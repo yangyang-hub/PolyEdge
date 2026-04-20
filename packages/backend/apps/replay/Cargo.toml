@@ -1,0 +1,11 @@
+[package]
+name = "polyedge-replay"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+polyedge-domain = { path = "../../crates/domain" }
+polyedge-infrastructure = { path = "../../crates/infrastructure" }
+tokio.workspace = true
+tracing.workspace = true

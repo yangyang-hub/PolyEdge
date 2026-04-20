@@ -1,0 +1,352 @@
+use crate::{
+    auth::InternalTokenVerifier,
+    catalog::{InMemoryMarketEventStore, PostgresMarketEventStore},
+    settings::Settings,
+    stores::{
+        ExternalEventStore, InMemoryAuditLogSink, InMemoryExternalEventStore,
+        InMemoryIdempotencyStore, InMemoryModeStateStore, InMemoryRiskStateStore,
+        PostgresAuditLogSink, PostgresExternalEventStore, PostgresIdempotencyStore,
+        PostgresModeStateStore, PostgresRiskStateStore,
+    },
+};
+use polyedge_application::{
+    AuditLogSink, ExecutionService, IdempotencyStore, MarketEventService, MarketEventStore,
+    ModeStateStore, RiskPolicy, RiskService, RiskStateStore, SystemModeService,
+};
+use polyedge_domain::{AppError, Result, SystemMode};
+use sqlx::{PgPool, postgres::PgPoolOptions};
+use std::sync::Arc;
+use tracing::info;
+
+static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("../../migrations");
+
+#[derive(Clone)]
+pub struct AppState {
+    pub settings: Arc<Settings>,
+    pub dependencies: Arc<RuntimeDependencies>,
+    pub auth_verifier: Arc<InternalTokenVerifier>,
+    pub idempotency_store: Arc<dyn IdempotencyStore>,
+    pub external_event_store: Arc<dyn ExternalEventStore>,
+    pub system_mode_service: Arc<SystemModeService>,
+    pub market_event_service: Arc<MarketEventService>,
+    pub risk_service: Arc<RiskService>,
+    pub execution_service: Arc<ExecutionService>,
+}
+
+pub struct Runtime {
+    state: AppState,
+}
+
+#[derive(Debug)]
+pub struct RuntimeDependencies {
+    pub postgres: Option<PgPool>,
+    pub redis: Option<redis::Client>,
+}
+
+impl Runtime {
+    pub async fn load() -> Result<Self> {
+        let settings = Arc::new(Settings::load()?);
+        Self::from_settings(settings).await
+    }
+
+    pub async fn from_settings(settings: Arc<Settings>) -> Result<Self> {
+        let postgres = connect_postgres(settings.postgres.url.as_deref()).await?;
+        let redis = connect_redis(settings.redis.url.as_deref()).await?;
+        let auth_verifier = Arc::new(InternalTokenVerifier::from_settings(&settings.auth)?);
+        let (
+            mode_store,
+            risk_state_store,
+            idempotency_store,
+            external_event_store,
+            audit_log_sink,
+        ): (
+            Arc<dyn ModeStateStore>,
+            Arc<dyn RiskStateStore>,
+            Arc<dyn IdempotencyStore>,
+            Arc<dyn ExternalEventStore>,
+            Arc<dyn AuditLogSink>,
+        ) = if let Some(pool) = postgres.clone() {
+            let mode_store = Arc::new(PostgresModeStateStore::new(
+                pool.clone(),
+                settings.runtime.initial_mode,
+                settings.runtime.environment.clone(),
+            ));
+            mode_store.bootstrap().await?;
+            let risk_state_store = Arc::new(PostgresRiskStateStore::new(
+                pool.clone(),
+                settings.risk.initial_kill_switch,
+                settings.risk.initial_daily_pnl,
+                settings.risk.initial_gross_exposure,
+                settings.risk.initial_net_exposure,
+                settings.risk.initial_open_alerts,
+            ));
+            risk_state_store.bootstrap().await?;
+            (
+                mode_store,
+                risk_state_store,
+                Arc::new(PostgresIdempotencyStore::new(pool.clone())),
+                Arc::new(PostgresExternalEventStore::new(pool.clone())),
+                Arc::new(PostgresAuditLogSink::new(pool)),
+            )
+        } else {
+            (
+                Arc::new(InMemoryModeStateStore::new(
+                    settings.runtime.initial_mode,
+                    settings.runtime.environment.clone(),
+                )),
+                Arc::new(InMemoryRiskStateStore::new(
+                    settings.risk.initial_kill_switch,
+                    settings.risk.initial_daily_pnl,
+                    settings.risk.initial_gross_exposure,
+                    settings.risk.initial_net_exposure,
+                    settings.risk.initial_open_alerts,
+                )),
+                Arc::new(InMemoryIdempotencyStore::new()),
+                Arc::new(InMemoryExternalEventStore::new()),
+                Arc::new(InMemoryAuditLogSink::new()),
+            )
+        };
+        let market_event_store: Arc<dyn MarketEventStore> = if let Some(pool) = postgres.clone() {
+            Arc::new(PostgresMarketEventStore::new(pool))
+        } else {
+            Arc::new(InMemoryMarketEventStore::new())
+        };
+        let system_mode_service = Arc::new(SystemModeService::new(
+            mode_store,
+            idempotency_store.clone(),
+            audit_log_sink.clone(),
+        ));
+        let market_event_service = Arc::new(MarketEventService::new(market_event_store));
+        let execution_audit_log_sink = audit_log_sink.clone();
+        let risk_service = Arc::new(RiskService::new(
+            risk_policy(&settings),
+            risk_state_store,
+            market_event_service.clone(),
+            system_mode_service.clone(),
+            audit_log_sink,
+        ));
+        let execution_service = Arc::new(ExecutionService::new(
+            market_event_service.clone(),
+            risk_service.clone(),
+            execution_audit_log_sink,
+        ));
+
+        Ok(Self {
+            state: AppState {
+                settings,
+                dependencies: Arc::new(RuntimeDependencies { postgres, redis }),
+                auth_verifier,
+                idempotency_store,
+                external_event_store,
+                system_mode_service,
+                market_event_service,
+                risk_service,
+                execution_service,
+            },
+        })
+    }
+
+    pub fn test_app_state(settings: Settings) -> Result<AppState> {
+        let settings = Arc::new(settings);
+        let auth_verifier = Arc::new(InternalTokenVerifier::from_settings(&settings.auth)?);
+        let mode_store: Arc<dyn ModeStateStore> = Arc::new(InMemoryModeStateStore::new(
+            settings.runtime.initial_mode,
+            settings.runtime.environment.clone(),
+        ));
+        let risk_state_store: Arc<dyn RiskStateStore> = Arc::new(InMemoryRiskStateStore::new(
+            settings.risk.initial_kill_switch,
+            settings.risk.initial_daily_pnl,
+            settings.risk.initial_gross_exposure,
+            settings.risk.initial_net_exposure,
+            settings.risk.initial_open_alerts,
+        ));
+        let idempotency_store: Arc<dyn IdempotencyStore> =
+            Arc::new(InMemoryIdempotencyStore::new());
+        let external_event_store: Arc<dyn ExternalEventStore> =
+            Arc::new(InMemoryExternalEventStore::new());
+        let audit_log_sink: Arc<dyn AuditLogSink> = Arc::new(InMemoryAuditLogSink::new());
+        let market_event_store: Arc<dyn MarketEventStore> =
+            Arc::new(InMemoryMarketEventStore::new());
+        let system_mode_service = Arc::new(SystemModeService::new(
+            mode_store,
+            idempotency_store.clone(),
+            audit_log_sink.clone(),
+        ));
+        let market_event_service = Arc::new(MarketEventService::new(market_event_store));
+        let execution_audit_log_sink = audit_log_sink.clone();
+        let risk_service = Arc::new(RiskService::new(
+            risk_policy(&settings),
+            risk_state_store,
+            market_event_service.clone(),
+            system_mode_service.clone(),
+            audit_log_sink,
+        ));
+        let execution_service = Arc::new(ExecutionService::new(
+            market_event_service.clone(),
+            risk_service.clone(),
+            execution_audit_log_sink,
+        ));
+
+        Ok(AppState {
+            settings,
+            dependencies: Arc::new(RuntimeDependencies {
+                postgres: None,
+                redis: None,
+            }),
+            auth_verifier,
+            idempotency_store,
+            external_event_store,
+            system_mode_service,
+            market_event_service,
+            risk_service,
+            execution_service,
+        })
+    }
+
+    #[must_use]
+    pub fn app_state(&self) -> AppState {
+        self.state.clone()
+    }
+}
+
+impl RuntimeDependencies {
+    pub async fn postgres_ready(&self) -> Result<()> {
+        let Some(pool) = &self.postgres else {
+            return Ok(());
+        };
+
+        sqlx::query("SELECT 1")
+            .execute(pool)
+            .await
+            .map_err(|error| {
+                AppError::dependency_unavailable(
+                    "POSTGRES_NOT_READY",
+                    format!("postgres readiness check failed: {error}"),
+                )
+            })?;
+
+        Ok(())
+    }
+
+    pub async fn redis_ready(&self) -> Result<()> {
+        let Some(client) = &self.redis else {
+            return Ok(());
+        };
+
+        let mut connection = client
+            .get_multiplexed_async_connection()
+            .await
+            .map_err(|error| {
+                AppError::dependency_unavailable(
+                    "REDIS_NOT_READY",
+                    format!("redis connection failed: {error}"),
+                )
+            })?;
+
+        let pong: String = redis::cmd("PING")
+            .query_async(&mut connection)
+            .await
+            .map_err(|error| {
+                AppError::dependency_unavailable(
+                    "REDIS_NOT_READY",
+                    format!("redis ping failed: {error}"),
+                )
+            })?;
+
+        if pong != "PONG" {
+            return Err(AppError::dependency_unavailable(
+                "REDIS_NOT_READY",
+                format!("unexpected redis ping response: {pong}"),
+            ));
+        }
+
+        Ok(())
+    }
+}
+
+fn risk_policy(settings: &Settings) -> RiskPolicy {
+    RiskPolicy {
+        exposure_reference_nav: settings.risk.exposure_reference_nav,
+        min_signal_confidence: settings.risk.min_signal_confidence,
+        min_edge_to_execute: settings.risk.min_edge_to_execute,
+        max_open_alerts: settings.risk.max_open_alerts,
+        max_daily_loss: settings.risk.max_daily_loss,
+        max_gross_exposure: settings.risk.max_gross_exposure,
+        max_net_exposure: settings.risk.max_net_exposure,
+    }
+}
+
+async fn connect_postgres(url: Option<&str>) -> Result<Option<PgPool>> {
+    let Some(url) = url.filter(|value| !value.trim().is_empty()) else {
+        info!("postgres connection is not configured");
+        return Ok(None);
+    };
+
+    let pool = PgPoolOptions::new()
+        .max_connections(5)
+        .connect(url)
+        .await
+        .map_err(|error| {
+            AppError::dependency_unavailable(
+                "POSTGRES_CONNECT_FAILED",
+                format!("failed to connect to postgres: {error}"),
+            )
+        })?;
+
+    MIGRATOR.run(&pool).await.map_err(|error| {
+        AppError::dependency_unavailable(
+            "POSTGRES_MIGRATION_FAILED",
+            format!("failed to run embedded postgres migrations: {error}"),
+        )
+    })?;
+
+    Ok(Some(pool))
+}
+
+async fn connect_redis(url: Option<&str>) -> Result<Option<redis::Client>> {
+    let Some(url) = url.filter(|value| !value.trim().is_empty()) else {
+        info!("redis connection is not configured");
+        return Ok(None);
+    };
+
+    let client = redis::Client::open(url).map_err(|error| {
+        AppError::dependency_unavailable(
+            "REDIS_CONNECT_FAILED",
+            format!("failed to construct redis client: {error}"),
+        )
+    })?;
+
+    let mut connection = client
+        .get_multiplexed_async_connection()
+        .await
+        .map_err(|error| {
+            AppError::dependency_unavailable(
+                "REDIS_CONNECT_FAILED",
+                format!("failed to connect to redis: {error}"),
+            )
+        })?;
+
+    let pong: String = redis::cmd("PING")
+        .query_async(&mut connection)
+        .await
+        .map_err(|error| {
+            AppError::dependency_unavailable(
+                "REDIS_CONNECT_FAILED",
+                format!("failed to ping redis: {error}"),
+            )
+        })?;
+
+    if pong != "PONG" {
+        return Err(AppError::dependency_unavailable(
+            "REDIS_CONNECT_FAILED",
+            format!("unexpected redis ping response: {pong}"),
+        ));
+    }
+
+    Ok(Some(client))
+}
+
+#[allow(dead_code)]
+fn _assert_mode_copy(mode: SystemMode) -> SystemMode {
+    mode
+}

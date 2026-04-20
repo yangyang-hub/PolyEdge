@@ -1,0 +1,26 @@
+[package]
+name = "polyedge-api"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+axum.workspace = true
+polyedge-application = { path = "../../crates/application" }
+polyedge-connectors = { path = "../../crates/connectors" }
+polyedge-contracts = { path = "../../crates/contracts" }
+polyedge-domain = { path = "../../crates/domain" }
+polyedge-infrastructure = { path = "../../crates/infrastructure" }
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+time.workspace = true
+tokio.workspace = true
+tower.workspace = true
+tower-http.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+base64.workspace = true
+ed25519-dalek.workspace = true

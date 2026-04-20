@@ -1,0 +1,204 @@
+# PolyEdge
+
+PolyEdge 是一个面向 Polymarket 的事件驱动交易系统原型仓库，目标是把外部事件与证据转成概率更新、交易信号和风险受控的执行动作。
+
+当前仓库已经包含两部分：
+
+- `packages/front`：`Next.js 16 + React 19` 控制台前端
+- `packages/backend`：Rust workspace，包含 `api / worker / replay`
+
+如果你想先了解“当前代码已经实现到哪一步”，优先看 [AGENT.md](./AGENT.md)。设计目标和长期方案在 `doc/` 目录。
+
+## 当前状态
+
+仓库已经不是纯文档状态：
+
+- 前端控制台已经有 `dashboard / markets / events / signals / positions / risk / approvals / replay / settings`
+- 后端已经有 Axum API、worker 子命令、配置和数据库迁移
+- 默认体验仍然是 mock-first
+- 前后端 live 联调还没有完全闭环
+
+当前最重要的现实判断：
+
+1. 前端在未配置 `POLYEDGE_API_BASE_URL` 时，走 typed mock 数据。
+2. 后端已经有真实业务骨架，但前端与后端的 live API/SSE/鉴权还没完全对齐。
+3. 因此，这个仓库适合用于界面开发、契约收敛、后端能力建设和逐步联调，而不是直接当成已上线系统。
+
+## 仓库结构
+
+```text
+PolyEdge/
+├── AGENT.md
+├── README.md
+├── doc/
+├── packages/
+│   ├── front/
+│   └── backend/
+```
+
+### `doc/`
+
+设计与契约文档，包括：
+
+- 系统总设计
+- 前端设计与实施计划
+- 后端设计与实施计划
+- API 契约
+- 鉴权设计
+- 存储 schema
+- LLM 治理
+- Polymarket connector 设计
+
+### `packages/front/`
+
+前端控制台，主要结构：
+
+- `src/app/(console)`：页面路由
+- `src/features/*`：按业务域拆分的 loader 和组件
+- `src/server/api/*`：前端读取层
+- `src/server/actions/*`：前端写操作
+- `src/app/api/stream/[channel]/route.ts`：SSE proxy / mock stream 入口
+
+### `packages/backend/`
+
+Rust workspace，主要结构：
+
+- `apps/api`：Axum HTTP API
+- `apps/worker`：后台任务与执行/回写流程
+- `apps/replay`：研究/回放运行时骨架
+- `crates/application`：用例编排
+- `crates/domain`：领域模型与规则
+- `crates/contracts`：HTTP/DTO 契约
+- `crates/infrastructure`：配置、存储、鉴权、运行时
+- `crates/connectors`：外部连接器
+
+## 快速开始
+
+这个仓库不是单一工具链的 monorepo。前端和后端要分别进入各自目录运行。
+
+### 环境要求
+
+建议本地至少具备：
+
+- `Node.js 20+`
+- `pnpm`
+- `Rust` 与 `cargo`
+- `PostgreSQL` 和 `Redis`（后端真实运行时需要）
+
+## 前端运行
+
+进入前端目录：
+
+```bash
+cd packages/front
+```
+
+安装依赖并启动：
+
+```bash
+pnpm install
+pnpm dev
+```
+
+常用命令：
+
+```bash
+pnpm lint
+pnpm build
+```
+
+默认环境变量见 [packages/front/.env.example](./packages/front/.env.example)：
+
+```bash
+POLYEDGE_API_BASE_URL=
+POLYEDGE_CONSOLE_AUTH=off
+```
+
+说明：
+
+1. `POLYEDGE_API_BASE_URL` 留空时，前端走 mock 数据。
+2. `POLYEDGE_CONSOLE_AUTH` 当前只支持 `off` 和 `mock-session`。
+
+## 后端运行
+
+进入后端目录：
+
+```bash
+cd packages/backend
+```
+
+常用命令：
+
+```bash
+cargo check --workspace
+cargo test --workspace
+cargo run -p polyedge-api
+```
+
+worker 常用子命令：
+
+```bash
+cargo run -p polyedge-worker -- ingest-fixtures
+cargo run -p polyedge-worker -- drain-execution-queue
+cargo run -p polyedge-worker -- reconcile-paper-fills
+cargo run -p polyedge-worker -- poll-paper-order-statuses
+cargo run -p polyedge-worker -- poll-polymarket-order-statuses
+cargo run -p polyedge-worker -- reconcile-polymarket-fills
+```
+
+默认后端配置在 [packages/backend/config/default.toml](./packages/backend/config/default.toml)：
+
+- API 默认监听 `127.0.0.1:8080`
+- runtime 默认模式是 `manual_confirm`
+- polymarket 默认模式是 `mock`
+- `postgres.url` 和 `redis.url` 默认仍为空
+
+## 当前已实现能力
+
+### 前端
+
+- 控制台布局、顶部状态条、侧边导航和实时状态栏
+- `dashboard / markets / events / signals / positions / risk / approvals / replay`
+- feature loader + feature component 分层
+- Server Actions 驱动的审批、风险控制和 kill switch UI 链路
+- SSE mock/live 代理与共享 realtime provider
+
+### 后端
+
+- Axum API 骨架与多个 `v1` 资源路由
+- 风险模式切换、signal approve/reject、execution request 等写路径
+- worker 侧的 fixture ingest、执行队列、fill/status reconcile 流程
+- Polymarket connector 与 paper/mock 执行相关代码
+- PostgreSQL schema 迁移
+
+## 当前未闭合的部分
+
+以下是目前最重要的集成缺口：
+
+1. 前端 live API 适配层当前请求 `/api/...`，后端已暴露的是 `/api/v1/...`。
+2. 前端 live SSE 代理期待上游存在 `/api/stream/{channel}`，后端当前仓库内还没有对应 stream 路由。
+3. Next.js 到 Rust 的真实内部鉴权 token 与用户上下文透传尚未接通。
+4. 前端权限仍以本地 mock session 为主，不是生产级会话系统。
+
+这意味着：
+
+- 前端界面和 BFF 层已经较完整
+- 后端主链路已经开始成型
+- 但全链路真实联调还需要继续收口
+
+## 推荐阅读顺序
+
+如果你刚接手这个项目，建议按这个顺序阅读：
+
+1. [AGENT.md](./AGENT.md)
+2. [doc/polyedge-design.md](./doc/polyedge-design.md)
+3. [doc/polyedge-frontend-design.md](./doc/polyedge-frontend-design.md)
+4. [doc/polyedge-backend-design.md](./doc/polyedge-backend-design.md)
+5. [doc/polyedge-api-contract.md](./doc/polyedge-api-contract.md)
+6. [doc/polyedge-auth-design.md](./doc/polyedge-auth-design.md)
+
+## 说明
+
+- 根目录 `README.md` 用于项目入口说明。
+- 根目录 [AGENT.md](./AGENT.md) 用于记录“当前仓库真实状态”和开发维护约定。
+- 如果两者描述出现冲突，以 `AGENT.md` 为准。

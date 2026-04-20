@@ -1,0 +1,5948 @@
+use async_trait::async_trait;
+use polyedge_application::{
+    DispatchExecutionListFilters, EventListFilters, EventView, EvidenceListFilters, EvidenceView,
+    ExecutionDispatchCandidate, ExecutionDispatchResult, ExecutionFillResult,
+    ExecutionReconciliationCandidate, ExecutionRequestListFilters, ExecutionRequestView,
+    ExecutionSubmissionResult, FixtureBundle, FixtureIngestionReport, MarketEventStore,
+    MarketListFilters, MarketView, OrderDraftListFilters, OrderDraftView, OrderListFilters,
+    OrderView, PositionListFilters, PositionView, ProbabilityEstimateListFilters,
+    ProbabilityEstimateView, RecomputeSignalCommand, RecomputeSignalResult,
+    ReconcileExecutionListFilters, SignalListFilters, SignalTransitionListFilters,
+    SignalTransitionView, SignalView, SubmitExecutionStoreCommand, TradeListFilters, TradeView,
+    build_recompute_signal_draft,
+};
+use polyedge_domain::{
+    AmbiguityLevel, AppError, Edge, EventStatus, EvidenceDirection, EvidenceStatus,
+    ExecutionRequestStatus, MarketStatus, OrderDraftStatus, OrderStatus, Probability, Quantity,
+    Result, SignalAction, SignalLifecycleState, SignalSide, SignedUsdAmount, TimeHorizon,
+    TradabilityStatus, UsdAmount,
+};
+use rust_decimal::{Decimal, RoundingStrategy};
+use serde_json::{Value, json};
+use sqlx::{PgPool, Row, types::Json};
+use std::{collections::HashMap, str::FromStr};
+use time::OffsetDateTime;
+use tokio::sync::RwLock;
+use uuid::Uuid;
+
+fn db_error(code: &'static str, context: impl Into<String>) -> AppError {
+    AppError::dependency_unavailable(code, context.into())
+}
+
+pub struct InMemoryMarketEventStore {
+    markets: RwLock<HashMap<String, MarketView>>,
+    events: RwLock<HashMap<String, EventView>>,
+    evidences: RwLock<HashMap<String, EvidenceView>>,
+    signals: RwLock<HashMap<String, SignalView>>,
+    probability_estimates: RwLock<HashMap<String, ProbabilityEstimateView>>,
+    signal_transitions: RwLock<Vec<SignalTransitionView>>,
+    order_drafts: RwLock<HashMap<String, OrderDraftView>>,
+    execution_requests: RwLock<HashMap<String, ExecutionRequestView>>,
+    orders: RwLock<HashMap<String, OrderView>>,
+    trades: RwLock<HashMap<String, TradeView>>,
+    positions: RwLock<HashMap<String, PositionView>>,
+}
+
+impl InMemoryMarketEventStore {
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            markets: RwLock::new(HashMap::new()),
+            events: RwLock::new(HashMap::new()),
+            evidences: RwLock::new(HashMap::new()),
+            signals: RwLock::new(HashMap::new()),
+            probability_estimates: RwLock::new(HashMap::new()),
+            signal_transitions: RwLock::new(Vec::new()),
+            order_drafts: RwLock::new(HashMap::new()),
+            execution_requests: RwLock::new(HashMap::new()),
+            orders: RwLock::new(HashMap::new()),
+            trades: RwLock::new(HashMap::new()),
+            positions: RwLock::new(HashMap::new()),
+        }
+    }
+}
+
+#[async_trait]
+impl MarketEventStore for InMemoryMarketEventStore {
+    async fn list_markets(&self, filters: &MarketListFilters) -> Result<Vec<MarketView>> {
+        let markets = self.markets.read().await;
+        let mut items: Vec<_> = markets
+            .values()
+            .filter(|market| {
+                filters.status.is_none_or(|status| market.status == status)
+                    && filters
+                        .tradability_status
+                        .is_none_or(|status| market.tradability_status == status)
+            })
+            .cloned()
+            .collect();
+        items.sort_by(|left, right| {
+            right
+                .updated_at
+                .cmp(&left.updated_at)
+                .then_with(|| left.id.cmp(&right.id))
+        });
+        items.truncate(usize::from(filters.limit));
+        Ok(items)
+    }
+
+    async fn get_market(&self, market_id: &str) -> Result<Option<MarketView>> {
+        Ok(self.markets.read().await.get(market_id).cloned())
+    }
+
+    async fn get_signal(&self, signal_id: &str) -> Result<Option<SignalView>> {
+        Ok(self.signals.read().await.get(signal_id).cloned())
+    }
+
+    async fn list_events(&self, filters: &EventListFilters) -> Result<Vec<EventView>> {
+        let events = self.events.read().await;
+        let mut items: Vec<_> = events
+            .values()
+            .filter(|event| filters.status.is_none_or(|status| event.status == status))
+            .cloned()
+            .collect();
+        items.sort_by(|left, right| {
+            right
+                .updated_at
+                .cmp(&left.updated_at)
+                .then_with(|| left.id.cmp(&right.id))
+        });
+        items.truncate(usize::from(filters.limit));
+        Ok(items)
+    }
+
+    async fn list_evidences(&self, filters: &EvidenceListFilters) -> Result<Vec<EvidenceView>> {
+        let evidences = self.evidences.read().await;
+        let mut items: Vec<_> = evidences
+            .values()
+            .filter(|evidence| {
+                filters
+                    .market_id
+                    .as_ref()
+                    .is_none_or(|market_id| &evidence.market_id == market_id)
+                    && filters
+                        .event_id
+                        .as_ref()
+                        .is_none_or(|event_id| &evidence.event_id == event_id)
+                    && filters
+                        .status
+                        .is_none_or(|status| evidence.status == status)
+            })
+            .cloned()
+            .collect();
+        items.sort_by(|left, right| {
+            right
+                .created_at
+                .cmp(&left.created_at)
+                .then_with(|| left.id.cmp(&right.id))
+        });
+        items.truncate(usize::from(filters.limit));
+        Ok(items)
+    }
+
+    async fn list_signals(&self, filters: &SignalListFilters) -> Result<Vec<SignalView>> {
+        let signals = self.signals.read().await;
+        let mut items: Vec<_> = signals
+            .values()
+            .filter(|signal| {
+                filters
+                    .market_id
+                    .as_ref()
+                    .is_none_or(|market_id| &signal.market_id == market_id)
+                    && filters
+                        .event_id
+                        .as_ref()
+                        .is_none_or(|event_id| &signal.event_id == event_id)
+                    && filters
+                        .lifecycle_state
+                        .is_none_or(|state| signal.lifecycle_state == state)
+            })
+            .cloned()
+            .collect();
+        items.sort_by(|left, right| {
+            right
+                .updated_at
+                .cmp(&left.updated_at)
+                .then_with(|| left.id.cmp(&right.id))
+        });
+        items.truncate(usize::from(filters.limit));
+        Ok(items)
+    }
+
+    async fn list_probability_estimates(
+        &self,
+        filters: &ProbabilityEstimateListFilters,
+    ) -> Result<Vec<ProbabilityEstimateView>> {
+        let estimates = self.probability_estimates.read().await;
+        let mut items: Vec<_> = estimates
+            .values()
+            .filter(|estimate| {
+                filters
+                    .market_id
+                    .as_ref()
+                    .is_none_or(|market_id| &estimate.market_id == market_id)
+                    && filters
+                        .event_id
+                        .as_ref()
+                        .is_none_or(|event_id| &estimate.event_id == event_id)
+                    && filters
+                        .signal_id
+                        .as_ref()
+                        .is_none_or(|signal_id| estimate.signal_id.as_ref() == Some(signal_id))
+            })
+            .cloned()
+            .collect();
+        items.sort_by(|left, right| {
+            right
+                .created_at
+                .cmp(&left.created_at)
+                .then_with(|| left.id.cmp(&right.id))
+        });
+        items.truncate(usize::from(filters.limit));
+        Ok(items)
+    }
+
+    async fn list_signal_transitions(
+        &self,
+        filters: &SignalTransitionListFilters,
+    ) -> Result<Vec<SignalTransitionView>> {
+        let transitions = self.signal_transitions.read().await;
+        let mut items: Vec<_> = transitions
+            .iter()
+            .filter(|transition| transition.signal_id == filters.signal_id)
+            .cloned()
+            .collect();
+        items.sort_by(|left, right| {
+            right
+                .created_at
+                .cmp(&left.created_at)
+                .then_with(|| left.id.cmp(&right.id))
+        });
+        items.truncate(usize::from(filters.limit));
+        Ok(items)
+    }
+
+    async fn list_order_drafts(
+        &self,
+        filters: &OrderDraftListFilters,
+    ) -> Result<Vec<OrderDraftView>> {
+        let order_drafts = self.order_drafts.read().await;
+        let mut items: Vec<_> = order_drafts
+            .values()
+            .filter(|draft| {
+                filters
+                    .signal_id
+                    .as_ref()
+                    .is_none_or(|signal_id| &draft.signal_id == signal_id)
+                    && filters
+                        .connector_name
+                        .as_ref()
+                        .is_none_or(|connector_name| &draft.connector_name == connector_name)
+                    && filters.status.is_none_or(|status| draft.status == status)
+            })
+            .cloned()
+            .collect();
+        items.sort_by(|left, right| {
+            right
+                .created_at
+                .cmp(&left.created_at)
+                .then_with(|| left.id.cmp(&right.id))
+        });
+        items.truncate(usize::from(filters.limit));
+        Ok(items)
+    }
+
+    async fn list_execution_requests(
+        &self,
+        filters: &ExecutionRequestListFilters,
+    ) -> Result<Vec<ExecutionRequestView>> {
+        let execution_requests = self.execution_requests.read().await;
+        let mut items: Vec<_> = execution_requests
+            .values()
+            .filter(|request| {
+                filters
+                    .signal_id
+                    .as_ref()
+                    .is_none_or(|signal_id| &request.signal_id == signal_id)
+                    && filters
+                        .connector_name
+                        .as_ref()
+                        .is_none_or(|connector_name| &request.connector_name == connector_name)
+                    && filters.status.is_none_or(|status| request.status == status)
+            })
+            .cloned()
+            .collect();
+        items.sort_by(|left, right| {
+            right
+                .created_at
+                .cmp(&left.created_at)
+                .then_with(|| left.id.cmp(&right.id))
+        });
+        items.truncate(usize::from(filters.limit));
+        Ok(items)
+    }
+
+    async fn get_order_by_external_ref(
+        &self,
+        connector_name: &str,
+        external_order_id: &str,
+    ) -> Result<OrderView> {
+        let orders = self.orders.read().await;
+        orders
+            .values()
+            .find(|order| {
+                order.connector_name == connector_name
+                    && order.external_order_id == external_order_id
+            })
+            .cloned()
+            .ok_or_else(|| {
+                AppError::not_found(
+                    "ORDER_NOT_FOUND",
+                    format!(
+                        "order was not found for connector={} external_order_id={}",
+                        connector_name, external_order_id
+                    ),
+                )
+            })
+    }
+
+    async fn list_orders(&self, filters: &OrderListFilters) -> Result<Vec<OrderView>> {
+        let orders = self.orders.read().await;
+        let mut items: Vec<_> = orders
+            .values()
+            .filter(|order| {
+                filters
+                    .signal_id
+                    .as_ref()
+                    .is_none_or(|signal_id| &order.signal_id == signal_id)
+                    && filters
+                        .market_id
+                        .as_ref()
+                        .is_none_or(|market_id| &order.market_id == market_id)
+                    && filters
+                        .connector_name
+                        .as_ref()
+                        .is_none_or(|connector_name| &order.connector_name == connector_name)
+                    && filters.status.is_none_or(|status| order.status == status)
+            })
+            .cloned()
+            .collect();
+        items.sort_by(|left, right| {
+            right
+                .updated_at
+                .cmp(&left.updated_at)
+                .then_with(|| left.id.cmp(&right.id))
+        });
+        items.truncate(usize::from(filters.limit));
+        Ok(items)
+    }
+
+    async fn list_trades(&self, filters: &TradeListFilters) -> Result<Vec<TradeView>> {
+        let trades = self.trades.read().await;
+        let mut items: Vec<_> = trades
+            .values()
+            .filter(|trade| {
+                filters
+                    .order_id
+                    .as_ref()
+                    .is_none_or(|order_id| &trade.order_id == order_id)
+                    && filters
+                        .signal_id
+                        .as_ref()
+                        .is_none_or(|signal_id| &trade.signal_id == signal_id)
+                    && filters
+                        .market_id
+                        .as_ref()
+                        .is_none_or(|market_id| &trade.market_id == market_id)
+                    && filters
+                        .connector_name
+                        .as_ref()
+                        .is_none_or(|connector_name| &trade.connector_name == connector_name)
+            })
+            .cloned()
+            .collect();
+        items.sort_by(|left, right| {
+            right
+                .executed_at
+                .cmp(&left.executed_at)
+                .then_with(|| left.id.cmp(&right.id))
+        });
+        items.truncate(usize::from(filters.limit));
+        Ok(items)
+    }
+
+    async fn list_positions(&self, filters: &PositionListFilters) -> Result<Vec<PositionView>> {
+        let positions = self.positions.read().await;
+        let mut items: Vec<_> = positions
+            .values()
+            .filter(|position| {
+                filters
+                    .market_id
+                    .as_ref()
+                    .is_none_or(|market_id| &position.market_id == market_id)
+                    && filters
+                        .connector_name
+                        .as_ref()
+                        .is_none_or(|connector_name| &position.connector_name == connector_name)
+                    && filters.side.is_none_or(|side| position.side == side)
+            })
+            .cloned()
+            .collect();
+        items.sort_by(|left, right| {
+            right
+                .updated_at
+                .cmp(&left.updated_at)
+                .then_with(|| left.id.cmp(&right.id))
+        });
+        items.truncate(usize::from(filters.limit));
+        Ok(items)
+    }
+
+    async fn recompute_signal(
+        &self,
+        command: &RecomputeSignalCommand,
+    ) -> Result<RecomputeSignalResult> {
+        let signal = {
+            let signals = self.signals.read().await;
+            signals.get(&command.signal_id).cloned().ok_or_else(|| {
+                AppError::not_found(
+                    "SIGNAL_NOT_FOUND",
+                    format!("signal was not found: {}", command.signal_id),
+                )
+            })?
+        };
+        let market = {
+            let markets = self.markets.read().await;
+            markets.get(&signal.market_id).cloned().ok_or_else(|| {
+                AppError::not_found(
+                    "MARKET_NOT_FOUND",
+                    format!("market was not found: {}", signal.market_id),
+                )
+            })?
+        };
+        let evidences: Vec<_> = {
+            let evidences = self.evidences.read().await;
+            evidences
+                .values()
+                .filter(|evidence| {
+                    evidence.market_id == signal.market_id && evidence.event_id == signal.event_id
+                })
+                .cloned()
+                .collect()
+        };
+
+        let estimate_id = format!("est_{}", Uuid::now_v7());
+        let draft = build_recompute_signal_draft(
+            &signal,
+            &market,
+            &evidences,
+            &command.reason,
+            &estimate_id,
+        )?;
+
+        {
+            let mut estimates = self.probability_estimates.write().await;
+            estimates.insert(draft.estimate.id.clone(), draft.estimate.clone());
+        }
+
+        {
+            let mut signals = self.signals.write().await;
+            signals.insert(draft.next_signal.id.clone(), draft.next_signal.clone());
+        }
+
+        let transition = if let Some(transition) = draft.transition {
+            let view = SignalTransitionView {
+                id: format!("sgt_{}", Uuid::now_v7()),
+                signal_id: draft.next_signal.id.clone(),
+                from_state: transition.from_state,
+                to_state: transition.to_state,
+                trigger_type: transition.trigger_type,
+                trigger_payload: transition.trigger_payload,
+                created_at: transition.created_at,
+            };
+            self.signal_transitions.write().await.push(view.clone());
+            Some(view)
+        } else {
+            None
+        };
+
+        Ok(RecomputeSignalResult {
+            signal: draft.next_signal,
+            estimate: draft.estimate,
+            transition,
+        })
+    }
+
+    async fn approve_signal(
+        &self,
+        signal_id: &str,
+        approved_by_user_id: &str,
+        approval_reason: &str,
+        _trace_id: &str,
+        expected_version: Option<i64>,
+    ) -> Result<SignalView> {
+        let mut signals = self.signals.write().await;
+        let current = signals.get(signal_id).cloned().ok_or_else(|| {
+            AppError::not_found(
+                "SIGNAL_NOT_FOUND",
+                format!("signal was not found: {signal_id}"),
+            )
+        })?;
+
+        if let Some(expected_version) = expected_version {
+            if current.version != expected_version {
+                return Err(AppError::conflict(
+                    "STATE_VERSION_MISMATCH",
+                    "signal version does not match the expected_version",
+                ));
+            }
+        }
+
+        if current.approved_by_user_id.is_some() {
+            return Err(AppError::conflict(
+                "STATE_SIGNAL_ALREADY_APPROVED",
+                "signal has already been approved",
+            ));
+        }
+
+        if current.rejected_by_user_id.is_some() {
+            return Err(AppError::conflict(
+                "STATE_SIGNAL_ALREADY_REJECTED",
+                "signal has already been rejected for the current version",
+            ));
+        }
+
+        let approved_at = OffsetDateTime::now_utc();
+        let approved_signal = SignalView {
+            id: current.id.clone(),
+            market_id: current.market_id.clone(),
+            event_id: current.event_id.clone(),
+            action: current.action,
+            side: current.side,
+            market_price: current.market_price,
+            fair_price: current.fair_price,
+            edge: current.edge,
+            confidence: current.confidence,
+            lifecycle_state: current.lifecycle_state,
+            reason: current.reason.clone(),
+            risk_decision: approval_reason.to_string(),
+            evidence_ids: current.evidence_ids.clone(),
+            approved_by_user_id: Some(approved_by_user_id.to_string()),
+            approved_at: Some(approved_at),
+            rejected_by_user_id: None,
+            rejected_at: None,
+            updated_at: approved_at,
+            version: current.version + 1,
+        };
+
+        signals.insert(signal_id.to_string(), approved_signal.clone());
+        Ok(approved_signal)
+    }
+
+    async fn reject_signal(
+        &self,
+        signal_id: &str,
+        rejected_by_user_id: &str,
+        rejection_reason: &str,
+        _trace_id: &str,
+        expected_version: Option<i64>,
+    ) -> Result<SignalView> {
+        let mut signals = self.signals.write().await;
+        let current = signals.get(signal_id).cloned().ok_or_else(|| {
+            AppError::not_found(
+                "SIGNAL_NOT_FOUND",
+                format!("signal was not found: {signal_id}"),
+            )
+        })?;
+
+        if let Some(expected_version) = expected_version {
+            if current.version != expected_version {
+                return Err(AppError::conflict(
+                    "STATE_VERSION_MISMATCH",
+                    "signal version does not match the expected_version",
+                ));
+            }
+        }
+
+        if current.approved_by_user_id.is_some() {
+            return Err(AppError::conflict(
+                "STATE_SIGNAL_ALREADY_APPROVED",
+                "approved signals cannot be rejected for the current version",
+            ));
+        }
+
+        if current.rejected_by_user_id.is_some() {
+            return Err(AppError::conflict(
+                "STATE_SIGNAL_ALREADY_REJECTED",
+                "signal has already been rejected for the current version",
+            ));
+        }
+
+        let rejected_at = OffsetDateTime::now_utc();
+        let rejected_signal = SignalView {
+            id: current.id.clone(),
+            market_id: current.market_id.clone(),
+            event_id: current.event_id.clone(),
+            action: current.action,
+            side: current.side,
+            market_price: current.market_price,
+            fair_price: current.fair_price,
+            edge: current.edge,
+            confidence: current.confidence,
+            lifecycle_state: current.lifecycle_state,
+            reason: current.reason.clone(),
+            risk_decision: rejection_reason.to_string(),
+            evidence_ids: current.evidence_ids.clone(),
+            approved_by_user_id: None,
+            approved_at: None,
+            rejected_by_user_id: Some(rejected_by_user_id.to_string()),
+            rejected_at: Some(rejected_at),
+            updated_at: rejected_at,
+            version: current.version + 1,
+        };
+
+        signals.insert(signal_id.to_string(), rejected_signal.clone());
+        Ok(rejected_signal)
+    }
+
+    async fn submit_execution_request(
+        &self,
+        command: &SubmitExecutionStoreCommand,
+    ) -> Result<ExecutionSubmissionResult> {
+        let signal = {
+            let signals = self.signals.read().await;
+            signals.get(&command.signal_id).cloned().ok_or_else(|| {
+                AppError::not_found(
+                    "SIGNAL_NOT_FOUND",
+                    format!("signal was not found: {}", command.signal_id),
+                )
+            })?
+        };
+
+        if let Some(expected_signal_version) = command.expected_signal_version {
+            if signal.version != expected_signal_version {
+                return Err(AppError::conflict(
+                    "STATE_VERSION_MISMATCH",
+                    "signal version does not match the expected_signal_version",
+                ));
+            }
+        }
+
+        validate_signal_for_execution(&signal, command.mode)?;
+
+        {
+            let execution_requests = self.execution_requests.read().await;
+            if execution_requests.values().any(|request| {
+                request.signal_id == signal.id && request.signal_version == signal.version
+            }) {
+                return Err(AppError::conflict(
+                    "STATE_EXECUTION_REQUEST_ALREADY_EXISTS",
+                    "an execution request already exists for the current signal version",
+                ));
+            }
+        }
+
+        let now = OffsetDateTime::now_utc();
+        let order_draft = OrderDraftView {
+            id: format!("odr_{}", Uuid::now_v7()),
+            signal_id: signal.id.clone(),
+            signal_version: signal.version,
+            market_id: signal.market_id.clone(),
+            connector_name: command.connector_name.clone(),
+            side: signal.side,
+            limit_price: command.limit_price,
+            quantity: command.quantity,
+            notional: compute_order_notional(command.limit_price, command.quantity)?,
+            status: OrderDraftStatus::Queued,
+            created_by_user_id: command.requested_by_user_id.clone(),
+            external_order_id: None,
+            submitted_at: None,
+            failure_code: None,
+            failure_message: None,
+            created_at: now,
+            updated_at: now,
+            version: 1,
+        };
+        let execution_request = ExecutionRequestView {
+            id: format!("exr_{}", Uuid::now_v7()),
+            signal_id: signal.id,
+            signal_version: signal.version,
+            order_draft_id: order_draft.id.clone(),
+            connector_name: command.connector_name.clone(),
+            mode: command.mode,
+            requested_by_user_id: command.requested_by_user_id.clone(),
+            status: ExecutionRequestStatus::Queued,
+            reason: command.reason.clone(),
+            external_order_id: None,
+            submitted_at: None,
+            failure_code: None,
+            failure_message: None,
+            created_at: now,
+            updated_at: now,
+            version: 1,
+        };
+
+        self.order_drafts
+            .write()
+            .await
+            .insert(order_draft.id.clone(), order_draft.clone());
+        self.execution_requests
+            .write()
+            .await
+            .insert(execution_request.id.clone(), execution_request.clone());
+
+        Ok(ExecutionSubmissionResult {
+            order_draft,
+            execution_request,
+        })
+    }
+
+    async fn list_dispatch_candidates(
+        &self,
+        filters: &DispatchExecutionListFilters,
+    ) -> Result<Vec<ExecutionDispatchCandidate>> {
+        let execution_requests = self.execution_requests.read().await;
+        let order_drafts = self.order_drafts.read().await;
+        let mut items: Vec<_> = execution_requests
+            .values()
+            .filter(|request| {
+                request.status == ExecutionRequestStatus::Queued
+                    && filters
+                        .connector_name
+                        .as_ref()
+                        .is_none_or(|connector_name| &request.connector_name == connector_name)
+            })
+            .filter_map(|request| {
+                let order_draft = order_drafts.get(&request.order_draft_id)?;
+                (order_draft.status == OrderDraftStatus::Queued).then(|| {
+                    ExecutionDispatchCandidate {
+                        order_draft: order_draft.clone(),
+                        execution_request: request.clone(),
+                    }
+                })
+            })
+            .collect();
+        items.sort_by(|left, right| {
+            left.execution_request
+                .created_at
+                .cmp(&right.execution_request.created_at)
+                .then_with(|| left.execution_request.id.cmp(&right.execution_request.id))
+        });
+        items.truncate(usize::from(filters.limit));
+        Ok(items)
+    }
+
+    async fn list_reconciliation_candidates(
+        &self,
+        filters: &ReconcileExecutionListFilters,
+    ) -> Result<Vec<ExecutionReconciliationCandidate>> {
+        let execution_requests = self.execution_requests.read().await;
+        let order_drafts = self.order_drafts.read().await;
+        let orders = self.orders.read().await;
+        let mut items: Vec<_> = execution_requests
+            .values()
+            .filter(|request| {
+                request.status == ExecutionRequestStatus::Submitted
+                    && filters
+                        .connector_name
+                        .as_ref()
+                        .is_none_or(|connector_name| &request.connector_name == connector_name)
+            })
+            .filter_map(|request| {
+                let order_draft = order_drafts.get(&request.order_draft_id)?;
+                let order = orders
+                    .values()
+                    .find(|order| order.execution_request_id == request.id)
+                    .cloned();
+                let is_reconcilable = order.as_ref().is_none_or(|order| {
+                    matches!(
+                        order.status,
+                        OrderStatus::Submitted | OrderStatus::Open | OrderStatus::PartiallyFilled
+                    ) && order.filled_quantity.value() < order.quantity.value()
+                });
+                (order_draft.status == OrderDraftStatus::Submitted && is_reconcilable).then(|| {
+                    ExecutionReconciliationCandidate {
+                        order_draft: order_draft.clone(),
+                        execution_request: request.clone(),
+                        order,
+                    }
+                })
+            })
+            .collect();
+        items.sort_by(|left, right| {
+            left.execution_request
+                .updated_at
+                .cmp(&right.execution_request.updated_at)
+                .then_with(|| left.execution_request.id.cmp(&right.execution_request.id))
+        });
+        items.truncate(usize::from(filters.limit));
+        Ok(items)
+    }
+
+    async fn mark_execution_submitted(
+        &self,
+        execution_request_id: &str,
+        account_id: &str,
+        external_order_id: &str,
+        _trace_id: &str,
+    ) -> Result<ExecutionDispatchResult> {
+        let mut execution_requests = self.execution_requests.write().await;
+        let mut order_drafts = self.order_drafts.write().await;
+        let mut orders = self.orders.write().await;
+        let request = execution_requests
+            .get(execution_request_id)
+            .cloned()
+            .ok_or_else(|| {
+                AppError::not_found(
+                    "EXECUTION_REQUEST_NOT_FOUND",
+                    format!("execution request was not found: {execution_request_id}"),
+                )
+            })?;
+
+        if request.status != ExecutionRequestStatus::Queued {
+            return Err(AppError::conflict(
+                "STATE_EXECUTION_REQUEST_NOT_DISPATCHABLE",
+                "execution request is no longer queued",
+            ));
+        }
+
+        let order_draft = order_drafts
+            .get(&request.order_draft_id)
+            .cloned()
+            .ok_or_else(|| {
+                AppError::not_found(
+                    "ORDER_DRAFT_NOT_FOUND",
+                    format!("order draft was not found: {}", request.order_draft_id),
+                )
+            })?;
+
+        if order_draft.status != OrderDraftStatus::Queued {
+            return Err(AppError::conflict(
+                "STATE_ORDER_DRAFT_NOT_DISPATCHABLE",
+                "order draft is no longer queued",
+            ));
+        }
+
+        let submitted_at = OffsetDateTime::now_utc();
+        let next_order_draft = OrderDraftView {
+            status: OrderDraftStatus::Submitted,
+            external_order_id: Some(external_order_id.to_string()),
+            submitted_at: Some(submitted_at),
+            failure_code: None,
+            failure_message: None,
+            updated_at: submitted_at,
+            version: order_draft.version + 1,
+            ..order_draft
+        };
+        let next_request = ExecutionRequestView {
+            status: ExecutionRequestStatus::Submitted,
+            external_order_id: Some(external_order_id.to_string()),
+            submitted_at: Some(submitted_at),
+            failure_code: None,
+            failure_message: None,
+            updated_at: submitted_at,
+            version: request.version + 1,
+            ..request
+        };
+        let submitted_order = OrderView {
+            id: format!("ord_{}", Uuid::now_v7()),
+            signal_id: next_request.signal_id.clone(),
+            execution_request_id: next_request.id.clone(),
+            order_draft_id: next_order_draft.id.clone(),
+            market_id: next_order_draft.market_id.clone(),
+            connector_name: next_request.connector_name.clone(),
+            account_id: account_id.to_string(),
+            external_order_id: external_order_id.to_string(),
+            side: next_order_draft.side,
+            limit_price: next_order_draft.limit_price,
+            quantity: next_order_draft.quantity,
+            filled_quantity: Quantity::new(Decimal::ZERO)?,
+            avg_fill_price: Probability::new(Decimal::ZERO)?,
+            status: OrderStatus::Submitted,
+            submitted_at,
+            updated_at: submitted_at,
+            version: 1,
+        };
+
+        order_drafts.insert(next_order_draft.id.clone(), next_order_draft.clone());
+        execution_requests.insert(next_request.id.clone(), next_request.clone());
+        orders.insert(submitted_order.id.clone(), submitted_order);
+
+        Ok(ExecutionDispatchResult {
+            order_draft: next_order_draft,
+            execution_request: next_request,
+        })
+    }
+
+    async fn mark_order_open(&self, order_id: &str, _trace_id: &str) -> Result<OrderView> {
+        let mut orders = self.orders.write().await;
+        let order = orders.get(order_id).cloned().ok_or_else(|| {
+            AppError::not_found(
+                "ORDER_NOT_FOUND",
+                format!("order was not found: {order_id}"),
+            )
+        })?;
+
+        let next_order = match order.status {
+            OrderStatus::Submitted => OrderView {
+                status: OrderStatus::Open,
+                updated_at: OffsetDateTime::now_utc(),
+                version: order.version + 1,
+                ..order
+            },
+            OrderStatus::Open => order,
+            _ => {
+                return Err(AppError::conflict(
+                    "STATE_ORDER_NOT_POLLABLE",
+                    "only submitted/open orders can be polled as open",
+                ));
+            }
+        };
+
+        orders.insert(next_order.id.clone(), next_order.clone());
+        Ok(next_order)
+    }
+
+    async fn mark_order_canceled(&self, order_id: &str, _trace_id: &str) -> Result<OrderView> {
+        let mut orders = self.orders.write().await;
+        let mut execution_requests = self.execution_requests.write().await;
+        let order = orders.get(order_id).cloned().ok_or_else(|| {
+            AppError::not_found(
+                "ORDER_NOT_FOUND",
+                format!("order was not found: {order_id}"),
+            )
+        })?;
+
+        let next_order = match order.status {
+            OrderStatus::Submitted | OrderStatus::Open | OrderStatus::PartiallyFilled => {
+                OrderView {
+                    status: OrderStatus::Canceled,
+                    updated_at: OffsetDateTime::now_utc(),
+                    version: order.version + 1,
+                    ..order
+                }
+            }
+            OrderStatus::Canceled => order,
+            _ => {
+                return Err(AppError::conflict(
+                    "STATE_ORDER_NOT_CANCELABLE",
+                    "only submitted/open/partially_filled orders can be canceled",
+                ));
+            }
+        };
+
+        if let Some(request) = execution_requests
+            .get(&next_order.execution_request_id)
+            .cloned()
+            .filter(|request| request.status == ExecutionRequestStatus::Submitted)
+        {
+            execution_requests.insert(
+                request.id.clone(),
+                ExecutionRequestView {
+                    status: ExecutionRequestStatus::Canceled,
+                    updated_at: next_order.updated_at,
+                    version: request.version + 1,
+                    ..request
+                },
+            );
+        }
+
+        orders.insert(next_order.id.clone(), next_order.clone());
+        Ok(next_order)
+    }
+
+    async fn mark_execution_failed(
+        &self,
+        execution_request_id: &str,
+        failure_code: &str,
+        failure_message: &str,
+        _trace_id: &str,
+    ) -> Result<ExecutionDispatchResult> {
+        let mut execution_requests = self.execution_requests.write().await;
+        let mut order_drafts = self.order_drafts.write().await;
+        let request = execution_requests
+            .get(execution_request_id)
+            .cloned()
+            .ok_or_else(|| {
+                AppError::not_found(
+                    "EXECUTION_REQUEST_NOT_FOUND",
+                    format!("execution request was not found: {execution_request_id}"),
+                )
+            })?;
+
+        if request.status != ExecutionRequestStatus::Queued {
+            return Err(AppError::conflict(
+                "STATE_EXECUTION_REQUEST_NOT_DISPATCHABLE",
+                "execution request is no longer queued",
+            ));
+        }
+
+        let order_draft = order_drafts
+            .get(&request.order_draft_id)
+            .cloned()
+            .ok_or_else(|| {
+                AppError::not_found(
+                    "ORDER_DRAFT_NOT_FOUND",
+                    format!("order draft was not found: {}", request.order_draft_id),
+                )
+            })?;
+
+        if order_draft.status != OrderDraftStatus::Queued {
+            return Err(AppError::conflict(
+                "STATE_ORDER_DRAFT_NOT_DISPATCHABLE",
+                "order draft is no longer queued",
+            ));
+        }
+
+        let failed_at = OffsetDateTime::now_utc();
+        let next_order_draft = OrderDraftView {
+            status: OrderDraftStatus::Rejected,
+            external_order_id: None,
+            submitted_at: None,
+            failure_code: Some(failure_code.to_string()),
+            failure_message: Some(failure_message.to_string()),
+            updated_at: failed_at,
+            version: order_draft.version + 1,
+            ..order_draft
+        };
+        let next_request = ExecutionRequestView {
+            status: ExecutionRequestStatus::Failed,
+            external_order_id: None,
+            submitted_at: None,
+            failure_code: Some(failure_code.to_string()),
+            failure_message: Some(failure_message.to_string()),
+            updated_at: failed_at,
+            version: request.version + 1,
+            ..request
+        };
+
+        order_drafts.insert(next_order_draft.id.clone(), next_order_draft.clone());
+        execution_requests.insert(next_request.id.clone(), next_request.clone());
+
+        Ok(ExecutionDispatchResult {
+            order_draft: next_order_draft,
+            execution_request: next_request,
+        })
+    }
+
+    async fn reconcile_execution_fill(
+        &self,
+        execution_request_id: &str,
+        account_id: &str,
+        external_trade_id: &str,
+        fill_price: Probability,
+        filled_quantity: Quantity,
+        fee: UsdAmount,
+        trace_id: &str,
+    ) -> Result<ExecutionFillResult> {
+        let execution_requests = self.execution_requests.read().await;
+        let order_drafts = self.order_drafts.read().await;
+        let mut orders = self.orders.write().await;
+        let mut trades = self.trades.write().await;
+        let mut positions = self.positions.write().await;
+        let mut signals = self.signals.write().await;
+        let mut transitions = self.signal_transitions.write().await;
+
+        let request = execution_requests
+            .get(execution_request_id)
+            .cloned()
+            .ok_or_else(|| {
+                AppError::not_found(
+                    "EXECUTION_REQUEST_NOT_FOUND",
+                    format!("execution request was not found: {execution_request_id}"),
+                )
+            })?;
+
+        if request.status != ExecutionRequestStatus::Submitted {
+            return Err(AppError::conflict(
+                "STATE_EXECUTION_REQUEST_NOT_RECONCILABLE",
+                "execution request is not in submitted state",
+            ));
+        }
+
+        if trades.values().any(|trade| {
+            trade.connector_name == request.connector_name
+                && trade.external_trade_id == external_trade_id
+        }) {
+            return Err(AppError::conflict(
+                "STATE_TRADE_ALREADY_RECORDED",
+                "external trade id has already been recorded",
+            ));
+        }
+
+        let order_draft = order_drafts
+            .get(&request.order_draft_id)
+            .cloned()
+            .ok_or_else(|| {
+                AppError::not_found(
+                    "ORDER_DRAFT_NOT_FOUND",
+                    format!("order draft was not found: {}", request.order_draft_id),
+                )
+            })?;
+
+        if order_draft.status != OrderDraftStatus::Submitted {
+            return Err(AppError::conflict(
+                "STATE_ORDER_DRAFT_NOT_RECONCILABLE",
+                "order draft is not in submitted state",
+            ));
+        }
+
+        let external_order_id = request
+            .external_order_id
+            .clone()
+            .or_else(|| order_draft.external_order_id.clone())
+            .ok_or_else(|| {
+                AppError::conflict(
+                    "STATE_EXTERNAL_ORDER_ID_MISSING",
+                    "submitted execution request is missing external_order_id",
+                )
+            })?;
+
+        let now = OffsetDateTime::now_utc();
+        let submitted_at = request
+            .submitted_at
+            .or(order_draft.submitted_at)
+            .unwrap_or(now);
+        let order = if let Some(current) = orders
+            .values()
+            .find(|order| order.execution_request_id == request.id)
+            .cloned()
+        {
+            if !matches!(
+                current.status,
+                OrderStatus::Submitted | OrderStatus::Open | OrderStatus::PartiallyFilled
+            ) {
+                return Err(AppError::conflict(
+                    "STATE_ORDER_NOT_RECONCILABLE",
+                    "existing order is not in a reconcilable state",
+                ));
+            }
+
+            let next_filled_quantity_value =
+                current.filled_quantity.value() + filled_quantity.value();
+            if next_filled_quantity_value > current.quantity.value() {
+                return Err(AppError::conflict(
+                    "STATE_FILL_QUANTITY_EXCEEDS_ORDER",
+                    "filled quantity exceeds order quantity",
+                ));
+            }
+
+            let next_filled_quantity = Quantity::new(next_filled_quantity_value)?;
+            let next_avg_fill_price = weighted_fill_price(
+                current.avg_fill_price,
+                current.filled_quantity,
+                fill_price,
+                filled_quantity,
+            )?;
+            let next_status = if next_filled_quantity.value() == current.quantity.value() {
+                OrderStatus::Filled
+            } else {
+                OrderStatus::PartiallyFilled
+            };
+
+            OrderView {
+                filled_quantity: next_filled_quantity,
+                avg_fill_price: next_avg_fill_price,
+                status: next_status,
+                updated_at: now,
+                version: current.version + 1,
+                ..current
+            }
+        } else {
+            let next_status = if filled_quantity.value() == order_draft.quantity.value() {
+                OrderStatus::Filled
+            } else {
+                OrderStatus::PartiallyFilled
+            };
+            OrderView {
+                id: format!("ord_{}", Uuid::now_v7()),
+                signal_id: request.signal_id.clone(),
+                execution_request_id: request.id.clone(),
+                order_draft_id: order_draft.id.clone(),
+                market_id: order_draft.market_id.clone(),
+                connector_name: request.connector_name.clone(),
+                account_id: account_id.to_string(),
+                external_order_id,
+                side: order_draft.side,
+                limit_price: order_draft.limit_price,
+                quantity: order_draft.quantity,
+                filled_quantity,
+                avg_fill_price: fill_price,
+                status: next_status,
+                submitted_at,
+                updated_at: now,
+                version: 1,
+            }
+        };
+        let trade = TradeView {
+            id: format!("trd_{}", Uuid::now_v7()),
+            order_id: order.id.clone(),
+            signal_id: order.signal_id.clone(),
+            market_id: order.market_id.clone(),
+            connector_name: order.connector_name.clone(),
+            external_trade_id: external_trade_id.to_string(),
+            side: order.side,
+            price: fill_price,
+            quantity: filled_quantity,
+            fee,
+            executed_at: now,
+        };
+
+        let position_key = in_memory_position_key(
+            &order.connector_name,
+            account_id,
+            &order.market_id,
+            order.side,
+        );
+        let position = if let Some(current) = positions.get(&position_key).cloned() {
+            build_next_position(current, filled_quantity, fill_price, trace_id)?
+        } else {
+            PositionView {
+                id: position_key.clone(),
+                market_id: order.market_id.clone(),
+                connector_name: order.connector_name.clone(),
+                account_id: account_id.to_string(),
+                side: order.side,
+                net_quantity: filled_quantity,
+                avg_cost: fill_price,
+                mark_price: fill_price,
+                unrealized_pnl: SignedUsdAmount::new(Decimal::ZERO)?,
+                realized_pnl: SignedUsdAmount::new(Decimal::ZERO)?,
+                updated_at: now,
+                version: 1,
+            }
+        };
+
+        let current_signal = signals.get(&order.signal_id).cloned().ok_or_else(|| {
+            AppError::not_found(
+                "SIGNAL_NOT_FOUND",
+                format!("signal was not found: {}", order.signal_id),
+            )
+        })?;
+
+        orders.insert(order.id.clone(), order.clone());
+        trades.insert(trade.id.clone(), trade.clone());
+        positions.insert(position.id.clone(), position.clone());
+        if current_signal.lifecycle_state != SignalLifecycleState::Executed {
+            let next_signal = SignalView {
+                lifecycle_state: SignalLifecycleState::Executed,
+                updated_at: now,
+                version: current_signal.version + 1,
+                ..current_signal.clone()
+            };
+            signals.insert(next_signal.id.clone(), next_signal.clone());
+            transitions.push(SignalTransitionView {
+                id: format!("sgt_{}", Uuid::now_v7()),
+                signal_id: next_signal.id.clone(),
+                from_state: current_signal.lifecycle_state,
+                to_state: SignalLifecycleState::Executed,
+                trigger_type: "execution_fill_reconciled".to_string(),
+                trigger_payload: json!({
+                    "execution_request_id": execution_request_id,
+                    "order_id": order.id,
+                    "trade_id": trade.id,
+                    "trace_id": trace_id,
+                }),
+                created_at: now,
+            });
+        }
+
+        Ok(ExecutionFillResult {
+            order,
+            trade,
+            position,
+        })
+    }
+
+    async fn ingest_fixture_bundle(
+        &self,
+        bundle: &FixtureBundle,
+        _trace_id: &str,
+    ) -> Result<FixtureIngestionReport> {
+        {
+            let mut markets = self.markets.write().await;
+            for market in &bundle.markets {
+                markets.insert(
+                    market.id.clone(),
+                    MarketView {
+                        id: market.id.clone(),
+                        question: market.question.clone(),
+                        category: market.category.clone(),
+                        status: market.status,
+                        best_bid: market.best_bid,
+                        best_ask: market.best_ask,
+                        mid_price: market.mid_price,
+                        volume_24h: market.volume_24h,
+                        ambiguity_level: market.ambiguity_level,
+                        tradability_status: market.tradability_status,
+                        resolution_source: market.resolution_source.clone(),
+                        edge_case_notes: market.edge_case_notes.clone(),
+                        polymarket_condition_id: market.polymarket_condition_id.clone(),
+                        polymarket_yes_asset_id: market.polymarket_yes_asset_id.clone(),
+                        polymarket_no_asset_id: market.polymarket_no_asset_id.clone(),
+                        updated_at: market.updated_at,
+                        version: market.version,
+                    },
+                );
+            }
+        }
+
+        {
+            let mut events = self.events.write().await;
+            for event in &bundle.events {
+                events.insert(
+                    event.id.clone(),
+                    EventView {
+                        id: event.id.clone(),
+                        source: event.source.clone(),
+                        summary: event.summary.clone(),
+                        relevance_score: event.relevance_score,
+                        confidence: event.confidence,
+                        status: event.status,
+                        related_market_ids: event.related_market_ids.clone(),
+                        reason_trace: event.reason_trace.clone(),
+                        created_at: event.created_at,
+                        updated_at: event.updated_at,
+                        version: event.version,
+                    },
+                );
+            }
+        }
+
+        {
+            let mut evidences = self.evidences.write().await;
+            for evidence in &bundle.evidences {
+                evidences.insert(
+                    evidence.id.clone(),
+                    EvidenceView {
+                        id: evidence.id.clone(),
+                        market_id: evidence.market_id.clone(),
+                        event_id: evidence.event_id.clone(),
+                        direction: evidence.direction,
+                        strength: evidence.strength,
+                        source_reliability: evidence.source_reliability,
+                        novelty: evidence.novelty,
+                        resolution_relevance: evidence.resolution_relevance,
+                        status: evidence.status,
+                        expires_at: evidence.expires_at,
+                        created_at: evidence.created_at,
+                        updated_at: evidence.updated_at,
+                        version: evidence.version,
+                    },
+                );
+            }
+        }
+
+        {
+            let mut signals = self.signals.write().await;
+            for signal in &bundle.signals {
+                signals.insert(
+                    signal.id.clone(),
+                    SignalView {
+                        id: signal.id.clone(),
+                        market_id: signal.market_id.clone(),
+                        event_id: signal.event_id.clone(),
+                        action: signal.action,
+                        side: signal.side,
+                        market_price: signal.market_price,
+                        fair_price: signal.fair_price,
+                        edge: signal.edge,
+                        confidence: signal.confidence,
+                        lifecycle_state: signal.lifecycle_state,
+                        reason: signal.reason.clone(),
+                        risk_decision: signal.risk_decision.clone(),
+                        evidence_ids: signal.evidence_ids.clone(),
+                        approved_by_user_id: signal.approved_by_user_id.clone(),
+                        approved_at: signal.approved_at,
+                        rejected_by_user_id: signal.rejected_by_user_id.clone(),
+                        rejected_at: signal.rejected_at,
+                        updated_at: signal.updated_at,
+                        version: signal.version,
+                    },
+                );
+            }
+        }
+
+        Ok(FixtureIngestionReport {
+            markets_upserted: bundle.markets.len(),
+            events_upserted: bundle.events.len(),
+            evidences_upserted: bundle.evidences.len(),
+            signals_upserted: bundle.signals.len(),
+        })
+    }
+}
+
+pub struct PostgresMarketEventStore {
+    pool: PgPool,
+}
+
+impl PostgresMarketEventStore {
+    #[must_use]
+    pub fn new(pool: PgPool) -> Self {
+        Self { pool }
+    }
+}
+
+#[async_trait]
+impl MarketEventStore for PostgresMarketEventStore {
+    async fn list_markets(&self, filters: &MarketListFilters) -> Result<Vec<MarketView>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT
+              m.id,
+              m.question,
+              m.category,
+              m.status,
+              m.best_bid,
+              m.best_ask,
+              m.mid_price,
+              m.volume_24h,
+              m.ambiguity_level,
+              m.tradability_status,
+              r.resolution_source,
+              r.edge_case_notes,
+              m.polymarket_condition_id,
+              m.polymarket_yes_asset_id,
+              m.polymarket_no_asset_id,
+              m.updated_at,
+              m.version
+            FROM markets m
+            INNER JOIN market_resolution_rules r ON r.market_id = m.id
+            WHERE ($1::TEXT IS NULL OR m.status = $1)
+              AND ($2::TEXT IS NULL OR m.tradability_status = $2)
+            ORDER BY m.updated_at DESC, m.id ASC
+            LIMIT $3
+            "#,
+        )
+        .bind(filters.status.map(MarketStatus::as_str))
+        .bind(filters.tradability_status.map(TradabilityStatus::as_str))
+        .bind(i64::from(filters.limit))
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_QUERY_FAILED",
+                format!("failed to list markets: {error}"),
+            )
+        })?;
+
+        rows.iter().map(parse_market_row).collect()
+    }
+
+    async fn get_market(&self, market_id: &str) -> Result<Option<MarketView>> {
+        let row = sqlx::query(
+            r#"
+            SELECT
+              m.id,
+              m.question,
+              m.category,
+              m.status,
+              m.best_bid,
+              m.best_ask,
+              m.mid_price,
+              m.volume_24h,
+              m.ambiguity_level,
+              m.tradability_status,
+              r.resolution_source,
+              r.edge_case_notes,
+              m.polymarket_condition_id,
+              m.polymarket_yes_asset_id,
+              m.polymarket_no_asset_id,
+              m.updated_at,
+              m.version
+            FROM markets m
+            INNER JOIN market_resolution_rules r ON r.market_id = m.id
+            WHERE m.id = $1
+            "#,
+        )
+        .bind(market_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_QUERY_FAILED",
+                format!("failed to fetch market {market_id}: {error}"),
+            )
+        })?;
+
+        row.as_ref().map(parse_market_row).transpose()
+    }
+
+    async fn get_signal(&self, signal_id: &str) -> Result<Option<SignalView>> {
+        let row = sqlx::query(
+            r#"
+            SELECT
+              s.id,
+              s.market_id,
+              s.event_id,
+              s.action,
+              s.side,
+              s.market_price,
+              s.fair_price,
+              s.edge,
+              s.confidence,
+              s.lifecycle_state,
+              s.reason,
+              s.risk_decision,
+              s.approved_by_user_id,
+              s.approved_at,
+              s.rejected_by_user_id,
+              s.rejected_at,
+              s.updated_at,
+              s.version,
+              COALESCE(
+                array_agg(sel.evidence_id ORDER BY sel.evidence_id)
+                FILTER (WHERE sel.evidence_id IS NOT NULL),
+                '{}'::TEXT[]
+              ) AS evidence_ids
+            FROM signals s
+            LEFT JOIN signal_evidence_links sel ON sel.signal_id = s.id
+            WHERE s.id = $1
+            GROUP BY
+              s.id,
+              s.market_id,
+              s.event_id,
+              s.action,
+              s.side,
+              s.market_price,
+              s.fair_price,
+              s.edge,
+              s.confidence,
+              s.lifecycle_state,
+              s.reason,
+              s.risk_decision,
+              s.approved_by_user_id,
+              s.approved_at,
+              s.rejected_by_user_id,
+              s.rejected_at,
+              s.updated_at,
+              s.version
+            "#,
+        )
+        .bind(signal_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_QUERY_FAILED",
+                format!("failed to fetch signal {signal_id}: {error}"),
+            )
+        })?;
+
+        row.as_ref().map(parse_signal_row).transpose()
+    }
+
+    async fn list_events(&self, filters: &EventListFilters) -> Result<Vec<EventView>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT
+              e.id,
+              e.source,
+              e.summary,
+              e.relevance_score,
+              e.confidence,
+              e.status,
+              e.reason_trace,
+              e.created_at,
+              e.updated_at,
+              e.version,
+              COALESCE(
+                array_agg(eml.market_id ORDER BY eml.market_id)
+                FILTER (WHERE eml.market_id IS NOT NULL),
+                '{}'::TEXT[]
+              ) AS related_market_ids
+            FROM events e
+            LEFT JOIN event_market_links eml ON eml.event_id = e.id
+            WHERE ($1::TEXT IS NULL OR e.status = $1)
+            GROUP BY
+              e.id,
+              e.source,
+              e.summary,
+              e.relevance_score,
+              e.confidence,
+              e.status,
+              e.reason_trace,
+              e.created_at,
+              e.updated_at,
+              e.version
+            ORDER BY e.updated_at DESC, e.id ASC
+            LIMIT $2
+            "#,
+        )
+        .bind(filters.status.map(EventStatus::as_str))
+        .bind(i64::from(filters.limit))
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_QUERY_FAILED",
+                format!("failed to list events: {error}"),
+            )
+        })?;
+
+        rows.iter().map(parse_event_row).collect()
+    }
+
+    async fn list_evidences(&self, filters: &EvidenceListFilters) -> Result<Vec<EvidenceView>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT
+              id,
+              market_id,
+              event_id,
+              direction,
+              strength,
+              source_reliability,
+              novelty,
+              resolution_relevance,
+              status,
+              expires_at,
+              created_at,
+              updated_at,
+              version
+            FROM evidences
+            WHERE ($1::TEXT IS NULL OR market_id = $1)
+              AND ($2::TEXT IS NULL OR event_id = $2)
+              AND ($3::TEXT IS NULL OR status = $3)
+            ORDER BY created_at DESC, id ASC
+            LIMIT $4
+            "#,
+        )
+        .bind(filters.market_id.as_deref())
+        .bind(filters.event_id.as_deref())
+        .bind(filters.status.map(EvidenceStatus::as_str))
+        .bind(i64::from(filters.limit))
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_QUERY_FAILED",
+                format!("failed to list evidences: {error}"),
+            )
+        })?;
+
+        rows.iter().map(parse_evidence_row).collect()
+    }
+
+    async fn list_signals(&self, filters: &SignalListFilters) -> Result<Vec<SignalView>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT
+              s.id,
+              s.market_id,
+              s.event_id,
+              s.action,
+              s.side,
+              s.market_price,
+              s.fair_price,
+              s.edge,
+              s.confidence,
+              s.lifecycle_state,
+              s.reason,
+              s.risk_decision,
+              s.approved_by_user_id,
+              s.approved_at,
+              s.rejected_by_user_id,
+              s.rejected_at,
+              s.updated_at,
+              s.version,
+              COALESCE(
+                array_agg(sel.evidence_id ORDER BY sel.evidence_id)
+                FILTER (WHERE sel.evidence_id IS NOT NULL),
+                '{}'::TEXT[]
+              ) AS evidence_ids
+            FROM signals s
+            LEFT JOIN signal_evidence_links sel ON sel.signal_id = s.id
+            WHERE ($1::TEXT IS NULL OR s.market_id = $1)
+              AND ($2::TEXT IS NULL OR s.event_id = $2)
+              AND ($3::TEXT IS NULL OR s.lifecycle_state = $3)
+            GROUP BY
+              s.id,
+              s.market_id,
+              s.event_id,
+              s.action,
+              s.side,
+              s.market_price,
+              s.fair_price,
+              s.edge,
+              s.confidence,
+              s.lifecycle_state,
+              s.reason,
+              s.risk_decision,
+              s.approved_by_user_id,
+              s.approved_at,
+              s.rejected_by_user_id,
+              s.rejected_at,
+              s.updated_at,
+              s.version
+            ORDER BY s.updated_at DESC, s.id ASC
+            LIMIT $4
+            "#,
+        )
+        .bind(filters.market_id.as_deref())
+        .bind(filters.event_id.as_deref())
+        .bind(filters.lifecycle_state.map(SignalLifecycleState::as_str))
+        .bind(i64::from(filters.limit))
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_QUERY_FAILED",
+                format!("failed to list signals: {error}"),
+            )
+        })?;
+
+        rows.iter().map(parse_signal_row).collect()
+    }
+
+    async fn list_probability_estimates(
+        &self,
+        filters: &ProbabilityEstimateListFilters,
+    ) -> Result<Vec<ProbabilityEstimateView>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT
+              id,
+              market_id,
+              event_id,
+              signal_id,
+              prior_price,
+              posterior_price,
+              fair_price,
+              market_price,
+              edge,
+              confidence,
+              time_horizon,
+              model_version,
+              reason_codes_json,
+              evidence_count,
+              created_at
+            FROM probability_estimates
+            WHERE ($1::TEXT IS NULL OR market_id = $1)
+              AND ($2::TEXT IS NULL OR event_id = $2)
+              AND ($3::TEXT IS NULL OR signal_id = $3)
+            ORDER BY created_at DESC, id ASC
+            LIMIT $4
+            "#,
+        )
+        .bind(filters.market_id.as_deref())
+        .bind(filters.event_id.as_deref())
+        .bind(filters.signal_id.as_deref())
+        .bind(i64::from(filters.limit))
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_QUERY_FAILED",
+                format!("failed to list probability estimates: {error}"),
+            )
+        })?;
+
+        rows.iter().map(parse_probability_estimate_row).collect()
+    }
+
+    async fn list_signal_transitions(
+        &self,
+        filters: &SignalTransitionListFilters,
+    ) -> Result<Vec<SignalTransitionView>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT
+              id,
+              signal_id,
+              from_state,
+              to_state,
+              trigger_type,
+              trigger_payload_json,
+              created_at
+            FROM signal_transitions
+            WHERE signal_id = $1
+            ORDER BY created_at DESC, id ASC
+            LIMIT $2
+            "#,
+        )
+        .bind(&filters.signal_id)
+        .bind(i64::from(filters.limit))
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_QUERY_FAILED",
+                format!("failed to list signal transitions: {error}"),
+            )
+        })?;
+
+        rows.iter().map(parse_signal_transition_row).collect()
+    }
+
+    async fn list_order_drafts(
+        &self,
+        filters: &OrderDraftListFilters,
+    ) -> Result<Vec<OrderDraftView>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT
+              id,
+              signal_id,
+              signal_version,
+              market_id,
+              connector_name,
+              side,
+              limit_price,
+              quantity,
+              notional,
+              status,
+              created_by_user_id,
+              external_order_id,
+              submitted_at,
+              failure_code,
+              failure_message,
+              created_at,
+              updated_at,
+              version
+            FROM order_drafts
+            WHERE ($1::TEXT IS NULL OR signal_id = $1)
+              AND ($2::TEXT IS NULL OR connector_name = $2)
+              AND ($3::TEXT IS NULL OR status = $3)
+            ORDER BY created_at DESC, id ASC
+            LIMIT $4
+            "#,
+        )
+        .bind(filters.signal_id.as_deref())
+        .bind(filters.connector_name.as_deref())
+        .bind(filters.status.map(OrderDraftStatus::as_str))
+        .bind(i64::from(filters.limit))
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_QUERY_FAILED",
+                format!("failed to list order drafts: {error}"),
+            )
+        })?;
+
+        rows.iter().map(parse_order_draft_row).collect()
+    }
+
+    async fn list_execution_requests(
+        &self,
+        filters: &ExecutionRequestListFilters,
+    ) -> Result<Vec<ExecutionRequestView>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT
+              id,
+              signal_id,
+              signal_version,
+              order_draft_id,
+              connector_name,
+              mode,
+              requested_by_user_id,
+              status,
+              reason,
+              external_order_id,
+              submitted_at,
+              failure_code,
+              failure_message,
+              created_at,
+              updated_at,
+              version
+            FROM execution_requests
+            WHERE ($1::TEXT IS NULL OR signal_id = $1)
+              AND ($2::TEXT IS NULL OR connector_name = $2)
+              AND ($3::TEXT IS NULL OR status = $3)
+            ORDER BY created_at DESC, id ASC
+            LIMIT $4
+            "#,
+        )
+        .bind(filters.signal_id.as_deref())
+        .bind(filters.connector_name.as_deref())
+        .bind(filters.status.map(ExecutionRequestStatus::as_str))
+        .bind(i64::from(filters.limit))
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_QUERY_FAILED",
+                format!("failed to list execution requests: {error}"),
+            )
+        })?;
+
+        rows.iter().map(parse_execution_request_row).collect()
+    }
+
+    async fn get_order_by_external_ref(
+        &self,
+        connector_name: &str,
+        external_order_id: &str,
+    ) -> Result<OrderView> {
+        let row = sqlx::query(
+            r#"
+            SELECT
+              id,
+              signal_id,
+              execution_request_id,
+              order_draft_id,
+              market_id,
+              connector_name,
+              account_id,
+              external_order_id,
+              side,
+              limit_price,
+              quantity,
+              filled_quantity,
+              avg_fill_price,
+              status,
+              submitted_at,
+              updated_at,
+              version
+            FROM orders
+            WHERE connector_name = $1
+              AND external_order_id = $2
+            LIMIT 1
+            "#,
+        )
+        .bind(connector_name)
+        .bind(external_order_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_QUERY_FAILED",
+                format!(
+                    "failed to load order for connector={} external_order_id={}: {error}",
+                    connector_name, external_order_id
+                ),
+            )
+        })?
+        .ok_or_else(|| {
+            AppError::not_found(
+                "ORDER_NOT_FOUND",
+                format!(
+                    "order was not found for connector={} external_order_id={}",
+                    connector_name, external_order_id
+                ),
+            )
+        })?;
+
+        parse_order_row(&row)
+    }
+
+    async fn list_orders(&self, filters: &OrderListFilters) -> Result<Vec<OrderView>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT
+              id,
+              signal_id,
+              execution_request_id,
+              order_draft_id,
+              market_id,
+              connector_name,
+              account_id,
+              external_order_id,
+              side,
+              limit_price,
+              quantity,
+              filled_quantity,
+              avg_fill_price,
+              status,
+              submitted_at,
+              updated_at,
+              version
+            FROM orders
+            WHERE ($1::TEXT IS NULL OR signal_id = $1)
+              AND ($2::TEXT IS NULL OR market_id = $2)
+              AND ($3::TEXT IS NULL OR connector_name = $3)
+              AND ($4::TEXT IS NULL OR status = $4)
+            ORDER BY updated_at DESC, id ASC
+            LIMIT $5
+            "#,
+        )
+        .bind(filters.signal_id.as_deref())
+        .bind(filters.market_id.as_deref())
+        .bind(filters.connector_name.as_deref())
+        .bind(filters.status.map(OrderStatus::as_str))
+        .bind(i64::from(filters.limit))
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_QUERY_FAILED",
+                format!("failed to list orders: {error}"),
+            )
+        })?;
+
+        rows.iter().map(parse_order_row).collect()
+    }
+
+    async fn list_trades(&self, filters: &TradeListFilters) -> Result<Vec<TradeView>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT
+              id,
+              order_id,
+              signal_id,
+              market_id,
+              connector_name,
+              external_trade_id,
+              side,
+              price,
+              quantity,
+              fee,
+              executed_at
+            FROM trades
+            WHERE ($1::TEXT IS NULL OR order_id = $1)
+              AND ($2::TEXT IS NULL OR signal_id = $2)
+              AND ($3::TEXT IS NULL OR market_id = $3)
+              AND ($4::TEXT IS NULL OR connector_name = $4)
+            ORDER BY executed_at DESC, id ASC
+            LIMIT $5
+            "#,
+        )
+        .bind(filters.order_id.as_deref())
+        .bind(filters.signal_id.as_deref())
+        .bind(filters.market_id.as_deref())
+        .bind(filters.connector_name.as_deref())
+        .bind(i64::from(filters.limit))
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_QUERY_FAILED",
+                format!("failed to list trades: {error}"),
+            )
+        })?;
+
+        rows.iter().map(parse_trade_row).collect()
+    }
+
+    async fn list_positions(&self, filters: &PositionListFilters) -> Result<Vec<PositionView>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT
+              id,
+              market_id,
+              connector_name,
+              account_id,
+              side,
+              net_quantity,
+              avg_cost,
+              mark_price,
+              unrealized_pnl,
+              realized_pnl,
+              updated_at,
+              version
+            FROM positions
+            WHERE ($1::TEXT IS NULL OR market_id = $1)
+              AND ($2::TEXT IS NULL OR connector_name = $2)
+              AND ($3::TEXT IS NULL OR side = $3)
+            ORDER BY updated_at DESC, id ASC
+            LIMIT $4
+            "#,
+        )
+        .bind(filters.market_id.as_deref())
+        .bind(filters.connector_name.as_deref())
+        .bind(filters.side.map(SignalSide::as_str))
+        .bind(i64::from(filters.limit))
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_QUERY_FAILED",
+                format!("failed to list positions: {error}"),
+            )
+        })?;
+
+        rows.iter().map(parse_position_row).collect()
+    }
+
+    async fn recompute_signal(
+        &self,
+        command: &RecomputeSignalCommand,
+    ) -> Result<RecomputeSignalResult> {
+        let mut transaction = self.pool.begin().await.map_err(|error| {
+            db_error(
+                "POSTGRES_TRANSACTION_BEGIN_FAILED",
+                format!("failed to begin signal recompute transaction: {error}"),
+            )
+        })?;
+
+        let signal_row = sqlx::query(
+            r#"
+            SELECT
+              s.id,
+              s.market_id,
+              s.event_id,
+              s.action,
+              s.side,
+              s.market_price,
+              s.fair_price,
+              s.edge,
+              s.confidence,
+              s.lifecycle_state,
+              s.reason,
+              s.risk_decision,
+              s.approved_by_user_id,
+              s.approved_at,
+              s.rejected_by_user_id,
+              s.rejected_at,
+              s.updated_at,
+              s.version,
+              COALESCE(
+                array_agg(sel.evidence_id ORDER BY sel.evidence_id)
+                FILTER (WHERE sel.evidence_id IS NOT NULL),
+                '{}'::TEXT[]
+              ) AS evidence_ids
+            FROM signals s
+            LEFT JOIN signal_evidence_links sel ON sel.signal_id = s.id
+            WHERE s.id = $1
+            GROUP BY
+              s.id,
+              s.market_id,
+              s.event_id,
+              s.action,
+              s.side,
+              s.market_price,
+              s.fair_price,
+              s.edge,
+              s.confidence,
+              s.lifecycle_state,
+              s.reason,
+              s.risk_decision,
+              s.approved_by_user_id,
+              s.approved_at,
+              s.rejected_by_user_id,
+              s.rejected_at,
+              s.updated_at,
+              s.version
+            FOR UPDATE
+            "#,
+        )
+        .bind(&command.signal_id)
+        .fetch_optional(&mut *transaction)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_QUERY_FAILED",
+                format!("failed to lock signal {}: {error}", command.signal_id),
+            )
+        })?
+        .ok_or_else(|| {
+            AppError::not_found(
+                "SIGNAL_NOT_FOUND",
+                format!("signal was not found: {}", command.signal_id),
+            )
+        })?;
+        let current_signal = parse_signal_row(&signal_row)?;
+
+        let market = fetch_market_by_id(&mut transaction, &current_signal.market_id)
+            .await?
+            .ok_or_else(|| {
+                AppError::not_found(
+                    "MARKET_NOT_FOUND",
+                    format!("market was not found: {}", current_signal.market_id),
+                )
+            })?;
+
+        let evidences = fetch_evidences_for_signal(
+            &mut transaction,
+            &current_signal.market_id,
+            &current_signal.event_id,
+        )
+        .await?;
+        let estimate_id = format!("est_{}", Uuid::now_v7());
+        let draft = build_recompute_signal_draft(
+            &current_signal,
+            &market,
+            &evidences,
+            &command.reason,
+            &estimate_id,
+        )?;
+
+        sqlx::query(
+            r#"
+            INSERT INTO probability_estimates (
+              id,
+              market_id,
+              event_id,
+              signal_id,
+              prior_price,
+              posterior_price,
+              fair_price,
+              market_price,
+              edge,
+              confidence,
+              time_horizon,
+              model_version,
+              reason_codes_json,
+              evidence_count,
+              trace_id,
+              created_at
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+            "#,
+        )
+        .bind(&draft.estimate.id)
+        .bind(&draft.estimate.market_id)
+        .bind(&draft.estimate.event_id)
+        .bind(draft.estimate.signal_id.as_deref())
+        .bind(draft.estimate.prior_price.value())
+        .bind(draft.estimate.posterior_price.value())
+        .bind(draft.estimate.fair_price.value())
+        .bind(draft.estimate.market_price.value())
+        .bind(draft.estimate.edge.value())
+        .bind(draft.estimate.confidence.value())
+        .bind(draft.estimate.time_horizon.as_str())
+        .bind(&draft.estimate.model_version)
+        .bind(Json(draft.estimate.reason_codes.clone()))
+        .bind(i32::try_from(draft.estimate.evidence_count).unwrap_or(i32::MAX))
+        .bind(&command.trace_id)
+        .bind(draft.estimate.created_at)
+        .execute(&mut *transaction)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_INSERT_FAILED",
+                format!("failed to insert probability estimate: {error}"),
+            )
+        })?;
+
+        sqlx::query(
+            r#"
+            UPDATE signals
+            SET
+              action = $1,
+              side = $2,
+              market_price = $3,
+              fair_price = $4,
+              edge = $5,
+              confidence = $6,
+              lifecycle_state = $7,
+              reason = $8,
+              risk_decision = $9,
+              approved_by_user_id = NULL,
+              approved_at = NULL,
+              rejected_by_user_id = NULL,
+              rejected_at = NULL,
+              estimate_id = $10,
+              updated_at = $11,
+              version = $12,
+              trace_id = $13
+            WHERE id = $14
+            "#,
+        )
+        .bind(draft.next_signal.action.as_str())
+        .bind(draft.next_signal.side.as_str())
+        .bind(draft.next_signal.market_price.value())
+        .bind(draft.next_signal.fair_price.value())
+        .bind(draft.next_signal.edge.value())
+        .bind(draft.next_signal.confidence.value())
+        .bind(draft.next_signal.lifecycle_state.as_str())
+        .bind(&draft.next_signal.reason)
+        .bind(&draft.next_signal.risk_decision)
+        .bind(&draft.estimate.id)
+        .bind(draft.next_signal.updated_at)
+        .bind(draft.next_signal.version)
+        .bind(&command.trace_id)
+        .bind(&draft.next_signal.id)
+        .execute(&mut *transaction)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_UPDATE_FAILED",
+                format!("failed to update signal {}: {error}", draft.next_signal.id),
+            )
+        })?;
+
+        sqlx::query(
+            r#"
+            DELETE FROM signal_evidence_links
+            WHERE signal_id = $1
+            "#,
+        )
+        .bind(&draft.next_signal.id)
+        .execute(&mut *transaction)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_DELETE_FAILED",
+                format!(
+                    "failed to reset signal evidence links for {}: {error}",
+                    draft.next_signal.id
+                ),
+            )
+        })?;
+
+        for evidence_id in &draft.next_signal.evidence_ids {
+            sqlx::query(
+                r#"
+                INSERT INTO signal_evidence_links (signal_id, evidence_id, created_at)
+                VALUES ($1, $2, $3)
+                ON CONFLICT (signal_id, evidence_id) DO NOTHING
+                "#,
+            )
+            .bind(&draft.next_signal.id)
+            .bind(evidence_id)
+            .bind(draft.next_signal.updated_at)
+            .execute(&mut *transaction)
+            .await
+            .map_err(|error| {
+                db_error(
+                    "POSTGRES_INSERT_FAILED",
+                    format!(
+                        "failed to insert signal-evidence link {} -> {}: {error}",
+                        draft.next_signal.id, evidence_id
+                    ),
+                )
+            })?;
+        }
+
+        let transition = if let Some(transition) = draft.transition {
+            let view = SignalTransitionView {
+                id: format!("sgt_{}", Uuid::now_v7()),
+                signal_id: draft.next_signal.id.clone(),
+                from_state: transition.from_state,
+                to_state: transition.to_state,
+                trigger_type: transition.trigger_type,
+                trigger_payload: transition.trigger_payload,
+                created_at: transition.created_at,
+            };
+
+            sqlx::query(
+                r#"
+                INSERT INTO signal_transitions (
+                  id,
+                  signal_id,
+                  from_state,
+                  to_state,
+                  trigger_type,
+                  trigger_payload_json,
+                  trace_id,
+                  created_at
+                )
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                "#,
+            )
+            .bind(&view.id)
+            .bind(&view.signal_id)
+            .bind(view.from_state.as_str())
+            .bind(view.to_state.as_str())
+            .bind(&view.trigger_type)
+            .bind(Json(view.trigger_payload.clone()))
+            .bind(&command.trace_id)
+            .bind(view.created_at)
+            .execute(&mut *transaction)
+            .await
+            .map_err(|error| {
+                db_error(
+                    "POSTGRES_INSERT_FAILED",
+                    format!("failed to insert signal transition: {error}"),
+                )
+            })?;
+
+            Some(view)
+        } else {
+            None
+        };
+
+        transaction.commit().await.map_err(|error| {
+            db_error(
+                "POSTGRES_TRANSACTION_COMMIT_FAILED",
+                format!("failed to commit signal recompute transaction: {error}"),
+            )
+        })?;
+
+        Ok(RecomputeSignalResult {
+            signal: draft.next_signal,
+            estimate: draft.estimate,
+            transition,
+        })
+    }
+
+    async fn approve_signal(
+        &self,
+        signal_id: &str,
+        approved_by_user_id: &str,
+        approval_reason: &str,
+        trace_id: &str,
+        expected_version: Option<i64>,
+    ) -> Result<SignalView> {
+        let mut transaction = self.pool.begin().await.map_err(|error| {
+            db_error(
+                "POSTGRES_TRANSACTION_BEGIN_FAILED",
+                format!("failed to begin signal approval transaction: {error}"),
+            )
+        })?;
+
+        let signal_row = sqlx::query(
+            r#"
+            SELECT
+              s.id,
+              s.market_id,
+              s.event_id,
+              s.action,
+              s.side,
+              s.market_price,
+              s.fair_price,
+              s.edge,
+              s.confidence,
+              s.lifecycle_state,
+              s.reason,
+              s.risk_decision,
+              s.approved_by_user_id,
+              s.approved_at,
+              s.rejected_by_user_id,
+              s.rejected_at,
+              s.updated_at,
+              s.version,
+              COALESCE(
+                array_agg(sel.evidence_id ORDER BY sel.evidence_id)
+                FILTER (WHERE sel.evidence_id IS NOT NULL),
+                '{}'::TEXT[]
+              ) AS evidence_ids
+            FROM signals s
+            LEFT JOIN signal_evidence_links sel ON sel.signal_id = s.id
+            WHERE s.id = $1
+            GROUP BY
+              s.id,
+              s.market_id,
+              s.event_id,
+              s.action,
+              s.side,
+              s.market_price,
+              s.fair_price,
+              s.edge,
+              s.confidence,
+              s.lifecycle_state,
+              s.reason,
+              s.risk_decision,
+              s.approved_by_user_id,
+              s.approved_at,
+              s.rejected_by_user_id,
+              s.rejected_at,
+              s.updated_at,
+              s.version
+            FOR UPDATE
+            "#,
+        )
+        .bind(signal_id)
+        .fetch_optional(&mut *transaction)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_QUERY_FAILED",
+                format!("failed to lock signal {signal_id}: {error}"),
+            )
+        })?
+        .ok_or_else(|| {
+            AppError::not_found(
+                "SIGNAL_NOT_FOUND",
+                format!("signal was not found: {signal_id}"),
+            )
+        })?;
+        let current_signal = parse_signal_row(&signal_row)?;
+
+        if let Some(expected_version) = expected_version {
+            if current_signal.version != expected_version {
+                return Err(AppError::conflict(
+                    "STATE_VERSION_MISMATCH",
+                    "signal version does not match the expected_version",
+                ));
+            }
+        }
+
+        if current_signal.approved_by_user_id.is_some() {
+            return Err(AppError::conflict(
+                "STATE_SIGNAL_ALREADY_APPROVED",
+                "signal has already been approved",
+            ));
+        }
+
+        if current_signal.rejected_by_user_id.is_some() {
+            return Err(AppError::conflict(
+                "STATE_SIGNAL_ALREADY_REJECTED",
+                "signal has already been rejected for the current version",
+            ));
+        }
+
+        let approved_at = OffsetDateTime::now_utc();
+        let next_signal = SignalView {
+            id: current_signal.id.clone(),
+            market_id: current_signal.market_id.clone(),
+            event_id: current_signal.event_id.clone(),
+            action: current_signal.action,
+            side: current_signal.side,
+            market_price: current_signal.market_price,
+            fair_price: current_signal.fair_price,
+            edge: current_signal.edge,
+            confidence: current_signal.confidence,
+            lifecycle_state: current_signal.lifecycle_state,
+            reason: current_signal.reason.clone(),
+            risk_decision: approval_reason.to_string(),
+            evidence_ids: current_signal.evidence_ids.clone(),
+            approved_by_user_id: Some(approved_by_user_id.to_string()),
+            approved_at: Some(approved_at),
+            rejected_by_user_id: None,
+            rejected_at: None,
+            updated_at: approved_at,
+            version: current_signal.version + 1,
+        };
+
+        sqlx::query(
+            r#"
+            UPDATE signals
+            SET
+              risk_decision = $1,
+              approved_by_user_id = $2,
+              approved_at = $3,
+              rejected_by_user_id = NULL,
+              rejected_at = NULL,
+              updated_at = $4,
+              version = $5,
+              trace_id = $6
+            WHERE id = $7
+            "#,
+        )
+        .bind(&next_signal.risk_decision)
+        .bind(next_signal.approved_by_user_id.as_deref())
+        .bind(next_signal.approved_at)
+        .bind(next_signal.updated_at)
+        .bind(next_signal.version)
+        .bind(trace_id)
+        .bind(signal_id)
+        .execute(&mut *transaction)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_UPDATE_FAILED",
+                format!("failed to approve signal {signal_id}: {error}"),
+            )
+        })?;
+
+        transaction.commit().await.map_err(|error| {
+            db_error(
+                "POSTGRES_TRANSACTION_COMMIT_FAILED",
+                format!("failed to commit signal approval transaction: {error}"),
+            )
+        })?;
+
+        Ok(next_signal)
+    }
+
+    async fn reject_signal(
+        &self,
+        signal_id: &str,
+        rejected_by_user_id: &str,
+        rejection_reason: &str,
+        trace_id: &str,
+        expected_version: Option<i64>,
+    ) -> Result<SignalView> {
+        let mut transaction = self.pool.begin().await.map_err(|error| {
+            db_error(
+                "POSTGRES_TRANSACTION_BEGIN_FAILED",
+                format!("failed to begin signal rejection transaction: {error}"),
+            )
+        })?;
+
+        let signal_row = sqlx::query(
+            r#"
+            SELECT
+              s.id,
+              s.market_id,
+              s.event_id,
+              s.action,
+              s.side,
+              s.market_price,
+              s.fair_price,
+              s.edge,
+              s.confidence,
+              s.lifecycle_state,
+              s.reason,
+              s.risk_decision,
+              s.approved_by_user_id,
+              s.approved_at,
+              s.rejected_by_user_id,
+              s.rejected_at,
+              s.updated_at,
+              s.version,
+              COALESCE(
+                array_agg(sel.evidence_id ORDER BY sel.evidence_id)
+                FILTER (WHERE sel.evidence_id IS NOT NULL),
+                '{}'::TEXT[]
+              ) AS evidence_ids
+            FROM signals s
+            LEFT JOIN signal_evidence_links sel ON sel.signal_id = s.id
+            WHERE s.id = $1
+            GROUP BY
+              s.id,
+              s.market_id,
+              s.event_id,
+              s.action,
+              s.side,
+              s.market_price,
+              s.fair_price,
+              s.edge,
+              s.confidence,
+              s.lifecycle_state,
+              s.reason,
+              s.risk_decision,
+              s.approved_by_user_id,
+              s.approved_at,
+              s.rejected_by_user_id,
+              s.rejected_at,
+              s.updated_at,
+              s.version
+            FOR UPDATE
+            "#,
+        )
+        .bind(signal_id)
+        .fetch_optional(&mut *transaction)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_QUERY_FAILED",
+                format!("failed to lock signal {signal_id}: {error}"),
+            )
+        })?
+        .ok_or_else(|| {
+            AppError::not_found(
+                "SIGNAL_NOT_FOUND",
+                format!("signal was not found: {signal_id}"),
+            )
+        })?;
+        let current_signal = parse_signal_row(&signal_row)?;
+
+        if let Some(expected_version) = expected_version {
+            if current_signal.version != expected_version {
+                return Err(AppError::conflict(
+                    "STATE_VERSION_MISMATCH",
+                    "signal version does not match the expected_version",
+                ));
+            }
+        }
+
+        if current_signal.approved_by_user_id.is_some() {
+            return Err(AppError::conflict(
+                "STATE_SIGNAL_ALREADY_APPROVED",
+                "approved signals cannot be rejected for the current version",
+            ));
+        }
+
+        if current_signal.rejected_by_user_id.is_some() {
+            return Err(AppError::conflict(
+                "STATE_SIGNAL_ALREADY_REJECTED",
+                "signal has already been rejected for the current version",
+            ));
+        }
+
+        let rejected_at = OffsetDateTime::now_utc();
+        let next_signal = SignalView {
+            id: current_signal.id.clone(),
+            market_id: current_signal.market_id.clone(),
+            event_id: current_signal.event_id.clone(),
+            action: current_signal.action,
+            side: current_signal.side,
+            market_price: current_signal.market_price,
+            fair_price: current_signal.fair_price,
+            edge: current_signal.edge,
+            confidence: current_signal.confidence,
+            lifecycle_state: current_signal.lifecycle_state,
+            reason: current_signal.reason.clone(),
+            risk_decision: rejection_reason.to_string(),
+            evidence_ids: current_signal.evidence_ids.clone(),
+            approved_by_user_id: None,
+            approved_at: None,
+            rejected_by_user_id: Some(rejected_by_user_id.to_string()),
+            rejected_at: Some(rejected_at),
+            updated_at: rejected_at,
+            version: current_signal.version + 1,
+        };
+
+        sqlx::query(
+            r#"
+            UPDATE signals
+            SET
+              risk_decision = $1,
+              approved_by_user_id = NULL,
+              approved_at = NULL,
+              rejected_by_user_id = $2,
+              rejected_at = $3,
+              updated_at = $4,
+              version = $5,
+              trace_id = $6
+            WHERE id = $7
+            "#,
+        )
+        .bind(&next_signal.risk_decision)
+        .bind(next_signal.rejected_by_user_id.as_deref())
+        .bind(next_signal.rejected_at)
+        .bind(next_signal.updated_at)
+        .bind(next_signal.version)
+        .bind(trace_id)
+        .bind(signal_id)
+        .execute(&mut *transaction)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_UPDATE_FAILED",
+                format!("failed to reject signal {signal_id}: {error}"),
+            )
+        })?;
+
+        transaction.commit().await.map_err(|error| {
+            db_error(
+                "POSTGRES_TRANSACTION_COMMIT_FAILED",
+                format!("failed to commit signal rejection transaction: {error}"),
+            )
+        })?;
+
+        Ok(next_signal)
+    }
+
+    async fn submit_execution_request(
+        &self,
+        command: &SubmitExecutionStoreCommand,
+    ) -> Result<ExecutionSubmissionResult> {
+        let mut transaction = self.pool.begin().await.map_err(|error| {
+            db_error(
+                "POSTGRES_TRANSACTION_BEGIN_FAILED",
+                format!("failed to begin execution request transaction: {error}"),
+            )
+        })?;
+
+        let signal_row = sqlx::query(
+            r#"
+            SELECT
+              s.id,
+              s.market_id,
+              s.event_id,
+              s.action,
+              s.side,
+              s.market_price,
+              s.fair_price,
+              s.edge,
+              s.confidence,
+              s.lifecycle_state,
+              s.reason,
+              s.risk_decision,
+              s.approved_by_user_id,
+              s.approved_at,
+              s.rejected_by_user_id,
+              s.rejected_at,
+              s.updated_at,
+              s.version,
+              COALESCE(
+                array_agg(sel.evidence_id ORDER BY sel.evidence_id)
+                FILTER (WHERE sel.evidence_id IS NOT NULL),
+                '{}'::TEXT[]
+              ) AS evidence_ids
+            FROM signals s
+            LEFT JOIN signal_evidence_links sel ON sel.signal_id = s.id
+            WHERE s.id = $1
+            GROUP BY
+              s.id,
+              s.market_id,
+              s.event_id,
+              s.action,
+              s.side,
+              s.market_price,
+              s.fair_price,
+              s.edge,
+              s.confidence,
+              s.lifecycle_state,
+              s.reason,
+              s.risk_decision,
+              s.approved_by_user_id,
+              s.approved_at,
+              s.rejected_by_user_id,
+              s.rejected_at,
+              s.updated_at,
+              s.version
+            FOR UPDATE
+            "#,
+        )
+        .bind(&command.signal_id)
+        .fetch_optional(&mut *transaction)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_QUERY_FAILED",
+                format!("failed to lock signal {}: {error}", command.signal_id),
+            )
+        })?
+        .ok_or_else(|| {
+            AppError::not_found(
+                "SIGNAL_NOT_FOUND",
+                format!("signal was not found: {}", command.signal_id),
+            )
+        })?;
+        let signal = parse_signal_row(&signal_row)?;
+
+        if let Some(expected_signal_version) = command.expected_signal_version {
+            if signal.version != expected_signal_version {
+                return Err(AppError::conflict(
+                    "STATE_VERSION_MISMATCH",
+                    "signal version does not match the expected_signal_version",
+                ));
+            }
+        }
+
+        validate_signal_for_execution(&signal, command.mode)?;
+
+        let existing_request = sqlx::query(
+            r#"
+            SELECT id
+            FROM execution_requests
+            WHERE signal_id = $1 AND signal_version = $2
+            LIMIT 1
+            "#,
+        )
+        .bind(&signal.id)
+        .bind(signal.version)
+        .fetch_optional(&mut *transaction)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_QUERY_FAILED",
+                format!(
+                    "failed to check existing execution request for {}: {error}",
+                    signal.id
+                ),
+            )
+        })?;
+
+        if existing_request.is_some() {
+            return Err(AppError::conflict(
+                "STATE_EXECUTION_REQUEST_ALREADY_EXISTS",
+                "an execution request already exists for the current signal version",
+            ));
+        }
+
+        let now = OffsetDateTime::now_utc();
+        let order_draft = OrderDraftView {
+            id: format!("odr_{}", Uuid::now_v7()),
+            signal_id: signal.id.clone(),
+            signal_version: signal.version,
+            market_id: signal.market_id.clone(),
+            connector_name: command.connector_name.clone(),
+            side: signal.side,
+            limit_price: command.limit_price,
+            quantity: command.quantity,
+            notional: compute_order_notional(command.limit_price, command.quantity)?,
+            status: OrderDraftStatus::Queued,
+            created_by_user_id: command.requested_by_user_id.clone(),
+            external_order_id: None,
+            submitted_at: None,
+            failure_code: None,
+            failure_message: None,
+            created_at: now,
+            updated_at: now,
+            version: 1,
+        };
+
+        sqlx::query(
+            r#"
+            INSERT INTO order_drafts (
+              id,
+              signal_id,
+              signal_version,
+              market_id,
+              connector_name,
+              side,
+              limit_price,
+              quantity,
+              notional,
+              status,
+              created_by_user_id,
+              external_order_id,
+              submitted_at,
+              failure_code,
+              failure_message,
+              created_at,
+              updated_at,
+              version,
+              trace_id
+            )
+            VALUES (
+              $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19
+            )
+            "#,
+        )
+        .bind(&order_draft.id)
+        .bind(&order_draft.signal_id)
+        .bind(order_draft.signal_version)
+        .bind(&order_draft.market_id)
+        .bind(&order_draft.connector_name)
+        .bind(order_draft.side.as_str())
+        .bind(order_draft.limit_price.value())
+        .bind(order_draft.quantity.value())
+        .bind(order_draft.notional.value())
+        .bind(order_draft.status.as_str())
+        .bind(&order_draft.created_by_user_id)
+        .bind(&order_draft.external_order_id)
+        .bind(order_draft.submitted_at)
+        .bind(&order_draft.failure_code)
+        .bind(&order_draft.failure_message)
+        .bind(order_draft.created_at)
+        .bind(order_draft.updated_at)
+        .bind(order_draft.version)
+        .bind(&command.trace_id)
+        .execute(&mut *transaction)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_INSERT_FAILED",
+                format!("failed to insert order draft {}: {error}", order_draft.id),
+            )
+        })?;
+
+        let execution_request = ExecutionRequestView {
+            id: format!("exr_{}", Uuid::now_v7()),
+            signal_id: signal.id,
+            signal_version: signal.version,
+            order_draft_id: order_draft.id.clone(),
+            connector_name: command.connector_name.clone(),
+            mode: command.mode,
+            requested_by_user_id: command.requested_by_user_id.clone(),
+            status: ExecutionRequestStatus::Queued,
+            reason: command.reason.clone(),
+            external_order_id: None,
+            submitted_at: None,
+            failure_code: None,
+            failure_message: None,
+            created_at: now,
+            updated_at: now,
+            version: 1,
+        };
+
+        sqlx::query(
+            r#"
+            INSERT INTO execution_requests (
+              id,
+              signal_id,
+              signal_version,
+              order_draft_id,
+              connector_name,
+              mode,
+              risk_state_version,
+              requested_by_user_id,
+              status,
+              reason,
+              external_order_id,
+              submitted_at,
+              failure_code,
+              failure_message,
+              created_at,
+              updated_at,
+              version,
+              trace_id
+            )
+            VALUES (
+              $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18
+            )
+            "#,
+        )
+        .bind(&execution_request.id)
+        .bind(&execution_request.signal_id)
+        .bind(execution_request.signal_version)
+        .bind(&execution_request.order_draft_id)
+        .bind(&execution_request.connector_name)
+        .bind(execution_request.mode.as_str())
+        .bind(command.risk_state_version)
+        .bind(&execution_request.requested_by_user_id)
+        .bind(execution_request.status.as_str())
+        .bind(&execution_request.reason)
+        .bind(&execution_request.external_order_id)
+        .bind(execution_request.submitted_at)
+        .bind(&execution_request.failure_code)
+        .bind(&execution_request.failure_message)
+        .bind(execution_request.created_at)
+        .bind(execution_request.updated_at)
+        .bind(execution_request.version)
+        .bind(&command.trace_id)
+        .execute(&mut *transaction)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_INSERT_FAILED",
+                format!(
+                    "failed to insert execution request {}: {error}",
+                    execution_request.id
+                ),
+            )
+        })?;
+
+        transaction.commit().await.map_err(|error| {
+            db_error(
+                "POSTGRES_TRANSACTION_COMMIT_FAILED",
+                format!("failed to commit execution request transaction: {error}"),
+            )
+        })?;
+
+        Ok(ExecutionSubmissionResult {
+            order_draft,
+            execution_request,
+        })
+    }
+
+    async fn list_dispatch_candidates(
+        &self,
+        filters: &DispatchExecutionListFilters,
+    ) -> Result<Vec<ExecutionDispatchCandidate>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT
+              od.id AS order_draft_id,
+              od.signal_id AS order_draft_signal_id,
+              od.signal_version AS order_draft_signal_version,
+              od.market_id AS order_draft_market_id,
+              od.connector_name AS order_draft_connector_name,
+              od.side AS order_draft_side,
+              od.limit_price AS order_draft_limit_price,
+              od.quantity AS order_draft_quantity,
+              od.notional AS order_draft_notional,
+              od.status AS order_draft_status,
+              od.created_by_user_id AS order_draft_created_by_user_id,
+              od.external_order_id AS order_draft_external_order_id,
+              od.submitted_at AS order_draft_submitted_at,
+              od.failure_code AS order_draft_failure_code,
+              od.failure_message AS order_draft_failure_message,
+              od.created_at AS order_draft_created_at,
+              od.updated_at AS order_draft_updated_at,
+              od.version AS order_draft_version,
+              er.id AS execution_request_id,
+              er.signal_id AS execution_request_signal_id,
+              er.signal_version AS execution_request_signal_version,
+              er.order_draft_id AS execution_request_order_draft_id,
+              er.connector_name AS execution_request_connector_name,
+              er.mode AS execution_request_mode,
+              er.requested_by_user_id AS execution_request_requested_by_user_id,
+              er.status AS execution_request_status,
+              er.reason AS execution_request_reason,
+              er.external_order_id AS execution_request_external_order_id,
+              er.submitted_at AS execution_request_submitted_at,
+              er.failure_code AS execution_request_failure_code,
+              er.failure_message AS execution_request_failure_message,
+              er.created_at AS execution_request_created_at,
+              er.updated_at AS execution_request_updated_at,
+              er.version AS execution_request_version
+            FROM execution_requests er
+            INNER JOIN order_drafts od ON od.id = er.order_draft_id
+            WHERE er.status = 'queued'
+              AND od.status = 'queued'
+              AND ($1::TEXT IS NULL OR er.connector_name = $1)
+            ORDER BY er.created_at ASC, er.id ASC
+            LIMIT $2
+            "#,
+        )
+        .bind(filters.connector_name.as_deref())
+        .bind(i64::from(filters.limit))
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_QUERY_FAILED",
+                format!("failed to list dispatch candidates: {error}"),
+            )
+        })?;
+
+        rows.iter().map(parse_dispatch_candidate_row).collect()
+    }
+
+    async fn list_reconciliation_candidates(
+        &self,
+        filters: &ReconcileExecutionListFilters,
+    ) -> Result<Vec<ExecutionReconciliationCandidate>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT
+              od.id AS order_draft_id,
+              od.signal_id AS order_draft_signal_id,
+              od.signal_version AS order_draft_signal_version,
+              od.market_id AS order_draft_market_id,
+              od.connector_name AS order_draft_connector_name,
+              od.side AS order_draft_side,
+              od.limit_price AS order_draft_limit_price,
+              od.quantity AS order_draft_quantity,
+              od.notional AS order_draft_notional,
+              od.status AS order_draft_status,
+              od.created_by_user_id AS order_draft_created_by_user_id,
+              od.external_order_id AS order_draft_external_order_id,
+              od.submitted_at AS order_draft_submitted_at,
+              od.failure_code AS order_draft_failure_code,
+              od.failure_message AS order_draft_failure_message,
+              od.created_at AS order_draft_created_at,
+              od.updated_at AS order_draft_updated_at,
+              od.version AS order_draft_version,
+              er.id AS execution_request_id,
+              er.signal_id AS execution_request_signal_id,
+              er.signal_version AS execution_request_signal_version,
+              er.order_draft_id AS execution_request_order_draft_id,
+              er.connector_name AS execution_request_connector_name,
+              er.mode AS execution_request_mode,
+              er.requested_by_user_id AS execution_request_requested_by_user_id,
+              er.status AS execution_request_status,
+              er.reason AS execution_request_reason,
+              er.external_order_id AS execution_request_external_order_id,
+              er.submitted_at AS execution_request_submitted_at,
+              er.failure_code AS execution_request_failure_code,
+              er.failure_message AS execution_request_failure_message,
+              er.created_at AS execution_request_created_at,
+              er.updated_at AS execution_request_updated_at,
+              er.version AS execution_request_version,
+              o.id AS order_id,
+              o.signal_id AS order_signal_id,
+              o.execution_request_id AS order_execution_request_id,
+              o.order_draft_id AS order_order_draft_id,
+              o.market_id AS order_market_id,
+              o.connector_name AS order_connector_name,
+              o.account_id AS order_account_id,
+              o.external_order_id AS order_external_order_id,
+              o.side AS order_side,
+              o.limit_price AS order_limit_price,
+              o.quantity AS order_quantity,
+              o.filled_quantity AS order_filled_quantity,
+              o.avg_fill_price AS order_avg_fill_price,
+              o.status AS order_status,
+              o.submitted_at AS order_submitted_at,
+              o.updated_at AS order_updated_at,
+              o.version AS order_version
+            FROM execution_requests er
+            INNER JOIN order_drafts od ON od.id = er.order_draft_id
+            LEFT JOIN orders o ON o.execution_request_id = er.id
+            WHERE er.status = 'submitted'
+              AND od.status = 'submitted'
+              AND (
+                o.id IS NULL
+                OR (
+                  o.status IN ('submitted', 'open', 'partially_filled')
+                  AND o.filled_quantity < o.quantity
+                )
+              )
+              AND ($1::TEXT IS NULL OR er.connector_name = $1)
+            ORDER BY COALESCE(o.updated_at, er.updated_at) ASC, er.id ASC
+            LIMIT $2
+            "#,
+        )
+        .bind(filters.connector_name.as_deref())
+        .bind(i64::from(filters.limit))
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_QUERY_FAILED",
+                format!("failed to list reconciliation candidates: {error}"),
+            )
+        })?;
+
+        rows.iter()
+            .map(parse_reconciliation_candidate_row)
+            .collect()
+    }
+
+    async fn mark_execution_submitted(
+        &self,
+        execution_request_id: &str,
+        account_id: &str,
+        external_order_id: &str,
+        trace_id: &str,
+    ) -> Result<ExecutionDispatchResult> {
+        let mut transaction = self.pool.begin().await.map_err(|error| {
+            db_error(
+                "POSTGRES_TRANSACTION_BEGIN_FAILED",
+                format!("failed to begin execution dispatch transaction: {error}"),
+            )
+        })?;
+
+        let request_row = sqlx::query(
+            r#"
+            SELECT
+              id,
+              signal_id,
+              signal_version,
+              order_draft_id,
+              connector_name,
+              mode,
+              requested_by_user_id,
+              status,
+              reason,
+              external_order_id,
+              submitted_at,
+              failure_code,
+              failure_message,
+              created_at,
+              updated_at,
+              version
+            FROM execution_requests
+            WHERE id = $1
+            FOR UPDATE
+            "#,
+        )
+        .bind(execution_request_id)
+        .fetch_optional(&mut *transaction)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_QUERY_FAILED",
+                format!("failed to lock execution request {execution_request_id}: {error}"),
+            )
+        })?
+        .ok_or_else(|| {
+            AppError::not_found(
+                "EXECUTION_REQUEST_NOT_FOUND",
+                format!("execution request was not found: {execution_request_id}"),
+            )
+        })?;
+        let request = parse_execution_request_row(&request_row)?;
+
+        if request.status != ExecutionRequestStatus::Queued {
+            return Err(AppError::conflict(
+                "STATE_EXECUTION_REQUEST_NOT_DISPATCHABLE",
+                "execution request is no longer queued",
+            ));
+        }
+
+        let order_draft_row = sqlx::query(
+            r#"
+            SELECT
+              id,
+              signal_id,
+              signal_version,
+              market_id,
+              connector_name,
+              side,
+              limit_price,
+              quantity,
+              notional,
+              status,
+              created_by_user_id,
+              external_order_id,
+              submitted_at,
+              failure_code,
+              failure_message,
+              created_at,
+              updated_at,
+              version
+            FROM order_drafts
+            WHERE id = $1
+            FOR UPDATE
+            "#,
+        )
+        .bind(&request.order_draft_id)
+        .fetch_optional(&mut *transaction)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_QUERY_FAILED",
+                format!(
+                    "failed to lock order draft {}: {error}",
+                    request.order_draft_id
+                ),
+            )
+        })?
+        .ok_or_else(|| {
+            AppError::not_found(
+                "ORDER_DRAFT_NOT_FOUND",
+                format!("order draft was not found: {}", request.order_draft_id),
+            )
+        })?;
+        let order_draft = parse_order_draft_row(&order_draft_row)?;
+
+        if order_draft.status != OrderDraftStatus::Queued {
+            return Err(AppError::conflict(
+                "STATE_ORDER_DRAFT_NOT_DISPATCHABLE",
+                "order draft is no longer queued",
+            ));
+        }
+
+        let submitted_at = OffsetDateTime::now_utc();
+        let next_order_draft = OrderDraftView {
+            status: OrderDraftStatus::Submitted,
+            external_order_id: Some(external_order_id.to_string()),
+            submitted_at: Some(submitted_at),
+            failure_code: None,
+            failure_message: None,
+            updated_at: submitted_at,
+            version: order_draft.version + 1,
+            ..order_draft
+        };
+        let next_request = ExecutionRequestView {
+            status: ExecutionRequestStatus::Submitted,
+            external_order_id: Some(external_order_id.to_string()),
+            submitted_at: Some(submitted_at),
+            failure_code: None,
+            failure_message: None,
+            updated_at: submitted_at,
+            version: request.version + 1,
+            ..request
+        };
+        let submitted_order = OrderView {
+            id: format!("ord_{}", Uuid::now_v7()),
+            signal_id: next_request.signal_id.clone(),
+            execution_request_id: next_request.id.clone(),
+            order_draft_id: next_order_draft.id.clone(),
+            market_id: next_order_draft.market_id.clone(),
+            connector_name: next_request.connector_name.clone(),
+            account_id: account_id.to_string(),
+            external_order_id: external_order_id.to_string(),
+            side: next_order_draft.side,
+            limit_price: next_order_draft.limit_price,
+            quantity: next_order_draft.quantity,
+            filled_quantity: Quantity::new(Decimal::ZERO)?,
+            avg_fill_price: Probability::new(Decimal::ZERO)?,
+            status: OrderStatus::Submitted,
+            submitted_at,
+            updated_at: submitted_at,
+            version: 1,
+        };
+
+        sqlx::query(
+            r#"
+            UPDATE order_drafts
+            SET
+              status = $1,
+              external_order_id = $2,
+              submitted_at = $3,
+              failure_code = NULL,
+              failure_message = NULL,
+              updated_at = $4,
+              version = $5,
+              trace_id = $6
+            WHERE id = $7
+            "#,
+        )
+        .bind(next_order_draft.status.as_str())
+        .bind(next_order_draft.external_order_id.as_deref())
+        .bind(next_order_draft.submitted_at)
+        .bind(next_order_draft.updated_at)
+        .bind(next_order_draft.version)
+        .bind(trace_id)
+        .bind(&next_order_draft.id)
+        .execute(&mut *transaction)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_UPDATE_FAILED",
+                format!(
+                    "failed to update order draft {}: {error}",
+                    next_order_draft.id
+                ),
+            )
+        })?;
+
+        sqlx::query(
+            r#"
+            UPDATE execution_requests
+            SET
+              status = $1,
+              external_order_id = $2,
+              submitted_at = $3,
+              failure_code = NULL,
+              failure_message = NULL,
+              updated_at = $4,
+              version = $5,
+              trace_id = $6
+            WHERE id = $7
+            "#,
+        )
+        .bind(next_request.status.as_str())
+        .bind(next_request.external_order_id.as_deref())
+        .bind(next_request.submitted_at)
+        .bind(next_request.updated_at)
+        .bind(next_request.version)
+        .bind(trace_id)
+        .bind(&next_request.id)
+        .execute(&mut *transaction)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_UPDATE_FAILED",
+                format!(
+                    "failed to update execution request {}: {error}",
+                    next_request.id
+                ),
+            )
+        })?;
+
+        sqlx::query(
+            r#"
+            INSERT INTO orders (
+              id,
+              signal_id,
+              execution_request_id,
+              order_draft_id,
+              market_id,
+              connector_name,
+              account_id,
+              external_order_id,
+              side,
+              limit_price,
+              quantity,
+              filled_quantity,
+              avg_fill_price,
+              status,
+              submitted_at,
+              updated_at,
+              trace_id,
+              version
+            )
+            VALUES (
+              $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18
+            )
+            "#,
+        )
+        .bind(&submitted_order.id)
+        .bind(&submitted_order.signal_id)
+        .bind(&submitted_order.execution_request_id)
+        .bind(&submitted_order.order_draft_id)
+        .bind(&submitted_order.market_id)
+        .bind(&submitted_order.connector_name)
+        .bind(&submitted_order.account_id)
+        .bind(&submitted_order.external_order_id)
+        .bind(submitted_order.side.as_str())
+        .bind(submitted_order.limit_price.value())
+        .bind(submitted_order.quantity.value())
+        .bind(submitted_order.filled_quantity.value())
+        .bind(submitted_order.avg_fill_price.value())
+        .bind(submitted_order.status.as_str())
+        .bind(submitted_order.submitted_at)
+        .bind(submitted_order.updated_at)
+        .bind(trace_id)
+        .bind(submitted_order.version)
+        .execute(&mut *transaction)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_INSERT_FAILED",
+                format!(
+                    "failed to insert submitted order {}: {error}",
+                    submitted_order.id
+                ),
+            )
+        })?;
+
+        transaction.commit().await.map_err(|error| {
+            db_error(
+                "POSTGRES_TRANSACTION_COMMIT_FAILED",
+                format!("failed to commit execution dispatch transaction: {error}"),
+            )
+        })?;
+
+        Ok(ExecutionDispatchResult {
+            order_draft: next_order_draft,
+            execution_request: next_request,
+        })
+    }
+
+    async fn mark_order_open(&self, order_id: &str, trace_id: &str) -> Result<OrderView> {
+        let mut transaction = self.pool.begin().await.map_err(|error| {
+            db_error(
+                "POSTGRES_TRANSACTION_BEGIN_FAILED",
+                format!("failed to begin order status polling transaction: {error}"),
+            )
+        })?;
+
+        let order_row = sqlx::query(
+            r#"
+            SELECT
+              id,
+              signal_id,
+              execution_request_id,
+              order_draft_id,
+              market_id,
+              connector_name,
+              account_id,
+              external_order_id,
+              side,
+              limit_price,
+              quantity,
+              filled_quantity,
+              avg_fill_price,
+              status,
+              submitted_at,
+              updated_at,
+              version
+            FROM orders
+            WHERE id = $1
+            FOR UPDATE
+            "#,
+        )
+        .bind(order_id)
+        .fetch_optional(&mut *transaction)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_QUERY_FAILED",
+                format!("failed to lock order {order_id}: {error}"),
+            )
+        })?
+        .ok_or_else(|| {
+            AppError::not_found(
+                "ORDER_NOT_FOUND",
+                format!("order was not found: {order_id}"),
+            )
+        })?;
+        let order = parse_order_row(&order_row)?;
+        let current_status = order.status;
+
+        let next_order = match current_status {
+            OrderStatus::Submitted => OrderView {
+                status: OrderStatus::Open,
+                updated_at: OffsetDateTime::now_utc(),
+                version: order.version + 1,
+                ..order
+            },
+            OrderStatus::Open => order,
+            _ => {
+                return Err(AppError::conflict(
+                    "STATE_ORDER_NOT_POLLABLE",
+                    "only submitted/open orders can be polled as open",
+                ));
+            }
+        };
+
+        if next_order.status != current_status {
+            sqlx::query(
+                r#"
+                UPDATE orders
+                SET
+                  status = $1,
+                  updated_at = $2,
+                  trace_id = $3,
+                  version = $4
+                WHERE id = $5
+                "#,
+            )
+            .bind(next_order.status.as_str())
+            .bind(next_order.updated_at)
+            .bind(trace_id)
+            .bind(next_order.version)
+            .bind(&next_order.id)
+            .execute(&mut *transaction)
+            .await
+            .map_err(|error| {
+                db_error(
+                    "POSTGRES_UPDATE_FAILED",
+                    format!("failed to update order {} as open: {error}", next_order.id),
+                )
+            })?;
+        }
+
+        transaction.commit().await.map_err(|error| {
+            db_error(
+                "POSTGRES_TRANSACTION_COMMIT_FAILED",
+                format!("failed to commit order status polling transaction: {error}"),
+            )
+        })?;
+
+        Ok(next_order)
+    }
+
+    async fn mark_order_canceled(&self, order_id: &str, trace_id: &str) -> Result<OrderView> {
+        let mut transaction = self.pool.begin().await.map_err(|error| {
+            db_error(
+                "POSTGRES_TRANSACTION_BEGIN_FAILED",
+                format!("failed to begin order cancel transaction: {error}"),
+            )
+        })?;
+
+        let order_row = sqlx::query(
+            r#"
+            SELECT
+              id,
+              signal_id,
+              execution_request_id,
+              order_draft_id,
+              market_id,
+              connector_name,
+              account_id,
+              external_order_id,
+              side,
+              limit_price,
+              quantity,
+              filled_quantity,
+              avg_fill_price,
+              status,
+              submitted_at,
+              updated_at,
+              version
+            FROM orders
+            WHERE id = $1
+            FOR UPDATE
+            "#,
+        )
+        .bind(order_id)
+        .fetch_optional(&mut *transaction)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_QUERY_FAILED",
+                format!("failed to lock order {order_id}: {error}"),
+            )
+        })?
+        .ok_or_else(|| {
+            AppError::not_found(
+                "ORDER_NOT_FOUND",
+                format!("order was not found: {order_id}"),
+            )
+        })?;
+        let order = parse_order_row(&order_row)?;
+        let current_status = order.status;
+
+        let next_order = match current_status {
+            OrderStatus::Submitted | OrderStatus::Open | OrderStatus::PartiallyFilled => {
+                OrderView {
+                    status: OrderStatus::Canceled,
+                    updated_at: OffsetDateTime::now_utc(),
+                    version: order.version + 1,
+                    ..order
+                }
+            }
+            OrderStatus::Canceled => order,
+            _ => {
+                return Err(AppError::conflict(
+                    "STATE_ORDER_NOT_CANCELABLE",
+                    "only submitted/open/partially_filled orders can be canceled",
+                ));
+            }
+        };
+
+        if next_order.status != current_status {
+            sqlx::query(
+                r#"
+                UPDATE orders
+                SET
+                  status = $1,
+                  updated_at = $2,
+                  trace_id = $3,
+                  version = $4
+                WHERE id = $5
+                "#,
+            )
+            .bind(next_order.status.as_str())
+            .bind(next_order.updated_at)
+            .bind(trace_id)
+            .bind(next_order.version)
+            .bind(&next_order.id)
+            .execute(&mut *transaction)
+            .await
+            .map_err(|error| {
+                db_error(
+                    "POSTGRES_UPDATE_FAILED",
+                    format!("failed to cancel order {}: {error}", next_order.id),
+                )
+            })?;
+
+            let request_row = sqlx::query(
+                r#"
+                SELECT
+                  id,
+                  signal_id,
+                  signal_version,
+                  order_draft_id,
+                  connector_name,
+                  mode,
+                  requested_by_user_id,
+                  status,
+                  reason,
+                  external_order_id,
+                  submitted_at,
+                  failure_code,
+                  failure_message,
+                  created_at,
+                  updated_at,
+                  version
+                FROM execution_requests
+                WHERE id = $1
+                FOR UPDATE
+                "#,
+            )
+            .bind(&next_order.execution_request_id)
+            .fetch_optional(&mut *transaction)
+            .await
+            .map_err(|error| {
+                db_error(
+                    "POSTGRES_QUERY_FAILED",
+                    format!(
+                        "failed to lock execution request {} for order cancel: {error}",
+                        next_order.execution_request_id
+                    ),
+                )
+            })?
+            .ok_or_else(|| {
+                AppError::not_found(
+                    "EXECUTION_REQUEST_NOT_FOUND",
+                    format!(
+                        "execution request was not found: {}",
+                        next_order.execution_request_id
+                    ),
+                )
+            })?;
+            let request = parse_execution_request_row(&request_row)?;
+
+            if request.status == ExecutionRequestStatus::Submitted {
+                sqlx::query(
+                    r#"
+                    UPDATE execution_requests
+                    SET
+                      status = $1,
+                      updated_at = $2,
+                      trace_id = $3,
+                      version = $4
+                    WHERE id = $5
+                    "#,
+                )
+                .bind(ExecutionRequestStatus::Canceled.as_str())
+                .bind(next_order.updated_at)
+                .bind(trace_id)
+                .bind(request.version + 1)
+                .bind(&request.id)
+                .execute(&mut *transaction)
+                .await
+                .map_err(|error| {
+                    db_error(
+                        "POSTGRES_UPDATE_FAILED",
+                        format!("failed to cancel execution request {}: {error}", request.id),
+                    )
+                })?;
+            }
+        }
+
+        transaction.commit().await.map_err(|error| {
+            db_error(
+                "POSTGRES_TRANSACTION_COMMIT_FAILED",
+                format!("failed to commit order cancel transaction: {error}"),
+            )
+        })?;
+
+        Ok(next_order)
+    }
+
+    async fn mark_execution_failed(
+        &self,
+        execution_request_id: &str,
+        failure_code: &str,
+        failure_message: &str,
+        trace_id: &str,
+    ) -> Result<ExecutionDispatchResult> {
+        let mut transaction = self.pool.begin().await.map_err(|error| {
+            db_error(
+                "POSTGRES_TRANSACTION_BEGIN_FAILED",
+                format!("failed to begin execution failure transaction: {error}"),
+            )
+        })?;
+
+        let request_row = sqlx::query(
+            r#"
+            SELECT
+              id,
+              signal_id,
+              signal_version,
+              order_draft_id,
+              connector_name,
+              mode,
+              requested_by_user_id,
+              status,
+              reason,
+              external_order_id,
+              submitted_at,
+              failure_code,
+              failure_message,
+              created_at,
+              updated_at,
+              version
+            FROM execution_requests
+            WHERE id = $1
+            FOR UPDATE
+            "#,
+        )
+        .bind(execution_request_id)
+        .fetch_optional(&mut *transaction)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_QUERY_FAILED",
+                format!("failed to lock execution request {execution_request_id}: {error}"),
+            )
+        })?
+        .ok_or_else(|| {
+            AppError::not_found(
+                "EXECUTION_REQUEST_NOT_FOUND",
+                format!("execution request was not found: {execution_request_id}"),
+            )
+        })?;
+        let request = parse_execution_request_row(&request_row)?;
+
+        if request.status != ExecutionRequestStatus::Queued {
+            return Err(AppError::conflict(
+                "STATE_EXECUTION_REQUEST_NOT_DISPATCHABLE",
+                "execution request is no longer queued",
+            ));
+        }
+
+        let order_draft_row = sqlx::query(
+            r#"
+            SELECT
+              id,
+              signal_id,
+              signal_version,
+              market_id,
+              connector_name,
+              side,
+              limit_price,
+              quantity,
+              notional,
+              status,
+              created_by_user_id,
+              external_order_id,
+              submitted_at,
+              failure_code,
+              failure_message,
+              created_at,
+              updated_at,
+              version
+            FROM order_drafts
+            WHERE id = $1
+            FOR UPDATE
+            "#,
+        )
+        .bind(&request.order_draft_id)
+        .fetch_optional(&mut *transaction)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_QUERY_FAILED",
+                format!(
+                    "failed to lock order draft {}: {error}",
+                    request.order_draft_id
+                ),
+            )
+        })?
+        .ok_or_else(|| {
+            AppError::not_found(
+                "ORDER_DRAFT_NOT_FOUND",
+                format!("order draft was not found: {}", request.order_draft_id),
+            )
+        })?;
+        let order_draft = parse_order_draft_row(&order_draft_row)?;
+
+        if order_draft.status != OrderDraftStatus::Queued {
+            return Err(AppError::conflict(
+                "STATE_ORDER_DRAFT_NOT_DISPATCHABLE",
+                "order draft is no longer queued",
+            ));
+        }
+
+        let failed_at = OffsetDateTime::now_utc();
+        let next_order_draft = OrderDraftView {
+            status: OrderDraftStatus::Rejected,
+            external_order_id: None,
+            submitted_at: None,
+            failure_code: Some(failure_code.to_string()),
+            failure_message: Some(failure_message.to_string()),
+            updated_at: failed_at,
+            version: order_draft.version + 1,
+            ..order_draft
+        };
+        let next_request = ExecutionRequestView {
+            status: ExecutionRequestStatus::Failed,
+            external_order_id: None,
+            submitted_at: None,
+            failure_code: Some(failure_code.to_string()),
+            failure_message: Some(failure_message.to_string()),
+            updated_at: failed_at,
+            version: request.version + 1,
+            ..request
+        };
+
+        sqlx::query(
+            r#"
+            UPDATE order_drafts
+            SET
+              status = $1,
+              external_order_id = NULL,
+              submitted_at = NULL,
+              failure_code = $2,
+              failure_message = $3,
+              updated_at = $4,
+              version = $5,
+              trace_id = $6
+            WHERE id = $7
+            "#,
+        )
+        .bind(next_order_draft.status.as_str())
+        .bind(next_order_draft.failure_code.as_deref())
+        .bind(next_order_draft.failure_message.as_deref())
+        .bind(next_order_draft.updated_at)
+        .bind(next_order_draft.version)
+        .bind(trace_id)
+        .bind(&next_order_draft.id)
+        .execute(&mut *transaction)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_UPDATE_FAILED",
+                format!(
+                    "failed to update order draft {}: {error}",
+                    next_order_draft.id
+                ),
+            )
+        })?;
+
+        sqlx::query(
+            r#"
+            UPDATE execution_requests
+            SET
+              status = $1,
+              external_order_id = NULL,
+              submitted_at = NULL,
+              failure_code = $2,
+              failure_message = $3,
+              updated_at = $4,
+              version = $5,
+              trace_id = $6
+            WHERE id = $7
+            "#,
+        )
+        .bind(next_request.status.as_str())
+        .bind(next_request.failure_code.as_deref())
+        .bind(next_request.failure_message.as_deref())
+        .bind(next_request.updated_at)
+        .bind(next_request.version)
+        .bind(trace_id)
+        .bind(&next_request.id)
+        .execute(&mut *transaction)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_UPDATE_FAILED",
+                format!(
+                    "failed to update execution request {}: {error}",
+                    next_request.id
+                ),
+            )
+        })?;
+
+        transaction.commit().await.map_err(|error| {
+            db_error(
+                "POSTGRES_TRANSACTION_COMMIT_FAILED",
+                format!("failed to commit execution failure transaction: {error}"),
+            )
+        })?;
+
+        Ok(ExecutionDispatchResult {
+            order_draft: next_order_draft,
+            execution_request: next_request,
+        })
+    }
+
+    async fn reconcile_execution_fill(
+        &self,
+        execution_request_id: &str,
+        account_id: &str,
+        external_trade_id: &str,
+        fill_price: Probability,
+        filled_quantity: Quantity,
+        fee: UsdAmount,
+        trace_id: &str,
+    ) -> Result<ExecutionFillResult> {
+        let mut transaction = self.pool.begin().await.map_err(|error| {
+            db_error(
+                "POSTGRES_TRANSACTION_BEGIN_FAILED",
+                format!("failed to begin execution reconciliation transaction: {error}"),
+            )
+        })?;
+
+        let request_row = sqlx::query(
+            r#"
+            SELECT
+              id,
+              signal_id,
+              signal_version,
+              order_draft_id,
+              connector_name,
+              mode,
+              requested_by_user_id,
+              status,
+              reason,
+              external_order_id,
+              submitted_at,
+              failure_code,
+              failure_message,
+              created_at,
+              updated_at,
+              version
+            FROM execution_requests
+            WHERE id = $1
+            FOR UPDATE
+            "#,
+        )
+        .bind(execution_request_id)
+        .fetch_optional(&mut *transaction)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_QUERY_FAILED",
+                format!(
+                    "failed to lock reconciliation execution request {execution_request_id}: {error}"
+                ),
+            )
+        })?
+        .ok_or_else(|| {
+            AppError::not_found(
+                "EXECUTION_REQUEST_NOT_FOUND",
+                format!("execution request was not found: {execution_request_id}"),
+            )
+        })?;
+        let request = parse_execution_request_row(&request_row)?;
+
+        if request.status != ExecutionRequestStatus::Submitted {
+            return Err(AppError::conflict(
+                "STATE_EXECUTION_REQUEST_NOT_RECONCILABLE",
+                "execution request is not in submitted state",
+            ));
+        }
+
+        let existing_order_row = sqlx::query(
+            r#"
+            SELECT
+              id,
+              signal_id,
+              execution_request_id,
+              order_draft_id,
+              market_id,
+              connector_name,
+              account_id,
+              external_order_id,
+              side,
+              limit_price,
+              quantity,
+              filled_quantity,
+              avg_fill_price,
+              status,
+              submitted_at,
+              updated_at,
+              version
+            FROM orders
+            WHERE execution_request_id = $1
+            FOR UPDATE
+            "#,
+        )
+        .bind(&request.id)
+        .fetch_optional(&mut *transaction)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_QUERY_FAILED",
+                format!(
+                    "failed to check existing reconciled order for execution request {}: {error}",
+                    request.id
+                ),
+            )
+        })?;
+        let existing_order = existing_order_row
+            .as_ref()
+            .map(parse_order_row)
+            .transpose()?;
+
+        let existing_trade_row = sqlx::query(
+            r#"
+            SELECT id
+            FROM trades
+            WHERE connector_name = $1
+              AND external_trade_id = $2
+            LIMIT 1
+            "#,
+        )
+        .bind(&request.connector_name)
+        .bind(external_trade_id)
+        .fetch_optional(&mut *transaction)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_QUERY_FAILED",
+                format!(
+                    "failed to check existing trade {} for connector {}: {error}",
+                    external_trade_id, request.connector_name
+                ),
+            )
+        })?;
+        if existing_trade_row.is_some() {
+            return Err(AppError::conflict(
+                "STATE_TRADE_ALREADY_RECORDED",
+                "external trade id has already been recorded",
+            ));
+        }
+
+        let order_draft_row = sqlx::query(
+            r#"
+            SELECT
+              id,
+              signal_id,
+              signal_version,
+              market_id,
+              connector_name,
+              side,
+              limit_price,
+              quantity,
+              notional,
+              status,
+              created_by_user_id,
+              external_order_id,
+              submitted_at,
+              failure_code,
+              failure_message,
+              created_at,
+              updated_at,
+              version
+            FROM order_drafts
+            WHERE id = $1
+            FOR UPDATE
+            "#,
+        )
+        .bind(&request.order_draft_id)
+        .fetch_optional(&mut *transaction)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_QUERY_FAILED",
+                format!(
+                    "failed to lock order draft {} for reconciliation: {error}",
+                    request.order_draft_id
+                ),
+            )
+        })?
+        .ok_or_else(|| {
+            AppError::not_found(
+                "ORDER_DRAFT_NOT_FOUND",
+                format!("order draft was not found: {}", request.order_draft_id),
+            )
+        })?;
+        let order_draft = parse_order_draft_row(&order_draft_row)?;
+
+        if order_draft.status != OrderDraftStatus::Submitted {
+            return Err(AppError::conflict(
+                "STATE_ORDER_DRAFT_NOT_RECONCILABLE",
+                "order draft is not in submitted state",
+            ));
+        }
+
+        let external_order_id = request
+            .external_order_id
+            .clone()
+            .or_else(|| order_draft.external_order_id.clone())
+            .ok_or_else(|| {
+                AppError::conflict(
+                    "STATE_EXTERNAL_ORDER_ID_MISSING",
+                    "submitted execution request is missing external_order_id",
+                )
+            })?;
+
+        let signal_row = sqlx::query(
+            r#"
+            SELECT id, lifecycle_state, updated_at, version
+            FROM signals
+            WHERE id = $1
+            FOR UPDATE
+            "#,
+        )
+        .bind(&request.signal_id)
+        .fetch_optional(&mut *transaction)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_QUERY_FAILED",
+                format!("failed to lock signal {}: {error}", request.signal_id),
+            )
+        })?
+        .ok_or_else(|| {
+            AppError::not_found(
+                "SIGNAL_NOT_FOUND",
+                format!("signal was not found: {}", request.signal_id),
+            )
+        })?;
+        let current_signal_state = SignalLifecycleState::from_str(&decode_column::<String>(
+            &signal_row,
+            "lifecycle_state",
+        )?)?;
+        let current_signal_version: i64 = decode_column(&signal_row, "version")?;
+
+        let position_row = sqlx::query(
+            r#"
+            SELECT
+              id,
+              market_id,
+              connector_name,
+              account_id,
+              side,
+              net_quantity,
+              avg_cost,
+              mark_price,
+              unrealized_pnl,
+              realized_pnl,
+              updated_at,
+              version
+            FROM positions
+            WHERE connector_name = $1
+              AND account_id = $2
+              AND market_id = $3
+              AND side = $4
+            FOR UPDATE
+            "#,
+        )
+        .bind(&request.connector_name)
+        .bind(account_id)
+        .bind(&order_draft.market_id)
+        .bind(order_draft.side.as_str())
+        .fetch_optional(&mut *transaction)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_QUERY_FAILED",
+                format!(
+                    "failed to lock position for connector={} account={} market={} side={}: {error}",
+                    request.connector_name,
+                    account_id,
+                    order_draft.market_id,
+                    order_draft.side.as_str(),
+                ),
+            )
+        })?;
+
+        let now = OffsetDateTime::now_utc();
+        let submitted_at = request
+            .submitted_at
+            .or(order_draft.submitted_at)
+            .unwrap_or(now);
+        let order = if let Some(current) = existing_order {
+            if !matches!(
+                current.status,
+                OrderStatus::Submitted | OrderStatus::Open | OrderStatus::PartiallyFilled
+            ) {
+                return Err(AppError::conflict(
+                    "STATE_ORDER_NOT_RECONCILABLE",
+                    "existing order is not in a reconcilable state",
+                ));
+            }
+
+            let next_filled_quantity_value =
+                current.filled_quantity.value() + filled_quantity.value();
+            if next_filled_quantity_value > current.quantity.value() {
+                return Err(AppError::conflict(
+                    "STATE_FILL_QUANTITY_EXCEEDS_ORDER",
+                    "filled quantity exceeds order quantity",
+                ));
+            }
+
+            let next_filled_quantity = Quantity::new(next_filled_quantity_value)?;
+            let next_avg_fill_price = weighted_fill_price(
+                current.avg_fill_price,
+                current.filled_quantity,
+                fill_price,
+                filled_quantity,
+            )?;
+            let next_status = if next_filled_quantity.value() == current.quantity.value() {
+                OrderStatus::Filled
+            } else {
+                OrderStatus::PartiallyFilled
+            };
+
+            OrderView {
+                filled_quantity: next_filled_quantity,
+                avg_fill_price: next_avg_fill_price,
+                status: next_status,
+                updated_at: now,
+                version: current.version + 1,
+                ..current
+            }
+        } else {
+            if filled_quantity.value() > order_draft.quantity.value() {
+                return Err(AppError::conflict(
+                    "STATE_FILL_QUANTITY_EXCEEDS_ORDER",
+                    "filled quantity exceeds queued order quantity",
+                ));
+            }
+
+            let next_status = if filled_quantity.value() == order_draft.quantity.value() {
+                OrderStatus::Filled
+            } else {
+                OrderStatus::PartiallyFilled
+            };
+
+            OrderView {
+                id: format!("ord_{}", Uuid::now_v7()),
+                signal_id: request.signal_id.clone(),
+                execution_request_id: request.id.clone(),
+                order_draft_id: order_draft.id.clone(),
+                market_id: order_draft.market_id.clone(),
+                connector_name: request.connector_name.clone(),
+                account_id: account_id.to_string(),
+                external_order_id,
+                side: order_draft.side,
+                limit_price: order_draft.limit_price,
+                quantity: order_draft.quantity,
+                filled_quantity,
+                avg_fill_price: fill_price,
+                status: next_status,
+                submitted_at,
+                updated_at: now,
+                version: 1,
+            }
+        };
+        let trade = TradeView {
+            id: format!("trd_{}", Uuid::now_v7()),
+            order_id: order.id.clone(),
+            signal_id: order.signal_id.clone(),
+            market_id: order.market_id.clone(),
+            connector_name: order.connector_name.clone(),
+            external_trade_id: external_trade_id.to_string(),
+            side: order.side,
+            price: fill_price,
+            quantity: filled_quantity,
+            fee,
+            executed_at: now,
+        };
+        let position_key = in_memory_position_key(
+            &order.connector_name,
+            account_id,
+            &order.market_id,
+            order.side,
+        );
+        let position = if let Some(row) = position_row.as_ref() {
+            build_next_position(
+                parse_position_row(row)?,
+                filled_quantity,
+                fill_price,
+                trace_id,
+            )?
+        } else {
+            PositionView {
+                id: position_key,
+                market_id: order.market_id.clone(),
+                connector_name: order.connector_name.clone(),
+                account_id: account_id.to_string(),
+                side: order.side,
+                net_quantity: filled_quantity,
+                avg_cost: fill_price,
+                mark_price: fill_price,
+                unrealized_pnl: SignedUsdAmount::new(Decimal::ZERO)?,
+                realized_pnl: SignedUsdAmount::new(Decimal::ZERO)?,
+                updated_at: now,
+                version: 1,
+            }
+        };
+
+        if existing_order_row.is_some() {
+            sqlx::query(
+                r#"
+                UPDATE orders
+                SET
+                  filled_quantity = $1,
+                  avg_fill_price = $2,
+                  status = $3,
+                  updated_at = $4,
+                  trace_id = $5,
+                  version = $6
+                WHERE id = $7
+                "#,
+            )
+            .bind(order.filled_quantity.value())
+            .bind(order.avg_fill_price.value())
+            .bind(order.status.as_str())
+            .bind(order.updated_at)
+            .bind(trace_id)
+            .bind(order.version)
+            .bind(&order.id)
+            .execute(&mut *transaction)
+            .await
+            .map_err(|error| {
+                db_error(
+                    "POSTGRES_UPDATE_FAILED",
+                    format!("failed to update reconciled order {}: {error}", order.id),
+                )
+            })?;
+        } else {
+            sqlx::query(
+                r#"
+                INSERT INTO orders (
+                  id,
+                  signal_id,
+                  execution_request_id,
+                  order_draft_id,
+                  market_id,
+                  connector_name,
+                  account_id,
+                  external_order_id,
+                  side,
+                  limit_price,
+                  quantity,
+                  filled_quantity,
+                  avg_fill_price,
+                  status,
+                  submitted_at,
+                  updated_at,
+                  trace_id,
+                  version
+                )
+                VALUES (
+                  $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18
+                )
+                "#,
+            )
+            .bind(&order.id)
+            .bind(&order.signal_id)
+            .bind(&order.execution_request_id)
+            .bind(&order.order_draft_id)
+            .bind(&order.market_id)
+            .bind(&order.connector_name)
+            .bind(&order.account_id)
+            .bind(&order.external_order_id)
+            .bind(order.side.as_str())
+            .bind(order.limit_price.value())
+            .bind(order.quantity.value())
+            .bind(order.filled_quantity.value())
+            .bind(order.avg_fill_price.value())
+            .bind(order.status.as_str())
+            .bind(order.submitted_at)
+            .bind(order.updated_at)
+            .bind(trace_id)
+            .bind(order.version)
+            .execute(&mut *transaction)
+            .await
+            .map_err(|error| {
+                db_error(
+                    "POSTGRES_INSERT_FAILED",
+                    format!("failed to insert reconciled order {}: {error}", order.id),
+                )
+            })?;
+        }
+
+        sqlx::query(
+            r#"
+            INSERT INTO trades (
+              id,
+              order_id,
+              signal_id,
+              market_id,
+              connector_name,
+              external_trade_id,
+              side,
+              price,
+              quantity,
+              fee,
+              executed_at,
+              trace_id,
+              created_at
+            )
+            VALUES (
+              $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13
+            )
+            "#,
+        )
+        .bind(&trade.id)
+        .bind(&trade.order_id)
+        .bind(&trade.signal_id)
+        .bind(&trade.market_id)
+        .bind(&trade.connector_name)
+        .bind(&trade.external_trade_id)
+        .bind(trade.side.as_str())
+        .bind(trade.price.value())
+        .bind(trade.quantity.value())
+        .bind(trade.fee.value())
+        .bind(trade.executed_at)
+        .bind(trace_id)
+        .bind(now)
+        .execute(&mut *transaction)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_INSERT_FAILED",
+                format!("failed to insert reconciled trade {}: {error}", trade.id),
+            )
+        })?;
+
+        if position_row.is_some() {
+            sqlx::query(
+                r#"
+                UPDATE positions
+                SET
+                  net_quantity = $1,
+                  avg_cost = $2,
+                  mark_price = $3,
+                  unrealized_pnl = $4,
+                  realized_pnl = $5,
+                  updated_at = $6,
+                  trace_id = $7,
+                  version = $8
+                WHERE id = $9
+                "#,
+            )
+            .bind(position.net_quantity.value())
+            .bind(position.avg_cost.value())
+            .bind(position.mark_price.value())
+            .bind(position.unrealized_pnl.value())
+            .bind(position.realized_pnl.value())
+            .bind(position.updated_at)
+            .bind(trace_id)
+            .bind(position.version)
+            .bind(&position.id)
+            .execute(&mut *transaction)
+            .await
+            .map_err(|error| {
+                db_error(
+                    "POSTGRES_UPDATE_FAILED",
+                    format!("failed to update position {}: {error}", position.id),
+                )
+            })?;
+        } else {
+            sqlx::query(
+                r#"
+                INSERT INTO positions (
+                  id,
+                  market_id,
+                  connector_name,
+                  account_id,
+                  side,
+                  net_quantity,
+                  avg_cost,
+                  mark_price,
+                  unrealized_pnl,
+                  realized_pnl,
+                  updated_at,
+                  trace_id,
+                  version
+                )
+                VALUES (
+                  $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13
+                )
+                "#,
+            )
+            .bind(&position.id)
+            .bind(&position.market_id)
+            .bind(&position.connector_name)
+            .bind(&position.account_id)
+            .bind(position.side.as_str())
+            .bind(position.net_quantity.value())
+            .bind(position.avg_cost.value())
+            .bind(position.mark_price.value())
+            .bind(position.unrealized_pnl.value())
+            .bind(position.realized_pnl.value())
+            .bind(position.updated_at)
+            .bind(trace_id)
+            .bind(position.version)
+            .execute(&mut *transaction)
+            .await
+            .map_err(|error| {
+                db_error(
+                    "POSTGRES_INSERT_FAILED",
+                    format!("failed to insert position {}: {error}", position.id),
+                )
+            })?;
+        }
+
+        if current_signal_state != SignalLifecycleState::Executed {
+            sqlx::query(
+                r#"
+                UPDATE signals
+                SET
+                  lifecycle_state = $1,
+                  updated_at = $2,
+                  version = $3
+                WHERE id = $4
+                "#,
+            )
+            .bind(SignalLifecycleState::Executed.as_str())
+            .bind(now)
+            .bind(current_signal_version + 1)
+            .bind(&request.signal_id)
+            .execute(&mut *transaction)
+            .await
+            .map_err(|error| {
+                db_error(
+                    "POSTGRES_UPDATE_FAILED",
+                    format!(
+                        "failed to update signal {} after reconciliation: {error}",
+                        request.signal_id
+                    ),
+                )
+            })?;
+
+            sqlx::query(
+                r#"
+                INSERT INTO signal_transitions (
+                  id,
+                  signal_id,
+                  from_state,
+                  to_state,
+                  trigger_type,
+                  trigger_payload,
+                  created_at
+                )
+                VALUES ($1, $2, $3, $4, $5, $6, $7)
+                "#,
+            )
+            .bind(format!("sgt_{}", Uuid::now_v7()))
+            .bind(&request.signal_id)
+            .bind(current_signal_state.as_str())
+            .bind(SignalLifecycleState::Executed.as_str())
+            .bind("execution_fill_reconciled")
+            .bind(Json(json!({
+                "execution_request_id": request.id,
+                "external_trade_id": external_trade_id,
+                "trace_id": trace_id,
+            })))
+            .bind(now)
+            .execute(&mut *transaction)
+            .await
+            .map_err(|error| {
+                db_error(
+                    "POSTGRES_INSERT_FAILED",
+                    format!(
+                        "failed to insert signal transition for signal {}: {error}",
+                        request.signal_id
+                    ),
+                )
+            })?;
+        }
+
+        transaction.commit().await.map_err(|error| {
+            db_error(
+                "POSTGRES_TRANSACTION_COMMIT_FAILED",
+                format!("failed to commit execution reconciliation transaction: {error}"),
+            )
+        })?;
+
+        Ok(ExecutionFillResult {
+            order,
+            trade,
+            position,
+        })
+    }
+
+    async fn ingest_fixture_bundle(
+        &self,
+        bundle: &FixtureBundle,
+        trace_id: &str,
+    ) -> Result<FixtureIngestionReport> {
+        let mut transaction = self.pool.begin().await.map_err(|error| {
+            db_error(
+                "POSTGRES_TRANSACTION_BEGIN_FAILED",
+                format!("failed to begin market/event ingestion transaction: {error}"),
+            )
+        })?;
+
+        for market in &bundle.markets {
+            sqlx::query(
+                r#"
+                INSERT INTO markets (
+                  id,
+                  question,
+                  category,
+                  status,
+                  best_bid,
+                  best_ask,
+                  mid_price,
+                  volume_24h,
+                  ambiguity_level,
+                  tradability_status,
+                  polymarket_condition_id,
+                  polymarket_yes_asset_id,
+                  polymarket_no_asset_id,
+                  updated_at,
+                  version,
+                  trace_id
+                )
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+                ON CONFLICT (id) DO UPDATE
+                SET
+                  question = EXCLUDED.question,
+                  category = EXCLUDED.category,
+                  status = EXCLUDED.status,
+                  best_bid = EXCLUDED.best_bid,
+                  best_ask = EXCLUDED.best_ask,
+                  mid_price = EXCLUDED.mid_price,
+                  volume_24h = EXCLUDED.volume_24h,
+                  ambiguity_level = EXCLUDED.ambiguity_level,
+                  tradability_status = EXCLUDED.tradability_status,
+                  polymarket_condition_id = EXCLUDED.polymarket_condition_id,
+                  polymarket_yes_asset_id = EXCLUDED.polymarket_yes_asset_id,
+                  polymarket_no_asset_id = EXCLUDED.polymarket_no_asset_id,
+                  updated_at = EXCLUDED.updated_at,
+                  version = EXCLUDED.version,
+                  trace_id = EXCLUDED.trace_id
+                "#,
+            )
+            .bind(&market.id)
+            .bind(&market.question)
+            .bind(&market.category)
+            .bind(market.status.as_str())
+            .bind(market.best_bid.value())
+            .bind(market.best_ask.value())
+            .bind(market.mid_price.value())
+            .bind(market.volume_24h.value())
+            .bind(market.ambiguity_level.as_str())
+            .bind(market.tradability_status.as_str())
+            .bind(&market.polymarket_condition_id)
+            .bind(&market.polymarket_yes_asset_id)
+            .bind(&market.polymarket_no_asset_id)
+            .bind(market.updated_at)
+            .bind(market.version)
+            .bind(trace_id)
+            .execute(&mut *transaction)
+            .await
+            .map_err(|error| {
+                db_error(
+                    "POSTGRES_INSERT_FAILED",
+                    format!("failed to upsert market {}: {error}", market.id),
+                )
+            })?;
+
+            sqlx::query(
+                r#"
+                INSERT INTO market_resolution_rules (
+                  market_id,
+                  resolution_source,
+                  edge_case_notes,
+                  updated_at,
+                  version,
+                  trace_id
+                )
+                VALUES ($1, $2, $3, $4, $5, $6)
+                ON CONFLICT (market_id) DO UPDATE
+                SET
+                  resolution_source = EXCLUDED.resolution_source,
+                  edge_case_notes = EXCLUDED.edge_case_notes,
+                  updated_at = EXCLUDED.updated_at,
+                  version = EXCLUDED.version,
+                  trace_id = EXCLUDED.trace_id
+                "#,
+            )
+            .bind(&market.id)
+            .bind(&market.resolution_source)
+            .bind(&market.edge_case_notes)
+            .bind(market.updated_at)
+            .bind(market.version)
+            .bind(trace_id)
+            .execute(&mut *transaction)
+            .await
+            .map_err(|error| {
+                db_error(
+                    "POSTGRES_INSERT_FAILED",
+                    format!(
+                        "failed to upsert market resolution rules for {}: {error}",
+                        market.id
+                    ),
+                )
+            })?;
+        }
+
+        for event in &bundle.events {
+            let raw_payload = serde_json::to_value(event).map_err(|error| {
+                AppError::internal(
+                    "RAW_EVENT_SERIALIZE_FAILED",
+                    format!("failed to serialize event fixture {}: {error}", event.id),
+                )
+            })?;
+
+            let raw_event_id = format!("raw_{}", event.id);
+            let hash = format!("fixture_hash_{}", event.id);
+
+            sqlx::query(
+                r#"
+                INSERT INTO raw_events (
+                  id,
+                  source,
+                  hash,
+                  raw_payload,
+                  ingested_at,
+                  trace_id
+                )
+                VALUES ($1, $2, $3, $4, $5, $6)
+                ON CONFLICT (id) DO UPDATE
+                SET
+                  source = EXCLUDED.source,
+                  hash = EXCLUDED.hash,
+                  raw_payload = EXCLUDED.raw_payload,
+                  ingested_at = EXCLUDED.ingested_at,
+                  trace_id = EXCLUDED.trace_id
+                "#,
+            )
+            .bind(&raw_event_id)
+            .bind(&event.source)
+            .bind(hash)
+            .bind(Json(raw_payload))
+            .bind(event.updated_at)
+            .bind(trace_id)
+            .execute(&mut *transaction)
+            .await
+            .map_err(|error| {
+                db_error(
+                    "POSTGRES_INSERT_FAILED",
+                    format!("failed to upsert raw event {}: {error}", event.id),
+                )
+            })?;
+
+            sqlx::query(
+                r#"
+                INSERT INTO events (
+                  id,
+                  raw_event_id,
+                  source,
+                  summary,
+                  relevance_score,
+                  confidence,
+                  status,
+                  reason_trace,
+                  created_at,
+                  updated_at,
+                  version,
+                  trace_id
+                )
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                ON CONFLICT (id) DO UPDATE
+                SET
+                  raw_event_id = EXCLUDED.raw_event_id,
+                  source = EXCLUDED.source,
+                  summary = EXCLUDED.summary,
+                  relevance_score = EXCLUDED.relevance_score,
+                  confidence = EXCLUDED.confidence,
+                  status = EXCLUDED.status,
+                  reason_trace = EXCLUDED.reason_trace,
+                  created_at = EXCLUDED.created_at,
+                  updated_at = EXCLUDED.updated_at,
+                  version = EXCLUDED.version,
+                  trace_id = EXCLUDED.trace_id
+                "#,
+            )
+            .bind(&event.id)
+            .bind(&raw_event_id)
+            .bind(&event.source)
+            .bind(&event.summary)
+            .bind(event.relevance_score.value())
+            .bind(event.confidence.value())
+            .bind(event.status.as_str())
+            .bind(&event.reason_trace)
+            .bind(event.created_at)
+            .bind(event.updated_at)
+            .bind(event.version)
+            .bind(trace_id)
+            .execute(&mut *transaction)
+            .await
+            .map_err(|error| {
+                db_error(
+                    "POSTGRES_INSERT_FAILED",
+                    format!("failed to upsert event {}: {error}", event.id),
+                )
+            })?;
+
+            sqlx::query("DELETE FROM event_market_links WHERE event_id = $1")
+                .bind(&event.id)
+                .execute(&mut *transaction)
+                .await
+                .map_err(|error| {
+                    db_error(
+                        "POSTGRES_DELETE_FAILED",
+                        format!(
+                            "failed to reset event market links for {}: {error}",
+                            event.id
+                        ),
+                    )
+                })?;
+
+            for market_id in &event.related_market_ids {
+                sqlx::query(
+                    r#"
+                    INSERT INTO event_market_links (event_id, market_id, created_at)
+                    VALUES ($1, $2, $3)
+                    ON CONFLICT (event_id, market_id) DO NOTHING
+                    "#,
+                )
+                .bind(&event.id)
+                .bind(market_id)
+                .bind(event.created_at)
+                .execute(&mut *transaction)
+                .await
+                .map_err(|error| {
+                    db_error(
+                        "POSTGRES_INSERT_FAILED",
+                        format!(
+                            "failed to insert event-market link {} -> {}: {error}",
+                            event.id, market_id
+                        ),
+                    )
+                })?;
+            }
+        }
+
+        for evidence in &bundle.evidences {
+            sqlx::query(
+                r#"
+                INSERT INTO evidences (
+                  id,
+                  market_id,
+                  event_id,
+                  direction,
+                  strength,
+                  source_reliability,
+                  novelty,
+                  resolution_relevance,
+                  status,
+                  expires_at,
+                  created_at,
+                  updated_at,
+                  version,
+                  trace_id
+                )
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+                ON CONFLICT (id) DO UPDATE
+                SET
+                  market_id = EXCLUDED.market_id,
+                  event_id = EXCLUDED.event_id,
+                  direction = EXCLUDED.direction,
+                  strength = EXCLUDED.strength,
+                  source_reliability = EXCLUDED.source_reliability,
+                  novelty = EXCLUDED.novelty,
+                  resolution_relevance = EXCLUDED.resolution_relevance,
+                  status = EXCLUDED.status,
+                  expires_at = EXCLUDED.expires_at,
+                  created_at = EXCLUDED.created_at,
+                  updated_at = EXCLUDED.updated_at,
+                  version = EXCLUDED.version,
+                  trace_id = EXCLUDED.trace_id
+                "#,
+            )
+            .bind(&evidence.id)
+            .bind(&evidence.market_id)
+            .bind(&evidence.event_id)
+            .bind(evidence.direction.as_str())
+            .bind(evidence.strength.value())
+            .bind(evidence.source_reliability.value())
+            .bind(evidence.novelty.value())
+            .bind(evidence.resolution_relevance.value())
+            .bind(evidence.status.as_str())
+            .bind(evidence.expires_at)
+            .bind(evidence.created_at)
+            .bind(evidence.updated_at)
+            .bind(evidence.version)
+            .bind(trace_id)
+            .execute(&mut *transaction)
+            .await
+            .map_err(|error| {
+                db_error(
+                    "POSTGRES_INSERT_FAILED",
+                    format!("failed to upsert evidence {}: {error}", evidence.id),
+                )
+            })?;
+        }
+
+        for signal in &bundle.signals {
+            sqlx::query(
+                r#"
+                INSERT INTO signals (
+                  id,
+                  market_id,
+                  event_id,
+                  action,
+                  side,
+                  market_price,
+                  fair_price,
+                  edge,
+                  confidence,
+                  lifecycle_state,
+                  reason,
+                  risk_decision,
+                  approved_by_user_id,
+                  approved_at,
+                  rejected_by_user_id,
+                  rejected_at,
+                  updated_at,
+                  version,
+                  trace_id
+                )
+                VALUES (
+                  $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17,
+                  $18, $19
+                )
+                ON CONFLICT (id) DO UPDATE
+                SET
+                  market_id = EXCLUDED.market_id,
+                  event_id = EXCLUDED.event_id,
+                  action = EXCLUDED.action,
+                  side = EXCLUDED.side,
+                  market_price = EXCLUDED.market_price,
+                  fair_price = EXCLUDED.fair_price,
+                  edge = EXCLUDED.edge,
+                  confidence = EXCLUDED.confidence,
+                  lifecycle_state = EXCLUDED.lifecycle_state,
+                  reason = EXCLUDED.reason,
+                  risk_decision = EXCLUDED.risk_decision,
+                  approved_by_user_id = EXCLUDED.approved_by_user_id,
+                  approved_at = EXCLUDED.approved_at,
+                  rejected_by_user_id = EXCLUDED.rejected_by_user_id,
+                  rejected_at = EXCLUDED.rejected_at,
+                  updated_at = EXCLUDED.updated_at,
+                  version = EXCLUDED.version,
+                  trace_id = EXCLUDED.trace_id
+                "#,
+            )
+            .bind(&signal.id)
+            .bind(&signal.market_id)
+            .bind(&signal.event_id)
+            .bind(signal.action.as_str())
+            .bind(signal.side.as_str())
+            .bind(signal.market_price.value())
+            .bind(signal.fair_price.value())
+            .bind(signal.edge.value())
+            .bind(signal.confidence.value())
+            .bind(signal.lifecycle_state.as_str())
+            .bind(&signal.reason)
+            .bind(&signal.risk_decision)
+            .bind(&signal.approved_by_user_id)
+            .bind(signal.approved_at)
+            .bind(&signal.rejected_by_user_id)
+            .bind(signal.rejected_at)
+            .bind(signal.updated_at)
+            .bind(signal.version)
+            .bind(trace_id)
+            .execute(&mut *transaction)
+            .await
+            .map_err(|error| {
+                db_error(
+                    "POSTGRES_INSERT_FAILED",
+                    format!("failed to upsert signal {}: {error}", signal.id),
+                )
+            })?;
+
+            sqlx::query("DELETE FROM signal_evidence_links WHERE signal_id = $1")
+                .bind(&signal.id)
+                .execute(&mut *transaction)
+                .await
+                .map_err(|error| {
+                    db_error(
+                        "POSTGRES_DELETE_FAILED",
+                        format!(
+                            "failed to reset signal evidence links for {}: {error}",
+                            signal.id
+                        ),
+                    )
+                })?;
+
+            for evidence_id in &signal.evidence_ids {
+                sqlx::query(
+                    r#"
+                    INSERT INTO signal_evidence_links (signal_id, evidence_id, created_at)
+                    VALUES ($1, $2, $3)
+                    ON CONFLICT (signal_id, evidence_id) DO NOTHING
+                    "#,
+                )
+                .bind(&signal.id)
+                .bind(evidence_id)
+                .bind(signal.updated_at)
+                .execute(&mut *transaction)
+                .await
+                .map_err(|error| {
+                    db_error(
+                        "POSTGRES_INSERT_FAILED",
+                        format!(
+                            "failed to insert signal-evidence link {} -> {}: {error}",
+                            signal.id, evidence_id
+                        ),
+                    )
+                })?;
+            }
+        }
+
+        transaction.commit().await.map_err(|error| {
+            db_error(
+                "POSTGRES_TRANSACTION_COMMIT_FAILED",
+                format!("failed to commit market/event ingestion transaction: {error}"),
+            )
+        })?;
+
+        Ok(FixtureIngestionReport {
+            markets_upserted: bundle.markets.len(),
+            events_upserted: bundle.events.len(),
+            evidences_upserted: bundle.evidences.len(),
+            signals_upserted: bundle.signals.len(),
+        })
+    }
+}
+
+async fn fetch_market_by_id(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    market_id: &str,
+) -> Result<Option<MarketView>> {
+    let row = sqlx::query(
+        r#"
+        SELECT
+          m.id,
+          m.question,
+          m.category,
+          m.status,
+          m.best_bid,
+          m.best_ask,
+          m.mid_price,
+          m.volume_24h,
+          m.ambiguity_level,
+          m.tradability_status,
+          r.resolution_source,
+          r.edge_case_notes,
+          m.polymarket_condition_id,
+          m.polymarket_yes_asset_id,
+          m.polymarket_no_asset_id,
+          m.updated_at,
+          m.version
+        FROM markets m
+        INNER JOIN market_resolution_rules r ON r.market_id = m.id
+        WHERE m.id = $1
+        "#,
+    )
+    .bind(market_id)
+    .fetch_optional(&mut **transaction)
+    .await
+    .map_err(|error| {
+        db_error(
+            "POSTGRES_QUERY_FAILED",
+            format!("failed to fetch market {market_id}: {error}"),
+        )
+    })?;
+
+    row.as_ref().map(parse_market_row).transpose()
+}
+
+async fn fetch_evidences_for_signal(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    market_id: &str,
+    event_id: &str,
+) -> Result<Vec<EvidenceView>> {
+    let rows = sqlx::query(
+        r#"
+        SELECT
+          id,
+          market_id,
+          event_id,
+          direction,
+          strength,
+          source_reliability,
+          novelty,
+          resolution_relevance,
+          status,
+          expires_at,
+          created_at,
+          updated_at,
+          version
+        FROM evidences
+        WHERE market_id = $1
+          AND event_id = $2
+        ORDER BY created_at DESC, id ASC
+        "#,
+    )
+    .bind(market_id)
+    .bind(event_id)
+    .fetch_all(&mut **transaction)
+    .await
+    .map_err(|error| {
+        db_error(
+            "POSTGRES_QUERY_FAILED",
+            format!("failed to fetch evidences for {market_id}/{event_id}: {error}"),
+        )
+    })?;
+
+    rows.iter().map(parse_evidence_row).collect()
+}
+
+fn parse_market_row(row: &sqlx::postgres::PgRow) -> Result<MarketView> {
+    let status_raw: String = decode_column(row, "status")?;
+    let ambiguity_level_raw: String = decode_column(row, "ambiguity_level")?;
+    let tradability_status_raw: String = decode_column(row, "tradability_status")?;
+    let best_bid: Decimal = decode_column(row, "best_bid")?;
+    let best_ask: Decimal = decode_column(row, "best_ask")?;
+    let mid_price: Decimal = decode_column(row, "mid_price")?;
+    let volume_24h: Decimal = decode_column(row, "volume_24h")?;
+
+    Ok(MarketView {
+        id: decode_column(row, "id")?,
+        question: decode_column(row, "question")?,
+        category: decode_column(row, "category")?,
+        status: MarketStatus::from_str(&status_raw).map_err(|error| {
+            db_error(
+                "POSTGRES_DECODE_FAILED",
+                format!("failed to decode market status: {error}"),
+            )
+        })?,
+        best_bid: Probability::new(best_bid).map_err(|error| {
+            db_error(
+                "POSTGRES_DECODE_FAILED",
+                format!("failed to decode market best_bid: {error}"),
+            )
+        })?,
+        best_ask: Probability::new(best_ask).map_err(|error| {
+            db_error(
+                "POSTGRES_DECODE_FAILED",
+                format!("failed to decode market best_ask: {error}"),
+            )
+        })?,
+        mid_price: Probability::new(mid_price).map_err(|error| {
+            db_error(
+                "POSTGRES_DECODE_FAILED",
+                format!("failed to decode market mid_price: {error}"),
+            )
+        })?,
+        volume_24h: UsdAmount::new(volume_24h).map_err(|error| {
+            db_error(
+                "POSTGRES_DECODE_FAILED",
+                format!("failed to decode market volume_24h: {error}"),
+            )
+        })?,
+        ambiguity_level: AmbiguityLevel::from_str(&ambiguity_level_raw).map_err(|error| {
+            db_error(
+                "POSTGRES_DECODE_FAILED",
+                format!("failed to decode ambiguity level: {error}"),
+            )
+        })?,
+        tradability_status: TradabilityStatus::from_str(&tradability_status_raw).map_err(
+            |error| {
+                db_error(
+                    "POSTGRES_DECODE_FAILED",
+                    format!("failed to decode tradability status: {error}"),
+                )
+            },
+        )?,
+        resolution_source: decode_column(row, "resolution_source")?,
+        edge_case_notes: decode_column(row, "edge_case_notes")?,
+        polymarket_condition_id: decode_column(row, "polymarket_condition_id")?,
+        polymarket_yes_asset_id: decode_column(row, "polymarket_yes_asset_id")?,
+        polymarket_no_asset_id: decode_column(row, "polymarket_no_asset_id")?,
+        updated_at: decode_column(row, "updated_at")?,
+        version: decode_column(row, "version")?,
+    })
+}
+
+fn parse_event_row(row: &sqlx::postgres::PgRow) -> Result<EventView> {
+    let status_raw: String = decode_column(row, "status")?;
+    let relevance_score: Decimal = decode_column(row, "relevance_score")?;
+    let confidence: Decimal = decode_column(row, "confidence")?;
+
+    Ok(EventView {
+        id: decode_column(row, "id")?,
+        source: decode_column(row, "source")?,
+        summary: decode_column(row, "summary")?,
+        relevance_score: Probability::new(relevance_score).map_err(|error| {
+            db_error(
+                "POSTGRES_DECODE_FAILED",
+                format!("failed to decode event relevance_score: {error}"),
+            )
+        })?,
+        confidence: Probability::new(confidence).map_err(|error| {
+            db_error(
+                "POSTGRES_DECODE_FAILED",
+                format!("failed to decode event confidence: {error}"),
+            )
+        })?,
+        status: EventStatus::from_str(&status_raw).map_err(|error| {
+            db_error(
+                "POSTGRES_DECODE_FAILED",
+                format!("failed to decode event status: {error}"),
+            )
+        })?,
+        related_market_ids: decode_column(row, "related_market_ids")?,
+        reason_trace: decode_column(row, "reason_trace")?,
+        created_at: decode_column(row, "created_at")?,
+        updated_at: decode_column(row, "updated_at")?,
+        version: decode_column(row, "version")?,
+    })
+}
+
+fn parse_evidence_row(row: &sqlx::postgres::PgRow) -> Result<EvidenceView> {
+    let direction_raw: String = decode_column(row, "direction")?;
+    let status_raw: String = decode_column(row, "status")?;
+    let strength: Decimal = decode_column(row, "strength")?;
+    let source_reliability: Decimal = decode_column(row, "source_reliability")?;
+    let novelty: Decimal = decode_column(row, "novelty")?;
+    let resolution_relevance: Decimal = decode_column(row, "resolution_relevance")?;
+
+    Ok(EvidenceView {
+        id: decode_column(row, "id")?,
+        market_id: decode_column(row, "market_id")?,
+        event_id: decode_column(row, "event_id")?,
+        direction: EvidenceDirection::from_str(&direction_raw).map_err(|error| {
+            db_error(
+                "POSTGRES_DECODE_FAILED",
+                format!("failed to decode evidence direction: {error}"),
+            )
+        })?,
+        strength: Probability::new(strength).map_err(|error| {
+            db_error(
+                "POSTGRES_DECODE_FAILED",
+                format!("failed to decode evidence strength: {error}"),
+            )
+        })?,
+        source_reliability: Probability::new(source_reliability).map_err(|error| {
+            db_error(
+                "POSTGRES_DECODE_FAILED",
+                format!("failed to decode evidence source_reliability: {error}"),
+            )
+        })?,
+        novelty: Probability::new(novelty).map_err(|error| {
+            db_error(
+                "POSTGRES_DECODE_FAILED",
+                format!("failed to decode evidence novelty: {error}"),
+            )
+        })?,
+        resolution_relevance: Probability::new(resolution_relevance).map_err(|error| {
+            db_error(
+                "POSTGRES_DECODE_FAILED",
+                format!("failed to decode evidence resolution_relevance: {error}"),
+            )
+        })?,
+        status: EvidenceStatus::from_str(&status_raw).map_err(|error| {
+            db_error(
+                "POSTGRES_DECODE_FAILED",
+                format!("failed to decode evidence status: {error}"),
+            )
+        })?,
+        expires_at: decode_column(row, "expires_at")?,
+        created_at: decode_column(row, "created_at")?,
+        updated_at: decode_column(row, "updated_at")?,
+        version: decode_column(row, "version")?,
+    })
+}
+
+fn parse_signal_row(row: &sqlx::postgres::PgRow) -> Result<SignalView> {
+    let action_raw: String = decode_column(row, "action")?;
+    let side_raw: String = decode_column(row, "side")?;
+    let lifecycle_state_raw: String = decode_column(row, "lifecycle_state")?;
+    let market_price: Decimal = decode_column(row, "market_price")?;
+    let fair_price: Decimal = decode_column(row, "fair_price")?;
+    let edge: Decimal = decode_column(row, "edge")?;
+    let confidence: Decimal = decode_column(row, "confidence")?;
+
+    Ok(SignalView {
+        id: decode_column(row, "id")?,
+        market_id: decode_column(row, "market_id")?,
+        event_id: decode_column(row, "event_id")?,
+        action: SignalAction::from_str(&action_raw).map_err(|error| {
+            db_error(
+                "POSTGRES_DECODE_FAILED",
+                format!("failed to decode signal action: {error}"),
+            )
+        })?,
+        side: SignalSide::from_str(&side_raw).map_err(|error| {
+            db_error(
+                "POSTGRES_DECODE_FAILED",
+                format!("failed to decode signal side: {error}"),
+            )
+        })?,
+        market_price: Probability::new(market_price).map_err(|error| {
+            db_error(
+                "POSTGRES_DECODE_FAILED",
+                format!("failed to decode signal market_price: {error}"),
+            )
+        })?,
+        fair_price: Probability::new(fair_price).map_err(|error| {
+            db_error(
+                "POSTGRES_DECODE_FAILED",
+                format!("failed to decode signal fair_price: {error}"),
+            )
+        })?,
+        edge: Edge::new(edge).map_err(|error| {
+            db_error(
+                "POSTGRES_DECODE_FAILED",
+                format!("failed to decode signal edge: {error}"),
+            )
+        })?,
+        confidence: Probability::new(confidence).map_err(|error| {
+            db_error(
+                "POSTGRES_DECODE_FAILED",
+                format!("failed to decode signal confidence: {error}"),
+            )
+        })?,
+        lifecycle_state: SignalLifecycleState::from_str(&lifecycle_state_raw).map_err(|error| {
+            db_error(
+                "POSTGRES_DECODE_FAILED",
+                format!("failed to decode signal lifecycle_state: {error}"),
+            )
+        })?,
+        reason: decode_column(row, "reason")?,
+        risk_decision: decode_column(row, "risk_decision")?,
+        evidence_ids: decode_column(row, "evidence_ids")?,
+        approved_by_user_id: decode_column(row, "approved_by_user_id")?,
+        approved_at: decode_column(row, "approved_at")?,
+        rejected_by_user_id: decode_column(row, "rejected_by_user_id")?,
+        rejected_at: decode_column(row, "rejected_at")?,
+        updated_at: decode_column(row, "updated_at")?,
+        version: decode_column(row, "version")?,
+    })
+}
+
+fn parse_probability_estimate_row(row: &sqlx::postgres::PgRow) -> Result<ProbabilityEstimateView> {
+    let prior_price: Decimal = decode_column(row, "prior_price")?;
+    let posterior_price: Decimal = decode_column(row, "posterior_price")?;
+    let fair_price: Decimal = decode_column(row, "fair_price")?;
+    let market_price: Decimal = decode_column(row, "market_price")?;
+    let edge: Decimal = decode_column(row, "edge")?;
+    let confidence: Decimal = decode_column(row, "confidence")?;
+    let time_horizon_raw: String = decode_column(row, "time_horizon")?;
+    let reason_codes_json: Json<Vec<String>> = decode_column(row, "reason_codes_json")?;
+    let evidence_count: i32 = decode_column(row, "evidence_count")?;
+
+    Ok(ProbabilityEstimateView {
+        id: decode_column(row, "id")?,
+        market_id: decode_column(row, "market_id")?,
+        event_id: decode_column(row, "event_id")?,
+        signal_id: decode_column(row, "signal_id")?,
+        prior_price: Probability::new(prior_price).map_err(|error| {
+            db_error(
+                "POSTGRES_DECODE_FAILED",
+                format!("failed to decode prior_price: {error}"),
+            )
+        })?,
+        posterior_price: Probability::new(posterior_price).map_err(|error| {
+            db_error(
+                "POSTGRES_DECODE_FAILED",
+                format!("failed to decode posterior_price: {error}"),
+            )
+        })?,
+        fair_price: Probability::new(fair_price).map_err(|error| {
+            db_error(
+                "POSTGRES_DECODE_FAILED",
+                format!("failed to decode fair_price: {error}"),
+            )
+        })?,
+        market_price: Probability::new(market_price).map_err(|error| {
+            db_error(
+                "POSTGRES_DECODE_FAILED",
+                format!("failed to decode market_price: {error}"),
+            )
+        })?,
+        edge: Edge::new(edge).map_err(|error| {
+            db_error(
+                "POSTGRES_DECODE_FAILED",
+                format!("failed to decode estimate edge: {error}"),
+            )
+        })?,
+        confidence: Probability::new(confidence).map_err(|error| {
+            db_error(
+                "POSTGRES_DECODE_FAILED",
+                format!("failed to decode estimate confidence: {error}"),
+            )
+        })?,
+        time_horizon: TimeHorizon::from_str(&time_horizon_raw).map_err(|error| {
+            db_error(
+                "POSTGRES_DECODE_FAILED",
+                format!("failed to decode time_horizon: {error}"),
+            )
+        })?,
+        model_version: decode_column(row, "model_version")?,
+        reason_codes: reason_codes_json.0,
+        evidence_count: evidence_count.max(0) as u32,
+        created_at: decode_column(row, "created_at")?,
+    })
+}
+
+fn parse_signal_transition_row(row: &sqlx::postgres::PgRow) -> Result<SignalTransitionView> {
+    let from_state_raw: String = decode_column(row, "from_state")?;
+    let to_state_raw: String = decode_column(row, "to_state")?;
+    let trigger_payload_json: Json<Value> = decode_column(row, "trigger_payload_json")?;
+
+    Ok(SignalTransitionView {
+        id: decode_column(row, "id")?,
+        signal_id: decode_column(row, "signal_id")?,
+        from_state: SignalLifecycleState::from_str(&from_state_raw).map_err(|error| {
+            db_error(
+                "POSTGRES_DECODE_FAILED",
+                format!("failed to decode from_state: {error}"),
+            )
+        })?,
+        to_state: SignalLifecycleState::from_str(&to_state_raw).map_err(|error| {
+            db_error(
+                "POSTGRES_DECODE_FAILED",
+                format!("failed to decode to_state: {error}"),
+            )
+        })?,
+        trigger_type: decode_column(row, "trigger_type")?,
+        trigger_payload: trigger_payload_json.0,
+        created_at: decode_column(row, "created_at")?,
+    })
+}
+
+fn parse_order_draft_row(row: &sqlx::postgres::PgRow) -> Result<OrderDraftView> {
+    let side_raw: String = decode_column(row, "side")?;
+    let limit_price: Decimal = decode_column(row, "limit_price")?;
+    let quantity: Decimal = decode_column(row, "quantity")?;
+    let notional: Decimal = decode_column(row, "notional")?;
+    let status_raw: String = decode_column(row, "status")?;
+
+    Ok(OrderDraftView {
+        id: decode_column(row, "id")?,
+        signal_id: decode_column(row, "signal_id")?,
+        signal_version: decode_column(row, "signal_version")?,
+        market_id: decode_column(row, "market_id")?,
+        connector_name: decode_column(row, "connector_name")?,
+        side: SignalSide::from_str(&side_raw).map_err(|error| {
+            db_error(
+                "POSTGRES_DECODE_FAILED",
+                format!("failed to decode order draft side: {error}"),
+            )
+        })?,
+        limit_price: Probability::new(limit_price).map_err(|error| {
+            db_error(
+                "POSTGRES_DECODE_FAILED",
+                format!("failed to decode order draft limit_price: {error}"),
+            )
+        })?,
+        quantity: Quantity::new(quantity).map_err(|error| {
+            db_error(
+                "POSTGRES_DECODE_FAILED",
+                format!("failed to decode order draft quantity: {error}"),
+            )
+        })?,
+        notional: UsdAmount::new(notional).map_err(|error| {
+            db_error(
+                "POSTGRES_DECODE_FAILED",
+                format!("failed to decode order draft notional: {error}"),
+            )
+        })?,
+        status: OrderDraftStatus::from_str(&status_raw).map_err(|error| {
+            db_error(
+                "POSTGRES_DECODE_FAILED",
+                format!("failed to decode order draft status: {error}"),
+            )
+        })?,
+        created_by_user_id: decode_column(row, "created_by_user_id")?,
+        external_order_id: decode_column(row, "external_order_id")?,
+        submitted_at: decode_column(row, "submitted_at")?,
+        failure_code: decode_column(row, "failure_code")?,
+        failure_message: decode_column(row, "failure_message")?,
+        created_at: decode_column(row, "created_at")?,
+        updated_at: decode_column(row, "updated_at")?,
+        version: decode_column(row, "version")?,
+    })
+}
+
+fn parse_execution_request_row(row: &sqlx::postgres::PgRow) -> Result<ExecutionRequestView> {
+    let mode_raw: String = decode_column(row, "mode")?;
+    let status_raw: String = decode_column(row, "status")?;
+
+    Ok(ExecutionRequestView {
+        id: decode_column(row, "id")?,
+        signal_id: decode_column(row, "signal_id")?,
+        signal_version: decode_column(row, "signal_version")?,
+        order_draft_id: decode_column(row, "order_draft_id")?,
+        connector_name: decode_column(row, "connector_name")?,
+        mode: polyedge_domain::SystemMode::from_str(&mode_raw).map_err(|error| {
+            db_error(
+                "POSTGRES_DECODE_FAILED",
+                format!("failed to decode execution request mode: {error}"),
+            )
+        })?,
+        requested_by_user_id: decode_column(row, "requested_by_user_id")?,
+        status: ExecutionRequestStatus::from_str(&status_raw).map_err(|error| {
+            db_error(
+                "POSTGRES_DECODE_FAILED",
+                format!("failed to decode execution request status: {error}"),
+            )
+        })?,
+        reason: decode_column(row, "reason")?,
+        external_order_id: decode_column(row, "external_order_id")?,
+        submitted_at: decode_column(row, "submitted_at")?,
+        failure_code: decode_column(row, "failure_code")?,
+        failure_message: decode_column(row, "failure_message")?,
+        created_at: decode_column(row, "created_at")?,
+        updated_at: decode_column(row, "updated_at")?,
+        version: decode_column(row, "version")?,
+    })
+}
+
+fn parse_dispatch_candidate_row(row: &sqlx::postgres::PgRow) -> Result<ExecutionDispatchCandidate> {
+    let order_draft_side_raw: String = decode_column(row, "order_draft_side")?;
+    let order_draft_limit_price: Decimal = decode_column(row, "order_draft_limit_price")?;
+    let order_draft_quantity: Decimal = decode_column(row, "order_draft_quantity")?;
+    let order_draft_notional: Decimal = decode_column(row, "order_draft_notional")?;
+    let order_draft_status_raw: String = decode_column(row, "order_draft_status")?;
+    let execution_request_mode_raw: String = decode_column(row, "execution_request_mode")?;
+    let execution_request_status_raw: String = decode_column(row, "execution_request_status")?;
+
+    Ok(ExecutionDispatchCandidate {
+        order_draft: OrderDraftView {
+            id: decode_column(row, "order_draft_id")?,
+            signal_id: decode_column(row, "order_draft_signal_id")?,
+            signal_version: decode_column(row, "order_draft_signal_version")?,
+            market_id: decode_column(row, "order_draft_market_id")?,
+            connector_name: decode_column(row, "order_draft_connector_name")?,
+            side: SignalSide::from_str(&order_draft_side_raw).map_err(|error| {
+                db_error(
+                    "POSTGRES_DECODE_FAILED",
+                    format!("failed to decode dispatch order draft side: {error}"),
+                )
+            })?,
+            limit_price: Probability::new(order_draft_limit_price).map_err(|error| {
+                db_error(
+                    "POSTGRES_DECODE_FAILED",
+                    format!("failed to decode dispatch order draft limit_price: {error}"),
+                )
+            })?,
+            quantity: Quantity::new(order_draft_quantity).map_err(|error| {
+                db_error(
+                    "POSTGRES_DECODE_FAILED",
+                    format!("failed to decode dispatch order draft quantity: {error}"),
+                )
+            })?,
+            notional: UsdAmount::new(order_draft_notional).map_err(|error| {
+                db_error(
+                    "POSTGRES_DECODE_FAILED",
+                    format!("failed to decode dispatch order draft notional: {error}"),
+                )
+            })?,
+            status: OrderDraftStatus::from_str(&order_draft_status_raw).map_err(|error| {
+                db_error(
+                    "POSTGRES_DECODE_FAILED",
+                    format!("failed to decode dispatch order draft status: {error}"),
+                )
+            })?,
+            created_by_user_id: decode_column(row, "order_draft_created_by_user_id")?,
+            external_order_id: decode_column(row, "order_draft_external_order_id")?,
+            submitted_at: decode_column(row, "order_draft_submitted_at")?,
+            failure_code: decode_column(row, "order_draft_failure_code")?,
+            failure_message: decode_column(row, "order_draft_failure_message")?,
+            created_at: decode_column(row, "order_draft_created_at")?,
+            updated_at: decode_column(row, "order_draft_updated_at")?,
+            version: decode_column(row, "order_draft_version")?,
+        },
+        execution_request: ExecutionRequestView {
+            id: decode_column(row, "execution_request_id")?,
+            signal_id: decode_column(row, "execution_request_signal_id")?,
+            signal_version: decode_column(row, "execution_request_signal_version")?,
+            order_draft_id: decode_column(row, "execution_request_order_draft_id")?,
+            connector_name: decode_column(row, "execution_request_connector_name")?,
+            mode: polyedge_domain::SystemMode::from_str(&execution_request_mode_raw).map_err(
+                |error| {
+                    db_error(
+                        "POSTGRES_DECODE_FAILED",
+                        format!("failed to decode dispatch execution request mode: {error}"),
+                    )
+                },
+            )?,
+            requested_by_user_id: decode_column(row, "execution_request_requested_by_user_id")?,
+            status: ExecutionRequestStatus::from_str(&execution_request_status_raw).map_err(
+                |error| {
+                    db_error(
+                        "POSTGRES_DECODE_FAILED",
+                        format!("failed to decode dispatch execution request status: {error}"),
+                    )
+                },
+            )?,
+            reason: decode_column(row, "execution_request_reason")?,
+            external_order_id: decode_column(row, "execution_request_external_order_id")?,
+            submitted_at: decode_column(row, "execution_request_submitted_at")?,
+            failure_code: decode_column(row, "execution_request_failure_code")?,
+            failure_message: decode_column(row, "execution_request_failure_message")?,
+            created_at: decode_column(row, "execution_request_created_at")?,
+            updated_at: decode_column(row, "execution_request_updated_at")?,
+            version: decode_column(row, "execution_request_version")?,
+        },
+    })
+}
+
+fn parse_reconciliation_candidate_row(
+    row: &sqlx::postgres::PgRow,
+) -> Result<ExecutionReconciliationCandidate> {
+    let candidate = parse_dispatch_candidate_row(row)?;
+    let order = if decode_column::<Option<String>>(row, "order_id")?.is_some() {
+        Some(parse_order_row_with_prefix(row, "order_")?)
+    } else {
+        None
+    };
+    Ok(ExecutionReconciliationCandidate {
+        order_draft: candidate.order_draft,
+        execution_request: candidate.execution_request,
+        order,
+    })
+}
+
+fn parse_order_row(row: &sqlx::postgres::PgRow) -> Result<OrderView> {
+    parse_order_row_with_prefix(row, "")
+}
+
+fn parse_order_row_with_prefix(row: &sqlx::postgres::PgRow, prefix: &str) -> Result<OrderView> {
+    let side_raw: String = decode_column(row, &format!("{prefix}side"))?;
+    let limit_price: Decimal = decode_column(row, &format!("{prefix}limit_price"))?;
+    let quantity: Decimal = decode_column(row, &format!("{prefix}quantity"))?;
+    let filled_quantity: Decimal = decode_column(row, &format!("{prefix}filled_quantity"))?;
+    let avg_fill_price: Decimal = decode_column(row, &format!("{prefix}avg_fill_price"))?;
+    let status_raw: String = decode_column(row, &format!("{prefix}status"))?;
+
+    Ok(OrderView {
+        id: decode_column(row, &format!("{prefix}id"))?,
+        signal_id: decode_column(row, &format!("{prefix}signal_id"))?,
+        execution_request_id: decode_column(row, &format!("{prefix}execution_request_id"))?,
+        order_draft_id: decode_column(row, &format!("{prefix}order_draft_id"))?,
+        market_id: decode_column(row, &format!("{prefix}market_id"))?,
+        connector_name: decode_column(row, &format!("{prefix}connector_name"))?,
+        account_id: decode_column(row, &format!("{prefix}account_id"))?,
+        external_order_id: decode_column(row, &format!("{prefix}external_order_id"))?,
+        side: SignalSide::from_str(&side_raw).map_err(|error| {
+            db_error(
+                "POSTGRES_DECODE_FAILED",
+                format!("failed to decode order side: {error}"),
+            )
+        })?,
+        limit_price: Probability::new(limit_price).map_err(|error| {
+            db_error(
+                "POSTGRES_DECODE_FAILED",
+                format!("failed to decode order limit_price: {error}"),
+            )
+        })?,
+        quantity: Quantity::new(quantity).map_err(|error| {
+            db_error(
+                "POSTGRES_DECODE_FAILED",
+                format!("failed to decode order quantity: {error}"),
+            )
+        })?,
+        filled_quantity: Quantity::new(filled_quantity).map_err(|error| {
+            db_error(
+                "POSTGRES_DECODE_FAILED",
+                format!("failed to decode order filled_quantity: {error}"),
+            )
+        })?,
+        avg_fill_price: Probability::new(avg_fill_price).map_err(|error| {
+            db_error(
+                "POSTGRES_DECODE_FAILED",
+                format!("failed to decode order avg_fill_price: {error}"),
+            )
+        })?,
+        status: OrderStatus::from_str(&status_raw).map_err(|error| {
+            db_error(
+                "POSTGRES_DECODE_FAILED",
+                format!("failed to decode order status: {error}"),
+            )
+        })?,
+        submitted_at: decode_column(row, &format!("{prefix}submitted_at"))?,
+        updated_at: decode_column(row, &format!("{prefix}updated_at"))?,
+        version: decode_column(row, &format!("{prefix}version"))?,
+    })
+}
+
+fn parse_trade_row(row: &sqlx::postgres::PgRow) -> Result<TradeView> {
+    let side_raw: String = decode_column(row, "side")?;
+    let price: Decimal = decode_column(row, "price")?;
+    let quantity: Decimal = decode_column(row, "quantity")?;
+    let fee: Decimal = decode_column(row, "fee")?;
+
+    Ok(TradeView {
+        id: decode_column(row, "id")?,
+        order_id: decode_column(row, "order_id")?,
+        signal_id: decode_column(row, "signal_id")?,
+        market_id: decode_column(row, "market_id")?,
+        connector_name: decode_column(row, "connector_name")?,
+        external_trade_id: decode_column(row, "external_trade_id")?,
+        side: SignalSide::from_str(&side_raw).map_err(|error| {
+            db_error(
+                "POSTGRES_DECODE_FAILED",
+                format!("failed to decode trade side: {error}"),
+            )
+        })?,
+        price: Probability::new(price).map_err(|error| {
+            db_error(
+                "POSTGRES_DECODE_FAILED",
+                format!("failed to decode trade price: {error}"),
+            )
+        })?,
+        quantity: Quantity::new(quantity).map_err(|error| {
+            db_error(
+                "POSTGRES_DECODE_FAILED",
+                format!("failed to decode trade quantity: {error}"),
+            )
+        })?,
+        fee: UsdAmount::new(fee).map_err(|error| {
+            db_error(
+                "POSTGRES_DECODE_FAILED",
+                format!("failed to decode trade fee: {error}"),
+            )
+        })?,
+        executed_at: decode_column(row, "executed_at")?,
+    })
+}
+
+fn parse_position_row(row: &sqlx::postgres::PgRow) -> Result<PositionView> {
+    let side_raw: String = decode_column(row, "side")?;
+    let net_quantity: Decimal = decode_column(row, "net_quantity")?;
+    let avg_cost: Decimal = decode_column(row, "avg_cost")?;
+    let mark_price: Decimal = decode_column(row, "mark_price")?;
+    let unrealized_pnl: Decimal = decode_column(row, "unrealized_pnl")?;
+    let realized_pnl: Decimal = decode_column(row, "realized_pnl")?;
+
+    Ok(PositionView {
+        id: decode_column(row, "id")?,
+        market_id: decode_column(row, "market_id")?,
+        connector_name: decode_column(row, "connector_name")?,
+        account_id: decode_column(row, "account_id")?,
+        side: SignalSide::from_str(&side_raw).map_err(|error| {
+            db_error(
+                "POSTGRES_DECODE_FAILED",
+                format!("failed to decode position side: {error}"),
+            )
+        })?,
+        net_quantity: Quantity::new(net_quantity).map_err(|error| {
+            db_error(
+                "POSTGRES_DECODE_FAILED",
+                format!("failed to decode position net_quantity: {error}"),
+            )
+        })?,
+        avg_cost: Probability::new(avg_cost).map_err(|error| {
+            db_error(
+                "POSTGRES_DECODE_FAILED",
+                format!("failed to decode position avg_cost: {error}"),
+            )
+        })?,
+        mark_price: Probability::new(mark_price).map_err(|error| {
+            db_error(
+                "POSTGRES_DECODE_FAILED",
+                format!("failed to decode position mark_price: {error}"),
+            )
+        })?,
+        unrealized_pnl: SignedUsdAmount::new(unrealized_pnl).map_err(|error| {
+            db_error(
+                "POSTGRES_DECODE_FAILED",
+                format!("failed to decode position unrealized_pnl: {error}"),
+            )
+        })?,
+        realized_pnl: SignedUsdAmount::new(realized_pnl).map_err(|error| {
+            db_error(
+                "POSTGRES_DECODE_FAILED",
+                format!("failed to decode position realized_pnl: {error}"),
+            )
+        })?,
+        updated_at: decode_column(row, "updated_at")?,
+        version: decode_column(row, "version")?,
+    })
+}
+
+fn in_memory_position_key(
+    connector_name: &str,
+    account_id: &str,
+    market_id: &str,
+    side: SignalSide,
+) -> String {
+    format!(
+        "{connector_name}:{account_id}:{market_id}:{}",
+        side.as_str()
+    )
+}
+
+fn build_next_position(
+    current: PositionView,
+    filled_quantity: Quantity,
+    fill_price: Probability,
+    _trace_id: &str,
+) -> Result<PositionView> {
+    let next_quantity_value = current.net_quantity.value() + filled_quantity.value();
+    let next_quantity = Quantity::new(next_quantity_value)?;
+    let total_cost = (current.avg_cost.value() * current.net_quantity.value())
+        + (fill_price.value() * filled_quantity.value());
+    let avg_cost = if next_quantity.value().is_zero() {
+        Probability::new(Decimal::ZERO)?
+    } else {
+        Probability::new(
+            (total_cost / next_quantity.value())
+                .round_dp_with_strategy(Probability::SCALE, RoundingStrategy::MidpointNearestEven),
+        )?
+    };
+    let mark_price = fill_price;
+    let unrealized_pnl = compute_unrealized_pnl(next_quantity, avg_cost, mark_price)?;
+
+    Ok(PositionView {
+        avg_cost,
+        mark_price,
+        net_quantity: next_quantity,
+        unrealized_pnl,
+        updated_at: OffsetDateTime::now_utc(),
+        version: current.version + 1,
+        ..current
+    })
+}
+
+fn weighted_fill_price(
+    current_avg_fill_price: Probability,
+    current_filled_quantity: Quantity,
+    fill_price: Probability,
+    fill_quantity: Quantity,
+) -> Result<Probability> {
+    let next_filled_quantity_value = current_filled_quantity.value() + fill_quantity.value();
+    if next_filled_quantity_value <= Decimal::ZERO {
+        return Probability::new(Decimal::ZERO);
+    }
+
+    let weighted_cost = (current_avg_fill_price.value() * current_filled_quantity.value())
+        + (fill_price.value() * fill_quantity.value());
+    Probability::new(
+        (weighted_cost / next_filled_quantity_value)
+            .round_dp_with_strategy(Probability::SCALE, RoundingStrategy::MidpointNearestEven),
+    )
+}
+
+fn compute_unrealized_pnl(
+    quantity: Quantity,
+    avg_cost: Probability,
+    mark_price: Probability,
+) -> Result<SignedUsdAmount> {
+    let raw = (mark_price.value() - avg_cost.value()) * quantity.value();
+    SignedUsdAmount::new(raw.round_dp_with_strategy(
+        SignedUsdAmount::SCALE,
+        RoundingStrategy::MidpointNearestEven,
+    ))
+}
+
+fn validate_signal_for_execution(
+    signal: &SignalView,
+    mode: polyedge_domain::SystemMode,
+) -> Result<()> {
+    if signal.rejected_by_user_id.is_some() {
+        return Err(AppError::conflict(
+            "STATE_SIGNAL_REJECTED_FOR_EXECUTION",
+            "rejected signals cannot be submitted for execution",
+        ));
+    }
+
+    if mode == polyedge_domain::SystemMode::ManualConfirm && signal.approved_by_user_id.is_none() {
+        return Err(AppError::conflict(
+            "STATE_SIGNAL_NOT_APPROVED_FOR_EXECUTION",
+            "manual_confirm execution requires an approved signal version",
+        ));
+    }
+
+    if !matches!(
+        signal.lifecycle_state,
+        SignalLifecycleState::New | SignalLifecycleState::Active
+    ) {
+        return Err(AppError::conflict(
+            "STATE_SIGNAL_NOT_EXECUTABLE",
+            "only new or active signals can be submitted for execution",
+        ));
+    }
+
+    Ok(())
+}
+
+fn compute_order_notional(limit_price: Probability, quantity: Quantity) -> Result<UsdAmount> {
+    let notional = (limit_price.value() * quantity.value())
+        .round_dp_with_strategy(UsdAmount::SCALE, RoundingStrategy::MidpointNearestEven);
+    UsdAmount::new(notional).map_err(|error| {
+        AppError::invalid_input(
+            "ORDER_NOTIONAL_INVALID",
+            format!("failed to compute order notional: {error}"),
+        )
+    })
+}
+
+fn decode_column<T>(row: &sqlx::postgres::PgRow, column: &str) -> Result<T>
+where
+    T: for<'r> sqlx::Decode<'r, sqlx::Postgres> + sqlx::Type<sqlx::Postgres>,
+{
+    row.try_get(column).map_err(|error| {
+        db_error(
+            "POSTGRES_DECODE_FAILED",
+            format!("failed to decode column {column}: {error}"),
+        )
+    })
+}

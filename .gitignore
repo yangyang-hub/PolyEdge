@@ -1,0 +1,34 @@
+# OS and editors
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Local environment files
+**/.env
+**/.env.*
+!**/.env.example
+
+# Node / Next.js
+**/node_modules/
+**/.next/
+**/out/
+**/dist/
+**/coverage/
+**/.turbo/
+**/*.tsbuildinfo
+.pnpm-store/
+.npm/
+
+# Rust
+**/target/

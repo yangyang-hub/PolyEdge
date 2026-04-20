@@ -1,0 +1,58 @@
+[server]
+host = "127.0.0.1"
+port = 8080
+
+[postgres]
+url = ""
+
+[redis]
+url = ""
+
+[runtime]
+environment = "local"
+initial_mode = "manual_confirm"
+
+[risk]
+exposure_reference_nav = "100.00"
+initial_daily_pnl = "0.00"
+initial_gross_exposure = "0"
+initial_net_exposure = "0"
+initial_open_alerts = 0
+initial_kill_switch = false
+min_signal_confidence = "0.55"
+min_edge_to_execute = "0.03"
+max_open_alerts = 3
+max_daily_loss = "5000.00"
+max_gross_exposure = "0.50"
+max_net_exposure = "0.30"
+
+[polymarket]
+mode = "mock"
+account_id = "polymarket_account"
+chain_id = 137
+signature_type = "eoa"
+funder = ""
+private_key = ""
+api_key = ""
+api_secret = ""
+api_passphrase = ""
+clob_host = "https://clob.polymarket.com"
+ws_host = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
+gamma_host = "https://gamma-api.polymarket.com"
+data_api_host = "https://data-api.polymarket.com"
+order_status_poll_limit = 100
+fill_poll_limit = 100
+ws_max_instruments = 100
+ws_idle_warn_secs = 15
+ws_stale_after_secs = 60
+
+[auth]
+issuer = "polyedge-nextjs"
+audience = "polyedge-rust-api"
+clock_skew_secs = 30
+max_query_ttl_secs = 60
+max_write_ttl_secs = 30
+max_step_up_window_secs = 600
+revoked_sessions = []
+force_reauth_after = "2026-01-01T00:00:00Z"
+keys = []
