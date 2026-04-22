@@ -104,7 +104,7 @@ post_only_enabled = false
 参考实现：
 
 1. `/home/yangyang/workspace/polygon/PolyAlpha/crates/pa-core/src/config.rs`
-2. `/home/yangyang/workspace/polygon/PolyAlpha/config/default.toml`
+2. `packages/backend/.env.example`
 
 ---
 
@@ -497,7 +497,7 @@ PolyEdge 不应直接把外部系统状态当内部状态。
 3. CTF 链上操作：`/home/yangyang/workspace/polygon/PolyAlpha/crates/pa-execution/src/ctf_executor.rs`
 4. Safe 代理赎回：`/home/yangyang/workspace/polygon/PolyAlpha/crates/pa-execution/src/safe_redeemer.rs`
 5. 配置模型：`/home/yangyang/workspace/polygon/PolyAlpha/crates/pa-core/src/config.rs`
-6. 默认配置：`/home/yangyang/workspace/polygon/PolyAlpha/config/default.toml`
+6. 默认配置示例：`packages/backend/.env.example`
 7. 依赖组合：`/home/yangyang/workspace/polygon/PolyAlpha/Cargo.toml`
 
 这些文件可作为参考实现，但 PolyEdge 应保留自己的分层：

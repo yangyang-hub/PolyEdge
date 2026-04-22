@@ -146,12 +146,26 @@ cargo run -p polyedge-worker -- poll-polymarket-order-statuses
 cargo run -p polyedge-worker -- reconcile-polymarket-fills
 ```
 
-默认后端配置在 [packages/backend/config/default.toml](./packages/backend/config/default.toml)：
+后端通过环境变量配置，示例见 [packages/backend/.env.example](./packages/backend/.env.example)。
+
+建议先在 `packages/backend` 下创建本地配置：
+
+```bash
+cp .env.example .env
+```
+
+默认值对应当前开发环境：
 
 - API 默认监听 `127.0.0.1:8080`
 - runtime 默认模式是 `manual_confirm`
 - polymarket 默认模式是 `mock`
 - `postgres.url` 和 `redis.url` 默认仍为空
+
+说明：
+
+1. 环境变量命名采用 `POLYEDGE_<section>__<field>`，例如 `POLYEDGE_SERVER__PORT=8080`。
+2. 留空的可选项会被视为未配置，例如 `POLYEDGE_POSTGRES__URL=`。
+3. `POLYEDGE_AUTH__KEYS_JSON` 使用 JSON 数组格式配置验签公钥。
 
 ## 当前已实现能力
 

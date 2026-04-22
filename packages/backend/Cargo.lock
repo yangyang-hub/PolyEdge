@@ -3173,6 +3173,7 @@ dependencies = [
  "axum",
  "base64",
  "config",
+ "dotenvy",
  "ed25519-dalek",
  "polyedge-application",
  "polyedge-contracts",

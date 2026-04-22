@@ -9,6 +9,7 @@ async-trait.workspace = true
 axum.workspace = true
 base64.workspace = true
 config.workspace = true
+dotenvy.workspace = true
 ed25519-dalek.workspace = true
 polyedge-application = { path = "../application" }
 polyedge-contracts = { path = "../contracts" }

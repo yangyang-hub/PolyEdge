@@ -1,8 +1,13 @@
-use config::{Config, Environment, File};
-use polyedge_domain::{ExposureRatio, Probability, SignedUsdAmount, SystemMode, UsdAmount};
+use config::{Config, Environment};
+use polyedge_domain::{
+    AppError, ExposureRatio, Probability, SignedUsdAmount, SystemMode, UsdAmount,
+};
 use serde::Deserialize;
 
-#[derive(Debug, Clone, Deserialize)]
+const AUTH_KEYS_JSON_ENV: &str = "POLYEDGE_AUTH__KEYS_JSON";
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
 pub struct Settings {
     pub server: ServerSettings,
     pub postgres: DatabaseSettings,
@@ -14,28 +19,33 @@ pub struct Settings {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
 pub struct ServerSettings {
     pub host: String,
     pub port: u16,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
 pub struct DatabaseSettings {
     pub url: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
 pub struct RedisSettings {
     pub url: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
 pub struct RuntimeSettings {
     pub environment: String,
     pub initial_mode: SystemMode,
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
 pub struct RiskSettings {
     pub exposure_reference_nav: UsdAmount,
     pub initial_daily_pnl: SignedUsdAmount,
@@ -68,6 +78,7 @@ pub enum PolymarketSignatureType {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
 pub struct PolymarketSettings {
     pub mode: PolymarketConnectorMode,
     pub account_id: String,
@@ -90,6 +101,7 @@ pub struct PolymarketSettings {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
 pub struct AuthSettings {
     pub issuer: String,
     pub audience: String,
@@ -110,25 +122,108 @@ pub struct AuthKeySettings {
     pub public_key_base64: String,
 }
 
+impl Default for ServerSettings {
+    fn default() -> Self {
+        Self {
+            host: "127.0.0.1".to_string(),
+            port: 8080,
+        }
+    }
+}
+
+impl Default for RuntimeSettings {
+    fn default() -> Self {
+        Self {
+            environment: "local".to_string(),
+            initial_mode: SystemMode::ManualConfirm,
+        }
+    }
+}
+
+impl Default for RiskSettings {
+    fn default() -> Self {
+        Self {
+            exposure_reference_nav: usd_amount("100.00"),
+            initial_daily_pnl: signed_usd_amount("0.00"),
+            initial_gross_exposure: exposure_ratio("0"),
+            initial_net_exposure: exposure_ratio("0"),
+            initial_open_alerts: 0,
+            initial_kill_switch: false,
+            min_signal_confidence: probability("0.55"),
+            min_edge_to_execute: probability("0.03"),
+            max_open_alerts: 3,
+            max_daily_loss: usd_amount("5000.00"),
+            max_gross_exposure: exposure_ratio("0.50"),
+            max_net_exposure: exposure_ratio("0.30"),
+        }
+    }
+}
+
+impl Default for PolymarketConnectorMode {
+    fn default() -> Self {
+        Self::Mock
+    }
+}
+
+impl Default for PolymarketSignatureType {
+    fn default() -> Self {
+        Self::Eoa
+    }
+}
+
+impl Default for PolymarketSettings {
+    fn default() -> Self {
+        Self {
+            mode: PolymarketConnectorMode::Mock,
+            account_id: "polymarket_account".to_string(),
+            chain_id: 137,
+            signature_type: PolymarketSignatureType::Eoa,
+            funder: None,
+            private_key: None,
+            api_key: None,
+            api_secret: None,
+            api_passphrase: None,
+            clob_host: "https://clob.polymarket.com".to_string(),
+            ws_host: "wss://ws-subscriptions-clob.polymarket.com/ws/market".to_string(),
+            gamma_host: "https://gamma-api.polymarket.com".to_string(),
+            data_api_host: "https://data-api.polymarket.com".to_string(),
+            order_status_poll_limit: 100,
+            fill_poll_limit: 100,
+            ws_max_instruments: 100,
+            ws_idle_warn_secs: 15,
+            ws_stale_after_secs: 60,
+        }
+    }
+}
+
+impl Default for AuthSettings {
+    fn default() -> Self {
+        Self {
+            issuer: "polyedge-nextjs".to_string(),
+            audience: "polyedge-rust-api".to_string(),
+            clock_skew_secs: 30,
+            max_query_ttl_secs: 60,
+            max_write_ttl_secs: 30,
+            max_step_up_window_secs: 600,
+            revoked_sessions: Vec::new(),
+            force_reauth_after: Some("2026-01-01T00:00:00Z".to_string()),
+            keys: Vec::new(),
+        }
+    }
+}
+
 impl Settings {
     pub fn load() -> polyedge_domain::Result<Self> {
-        let builder = Config::builder()
-            .add_source(File::with_name("config/default").required(false))
-            .add_source(Environment::with_prefix("POLYEDGE").separator("__"));
+        if let Err(error) = dotenvy::dotenv() {
+            if !error.not_found() {
+                return Err(AppError::internal(
+                    "CONFIG_DOTENV_FAILED",
+                    format!("failed to load .env file: {error}"),
+                ));
+            }
+        }
 
-        let config = builder.build().map_err(|error| {
-            polyedge_domain::AppError::internal(
-                "CONFIG_BUILD_FAILED",
-                format!("failed to build configuration: {error}"),
-            )
-        })?;
-
-        config.try_deserialize().map_err(|error| {
-            polyedge_domain::AppError::internal(
-                "CONFIG_DESERIALIZE_FAILED",
-                format!("failed to deserialize configuration: {error}"),
-            )
-        })
+        Self::load_from_environment(environment_source(), std::env::var(AUTH_KEYS_JSON_ENV).ok())
     }
 
     #[must_use]
@@ -137,83 +232,176 @@ impl Settings {
         environment: impl Into<String>,
         public_keys: Vec<AuthKeySettings>,
     ) -> Self {
-        Self {
-            server: ServerSettings {
-                host: "127.0.0.1".to_string(),
-                port: 3000,
-            },
-            postgres: DatabaseSettings { url: None },
-            redis: RedisSettings { url: None },
-            runtime: RuntimeSettings {
-                environment: environment.into(),
-                initial_mode,
-            },
-            risk: RiskSettings {
-                exposure_reference_nav: UsdAmount::new(
-                    rust_decimal::Decimal::from_str_exact("100.00").expect("usd amount"),
+        let mut settings = Self::default();
+        settings.server.port = 3000;
+        settings.runtime.environment = environment.into();
+        settings.runtime.initial_mode = initial_mode;
+        settings.auth.force_reauth_after = None;
+        settings.auth.keys = public_keys;
+        settings
+    }
+
+    fn load_from_environment(
+        source: Environment,
+        auth_keys_json: Option<String>,
+    ) -> polyedge_domain::Result<Self> {
+        let config = Config::builder()
+            .add_source(source)
+            .build()
+            .map_err(|error| {
+                AppError::internal(
+                    "CONFIG_BUILD_FAILED",
+                    format!("failed to build configuration: {error}"),
                 )
-                .expect("exposure reference nav"),
-                initial_daily_pnl: SignedUsdAmount::new(rust_decimal::Decimal::ZERO)
-                    .expect("signed usd amount"),
-                initial_gross_exposure: ExposureRatio::new(rust_decimal::Decimal::ZERO)
-                    .expect("gross exposure"),
-                initial_net_exposure: ExposureRatio::new(rust_decimal::Decimal::ZERO)
-                    .expect("net exposure"),
-                initial_open_alerts: 0,
-                initial_kill_switch: false,
-                min_signal_confidence: Probability::new(
-                    rust_decimal::Decimal::from_str_exact("0.55").expect("probability"),
+            })?;
+
+        let mut settings = Self::from_config(config)?;
+
+        if let Some(raw_keys) = auth_keys_json.filter(|value| !value.trim().is_empty()) {
+            settings.auth.keys = serde_json::from_str(&raw_keys).map_err(|error| {
+                AppError::internal(
+                    "CONFIG_AUTH_KEYS_JSON_INVALID",
+                    format!("failed to parse {AUTH_KEYS_JSON_ENV}: {error}"),
                 )
-                .expect("min confidence"),
-                min_edge_to_execute: Probability::new(
-                    rust_decimal::Decimal::from_str_exact("0.03").expect("probability"),
-                )
-                .expect("min edge"),
-                max_open_alerts: 3,
-                max_daily_loss: UsdAmount::new(
-                    rust_decimal::Decimal::from_str_exact("5000.00").expect("usd amount"),
-                )
-                .expect("max daily loss"),
-                max_gross_exposure: ExposureRatio::new(
-                    rust_decimal::Decimal::from_str_exact("0.50").expect("gross limit"),
-                )
-                .expect("gross limit"),
-                max_net_exposure: ExposureRatio::new(
-                    rust_decimal::Decimal::from_str_exact("0.30").expect("net limit"),
-                )
-                .expect("net limit"),
-            },
-            polymarket: PolymarketSettings {
-                mode: PolymarketConnectorMode::Mock,
-                account_id: "polymarket_account".to_string(),
-                chain_id: 137,
-                signature_type: PolymarketSignatureType::Eoa,
-                funder: None,
-                private_key: None,
-                api_key: None,
-                api_secret: None,
-                api_passphrase: None,
-                clob_host: "https://clob.polymarket.com".to_string(),
-                ws_host: "wss://ws-subscriptions-clob.polymarket.com/ws/market".to_string(),
-                gamma_host: "https://gamma-api.polymarket.com".to_string(),
-                data_api_host: "https://data-api.polymarket.com".to_string(),
-                order_status_poll_limit: 100,
-                fill_poll_limit: 100,
-                ws_max_instruments: 100,
-                ws_idle_warn_secs: 15,
-                ws_stale_after_secs: 60,
-            },
-            auth: AuthSettings {
-                issuer: "polyedge-nextjs".to_string(),
-                audience: "polyedge-rust-api".to_string(),
-                clock_skew_secs: 30,
-                max_query_ttl_secs: 60,
-                max_write_ttl_secs: 30,
-                max_step_up_window_secs: 600,
-                revoked_sessions: Vec::new(),
-                force_reauth_after: None,
-                keys: public_keys,
-            },
+            })?;
         }
+
+        Ok(settings)
+    }
+
+    fn from_config(config: Config) -> polyedge_domain::Result<Self> {
+        config.try_deserialize().map_err(|error| {
+            AppError::internal(
+                "CONFIG_DESERIALIZE_FAILED",
+                format!("failed to deserialize configuration: {error}"),
+            )
+        })
+    }
+}
+
+fn environment_source() -> Environment {
+    Environment::with_prefix("POLYEDGE")
+        .prefix_separator("_")
+        .separator("__")
+        .ignore_empty(true)
+        .try_parsing(true)
+        .list_separator(",")
+        .with_list_parse_key("auth.revoked_sessions")
+}
+
+fn decimal(value: &str) -> rust_decimal::Decimal {
+    rust_decimal::Decimal::from_str_exact(value)
+        .expect("static backend configuration default must be a valid decimal")
+}
+
+fn probability(value: &str) -> Probability {
+    Probability::new(decimal(value)).expect("static backend configuration default must be valid")
+}
+
+fn exposure_ratio(value: &str) -> ExposureRatio {
+    ExposureRatio::new(decimal(value)).expect("static backend configuration default must be valid")
+}
+
+fn usd_amount(value: &str) -> UsdAmount {
+    UsdAmount::new(decimal(value)).expect("static backend configuration default must be valid")
+}
+
+fn signed_usd_amount(value: &str) -> SignedUsdAmount {
+    SignedUsdAmount::new(decimal(value))
+        .expect("static backend configuration default must be valid")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Settings, environment_source};
+    use std::collections::HashMap;
+
+    #[test]
+    fn settings_defaults_match_runtime_defaults() {
+        let settings = Settings::from_config(config::Config::builder().build().expect("config"))
+            .expect("settings");
+
+        assert_eq!(settings.server.host, "127.0.0.1");
+        assert_eq!(settings.server.port, 8080);
+        assert_eq!(settings.runtime.environment, "local");
+        assert_eq!(
+            settings.runtime.initial_mode,
+            polyedge_domain::SystemMode::ManualConfirm
+        );
+        assert_eq!(
+            settings.polymarket.mode,
+            super::PolymarketConnectorMode::Mock
+        );
+        assert!(settings.postgres.url.is_none());
+        assert!(settings.redis.url.is_none());
+        assert_eq!(
+            settings.auth.force_reauth_after.as_deref(),
+            Some("2026-01-01T00:00:00Z")
+        );
+    }
+
+    #[test]
+    fn settings_can_be_loaded_from_environment_variables() {
+        let source = environment_source().source(Some(HashMap::from([
+            ("POLYEDGE_SERVER__PORT".to_string(), "9090".to_string()),
+            (
+                "POLYEDGE_POSTGRES__URL".to_string(),
+                "postgres://postgres:postgres@localhost:5432/polyedge".to_string(),
+            ),
+            (
+                "POLYEDGE_RUNTIME__ENVIRONMENT".to_string(),
+                "staging".to_string(),
+            ),
+            (
+                "POLYEDGE_RUNTIME__INITIAL_MODE".to_string(),
+                "live_auto".to_string(),
+            ),
+            (
+                "POLYEDGE_RISK__INITIAL_KILL_SWITCH".to_string(),
+                "true".to_string(),
+            ),
+            ("POLYEDGE_POLYMARKET__MODE".to_string(), "live".to_string()),
+            (
+                "POLYEDGE_POLYMARKET__PRIVATE_KEY".to_string(),
+                "".to_string(),
+            ),
+            (
+                "POLYEDGE_AUTH__REVOKED_SESSIONS".to_string(),
+                "sess_alpha,sess_beta".to_string(),
+            ),
+            ("POLYEDGE_AUTH__KEYS_JSON".to_string(), "[]".to_string()),
+        ])));
+
+        let settings = Settings::load_from_environment(
+            source,
+            Some(
+                r#"[{"kid":"local-dev","public_key_base64":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}]"#
+                    .to_string(),
+            ),
+        )
+        .expect("settings");
+
+        assert_eq!(settings.server.port, 9090);
+        assert_eq!(
+            settings.postgres.url.as_deref(),
+            Some("postgres://postgres:postgres@localhost:5432/polyedge"),
+        );
+        assert_eq!(settings.runtime.environment, "staging");
+        assert_eq!(
+            settings.runtime.initial_mode,
+            polyedge_domain::SystemMode::LiveAuto
+        );
+        assert!(settings.risk.initial_kill_switch);
+        assert_eq!(
+            settings.polymarket.mode,
+            super::PolymarketConnectorMode::Live
+        );
+        assert!(settings.polymarket.private_key.is_none());
+        assert_eq!(
+            settings.auth.revoked_sessions,
+            vec!["sess_alpha".to_string(), "sess_beta".to_string()],
+        );
+        assert_eq!(settings.auth.keys.len(), 1);
+        assert_eq!(settings.auth.keys[0].kid, "local-dev");
     }
 }
