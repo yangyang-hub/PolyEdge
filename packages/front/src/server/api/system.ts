@@ -4,15 +4,24 @@ import type { ApiListResponse, ContractListQuery, WriteResponse } from "@/lib/co
 import type { ApprovalDto } from "@/lib/contracts/dto";
 import { approvalFixtures } from "@/lib/server/polyedge-mock-data";
 import {
-  buildQueryString,
   createListResponse,
   createWriteResponse,
-  fetchContract,
   fetchWriteContract,
 } from "@/server/api/base";
+import { readDerivedLiveApprovals } from "@/server/api/live-console-derived";
+
+type LiveSignalDecisionResponse = {
+  data: {
+    replayed: boolean;
+    signal: {
+      id: string;
+      version: number;
+    };
+  };
+};
 
 export async function listApprovals(query?: ContractListQuery): Promise<ApiListResponse<ApprovalDto>> {
-  const filtered = approvalFixtures.filter((approval) => {
+  const applyFilters = (approvals: ApprovalDto[]) => approvals.filter((approval) => {
     if (query?.status && !query.status.includes(approval.status)) {
       return false;
     }
@@ -20,10 +29,23 @@ export async function listApprovals(query?: ContractListQuery): Promise<ApiListR
     return true;
   });
 
-  return fetchContract(
-    `/api/system/approvals${buildQueryString(query)}`,
-    createListResponse("approvals", filtered, query?.limit),
-  );
+  if (!process.env.POLYEDGE_API_BASE_URL) {
+    return createListResponse("approvals", applyFilters(approvalFixtures), query?.limit);
+  }
+
+  const { data, meta } = await readDerivedLiveApprovals();
+  const filtered = applyFilters(data);
+  const limited = query?.limit ? filtered.slice(0, query.limit) : filtered;
+
+  return {
+    data: limited,
+    page: {
+      limit: query?.limit ?? limited.length,
+      next_cursor: null,
+      has_more: filtered.length > limited.length,
+    },
+    meta,
+  };
 }
 
 export async function submitApprovalDecision(input: {
@@ -35,20 +57,37 @@ export async function submitApprovalDecision(input: {
   stepUpCode?: string;
 }): Promise<WriteResponse> {
   const status = input.decision === "approved" ? "queued" : "rejected";
+  const isSignalDecision = input.resourceId.startsWith("sig_");
+
+  if (!isSignalDecision && process.env.POLYEDGE_API_BASE_URL) {
+    throw new Error("Live approval decisions are only wired for signal resources. Mode-switch and kill-switch queues remain mock-only.");
+  }
+
+  const path = input.decision === "approved"
+    ? `/api/v1/signals/${input.resourceId}/approve`
+    : `/api/v1/signals/${input.resourceId}/reject`;
+  const stepUpScope = input.decision === "approved" ? "signal_approve" : "signal_reject";
 
   return fetchWriteContract(
-    `/api/system/approvals/${input.approvalId}/decision`,
+    path,
     {
       method: "POST",
       idempotencyKey: `approval-${input.approvalId}-${input.decision}-${crypto.randomUUID()}`,
       body: {
-        resource_id: input.resourceId,
         expected_version: input.expectedVersion,
-        decision: input.decision,
-        note: input.note,
-        step_up_code: input.stepUpCode ?? null,
+        reason: input.note,
       },
+      stepUpCode: input.stepUpCode,
+      stepUpScopes: [stepUpScope],
     },
     createWriteResponse(`approval_decision_${input.approvalId}`, input.resourceId, status),
+    {
+      mapLiveResponse: (payload: LiveSignalDecisionResponse) =>
+        createWriteResponse(
+          `signal_${input.decision}_${payload.data.signal.id}_${payload.data.signal.version}`,
+          payload.data.signal.id,
+          input.decision === "approved" ? "completed" : "rejected",
+        ),
+    },
   );
 }

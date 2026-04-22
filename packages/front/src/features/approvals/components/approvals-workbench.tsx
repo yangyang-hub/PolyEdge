@@ -67,7 +67,7 @@ type ApprovalsWorkbenchProps = {
   pendingCount: number;
   completedCount: number;
   approvals: ApprovalItem[];
-  selectedApproval: SelectedApproval;
+  selectedApproval: SelectedApproval | null;
 };
 
 type ApprovalTab = "pending" | "completed";
@@ -128,9 +128,17 @@ function ApprovalsDetailPanel({
   approval,
   onOpenDecision,
 }: {
-  approval: ApprovalItem | SelectedApproval;
+  approval: ApprovalItem | SelectedApproval | null;
   onOpenDecision?: (decision: Exclude<ApprovalDecision, null>) => void;
 }) {
+  if (!approval) {
+    return (
+      <div className="rounded-md bg-accent/45 p-4 text-sm text-muted-foreground">
+        No approval items are currently queued from the live backend.
+      </div>
+    );
+  }
+
   const approvalStatus = "status" in approval ? approval.status : "pending";
 
   return (

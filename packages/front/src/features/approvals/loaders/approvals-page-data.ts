@@ -6,11 +6,13 @@ import { approvalSeverityTone, formatClock, humanizeSnakeCase } from "@/lib/serv
 
 export async function getApprovalsPageData() {
   const { data: approvals } = await listApprovals();
-  const selectedApproval = selectFirstMatchingItem(
-    approvals,
-    [(approval) => approval.severity === "critical"],
-    "Approvals page requires at least one approval fixture or API result.",
-  );
+  const selectedApproval = approvals.length > 0
+    ? selectFirstMatchingItem(
+        approvals,
+        [(approval) => approval.severity === "critical"],
+        "Approvals page requires at least one approval fixture or API result.",
+      )
+    : null;
   const riskMap = {
     critical: "98%",
     warning: "32%",
@@ -34,17 +36,19 @@ export async function getApprovalsPageData() {
       resourceId: approval.resource_id,
       version: approval.version,
       requiresStepUpAuth: approval.requires_step_up_auth,
-      isSelected: approval.id === selectedApproval.id,
+      isSelected: approval.id === selectedApproval?.id,
     })),
-    selectedApproval: {
-      typeLabel: humanizeSnakeCase(selectedApproval.type),
-      severity: selectedApproval.severity,
-      severityLabel: selectedApproval.severity,
-      severityTone: approvalSeverityTone(selectedApproval.severity),
-      summary: selectedApproval.summary,
-      resourceId: selectedApproval.resource_id,
-      version: selectedApproval.version,
-      requiresStepUpAuth: selectedApproval.requires_step_up_auth,
-    },
+    selectedApproval: selectedApproval
+      ? {
+          typeLabel: humanizeSnakeCase(selectedApproval.type),
+          severity: selectedApproval.severity,
+          severityLabel: selectedApproval.severity,
+          severityTone: approvalSeverityTone(selectedApproval.severity),
+          summary: selectedApproval.summary,
+          resourceId: selectedApproval.resource_id,
+          version: selectedApproval.version,
+          requiresStepUpAuth: selectedApproval.requires_step_up_auth,
+        }
+      : null,
   };
 }

@@ -1,8 +1,6 @@
 import "server-only";
 
-import { readReplayRun } from "@/server/api/research";
-import { listEvents } from "@/server/api/events";
-import { listSignals } from "@/server/api/signals";
+import { readReplaySnapshot } from "@/server/api/research";
 import {
   eventStatusTone,
   formatClock,
@@ -14,12 +12,9 @@ import {
 } from "@/lib/server/console-formatters";
 
 export async function getReplayPageData() {
-  const { data: replayRun } = await readReplayRun();
-  const [{ data: signals }, { data: events }] = await Promise.all([
-    listSignals({ market_id: replayRun.market_id }),
-    listEvents(),
-  ]);
-  const relatedEvents = events.filter((event) => event.related_market_ids.includes(replayRun.market_id));
+  const {
+    data: { replayRun, relatedSignals, relatedEvents },
+  } = await readReplaySnapshot();
   const selectedTimelineMoment = replayRun.timeline.at(-1) ?? replayRun.timeline[0];
   const posteriorDelta = (
     Number.parseFloat(replayRun.posterior) - Number.parseFloat(replayRun.prior)
@@ -47,12 +42,14 @@ export async function getReplayPageData() {
       createdAt: formatClock(replayRun.created_at),
       updatedAt: formatClock(replayRun.updated_at),
     },
-    metrics: [
-      { title: "Signal Hit Rate", value: formatPercentFromRatio(replayRun.signal_hit_rate) },
-      { title: "Brier Score", value: replayRun.brier_score },
-      { title: "Net Alpha", value: formatPercentFromRatio(replayRun.net_alpha, 1) },
-    ],
-    relatedSignals: signals.map((signal) => ({
+    metrics:
+      replayRun.metrics ??
+      [
+        { title: "Signal Hit Rate", value: formatPercentFromRatio(replayRun.signal_hit_rate) },
+        { title: "Brier Score", value: replayRun.brier_score },
+        { title: "Net Alpha", value: formatPercentFromRatio(replayRun.net_alpha, 1) },
+      ],
+    relatedSignals: relatedSignals.map((signal) => ({
       id: signal.id,
       side: uppercaseEnum(signal.side),
       confidence: formatPercentFromRatio(signal.confidence),

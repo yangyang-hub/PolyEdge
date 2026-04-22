@@ -4,6 +4,7 @@ import { getConsoleAuthMode } from "@/lib/console-auth";
 import { REALTIME_CHANNELS, type RealtimeChannel } from "@/lib/contracts/realtime";
 import { readConsoleSession } from "@/server/auth/console-session";
 import { getApiBaseUrl, getBackendMode } from "@/server/api/base";
+import { createInternalApiHeaders } from "@/server/auth/internal-api-token";
 import { getMockStreamEvents } from "@/server/realtime/mock-stream-events";
 
 export const dynamic = "force-dynamic";
@@ -74,17 +75,19 @@ async function proxyLiveStream(channel: RealtimeChannel, request: NextRequest): 
     return new Response("Live stream base URL is not configured.", { status: 500 });
   }
 
-  const headers = new Headers({
-    Accept: "text/event-stream",
-    "Cache-Control": "no-cache",
+  const headers = await createInternalApiHeaders({
+    kind: "read",
   });
+
+  headers.set("Accept", "text/event-stream");
+  headers.set("Cache-Control", "no-cache");
   const lastEventId = request.headers.get("last-event-id");
 
   if (lastEventId) {
     headers.set("Last-Event-ID", lastEventId);
   }
 
-  const upstream = await fetch(`${apiBaseUrl}/api/stream/${channel}`, {
+  const upstream = await fetch(`${apiBaseUrl}/api/v1/stream/${channel}`, {
     headers,
     cache: "no-store",
     signal: request.signal,
@@ -99,6 +102,18 @@ async function proxyLiveStream(channel: RealtimeChannel, request: NextRequest): 
   return new Response(upstream.body, {
     status: upstream.status,
     headers: createSseHeaders(upstream.headers),
+  });
+}
+
+function liveSseEnabled(): boolean {
+  return process.env.POLYEDGE_ENABLE_LIVE_SSE === "1";
+}
+
+function createLiveFallbackStream(channel: RealtimeChannel, request: NextRequest): Response {
+  return new Response(createMockStream(channel, request), {
+    headers: createSseHeaders({
+      "X-PolyEdge-Stream-Mode": "mock-fallback",
+    }),
   });
 }
 
@@ -122,11 +137,9 @@ export async function GET(
     return new Response("Unknown stream channel.", { status: 404 });
   }
 
-  if (getBackendMode() === "live") {
+  if (getBackendMode() === "live" && liveSseEnabled()) {
     return proxyLiveStream(channel, request);
   }
 
-  return new Response(createMockStream(channel, request), {
-    headers: createSseHeaders(),
-  });
+  return createLiveFallbackStream(channel, request);
 }

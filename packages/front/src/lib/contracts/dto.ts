@@ -89,6 +89,10 @@ export type SignalDto = ResourceVersion & {
   reason: string;
   risk_decision: string;
   evidence_ids: string[];
+  approved_by_user_id?: string | null;
+  approved_at?: string | null;
+  rejected_by_user_id?: string | null;
+  rejected_at?: string | null;
   updated_at: string;
 };
 
@@ -148,10 +152,43 @@ export type RiskBucketDto = ResourceVersion & {
   updated_at: string;
 };
 
+export type ProbabilityEstimateDto = {
+  id: string;
+  market_id: string;
+  event_id: string;
+  signal_id?: string | null;
+  prior_price: string;
+  posterior_price: string;
+  fair_price: string;
+  market_price: string;
+  edge: string;
+  confidence: string;
+  time_horizon: string;
+  model_version: string;
+  reason_codes: string[];
+  evidence_count: number;
+  created_at: string;
+};
+
+export type SignalTransitionDto = {
+  id: string;
+  signal_id: string;
+  from_state: SignalLifecycleState;
+  to_state: SignalLifecycleState;
+  trigger_type: string;
+  trigger_payload: unknown;
+  created_at: string;
+};
+
 export type ReplayMomentDto = {
   occurred_at: string;
   kind: ReplayMomentKind;
   summary: string;
+};
+
+export type ReplayMetricDto = {
+  title: string;
+  value: string;
 };
 
 export type ReplayRunDto = ResourceVersion & {
@@ -165,6 +202,7 @@ export type ReplayRunDto = ResourceVersion & {
   signal_hit_rate: string;
   brier_score: string;
   net_alpha: string;
+  metrics?: ReplayMetricDto[];
   timeline: ReplayMomentDto[];
   created_at: string;
   updated_at: string;

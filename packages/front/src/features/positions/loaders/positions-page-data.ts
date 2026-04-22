@@ -64,7 +64,8 @@ export async function getPositionsPageData() {
   const positionItems = positions.map((position) => {
     const market = marketIndex.get(position.market_id);
     const signal = latestSignalsByMarket.get(position.market_id);
-    const bucket = bucketIndex.get(position.bucket_name);
+    const bucketName = market?.category ?? position.bucket_name;
+    const bucket = bucketIndex.get(bucketName);
     const linkedEvents = events.filter((event) => event.related_market_ids.includes(position.market_id));
     const totalPnlValue = (
       Number.parseFloat(position.realized_pnl) + Number.parseFloat(position.unrealized_pnl)
@@ -74,8 +75,8 @@ export async function getPositionsPageData() {
       id: position.id,
       marketId: position.market_id,
       signalId: signal?.id ?? null,
-      marketQuestion: position.market_question,
-      bucketName: position.bucket_name,
+      marketQuestion: market?.question ?? position.market_question,
+      bucketName,
       side: uppercaseEnum(position.side),
       quantity: formatInteger(position.quantity),
       averageCost: position.average_cost,

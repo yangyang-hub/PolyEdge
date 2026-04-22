@@ -5,9 +5,10 @@ import type {
   ApiListResponse,
   ApiMeta,
   ApiResponse,
-  ContractListQuery,
   WriteResponse,
 } from "@/lib/contracts/api";
+import type { InternalApiRequestKind, InternalApiStepUpScope } from "@/server/auth/internal-api-token";
+import { createInternalApiHeaders } from "@/server/auth/internal-api-token";
 
 const API_BASE_URL = process.env.POLYEDGE_API_BASE_URL?.replace(/\/$/, "");
 
@@ -49,6 +50,14 @@ function clone<T>(value: T): T {
   return structuredClone(value);
 }
 
+function createCursorPage(limit: number) {
+  return {
+    limit,
+    next_cursor: null,
+    has_more: false,
+  };
+}
+
 export function getBackendMode(): BackendMode {
   return API_BASE_URL ? "live" : "mock";
 }
@@ -57,7 +66,12 @@ export function getApiBaseUrl(): string | null {
   return API_BASE_URL ?? null;
 }
 
-export function buildQueryString(query?: ContractListQuery): string {
+export function buildQueryString(
+  query?: Record<
+    string,
+    string | number | boolean | null | undefined | Array<string | number | boolean>
+  >,
+): string {
   if (!query) {
     return "";
   }
@@ -71,7 +85,7 @@ export function buildQueryString(query?: ContractListQuery): string {
 
     if (Array.isArray(rawValue)) {
       for (const value of rawValue) {
-        searchParams.append(key, value);
+        searchParams.append(key, String(value));
       }
       continue;
     }
@@ -123,45 +137,26 @@ export function createWriteResponse(
   };
 }
 
-export async function fetchContract<T>(path: string, fallback: T): Promise<T> {
-  if (!API_BASE_URL) {
-    return clone(fallback);
-  }
+async function fetchJson<T>(
+  path: string,
+  init: RequestInit,
+  auth: {
+    kind: InternalApiRequestKind;
+    stepUpCode?: string;
+    stepUpScopes?: InternalApiStepUpScope[];
+  },
+): Promise<T> {
+  const authHeaders = await createInternalApiHeaders(auth);
+  const headers = new Headers(init.headers);
 
-  const response = await fetch(`${API_BASE_URL}${path}`, {
-    headers: {
-      Accept: "application/json",
-    },
+  authHeaders.forEach((value, key) => {
+    headers.set(key, value);
   });
 
-  if (!response.ok) {
-    throw new Error(`PolyEdge API request failed: ${response.status} ${response.statusText}`);
-  }
-
-  return (await response.json()) as T;
-}
-
-export async function fetchWriteContract<T>(
-  path: string,
-  init: {
-    method?: "POST" | "PATCH";
-    body: Record<string, string | number | boolean | null>;
-    idempotencyKey: string;
-  },
-  fallback: T,
-): Promise<T> {
-  if (!API_BASE_URL) {
-    return clone(fallback);
-  }
-
   const response = await fetch(`${API_BASE_URL}${path}`, {
-    method: init.method ?? "POST",
-    headers: {
-      Accept: "application/json",
-      "Content-Type": "application/json",
-      "Idempotency-Key": init.idempotencyKey,
-    },
-    body: JSON.stringify(init.body),
+    ...init,
+    headers,
+    cache: "no-store",
   });
 
   if (!response.ok) {
@@ -182,4 +177,100 @@ export async function fetchWriteContract<T>(
   }
 
   return (await response.json()) as T;
+}
+
+export async function fetchContract<T>(path: string, fallback: T): Promise<T> {
+  if (!API_BASE_URL) {
+    return clone(fallback);
+  }
+
+  return fetchJson<T>(
+    path,
+    {
+      headers: {
+        Accept: "application/json",
+      },
+    },
+    {
+      kind: "read",
+    },
+  );
+}
+
+export async function fetchListContract<TLive, TFront = TLive>(
+  path: string,
+  fallback: ApiListResponse<TFront>,
+  options?: {
+    mapItem?: (item: TLive) => TFront;
+  },
+): Promise<ApiListResponse<TFront>> {
+  if (!API_BASE_URL) {
+    return clone(fallback);
+  }
+
+  const payload = await fetchJson<ApiResponse<TLive[]>>(
+    path,
+    {
+      headers: {
+        Accept: "application/json",
+      },
+    },
+    {
+      kind: "read",
+    },
+  );
+  const items = options?.mapItem ? payload.data.map(options.mapItem) : (payload.data as unknown as TFront[]);
+
+  return {
+    data: items,
+    page: createCursorPage(items.length),
+    meta: payload.meta,
+  };
+}
+
+export async function fetchWriteContract<TLive, TFront = TLive>(
+  path: string,
+  init: {
+    method?: "POST" | "PATCH";
+    body: Record<string, unknown>;
+    idempotencyKey: string;
+    stepUpCode?: string;
+    stepUpScopes?: InternalApiStepUpScope[];
+  },
+  fallback: TFront,
+  options?: {
+    mapLiveResponse?: (payload: TLive) => TFront;
+  },
+): Promise<TFront> {
+  if (!API_BASE_URL) {
+    return clone(fallback);
+  }
+
+  const payload = await fetchJson<TLive>(
+    path,
+    {
+      method: init.method ?? "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        "Idempotency-Key": init.idempotencyKey,
+      },
+      body: JSON.stringify(init.body),
+    },
+    {
+      kind: "write",
+      stepUpCode: init.stepUpCode,
+      stepUpScopes: init.stepUpScopes,
+    },
+  );
+
+  return options?.mapLiveResponse ? options.mapLiveResponse(payload) : ((payload as unknown) as TFront);
+}
+
+export async function fetchUnsupportedContract<T>(fallback: T): Promise<T> {
+  return clone(fallback);
+}
+
+export async function fetchUnsupportedListContract<T>(fallback: ApiListResponse<T>): Promise<ApiListResponse<T>> {
+  return clone(fallback);
 }
