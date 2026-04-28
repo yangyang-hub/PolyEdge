@@ -5,6 +5,7 @@ use polyedge_domain::{
 use serde::Deserialize;
 
 const AUTH_KEYS_JSON_ENV: &str = "POLYEDGE_AUTH__KEYS_JSON";
+const NEWS_SOURCES_JSON_ENV: &str = "POLYEDGE_NEWS__SOURCES_JSON";
 
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
@@ -15,6 +16,7 @@ pub struct Settings {
     pub runtime: RuntimeSettings,
     pub risk: RiskSettings,
     pub polymarket: PolymarketSettings,
+    pub news: NewsSettings,
     pub auth: AuthSettings,
 }
 
@@ -98,6 +100,27 @@ pub struct PolymarketSettings {
     pub ws_max_instruments: usize,
     pub ws_idle_warn_secs: u64,
     pub ws_stale_after_secs: u64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct NewsSettings {
+    pub enabled: bool,
+    pub poll_interval_secs: u64,
+    pub request_timeout_secs: u64,
+    pub max_items_per_source: usize,
+    #[serde(default)]
+    pub sources: Vec<NewsSourceSettings>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct NewsSourceSettings {
+    pub id: String,
+    pub source_type: String,
+    pub url: String,
+    pub reliability: Probability,
+    pub enabled: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -196,6 +219,30 @@ impl Default for PolymarketSettings {
     }
 }
 
+impl Default for NewsSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            poll_interval_secs: 60,
+            request_timeout_secs: 10,
+            max_items_per_source: 50,
+            sources: Vec::new(),
+        }
+    }
+}
+
+impl Default for NewsSourceSettings {
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            source_type: "news".to_string(),
+            url: String::new(),
+            reliability: probability("0.50"),
+            enabled: true,
+        }
+    }
+}
+
 impl Default for AuthSettings {
     fn default() -> Self {
         Self {
@@ -223,7 +270,11 @@ impl Settings {
             }
         }
 
-        Self::load_from_environment(environment_source(), std::env::var(AUTH_KEYS_JSON_ENV).ok())
+        Self::load_from_environment(
+            environment_source(),
+            std::env::var(AUTH_KEYS_JSON_ENV).ok(),
+            std::env::var(NEWS_SOURCES_JSON_ENV).ok(),
+        )
     }
 
     #[must_use]
@@ -244,6 +295,7 @@ impl Settings {
     fn load_from_environment(
         source: Environment,
         auth_keys_json: Option<String>,
+        news_sources_json: Option<String>,
     ) -> polyedge_domain::Result<Self> {
         let config = Config::builder()
             .add_source(source)
@@ -262,6 +314,15 @@ impl Settings {
                 AppError::internal(
                     "CONFIG_AUTH_KEYS_JSON_INVALID",
                     format!("failed to parse {AUTH_KEYS_JSON_ENV}: {error}"),
+                )
+            })?;
+        }
+
+        if let Some(raw_sources) = news_sources_json.filter(|value| !value.trim().is_empty()) {
+            settings.news.sources = serde_json::from_str(&raw_sources).map_err(|error| {
+                AppError::internal(
+                    "CONFIG_NEWS_SOURCES_JSON_INVALID",
+                    format!("failed to parse {NEWS_SOURCES_JSON_ENV}: {error}"),
                 )
             })?;
         }
@@ -332,6 +393,11 @@ mod tests {
             settings.polymarket.mode,
             super::PolymarketConnectorMode::Mock
         );
+        assert!(!settings.news.enabled);
+        assert_eq!(settings.news.poll_interval_secs, 60);
+        assert_eq!(settings.news.request_timeout_secs, 10);
+        assert_eq!(settings.news.max_items_per_source, 50);
+        assert!(settings.news.sources.is_empty());
         assert!(settings.postgres.url.is_none());
         assert!(settings.redis.url.is_none());
         assert_eq!(
@@ -378,6 +444,10 @@ mod tests {
                 r#"[{"kid":"local-dev","public_key_base64":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}]"#
                     .to_string(),
             ),
+            Some(
+                r#"[{"id":"sec_feed","source_type":"official","url":"https://example.com/rss","reliability":"0.95","enabled":true}]"#
+                    .to_string(),
+            ),
         )
         .expect("settings");
 
@@ -403,5 +473,10 @@ mod tests {
         );
         assert_eq!(settings.auth.keys.len(), 1);
         assert_eq!(settings.auth.keys[0].kid, "local-dev");
+        assert_eq!(settings.news.sources.len(), 1);
+        assert_eq!(settings.news.sources[0].id, "sec_feed");
+        assert_eq!(settings.news.sources[0].source_type, "official");
+        assert_eq!(settings.news.sources[0].url, "https://example.com/rss");
+        assert!(settings.news.sources[0].enabled);
     }
 }

@@ -155,6 +155,8 @@
 `packages/backend/apps/worker/src/main.rs` 当前已暴露这些入口：
 
 - `ingest-fixtures`
+- `ingest-news-once`
+- `poll-news`
 - `drain-execution-queue`
 - `reconcile-paper-fills`
 - `poll-paper-order-statuses`
@@ -173,6 +175,7 @@
 - API 默认监听：`127.0.0.1:8080`
 - 默认 runtime mode：`manual_confirm`
 - 默认 Polymarket mode：`mock`
+- 默认 news ingestion：`disabled`
 - `postgres.url` 和 `redis.url` 默认仍为空
 
 数据库迁移目前已到：
@@ -187,6 +190,7 @@
 - `0008_execution_dispatch_metadata.sql`
 - `0009_orders_trades_positions.sql`
 - `0010_market_connector_refs.sql`
+- `0011_news_ingestion.sql`
 
 ## 6. 前后端贯通状态
 
@@ -210,6 +214,7 @@
 2. 前端权限当前仍是 `off | mock-session`，不是生产级真实会话体系。
 3. 签名内部 JWT 链路已具备代码路径，但仍需要在真实环境配置 Ed25519 key rotation、会话来源和撤销策略。
 4. Polymarket live 模式已有 connector/worker 骨架，但仍需要真实凭证、真实账户、小额演练和运维 runbook 才能视为生产交易链路。
+5. 新闻源已支持 RSS/Atom 抓取、标准化、去重写入 `raw_events` 和 `news_source_health`，但还没有把真实新闻自动提升为 `events/evidences/signals`。
 
 ### 6.4 因此的实际判断
 

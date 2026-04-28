@@ -11,5 +11,6 @@ polyedge-application = { path = "../../crates/application" }
 polyedge-connectors = { path = "../../crates/connectors" }
 polyedge-domain = { path = "../../crates/domain" }
 polyedge-infrastructure = { path = "../../crates/infrastructure" }
+time.workspace = true
 tokio.workspace = true
 tracing.workspace = true

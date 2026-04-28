@@ -1,5 +1,6 @@
 #![allow(clippy::missing_const_for_fn)]
 
+mod news;
 mod polymarket;
 
 use polyedge_domain::{
@@ -8,6 +9,7 @@ use polyedge_domain::{
 use rust_decimal::Decimal;
 use time::OffsetDateTime;
 
+pub use news::{ConnectorNewsItem, NewsSource, RssNewsConnector, RssNewsSourceConfig};
 pub use polymarket::{
     ConnectorOrderStatusUpdate, ConnectorTradeFillUpdate, LivePolymarketConfig,
     LivePolymarketConnector, LivePolymarketExecutionOutcome, LivePolymarketOrderAcceptance,

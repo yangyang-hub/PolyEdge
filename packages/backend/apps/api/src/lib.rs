@@ -700,7 +700,7 @@ fn signal_needs_approval(
         return true;
     }
 
-    if market.is_some_and(|market| is_manual_review_market(market)) {
+    if market.is_some_and(is_manual_review_market) {
         return true;
     }
 

@@ -2,6 +2,7 @@
 
 mod execution;
 mod market_event;
+mod news_ingestion;
 mod risk;
 mod system_mode;
 
@@ -23,6 +24,11 @@ pub use market_event::{
     RecomputeSignalDraft, RecomputeSignalResult, SignalListFilters, SignalTransitionDraft,
     SignalTransitionListFilters, SignalTransitionView, SignalView, build_recompute_signal_draft,
     demo_fixture_bundle,
+};
+pub use news_ingestion::{
+    NewsIngestSourceCommand, NewsIngestionItem, NewsIngestionService, NewsIngestionStore,
+    NewsRawEventInsert, NewsSourceFailureUpdate, NewsSourceIngestionReport,
+    NewsSourceSuccessUpdate,
 };
 pub use risk::{
     ApproveSignalCommand, ApproveSignalReceipt, KillSwitchReceipt, RejectSignalCommand,

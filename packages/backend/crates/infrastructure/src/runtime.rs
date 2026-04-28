@@ -11,8 +11,8 @@ use crate::{
 };
 use polyedge_application::{
     AuditLogSink, ExecutionService, IdempotencyStore, MarketEventService, MarketEventStore,
-    MarketListFilters, ModeStateStore, RiskPolicy, RiskService, RiskStateStore, SystemModeService,
-    demo_fixture_bundle,
+    MarketListFilters, ModeStateStore, NewsIngestionService, NewsIngestionStore, RiskPolicy,
+    RiskService, RiskStateStore, SystemModeService, demo_fixture_bundle,
 };
 use polyedge_domain::{AppError, Result, SystemMode};
 use sqlx::{PgPool, postgres::PgPoolOptions};
@@ -30,6 +30,7 @@ pub struct AppState {
     pub external_event_store: Arc<dyn ExternalEventStore>,
     pub system_mode_service: Arc<SystemModeService>,
     pub market_event_service: Arc<MarketEventService>,
+    pub news_ingestion_service: Arc<NewsIngestionService>,
     pub risk_service: Arc<RiskService>,
     pub execution_service: Arc<ExecutionService>,
 }
@@ -107,10 +108,15 @@ impl Runtime {
                 Arc::new(InMemoryAuditLogSink::new()),
             )
         };
-        let market_event_store: Arc<dyn MarketEventStore> = if let Some(pool) = postgres.clone() {
-            Arc::new(PostgresMarketEventStore::new(pool))
+        let (market_event_store, news_ingestion_store): (
+            Arc<dyn MarketEventStore>,
+            Arc<dyn NewsIngestionStore>,
+        ) = if let Some(pool) = postgres.clone() {
+            let store = Arc::new(PostgresMarketEventStore::new(pool));
+            (store.clone(), store)
         } else {
-            Arc::new(InMemoryMarketEventStore::new())
+            let store = Arc::new(InMemoryMarketEventStore::new());
+            (store.clone(), store)
         };
         let system_mode_service = Arc::new(SystemModeService::new(
             mode_store,
@@ -118,6 +124,7 @@ impl Runtime {
             audit_log_sink.clone(),
         ));
         let market_event_service = Arc::new(MarketEventService::new(market_event_store));
+        let news_ingestion_service = Arc::new(NewsIngestionService::new(news_ingestion_store));
         bootstrap_demo_data_if_empty(&settings, &market_event_service).await?;
         let execution_audit_log_sink = audit_log_sink.clone();
         let risk_service = Arc::new(RiskService::new(
@@ -142,6 +149,7 @@ impl Runtime {
                 external_event_store,
                 system_mode_service,
                 market_event_service,
+                news_ingestion_service,
                 risk_service,
                 execution_service,
             },
@@ -167,14 +175,14 @@ impl Runtime {
         let external_event_store: Arc<dyn ExternalEventStore> =
             Arc::new(InMemoryExternalEventStore::new());
         let audit_log_sink: Arc<dyn AuditLogSink> = Arc::new(InMemoryAuditLogSink::new());
-        let market_event_store: Arc<dyn MarketEventStore> =
-            Arc::new(InMemoryMarketEventStore::new());
+        let market_event_store = Arc::new(InMemoryMarketEventStore::new());
         let system_mode_service = Arc::new(SystemModeService::new(
             mode_store,
             idempotency_store.clone(),
             audit_log_sink.clone(),
         ));
-        let market_event_service = Arc::new(MarketEventService::new(market_event_store));
+        let market_event_service = Arc::new(MarketEventService::new(market_event_store.clone()));
+        let news_ingestion_service = Arc::new(NewsIngestionService::new(market_event_store));
         let execution_audit_log_sink = audit_log_sink.clone();
         let risk_service = Arc::new(RiskService::new(
             risk_policy(&settings),
@@ -200,6 +208,7 @@ impl Runtime {
             external_event_store,
             system_mode_service,
             market_event_service,
+            news_ingestion_service,
             risk_service,
             execution_service,
         })

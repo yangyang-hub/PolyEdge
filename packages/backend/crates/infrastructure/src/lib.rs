@@ -19,4 +19,7 @@ pub use auth::{
 };
 pub use http::{HttpError, hash_json, new_trace_id, request_id_from_headers};
 pub use runtime::{AppState, Runtime, RuntimeDependencies};
-pub use settings::{AuthKeySettings, AuthSettings, RuntimeSettings, ServerSettings, Settings};
+pub use settings::{
+    AuthKeySettings, AuthSettings, NewsSettings, NewsSourceSettings, RuntimeSettings,
+    ServerSettings, Settings,
+};

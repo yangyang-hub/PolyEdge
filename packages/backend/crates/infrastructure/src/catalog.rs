@@ -4,12 +4,12 @@ use polyedge_application::{
     ExecutionDispatchCandidate, ExecutionDispatchResult, ExecutionFillResult,
     ExecutionReconciliationCandidate, ExecutionRequestListFilters, ExecutionRequestView,
     ExecutionSubmissionResult, FixtureBundle, FixtureIngestionReport, MarketEventStore,
-    MarketListFilters, MarketView, OrderDraftListFilters, OrderDraftView, OrderListFilters,
-    OrderView, PositionListFilters, PositionView, ProbabilityEstimateListFilters,
-    ProbabilityEstimateView, RecomputeSignalCommand, RecomputeSignalResult,
-    ReconcileExecutionListFilters, SignalListFilters, SignalTransitionListFilters,
-    SignalTransitionView, SignalView, SubmitExecutionStoreCommand, TradeListFilters, TradeView,
-    build_recompute_signal_draft,
+    MarketListFilters, MarketView, NewsIngestionStore, NewsRawEventInsert, NewsSourceFailureUpdate,
+    NewsSourceSuccessUpdate, OrderDraftListFilters, OrderDraftView, OrderListFilters, OrderView,
+    PositionListFilters, PositionView, ProbabilityEstimateListFilters, ProbabilityEstimateView,
+    RecomputeSignalCommand, RecomputeSignalResult, ReconcileExecutionListFilters,
+    SignalListFilters, SignalTransitionListFilters, SignalTransitionView, SignalView,
+    SubmitExecutionStoreCommand, TradeListFilters, TradeView, build_recompute_signal_draft,
 };
 use polyedge_domain::{
     AmbiguityLevel, AppError, Edge, EventStatus, EvidenceDirection, EvidenceStatus,
@@ -20,7 +20,10 @@ use polyedge_domain::{
 use rust_decimal::{Decimal, RoundingStrategy};
 use serde_json::{Value, json};
 use sqlx::{PgPool, Row, types::Json};
-use std::{collections::HashMap, str::FromStr};
+use std::{
+    collections::{HashMap, HashSet},
+    str::FromStr,
+};
 use time::OffsetDateTime;
 use tokio::sync::RwLock;
 use uuid::Uuid;
@@ -41,6 +44,7 @@ pub struct InMemoryMarketEventStore {
     orders: RwLock<HashMap<String, OrderView>>,
     trades: RwLock<HashMap<String, TradeView>>,
     positions: RwLock<HashMap<String, PositionView>>,
+    raw_news_dedup_keys: RwLock<HashSet<String>>,
 }
 
 impl InMemoryMarketEventStore {
@@ -58,6 +62,7 @@ impl InMemoryMarketEventStore {
             orders: RwLock::new(HashMap::new()),
             trades: RwLock::new(HashMap::new()),
             positions: RwLock::new(HashMap::new()),
+            raw_news_dedup_keys: RwLock::new(HashSet::new()),
         }
     }
 }
@@ -1372,6 +1377,28 @@ impl MarketEventStore for InMemoryMarketEventStore {
     }
 }
 
+#[async_trait]
+impl NewsIngestionStore for InMemoryMarketEventStore {
+    async fn insert_raw_news_event(&self, event: &NewsRawEventInsert) -> Result<bool> {
+        let keys = raw_news_dedup_keys(event);
+        let mut existing_keys = self.raw_news_dedup_keys.write().await;
+        if keys.iter().any(|key| existing_keys.contains(key)) {
+            return Ok(false);
+        }
+
+        existing_keys.extend(keys);
+        Ok(true)
+    }
+
+    async fn record_news_source_success(&self, _update: &NewsSourceSuccessUpdate) -> Result<()> {
+        Ok(())
+    }
+
+    async fn record_news_source_failure(&self, _update: &NewsSourceFailureUpdate) -> Result<()> {
+        Ok(())
+    }
+}
+
 pub struct PostgresMarketEventStore {
     pool: PgPool,
 }
@@ -1380,6 +1407,185 @@ impl PostgresMarketEventStore {
     #[must_use]
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
+    }
+}
+
+#[async_trait]
+impl NewsIngestionStore for PostgresMarketEventStore {
+    async fn insert_raw_news_event(&self, event: &NewsRawEventInsert) -> Result<bool> {
+        let result = sqlx::query(
+            r#"
+            INSERT INTO raw_events (
+              id,
+              source,
+              source_type,
+              external_id,
+              title,
+              url,
+              author,
+              published_at,
+              event_time,
+              hash,
+              raw_payload,
+              ingested_at,
+              trace_id
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+            ON CONFLICT DO NOTHING
+            "#,
+        )
+        .bind(&event.id)
+        .bind(&event.source)
+        .bind(&event.source_type)
+        .bind(&event.external_id)
+        .bind(&event.title)
+        .bind(&event.url)
+        .bind(&event.author)
+        .bind(event.published_at)
+        .bind(event.event_time)
+        .bind(&event.hash)
+        .bind(Json(event.raw_payload.clone()))
+        .bind(event.ingested_at)
+        .bind(&event.trace_id)
+        .execute(&self.pool)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_INSERT_FAILED",
+                format!("failed to insert raw news event {}: {error}", event.id),
+            )
+        })?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
+    async fn record_news_source_success(&self, update: &NewsSourceSuccessUpdate) -> Result<()> {
+        sqlx::query(
+            r#"
+            INSERT INTO news_source_health (
+              source,
+              source_type,
+              enabled,
+              reliability,
+              last_success_at,
+              last_error_at,
+              consecutive_failures,
+              items_fetched,
+              items_inserted,
+              items_deduped,
+              health_score,
+              last_error,
+              updated_at,
+              trace_id
+            )
+            VALUES ($1, $2, TRUE, $3, $4, NULL, 0, $5, $6, $7, $3, NULL, $4, $8)
+            ON CONFLICT (source) DO UPDATE
+            SET
+              source_type = EXCLUDED.source_type,
+              enabled = TRUE,
+              reliability = EXCLUDED.reliability,
+              last_success_at = EXCLUDED.last_success_at,
+              consecutive_failures = 0,
+              items_fetched = news_source_health.items_fetched + EXCLUDED.items_fetched,
+              items_inserted = news_source_health.items_inserted + EXCLUDED.items_inserted,
+              items_deduped = news_source_health.items_deduped + EXCLUDED.items_deduped,
+              health_score = EXCLUDED.health_score,
+              last_error = NULL,
+              updated_at = EXCLUDED.updated_at,
+              trace_id = EXCLUDED.trace_id
+            "#,
+        )
+        .bind(&update.source)
+        .bind(&update.source_type)
+        .bind(update.reliability.value())
+        .bind(update.observed_at)
+        .bind(usize_to_i64(update.fetched)?)
+        .bind(usize_to_i64(update.inserted)?)
+        .bind(usize_to_i64(update.deduped)?)
+        .bind(&update.trace_id)
+        .execute(&self.pool)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_UPSERT_FAILED",
+                format!(
+                    "failed to record news source success {}: {error}",
+                    update.source
+                ),
+            )
+        })?;
+
+        Ok(())
+    }
+
+    async fn record_news_source_failure(&self, update: &NewsSourceFailureUpdate) -> Result<()> {
+        let last_error = clamped_error_message(&update.error_message);
+        sqlx::query(
+            r#"
+            INSERT INTO news_source_health (
+              source,
+              source_type,
+              enabled,
+              reliability,
+              last_success_at,
+              last_error_at,
+              consecutive_failures,
+              items_fetched,
+              items_inserted,
+              items_deduped,
+              health_score,
+              last_error,
+              updated_at,
+              trace_id
+            )
+            VALUES (
+              $1,
+              $2,
+              TRUE,
+              $3,
+              NULL,
+              $4,
+              1,
+              0,
+              0,
+              0,
+              GREATEST(0::numeric, $3 - 0.20),
+              $5,
+              $4,
+              $6
+            )
+            ON CONFLICT (source) DO UPDATE
+            SET
+              source_type = EXCLUDED.source_type,
+              enabled = TRUE,
+              reliability = EXCLUDED.reliability,
+              last_error_at = EXCLUDED.last_error_at,
+              consecutive_failures = news_source_health.consecutive_failures + 1,
+              health_score = GREATEST(
+                0::numeric,
+                EXCLUDED.reliability - ((news_source_health.consecutive_failures + 1)::numeric * 0.20)
+              ),
+              last_error = EXCLUDED.last_error,
+              updated_at = EXCLUDED.updated_at,
+              trace_id = EXCLUDED.trace_id
+            "#,
+        )
+        .bind(&update.source)
+        .bind(&update.source_type)
+        .bind(update.reliability.value())
+        .bind(update.observed_at)
+        .bind(last_error)
+        .bind(&update.trace_id)
+        .execute(&self.pool)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_UPSERT_FAILED",
+                format!("failed to record news source failure {}: {error}", update.source),
+            )
+        })?;
+
+        Ok(())
     }
 }
 
@@ -5933,6 +6139,36 @@ fn compute_order_notional(limit_price: Probability, quantity: Quantity) -> Resul
             format!("failed to compute order notional: {error}"),
         )
     })
+}
+
+fn raw_news_dedup_keys(event: &NewsRawEventInsert) -> Vec<String> {
+    let mut keys = vec![
+        format!("id:{}", event.id),
+        format!("source_hash:{}:{}", event.source, event.hash),
+    ];
+
+    if let Some(external_id) = event.external_id.as_deref() {
+        keys.push(format!("source_external_id:{}:{external_id}", event.source));
+    }
+
+    if let Some(url) = event.url.as_deref() {
+        keys.push(format!("source_url:{}:{url}", event.source));
+    }
+
+    keys
+}
+
+fn usize_to_i64(value: usize) -> Result<i64> {
+    i64::try_from(value).map_err(|error| {
+        AppError::invalid_input(
+            "NEWS_COUNT_OUT_OF_RANGE",
+            format!("news ingestion count does not fit i64: {error}"),
+        )
+    })
+}
+
+fn clamped_error_message(value: &str) -> String {
+    value.chars().take(1_000).collect()
 }
 
 fn decode_column<T>(row: &sqlx::postgres::PgRow, column: &str) -> Result<T>

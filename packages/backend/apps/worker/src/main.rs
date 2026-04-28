@@ -2,29 +2,32 @@ use futures::StreamExt as _;
 use polyedge_application::{
     AuthenticatedActor, DispatchExecutionListFilters, ExecutionDispatchCandidate,
     ExecutionReconciliationCandidate, MarkExecutionFailedCommand, MarkExecutionSubmittedCommand,
-    MarketView, OrderListFilters, ReconcileExecutionListFilters, ReconcileExternalTradeCommand,
+    MarketView, NewsIngestSourceCommand, NewsIngestionItem, NewsSourceFailureUpdate,
+    OrderListFilters, ReconcileExecutionListFilters, ReconcileExternalTradeCommand,
     SyncExternalOrderStatusCommand, demo_fixture_bundle,
 };
 use polyedge_connectors::{
-    LivePolymarketConfig, LivePolymarketConnector, LivePolymarketExecutionOutcome,
-    LivePolymarketOrderRequest, LivePolymarketOrderStatusRequest, LivePolymarketTradeSyncRequest,
-    MockPolymarketConnector, MockPolymarketExecutionOutcome, MockPolymarketFillRequest,
-    MockPolymarketOrderRequest, MockPolymarketOrderStatusRequest, PAPER_ACCOUNT_ID,
-    PAPER_EXECUTOR_NAME, POLYMARKET_ACCOUNT_ID, POLYMARKET_CONNECTOR_NAME, PaperExecutionOutcome,
-    PaperExecutor, PaperFillRequest, PaperOrderRequest, PaperOrderStatusRequest,
-    PolymarketMarketRefs, PolymarketSignatureScheme, normalize_polymarket_order_status_update,
+    ConnectorNewsItem, LivePolymarketConfig, LivePolymarketConnector,
+    LivePolymarketExecutionOutcome, LivePolymarketOrderRequest, LivePolymarketOrderStatusRequest,
+    LivePolymarketTradeSyncRequest, MockPolymarketConnector, MockPolymarketExecutionOutcome,
+    MockPolymarketFillRequest, MockPolymarketOrderRequest, MockPolymarketOrderStatusRequest,
+    NewsSource, PAPER_ACCOUNT_ID, PAPER_EXECUTOR_NAME, POLYMARKET_ACCOUNT_ID,
+    POLYMARKET_CONNECTOR_NAME, PaperExecutionOutcome, PaperExecutor, PaperFillRequest,
+    PaperOrderRequest, PaperOrderStatusRequest, PolymarketMarketRefs, PolymarketSignatureScheme,
+    RssNewsConnector, RssNewsSourceConfig, normalize_polymarket_order_status_update,
     normalize_polymarket_trade_fill_update, normalize_polymarket_ws_order_message,
     normalize_polymarket_ws_trade_message,
 };
 use polyedge_domain::{AppError, OrderStatus, Quantity, Result, UserRole};
 use polyedge_infrastructure::{
     AppState, Runtime, new_trace_id,
-    settings::{PolymarketConnectorMode, PolymarketSignatureType},
+    settings::{NewsSourceSettings, PolymarketConnectorMode, PolymarketSignatureType},
     telemetry::init_tracing,
 };
 use polymarket_client_sdk::clob::ws::WsMessage;
 use polymarket_client_sdk::types::B256;
-use std::collections::HashSet;
+use std::{collections::HashSet, time::Duration};
+use time::OffsetDateTime;
 use tracing::{info, warn};
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -61,6 +64,16 @@ struct PolymarketTradeEventReport {
     applied: usize,
     skipped_unknown_orders: usize,
     skipped_duplicate_trades: usize,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+struct NewsIngestionRunReport {
+    sources_scanned: usize,
+    sources_succeeded: usize,
+    sources_failed: usize,
+    fetched: usize,
+    inserted: usize,
+    deduped: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -113,6 +126,35 @@ async fn main() -> Result<()> {
                 submitted = report.submitted,
                 failed = report.failed,
                 "drained queued execution requests",
+            );
+            Ok(())
+        }
+        Some("ingest-news-once") => {
+            let trace_id = new_trace_id();
+            let report = ingest_news_once(&state, &trace_id).await?;
+            info!(
+                trace_id = %trace_id,
+                sources_scanned = report.sources_scanned,
+                sources_succeeded = report.sources_succeeded,
+                sources_failed = report.sources_failed,
+                fetched = report.fetched,
+                inserted = report.inserted,
+                deduped = report.deduped,
+                "ingested configured news sources once",
+            );
+            Ok(())
+        }
+        Some("poll-news") => {
+            let max_cycles = parse_limit_arg(args.next())?.map(usize::from);
+            let report = poll_news(&state, max_cycles).await?;
+            info!(
+                sources_scanned = report.sources_scanned,
+                sources_succeeded = report.sources_succeeded,
+                sources_failed = report.sources_failed,
+                fetched = report.fetched,
+                inserted = report.inserted,
+                deduped = report.deduped,
+                "news polling stopped",
             );
             Ok(())
         }
@@ -278,6 +320,187 @@ async fn drain_execution_queue(
     }
 
     Ok(report)
+}
+
+async fn ingest_news_once(state: &AppState, trace_id: &str) -> Result<NewsIngestionRunReport> {
+    let settings = &state.settings.news;
+    if !settings.enabled {
+        return Err(AppError::invalid_input(
+            "NEWS_INGESTION_DISABLED",
+            "news ingestion is disabled; set POLYEDGE_NEWS__ENABLED=true",
+        ));
+    }
+
+    let enabled_sources: Vec<_> = settings
+        .sources
+        .iter()
+        .filter(|source| source.enabled)
+        .collect();
+
+    if enabled_sources.is_empty() {
+        return Err(AppError::invalid_input(
+            "NEWS_SOURCES_REQUIRED",
+            "news ingestion requires at least one enabled source",
+        ));
+    }
+
+    let timeout = Duration::from_secs(settings.request_timeout_secs.max(1));
+    let mut report = NewsIngestionRunReport {
+        sources_scanned: enabled_sources.len(),
+        ..NewsIngestionRunReport::default()
+    };
+
+    for source in enabled_sources {
+        let connector = match RssNewsConnector::new(
+            RssNewsSourceConfig {
+                id: source.id.clone(),
+                source_type: source.source_type.clone(),
+                url: source.url.clone(),
+            },
+            timeout,
+        ) {
+            Ok(connector) => connector,
+            Err(error) => {
+                record_news_failure(state, source, &error, trace_id).await?;
+                report.sources_failed += 1;
+                warn!(
+                    source = %source.id,
+                    error = %error,
+                    "news source configuration failed",
+                );
+                continue;
+            }
+        };
+
+        let fetched_items = match connector.fetch().await {
+            Ok(items) => items,
+            Err(error) => {
+                record_news_failure(state, source, &error, trace_id).await?;
+                report.sources_failed += 1;
+                warn!(
+                    source = %source.id,
+                    error = %error,
+                    "news source fetch failed",
+                );
+                continue;
+            }
+        };
+
+        let items: Vec<_> = fetched_items
+            .into_iter()
+            .take(settings.max_items_per_source)
+            .map(news_item_to_ingestion_item)
+            .collect();
+        let source_report = match state
+            .news_ingestion_service
+            .ingest_source_items(NewsIngestSourceCommand {
+                source: source.id.clone(),
+                source_type: source.source_type.clone(),
+                reliability: source.reliability,
+                items,
+                trace_id: trace_id.to_string(),
+            })
+            .await
+        {
+            Ok(source_report) => source_report,
+            Err(error) => {
+                record_news_failure(state, source, &error, trace_id).await?;
+                report.sources_failed += 1;
+                warn!(
+                    source = %source.id,
+                    error = %error,
+                    "news source ingestion failed",
+                );
+                continue;
+            }
+        };
+
+        report.sources_succeeded += 1;
+        report.fetched += source_report.fetched;
+        report.inserted += source_report.inserted;
+        report.deduped += source_report.deduped;
+    }
+
+    Ok(report)
+}
+
+async fn poll_news(state: &AppState, max_cycles: Option<usize>) -> Result<NewsIngestionRunReport> {
+    let mut total = NewsIngestionRunReport::default();
+    let mut cycles = 0usize;
+    let interval = Duration::from_secs(state.settings.news.poll_interval_secs.max(1));
+
+    loop {
+        let trace_id = new_trace_id();
+        let report = ingest_news_once(state, &trace_id).await?;
+        total.sources_scanned += report.sources_scanned;
+        total.sources_succeeded += report.sources_succeeded;
+        total.sources_failed += report.sources_failed;
+        total.fetched += report.fetched;
+        total.inserted += report.inserted;
+        total.deduped += report.deduped;
+        cycles += 1;
+
+        info!(
+            trace_id = %trace_id,
+            cycle = cycles,
+            sources_scanned = report.sources_scanned,
+            sources_succeeded = report.sources_succeeded,
+            sources_failed = report.sources_failed,
+            fetched = report.fetched,
+            inserted = report.inserted,
+            deduped = report.deduped,
+            "completed news polling cycle",
+        );
+
+        if max_cycles.is_some_and(|limit| cycles >= limit) {
+            break;
+        }
+
+        tokio::select! {
+            () = tokio::time::sleep(interval) => {}
+            shutdown = tokio::signal::ctrl_c() => {
+                if let Err(error) = shutdown {
+                    warn!(error = %error, "failed to listen for ctrl-c during news polling");
+                }
+                break;
+            }
+        }
+    }
+
+    Ok(total)
+}
+
+async fn record_news_failure(
+    state: &AppState,
+    source: &NewsSourceSettings,
+    error: &AppError,
+    trace_id: &str,
+) -> Result<()> {
+    state
+        .news_ingestion_service
+        .record_source_failure(NewsSourceFailureUpdate {
+            source: source.id.clone(),
+            source_type: source.source_type.clone(),
+            reliability: source.reliability,
+            error_message: format!("{}: {}", error.code(), error.message()),
+            observed_at: OffsetDateTime::now_utc(),
+            trace_id: trace_id.to_string(),
+        })
+        .await
+}
+
+fn news_item_to_ingestion_item(item: ConnectorNewsItem) -> NewsIngestionItem {
+    NewsIngestionItem {
+        source: item.source,
+        source_type: item.source_type,
+        external_id: item.external_id,
+        title: item.title,
+        url: item.url,
+        author: item.author,
+        published_at: item.published_at,
+        content_snippet: item.content_snippet,
+        raw_payload: item.raw_payload,
+    }
 }
 
 async fn reconcile_paper_fills(

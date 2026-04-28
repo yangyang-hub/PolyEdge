@@ -5,8 +5,11 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+async-trait.workspace = true
 polyedge-domain = { path = "../domain" }
 polymarket-client-sdk.workspace = true
+reqwest.workspace = true
 rust_decimal.workspace = true
+serde_json.workspace = true
 time.workspace = true
 tracing.workspace = true
