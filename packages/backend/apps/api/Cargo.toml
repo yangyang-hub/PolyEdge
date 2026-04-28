@@ -6,11 +6,13 @@ license.workspace = true
 
 [dependencies]
 axum.workspace = true
+futures.workspace = true
 polyedge-application = { path = "../../crates/application" }
 polyedge-connectors = { path = "../../crates/connectors" }
 polyedge-contracts = { path = "../../crates/contracts" }
 polyedge-domain = { path = "../../crates/domain" }
 polyedge-infrastructure = { path = "../../crates/infrastructure" }
+rust_decimal.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true

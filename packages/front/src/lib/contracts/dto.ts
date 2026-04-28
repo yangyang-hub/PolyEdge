@@ -25,7 +25,7 @@ export type RuntimeMode =
   | "manual_confirm"
   | "live_auto"
   | "kill_switch_locked";
-export type RuntimeEnvironment = "paper" | "staging" | "production";
+export type RuntimeEnvironment = "local" | "paper" | "staging" | "production";
 export type ApprovalType = "signal" | "mode_switch" | "kill_switch";
 export type ApprovalSeverity = "info" | "warning" | "critical";
 export type ApprovalStatus = "pending" | "approved" | "rejected";

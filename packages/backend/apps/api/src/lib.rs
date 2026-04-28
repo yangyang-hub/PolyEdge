@@ -1,10 +1,13 @@
 use axum::{
     Router,
+    body::{Body, Bytes},
     extract::{Extension, Json, Path, Query, State},
-    http::{HeaderMap, StatusCode},
+    http::{HeaderMap, StatusCode, header},
     middleware,
+    response::Response,
     routing::get,
 };
+use futures::stream;
 use polyedge_application::{
     ApproveSignalCommand, ApproveSignalReceipt, AuthenticatedActor, EventListFilters, EventView,
     EvidenceListFilters, EvidenceView, ExecutionFillResult, ExecutionRequestListFilters,
@@ -12,7 +15,7 @@ use polyedge_application::{
     KillSwitchReceipt, MarketListFilters, MarketView, ModeTransitionCommand, OrderDraftListFilters,
     OrderDraftView, OrderListFilters, OrderView, PositionListFilters, PositionView,
     ProbabilityEstimateListFilters, ProbabilityEstimateView, ReconcileExternalTradeCommand,
-    RejectSignalCommand, RejectSignalReceipt, ReleaseKillSwitchCommand, RiskStateView,
+    RejectSignalCommand, RejectSignalReceipt, ReleaseKillSwitchCommand, RiskPolicy, RiskStateView,
     SignalListFilters, SignalTransitionListFilters, SignalTransitionView, SignalView,
     SubmitExecutionCommand, SyncExternalOrderStatusCommand, TradeListFilters, TradeView,
     TriggerKillSwitchCommand,
@@ -22,30 +25,42 @@ use polyedge_connectors::{
     normalize_polymarket_trade_fill_update,
 };
 use polyedge_contracts::{
-    ApiResponse, ApproveSignalData, ApproveSignalRequest, ConnectorOrderStatusCallbackData,
-    ConnectorOrderStatusCallbackRequest, ConnectorTradeFillCallbackData,
-    ConnectorTradeFillCallbackRequest, DependencyStatus, EventData, EventListQuery, EvidenceData,
-    EvidenceListQuery, ExecutionRequestData, ExecutionRequestListQuery, HealthData, KillSwitchData,
-    MarketData, MarketListQuery, OrderData, OrderDraftData, OrderDraftListQuery, OrderListQuery,
-    PolymarketOrderStatusCallbackRequest, PolymarketTradeFillCallbackRequest, PositionData,
-    PositionListQuery, ProbabilityEstimateData, ProbabilityEstimateListQuery, ReadinessData,
-    RecomputeSignalData, RecomputeSignalRequest, RejectSignalData, RejectSignalRequest,
-    ReleaseKillSwitchRequest, RiskStateData, SignalData, SignalListQuery, SignalTransitionData,
-    SignalTransitionListQuery, SubmitExecutionData, SubmitExecutionRequest, SystemModeData,
-    TradeData, TradeListQuery, TransitionSystemModeRequest, TriggerKillSwitchRequest,
+    AlertSeverity, AlertStatus, ApiResponse, ApprovalData, ApprovalListQuery, ApprovalSeverity,
+    ApprovalStatus, ApprovalType, ApproveSignalData, ApproveSignalRequest, BucketStatus,
+    ConnectorOrderStatusCallbackData, ConnectorOrderStatusCallbackRequest,
+    ConnectorTradeFillCallbackData, ConnectorTradeFillCallbackRequest, DependencyStatus, EventData,
+    EventListQuery, EvidenceData, EvidenceListQuery, ExecutionRequestData,
+    ExecutionRequestListQuery, HealthData, KillSwitchData, MarketData, MarketListQuery, OrderData,
+    OrderDraftData, OrderDraftListQuery, OrderListQuery, PolymarketOrderStatusCallbackRequest,
+    PolymarketTradeFillCallbackRequest, PositionData, PositionListQuery, ProbabilityEstimateData,
+    ProbabilityEstimateListQuery, ReadinessData, RecomputeSignalData, RecomputeSignalRequest,
+    RejectSignalData, RejectSignalRequest, ReleaseKillSwitchRequest, RiskAlertData,
+    RiskAlertListQuery, RiskBucketData, RiskBucketListQuery, RiskStateData, SignalData,
+    SignalListQuery, SignalTransitionData, SignalTransitionListQuery, SubmitExecutionData,
+    SubmitExecutionRequest, SystemModeData, TradeData, TradeListQuery, TransitionSystemModeRequest,
+    TriggerKillSwitchRequest,
 };
-use polyedge_domain::{AppError, OrderStatus, Probability, Quantity, StepUpScope, UsdAmount};
+use polyedge_domain::{
+    AppError, ExposureRatio, OrderStatus, Probability, Quantity, SignalLifecycleState, StepUpScope,
+    TradabilityStatus, UsdAmount,
+};
 use polyedge_infrastructure::stores::ExternalEventBegin;
 use polyedge_infrastructure::{
     AppState, AuthContext, HttpError, IdempotencyKey, hash_json, new_trace_id,
     request_id_from_headers, require_connector_write_auth, require_console_read_auth,
     require_console_write_auth, require_mode_write_auth,
 };
+use rust_decimal::Decimal;
+use serde_json::{Value, json};
+use std::{collections::HashMap, convert::Infallible, time::Duration};
+use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use tower::ServiceBuilder;
 use tower_http::{timeout::TimeoutLayer, trace::TraceLayer};
 
 const CONNECTOR_ORDER_STATUS_SOURCE: &str = "connector.orders.status";
 const CONNECTOR_TRADE_FILL_SOURCE: &str = "connector.trades.fill";
+const DEFAULT_CONSOLE_LIST_LIMIT: u16 = 100;
+const MAX_CONSOLE_LIST_LIMIT: u16 = 200;
 
 pub fn build_app(state: AppState) -> Router {
     let system_routes =
@@ -222,6 +237,34 @@ pub fn build_app(state: AppState) -> Router {
                 require_console_read_auth,
             )),
         )
+        .route(
+            "/api/v1/risk/alerts",
+            get(list_risk_alerts).route_layer(middleware::from_fn_with_state(
+                state.clone(),
+                require_console_read_auth,
+            )),
+        )
+        .route(
+            "/api/v1/risk/buckets",
+            get(list_risk_buckets).route_layer(middleware::from_fn_with_state(
+                state.clone(),
+                require_console_read_auth,
+            )),
+        )
+        .route(
+            "/api/v1/approvals",
+            get(list_approvals).route_layer(middleware::from_fn_with_state(
+                state.clone(),
+                require_console_read_auth,
+            )),
+        )
+        .route(
+            "/api/v1/stream/{channel}",
+            get(stream_channel).route_layer(middleware::from_fn_with_state(
+                state.clone(),
+                require_console_read_auth,
+            )),
+        )
         .nest("/api/v1/system", system_routes)
         .with_state(state)
         .layer(
@@ -294,6 +337,782 @@ async fn readyz(
             trace_id,
         )),
     )
+}
+
+#[derive(Debug, Clone)]
+struct ConsoleRiskSnapshot {
+    risk_state: RiskStateView,
+    environment: String,
+    approvals: Vec<ApprovalData>,
+    alerts: Vec<RiskAlertData>,
+    buckets: Vec<RiskBucketData>,
+}
+
+#[derive(Debug, Clone)]
+struct BucketAccumulator {
+    exposure: Decimal,
+    updated_at: OffsetDateTime,
+    version: i64,
+}
+
+async fn read_console_risk_snapshot(
+    state: &AppState,
+) -> polyedge_domain::Result<ConsoleRiskSnapshot> {
+    let risk_state = state.risk_service.read_state().await?;
+    let mode = state.system_mode_service.read_mode().await?;
+    let markets = state
+        .market_event_service
+        .list_markets(MarketListFilters::new(
+            None,
+            None,
+            Some(MAX_CONSOLE_LIST_LIMIT),
+        )?)
+        .await?;
+    let signals = state
+        .market_event_service
+        .list_signals(SignalListFilters::new(
+            None,
+            None,
+            None,
+            Some(MAX_CONSOLE_LIST_LIMIT),
+        )?)
+        .await?;
+    let positions = state
+        .execution_service
+        .list_positions(PositionListFilters::new(
+            None,
+            None,
+            None,
+            Some(MAX_CONSOLE_LIST_LIMIT),
+        )?)
+        .await?;
+    let markets_by_id = markets
+        .iter()
+        .map(|market| (market.id.clone(), market.clone()))
+        .collect::<HashMap<_, _>>();
+    let approvals = derive_approvals(&signals, &markets_by_id, risk_state.mode);
+    let buckets = derive_risk_buckets(&positions, &markets_by_id)?;
+    let alerts = derive_risk_alerts(
+        &risk_state,
+        &approvals,
+        &buckets,
+        state.risk_service.policy(),
+    )?;
+
+    Ok(ConsoleRiskSnapshot {
+        risk_state,
+        environment: mode.environment,
+        approvals,
+        alerts,
+        buckets,
+    })
+}
+
+fn derive_approvals(
+    signals: &[SignalView],
+    markets_by_id: &HashMap<String, MarketView>,
+    mode: polyedge_domain::SystemMode,
+) -> Vec<ApprovalData> {
+    let mut approvals = signals
+        .iter()
+        .filter_map(|signal| {
+            let market = markets_by_id.get(&signal.market_id);
+            let pending = signal_needs_approval(signal, market, mode);
+            let status = if signal.approved_at.is_some() {
+                ApprovalStatus::Approved
+            } else if signal.rejected_at.is_some() {
+                ApprovalStatus::Rejected
+            } else if pending {
+                ApprovalStatus::Pending
+            } else {
+                return None;
+            };
+            let occurred_at = signal
+                .approved_at
+                .or(signal.rejected_at)
+                .unwrap_or(signal.updated_at);
+            let market_question = market
+                .map(|market| market.question.as_str())
+                .unwrap_or(signal.market_id.as_str());
+            let summary = match status {
+                ApprovalStatus::Pending => format!(
+                    "{market_question} requires manual confirmation. {}",
+                    signal.risk_decision
+                ),
+                ApprovalStatus::Approved => {
+                    format!("{market_question} was approved for operator-driven execution.")
+                }
+                ApprovalStatus::Rejected => {
+                    format!("{market_question} was rejected and returned to manual monitoring.")
+                }
+            };
+            let owner = if status == ApprovalStatus::Pending {
+                "Risk Engine".to_string()
+            } else {
+                signal
+                    .approved_by_user_id
+                    .as_ref()
+                    .or(signal.rejected_by_user_id.as_ref())
+                    .cloned()
+                    .unwrap_or_else(|| "Operator Desk".to_string())
+            };
+
+            Some(ApprovalData {
+                id: format!("apr_signal_{}", signal.id),
+                approval_type: ApprovalType::Signal,
+                severity: approval_severity(signal, market),
+                owner,
+                resource_id: signal.id.clone(),
+                summary,
+                status,
+                requires_step_up_auth: status == ApprovalStatus::Pending,
+                created_at: occurred_at,
+                updated_at: signal.updated_at,
+                version: signal.version,
+            })
+        })
+        .collect::<Vec<_>>();
+
+    approvals.sort_by(|left, right| {
+        approval_status_rank(left.status)
+            .cmp(&approval_status_rank(right.status))
+            .then_with(|| right.updated_at.cmp(&left.updated_at))
+    });
+    approvals
+}
+
+fn derive_risk_buckets(
+    positions: &[PositionView],
+    markets_by_id: &HashMap<String, MarketView>,
+) -> polyedge_domain::Result<Vec<RiskBucketData>> {
+    let mut grouped = HashMap::<String, BucketAccumulator>::new();
+
+    for position in positions {
+        let bucket_name = markets_by_id
+            .get(&position.market_id)
+            .map(|market| market.category.clone())
+            .unwrap_or_else(|| "Uncategorized".to_string());
+        let exposure = (position.net_quantity.value() * position.mark_price.value()).abs();
+
+        grouped
+            .entry(bucket_name)
+            .and_modify(|bucket| {
+                bucket.exposure += exposure;
+                bucket.updated_at = bucket.updated_at.max(position.updated_at);
+                bucket.version = bucket.version.max(position.version);
+            })
+            .or_insert(BucketAccumulator {
+                exposure,
+                updated_at: position.updated_at,
+                version: position.version,
+            });
+    }
+
+    let total_exposure = grouped
+        .values()
+        .fold(Decimal::ZERO, |sum, bucket| sum + bucket.exposure);
+    let mut buckets = grouped
+        .into_iter()
+        .map(|(name, bucket)| {
+            let exposure_ratio = if total_exposure > Decimal::ZERO {
+                bucket.exposure / total_exposure
+            } else {
+                Decimal::ZERO
+            };
+            let limit = category_limit(&name)?;
+            let utilization = if limit.value() > Decimal::ZERO {
+                exposure_ratio / limit.value()
+            } else {
+                Decimal::ZERO
+            };
+            let status = if utilization >= Decimal::ONE {
+                BucketStatus::Breach
+            } else if utilization >= Decimal::new(85, 2) {
+                BucketStatus::Watch
+            } else {
+                BucketStatus::Healthy
+            };
+
+            Ok(RiskBucketData {
+                id: format!("bucket_{}", slugify(&name)),
+                name,
+                exposure: ExposureRatio::new(exposure_ratio)?,
+                limit,
+                utilization: ExposureRatio::new(utilization)?,
+                status,
+                updated_at: bucket.updated_at,
+                version: bucket.version,
+            })
+        })
+        .collect::<polyedge_domain::Result<Vec<_>>>()?;
+
+    buckets.sort_by(|left, right| right.exposure.cmp(&left.exposure));
+    Ok(buckets)
+}
+
+fn derive_risk_alerts(
+    risk_state: &RiskStateView,
+    approvals: &[ApprovalData],
+    buckets: &[RiskBucketData],
+    policy: &RiskPolicy,
+) -> polyedge_domain::Result<Vec<RiskAlertData>> {
+    let mut alerts = Vec::new();
+    let daily_loss_used = daily_loss_used(risk_state)?;
+    let daily_loss_limit = policy.max_daily_loss.value();
+    let daily_loss_usage = if daily_loss_limit > Decimal::ZERO {
+        daily_loss_used.value() / daily_loss_limit
+    } else {
+        Decimal::ZERO
+    };
+
+    if risk_state.kill_switch {
+        alerts.push(RiskAlertData {
+            id: "alt_kill_switch_active".to_string(),
+            severity: AlertSeverity::Critical,
+            reason: "Kill switch is active. Execution remains halted until a protected release is approved.".to_string(),
+            target: "System Runtime".to_string(),
+            status: AlertStatus::Unresolved,
+            created_at: risk_state.updated_at,
+            updated_at: risk_state.updated_at,
+            version: risk_state.version,
+        });
+    }
+
+    if daily_loss_usage >= Decimal::new(8, 1) {
+        alerts.push(RiskAlertData {
+            id: "alt_daily_loss_usage".to_string(),
+            severity: if daily_loss_usage >= Decimal::new(9, 1) {
+                AlertSeverity::Critical
+            } else {
+                AlertSeverity::Warning
+            },
+            reason: format!(
+                "Daily loss usage reached {}% of the configured budget.",
+                (daily_loss_usage * Decimal::new(100, 0)).round_dp(0)
+            ),
+            target: "Global Risk".to_string(),
+            status: if daily_loss_usage >= Decimal::new(9, 1) {
+                AlertStatus::Unresolved
+            } else {
+                AlertStatus::Watching
+            },
+            created_at: risk_state.updated_at,
+            updated_at: risk_state.updated_at,
+            version: risk_state.version,
+        });
+    }
+
+    for bucket in buckets {
+        if bucket.status == BucketStatus::Healthy {
+            continue;
+        }
+
+        alerts.push(RiskAlertData {
+            id: format!("alt_bucket_{}", bucket.id),
+            severity: if bucket.status == BucketStatus::Breach {
+                AlertSeverity::Critical
+            } else {
+                AlertSeverity::Warning
+            },
+            reason: if bucket.status == BucketStatus::Breach {
+                format!(
+                    "{} exposure exceeded its configured concentration limit.",
+                    bucket.name
+                )
+            } else {
+                format!(
+                    "{} exposure is approaching its configured concentration limit.",
+                    bucket.name
+                )
+            },
+            target: format!("{} Bucket", bucket.name),
+            status: if bucket.status == BucketStatus::Breach {
+                AlertStatus::Unresolved
+            } else {
+                AlertStatus::Watching
+            },
+            created_at: bucket.updated_at,
+            updated_at: bucket.updated_at,
+            version: bucket.version,
+        });
+    }
+
+    let pending_approvals = approvals
+        .iter()
+        .filter(|approval| approval.status == ApprovalStatus::Pending)
+        .collect::<Vec<_>>();
+    if let Some(first_approval) = pending_approvals.first() {
+        let pending_count = pending_approvals.len();
+        alerts.push(RiskAlertData {
+            id: "alt_pending_signal_approvals".to_string(),
+            severity: if pending_count >= 3 {
+                AlertSeverity::Critical
+            } else {
+                AlertSeverity::Warning
+            },
+            reason: format!(
+                "{} signal approval item{} await operator review.",
+                pending_count,
+                if pending_count == 1 { "" } else { "s" }
+            ),
+            target: "Approval Queue".to_string(),
+            status: AlertStatus::Watching,
+            created_at: first_approval.created_at,
+            updated_at: first_approval.updated_at,
+            version: pending_approvals
+                .iter()
+                .map(|approval| approval.version)
+                .max()
+                .unwrap_or(first_approval.version),
+        });
+    }
+
+    alerts.sort_by(|left, right| {
+        alert_severity_rank(left.severity)
+            .cmp(&alert_severity_rank(right.severity))
+            .then_with(|| right.updated_at.cmp(&left.updated_at))
+    });
+    Ok(alerts)
+}
+
+fn signal_needs_approval(
+    signal: &SignalView,
+    market: Option<&MarketView>,
+    mode: polyedge_domain::SystemMode,
+) -> bool {
+    if signal.approved_at.is_some() || signal.rejected_at.is_some() {
+        return false;
+    }
+
+    if !matches!(
+        signal.lifecycle_state,
+        SignalLifecycleState::New | SignalLifecycleState::Active | SignalLifecycleState::Weakened
+    ) {
+        return false;
+    }
+
+    let review_text = format!("{} {}", signal.reason, signal.risk_decision).to_lowercase();
+    if review_text.contains("manual review")
+        || review_text.contains("manual confirmation")
+        || review_text.contains("operator review")
+        || review_text.contains("operator confirmation")
+    {
+        return true;
+    }
+
+    if market.is_some_and(|market| is_manual_review_market(market)) {
+        return true;
+    }
+
+    signal.lifecycle_state == SignalLifecycleState::New
+        && mode == polyedge_domain::SystemMode::ManualConfirm
+}
+
+fn approval_severity(signal: &SignalView, market: Option<&MarketView>) -> ApprovalSeverity {
+    if market.is_some_and(|market| {
+        market.tradability_status == TradabilityStatus::Blocked
+            || market.ambiguity_level.as_str() == "high"
+    }) {
+        return ApprovalSeverity::Critical;
+    }
+
+    if market.is_some_and(is_manual_review_market)
+        || signal.confidence.value() < Decimal::new(65, 2)
+    {
+        return ApprovalSeverity::Warning;
+    }
+
+    ApprovalSeverity::Info
+}
+
+fn is_manual_review_market(market: &MarketView) -> bool {
+    matches!(
+        market.tradability_status,
+        TradabilityStatus::ManualReview
+            | TradabilityStatus::ObserveOnly
+            | TradabilityStatus::Blocked
+    )
+}
+
+fn approval_status_rank(status: ApprovalStatus) -> u8 {
+    match status {
+        ApprovalStatus::Pending => 0,
+        ApprovalStatus::Approved => 1,
+        ApprovalStatus::Rejected => 2,
+    }
+}
+
+fn alert_severity_rank(severity: AlertSeverity) -> u8 {
+    match severity {
+        AlertSeverity::Critical => 0,
+        AlertSeverity::Warning => 1,
+    }
+}
+
+fn category_limit(category: &str) -> polyedge_domain::Result<ExposureRatio> {
+    let limit = match category.to_lowercase().as_str() {
+        "crypto" => Decimal::new(35, 2),
+        "regulation" => Decimal::new(25, 2),
+        "macro" => Decimal::new(18, 2),
+        _ => Decimal::new(20, 2),
+    };
+
+    ExposureRatio::new(limit)
+}
+
+fn slugify(value: &str) -> String {
+    let slug = value
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() {
+                character.to_ascii_lowercase()
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>()
+        .trim_matches('_')
+        .to_string();
+
+    if slug.is_empty() {
+        "uncategorized".to_string()
+    } else {
+        slug
+    }
+}
+
+fn apply_limit<T>(mut items: Vec<T>, limit: Option<u16>) -> Vec<T> {
+    let limit = usize::from(
+        limit
+            .unwrap_or(DEFAULT_CONSOLE_LIST_LIMIT)
+            .min(MAX_CONSOLE_LIST_LIMIT),
+    );
+    items.truncate(limit);
+    items
+}
+
+#[derive(Debug, Clone)]
+struct SseMessage {
+    id: String,
+    event: &'static str,
+    data: Value,
+}
+
+#[derive(Clone)]
+struct StreamState {
+    app_state: AppState,
+    channel: String,
+    sequence: u64,
+}
+
+async fn stream_channel(
+    Extension(_auth): Extension<AuthContext>,
+    State(state): State<AppState>,
+    Path(channel): Path<String>,
+) -> std::result::Result<Response, HttpError> {
+    if !matches!(channel.as_str(), "signals" | "risk" | "events") {
+        return Err(HttpError::with_meta(
+            AppError::not_found("STREAM_CHANNEL_NOT_FOUND", "unknown stream channel"),
+            "unknown",
+            new_trace_id(),
+        ));
+    }
+
+    let stream_state = StreamState {
+        app_state: state,
+        channel,
+        sequence: 0,
+    };
+    let event_stream = stream::unfold(stream_state, |mut stream_state| async move {
+        if stream_state.sequence > 0 {
+            tokio::time::sleep(Duration::from_secs(5)).await;
+        }
+
+        let chunk = match build_stream_chunk(
+            &stream_state.app_state,
+            &stream_state.channel,
+            stream_state.sequence,
+        )
+        .await
+        {
+            Ok(chunk) => chunk,
+            Err(error) => format!(
+                "event: stream.error\ndata: {}\n\n",
+                json!({
+                    "code": error.code(),
+                    "message": error.message(),
+                    "retryable": error.retryable(),
+                })
+            ),
+        };
+
+        stream_state.sequence += 1;
+        Some((Ok::<Bytes, Infallible>(Bytes::from(chunk)), stream_state))
+    });
+
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "text/event-stream; charset=utf-8")
+        .header(header::CACHE_CONTROL, "no-cache, no-transform")
+        .header(header::CONNECTION, "keep-alive")
+        .header("x-accel-buffering", "no")
+        .body(Body::from_stream(event_stream))
+        .map_err(|error| {
+            HttpError::with_meta(
+                AppError::internal(
+                    "STREAM_RESPONSE_BUILD_FAILED",
+                    format!("failed to build stream response: {error}"),
+                ),
+                "unknown",
+                new_trace_id(),
+            )
+        })
+}
+
+async fn build_stream_chunk(
+    state: &AppState,
+    channel: &str,
+    sequence: u64,
+) -> polyedge_domain::Result<String> {
+    let messages = match channel {
+        "signals" => signal_stream_messages(state).await?,
+        "risk" => risk_stream_messages(state).await?,
+        "events" => event_stream_messages(state).await?,
+        _ => Vec::new(),
+    };
+
+    if messages.is_empty() {
+        return Ok(format!(
+            ": polyedge {channel} stream heartbeat {sequence}\n\n"
+        ));
+    }
+
+    Ok(messages
+        .iter()
+        .map(format_sse_message)
+        .collect::<Vec<_>>()
+        .join(""))
+}
+
+async fn signal_stream_messages(state: &AppState) -> polyedge_domain::Result<Vec<SseMessage>> {
+    let markets = state
+        .market_event_service
+        .list_markets(MarketListFilters::new(None, None, Some(100))?)
+        .await?;
+    let signals = state
+        .market_event_service
+        .list_signals(SignalListFilters::new(None, None, None, Some(50))?)
+        .await?;
+
+    Ok(signals
+        .into_iter()
+        .map(|signal| {
+            let market = markets.iter().find(|market| market.id == signal.market_id);
+            let event = match signal.lifecycle_state.as_str() {
+                "new" => "signal.created",
+                "invalidated" => "signal.invalidated",
+                _ => "signal.updated",
+            };
+
+            SseMessage {
+                id: format!("signals:{}:{}", signal.id, signal.version),
+                event,
+                data: json!({
+                    "signal_id": signal.id,
+                    "market_id": signal.market_id,
+                    "market_question": market.map(|market| market.question.clone()),
+                    "context_label": market.map(|market| {
+                        format!("{} / {}", market.category, market.tradability_status.as_str())
+                    }),
+                    "version": signal.version,
+                    "lifecycle_state": signal.lifecycle_state,
+                    "side": signal.side,
+                    "fair_price": signal.fair_price,
+                    "market_price": signal.market_price,
+                    "edge": signal.edge,
+                    "confidence": signal.confidence,
+                    "requires_review": signal_requires_review(&signal, market),
+                    "reason": signal.reason,
+                    "risk_decision": signal.risk_decision,
+                    "evidence_lines": Vec::<String>::new(),
+                    "updated_at": format_timestamp(signal.updated_at),
+                }),
+            }
+        })
+        .collect())
+}
+
+async fn risk_stream_messages(state: &AppState) -> polyedge_domain::Result<Vec<SseMessage>> {
+    let snapshot = read_console_risk_snapshot(state).await?;
+    let open_alerts = snapshot
+        .alerts
+        .iter()
+        .filter(|alert| alert.status != AlertStatus::Contained)
+        .count();
+    let critical_alerts = snapshot
+        .alerts
+        .iter()
+        .filter(|alert| alert.severity == AlertSeverity::Critical)
+        .count();
+    let warning_alerts = snapshot
+        .alerts
+        .iter()
+        .filter(|alert| alert.severity == AlertSeverity::Warning)
+        .count();
+    let approval_count = snapshot
+        .approvals
+        .iter()
+        .filter(|approval| approval.status == ApprovalStatus::Pending)
+        .count();
+    let risk_state = risk_state_to_contract(
+        snapshot.risk_state.clone(),
+        snapshot.environment.clone(),
+        state.risk_service.policy(),
+        Some(open_alerts.try_into().unwrap_or(u32::MAX)),
+    )?;
+    let mut messages = vec![SseMessage {
+        id: format!("risk:{}:{}", risk_state.mode.as_str(), risk_state.version),
+        event: "risk.mode_changed",
+        data: json!({
+            "resource_id": risk_state.id,
+            "version": risk_state.version,
+            "mode": risk_state.mode,
+            "environment": risk_state.environment,
+            "kill_switch": risk_state.kill_switch,
+            "daily_pnl": risk_state.daily_pnl,
+            "gross_exposure": risk_state.gross_exposure,
+            "net_exposure": risk_state.net_exposure,
+            "daily_loss_limit": risk_state.daily_loss_limit,
+            "daily_loss_used": risk_state.daily_loss_used,
+            "open_alerts": risk_state.open_alerts,
+            "critical_alerts": critical_alerts,
+            "warning_alerts": warning_alerts,
+            "approval_count": approval_count,
+            "updated_at": format_timestamp(risk_state.updated_at),
+        }),
+    }];
+
+    messages.extend(snapshot.alerts.into_iter().map(|alert| {
+        let alert_id = alert.id;
+
+        SseMessage {
+            id: format!("risk:alert:{}:{}", alert_id, alert.version),
+            event: "risk.alerted",
+            data: json!({
+                "resource_id": alert_id.clone(),
+                "version": alert.version,
+                "alert_id": alert_id,
+                "severity": alert.severity,
+                "reason": alert.reason,
+                "target": alert.target,
+                "status": alert.status,
+                "created_at": format_timestamp(alert.created_at),
+                "updated_at": format_timestamp(alert.updated_at),
+            }),
+        }
+    }));
+    messages.extend(snapshot.approvals.into_iter().map(|approval| {
+        let event = if approval.status == ApprovalStatus::Pending {
+            "approval.created"
+        } else {
+            "approval.updated"
+        };
+
+        let approval_id = approval.id;
+        let resource_id = approval.resource_id;
+
+        SseMessage {
+            id: format!("risk:approval:{}:{}", approval_id, approval.version),
+            event,
+            data: json!({
+                "resource_id": resource_id.clone(),
+                "version": approval.version,
+                "approval_id": approval_id,
+                "approval_type": approval.approval_type,
+                "approval_severity": approval.severity,
+                "approval_status": approval.status,
+                "approval_owner": approval.owner,
+                "approval_summary": approval.summary,
+                "approval_resource_id": resource_id,
+                "approval_requires_step_up_auth": approval.requires_step_up_auth,
+                "created_at": format_timestamp(approval.created_at),
+                "updated_at": format_timestamp(approval.updated_at),
+            }),
+        }
+    }));
+
+    Ok(messages)
+}
+
+async fn event_stream_messages(state: &AppState) -> polyedge_domain::Result<Vec<SseMessage>> {
+    let events = state
+        .market_event_service
+        .list_events(EventListFilters::new(None, Some(50))?)
+        .await?;
+
+    Ok(events
+        .into_iter()
+        .map(|event| SseMessage {
+            id: format!("events:{}:{}", event.id, event.version),
+            event: "event.created",
+            data: json!({
+                "event_id": event.id,
+                "source": event.source,
+                "summary": event.summary,
+                "confidence": event.confidence,
+                "created_at": format_timestamp(event.created_at),
+                "version": event.version,
+            }),
+        })
+        .collect())
+}
+
+fn signal_requires_review(signal: &SignalView, market: Option<&MarketView>) -> bool {
+    if signal.approved_at.is_some() || signal.rejected_at.is_some() {
+        return false;
+    }
+
+    let eligible_state = matches!(
+        signal.lifecycle_state.as_str(),
+        "new" | "active" | "weakened"
+    );
+    let manual_market = market.is_some_and(|market| {
+        matches!(
+            market.tradability_status.as_str(),
+            "manual_review" | "observe_only" | "blocked"
+        )
+    });
+    let review_text = format!("{} {}", signal.reason, signal.risk_decision).to_lowercase();
+
+    eligible_state
+        && (manual_market
+            || review_text.contains("manual review")
+            || review_text.contains("manual confirmation")
+            || review_text.contains("operator review")
+            || review_text.contains("operator confirmation"))
+}
+
+fn daily_loss_used(risk_state: &RiskStateView) -> polyedge_domain::Result<UsdAmount> {
+    let daily_pnl = risk_state.daily_pnl.value();
+
+    if daily_pnl < Decimal::ZERO {
+        return UsdAmount::new(-daily_pnl);
+    }
+
+    UsdAmount::new(Decimal::ZERO)
+}
+
+fn format_sse_message(message: &SseMessage) -> String {
+    format!(
+        "id: {}\nevent: {}\ndata: {}\n\n",
+        message.id, message.event, message.data
+    )
+}
+
+fn format_timestamp(timestamp: OffsetDateTime) -> String {
+    timestamp
+        .format(&Rfc3339)
+        .unwrap_or_else(|_| timestamp.to_string())
 }
 
 async fn read_system_mode(
@@ -945,11 +1764,8 @@ async fn process_connector_trade_fill_callback<T: serde::Serialize>(
         HttpError::with_meta(error, auth.request_id.clone(), trace_id.to_string())
     })?;
 
-    Ok(connector_trade_fill_to_contract(
-        fill_result,
-        risk_state,
-        false,
-    ))
+    connector_trade_fill_to_contract(fill_result, risk_state, false, state)
+        .map_err(|error| HttpError::with_meta(error, auth.request_id.clone(), trace_id.to_string()))
 }
 
 async fn recompute_signal(
@@ -1050,13 +1866,86 @@ async fn read_risk_state(
     State(state): State<AppState>,
 ) -> std::result::Result<Json<ApiResponse<RiskStateData>>, HttpError> {
     let trace_id = new_trace_id();
-    let risk_state =
-        state.risk_service.read_state().await.map_err(|error| {
-            HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone())
-        })?;
+    let snapshot = read_console_risk_snapshot(&state)
+        .await
+        .map_err(|error| HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone()))?;
+    let open_alerts = snapshot
+        .alerts
+        .iter()
+        .filter(|alert| alert.status != AlertStatus::Contained)
+        .count()
+        .try_into()
+        .unwrap_or(u32::MAX);
 
     Ok(Json(ApiResponse::new(
-        risk_state_to_contract(risk_state),
+        risk_state_to_contract(
+            snapshot.risk_state,
+            snapshot.environment,
+            state.risk_service.policy(),
+            Some(open_alerts),
+        )
+        .map_err(|error| HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone()))?,
+        auth.request_id,
+        trace_id,
+    )))
+}
+
+async fn list_risk_alerts(
+    Extension(auth): Extension<AuthContext>,
+    State(state): State<AppState>,
+    Query(query): Query<RiskAlertListQuery>,
+) -> std::result::Result<Json<ApiResponse<Vec<RiskAlertData>>>, HttpError> {
+    let trace_id = new_trace_id();
+    let snapshot = read_console_risk_snapshot(&state)
+        .await
+        .map_err(|error| HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone()))?;
+    let alerts = snapshot
+        .alerts
+        .into_iter()
+        .filter(|alert| query.status.is_none_or(|status| alert.status == status))
+        .collect::<Vec<_>>();
+
+    Ok(Json(ApiResponse::new(
+        apply_limit(alerts, query.limit),
+        auth.request_id,
+        trace_id,
+    )))
+}
+
+async fn list_risk_buckets(
+    Extension(auth): Extension<AuthContext>,
+    State(state): State<AppState>,
+    Query(query): Query<RiskBucketListQuery>,
+) -> std::result::Result<Json<ApiResponse<Vec<RiskBucketData>>>, HttpError> {
+    let trace_id = new_trace_id();
+    let snapshot = read_console_risk_snapshot(&state)
+        .await
+        .map_err(|error| HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone()))?;
+
+    Ok(Json(ApiResponse::new(
+        apply_limit(snapshot.buckets, query.limit),
+        auth.request_id,
+        trace_id,
+    )))
+}
+
+async fn list_approvals(
+    Extension(auth): Extension<AuthContext>,
+    State(state): State<AppState>,
+    Query(query): Query<ApprovalListQuery>,
+) -> std::result::Result<Json<ApiResponse<Vec<ApprovalData>>>, HttpError> {
+    let trace_id = new_trace_id();
+    let snapshot = read_console_risk_snapshot(&state)
+        .await
+        .map_err(|error| HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone()))?;
+    let approvals = snapshot
+        .approvals
+        .into_iter()
+        .filter(|approval| query.status.is_none_or(|status| approval.status == status))
+        .collect::<Vec<_>>();
+
+    Ok(Json(ApiResponse::new(
+        apply_limit(approvals, query.limit),
         auth.request_id,
         trace_id,
     )))
@@ -1149,7 +2038,8 @@ async fn approve_signal(
         }
     };
 
-    let response_data = approve_signal_to_contract(receipt, false);
+    let response_data = approve_signal_to_contract(receipt, false, &state)
+        .map_err(|error| HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone()))?;
     let response_json = serde_json::to_string(&response_data).map_err(|error| {
         HttpError::with_meta(
             AppError::internal(
@@ -1261,7 +2151,8 @@ async fn reject_signal(
         }
     };
 
-    let response_data = reject_signal_to_contract(receipt, false);
+    let response_data = reject_signal_to_contract(receipt, false, &state)
+        .map_err(|error| HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone()))?;
     let response_json = serde_json::to_string(&response_data).map_err(|error| {
         HttpError::with_meta(
             AppError::internal(
@@ -1381,7 +2272,8 @@ async fn submit_execution_request(
         }
     };
 
-    let response_data = execution_submission_to_contract(receipt, false);
+    let response_data = execution_submission_to_contract(receipt, false, &state)
+        .map_err(|error| HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone()))?;
     let response_json = serde_json::to_string(&response_data).map_err(|error| {
         HttpError::with_meta(
             AppError::internal(
@@ -1494,7 +2386,8 @@ async fn trigger_kill_switch(
         }
     };
 
-    let response_data = kill_switch_to_contract(receipt, false);
+    let response_data = kill_switch_to_contract(receipt, false, &state)
+        .map_err(|error| HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone()))?;
     let response_json = serde_json::to_string(&response_data).map_err(|error| {
         HttpError::with_meta(
             AppError::internal(
@@ -1608,7 +2501,8 @@ async fn release_kill_switch(
         }
     };
 
-    let response_data = kill_switch_to_contract(receipt, false);
+    let response_data = kill_switch_to_contract(receipt, false, &state)
+        .map_err(|error| HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone()))?;
     let response_json = serde_json::to_string(&response_data).map_err(|error| {
         HttpError::with_meta(
             AppError::internal(
@@ -1866,17 +2760,26 @@ fn position_to_contract(position: PositionView) -> PositionData {
     }
 }
 
-fn risk_state_to_contract(risk_state: RiskStateView) -> RiskStateData {
-    RiskStateData {
+fn risk_state_to_contract(
+    risk_state: RiskStateView,
+    environment: String,
+    policy: &RiskPolicy,
+    open_alerts_override: Option<u32>,
+) -> polyedge_domain::Result<RiskStateData> {
+    Ok(RiskStateData {
+        id: "risk_state_global".to_string(),
         mode: risk_state.mode,
+        environment,
         kill_switch: risk_state.kill_switch,
         daily_pnl: risk_state.daily_pnl,
         gross_exposure: risk_state.gross_exposure,
         net_exposure: risk_state.net_exposure,
-        open_alerts: risk_state.open_alerts,
+        open_alerts: open_alerts_override.unwrap_or(risk_state.open_alerts),
+        daily_loss_limit: policy.max_daily_loss,
+        daily_loss_used: daily_loss_used(&risk_state)?,
         updated_at: risk_state.updated_at,
         version: risk_state.version,
-    }
+    })
 }
 
 fn probability_estimate_to_contract(estimate: ProbabilityEstimateView) -> ProbabilityEstimateData {
@@ -1923,39 +2826,64 @@ fn recompute_signal_to_contract(
     }
 }
 
-fn approve_signal_to_contract(receipt: ApproveSignalReceipt, replayed: bool) -> ApproveSignalData {
-    ApproveSignalData {
-        signal: signal_to_contract(receipt.signal),
-        risk_state: risk_state_to_contract(receipt.risk_state),
-        replayed,
-    }
+fn risk_state_to_contract_for_state(
+    state: &AppState,
+    risk_state: RiskStateView,
+) -> polyedge_domain::Result<RiskStateData> {
+    risk_state_to_contract(
+        risk_state,
+        state.settings.runtime.environment.clone(),
+        state.risk_service.policy(),
+        None,
+    )
 }
 
-fn reject_signal_to_contract(receipt: RejectSignalReceipt, replayed: bool) -> RejectSignalData {
-    RejectSignalData {
+fn approve_signal_to_contract(
+    receipt: ApproveSignalReceipt,
+    replayed: bool,
+    state: &AppState,
+) -> polyedge_domain::Result<ApproveSignalData> {
+    Ok(ApproveSignalData {
         signal: signal_to_contract(receipt.signal),
-        risk_state: risk_state_to_contract(receipt.risk_state),
+        risk_state: risk_state_to_contract_for_state(state, receipt.risk_state)?,
         replayed,
-    }
+    })
+}
+
+fn reject_signal_to_contract(
+    receipt: RejectSignalReceipt,
+    replayed: bool,
+    state: &AppState,
+) -> polyedge_domain::Result<RejectSignalData> {
+    Ok(RejectSignalData {
+        signal: signal_to_contract(receipt.signal),
+        risk_state: risk_state_to_contract_for_state(state, receipt.risk_state)?,
+        replayed,
+    })
 }
 
 fn execution_submission_to_contract(
     receipt: ExecutionSubmissionReceipt,
     replayed: bool,
-) -> SubmitExecutionData {
-    SubmitExecutionData {
+    state: &AppState,
+) -> polyedge_domain::Result<SubmitExecutionData> {
+    Ok(SubmitExecutionData {
         order_draft: order_draft_to_contract(receipt.order_draft),
         execution_request: execution_request_to_contract(receipt.execution_request),
-        risk_state: risk_state_to_contract(receipt.risk_state),
+        risk_state: risk_state_to_contract_for_state(state, receipt.risk_state)?,
         replayed,
-    }
+    })
 }
 
-fn kill_switch_to_contract(receipt: KillSwitchReceipt, replayed: bool) -> KillSwitchData {
-    KillSwitchData {
-        risk_state: risk_state_to_contract(receipt.risk_state),
+fn kill_switch_to_contract(
+    receipt: KillSwitchReceipt,
+    replayed: bool,
+    state: &AppState,
+) -> polyedge_domain::Result<KillSwitchData> {
+    Ok(KillSwitchData {
+        risk_state: risk_state_to_contract_for_state(state, receipt.risk_state)?,
         replayed,
-    }
+    })
 }
 
 fn connector_order_status_to_contract(
@@ -1972,14 +2900,15 @@ fn connector_trade_fill_to_contract(
     result: ExecutionFillResult,
     risk_state: RiskStateView,
     replayed: bool,
-) -> ConnectorTradeFillCallbackData {
-    ConnectorTradeFillCallbackData {
+    state: &AppState,
+) -> polyedge_domain::Result<ConnectorTradeFillCallbackData> {
+    Ok(ConnectorTradeFillCallbackData {
         order: order_to_contract(result.order),
         trade: trade_to_contract(result.trade),
         position: position_to_contract(result.position),
-        risk_state: risk_state_to_contract(risk_state),
+        risk_state: risk_state_to_contract_for_state(state, risk_state)?,
         replayed,
-    }
+    })
 }
 
 fn authenticated_actor(auth: &AuthContext) -> AuthenticatedActor {
@@ -2078,7 +3007,7 @@ async fn build_trade_fill_callback_response(
         order: order_to_contract(order),
         trade: trade_to_contract(trade),
         position: position_to_contract(position),
-        risk_state: risk_state_to_contract(risk_state),
+        risk_state: risk_state_to_contract_for_state(state, risk_state)?,
         replayed,
     })
 }
@@ -2559,8 +3488,80 @@ mod tests {
         let payload: ApiResponse<RiskStateData> =
             serde_json::from_slice(&body).expect("deserialize response");
         assert_eq!(payload.data.mode, SystemMode::ManualConfirm);
+        assert_eq!(payload.data.id, "risk_state_global");
+        assert_eq!(payload.data.environment, "test");
         assert!(!payload.data.kill_switch);
         assert_eq!(payload.data.open_alerts, 0);
+    }
+
+    #[tokio::test]
+    async fn console_risk_routes_return_derived_resources() {
+        let signing_key = SigningKey::from_bytes(&[28_u8; 32]);
+        let settings = Settings::for_test(
+            SystemMode::ManualConfirm,
+            "test",
+            vec![AuthKeySettings {
+                kid: "test-key".to_string(),
+                public_key_base64: general_purpose::STANDARD
+                    .encode(signing_key.verifying_key().as_bytes()),
+            }],
+        );
+        let state = Runtime::test_app_state(settings).expect("state");
+        state
+            .market_event_service
+            .ingest_fixture_bundle(demo_fixture_bundle(), "trc_seeded_console_risk")
+            .await
+            .expect("seed fixtures");
+        let app = build_app(state);
+
+        let approvals_request_id = format!("req_{}", Uuid::now_v7());
+        let approvals_token = issue_token(&signing_key, "test-key", &approvals_request_id);
+        let approvals_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/approvals?status=pending")
+                    .header("Authorization", format!("Bearer {approvals_token}"))
+                    .header("X-Request-Id", &approvals_request_id)
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        assert_eq!(approvals_response.status(), StatusCode::OK);
+        let approvals_body = to_bytes(approvals_response.into_body(), usize::MAX)
+            .await
+            .expect("read approvals body");
+        let approvals_payload: ApiResponse<Vec<ApprovalData>> =
+            serde_json::from_slice(&approvals_body).expect("deserialize approvals response");
+        assert!(!approvals_payload.data.is_empty());
+        assert_eq!(approvals_payload.data[0].status, ApprovalStatus::Pending);
+
+        let alerts_request_id = format!("req_{}", Uuid::now_v7());
+        let alerts_token = issue_token(&signing_key, "test-key", &alerts_request_id);
+        let alerts_response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/risk/alerts")
+                    .header("Authorization", format!("Bearer {alerts_token}"))
+                    .header("X-Request-Id", &alerts_request_id)
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        assert_eq!(alerts_response.status(), StatusCode::OK);
+        let alerts_body = to_bytes(alerts_response.into_body(), usize::MAX)
+            .await
+            .expect("read alerts body");
+        let alerts_payload: ApiResponse<Vec<RiskAlertData>> =
+            serde_json::from_slice(&alerts_body).expect("deserialize alerts response");
+        assert!(
+            alerts_payload
+                .data
+                .iter()
+                .any(|alert| alert.id == "alt_pending_signal_approvals")
+        );
     }
 
     #[tokio::test]

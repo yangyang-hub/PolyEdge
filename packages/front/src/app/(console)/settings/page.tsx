@@ -49,7 +49,8 @@ export default async function SettingsPage() {
             <p>1. `POLYEDGE_API_BASE_URL` {data.apiBaseUrl ? `-> ${data.apiBaseUrl}` : "is unset, using typed mock envelopes"}.</p>
             <p>2. Backend mode resolves to `{data.backendMode}` from that value.</p>
             <p>3. `POLYEDGE_CONSOLE_AUTH` currently resolves to `{data.consoleAuthMode}`.</p>
-            <p>4. Live backend requests also require `POLYEDGE_INTERNAL_AUTH_KID` and `POLYEDGE_INTERNAL_AUTH_PRIVATE_KEY` for Next.js server-side token signing.</p>
+            <p>4. Local live mode can use `POLYEDGE_INTERNAL_AUTH_DEV_BYPASS=1`; signed mode requires `POLYEDGE_INTERNAL_AUTH_KID` and `POLYEDGE_INTERNAL_AUTH_PRIVATE_KEY`.</p>
+            <p>5. Protected actions verify `POLYEDGE_CONSOLE_STEP_UP_CODE` before sending step-up scopes downstream.</p>
           </CardContent>
         </Card>
       </section>

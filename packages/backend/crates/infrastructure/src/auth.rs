@@ -462,6 +462,10 @@ fn authenticate_request(
             )
         })?;
 
+    if let Some(auth) = authenticate_local_dev_request(state, request, &request_id)? {
+        return Ok(auth);
+    }
+
     let token = headers
         .get("authorization")
         .and_then(|value| value.to_str().ok())
@@ -491,6 +495,129 @@ fn authenticate_request(
         .auth_verifier
         .authenticate(token, &request_id, kind, client_ip, client_user_agent)
         .map_err(|error| HttpError::with_meta(error, request_id, new_trace_id()))
+}
+
+fn authenticate_local_dev_request(
+    state: &AppState,
+    request: &Request,
+    request_id: &str,
+) -> std::result::Result<Option<AuthContext>, HttpError> {
+    if state.settings.runtime.environment != "local" || !state.settings.auth.keys.is_empty() {
+        return Ok(None);
+    }
+
+    let headers = request.headers();
+    let dev_auth = headers
+        .get("x-polyedge-dev-auth")
+        .and_then(|value| value.to_str().ok());
+
+    if dev_auth != Some("local") {
+        return Ok(None);
+    }
+
+    let role = headers
+        .get("x-polyedge-console-role")
+        .and_then(|value| value.to_str().ok())
+        .map(parse_dev_role)
+        .transpose()
+        .map_err(|error| HttpError::with_meta(error, request_id.to_string(), new_trace_id()))?
+        .unwrap_or(UserRole::Viewer);
+    let actor = headers
+        .get("x-polyedge-console-user")
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("local-console");
+    let actor_id = normalize_dev_actor(actor);
+    let step_up_verified = headers
+        .get("x-polyedge-step-up-verified")
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value == "true");
+    let step_up_scopes = if step_up_verified {
+        headers
+            .get("x-polyedge-step-up-scopes")
+            .and_then(|value| value.to_str().ok())
+            .map(parse_dev_step_up_scopes)
+            .transpose()
+            .map_err(|error| HttpError::with_meta(error, request_id.to_string(), new_trace_id()))?
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    let client_ip = headers
+        .get("x-client-ip")
+        .and_then(|value| value.to_str().ok())
+        .map(std::borrow::ToOwned::to_owned);
+    let client_user_agent = headers
+        .get("x-client-user-agent")
+        .and_then(|value| value.to_str().ok())
+        .map(std::borrow::ToOwned::to_owned);
+    let now = OffsetDateTime::now_utc();
+
+    Ok(Some(AuthContext {
+        user_id: format!("usr_{actor_id}"),
+        session_id: format!("sess_local_{actor_id}"),
+        roles: vec![role],
+        request_id: request_id.to_string(),
+        step_up_verified,
+        step_up_scopes,
+        step_up_until: step_up_verified
+            .then(|| now + time::Duration::seconds(state.settings.auth.max_step_up_window_secs)),
+        ip: client_ip,
+        user_agent: client_user_agent,
+    }))
+}
+
+fn parse_dev_role(value: &str) -> Result<UserRole> {
+    match value {
+        "viewer" => Ok(UserRole::Viewer),
+        "operator" => Ok(UserRole::Operator),
+        "risk_admin" => Ok(UserRole::RiskAdmin),
+        "admin" => Ok(UserRole::Admin),
+        _ => Err(AppError::unauthorized(
+            "AUTH_DEV_ROLE_INVALID",
+            format!("invalid local dev role: {value}"),
+        )),
+    }
+}
+
+fn parse_dev_step_up_scopes(value: &str) -> Result<Vec<StepUpScope>> {
+    value
+        .split(',')
+        .filter(|scope| !scope.trim().is_empty())
+        .map(|scope| match scope.trim() {
+            "signal_approve" => Ok(StepUpScope::SignalApprove),
+            "signal_reject" => Ok(StepUpScope::SignalReject),
+            "execution_submit" => Ok(StepUpScope::ExecutionSubmit),
+            "order_cancel_force" => Ok(StepUpScope::OrderCancelForce),
+            "system_mode_switch" => Ok(StepUpScope::SystemModeSwitch),
+            "system_kill_switch_trigger" => Ok(StepUpScope::SystemKillSwitchTrigger),
+            "system_kill_switch_release" => Ok(StepUpScope::SystemKillSwitchRelease),
+            "risk_threshold_update" => Ok(StepUpScope::RiskThresholdUpdate),
+            other => Err(AppError::unauthorized(
+                "AUTH_DEV_STEP_UP_SCOPE_INVALID",
+                format!("invalid local dev step-up scope: {other}"),
+            )),
+        })
+        .collect()
+}
+
+fn normalize_dev_actor(value: &str) -> String {
+    let normalized: String = value
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() {
+                character.to_ascii_lowercase()
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    let normalized = normalized.trim_matches('_');
+
+    if normalized.is_empty() {
+        "local_console".to_string()
+    } else {
+        normalized.to_string()
+    }
 }
 
 fn split_token(token: &str) -> Result<(&str, &str, &str)> {

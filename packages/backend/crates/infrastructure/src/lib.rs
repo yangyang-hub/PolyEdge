@@ -1,3 +1,10 @@
+#![allow(
+    clippy::collapsible_if,
+    clippy::derivable_impls,
+    clippy::new_without_default,
+    clippy::type_complexity
+)]
+
 pub mod auth;
 pub mod catalog;
 pub mod http;

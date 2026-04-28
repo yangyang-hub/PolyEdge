@@ -4,16 +4,14 @@ import type { ApiListResponse, ApiResponse, ContractListQuery, WriteResponse } f
 import type { RiskAlertDto, RiskBucketDto, RiskStateDto } from "@/lib/contracts/dto";
 import { riskAlertFixtures, riskBucketFixtures, riskStateFixture } from "@/lib/server/polyedge-mock-data";
 import {
+  buildQueryString,
   createListResponse,
   createResponse,
+  fetchContract,
+  fetchListContract,
   createWriteResponse,
   fetchWriteContract,
 } from "@/server/api/base";
-import {
-  readDerivedLiveRiskAlerts,
-  readDerivedLiveRiskBuckets,
-  readDerivedLiveRiskState,
-} from "@/server/api/live-console-derived";
 
 type LiveSystemModeWriteResponse = ApiResponse<{
   mode: RiskStateDto["mode"];
@@ -27,7 +25,10 @@ export async function readRiskState(): Promise<ApiResponse<RiskStateDto>> {
     return createResponse("risk_state", riskStateFixture);
   }
 
-  return readDerivedLiveRiskState();
+  return fetchContract<ApiResponse<RiskStateDto>>(
+    "/api/v1/risk/state",
+    createResponse("risk_state", riskStateFixture),
+  );
 }
 
 export async function listRiskAlerts(query?: ContractListQuery): Promise<ApiListResponse<RiskAlertDto>> {
@@ -39,42 +40,22 @@ export async function listRiskAlerts(query?: ContractListQuery): Promise<ApiList
     return true;
   });
 
-  if (!process.env.POLYEDGE_API_BASE_URL) {
-    return createListResponse("risk_alerts", applyFilters(riskAlertFixtures), query?.limit);
-  }
+  const fallback = createListResponse("risk_alerts", applyFilters(riskAlertFixtures), query?.limit);
 
-  const { data, meta } = await readDerivedLiveRiskAlerts();
-  const filtered = applyFilters(data);
-  const limited = query?.limit ? filtered.slice(0, query.limit) : filtered;
-
-  return {
-    data: limited,
-    page: {
-      limit: query?.limit ?? limited.length,
-      next_cursor: null,
-      has_more: filtered.length > limited.length,
-    },
-    meta,
-  };
+  return fetchListContract(
+    `/api/v1/risk/alerts${buildQueryString({
+      status: query?.status?.[0],
+      limit: query?.limit,
+    })}`,
+    fallback,
+  );
 }
 
 export async function listRiskBuckets(query?: ContractListQuery): Promise<ApiListResponse<RiskBucketDto>> {
-  if (!process.env.POLYEDGE_API_BASE_URL) {
-    return createListResponse("risk_buckets", riskBucketFixtures, query?.limit);
-  }
-
-  const { data, meta } = await readDerivedLiveRiskBuckets();
-  const limited = query?.limit ? data.slice(0, query.limit) : data;
-
-  return {
-    data: limited,
-    page: {
-      limit: query?.limit ?? limited.length,
-      next_cursor: null,
-      has_more: data.length > limited.length,
-    },
-    meta,
-  };
+  return fetchListContract(
+    `/api/v1/risk/buckets${buildQueryString({ limit: query?.limit })}`,
+    createListResponse("risk_buckets", riskBucketFixtures, query?.limit),
+  );
 }
 
 export async function requestModeSwitch(input: {

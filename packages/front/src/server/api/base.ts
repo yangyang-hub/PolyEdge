@@ -10,8 +10,6 @@ import type {
 import type { InternalApiRequestKind, InternalApiStepUpScope } from "@/server/auth/internal-api-token";
 import { createInternalApiHeaders } from "@/server/auth/internal-api-token";
 
-const API_BASE_URL = process.env.POLYEDGE_API_BASE_URL?.replace(/\/$/, "");
-
 export type BackendMode = "mock" | "live";
 
 export class PolyEdgeApiError extends Error {
@@ -59,11 +57,12 @@ function createCursorPage(limit: number) {
 }
 
 export function getBackendMode(): BackendMode {
-  return API_BASE_URL ? "live" : "mock";
+  return getApiBaseUrl() ? "live" : "mock";
 }
 
 export function getApiBaseUrl(): string | null {
-  return API_BASE_URL ?? null;
+  const value = process.env.POLYEDGE_API_BASE_URL?.trim().replace(/\/$/, "");
+  return value ? value : null;
 }
 
 export function buildQueryString(
@@ -146,6 +145,12 @@ async function fetchJson<T>(
     stepUpScopes?: InternalApiStepUpScope[];
   },
 ): Promise<T> {
+  const apiBaseUrl = getApiBaseUrl();
+
+  if (!apiBaseUrl) {
+    throw new PolyEdgeApiError("PolyEdge API base URL is not configured.");
+  }
+
   const authHeaders = await createInternalApiHeaders(auth);
   const headers = new Headers(init.headers);
 
@@ -153,7 +158,7 @@ async function fetchJson<T>(
     headers.set(key, value);
   });
 
-  const response = await fetch(`${API_BASE_URL}${path}`, {
+  const response = await fetch(`${apiBaseUrl}${path}`, {
     ...init,
     headers,
     cache: "no-store",
@@ -180,7 +185,7 @@ async function fetchJson<T>(
 }
 
 export async function fetchContract<T>(path: string, fallback: T): Promise<T> {
-  if (!API_BASE_URL) {
+  if (!getApiBaseUrl()) {
     return clone(fallback);
   }
 
@@ -204,7 +209,7 @@ export async function fetchListContract<TLive, TFront = TLive>(
     mapItem?: (item: TLive) => TFront;
   },
 ): Promise<ApiListResponse<TFront>> {
-  if (!API_BASE_URL) {
+  if (!getApiBaseUrl()) {
     return clone(fallback);
   }
 
@@ -242,7 +247,7 @@ export async function fetchWriteContract<TLive, TFront = TLive>(
     mapLiveResponse?: (payload: TLive) => TFront;
   },
 ): Promise<TFront> {
-  if (!API_BASE_URL) {
+  if (!getApiBaseUrl()) {
     return clone(fallback);
   }
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useEffectEvent, useMemo, useState } from "react";
+import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 
 import {
   CHANNEL_EVENT_TYPES,
@@ -29,12 +29,21 @@ export function useSseStream<TChannel extends RealtimeChannel>({
   );
   const [lastEvent, setLastEvent] = useState<StreamEvent<RealtimePayloadByChannel[TChannel]> | null>(null);
   const [lastErrorAt, setLastErrorAt] = useState<number | null>(null);
+  const seenEventIdsRef = useRef<Set<string>>(new Set());
 
   const eventTypes = useMemo(() => events ?? CHANNEL_EVENT_TYPES[channel], [channel, events]);
 
   const handleMessage = useEffectEvent((event: MessageEvent<string>) => {
     try {
+      if (event.lastEventId && seenEventIdsRef.current.has(event.lastEventId)) {
+        return;
+      }
+
       const payload = JSON.parse(event.data) as RealtimePayloadByChannel[TChannel];
+
+      if (event.lastEventId) {
+        seenEventIdsRef.current.add(event.lastEventId);
+      }
 
       setLastEvent({
         id: event.lastEventId,
@@ -53,6 +62,7 @@ export function useSseStream<TChannel extends RealtimeChannel>({
       return;
     }
 
+    seenEventIdsRef.current.clear();
     const stream = new EventSource(`/api/stream/${channel}`);
 
     stream.onopen = () => {

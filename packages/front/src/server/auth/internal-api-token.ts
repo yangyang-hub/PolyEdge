@@ -3,6 +3,7 @@ import "server-only";
 import { createHash, createPrivateKey, sign as signDetached, type KeyObject } from "node:crypto";
 
 import type { ConsoleRole } from "@/lib/console-auth";
+import { getConsoleAuthMode } from "@/lib/console-auth";
 import { readConsoleSession } from "@/server/auth/console-session";
 
 export type InternalApiRequestKind = "read" | "write";
@@ -23,6 +24,7 @@ const DEFAULT_AUDIENCE = "polyedge-rust-api";
 const READ_TTL_SECS = 60;
 const WRITE_TTL_SECS = 30;
 const STEP_UP_WINDOW_SECS = 300;
+const LOCAL_DEV_STEP_UP_CODE = "000000";
 
 let cachedSigningKey: KeyObject | null = null;
 
@@ -57,6 +59,51 @@ function slugifyActorName(value: string | null): string {
 function buildSessionId(role: string, displayName: string): string {
   const digest = createHash("sha256").update(`${role}:${displayName}`).digest("hex");
   return `sess_${digest.slice(0, 20)}`;
+}
+
+function getConfiguredStepUpCode(): string | null {
+  const configured = process.env.POLYEDGE_CONSOLE_STEP_UP_CODE?.trim();
+
+  if (configured) {
+    return configured;
+  }
+
+  return getConsoleAuthMode(process.env.POLYEDGE_CONSOLE_AUTH) === "off" ? LOCAL_DEV_STEP_UP_CODE : null;
+}
+
+function verifyStepUpCode(rawCode: string | undefined, requestedScopes: InternalApiStepUpScope[]): boolean {
+  if (requestedScopes.length === 0) {
+    return false;
+  }
+
+  const expectedCode = getConfiguredStepUpCode();
+  return Boolean(expectedCode && rawCode?.trim() === expectedCode);
+}
+
+function assertStepUpVerified(rawCode: string | undefined, requestedScopes: InternalApiStepUpScope[]): boolean {
+  if (requestedScopes.length === 0) {
+    return false;
+  }
+
+  if (verifyStepUpCode(rawCode, requestedScopes)) {
+    return true;
+  }
+
+  throw new Error(
+    "Step-up verification failed. Set POLYEDGE_CONSOLE_STEP_UP_CODE and submit the matching code for protected operations.",
+  );
+}
+
+function shouldUseDevInternalAuth(): boolean {
+  const kid = process.env.POLYEDGE_INTERNAL_AUTH_KID?.trim();
+  const privateKey = process.env.POLYEDGE_INTERNAL_AUTH_PRIVATE_KEY?.trim();
+
+  if (kid || privateKey) {
+    return false;
+  }
+
+  return process.env.POLYEDGE_INTERNAL_AUTH_DEV_BYPASS === "1" ||
+    getConsoleAuthMode(process.env.POLYEDGE_CONSOLE_AUTH) === "off";
 }
 
 function loadSigningKey(): { kid: string; key: KeyObject } {
@@ -101,7 +148,7 @@ async function issueInternalToken(input: {
   const now = Math.floor(Date.now() / 1000);
   const ttlSecs = input.kind === "write" ? WRITE_TTL_SECS : READ_TTL_SECS;
   const requestedScopes = input.stepUpScopes ?? [];
-  const stepUpVerified = requestedScopes.length > 0 && (input.stepUpCode?.trim().length ?? 0) >= 6;
+  const stepUpVerified = assertStepUpVerified(input.stepUpCode, requestedScopes);
   const { kid, key } = loadSigningKey();
 
   const header = {
@@ -140,6 +187,22 @@ export async function createInternalApiHeaders(input: {
   stepUpScopes?: InternalApiStepUpScope[];
 }): Promise<Headers> {
   const requestId = `req_${crypto.randomUUID().replace(/-/g, "")}`;
+  const requestedScopes = input.stepUpScopes ?? [];
+
+  if (shouldUseDevInternalAuth()) {
+    const { role, displayName } = await readConsoleSession();
+    const stepUpVerified = assertStepUpVerified(input.stepUpCode, requestedScopes);
+
+    return new Headers({
+      "X-Request-Id": requestId,
+      "X-PolyEdge-Dev-Auth": "local",
+      "X-PolyEdge-Console-Role": roleToTokenRole(role),
+      "X-PolyEdge-Console-User": encodeURIComponent(displayName ?? "Local Console"),
+      "X-PolyEdge-Step-Up-Verified": String(stepUpVerified),
+      "X-PolyEdge-Step-Up-Scopes": stepUpVerified ? requestedScopes.join(",") : "",
+    });
+  }
+
   const token = await issueInternalToken({
     requestId,
     kind: input.kind,

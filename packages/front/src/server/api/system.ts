@@ -4,11 +4,12 @@ import type { ApiListResponse, ContractListQuery, WriteResponse } from "@/lib/co
 import type { ApprovalDto } from "@/lib/contracts/dto";
 import { approvalFixtures } from "@/lib/server/polyedge-mock-data";
 import {
+  buildQueryString,
   createListResponse,
   createWriteResponse,
+  fetchListContract,
   fetchWriteContract,
 } from "@/server/api/base";
-import { readDerivedLiveApprovals } from "@/server/api/live-console-derived";
 
 type LiveSignalDecisionResponse = {
   data: {
@@ -29,23 +30,13 @@ export async function listApprovals(query?: ContractListQuery): Promise<ApiListR
     return true;
   });
 
-  if (!process.env.POLYEDGE_API_BASE_URL) {
-    return createListResponse("approvals", applyFilters(approvalFixtures), query?.limit);
-  }
-
-  const { data, meta } = await readDerivedLiveApprovals();
-  const filtered = applyFilters(data);
-  const limited = query?.limit ? filtered.slice(0, query.limit) : filtered;
-
-  return {
-    data: limited,
-    page: {
-      limit: query?.limit ?? limited.length,
-      next_cursor: null,
-      has_more: filtered.length > limited.length,
-    },
-    meta,
-  };
+  return fetchListContract(
+    `/api/v1/approvals${buildQueryString({
+      status: query?.status?.[0],
+      limit: query?.limit,
+    })}`,
+    createListResponse("approvals", applyFilters(approvalFixtures), query?.limit),
+  );
 }
 
 export async function submitApprovalDecision(input: {

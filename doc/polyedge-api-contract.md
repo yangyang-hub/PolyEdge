@@ -30,17 +30,20 @@
 
 ### 3.1 资源命名
 
-资源统一使用复数名词：
+当前实现统一挂在 `/api/v1` 前缀下，资源使用复数名词：
 
-1. `/api/markets`
-2. `/api/events`
-3. `/api/evidences`
-4. `/api/signals`
-5. `/api/orders`
-6. `/api/positions`
-7. `/api/risk`
-8. `/api/system`
-9. `/api/research`
+1. `/api/v1/markets`
+2. `/api/v1/events`
+3. `/api/v1/evidences`
+4. `/api/v1/signals`
+5. `/api/v1/orders`
+6. `/api/v1/positions`
+7. `/api/v1/approvals`
+8. `/api/v1/risk/state`
+9. `/api/v1/risk/alerts`
+10. `/api/v1/risk/buckets`
+11. `/api/v1/system`
+12. `/api/v1/stream/{channel}`
 
 ### 3.2 字段命名
 
@@ -131,7 +134,7 @@
 示例：
 
 ```text
-GET /api/events?limit=50&cursor=evt_20260416_0001
+GET /api/v1/events?limit=50&cursor=evt_20260416_0001
 ```
 
 ### 5.2 过滤
@@ -149,7 +152,7 @@ GET /api/events?limit=50&cursor=evt_20260416_0001
 多值过滤建议使用重复参数：
 
 ```text
-GET /api/signals?status=active&status=weakened
+GET /api/v1/signals?status=active&status=weakened
 ```
 
 ### 5.3 排序
@@ -162,7 +165,7 @@ GET /api/signals?status=active&status=weakened
 例如：
 
 ```text
-GET /api/markets?sort_by=updated_at&sort_order=desc
+GET /api/v1/markets?sort_by=updated_at&sort_order=desc
 ```
 
 ---
@@ -247,14 +250,66 @@ GET /api/markets?sort_by=updated_at&sort_order=desc
 
 ```json
 {
+  "id": "risk_state_global",
   "mode": "manual_confirm",
+  "environment": "local",
   "kill_switch": false,
   "daily_pnl": "-125.50",
   "gross_exposure": "0.28",
   "net_exposure": "0.11",
   "open_alerts": 2,
+  "daily_loss_limit": "5000.00",
+  "daily_loss_used": "125.50",
   "updated_at": "2026-04-16T00:00:00Z",
   "version": 15
+}
+```
+
+### 6.6 `ApprovalDto`
+
+```json
+{
+  "id": "apr_signal_sig_xxx",
+  "type": "signal",
+  "severity": "warning",
+  "owner": "Risk Engine",
+  "resource_id": "sig_xxx",
+  "summary": "Market requires manual confirmation.",
+  "status": "pending",
+  "requires_step_up_auth": true,
+  "created_at": "2026-04-16T00:00:00Z",
+  "updated_at": "2026-04-16T00:00:00Z",
+  "version": 9
+}
+```
+
+### 6.7 `RiskAlertDto`
+
+```json
+{
+  "id": "alt_pending_signal_approvals",
+  "severity": "warning",
+  "reason": "1 signal approval item await operator review.",
+  "target": "Approval Queue",
+  "status": "watching",
+  "created_at": "2026-04-16T00:00:00Z",
+  "updated_at": "2026-04-16T00:00:00Z",
+  "version": 9
+}
+```
+
+### 6.8 `RiskBucketDto`
+
+```json
+{
+  "id": "bucket_crypto",
+  "name": "Crypto",
+  "exposure": "0.28",
+  "limit": "0.35",
+  "utilization": "0.80",
+  "status": "healthy",
+  "updated_at": "2026-04-16T00:00:00Z",
+  "version": 3
 }
 ```
 
@@ -368,8 +423,12 @@ data: {"signal_id":"sig_xxx","version":9,"lifecycle_state":"active","edge":"0.06
 3. `signal.invalidated`
 4. `risk.alerted`
 5. `risk.mode_changed`
-6. `event.created`
-7. `order.updated`
+6. `approval.created`
+7. `approval.updated`
+8. `event.created`
+9. `order.updated`
+
+当前实现中的 `/api/v1/stream/{channel}` 是 snapshot-backed SSE：后端按间隔读取当前资源状态并输出稳定事件 ID，客户端应按 `id` 去重。后续若接入 outbox/Redis stream，应保持事件类型和 payload 兼容。
 
 ---
 

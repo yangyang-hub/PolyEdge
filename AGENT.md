@@ -1,6 +1,6 @@
 # AGENT.md
 
-最后更新：2026-04-20
+最后更新：2026-04-28
 
 ## 1. 文件用途
 
@@ -92,6 +92,9 @@
 
 - `POLYEDGE_API_BASE_URL` 未配置时：前端运行在 typed mock 模式。
 - `POLYEDGE_API_BASE_URL` 已配置时：前端尝试切换到 live API 模式。
+- live API 路径当前统一请求 Rust 后端的 `/api/v1/...`。
+- live SSE 默认仍使用前端 mock-fallback；设置 `POLYEDGE_ENABLE_LIVE_SSE=1` 后会代理到 Rust 后端 `/api/v1/stream/{channel}`。
+- 本地 live 联调可使用 `POLYEDGE_INTERNAL_AUTH_DEV_BYPASS=1` 的 dev-auth headers；签名模式使用 `POLYEDGE_INTERNAL_AUTH_KID` / `POLYEDGE_INTERNAL_AUTH_PRIVATE_KEY` 与后端 `POLYEDGE_AUTH__KEYS_JSON` 配对。
 - `POLYEDGE_CONSOLE_AUTH` 当前只支持：
   - `off`
   - `mock-session`
@@ -138,6 +141,10 @@
 - `GET /api/v1/positions`
 - `GET /api/v1/pricing/estimates`
 - `GET /api/v1/risk/state`
+- `GET /api/v1/risk/alerts`
+- `GET /api/v1/risk/buckets`
+- `GET /api/v1/approvals`
+- `GET /api/v1/stream/{channel}`
 - `POST /api/v1/system/mode`
 - `POST /api/v1/system/kill-switch/trigger`
 - `POST /api/v1/system/kill-switch/release`
@@ -153,6 +160,7 @@
 - `poll-paper-order-statuses`
 - `poll-polymarket-order-statuses`
 - `reconcile-polymarket-fills`
+- `consume-polymarket-user-events`
 
 ### 5.4 Replay 层
 
@@ -184,29 +192,32 @@
 
 ### 6.1 当前结论
 
-当前仓库处于“前端原型和 BFF 层较完整，后端主链路已具备，但 live 集成尚未完全闭环”的状态。
+当前仓库处于“前端控制台和后端主链路已具备，本地 live API/SSE 联调路径已经基本打通，但生产级会话、真实部署和真实资金链路尚未闭环”的状态。
 
 ### 6.2 已经具备的部分
 
 - 前端读取统一走 `src/server/api/*`
 - 前端写操作统一走 `src/server/actions/*`
-- 前端已有 SSE proxy / mock stream 机制
+- 前端 live API 已统一请求 `/api/v1/...`
+- 前端已有 SSE proxy / mock stream 机制，并可代理 Rust `/api/v1/stream/{channel}`
+- 前端 live fetch 已能发送本地 dev-auth headers 或签名内部 JWT
 - 后端已有 `v1` REST API、worker 和交易/回写相关主链路
+- 后端已有审批、风险告警、风险桶的一等只读资源端点，前端不再依赖 `live-console-derived.ts` 派生这些资源
 
 ### 6.3 当前明确存在的缺口
 
-1. 前端 API 适配层当前请求的是 `/api/...`，后端 Axum 暴露的是 `/api/v1/...`。
-2. 前端 SSE live 代理当前期待上游存在 `/api/stream/{channel}`，后端仓库里目前没有对应 stream 路由实现。
-3. 前端 live fetch 当前没有把 Next.js 到 Rust 的内部鉴权 token / 真实会话上下文透传给后端，而设计文档要求这条链路存在。
-4. 前端权限当前仍是 `off | mock-session`，不是生产级真实会话体系。
+1. SSE 仍是 snapshot-backed stream：后端按间隔生成当前 signals/risk/events 快照消息，尚不是持久化事件总线或 Redis/Postgres outbox 驱动的精确增量流。
+2. 前端权限当前仍是 `off | mock-session`，不是生产级真实会话体系。
+3. 签名内部 JWT 链路已具备代码路径，但仍需要在真实环境配置 Ed25519 key rotation、会话来源和撤销策略。
+4. Polymarket live 模式已有 connector/worker 骨架，但仍需要真实凭证、真实账户、小额演练和运维 runbook 才能视为生产交易链路。
 
 ### 6.4 因此的实际判断
 
 默认运行态仍然应视为：
 
 - 前端：mock-first 原型控制台
-- 后端：真实业务骨架与主链路实现中
-- 全链路 live 联调：未完成
+- 后端：真实业务骨架与本地 live API/SSE 联调路径
+- 全链路生产化：未完成
 
 ## 7. 运行与调试
 
@@ -225,6 +236,8 @@ pnpm build
 ```bash
 POLYEDGE_API_BASE_URL=
 POLYEDGE_CONSOLE_AUTH=off
+POLYEDGE_ENABLE_LIVE_SSE=0
+POLYEDGE_INTERNAL_AUTH_DEV_BYPASS=1
 ```
 
 ### 7.2 后端
