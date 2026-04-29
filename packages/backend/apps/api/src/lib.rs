@@ -12,13 +12,13 @@ use polyedge_application::{
     ApproveSignalCommand, ApproveSignalReceipt, AuthenticatedActor, EventListFilters, EventView,
     EvidenceListFilters, EvidenceView, ExecutionFillResult, ExecutionRequestListFilters,
     ExecutionRequestView, ExecutionSubmissionReceipt, IdempotencyBegin, IdempotencyRequest,
-    KillSwitchReceipt, MarketListFilters, MarketView, ModeTransitionCommand, OrderDraftListFilters,
-    OrderDraftView, OrderListFilters, OrderView, PositionListFilters, PositionView,
-    ProbabilityEstimateListFilters, ProbabilityEstimateView, ReconcileExternalTradeCommand,
-    RejectSignalCommand, RejectSignalReceipt, ReleaseKillSwitchCommand, RiskPolicy, RiskStateView,
-    SignalListFilters, SignalTransitionListFilters, SignalTransitionView, SignalView,
-    SubmitExecutionCommand, SyncExternalOrderStatusCommand, TradeListFilters, TradeView,
-    TriggerKillSwitchCommand,
+    KillSwitchReceipt, MarketListFilters, MarketView, ModeTransitionCommand,
+    NewsSourceHealthListFilters, NewsSourceHealthView, OrderDraftListFilters, OrderDraftView,
+    OrderListFilters, OrderView, PositionListFilters, PositionView, ProbabilityEstimateListFilters,
+    ProbabilityEstimateView, ReconcileExternalTradeCommand, RejectSignalCommand,
+    RejectSignalReceipt, ReleaseKillSwitchCommand, RiskPolicy, RiskStateView, SignalListFilters,
+    SignalTransitionListFilters, SignalTransitionView, SignalView, SubmitExecutionCommand,
+    SyncExternalOrderStatusCommand, TradeListFilters, TradeView, TriggerKillSwitchCommand,
 };
 use polyedge_connectors::{
     ConnectorOrderStatusUpdate, ConnectorTradeFillUpdate, normalize_polymarket_order_status_update,
@@ -30,8 +30,9 @@ use polyedge_contracts::{
     ConnectorOrderStatusCallbackData, ConnectorOrderStatusCallbackRequest,
     ConnectorTradeFillCallbackData, ConnectorTradeFillCallbackRequest, DependencyStatus, EventData,
     EventListQuery, EvidenceData, EvidenceListQuery, ExecutionRequestData,
-    ExecutionRequestListQuery, HealthData, KillSwitchData, MarketData, MarketListQuery, OrderData,
-    OrderDraftData, OrderDraftListQuery, OrderListQuery, PolymarketOrderStatusCallbackRequest,
+    ExecutionRequestListQuery, HealthData, KillSwitchData, MarketData, MarketListQuery,
+    NewsSourceHealthData, NewsSourceHealthListQuery, OrderData, OrderDraftData,
+    OrderDraftListQuery, OrderListQuery, PolymarketOrderStatusCallbackRequest,
     PolymarketTradeFillCallbackRequest, PositionData, PositionListQuery, ProbabilityEstimateData,
     ProbabilityEstimateListQuery, ReadinessData, RecomputeSignalData, RecomputeSignalRequest,
     RejectSignalData, RejectSignalRequest, ReleaseKillSwitchRequest, RiskAlertData,
@@ -112,6 +113,13 @@ pub fn build_app(state: AppState) -> Router {
         .route(
             "/api/v1/events",
             get(list_events).route_layer(middleware::from_fn_with_state(
+                state.clone(),
+                require_console_read_auth,
+            )),
+        )
+        .route(
+            "/api/v1/news/source-health",
+            get(list_news_source_health).route_layer(middleware::from_fn_with_state(
                 state.clone(),
                 require_console_read_auth,
             )),
@@ -1195,6 +1203,30 @@ async fn list_events(
 
     Ok(Json(ApiResponse::new(
         events.into_iter().map(event_to_contract).collect(),
+        auth.request_id,
+        trace_id,
+    )))
+}
+
+async fn list_news_source_health(
+    Extension(auth): Extension<AuthContext>,
+    State(state): State<AppState>,
+    Query(query): Query<NewsSourceHealthListQuery>,
+) -> std::result::Result<Json<ApiResponse<Vec<NewsSourceHealthData>>>, HttpError> {
+    let trace_id = new_trace_id();
+    let filters = NewsSourceHealthListFilters::new(query.source_type, query.limit)
+        .map_err(|error| HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone()))?;
+    let sources = state
+        .news_ingestion_service
+        .list_source_health(filters)
+        .await
+        .map_err(|error| HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone()))?;
+
+    Ok(Json(ApiResponse::new(
+        sources
+            .into_iter()
+            .map(news_source_health_to_contract)
+            .collect(),
         auth.request_id,
         trace_id,
     )))
@@ -2619,6 +2651,24 @@ fn event_to_contract(event: EventView) -> EventData {
     }
 }
 
+fn news_source_health_to_contract(source: NewsSourceHealthView) -> NewsSourceHealthData {
+    NewsSourceHealthData {
+        source: source.source,
+        source_type: source.source_type,
+        enabled: source.enabled,
+        reliability: source.reliability,
+        last_success_at: source.last_success_at,
+        last_error_at: source.last_error_at,
+        consecutive_failures: source.consecutive_failures,
+        items_fetched: source.items_fetched,
+        items_inserted: source.items_inserted,
+        items_deduped: source.items_deduped,
+        health_score: source.health_score,
+        last_error: source.last_error,
+        updated_at: source.updated_at,
+    }
+}
+
 fn evidence_to_contract(evidence: EvidenceView) -> EvidenceData {
     EvidenceData {
         id: evidence.id,
@@ -3023,7 +3073,8 @@ mod tests {
     use base64::{Engine, engine::general_purpose};
     use ed25519_dalek::{Signer, SigningKey};
     use polyedge_application::{
-        AuthenticatedActor, MarkExecutionSubmittedCommand, demo_fixture_bundle,
+        AuthenticatedActor, MarkExecutionSubmittedCommand, NewsIngestSourceCommand,
+        NewsIngestionItem, demo_fixture_bundle,
     };
     use polyedge_domain::{StepUpScope, SystemMode, UserRole};
     use polyedge_infrastructure::{AppState, AuthKeySettings, Runtime, Settings};
@@ -3363,6 +3414,93 @@ mod tests {
             serde_json::from_slice(&body).expect("deserialize response");
         assert_eq!(payload.data.len(), 1);
         assert_eq!(payload.data[0].id, "evt_9001");
+    }
+
+    #[tokio::test]
+    async fn news_source_health_route_filters_by_source_type() {
+        let signing_key = SigningKey::from_bytes(&[17_u8; 32]);
+        let settings = Settings::for_test(
+            SystemMode::ManualConfirm,
+            "test",
+            vec![AuthKeySettings {
+                kid: "test-key".to_string(),
+                public_key_base64: general_purpose::STANDARD
+                    .encode(signing_key.verifying_key().as_bytes()),
+            }],
+        );
+        let state = Runtime::test_app_state(settings).expect("state");
+        let reliability = Probability::new(Decimal::new(95, 2)).expect("probability");
+        state
+            .news_ingestion_service
+            .ingest_source_items(NewsIngestSourceCommand {
+                source: "sec_feed".to_string(),
+                source_type: "official".to_string(),
+                reliability,
+                items: vec![NewsIngestionItem {
+                    source: "sec_feed".to_string(),
+                    source_type: "official".to_string(),
+                    external_id: Some("entry-1".to_string()),
+                    title: "SEC publishes ETF calendar update".to_string(),
+                    url: Some("https://example.com/sec-calendar".to_string()),
+                    author: None,
+                    published_at: None,
+                    content_snippet: Some("Window narrowed".to_string()),
+                    raw_payload: serde_json::json!({"id": "entry-1"}),
+                }],
+                trace_id: "trc_seed_news_health".to_string(),
+            })
+            .await
+            .expect("seed official source health");
+        state
+            .news_ingestion_service
+            .ingest_source_items(NewsIngestSourceCommand {
+                source: "wire_feed".to_string(),
+                source_type: "news".to_string(),
+                reliability,
+                items: vec![NewsIngestionItem {
+                    source: "wire_feed".to_string(),
+                    source_type: "news".to_string(),
+                    external_id: Some("wire-1".to_string()),
+                    title: "Wire reports crypto policy hearing".to_string(),
+                    url: Some("https://example.com/wire-policy".to_string()),
+                    author: None,
+                    published_at: None,
+                    content_snippet: Some("Hearing scheduled".to_string()),
+                    raw_payload: serde_json::json!({"id": "wire-1"}),
+                }],
+                trace_id: "trc_seed_wire_health".to_string(),
+            })
+            .await
+            .expect("seed news source health");
+
+        let app = build_app(state);
+        let request_id = format!("req_{}", Uuid::now_v7());
+        let token = issue_token(&signing_key, "test-key", &request_id);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/news/source-health?source_type=official")
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("X-Request-Id", &request_id)
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("read body");
+        let payload: ApiResponse<Vec<NewsSourceHealthData>> =
+            serde_json::from_slice(&body).expect("deserialize response");
+        assert_eq!(payload.data.len(), 1);
+        assert_eq!(payload.data[0].source, "sec_feed");
+        assert_eq!(payload.data[0].source_type, "official");
+        assert_eq!(payload.data[0].items_fetched, 1);
+        assert_eq!(payload.data[0].items_inserted, 1);
+        assert_eq!(payload.data[0].consecutive_failures, 0);
     }
 
     #[tokio::test]

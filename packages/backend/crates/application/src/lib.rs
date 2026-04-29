@@ -22,13 +22,14 @@ pub use market_event::{
     FixtureSignalRecord, MarketEventService, MarketEventStore, MarketListFilters, MarketView,
     ProbabilityEstimateListFilters, ProbabilityEstimateView, RecomputeSignalCommand,
     RecomputeSignalDraft, RecomputeSignalResult, SignalListFilters, SignalTransitionDraft,
-    SignalTransitionListFilters, SignalTransitionView, SignalView, build_recompute_signal_draft,
+    SignalTransitionListFilters, SignalTransitionView, SignalView, SourceHealthAdjustment,
+    build_recompute_signal_draft, build_recompute_signal_draft_with_source_health,
     demo_fixture_bundle,
 };
 pub use news_ingestion::{
     NewsIngestSourceCommand, NewsIngestionItem, NewsIngestionService, NewsIngestionStore,
-    NewsRawEventInsert, NewsSourceFailureUpdate, NewsSourceIngestionReport,
-    NewsSourceSuccessUpdate,
+    NewsRawEventInsert, NewsSourceFailureUpdate, NewsSourceHealthListFilters, NewsSourceHealthView,
+    NewsSourceIngestionReport, NewsSourceSuccessUpdate, degraded_health_score,
 };
 pub use risk::{
     ApproveSignalCommand, ApproveSignalReceipt, KillSwitchReceipt, RejectSignalCommand,

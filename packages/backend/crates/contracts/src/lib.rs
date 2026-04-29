@@ -143,6 +143,29 @@ pub struct EventData {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NewsSourceHealthData {
+    pub source: String,
+    pub source_type: String,
+    pub enabled: bool,
+    pub reliability: Probability,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(with = "time::serde::rfc3339::option")]
+    pub last_success_at: Option<OffsetDateTime>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(with = "time::serde::rfc3339::option")]
+    pub last_error_at: Option<OffsetDateTime>,
+    pub consecutive_failures: u64,
+    pub items_fetched: u64,
+    pub items_inserted: u64,
+    pub items_deduped: u64,
+    pub health_score: Probability,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_error: Option<String>,
+    #[serde(with = "time::serde::rfc3339")]
+    pub updated_at: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EvidenceData {
     pub id: String,
     pub market_id: String,
@@ -616,6 +639,14 @@ pub struct MarketListQuery {
 pub struct EventListQuery {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub status: Option<EventStatus>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit: Option<u16>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct NewsSourceHealthListQuery {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_type: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub limit: Option<u16>,
 }

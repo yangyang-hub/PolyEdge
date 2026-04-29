@@ -33,6 +33,7 @@ export type AlertSeverity = "warning" | "critical";
 export type AlertStatus = "unresolved" | "watching" | "contained";
 export type PositionSide = "yes" | "no";
 export type BucketStatus = "healthy" | "watch" | "breach";
+export type NewsSourceType = "news" | "social" | "official" | "calendar" | "market";
 export type ReplayMomentKind = "event_ingested" | "evidence_generated" | "posterior_updated" | "signal_transition";
 
 export type MarketDto = ResourceVersion & {
@@ -59,6 +60,22 @@ export type EventDto = ResourceVersion & {
   related_market_ids: string[];
   reason_trace: string;
   created_at: string;
+  updated_at: string;
+};
+
+export type NewsSourceHealthDto = {
+  source: string;
+  source_type: NewsSourceType;
+  enabled: boolean;
+  reliability: string;
+  last_success_at?: string | null;
+  last_error_at?: string | null;
+  consecutive_failures: number;
+  items_fetched: number;
+  items_inserted: number;
+  items_deduped: number;
+  health_score: string;
+  last_error?: string | null;
   updated_at: string;
 };
 

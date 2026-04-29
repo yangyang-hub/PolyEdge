@@ -416,6 +416,12 @@ pub struct RecomputeSignalDraft {
     pub transition: Option<SignalTransitionDraft>,
 }
 
+#[derive(Debug, Clone)]
+pub struct SourceHealthAdjustment {
+    pub source: String,
+    pub health_score: Probability,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SignalTransitionDraft {
     pub from_state: SignalLifecycleState,
@@ -1023,6 +1029,24 @@ pub fn build_recompute_signal_draft(
     recompute_reason: &str,
     estimate_id: impl Into<String>,
 ) -> Result<RecomputeSignalDraft> {
+    build_recompute_signal_draft_with_source_health(
+        signal,
+        market,
+        evidences,
+        recompute_reason,
+        None,
+        estimate_id,
+    )
+}
+
+pub fn build_recompute_signal_draft_with_source_health(
+    signal: &SignalView,
+    market: &MarketView,
+    evidences: &[EvidenceView],
+    recompute_reason: &str,
+    source_health: Option<&SourceHealthAdjustment>,
+    estimate_id: impl Into<String>,
+) -> Result<RecomputeSignalDraft> {
     let active_evidences: Vec<_> = evidences
         .iter()
         .filter(|evidence| evidence.status == EvidenceStatus::Active)
@@ -1038,8 +1062,11 @@ pub fn build_recompute_signal_draft(
     let prior_price = market.mid_price;
     let market_price = market.mid_price;
 
+    let source_health_score = source_health
+        .map(|adjustment| adjustment.health_score.value())
+        .unwrap_or(Decimal::ONE);
     let (weighted_delta, avg_signal_quality) =
-        compute_evidence_signal(&active_evidences, reference_time);
+        compute_evidence_signal(&active_evidences, reference_time, source_health_score);
     let ambiguity_factor = match market.ambiguity_level {
         AmbiguityLevel::Low => dec("1.00"),
         AmbiguityLevel::Medium => dec("0.85"),
@@ -1068,8 +1095,14 @@ pub fn build_recompute_signal_draft(
     let confidence = probability_from_decimal(confidence_raw)?;
 
     let time_horizon = derive_time_horizon(&active_evidences, reference_time);
-    let reason_codes =
-        derive_reason_codes(market, &active_evidences, edge, confidence, evidence_count);
+    let reason_codes = derive_reason_codes(
+        market,
+        &active_evidences,
+        edge,
+        confidence,
+        evidence_count,
+        source_health,
+    );
     let next_side = if edge.value() >= Decimal::ZERO {
         SignalSide::Yes
     } else {
@@ -1148,6 +1181,10 @@ pub fn build_recompute_signal_draft(
                 "prior_price": estimate.prior_price,
                 "posterior_price": estimate.posterior_price,
                 "market_tradability_status": market.tradability_status,
+                "source_health": source_health.map(|adjustment| json!({
+                    "source": adjustment.source,
+                    "health_score": adjustment.health_score,
+                })),
             }),
             created_at: reference_time,
         })
@@ -1484,6 +1521,7 @@ fn validate_optional_id(field: &'static str, value: Option<String>) -> Result<Op
 fn compute_evidence_signal(
     evidences: &[EvidenceView],
     reference_time: OffsetDateTime,
+    source_health_score: Decimal,
 ) -> (Decimal, Decimal) {
     if evidences.is_empty() {
         return (Decimal::ZERO, Decimal::ZERO);
@@ -1499,8 +1537,10 @@ fn compute_evidence_signal(
         let remaining_secs = (evidence.expires_at - reference_time).whole_seconds();
         let clamped_remaining = remaining_secs.clamp(0, total_window_secs);
         let freshness_decay = Decimal::from(clamped_remaining) / Decimal::from(total_window_secs);
+        let effective_source_reliability =
+            evidence.source_reliability.value() * source_health_score;
         let weight = evidence.strength.value()
-            * evidence.source_reliability.value()
+            * effective_source_reliability
             * evidence.novelty.value()
             * evidence.resolution_relevance.value()
             * freshness_decay;
@@ -1512,7 +1552,7 @@ fn compute_evidence_signal(
         };
 
         weighted_delta += weight * direction_multiplier;
-        quality_sum += ((evidence.source_reliability.value()
+        quality_sum += ((effective_source_reliability
             + evidence.novelty.value()
             + evidence.resolution_relevance.value())
             / dec("3"))
@@ -1551,14 +1591,22 @@ fn derive_reason_codes(
     edge: Edge,
     confidence: Probability,
     evidence_count: usize,
+    source_health: Option<&SourceHealthAdjustment>,
 ) -> Vec<String> {
     let mut reason_codes = Vec::new();
+    let source_health_score = source_health
+        .map(|adjustment| adjustment.health_score.value())
+        .unwrap_or(Decimal::ONE);
 
     if evidences
         .iter()
-        .any(|evidence| evidence.source_reliability.value() >= dec("0.85"))
+        .any(|evidence| evidence.source_reliability.value() * source_health_score >= dec("0.85"))
     {
         reason_codes.push("official_source".to_string());
+    }
+
+    if source_health.is_some_and(|adjustment| adjustment.health_score.value() < dec("0.75")) {
+        reason_codes.push("source_health_degraded".to_string());
     }
 
     if evidence_count >= 2 {
@@ -1826,6 +1874,70 @@ fn timestamp(raw: &str) -> OffsetDateTime {
 mod tests {
     use super::*;
 
+    fn signal_view(record: &FixtureSignalRecord) -> SignalView {
+        SignalView {
+            id: record.id.clone(),
+            market_id: record.market_id.clone(),
+            event_id: record.event_id.clone(),
+            action: record.action,
+            side: record.side,
+            market_price: record.market_price,
+            fair_price: record.fair_price,
+            edge: record.edge,
+            confidence: record.confidence,
+            lifecycle_state: record.lifecycle_state,
+            reason: record.reason.clone(),
+            risk_decision: record.risk_decision.clone(),
+            evidence_ids: record.evidence_ids.clone(),
+            approved_by_user_id: record.approved_by_user_id.clone(),
+            approved_at: record.approved_at,
+            rejected_by_user_id: record.rejected_by_user_id.clone(),
+            rejected_at: record.rejected_at,
+            updated_at: record.updated_at,
+            version: record.version,
+        }
+    }
+
+    fn market_view(record: &FixtureMarketRecord) -> MarketView {
+        MarketView {
+            id: record.id.clone(),
+            question: record.question.clone(),
+            category: record.category.clone(),
+            status: record.status,
+            best_bid: record.best_bid,
+            best_ask: record.best_ask,
+            mid_price: record.mid_price,
+            volume_24h: record.volume_24h,
+            ambiguity_level: record.ambiguity_level,
+            tradability_status: record.tradability_status,
+            resolution_source: record.resolution_source.clone(),
+            edge_case_notes: record.edge_case_notes.clone(),
+            polymarket_condition_id: record.polymarket_condition_id.clone(),
+            polymarket_yes_asset_id: record.polymarket_yes_asset_id.clone(),
+            polymarket_no_asset_id: record.polymarket_no_asset_id.clone(),
+            updated_at: record.updated_at,
+            version: record.version,
+        }
+    }
+
+    fn evidence_view(record: &FixtureEvidenceRecord) -> EvidenceView {
+        EvidenceView {
+            id: record.id.clone(),
+            market_id: record.market_id.clone(),
+            event_id: record.event_id.clone(),
+            direction: record.direction,
+            strength: record.strength,
+            source_reliability: record.source_reliability,
+            novelty: record.novelty,
+            resolution_relevance: record.resolution_relevance,
+            status: record.status,
+            expires_at: record.expires_at,
+            created_at: record.created_at,
+            updated_at: record.updated_at,
+            version: record.version,
+        }
+    }
+
     #[test]
     fn market_filters_reject_zero_limit() {
         let result = MarketListFilters::new(None, None, Some(0));
@@ -1866,63 +1978,11 @@ mod tests {
             .filter(|evidence| {
                 evidence.market_id == signal.market_id && evidence.event_id == signal.event_id
             })
-            .map(|evidence| EvidenceView {
-                id: evidence.id.clone(),
-                market_id: evidence.market_id.clone(),
-                event_id: evidence.event_id.clone(),
-                direction: evidence.direction,
-                strength: evidence.strength,
-                source_reliability: evidence.source_reliability,
-                novelty: evidence.novelty,
-                resolution_relevance: evidence.resolution_relevance,
-                status: evidence.status,
-                expires_at: evidence.expires_at,
-                created_at: evidence.created_at,
-                updated_at: evidence.updated_at,
-                version: evidence.version,
-            })
+            .map(evidence_view)
             .collect();
         let draft = build_recompute_signal_draft(
-            &SignalView {
-                id: signal.id.clone(),
-                market_id: signal.market_id.clone(),
-                event_id: signal.event_id.clone(),
-                action: signal.action,
-                side: signal.side,
-                market_price: signal.market_price,
-                fair_price: signal.fair_price,
-                edge: signal.edge,
-                confidence: signal.confidence,
-                lifecycle_state: signal.lifecycle_state,
-                reason: signal.reason.clone(),
-                risk_decision: signal.risk_decision.clone(),
-                evidence_ids: signal.evidence_ids.clone(),
-                approved_by_user_id: signal.approved_by_user_id.clone(),
-                approved_at: signal.approved_at,
-                rejected_by_user_id: signal.rejected_by_user_id.clone(),
-                rejected_at: signal.rejected_at,
-                updated_at: signal.updated_at,
-                version: signal.version,
-            },
-            &MarketView {
-                id: market.id.clone(),
-                question: market.question.clone(),
-                category: market.category.clone(),
-                status: market.status,
-                best_bid: market.best_bid,
-                best_ask: market.best_ask,
-                mid_price: market.mid_price,
-                volume_24h: market.volume_24h,
-                ambiguity_level: market.ambiguity_level,
-                tradability_status: market.tradability_status,
-                resolution_source: market.resolution_source.clone(),
-                edge_case_notes: market.edge_case_notes.clone(),
-                polymarket_condition_id: market.polymarket_condition_id.clone(),
-                polymarket_yes_asset_id: market.polymarket_yes_asset_id.clone(),
-                polymarket_no_asset_id: market.polymarket_no_asset_id.clone(),
-                updated_at: market.updated_at,
-                version: market.version,
-            },
+            &signal_view(signal),
+            &market_view(market),
             &evidences,
             "manual refresh",
             "est_test",
@@ -1932,5 +1992,66 @@ mod tests {
         assert_eq!(draft.next_signal.side, SignalSide::No);
         assert_eq!(draft.next_signal.lifecycle_state, SignalLifecycleState::New);
         assert!(draft.transition.is_none());
+    }
+
+    #[test]
+    fn recompute_draft_discounts_degraded_event_source_health() {
+        let bundle = demo_fixture_bundle();
+        let signal = bundle
+            .signals
+            .iter()
+            .find(|signal| signal.id == "sig_2412")
+            .expect("fixture signal");
+        let market = bundle
+            .markets
+            .iter()
+            .find(|market| market.id == signal.market_id)
+            .expect("fixture market");
+        let evidences: Vec<_> = bundle
+            .evidences
+            .iter()
+            .filter(|evidence| {
+                evidence.market_id == signal.market_id && evidence.event_id == signal.event_id
+            })
+            .map(evidence_view)
+            .collect();
+        let signal = signal_view(signal);
+        let market = market_view(market);
+
+        let baseline = build_recompute_signal_draft(
+            &signal,
+            &market,
+            &evidences,
+            "baseline recompute",
+            "est_baseline",
+        )
+        .expect("baseline recompute draft");
+        let degraded = build_recompute_signal_draft_with_source_health(
+            &signal,
+            &market,
+            &evidences,
+            "degraded recompute",
+            Some(&SourceHealthAdjustment {
+                source: "reuters".to_string(),
+                health_score: probability("0.20"),
+            }),
+            "est_degraded",
+        )
+        .expect("degraded recompute draft");
+
+        assert!(degraded.estimate.edge.value().abs() < baseline.estimate.edge.value().abs());
+        assert!(degraded.estimate.confidence < baseline.estimate.confidence);
+        assert!(
+            degraded
+                .estimate
+                .reason_codes
+                .contains(&"source_health_degraded".to_string())
+        );
+        assert!(
+            !degraded
+                .estimate
+                .reason_codes
+                .contains(&"official_source".to_string())
+        );
     }
 }

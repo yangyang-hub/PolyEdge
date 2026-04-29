@@ -43,7 +43,8 @@
 9. `/api/v1/risk/alerts`
 10. `/api/v1/risk/buckets`
 11. `/api/v1/system`
-12. `/api/v1/stream/{channel}`
+12. `/api/v1/news/source-health`
+13. `/api/v1/stream/{channel}`
 
 ### 3.2 字段命名
 
@@ -148,6 +149,7 @@ GET /api/v1/events?limit=50&cursor=evt_20260416_0001
 5. `from`
 6. `to`
 7. `q`
+8. `source_type`
 
 多值过滤建议使用重复参数：
 
@@ -310,6 +312,28 @@ GET /api/v1/markets?sort_by=updated_at&sort_order=desc
   "status": "healthy",
   "updated_at": "2026-04-16T00:00:00Z",
   "version": 3
+}
+```
+
+### 6.9 `NewsSourceHealthDto`
+
+Returned by `GET /api/v1/news/source-health`.
+
+```json
+{
+  "source": "sec_feed",
+  "source_type": "official",
+  "enabled": true,
+  "reliability": "0.950000",
+  "last_success_at": "2026-04-16T14:24:00Z",
+  "last_error_at": null,
+  "consecutive_failures": 0,
+  "items_fetched": 18,
+  "items_inserted": 12,
+  "items_deduped": 6,
+  "health_score": "0.950000",
+  "last_error": null,
+  "updated_at": "2026-04-16T14:24:00Z"
 }
 ```
 

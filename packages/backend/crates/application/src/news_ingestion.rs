@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use polyedge_domain::{AppError, Probability, Result};
+use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -7,6 +8,8 @@ use std::sync::Arc;
 use time::OffsetDateTime;
 
 const NEWS_SOURCE_TYPES: &[&str] = &["news", "social", "official", "calendar", "market"];
+const DEFAULT_LIST_LIMIT: u16 = 100;
+const MAX_LIST_LIMIT: u16 = 200;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NewsIngestionItem {
@@ -90,8 +93,53 @@ pub struct NewsSourceFailureUpdate {
     pub trace_id: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NewsSourceHealthView {
+    pub source: String,
+    pub source_type: String,
+    pub enabled: bool,
+    pub reliability: Probability,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(with = "time::serde::rfc3339::option")]
+    pub last_success_at: Option<OffsetDateTime>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(with = "time::serde::rfc3339::option")]
+    pub last_error_at: Option<OffsetDateTime>,
+    pub consecutive_failures: u64,
+    pub items_fetched: u64,
+    pub items_inserted: u64,
+    pub items_deduped: u64,
+    pub health_score: Probability,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_error: Option<String>,
+    #[serde(with = "time::serde::rfc3339")]
+    pub updated_at: OffsetDateTime,
+}
+
+#[derive(Debug, Clone)]
+pub struct NewsSourceHealthListFilters {
+    pub source_type: Option<String>,
+    pub limit: u16,
+}
+
+impl NewsSourceHealthListFilters {
+    pub fn new(source_type: Option<String>, limit: Option<u16>) -> Result<Self> {
+        Ok(Self {
+            source_type: source_type
+                .map(|value| normalize_source_type(&value))
+                .transpose()?,
+            limit: validate_limit(limit)?,
+        })
+    }
+}
+
 #[async_trait]
 pub trait NewsIngestionStore: Send + Sync {
+    async fn list_news_source_health(
+        &self,
+        filters: &NewsSourceHealthListFilters,
+    ) -> Result<Vec<NewsSourceHealthView>>;
+
     async fn insert_raw_news_event(&self, event: &NewsRawEventInsert) -> Result<bool>;
 
     async fn record_news_source_success(&self, update: &NewsSourceSuccessUpdate) -> Result<()>;
@@ -166,6 +214,13 @@ impl NewsIngestionService {
                 trace_id,
             })
             .await
+    }
+
+    pub async fn list_source_health(
+        &self,
+        filters: NewsSourceHealthListFilters,
+    ) -> Result<Vec<NewsSourceHealthView>> {
+        self.store.list_news_source_health(&filters).await
     }
 }
 
@@ -298,6 +353,34 @@ fn normalize_source_type(value: &str) -> Result<String> {
     }
 }
 
+fn validate_limit(limit: Option<u16>) -> Result<u16> {
+    let limit = limit.unwrap_or(DEFAULT_LIST_LIMIT);
+    if limit == 0 {
+        return Err(AppError::invalid_input(
+            "NEWS_LIST_LIMIT_INVALID",
+            "news list limit must be greater than zero",
+        ));
+    }
+
+    if limit > MAX_LIST_LIMIT {
+        return Err(AppError::invalid_input(
+            "NEWS_LIST_LIMIT_INVALID",
+            format!("news list limit must be at most {MAX_LIST_LIMIT}"),
+        ));
+    }
+
+    Ok(limit)
+}
+
+pub fn degraded_health_score(
+    reliability: Probability,
+    consecutive_failures: u64,
+) -> Result<Probability> {
+    let penalty = Decimal::from(consecutive_failures.min(5)) / Decimal::from(5);
+    let score = reliability.value() - penalty;
+    Probability::new(score.max(Decimal::ZERO))
+}
+
 fn normalize_for_hash(value: &str) -> String {
     value
         .split_whitespace()
@@ -333,8 +416,8 @@ fn id_fragment(source: &str) -> String {
 mod tests {
     use super::{
         NewsIngestSourceCommand, NewsIngestionItem, NewsIngestionService, NewsIngestionStore,
-        NewsRawEventInsert, NewsSourceFailureUpdate, NewsSourceSuccessUpdate,
-        normalize_source_type,
+        NewsRawEventInsert, NewsSourceFailureUpdate, NewsSourceHealthListFilters,
+        NewsSourceHealthView, NewsSourceSuccessUpdate, normalize_source_type,
     };
     use async_trait::async_trait;
     use polyedge_domain::{Probability, Result};
@@ -353,6 +436,13 @@ mod tests {
 
     #[async_trait]
     impl NewsIngestionStore for TestNewsStore {
+        async fn list_news_source_health(
+            &self,
+            _filters: &NewsSourceHealthListFilters,
+        ) -> Result<Vec<NewsSourceHealthView>> {
+            Ok(Vec::new())
+        }
+
         async fn insert_raw_news_event(&self, event: &NewsRawEventInsert) -> Result<bool> {
             let mut ids = self.ids.lock().expect("test store lock");
             Ok(ids.insert(event.id.clone()))

@@ -5,11 +5,13 @@ use polyedge_application::{
     ExecutionReconciliationCandidate, ExecutionRequestListFilters, ExecutionRequestView,
     ExecutionSubmissionResult, FixtureBundle, FixtureIngestionReport, MarketEventStore,
     MarketListFilters, MarketView, NewsIngestionStore, NewsRawEventInsert, NewsSourceFailureUpdate,
-    NewsSourceSuccessUpdate, OrderDraftListFilters, OrderDraftView, OrderListFilters, OrderView,
-    PositionListFilters, PositionView, ProbabilityEstimateListFilters, ProbabilityEstimateView,
-    RecomputeSignalCommand, RecomputeSignalResult, ReconcileExecutionListFilters,
-    SignalListFilters, SignalTransitionListFilters, SignalTransitionView, SignalView,
-    SubmitExecutionStoreCommand, TradeListFilters, TradeView, build_recompute_signal_draft,
+    NewsSourceHealthListFilters, NewsSourceHealthView, NewsSourceSuccessUpdate,
+    OrderDraftListFilters, OrderDraftView, OrderListFilters, OrderView, PositionListFilters,
+    PositionView, ProbabilityEstimateListFilters, ProbabilityEstimateView, RecomputeSignalCommand,
+    RecomputeSignalResult, ReconcileExecutionListFilters, SignalListFilters,
+    SignalTransitionListFilters, SignalTransitionView, SignalView, SourceHealthAdjustment,
+    SubmitExecutionStoreCommand, TradeListFilters, TradeView,
+    build_recompute_signal_draft_with_source_health, degraded_health_score,
 };
 use polyedge_domain::{
     AmbiguityLevel, AppError, Edge, EventStatus, EvidenceDirection, EvidenceStatus,
@@ -45,6 +47,7 @@ pub struct InMemoryMarketEventStore {
     trades: RwLock<HashMap<String, TradeView>>,
     positions: RwLock<HashMap<String, PositionView>>,
     raw_news_dedup_keys: RwLock<HashSet<String>>,
+    news_source_health: RwLock<HashMap<String, NewsSourceHealthView>>,
 }
 
 impl InMemoryMarketEventStore {
@@ -63,7 +66,23 @@ impl InMemoryMarketEventStore {
             trades: RwLock::new(HashMap::new()),
             positions: RwLock::new(HashMap::new()),
             raw_news_dedup_keys: RwLock::new(HashSet::new()),
+            news_source_health: RwLock::new(HashMap::new()),
         }
+    }
+
+    async fn source_health_adjustment_for_event(
+        &self,
+        event_id: &str,
+    ) -> Option<SourceHealthAdjustment> {
+        let source = {
+            let events = self.events.read().await;
+            events.get(event_id).map(|event| event.source.clone())?
+        };
+        let health = self.news_source_health.read().await;
+        health.get(&source).map(|view| SourceHealthAdjustment {
+            source,
+            health_score: view.health_score,
+        })
     }
 }
 
@@ -435,13 +454,17 @@ impl MarketEventStore for InMemoryMarketEventStore {
                 .cloned()
                 .collect()
         };
+        let source_health = self
+            .source_health_adjustment_for_event(&signal.event_id)
+            .await;
 
         let estimate_id = format!("est_{}", Uuid::now_v7());
-        let draft = build_recompute_signal_draft(
+        let draft = build_recompute_signal_draft_with_source_health(
             &signal,
             &market,
             &evidences,
             &command.reason,
+            source_health.as_ref(),
             &estimate_id,
         )?;
 
@@ -1379,6 +1402,31 @@ impl MarketEventStore for InMemoryMarketEventStore {
 
 #[async_trait]
 impl NewsIngestionStore for InMemoryMarketEventStore {
+    async fn list_news_source_health(
+        &self,
+        filters: &NewsSourceHealthListFilters,
+    ) -> Result<Vec<NewsSourceHealthView>> {
+        let health = self.news_source_health.read().await;
+        let mut items: Vec<_> = health
+            .values()
+            .filter(|item| {
+                filters
+                    .source_type
+                    .as_deref()
+                    .is_none_or(|source_type| item.source_type == source_type)
+            })
+            .cloned()
+            .collect();
+        items.sort_by(|left, right| {
+            right
+                .updated_at
+                .cmp(&left.updated_at)
+                .then_with(|| left.source.cmp(&right.source))
+        });
+        items.truncate(usize::from(filters.limit));
+        Ok(items)
+    }
+
     async fn insert_raw_news_event(&self, event: &NewsRawEventInsert) -> Result<bool> {
         let keys = raw_news_dedup_keys(event);
         let mut existing_keys = self.raw_news_dedup_keys.write().await;
@@ -1390,11 +1438,83 @@ impl NewsIngestionStore for InMemoryMarketEventStore {
         Ok(true)
     }
 
-    async fn record_news_source_success(&self, _update: &NewsSourceSuccessUpdate) -> Result<()> {
+    async fn record_news_source_success(&self, update: &NewsSourceSuccessUpdate) -> Result<()> {
+        let fetched = usize_to_u64(update.fetched)?;
+        let inserted = usize_to_u64(update.inserted)?;
+        let deduped = usize_to_u64(update.deduped)?;
+        let mut health = self.news_source_health.write().await;
+
+        if let Some(existing) = health.get_mut(&update.source) {
+            existing.source_type = update.source_type.clone();
+            existing.enabled = true;
+            existing.reliability = update.reliability;
+            existing.last_success_at = Some(update.observed_at);
+            existing.consecutive_failures = 0;
+            existing.items_fetched = add_news_count(existing.items_fetched, fetched)?;
+            existing.items_inserted = add_news_count(existing.items_inserted, inserted)?;
+            existing.items_deduped = add_news_count(existing.items_deduped, deduped)?;
+            existing.health_score = update.reliability;
+            existing.last_error = None;
+            existing.updated_at = update.observed_at;
+        } else {
+            health.insert(
+                update.source.clone(),
+                NewsSourceHealthView {
+                    source: update.source.clone(),
+                    source_type: update.source_type.clone(),
+                    enabled: true,
+                    reliability: update.reliability,
+                    last_success_at: Some(update.observed_at),
+                    last_error_at: None,
+                    consecutive_failures: 0,
+                    items_fetched: fetched,
+                    items_inserted: inserted,
+                    items_deduped: deduped,
+                    health_score: update.reliability,
+                    last_error: None,
+                    updated_at: update.observed_at,
+                },
+            );
+        }
+
         Ok(())
     }
 
-    async fn record_news_source_failure(&self, _update: &NewsSourceFailureUpdate) -> Result<()> {
+    async fn record_news_source_failure(&self, update: &NewsSourceFailureUpdate) -> Result<()> {
+        let mut health = self.news_source_health.write().await;
+
+        if let Some(existing) = health.get_mut(&update.source) {
+            let consecutive_failures = add_news_count(existing.consecutive_failures, 1)?;
+            existing.source_type = update.source_type.clone();
+            existing.enabled = true;
+            existing.reliability = update.reliability;
+            existing.last_error_at = Some(update.observed_at);
+            existing.consecutive_failures = consecutive_failures;
+            existing.health_score =
+                degraded_health_score(update.reliability, consecutive_failures)?;
+            existing.last_error = Some(clamped_error_message(&update.error_message));
+            existing.updated_at = update.observed_at;
+        } else {
+            health.insert(
+                update.source.clone(),
+                NewsSourceHealthView {
+                    source: update.source.clone(),
+                    source_type: update.source_type.clone(),
+                    enabled: true,
+                    reliability: update.reliability,
+                    last_success_at: None,
+                    last_error_at: Some(update.observed_at),
+                    consecutive_failures: 1,
+                    items_fetched: 0,
+                    items_inserted: 0,
+                    items_deduped: 0,
+                    health_score: degraded_health_score(update.reliability, 1)?,
+                    last_error: Some(clamped_error_message(&update.error_message)),
+                    updated_at: update.observed_at,
+                },
+            );
+        }
+
         Ok(())
     }
 }
@@ -1412,6 +1532,46 @@ impl PostgresMarketEventStore {
 
 #[async_trait]
 impl NewsIngestionStore for PostgresMarketEventStore {
+    async fn list_news_source_health(
+        &self,
+        filters: &NewsSourceHealthListFilters,
+    ) -> Result<Vec<NewsSourceHealthView>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT
+              source,
+              source_type,
+              enabled,
+              reliability,
+              last_success_at,
+              last_error_at,
+              consecutive_failures,
+              items_fetched,
+              items_inserted,
+              items_deduped,
+              health_score,
+              last_error,
+              updated_at
+            FROM news_source_health
+            WHERE ($1::TEXT IS NULL OR source_type = $1)
+            ORDER BY updated_at DESC, source ASC
+            LIMIT $2
+            "#,
+        )
+        .bind(filters.source_type.as_deref())
+        .bind(i64::from(filters.limit))
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_QUERY_FAILED",
+                format!("failed to list news source health: {error}"),
+            )
+        })?;
+
+        rows.iter().map(parse_news_source_health_row).collect()
+    }
+
     async fn insert_raw_news_event(&self, event: &NewsRawEventInsert) -> Result<bool> {
         let result = sqlx::query(
             r#"
@@ -1549,7 +1709,7 @@ impl NewsIngestionStore for PostgresMarketEventStore {
               0,
               0,
               0,
-              GREATEST(0::numeric, $3 - 0.20),
+              GREATEST(0::numeric, $3 - (1::numeric / 5::numeric)),
               $5,
               $4,
               $6
@@ -1563,7 +1723,8 @@ impl NewsIngestionStore for PostgresMarketEventStore {
               consecutive_failures = news_source_health.consecutive_failures + 1,
               health_score = GREATEST(
                 0::numeric,
-                EXCLUDED.reliability - ((news_source_health.consecutive_failures + 1)::numeric * 0.20)
+                EXCLUDED.reliability
+                  - (LEAST(news_source_health.consecutive_failures + 1, 5)::numeric / 5::numeric)
               ),
               last_error = EXCLUDED.last_error,
               updated_at = EXCLUDED.updated_at,
@@ -1581,7 +1742,10 @@ impl NewsIngestionStore for PostgresMarketEventStore {
         .map_err(|error| {
             db_error(
                 "POSTGRES_UPSERT_FAILED",
-                format!("failed to record news source failure {}: {error}", update.source),
+                format!(
+                    "failed to record news source failure {}: {error}",
+                    update.source
+                ),
             )
         })?;
 
@@ -2356,12 +2520,16 @@ impl MarketEventStore for PostgresMarketEventStore {
             &current_signal.event_id,
         )
         .await?;
+        let source_health =
+            fetch_source_health_adjustment_for_event(&mut transaction, &current_signal.event_id)
+                .await?;
         let estimate_id = format!("est_{}", Uuid::now_v7());
-        let draft = build_recompute_signal_draft(
+        let draft = build_recompute_signal_draft_with_source_health(
             &current_signal,
             &market,
             &evidences,
             &command.reason,
+            source_health.as_ref(),
             &estimate_id,
         )?;
 
@@ -5357,6 +5525,49 @@ async fn fetch_evidences_for_signal(
     rows.iter().map(parse_evidence_row).collect()
 }
 
+async fn fetch_source_health_adjustment_for_event(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    event_id: &str,
+) -> Result<Option<SourceHealthAdjustment>> {
+    let row = sqlx::query(
+        r#"
+        SELECT
+          e.source,
+          nsh.health_score
+        FROM events e
+        LEFT JOIN news_source_health nsh ON nsh.source = e.source
+        WHERE e.id = $1
+        "#,
+    )
+    .bind(event_id)
+    .fetch_optional(&mut **transaction)
+    .await
+    .map_err(|error| {
+        db_error(
+            "POSTGRES_QUERY_FAILED",
+            format!("failed to fetch source health for event {event_id}: {error}"),
+        )
+    })?;
+
+    let Some(row) = row else {
+        return Ok(None);
+    };
+    let health_score: Option<Decimal> = decode_column(&row, "health_score")?;
+    let Some(health_score) = health_score else {
+        return Ok(None);
+    };
+
+    Ok(Some(SourceHealthAdjustment {
+        source: decode_column(&row, "source")?,
+        health_score: Probability::new(health_score).map_err(|error| {
+            db_error(
+                "POSTGRES_DECODE_FAILED",
+                format!("failed to decode event source health_score: {error}"),
+            )
+        })?,
+    }))
+}
+
 fn parse_market_row(row: &sqlx::postgres::PgRow) -> Result<MarketView> {
     let status_raw: String = decode_column(row, "status")?;
     let ambiguity_level_raw: String = decode_column(row, "ambiguity_level")?;
@@ -5421,6 +5632,41 @@ fn parse_market_row(row: &sqlx::postgres::PgRow) -> Result<MarketView> {
         polymarket_no_asset_id: decode_column(row, "polymarket_no_asset_id")?,
         updated_at: decode_column(row, "updated_at")?,
         version: decode_column(row, "version")?,
+    })
+}
+
+fn parse_news_source_health_row(row: &sqlx::postgres::PgRow) -> Result<NewsSourceHealthView> {
+    let reliability: Decimal = decode_column(row, "reliability")?;
+    let health_score: Decimal = decode_column(row, "health_score")?;
+    let consecutive_failures: i64 = decode_column(row, "consecutive_failures")?;
+    let items_fetched: i64 = decode_column(row, "items_fetched")?;
+    let items_inserted: i64 = decode_column(row, "items_inserted")?;
+    let items_deduped: i64 = decode_column(row, "items_deduped")?;
+
+    Ok(NewsSourceHealthView {
+        source: decode_column(row, "source")?,
+        source_type: decode_column(row, "source_type")?,
+        enabled: decode_column(row, "enabled")?,
+        reliability: Probability::new(reliability).map_err(|error| {
+            db_error(
+                "POSTGRES_DECODE_FAILED",
+                format!("failed to decode news source reliability: {error}"),
+            )
+        })?,
+        last_success_at: decode_column(row, "last_success_at")?,
+        last_error_at: decode_column(row, "last_error_at")?,
+        consecutive_failures: i64_to_u64("consecutive_failures", consecutive_failures)?,
+        items_fetched: i64_to_u64("items_fetched", items_fetched)?,
+        items_inserted: i64_to_u64("items_inserted", items_inserted)?,
+        items_deduped: i64_to_u64("items_deduped", items_deduped)?,
+        health_score: Probability::new(health_score).map_err(|error| {
+            db_error(
+                "POSTGRES_DECODE_FAILED",
+                format!("failed to decode news source health_score: {error}"),
+            )
+        })?,
+        last_error: decode_column(row, "last_error")?,
+        updated_at: decode_column(row, "updated_at")?,
     })
 }
 
@@ -6167,6 +6413,33 @@ fn usize_to_i64(value: usize) -> Result<i64> {
     })
 }
 
+fn usize_to_u64(value: usize) -> Result<u64> {
+    u64::try_from(value).map_err(|error| {
+        AppError::invalid_input(
+            "NEWS_COUNT_OUT_OF_RANGE",
+            format!("news ingestion count does not fit u64: {error}"),
+        )
+    })
+}
+
+fn add_news_count(left: u64, right: u64) -> Result<u64> {
+    left.checked_add(right).ok_or_else(|| {
+        AppError::invalid_input(
+            "NEWS_COUNT_OUT_OF_RANGE",
+            "news ingestion count exceeds u64 range",
+        )
+    })
+}
+
+fn i64_to_u64(column: &str, value: i64) -> Result<u64> {
+    u64::try_from(value).map_err(|error| {
+        db_error(
+            "POSTGRES_DECODE_FAILED",
+            format!("failed to decode column {column} as nonnegative count: {error}"),
+        )
+    })
+}
+
 fn clamped_error_message(value: &str) -> String {
     value.chars().take(1_000).collect()
 }
@@ -6181,4 +6454,260 @@ where
             format!("failed to decode column {column}: {error}"),
         )
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{InMemoryMarketEventStore, PostgresMarketEventStore};
+    use polyedge_application::{
+        MarketEventStore, NewsIngestionStore, NewsSourceFailureUpdate, NewsSourceHealthListFilters,
+        NewsSourceSuccessUpdate, RecomputeSignalCommand, demo_fixture_bundle,
+    };
+    use polyedge_domain::{Probability, Result};
+    use rust_decimal::Decimal;
+    use sqlx::{Executor, postgres::PgPoolOptions};
+    use std::error::Error;
+    use time::{Duration, OffsetDateTime};
+    use uuid::Uuid;
+
+    static TEST_MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("../../migrations");
+
+    fn quote_pg_ident(value: &str) -> String {
+        format!(r#""{}""#, value.replace('"', r#""""#))
+    }
+
+    #[tokio::test]
+    async fn in_memory_news_source_health_tracks_counts_failures_and_filters() -> Result<()> {
+        let store = InMemoryMarketEventStore::new();
+        let reliability = Probability::new(Decimal::new(90, 2))?;
+        let first_seen = OffsetDateTime::UNIX_EPOCH + Duration::seconds(1);
+        let failed_at = OffsetDateTime::UNIX_EPOCH + Duration::seconds(2);
+        let official_seen = OffsetDateTime::UNIX_EPOCH + Duration::seconds(3);
+
+        store
+            .record_news_source_success(&NewsSourceSuccessUpdate {
+                source: "rss_feed".to_string(),
+                source_type: "news".to_string(),
+                reliability,
+                fetched: 3,
+                inserted: 2,
+                deduped: 1,
+                observed_at: first_seen,
+                trace_id: "trc_success".to_string(),
+            })
+            .await?;
+        store
+            .record_news_source_failure(&NewsSourceFailureUpdate {
+                source: "rss_feed".to_string(),
+                source_type: "news".to_string(),
+                reliability,
+                error_message: "upstream timeout".to_string(),
+                observed_at: failed_at,
+                trace_id: "trc_failure".to_string(),
+            })
+            .await?;
+        store
+            .record_news_source_success(&NewsSourceSuccessUpdate {
+                source: "sec_feed".to_string(),
+                source_type: "official".to_string(),
+                reliability,
+                fetched: 1,
+                inserted: 1,
+                deduped: 0,
+                observed_at: official_seen,
+                trace_id: "trc_official".to_string(),
+            })
+            .await?;
+
+        let all_sources = store
+            .list_news_source_health(&NewsSourceHealthListFilters::new(None, Some(10))?)
+            .await?;
+        assert_eq!(all_sources.len(), 2);
+        assert_eq!(all_sources[0].source, "sec_feed");
+
+        let news_sources = store
+            .list_news_source_health(&NewsSourceHealthListFilters::new(
+                Some(" news ".to_string()),
+                Some(10),
+            )?)
+            .await?;
+        assert_eq!(news_sources.len(), 1);
+
+        let rss_feed = &news_sources[0];
+        assert_eq!(rss_feed.source, "rss_feed");
+        assert_eq!(rss_feed.items_fetched, 3);
+        assert_eq!(rss_feed.items_inserted, 2);
+        assert_eq!(rss_feed.items_deduped, 1);
+        assert_eq!(rss_feed.consecutive_failures, 1);
+        assert_eq!(rss_feed.last_success_at, Some(first_seen));
+        assert_eq!(rss_feed.last_error_at, Some(failed_at));
+        assert_eq!(rss_feed.last_error.as_deref(), Some("upstream timeout"));
+        assert_eq!(
+            rss_feed.health_score,
+            Probability::new(Decimal::new(70, 2))?
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn in_memory_recompute_discounts_degraded_event_source_health() -> Result<()> {
+        let store = InMemoryMarketEventStore::new();
+        let bundle = demo_fixture_bundle();
+        store
+            .ingest_fixture_bundle(&bundle, "trc_seed_recompute_health")
+            .await?;
+        store
+            .record_news_source_failure(&NewsSourceFailureUpdate {
+                source: "reuters".to_string(),
+                source_type: "news".to_string(),
+                reliability: Probability::new(Decimal::new(90, 2))?,
+                error_message: "source timeout".to_string(),
+                observed_at: OffsetDateTime::UNIX_EPOCH + Duration::seconds(10),
+                trace_id: "trc_degrade_reuters".to_string(),
+            })
+            .await?;
+
+        let result = store
+            .recompute_signal(&RecomputeSignalCommand {
+                signal_id: "sig_2412".to_string(),
+                reason: "test source health adjustment".to_string(),
+                trace_id: "trc_recompute".to_string(),
+            })
+            .await?;
+
+        assert!(
+            result
+                .estimate
+                .reason_codes
+                .contains(&"source_health_degraded".to_string())
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn postgres_news_source_health_round_trips_filters_and_migrates_index()
+    -> std::result::Result<(), Box<dyn Error>> {
+        let Some(database_url) = std::env::var("POLYEDGE_TEST_DATABASE_URL")
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+        else {
+            return Ok(());
+        };
+
+        let schema = format!("polyedge_test_{}", Uuid::now_v7().simple());
+        let quoted_schema = quote_pg_ident(&schema);
+        let admin_pool = PgPoolOptions::new()
+            .max_connections(1)
+            .connect(&database_url)
+            .await?;
+        admin_pool
+            .execute(format!("CREATE SCHEMA {quoted_schema}").as_str())
+            .await?;
+
+        let test_result: std::result::Result<(), Box<dyn Error>> = async {
+            let search_path_schema = quoted_schema.clone();
+            let pool = PgPoolOptions::new()
+                .max_connections(2)
+                .after_connect(move |connection, _meta| {
+                    let search_path_schema = search_path_schema.clone();
+                    Box::pin(async move {
+                        connection
+                            .execute(format!("SET search_path TO {search_path_schema}").as_str())
+                            .await?;
+                        Ok(())
+                    })
+                })
+                .connect(&database_url)
+                .await?;
+            TEST_MIGRATOR.run(&pool).await?;
+
+            let index_exists: bool = sqlx::query_scalar("SELECT to_regclass($1) IS NOT NULL")
+                .bind(format!(
+                    "{schema}.news_source_health_source_type_updated_at_idx"
+                ))
+                .fetch_one(&admin_pool)
+                .await?;
+            assert!(index_exists);
+
+            let store = PostgresMarketEventStore::new(pool.clone());
+            let reliability = Probability::new(Decimal::new(90, 2))?;
+            let news_seen = OffsetDateTime::UNIX_EPOCH + Duration::seconds(1);
+            let news_failed = OffsetDateTime::UNIX_EPOCH + Duration::seconds(2);
+            let official_seen = OffsetDateTime::UNIX_EPOCH + Duration::seconds(3);
+
+            store
+                .record_news_source_success(&NewsSourceSuccessUpdate {
+                    source: "wire_feed".to_string(),
+                    source_type: "news".to_string(),
+                    reliability,
+                    fetched: 4,
+                    inserted: 3,
+                    deduped: 1,
+                    observed_at: news_seen,
+                    trace_id: "trc_pg_success".to_string(),
+                })
+                .await?;
+            store
+                .record_news_source_failure(&NewsSourceFailureUpdate {
+                    source: "wire_feed".to_string(),
+                    source_type: "news".to_string(),
+                    reliability,
+                    error_message: "upstream timeout".to_string(),
+                    observed_at: news_failed,
+                    trace_id: "trc_pg_failure".to_string(),
+                })
+                .await?;
+            store
+                .record_news_source_success(&NewsSourceSuccessUpdate {
+                    source: "sec_feed".to_string(),
+                    source_type: "official".to_string(),
+                    reliability,
+                    fetched: 1,
+                    inserted: 1,
+                    deduped: 0,
+                    observed_at: official_seen,
+                    trace_id: "trc_pg_official".to_string(),
+                })
+                .await?;
+
+            let all_sources = store
+                .list_news_source_health(&NewsSourceHealthListFilters::new(None, Some(10))?)
+                .await?;
+            assert_eq!(all_sources.len(), 2);
+            assert_eq!(all_sources[0].source, "sec_feed");
+
+            let news_sources = store
+                .list_news_source_health(&NewsSourceHealthListFilters::new(
+                    Some("news".to_string()),
+                    Some(10),
+                )?)
+                .await?;
+            assert_eq!(news_sources.len(), 1);
+
+            let wire_feed = &news_sources[0];
+            assert_eq!(wire_feed.source, "wire_feed");
+            assert_eq!(wire_feed.items_fetched, 4);
+            assert_eq!(wire_feed.items_inserted, 3);
+            assert_eq!(wire_feed.items_deduped, 1);
+            assert_eq!(wire_feed.consecutive_failures, 1);
+            assert_eq!(wire_feed.last_error.as_deref(), Some("upstream timeout"));
+            assert_eq!(
+                wire_feed.health_score,
+                Probability::new(Decimal::new(70, 2))?
+            );
+
+            pool.close().await;
+            Ok(())
+        }
+        .await;
+
+        admin_pool
+            .execute(format!("DROP SCHEMA IF EXISTS {quoted_schema} CASCADE").as_str())
+            .await?;
+        admin_pool.close().await;
+
+        test_result
+    }
 }

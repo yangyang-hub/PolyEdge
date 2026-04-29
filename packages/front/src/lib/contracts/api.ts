@@ -7,6 +7,7 @@ export type ContractListQuery = {
   market_id?: string;
   event_id?: string;
   signal_state?: string[];
+  source_type?: string;
   from?: string;
   to?: string;
   q?: string;
