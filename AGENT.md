@@ -1,6 +1,6 @@
 # AGENT.md
 
-最后更新：2026-04-28
+最后更新：2026-04-30
 
 ## 1. 文件用途
 
@@ -127,6 +127,8 @@
 - `GET /readyz`
 - `GET /api/v1/markets`
 - `GET /api/v1/events`
+- `GET /api/v1/news/source-health`
+- `GET /api/v1/news/raw-events`
 - `GET /api/v1/evidences`
 - `GET /api/v1/signals`
 - `GET /api/v1/signals/{signal_id}/transitions`
@@ -157,6 +159,7 @@
 - `ingest-fixtures`
 - `ingest-news-once`
 - `poll-news`
+- `promote-news-events`
 - `drain-execution-queue`
 - `reconcile-paper-fills`
 - `poll-paper-order-statuses`
@@ -171,7 +174,7 @@
 
 ### 5.5 配置与迁移
 
-- 默认配置：`packages/backend/config/default.toml`
+- 默认配置由 `packages/backend/crates/infrastructure/src/settings.rs` 的 `Default` 实现提供，环境变量示例见 `packages/backend/.env.example`；当前没有 `packages/backend/config/default.toml` 文件。
 - API 默认监听：`127.0.0.1:8080`
 - 默认 runtime mode：`manual_confirm`
 - 默认 Polymarket mode：`mock`
@@ -191,6 +194,7 @@
 - `0009_orders_trades_positions.sql`
 - `0010_market_connector_refs.sql`
 - `0011_news_ingestion.sql`
+- `0012_news_source_health_list_index.sql`
 
 ## 6. 前后端贯通状态
 
@@ -206,15 +210,16 @@
 - 前端已有 SSE proxy / mock stream 机制，并可代理 Rust `/api/v1/stream/{channel}`
 - 前端 live fetch 已能发送本地 dev-auth headers 或签名内部 JWT
 - 后端已有 `v1` REST API、worker 和交易/回写相关主链路
-- 后端已有审批、风险告警、风险桶的一等只读资源端点，前端不再依赖 `live-console-derived.ts` 派生这些资源
+- 后端已有审批、风险告警、风险桶、新闻源健康和 raw news 的一等只读资源端点，前端不再依赖 `live-console-derived.ts` 派生这些资源
+- 后端 worker 已能把近期 raw news 按保守词面匹配提升为关联已有市场的 `events`
 
 ### 6.3 当前明确存在的缺口
 
-1. SSE 仍是 snapshot-backed stream：后端按间隔生成当前 signals/risk/events 快照消息，尚不是持久化事件总线或 Redis/Postgres outbox 驱动的精确增量流。
+1. SSE 仍是 snapshot-backed stream：后端按间隔读取当前 signals/risk/events 快照，会用 `Last-Event-ID` 避免重发最近事件，并在单个连接内按事件 ID 去重后发送；尚不是持久化事件总线或 Redis/Postgres outbox 驱动的精确增量流。
 2. 前端权限当前仍是 `off | mock-session`，不是生产级真实会话体系。
 3. 签名内部 JWT 链路已具备代码路径，但仍需要在真实环境配置 Ed25519 key rotation、会话来源和撤销策略。
 4. Polymarket live 模式已有 connector/worker 骨架，但仍需要真实凭证、真实账户、小额演练和运维 runbook 才能视为生产交易链路。
-5. 新闻源已支持 RSS/Atom 抓取、标准化、去重写入 `raw_events` 和 `news_source_health`，但还没有把真实新闻自动提升为 `events/evidences/signals`。
+5. 新闻源已支持 RSS/Atom 抓取、标准化、去重写入 `raw_events` 和 `news_source_health`，并可在 API/设置页查看 source health 与最近 raw news；worker 可将匹配到已有市场的 raw news 提升为 `events`，但尚未自动生成 `evidences/signals`。
 
 ### 6.4 因此的实际判断
 
@@ -254,6 +259,9 @@ cargo check --workspace
 cargo test --workspace
 cargo run -p polyedge-api
 cargo run -p polyedge-worker -- ingest-fixtures
+cargo run -p polyedge-worker -- ingest-news-once
+cargo run -p polyedge-worker -- poll-news
+cargo run -p polyedge-worker -- promote-news-events
 cargo run -p polyedge-worker -- drain-execution-queue
 ```
 
@@ -271,6 +279,7 @@ cargo run -p polyedge-worker -- reconcile-polymarket-fills
 ### 8.1 前端
 
 - `packages/front/src/server/api/base.ts`
+- `packages/front/src/server/api/news.ts`
 - `packages/front/src/server/actions/approval-actions.ts`
 - `packages/front/src/server/actions/risk-actions.ts`
 - `packages/front/src/app/api/stream/[channel]/route.ts`
@@ -285,7 +294,7 @@ cargo run -p polyedge-worker -- reconcile-polymarket-fills
 - `packages/backend/crates/application/src/lib.rs`
 - `packages/backend/crates/infrastructure/src/runtime.rs`
 - `packages/backend/crates/infrastructure/src/settings.rs`
-- `packages/backend/config/default.toml`
+- `packages/backend/.env.example`
 
 ## 9. 更新本文件时的最小检查清单
 

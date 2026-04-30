@@ -3219,6 +3219,8 @@ dependencies = [
  "polyedge-domain",
  "polyedge-infrastructure",
  "polymarket-client-sdk",
+ "rust_decimal",
+ "serde_json",
  "time",
  "tokio",
  "tracing",

@@ -314,6 +314,8 @@ pub struct FixtureMarketRecord {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FixtureEventRecord {
     pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub raw_event_id: Option<String>,
     pub source: String,
     pub summary: String,
     pub relevance_score: Probability,
@@ -1765,6 +1767,7 @@ fn fixture_event(
 ) -> FixtureEventRecord {
     FixtureEventRecord {
         id: id.to_string(),
+        raw_event_id: None,
         source: source.to_string(),
         summary: summary.to_string(),
         relevance_score: probability(relevance_score),

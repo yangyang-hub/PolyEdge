@@ -79,6 +79,22 @@ export type NewsSourceHealthDto = {
   updated_at: string;
 };
 
+export type NewsRawEventDto = {
+  id: string;
+  source: string;
+  source_type: NewsSourceType;
+  external_id?: string | null;
+  title: string;
+  url?: string | null;
+  author?: string | null;
+  published_at?: string | null;
+  event_time: string;
+  hash: string;
+  raw_payload: unknown;
+  ingested_at: string;
+  trace_id: string;
+};
+
 export type EvidenceDto = ResourceVersion & {
   market_id: string;
   event_id: string;

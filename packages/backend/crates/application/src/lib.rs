@@ -28,8 +28,9 @@ pub use market_event::{
 };
 pub use news_ingestion::{
     NewsIngestSourceCommand, NewsIngestionItem, NewsIngestionService, NewsIngestionStore,
-    NewsRawEventInsert, NewsSourceFailureUpdate, NewsSourceHealthListFilters, NewsSourceHealthView,
-    NewsSourceIngestionReport, NewsSourceSuccessUpdate, degraded_health_score,
+    NewsRawEventInsert, NewsRawEventListFilters, NewsRawEventView, NewsSourceFailureUpdate,
+    NewsSourceHealthListFilters, NewsSourceHealthView, NewsSourceIngestionReport,
+    NewsSourceSuccessUpdate, degraded_health_score,
 };
 pub use risk::{
     ApproveSignalCommand, ApproveSignalReceipt, KillSwitchReceipt, RejectSignalCommand,

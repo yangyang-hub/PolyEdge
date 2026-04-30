@@ -9,7 +9,7 @@ import {
   type Tone,
 } from "@/lib/server/console-formatters";
 import { getApiBaseUrl, getBackendMode } from "@/server/api/base";
-import { listNewsSourceHealth } from "@/server/api/news";
+import { listNewsRawEvents, listNewsSourceHealth } from "@/server/api/news";
 
 function sourceHealthTone(healthScore: string, consecutiveFailures: number): Tone {
   const score = Number.parseFloat(healthScore);
@@ -30,7 +30,10 @@ function formatOptionalClock(value: string | null | undefined): string {
 }
 
 export async function getSettingsPageData() {
-  const { data: sourceHealth } = await listNewsSourceHealth({ limit: 10 });
+  const [{ data: sourceHealth }, { data: rawNews }] = await Promise.all([
+    listNewsSourceHealth({ limit: 10 }),
+    listNewsRawEvents({ limit: 8 }),
+  ]);
   const degradedSources = sourceHealth.filter(
     (source) => sourceHealthTone(source.health_score, source.consecutive_failures) !== "success",
   );
@@ -59,6 +62,19 @@ export async function getSettingsPageData() {
       lastError: source.last_error,
       updatedAtLabel: formatClock(source.updated_at),
       tone: sourceHealthTone(source.health_score, source.consecutive_failures),
+    })),
+    rawNews: rawNews.map((event) => ({
+      id: event.id,
+      source: event.source,
+      typeLabel: humanizeSnakeCase(event.source_type),
+      title: event.title,
+      url: event.url,
+      externalId: event.external_id,
+      author: event.author,
+      eventTimeLabel: formatClock(event.event_time),
+      publishedAtLabel: formatOptionalClock(event.published_at),
+      ingestedAtLabel: formatClock(event.ingested_at),
+      traceId: event.trace_id,
     })),
   };
 }

@@ -97,6 +97,69 @@ export default async function SettingsPage() {
           </CardContent>
         </Card>
 
+        <Card className="md:col-span-2">
+          <CardHeader>
+            <CardTitle>Recent Raw News</CardTitle>
+            <CardDescription>Latest normalized feed entries before event and signal promotion.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {data.rawNews.length > 0 ? (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Source</TableHead>
+                    <TableHead>Title</TableHead>
+                    <TableHead>Event Time</TableHead>
+                    <TableHead>Ingested</TableHead>
+                    <TableHead>Trace</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {data.rawNews.map((event) => (
+                    <TableRow key={event.id}>
+                      <TableCell>
+                        <div className="space-y-1">
+                          <p className="font-mono text-xs text-foreground">{event.source}</p>
+                          <StatusPill tone="neutral">{event.typeLabel}</StatusPill>
+                        </div>
+                      </TableCell>
+                      <TableCell className="max-w-xl whitespace-normal">
+                        <div className="space-y-1">
+                          {event.url ? (
+                            <a
+                              href={event.url}
+                              className="text-sm font-medium text-foreground underline-offset-4 hover:underline"
+                              target="_blank"
+                              rel="noreferrer"
+                            >
+                              {event.title}
+                            </a>
+                          ) : (
+                            <p className="text-sm font-medium text-foreground">{event.title}</p>
+                          )}
+                          <p className="text-xs text-muted-foreground">
+                            {event.externalId ?? event.author ?? event.id}
+                          </p>
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <div className="space-y-1 text-xs">
+                          <p className="text-foreground">{event.eventTimeLabel}</p>
+                          <p className="text-muted-foreground">published {event.publishedAtLabel}</p>
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-xs text-muted-foreground">{event.ingestedAtLabel}</TableCell>
+                      <TableCell className="font-mono text-xs text-muted-foreground">{event.traceId}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            ) : (
+              <p className="text-sm text-muted-foreground">No raw news entries have been ingested yet.</p>
+            )}
+          </CardContent>
+        </Card>
+
         <Card>
           <CardHeader>
             <CardTitle className="font-heading text-base">Documentation Links</CardTitle>

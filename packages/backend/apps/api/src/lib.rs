@@ -13,10 +13,11 @@ use polyedge_application::{
     EvidenceListFilters, EvidenceView, ExecutionFillResult, ExecutionRequestListFilters,
     ExecutionRequestView, ExecutionSubmissionReceipt, IdempotencyBegin, IdempotencyRequest,
     KillSwitchReceipt, MarketListFilters, MarketView, ModeTransitionCommand,
-    NewsSourceHealthListFilters, NewsSourceHealthView, OrderDraftListFilters, OrderDraftView,
-    OrderListFilters, OrderView, PositionListFilters, PositionView, ProbabilityEstimateListFilters,
-    ProbabilityEstimateView, ReconcileExternalTradeCommand, RejectSignalCommand,
-    RejectSignalReceipt, ReleaseKillSwitchCommand, RiskPolicy, RiskStateView, SignalListFilters,
+    NewsRawEventListFilters, NewsRawEventView, NewsSourceHealthListFilters, NewsSourceHealthView,
+    OrderDraftListFilters, OrderDraftView, OrderListFilters, OrderView, PositionListFilters,
+    PositionView, ProbabilityEstimateListFilters, ProbabilityEstimateView,
+    ReconcileExternalTradeCommand, RejectSignalCommand, RejectSignalReceipt,
+    ReleaseKillSwitchCommand, RiskPolicy, RiskStateView, SignalListFilters,
     SignalTransitionListFilters, SignalTransitionView, SignalView, SubmitExecutionCommand,
     SyncExternalOrderStatusCommand, TradeListFilters, TradeView, TriggerKillSwitchCommand,
 };
@@ -31,15 +32,15 @@ use polyedge_contracts::{
     ConnectorTradeFillCallbackData, ConnectorTradeFillCallbackRequest, DependencyStatus, EventData,
     EventListQuery, EvidenceData, EvidenceListQuery, ExecutionRequestData,
     ExecutionRequestListQuery, HealthData, KillSwitchData, MarketData, MarketListQuery,
-    NewsSourceHealthData, NewsSourceHealthListQuery, OrderData, OrderDraftData,
-    OrderDraftListQuery, OrderListQuery, PolymarketOrderStatusCallbackRequest,
-    PolymarketTradeFillCallbackRequest, PositionData, PositionListQuery, ProbabilityEstimateData,
-    ProbabilityEstimateListQuery, ReadinessData, RecomputeSignalData, RecomputeSignalRequest,
-    RejectSignalData, RejectSignalRequest, ReleaseKillSwitchRequest, RiskAlertData,
-    RiskAlertListQuery, RiskBucketData, RiskBucketListQuery, RiskStateData, SignalData,
-    SignalListQuery, SignalTransitionData, SignalTransitionListQuery, SubmitExecutionData,
-    SubmitExecutionRequest, SystemModeData, TradeData, TradeListQuery, TransitionSystemModeRequest,
-    TriggerKillSwitchRequest,
+    NewsRawEventData, NewsRawEventListQuery, NewsSourceHealthData, NewsSourceHealthListQuery,
+    OrderData, OrderDraftData, OrderDraftListQuery, OrderListQuery,
+    PolymarketOrderStatusCallbackRequest, PolymarketTradeFillCallbackRequest, PositionData,
+    PositionListQuery, ProbabilityEstimateData, ProbabilityEstimateListQuery, ReadinessData,
+    RecomputeSignalData, RecomputeSignalRequest, RejectSignalData, RejectSignalRequest,
+    ReleaseKillSwitchRequest, RiskAlertData, RiskAlertListQuery, RiskBucketData,
+    RiskBucketListQuery, RiskStateData, SignalData, SignalListQuery, SignalTransitionData,
+    SignalTransitionListQuery, SubmitExecutionData, SubmitExecutionRequest, SystemModeData,
+    TradeData, TradeListQuery, TransitionSystemModeRequest, TriggerKillSwitchRequest,
 };
 use polyedge_domain::{
     AppError, ExposureRatio, OrderStatus, Probability, Quantity, SignalLifecycleState, StepUpScope,
@@ -53,7 +54,11 @@ use polyedge_infrastructure::{
 };
 use rust_decimal::Decimal;
 use serde_json::{Value, json};
-use std::{collections::HashMap, convert::Infallible, time::Duration};
+use std::{
+    collections::{HashMap, HashSet},
+    convert::Infallible,
+    time::Duration,
+};
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use tower::ServiceBuilder;
 use tower_http::{timeout::TimeoutLayer, trace::TraceLayer};
@@ -120,6 +125,13 @@ pub fn build_app(state: AppState) -> Router {
         .route(
             "/api/v1/news/source-health",
             get(list_news_source_health).route_layer(middleware::from_fn_with_state(
+                state.clone(),
+                require_console_read_auth,
+            )),
+        )
+        .route(
+            "/api/v1/news/raw-events",
+            get(list_news_raw_events).route_layer(middleware::from_fn_with_state(
                 state.clone(),
                 require_console_read_auth,
             )),
@@ -811,12 +823,14 @@ struct StreamState {
     app_state: AppState,
     channel: String,
     sequence: u64,
+    emitted_ids: HashSet<String>,
 }
 
 async fn stream_channel(
     Extension(_auth): Extension<AuthContext>,
     State(state): State<AppState>,
     Path(channel): Path<String>,
+    headers: HeaderMap,
 ) -> std::result::Result<Response, HttpError> {
     if !matches!(channel.as_str(), "signals" | "risk" | "events") {
         return Err(HttpError::with_meta(
@@ -826,10 +840,22 @@ async fn stream_channel(
         ));
     }
 
+    let mut emitted_ids = HashSet::new();
+
+    if let Some(last_event_id) = headers
+        .get("last-event-id")
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        emitted_ids.insert(last_event_id.to_string());
+    }
+
     let stream_state = StreamState {
         app_state: state,
         channel,
         sequence: 0,
+        emitted_ids,
     };
     let event_stream = stream::unfold(stream_state, |mut stream_state| async move {
         if stream_state.sequence > 0 {
@@ -840,6 +866,7 @@ async fn stream_channel(
             &stream_state.app_state,
             &stream_state.channel,
             stream_state.sequence,
+            &mut stream_state.emitted_ids,
         )
         .await
         {
@@ -881,6 +908,7 @@ async fn build_stream_chunk(
     state: &AppState,
     channel: &str,
     sequence: u64,
+    emitted_ids: &mut HashSet<String>,
 ) -> polyedge_domain::Result<String> {
     let messages = match channel {
         "signals" => signal_stream_messages(state).await?,
@@ -888,6 +916,7 @@ async fn build_stream_chunk(
         "events" => event_stream_messages(state).await?,
         _ => Vec::new(),
     };
+    let messages = filter_new_sse_messages(messages, emitted_ids);
 
     if messages.is_empty() {
         return Ok(format!(
@@ -900,6 +929,16 @@ async fn build_stream_chunk(
         .map(format_sse_message)
         .collect::<Vec<_>>()
         .join(""))
+}
+
+fn filter_new_sse_messages(
+    messages: Vec<SseMessage>,
+    emitted_ids: &mut HashSet<String>,
+) -> Vec<SseMessage> {
+    messages
+        .into_iter()
+        .filter(|message| emitted_ids.insert(message.id.clone()))
+        .collect()
 }
 
 async fn signal_stream_messages(state: &AppState) -> polyedge_domain::Result<Vec<SseMessage>> {
@@ -1227,6 +1266,27 @@ async fn list_news_source_health(
             .into_iter()
             .map(news_source_health_to_contract)
             .collect(),
+        auth.request_id,
+        trace_id,
+    )))
+}
+
+async fn list_news_raw_events(
+    Extension(auth): Extension<AuthContext>,
+    State(state): State<AppState>,
+    Query(query): Query<NewsRawEventListQuery>,
+) -> std::result::Result<Json<ApiResponse<Vec<NewsRawEventData>>>, HttpError> {
+    let trace_id = new_trace_id();
+    let filters = NewsRawEventListFilters::new(query.source, query.source_type, query.limit)
+        .map_err(|error| HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone()))?;
+    let events = state
+        .news_ingestion_service
+        .list_raw_events(filters)
+        .await
+        .map_err(|error| HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone()))?;
+
+    Ok(Json(ApiResponse::new(
+        events.into_iter().map(news_raw_event_to_contract).collect(),
         auth.request_id,
         trace_id,
     )))
@@ -2669,6 +2729,24 @@ fn news_source_health_to_contract(source: NewsSourceHealthView) -> NewsSourceHea
     }
 }
 
+fn news_raw_event_to_contract(event: NewsRawEventView) -> NewsRawEventData {
+    NewsRawEventData {
+        id: event.id,
+        source: event.source,
+        source_type: event.source_type,
+        external_id: event.external_id,
+        title: event.title,
+        url: event.url,
+        author: event.author,
+        published_at: event.published_at,
+        event_time: event.event_time,
+        hash: event.hash,
+        raw_payload: event.raw_payload,
+        ingested_at: event.ingested_at,
+        trace_id: event.trace_id,
+    }
+}
+
 fn evidence_to_contract(evidence: EvidenceView) -> EvidenceData {
     EvidenceData {
         id: evidence.id,
@@ -3107,6 +3185,63 @@ mod tests {
         step_up_until: Option<i64>,
     }
 
+    #[test]
+    fn sse_message_filter_keeps_new_resource_versions_only() {
+        let mut emitted_ids = HashSet::new();
+        let first_batch = filter_new_sse_messages(
+            vec![
+                SseMessage {
+                    id: "signals:sig_1:1".to_string(),
+                    event: "signal.updated",
+                    data: json!({ "signal_id": "sig_1", "version": 1 }),
+                },
+                SseMessage {
+                    id: "signals:sig_1:1".to_string(),
+                    event: "signal.updated",
+                    data: json!({ "signal_id": "sig_1", "version": 1 }),
+                },
+                SseMessage {
+                    id: "signals:sig_2:1".to_string(),
+                    event: "signal.created",
+                    data: json!({ "signal_id": "sig_2", "version": 1 }),
+                },
+            ],
+            &mut emitted_ids,
+        );
+
+        assert_eq!(
+            first_batch
+                .iter()
+                .map(|message| message.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["signals:sig_1:1", "signals:sig_2:1"]
+        );
+
+        let second_batch = filter_new_sse_messages(
+            vec![
+                SseMessage {
+                    id: "signals:sig_1:1".to_string(),
+                    event: "signal.updated",
+                    data: json!({ "signal_id": "sig_1", "version": 1 }),
+                },
+                SseMessage {
+                    id: "signals:sig_1:2".to_string(),
+                    event: "signal.updated",
+                    data: json!({ "signal_id": "sig_1", "version": 2 }),
+                },
+            ],
+            &mut emitted_ids,
+        );
+
+        assert_eq!(
+            second_batch
+                .iter()
+                .map(|message| message.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["signals:sig_1:2"]
+        );
+    }
+
     fn issue_token_with(
         signing_key: &SigningKey,
         kid: &str,
@@ -3478,6 +3613,7 @@ mod tests {
         let token = issue_token(&signing_key, "test-key", &request_id);
 
         let response = app
+            .clone()
             .oneshot(
                 Request::builder()
                     .uri("/api/v1/news/source-health?source_type=official")
@@ -3501,6 +3637,34 @@ mod tests {
         assert_eq!(payload.data[0].items_fetched, 1);
         assert_eq!(payload.data[0].items_inserted, 1);
         assert_eq!(payload.data[0].consecutive_failures, 0);
+
+        let raw_request_id = format!("req_{}", Uuid::now_v7());
+        let raw_token = issue_token(&signing_key, "test-key", &raw_request_id);
+        let raw_response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/news/raw-events?source_type=official")
+                    .header("Authorization", format!("Bearer {raw_token}"))
+                    .header("X-Request-Id", &raw_request_id)
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+
+        assert_eq!(raw_response.status(), StatusCode::OK);
+        let raw_body = to_bytes(raw_response.into_body(), usize::MAX)
+            .await
+            .expect("read raw body");
+        let raw_payload: ApiResponse<Vec<NewsRawEventData>> =
+            serde_json::from_slice(&raw_body).expect("deserialize raw response");
+        assert_eq!(raw_payload.data.len(), 1);
+        assert_eq!(raw_payload.data[0].source, "sec_feed");
+        assert_eq!(
+            raw_payload.data[0].title,
+            "SEC publishes ETF calendar update"
+        );
+        assert_eq!(raw_payload.data[0].external_id.as_deref(), Some("entry-1"));
     }
 
     #[tokio::test]

@@ -166,6 +166,30 @@ pub struct NewsSourceHealthData {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NewsRawEventData {
+    pub id: String,
+    pub source: String,
+    pub source_type: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub external_id: Option<String>,
+    pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub author: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(with = "time::serde::rfc3339::option")]
+    pub published_at: Option<OffsetDateTime>,
+    #[serde(with = "time::serde::rfc3339")]
+    pub event_time: OffsetDateTime,
+    pub hash: String,
+    pub raw_payload: Value,
+    #[serde(with = "time::serde::rfc3339")]
+    pub ingested_at: OffsetDateTime,
+    pub trace_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EvidenceData {
     pub id: String,
     pub market_id: String,
@@ -645,6 +669,16 @@ pub struct EventListQuery {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct NewsSourceHealthListQuery {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit: Option<u16>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct NewsRawEventListQuery {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_type: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

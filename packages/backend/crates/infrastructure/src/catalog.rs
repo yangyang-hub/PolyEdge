@@ -4,13 +4,13 @@ use polyedge_application::{
     ExecutionDispatchCandidate, ExecutionDispatchResult, ExecutionFillResult,
     ExecutionReconciliationCandidate, ExecutionRequestListFilters, ExecutionRequestView,
     ExecutionSubmissionResult, FixtureBundle, FixtureIngestionReport, MarketEventStore,
-    MarketListFilters, MarketView, NewsIngestionStore, NewsRawEventInsert, NewsSourceFailureUpdate,
-    NewsSourceHealthListFilters, NewsSourceHealthView, NewsSourceSuccessUpdate,
-    OrderDraftListFilters, OrderDraftView, OrderListFilters, OrderView, PositionListFilters,
-    PositionView, ProbabilityEstimateListFilters, ProbabilityEstimateView, RecomputeSignalCommand,
-    RecomputeSignalResult, ReconcileExecutionListFilters, SignalListFilters,
-    SignalTransitionListFilters, SignalTransitionView, SignalView, SourceHealthAdjustment,
-    SubmitExecutionStoreCommand, TradeListFilters, TradeView,
+    MarketListFilters, MarketView, NewsIngestionStore, NewsRawEventInsert, NewsRawEventListFilters,
+    NewsRawEventView, NewsSourceFailureUpdate, NewsSourceHealthListFilters, NewsSourceHealthView,
+    NewsSourceSuccessUpdate, OrderDraftListFilters, OrderDraftView, OrderListFilters, OrderView,
+    PositionListFilters, PositionView, ProbabilityEstimateListFilters, ProbabilityEstimateView,
+    RecomputeSignalCommand, RecomputeSignalResult, ReconcileExecutionListFilters,
+    SignalListFilters, SignalTransitionListFilters, SignalTransitionView, SignalView,
+    SourceHealthAdjustment, SubmitExecutionStoreCommand, TradeListFilters, TradeView,
     build_recompute_signal_draft_with_source_health, degraded_health_score,
 };
 use polyedge_domain::{
@@ -46,6 +46,7 @@ pub struct InMemoryMarketEventStore {
     orders: RwLock<HashMap<String, OrderView>>,
     trades: RwLock<HashMap<String, TradeView>>,
     positions: RwLock<HashMap<String, PositionView>>,
+    raw_news_events: RwLock<HashMap<String, NewsRawEventView>>,
     raw_news_dedup_keys: RwLock<HashSet<String>>,
     news_source_health: RwLock<HashMap<String, NewsSourceHealthView>>,
 }
@@ -65,6 +66,7 @@ impl InMemoryMarketEventStore {
             orders: RwLock::new(HashMap::new()),
             trades: RwLock::new(HashMap::new()),
             positions: RwLock::new(HashMap::new()),
+            raw_news_events: RwLock::new(HashMap::new()),
             raw_news_dedup_keys: RwLock::new(HashSet::new()),
             news_source_health: RwLock::new(HashMap::new()),
         }
@@ -1427,6 +1429,36 @@ impl NewsIngestionStore for InMemoryMarketEventStore {
         Ok(items)
     }
 
+    async fn list_raw_news_events(
+        &self,
+        filters: &NewsRawEventListFilters,
+    ) -> Result<Vec<NewsRawEventView>> {
+        let events = self.raw_news_events.read().await;
+        let mut items: Vec<_> = events
+            .values()
+            .filter(|item| {
+                filters
+                    .source
+                    .as_deref()
+                    .is_none_or(|source| item.source == source)
+                    && filters
+                        .source_type
+                        .as_deref()
+                        .is_none_or(|source_type| item.source_type == source_type)
+            })
+            .cloned()
+            .collect();
+        items.sort_by(|left, right| {
+            right
+                .event_time
+                .cmp(&left.event_time)
+                .then_with(|| right.ingested_at.cmp(&left.ingested_at))
+                .then_with(|| left.id.cmp(&right.id))
+        });
+        items.truncate(usize::from(filters.limit));
+        Ok(items)
+    }
+
     async fn insert_raw_news_event(&self, event: &NewsRawEventInsert) -> Result<bool> {
         let keys = raw_news_dedup_keys(event);
         let mut existing_keys = self.raw_news_dedup_keys.write().await;
@@ -1435,6 +1467,10 @@ impl NewsIngestionStore for InMemoryMarketEventStore {
         }
 
         existing_keys.extend(keys);
+        self.raw_news_events
+            .write()
+            .await
+            .insert(event.id.clone(), raw_news_event_view_from_insert(event));
         Ok(true)
     }
 
@@ -1570,6 +1606,51 @@ impl NewsIngestionStore for PostgresMarketEventStore {
         })?;
 
         rows.iter().map(parse_news_source_health_row).collect()
+    }
+
+    async fn list_raw_news_events(
+        &self,
+        filters: &NewsRawEventListFilters,
+    ) -> Result<Vec<NewsRawEventView>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT
+              id,
+              source,
+              source_type,
+              external_id,
+              title,
+              url,
+              author,
+              published_at,
+              event_time,
+              hash,
+              raw_payload,
+              ingested_at,
+              trace_id
+            FROM raw_events
+            WHERE source_type IS NOT NULL
+              AND title IS NOT NULL
+              AND event_time IS NOT NULL
+              AND ($1::TEXT IS NULL OR source = $1)
+              AND ($2::TEXT IS NULL OR source_type = $2)
+            ORDER BY event_time DESC, ingested_at DESC, id ASC
+            LIMIT $3
+            "#,
+        )
+        .bind(filters.source.as_deref())
+        .bind(filters.source_type.as_deref())
+        .bind(i64::from(filters.limit))
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_QUERY_FAILED",
+                format!("failed to list raw news events: {error}"),
+            )
+        })?;
+
+        rows.iter().map(parse_news_raw_event_row).collect()
     }
 
     async fn insert_raw_news_event(&self, event: &NewsRawEventInsert) -> Result<bool> {
@@ -5118,43 +5199,49 @@ impl MarketEventStore for PostgresMarketEventStore {
                 )
             })?;
 
-            let raw_event_id = format!("raw_{}", event.id);
-            let hash = format!("fixture_hash_{}", event.id);
+            let raw_event_id = if let Some(raw_event_id) = event.raw_event_id.as_deref() {
+                raw_event_id.to_string()
+            } else {
+                let raw_event_id = format!("raw_{}", event.id);
+                let hash = format!("fixture_hash_{}", event.id);
 
-            sqlx::query(
-                r#"
-                INSERT INTO raw_events (
-                  id,
-                  source,
-                  hash,
-                  raw_payload,
-                  ingested_at,
-                  trace_id
+                sqlx::query(
+                    r#"
+                    INSERT INTO raw_events (
+                      id,
+                      source,
+                      hash,
+                      raw_payload,
+                      ingested_at,
+                      trace_id
+                    )
+                    VALUES ($1, $2, $3, $4, $5, $6)
+                    ON CONFLICT (id) DO UPDATE
+                    SET
+                      source = EXCLUDED.source,
+                      hash = EXCLUDED.hash,
+                      raw_payload = EXCLUDED.raw_payload,
+                      ingested_at = EXCLUDED.ingested_at,
+                      trace_id = EXCLUDED.trace_id
+                    "#,
                 )
-                VALUES ($1, $2, $3, $4, $5, $6)
-                ON CONFLICT (id) DO UPDATE
-                SET
-                  source = EXCLUDED.source,
-                  hash = EXCLUDED.hash,
-                  raw_payload = EXCLUDED.raw_payload,
-                  ingested_at = EXCLUDED.ingested_at,
-                  trace_id = EXCLUDED.trace_id
-                "#,
-            )
-            .bind(&raw_event_id)
-            .bind(&event.source)
-            .bind(hash)
-            .bind(Json(raw_payload))
-            .bind(event.updated_at)
-            .bind(trace_id)
-            .execute(&mut *transaction)
-            .await
-            .map_err(|error| {
-                db_error(
-                    "POSTGRES_INSERT_FAILED",
-                    format!("failed to upsert raw event {}: {error}", event.id),
-                )
-            })?;
+                .bind(&raw_event_id)
+                .bind(&event.source)
+                .bind(hash)
+                .bind(Json(raw_payload))
+                .bind(event.updated_at)
+                .bind(trace_id)
+                .execute(&mut *transaction)
+                .await
+                .map_err(|error| {
+                    db_error(
+                        "POSTGRES_INSERT_FAILED",
+                        format!("failed to upsert raw event {}: {error}", event.id),
+                    )
+                })?;
+
+                raw_event_id
+            };
 
             sqlx::query(
                 r#"
@@ -5667,6 +5754,26 @@ fn parse_news_source_health_row(row: &sqlx::postgres::PgRow) -> Result<NewsSourc
         })?,
         last_error: decode_column(row, "last_error")?,
         updated_at: decode_column(row, "updated_at")?,
+    })
+}
+
+fn parse_news_raw_event_row(row: &sqlx::postgres::PgRow) -> Result<NewsRawEventView> {
+    let raw_payload: Json<Value> = decode_column(row, "raw_payload")?;
+
+    Ok(NewsRawEventView {
+        id: decode_column(row, "id")?,
+        source: decode_column(row, "source")?,
+        source_type: decode_column(row, "source_type")?,
+        external_id: decode_column(row, "external_id")?,
+        title: decode_column(row, "title")?,
+        url: decode_column(row, "url")?,
+        author: decode_column(row, "author")?,
+        published_at: decode_column(row, "published_at")?,
+        event_time: decode_column(row, "event_time")?,
+        hash: decode_column(row, "hash")?,
+        raw_payload: raw_payload.0,
+        ingested_at: decode_column(row, "ingested_at")?,
+        trace_id: decode_column(row, "trace_id")?,
     })
 }
 
@@ -6402,6 +6509,24 @@ fn raw_news_dedup_keys(event: &NewsRawEventInsert) -> Vec<String> {
     }
 
     keys
+}
+
+fn raw_news_event_view_from_insert(event: &NewsRawEventInsert) -> NewsRawEventView {
+    NewsRawEventView {
+        id: event.id.clone(),
+        source: event.source.clone(),
+        source_type: event.source_type.clone(),
+        external_id: event.external_id.clone(),
+        title: event.title.clone(),
+        url: event.url.clone(),
+        author: event.author.clone(),
+        published_at: event.published_at,
+        event_time: event.event_time,
+        hash: event.hash.clone(),
+        raw_payload: event.raw_payload.clone(),
+        ingested_at: event.ingested_at,
+        trace_id: event.trace_id.clone(),
+    }
 }
 
 fn usize_to_i64(value: usize) -> Result<i64> {
