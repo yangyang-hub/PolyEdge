@@ -189,7 +189,7 @@ cp .env.example .env
 - Axum API 骨架与多个 `v1` 资源路由
 - 风险模式切换、signal approve/reject、execution request 等写路径
 - 审批、风险告警、风险桶与 SSE stream 只读资源
-- worker 侧的 fixture ingest、执行队列、fill/status reconcile、raw news event promotion 流程
+- worker 侧的 fixture ingest、执行队列、fill/status reconcile、raw news event/evidence promotion 流程
 - RSS/Atom 新闻源抓取、标准化、去重入 `raw_events`、source health 记录和 raw news 只读 API
 - Polymarket connector 与 paper/mock 执行相关代码
 - PostgreSQL schema 迁移
@@ -202,7 +202,7 @@ cp .env.example .env
 2. 前端权限仍以 `off | mock-session` 为主，不是生产级会话系统。
 3. 签名内部 JWT 代码路径已具备，但真实环境还需要 key rotation、会话来源和撤销策略。
 4. Polymarket live 交易链路仍需要真实凭证、小额演练、部署配置和运维 runbook。
-5. 新闻源当前已闭合到 `raw_events` 入库、健康状态、只读查看和保守提升为 `events`，尚未自动生成 `evidences/signals`。
+5. 新闻源当前已闭合到 `raw_events` 入库、健康状态、只读查看和保守提升为 `events/evidences`，尚未自动生成 `signals`。
 
 这意味着：
 

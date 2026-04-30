@@ -1,7 +1,7 @@
 use futures::StreamExt as _;
 use polyedge_application::{
     AuthenticatedActor, DispatchExecutionListFilters, ExecutionDispatchCandidate,
-    ExecutionReconciliationCandidate, FixtureBundle, FixtureEventRecord,
+    ExecutionReconciliationCandidate, FixtureBundle, FixtureEventRecord, FixtureEvidenceRecord,
     MarkExecutionFailedCommand, MarkExecutionSubmittedCommand, MarketListFilters, MarketView,
     NewsIngestSourceCommand, NewsIngestionItem, NewsRawEventListFilters, NewsRawEventView,
     NewsSourceFailureUpdate, NewsSourceHealthListFilters, NewsSourceHealthView, OrderListFilters,
@@ -21,7 +21,8 @@ use polyedge_connectors::{
     normalize_polymarket_ws_trade_message,
 };
 use polyedge_domain::{
-    AppError, EventStatus, OrderStatus, Probability, Quantity, Result, UserRole,
+    AppError, EventStatus, EvidenceDirection, EvidenceStatus, OrderStatus, Probability, Quantity,
+    Result, UserRole,
 };
 use polyedge_infrastructure::{
     AppState, Runtime, new_trace_id,
@@ -35,7 +36,7 @@ use std::{
     collections::{HashMap, HashSet},
     time::Duration,
 };
-use time::OffsetDateTime;
+use time::{Duration as TimeDuration, OffsetDateTime};
 use tracing::{info, warn};
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -88,6 +89,7 @@ struct NewsIngestionRunReport {
 struct NewsPromotionReport {
     scanned: usize,
     promoted: usize,
+    evidences_promoted: usize,
     skipped_unmatched: usize,
 }
 
@@ -181,8 +183,9 @@ async fn main() -> Result<()> {
                 trace_id = %trace_id,
                 scanned = report.scanned,
                 promoted = report.promoted,
+                evidences_promoted = report.evidences_promoted,
                 skipped_unmatched = report.skipped_unmatched,
-                "promoted raw news into event candidates",
+                "promoted raw news into event and evidence candidates",
             );
             Ok(())
         }
@@ -523,6 +526,7 @@ async fn promote_news_events(
         ..NewsPromotionReport::default()
     };
     let mut promoted_events = Vec::new();
+    let mut promoted_evidences = Vec::new();
 
     for raw_event in raw_events {
         let related_market_ids = match_raw_news_markets(&raw_event, &markets);
@@ -533,14 +537,21 @@ async fn promote_news_events(
         }
 
         let health = source_health.get(&raw_event.source);
-        promoted_events.push(build_promoted_event_record(
-            &raw_event,
-            related_market_ids,
-            health,
-        )?);
+        let promoted_event =
+            build_promoted_event_record(&raw_event, related_market_ids.clone(), health)?;
+        for market_id in &related_market_ids {
+            promoted_evidences.push(build_promoted_evidence_record(
+                &raw_event,
+                market_id,
+                &promoted_event.id,
+                health,
+            )?);
+        }
+        promoted_events.push(promoted_event);
     }
 
     report.promoted = promoted_events.len();
+    report.evidences_promoted = promoted_evidences.len();
 
     if promoted_events.is_empty() {
         return Ok(report);
@@ -552,7 +563,7 @@ async fn promote_news_events(
             FixtureBundle {
                 markets: Vec::new(),
                 events: promoted_events,
-                evidences: Vec::new(),
+                evidences: promoted_evidences,
                 signals: Vec::new(),
             },
             trace_id,
@@ -1681,6 +1692,37 @@ fn build_promoted_event_record(
     })
 }
 
+fn build_promoted_evidence_record(
+    raw_event: &NewsRawEventView,
+    market_id: &str,
+    event_id: &str,
+    health: Option<&NewsSourceHealthView>,
+) -> Result<FixtureEvidenceRecord> {
+    let direction = promoted_evidence_direction(raw_event);
+    let source_reliability = health
+        .map(|health| health.reliability)
+        .unwrap_or_else(|| default_news_confidence(&raw_event.source_type));
+
+    Ok(FixtureEvidenceRecord {
+        id: promoted_evidence_id(raw_event, market_id),
+        market_id: market_id.to_string(),
+        event_id: event_id.to_string(),
+        direction,
+        strength: promotion_evidence_strength(&raw_event.source_type, direction),
+        source_reliability,
+        novelty: promotion_evidence_novelty(&raw_event.source_type),
+        resolution_relevance: promotion_evidence_resolution_relevance(
+            &raw_event.source_type,
+            direction,
+        ),
+        status: EvidenceStatus::Active,
+        expires_at: raw_event.event_time + promotion_evidence_ttl(&raw_event.source_type),
+        created_at: raw_event.event_time,
+        updated_at: OffsetDateTime::now_utc(),
+        version: 1,
+    })
+}
+
 fn match_raw_news_markets(raw_event: &NewsRawEventView, markets: &[MarketView]) -> Vec<String> {
     let raw_text = format!("{} {}", raw_event.title, raw_event.source);
     let raw_tokens = tokenize_match_text(&raw_text);
@@ -1751,6 +1793,70 @@ fn promoted_event_id(raw_event: &NewsRawEventView) -> String {
     format!("evt_news_{suffix}")
 }
 
+fn promoted_evidence_id(raw_event: &NewsRawEventView, market_id: &str) -> String {
+    let suffix = raw_event.hash.chars().take(24).collect::<String>();
+    format!("evd_news_{market_id}_{suffix}")
+}
+
+fn promoted_evidence_direction(raw_event: &NewsRawEventView) -> EvidenceDirection {
+    let lower_title = raw_event.title.to_ascii_lowercase();
+    let tokens = tokenize_match_text(&lower_title);
+
+    if tokens.iter().any(|token| {
+        matches!(
+            token.as_str(),
+            "reject"
+                | "rejects"
+                | "rejected"
+                | "denies"
+                | "denied"
+                | "denial"
+                | "delay"
+                | "delays"
+                | "delayed"
+                | "postpone"
+                | "postpones"
+                | "postponed"
+                | "retract"
+                | "retracted"
+                | "withdraw"
+                | "withdraws"
+                | "withdrawn"
+                | "concern"
+                | "concerns"
+                | "investigation"
+                | "lawsuit"
+                | "halts"
+                | "blocks"
+        )
+    }) {
+        return EvidenceDirection::SupportsNo;
+    }
+
+    if lower_title.contains("approval granted")
+        || lower_title.contains("approved")
+        || lower_title.contains("greenlight")
+        || lower_title.contains("green-light")
+        || tokens.iter().any(|token| {
+            matches!(
+                token.as_str(),
+                "approve"
+                    | "approves"
+                    | "grants"
+                    | "granted"
+                    | "clears"
+                    | "accepts"
+                    | "authorizes"
+                    | "authorized"
+            )
+        })
+    {
+        return EvidenceDirection::SupportsYes;
+    }
+
+    EvidenceDirection::Background
+}
+
 fn default_news_confidence(source_type: &str) -> Probability {
     match source_type {
         "official" => static_probability(78, 2),
@@ -1780,9 +1886,69 @@ fn promotion_relevance_score(
     Probability::new((base + boost).min(Decimal::new(90, 2)))
 }
 
+fn promotion_evidence_strength(source_type: &str, direction: EvidenceDirection) -> Probability {
+    let is_directional = direction != EvidenceDirection::Background;
+    match (source_type, is_directional) {
+        ("official", true) => static_probability(34, 2),
+        ("official", false) => static_probability(18, 2),
+        ("calendar", true) => static_probability(26, 2),
+        ("calendar", false) => static_probability(16, 2),
+        ("market", true) => static_probability(22, 2),
+        ("market", false) => static_probability(14, 2),
+        ("social", true) => static_probability(12, 2),
+        ("social", false) => static_probability(8, 2),
+        (_, true) => static_probability(20, 2),
+        (_, false) => static_probability(12, 2),
+    }
+}
+
+fn promotion_evidence_novelty(source_type: &str) -> Probability {
+    match source_type {
+        "official" => static_probability(72, 2),
+        "calendar" => static_probability(62, 2),
+        "market" => static_probability(55, 2),
+        "social" => static_probability(40, 2),
+        _ => static_probability(50, 2),
+    }
+}
+
+fn promotion_evidence_resolution_relevance(
+    source_type: &str,
+    direction: EvidenceDirection,
+) -> Probability {
+    let directional_boost = if direction == EvidenceDirection::Background {
+        Decimal::ZERO
+    } else {
+        Decimal::new(8, 2)
+    };
+    let base = match source_type {
+        "official" => Decimal::new(76, 2),
+        "calendar" => Decimal::new(68, 2),
+        "market" => Decimal::new(60, 2),
+        "social" => Decimal::new(42, 2),
+        _ => Decimal::new(55, 2),
+    };
+
+    static_probability_from_decimal((base + directional_boost).min(Decimal::new(90, 2)))
+}
+
+fn promotion_evidence_ttl(source_type: &str) -> TimeDuration {
+    match source_type {
+        "official" => TimeDuration::days(7),
+        "calendar" => TimeDuration::days(3),
+        "market" => TimeDuration::days(1),
+        "social" => TimeDuration::hours(6),
+        _ => TimeDuration::days(2),
+    }
+}
+
 fn static_probability(value: i64, scale: u32) -> Probability {
     Probability::new(Decimal::new(value, scale))
         .expect("static worker probability default must be valid")
+}
+
+fn static_probability_from_decimal(value: Decimal) -> Probability {
+    Probability::new(value).expect("static worker probability default must be valid")
 }
 
 fn worker_actor(request_id: &str) -> AuthenticatedActor {
@@ -1876,9 +2042,9 @@ fn ensure_polymarket_enabled(state: &AppState) -> Result<()> {
 mod tests {
     use super::*;
     use polyedge_application::{
-        ApproveSignalCommand, EventListFilters, ExecutionRequestListFilters, OrderDraftListFilters,
-        OrderListFilters, PositionListFilters, SignalListFilters, SubmitExecutionCommand,
-        SyncExternalOrderStatusCommand, TradeListFilters,
+        ApproveSignalCommand, EventListFilters, EvidenceListFilters, ExecutionRequestListFilters,
+        OrderDraftListFilters, OrderListFilters, PositionListFilters, SignalListFilters,
+        SubmitExecutionCommand, SyncExternalOrderStatusCommand, TradeListFilters,
     };
     use polyedge_domain::{
         ExecutionRequestStatus, OrderDraftStatus, OrderStatus, Quantity, SignalLifecycleState,
@@ -1907,7 +2073,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn promote_news_events_creates_market_linked_event() {
+    async fn promote_news_events_creates_market_linked_event_and_evidence() {
         let state = test_state(SystemMode::ManualConfirm);
         state
             .market_event_service
@@ -1949,6 +2115,7 @@ mod tests {
             NewsPromotionReport {
                 scanned: 1,
                 promoted: 1,
+                evidences_promoted: 1,
                 skipped_unmatched: 0,
             }
         );
@@ -1965,6 +2132,45 @@ mod tests {
         assert_eq!(promoted_event.status, EventStatus::Active);
         assert_eq!(promoted_event.related_market_ids, vec!["mkt_121"]);
         assert_eq!(promoted_event.confidence, source_reliability);
+
+        let promoted_evidences = state
+            .market_event_service
+            .list_evidences(
+                EvidenceListFilters::new(
+                    Some("mkt_121".to_string()),
+                    Some(promoted_event.id.clone()),
+                    None,
+                    Some(200),
+                )
+                .expect("evidence filters"),
+            )
+            .await
+            .expect("list evidences");
+        assert_eq!(promoted_evidences.len(), 1);
+        let promoted_evidence = &promoted_evidences[0];
+        assert_eq!(promoted_evidence.status, EvidenceStatus::Active);
+        assert_eq!(promoted_evidence.direction, EvidenceDirection::Background);
+        assert_eq!(promoted_evidence.source_reliability, source_reliability);
+        assert_eq!(promoted_evidence.market_id, "mkt_121");
+        assert_eq!(
+            promoted_evidence.event_id.as_str(),
+            promoted_event.id.as_str()
+        );
+
+        let promoted_signals = state
+            .market_event_service
+            .list_signals(
+                SignalListFilters::new(
+                    Some("mkt_121".to_string()),
+                    Some(promoted_event.id.clone()),
+                    None,
+                    Some(200),
+                )
+                .expect("signal filters"),
+            )
+            .await
+            .expect("list signals");
+        assert!(promoted_signals.is_empty());
     }
 
     async fn seed_execution_request_for_connector(

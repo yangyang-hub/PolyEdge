@@ -211,7 +211,7 @@
 - 前端 live fetch 已能发送本地 dev-auth headers 或签名内部 JWT
 - 后端已有 `v1` REST API、worker 和交易/回写相关主链路
 - 后端已有审批、风险告警、风险桶、新闻源健康和 raw news 的一等只读资源端点，前端不再依赖 `live-console-derived.ts` 派生这些资源
-- 后端 worker 已能把近期 raw news 按保守词面匹配提升为关联已有市场的 `events`
+- 后端 worker 已能把近期 raw news 按保守词面匹配提升为关联已有市场的 `events` 和 `evidences`
 
 ### 6.3 当前明确存在的缺口
 
@@ -219,7 +219,7 @@
 2. 前端权限当前仍是 `off | mock-session`，不是生产级真实会话体系。
 3. 签名内部 JWT 链路已具备代码路径，但仍需要在真实环境配置 Ed25519 key rotation、会话来源和撤销策略。
 4. Polymarket live 模式已有 connector/worker 骨架，但仍需要真实凭证、真实账户、小额演练和运维 runbook 才能视为生产交易链路。
-5. 新闻源已支持 RSS/Atom 抓取、标准化、去重写入 `raw_events` 和 `news_source_health`，并可在 API/设置页查看 source health 与最近 raw news；worker 可将匹配到已有市场的 raw news 提升为 `events`，但尚未自动生成 `evidences/signals`。
+5. 新闻源已支持 RSS/Atom 抓取、标准化、去重写入 `raw_events` 和 `news_source_health`，并可在 API/设置页查看 source health 与最近 raw news；worker 可将匹配到已有市场的 raw news 提升为 `events/evidences`，但尚未自动生成 `signals`。
 
 ### 6.4 因此的实际判断
 
