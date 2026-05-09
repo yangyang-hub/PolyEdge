@@ -9,6 +9,23 @@ import {
   type RealtimePayloadByChannel,
 } from "@/lib/contracts/realtime";
 
+const MAX_SEEN_EVENT_IDS = 500;
+
+function evictOldestIds(set: Set<string>, max: number): void {
+  if (set.size <= max) {
+    return;
+  }
+
+  let toRemove = set.size - max;
+  for (const id of set) {
+    if (toRemove <= 0) {
+      break;
+    }
+    set.delete(id);
+    toRemove -= 1;
+  }
+}
+
 export type StreamConnectionState = "connecting" | "open" | "error" | "closed";
 
 export type StreamEvent<T> = RealtimeMessage<T> & {
@@ -43,6 +60,7 @@ export function useSseStream<TChannel extends RealtimeChannel>({
 
       if (event.lastEventId) {
         seenEventIdsRef.current.add(event.lastEventId);
+        evictOldestIds(seenEventIdsRef.current, MAX_SEEN_EVENT_IDS);
       }
 
       setLastEvent({

@@ -28,6 +28,7 @@ import {
   signalStateTone,
   uppercaseEnum,
 } from "@/lib/realtime-formatters";
+import { patchApprovalField, upsertStreamedItem } from "@/lib/signal-stream-utils";
 
 type DashboardPageData = Awaited<ReturnType<typeof getDashboardPageData>>;
 
@@ -48,47 +49,6 @@ function buildSignalRow(
     stateTone: signalStateTone(payload.lifecycle_state),
     hasPendingApproval: payload.requires_review ?? current?.hasPendingApproval ?? false,
   };
-}
-
-function upsertSignalRow(
-  signals: DashboardPageData["signals"],
-  payload: SignalStreamPayload,
-  eventType: string,
-): DashboardPageData["signals"] {
-  const current = signals.find((signal) => signal.id === payload.signal_id);
-  const nextSignal = buildSignalRow(payload, current);
-
-  if (current) {
-    return signals.map((signal) => (signal.id === payload.signal_id ? nextSignal : signal));
-  }
-
-  if (eventType === "signal.created") {
-    return [nextSignal, ...signals];
-  }
-
-  return [...signals, nextSignal];
-}
-
-function patchSignalApprovalStatus(
-  signals: DashboardPageData["signals"],
-  payload: RiskStreamPayload,
-): DashboardPageData["signals"] {
-  if (
-    payload.approval_type !== "signal" ||
-    !payload.approval_resource_id ||
-    !payload.approval_status
-  ) {
-    return signals;
-  }
-
-  return signals.map((signal) =>
-    signal.id === payload.approval_resource_id
-      ? {
-          ...signal,
-          hasPendingApproval: payload.approval_status === "pending",
-        }
-      : signal,
-  );
 }
 
 function buildAlertItem(
@@ -266,7 +226,7 @@ export function DashboardOverview({ data }: { data: DashboardPageData }) {
     startTransition(() => {
       setLiveData((current) => ({
         ...current,
-        signals: upsertSignalRow(current.signals, streamEvent.data, streamEvent.type),
+        signals: upsertStreamedItem(current.signals, streamEvent.data, buildSignalRow, streamEvent.type),
       }));
     });
   }, [signalsStream.lastEvent]);
@@ -288,7 +248,7 @@ export function DashboardOverview({ data }: { data: DashboardPageData }) {
         metrics: patchMetrics(current.metrics, streamEvent.data),
         alerts: upsertAlert(current.alerts, streamEvent.data),
         approvals: upsertApprovalItem(current.approvals, streamEvent.data),
-        signals: patchSignalApprovalStatus(current.signals, streamEvent.data),
+        signals: patchApprovalField(current.signals, streamEvent.data, "hasPendingApproval"),
       }));
     });
   }, [riskStream.lastEvent]);

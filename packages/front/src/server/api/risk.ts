@@ -22,7 +22,7 @@ type LiveSystemModeWriteResponse = ApiResponse<{
 
 export async function readRiskState(): Promise<ApiResponse<RiskStateDto>> {
   if (!process.env.POLYEDGE_API_BASE_URL) {
-    return createResponse("risk_state", riskStateFixture);
+    return createResponse("risk_state", structuredClone(riskStateFixture));
   }
 
   return fetchContract<ApiResponse<RiskStateDto>>(
@@ -133,22 +133,5 @@ export async function setKillSwitchState(input: {
     );
   }
 
-  return fetchWriteContract(
-    "/api/v1/system/kill-switch/release",
-    {
-      method: "POST",
-      idempotencyKey: `kill-switch-off-${crypto.randomUUID()}`,
-      body: {
-        reason: input.note,
-        to_mode: "manual_confirm",
-      },
-      stepUpCode: input.stepUpCode,
-      stepUpScopes: ["system_kill_switch_release"],
-    },
-    createWriteResponse("kill_switch", "kill_switch_global", "queued"),
-    {
-      mapLiveResponse: () =>
-        createWriteResponse("kill_switch", "kill_switch_global", "completed"),
-    },
-  );
+  return releaseRiskControls({ note: input.note, stepUpCode: input.stepUpCode });
 }

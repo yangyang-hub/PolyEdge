@@ -1,5 +1,6 @@
 import "server-only";
 
+import { humanizeSnakeCase } from "@/lib/formatters";
 import type {
   ConsoleEventStreamPayload,
   RealtimeChannel,
@@ -20,10 +21,6 @@ export type MockStreamEvent = {
   type: string;
   data: SignalStreamPayload | RiskStreamPayload | ConsoleEventStreamPayload;
 };
-
-function humanizeSnakeCase(value: string): string {
-  return value.replaceAll("_", " ");
-}
 
 function buildEventId(channel: RealtimeChannel, timestamp: string, sequence: number) {
   return `${timestamp}_${channel}_${String(sequence).padStart(4, "0")}`;

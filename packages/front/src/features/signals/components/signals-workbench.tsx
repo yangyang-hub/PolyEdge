@@ -18,7 +18,7 @@ import { MeterBar } from "@/components/shared/meter-bar";
 import { StatusPill } from "@/components/shared/status-pill";
 import { WorkbenchDetailPane, WorkbenchLayout } from "@/components/shared/workbench-layout";
 import { WorkbenchSegmentedControl } from "@/components/shared/workbench-segmented-control";
-import type { RiskStreamPayload, SignalStreamPayload } from "@/lib/contracts/realtime";
+import type { SignalStreamPayload } from "@/lib/contracts/realtime";
 import { isKeyboardSelect } from "@/lib/keyboard";
 import {
   formatPercentFromRatio,
@@ -28,6 +28,7 @@ import {
   type RealtimeTone,
   uppercaseEnum,
 } from "@/lib/realtime-formatters";
+import { patchApprovalField, upsertStreamedItem } from "@/lib/signal-stream-utils";
 
 type SignalTone = RealtimeTone;
 
@@ -100,40 +101,6 @@ function buildSignalItem(payload: SignalStreamPayload, current?: SignalItem): Si
     evidenceLines: payload.evidence_lines ?? current?.evidenceLines ?? [],
     isSelected: current?.isSelected ?? false,
   };
-}
-
-function upsertSignal(signals: SignalItem[], payload: SignalStreamPayload, eventType: string): SignalItem[] {
-  const current = signals.find((signal) => signal.id === payload.signal_id);
-  const nextSignal = buildSignalItem(payload, current);
-
-  if (current) {
-    return signals.map((signal) => (signal.id === payload.signal_id ? nextSignal : signal));
-  }
-
-  if (eventType === "signal.created") {
-    return [nextSignal, ...signals];
-  }
-
-  return [...signals, nextSignal];
-}
-
-function patchSignalApprovalStatus(signals: SignalItem[], payload: RiskStreamPayload): SignalItem[] {
-  if (
-    payload.approval_type !== "signal" ||
-    !payload.approval_resource_id ||
-    !payload.approval_status
-  ) {
-    return signals;
-  }
-
-  return signals.map((signal) =>
-    signal.id === payload.approval_resource_id
-      ? {
-          ...signal,
-          requiresReview: payload.approval_status === "pending",
-        }
-      : signal,
-  );
 }
 
 function SignalsDetailPanel({
@@ -237,7 +204,7 @@ export function SignalsWorkbench({
     }
 
     startTransition(() => {
-      setLiveSignals((currentSignals) => upsertSignal(currentSignals, streamEvent.data, streamEvent.type));
+      setLiveSignals((currentSignals) => upsertStreamedItem(currentSignals, streamEvent.data, buildSignalItem, streamEvent.type));
     });
   }, [lastEvent]);
 
@@ -249,7 +216,7 @@ export function SignalsWorkbench({
     }
 
     startTransition(() => {
-      setLiveSignals((currentSignals) => patchSignalApprovalStatus(currentSignals, streamEvent.data));
+      setLiveSignals((currentSignals) => patchApprovalField(currentSignals, streamEvent.data, "requiresReview"));
     });
   }, [lastRiskEvent]);
 

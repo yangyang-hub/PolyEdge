@@ -1,6 +1,6 @@
 # AGENT.md
 
-最后更新：2026-04-30
+最后更新：2026-05-09
 
 ## 1. 文件用途
 
@@ -94,10 +94,11 @@
 - `POLYEDGE_API_BASE_URL` 已配置时：前端尝试切换到 live API 模式。
 - live API 路径当前统一请求 Rust 后端的 `/api/v1/...`。
 - live SSE 默认仍使用前端 mock-fallback；设置 `POLYEDGE_ENABLE_LIVE_SSE=1` 后会代理到 Rust 后端 `/api/v1/stream/{channel}`。
-- 本地 live 联调可使用 `POLYEDGE_INTERNAL_AUTH_DEV_BYPASS=1` 的 dev-auth headers；签名模式使用 `POLYEDGE_INTERNAL_AUTH_KID` / `POLYEDGE_INTERNAL_AUTH_PRIVATE_KEY` 与后端 `POLYEDGE_AUTH__KEYS_JSON` 配对。
+- 本地 live 联调可使用 `POLYEDGE_INTERNAL_AUTH_DEV_BYPASS=1` 的 dev-auth headers；签名模式使用 `POLYEDGE_INTERNAL_AUTH_KID` / `POLYEDGE_INTERNAL_AUTH_PRIVATE_KEY` 与后端 `POLYEDGE_AUTH__KEYS_JSON` 配对，但当前前端会拒绝在 `off | mock-session` 控制台会话下签发内部 JWT。
 - `POLYEDGE_CONSOLE_AUTH` 当前只支持：
   - `off`
   - `mock-session`
+- `off | mock-session` 只能视为本地/原型权限模式，不是可信生产会话；前端路由保护只从 mock session cookie 读取角色，不再接受请求头角色回退。
 
 ### 4.6 已知前端说明文件
 
@@ -208,16 +209,17 @@
 - 前端写操作统一走 `src/server/actions/*`
 - 前端 live API 已统一请求 `/api/v1/...`
 - 前端已有 SSE proxy / mock stream 机制，并可代理 Rust `/api/v1/stream/{channel}`
-- 前端 live fetch 已能发送本地 dev-auth headers 或签名内部 JWT
+- 前端 live fetch 已能发送本地 dev-auth headers；签名内部 JWT helper 已具备，但在真实会话体系接入前不会从 `off | mock-session` 签发令牌
 - 后端已有 `v1` REST API、worker 和交易/回写相关主链路
 - 后端已有审批、风险告警、风险桶、新闻源健康和 raw news 的一等只读资源端点，前端不再依赖 `live-console-derived.ts` 派生这些资源
+- 后端风险/审批派生资源会读取完整内部快照后再对响应应用展示 limit；成交回写后的风险指标按全局持仓聚合
 - 后端 worker 已能把近期 raw news 按保守词面匹配提升为关联已有市场的 `events` 和 `evidences`
 
 ### 6.3 当前明确存在的缺口
 
-1. SSE 仍是 snapshot-backed stream：后端按间隔读取当前 signals/risk/events 快照，会用 `Last-Event-ID` 避免重发最近事件，并在单个连接内按事件 ID 去重后发送；尚不是持久化事件总线或 Redis/Postgres outbox 驱动的精确增量流。
+1. SSE 仍是 snapshot-backed stream：后端按间隔读取当前 signals/risk/events 快照，会用 `Last-Event-ID` 避免重发最近事件，并在单个连接内按事件 ID 去重后发送；单连接去重缓存有上限，但尚不是持久化事件总线或 Redis/Postgres outbox 驱动的精确增量流。
 2. 前端权限当前仍是 `off | mock-session`，不是生产级真实会话体系。
-3. 签名内部 JWT 链路已具备代码路径，但仍需要在真实环境配置 Ed25519 key rotation、会话来源和撤销策略。
+3. 签名内部 JWT 链路已具备代码路径，但当前拒绝从 `off | mock-session` 签发；真实环境仍需要可信会话来源、Ed25519 key rotation 和撤销策略。
 4. Polymarket live 模式已有 connector/worker 骨架，但仍需要真实凭证、真实账户、小额演练和运维 runbook 才能视为生产交易链路。
 5. 新闻源已支持 RSS/Atom 抓取、标准化、去重写入 `raw_events` 和 `news_source_health`，并可在 API/设置页查看 source health 与最近 raw news；worker 可将匹配到已有市场的 raw news 提升为 `events/evidences`，但尚未自动生成 `signals`。
 

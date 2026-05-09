@@ -37,6 +37,7 @@ function createMockStream(channel: RealtimeChannel, request: NextRequest): Reada
   return new ReadableStream<Uint8Array>({
     start(controller) {
       let index = startIndex;
+      let cycleCount = 0;
       let closed = false;
 
       const close = () => {
@@ -51,7 +52,16 @@ function createMockStream(channel: RealtimeChannel, request: NextRequest): Reada
       };
 
       const pushEvent = () => {
-        controller.enqueue(formatEventMessage(events[index % events.length]));
+        const eventIndex = index % events.length;
+        if (eventIndex === 0 && index > 0) {
+          cycleCount += 1;
+        }
+
+        const event = events[eventIndex];
+        controller.enqueue(formatEventMessage({
+          ...event,
+          id: `${cycleCount}_${event.id}`,
+        }));
         index += 1;
       };
 

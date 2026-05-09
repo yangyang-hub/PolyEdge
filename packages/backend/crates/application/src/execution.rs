@@ -896,7 +896,7 @@ impl ExecutionService {
             )
             .await?;
 
-        self.sync_risk_state_after_fill(&result, trace_id).await?;
+        self.sync_risk_state_after_fill(trace_id).await?;
 
         self.append_worker_audit(
             audit_action,
@@ -914,16 +914,12 @@ impl ExecutionService {
         Ok(result)
     }
 
-    async fn sync_risk_state_after_fill(
-        &self,
-        fill_result: &ExecutionFillResult,
-        trace_id: &str,
-    ) -> Result<RiskStateView> {
+    async fn sync_risk_state_after_fill(&self, trace_id: &str) -> Result<RiskStateView> {
         let positions = self
             .market_event_service
             .list_positions(PositionListFilters {
                 market_id: None,
-                connector_name: Some(fill_result.position.connector_name.clone()),
+                connector_name: None,
                 side: None,
                 limit: u16::MAX,
             })

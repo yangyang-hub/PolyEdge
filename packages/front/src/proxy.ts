@@ -22,9 +22,7 @@ function redirectTo(request: NextRequest, pathname: string, params: Record<strin
 
 export function proxy(request: NextRequest) {
   const authMode = getConsoleAuthMode(process.env.POLYEDGE_CONSOLE_AUTH);
-  const currentRole =
-    normalizeConsoleRole(request.cookies.get(CONSOLE_ROLE_COOKIE)?.value) ??
-    normalizeConsoleRole(request.headers.get("x-polyedge-console-role"));
+  const currentRole = normalizeConsoleRole(request.cookies.get(CONSOLE_ROLE_COOKIE)?.value);
   const { allowed, requiredRole } = resolveConsoleRouteAccess(request.nextUrl.pathname, currentRole);
 
   if (!requiredRole || authMode === "off") {

@@ -106,6 +106,16 @@ function shouldUseDevInternalAuth(): boolean {
     getConsoleAuthMode(process.env.POLYEDGE_CONSOLE_AUTH) === "off";
 }
 
+function assertSignedInternalAuthHasTrustedConsoleSession(): void {
+  const authMode = getConsoleAuthMode(process.env.POLYEDGE_CONSOLE_AUTH);
+
+  if (authMode === "off" || authMode === "mock-session") {
+    throw new Error(
+      "Signed internal API auth requires a trusted console session. POLYEDGE_CONSOLE_AUTH=off/mock-session may only be used with local dev-auth bypass.",
+    );
+  }
+}
+
 function loadSigningKey(): { kid: string; key: KeyObject } {
   const kid = process.env.POLYEDGE_INTERNAL_AUTH_KID?.trim();
   const privateKey = process.env.POLYEDGE_INTERNAL_AUTH_PRIVATE_KEY?.trim();
@@ -142,6 +152,8 @@ async function issueInternalToken(input: {
   stepUpCode?: string;
   stepUpScopes?: InternalApiStepUpScope[];
 }): Promise<string> {
+  assertSignedInternalAuthHasTrustedConsoleSession();
+
   const { role, displayName } = await readConsoleSession();
   const actorRole = roleToTokenRole(role);
   const actorSlug = slugifyActorName(displayName);

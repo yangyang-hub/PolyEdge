@@ -55,18 +55,19 @@ use polyedge_infrastructure::{
 use rust_decimal::Decimal;
 use serde_json::{Value, json};
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{HashMap, HashSet, VecDeque},
     convert::Infallible,
     time::Duration,
 };
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use tower::ServiceBuilder;
-use tower_http::{timeout::TimeoutLayer, trace::TraceLayer};
+use tower_http::{limit::RequestBodyLimitLayer, timeout::TimeoutLayer, trace::TraceLayer};
 
 const CONNECTOR_ORDER_STATUS_SOURCE: &str = "connector.orders.status";
 const CONNECTOR_TRADE_FILL_SOURCE: &str = "connector.trades.fill";
 const DEFAULT_CONSOLE_LIST_LIMIT: u16 = 100;
 const MAX_CONSOLE_LIST_LIMIT: u16 = 200;
+const MAX_STREAM_EMITTED_IDS: usize = 1_024;
 
 pub fn build_app(state: AppState) -> Router {
     let system_routes =
@@ -289,6 +290,7 @@ pub fn build_app(state: AppState) -> Router {
         .with_state(state)
         .layer(
             ServiceBuilder::new()
+                .layer(RequestBodyLimitLayer::new(1024 * 1024))
                 .layer(TraceLayer::new_for_http())
                 .layer(TimeoutLayer::with_status_code(
                     StatusCode::REQUEST_TIMEOUT,
@@ -382,29 +384,29 @@ async fn read_console_risk_snapshot(
     let mode = state.system_mode_service.read_mode().await?;
     let markets = state
         .market_event_service
-        .list_markets(MarketListFilters::new(
-            None,
-            None,
-            Some(MAX_CONSOLE_LIST_LIMIT),
-        )?)
+        .list_markets(MarketListFilters {
+            status: None,
+            tradability_status: None,
+            limit: u16::MAX,
+        })
         .await?;
     let signals = state
         .market_event_service
-        .list_signals(SignalListFilters::new(
-            None,
-            None,
-            None,
-            Some(MAX_CONSOLE_LIST_LIMIT),
-        )?)
+        .list_signals(SignalListFilters {
+            market_id: None,
+            event_id: None,
+            lifecycle_state: None,
+            limit: u16::MAX,
+        })
         .await?;
     let positions = state
         .execution_service
-        .list_positions(PositionListFilters::new(
-            None,
-            None,
-            None,
-            Some(MAX_CONSOLE_LIST_LIMIT),
-        )?)
+        .list_positions(PositionListFilters {
+            market_id: None,
+            connector_name: None,
+            side: None,
+            limit: u16::MAX,
+        })
         .await?;
     let markets_by_id = markets
         .iter()
@@ -824,6 +826,7 @@ struct StreamState {
     channel: String,
     sequence: u64,
     emitted_ids: HashSet<String>,
+    emitted_id_order: VecDeque<String>,
 }
 
 async fn stream_channel(
@@ -841,6 +844,7 @@ async fn stream_channel(
     }
 
     let mut emitted_ids = HashSet::new();
+    let mut emitted_id_order = VecDeque::new();
 
     if let Some(last_event_id) = headers
         .get("last-event-id")
@@ -849,6 +853,7 @@ async fn stream_channel(
         .filter(|value| !value.is_empty())
     {
         emitted_ids.insert(last_event_id.to_string());
+        emitted_id_order.push_back(last_event_id.to_string());
     }
 
     let stream_state = StreamState {
@@ -856,6 +861,7 @@ async fn stream_channel(
         channel,
         sequence: 0,
         emitted_ids,
+        emitted_id_order,
     };
     let event_stream = stream::unfold(stream_state, |mut stream_state| async move {
         if stream_state.sequence > 0 {
@@ -867,6 +873,7 @@ async fn stream_channel(
             &stream_state.channel,
             stream_state.sequence,
             &mut stream_state.emitted_ids,
+            &mut stream_state.emitted_id_order,
         )
         .await
         {
@@ -909,6 +916,7 @@ async fn build_stream_chunk(
     channel: &str,
     sequence: u64,
     emitted_ids: &mut HashSet<String>,
+    emitted_id_order: &mut VecDeque<String>,
 ) -> polyedge_domain::Result<String> {
     let messages = match channel {
         "signals" => signal_stream_messages(state).await?,
@@ -916,7 +924,7 @@ async fn build_stream_chunk(
         "events" => event_stream_messages(state).await?,
         _ => Vec::new(),
     };
-    let messages = filter_new_sse_messages(messages, emitted_ids);
+    let messages = filter_new_sse_messages(messages, emitted_ids, emitted_id_order);
 
     if messages.is_empty() {
         return Ok(format!(
@@ -934,11 +942,33 @@ async fn build_stream_chunk(
 fn filter_new_sse_messages(
     messages: Vec<SseMessage>,
     emitted_ids: &mut HashSet<String>,
+    emitted_id_order: &mut VecDeque<String>,
 ) -> Vec<SseMessage> {
     messages
         .into_iter()
-        .filter(|message| emitted_ids.insert(message.id.clone()))
+        .filter(|message| remember_stream_event_id(&message.id, emitted_ids, emitted_id_order))
         .collect()
+}
+
+fn remember_stream_event_id(
+    event_id: &str,
+    emitted_ids: &mut HashSet<String>,
+    emitted_id_order: &mut VecDeque<String>,
+) -> bool {
+    if !emitted_ids.insert(event_id.to_string()) {
+        return false;
+    }
+
+    emitted_id_order.push_back(event_id.to_string());
+
+    while emitted_ids.len() > MAX_STREAM_EMITTED_IDS {
+        let Some(oldest_id) = emitted_id_order.pop_front() else {
+            break;
+        };
+        emitted_ids.remove(&oldest_id);
+    }
+
+    true
 }
 
 async fn signal_stream_messages(state: &AppState) -> polyedge_domain::Result<Vec<SseMessage>> {
@@ -3188,6 +3218,7 @@ mod tests {
     #[test]
     fn sse_message_filter_keeps_new_resource_versions_only() {
         let mut emitted_ids = HashSet::new();
+        let mut emitted_id_order = VecDeque::new();
         let first_batch = filter_new_sse_messages(
             vec![
                 SseMessage {
@@ -3207,6 +3238,7 @@ mod tests {
                 },
             ],
             &mut emitted_ids,
+            &mut emitted_id_order,
         );
 
         assert_eq!(
@@ -3231,6 +3263,7 @@ mod tests {
                 },
             ],
             &mut emitted_ids,
+            &mut emitted_id_order,
         );
 
         assert_eq!(
@@ -3240,6 +3273,26 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["signals:sig_1:2"]
         );
+    }
+
+    #[test]
+    fn sse_message_filter_bounds_seen_id_cache() {
+        let mut emitted_ids = HashSet::new();
+        let mut emitted_id_order = VecDeque::new();
+        let messages = (0..=MAX_STREAM_EMITTED_IDS)
+            .map(|index| SseMessage {
+                id: format!("signals:sig_{index}:1"),
+                event: "signal.updated",
+                data: json!({ "signal_id": format!("sig_{index}"), "version": 1 }),
+            })
+            .collect::<Vec<_>>();
+
+        let filtered = filter_new_sse_messages(messages, &mut emitted_ids, &mut emitted_id_order);
+
+        assert_eq!(filtered.len(), MAX_STREAM_EMITTED_IDS + 1);
+        assert_eq!(emitted_ids.len(), MAX_STREAM_EMITTED_IDS);
+        assert!(!emitted_ids.contains("signals:sig_0:1"));
+        assert!(emitted_ids.contains(&format!("signals:sig_{MAX_STREAM_EMITTED_IDS}:1")));
     }
 
     fn issue_token_with(
