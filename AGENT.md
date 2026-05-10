@@ -1,6 +1,6 @@
 # AGENT.md
 
-最后更新：2026-05-09
+最后更新：2026-05-10
 
 ## 1. 文件用途
 
@@ -276,6 +276,29 @@ cargo run -p polyedge-worker -- poll-polymarket-order-statuses
 cargo run -p polyedge-worker -- reconcile-polymarket-fills
 ```
 
+### 7.3 Docker 部署
+
+仓库已包含前后端 Docker 部署入口：
+
+- `packages/backend/Dockerfile`
+  构建 `polyedge-api` 运行镜像。
+- `packages/front/Dockerfile`
+  构建 Next.js standalone 前端镜像。
+- `deploy/docker-compose.yml`
+  编排 `polyedge-api` 和 `polyedge-front`；PostgreSQL 与 Redis 不在 compose 内启动，通过环境变量连接外部实例。
+- `deploy/.env.example`
+  部署环境变量模板。
+- `scripts/deploy.sh`
+  服务器部署脚本，支持从 GitHub 现有 checkout 执行 fast-forward 更新，也支持通过 `POLYEDGE_GIT_REPO` 初次 clone。
+
+默认部署模板沿用当前可工作的本地 internal dev-auth 模式：
+
+- `POLYEDGE_RUNTIME__ENVIRONMENT=local`
+- `POLYEDGE_AUTH__KEYS_JSON=[]`
+- `POLYEDGE_INTERNAL_AUTH_DEV_BYPASS=1`
+
+这只适合原型/内网共享环境；生产前仍需要真实会话体系、签名 internal JWT、key rotation 和撤销策略。
+
 ## 8. 关键入口文件
 
 ### 8.1 前端
@@ -297,6 +320,11 @@ cargo run -p polyedge-worker -- reconcile-polymarket-fills
 - `packages/backend/crates/infrastructure/src/runtime.rs`
 - `packages/backend/crates/infrastructure/src/settings.rs`
 - `packages/backend/.env.example`
+- `packages/backend/Dockerfile`
+- `packages/front/Dockerfile`
+- `deploy/docker-compose.yml`
+- `deploy/.env.example`
+- `scripts/deploy.sh`
 
 ## 9. 更新本文件时的最小检查清单
 

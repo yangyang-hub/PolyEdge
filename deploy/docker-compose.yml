@@ -1,0 +1,60 @@
+services:
+  polyedge-api:
+    build:
+      context: ..
+      dockerfile: packages/backend/Dockerfile
+      args:
+        PACKAGE: polyedge-api
+        BIN: polyedge-api
+    image: ${POLYEDGE_API_IMAGE:-polyedge-api:local}
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      POLYEDGE_SERVER__HOST: 0.0.0.0
+      POLYEDGE_SERVER__PORT: 8080
+    ports:
+      - "${POLYEDGE_API_BIND:-127.0.0.1}:${POLYEDGE_API_PORT:-8080}:8080"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/healthz >/dev/null"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  polyedge-front:
+    build:
+      context: ..
+      dockerfile: packages/front/Dockerfile
+    image: ${POLYEDGE_FRONT_IMAGE:-polyedge-front:local}
+    restart: unless-stopped
+    environment:
+      HOSTNAME: 0.0.0.0
+      PORT: 3000
+      POLYEDGE_API_BASE_URL: ${POLYEDGE_API_BASE_URL:-http://polyedge-api:8080}
+      POLYEDGE_ENABLE_LIVE_SSE: ${POLYEDGE_ENABLE_LIVE_SSE:-1}
+      POLYEDGE_CONSOLE_AUTH: ${POLYEDGE_CONSOLE_AUTH:-mock-session}
+      POLYEDGE_CONSOLE_STEP_UP_CODE: ${POLYEDGE_CONSOLE_STEP_UP_CODE:?set POLYEDGE_CONSOLE_STEP_UP_CODE in deploy/.env}
+      POLYEDGE_INTERNAL_AUTH_DEV_BYPASS: ${POLYEDGE_INTERNAL_AUTH_DEV_BYPASS:-1}
+      POLYEDGE_INTERNAL_AUTH_KID: ${POLYEDGE_INTERNAL_AUTH_KID:-}
+      POLYEDGE_INTERNAL_AUTH_PRIVATE_KEY: ${POLYEDGE_INTERNAL_AUTH_PRIVATE_KEY:-}
+      POLYEDGE_INTERNAL_AUTH_ISSUER: ${POLYEDGE_AUTH__ISSUER:-polyedge-nextjs}
+      POLYEDGE_INTERNAL_AUTH_AUDIENCE: ${POLYEDGE_AUTH__AUDIENCE:-polyedge-rust-api}
+      NEXT_TELEMETRY_DISABLED: 1
+    ports:
+      - "${POLYEDGE_FRONT_BIND:-0.0.0.0}:${POLYEDGE_FRONT_PORT:-3000}:3000"
+    depends_on:
+      polyedge-api:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "node -e \"fetch('http://127.0.0.1:3000').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\"",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s

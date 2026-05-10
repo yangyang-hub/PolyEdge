@@ -174,6 +174,38 @@ cp .env.example .env
 2. 留空的可选项会被视为未配置，例如 `POLYEDGE_POSTGRES__URL=`。
 3. `POLYEDGE_AUTH__KEYS_JSON` 使用 JSON 数组格式配置验签公钥。
 
+## Docker 部署
+
+仓库包含一个服务器部署入口：
+
+```bash
+cp deploy/.env.example deploy/.env
+# 编辑 deploy/.env，填入外部 PostgreSQL / Redis URL 和控制台 step-up code
+./scripts/deploy.sh
+```
+
+`deploy/docker-compose.yml` 只启动：
+
+- `polyedge-api`
+- `polyedge-front`
+
+PostgreSQL 和 Redis 不会由 compose 创建，需要在 `deploy/.env` 里配置已有服务地址。
+
+部署脚本会在启动前从 GitHub 更新当前 checkout：
+
+```bash
+POLYEDGE_GIT_BRANCH=main ./scripts/deploy.sh
+```
+
+如果是首次在空目录部署，也可以把脚本放到服务器后指定仓库地址：
+
+```bash
+POLYEDGE_DEPLOY_DIR=/opt/polyedge \
+POLYEDGE_GIT_REPO=https://github.com/<owner>/<repo>.git \
+POLYEDGE_GIT_BRANCH=main \
+./scripts/deploy.sh
+```
+
 ## 当前已实现能力
 
 ### 前端
