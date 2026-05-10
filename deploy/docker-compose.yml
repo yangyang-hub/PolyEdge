@@ -3,9 +3,6 @@ services:
     build:
       context: ..
       dockerfile: packages/backend/Dockerfile
-      args:
-        PACKAGE: polyedge-api
-        BIN: polyedge-api
     image: ${POLYEDGE_API_IMAGE:-polyedge-api:local}
     restart: unless-stopped
     env_file:

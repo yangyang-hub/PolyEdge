@@ -178,6 +178,16 @@ cp .env.example .env
 
 仓库包含一个服务器部署入口：
 
+先在构建机或 CI 上生成 Linux 服务器可运行的后端二进制，并提交到仓库：
+
+```bash
+./scripts/build-backend-bin.sh
+git add bin/polyedge-api
+git commit -m "Build backend binary"
+```
+
+服务器上执行：
+
 ```bash
 cp deploy/.env.example deploy/.env
 # 编辑 deploy/.env，填入外部 PostgreSQL / Redis URL 和控制台 step-up code
@@ -191,7 +201,13 @@ cp deploy/.env.example deploy/.env
 
 PostgreSQL 和 Redis 不会由 compose 创建，需要在 `deploy/.env` 里配置已有服务地址。
 
-部署脚本会在启动前从 GitHub 更新当前 checkout：
+部署脚本会在启动前从 GitHub 更新当前 checkout，并按变更范围增量重建镜像：
+
+- `bin/polyedge-api` 或后端部署文件变化：重建 `polyedge-api`
+- `packages/front` 或前端部署文件变化：重建 `polyedge-front`
+- 只有文档等无关文件变化：不重建镜像，只执行 `docker compose up -d`
+
+更新指定分支：
 
 ```bash
 POLYEDGE_GIT_BRANCH=main ./scripts/deploy.sh

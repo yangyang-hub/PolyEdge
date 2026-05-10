@@ -281,15 +281,23 @@ cargo run -p polyedge-worker -- reconcile-polymarket-fills
 仓库已包含前后端 Docker 部署入口：
 
 - `packages/backend/Dockerfile`
-  构建 `polyedge-api` 运行镜像。
+  从仓库 `bin/polyedge-api` 复制预构建二进制，构建 `polyedge-api` 运行镜像；服务器部署不再编译 Rust。
 - `packages/front/Dockerfile`
   构建 Next.js standalone 前端镜像。
 - `deploy/docker-compose.yml`
   编排 `polyedge-api` 和 `polyedge-front`；PostgreSQL 与 Redis 不在 compose 内启动，通过环境变量连接外部实例。
 - `deploy/.env.example`
   部署环境变量模板。
+- `scripts/build-backend-bin.sh`
+  在构建机/CI 上执行 `cargo build --release -p polyedge-api` 并复制产物到 `bin/polyedge-api`，该二进制需要提交到仓库。
 - `scripts/deploy.sh`
-  服务器部署脚本，支持从 GitHub 现有 checkout 执行 fast-forward 更新，也支持通过 `POLYEDGE_GIT_REPO` 初次 clone。
+  服务器部署脚本，支持从 GitHub 现有 checkout 执行 fast-forward 更新，也支持通过 `POLYEDGE_GIT_REPO` 初次 clone；更新后按 diff 增量重建镜像。
+
+`scripts/deploy.sh` 的镜像重建判断：
+
+- `bin/polyedge-api`、`packages/backend/Dockerfile`、`deploy/docker-compose.yml` 或 `.dockerignore` 变化时重建 `polyedge-api`。
+- `packages/front`、`deploy/docker-compose.yml` 或 `.dockerignore` 变化时重建 `polyedge-front`。
+- `POLYEDGE_FORCE_REBUILD=1` 会强制重建两个镜像。
 
 默认部署模板沿用当前可工作的本地 internal dev-auth 模式：
 
@@ -324,7 +332,9 @@ cargo run -p polyedge-worker -- reconcile-polymarket-fills
 - `packages/front/Dockerfile`
 - `deploy/docker-compose.yml`
 - `deploy/.env.example`
+- `bin/README.md`
 - `scripts/deploy.sh`
+- `scripts/build-backend-bin.sh`
 
 ## 9. 更新本文件时的最小检查清单
 

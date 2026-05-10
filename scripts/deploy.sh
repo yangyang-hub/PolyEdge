@@ -30,6 +30,9 @@ deploy_dir="${POLYEDGE_DEPLOY_DIR:-${default_root}}"
 repo_url="${POLYEDGE_GIT_REPO:-}"
 branch="${POLYEDGE_GIT_BRANCH:-}"
 skip_git_pull="${POLYEDGE_SKIP_GIT_PULL:-0}"
+force_rebuild="${POLYEDGE_FORCE_REBUILD:-0}"
+old_rev=""
+did_clone=0
 
 if [[ ! -d "${deploy_dir}/.git" ]]; then
   [[ -n "${repo_url}" ]] || fail "POLYEDGE_DEPLOY_DIR is not a git checkout. Set POLYEDGE_GIT_REPO to clone from GitHub."
@@ -42,9 +45,11 @@ if [[ ! -d "${deploy_dir}/.git" ]]; then
   mkdir -p "$(dirname "${deploy_dir}")"
   log "cloning ${repo_url} branch ${branch} into ${deploy_dir}"
   git clone --branch "${branch}" "${repo_url}" "${deploy_dir}"
+  did_clone=1
 fi
 
 cd "${deploy_dir}"
+old_rev="$(git rev-parse HEAD)"
 
 if [[ -z "${branch}" ]]; then
   branch="$(git rev-parse --abbrev-ref HEAD)"
@@ -77,6 +82,8 @@ else
   log "skipping git update"
 fi
 
+new_rev="$(git rev-parse HEAD)"
+
 compose_file="${POLYEDGE_COMPOSE_FILE:-${deploy_dir}/deploy/docker-compose.yml}"
 env_file="${POLYEDGE_ENV_FILE:-${deploy_dir}/deploy/.env}"
 env_example="${deploy_dir}/deploy/.env.example"
@@ -91,8 +98,47 @@ fi
 
 compose_cmd="$(find_compose)" || fail "Docker Compose is not installed."
 
-log "building images"
-${compose_cmd} --env-file "${env_file}" -f "${compose_file}" build --pull
+rebuild_services=()
+
+if [[ "${did_clone}" == "1" ]]; then
+  log "initial checkout detected"
+  rebuild_services=(polyedge-api polyedge-front)
+elif [[ "${force_rebuild}" == "1" ]]; then
+  log "force rebuild requested"
+  rebuild_services=(polyedge-api polyedge-front)
+elif [[ "${old_rev}" != "${new_rev}" ]]; then
+  log "checking changed deployment inputs from ${old_rev} to ${new_rev}"
+
+  if ! git diff --quiet "${old_rev}" "${new_rev}" -- \
+    bin/polyedge-api \
+    packages/backend/Dockerfile \
+    deploy/docker-compose.yml \
+    .dockerignore
+  then
+    rebuild_services+=(polyedge-api)
+  fi
+
+  if ! git diff --quiet "${old_rev}" "${new_rev}" -- \
+    packages/front \
+    deploy/docker-compose.yml \
+    .dockerignore
+  then
+    rebuild_services+=(polyedge-front)
+  fi
+else
+  log "repository is already up to date"
+fi
+
+if [[ ${#rebuild_services[@]} -gt 0 ]]; then
+  if printf '%s\n' "${rebuild_services[@]}" | grep -qx 'polyedge-api'; then
+    [[ -f "${deploy_dir}/bin/polyedge-api" ]] || fail "bin/polyedge-api is missing. Build it with scripts/build-backend-bin.sh and commit it."
+  fi
+
+  log "building changed images: ${rebuild_services[*]}"
+  ${compose_cmd} --env-file "${env_file}" -f "${compose_file}" build --pull "${rebuild_services[@]}"
+else
+  log "no image rebuild needed"
+fi
 
 log "starting containers"
 ${compose_cmd} --env-file "${env_file}" -f "${compose_file}" up -d --remove-orphans
