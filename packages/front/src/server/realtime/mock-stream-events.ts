@@ -2,6 +2,7 @@ import "server-only";
 
 import { humanizeSnakeCase } from "@/lib/formatters";
 import type {
+  ArbitrageStreamPayload,
   ConsoleEventStreamPayload,
   RealtimeChannel,
   RiskStreamPayload,
@@ -9,6 +10,9 @@ import type {
 } from "@/lib/contracts/realtime";
 import {
   approvalFixtures,
+  arbitrageAnalysisRunFixtures,
+  arbitrageOpportunityFixtures,
+  arbitrageScanFixtures,
   eventFixtures,
   marketFixtures,
   riskAlertFixtures,
@@ -19,7 +23,7 @@ import {
 export type MockStreamEvent = {
   id: string;
   type: string;
-  data: SignalStreamPayload | RiskStreamPayload | ConsoleEventStreamPayload;
+  data: SignalStreamPayload | RiskStreamPayload | ConsoleEventStreamPayload | ArbitrageStreamPayload;
 };
 
 function buildEventId(channel: RealtimeChannel, timestamp: string, sequence: number) {
@@ -309,6 +313,150 @@ const eventStreamEvents: MockStreamEvent[] = [
   },
 ];
 
+const arbitrageEvents: MockStreamEvent[] = [
+  {
+    id: "1",
+    type: "arbitrage.scan.started",
+    data: {
+      sequence: 1,
+      event_type: "arbitrage.scan.started",
+      resource_type: "scan",
+      resource_id: "scan_mock_live_1435",
+      scan_id: "scan_mock_live_1435",
+      started_at: "2026-04-16T14:34:45Z",
+      market_count: 0,
+      snapshot_count: 0,
+      opportunity_count: 0,
+      scanner_version: "arbitrage-radar-v0",
+      metadata: { connector: "polymarket", mode: "opportunity_detection_only" },
+      occurred_at: "2026-04-16T14:34:45Z",
+      trace_id: "trc_mock_arb_live_1435",
+    },
+  },
+  {
+    id: "2",
+    type: "arbitrage.opportunity.observed",
+    data: {
+      sequence: 2,
+      event_type: "arbitrage.opportunity.observed",
+      resource_type: "opportunity",
+      resource_id: "arb_mock_live_mkt_121_sell_both",
+      opportunity_id: "arb_mock_live_mkt_121_sell_both",
+      scan_id: "scan_mock_live_1435",
+      market_id: "mkt_121",
+      opportunity_type: "binary_sell_both",
+      status: "observed",
+      gross_edge: "0.0310",
+      price_sum: "1.0310",
+      capacity: "470.00",
+      yes_price: "0.445",
+      no_price: "0.586",
+      yes_size: "510.00",
+      no_size: "470.00",
+      observed_at: "2026-04-16T14:34:54Z",
+      reason_codes: ["yes_bid_plus_no_bid_above_one"],
+      analysis_payload: {
+        formula: "yes_bid + no_bid - 1",
+        yes_bid: "0.445",
+        no_bid: "0.586",
+        price_sum: "1.0310",
+        gross_edge: "0.0310",
+      },
+      occurred_at: "2026-04-16T14:34:54Z",
+      trace_id: "trc_mock_arb_live_1435",
+    },
+  },
+  {
+    id: "3",
+    type: "arbitrage.validation.passed",
+    data: {
+      sequence: 3,
+      event_type: "arbitrage.validation.passed",
+      resource_type: "validation",
+      resource_id: "arb_mock_live_mkt_121_sell_both",
+      validation_id: "arb_val_mock_live_mkt_121_sell_both",
+      opportunity_id: "arb_mock_live_mkt_121_sell_both",
+      validation_status: "valid",
+      gross_edge: "0.0310",
+      net_edge: "0.0210",
+      fee_estimate: "0.0050",
+      slippage_buffer: "0.0050",
+      validated_capacity: "470.00",
+      book_age_ms: 280,
+      reason_codes: ["net_edge_positive_after_buffers"],
+      validation_payload: { source: "mock" },
+      validated_at: "2026-04-16T14:34:54Z",
+      occurred_at: "2026-04-16T14:34:54Z",
+      trace_id: "trc_mock_arb_live_1435",
+    },
+  },
+  {
+    id: "4",
+    type: "arbitrage.opportunity.expired",
+    data: {
+      sequence: 4,
+      event_type: "arbitrage.opportunity.expired",
+      resource_type: "opportunity",
+      resource_id: arbitrageOpportunityFixtures[3].id,
+      opportunity_id: arbitrageOpportunityFixtures[3].id,
+      scan_id: arbitrageOpportunityFixtures[3].scan_id,
+      market_id: arbitrageOpportunityFixtures[3].market_id,
+      opportunity_type: arbitrageOpportunityFixtures[3].opportunity_type,
+      status: "expired",
+      gross_edge: arbitrageOpportunityFixtures[3].gross_edge,
+      price_sum: arbitrageOpportunityFixtures[3].price_sum,
+      capacity: arbitrageOpportunityFixtures[3].capacity,
+      yes_price: arbitrageOpportunityFixtures[3].yes_price,
+      no_price: arbitrageOpportunityFixtures[3].no_price,
+      yes_size: arbitrageOpportunityFixtures[3].yes_size,
+      no_size: arbitrageOpportunityFixtures[3].no_size,
+      observed_at: arbitrageOpportunityFixtures[3].observed_at,
+      reason_codes: arbitrageOpportunityFixtures[3].reason_codes,
+      analysis_payload: arbitrageOpportunityFixtures[3].analysis_payload,
+      occurred_at: "2026-04-16T14:35:00Z",
+      trace_id: "trc_mock_arb_live_1435",
+    },
+  },
+  {
+    id: "5",
+    type: "arbitrage.scan.completed",
+    data: {
+      sequence: 5,
+      event_type: "arbitrage.scan.completed",
+      resource_type: "scan",
+      resource_id: "scan_mock_live_1435",
+      scan_id: "scan_mock_live_1435",
+      started_at: "2026-04-16T14:34:45Z",
+      finished_at: "2026-04-16T14:34:59Z",
+      market_count: arbitrageScanFixtures[0].market_count,
+      snapshot_count: arbitrageScanFixtures[0].snapshot_count,
+      opportunity_count: 1,
+      scanner_version: "arbitrage-radar-v0",
+      metadata: { connector: "polymarket", mode: "opportunity_detection_only" },
+      occurred_at: "2026-04-16T14:34:59Z",
+      trace_id: "trc_mock_arb_live_1435",
+    },
+  },
+  {
+    id: "6",
+    type: "arbitrage.analysis.generated",
+    data: {
+      sequence: 6,
+      event_type: "arbitrage.analysis.generated",
+      resource_type: "analysis",
+      resource_id: "arb_analysis_mock_live_1435",
+      analysis_id: "arb_analysis_mock_live_1435",
+      generated_at: "2026-04-16T14:35:02Z",
+      lookback_hours: 24,
+      opportunity_count: arbitrageAnalysisRunFixtures[0].opportunity_count + 1,
+      market_count: arbitrageAnalysisRunFixtures[0].market_count,
+      summary_payload: arbitrageAnalysisRunFixtures[0].summary_payload,
+      occurred_at: "2026-04-16T14:35:02Z",
+      trace_id: "trc_mock_arb_live_1435",
+    },
+  },
+];
+
 export function getMockStreamEvents(channel: RealtimeChannel): MockStreamEvent[] {
   if (channel === "signals") {
     return signalEvents;
@@ -316,6 +464,10 @@ export function getMockStreamEvents(channel: RealtimeChannel): MockStreamEvent[]
 
   if (channel === "risk") {
     return riskEvents;
+  }
+
+  if (channel === "arbitrage") {
+    return arbitrageEvents;
   }
 
   return eventStreamEvents;

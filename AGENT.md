@@ -1,6 +1,6 @@
 # AGENT.md
 
-最后更新：2026-05-10
+最后更新：2026-05-14
 
 ## 1. 文件用途
 
@@ -57,6 +57,7 @@
 - `dashboard`
 - `markets`
 - `events`
+- `radar`
 - `signals`
 - `positions`
 - `risk`
@@ -143,6 +144,9 @@
 - `GET /api/v1/execution/requests`
 - `GET /api/v1/positions`
 - `GET /api/v1/pricing/estimates`
+- `GET /api/v1/arbitrage/scans`
+- `GET /api/v1/arbitrage/opportunities`
+- `GET /api/v1/arbitrage/analysis`
 - `GET /api/v1/risk/state`
 - `GET /api/v1/risk/alerts`
 - `GET /api/v1/risk/buckets`
@@ -161,6 +165,9 @@
 - `ingest-news-once`
 - `poll-news`
 - `promote-news-events`
+- `scan-arbitrage-once`
+- `poll-arbitrage-radar`
+- `analyze-arbitrage-opportunities`
 - `drain-execution-queue`
 - `reconcile-paper-fills`
 - `poll-paper-order-statuses`
@@ -179,6 +186,7 @@
 - API 默认监听：`127.0.0.1:8080`
 - 默认 runtime mode：`manual_confirm`
 - 默认 Polymarket mode：`mock`
+- 默认 arbitrage radar：`disabled`，默认盘口源为 `market_snapshot`，机会 TTL 为 60 秒，校验默认要求盘口年龄不超过 10 秒、gross edge 不低于 0.5%、容量不低于 1，并预留 fee/slippage buffer 各 0.5%
 - 默认 news ingestion：`disabled`
 - `postgres.url` 和 `redis.url` 默认仍为空
 
@@ -196,6 +204,8 @@
 - `0010_market_connector_refs.sql`
 - `0011_news_ingestion.sql`
 - `0012_news_source_health_list_index.sql`
+- `0013_arbitrage_radar.sql`
+- `0014_arbitrage_validation_events.sql`
 
 ## 6. 前后端贯通状态
 
@@ -209,19 +219,24 @@
 - 前端写操作统一走 `src/server/actions/*`
 - 前端 live API 已统一请求 `/api/v1/...`
 - 前端已有 SSE proxy / mock stream 机制，并可代理 Rust `/api/v1/stream/{channel}`
+- 前端 `/radar` 已订阅 `arbitrage` SSE channel，可在初始快照之上增量合并 scan、机会、过期、校验和分析事件
 - 前端 live fetch 已能发送本地 dev-auth headers；签名内部 JWT helper 已具备，但在真实会话体系接入前不会从 `off | mock-session` 签发令牌
 - 后端已有 `v1` REST API、worker 和交易/回写相关主链路
 - 后端已有审批、风险告警、风险桶、新闻源健康和 raw news 的一等只读资源端点，前端不再依赖 `live-console-derived.ts` 派生这些资源
 - 后端风险/审批派生资源会读取完整内部快照后再对响应应用展示 limit；成交回写后的风险指标按全局持仓聚合
 - 后端 worker 已能把近期 raw news 按保守词面匹配提升为关联已有市场的 `events` 和 `evidences`
+- 后端 worker 已有只读套利雷达入口，可记录扫描、盘口快照、机会、机会校验、过期事件和历史分析；该链路不会创建 execution request 或订单
+- 套利雷达已通过 `/api/v1/arbitrage/scans`、`/api/v1/arbitrage/opportunities`、`/api/v1/arbitrage/analysis` 暴露只读 API，前端 `/radar` 页面已接入 typed mock/live API 适配
+- 后端 `/api/v1/stream/arbitrage` 已使用套利 outbox 事件表/内存事件序列做增量 SSE，支持 `Last-Event-ID` 按 sequence 续传
 
 ### 6.3 当前明确存在的缺口
 
-1. SSE 仍是 snapshot-backed stream：后端按间隔读取当前 signals/risk/events 快照，会用 `Last-Event-ID` 避免重发最近事件，并在单个连接内按事件 ID 去重后发送；单连接去重缓存有上限，但尚不是持久化事件总线或 Redis/Postgres outbox 驱动的精确增量流。
+1. `signals / risk / events` SSE 仍是 snapshot-backed stream：后端按间隔读取当前快照，会用 `Last-Event-ID` 避免重发最近事件，并在单个连接内按事件 ID 去重后发送；套利 `arbitrage` channel 已是 outbox-backed 增量流，但还不是跨所有资源统一的事件总线。
 2. 前端权限当前仍是 `off | mock-session`，不是生产级真实会话体系。
 3. 签名内部 JWT 链路已具备代码路径，但当前拒绝从 `off | mock-session` 签发；真实环境仍需要可信会话来源、Ed25519 key rotation 和撤销策略。
 4. Polymarket live 模式已有 connector/worker 骨架，但仍需要真实凭证、真实账户、小额演练和运维 runbook 才能视为生产交易链路。
-5. 新闻源已支持 RSS/Atom 抓取、标准化、去重写入 `raw_events` 和 `news_source_health`，并可在 API/设置页查看 source health 与最近 raw news；worker 可将匹配到已有市场的 raw news 提升为 `events/evidences`，但尚未自动生成 `signals`。
+5. 套利雷达当前已闭合到发现、记录、机会校验、分析、只读展示和实时增量推送；尚未接入交易执行。
+6. 新闻源已支持 RSS/Atom 抓取、标准化、去重写入 `raw_events` 和 `news_source_health`，并可在 API/设置页查看 source health 与最近 raw news；worker 可将匹配到已有市场的 raw news 提升为 `events/evidences`，但尚未自动生成 `signals`。
 
 ### 6.4 因此的实际判断
 
@@ -264,6 +279,9 @@ cargo run -p polyedge-worker -- ingest-fixtures
 cargo run -p polyedge-worker -- ingest-news-once
 cargo run -p polyedge-worker -- poll-news
 cargo run -p polyedge-worker -- promote-news-events
+cargo run -p polyedge-worker -- scan-arbitrage-once
+cargo run -p polyedge-worker -- poll-arbitrage-radar
+cargo run -p polyedge-worker -- analyze-arbitrage-opportunities
 cargo run -p polyedge-worker -- drain-execution-queue
 ```
 
@@ -312,7 +330,11 @@ cargo run -p polyedge-worker -- reconcile-polymarket-fills
 ### 8.1 前端
 
 - `packages/front/src/server/api/base.ts`
+- `packages/front/src/server/api/arbitrage.ts`
 - `packages/front/src/server/api/news.ts`
+- `packages/front/src/app/(console)/radar/page.tsx`
+- `packages/front/src/features/radar/loaders/radar-page-data.ts`
+- `packages/front/src/features/radar/components/arbitrage-radar-workbench.tsx`
 - `packages/front/src/server/actions/approval-actions.ts`
 - `packages/front/src/server/actions/risk-actions.ts`
 - `packages/front/src/app/api/stream/[channel]/route.ts`
@@ -324,9 +346,13 @@ cargo run -p polyedge-worker -- reconcile-polymarket-fills
 - `packages/backend/apps/api/src/lib.rs`
 - `packages/backend/apps/api/src/main.rs`
 - `packages/backend/apps/worker/src/main.rs`
+- `packages/backend/crates/application/src/arbitrage.rs`
 - `packages/backend/crates/application/src/lib.rs`
+- `packages/backend/crates/connectors/src/polymarket.rs`
 - `packages/backend/crates/infrastructure/src/runtime.rs`
 - `packages/backend/crates/infrastructure/src/settings.rs`
+- `packages/backend/migrations/0013_arbitrage_radar.sql`
+- `packages/backend/migrations/0014_arbitrage_validation_events.sql`
 - `packages/backend/.env.example`
 - `packages/backend/Dockerfile`
 - `packages/front/Dockerfile`

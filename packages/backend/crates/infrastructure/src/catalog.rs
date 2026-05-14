@@ -1,16 +1,21 @@
 use async_trait::async_trait;
 use polyedge_application::{
-    DispatchExecutionListFilters, EventListFilters, EventView, EvidenceListFilters, EvidenceView,
-    ExecutionDispatchCandidate, ExecutionDispatchResult, ExecutionFillResult,
-    ExecutionReconciliationCandidate, ExecutionRequestListFilters, ExecutionRequestView,
-    ExecutionSubmissionResult, FixtureBundle, FixtureIngestionReport, MarketEventStore,
-    MarketListFilters, MarketView, NewsIngestionStore, NewsRawEventInsert, NewsRawEventListFilters,
-    NewsRawEventView, NewsSourceFailureUpdate, NewsSourceHealthListFilters, NewsSourceHealthView,
-    NewsSourceSuccessUpdate, OrderDraftListFilters, OrderDraftView, OrderListFilters, OrderView,
-    PositionListFilters, PositionView, ProbabilityEstimateListFilters, ProbabilityEstimateView,
-    RecomputeSignalCommand, RecomputeSignalResult, ReconcileExecutionListFilters,
-    SignalListFilters, SignalTransitionListFilters, SignalTransitionView, SignalView,
-    SourceHealthAdjustment, SubmitExecutionStoreCommand, TradeListFilters, TradeView,
+    ArbitrageAnalysisRunListFilters, ArbitrageAnalysisRunView, ArbitrageEventListFilters,
+    ArbitrageEventType, ArbitrageEventView, ArbitrageOpportunityListFilters,
+    ArbitrageOpportunityStatus, ArbitrageOpportunityType, ArbitrageOpportunityValidationView,
+    ArbitrageOpportunityView, ArbitrageScanListFilters, ArbitrageScanView, ArbitrageStore,
+    ArbitrageValidationStatus, DispatchExecutionListFilters, EventListFilters, EventView,
+    EvidenceListFilters, EvidenceView, ExecutionDispatchCandidate, ExecutionDispatchResult,
+    ExecutionFillResult, ExecutionReconciliationCandidate, ExecutionRequestListFilters,
+    ExecutionRequestView, ExecutionSubmissionResult, FixtureBundle, FixtureIngestionReport,
+    MarketBookSnapshotView, MarketEventStore, MarketListFilters, MarketView, NewsIngestionStore,
+    NewsRawEventInsert, NewsRawEventListFilters, NewsRawEventView, NewsSourceFailureUpdate,
+    NewsSourceHealthListFilters, NewsSourceHealthView, NewsSourceSuccessUpdate,
+    OrderDraftListFilters, OrderDraftView, OrderListFilters, OrderView, PositionListFilters,
+    PositionView, ProbabilityEstimateListFilters, ProbabilityEstimateView, RecomputeSignalCommand,
+    RecomputeSignalResult, ReconcileExecutionListFilters, SignalListFilters,
+    SignalTransitionListFilters, SignalTransitionView, SignalView, SourceHealthAdjustment,
+    SubmitExecutionStoreCommand, TradeListFilters, TradeView,
     build_recompute_signal_draft_with_source_health, degraded_health_score,
 };
 use polyedge_domain::{
@@ -49,6 +54,13 @@ pub struct InMemoryMarketEventStore {
     raw_news_events: RwLock<HashMap<String, NewsRawEventView>>,
     raw_news_dedup_keys: RwLock<HashSet<String>>,
     news_source_health: RwLock<HashMap<String, NewsSourceHealthView>>,
+    arbitrage_scans: RwLock<HashMap<String, ArbitrageScanView>>,
+    market_book_snapshots: RwLock<HashMap<String, MarketBookSnapshotView>>,
+    arbitrage_opportunities: RwLock<HashMap<String, ArbitrageOpportunityView>>,
+    arbitrage_opportunity_validations: RwLock<HashMap<String, ArbitrageOpportunityValidationView>>,
+    arbitrage_analysis_runs: RwLock<HashMap<String, ArbitrageAnalysisRunView>>,
+    arbitrage_events: RwLock<Vec<ArbitrageEventView>>,
+    arbitrage_event_sequence: RwLock<u64>,
 }
 
 impl InMemoryMarketEventStore {
@@ -69,6 +81,13 @@ impl InMemoryMarketEventStore {
             raw_news_events: RwLock::new(HashMap::new()),
             raw_news_dedup_keys: RwLock::new(HashSet::new()),
             news_source_health: RwLock::new(HashMap::new()),
+            arbitrage_scans: RwLock::new(HashMap::new()),
+            market_book_snapshots: RwLock::new(HashMap::new()),
+            arbitrage_opportunities: RwLock::new(HashMap::new()),
+            arbitrage_opportunity_validations: RwLock::new(HashMap::new()),
+            arbitrage_analysis_runs: RwLock::new(HashMap::new()),
+            arbitrage_events: RwLock::new(Vec::new()),
+            arbitrage_event_sequence: RwLock::new(0),
         }
     }
 
@@ -1555,6 +1574,201 @@ impl NewsIngestionStore for InMemoryMarketEventStore {
     }
 }
 
+#[async_trait]
+impl ArbitrageStore for InMemoryMarketEventStore {
+    async fn start_arbitrage_scan(&self, scan: &ArbitrageScanView) -> Result<()> {
+        self.arbitrage_scans
+            .write()
+            .await
+            .insert(scan.id.clone(), scan.clone());
+        Ok(())
+    }
+
+    async fn complete_arbitrage_scan(
+        &self,
+        scan_id: &str,
+        finished_at: OffsetDateTime,
+        market_count: u32,
+        snapshot_count: u32,
+        opportunity_count: u32,
+    ) -> Result<ArbitrageScanView> {
+        let mut scans = self.arbitrage_scans.write().await;
+        let scan = scans.get_mut(scan_id).ok_or_else(|| {
+            AppError::not_found(
+                "ARBITRAGE_SCAN_NOT_FOUND",
+                format!("arbitrage scan was not found: {scan_id}"),
+            )
+        })?;
+        scan.finished_at = Some(finished_at);
+        scan.market_count = market_count;
+        scan.snapshot_count = snapshot_count;
+        scan.opportunity_count = opportunity_count;
+        Ok(scan.clone())
+    }
+
+    async fn record_market_book_snapshot(&self, snapshot: &MarketBookSnapshotView) -> Result<()> {
+        self.market_book_snapshots
+            .write()
+            .await
+            .insert(snapshot.id.clone(), snapshot.clone());
+        Ok(())
+    }
+
+    async fn record_arbitrage_opportunity(
+        &self,
+        opportunity: &ArbitrageOpportunityView,
+    ) -> Result<()> {
+        self.arbitrage_opportunities
+            .write()
+            .await
+            .insert(opportunity.id.clone(), opportunity.clone());
+        Ok(())
+    }
+
+    async fn record_arbitrage_opportunity_validation(
+        &self,
+        validation: &ArbitrageOpportunityValidationView,
+    ) -> Result<()> {
+        self.arbitrage_opportunity_validations
+            .write()
+            .await
+            .insert(validation.id.clone(), validation.clone());
+        Ok(())
+    }
+
+    async fn expire_arbitrage_opportunities(
+        &self,
+        observed_before: OffsetDateTime,
+        trace_id: &str,
+    ) -> Result<Vec<ArbitrageOpportunityView>> {
+        let mut opportunities = self.arbitrage_opportunities.write().await;
+        let mut expired = Vec::new();
+
+        for opportunity in opportunities.values_mut() {
+            if opportunity.observed_at < observed_before
+                && opportunity.status != ArbitrageOpportunityStatus::Expired
+            {
+                opportunity.status = ArbitrageOpportunityStatus::Expired;
+                opportunity.trace_id = trace_id.to_string();
+                expired.push(opportunity.clone());
+            }
+        }
+
+        Ok(expired)
+    }
+
+    async fn list_arbitrage_scans(
+        &self,
+        filters: &ArbitrageScanListFilters,
+    ) -> Result<Vec<ArbitrageScanView>> {
+        let scans = self.arbitrage_scans.read().await;
+        let mut items: Vec<_> = scans.values().cloned().collect();
+        items.sort_by(|left, right| {
+            right
+                .started_at
+                .cmp(&left.started_at)
+                .then_with(|| left.id.cmp(&right.id))
+        });
+        items.truncate(usize::from(filters.limit));
+        Ok(items)
+    }
+
+    async fn list_arbitrage_opportunities(
+        &self,
+        filters: &ArbitrageOpportunityListFilters,
+    ) -> Result<Vec<ArbitrageOpportunityView>> {
+        let opportunities = self.arbitrage_opportunities.read().await;
+        let validations = self.arbitrage_opportunity_validations.read().await;
+        let mut items: Vec<_> = opportunities
+            .values()
+            .filter(|opportunity| {
+                filters
+                    .market_id
+                    .as_ref()
+                    .is_none_or(|market_id| &opportunity.market_id == market_id)
+                    && filters
+                        .opportunity_type
+                        .is_none_or(|kind| opportunity.opportunity_type == kind)
+                    && filters
+                        .observed_after
+                        .is_none_or(|after| opportunity.observed_at >= after)
+            })
+            .cloned()
+            .map(|mut opportunity| {
+                opportunity.validation =
+                    latest_validation_for_opportunity(&validations, &opportunity.id);
+                opportunity
+            })
+            .collect();
+        items.sort_by(|left, right| {
+            right
+                .observed_at
+                .cmp(&left.observed_at)
+                .then_with(|| left.id.cmp(&right.id))
+        });
+        items.truncate(usize::from(filters.limit));
+        Ok(items)
+    }
+
+    async fn record_arbitrage_analysis_run(
+        &self,
+        analysis: &ArbitrageAnalysisRunView,
+    ) -> Result<()> {
+        self.arbitrage_analysis_runs
+            .write()
+            .await
+            .insert(analysis.id.clone(), analysis.clone());
+        Ok(())
+    }
+
+    async fn list_arbitrage_analysis_runs(
+        &self,
+        filters: &ArbitrageAnalysisRunListFilters,
+    ) -> Result<Vec<ArbitrageAnalysisRunView>> {
+        let runs = self.arbitrage_analysis_runs.read().await;
+        let mut items: Vec<_> = runs.values().cloned().collect();
+        items.sort_by(|left, right| {
+            right
+                .generated_at
+                .cmp(&left.generated_at)
+                .then_with(|| left.id.cmp(&right.id))
+        });
+        items.truncate(usize::from(filters.limit));
+        Ok(items)
+    }
+
+    async fn record_arbitrage_event(
+        &self,
+        event: &ArbitrageEventView,
+    ) -> Result<ArbitrageEventView> {
+        let mut sequence = self.arbitrage_event_sequence.write().await;
+        *sequence = sequence.saturating_add(1);
+        let mut recorded = event.clone();
+        recorded.sequence = *sequence;
+        self.arbitrage_events.write().await.push(recorded.clone());
+        Ok(recorded)
+    }
+
+    async fn list_arbitrage_events(
+        &self,
+        filters: &ArbitrageEventListFilters,
+    ) -> Result<Vec<ArbitrageEventView>> {
+        let events = self.arbitrage_events.read().await;
+        let mut items = events
+            .iter()
+            .filter(|event| {
+                filters
+                    .after_sequence
+                    .is_none_or(|after_sequence| event.sequence > after_sequence)
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        items.sort_by(|left, right| left.sequence.cmp(&right.sequence));
+        items.truncate(usize::from(filters.limit));
+        Ok(items)
+    }
+}
+
 pub struct PostgresMarketEventStore {
     pool: PgPool,
 }
@@ -1831,6 +2045,673 @@ impl NewsIngestionStore for PostgresMarketEventStore {
         })?;
 
         Ok(())
+    }
+}
+
+#[async_trait]
+impl ArbitrageStore for PostgresMarketEventStore {
+    async fn start_arbitrage_scan(&self, scan: &ArbitrageScanView) -> Result<()> {
+        sqlx::query(
+            r#"
+            INSERT INTO arbitrage_scans (
+              id,
+              started_at,
+              finished_at,
+              market_count,
+              snapshot_count,
+              opportunity_count,
+              scanner_version,
+              metadata_json,
+              trace_id
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            "#,
+        )
+        .bind(&scan.id)
+        .bind(scan.started_at)
+        .bind(scan.finished_at)
+        .bind(i64::from(scan.market_count))
+        .bind(i64::from(scan.snapshot_count))
+        .bind(i64::from(scan.opportunity_count))
+        .bind(&scan.scanner_version)
+        .bind(Json(scan.metadata.clone()))
+        .bind(&scan.trace_id)
+        .execute(&self.pool)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_INSERT_FAILED",
+                format!("failed to insert arbitrage scan {}: {error}", scan.id),
+            )
+        })?;
+
+        Ok(())
+    }
+
+    async fn complete_arbitrage_scan(
+        &self,
+        scan_id: &str,
+        finished_at: OffsetDateTime,
+        market_count: u32,
+        snapshot_count: u32,
+        opportunity_count: u32,
+    ) -> Result<ArbitrageScanView> {
+        let row = sqlx::query(
+            r#"
+            UPDATE arbitrage_scans
+            SET
+              finished_at = $2,
+              market_count = $3,
+              snapshot_count = $4,
+              opportunity_count = $5
+            WHERE id = $1
+            RETURNING
+              id,
+              started_at,
+              finished_at,
+              market_count,
+              snapshot_count,
+              opportunity_count,
+              scanner_version,
+              metadata_json,
+              trace_id
+            "#,
+        )
+        .bind(scan_id)
+        .bind(finished_at)
+        .bind(i64::from(market_count))
+        .bind(i64::from(snapshot_count))
+        .bind(i64::from(opportunity_count))
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_UPDATE_FAILED",
+                format!("failed to complete arbitrage scan {scan_id}: {error}"),
+            )
+        })?;
+
+        row.as_ref()
+            .map(parse_arbitrage_scan_row)
+            .transpose()?
+            .ok_or_else(|| {
+                AppError::not_found(
+                    "ARBITRAGE_SCAN_NOT_FOUND",
+                    format!("arbitrage scan was not found: {scan_id}"),
+                )
+            })
+    }
+
+    async fn record_market_book_snapshot(&self, snapshot: &MarketBookSnapshotView) -> Result<()> {
+        sqlx::query(
+            r#"
+            INSERT INTO market_book_snapshots (
+              id,
+              scan_id,
+              connector_name,
+              market_id,
+              yes_asset_id,
+              no_asset_id,
+              yes_bid,
+              yes_ask,
+              yes_bid_size,
+              yes_ask_size,
+              no_bid,
+              no_ask,
+              no_bid_size,
+              no_ask_size,
+              observed_at,
+              raw_payload_json,
+              trace_id
+            )
+            VALUES (
+              $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+              $11, $12, $13, $14, $15, $16, $17
+            )
+            ON CONFLICT (id) DO UPDATE
+            SET
+              connector_name = EXCLUDED.connector_name,
+              market_id = EXCLUDED.market_id,
+              yes_asset_id = EXCLUDED.yes_asset_id,
+              no_asset_id = EXCLUDED.no_asset_id,
+              yes_bid = EXCLUDED.yes_bid,
+              yes_ask = EXCLUDED.yes_ask,
+              yes_bid_size = EXCLUDED.yes_bid_size,
+              yes_ask_size = EXCLUDED.yes_ask_size,
+              no_bid = EXCLUDED.no_bid,
+              no_ask = EXCLUDED.no_ask,
+              no_bid_size = EXCLUDED.no_bid_size,
+              no_ask_size = EXCLUDED.no_ask_size,
+              observed_at = EXCLUDED.observed_at,
+              raw_payload_json = EXCLUDED.raw_payload_json,
+              trace_id = EXCLUDED.trace_id
+            "#,
+        )
+        .bind(&snapshot.id)
+        .bind(&snapshot.scan_id)
+        .bind(&snapshot.connector_name)
+        .bind(&snapshot.market_id)
+        .bind(&snapshot.yes_asset_id)
+        .bind(&snapshot.no_asset_id)
+        .bind(snapshot.yes_bid.map(Probability::value))
+        .bind(snapshot.yes_ask.map(Probability::value))
+        .bind(snapshot.yes_bid_size.value())
+        .bind(snapshot.yes_ask_size.value())
+        .bind(snapshot.no_bid.map(Probability::value))
+        .bind(snapshot.no_ask.map(Probability::value))
+        .bind(snapshot.no_bid_size.value())
+        .bind(snapshot.no_ask_size.value())
+        .bind(snapshot.observed_at)
+        .bind(Json(snapshot.raw_payload.clone()))
+        .bind(&snapshot.trace_id)
+        .execute(&self.pool)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_UPSERT_FAILED",
+                format!(
+                    "failed to record market book snapshot {}: {error}",
+                    snapshot.id
+                ),
+            )
+        })?;
+
+        Ok(())
+    }
+
+    async fn record_arbitrage_opportunity(
+        &self,
+        opportunity: &ArbitrageOpportunityView,
+    ) -> Result<()> {
+        sqlx::query(
+            r#"
+            INSERT INTO arbitrage_opportunities (
+              id,
+              scan_id,
+              market_id,
+              opportunity_type,
+              status,
+              gross_edge,
+              price_sum,
+              capacity,
+              yes_price,
+              no_price,
+              yes_size,
+              no_size,
+              observed_at,
+              reason_codes_json,
+              analysis_payload_json,
+              trace_id
+            )
+            VALUES (
+              $1, $2, $3, $4, $5, $6, $7, $8,
+              $9, $10, $11, $12, $13, $14, $15, $16
+            )
+            ON CONFLICT (id) DO UPDATE
+            SET
+              status = EXCLUDED.status,
+              gross_edge = EXCLUDED.gross_edge,
+              price_sum = EXCLUDED.price_sum,
+              capacity = EXCLUDED.capacity,
+              yes_price = EXCLUDED.yes_price,
+              no_price = EXCLUDED.no_price,
+              yes_size = EXCLUDED.yes_size,
+              no_size = EXCLUDED.no_size,
+              observed_at = EXCLUDED.observed_at,
+              reason_codes_json = EXCLUDED.reason_codes_json,
+              analysis_payload_json = EXCLUDED.analysis_payload_json,
+              trace_id = EXCLUDED.trace_id
+            "#,
+        )
+        .bind(&opportunity.id)
+        .bind(&opportunity.scan_id)
+        .bind(&opportunity.market_id)
+        .bind(opportunity.opportunity_type.as_str())
+        .bind(opportunity.status.as_str())
+        .bind(opportunity.gross_edge.value())
+        .bind(opportunity.price_sum)
+        .bind(opportunity.capacity.value())
+        .bind(opportunity.yes_price.value())
+        .bind(opportunity.no_price.value())
+        .bind(opportunity.yes_size.value())
+        .bind(opportunity.no_size.value())
+        .bind(opportunity.observed_at)
+        .bind(Json(opportunity.reason_codes.clone()))
+        .bind(Json(opportunity.analysis_payload.clone()))
+        .bind(&opportunity.trace_id)
+        .execute(&self.pool)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_UPSERT_FAILED",
+                format!(
+                    "failed to record arbitrage opportunity {}: {error}",
+                    opportunity.id
+                ),
+            )
+        })?;
+
+        Ok(())
+    }
+
+    async fn record_arbitrage_opportunity_validation(
+        &self,
+        validation: &ArbitrageOpportunityValidationView,
+    ) -> Result<()> {
+        sqlx::query(
+            r#"
+            INSERT INTO arbitrage_opportunity_validations (
+              id,
+              opportunity_id,
+              status,
+              gross_edge,
+              net_edge,
+              fee_estimate,
+              slippage_buffer,
+              validated_capacity,
+              book_age_ms,
+              reason_codes_json,
+              validation_payload_json,
+              validated_at,
+              trace_id
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+            ON CONFLICT (id) DO UPDATE
+            SET
+              status = EXCLUDED.status,
+              gross_edge = EXCLUDED.gross_edge,
+              net_edge = EXCLUDED.net_edge,
+              fee_estimate = EXCLUDED.fee_estimate,
+              slippage_buffer = EXCLUDED.slippage_buffer,
+              validated_capacity = EXCLUDED.validated_capacity,
+              book_age_ms = EXCLUDED.book_age_ms,
+              reason_codes_json = EXCLUDED.reason_codes_json,
+              validation_payload_json = EXCLUDED.validation_payload_json,
+              validated_at = EXCLUDED.validated_at,
+              trace_id = EXCLUDED.trace_id
+            "#,
+        )
+        .bind(&validation.id)
+        .bind(&validation.opportunity_id)
+        .bind(validation.status.as_str())
+        .bind(validation.gross_edge.value())
+        .bind(validation.net_edge.value())
+        .bind(validation.fee_estimate.value())
+        .bind(validation.slippage_buffer.value())
+        .bind(validation.validated_capacity.value())
+        .bind(i64::try_from(validation.book_age_ms).unwrap_or(i64::MAX))
+        .bind(Json(validation.reason_codes.clone()))
+        .bind(Json(validation.validation_payload.clone()))
+        .bind(validation.validated_at)
+        .bind(&validation.trace_id)
+        .execute(&self.pool)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_UPSERT_FAILED",
+                format!(
+                    "failed to record arbitrage opportunity validation {}: {error}",
+                    validation.id
+                ),
+            )
+        })?;
+
+        Ok(())
+    }
+
+    async fn expire_arbitrage_opportunities(
+        &self,
+        observed_before: OffsetDateTime,
+        trace_id: &str,
+    ) -> Result<Vec<ArbitrageOpportunityView>> {
+        let rows = sqlx::query(
+            r#"
+            UPDATE arbitrage_opportunities
+            SET
+              status = 'expired',
+              trace_id = $2
+            WHERE observed_at < $1
+              AND status <> 'expired'
+            RETURNING
+              id,
+              scan_id,
+              market_id,
+              opportunity_type,
+              status,
+              gross_edge,
+              price_sum,
+              capacity,
+              yes_price,
+              no_price,
+              yes_size,
+              no_size,
+              observed_at,
+              reason_codes_json,
+              analysis_payload_json,
+              trace_id,
+              NULL::TEXT AS validation_id,
+              NULL::TEXT AS validation_status,
+              NULL::NUMERIC AS validation_gross_edge,
+              NULL::NUMERIC AS validation_net_edge,
+              NULL::NUMERIC AS validation_fee_estimate,
+              NULL::NUMERIC AS validation_slippage_buffer,
+              NULL::NUMERIC AS validation_validated_capacity,
+              NULL::BIGINT AS validation_book_age_ms,
+              NULL::JSONB AS validation_reason_codes_json,
+              NULL::JSONB AS validation_payload_json,
+              NULL::TIMESTAMPTZ AS validation_validated_at,
+              NULL::TEXT AS validation_trace_id
+            "#,
+        )
+        .bind(observed_before)
+        .bind(trace_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_UPDATE_FAILED",
+                format!("failed to expire arbitrage opportunities: {error}"),
+            )
+        })?;
+
+        rows.iter().map(parse_arbitrage_opportunity_row).collect()
+    }
+
+    async fn list_arbitrage_scans(
+        &self,
+        filters: &ArbitrageScanListFilters,
+    ) -> Result<Vec<ArbitrageScanView>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT
+              id,
+              started_at,
+              finished_at,
+              market_count,
+              snapshot_count,
+              opportunity_count,
+              scanner_version,
+              metadata_json,
+              trace_id
+            FROM arbitrage_scans
+            ORDER BY started_at DESC, id ASC
+            LIMIT $1
+            "#,
+        )
+        .bind(i64::from(filters.limit))
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_QUERY_FAILED",
+                format!("failed to list arbitrage scans: {error}"),
+            )
+        })?;
+
+        rows.iter().map(parse_arbitrage_scan_row).collect()
+    }
+
+    async fn list_arbitrage_opportunities(
+        &self,
+        filters: &ArbitrageOpportunityListFilters,
+    ) -> Result<Vec<ArbitrageOpportunityView>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT
+              o.id,
+              o.scan_id,
+              o.market_id,
+              o.opportunity_type,
+              o.status,
+              o.gross_edge,
+              o.price_sum,
+              o.capacity,
+              o.yes_price,
+              o.no_price,
+              o.yes_size,
+              o.no_size,
+              o.observed_at,
+              o.reason_codes_json,
+              o.analysis_payload_json,
+              o.trace_id,
+              v.id AS validation_id,
+              v.status AS validation_status,
+              v.gross_edge AS validation_gross_edge,
+              v.net_edge AS validation_net_edge,
+              v.fee_estimate AS validation_fee_estimate,
+              v.slippage_buffer AS validation_slippage_buffer,
+              v.validated_capacity AS validation_validated_capacity,
+              v.book_age_ms AS validation_book_age_ms,
+              v.reason_codes_json AS validation_reason_codes_json,
+              v.validation_payload_json AS validation_payload_json,
+              v.validated_at AS validation_validated_at,
+              v.trace_id AS validation_trace_id
+            FROM arbitrage_opportunities o
+            LEFT JOIN LATERAL (
+              SELECT
+                id,
+                opportunity_id,
+                status,
+                gross_edge,
+                net_edge,
+                fee_estimate,
+                slippage_buffer,
+                validated_capacity,
+                book_age_ms,
+                reason_codes_json,
+                validation_payload_json,
+                validated_at,
+                trace_id
+              FROM arbitrage_opportunity_validations
+              WHERE opportunity_id = o.id
+              ORDER BY validated_at DESC, id ASC
+              LIMIT 1
+            ) v ON TRUE
+            WHERE ($1::TEXT IS NULL OR o.market_id = $1)
+              AND ($2::TEXT IS NULL OR o.opportunity_type = $2)
+              AND ($3::TIMESTAMPTZ IS NULL OR o.observed_at >= $3)
+            ORDER BY o.observed_at DESC, o.id ASC
+            LIMIT $4
+            "#,
+        )
+        .bind(filters.market_id.as_deref())
+        .bind(
+            filters
+                .opportunity_type
+                .map(ArbitrageOpportunityType::as_str),
+        )
+        .bind(filters.observed_after)
+        .bind(i64::from(filters.limit))
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_QUERY_FAILED",
+                format!("failed to list arbitrage opportunities: {error}"),
+            )
+        })?;
+
+        rows.iter().map(parse_arbitrage_opportunity_row).collect()
+    }
+
+    async fn record_arbitrage_analysis_run(
+        &self,
+        analysis: &ArbitrageAnalysisRunView,
+    ) -> Result<()> {
+        sqlx::query(
+            r#"
+            INSERT INTO arbitrage_analysis_runs (
+              id,
+              generated_at,
+              lookback_hours,
+              opportunity_count,
+              market_count,
+              summary_payload_json,
+              trace_id
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            ON CONFLICT (id) DO UPDATE
+            SET
+              generated_at = EXCLUDED.generated_at,
+              lookback_hours = EXCLUDED.lookback_hours,
+              opportunity_count = EXCLUDED.opportunity_count,
+              market_count = EXCLUDED.market_count,
+              summary_payload_json = EXCLUDED.summary_payload_json,
+              trace_id = EXCLUDED.trace_id
+            "#,
+        )
+        .bind(&analysis.id)
+        .bind(analysis.generated_at)
+        .bind(i64::from(analysis.lookback_hours))
+        .bind(i64::from(analysis.opportunity_count))
+        .bind(i64::from(analysis.market_count))
+        .bind(Json(analysis.summary_payload.clone()))
+        .bind(&analysis.trace_id)
+        .execute(&self.pool)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_UPSERT_FAILED",
+                format!(
+                    "failed to record arbitrage analysis run {}: {error}",
+                    analysis.id
+                ),
+            )
+        })?;
+
+        Ok(())
+    }
+
+    async fn list_arbitrage_analysis_runs(
+        &self,
+        filters: &ArbitrageAnalysisRunListFilters,
+    ) -> Result<Vec<ArbitrageAnalysisRunView>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT
+              id,
+              generated_at,
+              lookback_hours,
+              opportunity_count,
+              market_count,
+              summary_payload_json,
+              trace_id
+            FROM arbitrage_analysis_runs
+            ORDER BY generated_at DESC, id ASC
+            LIMIT $1
+            "#,
+        )
+        .bind(i64::from(filters.limit))
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_QUERY_FAILED",
+                format!("failed to list arbitrage analysis runs: {error}"),
+            )
+        })?;
+
+        rows.iter().map(parse_arbitrage_analysis_run_row).collect()
+    }
+
+    async fn record_arbitrage_event(
+        &self,
+        event: &ArbitrageEventView,
+    ) -> Result<ArbitrageEventView> {
+        let row = sqlx::query(
+            r#"
+            INSERT INTO arbitrage_events (
+              id,
+              event_type,
+              resource_type,
+              resource_id,
+              payload_json,
+              occurred_at,
+              trace_id
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            ON CONFLICT (id) DO UPDATE
+            SET
+              event_type = EXCLUDED.event_type,
+              resource_type = EXCLUDED.resource_type,
+              resource_id = EXCLUDED.resource_id,
+              payload_json = EXCLUDED.payload_json,
+              occurred_at = EXCLUDED.occurred_at,
+              trace_id = EXCLUDED.trace_id
+            RETURNING
+              sequence,
+              id,
+              event_type,
+              resource_type,
+              resource_id,
+              payload_json,
+              occurred_at,
+              trace_id
+            "#,
+        )
+        .bind(&event.id)
+        .bind(event.event_type.as_str())
+        .bind(&event.resource_type)
+        .bind(&event.resource_id)
+        .bind(Json(event.payload.clone()))
+        .bind(event.occurred_at)
+        .bind(&event.trace_id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_UPSERT_FAILED",
+                format!("failed to record arbitrage event {}: {error}", event.id),
+            )
+        })?;
+
+        parse_arbitrage_event_row(&row)
+    }
+
+    async fn list_arbitrage_events(
+        &self,
+        filters: &ArbitrageEventListFilters,
+    ) -> Result<Vec<ArbitrageEventView>> {
+        let after_sequence = filters
+            .after_sequence
+            .map(|sequence| {
+                i64::try_from(sequence).map_err(|error| {
+                    AppError::invalid_input(
+                        "ARBITRAGE_EVENT_SEQUENCE_OUT_OF_RANGE",
+                        format!("arbitrage event sequence does not fit i64: {error}"),
+                    )
+                })
+            })
+            .transpose()?;
+        let rows = sqlx::query(
+            r#"
+            SELECT
+              sequence,
+              id,
+              event_type,
+              resource_type,
+              resource_id,
+              payload_json,
+              occurred_at,
+              trace_id
+            FROM arbitrage_events
+            WHERE ($1::BIGINT IS NULL OR sequence > $1)
+            ORDER BY sequence ASC
+            LIMIT $2
+            "#,
+        )
+        .bind(after_sequence)
+        .bind(i64::from(filters.limit))
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_QUERY_FAILED",
+                format!("failed to list arbitrage events: {error}"),
+            )
+        })?;
+
+        rows.iter().map(parse_arbitrage_event_row).collect()
     }
 }
 
@@ -5777,6 +6658,212 @@ fn parse_news_raw_event_row(row: &sqlx::postgres::PgRow) -> Result<NewsRawEventV
     })
 }
 
+fn parse_arbitrage_scan_row(row: &sqlx::postgres::PgRow) -> Result<ArbitrageScanView> {
+    let metadata_json: Json<Value> = decode_column(row, "metadata_json")?;
+    let market_count: i32 = decode_column(row, "market_count")?;
+    let snapshot_count: i32 = decode_column(row, "snapshot_count")?;
+    let opportunity_count: i32 = decode_column(row, "opportunity_count")?;
+
+    Ok(ArbitrageScanView {
+        id: decode_column(row, "id")?,
+        started_at: decode_column(row, "started_at")?,
+        finished_at: decode_column(row, "finished_at")?,
+        market_count: nonnegative_i32_to_u32("market_count", market_count)?,
+        snapshot_count: nonnegative_i32_to_u32("snapshot_count", snapshot_count)?,
+        opportunity_count: nonnegative_i32_to_u32("opportunity_count", opportunity_count)?,
+        scanner_version: decode_column(row, "scanner_version")?,
+        metadata: metadata_json.0,
+        trace_id: decode_column(row, "trace_id")?,
+    })
+}
+
+fn parse_arbitrage_opportunity_row(
+    row: &sqlx::postgres::PgRow,
+) -> Result<ArbitrageOpportunityView> {
+    let opportunity_type_raw: String = decode_column(row, "opportunity_type")?;
+    let status_raw: String = decode_column(row, "status")?;
+    let gross_edge: Decimal = decode_column(row, "gross_edge")?;
+    let price_sum: Decimal = decode_column(row, "price_sum")?;
+    let capacity: Decimal = decode_column(row, "capacity")?;
+    let yes_price: Decimal = decode_column(row, "yes_price")?;
+    let no_price: Decimal = decode_column(row, "no_price")?;
+    let yes_size: Decimal = decode_column(row, "yes_size")?;
+    let no_size: Decimal = decode_column(row, "no_size")?;
+    let reason_codes_json: Json<Vec<String>> = decode_column(row, "reason_codes_json")?;
+    let analysis_payload_json: Json<Value> = decode_column(row, "analysis_payload_json")?;
+
+    Ok(ArbitrageOpportunityView {
+        id: decode_column(row, "id")?,
+        scan_id: decode_column(row, "scan_id")?,
+        market_id: decode_column(row, "market_id")?,
+        opportunity_type: ArbitrageOpportunityType::from_str(&opportunity_type_raw).map_err(
+            |error| {
+                db_error(
+                    "POSTGRES_DECODE_FAILED",
+                    format!("failed to decode arbitrage opportunity_type: {error}"),
+                )
+            },
+        )?,
+        status: ArbitrageOpportunityStatus::from_str(&status_raw).map_err(|error| {
+            db_error(
+                "POSTGRES_DECODE_FAILED",
+                format!("failed to decode arbitrage opportunity status: {error}"),
+            )
+        })?,
+        gross_edge: Edge::new(gross_edge).map_err(|error| {
+            db_error(
+                "POSTGRES_DECODE_FAILED",
+                format!("failed to decode arbitrage gross_edge: {error}"),
+            )
+        })?,
+        price_sum,
+        capacity: Quantity::new(capacity).map_err(|error| {
+            db_error(
+                "POSTGRES_DECODE_FAILED",
+                format!("failed to decode arbitrage capacity: {error}"),
+            )
+        })?,
+        yes_price: Probability::new(yes_price).map_err(|error| {
+            db_error(
+                "POSTGRES_DECODE_FAILED",
+                format!("failed to decode arbitrage yes_price: {error}"),
+            )
+        })?,
+        no_price: Probability::new(no_price).map_err(|error| {
+            db_error(
+                "POSTGRES_DECODE_FAILED",
+                format!("failed to decode arbitrage no_price: {error}"),
+            )
+        })?,
+        yes_size: Quantity::new(yes_size).map_err(|error| {
+            db_error(
+                "POSTGRES_DECODE_FAILED",
+                format!("failed to decode arbitrage yes_size: {error}"),
+            )
+        })?,
+        no_size: Quantity::new(no_size).map_err(|error| {
+            db_error(
+                "POSTGRES_DECODE_FAILED",
+                format!("failed to decode arbitrage no_size: {error}"),
+            )
+        })?,
+        observed_at: decode_column(row, "observed_at")?,
+        reason_codes: reason_codes_json.0,
+        analysis_payload: analysis_payload_json.0,
+        trace_id: decode_column(row, "trace_id")?,
+        validation: parse_arbitrage_validation_from_row(row)?,
+    })
+}
+
+fn parse_arbitrage_validation_from_row(
+    row: &sqlx::postgres::PgRow,
+) -> Result<Option<ArbitrageOpportunityValidationView>> {
+    let Some(id) = decode_column::<Option<String>>(row, "validation_id")? else {
+        return Ok(None);
+    };
+    let status_raw = required_optional_column::<String>(row, "validation_status", &id)?;
+    let gross_edge = required_optional_column::<Decimal>(row, "validation_gross_edge", &id)?;
+    let net_edge = required_optional_column::<Decimal>(row, "validation_net_edge", &id)?;
+    let fee_estimate = required_optional_column::<Decimal>(row, "validation_fee_estimate", &id)?;
+    let slippage_buffer =
+        required_optional_column::<Decimal>(row, "validation_slippage_buffer", &id)?;
+    let validated_capacity =
+        required_optional_column::<Decimal>(row, "validation_validated_capacity", &id)?;
+    let book_age_ms = required_optional_column::<i64>(row, "validation_book_age_ms", &id)?;
+    let reason_codes_json =
+        required_optional_column::<Json<Vec<String>>>(row, "validation_reason_codes_json", &id)?;
+    let validation_payload_json =
+        required_optional_column::<Json<Value>>(row, "validation_payload_json", &id)?;
+
+    Ok(Some(ArbitrageOpportunityValidationView {
+        id,
+        opportunity_id: decode_column(row, "id")?,
+        status: ArbitrageValidationStatus::from_str(&status_raw).map_err(|error| {
+            db_error(
+                "POSTGRES_DECODE_FAILED",
+                format!("failed to decode arbitrage validation status: {error}"),
+            )
+        })?,
+        gross_edge: Edge::new(gross_edge).map_err(|error| {
+            db_error(
+                "POSTGRES_DECODE_FAILED",
+                format!("failed to decode arbitrage validation gross_edge: {error}"),
+            )
+        })?,
+        net_edge: Edge::new(net_edge).map_err(|error| {
+            db_error(
+                "POSTGRES_DECODE_FAILED",
+                format!("failed to decode arbitrage validation net_edge: {error}"),
+            )
+        })?,
+        fee_estimate: Edge::new(fee_estimate).map_err(|error| {
+            db_error(
+                "POSTGRES_DECODE_FAILED",
+                format!("failed to decode arbitrage validation fee_estimate: {error}"),
+            )
+        })?,
+        slippage_buffer: Edge::new(slippage_buffer).map_err(|error| {
+            db_error(
+                "POSTGRES_DECODE_FAILED",
+                format!("failed to decode arbitrage validation slippage_buffer: {error}"),
+            )
+        })?,
+        validated_capacity: Quantity::new(validated_capacity).map_err(|error| {
+            db_error(
+                "POSTGRES_DECODE_FAILED",
+                format!("failed to decode arbitrage validation capacity: {error}"),
+            )
+        })?,
+        book_age_ms: i64_to_u64("validation_book_age_ms", book_age_ms)?,
+        reason_codes: reason_codes_json.0,
+        validation_payload: validation_payload_json.0,
+        validated_at: required_optional_column(row, "validation_validated_at", "validation")?,
+        trace_id: required_optional_column(row, "validation_trace_id", "validation")?,
+    }))
+}
+
+fn parse_arbitrage_analysis_run_row(
+    row: &sqlx::postgres::PgRow,
+) -> Result<ArbitrageAnalysisRunView> {
+    let lookback_hours: i32 = decode_column(row, "lookback_hours")?;
+    let opportunity_count: i32 = decode_column(row, "opportunity_count")?;
+    let market_count: i32 = decode_column(row, "market_count")?;
+    let summary_payload_json: Json<Value> = decode_column(row, "summary_payload_json")?;
+
+    Ok(ArbitrageAnalysisRunView {
+        id: decode_column(row, "id")?,
+        generated_at: decode_column(row, "generated_at")?,
+        lookback_hours: nonnegative_i32_to_u32("lookback_hours", lookback_hours)?
+            .min(u32::from(u16::MAX)) as u16,
+        opportunity_count: nonnegative_i32_to_u32("opportunity_count", opportunity_count)?,
+        market_count: nonnegative_i32_to_u32("market_count", market_count)?,
+        summary_payload: summary_payload_json.0,
+        trace_id: decode_column(row, "trace_id")?,
+    })
+}
+
+fn parse_arbitrage_event_row(row: &sqlx::postgres::PgRow) -> Result<ArbitrageEventView> {
+    let sequence: i64 = decode_column(row, "sequence")?;
+    let event_type_raw: String = decode_column(row, "event_type")?;
+    let payload_json: Json<Value> = decode_column(row, "payload_json")?;
+
+    Ok(ArbitrageEventView {
+        sequence: i64_to_u64("sequence", sequence)?,
+        id: decode_column(row, "id")?,
+        event_type: ArbitrageEventType::from_str(&event_type_raw).map_err(|error| {
+            db_error(
+                "POSTGRES_DECODE_FAILED",
+                format!("failed to decode arbitrage event type: {error}"),
+            )
+        })?,
+        resource_type: decode_column(row, "resource_type")?,
+        resource_id: decode_column(row, "resource_id")?,
+        payload: payload_json.0,
+        occurred_at: decode_column(row, "occurred_at")?,
+        trace_id: decode_column(row, "trace_id")?,
+    })
+}
+
 fn parse_event_row(row: &sqlx::postgres::PgRow) -> Result<EventView> {
     let status_raw: String = decode_column(row, "status")?;
     let relevance_score: Decimal = decode_column(row, "relevance_score")?;
@@ -6565,8 +7652,49 @@ fn i64_to_u64(column: &str, value: i64) -> Result<u64> {
     })
 }
 
+fn nonnegative_i32_to_u32(column: &str, value: i32) -> Result<u32> {
+    u32::try_from(value).map_err(|error| {
+        db_error(
+            "POSTGRES_DECODE_FAILED",
+            format!("failed to decode column {column} as nonnegative count: {error}"),
+        )
+    })
+}
+
+fn latest_validation_for_opportunity(
+    validations: &HashMap<String, ArbitrageOpportunityValidationView>,
+    opportunity_id: &str,
+) -> Option<ArbitrageOpportunityValidationView> {
+    validations
+        .values()
+        .filter(|validation| validation.opportunity_id == opportunity_id)
+        .max_by(|left, right| {
+            left.validated_at
+                .cmp(&right.validated_at)
+                .then_with(|| left.id.cmp(&right.id))
+        })
+        .cloned()
+}
+
 fn clamped_error_message(value: &str) -> String {
     value.chars().take(1_000).collect()
+}
+
+fn required_optional_column<T>(
+    row: &sqlx::postgres::PgRow,
+    column: &str,
+    context: &str,
+) -> Result<T>
+where
+    T: for<'r> sqlx::Decode<'r, sqlx::Postgres> + sqlx::Type<sqlx::Postgres>,
+{
+    let value: Option<T> = decode_column(row, column)?;
+    value.ok_or_else(|| {
+        db_error(
+            "POSTGRES_DECODE_FAILED",
+            format!("missing column {column} while decoding {context}"),
+        )
+    })
 }
 
 fn decode_column<T>(row: &sqlx::postgres::PgRow, column: &str) -> Result<T>

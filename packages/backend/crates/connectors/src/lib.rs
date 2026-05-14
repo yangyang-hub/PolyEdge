@@ -17,9 +17,10 @@ pub use polymarket::{
     MockPolymarketConnector, MockPolymarketExecutionOutcome, MockPolymarketFillRequest,
     MockPolymarketOrderRequest, MockPolymarketOrderStatusPayload, MockPolymarketOrderStatusRequest,
     MockPolymarketTradePayload, POLYMARKET_ACCOUNT_ID, POLYMARKET_CONNECTOR_NAME,
-    PolymarketMarketRefs, PolymarketSignatureScheme, normalize_polymarket_order_status_update,
-    normalize_polymarket_trade_fill_update, normalize_polymarket_ws_order_message,
-    normalize_polymarket_ws_trade_message,
+    PolymarketBinaryBookSnapshot, PolymarketBookConnector, PolymarketBookLevel,
+    PolymarketMarketRefs, PolymarketSignatureScheme, PolymarketSingleTokenBook,
+    normalize_polymarket_order_status_update, normalize_polymarket_trade_fill_update,
+    normalize_polymarket_ws_order_message, normalize_polymarket_ws_trade_message,
 };
 
 pub const PAPER_EXECUTOR_NAME: &str = "paper_executor";

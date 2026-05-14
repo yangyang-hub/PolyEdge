@@ -1,6 +1,6 @@
 use config::{Config, Environment};
 use polyedge_domain::{
-    AppError, ExposureRatio, Probability, SignedUsdAmount, SystemMode, UsdAmount,
+    AppError, Edge, ExposureRatio, Probability, Quantity, SignedUsdAmount, SystemMode, UsdAmount,
 };
 use serde::Deserialize;
 
@@ -16,6 +16,7 @@ pub struct Settings {
     pub runtime: RuntimeSettings,
     pub risk: RiskSettings,
     pub polymarket: PolymarketSettings,
+    pub arbitrage: ArbitrageSettings,
     pub news: NewsSettings,
     pub auth: AuthSettings,
 }
@@ -100,6 +101,23 @@ pub struct PolymarketSettings {
     pub ws_max_instruments: usize,
     pub ws_idle_warn_secs: u64,
     pub ws_stale_after_secs: u64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct ArbitrageSettings {
+    pub enabled: bool,
+    pub poll_interval_secs: u64,
+    pub scan_limit: u16,
+    pub scanner_version: String,
+    pub book_source: String,
+    pub analysis_lookback_hours: u16,
+    pub max_book_age_ms: u64,
+    pub opportunity_ttl_secs: u64,
+    pub min_gross_edge: Edge,
+    pub min_capacity: Quantity,
+    pub fee_buffer: Edge,
+    pub slippage_buffer: Edge,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -215,6 +233,25 @@ impl Default for PolymarketSettings {
             ws_max_instruments: 100,
             ws_idle_warn_secs: 15,
             ws_stale_after_secs: 60,
+        }
+    }
+}
+
+impl Default for ArbitrageSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            poll_interval_secs: 5,
+            scan_limit: 100,
+            scanner_version: "v1".to_string(),
+            book_source: "market_snapshot".to_string(),
+            analysis_lookback_hours: 24,
+            max_book_age_ms: 10_000,
+            opportunity_ttl_secs: 60,
+            min_gross_edge: edge("0.005"),
+            min_capacity: quantity("1"),
+            fee_buffer: edge("0.005"),
+            slippage_buffer: edge("0.005"),
         }
     }
 }
@@ -359,6 +396,14 @@ fn probability(value: &str) -> Probability {
     Probability::new(decimal(value)).expect("static backend configuration default must be valid")
 }
 
+fn edge(value: &str) -> Edge {
+    Edge::new(decimal(value)).expect("static backend configuration default must be valid")
+}
+
+fn quantity(value: &str) -> Quantity {
+    Quantity::new(decimal(value)).expect("static backend configuration default must be valid")
+}
+
 fn exposure_ratio(value: &str) -> ExposureRatio {
     ExposureRatio::new(decimal(value)).expect("static backend configuration default must be valid")
 }
@@ -374,7 +419,7 @@ fn signed_usd_amount(value: &str) -> SignedUsdAmount {
 
 #[cfg(test)]
 mod tests {
-    use super::{Settings, environment_source};
+    use super::{Settings, edge, environment_source, quantity};
     use std::collections::HashMap;
 
     #[test]
@@ -398,6 +443,18 @@ mod tests {
         assert_eq!(settings.news.request_timeout_secs, 10);
         assert_eq!(settings.news.max_items_per_source, 50);
         assert!(settings.news.sources.is_empty());
+        assert!(!settings.arbitrage.enabled);
+        assert_eq!(settings.arbitrage.poll_interval_secs, 5);
+        assert_eq!(settings.arbitrage.scan_limit, 100);
+        assert_eq!(settings.arbitrage.scanner_version, "v1");
+        assert_eq!(settings.arbitrage.book_source, "market_snapshot");
+        assert_eq!(settings.arbitrage.analysis_lookback_hours, 24);
+        assert_eq!(settings.arbitrage.max_book_age_ms, 10_000);
+        assert_eq!(settings.arbitrage.opportunity_ttl_secs, 60);
+        assert_eq!(settings.arbitrage.min_gross_edge, edge("0.005"));
+        assert_eq!(settings.arbitrage.min_capacity, quantity("1"));
+        assert_eq!(settings.arbitrage.fee_buffer, edge("0.005"));
+        assert_eq!(settings.arbitrage.slippage_buffer, edge("0.005"));
         assert!(settings.postgres.url.is_none());
         assert!(settings.redis.url.is_none());
         assert_eq!(
@@ -427,6 +484,54 @@ mod tests {
                 "true".to_string(),
             ),
             ("POLYEDGE_POLYMARKET__MODE".to_string(), "live".to_string()),
+            (
+                "POLYEDGE_ARBITRAGE__ENABLED".to_string(),
+                "true".to_string(),
+            ),
+            (
+                "POLYEDGE_ARBITRAGE__POLL_INTERVAL_SECS".to_string(),
+                "7".to_string(),
+            ),
+            (
+                "POLYEDGE_ARBITRAGE__SCAN_LIMIT".to_string(),
+                "42".to_string(),
+            ),
+            (
+                "POLYEDGE_ARBITRAGE__SCANNER_VERSION".to_string(),
+                "v_test".to_string(),
+            ),
+            (
+                "POLYEDGE_ARBITRAGE__BOOK_SOURCE".to_string(),
+                "polymarket".to_string(),
+            ),
+            (
+                "POLYEDGE_ARBITRAGE__ANALYSIS_LOOKBACK_HOURS".to_string(),
+                "12".to_string(),
+            ),
+            (
+                "POLYEDGE_ARBITRAGE__MAX_BOOK_AGE_MS".to_string(),
+                "2500".to_string(),
+            ),
+            (
+                "POLYEDGE_ARBITRAGE__OPPORTUNITY_TTL_SECS".to_string(),
+                "15".to_string(),
+            ),
+            (
+                "POLYEDGE_ARBITRAGE__MIN_GROSS_EDGE".to_string(),
+                "0.02".to_string(),
+            ),
+            (
+                "POLYEDGE_ARBITRAGE__MIN_CAPACITY".to_string(),
+                "50".to_string(),
+            ),
+            (
+                "POLYEDGE_ARBITRAGE__FEE_BUFFER".to_string(),
+                "0.003".to_string(),
+            ),
+            (
+                "POLYEDGE_ARBITRAGE__SLIPPAGE_BUFFER".to_string(),
+                "0.004".to_string(),
+            ),
             (
                 "POLYEDGE_POLYMARKET__PRIVATE_KEY".to_string(),
                 "".to_string(),
@@ -467,6 +572,18 @@ mod tests {
             super::PolymarketConnectorMode::Live
         );
         assert!(settings.polymarket.private_key.is_none());
+        assert!(settings.arbitrage.enabled);
+        assert_eq!(settings.arbitrage.poll_interval_secs, 7);
+        assert_eq!(settings.arbitrage.scan_limit, 42);
+        assert_eq!(settings.arbitrage.scanner_version, "v_test");
+        assert_eq!(settings.arbitrage.book_source, "polymarket");
+        assert_eq!(settings.arbitrage.analysis_lookback_hours, 12);
+        assert_eq!(settings.arbitrage.max_book_age_ms, 2500);
+        assert_eq!(settings.arbitrage.opportunity_ttl_secs, 15);
+        assert_eq!(settings.arbitrage.min_gross_edge, edge("0.02"));
+        assert_eq!(settings.arbitrage.min_capacity, quantity("50"));
+        assert_eq!(settings.arbitrage.fee_buffer, edge("0.003"));
+        assert_eq!(settings.arbitrage.slippage_buffer, edge("0.004"));
         assert_eq!(
             settings.auth.revoked_sessions,
             vec!["sess_alpha".to_string(), "sess_beta".to_string()],

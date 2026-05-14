@@ -1,12 +1,14 @@
 use futures::StreamExt as _;
 use polyedge_application::{
-    AuthenticatedActor, DispatchExecutionListFilters, ExecutionDispatchCandidate,
-    ExecutionReconciliationCandidate, FixtureBundle, FixtureEventRecord, FixtureEvidenceRecord,
-    MarkExecutionFailedCommand, MarkExecutionSubmittedCommand, MarketListFilters, MarketView,
+    ArbitrageAnalysisRunView, ArbitrageOpportunityListFilters, ArbitrageScanView,
+    ArbitrageValidationConfig, AuthenticatedActor, DispatchExecutionListFilters,
+    ExecutionDispatchCandidate, ExecutionReconciliationCandidate, FixtureBundle,
+    FixtureEventRecord, FixtureEvidenceRecord, MarkExecutionFailedCommand,
+    MarkExecutionSubmittedCommand, MarketBookSnapshotView, MarketListFilters, MarketView,
     NewsIngestSourceCommand, NewsIngestionItem, NewsRawEventListFilters, NewsRawEventView,
     NewsSourceFailureUpdate, NewsSourceHealthListFilters, NewsSourceHealthView, OrderListFilters,
     ReconcileExecutionListFilters, ReconcileExternalTradeCommand, SyncExternalOrderStatusCommand,
-    demo_fixture_bundle,
+    build_arbitrage_analysis, demo_fixture_bundle, market_book_snapshot_id,
 };
 use polyedge_connectors::{
     ConnectorNewsItem, LivePolymarketConfig, LivePolymarketConnector,
@@ -15,14 +17,15 @@ use polyedge_connectors::{
     MockPolymarketFillRequest, MockPolymarketOrderRequest, MockPolymarketOrderStatusRequest,
     NewsSource, PAPER_ACCOUNT_ID, PAPER_EXECUTOR_NAME, POLYMARKET_ACCOUNT_ID,
     POLYMARKET_CONNECTOR_NAME, PaperExecutionOutcome, PaperExecutor, PaperFillRequest,
-    PaperOrderRequest, PaperOrderStatusRequest, PolymarketMarketRefs, PolymarketSignatureScheme,
+    PaperOrderRequest, PaperOrderStatusRequest, PolymarketBinaryBookSnapshot,
+    PolymarketBookConnector, PolymarketBookLevel, PolymarketMarketRefs, PolymarketSignatureScheme,
     RssNewsConnector, RssNewsSourceConfig, normalize_polymarket_order_status_update,
     normalize_polymarket_trade_fill_update, normalize_polymarket_ws_order_message,
     normalize_polymarket_ws_trade_message,
 };
 use polyedge_domain::{
-    AppError, EventStatus, EvidenceDirection, EvidenceStatus, OrderStatus, Probability, Quantity,
-    Result, UserRole,
+    AppError, EventStatus, EvidenceDirection, EvidenceStatus, MarketStatus, OrderStatus,
+    Probability, Quantity, Result, UserRole,
 };
 use polyedge_infrastructure::{
     AppState, Runtime, new_trace_id,
@@ -32,6 +35,7 @@ use polyedge_infrastructure::{
 use polymarket_client_sdk::clob::ws::WsMessage;
 use polymarket_client_sdk::types::B256;
 use rust_decimal::Decimal;
+use serde_json::json;
 use std::{
     collections::{HashMap, HashSet},
     time::Duration,
@@ -91,6 +95,16 @@ struct NewsPromotionReport {
     promoted: usize,
     evidences_promoted: usize,
     skipped_unmatched: usize,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+struct ArbitrageScanRunReport {
+    markets_scanned: usize,
+    snapshots_recorded: usize,
+    opportunities_recorded: usize,
+    validations_recorded: usize,
+    opportunities_expired: usize,
+    failed_books: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -186,6 +200,52 @@ async fn main() -> Result<()> {
                 evidences_promoted = report.evidences_promoted,
                 skipped_unmatched = report.skipped_unmatched,
                 "promoted raw news into event and evidence candidates",
+            );
+            Ok(())
+        }
+        Some("scan-arbitrage-once") => {
+            let trace_id = new_trace_id();
+            let report = scan_arbitrage_once(&state, &trace_id).await?;
+            info!(
+                trace_id = %trace_id,
+                markets_scanned = report.markets_scanned,
+                snapshots_recorded = report.snapshots_recorded,
+                opportunities_recorded = report.opportunities_recorded,
+                validations_recorded = report.validations_recorded,
+                opportunities_expired = report.opportunities_expired,
+                failed_books = report.failed_books,
+                "scanned arbitrage radar once",
+            );
+            Ok(())
+        }
+        Some("poll-arbitrage-radar") => {
+            let max_cycles = parse_limit_arg(args.next())?.map(usize::from);
+            let report = poll_arbitrage_radar(&state, max_cycles).await?;
+            info!(
+                markets_scanned = report.markets_scanned,
+                snapshots_recorded = report.snapshots_recorded,
+                opportunities_recorded = report.opportunities_recorded,
+                validations_recorded = report.validations_recorded,
+                opportunities_expired = report.opportunities_expired,
+                failed_books = report.failed_books,
+                "arbitrage radar polling stopped",
+            );
+            Ok(())
+        }
+        Some("analyze-arbitrage-opportunities") => {
+            let trace_id = new_trace_id();
+            let lookback_hours = parse_limit_arg(args.next())?
+                .unwrap_or(state.settings.arbitrage.analysis_lookback_hours);
+            let analysis =
+                analyze_arbitrage_opportunities(&state, lookback_hours, &trace_id).await?;
+            info!(
+                trace_id = %trace_id,
+                analysis_id = %analysis.id,
+                lookback_hours = analysis.lookback_hours,
+                opportunity_count = analysis.opportunity_count,
+                market_count = analysis.market_count,
+                summary = %analysis.summary_payload,
+                "analyzed arbitrage opportunity history",
             );
             Ok(())
         }
@@ -571,6 +631,318 @@ async fn promote_news_events(
         .await?;
 
     Ok(report)
+}
+
+async fn scan_arbitrage_once(state: &AppState, trace_id: &str) -> Result<ArbitrageScanRunReport> {
+    let started_at = OffsetDateTime::now_utc();
+    let scan_id = format!("scan_{}", trace_id.trim_start_matches("trc_"));
+    let book_source = state.settings.arbitrage.book_source.trim();
+    let scan = ArbitrageScanView {
+        id: scan_id.clone(),
+        started_at,
+        finished_at: None,
+        market_count: 0,
+        snapshot_count: 0,
+        opportunity_count: 0,
+        scanner_version: state.settings.arbitrage.scanner_version.clone(),
+        metadata: json!({
+            "book_source": book_source,
+            "scan_limit": state.settings.arbitrage.scan_limit,
+        }),
+        trace_id: trace_id.to_string(),
+    };
+    state.arbitrage_service.start_scan(scan).await?;
+
+    let validation_config = arbitrage_validation_config(state);
+    let markets = state
+        .market_event_service
+        .list_markets(MarketListFilters::new(
+            Some(MarketStatus::Open),
+            None,
+            Some(state.settings.arbitrage.scan_limit),
+        )?)
+        .await?;
+    let book_feed = build_arbitrage_book_feed(state)?;
+    let mut report = ArbitrageScanRunReport {
+        markets_scanned: markets.len(),
+        ..ArbitrageScanRunReport::default()
+    };
+    let expired_before =
+        started_at - duration_seconds(state.settings.arbitrage.opportunity_ttl_secs);
+    let expired = state
+        .arbitrage_service
+        .expire_opportunities(expired_before, trace_id)
+        .await?;
+    report.opportunities_expired += expired.len();
+
+    for market in markets {
+        let snapshot =
+            match build_arbitrage_book_snapshot(&book_feed, &market, &scan_id, trace_id).await {
+                Ok(snapshot) => snapshot,
+                Err(error) => {
+                    report.failed_books += 1;
+                    warn!(
+                        trace_id,
+                        market_id = %market.id,
+                        error = %error,
+                        "failed to build arbitrage book snapshot",
+                    );
+                    continue;
+                }
+            };
+
+        let opportunities = state
+            .arbitrage_service
+            .record_snapshot_and_detect(snapshot.clone())
+            .await?;
+        report.snapshots_recorded += 1;
+        report.opportunities_recorded += opportunities.len();
+
+        for opportunity in &opportunities {
+            state
+                .arbitrage_service
+                .validate_opportunity(
+                    opportunity,
+                    &snapshot,
+                    &validation_config,
+                    OffsetDateTime::now_utc(),
+                )
+                .await?;
+            report.validations_recorded += 1;
+        }
+    }
+
+    state
+        .arbitrage_service
+        .complete_scan(
+            &scan_id,
+            OffsetDateTime::now_utc(),
+            u32::try_from(report.markets_scanned).unwrap_or(u32::MAX),
+            u32::try_from(report.snapshots_recorded).unwrap_or(u32::MAX),
+            u32::try_from(report.opportunities_recorded).unwrap_or(u32::MAX),
+        )
+        .await?;
+
+    Ok(report)
+}
+
+async fn poll_arbitrage_radar(
+    state: &AppState,
+    max_cycles: Option<usize>,
+) -> Result<ArbitrageScanRunReport> {
+    let mut total = ArbitrageScanRunReport::default();
+    let mut cycles = 0usize;
+    let interval = Duration::from_secs(state.settings.arbitrage.poll_interval_secs.max(1));
+
+    loop {
+        let trace_id = new_trace_id();
+        let report = scan_arbitrage_once(state, &trace_id).await?;
+        total.markets_scanned += report.markets_scanned;
+        total.snapshots_recorded += report.snapshots_recorded;
+        total.opportunities_recorded += report.opportunities_recorded;
+        total.validations_recorded += report.validations_recorded;
+        total.opportunities_expired += report.opportunities_expired;
+        total.failed_books += report.failed_books;
+        cycles += 1;
+
+        info!(
+            trace_id = %trace_id,
+            cycle = cycles,
+            markets_scanned = report.markets_scanned,
+            snapshots_recorded = report.snapshots_recorded,
+            opportunities_recorded = report.opportunities_recorded,
+            validations_recorded = report.validations_recorded,
+            opportunities_expired = report.opportunities_expired,
+            failed_books = report.failed_books,
+            "completed arbitrage radar polling cycle",
+        );
+
+        if max_cycles.is_some_and(|limit| cycles >= limit) {
+            break;
+        }
+
+        tokio::select! {
+            () = tokio::time::sleep(interval) => {}
+            shutdown = tokio::signal::ctrl_c() => {
+                if let Err(error) = shutdown {
+                    warn!(error = %error, "failed to listen for ctrl-c during arbitrage polling");
+                }
+                break;
+            }
+        }
+    }
+
+    Ok(total)
+}
+
+fn arbitrage_validation_config(state: &AppState) -> ArbitrageValidationConfig {
+    ArbitrageValidationConfig {
+        max_book_age_ms: state.settings.arbitrage.max_book_age_ms,
+        min_gross_edge: state.settings.arbitrage.min_gross_edge,
+        min_capacity: state.settings.arbitrage.min_capacity,
+        fee_buffer: state.settings.arbitrage.fee_buffer,
+        slippage_buffer: state.settings.arbitrage.slippage_buffer,
+    }
+}
+
+fn duration_seconds(seconds: u64) -> TimeDuration {
+    TimeDuration::seconds(i64::try_from(seconds).unwrap_or(i64::MAX))
+}
+
+async fn analyze_arbitrage_opportunities(
+    state: &AppState,
+    lookback_hours: u16,
+    trace_id: &str,
+) -> Result<ArbitrageAnalysisRunView> {
+    let generated_at = OffsetDateTime::now_utc();
+    let observed_after = generated_at - TimeDuration::hours(i64::from(lookback_hours.max(1)));
+    let opportunities = state
+        .arbitrage_service
+        .list_opportunities(ArbitrageOpportunityListFilters::new(
+            None,
+            None,
+            Some(observed_after),
+            Some(500),
+        )?)
+        .await?;
+    let summary = build_arbitrage_analysis(&opportunities, lookback_hours.max(1), generated_at);
+    let summary_payload = serde_json::to_value(&summary).map_err(|error| {
+        AppError::internal(
+            "ARBITRAGE_ANALYSIS_ENCODE_FAILED",
+            format!("failed to encode arbitrage analysis summary: {error}"),
+        )
+    })?;
+    let analysis = ArbitrageAnalysisRunView {
+        id: format!("arb_analysis_{}", trace_id.trim_start_matches("trc_")),
+        generated_at,
+        lookback_hours: lookback_hours.max(1),
+        opportunity_count: summary.opportunity_count,
+        market_count: summary.market_count,
+        summary_payload,
+        trace_id: trace_id.to_string(),
+    };
+
+    state.arbitrage_service.record_analysis_run(analysis).await
+}
+
+enum ArbitrageBookFeed {
+    MarketSnapshot,
+    Polymarket(PolymarketBookConnector),
+}
+
+fn build_arbitrage_book_feed(state: &AppState) -> Result<ArbitrageBookFeed> {
+    match state.settings.arbitrage.book_source.trim() {
+        "" | "market_snapshot" => Ok(ArbitrageBookFeed::MarketSnapshot),
+        "polymarket" => Ok(ArbitrageBookFeed::Polymarket(PolymarketBookConnector::new(
+            &state.settings.polymarket.clob_host,
+        )?)),
+        other => Err(AppError::invalid_input(
+            "ARBITRAGE_BOOK_SOURCE_UNSUPPORTED",
+            format!("unsupported arbitrage book_source={other}"),
+        )),
+    }
+}
+
+async fn build_arbitrage_book_snapshot(
+    feed: &ArbitrageBookFeed,
+    market: &MarketView,
+    scan_id: &str,
+    trace_id: &str,
+) -> Result<MarketBookSnapshotView> {
+    match feed {
+        ArbitrageBookFeed::MarketSnapshot => {
+            build_market_snapshot_book_snapshot(market, scan_id, trace_id)
+        }
+        ArbitrageBookFeed::Polymarket(connector) => {
+            let refs = polymarket_market_refs(market)?;
+            let snapshot = connector.fetch_binary_book(&refs).await?;
+            build_polymarket_book_snapshot(market, &snapshot, scan_id, trace_id)
+        }
+    }
+}
+
+fn build_market_snapshot_book_snapshot(
+    market: &MarketView,
+    scan_id: &str,
+    trace_id: &str,
+) -> Result<MarketBookSnapshotView> {
+    let no_bid = Probability::new(Decimal::ONE - market.best_ask.value())?;
+    let no_ask = Probability::new(Decimal::ONE - market.best_bid.value())?;
+    let zero = zero_quantity();
+
+    Ok(MarketBookSnapshotView {
+        id: market_book_snapshot_id(scan_id, &market.id),
+        scan_id: scan_id.to_string(),
+        connector_name: "market_snapshot".to_string(),
+        market_id: market.id.clone(),
+        yes_asset_id: market.polymarket_yes_asset_id.clone(),
+        no_asset_id: market.polymarket_no_asset_id.clone(),
+        yes_bid: Some(market.best_bid),
+        yes_ask: Some(market.best_ask),
+        yes_bid_size: zero,
+        yes_ask_size: zero,
+        no_bid: Some(no_bid),
+        no_ask: Some(no_ask),
+        no_bid_size: zero,
+        no_ask_size: zero,
+        observed_at: OffsetDateTime::now_utc(),
+        raw_payload: json!({
+            "source": "market_snapshot",
+            "market_best_bid": market.best_bid,
+            "market_best_ask": market.best_ask,
+            "derived_no_bid": no_bid,
+            "derived_no_ask": no_ask,
+        }),
+        trace_id: trace_id.to_string(),
+    })
+}
+
+fn build_polymarket_book_snapshot(
+    market: &MarketView,
+    snapshot: &PolymarketBinaryBookSnapshot,
+    scan_id: &str,
+    trace_id: &str,
+) -> Result<MarketBookSnapshotView> {
+    Ok(MarketBookSnapshotView {
+        id: market_book_snapshot_id(scan_id, &market.id),
+        scan_id: scan_id.to_string(),
+        connector_name: POLYMARKET_CONNECTOR_NAME.to_string(),
+        market_id: market.id.clone(),
+        yes_asset_id: Some(snapshot.yes_asset_id.clone()),
+        no_asset_id: Some(snapshot.no_asset_id.clone()),
+        yes_bid: book_level_price(&snapshot.yes.best_bid),
+        yes_ask: book_level_price(&snapshot.yes.best_ask),
+        yes_bid_size: book_level_size(&snapshot.yes.best_bid),
+        yes_ask_size: book_level_size(&snapshot.yes.best_ask),
+        no_bid: book_level_price(&snapshot.no.best_bid),
+        no_ask: book_level_price(&snapshot.no.best_ask),
+        no_bid_size: book_level_size(&snapshot.no.best_bid),
+        no_ask_size: book_level_size(&snapshot.no.best_ask),
+        observed_at: snapshot.observed_at,
+        raw_payload: json!({
+            "source": "polymarket",
+            "condition_id": snapshot.condition_id,
+            "yes_asset_id": snapshot.yes_asset_id,
+            "no_asset_id": snapshot.no_asset_id,
+            "yes_book": snapshot.yes.raw_payload,
+            "no_book": snapshot.no.raw_payload,
+        }),
+        trace_id: trace_id.to_string(),
+    })
+}
+
+fn book_level_price(level: &Option<PolymarketBookLevel>) -> Option<Probability> {
+    level.as_ref().map(|level| level.price)
+}
+
+fn book_level_size(level: &Option<PolymarketBookLevel>) -> Quantity {
+    level
+        .as_ref()
+        .map_or_else(zero_quantity, |level| level.size)
+}
+
+fn zero_quantity() -> Quantity {
+    Quantity::new(Decimal::ZERO).expect("zero quantity must be valid")
 }
 
 async fn record_news_failure(
@@ -2042,9 +2414,10 @@ fn ensure_polymarket_enabled(state: &AppState) -> Result<()> {
 mod tests {
     use super::*;
     use polyedge_application::{
-        ApproveSignalCommand, EventListFilters, EvidenceListFilters, ExecutionRequestListFilters,
-        OrderDraftListFilters, OrderListFilters, PositionListFilters, SignalListFilters,
-        SubmitExecutionCommand, SyncExternalOrderStatusCommand, TradeListFilters,
+        ApproveSignalCommand, ArbitrageAnalysisRunListFilters, ArbitrageScanListFilters,
+        EventListFilters, EvidenceListFilters, ExecutionRequestListFilters, OrderDraftListFilters,
+        OrderListFilters, PositionListFilters, SignalListFilters, SubmitExecutionCommand,
+        SyncExternalOrderStatusCommand, TradeListFilters,
     };
     use polyedge_domain::{
         ExecutionRequestStatus, OrderDraftStatus, OrderStatus, Quantity, SignalLifecycleState,
@@ -2171,6 +2544,76 @@ mod tests {
             .await
             .expect("list signals");
         assert!(promoted_signals.is_empty());
+    }
+
+    #[tokio::test]
+    async fn scan_arbitrage_once_records_market_snapshots_without_trade_side_effects() {
+        let state = test_state(SystemMode::ManualConfirm);
+        state
+            .market_event_service
+            .ingest_fixture_bundle(demo_fixture_bundle(), "trace_seed")
+            .await
+            .expect("seed markets");
+
+        let report = scan_arbitrage_once(&state, "trc_arbitrage_scan")
+            .await
+            .expect("scan arbitrage");
+
+        assert_eq!(
+            report,
+            ArbitrageScanRunReport {
+                markets_scanned: 4,
+                snapshots_recorded: 4,
+                opportunities_recorded: 0,
+                validations_recorded: 0,
+                opportunities_expired: 0,
+                failed_books: 0,
+            }
+        );
+
+        let scans = state
+            .arbitrage_service
+            .list_scans(ArbitrageScanListFilters::new(Some(10)).expect("scan filters"))
+            .await
+            .expect("list scans");
+        assert_eq!(scans.len(), 1);
+        assert_eq!(scans[0].id, "scan_arbitrage_scan");
+        assert_eq!(scans[0].market_count, 4);
+        assert_eq!(scans[0].snapshot_count, 4);
+        assert_eq!(scans[0].opportunity_count, 0);
+        assert!(scans[0].finished_at.is_some());
+    }
+
+    #[tokio::test]
+    async fn analyze_arbitrage_opportunities_records_summary_run() {
+        let state = test_state(SystemMode::ManualConfirm);
+        state
+            .market_event_service
+            .ingest_fixture_bundle(demo_fixture_bundle(), "trace_seed")
+            .await
+            .expect("seed markets");
+        scan_arbitrage_once(&state, "trc_arbitrage_scan")
+            .await
+            .expect("scan arbitrage");
+
+        let analysis = analyze_arbitrage_opportunities(&state, 24, "trc_arbitrage_analysis")
+            .await
+            .expect("analyze arbitrage");
+
+        assert_eq!(analysis.id, "arb_analysis_arbitrage_analysis");
+        assert_eq!(analysis.lookback_hours, 24);
+        assert_eq!(analysis.opportunity_count, 0);
+        assert_eq!(analysis.market_count, 0);
+
+        let runs = state
+            .arbitrage_service
+            .list_analysis_runs(
+                ArbitrageAnalysisRunListFilters::new(Some(10)).expect("analysis filters"),
+            )
+            .await
+            .expect("list analysis runs");
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].id, analysis.id);
     }
 
     async fn seed_execution_request_for_connector(

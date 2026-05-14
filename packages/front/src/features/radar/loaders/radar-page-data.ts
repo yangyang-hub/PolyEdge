@@ -1,0 +1,331 @@
+import "server-only";
+
+import type {
+  ArbitrageAnalysisSummaryDto,
+  ArbitrageOpportunityDto,
+  ArbitrageOpportunityStatus,
+  ArbitrageOpportunityType,
+  ArbitrageValidationStatus,
+  MarketDto,
+} from "@/lib/contracts/dto";
+import {
+  formatClock,
+  formatInteger,
+  formatPercentFromRatio,
+  humanizeSnakeCase,
+  type AccentTone,
+  type Tone,
+} from "@/lib/server/console-formatters";
+import {
+  listArbitrageAnalysisRuns,
+  listArbitrageOpportunities,
+  listArbitrageScans,
+} from "@/server/api/arbitrage";
+import { listMarkets } from "@/server/api/markets";
+
+export type RadarOpportunityItem = {
+  id: string;
+  marketId: string;
+  marketQuestion: string;
+  contextLabel: string;
+  opportunityType: ArbitrageOpportunityType;
+  typeLabel: string;
+  typeTone: Tone;
+  status: ArbitrageOpportunityStatus;
+  statusLabel: string;
+  statusTone: Tone;
+  grossEdge: string;
+  grossEdgeValue: number;
+  priceSum: string;
+  capacity: string;
+  observedAt: string;
+  observedClock: string;
+  yesPrice: string;
+  noPrice: string;
+  yesSize: string;
+  noSize: string;
+  reasonCodes: string[];
+  formula: string;
+  validationStatus: ArbitrageValidationStatus | "unvalidated";
+  validationLabel: string;
+  validationTone: Tone;
+  netEdge: string;
+  feeEstimate: string;
+  slippageBuffer: string;
+  validatedCapacity: string;
+  bookAge: string;
+  validationReasonCodes: string[];
+  isSelected: boolean;
+};
+
+export type RadarScanRow = {
+  id: string;
+  startedClock: string;
+  finishedClock: string;
+  marketCount: string;
+  snapshotCount: string;
+  opportunityCount: string;
+  scannerVersion: string;
+};
+
+export type RadarTypeCount = {
+  typeLabel: string;
+  count: string;
+  tone: Tone;
+};
+
+export type RadarTopMarket = {
+  marketId: string;
+  marketQuestion: string;
+  opportunityCount: string;
+  maxGrossEdge: string;
+  avgGrossEdge: string;
+  maxCapacity: string;
+  duration: string;
+};
+
+export type RadarAnalysis = {
+  generatedClock: string;
+  lookbackHours: string;
+  opportunityCount: string;
+  marketCount: string;
+  typeCounts: RadarTypeCount[];
+  topMarkets: RadarTopMarket[];
+};
+
+export type RadarMetric = {
+  title: string;
+  value: string;
+  hint: string;
+  accent: AccentTone;
+};
+
+export type RadarPageData = {
+  selectedOpportunityId: string;
+  metrics: RadarMetric[];
+  opportunities: RadarOpportunityItem[];
+  scans: RadarScanRow[];
+  analysis: RadarAnalysis | null;
+};
+
+function toNumber(value: string | number | null | undefined): number {
+  if (value === null || value === undefined) {
+    return 0;
+  }
+
+  const parsed = typeof value === "number" ? value : Number.parseFloat(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function opportunityTypeTone(type: ArbitrageOpportunityType): Tone {
+  return type === "binary_buy_both" ? "success" : "primary";
+}
+
+function opportunityStatusTone(status: ArbitrageOpportunityStatus): Tone {
+  if (status === "observed") {
+    return "success";
+  }
+
+  if (status === "repeated") {
+    return "warning";
+  }
+
+  return "neutral";
+}
+
+function validationStatusTone(status: ArbitrageValidationStatus | "unvalidated"): Tone {
+  if (status === "valid") {
+    return "success";
+  }
+
+  if (status === "unvalidated") {
+    return "neutral";
+  }
+
+  if (status === "stale_book" || status === "insufficient_depth" || status === "below_threshold") {
+    return "warning";
+  }
+
+  return "danger";
+}
+
+function formatBookAge(value: number | null | undefined): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) {
+    return "n/a";
+  }
+
+  if (value < 1000) {
+    return `${Math.max(0, Math.round(value))}ms`;
+  }
+
+  return `${(value / 1000).toFixed(1)}s`;
+}
+
+function readFormula(payload: unknown): string {
+  if (!payload || typeof payload !== "object" || !("formula" in payload)) {
+    return "n/a";
+  }
+
+  const formula = (payload as { formula?: unknown }).formula;
+  return typeof formula === "string" && formula.trim() ? formula : "n/a";
+}
+
+function isAnalysisSummary(value: unknown): value is ArbitrageAnalysisSummaryDto {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const candidate = value as Partial<ArbitrageAnalysisSummaryDto>;
+  return Array.isArray(candidate.type_counts) && Array.isArray(candidate.top_markets);
+}
+
+function formatDuration(seconds: number): string {
+  if (seconds < 60) {
+    return `${seconds}s`;
+  }
+
+  const minutes = Math.floor(seconds / 60);
+  const remainder = seconds % 60;
+  return remainder === 0 ? `${minutes}m` : `${minutes}m ${remainder}s`;
+}
+
+function formatPrice(value: string): string {
+  return toNumber(value).toFixed(3);
+}
+
+function buildOpportunity(
+  opportunity: ArbitrageOpportunityDto,
+  marketIndex: Map<string, MarketDto>,
+  selectedOpportunityId: string,
+): RadarOpportunityItem {
+  const market = marketIndex.get(opportunity.market_id);
+  const validation = opportunity.validation ?? null;
+  const validationStatus = validation?.status ?? "unvalidated";
+
+  return {
+    id: opportunity.id,
+    marketId: opportunity.market_id,
+    marketQuestion: market?.question ?? opportunity.market_id,
+    contextLabel: `${market?.category ?? "Unknown"} / scan ${opportunity.scan_id}`,
+    opportunityType: opportunity.opportunity_type,
+    typeLabel: humanizeSnakeCase(opportunity.opportunity_type),
+    typeTone: opportunityTypeTone(opportunity.opportunity_type),
+    status: opportunity.status,
+    statusLabel: humanizeSnakeCase(opportunity.status),
+    statusTone: opportunityStatusTone(opportunity.status),
+    grossEdge: formatPercentFromRatio(opportunity.gross_edge, 1),
+    grossEdgeValue: toNumber(opportunity.gross_edge),
+    priceSum: formatPrice(opportunity.price_sum),
+    capacity: formatInteger(opportunity.capacity),
+    observedAt: opportunity.observed_at,
+    observedClock: formatClock(opportunity.observed_at),
+    yesPrice: formatPrice(opportunity.yes_price),
+    noPrice: formatPrice(opportunity.no_price),
+    yesSize: formatInteger(opportunity.yes_size),
+    noSize: formatInteger(opportunity.no_size),
+    reasonCodes: opportunity.reason_codes.map(humanizeSnakeCase),
+    formula: readFormula(opportunity.analysis_payload),
+    validationStatus,
+    validationLabel: humanizeSnakeCase(validationStatus),
+    validationTone: validationStatusTone(validationStatus),
+    netEdge: validation ? formatPercentFromRatio(validation.net_edge, 1) : "n/a",
+    feeEstimate: validation ? formatPercentFromRatio(validation.fee_estimate, 1) : "n/a",
+    slippageBuffer: validation ? formatPercentFromRatio(validation.slippage_buffer, 1) : "n/a",
+    validatedCapacity: validation ? formatInteger(validation.validated_capacity) : "n/a",
+    bookAge: formatBookAge(validation?.book_age_ms),
+    validationReasonCodes: validation?.reason_codes.map(humanizeSnakeCase) ?? [],
+    isSelected: opportunity.id === selectedOpportunityId,
+  };
+}
+
+function buildAnalysis(
+  summary: ArbitrageAnalysisSummaryDto,
+  marketIndex: Map<string, MarketDto>,
+): RadarAnalysis {
+  return {
+    generatedClock: formatClock(summary.generated_at),
+    lookbackHours: `${summary.lookback_hours}h`,
+    opportunityCount: formatInteger(summary.opportunity_count),
+    marketCount: formatInteger(summary.market_count),
+    typeCounts: summary.type_counts.map((item) => ({
+      typeLabel: humanizeSnakeCase(item.opportunity_type),
+      count: formatInteger(item.count),
+      tone: opportunityTypeTone(item.opportunity_type),
+    })),
+    topMarkets: summary.top_markets.map((market) => ({
+      marketId: market.market_id,
+      marketQuestion: marketIndex.get(market.market_id)?.question ?? market.market_id,
+      opportunityCount: formatInteger(market.opportunity_count),
+      maxGrossEdge: formatPercentFromRatio(market.max_gross_edge, 1),
+      avgGrossEdge: formatPercentFromRatio(market.avg_gross_edge, 1),
+      maxCapacity: formatInteger(market.max_capacity),
+      duration: formatDuration(market.duration_seconds),
+    })),
+  };
+}
+
+export async function getRadarPageData(): Promise<RadarPageData> {
+  const [{ data: scans }, { data: opportunities }, { data: analysisRuns }, { data: markets }] =
+    await Promise.all([
+      listArbitrageScans({ limit: 8 }),
+      listArbitrageOpportunities({ limit: 50 }),
+      listArbitrageAnalysisRuns({ limit: 1 }),
+      listMarkets({ limit: 200 }),
+    ]);
+
+  const marketIndex = new Map(markets.map((market) => [market.id, market]));
+  const sortedOpportunities = opportunities
+    .slice()
+    .sort((left, right) => Date.parse(right.observed_at) - Date.parse(left.observed_at));
+  const selectedOpportunityId = sortedOpportunities[0]?.id ?? "";
+  const maxEdge = sortedOpportunities.reduce(
+    (value, opportunity) => Math.max(value, toNumber(opportunity.gross_edge)),
+    0,
+  );
+  const coveredMarketCount = new Set(sortedOpportunities.map((opportunity) => opportunity.market_id)).size;
+  const latestScan = scans[0] ?? null;
+  const analysisSummary = analysisRuns[0]?.summary_payload;
+
+  return {
+    selectedOpportunityId,
+    metrics: [
+      {
+        title: "Latest Scan",
+        value: latestScan ? formatClock(latestScan.started_at) : "n/a",
+        hint: latestScan ? `${formatInteger(latestScan.market_count)} markets` : "no scan",
+        accent: "primary",
+      },
+      {
+        title: "Observed Opportunities",
+        value: formatInteger(sortedOpportunities.length),
+        hint: latestScan ? `${formatInteger(latestScan.opportunity_count)} latest scan` : "all windows",
+        accent: "success",
+      },
+      {
+        title: "Max Gross Edge",
+        value: formatPercentFromRatio(maxEdge, 1),
+        hint: "best observed",
+        accent: maxEdge > 0 ? "success" : "primary",
+      },
+      {
+        title: "Covered Markets",
+        value: formatInteger(coveredMarketCount),
+        hint: `${formatInteger(markets.length)} tracked`,
+        accent: "violet",
+      },
+    ],
+    opportunities: sortedOpportunities.map((opportunity) =>
+      buildOpportunity(opportunity, marketIndex, selectedOpportunityId),
+    ),
+    scans: scans.map((scan) => ({
+      id: scan.id,
+      startedClock: formatClock(scan.started_at),
+      finishedClock: scan.finished_at ? formatClock(scan.finished_at) : "running",
+      marketCount: formatInteger(scan.market_count),
+      snapshotCount: formatInteger(scan.snapshot_count),
+      opportunityCount: formatInteger(scan.opportunity_count),
+      scannerVersion: scan.scanner_version,
+    })),
+    analysis: isAnalysisSummary(analysisSummary) ? buildAnalysis(analysisSummary, marketIndex) : null,
+  };
+}

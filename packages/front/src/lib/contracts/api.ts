@@ -5,6 +5,8 @@ export type ContractListQuery = {
   cursor?: string;
   status?: string[];
   market_id?: string;
+  opportunity_type?: string;
+  observed_after?: string;
   event_id?: string;
   signal_state?: string[];
   source_type?: string;

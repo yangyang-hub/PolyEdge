@@ -9,13 +9,16 @@ use axum::{
 };
 use futures::stream;
 use polyedge_application::{
-    ApproveSignalCommand, ApproveSignalReceipt, AuthenticatedActor, EventListFilters, EventView,
-    EvidenceListFilters, EvidenceView, ExecutionFillResult, ExecutionRequestListFilters,
-    ExecutionRequestView, ExecutionSubmissionReceipt, IdempotencyBegin, IdempotencyRequest,
-    KillSwitchReceipt, MarketListFilters, MarketView, ModeTransitionCommand,
-    NewsRawEventListFilters, NewsRawEventView, NewsSourceHealthListFilters, NewsSourceHealthView,
-    OrderDraftListFilters, OrderDraftView, OrderListFilters, OrderView, PositionListFilters,
-    PositionView, ProbabilityEstimateListFilters, ProbabilityEstimateView,
+    ApproveSignalCommand, ApproveSignalReceipt, ArbitrageAnalysisRunListFilters,
+    ArbitrageAnalysisRunView, ArbitrageEventListFilters, ArbitrageEventView,
+    ArbitrageOpportunityListFilters, ArbitrageOpportunityType, ArbitrageOpportunityValidationView,
+    ArbitrageOpportunityView, ArbitrageScanListFilters, ArbitrageScanView, AuthenticatedActor,
+    EventListFilters, EventView, EvidenceListFilters, EvidenceView, ExecutionFillResult,
+    ExecutionRequestListFilters, ExecutionRequestView, ExecutionSubmissionReceipt,
+    IdempotencyBegin, IdempotencyRequest, KillSwitchReceipt, MarketListFilters, MarketView,
+    ModeTransitionCommand, NewsRawEventListFilters, NewsRawEventView, NewsSourceHealthListFilters,
+    NewsSourceHealthView, OrderDraftListFilters, OrderDraftView, OrderListFilters, OrderView,
+    PositionListFilters, PositionView, ProbabilityEstimateListFilters, ProbabilityEstimateView,
     ReconcileExternalTradeCommand, RejectSignalCommand, RejectSignalReceipt,
     ReleaseKillSwitchCommand, RiskPolicy, RiskStateView, SignalListFilters,
     SignalTransitionListFilters, SignalTransitionView, SignalView, SubmitExecutionCommand,
@@ -27,13 +30,15 @@ use polyedge_connectors::{
 };
 use polyedge_contracts::{
     AlertSeverity, AlertStatus, ApiResponse, ApprovalData, ApprovalListQuery, ApprovalSeverity,
-    ApprovalStatus, ApprovalType, ApproveSignalData, ApproveSignalRequest, BucketStatus,
-    ConnectorOrderStatusCallbackData, ConnectorOrderStatusCallbackRequest,
-    ConnectorTradeFillCallbackData, ConnectorTradeFillCallbackRequest, DependencyStatus, EventData,
-    EventListQuery, EvidenceData, EvidenceListQuery, ExecutionRequestData,
-    ExecutionRequestListQuery, HealthData, KillSwitchData, MarketData, MarketListQuery,
-    NewsRawEventData, NewsRawEventListQuery, NewsSourceHealthData, NewsSourceHealthListQuery,
-    OrderData, OrderDraftData, OrderDraftListQuery, OrderListQuery,
+    ApprovalStatus, ApprovalType, ApproveSignalData, ApproveSignalRequest,
+    ArbitrageAnalysisRunData, ArbitrageAnalysisRunListQuery, ArbitrageOpportunityData,
+    ArbitrageOpportunityListQuery, ArbitrageOpportunityValidationData, ArbitrageScanData,
+    ArbitrageScanListQuery, BucketStatus, ConnectorOrderStatusCallbackData,
+    ConnectorOrderStatusCallbackRequest, ConnectorTradeFillCallbackData,
+    ConnectorTradeFillCallbackRequest, DependencyStatus, EventData, EventListQuery, EvidenceData,
+    EvidenceListQuery, ExecutionRequestData, ExecutionRequestListQuery, HealthData, KillSwitchData,
+    MarketData, MarketListQuery, NewsRawEventData, NewsRawEventListQuery, NewsSourceHealthData,
+    NewsSourceHealthListQuery, OrderData, OrderDraftData, OrderDraftListQuery, OrderListQuery,
     PolymarketOrderStatusCallbackRequest, PolymarketTradeFillCallbackRequest, PositionData,
     PositionListQuery, ProbabilityEstimateData, ProbabilityEstimateListQuery, ReadinessData,
     RecomputeSignalData, RecomputeSignalRequest, RejectSignalData, RejectSignalRequest,
@@ -53,10 +58,11 @@ use polyedge_infrastructure::{
     require_console_write_auth, require_mode_write_auth,
 };
 use rust_decimal::Decimal;
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     convert::Infallible,
+    str::FromStr,
     time::Duration,
 };
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
@@ -247,6 +253,27 @@ pub fn build_app(state: AppState) -> Router {
         .route(
             "/api/v1/pricing/estimates",
             get(list_probability_estimates).route_layer(middleware::from_fn_with_state(
+                state.clone(),
+                require_console_read_auth,
+            )),
+        )
+        .route(
+            "/api/v1/arbitrage/scans",
+            get(list_arbitrage_scans).route_layer(middleware::from_fn_with_state(
+                state.clone(),
+                require_console_read_auth,
+            )),
+        )
+        .route(
+            "/api/v1/arbitrage/opportunities",
+            get(list_arbitrage_opportunities).route_layer(middleware::from_fn_with_state(
+                state.clone(),
+                require_console_read_auth,
+            )),
+        )
+        .route(
+            "/api/v1/arbitrage/analysis",
+            get(list_arbitrage_analysis_runs).route_layer(middleware::from_fn_with_state(
                 state.clone(),
                 require_console_read_auth,
             )),
@@ -827,6 +854,7 @@ struct StreamState {
     sequence: u64,
     emitted_ids: HashSet<String>,
     emitted_id_order: VecDeque<String>,
+    last_arbitrage_sequence: Option<u64>,
 }
 
 async fn stream_channel(
@@ -835,7 +863,10 @@ async fn stream_channel(
     Path(channel): Path<String>,
     headers: HeaderMap,
 ) -> std::result::Result<Response, HttpError> {
-    if !matches!(channel.as_str(), "signals" | "risk" | "events") {
+    if !matches!(
+        channel.as_str(),
+        "signals" | "risk" | "events" | "arbitrage"
+    ) {
         return Err(HttpError::with_meta(
             AppError::not_found("STREAM_CHANNEL_NOT_FOUND", "unknown stream channel"),
             "unknown",
@@ -845,6 +876,7 @@ async fn stream_channel(
 
     let mut emitted_ids = HashSet::new();
     let mut emitted_id_order = VecDeque::new();
+    let mut last_arbitrage_sequence = None;
 
     if let Some(last_event_id) = headers
         .get("last-event-id")
@@ -852,6 +884,9 @@ async fn stream_channel(
         .map(str::trim)
         .filter(|value| !value.is_empty())
     {
+        if channel == "arbitrage" {
+            last_arbitrage_sequence = last_event_id.parse::<u64>().ok();
+        }
         emitted_ids.insert(last_event_id.to_string());
         emitted_id_order.push_back(last_event_id.to_string());
     }
@@ -862,6 +897,7 @@ async fn stream_channel(
         sequence: 0,
         emitted_ids,
         emitted_id_order,
+        last_arbitrage_sequence,
     };
     let event_stream = stream::unfold(stream_state, |mut stream_state| async move {
         if stream_state.sequence > 0 {
@@ -874,6 +910,7 @@ async fn stream_channel(
             stream_state.sequence,
             &mut stream_state.emitted_ids,
             &mut stream_state.emitted_id_order,
+            &mut stream_state.last_arbitrage_sequence,
         )
         .await
         {
@@ -917,11 +954,13 @@ async fn build_stream_chunk(
     sequence: u64,
     emitted_ids: &mut HashSet<String>,
     emitted_id_order: &mut VecDeque<String>,
+    last_arbitrage_sequence: &mut Option<u64>,
 ) -> polyedge_domain::Result<String> {
     let messages = match channel {
         "signals" => signal_stream_messages(state).await?,
         "risk" => risk_stream_messages(state).await?,
         "events" => event_stream_messages(state).await?,
+        "arbitrage" => arbitrage_stream_messages(state, last_arbitrage_sequence).await?,
         _ => Vec::new(),
     };
     let messages = filter_new_sse_messages(messages, emitted_ids, emitted_id_order);
@@ -1142,6 +1181,52 @@ async fn event_stream_messages(state: &AppState) -> polyedge_domain::Result<Vec<
             }),
         })
         .collect())
+}
+
+async fn arbitrage_stream_messages(
+    state: &AppState,
+    last_sequence: &mut Option<u64>,
+) -> polyedge_domain::Result<Vec<SseMessage>> {
+    let events = state
+        .arbitrage_service
+        .list_events(ArbitrageEventListFilters::new(*last_sequence, Some(100))?)
+        .await?;
+
+    if let Some(sequence) = events.last().map(|event| event.sequence) {
+        *last_sequence = Some(sequence);
+    }
+
+    Ok(events
+        .into_iter()
+        .map(|event| SseMessage {
+            id: event.sequence.to_string(),
+            event: event.event_type.as_str(),
+            data: arbitrage_event_sse_data(event),
+        })
+        .collect())
+}
+
+fn arbitrage_event_sse_data(event: ArbitrageEventView) -> Value {
+    let mut data = match event.payload {
+        Value::Object(map) => map,
+        payload => {
+            let mut map = Map::new();
+            map.insert("payload".to_string(), payload);
+            map
+        }
+    };
+
+    data.insert("sequence".to_string(), json!(event.sequence));
+    data.insert("event_id".to_string(), json!(event.id));
+    data.insert("event_type".to_string(), json!(event.event_type.as_str()));
+    data.insert("resource_type".to_string(), json!(event.resource_type));
+    data.insert("resource_id".to_string(), json!(event.resource_id));
+    data.insert(
+        "occurred_at".to_string(),
+        json!(format_timestamp(event.occurred_at)),
+    );
+    data.insert("trace_id".to_string(), json!(event.trace_id));
+    Value::Object(data)
 }
 
 fn signal_requires_review(signal: &SignalView, market: Option<&MarketView>) -> bool {
@@ -1395,6 +1480,98 @@ async fn list_probability_estimates(
         estimates
             .into_iter()
             .map(probability_estimate_to_contract)
+            .collect(),
+        auth.request_id,
+        trace_id,
+    )))
+}
+
+async fn list_arbitrage_scans(
+    Extension(auth): Extension<AuthContext>,
+    State(state): State<AppState>,
+    Query(query): Query<ArbitrageScanListQuery>,
+) -> std::result::Result<Json<ApiResponse<Vec<ArbitrageScanData>>>, HttpError> {
+    let trace_id = new_trace_id();
+    let filters = ArbitrageScanListFilters::new(query.limit)
+        .map_err(|error| HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone()))?;
+    let scans = state
+        .arbitrage_service
+        .list_scans(filters)
+        .await
+        .map_err(|error| HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone()))?;
+
+    Ok(Json(ApiResponse::new(
+        scans.into_iter().map(arbitrage_scan_to_contract).collect(),
+        auth.request_id,
+        trace_id,
+    )))
+}
+
+async fn list_arbitrage_opportunities(
+    Extension(auth): Extension<AuthContext>,
+    State(state): State<AppState>,
+    Query(query): Query<ArbitrageOpportunityListQuery>,
+) -> std::result::Result<Json<ApiResponse<Vec<ArbitrageOpportunityData>>>, HttpError> {
+    let trace_id = new_trace_id();
+    let opportunity_type = query
+        .opportunity_type
+        .as_deref()
+        .map(ArbitrageOpportunityType::from_str)
+        .transpose()
+        .map_err(|error| HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone()))?;
+    let observed_after = query
+        .observed_after
+        .as_deref()
+        .map(|value| {
+            OffsetDateTime::parse(value, &Rfc3339).map_err(|error| {
+                AppError::invalid_input(
+                    "ARBITRAGE_OBSERVED_AFTER_INVALID",
+                    format!("observed_after must be RFC3339: {error}"),
+                )
+            })
+        })
+        .transpose()
+        .map_err(|error| HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone()))?;
+    let filters = ArbitrageOpportunityListFilters::new(
+        query.market_id,
+        opportunity_type,
+        observed_after,
+        query.limit,
+    )
+    .map_err(|error| HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone()))?;
+    let opportunities = state
+        .arbitrage_service
+        .list_opportunities(filters)
+        .await
+        .map_err(|error| HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone()))?;
+
+    Ok(Json(ApiResponse::new(
+        opportunities
+            .into_iter()
+            .map(arbitrage_opportunity_to_contract)
+            .collect(),
+        auth.request_id,
+        trace_id,
+    )))
+}
+
+async fn list_arbitrage_analysis_runs(
+    Extension(auth): Extension<AuthContext>,
+    State(state): State<AppState>,
+    Query(query): Query<ArbitrageAnalysisRunListQuery>,
+) -> std::result::Result<Json<ApiResponse<Vec<ArbitrageAnalysisRunData>>>, HttpError> {
+    let trace_id = new_trace_id();
+    let filters = ArbitrageAnalysisRunListFilters::new(query.limit)
+        .map_err(|error| HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone()))?;
+    let runs = state
+        .arbitrage_service
+        .list_analysis_runs(filters)
+        .await
+        .map_err(|error| HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone()))?;
+
+    Ok(Json(ApiResponse::new(
+        runs.into_iter()
+            .map(arbitrage_analysis_run_to_contract)
             .collect(),
         auth.request_id,
         trace_id,
@@ -2960,6 +3137,78 @@ fn probability_estimate_to_contract(estimate: ProbabilityEstimateView) -> Probab
     }
 }
 
+fn arbitrage_scan_to_contract(scan: ArbitrageScanView) -> ArbitrageScanData {
+    ArbitrageScanData {
+        id: scan.id,
+        started_at: scan.started_at,
+        finished_at: scan.finished_at,
+        market_count: scan.market_count,
+        snapshot_count: scan.snapshot_count,
+        opportunity_count: scan.opportunity_count,
+        scanner_version: scan.scanner_version,
+        metadata: scan.metadata,
+        trace_id: scan.trace_id,
+    }
+}
+
+fn arbitrage_opportunity_to_contract(
+    opportunity: ArbitrageOpportunityView,
+) -> ArbitrageOpportunityData {
+    ArbitrageOpportunityData {
+        id: opportunity.id,
+        scan_id: opportunity.scan_id,
+        market_id: opportunity.market_id,
+        opportunity_type: opportunity.opportunity_type.as_str().to_string(),
+        status: opportunity.status.as_str().to_string(),
+        gross_edge: opportunity.gross_edge,
+        price_sum: opportunity.price_sum.to_string(),
+        capacity: opportunity.capacity,
+        yes_price: opportunity.yes_price,
+        no_price: opportunity.no_price,
+        yes_size: opportunity.yes_size,
+        no_size: opportunity.no_size,
+        observed_at: opportunity.observed_at,
+        reason_codes: opportunity.reason_codes,
+        analysis_payload: opportunity.analysis_payload,
+        trace_id: opportunity.trace_id,
+        validation: opportunity.validation.map(arbitrage_validation_to_contract),
+    }
+}
+
+fn arbitrage_validation_to_contract(
+    validation: ArbitrageOpportunityValidationView,
+) -> ArbitrageOpportunityValidationData {
+    ArbitrageOpportunityValidationData {
+        id: validation.id,
+        opportunity_id: validation.opportunity_id,
+        status: validation.status.as_str().to_string(),
+        gross_edge: validation.gross_edge,
+        net_edge: validation.net_edge,
+        fee_estimate: validation.fee_estimate,
+        slippage_buffer: validation.slippage_buffer,
+        validated_capacity: validation.validated_capacity,
+        book_age_ms: validation.book_age_ms,
+        reason_codes: validation.reason_codes,
+        validation_payload: validation.validation_payload,
+        validated_at: validation.validated_at,
+        trace_id: validation.trace_id,
+    }
+}
+
+fn arbitrage_analysis_run_to_contract(
+    analysis: ArbitrageAnalysisRunView,
+) -> ArbitrageAnalysisRunData {
+    ArbitrageAnalysisRunData {
+        id: analysis.id,
+        generated_at: analysis.generated_at,
+        lookback_hours: analysis.lookback_hours,
+        opportunity_count: analysis.opportunity_count,
+        market_count: analysis.market_count,
+        summary_payload: analysis.summary_payload,
+        trace_id: analysis.trace_id,
+    }
+}
+
 fn signal_transition_to_contract(transition: SignalTransitionView) -> SignalTransitionData {
     SignalTransitionData {
         id: transition.id,
@@ -3181,10 +3430,11 @@ mod tests {
     use base64::{Engine, engine::general_purpose};
     use ed25519_dalek::{Signer, SigningKey};
     use polyedge_application::{
-        AuthenticatedActor, MarkExecutionSubmittedCommand, NewsIngestSourceCommand,
-        NewsIngestionItem, demo_fixture_bundle,
+        ArbitrageAnalysisRunView, ArbitrageScanView, ArbitrageValidationConfig, AuthenticatedActor,
+        MarkExecutionSubmittedCommand, MarketBookSnapshotView, NewsIngestSourceCommand,
+        NewsIngestionItem, build_arbitrage_analysis, demo_fixture_bundle,
     };
-    use polyedge_domain::{StepUpScope, SystemMode, UserRole};
+    use polyedge_domain::{Edge, Probability, Quantity, StepUpScope, SystemMode, UserRole};
     use polyedge_infrastructure::{AppState, AuthKeySettings, Runtime, Settings};
     use serde::Serialize;
     use tower::util::ServiceExt;
@@ -3558,6 +3808,212 @@ mod tests {
             serde_json::from_slice(&body).expect("deserialize response");
         assert_eq!(payload.data.len(), 1);
         assert_eq!(payload.data[0].id, "mkt_121");
+    }
+
+    #[tokio::test]
+    async fn arbitrage_routes_return_recorded_opportunities() {
+        let signing_key = SigningKey::from_bytes(&[42_u8; 32]);
+        let settings = Settings::for_test(
+            SystemMode::ManualConfirm,
+            "test",
+            vec![AuthKeySettings {
+                kid: "test-key".to_string(),
+                public_key_base64: general_purpose::STANDARD
+                    .encode(signing_key.verifying_key().as_bytes()),
+            }],
+        );
+        let state = Runtime::test_app_state(settings).expect("state");
+        let started_at = OffsetDateTime::now_utc();
+        let scan_id = "scan_api_test_arbitrage";
+        state
+            .arbitrage_service
+            .start_scan(ArbitrageScanView {
+                id: scan_id.to_string(),
+                started_at,
+                finished_at: None,
+                market_count: 0,
+                snapshot_count: 0,
+                opportunity_count: 0,
+                scanner_version: "api-test".to_string(),
+                metadata: json!({ "mode": "test" }),
+                trace_id: "trc_api_test_arbitrage".to_string(),
+            })
+            .await
+            .expect("start scan");
+        let observed_at = started_at + time::Duration::seconds(1);
+        let snapshot = MarketBookSnapshotView {
+            id: "book_api_test_mkt_120".to_string(),
+            scan_id: scan_id.to_string(),
+            connector_name: "polymarket".to_string(),
+            market_id: "mkt_120".to_string(),
+            yes_asset_id: Some("asset_yes".to_string()),
+            no_asset_id: Some("asset_no".to_string()),
+            yes_bid: None,
+            yes_ask: Some(Probability::new(Decimal::new(45, 2)).expect("yes ask")),
+            yes_bid_size: Quantity::new(Decimal::ZERO).expect("zero yes bid size"),
+            yes_ask_size: Quantity::new(Decimal::new(900, 0)).expect("yes ask size"),
+            no_bid: None,
+            no_ask: Some(Probability::new(Decimal::new(51, 2)).expect("no ask")),
+            no_bid_size: Quantity::new(Decimal::ZERO).expect("zero no bid size"),
+            no_ask_size: Quantity::new(Decimal::new(850, 0)).expect("no ask size"),
+            observed_at,
+            raw_payload: json!({ "fixture": true }),
+            trace_id: "trc_api_test_arbitrage".to_string(),
+        };
+        let opportunities = state
+            .arbitrage_service
+            .record_snapshot_and_detect(snapshot.clone())
+            .await
+            .expect("record snapshot and detect");
+        state
+            .arbitrage_service
+            .validate_opportunity(
+                &opportunities[0],
+                &snapshot,
+                &ArbitrageValidationConfig {
+                    max_book_age_ms: 10_000,
+                    min_gross_edge: Edge::new(Decimal::new(5, 3)).expect("min edge"),
+                    min_capacity: Quantity::new(Decimal::ONE).expect("min capacity"),
+                    fee_buffer: Edge::new(Decimal::new(5, 3)).expect("fee buffer"),
+                    slippage_buffer: Edge::new(Decimal::new(5, 3)).expect("slippage buffer"),
+                },
+                observed_at + time::Duration::milliseconds(50),
+            )
+            .await
+            .expect("validate opportunity");
+        state
+            .arbitrage_service
+            .complete_scan(scan_id, started_at + time::Duration::seconds(2), 1, 1, 1)
+            .await
+            .expect("complete scan");
+        let summary =
+            build_arbitrage_analysis(&opportunities, 24, started_at + time::Duration::seconds(3));
+        state
+            .arbitrage_service
+            .record_analysis_run(ArbitrageAnalysisRunView {
+                id: "arb_analysis_api_test".to_string(),
+                generated_at: summary.generated_at,
+                lookback_hours: summary.lookback_hours,
+                opportunity_count: summary.opportunity_count,
+                market_count: summary.market_count,
+                summary_payload: serde_json::to_value(&summary).expect("serialize summary"),
+                trace_id: "trc_api_test_arbitrage_analysis".to_string(),
+            })
+            .await
+            .expect("record analysis");
+
+        let mut emitted_ids = HashSet::new();
+        let mut emitted_id_order = VecDeque::new();
+        let mut last_arbitrage_sequence = None;
+        let stream_chunk = build_stream_chunk(
+            &state,
+            "arbitrage",
+            0,
+            &mut emitted_ids,
+            &mut emitted_id_order,
+            &mut last_arbitrage_sequence,
+        )
+        .await
+        .expect("build arbitrage stream");
+        assert!(stream_chunk.contains("event: arbitrage.scan.started"));
+        assert!(stream_chunk.contains("event: arbitrage.validation.passed"));
+        assert!(last_arbitrage_sequence.is_some());
+
+        let second_stream_chunk = build_stream_chunk(
+            &state,
+            "arbitrage",
+            1,
+            &mut emitted_ids,
+            &mut emitted_id_order,
+            &mut last_arbitrage_sequence,
+        )
+        .await
+        .expect("build arbitrage stream heartbeat");
+        assert!(second_stream_chunk.contains("polyedge arbitrage stream heartbeat"));
+
+        let app = build_app(state);
+        let request_id = format!("req_{}", Uuid::now_v7());
+        let token = issue_token(&signing_key, "test-key", &request_id);
+
+        let opportunities_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/arbitrage/opportunities?market_id=mkt_120&opportunity_type=binary_buy_both")
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("X-Request-Id", &request_id)
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("opportunities response");
+
+        assert_eq!(opportunities_response.status(), StatusCode::OK);
+        let opportunities_body = to_bytes(opportunities_response.into_body(), usize::MAX)
+            .await
+            .expect("read opportunities body");
+        let opportunities_payload: ApiResponse<Vec<ArbitrageOpportunityData>> =
+            serde_json::from_slice(&opportunities_body).expect("deserialize opportunities");
+        assert_eq!(opportunities_payload.data.len(), 1);
+        assert_eq!(
+            opportunities_payload.data[0].opportunity_type,
+            "binary_buy_both"
+        );
+        assert_eq!(opportunities_payload.data[0].status, "observed");
+        assert_eq!(opportunities_payload.data[0].price_sum, "0.96");
+        assert_eq!(
+            opportunities_payload.data[0].reason_codes,
+            vec!["yes_ask_plus_no_ask_below_one"]
+        );
+        let validation = opportunities_payload.data[0]
+            .validation
+            .as_ref()
+            .expect("validation");
+        assert_eq!(validation.status, "valid");
+        assert_eq!(validation.book_age_ms, 50);
+
+        let scans_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/arbitrage/scans?limit=1")
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("X-Request-Id", &request_id)
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("scans response");
+
+        assert_eq!(scans_response.status(), StatusCode::OK);
+        let scans_body = to_bytes(scans_response.into_body(), usize::MAX)
+            .await
+            .expect("read scans body");
+        let scans_payload: ApiResponse<Vec<ArbitrageScanData>> =
+            serde_json::from_slice(&scans_body).expect("deserialize scans");
+        assert_eq!(scans_payload.data[0].id, scan_id);
+        assert_eq!(scans_payload.data[0].opportunity_count, 1);
+
+        let analysis_response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/arbitrage/analysis?limit=1")
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("X-Request-Id", &request_id)
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("analysis response");
+
+        assert_eq!(analysis_response.status(), StatusCode::OK);
+        let analysis_body = to_bytes(analysis_response.into_body(), usize::MAX)
+            .await
+            .expect("read analysis body");
+        let analysis_payload: ApiResponse<Vec<ArbitrageAnalysisRunData>> =
+            serde_json::from_slice(&analysis_body).expect("deserialize analysis");
+        assert_eq!(analysis_payload.data[0].opportunity_count, 1);
+        assert_eq!(analysis_payload.data[0].market_count, 1);
     }
 
     #[tokio::test]

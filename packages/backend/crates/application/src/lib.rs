@@ -1,11 +1,22 @@
 #![allow(clippy::too_many_arguments)]
 
+mod arbitrage;
 mod execution;
 mod market_event;
 mod news_ingestion;
 mod risk;
 mod system_mode;
 
+pub use arbitrage::{
+    ArbitrageAnalysisRunListFilters, ArbitrageAnalysisRunView, ArbitrageAnalysisSummary,
+    ArbitrageEventListFilters, ArbitrageEventType, ArbitrageEventView, ArbitrageMarketSummary,
+    ArbitrageOpportunityDraft, ArbitrageOpportunityListFilters, ArbitrageOpportunityStatus,
+    ArbitrageOpportunityType, ArbitrageOpportunityValidationView, ArbitrageOpportunityView,
+    ArbitrageScanListFilters, ArbitrageScanView, ArbitrageService, ArbitrageStore,
+    ArbitrageTypeCount, ArbitrageValidationConfig, ArbitrageValidationStatus,
+    MarketBookSnapshotView, build_arbitrage_analysis, detect_arbitrage_opportunities,
+    market_book_snapshot_id, validate_arbitrage_opportunity,
+};
 pub use execution::{
     DEFAULT_EXECUTION_CONNECTOR, DispatchExecutionListFilters, ExecutionDispatchCandidate,
     ExecutionDispatchResult, ExecutionFillResult, ExecutionReconciliationCandidate,

@@ -15,6 +15,7 @@ type ConsoleRealtimeContextValue = {
   signals: ChannelState<"signals">;
   risk: ChannelState<"risk">;
   events: ChannelState<"events">;
+  arbitrage: ChannelState<"arbitrage">;
 };
 
 const ConsoleRealtimeContext = createContext<ConsoleRealtimeContextValue | null>(null);
@@ -23,9 +24,10 @@ export function ConsoleRealtimeProvider({ children }: { children: React.ReactNod
   const signals = useSseStream({ channel: "signals" });
   const risk = useSseStream({ channel: "risk" });
   const events = useSseStream({ channel: "events" });
+  const arbitrage = useSseStream({ channel: "arbitrage" });
 
   return (
-    <ConsoleRealtimeContext.Provider value={{ signals, risk, events }}>
+    <ConsoleRealtimeContext.Provider value={{ signals, risk, events, arbitrage }}>
       {children}
     </ConsoleRealtimeContext.Provider>
   );

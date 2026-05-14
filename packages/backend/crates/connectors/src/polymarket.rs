@@ -1,9 +1,12 @@
 use polyedge_domain::{
     AppError, OrderStatus, Probability, Quantity, Result, SignalSide, UsdAmount,
 };
-use polymarket_client_sdk::auth::state::Authenticated;
+use polymarket_client_sdk::auth::state::{Authenticated, Unauthenticated};
 use polymarket_client_sdk::auth::{Credentials, LocalSigner, Normal, Signer, Uuid};
-use polymarket_client_sdk::clob::types::request::{OrdersRequest, TradesRequest};
+use polymarket_client_sdk::clob::types::request::{
+    OrderBookSummaryRequest, OrdersRequest, TradesRequest,
+};
+use polymarket_client_sdk::clob::types::response::OrderSummary;
 use polymarket_client_sdk::clob::types::{
     OrderStatusType as SdkOrderStatusType, OrderType, Side, SignatureType,
     TradeStatusType as SdkTradeStatusType,
@@ -131,6 +134,36 @@ pub struct LivePolymarketConnector {
 }
 
 #[derive(Debug, Clone)]
+pub struct PolymarketBookLevel {
+    pub price: Probability,
+    pub size: Quantity,
+}
+
+#[derive(Debug, Clone)]
+pub struct PolymarketSingleTokenBook {
+    pub asset_id: String,
+    pub best_bid: Option<PolymarketBookLevel>,
+    pub best_ask: Option<PolymarketBookLevel>,
+    pub raw_payload: serde_json::Value,
+    pub observed_at: OffsetDateTime,
+}
+
+#[derive(Debug, Clone)]
+pub struct PolymarketBinaryBookSnapshot {
+    pub condition_id: String,
+    pub yes_asset_id: String,
+    pub no_asset_id: String,
+    pub yes: PolymarketSingleTokenBook,
+    pub no: PolymarketSingleTokenBook,
+    pub observed_at: OffsetDateTime,
+}
+
+#[derive(Debug, Clone)]
+pub struct PolymarketBookConnector {
+    client: ClobClient<Unauthenticated>,
+}
+
+#[derive(Debug, Clone)]
 pub struct MockPolymarketOrderRequest {
     pub execution_request_id: String,
     pub connector_name: String,
@@ -220,6 +253,66 @@ pub struct ConnectorTradeFillUpdate {
     pub fill_price: Probability,
     pub filled_quantity: Quantity,
     pub fee: UsdAmount,
+}
+
+impl PolymarketBookConnector {
+    pub fn new(clob_host: &str) -> Result<Self> {
+        let client = ClobClient::new(clob_host, ClobConfig::default()).map_err(|error| {
+            AppError::internal(
+                "POLYMARKET_CLIENT_INIT_FAILED",
+                format!("failed to initialize Polymarket CLOB book client: {error}"),
+            )
+        })?;
+
+        Ok(Self { client })
+    }
+
+    pub async fn fetch_binary_book(
+        &self,
+        market_refs: &PolymarketMarketRefs,
+    ) -> Result<PolymarketBinaryBookSnapshot> {
+        let yes_asset_id = market_refs.asset_id_for_side(SignalSide::Yes)?;
+        let no_asset_id = market_refs.asset_id_for_side(SignalSide::No)?;
+        let yes = self.fetch_token_book(yes_asset_id).await?;
+        let no = self.fetch_token_book(no_asset_id).await?;
+        let observed_at = max_time(yes.observed_at, no.observed_at);
+
+        Ok(PolymarketBinaryBookSnapshot {
+            condition_id: market_refs.condition_id.clone(),
+            yes_asset_id: market_refs.yes_asset_id.clone(),
+            no_asset_id: market_refs.no_asset_id.clone(),
+            yes,
+            no,
+            observed_at,
+        })
+    }
+
+    async fn fetch_token_book(&self, asset_id: U256) -> Result<PolymarketSingleTokenBook> {
+        let request = OrderBookSummaryRequest::builder()
+            .token_id(asset_id)
+            .build();
+        let response = self.client.order_book(&request).await.map_err(|error| {
+            AppError::dependency_unavailable(
+                "POLYMARKET_ORDER_BOOK_QUERY_FAILED",
+                format!("failed to query Polymarket order book for asset_id={asset_id}: {error}"),
+            )
+        })?;
+        let observed_at = OffsetDateTime::now_utc();
+        let raw_payload = serde_json::to_value(&response).map_err(|error| {
+            AppError::internal(
+                "POLYMARKET_ORDER_BOOK_ENCODE_FAILED",
+                format!("failed to encode Polymarket order book for asset_id={asset_id}: {error}"),
+            )
+        })?;
+
+        Ok(PolymarketSingleTokenBook {
+            asset_id: asset_id.to_string(),
+            best_bid: best_bid_level(response.bids)?,
+            best_ask: best_ask_level(response.asks)?,
+            raw_payload,
+            observed_at,
+        })
+    }
 }
 
 impl LivePolymarketConnector {
@@ -1055,6 +1148,43 @@ fn parse_u256(field_name: &str, value: &str, error_code: &'static str) -> Result
     U256::from_str(value.trim()).map_err(|error| {
         AppError::invalid_input(error_code, format!("invalid {field_name}: {error}"))
     })
+}
+
+fn best_bid_level(orders: Vec<OrderSummary>) -> Result<Option<PolymarketBookLevel>> {
+    orders
+        .into_iter()
+        .max_by(|left, right| left.price.cmp(&right.price))
+        .map(book_level_from_order)
+        .transpose()
+}
+
+fn best_ask_level(orders: Vec<OrderSummary>) -> Result<Option<PolymarketBookLevel>> {
+    orders
+        .into_iter()
+        .min_by(|left, right| left.price.cmp(&right.price))
+        .map(book_level_from_order)
+        .transpose()
+}
+
+fn book_level_from_order(order: OrderSummary) -> Result<PolymarketBookLevel> {
+    Ok(PolymarketBookLevel {
+        price: Probability::new(order.price).map_err(|error| {
+            AppError::internal(
+                "POLYMARKET_ORDER_BOOK_PRICE_INVALID",
+                format!("failed to decode Polymarket order book price: {error}"),
+            )
+        })?,
+        size: Quantity::new(order.size).map_err(|error| {
+            AppError::internal(
+                "POLYMARKET_ORDER_BOOK_SIZE_INVALID",
+                format!("failed to decode Polymarket order book size: {error}"),
+            )
+        })?,
+    })
+}
+
+fn max_time(left: OffsetDateTime, right: OffsetDateTime) -> OffsetDateTime {
+    if left >= right { left } else { right }
 }
 
 fn validate_live_order_request(request: &LivePolymarketOrderRequest) -> Result<()> {

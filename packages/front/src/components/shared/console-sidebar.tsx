@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { LucideIcon } from "lucide-react";
 import {
+  Activity,
   CheckSquare,
   History,
   LayoutDashboard,
@@ -29,7 +30,8 @@ const navItems: NavItem[] = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/markets", label: "Markets", icon: SquareChartGantt },
   { href: "/events", label: "Events", icon: Newspaper },
-  { href: "/signals", label: "Signals", icon: Radar },
+  { href: "/radar", label: "Radar", icon: Radar },
+  { href: "/signals", label: "Signals", icon: Activity },
   { href: "/positions", label: "Positions", icon: WalletCards },
   { href: "/risk", label: "Risk", icon: ShieldAlert },
   { href: "/approvals", label: "Approvals", icon: CheckSquare },
