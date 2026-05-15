@@ -15,7 +15,14 @@ import { buildQueryString, createListResponse, fetchListContract } from "@/serve
 
 type ArbitrageOpportunityQuery = Pick<
   ContractListQuery,
-  "limit" | "market_id" | "opportunity_type" | "observed_after"
+  | "limit"
+  | "market_id"
+  | "opportunity_type"
+  | "status"
+  | "validation_status"
+  | "min_net_edge"
+  | "observed_after"
+  | "active_only"
 >;
 
 function timestamp(value: string): number {
@@ -44,6 +51,33 @@ export async function listArbitrageOpportunities(
       return false;
     }
 
+    if (query?.status?.length && !query.status.includes(opportunity.status)) {
+      return false;
+    }
+
+    if (query?.validation_status === "unvalidated" && opportunity.validation) {
+      return false;
+    }
+
+    if (
+      query?.validation_status &&
+      query.validation_status !== "unvalidated" &&
+      opportunity.validation?.status !== query.validation_status
+    ) {
+      return false;
+    }
+
+    if (
+      query?.min_net_edge &&
+      Number.parseFloat(opportunity.validation?.net_edge ?? "0") < Number.parseFloat(query.min_net_edge)
+    ) {
+      return false;
+    }
+
+    if (query?.active_only && opportunity.status === "expired") {
+      return false;
+    }
+
     if (query?.observed_after && timestamp(opportunity.observed_at) < timestamp(query.observed_after)) {
       return false;
     }
@@ -56,7 +90,11 @@ export async function listArbitrageOpportunities(
       limit: query?.limit,
       market_id: query?.market_id,
       opportunity_type: query?.opportunity_type,
+      status: query?.status?.[0],
+      validation_status: query?.validation_status,
+      min_net_edge: query?.min_net_edge,
       observed_after: query?.observed_after,
+      active_only: query?.active_only,
     })}`,
     createListResponse("arbitrage_opportunities", filtered, query?.limit),
   );

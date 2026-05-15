@@ -22,6 +22,7 @@ import {
   listArbitrageScans,
 } from "@/server/api/arbitrage";
 import { listMarkets } from "@/server/api/markets";
+import { deriveCandidatePreview } from "@/features/radar/lib/radar-state";
 
 export type RadarOpportunityItem = {
   id: string;
@@ -50,11 +51,17 @@ export type RadarOpportunityItem = {
   validationLabel: string;
   validationTone: Tone;
   netEdge: string;
+  netEdgeValue: number;
   feeEstimate: string;
   slippageBuffer: string;
   validatedCapacity: string;
   bookAge: string;
+  bookAgeMs: number | null;
   validationReasonCodes: string[];
+  candidateStatus: "candidate" | "watch" | "blocked";
+  candidateLabel: string;
+  candidateTone: Tone;
+  candidateReason: string;
   isSelected: boolean;
 };
 
@@ -201,6 +208,12 @@ function buildOpportunity(
   const market = marketIndex.get(opportunity.market_id);
   const validation = opportunity.validation ?? null;
   const validationStatus = validation?.status ?? "unvalidated";
+  const candidate = deriveCandidatePreview({
+    opportunityStatus: opportunity.status,
+    validationStatus,
+    hasValidation: Boolean(validation),
+    netEdgeValue: validation ? toNumber(validation.net_edge) : 0,
+  });
 
   return {
     id: opportunity.id,
@@ -229,11 +242,17 @@ function buildOpportunity(
     validationLabel: humanizeSnakeCase(validationStatus),
     validationTone: validationStatusTone(validationStatus),
     netEdge: validation ? formatPercentFromRatio(validation.net_edge, 1) : "n/a",
+    netEdgeValue: validation ? toNumber(validation.net_edge) : 0,
     feeEstimate: validation ? formatPercentFromRatio(validation.fee_estimate, 1) : "n/a",
     slippageBuffer: validation ? formatPercentFromRatio(validation.slippage_buffer, 1) : "n/a",
     validatedCapacity: validation ? formatInteger(validation.validated_capacity) : "n/a",
     bookAge: formatBookAge(validation?.book_age_ms),
+    bookAgeMs: validation?.book_age_ms ?? null,
     validationReasonCodes: validation?.reason_codes.map(humanizeSnakeCase) ?? [],
+    candidateStatus: candidate.status,
+    candidateLabel: candidate.label,
+    candidateTone: candidate.tone,
+    candidateReason: candidate.reason,
     isSelected: opportunity.id === selectedOpportunityId,
   };
 }
@@ -268,7 +287,7 @@ export async function getRadarPageData(): Promise<RadarPageData> {
   const [{ data: scans }, { data: opportunities }, { data: analysisRuns }, { data: markets }] =
     await Promise.all([
       listArbitrageScans({ limit: 8 }),
-      listArbitrageOpportunities({ limit: 50 }),
+      listArbitrageOpportunities({ limit: 100 }),
       listArbitrageAnalysisRuns({ limit: 1 }),
       listMarkets({ limit: 200 }),
     ]);

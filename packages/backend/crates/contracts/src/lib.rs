@@ -803,7 +803,15 @@ pub struct ArbitrageOpportunityListQuery {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub opportunity_type: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub validation_status: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub min_net_edge: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub observed_after: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub active_only: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub limit: Option<u16>,
 }

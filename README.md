@@ -177,6 +177,36 @@ cp .env.example .env
 2. 留空的可选项会被视为未配置，例如 `POLYEDGE_POSTGRES__URL=`。
 3. `POLYEDGE_AUTH__KEYS_JSON` 使用 JSON 数组格式配置验签公钥。
 
+### 套利雷达 live 冒烟
+
+本地验证真实盘口链路时，先确保已应用迁移到 `0014_arbitrage_validation_events.sql`，再使用：
+
+```bash
+POLYEDGE_POSTGRES__URL=postgres://...
+POLYEDGE_REDIS__URL=redis://...
+POLYEDGE_ARBITRAGE__BOOK_SOURCE=polymarket
+POLYEDGE_ARBITRAGE__SCAN_LIMIT=1
+POLYEDGE_ENABLE_LIVE_SSE=1
+cargo run -p polyedge-api
+cargo run -p polyedge-worker -- scan-arbitrage-once
+cargo run -p polyedge-worker -- analyze-arbitrage-opportunities
+```
+
+前端 `/radar` 应能看到 scan、机会、validation、过期和 analysis 事件。`poll-arbitrage-radar` 会持续扫描，并按 `POLYEDGE_ARBITRAGE__EVENT_RETENTION_HOURS` 清理旧 outbox 事件。
+
+也可以用本地冒烟脚本检查 API、worker、套利只读端点和可选前端 SSE 代理：
+
+```bash
+POLYEDGE_FRONT_BASE_URL=http://127.0.0.1:3001 \
+./scripts/smoke-arbitrage-radar.sh
+```
+
+说明：
+
+1. `packages/backend/.env` 中 `POLYEDGE_POSTGRES__URL` / `POLYEDGE_REDIS__URL` 留空时，后端会回退到内存 store；要验证持久化和 outbox，必须显式传真实连接串。
+2. `POLYEDGE_ARBITRAGE__BOOK_SOURCE=polymarket` 会实时请求 Polymarket CLOB `/book`。fixture 里的演示 token 不是公网真实 token，live 冒烟时需要先把待测市场替换为真实 `polymarket_*` 引用，或把 `POLYEDGE_ARBITRAGE__BOOK_SOURCE` 改回 `market_snapshot`。
+3. `scripts/smoke-arbitrage-radar.sh` 未设置 `POLYEDGE_SMOKE_BEARER_TOKEN` 时会发送本地 dev-auth header；如果后端没有关闭验签或没有启用 dev-auth，本脚本会跳过受保护端点或返回认证失败。
+
 ## Docker 部署
 
 仓库包含一个服务器部署入口：
@@ -241,8 +271,8 @@ POLYEDGE_GIT_BRANCH=main \
 - 风险模式切换、signal approve/reject、execution request 等写路径
 - 审批、风险告警、风险桶与 SSE stream 只读资源
 - worker 侧的 fixture ingest、执行队列、fill/status reconcile、raw news event/evidence promotion 流程
-- worker 侧只读套利雷达，可扫描盘口、记录机会、校验机会、过期旧机会并生成历史分析，不会创建 execution request 或订单
-- 套利雷达只读 API 与前端 `/radar` 页面，支持查看 scan、机会列表、校验结果和分析摘要
+- worker 侧只读套利雷达，可扫描盘口、记录机会、重新拉并记录最新盘口来校验机会、识别 `price_moved`、过期旧机会并生成历史分析，不会创建 execution request 或订单
+- 套利雷达只读 API 与前端 `/radar` 页面，支持查看 scan、机会列表、校验结果、active/validated/rejected/history 视图、只读 candidate preview 和分析摘要
 - `/api/v1/stream/arbitrage` 使用套利 outbox sequence 做实时增量 SSE，并支持 `Last-Event-ID` 续传
 - RSS/Atom 新闻源抓取、标准化、去重入 `raw_events`、source health 记录和 raw news 只读 API
 - Polymarket connector 与 paper/mock 执行相关代码
@@ -256,7 +286,7 @@ POLYEDGE_GIT_BRANCH=main \
 2. 前端权限仍以 `off | mock-session` 为主，不是生产级会话系统。
 3. 签名内部 JWT 代码路径已具备，但真实环境还需要 key rotation、会话来源和撤销策略。
 4. Polymarket live 交易链路仍需要真实凭证、小额演练、部署配置和运维 runbook。
-5. 套利雷达当前闭合到机会发现、记录、校验、分析、实时增量推送和只读展示；尚未接入交易执行。
+5. 套利雷达当前闭合到机会发现、记录、校验、分析、实时增量推送、只读展示和 candidate preview；尚未创建 execution request 或订单。
 6. 新闻源当前已闭合到 `raw_events` 入库、健康状态、只读查看和保守提升为 `events/evidences`，尚未自动生成 `signals`。
 
 这意味着：

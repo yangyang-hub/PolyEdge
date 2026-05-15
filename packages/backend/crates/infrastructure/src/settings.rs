@@ -114,6 +114,7 @@ pub struct ArbitrageSettings {
     pub analysis_lookback_hours: u16,
     pub max_book_age_ms: u64,
     pub opportunity_ttl_secs: u64,
+    pub event_retention_hours: u64,
     pub min_gross_edge: Edge,
     pub min_capacity: Quantity,
     pub fee_buffer: Edge,
@@ -248,6 +249,7 @@ impl Default for ArbitrageSettings {
             analysis_lookback_hours: 24,
             max_book_age_ms: 10_000,
             opportunity_ttl_secs: 60,
+            event_retention_hours: 24,
             min_gross_edge: edge("0.005"),
             min_capacity: quantity("1"),
             fee_buffer: edge("0.005"),
@@ -451,6 +453,7 @@ mod tests {
         assert_eq!(settings.arbitrage.analysis_lookback_hours, 24);
         assert_eq!(settings.arbitrage.max_book_age_ms, 10_000);
         assert_eq!(settings.arbitrage.opportunity_ttl_secs, 60);
+        assert_eq!(settings.arbitrage.event_retention_hours, 24);
         assert_eq!(settings.arbitrage.min_gross_edge, edge("0.005"));
         assert_eq!(settings.arbitrage.min_capacity, quantity("1"));
         assert_eq!(settings.arbitrage.fee_buffer, edge("0.005"));
@@ -517,6 +520,10 @@ mod tests {
                 "15".to_string(),
             ),
             (
+                "POLYEDGE_ARBITRAGE__EVENT_RETENTION_HOURS".to_string(),
+                "6".to_string(),
+            ),
+            (
                 "POLYEDGE_ARBITRAGE__MIN_GROSS_EDGE".to_string(),
                 "0.02".to_string(),
             ),
@@ -580,6 +587,7 @@ mod tests {
         assert_eq!(settings.arbitrage.analysis_lookback_hours, 12);
         assert_eq!(settings.arbitrage.max_book_age_ms, 2500);
         assert_eq!(settings.arbitrage.opportunity_ttl_secs, 15);
+        assert_eq!(settings.arbitrage.event_retention_hours, 6);
         assert_eq!(settings.arbitrage.min_gross_edge, edge("0.02"));
         assert_eq!(settings.arbitrage.min_capacity, quantity("50"));
         assert_eq!(settings.arbitrage.fee_buffer, edge("0.003"));

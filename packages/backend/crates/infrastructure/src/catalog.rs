@@ -1690,6 +1690,11 @@ impl ArbitrageStore for InMemoryMarketEventStore {
                         .opportunity_type
                         .is_none_or(|kind| opportunity.opportunity_type == kind)
                     && filters
+                        .status
+                        .is_none_or(|status| opportunity.status == status)
+                    && (!filters.active_only
+                        || opportunity.status != ArbitrageOpportunityStatus::Expired)
+                    && filters
                         .observed_after
                         .is_none_or(|after| opportunity.observed_at >= after)
             })
@@ -1698,6 +1703,23 @@ impl ArbitrageStore for InMemoryMarketEventStore {
                 opportunity.validation =
                     latest_validation_for_opportunity(&validations, &opportunity.id);
                 opportunity
+            })
+            .filter(|opportunity| {
+                filters.validation_status.is_none_or(|status| {
+                    if status == ArbitrageValidationStatus::Unvalidated {
+                        opportunity.validation.is_none()
+                    } else {
+                        opportunity
+                            .validation
+                            .as_ref()
+                            .is_some_and(|validation| validation.status == status)
+                    }
+                }) && filters.min_net_edge.is_none_or(|min_net_edge| {
+                    opportunity
+                        .validation
+                        .as_ref()
+                        .is_some_and(|validation| validation.net_edge >= min_net_edge)
+                })
             })
             .collect();
         items.sort_by(|left, right| {
@@ -1766,6 +1788,13 @@ impl ArbitrageStore for InMemoryMarketEventStore {
         items.sort_by(|left, right| left.sequence.cmp(&right.sequence));
         items.truncate(usize::from(filters.limit));
         Ok(items)
+    }
+
+    async fn prune_arbitrage_events(&self, occurred_before: OffsetDateTime) -> Result<u64> {
+        let mut events = self.arbitrage_events.write().await;
+        let before = events.len();
+        events.retain(|event| event.occurred_at >= occurred_before);
+        usize_to_u64(before.saturating_sub(events.len()))
     }
 }
 
@@ -2509,9 +2538,17 @@ impl ArbitrageStore for PostgresMarketEventStore {
             ) v ON TRUE
             WHERE ($1::TEXT IS NULL OR o.market_id = $1)
               AND ($2::TEXT IS NULL OR o.opportunity_type = $2)
-              AND ($3::TIMESTAMPTZ IS NULL OR o.observed_at >= $3)
+              AND ($3::TEXT IS NULL OR o.status = $3)
+              AND (
+                $4::TEXT IS NULL
+                OR ($4 = 'unvalidated' AND v.id IS NULL)
+                OR ($4 <> 'unvalidated' AND v.status = $4)
+              )
+              AND ($5::NUMERIC IS NULL OR v.net_edge >= $5)
+              AND ($6::TIMESTAMPTZ IS NULL OR o.observed_at >= $6)
+              AND (NOT $7::BOOL OR o.status <> 'expired')
             ORDER BY o.observed_at DESC, o.id ASC
-            LIMIT $4
+            LIMIT $8
             "#,
         )
         .bind(filters.market_id.as_deref())
@@ -2520,7 +2557,15 @@ impl ArbitrageStore for PostgresMarketEventStore {
                 .opportunity_type
                 .map(ArbitrageOpportunityType::as_str),
         )
+        .bind(filters.status.map(ArbitrageOpportunityStatus::as_str))
+        .bind(
+            filters
+                .validation_status
+                .map(ArbitrageValidationStatus::as_str),
+        )
+        .bind(filters.min_net_edge.map(Edge::value))
         .bind(filters.observed_after)
+        .bind(filters.active_only)
         .bind(i64::from(filters.limit))
         .fetch_all(&self.pool)
         .await
@@ -2712,6 +2757,26 @@ impl ArbitrageStore for PostgresMarketEventStore {
         })?;
 
         rows.iter().map(parse_arbitrage_event_row).collect()
+    }
+
+    async fn prune_arbitrage_events(&self, occurred_before: OffsetDateTime) -> Result<u64> {
+        let result = sqlx::query(
+            r#"
+            DELETE FROM arbitrage_events
+            WHERE occurred_at < $1
+            "#,
+        )
+        .bind(occurred_before)
+        .execute(&self.pool)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_DELETE_FAILED",
+                format!("failed to prune arbitrage events: {error}"),
+            )
+        })?;
+
+        Ok(result.rows_affected())
     }
 }
 
@@ -7713,6 +7778,7 @@ where
 mod tests {
     use super::{InMemoryMarketEventStore, PostgresMarketEventStore};
     use polyedge_application::{
+        ArbitrageEventListFilters, ArbitrageEventType, ArbitrageEventView, ArbitrageStore,
         MarketEventStore, NewsIngestionStore, NewsSourceFailureUpdate, NewsSourceHealthListFilters,
         NewsSourceSuccessUpdate, RecomputeSignalCommand, demo_fixture_bundle,
     };
@@ -7727,6 +7793,56 @@ mod tests {
 
     fn quote_pg_ident(value: &str) -> String {
         format!(r#""{}""#, value.replace('"', r#""""#))
+    }
+
+    fn arbitrage_event(id: &str, occurred_at: OffsetDateTime) -> ArbitrageEventView {
+        ArbitrageEventView {
+            sequence: 0,
+            id: id.to_string(),
+            event_type: ArbitrageEventType::ScanStarted,
+            resource_type: "scan".to_string(),
+            resource_id: id.to_string(),
+            payload: serde_json::json!({ "scan_id": id }),
+            occurred_at,
+            trace_id: "trc_arbitrage_event_test".to_string(),
+        }
+    }
+
+    #[tokio::test]
+    async fn in_memory_arbitrage_events_prune_old_records_and_keep_sequences() -> Result<()> {
+        let store = InMemoryMarketEventStore::new();
+        let old_at = OffsetDateTime::UNIX_EPOCH + Duration::seconds(10);
+        let fresh_at = OffsetDateTime::UNIX_EPOCH + Duration::seconds(30);
+
+        let old = store
+            .record_arbitrage_event(&arbitrage_event("scan_old", old_at))
+            .await?;
+        let fresh = store
+            .record_arbitrage_event(&arbitrage_event("scan_fresh", fresh_at))
+            .await?;
+
+        assert_eq!(old.sequence, 1);
+        assert_eq!(fresh.sequence, 2);
+
+        let pruned = store
+            .prune_arbitrage_events(OffsetDateTime::UNIX_EPOCH + Duration::seconds(20))
+            .await?;
+        assert_eq!(pruned, 1);
+
+        let remaining = store
+            .list_arbitrage_events(&ArbitrageEventListFilters::new(None, Some(10))?)
+            .await?;
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].id, "scan_fresh");
+        assert_eq!(remaining[0].sequence, 2);
+
+        let resumed = store
+            .list_arbitrage_events(&ArbitrageEventListFilters::new(Some(1), Some(10))?)
+            .await?;
+        assert_eq!(resumed.len(), 1);
+        assert_eq!(resumed[0].id, "scan_fresh");
+
+        Ok(())
     }
 
     #[tokio::test]

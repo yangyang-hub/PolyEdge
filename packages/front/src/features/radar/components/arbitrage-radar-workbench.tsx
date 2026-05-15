@@ -25,6 +25,10 @@ import type {
 } from "@/lib/contracts/dto";
 import type { ArbitrageStreamPayload } from "@/lib/contracts/realtime";
 import {
+  calculateValidationSummary,
+  deriveCandidatePreview,
+} from "@/features/radar/lib/radar-state";
+import {
   formatClock,
   formatInteger,
   formatPercentFromRatio,
@@ -35,6 +39,7 @@ import {
 import { isKeyboardSelect } from "@/lib/keyboard";
 
 type RadarFilter = "all" | "binary_buy_both" | "binary_sell_both";
+type RadarView = "active" | "validated" | "rejected" | "history";
 
 type ArbitrageRadarWorkbenchProps = {
   data: RadarPageData;
@@ -44,6 +49,13 @@ const filterButtons: Array<{ key: RadarFilter; label: string }> = [
   { key: "all", label: "all" },
   { key: "binary_buy_both", label: "buy both" },
   { key: "binary_sell_both", label: "sell both" },
+];
+
+const viewButtons: Array<{ key: RadarView; label: string }> = [
+  { key: "active", label: "active" },
+  { key: "validated", label: "validated" },
+  { key: "rejected", label: "rejected" },
+  { key: "history", label: "history" },
 ];
 
 function toNumber(value: string | number | null | undefined): number {
@@ -147,11 +159,17 @@ function buildLiveOpportunity(payload: ArbitrageStreamPayload): RadarOpportunity
     validationLabel: humanizeSnakeCase(validationStatus),
     validationTone: validationStatusTone(validationStatus),
     netEdge: "n/a",
+    netEdgeValue: 0,
     feeEstimate: "n/a",
     slippageBuffer: "n/a",
     validatedCapacity: "n/a",
     bookAge: "n/a",
+    bookAgeMs: null,
     validationReasonCodes: [],
+    candidateStatus: "watch",
+    candidateLabel: "watch",
+    candidateTone: "warning",
+    candidateReason: "waiting for validation",
     isSelected: false,
   };
 }
@@ -161,6 +179,13 @@ function applyOpportunityPatch(
   payload: ArbitrageStreamPayload,
 ): RadarOpportunityItem {
   const status = payload.status ?? current.status;
+  const candidate = deriveCandidatePreview({
+    opportunityStatus: status,
+    validationStatus: current.validationStatus,
+    hasValidation: current.validationStatus !== "unvalidated",
+    netEdgeValue: current.netEdgeValue,
+  });
+
   return {
     ...current,
     status,
@@ -178,6 +203,10 @@ function applyOpportunityPatch(
     noSize: payload.no_size ? formatInteger(payload.no_size) : current.noSize,
     reasonCodes: payload.reason_codes?.map(humanizeSnakeCase) ?? current.reasonCodes,
     formula: payload.analysis_payload ? readFormula(payload.analysis_payload) : current.formula,
+    candidateStatus: candidate.status,
+    candidateLabel: candidate.label,
+    candidateTone: candidate.tone,
+    candidateReason: candidate.reason,
   };
 }
 
@@ -186,6 +215,13 @@ function applyValidationPatch(
   payload: ArbitrageStreamPayload,
 ): RadarOpportunityItem {
   const validationStatus = payload.validation_status ?? current.validationStatus;
+  const netEdgeValue = toNumber(payload.net_edge ?? current.netEdgeValue);
+  const candidate = deriveCandidatePreview({
+    opportunityStatus: current.status,
+    validationStatus,
+    hasValidation: true,
+    netEdgeValue,
+  });
 
   return {
     ...current,
@@ -193,6 +229,7 @@ function applyValidationPatch(
     validationLabel: humanizeSnakeCase(validationStatus),
     validationTone: validationStatusTone(validationStatus),
     netEdge: payload.net_edge ? formatPercentFromRatio(payload.net_edge, 1) : current.netEdge,
+    netEdgeValue,
     feeEstimate: payload.fee_estimate ? formatPercentFromRatio(payload.fee_estimate, 1) : current.feeEstimate,
     slippageBuffer: payload.slippage_buffer
       ? formatPercentFromRatio(payload.slippage_buffer, 1)
@@ -201,7 +238,12 @@ function applyValidationPatch(
       ? formatInteger(payload.validated_capacity)
       : current.validatedCapacity,
     bookAge: payload.book_age_ms !== undefined ? formatBookAge(payload.book_age_ms) : current.bookAge,
+    bookAgeMs: payload.book_age_ms ?? current.bookAgeMs,
     validationReasonCodes: payload.reason_codes?.map(humanizeSnakeCase) ?? current.validationReasonCodes,
+    candidateStatus: candidate.status,
+    candidateLabel: candidate.label,
+    candidateTone: candidate.tone,
+    candidateReason: candidate.reason,
   };
 }
 
@@ -312,9 +354,13 @@ function buildLiveAnalysis(payload: ArbitrageStreamPayload): RadarAnalysis | nul
 
 function buildMetrics(opportunities: RadarOpportunityItem[], scans: RadarScanRow[]): RadarMetric[] {
   const latestScan = scans[0] ?? null;
-  const maxEdge = opportunities.reduce((value, opportunity) => Math.max(value, opportunity.grossEdgeValue), 0);
-  const validCount = opportunities.filter((opportunity) => opportunity.validationStatus === "valid").length;
-  const accent: AccentTone = maxEdge > 0 ? "success" : "primary";
+  const active = opportunities.filter((opportunity) => opportunity.status !== "expired");
+  const validationSummary = calculateValidationSummary(opportunities);
+  const maxNetEdge = opportunities.reduce(
+    (value, opportunity) => Math.max(value, opportunity.netEdgeValue),
+    0,
+  );
+  const accent: AccentTone = maxNetEdge > 0 ? "success" : "primary";
 
   return [
     {
@@ -324,24 +370,54 @@ function buildMetrics(opportunities: RadarOpportunityItem[], scans: RadarScanRow
       accent: "primary",
     },
     {
-      title: "Observed Opportunities",
-      value: formatInteger(opportunities.length),
-      hint: latestScan ? `${latestScan.opportunityCount} latest scan` : "all windows",
+      title: "Active Opportunities",
+      value: formatInteger(active.length),
+      hint: latestScan ? `${latestScan.opportunityCount} latest scan` : "not expired",
       accent: "success",
     },
     {
-      title: "Max Gross Edge",
-      value: formatPercentFromRatio(maxEdge, 1),
-      hint: "best observed",
+      title: "Max Net Edge",
+      value: formatPercentFromRatio(maxNetEdge, 1),
+      hint: "after buffers",
       accent,
     },
     {
-      title: "Valid Opportunities",
-      value: formatInteger(validCount),
-      hint: `${formatInteger(opportunities.length - validCount)} pending or rejected`,
-      accent: validCount > 0 ? "success" : "primary",
+      title: "Validation Pass Rate",
+      value: formatPercentFromRatio(validationSummary.passRate, 0),
+      hint: `${formatInteger(validationSummary.completedValidationCount)} completed, ${formatInteger(validationSummary.rejectedCount)} rejected`,
+      accent: validationSummary.passRate > 0 ? "success" : "primary",
     },
   ];
+}
+
+function viewMatches(view: RadarView, opportunity: RadarOpportunityItem): boolean {
+  if (view === "active") {
+    return opportunity.status !== "expired";
+  }
+
+  if (view === "validated") {
+    return opportunity.validationStatus === "valid";
+  }
+
+  if (view === "rejected") {
+    return opportunity.validationStatus !== "valid" && opportunity.validationStatus !== "unvalidated";
+  }
+
+  return true;
+}
+
+function compareRadarPriority(left: RadarOpportunityItem, right: RadarOpportunityItem): number {
+  const leftValid = left.validationStatus === "valid" ? 1 : 0;
+  const rightValid = right.validationStatus === "valid" ? 1 : 0;
+  const leftAge = left.bookAgeMs ?? Number.MAX_SAFE_INTEGER;
+  const rightAge = right.bookAgeMs ?? Number.MAX_SAFE_INTEGER;
+
+  return (
+    rightValid - leftValid ||
+    right.netEdgeValue - left.netEdgeValue ||
+    leftAge - rightAge ||
+    Date.parse(right.observedAt) - Date.parse(left.observedAt)
+  );
 }
 
 function OpportunityDetail({ opportunity }: { opportunity: RadarOpportunityItem | null }) {
@@ -364,6 +440,7 @@ function OpportunityDetail({ opportunity }: { opportunity: RadarOpportunityItem 
           <StatusPill tone={opportunity.typeTone}>{opportunity.typeLabel}</StatusPill>
           <StatusPill tone={opportunity.statusTone}>{opportunity.statusLabel}</StatusPill>
           <StatusPill tone={opportunity.validationTone}>{opportunity.validationLabel}</StatusPill>
+          <StatusPill tone={opportunity.candidateTone}>{opportunity.candidateLabel}</StatusPill>
           <StatusPill tone="primary">{opportunity.observedClock}</StatusPill>
         </div>
       </div>
@@ -430,6 +507,16 @@ function OpportunityDetail({ opportunity }: { opportunity: RadarOpportunityItem 
 
       <div className="rounded-md bg-popover/70 p-4">
         <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">
+          Candidate Preview
+        </p>
+        <div className="mt-3 flex items-center justify-between gap-3">
+          <StatusPill tone={opportunity.candidateTone}>{opportunity.candidateLabel}</StatusPill>
+          <p className="text-right text-xs text-muted-foreground">{opportunity.candidateReason}</p>
+        </div>
+      </div>
+
+      <div className="rounded-md bg-popover/70 p-4">
+        <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">
           Detection Formula
         </p>
         <p className="mt-3 font-mono text-sm text-foreground">{opportunity.formula}</p>
@@ -454,6 +541,7 @@ function OpportunityDetail({ opportunity }: { opportunity: RadarOpportunityItem 
 export function ArbitrageRadarWorkbench({ data }: ArbitrageRadarWorkbenchProps) {
   const arbitrageStream = useConsoleRealtimeChannel("arbitrage");
   const [filter, setFilter] = useState<RadarFilter>("all");
+  const [view, setView] = useState<RadarView>("active");
   const [selectedId, setSelectedId] = useState(data.selectedOpportunityId);
   const [liveOpportunities, setLiveOpportunities] = useState(data.opportunities);
   const [liveScans, setLiveScans] = useState(data.scans);
@@ -509,17 +597,17 @@ export function ArbitrageRadarWorkbench({ data }: ArbitrageRadarWorkbenchProps) 
   const metrics = useMemo(() => buildMetrics(liveOpportunities, liveScans), [liveOpportunities, liveScans]);
 
   const filteredOpportunities = useMemo(() => {
-    if (deferredFilter === "all") {
-      return liveOpportunities;
-    }
-
-    return liveOpportunities.filter((opportunity) => opportunity.opportunityType === deferredFilter);
-  }, [liveOpportunities, deferredFilter]);
+    return liveOpportunities
+      .filter((opportunity) => viewMatches(view, opportunity))
+      .filter((opportunity) => deferredFilter === "all" || opportunity.opportunityType === deferredFilter)
+      .slice()
+      .sort(compareRadarPriority);
+  }, [liveOpportunities, deferredFilter, view]);
 
   const selectedOpportunity =
     filteredOpportunities.find((opportunity) => opportunity.id === selectedId) ??
-    liveOpportunities.find((opportunity) => opportunity.id === selectedId) ??
     filteredOpportunities[0] ??
+    liveOpportunities.find((opportunity) => opportunity.id === selectedId) ??
     liveOpportunities[0] ??
     null;
 
@@ -569,6 +657,7 @@ export function ArbitrageRadarWorkbench({ data }: ArbitrageRadarWorkbenchProps) 
               </h2>
             </div>
             <div className="flex flex-wrap items-center gap-2">
+              <WorkbenchSegmentedControl items={viewButtons} value={view} onChange={setView} />
               <WorkbenchSegmentedControl items={filterButtons} value={filter} onChange={setFilter} />
               <Button
                 variant="outline"
@@ -590,10 +679,12 @@ export function ArbitrageRadarWorkbench({ data }: ArbitrageRadarWorkbenchProps) 
                     <th className="px-4 py-3">Type</th>
                     <th className="px-4 py-3 text-right">Sum</th>
                     <th className="px-4 py-3 text-right">Edge</th>
+                    <th className="px-4 py-3 text-right">Net</th>
                     <th className="px-4 py-3 text-right">Capacity</th>
                     <th className="px-4 py-3">Observed</th>
                     <th className="px-4 py-3">Status</th>
                     <th className="px-4 py-3">Validation</th>
+                    <th className="px-4 py-3">Candidate</th>
                     <th className="px-5 py-3 text-right">Open</th>
                   </tr>
                 </thead>
@@ -634,6 +725,9 @@ export function ArbitrageRadarWorkbench({ data }: ArbitrageRadarWorkbenchProps) 
                       <td className="px-4 py-3 text-right font-mono text-secondary">
                         {opportunity.grossEdge}
                       </td>
+                      <td className="px-4 py-3 text-right font-mono text-secondary">
+                        {opportunity.netEdge}
+                      </td>
                       <td className="px-4 py-3 text-right font-mono">{opportunity.capacity}</td>
                       <td className="px-4 py-3 font-mono text-muted-foreground">
                         {opportunity.observedClock}
@@ -644,6 +738,11 @@ export function ArbitrageRadarWorkbench({ data }: ArbitrageRadarWorkbenchProps) 
                       <td className="px-4 py-3">
                         <StatusPill tone={opportunity.validationTone}>
                           {opportunity.validationLabel}
+                        </StatusPill>
+                      </td>
+                      <td className="px-4 py-3">
+                        <StatusPill tone={opportunity.candidateTone}>
+                          {opportunity.candidateLabel}
                         </StatusPill>
                       </td>
                       <td className="px-5 py-3 text-right">

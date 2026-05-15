@@ -8,7 +8,7 @@ use std::{
     str::FromStr,
     sync::Arc,
 };
-use time::OffsetDateTime;
+use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
 const DEFAULT_LIST_LIMIT: u16 = 100;
 const MAX_LIST_LIMIT: u16 = 500;
@@ -364,7 +364,11 @@ impl ArbitrageScanListFilters {
 pub struct ArbitrageOpportunityListFilters {
     pub market_id: Option<String>,
     pub opportunity_type: Option<ArbitrageOpportunityType>,
+    pub status: Option<ArbitrageOpportunityStatus>,
+    pub validation_status: Option<ArbitrageValidationStatus>,
+    pub min_net_edge: Option<Edge>,
     pub observed_after: Option<OffsetDateTime>,
+    pub active_only: bool,
     pub limit: u16,
 }
 
@@ -372,13 +376,21 @@ impl ArbitrageOpportunityListFilters {
     pub fn new(
         market_id: Option<String>,
         opportunity_type: Option<ArbitrageOpportunityType>,
+        status: Option<ArbitrageOpportunityStatus>,
+        validation_status: Option<ArbitrageValidationStatus>,
+        min_net_edge: Option<Edge>,
         observed_after: Option<OffsetDateTime>,
+        active_only: bool,
         limit: Option<u16>,
     ) -> Result<Self> {
         Ok(Self {
             market_id: normalize_optional_id("market_id", market_id)?,
             opportunity_type,
+            status,
+            validation_status,
+            min_net_edge,
             observed_after,
+            active_only,
             limit: validate_limit(limit)?,
         })
     }
@@ -472,6 +484,8 @@ pub trait ArbitrageStore: Send + Sync {
         &self,
         filters: &ArbitrageEventListFilters,
     ) -> Result<Vec<ArbitrageEventView>>;
+
+    async fn prune_arbitrage_events(&self, occurred_before: OffsetDateTime) -> Result<u64>;
 }
 
 pub struct ArbitrageService {
@@ -594,6 +608,14 @@ impl ArbitrageService {
         Ok(opportunities)
     }
 
+    pub async fn record_book_snapshot(
+        &self,
+        snapshot: MarketBookSnapshotView,
+    ) -> Result<MarketBookSnapshotView> {
+        self.store.record_market_book_snapshot(&snapshot).await?;
+        Ok(snapshot)
+    }
+
     pub async fn validate_opportunity(
         &self,
         opportunity: &ArbitrageOpportunityView,
@@ -698,6 +720,10 @@ impl ArbitrageService {
         self.store.list_arbitrage_events(&filters).await
     }
 
+    pub async fn prune_events(&self, occurred_before: OffsetDateTime) -> Result<u64> {
+        self.store.prune_arbitrage_events(occurred_before).await
+    }
+
     async fn is_repeated_opportunity(
         &self,
         market_id: &str,
@@ -710,7 +736,11 @@ impl ArbitrageService {
             .list_arbitrage_opportunities(&ArbitrageOpportunityListFilters::new(
                 Some(market_id.to_string()),
                 Some(opportunity_type),
+                None,
+                None,
+                None,
                 Some(repeated_after),
+                true,
                 Some(1),
             )?)
             .await?;
@@ -813,7 +843,15 @@ pub fn validate_arbitrage_opportunity(
     let mut status = ArbitrageValidationStatus::Valid;
     let mut reason_codes = Vec::new();
     let book_age_ms = nonnegative_millis(validated_at - snapshot.observed_at);
-    let gross_edge = opportunity.gross_edge.value();
+    let current_draft = detect_arbitrage_opportunities(snapshot)?
+        .into_iter()
+        .find(|draft| draft.opportunity_type == opportunity.opportunity_type);
+    let gross_edge = current_draft
+        .as_ref()
+        .map_or(Decimal::ZERO, |draft| draft.gross_edge.value());
+    let current_capacity = current_draft
+        .as_ref()
+        .map_or(Quantity::new(Decimal::ZERO)?, |draft| draft.capacity);
     let fee_estimate = config.fee_buffer.value();
     let slippage_buffer = config.slippage_buffer.value();
     let net_edge = clamp_edge(gross_edge - fee_estimate - slippage_buffer);
@@ -836,6 +874,15 @@ pub fn validate_arbitrage_opportunity(
         );
     }
 
+    if current_draft.is_none() {
+        set_validation_status(
+            &mut status,
+            ArbitrageValidationStatus::PriceMoved,
+            &mut reason_codes,
+            "opportunity_no_longer_present_in_latest_book",
+        );
+    }
+
     if gross_edge < config.min_gross_edge.value() {
         set_validation_status(
             &mut status,
@@ -845,7 +892,7 @@ pub fn validate_arbitrage_opportunity(
         );
     }
 
-    if opportunity.capacity.value() < config.min_capacity.value() {
+    if current_capacity.value() < config.min_capacity.value() {
         set_validation_status(
             &mut status,
             ArbitrageValidationStatus::InsufficientDepth,
@@ -868,7 +915,7 @@ pub fn validate_arbitrage_opportunity(
     }
 
     let validated_capacity = if status == ArbitrageValidationStatus::Valid {
-        opportunity.capacity
+        current_capacity
     } else {
         Quantity::new(Decimal::ZERO)?
     };
@@ -877,7 +924,7 @@ pub fn validate_arbitrage_opportunity(
         id: arbitrage_validation_id(&opportunity.id, validated_at),
         opportunity_id: opportunity.id.clone(),
         status,
-        gross_edge: opportunity.gross_edge,
+        gross_edge: Edge::new(gross_edge)?,
         net_edge: Edge::new(net_edge)?,
         fee_estimate: config.fee_buffer,
         slippage_buffer: config.slippage_buffer,
@@ -892,6 +939,9 @@ pub fn validate_arbitrage_opportunity(
             "slippage_buffer": config.slippage_buffer,
             "snapshot_id": snapshot.id,
             "snapshot_observed_at": snapshot.observed_at,
+            "discovery_gross_edge": opportunity.gross_edge,
+            "discovery_capacity": opportunity.capacity,
+            "current_capacity": current_capacity,
             "validated_at": validated_at,
         }),
         validated_at,
@@ -1078,11 +1128,17 @@ fn arbitrage_event_id(
     )
 }
 
+fn timestamp_payload(timestamp: OffsetDateTime) -> String {
+    timestamp
+        .format(&Rfc3339)
+        .unwrap_or_else(|_| timestamp.to_string())
+}
+
 fn scan_payload(scan: &ArbitrageScanView) -> Value {
     json!({
         "scan_id": &scan.id,
-        "started_at": scan.started_at,
-        "finished_at": scan.finished_at,
+        "started_at": timestamp_payload(scan.started_at),
+        "finished_at": scan.finished_at.map(timestamp_payload),
         "market_count": scan.market_count,
         "snapshot_count": scan.snapshot_count,
         "opportunity_count": scan.opportunity_count,
@@ -1106,7 +1162,7 @@ fn opportunity_payload(opportunity: &ArbitrageOpportunityView) -> Value {
         "no_price": opportunity.no_price,
         "yes_size": opportunity.yes_size,
         "no_size": opportunity.no_size,
-        "observed_at": opportunity.observed_at,
+        "observed_at": timestamp_payload(opportunity.observed_at),
         "reason_codes": &opportunity.reason_codes,
         "analysis_payload": &opportunity.analysis_payload,
         "validation": &opportunity.validation,
@@ -1127,7 +1183,7 @@ fn validation_payload(validation: &ArbitrageOpportunityValidationView) -> Value 
         "book_age_ms": validation.book_age_ms,
         "reason_codes": &validation.reason_codes,
         "validation_payload": &validation.validation_payload,
-        "validated_at": validation.validated_at,
+        "validated_at": timestamp_payload(validation.validated_at),
         "trace_id": &validation.trace_id,
     })
 }
@@ -1135,7 +1191,7 @@ fn validation_payload(validation: &ArbitrageOpportunityValidationView) -> Value 
 fn analysis_payload(analysis: &ArbitrageAnalysisRunView) -> Value {
     json!({
         "analysis_id": &analysis.id,
-        "generated_at": analysis.generated_at,
+        "generated_at": timestamp_payload(analysis.generated_at),
         "lookback_hours": analysis.lookback_hours,
         "opportunity_count": analysis.opportunity_count,
         "market_count": analysis.market_count,
@@ -1301,6 +1357,84 @@ mod tests {
     }
 
     #[test]
+    fn arbitrage_event_payload_timestamps_are_rfc3339_strings() -> Result<()> {
+        let started_at = OffsetDateTime::UNIX_EPOCH + Duration::seconds(1);
+        let finished_at = started_at + Duration::seconds(2);
+        let scan = super::ArbitrageScanView {
+            id: "scan_1".to_string(),
+            started_at,
+            finished_at: Some(finished_at),
+            market_count: 1,
+            snapshot_count: 1,
+            opportunity_count: 1,
+            scanner_version: "v1".to_string(),
+            metadata: json!({ "book_source": "fixture" }),
+            trace_id: "trc_1".to_string(),
+        };
+
+        let scan_payload = super::scan_payload(&scan);
+        assert!(scan_payload["started_at"].is_string());
+        assert!(scan_payload["finished_at"].is_string());
+
+        let snapshot = snapshot();
+        let draft = detect_arbitrage_opportunities(&snapshot)?
+            .into_iter()
+            .next()
+            .expect("opportunity");
+        let opportunity = super::ArbitrageOpportunityView {
+            id: "opp_binary_buy_both".to_string(),
+            scan_id: snapshot.scan_id.clone(),
+            market_id: snapshot.market_id.clone(),
+            opportunity_type: draft.opportunity_type,
+            status: ArbitrageOpportunityStatus::Observed,
+            gross_edge: draft.gross_edge,
+            price_sum: draft.price_sum,
+            capacity: draft.capacity,
+            yes_price: draft.yes_price,
+            no_price: draft.no_price,
+            yes_size: draft.yes_size,
+            no_size: draft.no_size,
+            observed_at: snapshot.observed_at,
+            reason_codes: draft.reason_codes,
+            analysis_payload: draft.analysis_payload,
+            trace_id: "trc_1".to_string(),
+            validation: None,
+        };
+        let opportunity_payload = super::opportunity_payload(&opportunity);
+        assert!(opportunity_payload["observed_at"].is_string());
+
+        let config = ArbitrageValidationConfig {
+            max_book_age_ms: 5_000,
+            min_gross_edge: Edge::new(Decimal::new(1, 2))?,
+            min_capacity: quantity(5),
+            fee_buffer: Edge::new(Decimal::new(5, 3))?,
+            slippage_buffer: Edge::new(Decimal::new(5, 3))?,
+        };
+        let validation = validate_arbitrage_opportunity(
+            &opportunity,
+            &snapshot,
+            &config,
+            snapshot.observed_at + Duration::milliseconds(50),
+            "trc_1",
+        )?;
+        let validation_payload = super::validation_payload(&validation);
+        assert!(validation_payload["validated_at"].is_string());
+
+        let analysis_payload = super::analysis_payload(&super::ArbitrageAnalysisRunView {
+            id: "arb_analysis_1".to_string(),
+            generated_at: finished_at,
+            lookback_hours: 24,
+            opportunity_count: 1,
+            market_count: 1,
+            summary_payload: json!({ "generated_at": "1970-01-01T00:00:03Z" }),
+            trace_id: "trc_1".to_string(),
+        });
+        assert!(analysis_payload["generated_at"].is_string());
+
+        Ok(())
+    }
+
+    #[test]
     fn validate_arbitrage_opportunity_applies_buffers_and_capacity_rules() -> Result<()> {
         let snapshot = snapshot();
         let observed_at = snapshot.observed_at + Duration::seconds(1);
@@ -1353,6 +1487,85 @@ mod tests {
         assert_eq!(
             stale_validation.status,
             ArbitrageValidationStatus::StaleBook
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn validate_arbitrage_opportunity_marks_price_moved_when_current_book_loses_edge() -> Result<()>
+    {
+        let discovery_snapshot = snapshot();
+        let observed_at = discovery_snapshot.observed_at + Duration::seconds(1);
+        let draft = detect_arbitrage_opportunities(&discovery_snapshot)?
+            .into_iter()
+            .find(|draft| draft.opportunity_type == ArbitrageOpportunityType::BinaryBuyBoth)
+            .expect("buy-both opportunity");
+        let opportunity = super::ArbitrageOpportunityView {
+            id: "opp_binary_buy_both".to_string(),
+            scan_id: discovery_snapshot.scan_id.clone(),
+            market_id: discovery_snapshot.market_id.clone(),
+            opportunity_type: draft.opportunity_type,
+            status: ArbitrageOpportunityStatus::Observed,
+            gross_edge: draft.gross_edge,
+            price_sum: draft.price_sum,
+            capacity: draft.capacity,
+            yes_price: draft.yes_price,
+            no_price: draft.no_price,
+            yes_size: draft.yes_size,
+            no_size: draft.no_size,
+            observed_at: discovery_snapshot.observed_at,
+            reason_codes: draft.reason_codes,
+            analysis_payload: draft.analysis_payload,
+            trace_id: "trc_1".to_string(),
+            validation: None,
+        };
+        let validation_snapshot = MarketBookSnapshotView {
+            id: "book_1_validation".to_string(),
+            scan_id: discovery_snapshot.scan_id.clone(),
+            connector_name: discovery_snapshot.connector_name.clone(),
+            market_id: discovery_snapshot.market_id.clone(),
+            yes_asset_id: discovery_snapshot.yes_asset_id.clone(),
+            no_asset_id: discovery_snapshot.no_asset_id.clone(),
+            yes_bid: Some(probability(49, 2)),
+            yes_ask: Some(probability(50, 2)),
+            yes_bid_size: quantity(7),
+            yes_ask_size: quantity(11),
+            no_bid: Some(probability(49, 2)),
+            no_ask: Some(probability(51, 2)),
+            no_bid_size: quantity(9),
+            no_ask_size: quantity(13),
+            observed_at,
+            raw_payload: json!({ "fixture": "price_moved" }),
+            trace_id: "trc_1".to_string(),
+        };
+        let config = ArbitrageValidationConfig {
+            max_book_age_ms: 5_000,
+            min_gross_edge: Edge::new(Decimal::new(1, 2))?,
+            min_capacity: quantity(5),
+            fee_buffer: Edge::new(Decimal::new(5, 3))?,
+            slippage_buffer: Edge::new(Decimal::new(5, 3))?,
+        };
+
+        let validation = validate_arbitrage_opportunity(
+            &opportunity,
+            &validation_snapshot,
+            &config,
+            observed_at + Duration::milliseconds(50),
+            "trc_1",
+        )?;
+
+        assert_eq!(validation.status, ArbitrageValidationStatus::PriceMoved);
+        assert_eq!(validation.gross_edge, Edge::new(Decimal::ZERO)?);
+        assert_eq!(validation.validated_capacity, quantity(0));
+        assert!(
+            validation
+                .reason_codes
+                .contains(&"opportunity_no_longer_present_in_latest_book".to_string())
+        );
+        assert_eq!(
+            validation.validation_payload["snapshot_id"],
+            json!("book_1_validation")
         );
 
         Ok(())

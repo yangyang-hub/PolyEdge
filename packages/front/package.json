@@ -7,7 +7,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test:radar-state": "rm -rf .tmp/radar-state-test && tsc -p tsconfig.radar-test.json && node --test .tmp/radar-state-test/features/radar/lib/radar-state.test.js"
   },
   "dependencies": {
     "class-variance-authority": "^0.7.1",

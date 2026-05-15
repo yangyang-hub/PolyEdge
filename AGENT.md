@@ -186,9 +186,11 @@
 - API 默认监听：`127.0.0.1:8080`
 - 默认 runtime mode：`manual_confirm`
 - 默认 Polymarket mode：`mock`
-- 默认 arbitrage radar：`disabled`，默认盘口源为 `market_snapshot`，机会 TTL 为 60 秒，校验默认要求盘口年龄不超过 10 秒、gross edge 不低于 0.5%、容量不低于 1，并预留 fee/slippage buffer 各 0.5%
+- 默认 arbitrage radar：`disabled`，默认盘口源为 `market_snapshot`，机会 TTL 为 60 秒，outbox 默认保留 24 小时，校验默认要求盘口年龄不超过 10 秒、gross edge 不低于 0.5%、容量不低于 1，并预留 fee/slippage buffer 各 0.5%
 - 默认 news ingestion：`disabled`
 - `postgres.url` 和 `redis.url` 默认仍为空
+- 本地 live 套利雷达验证需要显式传 `POLYEDGE_POSTGRES__URL` / `POLYEDGE_REDIS__URL`，否则会走内存 store，无法验证持久化 outbox、scan 历史和多进程前后端共享状态
+- `POLYEDGE_ARBITRAGE__BOOK_SOURCE=polymarket` 会请求真实 Polymarket CLOB `/book`；fixture 内演示 token 不是公网真实 token，live 冒烟需要替换为真实 `polymarket_condition_id` / `polymarket_yes_asset_id` / `polymarket_no_asset_id`，或回退 `market_snapshot`
 
 数据库迁移目前已到：
 
@@ -219,15 +221,16 @@
 - 前端写操作统一走 `src/server/actions/*`
 - 前端 live API 已统一请求 `/api/v1/...`
 - 前端已有 SSE proxy / mock stream 机制，并可代理 Rust `/api/v1/stream/{channel}`
-- 前端 `/radar` 已订阅 `arbitrage` SSE channel，可在初始快照之上增量合并 scan、机会、过期、校验和分析事件
+- 前端 `/radar` 已订阅 `arbitrage` SSE channel，可在初始快照之上增量合并 scan、机会、过期、校验和分析事件，并提供 active / validated / rejected / history 视图和只读 candidate preview
 - 前端 live fetch 已能发送本地 dev-auth headers；签名内部 JWT helper 已具备，但在真实会话体系接入前不会从 `off | mock-session` 签发令牌
 - 后端已有 `v1` REST API、worker 和交易/回写相关主链路
 - 后端已有审批、风险告警、风险桶、新闻源健康和 raw news 的一等只读资源端点，前端不再依赖 `live-console-derived.ts` 派生这些资源
 - 后端风险/审批派生资源会读取完整内部快照后再对响应应用展示 limit；成交回写后的风险指标按全局持仓聚合
 - 后端 worker 已能把近期 raw news 按保守词面匹配提升为关联已有市场的 `events` 和 `evidences`
-- 后端 worker 已有只读套利雷达入口，可记录扫描、盘口快照、机会、机会校验、过期事件和历史分析；该链路不会创建 execution request 或订单
+- 后端 worker 已有只读套利雷达入口，可记录扫描、发现盘口快照、机会、二次盘口快照与校验、`price_moved`、过期事件、outbox 清理和历史分析；该链路不会创建 execution request 或订单
 - 套利雷达已通过 `/api/v1/arbitrage/scans`、`/api/v1/arbitrage/opportunities`、`/api/v1/arbitrage/analysis` 暴露只读 API，前端 `/radar` 页面已接入 typed mock/live API 适配
 - 后端 `/api/v1/stream/arbitrage` 已使用套利 outbox 事件表/内存事件序列做增量 SSE，支持 `Last-Event-ID` 按 sequence 续传
+- 本地套利链路可用 `./scripts/smoke-arbitrage-radar.sh` 冒烟检查 API、worker、只读端点和可选前端 SSE 代理
 
 ### 6.3 当前明确存在的缺口
 
@@ -235,7 +238,7 @@
 2. 前端权限当前仍是 `off | mock-session`，不是生产级真实会话体系。
 3. 签名内部 JWT 链路已具备代码路径，但当前拒绝从 `off | mock-session` 签发；真实环境仍需要可信会话来源、Ed25519 key rotation 和撤销策略。
 4. Polymarket live 模式已有 connector/worker 骨架，但仍需要真实凭证、真实账户、小额演练和运维 runbook 才能视为生产交易链路。
-5. 套利雷达当前已闭合到发现、记录、机会校验、分析、只读展示和实时增量推送；尚未接入交易执行。
+5. 套利雷达当前已闭合到发现、记录、机会校验、分析、只读展示、实时增量推送和 candidate preview；尚未创建 execution request 或订单。
 6. 新闻源已支持 RSS/Atom 抓取、标准化、去重写入 `raw_events` 和 `news_source_health`，并可在 API/设置页查看 source health 与最近 raw news；worker 可将匹配到已有市场的 raw news 提升为 `events/evidences`，但尚未自动生成 `signals`。
 
 ### 6.4 因此的实际判断
