@@ -111,6 +111,7 @@ pnpm build
 
 ```bash
 POLYEDGE_API_BASE_URL=
+HOSTNAME=0.0.0.0
 POLYEDGE_CONSOLE_AUTH=off
 POLYEDGE_ENABLE_LIVE_SSE=0
 POLYEDGE_INTERNAL_AUTH_DEV_BYPASS=1
@@ -166,7 +167,7 @@ cp .env.example .env
 
 默认值对应当前开发环境：
 
-- API 默认监听 `127.0.0.1:8080`
+- API 默认监听 `0.0.0.0:8080`
 - runtime 默认模式是 `manual_confirm`
 - polymarket 默认模式是 `mock`
 - `postgres.url` 和 `redis.url` 默认仍为空

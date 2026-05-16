@@ -183,7 +183,7 @@
 ### 5.5 配置与迁移
 
 - 默认配置由 `packages/backend/crates/infrastructure/src/settings.rs` 的 `Default` 实现提供，环境变量示例见 `packages/backend/.env.example`；当前没有 `packages/backend/config/default.toml` 文件。
-- API 默认监听：`127.0.0.1:8080`
+- API 默认监听：`0.0.0.0:8080`
 - 默认 runtime mode：`manual_confirm`
 - 默认 Polymarket mode：`mock`
 - 默认 arbitrage radar：`disabled`，默认盘口源为 `market_snapshot`，机会 TTL 为 60 秒，outbox 默认保留 24 小时，校验默认要求盘口年龄不超过 10 秒、gross edge 不低于 0.5%、容量不低于 1，并预留 fee/slippage buffer 各 0.5%
@@ -265,6 +265,7 @@ pnpm build
 
 ```bash
 POLYEDGE_API_BASE_URL=
+HOSTNAME=0.0.0.0
 POLYEDGE_CONSOLE_AUTH=off
 POLYEDGE_ENABLE_LIVE_SSE=0
 POLYEDGE_INTERNAL_AUTH_DEV_BYPASS=1

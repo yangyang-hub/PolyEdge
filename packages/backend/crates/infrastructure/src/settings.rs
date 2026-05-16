@@ -167,7 +167,7 @@ pub struct AuthKeySettings {
 impl Default for ServerSettings {
     fn default() -> Self {
         Self {
-            host: "127.0.0.1".to_string(),
+            host: "0.0.0.0".to_string(),
             port: 8080,
         }
     }
@@ -429,7 +429,7 @@ mod tests {
         let settings = Settings::from_config(config::Config::builder().build().expect("config"))
             .expect("settings");
 
-        assert_eq!(settings.server.host, "127.0.0.1");
+        assert_eq!(settings.server.host, "0.0.0.0");
         assert_eq!(settings.server.port, 8080);
         assert_eq!(settings.runtime.environment, "local");
         assert_eq!(

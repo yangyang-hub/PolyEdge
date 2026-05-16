@@ -11,7 +11,7 @@ services:
       POLYEDGE_SERVER__HOST: 0.0.0.0
       POLYEDGE_SERVER__PORT: 8080
     ports:
-      - "${POLYEDGE_API_BIND:-127.0.0.1}:${POLYEDGE_API_PORT:-8080}:8080"
+      - "${POLYEDGE_API_BIND:-0.0.0.0}:${POLYEDGE_API_PORT:-8080}:8080"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     healthcheck:

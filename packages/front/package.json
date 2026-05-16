@@ -4,9 +4,9 @@
   "private": true,
   "packageManager": "pnpm@10.28.1",
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev --hostname 0.0.0.0",
     "build": "next build",
-    "start": "next start",
+    "start": "next start --hostname 0.0.0.0",
     "lint": "eslint",
     "test:radar-state": "rm -rf .tmp/radar-state-test && tsc -p tsconfig.radar-test.json && node --test .tmp/radar-state-test/features/radar/lib/radar-state.test.js"
   },
