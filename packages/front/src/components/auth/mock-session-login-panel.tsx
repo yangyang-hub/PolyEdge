@@ -6,7 +6,6 @@ import { useRouter } from "next/navigation";
 
 import {
   CONSOLE_ROLE_COOKIE,
-  CONSOLE_ROLE_LABELS,
   CONSOLE_ROLES,
   CONSOLE_USER_COOKIE,
   type ConsoleAuthMode,
@@ -15,13 +14,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { RouteStateCard } from "@/components/shared/route-state-card";
-
-const ROLE_COPY: Record<ConsoleRole, string> = {
-  viewer: "Read-only access for dashboards, markets, signals, positions and replay.",
-  operator: "Can review approval queues and perform standard desk interventions.",
-  risk_admin: "Can manage risk controls, mode transitions and protected desk states.",
-  admin: "Full access, including settings and environment management.",
-};
+import { useI18n } from "@/lib/i18n/client";
 
 type MockSessionLoginPanelProps = {
   authMode: ConsoleAuthMode;
@@ -36,7 +29,8 @@ export function MockSessionLoginPanel({
 }: MockSessionLoginPanelProps) {
   const router = useRouter();
   const [selectedRole, setSelectedRole] = useState<ConsoleRole>(requiredRole);
-  const [displayName, setDisplayName] = useState("Desk Operator");
+  const { dictionary } = useI18n();
+  const [displayName, setDisplayName] = useState(dictionary.auth.defaultDisplayName);
 
   function createMockSession() {
     document.cookie = `${CONSOLE_ROLE_COOKIE}=${selectedRole}; path=/; max-age=28800; samesite=lax`;
@@ -50,16 +44,16 @@ export function MockSessionLoginPanel({
   if (authMode === "off") {
     return (
       <RouteStateCard
-        eyebrow="Console Auth"
-        title="Authentication disabled"
-        description="Console auth is currently disabled, so the console is accessible without a mock session."
-        details={<p>Direct navigation is available. The login page remains as a placeholder for the later real auth flow.</p>}
+        eyebrow={dictionary.auth.consoleAuth}
+        title={dictionary.auth.authDisabledTitle}
+        description={dictionary.auth.authDisabledDescription}
+        details={<p>{dictionary.auth.authDisabledDetails}</p>}
         actions={
           <Button
             onClick={() => startTransition(() => router.push(nextPath))}
             className="rounded-sm bg-primary text-primary-foreground hover:bg-primary/90"
           >
-            Continue to console
+            {dictionary.auth.continueToConsole}
             <ArrowRight className="size-4" />
           </Button>
         }
@@ -69,13 +63,13 @@ export function MockSessionLoginPanel({
 
   return (
     <RouteStateCard
-      eyebrow="Mock Session"
-      title="Start a console session"
-      description="The protected console is running in mock-session mode. Pick a role, stamp a temporary cookie and continue to the requested route."
+      eyebrow={dictionary.auth.mockSession}
+      title={dictionary.auth.startSessionTitle}
+      description={dictionary.auth.startSessionDescription}
       details={
         <div className="space-y-3">
-          <p>Requested route: {nextPath}</p>
-          <p>Minimum role for that route: {CONSOLE_ROLE_LABELS[requiredRole]}</p>
+          <p>{dictionary.auth.requestedRoute}: {nextPath}</p>
+          <p>{dictionary.auth.minimumRole}: {dictionary.roles[requiredRole]}</p>
         </div>
       }
       actions={
@@ -97,8 +91,8 @@ export function MockSessionLoginPanel({
                     <ShieldCheck className="size-4" />
                   </div>
                   <div>
-                    <p className="font-semibold text-foreground">{CONSOLE_ROLE_LABELS[role]}</p>
-                    <p className="mt-1 text-sm text-muted-foreground">{ROLE_COPY[role]}</p>
+                    <p className="font-semibold text-foreground">{dictionary.roles[role]}</p>
+                    <p className="mt-1 text-sm text-muted-foreground">{dictionary.auth.roleCopy[role]}</p>
                   </div>
                 </div>
               </button>
@@ -107,12 +101,12 @@ export function MockSessionLoginPanel({
 
           <div className="rounded-xl border border-border/70 bg-accent/35 p-4">
             <p className="font-mono text-[10px] font-bold uppercase tracking-[0.2em] text-muted-foreground">
-              Session Profile
+              {dictionary.auth.sessionProfile}
             </p>
             <div className="mt-4 space-y-4">
               <div className="space-y-2">
                 <label className="text-sm font-medium text-foreground" htmlFor="display-name">
-                  Display name
+                  {dictionary.auth.displayName}
                 </label>
                 <div className="relative">
                   <UserRound className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
@@ -126,14 +120,14 @@ export function MockSessionLoginPanel({
               </div>
 
               <div className="rounded-lg bg-card/80 p-3 text-sm text-muted-foreground">
-                Session role: {CONSOLE_ROLE_LABELS[selectedRole]}
+                {dictionary.auth.sessionRole}: {dictionary.roles[selectedRole]}
               </div>
 
               <Button
                 onClick={createMockSession}
                 className="h-10 w-full rounded-sm bg-primary text-primary-foreground hover:bg-primary/90"
               >
-                Continue with mock session
+                {dictionary.auth.continueWithMock}
                 <ArrowRight className="size-4" />
               </Button>
             </div>

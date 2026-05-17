@@ -23,13 +23,14 @@ import { OperationFeedbackBanner } from "@/components/shared/operation-feedback-
 import { StatusPill } from "@/components/shared/status-pill";
 import { WorkbenchDetailPane, WorkbenchLayout } from "@/components/shared/workbench-layout";
 import { WorkbenchSegmentedControl } from "@/components/shared/workbench-segmented-control";
+import { useI18n } from "@/lib/i18n/client";
+import { localizeGeneratedCopy } from "@/lib/i18n/generated-copy";
 import type { RiskStreamPayload } from "@/lib/contracts/realtime";
 import { isKeyboardSelect } from "@/lib/keyboard";
 import {
   approvalRiskPercent,
   approvalSeverityTone,
   formatClock,
-  humanizeSnakeCase,
 } from "@/lib/realtime-formatters";
 
 type ApprovalTone = "neutral" | "primary" | "success" | "warning" | "danger" | "violet";
@@ -40,6 +41,7 @@ type ApprovalItem = {
   typeLabel: string;
   status: ApprovalStatus;
   severity: string;
+  severityLabel: string;
   severityTone: ApprovalTone;
   owner: string;
   createdAt: string;
@@ -76,6 +78,7 @@ type ApprovalDecision = "approved" | "rejected" | null;
 function buildApprovalItem(
   payload: RiskStreamPayload,
   current?: ApprovalItem,
+  enumLabel: (value: string) => string = (value) => value.replaceAll("_", " "),
 ): ApprovalItem | null {
   if (
     !payload.approval_id ||
@@ -93,9 +96,10 @@ function buildApprovalItem(
 
   return {
     id: payload.approval_id,
-    typeLabel: humanizeSnakeCase(payload.approval_type),
+    typeLabel: enumLabel(payload.approval_type),
     status: payload.approval_status,
     severity: payload.approval_severity,
+    severityLabel: enumLabel(payload.approval_severity),
     severityTone: approvalSeverityTone(payload.approval_severity),
     owner: payload.approval_owner,
     createdAt: payload.created_at ? formatClock(payload.created_at) : current?.createdAt ?? "--:--:--",
@@ -109,9 +113,13 @@ function buildApprovalItem(
   };
 }
 
-function upsertApprovalItem(items: ApprovalItem[], payload: RiskStreamPayload): ApprovalItem[] {
+function upsertApprovalItem(
+  items: ApprovalItem[],
+  payload: RiskStreamPayload,
+  enumLabel: (value: string) => string,
+): ApprovalItem[] {
   const current = items.find((item) => item.id === payload.approval_id);
-  const nextItem = buildApprovalItem(payload, current);
+  const nextItem = buildApprovalItem(payload, current, enumLabel);
 
   if (!nextItem) {
     return items;
@@ -131,10 +139,12 @@ function ApprovalsDetailPanel({
   approval: ApprovalItem | SelectedApproval | null;
   onOpenDecision?: (decision: Exclude<ApprovalDecision, null>) => void;
 }) {
+  const { dictionary, enumLabel } = useI18n();
+
   if (!approval) {
     return (
       <div className="rounded-md bg-accent/45 p-4 text-sm text-muted-foreground">
-        No approval items are currently queued from the live backend.
+        {dictionary.approvals.noItems}
       </div>
     );
   }
@@ -146,9 +156,7 @@ function ApprovalsDetailPanel({
       <div className="space-y-2">
         <div className="flex flex-wrap gap-2">
           <StatusPill tone={approval.severityTone}>{approval.typeLabel}</StatusPill>
-          <StatusPill tone={approval.severityTone}>
-            {"severityLabel" in approval ? approval.severityLabel : approval.severity}
-          </StatusPill>
+          <StatusPill tone={approval.severityTone}>{approval.severityLabel}</StatusPill>
         </div>
         <p className="font-heading text-lg font-bold tracking-tight text-foreground">{approval.summary}</p>
       </div>
@@ -157,17 +165,17 @@ function ApprovalsDetailPanel({
         <div className="mb-3 flex items-center gap-2">
           <ShieldAlert className="size-4 text-destructive" />
           <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">
-            Risk and Audit Context
+            {dictionary.approvals.riskAuditContext}
           </p>
         </div>
         <div className="space-y-2 text-sm text-muted-foreground">
-          <p>Target resource: {approval.resourceId}</p>
-          <p>Expected version: {approval.version}</p>
-          <p>Current queue status: {approvalStatus}</p>
+          <p>{dictionary.approvals.targetResource}: {approval.resourceId}</p>
+          <p>{dictionary.approvals.expectedVersion}: {approval.version}</p>
+          <p>{dictionary.approvals.currentQueueStatus}: {enumLabel(approvalStatus)}</p>
           <p>
             {approval.requiresStepUpAuth
-              ? "Step-up auth and operator note are required before backend acceptance."
-              : "Standard audit logging applies."}
+              ? dictionary.approvals.stepUpRequired
+              : dictionary.approvals.standardAudit}
           </p>
         </div>
       </div>
@@ -178,19 +186,19 @@ function ApprovalsDetailPanel({
             className="rounded-sm bg-primary text-primary-foreground hover:bg-primary/90"
             onClick={() => onOpenDecision("approved")}
           >
-            Approve
+            {dictionary.approvals.approve}
           </Button>
           <Button
             variant="outline"
             className="rounded-sm border-destructive/30 bg-destructive/5 text-destructive hover:bg-destructive/10"
             onClick={() => onOpenDecision("rejected")}
           >
-            Reject
+            {dictionary.approvals.reject}
           </Button>
         </div>
       ) : (
         <div className="rounded-md bg-accent/45 p-4 text-sm text-muted-foreground">
-          This queue item is already completed. Open another pending item to submit a new decision.
+          {dictionary.approvals.completedItem}
         </div>
       )}
     </div>
@@ -217,6 +225,7 @@ export function ApprovalsWorkbench({
   const [fieldErrors, setFieldErrors] = useState<OperationActionResult["fieldErrors"]>({});
   const [isPending, startActionTransition] = useTransition();
   const deferredTab = useDeferredValue(tab);
+  const { locale, dictionary, enumLabel, format } = useI18n();
 
   useEffect(() => {
     const streamEvent = lastRiskEvent;
@@ -226,9 +235,15 @@ export function ApprovalsWorkbench({
     }
 
     startTransition(() => {
-      setApprovalItems((currentItems) => upsertApprovalItem(currentItems, streamEvent.data));
+      setApprovalItems((currentItems) =>
+        upsertApprovalItem(currentItems, streamEvent.data, enumLabel).map((approval) => ({
+          ...approval,
+          owner: localizeGeneratedCopy(locale, dictionary, approval.owner),
+          summary: localizeGeneratedCopy(locale, dictionary, approval.summary),
+        })),
+      );
     });
-  }, [lastRiskEvent]);
+  }, [dictionary, enumLabel, lastRiskEvent, locale]);
 
   const visibleApprovals = approvalItems.filter((approval) => {
     if (deferredTab === "pending") {
@@ -249,20 +264,20 @@ export function ApprovalsWorkbench({
   const computedCompletedCount = approvalItems.length > 0
     ? approvalItems.filter((approval) => approval.status !== "pending").length
     : completedCount;
-  const runtimeModeLabel = lastRiskEvent?.data.mode ? humanizeSnakeCase(lastRiskEvent.data.mode) : null;
+  const runtimeModeLabel = lastRiskEvent?.data.mode ? enumLabel(lastRiskEvent.data.mode) : null;
   const killSwitchActive = lastRiskEvent?.data.kill_switch ?? false;
 
   const tabs: Array<{ key: ApprovalTab; label: string }> = [
     {
       key: "pending",
-      label: `Pending (${computedPendingCount})`,
+      label: `${dictionary.common.pending} (${computedPendingCount})`,
     },
     {
       key: "completed",
-      label: `Completed (${computedCompletedCount})`,
+      label: `${dictionary.common.completed} (${computedCompletedCount})`,
     },
   ];
-  const filters = ["Type: all", "Severity: high+", "Risk: critical"];
+  const filters = [dictionary.approvals.typeAll, dictionary.approvals.severityHigh, dictionary.approvals.riskCritical];
 
   function selectApproval(approvalId: string) {
     startTransition(() => {
@@ -277,8 +292,8 @@ export function ApprovalsWorkbench({
     setStepUpCode("");
     setNote(
       nextDecision === "approved"
-        ? "Reviewed ambiguity notes and current exposure. Approving for manual execution with operator oversight."
-        : "Rejecting this request because current risk posture and settlement ambiguity do not justify execution.",
+        ? dictionary.approvals.approveNote
+        : dictionary.approvals.rejectNote,
     );
   }
 
@@ -337,14 +352,14 @@ export function ApprovalsWorkbench({
   return (
     <div className="space-y-4">
       <PageHeader
-        eyebrow="Manual Controls"
-        title="Approvals"
-        description="High-risk actions are staged here with rationale, risk context and operator decision logging."
+        eyebrow={dictionary.approvals.eyebrow}
+        title={dictionary.approvals.title}
+        description={dictionary.approvals.description}
         className="border-none pb-0"
         actions={
           <>
-            <StatusPill tone="violet">{computedPendingCount} pending</StatusPill>
-            <StatusPill tone="primary">{computedCompletedCount} completed</StatusPill>
+            <StatusPill tone="violet">{format(dictionary.approvals.pending, { count: computedPendingCount })}</StatusPill>
+            <StatusPill tone="primary">{format(dictionary.approvals.completed, { count: computedCompletedCount })}</StatusPill>
             {runtimeModeLabel ? (
               <StatusPill tone={killSwitchActive ? "danger" : "warning"}>{runtimeModeLabel}</StatusPill>
             ) : null}
@@ -361,7 +376,7 @@ export function ApprovalsWorkbench({
 
               <div className="flex flex-wrap items-center gap-2">
                 <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-muted-foreground">
-                  Filter by
+                  {dictionary.approvals.filterBy}
                 </span>
                 {filters.map((label) => (
                   <Button
@@ -382,12 +397,12 @@ export function ApprovalsWorkbench({
                 <table className="w-full border-separate border-spacing-y-2 text-left">
                   <thead>
                     <tr className="text-[10px] font-bold uppercase tracking-[0.2em] text-muted-foreground">
-                      <th className="pb-2 pl-4">Item Type</th>
-                      <th className="pb-2">Severity</th>
-                      <th className="pb-2">Ambiguity / Risk</th>
-                      <th className="pb-2">Created By</th>
-                      <th className="pb-2 pr-4 text-right">Time</th>
-                      <th className="pb-2 pr-4 text-right xl:hidden">Review</th>
+                      <th className="pb-2 pl-4">{dictionary.approvals.itemType}</th>
+                      <th className="pb-2">{dictionary.approvals.severity}</th>
+                      <th className="pb-2">{dictionary.approvals.ambiguityRisk}</th>
+                      <th className="pb-2">{dictionary.approvals.createdBy}</th>
+                      <th className="pb-2 pr-4 text-right">{dictionary.approvals.time}</th>
+                      <th className="pb-2 pr-4 text-right xl:hidden">{dictionary.approvals.review}</th>
                     </tr>
                   </thead>
                   <tbody className="text-sm">
@@ -428,7 +443,7 @@ export function ApprovalsWorkbench({
                           </div>
                         </td>
                         <td>
-                          <StatusPill tone={approval.severityTone}>{approval.severity}</StatusPill>
+                          <StatusPill tone={approval.severityTone}>{approval.severityLabel}</StatusPill>
                         </td>
                         <td>
                           <div className="w-24 space-y-1">
@@ -453,14 +468,14 @@ export function ApprovalsWorkbench({
                                 className="rounded-sm text-primary hover:bg-primary/10"
                                 onClick={() => selectApproval(approval.id)}
                               >
-                                Review
+                                {dictionary.approvals.review}
                               </Button>
                             </SheetTrigger>
                             <SheetContent className="w-full max-w-none border-white/10 bg-card p-0 sm:max-w-md">
                               <SheetHeader className="border-b border-white/8 px-5 py-4">
-                                <SheetTitle>Approval Detail</SheetTitle>
+                                <SheetTitle>{dictionary.approvals.approvalDetail}</SheetTitle>
                                 <SheetDescription>
-                                  Operator note, risk context and audit requirements.
+                                  {dictionary.approvals.approvalDetailDescription}
                                 </SheetDescription>
                               </SheetHeader>
                               <div className="overflow-y-auto px-5 py-5">
@@ -476,9 +491,9 @@ export function ApprovalsWorkbench({
               </div>
             ) : (
               <div className="px-5 py-10 text-center">
-                <p className="font-heading text-lg font-bold text-foreground">No approvals in this queue</p>
+                <p className="font-heading text-lg font-bold text-foreground">{dictionary.approvals.noQueueTitle}</p>
                 <p className="mt-2 text-sm text-muted-foreground">
-                  Current filters returned no approval items.
+                  {dictionary.approvals.noQueueDetail}
                 </p>
               </div>
             )}
@@ -499,9 +514,9 @@ export function ApprovalsWorkbench({
               closeDecisionDialog();
             }
           }}
-          title={decision === "approved" ? "Approve queue item" : "Reject queue item"}
-          description="This decision is submitted as a protected server action and returns audit identifiers for downstream tracing."
-          confirmLabel={decision === "approved" ? "Queue approval" : "Queue rejection"}
+          title={decision === "approved" ? dictionary.approvals.approveTitle : dictionary.approvals.rejectTitle}
+          description={dictionary.approvals.decisionDescription}
+          confirmLabel={decision === "approved" ? dictionary.approvals.queueApproval : dictionary.approvals.queueRejection}
           confirmVariant={decision === "approved" ? "default" : "destructive"}
           isPending={isPending}
           note={note}
@@ -516,9 +531,9 @@ export function ApprovalsWorkbench({
           context={
             selectedApproval && "resourceId" in selectedApproval ? (
               <div className="space-y-1">
-                <p>Resource: {selectedApproval.resourceId}</p>
-                <p>Expected version: {selectedApproval.version}</p>
-                <p>Severity: {selectedApproval.severity}</p>
+                <p>{dictionary.approvals.resource}: {selectedApproval.resourceId}</p>
+                <p>{dictionary.approvals.expectedVersion}: {selectedApproval.version}</p>
+                <p>{dictionary.approvals.severity}: {enumLabel(selectedApproval.severity)}</p>
               </div>
             ) : null
           }

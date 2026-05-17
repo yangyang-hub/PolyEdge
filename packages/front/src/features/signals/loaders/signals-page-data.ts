@@ -4,6 +4,8 @@ import { listEvidences } from "@/server/api/events";
 import { listMarkets } from "@/server/api/markets";
 import { listSignals } from "@/server/api/signals";
 import { listApprovals } from "@/server/api/system";
+import { localizeGeneratedCopy } from "@/lib/i18n/generated-copy";
+import { getServerI18n } from "@/lib/i18n/server";
 import {
   getPendingSignalApprovalIds,
   indexMarkets,
@@ -12,18 +14,19 @@ import {
 import {
   formatPercentFromRatio,
   formatSignedFixed,
-  humanizeSnakeCase,
   signalStateTone,
   uppercaseEnum,
 } from "@/lib/server/console-formatters";
 
 export async function getSignalsPageData() {
-  const [{ data: signals }, { data: markets }, { data: evidences }, { data: approvals }] = await Promise.all([
+  const [{ data: signals }, { data: markets }, { data: evidences }, { data: approvals }, i18n] = await Promise.all([
     listSignals(),
     listMarkets(),
     listEvidences(),
     listApprovals(),
+    getServerI18n(),
   ]);
+  const { locale, dictionary, enumLabel, format } = i18n;
   const marketIndex = indexMarkets(markets);
   const pendingSignalApprovalIds = getPendingSignalApprovalIds(approvals);
   const selectedSignal = selectFirstMatchingItem(
@@ -32,7 +35,7 @@ export async function getSignalsPageData() {
       (signal) => pendingSignalApprovalIds.has(signal.id),
       (signal) => signal.lifecycle_state === "new",
     ],
-    "Signals page requires at least one signal fixture or API result.",
+    dictionary.routeStates.signalsDataRequired,
   );
   const selectedEvidenceItems = evidences.filter((evidence) => selectedSignal.evidence_ids.includes(evidence.id));
 
@@ -42,7 +45,7 @@ export async function getSignalsPageData() {
     signals: signals.map((signal) => ({
       id: signal.id,
       marketQuestion: marketIndex.get(signal.market_id)?.question ?? signal.market_id,
-      contextLabel: `${marketIndex.get(signal.market_id)?.category ?? "Unknown"} / ${humanizeSnakeCase(
+      contextLabel: `${marketIndex.get(signal.market_id)?.category ?? dictionary.common.unknown} / ${enumLabel(
         marketIndex.get(signal.market_id)?.tradability_status ?? "manual_review",
       )}`,
       confidenceValue: Number.parseFloat(signal.confidence),
@@ -52,15 +55,19 @@ export async function getSignalsPageData() {
       edge: formatSignedFixed(signal.edge),
       confidence: formatPercentFromRatio(signal.confidence),
       confidenceWidth: formatPercentFromRatio(signal.confidence),
-      stateLabel: humanizeSnakeCase(signal.lifecycle_state),
+      stateLabel: enumLabel(signal.lifecycle_state),
       stateTone: signalStateTone(signal.lifecycle_state),
       requiresReview: pendingSignalApprovalIds.has(signal.id),
-      reason: signal.reason,
-      riskDecision: signal.risk_decision,
+      reason: localizeGeneratedCopy(locale, dictionary, signal.reason),
+      riskDecision: localizeGeneratedCopy(locale, dictionary, signal.risk_decision),
       evidenceLines: evidences
         .filter((evidence) => signal.evidence_ids.includes(evidence.id))
         .map((evidence) => {
-          return `${humanizeSnakeCase(evidence.direction)} · strength ${evidence.strength} · novelty ${formatPercentFromRatio(evidence.novelty)}`;
+          return format(dictionary.signals.evidenceLine, {
+            direction: enumLabel(evidence.direction),
+            strength: evidence.strength,
+            novelty: formatPercentFromRatio(evidence.novelty),
+          });
         }),
       isSelected: signal.id === selectedSignal.id,
     })),
@@ -70,13 +77,17 @@ export async function getSignalsPageData() {
       marketPrice: selectedSignal.market_price,
       fairPrice: selectedSignal.fair_price,
       edge: formatSignedFixed(selectedSignal.edge),
-      stateLabel: humanizeSnakeCase(selectedSignal.lifecycle_state),
+      stateLabel: enumLabel(selectedSignal.lifecycle_state),
       stateTone: signalStateTone(selectedSignal.lifecycle_state),
       requiresReview: pendingSignalApprovalIds.has(selectedSignal.id),
-      reason: selectedSignal.reason,
-      riskDecision: selectedSignal.risk_decision,
-      evidenceLines: selectedEvidenceItems.map((evidence) => {
-        return `${humanizeSnakeCase(evidence.direction)} · strength ${evidence.strength} · novelty ${formatPercentFromRatio(evidence.novelty)}`;
+      reason: localizeGeneratedCopy(locale, dictionary, selectedSignal.reason),
+      riskDecision: localizeGeneratedCopy(locale, dictionary, selectedSignal.risk_decision),
+    evidenceLines: selectedEvidenceItems.map((evidence) => {
+        return format(dictionary.signals.evidenceLine, {
+          direction: enumLabel(evidence.direction),
+          strength: evidence.strength,
+          novelty: formatPercentFromRatio(evidence.novelty),
+        });
       }),
     },
   };

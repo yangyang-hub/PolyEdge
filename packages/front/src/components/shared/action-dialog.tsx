@@ -15,6 +15,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { OperationFeedbackBanner } from "@/components/shared/operation-feedback-banner";
+import { useI18n } from "@/lib/i18n/client";
 
 type ActionDialogProps = {
   open: boolean;
@@ -57,6 +58,8 @@ export function ActionDialog({
   context,
   children,
 }: ActionDialogProps) {
+  const { dictionary } = useI18n();
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-lg border-white/10 bg-card p-0">
@@ -71,14 +74,14 @@ export function ActionDialog({
           {children}
           <div className="space-y-2">
             <label className="text-sm font-medium text-foreground" htmlFor="operation-note">
-              Operator note
+              {dictionary.actionDialog.operatorNote}
             </label>
             <Textarea
               id="operation-note"
               value={note}
               onChange={(event) => onNoteChange(event.target.value)}
               className="min-h-28 rounded-sm border-white/10 bg-accent/45 text-foreground"
-              placeholder="Describe why this action is warranted, what context was reviewed and what should happen next."
+              placeholder={dictionary.actionDialog.notePlaceholder}
             />
             {noteError ? <p className="text-xs text-destructive">{noteError}</p> : null}
           </div>
@@ -86,14 +89,14 @@ export function ActionDialog({
           {requiresStepUp ? (
             <div className="space-y-2">
               <label className="text-sm font-medium text-foreground" htmlFor="step-up-code">
-                Step-up code
+                {dictionary.actionDialog.stepUpCode}
               </label>
               <Input
                 id="step-up-code"
                 value={stepUpCode}
                 onChange={(event) => onStepUpCodeChange(event.target.value)}
                 className="h-10 rounded-sm border-white/10 bg-accent/45"
-                placeholder="Enter step-up confirmation code"
+                placeholder={dictionary.actionDialog.stepUpCodePlaceholder}
               />
               {stepUpCodeError ? <p className="text-xs text-destructive">{stepUpCodeError}</p> : null}
             </div>
@@ -106,7 +109,7 @@ export function ActionDialog({
             className="rounded-sm border-white/10 bg-accent/45 hover:bg-accent"
             onClick={() => onOpenChange(false)}
           >
-            Cancel
+            {dictionary.common.cancel}
           </Button>
           <Button
             variant={confirmVariant}
@@ -114,7 +117,7 @@ export function ActionDialog({
             onClick={onSubmit}
             disabled={isPending}
           >
-            {isPending ? "Submitting..." : confirmLabel}
+            {isPending ? dictionary.common.submitting : confirmLabel}
           </Button>
         </DialogFooter>
       </DialogContent>

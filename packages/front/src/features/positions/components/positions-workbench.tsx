@@ -11,6 +11,7 @@ import { WorkbenchSegmentedControl } from "@/components/shared/workbench-segment
 import { useConsoleRealtimeChannel } from "@/components/shared/console-realtime-provider";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { MeterBar } from "@/components/shared/meter-bar";
+import { useI18n } from "@/lib/i18n/client";
 import {
   Table,
   TableBody,
@@ -25,7 +26,6 @@ import {
   formatClock,
   formatCurrency,
   formatPercentFromRatio,
-  humanizeSnakeCase,
   metricToneForPnl,
   signalStateTone,
 } from "@/lib/realtime-formatters";
@@ -35,7 +35,11 @@ type PositionItem = PositionsPageData["positions"][number];
 type PositionMetric = PositionsPageData["metrics"][number];
 type PositionFilter = "all" | "review" | "gainers" | "pressure";
 
-function patchPositionSignal(position: PositionItem, payload: SignalStreamPayload): PositionItem {
+function patchPositionSignal(
+  position: PositionItem,
+  payload: SignalStreamPayload,
+  enumLabel: (value: string) => string,
+): PositionItem {
   return {
     ...position,
     signalId: payload.signal_id,
@@ -44,7 +48,7 @@ function patchPositionSignal(position: PositionItem, payload: SignalStreamPayloa
     signalEdge: payload.edge ? formatPercentFromRatio(payload.edge) : position.signalEdge,
     confidence: payload.confidence ? formatPercentFromRatio(payload.confidence) : position.confidence,
     confidenceWidth: payload.confidence ? formatPercentFromRatio(payload.confidence) : position.confidenceWidth,
-    signalStateLabel: humanizeSnakeCase(payload.lifecycle_state),
+    signalStateLabel: enumLabel(payload.lifecycle_state),
     signalStateTone: signalStateTone(payload.lifecycle_state),
     requiresReview: payload.requires_review ?? position.requiresReview,
     signalReason: payload.reason ?? position.signalReason,
@@ -53,10 +57,14 @@ function patchPositionSignal(position: PositionItem, payload: SignalStreamPayloa
   };
 }
 
-function patchPositionsFromSignal(positions: PositionItem[], payload: SignalStreamPayload): PositionItem[] {
+function patchPositionsFromSignal(
+  positions: PositionItem[],
+  payload: SignalStreamPayload,
+  enumLabel: (value: string) => string,
+): PositionItem[] {
   return positions.map((position) =>
     position.marketId === payload.market_id || position.signalId === payload.signal_id
-      ? patchPositionSignal(position, payload)
+      ? patchPositionSignal(position, payload, enumLabel)
       : position,
   );
 }
@@ -112,6 +120,7 @@ export function PositionsWorkbench({ data }: { data: PositionsPageData }) {
   const deferredFilter = useDeferredValue(filter);
   const { lastEvent: lastSignalEvent } = useConsoleRealtimeChannel("signals");
   const { lastEvent: lastRiskEvent } = useConsoleRealtimeChannel("risk");
+  const { dictionary, enumLabel, format } = useI18n();
 
   useEffect(() => {
     const streamEvent = lastSignalEvent;
@@ -121,9 +130,9 @@ export function PositionsWorkbench({ data }: { data: PositionsPageData }) {
     }
 
     startTransition(() => {
-      setPositionItems((currentItems) => patchPositionsFromSignal(currentItems, streamEvent.data));
+      setPositionItems((currentItems) => patchPositionsFromSignal(currentItems, streamEvent.data, enumLabel));
     });
-  }, [lastSignalEvent]);
+  }, [enumLabel, lastSignalEvent]);
 
   useEffect(() => {
     const streamEvent = lastRiskEvent;
@@ -137,14 +146,14 @@ export function PositionsWorkbench({ data }: { data: PositionsPageData }) {
       setPositionItems((currentItems) => patchPositionsFromApproval(currentItems, streamEvent.data));
 
       if (streamEvent.data.mode) {
-        setRuntimeModeLabel(humanizeSnakeCase(streamEvent.data.mode));
+        setRuntimeModeLabel(enumLabel(streamEvent.data.mode));
       }
 
       if (streamEvent.data.environment) {
         setRuntimeEnvironmentLabel(streamEvent.data.environment);
       }
     });
-  }, [lastRiskEvent]);
+  }, [enumLabel, lastRiskEvent]);
 
   const filteredPositions = positionItems.filter((position) => {
     if (deferredFilter === "review") {
@@ -156,7 +165,7 @@ export function PositionsWorkbench({ data }: { data: PositionsPageData }) {
     }
 
     if (deferredFilter === "pressure") {
-      return position.bucketStatusLabel !== "healthy" || position.pnlValue < 0;
+      return position.bucketStatus !== "healthy" || position.pnlValue < 0;
     }
 
     return true;
@@ -171,13 +180,13 @@ export function PositionsWorkbench({ data }: { data: PositionsPageData }) {
     positionItems.find((position) => position.id === activeSelectedId) ?? positionItems[0];
   const reviewCount = positionItems.filter((position) => position.requiresReview).length;
   const pressureCount = positionItems.filter(
-    (position) => position.bucketStatusLabel !== "healthy" || position.pnlValue < 0,
+    (position) => position.bucketStatus !== "healthy" || position.pnlValue < 0,
   ).length;
   const filterButtons: Array<{ key: PositionFilter; label: string }> = [
-    { key: "all", label: "all positions" },
-    { key: "review", label: "review queue" },
-    { key: "gainers", label: "positive pnl" },
-    { key: "pressure", label: "under pressure" },
+    { key: "all", label: dictionary.positions.all },
+    { key: "review", label: dictionary.positions.reviewQueue },
+    { key: "gainers", label: dictionary.positions.positivePnl },
+    { key: "pressure", label: dictionary.positions.pressure },
   ];
 
   if (!selectedPosition) {
@@ -193,14 +202,14 @@ export function PositionsWorkbench({ data }: { data: PositionsPageData }) {
   return (
     <div className="space-y-6">
       <PageHeader
-        eyebrow="Portfolio"
-        title="Positions"
-        description="Track live position health with signal posture, review pressure and bucket concentration in one workbench."
+        eyebrow={dictionary.positions.eyebrow}
+        title={dictionary.positions.title}
+        description={dictionary.positions.description}
         actions={
           <>
             <StatusPill tone="primary">{runtimeModeLabel}</StatusPill>
             <StatusPill tone="neutral">{runtimeEnvironmentLabel}</StatusPill>
-            <StatusPill tone="violet">{reviewCount} review</StatusPill>
+            <StatusPill tone="violet">{format(dictionary.positions.review, { count: reviewCount })}</StatusPill>
           </>
         }
       />
@@ -221,30 +230,30 @@ export function PositionsWorkbench({ data }: { data: PositionsPageData }) {
         <Card>
           <CardHeader className="flex flex-col gap-4 border-b border-border/70 md:flex-row md:items-center md:justify-between">
             <div>
-              <CardTitle className="font-heading text-base">Live Positions</CardTitle>
+              <CardTitle className="font-heading text-base">{dictionary.positions.livePositions}</CardTitle>
               <p className="mt-1 text-sm text-muted-foreground">
-                Review queue, PnL drift and signal posture update in place as the console stream moves.
+                {dictionary.positions.livePositionsHint}
               </p>
             </div>
             <WorkbenchSegmentedControl items={filterButtons} value={filter} onChange={setFilter} />
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="flex flex-wrap gap-2">
-              <StatusPill tone="success">{positionItems.length} open</StatusPill>
-              <StatusPill tone="warning">{pressureCount} pressure</StatusPill>
-              <StatusPill tone="violet">{reviewCount} manual review</StatusPill>
+              <StatusPill tone="success">{format(dictionary.positions.open, { count: positionItems.length })}</StatusPill>
+              <StatusPill tone="warning">{format(dictionary.positions.pressureCount, { count: pressureCount })}</StatusPill>
+              <StatusPill tone="violet">{format(dictionary.positions.manualReview, { count: reviewCount })}</StatusPill>
             </div>
 
             <div className="overflow-x-auto">
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Market</TableHead>
-                    <TableHead>Side</TableHead>
-                    <TableHead>Qty</TableHead>
-                    <TableHead>PnL</TableHead>
-                    <TableHead>Signal</TableHead>
-                    <TableHead>Controls</TableHead>
+                    <TableHead>{dictionary.positions.market}</TableHead>
+                    <TableHead>{dictionary.positions.side}</TableHead>
+                    <TableHead>{dictionary.positions.qty}</TableHead>
+                    <TableHead>{dictionary.positions.pnl}</TableHead>
+                    <TableHead>{dictionary.positions.signal}</TableHead>
+                    <TableHead>{dictionary.positions.controls}</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -282,8 +291,8 @@ export function PositionsWorkbench({ data }: { data: PositionsPageData }) {
                       </TableCell>
                       <TableCell>
                         <div className="flex flex-wrap gap-2">
-                          {position.requiresReview ? <StatusPill tone="violet">review</StatusPill> : null}
-                          {position.bucketStatusLabel !== "healthy" ? (
+                          {position.requiresReview ? <StatusPill tone="violet">{dictionary.common.review}</StatusPill> : null}
+                          {position.bucketStatus !== "healthy" ? (
                             <StatusPill tone={position.bucketTone}>{position.bucketStatusLabel}</StatusPill>
                           ) : null}
                         </div>
@@ -307,28 +316,28 @@ export function PositionsWorkbench({ data }: { data: PositionsPageData }) {
                   {selectedPosition.signalStateLabel}
                 </StatusPill>
                 <StatusPill tone={selectedPosition.pnlTone}>{selectedPosition.pnl}</StatusPill>
-                {selectedPosition.requiresReview ? <StatusPill tone="violet">manual review</StatusPill> : null}
+                {selectedPosition.requiresReview ? <StatusPill tone="violet">{dictionary.common.manualReview}</StatusPill> : null}
               </div>
             </div>
 
             <div className="grid grid-cols-2 gap-3">
               <div className="rounded-md bg-accent/45 p-3">
-                <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">mark</p>
+                <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">{dictionary.positions.mark}</p>
                 <p className="mt-2 font-mono text-lg text-foreground">{selectedPosition.markPrice}</p>
               </div>
               <div className="rounded-md bg-accent/45 p-3">
                 <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">
-                  posterior
+                  {dictionary.positions.posterior}
                 </p>
                 <p className="mt-2 font-mono text-lg text-primary">{selectedPosition.posterior}</p>
               </div>
               <div className="rounded-md bg-accent/45 p-3">
-                <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">avg cost</p>
+                <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">{dictionary.positions.avgCost}</p>
                 <p className="mt-2 font-mono text-lg text-foreground">{selectedPosition.averageCost}</p>
               </div>
               <div className="rounded-md bg-accent/45 p-3">
                 <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">
-                  confidence
+                  {dictionary.positions.confidence}
                 </p>
                 <p className="mt-2 font-mono text-lg text-foreground">{selectedPosition.confidence}</p>
               </div>
@@ -337,27 +346,27 @@ export function PositionsWorkbench({ data }: { data: PositionsPageData }) {
             <div className="space-y-3 rounded-md bg-popover/70 p-4">
               <div className="flex items-center justify-between gap-3">
                 <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">
-                  Bucket pressure
+                  {dictionary.positions.bucketPressure}
                 </p>
                 <StatusPill tone={selectedPosition.bucketTone}>{selectedPosition.bucketStatusLabel}</StatusPill>
               </div>
               <MeterBar value={selectedPosition.bucketUtilizationWidth} tone={selectedPosition.bucketTone} />
               <div className="flex items-center justify-between text-sm text-muted-foreground">
                 <span>{selectedPosition.bucketName}</span>
-                <span>{selectedPosition.bucketUtilization} utilized</span>
+                <span>{format(dictionary.positions.utilized, { value: selectedPosition.bucketUtilization })}</span>
               </div>
             </div>
 
             <div className="rounded-md bg-popover/70 p-4">
               <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">
-                Signal reason
+                {dictionary.positions.signalReason}
               </p>
               <p className="mt-3 text-sm text-foreground">{selectedPosition.signalReason}</p>
             </div>
 
             <div className="rounded-md bg-popover/70 p-4">
               <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">
-                Risk decision
+                {dictionary.positions.riskDecision}
               </p>
               <p className="mt-3 text-sm text-muted-foreground">{selectedPosition.riskDecision}</p>
             </div>
@@ -365,7 +374,7 @@ export function PositionsWorkbench({ data }: { data: PositionsPageData }) {
 
           <Card>
             <CardHeader>
-              <CardTitle className="font-heading text-base">Catalysts</CardTitle>
+              <CardTitle className="font-heading text-base">{dictionary.positions.catalysts}</CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
               {selectedPosition.linkedEvents.length > 0 ? (
@@ -379,14 +388,14 @@ export function PositionsWorkbench({ data }: { data: PositionsPageData }) {
                   </div>
                 ))
               ) : (
-                <p className="text-sm text-muted-foreground">No linked catalysts are attached to this position yet.</p>
+                <p className="text-sm text-muted-foreground">{dictionary.positions.noCatalysts}</p>
               )}
             </CardContent>
           </Card>
 
           <Card>
             <CardHeader>
-              <CardTitle className="font-heading text-base">Desk Buckets</CardTitle>
+              <CardTitle className="font-heading text-base">{dictionary.positions.deskBuckets}</CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
               {data.riskBuckets.map((bucket) => (
@@ -398,8 +407,8 @@ export function PositionsWorkbench({ data }: { data: PositionsPageData }) {
                   <div className="mt-3 space-y-2">
                     <MeterBar value={bucket.width} tone={bucket.tone} />
                     <div className="flex items-center justify-between text-xs text-muted-foreground">
-                      <span>exposure {bucket.exposure}</span>
-                      <span>limit {bucket.limit}</span>
+                      <span>{dictionary.positions.exposure} {bucket.exposure}</span>
+                      <span>{dictionary.positions.limit} {bucket.limit}</span>
                     </div>
                   </div>
                 </div>

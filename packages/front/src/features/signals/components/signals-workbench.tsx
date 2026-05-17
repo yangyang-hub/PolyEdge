@@ -18,12 +18,13 @@ import { MeterBar } from "@/components/shared/meter-bar";
 import { StatusPill } from "@/components/shared/status-pill";
 import { WorkbenchDetailPane, WorkbenchLayout } from "@/components/shared/workbench-layout";
 import { WorkbenchSegmentedControl } from "@/components/shared/workbench-segmented-control";
+import { useI18n } from "@/lib/i18n/client";
+import { localizeGeneratedCopy } from "@/lib/i18n/generated-copy";
 import type { SignalStreamPayload } from "@/lib/contracts/realtime";
 import { isKeyboardSelect } from "@/lib/keyboard";
 import {
   formatPercentFromRatio,
   formatSignedFixed,
-  humanizeSnakeCase,
   signalStateTone,
   type RealtimeTone,
   uppercaseEnum,
@@ -75,7 +76,12 @@ type SignalsWorkbenchProps = {
 
 type SignalFilter = "all" | "high_confidence" | "needs_review";
 
-function buildSignalItem(payload: SignalStreamPayload, current?: SignalItem): SignalItem {
+function buildSignalItem(
+  payload: SignalStreamPayload,
+  current: SignalItem | undefined,
+  dictionary: ReturnType<typeof useI18n>["dictionary"],
+  enumLabel: (value: string) => string,
+): SignalItem {
   const confidenceValue = payload.confidence
     ? Number.parseFloat(payload.confidence)
     : current?.confidenceValue ?? 0;
@@ -83,7 +89,7 @@ function buildSignalItem(payload: SignalStreamPayload, current?: SignalItem): Si
   return {
     id: payload.signal_id,
     marketQuestion: payload.market_question ?? current?.marketQuestion ?? payload.market_id,
-    contextLabel: payload.context_label ?? current?.contextLabel ?? "Live stream / pending enrichment",
+    contextLabel: payload.context_label ?? current?.contextLabel ?? dictionary.signals.liveContextFallback,
     confidenceValue,
     side: payload.side ? uppercaseEnum(payload.side) : current?.side ?? "YES",
     fairPrice: payload.fair_price ?? current?.fairPrice ?? "0.00",
@@ -93,11 +99,11 @@ function buildSignalItem(payload: SignalStreamPayload, current?: SignalItem): Si
     confidenceWidth: payload.confidence
       ? formatPercentFromRatio(payload.confidence)
       : current?.confidenceWidth ?? "0%",
-    stateLabel: humanizeSnakeCase(payload.lifecycle_state),
+    stateLabel: enumLabel(payload.lifecycle_state),
     stateTone: signalStateTone(payload.lifecycle_state),
     requiresReview: payload.requires_review ?? current?.requiresReview ?? false,
-    reason: payload.reason ?? current?.reason ?? "Awaiting realtime hydration.",
-    riskDecision: payload.risk_decision ?? current?.riskDecision ?? "Decision update pending.",
+    reason: payload.reason ?? current?.reason ?? dictionary.signals.reasonFallback,
+    riskDecision: payload.risk_decision ?? current?.riskDecision ?? dictionary.signals.riskFallback,
     evidenceLines: payload.evidence_lines ?? current?.evidenceLines ?? [],
     isSelected: current?.isSelected ?? false,
   };
@@ -108,6 +114,8 @@ function SignalsDetailPanel({
 }: {
   signal: SignalItem | SelectedSignal;
 }) {
+  const { dictionary } = useI18n();
+
   return (
     <div className="space-y-4">
       <div className="space-y-2">
@@ -117,42 +125,48 @@ function SignalsDetailPanel({
         <div className="flex flex-wrap gap-2">
           <StatusPill tone={signal.stateTone}>{signal.stateLabel}</StatusPill>
           <StatusPill tone="primary">{signal.confidence}</StatusPill>
-          {signal.requiresReview ? <StatusPill tone="violet">manual review</StatusPill> : null}
+          {signal.requiresReview ? <StatusPill tone="violet">{dictionary.signals.manualReview}</StatusPill> : null}
         </div>
       </div>
 
       <div className="grid grid-cols-3 gap-3">
         <div className="rounded-md bg-accent/45 p-3">
-          <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">market</p>
+          <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">
+            {dictionary.signals.marketPrice}
+          </p>
           <p className="mt-2 font-mono text-lg text-foreground">{signal.marketPrice}</p>
         </div>
         <div className="rounded-md bg-accent/45 p-3">
-          <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">posterior</p>
+          <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">
+            {dictionary.signals.posterior}
+          </p>
           <p className="mt-2 font-mono text-lg text-primary">{signal.fairPrice}</p>
         </div>
         <div className="rounded-md bg-accent/45 p-3">
-          <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">edge</p>
+          <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">
+            {dictionary.signals.edge}
+          </p>
           <p className="mt-2 font-mono text-lg text-foreground">{signal.edge}</p>
         </div>
       </div>
 
       <div className="rounded-md bg-popover/70 p-4">
         <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">
-          Reason Trace
+          {dictionary.signals.reasonTrace}
         </p>
         <p className="mt-3 text-sm text-foreground">{signal.reason}</p>
       </div>
 
       <div className="rounded-md bg-popover/70 p-4">
         <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">
-          Risk Decision
+          {dictionary.signals.riskDecision}
         </p>
         <p className="mt-3 text-sm text-muted-foreground">{signal.riskDecision}</p>
       </div>
 
       <div className="rounded-md bg-popover/70 p-4">
         <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">
-          Evidence Stack
+          {dictionary.signals.evidenceStack}
         </p>
         <ul className="mt-3 space-y-3">
           {signal.evidenceLines.map((line, index) => (
@@ -170,13 +184,13 @@ function SignalsDetailPanel({
 
       <div className="flex gap-2">
         <Button className="flex-1 rounded-sm bg-primary text-primary-foreground hover:bg-primary/90">
-          Approve signal
+          {dictionary.signals.approveSignal}
         </Button>
         <Button
           variant="outline"
           className="flex-1 rounded-sm border-destructive/30 bg-destructive/5 text-destructive hover:bg-destructive/10"
         >
-          Reject
+          {dictionary.signals.reject}
         </Button>
       </div>
     </div>
@@ -195,6 +209,7 @@ export function SignalsWorkbench({
   const deferredFilter = useDeferredValue(filter);
   const { lastEvent } = useConsoleRealtimeChannel("signals");
   const { lastEvent: lastRiskEvent } = useConsoleRealtimeChannel("risk");
+  const { locale, dictionary, enumLabel, format } = useI18n();
 
   useEffect(() => {
     const streamEvent = lastEvent;
@@ -204,9 +219,36 @@ export function SignalsWorkbench({
     }
 
     startTransition(() => {
-      setLiveSignals((currentSignals) => upsertStreamedItem(currentSignals, streamEvent.data, buildSignalItem, streamEvent.type));
+      setLiveSignals((currentSignals) =>
+        upsertStreamedItem(
+          currentSignals,
+          streamEvent.data,
+          (payload, currentSignal) =>
+            buildSignalItem(
+              {
+                ...payload,
+                context_label: payload.context_label
+                  ? localizeGeneratedCopy(locale, dictionary, payload.context_label)
+                  : payload.context_label,
+                reason: payload.reason
+                  ? localizeGeneratedCopy(locale, dictionary, payload.reason)
+                  : payload.reason,
+                risk_decision: payload.risk_decision
+                  ? localizeGeneratedCopy(locale, dictionary, payload.risk_decision)
+                  : payload.risk_decision,
+                evidence_lines: payload.evidence_lines?.map((line) =>
+                  localizeGeneratedCopy(locale, dictionary, line),
+                ),
+              },
+              currentSignal,
+              dictionary,
+              enumLabel,
+            ),
+          streamEvent.type,
+        ),
+      );
     });
-  }, [lastEvent]);
+  }, [dictionary, enumLabel, lastEvent, locale]);
 
   useEffect(() => {
     const streamEvent = lastRiskEvent;
@@ -238,13 +280,13 @@ export function SignalsWorkbench({
     filteredSignals[0] ??
     liveSignals[0];
 
-  const activeCount = liveSignals.filter((signal) => signal.stateLabel === "active").length;
+  const activeCount = liveSignals.filter((signal) => signal.stateTone === "success").length;
   const approvalCount = liveSignals.filter((signal) => signal.requiresReview).length;
 
   const filterButtons: Array<{ key: SignalFilter; label: string }> = [
-    { key: "all", label: "all" },
-    { key: "high_confidence", label: "high confidence" },
-    { key: "needs_review", label: "manual review" },
+    { key: "all", label: dictionary.signals.all },
+    { key: "high_confidence", label: dictionary.signals.highConfidence },
+    { key: "needs_review", label: dictionary.signals.manualReview },
   ];
 
   function selectSignal(signalId: string) {
@@ -256,14 +298,14 @@ export function SignalsWorkbench({
   return (
     <div className="space-y-4">
       <PageHeader
-        eyebrow="Decisioning"
-        title="Signals"
-        description="Inspect posterior, edge and confidence together with approval state and risk reasoning."
+        eyebrow={dictionary.signals.eyebrow}
+        title={dictionary.signals.title}
+        description={dictionary.signals.description}
         className="border-none pb-0"
         actions={
           <>
-            <StatusPill tone="success">{activeCount} active</StatusPill>
-            <StatusPill tone="violet">{approvalCount} pending approval</StatusPill>
+            <StatusPill tone="success">{format(dictionary.signals.active, { count: activeCount })}</StatusPill>
+            <StatusPill tone="violet">{format(dictionary.signals.pendingApproval, { count: approvalCount })}</StatusPill>
           </>
         }
       />
@@ -272,10 +314,10 @@ export function SignalsWorkbench({
         <div className="overflow-hidden rounded-lg bg-card/95 ring-1 ring-white/5">
           <div className="flex flex-col gap-4 bg-popover/70 px-5 py-4 xl:flex-row xl:items-center xl:justify-between">
             <div className="flex items-center gap-3">
-              <h2 className="font-heading text-xl font-bold tracking-tight text-foreground">Live Signals</h2>
+              <h2 className="font-heading text-xl font-bold tracking-tight text-foreground">{dictionary.signals.liveSignals}</h2>
               <div className="flex flex-wrap gap-2">
-                <StatusPill tone="success">{activeCount} active</StatusPill>
-                <StatusPill tone="violet">{approvalCount} approval req</StatusPill>
+                <StatusPill tone="success">{format(dictionary.signals.active, { count: activeCount })}</StatusPill>
+                <StatusPill tone="violet">{format(dictionary.signals.approvalReq, { count: approvalCount })}</StatusPill>
               </div>
             </div>
             <div className="flex flex-wrap items-center gap-2">
@@ -286,7 +328,7 @@ export function SignalsWorkbench({
                 className="rounded-sm border-white/10 bg-accent/40 text-foreground hover:bg-accent"
               >
                 <Filter className="size-3.5" />
-                Filter
+                {dictionary.common.filter}
               </Button>
             </div>
           </div>
@@ -296,14 +338,14 @@ export function SignalsWorkbench({
               <table className="w-full text-left">
                 <thead className="bg-sidebar/60">
                   <tr className="text-[10px] font-bold uppercase tracking-[0.2em] text-muted-foreground">
-                    <th className="px-5 py-3">Market</th>
-                    <th className="px-4 py-3">Side</th>
-                    <th className="px-4 py-3">Fair</th>
-                    <th className="px-4 py-3">Market</th>
-                    <th className="px-4 py-3 text-right">Edge</th>
-                    <th className="px-4 py-3">Confidence</th>
-                    <th className="px-4 py-3">State</th>
-                    <th className="px-5 py-3 text-right">Action</th>
+                    <th className="px-5 py-3">{dictionary.signals.market}</th>
+                    <th className="px-4 py-3">{dictionary.signals.side}</th>
+                    <th className="px-4 py-3">{dictionary.signals.fair}</th>
+                    <th className="px-4 py-3">{dictionary.signals.marketPrice}</th>
+                    <th className="px-4 py-3 text-right">{dictionary.signals.edge}</th>
+                    <th className="px-4 py-3">{dictionary.dashboard.tableConfidence}</th>
+                    <th className="px-4 py-3">{dictionary.dashboard.tableState}</th>
+                    <th className="px-5 py-3 text-right">{dictionary.signals.action}</th>
                   </tr>
                 </thead>
                 <tbody className="text-sm">
@@ -359,7 +401,7 @@ export function SignalsWorkbench({
                       <td className="px-4 py-3">
                         <div className="flex flex-wrap gap-2">
                           <StatusPill tone={signal.stateTone}>{signal.stateLabel}</StatusPill>
-                          {signal.requiresReview ? <StatusPill tone="violet">manual review</StatusPill> : null}
+                          {signal.requiresReview ? <StatusPill tone="violet">{dictionary.signals.manualReview}</StatusPill> : null}
                         </div>
                       </td>
                       <td className="px-5 py-3 text-right">
@@ -382,9 +424,9 @@ export function SignalsWorkbench({
                             </SheetTrigger>
                             <SheetContent className="w-full max-w-none border-white/10 bg-card p-0 sm:max-w-md">
                               <SheetHeader className="border-b border-white/8 px-5 py-4">
-                                <SheetTitle>Signal Detail</SheetTitle>
+                                <SheetTitle>{dictionary.signals.signalDetail}</SheetTitle>
                                 <SheetDescription>
-                                  Posterior, evidence stack and risk decision.
+                                  {dictionary.signals.signalDetailDescription}
                                 </SheetDescription>
                               </SheetHeader>
                               <div className="overflow-y-auto px-5 py-5">
@@ -401,9 +443,9 @@ export function SignalsWorkbench({
             </div>
           ) : (
             <div className="px-5 py-10 text-center">
-              <p className="font-heading text-lg font-bold text-foreground">No signals match this filter</p>
+              <p className="font-heading text-lg font-bold text-foreground">{dictionary.signals.noFilterTitle}</p>
               <p className="mt-2 text-sm text-muted-foreground">
-                Adjust the filter or wait for the next strategy refresh.
+                {dictionary.signals.noFilterDetail}
               </p>
             </div>
           )}

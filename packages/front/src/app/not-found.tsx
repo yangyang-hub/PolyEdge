@@ -2,22 +2,25 @@ import Link from "next/link";
 
 import { Button } from "@/components/ui/button";
 import { RouteStateCard } from "@/components/shared/route-state-card";
+import { getServerI18n } from "@/lib/i18n/server";
 
-export default function NotFound() {
+export default async function NotFound() {
+  const { dictionary } = await getServerI18n();
+
   return (
     <div className="flex min-h-screen items-center justify-center px-6 py-12">
       <RouteStateCard
-        eyebrow="404"
-        title="This route is not mapped"
-        description="The requested URL does not match any page in the PolyEdge console."
-        details={<p>Use the primary console entrypoint or return to the login shell if route protection is enabled.</p>}
+        eyebrow={dictionary.routeStates.notFoundEyebrow}
+        title={dictionary.routeStates.notFoundTitle}
+        description={dictionary.routeStates.notFoundDescription}
+        details={<p>{dictionary.routeStates.notFoundDetails}</p>}
         actions={
           <>
             <Button asChild className="rounded-sm bg-primary text-primary-foreground hover:bg-primary/90">
-              <Link href="/dashboard">Open dashboard</Link>
+              <Link href="/dashboard">{dictionary.routeStates.openDashboard}</Link>
             </Button>
             <Button asChild variant="outline" className="rounded-sm border-white/10 bg-accent/45 hover:bg-accent">
-              <Link href="/login">Open login</Link>
+              <Link href="/login">{dictionary.routeStates.openLogin}</Link>
             </Button>
           </>
         }

@@ -16,6 +16,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { useI18n } from "@/lib/i18n/client";
 import { isKeyboardSelect } from "@/lib/keyboard";
 
 type MarketsPageData = Awaited<ReturnType<typeof getMarketsPageData>>;
@@ -25,6 +26,7 @@ export function MarketsWorkbench({ data }: { data: MarketsPageData }) {
   const [selectedId, setSelectedId] = useState(data.selectedMarketId);
   const [filter, setFilter] = useState<MarketFilter>("all");
   const deferredFilter = useDeferredValue(filter);
+  const { dictionary } = useI18n();
 
   const visibleMarkets = data.markets.filter((market) => {
     if (deferredFilter === "review_queue") {
@@ -51,9 +53,9 @@ export function MarketsWorkbench({ data }: { data: MarketsPageData }) {
   }
 
   const filterButtons: Array<{ key: MarketFilter; label: string }> = [
-    { key: "all", label: "all markets" },
-    { key: "review_queue", label: "review queue" },
-    { key: "watch_only", label: "observe only" },
+    { key: "all", label: dictionary.markets.filterAll },
+    { key: "review_queue", label: dictionary.markets.filterReview },
+    { key: "watch_only", label: dictionary.markets.filterObserve },
   ];
 
   function selectMarket(marketId: string) {
@@ -65,18 +67,18 @@ export function MarketsWorkbench({ data }: { data: MarketsPageData }) {
   return (
     <div className="space-y-6">
       <PageHeader
-        eyebrow="Discovery"
-        title="Markets"
-        description="Browse tradable markets, inspect settlement semantics and pivot through linked events without leaving the workbench."
+        eyebrow={dictionary.markets.eyebrow}
+        title={dictionary.markets.title}
+        description={dictionary.markets.description}
       />
 
       <WorkbenchLayout>
         <Card>
           <CardHeader className="flex flex-col gap-4 border-b border-border/70 md:flex-row md:items-center md:justify-between">
             <div>
-              <CardTitle className="font-heading text-base">Market Universe</CardTitle>
+              <CardTitle className="font-heading text-base">{dictionary.markets.universe}</CardTitle>
               <p className="mt-1 text-sm text-muted-foreground">
-                Click a row to update the settlement and event context panel.
+                {dictionary.markets.universeHint}
               </p>
             </div>
             <WorkbenchSegmentedControl items={filterButtons} value={filter} onChange={setFilter} />
@@ -85,11 +87,11 @@ export function MarketsWorkbench({ data }: { data: MarketsPageData }) {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Question</TableHead>
-                  <TableHead>Mid</TableHead>
-                  <TableHead>Tradability</TableHead>
-                  <TableHead>Ambiguity</TableHead>
-                  <TableHead>Events</TableHead>
+                  <TableHead>{dictionary.markets.question}</TableHead>
+                  <TableHead>{dictionary.markets.mid}</TableHead>
+                  <TableHead>{dictionary.markets.tradability}</TableHead>
+                  <TableHead>{dictionary.markets.ambiguity}</TableHead>
+                  <TableHead>{dictionary.markets.events}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -134,7 +136,7 @@ export function MarketsWorkbench({ data }: { data: MarketsPageData }) {
         <div className="space-y-4">
           <Card>
             <CardHeader>
-              <CardTitle className="font-heading text-base">Settlement View</CardTitle>
+              <CardTitle className="font-heading text-base">{dictionary.markets.settlementView}</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
               <div>
@@ -148,15 +150,15 @@ export function MarketsWorkbench({ data }: { data: MarketsPageData }) {
                   {selectedMarket.tradabilityLabel}
                 </StatusPill>
                 <StatusPill tone={selectedMarket.ambiguityTone}>
-                  ambiguity {selectedMarket.ambiguityLabel}
+                  {dictionary.markets.ambiguity} {selectedMarket.ambiguityLabel}
                 </StatusPill>
               </div>
               <div className="rounded-sm border border-border/70 bg-card p-3 text-sm text-muted-foreground">
-                Resolution source: {selectedMarket.resolutionSource}
+                {dictionary.markets.resolutionSource}: {selectedMarket.resolutionSource}
               </div>
               <div className="space-y-2 text-sm text-muted-foreground">
                 {selectedMarket.edgeCaseNotes.map((note) => (
-                  <p key={note}>Edge case: {note}</p>
+                  <p key={note}>{dictionary.markets.edgeCase}: {note}</p>
                 ))}
               </div>
             </CardContent>
@@ -164,7 +166,7 @@ export function MarketsWorkbench({ data }: { data: MarketsPageData }) {
 
           <Card>
             <CardHeader>
-              <CardTitle className="font-heading text-base">Linked Events</CardTitle>
+              <CardTitle className="font-heading text-base">{dictionary.markets.linkedEvents}</CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
               {selectedMarket.linkedEvents.map((event) => (

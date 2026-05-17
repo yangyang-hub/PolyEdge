@@ -10,6 +10,8 @@ import { useConsoleRealtimeChannel } from "@/components/shared/console-realtime-
 import { WorkbenchDetailPane, WorkbenchLayout } from "@/components/shared/workbench-layout";
 import { WorkbenchSegmentedControl } from "@/components/shared/workbench-segmented-control";
 import { Button } from "@/components/ui/button";
+import { useI18n } from "@/lib/i18n/client";
+import type { Dictionary } from "@/lib/i18n/dictionaries";
 import type {
   RadarAnalysis,
   RadarMetric,
@@ -32,7 +34,6 @@ import {
   formatClock,
   formatInteger,
   formatPercentFromRatio,
-  humanizeSnakeCase,
   type AccentTone,
   type Tone,
 } from "@/lib/formatters";
@@ -44,19 +45,6 @@ type RadarView = "active" | "validated" | "rejected" | "history";
 type ArbitrageRadarWorkbenchProps = {
   data: RadarPageData;
 };
-
-const filterButtons: Array<{ key: RadarFilter; label: string }> = [
-  { key: "all", label: "all" },
-  { key: "binary_buy_both", label: "buy both" },
-  { key: "binary_sell_both", label: "sell both" },
-];
-
-const viewButtons: Array<{ key: RadarView; label: string }> = [
-  { key: "active", label: "active" },
-  { key: "validated", label: "validated" },
-  { key: "rejected", label: "rejected" },
-  { key: "history", label: "history" },
-];
 
 function toNumber(value: string | number | null | undefined): number {
   if (value === null || value === undefined) {
@@ -124,7 +112,32 @@ function readFormula(payload: unknown): string {
   return typeof formula === "string" && formula.trim() ? formula : "n/a";
 }
 
-function buildLiveOpportunity(payload: ArbitrageStreamPayload): RadarOpportunityItem | null {
+function localizeCandidateReason(dictionary: Dictionary, enumLabel: (value: string) => string, reason: string): string {
+  if (reason === "expired opportunity") {
+    return dictionary.radar.expiredOpportunity;
+  }
+
+  if (reason === "waiting for validation") {
+    return dictionary.radar.waitingValidation;
+  }
+
+  if (reason === "non-positive net edge") {
+    return dictionary.radar.nonPositiveNetEdge;
+  }
+
+  if (reason === "valid read-only candidate") {
+    return dictionary.radar.validReadOnlyCandidate;
+  }
+
+  return enumLabel(reason);
+}
+
+function buildLiveOpportunity(
+  payload: ArbitrageStreamPayload,
+  dictionary: Dictionary,
+  enumLabel: (value: string) => string,
+  format: (template: string, values?: Record<string, string | number>) => string,
+): RadarOpportunityItem | null {
   if (!payload.opportunity_id || !payload.market_id || !payload.opportunity_type || !payload.status) {
     return null;
   }
@@ -136,12 +149,12 @@ function buildLiveOpportunity(payload: ArbitrageStreamPayload): RadarOpportunity
     id: payload.opportunity_id,
     marketId: payload.market_id,
     marketQuestion: payload.market_id,
-    contextLabel: `Live / scan ${payload.scan_id ?? "n/a"}`,
+    contextLabel: format(dictionary.radar.liveContext, { scanId: payload.scan_id ?? "n/a" }),
     opportunityType: payload.opportunity_type,
-    typeLabel: humanizeSnakeCase(payload.opportunity_type),
+    typeLabel: enumLabel(payload.opportunity_type),
     typeTone: opportunityTypeTone(payload.opportunity_type),
     status: payload.status,
-    statusLabel: humanizeSnakeCase(payload.status),
+    statusLabel: enumLabel(payload.status),
     statusTone: opportunityStatusTone(payload.status),
     grossEdge: formatPercentFromRatio(payload.gross_edge ?? 0, 1),
     grossEdgeValue: toNumber(payload.gross_edge),
@@ -153,10 +166,10 @@ function buildLiveOpportunity(payload: ArbitrageStreamPayload): RadarOpportunity
     noPrice: formatPrice(payload.no_price),
     yesSize: formatInteger(payload.yes_size ?? 0),
     noSize: formatInteger(payload.no_size ?? 0),
-    reasonCodes: payload.reason_codes?.map(humanizeSnakeCase) ?? [],
+    reasonCodes: payload.reason_codes?.map(enumLabel) ?? [],
     formula: readFormula(payload.analysis_payload),
     validationStatus,
-    validationLabel: humanizeSnakeCase(validationStatus),
+    validationLabel: enumLabel(validationStatus),
     validationTone: validationStatusTone(validationStatus),
     netEdge: "n/a",
     netEdgeValue: 0,
@@ -167,9 +180,9 @@ function buildLiveOpportunity(payload: ArbitrageStreamPayload): RadarOpportunity
     bookAgeMs: null,
     validationReasonCodes: [],
     candidateStatus: "watch",
-    candidateLabel: "watch",
+    candidateLabel: enumLabel("watch"),
     candidateTone: "warning",
-    candidateReason: "waiting for validation",
+    candidateReason: dictionary.radar.waitingValidation,
     isSelected: false,
   };
 }
@@ -177,6 +190,8 @@ function buildLiveOpportunity(payload: ArbitrageStreamPayload): RadarOpportunity
 function applyOpportunityPatch(
   current: RadarOpportunityItem,
   payload: ArbitrageStreamPayload,
+  dictionary: Dictionary,
+  enumLabel: (value: string) => string,
 ): RadarOpportunityItem {
   const status = payload.status ?? current.status;
   const candidate = deriveCandidatePreview({
@@ -189,7 +204,7 @@ function applyOpportunityPatch(
   return {
     ...current,
     status,
-    statusLabel: humanizeSnakeCase(status),
+    statusLabel: enumLabel(status),
     statusTone: opportunityStatusTone(status),
     grossEdge: payload.gross_edge ? formatPercentFromRatio(payload.gross_edge, 1) : current.grossEdge,
     grossEdgeValue: payload.gross_edge ? toNumber(payload.gross_edge) : current.grossEdgeValue,
@@ -201,18 +216,20 @@ function applyOpportunityPatch(
     noPrice: payload.no_price ? formatPrice(payload.no_price) : current.noPrice,
     yesSize: payload.yes_size ? formatInteger(payload.yes_size) : current.yesSize,
     noSize: payload.no_size ? formatInteger(payload.no_size) : current.noSize,
-    reasonCodes: payload.reason_codes?.map(humanizeSnakeCase) ?? current.reasonCodes,
+    reasonCodes: payload.reason_codes?.map(enumLabel) ?? current.reasonCodes,
     formula: payload.analysis_payload ? readFormula(payload.analysis_payload) : current.formula,
     candidateStatus: candidate.status,
-    candidateLabel: candidate.label,
+    candidateLabel: enumLabel(candidate.label),
     candidateTone: candidate.tone,
-    candidateReason: candidate.reason,
+    candidateReason: localizeCandidateReason(dictionary, enumLabel, candidate.reason),
   };
 }
 
 function applyValidationPatch(
   current: RadarOpportunityItem,
   payload: ArbitrageStreamPayload,
+  dictionary: Dictionary,
+  enumLabel: (value: string) => string,
 ): RadarOpportunityItem {
   const validationStatus = payload.validation_status ?? current.validationStatus;
   const netEdgeValue = toNumber(payload.net_edge ?? current.netEdgeValue);
@@ -226,7 +243,7 @@ function applyValidationPatch(
   return {
     ...current,
     validationStatus,
-    validationLabel: humanizeSnakeCase(validationStatus),
+    validationLabel: enumLabel(validationStatus),
     validationTone: validationStatusTone(validationStatus),
     netEdge: payload.net_edge ? formatPercentFromRatio(payload.net_edge, 1) : current.netEdge,
     netEdgeValue,
@@ -239,19 +256,22 @@ function applyValidationPatch(
       : current.validatedCapacity,
     bookAge: payload.book_age_ms !== undefined ? formatBookAge(payload.book_age_ms) : current.bookAge,
     bookAgeMs: payload.book_age_ms ?? current.bookAgeMs,
-    validationReasonCodes: payload.reason_codes?.map(humanizeSnakeCase) ?? current.validationReasonCodes,
+    validationReasonCodes: payload.reason_codes?.map(enumLabel) ?? current.validationReasonCodes,
     candidateStatus: candidate.status,
-    candidateLabel: candidate.label,
+    candidateLabel: enumLabel(candidate.label),
     candidateTone: candidate.tone,
-    candidateReason: candidate.reason,
+    candidateReason: localizeCandidateReason(dictionary, enumLabel, candidate.reason),
   };
 }
 
 function upsertOpportunity(
   current: RadarOpportunityItem[],
   payload: ArbitrageStreamPayload,
+  dictionary: Dictionary,
+  enumLabel: (value: string) => string,
+  format: (template: string, values?: Record<string, string | number>) => string,
 ): RadarOpportunityItem[] {
-  const next = buildLiveOpportunity(payload);
+  const next = buildLiveOpportunity(payload, dictionary, enumLabel, format);
 
   if (!next) {
     return current;
@@ -259,7 +279,7 @@ function upsertOpportunity(
 
   const updated = current.some((opportunity) => opportunity.id === next.id)
     ? current.map((opportunity) =>
-        opportunity.id === next.id ? applyOpportunityPatch(opportunity, payload) : opportunity,
+        opportunity.id === next.id ? applyOpportunityPatch(opportunity, payload, dictionary, enumLabel) : opportunity,
       )
     : [next, ...current];
 
@@ -272,17 +292,19 @@ function upsertOpportunity(
 function patchValidation(
   current: RadarOpportunityItem[],
   payload: ArbitrageStreamPayload,
+  dictionary: Dictionary,
+  enumLabel: (value: string) => string,
 ): RadarOpportunityItem[] {
   if (!payload.opportunity_id) {
     return current;
   }
 
   return current.map((opportunity) =>
-    opportunity.id === payload.opportunity_id ? applyValidationPatch(opportunity, payload) : opportunity,
+    opportunity.id === payload.opportunity_id ? applyValidationPatch(opportunity, payload, dictionary, enumLabel) : opportunity,
   );
 }
 
-function buildScanRow(payload: ArbitrageStreamPayload): RadarScanRow | null {
+function buildScanRow(payload: ArbitrageStreamPayload, dictionary: Dictionary): RadarScanRow | null {
   if (!payload.scan_id) {
     return null;
   }
@@ -294,16 +316,16 @@ function buildScanRow(payload: ArbitrageStreamPayload): RadarScanRow | null {
       : payload.occurred_at
         ? formatClock(payload.occurred_at)
         : "n/a",
-    finishedClock: payload.finished_at ? formatClock(payload.finished_at) : "running",
+    finishedClock: payload.finished_at ? formatClock(payload.finished_at) : dictionary.radar.running,
     marketCount: formatInteger(payload.market_count ?? 0),
     snapshotCount: formatInteger(payload.snapshot_count ?? 0),
     opportunityCount: formatInteger(payload.opportunity_count ?? 0),
-    scannerVersion: payload.scanner_version ?? "radar",
+    scannerVersion: payload.scanner_version ?? dictionary.radar.radarScanner,
   };
 }
 
-function upsertScan(current: RadarScanRow[], payload: ArbitrageStreamPayload): RadarScanRow[] {
-  const next = buildScanRow(payload);
+function upsertScan(current: RadarScanRow[], payload: ArbitrageStreamPayload, dictionary: Dictionary): RadarScanRow[] {
+  const next = buildScanRow(payload, dictionary);
 
   if (!next) {
     return current;
@@ -324,7 +346,10 @@ function isAnalysisSummary(value: unknown): value is ArbitrageAnalysisSummaryDto
   return Array.isArray(candidate.type_counts) && Array.isArray(candidate.top_markets);
 }
 
-function buildLiveAnalysis(payload: ArbitrageStreamPayload): RadarAnalysis | null {
+function buildLiveAnalysis(
+  payload: ArbitrageStreamPayload,
+  enumLabel: (value: string) => string,
+): RadarAnalysis | null {
   if (!isAnalysisSummary(payload.summary_payload)) {
     return null;
   }
@@ -336,7 +361,7 @@ function buildLiveAnalysis(payload: ArbitrageStreamPayload): RadarAnalysis | nul
     opportunityCount: formatInteger(summary.opportunity_count),
     marketCount: formatInteger(summary.market_count),
     typeCounts: summary.type_counts.map((item) => ({
-      typeLabel: humanizeSnakeCase(item.opportunity_type),
+      typeLabel: enumLabel(item.opportunity_type),
       count: formatInteger(item.count),
       tone: opportunityTypeTone(item.opportunity_type),
     })),
@@ -352,7 +377,12 @@ function buildLiveAnalysis(payload: ArbitrageStreamPayload): RadarAnalysis | nul
   };
 }
 
-function buildMetrics(opportunities: RadarOpportunityItem[], scans: RadarScanRow[]): RadarMetric[] {
+function buildMetrics(
+  opportunities: RadarOpportunityItem[],
+  scans: RadarScanRow[],
+  dictionary: Dictionary,
+  format: (template: string, values?: Record<string, string | number>) => string,
+): RadarMetric[] {
   const latestScan = scans[0] ?? null;
   const active = opportunities.filter((opportunity) => opportunity.status !== "expired");
   const validationSummary = calculateValidationSummary(opportunities);
@@ -364,27 +394,30 @@ function buildMetrics(opportunities: RadarOpportunityItem[], scans: RadarScanRow
 
   return [
     {
-      title: "Latest Scan",
+      title: dictionary.metrics.latestScan,
       value: latestScan?.startedClock ?? "n/a",
-      hint: latestScan ? `${latestScan.marketCount} markets` : "no scan",
+      hint: latestScan ? format(dictionary.metricHints.markets, { count: latestScan.marketCount }) : dictionary.metricHints.noScan,
       accent: "primary",
     },
     {
-      title: "Active Opportunities",
+      title: dictionary.metrics.activeOpportunities,
       value: formatInteger(active.length),
-      hint: latestScan ? `${latestScan.opportunityCount} latest scan` : "not expired",
+      hint: latestScan ? format(dictionary.metricHints.latestScan, { count: latestScan.opportunityCount }) : dictionary.metricHints.notExpired,
       accent: "success",
     },
     {
-      title: "Max Net Edge",
+      title: dictionary.metrics.maxNetEdge,
       value: formatPercentFromRatio(maxNetEdge, 1),
-      hint: "after buffers",
+      hint: dictionary.metricHints.afterBuffers,
       accent,
     },
     {
-      title: "Validation Pass Rate",
+      title: dictionary.metrics.validationPassRate,
       value: formatPercentFromRatio(validationSummary.passRate, 0),
-      hint: `${formatInteger(validationSummary.completedValidationCount)} completed, ${formatInteger(validationSummary.rejectedCount)} rejected`,
+      hint: format(dictionary.metricHints.validationSummary, {
+        completed: formatInteger(validationSummary.completedValidationCount),
+        rejected: formatInteger(validationSummary.rejectedCount),
+      }),
       accent: validationSummary.passRate > 0 ? "success" : "primary",
     },
   ];
@@ -421,11 +454,13 @@ function compareRadarPriority(left: RadarOpportunityItem, right: RadarOpportunit
 }
 
 function OpportunityDetail({ opportunity }: { opportunity: RadarOpportunityItem | null }) {
+  const { dictionary } = useI18n();
+
   if (!opportunity) {
     return (
       <div className="rounded-md bg-popover/70 p-4">
-        <p className="font-heading text-lg font-bold text-foreground">No opportunity selected</p>
-        <p className="mt-2 text-sm text-muted-foreground">Radar has not recorded an active opportunity.</p>
+        <p className="font-heading text-lg font-bold text-foreground">{dictionary.radar.noSelectionTitle}</p>
+        <p className="mt-2 text-sm text-muted-foreground">{dictionary.radar.noSelectionDetail}</p>
       </div>
     );
   }
@@ -447,50 +482,50 @@ function OpportunityDetail({ opportunity }: { opportunity: RadarOpportunityItem 
 
       <div className="grid grid-cols-2 gap-3">
         <div className="rounded-md bg-accent/45 p-3">
-          <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">gross edge</p>
+          <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">{dictionary.radar.grossEdge}</p>
           <p className="mt-2 font-mono text-lg text-secondary">{opportunity.grossEdge}</p>
         </div>
         <div className="rounded-md bg-accent/45 p-3">
-          <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">price sum</p>
+          <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">{dictionary.radar.priceSum}</p>
           <p className="mt-2 font-mono text-lg text-foreground">{opportunity.priceSum}</p>
         </div>
         <div className="rounded-md bg-accent/45 p-3">
-          <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">yes price</p>
+          <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">{dictionary.radar.yesPrice}</p>
           <p className="mt-2 font-mono text-lg text-primary">{opportunity.yesPrice}</p>
         </div>
         <div className="rounded-md bg-accent/45 p-3">
-          <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">no price</p>
+          <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">{dictionary.radar.noPrice}</p>
           <p className="mt-2 font-mono text-lg text-primary">{opportunity.noPrice}</p>
         </div>
         <div className="rounded-md bg-accent/45 p-3">
-          <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">yes size</p>
+          <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">{dictionary.radar.yesSize}</p>
           <p className="mt-2 font-mono text-lg text-foreground">{opportunity.yesSize}</p>
         </div>
         <div className="rounded-md bg-accent/45 p-3">
-          <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">no size</p>
+          <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">{dictionary.radar.noSize}</p>
           <p className="mt-2 font-mono text-lg text-foreground">{opportunity.noSize}</p>
         </div>
       </div>
 
       <div className="rounded-md bg-popover/70 p-4">
         <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">
-          Validation
+          {dictionary.radar.validation}
         </p>
         <div className="mt-3 grid grid-cols-2 gap-3">
           <div>
-            <p className="text-[10px] uppercase text-muted-foreground">net edge</p>
+            <p className="text-[10px] uppercase text-muted-foreground">{dictionary.radar.netEdge}</p>
             <p className="mt-1 font-mono text-sm text-foreground">{opportunity.netEdge}</p>
           </div>
           <div>
-            <p className="text-[10px] uppercase text-muted-foreground">capacity</p>
+            <p className="text-[10px] uppercase text-muted-foreground">{dictionary.radar.capacity}</p>
             <p className="mt-1 font-mono text-sm text-foreground">{opportunity.validatedCapacity}</p>
           </div>
           <div>
-            <p className="text-[10px] uppercase text-muted-foreground">fee buffer</p>
+            <p className="text-[10px] uppercase text-muted-foreground">{dictionary.radar.feeBuffer}</p>
             <p className="mt-1 font-mono text-sm text-foreground">{opportunity.feeEstimate}</p>
           </div>
           <div>
-            <p className="text-[10px] uppercase text-muted-foreground">book age</p>
+            <p className="text-[10px] uppercase text-muted-foreground">{dictionary.radar.bookAge}</p>
             <p className="mt-1 font-mono text-sm text-foreground">{opportunity.bookAge}</p>
           </div>
         </div>
@@ -507,7 +542,7 @@ function OpportunityDetail({ opportunity }: { opportunity: RadarOpportunityItem 
 
       <div className="rounded-md bg-popover/70 p-4">
         <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">
-          Candidate Preview
+          {dictionary.radar.candidatePreview}
         </p>
         <div className="mt-3 flex items-center justify-between gap-3">
           <StatusPill tone={opportunity.candidateTone}>{opportunity.candidateLabel}</StatusPill>
@@ -517,14 +552,14 @@ function OpportunityDetail({ opportunity }: { opportunity: RadarOpportunityItem 
 
       <div className="rounded-md bg-popover/70 p-4">
         <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">
-          Detection Formula
+          {dictionary.radar.detectionFormula}
         </p>
         <p className="mt-3 font-mono text-sm text-foreground">{opportunity.formula}</p>
       </div>
 
       <div className="rounded-md bg-popover/70 p-4">
         <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">
-          Reason Codes
+          {dictionary.radar.reasonCodes}
         </p>
         <div className="mt-3 flex flex-wrap gap-2">
           {opportunity.reasonCodes.map((reason) => (
@@ -540,6 +575,7 @@ function OpportunityDetail({ opportunity }: { opportunity: RadarOpportunityItem 
 
 export function ArbitrageRadarWorkbench({ data }: ArbitrageRadarWorkbenchProps) {
   const arbitrageStream = useConsoleRealtimeChannel("arbitrage");
+  const { dictionary, enumLabel, format } = useI18n();
   const [filter, setFilter] = useState<RadarFilter>("all");
   const [view, setView] = useState<RadarView>("active");
   const [selectedId, setSelectedId] = useState(data.selectedOpportunityId);
@@ -547,6 +583,17 @@ export function ArbitrageRadarWorkbench({ data }: ArbitrageRadarWorkbenchProps) 
   const [liveScans, setLiveScans] = useState(data.scans);
   const [liveAnalysis, setLiveAnalysis] = useState(data.analysis);
   const deferredFilter = useDeferredValue(filter);
+  const filterButtons: Array<{ key: RadarFilter; label: string }> = [
+    { key: "all", label: dictionary.radar.all },
+    { key: "binary_buy_both", label: dictionary.radar.buyBoth },
+    { key: "binary_sell_both", label: dictionary.radar.sellBoth },
+  ];
+  const viewButtons: Array<{ key: RadarView; label: string }> = [
+    { key: "active", label: dictionary.radar.active },
+    { key: "validated", label: dictionary.radar.validated },
+    { key: "rejected", label: dictionary.radar.rejected },
+    { key: "history", label: dictionary.radar.history },
+  ];
 
   useEffect(() => {
     const streamEvent = arbitrageStream.lastEvent;
@@ -561,7 +608,9 @@ export function ArbitrageRadarWorkbench({ data }: ArbitrageRadarWorkbenchProps) 
       streamEvent.type === "arbitrage.opportunity.expired"
     ) {
       startTransition(() => {
-        setLiveOpportunities((current) => upsertOpportunity(current, streamEvent.data));
+        setLiveOpportunities((current) =>
+          upsertOpportunity(current, streamEvent.data, dictionary, enumLabel, format),
+        );
         setSelectedId((current) => current || streamEvent.data.opportunity_id || "");
       });
       return;
@@ -572,29 +621,32 @@ export function ArbitrageRadarWorkbench({ data }: ArbitrageRadarWorkbenchProps) 
       streamEvent.type === "arbitrage.validation.failed"
     ) {
       startTransition(() => {
-        setLiveOpportunities((current) => patchValidation(current, streamEvent.data));
+        setLiveOpportunities((current) => patchValidation(current, streamEvent.data, dictionary, enumLabel));
       });
       return;
     }
 
     if (streamEvent.type === "arbitrage.scan.started" || streamEvent.type === "arbitrage.scan.completed") {
       startTransition(() => {
-        setLiveScans((current) => upsertScan(current, streamEvent.data));
+        setLiveScans((current) => upsertScan(current, streamEvent.data, dictionary));
       });
       return;
     }
 
     if (streamEvent.type === "arbitrage.analysis.generated") {
-      const analysis = buildLiveAnalysis(streamEvent.data);
+      const analysis = buildLiveAnalysis(streamEvent.data, enumLabel);
       if (analysis) {
         startTransition(() => {
           setLiveAnalysis(analysis);
         });
       }
     }
-  }, [arbitrageStream.lastEvent]);
+  }, [arbitrageStream.lastEvent, dictionary, enumLabel, format]);
 
-  const metrics = useMemo(() => buildMetrics(liveOpportunities, liveScans), [liveOpportunities, liveScans]);
+  const metrics = useMemo(
+    () => buildMetrics(liveOpportunities, liveScans, dictionary, format),
+    [dictionary, format, liveOpportunities, liveScans],
+  );
 
   const filteredOpportunities = useMemo(() => {
     return liveOpportunities
@@ -620,17 +672,17 @@ export function ArbitrageRadarWorkbench({ data }: ArbitrageRadarWorkbenchProps) 
   return (
     <div className="space-y-4">
       <PageHeader
-        eyebrow="Arbitrage"
-        title="Radar"
-        description="Detect, record and analyze binary market price-sum opportunities without initiating trades."
+        eyebrow={dictionary.radar.eyebrow}
+        title={dictionary.radar.title}
+        description={dictionary.radar.description}
         className="border-none pb-0"
         actions={
           <>
             <StatusPill tone={arbitrageStream.connection === "open" ? "success" : "warning"}>
               {arbitrageStream.connection}
             </StatusPill>
-            <StatusPill tone="success">{liveOpportunities.length} observed</StatusPill>
-            <StatusPill tone="primary">{liveScans.length} scans</StatusPill>
+            <StatusPill tone="success">{format(dictionary.radar.observed, { count: liveOpportunities.length })}</StatusPill>
+            <StatusPill tone="primary">{format(dictionary.radar.scans, { count: liveScans.length })}</StatusPill>
           </>
         }
       />
@@ -653,7 +705,7 @@ export function ArbitrageRadarWorkbench({ data }: ArbitrageRadarWorkbenchProps) 
             <div className="flex items-center gap-3">
               <Radar className="size-5 text-primary" />
               <h2 className="font-heading text-xl font-bold tracking-tight text-foreground">
-                Opportunities
+                {dictionary.radar.opportunities}
               </h2>
             </div>
             <div className="flex flex-wrap items-center gap-2">
@@ -665,7 +717,7 @@ export function ArbitrageRadarWorkbench({ data }: ArbitrageRadarWorkbenchProps) 
                 className="rounded-sm border-white/10 bg-accent/40 text-foreground hover:bg-accent"
               >
                 <Filter className="size-3.5" />
-                Filter
+                {dictionary.common.filter}
               </Button>
             </div>
           </div>
@@ -675,17 +727,17 @@ export function ArbitrageRadarWorkbench({ data }: ArbitrageRadarWorkbenchProps) 
               <table className="w-full text-left">
                 <thead className="bg-sidebar/60">
                   <tr className="text-[10px] font-bold uppercase tracking-[0.2em] text-muted-foreground">
-                    <th className="px-5 py-3">Market</th>
-                    <th className="px-4 py-3">Type</th>
-                    <th className="px-4 py-3 text-right">Sum</th>
-                    <th className="px-4 py-3 text-right">Edge</th>
-                    <th className="px-4 py-3 text-right">Net</th>
-                    <th className="px-4 py-3 text-right">Capacity</th>
-                    <th className="px-4 py-3">Observed</th>
-                    <th className="px-4 py-3">Status</th>
-                    <th className="px-4 py-3">Validation</th>
-                    <th className="px-4 py-3">Candidate</th>
-                    <th className="px-5 py-3 text-right">Open</th>
+                    <th className="px-5 py-3">{dictionary.radar.market}</th>
+                    <th className="px-4 py-3">{dictionary.radar.type}</th>
+                    <th className="px-4 py-3 text-right">{dictionary.radar.sum}</th>
+                    <th className="px-4 py-3 text-right">{dictionary.radar.edge}</th>
+                    <th className="px-4 py-3 text-right">{dictionary.radar.net}</th>
+                    <th className="px-4 py-3 text-right">{dictionary.radar.capacity}</th>
+                    <th className="px-4 py-3">{dictionary.radar.observedAt}</th>
+                    <th className="px-4 py-3">{dictionary.radar.status}</th>
+                    <th className="px-4 py-3">{dictionary.radar.validation}</th>
+                    <th className="px-4 py-3">{dictionary.radar.candidate}</th>
+                    <th className="px-5 py-3 text-right">{dictionary.radar.open}</th>
                   </tr>
                 </thead>
                 <tbody className="text-sm">
@@ -757,9 +809,9 @@ export function ArbitrageRadarWorkbench({ data }: ArbitrageRadarWorkbenchProps) 
             </div>
           ) : (
             <div className="px-5 py-10 text-center">
-              <p className="font-heading text-lg font-bold text-foreground">No opportunities recorded</p>
+              <p className="font-heading text-lg font-bold text-foreground">{dictionary.radar.noOpportunityTitle}</p>
               <p className="mt-2 text-sm text-muted-foreground">
-                The current filter has no observed price-sum dislocations.
+                {dictionary.radar.noOpportunityDetail}
               </p>
             </div>
           )}
@@ -773,13 +825,13 @@ export function ArbitrageRadarWorkbench({ data }: ArbitrageRadarWorkbenchProps) 
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
                   <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">
-                    Analysis
+                    {dictionary.radar.analysis}
                   </p>
                   <p className="mt-1 text-sm text-foreground">
                     {liveAnalysis.generatedClock} / {liveAnalysis.lookbackHours}
                   </p>
                 </div>
-                <StatusPill tone="primary">{liveAnalysis.marketCount} markets</StatusPill>
+                <StatusPill tone="primary">{format(dictionary.metricHints.markets, { count: liveAnalysis.marketCount })}</StatusPill>
               </div>
 
               <div className="grid grid-cols-2 gap-3">
@@ -801,8 +853,8 @@ export function ArbitrageRadarWorkbench({ data }: ArbitrageRadarWorkbenchProps) 
                       <StatusPill tone="success">{market.maxGrossEdge}</StatusPill>
                     </div>
                     <div className="mt-3 grid grid-cols-3 gap-2 text-xs text-muted-foreground">
-                      <span>{market.opportunityCount} opps</span>
-                      <span>{market.maxCapacity} cap</span>
+                      <span>{market.opportunityCount} {dictionary.radar.opps}</span>
+                      <span>{market.maxCapacity} {dictionary.radar.cap}</span>
                       <span>{market.duration}</span>
                     </div>
                   </div>
@@ -813,7 +865,7 @@ export function ArbitrageRadarWorkbench({ data }: ArbitrageRadarWorkbenchProps) 
 
           <div className="rounded-md bg-popover/70 p-4">
             <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">
-              Scan History
+              {dictionary.radar.scanHistory}
             </p>
             <div className="mt-3 space-y-3">
               {liveScans.map((scan) => (
@@ -821,11 +873,11 @@ export function ArbitrageRadarWorkbench({ data }: ArbitrageRadarWorkbenchProps) 
                   <div className="flex items-center justify-between gap-3">
                     <p className="font-mono text-xs text-foreground">{scan.startedClock}</p>
                     <StatusPill tone={scan.opportunityCount === "0" ? "neutral" : "success"}>
-                      {scan.opportunityCount} opps
+                      {scan.opportunityCount} {dictionary.radar.opps}
                     </StatusPill>
                   </div>
                   <p className="mt-2 text-xs text-muted-foreground">
-                    {scan.marketCount} markets / {scan.snapshotCount} snapshots / {scan.scannerVersion}
+                    {format(dictionary.metricHints.markets, { count: scan.marketCount })} / {scan.snapshotCount} {dictionary.radar.snapshots} / {scan.scannerVersion}
                   </p>
                 </div>
               ))}

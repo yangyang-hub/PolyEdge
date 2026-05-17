@@ -8,6 +8,7 @@ import { PageHeader } from "@/components/shared/page-header";
 import { StatusPill } from "@/components/shared/status-pill";
 import { WorkbenchLayout, WorkbenchDetailPane } from "@/components/shared/workbench-layout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { useI18n } from "@/lib/i18n/client";
 import { isKeyboardSelect } from "@/lib/keyboard";
 
 type ReplayPageData = Awaited<ReturnType<typeof getReplayPageData>>;
@@ -32,6 +33,7 @@ function replayMomentTone(
 
 export function ReplayWorkbench({ data }: { data: ReplayPageData }) {
   const [selectedId, setSelectedId] = useState(data.selectedMomentId);
+  const { dictionary, format } = useI18n();
   const selectedMoment =
     data.timeline.find((moment) => moment.id === selectedId) ??
     data.timeline.find((moment) => moment.id === data.selectedMomentId) ??
@@ -50,9 +52,9 @@ export function ReplayWorkbench({ data }: { data: ReplayPageData }) {
   return (
     <div className="space-y-6">
       <PageHeader
-        eyebrow="Research"
-        title="Replay"
-        description="Inspect how evidence changed posterior and why the signal ended up in its current transition path."
+        eyebrow={dictionary.replay.eyebrow}
+        title={dictionary.replay.title}
+        description={dictionary.replay.description}
         actions={
           <>
             <StatusPill tone="primary">{data.runLabel}</StatusPill>
@@ -68,7 +70,7 @@ export function ReplayWorkbench({ data }: { data: ReplayPageData }) {
             title={metric.title}
             value={metric.value}
             hint={data.marketQuestion}
-            accent={metric.title === "Brier Score" ? "primary" : "success"}
+            accent={metric.title === dictionary.metrics.brierScore ? "primary" : "success"}
           />
         ))}
       </section>
@@ -76,7 +78,7 @@ export function ReplayWorkbench({ data }: { data: ReplayPageData }) {
       <WorkbenchLayout columnsClassName="xl:grid-cols-[1.15fr_1fr]">
         <Card>
           <CardHeader>
-            <CardTitle className="font-heading text-base">Replay Timeline</CardTitle>
+            <CardTitle className="font-heading text-base">{dictionary.replay.replayTimeline}</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
             {data.timeline.map((moment) => {
@@ -124,35 +126,38 @@ export function ReplayWorkbench({ data }: { data: ReplayPageData }) {
 
             <div className="grid grid-cols-3 gap-3">
               <div className="rounded-md bg-accent/45 p-3">
-                <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">prior</p>
+                <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">{dictionary.replay.prior}</p>
                 <p className="mt-2 font-mono text-lg text-foreground">{data.snapshot.prior}</p>
               </div>
               <div className="rounded-md bg-accent/45 p-3">
                 <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">
-                  posterior
+                  {dictionary.replay.posterior}
                 </p>
                 <p className="mt-2 font-mono text-lg text-primary">{data.snapshot.posterior}</p>
               </div>
               <div className="rounded-md bg-accent/45 p-3">
-                <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">delta</p>
+                <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">{dictionary.replay.delta}</p>
                 <p className="mt-2 font-mono text-lg text-foreground">{data.snapshot.posteriorDelta}</p>
               </div>
             </div>
 
             <div className="rounded-md bg-popover/70 p-4">
               <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">
-                Selected moment
+                {dictionary.replay.selectedMoment}
               </p>
               <p className="mt-3 text-sm text-foreground">{selectedMoment.summary}</p>
               <p className="mt-2 text-xs text-muted-foreground">
-                Run created {data.snapshot.createdAt} and last updated {data.snapshot.updatedAt}.
+                {format(dictionary.replay.runUpdated, {
+                  createdAt: data.snapshot.createdAt,
+                  updatedAt: data.snapshot.updatedAt,
+                })}
               </p>
             </div>
           </WorkbenchDetailPane>
 
           <Card>
             <CardHeader>
-              <CardTitle className="font-heading text-base">Related Signals</CardTitle>
+              <CardTitle className="font-heading text-base">{dictionary.replay.relatedSignals}</CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
               {data.relatedSignals.map((signal) => (
@@ -164,7 +169,7 @@ export function ReplayWorkbench({ data }: { data: ReplayPageData }) {
                     </span>
                   </div>
                   <p className="mt-2 text-sm text-foreground">{signal.reason}</p>
-                  <p className="mt-2 font-mono text-xs text-muted-foreground">edge {signal.edge}</p>
+                  <p className="mt-2 font-mono text-xs text-muted-foreground">{dictionary.signals.edge} {signal.edge}</p>
                 </div>
               ))}
             </CardContent>
@@ -172,7 +177,7 @@ export function ReplayWorkbench({ data }: { data: ReplayPageData }) {
 
           <Card>
             <CardHeader>
-              <CardTitle className="font-heading text-base">Related Events</CardTitle>
+              <CardTitle className="font-heading text-base">{dictionary.replay.relatedEvents}</CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
               {data.relatedEvents.map((event) => (
@@ -183,7 +188,7 @@ export function ReplayWorkbench({ data }: { data: ReplayPageData }) {
                   </div>
                   <p className="mt-2 text-sm text-foreground">{event.summary}</p>
                   <p className="mt-2 font-mono text-xs text-muted-foreground">
-                    {event.createdAt} / confidence {event.confidence}
+                    {event.createdAt} / {dictionary.common.confidence} {event.confidence}
                   </p>
                 </div>
               ))}

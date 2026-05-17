@@ -1,6 +1,6 @@
 "use client";
 
-import { startTransition, useEffect, useState, useTransition } from "react";
+import { startTransition, useEffect, useMemo, useState, useTransition } from "react";
 import Link from "next/link";
 import { Download, ShieldCheck, ToggleLeft } from "lucide-react";
 import { toast } from "sonner";
@@ -18,13 +18,14 @@ import { ActionDialog } from "@/components/shared/action-dialog";
 import { useConsoleRealtimeChannel } from "@/components/shared/console-realtime-provider";
 import { Button } from "@/components/ui/button";
 import { EmptyPanel } from "@/components/shared/empty-panel";
+import { useI18n } from "@/lib/i18n/client";
+import { localizeGeneratedCopy } from "@/lib/i18n/generated-copy";
 import {
   alertSeverityTone,
   alertStatusTone,
   formatClock,
   formatCurrency,
   formatPercentFromRatio,
-  humanizeSnakeCase,
 } from "@/lib/realtime-formatters";
 import { MeterBar } from "@/components/shared/meter-bar";
 import { OperationFeedbackBanner } from "@/components/shared/operation-feedback-banner";
@@ -35,35 +36,38 @@ import { StatusPill } from "@/components/shared/status-pill";
 type RiskPageData = Awaited<ReturnType<typeof getRiskPageData>>;
 type RiskDialog = "mode" | "release" | "kill_switch" | null;
 
-const MODE_OPTIONS: Array<{ value: RuntimeMode; label: string; detail: string }> = [
-  { value: "research", label: "research", detail: "No live execution, full operator visibility." },
-  { value: "paper_trade", label: "paper trade", detail: "Simulate execution against live inputs." },
-  { value: "manual_confirm", label: "manual confirm", detail: "Operator confirmation required before execution." },
-  { value: "live_auto", label: "live auto", detail: "Autonomous execution within live controls." },
-  { value: "kill_switch_locked", label: "kill switch locked", detail: "Protected mode with execution halted." },
+const MODE_OPTION_VALUES: RuntimeMode[] = [
+  "research",
+  "paper_trade",
+  "manual_confirm",
+  "live_auto",
+  "kill_switch_locked",
 ];
-
-function humanizeMode(mode: RuntimeMode): string {
-  return mode.replaceAll("_", " ");
-}
 
 function patchMetricValues(
   metrics: RiskPageData["metrics"],
   controls: { mode: RuntimeMode; killSwitch: boolean },
+  labels: {
+    mode: (mode: RuntimeMode) => string;
+    active: string;
+    armed: string;
+    halted: string;
+    readyState: string;
+  },
 ) {
   return metrics.map((metric) => {
-    if (metric.title === "Mode") {
+    if (metric.key === "mode") {
       return {
         ...metric,
-        value: humanizeMode(controls.mode),
+        value: labels.mode(controls.mode),
       };
     }
 
-    if (metric.title === "Kill Switch") {
+    if (metric.key === "kill_switch") {
       return {
         ...metric,
-        value: controls.killSwitch ? "active" : "armed",
-        hint: controls.killSwitch ? "halted" : "ready state",
+        value: controls.killSwitch ? labels.active : labels.armed,
+        hint: controls.killSwitch ? labels.halted : labels.readyState,
         tone: controls.killSwitch ? ("danger" as const) : ("primary" as const),
       };
     }
@@ -76,27 +80,35 @@ function patchMetricsFromStream(
   metrics: RiskPageData["metrics"],
   payload: RiskStreamPayload,
   controls: { mode: RuntimeMode; killSwitch: boolean },
+  labels: {
+    mode: (mode: RuntimeMode) => string;
+    active: string;
+    armed: string;
+    halted: string;
+    readyState: string;
+    critical: string;
+  },
 ) {
   return metrics.map((metric) => {
-    if (metric.title === "Mode") {
+    if (metric.key === "mode") {
       return {
         ...metric,
-        value: humanizeSnakeCase(payload.mode ?? controls.mode),
+        value: labels.mode(payload.mode ?? controls.mode),
       };
     }
 
-    if (metric.title === "Kill Switch") {
+    if (metric.key === "kill_switch") {
       const killSwitch = payload.kill_switch ?? controls.killSwitch;
 
       return {
         ...metric,
-        value: killSwitch ? "active" : "armed",
-        hint: killSwitch ? "halted" : "ready state",
+        value: killSwitch ? labels.active : labels.armed,
+        hint: killSwitch ? labels.halted : labels.readyState,
         tone: killSwitch ? ("danger" as const) : ("primary" as const),
       };
     }
 
-    if (metric.title === "Daily Loss Usage" && payload.daily_loss_limit && payload.daily_loss_used) {
+    if (metric.key === "daily_loss_usage" && payload.daily_loss_limit && payload.daily_loss_used) {
       const dailyLossUsage = Number.parseFloat(payload.daily_loss_used) / Number.parseFloat(payload.daily_loss_limit);
 
       return {
@@ -106,13 +118,13 @@ function patchMetricsFromStream(
       };
     }
 
-    if (metric.title === "Open Alerts" && payload.open_alerts !== undefined) {
+    if (metric.key === "open_alerts" && payload.open_alerts !== undefined) {
       return {
         ...metric,
         value: String(payload.open_alerts),
         hint:
           payload.critical_alerts !== undefined
-            ? `${payload.critical_alerts} critical`
+            ? `${payload.critical_alerts} ${labels.critical}`
             : metric.hint,
       };
     }
@@ -121,7 +133,11 @@ function patchMetricsFromStream(
   });
 }
 
-function patchSummaryFromStream(summary: RiskPageData["summary"], payload: RiskStreamPayload) {
+function patchSummaryFromStream(
+  summary: RiskPageData["summary"],
+  payload: RiskStreamPayload,
+  labels: { deskBias: string },
+) {
   const nextSummary = { ...summary };
 
   if (payload.daily_loss_limit && payload.daily_loss_used) {
@@ -138,7 +154,7 @@ function patchSummaryFromStream(summary: RiskPageData["summary"], payload: RiskS
 
   if (payload.net_exposure) {
     nextSummary.netExposure = formatPercentFromRatio(payload.net_exposure);
-    nextSummary.longBiasLabel = `long bias ${formatPercentFromRatio(payload.net_exposure)}`;
+    nextSummary.longBiasLabel = `${labels.deskBias} ${formatPercentFromRatio(payload.net_exposure)}`;
   }
 
   if (payload.critical_alerts !== undefined) {
@@ -155,6 +171,7 @@ function patchSummaryFromStream(summary: RiskPageData["summary"], payload: RiskS
 function buildAlertItem(
   payload: RiskStreamPayload,
   current?: RiskPageData["alerts"][number],
+  enumLabel: (value: string) => string = (value) => value.replaceAll("_", " "),
 ): RiskPageData["alerts"][number] | null {
   if (!payload.alert_id || !payload.severity || !payload.reason || !payload.target || !payload.status) {
     return current ?? null;
@@ -167,7 +184,7 @@ function buildAlertItem(
     reason: payload.reason,
     target: payload.target,
     createdAt: payload.created_at ? formatClock(payload.created_at) : current?.createdAt ?? "--:--:--",
-    statusLabel: humanizeSnakeCase(payload.status),
+    statusLabel: enumLabel(payload.status),
     statusTone: alertStatusTone(payload.status),
   };
 }
@@ -175,9 +192,10 @@ function buildAlertItem(
 function upsertAlert(
   alerts: RiskPageData["alerts"],
   payload: RiskStreamPayload,
+  enumLabel: (value: string) => string,
 ): RiskPageData["alerts"] {
   const current = alerts.find((alert) => alert.id === payload.alert_id);
-  const nextAlert = buildAlertItem(payload, current);
+  const nextAlert = buildAlertItem(payload, current, enumLabel);
 
   if (!nextAlert) {
     return alerts;
@@ -207,6 +225,27 @@ export function RiskControlCenter({ data }: { data: RiskPageData }) {
   const [fieldErrors, setFieldErrors] = useState<OperationActionResult["fieldErrors"]>({});
   const [isPending, startActionTransition] = useTransition();
   const { lastEvent } = useConsoleRealtimeChannel("risk");
+  const { locale, dictionary, enumLabel, format } = useI18n();
+  const metricLabels = useMemo(() => ({
+    mode: (mode: RuntimeMode) => enumLabel(mode),
+    active: dictionary.common.active,
+    armed: dictionary.common.armed,
+    halted: dictionary.metricHints.halted,
+    readyState: dictionary.metricHints.readyState,
+    critical: dictionary.common.critical,
+  }), [
+    dictionary.common.active,
+    dictionary.common.armed,
+    dictionary.common.critical,
+    dictionary.metricHints.halted,
+    dictionary.metricHints.readyState,
+    enumLabel,
+  ]);
+  const modeOptions = MODE_OPTION_VALUES.map((value) => ({
+    value,
+    label: dictionary.runtimeModes[value].label,
+    detail: dictionary.runtimeModes[value].detail,
+  }));
 
   useEffect(() => {
     const streamEvent = lastEvent;
@@ -220,23 +259,35 @@ export function RiskControlCenter({ data }: { data: RiskPageData }) {
         const nextControls = {
           ...currentControls,
           mode: streamEvent.data.mode ?? currentControls.mode,
-          modeLabel: humanizeMode(streamEvent.data.mode ?? currentControls.mode),
+          modeLabel: enumLabel(streamEvent.data.mode ?? currentControls.mode),
           killSwitch: streamEvent.data.kill_switch ?? currentControls.killSwitch,
           environment: streamEvent.data.environment ?? currentControls.environment,
         };
 
-        setMetrics((currentMetrics) => patchMetricsFromStream(currentMetrics, streamEvent.data, nextControls));
+        setMetrics((currentMetrics) =>
+          patchMetricsFromStream(currentMetrics, streamEvent.data, nextControls, metricLabels),
+        );
         return nextControls;
       });
 
-      setSummary((currentSummary) => patchSummaryFromStream(currentSummary, streamEvent.data));
-      setAlerts((currentAlerts) => upsertAlert(currentAlerts, streamEvent.data));
+      setSummary((currentSummary) =>
+        patchSummaryFromStream(currentSummary, streamEvent.data, {
+          deskBias: dictionary.metricHints.deskBias,
+        }),
+      );
+      setAlerts((currentAlerts) =>
+        upsertAlert(currentAlerts, streamEvent.data, enumLabel).map((alert) => ({
+          ...alert,
+          reason: localizeGeneratedCopy(locale, dictionary, alert.reason),
+          target: localizeGeneratedCopy(locale, dictionary, alert.target),
+        })),
+      );
 
       if (streamEvent.data.approval_count !== undefined) {
         setApprovalCount(streamEvent.data.approval_count);
       }
     });
-  }, [lastEvent]);
+  }, [dictionary, dictionary.metricHints.deskBias, enumLabel, lastEvent, locale, metricLabels]);
 
   function openDialog(dialog: Exclude<RiskDialog, null>) {
     setActiveDialog(dialog);
@@ -245,20 +296,20 @@ export function RiskControlCenter({ data }: { data: RiskPageData }) {
     setStepUpCode("");
 
     if (dialog === "mode") {
-      setNote(`Switching runtime from ${controls.modeLabel} after reviewing current alert and approval state.`);
+      setNote(format(dictionary.risk.modeNote, { mode: controls.modeLabel }));
       setTargetMode(controls.mode === "manual_confirm" ? "paper_trade" : "manual_confirm");
       return;
     }
 
     if (dialog === "release") {
-      setNote("Releasing protective controls after operator review of current alerts and exposure.");
+      setNote(dictionary.risk.releaseNote);
       return;
     }
 
     setNote(
       controls.killSwitch
-        ? "Releasing the kill switch after verifying upstream health and desk approvals."
-        : "Triggering the kill switch because current risk conditions require an immediate halt.",
+        ? dictionary.risk.killReleaseNote
+        : dictionary.risk.killTriggerNote,
     );
   }
 
@@ -273,12 +324,12 @@ export function RiskControlCenter({ data }: { data: RiskPageData }) {
     const nextState = {
       ...controls,
       mode: nextControls.mode,
-      modeLabel: humanizeMode(nextControls.mode),
+      modeLabel: enumLabel(nextControls.mode),
       killSwitch: nextControls.killSwitch,
     };
 
     setControls(nextState);
-    setMetrics((currentMetrics) => patchMetricValues(currentMetrics, nextControls));
+    setMetrics((currentMetrics) => patchMetricValues(currentMetrics, nextControls, metricLabels));
   }
 
   function handleResult(result: OperationActionResult) {
@@ -364,9 +415,9 @@ export function RiskControlCenter({ data }: { data: RiskPageData }) {
   return (
     <div className="space-y-4">
       <PageHeader
-        eyebrow="Safety"
-        title="Risk Monitoring"
-        description="Real-time exposure, alert state and circuit-breaker controls."
+        eyebrow={dictionary.risk.eyebrow}
+        title={dictionary.risk.title}
+        description={dictionary.risk.description}
         className="border-none pb-0"
         actions={
           <>
@@ -378,14 +429,14 @@ export function RiskControlCenter({ data }: { data: RiskPageData }) {
               onClick={() => openDialog("mode")}
             >
               <ToggleLeft className="size-4" />
-              Switch mode
+              {dictionary.risk.switchMode}
             </Button>
             <Button
               className="rounded-sm bg-primary text-primary-foreground hover:bg-primary/90"
               onClick={() => openDialog("release")}
             >
               <ShieldCheck className="size-4" />
-              Release controls
+              {dictionary.risk.releaseControls}
             </Button>
           </>
         }
@@ -396,14 +447,17 @@ export function RiskControlCenter({ data }: { data: RiskPageData }) {
       <section className="grid gap-4 lg:grid-cols-2">
         <StateBanner
           tone="warning"
-          title="Risk engine in watch mode"
-          detail={`${summary.criticalAlerts} critical and ${summary.warningAlerts} warning alerts are influencing runtime controls.`}
+          title={dictionary.risk.watchModeTitle}
+          detail={format(dictionary.risk.watchModeDetail, {
+            critical: summary.criticalAlerts,
+            warning: summary.warningAlerts,
+          })}
           className="animate-in fade-in-0 duration-300"
         />
         <StateBanner
           tone={controls.killSwitch ? "warning" : "info"}
-          title={controls.killSwitch ? "Kill switch active" : "Kill switch armed"}
-          detail={`Approval queue currently holds ${approvalCount} pending high-risk items.`}
+          title={controls.killSwitch ? dictionary.risk.killActiveTitle : dictionary.risk.killArmedTitle}
+          detail={format(dictionary.risk.approvalQueueDetail, { count: approvalCount })}
           className="animate-in fade-in-0 duration-300"
         />
       </section>
@@ -412,10 +466,10 @@ export function RiskControlCenter({ data }: { data: RiskPageData }) {
         <div className="rounded-lg bg-card/95 p-5 ring-1 ring-white/5 xl:col-span-4">
           <div className="mb-4 flex items-start justify-between gap-3">
             <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-muted-foreground">
-              Daily Loss Usage
+              {dictionary.risk.dailyLossUsage}
             </p>
             <span className="font-mono text-xs text-destructive">
-              critical ({summary.dailyLossUsage})
+              {dictionary.common.critical} ({summary.dailyLossUsage})
             </span>
           </div>
           <div className="mb-3 flex items-end gap-2">
@@ -449,18 +503,18 @@ export function RiskControlCenter({ data }: { data: RiskPageData }) {
         </div>
 
         <div className="rounded-lg border border-destructive/10 bg-destructive/5 p-5 ring-1 ring-destructive/10 xl:col-span-3">
-          <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-destructive">Active Alerts</p>
+          <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-destructive">{dictionary.risk.activeAlerts}</p>
           <div className="mt-3 flex items-end justify-between">
             <span className="font-heading text-5xl font-black leading-none text-destructive">
               {String(summary.criticalAlerts + summary.warningAlerts).padStart(2, "0")}
             </span>
             <div className="text-right text-xs">
-              <p className="font-semibold text-foreground">{summary.criticalAlerts} critical</p>
-              <p className="text-muted-foreground">{summary.warningAlerts} warnings</p>
+              <p className="font-semibold text-foreground">{summary.criticalAlerts} {dictionary.common.critical}</p>
+              <p className="text-muted-foreground">{summary.warningAlerts} {dictionary.common.warnings}</p>
             </div>
           </div>
           <Button className="mt-4 h-8 w-full rounded-sm bg-destructive text-destructive-foreground hover:bg-destructive/90">
-            View log
+            {dictionary.risk.viewLog}
           </Button>
         </div>
       </section>
@@ -469,7 +523,7 @@ export function RiskControlCenter({ data }: { data: RiskPageData }) {
         <div className="overflow-hidden rounded-lg bg-card/95 ring-1 ring-white/5">
           <div className="flex flex-col gap-3 bg-popover/70 px-5 py-4 md:flex-row md:items-center md:justify-between">
             <p className="font-heading text-sm font-bold uppercase tracking-[0.18em] text-foreground">
-              Risk Event Audit Log
+              {dictionary.risk.auditLog}
             </p>
             <div className="flex flex-wrap gap-2">
               <Button
@@ -477,7 +531,7 @@ export function RiskControlCenter({ data }: { data: RiskPageData }) {
                 size="sm"
                 className="rounded-sm border-white/10 bg-accent/40 text-foreground hover:bg-accent"
               >
-                Filter: all
+                {dictionary.risk.filterAll}
               </Button>
               <Button
                 variant="outline"
@@ -485,7 +539,7 @@ export function RiskControlCenter({ data }: { data: RiskPageData }) {
                 className="rounded-sm border-white/10 bg-accent/40 text-foreground hover:bg-accent"
               >
                 <Download className="size-3.5" />
-                Export CSV
+                {dictionary.risk.exportCsv}
               </Button>
             </div>
           </div>
@@ -495,19 +549,19 @@ export function RiskControlCenter({ data }: { data: RiskPageData }) {
               <table className="w-full text-left">
                 <thead className="bg-sidebar/60">
                   <tr className="text-[10px] font-bold uppercase tracking-[0.2em] text-muted-foreground">
-                    <th className="px-5 py-3">Severity</th>
-                    <th className="px-5 py-3">Reason</th>
-                    <th className="px-5 py-3">Market / Theme</th>
-                    <th className="px-5 py-3">Timestamp</th>
-                    <th className="px-5 py-3">Audit Status</th>
-                    <th className="px-5 py-3 text-right">Actions</th>
+                    <th className="px-5 py-3">{dictionary.risk.severity}</th>
+                    <th className="px-5 py-3">{dictionary.risk.reason}</th>
+                    <th className="px-5 py-3">{dictionary.risk.marketTheme}</th>
+                    <th className="px-5 py-3">{dictionary.risk.timestamp}</th>
+                    <th className="px-5 py-3">{dictionary.risk.auditStatus}</th>
+                    <th className="px-5 py-3 text-right">{dictionary.risk.actions}</th>
                   </tr>
                 </thead>
                 <tbody>
                   {alerts.map((alert) => (
                     <tr key={alert.id} className="transition-colors hover:bg-accent/35">
                       <td className="px-5 py-4">
-                        <StatusPill tone={alert.severityTone}>{alert.severity}</StatusPill>
+                        <StatusPill tone={alert.severityTone}>{enumLabel(alert.severity)}</StatusPill>
                       </td>
                       <td className="px-5 py-4 font-mono text-sm text-foreground">{alert.reason}</td>
                       <td className="px-5 py-4 text-sm text-foreground">{alert.target}</td>
@@ -517,7 +571,7 @@ export function RiskControlCenter({ data }: { data: RiskPageData }) {
                       </td>
                       <td className="px-5 py-4 text-right">
                         <button className="text-xs font-bold uppercase tracking-[0.18em] text-primary transition-colors hover:text-primary/80">
-                          Manage
+                          {dictionary.common.manage}
                         </button>
                       </td>
                     </tr>
@@ -527,8 +581,8 @@ export function RiskControlCenter({ data }: { data: RiskPageData }) {
             </div>
           ) : (
             <EmptyPanel
-              title="No risk alerts"
-              detail="When thresholds or data-quality rules fire, the audit log will populate here."
+              title={dictionary.risk.noAlertsTitle}
+              detail={dictionary.risk.noAlertsDetail}
             />
           )}
         </div>
@@ -536,28 +590,28 @@ export function RiskControlCenter({ data }: { data: RiskPageData }) {
         <div className="space-y-4">
           <div className="rounded-lg bg-card/95 p-5 ring-1 ring-white/5">
             <p className="font-heading text-sm font-bold uppercase tracking-[0.18em] text-foreground">
-              Global Controls
+              {dictionary.risk.globalControls}
             </p>
             <div className="mt-4 space-y-3">
               <div className="rounded-md bg-accent/45 p-4 text-sm text-muted-foreground">
-                Mode changes, kill switch actions and release operations require step-up auth.
+                {dictionary.risk.globalControlsDetail}
               </div>
               <Button
                 variant="outline"
                 className="h-9 w-full rounded-sm border-white/10 bg-accent/40 text-foreground hover:bg-accent"
                 onClick={() => openDialog("kill_switch")}
               >
-                {controls.killSwitch ? "Release kill switch" : "Trigger kill switch"}
+                {controls.killSwitch ? dictionary.risk.releaseKillSwitch : dictionary.risk.triggerKillSwitch}
               </Button>
               <Button asChild className="h-9 w-full rounded-sm bg-primary text-primary-foreground hover:bg-primary/90">
-                <Link href="/approvals">Review approvals ({approvalCount})</Link>
+                <Link href="/approvals">{format(dictionary.risk.reviewApprovals, { count: approvalCount })}</Link>
               </Button>
             </div>
           </div>
 
           <div className="rounded-lg bg-card/95 p-5 ring-1 ring-white/5">
             <p className="font-heading text-sm font-bold uppercase tracking-[0.18em] text-foreground">
-              Risk Buckets
+              {dictionary.risk.riskBuckets}
             </p>
             <div className="mt-4 space-y-4">
               {data.riskBuckets.map((bucket, index) => (
@@ -585,9 +639,9 @@ export function RiskControlCenter({ data }: { data: RiskPageData }) {
             closeDialog();
           }
         }}
-        title="Switch runtime mode"
-        description="Mode changes require step-up authentication, an audit note and a clear target state."
-        confirmLabel="Queue mode switch"
+        title={dictionary.risk.switchRuntimeTitle}
+        description={dictionary.risk.switchRuntimeDescription}
+        confirmLabel={dictionary.risk.queueModeSwitch}
         isPending={isPending}
         note={note}
         onNoteChange={setNote}
@@ -600,15 +654,15 @@ export function RiskControlCenter({ data }: { data: RiskPageData }) {
         feedback={dialogFeedback}
         context={
           <div className="space-y-1">
-            <p>Current mode: {controls.modeLabel}</p>
-            <p>Environment: {controls.environment}</p>
+            <p>{dictionary.risk.currentMode}: {controls.modeLabel}</p>
+            <p>{dictionary.risk.environment}: {controls.environment}</p>
           </div>
         }
       >
         <div className="space-y-2">
-          <p className="text-sm font-medium text-foreground">Target mode</p>
+          <p className="text-sm font-medium text-foreground">{dictionary.risk.targetMode}</p>
           <div className="grid gap-2 sm:grid-cols-2">
-            {MODE_OPTIONS.map((option) => (
+            {modeOptions.map((option) => (
               <button
                 key={option.value}
                 type="button"
@@ -635,9 +689,9 @@ export function RiskControlCenter({ data }: { data: RiskPageData }) {
             closeDialog();
           }
         }}
-        title="Release protective controls"
-        description="This queues a protected operation to release desk controls after operator confirmation."
-        confirmLabel="Queue release"
+        title={dictionary.risk.releaseTitle}
+        description={dictionary.risk.releaseDescription}
+        confirmLabel={dictionary.risk.queueRelease}
         isPending={isPending}
         note={note}
         onNoteChange={setNote}
@@ -650,8 +704,8 @@ export function RiskControlCenter({ data }: { data: RiskPageData }) {
         feedback={dialogFeedback}
         context={
           <div className="space-y-1">
-            <p>Kill switch: {controls.killSwitch ? "active" : "armed"}</p>
-            <p>Pending approvals: {approvalCount}</p>
+            <p>{dictionary.risk.killSwitch}: {controls.killSwitch ? dictionary.common.active : dictionary.common.armed}</p>
+            <p>{dictionary.risk.pendingApprovals}: {approvalCount}</p>
           </div>
         }
       />
@@ -663,9 +717,9 @@ export function RiskControlCenter({ data }: { data: RiskPageData }) {
             closeDialog();
           }
         }}
-        title={controls.killSwitch ? "Release kill switch" : "Trigger kill switch"}
-        description="Kill switch operations are high-risk controls and always require step-up authentication."
-        confirmLabel={controls.killSwitch ? "Queue release" : "Queue kill switch"}
+        title={controls.killSwitch ? dictionary.risk.releaseKillSwitch : dictionary.risk.triggerKillSwitch}
+        description={dictionary.risk.killSwitchDescription}
+        confirmLabel={controls.killSwitch ? dictionary.risk.queueRelease : dictionary.risk.queueKillSwitch}
         confirmVariant={controls.killSwitch ? "default" : "destructive"}
         isPending={isPending}
         note={note}
@@ -679,8 +733,8 @@ export function RiskControlCenter({ data }: { data: RiskPageData }) {
         feedback={dialogFeedback}
         context={
           <div className="space-y-1">
-            <p>Current mode: {controls.modeLabel}</p>
-            <p>Kill switch status: {controls.killSwitch ? "active" : "armed"}</p>
+            <p>{dictionary.risk.currentMode}: {controls.modeLabel}</p>
+            <p>{dictionary.risk.killSwitchStatus}: {controls.killSwitch ? dictionary.common.active : dictionary.common.armed}</p>
           </div>
         }
       />

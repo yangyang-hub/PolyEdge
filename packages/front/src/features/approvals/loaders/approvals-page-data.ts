@@ -1,16 +1,19 @@
 import "server-only";
 
 import { listApprovals } from "@/server/api/system";
+import { localizeGeneratedCopy } from "@/lib/i18n/generated-copy";
+import { getServerI18n } from "@/lib/i18n/server";
 import { selectFirstMatchingItem } from "@/server/loaders/console-loader-utils";
-import { approvalSeverityTone, formatClock, humanizeSnakeCase } from "@/lib/server/console-formatters";
+import { approvalSeverityTone, formatClock } from "@/lib/server/console-formatters";
 
 export async function getApprovalsPageData() {
-  const { data: approvals } = await listApprovals();
+  const [{ data: approvals }, i18n] = await Promise.all([listApprovals(), getServerI18n()]);
+  const { locale, dictionary, enumLabel } = i18n;
   const selectedApproval = approvals.length > 0
     ? selectFirstMatchingItem(
         approvals,
         [(approval) => approval.severity === "critical"],
-        "Approvals page requires at least one approval fixture or API result.",
+        dictionary.routeStates.approvalsDataRequired,
       )
     : null;
   const riskMap = {
@@ -24,13 +27,14 @@ export async function getApprovalsPageData() {
     completedCount: approvals.filter((approval) => approval.status !== "pending").length,
     approvals: approvals.map((approval) => ({
       id: approval.id,
-      typeLabel: humanizeSnakeCase(approval.type),
+      typeLabel: enumLabel(approval.type),
       status: approval.status,
       severity: approval.severity,
+      severityLabel: enumLabel(approval.severity),
       severityTone: approvalSeverityTone(approval.severity),
-      owner: approval.owner,
+      owner: localizeGeneratedCopy(locale, dictionary, approval.owner),
       createdAt: formatClock(approval.created_at),
-      summary: approval.summary,
+      summary: localizeGeneratedCopy(locale, dictionary, approval.summary),
       riskPercent: riskMap[approval.severity],
       riskWidth: riskMap[approval.severity],
       resourceId: approval.resource_id,
@@ -40,11 +44,11 @@ export async function getApprovalsPageData() {
     })),
     selectedApproval: selectedApproval
       ? {
-          typeLabel: humanizeSnakeCase(selectedApproval.type),
+          typeLabel: enumLabel(selectedApproval.type),
           severity: selectedApproval.severity,
-          severityLabel: selectedApproval.severity,
+          severityLabel: enumLabel(selectedApproval.severity),
           severityTone: approvalSeverityTone(selectedApproval.severity),
-          summary: selectedApproval.summary,
+          summary: localizeGeneratedCopy(locale, dictionary, selectedApproval.summary),
           resourceId: selectedApproval.resource_id,
           version: selectedApproval.version,
           requiresStepUpAuth: selectedApproval.requires_step_up_auth,

@@ -18,29 +18,31 @@ import {
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { useI18n } from "@/lib/i18n/client";
 import { cn } from "@/lib/utils";
 
 type NavItem = {
   href: string;
-  label: string;
+  labelKey: keyof ReturnType<typeof useI18n>["dictionary"]["nav"];
   icon: LucideIcon;
 };
 
 const navItems: NavItem[] = [
-  { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/markets", label: "Markets", icon: SquareChartGantt },
-  { href: "/events", label: "Events", icon: Newspaper },
-  { href: "/radar", label: "Radar", icon: Radar },
-  { href: "/signals", label: "Signals", icon: Activity },
-  { href: "/positions", label: "Positions", icon: WalletCards },
-  { href: "/risk", label: "Risk", icon: ShieldAlert },
-  { href: "/approvals", label: "Approvals", icon: CheckSquare },
-  { href: "/replay", label: "Replay", icon: History },
-  { href: "/settings", label: "Settings", icon: Settings },
+  { href: "/dashboard", labelKey: "dashboard", icon: LayoutDashboard },
+  { href: "/markets", labelKey: "markets", icon: SquareChartGantt },
+  { href: "/events", labelKey: "events", icon: Newspaper },
+  { href: "/radar", labelKey: "radar", icon: Radar },
+  { href: "/signals", labelKey: "signals", icon: Activity },
+  { href: "/positions", labelKey: "positions", icon: WalletCards },
+  { href: "/risk", labelKey: "risk", icon: ShieldAlert },
+  { href: "/approvals", labelKey: "approvals", icon: CheckSquare },
+  { href: "/replay", labelKey: "replay", icon: History },
+  { href: "/settings", labelKey: "settings", icon: Settings },
 ];
 
 export function ConsoleSidebar() {
   const pathname = usePathname();
+  const { dictionary } = useI18n();
 
   return (
     <aside className="group fixed inset-y-0 left-0 z-40 hidden w-16 overflow-hidden bg-sidebar transition-all duration-300 hover:w-64 md:flex md:flex-col">
@@ -54,8 +56,9 @@ export function ConsoleSidebar() {
       </div>
 
       <nav className="flex-1 space-y-1 px-2 pt-4">
-        {navItems.map(({ href, label, icon: Icon }) => {
+        {navItems.map(({ href, labelKey, icon: Icon }) => {
           const active = pathname === href || (href !== "/dashboard" && pathname.startsWith(`${href}/`));
+          const label = dictionary.nav[labelKey];
 
           return (
             <Link
@@ -81,7 +84,7 @@ export function ConsoleSidebar() {
         <Button className="h-10 w-full justify-start gap-3 overflow-hidden rounded-sm bg-primary text-primary-foreground shadow-[0_0_20px_rgba(0,102,255,0.18)] hover:bg-primary/90">
           <Plus className="size-4 shrink-0" />
           <span className="min-w-max opacity-0 transition-opacity duration-200 group-hover:opacity-100">
-            New Order
+            {dictionary.nav.newOrder}
           </span>
         </Button>
       </div>

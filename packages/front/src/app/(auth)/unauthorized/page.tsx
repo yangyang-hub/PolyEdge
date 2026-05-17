@@ -1,12 +1,12 @@
 import Link from "next/link";
 
 import {
-  CONSOLE_ROLE_LABELS,
   normalizeConsoleRole,
   sanitizeNextPath,
 } from "@/lib/console-auth";
 import { Button } from "@/components/ui/button";
 import { RouteStateCard } from "@/components/shared/route-state-card";
+import { getServerI18n } from "@/lib/i18n/server";
 
 type UnauthorizedPageProps = {
   searchParams: Promise<{
@@ -17,7 +17,7 @@ type UnauthorizedPageProps = {
 };
 
 export default async function UnauthorizedPage({ searchParams }: UnauthorizedPageProps) {
-  const resolvedSearchParams = await searchParams;
+  const [resolvedSearchParams, { dictionary }] = await Promise.all([searchParams, getServerI18n()]);
   const nextPath = sanitizeNextPath(resolvedSearchParams.next);
   const requiredRole = normalizeConsoleRole(
     Array.isArray(resolvedSearchParams.required)
@@ -32,23 +32,23 @@ export default async function UnauthorizedPage({ searchParams }: UnauthorizedPag
 
   return (
     <RouteStateCard
-      eyebrow="Access Boundary"
-      title="Current session does not satisfy the route policy"
-      description="The console guard allowed the request to reach the auth shell, but the active role is below the minimum requirement for the destination route."
+      eyebrow={dictionary.auth.accessBoundary}
+      title={dictionary.auth.unauthorizedTitle}
+      description={dictionary.auth.unauthorizedDescription}
       details={
         <div className="space-y-3">
-          <p>Requested route: {nextPath}</p>
-          <p>Required role: {requiredRole ? CONSOLE_ROLE_LABELS[requiredRole] : "Unknown"}</p>
-          <p>Current role: {currentRole ? CONSOLE_ROLE_LABELS[currentRole] : "No session"}</p>
+          <p>{dictionary.auth.requestedRoute}: {nextPath}</p>
+          <p>{dictionary.auth.requiredRole}: {requiredRole ? dictionary.roles[requiredRole] : dictionary.common.unknown}</p>
+          <p>{dictionary.auth.currentRole}: {currentRole ? dictionary.roles[currentRole] : dictionary.auth.noSession}</p>
         </div>
       }
       actions={
         <>
           <Button asChild className="rounded-sm bg-primary text-primary-foreground hover:bg-primary/90">
-            <Link href={`/login?next=${encodeURIComponent(nextPath)}`}>Switch role</Link>
+            <Link href={`/login?next=${encodeURIComponent(nextPath)}`}>{dictionary.auth.switchRole}</Link>
           </Button>
           <Button asChild variant="outline" className="rounded-sm border-white/10 bg-accent/45 hover:bg-accent">
-            <Link href="/dashboard">Go to dashboard</Link>
+            <Link href="/dashboard">{dictionary.auth.goToDashboard}</Link>
           </Button>
         </>
       }

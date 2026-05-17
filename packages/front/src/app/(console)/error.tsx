@@ -5,6 +5,7 @@ import Link from "next/link";
 
 import { Button } from "@/components/ui/button";
 import { RouteStateCard } from "@/components/shared/route-state-card";
+import { useI18n } from "@/lib/i18n/client";
 
 export default function Error({
   error,
@@ -13,19 +14,21 @@ export default function Error({
   error: Error & { digest?: string };
   unstable_retry: () => void;
 }) {
+  const { dictionary } = useI18n();
+
   useEffect(() => {
     console.error(error);
   }, [error]);
 
   return (
     <RouteStateCard
-      eyebrow="Console Error"
-      title="The console segment failed to render"
-      description="A runtime error interrupted the current route. Retry the segment render or go back to the dashboard shell."
+      eyebrow={dictionary.routeStates.consoleErrorEyebrow}
+      title={dictionary.routeStates.consoleErrorTitle}
+      description={dictionary.routeStates.consoleErrorDescription}
       details={
         <div className="space-y-2">
-          <p>Message: {error.message}</p>
-          {error.digest ? <p>Digest: {error.digest}</p> : null}
+          <p>{dictionary.routeStates.message}: {error.message}</p>
+          {error.digest ? <p>{dictionary.routeStates.digest}: {error.digest}</p> : null}
         </div>
       }
       actions={
@@ -34,10 +37,10 @@ export default function Error({
             onClick={() => unstable_retry()}
             className="rounded-sm bg-primary text-primary-foreground hover:bg-primary/90"
           >
-            Retry segment
+            {dictionary.routeStates.retrySegment}
           </Button>
           <Button asChild variant="outline" className="rounded-sm border-white/10 bg-accent/45 hover:bg-accent">
-            <Link href="/dashboard">Return to dashboard</Link>
+            <Link href="/dashboard">{dictionary.routeStates.returnDashboard}</Link>
           </Button>
         </>
       }

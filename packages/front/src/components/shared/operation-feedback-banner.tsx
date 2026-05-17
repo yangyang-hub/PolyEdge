@@ -1,6 +1,7 @@
 import type { OperationActionResult } from "@/server/actions/action-result";
 
 import { StatusPill } from "@/components/shared/status-pill";
+import { useI18n } from "@/lib/i18n/client";
 import { cn } from "@/lib/utils";
 
 export function OperationFeedbackBanner({
@@ -10,6 +11,8 @@ export function OperationFeedbackBanner({
   feedback: OperationActionResult;
   className?: string;
 }) {
+  const { dictionary } = useI18n();
+
   return (
     <div
       className={cn(
@@ -22,7 +25,7 @@ export function OperationFeedbackBanner({
     >
       <div className="flex flex-wrap items-center gap-2">
         <StatusPill tone={feedback.ok ? "success" : "danger"}>
-          {feedback.ok ? "operation queued" : "operation failed"}
+          {feedback.ok ? dictionary.feedback.operationQueued : dictionary.feedback.operationFailed}
         </StatusPill>
         {feedback.status ? <StatusPill tone="primary">{feedback.status}</StatusPill> : null}
       </div>

@@ -3,27 +3,29 @@ import "server-only";
 import { listEvidences, listEvents } from "@/server/api/events";
 import { listMarkets } from "@/server/api/markets";
 import { listSignals } from "@/server/api/signals";
+import { getServerI18n } from "@/lib/i18n/server";
 import { indexMarkets, selectFirstMatchingItem } from "@/server/loaders/console-loader-utils";
 import {
   eventStatusTone,
   formatPercentFromRatio,
   formatSignedFixed,
-  humanizeSnakeCase,
   signalStateTone,
 } from "@/lib/server/console-formatters";
 
 export async function getEventsPageData() {
-  const [{ data: events }, { data: evidences }, { data: signals }, { data: markets }] = await Promise.all([
+  const [{ data: events }, { data: evidences }, { data: signals }, { data: markets }, i18n] = await Promise.all([
     listEvents(),
     listEvidences(),
     listSignals(),
     listMarkets(),
+    getServerI18n(),
   ]);
+  const { dictionary, enumLabel } = i18n;
   const marketIndex = indexMarkets(markets);
   const selectedEvent = selectFirstMatchingItem(
     events,
     [(event) => event.status === "active"],
-    "Events page requires at least one event fixture or API result.",
+    dictionary.routeStates.eventsDataRequired,
   );
   return {
     selectedEventId: selectedEvent.id,
@@ -38,7 +40,7 @@ export async function getEventsPageData() {
         id: event.id,
         source: event.source,
         summary: event.summary,
-        statusLabel: humanizeSnakeCase(event.status),
+        statusLabel: enumLabel(event.status),
         statusTone: eventStatusTone(event.status),
         relevance: formatPercentFromRatio(event.relevance_score),
         confidence: formatPercentFromRatio(event.confidence),
@@ -46,7 +48,7 @@ export async function getEventsPageData() {
         relatedMarketIds: event.related_market_ids,
         evidence: selectedEvidence
           ? {
-              direction: humanizeSnakeCase(selectedEvidence.direction),
+              direction: enumLabel(selectedEvidence.direction),
               strength: selectedEvidence.strength,
               resolutionRelevance: selectedEvidence.resolution_relevance,
               novelty: selectedEvidence.novelty,
@@ -58,7 +60,7 @@ export async function getEventsPageData() {
           marketId: signal.market_id,
           marketQuestion: marketIndex.get(signal.market_id)?.question ?? signal.market_id,
           edge: formatSignedFixed(signal.edge),
-          stateLabel: humanizeSnakeCase(signal.lifecycle_state),
+          stateLabel: enumLabel(signal.lifecycle_state),
           stateTone: signalStateTone(signal.lifecycle_state),
         })),
         isSelected: event.id === selectedEvent.id,

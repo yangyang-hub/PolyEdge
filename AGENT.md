@@ -1,6 +1,6 @@
 # AGENT.md
 
-最后更新：2026-05-14
+最后更新：2026-05-17
 
 ## 1. 文件用途
 
@@ -36,7 +36,7 @@
 ### 3.2 当前实现判断
 
 - 这个仓库已经不是纯文档仓库。
-- 前端控制台已经成型，包含实时状态、审批、风险控制、事件/信号/市场/持仓/回放等页面。
+- 前端控制台已经成型，包含实时状态、审批、风险控制、事件/信号/市场/持仓/回放等页面，并已接入 `zh-CN / en-US` 双语切换。
 - 后端已经有可编译的 Rust workspace、Axum API、worker job、配置和迁移文件。
 
 ## 4. 前端现状
@@ -72,6 +72,8 @@
 3. 交互 UI 在 `src/features/*/components`。
 4. 共享布局和组件在 `src/components/shared` 与 `src/components/ui`。
 
+控制台、认证页、错误页与 not-found 页的用户可见文案已经统一接入前端 i18n 字典；页面不使用 locale 路由前缀。
+
 ### 4.3 数据与交互层
 
 - 契约类型：`packages/front/src/lib/contracts/*`
@@ -79,6 +81,10 @@
 - 读接口适配：`packages/front/src/server/api/*`
 - 写操作：`packages/front/src/server/actions/*`
 - 页面装配辅助：`packages/front/src/server/loaders/*`
+- 双语字典：`packages/front/src/lib/i18n/dictionaries.ts`
+- 系统生成展示文案本地化：`packages/front/src/lib/i18n/generated-copy.ts`
+- 语言读取与 provider：`packages/front/src/lib/i18n/server.ts`、`packages/front/src/lib/i18n/client.tsx`
+- 语言切换写操作：`packages/front/src/server/actions/locale-actions.ts`
 
 ### 4.4 权限与实时层
 
@@ -100,6 +106,7 @@
   - `off`
   - `mock-session`
 - `off | mock-session` 只能视为本地/原型权限模式，不是可信生产会话；前端路由保护只从 mock session cookie 读取角色，不再接受请求头角色回退。
+- 控制台语言由 `polyedge_locale` cookie 控制，支持 `zh-CN` 与 `en-US`；未设置或非法值会回退到默认 `zh-CN`。右上角语言切换组件通过 server action 写 cookie，然后刷新当前页面的服务端数据。
 
 ### 4.6 已知前端说明文件
 
@@ -336,11 +343,18 @@ cargo run -p polyedge-worker -- reconcile-polymarket-fills
 - `packages/front/src/server/api/base.ts`
 - `packages/front/src/server/api/arbitrage.ts`
 - `packages/front/src/server/api/news.ts`
+- `packages/front/src/lib/i18n/locales.ts`
+- `packages/front/src/lib/i18n/dictionaries.ts`
+- `packages/front/src/lib/i18n/generated-copy.ts`
+- `packages/front/src/lib/i18n/server.ts`
+- `packages/front/src/lib/i18n/client.tsx`
 - `packages/front/src/app/(console)/radar/page.tsx`
 - `packages/front/src/features/radar/loaders/radar-page-data.ts`
 - `packages/front/src/features/radar/components/arbitrage-radar-workbench.tsx`
+- `packages/front/src/components/shared/language-switcher.tsx`
 - `packages/front/src/server/actions/approval-actions.ts`
 - `packages/front/src/server/actions/risk-actions.ts`
+- `packages/front/src/server/actions/locale-actions.ts`
 - `packages/front/src/app/api/stream/[channel]/route.ts`
 - `packages/front/src/proxy.ts`
 - `packages/front/src/components/shared/console-realtime-provider.tsx`

@@ -1,8 +1,9 @@
 "use client";
 
 import { useConsoleRealtime } from "@/components/shared/console-realtime-provider";
+import { useI18n } from "@/lib/i18n/client";
 import type { RealtimeTone } from "@/lib/realtime-formatters";
-import { formatClock, humanizeSnakeCase } from "@/lib/realtime-formatters";
+import { formatClock } from "@/lib/realtime-formatters";
 import { useMemo } from "react";
 
 type StatusBadge = {
@@ -14,36 +15,40 @@ function describeStream(
   label: string,
   connection: "connecting" | "open" | "error" | "closed",
   lastEventAt: number | null,
+  dictionary: ReturnType<typeof useI18n>["dictionary"],
 ): StatusBadge {
   if (connection === "open") {
     return {
       tone: "success",
-      label: lastEventAt ? `${label} ${formatClock(new Date(lastEventAt).toISOString())}` : `${label} live`,
+      label: lastEventAt
+        ? `${label} ${formatClock(new Date(lastEventAt).toISOString())}`
+        : `${label} ${dictionary.common.live}`,
     };
   }
 
   if (connection === "error") {
     return {
       tone: "warning",
-      label: `${label} reconnecting`,
+      label: `${label} ${dictionary.common.reconnecting}`,
     };
   }
 
   if (connection === "connecting") {
     return {
       tone: "neutral",
-      label: `${label} connecting`,
+      label: `${label} ${dictionary.common.connecting}`,
     };
   }
 
   return {
     tone: "neutral",
-    label: `${label} idle`,
+    label: `${label} ${dictionary.common.idle}`,
   };
 }
 
 export function useLiveStatus() {
   const { signals: signalsStream, risk: riskStream, events: eventsStream } = useConsoleRealtime();
+  const { dictionary, enumLabel } = useI18n();
 
   return useMemo(() => {
     const connections = [signalsStream.connection, riskStream.connection, eventsStream.connection];
@@ -52,10 +57,10 @@ export function useLiveStatus() {
     const anyConnecting = connections.some((connection) => connection === "connecting");
 
     const apiBadge: StatusBadge = anyError
-      ? { tone: "warning", label: "api stream degraded" }
+      ? { tone: "warning", label: dictionary.statusRail.apiStreamDegraded }
       : anyConnecting && !allOpen
-        ? { tone: "neutral", label: "api stream syncing" }
-        : { tone: "success", label: "api stream healthy" };
+        ? { tone: "neutral", label: dictionary.statusRail.apiStreamSyncing }
+        : { tone: "success", label: dictionary.statusRail.apiStreamHealthy };
 
     const riskBadge: StatusBadge =
       riskStream.connection === "open" && riskStream.lastEvent?.data.open_alerts !== undefined
@@ -64,23 +69,23 @@ export function useLiveStatus() {
               riskStream.lastEvent.data.open_alerts > 0
                 ? ("warning" as const)
                 : ("success" as const),
-            label: `risk ${riskStream.lastEvent.data.open_alerts} alerts`,
+            label: `${dictionary.nav.risk} ${riskStream.lastEvent.data.open_alerts} ${dictionary.common.alerts}`,
           }
-        : describeStream("risk stream", riskStream.connection, riskStream.lastEvent?.receivedAt ?? null);
+        : describeStream(dictionary.statusRail.riskStream, riskStream.connection, riskStream.lastEvent?.receivedAt ?? null, dictionary);
 
     const signalsBadge: StatusBadge =
       signalsStream.connection === "open" && signalsStream.lastEvent?.data.lifecycle_state
         ? {
             tone: "primary",
-            label: `signal ${humanizeSnakeCase(signalsStream.lastEvent.data.lifecycle_state)}`,
+            label: `${dictionary.statusRail.signal} ${enumLabel(signalsStream.lastEvent.data.lifecycle_state)}`,
           }
-        : describeStream("market stream", signalsStream.connection, signalsStream.lastEvent?.receivedAt ?? null);
+        : describeStream(dictionary.statusRail.marketStream, signalsStream.connection, signalsStream.lastEvent?.receivedAt ?? null, dictionary);
 
     return {
       badges: [
         apiBadge,
         signalsBadge,
-        describeStream("event stream", eventsStream.connection, eventsStream.lastEvent?.receivedAt ?? null),
+        describeStream(dictionary.statusRail.eventStream, eventsStream.connection, eventsStream.lastEvent?.receivedAt ?? null, dictionary),
         riskBadge,
       ] as StatusBadge[],
     };
@@ -91,5 +96,7 @@ export function useLiveStatus() {
     riskStream.lastEvent,
     eventsStream.connection,
     eventsStream.lastEvent,
+    dictionary,
+    enumLabel,
   ]);
 }

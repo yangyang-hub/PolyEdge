@@ -6,11 +6,11 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { PageHeader } from "@/components/shared/page-header";
 import { StatusPill } from "@/components/shared/status-pill";
 import { useConsoleRealtimeChannel } from "@/components/shared/console-realtime-provider";
+import { useI18n } from "@/lib/i18n/client";
 import type { ConsoleEventStreamPayload, SignalStreamPayload } from "@/lib/contracts/realtime";
 import {
   formatPercentFromRatio,
   formatSignedFixed,
-  humanizeSnakeCase,
   signalStateTone,
 } from "@/lib/realtime-formatters";
 import type { getEventsPageData } from "@/features/events/loaders/events-page-data";
@@ -18,17 +18,21 @@ import type { getEventsPageData } from "@/features/events/loaders/events-page-da
 type EventsPageData = Awaited<ReturnType<typeof getEventsPageData>>;
 type EventItem = EventsPageData["events"][number];
 
-function buildEventItem(payload: ConsoleEventStreamPayload, current?: EventItem): EventItem {
+function buildEventItem(
+  payload: ConsoleEventStreamPayload,
+  current: EventItem | undefined,
+  dictionary: ReturnType<typeof useI18n>["dictionary"],
+): EventItem {
   return {
     id: payload.event_id,
     source: payload.source,
     summary: payload.summary,
-    statusLabel: current?.statusLabel ?? "active",
+    statusLabel: current?.statusLabel ?? dictionary.common.active,
     statusTone: current?.statusTone ?? "success",
     relevance: current?.relevance ?? formatPercentFromRatio(payload.confidence),
     confidence: formatPercentFromRatio(payload.confidence),
     reasonTrace:
-      current?.reasonTrace ?? "Realtime event ingested. Evidence mapping and causal trace are still catching up.",
+      current?.reasonTrace ?? dictionary.events.realtimeReasonTraceFallback,
     relatedMarketIds: current?.relatedMarketIds ?? [],
     evidence: current?.evidence ?? null,
     linkedSignals: current?.linkedSignals ?? [],
@@ -36,9 +40,13 @@ function buildEventItem(payload: ConsoleEventStreamPayload, current?: EventItem)
   };
 }
 
-function upsertEvent(events: EventItem[], payload: ConsoleEventStreamPayload): EventItem[] {
+function upsertEvent(
+  events: EventItem[],
+  payload: ConsoleEventStreamPayload,
+  dictionary: ReturnType<typeof useI18n>["dictionary"],
+): EventItem[] {
   const current = events.find((event) => event.id === payload.event_id);
-  const nextEvent = buildEventItem(payload, current);
+  const nextEvent = buildEventItem(payload, current, dictionary);
 
   if (current) {
     return events.map((event) => (event.id === nextEvent.id ? nextEvent : event));
@@ -47,13 +55,17 @@ function upsertEvent(events: EventItem[], payload: ConsoleEventStreamPayload): E
   return [nextEvent, ...events];
 }
 
-function patchLinkedSignals(events: EventItem[], payload: SignalStreamPayload): EventItem[] {
+function patchLinkedSignals(
+  events: EventItem[],
+  payload: SignalStreamPayload,
+  enumLabel: (value: string) => string,
+): EventItem[] {
   const nextSignal = {
     id: payload.signal_id,
     marketId: payload.market_id,
     marketQuestion: payload.market_question ?? payload.market_id,
     edge: payload.edge ? formatSignedFixed(payload.edge) : "0.00",
-    stateLabel: humanizeSnakeCase(payload.lifecycle_state),
+    stateLabel: enumLabel(payload.lifecycle_state),
     stateTone: signalStateTone(payload.lifecycle_state),
   };
 
@@ -85,6 +97,7 @@ export function EventsWorkbench({ data }: { data: EventsPageData }) {
   const [selectedId, setSelectedId] = useState(data.selectedEventId);
   const { lastEvent: lastConsoleEvent } = useConsoleRealtimeChannel("events");
   const { lastEvent: lastSignalEvent } = useConsoleRealtimeChannel("signals");
+  const { dictionary, enumLabel, format } = useI18n();
 
   useEffect(() => {
     const streamEvent = lastConsoleEvent;
@@ -94,9 +107,9 @@ export function EventsWorkbench({ data }: { data: EventsPageData }) {
     }
 
     startTransition(() => {
-      setEventItems((currentItems) => upsertEvent(currentItems, streamEvent.data));
+      setEventItems((currentItems) => upsertEvent(currentItems, streamEvent.data, dictionary));
     });
-  }, [lastConsoleEvent]);
+  }, [dictionary, lastConsoleEvent]);
 
   useEffect(() => {
     const streamEvent = lastSignalEvent;
@@ -106,9 +119,9 @@ export function EventsWorkbench({ data }: { data: EventsPageData }) {
     }
 
     startTransition(() => {
-      setEventItems((currentItems) => patchLinkedSignals(currentItems, streamEvent.data));
+      setEventItems((currentItems) => patchLinkedSignals(currentItems, streamEvent.data, enumLabel));
     });
-  }, [lastSignalEvent]);
+  }, [enumLabel, lastSignalEvent]);
 
   const selectedEvent =
     eventItems.find((event) => event.id === selectedId) ??
@@ -118,13 +131,13 @@ export function EventsWorkbench({ data }: { data: EventsPageData }) {
   return (
     <div className="space-y-6">
       <PageHeader
-        eyebrow="Cognition"
-        title="Events"
-        description="Track how raw information becomes evidence, then turns into posterior updates and signal candidates."
+        eyebrow={dictionary.events.eyebrow}
+        title={dictionary.events.title}
+        description={dictionary.events.description}
         actions={
           <>
-            <StatusPill tone="primary">{eventItems.length} events</StatusPill>
-            <StatusPill tone="success">stream synced</StatusPill>
+            <StatusPill tone="primary">{format(dictionary.events.eventCount, { count: eventItems.length })}</StatusPill>
+            <StatusPill tone="success">{dictionary.common.streamSynced}</StatusPill>
           </>
         }
       />
@@ -132,7 +145,7 @@ export function EventsWorkbench({ data }: { data: EventsPageData }) {
       <section className="grid gap-4 xl:grid-cols-[1fr_1.2fr]">
         <Card>
           <CardHeader>
-            <CardTitle className="font-heading text-base">Event Timeline</CardTitle>
+            <CardTitle className="font-heading text-base">{dictionary.events.timeline}</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
             {eventItems.map((event) => {
@@ -166,63 +179,67 @@ export function EventsWorkbench({ data }: { data: EventsPageData }) {
 
         <Card>
           <CardHeader>
-            <CardTitle className="font-heading text-base">Evidence Mapping</CardTitle>
+            <CardTitle className="font-heading text-base">{dictionary.events.evidenceMapping}</CardTitle>
           </CardHeader>
           <CardContent className="space-y-5">
             <div className="space-y-2">
               <p className="text-sm font-medium text-foreground">{selectedEvent?.summary}</p>
               <div className="flex flex-wrap gap-2">
-                <StatusPill tone="success">relevance {selectedEvent?.relevance ?? "pending"}</StatusPill>
-                <StatusPill tone="primary">confidence {selectedEvent?.confidence ?? "pending"}</StatusPill>
+                <StatusPill tone="success">
+                  {dictionary.events.relevance} {selectedEvent?.relevance ?? dictionary.common.pending}
+                </StatusPill>
+                <StatusPill tone="primary">
+                  {dictionary.common.confidence} {selectedEvent?.confidence ?? dictionary.common.pending}
+                </StatusPill>
               </div>
             </div>
 
             <div className="grid gap-3 md:grid-cols-2">
               <div className="rounded-sm border border-border/70 bg-card p-3">
                 <p className="font-mono text-xs uppercase tracking-[0.24em] text-muted-foreground">
-                  Candidate evidence
+                  {dictionary.events.candidateEvidence}
                 </p>
                 {selectedEvent?.evidence ? (
                   <div className="mt-3 space-y-2 text-sm text-foreground">
-                    <p>Direction: {selectedEvent.evidence.direction}</p>
-                    <p>Strength: {selectedEvent.evidence.strength}</p>
-                    <p>Resolution relevance: {selectedEvent.evidence.resolutionRelevance}</p>
-                    <p>Novelty: {selectedEvent.evidence.novelty}</p>
-                    <p>Source reliability: {selectedEvent.evidence.sourceReliability}</p>
+                    <p>{dictionary.events.direction}: {selectedEvent.evidence.direction}</p>
+                    <p>{dictionary.events.strength}: {selectedEvent.evidence.strength}</p>
+                    <p>{dictionary.events.resolutionRelevance}: {selectedEvent.evidence.resolutionRelevance}</p>
+                    <p>{dictionary.events.novelty}: {selectedEvent.evidence.novelty}</p>
+                    <p>{dictionary.events.sourceReliability}: {selectedEvent.evidence.sourceReliability}</p>
                   </div>
                 ) : (
                   <p className="mt-3 text-sm text-muted-foreground">
-                    Evidence generation is still pending for this event snapshot.
+                    {dictionary.events.evidencePending}
                   </p>
                 )}
               </div>
               <div className="rounded-sm border border-border/70 bg-card p-3">
                 <p className="font-mono text-xs uppercase tracking-[0.24em] text-muted-foreground">
-                  Reason trace
+                  {dictionary.events.reasonTrace}
                 </p>
                 <p className="mt-3 text-sm text-muted-foreground">
-                  {selectedEvent?.reasonTrace ?? "Trace is not available yet."}
+                  {selectedEvent?.reasonTrace ?? dictionary.events.traceUnavailable}
                 </p>
               </div>
             </div>
 
             <div className="space-y-3">
               <p className="font-mono text-xs uppercase tracking-[0.24em] text-muted-foreground">
-                Linked signals
+                {dictionary.events.linkedSignals}
               </p>
               {selectedEvent && selectedEvent.linkedSignals.length > 0 ? (
                 selectedEvent.linkedSignals.map((signal) => (
                   <div key={signal.id} className="flex items-center justify-between rounded-sm bg-accent/50 p-3">
                     <div>
                       <p className="text-sm font-medium text-foreground">{signal.marketQuestion}</p>
-                      <p className="font-mono text-xs text-muted-foreground">edge {signal.edge}</p>
+                      <p className="font-mono text-xs text-muted-foreground">{dictionary.signals.edge} {signal.edge}</p>
                     </div>
                     <StatusPill tone={signal.stateTone}>{signal.stateLabel}</StatusPill>
                   </div>
                 ))
               ) : (
                 <p className="text-sm text-muted-foreground">
-                  No linked signals are associated with this event yet.
+                  {dictionary.events.noLinkedSignals}
                 </p>
               )}
             </div>

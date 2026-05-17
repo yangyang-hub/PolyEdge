@@ -12,10 +12,11 @@ import {
   formatClock,
   formatInteger,
   formatPercentFromRatio,
-  humanizeSnakeCase,
   type AccentTone,
   type Tone,
 } from "@/lib/server/console-formatters";
+import type { Dictionary } from "@/lib/i18n/dictionaries";
+import { getServerI18n } from "@/lib/i18n/server";
 import {
   listArbitrageAnalysisRuns,
   listArbitrageOpportunities,
@@ -200,10 +201,32 @@ function formatPrice(value: string): string {
   return toNumber(value).toFixed(3);
 }
 
+function localizeCandidateReason(dictionary: Dictionary, enumLabel: (value: string) => string, reason: string): string {
+  if (reason === "expired opportunity") {
+    return dictionary.radar.expiredOpportunity;
+  }
+
+  if (reason === "waiting for validation") {
+    return dictionary.radar.waitingValidation;
+  }
+
+  if (reason === "non-positive net edge") {
+    return dictionary.radar.nonPositiveNetEdge;
+  }
+
+  if (reason === "valid read-only candidate") {
+    return dictionary.radar.validReadOnlyCandidate;
+  }
+
+  return enumLabel(reason);
+}
+
 function buildOpportunity(
   opportunity: ArbitrageOpportunityDto,
   marketIndex: Map<string, MarketDto>,
   selectedOpportunityId: string,
+  dictionary: Dictionary,
+  enumLabel: (value: string) => string,
 ): RadarOpportunityItem {
   const market = marketIndex.get(opportunity.market_id);
   const validation = opportunity.validation ?? null;
@@ -219,12 +242,12 @@ function buildOpportunity(
     id: opportunity.id,
     marketId: opportunity.market_id,
     marketQuestion: market?.question ?? opportunity.market_id,
-    contextLabel: `${market?.category ?? "Unknown"} / scan ${opportunity.scan_id}`,
+    contextLabel: `${market?.category ?? dictionary.common.unknown} / scan ${opportunity.scan_id}`,
     opportunityType: opportunity.opportunity_type,
-    typeLabel: humanizeSnakeCase(opportunity.opportunity_type),
+    typeLabel: enumLabel(opportunity.opportunity_type),
     typeTone: opportunityTypeTone(opportunity.opportunity_type),
     status: opportunity.status,
-    statusLabel: humanizeSnakeCase(opportunity.status),
+    statusLabel: enumLabel(opportunity.status),
     statusTone: opportunityStatusTone(opportunity.status),
     grossEdge: formatPercentFromRatio(opportunity.gross_edge, 1),
     grossEdgeValue: toNumber(opportunity.gross_edge),
@@ -236,10 +259,10 @@ function buildOpportunity(
     noPrice: formatPrice(opportunity.no_price),
     yesSize: formatInteger(opportunity.yes_size),
     noSize: formatInteger(opportunity.no_size),
-    reasonCodes: opportunity.reason_codes.map(humanizeSnakeCase),
+    reasonCodes: opportunity.reason_codes.map(enumLabel),
     formula: readFormula(opportunity.analysis_payload),
     validationStatus,
-    validationLabel: humanizeSnakeCase(validationStatus),
+    validationLabel: enumLabel(validationStatus),
     validationTone: validationStatusTone(validationStatus),
     netEdge: validation ? formatPercentFromRatio(validation.net_edge, 1) : "n/a",
     netEdgeValue: validation ? toNumber(validation.net_edge) : 0,
@@ -248,11 +271,11 @@ function buildOpportunity(
     validatedCapacity: validation ? formatInteger(validation.validated_capacity) : "n/a",
     bookAge: formatBookAge(validation?.book_age_ms),
     bookAgeMs: validation?.book_age_ms ?? null,
-    validationReasonCodes: validation?.reason_codes.map(humanizeSnakeCase) ?? [],
+    validationReasonCodes: validation?.reason_codes.map(enumLabel) ?? [],
     candidateStatus: candidate.status,
-    candidateLabel: candidate.label,
+    candidateLabel: enumLabel(candidate.label),
     candidateTone: candidate.tone,
-    candidateReason: candidate.reason,
+    candidateReason: localizeCandidateReason(dictionary, enumLabel, candidate.reason),
     isSelected: opportunity.id === selectedOpportunityId,
   };
 }
@@ -260,6 +283,7 @@ function buildOpportunity(
 function buildAnalysis(
   summary: ArbitrageAnalysisSummaryDto,
   marketIndex: Map<string, MarketDto>,
+  enumLabel: (value: string) => string,
 ): RadarAnalysis {
   return {
     generatedClock: formatClock(summary.generated_at),
@@ -267,7 +291,7 @@ function buildAnalysis(
     opportunityCount: formatInteger(summary.opportunity_count),
     marketCount: formatInteger(summary.market_count),
     typeCounts: summary.type_counts.map((item) => ({
-      typeLabel: humanizeSnakeCase(item.opportunity_type),
+      typeLabel: enumLabel(item.opportunity_type),
       count: formatInteger(item.count),
       tone: opportunityTypeTone(item.opportunity_type),
     })),
@@ -284,13 +308,15 @@ function buildAnalysis(
 }
 
 export async function getRadarPageData(): Promise<RadarPageData> {
-  const [{ data: scans }, { data: opportunities }, { data: analysisRuns }, { data: markets }] =
+  const [{ data: scans }, { data: opportunities }, { data: analysisRuns }, { data: markets }, i18n] =
     await Promise.all([
       listArbitrageScans({ limit: 8 }),
       listArbitrageOpportunities({ limit: 100 }),
       listArbitrageAnalysisRuns({ limit: 1 }),
       listMarkets({ limit: 200 }),
+      getServerI18n(),
     ]);
+  const { dictionary, enumLabel, format } = i18n;
 
   const marketIndex = new Map(markets.map((market) => [market.id, market]));
   const sortedOpportunities = opportunities
@@ -309,42 +335,46 @@ export async function getRadarPageData(): Promise<RadarPageData> {
     selectedOpportunityId,
     metrics: [
       {
-        title: "Latest Scan",
+        title: dictionary.metrics.latestScan,
         value: latestScan ? formatClock(latestScan.started_at) : "n/a",
-        hint: latestScan ? `${formatInteger(latestScan.market_count)} markets` : "no scan",
+        hint: latestScan
+          ? format(dictionary.metricHints.markets, { count: formatInteger(latestScan.market_count) })
+          : dictionary.metricHints.noScan,
         accent: "primary",
       },
       {
-        title: "Observed Opportunities",
+        title: dictionary.metrics.observedOpportunities,
         value: formatInteger(sortedOpportunities.length),
-        hint: latestScan ? `${formatInteger(latestScan.opportunity_count)} latest scan` : "all windows",
+        hint: latestScan
+          ? format(dictionary.metricHints.latestScan, { count: formatInteger(latestScan.opportunity_count) })
+          : dictionary.metricHints.allWindows,
         accent: "success",
       },
       {
-        title: "Max Gross Edge",
+        title: dictionary.metrics.maxGrossEdge,
         value: formatPercentFromRatio(maxEdge, 1),
-        hint: "best observed",
+        hint: dictionary.metricHints.bestObserved,
         accent: maxEdge > 0 ? "success" : "primary",
       },
       {
-        title: "Covered Markets",
+        title: dictionary.metrics.coveredMarkets,
         value: formatInteger(coveredMarketCount),
-        hint: `${formatInteger(markets.length)} tracked`,
+        hint: format(dictionary.metricHints.tracked, { count: formatInteger(markets.length) }),
         accent: "violet",
       },
     ],
     opportunities: sortedOpportunities.map((opportunity) =>
-      buildOpportunity(opportunity, marketIndex, selectedOpportunityId),
+      buildOpportunity(opportunity, marketIndex, selectedOpportunityId, dictionary, enumLabel),
     ),
     scans: scans.map((scan) => ({
       id: scan.id,
       startedClock: formatClock(scan.started_at),
-      finishedClock: scan.finished_at ? formatClock(scan.finished_at) : "running",
+      finishedClock: scan.finished_at ? formatClock(scan.finished_at) : dictionary.radar.running,
       marketCount: formatInteger(scan.market_count),
       snapshotCount: formatInteger(scan.snapshot_count),
       opportunityCount: formatInteger(scan.opportunity_count),
       scannerVersion: scan.scanner_version,
     })),
-    analysis: isAnalysisSummary(analysisSummary) ? buildAnalysis(analysisSummary, marketIndex) : null,
+    analysis: isAnalysisSummary(analysisSummary) ? buildAnalysis(analysisSummary, marketIndex, enumLabel) : null,
   };
 }

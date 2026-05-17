@@ -6,6 +6,8 @@ import { listPositions } from "@/server/api/positions";
 import { readRiskState, listRiskBuckets } from "@/server/api/risk";
 import { listSignals } from "@/server/api/signals";
 import { listApprovals } from "@/server/api/system";
+import { localizeGeneratedCopy } from "@/lib/i18n/generated-copy";
+import { getServerI18n } from "@/lib/i18n/server";
 import { sumNumericStrings } from "@/server/loaders/console-loader-utils";
 import {
   bucketTone,
@@ -15,7 +17,6 @@ import {
   formatPercentFromRatio,
   metricToneForPnl,
   signalStateTone,
-  humanizeSnakeCase,
   marketTradabilityTone,
   uppercaseEnum,
 } from "@/lib/server/console-formatters";
@@ -44,6 +45,7 @@ export async function getPositionsPageData() {
     { data: signals },
     { data: approvals },
     { data: events },
+    i18n,
   ] = await Promise.all([
     listPositions(),
     listRiskBuckets(),
@@ -52,7 +54,9 @@ export async function getPositionsPageData() {
     listSignals(),
     listApprovals(),
     listEvents(),
+    getServerI18n(),
   ]);
+  const { locale, dictionary, enumLabel } = i18n;
 
   const realizedTotal = sumNumericStrings(positions.map((position) => position.realized_pnl));
   const unrealizedTotal = sumNumericStrings(positions.map((position) => position.unrealized_pnl));
@@ -90,17 +94,22 @@ export async function getPositionsPageData() {
       signalEdge: signal ? formatPercentFromRatio(signal.edge) : "0%",
       confidence: signal ? formatPercentFromRatio(signal.confidence) : "n/a",
       confidenceWidth: signal ? formatPercentFromRatio(signal.confidence) : "0%",
-      signalStateLabel: signal ? humanizeSnakeCase(signal.lifecycle_state) : "monitoring",
+      signalStateLabel: signal ? enumLabel(signal.lifecycle_state) : "monitoring",
       signalStateTone: signal ? signalStateTone(signal.lifecycle_state) : ("neutral" as const),
-      tradabilityLabel: market ? humanizeSnakeCase(market.tradability_status) : "unknown",
+      tradabilityLabel: market ? enumLabel(market.tradability_status) : dictionary.common.unknown,
       tradabilityTone: market ? marketTradabilityTone(market.tradability_status) : ("neutral" as const),
-      bucketStatusLabel: bucket ? humanizeSnakeCase(bucket.status) : "healthy",
+      bucketStatusLabel: bucket ? enumLabel(bucket.status) : dictionary.common.healthy,
+      bucketStatus: bucket?.status ?? "healthy",
       bucketTone: bucket ? bucketTone(bucket.status) : ("neutral" as const),
       bucketUtilization: bucket ? formatPercentFromRatio(bucket.utilization) : "0%",
       bucketUtilizationWidth: bucket ? formatPercentFromRatio(bucket.utilization) : "0%",
       requiresReview: signal ? pendingSignalApprovalIds.has(signal.id) : false,
-      signalReason: signal?.reason ?? "Signal context has not been hydrated for this position yet.",
-      riskDecision: signal?.risk_decision ?? "No active risk action is attached to this position.",
+      signalReason: signal
+        ? localizeGeneratedCopy(locale, dictionary, signal.reason)
+        : dictionary.positions.signalFallback,
+      riskDecision: signal
+        ? localizeGeneratedCopy(locale, dictionary, signal.risk_decision)
+        : dictionary.positions.riskFallback,
       eventCount: linkedEvents.length,
       linkedEvents: linkedEvents.slice(0, 3).map((event) => ({
         id: event.id,
@@ -115,42 +124,42 @@ export async function getPositionsPageData() {
     positionItems,
     [
       (position) => position.requiresReview,
-      (position) => position.bucketStatusLabel === "breach",
+      (position) => position.bucketStatus === "breach",
       (position) => position.pnlValue < 0,
     ],
-    "Positions page requires at least one position fixture or API result.",
+    dictionary.routeStates.positionsDataRequired,
   );
 
   return {
-    runtimeModeLabel: humanizeSnakeCase(riskState.mode),
+    runtimeModeLabel: enumLabel(riskState.mode),
     runtimeEnvironmentLabel: riskState.environment,
     metrics: [
       {
         key: "daily_pnl",
-        title: "Daily PnL",
+        title: dictionary.metrics.dailyPnl,
         value: formatCurrency(riskState.daily_pnl),
-        hint: "realized + unrealized",
+        hint: dictionary.metricHints.realizedUnrealized,
         tone: metricToneForPnl(riskState.daily_pnl),
       },
       {
         key: "realized_pnl",
-        title: "Realized",
+        title: dictionary.metrics.realized,
         value: formatCurrency(realizedTotal),
-        hint: "today",
+        hint: dictionary.metricHints.today,
         tone: metricToneForPnl(realizedTotal),
       },
       {
         key: "unrealized_pnl",
-        title: "Unrealized",
+        title: dictionary.metrics.unrealized,
         value: formatCurrency(unrealizedTotal),
-        hint: "mark to market",
+        hint: dictionary.metricHints.markToMarket,
         tone: metricToneForPnl(unrealizedTotal) === "danger" ? ("danger" as const) : ("violet" as const),
       },
       {
         key: "net_exposure",
-        title: "Net Exposure",
+        title: dictionary.metrics.netExposure,
         value: formatPercentFromRatio(riskState.net_exposure),
-        hint: "desk bias",
+        hint: dictionary.metricHints.deskBias,
         tone: "danger" as const,
       },
     ],
@@ -165,7 +174,7 @@ export async function getPositionsPageData() {
       exposure: formatPercentFromRatio(bucket.exposure),
       limit: formatPercentFromRatio(bucket.limit),
       utilization: formatPercentFromRatio(bucket.utilization),
-      statusLabel: humanizeSnakeCase(bucket.status),
+      statusLabel: enumLabel(bucket.status),
       tone: bucketTone(bucket.status),
       width: formatBucketWidth(bucket.exposure),
     })),

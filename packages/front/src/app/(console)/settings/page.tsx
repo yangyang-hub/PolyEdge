@@ -4,23 +4,23 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { getSettingsPageData } from "@/features/settings/loaders/settings-page-data";
 import { PageHeader } from "@/components/shared/page-header";
 import { StatusPill } from "@/components/shared/status-pill";
-
-const docs = [
-  { title: "System Design", path: "doc/polyedge-design.md" },
-  { title: "Frontend Design", path: "doc/polyedge-frontend-design.md" },
-  { title: "Prototype Design", path: "doc/polyedge-prototype-design.md" },
-  { title: "UI Stack", path: "doc/polyedge-frontend-ui-stack.md" },
-];
+import { getServerI18n } from "@/lib/i18n/server";
 
 export default async function SettingsPage() {
-  const data = await getSettingsPageData();
+  const [data, { dictionary, format }] = await Promise.all([getSettingsPageData(), getServerI18n()]);
+  const docs = [
+    { title: dictionary.docs.systemDesign, path: "doc/polyedge-design.md" },
+    { title: dictionary.docs.frontendDesign, path: "doc/polyedge-frontend-design.md" },
+    { title: dictionary.docs.prototypeDesign, path: "doc/polyedge-prototype-design.md" },
+    { title: dictionary.docs.uiStack, path: "doc/polyedge-frontend-ui-stack.md" },
+  ];
 
   return (
     <div className="space-y-6">
       <PageHeader
-        eyebrow="Configuration"
-        title="Settings"
-        description="Placeholder route for system configuration, permission management and implementation notes."
+        eyebrow={dictionary.settings.eyebrow}
+        title={dictionary.settings.title}
+        description={dictionary.settings.description}
         actions={
           <StatusPill tone={data.backendMode === "live" ? "success" : "warning"}>
             {data.backendMode}
@@ -31,8 +31,8 @@ export default async function SettingsPage() {
       <section className="grid gap-4 md:grid-cols-2">
         <Card className="md:col-span-2">
           <CardHeader>
-            <CardTitle>Data Source Health</CardTitle>
-            <CardDescription>Latest ingestion counters and source degradation state.</CardDescription>
+            <CardTitle>{dictionary.settings.dataSourceHealth}</CardTitle>
+            <CardDescription>{dictionary.settings.sourceHealthDescription}</CardDescription>
             <CardAction>
               <StatusPill tone={data.sourceHealthSummary.tone}>{data.sourceHealthSummary.label}</StatusPill>
             </CardAction>
@@ -42,15 +42,15 @@ export default async function SettingsPage() {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Source</TableHead>
-                    <TableHead>Type</TableHead>
-                    <TableHead className="min-w-36">Health</TableHead>
-                    <TableHead>Fetched</TableHead>
-                    <TableHead>Inserted</TableHead>
-                    <TableHead>Deduped</TableHead>
-                    <TableHead>Failures</TableHead>
-                    <TableHead>Updated</TableHead>
-                    <TableHead>Error</TableHead>
+                    <TableHead>{dictionary.settings.source}</TableHead>
+                    <TableHead>{dictionary.settings.type}</TableHead>
+                    <TableHead className="min-w-36">{dictionary.settings.health}</TableHead>
+                    <TableHead>{dictionary.settings.fetched}</TableHead>
+                    <TableHead>{dictionary.settings.inserted}</TableHead>
+                    <TableHead>{dictionary.settings.deduped}</TableHead>
+                    <TableHead>{dictionary.settings.failures}</TableHead>
+                    <TableHead>{dictionary.settings.updated}</TableHead>
+                    <TableHead>{dictionary.settings.error}</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -69,7 +69,7 @@ export default async function SettingsPage() {
                         <div className="space-y-2">
                           <div className="flex items-center justify-between gap-3">
                             <StatusPill tone={source.tone}>{source.healthScoreLabel}</StatusPill>
-                            <span className="text-xs text-muted-foreground">{source.reliabilityLabel} rel</span>
+                            <span className="text-xs text-muted-foreground">{source.reliabilityLabel} {dictionary.settings.rel}</span>
                           </div>
                           <MeterBar value={source.healthScoreWidth} tone={source.tone} />
                         </div>
@@ -81,37 +81,37 @@ export default async function SettingsPage() {
                       <TableCell>
                         <div className="space-y-1 text-xs">
                           <p className="text-foreground">{source.updatedAtLabel}</p>
-                          <p className="text-muted-foreground">ok {source.lastSuccessLabel}</p>
+                          <p className="text-muted-foreground">{dictionary.settings.ok} {source.lastSuccessLabel}</p>
                         </div>
                       </TableCell>
                       <TableCell className="max-w-56 whitespace-normal text-xs text-muted-foreground">
-                        {source.lastError ? `${source.lastErrorLabel} - ${source.lastError}` : "none"}
+                        {source.lastError ? `${source.lastErrorLabel} - ${source.lastError}` : dictionary.common.none}
                       </TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
               </Table>
             ) : (
-              <p className="text-sm text-muted-foreground">No source health records have been ingested yet.</p>
+              <p className="text-sm text-muted-foreground">{dictionary.settings.noSourceHealth}</p>
             )}
           </CardContent>
         </Card>
 
         <Card className="md:col-span-2">
           <CardHeader>
-            <CardTitle>Recent Raw News</CardTitle>
-            <CardDescription>Latest normalized feed entries before event and signal promotion.</CardDescription>
+            <CardTitle>{dictionary.settings.recentRawNews}</CardTitle>
+            <CardDescription>{dictionary.settings.rawNewsDescription}</CardDescription>
           </CardHeader>
           <CardContent>
             {data.rawNews.length > 0 ? (
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Source</TableHead>
-                    <TableHead>Title</TableHead>
-                    <TableHead>Event Time</TableHead>
-                    <TableHead>Ingested</TableHead>
-                    <TableHead>Trace</TableHead>
+                    <TableHead>{dictionary.settings.source}</TableHead>
+                    <TableHead>{dictionary.settings.titleColumn}</TableHead>
+                    <TableHead>{dictionary.settings.eventTime}</TableHead>
+                    <TableHead>{dictionary.settings.ingested}</TableHead>
+                    <TableHead>{dictionary.settings.trace}</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -145,7 +145,7 @@ export default async function SettingsPage() {
                       <TableCell>
                         <div className="space-y-1 text-xs">
                           <p className="text-foreground">{event.eventTimeLabel}</p>
-                          <p className="text-muted-foreground">published {event.publishedAtLabel}</p>
+                          <p className="text-muted-foreground">{dictionary.common.published} {event.publishedAtLabel}</p>
                         </div>
                       </TableCell>
                       <TableCell className="text-xs text-muted-foreground">{event.ingestedAtLabel}</TableCell>
@@ -155,14 +155,14 @@ export default async function SettingsPage() {
                 </TableBody>
               </Table>
             ) : (
-              <p className="text-sm text-muted-foreground">No raw news entries have been ingested yet.</p>
+              <p className="text-sm text-muted-foreground">{dictionary.settings.noRawNews}</p>
             )}
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader>
-            <CardTitle className="font-heading text-base">Documentation Links</CardTitle>
+            <CardTitle className="font-heading text-base">{dictionary.settings.documentationLinks}</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
             {docs.map((doc) => (
@@ -176,14 +176,18 @@ export default async function SettingsPage() {
 
         <Card>
           <CardHeader>
-            <CardTitle className="font-heading text-base">Next Build Targets</CardTitle>
+            <CardTitle className="font-heading text-base">{dictionary.settings.buildTargets}</CardTitle>
           </CardHeader>
           <CardContent className="space-y-2 text-sm text-muted-foreground">
-            <p>1. `POLYEDGE_API_BASE_URL` {data.apiBaseUrl ? `-> ${data.apiBaseUrl}` : "is unset, using typed mock envelopes"}.</p>
-            <p>2. Backend mode resolves to `{data.backendMode}` from that value.</p>
-            <p>3. `POLYEDGE_CONSOLE_AUTH` currently resolves to `{data.consoleAuthMode}`.</p>
-            <p>4. Local live mode can use `POLYEDGE_INTERNAL_AUTH_DEV_BYPASS=1`; signed mode requires `POLYEDGE_INTERNAL_AUTH_KID` and `POLYEDGE_INTERNAL_AUTH_PRIVATE_KEY`.</p>
-            <p>5. Protected actions verify `POLYEDGE_CONSOLE_STEP_UP_CODE` before sending step-up scopes downstream.</p>
+            <p>
+              1. {format(dictionary.settings.buildTargetApi, {
+                state: data.apiBaseUrl ? `-> ${data.apiBaseUrl}` : dictionary.settings.buildTargetApiUnset,
+              })}
+            </p>
+            <p>2. {format(dictionary.settings.buildTargetBackendMode, { mode: data.backendMode })}</p>
+            <p>3. {format(dictionary.settings.buildTargetAuthMode, { mode: data.consoleAuthMode })}</p>
+            <p>4. {dictionary.settings.buildTargetLiveMode}</p>
+            <p>5. {dictionary.settings.buildTargetStepUp}</p>
           </CardContent>
         </Card>
       </section>
