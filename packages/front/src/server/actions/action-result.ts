@@ -5,7 +5,9 @@ export type OperationActionResult = {
   traceId?: string;
   operationId?: string;
   status?: "queued" | "completed" | "rejected";
-  fieldErrors?: Partial<Record<"note" | "stepUpCode" | "targetMode", string>>;
+  fieldErrors?: Partial<
+    Record<"note" | "stepUpCode" | "targetMode" | "limitPrice" | "quantity" | "connectorName", string>
+  >;
 };
 
 export function createActionSuccessResult(

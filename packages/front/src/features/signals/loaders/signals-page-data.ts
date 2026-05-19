@@ -2,6 +2,7 @@ import "server-only";
 
 import { listEvidences } from "@/server/api/events";
 import { listMarkets } from "@/server/api/markets";
+import { readRiskState } from "@/server/api/risk";
 import { listSignals } from "@/server/api/signals";
 import { listApprovals } from "@/server/api/system";
 import { localizeGeneratedCopy } from "@/lib/i18n/generated-copy";
@@ -19,11 +20,19 @@ import {
 } from "@/lib/server/console-formatters";
 
 export async function getSignalsPageData() {
-  const [{ data: signals }, { data: markets }, { data: evidences }, { data: approvals }, i18n] = await Promise.all([
+  const [
+    { data: signals },
+    { data: markets },
+    { data: evidences },
+    { data: approvals },
+    { data: riskState },
+    i18n,
+  ] = await Promise.all([
     listSignals(),
     listMarkets(),
     listEvidences(),
     listApprovals(),
+    readRiskState(),
     getServerI18n(),
   ]);
   const { locale, dictionary, enumLabel, format } = i18n;
@@ -42,8 +51,15 @@ export async function getSignalsPageData() {
   return {
     activeCount: signals.filter((signal) => signal.lifecycle_state === "active").length,
     approvalCount: pendingSignalApprovalIds.size,
+    runtimeControls: {
+      mode: riskState.mode,
+      modeLabel: enumLabel(riskState.mode),
+      killSwitch: riskState.kill_switch,
+    },
     signals: signals.map((signal) => ({
       id: signal.id,
+      version: signal.version,
+      lifecycleState: signal.lifecycle_state,
       marketQuestion: marketIndex.get(signal.market_id)?.question ?? signal.market_id,
       contextLabel: `${marketIndex.get(signal.market_id)?.category ?? dictionary.common.unknown} / ${enumLabel(
         marketIndex.get(signal.market_id)?.tradability_status ?? "manual_review",
@@ -58,6 +74,8 @@ export async function getSignalsPageData() {
       stateLabel: enumLabel(signal.lifecycle_state),
       stateTone: signalStateTone(signal.lifecycle_state),
       requiresReview: pendingSignalApprovalIds.has(signal.id),
+      approvedAt: signal.approved_at ?? null,
+      rejectedAt: signal.rejected_at ?? null,
       reason: localizeGeneratedCopy(locale, dictionary, signal.reason),
       riskDecision: localizeGeneratedCopy(locale, dictionary, signal.risk_decision),
       evidenceLines: evidences
@@ -72,6 +90,9 @@ export async function getSignalsPageData() {
       isSelected: signal.id === selectedSignal.id,
     })),
     selectedSignal: {
+      id: selectedSignal.id,
+      version: selectedSignal.version,
+      lifecycleState: selectedSignal.lifecycle_state,
       marketQuestion: marketIndex.get(selectedSignal.market_id)?.question ?? selectedSignal.market_id,
       confidence: formatPercentFromRatio(selectedSignal.confidence),
       marketPrice: selectedSignal.market_price,
@@ -80,9 +101,11 @@ export async function getSignalsPageData() {
       stateLabel: enumLabel(selectedSignal.lifecycle_state),
       stateTone: signalStateTone(selectedSignal.lifecycle_state),
       requiresReview: pendingSignalApprovalIds.has(selectedSignal.id),
+      approvedAt: selectedSignal.approved_at ?? null,
+      rejectedAt: selectedSignal.rejected_at ?? null,
       reason: localizeGeneratedCopy(locale, dictionary, selectedSignal.reason),
       riskDecision: localizeGeneratedCopy(locale, dictionary, selectedSignal.risk_decision),
-    evidenceLines: selectedEvidenceItems.map((evidence) => {
+      evidenceLines: selectedEvidenceItems.map((evidence) => {
         return format(dictionary.signals.evidenceLine, {
           direction: enumLabel(evidence.direction),
           strength: evidence.strength,

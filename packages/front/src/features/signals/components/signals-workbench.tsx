@@ -1,11 +1,14 @@
 "use client";
 
-import { startTransition, useDeferredValue, useEffect, useState } from "react";
-import { ChevronRight, Filter } from "lucide-react";
+import { startTransition, useDeferredValue, useEffect, useState, useTransition } from "react";
+import { Check, ChevronRight, Filter, Send, X } from "lucide-react";
+import { toast } from "sonner";
 
 import { PageHeader } from "@/components/shared/page-header";
+import { ActionDialog } from "@/components/shared/action-dialog";
 import { useConsoleRealtimeChannel } from "@/components/shared/console-realtime-provider";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   Sheet,
   SheetContent,
@@ -15,6 +18,7 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet";
 import { MeterBar } from "@/components/shared/meter-bar";
+import { OperationFeedbackBanner } from "@/components/shared/operation-feedback-banner";
 import { StatusPill } from "@/components/shared/status-pill";
 import { WorkbenchDetailPane, WorkbenchLayout } from "@/components/shared/workbench-layout";
 import { WorkbenchSegmentedControl } from "@/components/shared/workbench-segmented-control";
@@ -30,11 +34,19 @@ import {
   uppercaseEnum,
 } from "@/lib/realtime-formatters";
 import { patchApprovalField, upsertStreamedItem } from "@/lib/signal-stream-utils";
+import {
+  submitSignalDecisionAction,
+  submitSignalExecutionAction,
+} from "@/server/actions/signal-actions";
+import type { OperationActionResult } from "@/server/actions/action-result";
+import type { RuntimeMode, SignalLifecycleState } from "@/lib/contracts/dto";
 
 type SignalTone = RealtimeTone;
 
 type SignalItem = {
   id: string;
+  version: number;
+  lifecycleState: SignalLifecycleState;
   marketQuestion: string;
   contextLabel: string;
   confidenceValue: number;
@@ -47,6 +59,8 @@ type SignalItem = {
   stateLabel: string;
   stateTone: SignalTone;
   requiresReview: boolean;
+  approvedAt: string | null;
+  rejectedAt: string | null;
   reason: string;
   riskDecision: string;
   evidenceLines: string[];
@@ -54,6 +68,9 @@ type SignalItem = {
 };
 
 type SelectedSignal = {
+  id: string;
+  version: number;
+  lifecycleState: SignalLifecycleState;
   marketQuestion: string;
   confidence: string;
   marketPrice: string;
@@ -62,6 +79,8 @@ type SelectedSignal = {
   stateLabel: string;
   stateTone: SignalTone;
   requiresReview: boolean;
+  approvedAt: string | null;
+  rejectedAt: string | null;
   reason: string;
   riskDecision: string;
   evidenceLines: string[];
@@ -70,11 +89,19 @@ type SelectedSignal = {
 type SignalsWorkbenchProps = {
   activeCount: number;
   approvalCount: number;
+  runtimeControls: RuntimeControls;
   signals: SignalItem[];
   selectedSignal: SelectedSignal;
 };
 
+type RuntimeControls = {
+  mode: RuntimeMode;
+  modeLabel: string;
+  killSwitch: boolean;
+};
+
 type SignalFilter = "all" | "high_confidence" | "needs_review";
+type SignalActionDialog = "approved" | "rejected" | "execution" | null;
 
 function buildSignalItem(
   payload: SignalStreamPayload,
@@ -88,6 +115,8 @@ function buildSignalItem(
 
   return {
     id: payload.signal_id,
+    version: payload.version,
+    lifecycleState: payload.lifecycle_state,
     marketQuestion: payload.market_question ?? current?.marketQuestion ?? payload.market_id,
     contextLabel: payload.context_label ?? current?.contextLabel ?? dictionary.signals.liveContextFallback,
     confidenceValue,
@@ -102,6 +131,8 @@ function buildSignalItem(
     stateLabel: enumLabel(payload.lifecycle_state),
     stateTone: signalStateTone(payload.lifecycle_state),
     requiresReview: payload.requires_review ?? current?.requiresReview ?? false,
+    approvedAt: current?.approvedAt ?? null,
+    rejectedAt: current?.rejectedAt ?? null,
     reason: payload.reason ?? current?.reason ?? dictionary.signals.reasonFallback,
     riskDecision: payload.risk_decision ?? current?.riskDecision ?? dictionary.signals.riskFallback,
     evidenceLines: payload.evidence_lines ?? current?.evidenceLines ?? [],
@@ -109,12 +140,56 @@ function buildSignalItem(
   };
 }
 
+function hasExecutableLifecycle(signal: SignalItem | SelectedSignal): boolean {
+  return signal.lifecycleState === "new" || signal.lifecycleState === "active";
+}
+
+function canApproveSignal(signal: SignalItem | SelectedSignal, controls: RuntimeControls): boolean {
+  return (
+    controls.mode === "manual_confirm" &&
+    !controls.killSwitch &&
+    !signal.approvedAt &&
+    !signal.rejectedAt &&
+    hasExecutableLifecycle(signal)
+  );
+}
+
+function canRejectSignal(signal: SignalItem | SelectedSignal, controls: RuntimeControls): boolean {
+  return (
+    (controls.mode === "manual_confirm" || controls.mode === "kill_switch_locked") &&
+    !signal.approvedAt &&
+    !signal.rejectedAt &&
+    (signal.lifecycleState === "new" ||
+      signal.lifecycleState === "active" ||
+      signal.lifecycleState === "weakened")
+  );
+}
+
+function canSubmitExecution(signal: SignalItem | SelectedSignal, controls: RuntimeControls): boolean {
+  if (controls.killSwitch || signal.rejectedAt || !hasExecutableLifecycle(signal)) {
+    return false;
+  }
+
+  if (controls.mode === "paper_trade") {
+    return true;
+  }
+
+  return controls.mode === "manual_confirm" && Boolean(signal.approvedAt);
+}
+
 function SignalsDetailPanel({
   signal,
+  runtimeControls,
+  onOpenAction,
 }: {
   signal: SignalItem | SelectedSignal;
+  runtimeControls: RuntimeControls;
+  onOpenAction?: (signalId: string, dialog: Exclude<SignalActionDialog, null>) => void;
 }) {
   const { dictionary } = useI18n();
+  const approveEnabled = canApproveSignal(signal, runtimeControls);
+  const rejectEnabled = canRejectSignal(signal, runtimeControls);
+  const executionEnabled = canSubmitExecution(signal, runtimeControls);
 
   return (
     <div className="space-y-4">
@@ -125,6 +200,7 @@ function SignalsDetailPanel({
         <div className="flex flex-wrap gap-2">
           <StatusPill tone={signal.stateTone}>{signal.stateLabel}</StatusPill>
           <StatusPill tone="primary">{signal.confidence}</StatusPill>
+          <StatusPill tone={runtimeControls.killSwitch ? "danger" : "warning"}>{runtimeControls.modeLabel}</StatusPill>
           {signal.requiresReview ? <StatusPill tone="violet">{dictionary.signals.manualReview}</StatusPill> : null}
         </div>
       </div>
@@ -182,15 +258,32 @@ function SignalsDetailPanel({
         </ul>
       </div>
 
-      <div className="flex gap-2">
-        <Button className="flex-1 rounded-sm bg-primary text-primary-foreground hover:bg-primary/90">
+      <div className="grid gap-2 sm:grid-cols-3">
+        <Button
+          className="rounded-sm bg-primary text-primary-foreground hover:bg-primary/90"
+          disabled={!approveEnabled || !onOpenAction}
+          onClick={() => onOpenAction?.(signal.id, "approved")}
+        >
+          <Check className="size-3.5" />
           {dictionary.signals.approveSignal}
         </Button>
         <Button
           variant="outline"
-          className="flex-1 rounded-sm border-destructive/30 bg-destructive/5 text-destructive hover:bg-destructive/10"
+          className="rounded-sm border-destructive/30 bg-destructive/5 text-destructive hover:bg-destructive/10"
+          disabled={!rejectEnabled || !onOpenAction}
+          onClick={() => onOpenAction?.(signal.id, "rejected")}
         >
+          <X className="size-3.5" />
           {dictionary.signals.reject}
+        </Button>
+        <Button
+          variant="outline"
+          className="rounded-sm border-white/10 bg-accent/40 text-foreground hover:bg-accent"
+          disabled={!executionEnabled || !onOpenAction}
+          onClick={() => onOpenAction?.(signal.id, "execution")}
+        >
+          <Send className="size-3.5" />
+          {dictionary.signals.submitExecution}
         </Button>
       </div>
     </div>
@@ -200,12 +293,25 @@ function SignalsDetailPanel({
 export function SignalsWorkbench({
   signals,
   selectedSignal: initialSelectedSignal,
+  runtimeControls: initialRuntimeControls,
 }: SignalsWorkbenchProps) {
   const [filter, setFilter] = useState<SignalFilter>("all");
   const [liveSignals, setLiveSignals] = useState(signals);
+  const [runtimeControls, setRuntimeControls] = useState(initialRuntimeControls);
   const [selectedId, setSelectedId] = useState<string>(
     signals.find((signal) => signal.isSelected)?.id ?? signals[0]?.id ?? "",
   );
+  const [activeDialog, setActiveDialog] = useState<SignalActionDialog>(null);
+  const [actionSignalId, setActionSignalId] = useState<string>("");
+  const [note, setNote] = useState("");
+  const [stepUpCode, setStepUpCode] = useState("");
+  const [limitPrice, setLimitPrice] = useState("");
+  const [quantity, setQuantity] = useState("1");
+  const [connectorName, setConnectorName] = useState("paper_executor");
+  const [dialogFeedback, setDialogFeedback] = useState<OperationActionResult | null>(null);
+  const [lastOperation, setLastOperation] = useState<OperationActionResult | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<OperationActionResult["fieldErrors"]>({});
+  const [isPending, startActionTransition] = useTransition();
   const deferredFilter = useDeferredValue(filter);
   const { lastEvent } = useConsoleRealtimeChannel("signals");
   const { lastEvent: lastRiskEvent } = useConsoleRealtimeChannel("risk");
@@ -253,14 +359,24 @@ export function SignalsWorkbench({
   useEffect(() => {
     const streamEvent = lastRiskEvent;
 
-    if (!streamEvent || !streamEvent.type.startsWith("approval.")) {
+    if (!streamEvent) {
       return;
     }
 
     startTransition(() => {
-      setLiveSignals((currentSignals) => patchApprovalField(currentSignals, streamEvent.data, "requiresReview"));
+      if (streamEvent.data.mode || typeof streamEvent.data.kill_switch === "boolean") {
+        setRuntimeControls((currentControls) => ({
+          mode: streamEvent.data.mode ?? currentControls.mode,
+          modeLabel: streamEvent.data.mode ? enumLabel(streamEvent.data.mode) : currentControls.modeLabel,
+          killSwitch: streamEvent.data.kill_switch ?? currentControls.killSwitch,
+        }));
+      }
+
+      if (streamEvent.type.startsWith("approval.")) {
+        setLiveSignals((currentSignals) => patchApprovalField(currentSignals, streamEvent.data, "requiresReview"));
+      }
     });
-  }, [lastRiskEvent]);
+  }, [enumLabel, lastRiskEvent]);
 
   const filteredSignals = liveSignals.filter((signal) => {
     if (deferredFilter === "high_confidence") {
@@ -279,6 +395,10 @@ export function SignalsWorkbench({
     liveSignals.find((signal) => signal.id === selectedId) ??
     filteredSignals[0] ??
     liveSignals[0];
+  const actionSignal =
+    liveSignals.find((signal) => signal.id === actionSignalId) ??
+    selectedSignal ??
+    initialSelectedSignal;
 
   const activeCount = liveSignals.filter((signal) => signal.stateTone === "success").length;
   const approvalCount = liveSignals.filter((signal) => signal.requiresReview).length;
@@ -292,6 +412,137 @@ export function SignalsWorkbench({
   function selectSignal(signalId: string) {
     startTransition(() => {
       setSelectedId(signalId);
+    });
+  }
+
+  function cycleFilter() {
+    const currentIndex = filterButtons.findIndex((item) => item.key === filter);
+    const nextFilter = filterButtons[(currentIndex + 1) % filterButtons.length]?.key ?? "all";
+    setFilter(nextFilter);
+  }
+
+  function openSignalAction(signalId: string, dialog: Exclude<SignalActionDialog, null>) {
+    const signal = liveSignals.find((item) => item.id === signalId) ?? selectedSignal;
+    if (
+      !signal ||
+      (dialog === "approved" && !canApproveSignal(signal, runtimeControls)) ||
+      (dialog === "rejected" && !canRejectSignal(signal, runtimeControls)) ||
+      (dialog === "execution" && !canSubmitExecution(signal, runtimeControls))
+    ) {
+      return;
+    }
+
+    setSelectedId(signalId);
+    setActionSignalId(signalId);
+    setActiveDialog(dialog);
+    setDialogFeedback(null);
+    setFieldErrors({});
+    setStepUpCode("");
+    setLimitPrice(signal?.marketPrice ?? "");
+    setQuantity("1");
+    setConnectorName("paper_executor");
+    setNote(
+      dialog === "approved"
+        ? dictionary.signals.approveNote
+        : dialog === "rejected"
+          ? dictionary.signals.rejectNote
+          : dictionary.signals.executionNote,
+    );
+  }
+
+  function closeSignalAction() {
+    setActiveDialog(null);
+    setActionSignalId("");
+    setDialogFeedback(null);
+    setFieldErrors({});
+    setStepUpCode("");
+  }
+
+  function handleActionResult(result: OperationActionResult) {
+    setDialogFeedback(result);
+    setLastOperation(result);
+
+    if (result.ok) {
+      toast.success(result.message, {
+        description: [result.requestId, result.traceId].filter(Boolean).join(" · "),
+      });
+      return;
+    }
+
+    toast.error(result.message, {
+      description: [result.requestId, result.traceId].filter(Boolean).join(" · "),
+    });
+  }
+
+  function patchSignalDecision(signalId: string, decision: "approved" | "rejected") {
+    setLiveSignals((currentSignals) =>
+      currentSignals.map((signal) => {
+        if (signal.id !== signalId) {
+          return signal;
+        }
+
+        return {
+          ...signal,
+          version: signal.version + 1,
+          requiresReview: false,
+          approvedAt: decision === "approved" ? new Date().toISOString() : null,
+          rejectedAt: decision === "rejected" ? new Date().toISOString() : null,
+          riskDecision: decision === "approved" ? dictionary.signals.approveNote : dictionary.signals.rejectNote,
+        };
+      }),
+    );
+  }
+
+  function submitSignalDecision(dialog: "approved" | "rejected") {
+    if (
+      !actionSignal ||
+      (dialog === "approved" && !canApproveSignal(actionSignal, runtimeControls)) ||
+      (dialog === "rejected" && !canRejectSignal(actionSignal, runtimeControls))
+    ) {
+      return;
+    }
+
+    startActionTransition(async () => {
+      const result = await submitSignalDecisionAction({
+        signalId: actionSignal.id,
+        expectedVersion: actionSignal.version,
+        decision: dialog,
+        note,
+        stepUpCode,
+      });
+
+      setFieldErrors(result.fieldErrors ?? {});
+      handleActionResult(result);
+
+      if (result.ok) {
+        patchSignalDecision(actionSignal.id, dialog);
+        closeSignalAction();
+      }
+    });
+  }
+
+  function submitExecutionRequest() {
+    if (!actionSignal || !canSubmitExecution(actionSignal, runtimeControls)) {
+      return;
+    }
+
+    startActionTransition(async () => {
+      const result = await submitSignalExecutionAction({
+        signalId: actionSignal.id,
+        expectedVersion: actionSignal.version,
+        limitPrice,
+        quantity,
+        connectorName,
+        note,
+        stepUpCode,
+      });
+
+      setFieldErrors(result.fieldErrors ?? {});
+      handleActionResult(result);
+
+      if (result.ok) {
+        closeSignalAction();
+      }
     });
   }
 
@@ -309,6 +560,7 @@ export function SignalsWorkbench({
           </>
         }
       />
+      {lastOperation ? <OperationFeedbackBanner feedback={lastOperation} /> : null}
 
       <WorkbenchLayout columnsClassName="xl:grid-cols-[1.6fr_0.95fr]">
         <div className="overflow-hidden rounded-lg bg-card/95 ring-1 ring-white/5">
@@ -326,6 +578,7 @@ export function SignalsWorkbench({
                 variant="outline"
                 size="sm"
                 className="rounded-sm border-white/10 bg-accent/40 text-foreground hover:bg-accent"
+                onClick={cycleFilter}
               >
                 <Filter className="size-3.5" />
                 {dictionary.common.filter}
@@ -406,7 +659,14 @@ export function SignalsWorkbench({
                       </td>
                       <td className="px-5 py-3 text-right">
                         <div className="hidden xl:block">
-                          <button className="rounded-sm p-1 text-primary transition-colors hover:bg-primary/10">
+                          <button
+                            type="button"
+                            className="rounded-sm p-1 text-primary transition-colors hover:bg-primary/10"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              selectSignal(signal.id);
+                            }}
+                          >
                             <ChevronRight className="ml-auto size-4" />
                           </button>
                         </div>
@@ -430,7 +690,11 @@ export function SignalsWorkbench({
                                 </SheetDescription>
                               </SheetHeader>
                               <div className="overflow-y-auto px-5 py-5">
-                                <SignalsDetailPanel signal={signal} />
+                                <SignalsDetailPanel
+                                  signal={signal}
+                                  runtimeControls={runtimeControls}
+                                  onOpenAction={openSignalAction}
+                                />
                               </div>
                             </SheetContent>
                           </Sheet>
@@ -452,8 +716,129 @@ export function SignalsWorkbench({
         </div>
 
         <WorkbenchDetailPane desktopOnly>
-          <SignalsDetailPanel signal={selectedSignal ?? initialSelectedSignal} />
+          <SignalsDetailPanel
+            signal={selectedSignal ?? initialSelectedSignal}
+            runtimeControls={runtimeControls}
+            onOpenAction={openSignalAction}
+          />
         </WorkbenchDetailPane>
+
+        <ActionDialog
+          open={activeDialog === "approved" || activeDialog === "rejected"}
+          onOpenChange={(open) => {
+            if (!open) {
+              closeSignalAction();
+            }
+          }}
+          title={activeDialog === "approved" ? dictionary.signals.approveTitle : dictionary.signals.rejectTitle}
+          description={dictionary.signals.decisionDescription}
+          confirmLabel={activeDialog === "approved" ? dictionary.signals.queueApproval : dictionary.signals.queueRejection}
+          confirmVariant={activeDialog === "rejected" ? "destructive" : "default"}
+          isPending={isPending}
+          note={note}
+          onNoteChange={setNote}
+          noteError={fieldErrors?.note}
+          stepUpCode={stepUpCode}
+          onStepUpCodeChange={setStepUpCode}
+          stepUpCodeError={fieldErrors?.stepUpCode}
+          requiresStepUp
+          confirmDisabled={
+            !actionSignal ||
+            (activeDialog === "approved" && !canApproveSignal(actionSignal, runtimeControls)) ||
+            (activeDialog === "rejected" && !canRejectSignal(actionSignal, runtimeControls))
+          }
+          onSubmit={() => {
+            if (activeDialog === "approved" || activeDialog === "rejected") {
+              submitSignalDecision(activeDialog);
+            }
+          }}
+          feedback={dialogFeedback}
+          context={
+            actionSignal ? (
+              <div className="space-y-1">
+                <p>{dictionary.signals.market}: {actionSignal.marketQuestion}</p>
+                <p>{dictionary.approvals.expectedVersion}: {actionSignal.version}</p>
+                <p>{dictionary.dashboard.tableState}: {actionSignal.stateLabel}</p>
+                <p>{dictionary.metrics.mode}: {runtimeControls.modeLabel}</p>
+              </div>
+            ) : null
+          }
+        />
+
+        <ActionDialog
+          open={activeDialog === "execution"}
+          onOpenChange={(open) => {
+            if (!open) {
+              closeSignalAction();
+            }
+          }}
+          title={dictionary.signals.executeTitle}
+          description={dictionary.signals.executeDescription}
+          confirmLabel={dictionary.signals.queueExecution}
+          isPending={isPending}
+          note={note}
+          onNoteChange={setNote}
+          noteError={fieldErrors?.note}
+          stepUpCode={stepUpCode}
+          onStepUpCodeChange={setStepUpCode}
+          stepUpCodeError={fieldErrors?.stepUpCode}
+          requiresStepUp
+          confirmDisabled={!actionSignal || !canSubmitExecution(actionSignal, runtimeControls)}
+          onSubmit={submitExecutionRequest}
+          feedback={dialogFeedback}
+          context={
+            actionSignal ? (
+              <div className="space-y-1">
+                <p>{dictionary.signals.market}: {actionSignal.marketQuestion}</p>
+                <p>{dictionary.approvals.expectedVersion}: {actionSignal.version}</p>
+                <p>{dictionary.signals.marketPrice}: {actionSignal.marketPrice}</p>
+                <p>{dictionary.metrics.mode}: {runtimeControls.modeLabel}</p>
+              </div>
+            ) : null
+          }
+        >
+          <div className="grid gap-3 sm:grid-cols-3">
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-foreground" htmlFor="signal-limit-price">
+                {dictionary.signals.limitPrice}
+              </label>
+              <Input
+                id="signal-limit-price"
+                value={limitPrice}
+                inputMode="decimal"
+                onChange={(event) => setLimitPrice(event.target.value)}
+                className="h-10 rounded-sm border-white/10 bg-accent/45"
+              />
+              {fieldErrors?.limitPrice ? <p className="text-xs text-destructive">{fieldErrors.limitPrice}</p> : null}
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-foreground" htmlFor="signal-quantity">
+                {dictionary.signals.quantity}
+              </label>
+              <Input
+                id="signal-quantity"
+                value={quantity}
+                inputMode="decimal"
+                onChange={(event) => setQuantity(event.target.value)}
+                className="h-10 rounded-sm border-white/10 bg-accent/45"
+              />
+              {fieldErrors?.quantity ? <p className="text-xs text-destructive">{fieldErrors.quantity}</p> : null}
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-foreground" htmlFor="signal-connector">
+                {dictionary.signals.connectorName}
+              </label>
+              <Input
+                id="signal-connector"
+                value={connectorName}
+                onChange={(event) => setConnectorName(event.target.value)}
+                className="h-10 rounded-sm border-white/10 bg-accent/45"
+                placeholder={dictionary.signals.connectorPlaceholder}
+              />
+              {fieldErrors?.connectorName ? <p className="text-xs text-destructive">{fieldErrors.connectorName}</p> : null}
+            </div>
+          </div>
+        </ActionDialog>
       </WorkbenchLayout>
     </div>
   );

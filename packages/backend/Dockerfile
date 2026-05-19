@@ -5,7 +5,8 @@ RUN apt-get update \
   && rm -rf /var/lib/apt/lists/*
 
 COPY bin/polyedge-api /usr/local/bin/polyedge-api
-RUN chmod 0755 /usr/local/bin/polyedge-api
+COPY bin/polyedge-worker /usr/local/bin/polyedge-worker
+RUN chmod 0755 /usr/local/bin/polyedge-api /usr/local/bin/polyedge-worker
 
 ENV POLYEDGE_SERVER__HOST=0.0.0.0
 ENV POLYEDGE_SERVER__PORT=8080

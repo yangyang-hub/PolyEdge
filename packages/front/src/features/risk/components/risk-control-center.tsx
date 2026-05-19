@@ -1,7 +1,8 @@
 "use client";
 
-import { startTransition, useEffect, useMemo, useState, useTransition } from "react";
+import { startTransition, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { Download, ShieldCheck, ToggleLeft } from "lucide-react";
 import { toast } from "sonner";
 
@@ -35,6 +36,7 @@ import { StatusPill } from "@/components/shared/status-pill";
 
 type RiskPageData = Awaited<ReturnType<typeof getRiskPageData>>;
 type RiskDialog = "mode" | "release" | "kill_switch" | null;
+type RiskAlertFilter = "all" | "unresolved" | "watching";
 
 const MODE_OPTION_VALUES: RuntimeMode[] = [
   "research",
@@ -184,6 +186,7 @@ function buildAlertItem(
     reason: payload.reason,
     target: payload.target,
     createdAt: payload.created_at ? formatClock(payload.created_at) : current?.createdAt ?? "--:--:--",
+    status: payload.status,
     statusLabel: enumLabel(payload.status),
     statusTone: alertStatusTone(payload.status),
   };
@@ -213,6 +216,7 @@ export function RiskControlCenter({ data }: { data: RiskPageData }) {
   const [metrics, setMetrics] = useState(data.metrics);
   const [summary, setSummary] = useState(data.summary);
   const [alerts, setAlerts] = useState(data.alerts);
+  const [alertFilter, setAlertFilter] = useState<RiskAlertFilter>("all");
   const [approvalCount, setApprovalCount] = useState(data.approvalCount);
   const [activeDialog, setActiveDialog] = useState<RiskDialog>(null);
   const [targetMode, setTargetMode] = useState<RuntimeMode>(
@@ -224,6 +228,8 @@ export function RiskControlCenter({ data }: { data: RiskPageData }) {
   const [lastOperation, setLastOperation] = useState<OperationActionResult | null>(null);
   const [fieldErrors, setFieldErrors] = useState<OperationActionResult["fieldErrors"]>({});
   const [isPending, startActionTransition] = useTransition();
+  const auditLogRef = useRef<HTMLElement | null>(null);
+  const router = useRouter();
   const { lastEvent } = useConsoleRealtimeChannel("risk");
   const { locale, dictionary, enumLabel, format } = useI18n();
   const metricLabels = useMemo(() => ({
@@ -412,6 +418,56 @@ export function RiskControlCenter({ data }: { data: RiskPageData }) {
     });
   }
 
+  const visibleAlerts = alerts.filter((alert) => {
+    if (alertFilter === "unresolved") {
+      return alert.status === "unresolved";
+    }
+
+    if (alertFilter === "watching") {
+      return alert.status === "watching";
+    }
+
+    return true;
+  });
+
+  function scrollToAuditLog() {
+    auditLogRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  function exportVisibleAlertsCsv() {
+    const header = ["id", "severity", "reason", "target", "created_at", "status"];
+    const rows = visibleAlerts.map((alert) => [
+      alert.id,
+      alert.severity,
+      alert.reason,
+      alert.target,
+      alert.createdAt,
+      alert.status,
+    ]);
+    const escapeCell = (value: string) => `"${value.replaceAll('"', '""')}"`;
+    const csv = [header, ...rows].map((row) => row.map(escapeCell).join(",")).join("\n");
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `polyedge-risk-alerts-${new Date().toISOString().slice(0, 10)}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function manageAlert(alert: RiskPageData["alerts"][number]) {
+    if (alert.id === "alt_pending_signal_approvals" || alert.target === dictionary.generated.approvalQueue) {
+      router.push("/approvals");
+      return;
+    }
+
+    if (alert.id === "alt_kill_switch_active" || controls.killSwitch) {
+      openDialog("release");
+      return;
+    }
+
+    openDialog("mode");
+  }
+
   return (
     <div className="space-y-4">
       <PageHeader
@@ -513,13 +569,16 @@ export function RiskControlCenter({ data }: { data: RiskPageData }) {
               <p className="text-muted-foreground">{summary.warningAlerts} {dictionary.common.warnings}</p>
             </div>
           </div>
-          <Button className="mt-4 h-8 w-full rounded-sm bg-destructive text-destructive-foreground hover:bg-destructive/90">
+          <Button
+            className="mt-4 h-8 w-full rounded-sm bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            onClick={scrollToAuditLog}
+          >
             {dictionary.risk.viewLog}
           </Button>
         </div>
       </section>
 
-      <section className="grid gap-4 xl:grid-cols-[1.55fr_0.9fr]">
+      <section ref={auditLogRef} className="grid scroll-mt-4 gap-4 xl:grid-cols-[1.55fr_0.9fr]">
         <div className="overflow-hidden rounded-lg bg-card/95 ring-1 ring-white/5">
           <div className="flex flex-col gap-3 bg-popover/70 px-5 py-4 md:flex-row md:items-center md:justify-between">
             <p className="font-heading text-sm font-bold uppercase tracking-[0.18em] text-foreground">
@@ -529,14 +588,35 @@ export function RiskControlCenter({ data }: { data: RiskPageData }) {
               <Button
                 variant="outline"
                 size="sm"
-                className="rounded-sm border-white/10 bg-accent/40 text-foreground hover:bg-accent"
+                className={
+                  alertFilter === "all"
+                    ? "rounded-sm border-primary/40 bg-primary/10 text-primary hover:bg-primary/15"
+                    : "rounded-sm border-white/10 bg-accent/40 text-foreground hover:bg-accent"
+                }
+                onClick={() => setAlertFilter("all")}
               >
                 {dictionary.risk.filterAll}
               </Button>
+              {(["unresolved", "watching"] as const).map((status) => (
+                <Button
+                  key={status}
+                  variant="outline"
+                  size="sm"
+                  className={
+                    alertFilter === status
+                      ? "rounded-sm border-primary/40 bg-primary/10 text-primary hover:bg-primary/15"
+                      : "rounded-sm border-white/10 bg-accent/40 text-foreground hover:bg-accent"
+                  }
+                  onClick={() => setAlertFilter(status)}
+                >
+                  {enumLabel(status)}
+                </Button>
+              ))}
               <Button
                 variant="outline"
                 size="sm"
                 className="rounded-sm border-white/10 bg-accent/40 text-foreground hover:bg-accent"
+                onClick={exportVisibleAlertsCsv}
               >
                 <Download className="size-3.5" />
                 {dictionary.risk.exportCsv}
@@ -544,7 +624,7 @@ export function RiskControlCenter({ data }: { data: RiskPageData }) {
             </div>
           </div>
 
-          {alerts.length > 0 ? (
+          {visibleAlerts.length > 0 ? (
             <div className="overflow-x-auto">
               <table className="w-full text-left">
                 <thead className="bg-sidebar/60">
@@ -558,7 +638,7 @@ export function RiskControlCenter({ data }: { data: RiskPageData }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {alerts.map((alert) => (
+                  {visibleAlerts.map((alert) => (
                     <tr key={alert.id} className="transition-colors hover:bg-accent/35">
                       <td className="px-5 py-4">
                         <StatusPill tone={alert.severityTone}>{enumLabel(alert.severity)}</StatusPill>
@@ -570,7 +650,11 @@ export function RiskControlCenter({ data }: { data: RiskPageData }) {
                         <StatusPill tone={alert.statusTone}>{alert.statusLabel}</StatusPill>
                       </td>
                       <td className="px-5 py-4 text-right">
-                        <button className="text-xs font-bold uppercase tracking-[0.18em] text-primary transition-colors hover:text-primary/80">
+                        <button
+                          type="button"
+                          className="text-xs font-bold uppercase tracking-[0.18em] text-primary transition-colors hover:text-primary/80"
+                          onClick={() => manageAlert(alert)}
+                        >
                           {dictionary.common.manage}
                         </button>
                       </td>

@@ -51,6 +51,8 @@ check_json_endpoint() {
 echo "Checking PolyEdge API at ${API_BASE_URL}"
 curl -fsS "${API_BASE_URL}/healthz" >/dev/null
 echo "PASS api healthz"
+curl -fsS "${API_BASE_URL}/readyz" >/dev/null
+echo "PASS api readyz"
 
 if [[ "${RUN_WORKER}" == "1" ]]; then
   echo "Running one arbitrage scan and analysis via worker"

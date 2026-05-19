@@ -74,6 +74,7 @@ type ApprovalsWorkbenchProps = {
 
 type ApprovalTab = "pending" | "completed";
 type ApprovalDecision = "approved" | "rejected" | null;
+type ApprovalQuickFilter = "all" | "high_severity" | "critical";
 
 function buildApprovalItem(
   payload: RiskStreamPayload,
@@ -214,6 +215,7 @@ export function ApprovalsWorkbench({
   const { lastEvent: lastRiskEvent } = useConsoleRealtimeChannel("risk");
   const [approvalItems, setApprovalItems] = useState(approvals);
   const [tab, setTab] = useState<ApprovalTab>("pending");
+  const [quickFilter, setQuickFilter] = useState<ApprovalQuickFilter>("all");
   const [selectedId, setSelectedId] = useState<string>(
     approvals.find((approval) => approval.isSelected)?.id ?? approvals[0]?.id ?? "",
   );
@@ -247,10 +249,22 @@ export function ApprovalsWorkbench({
 
   const visibleApprovals = approvalItems.filter((approval) => {
     if (deferredTab === "pending") {
-      return approval.status === "pending";
+      if (approval.status !== "pending") {
+        return false;
+      }
+    } else if (approval.status === "pending") {
+      return false;
     }
 
-    return approval.status !== "pending";
+    if (quickFilter === "critical") {
+      return approval.severity === "critical";
+    }
+
+    if (quickFilter === "high_severity") {
+      return approval.severity === "critical" || approval.severity === "warning";
+    }
+
+    return true;
   });
 
   const selectedApproval =
@@ -277,7 +291,11 @@ export function ApprovalsWorkbench({
       label: `${dictionary.common.completed} (${computedCompletedCount})`,
     },
   ];
-  const filters = [dictionary.approvals.typeAll, dictionary.approvals.severityHigh, dictionary.approvals.riskCritical];
+  const filters: Array<{ key: ApprovalQuickFilter; label: string }> = [
+    { key: "all", label: dictionary.approvals.typeAll },
+    { key: "high_severity", label: dictionary.approvals.severityHigh },
+    { key: "critical", label: dictionary.approvals.riskCritical },
+  ];
 
   function selectApproval(approvalId: string) {
     startTransition(() => {
@@ -378,15 +396,20 @@ export function ApprovalsWorkbench({
                 <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-muted-foreground">
                   {dictionary.approvals.filterBy}
                 </span>
-                {filters.map((label) => (
+                {filters.map((item) => (
                   <Button
-                    key={label}
+                    key={item.key}
                     variant="outline"
                     size="sm"
-                    className="rounded-sm border-white/10 bg-accent/40 text-foreground hover:bg-accent"
+                    className={
+                      item.key === quickFilter
+                        ? "rounded-sm border-primary/40 bg-primary/10 text-primary hover:bg-primary/15"
+                        : "rounded-sm border-white/10 bg-accent/40 text-foreground hover:bg-accent"
+                    }
+                    onClick={() => setQuickFilter(item.key)}
                   >
                     <Filter className="size-3.5" />
-                    {label}
+                    {item.label}
                   </Button>
                 ))}
               </div>

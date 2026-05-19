@@ -54,7 +54,11 @@ impl Runtime {
     }
 
     pub async fn from_settings(settings: Arc<Settings>) -> Result<Self> {
-        let postgres = connect_postgres(settings.postgres.url.as_deref()).await?;
+        let postgres = connect_postgres(
+            settings.postgres.url.as_deref(),
+            settings.postgres.max_connections,
+        )
+        .await?;
         let redis = connect_redis(settings.redis.url.as_deref()).await?;
         let auth_verifier = Arc::new(InternalTokenVerifier::from_settings(&settings.auth)?);
         let (
@@ -316,14 +320,21 @@ fn risk_policy(settings: &Settings) -> RiskPolicy {
     }
 }
 
-async fn connect_postgres(url: Option<&str>) -> Result<Option<PgPool>> {
+async fn connect_postgres(url: Option<&str>, max_connections: u32) -> Result<Option<PgPool>> {
     let Some(url) = url.filter(|value| !value.trim().is_empty()) else {
         info!("postgres connection is not configured");
         return Ok(None);
     };
 
+    if max_connections == 0 {
+        return Err(AppError::invalid_input(
+            "POSTGRES_MAX_CONNECTIONS_INVALID",
+            "postgres max_connections must be greater than zero",
+        ));
+    }
+
     let pool = PgPoolOptions::new()
-        .max_connections(5)
+        .max_connections(max_connections)
         .connect(url)
         .await
         .map_err(|error| {

@@ -47,11 +47,10 @@ export async function submitApprovalDecision(input: {
   note: string;
   stepUpCode?: string;
 }): Promise<WriteResponse> {
-  const status = input.decision === "approved" ? "queued" : "rejected";
   const isSignalDecision = input.resourceId.startsWith("sig_");
 
   if (!isSignalDecision && process.env.POLYEDGE_API_BASE_URL) {
-    throw new Error("Live approval decisions are only wired for signal resources. Mode-switch and kill-switch queues remain mock-only.");
+    throw new Error("Live approval decisions are only wired for signal resources. Use the risk controls endpoints for mode and kill-switch changes.");
   }
 
   const path = input.decision === "approved"
@@ -71,7 +70,6 @@ export async function submitApprovalDecision(input: {
       stepUpCode: input.stepUpCode,
       stepUpScopes: [stepUpScope],
     },
-    createWriteResponse(`approval_decision_${input.approvalId}`, input.resourceId, status),
     {
       mapLiveResponse: (payload: LiveSignalDecisionResponse) =>
         createWriteResponse(

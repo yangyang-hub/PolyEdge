@@ -18,6 +18,7 @@ pub struct Settings {
     pub polymarket: PolymarketSettings,
     pub arbitrage: ArbitrageSettings,
     pub news: NewsSettings,
+    pub worker: WorkerSettings,
     pub auth: AuthSettings,
 }
 
@@ -28,10 +29,11 @@ pub struct ServerSettings {
     pub port: u16,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct DatabaseSettings {
     pub url: Option<String>,
+    pub max_connections: u32,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -144,6 +146,29 @@ pub struct NewsSourceSettings {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
+pub struct WorkerSettings {
+    pub ingest_fixtures_on_start: bool,
+    pub poll_news: bool,
+    pub promote_news_events: bool,
+    pub poll_arbitrage_radar: bool,
+    pub analyze_arbitrage_opportunities: bool,
+    pub drain_execution_queue: bool,
+    pub poll_paper_order_statuses: bool,
+    pub reconcile_paper_fills: bool,
+    pub poll_polymarket_order_statuses: bool,
+    pub reconcile_polymarket_fills: bool,
+    pub consume_polymarket_user_events: bool,
+    pub news_promotion_interval_secs: u64,
+    pub arbitrage_analysis_interval_secs: u64,
+    pub execution_drain_interval_secs: u64,
+    pub order_status_poll_interval_secs: u64,
+    pub fill_reconciliation_interval_secs: u64,
+    pub polymarket_user_event_restart_interval_secs: u64,
+    pub task_limit: u16,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
 pub struct AuthSettings {
     pub issuer: String,
     pub audience: String,
@@ -169,6 +194,15 @@ impl Default for ServerSettings {
         Self {
             host: "0.0.0.0".to_string(),
             port: 8080,
+        }
+    }
+}
+
+impl Default for DatabaseSettings {
+    fn default() -> Self {
+        Self {
+            url: None,
+            max_connections: 20,
         }
     }
 }
@@ -278,6 +312,31 @@ impl Default for NewsSourceSettings {
             url: String::new(),
             reliability: probability("0.50"),
             enabled: true,
+        }
+    }
+}
+
+impl Default for WorkerSettings {
+    fn default() -> Self {
+        Self {
+            ingest_fixtures_on_start: false,
+            poll_news: false,
+            promote_news_events: false,
+            poll_arbitrage_radar: false,
+            analyze_arbitrage_opportunities: false,
+            drain_execution_queue: false,
+            poll_paper_order_statuses: false,
+            reconcile_paper_fills: false,
+            poll_polymarket_order_statuses: false,
+            reconcile_polymarket_fills: false,
+            consume_polymarket_user_events: false,
+            news_promotion_interval_secs: 60,
+            arbitrage_analysis_interval_secs: 300,
+            execution_drain_interval_secs: 5,
+            order_status_poll_interval_secs: 15,
+            fill_reconciliation_interval_secs: 15,
+            polymarket_user_event_restart_interval_secs: 5,
+            task_limit: 100,
         }
     }
 }
@@ -445,6 +504,27 @@ mod tests {
         assert_eq!(settings.news.request_timeout_secs, 10);
         assert_eq!(settings.news.max_items_per_source, 50);
         assert!(settings.news.sources.is_empty());
+        assert!(!settings.worker.ingest_fixtures_on_start);
+        assert!(!settings.worker.poll_news);
+        assert!(!settings.worker.promote_news_events);
+        assert!(!settings.worker.poll_arbitrage_radar);
+        assert!(!settings.worker.analyze_arbitrage_opportunities);
+        assert!(!settings.worker.drain_execution_queue);
+        assert!(!settings.worker.poll_paper_order_statuses);
+        assert!(!settings.worker.reconcile_paper_fills);
+        assert!(!settings.worker.poll_polymarket_order_statuses);
+        assert!(!settings.worker.reconcile_polymarket_fills);
+        assert!(!settings.worker.consume_polymarket_user_events);
+        assert_eq!(settings.worker.news_promotion_interval_secs, 60);
+        assert_eq!(settings.worker.arbitrage_analysis_interval_secs, 300);
+        assert_eq!(settings.worker.execution_drain_interval_secs, 5);
+        assert_eq!(settings.worker.order_status_poll_interval_secs, 15);
+        assert_eq!(settings.worker.fill_reconciliation_interval_secs, 15);
+        assert_eq!(
+            settings.worker.polymarket_user_event_restart_interval_secs,
+            5
+        );
+        assert_eq!(settings.worker.task_limit, 100);
         assert!(!settings.arbitrage.enabled);
         assert_eq!(settings.arbitrage.poll_interval_secs, 5);
         assert_eq!(settings.arbitrage.scan_limit, 100);
@@ -459,6 +539,7 @@ mod tests {
         assert_eq!(settings.arbitrage.fee_buffer, edge("0.005"));
         assert_eq!(settings.arbitrage.slippage_buffer, edge("0.005"));
         assert!(settings.postgres.url.is_none());
+        assert_eq!(settings.postgres.max_connections, 20);
         assert!(settings.redis.url.is_none());
         assert_eq!(
             settings.auth.force_reauth_after.as_deref(),
@@ -473,6 +554,10 @@ mod tests {
             (
                 "POLYEDGE_POSTGRES__URL".to_string(),
                 "postgres://postgres:postgres@localhost:5432/polyedge".to_string(),
+            ),
+            (
+                "POLYEDGE_POSTGRES__MAX_CONNECTIONS".to_string(),
+                "32".to_string(),
             ),
             (
                 "POLYEDGE_RUNTIME__ENVIRONMENT".to_string(),
@@ -540,6 +625,72 @@ mod tests {
                 "0.004".to_string(),
             ),
             (
+                "POLYEDGE_WORKER__INGEST_FIXTURES_ON_START".to_string(),
+                "true".to_string(),
+            ),
+            ("POLYEDGE_WORKER__POLL_NEWS".to_string(), "true".to_string()),
+            (
+                "POLYEDGE_WORKER__PROMOTE_NEWS_EVENTS".to_string(),
+                "true".to_string(),
+            ),
+            (
+                "POLYEDGE_WORKER__POLL_ARBITRAGE_RADAR".to_string(),
+                "true".to_string(),
+            ),
+            (
+                "POLYEDGE_WORKER__ANALYZE_ARBITRAGE_OPPORTUNITIES".to_string(),
+                "true".to_string(),
+            ),
+            (
+                "POLYEDGE_WORKER__DRAIN_EXECUTION_QUEUE".to_string(),
+                "true".to_string(),
+            ),
+            (
+                "POLYEDGE_WORKER__POLL_PAPER_ORDER_STATUSES".to_string(),
+                "true".to_string(),
+            ),
+            (
+                "POLYEDGE_WORKER__RECONCILE_PAPER_FILLS".to_string(),
+                "true".to_string(),
+            ),
+            (
+                "POLYEDGE_WORKER__POLL_POLYMARKET_ORDER_STATUSES".to_string(),
+                "true".to_string(),
+            ),
+            (
+                "POLYEDGE_WORKER__RECONCILE_POLYMARKET_FILLS".to_string(),
+                "true".to_string(),
+            ),
+            (
+                "POLYEDGE_WORKER__CONSUME_POLYMARKET_USER_EVENTS".to_string(),
+                "true".to_string(),
+            ),
+            (
+                "POLYEDGE_WORKER__NEWS_PROMOTION_INTERVAL_SECS".to_string(),
+                "30".to_string(),
+            ),
+            (
+                "POLYEDGE_WORKER__ARBITRAGE_ANALYSIS_INTERVAL_SECS".to_string(),
+                "120".to_string(),
+            ),
+            (
+                "POLYEDGE_WORKER__EXECUTION_DRAIN_INTERVAL_SECS".to_string(),
+                "6".to_string(),
+            ),
+            (
+                "POLYEDGE_WORKER__ORDER_STATUS_POLL_INTERVAL_SECS".to_string(),
+                "20".to_string(),
+            ),
+            (
+                "POLYEDGE_WORKER__FILL_RECONCILIATION_INTERVAL_SECS".to_string(),
+                "25".to_string(),
+            ),
+            (
+                "POLYEDGE_WORKER__POLYMARKET_USER_EVENT_RESTART_INTERVAL_SECS".to_string(),
+                "10".to_string(),
+            ),
+            ("POLYEDGE_WORKER__TASK_LIMIT".to_string(), "33".to_string()),
+            (
                 "POLYEDGE_POLYMARKET__PRIVATE_KEY".to_string(),
                 "".to_string(),
             ),
@@ -568,6 +719,7 @@ mod tests {
             settings.postgres.url.as_deref(),
             Some("postgres://postgres:postgres@localhost:5432/polyedge"),
         );
+        assert_eq!(settings.postgres.max_connections, 32);
         assert_eq!(settings.runtime.environment, "staging");
         assert_eq!(
             settings.runtime.initial_mode,
@@ -592,6 +744,27 @@ mod tests {
         assert_eq!(settings.arbitrage.min_capacity, quantity("50"));
         assert_eq!(settings.arbitrage.fee_buffer, edge("0.003"));
         assert_eq!(settings.arbitrage.slippage_buffer, edge("0.004"));
+        assert!(settings.worker.ingest_fixtures_on_start);
+        assert!(settings.worker.poll_news);
+        assert!(settings.worker.promote_news_events);
+        assert!(settings.worker.poll_arbitrage_radar);
+        assert!(settings.worker.analyze_arbitrage_opportunities);
+        assert!(settings.worker.drain_execution_queue);
+        assert!(settings.worker.poll_paper_order_statuses);
+        assert!(settings.worker.reconcile_paper_fills);
+        assert!(settings.worker.poll_polymarket_order_statuses);
+        assert!(settings.worker.reconcile_polymarket_fills);
+        assert!(settings.worker.consume_polymarket_user_events);
+        assert_eq!(settings.worker.news_promotion_interval_secs, 30);
+        assert_eq!(settings.worker.arbitrage_analysis_interval_secs, 120);
+        assert_eq!(settings.worker.execution_drain_interval_secs, 6);
+        assert_eq!(settings.worker.order_status_poll_interval_secs, 20);
+        assert_eq!(settings.worker.fill_reconciliation_interval_secs, 25);
+        assert_eq!(
+            settings.worker.polymarket_user_event_restart_interval_secs,
+            10
+        );
+        assert_eq!(settings.worker.task_limit, 33);
         assert_eq!(
             settings.auth.revoked_sessions,
             vec!["sess_alpha".to_string(), "sess_beta".to_string()],

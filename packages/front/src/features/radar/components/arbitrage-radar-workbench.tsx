@@ -669,6 +669,12 @@ export function ArbitrageRadarWorkbench({ data }: ArbitrageRadarWorkbenchProps) 
     });
   }
 
+  function cycleFilter() {
+    const currentIndex = filterButtons.findIndex((item) => item.key === filter);
+    const nextFilter = filterButtons[(currentIndex + 1) % filterButtons.length]?.key ?? "all";
+    setFilter(nextFilter);
+  }
+
   return (
     <div className="space-y-4">
       <PageHeader
@@ -715,6 +721,7 @@ export function ArbitrageRadarWorkbench({ data }: ArbitrageRadarWorkbenchProps) 
                 variant="outline"
                 size="sm"
                 className="rounded-sm border-white/10 bg-accent/40 text-foreground hover:bg-accent"
+                onClick={cycleFilter}
               >
                 <Filter className="size-3.5" />
                 {dictionary.common.filter}
@@ -798,7 +805,14 @@ export function ArbitrageRadarWorkbench({ data }: ArbitrageRadarWorkbenchProps) 
                         </StatusPill>
                       </td>
                       <td className="px-5 py-3 text-right">
-                        <button className="rounded-sm p-1 text-primary transition-colors hover:bg-primary/10">
+                        <button
+                          type="button"
+                          className="rounded-sm p-1 text-primary transition-colors hover:bg-primary/10"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            selectOpportunity(opportunity.id);
+                          }}
+                        >
                           <ChevronRight className="ml-auto size-4" />
                         </button>
                       </td>

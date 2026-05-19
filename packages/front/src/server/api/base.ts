@@ -242,13 +242,12 @@ export async function fetchWriteContract<TLive, TFront = TLive>(
     stepUpCode?: string;
     stepUpScopes?: InternalApiStepUpScope[];
   },
-  fallback: TFront,
   options?: {
     mapLiveResponse?: (payload: TLive) => TFront;
   },
 ): Promise<TFront> {
   if (!getApiBaseUrl()) {
-    return clone(fallback);
+    throw new PolyEdgeApiError("PolyEdge API base URL is not configured for write operations.");
   }
 
   const payload = await fetchJson<TLive>(

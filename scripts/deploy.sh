@@ -24,6 +24,58 @@ find_compose() {
   return 1
 }
 
+env_value() {
+  local key="$1"
+  local file="$2"
+  local line
+  line="$(grep -E "^[[:space:]]*${key}[[:space:]]*=" "${file}" | tail -n1 || true)"
+  [[ -n "${line}" ]] || return 0
+
+  local value="${line#*=}"
+  value="$(printf '%s' "${value}" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')"
+  value="${value%\"}"
+  value="${value#\"}"
+  value="${value%\'}"
+  value="${value#\'}"
+  printf '%s' "${value}"
+}
+
+validate_env_file() {
+  local file="$1"
+
+  if [[ "${POLYEDGE_SKIP_ENV_VALIDATION:-0}" == "1" ]]; then
+    log "skipping env validation because POLYEDGE_SKIP_ENV_VALIDATION=1"
+    return 0
+  fi
+
+  local postgres_url
+  postgres_url="$(env_value POLYEDGE_POSTGRES__URL "${file}")"
+  local allow_in_memory
+  allow_in_memory="$(env_value POLYEDGE_ALLOW_IN_MEMORY_DEPLOY "${file}")"
+  if [[ -z "${postgres_url}" && "${allow_in_memory}" != "1" ]]; then
+    fail "POLYEDGE_POSTGRES__URL is empty in ${file}. Production deploys require PostgreSQL; set POLYEDGE_ALLOW_IN_MEMORY_DEPLOY=1 only for throwaway demos."
+  fi
+  if [[ "${postgres_url}" == *change-me* ]]; then
+    fail "POLYEDGE_POSTGRES__URL still contains change-me in ${file}."
+  fi
+
+  local step_up_code
+  step_up_code="$(env_value POLYEDGE_CONSOLE_STEP_UP_CODE "${file}")"
+  if [[ -z "${step_up_code}" || "${step_up_code}" == "change-me" ]]; then
+    fail "POLYEDGE_CONSOLE_STEP_UP_CODE must be set to a non-placeholder value in ${file}."
+  fi
+
+  local runtime_environment
+  runtime_environment="$(env_value POLYEDGE_RUNTIME__ENVIRONMENT "${file}")"
+  runtime_environment="${runtime_environment:-local}"
+  local dev_bypass
+  dev_bypass="$(env_value POLYEDGE_INTERNAL_AUTH_DEV_BYPASS "${file}")"
+  dev_bypass="${dev_bypass:-1}"
+  if [[ "${runtime_environment}" != "local" && "${dev_bypass}" == "1" ]]; then
+    fail "POLYEDGE_INTERNAL_AUTH_DEV_BYPASS=1 is only allowed with POLYEDGE_RUNTIME__ENVIRONMENT=local."
+  fi
+}
+
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 default_root="$(cd "${script_dir}/.." && pwd)"
 deploy_dir="${POLYEDGE_DEPLOY_DIR:-${default_root}}"
@@ -96,6 +148,8 @@ if [[ ! -f "${env_file}" ]]; then
   fail "created ${env_file}. Edit PostgreSQL/Redis URLs and secrets, then rerun this script."
 fi
 
+validate_env_file "${env_file}"
+
 compose_cmd="$(find_compose)" || fail "Docker Compose is not installed."
 
 rebuild_services=()
@@ -111,6 +165,7 @@ elif [[ "${old_rev}" != "${new_rev}" ]]; then
 
   if ! git diff --quiet "${old_rev}" "${new_rev}" -- \
     bin/polyedge-api \
+    bin/polyedge-worker \
     packages/backend/Dockerfile \
     deploy/docker-compose.yml \
     .dockerignore
@@ -132,6 +187,7 @@ fi
 if [[ ${#rebuild_services[@]} -gt 0 ]]; then
   if printf '%s\n' "${rebuild_services[@]}" | grep -qx 'polyedge-api'; then
     [[ -f "${deploy_dir}/bin/polyedge-api" ]] || fail "bin/polyedge-api is missing. Build it with scripts/build-backend-bin.sh and commit it."
+    [[ -f "${deploy_dir}/bin/polyedge-worker" ]] || fail "bin/polyedge-worker is missing. Build it with scripts/build-backend-bin.sh and commit it."
   fi
 
   log "building changed images: ${rebuild_services[*]}"

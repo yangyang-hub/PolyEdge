@@ -21,6 +21,18 @@ services:
       retries: 10
       start_period: 20s
 
+  polyedge-worker:
+    image: ${POLYEDGE_API_IMAGE:-polyedge-api:local}
+    restart: unless-stopped
+    env_file:
+      - .env
+    command: ["polyedge-worker"]
+    depends_on:
+      polyedge-api:
+        condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
   polyedge-front:
     build:
       context: ..

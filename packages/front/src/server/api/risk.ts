@@ -76,7 +76,6 @@ export async function requestModeSwitch(input: {
       stepUpCode: input.stepUpCode,
       stepUpScopes: ["system_mode_switch"],
     },
-    createWriteResponse(`mode_switch_${input.targetMode}`, "runtime_mode", "queued"),
     {
       mapLiveResponse: (payload: LiveSystemModeWriteResponse) =>
         createWriteResponse(`mode_switch_${payload.data.mode}`, "runtime_mode", "completed"),
@@ -100,7 +99,6 @@ export async function releaseRiskControls(input: {
       stepUpCode: input.stepUpCode,
       stepUpScopes: ["system_kill_switch_release"],
     },
-    createWriteResponse("risk_release", "risk_state_global", "queued"),
     {
       mapLiveResponse: () =>
         createWriteResponse("risk_release", "risk_state_global", "completed"),
@@ -125,7 +123,6 @@ export async function setKillSwitchState(input: {
         stepUpCode: input.stepUpCode,
         stepUpScopes: ["system_kill_switch_trigger"],
       },
-      createWriteResponse("kill_switch", "kill_switch_global", "queued"),
       {
         mapLiveResponse: () =>
           createWriteResponse("kill_switch", "kill_switch_global", "completed"),

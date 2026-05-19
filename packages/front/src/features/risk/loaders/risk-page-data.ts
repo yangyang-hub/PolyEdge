@@ -85,6 +85,7 @@ export async function getRiskPageData() {
       reason: localizeGeneratedCopy(locale, dictionary, alert.reason),
       target: localizeGeneratedCopy(locale, dictionary, alert.target),
       createdAt: formatClock(alert.created_at),
+      status: alert.status,
       statusLabel: enumLabel(alert.status),
       statusTone: alertStatusTone(alert.status),
     })),

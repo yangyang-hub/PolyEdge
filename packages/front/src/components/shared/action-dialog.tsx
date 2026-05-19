@@ -33,6 +33,7 @@ type ActionDialogProps = {
   stepUpCodeError?: string;
   requiresStepUp: boolean;
   onSubmit: () => void;
+  confirmDisabled?: boolean;
   feedback?: OperationActionResult | null;
   context?: ReactNode;
   children?: ReactNode;
@@ -54,6 +55,7 @@ export function ActionDialog({
   stepUpCodeError,
   requiresStepUp,
   onSubmit,
+  confirmDisabled = false,
   feedback,
   context,
   children,
@@ -115,7 +117,7 @@ export function ActionDialog({
             variant={confirmVariant}
             className="rounded-sm"
             onClick={onSubmit}
-            disabled={isPending}
+            disabled={isPending || confirmDisabled}
           >
             {isPending ? dictionary.common.submitting : confirmLabel}
           </Button>
