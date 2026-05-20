@@ -24,7 +24,9 @@ config = { version = "0.15.18", default-features = false, features = ["toml"] }
 dotenvy = "0.15.7"
 ed25519-dalek = { version = "2.2.0", features = ["rand_core"] }
 futures = "0.3.32"
-polymarket-client-sdk = { version = "0.4.4", features = ["clob", "tracing", "ws"] }
+# Keep the dependency key as `polymarket-client-sdk` so existing `polymarket_client_sdk`
+# imports resolve to the CLOB V2 crate.
+polymarket-client-sdk = { package = "polymarket_client_sdk_v2", version = "0.6.0-canary.1", features = ["clob", "tracing", "ws"] }
 redis = { version = "0.32.7", default-features = false, features = ["tokio-comp"] }
 reqwest = "0.13.2"
 rust_decimal = { version = "1.39.0", features = ["serde"] }

@@ -257,7 +257,7 @@ git commit -m "Build backend binaries"
 ```bash
 cp deploy/.env.example deploy/.env
 # 编辑 deploy/.env，填入外部 PostgreSQL / Redis URL 和控制台 step-up code
-./scripts/deploy.sh
+./scripts/deploy.sh all
 ```
 
 `deploy/docker-compose.yml` 启动：
@@ -268,11 +268,14 @@ cp deploy/.env.example deploy/.env
 
 PostgreSQL 和 Redis 不会由 compose 创建，需要在 `deploy/.env` 里配置已有服务地址。
 
-部署脚本会在启动前从 GitHub 更新当前 checkout，并按变更范围增量重建镜像：
+部署脚本会在启动前从 GitHub 更新当前 checkout，然后按传入目标重建镜像并重启对应容器：
 
-- `bin/polyedge-api`、`bin/polyedge-worker` 或后端部署文件变化：重建后端镜像
-- `packages/front` 或前端部署文件变化：重建 `polyedge-front`
-- 只有文档等无关文件变化：不重建镜像，只执行 `docker compose up -d`
+- `./scripts/deploy.sh all`：重建后端和前端镜像，并重启 `polyedge-api`、`polyedge-worker`、`polyedge-front`
+- `./scripts/deploy.sh api worker`：重建后端镜像，并重启 API 与 worker
+- `./scripts/deploy.sh api`：只重建后端镜像并重启 API
+- `./scripts/deploy.sh worker`：只重建后端镜像并重启 worker
+- `./scripts/deploy.sh front`：只重建前端镜像并重启前端
+- 也可以传多个目标，例如 `./scripts/deploy.sh api front` 或 `./scripts/deploy.sh api,worker`
 
 更新指定分支：
 
