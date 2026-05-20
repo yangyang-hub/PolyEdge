@@ -14,21 +14,15 @@ import type {
   SignalDto,
   SignalTransitionDto,
 } from "@/lib/contracts/dto";
-import {
-  eventFixtures,
-  replayRunFixture,
-  signalFixtures,
-} from "@/lib/server/polyedge-mock-data";
-import {
-  buildQueryString,
-  createResponse,
-  fetchContract,
-  getBackendMode,
-} from "@/server/api/base";
+import { buildQueryString, fetchContract } from "@/server/api/base";
 import { listEvents, listEvidences } from "@/server/api/events";
 import { formatInteger, formatPercentFromRatio, formatSignedFixed, humanizeSnakeCase } from "@/lib/server/console-formatters";
 import { listMarkets } from "@/server/api/markets";
 import { listSignals } from "@/server/api/signals";
+
+const DEFAULT_REPLAY_RUN_ID = "latest";
+const DEFAULT_REPLAY_MARKET_ID = "live_replay";
+const DEFAULT_REPLAY_MARKET_QUESTION = "Live replay";
 
 type ReplaySnapshot = {
   replayRun: ReplayRunDto;
@@ -56,7 +50,7 @@ function sortByTimestampAscending<T>(items: T[], readTimestamp: (item: T) => str
 function selectReplaySignal(signals: SignalDto[], runId: string): SignalDto | null {
   const sortedSignals = sortByTimestampDescending(signals, (signal) => signal.updated_at);
 
-  if (runId !== replayRunFixture.id) {
+  if (runId !== DEFAULT_REPLAY_RUN_ID) {
     return (
       sortedSignals.find((signal) => signal.id === runId || signal.market_id === runId || `signal_${signal.id}_replay` === runId) ??
       sortedSignals[0] ??
@@ -72,7 +66,7 @@ function selectReplayMarket(markets: MarketDto[], selectedSignal: SignalDto | nu
     return markets.find((market) => market.id === selectedSignal.market_id) ?? null;
   }
 
-  if (runId !== replayRunFixture.id) {
+  if (runId !== DEFAULT_REPLAY_RUN_ID) {
     const directMatch = markets.find((market) => market.id === runId || `market_${market.id}_replay` === runId);
     if (directMatch) {
       return directMatch;
@@ -161,8 +155,8 @@ function buildReplayRun(params: {
   evidenceCount: number;
   timeline: ReplayMomentDto[];
 }): ReplayRunDto {
-  const marketId = params.signal?.market_id ?? params.market?.id ?? replayRunFixture.market_id;
-  const marketQuestion = params.market?.question ?? replayRunFixture.market_question;
+  const marketId = params.signal?.market_id ?? params.market?.id ?? DEFAULT_REPLAY_MARKET_ID;
+  const marketQuestion = params.market?.question ?? DEFAULT_REPLAY_MARKET_QUESTION;
   const prior = params.estimate?.prior_price ?? params.signal?.market_price ?? params.market?.mid_price ?? "0.00";
   const posterior = params.estimate?.posterior_price ?? params.signal?.fair_price ?? params.market?.mid_price ?? prior;
   const marketPrice = params.estimate?.market_price ?? params.signal?.market_price ?? params.market?.mid_price ?? posterior;
@@ -199,7 +193,7 @@ const readDerivedLiveReplaySnapshot = cache(async (runId: string): Promise<ApiRe
 
   const selectedSignal = selectReplaySignal(signalsPayload.data, runId);
   const selectedMarket = selectReplayMarket(marketsPayload.data, selectedSignal, runId);
-  const marketId = selectedSignal?.market_id ?? selectedMarket?.id ?? replayRunFixture.market_id;
+  const marketId = selectedSignal?.market_id ?? selectedMarket?.id ?? DEFAULT_REPLAY_MARKET_ID;
   const relatedSignals = sortByTimestampDescending(
     signalsPayload.data.filter((signal) => signal.market_id === marketId),
     (signal) => signal.updated_at,
@@ -223,14 +217,15 @@ const readDerivedLiveReplaySnapshot = cache(async (runId: string): Promise<ApiRe
     }),
     fetchContract<ApiResponse<ProbabilityEstimateDto[]>>(
       `/api/v1/pricing/estimates${buildQueryString(estimateQuery)}`,
-      createResponse("probability_estimates", [] as ProbabilityEstimateDto[]),
     ),
     selectedSignal
       ? fetchContract<ApiResponse<SignalTransitionDto[]>>(
           `/api/v1/signals/${selectedSignal.id}/transitions${buildQueryString({ limit: 20 })}`,
-          createResponse("signal_transitions", [] as SignalTransitionDto[]),
         )
-      : Promise.resolve(createResponse("signal_transitions", [] as SignalTransitionDto[])),
+      : Promise.resolve({
+          data: [],
+          meta: signalsPayload.meta,
+        } satisfies ApiResponse<SignalTransitionDto[]>),
   ]);
 
   const selectedEvidence =
@@ -244,7 +239,7 @@ const readDerivedLiveReplaySnapshot = cache(async (runId: string): Promise<ApiRe
     estimate: selectedEstimate,
     transitions: orderedTransitions,
     signal: selectedSignal,
-    marketQuestion: selectedMarket?.question ?? replayRunFixture.market_question,
+    marketQuestion: selectedMarket?.question ?? DEFAULT_REPLAY_MARKET_QUESTION,
   });
 
   return {
@@ -264,17 +259,6 @@ const readDerivedLiveReplaySnapshot = cache(async (runId: string): Promise<ApiRe
   };
 });
 
-export async function readReplaySnapshot(runId = replayRunFixture.id): Promise<ApiResponse<ReplaySnapshot>> {
-  if (getBackendMode() === "mock") {
-    const relatedSignals = signalFixtures.filter((signal) => signal.market_id === replayRunFixture.market_id);
-    const relatedEvents = eventFixtures.filter((event) => event.related_market_ids.includes(replayRunFixture.market_id));
-
-    return createResponse("replay_snapshot", {
-      replayRun: replayRunFixture,
-      relatedSignals,
-      relatedEvents,
-    });
-  }
-
+export async function readReplaySnapshot(runId = DEFAULT_REPLAY_RUN_ID): Promise<ApiResponse<ReplaySnapshot>> {
   return readDerivedLiveReplaySnapshot(runId);
 }

@@ -10,7 +10,7 @@ import type {
 import type { InternalApiRequestKind, InternalApiStepUpScope } from "@/server/auth/internal-api-token";
 import { createInternalApiHeaders } from "@/server/auth/internal-api-token";
 
-export type BackendMode = "mock" | "live";
+export type BackendMode = "live";
 
 export class PolyEdgeApiError extends Error {
   code?: string;
@@ -44,10 +44,6 @@ function createMeta(resource: string): ApiMeta {
   };
 }
 
-function clone<T>(value: T): T {
-  return structuredClone(value);
-}
-
 function createCursorPage(limit: number) {
   return {
     limit,
@@ -57,12 +53,22 @@ function createCursorPage(limit: number) {
 }
 
 export function getBackendMode(): BackendMode {
-  return getApiBaseUrl() ? "live" : "mock";
+  return "live";
 }
 
-export function getApiBaseUrl(): string | null {
+export function getConfiguredApiBaseUrl(): string | null {
   const value = process.env.POLYEDGE_API_BASE_URL?.trim().replace(/\/$/, "");
   return value ? value : null;
+}
+
+export function getApiBaseUrl(): string {
+  const apiBaseUrl = getConfiguredApiBaseUrl();
+
+  if (!apiBaseUrl) {
+    throw new PolyEdgeApiError("POLYEDGE_API_BASE_URL is required for frontend live data.");
+  }
+
+  return apiBaseUrl;
 }
 
 export function buildQueryString(
@@ -96,28 +102,6 @@ export function buildQueryString(
   return queryString ? `?${queryString}` : "";
 }
 
-export function createListResponse<T>(resource: string, items: T[], limit?: number): ApiListResponse<T> {
-  const normalizedLimit = limit ?? items.length;
-  const slicedItems = items.slice(0, normalizedLimit);
-
-  return {
-    data: slicedItems,
-    page: {
-      limit: normalizedLimit,
-      next_cursor: items.length > normalizedLimit ? `${resource}_cursor_01` : null,
-      has_more: items.length > normalizedLimit,
-    },
-    meta: createMeta(resource),
-  };
-}
-
-export function createResponse<T>(resource: string, data: T): ApiResponse<T> {
-  return {
-    data,
-    meta: createMeta(resource),
-  };
-}
-
 export function createWriteResponse(
   resource: string,
   resourceId: string,
@@ -146,10 +130,6 @@ async function fetchJson<T>(
   },
 ): Promise<T> {
   const apiBaseUrl = getApiBaseUrl();
-
-  if (!apiBaseUrl) {
-    throw new PolyEdgeApiError("PolyEdge API base URL is not configured.");
-  }
 
   const authHeaders = await createInternalApiHeaders(auth);
   const headers = new Headers(init.headers);
@@ -184,11 +164,7 @@ async function fetchJson<T>(
   return (await response.json()) as T;
 }
 
-export async function fetchContract<T>(path: string, fallback: T): Promise<T> {
-  if (!getApiBaseUrl()) {
-    return clone(fallback);
-  }
-
+export async function fetchContract<T>(path: string): Promise<T> {
   return fetchJson<T>(
     path,
     {
@@ -204,15 +180,10 @@ export async function fetchContract<T>(path: string, fallback: T): Promise<T> {
 
 export async function fetchListContract<TLive, TFront = TLive>(
   path: string,
-  fallback: ApiListResponse<TFront>,
   options?: {
     mapItem?: (item: TLive) => TFront;
   },
 ): Promise<ApiListResponse<TFront>> {
-  if (!getApiBaseUrl()) {
-    return clone(fallback);
-  }
-
   const payload = await fetchJson<ApiResponse<TLive[]>>(
     path,
     {
@@ -246,10 +217,6 @@ export async function fetchWriteContract<TLive, TFront = TLive>(
     mapLiveResponse?: (payload: TLive) => TFront;
   },
 ): Promise<TFront> {
-  if (!getApiBaseUrl()) {
-    throw new PolyEdgeApiError("PolyEdge API base URL is not configured for write operations.");
-  }
-
   const payload = await fetchJson<TLive>(
     path,
     {
@@ -269,12 +236,4 @@ export async function fetchWriteContract<TLive, TFront = TLive>(
   );
 
   return options?.mapLiveResponse ? options.mapLiveResponse(payload) : ((payload as unknown) as TFront);
-}
-
-export async function fetchUnsupportedContract<T>(fallback: T): Promise<T> {
-  return clone(fallback);
-}
-
-export async function fetchUnsupportedListContract<T>(fallback: ApiListResponse<T>): Promise<ApiListResponse<T>> {
-  return clone(fallback);
 }

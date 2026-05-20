@@ -1,8 +1,5 @@
 export type ConsoleRole = "viewer" | "operator" | "risk_admin" | "admin";
-export type ConsoleAuthMode = "off" | "mock-session";
-
-export const CONSOLE_ROLE_COOKIE = "polyedge_console_role";
-export const CONSOLE_USER_COOKIE = "polyedge_console_user";
+export type ConsoleAuthMode = "off";
 
 export const CONSOLE_ROLES: ConsoleRole[] = ["viewer", "operator", "risk_admin", "admin"];
 
@@ -33,7 +30,8 @@ const CONSOLE_ROUTE_REQUIREMENTS: Array<{ prefix: string; minRole: ConsoleRole }
 ];
 
 export function getConsoleAuthMode(rawValue: string | null | undefined): ConsoleAuthMode {
-  return rawValue === "mock-session" ? "mock-session" : "off";
+  void rawValue;
+  return "off";
 }
 
 export function normalizeConsoleRole(rawValue: string | null | undefined): ConsoleRole | null {

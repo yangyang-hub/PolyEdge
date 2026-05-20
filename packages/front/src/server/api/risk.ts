@@ -2,14 +2,11 @@ import "server-only";
 
 import type { ApiListResponse, ApiResponse, ContractListQuery, WriteResponse } from "@/lib/contracts/api";
 import type { RiskAlertDto, RiskBucketDto, RiskStateDto } from "@/lib/contracts/dto";
-import { riskAlertFixtures, riskBucketFixtures, riskStateFixture } from "@/lib/server/polyedge-mock-data";
 import {
   buildQueryString,
-  createListResponse,
-  createResponse,
+  createWriteResponse,
   fetchContract,
   fetchListContract,
-  createWriteResponse,
   fetchWriteContract,
 } from "@/server/api/base";
 
@@ -21,41 +18,20 @@ type LiveSystemModeWriteResponse = ApiResponse<{
 }>;
 
 export async function readRiskState(): Promise<ApiResponse<RiskStateDto>> {
-  if (!process.env.POLYEDGE_API_BASE_URL) {
-    return createResponse("risk_state", structuredClone(riskStateFixture));
-  }
-
-  return fetchContract<ApiResponse<RiskStateDto>>(
-    "/api/v1/risk/state",
-    createResponse("risk_state", riskStateFixture),
-  );
+  return fetchContract<ApiResponse<RiskStateDto>>("/api/v1/risk/state");
 }
 
 export async function listRiskAlerts(query?: ContractListQuery): Promise<ApiListResponse<RiskAlertDto>> {
-  const applyFilters = (alerts: RiskAlertDto[]) => alerts.filter((alert) => {
-    if (query?.status && !query.status.includes(alert.status)) {
-      return false;
-    }
-
-    return true;
-  });
-
-  const fallback = createListResponse("risk_alerts", applyFilters(riskAlertFixtures), query?.limit);
-
   return fetchListContract(
     `/api/v1/risk/alerts${buildQueryString({
       status: query?.status?.[0],
       limit: query?.limit,
     })}`,
-    fallback,
   );
 }
 
 export async function listRiskBuckets(query?: ContractListQuery): Promise<ApiListResponse<RiskBucketDto>> {
-  return fetchListContract(
-    `/api/v1/risk/buckets${buildQueryString({ limit: query?.limit })}`,
-    createListResponse("risk_buckets", riskBucketFixtures, query?.limit),
-  );
+  return fetchListContract(`/api/v1/risk/buckets${buildQueryString({ limit: query?.limit })}`);
 }
 
 export async function requestModeSwitch(input: {

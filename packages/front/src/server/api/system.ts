@@ -2,10 +2,8 @@ import "server-only";
 
 import type { ApiListResponse, ContractListQuery, WriteResponse } from "@/lib/contracts/api";
 import type { ApprovalDto } from "@/lib/contracts/dto";
-import { approvalFixtures } from "@/lib/server/polyedge-mock-data";
 import {
   buildQueryString,
-  createListResponse,
   createWriteResponse,
   fetchListContract,
   fetchWriteContract,
@@ -22,20 +20,11 @@ type LiveSignalDecisionResponse = {
 };
 
 export async function listApprovals(query?: ContractListQuery): Promise<ApiListResponse<ApprovalDto>> {
-  const applyFilters = (approvals: ApprovalDto[]) => approvals.filter((approval) => {
-    if (query?.status && !query.status.includes(approval.status)) {
-      return false;
-    }
-
-    return true;
-  });
-
   return fetchListContract(
     `/api/v1/approvals${buildQueryString({
       status: query?.status?.[0],
       limit: query?.limit,
     })}`,
-    createListResponse("approvals", applyFilters(approvalFixtures), query?.limit),
   );
 }
 
@@ -49,7 +38,7 @@ export async function submitApprovalDecision(input: {
 }): Promise<WriteResponse> {
   const isSignalDecision = input.resourceId.startsWith("sig_");
 
-  if (!isSignalDecision && process.env.POLYEDGE_API_BASE_URL) {
+  if (!isSignalDecision) {
     throw new Error("Live approval decisions are only wired for signal resources. Use the risk controls endpoints for mode and kill-switch changes.");
   }
 

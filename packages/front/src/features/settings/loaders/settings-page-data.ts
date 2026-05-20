@@ -8,7 +8,7 @@ import {
   formatPercentFromRatio,
   type Tone,
 } from "@/lib/server/console-formatters";
-import { getApiBaseUrl, getBackendMode } from "@/server/api/base";
+import { getBackendMode, getConfiguredApiBaseUrl } from "@/server/api/base";
 import { listNewsRawEvents, listNewsSourceHealth } from "@/server/api/news";
 
 function sourceHealthTone(healthScore: string, consecutiveFailures: number): Tone {
@@ -42,7 +42,7 @@ export async function getSettingsPageData() {
 
   return {
     backendMode: getBackendMode(),
-    apiBaseUrl: getApiBaseUrl(),
+    apiBaseUrl: getConfiguredApiBaseUrl(),
     consoleAuthMode: getConsoleAuthMode(process.env.POLYEDGE_CONSOLE_AUTH),
     sourceHealthSummary: {
       label: degradedSources.length > 0

@@ -11,7 +11,6 @@ export default async function SettingsPage() {
   const docs = [
     { title: dictionary.docs.systemDesign, path: "doc/polyedge-design.md" },
     { title: dictionary.docs.frontendDesign, path: "doc/polyedge-frontend-design.md" },
-    { title: dictionary.docs.prototypeDesign, path: "doc/polyedge-prototype-design.md" },
     { title: dictionary.docs.uiStack, path: "doc/polyedge-frontend-ui-stack.md" },
   ];
 

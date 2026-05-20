@@ -109,9 +109,9 @@ function shouldUseDevInternalAuth(): boolean {
 function assertSignedInternalAuthHasTrustedConsoleSession(): void {
   const authMode = getConsoleAuthMode(process.env.POLYEDGE_CONSOLE_AUTH);
 
-  if (authMode === "off" || authMode === "mock-session") {
+  if (authMode === "off") {
     throw new Error(
-      "Signed internal API auth requires a trusted console session. POLYEDGE_CONSOLE_AUTH=off/mock-session may only be used with local dev-auth bypass.",
+      "Signed internal API auth requires a trusted console session. POLYEDGE_CONSOLE_AUTH=off may only be used with local dev-auth bypass.",
     );
   }
 }

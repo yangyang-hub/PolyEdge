@@ -2,8 +2,7 @@ import "server-only";
 
 import type { ApiListResponse, ContractListQuery } from "@/lib/contracts/api";
 import type { PositionDto } from "@/lib/contracts/dto";
-import { positionFixtures } from "@/lib/server/polyedge-mock-data";
-import { buildQueryString, createListResponse, fetchListContract } from "@/server/api/base";
+import { buildQueryString, fetchListContract } from "@/server/api/base";
 
 type LivePositionData = {
   id: string;
@@ -27,7 +26,6 @@ export async function listPositions(query?: ContractListQuery): Promise<ApiListR
 
   return fetchListContract<LivePositionData, PositionDto>(
     `/api/v1/positions${buildQueryString(liveQuery)}`,
-    createListResponse("positions", positionFixtures, query?.limit),
     {
       mapItem: (position) => ({
         id: position.id,
