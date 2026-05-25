@@ -4,6 +4,7 @@ mod arbitrage;
 mod execution;
 mod market_event;
 mod news_ingestion;
+mod rewards;
 mod risk;
 mod system_mode;
 
@@ -42,6 +43,14 @@ pub use news_ingestion::{
     NewsRawEventInsert, NewsRawEventListFilters, NewsRawEventView, NewsSourceFailureUpdate,
     NewsSourceHealthListFilters, NewsSourceHealthView, NewsSourceIngestionReport,
     NewsSourceSuccessUpdate, degraded_health_score,
+};
+pub use rewards::{
+    ManagedRewardOrder, ManagedRewardOrderStatus, RewardBookLevel, RewardBotConfig,
+    RewardBotConfigPatch, RewardBotMode, RewardBotRunReport, RewardBotService, RewardBotSnapshot,
+    RewardBotStatus, RewardBotStore, RewardMarket, RewardOrderBook, RewardOrderSide,
+    RewardPosition, RewardQuoteLeg, RewardQuotePlan, RewardRiskEvent, RewardRiskSeverity,
+    RewardToken, build_reward_quote_plans, new_risk_event, select_reward_book_token_ids,
+    validate_reward_list_limit,
 };
 pub use risk::{
     ApproveSignalCommand, ApproveSignalReceipt, KillSwitchReceipt, RejectSignalCommand,

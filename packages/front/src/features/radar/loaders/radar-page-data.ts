@@ -3,17 +3,12 @@ import "server-only";
 import type {
   ArbitrageAnalysisSummaryDto,
   ArbitrageOpportunityDto,
-  ArbitrageOpportunityStatus,
-  ArbitrageOpportunityType,
-  ArbitrageValidationStatus,
   MarketDto,
 } from "@/lib/contracts/dto";
 import {
   formatClock,
   formatInteger,
   formatPercentFromRatio,
-  type AccentTone,
-  type Tone,
 } from "@/lib/server/console-formatters";
 import type { Dictionary } from "@/lib/i18n/dictionaries";
 import { getServerI18n } from "@/lib/i18n/server";
@@ -23,203 +18,20 @@ import {
   listArbitrageScans,
 } from "@/server/api/arbitrage";
 import { listMarkets } from "@/server/api/markets";
+import {
+  formatBookAge,
+  formatDuration,
+  formatPrice,
+  isAnalysisSummary,
+  localizeCandidateReason,
+  opportunityStatusTone,
+  opportunityTypeTone,
+  readFormula,
+  toNumber,
+  validationStatusTone,
+} from "@/features/radar/lib/radar-formatters";
 import { deriveCandidatePreview } from "@/features/radar/lib/radar-state";
-
-export type RadarOpportunityItem = {
-  id: string;
-  marketId: string;
-  marketQuestion: string;
-  contextLabel: string;
-  opportunityType: ArbitrageOpportunityType;
-  typeLabel: string;
-  typeTone: Tone;
-  status: ArbitrageOpportunityStatus;
-  statusLabel: string;
-  statusTone: Tone;
-  grossEdge: string;
-  grossEdgeValue: number;
-  priceSum: string;
-  capacity: string;
-  observedAt: string;
-  observedClock: string;
-  yesPrice: string;
-  noPrice: string;
-  yesSize: string;
-  noSize: string;
-  reasonCodes: string[];
-  formula: string;
-  validationStatus: ArbitrageValidationStatus | "unvalidated";
-  validationLabel: string;
-  validationTone: Tone;
-  netEdge: string;
-  netEdgeValue: number;
-  feeEstimate: string;
-  slippageBuffer: string;
-  validatedCapacity: string;
-  bookAge: string;
-  bookAgeMs: number | null;
-  validationReasonCodes: string[];
-  candidateStatus: "candidate" | "watch" | "blocked";
-  candidateLabel: string;
-  candidateTone: Tone;
-  candidateReason: string;
-  isSelected: boolean;
-};
-
-export type RadarScanRow = {
-  id: string;
-  startedClock: string;
-  finishedClock: string;
-  marketCount: string;
-  snapshotCount: string;
-  opportunityCount: string;
-  scannerVersion: string;
-};
-
-export type RadarTypeCount = {
-  typeLabel: string;
-  count: string;
-  tone: Tone;
-};
-
-export type RadarTopMarket = {
-  marketId: string;
-  marketQuestion: string;
-  opportunityCount: string;
-  maxGrossEdge: string;
-  avgGrossEdge: string;
-  maxCapacity: string;
-  duration: string;
-};
-
-export type RadarAnalysis = {
-  generatedClock: string;
-  lookbackHours: string;
-  opportunityCount: string;
-  marketCount: string;
-  typeCounts: RadarTypeCount[];
-  topMarkets: RadarTopMarket[];
-};
-
-export type RadarMetric = {
-  title: string;
-  value: string;
-  hint: string;
-  accent: AccentTone;
-};
-
-export type RadarPageData = {
-  selectedOpportunityId: string;
-  metrics: RadarMetric[];
-  opportunities: RadarOpportunityItem[];
-  scans: RadarScanRow[];
-  analysis: RadarAnalysis | null;
-};
-
-function toNumber(value: string | number | null | undefined): number {
-  if (value === null || value === undefined) {
-    return 0;
-  }
-
-  const parsed = typeof value === "number" ? value : Number.parseFloat(value);
-  return Number.isFinite(parsed) ? parsed : 0;
-}
-
-function opportunityTypeTone(type: ArbitrageOpportunityType): Tone {
-  return type === "binary_buy_both" ? "success" : "primary";
-}
-
-function opportunityStatusTone(status: ArbitrageOpportunityStatus): Tone {
-  if (status === "observed") {
-    return "success";
-  }
-
-  if (status === "repeated") {
-    return "warning";
-  }
-
-  return "neutral";
-}
-
-function validationStatusTone(status: ArbitrageValidationStatus | "unvalidated"): Tone {
-  if (status === "valid") {
-    return "success";
-  }
-
-  if (status === "unvalidated") {
-    return "neutral";
-  }
-
-  if (status === "stale_book" || status === "insufficient_depth" || status === "below_threshold") {
-    return "warning";
-  }
-
-  return "danger";
-}
-
-function formatBookAge(value: number | null | undefined): string {
-  if (value === null || value === undefined || !Number.isFinite(value)) {
-    return "n/a";
-  }
-
-  if (value < 1000) {
-    return `${Math.max(0, Math.round(value))}ms`;
-  }
-
-  return `${(value / 1000).toFixed(1)}s`;
-}
-
-function readFormula(payload: unknown): string {
-  if (!payload || typeof payload !== "object" || !("formula" in payload)) {
-    return "n/a";
-  }
-
-  const formula = (payload as { formula?: unknown }).formula;
-  return typeof formula === "string" && formula.trim() ? formula : "n/a";
-}
-
-function isAnalysisSummary(value: unknown): value is ArbitrageAnalysisSummaryDto {
-  if (!value || typeof value !== "object") {
-    return false;
-  }
-
-  const candidate = value as Partial<ArbitrageAnalysisSummaryDto>;
-  return Array.isArray(candidate.type_counts) && Array.isArray(candidate.top_markets);
-}
-
-function formatDuration(seconds: number): string {
-  if (seconds < 60) {
-    return `${seconds}s`;
-  }
-
-  const minutes = Math.floor(seconds / 60);
-  const remainder = seconds % 60;
-  return remainder === 0 ? `${minutes}m` : `${minutes}m ${remainder}s`;
-}
-
-function formatPrice(value: string): string {
-  return toNumber(value).toFixed(3);
-}
-
-function localizeCandidateReason(dictionary: Dictionary, enumLabel: (value: string) => string, reason: string): string {
-  if (reason === "expired opportunity") {
-    return dictionary.radar.expiredOpportunity;
-  }
-
-  if (reason === "waiting for validation") {
-    return dictionary.radar.waitingValidation;
-  }
-
-  if (reason === "non-positive net edge") {
-    return dictionary.radar.nonPositiveNetEdge;
-  }
-
-  if (reason === "valid read-only candidate") {
-    return dictionary.radar.validReadOnlyCandidate;
-  }
-
-  return enumLabel(reason);
-}
+import type { RadarAnalysis, RadarOpportunityItem, RadarPageData } from "@/features/radar/types";
 
 function buildOpportunity(
   opportunity: ArbitrageOpportunityDto,

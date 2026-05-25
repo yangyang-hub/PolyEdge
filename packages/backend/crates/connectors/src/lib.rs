@@ -2,6 +2,7 @@
 
 mod news;
 mod polymarket;
+mod rewards;
 
 use polyedge_domain::{
     AppError, OrderStatus, Probability, Quantity, Result, SignalSide, UsdAmount,
@@ -21,6 +22,10 @@ pub use polymarket::{
     PolymarketMarketRefs, PolymarketSignatureScheme, PolymarketSingleTokenBook,
     normalize_polymarket_order_status_update, normalize_polymarket_trade_fill_update,
     normalize_polymarket_ws_order_message, normalize_polymarket_ws_trade_message,
+};
+pub use rewards::{
+    PolymarketRewardBookLevel, PolymarketRewardMarket, PolymarketRewardOrderBook,
+    PolymarketRewardToken, PolymarketRewardsConnector,
 };
 
 pub const PAPER_EXECUTOR_NAME: &str = "paper_executor";

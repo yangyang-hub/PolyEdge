@@ -47,6 +47,17 @@ export type ArbitrageValidationStatus =
   | "below_threshold"
   | "invalid_market"
   | "error";
+export type RewardBotMode = "dry_run" | "live";
+export type RewardOrderSide = "buy" | "sell";
+export type ManagedRewardOrderStatus =
+  | "planned"
+  | "open"
+  | "cancelled"
+  | "filled"
+  | "exit_pending"
+  | "error";
+export type RewardRiskSeverity = "info" | "warning" | "critical";
+export type DecimalValue = string | number;
 
 export type MarketDto = ResourceVersion & {
   question: string;
@@ -297,6 +308,139 @@ export type ArbitrageMarketSummaryDto = {
   avg_gross_edge: string;
   max_capacity: string;
   avg_capacity: string;
+};
+
+export type RewardBotConfigDto = {
+  enabled: boolean;
+  mode: RewardBotMode;
+  account_id: string;
+  max_markets: number;
+  max_open_orders: number;
+  per_market_usd: DecimalValue;
+  quote_size_usd: DecimalValue;
+  min_daily_reward: DecimalValue;
+  min_market_score: DecimalValue;
+  max_spread_cents: DecimalValue;
+  quote_edge_cents: DecimalValue;
+  safety_margin_cents: DecimalValue;
+  min_midpoint: DecimalValue;
+  max_midpoint: DecimalValue;
+  stale_book_ms: number;
+  min_scoring_check_sec: number;
+  max_position_usd: DecimalValue;
+  max_global_position_usd: DecimalValue;
+  exit_markup_cents: DecimalValue;
+  cancel_on_fill: boolean;
+};
+
+export type RewardBotConfigPatchDto = Partial<RewardBotConfigDto>;
+
+export type RewardTokenDto = {
+  token_id: string;
+  outcome: string;
+  price?: DecimalValue | null;
+};
+
+export type RewardMarketDto = {
+  condition_id: string;
+  question: string;
+  market_slug: string;
+  event_slug: string;
+  image: string;
+  rewards_max_spread: DecimalValue;
+  rewards_min_size: DecimalValue;
+  total_daily_rate: DecimalValue;
+  tokens: RewardTokenDto[];
+  active: boolean;
+  updated_at: string;
+};
+
+export type RewardQuoteLegDto = {
+  token_id: string;
+  outcome: string;
+  side: RewardOrderSide;
+  price: DecimalValue;
+  size: DecimalValue;
+  notional_usd: DecimalValue;
+};
+
+export type RewardQuotePlanDto = {
+  condition_id: string;
+  market_slug: string;
+  question: string;
+  score: DecimalValue;
+  eligible: boolean;
+  reason: string;
+  midpoint?: DecimalValue | null;
+  total_daily_rate: DecimalValue;
+  rewards_max_spread: DecimalValue;
+  rewards_min_size: DecimalValue;
+  legs: RewardQuoteLegDto[];
+  updated_at: string;
+};
+
+export type ManagedRewardOrderDto = {
+  id: string;
+  account_id: string;
+  condition_id: string;
+  token_id: string;
+  outcome: string;
+  side: RewardOrderSide;
+  price: DecimalValue;
+  size: DecimalValue;
+  external_order_id?: string | null;
+  status: ManagedRewardOrderStatus;
+  scoring: boolean;
+  reason: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type RewardPositionDto = {
+  account_id: string;
+  condition_id: string;
+  token_id: string;
+  outcome: string;
+  size: DecimalValue;
+  avg_price: DecimalValue;
+  realized_pnl: DecimalValue;
+  updated_at: string;
+};
+
+export type RewardRiskEventDto = {
+  id: string;
+  account_id?: string | null;
+  condition_id?: string | null;
+  external_order_id?: string | null;
+  event_type: string;
+  severity: RewardRiskSeverity;
+  message: string;
+  metadata: unknown;
+  created_at: string;
+};
+
+export type RewardBotStatusDto = {
+  enabled: boolean;
+  running: boolean;
+  mode: RewardBotMode;
+  account_id: string;
+  markets_tracked: number;
+  eligible_markets: number;
+  open_orders: number;
+  positions: number;
+  last_scan_at?: string | null;
+  last_run_at?: string | null;
+  error?: string | null;
+};
+
+export type RewardBotSnapshotDto = {
+  config: RewardBotConfigDto;
+  status: RewardBotStatusDto;
+  markets: RewardMarketDto[];
+  quote_plans: RewardQuotePlanDto[];
+  orders: ManagedRewardOrderDto[];
+  positions: RewardPositionDto[];
+  events: RewardRiskEventDto[];
 };
 
 export type SignalTransitionDto = {

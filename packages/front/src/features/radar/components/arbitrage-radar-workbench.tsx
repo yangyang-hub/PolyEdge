@@ -18,14 +18,20 @@ import type {
   RadarOpportunityItem,
   RadarPageData,
   RadarScanRow,
-} from "@/features/radar/loaders/radar-page-data";
-import type {
-  ArbitrageAnalysisSummaryDto,
-  ArbitrageOpportunityStatus,
-  ArbitrageOpportunityType,
-  ArbitrageValidationStatus,
-} from "@/lib/contracts/dto";
+} from "@/features/radar/types";
 import type { ArbitrageStreamPayload } from "@/lib/contracts/realtime";
+import {
+  formatBookAge,
+  formatDuration,
+  formatPrice,
+  isAnalysisSummary,
+  localizeCandidateReason,
+  opportunityStatusTone,
+  opportunityTypeTone,
+  readFormula,
+  toNumber,
+  validationStatusTone,
+} from "@/features/radar/lib/radar-formatters";
 import {
   calculateValidationSummary,
   deriveCandidatePreview,
@@ -35,7 +41,6 @@ import {
   formatInteger,
   formatPercentFromRatio,
   type AccentTone,
-  type Tone,
 } from "@/lib/formatters";
 import { isKeyboardSelect } from "@/lib/keyboard";
 
@@ -45,92 +50,6 @@ type RadarView = "active" | "validated" | "rejected" | "history";
 type ArbitrageRadarWorkbenchProps = {
   data: RadarPageData;
 };
-
-function toNumber(value: string | number | null | undefined): number {
-  if (value === null || value === undefined) {
-    return 0;
-  }
-
-  const parsed = typeof value === "number" ? value : Number.parseFloat(value);
-  return Number.isFinite(parsed) ? parsed : 0;
-}
-
-function formatPrice(value: string | number | null | undefined): string {
-  return toNumber(value).toFixed(3);
-}
-
-function opportunityTypeTone(type: ArbitrageOpportunityType): Tone {
-  return type === "binary_buy_both" ? "success" : "primary";
-}
-
-function opportunityStatusTone(status: ArbitrageOpportunityStatus): Tone {
-  if (status === "observed") {
-    return "success";
-  }
-
-  if (status === "repeated") {
-    return "warning";
-  }
-
-  return "neutral";
-}
-
-function validationStatusTone(status: ArbitrageValidationStatus | "unvalidated"): Tone {
-  if (status === "valid") {
-    return "success";
-  }
-
-  if (status === "unvalidated") {
-    return "neutral";
-  }
-
-  if (status === "stale_book" || status === "insufficient_depth" || status === "below_threshold") {
-    return "warning";
-  }
-
-  return "danger";
-}
-
-function formatBookAge(value: number | null | undefined): string {
-  if (value === null || value === undefined || !Number.isFinite(value)) {
-    return "n/a";
-  }
-
-  if (value < 1000) {
-    return `${Math.max(0, Math.round(value))}ms`;
-  }
-
-  return `${(value / 1000).toFixed(1)}s`;
-}
-
-function readFormula(payload: unknown): string {
-  if (!payload || typeof payload !== "object" || !("formula" in payload)) {
-    return "n/a";
-  }
-
-  const formula = (payload as { formula?: unknown }).formula;
-  return typeof formula === "string" && formula.trim() ? formula : "n/a";
-}
-
-function localizeCandidateReason(dictionary: Dictionary, enumLabel: (value: string) => string, reason: string): string {
-  if (reason === "expired opportunity") {
-    return dictionary.radar.expiredOpportunity;
-  }
-
-  if (reason === "waiting for validation") {
-    return dictionary.radar.waitingValidation;
-  }
-
-  if (reason === "non-positive net edge") {
-    return dictionary.radar.nonPositiveNetEdge;
-  }
-
-  if (reason === "valid read-only candidate") {
-    return dictionary.radar.validReadOnlyCandidate;
-  }
-
-  return enumLabel(reason);
-}
 
 function buildLiveOpportunity(
   payload: ArbitrageStreamPayload,
@@ -337,15 +256,6 @@ function upsertScan(current: RadarScanRow[], payload: ArbitrageStreamPayload, di
   return [merged, ...current.filter((scan) => scan.id !== next.id)].slice(0, 8);
 }
 
-function isAnalysisSummary(value: unknown): value is ArbitrageAnalysisSummaryDto {
-  if (!value || typeof value !== "object") {
-    return false;
-  }
-
-  const candidate = value as Partial<ArbitrageAnalysisSummaryDto>;
-  return Array.isArray(candidate.type_counts) && Array.isArray(candidate.top_markets);
-}
-
 function buildLiveAnalysis(
   payload: ArbitrageStreamPayload,
   enumLabel: (value: string) => string,
@@ -372,7 +282,7 @@ function buildLiveAnalysis(
       maxGrossEdge: formatPercentFromRatio(market.max_gross_edge, 1),
       avgGrossEdge: formatPercentFromRatio(market.avg_gross_edge, 1),
       maxCapacity: formatInteger(market.max_capacity),
-      duration: `${market.duration_seconds}s`,
+      duration: formatDuration(market.duration_seconds),
     })),
   };
 }

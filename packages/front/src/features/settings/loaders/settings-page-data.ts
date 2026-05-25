@@ -29,11 +29,13 @@ function formatOptionalClock(value: string | null | undefined, fallback: string)
   return value ? formatClock(value) : fallback;
 }
 
-export async function getSettingsPageData() {
+type ServerI18n = Awaited<ReturnType<typeof getServerI18n>>;
+
+export async function getSettingsPageData(i18nInput?: Promise<ServerI18n> | ServerI18n) {
   const [{ data: sourceHealth }, { data: rawNews }, i18n] = await Promise.all([
     listNewsSourceHealth({ limit: 10 }),
     listNewsRawEvents({ limit: 8 }),
-    getServerI18n(),
+    i18nInput ?? getServerI18n(),
   ]);
   const { dictionary, enumLabel, format } = i18n;
   const degradedSources = sourceHealth.filter(

@@ -21,13 +21,16 @@ use polyedge_application::{
     OrderDraftListFilters, OrderDraftView, OrderListFilters, OrderView, PositionListFilters,
     PositionView, ProbabilityEstimateListFilters, ProbabilityEstimateView,
     ReconcileExternalTradeCommand, RejectSignalCommand, RejectSignalReceipt,
-    ReleaseKillSwitchCommand, RiskPolicy, RiskStateView, SignalListFilters,
+    ReleaseKillSwitchCommand, RewardBookLevel, RewardBotConfigPatch, RewardBotSnapshot,
+    RewardMarket, RewardOrderBook, RewardToken, RiskPolicy, RiskStateView, SignalListFilters,
     SignalTransitionListFilters, SignalTransitionView, SignalView, SubmitExecutionCommand,
     SyncExternalOrderStatusCommand, TradeListFilters, TradeView, TriggerKillSwitchCommand,
+    select_reward_book_token_ids,
 };
 use polyedge_connectors::{
-    ConnectorOrderStatusUpdate, ConnectorTradeFillUpdate, normalize_polymarket_order_status_update,
-    normalize_polymarket_trade_fill_update,
+    ConnectorOrderStatusUpdate, ConnectorTradeFillUpdate, PolymarketRewardMarket,
+    PolymarketRewardOrderBook, PolymarketRewardsConnector,
+    normalize_polymarket_order_status_update, normalize_polymarket_trade_fill_update,
 };
 use polyedge_contracts::{
     AlertSeverity, AlertStatus, ApiResponse, ApprovalData, ApprovalListQuery, ApprovalSeverity,
@@ -278,6 +281,32 @@ pub fn build_app(state: AppState) -> Router {
                 state.clone(),
                 require_console_read_auth,
             )),
+        )
+        .route(
+            "/api/v1/rewards-bot",
+            get(read_reward_bot_snapshot).route_layer(middleware::from_fn_with_state(
+                state.clone(),
+                require_console_read_auth,
+            )),
+        )
+        .route(
+            "/api/v1/rewards-bot/config",
+            axum::routing::post(update_reward_bot_config).route_layer(
+                middleware::from_fn_with_state(state.clone(), require_console_write_auth),
+            ),
+        )
+        .route(
+            "/api/v1/rewards-bot/run",
+            axum::routing::post(run_reward_bot_once).route_layer(middleware::from_fn_with_state(
+                state.clone(),
+                require_console_write_auth,
+            )),
+        )
+        .route(
+            "/api/v1/rewards-bot/cancel-all",
+            axum::routing::post(cancel_reward_bot_orders).route_layer(
+                middleware::from_fn_with_state(state.clone(), require_console_write_auth),
+            ),
         )
         .route(
             "/api/v1/risk/state",
@@ -1608,6 +1637,157 @@ async fn list_arbitrage_analysis_runs(
         auth.request_id,
         trace_id,
     )))
+}
+
+async fn read_reward_bot_snapshot(
+    Extension(auth): Extension<AuthContext>,
+    State(state): State<AppState>,
+) -> std::result::Result<Json<ApiResponse<RewardBotSnapshot>>, HttpError> {
+    let trace_id = new_trace_id();
+    let snapshot =
+        state.reward_bot_service.snapshot().await.map_err(|error| {
+            HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone())
+        })?;
+
+    Ok(Json(ApiResponse::new(snapshot, auth.request_id, trace_id)))
+}
+
+async fn update_reward_bot_config(
+    Extension(auth): Extension<AuthContext>,
+    State(state): State<AppState>,
+    Json(payload): Json<RewardBotConfigPatch>,
+) -> std::result::Result<Json<ApiResponse<RewardBotSnapshot>>, HttpError> {
+    let trace_id = new_trace_id();
+    state
+        .reward_bot_service
+        .update_config(payload)
+        .await
+        .map_err(|error| HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone()))?;
+    let snapshot =
+        state.reward_bot_service.snapshot().await.map_err(|error| {
+            HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone())
+        })?;
+
+    Ok(Json(ApiResponse::new(snapshot, auth.request_id, trace_id)))
+}
+
+async fn run_reward_bot_once(
+    Extension(auth): Extension<AuthContext>,
+    State(state): State<AppState>,
+) -> std::result::Result<Json<ApiResponse<RewardBotSnapshot>>, HttpError> {
+    let trace_id = new_trace_id();
+    let (markets, books) = fetch_reward_bot_inputs(&state, &trace_id)
+        .await
+        .map_err(|error| HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone()))?;
+    state
+        .reward_bot_service
+        .run_simulation(markets, books, &trace_id)
+        .await
+        .map_err(|error| HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone()))?;
+    let snapshot =
+        state.reward_bot_service.snapshot().await.map_err(|error| {
+            HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone())
+        })?;
+
+    Ok(Json(ApiResponse::new(snapshot, auth.request_id, trace_id)))
+}
+
+async fn cancel_reward_bot_orders(
+    Extension(auth): Extension<AuthContext>,
+    State(state): State<AppState>,
+) -> std::result::Result<Json<ApiResponse<RewardBotSnapshot>>, HttpError> {
+    let trace_id = new_trace_id();
+    let config = state
+        .reward_bot_service
+        .read_config()
+        .await
+        .map_err(|error| HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone()))?;
+    state
+        .reward_bot_service
+        .cancel_all_orders(
+            Some(&config.account_id),
+            "operator cancelled all simulated rewards orders",
+            &trace_id,
+        )
+        .await
+        .map_err(|error| HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone()))?;
+    let snapshot =
+        state.reward_bot_service.snapshot().await.map_err(|error| {
+            HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone())
+        })?;
+
+    Ok(Json(ApiResponse::new(snapshot, auth.request_id, trace_id)))
+}
+
+async fn fetch_reward_bot_inputs(
+    state: &AppState,
+    _trace_id: &str,
+) -> polyedge_domain::Result<(Vec<RewardMarket>, HashMap<String, RewardOrderBook>)> {
+    let config = state.reward_bot_service.read_config().await?;
+    let connector = PolymarketRewardsConnector::new(&state.settings.polymarket.clob_host)?;
+    let markets = connector
+        .fetch_current_markets()
+        .await?
+        .into_iter()
+        .map(reward_market_from_connector)
+        .collect::<Vec<_>>();
+    let token_ids = select_reward_book_token_ids(&markets, &config);
+    let books = connector
+        .fetch_order_books(&token_ids)
+        .await?
+        .into_iter()
+        .map(reward_order_book_from_connector)
+        .map(|book| (book.token_id.clone(), book))
+        .collect::<HashMap<_, _>>();
+
+    Ok((markets, books))
+}
+
+fn reward_market_from_connector(market: PolymarketRewardMarket) -> RewardMarket {
+    RewardMarket {
+        condition_id: market.condition_id,
+        question: market.question,
+        market_slug: market.market_slug,
+        event_slug: market.event_slug,
+        image: market.image,
+        rewards_max_spread: market.rewards_max_spread,
+        rewards_min_size: market.rewards_min_size,
+        total_daily_rate: market.total_daily_rate,
+        tokens: market
+            .tokens
+            .into_iter()
+            .map(|token| RewardToken {
+                token_id: token.token_id,
+                outcome: token.outcome,
+                price: token.price,
+            })
+            .collect(),
+        active: market.active,
+        updated_at: market.updated_at,
+    }
+}
+
+fn reward_order_book_from_connector(book: PolymarketRewardOrderBook) -> RewardOrderBook {
+    RewardOrderBook {
+        token_id: book.token_id,
+        bids: book
+            .bids
+            .into_iter()
+            .map(|level| RewardBookLevel {
+                price: level.price,
+                size: level.size,
+            })
+            .collect(),
+        asks: book
+            .asks
+            .into_iter()
+            .map(|level| RewardBookLevel {
+                price: level.price,
+                size: level.size,
+            })
+            .collect(),
+        observed_at: book.observed_at,
+    }
 }
 
 async fn list_signal_transitions(

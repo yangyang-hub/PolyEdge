@@ -9,6 +9,7 @@ export const config = {
     "/dashboard/:path*",
     "/markets/:path*",
     "/events/:path*",
+    "/rewards/:path*",
     "/signals/:path*",
     "/positions/:path*",
     "/risk/:path*",

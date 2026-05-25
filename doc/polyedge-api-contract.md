@@ -44,7 +44,8 @@
 10. `/api/v1/risk/buckets`
 11. `/api/v1/system`
 12. `/api/v1/news/source-health`
-13. `/api/v1/stream/{channel}`
+13. `/api/v1/rewards-bot`
+14. `/api/v1/stream/{channel}`
 
 ### 3.2 字段命名
 
@@ -334,6 +335,47 @@ Returned by `GET /api/v1/news/source-health`.
   "health_score": "0.950000",
   "last_error": null,
   "updated_at": "2026-04-16T14:24:00Z"
+}
+```
+
+### 6.10 `RewardBotSnapshotDto`
+
+Returned by `GET /api/v1/rewards-bot`. Mutation routes currently return the same snapshot after applying the operation:
+
+1. `POST /api/v1/rewards-bot/config`
+2. `POST /api/v1/rewards-bot/run`
+3. `POST /api/v1/rewards-bot/cancel-all`
+
+Current behavior is simulation-only. `mode=live` is accepted for configuration compatibility but does not submit live orders.
+
+```json
+{
+  "config": {
+    "enabled": false,
+    "mode": "dry_run",
+    "account_id": "reward_simulator",
+    "max_markets": 3,
+    "max_open_orders": 12,
+    "per_market_usd": "20",
+    "quote_size_usd": "10",
+    "min_daily_reward": "1",
+    "min_market_score": "15"
+  },
+  "status": {
+    "enabled": false,
+    "running": false,
+    "mode": "dry_run",
+    "account_id": "reward_simulator",
+    "markets_tracked": 0,
+    "eligible_markets": 0,
+    "open_orders": 0,
+    "positions": 0
+  },
+  "markets": [],
+  "quote_plans": [],
+  "orders": [],
+  "positions": [],
+  "events": []
 }
 ```
 

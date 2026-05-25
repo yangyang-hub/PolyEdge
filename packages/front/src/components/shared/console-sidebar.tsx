@@ -6,6 +6,7 @@ import type { LucideIcon } from "lucide-react";
 import {
   Activity,
   CheckSquare,
+  HandCoins,
   History,
   LayoutDashboard,
   Newspaper,
@@ -32,6 +33,7 @@ const navItems: NavItem[] = [
   { href: "/markets", labelKey: "markets", icon: SquareChartGantt },
   { href: "/events", labelKey: "events", icon: Newspaper },
   { href: "/radar", labelKey: "radar", icon: Radar },
+  { href: "/rewards", labelKey: "rewards", icon: HandCoins },
   { href: "/signals", labelKey: "signals", icon: Activity },
   { href: "/positions", labelKey: "positions", icon: WalletCards },
   { href: "/risk", labelKey: "risk", icon: ShieldAlert },

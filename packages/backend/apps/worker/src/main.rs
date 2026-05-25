@@ -7,8 +7,10 @@ use polyedge_application::{
     MarkExecutionSubmittedCommand, MarketBookSnapshotView, MarketListFilters, MarketView,
     NewsIngestSourceCommand, NewsIngestionItem, NewsRawEventListFilters, NewsRawEventView,
     NewsSourceFailureUpdate, NewsSourceHealthListFilters, NewsSourceHealthView, OrderListFilters,
-    ReconcileExecutionListFilters, ReconcileExternalTradeCommand, SyncExternalOrderStatusCommand,
+    ReconcileExecutionListFilters, ReconcileExternalTradeCommand, RewardBookLevel,
+    RewardBotRunReport, RewardMarket, RewardOrderBook, RewardToken, SyncExternalOrderStatusCommand,
     build_arbitrage_analysis, demo_fixture_bundle, market_book_snapshot_id,
+    select_reward_book_token_ids,
 };
 use polyedge_connectors::{
     ConnectorNewsItem, LivePolymarketConfig, LivePolymarketConnector,
@@ -18,7 +20,8 @@ use polyedge_connectors::{
     NewsSource, PAPER_ACCOUNT_ID, PAPER_EXECUTOR_NAME, POLYMARKET_ACCOUNT_ID,
     POLYMARKET_CONNECTOR_NAME, PaperExecutionOutcome, PaperExecutor, PaperFillRequest,
     PaperOrderRequest, PaperOrderStatusRequest, PolymarketBinaryBookSnapshot,
-    PolymarketBookConnector, PolymarketBookLevel, PolymarketMarketRefs, PolymarketSignatureScheme,
+    PolymarketBookConnector, PolymarketBookLevel, PolymarketMarketRefs, PolymarketRewardMarket,
+    PolymarketRewardOrderBook, PolymarketRewardsConnector, PolymarketSignatureScheme,
     RssNewsConnector, RssNewsSourceConfig, normalize_polymarket_order_status_update,
     normalize_polymarket_trade_fill_update, normalize_polymarket_ws_order_message,
     normalize_polymarket_ws_trade_message,
@@ -260,6 +263,35 @@ async fn main() -> Result<()> {
                 market_count = analysis.market_count,
                 summary = %analysis.summary_payload,
                 "analyzed arbitrage opportunity history",
+            );
+            Ok(())
+        }
+        Some("scan-rewards-once") => {
+            let trace_id = new_trace_id();
+            let report = run_reward_bot_once(&state, &trace_id).await?;
+            info!(
+                trace_id = %trace_id,
+                markets_scanned = report.markets_scanned,
+                books_fetched = report.books_fetched,
+                plans_built = report.plans_built,
+                eligible_plans = report.eligible_plans,
+                simulated_orders = report.simulated_orders,
+                cancelled_orders = report.cancelled_orders,
+                "ran rewards bot simulation once",
+            );
+            Ok(())
+        }
+        Some("poll-reward-bot") => {
+            let max_cycles = parse_limit_arg(args.next())?.map(usize::from);
+            let report = poll_reward_bot(&state, max_cycles).await?;
+            info!(
+                markets_scanned = report.markets_scanned,
+                books_fetched = report.books_fetched,
+                plans_built = report.plans_built,
+                eligible_plans = report.eligible_plans,
+                simulated_orders = report.simulated_orders,
+                cancelled_orders = report.cancelled_orders,
+                "reward bot polling stopped",
             );
             Ok(())
         }
@@ -531,6 +563,42 @@ fn spawn_worker_tasks(state: &AppState, shutdown_rx: watch::Receiver<bool>) -> V
         } else {
             warn!(
                 "worker arbitrage analysis is enabled but arbitrage is disabled; set POLYEDGE_ARBITRAGE__ENABLED=true"
+            );
+        }
+    }
+
+    if settings.poll_reward_bot {
+        if state.settings.rewards.enabled {
+            let job_state = state.clone();
+            handles.push(spawn_interval_job(
+                "poll-reward-bot",
+                state.settings.rewards.poll_interval_secs,
+                shutdown_rx.clone(),
+                move || {
+                    let state = job_state.clone();
+                    async move {
+                        let trace_id = new_trace_id();
+                        match run_reward_bot_once(&state, &trace_id).await {
+                            Ok(report) => info!(
+                                trace_id = %trace_id,
+                                markets_scanned = report.markets_scanned,
+                                books_fetched = report.books_fetched,
+                                plans_built = report.plans_built,
+                                eligible_plans = report.eligible_plans,
+                                simulated_orders = report.simulated_orders,
+                                cancelled_orders = report.cancelled_orders,
+                                "completed worker reward bot simulation cycle",
+                            ),
+                            Err(error) => {
+                                warn!(trace_id = %trace_id, error = %error, "worker reward bot simulation cycle failed");
+                            }
+                        }
+                    }
+                },
+            ));
+        } else {
+            warn!(
+                "worker poll-reward-bot is enabled but rewards bot is disabled; set POLYEDGE_REWARDS__ENABLED=true"
             );
         }
     }
@@ -1337,6 +1405,140 @@ async fn poll_arbitrage_radar(
     }
 
     Ok(total)
+}
+
+async fn run_reward_bot_once(state: &AppState, trace_id: &str) -> Result<RewardBotRunReport> {
+    let (markets, books) = fetch_reward_bot_inputs(state).await?;
+    state
+        .reward_bot_service
+        .run_simulation(markets, books, trace_id)
+        .await
+}
+
+async fn poll_reward_bot(
+    state: &AppState,
+    max_cycles: Option<usize>,
+) -> Result<RewardBotRunReport> {
+    let mut total = RewardBotRunReport {
+        markets_scanned: 0,
+        books_fetched: 0,
+        plans_built: 0,
+        eligible_plans: 0,
+        simulated_orders: 0,
+        cancelled_orders: 0,
+    };
+    let mut cycles = 0usize;
+    let interval = Duration::from_secs(state.settings.rewards.poll_interval_secs.max(1));
+
+    loop {
+        let trace_id = new_trace_id();
+        let report = run_reward_bot_once(state, &trace_id).await?;
+        total.markets_scanned += report.markets_scanned;
+        total.books_fetched += report.books_fetched;
+        total.plans_built += report.plans_built;
+        total.eligible_plans += report.eligible_plans;
+        total.simulated_orders += report.simulated_orders;
+        total.cancelled_orders += report.cancelled_orders;
+        cycles += 1;
+
+        info!(
+            trace_id = %trace_id,
+            cycle = cycles,
+            markets_scanned = report.markets_scanned,
+            books_fetched = report.books_fetched,
+            plans_built = report.plans_built,
+            eligible_plans = report.eligible_plans,
+            simulated_orders = report.simulated_orders,
+            cancelled_orders = report.cancelled_orders,
+            "completed reward bot polling cycle",
+        );
+
+        if max_cycles.is_some_and(|limit| cycles >= limit) {
+            break;
+        }
+
+        tokio::select! {
+            () = tokio::time::sleep(interval) => {}
+            shutdown = tokio::signal::ctrl_c() => {
+                if let Err(error) = shutdown {
+                    warn!(error = %error, "failed to listen for ctrl-c during reward bot polling");
+                }
+                break;
+            }
+        }
+    }
+
+    Ok(total)
+}
+
+async fn fetch_reward_bot_inputs(
+    state: &AppState,
+) -> Result<(Vec<RewardMarket>, HashMap<String, RewardOrderBook>)> {
+    let config = state.reward_bot_service.read_config().await?;
+    let connector = PolymarketRewardsConnector::new(&state.settings.polymarket.clob_host)?;
+    let markets = connector
+        .fetch_current_markets()
+        .await?
+        .into_iter()
+        .map(reward_market_from_connector)
+        .collect::<Vec<_>>();
+    let token_ids = select_reward_book_token_ids(&markets, &config);
+    let books = connector
+        .fetch_order_books(&token_ids)
+        .await?
+        .into_iter()
+        .map(reward_order_book_from_connector)
+        .map(|book| (book.token_id.clone(), book))
+        .collect::<HashMap<_, _>>();
+
+    Ok((markets, books))
+}
+
+fn reward_market_from_connector(market: PolymarketRewardMarket) -> RewardMarket {
+    RewardMarket {
+        condition_id: market.condition_id,
+        question: market.question,
+        market_slug: market.market_slug,
+        event_slug: market.event_slug,
+        image: market.image,
+        rewards_max_spread: market.rewards_max_spread,
+        rewards_min_size: market.rewards_min_size,
+        total_daily_rate: market.total_daily_rate,
+        tokens: market
+            .tokens
+            .into_iter()
+            .map(|token| RewardToken {
+                token_id: token.token_id,
+                outcome: token.outcome,
+                price: token.price,
+            })
+            .collect(),
+        active: market.active,
+        updated_at: market.updated_at,
+    }
+}
+
+fn reward_order_book_from_connector(book: PolymarketRewardOrderBook) -> RewardOrderBook {
+    RewardOrderBook {
+        token_id: book.token_id,
+        bids: book
+            .bids
+            .into_iter()
+            .map(|level| RewardBookLevel {
+                price: level.price,
+                size: level.size,
+            })
+            .collect(),
+        asks: book
+            .asks
+            .into_iter()
+            .map(|level| RewardBookLevel {
+                price: level.price,
+                size: level.size,
+            })
+            .collect(),
+        observed_at: book.observed_at,
+    }
 }
 
 fn arbitrage_validation_config(state: &AppState) -> ArbitrageValidationConfig {

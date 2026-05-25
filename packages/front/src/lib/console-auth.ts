@@ -21,6 +21,7 @@ const CONSOLE_ROUTE_REQUIREMENTS: Array<{ prefix: string; minRole: ConsoleRole }
   { prefix: "/dashboard", minRole: "viewer" },
   { prefix: "/markets", minRole: "viewer" },
   { prefix: "/events", minRole: "viewer" },
+  { prefix: "/rewards", minRole: "operator" },
   { prefix: "/signals", minRole: "viewer" },
   { prefix: "/positions", minRole: "viewer" },
   { prefix: "/replay", minRole: "viewer" },

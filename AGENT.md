@@ -1,6 +1,6 @@
 # AGENT.md
 
-最后更新：2026-05-20
+最后更新：2026-05-24
 
 ## 文件用途
 
@@ -24,17 +24,18 @@
 ## 当前状态
 
 - 仓库已经不是纯文档仓库：前端控制台、Rust API、worker、迁移、配置和 Docker 部署入口都已具备。
-- 前端控制台已有 `dashboard / markets / events / radar / signals / positions / risk / approvals / replay / settings` 页面。
+- 前端控制台已有 `dashboard / markets / events / radar / rewards / signals / positions / risk / approvals / replay / settings` 页面。
 - 前端读取统一走 `src/server/api/*`，写操作统一走 `src/server/actions/*`，页面装配在 `src/features/*/loaders` 和 `src/features/*/components`。
 - 前端支持 `zh-CN / en-US`，语言由 `polyedge_locale` cookie 控制。
 - 前端不再提供 mock 数据模式；`POLYEDGE_API_BASE_URL` 必须指向 Rust 后端，读写和 SSE 都走真实 `/api/v1/...`。
 - 当前控制台会话只保留 `off`，不是生产级真实会话。
-- 后端 API 已覆盖 markets、events、news、evidences、signals、orders、trades、positions、pricing、arbitrage、risk、approvals、system、SSE 和 connector callback 等主路径。
-- `polyedge-worker` 支持 fixture/news ingest、news promotion、arbitrage radar、execution drain、paper reconciliation、Polymarket order/fill/user-event 任务。
+- 后端 API 已覆盖 markets、events、news、evidences、signals、orders、trades、positions、pricing、arbitrage、rewards bot、risk、approvals、system、SSE 和 connector callback 等主路径。
+- `polyedge-worker` 支持 fixture/news ingest、news promotion、arbitrage radar、rewards bot 模拟、execution drain、paper reconciliation、Polymarket order/fill/user-event 任务。
 - 套利雷达是只读链路：发现、记录、校验、分析、展示和 SSE 推送已具备，但不会创建 execution request 或订单。
+- Rewards bot 已接入模拟链路：扫描 Polymarket CLOB rewards 当前市场、拉取候选 token 盘口、生成 YES/NO post-only 双边买单计划，并可写入模拟托管挂单；当前不会实盘下单。
 - Polymarket connector 已迁移到 CLOB V2 Rust crate：`packages/backend/Cargo.toml` 保留 dependency key `polymarket-client-sdk`，实际指向 `polymarket_client_sdk_v2`。
 - 默认 Polymarket mode 仍是 `mock`；live 交易仍需要真实凭证、真实账户、小额演练和运维 runbook。
-- 数据库迁移目前到 `0014_arbitrage_validation_events.sql`。
+- 数据库迁移目前到 `0015_reward_bot.sql`。
 
 ## 主要缺口
 
@@ -42,6 +43,7 @@
 - 内部 JWT 签名 helper 已有代码路径，但当前不会从 `off` 签发可信令牌。
 - `signals / risk / events` SSE 仍是 snapshot-backed stream；`arbitrage` 已是 outbox-backed 增量流，但尚未统一到全资源事件总线。
 - 新闻源可以抓取、去重、提升为 events/evidences，但尚未自动生成 signals。
+- Rewards bot 当前只做模拟；尚未接入真实 post-only 下单、订单计分查询、成交处理、退出卖单或真实库存同步。
 - Polymarket live 链路已具备骨架和 CLOB V2 SDK，仍需真实资金链路验证。
 
 ## 运行命令
@@ -75,6 +77,8 @@ cargo run -p polyedge-worker -- promote-news-events
 cargo run -p polyedge-worker -- scan-arbitrage-once
 cargo run -p polyedge-worker -- poll-arbitrage-radar
 cargo run -p polyedge-worker -- analyze-arbitrage-opportunities
+cargo run -p polyedge-worker -- scan-rewards-once
+cargo run -p polyedge-worker -- poll-reward-bot
 cargo run -p polyedge-worker -- drain-execution-queue
 cargo run -p polyedge-worker -- poll-polymarket-order-statuses
 cargo run -p polyedge-worker -- reconcile-polymarket-fills
@@ -93,6 +97,7 @@ cargo run -p polyedge-worker -- consume-polymarket-user-events
 - 默认 runtime mode 是 `manual_confirm`。
 - 默认 Polymarket mode 是 `mock`。
 - 默认 arbitrage radar 和 news ingestion 是 disabled。
+- 默认 rewards bot worker 模拟是 disabled；前端 `/rewards` 可以手动运行模拟，worker 需要同时设置 `POLYEDGE_REWARDS__ENABLED=true` 和 `POLYEDGE_WORKER__POLL_REWARD_BOT=true`。
 - `POLYEDGE_POSTGRES__URL` / `POLYEDGE_REDIS__URL` 为空时，本地可能走内存路径，无法验证多进程共享状态和持久化 outbox。
 - `POLYEDGE_ARBITRAGE__BOOK_SOURCE=polymarket` 会请求真实 Polymarket CLOB `/book`；fixture 中演示 token 不是公网真实 token，live 冒烟必须替换成真实 Polymarket refs。
 

@@ -1,7 +1,10 @@
 use async_trait::async_trait;
 use polyedge_application::{
     AuditLogEntry, AuditLogSink, IdempotencyBegin, IdempotencyRequest, IdempotencyStore,
-    ModeSnapshot, ModeStateStore, ModeTransitionCommand, RiskStateSnapshot, RiskStateStore,
+    ManagedRewardOrder, ManagedRewardOrderStatus, ModeSnapshot, ModeStateStore,
+    ModeTransitionCommand, RewardBotConfig, RewardBotMode, RewardBotStore, RewardMarket,
+    RewardOrderSide, RewardPosition, RewardQuotePlan, RewardRiskEvent, RewardRiskSeverity,
+    RewardToken, RiskStateSnapshot, RiskStateStore,
 };
 use polyedge_domain::{
     AppError, ExposureRatio, IdempotencyStatus, Result, SignedUsdAmount, SystemMode,
@@ -1459,6 +1462,871 @@ impl AuditLogSink for PostgresAuditLogSink {
 
         Ok(())
     }
+}
+
+pub struct InMemoryRewardBotStore {
+    config: RwLock<RewardBotConfig>,
+    markets: RwLock<HashMap<String, RewardMarket>>,
+    quote_plans: RwLock<HashMap<String, RewardQuotePlan>>,
+    orders: RwLock<Vec<ManagedRewardOrder>>,
+    positions: RwLock<HashMap<(String, String), RewardPosition>>,
+    events: RwLock<Vec<RewardRiskEvent>>,
+}
+
+impl InMemoryRewardBotStore {
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            config: RwLock::new(RewardBotConfig::default()),
+            markets: RwLock::new(HashMap::new()),
+            quote_plans: RwLock::new(HashMap::new()),
+            orders: RwLock::new(Vec::new()),
+            positions: RwLock::new(HashMap::new()),
+            events: RwLock::new(Vec::new()),
+        }
+    }
+}
+
+#[async_trait]
+impl RewardBotStore for InMemoryRewardBotStore {
+    async fn load_config(&self) -> Result<RewardBotConfig> {
+        Ok(self.config.read().await.clone().normalized())
+    }
+
+    async fn save_config(&self, config: &RewardBotConfig) -> Result<()> {
+        *self.config.write().await = config.clone().normalized();
+        Ok(())
+    }
+
+    async fn upsert_markets(&self, markets: &[RewardMarket]) -> Result<()> {
+        let mut store = self.markets.write().await;
+        for market in markets {
+            store.insert(market.condition_id.clone(), market.clone());
+        }
+        Ok(())
+    }
+
+    async fn save_quote_plans(&self, plans: &[RewardQuotePlan]) -> Result<()> {
+        let mut store = self.quote_plans.write().await;
+        for plan in plans {
+            store.insert(plan.condition_id.clone(), plan.clone());
+        }
+        Ok(())
+    }
+
+    async fn replace_simulated_orders(
+        &self,
+        account_id: &str,
+        orders: &[ManagedRewardOrder],
+        _trace_id: &str,
+    ) -> Result<usize> {
+        let now = OffsetDateTime::now_utc();
+        let mut store = self.orders.write().await;
+        let mut cancelled = 0;
+        for order in store.iter_mut() {
+            if order.account_id == account_id && order.status.is_open_like() {
+                order.status = ManagedRewardOrderStatus::Cancelled;
+                order.reason = "replaced by latest rewards simulation".to_string();
+                order.updated_at = now;
+                cancelled += 1;
+            }
+        }
+        store.extend(orders.iter().cloned());
+        store.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
+        Ok(cancelled)
+    }
+
+    async fn cancel_open_orders(
+        &self,
+        account_id: Option<&str>,
+        reason: &str,
+        _trace_id: &str,
+    ) -> Result<usize> {
+        let now = OffsetDateTime::now_utc();
+        let mut cancelled = 0;
+        let mut store = self.orders.write().await;
+        for order in store.iter_mut() {
+            let account_matches =
+                account_id.is_none_or(|account_id| account_id == order.account_id);
+            if account_matches && order.status.is_open_like() {
+                order.status = ManagedRewardOrderStatus::Cancelled;
+                order.reason = reason.to_string();
+                order.updated_at = now;
+                cancelled += 1;
+            }
+        }
+        Ok(cancelled)
+    }
+
+    async fn list_markets(&self, limit: u16) -> Result<Vec<RewardMarket>> {
+        let mut markets = self
+            .markets
+            .read()
+            .await
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
+        markets.sort_by(|left, right| {
+            right
+                .total_daily_rate
+                .cmp(&left.total_daily_rate)
+                .then_with(|| right.updated_at.cmp(&left.updated_at))
+        });
+        markets.truncate(usize::from(limit));
+        Ok(markets)
+    }
+
+    async fn list_quote_plans(&self, limit: u16) -> Result<Vec<RewardQuotePlan>> {
+        let mut plans = self
+            .quote_plans
+            .read()
+            .await
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
+        plans.sort_by(|left, right| {
+            right
+                .eligible
+                .cmp(&left.eligible)
+                .then_with(|| right.score.cmp(&left.score))
+                .then_with(|| right.updated_at.cmp(&left.updated_at))
+        });
+        plans.truncate(usize::from(limit));
+        Ok(plans)
+    }
+
+    async fn list_orders(&self, limit: u16) -> Result<Vec<ManagedRewardOrder>> {
+        let mut orders = self.orders.read().await.clone();
+        orders.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
+        orders.truncate(usize::from(limit));
+        Ok(orders)
+    }
+
+    async fn list_positions(&self, limit: u16) -> Result<Vec<RewardPosition>> {
+        let mut positions = self
+            .positions
+            .read()
+            .await
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
+        positions.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
+        positions.truncate(usize::from(limit));
+        Ok(positions)
+    }
+
+    async fn list_events(&self, limit: u16) -> Result<Vec<RewardRiskEvent>> {
+        let mut events = self.events.read().await.clone();
+        events.sort_by(|left, right| right.created_at.cmp(&left.created_at));
+        events.truncate(usize::from(limit));
+        Ok(events)
+    }
+
+    async fn log_event(&self, event: RewardRiskEvent) -> Result<()> {
+        let mut events = self.events.write().await;
+        events.push(event);
+        events.sort_by(|left, right| right.created_at.cmp(&left.created_at));
+        events.truncate(1_000);
+        Ok(())
+    }
+}
+
+pub struct PostgresRewardBotStore {
+    pool: PgPool,
+}
+
+impl PostgresRewardBotStore {
+    #[must_use]
+    pub fn new(pool: PgPool) -> Self {
+        Self { pool }
+    }
+}
+
+#[async_trait]
+impl RewardBotStore for PostgresRewardBotStore {
+    async fn load_config(&self) -> Result<RewardBotConfig> {
+        let rows = sqlx::query(
+            r#"
+            SELECT key, value
+            FROM reward_bot_config
+            "#,
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_QUERY_FAILED",
+                format!("failed to query reward bot config: {error}"),
+            )
+        })?;
+
+        let mut config = RewardBotConfig::default();
+        for row in rows {
+            let key: String = row.try_get("key").map_err(postgres_decode_error)?;
+            let value: String = row.try_get("value").map_err(postgres_decode_error)?;
+            apply_reward_config_value(&mut config, &key, &value)?;
+        }
+        Ok(config.normalized())
+    }
+
+    async fn save_config(&self, config: &RewardBotConfig) -> Result<()> {
+        let config = config.clone().normalized();
+        let mut transaction = self.pool.begin().await.map_err(|error| {
+            db_error(
+                "POSTGRES_TRANSACTION_BEGIN_FAILED",
+                format!("failed to begin reward config transaction: {error}"),
+            )
+        })?;
+
+        for (key, value) in reward_config_entries(&config) {
+            sqlx::query(
+                r#"
+                INSERT INTO reward_bot_config (key, value, updated_at)
+                VALUES ($1, $2, now())
+                ON CONFLICT (key) DO UPDATE
+                SET value = EXCLUDED.value,
+                    updated_at = now()
+                "#,
+            )
+            .bind(key)
+            .bind(value)
+            .execute(&mut *transaction)
+            .await
+            .map_err(|error| {
+                db_error(
+                    "POSTGRES_UPSERT_FAILED",
+                    format!("failed to upsert reward bot config: {error}"),
+                )
+            })?;
+        }
+
+        transaction.commit().await.map_err(|error| {
+            db_error(
+                "POSTGRES_TRANSACTION_COMMIT_FAILED",
+                format!("failed to commit reward config transaction: {error}"),
+            )
+        })?;
+        Ok(())
+    }
+
+    async fn upsert_markets(&self, markets: &[RewardMarket]) -> Result<()> {
+        for market in markets {
+            sqlx::query(
+                r#"
+                INSERT INTO reward_markets (
+                  condition_id,
+                  question,
+                  market_slug,
+                  event_slug,
+                  image,
+                  rewards_max_spread,
+                  rewards_min_size,
+                  total_daily_rate,
+                  tokens_json,
+                  active,
+                  updated_at
+                )
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                ON CONFLICT (condition_id) DO UPDATE
+                SET question = EXCLUDED.question,
+                    market_slug = EXCLUDED.market_slug,
+                    event_slug = EXCLUDED.event_slug,
+                    image = EXCLUDED.image,
+                    rewards_max_spread = EXCLUDED.rewards_max_spread,
+                    rewards_min_size = EXCLUDED.rewards_min_size,
+                    total_daily_rate = EXCLUDED.total_daily_rate,
+                    tokens_json = EXCLUDED.tokens_json,
+                    active = EXCLUDED.active,
+                    updated_at = EXCLUDED.updated_at
+                "#,
+            )
+            .bind(&market.condition_id)
+            .bind(&market.question)
+            .bind(&market.market_slug)
+            .bind(&market.event_slug)
+            .bind(&market.image)
+            .bind(market.rewards_max_spread)
+            .bind(market.rewards_min_size)
+            .bind(market.total_daily_rate)
+            .bind(Json(market.tokens.clone()))
+            .bind(market.active)
+            .bind(market.updated_at)
+            .execute(&self.pool)
+            .await
+            .map_err(|error| {
+                db_error(
+                    "POSTGRES_UPSERT_FAILED",
+                    format!("failed to upsert reward market: {error}"),
+                )
+            })?;
+        }
+        Ok(())
+    }
+
+    async fn save_quote_plans(&self, plans: &[RewardQuotePlan]) -> Result<()> {
+        for plan in plans {
+            sqlx::query(
+                r#"
+                INSERT INTO reward_quote_plans (
+                  condition_id,
+                  score,
+                  eligible,
+                  reason,
+                  quote_plan_json,
+                  updated_at
+                )
+                VALUES ($1, $2, $3, $4, $5, $6)
+                ON CONFLICT (condition_id) DO UPDATE
+                SET score = EXCLUDED.score,
+                    eligible = EXCLUDED.eligible,
+                    reason = EXCLUDED.reason,
+                    quote_plan_json = EXCLUDED.quote_plan_json,
+                    updated_at = EXCLUDED.updated_at
+                "#,
+            )
+            .bind(&plan.condition_id)
+            .bind(plan.score)
+            .bind(plan.eligible)
+            .bind(&plan.reason)
+            .bind(Json(plan.clone()))
+            .bind(plan.updated_at)
+            .execute(&self.pool)
+            .await
+            .map_err(|error| {
+                db_error(
+                    "POSTGRES_UPSERT_FAILED",
+                    format!("failed to upsert reward quote plan: {error}"),
+                )
+            })?;
+        }
+        Ok(())
+    }
+
+    async fn replace_simulated_orders(
+        &self,
+        account_id: &str,
+        orders: &[ManagedRewardOrder],
+        trace_id: &str,
+    ) -> Result<usize> {
+        let now = OffsetDateTime::now_utc();
+        let mut transaction = self.pool.begin().await.map_err(|error| {
+            db_error(
+                "POSTGRES_TRANSACTION_BEGIN_FAILED",
+                format!("failed to begin reward order transaction: {error}"),
+            )
+        })?;
+
+        let cancelled = sqlx::query(
+            r#"
+            UPDATE reward_managed_orders
+            SET status = 'cancelled',
+                reason = 'replaced by latest rewards simulation',
+                updated_at = $1,
+                trace_id = $2
+            WHERE account_id = $3
+              AND status IN ('planned', 'open', 'exit_pending')
+            "#,
+        )
+        .bind(now)
+        .bind(trace_id)
+        .bind(account_id)
+        .execute(&mut *transaction)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_UPDATE_FAILED",
+                format!("failed to cancel stale reward orders: {error}"),
+            )
+        })?
+        .rows_affected() as usize;
+
+        for order in orders {
+            insert_reward_order(&mut transaction, order, trace_id).await?;
+        }
+
+        transaction.commit().await.map_err(|error| {
+            db_error(
+                "POSTGRES_TRANSACTION_COMMIT_FAILED",
+                format!("failed to commit reward order transaction: {error}"),
+            )
+        })?;
+        Ok(cancelled)
+    }
+
+    async fn cancel_open_orders(
+        &self,
+        account_id: Option<&str>,
+        reason: &str,
+        trace_id: &str,
+    ) -> Result<usize> {
+        let now = OffsetDateTime::now_utc();
+        let result = sqlx::query(
+            r#"
+            UPDATE reward_managed_orders
+            SET status = 'cancelled',
+                reason = $1,
+                updated_at = $2,
+                trace_id = $3
+            WHERE status IN ('planned', 'open', 'exit_pending')
+              AND ($4::text IS NULL OR account_id = $4)
+            "#,
+        )
+        .bind(reason)
+        .bind(now)
+        .bind(trace_id)
+        .bind(account_id)
+        .execute(&self.pool)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_UPDATE_FAILED",
+                format!("failed to cancel reward orders: {error}"),
+            )
+        })?;
+        Ok(result.rows_affected() as usize)
+    }
+
+    async fn list_markets(&self, limit: u16) -> Result<Vec<RewardMarket>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT condition_id,
+                   question,
+                   market_slug,
+                   event_slug,
+                   image,
+                   rewards_max_spread,
+                   rewards_min_size,
+                   total_daily_rate,
+                   tokens_json,
+                   active,
+                   updated_at
+            FROM reward_markets
+            WHERE active = true
+            ORDER BY total_daily_rate DESC, updated_at DESC
+            LIMIT $1
+            "#,
+        )
+        .bind(i64::from(limit))
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_QUERY_FAILED",
+                format!("failed to query reward markets: {error}"),
+            )
+        })?;
+
+        rows.iter().map(reward_market_from_row).collect()
+    }
+
+    async fn list_quote_plans(&self, limit: u16) -> Result<Vec<RewardQuotePlan>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT quote_plan_json
+            FROM reward_quote_plans
+            ORDER BY eligible DESC, score DESC, updated_at DESC
+            LIMIT $1
+            "#,
+        )
+        .bind(i64::from(limit))
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_QUERY_FAILED",
+                format!("failed to query reward quote plans: {error}"),
+            )
+        })?;
+
+        rows.iter()
+            .map(|row| {
+                let plan: Json<RewardQuotePlan> = row
+                    .try_get("quote_plan_json")
+                    .map_err(postgres_decode_error)?;
+                Ok(plan.0)
+            })
+            .collect()
+    }
+
+    async fn list_orders(&self, limit: u16) -> Result<Vec<ManagedRewardOrder>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT id,
+                   account_id,
+                   condition_id,
+                   token_id,
+                   outcome,
+                   side,
+                   price,
+                   size,
+                   external_order_id,
+                   status,
+                   scoring,
+                   reason,
+                   created_at,
+                   updated_at
+            FROM reward_managed_orders
+            ORDER BY updated_at DESC
+            LIMIT $1
+            "#,
+        )
+        .bind(i64::from(limit))
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_QUERY_FAILED",
+                format!("failed to query reward managed orders: {error}"),
+            )
+        })?;
+
+        rows.iter().map(reward_order_from_row).collect()
+    }
+
+    async fn list_positions(&self, limit: u16) -> Result<Vec<RewardPosition>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT account_id,
+                   condition_id,
+                   token_id,
+                   outcome,
+                   size,
+                   avg_price,
+                   realized_pnl,
+                   updated_at
+            FROM reward_positions
+            WHERE size <> 0
+            ORDER BY updated_at DESC
+            LIMIT $1
+            "#,
+        )
+        .bind(i64::from(limit))
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_QUERY_FAILED",
+                format!("failed to query reward positions: {error}"),
+            )
+        })?;
+
+        rows.iter().map(reward_position_from_row).collect()
+    }
+
+    async fn list_events(&self, limit: u16) -> Result<Vec<RewardRiskEvent>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT id,
+                   account_id,
+                   condition_id,
+                   external_order_id,
+                   event_type,
+                   severity,
+                   message,
+                   metadata_json,
+                   created_at
+            FROM reward_risk_events
+            ORDER BY created_at DESC
+            LIMIT $1
+            "#,
+        )
+        .bind(i64::from(limit))
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_QUERY_FAILED",
+                format!("failed to query reward risk events: {error}"),
+            )
+        })?;
+
+        rows.iter().map(reward_event_from_row).collect()
+    }
+
+    async fn log_event(&self, event: RewardRiskEvent) -> Result<()> {
+        sqlx::query(
+            r#"
+            INSERT INTO reward_risk_events (
+              id,
+              account_id,
+              condition_id,
+              external_order_id,
+              event_type,
+              severity,
+              message,
+              metadata_json,
+              created_at
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            "#,
+        )
+        .bind(&event.id)
+        .bind(&event.account_id)
+        .bind(&event.condition_id)
+        .bind(&event.external_order_id)
+        .bind(&event.event_type)
+        .bind(event.severity.as_str())
+        .bind(&event.message)
+        .bind(Json(event.metadata.clone()))
+        .bind(event.created_at)
+        .execute(&self.pool)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_INSERT_FAILED",
+                format!("failed to insert reward risk event: {error}"),
+            )
+        })?;
+        Ok(())
+    }
+}
+
+fn postgres_decode_error(error: sqlx::Error) -> AppError {
+    db_error(
+        "POSTGRES_DECODE_FAILED",
+        format!("failed to decode postgres row: {error}"),
+    )
+}
+
+fn apply_reward_config_value(config: &mut RewardBotConfig, key: &str, value: &str) -> Result<()> {
+    match key {
+        "enabled" => config.enabled = parse_bool_config(key, value)?,
+        "mode" => config.mode = RewardBotMode::from_str(value)?,
+        "account_id" => config.account_id = value.to_string(),
+        "max_markets" => config.max_markets = parse_u16_config(key, value)?,
+        "max_open_orders" => config.max_open_orders = parse_u16_config(key, value)?,
+        "per_market_usd" => config.per_market_usd = parse_decimal_config(key, value)?,
+        "quote_size_usd" => config.quote_size_usd = parse_decimal_config(key, value)?,
+        "min_daily_reward" => config.min_daily_reward = parse_decimal_config(key, value)?,
+        "min_market_score" => config.min_market_score = parse_decimal_config(key, value)?,
+        "max_spread_cents" => config.max_spread_cents = parse_decimal_config(key, value)?,
+        "quote_edge_cents" => config.quote_edge_cents = parse_decimal_config(key, value)?,
+        "safety_margin_cents" => config.safety_margin_cents = parse_decimal_config(key, value)?,
+        "min_midpoint" => config.min_midpoint = parse_decimal_config(key, value)?,
+        "max_midpoint" => config.max_midpoint = parse_decimal_config(key, value)?,
+        "stale_book_ms" => config.stale_book_ms = parse_u64_config(key, value)?,
+        "min_scoring_check_sec" => config.min_scoring_check_sec = parse_u64_config(key, value)?,
+        "max_position_usd" => config.max_position_usd = parse_decimal_config(key, value)?,
+        "max_global_position_usd" => {
+            config.max_global_position_usd = parse_decimal_config(key, value)?;
+        }
+        "exit_markup_cents" => config.exit_markup_cents = parse_decimal_config(key, value)?,
+        "cancel_on_fill" => config.cancel_on_fill = parse_bool_config(key, value)?,
+        _ => {}
+    }
+    Ok(())
+}
+
+fn reward_config_entries(config: &RewardBotConfig) -> Vec<(&'static str, String)> {
+    vec![
+        ("enabled", config.enabled.to_string()),
+        ("mode", config.mode.as_str().to_string()),
+        ("account_id", config.account_id.clone()),
+        ("max_markets", config.max_markets.to_string()),
+        ("max_open_orders", config.max_open_orders.to_string()),
+        ("per_market_usd", config.per_market_usd.to_string()),
+        ("quote_size_usd", config.quote_size_usd.to_string()),
+        ("min_daily_reward", config.min_daily_reward.to_string()),
+        ("min_market_score", config.min_market_score.to_string()),
+        ("max_spread_cents", config.max_spread_cents.to_string()),
+        ("quote_edge_cents", config.quote_edge_cents.to_string()),
+        (
+            "safety_margin_cents",
+            config.safety_margin_cents.to_string(),
+        ),
+        ("min_midpoint", config.min_midpoint.to_string()),
+        ("max_midpoint", config.max_midpoint.to_string()),
+        ("stale_book_ms", config.stale_book_ms.to_string()),
+        (
+            "min_scoring_check_sec",
+            config.min_scoring_check_sec.to_string(),
+        ),
+        ("max_position_usd", config.max_position_usd.to_string()),
+        (
+            "max_global_position_usd",
+            config.max_global_position_usd.to_string(),
+        ),
+        ("exit_markup_cents", config.exit_markup_cents.to_string()),
+        ("cancel_on_fill", config.cancel_on_fill.to_string()),
+    ]
+}
+
+fn parse_bool_config(key: &str, value: &str) -> Result<bool> {
+    match value {
+        "true" | "1" => Ok(true),
+        "false" | "0" => Ok(false),
+        _ => Err(AppError::invalid_input(
+            "REWARD_CONFIG_BOOL_INVALID",
+            format!("reward config key {key} must be a boolean"),
+        )),
+    }
+}
+
+fn parse_u16_config(key: &str, value: &str) -> Result<u16> {
+    value.parse::<u16>().map_err(|error| {
+        AppError::invalid_input(
+            "REWARD_CONFIG_U16_INVALID",
+            format!("reward config key {key} must be a u16: {error}"),
+        )
+    })
+}
+
+fn parse_u64_config(key: &str, value: &str) -> Result<u64> {
+    value.parse::<u64>().map_err(|error| {
+        AppError::invalid_input(
+            "REWARD_CONFIG_U64_INVALID",
+            format!("reward config key {key} must be a u64: {error}"),
+        )
+    })
+}
+
+fn parse_decimal_config(key: &str, value: &str) -> Result<Decimal> {
+    Decimal::from_str(value).map_err(|error| {
+        AppError::invalid_input(
+            "REWARD_CONFIG_DECIMAL_INVALID",
+            format!("reward config key {key} must be a decimal: {error}"),
+        )
+    })
+}
+
+async fn insert_reward_order(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    order: &ManagedRewardOrder,
+    trace_id: &str,
+) -> Result<()> {
+    sqlx::query(
+        r#"
+        INSERT INTO reward_managed_orders (
+          id,
+          account_id,
+          condition_id,
+          token_id,
+          outcome,
+          side,
+          price,
+          size,
+          external_order_id,
+          status,
+          scoring,
+          reason,
+          created_at,
+          updated_at,
+          trace_id
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+        ON CONFLICT (id) DO UPDATE
+        SET external_order_id = EXCLUDED.external_order_id,
+            status = EXCLUDED.status,
+            scoring = EXCLUDED.scoring,
+            reason = EXCLUDED.reason,
+            updated_at = EXCLUDED.updated_at,
+            trace_id = EXCLUDED.trace_id
+        "#,
+    )
+    .bind(&order.id)
+    .bind(&order.account_id)
+    .bind(&order.condition_id)
+    .bind(&order.token_id)
+    .bind(&order.outcome)
+    .bind(order.side.as_str())
+    .bind(order.price)
+    .bind(order.size)
+    .bind(&order.external_order_id)
+    .bind(order.status.as_str())
+    .bind(order.scoring)
+    .bind(&order.reason)
+    .bind(order.created_at)
+    .bind(order.updated_at)
+    .bind(trace_id)
+    .execute(&mut **transaction)
+    .await
+    .map_err(|error| {
+        db_error(
+            "POSTGRES_INSERT_FAILED",
+            format!("failed to insert reward managed order: {error}"),
+        )
+    })?;
+    Ok(())
+}
+
+fn reward_market_from_row(row: &sqlx::postgres::PgRow) -> Result<RewardMarket> {
+    let tokens: Json<Vec<RewardToken>> =
+        row.try_get("tokens_json").map_err(postgres_decode_error)?;
+    Ok(RewardMarket {
+        condition_id: row.try_get("condition_id").map_err(postgres_decode_error)?,
+        question: row.try_get("question").map_err(postgres_decode_error)?,
+        market_slug: row.try_get("market_slug").map_err(postgres_decode_error)?,
+        event_slug: row.try_get("event_slug").map_err(postgres_decode_error)?,
+        image: row.try_get("image").map_err(postgres_decode_error)?,
+        rewards_max_spread: row
+            .try_get("rewards_max_spread")
+            .map_err(postgres_decode_error)?,
+        rewards_min_size: row
+            .try_get("rewards_min_size")
+            .map_err(postgres_decode_error)?,
+        total_daily_rate: row
+            .try_get("total_daily_rate")
+            .map_err(postgres_decode_error)?,
+        tokens: tokens.0,
+        active: row.try_get("active").map_err(postgres_decode_error)?,
+        updated_at: row.try_get("updated_at").map_err(postgres_decode_error)?,
+    })
+}
+
+fn reward_order_from_row(row: &sqlx::postgres::PgRow) -> Result<ManagedRewardOrder> {
+    let side_raw: String = row.try_get("side").map_err(postgres_decode_error)?;
+    let status_raw: String = row.try_get("status").map_err(postgres_decode_error)?;
+    Ok(ManagedRewardOrder {
+        id: row.try_get("id").map_err(postgres_decode_error)?,
+        account_id: row.try_get("account_id").map_err(postgres_decode_error)?,
+        condition_id: row.try_get("condition_id").map_err(postgres_decode_error)?,
+        token_id: row.try_get("token_id").map_err(postgres_decode_error)?,
+        outcome: row.try_get("outcome").map_err(postgres_decode_error)?,
+        side: RewardOrderSide::from_str(&side_raw)?,
+        price: row.try_get("price").map_err(postgres_decode_error)?,
+        size: row.try_get("size").map_err(postgres_decode_error)?,
+        external_order_id: row
+            .try_get("external_order_id")
+            .map_err(postgres_decode_error)?,
+        status: ManagedRewardOrderStatus::from_str(&status_raw)?,
+        scoring: row.try_get("scoring").map_err(postgres_decode_error)?,
+        reason: row.try_get("reason").map_err(postgres_decode_error)?,
+        created_at: row.try_get("created_at").map_err(postgres_decode_error)?,
+        updated_at: row.try_get("updated_at").map_err(postgres_decode_error)?,
+    })
+}
+
+fn reward_position_from_row(row: &sqlx::postgres::PgRow) -> Result<RewardPosition> {
+    Ok(RewardPosition {
+        account_id: row.try_get("account_id").map_err(postgres_decode_error)?,
+        condition_id: row.try_get("condition_id").map_err(postgres_decode_error)?,
+        token_id: row.try_get("token_id").map_err(postgres_decode_error)?,
+        outcome: row.try_get("outcome").map_err(postgres_decode_error)?,
+        size: row.try_get("size").map_err(postgres_decode_error)?,
+        avg_price: row.try_get("avg_price").map_err(postgres_decode_error)?,
+        realized_pnl: row.try_get("realized_pnl").map_err(postgres_decode_error)?,
+        updated_at: row.try_get("updated_at").map_err(postgres_decode_error)?,
+    })
+}
+
+fn reward_event_from_row(row: &sqlx::postgres::PgRow) -> Result<RewardRiskEvent> {
+    let severity_raw: String = row.try_get("severity").map_err(postgres_decode_error)?;
+    let metadata: Json<Value> = row
+        .try_get("metadata_json")
+        .map_err(postgres_decode_error)?;
+    Ok(RewardRiskEvent {
+        id: row.try_get("id").map_err(postgres_decode_error)?,
+        account_id: row.try_get("account_id").map_err(postgres_decode_error)?,
+        condition_id: row.try_get("condition_id").map_err(postgres_decode_error)?,
+        external_order_id: row
+            .try_get("external_order_id")
+            .map_err(postgres_decode_error)?,
+        event_type: row.try_get("event_type").map_err(postgres_decode_error)?,
+        severity: RewardRiskSeverity::from_str(&severity_raw)?,
+        message: row.try_get("message").map_err(postgres_decode_error)?,
+        metadata: metadata.0,
+        created_at: row.try_get("created_at").map_err(postgres_decode_error)?,
+    })
 }
 
 pub type SharedModeStateStore = Arc<InMemoryModeStateStore>;

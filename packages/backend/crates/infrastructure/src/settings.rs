@@ -17,6 +17,7 @@ pub struct Settings {
     pub risk: RiskSettings,
     pub polymarket: PolymarketSettings,
     pub arbitrage: ArbitrageSettings,
+    pub rewards: RewardsSettings,
     pub news: NewsSettings,
     pub worker: WorkerSettings,
     pub auth: AuthSettings,
@@ -125,6 +126,13 @@ pub struct ArbitrageSettings {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
+pub struct RewardsSettings {
+    pub enabled: bool,
+    pub poll_interval_secs: u64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
 pub struct NewsSettings {
     pub enabled: bool,
     pub poll_interval_secs: u64,
@@ -152,6 +160,7 @@ pub struct WorkerSettings {
     pub promote_news_events: bool,
     pub poll_arbitrage_radar: bool,
     pub analyze_arbitrage_opportunities: bool,
+    pub poll_reward_bot: bool,
     pub drain_execution_queue: bool,
     pub poll_paper_order_statuses: bool,
     pub reconcile_paper_fills: bool,
@@ -292,6 +301,15 @@ impl Default for ArbitrageSettings {
     }
 }
 
+impl Default for RewardsSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            poll_interval_secs: 60,
+        }
+    }
+}
+
 impl Default for NewsSettings {
     fn default() -> Self {
         Self {
@@ -324,6 +342,7 @@ impl Default for WorkerSettings {
             promote_news_events: false,
             poll_arbitrage_radar: false,
             analyze_arbitrage_opportunities: false,
+            poll_reward_bot: false,
             drain_execution_queue: false,
             poll_paper_order_statuses: false,
             reconcile_paper_fills: false,
@@ -504,11 +523,14 @@ mod tests {
         assert_eq!(settings.news.request_timeout_secs, 10);
         assert_eq!(settings.news.max_items_per_source, 50);
         assert!(settings.news.sources.is_empty());
+        assert!(!settings.rewards.enabled);
+        assert_eq!(settings.rewards.poll_interval_secs, 60);
         assert!(!settings.worker.ingest_fixtures_on_start);
         assert!(!settings.worker.poll_news);
         assert!(!settings.worker.promote_news_events);
         assert!(!settings.worker.poll_arbitrage_radar);
         assert!(!settings.worker.analyze_arbitrage_opportunities);
+        assert!(!settings.worker.poll_reward_bot);
         assert!(!settings.worker.drain_execution_queue);
         assert!(!settings.worker.poll_paper_order_statuses);
         assert!(!settings.worker.reconcile_paper_fills);
@@ -624,6 +646,11 @@ mod tests {
                 "POLYEDGE_ARBITRAGE__SLIPPAGE_BUFFER".to_string(),
                 "0.004".to_string(),
             ),
+            ("POLYEDGE_REWARDS__ENABLED".to_string(), "true".to_string()),
+            (
+                "POLYEDGE_REWARDS__POLL_INTERVAL_SECS".to_string(),
+                "45".to_string(),
+            ),
             (
                 "POLYEDGE_WORKER__INGEST_FIXTURES_ON_START".to_string(),
                 "true".to_string(),
@@ -639,6 +666,10 @@ mod tests {
             ),
             (
                 "POLYEDGE_WORKER__ANALYZE_ARBITRAGE_OPPORTUNITIES".to_string(),
+                "true".to_string(),
+            ),
+            (
+                "POLYEDGE_WORKER__POLL_REWARD_BOT".to_string(),
                 "true".to_string(),
             ),
             (
@@ -744,11 +775,14 @@ mod tests {
         assert_eq!(settings.arbitrage.min_capacity, quantity("50"));
         assert_eq!(settings.arbitrage.fee_buffer, edge("0.003"));
         assert_eq!(settings.arbitrage.slippage_buffer, edge("0.004"));
+        assert!(settings.rewards.enabled);
+        assert_eq!(settings.rewards.poll_interval_secs, 45);
         assert!(settings.worker.ingest_fixtures_on_start);
         assert!(settings.worker.poll_news);
         assert!(settings.worker.promote_news_events);
         assert!(settings.worker.poll_arbitrage_radar);
         assert!(settings.worker.analyze_arbitrage_opportunities);
+        assert!(settings.worker.poll_reward_bot);
         assert!(settings.worker.drain_execution_queue);
         assert!(settings.worker.poll_paper_order_statuses);
         assert!(settings.worker.reconcile_paper_fills);
