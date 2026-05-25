@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BACKEND_DIR="${ROOT_DIR}/packages/backend"
-API_BASE_URL="${POLYEDGE_API_BASE_URL:-http://127.0.0.1:8080}"
+API_BASE_URL="${POLYEDGE_API_BASE_URL:-http://127.0.0.1:38001}"
 FRONT_BASE_URL="${POLYEDGE_FRONT_BASE_URL:-}"
 RUN_WORKER="${POLYEDGE_SMOKE_RUN_WORKER:-1}"
 REQUEST_ID="${POLYEDGE_SMOKE_REQUEST_ID:-req_smoke_arbitrage_radar}"

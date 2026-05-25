@@ -9,7 +9,7 @@ COPY bin/polyedge-worker /usr/local/bin/polyedge-worker
 RUN chmod 0755 /usr/local/bin/polyedge-api /usr/local/bin/polyedge-worker
 
 ENV POLYEDGE_SERVER__HOST=0.0.0.0
-ENV POLYEDGE_SERVER__PORT=8080
+ENV POLYEDGE_SERVER__PORT=38001
 
-EXPOSE 8080
+EXPOSE 38001
 CMD ["polyedge-api"]

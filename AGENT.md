@@ -93,7 +93,7 @@ cargo run -p polyedge-worker -- consume-polymarket-user-events
 
 ## 配置要点
 
-- 后端默认监听 `0.0.0.0:8080`。
+- 后端默认监听 `0.0.0.0:38001`。
 - 默认 runtime mode 是 `manual_confirm`。
 - 默认 Polymarket mode 是 `mock`。
 - 默认 arbitrage radar 和 news ingestion 是 disabled。

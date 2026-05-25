@@ -202,7 +202,7 @@ impl Default for ServerSettings {
     fn default() -> Self {
         Self {
             host: "0.0.0.0".to_string(),
-            port: 8080,
+            port: 38001,
         }
     }
 }
@@ -401,7 +401,7 @@ impl Settings {
         public_keys: Vec<AuthKeySettings>,
     ) -> Self {
         let mut settings = Self::default();
-        settings.server.port = 3000;
+        settings.server.port = 38001;
         settings.runtime.environment = environment.into();
         settings.runtime.initial_mode = initial_mode;
         settings.auth.force_reauth_after = None;
@@ -508,7 +508,7 @@ mod tests {
             .expect("settings");
 
         assert_eq!(settings.server.host, "0.0.0.0");
-        assert_eq!(settings.server.port, 8080);
+        assert_eq!(settings.server.port, 38001);
         assert_eq!(settings.runtime.environment, "local");
         assert_eq!(
             settings.runtime.initial_mode,

@@ -171,14 +171,14 @@ cp .env.example .env
 
 默认值对应当前开发环境：
 
-- API 默认监听 `0.0.0.0:8080`
+- API 默认监听 `0.0.0.0:38001`
 - runtime 默认模式是 `manual_confirm`
 - polymarket 默认模式是 `mock`
 - `postgres.url` 和 `redis.url` 默认仍为空
 
 说明：
 
-1. 环境变量命名采用 `POLYEDGE_<section>__<field>`，例如 `POLYEDGE_SERVER__PORT=8080`。
+1. 环境变量命名采用 `POLYEDGE_<section>__<field>`，例如 `POLYEDGE_SERVER__PORT=38001`。
 2. 留空的可选项会被视为未配置，例如 `POLYEDGE_POSTGRES__URL=`。
 3. `POLYEDGE_AUTH__KEYS_JSON` 使用 JSON 数组格式配置验签公钥。
 
