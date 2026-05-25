@@ -220,7 +220,7 @@ impl Default for RuntimeSettings {
     fn default() -> Self {
         Self {
             environment: "local".to_string(),
-            initial_mode: SystemMode::ManualConfirm,
+            initial_mode: SystemMode::PaperTrade,
         }
     }
 }
@@ -512,7 +512,7 @@ mod tests {
         assert_eq!(settings.runtime.environment, "local");
         assert_eq!(
             settings.runtime.initial_mode,
-            polyedge_domain::SystemMode::ManualConfirm
+            polyedge_domain::SystemMode::PaperTrade
         );
         assert_eq!(
             settings.polymarket.mode,

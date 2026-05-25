@@ -1,7 +1,7 @@
 "use client";
 
 import { startTransition, useEffect, useState } from "react";
-import { Bolt, TriangleAlert } from "lucide-react";
+import { TriangleAlert } from "lucide-react";
 
 import type { getDashboardPageData } from "@/features/dashboard/loaders/dashboard-page-data";
 import { useConsoleRealtime } from "@/components/shared/console-realtime-provider";
@@ -19,7 +19,6 @@ import type {
   SignalStreamPayload,
 } from "@/lib/contracts/realtime";
 import {
-  approvalSeverityTone,
   alertSeverityTone,
   formatClock,
   formatCurrency,
@@ -29,7 +28,7 @@ import {
   signalStateTone,
   uppercaseEnum,
 } from "@/lib/realtime-formatters";
-import { patchApprovalField, upsertStreamedItem } from "@/lib/signal-stream-utils";
+import { upsertStreamedItem } from "@/lib/signal-stream-utils";
 
 type DashboardPageData = Awaited<ReturnType<typeof getDashboardPageData>>;
 
@@ -49,7 +48,6 @@ function buildSignalRow(
       : current?.confidenceWidth ?? "0%",
     stateLabel: enumLabel(payload.lifecycle_state),
     stateTone: signalStateTone(payload.lifecycle_state),
-    hasPendingApproval: payload.requires_review ?? current?.hasPendingApproval ?? false,
   };
 }
 
@@ -89,52 +87,6 @@ function upsertAlert(
   return [nextAlert, ...alerts].slice(0, 3);
 }
 
-function buildApprovalItem(
-  payload: RiskStreamPayload,
-  current?: DashboardPageData["approvals"][number],
-  enumLabel: (value: string) => string = (value) => value.replaceAll("_", " "),
-): DashboardPageData["approvals"][number] | null {
-  if (
-    !payload.approval_id ||
-    !payload.approval_type ||
-    !payload.approval_severity ||
-    !payload.approval_summary
-  ) {
-    return current ?? null;
-  }
-
-  return {
-    id: payload.approval_id,
-    typeLabel: enumLabel(payload.approval_type),
-    severityTone: approvalSeverityTone(payload.approval_severity),
-    createdAt: payload.created_at ? formatClock(payload.created_at) : current?.createdAt ?? "--:--:--",
-    summary: payload.approval_summary,
-  };
-}
-
-function upsertApprovalItem(
-  approvals: DashboardPageData["approvals"],
-  payload: RiskStreamPayload,
-  enumLabel: (value: string) => string,
-): DashboardPageData["approvals"] {
-  const current = approvals.find((approval) => approval.id === payload.approval_id);
-  const nextApproval = buildApprovalItem(payload, current, enumLabel);
-
-  if (!nextApproval) {
-    return approvals;
-  }
-
-  if (payload.approval_status && payload.approval_status !== "pending") {
-    return approvals.filter((approval) => approval.id !== nextApproval.id);
-  }
-
-  if (current) {
-    return approvals.map((approval) => (approval.id === nextApproval.id ? nextApproval : approval));
-  }
-
-  return [nextApproval, ...approvals].slice(0, 3);
-}
-
 function buildEventItem(
   payload: ConsoleEventStreamPayload,
   current: DashboardPageData["events"][number] | undefined,
@@ -168,7 +120,6 @@ function patchMetrics(
   payload: RiskStreamPayload,
   labels: {
     critical: string;
-    updated: (time: string) => string;
   },
 ): DashboardPageData["metrics"] {
   return metrics.map((metric) => {
@@ -197,14 +148,6 @@ function patchMetrics(
             ? `${payload.critical_alerts} ${labels.critical}`
             : metric.hint,
         tone: (payload.critical_alerts ?? 0) > 0 ? ("danger" as const) : ("primary" as const),
-      };
-    }
-
-    if (metric.key === "pending_approvals" && payload.approval_count !== undefined) {
-      return {
-        ...metric,
-        value: String(payload.approval_count),
-        hint: payload.updated_at ? labels.updated(formatClock(payload.updated_at)) : metric.hint,
       };
     }
 
@@ -263,21 +206,15 @@ export function DashboardOverview({ data }: { data: DashboardPageData }) {
         environmentLabel: streamEvent.data.environment ?? current.environmentLabel,
         metrics: patchMetrics(current.metrics, streamEvent.data, {
           critical: dictionary.common.critical,
-          updated: (time) => format(dictionary.metricHints.updated, { time }),
         }),
         alerts: upsertAlert(current.alerts, streamEvent.data).map((alert) => ({
           ...alert,
           reason: localizeGeneratedCopy(locale, dictionary, alert.reason),
           target: localizeGeneratedCopy(locale, dictionary, alert.target),
         })),
-        approvals: upsertApprovalItem(current.approvals, streamEvent.data, enumLabel).map((approval) => ({
-          ...approval,
-          summary: localizeGeneratedCopy(locale, dictionary, approval.summary),
-        })),
-        signals: patchApprovalField(current.signals, streamEvent.data, "hasPendingApproval"),
       }));
     });
-  }, [dictionary, dictionary.common.critical, dictionary.metricHints.updated, enumLabel, format, locale, riskStream.lastEvent]);
+  }, [dictionary, dictionary.common.critical, enumLabel, locale, riskStream.lastEvent]);
 
   useEffect(() => {
     const streamEvent = eventsStream.lastEvent;
@@ -369,11 +306,7 @@ export function DashboardOverview({ data }: { data: DashboardPageData }) {
                   {liveData.signals.map((signal) => (
                     <tr
                       key={signal.id}
-                      className={
-                        signal.hasPendingApproval
-                          ? "bg-accent/40"
-                          : "transition-colors hover:bg-accent/35"
-                      }
+                      className="transition-colors hover:bg-accent/35"
                     >
                       <td className="px-4 py-3">
                         <div className="space-y-1">
@@ -408,12 +341,6 @@ export function DashboardOverview({ data }: { data: DashboardPageData }) {
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-2">
                           <StatusPill tone={signal.stateTone}>{signal.stateLabel}</StatusPill>
-                          {signal.hasPendingApproval ? (
-                            <>
-                              <StatusPill tone="violet">{dictionary.common.manualReview}</StatusPill>
-                              <Bolt className="size-3 text-secondary" />
-                            </>
-                          ) : null}
                         </div>
                       </td>
                     </tr>
@@ -454,33 +381,6 @@ export function DashboardOverview({ data }: { data: DashboardPageData }) {
               <EmptyPanel
                 title={dictionary.dashboard.noOpenAlertsTitle}
                 detail={dictionary.dashboard.noOpenAlertsDetail}
-              />
-            )}
-          </div>
-
-          <div className="rounded-lg bg-card/95 p-4 ring-1 ring-white/5">
-            <div className="mb-3 flex items-center justify-between">
-              <p className="font-heading text-sm font-bold uppercase tracking-[0.18em] text-foreground">
-                {dictionary.dashboard.pendingApprovals}
-              </p>
-              <StatusPill tone="violet">{dictionary.dashboard.manualQueue}</StatusPill>
-            </div>
-            {liveData.approvals.length > 0 ? (
-              <div className="space-y-3">
-                {liveData.approvals.map((approval) => (
-                  <div key={approval.id} className="rounded-md bg-popover/70 p-3">
-                    <div className="flex items-center justify-between gap-3">
-                      <StatusPill tone={approval.severityTone}>{approval.typeLabel}</StatusPill>
-                      <span className="font-mono text-[10px] text-muted-foreground">{approval.createdAt}</span>
-                    </div>
-                    <p className="mt-2 text-sm text-foreground">{approval.summary}</p>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <EmptyPanel
-                title={dictionary.dashboard.noPendingApprovalsTitle}
-                detail={dictionary.dashboard.noPendingApprovalsDetail}
               />
             )}
           </div>

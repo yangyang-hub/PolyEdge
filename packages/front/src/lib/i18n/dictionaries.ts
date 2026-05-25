@@ -123,12 +123,12 @@ const enUS = {
   dashboard: {
     eyebrow: "Operations",
     title: "Dashboard",
-    description: "Desk summary across live signals, risk posture and approvals queue.",
+    description: "Desk summary across live signals and risk posture.",
     streamTitle: "Market stream synchronized",
     streamDetail: "Signal confidence and market snapshots are rendering from the typed contract layer.",
     reviewActiveTitle: "Operator review active",
     reviewQuietTitle: "No active desk warnings",
-    reviewActiveDetail: "{count} alert items are influencing approvals and risk posture.",
+    reviewActiveDetail: "{count} alert items are influencing risk posture.",
     reviewQuietDetail: "Risk engine is currently quiet.",
     realtimeSignals: "Real-time Signals",
     liveStreaming: "live streaming",
@@ -242,7 +242,7 @@ const enUS = {
   signals: {
     eyebrow: "Decisioning",
     title: "Signals",
-    description: "Inspect posterior, edge and confidence together with approval state and risk reasoning.",
+    description: "Inspect posterior, edge and confidence together with risk reasoning.",
     active: "{count} active",
     pendingApproval: "{count} pending approval",
     approvalReq: "{count} approval req",
@@ -279,6 +279,7 @@ const enUS = {
     queueExecution: "Queue execution",
     executionNote:
       "Submitting this execution request after reviewing signal evidence, price, quantity and current risk controls.",
+    expectedVersion: "Expected version",
     limitPrice: "Limit price",
     quantity: "Quantity",
     connectorName: "Connector",
@@ -379,11 +380,11 @@ const enUS = {
     queueKillSwitch: "Queue kill switch",
     killSwitchStatus: "Kill switch status",
     modeNote:
-      "Switching runtime from {mode} after reviewing current alert and approval state.",
+      "Switching runtime from {mode} after reviewing current alert state.",
     releaseNote:
       "Releasing protective controls after operator review of current alerts and exposure.",
     killReleaseNote:
-      "Releasing the kill switch after verifying upstream health and desk approvals.",
+      "Releasing the kill switch after verifying upstream health and current exposure.",
     killTriggerNote:
       "Triggering the kill switch because current risk conditions require an immediate halt.",
   },
@@ -858,12 +859,12 @@ const zhCN = {
   dashboard: {
     eyebrow: "运行台",
     title: "仪表盘",
-    description: "汇总实时信号、风控状态和待审批队列。",
+    description: "汇总实时信号和风控状态。",
     streamTitle: "市场数据流已同步",
     streamDetail: "信号置信度和市场快照正在通过 typed contract 层渲染。",
     reviewActiveTitle: "操作员复核中",
     reviewQuietTitle: "当前无活跃台面警告",
-    reviewActiveDetail: "{count} 条告警正在影响审批和风控状态。",
+    reviewActiveDetail: "{count} 条告警正在影响风控状态。",
     reviewQuietDetail: "当前风控引擎处于安静状态。",
     realtimeSignals: "实时信号",
     liveStreaming: "实时推送中",
@@ -973,7 +974,7 @@ const zhCN = {
   signals: {
     eyebrow: "决策",
     title: "信号",
-    description: "同时查看后验概率、edge、置信度、审批状态和风控原因。",
+    description: "同时查看后验概率、edge、置信度和风控原因。",
     active: "{count} 个活跃",
     pendingApproval: "{count} 个待审批",
     approvalReq: "{count} 个需审批",
@@ -1005,6 +1006,7 @@ const zhCN = {
     executeDescription: "为选中的信号创建后端执行请求，worker 会按连接器配置消费队列。",
     queueExecution: "执行入队",
     executionNote: "已复核信号证据、价格、数量和当前风控控制，提交该执行请求。",
+    expectedVersion: "期望版本",
     limitPrice: "限价",
     quantity: "数量",
     connectorName: "连接器",
@@ -1099,9 +1101,9 @@ const zhCN = {
     killSwitchDescription: "熔断操作属于高风险控制，始终需要二次认证。",
     queueKillSwitch: "熔断请求入队",
     killSwitchStatus: "熔断状态",
-    modeNote: "复核当前告警和审批状态后，将运行模式从 {mode} 切换。",
+    modeNote: "复核当前告警状态后，将运行模式从 {mode} 切换。",
     releaseNote: "操作员复核当前告警和敞口后，释放保护控制。",
-    killReleaseNote: "确认上游健康和台面审批后，释放熔断开关。",
+    killReleaseNote: "确认上游健康和当前敞口后，释放熔断开关。",
     killTriggerNote: "当前风险条件要求立即暂停，因此触发熔断开关。",
   },
   approvals: {

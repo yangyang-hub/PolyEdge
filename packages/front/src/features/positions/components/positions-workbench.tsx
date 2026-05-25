@@ -33,7 +33,7 @@ import {
 type PositionsPageData = Awaited<ReturnType<typeof getPositionsPageData>>;
 type PositionItem = PositionsPageData["positions"][number];
 type PositionMetric = PositionsPageData["metrics"][number];
-type PositionFilter = "all" | "review" | "gainers" | "pressure";
+type PositionFilter = "all" | "gainers" | "pressure";
 
 function patchPositionSignal(
   position: PositionItem,
@@ -50,7 +50,6 @@ function patchPositionSignal(
     confidenceWidth: payload.confidence ? formatPercentFromRatio(payload.confidence) : position.confidenceWidth,
     signalStateLabel: enumLabel(payload.lifecycle_state),
     signalStateTone: signalStateTone(payload.lifecycle_state),
-    requiresReview: payload.requires_review ?? position.requiresReview,
     signalReason: payload.reason ?? position.signalReason,
     riskDecision: payload.risk_decision ?? position.riskDecision,
     signalUpdatedAt: payload.updated_at ?? position.signalUpdatedAt,
@@ -65,25 +64,6 @@ function patchPositionsFromSignal(
   return positions.map((position) =>
     position.marketId === payload.market_id || position.signalId === payload.signal_id
       ? patchPositionSignal(position, payload, enumLabel)
-      : position,
-  );
-}
-
-function patchPositionsFromApproval(positions: PositionItem[], payload: RiskStreamPayload): PositionItem[] {
-  if (
-    payload.approval_type !== "signal" ||
-    !payload.approval_resource_id ||
-    !payload.approval_status
-  ) {
-    return positions;
-  }
-
-  return positions.map((position) =>
-    position.signalId === payload.approval_resource_id
-      ? {
-          ...position,
-          requiresReview: payload.approval_status === "pending",
-        }
       : position,
   );
 }
@@ -143,7 +123,6 @@ export function PositionsWorkbench({ data }: { data: PositionsPageData }) {
 
     startTransition(() => {
       setMetrics((currentMetrics) => patchMetrics(currentMetrics, streamEvent.data));
-      setPositionItems((currentItems) => patchPositionsFromApproval(currentItems, streamEvent.data));
 
       if (streamEvent.data.mode) {
         setRuntimeModeLabel(enumLabel(streamEvent.data.mode));
@@ -156,10 +135,6 @@ export function PositionsWorkbench({ data }: { data: PositionsPageData }) {
   }, [enumLabel, lastRiskEvent]);
 
   const filteredPositions = positionItems.filter((position) => {
-    if (deferredFilter === "review") {
-      return position.requiresReview;
-    }
-
     if (deferredFilter === "gainers") {
       return position.pnlValue > 0;
     }
@@ -178,13 +153,11 @@ export function PositionsWorkbench({ data }: { data: PositionsPageData }) {
     "";
   const selectedPosition =
     positionItems.find((position) => position.id === activeSelectedId) ?? positionItems[0];
-  const reviewCount = positionItems.filter((position) => position.requiresReview).length;
   const pressureCount = positionItems.filter(
     (position) => position.bucketStatus !== "healthy" || position.pnlValue < 0,
   ).length;
   const filterButtons: Array<{ key: PositionFilter; label: string }> = [
     { key: "all", label: dictionary.positions.all },
-    { key: "review", label: dictionary.positions.reviewQueue },
     { key: "gainers", label: dictionary.positions.positivePnl },
     { key: "pressure", label: dictionary.positions.pressure },
   ];
@@ -209,7 +182,6 @@ export function PositionsWorkbench({ data }: { data: PositionsPageData }) {
           <>
             <StatusPill tone="primary">{runtimeModeLabel}</StatusPill>
             <StatusPill tone="neutral">{runtimeEnvironmentLabel}</StatusPill>
-            <StatusPill tone="violet">{format(dictionary.positions.review, { count: reviewCount })}</StatusPill>
           </>
         }
       />
@@ -241,7 +213,6 @@ export function PositionsWorkbench({ data }: { data: PositionsPageData }) {
             <div className="flex flex-wrap gap-2">
               <StatusPill tone="success">{format(dictionary.positions.open, { count: positionItems.length })}</StatusPill>
               <StatusPill tone="warning">{format(dictionary.positions.pressureCount, { count: pressureCount })}</StatusPill>
-              <StatusPill tone="violet">{format(dictionary.positions.manualReview, { count: reviewCount })}</StatusPill>
             </div>
 
             <div className="overflow-x-auto">
@@ -291,7 +262,6 @@ export function PositionsWorkbench({ data }: { data: PositionsPageData }) {
                       </TableCell>
                       <TableCell>
                         <div className="flex flex-wrap gap-2">
-                          {position.requiresReview ? <StatusPill tone="violet">{dictionary.common.review}</StatusPill> : null}
                           {position.bucketStatus !== "healthy" ? (
                             <StatusPill tone={position.bucketTone}>{position.bucketStatusLabel}</StatusPill>
                           ) : null}
@@ -316,7 +286,6 @@ export function PositionsWorkbench({ data }: { data: PositionsPageData }) {
                   {selectedPosition.signalStateLabel}
                 </StatusPill>
                 <StatusPill tone={selectedPosition.pnlTone}>{selectedPosition.pnl}</StatusPill>
-                {selectedPosition.requiresReview ? <StatusPill tone="violet">{dictionary.common.manualReview}</StatusPill> : null}
               </div>
             </div>
 

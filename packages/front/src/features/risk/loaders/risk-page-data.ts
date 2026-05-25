@@ -1,7 +1,6 @@
 import "server-only";
 
 import { listRiskAlerts, listRiskBuckets, readRiskState } from "@/server/api/risk";
-import { listApprovals } from "@/server/api/system";
 import { localizeGeneratedCopy } from "@/lib/i18n/generated-copy";
 import { getServerI18n } from "@/lib/i18n/server";
 import {
@@ -14,11 +13,10 @@ import {
 } from "@/lib/server/console-formatters";
 
 export async function getRiskPageData() {
-  const [{ data: riskState }, { data: alerts }, { data: riskBuckets }, { data: approvals }, i18n] = await Promise.all([
+  const [{ data: riskState }, { data: alerts }, { data: riskBuckets }, i18n] = await Promise.all([
     readRiskState(),
     listRiskAlerts(),
     listRiskBuckets(),
-    listApprovals(),
     getServerI18n(),
   ]);
   const { locale, dictionary, enumLabel } = i18n;
@@ -28,7 +26,6 @@ export async function getRiskPageData() {
   ).toFixed(2);
   const criticalAlerts = alerts.filter((alert) => alert.severity === "critical").length;
   const warningAlerts = alerts.filter((alert) => alert.severity === "warning").length;
-  const pendingApprovals = approvals.filter((approval) => approval.status === "pending");
 
   return {
     controls: {
@@ -95,6 +92,5 @@ export async function getRiskPageData() {
       exposure: formatPercentFromRatio(bucket.exposure),
       width: formatBucketWidth(bucket.exposure),
     })),
-    approvalCount: pendingApprovals.length,
   };
 }

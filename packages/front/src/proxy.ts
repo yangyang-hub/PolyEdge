@@ -13,7 +13,6 @@ export const config = {
     "/signals/:path*",
     "/positions/:path*",
     "/risk/:path*",
-    "/approvals/:path*",
     "/replay/:path*",
     "/settings/:path*",
   ],

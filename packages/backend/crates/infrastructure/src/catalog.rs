@@ -677,7 +677,7 @@ impl MarketEventStore for InMemoryMarketEventStore {
             }
         }
 
-        validate_signal_for_execution(&signal, command.mode)?;
+        validate_signal_for_execution(&signal)?;
 
         {
             let execution_requests = self.execution_requests.read().await;
@@ -4188,7 +4188,7 @@ impl MarketEventStore for PostgresMarketEventStore {
             }
         }
 
-        validate_signal_for_execution(&signal, command.mode)?;
+        validate_signal_for_execution(&signal)?;
 
         let existing_request = sqlx::query(
             r#"
@@ -7604,21 +7604,11 @@ fn compute_unrealized_pnl(
     ))
 }
 
-fn validate_signal_for_execution(
-    signal: &SignalView,
-    mode: polyedge_domain::SystemMode,
-) -> Result<()> {
+fn validate_signal_for_execution(signal: &SignalView) -> Result<()> {
     if signal.rejected_by_user_id.is_some() {
         return Err(AppError::conflict(
             "STATE_SIGNAL_REJECTED_FOR_EXECUTION",
             "rejected signals cannot be submitted for execution",
-        ));
-    }
-
-    if mode == polyedge_domain::SystemMode::ManualConfirm && signal.approved_by_user_id.is_none() {
-        return Err(AppError::conflict(
-            "STATE_SIGNAL_NOT_APPROVED_FOR_EXECUTION",
-            "manual_confirm execution requires an approved signal version",
         ));
     }
 

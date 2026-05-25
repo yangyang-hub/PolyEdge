@@ -9,23 +9,21 @@ use axum::{
 };
 use futures::stream;
 use polyedge_application::{
-    ApproveSignalCommand, ApproveSignalReceipt, ArbitrageAnalysisRunListFilters,
-    ArbitrageAnalysisRunView, ArbitrageEventListFilters, ArbitrageEventView,
-    ArbitrageOpportunityListFilters, ArbitrageOpportunityStatus, ArbitrageOpportunityType,
-    ArbitrageOpportunityValidationView, ArbitrageOpportunityView, ArbitrageScanListFilters,
-    ArbitrageScanView, ArbitrageValidationStatus, AuthenticatedActor, EventListFilters, EventView,
-    EvidenceListFilters, EvidenceView, ExecutionFillResult, ExecutionRequestListFilters,
-    ExecutionRequestView, ExecutionSubmissionReceipt, IdempotencyBegin, IdempotencyRequest,
-    KillSwitchReceipt, MarketListFilters, MarketView, ModeTransitionCommand,
-    NewsRawEventListFilters, NewsRawEventView, NewsSourceHealthListFilters, NewsSourceHealthView,
-    OrderDraftListFilters, OrderDraftView, OrderListFilters, OrderView, PositionListFilters,
-    PositionView, ProbabilityEstimateListFilters, ProbabilityEstimateView,
-    ReconcileExternalTradeCommand, RejectSignalCommand, RejectSignalReceipt,
-    ReleaseKillSwitchCommand, RewardBookLevel, RewardBotConfigPatch, RewardBotSnapshot,
-    RewardMarket, RewardOrderBook, RewardToken, RiskPolicy, RiskStateView, SignalListFilters,
-    SignalTransitionListFilters, SignalTransitionView, SignalView, SubmitExecutionCommand,
-    SyncExternalOrderStatusCommand, TradeListFilters, TradeView, TriggerKillSwitchCommand,
-    select_reward_book_token_ids,
+    ArbitrageAnalysisRunListFilters, ArbitrageAnalysisRunView, ArbitrageEventListFilters,
+    ArbitrageEventView, ArbitrageOpportunityListFilters, ArbitrageOpportunityStatus,
+    ArbitrageOpportunityType, ArbitrageOpportunityValidationView, ArbitrageOpportunityView,
+    ArbitrageScanListFilters, ArbitrageScanView, ArbitrageValidationStatus, AuthenticatedActor,
+    EventListFilters, EventView, EvidenceListFilters, EvidenceView, ExecutionFillResult,
+    ExecutionRequestListFilters, ExecutionRequestView, ExecutionSubmissionReceipt,
+    IdempotencyBegin, IdempotencyRequest, KillSwitchReceipt, MarketListFilters, MarketView,
+    ModeTransitionCommand, NewsRawEventListFilters, NewsRawEventView, NewsSourceHealthListFilters,
+    NewsSourceHealthView, OrderDraftListFilters, OrderDraftView, OrderListFilters, OrderView,
+    PositionListFilters, PositionView, ProbabilityEstimateListFilters, ProbabilityEstimateView,
+    ReconcileExternalTradeCommand, ReleaseKillSwitchCommand, RewardBookLevel, RewardBotConfigPatch,
+    RewardBotSnapshot, RewardMarket, RewardOrderBook, RewardToken, RiskPolicy, RiskStateView,
+    SignalListFilters, SignalTransitionListFilters, SignalTransitionView, SignalView,
+    SubmitExecutionCommand, SyncExternalOrderStatusCommand, TradeListFilters, TradeView,
+    TriggerKillSwitchCommand, select_reward_book_token_ids,
 };
 use polyedge_connectors::{
     ConnectorOrderStatusUpdate, ConnectorTradeFillUpdate, PolymarketRewardMarket,
@@ -33,27 +31,25 @@ use polyedge_connectors::{
     normalize_polymarket_order_status_update, normalize_polymarket_trade_fill_update,
 };
 use polyedge_contracts::{
-    AlertSeverity, AlertStatus, ApiResponse, ApprovalData, ApprovalListQuery, ApprovalSeverity,
-    ApprovalStatus, ApprovalType, ApproveSignalData, ApproveSignalRequest,
-    ArbitrageAnalysisRunData, ArbitrageAnalysisRunListQuery, ArbitrageOpportunityData,
-    ArbitrageOpportunityListQuery, ArbitrageOpportunityValidationData, ArbitrageScanData,
-    ArbitrageScanListQuery, BucketStatus, ConnectorOrderStatusCallbackData,
-    ConnectorOrderStatusCallbackRequest, ConnectorTradeFillCallbackData,
-    ConnectorTradeFillCallbackRequest, DependencyStatus, EventData, EventListQuery, EvidenceData,
-    EvidenceListQuery, ExecutionRequestData, ExecutionRequestListQuery, HealthData, KillSwitchData,
-    MarketData, MarketListQuery, NewsRawEventData, NewsRawEventListQuery, NewsSourceHealthData,
-    NewsSourceHealthListQuery, OrderData, OrderDraftData, OrderDraftListQuery, OrderListQuery,
+    AlertSeverity, AlertStatus, ApiResponse, ArbitrageAnalysisRunData,
+    ArbitrageAnalysisRunListQuery, ArbitrageOpportunityData, ArbitrageOpportunityListQuery,
+    ArbitrageOpportunityValidationData, ArbitrageScanData, ArbitrageScanListQuery, BucketStatus,
+    ConnectorOrderStatusCallbackData, ConnectorOrderStatusCallbackRequest,
+    ConnectorTradeFillCallbackData, ConnectorTradeFillCallbackRequest, DependencyStatus, EventData,
+    EventListQuery, EvidenceData, EvidenceListQuery, ExecutionRequestData,
+    ExecutionRequestListQuery, HealthData, KillSwitchData, MarketData, MarketListQuery,
+    NewsRawEventData, NewsRawEventListQuery, NewsSourceHealthData, NewsSourceHealthListQuery,
+    OrderData, OrderDraftData, OrderDraftListQuery, OrderListQuery,
     PolymarketOrderStatusCallbackRequest, PolymarketTradeFillCallbackRequest, PositionData,
     PositionListQuery, ProbabilityEstimateData, ProbabilityEstimateListQuery, ReadinessData,
-    RecomputeSignalData, RecomputeSignalRequest, RejectSignalData, RejectSignalRequest,
-    ReleaseKillSwitchRequest, RiskAlertData, RiskAlertListQuery, RiskBucketData,
-    RiskBucketListQuery, RiskStateData, SignalData, SignalListQuery, SignalTransitionData,
-    SignalTransitionListQuery, SubmitExecutionData, SubmitExecutionRequest, SystemModeData,
-    TradeData, TradeListQuery, TransitionSystemModeRequest, TriggerKillSwitchRequest,
+    RecomputeSignalData, RecomputeSignalRequest, ReleaseKillSwitchRequest, RiskAlertData,
+    RiskAlertListQuery, RiskBucketData, RiskBucketListQuery, RiskStateData, SignalData,
+    SignalListQuery, SignalTransitionData, SignalTransitionListQuery, SubmitExecutionData,
+    SubmitExecutionRequest, SystemModeData, TradeData, TradeListQuery, TransitionSystemModeRequest,
+    TriggerKillSwitchRequest,
 };
 use polyedge_domain::{
-    AppError, Edge, ExposureRatio, OrderStatus, Probability, Quantity, SignalLifecycleState,
-    StepUpScope, TradabilityStatus, UsdAmount,
+    AppError, Edge, ExposureRatio, OrderStatus, Probability, Quantity, StepUpScope, UsdAmount,
 };
 use polyedge_infrastructure::stores::ExternalEventBegin;
 use polyedge_infrastructure::{
@@ -171,20 +167,6 @@ pub fn build_app(state: AppState) -> Router {
         .route(
             "/api/v1/signals/{signal_id}/recompute",
             axum::routing::post(recompute_signal).route_layer(middleware::from_fn_with_state(
-                state.clone(),
-                require_console_write_auth,
-            )),
-        )
-        .route(
-            "/api/v1/signals/{signal_id}/approve",
-            axum::routing::post(approve_signal).route_layer(middleware::from_fn_with_state(
-                state.clone(),
-                require_console_write_auth,
-            )),
-        )
-        .route(
-            "/api/v1/signals/{signal_id}/reject",
-            axum::routing::post(reject_signal).route_layer(middleware::from_fn_with_state(
                 state.clone(),
                 require_console_write_auth,
             )),
@@ -330,13 +312,6 @@ pub fn build_app(state: AppState) -> Router {
             )),
         )
         .route(
-            "/api/v1/approvals",
-            get(list_approvals).route_layer(middleware::from_fn_with_state(
-                state.clone(),
-                require_console_read_auth,
-            )),
-        )
-        .route(
             "/api/v1/stream/{channel}",
             get(stream_channel).route_layer(middleware::from_fn_with_state(
                 state.clone(),
@@ -422,7 +397,6 @@ async fn readyz(
 struct ConsoleRiskSnapshot {
     risk_state: RiskStateView,
     environment: String,
-    approvals: Vec<ApprovalData>,
     alerts: Vec<RiskAlertData>,
     buckets: Vec<RiskBucketData>,
 }
@@ -447,15 +421,6 @@ async fn read_console_risk_snapshot(
             limit: u16::MAX,
         })
         .await?;
-    let signals = state
-        .market_event_service
-        .list_signals(SignalListFilters {
-            market_id: None,
-            event_id: None,
-            lifecycle_state: None,
-            limit: u16::MAX,
-        })
-        .await?;
     let positions = state
         .execution_service
         .list_positions(PositionListFilters {
@@ -469,95 +434,15 @@ async fn read_console_risk_snapshot(
         .iter()
         .map(|market| (market.id.clone(), market.clone()))
         .collect::<HashMap<_, _>>();
-    let approvals = derive_approvals(&signals, &markets_by_id, risk_state.mode);
     let buckets = derive_risk_buckets(&positions, &markets_by_id)?;
-    let alerts = derive_risk_alerts(
-        &risk_state,
-        &approvals,
-        &buckets,
-        state.risk_service.policy(),
-    )?;
+    let alerts = derive_risk_alerts(&risk_state, &buckets, state.risk_service.policy())?;
 
     Ok(ConsoleRiskSnapshot {
         risk_state,
         environment: mode.environment,
-        approvals,
         alerts,
         buckets,
     })
-}
-
-fn derive_approvals(
-    signals: &[SignalView],
-    markets_by_id: &HashMap<String, MarketView>,
-    mode: polyedge_domain::SystemMode,
-) -> Vec<ApprovalData> {
-    let mut approvals = signals
-        .iter()
-        .filter_map(|signal| {
-            let market = markets_by_id.get(&signal.market_id);
-            let pending = signal_needs_approval(signal, market, mode);
-            let status = if signal.approved_at.is_some() {
-                ApprovalStatus::Approved
-            } else if signal.rejected_at.is_some() {
-                ApprovalStatus::Rejected
-            } else if pending {
-                ApprovalStatus::Pending
-            } else {
-                return None;
-            };
-            let occurred_at = signal
-                .approved_at
-                .or(signal.rejected_at)
-                .unwrap_or(signal.updated_at);
-            let market_question = market
-                .map(|market| market.question.as_str())
-                .unwrap_or(signal.market_id.as_str());
-            let summary = match status {
-                ApprovalStatus::Pending => format!(
-                    "{market_question} requires manual confirmation. {}",
-                    signal.risk_decision
-                ),
-                ApprovalStatus::Approved => {
-                    format!("{market_question} was approved for operator-driven execution.")
-                }
-                ApprovalStatus::Rejected => {
-                    format!("{market_question} was rejected and returned to manual monitoring.")
-                }
-            };
-            let owner = if status == ApprovalStatus::Pending {
-                "Risk Engine".to_string()
-            } else {
-                signal
-                    .approved_by_user_id
-                    .as_ref()
-                    .or(signal.rejected_by_user_id.as_ref())
-                    .cloned()
-                    .unwrap_or_else(|| "Operator Desk".to_string())
-            };
-
-            Some(ApprovalData {
-                id: format!("apr_signal_{}", signal.id),
-                approval_type: ApprovalType::Signal,
-                severity: approval_severity(signal, market),
-                owner,
-                resource_id: signal.id.clone(),
-                summary,
-                status,
-                requires_step_up_auth: status == ApprovalStatus::Pending,
-                created_at: occurred_at,
-                updated_at: signal.updated_at,
-                version: signal.version,
-            })
-        })
-        .collect::<Vec<_>>();
-
-    approvals.sort_by(|left, right| {
-        approval_status_rank(left.status)
-            .cmp(&approval_status_rank(right.status))
-            .then_with(|| right.updated_at.cmp(&left.updated_at))
-    });
-    approvals
 }
 
 fn derive_risk_buckets(
@@ -631,7 +516,6 @@ fn derive_risk_buckets(
 
 fn derive_risk_alerts(
     risk_state: &RiskStateView,
-    approvals: &[ApprovalData],
     buckets: &[RiskBucketData],
     policy: &RiskPolicy,
 ) -> polyedge_domain::Result<Vec<RiskAlertData>> {
@@ -648,7 +532,7 @@ fn derive_risk_alerts(
         alerts.push(RiskAlertData {
             id: "alt_kill_switch_active".to_string(),
             severity: AlertSeverity::Critical,
-            reason: "Kill switch is active. Execution remains halted until a protected release is approved.".to_string(),
+            reason: "Kill switch is active. Execution remains halted until a protected release completes.".to_string(),
             target: "System Runtime".to_string(),
             status: AlertStatus::Unresolved,
             created_at: risk_state.updated_at,
@@ -716,109 +600,12 @@ fn derive_risk_alerts(
         });
     }
 
-    let pending_approvals = approvals
-        .iter()
-        .filter(|approval| approval.status == ApprovalStatus::Pending)
-        .collect::<Vec<_>>();
-    if let Some(first_approval) = pending_approvals.first() {
-        let pending_count = pending_approvals.len();
-        alerts.push(RiskAlertData {
-            id: "alt_pending_signal_approvals".to_string(),
-            severity: if pending_count >= 3 {
-                AlertSeverity::Critical
-            } else {
-                AlertSeverity::Warning
-            },
-            reason: format!(
-                "{} signal approval item{} await operator review.",
-                pending_count,
-                if pending_count == 1 { "" } else { "s" }
-            ),
-            target: "Approval Queue".to_string(),
-            status: AlertStatus::Watching,
-            created_at: first_approval.created_at,
-            updated_at: first_approval.updated_at,
-            version: pending_approvals
-                .iter()
-                .map(|approval| approval.version)
-                .max()
-                .unwrap_or(first_approval.version),
-        });
-    }
-
     alerts.sort_by(|left, right| {
         alert_severity_rank(left.severity)
             .cmp(&alert_severity_rank(right.severity))
             .then_with(|| right.updated_at.cmp(&left.updated_at))
     });
     Ok(alerts)
-}
-
-fn signal_needs_approval(
-    signal: &SignalView,
-    market: Option<&MarketView>,
-    mode: polyedge_domain::SystemMode,
-) -> bool {
-    if signal.approved_at.is_some() || signal.rejected_at.is_some() {
-        return false;
-    }
-
-    if !matches!(
-        signal.lifecycle_state,
-        SignalLifecycleState::New | SignalLifecycleState::Active | SignalLifecycleState::Weakened
-    ) {
-        return false;
-    }
-
-    let review_text = format!("{} {}", signal.reason, signal.risk_decision).to_lowercase();
-    if review_text.contains("manual review")
-        || review_text.contains("manual confirmation")
-        || review_text.contains("operator review")
-        || review_text.contains("operator confirmation")
-    {
-        return true;
-    }
-
-    if market.is_some_and(is_manual_review_market) {
-        return true;
-    }
-
-    signal.lifecycle_state == SignalLifecycleState::New
-        && mode == polyedge_domain::SystemMode::ManualConfirm
-}
-
-fn approval_severity(signal: &SignalView, market: Option<&MarketView>) -> ApprovalSeverity {
-    if market.is_some_and(|market| {
-        market.tradability_status == TradabilityStatus::Blocked
-            || market.ambiguity_level.as_str() == "high"
-    }) {
-        return ApprovalSeverity::Critical;
-    }
-
-    if market.is_some_and(is_manual_review_market)
-        || signal.confidence.value() < Decimal::new(65, 2)
-    {
-        return ApprovalSeverity::Warning;
-    }
-
-    ApprovalSeverity::Info
-}
-
-fn is_manual_review_market(market: &MarketView) -> bool {
-    matches!(
-        market.tradability_status,
-        TradabilityStatus::ManualReview
-            | TradabilityStatus::ObserveOnly
-            | TradabilityStatus::Blocked
-    )
-}
-
-fn approval_status_rank(status: ApprovalStatus) -> u8 {
-    match status {
-        ApprovalStatus::Pending => 0,
-        ApprovalStatus::Approved => 1,
-        ApprovalStatus::Rejected => 2,
-    }
 }
 
 fn alert_severity_rank(severity: AlertSeverity) -> u8 {
@@ -1077,7 +864,6 @@ async fn signal_stream_messages(state: &AppState) -> polyedge_domain::Result<Vec
                     "market_price": signal.market_price,
                     "edge": signal.edge,
                     "confidence": signal.confidence,
-                    "requires_review": signal_requires_review(&signal, market),
                     "reason": signal.reason,
                     "risk_decision": signal.risk_decision,
                     "evidence_lines": Vec::<String>::new(),
@@ -1105,11 +891,6 @@ async fn risk_stream_messages(state: &AppState) -> polyedge_domain::Result<Vec<S
         .iter()
         .filter(|alert| alert.severity == AlertSeverity::Warning)
         .count();
-    let approval_count = snapshot
-        .approvals
-        .iter()
-        .filter(|approval| approval.status == ApprovalStatus::Pending)
-        .count();
     let risk_state = risk_state_to_contract(
         snapshot.risk_state.clone(),
         snapshot.environment.clone(),
@@ -1133,7 +914,6 @@ async fn risk_stream_messages(state: &AppState) -> polyedge_domain::Result<Vec<S
             "open_alerts": risk_state.open_alerts,
             "critical_alerts": critical_alerts,
             "warning_alerts": warning_alerts,
-            "approval_count": approval_count,
             "updated_at": format_timestamp(risk_state.updated_at),
         }),
     }];
@@ -1157,36 +937,6 @@ async fn risk_stream_messages(state: &AppState) -> polyedge_domain::Result<Vec<S
             }),
         }
     }));
-    messages.extend(snapshot.approvals.into_iter().map(|approval| {
-        let event = if approval.status == ApprovalStatus::Pending {
-            "approval.created"
-        } else {
-            "approval.updated"
-        };
-
-        let approval_id = approval.id;
-        let resource_id = approval.resource_id;
-
-        SseMessage {
-            id: format!("risk:approval:{}:{}", approval_id, approval.version),
-            event,
-            data: json!({
-                "resource_id": resource_id.clone(),
-                "version": approval.version,
-                "approval_id": approval_id,
-                "approval_type": approval.approval_type,
-                "approval_severity": approval.severity,
-                "approval_status": approval.status,
-                "approval_owner": approval.owner,
-                "approval_summary": approval.summary,
-                "approval_resource_id": resource_id,
-                "approval_requires_step_up_auth": approval.requires_step_up_auth,
-                "created_at": format_timestamp(approval.created_at),
-                "updated_at": format_timestamp(approval.updated_at),
-            }),
-        }
-    }));
-
     Ok(messages)
 }
 
@@ -1257,31 +1007,6 @@ fn arbitrage_event_sse_data(event: ArbitrageEventView) -> Value {
     );
     data.insert("trace_id".to_string(), json!(event.trace_id));
     Value::Object(data)
-}
-
-fn signal_requires_review(signal: &SignalView, market: Option<&MarketView>) -> bool {
-    if signal.approved_at.is_some() || signal.rejected_at.is_some() {
-        return false;
-    }
-
-    let eligible_state = matches!(
-        signal.lifecycle_state.as_str(),
-        "new" | "active" | "weakened"
-    );
-    let manual_market = market.is_some_and(|market| {
-        matches!(
-            market.tradability_status.as_str(),
-            "manual_review" | "observe_only" | "blocked"
-        )
-    });
-    let review_text = format!("{} {}", signal.reason, signal.risk_decision).to_lowercase();
-
-    eligible_state
-        && (manual_market
-            || review_text.contains("manual review")
-            || review_text.contains("manual confirmation")
-            || review_text.contains("operator review")
-            || review_text.contains("operator confirmation"))
 }
 
 fn daily_loss_used(risk_state: &RiskStateView) -> polyedge_domain::Result<UsdAmount> {
@@ -2440,254 +2165,6 @@ async fn list_risk_buckets(
     )))
 }
 
-async fn list_approvals(
-    Extension(auth): Extension<AuthContext>,
-    State(state): State<AppState>,
-    Query(query): Query<ApprovalListQuery>,
-) -> std::result::Result<Json<ApiResponse<Vec<ApprovalData>>>, HttpError> {
-    let trace_id = new_trace_id();
-    let snapshot = read_console_risk_snapshot(&state)
-        .await
-        .map_err(|error| HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone()))?;
-    let approvals = snapshot
-        .approvals
-        .into_iter()
-        .filter(|approval| query.status.is_none_or(|status| approval.status == status))
-        .collect::<Vec<_>>();
-
-    Ok(Json(ApiResponse::new(
-        apply_limit(approvals, query.limit),
-        auth.request_id,
-        trace_id,
-    )))
-}
-
-async fn approve_signal(
-    Extension(auth): Extension<AuthContext>,
-    Extension(idempotency_key): Extension<IdempotencyKey>,
-    State(state): State<AppState>,
-    Path(signal_id): Path<String>,
-    Json(payload): Json<ApproveSignalRequest>,
-) -> std::result::Result<Json<ApiResponse<ApproveSignalData>>, HttpError> {
-    auth.ensure_scope(StepUpScope::SignalApprove, time::OffsetDateTime::now_utc())
-        .map_err(|error| HttpError::with_meta(error, auth.request_id.clone(), new_trace_id()))?;
-
-    let trace_id = new_trace_id();
-    let request_hash = hash_json(&payload)
-        .map_err(|error| HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone()))?;
-    let idempotency_request = IdempotencyRequest {
-        scope: "signals.approve".to_string(),
-        idempotency_key: idempotency_key.0,
-        request_hash,
-        request_id: auth.request_id.clone(),
-        actor_user_id: Some(auth.user_id.clone()),
-        actor_session_id: Some(auth.session_id.clone()),
-        resource_type: Some("signal".to_string()),
-        resource_id: Some(signal_id.clone()),
-    };
-
-    match state
-        .idempotency_store
-        .begin(&idempotency_request)
-        .await
-        .map_err(|error| HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone()))?
-    {
-        IdempotencyBegin::Replay(response_json) => {
-            let mut replayed: ApproveSignalData =
-                serde_json::from_str(&response_json).map_err(|error| {
-                    HttpError::with_meta(
-                        AppError::internal(
-                            "SIGNAL_APPROVAL_REPLAY_DESERIALIZE_FAILED",
-                            format!("failed to deserialize replayed approval response: {error}"),
-                        ),
-                        auth.request_id.clone(),
-                        trace_id.clone(),
-                    )
-                })?;
-            replayed.replayed = true;
-
-            return Ok(Json(ApiResponse::new(replayed, auth.request_id, trace_id)));
-        }
-        IdempotencyBegin::Started => {}
-    }
-
-    let actor = AuthenticatedActor {
-        user_id: auth.user_id.clone(),
-        session_id: auth.session_id.clone(),
-        roles: auth.roles.clone(),
-        request_id: auth.request_id.clone(),
-        ip: auth.ip.clone(),
-        user_agent: auth.user_agent.clone(),
-    };
-
-    let receipt = match state
-        .risk_service
-        .approve_signal(ApproveSignalCommand {
-            signal_id,
-            reason: payload.reason,
-            expected_version: payload.expected_version,
-            request_id: auth.request_id.clone(),
-            trace_id: trace_id.clone(),
-            actor,
-        })
-        .await
-    {
-        Ok(receipt) => receipt,
-        Err(error) => {
-            state
-                .idempotency_store
-                .fail(&idempotency_request, error.code())
-                .await
-                .map_err(|fail_error| {
-                    HttpError::with_meta(fail_error, auth.request_id.clone(), trace_id.clone())
-                })?;
-            return Err(HttpError::with_meta(
-                error,
-                auth.request_id.clone(),
-                trace_id,
-            ));
-        }
-    };
-
-    let response_data = approve_signal_to_contract(receipt, false, &state)
-        .map_err(|error| HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone()))?;
-    let response_json = serde_json::to_string(&response_data).map_err(|error| {
-        HttpError::with_meta(
-            AppError::internal(
-                "SIGNAL_APPROVAL_RESPONSE_SERIALIZE_FAILED",
-                format!("failed to serialize signal approval response: {error}"),
-            ),
-            auth.request_id.clone(),
-            trace_id.clone(),
-        )
-    })?;
-
-    state
-        .idempotency_store
-        .complete(&idempotency_request, &response_json)
-        .await
-        .map_err(|error| HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone()))?;
-
-    Ok(Json(ApiResponse::new(
-        response_data,
-        auth.request_id,
-        trace_id,
-    )))
-}
-
-async fn reject_signal(
-    Extension(auth): Extension<AuthContext>,
-    Extension(idempotency_key): Extension<IdempotencyKey>,
-    State(state): State<AppState>,
-    Path(signal_id): Path<String>,
-    Json(payload): Json<RejectSignalRequest>,
-) -> std::result::Result<Json<ApiResponse<RejectSignalData>>, HttpError> {
-    auth.ensure_scope(StepUpScope::SignalReject, time::OffsetDateTime::now_utc())
-        .map_err(|error| HttpError::with_meta(error, auth.request_id.clone(), new_trace_id()))?;
-
-    let trace_id = new_trace_id();
-    let request_hash = hash_json(&payload)
-        .map_err(|error| HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone()))?;
-    let idempotency_request = IdempotencyRequest {
-        scope: "signals.reject".to_string(),
-        idempotency_key: idempotency_key.0,
-        request_hash,
-        request_id: auth.request_id.clone(),
-        actor_user_id: Some(auth.user_id.clone()),
-        actor_session_id: Some(auth.session_id.clone()),
-        resource_type: Some("signal".to_string()),
-        resource_id: Some(signal_id.clone()),
-    };
-
-    match state
-        .idempotency_store
-        .begin(&idempotency_request)
-        .await
-        .map_err(|error| HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone()))?
-    {
-        IdempotencyBegin::Replay(response_json) => {
-            let mut replayed: RejectSignalData =
-                serde_json::from_str(&response_json).map_err(|error| {
-                    HttpError::with_meta(
-                        AppError::internal(
-                            "SIGNAL_REJECTION_REPLAY_DESERIALIZE_FAILED",
-                            format!("failed to deserialize replayed rejection response: {error}"),
-                        ),
-                        auth.request_id.clone(),
-                        trace_id.clone(),
-                    )
-                })?;
-            replayed.replayed = true;
-
-            return Ok(Json(ApiResponse::new(replayed, auth.request_id, trace_id)));
-        }
-        IdempotencyBegin::Started => {}
-    }
-
-    let actor = AuthenticatedActor {
-        user_id: auth.user_id.clone(),
-        session_id: auth.session_id.clone(),
-        roles: auth.roles.clone(),
-        request_id: auth.request_id.clone(),
-        ip: auth.ip.clone(),
-        user_agent: auth.user_agent.clone(),
-    };
-
-    let receipt = match state
-        .risk_service
-        .reject_signal(RejectSignalCommand {
-            signal_id,
-            reason: payload.reason,
-            expected_version: payload.expected_version,
-            request_id: auth.request_id.clone(),
-            trace_id: trace_id.clone(),
-            actor,
-        })
-        .await
-    {
-        Ok(receipt) => receipt,
-        Err(error) => {
-            state
-                .idempotency_store
-                .fail(&idempotency_request, error.code())
-                .await
-                .map_err(|fail_error| {
-                    HttpError::with_meta(fail_error, auth.request_id.clone(), trace_id.clone())
-                })?;
-            return Err(HttpError::with_meta(
-                error,
-                auth.request_id.clone(),
-                trace_id,
-            ));
-        }
-    };
-
-    let response_data = reject_signal_to_contract(receipt, false, &state)
-        .map_err(|error| HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone()))?;
-    let response_json = serde_json::to_string(&response_data).map_err(|error| {
-        HttpError::with_meta(
-            AppError::internal(
-                "SIGNAL_REJECTION_RESPONSE_SERIALIZE_FAILED",
-                format!("failed to serialize signal rejection response: {error}"),
-            ),
-            auth.request_id.clone(),
-            trace_id.clone(),
-        )
-    })?;
-
-    state
-        .idempotency_store
-        .complete(&idempotency_request, &response_json)
-        .await
-        .map_err(|error| HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone()))?;
-
-    Ok(Json(ApiResponse::new(
-        response_data,
-        auth.request_id,
-        trace_id,
-    )))
-}
-
 async fn submit_execution_request(
     Extension(auth): Extension<AuthContext>,
     Extension(idempotency_key): Extension<IdempotencyKey>,
@@ -3457,30 +2934,6 @@ fn risk_state_to_contract_for_state(
     )
 }
 
-fn approve_signal_to_contract(
-    receipt: ApproveSignalReceipt,
-    replayed: bool,
-    state: &AppState,
-) -> polyedge_domain::Result<ApproveSignalData> {
-    Ok(ApproveSignalData {
-        signal: signal_to_contract(receipt.signal),
-        risk_state: risk_state_to_contract_for_state(state, receipt.risk_state)?,
-        replayed,
-    })
-}
-
-fn reject_signal_to_contract(
-    receipt: RejectSignalReceipt,
-    replayed: bool,
-    state: &AppState,
-) -> polyedge_domain::Result<RejectSignalData> {
-    Ok(RejectSignalData {
-        signal: signal_to_contract(receipt.signal),
-        risk_state: risk_state_to_contract_for_state(state, receipt.risk_state)?,
-        replayed,
-    })
-}
-
 fn execution_submission_to_contract(
     receipt: ExecutionSubmissionReceipt,
     replayed: bool,
@@ -3817,47 +3270,12 @@ mod tests {
         }
     }
 
-    async fn approve_and_submit_execution(
+    async fn submit_execution_for_test(
         app: Router,
         signing_key: &SigningKey,
         signal_id: &str,
         connector_name: &str,
     ) -> SubmitExecutionData {
-        let approve_request_id = format!("req_{}", Uuid::now_v7());
-        let approve_token = issue_token_with(
-            signing_key,
-            "test-key",
-            &approve_request_id,
-            vec![UserRole::RiskAdmin],
-            vec![StepUpScope::SignalApprove],
-        );
-        let approve_body = serde_json::to_vec(&ApproveSignalRequest {
-            reason: "approve before connector callback flow".to_string(),
-            expected_version: Some(9),
-        })
-        .expect("serialize approval body");
-        let approve_response = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri(format!("/api/v1/signals/{signal_id}/approve"))
-                    .header("Authorization", format!("Bearer {approve_token}"))
-                    .header("X-Request-Id", &approve_request_id)
-                    .header("Idempotency-Key", format!("idem-approve-{signal_id}"))
-                    .header("Content-Type", "application/json")
-                    .body(Body::from(approve_body))
-                    .expect("approve request"),
-            )
-            .await
-            .expect("approve response");
-        assert_eq!(approve_response.status(), StatusCode::OK);
-        let approve_response_body = to_bytes(approve_response.into_body(), usize::MAX)
-            .await
-            .expect("read approve body");
-        let approve_payload: ApiResponse<ApproveSignalData> =
-            serde_json::from_slice(&approve_response_body).expect("deserialize approval response");
-
         let submit_request_id = format!("req_{}", Uuid::now_v7());
         let submit_token = issue_token_with(
             signing_key,
@@ -3870,7 +3288,7 @@ mod tests {
             "limit_price": "0.48",
             "quantity": "25",
             "reason": "queue manual execution request for connector callback flow",
-            "expected_signal_version": approve_payload.data.signal.version,
+            "expected_signal_version": 9,
             "connector_name": connector_name
         }))
         .expect("serialize execution body");
@@ -4623,29 +4041,6 @@ mod tests {
             .expect("seed fixtures");
         let app = build_app(state);
 
-        let approvals_request_id = format!("req_{}", Uuid::now_v7());
-        let approvals_token = issue_token(&signing_key, "test-key", &approvals_request_id);
-        let approvals_response = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .uri("/api/v1/approvals?status=pending")
-                    .header("Authorization", format!("Bearer {approvals_token}"))
-                    .header("X-Request-Id", &approvals_request_id)
-                    .body(Body::empty())
-                    .expect("request"),
-            )
-            .await
-            .expect("response");
-        assert_eq!(approvals_response.status(), StatusCode::OK);
-        let approvals_body = to_bytes(approvals_response.into_body(), usize::MAX)
-            .await
-            .expect("read approvals body");
-        let approvals_payload: ApiResponse<Vec<ApprovalData>> =
-            serde_json::from_slice(&approvals_body).expect("deserialize approvals response");
-        assert!(!approvals_payload.data.is_empty());
-        assert_eq!(approvals_payload.data[0].status, ApprovalStatus::Pending);
-
         let alerts_request_id = format!("req_{}", Uuid::now_v7());
         let alerts_token = issue_token(&signing_key, "test-key", &alerts_request_id);
         let alerts_response = app
@@ -4669,345 +4064,8 @@ mod tests {
             alerts_payload
                 .data
                 .iter()
-                .any(|alert| alert.id == "alt_pending_signal_approvals")
+                .all(|alert| alert.id != "alt_pending_signal_approvals")
         );
-    }
-
-    #[tokio::test]
-    async fn approve_signal_route_requires_signal_approve_scope() {
-        let signing_key = SigningKey::from_bytes(&[19_u8; 32]);
-        let settings = Settings::for_test(
-            SystemMode::ManualConfirm,
-            "test",
-            vec![AuthKeySettings {
-                kid: "test-key".to_string(),
-                public_key_base64: general_purpose::STANDARD
-                    .encode(signing_key.verifying_key().as_bytes()),
-            }],
-        );
-        let state = Runtime::test_app_state(settings).expect("state");
-        state
-            .market_event_service
-            .ingest_fixture_bundle(demo_fixture_bundle(), "trc_seeded_approval_scope")
-            .await
-            .expect("seed fixtures");
-        let app = build_app(state);
-        let request_id = format!("req_{}", Uuid::now_v7());
-        let token = issue_token(&signing_key, "test-key", &request_id);
-        let body = serde_json::to_vec(&ApproveSignalRequest {
-            reason: "scope check".to_string(),
-            expected_version: Some(9),
-        })
-        .expect("serialize body");
-
-        let response = app
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/api/v1/signals/sig_2412/approve")
-                    .header("Authorization", format!("Bearer {token}"))
-                    .header("X-Request-Id", &request_id)
-                    .header("Idempotency-Key", "idem-approve-scope")
-                    .header("Content-Type", "application/json")
-                    .body(Body::from(body))
-                    .expect("request"),
-            )
-            .await
-            .expect("response");
-
-        assert_eq!(response.status(), StatusCode::FORBIDDEN);
-    }
-
-    #[tokio::test]
-    async fn approve_signal_route_is_idempotent() {
-        let signing_key = SigningKey::from_bytes(&[20_u8; 32]);
-        let settings = Settings::for_test(
-            SystemMode::ManualConfirm,
-            "test",
-            vec![AuthKeySettings {
-                kid: "test-key".to_string(),
-                public_key_base64: general_purpose::STANDARD
-                    .encode(signing_key.verifying_key().as_bytes()),
-            }],
-        );
-        let state = Runtime::test_app_state(settings).expect("state");
-        state
-            .market_event_service
-            .ingest_fixture_bundle(demo_fixture_bundle(), "trc_seeded_approval")
-            .await
-            .expect("seed fixtures");
-        let app = build_app(state);
-        let request_id = format!("req_{}", Uuid::now_v7());
-        let token = issue_token_with(
-            &signing_key,
-            "test-key",
-            &request_id,
-            vec![UserRole::RiskAdmin],
-            vec![StepUpScope::SignalApprove],
-        );
-        let body = serde_json::to_vec(&ApproveSignalRequest {
-            reason: "manual approval after ambiguity review".to_string(),
-            expected_version: Some(9),
-        })
-        .expect("serialize body");
-
-        let response = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/api/v1/signals/sig_2412/approve")
-                    .header("Authorization", format!("Bearer {token}"))
-                    .header("X-Request-Id", &request_id)
-                    .header("Idempotency-Key", "idem-approve-1")
-                    .header("Content-Type", "application/json")
-                    .body(Body::from(body.clone()))
-                    .expect("request"),
-            )
-            .await
-            .expect("response");
-
-        assert_eq!(response.status(), StatusCode::OK);
-        let response_body = to_bytes(response.into_body(), usize::MAX)
-            .await
-            .expect("read body");
-        let payload: ApiResponse<ApproveSignalData> =
-            serde_json::from_slice(&response_body).expect("deserialize response");
-        assert_eq!(payload.data.signal.id, "sig_2412");
-        assert_eq!(
-            payload.data.signal.approved_by_user_id.as_deref(),
-            Some("usr_123")
-        );
-        assert!(payload.data.signal.approved_at.is_some());
-        assert_eq!(payload.data.risk_state.mode, SystemMode::ManualConfirm);
-        assert!(!payload.data.replayed);
-
-        let replay = app
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/api/v1/signals/sig_2412/approve")
-                    .header("Authorization", format!("Bearer {token}"))
-                    .header("X-Request-Id", &request_id)
-                    .header("Idempotency-Key", "idem-approve-1")
-                    .header("Content-Type", "application/json")
-                    .body(Body::from(body))
-                    .expect("request"),
-            )
-            .await
-            .expect("response");
-
-        assert_eq!(replay.status(), StatusCode::OK);
-        let replay_body = to_bytes(replay.into_body(), usize::MAX)
-            .await
-            .expect("read body");
-        let replay_payload: ApiResponse<ApproveSignalData> =
-            serde_json::from_slice(&replay_body).expect("deserialize response");
-        assert!(replay_payload.data.replayed);
-        assert_eq!(
-            replay_payload.data.signal.version,
-            payload.data.signal.version
-        );
-    }
-
-    #[tokio::test]
-    async fn reject_signal_route_requires_signal_reject_scope() {
-        let signing_key = SigningKey::from_bytes(&[23_u8; 32]);
-        let settings = Settings::for_test(
-            SystemMode::ManualConfirm,
-            "test",
-            vec![AuthKeySettings {
-                kid: "test-key".to_string(),
-                public_key_base64: general_purpose::STANDARD
-                    .encode(signing_key.verifying_key().as_bytes()),
-            }],
-        );
-        let state = Runtime::test_app_state(settings).expect("state");
-        state
-            .market_event_service
-            .ingest_fixture_bundle(demo_fixture_bundle(), "trc_seeded_rejection_scope")
-            .await
-            .expect("seed fixtures");
-        let app = build_app(state);
-        let request_id = format!("req_{}", Uuid::now_v7());
-        let token = issue_token(&signing_key, "test-key", &request_id);
-        let body = serde_json::to_vec(&RejectSignalRequest {
-            reason: "scope check".to_string(),
-            expected_version: Some(9),
-        })
-        .expect("serialize body");
-
-        let response = app
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/api/v1/signals/sig_2412/reject")
-                    .header("Authorization", format!("Bearer {token}"))
-                    .header("X-Request-Id", &request_id)
-                    .header("Idempotency-Key", "idem-reject-scope")
-                    .header("Content-Type", "application/json")
-                    .body(Body::from(body))
-                    .expect("request"),
-            )
-            .await
-            .expect("response");
-
-        assert_eq!(response.status(), StatusCode::FORBIDDEN);
-    }
-
-    #[tokio::test]
-    async fn reject_signal_route_is_idempotent_and_recompute_clears_rejection() {
-        let signing_key = SigningKey::from_bytes(&[24_u8; 32]);
-        let settings = Settings::for_test(
-            SystemMode::ManualConfirm,
-            "test",
-            vec![AuthKeySettings {
-                kid: "test-key".to_string(),
-                public_key_base64: general_purpose::STANDARD
-                    .encode(signing_key.verifying_key().as_bytes()),
-            }],
-        );
-        let state = Runtime::test_app_state(settings).expect("state");
-        state
-            .market_event_service
-            .ingest_fixture_bundle(demo_fixture_bundle(), "trc_seeded_rejection")
-            .await
-            .expect("seed fixtures");
-        let app = build_app(state);
-
-        let reject_request_id = format!("req_{}", Uuid::now_v7());
-        let reject_token = issue_token_with(
-            &signing_key,
-            "test-key",
-            &reject_request_id,
-            vec![UserRole::RiskAdmin],
-            vec![StepUpScope::SignalReject],
-        );
-        let reject_body = serde_json::to_vec(&RejectSignalRequest {
-            reason: "manual rejection after operator review".to_string(),
-            expected_version: Some(9),
-        })
-        .expect("serialize body");
-
-        let reject_response = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/api/v1/signals/sig_2412/reject")
-                    .header("Authorization", format!("Bearer {reject_token}"))
-                    .header("X-Request-Id", &reject_request_id)
-                    .header("Idempotency-Key", "idem-reject-1")
-                    .header("Content-Type", "application/json")
-                    .body(Body::from(reject_body.clone()))
-                    .expect("request"),
-            )
-            .await
-            .expect("response");
-
-        assert_eq!(reject_response.status(), StatusCode::OK);
-        let reject_response_body = to_bytes(reject_response.into_body(), usize::MAX)
-            .await
-            .expect("read body");
-        let reject_payload: ApiResponse<RejectSignalData> =
-            serde_json::from_slice(&reject_response_body).expect("deserialize response");
-        assert_eq!(reject_payload.data.signal.id, "sig_2412");
-        assert_eq!(
-            reject_payload.data.signal.rejected_by_user_id.as_deref(),
-            Some("usr_123")
-        );
-        assert!(reject_payload.data.signal.rejected_at.is_some());
-        assert!(reject_payload.data.signal.approved_by_user_id.is_none());
-        assert!(!reject_payload.data.replayed);
-
-        let reject_replay = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/api/v1/signals/sig_2412/reject")
-                    .header("Authorization", format!("Bearer {reject_token}"))
-                    .header("X-Request-Id", &reject_request_id)
-                    .header("Idempotency-Key", "idem-reject-1")
-                    .header("Content-Type", "application/json")
-                    .body(Body::from(reject_body))
-                    .expect("request"),
-            )
-            .await
-            .expect("response");
-
-        assert_eq!(reject_replay.status(), StatusCode::OK);
-        let reject_replay_body = to_bytes(reject_replay.into_body(), usize::MAX)
-            .await
-            .expect("read body");
-        let reject_replay_payload: ApiResponse<RejectSignalData> =
-            serde_json::from_slice(&reject_replay_body).expect("deserialize response");
-        assert!(reject_replay_payload.data.replayed);
-
-        let approve_request_id = format!("req_{}", Uuid::now_v7());
-        let approve_token = issue_token_with(
-            &signing_key,
-            "test-key",
-            &approve_request_id,
-            vec![UserRole::RiskAdmin],
-            vec![StepUpScope::SignalApprove],
-        );
-        let approve_body = serde_json::to_vec(&ApproveSignalRequest {
-            reason: "should fail after rejection".to_string(),
-            expected_version: Some(reject_payload.data.signal.version),
-        })
-        .expect("serialize body");
-
-        let approve_after_reject = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/api/v1/signals/sig_2412/approve")
-                    .header("Authorization", format!("Bearer {approve_token}"))
-                    .header("X-Request-Id", &approve_request_id)
-                    .header("Idempotency-Key", "idem-approve-after-reject")
-                    .header("Content-Type", "application/json")
-                    .body(Body::from(approve_body))
-                    .expect("request"),
-            )
-            .await
-            .expect("response");
-
-        assert_eq!(approve_after_reject.status(), StatusCode::CONFLICT);
-
-        let recompute_request_id = format!("req_{}", Uuid::now_v7());
-        let recompute_token = issue_token(&signing_key, "test-key", &recompute_request_id);
-        let recompute_body = serde_json::to_vec(&RecomputeSignalRequest {
-            reason: "refresh evidence after rejection".to_string(),
-        })
-        .expect("serialize body");
-
-        let recompute_response = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/api/v1/signals/sig_2412/recompute")
-                    .header("Authorization", format!("Bearer {recompute_token}"))
-                    .header("X-Request-Id", &recompute_request_id)
-                    .header("Idempotency-Key", "idem-recompute-after-reject")
-                    .header("Content-Type", "application/json")
-                    .body(Body::from(recompute_body))
-                    .expect("request"),
-            )
-            .await
-            .expect("response");
-
-        assert_eq!(recompute_response.status(), StatusCode::OK);
-        let recompute_response_body = to_bytes(recompute_response.into_body(), usize::MAX)
-            .await
-            .expect("read body");
-        let recompute_payload: ApiResponse<RecomputeSignalData> =
-            serde_json::from_slice(&recompute_response_body).expect("deserialize response");
-        assert!(recompute_payload.data.signal.rejected_by_user_id.is_none());
-        assert!(recompute_payload.data.signal.rejected_at.is_none());
-        assert!(recompute_payload.data.signal.approved_by_user_id.is_none());
     }
 
     #[tokio::test]
@@ -5078,41 +4136,6 @@ mod tests {
             .expect("seed fixtures");
         let app = build_app(state);
 
-        let approve_request_id = format!("req_{}", Uuid::now_v7());
-        let approve_token = issue_token_with(
-            &signing_key,
-            "test-key",
-            &approve_request_id,
-            vec![UserRole::RiskAdmin],
-            vec![StepUpScope::SignalApprove],
-        );
-        let approve_body = serde_json::to_vec(&ApproveSignalRequest {
-            reason: "approve before queueing execution".to_string(),
-            expected_version: Some(9),
-        })
-        .expect("serialize body");
-        let approve_response = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/api/v1/signals/sig_2412/approve")
-                    .header("Authorization", format!("Bearer {approve_token}"))
-                    .header("X-Request-Id", &approve_request_id)
-                    .header("Idempotency-Key", "idem-execution-approve")
-                    .header("Content-Type", "application/json")
-                    .body(Body::from(approve_body))
-                    .expect("request"),
-            )
-            .await
-            .expect("response");
-        assert_eq!(approve_response.status(), StatusCode::OK);
-        let approve_response_body = to_bytes(approve_response.into_body(), usize::MAX)
-            .await
-            .expect("read body");
-        let approve_payload: ApiResponse<ApproveSignalData> =
-            serde_json::from_slice(&approve_response_body).expect("deserialize response");
-
         let submit_request_id = format!("req_{}", Uuid::now_v7());
         let submit_token = issue_token_with(
             &signing_key,
@@ -5125,7 +4148,7 @@ mod tests {
             "limit_price": "0.48",
             "quantity": "25",
             "reason": "queue manual execution request",
-            "expected_signal_version": approve_payload.data.signal.version,
+            "expected_signal_version": 9,
             "connector_name": "paper_executor"
         }))
         .expect("serialize body");
@@ -5257,7 +4280,7 @@ mod tests {
             .expect("seed fixtures");
         let app = build_app(state.clone());
         let submission =
-            approve_and_submit_execution(app.clone(), &signing_key, "sig_2412", "paper_executor")
+            submit_execution_for_test(app.clone(), &signing_key, "sig_2412", "paper_executor")
                 .await;
         let external_order_id = "paper_ord_callback_001";
 
@@ -5362,7 +4385,7 @@ mod tests {
             .expect("seed fixtures");
         let app = build_app(state.clone());
         let submission =
-            approve_and_submit_execution(app.clone(), &signing_key, "sig_2412", "paper_executor")
+            submit_execution_for_test(app.clone(), &signing_key, "sig_2412", "paper_executor")
                 .await;
         let external_order_id = "paper_ord_callback_002";
 
@@ -5533,7 +4556,7 @@ mod tests {
             .await
             .expect("seed fixtures");
         let app = build_app(state.clone());
-        let submission = approve_and_submit_execution(
+        let submission = submit_execution_for_test(
             app.clone(),
             &signing_key,
             "sig_2412",
@@ -5612,7 +4635,7 @@ mod tests {
             .await
             .expect("seed fixtures");
         let app = build_app(state.clone());
-        let submission = approve_and_submit_execution(
+        let submission = submit_execution_for_test(
             app.clone(),
             &signing_key,
             "sig_2412",

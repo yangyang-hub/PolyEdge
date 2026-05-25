@@ -26,9 +26,6 @@ export type RuntimeMode =
   | "live_auto"
   | "kill_switch_locked";
 export type RuntimeEnvironment = "local" | "paper" | "staging" | "production";
-export type ApprovalType = "signal" | "mode_switch" | "kill_switch";
-export type ApprovalSeverity = "info" | "warning" | "critical";
-export type ApprovalStatus = "pending" | "approved" | "rejected";
 export type AlertSeverity = "warning" | "critical";
 export type AlertStatus = "unresolved" | "watching" | "contained";
 export type PositionSide = "yes" | "no";
@@ -162,18 +159,6 @@ export type RiskStateDto = ResourceVersion & {
   open_alerts: number;
   daily_loss_limit: string;
   daily_loss_used: string;
-  updated_at: string;
-};
-
-export type ApprovalDto = ResourceVersion & {
-  type: ApprovalType;
-  severity: ApprovalSeverity;
-  owner: string;
-  resource_id: string;
-  summary: string;
-  status: ApprovalStatus;
-  requires_step_up_auth: boolean;
-  created_at: string;
   updated_at: string;
 };
 

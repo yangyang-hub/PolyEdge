@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { ApprovalDto, MarketDto } from "@/lib/contracts/dto";
+import type { MarketDto } from "@/lib/contracts/dto";
 
 export function indexMarkets(markets: MarketDto[]): Map<string, MarketDto> {
   return new Map(markets.map((market) => [market.id, market]));
@@ -9,14 +9,6 @@ export function indexMarkets(markets: MarketDto[]): Map<string, MarketDto> {
 export function sumNumericStrings(values: string[]): string {
   const total = values.reduce((sum, value) => sum + Number.parseFloat(value), 0);
   return total.toFixed(2);
-}
-
-export function getPendingSignalApprovalIds(approvals: ApprovalDto[]): Set<string> {
-  return new Set(
-    approvals
-      .filter((approval) => approval.status === "pending" && approval.type === "signal")
-      .map((approval) => approval.resource_id),
-  );
 }
 
 export function selectFirstMatchingItem<T>(

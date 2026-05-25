@@ -1,6 +1,5 @@
 export {
   type Tone as RealtimeTone,
-  type Tone as ApprovalSeverityTone,
   type AccentTone as MetricTone,
   humanizeSnakeCase,
   uppercaseEnum,
@@ -9,9 +8,7 @@ export {
   formatSignedFixed,
   formatCurrency,
   signalStateTone,
-  approvalSeverityTone,
   alertSeverityTone,
   alertStatusTone,
   metricToneForPnl,
-  approvalRiskPercent,
 } from "@/lib/formatters";

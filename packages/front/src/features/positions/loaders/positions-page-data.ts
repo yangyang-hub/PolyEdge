@@ -5,7 +5,6 @@ import { listMarkets } from "@/server/api/markets";
 import { listPositions } from "@/server/api/positions";
 import { readRiskState, listRiskBuckets } from "@/server/api/risk";
 import { listSignals } from "@/server/api/signals";
-import { listApprovals } from "@/server/api/system";
 import { localizeGeneratedCopy } from "@/lib/i18n/generated-copy";
 import { getServerI18n } from "@/lib/i18n/server";
 import { sumNumericStrings } from "@/server/loaders/console-loader-utils";
@@ -20,7 +19,7 @@ import {
   marketTradabilityTone,
   uppercaseEnum,
 } from "@/lib/server/console-formatters";
-import { getPendingSignalApprovalIds, indexMarkets, selectFirstMatchingItem } from "@/server/loaders/console-loader-utils";
+import { indexMarkets, selectFirstMatchingItem } from "@/server/loaders/console-loader-utils";
 
 function indexLatestSignalsByMarket<T extends { market_id: string; version: number }>(signals: T[]) {
   const signalsByMarket = new Map<string, T>();
@@ -43,7 +42,6 @@ export async function getPositionsPageData() {
     { data: riskState },
     { data: markets },
     { data: signals },
-    { data: approvals },
     { data: events },
     i18n,
   ] = await Promise.all([
@@ -52,7 +50,6 @@ export async function getPositionsPageData() {
     readRiskState(),
     listMarkets(),
     listSignals(),
-    listApprovals(),
     listEvents(),
     getServerI18n(),
   ]);
@@ -62,7 +59,6 @@ export async function getPositionsPageData() {
   const unrealizedTotal = sumNumericStrings(positions.map((position) => position.unrealized_pnl));
   const marketIndex = indexMarkets(markets);
   const latestSignalsByMarket = indexLatestSignalsByMarket(signals);
-  const pendingSignalApprovalIds = getPendingSignalApprovalIds(approvals);
   const bucketIndex = new Map(riskBuckets.map((bucket) => [bucket.name, bucket]));
 
   const positionItems = positions.map((position) => {
@@ -103,7 +99,6 @@ export async function getPositionsPageData() {
       bucketTone: bucket ? bucketTone(bucket.status) : ("neutral" as const),
       bucketUtilization: bucket ? formatPercentFromRatio(bucket.utilization) : "0%",
       bucketUtilizationWidth: bucket ? formatPercentFromRatio(bucket.utilization) : "0%",
-      requiresReview: signal ? pendingSignalApprovalIds.has(signal.id) : false,
       signalReason: signal
         ? localizeGeneratedCopy(locale, dictionary, signal.reason)
         : dictionary.positions.signalFallback,
@@ -123,7 +118,6 @@ export async function getPositionsPageData() {
   const selectedPosition = selectFirstMatchingItem(
     positionItems,
     [
-      (position) => position.requiresReview,
       (position) => position.bucketStatus === "breach",
       (position) => position.pnlValue < 0,
     ],

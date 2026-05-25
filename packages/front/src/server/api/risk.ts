@@ -70,7 +70,7 @@ export async function releaseRiskControls(input: {
       idempotencyKey: `risk-release-${crypto.randomUUID()}`,
       body: {
         reason: input.note,
-        to_mode: "manual_confirm",
+        to_mode: "paper_trade",
       },
       stepUpCode: input.stepUpCode,
       stepUpScopes: ["system_kill_switch_release"],

@@ -25,7 +25,6 @@ const CONSOLE_ROUTE_REQUIREMENTS: Array<{ prefix: string; minRole: ConsoleRole }
   { prefix: "/signals", minRole: "viewer" },
   { prefix: "/positions", minRole: "viewer" },
   { prefix: "/replay", minRole: "viewer" },
-  { prefix: "/approvals", minRole: "operator" },
   { prefix: "/risk", minRole: "risk_admin" },
   { prefix: "/settings", minRole: "admin" },
 ];

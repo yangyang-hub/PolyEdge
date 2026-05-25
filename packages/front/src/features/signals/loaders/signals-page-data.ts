@@ -4,11 +4,9 @@ import { listEvidences } from "@/server/api/events";
 import { listMarkets } from "@/server/api/markets";
 import { readRiskState } from "@/server/api/risk";
 import { listSignals } from "@/server/api/signals";
-import { listApprovals } from "@/server/api/system";
 import { localizeGeneratedCopy } from "@/lib/i18n/generated-copy";
 import { getServerI18n } from "@/lib/i18n/server";
 import {
-  getPendingSignalApprovalIds,
   indexMarkets,
   selectFirstMatchingItem,
 } from "@/server/loaders/console-loader-utils";
@@ -24,24 +22,20 @@ export async function getSignalsPageData() {
     { data: signals },
     { data: markets },
     { data: evidences },
-    { data: approvals },
     { data: riskState },
     i18n,
   ] = await Promise.all([
     listSignals(),
     listMarkets(),
     listEvidences(),
-    listApprovals(),
     readRiskState(),
     getServerI18n(),
   ]);
   const { locale, dictionary, enumLabel, format } = i18n;
   const marketIndex = indexMarkets(markets);
-  const pendingSignalApprovalIds = getPendingSignalApprovalIds(approvals);
   const selectedSignal = selectFirstMatchingItem(
     signals,
     [
-      (signal) => pendingSignalApprovalIds.has(signal.id),
       (signal) => signal.lifecycle_state === "new",
     ],
     dictionary.routeStates.signalsDataRequired,
@@ -50,7 +44,6 @@ export async function getSignalsPageData() {
 
   return {
     activeCount: signals.filter((signal) => signal.lifecycle_state === "active").length,
-    approvalCount: pendingSignalApprovalIds.size,
     runtimeControls: {
       mode: riskState.mode,
       modeLabel: enumLabel(riskState.mode),
@@ -73,7 +66,6 @@ export async function getSignalsPageData() {
       confidenceWidth: formatPercentFromRatio(signal.confidence),
       stateLabel: enumLabel(signal.lifecycle_state),
       stateTone: signalStateTone(signal.lifecycle_state),
-      requiresReview: pendingSignalApprovalIds.has(signal.id),
       approvedAt: signal.approved_at ?? null,
       rejectedAt: signal.rejected_at ?? null,
       reason: localizeGeneratedCopy(locale, dictionary, signal.reason),
@@ -100,7 +92,6 @@ export async function getSignalsPageData() {
       edge: formatSignedFixed(selectedSignal.edge),
       stateLabel: enumLabel(selectedSignal.lifecycle_state),
       stateTone: signalStateTone(selectedSignal.lifecycle_state),
-      requiresReview: pendingSignalApprovalIds.has(selectedSignal.id),
       approvedAt: selectedSignal.approved_at ?? null,
       rejectedAt: selectedSignal.rejected_at ?? null,
       reason: localizeGeneratedCopy(locale, dictionary, selectedSignal.reason),

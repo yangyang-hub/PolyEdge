@@ -1,8 +1,6 @@
 "use client";
 
 import { startTransition, useEffect, useMemo, useRef, useState, useTransition } from "react";
-import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { Download, ShieldCheck, ToggleLeft } from "lucide-react";
 import { toast } from "sonner";
 
@@ -41,10 +39,13 @@ type RiskAlertFilter = "all" | "unresolved" | "watching";
 const MODE_OPTION_VALUES: RuntimeMode[] = [
   "research",
   "paper_trade",
-  "manual_confirm",
   "live_auto",
   "kill_switch_locked",
 ];
+
+function defaultTargetMode(currentMode: RuntimeMode): RuntimeMode {
+  return currentMode === "paper_trade" ? "live_auto" : "paper_trade";
+}
 
 function patchMetricValues(
   metrics: RiskPageData["metrics"],
@@ -217,11 +218,8 @@ export function RiskControlCenter({ data }: { data: RiskPageData }) {
   const [summary, setSummary] = useState(data.summary);
   const [alerts, setAlerts] = useState(data.alerts);
   const [alertFilter, setAlertFilter] = useState<RiskAlertFilter>("all");
-  const [approvalCount, setApprovalCount] = useState(data.approvalCount);
   const [activeDialog, setActiveDialog] = useState<RiskDialog>(null);
-  const [targetMode, setTargetMode] = useState<RuntimeMode>(
-    data.controls.mode === "manual_confirm" ? "paper_trade" : "manual_confirm",
-  );
+  const [targetMode, setTargetMode] = useState<RuntimeMode>(defaultTargetMode(data.controls.mode));
   const [note, setNote] = useState("");
   const [stepUpCode, setStepUpCode] = useState("");
   const [dialogFeedback, setDialogFeedback] = useState<OperationActionResult | null>(null);
@@ -229,7 +227,6 @@ export function RiskControlCenter({ data }: { data: RiskPageData }) {
   const [fieldErrors, setFieldErrors] = useState<OperationActionResult["fieldErrors"]>({});
   const [isPending, startActionTransition] = useTransition();
   const auditLogRef = useRef<HTMLElement | null>(null);
-  const router = useRouter();
   const { lastEvent } = useConsoleRealtimeChannel("risk");
   const { locale, dictionary, enumLabel, format } = useI18n();
   const metricLabels = useMemo(() => ({
@@ -289,9 +286,6 @@ export function RiskControlCenter({ data }: { data: RiskPageData }) {
         })),
       );
 
-      if (streamEvent.data.approval_count !== undefined) {
-        setApprovalCount(streamEvent.data.approval_count);
-      }
     });
   }, [dictionary, dictionary.metricHints.deskBias, enumLabel, lastEvent, locale, metricLabels]);
 
@@ -303,7 +297,7 @@ export function RiskControlCenter({ data }: { data: RiskPageData }) {
 
     if (dialog === "mode") {
       setNote(format(dictionary.risk.modeNote, { mode: controls.modeLabel }));
-      setTargetMode(controls.mode === "manual_confirm" ? "paper_trade" : "manual_confirm");
+      setTargetMode(defaultTargetMode(controls.mode));
       return;
     }
 
@@ -387,7 +381,7 @@ export function RiskControlCenter({ data }: { data: RiskPageData }) {
 
       if (result.ok) {
         applyControls({
-          mode: controls.mode === "kill_switch_locked" ? "manual_confirm" : controls.mode,
+          mode: controls.mode === "kill_switch_locked" ? "paper_trade" : controls.mode,
           killSwitch: false,
         });
         closeDialog();
@@ -410,7 +404,7 @@ export function RiskControlCenter({ data }: { data: RiskPageData }) {
 
       if (result.ok) {
         applyControls({
-          mode: nextEnabled ? "kill_switch_locked" : controls.mode === "kill_switch_locked" ? "manual_confirm" : controls.mode,
+          mode: nextEnabled ? "kill_switch_locked" : controls.mode === "kill_switch_locked" ? "paper_trade" : controls.mode,
           killSwitch: nextEnabled,
         });
         closeDialog();
@@ -455,11 +449,6 @@ export function RiskControlCenter({ data }: { data: RiskPageData }) {
   }
 
   function manageAlert(alert: RiskPageData["alerts"][number]) {
-    if (alert.id === "alt_pending_signal_approvals" || alert.target === dictionary.generated.approvalQueue) {
-      router.push("/approvals");
-      return;
-    }
-
     if (alert.id === "alt_kill_switch_active" || controls.killSwitch) {
       openDialog("release");
       return;
@@ -513,7 +502,7 @@ export function RiskControlCenter({ data }: { data: RiskPageData }) {
         <StateBanner
           tone={controls.killSwitch ? "warning" : "info"}
           title={controls.killSwitch ? dictionary.risk.killActiveTitle : dictionary.risk.killArmedTitle}
-          detail={format(dictionary.risk.approvalQueueDetail, { count: approvalCount })}
+          detail={dictionary.risk.killSwitchDescription}
           className="animate-in fade-in-0 duration-300"
         />
       </section>
@@ -687,9 +676,6 @@ export function RiskControlCenter({ data }: { data: RiskPageData }) {
               >
                 {controls.killSwitch ? dictionary.risk.releaseKillSwitch : dictionary.risk.triggerKillSwitch}
               </Button>
-              <Button asChild className="h-9 w-full rounded-sm bg-primary text-primary-foreground hover:bg-primary/90">
-                <Link href="/approvals">{format(dictionary.risk.reviewApprovals, { count: approvalCount })}</Link>
-              </Button>
             </div>
           </div>
 
@@ -789,7 +775,6 @@ export function RiskControlCenter({ data }: { data: RiskPageData }) {
         context={
           <div className="space-y-1">
             <p>{dictionary.risk.killSwitch}: {controls.killSwitch ? dictionary.common.active : dictionary.common.armed}</p>
-            <p>{dictionary.risk.pendingApprovals}: {approvalCount}</p>
           </div>
         }
       />

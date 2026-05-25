@@ -1,7 +1,4 @@
 import type {
-  ApprovalSeverity,
-  ApprovalStatus,
-  ApprovalType,
   AlertSeverity,
   AlertStatus,
   ArbitrageOpportunityStatus,
@@ -19,7 +16,7 @@ export type RealtimeChannel = (typeof REALTIME_CHANNELS)[number];
 
 export const CHANNEL_EVENT_TYPES = {
   signals: ["signal.created", "signal.updated", "signal.invalidated"],
-  risk: ["risk.alerted", "risk.mode_changed", "approval.created", "approval.updated"],
+  risk: ["risk.alerted", "risk.mode_changed"],
   events: ["event.created"],
   arbitrage: [
     "arbitrage.scan.started",
@@ -50,7 +47,6 @@ export type SignalStreamPayload = {
   market_price?: string;
   edge?: string;
   confidence?: string;
-  requires_review?: boolean;
   reason?: string;
   risk_decision?: string;
   evidence_lines?: string[];
@@ -71,15 +67,6 @@ export type RiskStreamPayload = {
   open_alerts?: number;
   critical_alerts?: number;
   warning_alerts?: number;
-  approval_count?: number;
-  approval_id?: string;
-  approval_type?: ApprovalType;
-  approval_severity?: ApprovalSeverity;
-  approval_status?: ApprovalStatus;
-  approval_owner?: string;
-  approval_summary?: string;
-  approval_resource_id?: string;
-  approval_requires_step_up_auth?: boolean;
   alert_id?: string;
   severity?: AlertSeverity;
   reason?: string;

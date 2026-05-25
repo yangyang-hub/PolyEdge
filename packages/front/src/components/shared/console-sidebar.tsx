@@ -5,7 +5,6 @@ import { usePathname } from "next/navigation";
 import type { LucideIcon } from "lucide-react";
 import {
   Activity,
-  CheckSquare,
   HandCoins,
   History,
   LayoutDashboard,
@@ -37,7 +36,6 @@ const navItems: NavItem[] = [
   { href: "/signals", labelKey: "signals", icon: Activity },
   { href: "/positions", labelKey: "positions", icon: WalletCards },
   { href: "/risk", labelKey: "risk", icon: ShieldAlert },
-  { href: "/approvals", labelKey: "approvals", icon: CheckSquare },
   { href: "/replay", labelKey: "replay", icon: History },
   { href: "/settings", labelKey: "settings", icon: Settings },
 ];

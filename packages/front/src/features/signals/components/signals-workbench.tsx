@@ -1,7 +1,7 @@
 "use client";
 
 import { startTransition, useDeferredValue, useEffect, useState, useTransition } from "react";
-import { Check, ChevronRight, Filter, Send, X } from "lucide-react";
+import { ChevronRight, Filter, Send } from "lucide-react";
 import { toast } from "sonner";
 
 import { PageHeader } from "@/components/shared/page-header";
@@ -33,11 +33,8 @@ import {
   type RealtimeTone,
   uppercaseEnum,
 } from "@/lib/realtime-formatters";
-import { patchApprovalField, upsertStreamedItem } from "@/lib/signal-stream-utils";
-import {
-  submitSignalDecisionAction,
-  submitSignalExecutionAction,
-} from "@/server/actions/signal-actions";
+import { upsertStreamedItem } from "@/lib/signal-stream-utils";
+import { submitSignalExecutionAction } from "@/server/actions/signal-actions";
 import type { OperationActionResult } from "@/server/actions/action-result";
 import type { RuntimeMode, SignalLifecycleState } from "@/lib/contracts/dto";
 
@@ -58,7 +55,6 @@ type SignalItem = {
   confidenceWidth: string;
   stateLabel: string;
   stateTone: SignalTone;
-  requiresReview: boolean;
   approvedAt: string | null;
   rejectedAt: string | null;
   reason: string;
@@ -78,7 +74,6 @@ type SelectedSignal = {
   edge: string;
   stateLabel: string;
   stateTone: SignalTone;
-  requiresReview: boolean;
   approvedAt: string | null;
   rejectedAt: string | null;
   reason: string;
@@ -88,7 +83,6 @@ type SelectedSignal = {
 
 type SignalsWorkbenchProps = {
   activeCount: number;
-  approvalCount: number;
   runtimeControls: RuntimeControls;
   signals: SignalItem[];
   selectedSignal: SelectedSignal;
@@ -100,8 +94,8 @@ type RuntimeControls = {
   killSwitch: boolean;
 };
 
-type SignalFilter = "all" | "high_confidence" | "needs_review";
-type SignalActionDialog = "approved" | "rejected" | "execution" | null;
+type SignalFilter = "all" | "high_confidence";
+type SignalActionDialog = "execution" | null;
 
 function buildSignalItem(
   payload: SignalStreamPayload,
@@ -130,7 +124,6 @@ function buildSignalItem(
       : current?.confidenceWidth ?? "0%",
     stateLabel: enumLabel(payload.lifecycle_state),
     stateTone: signalStateTone(payload.lifecycle_state),
-    requiresReview: payload.requires_review ?? current?.requiresReview ?? false,
     approvedAt: current?.approvedAt ?? null,
     rejectedAt: current?.rejectedAt ?? null,
     reason: payload.reason ?? current?.reason ?? dictionary.signals.reasonFallback,
@@ -144,37 +137,12 @@ function hasExecutableLifecycle(signal: SignalItem | SelectedSignal): boolean {
   return signal.lifecycleState === "new" || signal.lifecycleState === "active";
 }
 
-function canApproveSignal(signal: SignalItem | SelectedSignal, controls: RuntimeControls): boolean {
-  return (
-    controls.mode === "manual_confirm" &&
-    !controls.killSwitch &&
-    !signal.approvedAt &&
-    !signal.rejectedAt &&
-    hasExecutableLifecycle(signal)
-  );
-}
-
-function canRejectSignal(signal: SignalItem | SelectedSignal, controls: RuntimeControls): boolean {
-  return (
-    (controls.mode === "manual_confirm" || controls.mode === "kill_switch_locked") &&
-    !signal.approvedAt &&
-    !signal.rejectedAt &&
-    (signal.lifecycleState === "new" ||
-      signal.lifecycleState === "active" ||
-      signal.lifecycleState === "weakened")
-  );
-}
-
 function canSubmitExecution(signal: SignalItem | SelectedSignal, controls: RuntimeControls): boolean {
   if (controls.killSwitch || signal.rejectedAt || !hasExecutableLifecycle(signal)) {
     return false;
   }
 
-  if (controls.mode === "paper_trade") {
-    return true;
-  }
-
-  return controls.mode === "manual_confirm" && Boolean(signal.approvedAt);
+  return controls.mode === "paper_trade" || controls.mode === "manual_confirm" || controls.mode === "live_auto";
 }
 
 function SignalsDetailPanel({
@@ -187,8 +155,6 @@ function SignalsDetailPanel({
   onOpenAction?: (signalId: string, dialog: Exclude<SignalActionDialog, null>) => void;
 }) {
   const { dictionary } = useI18n();
-  const approveEnabled = canApproveSignal(signal, runtimeControls);
-  const rejectEnabled = canRejectSignal(signal, runtimeControls);
   const executionEnabled = canSubmitExecution(signal, runtimeControls);
 
   return (
@@ -201,7 +167,6 @@ function SignalsDetailPanel({
           <StatusPill tone={signal.stateTone}>{signal.stateLabel}</StatusPill>
           <StatusPill tone="primary">{signal.confidence}</StatusPill>
           <StatusPill tone={runtimeControls.killSwitch ? "danger" : "warning"}>{runtimeControls.modeLabel}</StatusPill>
-          {signal.requiresReview ? <StatusPill tone="violet">{dictionary.signals.manualReview}</StatusPill> : null}
         </div>
       </div>
 
@@ -258,24 +223,7 @@ function SignalsDetailPanel({
         </ul>
       </div>
 
-      <div className="grid gap-2 sm:grid-cols-3">
-        <Button
-          className="rounded-sm bg-primary text-primary-foreground hover:bg-primary/90"
-          disabled={!approveEnabled || !onOpenAction}
-          onClick={() => onOpenAction?.(signal.id, "approved")}
-        >
-          <Check className="size-3.5" />
-          {dictionary.signals.approveSignal}
-        </Button>
-        <Button
-          variant="outline"
-          className="rounded-sm border-destructive/30 bg-destructive/5 text-destructive hover:bg-destructive/10"
-          disabled={!rejectEnabled || !onOpenAction}
-          onClick={() => onOpenAction?.(signal.id, "rejected")}
-        >
-          <X className="size-3.5" />
-          {dictionary.signals.reject}
-        </Button>
+      <div className="grid gap-2">
         <Button
           variant="outline"
           className="rounded-sm border-white/10 bg-accent/40 text-foreground hover:bg-accent"
@@ -372,19 +320,12 @@ export function SignalsWorkbench({
         }));
       }
 
-      if (streamEvent.type.startsWith("approval.")) {
-        setLiveSignals((currentSignals) => patchApprovalField(currentSignals, streamEvent.data, "requiresReview"));
-      }
     });
   }, [enumLabel, lastRiskEvent]);
 
   const filteredSignals = liveSignals.filter((signal) => {
     if (deferredFilter === "high_confidence") {
       return signal.confidenceValue >= 0.7;
-    }
-
-    if (deferredFilter === "needs_review") {
-      return signal.requiresReview;
     }
 
     return true;
@@ -401,12 +342,9 @@ export function SignalsWorkbench({
     initialSelectedSignal;
 
   const activeCount = liveSignals.filter((signal) => signal.stateTone === "success").length;
-  const approvalCount = liveSignals.filter((signal) => signal.requiresReview).length;
-
   const filterButtons: Array<{ key: SignalFilter; label: string }> = [
     { key: "all", label: dictionary.signals.all },
     { key: "high_confidence", label: dictionary.signals.highConfidence },
-    { key: "needs_review", label: dictionary.signals.manualReview },
   ];
 
   function selectSignal(signalId: string) {
@@ -423,12 +361,7 @@ export function SignalsWorkbench({
 
   function openSignalAction(signalId: string, dialog: Exclude<SignalActionDialog, null>) {
     const signal = liveSignals.find((item) => item.id === signalId) ?? selectedSignal;
-    if (
-      !signal ||
-      (dialog === "approved" && !canApproveSignal(signal, runtimeControls)) ||
-      (dialog === "rejected" && !canRejectSignal(signal, runtimeControls)) ||
-      (dialog === "execution" && !canSubmitExecution(signal, runtimeControls))
-    ) {
+    if (!signal || (dialog === "execution" && !canSubmitExecution(signal, runtimeControls))) {
       return;
     }
 
@@ -441,13 +374,7 @@ export function SignalsWorkbench({
     setLimitPrice(signal?.marketPrice ?? "");
     setQuantity("1");
     setConnectorName("paper_executor");
-    setNote(
-      dialog === "approved"
-        ? dictionary.signals.approveNote
-        : dialog === "rejected"
-          ? dictionary.signals.rejectNote
-          : dictionary.signals.executionNote,
-    );
+    setNote(dictionary.signals.executionNote);
   }
 
   function closeSignalAction() {
@@ -471,53 +398,6 @@ export function SignalsWorkbench({
 
     toast.error(result.message, {
       description: [result.requestId, result.traceId].filter(Boolean).join(" · "),
-    });
-  }
-
-  function patchSignalDecision(signalId: string, decision: "approved" | "rejected") {
-    setLiveSignals((currentSignals) =>
-      currentSignals.map((signal) => {
-        if (signal.id !== signalId) {
-          return signal;
-        }
-
-        return {
-          ...signal,
-          version: signal.version + 1,
-          requiresReview: false,
-          approvedAt: decision === "approved" ? new Date().toISOString() : null,
-          rejectedAt: decision === "rejected" ? new Date().toISOString() : null,
-          riskDecision: decision === "approved" ? dictionary.signals.approveNote : dictionary.signals.rejectNote,
-        };
-      }),
-    );
-  }
-
-  function submitSignalDecision(dialog: "approved" | "rejected") {
-    if (
-      !actionSignal ||
-      (dialog === "approved" && !canApproveSignal(actionSignal, runtimeControls)) ||
-      (dialog === "rejected" && !canRejectSignal(actionSignal, runtimeControls))
-    ) {
-      return;
-    }
-
-    startActionTransition(async () => {
-      const result = await submitSignalDecisionAction({
-        signalId: actionSignal.id,
-        expectedVersion: actionSignal.version,
-        decision: dialog,
-        note,
-        stepUpCode,
-      });
-
-      setFieldErrors(result.fieldErrors ?? {});
-      handleActionResult(result);
-
-      if (result.ok) {
-        patchSignalDecision(actionSignal.id, dialog);
-        closeSignalAction();
-      }
     });
   }
 
@@ -556,7 +436,6 @@ export function SignalsWorkbench({
         actions={
           <>
             <StatusPill tone="success">{format(dictionary.signals.active, { count: activeCount })}</StatusPill>
-            <StatusPill tone="violet">{format(dictionary.signals.pendingApproval, { count: approvalCount })}</StatusPill>
           </>
         }
       />
@@ -569,7 +448,6 @@ export function SignalsWorkbench({
               <h2 className="font-heading text-xl font-bold tracking-tight text-foreground">{dictionary.signals.liveSignals}</h2>
               <div className="flex flex-wrap gap-2">
                 <StatusPill tone="success">{format(dictionary.signals.active, { count: activeCount })}</StatusPill>
-                <StatusPill tone="violet">{format(dictionary.signals.approvalReq, { count: approvalCount })}</StatusPill>
               </div>
             </div>
             <div className="flex flex-wrap items-center gap-2">
@@ -654,7 +532,6 @@ export function SignalsWorkbench({
                       <td className="px-4 py-3">
                         <div className="flex flex-wrap gap-2">
                           <StatusPill tone={signal.stateTone}>{signal.stateLabel}</StatusPill>
-                          {signal.requiresReview ? <StatusPill tone="violet">{dictionary.signals.manualReview}</StatusPill> : null}
                         </div>
                       </td>
                       <td className="px-5 py-3 text-right">
@@ -724,48 +601,6 @@ export function SignalsWorkbench({
         </WorkbenchDetailPane>
 
         <ActionDialog
-          open={activeDialog === "approved" || activeDialog === "rejected"}
-          onOpenChange={(open) => {
-            if (!open) {
-              closeSignalAction();
-            }
-          }}
-          title={activeDialog === "approved" ? dictionary.signals.approveTitle : dictionary.signals.rejectTitle}
-          description={dictionary.signals.decisionDescription}
-          confirmLabel={activeDialog === "approved" ? dictionary.signals.queueApproval : dictionary.signals.queueRejection}
-          confirmVariant={activeDialog === "rejected" ? "destructive" : "default"}
-          isPending={isPending}
-          note={note}
-          onNoteChange={setNote}
-          noteError={fieldErrors?.note}
-          stepUpCode={stepUpCode}
-          onStepUpCodeChange={setStepUpCode}
-          stepUpCodeError={fieldErrors?.stepUpCode}
-          requiresStepUp
-          confirmDisabled={
-            !actionSignal ||
-            (activeDialog === "approved" && !canApproveSignal(actionSignal, runtimeControls)) ||
-            (activeDialog === "rejected" && !canRejectSignal(actionSignal, runtimeControls))
-          }
-          onSubmit={() => {
-            if (activeDialog === "approved" || activeDialog === "rejected") {
-              submitSignalDecision(activeDialog);
-            }
-          }}
-          feedback={dialogFeedback}
-          context={
-            actionSignal ? (
-              <div className="space-y-1">
-                <p>{dictionary.signals.market}: {actionSignal.marketQuestion}</p>
-                <p>{dictionary.approvals.expectedVersion}: {actionSignal.version}</p>
-                <p>{dictionary.dashboard.tableState}: {actionSignal.stateLabel}</p>
-                <p>{dictionary.metrics.mode}: {runtimeControls.modeLabel}</p>
-              </div>
-            ) : null
-          }
-        />
-
-        <ActionDialog
           open={activeDialog === "execution"}
           onOpenChange={(open) => {
             if (!open) {
@@ -790,7 +625,7 @@ export function SignalsWorkbench({
             actionSignal ? (
               <div className="space-y-1">
                 <p>{dictionary.signals.market}: {actionSignal.marketQuestion}</p>
-                <p>{dictionary.approvals.expectedVersion}: {actionSignal.version}</p>
+                <p>{dictionary.signals.expectedVersion}: {actionSignal.version}</p>
                 <p>{dictionary.signals.marketPrice}: {actionSignal.marketPrice}</p>
                 <p>{dictionary.metrics.mode}: {runtimeControls.modeLabel}</p>
               </div>

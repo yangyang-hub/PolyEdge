@@ -3,10 +3,7 @@
 import { z } from "zod";
 
 import { assertConsoleRole } from "@/server/auth/console-session";
-import {
-  submitSignalDecision,
-  submitSignalExecutionRequest,
-} from "@/server/api/signals";
+import { submitSignalExecutionRequest } from "@/server/api/signals";
 import {
   createActionFailureResult,
   createActionSuccessResult,
@@ -26,14 +23,6 @@ const decimalString = (label: string) =>
       `${label} must be numeric.`,
     );
 
-const signalDecisionSchema = z.object({
-  signalId: z.string().min(1),
-  expectedVersion: z.number().int().positive(),
-  decision: z.enum(["approved", "rejected"]),
-  note: z.string().trim().min(16, "Operator note must be at least 16 characters."),
-  stepUpCode: z.string().trim().min(6, "Step-up code is required for signal decisions."),
-});
-
 const signalExecutionSchema = z.object({
   signalId: z.string().min(1),
   expectedVersion: z.number().int().positive(),
@@ -48,54 +37,6 @@ const signalExecutionSchema = z.object({
   note: z.string().trim().min(16, "Execution note must be at least 16 characters."),
   stepUpCode: z.string().trim().min(6, "Step-up code is required for execution submission."),
 });
-
-export async function submitSignalDecisionAction(input: {
-  signalId: string;
-  expectedVersion: number;
-  decision: "approved" | "rejected";
-  note: string;
-  stepUpCode: string;
-}): Promise<OperationActionResult> {
-  try {
-    await assertConsoleRole("operator");
-
-    const parsed = signalDecisionSchema.safeParse(input);
-    if (!parsed.success) {
-      const flattened = parsed.error.flatten().fieldErrors;
-      return createActionFailureResult("Signal decision request is invalid.", {
-        fieldErrors: {
-          note: flattened.note?.[0],
-          stepUpCode: flattened.stepUpCode?.[0],
-        },
-      });
-    }
-
-    const response = await submitSignalDecision(parsed.data);
-
-    return createActionSuccessResult(
-      parsed.data.decision === "approved"
-        ? "Signal approval accepted by the backend."
-        : "Signal rejection accepted by the backend.",
-      {
-        requestId: response.meta.request_id,
-        traceId: response.meta.trace_id,
-        operationId: response.data.operation_id,
-        status: response.data.status,
-      },
-    );
-  } catch (error) {
-    if (error instanceof PolyEdgeApiError) {
-      return createActionFailureResult(error.message, {
-        requestId: error.requestId,
-        traceId: error.traceId,
-      });
-    }
-
-    return createActionFailureResult(
-      error instanceof Error ? error.message : "Signal decision failed unexpectedly.",
-    );
-  }
-}
 
 export async function submitSignalExecutionAction(input: {
   signalId: string;

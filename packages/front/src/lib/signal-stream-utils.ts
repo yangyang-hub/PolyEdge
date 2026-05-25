@@ -1,4 +1,4 @@
-import type { RiskStreamPayload, SignalStreamPayload } from "@/lib/contracts/realtime";
+import type { SignalStreamPayload } from "@/lib/contracts/realtime";
 
 export function upsertStreamedItem<T extends { id: string }>(
   items: T[],
@@ -18,24 +18,4 @@ export function upsertStreamedItem<T extends { id: string }>(
   }
 
   return [...items, next];
-}
-
-export function patchApprovalField<T extends { id: string }>(
-  items: T[],
-  payload: RiskStreamPayload,
-  field: keyof T,
-): T[] {
-  if (
-    payload.approval_type !== "signal" ||
-    !payload.approval_resource_id ||
-    !payload.approval_status
-  ) {
-    return items;
-  }
-
-  return items.map((item) =>
-    item.id === payload.approval_resource_id
-      ? { ...item, [field]: payload.approval_status === "pending" }
-      : item,
-  );
 }

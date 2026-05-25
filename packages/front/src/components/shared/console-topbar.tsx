@@ -14,7 +14,6 @@ import { cn } from "@/lib/utils";
 const topNavLinks = [
   { href: "/dashboard", labelKey: "dashboard" },
   { href: "/signals", labelKey: "signals" },
-  { href: "/approvals", labelKey: "approvals" },
   { href: "/replay", labelKey: "replay" },
 ] as const;
 
