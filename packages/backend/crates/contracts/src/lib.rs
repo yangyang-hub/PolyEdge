@@ -101,6 +101,25 @@ pub struct TransitionSystemModeRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RuntimeConfigEntryData {
+    pub key: String,
+    pub section: String,
+    pub field: String,
+    pub label: String,
+    pub env_name: String,
+    pub value: String,
+    pub default_value: String,
+    pub value_type: String,
+    pub options: Vec<String>,
+    pub restart_required: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateRuntimeConfigRequest {
+    pub values: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MarketData {
     pub id: String,
     pub question: String,

@@ -1,14 +1,13 @@
 "use client";
 
 import { startTransition, useEffect, useMemo, useRef, useState, useTransition } from "react";
-import { Download, ShieldCheck, ToggleLeft } from "lucide-react";
+import { Download, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
 
 import type { RuntimeMode } from "@/lib/contracts/dto";
 import type { RiskStreamPayload } from "@/lib/contracts/realtime";
 import type { getRiskPageData } from "@/features/risk/loaders/risk-page-data";
 import {
-  requestModeSwitchAction,
   setKillSwitchStateAction,
   triggerRiskReleaseAction,
 } from "@/server/actions/risk-actions";
@@ -34,19 +33,8 @@ import { StateBanner } from "@/components/shared/state-banner";
 import { StatusPill } from "@/components/shared/status-pill";
 
 type RiskPageData = Awaited<ReturnType<typeof getRiskPageData>>;
-type RiskDialog = "mode" | "release" | "kill_switch" | null;
+type RiskDialog = "release" | "kill_switch" | null;
 type RiskAlertFilter = "all" | "unresolved" | "watching";
-
-const MODE_OPTION_VALUES: RuntimeMode[] = [
-  "research",
-  "paper_trade",
-  "live_auto",
-  "kill_switch_locked",
-];
-
-function defaultTargetMode(currentMode: RuntimeMode): RuntimeMode {
-  return currentMode === "paper_trade" ? "live_auto" : "paper_trade";
-}
 
 function patchMetricValues(
   metrics: RiskPageData["metrics"],
@@ -220,7 +208,6 @@ export function RiskControlCenter({ data }: { data: RiskPageData }) {
   const [alerts, setAlerts] = useState(data.alerts);
   const [alertFilter, setAlertFilter] = useState<RiskAlertFilter>("all");
   const [activeDialog, setActiveDialog] = useState<RiskDialog>(null);
-  const [targetMode, setTargetMode] = useState<RuntimeMode>(defaultTargetMode(data.controls.mode));
   const [note, setNote] = useState("");
   const [stepUpCode, setStepUpCode] = useState("");
   const [dialogFeedback, setDialogFeedback] = useState<OperationActionResult | null>(null);
@@ -230,6 +217,8 @@ export function RiskControlCenter({ data }: { data: RiskPageData }) {
   const auditLogRef = useRef<HTMLElement | null>(null);
   const { lastEvent } = useConsoleRealtimeChannel("risk");
   const { locale, dictionary, enumLabel, format } = useI18n();
+  const killSwitchAvailable =
+    controls.mode === "live_auto" || controls.mode === "kill_switch_locked" || controls.killSwitch;
   const metricLabels = useMemo(() => ({
     mode: (mode: RuntimeMode) => enumLabel(mode),
     active: dictionary.common.active,
@@ -245,12 +234,6 @@ export function RiskControlCenter({ data }: { data: RiskPageData }) {
     dictionary.metricHints.readyState,
     enumLabel,
   ]);
-  const modeOptions = MODE_OPTION_VALUES.map((value) => ({
-    value,
-    label: dictionary.runtimeModes[value].label,
-    detail: dictionary.runtimeModes[value].detail,
-  }));
-
   useEffect(() => {
     const streamEvent = lastEvent;
 
@@ -297,12 +280,6 @@ export function RiskControlCenter({ data }: { data: RiskPageData }) {
     setDialogFeedback(null);
     setFieldErrors({});
     setStepUpCode("");
-
-    if (dialog === "mode") {
-      setNote(format(dictionary.risk.modeNote, { mode: controls.modeLabel }));
-      setTargetMode(defaultTargetMode(controls.mode));
-      return;
-    }
 
     if (dialog === "release") {
       setNote(dictionary.risk.releaseNote);
@@ -352,28 +329,6 @@ export function RiskControlCenter({ data }: { data: RiskPageData }) {
         description: [result.requestId, result.traceId].filter(Boolean).join(" · "),
       });
     }
-  }
-
-  function submitModeSwitch() {
-    startActionTransition(async () => {
-      const result = await requestModeSwitchAction({
-        currentMode: controls.mode,
-        targetMode,
-        note,
-        stepUpCode,
-      });
-
-      setFieldErrors(result.fieldErrors ?? {});
-      handleResult(result);
-
-      if (result.ok) {
-        applyControls({
-          mode: targetMode,
-          killSwitch: targetMode === "kill_switch_locked" ? true : controls.killSwitch,
-        });
-        closeDialog();
-      }
-    });
   }
 
   function submitReleaseControls() {
@@ -430,6 +385,9 @@ export function RiskControlCenter({ data }: { data: RiskPageData }) {
 
     return true;
   });
+  const visibleMetrics = killSwitchAvailable
+    ? metrics
+    : metrics.filter((metric) => metric.key !== "kill_switch");
 
   function scrollToAuditLog() {
     auditLogRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -461,7 +419,7 @@ export function RiskControlCenter({ data }: { data: RiskPageData }) {
       return;
     }
 
-    openDialog("mode");
+    openDialog("release");
   }
 
   return (
@@ -475,21 +433,15 @@ export function RiskControlCenter({ data }: { data: RiskPageData }) {
           <>
             <StatusPill tone={controls.killSwitch ? "danger" : "warning"}>{controls.modeLabel}</StatusPill>
             <StatusPill tone="primary">{controls.environment}</StatusPill>
-            <Button
-              variant="outline"
-              className="rounded-sm border-white/10 bg-accent/40 text-foreground hover:bg-accent"
-              onClick={() => openDialog("mode")}
-            >
-              <ToggleLeft className="size-4" />
-              {dictionary.risk.switchMode}
-            </Button>
-            <Button
-              className="rounded-sm bg-primary text-primary-foreground hover:bg-primary/90"
-              onClick={() => openDialog("release")}
-            >
-              <ShieldCheck className="size-4" />
-              {dictionary.risk.releaseControls}
-            </Button>
+            {controls.killSwitch ? (
+              <Button
+                className="rounded-sm bg-primary text-primary-foreground hover:bg-primary/90"
+                onClick={() => openDialog("release")}
+              >
+                <ShieldCheck className="size-4" />
+                {dictionary.risk.releaseControls}
+              </Button>
+            ) : null}
           </>
         }
       />
@@ -506,12 +458,14 @@ export function RiskControlCenter({ data }: { data: RiskPageData }) {
           })}
           className="animate-in fade-in-0 duration-300"
         />
-        <StateBanner
-          tone={controls.killSwitch ? "warning" : "info"}
-          title={controls.killSwitch ? dictionary.risk.killActiveTitle : dictionary.risk.killArmedTitle}
-          detail={dictionary.risk.killSwitchDescription}
-          className="animate-in fade-in-0 duration-300"
-        />
+        {killSwitchAvailable ? (
+          <StateBanner
+            tone={controls.killSwitch ? "warning" : "info"}
+            title={controls.killSwitch ? dictionary.risk.killActiveTitle : dictionary.risk.killArmedTitle}
+            detail={dictionary.risk.killSwitchDescription}
+            className="animate-in fade-in-0 duration-300"
+          />
+        ) : null}
       </section>
 
       <section className="grid gap-4 xl:grid-cols-12">
@@ -542,7 +496,7 @@ export function RiskControlCenter({ data }: { data: RiskPageData }) {
 
         <div className="rounded-lg bg-card/95 p-5 ring-1 ring-white/5 xl:col-span-5">
           <div className="grid gap-4 md:grid-cols-2">
-            {metrics.map((metric) => (
+            {visibleMetrics.map((metric) => (
               <div key={metric.title} className="space-y-2 rounded-md bg-accent/35 p-4">
                 <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-muted-foreground">
                   {metric.title}
@@ -668,23 +622,25 @@ export function RiskControlCenter({ data }: { data: RiskPageData }) {
         </div>
 
         <div className="space-y-4">
-          <div className="rounded-lg bg-card/95 p-5 ring-1 ring-white/5">
-            <p className="font-heading text-sm font-bold uppercase tracking-[0.18em] text-foreground">
-              {dictionary.risk.globalControls}
-            </p>
-            <div className="mt-4 space-y-3">
-              <div className="rounded-md bg-accent/45 p-4 text-sm text-muted-foreground">
-                {dictionary.risk.globalControlsDetail}
+          {killSwitchAvailable ? (
+            <div className="rounded-lg bg-card/95 p-5 ring-1 ring-white/5">
+              <p className="font-heading text-sm font-bold uppercase tracking-[0.18em] text-foreground">
+                {dictionary.risk.globalControls}
+              </p>
+              <div className="mt-4 space-y-3">
+                <div className="rounded-md bg-accent/45 p-4 text-sm text-muted-foreground">
+                  {dictionary.risk.globalControlsDetail}
+                </div>
+                <Button
+                  variant="outline"
+                  className="h-9 w-full rounded-sm border-white/10 bg-accent/40 text-foreground hover:bg-accent"
+                  onClick={() => openDialog("kill_switch")}
+                >
+                  {controls.killSwitch ? dictionary.risk.releaseKillSwitch : dictionary.risk.triggerKillSwitch}
+                </Button>
               </div>
-              <Button
-                variant="outline"
-                className="h-9 w-full rounded-sm border-white/10 bg-accent/40 text-foreground hover:bg-accent"
-                onClick={() => openDialog("kill_switch")}
-              >
-                {controls.killSwitch ? dictionary.risk.releaseKillSwitch : dictionary.risk.triggerKillSwitch}
-              </Button>
             </div>
-          </div>
+          ) : null}
 
           <div className="rounded-lg bg-card/95 p-5 ring-1 ring-white/5">
             <p className="font-heading text-sm font-bold uppercase tracking-[0.18em] text-foreground">
@@ -708,56 +664,6 @@ export function RiskControlCenter({ data }: { data: RiskPageData }) {
           </div>
         </div>
       </section>
-
-      <ActionDialog
-        open={activeDialog === "mode"}
-        onOpenChange={(open) => {
-          if (!open) {
-            closeDialog();
-          }
-        }}
-        title={dictionary.risk.switchRuntimeTitle}
-        description={dictionary.risk.switchRuntimeDescription}
-        confirmLabel={dictionary.risk.queueModeSwitch}
-        isPending={isPending}
-        note={note}
-        onNoteChange={setNote}
-        noteError={fieldErrors?.note}
-        stepUpCode={stepUpCode}
-        onStepUpCodeChange={setStepUpCode}
-        stepUpCodeError={fieldErrors?.stepUpCode}
-        requiresStepUp
-        onSubmit={submitModeSwitch}
-        feedback={dialogFeedback}
-        context={
-          <div className="space-y-1">
-            <p>{dictionary.risk.currentMode}: {controls.modeLabel}</p>
-            <p>{dictionary.risk.environment}: {controls.environment}</p>
-          </div>
-        }
-      >
-        <div className="space-y-2">
-          <p className="text-sm font-medium text-foreground">{dictionary.risk.targetMode}</p>
-          <div className="grid gap-2 sm:grid-cols-2">
-            {modeOptions.map((option) => (
-              <button
-                key={option.value}
-                type="button"
-                onClick={() => setTargetMode(option.value)}
-                className={
-                  targetMode === option.value
-                    ? "rounded-md border border-primary/40 bg-primary/10 p-3 text-left"
-                    : "rounded-md border border-border/70 bg-accent/35 p-3 text-left hover:bg-accent/55"
-                }
-              >
-                <p className="text-sm font-semibold text-foreground">{option.label}</p>
-                <p className="mt-1 text-xs text-muted-foreground">{option.detail}</p>
-              </button>
-            ))}
-          </div>
-          {fieldErrors?.targetMode ? <p className="text-xs text-destructive">{fieldErrors.targetMode}</p> : null}
-        </div>
-      </ActionDialog>
 
       <ActionDialog
         open={activeDialog === "release"}

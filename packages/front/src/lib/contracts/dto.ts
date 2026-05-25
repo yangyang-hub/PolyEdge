@@ -26,6 +26,7 @@ export type RuntimeMode =
   | "live_auto"
   | "kill_switch_locked";
 export type RuntimeEnvironment = "local" | "paper" | "staging" | "production";
+export type RuntimeConfigValueType = "boolean" | "integer" | "decimal" | "text" | "url" | "json" | "enum";
 export type AlertSeverity = "warning" | "critical";
 export type AlertStatus = "unresolved" | "watching" | "contained";
 export type PositionSide = "yes" | "no";
@@ -160,6 +161,23 @@ export type RiskStateDto = ResourceVersion & {
   daily_loss_limit: string;
   daily_loss_used: string;
   updated_at: string;
+};
+
+export type RuntimeConfigEntryDto = {
+  key: string;
+  section: string;
+  field: string;
+  label: string;
+  env_name: string;
+  value: string;
+  default_value: string;
+  value_type: RuntimeConfigValueType;
+  options: string[];
+  restart_required: boolean;
+};
+
+export type RuntimeConfigUpdateDto = {
+  values: Record<string, string>;
 };
 
 export type RiskAlertDto = ResourceVersion & {

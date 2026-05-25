@@ -401,6 +401,13 @@ impl RiskService {
             ));
         }
 
+        if current.mode != SystemMode::LiveAuto {
+            return Err(AppError::conflict(
+                "RISK_KILL_SWITCH_MODE_INVALID",
+                "kill switch can only be triggered while live_auto mode is active",
+            ));
+        }
+
         self.risk_state_store
             .set_kill_switch(true, &command.trace_id, command.expected_version)
             .await?;

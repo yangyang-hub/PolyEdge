@@ -3,6 +3,7 @@ import { PageHeader } from "@/components/shared/page-header";
 import { StatusPill } from "@/components/shared/status-pill";
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { RuntimeConfigPanel } from "@/features/settings/components/runtime-config-panel";
 import type { getSettingsPageData } from "@/features/settings/loaders/settings-page-data";
 import type { Dictionary } from "@/lib/i18n/dictionaries";
 
@@ -35,6 +36,8 @@ export function SettingsWorkbench({ data, dictionary, format }: SettingsWorkbenc
       />
 
       <section className="grid gap-4 md:grid-cols-2">
+        <RuntimeConfigPanel entries={data.runtimeConfig} />
+
         <Card className="md:col-span-2">
           <CardHeader>
             <CardTitle>{dictionary.settings.dataSourceHealth}</CardTitle>

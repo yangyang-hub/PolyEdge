@@ -2,10 +2,13 @@ use config::{Config, Environment};
 use polyedge_domain::{
     AppError, Edge, ExposureRatio, Probability, Quantity, SignedUsdAmount, SystemMode, UsdAmount,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 const AUTH_KEYS_JSON_ENV: &str = "POLYEDGE_AUTH__KEYS_JSON";
 const NEWS_SOURCES_JSON_ENV: &str = "POLYEDGE_NEWS__SOURCES_JSON";
+
+mod runtime_config;
+pub use runtime_config::{RuntimeConfigEntry, RuntimeConfigValueType};
 
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
@@ -142,7 +145,7 @@ pub struct NewsSettings {
     pub sources: Vec<NewsSourceSettings>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
 pub struct NewsSourceSettings {
     pub id: String,
@@ -810,5 +813,43 @@ mod tests {
         assert_eq!(settings.news.sources[0].source_type, "official");
         assert_eq!(settings.news.sources[0].url, "https://example.com/rss");
         assert!(settings.news.sources[0].enabled);
+    }
+
+    #[test]
+    fn runtime_config_values_override_runtime_settings() {
+        let mut settings = Settings::default();
+        settings
+            .apply_runtime_config_values(std::collections::BTreeMap::from([
+                ("arbitrage.enabled".to_string(), "true".to_string()),
+                ("arbitrage.scan_limit".to_string(), "25".to_string()),
+                ("polymarket.mode".to_string(), "disabled".to_string()),
+                ("worker.poll_news".to_string(), "true".to_string()),
+                (
+                    "news.sources_json".to_string(),
+                    r#"[{"id":"sec","source_type":"official","url":"https://example.com/rss","reliability":"0.9","enabled":true}]"#
+                        .to_string(),
+                ),
+            ]))
+            .expect("runtime config values");
+
+        assert!(settings.arbitrage.enabled);
+        assert_eq!(settings.arbitrage.scan_limit, 25);
+        assert_eq!(
+            settings.polymarket.mode,
+            super::PolymarketConnectorMode::Disabled
+        );
+        assert!(settings.worker.poll_news);
+        assert_eq!(settings.news.sources.len(), 1);
+        assert_eq!(settings.news.sources[0].id, "sec");
+    }
+
+    #[test]
+    fn runtime_config_rejects_unknown_keys() {
+        let values =
+            std::collections::BTreeMap::from([("server.port".to_string(), "38002".to_string())]);
+
+        let error = Settings::validate_runtime_config_keys(&values).expect_err("unknown key");
+
+        assert_eq!(error.code(), "CONFIG_RUNTIME_KEY_UNSUPPORTED");
     }
 }

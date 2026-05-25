@@ -27,10 +27,10 @@ import {
   opportunityStatusTone,
   opportunityTypeTone,
   readFormula,
-  toNumber,
   validationStatusTone,
 } from "@/features/radar/lib/radar-formatters";
 import { deriveCandidatePreview } from "@/features/radar/lib/radar-state";
+import { toFiniteNumber } from "@/lib/server/console-formatters";
 import type { RadarAnalysis, RadarOpportunityItem, RadarPageData } from "@/features/radar/types";
 
 function buildOpportunity(
@@ -47,7 +47,7 @@ function buildOpportunity(
     opportunityStatus: opportunity.status,
     validationStatus,
     hasValidation: Boolean(validation),
-    netEdgeValue: validation ? toNumber(validation.net_edge) : 0,
+    netEdgeValue: validation ? toFiniteNumber(validation.net_edge) : 0,
   });
 
   return {
@@ -62,7 +62,7 @@ function buildOpportunity(
     statusLabel: enumLabel(opportunity.status),
     statusTone: opportunityStatusTone(opportunity.status),
     grossEdge: formatPercentFromRatio(opportunity.gross_edge, 1),
-    grossEdgeValue: toNumber(opportunity.gross_edge),
+    grossEdgeValue: toFiniteNumber(opportunity.gross_edge),
     priceSum: formatPrice(opportunity.price_sum),
     capacity: formatInteger(opportunity.capacity),
     observedAt: opportunity.observed_at,
@@ -77,7 +77,7 @@ function buildOpportunity(
     validationLabel: enumLabel(validationStatus),
     validationTone: validationStatusTone(validationStatus),
     netEdge: validation ? formatPercentFromRatio(validation.net_edge, 1) : "n/a",
-    netEdgeValue: validation ? toNumber(validation.net_edge) : 0,
+    netEdgeValue: validation ? toFiniteNumber(validation.net_edge) : 0,
     feeEstimate: validation ? formatPercentFromRatio(validation.fee_estimate, 1) : "n/a",
     slippageBuffer: validation ? formatPercentFromRatio(validation.slippage_buffer, 1) : "n/a",
     validatedCapacity: validation ? formatInteger(validation.validated_capacity) : "n/a",
@@ -136,7 +136,7 @@ export async function getRadarPageData(): Promise<RadarPageData> {
     .sort((left, right) => Date.parse(right.observed_at) - Date.parse(left.observed_at));
   const selectedOpportunityId = sortedOpportunities[0]?.id ?? "";
   const maxEdge = sortedOpportunities.reduce(
-    (value, opportunity) => Math.max(value, toNumber(opportunity.gross_edge)),
+    (value, opportunity) => Math.max(value, toFiniteNumber(opportunity.gross_edge)),
     0,
   );
   const coveredMarketCount = new Set(sortedOpportunities.map((opportunity) => opportunity.market_id)).size;

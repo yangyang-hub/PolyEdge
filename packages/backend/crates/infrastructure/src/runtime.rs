@@ -5,9 +5,10 @@ use crate::{
     stores::{
         ExternalEventStore, InMemoryAuditLogSink, InMemoryExternalEventStore,
         InMemoryIdempotencyStore, InMemoryModeStateStore, InMemoryRewardBotStore,
-        InMemoryRiskStateStore, PostgresAuditLogSink, PostgresExternalEventStore,
-        PostgresIdempotencyStore, PostgresModeStateStore, PostgresRewardBotStore,
-        PostgresRiskStateStore,
+        InMemoryRiskStateStore, InMemoryRuntimeConfigStore, PostgresAuditLogSink,
+        PostgresExternalEventStore, PostgresIdempotencyStore, PostgresModeStateStore,
+        PostgresRewardBotStore, PostgresRiskStateStore, PostgresRuntimeConfigStore,
+        RuntimeConfigStore,
     },
 };
 use polyedge_application::{
@@ -27,6 +28,7 @@ static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("../../migrations");
 pub struct AppState {
     pub settings: Arc<Settings>,
     pub dependencies: Arc<RuntimeDependencies>,
+    pub runtime_config_store: Arc<dyn RuntimeConfigStore>,
     pub auth_verifier: Arc<InternalTokenVerifier>,
     pub idempotency_store: Arc<dyn IdempotencyStore>,
     pub external_event_store: Arc<dyn ExternalEventStore>,
@@ -51,17 +53,31 @@ pub struct RuntimeDependencies {
 
 impl Runtime {
     pub async fn load() -> Result<Self> {
-        let settings = Arc::new(Settings::load()?);
+        let settings = Settings::load()?;
         Self::from_settings(settings).await
     }
 
-    pub async fn from_settings(settings: Arc<Settings>) -> Result<Self> {
+    pub async fn from_settings(mut settings: Settings) -> Result<Self> {
         let postgres = connect_postgres(
             settings.postgres.url.as_deref(),
             settings.postgres.max_connections,
         )
         .await?;
         let redis = connect_redis(settings.redis.url.as_deref()).await?;
+        let runtime_config_store: Arc<dyn RuntimeConfigStore> = match postgres.clone() {
+            Some(pool) => {
+                let store = Arc::new(PostgresRuntimeConfigStore::new(pool));
+                store
+                    .bootstrap(&settings.runtime_config_value_map())
+                    .await?;
+                settings.apply_runtime_config_values(store.load_values().await?)?;
+                store
+            }
+            None => Arc::new(InMemoryRuntimeConfigStore::new(
+                settings.runtime_config_value_map(),
+            )),
+        };
+        let settings = Arc::new(settings);
         let auth_verifier = Arc::new(InternalTokenVerifier::from_settings(&settings.auth)?);
         let (
             mode_store,
@@ -166,6 +182,7 @@ impl Runtime {
             state: AppState {
                 settings,
                 dependencies: Arc::new(RuntimeDependencies { postgres, redis }),
+                runtime_config_store,
                 auth_verifier,
                 idempotency_store,
                 external_event_store,
@@ -196,6 +213,9 @@ impl Runtime {
         ));
         let idempotency_store: Arc<dyn IdempotencyStore> =
             Arc::new(InMemoryIdempotencyStore::new());
+        let runtime_config_store: Arc<dyn RuntimeConfigStore> = Arc::new(
+            InMemoryRuntimeConfigStore::new(settings.runtime_config_value_map()),
+        );
         let external_event_store: Arc<dyn ExternalEventStore> =
             Arc::new(InMemoryExternalEventStore::new());
         let audit_log_sink: Arc<dyn AuditLogSink> = Arc::new(InMemoryAuditLogSink::new());
@@ -231,6 +251,7 @@ impl Runtime {
                 postgres: None,
                 redis: None,
             }),
+            runtime_config_store,
             auth_verifier,
             idempotency_store,
             external_event_store,

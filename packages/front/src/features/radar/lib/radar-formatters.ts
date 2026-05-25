@@ -5,19 +5,10 @@ import type {
   ArbitrageValidationStatus,
 } from "@/lib/contracts/dto";
 import type { Dictionary } from "@/lib/i18n/dictionaries";
-import type { Tone } from "@/lib/formatters";
-
-export function toNumber(value: string | number | null | undefined): number {
-  if (value === null || value === undefined) {
-    return 0;
-  }
-
-  const parsed = typeof value === "number" ? value : Number.parseFloat(value);
-  return Number.isFinite(parsed) ? parsed : 0;
-}
+import { formatFixed, type Tone } from "@/lib/formatters";
 
 export function formatPrice(value: string | number | null | undefined): string {
-  return toNumber(value).toFixed(3);
+  return formatFixed(value, 3);
 }
 
 export function opportunityTypeTone(type: ArbitrageOpportunityType): Tone {

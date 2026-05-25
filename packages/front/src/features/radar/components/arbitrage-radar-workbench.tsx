@@ -29,7 +29,6 @@ import {
   opportunityStatusTone,
   opportunityTypeTone,
   readFormula,
-  toNumber,
   validationStatusTone,
 } from "@/features/radar/lib/radar-formatters";
 import {
@@ -40,6 +39,7 @@ import {
   formatClock,
   formatInteger,
   formatPercentFromRatio,
+  toFiniteNumber,
   type AccentTone,
 } from "@/lib/formatters";
 import { isKeyboardSelect } from "@/lib/keyboard";
@@ -76,7 +76,7 @@ function buildLiveOpportunity(
     statusLabel: enumLabel(payload.status),
     statusTone: opportunityStatusTone(payload.status),
     grossEdge: formatPercentFromRatio(payload.gross_edge ?? 0, 1),
-    grossEdgeValue: toNumber(payload.gross_edge),
+    grossEdgeValue: toFiniteNumber(payload.gross_edge),
     priceSum: formatPrice(payload.price_sum),
     capacity: formatInteger(payload.capacity ?? 0),
     observedAt,
@@ -126,7 +126,7 @@ function applyOpportunityPatch(
     statusLabel: enumLabel(status),
     statusTone: opportunityStatusTone(status),
     grossEdge: payload.gross_edge ? formatPercentFromRatio(payload.gross_edge, 1) : current.grossEdge,
-    grossEdgeValue: payload.gross_edge ? toNumber(payload.gross_edge) : current.grossEdgeValue,
+    grossEdgeValue: payload.gross_edge ? toFiniteNumber(payload.gross_edge) : current.grossEdgeValue,
     priceSum: payload.price_sum ? formatPrice(payload.price_sum) : current.priceSum,
     capacity: payload.capacity ? formatInteger(payload.capacity) : current.capacity,
     observedAt: payload.observed_at ?? current.observedAt,
@@ -151,7 +151,7 @@ function applyValidationPatch(
   enumLabel: (value: string) => string,
 ): RadarOpportunityItem {
   const validationStatus = payload.validation_status ?? current.validationStatus;
-  const netEdgeValue = toNumber(payload.net_edge ?? current.netEdgeValue);
+  const netEdgeValue = toFiniteNumber(payload.net_edge ?? current.netEdgeValue);
   const candidate = deriveCandidatePreview({
     opportunityStatus: current.status,
     validationStatus,

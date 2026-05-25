@@ -2,6 +2,7 @@
 
 mod arbitrage;
 mod execution;
+mod list_filters;
 mod market_event;
 mod news_ingestion;
 mod rewards;

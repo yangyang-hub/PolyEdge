@@ -2,14 +2,41 @@ import { ConsoleRealtimeProvider } from "@/components/shared/console-realtime-pr
 import { ConsoleSidebar } from "@/components/shared/console-sidebar";
 import { ConsoleStatusRail } from "@/components/shared/console-status-rail";
 import { ConsoleTopbar } from "@/components/shared/console-topbar";
+import type { RuntimeMode } from "@/lib/contracts/dto";
+import { normalizeRuntimeMode } from "@/lib/runtime-mode";
+import { readRiskState } from "@/server/api/risk";
 
-export function ConsoleShell({ children }: { children: React.ReactNode }) {
+async function getShellRuntimeState(): Promise<{
+  mode: RuntimeMode;
+  environment: string;
+  killSwitch: boolean;
+} | null> {
+  try {
+    const { data } = await readRiskState();
+
+    return {
+      mode: normalizeRuntimeMode(data.mode),
+      environment: data.environment,
+      killSwitch: data.kill_switch,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export async function ConsoleShell({ children }: { children: React.ReactNode }) {
+  const runtimeState = await getShellRuntimeState();
+
   return (
     <div className="min-h-screen bg-background text-foreground">
       <ConsoleSidebar />
       <div className="md:pl-16">
         <ConsoleRealtimeProvider>
-          <ConsoleTopbar />
+          <ConsoleTopbar
+            initialEnvironment={runtimeState?.environment ?? null}
+            initialKillSwitch={runtimeState?.killSwitch ?? null}
+            initialMode={runtimeState?.mode ?? null}
+          />
           <main className="px-4 pb-12 pt-[4.5rem] md:px-6">{children}</main>
           <ConsoleStatusRail />
         </ConsoleRealtimeProvider>

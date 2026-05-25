@@ -1,8 +1,14 @@
 export type Tone = "neutral" | "primary" | "success" | "warning" | "danger" | "violet";
 export type AccentTone = "primary" | "success" | "danger" | "violet";
+export type NumericValue = number | string | null | undefined;
 
-function toNumber(value: number | string): number {
-  return typeof value === "number" ? value : Number.parseFloat(value);
+export function toFiniteNumber(value: NumericValue): number {
+  if (value === null || value === undefined) {
+    return 0;
+  }
+
+  const numericValue = typeof value === "number" ? value : Number.parseFloat(value);
+  return Number.isFinite(numericValue) ? numericValue : 0;
 }
 
 export function humanizeSnakeCase(value: string): string {
@@ -22,17 +28,39 @@ export function formatClock(value: string): string {
   }).format(new Date(value));
 }
 
-export function formatPercentFromRatio(value: number | string, digits = 0): string {
-  return `${(toNumber(value) * 100).toFixed(digits)}%`;
+export function formatOptionalClock(value: string | null | undefined, fallback = "n/a"): string {
+  if (!value) {
+    return fallback;
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return fallback;
+  }
+
+  return new Intl.DateTimeFormat("en-GB", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).format(date);
 }
 
-export function formatSignedFixed(value: number | string, digits = 2): string {
-  const numericValue = toNumber(value);
+export function formatFixed(value: NumericValue, digits = 2): string {
+  return toFiniteNumber(value).toFixed(digits);
+}
+
+export function formatPercentFromRatio(value: NumericValue, digits = 0): string {
+  return `${(toFiniteNumber(value) * 100).toFixed(digits)}%`;
+}
+
+export function formatSignedFixed(value: NumericValue, digits = 2): string {
+  const numericValue = toFiniteNumber(value);
   return `${numericValue > 0 ? "+" : ""}${numericValue.toFixed(digits)}`;
 }
 
-export function formatCurrency(value: number | string): string {
-  const numericValue = toNumber(value);
+export function formatCurrency(value: NumericValue): string {
+  const numericValue = toFiniteNumber(value);
 
   return new Intl.NumberFormat("en-US", {
     style: "currency",
@@ -42,11 +70,20 @@ export function formatCurrency(value: number | string): string {
   }).format(numericValue);
 }
 
-export function formatInteger(value: number | string): string {
-  return new Intl.NumberFormat("en-US").format(toNumber(value));
+export function formatUsdFixed(value: NumericValue, digits = 2): string {
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  }).format(toFiniteNumber(value));
 }
 
-export function formatBucketWidth(value: number | string): string {
+export function formatInteger(value: NumericValue): string {
+  return new Intl.NumberFormat("en-US").format(toFiniteNumber(value));
+}
+
+export function formatBucketWidth(value: NumericValue): string {
   return formatPercentFromRatio(value);
 }
 
@@ -162,8 +199,8 @@ export function bucketTone(value: "healthy" | "watch" | "breach"): Tone {
   return "danger";
 }
 
-export function metricToneForPnl(value: number | string): AccentTone {
-  return toNumber(value) >= 0 ? "success" : "danger";
+export function metricToneForPnl(value: NumericValue): AccentTone {
+  return toFiniteNumber(value) >= 0 ? "success" : "danger";
 }
 
 export function approvalRiskPercent(value: "info" | "warning" | "critical"): string {

@@ -416,22 +416,15 @@ fn normalize_source_type(value: &str) -> Result<String> {
 }
 
 fn validate_limit(limit: Option<u16>) -> Result<u16> {
-    let limit = limit.unwrap_or(DEFAULT_LIST_LIMIT);
-    if limit == 0 {
-        return Err(AppError::invalid_input(
-            "NEWS_LIST_LIMIT_INVALID",
-            "news list limit must be greater than zero",
-        ));
-    }
-
-    if limit > MAX_LIST_LIMIT {
-        return Err(AppError::invalid_input(
-            "NEWS_LIST_LIMIT_INVALID",
-            format!("news list limit must be at most {MAX_LIST_LIMIT}"),
-        ));
-    }
-
-    Ok(limit)
+    crate::list_filters::validate_list_limit(
+        limit,
+        DEFAULT_LIST_LIMIT,
+        MAX_LIST_LIMIT,
+        "NEWS_LIST_LIMIT_INVALID",
+        "news list limit must be greater than zero",
+        "NEWS_LIST_LIMIT_INVALID",
+        format!("news list limit must be at most {MAX_LIST_LIMIT}"),
+    )
 }
 
 pub fn degraded_health_score(

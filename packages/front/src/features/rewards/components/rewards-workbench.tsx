@@ -26,6 +26,13 @@ import type {
   RewardQuotePlanDto,
   RewardRiskEventDto,
 } from "@/lib/contracts/dto";
+import {
+  approvalSeverityTone,
+  formatFixed,
+  formatOptionalClock,
+  formatUsdFixed,
+  toFiniteNumber,
+} from "@/lib/formatters";
 import { useI18n } from "@/lib/i18n/client";
 import {
   cancelRewardBotOrdersAction,
@@ -52,40 +59,6 @@ type NumberConfigKey =
   | "max_global_position_usd"
   | "exit_markup_cents";
 
-function toNumber(value: DecimalValue | null | undefined): number {
-  if (value === null || value === undefined) {
-    return 0;
-  }
-
-  const parsed = typeof value === "number" ? value : Number.parseFloat(value);
-  return Number.isFinite(parsed) ? parsed : 0;
-}
-
-function formatMoney(value: DecimalValue | null | undefined): string {
-  return `$${toNumber(value).toFixed(2)}`;
-}
-
-function formatDecimal(value: DecimalValue | null | undefined, digits = 2): string {
-  return toNumber(value).toFixed(digits);
-}
-
-function formatClock(value: string | null | undefined): string {
-  if (!value) {
-    return "n/a";
-  }
-
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return "n/a";
-  }
-
-  return new Intl.DateTimeFormat(undefined, {
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  }).format(date);
-}
-
 function rewardTone(status: ManagedRewardOrderDto["status"]) {
   if (status === "open" || status === "exit_pending") {
     return "success" as const;
@@ -97,16 +70,6 @@ function rewardTone(status: ManagedRewardOrderDto["status"]) {
     return "neutral" as const;
   }
   return "warning" as const;
-}
-
-function severityTone(severity: RewardRiskEventDto["severity"]) {
-  if (severity === "critical") {
-    return "danger" as const;
-  }
-  if (severity === "warning") {
-    return "warning" as const;
-  }
-  return "neutral" as const;
 }
 
 export function RewardsWorkbench({ initialSnapshot }: { initialSnapshot: RewardBotSnapshotDto }) {
@@ -176,13 +139,13 @@ export function RewardsWorkbench({ initialSnapshot }: { initialSnapshot: RewardB
         <MetricCard
           title={dictionary.rewards.markets}
           value={String(snapshot.status.markets_tracked)}
-          hint={formatClock(snapshot.status.last_scan_at)}
+          hint={formatOptionalClock(snapshot.status.last_scan_at)}
           accent="violet"
         />
         <MetricCard
           title={dictionary.rewards.eligible}
           value={String(snapshot.status.eligible_markets)}
-          hint={formatClock(snapshot.status.last_run_at)}
+          hint={formatOptionalClock(snapshot.status.last_run_at)}
           accent="success"
         />
         <MetricCard
@@ -346,7 +309,7 @@ function NumberInput({
         <Input
           type="number"
           className="rounded-r-none font-mono"
-          value={String(toNumber(value))}
+          value={String(toFiniteNumber(value))}
           onChange={(event) => onChange(event.target.value)}
         />
         {suffix ? (
@@ -384,15 +347,15 @@ function QuotePlansTable({ plans }: { plans: RewardQuotePlanDto[] }) {
             </TableCell>
             <TableCell>
               <StatusPill tone={plan.eligible ? "success" : "neutral"}>
-                {formatDecimal(plan.score, 1)}
+                {formatFixed(plan.score, 1)}
               </StatusPill>
             </TableCell>
-            <TableCell className="font-mono">{formatMoney(plan.total_daily_rate)}</TableCell>
-            <TableCell className="font-mono">{plan.midpoint == null ? "n/a" : formatDecimal(plan.midpoint, 3)}</TableCell>
+            <TableCell className="font-mono">{formatUsdFixed(plan.total_daily_rate)}</TableCell>
+            <TableCell className="font-mono">{plan.midpoint == null ? "n/a" : formatFixed(plan.midpoint, 3)}</TableCell>
             <TableCell className="font-mono text-xs">
               {plan.legs.length === 0
                 ? dictionary.rewards.none
-                : plan.legs.map((leg) => `${leg.outcome} ${formatDecimal(leg.size, 2)}@${formatDecimal(leg.price, 2)}`).join(" / ")}
+                : plan.legs.map((leg) => `${leg.outcome} ${formatFixed(leg.size, 2)}@${formatFixed(leg.price, 2)}`).join(" / ")}
             </TableCell>
           </TableRow>
         ))}
@@ -422,8 +385,8 @@ function OrdersTable({ orders }: { orders: ManagedRewardOrderDto[] }) {
               <StatusPill tone={rewardTone(order.status)}>{order.status}</StatusPill>
             </TableCell>
             <TableCell>{order.outcome}</TableCell>
-            <TableCell className="font-mono">{formatDecimal(order.price, 2)}</TableCell>
-            <TableCell className="font-mono">{formatDecimal(order.size, 2)}</TableCell>
+            <TableCell className="font-mono">{formatFixed(order.price, 2)}</TableCell>
+            <TableCell className="font-mono">{formatFixed(order.size, 2)}</TableCell>
             <TableCell>{order.scoring ? dictionary.common.active : dictionary.common.idle}</TableCell>
           </TableRow>
         ))}
@@ -449,11 +412,11 @@ function EventsTable({ events }: { events: RewardRiskEventDto[] }) {
         {events.map((event) => (
           <TableRow key={event.id}>
             <TableCell>
-              <StatusPill tone={severityTone(event.severity)}>{event.severity}</StatusPill>
+              <StatusPill tone={approvalSeverityTone(event.severity)}>{event.severity}</StatusPill>
             </TableCell>
             <TableCell className="font-mono text-xs">{event.event_type}</TableCell>
             <TableCell className="max-w-[520px] truncate">{event.message}</TableCell>
-            <TableCell className="font-mono text-xs text-muted-foreground">{formatClock(event.created_at)}</TableCell>
+            <TableCell className="font-mono text-xs text-muted-foreground">{formatOptionalClock(event.created_at)}</TableCell>
           </TableRow>
         ))}
       </TableBody>

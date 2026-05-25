@@ -5,14 +5,17 @@ import { getServerI18n } from "@/lib/i18n/server";
 import {
   formatClock,
   formatInteger,
+  formatOptionalClock,
   formatPercentFromRatio,
+  toFiniteNumber,
   type Tone,
 } from "@/lib/server/console-formatters";
 import { getBackendMode, getConfiguredApiBaseUrl } from "@/server/api/base";
 import { listNewsRawEvents, listNewsSourceHealth } from "@/server/api/news";
+import { readRuntimeConfig } from "@/server/api/settings";
 
 function sourceHealthTone(healthScore: string, consecutiveFailures: number): Tone {
-  const score = Number.parseFloat(healthScore);
+  const score = toFiniteNumber(healthScore);
 
   if (!Number.isFinite(score) || score < 0.5 || consecutiveFailures >= 3) {
     return "danger";
@@ -25,16 +28,13 @@ function sourceHealthTone(healthScore: string, consecutiveFailures: number): Ton
   return "success";
 }
 
-function formatOptionalClock(value: string | null | undefined, fallback: string): string {
-  return value ? formatClock(value) : fallback;
-}
-
 type ServerI18n = Awaited<ReturnType<typeof getServerI18n>>;
 
 export async function getSettingsPageData(i18nInput?: Promise<ServerI18n> | ServerI18n) {
-  const [{ data: sourceHealth }, { data: rawNews }, i18n] = await Promise.all([
+  const [{ data: sourceHealth }, { data: rawNews }, { data: runtimeConfig }, i18n] = await Promise.all([
     listNewsSourceHealth({ limit: 10 }),
     listNewsRawEvents({ limit: 8 }),
+    readRuntimeConfig(),
     i18nInput ?? getServerI18n(),
   ]);
   const { dictionary, enumLabel, format } = i18n;
@@ -46,6 +46,7 @@ export async function getSettingsPageData(i18nInput?: Promise<ServerI18n> | Serv
     backendMode: getBackendMode(),
     apiBaseUrl: getConfiguredApiBaseUrl(),
     consoleAuthMode: getConsoleAuthMode(process.env.POLYEDGE_CONSOLE_AUTH),
+    runtimeConfig,
     sourceHealthSummary: {
       label: degradedSources.length > 0
         ? format(dictionary.settings.degraded, { count: degradedSources.length })
