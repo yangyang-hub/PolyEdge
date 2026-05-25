@@ -4,10 +4,10 @@
   "private": true,
   "packageManager": "pnpm@10.28.1",
   "scripts": {
-    "dev": "next dev --hostname 0.0.0.0 --port 33001",
-    "dev:webpack": "next dev --webpack --hostname 0.0.0.0 --port 33001",
+    "dev": "next dev --hostname 0.0.0.0 --port 33002",
+    "dev:webpack": "next dev --webpack --hostname 0.0.0.0 --port 33002",
     "build": "next build",
-    "start": "next start --hostname 0.0.0.0 --port 33001",
+    "start": "next start --hostname 0.0.0.0 --port 33002",
     "lint": "eslint",
     "test:radar-state": "rm -rf .tmp/radar-state-test && tsc -p tsconfig.radar-test.json && node --test .tmp/radar-state-test/features/radar/lib/radar-state.test.js"
   },

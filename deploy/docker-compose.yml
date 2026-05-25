@@ -41,7 +41,7 @@ services:
     restart: unless-stopped
     environment:
       HOSTNAME: 0.0.0.0
-      PORT: 33001
+      PORT: 33002
       POLYEDGE_API_BASE_URL: ${POLYEDGE_API_BASE_URL:-http://polyedge-api:38001}
       POLYEDGE_ENABLE_LIVE_SSE: ${POLYEDGE_ENABLE_LIVE_SSE:-1}
       POLYEDGE_CONSOLE_AUTH: ${POLYEDGE_CONSOLE_AUTH:-mock-session}
@@ -53,7 +53,7 @@ services:
       POLYEDGE_INTERNAL_AUTH_AUDIENCE: ${POLYEDGE_INTERNAL_AUTH_AUDIENCE:-${POLYEDGE_AUTH__AUDIENCE:-polyedge-rust-api}}
       NEXT_TELEMETRY_DISABLED: 1
     ports:
-      - "${POLYEDGE_FRONT_BIND:-0.0.0.0}:${POLYEDGE_FRONT_PORT:-33001}:33001"
+      - "${POLYEDGE_FRONT_BIND:-0.0.0.0}:${POLYEDGE_FRONT_PORT:-33002}:33002"
     depends_on:
       polyedge-api:
         condition: service_healthy
@@ -61,7 +61,7 @@ services:
       test:
         [
           "CMD-SHELL",
-          "node -e \"fetch('http://127.0.0.1:33001').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\"",
+          "node -e \"fetch('http://127.0.0.1:33002').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\"",
         ]
       interval: 15s
       timeout: 5s
