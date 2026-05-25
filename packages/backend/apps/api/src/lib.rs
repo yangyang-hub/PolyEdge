@@ -49,7 +49,8 @@ use polyedge_contracts::{
     TriggerKillSwitchRequest,
 };
 use polyedge_domain::{
-    AppError, Edge, ExposureRatio, OrderStatus, Probability, Quantity, StepUpScope, UsdAmount,
+    AppError, Edge, ExposureRatio, OrderStatus, Probability, Quantity, StepUpScope, SystemMode,
+    UsdAmount,
 };
 use polyedge_infrastructure::stores::ExternalEventBegin;
 use polyedge_infrastructure::{
@@ -1032,6 +1033,22 @@ fn format_timestamp(timestamp: OffsetDateTime) -> String {
         .unwrap_or_else(|_| timestamp.to_string())
 }
 
+fn console_runtime_mode(mode: SystemMode) -> SystemMode {
+    match mode {
+        SystemMode::ManualConfirm => SystemMode::PaperTrade,
+        other => other,
+    }
+}
+
+fn normalize_submit_execution_modes(data: &mut SubmitExecutionData) {
+    data.execution_request.mode = console_runtime_mode(data.execution_request.mode);
+    data.risk_state.mode = console_runtime_mode(data.risk_state.mode);
+}
+
+fn normalize_kill_switch_modes(data: &mut KillSwitchData) {
+    data.risk_state.mode = console_runtime_mode(data.risk_state.mode);
+}
+
 async fn read_system_mode(
     Extension(auth): Extension<AuthContext>,
     State(state): State<AppState>,
@@ -1045,7 +1062,7 @@ async fn read_system_mode(
 
     Ok(Json(ApiResponse::new(
         SystemModeData {
-            mode: snapshot.mode,
+            mode: console_runtime_mode(snapshot.mode),
             environment: snapshot.environment,
             version: snapshot.version,
             replayed: false,
@@ -2213,6 +2230,7 @@ async fn submit_execution_request(
                     )
                 })?;
             replayed.replayed = true;
+            normalize_submit_execution_modes(&mut replayed);
 
             return Ok(Json(ApiResponse::new(replayed, auth.request_id, trace_id)));
         }
@@ -2331,6 +2349,7 @@ async fn trigger_kill_switch(
                     )
                 })?;
             replayed.replayed = true;
+            normalize_kill_switch_modes(&mut replayed);
 
             return Ok(Json(ApiResponse::new(replayed, auth.request_id, trace_id)));
         }
@@ -2445,6 +2464,7 @@ async fn release_kill_switch(
                     )
                 })?;
             replayed.replayed = true;
+            normalize_kill_switch_modes(&mut replayed);
 
             return Ok(Json(ApiResponse::new(replayed, auth.request_id, trace_id)));
         }
@@ -2558,7 +2578,7 @@ async fn transition_system_mode(
 
     Ok(Json(ApiResponse::new(
         SystemModeData {
-            mode: receipt.snapshot.mode,
+            mode: console_runtime_mode(receipt.snapshot.mode),
             environment: receipt.snapshot.environment,
             version: receipt.snapshot.version,
             replayed: receipt.replayed,
@@ -2715,7 +2735,7 @@ fn execution_request_to_contract(execution_request: ExecutionRequestView) -> Exe
         signal_version: execution_request.signal_version,
         order_draft_id: execution_request.order_draft_id,
         connector_name: execution_request.connector_name,
-        mode: execution_request.mode,
+        mode: console_runtime_mode(execution_request.mode),
         requested_by_user_id: execution_request.requested_by_user_id,
         status: execution_request.status,
         reason: execution_request.reason,
@@ -2792,7 +2812,7 @@ fn risk_state_to_contract(
 ) -> polyedge_domain::Result<RiskStateData> {
     Ok(RiskStateData {
         id: "risk_state_global".to_string(),
-        mode: risk_state.mode,
+        mode: console_runtime_mode(risk_state.mode),
         environment,
         kill_switch: risk_state.kill_switch,
         daily_pnl: risk_state.daily_pnl,
@@ -4014,7 +4034,7 @@ mod tests {
             .expect("read body");
         let payload: ApiResponse<RiskStateData> =
             serde_json::from_slice(&body).expect("deserialize response");
-        assert_eq!(payload.data.mode, SystemMode::ManualConfirm);
+        assert_eq!(payload.data.mode, SystemMode::PaperTrade);
         assert_eq!(payload.data.id, "risk_state_global");
         assert_eq!(payload.data.environment, "test");
         assert!(!payload.data.kill_switch);
@@ -4183,7 +4203,7 @@ mod tests {
         );
         assert_eq!(
             submit_payload.data.execution_request.mode,
-            SystemMode::ManualConfirm
+            SystemMode::PaperTrade
         );
         assert_eq!(
             submit_payload.data.execution_request.connector_name,
@@ -4869,8 +4889,8 @@ mod tests {
             vec![StepUpScope::SystemKillSwitchRelease],
         );
         let release_body = serde_json::to_vec(&ReleaseKillSwitchRequest {
-            reason: "resume controlled manual operations".to_string(),
-            to_mode: SystemMode::ManualConfirm,
+            reason: "resume controlled paper trading".to_string(),
+            to_mode: SystemMode::PaperTrade,
             expected_version: Some(2),
         })
         .expect("serialize body");
@@ -4897,10 +4917,7 @@ mod tests {
             .expect("read body");
         let release_payload: ApiResponse<KillSwitchData> =
             serde_json::from_slice(&release_response_body).expect("deserialize response");
-        assert_eq!(
-            release_payload.data.risk_state.mode,
-            SystemMode::ManualConfirm
-        );
+        assert_eq!(release_payload.data.risk_state.mode, SystemMode::PaperTrade);
         assert!(!release_payload.data.risk_state.kill_switch);
         assert_eq!(release_payload.data.risk_state.version, 3);
         assert!(!release_payload.data.replayed);

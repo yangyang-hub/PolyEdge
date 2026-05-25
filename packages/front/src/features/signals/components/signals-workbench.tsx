@@ -24,6 +24,7 @@ import { WorkbenchDetailPane, WorkbenchLayout } from "@/components/shared/workbe
 import { WorkbenchSegmentedControl } from "@/components/shared/workbench-segmented-control";
 import { useI18n } from "@/lib/i18n/client";
 import { localizeGeneratedCopy } from "@/lib/i18n/generated-copy";
+import { normalizeOptionalRuntimeMode } from "@/lib/runtime-mode";
 import type { SignalStreamPayload } from "@/lib/contracts/realtime";
 import { isKeyboardSelect } from "@/lib/keyboard";
 import {
@@ -142,7 +143,7 @@ function canSubmitExecution(signal: SignalItem | SelectedSignal, controls: Runti
     return false;
   }
 
-  return controls.mode === "paper_trade" || controls.mode === "manual_confirm" || controls.mode === "live_auto";
+  return controls.mode === "paper_trade" || controls.mode === "live_auto";
 }
 
 function SignalsDetailPanel({
@@ -313,9 +314,11 @@ export function SignalsWorkbench({
 
     startTransition(() => {
       if (streamEvent.data.mode || typeof streamEvent.data.kill_switch === "boolean") {
+        const runtimeMode = normalizeOptionalRuntimeMode(streamEvent.data.mode);
+
         setRuntimeControls((currentControls) => ({
-          mode: streamEvent.data.mode ?? currentControls.mode,
-          modeLabel: streamEvent.data.mode ? enumLabel(streamEvent.data.mode) : currentControls.modeLabel,
+          mode: runtimeMode ?? currentControls.mode,
+          modeLabel: runtimeMode ? enumLabel(runtimeMode) : currentControls.modeLabel,
           killSwitch: streamEvent.data.kill_switch ?? currentControls.killSwitch,
         }));
       }

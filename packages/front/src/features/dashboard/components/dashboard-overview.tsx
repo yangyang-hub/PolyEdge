@@ -13,6 +13,7 @@ import { StateBanner } from "@/components/shared/state-banner";
 import { StatusPill } from "@/components/shared/status-pill";
 import { useI18n } from "@/lib/i18n/client";
 import { localizeGeneratedCopy } from "@/lib/i18n/generated-copy";
+import { normalizeOptionalRuntimeMode } from "@/lib/runtime-mode";
 import type {
   ConsoleEventStreamPayload,
   RiskStreamPayload,
@@ -197,12 +198,12 @@ export function DashboardOverview({ data }: { data: DashboardPageData }) {
       return;
     }
 
+    const runtimeMode = normalizeOptionalRuntimeMode(streamEvent.data.mode);
+
     startTransition(() => {
       setLiveData((current) => ({
         ...current,
-        modeLabel: streamEvent.data.mode
-          ? enumLabel(streamEvent.data.mode)
-          : current.modeLabel,
+        modeLabel: runtimeMode ? enumLabel(runtimeMode) : current.modeLabel,
         environmentLabel: streamEvent.data.environment ?? current.environmentLabel,
         metrics: patchMetrics(current.metrics, streamEvent.data, {
           critical: dictionary.common.critical,

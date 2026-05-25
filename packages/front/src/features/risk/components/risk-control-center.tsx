@@ -19,6 +19,7 @@ import { Button } from "@/components/ui/button";
 import { EmptyPanel } from "@/components/shared/empty-panel";
 import { useI18n } from "@/lib/i18n/client";
 import { localizeGeneratedCopy } from "@/lib/i18n/generated-copy";
+import { normalizeOptionalRuntimeMode, normalizeRuntimeMode } from "@/lib/runtime-mode";
 import {
   alertSeverityTone,
   alertStatusTone,
@@ -258,11 +259,13 @@ export function RiskControlCenter({ data }: { data: RiskPageData }) {
     }
 
     startTransition(() => {
+      const runtimeMode = normalizeOptionalRuntimeMode(streamEvent.data.mode);
+
       setControls((currentControls) => {
         const nextControls = {
           ...currentControls,
-          mode: streamEvent.data.mode ?? currentControls.mode,
-          modeLabel: enumLabel(streamEvent.data.mode ?? currentControls.mode),
+          mode: runtimeMode ?? currentControls.mode,
+          modeLabel: enumLabel(runtimeMode ?? currentControls.mode),
           killSwitch: streamEvent.data.kill_switch ?? currentControls.killSwitch,
           environment: streamEvent.data.environment ?? currentControls.environment,
         };
@@ -321,15 +324,19 @@ export function RiskControlCenter({ data }: { data: RiskPageData }) {
   }
 
   function applyControls(nextControls: { mode: RuntimeMode; killSwitch: boolean }) {
+    const normalizedControls = {
+      ...nextControls,
+      mode: normalizeRuntimeMode(nextControls.mode),
+    };
     const nextState = {
       ...controls,
-      mode: nextControls.mode,
-      modeLabel: enumLabel(nextControls.mode),
-      killSwitch: nextControls.killSwitch,
+      mode: normalizedControls.mode,
+      modeLabel: enumLabel(normalizedControls.mode),
+      killSwitch: normalizedControls.killSwitch,
     };
 
     setControls(nextState);
-    setMetrics((currentMetrics) => patchMetricValues(currentMetrics, nextControls, metricLabels));
+    setMetrics((currentMetrics) => patchMetricValues(currentMetrics, normalizedControls, metricLabels));
   }
 
   function handleResult(result: OperationActionResult) {

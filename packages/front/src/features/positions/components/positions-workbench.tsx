@@ -12,6 +12,7 @@ import { useConsoleRealtimeChannel } from "@/components/shared/console-realtime-
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { MeterBar } from "@/components/shared/meter-bar";
 import { useI18n } from "@/lib/i18n/client";
+import { normalizeOptionalRuntimeMode } from "@/lib/runtime-mode";
 import {
   Table,
   TableBody,
@@ -124,8 +125,10 @@ export function PositionsWorkbench({ data }: { data: PositionsPageData }) {
     startTransition(() => {
       setMetrics((currentMetrics) => patchMetrics(currentMetrics, streamEvent.data));
 
-      if (streamEvent.data.mode) {
-        setRuntimeModeLabel(enumLabel(streamEvent.data.mode));
+      const runtimeMode = normalizeOptionalRuntimeMode(streamEvent.data.mode);
+
+      if (runtimeMode) {
+        setRuntimeModeLabel(enumLabel(runtimeMode));
       }
 
       if (streamEvent.data.environment) {

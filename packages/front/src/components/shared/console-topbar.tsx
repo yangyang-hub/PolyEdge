@@ -9,6 +9,7 @@ import { LanguageSwitcher } from "@/components/shared/language-switcher";
 import { Button } from "@/components/ui/button";
 import { StatusPill } from "@/components/shared/status-pill";
 import { useI18n } from "@/lib/i18n/client";
+import { normalizeOptionalRuntimeMode } from "@/lib/runtime-mode";
 import { cn } from "@/lib/utils";
 
 const topNavLinks = [
@@ -21,7 +22,8 @@ export function ConsoleTopbar() {
   const pathname = usePathname();
   const { lastEvent } = useConsoleRealtimeChannel("risk");
   const { dictionary, enumLabel } = useI18n();
-  const modeLabel = lastEvent?.data.mode ? enumLabel(lastEvent.data.mode) : dictionary.topbar.runtimeSync;
+  const runtimeMode = normalizeOptionalRuntimeMode(lastEvent?.data.mode);
+  const modeLabel = runtimeMode ? enumLabel(runtimeMode) : dictionary.topbar.runtimeSync;
   const environmentLabel = lastEvent?.data.environment ?? dictionary.topbar.streamSync;
   const warningCount = lastEvent?.data.warning_alerts;
   const criticalCount = lastEvent?.data.critical_alerts;

@@ -7,6 +7,7 @@ import { readRiskState, listRiskBuckets } from "@/server/api/risk";
 import { listSignals } from "@/server/api/signals";
 import { localizeGeneratedCopy } from "@/lib/i18n/generated-copy";
 import { getServerI18n } from "@/lib/i18n/server";
+import { normalizeRuntimeMode } from "@/lib/runtime-mode";
 import { sumNumericStrings } from "@/server/loaders/console-loader-utils";
 import {
   bucketTone,
@@ -60,6 +61,7 @@ export async function getPositionsPageData() {
   const marketIndex = indexMarkets(markets);
   const latestSignalsByMarket = indexLatestSignalsByMarket(signals);
   const bucketIndex = new Map(riskBuckets.map((bucket) => [bucket.name, bucket]));
+  const runtimeMode = normalizeRuntimeMode(riskState.mode);
 
   const positionItems = positions.map((position) => {
     const market = marketIndex.get(position.market_id);
@@ -125,7 +127,7 @@ export async function getPositionsPageData() {
   );
 
   return {
-    runtimeModeLabel: enumLabel(riskState.mode),
+    runtimeModeLabel: enumLabel(runtimeMode),
     runtimeEnvironmentLabel: riskState.environment,
     metrics: [
       {

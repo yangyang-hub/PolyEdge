@@ -107,6 +107,17 @@ pub struct SystemModeService {
     audit_log_sink: std::sync::Arc<dyn AuditLogSink>,
 }
 
+fn validate_transition_target(mode: SystemMode) -> Result<()> {
+    if mode == SystemMode::ManualConfirm {
+        return Err(AppError::invalid_input(
+            "SYSTEM_MODE_MANUAL_CONFIRM_DISABLED",
+            "manual_confirm mode has been removed; use paper_trade for simulated execution",
+        ));
+    }
+
+    Ok(())
+}
+
 impl SystemModeService {
     pub fn new(
         mode_store: std::sync::Arc<dyn ModeStateStore>,
@@ -128,6 +139,8 @@ impl SystemModeService {
         &self,
         command: ModeTransitionCommand,
     ) -> Result<ModeSnapshot> {
+        validate_transition_target(command.to_mode)?;
+
         let current_snapshot = self.mode_store.current().await?;
         if current_snapshot.mode == command.to_mode {
             return Err(AppError::invalid_input(
@@ -143,6 +156,8 @@ impl SystemModeService {
         &self,
         command: ModeTransitionCommand,
     ) -> Result<SystemModeTransitionReceipt> {
+        validate_transition_target(command.to_mode)?;
+
         const IDEMPOTENCY_SCOPE: &str = "system.mode.switch";
         let idempotency_request = IdempotencyRequest {
             scope: IDEMPOTENCY_SCOPE.to_string(),

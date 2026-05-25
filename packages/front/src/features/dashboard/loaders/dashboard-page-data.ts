@@ -7,6 +7,7 @@ import { listSignals } from "@/server/api/signals";
 import { localizeGeneratedCopy } from "@/lib/i18n/generated-copy";
 import { getServerI18n } from "@/lib/i18n/server";
 import { indexMarkets } from "@/server/loaders/console-loader-utils";
+import { normalizeRuntimeMode } from "@/lib/runtime-mode";
 import {
   alertSeverityTone,
   formatClock,
@@ -32,9 +33,10 @@ export async function getDashboardPageData() {
   const { locale, dictionary, enumLabel } = i18n;
 
   const marketIndex = indexMarkets(markets);
+  const runtimeMode = normalizeRuntimeMode(riskState.mode);
 
   return {
-    modeLabel: enumLabel(riskState.mode),
+    modeLabel: enumLabel(runtimeMode),
     environmentLabel: riskState.environment,
     metrics: [
       {

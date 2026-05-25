@@ -16,6 +16,7 @@ import {
   signalStateTone,
   uppercaseEnum,
 } from "@/lib/server/console-formatters";
+import { normalizeRuntimeMode } from "@/lib/runtime-mode";
 
 export async function getSignalsPageData() {
   const [
@@ -41,12 +42,13 @@ export async function getSignalsPageData() {
     dictionary.routeStates.signalsDataRequired,
   );
   const selectedEvidenceItems = evidences.filter((evidence) => selectedSignal.evidence_ids.includes(evidence.id));
+  const runtimeMode = normalizeRuntimeMode(riskState.mode);
 
   return {
     activeCount: signals.filter((signal) => signal.lifecycle_state === "active").length,
     runtimeControls: {
-      mode: riskState.mode,
-      modeLabel: enumLabel(riskState.mode),
+      mode: runtimeMode,
+      modeLabel: enumLabel(runtimeMode),
       killSwitch: riskState.kill_switch,
     },
     signals: signals.map((signal) => ({
@@ -55,7 +57,7 @@ export async function getSignalsPageData() {
       lifecycleState: signal.lifecycle_state,
       marketQuestion: marketIndex.get(signal.market_id)?.question ?? signal.market_id,
       contextLabel: `${marketIndex.get(signal.market_id)?.category ?? dictionary.common.unknown} / ${enumLabel(
-        marketIndex.get(signal.market_id)?.tradability_status ?? "manual_review",
+        marketIndex.get(signal.market_id)?.tradability_status ?? "observe_only",
       )}`,
       confidenceValue: Number.parseFloat(signal.confidence),
       side: uppercaseEnum(signal.side),

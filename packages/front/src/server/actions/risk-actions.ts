@@ -13,8 +13,8 @@ import {
 import { PolyEdgeApiError } from "@/server/api/base";
 
 const modeSwitchSchema = z.object({
-  currentMode: z.enum(["research", "paper_trade", "manual_confirm", "live_auto", "kill_switch_locked"]),
-  targetMode: z.enum(["research", "paper_trade", "manual_confirm", "live_auto", "kill_switch_locked"]),
+  currentMode: z.enum(["research", "paper_trade", "live_auto", "kill_switch_locked"]),
+  targetMode: z.enum(["research", "paper_trade", "live_auto", "kill_switch_locked"]),
   note: z.string().trim().min(16, "Mode switch note must be at least 16 characters."),
   stepUpCode: z.string().trim().min(6, "Step-up code is required for mode changes."),
 });

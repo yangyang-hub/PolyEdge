@@ -452,11 +452,11 @@ impl RiskService {
 
         if matches!(
             command.to_mode,
-            SystemMode::KillSwitchLocked | SystemMode::LiveAuto
+            SystemMode::KillSwitchLocked | SystemMode::LiveAuto | SystemMode::ManualConfirm
         ) {
             return Err(AppError::invalid_input(
                 "KILL_SWITCH_RELEASE_MODE_INVALID",
-                "kill switch release target must be research, paper_trade, or manual_confirm",
+                "kill switch release target must be research or paper_trade",
             ));
         }
 

@@ -3,6 +3,7 @@ import "server-only";
 import { listRiskAlerts, listRiskBuckets, readRiskState } from "@/server/api/risk";
 import { localizeGeneratedCopy } from "@/lib/i18n/generated-copy";
 import { getServerI18n } from "@/lib/i18n/server";
+import { normalizeRuntimeMode } from "@/lib/runtime-mode";
 import {
   alertSeverityTone,
   alertStatusTone,
@@ -26,11 +27,12 @@ export async function getRiskPageData() {
   ).toFixed(2);
   const criticalAlerts = alerts.filter((alert) => alert.severity === "critical").length;
   const warningAlerts = alerts.filter((alert) => alert.severity === "warning").length;
+  const runtimeMode = normalizeRuntimeMode(riskState.mode);
 
   return {
     controls: {
-      mode: riskState.mode,
-      modeLabel: enumLabel(riskState.mode),
+      mode: runtimeMode,
+      modeLabel: enumLabel(runtimeMode),
       killSwitch: riskState.kill_switch,
       environment: riskState.environment,
     },
@@ -49,7 +51,7 @@ export async function getRiskPageData() {
       {
         key: "mode",
         title: dictionary.metrics.mode,
-        value: enumLabel(riskState.mode),
+        value: enumLabel(runtimeMode),
         hint: dictionary.metricHints.activeRuntime,
         tone: "primary" as const,
       },

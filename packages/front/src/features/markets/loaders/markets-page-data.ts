@@ -20,7 +20,7 @@ export async function getMarketsPageData() {
   const selectedMarket = selectFirstMatchingItem(
     markets,
     [
-      (market) => market.tradability_status === "manual_review",
+      (market) => market.tradability_status === "blocked",
       (market) => market.tradability_status === "observe_only",
     ],
     dictionary.routeStates.marketsDataRequired,
