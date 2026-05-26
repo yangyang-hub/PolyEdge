@@ -211,7 +211,7 @@ env_example="${deploy_dir}/deploy/.env.example"
 if [[ ! -f "${env_file}" ]]; then
   [[ -f "${env_example}" ]] || fail "env example not found: ${env_example}"
   cp "${env_example}" "${env_file}"
-  fail "created ${env_file}. Edit PostgreSQL/Redis URLs and secrets, then rerun this script."
+  fail "created ${env_file}. Edit the PostgreSQL URL and console step-up code, then rerun this script."
 fi
 
 validate_env_file "${env_file}"

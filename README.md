@@ -280,7 +280,7 @@ git commit -m "Build backend binaries"
 
 ```bash
 cp deploy/.env.example deploy/.env
-# 编辑 deploy/.env，填入外部 PostgreSQL / Redis URL 和控制台 step-up code
+# 编辑 deploy/.env，填入外部 PostgreSQL URL 和控制台 step-up code
 ./scripts/deploy.sh all
 ```
 
@@ -290,7 +290,7 @@ cp deploy/.env.example deploy/.env
 - `polyedge-worker`
 - `polyedge-front`
 
-PostgreSQL 和 Redis 不会由 compose 创建，需要在 `deploy/.env` 里配置已有服务地址。
+PostgreSQL 不会由 compose 创建，需要在 `deploy/.env` 里配置已有服务地址；Redis 仅在需要时按需添加 `POLYEDGE_REDIS__URL`。
 
 部署脚本会在启动前从 GitHub 更新当前 checkout，然后按传入目标重建镜像并重启对应容器：
 

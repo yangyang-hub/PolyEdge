@@ -114,7 +114,7 @@ git add bin/polyedge-api bin/polyedge-worker
 
 ```bash
 cp deploy/.env.example deploy/.env
-# 编辑 deploy/.env，填入外部 PostgreSQL / Redis URL 和控制台 step-up code
+# 编辑 deploy/.env，填入外部 PostgreSQL URL 和控制台 step-up code
 ./scripts/deploy.sh all
 ```
 
