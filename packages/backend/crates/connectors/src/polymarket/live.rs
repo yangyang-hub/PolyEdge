@@ -105,7 +105,7 @@ impl LivePolymarketConnector {
 
         if adjusted_notional < POLYMARKET_MIN_NOTIONAL_USD {
             return Ok(LivePolymarketExecutionOutcome::Rejected(
-                MockPolymarketOrderRejection {
+                PolymarketOrderRejection {
                     code: "POLYMARKET_MIN_NOTIONAL_NOT_MET".to_string(),
                     message: format!(
                         "polymarket live connector requires adjusted notional >= 1.00 USD, got {}",
@@ -157,7 +157,7 @@ impl LivePolymarketConnector {
 
         if !response.success {
             return Ok(LivePolymarketExecutionOutcome::Rejected(
-                MockPolymarketOrderRejection {
+                PolymarketOrderRejection {
                     code: "POLYMARKET_ORDER_REJECTED".to_string(),
                     message: response
                         .error_msg
@@ -176,7 +176,7 @@ impl LivePolymarketConnector {
                 },
             )),
             other => Ok(LivePolymarketExecutionOutcome::Rejected(
-                MockPolymarketOrderRejection {
+                PolymarketOrderRejection {
                     code: "POLYMARKET_ORDER_STATUS_UNSUPPORTED".to_string(),
                     message: format!(
                         "Polymarket returned unsupported post_order status={other} for execution_request_id={}",

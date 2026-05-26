@@ -100,23 +100,6 @@ pub fn runtime_config_entries(&self) -> Vec<RuntimeConfigEntry> {
         &mut entries,
         RuntimeConfigEntryDraft {
             section: "polymarket",
-            field: "mode",
-            label: "Polymarket mode",
-            env_name: "POLYEDGE_POLYMARKET__MODE",
-            value: self.polymarket.mode.as_str().to_string(),
-            default_value: defaults.polymarket.mode.as_str().to_string(),
-            value_type: RuntimeConfigValueType::Enum,
-            options: vec![
-            "disabled".to_string(),
-            "mock".to_string(),
-            "live".to_string(),
-        ],
-        },
-    );
-    push_runtime_config_entry(
-        &mut entries,
-        RuntimeConfigEntryDraft {
-            section: "polymarket",
             field: "account_id",
             label: "Polymarket account id",
             env_name: "POLYEDGE_POLYMARKET__ACCOUNT_ID",

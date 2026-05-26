@@ -1,3 +1,4 @@
+#[cfg(any(test, feature = "test-fixtures"))]
 #[must_use]
 pub fn demo_fixture_bundle() -> FixtureBundle {
     FixtureBundle {
@@ -494,6 +495,7 @@ fn dec(raw: &str) -> Decimal {
     Decimal::from_str(raw).expect("static decimal must be valid")
 }
 
+#[cfg(any(test, feature = "test-fixtures"))]
 fn fixture_market(
     id: &str,
     question: &str,
@@ -534,6 +536,7 @@ fn fixture_market(
     }
 }
 
+#[cfg(any(test, feature = "test-fixtures"))]
 fn fixture_event(
     id: &str,
     source: &str,
@@ -563,6 +566,7 @@ fn fixture_event(
     }
 }
 
+#[cfg(any(test, feature = "test-fixtures"))]
 fn fixture_evidence(
     id: &str,
     market_id: &str,
@@ -595,6 +599,7 @@ fn fixture_evidence(
     }
 }
 
+#[cfg(any(test, feature = "test-fixtures"))]
 fn fixture_signal(
     id: &str,
     market_id: &str,
@@ -635,21 +640,25 @@ fn fixture_signal(
     }
 }
 
+#[cfg(any(test, feature = "test-fixtures"))]
 fn probability(raw: &str) -> Probability {
     Probability::new(Decimal::from_str(raw).expect("fixture decimal must be valid"))
         .expect("fixture probability must be valid")
 }
 
+#[cfg(any(test, feature = "test-fixtures"))]
 fn edge(raw: &str) -> Edge {
     Edge::new(Decimal::from_str(raw).expect("fixture decimal must be valid"))
         .expect("fixture edge must be valid")
 }
 
+#[cfg(any(test, feature = "test-fixtures"))]
 fn usd_amount(raw: &str) -> UsdAmount {
     UsdAmount::new(Decimal::from_str(raw).expect("fixture decimal must be valid"))
         .expect("fixture usd amount must be valid")
 }
 
+#[cfg(any(test, feature = "test-fixtures"))]
 fn timestamp(raw: &str) -> OffsetDateTime {
     OffsetDateTime::parse(raw, &time::format_description::well_known::Rfc3339)
         .expect("fixture timestamp must be valid")

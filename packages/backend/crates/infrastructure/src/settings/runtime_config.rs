@@ -1,4 +1,4 @@
-use super::{NewsSourceSettings, PolymarketConnectorMode, PolymarketSignatureType, Settings};
+use super::{NewsSourceSettings, PolymarketSignatureType, Settings};
 use polyedge_domain::{AppError, Edge, ExposureRatio, Probability, Quantity, UsdAmount};
 use serde::Serialize;
 use std::{collections::BTreeMap, str::FromStr};
@@ -42,33 +42,6 @@ pub struct RuntimeConfigEntry {
     pub value_type: RuntimeConfigValueType,
     pub options: Vec<String>,
     pub restart_required: bool,
-}
-
-impl PolymarketConnectorMode {
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Disabled => "disabled",
-            Self::Mock => "mock",
-            Self::Live => "live",
-        }
-    }
-}
-
-impl FromStr for PolymarketConnectorMode {
-    type Err = AppError;
-
-    fn from_str(value: &str) -> polyedge_domain::Result<Self> {
-        match value {
-            "disabled" => Ok(Self::Disabled),
-            "mock" => Ok(Self::Mock),
-            "live" => Ok(Self::Live),
-            other => Err(AppError::invalid_input(
-                "CONFIG_POLYMARKET_MODE_INVALID",
-                format!("unsupported polymarket mode: {other}"),
-            )),
-        }
-    }
 }
 
 impl PolymarketSignatureType {

@@ -9,21 +9,17 @@ use polyedge_application::{
     NewsSourceFailureUpdate, NewsSourceHealthListFilters, NewsSourceHealthView, OrderListFilters,
     ReconcileExecutionListFilters, ReconcileExternalTradeCommand, RewardBookLevel,
     RewardBotRunReport, RewardMarket, RewardOrderBook, RewardToken, SyncExternalOrderStatusCommand,
-    build_arbitrage_analysis, demo_fixture_bundle, market_book_snapshot_id,
-    select_reward_book_token_ids,
+    build_arbitrage_analysis, market_book_snapshot_id, select_reward_book_token_ids,
 };
 use polyedge_connectors::{
     ConnectorNewsItem, LivePolymarketConfig, LivePolymarketConnector,
     LivePolymarketExecutionOutcome, LivePolymarketOrderRequest, LivePolymarketOrderStatusRequest,
-    LivePolymarketTradeSyncRequest, MockPolymarketConnector, MockPolymarketExecutionOutcome,
-    MockPolymarketFillRequest, MockPolymarketOrderRequest, MockPolymarketOrderStatusRequest,
-    NewsSource, PAPER_ACCOUNT_ID, PAPER_EXECUTOR_NAME, POLYMARKET_ACCOUNT_ID,
+    LivePolymarketTradeSyncRequest, NewsSource, PAPER_ACCOUNT_ID, PAPER_EXECUTOR_NAME,
     POLYMARKET_CONNECTOR_NAME, PaperExecutionOutcome, PaperExecutor, PaperFillRequest,
     PaperOrderRequest, PaperOrderStatusRequest, PolymarketBinaryBookSnapshot,
     PolymarketBookConnector, PolymarketBookLevel, PolymarketMarketRefs, PolymarketRewardMarket,
     PolymarketRewardOrderBook, PolymarketRewardsConnector, PolymarketSignatureScheme,
-    RssNewsConnector, RssNewsSourceConfig, normalize_polymarket_order_status_update,
-    normalize_polymarket_trade_fill_update, normalize_polymarket_ws_order_message,
+    RssNewsConnector, RssNewsSourceConfig, normalize_polymarket_ws_order_message,
     normalize_polymarket_ws_trade_message,
 };
 use polyedge_domain::{
@@ -32,7 +28,7 @@ use polyedge_domain::{
 };
 use polyedge_infrastructure::{
     AppState, Runtime, new_trace_id,
-    settings::{NewsSourceSettings, PolymarketConnectorMode, PolymarketSignatureType},
+    settings::{NewsSourceSettings, PolymarketSignatureType},
     telemetry::init_tracing,
 };
 use polymarket_client_sdk::clob::ws::WsMessage;
@@ -140,22 +136,6 @@ async fn main() -> Result<()> {
 
     match command.as_deref() {
         None | Some(WORKER_SERVICE_COMMAND) => run_worker_service(state).await,
-        Some("ingest-fixtures") => {
-            let trace_id = new_trace_id();
-            let report = state
-                .market_event_service
-                .ingest_fixture_bundle(demo_fixture_bundle(), &trace_id)
-                .await?;
-            info!(
-                trace_id = %trace_id,
-                markets_upserted = report.markets_upserted,
-                events_upserted = report.events_upserted,
-                evidences_upserted = report.evidences_upserted,
-                signals_upserted = report.signals_upserted,
-                "seeded demo market/event fixtures",
-            );
-            Ok(())
-        }
         Some("drain-execution-queue") => {
             let connector_name = args
                 .next()

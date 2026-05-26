@@ -1,5 +1,6 @@
 use polyedge_domain::{
-    AppError, OrderStatus, Probability, Quantity, Result, SignalSide, UsdAmount,
+    AmbiguityLevel, AppError, MarketStatus, OrderStatus, Probability, Quantity, Result, SignalSide,
+    TradabilityStatus, UsdAmount,
 };
 use polymarket_client_sdk::auth::state::{Authenticated, Unauthenticated};
 use polymarket_client_sdk::auth::{Credentials, LocalSigner, Normal, Signer, Uuid};
@@ -27,13 +28,12 @@ use time::OffsetDateTime;
 use tracing::warn;
 
 pub const POLYMARKET_CONNECTOR_NAME: &str = "polymarket";
-pub const POLYMARKET_ACCOUNT_ID: &str = "polymarket_account";
 const POLYMARKET_MIN_NOTIONAL_USD: Decimal = Decimal::ONE;
 
 include!("polymarket/models.rs");
+include!("polymarket/gamma.rs");
 include!("polymarket/book.rs");
 include!("polymarket/live.rs");
-include!("polymarket/mock.rs");
 include!("polymarket/normalizers.rs");
 include!("polymarket/helpers.rs");
 include!("polymarket/tests.rs");

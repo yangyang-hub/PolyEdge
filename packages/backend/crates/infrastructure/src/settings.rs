@@ -72,14 +72,6 @@ pub struct RiskSettings {
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub enum PolymarketConnectorMode {
-    Disabled,
-    Mock,
-    Live,
-}
-
-#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
 pub enum PolymarketSignatureType {
     Eoa,
     Proxy,
@@ -89,7 +81,6 @@ pub enum PolymarketSignatureType {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct PolymarketSettings {
-    pub mode: PolymarketConnectorMode,
     pub account_id: String,
     pub chain_id: u64,
     pub signature_type: PolymarketSignatureType,
@@ -158,7 +149,6 @@ pub struct NewsSourceSettings {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct WorkerSettings {
-    pub ingest_fixtures_on_start: bool,
     pub poll_news: bool,
     pub promote_news_events: bool,
     pub poll_arbitrage_radar: bool,
@@ -247,12 +237,6 @@ impl Default for RiskSettings {
     }
 }
 
-impl Default for PolymarketConnectorMode {
-    fn default() -> Self {
-        Self::Mock
-    }
-}
-
 impl Default for PolymarketSignatureType {
     fn default() -> Self {
         Self::Eoa
@@ -262,8 +246,7 @@ impl Default for PolymarketSignatureType {
 impl Default for PolymarketSettings {
     fn default() -> Self {
         Self {
-            mode: PolymarketConnectorMode::Mock,
-            account_id: "polymarket_account".to_string(),
+            account_id: String::new(),
             chain_id: 137,
             signature_type: PolymarketSignatureType::Eoa,
             funder: None,
@@ -340,7 +323,6 @@ impl Default for NewsSourceSettings {
 impl Default for WorkerSettings {
     fn default() -> Self {
         Self {
-            ingest_fixtures_on_start: false,
             poll_news: false,
             promote_news_events: false,
             poll_arbitrage_radar: false,
@@ -517,10 +499,7 @@ mod tests {
             settings.runtime.initial_mode,
             polyedge_domain::SystemMode::PaperTrade
         );
-        assert_eq!(
-            settings.polymarket.mode,
-            super::PolymarketConnectorMode::Mock
-        );
+        assert!(settings.polymarket.account_id.is_empty());
         assert!(!settings.news.enabled);
         assert_eq!(settings.news.poll_interval_secs, 60);
         assert_eq!(settings.news.request_timeout_secs, 10);
@@ -528,7 +507,6 @@ mod tests {
         assert!(settings.news.sources.is_empty());
         assert!(!settings.rewards.enabled);
         assert_eq!(settings.rewards.poll_interval_secs, 60);
-        assert!(!settings.worker.ingest_fixtures_on_start);
         assert!(!settings.worker.poll_news);
         assert!(!settings.worker.promote_news_events);
         assert!(!settings.worker.poll_arbitrage_radar);
@@ -596,7 +574,10 @@ mod tests {
                 "POLYEDGE_RISK__INITIAL_KILL_SWITCH".to_string(),
                 "true".to_string(),
             ),
-            ("POLYEDGE_POLYMARKET__MODE".to_string(), "live".to_string()),
+            (
+                "POLYEDGE_POLYMARKET__ACCOUNT_ID".to_string(),
+                "acct_poly".to_string(),
+            ),
             (
                 "POLYEDGE_ARBITRAGE__ENABLED".to_string(),
                 "true".to_string(),
@@ -653,10 +634,6 @@ mod tests {
             (
                 "POLYEDGE_REWARDS__POLL_INTERVAL_SECS".to_string(),
                 "45".to_string(),
-            ),
-            (
-                "POLYEDGE_WORKER__INGEST_FIXTURES_ON_START".to_string(),
-                "true".to_string(),
             ),
             ("POLYEDGE_WORKER__POLL_NEWS".to_string(), "true".to_string()),
             (
@@ -760,10 +737,7 @@ mod tests {
             polyedge_domain::SystemMode::LiveAuto
         );
         assert!(settings.risk.initial_kill_switch);
-        assert_eq!(
-            settings.polymarket.mode,
-            super::PolymarketConnectorMode::Live
-        );
+        assert_eq!(settings.polymarket.account_id, "acct_poly");
         assert!(settings.polymarket.private_key.is_none());
         assert!(settings.arbitrage.enabled);
         assert_eq!(settings.arbitrage.poll_interval_secs, 7);
@@ -780,7 +754,6 @@ mod tests {
         assert_eq!(settings.arbitrage.slippage_buffer, edge("0.004"));
         assert!(settings.rewards.enabled);
         assert_eq!(settings.rewards.poll_interval_secs, 45);
-        assert!(settings.worker.ingest_fixtures_on_start);
         assert!(settings.worker.poll_news);
         assert!(settings.worker.promote_news_events);
         assert!(settings.worker.poll_arbitrage_radar);
@@ -822,7 +795,10 @@ mod tests {
             .apply_runtime_config_values(std::collections::BTreeMap::from([
                 ("arbitrage.enabled".to_string(), "true".to_string()),
                 ("arbitrage.scan_limit".to_string(), "25".to_string()),
-                ("polymarket.mode".to_string(), "disabled".to_string()),
+                (
+                    "polymarket.account_id".to_string(),
+                    "acct_runtime".to_string(),
+                ),
                 ("worker.poll_news".to_string(), "true".to_string()),
                 (
                     "news.sources_json".to_string(),
@@ -834,10 +810,7 @@ mod tests {
 
         assert!(settings.arbitrage.enabled);
         assert_eq!(settings.arbitrage.scan_limit, 25);
-        assert_eq!(
-            settings.polymarket.mode,
-            super::PolymarketConnectorMode::Disabled
-        );
+        assert_eq!(settings.polymarket.account_id, "acct_runtime");
         assert!(settings.worker.poll_news);
         assert_eq!(settings.news.sources.len(), 1);
         assert_eq!(settings.news.sources[0].id, "sec");

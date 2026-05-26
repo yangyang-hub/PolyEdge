@@ -5,14 +5,6 @@ fn push_worker_runtime_config_entries(
 ) {
     let worker_entries = [
         (
-            "ingest_fixtures_on_start",
-            "Ingest fixtures on worker start",
-            "POLYEDGE_WORKER__INGEST_FIXTURES_ON_START",
-            settings.worker.ingest_fixtures_on_start.to_string(),
-            defaults.worker.ingest_fixtures_on_start.to_string(),
-            RuntimeConfigValueType::Boolean,
-        ),
-        (
             "poll_news",
             "Worker poll news",
             "POLYEDGE_WORKER__POLL_NEWS",

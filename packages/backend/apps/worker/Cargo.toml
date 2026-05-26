@@ -18,3 +18,4 @@ tokio.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+polyedge-application = { path = "../../crates/application", features = ["test-fixtures"] }

@@ -106,27 +106,4 @@ mod tests {
         assert_eq!(updates[0].external_trade_id, "pm_trade_1:pm_ord_taker");
         assert_eq!(updates[1].external_trade_id, "pm_trade_1:pm_ord_maker");
     }
-
-    #[test]
-    fn mock_connector_accepts_valid_order() {
-        let connector = MockPolymarketConnector::new();
-        let outcome = connector
-            .submit(&MockPolymarketOrderRequest {
-                execution_request_id: "exec_1".to_string(),
-                connector_name: POLYMARKET_CONNECTOR_NAME.to_string(),
-                market_id: "mkt_1".to_string(),
-                side: SignalSide::Yes,
-                limit_price: Probability::new(Decimal::new(48, 2)).expect("price"),
-                quantity: Quantity::new(Decimal::new(3, 0)).expect("quantity"),
-                notional: UsdAmount::new(Decimal::new(144, 2)).expect("notional"),
-            })
-            .expect("submit");
-
-        match outcome {
-            MockPolymarketExecutionOutcome::Accepted(acceptance) => {
-                assert!(acceptance.order_id.starts_with("pm:mkt_1:yes:"));
-            }
-            MockPolymarketExecutionOutcome::Rejected(_) => panic!("expected acceptance"),
-        }
-    }
 }

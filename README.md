@@ -144,7 +144,6 @@ cargo run -p polyedge-worker
 worker 仍保留以下维护/调试子命令，正常运行时不需要逐个手动执行：
 
 ```bash
-cargo run -p polyedge-worker -- ingest-fixtures
 cargo run -p polyedge-worker -- ingest-news-once
 cargo run -p polyedge-worker -- poll-news
 cargo run -p polyedge-worker -- promote-news-events
@@ -173,7 +172,7 @@ cp .env.example .env
 
 - API 默认监听 `0.0.0.0:38001`
 - runtime 默认模式是 `manual_confirm`
-- polymarket 默认模式是 `mock`
+- Polymarket connector 没有 mock mode；市场列表走 Gamma 实时数据，私有订单/成交任务需要真实账户和私钥
 - `postgres.url` 和 `redis.url` 默认仍为空
 
 说明：
@@ -218,6 +217,8 @@ POLYEDGE_WORKER__RECONCILE_POLYMARKET_FILLS=true
 POLYEDGE_WORKER__CONSUME_POLYMARKET_USER_EVENTS=true
 ```
 
+Polymarket 私有订单、成交和用户 websocket 任务会直接使用真实 connector；开启前必须配置真实 `POLYEDGE_POLYMARKET__ACCOUNT_ID` / `POLYEDGE_POLYMARKET__PRIVATE_KEY` 和必要 API 凭证。
+
 不要同时运行多个 `polyedge-worker` 常驻实例，除非先为具体任务加分布式锁/租约。API 可以多实例，worker 默认按单实例后台调度设计。
 
 ### Rewards bot 模拟
@@ -261,7 +262,7 @@ POLYEDGE_FRONT_BASE_URL=http://127.0.0.1:3001 \
 说明：
 
 1. `packages/backend/.env` 中 `POLYEDGE_POSTGRES__URL` / `POLYEDGE_REDIS__URL` 留空时，后端会回退到内存 store；要验证持久化和 outbox，必须显式传真实连接串。
-2. `POLYEDGE_ARBITRAGE__BOOK_SOURCE=polymarket` 会实时请求 Polymarket CLOB `/book`。fixture 里的演示 token 不是公网真实 token，live 冒烟时需要先把待测市场替换为真实 `polymarket_*` 引用，或把 `POLYEDGE_ARBITRAGE__BOOK_SOURCE` 改回 `market_snapshot`。
+2. `POLYEDGE_ARBITRAGE__BOOK_SOURCE=polymarket` 会实时请求 Polymarket CLOB `/book`。live 冒烟时需要先把待测市场替换为真实 `polymarket_*` 引用，或把 `POLYEDGE_ARBITRAGE__BOOK_SOURCE` 改回 `market_snapshot`。
 3. `scripts/smoke-arbitrage-radar.sh` 未设置 `POLYEDGE_SMOKE_BEARER_TOKEN` 时会发送本地 dev-auth header；如果后端没有关闭验签或没有启用 dev-auth，本脚本会跳过受保护端点或返回认证失败。
 
 ## Docker 部署
@@ -331,13 +332,13 @@ POLYEDGE_GIT_BRANCH=main \
 - Axum API 骨架与多个 `v1` 资源路由
 - 风险模式切换、signal approve/reject、execution request 等写路径
 - 审批、风险告警、风险桶与 SSE stream 只读资源
-- worker 侧的 fixture ingest、执行队列、fill/status reconcile、raw news event/evidence promotion 流程
+- worker 侧的执行队列、fill/status reconcile、raw news event/evidence promotion 流程
 - worker 侧只读套利雷达，可扫描盘口、记录机会、重新拉并记录最新盘口来校验机会、识别 `price_moved`、过期旧机会并生成历史分析，不会创建 execution request 或订单
 - 套利雷达只读 API 与前端 `/radar` 页面，支持查看 scan、机会列表、校验结果、active/validated/rejected/history 视图、只读 candidate preview 和分析摘要
 - rewards bot 模拟链路，可扫描 Polymarket rewards 当前市场、拉盘口、生成保守双边 post-only 报价计划，并在 `/rewards` 展示模拟挂单和事件
 - `/api/v1/stream/arbitrage` 使用套利 outbox sequence 做实时增量 SSE，并支持 `Last-Event-ID` 续传
 - RSS/Atom 新闻源抓取、标准化、去重入 `raw_events`、source health 记录和 raw news 只读 API
-- Polymarket connector 与 paper/mock 执行相关代码
+- Polymarket live connector 与 paper executor 相关代码
 - PostgreSQL schema 迁移
 
 ## 当前未闭合的部分

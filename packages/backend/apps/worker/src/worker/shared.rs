@@ -22,12 +22,7 @@ fn parse_limit_arg(raw: Option<String>) -> Result<Option<u16>> {
 }
 
 fn polymarket_account_id(state: &AppState) -> &str {
-    let configured = state.settings.polymarket.account_id.trim();
-    if configured.is_empty() {
-        POLYMARKET_ACCOUNT_ID
-    } else {
-        configured
-    }
+    state.settings.polymarket.account_id.trim()
 }
 
 fn polymarket_order_status_limit(state: &AppState, cli_limit: Option<u16>) -> Option<u16> {
@@ -73,14 +68,4 @@ fn polymarket_market_refs(market: &MarketView) -> Result<PolymarketMarketRefs> {
         yes_asset_id,
         no_asset_id,
     })
-}
-
-fn ensure_polymarket_enabled(state: &AppState) -> Result<()> {
-    match state.settings.polymarket.mode {
-        PolymarketConnectorMode::Mock | PolymarketConnectorMode::Live => Ok(()),
-        PolymarketConnectorMode::Disabled => Err(AppError::invalid_input(
-            "POLYMARKET_CONNECTOR_DISABLED",
-            "polymarket connector is disabled in configuration",
-        )),
-    }
 }

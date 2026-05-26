@@ -13,9 +13,8 @@ use crate::{
 };
 use polyedge_application::{
     ArbitrageService, ArbitrageStore, AuditLogSink, ExecutionService, IdempotencyStore,
-    MarketEventService, MarketEventStore, MarketListFilters, ModeStateStore, NewsIngestionService,
-    NewsIngestionStore, RewardBotService, RewardBotStore, RiskPolicy, RiskService, RiskStateStore,
-    SystemModeService, demo_fixture_bundle,
+    MarketEventService, MarketEventStore, ModeStateStore, NewsIngestionService, NewsIngestionStore,
+    RewardBotService, RewardBotStore, RiskPolicy, RiskService, RiskStateStore, SystemModeService,
 };
 use polyedge_domain::{AppError, Result, SystemMode};
 use sqlx::{PgPool, postgres::PgPoolOptions};
@@ -163,7 +162,6 @@ impl Runtime {
         let news_ingestion_service = Arc::new(NewsIngestionService::new(news_ingestion_store));
         let arbitrage_service = Arc::new(ArbitrageService::new(arbitrage_store));
         let reward_bot_service = Arc::new(RewardBotService::new(reward_bot_store));
-        bootstrap_demo_data_if_empty(&settings, &market_event_service).await?;
         let execution_audit_log_sink = audit_log_sink.clone();
         let risk_service = Arc::new(RiskService::new(
             risk_policy(&settings),
@@ -269,27 +267,6 @@ impl Runtime {
     pub fn app_state(&self) -> AppState {
         self.state.clone()
     }
-}
-
-async fn bootstrap_demo_data_if_empty(
-    settings: &Settings,
-    market_event_service: &MarketEventService,
-) -> Result<()> {
-    if settings.runtime.environment != "local" {
-        return Ok(());
-    }
-
-    let existing_markets = market_event_service
-        .list_markets(MarketListFilters::new(None, None, Some(1))?)
-        .await?;
-
-    if existing_markets.is_empty() {
-        market_event_service
-            .ingest_fixture_bundle(demo_fixture_bundle(), "trc_runtime_bootstrap")
-            .await?;
-    }
-
-    Ok(())
 }
 
 impl RuntimeDependencies {

@@ -89,7 +89,13 @@ pub struct LivePolymarketOrderAcceptance {
 #[derive(Debug, Clone)]
 pub enum LivePolymarketExecutionOutcome {
     Accepted(LivePolymarketOrderAcceptance),
-    Rejected(MockPolymarketOrderRejection),
+    Rejected(PolymarketOrderRejection),
+}
+
+#[derive(Debug, Clone)]
+pub struct PolymarketOrderRejection {
+    pub code: String,
+    pub message: String,
 }
 
 #[derive(Debug, Clone)]
@@ -130,78 +136,6 @@ pub struct PolymarketBinaryBookSnapshot {
 pub struct PolymarketBookConnector {
     client: ClobClient<Unauthenticated>,
 }
-
-#[derive(Debug, Clone)]
-pub struct MockPolymarketOrderRequest {
-    pub execution_request_id: String,
-    pub connector_name: String,
-    pub market_id: String,
-    pub side: SignalSide,
-    pub limit_price: Probability,
-    pub quantity: Quantity,
-    pub notional: UsdAmount,
-}
-
-#[derive(Debug, Clone)]
-pub struct MockPolymarketOrderAcceptance {
-    pub order_id: String,
-    pub accepted_at: OffsetDateTime,
-}
-
-#[derive(Debug, Clone)]
-pub struct MockPolymarketOrderRejection {
-    pub code: String,
-    pub message: String,
-}
-
-#[derive(Debug, Clone)]
-pub enum MockPolymarketExecutionOutcome {
-    Accepted(MockPolymarketOrderAcceptance),
-    Rejected(MockPolymarketOrderRejection),
-}
-
-#[derive(Debug, Clone)]
-pub struct MockPolymarketOrderStatusRequest {
-    pub connector_name: String,
-    pub external_order_id: String,
-    pub current_status: OrderStatus,
-}
-
-#[derive(Debug, Clone)]
-pub struct MockPolymarketOrderStatusPayload {
-    pub event_id: String,
-    pub order_id: String,
-    pub status: String,
-    pub observed_at: OffsetDateTime,
-}
-
-#[derive(Debug, Clone)]
-pub struct MockPolymarketFillRequest {
-    pub execution_request_id: String,
-    pub connector_name: String,
-    pub account_id: String,
-    pub external_order_id: String,
-    pub market_id: String,
-    pub side: SignalSide,
-    pub fill_price: Probability,
-    pub total_quantity: Quantity,
-    pub already_filled_quantity: Quantity,
-}
-
-#[derive(Debug, Clone)]
-pub struct MockPolymarketTradePayload {
-    pub event_id: String,
-    pub order_id: String,
-    pub account_id: String,
-    pub trade_id: String,
-    pub price: Probability,
-    pub size: Quantity,
-    pub fee: UsdAmount,
-    pub executed_at: OffsetDateTime,
-}
-
-#[derive(Debug, Default, Clone, Copy)]
-pub struct MockPolymarketConnector;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConnectorOrderStatusUpdate {

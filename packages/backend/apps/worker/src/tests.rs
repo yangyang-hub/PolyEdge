@@ -3,21 +3,17 @@ use polyedge_application::{
     ApproveSignalCommand, ArbitrageAnalysisRunListFilters, ArbitrageScanListFilters,
     EventListFilters, EvidenceListFilters, ExecutionRequestListFilters, OrderDraftListFilters,
     OrderListFilters, PositionListFilters, SignalListFilters, SubmitExecutionCommand,
-    SyncExternalOrderStatusCommand, TradeListFilters,
+    SyncExternalOrderStatusCommand, TradeListFilters, demo_fixture_bundle,
 };
 use polyedge_domain::{
     ExecutionRequestStatus, OrderDraftStatus, OrderStatus, Quantity, SignalLifecycleState,
     SignalSide, SignedUsdAmount, SystemMode,
 };
-use polyedge_infrastructure::{Settings, settings::PolymarketConnectorMode};
+use polyedge_infrastructure::Settings;
 
 fn test_state(initial_mode: SystemMode) -> AppState {
     Runtime::test_app_state(Settings::for_test(initial_mode, "test", Vec::new()))
         .expect("test app state")
-}
-
-fn test_state_with_settings(settings: Settings) -> AppState {
-    Runtime::test_app_state(settings).expect("test app state")
 }
 
 fn test_actor(request_id: &str) -> AuthenticatedActor {
@@ -360,132 +356,8 @@ async fn poll_paper_order_statuses_promotes_submitted_orders_to_open() {
 }
 
 #[tokio::test]
-async fn drain_execution_queue_supports_polymarket_mock_connector() {
+async fn polymarket_worker_requires_live_credentials() {
     let state = test_state(SystemMode::ManualConfirm);
-    let receipt = seed_execution_request_for_connector(&state, 3, POLYMARKET_CONNECTOR_NAME).await;
-
-    let report = drain_execution_queue(
-        &state,
-        Some(POLYMARKET_CONNECTOR_NAME.to_string()),
-        Some(10),
-    )
-    .await
-    .expect("drain queue");
-
-    assert_eq!(
-        report,
-        ExecutionDrainReport {
-            scanned: 1,
-            submitted: 1,
-            failed: 0,
-        }
-    );
-
-    let execution_request = state
-        .execution_service
-        .list_execution_requests(
-            ExecutionRequestListFilters::new(None, None, None, Some(10)).expect("request filters"),
-        )
-        .await
-        .expect("list execution requests")
-        .into_iter()
-        .find(|item| item.id == receipt.execution_request.id)
-        .expect("submitted execution request");
-    assert_eq!(execution_request.status, ExecutionRequestStatus::Submitted);
-    assert!(
-        execution_request
-            .external_order_id
-            .as_deref()
-            .is_some_and(|value| value.starts_with("pm:mkt_120:yes:"))
-    );
-
-    let orders = state
-        .execution_service
-        .list_orders(
-            OrderListFilters::new(Some("sig_2411".to_string()), None, None, None, Some(10))
-                .expect("order filters"),
-        )
-        .await
-        .expect("list orders");
-    assert_eq!(orders.len(), 1);
-    assert_eq!(orders[0].status, OrderStatus::Submitted);
-    assert_eq!(orders[0].account_id, POLYMARKET_ACCOUNT_ID);
-    assert_eq!(orders[0].connector_name, POLYMARKET_CONNECTOR_NAME);
-}
-
-#[tokio::test]
-async fn poll_polymarket_order_statuses_promotes_submitted_orders_to_open() {
-    let state = test_state(SystemMode::ManualConfirm);
-    seed_execution_request_for_connector(&state, 3, POLYMARKET_CONNECTOR_NAME).await;
-    drain_execution_queue(
-        &state,
-        Some(POLYMARKET_CONNECTOR_NAME.to_string()),
-        Some(10),
-    )
-    .await
-    .expect("drain queue");
-
-    let report = poll_polymarket_order_statuses(
-        &state,
-        Some(POLYMARKET_CONNECTOR_NAME.to_string()),
-        Some(10),
-    )
-    .await
-    .expect("poll order statuses");
-
-    assert_eq!(
-        report,
-        OrderStatusPollReport {
-            scanned: 1,
-            opened: 1,
-        }
-    );
-
-    let orders = state
-        .execution_service
-        .list_orders(
-            OrderListFilters::new(Some("sig_2411".to_string()), None, None, None, Some(10))
-                .expect("order filters"),
-        )
-        .await
-        .expect("list orders");
-    assert_eq!(orders.len(), 1);
-    assert_eq!(orders[0].status, OrderStatus::Open);
-    assert_eq!(orders[0].connector_name, POLYMARKET_CONNECTOR_NAME);
-}
-
-#[tokio::test]
-async fn polymarket_worker_uses_configured_account_id() {
-    let mut settings = Settings::for_test(SystemMode::ManualConfirm, "test", Vec::new());
-    settings.polymarket.account_id = "acct_poly_cfg".to_string();
-    let state = test_state_with_settings(settings);
-    seed_execution_request_for_connector(&state, 3, POLYMARKET_CONNECTOR_NAME).await;
-
-    drain_execution_queue(
-        &state,
-        Some(POLYMARKET_CONNECTOR_NAME.to_string()),
-        Some(10),
-    )
-    .await
-    .expect("drain queue");
-
-    let orders = state
-        .execution_service
-        .list_orders(
-            OrderListFilters::new(Some("sig_2411".to_string()), None, None, None, Some(10))
-                .expect("order filters"),
-        )
-        .await
-        .expect("list orders");
-    assert_eq!(orders.len(), 1);
-    assert_eq!(orders[0].account_id, "acct_poly_cfg");
-}
-
-#[tokio::test]
-async fn polymarket_worker_rejects_disabled_mode() {
-    let mut settings = Settings::for_test(SystemMode::ManualConfirm, "test", Vec::new());
-    settings.polymarket.mode = PolymarketConnectorMode::Disabled;
-    let state = test_state_with_settings(settings);
 
     let error = poll_polymarket_order_statuses(
         &state,
@@ -493,24 +365,7 @@ async fn polymarket_worker_rejects_disabled_mode() {
         Some(10),
     )
     .await
-    .expect_err("disabled polymarket connector should fail");
-
-    assert_eq!(error.code(), "POLYMARKET_CONNECTOR_DISABLED");
-}
-
-#[tokio::test]
-async fn polymarket_live_worker_requires_private_key() {
-    let mut settings = Settings::for_test(SystemMode::ManualConfirm, "test", Vec::new());
-    settings.polymarket.mode = PolymarketConnectorMode::Live;
-    let state = test_state_with_settings(settings);
-
-    let error = poll_polymarket_order_statuses(
-        &state,
-        Some(POLYMARKET_CONNECTOR_NAME.to_string()),
-        Some(10),
-    )
-    .await
-    .expect_err("live polymarket connector should require a private key");
+    .expect_err("polymarket connector should require a private key");
 
     assert_eq!(error.code(), "POLYMARKET_PRIVATE_KEY_REQUIRED");
 }
@@ -826,151 +681,4 @@ async fn reconcile_paper_fills_creates_order_trade_position_and_executes_signal(
             reconciled: 0,
         }
     );
-}
-
-#[tokio::test]
-async fn reconcile_polymarket_fills_creates_trade_and_position() {
-    let state = test_state(SystemMode::ManualConfirm);
-    let receipt = seed_execution_request_for_connector(&state, 3, POLYMARKET_CONNECTOR_NAME).await;
-    drain_execution_queue(
-        &state,
-        Some(POLYMARKET_CONNECTOR_NAME.to_string()),
-        Some(10),
-    )
-    .await
-    .expect("drain queue");
-    poll_polymarket_order_statuses(
-        &state,
-        Some(POLYMARKET_CONNECTOR_NAME.to_string()),
-        Some(10),
-    )
-    .await
-    .expect("poll polymarket orders");
-
-    let first_report = reconcile_polymarket_fills(
-        &state,
-        Some(POLYMARKET_CONNECTOR_NAME.to_string()),
-        Some(10),
-    )
-    .await
-    .expect("reconcile polymarket fills");
-
-    assert_eq!(
-        first_report,
-        FillReconciliationReport {
-            scanned: 1,
-            reconciled: 1,
-        }
-    );
-
-    let orders = state
-        .execution_service
-        .list_orders(
-            OrderListFilters::new(Some("sig_2411".to_string()), None, None, None, Some(10))
-                .expect("order filters"),
-        )
-        .await
-        .expect("list orders");
-    assert_eq!(orders.len(), 1);
-    let order = &orders[0];
-    assert_eq!(order.execution_request_id, receipt.execution_request.id);
-    assert_eq!(order.order_draft_id, receipt.order_draft.id);
-    assert_eq!(order.account_id, POLYMARKET_ACCOUNT_ID);
-    assert_eq!(order.connector_name, POLYMARKET_CONNECTOR_NAME);
-    assert_eq!(order.status, OrderStatus::PartiallyFilled);
-    assert_eq!(
-        order.filled_quantity,
-        Quantity::new(1.into()).expect("quantity")
-    );
-    assert!(order.external_order_id.starts_with("pm:mkt_120:yes:"));
-
-    let trades = state
-        .execution_service
-        .list_trades(
-            TradeListFilters::new(None, Some("sig_2411".to_string()), None, None, Some(10))
-                .expect("trade filters"),
-        )
-        .await
-        .expect("list trades");
-    assert_eq!(trades.len(), 1);
-    assert_eq!(trades[0].order_id, order.id);
-    assert_eq!(trades[0].connector_name, POLYMARKET_CONNECTOR_NAME);
-    assert!(
-        trades[0]
-            .external_trade_id
-            .starts_with("pm-trade:mkt_120:yes:")
-    );
-
-    let positions = state
-        .execution_service
-        .list_positions(
-            PositionListFilters::new(
-                Some("mkt_120".to_string()),
-                Some(POLYMARKET_CONNECTOR_NAME.to_string()),
-                Some(SignalSide::Yes),
-                Some(10),
-            )
-            .expect("position filters"),
-        )
-        .await
-        .expect("list positions");
-    assert_eq!(positions.len(), 1);
-    assert_eq!(positions[0].account_id, POLYMARKET_ACCOUNT_ID);
-    assert_eq!(
-        positions[0].net_quantity,
-        Quantity::new(1.into()).expect("quantity")
-    );
-
-    let second_report = reconcile_polymarket_fills(
-        &state,
-        Some(POLYMARKET_CONNECTOR_NAME.to_string()),
-        Some(10),
-    )
-    .await
-    .expect("reconcile polymarket fills again");
-    assert_eq!(
-        second_report,
-        FillReconciliationReport {
-            scanned: 1,
-            reconciled: 1,
-        }
-    );
-
-    let orders = state
-        .execution_service
-        .list_orders(
-            OrderListFilters::new(Some("sig_2411".to_string()), None, None, None, Some(10))
-                .expect("order filters"),
-        )
-        .await
-        .expect("list orders");
-    assert_eq!(orders.len(), 1);
-    assert_eq!(orders[0].status, OrderStatus::Filled);
-    assert_eq!(
-        orders[0].filled_quantity,
-        Quantity::new(3.into()).expect("quantity")
-    );
-
-    let trades = state
-        .execution_service
-        .list_trades(
-            TradeListFilters::new(None, Some("sig_2411".to_string()), None, None, Some(10))
-                .expect("trade filters"),
-        )
-        .await
-        .expect("list trades");
-    assert_eq!(trades.len(), 2);
-    assert!(
-        trades
-            .iter()
-            .all(|trade| trade.connector_name == POLYMARKET_CONNECTOR_NAME)
-    );
-
-    let risk_state = state
-        .risk_service
-        .read_state()
-        .await
-        .expect("read risk state");
-    assert_eq!(risk_state.gross_exposure.api_string(), "0.0156");
-    assert_eq!(risk_state.net_exposure.api_string(), "0.0156");
 }

@@ -29,6 +29,8 @@ pub use execution::{
     ReconcileExecutionListFilters, ReconcileExternalTradeCommand, SubmitExecutionCommand,
     SubmitExecutionStoreCommand, SyncExternalOrderStatusCommand, TradeListFilters, TradeView,
 };
+#[cfg(any(test, feature = "test-fixtures"))]
+pub use market_event::demo_fixture_bundle;
 pub use market_event::{
     EventListFilters, EventView, EvidenceListFilters, EvidenceView, FixtureBundle,
     FixtureEventRecord, FixtureEvidenceRecord, FixtureIngestionReport, FixtureMarketRecord,
@@ -37,7 +39,6 @@ pub use market_event::{
     RecomputeSignalDraft, RecomputeSignalResult, SignalListFilters, SignalTransitionDraft,
     SignalTransitionListFilters, SignalTransitionView, SignalView, SourceHealthAdjustment,
     build_recompute_signal_draft, build_recompute_signal_draft_with_source_health,
-    demo_fixture_bundle,
 };
 pub use news_ingestion::{
     NewsIngestSourceCommand, NewsIngestionItem, NewsIngestionService, NewsIngestionStore,

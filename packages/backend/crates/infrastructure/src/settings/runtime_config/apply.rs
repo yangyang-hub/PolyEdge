@@ -49,7 +49,6 @@ fn apply_runtime_config_value(
         "risk.max_net_exposure" => {
             self.risk.max_net_exposure = parse_exposure_ratio_runtime_config(key, value)?;
         }
-        "polymarket.mode" => self.polymarket.mode = PolymarketConnectorMode::from_str(value)?,
         "polymarket.account_id" => self.polymarket.account_id = value.to_string(),
         "polymarket.chain_id" => {
             self.polymarket.chain_id = parse_u64_runtime_config(key, value)?;
@@ -146,9 +145,6 @@ fn apply_runtime_config_value(
                     format!("runtime config key {key} must be valid JSON: {error}"),
                 )
             })?;
-        }
-        "worker.ingest_fixtures_on_start" => {
-            self.worker.ingest_fixtures_on_start = parse_bool_runtime_config(key, value)?;
         }
         "worker.poll_news" => self.worker.poll_news = parse_bool_runtime_config(key, value)?,
         "worker.promote_news_events" => {

@@ -30,7 +30,6 @@ async fn reconcile_polymarket_fills(
     connector_name: Option<String>,
     limit: Option<u16>,
 ) -> Result<FillReconciliationReport> {
-    ensure_polymarket_enabled(state)?;
     let connector_name = connector_name.unwrap_or_else(|| POLYMARKET_CONNECTOR_NAME.to_string());
     let candidates = state
         .execution_service
@@ -44,22 +43,10 @@ async fn reconcile_polymarket_fills(
         ..FillReconciliationReport::default()
     };
 
-    match state.settings.polymarket.mode {
-        PolymarketConnectorMode::Mock => {
-            let connector = MockPolymarketConnector::new();
-            for candidate in candidates {
-                reconcile_polymarket_candidate(state, &connector, candidate).await?;
-                report.reconciled += 1;
-            }
-        }
-        PolymarketConnectorMode::Live => {
-            let connector = build_live_polymarket_connector(state).await?;
-            for candidate in candidates {
-                reconcile_live_polymarket_candidate(state, &connector, candidate).await?;
-                report.reconciled += 1;
-            }
-        }
-        PolymarketConnectorMode::Disabled => unreachable!("disabled handled above"),
+    let connector = build_live_polymarket_connector(state).await?;
+    for candidate in candidates {
+        reconcile_live_polymarket_candidate(state, &connector, candidate).await?;
+        report.reconciled += 1;
     }
 
     Ok(report)
@@ -101,7 +88,6 @@ async fn poll_polymarket_order_statuses(
     connector_name: Option<String>,
     limit: Option<u16>,
 ) -> Result<OrderStatusPollReport> {
-    ensure_polymarket_enabled(state)?;
     let connector_name = connector_name.unwrap_or_else(|| POLYMARKET_CONNECTOR_NAME.to_string());
     let orders = state
         .execution_service
@@ -118,24 +104,11 @@ async fn poll_polymarket_order_statuses(
         ..OrderStatusPollReport::default()
     };
 
-    match state.settings.polymarket.mode {
-        PolymarketConnectorMode::Mock => {
-            let connector = MockPolymarketConnector::new();
-            for order in orders {
-                if poll_polymarket_order_status_candidate(state, &connector, order).await? {
-                    report.opened += 1;
-                }
-            }
+    let connector = build_live_polymarket_connector(state).await?;
+    for order in orders {
+        if poll_live_polymarket_order_status_candidate(state, &connector, order).await? {
+            report.opened += 1;
         }
-        PolymarketConnectorMode::Live => {
-            let connector = build_live_polymarket_connector(state).await?;
-            for order in orders {
-                if poll_live_polymarket_order_status_candidate(state, &connector, order).await? {
-                    report.opened += 1;
-                }
-            }
-        }
-        PolymarketConnectorMode::Disabled => unreachable!("disabled handled above"),
     }
 
     Ok(report)

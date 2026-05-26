@@ -3,14 +3,6 @@ async fn consume_polymarket_user_events(
     connector_name: Option<String>,
     max_events: Option<usize>,
 ) -> Result<PolymarketUserEventReport> {
-    ensure_polymarket_enabled(state)?;
-    if state.settings.polymarket.mode != PolymarketConnectorMode::Live {
-        return Err(AppError::invalid_input(
-            "POLYMARKET_USER_WS_REQUIRES_LIVE_MODE",
-            "polymarket authenticated user websocket consumption requires mode=live",
-        ));
-    }
-
     let connector_name = connector_name.unwrap_or_else(|| POLYMARKET_CONNECTOR_NAME.to_string());
     if connector_name != POLYMARKET_CONNECTOR_NAME {
         return Err(AppError::invalid_input(

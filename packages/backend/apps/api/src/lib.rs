@@ -26,9 +26,10 @@ use polyedge_application::{
     TriggerKillSwitchCommand, select_reward_book_token_ids,
 };
 use polyedge_connectors::{
-    ConnectorOrderStatusUpdate, ConnectorTradeFillUpdate, PolymarketRewardMarket,
-    PolymarketRewardOrderBook, PolymarketRewardsConnector,
-    normalize_polymarket_order_status_update, normalize_polymarket_trade_fill_update,
+    ConnectorOrderStatusUpdate, ConnectorTradeFillUpdate, PolymarketGammaConnector,
+    PolymarketGammaMarket, PolymarketRewardMarket, PolymarketRewardOrderBook,
+    PolymarketRewardsConnector, normalize_polymarket_order_status_update,
+    normalize_polymarket_trade_fill_update,
 };
 use polyedge_contracts::{
     AlertSeverity, AlertStatus, ApiResponse, ArbitrageAnalysisRunData,

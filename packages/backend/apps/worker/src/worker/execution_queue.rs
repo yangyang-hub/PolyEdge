@@ -17,10 +17,6 @@ fn task_limit(state: &AppState) -> Option<u16> {
     Some(state.settings.worker.task_limit)
 }
 
-fn polymarket_enabled(state: &AppState) -> bool {
-    state.settings.polymarket.mode != PolymarketConnectorMode::Disabled
-}
-
 async fn drain_execution_queue(
     state: &AppState,
     connector_name: Option<String>,
@@ -55,37 +51,17 @@ async fn drain_execution_queue(
             }
         }
         POLYMARKET_CONNECTOR_NAME => {
-            ensure_polymarket_enabled(state)?;
-            match state.settings.polymarket.mode {
-                PolymarketConnectorMode::Mock => {
-                    let connector = MockPolymarketConnector::new();
-                    for candidate in candidates {
-                        dispatch_polymarket_candidate(state, &connector, candidate)
-                            .await
-                            .map(|submitted| {
-                                if submitted {
-                                    report.submitted += 1;
-                                } else {
-                                    report.failed += 1;
-                                }
-                            })?;
-                    }
-                }
-                PolymarketConnectorMode::Live => {
-                    let connector = build_live_polymarket_connector(state).await?;
-                    for candidate in candidates {
-                        dispatch_live_polymarket_candidate(state, &connector, candidate)
-                            .await
-                            .map(|submitted| {
-                                if submitted {
-                                    report.submitted += 1;
-                                } else {
-                                    report.failed += 1;
-                                }
-                            })?;
-                    }
-                }
-                PolymarketConnectorMode::Disabled => unreachable!("disabled handled above"),
+            let connector = build_live_polymarket_connector(state).await?;
+            for candidate in candidates {
+                dispatch_live_polymarket_candidate(state, &connector, candidate)
+                    .await
+                    .map(|submitted| {
+                        if submitted {
+                            report.submitted += 1;
+                        } else {
+                            report.failed += 1;
+                        }
+                    })?;
             }
         }
         other => {
