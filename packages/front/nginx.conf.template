@@ -4,7 +4,7 @@ map $http_x_polyedge_step_up_code $polyedge_step_up_verified {
 }
 
 server {
-  listen 80;
+  listen 33002;
   server_name _;
   absolute_redirect off;
   root /usr/share/nginx/html;
