@@ -26,5 +26,5 @@ ENV POLYEDGE_CONSOLE_STEP_UP_CODE=__unset__
 COPY packages/front/nginx.conf.template /etc/nginx/templates/default.conf.template
 COPY --from=builder /app/packages/front/out /usr/share/nginx/html
 
-EXPOSE 33002
+EXPOSE 80
 CMD ["sh", "-c", "test -n \"$POLYEDGE_CONSOLE_STEP_UP_CODE\" && test \"$POLYEDGE_CONSOLE_STEP_UP_CODE\" != \"__unset__\" || { echo 'POLYEDGE_CONSOLE_STEP_UP_CODE is required for the static frontend proxy.' >&2; exit 1; }; nginx -g 'daemon off;'"]
