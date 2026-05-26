@@ -10,8 +10,8 @@ import type { getRiskPageData } from "@/features/risk/loaders/risk-page-data";
 import {
   setKillSwitchStateAction,
   triggerRiskReleaseAction,
-} from "@/server/actions/risk-actions";
-import type { OperationActionResult } from "@/server/actions/action-result";
+} from "@/lib/api/actions";
+import type { OperationActionResult } from "@/lib/api/actions";
 import { ActionDialog } from "@/components/shared/action-dialog";
 import { useConsoleRealtimeChannel } from "@/components/shared/console-realtime-provider";
 import { Button } from "@/components/ui/button";

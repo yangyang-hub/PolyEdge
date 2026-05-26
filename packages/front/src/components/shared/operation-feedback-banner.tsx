@@ -1,4 +1,4 @@
-import type { OperationActionResult } from "@/server/actions/action-result";
+import type { OperationActionResult } from "@/lib/api/actions";
 
 import { StatusPill } from "@/components/shared/status-pill";
 import { useI18n } from "@/lib/i18n/client";

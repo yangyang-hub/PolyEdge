@@ -1,12 +1,10 @@
 "use client";
 
 import { Languages } from "lucide-react";
-import { useTransition } from "react";
 
 import { Button } from "@/components/ui/button";
 import { useI18n } from "@/lib/i18n/client";
 import { LOCALES, type Locale } from "@/lib/i18n/locales";
-import { setLocaleAction } from "@/server/actions/locale-actions";
 import { cn } from "@/lib/utils";
 
 const localeButtonLabels: Record<Locale, string> = {
@@ -15,18 +13,14 @@ const localeButtonLabels: Record<Locale, string> = {
 };
 
 export function LanguageSwitcher() {
-  const [isPending, startLocaleTransition] = useTransition();
-  const { locale, dictionary } = useI18n();
+  const { locale, dictionary, setLocale } = useI18n();
 
   function switchLocale(nextLocale: Locale) {
-    if (nextLocale === locale || isPending) {
+    if (nextLocale === locale) {
       return;
     }
 
-    startLocaleTransition(async () => {
-      await setLocaleAction(nextLocale);
-      window.location.reload();
-    });
+    setLocale(nextLocale);
   }
 
   return (
@@ -43,7 +37,6 @@ export function LanguageSwitcher() {
             type="button"
             variant="ghost"
             size="sm"
-            disabled={isPending}
             onClick={() => switchLocale(item)}
             className={cn(
               "h-6 rounded-sm px-2 text-[11px] font-bold",

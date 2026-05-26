@@ -1,11 +1,9 @@
-import "server-only";
-
 import type { ApiResponse } from "@/lib/contracts/api";
 import type {
   RewardBotConfigPatchDto,
   RewardBotSnapshotDto,
 } from "@/lib/contracts/dto";
-import { fetchContract, fetchWriteContract } from "@/server/api/base";
+import { fetchContract, fetchWriteContract } from "@/lib/api/base";
 
 export async function readRewardBotSnapshot(): Promise<ApiResponse<RewardBotSnapshotDto>> {
   return fetchContract<ApiResponse<RewardBotSnapshotDto>>("/api/v1/rewards-bot");

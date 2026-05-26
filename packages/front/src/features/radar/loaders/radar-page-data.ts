@@ -1,5 +1,3 @@
-import "server-only";
-
 import type {
   ArbitrageAnalysisSummaryDto,
   ArbitrageOpportunityDto,
@@ -9,15 +7,15 @@ import {
   formatClock,
   formatInteger,
   formatPercentFromRatio,
-} from "@/lib/server/console-formatters";
+} from "@/lib/formatters";
 import type { Dictionary } from "@/lib/i18n/dictionaries";
-import { getServerI18n } from "@/lib/i18n/server";
+import type { I18nRuntime } from "@/lib/i18n/runtime";
 import {
   listArbitrageAnalysisRuns,
   listArbitrageOpportunities,
   listArbitrageScans,
-} from "@/server/api/arbitrage";
-import { listMarkets } from "@/server/api/markets";
+} from "@/lib/api/arbitrage";
+import { listMarkets } from "@/lib/api/markets";
 import {
   formatBookAge,
   formatDuration,
@@ -30,7 +28,7 @@ import {
   validationStatusTone,
 } from "@/features/radar/lib/radar-formatters";
 import { deriveCandidatePreview } from "@/features/radar/lib/radar-state";
-import { toFiniteNumber } from "@/lib/server/console-formatters";
+import { toFiniteNumber } from "@/lib/formatters";
 import type { RadarAnalysis, RadarOpportunityItem, RadarPageData } from "@/features/radar/types";
 
 function buildOpportunity(
@@ -119,14 +117,13 @@ function buildAnalysis(
   };
 }
 
-export async function getRadarPageData(): Promise<RadarPageData> {
-  const [{ data: scans }, { data: opportunities }, { data: analysisRuns }, { data: markets }, i18n] =
+export async function getRadarPageData(i18n: I18nRuntime): Promise<RadarPageData> {
+  const [{ data: scans }, { data: opportunities }, { data: analysisRuns }, { data: markets }] =
     await Promise.all([
       listArbitrageScans({ limit: 8 }),
       listArbitrageOpportunities({ limit: 100 }),
       listArbitrageAnalysisRuns({ limit: 1 }),
       listMarkets({ limit: 200 }),
-      getServerI18n(),
     ]);
   const { dictionary, enumLabel, format } = i18n;
 

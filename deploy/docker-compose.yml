@@ -37,10 +37,10 @@ services:
     image: ${POLYEDGE_FRONT_IMAGE:-polyedge-front:local}
     restart: unless-stopped
     environment:
-      POLYEDGE_API_BASE_URL: ${POLYEDGE_API_BASE_URL:-http://polyedge-api:38001}
+      POLYEDGE_API_UPSTREAM: ${POLYEDGE_API_UPSTREAM:-http://polyedge-api:38001}
       POLYEDGE_CONSOLE_STEP_UP_CODE: ${POLYEDGE_CONSOLE_STEP_UP_CODE:?set POLYEDGE_CONSOLE_STEP_UP_CODE in deploy/.env}
     ports:
-      - "${POLYEDGE_FRONT_BIND:-0.0.0.0}:${POLYEDGE_FRONT_PORT:-33002}:33002"
+      - "${POLYEDGE_FRONT_BIND:-0.0.0.0}:${POLYEDGE_FRONT_PORT:-33002}:80"
     depends_on:
       polyedge-api:
         condition: service_healthy
@@ -48,7 +48,7 @@ services:
       test:
         [
           "CMD-SHELL",
-          "node -e \"fetch('http://127.0.0.1:33002').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\"",
+          "wget -qO- http://127.0.0.1/healthz >/dev/null",
         ]
       interval: 15s
       timeout: 5s

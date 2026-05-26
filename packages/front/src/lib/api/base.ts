@@ -1,5 +1,3 @@
-import "server-only";
-
 import type {
   ApiErrorResponse,
   ApiListResponse,
@@ -7,10 +5,17 @@ import type {
   ApiResponse,
   WriteResponse,
 } from "@/lib/contracts/api";
-import type { InternalApiRequestKind, InternalApiStepUpScope } from "@/server/auth/internal-api-token";
-import { createInternalApiHeaders } from "@/server/auth/internal-api-token";
 
 export type BackendMode = "live";
+export type InternalApiStepUpScope =
+  | "signal_approve"
+  | "signal_reject"
+  | "execution_submit"
+  | "order_cancel_force"
+  | "system_mode_switch"
+  | "system_kill_switch_trigger"
+  | "system_kill_switch_release"
+  | "risk_threshold_update";
 
 export class PolyEdgeApiError extends Error {
   code?: string;
@@ -57,18 +62,20 @@ export function getBackendMode(): BackendMode {
 }
 
 export function getConfiguredApiBaseUrl(): string | null {
-  const value = process.env.POLYEDGE_API_BASE_URL?.trim().replace(/\/$/, "");
+  const value = process.env.NEXT_PUBLIC_POLYEDGE_API_BASE_URL?.trim().replace(/\/$/, "");
   return value ? value : null;
 }
 
 export function getApiBaseUrl(): string {
-  const apiBaseUrl = getConfiguredApiBaseUrl();
+  return getConfiguredApiBaseUrl() ?? "";
+}
 
-  if (!apiBaseUrl) {
-    throw new PolyEdgeApiError("POLYEDGE_API_BASE_URL is required for frontend live data.");
+function createRequestId(): string {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return `req_${crypto.randomUUID().replace(/-/g, "")}`;
   }
 
-  return apiBaseUrl;
+  return `req_${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`;
 }
 
 export function buildQueryString(
@@ -124,24 +131,35 @@ async function fetchJson<T>(
   path: string,
   init: RequestInit,
   auth: {
-    kind: InternalApiRequestKind;
     stepUpCode?: string;
     stepUpScopes?: InternalApiStepUpScope[];
   },
 ): Promise<T> {
   const apiBaseUrl = getApiBaseUrl();
-
-  const authHeaders = await createInternalApiHeaders(auth);
   const headers = new Headers(init.headers);
+  const requestId = createRequestId();
 
-  authHeaders.forEach((value, key) => {
-    headers.set(key, value);
-  });
+  headers.set("X-Request-Id", requestId);
+
+  if (process.env.NEXT_PUBLIC_POLYEDGE_INTERNAL_AUTH_DEV_BYPASS === "1") {
+    headers.set("X-PolyEdge-Dev-Auth", "local");
+    headers.set("X-PolyEdge-Console-Role", "admin");
+    headers.set("X-PolyEdge-Console-User", encodeURIComponent("Static Console"));
+  }
+
+  if (auth.stepUpCode?.trim()) {
+    headers.set("X-PolyEdge-Step-Up-Code", auth.stepUpCode.trim());
+  }
+
+  if (auth.stepUpScopes?.length) {
+    headers.set("X-PolyEdge-Step-Up-Scopes", auth.stepUpScopes.join(","));
+  }
 
   const response = await fetch(`${apiBaseUrl}${path}`, {
     ...init,
     headers,
     cache: "no-store",
+    credentials: "same-origin",
   });
 
   if (!response.ok) {
@@ -155,7 +173,7 @@ async function fetchJson<T>(
 
     throw new PolyEdgeApiError(errorPayload?.error.message ?? `PolyEdge API request failed: ${response.status}`, {
       code: errorPayload?.error.code,
-      requestId: errorPayload?.meta.request_id,
+      requestId: errorPayload?.meta.request_id ?? requestId,
       traceId: errorPayload?.meta.trace_id,
       retryable: errorPayload?.error.retryable,
     });
@@ -173,7 +191,6 @@ export async function fetchContract<T>(path: string): Promise<T> {
       },
     },
     {
-      kind: "read",
     },
   );
 }
@@ -192,7 +209,6 @@ export async function fetchListContract<TLive, TFront = TLive>(
       },
     },
     {
-      kind: "read",
     },
   );
   const items = options?.mapItem ? payload.data.map(options.mapItem) : (payload.data as unknown as TFront[]);
@@ -229,7 +245,6 @@ export async function fetchWriteContract<TLive, TFront = TLive>(
       body: JSON.stringify(init.body),
     },
     {
-      kind: "write",
       stepUpCode: init.stepUpCode,
       stepUpScopes: init.stepUpScopes,
     },

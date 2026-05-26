@@ -1,24 +1,21 @@
-import "server-only";
-
-import { listEvidences, listEvents } from "@/server/api/events";
-import { listMarkets } from "@/server/api/markets";
-import { listSignals } from "@/server/api/signals";
-import { getServerI18n } from "@/lib/i18n/server";
-import { indexMarkets, selectFirstMatchingItem } from "@/server/loaders/console-loader-utils";
+import { listEvidences, listEvents } from "@/lib/api/events";
+import { listMarkets } from "@/lib/api/markets";
+import { listSignals } from "@/lib/api/signals";
+import type { I18nRuntime } from "@/lib/i18n/runtime";
+import { indexMarkets, selectFirstMatchingItem } from "@/lib/loaders/console-loader-utils";
 import {
   eventStatusTone,
   formatPercentFromRatio,
   formatSignedFixed,
   signalStateTone,
-} from "@/lib/server/console-formatters";
+} from "@/lib/formatters";
 
-export async function getEventsPageData() {
-  const [{ data: events }, { data: evidences }, { data: signals }, { data: markets }, i18n] = await Promise.all([
+export async function getEventsPageData(i18n: I18nRuntime) {
+  const [{ data: events }, { data: evidences }, { data: signals }, { data: markets }] = await Promise.all([
     listEvents(),
     listEvidences(),
     listSignals(),
     listMarkets(),
-    getServerI18n(),
   ]);
   const { dictionary, enumLabel } = i18n;
   const marketIndex = indexMarkets(markets);

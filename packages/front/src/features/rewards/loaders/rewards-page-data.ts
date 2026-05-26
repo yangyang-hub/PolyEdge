@@ -1,7 +1,5 @@
-import "server-only";
-
 import type { RewardBotSnapshotDto } from "@/lib/contracts/dto";
-import { readRewardBotSnapshot } from "@/server/api/rewards";
+import { readRewardBotSnapshot } from "@/lib/api/rewards";
 
 export type RewardsPageData = {
   snapshot: RewardBotSnapshotDto;

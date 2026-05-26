@@ -18,18 +18,13 @@ COPY packages/front ./
 RUN mkdir -p public
 RUN pnpm build
 
-FROM node:20-bookworm-slim AS runtime
+FROM nginx:1.27-alpine AS runtime
 
-ENV NODE_ENV=production
-ENV NEXT_TELEMETRY_DISABLED=1
-ENV HOSTNAME=0.0.0.0
-ENV PORT=33002
+ENV POLYEDGE_API_UPSTREAM=http://polyedge-api:38001
+ENV POLYEDGE_CONSOLE_STEP_UP_CODE=__unset__
 
-WORKDIR /app
+COPY packages/front/nginx.conf.template /etc/nginx/templates/default.conf.template
+COPY --from=builder /app/packages/front/out /usr/share/nginx/html
 
-COPY --from=builder /app/packages/front/.next/standalone ./
-COPY --from=builder /app/packages/front/.next/static ./.next/static
-COPY --from=builder /app/packages/front/public ./public
-
-EXPOSE 33002
-CMD ["node", "server.js"]
+EXPOSE 80
+CMD ["sh", "-c", "test -n \"$POLYEDGE_CONSOLE_STEP_UP_CODE\" && test \"$POLYEDGE_CONSOLE_STEP_UP_CODE\" != \"__unset__\" || { echo 'POLYEDGE_CONSOLE_STEP_UP_CODE is required for the static frontend proxy.' >&2; exit 1; }; nginx -g 'daemon off;'"]

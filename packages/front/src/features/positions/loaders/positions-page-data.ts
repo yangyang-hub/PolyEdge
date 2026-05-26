@@ -1,14 +1,12 @@
-import "server-only";
-
-import { listEvents } from "@/server/api/events";
-import { listMarkets } from "@/server/api/markets";
-import { listPositions } from "@/server/api/positions";
-import { readRiskState, listRiskBuckets } from "@/server/api/risk";
-import { listSignals } from "@/server/api/signals";
+import { listEvents } from "@/lib/api/events";
+import { listMarkets } from "@/lib/api/markets";
+import { listPositions } from "@/lib/api/positions";
+import { readRiskState, listRiskBuckets } from "@/lib/api/risk";
+import { listSignals } from "@/lib/api/signals";
 import { localizeGeneratedCopy } from "@/lib/i18n/generated-copy";
-import { getServerI18n } from "@/lib/i18n/server";
+import type { I18nRuntime } from "@/lib/i18n/runtime";
 import { normalizeRuntimeMode } from "@/lib/runtime-mode";
-import { sumNumericStrings } from "@/server/loaders/console-loader-utils";
+import { sumNumericStrings } from "@/lib/loaders/console-loader-utils";
 import {
   bucketTone,
   formatBucketWidth,
@@ -19,8 +17,8 @@ import {
   signalStateTone,
   marketTradabilityTone,
   uppercaseEnum,
-} from "@/lib/server/console-formatters";
-import { indexMarkets, selectFirstMatchingItem } from "@/server/loaders/console-loader-utils";
+} from "@/lib/formatters";
+import { indexMarkets, selectFirstMatchingItem } from "@/lib/loaders/console-loader-utils";
 
 function indexLatestSignalsByMarket<T extends { market_id: string; version: number }>(signals: T[]) {
   const signalsByMarket = new Map<string, T>();
@@ -36,7 +34,7 @@ function indexLatestSignalsByMarket<T extends { market_id: string; version: numb
   return signalsByMarket;
 }
 
-export async function getPositionsPageData() {
+export async function getPositionsPageData(i18n: I18nRuntime) {
   const [
     { data: positions },
     { data: riskBuckets },
@@ -44,7 +42,6 @@ export async function getPositionsPageData() {
     { data: markets },
     { data: signals },
     { data: events },
-    i18n,
   ] = await Promise.all([
     listPositions(),
     listRiskBuckets(),
@@ -52,7 +49,6 @@ export async function getPositionsPageData() {
     listMarkets(),
     listSignals(),
     listEvents(),
-    getServerI18n(),
   ]);
   const { locale, dictionary, enumLabel } = i18n;
 

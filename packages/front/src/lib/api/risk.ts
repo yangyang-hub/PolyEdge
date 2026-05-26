@@ -1,5 +1,3 @@
-import "server-only";
-
 import type { ApiListResponse, ApiResponse, ContractListQuery, WriteResponse } from "@/lib/contracts/api";
 import type { RiskAlertDto, RiskBucketDto, RiskStateDto } from "@/lib/contracts/dto";
 import {
@@ -8,7 +6,7 @@ import {
   fetchContract,
   fetchListContract,
   fetchWriteContract,
-} from "@/server/api/base";
+} from "@/lib/api/base";
 
 type LiveSystemModeWriteResponse = ApiResponse<{
   mode: RiskStateDto["mode"];

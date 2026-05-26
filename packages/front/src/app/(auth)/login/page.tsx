@@ -1,16 +1,14 @@
-import { redirect } from "next/navigation";
+"use client";
+
+import { useEffect } from "react";
 
 import { sanitizeNextPath } from "@/lib/console-auth";
 
-type LoginPageProps = {
-  searchParams: Promise<{
-    next?: string | string[];
-  }>;
-};
+export default function LoginPage() {
+  useEffect(() => {
+    const searchParams = new URLSearchParams(window.location.search);
+    window.location.replace(sanitizeNextPath(searchParams.get("next")));
+  }, []);
 
-export default async function LoginPage({ searchParams }: LoginPageProps) {
-  const resolvedSearchParams = await searchParams;
-  const nextPath = sanitizeNextPath(resolvedSearchParams.next);
-
-  redirect(nextPath);
+  return null;
 }

@@ -1,5 +1,3 @@
-import "server-only";
-
 import type { MarketDto } from "@/lib/contracts/dto";
 
 export function indexMarkets(markets: MarketDto[]): Map<string, MarketDto> {

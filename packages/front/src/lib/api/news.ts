@@ -1,8 +1,6 @@
-import "server-only";
-
 import type { ApiListResponse, ContractListQuery } from "@/lib/contracts/api";
 import type { NewsRawEventDto, NewsSourceHealthDto } from "@/lib/contracts/dto";
-import { buildQueryString, fetchListContract } from "@/server/api/base";
+import { buildQueryString, fetchListContract } from "@/lib/api/base";
 
 export async function listNewsSourceHealth(
   query?: Pick<ContractListQuery, "limit" | "source_type">,

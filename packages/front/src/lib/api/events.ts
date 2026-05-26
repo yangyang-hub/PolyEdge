@@ -1,8 +1,6 @@
-import "server-only";
-
 import type { ApiListResponse, ContractListQuery } from "@/lib/contracts/api";
 import type { EventDto, EvidenceDto } from "@/lib/contracts/dto";
-import { buildQueryString, fetchListContract } from "@/server/api/base";
+import { buildQueryString, fetchListContract } from "@/lib/api/base";
 
 export async function listEvents(query?: ContractListQuery): Promise<ApiListResponse<EventDto>> {
   const liveQuery = {

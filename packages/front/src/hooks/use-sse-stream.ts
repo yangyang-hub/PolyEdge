@@ -81,7 +81,7 @@ export function useSseStream<TChannel extends RealtimeChannel>({
     }
 
     seenEventIdsRef.current.clear();
-    const stream = new EventSource(`/api/stream/${channel}`);
+    const stream = new EventSource(`/api/v1/stream/${channel}`);
 
     stream.onopen = () => {
       setConnectionState("open");

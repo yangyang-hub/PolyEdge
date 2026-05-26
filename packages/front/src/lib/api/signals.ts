@@ -1,5 +1,3 @@
-import "server-only";
-
 import type { ApiListResponse, ApiResponse, ContractListQuery, WriteResponse } from "@/lib/contracts/api";
 import type { SignalDto } from "@/lib/contracts/dto";
 import {
@@ -7,7 +5,7 @@ import {
   createWriteResponse,
   fetchListContract,
   fetchWriteContract,
-} from "@/server/api/base";
+} from "@/lib/api/base";
 
 type LiveSubmitExecutionResponse = ApiResponse<{
   replayed: boolean;

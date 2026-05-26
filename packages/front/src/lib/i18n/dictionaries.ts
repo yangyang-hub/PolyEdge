@@ -553,8 +553,8 @@ const enUS = {
     noRawNews: "No raw news entries have been ingested yet.",
     documentationLinks: "Documentation Links",
     buildTargets: "Next Build Targets",
-    buildTargetApi: "`POLYEDGE_API_BASE_URL` {state}.",
-    buildTargetApiUnset: "is unset; live data requests will fail until a backend is configured",
+    buildTargetApi: "API route {state}.",
+    buildTargetApiUnset: "uses same-origin `/api/v1` through the static Nginx proxy",
     buildTargetBackendMode: "Frontend data mode is `{mode}`.",
     buildTargetAuthMode: "`POLYEDGE_CONSOLE_AUTH` currently resolves to `{mode}`.",
     buildTargetLiveMode:
@@ -1241,8 +1241,8 @@ const zhCN = {
     noRawNews: "尚未采集到原始新闻条目。",
     documentationLinks: "文档链接",
     buildTargets: "后续构建目标",
-    buildTargetApi: "`POLYEDGE_API_BASE_URL` {state}。",
-    buildTargetApiUnset: "未设置；配置真实后端前 live 数据请求会失败",
+    buildTargetApi: "API 路由 {state}。",
+    buildTargetApiUnset: "通过静态 Nginx 代理使用同源 `/api/v1`",
     buildTargetBackendMode: "前端数据模式为 `{mode}`。",
     buildTargetAuthMode: "`POLYEDGE_CONSOLE_AUTH` 当前解析为 `{mode}`。",
     buildTargetLiveMode:

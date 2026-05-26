@@ -1,7 +1,3 @@
-import "server-only";
-
-import { cache } from "react";
-
 import type { ApiResponse } from "@/lib/contracts/api";
 import type {
   EventDto,
@@ -14,11 +10,11 @@ import type {
   SignalDto,
   SignalTransitionDto,
 } from "@/lib/contracts/dto";
-import { buildQueryString, fetchContract } from "@/server/api/base";
-import { listEvents, listEvidences } from "@/server/api/events";
-import { formatInteger, formatPercentFromRatio, formatSignedFixed, humanizeSnakeCase } from "@/lib/server/console-formatters";
-import { listMarkets } from "@/server/api/markets";
-import { listSignals } from "@/server/api/signals";
+import { buildQueryString, fetchContract } from "@/lib/api/base";
+import { listEvents, listEvidences } from "@/lib/api/events";
+import { formatInteger, formatPercentFromRatio, formatSignedFixed, humanizeSnakeCase } from "@/lib/formatters";
+import { listMarkets } from "@/lib/api/markets";
+import { listSignals } from "@/lib/api/signals";
 
 const DEFAULT_REPLAY_RUN_ID = "latest";
 const DEFAULT_REPLAY_MARKET_ID = "live_replay";
@@ -184,7 +180,7 @@ function buildReplayRun(params: {
   };
 }
 
-const readDerivedLiveReplaySnapshot = cache(async (runId: string): Promise<ApiResponse<ReplaySnapshot>> => {
+async function readDerivedLiveReplaySnapshot(runId: string): Promise<ApiResponse<ReplaySnapshot>> {
   const [signalsPayload, marketsPayload, eventsPayload] = await Promise.all([
     listSignals({ limit: 50 }),
     listMarkets({ limit: 50 }),
@@ -257,7 +253,7 @@ const readDerivedLiveReplaySnapshot = cache(async (runId: string): Promise<ApiRe
     },
     meta: signalsPayload.meta,
   };
-});
+}
 
 export async function readReplaySnapshot(runId = DEFAULT_REPLAY_RUN_ID): Promise<ApiResponse<ReplaySnapshot>> {
   return readDerivedLiveReplaySnapshot(runId);

@@ -1,7 +1,5 @@
-import "server-only";
-
-import { readReplaySnapshot } from "@/server/api/research";
-import { getServerI18n } from "@/lib/i18n/server";
+import { readReplaySnapshot } from "@/lib/api/research";
+import type { I18nRuntime } from "@/lib/i18n/runtime";
 import {
   eventStatusTone,
   formatClock,
@@ -9,15 +7,14 @@ import {
   formatSignedFixed,
   signalStateTone,
   uppercaseEnum,
-} from "@/lib/server/console-formatters";
+} from "@/lib/formatters";
 
-export async function getReplayPageData() {
+export async function getReplayPageData(i18n: I18nRuntime) {
   const [
     {
       data: { replayRun, relatedSignals, relatedEvents },
     },
-    i18n,
-  ] = await Promise.all([readReplaySnapshot(), getServerI18n()]);
+  ] = await Promise.all([readReplaySnapshot()]);
   const { dictionary, enumLabel } = i18n;
   const selectedTimelineMoment = replayRun.timeline.at(-1) ?? replayRun.timeline[0];
   const posteriorDelta = (

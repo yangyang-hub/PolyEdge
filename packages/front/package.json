@@ -7,7 +7,7 @@
     "dev": "NODE_OPTIONS=\"${NODE_OPTIONS:+$NODE_OPTIONS }--require ./scripts/suppress-dep0205.cjs\" next dev --hostname 0.0.0.0 --port 33002",
     "dev:webpack": "NODE_OPTIONS=\"${NODE_OPTIONS:+$NODE_OPTIONS }--require ./scripts/suppress-dep0205.cjs\" next dev --webpack --hostname 0.0.0.0 --port 33002",
     "build": "NODE_OPTIONS=\"${NODE_OPTIONS:+$NODE_OPTIONS }--require ./scripts/suppress-dep0205.cjs\" next build",
-    "start": "next start --hostname 0.0.0.0 --port 33002",
+    "start": "node -e \"console.error('This frontend is exported as static files. Use the nginx Docker image or serve ./out with a static file server.'); process.exit(1)\"",
     "lint": "eslint",
     "test:radar-state": "rm -rf .tmp/radar-state-test && tsc -p tsconfig.radar-test.json && node --test .tmp/radar-state-test/features/radar/lib/radar-state.test.js"
   },

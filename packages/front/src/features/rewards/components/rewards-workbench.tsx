@@ -39,7 +39,7 @@ import {
   runRewardBotOnceAction,
   updateRewardBotConfigAction,
   type RewardBotActionResult,
-} from "@/server/actions/reward-actions";
+} from "@/lib/api/actions";
 
 type NumberConfigKey =
   | "max_markets"

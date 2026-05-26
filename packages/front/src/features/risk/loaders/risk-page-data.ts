@@ -1,8 +1,6 @@
-import "server-only";
-
-import { listRiskAlerts, listRiskBuckets, readRiskState } from "@/server/api/risk";
+import { listRiskAlerts, listRiskBuckets, readRiskState } from "@/lib/api/risk";
 import { localizeGeneratedCopy } from "@/lib/i18n/generated-copy";
-import { getServerI18n } from "@/lib/i18n/server";
+import type { I18nRuntime } from "@/lib/i18n/runtime";
 import { normalizeRuntimeMode } from "@/lib/runtime-mode";
 import {
   alertSeverityTone,
@@ -11,14 +9,13 @@ import {
   formatClock,
   formatCurrency,
   formatPercentFromRatio,
-} from "@/lib/server/console-formatters";
+} from "@/lib/formatters";
 
-export async function getRiskPageData() {
-  const [{ data: riskState }, { data: alerts }, { data: riskBuckets }, i18n] = await Promise.all([
+export async function getRiskPageData(i18n: I18nRuntime) {
+  const [{ data: riskState }, { data: alerts }, { data: riskBuckets }] = await Promise.all([
     readRiskState(),
     listRiskAlerts(),
     listRiskBuckets(),
-    getServerI18n(),
   ]);
   const { locale, dictionary, enumLabel } = i18n;
 

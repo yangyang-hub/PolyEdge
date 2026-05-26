@@ -2,10 +2,11 @@ import Link from "next/link";
 
 import { Button } from "@/components/ui/button";
 import { RouteStateCard } from "@/components/shared/route-state-card";
-import { getServerI18n } from "@/lib/i18n/server";
+import { DEFAULT_LOCALE } from "@/lib/i18n/locales";
+import { createI18nRuntime } from "@/lib/i18n/runtime";
 
-export default async function NotFound() {
-  const { dictionary } = await getServerI18n();
+export default function NotFound() {
+  const { dictionary } = createI18nRuntime(DEFAULT_LOCALE);
 
   return (
     <div className="flex min-h-screen items-center justify-center px-6 py-12">

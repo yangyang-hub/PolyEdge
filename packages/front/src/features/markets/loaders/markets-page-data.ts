@@ -1,20 +1,17 @@
-import "server-only";
-
-import { listEvents } from "@/server/api/events";
-import { listMarkets } from "@/server/api/markets";
-import { getServerI18n } from "@/lib/i18n/server";
-import { selectFirstMatchingItem } from "@/server/loaders/console-loader-utils";
+import { listEvents } from "@/lib/api/events";
+import { listMarkets } from "@/lib/api/markets";
+import type { I18nRuntime } from "@/lib/i18n/runtime";
+import { selectFirstMatchingItem } from "@/lib/loaders/console-loader-utils";
 import {
   ambiguityTone,
   formatPercentFromRatio,
   marketTradabilityTone,
-} from "@/lib/server/console-formatters";
+} from "@/lib/formatters";
 
-export async function getMarketsPageData() {
-  const [{ data: markets }, { data: events }, i18n] = await Promise.all([
+export async function getMarketsPageData(i18n: I18nRuntime) {
+  const [{ data: markets }, { data: events }] = await Promise.all([
     listMarkets(),
     listEvents(),
-    getServerI18n(),
   ]);
   const { dictionary, enumLabel } = i18n;
   const selectedMarket = selectFirstMatchingItem(

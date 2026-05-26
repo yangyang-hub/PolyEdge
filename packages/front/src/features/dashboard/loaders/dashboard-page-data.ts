@@ -1,12 +1,10 @@
-import "server-only";
-
-import { listEvents } from "@/server/api/events";
-import { listMarkets } from "@/server/api/markets";
-import { readRiskState, listRiskAlerts } from "@/server/api/risk";
-import { listSignals } from "@/server/api/signals";
+import { listEvents } from "@/lib/api/events";
+import { listMarkets } from "@/lib/api/markets";
+import { readRiskState, listRiskAlerts } from "@/lib/api/risk";
+import { listSignals } from "@/lib/api/signals";
 import { localizeGeneratedCopy } from "@/lib/i18n/generated-copy";
-import { getServerI18n } from "@/lib/i18n/server";
-import { indexMarkets } from "@/server/loaders/console-loader-utils";
+import type { I18nRuntime } from "@/lib/i18n/runtime";
+import { indexMarkets } from "@/lib/loaders/console-loader-utils";
 import { normalizeRuntimeMode } from "@/lib/runtime-mode";
 import {
   alertSeverityTone,
@@ -18,17 +16,16 @@ import {
   metricToneForPnl,
   signalStateTone,
   uppercaseEnum,
-} from "@/lib/server/console-formatters";
+} from "@/lib/formatters";
 
-export async function getDashboardPageData() {
-  const [{ data: markets }, { data: events }, { data: signals }, { data: alerts }, { data: riskState }, i18n] =
+export async function getDashboardPageData(i18n: I18nRuntime) {
+  const [{ data: markets }, { data: events }, { data: signals }, { data: alerts }, { data: riskState }] =
     await Promise.all([
       listMarkets(),
       listEvents(),
       listSignals(),
       listRiskAlerts(),
       readRiskState(),
-      getServerI18n(),
     ]);
   const { locale, dictionary, enumLabel } = i18n;
 

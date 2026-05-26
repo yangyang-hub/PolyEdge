@@ -14,8 +14,8 @@ import { StatusPill } from "@/components/shared/status-pill";
 import type { RuntimeMode } from "@/lib/contracts/dto";
 import { useI18n } from "@/lib/i18n/client";
 import { normalizeOptionalRuntimeMode } from "@/lib/runtime-mode";
-import { requestModeSwitchAction } from "@/server/actions/risk-actions";
-import type { OperationActionResult } from "@/server/actions/action-result";
+import { requestModeSwitchAction } from "@/lib/api/actions";
+import type { OperationActionResult } from "@/lib/api/actions";
 import { cn } from "@/lib/utils";
 
 const topNavLinks = [

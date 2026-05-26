@@ -1,12 +1,10 @@
-import "server-only";
-
 import type { ApiListResponse, ContractListQuery } from "@/lib/contracts/api";
 import type {
   ArbitrageAnalysisRunDto,
   ArbitrageOpportunityDto,
   ArbitrageScanDto,
 } from "@/lib/contracts/dto";
-import { buildQueryString, fetchListContract } from "@/server/api/base";
+import { buildQueryString, fetchListContract } from "@/lib/api/base";
 
 type ArbitrageOpportunityQuery = Pick<
   ContractListQuery,

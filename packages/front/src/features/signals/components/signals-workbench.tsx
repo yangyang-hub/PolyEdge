@@ -35,8 +35,8 @@ import {
   uppercaseEnum,
 } from "@/lib/realtime-formatters";
 import { upsertStreamedItem } from "@/lib/signal-stream-utils";
-import { submitSignalExecutionAction } from "@/server/actions/signal-actions";
-import type { OperationActionResult } from "@/server/actions/action-result";
+import { submitSignalExecutionAction } from "@/lib/api/actions";
+import type { OperationActionResult } from "@/lib/api/actions";
 import type { RuntimeMode, SignalLifecycleState } from "@/lib/contracts/dto";
 
 type SignalTone = RealtimeTone;

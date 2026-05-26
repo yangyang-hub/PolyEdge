@@ -1,0 +1,72 @@
+map $http_x_polyedge_step_up_code $polyedge_step_up_verified {
+  default "false";
+  "${POLYEDGE_CONSOLE_STEP_UP_CODE}" "true";
+}
+
+server {
+  listen 80;
+  server_name _;
+  root /usr/share/nginx/html;
+  index index.html;
+
+  location = /healthz {
+    access_log off;
+    add_header Content-Type text/plain;
+    return 200 "ok\n";
+  }
+
+  location ^~ /_next/static/ {
+    try_files $uri =404;
+    access_log off;
+    expires 1y;
+    add_header Cache-Control "public, immutable";
+  }
+
+  location ^~ /api/v1/stream/ {
+    proxy_pass ${POLYEDGE_API_UPSTREAM};
+    proxy_http_version 1.1;
+    proxy_buffering off;
+    proxy_cache off;
+    proxy_read_timeout 1h;
+    proxy_send_timeout 1h;
+    add_header X-Accel-Buffering no;
+
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Client-IP $remote_addr;
+    proxy_set_header X-Client-User-Agent $http_user_agent;
+    proxy_set_header X-Request-Id $request_id;
+    proxy_set_header X-PolyEdge-Dev-Auth local;
+    proxy_set_header X-PolyEdge-Console-Role admin;
+    proxy_set_header X-PolyEdge-Console-User Static%20Console;
+    proxy_set_header X-PolyEdge-Step-Up-Verified false;
+    proxy_set_header X-PolyEdge-Step-Up-Scopes "";
+    proxy_set_header Authorization "";
+  }
+
+  location ^~ /api/v1/ {
+    proxy_pass ${POLYEDGE_API_UPSTREAM};
+    proxy_http_version 1.1;
+
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Client-IP $remote_addr;
+    proxy_set_header X-Client-User-Agent $http_user_agent;
+    proxy_set_header X-Request-Id $request_id;
+    proxy_set_header X-PolyEdge-Dev-Auth local;
+    proxy_set_header X-PolyEdge-Console-Role admin;
+    proxy_set_header X-PolyEdge-Console-User Static%20Console;
+    proxy_set_header X-PolyEdge-Step-Up-Verified $polyedge_step_up_verified;
+    proxy_set_header X-PolyEdge-Step-Up-Scopes $http_x_polyedge_step_up_scopes;
+    proxy_set_header X-PolyEdge-Step-Up-Code "";
+    proxy_set_header Authorization "";
+  }
+
+  location / {
+    try_files $uri $uri.html $uri/ /404.html;
+  }
+}

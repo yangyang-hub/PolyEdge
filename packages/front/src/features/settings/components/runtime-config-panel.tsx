@@ -14,7 +14,7 @@ import { useI18n } from "@/lib/i18n/client";
 import {
   updateRuntimeConfigAction,
   type RuntimeConfigActionResult,
-} from "@/server/actions/settings-actions";
+} from "@/lib/api/actions";
 
 type RuntimeConfigPanelProps = {
   entries: RuntimeConfigEntryDto[];

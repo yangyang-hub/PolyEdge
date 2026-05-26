@@ -3,7 +3,8 @@ import { Inter, Manrope, Roboto_Mono } from "next/font/google";
 
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { I18nProvider } from "@/lib/i18n/client";
-import { getServerI18n } from "@/lib/i18n/server";
+import { DEFAULT_LOCALE } from "@/lib/i18n/locales";
+import { createI18nRuntime } from "@/lib/i18n/runtime";
 import { Toaster } from "sonner";
 import "./globals.css";
 
@@ -22,29 +23,25 @@ const robotoMono = Roboto_Mono({
   subsets: ["latin"],
 });
 
-export async function generateMetadata(): Promise<Metadata> {
-  const { dictionary } = await getServerI18n();
+const initialI18n = createI18nRuntime(DEFAULT_LOCALE);
 
-  return {
-    title: dictionary.meta.title,
-    description: dictionary.meta.description,
-  };
-}
+export const metadata: Metadata = {
+  title: initialI18n.dictionary.meta.title,
+  description: initialI18n.dictionary.meta.description,
+};
 
-export default async function RootLayout({
+export default function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  const { locale, dictionary } = await getServerI18n();
-
   return (
     <html
-      lang={locale}
+      lang={initialI18n.locale}
       className={`${inter.variable} ${manrope.variable} ${robotoMono.variable} dark h-full antialiased`}
     >
       <body className="min-h-full bg-background text-foreground">
-        <I18nProvider locale={locale} dictionary={dictionary}>
+        <I18nProvider locale={initialI18n.locale} dictionary={initialI18n.dictionary}>
           <TooltipProvider delayDuration={150}>
             {children}
             <Toaster richColors position="top-right" theme="dark" />

@@ -1,11 +1,9 @@
-import "server-only";
-
 import type { ApiResponse } from "@/lib/contracts/api";
 import type {
   RuntimeConfigEntryDto,
   RuntimeConfigUpdateDto,
 } from "@/lib/contracts/dto";
-import { fetchContract, fetchWriteContract } from "@/server/api/base";
+import { fetchContract, fetchWriteContract } from "@/lib/api/base";
 
 export async function readRuntimeConfig(): Promise<ApiResponse<RuntimeConfigEntryDto[]>> {
   return fetchContract<ApiResponse<RuntimeConfigEntryDto[]>>("/api/v1/runtime-config");

@@ -1,7 +1,5 @@
-import "server-only";
-
 import { getConsoleAuthMode } from "@/lib/console-auth";
-import { getServerI18n } from "@/lib/i18n/server";
+import type { I18nRuntime } from "@/lib/i18n/runtime";
 import {
   formatClock,
   formatInteger,
@@ -9,10 +7,10 @@ import {
   formatPercentFromRatio,
   toFiniteNumber,
   type Tone,
-} from "@/lib/server/console-formatters";
-import { getBackendMode, getConfiguredApiBaseUrl } from "@/server/api/base";
-import { listNewsRawEvents, listNewsSourceHealth } from "@/server/api/news";
-import { readRuntimeConfig } from "@/server/api/settings";
+} from "@/lib/formatters";
+import { getBackendMode, getConfiguredApiBaseUrl } from "@/lib/api/base";
+import { listNewsRawEvents, listNewsSourceHealth } from "@/lib/api/news";
+import { readRuntimeConfig } from "@/lib/api/settings";
 
 function sourceHealthTone(healthScore: string, consecutiveFailures: number): Tone {
   const score = toFiniteNumber(healthScore);
@@ -28,14 +26,11 @@ function sourceHealthTone(healthScore: string, consecutiveFailures: number): Ton
   return "success";
 }
 
-type ServerI18n = Awaited<ReturnType<typeof getServerI18n>>;
-
-export async function getSettingsPageData(i18nInput?: Promise<ServerI18n> | ServerI18n) {
-  const [{ data: sourceHealth }, { data: rawNews }, { data: runtimeConfig }, i18n] = await Promise.all([
+export async function getSettingsPageData(i18n: I18nRuntime) {
+  const [{ data: sourceHealth }, { data: rawNews }, { data: runtimeConfig }] = await Promise.all([
     listNewsSourceHealth({ limit: 10 }),
     listNewsRawEvents({ limit: 8 }),
     readRuntimeConfig(),
-    i18nInput ?? getServerI18n(),
   ]);
   const { dictionary, enumLabel, format } = i18n;
   const degradedSources = sourceHealth.filter(
@@ -44,8 +39,8 @@ export async function getSettingsPageData(i18nInput?: Promise<ServerI18n> | Serv
 
   return {
     backendMode: getBackendMode(),
-    apiBaseUrl: getConfiguredApiBaseUrl(),
-    consoleAuthMode: getConsoleAuthMode(process.env.POLYEDGE_CONSOLE_AUTH),
+    apiBaseUrl: getConfiguredApiBaseUrl() ?? "same-origin /api/v1",
+    consoleAuthMode: getConsoleAuthMode(process.env.NEXT_PUBLIC_POLYEDGE_CONSOLE_AUTH),
     runtimeConfig,
     sourceHealthSummary: {
       label: degradedSources.length > 0

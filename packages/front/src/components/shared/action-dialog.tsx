@@ -2,7 +2,7 @@
 
 import type { ReactNode } from "react";
 
-import type { OperationActionResult } from "@/server/actions/action-result";
+import type { OperationActionResult } from "@/lib/api/actions";
 import {
   Dialog,
   DialogContent,
