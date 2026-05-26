@@ -15,6 +15,7 @@ WORKDIR /app/packages/front
 RUN corepack enable
 COPY --from=deps /app/packages/front/node_modules ./node_modules
 COPY packages/front ./
+RUN mkdir -p public
 RUN pnpm build
 
 FROM node:20-bookworm-slim AS runtime
