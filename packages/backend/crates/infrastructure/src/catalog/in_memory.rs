@@ -285,6 +285,14 @@ impl MarketEventStore for InMemoryMarketEventStore {
         self.market_event_ingest_fixture_bundle(bundle, _trace_id)
             .await
     }
+
+    async fn upsert_markets(&self, markets: &[MarketView], _trace_id: &str) -> Result<usize> {
+        let mut store = self.markets.write().await;
+        for market in markets {
+            store.insert(market.id.clone(), market.clone());
+        }
+        Ok(markets.len())
+    }
 }
 
 #[async_trait]

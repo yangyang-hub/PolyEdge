@@ -5,6 +5,7 @@ include!("market_event/signals.rs");
 include!("market_event/execution_submit.rs");
 include!("market_event/execution_updates.rs");
 include!("market_event/fixtures.rs");
+include!("market_event/upsert.rs");
 
 #[async_trait]
 impl MarketEventStore for PostgresMarketEventStore {
@@ -216,5 +217,9 @@ impl MarketEventStore for PostgresMarketEventStore {
     ) -> Result<FixtureIngestionReport> {
         self.market_event_ingest_fixture_bundle(bundle, trace_id)
             .await
+    }
+
+    async fn upsert_markets(&self, markets: &[MarketView], trace_id: &str) -> Result<usize> {
+        self.market_event_upsert_markets(markets, trace_id).await
     }
 }

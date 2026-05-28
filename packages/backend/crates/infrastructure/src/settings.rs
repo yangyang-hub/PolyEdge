@@ -160,12 +160,14 @@ pub struct WorkerSettings {
     pub poll_polymarket_order_statuses: bool,
     pub reconcile_polymarket_fills: bool,
     pub consume_polymarket_user_events: bool,
+    pub poll_market_sync: bool,
     pub news_promotion_interval_secs: u64,
     pub arbitrage_analysis_interval_secs: u64,
     pub execution_drain_interval_secs: u64,
     pub order_status_poll_interval_secs: u64,
     pub fill_reconciliation_interval_secs: u64,
     pub polymarket_user_event_restart_interval_secs: u64,
+    pub market_sync_interval_secs: u64,
     pub task_limit: u16,
 }
 
@@ -334,12 +336,14 @@ impl Default for WorkerSettings {
             poll_polymarket_order_statuses: false,
             reconcile_polymarket_fills: false,
             consume_polymarket_user_events: false,
+            poll_market_sync: false,
             news_promotion_interval_secs: 60,
             arbitrage_analysis_interval_secs: 300,
             execution_drain_interval_secs: 5,
             order_status_poll_interval_secs: 15,
             fill_reconciliation_interval_secs: 15,
             polymarket_user_event_restart_interval_secs: 5,
+            market_sync_interval_secs: 300,
             task_limit: 100,
         }
     }

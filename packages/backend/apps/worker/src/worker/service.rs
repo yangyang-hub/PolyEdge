@@ -89,6 +89,32 @@ fn spawn_worker_tasks(state: &AppState, shutdown_rx: watch::Receiver<bool>) -> V
         ));
     }
 
+    if settings.poll_market_sync {
+        let job_state = state.clone();
+        handles.push(spawn_interval_job(
+            "sync-markets",
+            settings.market_sync_interval_secs,
+            shutdown_rx.clone(),
+            move || {
+                let state = job_state.clone();
+                async move {
+                    let trace_id = new_trace_id();
+                    match sync_markets_once(&state, &trace_id).await {
+                        Ok(report) => info!(
+                            trace_id = %trace_id,
+                            fetched = report.fetched,
+                            upserted = report.upserted,
+                            "completed worker market sync cycle",
+                        ),
+                        Err(error) => {
+                            warn!(trace_id = %trace_id, error = %error, "worker market sync cycle failed");
+                        }
+                    }
+                }
+            },
+        ));
+    }
+
     if settings.poll_arbitrage_radar {
         if state.settings.arbitrage.enabled {
             let job_state = state.clone();

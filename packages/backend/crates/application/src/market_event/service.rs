@@ -118,6 +118,8 @@ pub trait MarketEventStore: Send + Sync {
         bundle: &FixtureBundle,
         trace_id: &str,
     ) -> Result<FixtureIngestionReport>;
+
+    async fn upsert_markets(&self, markets: &[MarketView], trace_id: &str) -> Result<usize>;
 }
 
 pub struct MarketEventService {
@@ -585,5 +587,9 @@ impl MarketEventService {
         trace_id: &str,
     ) -> Result<FixtureIngestionReport> {
         self.store.ingest_fixture_bundle(&bundle, trace_id).await
+    }
+
+    pub async fn upsert_markets(&self, markets: &[MarketView], trace_id: &str) -> Result<usize> {
+        self.store.upsert_markets(markets, trace_id).await
     }
 }

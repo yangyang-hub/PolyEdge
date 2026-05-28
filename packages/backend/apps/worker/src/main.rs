@@ -46,6 +46,12 @@ use tokio::{sync::watch, task::JoinHandle};
 use tracing::{info, warn};
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+struct MarketSyncReport {
+    fetched: usize,
+    upserted: usize,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 struct ExecutionDrainReport {
     scanned: usize,
     submitted: usize,
@@ -276,6 +282,17 @@ async fn main() -> Result<()> {
             );
             Ok(())
         }
+        Some("sync-markets-once") => {
+            let trace_id = new_trace_id();
+            let report = sync_markets_once(&state, &trace_id).await?;
+            info!(
+                trace_id = %trace_id,
+                fetched = report.fetched,
+                upserted = report.upserted,
+                "synced markets from Polymarket Gamma once",
+            );
+            Ok(())
+        }
         Some("reconcile-paper-fills") => {
             let connector_name = args
                 .next()
@@ -366,6 +383,7 @@ include!("worker/service.rs");
 include!("worker/execution_queue.rs");
 include!("worker/news.rs");
 include!("worker/arbitrage.rs");
+include!("worker/market_sync.rs");
 include!("worker/rewards.rs");
 include!("worker/arbitrage_books.rs");
 include!("worker/news_helpers.rs");
