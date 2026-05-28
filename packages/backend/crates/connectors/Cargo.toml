@@ -9,6 +9,7 @@ async-trait.workspace = true
 polyedge-domain = { path = "../domain" }
 polymarket-client-sdk.workspace = true
 reqwest.workspace = true
+tokio.workspace = true
 rust_decimal.workspace = true
 serde.workspace = true
 serde_json.workspace = true

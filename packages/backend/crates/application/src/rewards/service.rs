@@ -96,6 +96,27 @@ impl RewardBotService {
         books: HashMap<String, RewardOrderBook>,
         trace_id: &str,
     ) -> Result<RewardBotRunReport> {
+        self.run_simulation_inner(markets, books, trace_id, false)
+            .await
+    }
+
+    pub async fn run_simulation_forced(
+        &self,
+        markets: Vec<RewardMarket>,
+        books: HashMap<String, RewardOrderBook>,
+        trace_id: &str,
+    ) -> Result<RewardBotRunReport> {
+        self.run_simulation_inner(markets, books, trace_id, true)
+            .await
+    }
+
+    async fn run_simulation_inner(
+        &self,
+        markets: Vec<RewardMarket>,
+        books: HashMap<String, RewardOrderBook>,
+        trace_id: &str,
+        force_orders: bool,
+    ) -> Result<RewardBotRunReport> {
         let config = self.read_config().await?;
         let plans = build_reward_quote_plans(&markets, &books, &config);
         let eligible_plans = plans.iter().filter(|plan| plan.eligible).count();
@@ -106,7 +127,7 @@ impl RewardBotService {
         let mut cancelled_orders = 0;
         let mut simulated_orders = 0;
 
-        if config.enabled {
+        if config.enabled || force_orders {
             if config.mode == RewardBotMode::Live {
                 self.store
                     .log_event(new_risk_event(

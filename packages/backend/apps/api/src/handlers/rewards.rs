@@ -40,7 +40,7 @@ async fn run_reward_bot_once(
         .map_err(|error| HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone()))?;
     state
         .reward_bot_service
-        .run_simulation(markets, books, &trace_id)
+        .run_simulation_forced(markets, books, &trace_id)
         .await
         .map_err(|error| HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone()))?;
     let snapshot =
