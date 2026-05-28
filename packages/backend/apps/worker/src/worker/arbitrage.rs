@@ -19,7 +19,7 @@ async fn scan_arbitrage_once(state: &AppState, trace_id: &str) -> Result<Arbitra
     state.arbitrage_service.start_scan(scan).await?;
 
     let validation_config = arbitrage_validation_config(state);
-    let markets = state
+    let mut markets = state
         .market_event_service
         .list_markets(MarketListFilters::new(
             Some(MarketStatus::Open),
@@ -27,6 +27,29 @@ async fn scan_arbitrage_once(state: &AppState, trace_id: &str) -> Result<Arbitra
             Some(state.settings.arbitrage.scan_limit),
         )?)
         .await?;
+
+    if markets.is_empty() {
+        match fetch_gamma_markets(state).await {
+            Ok(gamma_markets) => {
+                if !gamma_markets.is_empty() {
+                    info!(
+                        trace_id,
+                        count = gamma_markets.len(),
+                        "loaded markets from Polymarket Gamma (database empty)",
+                    );
+                    markets = gamma_markets;
+                }
+            }
+            Err(error) => {
+                warn!(
+                    trace_id,
+                    error = %error,
+                    "failed to fetch markets from Polymarket Gamma fallback",
+                );
+            }
+        }
+    }
+
     let book_feed = build_arbitrage_book_feed(state)?;
     let mut report = ArbitrageScanRunReport {
         markets_scanned: markets.len(),
@@ -190,4 +213,38 @@ async fn poll_arbitrage_radar(
     }
 
     Ok(total)
+}
+
+async fn fetch_gamma_markets(state: &AppState) -> Result<Vec<MarketView>> {
+    let connector =
+        PolymarketGammaConnector::new(&state.settings.polymarket.gamma_host)?;
+    let limit = state.settings.arbitrage.scan_limit;
+    let markets = connector.fetch_markets(limit).await?;
+    Ok(markets
+        .into_iter()
+        .map(gamma_market_to_view)
+        .filter(|market| market.status == MarketStatus::Open)
+        .collect())
+}
+
+fn gamma_market_to_view(market: PolymarketGammaMarket) -> MarketView {
+    MarketView {
+        id: market.id,
+        question: market.question,
+        category: market.category,
+        status: market.status,
+        best_bid: market.best_bid,
+        best_ask: market.best_ask,
+        mid_price: market.mid_price,
+        volume_24h: market.volume_24h,
+        ambiguity_level: market.ambiguity_level,
+        tradability_status: market.tradability_status,
+        resolution_source: market.resolution_source,
+        edge_case_notes: market.edge_case_notes,
+        polymarket_condition_id: Some(market.condition_id),
+        polymarket_yes_asset_id: Some(market.yes_asset_id),
+        polymarket_no_asset_id: Some(market.no_asset_id),
+        updated_at: market.updated_at,
+        version: market.version,
+    }
 }

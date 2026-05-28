@@ -9,7 +9,7 @@ import {
   History,
   LayoutDashboard,
   Newspaper,
-  Plus,
+
   Radar,
   Settings,
   ShieldAlert,
@@ -17,7 +17,7 @@ import {
   WalletCards,
 } from "lucide-react";
 
-import { Button } from "@/components/ui/button";
+
 import { useI18n } from "@/lib/i18n/client";
 import { cn } from "@/lib/utils";
 
@@ -79,15 +79,6 @@ export function ConsoleSidebar() {
           );
         })}
       </nav>
-
-      <div className="p-2 pb-6">
-        <Button className="h-10 w-full justify-start gap-3 overflow-hidden rounded-sm bg-primary text-primary-foreground shadow-[0_0_20px_rgba(0,102,255,0.18)] hover:bg-primary/90">
-          <Plus className="size-4 shrink-0" />
-          <span className="min-w-max opacity-0 transition-opacity duration-200 group-hover:opacity-100">
-            {dictionary.nav.newOrder}
-          </span>
-        </Button>
-      </div>
     </aside>
   );
 }
