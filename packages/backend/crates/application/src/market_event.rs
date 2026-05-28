@@ -6,10 +6,11 @@ use crate::execution::{
     SubmitExecutionStoreCommand, TradeListFilters, TradeView,
 };
 use async_trait::async_trait;
+pub use polyedge_domain::{MarketSortField, SortOrder};
 use polyedge_domain::{
-    AmbiguityLevel, AppError, Edge, EventStatus, EvidenceDirection, EvidenceStatus, MarketStatus,
-    Probability, Quantity, Result, SignalAction, SignalLifecycleState, SignalSide, TimeHorizon,
-    TradabilityStatus, UsdAmount,
+    AmbiguityLevel, AppError, Edge, EventStatus, EvidenceDirection, EvidenceStatus,
+    MarketStatus, Probability, Quantity, Result, SignalAction, SignalLifecycleState, SignalSide,
+    TimeHorizon, TradabilityStatus, UsdAmount,
 };
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};

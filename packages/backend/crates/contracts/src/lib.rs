@@ -29,6 +29,13 @@ impl ApiMeta {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MarketListResponse {
+    pub data: Vec<MarketData>,
+    pub total_count: i64,
+    pub meta: ApiMeta,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApiResponse<T> {
     pub data: T,
     pub meta: ApiMeta,
@@ -743,6 +750,14 @@ pub struct MarketListQuery {
     pub status: Option<MarketStatus>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tradability_status: Option<TradabilityStatus>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sort_by: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sort_order: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub offset: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub limit: Option<u16>,
 }

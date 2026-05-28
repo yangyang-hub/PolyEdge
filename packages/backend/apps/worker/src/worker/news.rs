@@ -157,7 +157,7 @@ async fn promote_news_events(
         .await?;
     let markets = state
         .market_event_service
-        .list_markets(MarketListFilters::new(None, None, Some(200))?)
+        .list_markets(MarketListFilters::new(None, None, None, None, None, None, Some(200))?)
         .await?;
     let source_health = state
         .news_ingestion_service

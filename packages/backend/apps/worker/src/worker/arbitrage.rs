@@ -24,6 +24,10 @@ async fn scan_arbitrage_once(state: &AppState, trace_id: &str) -> Result<Arbitra
         .list_markets(MarketListFilters::new(
             Some(MarketStatus::Open),
             None,
+            None,
+            None,
+            None,
+            None,
             Some(state.settings.arbitrage.scan_limit),
         )?)
         .await?;

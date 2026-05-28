@@ -1,5 +1,5 @@
 import { listEvents } from "@/lib/api/events";
-import { listMarkets } from "@/lib/api/markets";
+import { listMarkets, type MarketListParams } from "@/lib/api/markets";
 import type { I18nRuntime } from "@/lib/i18n/runtime";
 import { selectFirstMatchingItem } from "@/lib/loaders/console-loader-utils";
 import {
@@ -8,9 +8,11 @@ import {
   marketTradabilityTone,
 } from "@/lib/formatters";
 
-export async function getMarketsPageData(i18n: I18nRuntime) {
-  const [{ data: markets }, { data: events }] = await Promise.all([
-    listMarkets(),
+export type { MarketListParams };
+
+export async function getMarketsPageData(i18n: I18nRuntime, params?: MarketListParams) {
+  const [{ data: markets, totalCount }, { data: events }] = await Promise.all([
+    listMarkets(params),
     listEvents(),
   ]);
   const { dictionary, enumLabel } = i18n;
@@ -25,11 +27,13 @@ export async function getMarketsPageData(i18n: I18nRuntime) {
 
   return {
     selectedMarketId: selectedMarket.id,
+    totalCount,
     markets: markets.map((market) => ({
       id: market.id,
       question: market.question,
       category: market.category,
       midPrice: market.mid_price,
+      volume24h: market.volume_24h,
       tradabilityStatus: market.tradability_status,
       tradabilityLabel: enumLabel(market.tradability_status),
       tradabilityTone: marketTradabilityTone(market.tradability_status),
@@ -41,6 +45,7 @@ export async function getMarketsPageData(i18n: I18nRuntime) {
       id: market.id,
       question: market.question,
       category: market.category,
+      polymarketConditionId: market.polymarket_condition_id ?? null,
       tradabilityLabel: enumLabel(market.tradability_status),
       tradabilityTone: marketTradabilityTone(market.tradability_status),
       ambiguityLabel: enumLabel(market.ambiguity_level),

@@ -80,6 +80,10 @@ impl MarketEventStore for InMemoryMarketEventStore {
         self.market_event_list_markets(filters).await
     }
 
+    async fn count_markets(&self, filters: &MarketListFilters) -> Result<i64> {
+        self.market_event_count_markets(filters).await
+    }
+
     async fn get_market(&self, market_id: &str) -> Result<Option<MarketView>> {
         self.market_event_get_market(market_id).await
     }

@@ -23,6 +23,10 @@ async fn read_console_risk_snapshot(
         .list_markets(MarketListFilters {
             status: None,
             tradability_status: None,
+            category: None,
+            sort_by: MarketSortField::default(),
+            sort_order: SortOrder::default(),
+            offset: 0,
             limit: u16::MAX,
         })
         .await?;

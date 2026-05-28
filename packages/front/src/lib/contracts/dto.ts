@@ -69,6 +69,9 @@ export type MarketDto = ResourceVersion & {
   tradability_status: TradabilityStatus;
   resolution_source: string;
   edge_case_notes: string[];
+  polymarket_condition_id?: string | null;
+  polymarket_yes_asset_id?: string | null;
+  polymarket_no_asset_id?: string | null;
   updated_at: string;
 };
 

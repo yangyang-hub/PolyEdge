@@ -171,7 +171,7 @@ fn remember_stream_event_id(
 async fn signal_stream_messages(state: &AppState) -> polyedge_domain::Result<Vec<SseMessage>> {
     let markets = state
         .market_event_service
-        .list_markets(MarketListFilters::new(None, None, Some(100))?)
+        .list_markets(MarketListFilters::new(None, None, None, None, None, None, Some(100))?)
         .await?;
     let signals = state
         .market_event_service

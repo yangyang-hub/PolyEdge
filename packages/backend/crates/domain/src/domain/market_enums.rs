@@ -509,6 +509,82 @@ impl FromStr for EventStatus {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MarketSortField {
+    UpdatedAt,
+    Volume24h,
+}
+
+impl MarketSortField {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::UpdatedAt => "updated_at",
+            Self::Volume24h => "volume_24h",
+        }
+    }
+}
+
+impl Default for MarketSortField {
+    fn default() -> Self {
+        Self::UpdatedAt
+    }
+}
+
+impl FromStr for MarketSortField {
+    type Err = AppError;
+
+    fn from_str(value: &str) -> Result<Self> {
+        match value {
+            "updated_at" => Ok(Self::UpdatedAt),
+            "volume_24h" => Ok(Self::Volume24h),
+            _ => Err(AppError::invalid_input(
+                "DOMAIN_MARKET_SORT_FIELD_INVALID",
+                format!("unknown market sort field: {value}"),
+            )),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SortOrder {
+    Asc,
+    Desc,
+}
+
+impl SortOrder {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Asc => "asc",
+            Self::Desc => "desc",
+        }
+    }
+}
+
+impl Default for SortOrder {
+    fn default() -> Self {
+        Self::Desc
+    }
+}
+
+impl FromStr for SortOrder {
+    type Err = AppError;
+
+    fn from_str(value: &str) -> Result<Self> {
+        match value {
+            "asc" => Ok(Self::Asc),
+            "desc" => Ok(Self::Desc),
+            _ => Err(AppError::invalid_input(
+                "DOMAIN_SORT_ORDER_INVALID",
+                format!("unknown sort order: {value}"),
+            )),
+        }
+    }
+}
+
 impl FromStr for SystemMode {
     type Err = AppError;
 

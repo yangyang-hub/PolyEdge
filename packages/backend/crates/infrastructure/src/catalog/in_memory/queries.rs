@@ -8,17 +8,45 @@ async fn market_event_list_markets(&self, filters: &MarketListFilters) -> Result
                     && filters
                         .tradability_status
                         .is_none_or(|status| market.tradability_status == status)
+                    && filters
+                        .category
+                        .as_ref()
+                        .is_none_or(|cat| &market.category == cat)
             })
             .cloned()
             .collect();
         items.sort_by(|left, right| {
-            right
-                .updated_at
-                .cmp(&left.updated_at)
-                .then_with(|| left.id.cmp(&right.id))
+            let ord = match filters.sort_by {
+                MarketSortField::Volume24h => left.volume_24h.cmp(&right.volume_24h),
+                MarketSortField::UpdatedAt => left.updated_at.cmp(&right.updated_at),
+            };
+            let ord = match filters.sort_order {
+                SortOrder::Asc => ord,
+                SortOrder::Desc => ord.reverse(),
+            };
+            ord.then_with(|| left.id.cmp(&right.id))
         });
-        items.truncate(usize::from(filters.limit));
+        let offset = usize::min(filters.offset as usize, items.len());
+        items = items.into_iter().skip(offset).take(usize::from(filters.limit)).collect();
         Ok(items)
+    }
+
+async fn market_event_count_markets(&self, filters: &MarketListFilters) -> Result<i64> {
+        let markets = self.markets.read().await;
+        let count = markets
+            .values()
+            .filter(|market| {
+                filters.status.is_none_or(|status| market.status == status)
+                    && filters
+                        .tradability_status
+                        .is_none_or(|status| market.tradability_status == status)
+                    && filters
+                        .category
+                        .as_ref()
+                        .is_none_or(|cat| &market.category == cat)
+            })
+            .count();
+        Ok(count as i64)
     }
 
 async fn market_event_get_market(&self, market_id: &str) -> Result<Option<MarketView>> {

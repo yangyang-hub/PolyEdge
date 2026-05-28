@@ -68,7 +68,7 @@ mod tests {
 
     #[test]
     fn market_filters_reject_zero_limit() {
-        let result = MarketListFilters::new(None, None, Some(0));
+        let result = MarketListFilters::new(None, None, None, None, None, None, Some(0));
         assert!(result.is_err());
     }
 

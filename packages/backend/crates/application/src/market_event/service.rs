@@ -2,6 +2,8 @@
 pub trait MarketEventStore: Send + Sync {
     async fn list_markets(&self, filters: &MarketListFilters) -> Result<Vec<MarketView>>;
 
+    async fn count_markets(&self, filters: &MarketListFilters) -> Result<i64>;
+
     async fn get_market(&self, market_id: &str) -> Result<Option<MarketView>>;
 
     async fn get_signal(&self, signal_id: &str) -> Result<Option<SignalView>>;
@@ -133,6 +135,10 @@ impl MarketEventService {
 
     pub async fn list_markets(&self, filters: MarketListFilters) -> Result<Vec<MarketView>> {
         self.store.list_markets(&filters).await
+    }
+
+    pub async fn count_markets(&self, filters: MarketListFilters) -> Result<i64> {
+        self.store.count_markets(&filters).await
     }
 
     pub async fn get_market(&self, market_id: &str) -> Result<MarketView> {

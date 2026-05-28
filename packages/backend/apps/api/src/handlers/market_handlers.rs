@@ -2,46 +2,42 @@ async fn list_markets(
     Extension(auth): Extension<AuthContext>,
     State(state): State<AppState>,
     Query(query): Query<MarketListQuery>,
-) -> std::result::Result<Json<ApiResponse<Vec<MarketData>>>, HttpError> {
+) -> std::result::Result<Json<MarketListResponse>, HttpError> {
     let trace_id = new_trace_id();
-    let filters = MarketListFilters::new(query.status, query.tradability_status, query.limit)
+    let sort_by = query
+        .sort_by
+        .as_deref()
+        .map(MarketSortField::from_str)
+        .transpose()
         .map_err(|error| HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone()))?;
-
-    if state.settings.runtime.environment == "test" {
-        let markets = state
-            .market_event_service
-            .list_markets(filters)
-            .await
-            .map_err(|error| HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone()))?;
-
-        return Ok(Json(ApiResponse::new(
-            markets.into_iter().map(market_to_contract).collect(),
-            auth.request_id,
-            trace_id,
-        )));
-    }
-
-    let connector = PolymarketGammaConnector::new(&state.settings.polymarket.gamma_host)
+    let sort_order = query
+        .sort_order
+        .as_deref()
+        .map(SortOrder::from_str)
+        .transpose()
         .map_err(|error| HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone()))?;
-    let markets = connector
-        .fetch_markets(filters.limit)
-        .await
-        .map_err(|error| HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone()))?
-        .into_iter()
-        .map(polymarket_gamma_market_to_view)
-        .filter(|market| {
-            filters.status.is_none_or(|status| market.status == status)
-                && filters
-                    .tradability_status
-                    .is_none_or(|status| market.tradability_status == status)
-        })
-        .collect::<Vec<_>>();
+    let filters = MarketListFilters::new(
+        query.status,
+        query.tradability_status,
+        query.category,
+        sort_by,
+        sort_order,
+        query.offset,
+        query.limit,
+    )
+    .map_err(|error| HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone()))?;
 
-    Ok(Json(ApiResponse::new(
-        markets.into_iter().map(market_to_contract).collect(),
-        auth.request_id,
-        trace_id,
-    )))
+    let (markets, total_count) = tokio::try_join!(
+        state.market_event_service.list_markets(filters.clone()),
+        state.market_event_service.count_markets(filters),
+    )
+    .map_err(|error| HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone()))?;
+
+    Ok(Json(MarketListResponse {
+        data: markets.into_iter().map(market_to_contract).collect(),
+        total_count,
+        meta: ApiMeta::new(auth.request_id, trace_id),
+    }))
 }
 
 async fn get_market(
@@ -51,65 +47,17 @@ async fn get_market(
 ) -> std::result::Result<Json<ApiResponse<MarketData>>, HttpError> {
     let trace_id = new_trace_id();
 
-    if state.settings.runtime.environment == "test" {
-        let market = state
-            .market_event_service
-            .get_market(&market_id)
-            .await
-            .map_err(|error| HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone()))?;
-
-        return Ok(Json(ApiResponse::new(
-            market_to_contract(market),
-            auth.request_id,
-            trace_id,
-        )));
-    }
-
-    let connector = PolymarketGammaConnector::new(&state.settings.polymarket.gamma_host)
-        .map_err(|error| HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone()))?;
-    let market = connector
-        .fetch_market(&market_id)
+    let market = state
+        .market_event_service
+        .get_market(&market_id)
         .await
-        .map_err(|error| HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone()))?
-        .map(polymarket_gamma_market_to_view)
-        .ok_or_else(|| {
-            HttpError::with_meta(
-                AppError::not_found(
-                    "MARKET_NOT_FOUND",
-                    format!("market was not found: {market_id}"),
-                ),
-                auth.request_id.clone(),
-                trace_id.clone(),
-            )
-        })?;
+        .map_err(|error| HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone()))?;
 
     Ok(Json(ApiResponse::new(
         market_to_contract(market),
         auth.request_id,
         trace_id,
     )))
-}
-
-fn polymarket_gamma_market_to_view(market: PolymarketGammaMarket) -> MarketView {
-    MarketView {
-        id: market.id,
-        question: market.question,
-        category: market.category,
-        status: market.status,
-        best_bid: market.best_bid,
-        best_ask: market.best_ask,
-        mid_price: market.mid_price,
-        volume_24h: market.volume_24h,
-        ambiguity_level: market.ambiguity_level,
-        tradability_status: market.tradability_status,
-        resolution_source: market.resolution_source,
-        edge_case_notes: market.edge_case_notes,
-        polymarket_condition_id: Some(market.condition_id),
-        polymarket_yes_asset_id: Some(market.yes_asset_id),
-        polymarket_no_asset_id: Some(market.no_asset_id),
-        updated_at: market.updated_at,
-        version: market.version,
-    }
 }
 
 async fn list_events(

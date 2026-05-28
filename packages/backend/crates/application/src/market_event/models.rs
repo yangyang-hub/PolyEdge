@@ -137,6 +137,10 @@ pub struct SignalTransitionView {
 pub struct MarketListFilters {
     pub status: Option<MarketStatus>,
     pub tradability_status: Option<TradabilityStatus>,
+    pub category: Option<String>,
+    pub sort_by: MarketSortField,
+    pub sort_order: SortOrder,
+    pub offset: u32,
     pub limit: u16,
 }
 
@@ -144,11 +148,19 @@ impl MarketListFilters {
     pub fn new(
         status: Option<MarketStatus>,
         tradability_status: Option<TradabilityStatus>,
+        category: Option<String>,
+        sort_by: Option<MarketSortField>,
+        sort_order: Option<SortOrder>,
+        offset: Option<u32>,
         limit: Option<u16>,
     ) -> Result<Self> {
         Ok(Self {
             status,
             tradability_status,
+            category,
+            sort_by: sort_by.unwrap_or_default(),
+            sort_order: sort_order.unwrap_or_default(),
+            offset: offset.unwrap_or(0),
             limit: validate_limit(limit)?,
         })
     }
