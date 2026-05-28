@@ -336,7 +336,7 @@ impl Default for WorkerSettings {
             poll_polymarket_order_statuses: false,
             reconcile_polymarket_fills: false,
             consume_polymarket_user_events: false,
-            poll_market_sync: false,
+            poll_market_sync: true,
             news_promotion_interval_secs: 60,
             arbitrage_analysis_interval_secs: 300,
             execution_drain_interval_secs: 5,
