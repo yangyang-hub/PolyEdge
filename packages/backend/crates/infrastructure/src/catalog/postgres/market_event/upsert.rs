@@ -56,6 +56,7 @@ async fn market_event_upsert_markets(
               updated_at = EXCLUDED.updated_at,
               version = EXCLUDED.version,
               trace_id = EXCLUDED.trace_id
+            WHERE EXCLUDED.version > markets.version
             "#,
         )
         .bind(&market.id)
@@ -101,6 +102,7 @@ async fn market_event_upsert_markets(
               updated_at = EXCLUDED.updated_at,
               version = EXCLUDED.version,
               trace_id = EXCLUDED.trace_id
+            WHERE EXCLUDED.version > market_resolution_rules.version
             "#,
         )
         .bind(&market.id)

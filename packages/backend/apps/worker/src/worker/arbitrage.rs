@@ -32,9 +32,21 @@ async fn scan_arbitrage_once(state: &AppState, trace_id: &str) -> Result<Arbitra
         match fetch_gamma_markets(state).await {
             Ok(gamma_markets) => {
                 if !gamma_markets.is_empty() {
+                    let count = gamma_markets.len();
+                    if let Err(error) = state
+                        .market_event_service
+                        .upsert_markets(&gamma_markets, trace_id)
+                        .await
+                    {
+                        warn!(
+                            trace_id,
+                            error = %error,
+                            "failed to upsert gamma markets during arbitrage fallback",
+                        );
+                    }
                     info!(
                         trace_id,
-                        count = gamma_markets.len(),
+                        count,
                         "loaded markets from Polymarket Gamma (database empty)",
                     );
                     markets = gamma_markets;
