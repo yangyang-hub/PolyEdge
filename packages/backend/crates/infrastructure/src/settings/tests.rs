@@ -16,25 +16,25 @@ mod tests {
             polyedge_domain::SystemMode::PaperTrade
         );
         assert!(settings.polymarket.account_id.is_empty());
-        assert!(!settings.news.enabled);
+        assert!(settings.news.enabled);
         assert_eq!(settings.news.poll_interval_secs, 60);
         assert_eq!(settings.news.request_timeout_secs, 10);
         assert_eq!(settings.news.max_items_per_source, 50);
         assert!(settings.news.sources.is_empty());
-        assert!(!settings.rewards.enabled);
+        assert!(settings.rewards.enabled);
         assert_eq!(settings.rewards.poll_interval_secs, 60);
-        assert!(!settings.worker.poll_news);
-        assert!(!settings.worker.promote_news_events);
-        assert!(!settings.worker.poll_arbitrage_radar);
-        assert!(!settings.worker.analyze_arbitrage_opportunities);
-        assert!(!settings.worker.poll_reward_bot);
-        assert!(!settings.worker.drain_execution_queue);
-        assert!(!settings.worker.poll_paper_order_statuses);
-        assert!(!settings.worker.reconcile_paper_fills);
-        assert!(!settings.worker.poll_polymarket_order_statuses);
-        assert!(!settings.worker.reconcile_polymarket_fills);
-        assert!(!settings.worker.consume_polymarket_user_events);
-        assert!(!settings.worker.consume_orderbook_stream);
+        assert!(settings.worker.poll_news);
+        assert!(settings.worker.promote_news_events);
+        assert!(settings.worker.poll_arbitrage_radar);
+        assert!(settings.worker.analyze_arbitrage_opportunities);
+        assert!(settings.worker.poll_reward_bot);
+        assert!(settings.worker.drain_execution_queue);
+        assert!(settings.worker.poll_paper_order_statuses);
+        assert!(settings.worker.reconcile_paper_fills);
+        assert!(settings.worker.poll_polymarket_order_statuses);
+        assert!(settings.worker.reconcile_polymarket_fills);
+        assert!(settings.worker.consume_polymarket_user_events);
+        assert!(settings.worker.consume_orderbook_stream);
         assert_eq!(settings.worker.news_promotion_interval_secs, 60);
         assert_eq!(settings.worker.arbitrage_analysis_interval_secs, 300);
         assert_eq!(settings.worker.execution_drain_interval_secs, 5);
@@ -45,7 +45,7 @@ mod tests {
             5
         );
         assert_eq!(settings.worker.task_limit, 100);
-        assert!(!settings.arbitrage.enabled);
+        assert!(settings.arbitrage.enabled);
         assert_eq!(settings.arbitrage.poll_interval_secs, 5);
         assert_eq!(settings.arbitrage.scan_limit, 100);
         assert_eq!(settings.arbitrage.scanner_version, "v1");
@@ -61,7 +61,7 @@ mod tests {
         assert!(settings.postgres.url.is_none());
         assert_eq!(settings.postgres.max_connections, 20);
         assert!(settings.redis.url.is_none());
-        assert!(!settings.orderbook_stream.enabled);
+        assert!(settings.orderbook_stream.enabled);
         assert_eq!(settings.orderbook_stream.max_tokens, 200);
         assert_eq!(settings.orderbook_stream.poll_reconcile_interval_secs, 30);
         assert_eq!(settings.orderbook_stream.stale_threshold_ms, 15_000);

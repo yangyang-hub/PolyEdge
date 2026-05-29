@@ -333,6 +333,9 @@ impl RewardBotStore for PostgresRewardBotStore {
                    status,
                    scoring,
                    reason,
+                   filled_size,
+                   reward_earned,
+                   last_scored_at,
                    created_at,
                    updated_at
             FROM reward_managed_orders

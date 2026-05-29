@@ -79,7 +79,7 @@ impl Default for PolymarketSettings {
 impl Default for ArbitrageSettings {
     fn default() -> Self {
         Self {
-            enabled: false,
+            enabled: true,
             poll_interval_secs: 5,
             scan_limit: 100,
             scanner_version: "v1".to_string(),
@@ -99,7 +99,7 @@ impl Default for ArbitrageSettings {
 impl Default for RewardsSettings {
     fn default() -> Self {
         Self {
-            enabled: false,
+            enabled: true,
             poll_interval_secs: 60,
         }
     }
@@ -108,7 +108,7 @@ impl Default for RewardsSettings {
 impl Default for NewsSettings {
     fn default() -> Self {
         Self {
-            enabled: false,
+            enabled: true,
             poll_interval_secs: 60,
             request_timeout_secs: 10,
             max_items_per_source: 50,
@@ -132,21 +132,21 @@ impl Default for NewsSourceSettings {
 impl Default for WorkerSettings {
     fn default() -> Self {
         Self {
-            poll_news: false,
-            promote_news_events: false,
-            poll_arbitrage_radar: false,
-            analyze_arbitrage_opportunities: false,
-            poll_reward_bot: false,
-            drain_execution_queue: false,
-            poll_paper_order_statuses: false,
-            reconcile_paper_fills: false,
-            poll_polymarket_order_statuses: false,
-            reconcile_polymarket_fills: false,
-            consume_polymarket_user_events: false,
+            poll_news: true,
+            promote_news_events: true,
+            poll_arbitrage_radar: true,
+            analyze_arbitrage_opportunities: true,
+            poll_reward_bot: true,
+            drain_execution_queue: true,
+            poll_paper_order_statuses: true,
+            reconcile_paper_fills: true,
+            poll_polymarket_order_statuses: true,
+            reconcile_polymarket_fills: true,
+            consume_polymarket_user_events: true,
             poll_market_sync: true,
-            consume_orderbook_stream: false,
-            poll_copytrade: false,
-            analyze_wallets: false,
+            consume_orderbook_stream: true,
+            poll_copytrade: true,
+            analyze_wallets: true,
             news_promotion_interval_secs: 60,
             arbitrage_analysis_interval_secs: 300,
             execution_drain_interval_secs: 5,
@@ -162,7 +162,7 @@ impl Default for WorkerSettings {
 impl Default for OrderbookStreamSettings {
     fn default() -> Self {
         Self {
-            enabled: false,
+            enabled: true,
             max_tokens: 200,
             poll_reconcile_interval_secs: 30,
             stale_threshold_ms: 15_000,
@@ -175,7 +175,7 @@ impl Default for OrderbookStreamSettings {
 impl Default for CopyTradeSettings {
     fn default() -> Self {
         Self {
-            enabled: false,
+            enabled: true,
             poll_interval_secs: 60,
             analysis_interval_secs: 300,
             wallet_activity_limit: 50,
