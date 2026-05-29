@@ -15,6 +15,7 @@ import {
   ShieldAlert,
   SquareChartGantt,
   WalletCards,
+  Users,
 } from "lucide-react";
 
 
@@ -33,6 +34,7 @@ const navItems: NavItem[] = [
   { href: "/events", labelKey: "events", icon: Newspaper },
   { href: "/radar", labelKey: "radar", icon: Radar },
   { href: "/rewards", labelKey: "rewards", icon: HandCoins },
+  { href: "/copy-trading", labelKey: "copytrade", icon: Users },
   { href: "/signals", labelKey: "signals", icon: Activity },
   { href: "/positions", labelKey: "positions", icon: WalletCards },
   { href: "/risk", labelKey: "risk", icon: ShieldAlert },

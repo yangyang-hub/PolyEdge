@@ -3,19 +3,19 @@ use crate::{
     catalog::{InMemoryMarketEventStore, PostgresMarketEventStore},
     settings::Settings,
     stores::{
-        ExternalEventStore, InMemoryAuditLogSink, InMemoryExternalEventStore,
+        ExternalEventStore, InMemoryAuditLogSink, InMemoryCopyTradeStore, InMemoryExternalEventStore,
         InMemoryIdempotencyStore, InMemoryModeStateStore, InMemoryOrderbookCache,
         InMemoryRewardBotStore, InMemoryRiskStateStore, InMemoryRuntimeConfigStore,
-        PostgresAuditLogSink, PostgresExternalEventStore, PostgresIdempotencyStore,
-        PostgresModeStateStore, PostgresRewardBotStore, PostgresRiskStateStore,
-        PostgresRuntimeConfigStore, RedisOrderbookCache, RuntimeConfigStore,
+        PostgresAuditLogSink, PostgresCopyTradeStore, PostgresExternalEventStore,
+        PostgresIdempotencyStore, PostgresModeStateStore, PostgresRewardBotStore,
+        PostgresRiskStateStore, PostgresRuntimeConfigStore, RedisOrderbookCache, RuntimeConfigStore,
     },
 };
 use polyedge_application::{
-    ArbitrageService, ArbitrageStore, AuditLogSink, ExecutionService, IdempotencyStore,
-    MarketEventService, MarketEventStore, ModeStateStore, NewsIngestionService, NewsIngestionStore,
-    OrderbookCache, RewardBotService, RewardBotStore, RiskPolicy, RiskService, RiskStateStore,
-    SystemModeService,
+    ArbitrageService, ArbitrageStore, AuditLogSink, CopyTradeService, CopyTradeStore,
+    ExecutionService, IdempotencyStore, MarketEventService, MarketEventStore, ModeStateStore,
+    NewsIngestionService, NewsIngestionStore, OrderbookCache, RewardBotService, RewardBotStore,
+    RiskPolicy, RiskService, RiskStateStore, SystemModeService,
 };
 use polyedge_domain::{AppError, Result, SystemMode};
 use sqlx::{PgPool, postgres::PgPoolOptions};
@@ -39,6 +39,7 @@ pub struct AppState {
     pub reward_bot_service: Arc<RewardBotService>,
     pub risk_service: Arc<RiskService>,
     pub execution_service: Arc<ExecutionService>,
+    pub copytrade_service: Arc<CopyTradeService>,
     pub orderbook_cache: Arc<dyn OrderbookCache>,
 }
 
@@ -155,6 +156,11 @@ impl Runtime {
                 Arc::new(InMemoryRewardBotStore::new()),
             )
         };
+        let copytrade_store: Arc<dyn CopyTradeStore> = if let Some(pool) = postgres.clone() {
+            Arc::new(PostgresCopyTradeStore::new(pool))
+        } else {
+            Arc::new(InMemoryCopyTradeStore::new())
+        };
         let system_mode_service = Arc::new(SystemModeService::new(
             mode_store,
             idempotency_store.clone(),
@@ -164,6 +170,7 @@ impl Runtime {
         let news_ingestion_service = Arc::new(NewsIngestionService::new(news_ingestion_store));
         let arbitrage_service = Arc::new(ArbitrageService::new(arbitrage_store));
         let reward_bot_service = Arc::new(RewardBotService::new(reward_bot_store));
+        let copytrade_service = Arc::new(CopyTradeService::new(copytrade_store));
         let execution_audit_log_sink = audit_log_sink.clone();
         let risk_service = Arc::new(RiskService::new(
             risk_policy(&settings),
@@ -199,6 +206,7 @@ impl Runtime {
                 news_ingestion_service,
                 arbitrage_service,
                 reward_bot_service,
+                copytrade_service,
                 risk_service,
                 execution_service,
                 orderbook_cache,
@@ -230,6 +238,7 @@ impl Runtime {
         let audit_log_sink: Arc<dyn AuditLogSink> = Arc::new(InMemoryAuditLogSink::new());
         let market_event_store = Arc::new(InMemoryMarketEventStore::new());
         let reward_bot_store = Arc::new(InMemoryRewardBotStore::new());
+        let copytrade_store: Arc<dyn CopyTradeStore> = Arc::new(InMemoryCopyTradeStore::new());
         let system_mode_service = Arc::new(SystemModeService::new(
             mode_store,
             idempotency_store.clone(),
@@ -240,6 +249,7 @@ impl Runtime {
             Arc::new(NewsIngestionService::new(market_event_store.clone()));
         let arbitrage_service = Arc::new(ArbitrageService::new(market_event_store));
         let reward_bot_service = Arc::new(RewardBotService::new(reward_bot_store));
+        let copytrade_service = Arc::new(CopyTradeService::new(copytrade_store));
         let execution_audit_log_sink = audit_log_sink.clone();
         let risk_service = Arc::new(RiskService::new(
             risk_policy(&settings),
@@ -271,6 +281,7 @@ impl Runtime {
             news_ingestion_service,
             arbitrage_service,
             reward_bot_service,
+            copytrade_service,
             risk_service,
             execution_service,
             orderbook_cache,

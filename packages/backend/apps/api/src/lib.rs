@@ -9,6 +9,9 @@ use axum::{
 };
 use futures::stream;
 use polyedge_application::{
+    AddTrackedWalletInput, CopyBookLevel, CopyOrderBook, CopyTradeConfigPatch,
+    CopyTradeSnapshot, TrackedWalletStatus, WalletActionInput, WalletActivityInput,
+    WalletFeedInput, WalletPositionInput,
     ArbitrageAnalysisRunListFilters, ArbitrageAnalysisRunView, ArbitrageEventListFilters,
     ArbitrageEventView, ArbitrageOpportunityListFilters, ArbitrageOpportunityStatus,
     ArbitrageOpportunityType, ArbitrageOpportunityValidationView, ArbitrageOpportunityView,
@@ -27,7 +30,7 @@ use polyedge_application::{
 };
 use polyedge_connectors::{
     ConnectorOrderStatusUpdate, ConnectorTradeFillUpdate,
-    PolymarketRewardMarket, PolymarketRewardOrderBook,
+    PolymarketDataApiConnector, PolymarketRewardMarket, PolymarketRewardOrderBook,
     PolymarketRewardsConnector, normalize_polymarket_order_status_update,
     normalize_polymarket_trade_fill_update,
 };
@@ -307,6 +310,64 @@ pub fn build_app(state: AppState) -> Router {
                 require_console_write_auth,
             )),
         )
+        // ── Copy Trading ─────────────────────────────────────────────
+        .route(
+            "/api/v1/copy-trading",
+            get(read_copytrade_snapshot).route_layer(middleware::from_fn_with_state(
+                state.clone(),
+                require_console_read_auth,
+            )),
+        )
+        .route(
+            "/api/v1/copy-trading/config",
+            axum::routing::post(update_copytrade_config).route_layer(
+                middleware::from_fn_with_state(state.clone(), require_console_write_auth),
+            ),
+        )
+        .route(
+            "/api/v1/copy-trading/wallets",
+            axum::routing::post(add_copytrade_wallet).route_layer(
+                middleware::from_fn_with_state(state.clone(), require_console_write_auth),
+            ),
+        )
+        .route(
+            "/api/v1/copy-trading/wallets/remove",
+            axum::routing::post(remove_copytrade_wallet).route_layer(
+                middleware::from_fn_with_state(state.clone(), require_console_write_auth),
+            ),
+        )
+        .route(
+            "/api/v1/copy-trading/wallets/status",
+            axum::routing::post(set_copytrade_wallet_status).route_layer(
+                middleware::from_fn_with_state(state.clone(), require_console_write_auth),
+            ),
+        )
+        .route(
+            "/api/v1/copy-trading/run",
+            axum::routing::post(run_copytrade_once).route_layer(middleware::from_fn_with_state(
+                state.clone(),
+                require_console_write_auth,
+            )),
+        )
+        .route(
+            "/api/v1/copy-trading/analyze",
+            axum::routing::post(analyze_copytrade_wallets).route_layer(
+                middleware::from_fn_with_state(state.clone(), require_console_write_auth),
+            ),
+        )
+        .route(
+            "/api/v1/copy-trading/cancel-all",
+            axum::routing::post(cancel_copytrade_orders).route_layer(
+                middleware::from_fn_with_state(state.clone(), require_console_write_auth),
+            ),
+        )
+        .route(
+            "/api/v1/copy-trading/reset",
+            axum::routing::post(reset_copytrade).route_layer(middleware::from_fn_with_state(
+                state.clone(),
+                require_console_write_auth,
+            )),
+        )
         .route(
             "/api/v1/runtime-config",
             get(read_runtime_config).route_layer(middleware::from_fn_with_state(
@@ -369,6 +430,7 @@ include!("handlers/streams.rs");
 include!("handlers/system.rs");
 include!("handlers/market_handlers.rs");
 include!("handlers/rewards.rs");
+include!("handlers/copytrade.rs");
 include!("handlers/runtime_config.rs");
 include!("handlers/reward_inputs.rs");
 include!("handlers/runtime_config_helpers.rs");

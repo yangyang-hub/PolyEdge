@@ -1,6 +1,7 @@
 #![allow(clippy::too_many_arguments)]
 
 mod arbitrage;
+mod copytrade;
 mod execution;
 mod list_filters;
 mod market_event;
@@ -19,6 +20,17 @@ pub use arbitrage::{
     ArbitrageTypeCount, ArbitrageValidationConfig, ArbitrageValidationStatus,
     MarketBookSnapshotView, build_arbitrage_analysis, detect_arbitrage_opportunities,
     market_book_snapshot_id, validate_arbitrage_opportunity,
+};
+pub use copytrade::{
+    AddTrackedWalletInput, CopyAccountState, CopyBookLevel, CopyDecision, CopyEvent,
+    CopyEventSeverity, CopyFill, CopyOrder, CopyOrderBook, CopyOrderSide, CopyOrderStatus,
+    CopyPosition, CopySimulationOutcome, CopySizingMode, CopySkipReason, CopyTradeConfig,
+    CopyTradeConfigPatch, CopyTradeMode, CopyTradeRunReport, CopyTradeService, CopyTradeSnapshot,
+    CopyTradeStatus, CopyTradeStore, TrackedWallet, TrackedWalletStatus,
+    WalletActionInput, WalletActivityInput, WalletAnalysisStats, WalletFeedInput,
+    WalletPositionInput, SourceTrade, build_wallet_analysis, compute_copy_size,
+    check_skip_reasons, run_copy_simulation_tick, new_copy_event, normalize_address,
+    validate_copytrade_list_limit,
 };
 pub use execution::{
     DEFAULT_EXECUTION_CONNECTOR, DispatchExecutionListFilters, ExecutionDispatchCandidate,

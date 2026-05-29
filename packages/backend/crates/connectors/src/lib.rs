@@ -16,8 +16,9 @@ pub use polymarket::{
     LivePolymarketConnector, LivePolymarketExecutionOutcome, LivePolymarketOrderAcceptance,
     LivePolymarketOrderRequest, LivePolymarketOrderStatusRequest, LivePolymarketTradeSyncRequest,
     POLYMARKET_CONNECTOR_NAME, PolymarketBinaryBookSnapshot, PolymarketBookConnector,
-    PolymarketBookLevel, PolymarketGammaConnector, PolymarketGammaMarket, PolymarketMarketRefs,
-    PolymarketOrderRejection, PolymarketSignatureScheme, PolymarketSingleTokenBook,
+    PolymarketBookLevel, PolymarketDataApiConnector, PolymarketGammaConnector, PolymarketGammaMarket,
+    PolymarketMarketRefs, PolymarketOrderRejection, PolymarketSignatureScheme,
+    PolymarketSingleTokenBook, PolymarketWalletActivity, PolymarketWalletPosition,
     normalize_polymarket_order_status_update, normalize_polymarket_trade_fill_update,
     normalize_polymarket_ws_order_message, normalize_polymarket_ws_trade_message,
 };

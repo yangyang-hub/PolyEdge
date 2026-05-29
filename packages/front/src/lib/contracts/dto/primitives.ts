@@ -60,4 +60,10 @@ export type PostFillStrategy =
   | "hold_and_requote"
   | "flatten_immediately";
 export type RewardFillRole = "maker" | "taker";
+export type CopyTradeMode = "paper" | "live";
+export type CopySizingMode = "fixed_usd" | "proportional_to_source" | "capital_ratio" | "mirror_portfolio_weight";
+export type CopyOrderSide = "buy" | "sell";
+export type CopyOrderStatus = "planned" | "open" | "filled" | "cancelled" | "skipped" | "error";
+export type TrackedWalletStatus = "active" | "paused";
+export type CopyEventSeverity = "info" | "warning" | "critical";
 export type DecimalValue = string | number;

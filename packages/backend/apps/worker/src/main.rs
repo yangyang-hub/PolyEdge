@@ -11,6 +11,8 @@ use polyedge_application::{
     ReconcileExecutionListFilters, ReconcileExternalTradeCommand, RewardBookLevel,
     RewardBotRunReport, RewardMarket, RewardOrderBook, RewardToken, SyncExternalOrderStatusCommand,
     build_arbitrage_analysis, market_book_snapshot_id, select_reward_book_token_ids,
+    CopyBookLevel, CopyOrderBook, CopyTradeRunReport, WalletActivityInput, WalletFeedInput,
+    WalletPositionInput,
 };
 use polyedge_connectors::{
     ConnectorNewsItem, LivePolymarketConfig, LivePolymarketConnector,
@@ -18,7 +20,8 @@ use polyedge_connectors::{
     LivePolymarketTradeSyncRequest, NewsSource, PAPER_ACCOUNT_ID, PAPER_EXECUTOR_NAME,
     POLYMARKET_CONNECTOR_NAME, PaperExecutionOutcome, PaperExecutor, PaperFillRequest,
     PaperOrderRequest, PaperOrderStatusRequest, PolymarketBinaryBookSnapshot,
-    PolymarketBookConnector, PolymarketBookLevel, PolymarketGammaConnector, PolymarketGammaMarket,
+    PolymarketBookConnector, PolymarketBookLevel, PolymarketDataApiConnector,
+    PolymarketGammaConnector, PolymarketGammaMarket,
     PolymarketMarketRefs, PolymarketRewardMarket,
     PolymarketRewardOrderBook, PolymarketRewardsConnector, PolymarketSignatureScheme,
     RssNewsConnector, RssNewsSourceConfig, normalize_polymarket_ws_order_message,
@@ -283,6 +286,43 @@ async fn main() -> Result<()> {
             );
             Ok(())
         }
+        Some("scan-copytrade-once") => {
+            let trace_id = new_trace_id();
+            let report = run_copytrade_once(&state, &trace_id).await?;
+            info!(
+                trace_id = %trace_id,
+                wallets_scanned = report.wallets_scanned,
+                trades_detected = report.trades_detected,
+                orders_placed = report.orders_placed,
+                orders_filled = report.orders_filled,
+                orders_skipped = report.orders_skipped,
+                "ran copy-trading cycle once",
+            );
+            Ok(())
+        }
+        Some("poll-copytrade") => {
+            let max_cycles = parse_limit_arg(args.next())?.map(usize::from);
+            let report = poll_copytrade(&state, max_cycles).await?;
+            info!(
+                wallets_scanned = report.wallets_scanned,
+                trades_detected = report.trades_detected,
+                orders_placed = report.orders_placed,
+                orders_filled = report.orders_filled,
+                orders_skipped = report.orders_skipped,
+                "copytrade polling stopped",
+            );
+            Ok(())
+        }
+        Some("analyze-wallets-once") => {
+            let trace_id = new_trace_id();
+            let analyzed = analyze_wallets_once(&state, &trace_id).await?;
+            info!(
+                trace_id = %trace_id,
+                wallets_analyzed = analyzed,
+                "analyzed copytrade wallets once",
+            );
+            Ok(())
+        }
         Some("sync-markets-once") => {
             let trace_id = new_trace_id();
             let report = sync_markets_once(&state, &trace_id).await?;
@@ -397,6 +437,7 @@ include!("worker/news.rs");
 include!("worker/arbitrage.rs");
 include!("worker/market_sync.rs");
 include!("worker/rewards.rs");
+include!("worker/copytrade.rs");
 include!("worker/arbitrage_books.rs");
 include!("worker/news_helpers.rs");
 include!("worker/execution_reconcile.rs");

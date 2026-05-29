@@ -24,7 +24,7 @@
 ## 当前状态
 
 - 仓库已经不是纯文档仓库：前端控制台、Rust API、worker、迁移、配置和 Docker 部署入口都已具备。
-- 前端控制台已有 `dashboard / markets / events / radar / rewards / signals / positions / risk / approvals / replay / settings` 页面。
+- 前端控制台已有 `dashboard / markets / events / radar / rewards / copy-trading / signals / positions / risk / approvals / replay / settings` 页面。
 - 前端数据层统一走 `src/lib/api/*`（读取按领域文件 `markets.ts` / `signals.ts` / `risk.ts`… 基于 `base.ts`，写操作走 `actions.ts`），页面装配在 `src/features/*/loaders` 和 `src/features/*/components`。`src/server/` 目前是空目录（历史遗留）。
 - 前端支持 `zh-CN / en-US`，语言由 `polyedge_locale` cookie 控制。
 - 前端不再提供 mock 数据模式；`POLYEDGE_API_BASE_URL` 必须指向 Rust 后端，读写和 SSE 都走真实 `/api/v1/...`。
@@ -34,8 +34,9 @@
 - 套利雷达是只读链路：发现、记录、校验、分析、展示和 SSE 推送已具备，但不会创建 execution request 或订单。
 - Rewards bot 已是有状态的逐 tick 做市模拟引擎：扫描 Polymarket CLOB rewards 当前市场、拉取候选盘口、生成 YES/NO post-only 双边买单计划，并维护共享资金池账本（capital/available/reserved/realized_pnl/reward_earned）、模拟成交（盘口穿透必成交 + 触顶概率成交，确定性伪随机可复现）、成交后策略（加价出场 / 持有续挂 / 市价平仓 / 成交即撤对侧）、撤单策略（中点漂移、掉出 max_spread）、以及忠实复刻 Polymarket Qmin 公式的做市奖励金额累加；当前仍不会实盘下单。
 - Polymarket connector 已迁移到 CLOB V2 Rust crate：`packages/backend/Cargo.toml` 保留 dependency key `polymarket-client-sdk`，实际指向 `polymarket_client_sdk_v2`。
+- 聪明钱跟单（copy-trading）已具备完整子系统：跟踪多个 Polymarket 钱包地址（`TrackedWallet`）、通过 Polymarket Data API（`data-api.polymarket.com`，通过 `PolymarketDataApiConnector`）检测钱包新成交、四种跟单仓位模式（`FixedUsd`/`ProportionalToSource`/`CapitalRatio`/`MirrorPortfolioWeight`）、钱包分析统计（胜率/ROI/成交量）、per-wallet/per-market/total 敞口+单日亏损+冷却+滑点风控、确定性模拟引擎（模拟资金账本：capital/available/reserved/realized_pnl）、`Run/Analyze/Cancel/Reset` 与账户资金设置前端 UI；`mode=live` 已结构化支持但未接入真实下单（记录警告回退模拟）；数据库迁移 `0020`，`POLYEDGE_COPYTRADE__ENABLED=true` 启用 worker 轮询。
 - Polymarket 运行时不再提供 mock mode；市场列表走 Gamma 实时数据，私有订单/成交任务需要真实凭证、真实账户、小额演练和运维 runbook。
-- 数据库迁移目前到 `0019_reward_simulation.sql`。
+- 数据库迁移目前到 `0020_copy_trading.sql`。
 
 ## 主要缺口
 
@@ -82,6 +83,9 @@ cargo run -p polyedge-worker -- drain-execution-queue
 cargo run -p polyedge-worker -- poll-polymarket-order-statuses
 cargo run -p polyedge-worker -- reconcile-polymarket-fills
 cargo run -p polyedge-worker -- consume-polymarket-user-events
+cargo run -p polyedge-worker -- scan-copytrade-once
+cargo run -p polyedge-worker -- poll-copytrade
+cargo run -p polyedge-worker -- analyze-wallets-once
 ```
 
 套利雷达冒烟：
@@ -97,6 +101,7 @@ cargo run -p polyedge-worker -- consume-polymarket-user-events
 - Polymarket connector 没有 mock mode；未配置真实账户/私钥时，不要开启 Polymarket 私有订单、成交或用户 websocket worker 任务。
 - 默认 arbitrage radar 和 news ingestion 是 disabled。
 - 默认 rewards bot worker 模拟是 disabled；前端 `/rewards` 可以手动运行模拟，worker 需要同时设置 `POLYEDGE_REWARDS__ENABLED=true` 和 `POLYEDGE_WORKER__POLL_REWARD_BOT=true`。
+- 默认跟单 worker 是 disabled；前端 `/copy-trading` 可以手动运行模拟，worker 需要同时设置 `POLYEDGE_COPYTRADE__ENABLED=true` + `POLYEDGE_WORKER__POLL_COPYTRADE=true`（跟单循环）或 `POLYEDGE_WORKER__ANALYZE_WALLETS=true`（钱包分析）。
 - `POLYEDGE_POSTGRES__URL` / `POLYEDGE_REDIS__URL` 为空时，本地可能走内存路径，无法验证多进程共享状态和持久化 outbox。
 - `POLYEDGE_ARBITRAGE__BOOK_SOURCE=polymarket` 会请求真实 Polymarket CLOB `/book`；live 冒烟必须使用真实 Polymarket refs。
 
@@ -140,19 +145,24 @@ cp deploy/.env.example deploy/.env
 
 - `packages/front/src/lib/api/base.ts`
 - `packages/front/src/lib/api/actions.ts`
+- `packages/front/src/lib/api/copytrade.ts`
 - `packages/front/src/app/api/stream/[channel]/route.ts`
 - `packages/front/src/proxy.ts`
 - `packages/front/src/lib/i18n/*`
 - `packages/front/src/features/radar/*`
+- `packages/front/src/features/copytrade/*`
 
 后端：
 
 - `packages/backend/apps/api/src/lib.rs`
+- `packages/backend/apps/api/src/handlers/copytrade.rs`
 - `packages/backend/apps/worker/src/main.rs`
-- `packages/backend/crates/application/src/*`
-- `packages/backend/crates/connectors/src/polymarket.rs`
+- `packages/backend/apps/worker/src/worker/copytrade.rs`
+- `packages/backend/crates/application/src/copytrade.rs`
+- `packages/backend/crates/connectors/src/polymarket/data_api.rs`
+- `packages/backend/crates/infrastructure/src/stores/copytrade.rs`
 - `packages/backend/crates/infrastructure/src/settings.rs`
-- `packages/backend/migrations/*`
+- `packages/backend/migrations/0020_copy_trading.sql`
 
 部署：
 

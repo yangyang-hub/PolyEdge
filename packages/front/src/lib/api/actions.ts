@@ -1,6 +1,8 @@
 import { z } from "zod";
 
 import type {
+  CopyTradeConfigDto,
+  CopyTradeSnapshotDto,
   RewardBotConfigDto,
   RewardBotSnapshotDto,
   RuntimeConfigEntryDto,
@@ -14,6 +16,16 @@ import {
   runRewardBotOnce,
   updateRewardBotConfig,
 } from "@/lib/api/rewards";
+import {
+  addTrackedWallet,
+  analyzeWallets,
+  cancelCopyTradeOrders,
+  removeTrackedWallet,
+  resetCopyTrade,
+  runCopyTradeOnce,
+  setWalletStatus,
+  updateCopyTradeConfig,
+} from "@/lib/api/copytrade";
 import {
   releaseRiskControls,
   requestModeSwitch,
@@ -386,6 +398,212 @@ export async function resetRewardBotAction(): Promise<RewardBotActionResult> {
     };
   } catch (error) {
     return apiActionFailure(error, "Reward simulation reset failed.");
+  }
+}
+
+// ── Copy Trade Actions ─────────────────────────────────────────────────────
+
+export type CopyTradeActionResult = OperationActionResult & {
+  snapshot?: CopyTradeSnapshotDto;
+};
+
+const HEX_ADDRESS_PATTERN = /^0x[0-9a-fA-F]{40}$/;
+
+const addWalletSchema = z.object({
+  address: z
+    .string()
+    .trim()
+    .regex(HEX_ADDRESS_PATTERN, "Address must be a 0x-prefixed 40-hex-char Ethereum address."),
+  label: z.string().trim().max(100).optional().default(""),
+});
+
+const walletActionSchema = z.object({
+  address: z
+    .string()
+    .trim()
+    .regex(HEX_ADDRESS_PATTERN, "Address must be a 0x-prefixed 40-hex-char Ethereum address."),
+});
+
+const copytradeConfigSchema = z.object({
+  enabled: z.boolean(),
+  mode: z.enum(["paper", "live"]),
+  account_id: z.string().trim().min(1),
+  account_capital_usd: decimalNumber.min(1),
+  sizing_mode: z.enum(["fixed_usd", "proportional_to_source", "capital_ratio", "mirror_portfolio_weight"]),
+  fixed_usd_per_trade: decimalNumber.min(1),
+  proportional_factor: decimalNumber.min(0.001).max(1),
+  capital_ratio: decimalNumber.min(0.001).max(1),
+  min_source_trade_usd: decimalNumber.min(0),
+  max_price: decimalNumber.min(0.01).max(1),
+  min_price: decimalNumber.min(0).max(0.99),
+  copy_sells: z.boolean(),
+  max_position_per_market_usd: decimalNumber.min(1),
+  per_wallet_max_exposure_usd: decimalNumber.min(1),
+  max_total_exposure_usd: decimalNumber.min(1),
+  max_open_copy_orders: z.coerce.number().int().min(1).max(200),
+  daily_loss_limit_usd: decimalNumber.min(0),
+  cooldown_secs: z.coerce.number().int().min(0).max(3600),
+  max_slippage_cents: decimalNumber.min(0).max(50),
+  fill_rate_per_tick: decimalNumber.min(0).max(1),
+  max_fill_ratio: decimalNumber.min(0.01).max(1),
+});
+
+export async function updateCopyTradeConfigAction(
+  input: CopyTradeConfigDto,
+): Promise<CopyTradeActionResult> {
+  try {
+    const parsed = copytradeConfigSchema.safeParse(input);
+    if (!parsed.success) {
+      return createActionFailureResult("Copy trading config is invalid.");
+    }
+    const response = await updateCopyTradeConfig(parsed.data);
+    return {
+      ...createActionSuccessResult("Copy trading configuration saved.", {
+        requestId: response.meta.request_id,
+        traceId: response.meta.trace_id,
+        operationId: `copytrade_config_${crypto.randomUUID().slice(0, 8)}`,
+        status: "completed",
+      }),
+      snapshot: response.data,
+    };
+  } catch (error) {
+    return apiActionFailure(error, "Copy trading configuration update failed.");
+  }
+}
+
+export async function addTrackedWalletAction(input: {
+  address: string;
+  label?: string;
+}): Promise<CopyTradeActionResult> {
+  try {
+    const parsed = addWalletSchema.safeParse(input);
+    if (!parsed.success) {
+      const fieldErrors = parsed.error.flatten().fieldErrors;
+      return createActionFailureResult("Wallet address is invalid.", {
+        fieldErrors: { note: fieldErrors.address?.[0] },
+      });
+    }
+    const response = await addTrackedWallet(parsed.data);
+    return {
+      ...createActionSuccessResult("Wallet added for tracking.", {
+        requestId: response.meta.request_id,
+        traceId: response.meta.trace_id,
+        operationId: `copytrade_add_wallet_${crypto.randomUUID().slice(0, 8)}`,
+        status: "completed",
+      }),
+      snapshot: response.data,
+    };
+  } catch (error) {
+    return apiActionFailure(error, "Adding wallet failed.");
+  }
+}
+
+export async function removeTrackedWalletAction(address: string): Promise<CopyTradeActionResult> {
+  try {
+    const parsed = walletActionSchema.safeParse({ address });
+    if (!parsed.success) {
+      return createActionFailureResult("Invalid wallet address.");
+    }
+    const response = await removeTrackedWallet(parsed.data);
+    return {
+      ...createActionSuccessResult("Wallet removed from tracking.", {
+        requestId: response.meta.request_id,
+        traceId: response.meta.trace_id,
+        operationId: `copytrade_remove_wallet_${crypto.randomUUID().slice(0, 8)}`,
+        status: "completed",
+      }),
+      snapshot: response.data,
+    };
+  } catch (error) {
+    return apiActionFailure(error, "Removing wallet failed.");
+  }
+}
+
+export async function setCopytradeWalletStatusAction(
+  address: string,
+  status: "active" | "paused",
+): Promise<CopyTradeActionResult> {
+  try {
+    const response = await setWalletStatus(address, status);
+    return {
+      ...createActionSuccessResult(`Wallet ${status === "active" ? "resumed" : "paused"}.`, {
+        requestId: response.meta.request_id,
+        traceId: response.meta.trace_id,
+        operationId: `copytrade_wallet_status_${crypto.randomUUID().slice(0, 8)}`,
+        status: "completed",
+      }),
+      snapshot: response.data,
+    };
+  } catch (error) {
+    return apiActionFailure(error, "Updating wallet status failed.");
+  }
+}
+
+export async function runCopyTradeOnceAction(): Promise<CopyTradeActionResult> {
+  try {
+    const response = await runCopyTradeOnce();
+    return {
+      ...createActionSuccessResult("Copy trading cycle completed.", {
+        requestId: response.meta.request_id,
+        traceId: response.meta.trace_id,
+        operationId: `copytrade_run_${crypto.randomUUID().slice(0, 8)}`,
+        status: "completed",
+      }),
+      snapshot: response.data,
+    };
+  } catch (error) {
+    return apiActionFailure(error, "Copy trading run failed.");
+  }
+}
+
+export async function analyzeCopytradeWalletsAction(): Promise<CopyTradeActionResult> {
+  try {
+    const response = await analyzeWallets();
+    return {
+      ...createActionSuccessResult("Wallet analysis completed.", {
+        requestId: response.meta.request_id,
+        traceId: response.meta.trace_id,
+        operationId: `copytrade_analyze_${crypto.randomUUID().slice(0, 8)}`,
+        status: "completed",
+      }),
+      snapshot: response.data,
+    };
+  } catch (error) {
+    return apiActionFailure(error, "Wallet analysis failed.");
+  }
+}
+
+export async function cancelCopyTradeOrdersAction(): Promise<CopyTradeActionResult> {
+  try {
+    const response = await cancelCopyTradeOrders();
+    return {
+      ...createActionSuccessResult("Copy trading orders cancelled.", {
+        requestId: response.meta.request_id,
+        traceId: response.meta.trace_id,
+        operationId: `copytrade_cancel_${crypto.randomUUID().slice(0, 8)}`,
+        status: "completed",
+      }),
+      snapshot: response.data,
+    };
+  } catch (error) {
+    return apiActionFailure(error, "Copy order cancellation failed.");
+  }
+}
+
+export async function resetCopyTradeAction(): Promise<CopyTradeActionResult> {
+  try {
+    const response = await resetCopyTrade();
+    return {
+      ...createActionSuccessResult("Copy trading simulation reset.", {
+        requestId: response.meta.request_id,
+        traceId: response.meta.trace_id,
+        operationId: `copytrade_reset_${crypto.randomUUID().slice(0, 8)}`,
+        status: "completed",
+      }),
+      snapshot: response.data,
+    };
+  } catch (error) {
+    return apiActionFailure(error, "Copy trading reset failed.");
   }
 }
 

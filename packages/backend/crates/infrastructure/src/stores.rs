@@ -1,11 +1,14 @@
 use async_trait::async_trait;
 use polyedge_application::{
-    AuditLogEntry, AuditLogSink, IdempotencyBegin, IdempotencyRequest, IdempotencyStore,
-    ManagedRewardOrder, ManagedRewardOrderStatus, ModeSnapshot, ModeStateStore,
+    AuditLogEntry, AuditLogSink, CopyAccountState, CopyEvent, CopyEventSeverity, CopyFill, CopyOrder,
+    CopyOrderStatus, CopyOrderSide, CopyPosition, CopySimulationOutcome, CopySizingMode,
+    CopyTradeConfig, CopyTradeMode, CopyTradeStore, IdempotencyBegin, IdempotencyRequest,
+    IdempotencyStore, ManagedRewardOrder, ManagedRewardOrderStatus, ModeSnapshot, ModeStateStore,
     ModeTransitionCommand, PostFillStrategy, RewardAccountState, RewardBotConfig, RewardBotMode,
     RewardBotStore, RewardFill, RewardFillRole, RewardMarket, RewardOrderSide, RewardPosition,
     RewardQuotePlan, RewardRiskEvent, RewardRiskSeverity, RewardSimulationOutcome, RewardToken,
-    RiskStateSnapshot, RiskStateStore,
+    RiskStateSnapshot, RiskStateStore, SourceTrade, TrackedWallet, TrackedWalletStatus,
+    WalletAnalysisStats,
 };
 use polyedge_domain::{
     AppError, ExposureRatio, IdempotencyStatus, Result, SignedUsdAmount, SystemMode,
@@ -42,6 +45,7 @@ include!("stores/idempotency.rs");
 include!("stores/external_event.rs");
 include!("stores/audit.rs");
 include!("stores/rewards.rs");
+include!("stores/copytrade.rs");
 include!("stores/orderbook_cache.rs");
 include!("stores/helpers.rs");
 include!("stores/types.rs");

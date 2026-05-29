@@ -9,4 +9,5 @@ export * from "./dto/position";
 export * from "./dto/probability";
 export * from "./dto/arbitrage";
 export * from "./dto/rewards";
+export * from "./dto/copytrade";
 export * from "./dto/replay";

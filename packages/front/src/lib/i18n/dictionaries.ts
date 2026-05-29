@@ -8,6 +8,7 @@ import { positionsEn, positionsZh } from "./dictionaries/positions";
 import { riskEn, riskZh } from "./dictionaries/risk";
 import { radarEn, radarZh } from "./dictionaries/radar";
 import { rewardsEn, rewardsZh } from "./dictionaries/rewards";
+import { copytradeEn, copytradeZh } from "./dictionaries/copytrade";
 import { opsEn, opsZh } from "./dictionaries/ops";
 
 const enUS = {
@@ -22,6 +23,7 @@ const enUS = {
   ...riskEn,
   ...radarEn,
   ...rewardsEn,
+  ...copytradeEn,
   ...opsEn,
 } as const;
 
@@ -48,6 +50,7 @@ const zhCN = {
   ...riskZh,
   ...radarZh,
   ...rewardsZh,
+  ...copytradeZh,
   ...opsZh,
 } satisfies Dictionary;
 

@@ -145,6 +145,8 @@ impl Default for WorkerSettings {
             consume_polymarket_user_events: false,
             poll_market_sync: true,
             consume_orderbook_stream: false,
+            poll_copytrade: false,
+            analyze_wallets: false,
             news_promotion_interval_secs: 60,
             arbitrage_analysis_interval_secs: 300,
             execution_drain_interval_secs: 5,
@@ -166,6 +168,17 @@ impl Default for OrderbookStreamSettings {
             stale_threshold_ms: 15_000,
             book_ttl_secs: 60,
             restart_interval_secs: 5,
+        }
+    }
+}
+
+impl Default for CopyTradeSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            poll_interval_secs: 60,
+            analysis_interval_secs: 300,
+            wallet_activity_limit: 50,
         }
     }
 }

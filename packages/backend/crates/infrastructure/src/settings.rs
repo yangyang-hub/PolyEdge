@@ -31,6 +31,7 @@ pub struct Settings {
     pub worker: WorkerSettings,
     pub orderbook_stream: OrderbookStreamSettings,
     pub auth: AuthSettings,
+    pub copytrade: CopyTradeSettings,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -169,6 +170,8 @@ pub struct WorkerSettings {
     pub consume_polymarket_user_events: bool,
     pub poll_market_sync: bool,
     pub consume_orderbook_stream: bool,
+    pub poll_copytrade: bool,
+    pub analyze_wallets: bool,
     pub news_promotion_interval_secs: u64,
     pub arbitrage_analysis_interval_secs: u64,
     pub execution_drain_interval_secs: u64,
@@ -188,6 +191,15 @@ pub struct OrderbookStreamSettings {
     pub stale_threshold_ms: u64,
     pub book_ttl_secs: u64,
     pub restart_interval_secs: u64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct CopyTradeSettings {
+    pub enabled: bool,
+    pub poll_interval_secs: u64,
+    pub analysis_interval_secs: u64,
+    pub wallet_activity_limit: u16,
 }
 
 #[derive(Debug, Clone, Deserialize)]

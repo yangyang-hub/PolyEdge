@@ -230,6 +230,71 @@ fn spawn_worker_tasks(state: &AppState, shutdown_rx: watch::Receiver<bool>) -> V
         }
     }
 
+    if settings.poll_copytrade {
+        if state.settings.copytrade.enabled {
+            let job_state = state.clone();
+            handles.push(spawn_interval_job(
+                "poll-copytrade",
+                state.settings.copytrade.poll_interval_secs,
+                shutdown_rx.clone(),
+                move || {
+                    let state = job_state.clone();
+                    async move {
+                        let trace_id = new_trace_id();
+                        match run_copytrade_once(&state, &trace_id).await {
+                            Ok(report) => info!(
+                                trace_id = %trace_id,
+                                wallets_scanned = report.wallets_scanned,
+                                trades_detected = report.trades_detected,
+                                orders_placed = report.orders_placed,
+                                orders_filled = report.orders_filled,
+                                "completed worker copytrade cycle",
+                            ),
+                            Err(error) => {
+                                warn!(trace_id = %trace_id, error = %error, "worker copytrade cycle failed");
+                            }
+                        }
+                    }
+                },
+            ));
+        } else {
+            warn!(
+                "worker poll-copytrade is enabled but copytrade is disabled; set POLYEDGE_COPYTRADE__ENABLED=true"
+            );
+        }
+    }
+
+    if settings.analyze_wallets {
+        if state.settings.copytrade.enabled {
+            let job_state = state.clone();
+            handles.push(spawn_interval_job(
+                "analyze-wallets",
+                state.settings.copytrade.analysis_interval_secs,
+                shutdown_rx.clone(),
+                move || {
+                    let state = job_state.clone();
+                    async move {
+                        let trace_id = new_trace_id();
+                        match analyze_wallets_once(&state, &trace_id).await {
+                            Ok(analyzed) => info!(
+                                trace_id = %trace_id,
+                                wallets_analyzed = analyzed,
+                                "completed worker wallet analysis cycle",
+                            ),
+                            Err(error) => {
+                                warn!(trace_id = %trace_id, error = %error, "worker wallet analysis cycle failed");
+                            }
+                        }
+                    }
+                },
+            ));
+        } else {
+            warn!(
+                "worker analyze-wallets is enabled but copytrade is disabled; set POLYEDGE_COPYTRADE__ENABLED=true"
+            );
+        }
+    }
+
     if settings.drain_execution_queue {
         let job_state = state.clone();
         handles.push(spawn_interval_job(
