@@ -13,5 +13,6 @@ const DEFAULT_TICK: Decimal = Decimal::from_parts(1, 0, 0, false, 2);
 include!("rewards/models.rs");
 include!("rewards/service.rs");
 include!("rewards/planner.rs");
+include!("rewards/engine.rs");
 include!("rewards/helpers.rs");
 include!("rewards/tests.rs");

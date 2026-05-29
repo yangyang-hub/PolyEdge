@@ -1,0 +1,126 @@
+// Stateful, tick-based rewards market-making simulation.
+//
+// Each tick the engine reconciles the existing resting orders against the
+// freshest order books, simulates fills (deterministic when the book crosses
+// our price, probabilistic when it merely touches), applies the configured
+// post-fill strategy, accrues Polymarket liquidity rewards, and finally tops
+// up quotes for eligible markets while respecting the shared fund pool.
+//
+// Reward accrual follows Polymarket's documented scoring function:
+//   `S(v, spread) = ((v - spread) / v)^2`
+//   `Q_min = max(min(Q_bid, Q_ask), max(Q_bid / c, Q_ask / c))`
+// sampled per tick and pro-rated by the elapsed wall-clock fraction of a day.
+
+/// The full set of state changes produced by a single simulation tick. The
+/// store persists it atomically via `apply_simulation_tick`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RewardSimulationOutcome {
+    pub account: RewardAccountState,
+    pub markets: Vec<RewardMarket>,
+    pub plans: Vec<RewardQuotePlan>,
+    /// New and modified managed orders, keyed by `id` (upserted).
+    pub orders: Vec<ManagedRewardOrder>,
+    /// Positions to upsert, keyed by `(account_id, token_id)`.
+    pub positions: Vec<RewardPosition>,
+    pub fills: Vec<RewardFill>,
+    pub events: Vec<RewardRiskEvent>,
+    pub report: RewardBotRunReport,
+}
+
+struct TickContext {
+    now: OffsetDateTime,
+    config: RewardBotConfig,
+    account: RewardAccountState,
+    orders: Vec<ManagedRewardOrder>,
+    positions: HashMap<String, RewardPosition>,
+    fills: Vec<RewardFill>,
+    events: Vec<RewardRiskEvent>,
+    trace_id: String,
+    seq: usize,
+    filled_orders: usize,
+    placed_orders: usize,
+    cancelled_orders: usize,
+    reward_accrued: Decimal,
+}
+
+/// Run a single simulation tick over the supplied inputs.
+///
+/// `open_orders` should contain the account's currently open-like orders and
+/// `positions` its non-zero inventory. `elapsed_seconds` is the wall-clock gap
+/// since the previous tick and drives reward accrual.
+#[must_use]
+pub fn run_reward_simulation_tick(
+    config: &RewardBotConfig,
+    account: RewardAccountState,
+    open_orders: Vec<ManagedRewardOrder>,
+    positions: Vec<RewardPosition>,
+    markets: &[RewardMarket],
+    books: &HashMap<String, RewardOrderBook>,
+    elapsed_seconds: i64,
+    trace_id: &str,
+) -> RewardSimulationOutcome {
+    let now = OffsetDateTime::now_utc();
+    let plans = build_reward_quote_plans(markets, books, config);
+    let eligible_plans = plans.iter().filter(|plan| plan.eligible).count();
+
+    let mut ctx = TickContext {
+        now,
+        config: config.clone(),
+        account,
+        orders: open_orders,
+        positions: positions
+            .into_iter()
+            .map(|position| (position.token_id.clone(), position))
+            .collect(),
+        fills: Vec::new(),
+        events: Vec::new(),
+        trace_id: trace_id.to_string(),
+        seq: 0,
+        filled_orders: 0,
+        placed_orders: 0,
+        cancelled_orders: 0,
+        reward_accrued: Decimal::ZERO,
+    };
+
+    let plan_index: HashMap<String, RewardQuotePlan> = plans
+        .iter()
+        .map(|plan| (plan.condition_id.clone(), plan.clone()))
+        .collect();
+
+    let elapsed = elapsed_seconds.clamp(1, 86_400);
+
+    ctx.reconcile_open_orders(&plan_index, books);
+    ctx.accrue_rewards(&plan_index, books, elapsed);
+    ctx.place_new_quotes(&plans);
+
+    ctx.account.tick_index += 1;
+    ctx.account.updated_at = now;
+
+    let report = RewardBotRunReport {
+        markets_scanned: markets.len(),
+        books_fetched: books.len(),
+        plans_built: plans.len(),
+        eligible_plans,
+        simulated_orders: ctx.placed_orders,
+        cancelled_orders: ctx.cancelled_orders,
+        filled_orders: ctx.filled_orders,
+        reward_accrued: ctx.reward_accrued,
+    };
+
+    RewardSimulationOutcome {
+        account: ctx.account,
+        markets: markets.to_vec(),
+        plans,
+        orders: ctx.orders,
+        positions: ctx.positions.into_values().collect(),
+        fills: ctx.fills,
+        events: ctx.events,
+        report,
+    }
+}
+
+include!("engine/reconcile.rs");
+include!("engine/fills.rs");
+include!("engine/quoting.rs");
+include!("engine/rewards_calc.rs");
+include!("engine/state.rs");

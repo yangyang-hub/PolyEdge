@@ -2,9 +2,10 @@ use async_trait::async_trait;
 use polyedge_application::{
     AuditLogEntry, AuditLogSink, IdempotencyBegin, IdempotencyRequest, IdempotencyStore,
     ManagedRewardOrder, ManagedRewardOrderStatus, ModeSnapshot, ModeStateStore,
-    ModeTransitionCommand, RewardBotConfig, RewardBotMode, RewardBotStore, RewardMarket,
-    RewardOrderSide, RewardPosition, RewardQuotePlan, RewardRiskEvent, RewardRiskSeverity,
-    RewardToken, RiskStateSnapshot, RiskStateStore,
+    ModeTransitionCommand, PostFillStrategy, RewardAccountState, RewardBotConfig, RewardBotMode,
+    RewardBotStore, RewardFill, RewardFillRole, RewardMarket, RewardOrderSide, RewardPosition,
+    RewardQuotePlan, RewardRiskEvent, RewardRiskSeverity, RewardSimulationOutcome, RewardToken,
+    RiskStateSnapshot, RiskStateStore,
 };
 use polyedge_domain::{
     AppError, ExposureRatio, IdempotencyStatus, Result, SignedUsdAmount, SystemMode,

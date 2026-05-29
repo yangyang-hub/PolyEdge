@@ -64,6 +64,76 @@ impl FromStr for RewardOrderSide {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+pub enum PostFillStrategy {
+    /// Rest a reverse sell order at `avg_price + exit_markup_cents` to take profit.
+    ExitAtMarkup,
+    /// Keep the filled inventory and keep quoting the market for more rewards.
+    HoldAndRequote,
+    /// Immediately cross the opposite book at market to flatten the position.
+    FlattenImmediately,
+}
+
+impl PostFillStrategy {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::ExitAtMarkup => "exit_at_markup",
+            Self::HoldAndRequote => "hold_and_requote",
+            Self::FlattenImmediately => "flatten_immediately",
+        }
+    }
+}
+
+impl FromStr for PostFillStrategy {
+    type Err = AppError;
+
+    fn from_str(value: &str) -> Result<Self> {
+        match value {
+            "exit_at_markup" => Ok(Self::ExitAtMarkup),
+            "hold_and_requote" => Ok(Self::HoldAndRequote),
+            "flatten_immediately" => Ok(Self::FlattenImmediately),
+            other => Err(AppError::invalid_input(
+                "REWARD_POST_FILL_STRATEGY_INVALID",
+                format!("unknown reward post-fill strategy: {other}"),
+            )),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RewardFillRole {
+    Maker,
+    Taker,
+}
+
+impl RewardFillRole {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Maker => "maker",
+            Self::Taker => "taker",
+        }
+    }
+}
+
+impl FromStr for RewardFillRole {
+    type Err = AppError;
+
+    fn from_str(value: &str) -> Result<Self> {
+        match value {
+            "maker" => Ok(Self::Maker),
+            "taker" => Ok(Self::Taker),
+            other => Err(AppError::invalid_input(
+                "REWARD_FILL_ROLE_INVALID",
+                format!("unknown reward fill role: {other}"),
+            )),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ManagedRewardOrderStatus {
     Planned,
     Open,
@@ -168,6 +238,23 @@ pub struct RewardBotConfig {
     pub max_global_position_usd: Decimal,
     pub exit_markup_cents: Decimal,
     pub cancel_on_fill: bool,
+    /// Total simulated fund pool shared across every market.
+    pub account_capital_usd: Decimal,
+    /// Fallback competition estimate used only when no fresh book is available
+    /// (e.g. dry-run): total market `Qmin ≈ our_qmin * reward_competition_factor`.
+    /// When live books exist, competing depth is measured directly from them.
+    pub reward_competition_factor: Decimal,
+    /// Polymarket single-sided divisor `c` in the `Qmin` formula.
+    pub single_sided_divisor_c: Decimal,
+    /// Per-tick fill probability for a resting order whose price merely touches the
+    /// opposite top of book (orders crossed through always fill).
+    pub fill_rate_per_tick: Decimal,
+    /// Fraction of an order's remaining size consumed by a single fill event.
+    pub max_fill_ratio: Decimal,
+    /// Cancel and re-quote when the midpoint drifts more than this many cents.
+    pub requote_drift_cents: Decimal,
+    /// What to do with inventory once a quote leg is filled.
+    pub post_fill_strategy: PostFillStrategy,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
@@ -212,6 +299,20 @@ pub struct RewardBotConfigPatch {
     pub exit_markup_cents: Option<Decimal>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cancel_on_fill: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account_capital_usd: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reward_competition_factor: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub single_sided_divisor_c: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fill_rate_per_tick: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_fill_ratio: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requote_drift_cents: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub post_fill_strategy: Option<PostFillStrategy>,
 }
 
 impl Default for RewardBotConfig {
@@ -237,6 +338,13 @@ impl Default for RewardBotConfig {
             max_global_position_usd: decimal("50"),
             exit_markup_cents: decimal("1"),
             cancel_on_fill: true,
+            account_capital_usd: decimal("1000"),
+            reward_competition_factor: decimal("4"),
+            single_sided_divisor_c: decimal("3"),
+            fill_rate_per_tick: decimal("0.2"),
+            max_fill_ratio: decimal("1"),
+            requote_drift_cents: decimal("2"),
+            post_fill_strategy: PostFillStrategy::ExitAtMarkup,
         }
     }
 }
@@ -272,6 +380,17 @@ impl RewardBotConfig {
         );
         self.exit_markup_cents =
             clamp_decimal(self.exit_markup_cents, Decimal::ZERO, decimal("50"));
+        self.account_capital_usd =
+            clamp_decimal(self.account_capital_usd, decimal("1"), decimal("100000000"));
+        self.reward_competition_factor =
+            clamp_decimal(self.reward_competition_factor, decimal("1"), decimal("10000"));
+        self.single_sided_divisor_c =
+            clamp_decimal(self.single_sided_divisor_c, decimal("1"), decimal("100"));
+        self.fill_rate_per_tick =
+            clamp_decimal(self.fill_rate_per_tick, Decimal::ZERO, Decimal::ONE);
+        self.max_fill_ratio = clamp_decimal(self.max_fill_ratio, decimal("0.01"), Decimal::ONE);
+        self.requote_drift_cents =
+            clamp_decimal(self.requote_drift_cents, decimal("0.1"), decimal("99"));
         self
     }
 
@@ -337,6 +456,27 @@ impl RewardBotConfig {
         }
         if let Some(cancel_on_fill) = patch.cancel_on_fill {
             next.cancel_on_fill = cancel_on_fill;
+        }
+        if let Some(account_capital_usd) = patch.account_capital_usd {
+            next.account_capital_usd = account_capital_usd;
+        }
+        if let Some(reward_competition_factor) = patch.reward_competition_factor {
+            next.reward_competition_factor = reward_competition_factor;
+        }
+        if let Some(single_sided_divisor_c) = patch.single_sided_divisor_c {
+            next.single_sided_divisor_c = single_sided_divisor_c;
+        }
+        if let Some(fill_rate_per_tick) = patch.fill_rate_per_tick {
+            next.fill_rate_per_tick = fill_rate_per_tick;
+        }
+        if let Some(max_fill_ratio) = patch.max_fill_ratio {
+            next.max_fill_ratio = max_fill_ratio;
+        }
+        if let Some(requote_drift_cents) = patch.requote_drift_cents {
+            next.requote_drift_cents = requote_drift_cents;
+        }
+        if let Some(post_fill_strategy) = patch.post_fill_strategy {
+            next.post_fill_strategy = post_fill_strategy;
         }
         next.normalized()
     }
@@ -424,6 +564,13 @@ pub struct ManagedRewardOrder {
     pub status: ManagedRewardOrderStatus,
     pub scoring: bool,
     pub reason: String,
+    #[serde(default)]
+    pub filled_size: Decimal,
+    #[serde(default)]
+    pub reward_earned: Decimal,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(with = "time::serde::rfc3339::option")]
+    pub last_scored_at: Option<OffsetDateTime>,
     #[serde(with = "time::serde::rfc3339")]
     pub created_at: OffsetDateTime,
     #[serde(with = "time::serde::rfc3339")]
@@ -441,6 +588,64 @@ pub struct RewardPosition {
     pub realized_pnl: Decimal,
     #[serde(with = "time::serde::rfc3339")]
     pub updated_at: OffsetDateTime,
+}
+
+/// Simulated fund-pool ledger shared across every market the bot quotes.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RewardAccountState {
+    pub account_id: String,
+    /// Total deposited capital (the configured fund pool).
+    pub capital_usd: Decimal,
+    /// Cash not reserved by resting buy orders or locked in inventory.
+    pub available_usd: Decimal,
+    /// Notional currently reserved by open buy orders.
+    pub reserved_usd: Decimal,
+    pub realized_pnl: Decimal,
+    pub reward_earned_usd: Decimal,
+    pub fees_paid: Decimal,
+    /// Monotonic per-account tick counter; also seeds the deterministic fill RNG.
+    pub tick_index: i64,
+    #[serde(with = "time::serde::rfc3339")]
+    pub updated_at: OffsetDateTime,
+}
+
+impl RewardAccountState {
+    #[must_use]
+    pub fn fresh(account_id: &str, capital_usd: Decimal, now: OffsetDateTime) -> Self {
+        Self {
+            account_id: account_id.to_string(),
+            capital_usd,
+            available_usd: capital_usd,
+            reserved_usd: Decimal::ZERO,
+            realized_pnl: Decimal::ZERO,
+            reward_earned_usd: Decimal::ZERO,
+            fees_paid: Decimal::ZERO,
+            tick_index: 0,
+            updated_at: now,
+        }
+    }
+}
+
+/// One simulated execution against a managed order (maker fill) or a taker
+/// flatten. Drives the "吃单" (order-taken) detail view on the frontend.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RewardFill {
+    pub id: String,
+    pub order_id: String,
+    pub account_id: String,
+    pub condition_id: String,
+    pub token_id: String,
+    pub outcome: String,
+    pub side: RewardOrderSide,
+    pub price: Decimal,
+    pub size: Decimal,
+    pub notional_usd: Decimal,
+    pub role: RewardFillRole,
+    pub realized_pnl: Decimal,
+    pub reason: String,
+    pub trace_id: String,
+    #[serde(with = "time::serde::rfc3339")]
+    pub created_at: OffsetDateTime,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -484,10 +689,12 @@ pub struct RewardBotStatus {
 pub struct RewardBotSnapshot {
     pub config: RewardBotConfig,
     pub status: RewardBotStatus,
+    pub account: RewardAccountState,
     pub markets: Vec<RewardMarket>,
     pub quote_plans: Vec<RewardQuotePlan>,
     pub orders: Vec<ManagedRewardOrder>,
     pub positions: Vec<RewardPosition>,
+    pub fills: Vec<RewardFill>,
     pub events: Vec<RewardRiskEvent>,
 }
 
@@ -499,6 +706,8 @@ pub struct RewardBotRunReport {
     pub eligible_plans: usize,
     pub simulated_orders: usize,
     pub cancelled_orders: usize,
+    pub filled_orders: usize,
+    pub reward_accrued: Decimal,
 }
 
 #[derive(Debug, Clone)]

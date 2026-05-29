@@ -17,6 +17,8 @@ async fn poll_reward_bot(
         eligible_plans: 0,
         simulated_orders: 0,
         cancelled_orders: 0,
+        filled_orders: 0,
+        reward_accrued: rust_decimal::Decimal::ZERO,
     };
     let mut cycles = 0usize;
     let interval = Duration::from_secs(state.settings.rewards.poll_interval_secs.max(1));
@@ -30,6 +32,8 @@ async fn poll_reward_bot(
         total.eligible_plans += report.eligible_plans;
         total.simulated_orders += report.simulated_orders;
         total.cancelled_orders += report.cancelled_orders;
+        total.filled_orders += report.filled_orders;
+        total.reward_accrued += report.reward_accrued;
         cycles += 1;
 
         info!(

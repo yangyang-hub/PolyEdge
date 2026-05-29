@@ -34,3 +34,11 @@ export async function cancelRewardBotOrders(): Promise<ApiResponse<RewardBotSnap
     body: {},
   });
 }
+
+export async function resetRewardBot(): Promise<ApiResponse<RewardBotSnapshotDto>> {
+  return fetchWriteContract<ApiResponse<RewardBotSnapshotDto>>("/api/v1/rewards-bot/reset", {
+    method: "POST",
+    idempotencyKey: `reward-reset-${crypto.randomUUID()}`,
+    body: {},
+  });
+}

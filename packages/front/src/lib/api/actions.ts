@@ -10,6 +10,7 @@ import type {
 import { PolyEdgeApiError } from "@/lib/api/base";
 import {
   cancelRewardBotOrders,
+  resetRewardBot,
   runRewardBotOnce,
   updateRewardBotConfig,
 } from "@/lib/api/rewards";
@@ -150,6 +151,17 @@ const rewardConfigSchema = z.object({
   max_global_position_usd: decimalNumber.min(1),
   exit_markup_cents: decimalNumber.min(0).max(50),
   cancel_on_fill: z.boolean(),
+  account_capital_usd: decimalNumber.min(1),
+  reward_competition_factor: decimalNumber.min(1).max(10_000),
+  single_sided_divisor_c: decimalNumber.min(1).max(100),
+  fill_rate_per_tick: decimalNumber.min(0).max(1),
+  max_fill_ratio: decimalNumber.min(0.01).max(1),
+  requote_drift_cents: decimalNumber.min(0.1).max(99),
+  post_fill_strategy: z.enum([
+    "exit_at_markup",
+    "hold_and_requote",
+    "flatten_immediately",
+  ]),
 }).refine((value) => value.max_midpoint > value.min_midpoint, {
   message: "Max midpoint must be greater than min midpoint.",
   path: ["max_midpoint"],
@@ -356,6 +368,24 @@ export async function cancelRewardBotOrdersAction(): Promise<RewardBotActionResu
     };
   } catch (error) {
     return apiActionFailure(error, "Reward order cancellation failed.");
+  }
+}
+
+export async function resetRewardBotAction(): Promise<RewardBotActionResult> {
+  try {
+    const response = await resetRewardBot();
+
+    return {
+      ...createActionSuccessResult("Reward simulation reset.", {
+        requestId: response.meta.request_id,
+        traceId: response.meta.trace_id,
+        operationId: `reward_reset_${crypto.randomUUID().slice(0, 8)}`,
+        status: "completed",
+      }),
+      snapshot: response.data,
+    };
+  } catch (error) {
+    return apiActionFailure(error, "Reward simulation reset failed.");
   }
 }
 

@@ -301,6 +301,13 @@ pub fn build_app(state: AppState) -> Router {
             ),
         )
         .route(
+            "/api/v1/rewards-bot/reset",
+            axum::routing::post(reset_reward_bot).route_layer(middleware::from_fn_with_state(
+                state.clone(),
+                require_console_write_auth,
+            )),
+        )
+        .route(
             "/api/v1/runtime-config",
             get(read_runtime_config).route_layer(middleware::from_fn_with_state(
                 state.clone(),

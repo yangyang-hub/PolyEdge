@@ -22,6 +22,22 @@ pub trait RewardBotStore: Send + Sync {
     async fn list_positions(&self, limit: u16) -> Result<Vec<RewardPosition>>;
     async fn list_events(&self, limit: u16) -> Result<Vec<RewardRiskEvent>>;
     async fn log_event(&self, event: RewardRiskEvent) -> Result<()>;
+
+    /// Load the simulated fund-pool ledger, seeding a fresh one from `config` if absent.
+    async fn load_account_state(&self, config: &RewardBotConfig) -> Result<RewardAccountState>;
+    /// Currently open-like orders for an account (planned/open/exit_pending).
+    async fn list_open_orders(&self, account_id: &str) -> Result<Vec<ManagedRewardOrder>>;
+    /// Non-zero inventory for an account.
+    async fn list_account_positions(&self, account_id: &str) -> Result<Vec<RewardPosition>>;
+    async fn list_fills(&self, limit: u16) -> Result<Vec<RewardFill>>;
+    /// Persist a full simulation tick (orders, fills, positions, ledger, events) atomically.
+    async fn apply_simulation_tick(
+        &self,
+        outcome: &RewardSimulationOutcome,
+        trace_id: &str,
+    ) -> Result<()>;
+    /// Reset the simulation: cancel orders, clear fills/positions, reset the ledger to capital.
+    async fn reset_simulation(&self, config: &RewardBotConfig, trace_id: &str) -> Result<()>;
 }
 
 #[derive(Clone)]
@@ -51,10 +67,12 @@ impl RewardBotService {
 
     pub async fn snapshot(&self) -> Result<RewardBotSnapshot> {
         let config = self.read_config().await?;
+        let account = self.store.load_account_state(&config).await?;
         let markets = self.store.list_markets(DEFAULT_LIST_LIMIT).await?;
         let quote_plans = self.store.list_quote_plans(DEFAULT_LIST_LIMIT).await?;
         let orders = self.store.list_orders(200).await?;
         let positions = self.store.list_positions(200).await?;
+        let fills = self.store.list_fills(200).await?;
         let events = self.store.list_events(100).await?;
         let last_scan_at = markets.iter().map(|market| market.updated_at).max();
         let last_run_at = quote_plans.iter().map(|plan| plan.updated_at).max();
@@ -82,10 +100,12 @@ impl RewardBotService {
                 error,
             },
             config,
+            account,
             markets,
             quote_plans,
             orders,
             positions,
+            fills,
             events,
         })
     }
@@ -118,38 +138,90 @@ impl RewardBotService {
         force_orders: bool,
     ) -> Result<RewardBotRunReport> {
         let config = self.read_config().await?;
-        let plans = build_reward_quote_plans(&markets, &books, &config);
-        let eligible_plans = plans.iter().filter(|plan| plan.eligible).count();
 
-        self.store.upsert_markets(&markets).await?;
-        self.store.save_quote_plans(&plans).await?;
-
-        let mut cancelled_orders = 0;
-        let mut simulated_orders = 0;
-
-        if config.enabled || force_orders {
-            if config.mode == RewardBotMode::Live {
-                self.store
-                    .log_event(new_risk_event(
-                        Some(config.account_id.clone()),
-                        None,
-                        None,
-                        "reward_bot_live_unsupported",
-                        RewardRiskSeverity::Warning,
-                        "Rewards bot live mode is not wired in PolyEdge yet; generated a simulation instead.",
-                        json!({ "trace_id": trace_id }),
-                    ))
-                    .await?;
-            }
-
-            let orders = build_simulated_orders(&config, &plans, trace_id);
-            cancelled_orders = self
-                .store
-                .replace_simulated_orders(&config.account_id, &orders, trace_id)
+        // When the bot is neither enabled nor manually triggered, just refresh
+        // the market scan + quote plans without touching orders or the ledger.
+        if !config.enabled && !force_orders {
+            let plans = build_reward_quote_plans(&markets, &books, &config);
+            let eligible_plans = plans.iter().filter(|plan| plan.eligible).count();
+            self.store.upsert_markets(&markets).await?;
+            self.store.save_quote_plans(&plans).await?;
+            self.log_run_summary(&config, trace_id, markets.len(), books.len(), &plans, 0, 0, 0)
                 .await?;
-            simulated_orders = orders.len();
+            return Ok(RewardBotRunReport {
+                markets_scanned: markets.len(),
+                books_fetched: books.len(),
+                plans_built: plans.len(),
+                eligible_plans,
+                simulated_orders: 0,
+                cancelled_orders: 0,
+                filled_orders: 0,
+                reward_accrued: Decimal::ZERO,
+            });
         }
 
+        if config.mode == RewardBotMode::Live {
+            self.store
+                .log_event(new_risk_event(
+                    Some(config.account_id.clone()),
+                    None,
+                    None,
+                    "reward_bot_live_unsupported",
+                    RewardRiskSeverity::Warning,
+                    "Rewards bot live mode is not wired in PolyEdge yet; generated a simulation instead.",
+                    json!({ "trace_id": trace_id }),
+                ))
+                .await?;
+        }
+
+        let account = self.store.load_account_state(&config).await?;
+        let open_orders = self.store.list_open_orders(&account.account_id).await?;
+        let positions = self
+            .store
+            .list_account_positions(&account.account_id)
+            .await?;
+        let elapsed_seconds = (OffsetDateTime::now_utc() - account.updated_at).whole_seconds();
+
+        let outcome = run_reward_simulation_tick(
+            &config,
+            account,
+            open_orders,
+            positions,
+            &markets,
+            &books,
+            elapsed_seconds,
+            trace_id,
+        );
+        let report = outcome.report.clone();
+        self.store.apply_simulation_tick(&outcome, trace_id).await?;
+
+        self.log_run_summary(
+            &config,
+            trace_id,
+            markets.len(),
+            books.len(),
+            &outcome.plans,
+            report.simulated_orders,
+            report.cancelled_orders,
+            report.filled_orders,
+        )
+        .await?;
+
+        Ok(report)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn log_run_summary(
+        &self,
+        config: &RewardBotConfig,
+        trace_id: &str,
+        markets_scanned: usize,
+        books_fetched: usize,
+        plans: &[RewardQuotePlan],
+        placed: usize,
+        cancelled: usize,
+        filled: usize,
+    ) -> Result<()> {
         self.store
             .log_event(new_risk_event(
                 Some(config.account_id.clone()),
@@ -157,27 +229,35 @@ impl RewardBotService {
                 None,
                 "reward_bot_simulation_run",
                 RewardRiskSeverity::Info,
-                "Completed rewards quote-plan simulation.",
+                "Completed rewards simulation tick.",
                 json!({
                     "trace_id": trace_id,
-                    "markets_scanned": markets.len(),
-                    "books_fetched": books.len(),
+                    "markets_scanned": markets_scanned,
+                    "books_fetched": books_fetched,
                     "plans_built": plans.len(),
-                    "eligible_plans": eligible_plans,
-                    "simulated_orders": simulated_orders,
-                    "cancelled_orders": cancelled_orders,
+                    "eligible_plans": plans.iter().filter(|plan| plan.eligible).count(),
+                    "placed_orders": placed,
+                    "cancelled_orders": cancelled,
+                    "filled_orders": filled,
                 }),
             ))
-            .await?;
+            .await
+    }
 
-        Ok(RewardBotRunReport {
-            markets_scanned: markets.len(),
-            books_fetched: books.len(),
-            plans_built: plans.len(),
-            eligible_plans,
-            simulated_orders,
-            cancelled_orders,
-        })
+    pub async fn reset_simulation(&self, trace_id: &str) -> Result<()> {
+        let config = self.read_config().await?;
+        self.store.reset_simulation(&config, trace_id).await?;
+        self.store
+            .log_event(new_risk_event(
+                Some(config.account_id.clone()),
+                None,
+                None,
+                "reward_bot_reset",
+                RewardRiskSeverity::Info,
+                "Reset rewards simulation account, orders, positions and fills.",
+                json!({ "trace_id": trace_id, "capital_usd": config.account_capital_usd }),
+            ))
+            .await
     }
 
     pub async fn cancel_all_orders(

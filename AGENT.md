@@ -1,6 +1,6 @@
 # AGENT.md
 
-最后更新：2026-05-24
+最后更新：2026-05-29
 
 ## 文件用途
 
@@ -16,7 +16,7 @@
 
 - `doc/`：系统设计、API 契约、鉴权、存储、前后端计划等文档。
 - `packages/front/`：`Next.js 16 + React 19 + Tailwind v4 + shadcn/ui` 控制台前端。
-- `packages/backend/`：Rust workspace，包含 `api / worker / replay` apps，以及 `application / connectors / contracts / domain / infrastructure` crates。
+- `packages/backend/`：Rust workspace，包含 `api / worker / replay` apps，以及 `application / connectors / contracts / domain / infrastructure` crates。后端代码规范（分层架构、`include!` 模块化、文件行数上限、公共代码提取、测试组织）见 [packages/backend/AGENTS.md](./packages/backend/AGENTS.md)，写或改后端 Rust 代码前必须遵守。
 - `deploy/`：Docker Compose 部署模板和环境变量示例。
 - `scripts/`：构建、部署、冒烟脚本。
 - `bin/`：部署镜像复制的预构建后端二进制。
@@ -32,10 +32,10 @@
 - 后端 API 已覆盖 markets、events、news、evidences、signals、orders、trades、positions、pricing、arbitrage、rewards bot、risk、approvals、system、SSE 和 connector callback 等主路径。
 - `polyedge-worker` 支持 news ingest、news promotion、arbitrage radar、rewards bot 模拟、execution drain、paper reconciliation、Polymarket order/fill/user-event 任务。
 - 套利雷达是只读链路：发现、记录、校验、分析、展示和 SSE 推送已具备，但不会创建 execution request 或订单。
-- Rewards bot 已接入模拟链路：扫描 Polymarket CLOB rewards 当前市场、拉取候选 token 盘口、生成 YES/NO post-only 双边买单计划，并可写入模拟托管挂单；当前不会实盘下单。
+- Rewards bot 已是有状态的逐 tick 做市模拟引擎：扫描 Polymarket CLOB rewards 当前市场、拉取候选盘口、生成 YES/NO post-only 双边买单计划，并维护共享资金池账本（capital/available/reserved/realized_pnl/reward_earned）、模拟成交（盘口穿透必成交 + 触顶概率成交，确定性伪随机可复现）、成交后策略（加价出场 / 持有续挂 / 市价平仓 / 成交即撤对侧）、撤单策略（中点漂移、掉出 max_spread）、以及忠实复刻 Polymarket Qmin 公式的做市奖励金额累加；当前仍不会实盘下单。
 - Polymarket connector 已迁移到 CLOB V2 Rust crate：`packages/backend/Cargo.toml` 保留 dependency key `polymarket-client-sdk`，实际指向 `polymarket_client_sdk_v2`。
 - Polymarket 运行时不再提供 mock mode；市场列表走 Gamma 实时数据，私有订单/成交任务需要真实凭证、真实账户、小额演练和运维 runbook。
-- 数据库迁移目前到 `0015_reward_bot.sql`。
+- 数据库迁移目前到 `0019_reward_simulation.sql`。
 
 ## 主要缺口
 
@@ -43,7 +43,7 @@
 - 内部 JWT 签名 helper 已有代码路径，但当前不会从 `off` 签发可信令牌。
 - `signals / risk / events` SSE 仍是 snapshot-backed stream；`arbitrage` 已是 outbox-backed 增量流，但尚未统一到全资源事件总线。
 - 新闻源可以抓取、去重、提升为 events/evidences，但尚未自动生成 signals。
-- Rewards bot 当前只做模拟；尚未接入真实 post-only 下单、订单计分查询、成交处理、退出卖单或真实库存同步。
+- Rewards bot 当前只做模拟：已具备资金池账本、成交模拟、Qmin 奖励金额计算、成交后处理与撤单策略，前端 `/rewards` 提供 Run / Cancel / Reset 与事件分类（挂单/撤单/吃单/奖励）视图；尚未接入真实 post-only 下单、订单计分查询、真实成交处理或真实库存同步。
 - Polymarket live 链路已具备骨架和 CLOB V2 SDK，仍需真实资金链路验证。
 
 ## 运行命令

@@ -55,6 +55,11 @@ export type ManagedRewardOrderStatus =
   | "exit_pending"
   | "error";
 export type RewardRiskSeverity = "info" | "warning" | "critical";
+export type PostFillStrategy =
+  | "exit_at_markup"
+  | "hold_and_requote"
+  | "flatten_immediately";
+export type RewardFillRole = "maker" | "taker";
 export type DecimalValue = string | number;
 
 export type MarketDto = ResourceVersion & {
@@ -338,6 +343,13 @@ export type RewardBotConfigDto = {
   max_global_position_usd: DecimalValue;
   exit_markup_cents: DecimalValue;
   cancel_on_fill: boolean;
+  account_capital_usd: DecimalValue;
+  reward_competition_factor: DecimalValue;
+  single_sided_divisor_c: DecimalValue;
+  fill_rate_per_tick: DecimalValue;
+  max_fill_ratio: DecimalValue;
+  requote_drift_cents: DecimalValue;
+  post_fill_strategy: PostFillStrategy;
 };
 
 export type RewardBotConfigPatchDto = Partial<RewardBotConfigDto>;
@@ -399,8 +411,41 @@ export type ManagedRewardOrderDto = {
   status: ManagedRewardOrderStatus;
   scoring: boolean;
   reason: string;
+  filled_size?: DecimalValue;
+  reward_earned?: DecimalValue;
+  last_scored_at?: string | null;
   created_at: string;
   updated_at: string;
+};
+
+export type RewardAccountStateDto = {
+  account_id: string;
+  capital_usd: DecimalValue;
+  available_usd: DecimalValue;
+  reserved_usd: DecimalValue;
+  realized_pnl: DecimalValue;
+  reward_earned_usd: DecimalValue;
+  fees_paid: DecimalValue;
+  tick_index: number;
+  updated_at: string;
+};
+
+export type RewardFillDto = {
+  id: string;
+  order_id: string;
+  account_id: string;
+  condition_id: string;
+  token_id: string;
+  outcome: string;
+  side: RewardOrderSide;
+  price: DecimalValue;
+  size: DecimalValue;
+  notional_usd: DecimalValue;
+  role: RewardFillRole;
+  realized_pnl: DecimalValue;
+  reason: string;
+  trace_id: string;
+  created_at: string;
 };
 
 export type RewardPositionDto = {
@@ -443,10 +488,12 @@ export type RewardBotStatusDto = {
 export type RewardBotSnapshotDto = {
   config: RewardBotConfigDto;
   status: RewardBotStatusDto;
+  account: RewardAccountStateDto;
   markets: RewardMarketDto[];
   quote_plans: RewardQuotePlanDto[];
   orders: ManagedRewardOrderDto[];
   positions: RewardPositionDto[];
+  fills: RewardFillDto[];
   events: RewardRiskEventDto[];
 };
 

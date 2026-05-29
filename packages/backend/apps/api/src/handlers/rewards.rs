@@ -77,3 +77,21 @@ async fn cancel_reward_bot_orders(
 
     Ok(Json(ApiResponse::new(snapshot, auth.request_id, trace_id)))
 }
+
+async fn reset_reward_bot(
+    Extension(auth): Extension<AuthContext>,
+    State(state): State<AppState>,
+) -> std::result::Result<Json<ApiResponse<RewardBotSnapshot>>, HttpError> {
+    let trace_id = new_trace_id();
+    state
+        .reward_bot_service
+        .reset_simulation(&trace_id)
+        .await
+        .map_err(|error| HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone()))?;
+    let snapshot =
+        state.reward_bot_service.snapshot().await.map_err(|error| {
+            HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone())
+        })?;
+
+    Ok(Json(ApiResponse::new(snapshot, auth.request_id, trace_id)))
+}

@@ -52,12 +52,13 @@ pub use orderbook_cache::{
     BookSource, CachedBookLevel, CachedOrderBook, OrderbookCache,
 };
 pub use rewards::{
-    ManagedRewardOrder, ManagedRewardOrderStatus, RewardBookLevel, RewardBotConfig,
-    RewardBotConfigPatch, RewardBotMode, RewardBotRunReport, RewardBotService, RewardBotSnapshot,
-    RewardBotStatus, RewardBotStore, RewardMarket, RewardOrderBook, RewardOrderSide,
-    RewardPosition, RewardQuoteLeg, RewardQuotePlan, RewardRiskEvent, RewardRiskSeverity,
-    RewardToken, build_reward_quote_plans, new_risk_event, select_reward_book_token_ids,
-    validate_reward_list_limit,
+    ManagedRewardOrder, ManagedRewardOrderStatus, PostFillStrategy, RewardAccountState,
+    RewardBookLevel, RewardBotConfig, RewardBotConfigPatch, RewardBotMode, RewardBotRunReport,
+    RewardBotService, RewardBotSnapshot, RewardBotStatus, RewardBotStore, RewardFill,
+    RewardFillRole, RewardMarket, RewardOrderBook, RewardOrderSide, RewardPosition, RewardQuoteLeg,
+    RewardQuotePlan, RewardRiskEvent, RewardRiskSeverity, RewardSimulationOutcome, RewardToken,
+    build_reward_quote_plans, new_risk_event, run_reward_simulation_tick,
+    select_reward_book_token_ids, validate_reward_list_limit,
 };
 pub use risk::{
     ApproveSignalCommand, ApproveSignalReceipt, KillSwitchReceipt, RejectSignalCommand,
