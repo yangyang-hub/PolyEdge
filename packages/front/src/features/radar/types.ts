@@ -5,6 +5,9 @@ import type {
 } from "@/lib/contracts/dto";
 import type { AccentTone, Tone } from "@/lib/formatters";
 
+export type RadarFilter = "all" | "binary_buy_both" | "binary_sell_both";
+export type RadarView = "active" | "validated" | "rejected" | "history";
+
 export type RadarOpportunityItem = {
   id: string;
   marketId: string;

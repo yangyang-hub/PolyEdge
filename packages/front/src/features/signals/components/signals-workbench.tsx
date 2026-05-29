@@ -1,7 +1,7 @@
 "use client";
 
 import { startTransition, useDeferredValue, useEffect, useState, useTransition } from "react";
-import { ChevronRight, Filter, Send } from "lucide-react";
+import { Filter } from "lucide-react";
 import { toast } from "sonner";
 
 import { PageHeader } from "@/components/shared/page-header";
@@ -9,15 +9,6 @@ import { ActionDialog } from "@/components/shared/action-dialog";
 import { useConsoleRealtimeChannel } from "@/components/shared/console-realtime-provider";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-  SheetTrigger,
-} from "@/components/ui/sheet";
-import { MeterBar } from "@/components/shared/meter-bar";
 import { OperationFeedbackBanner } from "@/components/shared/operation-feedback-banner";
 import { StatusPill } from "@/components/shared/status-pill";
 import { WorkbenchDetailPane, WorkbenchLayout } from "@/components/shared/workbench-layout";
@@ -25,219 +16,18 @@ import { WorkbenchSegmentedControl } from "@/components/shared/workbench-segment
 import { useI18n } from "@/lib/i18n/client";
 import { localizeGeneratedCopy } from "@/lib/i18n/generated-copy";
 import { normalizeOptionalRuntimeMode } from "@/lib/runtime-mode";
-import type { SignalStreamPayload } from "@/lib/contracts/realtime";
-import { isKeyboardSelect } from "@/lib/keyboard";
-import {
-  formatPercentFromRatio,
-  formatSignedFixed,
-  signalStateTone,
-  type RealtimeTone,
-  uppercaseEnum,
-} from "@/lib/realtime-formatters";
 import { upsertStreamedItem } from "@/lib/signal-stream-utils";
 import { submitSignalExecutionAction } from "@/lib/api/actions";
 import type { OperationActionResult } from "@/lib/api/actions";
-import type { RuntimeMode, SignalLifecycleState } from "@/lib/contracts/dto";
 
-type SignalTone = RealtimeTone;
-
-type SignalItem = {
-  id: string;
-  version: number;
-  lifecycleState: SignalLifecycleState;
-  marketQuestion: string;
-  contextLabel: string;
-  confidenceValue: number;
-  side: string;
-  fairPrice: string;
-  marketPrice: string;
-  edge: string;
-  confidence: string;
-  confidenceWidth: string;
-  stateLabel: string;
-  stateTone: SignalTone;
-  approvedAt: string | null;
-  rejectedAt: string | null;
-  reason: string;
-  riskDecision: string;
-  evidenceLines: string[];
-  isSelected: boolean;
-};
-
-type SelectedSignal = {
-  id: string;
-  version: number;
-  lifecycleState: SignalLifecycleState;
-  marketQuestion: string;
-  confidence: string;
-  marketPrice: string;
-  fairPrice: string;
-  edge: string;
-  stateLabel: string;
-  stateTone: SignalTone;
-  approvedAt: string | null;
-  rejectedAt: string | null;
-  reason: string;
-  riskDecision: string;
-  evidenceLines: string[];
-};
-
-type SignalsWorkbenchProps = {
-  activeCount: number;
-  runtimeControls: RuntimeControls;
-  signals: SignalItem[];
-  selectedSignal: SelectedSignal;
-};
-
-type RuntimeControls = {
-  mode: RuntimeMode;
-  modeLabel: string;
-  killSwitch: boolean;
-};
-
-type SignalFilter = "all" | "high_confidence";
-type SignalActionDialog = "execution" | null;
-
-function buildSignalItem(
-  payload: SignalStreamPayload,
-  current: SignalItem | undefined,
-  dictionary: ReturnType<typeof useI18n>["dictionary"],
-  enumLabel: (value: string) => string,
-): SignalItem {
-  const confidenceValue = payload.confidence
-    ? Number.parseFloat(payload.confidence)
-    : current?.confidenceValue ?? 0;
-
-  return {
-    id: payload.signal_id,
-    version: payload.version,
-    lifecycleState: payload.lifecycle_state,
-    marketQuestion: payload.market_question ?? current?.marketQuestion ?? payload.market_id,
-    contextLabel: payload.context_label ?? current?.contextLabel ?? dictionary.signals.liveContextFallback,
-    confidenceValue,
-    side: payload.side ? uppercaseEnum(payload.side) : current?.side ?? "YES",
-    fairPrice: payload.fair_price ?? current?.fairPrice ?? "0.00",
-    marketPrice: payload.market_price ?? current?.marketPrice ?? "0.00",
-    edge: payload.edge ? formatSignedFixed(payload.edge) : current?.edge ?? "0.00",
-    confidence: payload.confidence ? formatPercentFromRatio(payload.confidence) : current?.confidence ?? "0%",
-    confidenceWidth: payload.confidence
-      ? formatPercentFromRatio(payload.confidence)
-      : current?.confidenceWidth ?? "0%",
-    stateLabel: enumLabel(payload.lifecycle_state),
-    stateTone: signalStateTone(payload.lifecycle_state),
-    approvedAt: current?.approvedAt ?? null,
-    rejectedAt: current?.rejectedAt ?? null,
-    reason: payload.reason ?? current?.reason ?? dictionary.signals.reasonFallback,
-    riskDecision: payload.risk_decision ?? current?.riskDecision ?? dictionary.signals.riskFallback,
-    evidenceLines: payload.evidence_lines ?? current?.evidenceLines ?? [],
-    isSelected: current?.isSelected ?? false,
-  };
-}
-
-function hasExecutableLifecycle(signal: SignalItem | SelectedSignal): boolean {
-  return signal.lifecycleState === "new" || signal.lifecycleState === "active";
-}
-
-function canSubmitExecution(signal: SignalItem | SelectedSignal, controls: RuntimeControls): boolean {
-  if (controls.killSwitch || signal.rejectedAt || !hasExecutableLifecycle(signal)) {
-    return false;
-  }
-
-  return controls.mode === "paper_trade" || controls.mode === "live_auto";
-}
-
-function SignalsDetailPanel({
-  signal,
-  runtimeControls,
-  onOpenAction,
-}: {
-  signal: SignalItem | SelectedSignal;
-  runtimeControls: RuntimeControls;
-  onOpenAction?: (signalId: string, dialog: Exclude<SignalActionDialog, null>) => void;
-}) {
-  const { dictionary } = useI18n();
-  const executionEnabled = canSubmitExecution(signal, runtimeControls);
-
-  return (
-    <div className="space-y-4">
-      <div className="space-y-2">
-        <p className="font-heading text-lg font-bold tracking-tight text-foreground">
-          {signal.marketQuestion}
-        </p>
-        <div className="flex flex-wrap gap-2">
-          <StatusPill tone={signal.stateTone}>{signal.stateLabel}</StatusPill>
-          <StatusPill tone="primary">{signal.confidence}</StatusPill>
-          <StatusPill tone={runtimeControls.killSwitch ? "danger" : "warning"}>{runtimeControls.modeLabel}</StatusPill>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-3 gap-3">
-        <div className="rounded-md bg-accent/45 p-3">
-          <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">
-            {dictionary.signals.marketPrice}
-          </p>
-          <p className="mt-2 font-mono text-lg text-foreground">{signal.marketPrice}</p>
-        </div>
-        <div className="rounded-md bg-accent/45 p-3">
-          <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">
-            {dictionary.signals.posterior}
-          </p>
-          <p className="mt-2 font-mono text-lg text-primary">{signal.fairPrice}</p>
-        </div>
-        <div className="rounded-md bg-accent/45 p-3">
-          <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">
-            {dictionary.signals.edge}
-          </p>
-          <p className="mt-2 font-mono text-lg text-foreground">{signal.edge}</p>
-        </div>
-      </div>
-
-      <div className="rounded-md bg-popover/70 p-4">
-        <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">
-          {dictionary.signals.reasonTrace}
-        </p>
-        <p className="mt-3 text-sm text-foreground">{signal.reason}</p>
-      </div>
-
-      <div className="rounded-md bg-popover/70 p-4">
-        <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">
-          {dictionary.signals.riskDecision}
-        </p>
-        <p className="mt-3 text-sm text-muted-foreground">{signal.riskDecision}</p>
-      </div>
-
-      <div className="rounded-md bg-popover/70 p-4">
-        <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">
-          {dictionary.signals.evidenceStack}
-        </p>
-        <ul className="mt-3 space-y-3">
-          {signal.evidenceLines.map((line, index) => (
-            <li key={line} className="space-y-2">
-              <p className="text-sm text-foreground">{line}</p>
-              <MeterBar
-                value={`${Math.max(30, 85 - index * 18)}%`}
-                tone={index === 0 ? "success" : index === 1 ? "warning" : "primary"}
-                trackClassName="h-1 bg-background"
-              />
-            </li>
-          ))}
-        </ul>
-      </div>
-
-      <div className="grid gap-2">
-        <Button
-          variant="outline"
-          className="rounded-sm border-white/10 bg-accent/40 text-foreground hover:bg-accent"
-          disabled={!executionEnabled || !onOpenAction}
-          onClick={() => onOpenAction?.(signal.id, "execution")}
-        >
-          <Send className="size-3.5" />
-          {dictionary.signals.submitExecution}
-        </Button>
-      </div>
-    </div>
-  );
-}
+import { buildSignalItem, canSubmitExecution } from "@/features/signals/lib/signals-helpers";
+import type {
+  SignalActionDialog,
+  SignalFilter,
+  SignalsWorkbenchProps,
+} from "@/features/signals/types";
+import { SignalsDetailPanel } from "./signals-detail-panel";
+import { SignalsTable } from "./signals-table";
 
 export function SignalsWorkbench({
   signals,
@@ -467,132 +257,13 @@ export function SignalsWorkbench({
             </div>
           </div>
 
-          {filteredSignals.length > 0 ? (
-            <div className="overflow-x-auto">
-              <table className="w-full text-left">
-                <thead className="bg-sidebar/60">
-                  <tr className="text-[10px] font-bold uppercase tracking-[0.2em] text-muted-foreground">
-                    <th className="px-5 py-3">{dictionary.signals.market}</th>
-                    <th className="px-4 py-3">{dictionary.signals.side}</th>
-                    <th className="px-4 py-3">{dictionary.signals.fair}</th>
-                    <th className="px-4 py-3">{dictionary.signals.marketPrice}</th>
-                    <th className="px-4 py-3 text-right">{dictionary.signals.edge}</th>
-                    <th className="px-4 py-3">{dictionary.dashboard.tableConfidence}</th>
-                    <th className="px-4 py-3">{dictionary.dashboard.tableState}</th>
-                    <th className="px-5 py-3 text-right">{dictionary.signals.action}</th>
-                  </tr>
-                </thead>
-                <tbody className="text-sm">
-                  {filteredSignals.map((signal) => (
-                    <tr
-                      key={signal.id}
-                      tabIndex={0}
-                      onClick={() => selectSignal(signal.id)}
-                      onKeyDown={(event) => {
-                        if (isKeyboardSelect(event)) {
-                          event.preventDefault();
-                          selectSignal(signal.id);
-                        }
-                      }}
-                      className={
-                        signal.id === selectedSignal?.id
-                          ? "cursor-pointer bg-accent/45 shadow-[inset_2px_0_0_#0066ff]"
-                          : "cursor-pointer transition-colors hover:bg-accent/35"
-                      }
-                    >
-                      <td className="px-5 py-3">
-                        <div className="space-y-1">
-                          <p className="font-semibold text-foreground">{signal.marketQuestion}</p>
-                          <p className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
-                            {signal.contextLabel}
-                          </p>
-                        </div>
-                      </td>
-                      <td className="px-4 py-3">
-                        <span
-                          className={
-                            signal.side === "YES"
-                              ? "font-bold uppercase tracking-wide text-secondary"
-                              : "font-bold uppercase tracking-wide text-destructive"
-                          }
-                        >
-                          {signal.side}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 font-mono text-primary">{signal.fairPrice}</td>
-                      <td className="px-4 py-3 font-mono text-foreground">{signal.marketPrice}</td>
-                      <td className="px-4 py-3 text-right font-mono">{signal.edge}</td>
-                      <td className="px-4 py-3">
-                        <div className="w-20 space-y-1">
-                          <MeterBar
-                            value={signal.confidenceWidth}
-                            tone={signal.stateTone === "success" ? "success" : signal.stateTone}
-                            trackClassName="h-1 bg-background"
-                          />
-                          <span className="block text-[10px] text-muted-foreground">{signal.confidence}</span>
-                        </div>
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="flex flex-wrap gap-2">
-                          <StatusPill tone={signal.stateTone}>{signal.stateLabel}</StatusPill>
-                        </div>
-                      </td>
-                      <td className="px-5 py-3 text-right">
-                        <div className="hidden xl:block">
-                          <button
-                            type="button"
-                            className="rounded-sm p-1 text-primary transition-colors hover:bg-primary/10"
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              selectSignal(signal.id);
-                            }}
-                          >
-                            <ChevronRight className="ml-auto size-4" />
-                          </button>
-                        </div>
-                        <div className="xl:hidden">
-                          <Sheet>
-                            <SheetTrigger asChild>
-                              <Button
-                                variant="ghost"
-                                size="icon-sm"
-                                className="rounded-sm text-primary hover:bg-primary/10"
-                                onClick={() => selectSignal(signal.id)}
-                              >
-                                <ChevronRight className="size-4" />
-                              </Button>
-                            </SheetTrigger>
-                            <SheetContent className="w-full max-w-none border-white/10 bg-card p-0 sm:max-w-md">
-                              <SheetHeader className="border-b border-white/8 px-5 py-4">
-                                <SheetTitle>{dictionary.signals.signalDetail}</SheetTitle>
-                                <SheetDescription>
-                                  {dictionary.signals.signalDetailDescription}
-                                </SheetDescription>
-                              </SheetHeader>
-                              <div className="overflow-y-auto px-5 py-5">
-                                <SignalsDetailPanel
-                                  signal={signal}
-                                  runtimeControls={runtimeControls}
-                                  onOpenAction={openSignalAction}
-                                />
-                              </div>
-                            </SheetContent>
-                          </Sheet>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : (
-            <div className="px-5 py-10 text-center">
-              <p className="font-heading text-lg font-bold text-foreground">{dictionary.signals.noFilterTitle}</p>
-              <p className="mt-2 text-sm text-muted-foreground">
-                {dictionary.signals.noFilterDetail}
-              </p>
-            </div>
-          )}
+          <SignalsTable
+            signals={filteredSignals}
+            selectedSignalId={selectedSignal?.id}
+            runtimeControls={runtimeControls}
+            onSelect={selectSignal}
+            onOpenAction={openSignalAction}
+          />
         </div>
 
         <WorkbenchDetailPane desktopOnly>

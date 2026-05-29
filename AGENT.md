@@ -4,7 +4,7 @@
 
 ## 文件用途
 
-这是仓库级工作说明和状态快照，用来说明当前代码已经具备什么、缺什么，以及后续改动时需要同步维护哪些信息。前端专属规则仍以 [packages/front/AGENTS.md](./packages/front/AGENTS.md) 为准，其中 `Next.js 16` 提醒必须继续遵守。
+这是仓库级工作说明和状态快照，用来说明当前代码已经具备什么、缺什么，以及后续改动时需要同步维护哪些信息。前端代码规范（目录结构、数据层、行数上限、公共代码提取）见 [packages/front/AGENTS.md](./packages/front/AGENTS.md)，写或改前端代码前必须遵守，其中 `Next.js 16` 提醒尤其必须继续遵守。
 
 ## 维护规则
 
@@ -15,7 +15,7 @@
 ## 仓库结构
 
 - `doc/`：系统设计、API 契约、鉴权、存储、前后端计划等文档。
-- `packages/front/`：`Next.js 16 + React 19 + Tailwind v4 + shadcn/ui` 控制台前端。
+- `packages/front/`：`Next.js 16 + React 19 + Tailwind v4 + shadcn/ui` 控制台前端。前端代码规范（目录结构、数据层、文件行数上限、公共代码提取）见 [packages/front/AGENTS.md](./packages/front/AGENTS.md)，写或改前端代码前必须遵守。
 - `packages/backend/`：Rust workspace，包含 `api / worker / replay` apps，以及 `application / connectors / contracts / domain / infrastructure` crates。后端代码规范（分层架构、`include!` 模块化、文件行数上限、公共代码提取、测试组织）见 [packages/backend/AGENTS.md](./packages/backend/AGENTS.md)，写或改后端 Rust 代码前必须遵守。
 - `deploy/`：Docker Compose 部署模板和环境变量示例。
 - `scripts/`：构建、部署、冒烟脚本。
@@ -25,7 +25,7 @@
 
 - 仓库已经不是纯文档仓库：前端控制台、Rust API、worker、迁移、配置和 Docker 部署入口都已具备。
 - 前端控制台已有 `dashboard / markets / events / radar / rewards / signals / positions / risk / approvals / replay / settings` 页面。
-- 前端读取统一走 `src/server/api/*`，写操作统一走 `src/server/actions/*`，页面装配在 `src/features/*/loaders` 和 `src/features/*/components`。
+- 前端数据层统一走 `src/lib/api/*`（读取按领域文件 `markets.ts` / `signals.ts` / `risk.ts`… 基于 `base.ts`，写操作走 `actions.ts`），页面装配在 `src/features/*/loaders` 和 `src/features/*/components`。`src/server/` 目前是空目录（历史遗留）。
 - 前端支持 `zh-CN / en-US`，语言由 `polyedge_locale` cookie 控制。
 - 前端不再提供 mock 数据模式；`POLYEDGE_API_BASE_URL` 必须指向 Rust 后端，读写和 SSE 都走真实 `/api/v1/...`。
 - 当前控制台会话只保留 `off`，不是生产级真实会话。
@@ -138,8 +138,8 @@ cp deploy/.env.example deploy/.env
 
 前端：
 
-- `packages/front/src/server/api/base.ts`
-- `packages/front/src/server/actions/*`
+- `packages/front/src/lib/api/base.ts`
+- `packages/front/src/lib/api/actions.ts`
 - `packages/front/src/app/api/stream/[channel]/route.ts`
 - `packages/front/src/proxy.ts`
 - `packages/front/src/lib/i18n/*`

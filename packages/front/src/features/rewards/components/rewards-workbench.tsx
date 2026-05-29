@@ -6,37 +6,18 @@ import { Ban, Play, RotateCcw, Save } from "lucide-react";
 import { MetricCard } from "@/components/shared/metric-card";
 import { OperationFeedbackBanner } from "@/components/shared/operation-feedback-banner";
 import { PageHeader } from "@/components/shared/page-header";
-import { StatusPill } from "@/components/shared/status-pill";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 import type {
-  DecimalValue,
-  ManagedRewardOrderDto,
   PostFillStrategy,
   RewardBotConfigDto,
   RewardBotSnapshotDto,
-  RewardFillDto,
-  RewardQuotePlanDto,
-  RewardRiskEventDto,
 } from "@/lib/contracts/dto";
 import {
-  approvalSeverityTone,
-  formatFixed,
   formatOptionalClock,
-  formatSignedFixed,
   formatUsdFixed,
   metricToneForPnl,
-  toFiniteNumber,
 } from "@/lib/formatters";
 import { useI18n } from "@/lib/i18n/client";
 import {
@@ -47,64 +28,10 @@ import {
   type RewardBotActionResult,
 } from "@/lib/api/actions";
 
-type NumberConfigKey =
-  | "max_markets"
-  | "max_open_orders"
-  | "per_market_usd"
-  | "quote_size_usd"
-  | "min_daily_reward"
-  | "min_market_score"
-  | "max_spread_cents"
-  | "quote_edge_cents"
-  | "safety_margin_cents"
-  | "min_midpoint"
-  | "max_midpoint"
-  | "stale_book_ms"
-  | "min_scoring_check_sec"
-  | "max_position_usd"
-  | "max_global_position_usd"
-  | "exit_markup_cents"
-  | "account_capital_usd"
-  | "reward_competition_factor"
-  | "single_sided_divisor_c"
-  | "fill_rate_per_tick"
-  | "max_fill_ratio"
-  | "requote_drift_cents";
-
-type EventCategory = "all" | "placements" | "cancels" | "fills" | "rewards";
-
-function eventCategory(eventType: string): Exclude<EventCategory, "all"> | null {
-  if (eventType === "reward_order_placed" || eventType === "reward_exit_placed") {
-    return "placements";
-  }
-  if (eventType === "reward_order_cancelled") {
-    return "cancels";
-  }
-  if (
-    eventType === "reward_order_filled" ||
-    eventType === "reward_exit_filled" ||
-    eventType === "reward_position_flattened"
-  ) {
-    return "fills";
-  }
-  if (eventType === "reward_accrued") {
-    return "rewards";
-  }
-  return null;
-}
-
-function rewardTone(status: ManagedRewardOrderDto["status"]) {
-  if (status === "open" || status === "exit_pending") {
-    return "success" as const;
-  }
-  if (status === "error") {
-    return "danger" as const;
-  }
-  if (status === "cancelled") {
-    return "neutral" as const;
-  }
-  return "warning" as const;
-}
+import type { NumberConfigKey } from "../types";
+import { NumberInput } from "./number-input";
+import { EventsPanel } from "./rewards-events-panel";
+import { OrdersTable, QuotePlansTable } from "./rewards-tables";
 
 export function RewardsWorkbench({ initialSnapshot }: { initialSnapshot: RewardBotSnapshotDto }) {
   const { dictionary } = useI18n();
@@ -389,229 +316,5 @@ export function RewardsWorkbench({ initialSnapshot }: { initialSnapshot: RewardB
         </CardContent>
       </Card>
     </div>
-  );
-}
-
-function EventsPanel({
-  events,
-  fills,
-}: {
-  events: RewardRiskEventDto[];
-  fills: RewardFillDto[];
-}) {
-  const { dictionary } = useI18n();
-  const [category, setCategory] = useState<EventCategory>("all");
-
-  const filteredEvents = useMemo(
-    () =>
-      category === "all"
-        ? events
-        : events.filter((event) => eventCategory(event.event_type) === category),
-    [events, category],
-  );
-
-  return (
-    <Tabs
-      value={category}
-      onValueChange={(value) => setCategory(value as EventCategory)}
-      className="gap-4"
-    >
-      <TabsList>
-        <TabsTrigger value="all">{dictionary.rewards.eventsAll}</TabsTrigger>
-        <TabsTrigger value="placements">{dictionary.rewards.eventsPlacements}</TabsTrigger>
-        <TabsTrigger value="cancels">{dictionary.rewards.eventsCancels}</TabsTrigger>
-        <TabsTrigger value="fills">{dictionary.rewards.eventsFills}</TabsTrigger>
-        <TabsTrigger value="rewards">{dictionary.rewards.eventsRewards}</TabsTrigger>
-      </TabsList>
-      <TabsContent value="all">
-        <EventsTable events={filteredEvents} />
-      </TabsContent>
-      <TabsContent value="placements">
-        <EventsTable events={filteredEvents} />
-      </TabsContent>
-      <TabsContent value="cancels">
-        <EventsTable events={filteredEvents} />
-      </TabsContent>
-      <TabsContent value="fills">
-        <FillsTable fills={fills} />
-      </TabsContent>
-      <TabsContent value="rewards">
-        <EventsTable events={filteredEvents} />
-      </TabsContent>
-    </Tabs>
-  );
-}
-
-function FillsTable({ fills }: { fills: RewardFillDto[] }) {
-  const { dictionary } = useI18n();
-
-  if (fills.length === 0) {
-    return <p className="py-6 text-center text-sm text-muted-foreground">{dictionary.rewards.none}</p>;
-  }
-
-  return (
-    <Table>
-      <TableHeader>
-        <TableRow>
-          <TableHead>{dictionary.rewards.outcome}</TableHead>
-          <TableHead>{dictionary.rewards.state}</TableHead>
-          <TableHead>{dictionary.rewards.role}</TableHead>
-          <TableHead>{dictionary.rewards.price}</TableHead>
-          <TableHead>{dictionary.rewards.size}</TableHead>
-          <TableHead>{dictionary.rewards.pnl}</TableHead>
-          <TableHead>{dictionary.rewards.time}</TableHead>
-        </TableRow>
-      </TableHeader>
-      <TableBody>
-        {fills.map((fill) => (
-          <TableRow key={fill.id}>
-            <TableCell>{fill.outcome}</TableCell>
-            <TableCell>
-              <StatusPill tone={fill.side === "buy" ? "success" : "warning"}>{fill.side}</StatusPill>
-            </TableCell>
-            <TableCell className="font-mono text-xs">{fill.role}</TableCell>
-            <TableCell className="font-mono">{formatFixed(fill.price, 2)}</TableCell>
-            <TableCell className="font-mono">{formatFixed(fill.size, 2)}</TableCell>
-            <TableCell className="font-mono">{formatSignedFixed(fill.realized_pnl, 2)}</TableCell>
-            <TableCell className="font-mono text-xs text-muted-foreground">
-              {formatOptionalClock(fill.created_at)}
-            </TableCell>
-          </TableRow>
-        ))}
-      </TableBody>
-    </Table>
-  );
-}
-
-function NumberInput({
-  label,
-  value,
-  suffix,
-  onChange,
-}: {
-  label: string;
-  value: DecimalValue;
-  suffix?: string;
-  onChange: (value: string) => void;
-}) {
-  return (
-    <label className="space-y-1.5">
-      <span className="text-xs font-medium text-muted-foreground">{label}</span>
-      <div className="flex">
-        <Input
-          type="number"
-          className="rounded-r-none font-mono"
-          value={String(toFiniteNumber(value))}
-          onChange={(event) => onChange(event.target.value)}
-        />
-        {suffix ? (
-          <span className="flex h-8 min-w-8 items-center justify-center rounded-r-lg border border-l-0 border-input px-2 text-xs text-muted-foreground">
-            {suffix}
-          </span>
-        ) : null}
-      </div>
-    </label>
-  );
-}
-
-function QuotePlansTable({ plans }: { plans: RewardQuotePlanDto[] }) {
-  const { dictionary } = useI18n();
-
-  return (
-    <Table>
-      <TableHeader>
-        <TableRow>
-          <TableHead>{dictionary.rewards.market}</TableHead>
-          <TableHead>{dictionary.rewards.score}</TableHead>
-          <TableHead>{dictionary.rewards.dailyReward}</TableHead>
-          <TableHead>{dictionary.rewards.midpoint}</TableHead>
-          <TableHead>{dictionary.rewards.quotes}</TableHead>
-        </TableRow>
-      </TableHeader>
-      <TableBody>
-        {plans.map((plan) => (
-          <TableRow key={plan.condition_id}>
-            <TableCell className="max-w-[360px]">
-              <div className="space-y-1">
-                <p className="truncate font-medium">{plan.question}</p>
-                <p className="text-xs text-muted-foreground">{plan.reason}</p>
-              </div>
-            </TableCell>
-            <TableCell>
-              <StatusPill tone={plan.eligible ? "success" : "neutral"}>
-                {formatFixed(plan.score, 1)}
-              </StatusPill>
-            </TableCell>
-            <TableCell className="font-mono">{formatUsdFixed(plan.total_daily_rate)}</TableCell>
-            <TableCell className="font-mono">{plan.midpoint == null ? "n/a" : formatFixed(plan.midpoint, 3)}</TableCell>
-            <TableCell className="font-mono text-xs">
-              {plan.legs.length === 0
-                ? dictionary.rewards.none
-                : plan.legs.map((leg) => `${leg.outcome} ${formatFixed(leg.size, 2)}@${formatFixed(leg.price, 2)}`).join(" / ")}
-            </TableCell>
-          </TableRow>
-        ))}
-      </TableBody>
-    </Table>
-  );
-}
-
-function OrdersTable({ orders }: { orders: ManagedRewardOrderDto[] }) {
-  const { dictionary } = useI18n();
-
-  return (
-    <Table>
-      <TableHeader>
-        <TableRow>
-          <TableHead>{dictionary.rewards.state}</TableHead>
-          <TableHead>{dictionary.rewards.outcome}</TableHead>
-          <TableHead>{dictionary.rewards.price}</TableHead>
-          <TableHead>{dictionary.rewards.size}</TableHead>
-          <TableHead>{dictionary.rewards.scoring}</TableHead>
-        </TableRow>
-      </TableHeader>
-      <TableBody>
-        {orders.map((order) => (
-          <TableRow key={order.id}>
-            <TableCell>
-              <StatusPill tone={rewardTone(order.status)}>{order.status}</StatusPill>
-            </TableCell>
-            <TableCell>{order.outcome}</TableCell>
-            <TableCell className="font-mono">{formatFixed(order.price, 2)}</TableCell>
-            <TableCell className="font-mono">{formatFixed(order.size, 2)}</TableCell>
-            <TableCell>{order.scoring ? dictionary.common.active : dictionary.common.idle}</TableCell>
-          </TableRow>
-        ))}
-      </TableBody>
-    </Table>
-  );
-}
-
-function EventsTable({ events }: { events: RewardRiskEventDto[] }) {
-  const { dictionary } = useI18n();
-
-  return (
-    <Table>
-      <TableHeader>
-        <TableRow>
-          <TableHead>{dictionary.rewards.severity}</TableHead>
-          <TableHead>{dictionary.rewards.type}</TableHead>
-          <TableHead>{dictionary.rewards.message}</TableHead>
-          <TableHead>{dictionary.common.published}</TableHead>
-        </TableRow>
-      </TableHeader>
-      <TableBody>
-        {events.map((event) => (
-          <TableRow key={event.id}>
-            <TableCell>
-              <StatusPill tone={approvalSeverityTone(event.severity)}>{event.severity}</StatusPill>
-            </TableCell>
-            <TableCell className="font-mono text-xs">{event.event_type}</TableCell>
-            <TableCell className="max-w-[520px] truncate">{event.message}</TableCell>
-            <TableCell className="font-mono text-xs text-muted-foreground">{formatOptionalClock(event.created_at)}</TableCell>
-          </TableRow>
-        ))}
-      </TableBody>
-    </Table>
   );
 }

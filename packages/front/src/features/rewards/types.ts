@@ -1,0 +1,25 @@
+export type NumberConfigKey =
+  | "max_markets"
+  | "max_open_orders"
+  | "per_market_usd"
+  | "quote_size_usd"
+  | "min_daily_reward"
+  | "min_market_score"
+  | "max_spread_cents"
+  | "quote_edge_cents"
+  | "safety_margin_cents"
+  | "min_midpoint"
+  | "max_midpoint"
+  | "stale_book_ms"
+  | "min_scoring_check_sec"
+  | "max_position_usd"
+  | "max_global_position_usd"
+  | "exit_markup_cents"
+  | "account_capital_usd"
+  | "reward_competition_factor"
+  | "single_sided_divisor_c"
+  | "fill_rate_per_tick"
+  | "max_fill_ratio"
+  | "requote_drift_cents";
+
+export type EventCategory = "all" | "placements" | "cancels" | "fills" | "rewards";
