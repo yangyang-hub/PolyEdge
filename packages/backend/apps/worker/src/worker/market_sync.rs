@@ -18,6 +18,7 @@ async fn sync_markets_once(state: &AppState, trace_id: &str) -> Result<MarketSyn
 fn gamma_market_to_view(market: PolymarketGammaMarket) -> MarketView {
     MarketView {
         id: market.id,
+        slug: market.slug,
         question: market.question,
         category: market.category,
         status: market.status,

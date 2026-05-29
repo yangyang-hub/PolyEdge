@@ -9,6 +9,7 @@ fn parse_market_row(row: &sqlx::postgres::PgRow) -> Result<MarketView> {
 
     Ok(MarketView {
         id: decode_column(row, "id")?,
+        slug: decode_column(row, "slug")?,
         question: decode_column(row, "question")?,
         category: decode_column(row, "category")?,
         status: MarketStatus::from_str(&status_raw).map_err(|error| {

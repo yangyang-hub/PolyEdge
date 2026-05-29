@@ -81,6 +81,30 @@ async fn list_events(
     )))
 }
 
+async fn list_market_categories(
+    Extension(auth): Extension<AuthContext>,
+    State(state): State<AppState>,
+) -> std::result::Result<Json<ApiResponse<Vec<MarketCategoryData>>>, HttpError> {
+    let trace_id = new_trace_id();
+    let categories = state
+        .market_event_service
+        .list_market_categories()
+        .await
+        .map_err(|error| HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone()))?;
+
+    Ok(Json(ApiResponse::new(
+        categories
+            .into_iter()
+            .map(|cat| MarketCategoryData {
+                id: cat.id,
+                label: cat.label,
+            })
+            .collect(),
+        auth.request_id,
+        trace_id,
+    )))
+}
+
 async fn list_news_source_health(
     Extension(auth): Extension<AuthContext>,
     State(state): State<AppState>,

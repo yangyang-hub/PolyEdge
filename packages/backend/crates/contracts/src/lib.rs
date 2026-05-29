@@ -36,6 +36,12 @@ pub struct MarketListResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MarketCategoryData {
+    pub id: String,
+    pub label: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApiResponse<T> {
     pub data: T,
     pub meta: ApiMeta,
@@ -129,6 +135,8 @@ pub struct UpdateRuntimeConfigRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MarketData {
     pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slug: Option<String>,
     pub question: String,
     pub category: String,
     pub status: MarketStatus,

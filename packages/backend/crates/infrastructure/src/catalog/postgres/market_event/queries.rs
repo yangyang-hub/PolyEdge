@@ -12,6 +12,7 @@ async fn market_event_list_markets(&self, filters: &MarketListFilters) -> Result
             r#"
             SELECT
               m.id,
+              m.slug,
               m.question,
               m.category,
               m.status,
@@ -80,11 +81,40 @@ async fn market_event_count_markets(&self, filters: &MarketListFilters) -> Resul
         Ok(row)
     }
 
+async fn market_event_list_market_categories(&self) -> Result<Vec<MarketCategoryView>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT id, label, sort_order
+            FROM market_categories
+            ORDER BY sort_order ASC
+            "#,
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_QUERY_FAILED",
+                format!("failed to list market categories: {error}"),
+            )
+        })?;
+
+        rows.iter()
+            .map(|row| {
+                Ok(MarketCategoryView {
+                    id: decode_column(row, "id")?,
+                    label: decode_column(row, "label")?,
+                    sort_order: decode_column(row, "sort_order")?,
+                })
+            })
+            .collect()
+    }
+
 async fn market_event_get_market(&self, market_id: &str) -> Result<Option<MarketView>> {
         let row = sqlx::query(
             r#"
             SELECT
               m.id,
+              m.slug,
               m.question,
               m.category,
               m.status,

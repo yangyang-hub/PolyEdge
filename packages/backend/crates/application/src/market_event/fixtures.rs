@@ -517,6 +517,7 @@ fn fixture_market(
 ) -> FixtureMarketRecord {
     FixtureMarketRecord {
         id: id.to_string(),
+        slug: None,
         question: question.to_string(),
         category: category.to_string(),
         status,

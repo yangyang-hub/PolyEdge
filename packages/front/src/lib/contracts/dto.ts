@@ -60,6 +60,7 @@ export type DecimalValue = string | number;
 export type MarketDto = ResourceVersion & {
   question: string;
   category: string;
+  slug?: string | null;
   status: MarketStatus;
   best_bid: string;
   best_ask: string;

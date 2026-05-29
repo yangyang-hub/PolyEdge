@@ -29,6 +29,7 @@ mod tests {
     fn market_view(record: &FixtureMarketRecord) -> MarketView {
         MarketView {
             id: record.id.clone(),
+            slug: record.slug.clone(),
             question: record.question.clone(),
             category: record.category.clone(),
             status: record.status,

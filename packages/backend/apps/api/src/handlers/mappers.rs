@@ -1,6 +1,7 @@
 fn market_to_contract(market: MarketView) -> MarketData {
     MarketData {
         id: market.id,
+        slug: market.slug,
         question: market.question,
         category: market.category,
         status: market.status,

@@ -8,6 +8,7 @@ const MAX_GAMMA_MARKET_PAGES: usize = 5;
 #[derive(Debug, Clone)]
 pub struct PolymarketGammaMarket {
     pub id: String,
+    pub slug: Option<String>,
     pub question: String,
     pub category: String,
     pub status: MarketStatus,
@@ -41,6 +42,8 @@ struct GammaMarketPage {
 #[derive(Debug, Deserialize)]
 struct RawGammaMarket {
     id: String,
+    #[serde(default)]
+    slug: Option<String>,
     question: Option<String>,
     category: Option<String>,
     #[serde(rename = "conditionId")]
@@ -285,6 +288,7 @@ fn map_gamma_market(raw: RawGammaMarket) -> Result<Option<PolymarketGammaMarket>
 
     Ok(Some(PolymarketGammaMarket {
         id: raw.id,
+        slug: normalize_optional_text(raw.slug),
         question,
         category: normalize_optional_text(raw.category.clone())
             .unwrap_or_else(|| "Polymarket".to_string()),

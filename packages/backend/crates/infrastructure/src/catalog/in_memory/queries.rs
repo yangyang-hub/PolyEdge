@@ -49,6 +49,24 @@ async fn market_event_count_markets(&self, filters: &MarketListFilters) -> Resul
         Ok(count as i64)
     }
 
+async fn market_event_list_market_categories(&self) -> Result<Vec<MarketCategoryView>> {
+        Ok(vec![
+            MarketCategoryView { id: "sports".into(), label: "Sports".into(), sort_order: 1 },
+            MarketCategoryView { id: "politics".into(), label: "Politics".into(), sort_order: 2 },
+            MarketCategoryView { id: "crypto".into(), label: "Crypto".into(), sort_order: 3 },
+            MarketCategoryView { id: "esports".into(), label: "Esports".into(), sort_order: 4 },
+            MarketCategoryView { id: "finance".into(), label: "Finance".into(), sort_order: 5 },
+            MarketCategoryView { id: "geopolitics".into(), label: "Geopolitics".into(), sort_order: 6 },
+            MarketCategoryView { id: "tech".into(), label: "Tech".into(), sort_order: 7 },
+            MarketCategoryView { id: "culture".into(), label: "Culture".into(), sort_order: 8 },
+            MarketCategoryView { id: "economy".into(), label: "Economy".into(), sort_order: 9 },
+            MarketCategoryView { id: "weather".into(), label: "Weather".into(), sort_order: 10 },
+            MarketCategoryView { id: "pop_culture".into(), label: "Pop Culture".into(), sort_order: 11 },
+            MarketCategoryView { id: "ai".into(), label: "AI".into(), sort_order: 12 },
+            MarketCategoryView { id: "elections".into(), label: "Elections".into(), sort_order: 13 },
+        ])
+    }
+
 async fn market_event_get_market(&self, market_id: &str) -> Result<Option<MarketView>> {
         Ok(self.markets.read().await.get(market_id).cloned())
     }

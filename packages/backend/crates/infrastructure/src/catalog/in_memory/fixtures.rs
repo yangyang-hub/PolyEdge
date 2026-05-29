@@ -11,6 +11,7 @@ async fn market_event_ingest_fixture_bundle(
                     market.id.clone(),
                     MarketView {
                         id: market.id.clone(),
+                        slug: market.slug.clone(),
                         question: market.question.clone(),
                         category: market.category.clone(),
                         status: market.status,

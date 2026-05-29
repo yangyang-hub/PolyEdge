@@ -40,3 +40,15 @@ export async function listMarkets(params?: MarketListParams): Promise<MarketList
     meta: response.meta,
   };
 }
+
+export type MarketCategory = {
+  id: string;
+  label: string;
+};
+
+export async function listMarketCategories(): Promise<MarketCategory[]> {
+  const response = await fetchContract<{ data: MarketCategory[]; meta: ApiMeta }>(
+    "/api/v1/market-categories",
+  );
+  return response.data;
+}

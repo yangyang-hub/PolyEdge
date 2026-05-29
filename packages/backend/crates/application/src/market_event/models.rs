@@ -1,6 +1,8 @@
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MarketView {
     pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slug: Option<String>,
     pub question: String,
     pub category: String,
     pub status: MarketStatus,
@@ -166,6 +168,13 @@ impl MarketListFilters {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MarketCategoryView {
+    pub id: String,
+    pub label: String,
+    pub sort_order: i32,
+}
+
 #[derive(Debug, Clone)]
 pub struct EventListFilters {
     pub status: Option<EventStatus>,
@@ -279,6 +288,8 @@ impl SignalTransitionListFilters {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FixtureMarketRecord {
     pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slug: Option<String>,
     pub question: String,
     pub category: String,
     pub status: MarketStatus,

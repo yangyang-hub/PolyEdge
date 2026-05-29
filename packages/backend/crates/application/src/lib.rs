@@ -34,8 +34,8 @@ pub use market_event::demo_fixture_bundle;
 pub use market_event::{
     EventListFilters, EventView, EvidenceListFilters, EvidenceView, FixtureBundle,
     FixtureEventRecord, FixtureEvidenceRecord, FixtureIngestionReport, FixtureMarketRecord,
-    FixtureSignalRecord, MarketEventService, MarketEventStore, MarketListFilters, MarketSortField,
-    MarketView, ProbabilityEstimateListFilters, ProbabilityEstimateView, RecomputeSignalCommand,
+    FixtureSignalRecord, MarketCategoryView, MarketEventService, MarketEventStore,
+    MarketListFilters, MarketSortField, MarketView, ProbabilityEstimateListFilters, ProbabilityEstimateView, RecomputeSignalCommand,
     RecomputeSignalDraft, RecomputeSignalResult, SignalListFilters, SignalTransitionDraft,
     SignalTransitionListFilters, SignalTransitionView, SignalView, SortOrder,
     SourceHealthAdjustment, build_recompute_signal_draft,

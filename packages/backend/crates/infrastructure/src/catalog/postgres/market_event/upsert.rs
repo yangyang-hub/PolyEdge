@@ -22,6 +22,7 @@ async fn market_event_upsert_markets(
             r#"
             INSERT INTO markets (
               id,
+              slug,
               question,
               category,
               status,
@@ -38,9 +39,10 @@ async fn market_event_upsert_markets(
               version,
               trace_id
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
             ON CONFLICT (id) DO UPDATE
             SET
+              slug = EXCLUDED.slug,
               question = EXCLUDED.question,
               category = EXCLUDED.category,
               status = EXCLUDED.status,
@@ -60,6 +62,7 @@ async fn market_event_upsert_markets(
             "#,
         )
         .bind(&market.id)
+        .bind(&market.slug)
         .bind(&market.question)
         .bind(&market.category)
         .bind(market.status.as_str())

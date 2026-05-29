@@ -84,6 +84,10 @@ impl MarketEventStore for InMemoryMarketEventStore {
         self.market_event_count_markets(filters).await
     }
 
+    async fn list_market_categories(&self) -> Result<Vec<MarketCategoryView>> {
+        self.market_event_list_market_categories().await
+    }
+
     async fn get_market(&self, market_id: &str) -> Result<Option<MarketView>> {
         self.market_event_get_market(market_id).await
     }

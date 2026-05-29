@@ -44,9 +44,13 @@ export function MarketsWorkbench({ data }: { data: MarketsPageData }) {
 
   const { dictionary, format, enumLabel } = useI18n();
   const abortRef = useRef<AbortController | null>(null);
+  const selectedIdRef = useRef(data.selectedMarketId);
 
-  const categories = data.markets.map((m) => m.category).filter(Boolean);
-  const uniqueCategories = [...new Set(categories)].sort((a, b) => a.localeCompare(b));
+  useEffect(() => {
+    selectedIdRef.current = selectedId;
+  }, [selectedId]);
+
+  const categories = data.categories;
 
   const fetchMarkets = useCallback(async (params: MarketListParams) => {
     abortRef.current?.abort();
@@ -81,6 +85,7 @@ export function MarketsWorkbench({ data }: { data: MarketsPageData }) {
         question: market.question,
         category: market.category,
         polymarketConditionId: market.polymarket_condition_id ?? null,
+        slug: market.slug ?? null,
         tradabilityLabel: enumLabel(market.tradability_status),
         tradabilityTone: marketTradabilityTone(market.tradability_status),
         ambiguityLabel: enumLabel(market.ambiguity_level),
@@ -100,7 +105,9 @@ export function MarketsWorkbench({ data }: { data: MarketsPageData }) {
       setMarkets(mappedMarkets);
       setMarketDetails(mappedDetails);
       setTotalCount(newTotal);
-      if (mappedMarkets.length > 0 && !mappedMarkets.find((m) => m.id === selectedId)) {
+
+      const currentSelected = selectedIdRef.current;
+      if (mappedMarkets.length > 0 && !mappedMarkets.find((m) => m.id === currentSelected)) {
         setSelectedId(mappedMarkets[0].id);
       }
     } finally {
@@ -108,7 +115,7 @@ export function MarketsWorkbench({ data }: { data: MarketsPageData }) {
         setLoading(false);
       }
     }
-  }, [enumLabel, selectedId]);
+  }, [enumLabel]);
 
   useEffect(() => {
     const tradabilityStatus =
@@ -126,6 +133,10 @@ export function MarketsWorkbench({ data }: { data: MarketsPageData }) {
       sort_by: sortDir !== "none" ? "volume_24h" : undefined,
       sort_order: sortDir !== "none" ? sortDir : undefined,
     });
+
+    return () => {
+      abortRef.current?.abort();
+    };
   }, [filter, category, sortDir, page, fetchMarkets]);
 
   const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
@@ -169,8 +180,8 @@ export function MarketsWorkbench({ data }: { data: MarketsPageData }) {
     setPage(1);
   }
 
-  const polymarketUrl = selectedMarket.polymarketConditionId
-    ? `https://polymarket.com/event/${selectedMarket.polymarketConditionId}`
+  const polymarketUrl = selectedMarket.slug
+    ? `https://polymarket.com/event/${selectedMarket.slug}`
     : null;
 
   return (
@@ -181,8 +192,8 @@ export function MarketsWorkbench({ data }: { data: MarketsPageData }) {
         description={dictionary.markets.description}
       />
 
-      <WorkbenchLayout>
-        <Card>
+      <WorkbenchLayout className="items-start">
+        <Card className="max-h-[calc(100vh-14rem)] overflow-y-auto">
           <CardHeader className="flex flex-col gap-4 border-b border-border/70 md:flex-row md:items-center md:justify-between">
             <div>
               <CardTitle className="font-heading text-base">{dictionary.markets.universe}</CardTitle>
@@ -197,8 +208,8 @@ export function MarketsWorkbench({ data }: { data: MarketsPageData }) {
                 className="h-8 rounded-lg border border-input bg-transparent px-2.5 text-sm transition-colors outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
               >
                 <option value="all">{dictionary.markets.allCategories}</option>
-                {uniqueCategories.map((cat) => (
-                  <option key={cat} value={cat}>{cat}</option>
+                {categories.map((cat) => (
+                  <option key={cat.id} value={cat.id}>{cat.label}</option>
                 ))}
               </select>
               <WorkbenchSegmentedControl items={filterButtons} value={filter} onChange={handleFilterChange} />
@@ -302,12 +313,12 @@ export function MarketsWorkbench({ data }: { data: MarketsPageData }) {
           </CardContent>
         </Card>
 
-        <div className="space-y-4">
+        <div className="space-y-4 max-h-[calc(100vh-14rem)] overflow-y-auto">
           <Card>
-            <CardHeader>
-              <CardTitle className="font-heading text-base">{dictionary.markets.settlementView}</CardTitle>
+            <CardHeader className="py-3">
+              <CardTitle className="font-heading text-sm">{dictionary.markets.settlementView}</CardTitle>
             </CardHeader>
-            <CardContent className="space-y-4">
+            <CardContent className="space-y-3">
               <div>
                 <p className="text-sm font-medium text-foreground">{selectedMarket.question}</p>
                 <p className="mt-1 text-xs uppercase tracking-[0.2em] text-muted-foreground">
@@ -333,31 +344,35 @@ export function MarketsWorkbench({ data }: { data: MarketsPageData }) {
                   <ExternalLink className="size-3.5" />
                 </a>
               )}
-              <div className="rounded-sm border border-border/70 bg-card p-3 text-sm text-muted-foreground">
+              <div className="line-clamp-2 rounded-sm border border-border/70 bg-card p-2.5 text-xs text-muted-foreground">
                 {dictionary.markets.resolutionSource}: {selectedMarket.resolutionSource}
               </div>
-              <div className="space-y-2 text-sm text-muted-foreground">
+              <div className="space-y-1 text-xs text-muted-foreground">
                 {selectedMarket.edgeCaseNotes.map((note) => (
-                  <p key={note}>{dictionary.markets.edgeCase}: {note}</p>
+                  <p key={note} className="line-clamp-1">{dictionary.markets.edgeCase}: {note}</p>
                 ))}
               </div>
             </CardContent>
           </Card>
 
           <Card>
-            <CardHeader>
-              <CardTitle className="font-heading text-base">{dictionary.markets.linkedEvents}</CardTitle>
+            <CardHeader className="py-3">
+              <CardTitle className="font-heading text-sm">{dictionary.markets.linkedEvents}</CardTitle>
             </CardHeader>
-            <CardContent className="space-y-3">
-              {selectedMarket.linkedEvents.map((event) => (
-                <div key={event.id} className="rounded-sm border border-border/70 bg-card p-3">
-                  <div className="flex items-center justify-between">
-                    <StatusPill tone="primary">{event.source}</StatusPill>
-                    <span className="font-mono text-xs text-muted-foreground">{event.relevance}</span>
+            <CardContent className="space-y-2">
+              {selectedMarket.linkedEvents.length === 0 ? (
+                <p className="text-xs text-muted-foreground">—</p>
+              ) : (
+                selectedMarket.linkedEvents.map((event) => (
+                  <div key={event.id} className="rounded-sm border border-border/70 bg-card px-3 py-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <StatusPill tone="primary">{event.source}</StatusPill>
+                      <span className="shrink-0 font-mono text-xs text-muted-foreground">{event.relevance}</span>
+                    </div>
+                    <p className="mt-1.5 line-clamp-2 text-xs text-muted-foreground">{event.summary}</p>
                   </div>
-                  <p className="mt-2 text-sm text-foreground">{event.summary}</p>
-                </div>
-              ))}
+                ))
+              )}
             </CardContent>
           </Card>
         </div>

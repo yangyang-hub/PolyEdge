@@ -38,8 +38,8 @@ use polyedge_contracts::{
     ConnectorOrderStatusCallbackData, ConnectorOrderStatusCallbackRequest,
     ConnectorTradeFillCallbackData, ConnectorTradeFillCallbackRequest, DependencyStatus, EventData,
     EventListQuery, EvidenceData, EvidenceListQuery, ExecutionRequestData,
-    ExecutionRequestListQuery, HealthData, KillSwitchData, MarketData, MarketListQuery,
-    MarketListResponse,
+    ExecutionRequestListQuery, HealthData, KillSwitchData, MarketCategoryData, MarketData,
+    MarketListQuery, MarketListResponse,
     NewsRawEventData, NewsRawEventListQuery, NewsSourceHealthData, NewsSourceHealthListQuery,
     OrderData, OrderDraftData, OrderDraftListQuery, OrderListQuery,
     PolymarketOrderStatusCallbackRequest, PolymarketTradeFillCallbackRequest, PositionData,
@@ -121,6 +121,13 @@ pub fn build_app(state: AppState) -> Router {
         .route(
             "/api/v1/markets/{market_id}",
             get(get_market).route_layer(middleware::from_fn_with_state(
+                state.clone(),
+                require_console_read_auth,
+            )),
+        )
+        .route(
+            "/api/v1/market-categories",
+            get(list_market_categories).route_layer(middleware::from_fn_with_state(
                 state.clone(),
                 require_console_read_auth,
             )),
