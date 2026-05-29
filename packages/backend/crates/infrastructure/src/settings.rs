@@ -23,6 +23,7 @@ pub struct Settings {
     pub rewards: RewardsSettings,
     pub news: NewsSettings,
     pub worker: WorkerSettings,
+    pub orderbook_stream: OrderbookStreamSettings,
     pub auth: AuthSettings,
 }
 
@@ -161,6 +162,7 @@ pub struct WorkerSettings {
     pub reconcile_polymarket_fills: bool,
     pub consume_polymarket_user_events: bool,
     pub poll_market_sync: bool,
+    pub consume_orderbook_stream: bool,
     pub news_promotion_interval_secs: u64,
     pub arbitrage_analysis_interval_secs: u64,
     pub execution_drain_interval_secs: u64,
@@ -169,6 +171,17 @@ pub struct WorkerSettings {
     pub polymarket_user_event_restart_interval_secs: u64,
     pub market_sync_interval_secs: u64,
     pub task_limit: u16,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct OrderbookStreamSettings {
+    pub enabled: bool,
+    pub max_tokens: usize,
+    pub poll_reconcile_interval_secs: u64,
+    pub stale_threshold_ms: u64,
+    pub book_ttl_secs: u64,
+    pub restart_interval_secs: u64,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -337,6 +350,7 @@ impl Default for WorkerSettings {
             reconcile_polymarket_fills: false,
             consume_polymarket_user_events: false,
             poll_market_sync: true,
+            consume_orderbook_stream: false,
             news_promotion_interval_secs: 60,
             arbitrage_analysis_interval_secs: 300,
             execution_drain_interval_secs: 5,
@@ -345,6 +359,19 @@ impl Default for WorkerSettings {
             polymarket_user_event_restart_interval_secs: 5,
             market_sync_interval_secs: 300,
             task_limit: 100,
+        }
+    }
+}
+
+impl Default for OrderbookStreamSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            max_tokens: 200,
+            poll_reconcile_interval_secs: 30,
+            stale_threshold_ms: 15_000,
+            book_ttl_secs: 60,
+            restart_interval_secs: 5,
         }
     }
 }
@@ -522,6 +549,7 @@ mod tests {
         assert!(!settings.worker.poll_polymarket_order_statuses);
         assert!(!settings.worker.reconcile_polymarket_fills);
         assert!(!settings.worker.consume_polymarket_user_events);
+        assert!(!settings.worker.consume_orderbook_stream);
         assert_eq!(settings.worker.news_promotion_interval_secs, 60);
         assert_eq!(settings.worker.arbitrage_analysis_interval_secs, 300);
         assert_eq!(settings.worker.execution_drain_interval_secs, 5);
@@ -548,6 +576,12 @@ mod tests {
         assert!(settings.postgres.url.is_none());
         assert_eq!(settings.postgres.max_connections, 20);
         assert!(settings.redis.url.is_none());
+        assert!(!settings.orderbook_stream.enabled);
+        assert_eq!(settings.orderbook_stream.max_tokens, 200);
+        assert_eq!(settings.orderbook_stream.poll_reconcile_interval_secs, 30);
+        assert_eq!(settings.orderbook_stream.stale_threshold_ms, 15_000);
+        assert_eq!(settings.orderbook_stream.book_ttl_secs, 60);
+        assert_eq!(settings.orderbook_stream.restart_interval_secs, 5);
         assert_eq!(
             settings.auth.force_reauth_after.as_deref(),
             Some("2026-01-01T00:00:00Z")
@@ -681,6 +715,10 @@ mod tests {
                 "true".to_string(),
             ),
             (
+                "POLYEDGE_WORKER__CONSUME_ORDERBOOK_STREAM".to_string(),
+                "true".to_string(),
+            ),
+            (
                 "POLYEDGE_WORKER__NEWS_PROMOTION_INTERVAL_SECS".to_string(),
                 "30".to_string(),
             ),
@@ -705,6 +743,18 @@ mod tests {
                 "10".to_string(),
             ),
             ("POLYEDGE_WORKER__TASK_LIMIT".to_string(), "33".to_string()),
+            (
+                "POLYEDGE_ORDERBOOK_STREAM__ENABLED".to_string(),
+                "true".to_string(),
+            ),
+            (
+                "POLYEDGE_ORDERBOOK_STREAM__MAX_TOKENS".to_string(),
+                "100".to_string(),
+            ),
+            (
+                "POLYEDGE_ORDERBOOK_STREAM__POLL_RECONCILE_INTERVAL_SECS".to_string(),
+                "15".to_string(),
+            ),
             (
                 "POLYEDGE_POLYMARKET__PRIVATE_KEY".to_string(),
                 "".to_string(),
@@ -769,6 +819,7 @@ mod tests {
         assert!(settings.worker.poll_polymarket_order_statuses);
         assert!(settings.worker.reconcile_polymarket_fills);
         assert!(settings.worker.consume_polymarket_user_events);
+        assert!(settings.worker.consume_orderbook_stream);
         assert_eq!(settings.worker.news_promotion_interval_secs, 30);
         assert_eq!(settings.worker.arbitrage_analysis_interval_secs, 120);
         assert_eq!(settings.worker.execution_drain_interval_secs, 6);
@@ -779,6 +830,9 @@ mod tests {
             10
         );
         assert_eq!(settings.worker.task_limit, 33);
+        assert!(settings.orderbook_stream.enabled);
+        assert_eq!(settings.orderbook_stream.max_tokens, 100);
+        assert_eq!(settings.orderbook_stream.poll_reconcile_interval_secs, 15);
         assert_eq!(
             settings.auth.revoked_sessions,
             vec!["sess_alpha".to_string(), "sess_beta".to_string()],

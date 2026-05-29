@@ -93,6 +93,14 @@ fn push_worker_runtime_config_entries(
             RuntimeConfigValueType::Boolean,
         ),
         (
+            "consume_orderbook_stream",
+            "Worker consume orderbook stream",
+            "POLYEDGE_WORKER__CONSUME_ORDERBOOK_STREAM",
+            settings.worker.consume_orderbook_stream.to_string(),
+            defaults.worker.consume_orderbook_stream.to_string(),
+            RuntimeConfigValueType::Boolean,
+        ),
+        (
             "news_promotion_interval_secs",
             "News promotion interval seconds",
             "POLYEDGE_WORKER__NEWS_PROMOTION_INTERVAL_SECS",

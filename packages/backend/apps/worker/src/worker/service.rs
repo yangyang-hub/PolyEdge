@@ -373,7 +373,7 @@ fn spawn_worker_tasks(state: &AppState, shutdown_rx: watch::Receiver<bool>) -> V
         handles.push(spawn_restarting_job(
             "consume-polymarket-user-events",
             settings.polymarket_user_event_restart_interval_secs,
-            shutdown_rx,
+            shutdown_rx.clone(),
             move || {
                 let state = job_state.clone();
                 async move {
@@ -400,6 +400,36 @@ fn spawn_worker_tasks(state: &AppState, shutdown_rx: watch::Receiver<bool>) -> V
                 }
             },
         ));
+    }
+
+    if settings.consume_orderbook_stream {
+        if state.settings.orderbook_stream.enabled {
+            let job_state = state.clone();
+            handles.push(spawn_restarting_job(
+                "consume-orderbook-stream",
+                state.settings.orderbook_stream.restart_interval_secs,
+                shutdown_rx,
+                move || {
+                    let state = job_state.clone();
+                    async move {
+                        match consume_orderbook_stream(&state).await {
+                            Ok(report) => info!(
+                                subscribed_tokens = report.subscribed_tokens,
+                                ws_snapshots_received = report.ws_snapshots_received,
+                                "orderbook stream consumer stopped",
+                            ),
+                            Err(error) => {
+                                warn!(error = %error, "orderbook stream consumer failed");
+                            }
+                        }
+                    }
+                },
+            ));
+        } else {
+            warn!(
+                "worker consume-orderbook-stream is enabled but orderbook_stream is disabled; set POLYEDGE_ORDERBOOK_STREAM__ENABLED=true"
+            );
+        }
     }
 
     handles

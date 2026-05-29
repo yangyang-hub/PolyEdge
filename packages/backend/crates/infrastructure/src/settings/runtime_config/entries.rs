@@ -535,6 +535,85 @@ pub fn runtime_config_entries(&self) -> Vec<RuntimeConfigEntry> {
 
     push_worker_runtime_config_entries(&mut entries, self, &defaults);
 
+    push_runtime_config_entry(
+        &mut entries,
+        RuntimeConfigEntryDraft {
+            section: "orderbook_stream",
+            field: "enabled",
+            label: "Orderbook stream enabled",
+            env_name: "POLYEDGE_ORDERBOOK_STREAM__ENABLED",
+            value: self.orderbook_stream.enabled.to_string(),
+            default_value: defaults.orderbook_stream.enabled.to_string(),
+            value_type: RuntimeConfigValueType::Boolean,
+            options: Vec::new(),
+        },
+    );
+    push_runtime_config_entry(
+        &mut entries,
+        RuntimeConfigEntryDraft {
+            section: "orderbook_stream",
+            field: "max_tokens",
+            label: "Orderbook stream max tokens",
+            env_name: "POLYEDGE_ORDERBOOK_STREAM__MAX_TOKENS",
+            value: self.orderbook_stream.max_tokens.to_string(),
+            default_value: defaults.orderbook_stream.max_tokens.to_string(),
+            value_type: RuntimeConfigValueType::Integer,
+            options: Vec::new(),
+        },
+    );
+    push_runtime_config_entry(
+        &mut entries,
+        RuntimeConfigEntryDraft {
+            section: "orderbook_stream",
+            field: "poll_reconcile_interval_secs",
+            label: "Orderbook stream poll reconcile interval seconds",
+            env_name: "POLYEDGE_ORDERBOOK_STREAM__POLL_RECONCILE_INTERVAL_SECS",
+            value: self.orderbook_stream.poll_reconcile_interval_secs.to_string(),
+            default_value: defaults.orderbook_stream.poll_reconcile_interval_secs.to_string(),
+            value_type: RuntimeConfigValueType::Integer,
+            options: Vec::new(),
+        },
+    );
+    push_runtime_config_entry(
+        &mut entries,
+        RuntimeConfigEntryDraft {
+            section: "orderbook_stream",
+            field: "stale_threshold_ms",
+            label: "Orderbook stream stale threshold milliseconds",
+            env_name: "POLYEDGE_ORDERBOOK_STREAM__STALE_THRESHOLD_MS",
+            value: self.orderbook_stream.stale_threshold_ms.to_string(),
+            default_value: defaults.orderbook_stream.stale_threshold_ms.to_string(),
+            value_type: RuntimeConfigValueType::Integer,
+            options: Vec::new(),
+        },
+    );
+    push_runtime_config_entry(
+        &mut entries,
+        RuntimeConfigEntryDraft {
+            section: "orderbook_stream",
+            field: "book_ttl_secs",
+            label: "Orderbook stream book TTL seconds",
+            env_name: "POLYEDGE_ORDERBOOK_STREAM__BOOK_TTL_SECS",
+            value: self.orderbook_stream.book_ttl_secs.to_string(),
+            default_value: defaults.orderbook_stream.book_ttl_secs.to_string(),
+            value_type: RuntimeConfigValueType::Integer,
+            options: Vec::new(),
+        },
+    );
+    push_runtime_config_entry(
+        &mut entries,
+        RuntimeConfigEntryDraft {
+            section: "orderbook_stream",
+            field: "restart_interval_secs",
+            label: "Orderbook stream restart interval seconds",
+            env_name: "POLYEDGE_ORDERBOOK_STREAM__RESTART_INTERVAL_SECS",
+            value: self.orderbook_stream.restart_interval_secs.to_string(),
+            default_value: defaults.orderbook_stream.restart_interval_secs.to_string(),
+            value_type: RuntimeConfigValueType::Integer,
+            options: Vec::new(),
+        },
+    );
+
     entries
 }
 

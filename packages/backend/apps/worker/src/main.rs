@@ -1,7 +1,8 @@
 use futures::StreamExt as _;
 use polyedge_application::{
     ArbitrageAnalysisRunView, ArbitrageOpportunityListFilters, ArbitrageOpportunityView,
-    ArbitrageScanView, ArbitrageValidationConfig, AuthenticatedActor, DispatchExecutionListFilters,
+    ArbitrageScanView, ArbitrageValidationConfig, AuthenticatedActor, BookSource,
+    CachedBookLevel, CachedOrderBook, DispatchExecutionListFilters,
     ExecutionDispatchCandidate, ExecutionReconciliationCandidate, FixtureBundle,
     FixtureEventRecord, FixtureEvidenceRecord, MarkExecutionFailedCommand,
     MarkExecutionSubmittedCommand, MarketBookSnapshotView, MarketListFilters, MarketView,
@@ -43,7 +44,7 @@ use std::{
 };
 use time::{Duration as TimeDuration, OffsetDateTime};
 use tokio::{sync::watch, task::JoinHandle};
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 struct MarketSyncReport {
@@ -372,6 +373,17 @@ async fn main() -> Result<()> {
             );
             Ok(())
         }
+        Some("consume-orderbook-stream") => {
+            let report = consume_orderbook_stream(&state).await?;
+            info!(
+                subscribed_tokens = report.subscribed_tokens,
+                ws_snapshots_received = report.ws_snapshots_received,
+                poll_reconciliations = report.poll_reconciliations,
+                poll_failures = report.poll_failures,
+                "consumed orderbook stream",
+            );
+            Ok(())
+        }
         Some(other) => Err(AppError::invalid_input(
             "WORKER_COMMAND_UNSUPPORTED",
             format!("unsupported polyedge-worker command: {other}"),
@@ -390,6 +402,7 @@ include!("worker/news_helpers.rs");
 include!("worker/execution_reconcile.rs");
 include!("worker/polymarket_events.rs");
 include!("worker/polymarket_config.rs");
+include!("worker/orderbook_stream.rs");
 include!("worker/execution_dispatch.rs");
 include!("worker/news_promotion.rs");
 include!("worker/shared.rs");

@@ -5,6 +5,7 @@ mod execution;
 mod list_filters;
 mod market_event;
 mod news_ingestion;
+mod orderbook_cache;
 mod rewards;
 mod risk;
 mod system_mode;
@@ -46,6 +47,9 @@ pub use news_ingestion::{
     NewsRawEventInsert, NewsRawEventListFilters, NewsRawEventView, NewsSourceFailureUpdate,
     NewsSourceHealthListFilters, NewsSourceHealthView, NewsSourceIngestionReport,
     NewsSourceSuccessUpdate, degraded_health_score,
+};
+pub use orderbook_cache::{
+    BookSource, CachedBookLevel, CachedOrderBook, OrderbookCache,
 };
 pub use rewards::{
     ManagedRewardOrder, ManagedRewardOrderStatus, RewardBookLevel, RewardBotConfig,

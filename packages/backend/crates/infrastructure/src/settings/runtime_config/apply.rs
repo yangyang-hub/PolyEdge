@@ -178,6 +178,9 @@ fn apply_runtime_config_value(
         "worker.consume_polymarket_user_events" => {
             self.worker.consume_polymarket_user_events = parse_bool_runtime_config(key, value)?;
         }
+        "worker.consume_orderbook_stream" => {
+            self.worker.consume_orderbook_stream = parse_bool_runtime_config(key, value)?;
+        }
         "worker.news_promotion_interval_secs" => {
             self.worker.news_promotion_interval_secs = parse_u64_runtime_config(key, value)?;
         }
@@ -200,6 +203,25 @@ fn apply_runtime_config_value(
                 parse_u64_runtime_config(key, value)?;
         }
         "worker.task_limit" => self.worker.task_limit = parse_u16_runtime_config(key, value)?,
+        "orderbook_stream.enabled" => {
+            self.orderbook_stream.enabled = parse_bool_runtime_config(key, value)?;
+        }
+        "orderbook_stream.max_tokens" => {
+            self.orderbook_stream.max_tokens = parse_usize_runtime_config(key, value)?;
+        }
+        "orderbook_stream.poll_reconcile_interval_secs" => {
+            self.orderbook_stream.poll_reconcile_interval_secs =
+                parse_u64_runtime_config(key, value)?;
+        }
+        "orderbook_stream.stale_threshold_ms" => {
+            self.orderbook_stream.stale_threshold_ms = parse_u64_runtime_config(key, value)?;
+        }
+        "orderbook_stream.book_ttl_secs" => {
+            self.orderbook_stream.book_ttl_secs = parse_u64_runtime_config(key, value)?;
+        }
+        "orderbook_stream.restart_interval_secs" => {
+            self.orderbook_stream.restart_interval_secs = parse_u64_runtime_config(key, value)?;
+        }
         _ => {}
     }
 

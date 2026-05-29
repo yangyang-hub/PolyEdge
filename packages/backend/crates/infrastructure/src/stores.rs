@@ -41,5 +41,6 @@ include!("stores/idempotency.rs");
 include!("stores/external_event.rs");
 include!("stores/audit.rs");
 include!("stores/rewards.rs");
+include!("stores/orderbook_cache.rs");
 include!("stores/helpers.rs");
 include!("stores/types.rs");

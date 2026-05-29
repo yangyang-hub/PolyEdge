@@ -4,17 +4,18 @@ use crate::{
     settings::Settings,
     stores::{
         ExternalEventStore, InMemoryAuditLogSink, InMemoryExternalEventStore,
-        InMemoryIdempotencyStore, InMemoryModeStateStore, InMemoryRewardBotStore,
-        InMemoryRiskStateStore, InMemoryRuntimeConfigStore, PostgresAuditLogSink,
-        PostgresExternalEventStore, PostgresIdempotencyStore, PostgresModeStateStore,
-        PostgresRewardBotStore, PostgresRiskStateStore, PostgresRuntimeConfigStore,
-        RuntimeConfigStore,
+        InMemoryIdempotencyStore, InMemoryModeStateStore, InMemoryOrderbookCache,
+        InMemoryRewardBotStore, InMemoryRiskStateStore, InMemoryRuntimeConfigStore,
+        PostgresAuditLogSink, PostgresExternalEventStore, PostgresIdempotencyStore,
+        PostgresModeStateStore, PostgresRewardBotStore, PostgresRiskStateStore,
+        PostgresRuntimeConfigStore, RedisOrderbookCache, RuntimeConfigStore,
     },
 };
 use polyedge_application::{
     ArbitrageService, ArbitrageStore, AuditLogSink, ExecutionService, IdempotencyStore,
     MarketEventService, MarketEventStore, ModeStateStore, NewsIngestionService, NewsIngestionStore,
-    RewardBotService, RewardBotStore, RiskPolicy, RiskService, RiskStateStore, SystemModeService,
+    OrderbookCache, RewardBotService, RewardBotStore, RiskPolicy, RiskService, RiskStateStore,
+    SystemModeService,
 };
 use polyedge_domain::{AppError, Result, SystemMode};
 use sqlx::{PgPool, postgres::PgPoolOptions};
@@ -38,6 +39,7 @@ pub struct AppState {
     pub reward_bot_service: Arc<RewardBotService>,
     pub risk_service: Arc<RiskService>,
     pub execution_service: Arc<ExecutionService>,
+    pub orderbook_cache: Arc<dyn OrderbookCache>,
 }
 
 pub struct Runtime {
@@ -176,6 +178,14 @@ impl Runtime {
             execution_audit_log_sink,
         ));
 
+        let orderbook_cache: Arc<dyn OrderbookCache> = match &redis {
+            Some(client) => Arc::new(RedisOrderbookCache::new(
+                client.clone(),
+                settings.orderbook_stream.book_ttl_secs,
+            )),
+            None => Arc::new(InMemoryOrderbookCache::new()),
+        };
+
         Ok(Self {
             state: AppState {
                 settings,
@@ -191,6 +201,7 @@ impl Runtime {
                 reward_bot_service,
                 risk_service,
                 execution_service,
+                orderbook_cache,
             },
         })
     }
@@ -243,6 +254,8 @@ impl Runtime {
             execution_audit_log_sink,
         ));
 
+        let orderbook_cache: Arc<dyn OrderbookCache> = Arc::new(InMemoryOrderbookCache::new());
+
         Ok(AppState {
             settings,
             dependencies: Arc::new(RuntimeDependencies {
@@ -260,6 +273,7 @@ impl Runtime {
             reward_bot_service,
             risk_service,
             execution_service,
+            orderbook_cache,
         })
     }
 
