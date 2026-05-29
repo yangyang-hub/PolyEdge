@@ -1,32 +1,64 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
+# ---------------------------------------------------------------------------
+# PolyEdge deploy script
+#
+# Usage:
+#   scripts/deploy.sh                 # auto mode (default for cron/CI)
+#   scripts/deploy.sh auto            # same as no args
+#   scripts/deploy.sh all             # force rebuild everything
+#   scripts/deploy.sh api [worker|front ...]
+#
+# Auto mode (default):
+#   1. git fetch + fast-forward
+#   2. If no new code AND all containers healthy -> skip entirely
+#   3. If bin/polyedge-api changed -> rebuild backend image -> restart api & worker
+#   4. If new code pulled -> always rebuild frontend -> restart front
+#   5. If any container is not running -> rebuild & start it regardless
+#
+# Cron example (every 5 minutes):
+#   */5 * * * * /path/to/scripts/deploy.sh >> /var/log/polyedge-deploy.log 2>&1
+#
+# Environment variables:
+#   POLYEDGE_DEPLOY_DIR       - repo checkout (default: script's parent)
+#   POLYEDGE_GIT_REPO         - remote URL (only used for first clone)
+#   POLYEDGE_GIT_BRANCH       - branch to track (default: current)
+#   POLYEDGE_COMPOSE_FILE     - docker-compose file path
+#   POLYEDGE_ENV_FILE         - .env file path
+#   POLYEDGE_SKIP_ENV_VALIDATION=1 - skip .env sanity checks
+#   POLYEDGE_LOG_FILE         - log file path (default: /var/log/polyedge-deploy.log)
+# ---------------------------------------------------------------------------
+
 log() {
-  printf '[polyedge-deploy] %s\n' "$*"
+  printf '[polyedge-deploy] %s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"
 }
 
 fail() {
-  printf '[polyedge-deploy] ERROR: %s\n' "$*" >&2
+  printf '[polyedge-deploy] ERROR: %s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >&2
   exit 1
 }
 
 usage() {
   cat >&2 <<'EOF'
-Usage: scripts/deploy.sh [all|api|worker|front] [...]
+Usage: scripts/deploy.sh [auto|all|api|worker|front] [...]
 
 Targets:
-  no args       Same as all.
-  all           Rebuild backend and frontend images, then restart api, worker, and front.
-  api worker    Rebuild the backend image and restart both backend services.
-  api           Rebuild the backend image and restart only the API service.
-  worker        Rebuild the backend image and restart only the worker service.
-  front         Rebuild the frontend image and restart only the frontend service.
+  no args / auto  Intelligent deploy: pull code, detect changes, deploy only what changed.
+  all             Force rebuild backend and frontend images, then restart all services.
+  api worker      Rebuild the backend image and restart both backend services.
+  api             Rebuild the backend image and restart only the API service.
+  worker          Rebuild the backend image and restart only the worker service.
+  front           Rebuild the frontend image and restart only the frontend service.
 
 Multiple targets can be passed as separate args or comma-separated, for example:
   scripts/deploy.sh api worker
   scripts/deploy.sh api,front
 EOF
 }
+
+# mode: "auto" (change-detection) or "manual" (explicit targets)
+mode="auto"
 
 parse_targets() {
   local -n target_api_ref="$1"
@@ -40,9 +72,7 @@ parse_targets() {
   shift 3
 
   if [[ $# -eq 0 ]]; then
-    target_api_ref=1
-    target_worker_ref=1
-    target_front_ref=1
+    # default: auto mode
     return 0
   fi
 
@@ -51,18 +81,25 @@ parse_targets() {
     for part in "${parts[@]}"; do
       target="${part,,}"
       case "${target}" in
+        auto)
+          mode="auto"
+          ;;
         all)
+          mode="manual"
           target_api_ref=1
           target_worker_ref=1
           target_front_ref=1
           ;;
         api)
+          mode="manual"
           target_api_ref=1
           ;;
         worker)
+          mode="manual"
           target_worker_ref=1
           ;;
         front)
+          mode="manual"
           target_front_ref=1
           ;;
         ""|-h|--help|help)
@@ -71,7 +108,7 @@ parse_targets() {
           ;;
         *)
           usage
-          fail "unknown deploy target: ${part}. Expected all, api, worker, or front."
+          fail "unknown deploy target: ${part}. Expected auto, all, api, worker, or front."
           ;;
       esac
     done
@@ -144,18 +181,60 @@ validate_env_file() {
   fi
 }
 
+# Compute a checksum of a file, or "MISSING" if it does not exist.
+file_hash() {
+  if [[ -f "$1" ]]; then
+    md5sum "$1" 2>/dev/null | awk '{print $1}'
+  else
+    printf 'MISSING'
+  fi
+}
+
+# Check if a docker compose service container is running.
+# Returns 0 if running, 1 if not.
+container_running() {
+  local service="$1"
+  local status
+  status="$(${compose_cmd} ps --format json "${service}" 2>/dev/null)" || true
+  if [[ -z "${status}" ]]; then
+    return 1
+  fi
+  # docker compose ps --format json may return multiple lines; check last
+  printf '%s' "${status}" | tail -1 | grep -q '"running"' && return 0
+  return 1
+}
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 default_root="$(cd "${script_dir}/.." && pwd)"
 deploy_dir="${POLYEDGE_DEPLOY_DIR:-${default_root}}"
 repo_url="${POLYEDGE_GIT_REPO:-}"
 branch="${POLYEDGE_GIT_BRANCH:-}"
 skip_git_pull="${POLYEDGE_SKIP_GIT_PULL:-0}"
+
 target_api=0
 target_worker=0
 target_front=0
 
 parse_targets target_api target_worker target_front "$@"
 
+# ---- setup logging: tee to file when running non-interactively -----------
+log_file="${POLYEDGE_LOG_FILE:-}"
+if [[ -z "${log_file}" && ! -t 0 ]]; then
+  # non-interactive (cron) -> default log file
+  log_file="/var/log/polyedge-deploy.log"
+fi
+if [[ -n "${log_file}" ]]; then
+  mkdir -p "$(dirname "${log_file}")"
+  exec > >(tee -a "${log_file}") 2>&1
+fi
+
+log "=== deploy start (mode=${mode}) ==="
+
+# ---- git clone (first-time) ---------------------------------------------
 if [[ ! -d "${deploy_dir}/.git" ]]; then
   [[ -n "${repo_url}" ]] || fail "POLYEDGE_DEPLOY_DIR is not a git checkout. Set POLYEDGE_GIT_REPO to clone from GitHub."
   [[ -n "${branch}" ]] || branch="main"
@@ -178,10 +257,19 @@ if [[ -z "${branch}" ]]; then
   fi
 fi
 
+# ---- git pull ------------------------------------------------------------
+new_code=0
+old_api_hash=""
+old_worker_hash=""
+
 if [[ "${skip_git_pull}" != "1" ]]; then
   if [[ -n "$(git status --porcelain --untracked-files=no)" ]]; then
     fail "tracked files have local changes. Commit, stash, or set POLYEDGE_SKIP_GIT_PULL=1."
   fi
+
+  # Snapshot binary hashes before pull (for change detection in auto mode)
+  old_api_hash="$(file_hash bin/polyedge-api)"
+  old_worker_hash="$(file_hash bin/polyedge-worker)"
 
   log "fetching latest code from origin/${branch}"
   git fetch --prune origin "${branch}"
@@ -196,12 +284,22 @@ if [[ "${skip_git_pull}" != "1" ]]; then
     fi
   fi
 
-  log "fast-forwarding ${branch}"
-  git merge --ff-only "origin/${branch}"
+  # Detect if there are new commits to pull
+  local_head="$(git rev-parse HEAD)"
+  remote_head="$(git rev-parse "origin/${branch}")"
+
+  if [[ "${local_head}" != "${remote_head}" ]]; then
+    log "fast-forwarding ${branch} (${local_head:0:8} -> ${remote_head:0:8})"
+    git merge --ff-only "origin/${branch}"
+    new_code=1
+  else
+    log "already up-to-date (${local_head:0:8})"
+  fi
 else
   log "skipping git update"
 fi
 
+# ---- compose & env setup -------------------------------------------------
 compose_file="${POLYEDGE_COMPOSE_FILE:-${deploy_dir}/deploy/docker-compose.yml}"
 env_file="${POLYEDGE_ENV_FILE:-${deploy_dir}/deploy/.env}"
 env_example="${deploy_dir}/deploy/.env.example"
@@ -218,36 +316,113 @@ validate_env_file "${env_file}"
 
 compose_cmd="$(find_compose)" || fail "Docker Compose is not installed."
 
-build_services=()
-runtime_services=()
+# ---------------------------------------------------------------------------
+# Auto mode: intelligent change detection
+# ---------------------------------------------------------------------------
+if [[ "${mode}" == "auto" ]]; then
+  build_services=()
+  restart_services=()
 
-if [[ "${target_api}" == "1" || "${target_worker}" == "1" ]]; then
-  build_services+=(polyedge-api)
-fi
-if [[ "${target_front}" == "1" ]]; then
-  build_services+=(polyedge-front)
-fi
+  # Detect binary changes
+  new_api_hash="$(file_hash bin/polyedge-api)"
+  new_worker_hash="$(file_hash bin/polyedge-worker)"
+  backend_changed=0
+  front_changed=0
 
-if [[ "${target_api}" == "1" ]]; then
-  runtime_services+=(polyedge-api)
-fi
-if [[ "${target_worker}" == "1" ]]; then
-  runtime_services+=(polyedge-worker)
-fi
-if [[ "${target_front}" == "1" ]]; then
-  runtime_services+=(polyedge-front)
-fi
+  if [[ "${new_api_hash}" != "${old_api_hash}" || "${new_worker_hash}" != "${old_worker_hash}" ]]; then
+    backend_changed=1
+    log "backend binary changed (api: ${old_api_hash:0:8}->${new_api_hash:0:8}, worker: ${old_worker_hash:0:8}->${new_worker_hash:0:8})"
+  fi
 
-if [[ "${target_api}" == "1" || "${target_worker}" == "1" ]]; then
-  [[ -f "${deploy_dir}/bin/polyedge-api" ]] || fail "bin/polyedge-api is missing. Build it with scripts/build-backend-bin.sh and commit it."
-  [[ -f "${deploy_dir}/bin/polyedge-worker" ]] || fail "bin/polyedge-worker is missing. Build it with scripts/build-backend-bin.sh and commit it."
+  if [[ "${new_code}" == "1" ]]; then
+    front_changed=1
+    log "new code pulled -> frontend will be rebuilt"
+  fi
+
+  # Check container status: if any target container is down, force rebuild
+  backend_running=1
+  front_running=1
+
+  if ! container_running polyedge-api; then
+    log "polyedge-api container is not running"
+    backend_running=0
+  fi
+  if ! container_running polyedge-worker; then
+    log "polyedge-worker container is not running"
+    backend_running=0
+  fi
+  if ! container_running polyedge-front; then
+    log "polyedge-front container is not running"
+    front_running=0
+  fi
+
+  # Decide what to build and restart
+  if [[ "${backend_changed}" == "1" || "${backend_running}" == "0" ]]; then
+    build_services+=(polyedge-api)
+    restart_services+=(polyedge-api polyedge-worker)
+  fi
+
+  if [[ "${front_changed}" == "1" || "${front_running}" == "0" ]]; then
+    build_services+=(polyedge-front)
+    restart_services+=(polyedge-front)
+  fi
+
+  # Nothing to do?
+  if [[ ${#build_services[@]} -eq 0 && ${#restart_services[@]} -eq 0 ]]; then
+    log "no changes detected and all containers running -> nothing to do"
+    log "=== deploy end (skipped) ==="
+    exit 0
+  fi
+
+  # Ensure binaries exist before building backend
+  if [[ "${backend_changed}" == "1" || "${backend_running}" == "0" ]]; then
+    [[ -f bin/polyedge-api ]] || fail "bin/polyedge-api is missing. Build it with scripts/build-backend-bin.sh."
+    [[ -f bin/polyedge-worker ]] || fail "bin/polyedge-worker is missing. Build it with scripts/build-backend-bin.sh."
+  fi
+
+  log "building images: ${build_services[*]}"
+  ${compose_cmd} --env-file "${env_file}" -f "${compose_file}" build --pull "${build_services[@]}"
+
+  log "starting containers: ${restart_services[*]}"
+  ${compose_cmd} --env-file "${env_file}" -f "${compose_file}" up -d --remove-orphans "${restart_services[@]}"
+
+else
+  # ---------------------------------------------------------------------------
+  # Manual mode: explicit targets (same as original behavior)
+  # ---------------------------------------------------------------------------
+  build_services=()
+  runtime_services=()
+
+  if [[ "${target_api}" == "1" || "${target_worker}" == "1" ]]; then
+    build_services+=(polyedge-api)
+  fi
+  if [[ "${target_front}" == "1" ]]; then
+    build_services+=(polyedge-front)
+  fi
+
+  if [[ "${target_api}" == "1" ]]; then
+    runtime_services+=(polyedge-api)
+  fi
+  if [[ "${target_worker}" == "1" ]]; then
+    runtime_services+=(polyedge-worker)
+  fi
+  if [[ "${target_front}" == "1" ]]; then
+    runtime_services+=(polyedge-front)
+  fi
+
+  if [[ "${target_api}" == "1" || "${target_worker}" == "1" ]]; then
+    [[ -f "bin/polyedge-api" ]] || fail "bin/polyedge-api is missing. Build it with scripts/build-backend-bin.sh and commit it."
+    [[ -f "bin/polyedge-worker" ]] || fail "bin/polyedge-worker is missing. Build it with scripts/build-backend-bin.sh and commit it."
+  fi
+
+  log "building images: ${build_services[*]}"
+  ${compose_cmd} --env-file "${env_file}" -f "${compose_file}" build --pull "${build_services[@]}"
+
+  log "starting containers: ${runtime_services[*]}"
+  ${compose_cmd} --env-file "${env_file}" -f "${compose_file}" up -d --remove-orphans "${runtime_services[@]}"
 fi
-
-log "building images: ${build_services[*]}"
-${compose_cmd} --env-file "${env_file}" -f "${compose_file}" build --pull "${build_services[@]}"
-
-log "starting containers: ${runtime_services[*]}"
-${compose_cmd} --env-file "${env_file}" -f "${compose_file}" up -d --remove-orphans "${runtime_services[@]}"
 
 log "current container status"
 ${compose_cmd} --env-file "${env_file}" -f "${compose_file}" ps
+
+log "=== deploy end ==="
