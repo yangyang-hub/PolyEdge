@@ -162,11 +162,12 @@ fn book_top(
     let Some(book) = books.get(token_id) else {
         return (None, None, false);
     };
-    let fresh = (now - book.observed_at)
-        .whole_milliseconds()
-        .try_into()
-        .ok()
-        .is_some_and(|age_ms: u64| age_ms <= config.stale_book_ms);
+    let fresh = config.stale_book_ms == 0
+        || (now - book.observed_at)
+            .whole_milliseconds()
+            .try_into()
+            .ok()
+            .is_some_and(|age_ms: u64| age_ms <= config.stale_book_ms);
     if !fresh {
         return (None, None, false);
     }
@@ -197,11 +198,12 @@ fn fresh_book<'a>(
     now: OffsetDateTime,
 ) -> Option<&'a RewardOrderBook> {
     let book = books.get(token_id)?;
-    let fresh = (now - book.observed_at)
-        .whole_milliseconds()
-        .try_into()
-        .ok()
-        .is_some_and(|age_ms: u64| age_ms <= stale_book_ms);
+    let fresh = stale_book_ms == 0
+        || (now - book.observed_at)
+            .whole_milliseconds()
+            .try_into()
+            .ok()
+            .is_some_and(|age_ms: u64| age_ms <= stale_book_ms);
     fresh.then_some(book)
 }
 

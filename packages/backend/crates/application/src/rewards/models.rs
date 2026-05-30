@@ -361,7 +361,7 @@ impl RewardBotConfig {
         } else {
             self.per_market_usd
         };
-        self.quote_size_usd = clamp_decimal(self.quote_size_usd, decimal("1"), quote_size_cap);
+        self.quote_size_usd = clamp_decimal(self.quote_size_usd, Decimal::ZERO, quote_size_cap);
         self.min_daily_reward =
             clamp_decimal(self.min_daily_reward, Decimal::ZERO, decimal("100000"));
         self.min_market_score = clamp_decimal(self.min_market_score, Decimal::ZERO, decimal("100"));
@@ -374,8 +374,8 @@ impl RewardBotConfig {
         if self.max_midpoint <= self.min_midpoint {
             self.max_midpoint = Decimal::min(Decimal::ONE, self.min_midpoint + decimal("0.1"));
         }
-        self.stale_book_ms = self.stale_book_ms.clamp(1_000, 120_000);
-        self.min_scoring_check_sec = self.min_scoring_check_sec.clamp(15, 600);
+        self.stale_book_ms = self.stale_book_ms.clamp(0, 120_000);
+        self.min_scoring_check_sec = self.min_scoring_check_sec.clamp(0, 600);
         self.max_position_usd =
             clamp_decimal(self.max_position_usd, Decimal::ZERO, decimal("1000000"));
         self.max_global_position_usd = clamp_decimal(
@@ -395,7 +395,7 @@ impl RewardBotConfig {
             clamp_decimal(self.fill_rate_per_tick, Decimal::ZERO, Decimal::ONE);
         self.max_fill_ratio = clamp_decimal(self.max_fill_ratio, decimal("0.01"), Decimal::ONE);
         self.requote_drift_cents =
-            clamp_decimal(self.requote_drift_cents, decimal("0.1"), decimal("99"));
+            clamp_decimal(self.requote_drift_cents, Decimal::ZERO, decimal("99"));
         self
     }
 

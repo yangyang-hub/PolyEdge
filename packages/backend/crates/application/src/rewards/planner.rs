@@ -223,14 +223,15 @@ fn get_token_book_state(
     now: OffsetDateTime,
 ) -> Option<TokenBookState> {
     let book = books.get(&token.token_id);
-    let fresh = book
-        .and_then(|book| {
-            (now - book.observed_at)
-                .whole_milliseconds()
-                .try_into()
-                .ok()
-        })
-        .is_some_and(|age_ms: u64| age_ms <= config.stale_book_ms);
+    let fresh = config.stale_book_ms == 0
+        || book
+            .and_then(|book| {
+                (now - book.observed_at)
+                    .whole_milliseconds()
+                    .try_into()
+                    .ok()
+            })
+            .is_some_and(|age_ms: u64| age_ms <= config.stale_book_ms);
     let (best_bid, best_ask) = if fresh {
         (
             book.and_then(|book| book.bids.first().map(|level| level.price)),

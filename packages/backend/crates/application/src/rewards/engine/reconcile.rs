@@ -58,11 +58,13 @@ impl TickContext {
             return Some("market dropped below eligibility threshold".to_string());
         }
         let leg = plan.legs.iter().find(|leg| leg.token_id == order.token_id)?;
-        let drift_cents = ((order.price - leg.price).abs()) * decimal("100");
-        if drift_cents > self.config.requote_drift_cents {
-            return Some(format!(
-                "midpoint drifted {drift_cents} cents beyond requote threshold"
-            ));
+        if self.config.requote_drift_cents > Decimal::ZERO {
+            let drift_cents = ((order.price - leg.price).abs()) * decimal("100");
+            if drift_cents > self.config.requote_drift_cents {
+                return Some(format!(
+                    "midpoint drifted {drift_cents} cents beyond requote threshold"
+                ));
+            }
         }
         None
     }
