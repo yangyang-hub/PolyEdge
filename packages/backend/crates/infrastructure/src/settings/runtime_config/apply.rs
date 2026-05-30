@@ -181,8 +181,15 @@ fn apply_runtime_config_value(
         "worker.consume_orderbook_stream" => {
             self.worker.consume_orderbook_stream = parse_bool_runtime_config(key, value)?;
         }
+        "worker.recompute_signals" => {
+            self.worker.recompute_signals = parse_bool_runtime_config(key, value)?;
+        }
         "worker.news_promotion_interval_secs" => {
             self.worker.news_promotion_interval_secs = parse_u64_runtime_config(key, value)?;
+        }
+        "worker.signal_recompute_interval_secs" => {
+            self.worker.signal_recompute_interval_secs =
+                parse_u64_runtime_config(key, value)?;
         }
         "worker.arbitrage_analysis_interval_secs" => {
             self.worker.arbitrage_analysis_interval_secs =

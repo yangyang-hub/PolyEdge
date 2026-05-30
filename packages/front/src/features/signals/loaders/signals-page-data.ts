@@ -30,14 +30,18 @@ export async function getSignalsPageData(i18n: I18nRuntime) {
   ]);
   const { locale, dictionary, enumLabel, format } = i18n;
   const marketIndex = indexMarkets(markets);
-  const selectedSignal = selectFirstMatchingItem(
-    signals,
-    [
-      (signal) => signal.lifecycle_state === "new",
-    ],
-    dictionary.routeStates.signalsDataRequired,
-  );
-  const selectedEvidenceItems = evidences.filter((evidence) => selectedSignal.evidence_ids.includes(evidence.id));
+  const selectedSignal = signals.length > 0
+    ? selectFirstMatchingItem(
+        signals,
+        [
+          (signal) => signal.lifecycle_state === "new",
+        ],
+        dictionary.routeStates.signalsDataRequired,
+      )
+    : null;
+  const selectedEvidenceItems = selectedSignal
+    ? evidences.filter((evidence) => selectedSignal.evidence_ids.includes(evidence.id))
+    : [];
   const runtimeMode = normalizeRuntimeMode(riskState.mode);
 
   return {
@@ -77,30 +81,32 @@ export async function getSignalsPageData(i18n: I18nRuntime) {
             novelty: formatPercentFromRatio(evidence.novelty),
           });
         }),
-      isSelected: signal.id === selectedSignal.id,
+      isSelected: selectedSignal ? signal.id === selectedSignal.id : false,
     })),
-    selectedSignal: {
-      id: selectedSignal.id,
-      version: selectedSignal.version,
-      lifecycleState: selectedSignal.lifecycle_state,
-      marketQuestion: marketIndex.get(selectedSignal.market_id)?.question ?? selectedSignal.market_id,
-      confidence: formatPercentFromRatio(selectedSignal.confidence),
-      marketPrice: selectedSignal.market_price,
-      fairPrice: selectedSignal.fair_price,
-      edge: formatSignedFixed(selectedSignal.edge),
-      stateLabel: enumLabel(selectedSignal.lifecycle_state),
-      stateTone: signalStateTone(selectedSignal.lifecycle_state),
-      approvedAt: selectedSignal.approved_at ?? null,
-      rejectedAt: selectedSignal.rejected_at ?? null,
-      reason: localizeGeneratedCopy(locale, dictionary, selectedSignal.reason),
-      riskDecision: localizeGeneratedCopy(locale, dictionary, selectedSignal.risk_decision),
-      evidenceLines: selectedEvidenceItems.map((evidence) => {
-        return format(dictionary.signals.evidenceLine, {
-          direction: enumLabel(evidence.direction),
-          strength: evidence.strength,
-          novelty: formatPercentFromRatio(evidence.novelty),
-        });
-      }),
-    },
+    selectedSignal: selectedSignal
+      ? {
+          id: selectedSignal.id,
+          version: selectedSignal.version,
+          lifecycleState: selectedSignal.lifecycle_state,
+          marketQuestion: marketIndex.get(selectedSignal.market_id)?.question ?? selectedSignal.market_id,
+          confidence: formatPercentFromRatio(selectedSignal.confidence),
+          marketPrice: selectedSignal.market_price,
+          fairPrice: selectedSignal.fair_price,
+          edge: formatSignedFixed(selectedSignal.edge),
+          stateLabel: enumLabel(selectedSignal.lifecycle_state),
+          stateTone: signalStateTone(selectedSignal.lifecycle_state),
+          approvedAt: selectedSignal.approved_at ?? null,
+          rejectedAt: selectedSignal.rejected_at ?? null,
+          reason: localizeGeneratedCopy(locale, dictionary, selectedSignal.reason),
+          riskDecision: localizeGeneratedCopy(locale, dictionary, selectedSignal.risk_decision),
+          evidenceLines: selectedEvidenceItems.map((evidence) => {
+            return format(dictionary.signals.evidenceLine, {
+              direction: enumLabel(evidence.direction),
+              strength: evidence.strength,
+              novelty: formatPercentFromRatio(evidence.novelty),
+            });
+          }),
+        }
+      : null,
   };
 }

@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import { PageHeader } from "@/components/shared/page-header";
 import { ActionDialog } from "@/components/shared/action-dialog";
 import { useConsoleRealtimeChannel } from "@/components/shared/console-realtime-provider";
+import { EmptyPanel } from "@/components/shared/empty-panel";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { OperationFeedbackBanner } from "@/components/shared/operation-feedback-banner";
@@ -234,6 +235,12 @@ export function SignalsWorkbench({
       />
       {lastOperation ? <OperationFeedbackBanner feedback={lastOperation} /> : null}
 
+      {liveSignals.length === 0 ? (
+        <EmptyPanel
+          title={dictionary.signals.noSignalsTitle}
+          detail={dictionary.signals.noSignalsDetail}
+        />
+      ) : (
       <WorkbenchLayout columnsClassName="xl:grid-cols-[1.6fr_0.95fr]">
         <div className="overflow-hidden rounded-lg bg-card/95 ring-1 ring-white/5">
           <div className="flex flex-col gap-4 bg-popover/70 px-5 py-4 xl:flex-row xl:items-center xl:justify-between">
@@ -349,6 +356,7 @@ export function SignalsWorkbench({
           </div>
         </ActionDialog>
       </WorkbenchLayout>
+      )}
     </div>
   );
 }

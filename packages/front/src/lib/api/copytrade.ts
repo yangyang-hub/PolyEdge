@@ -5,7 +5,7 @@ import type {
   AddTrackedWalletInputDto,
   WalletActionInputDto,
 } from "@/lib/contracts/dto";
-import { fetchContract, fetchWriteContract } from "@/lib/api/base";
+import { fetchContract, fetchWriteContract, randomUUID } from "@/lib/api/base";
 
 export async function readCopyTradeSnapshot(): Promise<ApiResponse<CopyTradeSnapshotDto>> {
   return fetchContract<ApiResponse<CopyTradeSnapshotDto>>("/api/v1/copy-trading");
@@ -16,7 +16,7 @@ export async function updateCopyTradeConfig(
 ): Promise<ApiResponse<CopyTradeSnapshotDto>> {
   return fetchWriteContract<ApiResponse<CopyTradeSnapshotDto>>("/api/v1/copy-trading/config", {
     method: "POST",
-    idempotencyKey: `copytrade-config-${crypto.randomUUID()}`,
+    idempotencyKey: `copytrade-config-${randomUUID()}`,
     body: patch as Record<string, unknown>,
   });
 }
@@ -26,7 +26,7 @@ export async function addTrackedWallet(
 ): Promise<ApiResponse<CopyTradeSnapshotDto>> {
   return fetchWriteContract<ApiResponse<CopyTradeSnapshotDto>>("/api/v1/copy-trading/wallets", {
     method: "POST",
-    idempotencyKey: `copytrade-add-wallet-${crypto.randomUUID()}`,
+    idempotencyKey: `copytrade-add-wallet-${randomUUID()}`,
     body: input as Record<string, unknown>,
   });
 }
@@ -36,7 +36,7 @@ export async function removeTrackedWallet(
 ): Promise<ApiResponse<CopyTradeSnapshotDto>> {
   return fetchWriteContract<ApiResponse<CopyTradeSnapshotDto>>("/api/v1/copy-trading/wallets/remove", {
     method: "POST",
-    idempotencyKey: `copytrade-remove-wallet-${crypto.randomUUID()}`,
+    idempotencyKey: `copytrade-remove-wallet-${randomUUID()}`,
     body: input as Record<string, unknown>,
   });
 }
@@ -47,7 +47,7 @@ export async function setWalletStatus(
 ): Promise<ApiResponse<CopyTradeSnapshotDto>> {
   return fetchWriteContract<ApiResponse<CopyTradeSnapshotDto>>("/api/v1/copy-trading/wallets/status", {
     method: "POST",
-    idempotencyKey: `copytrade-wallet-status-${crypto.randomUUID()}`,
+    idempotencyKey: `copytrade-wallet-status-${randomUUID()}`,
     body: { address, status },
   });
 }
@@ -55,7 +55,7 @@ export async function setWalletStatus(
 export async function runCopyTradeOnce(): Promise<ApiResponse<CopyTradeSnapshotDto>> {
   return fetchWriteContract<ApiResponse<CopyTradeSnapshotDto>>("/api/v1/copy-trading/run", {
     method: "POST",
-    idempotencyKey: `copytrade-run-${crypto.randomUUID()}`,
+    idempotencyKey: `copytrade-run-${randomUUID()}`,
     body: {},
   });
 }
@@ -63,7 +63,7 @@ export async function runCopyTradeOnce(): Promise<ApiResponse<CopyTradeSnapshotD
 export async function analyzeWallets(): Promise<ApiResponse<CopyTradeSnapshotDto>> {
   return fetchWriteContract<ApiResponse<CopyTradeSnapshotDto>>("/api/v1/copy-trading/analyze", {
     method: "POST",
-    idempotencyKey: `copytrade-analyze-${crypto.randomUUID()}`,
+    idempotencyKey: `copytrade-analyze-${randomUUID()}`,
     body: {},
   });
 }
@@ -71,7 +71,7 @@ export async function analyzeWallets(): Promise<ApiResponse<CopyTradeSnapshotDto
 export async function cancelCopyTradeOrders(): Promise<ApiResponse<CopyTradeSnapshotDto>> {
   return fetchWriteContract<ApiResponse<CopyTradeSnapshotDto>>("/api/v1/copy-trading/cancel-all", {
     method: "POST",
-    idempotencyKey: `copytrade-cancel-${crypto.randomUUID()}`,
+    idempotencyKey: `copytrade-cancel-${randomUUID()}`,
     body: {},
   });
 }
@@ -79,7 +79,7 @@ export async function cancelCopyTradeOrders(): Promise<ApiResponse<CopyTradeSnap
 export async function resetCopyTrade(): Promise<ApiResponse<CopyTradeSnapshotDto>> {
   return fetchWriteContract<ApiResponse<CopyTradeSnapshotDto>>("/api/v1/copy-trading/reset", {
     method: "POST",
-    idempotencyKey: `copytrade-reset-${crypto.randomUUID()}`,
+    idempotencyKey: `copytrade-reset-${randomUUID()}`,
     body: {},
   });
 }

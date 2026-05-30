@@ -9,7 +9,8 @@ use polyedge_application::{
     NewsIngestSourceCommand, NewsIngestionItem, NewsRawEventListFilters, NewsRawEventView,
     NewsSourceFailureUpdate, NewsSourceHealthListFilters, NewsSourceHealthView, OrderListFilters,
     ReconcileExecutionListFilters, ReconcileExternalTradeCommand, RewardBookLevel,
-    RewardBotRunReport, RewardMarket, RewardOrderBook, RewardToken, SyncExternalOrderStatusCommand,
+    RewardBotRunReport, RewardMarket, RewardOrderBook, RewardToken, SignalListFilters,
+    SyncExternalOrderStatusCommand,
     build_arbitrage_analysis, market_book_snapshot_id, select_reward_book_token_ids,
     CopyBookLevel, CopyOrderBook, CopyTradeRunReport, WalletActivityInput, WalletFeedInput,
     WalletPositionInput,
@@ -446,6 +447,7 @@ include!("worker/polymarket_config.rs");
 include!("worker/orderbook_stream.rs");
 include!("worker/execution_dispatch.rs");
 include!("worker/news_promotion.rs");
+include!("worker/signal_recompute.rs");
 include!("worker/shared.rs");
 
 #[cfg(test)]

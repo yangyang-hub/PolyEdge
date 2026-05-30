@@ -3,7 +3,7 @@ import type {
   RewardBotConfigPatchDto,
   RewardBotSnapshotDto,
 } from "@/lib/contracts/dto";
-import { fetchContract, fetchWriteContract } from "@/lib/api/base";
+import { fetchContract, fetchWriteContract, randomUUID } from "@/lib/api/base";
 
 export async function readRewardBotSnapshot(): Promise<ApiResponse<RewardBotSnapshotDto>> {
   return fetchContract<ApiResponse<RewardBotSnapshotDto>>("/api/v1/rewards-bot");
@@ -14,7 +14,7 @@ export async function updateRewardBotConfig(
 ): Promise<ApiResponse<RewardBotSnapshotDto>> {
   return fetchWriteContract<ApiResponse<RewardBotSnapshotDto>>("/api/v1/rewards-bot/config", {
     method: "POST",
-    idempotencyKey: `reward-config-${crypto.randomUUID()}`,
+    idempotencyKey: `reward-config-${randomUUID()}`,
     body: patch as Record<string, unknown>,
   });
 }
@@ -22,7 +22,7 @@ export async function updateRewardBotConfig(
 export async function runRewardBotOnce(): Promise<ApiResponse<RewardBotSnapshotDto>> {
   return fetchWriteContract<ApiResponse<RewardBotSnapshotDto>>("/api/v1/rewards-bot/run", {
     method: "POST",
-    idempotencyKey: `reward-run-${crypto.randomUUID()}`,
+    idempotencyKey: `reward-run-${randomUUID()}`,
     body: {},
   });
 }
@@ -30,7 +30,7 @@ export async function runRewardBotOnce(): Promise<ApiResponse<RewardBotSnapshotD
 export async function cancelRewardBotOrders(): Promise<ApiResponse<RewardBotSnapshotDto>> {
   return fetchWriteContract<ApiResponse<RewardBotSnapshotDto>>("/api/v1/rewards-bot/cancel-all", {
     method: "POST",
-    idempotencyKey: `reward-cancel-${crypto.randomUUID()}`,
+    idempotencyKey: `reward-cancel-${randomUUID()}`,
     body: {},
   });
 }
@@ -38,7 +38,7 @@ export async function cancelRewardBotOrders(): Promise<ApiResponse<RewardBotSnap
 export async function resetRewardBot(): Promise<ApiResponse<RewardBotSnapshotDto>> {
   return fetchWriteContract<ApiResponse<RewardBotSnapshotDto>>("/api/v1/rewards-bot/reset", {
     method: "POST",
-    idempotencyKey: `reward-reset-${crypto.randomUUID()}`,
+    idempotencyKey: `reward-reset-${randomUUID()}`,
     body: {},
   });
 }

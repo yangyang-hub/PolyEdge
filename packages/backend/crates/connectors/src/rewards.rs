@@ -3,11 +3,15 @@ use rust_decimal::Decimal;
 use serde::Deserialize;
 use std::str::FromStr;
 use std::sync::Arc;
+use std::time::Duration;
 use time::OffsetDateTime;
 use tokio::sync::Semaphore;
 
 const LAST_CURSOR: &str = "LTE=";
 const MAX_REWARD_MARKET_PAGES: usize = 20;
+const ENRICH_TIMEOUT: Duration = Duration::from_secs(10);
+const ENRICH_MAX_RETRIES: u32 = 3;
+const ENRICH_RETRY_BASE_DELAY: Duration = Duration::from_millis(500);
 
 #[derive(Debug, Clone)]
 pub struct PolymarketRewardToken {
@@ -130,7 +134,10 @@ impl PolymarketRewardsConnector {
 
         Ok(Self {
             clob_host,
-            client: reqwest::Client::new(),
+            client: reqwest::Client::builder()
+                .timeout(ENRICH_TIMEOUT)
+                .build()
+                .expect("failed to build HTTP client"),
         })
     }
 
@@ -187,7 +194,14 @@ impl PolymarketRewardsConnector {
             cursor = Some(next_cursor);
         }
 
+        let raw_count = markets.len();
         let markets = self.enrich_reward_markets(markets).await;
+        tracing::info!(
+            raw_count,
+            enriched_count = markets.len(),
+            dropped = raw_count - markets.len(),
+            "fetched and enriched reward markets"
+        );
         Ok(markets)
     }
 
@@ -324,23 +338,41 @@ impl PolymarketRewardsConnector {
             let cid = market.condition_id.clone();
             handles.push(tokio::spawn(async move {
                 let _permit = sem.acquire().await.expect("semaphore closed");
-                connector.fetch_market_detail(&cid).await
+                for attempt in 0..=ENRICH_MAX_RETRIES {
+                    match connector.fetch_market_detail(&cid).await {
+                        Ok(result) => return result,
+                        Err(error) => {
+                            if attempt < ENRICH_MAX_RETRIES {
+                                let delay = ENRICH_RETRY_BASE_DELAY * 2u32.pow(attempt);
+                                tracing::debug!(
+                                    condition_id = %cid,
+                                    attempt = attempt + 1,
+                                    error = %error,
+                                    "retrying market detail fetch after {:?}",
+                                    delay,
+                                );
+                                tokio::time::sleep(delay).await;
+                            } else {
+                                tracing::warn!(
+                                    condition_id = %cid,
+                                    error = %error,
+                                    "failed to enrich reward market after {} retries",
+                                    ENRICH_MAX_RETRIES,
+                                );
+                                return None;
+                            }
+                        }
+                    }
+                }
+                unreachable!()
             }));
         }
 
         let mut enriched = Vec::with_capacity(handles.len());
         for (market, handle) in markets.into_iter().zip(handles) {
             let detail = match handle.await {
-                Ok(Ok(Some(detail))) => Some(detail),
-                Ok(Ok(None)) => None,
-                Ok(Err(error)) => {
-                    tracing::warn!(
-                        condition_id = %market.condition_id,
-                        error = %error,
-                        "failed to enrich reward market"
-                    );
-                    None
-                }
+                Ok(Some(detail)) => Some(detail),
+                Ok(None) => None,
                 Err(error) => {
                     tracing::warn!(
                         condition_id = %market.condition_id,

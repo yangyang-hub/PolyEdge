@@ -9,8 +9,8 @@ import {
   History,
   LayoutDashboard,
   Newspaper,
-
   Radar,
+  Search,
   Settings,
   ShieldAlert,
   SquareChartGantt,
@@ -35,6 +35,7 @@ const navItems: NavItem[] = [
   { href: "/radar", labelKey: "radar", icon: Radar },
   { href: "/rewards", labelKey: "rewards", icon: HandCoins },
   { href: "/copy-trading", labelKey: "copytrade", icon: Users },
+  { href: "/wallet-analysis", labelKey: "walletAnalysis", icon: Search },
   { href: "/signals", labelKey: "signals", icon: Activity },
   { href: "/positions", labelKey: "positions", icon: WalletCards },
   { href: "/risk", labelKey: "risk", icon: ShieldAlert },

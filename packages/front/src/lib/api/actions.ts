@@ -9,7 +9,7 @@ import type {
   RuntimeConfigUpdateDto,
   RuntimeMode,
 } from "@/lib/contracts/dto";
-import { PolyEdgeApiError } from "@/lib/api/base";
+import { PolyEdgeApiError, randomUUID } from "@/lib/api/base";
 import {
   cancelRewardBotOrders,
   resetRewardBot,
@@ -339,7 +339,7 @@ export async function updateRewardBotConfigAction(
       ...createActionSuccessResult("Reward bot configuration saved.", {
         requestId: response.meta.request_id,
         traceId: response.meta.trace_id,
-        operationId: `reward_config_${crypto.randomUUID().slice(0, 8)}`,
+        operationId: `reward_config_${randomUUID().slice(0, 8)}`,
         status: "completed",
       }),
       snapshot: response.data,
@@ -357,7 +357,7 @@ export async function runRewardBotOnceAction(): Promise<RewardBotActionResult> {
       ...createActionSuccessResult("Reward bot simulation completed.", {
         requestId: response.meta.request_id,
         traceId: response.meta.trace_id,
-        operationId: `reward_run_${crypto.randomUUID().slice(0, 8)}`,
+        operationId: `reward_run_${randomUUID().slice(0, 8)}`,
         status: "completed",
       }),
       snapshot: response.data,
@@ -375,7 +375,7 @@ export async function cancelRewardBotOrdersAction(): Promise<RewardBotActionResu
       ...createActionSuccessResult("Simulated reward orders cancelled.", {
         requestId: response.meta.request_id,
         traceId: response.meta.trace_id,
-        operationId: `reward_cancel_${crypto.randomUUID().slice(0, 8)}`,
+        operationId: `reward_cancel_${randomUUID().slice(0, 8)}`,
         status: "completed",
       }),
       snapshot: response.data,
@@ -393,7 +393,7 @@ export async function resetRewardBotAction(): Promise<RewardBotActionResult> {
       ...createActionSuccessResult("Reward simulation reset.", {
         requestId: response.meta.request_id,
         traceId: response.meta.trace_id,
-        operationId: `reward_reset_${crypto.randomUUID().slice(0, 8)}`,
+        operationId: `reward_reset_${randomUUID().slice(0, 8)}`,
         status: "completed",
       }),
       snapshot: response.data,
@@ -463,7 +463,7 @@ export async function updateCopyTradeConfigAction(
       ...createActionSuccessResult("Copy trading configuration saved.", {
         requestId: response.meta.request_id,
         traceId: response.meta.trace_id,
-        operationId: `copytrade_config_${crypto.randomUUID().slice(0, 8)}`,
+        operationId: `copytrade_config_${randomUUID().slice(0, 8)}`,
         status: "completed",
       }),
       snapshot: response.data,
@@ -490,7 +490,7 @@ export async function addTrackedWalletAction(input: {
       ...createActionSuccessResult("Wallet added for tracking.", {
         requestId: response.meta.request_id,
         traceId: response.meta.trace_id,
-        operationId: `copytrade_add_wallet_${crypto.randomUUID().slice(0, 8)}`,
+        operationId: `copytrade_add_wallet_${randomUUID().slice(0, 8)}`,
         status: "completed",
       }),
       snapshot: response.data,
@@ -511,7 +511,7 @@ export async function removeTrackedWalletAction(address: string): Promise<CopyTr
       ...createActionSuccessResult("Wallet removed from tracking.", {
         requestId: response.meta.request_id,
         traceId: response.meta.trace_id,
-        operationId: `copytrade_remove_wallet_${crypto.randomUUID().slice(0, 8)}`,
+        operationId: `copytrade_remove_wallet_${randomUUID().slice(0, 8)}`,
         status: "completed",
       }),
       snapshot: response.data,
@@ -531,7 +531,7 @@ export async function setCopytradeWalletStatusAction(
       ...createActionSuccessResult(`Wallet ${status === "active" ? "resumed" : "paused"}.`, {
         requestId: response.meta.request_id,
         traceId: response.meta.trace_id,
-        operationId: `copytrade_wallet_status_${crypto.randomUUID().slice(0, 8)}`,
+        operationId: `copytrade_wallet_status_${randomUUID().slice(0, 8)}`,
         status: "completed",
       }),
       snapshot: response.data,
@@ -548,7 +548,7 @@ export async function runCopyTradeOnceAction(): Promise<CopyTradeActionResult> {
       ...createActionSuccessResult("Copy trading cycle completed.", {
         requestId: response.meta.request_id,
         traceId: response.meta.trace_id,
-        operationId: `copytrade_run_${crypto.randomUUID().slice(0, 8)}`,
+        operationId: `copytrade_run_${randomUUID().slice(0, 8)}`,
         status: "completed",
       }),
       snapshot: response.data,
@@ -565,7 +565,7 @@ export async function analyzeCopytradeWalletsAction(): Promise<CopyTradeActionRe
       ...createActionSuccessResult("Wallet analysis completed.", {
         requestId: response.meta.request_id,
         traceId: response.meta.trace_id,
-        operationId: `copytrade_analyze_${crypto.randomUUID().slice(0, 8)}`,
+        operationId: `copytrade_analyze_${randomUUID().slice(0, 8)}`,
         status: "completed",
       }),
       snapshot: response.data,
@@ -582,7 +582,7 @@ export async function cancelCopyTradeOrdersAction(): Promise<CopyTradeActionResu
       ...createActionSuccessResult("Copy trading orders cancelled.", {
         requestId: response.meta.request_id,
         traceId: response.meta.trace_id,
-        operationId: `copytrade_cancel_${crypto.randomUUID().slice(0, 8)}`,
+        operationId: `copytrade_cancel_${randomUUID().slice(0, 8)}`,
         status: "completed",
       }),
       snapshot: response.data,
@@ -599,7 +599,7 @@ export async function resetCopyTradeAction(): Promise<CopyTradeActionResult> {
       ...createActionSuccessResult("Copy trading simulation reset.", {
         requestId: response.meta.request_id,
         traceId: response.meta.trace_id,
-        operationId: `copytrade_reset_${crypto.randomUUID().slice(0, 8)}`,
+        operationId: `copytrade_reset_${randomUUID().slice(0, 8)}`,
         status: "completed",
       }),
       snapshot: response.data,
@@ -625,7 +625,7 @@ export async function updateRuntimeConfigAction(
       ...createActionSuccessResult("Runtime configuration saved. Restart backend processes to apply runtime consumers.", {
         requestId: response.meta.request_id,
         traceId: response.meta.trace_id,
-        operationId: `runtime_config_${crypto.randomUUID().slice(0, 8)}`,
+        operationId: `runtime_config_${randomUUID().slice(0, 8)}`,
         status: "completed",
       }),
       entries: response.data,

@@ -35,7 +35,9 @@ mod tests {
         assert!(settings.worker.reconcile_polymarket_fills);
         assert!(settings.worker.consume_polymarket_user_events);
         assert!(settings.worker.consume_orderbook_stream);
+        assert!(settings.worker.recompute_signals);
         assert_eq!(settings.worker.news_promotion_interval_secs, 60);
+        assert_eq!(settings.worker.signal_recompute_interval_secs, 120);
         assert_eq!(settings.worker.arbitrage_analysis_interval_secs, 300);
         assert_eq!(settings.worker.execution_drain_interval_secs, 5);
         assert_eq!(settings.worker.order_status_poll_interval_secs, 15);

@@ -68,6 +68,16 @@ impl RewardBotService {
         Ok(next)
     }
 
+    /// Persist reward markets fetched by the sync worker.
+    pub async fn upsert_reward_markets(&self, markets: &[RewardMarket]) -> Result<()> {
+        self.store.upsert_markets(markets).await
+    }
+
+    /// List all active reward markets from the database.
+    pub async fn list_active_reward_markets(&self) -> Result<Vec<RewardMarket>> {
+        self.store.list_all_active_markets().await
+    }
+
     pub async fn snapshot(&self) -> Result<RewardBotSnapshot> {
         let config = self.read_config().await?;
         let account = self.store.load_account_state(&config).await?;

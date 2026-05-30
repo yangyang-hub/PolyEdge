@@ -10,6 +10,7 @@ import { radarEn, radarZh } from "./dictionaries/radar";
 import { rewardsEn, rewardsZh } from "./dictionaries/rewards";
 import { copytradeEn, copytradeZh } from "./dictionaries/copytrade";
 import { opsEn, opsZh } from "./dictionaries/ops";
+import { walletAnalysisEn, walletAnalysisZh } from "./dictionaries/wallet-analysis";
 
 const enUS = {
   localeName: "English",
@@ -25,6 +26,7 @@ const enUS = {
   ...rewardsEn,
   ...copytradeEn,
   ...opsEn,
+  ...walletAnalysisEn,
 } as const;
 
 type DeepStringRecord<T> = {
@@ -52,6 +54,7 @@ const zhCN = {
   ...rewardsZh,
   ...copytradeZh,
   ...opsZh,
+  ...walletAnalysisZh,
 } satisfies Dictionary;
 
 export const dictionaries = {

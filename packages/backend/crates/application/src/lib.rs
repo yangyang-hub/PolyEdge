@@ -10,6 +10,7 @@ mod orderbook_cache;
 mod rewards;
 mod risk;
 mod system_mode;
+pub mod wallet_analysis;
 
 pub use arbitrage::{
     ArbitrageAnalysisRunListFilters, ArbitrageAnalysisRunView, ArbitrageAnalysisSummary,

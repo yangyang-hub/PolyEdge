@@ -54,7 +54,7 @@ export type SignalsWorkbenchProps = {
   activeCount: number;
   runtimeControls: RuntimeControls;
   signals: SignalItem[];
-  selectedSignal: SelectedSignal;
+  selectedSignal: SelectedSignal | null;
 };
 
 export type SignalFilter = "all" | "high_confidence";

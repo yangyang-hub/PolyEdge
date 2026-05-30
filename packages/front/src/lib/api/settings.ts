@@ -3,7 +3,7 @@ import type {
   RuntimeConfigEntryDto,
   RuntimeConfigUpdateDto,
 } from "@/lib/contracts/dto";
-import { fetchContract, fetchWriteContract } from "@/lib/api/base";
+import { fetchContract, fetchWriteContract, randomUUID } from "@/lib/api/base";
 
 export async function readRuntimeConfig(): Promise<ApiResponse<RuntimeConfigEntryDto[]>> {
   return fetchContract<ApiResponse<RuntimeConfigEntryDto[]>>("/api/v1/runtime-config");
@@ -14,7 +14,7 @@ export async function updateRuntimeConfig(
 ): Promise<ApiResponse<RuntimeConfigEntryDto[]>> {
   return fetchWriteContract<ApiResponse<RuntimeConfigEntryDto[]>>("/api/v1/runtime-config", {
     method: "POST",
-    idempotencyKey: `runtime-config-${crypto.randomUUID()}`,
+    idempotencyKey: `runtime-config-${randomUUID()}`,
     body: update as unknown as Record<string, unknown>,
   });
 }

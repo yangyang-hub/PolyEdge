@@ -6,6 +6,7 @@ import {
   fetchContract,
   fetchListContract,
   fetchWriteContract,
+  randomUUID,
 } from "@/lib/api/base";
 
 type LiveSystemModeWriteResponse = ApiResponse<{
@@ -42,7 +43,7 @@ export async function requestModeSwitch(input: {
     "/api/v1/system/mode",
     {
       method: "POST",
-      idempotencyKey: `mode-${input.currentMode}-${input.targetMode}-${crypto.randomUUID()}`,
+      idempotencyKey: `mode-${input.currentMode}-${input.targetMode}-${randomUUID()}`,
       body: {
         to_mode: input.targetMode,
         reason: input.note,
@@ -65,7 +66,7 @@ export async function releaseRiskControls(input: {
     "/api/v1/system/kill-switch/release",
     {
       method: "POST",
-      idempotencyKey: `risk-release-${crypto.randomUUID()}`,
+      idempotencyKey: `risk-release-${randomUUID()}`,
       body: {
         reason: input.note,
         to_mode: "paper_trade",
@@ -90,7 +91,7 @@ export async function setKillSwitchState(input: {
       "/api/v1/system/kill-switch/trigger",
       {
         method: "POST",
-        idempotencyKey: `kill-switch-on-${crypto.randomUUID()}`,
+        idempotencyKey: `kill-switch-on-${randomUUID()}`,
         body: {
           reason: input.note,
         },

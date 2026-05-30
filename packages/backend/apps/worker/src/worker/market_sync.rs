@@ -12,6 +12,31 @@ async fn sync_markets_once(state: &AppState, trace_id: &str) -> Result<MarketSyn
         .market_event_service
         .upsert_markets(&views, trace_id)
         .await?;
+
+    // Sync reward markets from CLOB rewards API into reward_markets table.
+    let rewards_connector =
+        PolymarketRewardsConnector::new(&state.settings.polymarket.clob_host)?;
+    let reward_markets_raw = rewards_connector.fetch_current_markets().await?;
+    let reward_raw_count = reward_markets_raw.len();
+    let reward_markets: Vec<RewardMarket> = reward_markets_raw
+        .into_iter()
+        .map(reward_market_from_connector)
+        .collect();
+    let reward_enriched_count = reward_markets.len();
+    state
+        .reward_bot_service
+        .upsert_reward_markets(&reward_markets)
+        .await?;
+
+    info!(
+        trace_id = %trace_id,
+        general_fetched = fetched,
+        general_upserted = upserted,
+        reward_raw = reward_raw_count,
+        reward_upserted = reward_enriched_count,
+        "synced general and reward markets",
+    );
+
     Ok(MarketSyncReport { fetched, upserted })
 }
 

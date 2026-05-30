@@ -5,6 +5,7 @@ import {
   createWriteResponse,
   fetchListContract,
   fetchWriteContract,
+  randomUUID,
 } from "@/lib/api/base";
 
 type LiveSubmitExecutionResponse = ApiResponse<{
@@ -40,7 +41,7 @@ export async function submitSignalExecutionRequest(input: {
     `/api/v1/signals/${input.signalId}/execution-requests`,
     {
       method: "POST",
-      idempotencyKey: `execution-${input.signalId}-${crypto.randomUUID()}`,
+      idempotencyKey: `execution-${input.signalId}-${randomUUID()}`,
       body: {
         expected_signal_version: input.expectedVersion,
         limit_price: input.limitPrice,

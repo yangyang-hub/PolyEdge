@@ -101,11 +101,27 @@ fn push_worker_runtime_config_entries(
             RuntimeConfigValueType::Boolean,
         ),
         (
+            "recompute_signals",
+            "Worker recompute signals",
+            "POLYEDGE_WORKER__RECOMPUTE_SIGNALS",
+            settings.worker.recompute_signals.to_string(),
+            defaults.worker.recompute_signals.to_string(),
+            RuntimeConfigValueType::Boolean,
+        ),
+        (
             "news_promotion_interval_secs",
             "News promotion interval seconds",
             "POLYEDGE_WORKER__NEWS_PROMOTION_INTERVAL_SECS",
             settings.worker.news_promotion_interval_secs.to_string(),
             defaults.worker.news_promotion_interval_secs.to_string(),
+            RuntimeConfigValueType::Integer,
+        ),
+        (
+            "signal_recompute_interval_secs",
+            "Signal recompute interval seconds",
+            "POLYEDGE_WORKER__SIGNAL_RECOMPUTE_INTERVAL_SECS",
+            settings.worker.signal_recompute_interval_secs.to_string(),
+            defaults.worker.signal_recompute_interval_secs.to_string(),
             RuntimeConfigValueType::Integer,
         ),
         (

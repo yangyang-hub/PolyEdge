@@ -23,14 +23,14 @@ use polyedge_application::{
     NewsSourceHealthView, OrderDraftListFilters, OrderDraftView, OrderListFilters, OrderView,
     PositionListFilters, PositionView, ProbabilityEstimateListFilters, ProbabilityEstimateView,
     ReconcileExternalTradeCommand, ReleaseKillSwitchCommand, RewardBookLevel, RewardBotConfigPatch,
-    RewardBotSnapshot, RewardMarket, RewardOrderBook, RewardToken, RiskPolicy, RiskStateView,
+    RewardBotSnapshot, RewardMarket, RewardOrderBook, RiskPolicy, RiskStateView,
     SignalListFilters, SignalTransitionListFilters, SignalTransitionView, SignalView, SortOrder,
     SubmitExecutionCommand, SyncExternalOrderStatusCommand, TradeListFilters, TradeView,
-    TriggerKillSwitchCommand, select_reward_book_token_ids,
+    TriggerKillSwitchCommand, select_reward_book_token_ids, CachedOrderBook,
 };
 use polyedge_connectors::{
     ConnectorOrderStatusUpdate, ConnectorTradeFillUpdate,
-    PolymarketDataApiConnector, PolymarketRewardMarket, PolymarketRewardOrderBook,
+    PolymarketDataApiConnector,
     PolymarketRewardsConnector, normalize_polymarket_order_status_update,
     normalize_polymarket_trade_fill_update,
 };
@@ -52,6 +52,9 @@ use polyedge_contracts::{
     SignalData, SignalListQuery, SignalTransitionData, SignalTransitionListQuery,
     SubmitExecutionData, SubmitExecutionRequest, SystemModeData, TradeData, TradeListQuery,
     TransitionSystemModeRequest, TriggerKillSwitchRequest, UpdateRuntimeConfigRequest,
+    WalletAnalysisData, WalletAnalysisRequest, WalletActivityData, WalletCategoryData,
+    WalletClosedPositionData, WalletPnlData, WalletProfileData, WalletRecentTradeData,
+    WalletRiskData, WalletStyleData, WalletTopMarketData,
 };
 use polyedge_domain::{
     AppError, Edge, ExposureRatio, OrderStatus, Probability, Quantity, StepUpScope, SystemMode,
@@ -368,6 +371,14 @@ pub fn build_app(state: AppState) -> Router {
                 require_console_write_auth,
             )),
         )
+        // ── Wallet Analysis ─────────────────────────────────────────
+        .route(
+            "/api/v1/wallet-analysis",
+            axum::routing::post(analyze_wallet).route_layer(middleware::from_fn_with_state(
+                state.clone(),
+                require_console_read_auth,
+            )),
+        )
         .route(
             "/api/v1/runtime-config",
             get(read_runtime_config).route_layer(middleware::from_fn_with_state(
@@ -443,6 +454,7 @@ include!("handlers/execution_submit.rs");
 include!("handlers/mode_control.rs");
 include!("handlers/mappers.rs");
 include!("handlers/callback_helpers.rs");
+include!("handlers/wallet_analysis.rs");
 
 #[cfg(test)]
 mod tests;

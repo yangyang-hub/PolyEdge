@@ -89,6 +89,34 @@ fn spawn_worker_tasks(state: &AppState, shutdown_rx: watch::Receiver<bool>) -> V
         ));
     }
 
+    if settings.recompute_signals {
+        let job_state = state.clone();
+        handles.push(spawn_interval_job(
+            "recompute-all-signals",
+            settings.signal_recompute_interval_secs,
+            shutdown_rx.clone(),
+            move || {
+                let state = job_state.clone();
+                async move {
+                    let trace_id = new_trace_id();
+                    match recompute_all_signals(&state, task_limit(&state), &trace_id).await {
+                        Ok(report) => info!(
+                            trace_id = %trace_id,
+                            scanned = report.scanned,
+                            recomputed = report.recomputed,
+                            skipped = report.skipped,
+                            failed = report.failed,
+                            "completed worker signal recompute cycle",
+                        ),
+                        Err(error) => {
+                            warn!(trace_id = %trace_id, error = %error, "worker signal recompute cycle failed");
+                        }
+                    }
+                }
+            },
+        ));
+    }
+
     if settings.poll_market_sync {
         let job_state = state.clone();
         handles.push(spawn_interval_job(

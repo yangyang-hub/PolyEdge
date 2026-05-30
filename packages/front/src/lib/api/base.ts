@@ -70,12 +70,20 @@ export function getApiBaseUrl(): string {
   return getConfiguredApiBaseUrl() ?? "";
 }
 
-function createRequestId(): string {
+export function randomUUID(): string {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
-    return `req_${crypto.randomUUID().replace(/-/g, "")}`;
+    return crypto.randomUUID();
   }
 
-  return `req_${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`;
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === "x" ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
+
+function createRequestId(): string {
+  return `req_${randomUUID().replace(/-/g, "")}`;
 }
 
 export function buildQueryString(
@@ -114,7 +122,7 @@ export function createWriteResponse(
   resourceId: string,
   status: WriteResponse["data"]["status"] = "queued",
 ): WriteResponse {
-  const operationId = `op_${resource}_${crypto.randomUUID().slice(0, 8)}`;
+  const operationId = `op_${resource}_${randomUUID().slice(0, 8)}`;
 
   return {
     data: {

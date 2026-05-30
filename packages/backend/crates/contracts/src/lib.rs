@@ -26,3 +26,4 @@ include!("dto/execution.rs");
 include!("dto/arbitrage.rs");
 include!("dto/callback.rs");
 include!("dto/query.rs");
+include!("dto/wallet_analysis.rs");
