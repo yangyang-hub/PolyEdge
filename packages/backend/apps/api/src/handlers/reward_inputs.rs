@@ -2,7 +2,6 @@ async fn fetch_reward_bot_inputs(
     state: &AppState,
     _trace_id: &str,
 ) -> polyedge_domain::Result<(Vec<RewardMarket>, HashMap<String, RewardOrderBook>)> {
-    let config = state.reward_bot_service.read_config().await?;
     let connector = PolymarketRewardsConnector::new(&state.settings.polymarket.clob_host)?;
     let markets = connector
         .fetch_current_markets()
@@ -10,7 +9,7 @@ async fn fetch_reward_bot_inputs(
         .into_iter()
         .map(reward_market_from_connector)
         .collect::<Vec<_>>();
-    let token_ids = select_reward_book_token_ids(&markets, &config);
+    let token_ids = select_reward_book_token_ids(&markets);
     let books = connector
         .fetch_order_books(&token_ids)
         .await?

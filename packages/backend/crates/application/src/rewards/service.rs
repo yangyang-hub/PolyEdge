@@ -17,6 +17,8 @@ pub trait RewardBotStore: Send + Sync {
         trace_id: &str,
     ) -> Result<usize>;
     async fn list_markets(&self, limit: u16) -> Result<Vec<RewardMarket>>;
+    /// List all active markets without a row limit (used by snapshot).
+    async fn list_all_active_markets(&self) -> Result<Vec<RewardMarket>>;
     async fn list_quote_plans(&self, limit: u16) -> Result<Vec<RewardQuotePlan>>;
     async fn list_orders(&self, limit: u16) -> Result<Vec<ManagedRewardOrder>>;
     async fn list_positions(&self, limit: u16) -> Result<Vec<RewardPosition>>;
@@ -68,7 +70,7 @@ impl RewardBotService {
     pub async fn snapshot(&self) -> Result<RewardBotSnapshot> {
         let config = self.read_config().await?;
         let account = self.store.load_account_state(&config).await?;
-        let markets = self.store.list_markets(DEFAULT_LIST_LIMIT).await?;
+        let markets = self.store.list_all_active_markets().await?;
         let quote_plans = self.store.list_quote_plans(DEFAULT_LIST_LIMIT).await?;
         let orders = self.store.list_orders(200).await?;
         let positions = self.store.list_positions(200).await?;

@@ -20,6 +20,9 @@ impl TickContext {
     }
 
     fn position_over_cap(&self, token_id: &str, price: Decimal) -> bool {
+        if self.config.max_position_usd == Decimal::ZERO {
+            return false;
+        }
         self.positions.get(token_id).is_some_and(|position| {
             (position.size * price) >= self.config.max_position_usd
         })

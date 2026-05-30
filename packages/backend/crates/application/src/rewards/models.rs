@@ -353,30 +353,35 @@ impl RewardBotConfig {
     #[must_use]
     pub fn normalized(mut self) -> Self {
         self.account_id = normalize_account_id(&self.account_id);
-        self.max_markets = clamp_u16(self.max_markets, 1, 50);
-        self.max_open_orders = clamp_u16(self.max_open_orders, 1, 200);
-        self.per_market_usd = clamp_decimal(self.per_market_usd, decimal("1"), decimal("100000"));
-        self.quote_size_usd = clamp_decimal(self.quote_size_usd, decimal("1"), self.per_market_usd);
+        self.max_markets = clamp_u16(self.max_markets, 0, u16::MAX);
+        self.max_open_orders = clamp_u16(self.max_open_orders, 0, u16::MAX);
+        self.per_market_usd = clamp_decimal(self.per_market_usd, Decimal::ZERO, decimal("1000000"));
+        let quote_size_cap = if self.per_market_usd == Decimal::ZERO {
+            decimal("1000000")
+        } else {
+            self.per_market_usd
+        };
+        self.quote_size_usd = clamp_decimal(self.quote_size_usd, decimal("1"), quote_size_cap);
         self.min_daily_reward =
             clamp_decimal(self.min_daily_reward, Decimal::ZERO, decimal("100000"));
         self.min_market_score = clamp_decimal(self.min_market_score, Decimal::ZERO, decimal("100"));
-        self.max_spread_cents = clamp_decimal(self.max_spread_cents, decimal("0.1"), decimal("99"));
+        self.max_spread_cents = clamp_decimal(self.max_spread_cents, decimal("0.1"), decimal("1000"));
         self.quote_edge_cents = clamp_decimal(self.quote_edge_cents, Decimal::ZERO, decimal("50"));
         self.safety_margin_cents =
             clamp_decimal(self.safety_margin_cents, Decimal::ZERO, decimal("20"));
-        self.min_midpoint = clamp_decimal(self.min_midpoint, decimal("0.01"), decimal("0.49"));
-        self.max_midpoint = clamp_decimal(self.max_midpoint, decimal("0.51"), decimal("0.99"));
+        self.min_midpoint = clamp_decimal(self.min_midpoint, Decimal::ZERO, decimal("0.49"));
+        self.max_midpoint = clamp_decimal(self.max_midpoint, decimal("0.51"), Decimal::ONE);
         if self.max_midpoint <= self.min_midpoint {
-            self.max_midpoint = Decimal::min(decimal("0.99"), self.min_midpoint + decimal("0.1"));
+            self.max_midpoint = Decimal::min(Decimal::ONE, self.min_midpoint + decimal("0.1"));
         }
         self.stale_book_ms = self.stale_book_ms.clamp(1_000, 120_000);
         self.min_scoring_check_sec = self.min_scoring_check_sec.clamp(15, 600);
         self.max_position_usd =
-            clamp_decimal(self.max_position_usd, decimal("1"), decimal("100000"));
+            clamp_decimal(self.max_position_usd, Decimal::ZERO, decimal("1000000"));
         self.max_global_position_usd = clamp_decimal(
             self.max_global_position_usd,
-            decimal("1"),
-            decimal("1000000"),
+            Decimal::ZERO,
+            decimal("10000000"),
         );
         self.exit_markup_cents =
             clamp_decimal(self.exit_markup_cents, Decimal::ZERO, decimal("50"));

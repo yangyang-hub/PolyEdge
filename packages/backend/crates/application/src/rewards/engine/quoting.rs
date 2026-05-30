@@ -48,8 +48,16 @@ impl TickContext {
     }
 
     fn place_new_quotes(&mut self, plans: &[RewardQuotePlan]) {
-        let max_markets = usize::from(self.config.max_markets);
-        let max_open_orders = usize::from(self.config.max_open_orders);
+        let max_markets = if self.config.max_markets == 0 {
+            usize::MAX
+        } else {
+            usize::from(self.config.max_markets)
+        };
+        let max_open_orders = if self.config.max_open_orders == 0 {
+            usize::MAX
+        } else {
+            usize::from(self.config.max_open_orders)
+        };
 
         // Markets we already quote (any open-like order).
         let mut active_markets: std::collections::HashSet<String> = self
@@ -101,7 +109,9 @@ impl TickContext {
                     continue;
                 }
                 // Risk gate: stop adding exposure once held inventory hits the cap.
-                if self.global_inventory_notional() >= self.config.max_global_position_usd {
+                if self.config.max_global_position_usd > Decimal::ZERO
+                    && self.global_inventory_notional() >= self.config.max_global_position_usd
+                {
                     continue;
                 }
 

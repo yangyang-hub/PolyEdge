@@ -116,6 +116,24 @@ impl RewardBotStore for InMemoryRewardBotStore {
         Ok(markets)
     }
 
+    async fn list_all_active_markets(&self) -> Result<Vec<RewardMarket>> {
+        let mut markets = self
+            .markets
+            .read()
+            .await
+            .values()
+            .filter(|market| market.active)
+            .cloned()
+            .collect::<Vec<_>>();
+        markets.sort_by(|left, right| {
+            right
+                .total_daily_rate
+                .cmp(&left.total_daily_rate)
+                .then_with(|| right.updated_at.cmp(&left.updated_at))
+        });
+        Ok(markets)
+    }
+
     async fn list_quote_plans(&self, limit: u16) -> Result<Vec<RewardQuotePlan>> {
         let mut plans = self
             .quote_plans

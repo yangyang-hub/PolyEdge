@@ -195,14 +195,30 @@ impl PolymarketRewardsConnector {
         &self,
         token_ids: &[String],
     ) -> Result<Vec<PolymarketRewardOrderBook>> {
-        let mut books = Vec::new();
+        let semaphore = Arc::new(Semaphore::new(ENRICH_CONCURRENCY));
+        let connector = self.clone();
+        let mut handles = Vec::with_capacity(token_ids.len());
 
         for token_id in token_ids {
-            match self.fetch_order_book(token_id).await {
-                Ok(Some(book)) => books.push(book),
-                Ok(None) => {}
+            let sem = semaphore.clone();
+            let conn = connector.clone();
+            let tid = token_id.clone();
+            handles.push(tokio::spawn(async move {
+                let _permit = sem.acquire().await.expect("semaphore closed");
+                conn.fetch_order_book(&tid).await
+            }));
+        }
+
+        let mut books = Vec::new();
+        for handle in handles {
+            match handle.await {
+                Ok(Ok(Some(book))) => books.push(book),
+                Ok(Ok(None)) => {}
+                Ok(Err(error)) => {
+                    tracing::warn!(error = %error, "failed to fetch reward order book");
+                }
                 Err(error) => {
-                    tracing::warn!(token_id = %token_id, error = %error, "failed to fetch reward order book");
+                    tracing::warn!(error = %error, "order book task panicked");
                 }
             }
         }

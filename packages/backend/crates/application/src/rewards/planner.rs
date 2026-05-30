@@ -1,22 +1,13 @@
-pub fn select_reward_book_token_ids(
-    markets: &[RewardMarket],
-    config: &RewardBotConfig,
-) -> Vec<String> {
-    let market_limit = usize::min(
-        markets.len(),
-        usize::max(usize::from(config.max_markets) * 4, 12),
-    );
+pub fn select_reward_book_token_ids(markets: &[RewardMarket]) -> Vec<String> {
     let mut selected = Vec::new();
     let mut seen = std::collections::HashSet::new();
-    let mut candidates = markets.to_vec();
-    candidates.sort_by(|left, right| right.total_daily_rate.cmp(&left.total_daily_rate));
 
-    for market in candidates.into_iter().take(market_limit) {
-        for token in market.tokens.into_iter().take(2) {
+    for market in markets {
+        for token in market.tokens.iter().take(2) {
             if token.token_id.trim().is_empty() || !seen.insert(token.token_id.clone()) {
                 continue;
             }
-            selected.push(token.token_id);
+            selected.push(token.token_id.clone());
         }
     }
 
@@ -283,7 +274,11 @@ fn make_leg(
     config: &RewardBotConfig,
 ) -> RewardQuoteLeg {
     let target_size = config.quote_size_usd / price;
-    let max_leg_size = config.per_market_usd / decimal("2") / price;
+    let max_leg_size = if config.per_market_usd == Decimal::ZERO {
+        Decimal::MAX
+    } else {
+        config.per_market_usd / decimal("2") / price
+    };
     let size = Decimal::min(Decimal::max(rewards_min_size, target_size), max_leg_size)
         .round_dp_with_strategy(2, RoundingStrategy::ToZero);
 
