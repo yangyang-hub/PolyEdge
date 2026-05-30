@@ -9,8 +9,10 @@ import { EmptyPanel } from "@/components/shared/empty-panel";
 import { MetricCard } from "@/components/shared/metric-card";
 import { MeterBar } from "@/components/shared/meter-bar";
 import { PageHeader } from "@/components/shared/page-header";
+import { PaginationBar } from "@/components/pagination-bar";
 import { StateBanner } from "@/components/shared/state-banner";
 import { StatusPill } from "@/components/shared/status-pill";
+import { usePagination } from "@/hooks/use-pagination";
 import { useI18n } from "@/lib/i18n/client";
 import { localizeGeneratedCopy } from "@/lib/i18n/generated-copy";
 import { normalizeOptionalRuntimeMode } from "@/lib/runtime-mode";
@@ -234,6 +236,9 @@ export function DashboardOverview({ data }: { data: DashboardPageData }) {
 
   const openAlertCount = readMetricCount(liveData.metrics, "open_alerts", liveData.alerts.length);
 
+  const signalsPagination = usePagination(liveData.signals.length, 10);
+  const marketsPagination = usePagination(liveData.markets.length, 10);
+
   return (
     <div className="space-y-4">
       <PageHeader
@@ -292,6 +297,7 @@ export function DashboardOverview({ data }: { data: DashboardPageData }) {
           </div>
 
           {liveData.signals.length > 0 ? (
+            <>
             <div className="overflow-x-auto">
               <table className="w-full text-left">
                 <thead className="bg-sidebar/60">
@@ -304,7 +310,7 @@ export function DashboardOverview({ data }: { data: DashboardPageData }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {liveData.signals.map((signal) => (
+                  {liveData.signals.slice(signalsPagination.start, signalsPagination.end).map((signal) => (
                     <tr
                       key={signal.id}
                       className="transition-colors hover:bg-accent/35"
@@ -349,6 +355,8 @@ export function DashboardOverview({ data }: { data: DashboardPageData }) {
                 </tbody>
               </table>
             </div>
+            <PaginationBar pagination={signalsPagination} totalItems={liveData.signals.length} className="flex items-center justify-between border-t border-border/70 px-4 pt-3 pb-3" />
+            </>
           ) : (
             <EmptyPanel
               title={dictionary.dashboard.noLiveSignalsTitle}
@@ -394,7 +402,7 @@ export function DashboardOverview({ data }: { data: DashboardPageData }) {
             {dictionary.dashboard.hotMarkets}
           </p>
           <div className="space-y-3">
-            {liveData.markets.map((market) => (
+            {liveData.markets.slice(marketsPagination.start, marketsPagination.end).map((market) => (
               <div key={market.id} className="flex items-start justify-between gap-4 rounded-md bg-accent/35 p-3">
                 <div className="space-y-1">
                   <p className="text-sm font-medium text-foreground">{market.question}</p>
@@ -409,6 +417,7 @@ export function DashboardOverview({ data }: { data: DashboardPageData }) {
               </div>
             ))}
           </div>
+          <PaginationBar pagination={marketsPagination} totalItems={liveData.markets.length} className="mt-3 flex items-center justify-between border-t border-border/70 pt-3" />
         </div>
 
         <div className="rounded-lg bg-card/95 p-4 ring-1 ring-white/5">

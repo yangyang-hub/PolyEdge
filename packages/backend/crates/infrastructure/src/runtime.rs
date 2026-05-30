@@ -162,14 +162,14 @@ impl Runtime {
             Arc::new(InMemoryCopyTradeStore::new())
         };
         let system_mode_service = Arc::new(SystemModeService::new(
-            mode_store,
+            mode_store.clone(),
             idempotency_store.clone(),
             audit_log_sink.clone(),
         ));
         let market_event_service = Arc::new(MarketEventService::new(market_event_store));
         let news_ingestion_service = Arc::new(NewsIngestionService::new(news_ingestion_store));
         let arbitrage_service = Arc::new(ArbitrageService::new(arbitrage_store));
-        let reward_bot_service = Arc::new(RewardBotService::new(reward_bot_store));
+        let reward_bot_service = Arc::new(RewardBotService::new(reward_bot_store, mode_store));
         let copytrade_service = Arc::new(CopyTradeService::new(copytrade_store));
         let execution_audit_log_sink = audit_log_sink.clone();
         let risk_service = Arc::new(RiskService::new(
@@ -240,7 +240,7 @@ impl Runtime {
         let reward_bot_store = Arc::new(InMemoryRewardBotStore::new());
         let copytrade_store: Arc<dyn CopyTradeStore> = Arc::new(InMemoryCopyTradeStore::new());
         let system_mode_service = Arc::new(SystemModeService::new(
-            mode_store,
+            mode_store.clone(),
             idempotency_store.clone(),
             audit_log_sink.clone(),
         ));
@@ -248,7 +248,7 @@ impl Runtime {
         let news_ingestion_service =
             Arc::new(NewsIngestionService::new(market_event_store.clone()));
         let arbitrage_service = Arc::new(ArbitrageService::new(market_event_store));
-        let reward_bot_service = Arc::new(RewardBotService::new(reward_bot_store));
+        let reward_bot_service = Arc::new(RewardBotService::new(reward_bot_store, mode_store));
         let copytrade_service = Arc::new(CopyTradeService::new(copytrade_store));
         let execution_audit_log_sink = audit_log_sink.clone();
         let risk_service = Arc::new(RiskService::new(

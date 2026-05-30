@@ -144,23 +144,22 @@ const decimalNumber = z.coerce.number().finite();
 
 const rewardConfigSchema = z.object({
   enabled: z.boolean(),
-  mode: z.enum(["dry_run", "live"]),
   account_id: z.string().trim().min(1),
-  max_markets: z.coerce.number().int().min(1).max(50),
-  max_open_orders: z.coerce.number().int().min(1).max(200),
-  per_market_usd: decimalNumber.min(1),
-  quote_size_usd: decimalNumber.min(1),
+  max_markets: z.coerce.number().int().min(0).max(65_535),
+  max_open_orders: z.coerce.number().int().min(0).max(65_535),
+  per_market_usd: decimalNumber.min(0),
+  quote_size_usd: decimalNumber.min(0),
   min_daily_reward: decimalNumber.min(0),
   min_market_score: decimalNumber.min(0).max(100),
   max_spread_cents: decimalNumber.min(0.1).max(99),
   quote_edge_cents: decimalNumber.min(0).max(50),
   safety_margin_cents: decimalNumber.min(0).max(20),
-  min_midpoint: decimalNumber.min(0.01).max(0.49),
+  min_midpoint: decimalNumber.min(0).max(0.49),
   max_midpoint: decimalNumber.min(0.51).max(0.99),
-  stale_book_ms: z.coerce.number().int().min(1_000).max(120_000),
-  min_scoring_check_sec: z.coerce.number().int().min(15).max(600),
-  max_position_usd: decimalNumber.min(1),
-  max_global_position_usd: decimalNumber.min(1),
+  stale_book_ms: z.coerce.number().int().min(0).max(120_000),
+  min_scoring_check_sec: z.coerce.number().int().min(0).max(600),
+  max_position_usd: decimalNumber.min(0),
+  max_global_position_usd: decimalNumber.min(0),
   exit_markup_cents: decimalNumber.min(0).max(50),
   cancel_on_fill: z.boolean(),
   account_capital_usd: decimalNumber.min(1),
@@ -168,7 +167,7 @@ const rewardConfigSchema = z.object({
   single_sided_divisor_c: decimalNumber.min(1).max(100),
   fill_rate_per_tick: decimalNumber.min(0).max(1),
   max_fill_ratio: decimalNumber.min(0.01).max(1),
-  requote_drift_cents: decimalNumber.min(0.1).max(99),
+  requote_drift_cents: decimalNumber.min(0).max(99),
   post_fill_strategy: z.enum([
     "exit_at_markup",
     "hold_and_requote",
@@ -328,7 +327,10 @@ export async function updateRewardBotConfigAction(
     const parsed = rewardConfigSchema.safeParse(input);
 
     if (!parsed.success) {
-      return createActionFailureResult("Reward bot config is invalid.");
+      const issues = parsed.error.issues
+        .map((i) => `${i.path.join(".")}: ${i.message}`)
+        .join("; ");
+      return createActionFailureResult(`Reward bot config is invalid: ${issues}`);
     }
 
     const response = await updateRewardBotConfig(parsed.data);

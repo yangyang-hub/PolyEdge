@@ -1,8 +1,10 @@
 "use client";
 
+import { useEffect } from "react";
 import { ChevronRight } from "lucide-react";
 
 import { MeterBar } from "@/components/shared/meter-bar";
+import { PaginationBar } from "@/components/pagination-bar";
 import { StatusPill } from "@/components/shared/status-pill";
 import { Button } from "@/components/ui/button";
 import {
@@ -13,6 +15,7 @@ import {
   SheetTitle,
   SheetTrigger,
 } from "@/components/ui/sheet";
+import { usePagination } from "@/hooks/use-pagination";
 import { useI18n } from "@/lib/i18n/client";
 import { isKeyboardSelect } from "@/lib/keyboard";
 
@@ -33,6 +36,11 @@ export function SignalsTable({
   onOpenAction: (signalId: string, dialog: Exclude<SignalActionDialog, null>) => void;
 }) {
   const { dictionary } = useI18n();
+  const pagination = usePagination(signals.length, 20);
+
+  useEffect(() => {
+    pagination.reset();
+  }, [signals.length, pagination.reset]);
 
   if (signals.length === 0) {
     return (
@@ -61,7 +69,7 @@ export function SignalsTable({
           </tr>
         </thead>
         <tbody className="text-sm">
-          {signals.map((signal) => (
+          {signals.slice(pagination.start, pagination.end).map((signal) => (
             <tr
               key={signal.id}
               tabIndex={0}
@@ -162,6 +170,7 @@ export function SignalsTable({
           ))}
         </tbody>
       </table>
+      <PaginationBar pagination={pagination} totalItems={signals.length} />
     </div>
   );
 }

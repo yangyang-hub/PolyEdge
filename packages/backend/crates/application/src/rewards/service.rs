@@ -45,12 +45,13 @@ pub trait RewardBotStore: Send + Sync {
 #[derive(Clone)]
 pub struct RewardBotService {
     store: Arc<dyn RewardBotStore>,
+    mode_store: Arc<dyn ModeStateStore>,
 }
 
 impl RewardBotService {
     #[must_use]
-    pub fn new(store: Arc<dyn RewardBotStore>) -> Self {
-        Self { store }
+    pub fn new(store: Arc<dyn RewardBotStore>, mode_store: Arc<dyn ModeStateStore>) -> Self {
+        Self { store, mode_store }
     }
 
     pub async fn read_config(&self) -> Result<RewardBotConfig> {
@@ -91,7 +92,6 @@ impl RewardBotService {
             status: RewardBotStatus {
                 enabled: config.enabled,
                 running: config.enabled,
-                mode: config.mode,
                 account_id: config.account_id.clone(),
                 markets_tracked: markets.len(),
                 eligible_markets: quote_plans.iter().filter(|plan| plan.eligible).count(),
@@ -162,16 +162,18 @@ impl RewardBotService {
             });
         }
 
-        if config.mode == RewardBotMode::Live {
+        // Check global system mode — live trading is not wired yet.
+        let system_mode = self.mode_store.current().await?.mode;
+        if system_mode == SystemMode::LiveAuto {
             self.store
                 .log_event(new_risk_event(
                     Some(config.account_id.clone()),
                     None,
                     None,
-                    "reward_bot_live_unsupported",
+                    "reward_bot_live_auto_unsupported",
                     RewardRiskSeverity::Warning,
-                    "Rewards bot live mode is not wired in PolyEdge yet; generated a simulation instead.",
-                    json!({ "trace_id": trace_id }),
+                    "Global mode is live_auto but rewards bot live trading is not wired yet; running simulation.",
+                    json!({ "trace_id": trace_id, "system_mode": system_mode.as_str() }),
                 ))
                 .await?;
         }

@@ -1,10 +1,13 @@
 "use client";
 
+import { useEffect } from "react";
 import { Download } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { EmptyPanel } from "@/components/shared/empty-panel";
+import { PaginationBar } from "@/components/pagination-bar";
 import { StatusPill } from "@/components/shared/status-pill";
+import { usePagination } from "@/hooks/use-pagination";
 import { useI18n } from "@/lib/i18n/client";
 
 import type { RiskAlertFilter, RiskPageData } from "../types";
@@ -23,6 +26,11 @@ export function RiskAuditLog({
   onManage: (alert: RiskPageData["alerts"][number]) => void;
 }) {
   const { dictionary, enumLabel } = useI18n();
+  const pagination = usePagination(visibleAlerts.length, 20);
+
+  useEffect(() => {
+    pagination.reset();
+  }, [alertFilter, pagination.reset]);
 
   return (
     <div className="overflow-hidden rounded-lg bg-card/95 ring-1 ring-white/5">
@@ -71,6 +79,7 @@ export function RiskAuditLog({
       </div>
 
       {visibleAlerts.length > 0 ? (
+        <>
         <div className="overflow-x-auto">
           <table className="w-full text-left">
             <thead className="bg-sidebar/60">
@@ -84,7 +93,7 @@ export function RiskAuditLog({
               </tr>
             </thead>
             <tbody>
-              {visibleAlerts.map((alert) => (
+              {visibleAlerts.slice(pagination.start, pagination.end).map((alert) => (
                 <tr key={alert.id} className="transition-colors hover:bg-accent/35">
                   <td className="px-5 py-4">
                     <StatusPill tone={alert.severityTone}>{enumLabel(alert.severity)}</StatusPill>
@@ -109,6 +118,8 @@ export function RiskAuditLog({
             </tbody>
           </table>
         </div>
+        <PaginationBar pagination={pagination} totalItems={visibleAlerts.length} className="flex items-center justify-between border-t border-border/70 px-5 pt-3 pb-4" />
+        </>
       ) : (
         <EmptyPanel
           title={dictionary.risk.noAlertsTitle}

@@ -4,7 +4,7 @@ use polyedge_application::{
     CopyOrderStatus, CopyOrderSide, CopyPosition, CopySimulationOutcome, CopySizingMode,
     CopyTradeConfig, CopyTradeMode, CopyTradeStore, IdempotencyBegin, IdempotencyRequest,
     IdempotencyStore, ManagedRewardOrder, ManagedRewardOrderStatus, ModeSnapshot, ModeStateStore,
-    ModeTransitionCommand, PostFillStrategy, RewardAccountState, RewardBotConfig, RewardBotMode,
+    ModeTransitionCommand, PostFillStrategy, RewardAccountState, RewardBotConfig,
     RewardBotStore, RewardFill, RewardFillRole, RewardMarket, RewardOrderSide, RewardPosition,
     RewardQuotePlan, RewardRiskEvent, RewardRiskSeverity, RewardSimulationOutcome, RewardToken,
     RiskStateSnapshot, RiskStateStore, SourceTrade, TrackedWallet, TrackedWalletStatus,

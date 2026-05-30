@@ -5,12 +5,14 @@ import { startTransition, useDeferredValue, useEffect, useState } from "react";
 import type { getPositionsPageData } from "@/features/positions/loaders/positions-page-data";
 import { MetricCard } from "@/components/shared/metric-card";
 import { PageHeader } from "@/components/shared/page-header";
+import { PaginationBar } from "@/components/pagination-bar";
 import { StatusPill } from "@/components/shared/status-pill";
 import { WorkbenchLayout, WorkbenchDetailPane } from "@/components/shared/workbench-layout";
 import { WorkbenchSegmentedControl } from "@/components/shared/workbench-segmented-control";
 import { useConsoleRealtimeChannel } from "@/components/shared/console-realtime-provider";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { MeterBar } from "@/components/shared/meter-bar";
+import { usePagination } from "@/hooks/use-pagination";
 import { useI18n } from "@/lib/i18n/client";
 import { normalizeOptionalRuntimeMode } from "@/lib/runtime-mode";
 import {
@@ -149,6 +151,12 @@ export function PositionsWorkbench({ data }: { data: PositionsPageData }) {
     return true;
   });
 
+  const pagination = usePagination(filteredPositions.length, 20);
+
+  useEffect(() => {
+    pagination.reset();
+  }, [deferredFilter, pagination.reset]);
+
   const activeSelectedId =
     filteredPositions.find((position) => position.id === selectedId)?.id ??
     filteredPositions[0]?.id ??
@@ -231,7 +239,7 @@ export function PositionsWorkbench({ data }: { data: PositionsPageData }) {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filteredPositions.map((position) => (
+                  {filteredPositions.slice(pagination.start, pagination.end).map((position) => (
                     <TableRow
                       key={position.id}
                       tabIndex={0}
@@ -275,6 +283,8 @@ export function PositionsWorkbench({ data }: { data: PositionsPageData }) {
                 </TableBody>
               </Table>
             </div>
+
+            <PaginationBar pagination={pagination} totalItems={filteredPositions.length} />
           </CardContent>
         </Card>
 

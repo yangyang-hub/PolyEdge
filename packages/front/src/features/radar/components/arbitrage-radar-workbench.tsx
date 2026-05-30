@@ -5,11 +5,13 @@ import { ChevronRight, Filter, Radar } from "lucide-react";
 
 import { MetricCard } from "@/components/shared/metric-card";
 import { PageHeader } from "@/components/shared/page-header";
+import { PaginationBar } from "@/components/pagination-bar";
 import { StatusPill } from "@/components/shared/status-pill";
 import { useConsoleRealtimeChannel } from "@/components/shared/console-realtime-provider";
 import { WorkbenchDetailPane, WorkbenchLayout } from "@/components/shared/workbench-layout";
 import { WorkbenchSegmentedControl } from "@/components/shared/workbench-segmented-control";
 import { Button } from "@/components/ui/button";
+import { usePagination } from "@/hooks/use-pagination";
 import { useI18n } from "@/lib/i18n/client";
 import type { RadarFilter, RadarPageData, RadarView } from "@/features/radar/types";
 import { isKeyboardSelect } from "@/lib/keyboard";
@@ -112,6 +114,13 @@ export function ArbitrageRadarWorkbench({ data }: ArbitrageRadarWorkbenchProps) 
       .sort(compareRadarPriority);
   }, [liveOpportunities, deferredFilter, view]);
 
+  const oppsPagination = usePagination(filteredOpportunities.length, 20);
+  const scansPagination = usePagination(liveScans.length, 15);
+
+  useEffect(() => {
+    oppsPagination.reset();
+  }, [view, deferredFilter, oppsPagination.reset]);
+
   const selectedOpportunity =
     filteredOpportunities.find((opportunity) => opportunity.id === selectedId) ??
     filteredOpportunities[0] ??
@@ -186,6 +195,7 @@ export function ArbitrageRadarWorkbench({ data }: ArbitrageRadarWorkbenchProps) 
           </div>
 
           {filteredOpportunities.length > 0 ? (
+            <>
             <div className="overflow-x-auto">
               <table className="w-full text-left">
                 <thead className="bg-sidebar/60">
@@ -204,7 +214,7 @@ export function ArbitrageRadarWorkbench({ data }: ArbitrageRadarWorkbenchProps) 
                   </tr>
                 </thead>
                 <tbody className="text-sm">
-                  {filteredOpportunities.map((opportunity) => (
+                  {filteredOpportunities.slice(oppsPagination.start, oppsPagination.end).map((opportunity) => (
                     <tr
                       key={opportunity.id}
                       tabIndex={0}
@@ -277,6 +287,8 @@ export function ArbitrageRadarWorkbench({ data }: ArbitrageRadarWorkbenchProps) 
                 </tbody>
               </table>
             </div>
+            <PaginationBar pagination={oppsPagination} totalItems={filteredOpportunities.length} className="flex items-center justify-between border-t border-border/70 px-5 pt-3 pb-4" />
+            </>
           ) : (
             <div className="px-5 py-10 text-center">
               <p className="font-heading text-lg font-bold text-foreground">{dictionary.radar.noOpportunityTitle}</p>
@@ -338,7 +350,7 @@ export function ArbitrageRadarWorkbench({ data }: ArbitrageRadarWorkbenchProps) 
               {dictionary.radar.scanHistory}
             </p>
             <div className="mt-3 space-y-3">
-              {liveScans.map((scan) => (
+              {liveScans.slice(scansPagination.start, scansPagination.end).map((scan) => (
                 <div key={scan.id} className="rounded-md bg-accent/35 p-3">
                   <div className="flex items-center justify-between gap-3">
                     <p className="font-mono text-xs text-foreground">{scan.startedClock}</p>
@@ -352,6 +364,7 @@ export function ArbitrageRadarWorkbench({ data }: ArbitrageRadarWorkbenchProps) 
                 </div>
               ))}
             </div>
+            <PaginationBar pagination={scansPagination} totalItems={liveScans.length} className="mt-3 flex items-center justify-between border-t border-border/70 pt-3" />
           </div>
         </WorkbenchDetailPane>
       </WorkbenchLayout>

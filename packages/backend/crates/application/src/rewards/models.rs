@@ -1,37 +1,5 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum RewardBotMode {
-    DryRun,
-    Live,
-}
-
-impl RewardBotMode {
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::DryRun => "dry_run",
-            Self::Live => "live",
-        }
-    }
-}
-
-impl FromStr for RewardBotMode {
-    type Err = AppError;
-
-    fn from_str(value: &str) -> Result<Self> {
-        match value {
-            "dry_run" => Ok(Self::DryRun),
-            "live" => Ok(Self::Live),
-            other => Err(AppError::invalid_input(
-                "REWARD_BOT_MODE_INVALID",
-                format!("unknown reward bot mode: {other}"),
-            )),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
 pub enum RewardOrderSide {
     Buy,
     Sell,
@@ -219,7 +187,6 @@ impl FromStr for RewardRiskSeverity {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RewardBotConfig {
     pub enabled: bool,
-    pub mode: RewardBotMode,
     pub account_id: String,
     pub max_markets: u16,
     pub max_open_orders: u16,
@@ -261,8 +228,6 @@ pub struct RewardBotConfig {
 pub struct RewardBotConfigPatch {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub enabled: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub mode: Option<RewardBotMode>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub account_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -319,7 +284,6 @@ impl Default for RewardBotConfig {
     fn default() -> Self {
         Self {
             enabled: false,
-            mode: RewardBotMode::DryRun,
             account_id: "reward_simulator".to_string(),
             max_markets: 3,
             max_open_orders: 12,
@@ -404,9 +368,6 @@ impl RewardBotConfig {
         let mut next = self.clone();
         if let Some(enabled) = patch.enabled {
             next.enabled = enabled;
-        }
-        if let Some(mode) = patch.mode {
-            next.mode = mode;
         }
         if let Some(account_id) = patch.account_id {
             next.account_id = account_id;
@@ -674,7 +635,6 @@ pub struct RewardRiskEvent {
 pub struct RewardBotStatus {
     pub enabled: bool,
     pub running: bool,
-    pub mode: RewardBotMode,
     pub account_id: String,
     pub markets_tracked: usize,
     pub eligible_markets: usize,
@@ -719,5 +679,4 @@ pub struct RewardBotRunReport {
 struct TokenBookState {
     midpoint: Decimal,
     best_ask: Option<Decimal>,
-    fresh: bool,
 }

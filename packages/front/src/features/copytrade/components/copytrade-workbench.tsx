@@ -1,11 +1,12 @@
 "use client";
 
-import { startTransition, useMemo, useState } from "react";
+import { startTransition, useState } from "react";
 import { Ban, Play, RotateCcw, Save, Search, UserPlus, X } from "lucide-react";
 
 import { MetricCard } from "@/components/shared/metric-card";
 import { OperationFeedbackBanner } from "@/components/shared/operation-feedback-banner";
 import { PageHeader } from "@/components/shared/page-header";
+import { PaginationBar } from "@/components/pagination-bar";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -15,6 +16,7 @@ import type {
   CopyTradeSnapshotDto,
 } from "@/lib/contracts/dto";
 import { formatOptionalClock, formatUsdFixed, metricToneForPnl } from "@/lib/formatters";
+import { usePagination } from "@/hooks/use-pagination";
 import { useI18n } from "@/lib/i18n/client";
 import {
   addTrackedWalletAction,
@@ -42,12 +44,9 @@ export function CopyTradeWorkbench({
   const [walletAddress, setWalletAddress] = useState("");
   const [walletLabel, setWalletLabel] = useState("");
 
-  const visibleSourceTrades = useMemo(
-    () => snapshot.source_trades.slice(0, 50),
-    [snapshot.source_trades],
-  );
-  const visibleOrders = useMemo(() => snapshot.orders.slice(0, 50), [snapshot.orders]);
-  const visibleEvents = useMemo(() => snapshot.events.slice(0, 60), [snapshot.events]);
+  const tradesPagination = usePagination(snapshot.source_trades.length, 20);
+  const ordersPagination = usePagination(snapshot.orders.length, 20);
+  const eventsPagination = usePagination(snapshot.events.length, 20);
 
   function applyResult(result: CopyTradeActionResult) {
     setFeedback(result);
@@ -314,7 +313,7 @@ export function CopyTradeWorkbench({
                 </tr>
               </thead>
               <tbody>
-                {visibleSourceTrades.map((trade) => (
+                {snapshot.source_trades.slice(tradesPagination.start, tradesPagination.end).map((trade) => (
                   <tr key={trade.id} className="border-b border-border/20">
                     <td className="py-1.5 pr-2 font-mono">{trade.wallet_address.slice(0, 6)}…{trade.wallet_address.slice(-4)}</td>
                     <td className="py-1.5 pr-2">{trade.price}</td>
@@ -328,12 +327,13 @@ export function CopyTradeWorkbench({
                 ))}
               </tbody>
             </table>
+            <PaginationBar pagination={tradesPagination} totalItems={snapshot.source_trades.length} className="mt-3 flex items-center justify-between border-t border-border/70 pt-3" />
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader className="border-b border-border/70">
-            <CardTitle className="font-heading text-base">{t.copyOrders} ({visibleOrders.length})</CardTitle>
+            <CardTitle className="font-heading text-base">{t.copyOrders} ({snapshot.orders.length})</CardTitle>
           </CardHeader>
           <CardContent className="max-h-80 overflow-auto">
             <table className="w-full text-xs">
@@ -346,7 +346,7 @@ export function CopyTradeWorkbench({
                 </tr>
               </thead>
               <tbody>
-                {visibleOrders.map((order) => (
+                {snapshot.orders.slice(ordersPagination.start, ordersPagination.end).map((order) => (
                   <tr key={order.id} className="border-b border-border/20">
                     <td className="py-1.5 pr-2 font-mono">{order.wallet_address.slice(0, 6)}…{order.wallet_address.slice(-4)}</td>
                     <td className="py-1.5 pr-2">{order.price}</td>
@@ -362,6 +362,7 @@ export function CopyTradeWorkbench({
                 ))}
               </tbody>
             </table>
+            <PaginationBar pagination={ordersPagination} totalItems={snapshot.orders.length} className="mt-3 flex items-center justify-between border-t border-border/70 pt-3" />
           </CardContent>
         </Card>
       </div>
@@ -372,7 +373,7 @@ export function CopyTradeWorkbench({
         </CardHeader>
         <CardContent className="max-h-64 overflow-auto">
           <div className="space-y-1">
-            {visibleEvents.map((event) => (
+            {snapshot.events.slice(eventsPagination.start, eventsPagination.end).map((event) => (
               <div key={event.id} className="flex items-start gap-2 text-xs">
                 <span className={`mt-0.5 size-1.5 shrink-0 rounded-full ${
                   event.severity === "critical" ? "bg-red-500" :
@@ -384,6 +385,7 @@ export function CopyTradeWorkbench({
               </div>
             ))}
           </div>
+          <PaginationBar pagination={eventsPagination} totalItems={snapshot.events.length} className="mt-3 flex items-center justify-between border-t border-border/70 pt-3" />
         </CardContent>
       </Card>
     </div>

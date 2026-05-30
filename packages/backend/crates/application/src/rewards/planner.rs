@@ -63,18 +63,6 @@ fn build_reward_quote_plan(
         return empty_plan(market, "missing book or fallback token price", now, None);
     };
 
-    if config.mode == RewardBotMode::Live
-        && (!yes_state.as_ref().is_some_and(|state| state.fresh)
-            || !no_state.as_ref().is_some_and(|state| state.fresh))
-    {
-        return empty_plan(
-            market,
-            "live mode requires fresh YES and NO books",
-            now,
-            Some(midpoint),
-        );
-    }
-
     if midpoint < config.min_midpoint || midpoint > config.max_midpoint {
         return empty_plan(
             market,
@@ -248,19 +236,16 @@ fn get_token_book_state(
         return Some(TokenBookState {
             midpoint: (best_bid + best_ask) / decimal("2"),
             best_ask: Some(best_ask),
-            fresh: true,
         });
     }
 
-    if config.mode != RewardBotMode::Live
-        && let Some(price) = token
+    if let Some(price) = token
             .price
             .filter(|price| *price > Decimal::ZERO && *price < Decimal::ONE)
     {
         return Some(TokenBookState {
             midpoint: price,
             best_ask: None,
-            fresh: false,
         });
     }
 

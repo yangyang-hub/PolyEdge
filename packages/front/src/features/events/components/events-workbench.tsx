@@ -4,8 +4,10 @@ import { startTransition, useEffect, useState } from "react";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { PageHeader } from "@/components/shared/page-header";
+import { PaginationBar } from "@/components/pagination-bar";
 import { StatusPill } from "@/components/shared/status-pill";
 import { useConsoleRealtimeChannel } from "@/components/shared/console-realtime-provider";
+import { usePagination } from "@/hooks/use-pagination";
 import { useI18n } from "@/lib/i18n/client";
 import type { ConsoleEventStreamPayload, SignalStreamPayload } from "@/lib/contracts/realtime";
 import {
@@ -128,6 +130,8 @@ export function EventsWorkbench({ data }: { data: EventsPageData }) {
     eventItems.find((event) => event.isSelected) ??
     eventItems[0];
 
+  const pagination = usePagination(eventItems.length, 15);
+
   return (
     <div className="space-y-6">
       <PageHeader
@@ -148,7 +152,7 @@ export function EventsWorkbench({ data }: { data: EventsPageData }) {
             <CardTitle className="font-heading text-base">{dictionary.events.timeline}</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
-            {eventItems.map((event) => {
+            {eventItems.slice(pagination.start, pagination.end).map((event) => {
               const active = event.id === selectedEvent?.id;
 
               return (
@@ -174,6 +178,7 @@ export function EventsWorkbench({ data }: { data: EventsPageData }) {
                 </button>
               );
             })}
+            <PaginationBar pagination={pagination} totalItems={eventItems.length} />
           </CardContent>
         </Card>
 

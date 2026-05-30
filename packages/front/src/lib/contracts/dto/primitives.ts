@@ -45,7 +45,6 @@ export type ArbitrageValidationStatus =
   | "below_threshold"
   | "invalid_market"
   | "error";
-export type RewardBotMode = "dry_run" | "live";
 export type RewardOrderSide = "buy" | "sell";
 export type ManagedRewardOrderStatus =
   | "planned"

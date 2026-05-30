@@ -37,6 +37,12 @@ export const sharedEn = {
     submitting: "Submitting...",
     sync: "sync",
     unknown: "Unknown",
+    pagination: {
+      pageOf: "{current} of {total}",
+      totalItems: "{count} items",
+      previous: "Previous",
+      next: "Next",
+    },
     warnings: "warnings",
   },
   nav: {
@@ -163,6 +169,12 @@ export const sharedZh = {
     submitting: "提交中...",
     sync: "同步",
     unknown: "未知",
+    pagination: {
+      pageOf: "第 {current} / {total} 页",
+      totalItems: "共 {count} 条",
+      previous: "上一页",
+      next: "下一页",
+    },
     warnings: "警告",
   },
   nav: {

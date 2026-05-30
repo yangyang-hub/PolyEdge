@@ -74,8 +74,6 @@ export function RewardsWorkbench({ initialSnapshot }: { initialSnapshot: RewardB
     }));
   }
 
-  const modeLabel = draft.mode === "live" ? dictionary.rewards.liveDisabled : dictionary.rewards.simulation;
-
   return (
     <div className="space-y-6">
       <PageHeader
@@ -92,12 +90,6 @@ export function RewardsWorkbench({ initialSnapshot }: { initialSnapshot: RewardB
           value={snapshot.status.enabled ? dictionary.common.enabled : dictionary.common.disabled}
           hint={snapshot.status.running ? dictionary.common.active : dictionary.common.idle}
           accent={snapshot.status.enabled ? "success" : "primary"}
-        />
-        <MetricCard
-          title={dictionary.rewards.mode}
-          value={modeLabel}
-          hint={dictionary.rewards.lastRun}
-          accent="primary"
         />
         <MetricCard
           title={dictionary.rewards.markets}
@@ -205,22 +197,6 @@ export function RewardsWorkbench({ initialSnapshot }: { initialSnapshot: RewardB
                 value={draft.account_id}
                 onChange={(event) => setDraft((current) => ({ ...current, account_id: event.target.value }))}
               />
-            </label>
-            <label className="space-y-1.5">
-              <span className="text-xs font-medium text-muted-foreground">{dictionary.rewards.mode}</span>
-              <select
-                className="h-8 w-full rounded-lg border border-input bg-background px-2.5 text-sm"
-                value={draft.mode}
-                onChange={(event) =>
-                  setDraft((current) => ({
-                    ...current,
-                    mode: event.target.value === "live" ? "live" : "dry_run",
-                  }))
-                }
-              >
-                <option value="dry_run">{dictionary.rewards.simulation}</option>
-                <option value="live">{dictionary.rewards.liveDisabled}</option>
-              </select>
             </label>
             <label className="flex items-center gap-3 pt-6 text-sm">
               <input

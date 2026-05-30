@@ -1,6 +1,7 @@
 "use client";
 
 import { StatusPill } from "@/components/shared/status-pill";
+import { PaginationBar } from "@/components/pagination-bar";
 import {
   Table,
   TableBody,
@@ -22,18 +23,21 @@ import {
   formatSignedFixed,
   formatUsdFixed,
 } from "@/lib/formatters";
+import { usePagination } from "@/hooks/use-pagination";
 import { useI18n } from "@/lib/i18n/client";
 
 import { rewardTone } from "../lib/rewards-helpers";
 
 export function FillsTable({ fills }: { fills: RewardFillDto[] }) {
   const { dictionary } = useI18n();
+  const pagination = usePagination(fills.length, 15);
 
   if (fills.length === 0) {
     return <p className="py-6 text-center text-sm text-muted-foreground">{dictionary.rewards.none}</p>;
   }
 
   return (
+    <div>
     <Table>
       <TableHeader>
         <TableRow>
@@ -47,7 +51,7 @@ export function FillsTable({ fills }: { fills: RewardFillDto[] }) {
         </TableRow>
       </TableHeader>
       <TableBody>
-        {fills.map((fill) => (
+        {fills.slice(pagination.start, pagination.end).map((fill) => (
           <TableRow key={fill.id}>
             <TableCell>{fill.outcome}</TableCell>
             <TableCell>
@@ -64,13 +68,17 @@ export function FillsTable({ fills }: { fills: RewardFillDto[] }) {
         ))}
       </TableBody>
     </Table>
+    <PaginationBar pagination={pagination} totalItems={fills.length} />
+    </div>
   );
 }
 
 export function QuotePlansTable({ plans }: { plans: RewardQuotePlanDto[] }) {
   const { dictionary } = useI18n();
+  const pagination = usePagination(plans.length, 15);
 
   return (
+    <div>
     <Table>
       <TableHeader>
         <TableRow>
@@ -82,7 +90,7 @@ export function QuotePlansTable({ plans }: { plans: RewardQuotePlanDto[] }) {
         </TableRow>
       </TableHeader>
       <TableBody>
-        {plans.map((plan) => (
+        {plans.slice(pagination.start, pagination.end).map((plan) => (
           <TableRow key={plan.condition_id}>
             <TableCell className="max-w-[360px]">
               <div className="space-y-1">
@@ -106,13 +114,17 @@ export function QuotePlansTable({ plans }: { plans: RewardQuotePlanDto[] }) {
         ))}
       </TableBody>
     </Table>
+    <PaginationBar pagination={pagination} totalItems={plans.length} />
+    </div>
   );
 }
 
 export function OrdersTable({ orders }: { orders: ManagedRewardOrderDto[] }) {
   const { dictionary } = useI18n();
+  const pagination = usePagination(orders.length, 15);
 
   return (
+    <div>
     <Table>
       <TableHeader>
         <TableRow>
@@ -124,7 +136,7 @@ export function OrdersTable({ orders }: { orders: ManagedRewardOrderDto[] }) {
         </TableRow>
       </TableHeader>
       <TableBody>
-        {orders.map((order) => (
+        {orders.slice(pagination.start, pagination.end).map((order) => (
           <TableRow key={order.id}>
             <TableCell>
               <StatusPill tone={rewardTone(order.status)}>{order.status}</StatusPill>
@@ -137,13 +149,17 @@ export function OrdersTable({ orders }: { orders: ManagedRewardOrderDto[] }) {
         ))}
       </TableBody>
     </Table>
+    <PaginationBar pagination={pagination} totalItems={orders.length} />
+    </div>
   );
 }
 
 export function EventsTable({ events }: { events: RewardRiskEventDto[] }) {
   const { dictionary } = useI18n();
+  const pagination = usePagination(events.length, 15);
 
   return (
+    <div>
     <Table>
       <TableHeader>
         <TableRow>
@@ -154,7 +170,7 @@ export function EventsTable({ events }: { events: RewardRiskEventDto[] }) {
         </TableRow>
       </TableHeader>
       <TableBody>
-        {events.map((event) => (
+        {events.slice(pagination.start, pagination.end).map((event) => (
           <TableRow key={event.id}>
             <TableCell>
               <StatusPill tone={approvalSeverityTone(event.severity)}>{event.severity}</StatusPill>
@@ -166,5 +182,7 @@ export function EventsTable({ events }: { events: RewardRiskEventDto[] }) {
         ))}
       </TableBody>
     </Table>
+    <PaginationBar pagination={pagination} totalItems={events.length} />
+    </div>
   );
 }

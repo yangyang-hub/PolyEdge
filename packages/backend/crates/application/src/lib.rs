@@ -65,7 +65,7 @@ pub use orderbook_cache::{
 };
 pub use rewards::{
     ManagedRewardOrder, ManagedRewardOrderStatus, PostFillStrategy, RewardAccountState,
-    RewardBookLevel, RewardBotConfig, RewardBotConfigPatch, RewardBotMode, RewardBotRunReport,
+    RewardBookLevel, RewardBotConfig, RewardBotConfigPatch, RewardBotRunReport,
     RewardBotService, RewardBotSnapshot, RewardBotStatus, RewardBotStore, RewardFill,
     RewardFillRole, RewardMarket, RewardOrderBook, RewardOrderSide, RewardPosition, RewardQuoteLeg,
     RewardQuotePlan, RewardRiskEvent, RewardRiskSeverity, RewardSimulationOutcome, RewardToken,
