@@ -1,7 +1,7 @@
 "use client";
 
 import { startTransition, useMemo, useState } from "react";
-import { Ban, Play, RotateCcw, Save } from "lucide-react";
+import { Ban, Info, Play, RotateCcw, Save } from "lucide-react";
 
 import { MetricCard } from "@/components/shared/metric-card";
 import { OperationFeedbackBanner } from "@/components/shared/operation-feedback-banner";
@@ -9,6 +9,7 @@ import { PageHeader } from "@/components/shared/page-header";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type {
   PostFillStrategy,
   RewardBotConfigDto,
@@ -240,34 +241,52 @@ export function RewardsWorkbench({ initialSnapshot }: { initialSnapshot: RewardB
                 }
               />
               {dictionary.rewards.cancelOnFill}
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Info className="size-3 cursor-help text-muted-foreground/60" />
+                </TooltipTrigger>
+                <TooltipContent side="top" className="max-w-xs text-wrap">
+                  {dictionary.rewards.configHints.cancelOnFill}
+                </TooltipContent>
+              </Tooltip>
             </label>
           </div>
 
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-6">
-            <NumberInput label={dictionary.rewards.maxMarkets} value={draft.max_markets} onChange={(value) => updateNumber("max_markets", value)} />
-            <NumberInput label={dictionary.rewards.maxOpenOrders} value={draft.max_open_orders} onChange={(value) => updateNumber("max_open_orders", value)} />
-            <NumberInput label={dictionary.rewards.perMarketUsd} value={draft.per_market_usd} suffix="$" onChange={(value) => updateNumber("per_market_usd", value)} />
-            <NumberInput label={dictionary.rewards.quoteSizeUsd} value={draft.quote_size_usd} suffix="$" onChange={(value) => updateNumber("quote_size_usd", value)} />
-            <NumberInput label={dictionary.rewards.minDailyReward} value={draft.min_daily_reward} suffix="$" onChange={(value) => updateNumber("min_daily_reward", value)} />
-            <NumberInput label={dictionary.rewards.minMarketScore} value={draft.min_market_score} onChange={(value) => updateNumber("min_market_score", value)} />
-            <NumberInput label={dictionary.rewards.maxSpreadCents} value={draft.max_spread_cents} suffix="c" onChange={(value) => updateNumber("max_spread_cents", value)} />
-            <NumberInput label={dictionary.rewards.quoteEdgeCents} value={draft.quote_edge_cents} suffix="c" onChange={(value) => updateNumber("quote_edge_cents", value)} />
-            <NumberInput label={dictionary.rewards.safetyMarginCents} value={draft.safety_margin_cents} suffix="c" onChange={(value) => updateNumber("safety_margin_cents", value)} />
-            <NumberInput label={dictionary.rewards.minMidpoint} value={draft.min_midpoint} onChange={(value) => updateNumber("min_midpoint", value)} />
-            <NumberInput label={dictionary.rewards.maxMidpoint} value={draft.max_midpoint} onChange={(value) => updateNumber("max_midpoint", value)} />
-            <NumberInput label={dictionary.rewards.staleBookMs} value={draft.stale_book_ms} suffix="ms" onChange={(value) => updateNumber("stale_book_ms", value)} />
-            <NumberInput label={dictionary.rewards.minScoringCheckSec} value={draft.min_scoring_check_sec} suffix="s" onChange={(value) => updateNumber("min_scoring_check_sec", value)} />
-            <NumberInput label={dictionary.rewards.maxPositionUsd} value={draft.max_position_usd} suffix="$" onChange={(value) => updateNumber("max_position_usd", value)} />
-            <NumberInput label={dictionary.rewards.maxGlobalPositionUsd} value={draft.max_global_position_usd} suffix="$" onChange={(value) => updateNumber("max_global_position_usd", value)} />
-            <NumberInput label={dictionary.rewards.exitMarkupCents} value={draft.exit_markup_cents} suffix="c" onChange={(value) => updateNumber("exit_markup_cents", value)} />
-            <NumberInput label={dictionary.rewards.accountCapital} value={draft.account_capital_usd} suffix="$" onChange={(value) => updateNumber("account_capital_usd", value)} />
-            <NumberInput label={dictionary.rewards.competitionFactor} value={draft.reward_competition_factor} suffix="x" onChange={(value) => updateNumber("reward_competition_factor", value)} />
-            <NumberInput label={dictionary.rewards.singleSidedC} value={draft.single_sided_divisor_c} onChange={(value) => updateNumber("single_sided_divisor_c", value)} />
-            <NumberInput label={dictionary.rewards.fillRatePerTick} value={draft.fill_rate_per_tick} onChange={(value) => updateNumber("fill_rate_per_tick", value)} />
-            <NumberInput label={dictionary.rewards.maxFillRatio} value={draft.max_fill_ratio} onChange={(value) => updateNumber("max_fill_ratio", value)} />
-            <NumberInput label={dictionary.rewards.requoteDriftCents} value={draft.requote_drift_cents} suffix="c" onChange={(value) => updateNumber("requote_drift_cents", value)} />
+            <NumberInput label={dictionary.rewards.maxMarkets} value={draft.max_markets} hint={dictionary.rewards.configHints.maxMarkets} onChange={(value) => updateNumber("max_markets", value)} />
+            <NumberInput label={dictionary.rewards.maxOpenOrders} value={draft.max_open_orders} hint={dictionary.rewards.configHints.maxOpenOrders} onChange={(value) => updateNumber("max_open_orders", value)} />
+            <NumberInput label={dictionary.rewards.perMarketUsd} value={draft.per_market_usd} suffix="$" hint={dictionary.rewards.configHints.perMarketUsd} onChange={(value) => updateNumber("per_market_usd", value)} />
+            <NumberInput label={dictionary.rewards.quoteSizeUsd} value={draft.quote_size_usd} suffix="$" hint={dictionary.rewards.configHints.quoteSizeUsd} onChange={(value) => updateNumber("quote_size_usd", value)} />
+            <NumberInput label={dictionary.rewards.minDailyReward} value={draft.min_daily_reward} suffix="$" hint={dictionary.rewards.configHints.minDailyReward} onChange={(value) => updateNumber("min_daily_reward", value)} />
+            <NumberInput label={dictionary.rewards.minMarketScore} value={draft.min_market_score} hint={dictionary.rewards.configHints.minMarketScore} onChange={(value) => updateNumber("min_market_score", value)} />
+            <NumberInput label={dictionary.rewards.maxSpreadCents} value={draft.max_spread_cents} suffix="c" hint={dictionary.rewards.configHints.maxSpreadCents} onChange={(value) => updateNumber("max_spread_cents", value)} />
+            <NumberInput label={dictionary.rewards.quoteEdgeCents} value={draft.quote_edge_cents} suffix="c" hint={dictionary.rewards.configHints.quoteEdgeCents} onChange={(value) => updateNumber("quote_edge_cents", value)} />
+            <NumberInput label={dictionary.rewards.safetyMarginCents} value={draft.safety_margin_cents} suffix="c" hint={dictionary.rewards.configHints.safetyMarginCents} onChange={(value) => updateNumber("safety_margin_cents", value)} />
+            <NumberInput label={dictionary.rewards.minMidpoint} value={draft.min_midpoint} hint={dictionary.rewards.configHints.minMidpoint} onChange={(value) => updateNumber("min_midpoint", value)} />
+            <NumberInput label={dictionary.rewards.maxMidpoint} value={draft.max_midpoint} hint={dictionary.rewards.configHints.maxMidpoint} onChange={(value) => updateNumber("max_midpoint", value)} />
+            <NumberInput label={dictionary.rewards.staleBookMs} value={draft.stale_book_ms} suffix="ms" hint={dictionary.rewards.configHints.staleBookMs} onChange={(value) => updateNumber("stale_book_ms", value)} />
+            <NumberInput label={dictionary.rewards.minScoringCheckSec} value={draft.min_scoring_check_sec} suffix="s" hint={dictionary.rewards.configHints.minScoringCheckSec} onChange={(value) => updateNumber("min_scoring_check_sec", value)} />
+            <NumberInput label={dictionary.rewards.maxPositionUsd} value={draft.max_position_usd} suffix="$" hint={dictionary.rewards.configHints.maxPositionUsd} onChange={(value) => updateNumber("max_position_usd", value)} />
+            <NumberInput label={dictionary.rewards.maxGlobalPositionUsd} value={draft.max_global_position_usd} suffix="$" hint={dictionary.rewards.configHints.maxGlobalPositionUsd} onChange={(value) => updateNumber("max_global_position_usd", value)} />
+            <NumberInput label={dictionary.rewards.exitMarkupCents} value={draft.exit_markup_cents} suffix="c" hint={dictionary.rewards.configHints.exitMarkupCents} onChange={(value) => updateNumber("exit_markup_cents", value)} />
+            <NumberInput label={dictionary.rewards.accountCapital} value={draft.account_capital_usd} suffix="$" hint={dictionary.rewards.configHints.accountCapital} onChange={(value) => updateNumber("account_capital_usd", value)} />
+            <NumberInput label={dictionary.rewards.competitionFactor} value={draft.reward_competition_factor} suffix="x" hint={dictionary.rewards.configHints.competitionFactor} onChange={(value) => updateNumber("reward_competition_factor", value)} />
+            <NumberInput label={dictionary.rewards.singleSidedC} value={draft.single_sided_divisor_c} hint={dictionary.rewards.configHints.singleSidedC} onChange={(value) => updateNumber("single_sided_divisor_c", value)} />
+            <NumberInput label={dictionary.rewards.fillRatePerTick} value={draft.fill_rate_per_tick} hint={dictionary.rewards.configHints.fillRatePerTick} onChange={(value) => updateNumber("fill_rate_per_tick", value)} />
+            <NumberInput label={dictionary.rewards.maxFillRatio} value={draft.max_fill_ratio} hint={dictionary.rewards.configHints.maxFillRatio} onChange={(value) => updateNumber("max_fill_ratio", value)} />
+            <NumberInput label={dictionary.rewards.requoteDriftCents} value={draft.requote_drift_cents} suffix="c" hint={dictionary.rewards.configHints.requoteDriftCents} onChange={(value) => updateNumber("requote_drift_cents", value)} />
             <label className="space-y-1.5">
-              <span className="text-xs font-medium text-muted-foreground">{dictionary.rewards.postFillStrategy}</span>
+              <span className="flex items-center gap-1 text-xs font-medium text-muted-foreground">
+                {dictionary.rewards.postFillStrategy}
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Info className="size-3 cursor-help text-muted-foreground/60" />
+                  </TooltipTrigger>
+                  <TooltipContent side="top" className="max-w-xs text-wrap">
+                    {dictionary.rewards.configHints.postFillStrategy}
+                  </TooltipContent>
+                </Tooltip>
+              </span>
               <select
                 className="h-8 w-full rounded-lg border border-input bg-background px-2.5 text-sm"
                 value={draft.post_fill_strategy}
