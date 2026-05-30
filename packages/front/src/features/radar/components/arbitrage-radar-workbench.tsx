@@ -41,6 +41,21 @@ export function ArbitrageRadarWorkbench({ data }: ArbitrageRadarWorkbenchProps) 
   const [liveScans, setLiveScans] = useState(data.scans);
   const [liveAnalysis, setLiveAnalysis] = useState(data.analysis);
   const deferredFilter = useDeferredValue(filter);
+
+  // Build a market-question lookup from live opportunities for SSE analysis updates.
+  const marketQuestions = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const opp of liveOpportunities) {
+      if (!map.has(opp.marketId)) {
+        map.set(opp.marketId, opp.marketQuestion);
+      }
+    }
+    return map;
+  }, [liveOpportunities]);
+  const marketQuestionById = useMemo(
+    () => (id: string) => marketQuestions.get(id) ?? id,
+    [marketQuestions],
+  );
   const filterButtons: Array<{ key: RadarFilter; label: string }> = [
     { key: "all", label: dictionary.radar.all },
     { key: "binary_buy_both", label: dictionary.radar.buyBoth },
@@ -92,14 +107,14 @@ export function ArbitrageRadarWorkbench({ data }: ArbitrageRadarWorkbenchProps) 
     }
 
     if (streamEvent.type === "arbitrage.analysis.generated") {
-      const analysis = buildLiveAnalysis(streamEvent.data, enumLabel);
+      const analysis = buildLiveAnalysis(streamEvent.data, enumLabel, marketQuestionById);
       if (analysis) {
         startTransition(() => {
           setLiveAnalysis(analysis);
         });
       }
     }
-  }, [arbitrageStream.lastEvent, dictionary, enumLabel, format]);
+  }, [arbitrageStream.lastEvent, dictionary, enumLabel, format, marketQuestionById]);
 
   const metrics = useMemo(
     () => buildMetrics(liveOpportunities, liveScans, dictionary, format),

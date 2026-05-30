@@ -24,6 +24,7 @@ use polymarket_client_sdk::ws::config::Config as WsConfig;
 use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive;
 use std::str::FromStr;
+use std::time::Duration;
 use time::OffsetDateTime;
 use tracing::warn;
 

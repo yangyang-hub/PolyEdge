@@ -556,6 +556,10 @@ pub struct CopyAccountState {
     pub available_usd: Decimal,
     pub reserved_usd: Decimal,
     pub realized_pnl: Decimal,
+    /// PnL realized today (UTC date). Reset to zero when the date rolls over.
+    /// Used by the daily loss limit risk check.
+    #[serde(default)]
+    pub daily_realized_pnl: Decimal,
     pub fees_paid: Decimal,
     pub tick_index: i64,
     #[serde(with = "time::serde::rfc3339")]
@@ -571,6 +575,7 @@ impl CopyAccountState {
             available_usd: capital_usd,
             reserved_usd: Decimal::ZERO,
             realized_pnl: Decimal::ZERO,
+            daily_realized_pnl: Decimal::ZERO,
             fees_paid: Decimal::ZERO,
             tick_index: 0,
             updated_at: now,

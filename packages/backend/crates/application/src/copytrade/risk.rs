@@ -58,8 +58,8 @@ pub fn check_skip_reasons(
         return Some(CopySkipReason::TotalExposureCapExceeded);
     }
 
-    // 8. Daily loss limit
-    if account.realized_pnl < -config.daily_loss_limit_usd {
+    // 8. Daily loss limit (uses daily_realized_pnl which resets at UTC date boundary)
+    if account.daily_realized_pnl < -config.daily_loss_limit_usd {
         return Some(CopySkipReason::DailyLossLimit);
     }
 

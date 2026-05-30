@@ -3,6 +3,8 @@ use polymarket_client_sdk::clob::ws::Client as ClobWsClient;
 use polymarket_client_sdk::ws::config::Config as WsConfig;
 use polymarket_client_sdk::types::U256;
 use std::str::FromStr;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 struct OrderbookStreamReport {
@@ -69,6 +71,10 @@ async fn consume_orderbook_stream(state: &AppState) -> Result<OrderbookStreamRep
     let stale_threshold_ms = settings.stale_threshold_ms as i64;
     let clob_host = state.settings.polymarket.clob_host.clone();
     let poll_max_tokens = settings.max_tokens;
+    let poll_reconciliations = Arc::new(AtomicUsize::new(0));
+    let poll_failures = Arc::new(AtomicUsize::new(0));
+    let poll_reconciliations_clone = poll_reconciliations.clone();
+    let poll_failures_clone = poll_failures.clone();
 
     let poll_handle = tokio::spawn(async move {
         let connector = match PolymarketRewardsConnector::new(&clob_host) {
@@ -114,8 +120,10 @@ async fn consume_orderbook_stream(state: &AppState) -> Result<OrderbookStreamRep
                             );
                         }
                     }
+                    poll_reconciliations_clone.fetch_add(1, Ordering::Relaxed);
                 }
                 Err(error) => {
+                    poll_failures_clone.fetch_add(1, Ordering::Relaxed);
                     warn!(
                         error = %error,
                         "orderbook poll reconciler failed to fetch books"
@@ -153,6 +161,9 @@ async fn consume_orderbook_stream(state: &AppState) -> Result<OrderbookStreamRep
     }
 
     poll_handle.abort();
+
+    report.poll_reconciliations = poll_reconciliations.load(Ordering::Relaxed);
+    report.poll_failures = poll_failures.load(Ordering::Relaxed);
 
     info!(
         subscribed_tokens = report.subscribed_tokens,

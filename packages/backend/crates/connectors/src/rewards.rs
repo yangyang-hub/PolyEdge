@@ -137,7 +137,12 @@ impl PolymarketRewardsConnector {
             client: reqwest::Client::builder()
                 .timeout(ENRICH_TIMEOUT)
                 .build()
-                .expect("failed to build HTTP client"),
+                .map_err(|error| {
+                    AppError::internal(
+                        "POLYMARKET_REWARDS_HTTP_CLIENT_BUILD_FAILED",
+                        format!("failed to build Polymarket rewards HTTP client: {error}"),
+                    )
+                })?,
         })
     }
 

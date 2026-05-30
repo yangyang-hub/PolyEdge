@@ -68,7 +68,7 @@ pub fn build_wallet_analysis(
     WalletAnalysisStats {
         trades_window: trade_count,
         volume_window_usd: total_volume,
-        realized_pnl_window: total_pnl,
+        realized_pnl_window: realized_pnl,
         win_rate,
         roi,
         avg_trade_usd: avg_trade,

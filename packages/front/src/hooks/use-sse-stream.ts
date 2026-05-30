@@ -69,9 +69,12 @@ export function useSseStream<TChannel extends RealtimeChannel>({
         data: payload,
         receivedAt: Date.now(),
       });
+      // Recover from a previous data-level error — the connection is still open.
+      setConnectionState("open");
     } catch {
       setLastErrorAt(Date.now());
-      setConnectionState("error");
+      // Do NOT set connectionState to "error" here: the EventSource is still open.
+      // A JSON parse failure is a data-level issue, not a connection-level one.
     }
   });
 

@@ -78,18 +78,36 @@ async fn set_copytrade_wallet_status(
     Json(payload): Json<serde_json::Value>,
 ) -> std::result::Result<Json<ApiResponse<CopyTradeSnapshot>>, HttpError> {
     let trace_id = new_trace_id();
-    let address = payload
-        .get("address")
-        .and_then(|v| v.as_str())
-        .unwrap_or_default()
-        .to_string();
+    let address = match payload.get("address").and_then(|v| v.as_str()) {
+        Some(s) if !s.trim().is_empty() => s.trim().to_string(),
+        _ => {
+            return Err(HttpError::with_meta(
+                AppError::invalid_input(
+                    "WALLET_ADDRESS_REQUIRED",
+                    "wallet address must not be empty",
+                ),
+                auth.request_id.clone(),
+                trace_id,
+            ));
+        }
+    };
     let status_str = payload
         .get("status")
         .and_then(|v| v.as_str())
         .unwrap_or("paused");
     let status = match status_str {
         "active" => TrackedWalletStatus::Active,
-        _ => TrackedWalletStatus::Paused,
+        "paused" => TrackedWalletStatus::Paused,
+        other => {
+            return Err(HttpError::with_meta(
+                AppError::invalid_input(
+                    "INVALID_WALLET_STATUS",
+                    format!("invalid wallet status '{other}': expected 'active' or 'paused'"),
+                ),
+                auth.request_id.clone(),
+                trace_id,
+            ));
+        }
     };
     state
         .copytrade_service

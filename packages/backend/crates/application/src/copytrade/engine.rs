@@ -24,6 +24,12 @@ pub fn run_copy_simulation_tick(
         .map(|p| (p.token_id.clone(), p))
         .collect();
 
+    // Reset daily PnL when the UTC date rolls over.
+    let mut account = account;
+    if now.date() != account.updated_at.date() {
+        account.daily_realized_pnl = Decimal::ZERO;
+    }
+
     let mut ctx = CopyTickContext {
         now,
         config: config.clone(),
@@ -105,8 +111,8 @@ impl CopyTickContext {
                     .wrapping_add(self.seq as u64);
                 let roll = deterministic_probability(seed);
                 if roll < self.config.fill_rate_per_tick {
-                    let fill_size = (remaining * self.config.max_fill_ratio).min(remaining);
-                    self.fill_order(index, fill_size, "probabilistic_fill".into());
+                    // Pass raw remaining — fill_order applies max_fill_ratio once.
+                    self.fill_order(index, remaining, "probabilistic_fill".into());
                 }
             }
             self.seq += 1;
@@ -215,6 +221,7 @@ impl CopyTickContext {
                     let pnl = (order.price - position.avg_price) * fill_size;
                     order.realized_pnl += pnl;
                     self.account.realized_pnl += pnl;
+                    self.account.daily_realized_pnl += pnl;
                     self.account.available_usd += notional;
                     position.size = (position.size - fill_size).max(Decimal::ZERO);
                     position.realized_pnl += pnl;

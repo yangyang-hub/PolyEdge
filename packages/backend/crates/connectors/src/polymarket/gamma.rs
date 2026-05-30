@@ -4,6 +4,7 @@ use time::format_description::well_known::Rfc3339;
 
 const GAMMA_MARKETS_PATH: &str = "markets/keyset";
 const MAX_GAMMA_MARKET_PAGES: usize = 5;
+const GAMMA_TIMEOUT: Duration = Duration::from_secs(15);
 
 #[derive(Debug, Clone)]
 pub struct PolymarketGammaMarket {
@@ -106,7 +107,15 @@ impl PolymarketGammaConnector {
 
         Ok(Self {
             gamma_host,
-            client: reqwest::Client::new(),
+            client: reqwest::Client::builder()
+                .timeout(GAMMA_TIMEOUT)
+                .build()
+                .map_err(|error| {
+                    AppError::internal(
+                        "POLYMARKET_GAMMA_CLIENT_BUILD_FAILED",
+                        format!("failed to build Polymarket gamma HTTP client: {error}"),
+                    )
+                })?,
         })
     }
 

@@ -477,17 +477,27 @@ impl CopyTradeStore for PostgresCopyTradeStore {
         outcome: &CopySimulationOutcome,
         trace_id: &str,
     ) -> Result<()> {
-        // Mark processed source trades.
-        for trade_id in &outcome.processed_source_trade_ids {
-            self.mark_source_trade_processed(trade_id).await?;
-        }
-
         let mut transaction = self.pool.begin().await.map_err(|error| {
             db_error(
                 "POSTGRES_TRANSACTION_BEGIN_FAILED",
                 format!("failed to begin copytrade tick transaction: {error}"),
             )
         })?;
+
+        // Mark processed source trades INSIDE the transaction so they are only
+        // marked copied if the full tick (orders, fills, positions) is persisted.
+        for trade_id in &outcome.processed_source_trade_ids {
+            sqlx::query("UPDATE copytrade_source_trades SET copied = true WHERE id = $1")
+                .bind(trade_id)
+                .execute(&mut *transaction)
+                .await
+                .map_err(|error| {
+                    db_error(
+                        "POSTGRES_UPDATE_FAILED",
+                        format!("failed to mark copytrade source trade processed: {error}"),
+                    )
+                })?;
+        }
 
         for order in &outcome.orders {
             insert_copytrade_order(&mut transaction, order, trace_id).await?;
@@ -805,6 +815,10 @@ fn copytrade_account_state_from_row(
         available_usd: row.try_get("available_usd").map_err(postgres_decode_error)?,
         reserved_usd: row.try_get("reserved_usd").map_err(postgres_decode_error)?,
         realized_pnl: row.try_get("realized_pnl").map_err(postgres_decode_error)?,
+        daily_realized_pnl: row
+            .try_get::<Decimal, _>("daily_realized_pnl")
+            .or_else(|_| Ok(Decimal::ZERO))
+            .map_err(postgres_decode_error)?,
         fees_paid: row.try_get("fees_paid").map_err(postgres_decode_error)?,
         tick_index: row.try_get("tick_index").map_err(postgres_decode_error)?,
         updated_at: row.try_get("updated_at").map_err(postgres_decode_error)?,
@@ -837,14 +851,15 @@ fn copytrade_event_from_row(row: &sqlx::postgres::PgRow) -> Result<CopyEvent> {
 const COPYTRADE_ACCOUNT_STATE_UPSERT: &str = r#"
     INSERT INTO copytrade_account_state (
       account_id, capital_usd, available_usd, reserved_usd, realized_pnl,
-      fees_paid, tick_index, updated_at
+      daily_realized_pnl, fees_paid, tick_index, updated_at
     )
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
     ON CONFLICT (account_id) DO UPDATE
     SET capital_usd = EXCLUDED.capital_usd,
         available_usd = EXCLUDED.available_usd,
         reserved_usd = EXCLUDED.reserved_usd,
         realized_pnl = EXCLUDED.realized_pnl,
+        daily_realized_pnl = EXCLUDED.daily_realized_pnl,
         fees_paid = EXCLUDED.fees_paid,
         tick_index = EXCLUDED.tick_index,
         updated_at = EXCLUDED.updated_at
@@ -860,6 +875,7 @@ fn bind_copytrade_account_state<'q>(
         .bind(state.available_usd)
         .bind(state.reserved_usd)
         .bind(state.realized_pnl)
+        .bind(state.daily_realized_pnl)
         .bind(state.fees_paid)
         .bind(state.tick_index)
         .bind(state.updated_at)

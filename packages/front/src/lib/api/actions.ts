@@ -42,7 +42,7 @@ export type OperationActionResult = {
   operationId?: string;
   status?: "queued" | "completed" | "rejected";
   fieldErrors?: Partial<
-    Record<"note" | "stepUpCode" | "targetMode" | "limitPrice" | "quantity" | "connectorName", string>
+    Record<"note" | "stepUpCode" | "targetMode" | "limitPrice" | "quantity" | "connectorName" | "address", string>
   >;
 };
 
@@ -102,8 +102,8 @@ function apiActionFailure(error: unknown, fallback: string): OperationActionResu
 }
 
 const modeSwitchSchema = z.object({
-  currentMode: z.enum(["research", "paper_trade", "live_auto", "kill_switch_locked"]),
-  targetMode: z.enum(["research", "paper_trade", "live_auto", "kill_switch_locked"]),
+  currentMode: z.enum(["research", "paper_trade", "manual_confirm", "live_auto", "kill_switch_locked"]),
+  targetMode: z.enum(["research", "paper_trade", "manual_confirm", "live_auto", "kill_switch_locked"]),
   note: z.string().trim().min(16, "Mode switch note must be at least 16 characters."),
   stepUpCode: z.string().trim().min(6, "Step-up code is required for mode changes."),
 });
@@ -456,7 +456,10 @@ export async function updateCopyTradeConfigAction(
   try {
     const parsed = copytradeConfigSchema.safeParse(input);
     if (!parsed.success) {
-      return createActionFailureResult("Copy trading config is invalid.");
+      const issues = parsed.error.issues
+        .map((i) => `${i.path.join(".")}: ${i.message}`)
+        .join("; ");
+      return createActionFailureResult(`Copy trading config is invalid: ${issues}`);
     }
     const response = await updateCopyTradeConfig(parsed.data);
     return {
@@ -482,7 +485,7 @@ export async function addTrackedWalletAction(input: {
     if (!parsed.success) {
       const fieldErrors = parsed.error.flatten().fieldErrors;
       return createActionFailureResult("Wallet address is invalid.", {
-        fieldErrors: { note: fieldErrors.address?.[0] },
+        fieldErrors: { address: fieldErrors.address?.[0] },
       });
     }
     const response = await addTrackedWallet(parsed.data);

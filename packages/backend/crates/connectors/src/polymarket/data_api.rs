@@ -6,6 +6,7 @@
 // `parse_decimal_value`/`normalize_optional_text` items brought in by `gamma.rs`.
 
 const MAX_DATA_API_LIMIT: u16 = 500;
+const DATA_API_TIMEOUT: Duration = Duration::from_secs(15);
 
 #[derive(Debug, Clone)]
 pub struct PolymarketWalletActivity {
@@ -295,7 +296,15 @@ impl PolymarketDataApiConnector {
 
         Ok(Self {
             data_api_host,
-            client: reqwest::Client::new(),
+            client: reqwest::Client::builder()
+                .timeout(DATA_API_TIMEOUT)
+                .build()
+                .map_err(|error| {
+                    AppError::internal(
+                        "POLYMARKET_DATA_API_CLIENT_BUILD_FAILED",
+                        format!("failed to build Polymarket data API HTTP client: {error}"),
+                    )
+                })?,
         })
     }
 

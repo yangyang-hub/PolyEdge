@@ -236,6 +236,7 @@ export function upsertScan(current: RadarScanRow[], payload: ArbitrageStreamPayl
 export function buildLiveAnalysis(
   payload: ArbitrageStreamPayload,
   enumLabel: (value: string) => string,
+  marketQuestionById?: (id: string) => string,
 ): RadarAnalysis | null {
   if (!isAnalysisSummary(payload.summary_payload)) {
     return null;
@@ -254,7 +255,7 @@ export function buildLiveAnalysis(
     })),
     topMarkets: summary.top_markets.map((market) => ({
       marketId: market.market_id,
-      marketQuestion: market.market_id,
+      marketQuestion: marketQuestionById?.(market.market_id) ?? market.market_id,
       opportunityCount: formatInteger(market.opportunity_count),
       maxGrossEdge: formatPercentFromRatio(market.max_gross_edge, 1),
       avgGrossEdge: formatPercentFromRatio(market.avg_gross_edge, 1),

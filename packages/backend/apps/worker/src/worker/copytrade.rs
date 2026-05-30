@@ -151,49 +151,65 @@ async fn fetch_wallet_analysis_inputs(state: &AppState) -> Result<Vec<WalletFeed
     let mut feeds = Vec::new();
     for wallet in active_wallets {
         let limit = state.settings.copytrade.wallet_activity_limit;
-        let activities = connector
+        let activities = match connector
             .fetch_wallet_activity(&wallet.address, limit)
             .await
-            .map(|raws| {
-                raws.into_iter()
-                    .map(|raw| WalletActivityInput {
-                        kind: raw.kind,
-                        side: raw.side,
-                        asset: raw.asset,
-                        condition_id: raw.condition_id,
-                        outcome: raw.outcome,
-                        title: raw.title,
-                        slug: raw.slug,
-                        price: raw.price,
-                        size: raw.size,
-                        usdc_size: raw.usdc_size,
-                        transaction_hash: raw.transaction_hash,
-                        timestamp: raw.timestamp,
-                    })
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
+        {
+            Ok(raws) => raws
+                .into_iter()
+                .map(|raw| WalletActivityInput {
+                    kind: raw.kind,
+                    side: raw.side,
+                    asset: raw.asset,
+                    condition_id: raw.condition_id,
+                    outcome: raw.outcome,
+                    title: raw.title,
+                    slug: raw.slug,
+                    price: raw.price,
+                    size: raw.size,
+                    usdc_size: raw.usdc_size,
+                    transaction_hash: raw.transaction_hash,
+                    timestamp: raw.timestamp,
+                })
+                .collect::<Vec<_>>(),
+            Err(error) => {
+                warn!(
+                    wallet = %wallet.address,
+                    error = %error,
+                    "failed to fetch wallet activity from Polymarket Data API"
+                );
+                Vec::new()
+            }
+        };
 
-        let positions = connector
+        let positions = match connector
             .fetch_wallet_positions(&wallet.address)
             .await
-            .map(|raws| {
-                raws.into_iter()
-                    .map(|raw| WalletPositionInput {
-                        asset: raw.asset,
-                        condition_id: raw.condition_id,
-                        outcome: raw.outcome,
-                        title: raw.title,
-                        slug: raw.slug,
-                        size: raw.size,
-                        avg_price: raw.avg_price,
-                        cur_price: raw.cur_price,
-                        realized_pnl: raw.realized_pnl,
-                        percent_pnl: raw.percent_pnl,
-                    })
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
+        {
+            Ok(raws) => raws
+                .into_iter()
+                .map(|raw| WalletPositionInput {
+                    asset: raw.asset,
+                    condition_id: raw.condition_id,
+                    outcome: raw.outcome,
+                    title: raw.title,
+                    slug: raw.slug,
+                    size: raw.size,
+                    avg_price: raw.avg_price,
+                    cur_price: raw.cur_price,
+                    realized_pnl: raw.realized_pnl,
+                    percent_pnl: raw.percent_pnl,
+                })
+                .collect::<Vec<_>>(),
+            Err(error) => {
+                warn!(
+                    wallet = %wallet.address,
+                    error = %error,
+                    "failed to fetch wallet positions from Polymarket Data API"
+                );
+                Vec::new()
+            }
+        };
 
         feeds.push(WalletFeedInput {
             address: wallet.address,
