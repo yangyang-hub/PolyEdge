@@ -87,6 +87,12 @@
 
 **模拟引擎：** `run_reward_simulation_tick`（在 `rewards/engine.rs` 中，通过 `include!` 拆分到 `engine/{reconcile,fills,quoting,rewards_calc,state}.rs`）
 
+**资金与盘口约束：**
+- 新建模拟买单时按剩余 notional 从 `available_usd` 转入 `reserved_usd`；撤销未成交买单释放 reserved，买单成交消耗 reserved（兼容历史未 reserved 订单时才扣 available）。
+- `max_markets=0`、`max_open_orders=0` 或 `quote_size_usd=0` 表示不再新挂单。
+- 缺少新鲜缓存盘口时不会模拟成交，也不会计提 rewards；奖励竞争深度从缓存盘口直接观测。
+- 全局敞口门槛使用「已有库存 notional + 开放买单 reserved」。
+
 ### copytrade — 跟单
 
 **Store Trait：** `CopyTradeStore`
@@ -145,7 +151,7 @@ orderbook_cache ← (共享基础设施 trait)
 ## 当前状态
 
 - 所有模块已实现完整的 Store trait 和 Service struct
-- Rewards 和 Copytrade 的模拟引擎已具备完整功能
+- Rewards 和 Copytrade 的模拟引擎已具备完整功能；Rewards 模拟资金池会占用/释放开放买单资金，且成交/计奖依赖新鲜缓存盘口。
 - Wallet analysis 是纯计算，已完全实现
 - Arbitrage 是只读链路（发现/记录/校验/分析/展示），不会创建执行请求
 

@@ -8,11 +8,25 @@ impl TickContext {
         books: &HashMap<String, RewardOrderBook>,
     ) {
         let order = self.orders[index].clone();
+        if order.price <= Decimal::ZERO {
+            self.cancel_order(index, "invalid buy price for fill");
+            return;
+        }
+        let affordable_usd = self.account.available_usd + self.account.reserved_usd;
+        let requested_cost = (order.price * fill_size).round_dp(4);
+        let fill_size = if requested_cost > affordable_usd {
+            (affordable_usd / order.price).round_dp_with_strategy(2, RoundingStrategy::ToZero)
+        } else {
+            fill_size
+        };
+        if fill_size <= Decimal::ZERO {
+            self.cancel_order(index, "insufficient simulated funds for fill");
+            return;
+        }
         let cost = (order.price * fill_size).round_dp(4);
         let now = self.now;
 
-        // Deduct capital on actual fill (no per-order reservation).
-        self.account.available_usd = (self.account.available_usd - cost).max(Decimal::ZERO);
+        self.consume_buy_cost(cost);
 
         // Update inventory (average cost basis).
         let position = self.position_entry(&order);
@@ -39,7 +53,15 @@ impl TickContext {
         }
         self.filled_orders += 1;
 
-        self.record_fill(&order, RewardOrderSide::Buy, order.price, fill_size, RewardFillRole::Maker, Decimal::ZERO, "maker buy filled");
+        self.record_fill(
+            &order,
+            RewardOrderSide::Buy,
+            order.price,
+            fill_size,
+            RewardFillRole::Maker,
+            Decimal::ZERO,
+            "maker buy filled",
+        );
         self.push_event(
             Some(order.condition_id.clone()),
             order.external_order_id.clone(),

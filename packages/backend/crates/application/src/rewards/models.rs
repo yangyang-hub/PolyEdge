@@ -207,9 +207,8 @@ pub struct RewardBotConfig {
     pub cancel_on_fill: bool,
     /// Total simulated fund pool shared across every market.
     pub account_capital_usd: Decimal,
-    /// Fallback competition estimate used only when no fresh book is available
-    /// (e.g. dry-run): total market `Qmin ≈ our_qmin * reward_competition_factor`.
-    /// When live books exist, competing depth is measured directly from them.
+    /// Legacy dry-run competition multiplier. Reward accrual now requires a
+    /// fresh cached book and measures competing depth directly from that book.
     pub reward_competition_factor: Decimal,
     /// Polymarket single-sided divisor `c` in the `Qmin` formula.
     pub single_sided_divisor_c: Decimal,
@@ -329,7 +328,8 @@ impl RewardBotConfig {
         self.min_daily_reward =
             clamp_decimal(self.min_daily_reward, Decimal::ZERO, decimal("100000"));
         self.min_market_score = clamp_decimal(self.min_market_score, Decimal::ZERO, decimal("100"));
-        self.max_spread_cents = clamp_decimal(self.max_spread_cents, decimal("0.1"), decimal("1000"));
+        self.max_spread_cents =
+            clamp_decimal(self.max_spread_cents, decimal("0.1"), decimal("1000"));
         self.quote_edge_cents = clamp_decimal(self.quote_edge_cents, Decimal::ZERO, decimal("50"));
         self.safety_margin_cents =
             clamp_decimal(self.safety_margin_cents, Decimal::ZERO, decimal("20"));
@@ -351,8 +351,11 @@ impl RewardBotConfig {
             clamp_decimal(self.exit_markup_cents, Decimal::ZERO, decimal("50"));
         self.account_capital_usd =
             clamp_decimal(self.account_capital_usd, decimal("1"), decimal("100000000"));
-        self.reward_competition_factor =
-            clamp_decimal(self.reward_competition_factor, decimal("1"), decimal("10000"));
+        self.reward_competition_factor = clamp_decimal(
+            self.reward_competition_factor,
+            decimal("1"),
+            decimal("10000"),
+        );
         self.single_sided_divisor_c =
             clamp_decimal(self.single_sided_divisor_c, decimal("1"), decimal("100"));
         self.fill_rate_per_tick =

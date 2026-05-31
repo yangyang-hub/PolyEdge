@@ -131,6 +131,10 @@ fn build_reward_quote_plan(
         );
     }
 
+    if config.quote_size_usd <= Decimal::ZERO {
+        return empty_plan(market, "quote size is zero", now, Some(midpoint));
+    }
+
     let legs = vec![
         make_leg(
             &yes_token.token_id,
@@ -240,8 +244,8 @@ fn get_token_book_state(
     }
 
     if let Some(price) = token
-            .price
-            .filter(|price| *price > Decimal::ZERO && *price < Decimal::ONE)
+        .price
+        .filter(|price| *price > Decimal::ZERO && *price < Decimal::ONE)
     {
         return Some(TokenBookState {
             midpoint: price,

@@ -76,6 +76,7 @@
 - Config 存储使用 key-value 表（`reward_bot_config`、`copytrade_config`、`runtime_config`）
 - 常量：`SYSTEM_RUNTIME_STATE_ID = "global"`、`RISK_STATE_ID = "global"`
 - `db_error(code, context)` 辅助函数统一创建 `dependency_unavailable` 错误
+- `RewardBotStore.cancel_open_orders()` 在 Postgres/内存实现中会同步释放开放买单对应的 `reserved_usd`；订单列表优先返回 open-like 状态，避免大量历史成交/撤单淹没当前开放挂单。
 
 ### Catalog — 核心数据存储
 

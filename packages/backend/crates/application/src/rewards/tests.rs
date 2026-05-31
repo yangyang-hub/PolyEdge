@@ -4,9 +4,9 @@ mod tests {
         RewardBookLevel, RewardBotConfig, RewardMarket, RewardOrderBook, RewardToken,
         build_reward_quote_plans, decimal,
     };
+    use rust_decimal::Decimal;
     use std::collections::HashMap;
     use time::OffsetDateTime;
-    use rust_decimal::Decimal;
 
     #[test]
     fn quote_plan_uses_fallback_prices_in_dry_run() {
@@ -162,6 +162,30 @@ mod tests {
         )
     }
 
+    fn empty_fresh_books() -> HashMap<String, RewardOrderBook> {
+        let now = OffsetDateTime::now_utc();
+        HashMap::from([
+            (
+                "yes".to_string(),
+                RewardOrderBook {
+                    token_id: "yes".to_string(),
+                    bids: Vec::new(),
+                    asks: Vec::new(),
+                    observed_at: now,
+                },
+            ),
+            (
+                "no".to_string(),
+                RewardOrderBook {
+                    token_id: "no".to_string(),
+                    bids: Vec::new(),
+                    asks: Vec::new(),
+                    observed_at: now,
+                },
+            ),
+        ])
+    }
+
     #[test]
     fn places_two_sided_quotes_and_reserves_capital() {
         let config = RewardBotConfig::default();
@@ -183,10 +207,18 @@ mod tests {
             .filter(|order| order.status == ManagedRewardOrderStatus::Open)
             .collect();
         assert_eq!(open.len(), 2);
-        // Capital is no longer reserved per order (Polymarket portfolio margin model).
-        // With no fills yet, available equals starting capital.
-        assert_eq!(outcome.account.reserved_usd, Decimal::ZERO);
-        assert_eq!(outcome.account.available_usd, config.account_capital_usd);
+        let reserved = outcome
+            .orders
+            .iter()
+            .filter(|order| order.status == ManagedRewardOrderStatus::Open)
+            .map(|order| order.price * order.size)
+            .sum::<Decimal>()
+            .round_dp(4);
+        assert_eq!(outcome.account.reserved_usd, reserved);
+        assert_eq!(
+            outcome.account.available_usd,
+            config.account_capital_usd - reserved
+        );
     }
 
     #[test]
@@ -205,7 +237,7 @@ mod tests {
             seeds,
             Vec::new(),
             &[sample_market()],
-            &HashMap::new(),
+            &empty_fresh_books(),
             86_400,
             "trc_test",
         );
@@ -213,6 +245,54 @@ mod tests {
         assert!(outcome.account.reward_earned_usd > Decimal::ZERO);
         assert!(outcome.report.reward_accrued > Decimal::ZERO);
         assert!(outcome.report.filled_orders == 0);
+    }
+
+    #[test]
+    fn missing_books_do_not_fill_or_accrue_rewards() {
+        let config = RewardBotConfig {
+            fill_rate_per_tick: decimal("1"),
+            ..RewardBotConfig::default()
+        };
+        let seeds = vec![
+            open_buy("yes", "YES", "0.51", "20"),
+            open_buy("no", "NO", "0.47", "20"),
+        ];
+        let outcome = run_reward_simulation_tick(
+            &config,
+            fresh_account(),
+            seeds,
+            Vec::new(),
+            &[sample_market()],
+            &HashMap::new(),
+            86_400,
+            "trc_test",
+        );
+
+        assert_eq!(outcome.account.reward_earned_usd, Decimal::ZERO);
+        assert_eq!(outcome.report.reward_accrued, Decimal::ZERO);
+        assert_eq!(outcome.report.filled_orders, 0);
+    }
+
+    #[test]
+    fn zero_limits_place_no_orders() {
+        let config = RewardBotConfig {
+            max_markets: 0,
+            max_open_orders: 0,
+            ..RewardBotConfig::default()
+        };
+        let outcome = run_reward_simulation_tick(
+            &config,
+            fresh_account(),
+            Vec::new(),
+            Vec::new(),
+            &[sample_market()],
+            &HashMap::new(),
+            60,
+            "trc_test",
+        );
+
+        assert_eq!(outcome.report.simulated_orders, 0);
+        assert!(outcome.orders.is_empty());
     }
 
     #[test]
@@ -265,13 +345,13 @@ mod tests {
         };
         let now = OffsetDateTime::now_utc();
 
-        let without_book = run_reward_simulation_tick(
+        let without_competition = run_reward_simulation_tick(
             &config,
             fresh_account(),
             seeds(),
             Vec::new(),
             &[sample_market()],
-            &HashMap::new(),
+            &empty_fresh_books(),
             86_400,
             "trc_test",
         );
@@ -293,6 +373,15 @@ mod tests {
                 observed_at: now,
             },
         );
+        books.insert(
+            "no".to_string(),
+            RewardOrderBook {
+                token_id: "no".to_string(),
+                bids: Vec::new(),
+                asks: Vec::new(),
+                observed_at: now,
+            },
+        );
         let with_book = run_reward_simulation_tick(
             &config,
             fresh_account(),
@@ -306,7 +395,7 @@ mod tests {
 
         assert!(with_book.account.reward_earned_usd > Decimal::ZERO);
         assert!(
-            with_book.account.reward_earned_usd < without_book.account.reward_earned_usd,
+            with_book.account.reward_earned_usd < without_competition.account.reward_earned_usd,
             "observed competitor depth should reduce our reward share"
         );
         assert!(
@@ -339,9 +428,23 @@ mod tests {
             fill_rate_per_tick: decimal("0.5"),
             ..RewardBotConfig::default()
         };
-        let touched = simulate_fill(&order, Some(decimal("0.50")), Some(decimal("0.52")), true, 0.1, &config);
+        let touched = simulate_fill(
+            &order,
+            Some(decimal("0.50")),
+            Some(decimal("0.52")),
+            true,
+            0.1,
+            &config,
+        );
         assert!(touched.is_some());
-        let missed = simulate_fill(&order, Some(decimal("0.50")), Some(decimal("0.52")), true, 0.9, &config);
+        let missed = simulate_fill(
+            &order,
+            Some(decimal("0.50")),
+            Some(decimal("0.52")),
+            true,
+            0.9,
+            &config,
+        );
         assert!(missed.is_none());
     }
 

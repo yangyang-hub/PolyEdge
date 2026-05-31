@@ -87,14 +87,20 @@ impl RewardBotService {
         let quote_plans = self.store.list_all_quote_plans().await?;
         let orders = self.store.list_orders(200).await?;
         let positions = self.store.list_positions(200).await?;
+        let open_order_count = self
+            .store
+            .list_open_orders(&account.account_id)
+            .await?
+            .len();
+        let position_count = self
+            .store
+            .list_account_positions(&account.account_id)
+            .await?
+            .len();
         let fills = self.store.list_fills(200).await?;
         let events = self.store.list_events(100).await?;
         let last_scan_at = markets.iter().map(|market| market.updated_at).max();
         let last_run_at = quote_plans.iter().map(|plan| plan.updated_at).max();
-        let open_orders = orders
-            .iter()
-            .filter(|order| order.status.is_open_like())
-            .count();
         let error = events
             .iter()
             .find(|event| event.severity == RewardRiskSeverity::Critical)
@@ -107,8 +113,8 @@ impl RewardBotService {
                 account_id: config.account_id.clone(),
                 markets_tracked: markets.len(),
                 eligible_markets: quote_plans.iter().filter(|plan| plan.eligible).count(),
-                open_orders,
-                positions: positions.len(),
+                open_orders: open_order_count,
+                positions: position_count,
                 last_scan_at,
                 last_run_at,
                 error,
@@ -160,8 +166,17 @@ impl RewardBotService {
             let eligible_plans = plans.iter().filter(|plan| plan.eligible).count();
             self.store.upsert_markets(&markets).await?;
             self.store.save_quote_plans(&plans).await?;
-            self.log_run_summary(&config, trace_id, markets.len(), books.len(), &plans, 0, 0, 0)
-                .await?;
+            self.log_run_summary(
+                &config,
+                trace_id,
+                markets.len(),
+                books.len(),
+                &plans,
+                0,
+                0,
+                0,
+            )
+            .await?;
             return Ok(RewardBotRunReport {
                 markets_scanned: markets.len(),
                 books_fetched: books.len(),

@@ -95,6 +95,8 @@ fetch_reward_bot_inputs() // 获取奖励市场 + 盘口
 
 Report: `RewardBotRunReport { markets_scanned, books_fetched, plans_built, eligible_plans, simulated_orders, cancelled_orders, filled_orders, reward_accrued }`
 
+约束：worker/API 只从 Postgres 读取 reward markets、从 Redis orderbook cache 读取盘口。若本 tick 没有新鲜缓存盘口，模拟器不会产生盘口成交或 rewards 计提，只刷新计划/保留订单状态。
+
 ### orderbook_stream — 盘口流
 
 ```

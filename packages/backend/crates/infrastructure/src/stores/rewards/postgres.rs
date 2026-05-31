@@ -230,7 +230,14 @@ impl RewardBotStore for PostgresRewardBotStore {
         trace_id: &str,
     ) -> Result<usize> {
         let now = OffsetDateTime::now_utc();
-        let result = sqlx::query(
+        let mut transaction = self.pool.begin().await.map_err(|error| {
+            db_error(
+                "POSTGRES_TRANSACTION_BEGIN_FAILED",
+                format!("failed to begin reward cancel transaction: {error}"),
+            )
+        })?;
+
+        let rows = sqlx::query(
             r#"
             UPDATE reward_managed_orders
             SET status = 'cancelled',
@@ -239,13 +246,14 @@ impl RewardBotStore for PostgresRewardBotStore {
                 trace_id = $3
             WHERE status IN ('planned', 'open', 'exit_pending')
               AND ($4::text IS NULL OR account_id = $4)
+            RETURNING account_id, side, price, size, filled_size
             "#,
         )
         .bind(reason)
         .bind(now)
         .bind(trace_id)
         .bind(account_id)
-        .execute(&self.pool)
+        .fetch_all(&mut *transaction)
         .await
         .map_err(|error| {
             db_error(
@@ -253,7 +261,32 @@ impl RewardBotStore for PostgresRewardBotStore {
                 format!("failed to cancel reward orders: {error}"),
             )
         })?;
-        Ok(result.rows_affected() as usize)
+
+        let cancelled = rows.len();
+        let mut release_by_account: HashMap<String, Decimal> = HashMap::new();
+        for row in rows {
+            let side: String = row.try_get("side").map_err(postgres_decode_error)?;
+            if side != RewardOrderSide::Buy.as_str() {
+                continue;
+            }
+            let account_id: String = row.try_get("account_id").map_err(postgres_decode_error)?;
+            let price: Decimal = row.try_get("price").map_err(postgres_decode_error)?;
+            let size: Decimal = row.try_get("size").map_err(postgres_decode_error)?;
+            let filled_size: Decimal = row.try_get("filled_size").map_err(postgres_decode_error)?;
+            let remaining_notional = ((size - filled_size).max(Decimal::ZERO) * price).round_dp(4);
+            *release_by_account.entry(account_id).or_default() += remaining_notional;
+        }
+        for (account_id, release_usd) in release_by_account {
+            release_reward_reserve_tx(&mut transaction, &account_id, release_usd, now).await?;
+        }
+
+        transaction.commit().await.map_err(|error| {
+            db_error(
+                "POSTGRES_TRANSACTION_COMMIT_FAILED",
+                format!("failed to commit reward cancel transaction: {error}"),
+            )
+        })?;
+        Ok(cancelled)
     }
 
     async fn list_markets(&self, limit: u16) -> Result<Vec<RewardMarket>> {
@@ -397,7 +430,11 @@ impl RewardBotStore for PostgresRewardBotStore {
                    created_at,
                    updated_at
             FROM reward_managed_orders
-            ORDER BY updated_at DESC
+            ORDER BY CASE
+                       WHEN status IN ('planned', 'open', 'exit_pending') THEN 0
+                       ELSE 1
+                     END,
+                     updated_at DESC
             LIMIT $1
             "#,
         )
@@ -688,4 +725,65 @@ impl RewardBotStore for PostgresRewardBotStore {
         })?;
         Ok(())
     }
+}
+
+async fn release_reward_reserve_tx(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    account_id: &str,
+    requested_release: Decimal,
+    now: OffsetDateTime,
+) -> Result<()> {
+    if requested_release <= Decimal::ZERO {
+        return Ok(());
+    }
+
+    let row = sqlx::query(
+        r#"
+        SELECT reserved_usd
+        FROM reward_account_state
+        WHERE account_id = $1
+        FOR UPDATE
+        "#,
+    )
+    .bind(account_id)
+    .fetch_optional(&mut **transaction)
+    .await
+    .map_err(|error| {
+        db_error(
+            "POSTGRES_QUERY_FAILED",
+            format!("failed to lock reward account state: {error}"),
+        )
+    })?;
+
+    let Some(row) = row else {
+        return Ok(());
+    };
+    let reserved_usd: Decimal = row.try_get("reserved_usd").map_err(postgres_decode_error)?;
+    let release_usd = Decimal::min(reserved_usd, requested_release);
+    if release_usd <= Decimal::ZERO {
+        return Ok(());
+    }
+
+    sqlx::query(
+        r#"
+        UPDATE reward_account_state
+        SET available_usd = available_usd + $2,
+            reserved_usd = reserved_usd - $2,
+            updated_at = $3
+        WHERE account_id = $1
+        "#,
+    )
+    .bind(account_id)
+    .bind(release_usd)
+    .bind(now)
+    .execute(&mut **transaction)
+    .await
+    .map_err(|error| {
+        db_error(
+            "POSTGRES_UPDATE_FAILED",
+            format!("failed to release reward account reserve: {error}"),
+        )
+    })?;
+
+    Ok(())
 }

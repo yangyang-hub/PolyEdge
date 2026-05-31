@@ -22,6 +22,9 @@ impl TickContext {
     fn cancel_order(&mut self, index: usize, reason: impl Into<String>) {
         let reason = reason.into();
         let order = self.orders[index].clone();
+        if order.side == RewardOrderSide::Buy {
+            self.release_buy_reserve(order_remaining_notional(&order));
+        }
         {
             let stored = &mut self.orders[index];
             stored.status = ManagedRewardOrderStatus::Cancelled;
@@ -41,16 +44,11 @@ impl TickContext {
     }
 
     fn place_new_quotes(&mut self, plans: &[RewardQuotePlan]) {
-        let max_markets = if self.config.max_markets == 0 {
-            usize::MAX
-        } else {
-            usize::from(self.config.max_markets)
-        };
-        let max_open_orders = if self.config.max_open_orders == 0 {
-            usize::MAX
-        } else {
-            usize::from(self.config.max_open_orders)
-        };
+        let max_markets = usize::from(self.config.max_markets);
+        let max_open_orders = usize::from(self.config.max_open_orders);
+        if max_markets == 0 || max_open_orders == 0 {
+            return;
+        }
 
         // Markets we already quote (any open-like order).
         let mut active_markets: std::collections::HashSet<String> = self
@@ -61,9 +59,7 @@ impl TickContext {
             .collect();
 
         for plan in plans.iter().filter(|plan| plan.eligible) {
-            if active_markets.len() >= max_markets
-                && !active_markets.contains(&plan.condition_id)
-            {
+            if active_markets.len() >= max_markets && !active_markets.contains(&plan.condition_id) {
                 continue;
             }
             for leg in &plan.legs {
@@ -81,14 +77,20 @@ impl TickContext {
                 if notional <= Decimal::ZERO {
                     continue;
                 }
-                // Risk gate: stop adding exposure once held inventory hits the cap.
+                if self.account.available_usd < notional {
+                    continue;
+                }
+                // Risk gate: stop adding exposure once held inventory plus
+                // resting buy reservations hits the cap.
                 if self.config.max_global_position_usd > Decimal::ZERO
-                    && self.global_inventory_notional() >= self.config.max_global_position_usd
+                    && self.global_exposure_notional() + notional
+                        > self.config.max_global_position_usd
                 {
                     continue;
                 }
 
                 active_markets.insert(plan.condition_id.clone());
+                self.reserve_buy_notional(notional);
 
                 let id = self.next_id("rew");
                 let external = format!("sim_{id}");

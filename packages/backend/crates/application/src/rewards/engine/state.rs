@@ -23,9 +23,9 @@ impl TickContext {
         if self.config.max_position_usd == Decimal::ZERO {
             return false;
         }
-        self.positions.get(token_id).is_some_and(|position| {
-            (position.size * price) >= self.config.max_position_usd
-        })
+        self.positions
+            .get(token_id)
+            .is_some_and(|position| (position.size * price) >= self.config.max_position_usd)
     }
 
     /// Total directional inventory notional held across every market (at cost).
@@ -35,6 +35,36 @@ impl TickContext {
             .filter(|position| position.size > Decimal::ZERO)
             .map(|position| position.size * position.avg_price)
             .sum()
+    }
+
+    fn global_exposure_notional(&self) -> Decimal {
+        self.global_inventory_notional() + self.account.reserved_usd
+    }
+
+    fn reserve_buy_notional(&mut self, notional: Decimal) {
+        let notional = notional.max(Decimal::ZERO);
+        self.account.available_usd = (self.account.available_usd - notional).max(Decimal::ZERO);
+        self.account.reserved_usd += notional;
+    }
+
+    fn release_buy_reserve(&mut self, notional: Decimal) {
+        let releasable = Decimal::min(self.account.reserved_usd, notional.max(Decimal::ZERO));
+        if releasable <= Decimal::ZERO {
+            return;
+        }
+        self.account.reserved_usd -= releasable;
+        self.account.available_usd += releasable;
+    }
+
+    fn consume_buy_cost(&mut self, cost: Decimal) {
+        let cost = cost.max(Decimal::ZERO);
+        let from_reserved = Decimal::min(self.account.reserved_usd, cost);
+        self.account.reserved_usd -= from_reserved;
+        let shortfall = cost - from_reserved;
+        if shortfall > Decimal::ZERO {
+            self.account.available_usd =
+                (self.account.available_usd - shortfall).max(Decimal::ZERO);
+        }
     }
 
     fn position_avg(&self, token_id: &str) -> Option<Decimal> {
@@ -165,8 +195,7 @@ fn simulate_fill(
     } else if touching {
         draw < rate
     } else if !has_book {
-        // Dry-run with no live book: keep the sim lively at a reduced rate.
-        draw < rate * 0.5
+        false
     } else {
         false
     };
@@ -174,11 +203,16 @@ fn simulate_fill(
         return None;
     }
 
-    let mut fill = (remaining * config.max_fill_ratio).round_dp_with_strategy(2, RoundingStrategy::ToZero);
+    let mut fill =
+        (remaining * config.max_fill_ratio).round_dp_with_strategy(2, RoundingStrategy::ToZero);
     if fill <= Decimal::ZERO {
         fill = remaining;
     }
     Some(Decimal::min(fill, remaining))
+}
+
+fn order_remaining_notional(order: &ManagedRewardOrder) -> Decimal {
+    ((order.size - order.filled_size).max(Decimal::ZERO) * order.price).round_dp(4)
 }
 
 fn fnv1a(input: &str) -> u64 {

@@ -10,7 +10,6 @@ impl TickContext {
     ) {
         let time_fraction = Decimal::from(elapsed) / decimal("86400");
         let c = decimal_to_f64(self.config.single_sided_divisor_c).max(1.0);
-        let factor = decimal_to_f64(self.config.reward_competition_factor).max(1.0);
         let now = self.now;
         let stale_book_ms = self.config.stale_book_ms;
 
@@ -80,10 +79,9 @@ impl TickContext {
                 continue;
             }
 
-            // Estimate competitor liquidity. Prefer the *observed* resting depth
-            // inside the reward band on the live books (our simulated quotes are
-            // not on the real book, so this is pure competition); fall back to the
-            // configured competition factor when no fresh book is available.
+            // Estimate competitor liquidity from observed resting depth inside
+            // the reward band. Without a fresh cached book, do not accrue
+            // rewards; Polymarket scoring depends on live resting liquidity.
             let min_size = decimal_to_f64(plan.rewards_min_size).max(0.0);
             let observed = book_competition_qmin(
                 books,
@@ -97,13 +95,10 @@ impl TickContext {
                 stale_book_ms,
                 now,
             );
-            let (competitor, competition_source) = match observed {
-                Some(observed_qmin) => (observed_qmin, "observed_book"),
-                None => {
-                    let baseline = min_size.max(q_min);
-                    ((factor - 1.0).max(0.0) * baseline, "estimated_factor")
-                }
+            let Some(competitor) = observed else {
+                continue;
             };
+            let competition_source = "observed_book";
             let share = q_min / (q_min + competitor);
             let daily = decimal_to_f64(plan.total_daily_rate);
             let reward_f = share * daily * decimal_to_f64(time_fraction);
