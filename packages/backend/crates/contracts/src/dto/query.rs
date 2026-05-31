@@ -203,3 +203,31 @@ pub struct RiskBucketListQuery {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub limit: Option<u16>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct RewardBotSnapshotQuery {
+    /// Text search on quote plan question and reason.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plans_search: Option<String>,
+    /// Filter plans by eligibility: true = eligible only, false = ineligible only.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plans_eligible: Option<bool>,
+    /// Sort plans by field: "score", "daily_reward", "midpoint".
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plans_sort_by: Option<String>,
+    /// Sort direction: "asc" or "desc" (default "desc").
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plans_sort_order: Option<String>,
+    /// Text search on order outcome and condition_id.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub orders_search: Option<String>,
+    /// Filter orders by status: "open", "filled", "cancelled", "exit_pending".
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub orders_status: Option<String>,
+    /// Sort orders by field: "price", "size", "status".
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub orders_sort_by: Option<String>,
+    /// Sort direction: "asc" or "desc" (default "desc").
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub orders_sort_order: Option<String>,
+}

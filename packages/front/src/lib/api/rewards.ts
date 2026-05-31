@@ -3,10 +3,25 @@ import type {
   RewardBotConfigPatchDto,
   RewardBotSnapshotDto,
 } from "@/lib/contracts/dto";
-import { fetchContract, fetchWriteContract, randomUUID } from "@/lib/api/base";
+import { buildQueryString, fetchContract, fetchWriteContract, randomUUID } from "@/lib/api/base";
 
-export async function readRewardBotSnapshot(): Promise<ApiResponse<RewardBotSnapshotDto>> {
-  return fetchContract<ApiResponse<RewardBotSnapshotDto>>("/api/v1/rewards-bot");
+export interface RewardBotSnapshotQuery {
+  plans_search?: string;
+  plans_eligible?: boolean;
+  plans_sort_by?: string;
+  plans_sort_order?: string;
+  orders_search?: string;
+  orders_status?: string;
+  orders_sort_by?: string;
+  orders_sort_order?: string;
+}
+
+export async function readRewardBotSnapshot(
+  query?: RewardBotSnapshotQuery,
+): Promise<ApiResponse<RewardBotSnapshotDto>> {
+  return fetchContract<ApiResponse<RewardBotSnapshotDto>>(
+    `/api/v1/rewards-bot${buildQueryString(query as Record<string, string | number | boolean | undefined>)}`,
+  );
 }
 
 export async function updateRewardBotConfig(

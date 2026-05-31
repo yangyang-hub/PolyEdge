@@ -1,6 +1,6 @@
 "use client";
 
-import { startTransition, useMemo, useState } from "react";
+import { useCallback, startTransition, useMemo, useState } from "react";
 import { Ban, Info, Play, RotateCcw, Save } from "lucide-react";
 
 import { MetricCard } from "@/components/shared/metric-card";
@@ -28,6 +28,7 @@ import {
   updateRewardBotConfigAction,
   type RewardBotActionResult,
 } from "@/lib/api/actions";
+import { readRewardBotSnapshot, type RewardBotSnapshotQuery } from "@/lib/api/rewards";
 
 import type { NumberConfigKey } from "../types";
 import { NumberInput } from "./number-input";
@@ -41,16 +42,48 @@ export function RewardsWorkbench({ initialSnapshot }: { initialSnapshot: RewardB
   const [feedback, setFeedback] = useState<RewardBotActionResult | null>(null);
   const [pending, setPending] = useState(false);
 
-  const visiblePlans = snapshot.quote_plans;
-  const visibleOrders = useMemo(() => snapshot.orders.slice(0, 50), [snapshot.orders]);
-  const visibleEvents = useMemo(() => snapshot.events.slice(0, 60), [snapshot.events]);
-  const visibleFills = useMemo(() => snapshot.fills.slice(0, 50), [snapshot.fills]);
+  // Plan filter/sort state
+  const [plansSearch, setPlansSearch] = useState("");
+  const [plansEligible, setPlansEligible] = useState<"all" | "eligible" | "ineligible">("all");
+  const [plansSortBy, setPlansSortBy] = useState("score");
+  const [plansSortOrder, setPlansSortOrder] = useState<"asc" | "desc">("desc");
+
+  // Order filter/sort state
+  const [ordersSearch, setOrdersSearch] = useState("");
+  const [ordersStatus, setOrdersStatus] = useState<"all" | "open" | "filled" | "cancelled" | "exit_pending">("all");
+  const [ordersSortBy, setOrdersSortBy] = useState("status");
+  const [ordersSortOrder, setOrdersSortOrder] = useState<"asc" | "desc">("desc");
+
+  const buildQuery = useCallback((): RewardBotSnapshotQuery => {
+    const q: RewardBotSnapshotQuery = {};
+    if (plansSearch.trim()) q.plans_search = plansSearch.trim();
+    if (plansEligible === "eligible") q.plans_eligible = true;
+    if (plansEligible === "ineligible") q.plans_eligible = false;
+    q.plans_sort_by = plansSortBy;
+    q.plans_sort_order = plansSortOrder;
+    if (ordersSearch.trim()) q.orders_search = ordersSearch.trim();
+    if (ordersStatus !== "all") q.orders_status = ordersStatus;
+    q.orders_sort_by = ordersSortBy;
+    q.orders_sort_order = ordersSortOrder;
+    return q;
+  }, [plansSearch, plansEligible, plansSortBy, plansSortOrder, ordersSearch, ordersStatus, ordersSortBy, ordersSortOrder]);
+
+  const [filtering, setFiltering] = useState(false);
+
+  function refetchWithFilters() {
+    setFiltering(true);
+    void readRewardBotSnapshot(buildQuery())
+      .then((response) => setSnapshot(response.data))
+      .finally(() => setFiltering(false));
+  }
 
   function applyResult(result: RewardBotActionResult) {
     setFeedback(result);
     if (result.snapshot) {
+      // Re-apply current filters to the fresh snapshot
       setSnapshot(result.snapshot);
       setDraft(result.snapshot.config);
+      refetchWithFilters();
     }
   }
 
@@ -285,7 +318,17 @@ export function RewardsWorkbench({ initialSnapshot }: { initialSnapshot: RewardB
             <CardTitle className="font-heading text-base">{dictionary.rewards.quotePlans}</CardTitle>
           </CardHeader>
           <CardContent>
-            <QuotePlansTable plans={visiblePlans} />
+            <QuotePlansTable
+              plans={snapshot.quote_plans}
+              search={plansSearch}
+              onSearchChange={(v) => { setPlansSearch(v); }}
+              eligibility={plansEligible}
+              onEligibilityChange={(v) => { setPlansEligible(v); refetchWithFilters(); }}
+              sortBy={plansSortBy}
+              sortOrder={plansSortOrder}
+              onSortChange={(by, order) => { setPlansSortBy(by); setPlansSortOrder(order); refetchWithFilters(); }}
+              filtering={filtering}
+            />
           </CardContent>
         </Card>
 
@@ -294,7 +337,17 @@ export function RewardsWorkbench({ initialSnapshot }: { initialSnapshot: RewardB
             <CardTitle className="font-heading text-base">{dictionary.rewards.managedOrders}</CardTitle>
           </CardHeader>
           <CardContent>
-            <OrdersTable orders={visibleOrders} />
+            <OrdersTable
+              orders={snapshot.orders}
+              search={ordersSearch}
+              onSearchChange={(v) => { setOrdersSearch(v); }}
+              status={ordersStatus}
+              onStatusChange={(v) => { setOrdersStatus(v); refetchWithFilters(); }}
+              sortBy={ordersSortBy}
+              sortOrder={ordersSortOrder}
+              onSortChange={(by, order) => { setOrdersSortBy(by); setOrdersSortOrder(order); refetchWithFilters(); }}
+              filtering={filtering}
+            />
           </CardContent>
         </Card>
       </div>
@@ -304,7 +357,7 @@ export function RewardsWorkbench({ initialSnapshot }: { initialSnapshot: RewardB
           <CardTitle className="font-heading text-base">{dictionary.rewards.riskEvents}</CardTitle>
         </CardHeader>
         <CardContent>
-          <EventsPanel events={visibleEvents} fills={visibleFills} />
+          <EventsPanel events={snapshot.events} fills={snapshot.fills} />
         </CardContent>
       </Card>
     </div>
