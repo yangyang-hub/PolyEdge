@@ -79,7 +79,7 @@
 **Store Trait：** `RewardBotStore`
 - Config：`load_config`、`save_config`（key-value 模式）
 - Markets：`upsert_markets`、`list_markets`、`list_all_active_markets`
-- Quote Plans：`save_quote_plans`、`list_quote_plans`
+- Quote Plans：`save_quote_plans`（替换当前计划快照）、`list_quote_plans`
 - Orders/Positions/Events：完整 CRUD
 - Simulation：`apply_simulation_tick`（原子持久化 orders/fills/positions/ledger/events）、`reset_simulation`
 
@@ -92,6 +92,7 @@
 - `max_markets=0`、`max_open_orders=0` 或 `quote_size_usd=0` 表示不再新挂单。
 - 缺少新鲜缓存盘口时不会模拟成交，也不会计提 rewards；奖励竞争深度从缓存盘口直接观测。
 - 全局敞口门槛使用「已有库存 notional + 开放买单 reserved」。
+- 单次 rewards tick 使用 `list_reward_run_candidate_markets()` 只从 `reward_markets` 表读取有限候选池（默认至少 100、最多 500 个高日奖励市场），再按 active、token、最低日奖励、有效奖励 spread、下单开关做无需盘口的预过滤；只有通过预过滤的奖励市场会读取 Redis orderbook cache 并生成当前 quote plan 快照。
 
 ### copytrade — 跟单
 

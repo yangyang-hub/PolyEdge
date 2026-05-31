@@ -30,7 +30,7 @@
 
 ## 关键交互
 
-- **Run** → `runRewardBotOnce()` → 展示新的 snapshot
+- **Run** → `runRewardBotOnce()` → 后端对预过滤后的 reward market candidate pool 执行一轮模拟并展示新的 snapshot
 - **Cancel open sim orders** → `cancelRewardBotOrders()` → 撤销未成交模拟订单
 - **Reset** → `resetRewardBot()` → 重置资金池到初始资本
 - **Config 编辑** → `updateRewardBotConfig(patch)` → 即时更新配置
@@ -49,6 +49,7 @@
 - 完整的 Run / Cancel / Reset 交互
 - 配置编辑（22 个数值参数）
 - 配置提示说明 `max_markets=0`、`max_open_orders=0`、`quote_size_usd=0` 都会停止新挂单；已赚奖励只会在后端检测到新鲜缓存盘口后计提。
+- 报价计划默认展示可挂市场，本地支持全部/可挂/不可挂切换，并用状态标记说明每个当前候选计划是否符合最终过滤要求。
 - 事件分类视图（挂单/撤单/吃单/奖励）
 - 当前只做模拟，不会实盘下单
 

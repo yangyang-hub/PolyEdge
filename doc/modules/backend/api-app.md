@@ -63,6 +63,8 @@
 - `TimeoutLayer`（10s）— 请求超时保护
 - 认证中间件：按路由组使用不同的认证级别
 
+Rewards Bot `run` 端点只从 `reward_markets` 表读取 bounded candidate pool，先做无需盘口的奖励市场预过滤，再并发读取候选 token 的 Redis orderbook cache，避免全量 reward market / orderbook 扫描触发 10s 请求超时。
+
 ## 常量
 
 - `CONNECTOR_ORDER_STATUS_SOURCE` — 连接器订单状态回调来源标识

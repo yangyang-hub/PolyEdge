@@ -229,10 +229,10 @@ async fn collect_orderbook_subscription_tokens(state: &AppState) -> Result<Vec<S
         }
     }
 
-    // Source 2: Reward markets (for reward bot simulation)
+    // Source 2: Filtered reward markets (for reward bot simulation)
     if let Ok(reward_markets) = state
         .reward_bot_service
-        .list_active_reward_markets()
+        .list_reward_run_candidate_markets()
         .await
     {
         let reward_token_ids = select_reward_book_token_ids(&reward_markets);

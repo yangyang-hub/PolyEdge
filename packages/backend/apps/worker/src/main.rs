@@ -1,4 +1,4 @@
-use futures::StreamExt as _;
+use futures::{StreamExt as _, stream};
 use polyedge_application::{
     ArbitrageAnalysisRunView, ArbitrageOpportunityListFilters, ArbitrageOpportunityView,
     ArbitrageScanView, ArbitrageValidationConfig, AuthenticatedActor, BookSource,

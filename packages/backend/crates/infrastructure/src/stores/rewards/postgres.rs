@@ -134,6 +134,23 @@ impl RewardBotStore for PostgresRewardBotStore {
     }
 
     async fn save_quote_plans(&self, plans: &[RewardQuotePlan]) -> Result<()> {
+        let mut transaction = self.pool.begin().await.map_err(|error| {
+            db_error(
+                "POSTGRES_TRANSACTION_BEGIN_FAILED",
+                format!("failed to begin reward quote plan transaction: {error}"),
+            )
+        })?;
+
+        sqlx::query("DELETE FROM reward_quote_plans")
+            .execute(&mut *transaction)
+            .await
+            .map_err(|error| {
+                db_error(
+                    "POSTGRES_DELETE_FAILED",
+                    format!("failed to clear reward quote plans: {error}"),
+                )
+            })?;
+
         for plan in plans {
             sqlx::query(
                 r#"
@@ -160,7 +177,7 @@ impl RewardBotStore for PostgresRewardBotStore {
             .bind(&plan.reason)
             .bind(Json(plan.clone()))
             .bind(plan.updated_at)
-            .execute(&self.pool)
+            .execute(&mut *transaction)
             .await
             .map_err(|error| {
                 db_error(
@@ -169,6 +186,13 @@ impl RewardBotStore for PostgresRewardBotStore {
                 )
             })?;
         }
+
+        transaction.commit().await.map_err(|error| {
+            db_error(
+                "POSTGRES_TRANSACTION_COMMIT_FAILED",
+                format!("failed to commit reward quote plan transaction: {error}"),
+            )
+        })?;
         Ok(())
     }
 

@@ -95,12 +95,12 @@ fetch_reward_bot_inputs() // 获取奖励市场 + 盘口
 
 Report: `RewardBotRunReport { markets_scanned, books_fetched, plans_built, eligible_plans, simulated_orders, cancelled_orders, filled_orders, reward_accrued }`
 
-约束：worker/API 只从 Postgres 读取 reward markets、从 Redis orderbook cache 读取盘口。若本 tick 没有新鲜缓存盘口，模拟器不会产生盘口成交或 rewards 计提，只刷新计划/保留订单状态。
+约束：worker/API 只从 Postgres 的 `reward_markets` 读取奖励市场、从 Redis orderbook cache 读取盘口。每个 tick 只读取 bounded candidate market pool（默认至少 100、最多 500 个高日奖励市场），先按配置预过滤奖励市场，再并发读取候选盘口缓存；若本 tick 没有新鲜缓存盘口，模拟器不会产生盘口成交或 rewards 计提，只刷新当前候选计划/保留订单状态。
 
 ### orderbook_stream — 盘口流
 
 ```
-collect_orderbook_subscription_tokens() // 从多个来源收集 token ID
+collect_orderbook_subscription_tokens() // 从开放订单和预过滤后的奖励候选市场收集 token ID
     → ClobWsClient.subscribe_orderbook() // WebSocket 订阅
     → orderbook_cache.set_book() // 写入 Redis/内存缓存
 ```

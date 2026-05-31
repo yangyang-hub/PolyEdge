@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, startTransition, useMemo, useState } from "react";
+import { useCallback, startTransition, useState } from "react";
 import { Ban, Info, Play, RotateCcw, Save } from "lucide-react";
 
 import { MetricCard } from "@/components/shared/metric-card";
@@ -44,7 +44,7 @@ export function RewardsWorkbench({ initialSnapshot }: { initialSnapshot: RewardB
 
   // Plan filter/sort state
   const [plansSearch, setPlansSearch] = useState("");
-  const [plansEligible, setPlansEligible] = useState<"all" | "eligible" | "ineligible">("all");
+  const [plansEligible, setPlansEligible] = useState<"all" | "eligible" | "ineligible">("eligible");
   const [plansSortBy, setPlansSortBy] = useState("score");
   const [plansSortOrder, setPlansSortOrder] = useState<"asc" | "desc">("desc");
 
@@ -56,17 +56,12 @@ export function RewardsWorkbench({ initialSnapshot }: { initialSnapshot: RewardB
 
   const buildQuery = useCallback((): RewardBotSnapshotQuery => {
     const q: RewardBotSnapshotQuery = {};
-    if (plansSearch.trim()) q.plans_search = plansSearch.trim();
-    if (plansEligible === "eligible") q.plans_eligible = true;
-    if (plansEligible === "ineligible") q.plans_eligible = false;
-    q.plans_sort_by = plansSortBy;
-    q.plans_sort_order = plansSortOrder;
     if (ordersSearch.trim()) q.orders_search = ordersSearch.trim();
     if (ordersStatus !== "all") q.orders_status = ordersStatus;
     q.orders_sort_by = ordersSortBy;
     q.orders_sort_order = ordersSortOrder;
     return q;
-  }, [plansSearch, plansEligible, plansSortBy, plansSortOrder, ordersSearch, ordersStatus, ordersSortBy, ordersSortOrder]);
+  }, [ordersSearch, ordersStatus, ordersSortBy, ordersSortOrder]);
 
   const [filtering, setFiltering] = useState(false);
 
@@ -323,10 +318,10 @@ export function RewardsWorkbench({ initialSnapshot }: { initialSnapshot: RewardB
               search={plansSearch}
               onSearchChange={(v) => { setPlansSearch(v); }}
               eligibility={plansEligible}
-              onEligibilityChange={(v) => { setPlansEligible(v); refetchWithFilters(); }}
+              onEligibilityChange={setPlansEligible}
               sortBy={plansSortBy}
               sortOrder={plansSortOrder}
-              onSortChange={(by, order) => { setPlansSortBy(by); setPlansSortOrder(order); refetchWithFilters(); }}
+              onSortChange={(by, order) => { setPlansSortBy(by); setPlansSortOrder(order); }}
               filtering={filtering}
             />
           </CardContent>

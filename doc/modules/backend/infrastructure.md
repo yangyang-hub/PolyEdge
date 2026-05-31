@@ -77,6 +77,7 @@
 - 常量：`SYSTEM_RUNTIME_STATE_ID = "global"`、`RISK_STATE_ID = "global"`
 - `db_error(code, context)` 辅助函数统一创建 `dependency_unavailable` 错误
 - `RewardBotStore.cancel_open_orders()` 在 Postgres/内存实现中会同步释放开放买单对应的 `reserved_usd`；订单列表优先返回 open-like 状态，避免大量历史成交/撤单淹没当前开放挂单。
+- `RewardBotStore.list_markets(limit)` 在 Postgres/内存实现中只返回 active reward markets，并按日奖励金额排序，用于 bounded rewards tick candidate pool；`save_quote_plans()` 会替换当前 quote plan 快照，避免旧的全量计划继续出现在 `/rewards`。
 
 ### Catalog — 核心数据存储
 

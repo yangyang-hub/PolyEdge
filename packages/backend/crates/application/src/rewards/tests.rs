@@ -2,7 +2,7 @@
 mod tests {
     use super::{
         RewardBookLevel, RewardBotConfig, RewardMarket, RewardOrderBook, RewardToken,
-        build_reward_quote_plans, decimal,
+        build_reward_quote_plans, decimal, select_reward_quote_candidate_markets,
     };
     use rust_decimal::Decimal;
     use std::collections::HashMap;
@@ -97,6 +97,31 @@ mod tests {
 
         assert!(!plans[0].eligible);
         assert_eq!(plans[0].reason, "YES bid would touch best ask");
+    }
+
+    #[test]
+    fn reward_candidate_filter_runs_before_book_selection() {
+        let mut low_reward = sample_market();
+        low_reward.condition_id = "low_reward".to_string();
+        low_reward.total_daily_rate = decimal("0.25");
+
+        let mut inactive = sample_market();
+        inactive.condition_id = "inactive".to_string();
+        inactive.active = false;
+
+        let mut valid = sample_market();
+        valid.condition_id = "valid".to_string();
+
+        let config = RewardBotConfig {
+            min_daily_reward: decimal("1"),
+            ..RewardBotConfig::default()
+        };
+        let candidates = select_reward_quote_candidate_markets(
+            &[low_reward, inactive, valid.clone()],
+            &config,
+        );
+
+        assert_eq!(candidates, vec![valid]);
     }
 
     use super::{

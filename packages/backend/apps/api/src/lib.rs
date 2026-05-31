@@ -7,7 +7,7 @@ use axum::{
     response::Response,
     routing::get,
 };
-use futures::stream;
+use futures::{StreamExt as _, stream};
 use polyedge_application::{
     AddTrackedWalletInput, CopyBookLevel, CopyOrderBook, CopyTradeConfigPatch,
     CopyTradeSnapshot, TrackedWalletStatus, WalletActionInput, WalletActivityInput,

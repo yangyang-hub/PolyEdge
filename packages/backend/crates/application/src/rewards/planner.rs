@@ -14,6 +14,50 @@ pub fn select_reward_book_token_ids(markets: &[RewardMarket]) -> Vec<String> {
     selected
 }
 
+pub fn select_reward_quote_candidate_markets(
+    markets: &[RewardMarket],
+    config: &RewardBotConfig,
+) -> Vec<RewardMarket> {
+    if config.max_markets == 0
+        || config.max_open_orders == 0
+        || config.quote_size_usd <= Decimal::ZERO
+    {
+        return Vec::new();
+    }
+
+    markets
+        .iter()
+        .filter(|market| reward_market_prefilter_reason(market, config).is_none())
+        .cloned()
+        .collect()
+}
+
+fn reward_market_prefilter_reason(
+    market: &RewardMarket,
+    config: &RewardBotConfig,
+) -> Option<&'static str> {
+    if !market.active {
+        return Some("reward market is inactive");
+    }
+    if market
+        .tokens
+        .iter()
+        .filter(|token| !token.token_id.trim().is_empty())
+        .take(2)
+        .count()
+        < 2
+    {
+        return Some("missing quoteable reward tokens");
+    }
+    if market.total_daily_rate < config.min_daily_reward {
+        return Some("daily reward is below threshold");
+    }
+    if normalize_reward_spread_cents(market.rewards_max_spread) <= Decimal::ZERO {
+        return Some("invalid rewards spread setting");
+    }
+    None
+}
+
 pub fn build_reward_quote_plans(
     markets: &[RewardMarket],
     books: &HashMap<String, RewardOrderBook>,

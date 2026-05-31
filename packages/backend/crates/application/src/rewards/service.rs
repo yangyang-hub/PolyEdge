@@ -3,6 +3,7 @@ pub trait RewardBotStore: Send + Sync {
     async fn load_config(&self) -> Result<RewardBotConfig>;
     async fn save_config(&self, config: &RewardBotConfig) -> Result<()>;
     async fn upsert_markets(&self, markets: &[RewardMarket]) -> Result<()>;
+    /// Replace the current rewards quote plan snapshot.
     async fn save_quote_plans(&self, plans: &[RewardQuotePlan]) -> Result<()>;
     async fn replace_simulated_orders(
         &self,
@@ -78,6 +79,16 @@ impl RewardBotService {
     /// List all active reward markets from the database.
     pub async fn list_active_reward_markets(&self) -> Result<Vec<RewardMarket>> {
         self.store.list_all_active_markets().await
+    }
+
+    /// List a bounded candidate pool for one rewards simulation tick.
+    pub async fn list_reward_run_candidate_markets(&self) -> Result<Vec<RewardMarket>> {
+        let config = self.read_config().await?;
+        let markets = self
+            .store
+            .list_markets(reward_run_market_limit(&config))
+            .await?;
+        Ok(select_reward_quote_candidate_markets(&markets, &config))
     }
 
     pub async fn snapshot(&self) -> Result<RewardBotSnapshot> {
@@ -314,4 +325,22 @@ impl RewardBotService {
             .await?;
         Ok(cancelled)
     }
+}
+
+fn reward_run_market_limit(config: &RewardBotConfig) -> u16 {
+    let market_limit = if config.max_markets == 0 {
+        DEFAULT_LIST_LIMIT
+    } else {
+        config.max_markets.saturating_mul(20)
+    };
+    let order_limit = if config.max_open_orders == 0 {
+        DEFAULT_LIST_LIMIT
+    } else {
+        config.max_open_orders.saturating_mul(10)
+    };
+
+    market_limit
+        .max(order_limit)
+        .max(DEFAULT_LIST_LIMIT)
+        .min(MAX_LIST_LIMIT)
 }

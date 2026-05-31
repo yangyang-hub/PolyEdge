@@ -41,6 +41,7 @@ function FilterBar({
   search,
   onSearchChange,
   onSearchCommit,
+  placeholder,
   tabs,
   activeTab,
   onTabChange,
@@ -48,6 +49,7 @@ function FilterBar({
   search: string;
   onSearchChange: (v: string) => void;
   onSearchCommit: () => void;
+  placeholder: string;
   tabs: { key: string; label: string; count: number }[];
   activeTab: string;
   onTabChange: (key: string) => void;
@@ -58,7 +60,7 @@ function FilterBar({
         <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
         <Input
           className="h-8 pl-8 text-sm"
-          placeholder="Search…"
+          placeholder={placeholder}
           value={search}
           onChange={(e) => onSearchChange(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Enter") onSearchCommit(); }}
@@ -160,10 +162,50 @@ export function QuotePlansTable({
     debounceRef.current = setTimeout(() => onSearchChange(v), 300);
   }, [onSearchChange]);
 
+  const searchedPlans = useMemo(() => {
+    const query = localSearch.trim().toLowerCase();
+    if (!query) {
+      return plans;
+    }
+    return plans.filter((plan) =>
+      plan.question.toLowerCase().includes(query)
+        || plan.market_slug.toLowerCase().includes(query)
+        || plan.reason.toLowerCase().includes(query)
+    );
+  }, [plans, localSearch]);
+
+  const visiblePlans = useMemo(() => {
+    const next = searchedPlans.filter((plan) => {
+      if (eligibility === "eligible") {
+        return plan.eligible;
+      }
+      if (eligibility === "ineligible") {
+        return !plan.eligible;
+      }
+      return true;
+    });
+    next.sort((a, b) => {
+      const ord = (() => {
+        if (sortBy === "daily_reward") {
+          return Number(a.total_daily_rate) - Number(b.total_daily_rate);
+        }
+        if (sortBy === "midpoint") {
+          if (a.midpoint == null && b.midpoint == null) return 0;
+          if (a.midpoint == null) return -1;
+          if (b.midpoint == null) return 1;
+          return Number(a.midpoint) - Number(b.midpoint);
+        }
+        return Number(a.score) - Number(b.score);
+      })();
+      return sortOrder === "asc" ? ord : -ord;
+    });
+    return next;
+  }, [searchedPlans, eligibility, sortBy, sortOrder]);
+
   const tabs = [
-    { key: "all", label: dictionary.rewards.filterAll, count: plans.length },
-    { key: "eligible", label: dictionary.rewards.filterEligible, count: plans.filter((p) => p.eligible).length },
-    { key: "ineligible", label: dictionary.rewards.filterIneligible, count: plans.filter((p) => !p.eligible).length },
+    { key: "all", label: dictionary.rewards.filterAll, count: searchedPlans.length },
+    { key: "eligible", label: dictionary.rewards.filterEligible, count: searchedPlans.filter((p) => p.eligible).length },
+    { key: "ineligible", label: dictionary.rewards.filterIneligible, count: searchedPlans.filter((p) => !p.eligible).length },
   ];
 
   function handleSort(field: string) {
@@ -174,7 +216,7 @@ export function QuotePlansTable({
     }
   }
 
-  const pagination = usePagination(plans.length, 15);
+  const pagination = usePagination(visiblePlans.length, 15);
 
   return (
     <div className="space-y-3">
@@ -182,6 +224,7 @@ export function QuotePlansTable({
         search={localSearch}
         onSearchChange={handleSearchChange}
         onSearchCommit={() => onSearchChange(localSearch)}
+        placeholder={dictionary.rewards.searchPlaceholder}
         tabs={tabs}
         activeTab={eligibility}
         onTabChange={(key) => onEligibilityChange(key as typeof eligibility)}
@@ -191,6 +234,7 @@ export function QuotePlansTable({
         <TableHeader>
           <TableRow>
             <TableHead>{dictionary.rewards.market}</TableHead>
+            <TableHead>{dictionary.rewards.state}</TableHead>
             <TableHead className="cursor-pointer select-none" onClick={() => handleSort("score")}>
               {dictionary.rewards.score}
               <SortIndicator active={sortBy === "score"} order={sortOrder} />
@@ -207,20 +251,25 @@ export function QuotePlansTable({
           </TableRow>
         </TableHeader>
         <TableBody>
-          {plans.length === 0 ? (
+          {visiblePlans.length === 0 ? (
             <TableRow>
-              <TableCell colSpan={5} className="py-6 text-center text-sm text-muted-foreground">
+              <TableCell colSpan={6} className="py-6 text-center text-sm text-muted-foreground">
                 {dictionary.rewards.none}
               </TableCell>
             </TableRow>
           ) : (
-            plans.slice(pagination.start, pagination.end).map((plan) => (
+            visiblePlans.slice(pagination.start, pagination.end).map((plan) => (
               <TableRow key={plan.condition_id}>
                 <TableCell className="max-w-[360px]">
                   <div className="space-y-1">
                     <p className="truncate font-medium">{plan.question}</p>
                     <p className="text-xs text-muted-foreground">{plan.reason}</p>
                   </div>
+                </TableCell>
+                <TableCell>
+                  <StatusPill tone={plan.eligible ? "success" : "warning"}>
+                    {plan.eligible ? dictionary.rewards.filterEligible : dictionary.rewards.filterIneligible}
+                  </StatusPill>
                 </TableCell>
                 <TableCell>
                   <StatusPill tone={plan.eligible ? "success" : "neutral"}>
@@ -239,7 +288,7 @@ export function QuotePlansTable({
           )}
         </TableBody>
       </Table>
-      <PaginationBar pagination={pagination} totalItems={plans.length} />
+      <PaginationBar pagination={pagination} totalItems={visiblePlans.length} />
     </div>
   );
 }
@@ -296,6 +345,7 @@ export function OrdersTable({
         search={localSearch}
         onSearchChange={handleSearchChange}
         onSearchCommit={() => onSearchChange(localSearch)}
+        placeholder={dictionary.rewards.searchOrdersPlaceholder}
         tabs={tabs}
         activeTab={status}
         onTabChange={(key) => onStatusChange(key as typeof status)}

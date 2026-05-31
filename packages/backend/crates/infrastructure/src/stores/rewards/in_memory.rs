@@ -48,6 +48,7 @@ impl RewardBotStore for InMemoryRewardBotStore {
 
     async fn save_quote_plans(&self, plans: &[RewardQuotePlan]) -> Result<()> {
         let mut store = self.quote_plans.write().await;
+        store.clear();
         for plan in plans {
             store.insert(plan.condition_id.clone(), plan.clone());
         }
@@ -124,6 +125,7 @@ impl RewardBotStore for InMemoryRewardBotStore {
             .read()
             .await
             .values()
+            .filter(|market| market.active)
             .cloned()
             .collect::<Vec<_>>();
         markets.sort_by(|left, right| {
