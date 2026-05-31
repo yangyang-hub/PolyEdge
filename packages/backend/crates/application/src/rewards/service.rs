@@ -91,6 +91,36 @@ impl RewardBotService {
         Ok(select_reward_quote_candidate_markets(&markets, &config))
     }
 
+    /// Return distinct token IDs from markets where the reward bot currently has
+    /// open-like orders or non-zero positions. This is a much smaller set than
+    /// `list_reward_run_candidate_markets` and is used by the orderbook stream to
+    /// subscribe only to relevant orderbook channels.
+    pub async fn list_active_reward_book_token_ids(&self) -> Result<Vec<String>> {
+        let config = self.read_config().await?;
+        let account_id = &config.account_id;
+
+        let open_orders = self.store.list_open_orders(account_id).await?;
+        let positions = self.store.list_account_positions(account_id).await?;
+
+        let mut seen = HashSet::new();
+        let mut token_ids = Vec::new();
+
+        for order in &open_orders {
+            if order.token_id.trim().is_empty() || !seen.insert(order.token_id.clone()) {
+                continue;
+            }
+            token_ids.push(order.token_id.clone());
+        }
+        for position in &positions {
+            if position.token_id.trim().is_empty() || !seen.insert(position.token_id.clone()) {
+                continue;
+            }
+            token_ids.push(position.token_id.clone());
+        }
+
+        Ok(token_ids)
+    }
+
     pub async fn snapshot(&self) -> Result<RewardBotSnapshot> {
         let config = self.read_config().await?;
         let account = self.store.load_account_state(&config).await?;

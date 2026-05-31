@@ -5,6 +5,11 @@ services:
       dockerfile: packages/backend/Dockerfile
     image: ${POLYEDGE_API_IMAGE:-polyedge-api:local}
     restart: unless-stopped
+    logging: &default-logging
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
     env_file:
       - .env
     ports:
@@ -21,6 +26,7 @@ services:
   polyedge-worker:
     image: ${POLYEDGE_API_IMAGE:-polyedge-api:local}
     restart: unless-stopped
+    logging: *default-logging
     env_file:
       - .env
     command: ["polyedge-worker"]
@@ -36,6 +42,7 @@ services:
       dockerfile: packages/front/Dockerfile
     image: ${POLYEDGE_FRONT_IMAGE:-polyedge-front:local}
     restart: unless-stopped
+    logging: *default-logging
     environment:
       POLYEDGE_API_UPSTREAM: ${POLYEDGE_API_UPSTREAM:-http://polyedge-api:38001}
       POLYEDGE_CONSOLE_STEP_UP_CODE: ${POLYEDGE_CONSOLE_STEP_UP_CODE:?set POLYEDGE_CONSOLE_STEP_UP_CODE in deploy/.env}
