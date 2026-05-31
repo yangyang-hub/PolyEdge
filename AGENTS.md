@@ -149,6 +149,7 @@ cargo run -p polyedge-worker -- analyze-wallets-once
 - 默认跟单 worker 是 disabled；前端 `/copy-trading` 可以手动运行模拟，worker 需要同时设置 `POLYEDGE_COPYTRADE__ENABLED=true` + `POLYEDGE_WORKER__POLL_COPYTRADE=true`（跟单循环）或 `POLYEDGE_WORKER__ANALYZE_WALLETS=true`（钱包分析）。
 - `POLYEDGE_POSTGRES__URL` / `POLYEDGE_REDIS__URL` 为空时，本地可能走内存路径，无法验证多进程共享状态和持久化 outbox。
 - `POLYEDGE_ARBITRAGE__BOOK_SOURCE=polymarket` 会请求真实 Polymarket CLOB `/book`；live 冒烟必须使用真实 Polymarket refs。
+- Docker Compose 部署中的 `polyedge-worker` 会把所有 `POLYEDGE_WORKER__...` 后台任务默认覆盖为 `false`；需要运行市场同步、orderbook stream、新闻、套利、rewards 或 copytrade 时必须在 `deploy/.env` 显式设为 `true`。
 
 ## Docker 部署
 
@@ -175,12 +176,15 @@ cp deploy/.env.example deploy/.env
 
 `scripts/deploy.sh` 只接受简单目标参数：
 
-- `all` 或不传参数：重建后端和前端镜像，并重启 API、worker、front。
+- 不传参数或 `auto`：拉取最新代码，只在后端二进制或前端文件 hash 变化时 rebuild；容器未运行但 hash 未变时只启动已有镜像。
+- `all`：重建后端和前端镜像，并重启 API、worker、front。
 - `api worker`：重建后端镜像，并重启 API 与 worker。
 - `api`：只重建后端镜像并重启 API。
 - `worker`：只重建后端镜像并重启 worker。
 - `front`：只重建前端镜像并重启前端。
 - 支持组合，例如 `api front` 或 `api,worker`。
+
+部署脚本默认使用 `/tmp/polyedge-deploy.lock` 防止 cron/CI 重叠执行，默认 `COMPOSE_PARALLEL_LIMIT=1` 串行构建镜像；Auto 模式只有后端二进制或前端文件 hash 改变时才 rebuild，容器未运行但 hash 未变时只启动已有镜像。Compose 构建上下文已收窄：后端只上传 `bin/`，前端只上传 `packages/front/`，避免扫描本地 `packages/backend/target`、`node_modules`、`.next` 等大目录。
 
 默认部署模板仍沿用本地 internal dev-auth 模式，只适合原型/内网共享环境；生产前需要真实会话体系、签名 internal JWT、key rotation 和撤销策略。
 
@@ -212,6 +216,7 @@ cp deploy/.env.example deploy/.env
 部署：
 
 - `packages/backend/Dockerfile`
+- `deploy/backend.Dockerfile`
 - `packages/front/Dockerfile`
 - `deploy/docker-compose.yml`
 - `deploy/.env.example`

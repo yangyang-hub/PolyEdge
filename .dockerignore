@@ -16,6 +16,14 @@
 **/*.tsbuildinfo
 
 **/target
+packages/backend/target
+packages/backend/target/**
+packages/front/node_modules
+packages/front/node_modules/**
+packages/front/.next
+packages/front/.next/**
+packages/front/out
+packages/front/out/**
 
 *.log
 Dockerfile

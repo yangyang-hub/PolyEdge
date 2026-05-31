@@ -11,11 +11,14 @@
 | 文件 | 职责 |
 |---|---|
 | `deploy/docker-compose.yml` | 服务编排 |
+| `deploy/backend.Dockerfile` | 后端部署镜像（debian:trixie-slim + `bin/` 预构建二进制） |
 | `deploy/.env.example` | 环境变量模板 |
 | `scripts/deploy.sh` | 部署脚本（auto + manual 模式） |
 | `scripts/build-backend-bin.sh` | 后端二进制构建脚本 |
-| `packages/backend/Dockerfile` | 后端镜像（debian:trixie-slim + 预构建二进制） |
-| `packages/front/Dockerfile` | 前端镜像（3 阶段：deps → builder → nginx:1.27-alpine） |
+| `packages/backend/Dockerfile` | 后端镜像兼容模板（旧的仓库根 context 形式；Compose 部署不再使用） |
+| `packages/front/Dockerfile` | 前端镜像（3 阶段：deps → builder → nginx:1.27-alpine；context 为 `packages/front/`） |
+| `packages/front/.dockerignore` | 前端构建 context 排除规则 |
+| `.dockerignore` | 仓库根构建 context 排除规则（兼容旧构建入口） |
 | `packages/front/nginx.conf.template` | Nginx 配置模板 |
 
 ## 服务架构
@@ -46,6 +49,7 @@
 - 同 API 镜像，command 覆盖为 `polyedge-worker`
 - 无端口暴露
 - 依赖 API 健康检查通过后启动
+- Docker 部署中所有 `POLYEDGE_WORKER__...` 后台任务默认由 Compose 覆盖为 `false`，需要在 `deploy/.env` 显式改为 `true` 才会启动对应任务
 
 ### polyedge-front
 
@@ -71,11 +75,12 @@
 
 ### Auto 模式（默认，适合 cron/CI）
 
-1. `git fetch` + fast-forward merge
-2. 无新代码且所有容器健康 → 跳过
-3. 后端二进制变更 → 重建后端镜像，重启 API + Worker
-4. 有新代码 → 重建前端镜像，重启 Frontend
-5. 任何容器 down → 强制重建并重启
+1. 获取部署锁（默认 `/tmp/polyedge-deploy.lock`），避免 cron/CI 重叠执行
+2. `git fetch` + fast-forward merge
+3. 无镜像变更且所有容器运行中 → 跳过
+4. 后端二进制变更 → 重建后端镜像，立即写入 `.deploy-state`，再重启 API + Worker
+5. 前端文件变更 → 重建前端镜像，立即写入 `.deploy-state`，再重启 Frontend
+6. 容器未运行但镜像 hash 未变化 → 只 `up -d` 启动已有镜像，不强制 rebuild
 
 ### Manual 模式
 
@@ -109,6 +114,9 @@
 | `POLYEDGE_API_PORT` | `38001` | API 宿主机端口 |
 | `POLYEDGE_API_UPSTREAM` | `http://polyedge-api:38001` | 前端代理目标 |
 | `POLYEDGE_ALLOW_IN_MEMORY_DEPLOY` | — | 设为 1 允许无数据库部署（仅演示） |
+| `POLYEDGE_LOG_FILE` | `$HOME/polyedge-deploy.log`（cron） | deploy 脚本日志文件；无法写入时回退到 stdout/stderr |
+| `POLYEDGE_DEPLOY_LOCK_FILE` | `/tmp/polyedge-deploy.lock` | deploy 脚本互斥锁 |
+| `COMPOSE_PARALLEL_LIMIT` | `1` | Docker Compose 构建并发，低配服务器默认串行构建 |
 
 ## 后端二进制构建
 
@@ -120,6 +128,9 @@ git add bin/polyedge-api bin/polyedge-worker
 ## 当前状态
 
 - 部署模板适合原型/内网共享环境
+- Compose 部署使用窄构建上下文：后端只上传 `bin/`，前端只上传 `packages/front/`，避免扫描 Rust `target/`、前端 `node_modules/`、`.next/` 等大目录
+- `polyedge-front` 不再依赖 API 健康后才启动；前端静态 Nginx 可独立运行并在 API 恢复后继续代理请求
+- `scripts/deploy.sh` 已防止重叠执行；前端变更 hash 会直接 prune `node_modules`、`.next`、`out` 等大目录；容器 down 时不会因健康失败而重复 rebuild
 - 认证使用内部 dev-auth 模式
 - 生产前需要：真实会话体系、签名 JWT、key rotation
 

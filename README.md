@@ -292,7 +292,11 @@ cp deploy/.env.example deploy/.env
 
 PostgreSQL 不会由 compose 创建，需要在 `deploy/.env` 里配置已有服务地址；Redis 仅在需要时按需添加 `POLYEDGE_REDIS__URL`。
 
-部署脚本会在启动前从 GitHub 更新当前 checkout，然后按传入目标重建镜像并重启对应容器：
+部署脚本会在启动前从 GitHub 更新当前 checkout，并使用部署锁避免 cron 重叠执行。Auto 模式只在后端二进制或前端文件 hash 变化时重建镜像；如果容器未运行但镜像 hash 没变，只会 `up -d` 启动已有镜像，不会重复 rebuild。默认 `COMPOSE_PARALLEL_LIMIT=1`，低配服务器会串行构建后端和前端镜像。
+
+Docker Compose 部署使用窄构建上下文：后端镜像只上传 `bin/`，前端镜像只上传 `packages/front/`，避免扫描本地 Rust `target/`、前端 `node_modules/` 和 `.next/`。
+
+按传入目标重建镜像并重启对应容器：
 
 - `./scripts/deploy.sh all`：重建后端和前端镜像，并重启 `polyedge-api`、`polyedge-worker`、`polyedge-front`
 - `./scripts/deploy.sh api worker`：重建后端镜像，并重启 API 与 worker
@@ -306,6 +310,8 @@ PostgreSQL 不会由 compose 创建，需要在 `deploy/.env` 里配置已有服
 ```bash
 POLYEDGE_GIT_BRANCH=main ./scripts/deploy.sh
 ```
+
+Docker 部署里 worker 后台任务默认由 Compose 覆盖为关闭状态；需要市场同步、orderbook stream、新闻、套利、rewards 或 copytrade 时，在 `deploy/.env` 显式设置对应 `POLYEDGE_WORKER__...=true`。
 
 如果是首次在空目录部署，也可以把脚本放到服务器后指定仓库地址：
 

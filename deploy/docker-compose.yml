@@ -1,8 +1,8 @@
 services:
   polyedge-api:
     build:
-      context: ..
-      dockerfile: packages/backend/Dockerfile
+      context: ../bin
+      dockerfile: ../deploy/backend.Dockerfile
     image: ${POLYEDGE_API_IMAGE:-polyedge-api:local}
     restart: unless-stopped
     logging: &default-logging
@@ -29,6 +29,23 @@ services:
     logging: *default-logging
     env_file:
       - .env
+    environment:
+      POLYEDGE_WORKER__POLL_NEWS: ${POLYEDGE_WORKER__POLL_NEWS:-false}
+      POLYEDGE_WORKER__PROMOTE_NEWS_EVENTS: ${POLYEDGE_WORKER__PROMOTE_NEWS_EVENTS:-false}
+      POLYEDGE_WORKER__POLL_ARBITRAGE_RADAR: ${POLYEDGE_WORKER__POLL_ARBITRAGE_RADAR:-false}
+      POLYEDGE_WORKER__ANALYZE_ARBITRAGE_OPPORTUNITIES: ${POLYEDGE_WORKER__ANALYZE_ARBITRAGE_OPPORTUNITIES:-false}
+      POLYEDGE_WORKER__POLL_REWARD_BOT: ${POLYEDGE_WORKER__POLL_REWARD_BOT:-false}
+      POLYEDGE_WORKER__DRAIN_EXECUTION_QUEUE: ${POLYEDGE_WORKER__DRAIN_EXECUTION_QUEUE:-false}
+      POLYEDGE_WORKER__POLL_PAPER_ORDER_STATUSES: ${POLYEDGE_WORKER__POLL_PAPER_ORDER_STATUSES:-false}
+      POLYEDGE_WORKER__RECONCILE_PAPER_FILLS: ${POLYEDGE_WORKER__RECONCILE_PAPER_FILLS:-false}
+      POLYEDGE_WORKER__POLL_POLYMARKET_ORDER_STATUSES: ${POLYEDGE_WORKER__POLL_POLYMARKET_ORDER_STATUSES:-false}
+      POLYEDGE_WORKER__RECONCILE_POLYMARKET_FILLS: ${POLYEDGE_WORKER__RECONCILE_POLYMARKET_FILLS:-false}
+      POLYEDGE_WORKER__CONSUME_POLYMARKET_USER_EVENTS: ${POLYEDGE_WORKER__CONSUME_POLYMARKET_USER_EVENTS:-false}
+      POLYEDGE_WORKER__POLL_MARKET_SYNC: ${POLYEDGE_WORKER__POLL_MARKET_SYNC:-false}
+      POLYEDGE_WORKER__CONSUME_ORDERBOOK_STREAM: ${POLYEDGE_WORKER__CONSUME_ORDERBOOK_STREAM:-false}
+      POLYEDGE_WORKER__POLL_COPYTRADE: ${POLYEDGE_WORKER__POLL_COPYTRADE:-false}
+      POLYEDGE_WORKER__ANALYZE_WALLETS: ${POLYEDGE_WORKER__ANALYZE_WALLETS:-false}
+      POLYEDGE_WORKER__RECOMPUTE_SIGNALS: ${POLYEDGE_WORKER__RECOMPUTE_SIGNALS:-false}
     command: ["polyedge-worker"]
     depends_on:
       polyedge-api:
@@ -38,8 +55,8 @@ services:
 
   polyedge-front:
     build:
-      context: ..
-      dockerfile: packages/front/Dockerfile
+      context: ../packages/front
+      dockerfile: Dockerfile
     image: ${POLYEDGE_FRONT_IMAGE:-polyedge-front:local}
     restart: unless-stopped
     logging: *default-logging
@@ -48,9 +65,6 @@ services:
       POLYEDGE_CONSOLE_STEP_UP_CODE: ${POLYEDGE_CONSOLE_STEP_UP_CODE:?set POLYEDGE_CONSOLE_STEP_UP_CODE in deploy/.env}
     ports:
       - "${POLYEDGE_FRONT_BIND:-0.0.0.0}:${POLYEDGE_FRONT_PORT:-33002}:80"
-    depends_on:
-      polyedge-api:
-        condition: service_healthy
     healthcheck:
       test:
         [

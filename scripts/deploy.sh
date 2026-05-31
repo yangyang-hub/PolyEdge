@@ -12,14 +12,14 @@ set -Eeuo pipefail
 #
 # Auto mode (default):
 #   1. git fetch + fast-forward
-#   2. If no changes detected AND all containers healthy -> skip entirely
+#   2. If no changes detected AND all containers are running -> skip entirely
 #   3. If bin/polyedge-api or bin/polyedge-worker changed -> rebuild backend image -> restart api & worker
 #   4. If frontend files changed (packages/front/) -> rebuild frontend image -> restart front
-#   5. If any container is not running -> rebuild & start it regardless
-#   6. Persist state to .deploy-state for next run comparison
+#   5. If any container is not running -> start existing image without forcing a rebuild
+#   6. Persist image build state to .deploy-state immediately after successful builds
 #
-# Cron example (every 5 minutes):
-#   */5 * * * * /path/to/scripts/deploy.sh >> /var/log/polyedge-deploy.log 2>&1
+# Cron example (every 5 minutes; deploy.sh also has an internal lock):
+#   */5 * * * * POLYEDGE_LOG_FILE=/home/polyedge/polyedge-deploy.log /path/to/scripts/deploy.sh
 #
 # Environment variables:
 #   POLYEDGE_DEPLOY_DIR       - repo checkout (default: script's parent)
@@ -28,7 +28,9 @@ set -Eeuo pipefail
 #   POLYEDGE_COMPOSE_FILE     - docker-compose file path
 #   POLYEDGE_ENV_FILE         - .env file path
 #   POLYEDGE_SKIP_ENV_VALIDATION=1 - skip .env sanity checks
-#   POLYEDGE_LOG_FILE         - log file path (default: /var/log/polyedge-deploy.log)
+#   POLYEDGE_LOG_FILE         - log file path (default for cron: $HOME/polyedge-deploy.log)
+#   POLYEDGE_DEPLOY_LOCK_FILE - non-overlap lock file (default: /tmp/polyedge-deploy.lock)
+#   COMPOSE_PARALLEL_LIMIT    - compose build parallelism (default: 1)
 # ---------------------------------------------------------------------------
 
 log() {
@@ -195,11 +197,10 @@ file_hash() {
 frontend_hash() {
   local path="$1"
   if [[ -d "${path}" ]]; then
-    find "${path}" -type f \
-      -not -path '*/node_modules/*' \
-      -not -path '*/.next/*' \
-      -not -path '*/out/*' \
-      -print0 | sort -z | xargs -0 md5sum 2>/dev/null | md5sum | awk '{print $1}'
+    find "${path}" \
+      \( -path '*/node_modules' -o -path '*/.next' -o -path '*/out' -o -path '*/dist' -o -path '*/coverage' -o -path '*/.turbo' \) -prune \
+      -o -type f -not -name '*.tsbuildinfo' -print0 \
+      | sort -z | xargs -0 md5sum 2>/dev/null | md5sum | awk '{print $1}'
   else
     printf 'MISSING'
   fi
@@ -217,6 +218,18 @@ container_running() {
   # docker compose ps --format json may return multiple lines; check last
   printf '%s' "${status}" | tail -1 | grep -q '"running"' && return 0
   return 1
+}
+
+save_deploy_state() {
+  local state_file="$1"
+  cat > "${state_file}" <<EOF
+api_hash=${current_api_hash}
+worker_hash=${current_worker_hash}
+front_hash=${current_front_hash}
+commit=$(git rev-parse HEAD 2>/dev/null || echo "unknown")
+deployed_at=$(date '+%Y-%m-%d %H:%M:%S')
+EOF
+  log "deploy state saved to ${state_file}"
 }
 
 # ---------------------------------------------------------------------------
@@ -239,12 +252,26 @@ parse_targets target_api target_worker target_front "$@"
 # ---- setup logging: tee to file when running non-interactively -----------
 log_file="${POLYEDGE_LOG_FILE:-}"
 if [[ -z "${log_file}" && ! -t 0 ]]; then
-  # non-interactive (cron) -> default log file
-  log_file="/var/log/polyedge-deploy.log"
+  # non-interactive (cron) -> default to a user-writable log file
+  log_file="${HOME:-/tmp}/polyedge-deploy.log"
 fi
 if [[ -n "${log_file}" ]]; then
-  mkdir -p "$(dirname "${log_file}")"
-  exec > >(tee -a "${log_file}") 2>&1
+  if mkdir -p "$(dirname "${log_file}")" && touch "${log_file}" 2>/dev/null; then
+    exec > >(tee -a "${log_file}") 2>&1
+  else
+    printf '[polyedge-deploy] %s WARN: cannot write log file %s; continuing with stdout/stderr only\n' "$(date '+%Y-%m-%d %H:%M:%S')" "${log_file}" >&2
+  fi
+fi
+
+lock_file="${POLYEDGE_DEPLOY_LOCK_FILE:-/tmp/polyedge-deploy.lock}"
+if command -v flock >/dev/null 2>&1; then
+  exec 9>"${lock_file}"
+  if ! flock -n 9; then
+    log "another deploy is running; skip (${lock_file})"
+    exit 0
+  fi
+else
+  log "flock is not installed; continuing without deploy lock"
 fi
 
 log "=== deploy start (mode=${mode}) ==="
@@ -326,6 +353,7 @@ fi
 validate_env_file "${env_file}"
 
 compose_cmd="$(find_compose)" || fail "Docker Compose is not installed."
+export COMPOSE_PARALLEL_LIMIT="${COMPOSE_PARALLEL_LIMIT:-1}"
 
 # ---------------------------------------------------------------------------
 # Auto mode: intelligent change detection via persistent state file
@@ -370,7 +398,7 @@ if [[ "${mode}" == "auto" ]]; then
     log "frontend files changed on disk (${saved_front_hash:-NONE}->${current_front_hash:0:8})"
   fi
 
-  # --- Check container status: if any target container is down, force rebuild
+  # --- Check container status: down services are started without forcing rebuild
   backend_running=1
   front_running=1
 
@@ -391,13 +419,17 @@ if [[ "${mode}" == "auto" ]]; then
   build_services=()
   restart_services=()
 
-  if [[ "${backend_changed}" == "1" || "${backend_running}" == "0" ]]; then
+  if [[ "${backend_changed}" == "1" ]]; then
     build_services+=(polyedge-api)
+  fi
+  if [[ "${backend_changed}" == "1" || "${backend_running}" == "0" ]]; then
     restart_services+=(polyedge-api polyedge-worker)
   fi
 
-  if [[ "${front_changed}" == "1" || "${front_running}" == "0" ]]; then
+  if [[ "${front_changed}" == "1" ]]; then
     build_services+=(polyedge-front)
+  fi
+  if [[ "${front_changed}" == "1" || "${front_running}" == "0" ]]; then
     restart_services+=(polyedge-front)
   fi
 
@@ -409,26 +441,21 @@ if [[ "${mode}" == "auto" ]]; then
   fi
 
   # --- Ensure binaries exist before building backend -------------------------
-  if [[ "${backend_changed}" == "1" || "${backend_running}" == "0" ]]; then
+  if [[ "${backend_changed}" == "1" ]]; then
     [[ -f bin/polyedge-api ]] || fail "bin/polyedge-api is missing. Build it with scripts/build-backend-bin.sh."
     [[ -f bin/polyedge-worker ]] || fail "bin/polyedge-worker is missing. Build it with scripts/build-backend-bin.sh."
   fi
 
-  log "building images: ${build_services[*]}"
-  ${compose_cmd} --env-file "${env_file}" -f "${compose_file}" build --pull "${build_services[@]}"
+  if [[ ${#build_services[@]} -gt 0 ]]; then
+    log "building images: ${build_services[*]} (COMPOSE_PARALLEL_LIMIT=${COMPOSE_PARALLEL_LIMIT})"
+    ${compose_cmd} --env-file "${env_file}" -f "${compose_file}" build --pull "${build_services[@]}"
+    save_deploy_state "${state_file}"
+  else
+    log "no image changes detected; starting existing images"
+  fi
 
   log "starting containers: ${restart_services[*]}"
   ${compose_cmd} --env-file "${env_file}" -f "${compose_file}" up -d --remove-orphans "${restart_services[@]}"
-
-  # --- Persist deployed state for next run -----------------------------------
-  cat > "${state_file}" <<EOF
-api_hash=${current_api_hash}
-worker_hash=${current_worker_hash}
-front_hash=${current_front_hash}
-commit=$(git rev-parse HEAD 2>/dev/null || echo "unknown")
-deployed_at=$(date '+%Y-%m-%d %H:%M:%S')
-EOF
-  log "deploy state saved to ${state_file}"
 
 else
   # ---------------------------------------------------------------------------
@@ -459,7 +486,7 @@ else
     [[ -f "bin/polyedge-worker" ]] || fail "bin/polyedge-worker is missing. Build it with scripts/build-backend-bin.sh and commit it."
   fi
 
-  log "building images: ${build_services[*]}"
+  log "building images: ${build_services[*]} (COMPOSE_PARALLEL_LIMIT=${COMPOSE_PARALLEL_LIMIT})"
   ${compose_cmd} --env-file "${env_file}" -f "${compose_file}" build --pull "${build_services[@]}"
 
   log "starting containers: ${runtime_services[*]}"
