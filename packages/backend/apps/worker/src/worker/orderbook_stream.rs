@@ -229,44 +229,7 @@ async fn collect_orderbook_subscription_tokens(state: &AppState) -> Result<Vec<S
         }
     }
 
-    // Source 2: Open markets with polymarket refs (for arbitrage/general monitoring)
-    let market_limit = u16::try_from((max_tokens / 2).min(usize::from(u16::MAX)))
-        .unwrap_or(u16::MAX);
-    let open_markets = state
-        .market_event_service
-        .list_markets(MarketListFilters::new(
-            Some(MarketStatus::Open),
-            None,
-            None,
-            None,
-            None,
-            None,
-            Some(market_limit),
-        )?)
-        .await?;
-
-    for market in open_markets {
-        if tokens.len() >= max_tokens {
-            return Ok(tokens);
-        }
-        let market_refs = match polymarket_market_refs(&market) {
-            Ok(refs) => refs,
-            Err(_) => continue,
-        };
-        if !seen.contains(&market_refs.yes_asset_id) {
-            seen.insert(market_refs.yes_asset_id.clone());
-            tokens.push(market_refs.yes_asset_id);
-        }
-        if tokens.len() >= max_tokens {
-            return Ok(tokens);
-        }
-        if !seen.contains(&market_refs.no_asset_id) {
-            seen.insert(market_refs.no_asset_id.clone());
-            tokens.push(market_refs.no_asset_id);
-        }
-    }
-
-    // Source 3: Reward markets (for reward bot simulation)
+    // Source 2: Reward markets (for reward bot simulation)
     if let Ok(reward_markets) = state
         .reward_bot_service
         .list_active_reward_markets()
