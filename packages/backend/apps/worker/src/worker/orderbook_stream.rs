@@ -266,6 +266,24 @@ async fn collect_orderbook_subscription_tokens(state: &AppState) -> Result<Vec<S
         }
     }
 
+    // Source 3: Reward markets (for reward bot simulation)
+    if let Ok(reward_markets) = state
+        .reward_bot_service
+        .list_active_reward_markets()
+        .await
+    {
+        let reward_token_ids = select_reward_book_token_ids(&reward_markets);
+        for token_id in reward_token_ids {
+            if tokens.len() >= max_tokens {
+                return Ok(tokens);
+            }
+            if !seen.contains(&token_id) {
+                seen.insert(token_id.clone());
+                tokens.push(token_id);
+            }
+        }
+    }
+
     Ok(tokens)
 }
 

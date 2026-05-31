@@ -1,0 +1,132 @@
+# 部署（Docker + Nginx + Scripts）
+
+最后更新：2026-05-31
+
+## 概述
+
+部署体系基于 Docker Compose，包含 3 个服务（API、Worker、Frontend），通过 Nginx 反向代理前端到后端的 API 请求。
+
+## 架构与关键文件
+
+| 文件 | 职责 |
+|---|---|
+| `deploy/docker-compose.yml` | 服务编排 |
+| `deploy/.env.example` | 环境变量模板 |
+| `scripts/deploy.sh` | 部署脚本（auto + manual 模式） |
+| `scripts/build-backend-bin.sh` | 后端二进制构建脚本 |
+| `packages/backend/Dockerfile` | 后端镜像（debian:trixie-slim + 预构建二进制） |
+| `packages/front/Dockerfile` | 前端镜像（3 阶段：deps → builder → nginx:1.27-alpine） |
+| `packages/front/nginx.conf.template` | Nginx 配置模板 |
+
+## 服务架构
+
+```
+┌──────────────────┐     ┌──────────────────┐
+│   polyedge-front │────→│   polyedge-api   │
+│   nginx:80       │     │   port:38001     │
+│   (static site)  │     │   (Rust Axum)    │
+└──────────────────┘     └──────────────────┘
+                                ↑
+                         ┌──────────────────┐
+                         │  polyedge-worker  │
+                         │  (same image)     │
+                         └──────────────────┘
+```
+
+### polyedge-api
+
+- 镜像：`debian:trixie-slim` + 预构建 `bin/polyedge-api` 二进制
+- 端口：`0.0.0.0:38001 → container:38001`
+- 健康检查：`curl /healthz`（15s 间隔，10 次重试，20s 启动期）
+- 环境变量：所有 `POLYEDGE_*` 配置
+- `extra_hosts: host.docker.internal:host-gateway`（访问宿主机数据库）
+
+### polyedge-worker
+
+- 同 API 镜像，command 覆盖为 `polyedge-worker`
+- 无端口暴露
+- 依赖 API 健康检查通过后启动
+
+### polyedge-front
+
+- 镜像：3 阶段构建（node:20 deps → pnpm build → nginx:1.27-alpine）
+- 端口：`0.0.0.0:33002 → container:80`
+- 健康检查：`wget /healthz`
+- 入口脚本验证 `POLYEDGE_CONSOLE_STEP_UP_CODE` 已设置
+- `envsubst` 将环境变量注入 nginx 配置模板
+
+## Nginx 配置
+
+| 路径 | 行为 |
+|---|---|
+| `/healthz` | 返回 200 "ok" |
+| `/_next/static/` | 静态资源，1 年不可变缓存 |
+| `/api/v1/stream/` | SSE 代理，完全禁用缓冲（`proxy_buffering off`、`proxy_read_timeout 1h`） |
+| `/api/v1/` | 标准反向代理到后端，附带 step-up 认证头和硬编码身份（"Static Console"、admin 角色） |
+| `/` | 静态文件服务，fallback 到 `$uri.html` 和 `/404.html` |
+
+**Step-up 认证：** nginx 通过 `map` 指令比较请求头 `X-PolyEdge-Step-Up-Code` 与环境变量 `POLYEDGE_CONSOLE_STEP_UP_CODE`，设置 `$polyedge_step_up_verified` 为 "true" 或 "false"。
+
+## 部署脚本（deploy.sh）
+
+### Auto 模式（默认，适合 cron/CI）
+
+1. `git fetch` + fast-forward merge
+2. 无新代码且所有容器健康 → 跳过
+3. 后端二进制变更 → 重建后端镜像，重启 API + Worker
+4. 有新代码 → 重建前端镜像，重启 Frontend
+5. 任何容器 down → 强制重建并重启
+
+### Manual 模式
+
+- `scripts/deploy.sh all` — 全量重建
+- `scripts/deploy.sh api` — 重建后端，重启 API
+- `scripts/deploy.sh worker` — 重建后端，重启 Worker
+- `scripts/deploy.sh front` — 重建前端
+- 支持组合：`api worker`、`api,front` 等
+
+### 环境变量验证
+
+- `POLYEDGE_POSTGRES__URL` 不能包含 "change-me"
+- `POLYEDGE_CONSOLE_STEP_UP_CODE` 不能为空或 "change-me"
+- `POLYEDGE_INTERNAL_AUTH_DEV_BYPASS=1` 仅在 `POLYEDGE_RUNTIME__ENVIRONMENT=local` 时允许
+
+## 必需环境变量
+
+| 变量 | 说明 |
+|---|---|
+| `POLYEDGE_POSTGRES__URL` | PostgreSQL 连接字符串 |
+| `POLYEDGE_CONSOLE_STEP_UP_CODE` | 控制台提权认证码 |
+
+## 可选环境变量
+
+| 变量 | 默认值 | 说明 |
+|---|---|---|
+| `POLYEDGE_REDIS__URL` | — | Redis URL（可选） |
+| `POLYEDGE_FRONT_BIND` | `0.0.0.0` | 前端绑定地址 |
+| `POLYEDGE_FRONT_PORT` | `33002` | 前端宿主机端口 |
+| `POLYEDGE_API_BIND` | `0.0.0.0` | API 绑定地址 |
+| `POLYEDGE_API_PORT` | `38001` | API 宿主机端口 |
+| `POLYEDGE_API_UPSTREAM` | `http://polyedge-api:38001` | 前端代理目标 |
+| `POLYEDGE_ALLOW_IN_MEMORY_DEPLOY` | — | 设为 1 允许无数据库部署（仅演示） |
+
+## 后端二进制构建
+
+```bash
+./scripts/build-backend-bin.sh   # cargo build --release → bin/
+git add bin/polyedge-api bin/polyedge-worker
+```
+
+## 当前状态
+
+- 部署模板适合原型/内网共享环境
+- 认证使用内部 dev-auth 模式
+- 生产前需要：真实会话体系、签名 JWT、key rotation
+
+## 修改检查清单
+
+- [ ] 新增服务时更新 `docker-compose.yml`
+- [ ] 新增环境变量时更新 `.env.example` 和 `deploy.sh` 的验证逻辑
+- [ ] 修改 nginx 路由时更新 `nginx.conf.template`
+- [ ] 修改构建流程时更新 Dockerfile 和构建脚本
+- [ ] 部署后验证所有容器健康检查通过

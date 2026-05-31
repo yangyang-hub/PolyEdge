@@ -1,0 +1,107 @@
+# connectors（外部连接器层）
+
+最后更新：2026-05-31
+
+## 概述
+
+`polyedge_connectors` crate 实现所有外部系统的适配器：Polymarket CLOB（交易）、Gamma API（市场数据）、Data API（钱包活动）、Order Book（盘口）、Rewards API（奖励市场）、RSS 新闻源，以及内置的 Paper Trading 执行器。
+
+## 设计目标
+
+- 封装所有外部 HTTP/WebSocket 调用，隔离外部 API 细节
+- 提供统一的接口给 worker 和 application 层使用
+- 内置 Paper Trading 执行器用于本地模拟
+
+## 架构与关键文件
+
+| 文件/目录 | 职责 |
+|---|---|
+| `lib.rs` | 模块入口 + Paper Trading 执行器定义（~316 行） |
+| `polymarket/` | Polymarket 多 API 集成子目录 |
+| `polymarket/live.rs` | 认证 CLOB 连接器：`LivePolymarketConnector` |
+| `polymarket/gamma.rs` | 公共市场元数据：`PolymarketGammaConnector` |
+| `polymarket/data_api.rs` | 钱包活动 API：`PolymarketDataApiConnector` |
+| `polymarket/book.rs` | 盘口快照：`PolymarketBookConnector` |
+| `polymarket/rewards.rs` | 奖励市场：`PolymarketRewardsConnector` |
+| `polymarket/models.rs` | 共享数据模型 |
+| `polymarket/normalizers.rs` | WebSocket 消息规范化函数 |
+| `polymarket/helpers.rs` | 共享辅助函数 |
+| `news.rs` | RSS 新闻连接器：`RssNewsConnector` |
+
+## 核心数据结构
+
+### Polymarket Gamma（公共市场数据）
+
+- **`PolymarketGammaConnector`**：`gamma_host` + `reqwest::Client`
+- **`PolymarketGammaMarket`**：id、slug、question、category、status、best_bid/ask/mid_price、volume_24h、ambiguity_level、tradability_status、condition_id、yes/no_asset_id 等
+- **`GammaMarketPage`**：分页响应（markets + next_cursor）
+- 常量：`GAMMA_MARKETS_PATH = "markets/keyset"`、`GAMMA_TIMEOUT = 15s`
+- 用途：`market_sync.rs` worker 的主要数据源，`arbitrage.rs` 的回退数据源
+
+### Polymarket Data API（钱包活动）
+
+- **`PolymarketDataApiConnector`**：`data_api_host` + `reqwest::Client`，无需认证
+- **`PolymarketWalletActivity`**：proxy_wallet、kind（TRADE/SPLIT/MERGE/REDEEM/REWARD）、side、asset、condition_id、price、size、usdc_size、timestamp 等
+- **`PolymarketWalletPosition`**：当前持仓
+- **`PolymarketClosedPosition`**：已结算持仓
+- **`PolymarketTrade`**：单笔交易记录
+- 常量：`MAX_DATA_API_LIMIT = 500`、`DATA_API_TIMEOUT = 15s`
+- 用途：`copytrade.rs` worker 检测跟踪钱包的新成交
+
+### Polymarket Book（盘口）
+
+- **`PolymarketBookConnector`**：包装非认证 `ClobClient`
+- `fetch_binary_book(market_refs)`：获取 YES+NO 双侧盘口
+- `fetch_token_book(asset_id)`：获取单 token 盘口
+- **`PolymarketBinaryBookSnapshot`**：condition_id + yes/no book + observed_at
+- 用途：arbitrage scanner、rewards bot、orderbook stream
+
+### Polymarket Live（认证交易）
+
+- **`LivePolymarketConnector`**：client、private_key、chain_id、account_id、ws_host
+- `connect(config)`：创建 `LocalSigner` → `ClobClient` → `auth_builder.authenticate()`
+- `connect_user_ws()`：创建认证 WebSocket 客户端（订单/成交通道）
+- 用途：live 模式下的订单管理和 copytrade 实盘
+
+### Polymarket Rewards（奖励市场）
+
+- **`PolymarketRewardsConnector`**：`clob_host` + `reqwest::Client`
+- **`PolymarketRewardMarket`**：condition_id、question、market_slug、rewards_max_spread、rewards_min_size、total_daily_rate、tokens
+- **`PolymarketRewardOrderBook`**：token_id、bids、asks、observed_at
+- 常量：`ENRICH_TIMEOUT = 10s`、`ENRICH_MAX_RETRIES = 3`、`ENRICH_RETRY_BASE_DELAY = 500ms`
+- 用途：`market_sync.rs` 填充 `reward_markets` 表
+
+### News（RSS/Atom 新闻）
+
+- **`NewsSource`** trait：`async fn fetch(&self) -> Result<Vec<ConnectorNewsItem>>`
+- **`RssNewsConnector`**：`config` + `reqwest::Client`，User-Agent: `polyedge-news-ingestor/0.1`
+- **`ConnectorNewsItem`**：source、external_id、title、url、author、published_at、content_snippet、raw_payload
+- 用途：`news.rs` worker 从多个 RSS 源采集新闻
+
+### Paper Trading（内置模拟执行器）
+
+- **`PaperExecutor`**（无状态）：`submit()`、`reconcile_fill()`、`poll_order_status()`
+- **`PaperOrderRequest`**/**`PaperOrderAcceptance`**/**`PaperOrderRejection`**：提交/接受/拒绝
+- **`PaperFillRequest`**/**`PaperFillReceipt`**：成交流通
+- **`PaperExecutionOutcome`**：`Submitted(PaperOrderAcceptance)` | `Rejected(PaperOrderRejection)`
+- 常量：`PAPER_EXECUTOR_NAME`、`PAPER_ACCOUNT_ID`、`PAPER_MIN_NOTIONAL_USD`
+
+## 依赖关系
+
+- **上游**：`domain`（AppError、枚举、数值类型）、`application`（部分 trait）
+- **下游**：`apps/worker`（market_sync、arbitrage、copytrade、rewards、news、orderbook_stream）
+
+## 当前状态
+
+- 所有 connector 已实现，覆盖 Polymarket 全部公开 API
+- Paper Trading 执行器已完整实现
+- Live connector 结构已具备但需要真实凭证
+- RSS connector 支持 Atom/RSS 两种格式
+
+## 修改检查清单
+
+- [ ] 新增 connector 时在 `lib.rs` 添加模块声明和 `pub use` 导出
+- [ ] 修改 Polymarket API 调用时，检查对应的 worker 是否需要更新
+- [ ] 新增/修改数据模型时，同步更新 `market_sync.rs` 中的转换函数
+- [ ] WebSocket 相关修改后，检查 `orderbook_stream.rs` 和 `polymarket_events.rs`
+- [ ] 运行 `cargo check --workspace --tests`

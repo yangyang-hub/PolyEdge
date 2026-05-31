@@ -165,7 +165,7 @@ impl Default for OrderbookStreamSettings {
     fn default() -> Self {
         Self {
             enabled: true,
-            max_tokens: 200,
+            max_tokens: 5000,
             poll_reconcile_interval_secs: 30,
             stale_threshold_ms: 15_000,
             book_ttl_secs: 60,

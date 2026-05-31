@@ -12,10 +12,11 @@ set -Eeuo pipefail
 #
 # Auto mode (default):
 #   1. git fetch + fast-forward
-#   2. If no new code AND all containers healthy -> skip entirely
-#   3. If bin/polyedge-api changed -> rebuild backend image -> restart api & worker
-#   4. If new code pulled -> always rebuild frontend -> restart front
+#   2. If no changes detected AND all containers healthy -> skip entirely
+#   3. If bin/polyedge-api or bin/polyedge-worker changed -> rebuild backend image -> restart api & worker
+#   4. If frontend files changed (packages/front/) -> rebuild frontend image -> restart front
 #   5. If any container is not running -> rebuild & start it regardless
+#   6. Persist state to .deploy-state for next run comparison
 #
 # Cron example (every 5 minutes):
 #   */5 * * * * /path/to/scripts/deploy.sh >> /var/log/polyedge-deploy.log 2>&1
@@ -190,6 +191,20 @@ file_hash() {
   fi
 }
 
+# Compute a checksum of frontend source files (excluding node_modules, .next, out).
+frontend_hash() {
+  local path="$1"
+  if [[ -d "${path}" ]]; then
+    find "${path}" -type f \
+      -not -path '*/node_modules/*' \
+      -not -path '*/.next/*' \
+      -not -path '*/out/*' \
+      -print0 | sort -z | xargs -0 md5sum 2>/dev/null | md5sum | awk '{print $1}'
+  else
+    printf 'MISSING'
+  fi
+}
+
 # Check if a docker compose service container is running.
 # Returns 0 if running, 1 if not.
 container_running() {
@@ -259,17 +274,12 @@ fi
 
 # ---- git pull ------------------------------------------------------------
 new_code=0
-old_api_hash=""
-old_worker_hash=""
+pre_merge_head=""
 
 if [[ "${skip_git_pull}" != "1" ]]; then
   if [[ -n "$(git status --porcelain --untracked-files=no)" ]]; then
     fail "tracked files have local changes. Commit, stash, or set POLYEDGE_SKIP_GIT_PULL=1."
   fi
-
-  # Snapshot binary hashes before pull (for change detection in auto mode)
-  old_api_hash="$(file_hash bin/polyedge-api)"
-  old_worker_hash="$(file_hash bin/polyedge-worker)"
 
   log "fetching latest code from origin/${branch}"
   git fetch --prune origin "${branch}"
@@ -289,6 +299,7 @@ if [[ "${skip_git_pull}" != "1" ]]; then
   remote_head="$(git rev-parse "origin/${branch}")"
 
   if [[ "${local_head}" != "${remote_head}" ]]; then
+    pre_merge_head="${local_head}"
     log "fast-forwarding ${branch} (${local_head:0:8} -> ${remote_head:0:8})"
     git merge --ff-only "origin/${branch}"
     new_code=1
@@ -317,29 +328,49 @@ validate_env_file "${env_file}"
 compose_cmd="$(find_compose)" || fail "Docker Compose is not installed."
 
 # ---------------------------------------------------------------------------
-# Auto mode: intelligent change detection
+# Auto mode: intelligent change detection via persistent state file
 # ---------------------------------------------------------------------------
 if [[ "${mode}" == "auto" ]]; then
-  build_services=()
-  restart_services=()
+  # --- Compute current state ------------------------------------------------
+  current_api_hash="$(file_hash bin/polyedge-api)"
+  current_worker_hash="$(file_hash bin/polyedge-worker)"
+  current_front_hash="$(frontend_hash packages/front)"
 
-  # Detect binary changes
-  new_api_hash="$(file_hash bin/polyedge-api)"
-  new_worker_hash="$(file_hash bin/polyedge-worker)"
+  # --- Load last deployed state ---------------------------------------------
+  state_file="${deploy_dir}/.deploy-state"
+  saved_api_hash=""
+  saved_worker_hash=""
+  saved_front_hash=""
+
+  if [[ -f "${state_file}" ]]; then
+    saved_api_hash="$(grep '^api_hash=' "${state_file}" | cut -d= -f2 || true)"
+    saved_worker_hash="$(grep '^worker_hash=' "${state_file}" | cut -d= -f2 || true)"
+    saved_front_hash="$(grep '^front_hash=' "${state_file}" | cut -d= -f2 || true)"
+  fi
+
   backend_changed=0
   front_changed=0
 
-  if [[ "${new_api_hash}" != "${old_api_hash}" || "${new_worker_hash}" != "${old_worker_hash}" ]]; then
+  # --- Detect backend changes ------------------------------------------------
+  if [[ "${current_api_hash}" != "${saved_api_hash}" || "${current_worker_hash}" != "${saved_worker_hash}" ]]; then
     backend_changed=1
-    log "backend binary changed (api: ${old_api_hash:0:8}->${new_api_hash:0:8}, worker: ${old_worker_hash:0:8}->${new_worker_hash:0:8})"
+    log "backend binary changed (api: ${saved_api_hash:-NONE}->${current_api_hash:0:8}, worker: ${saved_worker_hash:-NONE}->${current_worker_hash:0:8})"
   fi
 
-  if [[ "${new_code}" == "1" ]]; then
+  # --- Detect frontend changes -----------------------------------------------
+  if [[ "${new_code}" == "1" && -n "${pre_merge_head}" ]]; then
+    # Check if any frontend-related files changed in the pulled commits
+    if git diff --name-only "${pre_merge_head}" HEAD -- packages/front/ packages/front/Dockerfile packages/front/nginx.conf.template | grep -q .; then
+      front_changed=1
+      log "frontend files changed in new commits"
+    fi
+  fi
+  if [[ "${front_changed}" == "0" && "${current_front_hash}" != "${saved_front_hash}" ]]; then
     front_changed=1
-    log "new code pulled -> frontend will be rebuilt"
+    log "frontend files changed on disk (${saved_front_hash:-NONE}->${current_front_hash:0:8})"
   fi
 
-  # Check container status: if any target container is down, force rebuild
+  # --- Check container status: if any target container is down, force rebuild
   backend_running=1
   front_running=1
 
@@ -356,7 +387,10 @@ if [[ "${mode}" == "auto" ]]; then
     front_running=0
   fi
 
-  # Decide what to build and restart
+  # --- Decide what to build and restart --------------------------------------
+  build_services=()
+  restart_services=()
+
   if [[ "${backend_changed}" == "1" || "${backend_running}" == "0" ]]; then
     build_services+=(polyedge-api)
     restart_services+=(polyedge-api polyedge-worker)
@@ -367,14 +401,14 @@ if [[ "${mode}" == "auto" ]]; then
     restart_services+=(polyedge-front)
   fi
 
-  # Nothing to do?
+  # --- Nothing to do? -------------------------------------------------------
   if [[ ${#build_services[@]} -eq 0 && ${#restart_services[@]} -eq 0 ]]; then
     log "no changes detected and all containers running -> nothing to do"
     log "=== deploy end (skipped) ==="
     exit 0
   fi
 
-  # Ensure binaries exist before building backend
+  # --- Ensure binaries exist before building backend -------------------------
   if [[ "${backend_changed}" == "1" || "${backend_running}" == "0" ]]; then
     [[ -f bin/polyedge-api ]] || fail "bin/polyedge-api is missing. Build it with scripts/build-backend-bin.sh."
     [[ -f bin/polyedge-worker ]] || fail "bin/polyedge-worker is missing. Build it with scripts/build-backend-bin.sh."
@@ -385,6 +419,16 @@ if [[ "${mode}" == "auto" ]]; then
 
   log "starting containers: ${restart_services[*]}"
   ${compose_cmd} --env-file "${env_file}" -f "${compose_file}" up -d --remove-orphans "${restart_services[@]}"
+
+  # --- Persist deployed state for next run -----------------------------------
+  cat > "${state_file}" <<EOF
+api_hash=${current_api_hash}
+worker_hash=${current_worker_hash}
+front_hash=${current_front_hash}
+commit=$(git rev-parse HEAD 2>/dev/null || echo "unknown")
+deployed_at=$(date '+%Y-%m-%d %H:%M:%S')
+EOF
+  log "deploy state saved to ${state_file}"
 
 else
   # ---------------------------------------------------------------------------

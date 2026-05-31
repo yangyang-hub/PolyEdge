@@ -1,0 +1,87 @@
+# 共享组件（Shared Components + UI Primitives）
+
+最后更新：2026-05-31
+
+## 概述
+
+共享组件分为两层：`components/ui/`（shadcn 生成的基础组件）和 `components/shared/`（跨页面复用的业务组件）。还有 `hooks/` 目录提供自定义 React hooks。
+
+## 设计目标
+
+- UI 基础组件由 shadcn 生成，不手动修改样式
+- 业务共享组件解决跨页面复用需求
+- 自定义 hooks 封装可复用的状态/副作用逻辑
+
+## 架构与关键文件
+
+### UI Primitives — `src/components/ui/`（13 个文件）
+
+shadcn 生成的 Radix UI 基础组件（style: radix-nova）：
+
+| 组件 | 用途 |
+|---|---|
+| `badge.tsx` | 标签 |
+| `button.tsx` | 按钮（多变体） |
+| `card.tsx` | 卡片容器 |
+| `dialog.tsx` | 模态对话框 |
+| `dropdown-menu.tsx` | 下拉菜单 |
+| `input.tsx` | 输入框 |
+| `scroll-area.tsx` | 可滚动区域 |
+| `separator.tsx` | 分隔线 |
+| `sheet.tsx` | 侧边抽屉 |
+| `table.tsx` | 表格（Table/Header/Row/Cell 等） |
+| `tabs.tsx` | 标签页 |
+| `textarea.tsx` | 多行输入 |
+| `tooltip.tsx` | 提示气泡 |
+
+### Shared Business Components — `src/components/shared/`（20 个文件）
+
+| 组件 | 用途 |
+|---|---|
+| `console-shell.tsx` | 控制台主布局外壳（sidebar + topbar + content） |
+| `console-sidebar.tsx` | 侧边导航栏 |
+| `console-topbar.tsx` | 顶部栏 |
+| `console-status-rail.tsx` | 状态栏 |
+| `console-realtime-provider.tsx` | 实时数据 Provider |
+| `console-loading-skeleton.tsx` | 加载骨架屏 |
+| `workbench-layout.tsx` | 标准工作台页面布局 |
+| `workbench-segmented-control.tsx` | 分段控制器 |
+| `page-header.tsx` | 页面标题组件 |
+| `action-dialog.tsx` | 操作确认对话框 |
+| `state-banner.tsx` | 状态横幅 |
+| `operation-feedback-banner.tsx` | 操作反馈横幅 |
+| `empty-panel.tsx` | 空状态面板 |
+| `client-data-boundary.tsx` | 客户端数据边界 |
+| `metric-card.tsx` | 指标卡片 |
+| `meter-bar.tsx` | 进度条/计量条 |
+| `status-pill.tsx` | 状态指示标签 |
+| `route-state-card.tsx` | 路由状态卡片 |
+| `language-switcher.tsx` | 语言切换器（zh-CN / en-US） |
+
+### 根级组件
+
+| 组件 | 用途 |
+|---|---|
+| `src/components/pagination-bar.tsx` | 通用分页栏 |
+
+### Custom Hooks — `src/hooks/`
+
+| Hook | 用途 |
+|---|---|
+| `use-live-status.ts` | 实时状态监听 |
+| `use-pagination.ts` | 分页状态管理（currentPage、pageSize、分页数据切片） |
+| `use-sse-stream.ts` | SSE 流式数据订阅 |
+
+## 当前状态
+
+- UI 组件基于 shadcn/ui v4（radix-nova 风格）
+- 共享组件覆盖所有跨页面复用场景
+- 暗色主题（`globals.css` 中仅定义暗色变量）
+
+## 修改检查清单
+
+- [ ] UI 基础组件优先使用 shadcn CLI 生成/更新
+- [ ] 跨页面复用的组件放到 `components/shared/`
+- [ ] 跨 feature 的工具/类型放到 `src/lib/`
+- [ ] 修改共享组件后需要人工 smoke 所有使用该组件的页面
+- [ ] 运行 `npx tsc --noEmit` 类型检查

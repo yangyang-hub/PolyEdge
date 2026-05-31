@@ -1,0 +1,36 @@
+# Positions（持仓）
+
+最后更新：2026-05-31
+
+## 概述
+
+`/positions` 页面展示当前持仓列表，包含数量、成本、PnL 等信息。
+
+## 架构与关键文件
+
+| 文件 | 职责 |
+|---|---|
+| `src/app/(console)/positions/page.tsx` | 路由页面 |
+| `src/features/positions/components/positions-workbench.tsx` | 主组件 |
+| `src/features/positions/loaders/positions-page-data.ts` | 服务端数据装配 |
+
+## API 依赖
+
+- `src/lib/api/positions.ts` — `listPositions(query)`（含字段映射：`net_quantity` → `quantity`、`avg_cost` → `average_cost`、`connector_name` → `bucket_name`）
+
+## 特殊注意
+
+`positions.ts` 是唯一使用 `fetchListContract` 的 `mapItem` 做字段重命名的 API 模块，因为后端字段名与前端 DTO 不完全一致。
+
+## i18n
+
+使用 `positions` 命名空间字典。
+
+## 当前状态
+
+已实现，展示持仓列表和汇总。
+
+## 修改检查清单
+
+- [ ] 修改后端持仓字段时同步更新 `positions.ts` 中的 `mapItem` 映射
+- [ ] 修改后人工 smoke `/positions` 页面
