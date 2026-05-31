@@ -183,14 +183,10 @@ mod tests {
             .filter(|order| order.status == ManagedRewardOrderStatus::Open)
             .collect();
         assert_eq!(open.len(), 2);
-        assert!(outcome.account.reserved_usd > Decimal::ZERO);
-        assert!(outcome.account.available_usd < config.account_capital_usd);
-        // Reserved + available should still equal the starting capital (no fills/rewards yet,
-        // since there is no book to cross and rewards need a prior resting period).
-        assert_eq!(
-            outcome.account.reserved_usd + outcome.account.available_usd,
-            config.account_capital_usd + outcome.account.reward_earned_usd
-        );
+        // Capital is no longer reserved per order (Polymarket portfolio margin model).
+        // With no fills yet, available equals starting capital.
+        assert_eq!(outcome.account.reserved_usd, Decimal::ZERO);
+        assert_eq!(outcome.account.available_usd, config.account_capital_usd);
     }
 
     #[test]

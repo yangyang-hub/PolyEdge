@@ -22,13 +22,6 @@ impl TickContext {
     fn cancel_order(&mut self, index: usize, reason: impl Into<String>) {
         let reason = reason.into();
         let order = self.orders[index].clone();
-        // Release the unfilled reservation for buy orders.
-        if order.side == RewardOrderSide::Buy {
-            let remaining = (order.size - order.filled_size).max(Decimal::ZERO);
-            let release = (order.price * remaining).round_dp(4);
-            self.account.reserved_usd = (self.account.reserved_usd - release).max(Decimal::ZERO);
-            self.account.available_usd += release;
-        }
         {
             let stored = &mut self.orders[index];
             stored.status = ManagedRewardOrderStatus::Cancelled;
@@ -88,26 +81,6 @@ impl TickContext {
                 if notional <= Decimal::ZERO {
                     continue;
                 }
-                // Cash gate: the shared fund pool must have free capital to reserve.
-                if self.account.available_usd < notional {
-                    self.push_event(
-                        Some(plan.condition_id.clone()),
-                        None,
-                        "reward_capital_blocked",
-                        RewardRiskSeverity::Warning,
-                        format!(
-                            "insufficient capital for {} quote ({} needed, {} available)",
-                            leg.outcome, notional, self.account.available_usd
-                        ),
-                        json!({
-                            "token_id": leg.token_id,
-                            "notional": notional,
-                            "available": self.account.available_usd,
-                            "reserved": self.account.reserved_usd,
-                        }),
-                    );
-                    continue;
-                }
                 // Risk gate: stop adding exposure once held inventory hits the cap.
                 if self.config.max_global_position_usd > Decimal::ZERO
                     && self.global_inventory_notional() >= self.config.max_global_position_usd
@@ -115,8 +88,6 @@ impl TickContext {
                     continue;
                 }
 
-                self.account.available_usd -= notional;
-                self.account.reserved_usd += notional;
                 active_markets.insert(plan.condition_id.clone());
 
                 let id = self.next_id("rew");

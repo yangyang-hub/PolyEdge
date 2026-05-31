@@ -11,8 +11,8 @@ impl TickContext {
         let cost = (order.price * fill_size).round_dp(4);
         let now = self.now;
 
-        // Move reserved cash into inventory; release any over-reserved remainder.
-        self.account.reserved_usd = (self.account.reserved_usd - cost).max(Decimal::ZERO);
+        // Deduct capital on actual fill (no per-order reservation).
+        self.account.available_usd = (self.account.available_usd - cost).max(Decimal::ZERO);
 
         // Update inventory (average cost basis).
         let position = self.position_entry(&order);
