@@ -366,11 +366,11 @@ export async function runRewardBotOnceAction(): Promise<RewardBotActionResult> {
     const response = await runRewardBotOnce();
 
     return {
-      ...createActionSuccessResult("Reward bot simulation completed.", {
+      ...createActionSuccessResult("Reward bot simulation queued for worker execution.", {
         requestId: response.meta.request_id,
         traceId: response.meta.trace_id,
         operationId: `reward_run_${randomUUID().slice(0, 8)}`,
-        status: "completed",
+        status: "queued",
       }),
       snapshot: response.data,
     };
@@ -384,11 +384,11 @@ export async function cancelRewardBotOrdersAction(): Promise<RewardBotActionResu
     const response = await cancelRewardBotOrders();
 
     return {
-      ...createActionSuccessResult("Simulated reward orders cancelled.", {
+      ...createActionSuccessResult("Reward order cancellation queued for worker execution.", {
         requestId: response.meta.request_id,
         traceId: response.meta.trace_id,
         operationId: `reward_cancel_${randomUUID().slice(0, 8)}`,
-        status: "completed",
+        status: "queued",
       }),
       snapshot: response.data,
     };
@@ -402,11 +402,11 @@ export async function resetRewardBotAction(): Promise<RewardBotActionResult> {
     const response = await resetRewardBot();
 
     return {
-      ...createActionSuccessResult("Reward simulation reset.", {
+      ...createActionSuccessResult("Reward simulation reset queued for worker execution.", {
         requestId: response.meta.request_id,
         traceId: response.meta.trace_id,
         operationId: `reward_reset_${randomUUID().slice(0, 8)}`,
-        status: "completed",
+        status: "queued",
       }),
       snapshot: response.data,
     };
@@ -560,11 +560,11 @@ export async function runCopyTradeOnceAction(): Promise<CopyTradeActionResult> {
   try {
     const response = await runCopyTradeOnce();
     return {
-      ...createActionSuccessResult("Copy trading cycle completed.", {
+      ...createActionSuccessResult("Copy trading cycle queued for worker execution.", {
         requestId: response.meta.request_id,
         traceId: response.meta.trace_id,
         operationId: `copytrade_run_${randomUUID().slice(0, 8)}`,
-        status: "completed",
+        status: "queued",
       }),
       snapshot: response.data,
     };
@@ -577,11 +577,11 @@ export async function analyzeCopytradeWalletsAction(): Promise<CopyTradeActionRe
   try {
     const response = await analyzeWallets();
     return {
-      ...createActionSuccessResult("Wallet analysis completed.", {
+      ...createActionSuccessResult("Wallet analysis queued for worker execution.", {
         requestId: response.meta.request_id,
         traceId: response.meta.trace_id,
         operationId: `copytrade_analyze_${randomUUID().slice(0, 8)}`,
-        status: "completed",
+        status: "queued",
       }),
       snapshot: response.data,
     };
@@ -594,11 +594,11 @@ export async function cancelCopyTradeOrdersAction(): Promise<CopyTradeActionResu
   try {
     const response = await cancelCopyTradeOrders();
     return {
-      ...createActionSuccessResult("Copy trading orders cancelled.", {
+      ...createActionSuccessResult("Copy trading order cancellation queued for worker execution.", {
         requestId: response.meta.request_id,
         traceId: response.meta.trace_id,
         operationId: `copytrade_cancel_${randomUUID().slice(0, 8)}`,
-        status: "completed",
+        status: "queued",
       }),
       snapshot: response.data,
     };
@@ -611,11 +611,11 @@ export async function resetCopyTradeAction(): Promise<CopyTradeActionResult> {
   try {
     const response = await resetCopyTrade();
     return {
-      ...createActionSuccessResult("Copy trading simulation reset.", {
+      ...createActionSuccessResult("Copy trading simulation reset queued for worker execution.", {
         requestId: response.meta.request_id,
         traceId: response.meta.trace_id,
         operationId: `copytrade_reset_${randomUUID().slice(0, 8)}`,
-        status: "completed",
+        status: "queued",
       }),
       snapshot: response.data,
     };

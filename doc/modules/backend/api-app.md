@@ -16,7 +16,7 @@
 
 | 文件 | 职责 |
 |---|---|
-| `lib.rs` | 路由组装入口：`build_app(state: AppState) -> Router`（~461 行） |
+| `lib.rs` | 路由组装入口：`build_app(state: AppState) -> Router`（~458 行） |
 | `handlers/system.rs` | 健康检查、就绪检查、系统模式 |
 | `handlers/market_handlers.rs` | 市场列表和详情 |
 | `handlers/signal_actions.rs` | 信号 CRUD、重算、转换 |
@@ -26,8 +26,8 @@
 | `handlers/risk_handlers.rs` | 风控状态、kill switch |
 | `handlers/console_risk.rs` | 控制台风控视图端点 |
 | `handlers/mode_control.rs` | 系统模式转换 |
-| `handlers/rewards.rs` + `reward_inputs.rs` + `reward_mappers.rs` | 奖励机器人管理 |
-| `handlers/copytrade.rs` | 跟单管理 |
+| `handlers/rewards.rs` | 奖励机器人管理；run/cancel/reset 只入队 worker 控制命令 |
+| `handlers/copytrade.rs` | 跟单管理；run/analyze/cancel/reset 只入队 worker 控制命令 |
 | `handlers/wallet_analysis.rs` | 钱包分析 |
 | `handlers/streams.rs` | SSE 流式端点 |
 | `handlers/health.rs` | 健康检查 |
@@ -63,7 +63,9 @@
 - `TimeoutLayer`（10s）— 请求超时保护
 - 认证中间件：按路由组使用不同的认证级别
 
-Rewards Bot `run` 端点只从 `reward_markets` 表读取 bounded candidate pool，先做无需盘口的奖励市场预过滤，再并发读取候选 token 的 Redis orderbook cache，避免全量 reward market / orderbook 扫描触发 10s 请求超时。
+Rewards Bot 的 `run` / `cancel-all` / `reset` 端点不执行策略、不读取 orderbook cache，也不直接修改模拟订单。API 只把控制命令写入 `reward_control_commands`，随后返回当前 snapshot；命令由 `polyedge-worker` 在 rewards tick 中领取并执行。
+
+Copy Trading 的 `run` / `analyze` / `cancel-all` / `reset` 端点同样不抓取 Polymarket Data API / CLOB，也不直接执行跟单循环；API 只写入 `copytrade_control_commands`，worker 负责领取并执行。
 
 ## 常量
 
@@ -95,6 +97,7 @@ HTTP Response
 
 - ~40 个 REST 端点已实现
 - SSE 流式端点已覆盖 signals、risk、events、arbitrage
+- Rewards Bot 与 Copy Trading 控制端点只作为前端接口和命令入口，具体模拟/分析/撤单/重置由 worker 处理
 - 认证当前为 `off` 模式，使用 dev-bypass 头
 - Step-up 认证用于敏感操作（模式切换、kill switch、执行提交）
 

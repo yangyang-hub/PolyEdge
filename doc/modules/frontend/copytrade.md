@@ -4,7 +4,7 @@
 
 ## 概述
 
-`/copy-trading` 页面管理跟单机器人：跟踪钱包、配置策略参数、运行模拟、查看成交/订单/事件、取消和重置。
+`/copy-trading` 页面管理跟单机器人：跟踪钱包、配置策略参数、向 worker 提交运行/分析/取消/重置命令、查看成交/订单/事件。
 
 ## 架构与关键文件
 
@@ -33,10 +33,10 @@
 - `removeTrackedWalletAction` — 移除跟踪钱包
 - `setCopytradeWalletStatusAction` — 设置钱包状态（active/paused）
 - `updateCopyTradeConfigAction` — 更新配置
-- `runCopyTradeOnceAction` — 运行一次跟单
-- `analyzeCopytradeWalletsAction` — 分析钱包
-- `cancelCopyTradeOrdersAction` — 取消所有订单
-- `resetCopyTradeAction` — 重置模拟
+- `runCopyTradeOnceAction` — 入队一次跟单循环命令
+- `analyzeCopytradeWalletsAction` — 入队钱包分析命令
+- `cancelCopyTradeOrdersAction` — 入队取消所有订单命令
+- `resetCopyTradeAction` — 入队重置模拟命令
 
 ## 数据流
 
@@ -47,7 +47,7 @@ Loader（copytrade-page-data.ts）
 
 Client Component（copytrade-workbench.tsx）
     → 接收 initialSnapshot prop
-    → 用户操作 → Server Action → API → 返回新 snapshot → 更新状态
+    → 用户操作 → Server Action → API 入队控制命令 → 返回当前 snapshot → worker 处理后后续 snapshot 体现变化
 ```
 
 ## i18n
@@ -56,11 +56,12 @@ Client Component（copytrade-workbench.tsx）
 
 ## 当前状态
 
-- 完整的 Run / Analyze / Cancel / Reset 交互
+- 完整的 Run / Analyze / Cancel / Reset 入队交互
 - 钱包管理（添加/移除/暂停/激活）
 - 配置编辑
 - 三个分页列表（成交/订单/事件）
 - `mode=live` 已结构化支持但未接入真实下单
+- 跟单循环、钱包分析、撤单和重置由 worker 执行，API 不直接执行任务
 
 ## 修改检查清单
 

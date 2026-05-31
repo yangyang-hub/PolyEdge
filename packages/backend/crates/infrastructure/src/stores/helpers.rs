@@ -500,3 +500,22 @@ fn reward_event_from_row(row: &sqlx::postgres::PgRow) -> Result<RewardRiskEvent>
         created_at: row.try_get("created_at").map_err(postgres_decode_error)?,
     })
 }
+
+fn reward_control_command_from_row(
+    row: &sqlx::postgres::PgRow,
+) -> Result<RewardControlCommand> {
+    let action_raw: String = row.try_get("action").map_err(postgres_decode_error)?;
+    let status_raw: String = row.try_get("status").map_err(postgres_decode_error)?;
+    Ok(RewardControlCommand {
+        id: row.try_get("id").map_err(postgres_decode_error)?,
+        action: RewardControlAction::from_str(&action_raw)?,
+        account_id: row.try_get("account_id").map_err(postgres_decode_error)?,
+        reason: row.try_get("reason").map_err(postgres_decode_error)?,
+        status: RewardControlCommandStatus::from_str(&status_raw)?,
+        requested_at: row.try_get("requested_at").map_err(postgres_decode_error)?,
+        started_at: row.try_get("started_at").map_err(postgres_decode_error)?,
+        completed_at: row.try_get("completed_at").map_err(postgres_decode_error)?,
+        trace_id: row.try_get("trace_id").map_err(postgres_decode_error)?,
+        error: row.try_get("error").map_err(postgres_decode_error)?,
+    })
+}

@@ -1,9 +1,112 @@
 async fn run_reward_bot_once(state: &AppState, trace_id: &str) -> Result<RewardBotRunReport> {
+    let command_report = process_pending_reward_control_commands(state).await?;
+    if command_report.processed > 0 {
+        return Ok(command_report.report);
+    }
+
+    run_reward_bot_tick(state, trace_id, false).await
+}
+
+async fn run_reward_bot_tick(
+    state: &AppState,
+    trace_id: &str,
+    force_orders: bool,
+) -> Result<RewardBotRunReport> {
     let (markets, books) = fetch_reward_bot_inputs(state).await?;
-    state
-        .reward_bot_service
-        .run_simulation(markets, books, trace_id)
-        .await
+    if force_orders {
+        state
+            .reward_bot_service
+            .run_simulation_forced(markets, books, trace_id)
+            .await
+    } else {
+        state
+            .reward_bot_service
+            .run_simulation(markets, books, trace_id)
+            .await
+    }
+}
+
+#[derive(Debug, Default)]
+struct RewardCommandProcessReport {
+    processed: usize,
+    report: RewardBotRunReport,
+}
+
+async fn process_pending_reward_control_commands(
+    state: &AppState,
+) -> Result<RewardCommandProcessReport> {
+    let mut total = RewardCommandProcessReport::default();
+    let max_commands = usize::from(task_limit(state).unwrap_or(10).max(1));
+
+    for _ in 0..max_commands {
+        let trace_id = new_trace_id();
+        let Some(command) = state
+            .reward_bot_service
+            .claim_next_control_command(&trace_id)
+            .await?
+        else {
+            break;
+        };
+
+        let result = execute_reward_control_command(state, &command, &trace_id).await;
+        match result {
+            Ok(report) => {
+                state
+                    .reward_bot_service
+                    .complete_control_command(&command, &trace_id)
+                    .await?;
+                accumulate_report(&mut total.report, &report);
+                total.processed += 1;
+                info!(
+                    trace_id = %trace_id,
+                    command_id = %command.id,
+                    action = command.action.as_str(),
+                    "completed queued reward bot control command",
+                );
+            }
+            Err(error) => {
+                state
+                    .reward_bot_service
+                    .fail_control_command(&command, &trace_id, &error)
+                    .await?;
+                total.processed += 1;
+                warn!(
+                    trace_id = %trace_id,
+                    command_id = %command.id,
+                    action = command.action.as_str(),
+                    error = %error,
+                    "queued reward bot control command failed",
+                );
+            }
+        }
+    }
+
+    Ok(total)
+}
+
+async fn execute_reward_control_command(
+    state: &AppState,
+    command: &RewardControlCommand,
+    trace_id: &str,
+) -> Result<RewardBotRunReport> {
+    match command.action {
+        RewardControlAction::RunOnce => run_reward_bot_tick(state, trace_id, true).await,
+        RewardControlAction::CancelAll => {
+            state
+                .reward_bot_service
+                .cancel_all_orders(
+                    command.account_id.as_deref(),
+                    "worker processed queued rewards cancel-all command",
+                    trace_id,
+                )
+                .await?;
+            Ok(RewardBotRunReport::default())
+        }
+        RewardControlAction::Reset => {
+            state.reward_bot_service.reset_simulation(trace_id).await?;
+            Ok(RewardBotRunReport::default())
+        }
+    }
 }
 
 async fn poll_reward_bot(
@@ -118,7 +221,7 @@ async fn fetch_reward_bot_inputs(
         .list_reward_run_candidate_markets()
         .await?;
 
-    // Read order books from Redis cache (written by orderbook-stream worker).
+    // Read order books from the worker-local cache maintained by orderbook-stream.
     let token_ids = select_reward_book_token_ids(&markets);
     let mut books = HashMap::new();
     let cache = state.orderbook_cache.clone();

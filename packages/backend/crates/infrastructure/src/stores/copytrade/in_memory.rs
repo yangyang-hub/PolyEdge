@@ -8,6 +8,7 @@ pub struct InMemoryCopyTradeStore {
     positions: RwLock<HashMap<(String, String), CopyPosition>>,
     events: RwLock<Vec<CopyEvent>>,
     account_state: RwLock<Option<CopyAccountState>>,
+    control_commands: RwLock<Vec<CopyControlCommand>>,
 }
 
 impl InMemoryCopyTradeStore {
@@ -21,6 +22,7 @@ impl InMemoryCopyTradeStore {
             positions: RwLock::new(HashMap::new()),
             events: RwLock::new(Vec::new()),
             account_state: RwLock::new(None),
+            control_commands: RwLock::new(Vec::new()),
         }
     }
 }
@@ -33,6 +35,63 @@ impl CopyTradeStore for InMemoryCopyTradeStore {
 
     async fn save_config(&self, config: &CopyTradeConfig) -> Result<()> {
         *self.config.write().await = config.clone().normalized();
+        Ok(())
+    }
+
+    async fn enqueue_control_command(&self, command: CopyControlCommand) -> Result<()> {
+        let mut commands = self.control_commands.write().await;
+        commands.push(command);
+        commands.sort_by(|left, right| left.requested_at.cmp(&right.requested_at));
+        Ok(())
+    }
+
+    async fn claim_next_control_command(
+        &self,
+        trace_id: &str,
+        now: OffsetDateTime,
+    ) -> Result<Option<CopyControlCommand>> {
+        let mut commands = self.control_commands.write().await;
+        let Some(command) = commands
+            .iter_mut()
+            .find(|command| command.status == CopyControlCommandStatus::Pending)
+        else {
+            return Ok(None);
+        };
+        command.status = CopyControlCommandStatus::Running;
+        command.started_at = Some(now);
+        command.trace_id = Some(trace_id.to_string());
+        Ok(Some(command.clone()))
+    }
+
+    async fn complete_control_command(
+        &self,
+        command_id: &str,
+        trace_id: &str,
+        now: OffsetDateTime,
+    ) -> Result<()> {
+        let mut commands = self.control_commands.write().await;
+        if let Some(command) = commands.iter_mut().find(|command| command.id == command_id) {
+            command.status = CopyControlCommandStatus::Completed;
+            command.completed_at = Some(now);
+            command.trace_id = Some(trace_id.to_string());
+        }
+        Ok(())
+    }
+
+    async fn fail_control_command(
+        &self,
+        command_id: &str,
+        trace_id: &str,
+        error: &str,
+        now: OffsetDateTime,
+    ) -> Result<()> {
+        let mut commands = self.control_commands.write().await;
+        if let Some(command) = commands.iter_mut().find(|command| command.id == command_id) {
+            command.status = CopyControlCommandStatus::Failed;
+            command.completed_at = Some(now);
+            command.trace_id = Some(trace_id.to_string());
+            command.error = Some(error.to_string());
+        }
         Ok(())
     }
 

@@ -2,6 +2,25 @@
 pub trait RewardBotStore: Send + Sync {
     async fn load_config(&self) -> Result<RewardBotConfig>;
     async fn save_config(&self, config: &RewardBotConfig) -> Result<()>;
+    async fn enqueue_control_command(&self, command: RewardControlCommand) -> Result<()>;
+    async fn claim_next_control_command(
+        &self,
+        trace_id: &str,
+        now: OffsetDateTime,
+    ) -> Result<Option<RewardControlCommand>>;
+    async fn complete_control_command(
+        &self,
+        command_id: &str,
+        trace_id: &str,
+        now: OffsetDateTime,
+    ) -> Result<()>;
+    async fn fail_control_command(
+        &self,
+        command_id: &str,
+        trace_id: &str,
+        error: &str,
+        now: OffsetDateTime,
+    ) -> Result<()>;
     async fn upsert_markets(&self, markets: &[RewardMarket]) -> Result<()>;
     /// Replace the current rewards quote plan snapshot.
     async fn save_quote_plans(&self, plans: &[RewardQuotePlan]) -> Result<()>;
@@ -96,6 +115,117 @@ impl RewardBotService {
         let next = current.apply_patch(patch);
         self.store.save_config(&next).await?;
         Ok(next)
+    }
+
+    pub async fn enqueue_control_command(
+        &self,
+        action: RewardControlAction,
+        reason: &str,
+        trace_id: &str,
+    ) -> Result<RewardControlCommand> {
+        let config = self.read_config().await?;
+        let now = OffsetDateTime::now_utc();
+        let command = RewardControlCommand {
+            id: reward_control_command_id(trace_id),
+            action,
+            account_id: Some(config.account_id.clone()),
+            reason: reason.to_string(),
+            status: RewardControlCommandStatus::Pending,
+            requested_at: now,
+            started_at: None,
+            completed_at: None,
+            trace_id: Some(trace_id.to_string()),
+            error: None,
+        };
+
+        self.store.enqueue_control_command(command.clone()).await?;
+        self.store
+            .log_event(new_risk_event(
+                Some(config.account_id),
+                None,
+                None,
+                "reward_control_command_queued",
+                RewardRiskSeverity::Info,
+                format!("Queued rewards control command: {}", action.as_str()),
+                json!({
+                    "command_id": &command.id,
+                    "action": action.as_str(),
+                    "reason": reason,
+                    "trace_id": trace_id,
+                }),
+            ))
+            .await?;
+        Ok(command)
+    }
+
+    pub async fn claim_next_control_command(
+        &self,
+        trace_id: &str,
+    ) -> Result<Option<RewardControlCommand>> {
+        self.store
+            .claim_next_control_command(trace_id, OffsetDateTime::now_utc())
+            .await
+    }
+
+    pub async fn complete_control_command(
+        &self,
+        command: &RewardControlCommand,
+        trace_id: &str,
+    ) -> Result<()> {
+        self.store
+            .complete_control_command(&command.id, trace_id, OffsetDateTime::now_utc())
+            .await?;
+        self.store
+            .log_event(new_risk_event(
+                command.account_id.clone(),
+                None,
+                None,
+                "reward_control_command_completed",
+                RewardRiskSeverity::Info,
+                format!("Completed rewards control command: {}", command.action.as_str()),
+                json!({
+                    "command_id": command.id,
+                    "action": command.action.as_str(),
+                    "trace_id": trace_id,
+                }),
+            ))
+            .await
+    }
+
+    pub async fn fail_control_command(
+        &self,
+        command: &RewardControlCommand,
+        trace_id: &str,
+        error: &AppError,
+    ) -> Result<()> {
+        let error_message = error.to_string();
+        self.store
+            .fail_control_command(
+                &command.id,
+                trace_id,
+                &error_message,
+                OffsetDateTime::now_utc(),
+            )
+            .await?;
+        self.store
+            .log_event(new_risk_event(
+                command.account_id.clone(),
+                None,
+                None,
+                "reward_control_command_failed",
+                RewardRiskSeverity::Critical,
+                format!(
+                    "Failed rewards control command {}: {error_message}",
+                    command.action.as_str()
+                ),
+                json!({
+                    "command_id": command.id,
+                    "action": command.action.as_str(),
+                    "trace_id": trace_id,
+                    "error": error_message,
+                }),
+            ))
+            .await
     }
 
     /// Persist reward markets fetched by the sync worker.
@@ -484,4 +614,8 @@ fn reward_run_market_limit(config: &RewardBotConfig) -> u16 {
         .max(order_limit)
         .max(DEFAULT_LIST_LIMIT)
         .min(MAX_LIST_LIMIT)
+}
+
+fn reward_control_command_id(trace_id: &str) -> String {
+    format!("rewcmd_{}", trace_id.trim_start_matches("trc_"))
 }

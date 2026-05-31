@@ -28,10 +28,10 @@
 | `worker/execution_queue.rs` | 执行队列管理 |
 | `worker/execution_reconcile.rs` | 订单/成交对账 |
 | `worker/orderbook_stream.rs` | WebSocket 盘口流实时订阅 |
-| `worker/rewards.rs` | 奖励机器人 tick |
+| `worker/rewards.rs` | 奖励机器人 tick；消费 API 入队的 run/cancel/reset 控制命令 |
 | `worker/arbitrage.rs` | 套利扫描 |
 | `worker/arbitrage_books.rs` | 套利盘口快照 |
-| `worker/copytrade.rs` | 跟单执行 |
+| `worker/copytrade.rs` | 跟单执行；消费 API 入队的 run/analyze/cancel/reset 控制命令 |
 | `worker/polymarket_config.rs` | Polymarket 配置刷新 |
 | `worker/polymarket_events.rs` | Polymarket 用户事件 WebSocket |
 | `worker/shared.rs` | 共享辅助函数 |
@@ -48,10 +48,10 @@
 | `scan-arbitrage-once` | `scan_arbitrage_once` | 一次性套利扫描 |
 | `poll-arbitrage-radar` | `poll_arbitrage_radar` | 持续套利扫描 |
 | `analyze-arbitrage-opportunities` | `analyze_arbitrage_opportunities` | 套利历史分析 |
-| `scan-rewards-once` | `run_reward_bot_once` | 一次性奖励模拟 |
-| `poll-reward-bot` | `poll_reward_bot` | 持续奖励模拟轮询 |
-| `scan-copytrade-once` | `run_copytrade_once` | 一次性跟单循环 |
-| `poll-copytrade` | `poll_copytrade` | 持续跟单轮询 |
+| `scan-rewards-once` | `run_reward_bot_once` | 一次性消费 rewards 控制命令或执行奖励模拟 |
+| `poll-reward-bot` | `poll_reward_bot` | 持续消费 rewards 控制命令和奖励模拟轮询 |
+| `scan-copytrade-once` | `run_copytrade_once` | 一次性消费 copytrade 控制命令或执行跟单循环 |
+| `poll-copytrade` | `poll_copytrade` | 持续消费 copytrade 控制命令和跟单轮询 |
 | `analyze-wallets-once` | `analyze_wallets_once` | 一次性钱包分析 |
 | `drain-execution-queue` | `drain_execution_queue` | 处理排队的执行请求 |
 | `reconcile-paper-fills` | `reconcile_paper_fills` | Paper 交易对账 |
@@ -80,22 +80,36 @@ Report: `MarketSyncReport { fetched, upserted }`
 ### copytrade — 跟单
 
 ```
-fetch_copytrade_inputs() // 获取钱包活动 + 盘口
-    → copytrade_service.run_copy_cycle() // 业务逻辑
+copytrade_service.claim_next_control_command()
+    → worker 执行 queued run_once / analyze_wallets / cancel_all / reset
+    → copytrade_service.complete_control_command() 或 fail_control_command()
+
+无待处理控制命令时：
+    fetch_copytrade_inputs() // 获取钱包活动 + 盘口
+        → copytrade_service.run_copy_cycle() // 业务逻辑
 ```
 
 Report: `CopyTradeRunReport { wallets_scanned, trades_detected, orders_placed, orders_filled, orders_skipped }`
 
-### rewards — 奖励模拟
+约束：worker 是 copytrade 手动控制命令和跟单循环的唯一执行者。API 只把 `run_once` / `analyze_wallets` / `cancel_all` / `reset` 写入 `copytrade_control_commands`；worker 每轮先领取并处理待执行命令，处理到命令时跳过本轮自动 tick。
+
+### rewards — 奖励模拟与控制命令
 
 ```
-fetch_reward_bot_inputs() // 获取奖励市场 + 盘口
-    → reward_bot_service.run_simulation() // 模拟 tick
+reward_bot_service.claim_next_control_command()
+    → worker 执行 queued run_once / cancel_all / reset
+    → reward_bot_service.complete_control_command() 或 fail_control_command()
+
+无待处理控制命令时：
+    fetch_reward_bot_inputs() // 获取奖励市场 + 盘口
+        → reward_bot_service.run_simulation() // 自动模拟 tick
 ```
 
 Report: `RewardBotRunReport { markets_scanned, books_fetched, plans_built, eligible_plans, simulated_orders, cancelled_orders, filled_orders, reward_accrued }`
 
-约束：worker 只从 Postgres 的 `reward_markets` 读取奖励市场、从进程内 `InMemoryOrderbookCache` 读取盘口（TTL 默认 5 分钟，后台清理任务每 60 秒淘汰过期条目）。每个 tick 只读取 bounded candidate market pool（默认至少 100、最多 500 个高日奖励市场），先按配置预过滤奖励市场，再并发读取候选盘口缓存；若本 tick 没有新鲜缓存盘口，模拟器不会产生盘口成交或 rewards 计提，只刷新当前候选计划/保留订单状态。
+约束：worker 是 rewards 策略和控制命令的唯一执行者。API 只把 `run_once` / `cancel_all` / `reset` 写入 `reward_control_commands`；worker 每轮先领取并处理待执行命令，处理到命令时跳过本轮自动 tick。`run_once` 命令会强制执行一次模拟（即使自动挂单开关关闭），`cancel_all` 撤销开放模拟订单并释放 reserved，`reset` 重置模拟资金池。
+
+自动 tick 只从 Postgres 的 `reward_markets` 读取奖励市场、从进程内 `InMemoryOrderbookCache` 读取盘口（TTL 默认 5 分钟，后台清理任务每 60 秒淘汰过期条目）。每个 tick 只读取 bounded candidate market pool（默认至少 100、最多 500 个高日奖励市场），先按配置预过滤奖励市场，再并发读取候选盘口缓存；若本 tick 没有新鲜缓存盘口，模拟器不会产生盘口成交或 rewards 计提，只刷新当前候选计划/保留订单状态。
 
 ### orderbook_stream — 盘口流
 
@@ -143,6 +157,8 @@ Report: `NewsIngestionRunReport { sources_scanned/succeeded/failed, fetched, ins
 
 - 所有 18 个子命令已实现
 - `run` 主循环包含 market_sync、orderbook_stream、rewards、copytrade、arbitrage、news、execution 等任务
+- rewards worker 会通过数据库命令队列接收前端 Run / Cancel / Reset 请求，API 进程不再执行 rewards 策略
+- copytrade worker 会通过数据库命令队列接收前端 Run / Analyze / Cancel / Reset 请求，API 进程不再执行跟单任务或抓取跟单输入
 - 默认大部分 worker 通过配置开关控制启用/禁用
 - Polymarket live 任务需要真实凭证
 

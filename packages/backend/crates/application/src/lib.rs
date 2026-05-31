@@ -23,15 +23,15 @@ pub use arbitrage::{
     market_book_snapshot_id, validate_arbitrage_opportunity,
 };
 pub use copytrade::{
-    AddTrackedWalletInput, CopyAccountState, CopyBookLevel, CopyDecision, CopyEvent,
-    CopyEventSeverity, CopyFill, CopyOrder, CopyOrderBook, CopyOrderSide, CopyOrderStatus,
-    CopyPosition, CopySimulationOutcome, CopySizingMode, CopySkipReason, CopyTradeConfig,
-    CopyTradeConfigPatch, CopyTradeMode, CopyTradeRunReport, CopyTradeService, CopyTradeSnapshot,
-    CopyTradeStatus, CopyTradeStore, TrackedWallet, TrackedWalletStatus,
-    WalletActionInput, WalletActivityInput, WalletAnalysisStats, WalletFeedInput,
-    WalletPositionInput, SourceTrade, build_wallet_analysis, compute_copy_size,
-    check_skip_reasons, run_copy_simulation_tick, new_copy_event, normalize_address,
-    validate_copytrade_list_limit,
+    AddTrackedWalletInput, CopyAccountState, CopyBookLevel, CopyControlAction, CopyControlCommand,
+    CopyControlCommandStatus, CopyDecision, CopyEvent, CopyEventSeverity, CopyFill, CopyOrder,
+    CopyOrderBook, CopyOrderSide, CopyOrderStatus, CopyPosition, CopySimulationOutcome,
+    CopySizingMode, CopySkipReason, CopyTradeConfig, CopyTradeConfigPatch, CopyTradeMode,
+    CopyTradeRunReport, CopyTradeService, CopyTradeSnapshot, CopyTradeStatus, CopyTradeStore,
+    SourceTrade, TrackedWallet, TrackedWalletStatus, WalletActionInput, WalletActivityInput,
+    WalletAnalysisStats, WalletFeedInput, WalletPositionInput, build_wallet_analysis,
+    check_skip_reasons, compute_copy_size, new_copy_event, normalize_address,
+    run_copy_simulation_tick, validate_copytrade_list_limit,
 };
 pub use execution::{
     DEFAULT_EXECUTION_CONNECTOR, DispatchExecutionListFilters, ExecutionDispatchCandidate,
@@ -49,10 +49,10 @@ pub use market_event::{
     EventListFilters, EventView, EvidenceListFilters, EvidenceView, FixtureBundle,
     FixtureEventRecord, FixtureEvidenceRecord, FixtureIngestionReport, FixtureMarketRecord,
     FixtureSignalRecord, MarketCategoryView, MarketEventService, MarketEventStore,
-    MarketListFilters, MarketSortField, MarketView, ProbabilityEstimateListFilters, ProbabilityEstimateView, RecomputeSignalCommand,
-    RecomputeSignalDraft, RecomputeSignalResult, SignalListFilters, SignalTransitionDraft,
-    SignalTransitionListFilters, SignalTransitionView, SignalView, SortOrder,
-    SourceHealthAdjustment, build_recompute_signal_draft,
+    MarketListFilters, MarketSortField, MarketView, ProbabilityEstimateListFilters,
+    ProbabilityEstimateView, RecomputeSignalCommand, RecomputeSignalDraft, RecomputeSignalResult,
+    SignalListFilters, SignalTransitionDraft, SignalTransitionListFilters, SignalTransitionView,
+    SignalView, SortOrder, SourceHealthAdjustment, build_recompute_signal_draft,
     build_recompute_signal_draft_with_source_health,
 };
 pub use news_ingestion::{
@@ -61,17 +61,16 @@ pub use news_ingestion::{
     NewsSourceHealthListFilters, NewsSourceHealthView, NewsSourceIngestionReport,
     NewsSourceSuccessUpdate, degraded_health_score,
 };
-pub use orderbook_cache::{
-    BookSource, CachedBookLevel, CachedOrderBook, OrderbookCache,
-};
+pub use orderbook_cache::{BookSource, CachedBookLevel, CachedOrderBook, OrderbookCache};
 pub use rewards::{
     ManagedRewardOrder, ManagedRewardOrderStatus, PostFillStrategy, RewardAccountState,
-    RewardBookLevel, RewardBotConfig, RewardBotConfigPatch, RewardBotRunReport,
-    RewardBotService, RewardBotSnapshot, RewardBotStatus, RewardBotStore, RewardFill,
-    RewardFillRole, RewardMarket, RewardOrderBook, RewardOrderSide, RewardPosition, RewardQuoteLeg,
-    RewardQuotePlan, RewardRiskEvent, RewardRiskSeverity, RewardSimulationOutcome, RewardToken,
-    build_reward_quote_plans, new_risk_event, run_reward_simulation_tick,
-    select_reward_book_token_ids, validate_reward_list_limit,
+    RewardBookLevel, RewardBotConfig, RewardBotConfigPatch, RewardBotRunReport, RewardBotService,
+    RewardBotSnapshot, RewardBotStatus, RewardBotStore, RewardControlAction, RewardControlCommand,
+    RewardControlCommandStatus, RewardFill, RewardFillRole, RewardMarket, RewardOrderBook,
+    RewardOrderSide, RewardPosition, RewardQuoteLeg, RewardQuotePlan, RewardRiskEvent,
+    RewardRiskSeverity, RewardSimulationOutcome, RewardToken, build_reward_quote_plans,
+    new_risk_event, run_reward_simulation_tick, select_reward_book_token_ids,
+    validate_reward_list_limit,
 };
 pub use risk::{
     ApproveSignalCommand, ApproveSignalReceipt, KillSwitchReceipt, RejectSignalCommand,

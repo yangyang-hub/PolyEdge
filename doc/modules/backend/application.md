@@ -82,8 +82,14 @@
 - Quote Plans：`save_quote_plans`（替换当前计划快照）、`list_quote_plans`
 - Orders/Positions/Events：完整 CRUD
 - Simulation：`apply_simulation_tick`（原子持久化 orders/fills/positions/ledger/events）、`reset_simulation`
+- Control Commands：`enqueue_control_command`、`claim_next_control_command`、`complete_control_command`、`fail_control_command`
 
-**服务：** `RewardBotService` — 读写配置、市场管理、快照聚合
+**服务：** `RewardBotService` — 读写配置、市场管理、快照聚合、rewards 控制命令入队/领取/完成状态管理
+
+**控制命令类型：**
+- `RewardControlAction`：`run_once`、`cancel_all`、`reset`
+- `RewardControlCommandStatus`：`pending`、`running`、`completed`、`failed`
+- `RewardControlCommand`：API 与 worker 之间的数据库命令消息
 
 **模拟引擎：** `run_reward_simulation_tick`（在 `rewards/engine.rs` 中，通过 `include!` 拆分到 `engine/{reconcile,fills,quoting,rewards_calc,state}.rs`）
 
@@ -92,15 +98,19 @@
 - `max_markets=0`、`max_open_orders=0` 或 `quote_size_usd=0` 表示不再新挂单。
 - 缺少新鲜缓存盘口时不会模拟成交，也不会计提 rewards；奖励竞争深度从缓存盘口直接观测。
 - 全局敞口门槛使用「已有库存 notional + 开放买单 reserved」。
-- 单次 rewards tick 使用 `list_reward_run_candidate_markets()` 只从 `reward_markets` 表读取有限候选池（默认至少 100、最多 500 个高日奖励市场），再按 active、token、最低日奖励、有效奖励 spread、下单开关做无需盘口的预过滤；只有通过预过滤的奖励市场会读取 Redis orderbook cache 并生成当前 quote plan 快照。
+- 单次 rewards tick 使用 `list_reward_run_candidate_markets()` 只从 `reward_markets` 表读取有限候选池（默认至少 100、最多 500 个高日奖励市场），再按 active、token、最低日奖励、有效奖励 spread、下单开关做无需盘口的预过滤；只有通过预过滤的奖励市场会读取 worker 进程内 orderbook cache 并生成当前 quote plan 快照。
 
 ### copytrade — 跟单
 
 **Store Trait：** `CopyTradeStore`
 - Config/Wallets/SourceTrades/Orders/Positions/Events/AccountState 完整 CRUD
 - 原子 tick：`apply_copy_tick(outcome, trace_id)`
+- Control Commands：`enqueue_control_command`、`claim_next_control_command`、`complete_control_command`、`fail_control_command`
 
-**服务：** `CopyTradeService` — 配置管理
+**服务：** `CopyTradeService` — 配置管理、钱包管理、跟单模拟、控制命令入队/领取/完成状态管理
+
+**控制命令类型：** `CopyControlAction`（run_once/analyze_wallets/cancel_all/reset）、`CopyControlCommandStatus`、`CopyControlCommand`
+
 **模拟引擎：** `run_copy_simulation_tick`、`compute_copy_size`
 
 ### arbitrage — 套利
@@ -152,7 +162,9 @@ orderbook_cache ← (共享基础设施 trait)
 ## 当前状态
 
 - 所有模块已实现完整的 Store trait 和 Service struct
-- Rewards 和 Copytrade 的模拟引擎已具备完整功能；Rewards 模拟资金池会占用/释放开放买单资金，且成交/计奖依赖新鲜缓存盘口。
+- Rewards 和 Copytrade 的模拟引擎已具备完整功能；Rewards 模拟资金池会占用/释放开放买单资金，且成交/计奖依赖 worker 进程内的新鲜缓存盘口。
+- Rewards 已具备数据库控制命令队列，API 负责入队，worker 负责执行 run/cancel/reset。
+- Copytrade 已具备数据库控制命令队列，API 负责入队，worker 负责执行 run/analyze/cancel/reset。
 - Wallet analysis 是纯计算，已完全实现
 - Arbitrage 是只读链路（发现/记录/校验/分析/展示），不会创建执行请求
 

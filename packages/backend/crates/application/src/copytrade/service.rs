@@ -2,6 +2,25 @@
 pub trait CopyTradeStore: Send + Sync {
     async fn load_config(&self) -> Result<CopyTradeConfig>;
     async fn save_config(&self, config: &CopyTradeConfig) -> Result<()>;
+    async fn enqueue_control_command(&self, command: CopyControlCommand) -> Result<()>;
+    async fn claim_next_control_command(
+        &self,
+        trace_id: &str,
+        now: OffsetDateTime,
+    ) -> Result<Option<CopyControlCommand>>;
+    async fn complete_control_command(
+        &self,
+        command_id: &str,
+        trace_id: &str,
+        now: OffsetDateTime,
+    ) -> Result<()>;
+    async fn fail_control_command(
+        &self,
+        command_id: &str,
+        trace_id: &str,
+        error: &str,
+        now: OffsetDateTime,
+    ) -> Result<()>;
 
     // Wallet management
     async fn list_wallets(&self) -> Result<Vec<TrackedWallet>>;
@@ -77,6 +96,114 @@ impl CopyTradeService {
         let next = current.apply_patch(patch);
         self.store.save_config(&next).await?;
         Ok(next)
+    }
+
+    pub async fn enqueue_control_command(
+        &self,
+        action: CopyControlAction,
+        reason: &str,
+        trace_id: &str,
+    ) -> Result<CopyControlCommand> {
+        let config = self.read_config().await?;
+        let now = OffsetDateTime::now_utc();
+        let command = CopyControlCommand {
+            id: copy_control_command_id(trace_id),
+            action,
+            account_id: Some(config.account_id.clone()),
+            reason: reason.to_string(),
+            status: CopyControlCommandStatus::Pending,
+            requested_at: now,
+            started_at: None,
+            completed_at: None,
+            trace_id: Some(trace_id.to_string()),
+            error: None,
+        };
+
+        self.store.enqueue_control_command(command.clone()).await?;
+        self.store
+            .log_event(new_copy_event(
+                Some(config.account_id),
+                None,
+                "copytrade_control_command_queued",
+                CopyEventSeverity::Info,
+                format!("Queued copytrade control command: {}", action.as_str()),
+                json!({
+                    "command_id": &command.id,
+                    "action": action.as_str(),
+                    "reason": reason,
+                    "trace_id": trace_id,
+                }),
+            ))
+            .await?;
+        Ok(command)
+    }
+
+    pub async fn claim_next_control_command(
+        &self,
+        trace_id: &str,
+    ) -> Result<Option<CopyControlCommand>> {
+        self.store
+            .claim_next_control_command(trace_id, OffsetDateTime::now_utc())
+            .await
+    }
+
+    pub async fn complete_control_command(
+        &self,
+        command: &CopyControlCommand,
+        trace_id: &str,
+    ) -> Result<()> {
+        self.store
+            .complete_control_command(&command.id, trace_id, OffsetDateTime::now_utc())
+            .await?;
+        self.store
+            .log_event(new_copy_event(
+                command.account_id.clone(),
+                None,
+                "copytrade_control_command_completed",
+                CopyEventSeverity::Info,
+                format!("Completed copytrade control command: {}", command.action.as_str()),
+                json!({
+                    "command_id": command.id,
+                    "action": command.action.as_str(),
+                    "trace_id": trace_id,
+                }),
+            ))
+            .await
+    }
+
+    pub async fn fail_control_command(
+        &self,
+        command: &CopyControlCommand,
+        trace_id: &str,
+        error: &AppError,
+    ) -> Result<()> {
+        let error_message = error.to_string();
+        self.store
+            .fail_control_command(
+                &command.id,
+                trace_id,
+                &error_message,
+                OffsetDateTime::now_utc(),
+            )
+            .await?;
+        self.store
+            .log_event(new_copy_event(
+                command.account_id.clone(),
+                None,
+                "copytrade_control_command_failed",
+                CopyEventSeverity::Critical,
+                format!(
+                    "Failed copytrade control command {}: {error_message}",
+                    command.action.as_str()
+                ),
+                json!({
+                    "command_id": command.id,
+                    "action": command.action.as_str(),
+                    "trace_id": trace_id,
+                    "error": error_message,
+                }),
+            ))
+            .await
     }
 
     pub async fn snapshot(&self) -> Result<CopyTradeSnapshot> {
@@ -584,4 +711,8 @@ fn apply_slippage(
         CopyOrderSide::Buy => (source_price + slippage).min(config.max_price),
         CopyOrderSide::Sell => (source_price - slippage).max(config.min_price),
     }
+}
+
+fn copy_control_command_id(trace_id: &str) -> String {
+    format!("copycmd_{}", trace_id.trim_start_matches("trc_"))
 }

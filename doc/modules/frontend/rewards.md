@@ -4,7 +4,7 @@
 
 ## 概述
 
-`/rewards` 页面管理做市奖励机器人的生命周期：配置、运行模拟、查看订单/持仓/事件、取消和重置。
+`/rewards` 页面管理做市奖励机器人的生命周期：配置、向 worker 提交运行/取消/重置命令、查看订单/持仓/事件。
 
 ## 架构与关键文件
 
@@ -30,15 +30,15 @@
 
 ## 关键交互
 
-- **Run** → `runRewardBotOnce()` → 后端对预过滤后的 reward market candidate pool 执行一轮模拟并展示新的 snapshot
-- **Cancel open sim orders** → `cancelRewardBotOrders()` → 撤销未成交模拟订单
-- **Reset** → `resetRewardBot()` → 重置资金池到初始资本
+- **Run** → `runRewardBotOnce()` → API 写入 `run_once` 控制命令，worker 领取后执行一轮模拟
+- **Cancel open sim orders** → `cancelRewardBotOrders()` → API 写入 `cancel_all` 控制命令，worker 领取后撤销未成交模拟订单
+- **Reset** → `resetRewardBot()` → API 写入 `reset` 控制命令，worker 领取后重置资金池到初始资本
 - **Config 编辑** → `updateRewardBotConfig(patch)` → 即时更新配置
 - 事件面板支持按 `EventCategory` 过滤
 
 ## 数据流
 
-所有 mutation 通过 Server Actions，每次返回完整的 `RewardBotSnapshotDto`，前端直接替换 snapshot 状态。
+所有 mutation 通过 Server Actions。配置保存会立即返回更新后的 `RewardBotSnapshotDto`；Run / Cancel / Reset 只表示命令已入队，返回的是入队后的当前 snapshot，实际订单/资金池变化会在 worker 处理命令后出现在后续 snapshot 中。
 
 ## i18n
 
@@ -46,12 +46,12 @@
 
 ## 当前状态
 
-- 完整的 Run / Cancel / Reset 交互
+- 完整的 Run / Cancel / Reset 入队交互
 - 配置编辑（22 个数值参数）
 - 配置提示说明 `max_markets=0`、`max_open_orders=0`、`quote_size_usd=0` 都会停止新挂单；已赚奖励只会在后端检测到新鲜缓存盘口后计提。
 - 报价计划默认展示可挂市场，本地支持全部/可挂/不可挂切换，并用状态标记说明每个当前候选计划是否符合最终过滤要求。
 - 事件分类视图（挂单/撤单/吃单/奖励）
-- 当前只做模拟，不会实盘下单
+- 当前只做模拟，不会实盘下单；策略和控制命令由 worker 执行，API 不直接执行 rewards 任务
 
 ## 修改检查清单
 

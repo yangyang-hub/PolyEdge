@@ -4,4 +4,6 @@
 // live in the parent `stores` module.
 
 include!("rewards/in_memory.rs");
+include!("rewards/postgres_control_commands.rs");
+include!("rewards/postgres_writes.rs");
 include!("rewards/postgres.rs");

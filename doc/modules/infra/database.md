@@ -4,7 +4,7 @@
 
 ## 概述
 
-数据库使用 PostgreSQL，通过 21 个 SQL 迁移文件管理 schema。覆盖审计、市场数据、事件/信号、执行管道、风控、套利、奖励、跟单等领域。
+数据库使用 PostgreSQL，通过 23 个 SQL 迁移文件管理 schema。覆盖审计、市场数据、事件/信号、执行管道、风控、套利、奖励、跟单等领域。
 
 ## 迁移文件列表
 
@@ -31,6 +31,8 @@
 | `0019_reward_simulation.sql` | 奖励模拟 | 修改 `reward_managed_orders`、`reward_fills`、`reward_account_state` |
 | `0020_copy_trading.sql` | 跟单 | `copytrade_config`、`copytrade_wallets`、`copytrade_source_trades`、`copytrade_copy_orders`、`copytrade_positions`、`copytrade_account_state`、`copytrade_events` |
 | `0021_copytrade_daily_pnl.sql` | 跟单日 PnL | 修改 `copytrade_account_state`（`daily_realized_pnl`） |
+| `0022_reward_bot_control_commands.sql` | 奖励机器人控制命令 | `reward_control_commands` |
+| `0023_copytrade_control_commands.sql` | 跟单控制命令 | `copytrade_control_commands` |
 
 ## Schema 领域分组
 
@@ -85,6 +87,7 @@
 - **`reward_managed_orders`**：account_id、condition_id、token_id、filled_size、reward_earned、last_scored_at
 - **`reward_fills`**：order_id、account_id、condition_id、token_id、outcome、side、price、size、notional_usd、role、realized_pnl
 - **`reward_account_state`**：capital_usd、available_usd、reserved_usd、realized_pnl、reward_earned_usd、fees_paid、tick_index
+- **`reward_control_commands`**：API 入队给 worker 的 rewards 控制命令（run_once/cancel_all/reset）及 pending/running/completed/failed 状态
 
 ### 9. 跟单
 
@@ -95,6 +98,7 @@
 - **`copytrade_positions`**：按 wallet+market 聚合
 - **`copytrade_account_state`**：资金池账本（同 reward_account_state 结构 + daily_realized_pnl）
 - **`copytrade_events`**：活动/风险事件日志
+- **`copytrade_control_commands`**：API 入队给 worker 的 copytrade 控制命令（run_once/analyze_wallets/cancel_all/reset）及 pending/running/completed/failed 状态
 
 ### 10. 运行时配置
 
@@ -102,7 +106,7 @@
 
 ## 当前状态
 
-- 21 个迁移文件，最新为 `0021_copytrade_daily_pnl.sql`
+- 23 个迁移文件，最新为 `0023_copytrade_control_commands.sql`
 - 所有表使用 PostgreSQL 特性（JSONB、NUMERIC 约束、BIGSERIAL、部分索引等）
 - 迁移使用 `sqlx` 管理
 

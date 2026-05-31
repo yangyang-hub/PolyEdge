@@ -52,7 +52,7 @@ crate 依赖**单向**，不可逆向：
 
 - 重复逻辑提到 `helpers.rs`（范例：`rewards/helpers.rs`、`stores/helpers.rs`）。
 - DB 行 ↔ 领域对象映射放 `*_rows.rs`（范例：`catalog/helpers/*_rows.rs`）。
-- HTTP DTO ↔ 领域对象转换放 `mappers.rs`（范例：`apps/api/src/handlers/mappers.rs`、`reward_mappers.rs`）。
+- HTTP DTO ↔ 领域对象转换放 `mappers.rs`（范例：`apps/api/src/handlers/mappers.rs`）。
 - 仅本模块用的私有 helper 就近放模块内；**跨 crate 复用下沉到 `domain` 或 `application`**，不要在 `apps` 之间复制。
 - 禁止复制粘贴成片逻辑：同一段逻辑第二次出现即提取为共享函数。
 
@@ -77,8 +77,10 @@ cargo clippy --workspace --tests  # lint
 下列文件超过软上限但未达硬上限，建议后续按本文件的 `include!` 模式继续拆分；新增改动不应让它们继续膨胀：
 
 - `catalog/postgres/market_event/queries.rs`（~739）
-- `application/rewards/models.rs`（~718）
+- `application/rewards/models.rs`（~788）
+- `application/copytrade/models.rs`（~787）
+- `stores/rewards/postgres.rs`（~783，受单 trait impl 约束，优先级低）
+- `stores/copytrade/postgres.rs`（~713，受单 trait impl 约束，优先级低）
 - `catalog/postgres/arbitrage.rs`（~704）
 - `catalog/postgres/market_event/execution_updates/fills.rs`（~688）
 - `application/risk.rs`（~687）
-- `stores/rewards/postgres.rs`（~640，受单 trait impl 约束，优先级低）

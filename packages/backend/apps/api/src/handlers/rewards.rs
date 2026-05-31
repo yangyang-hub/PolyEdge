@@ -143,12 +143,13 @@ async fn run_reward_bot_once(
     State(state): State<AppState>,
 ) -> std::result::Result<Json<ApiResponse<RewardBotSnapshot>>, HttpError> {
     let trace_id = new_trace_id();
-    let (markets, books) = fetch_reward_bot_inputs(&state, &trace_id)
-        .await
-        .map_err(|error| HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone()))?;
     state
         .reward_bot_service
-        .run_simulation_forced(markets, books, &trace_id)
+        .enqueue_control_command(
+            RewardControlAction::RunOnce,
+            "operator requested one rewards simulation tick",
+            &trace_id,
+        )
         .await
         .map_err(|error| HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone()))?;
     let snapshot =
@@ -164,16 +165,11 @@ async fn cancel_reward_bot_orders(
     State(state): State<AppState>,
 ) -> std::result::Result<Json<ApiResponse<RewardBotSnapshot>>, HttpError> {
     let trace_id = new_trace_id();
-    let config = state
-        .reward_bot_service
-        .read_config()
-        .await
-        .map_err(|error| HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone()))?;
     state
         .reward_bot_service
-        .cancel_all_orders(
-            Some(&config.account_id),
-            "operator cancelled all simulated rewards orders",
+        .enqueue_control_command(
+            RewardControlAction::CancelAll,
+            "operator requested cancelling all simulated rewards orders",
             &trace_id,
         )
         .await
@@ -193,7 +189,11 @@ async fn reset_reward_bot(
     let trace_id = new_trace_id();
     state
         .reward_bot_service
-        .reset_simulation(&trace_id)
+        .enqueue_control_command(
+            RewardControlAction::Reset,
+            "operator requested resetting rewards simulation account",
+            &trace_id,
+        )
         .await
         .map_err(|error| HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone()))?;
     let snapshot =

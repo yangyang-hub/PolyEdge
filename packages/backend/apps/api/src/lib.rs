@@ -7,33 +7,29 @@ use axum::{
     response::Response,
     routing::get,
 };
-use futures::{StreamExt as _, stream};
+use futures::stream;
 use polyedge_application::{
-    AddTrackedWalletInput, CopyBookLevel, CopyOrderBook, CopyTradeConfigPatch,
-    CopyTradeSnapshot, TrackedWalletStatus, WalletActionInput, WalletActivityInput,
-    WalletFeedInput, WalletPositionInput,
-    ArbitrageAnalysisRunListFilters, ArbitrageAnalysisRunView, ArbitrageEventListFilters,
-    ArbitrageEventView, ArbitrageOpportunityListFilters, ArbitrageOpportunityStatus,
-    ArbitrageOpportunityType, ArbitrageOpportunityValidationView, ArbitrageOpportunityView,
-    ArbitrageScanListFilters, ArbitrageScanView, ArbitrageValidationStatus, AuthenticatedActor,
-    EventListFilters, EventView, EvidenceListFilters, EvidenceView, ExecutionFillResult,
-    ExecutionRequestListFilters, ExecutionRequestView, ExecutionSubmissionReceipt,
-    IdempotencyBegin, IdempotencyRequest, KillSwitchReceipt, MarketListFilters, MarketSortField,
-    MarketView, ModeTransitionCommand, NewsRawEventListFilters, NewsRawEventView, NewsSourceHealthListFilters,
+    AddTrackedWalletInput, ArbitrageAnalysisRunListFilters, ArbitrageAnalysisRunView,
+    ArbitrageEventListFilters, ArbitrageEventView, ArbitrageOpportunityListFilters,
+    ArbitrageOpportunityStatus, ArbitrageOpportunityType, ArbitrageOpportunityValidationView,
+    ArbitrageOpportunityView, ArbitrageScanListFilters, ArbitrageScanView,
+    ArbitrageValidationStatus, AuthenticatedActor, CopyControlAction, CopyTradeConfigPatch,
+    CopyTradeSnapshot, EventListFilters, EventView, EvidenceListFilters, EvidenceView,
+    ExecutionFillResult, ExecutionRequestListFilters, ExecutionRequestView,
+    ExecutionSubmissionReceipt, IdempotencyBegin, IdempotencyRequest, KillSwitchReceipt,
+    ManagedRewardOrderStatus, MarketListFilters, MarketSortField, MarketView,
+    ModeTransitionCommand, NewsRawEventListFilters, NewsRawEventView, NewsSourceHealthListFilters,
     NewsSourceHealthView, OrderDraftListFilters, OrderDraftView, OrderListFilters, OrderView,
     PositionListFilters, PositionView, ProbabilityEstimateListFilters, ProbabilityEstimateView,
-    ReconcileExternalTradeCommand, ReleaseKillSwitchCommand, RewardBookLevel, RewardBotConfigPatch,
-    RewardBotSnapshot, RewardMarket, RewardOrderBook, RiskPolicy, RiskStateView,
-    ManagedRewardOrderStatus,
-    SignalListFilters, SignalTransitionListFilters, SignalTransitionView, SignalView, SortOrder,
-    SubmitExecutionCommand, SyncExternalOrderStatusCommand, TradeListFilters, TradeView,
-    TriggerKillSwitchCommand, select_reward_book_token_ids, CachedOrderBook,
+    ReconcileExternalTradeCommand, ReleaseKillSwitchCommand, RewardBotConfigPatch,
+    RewardBotSnapshot, RewardControlAction, RiskPolicy, RiskStateView, SignalListFilters,
+    SignalTransitionListFilters, SignalTransitionView, SignalView, SortOrder,
+    SubmitExecutionCommand, SyncExternalOrderStatusCommand, TrackedWalletStatus, TradeListFilters,
+    TradeView, TriggerKillSwitchCommand, WalletActionInput,
 };
 use polyedge_connectors::{
-    ConnectorOrderStatusUpdate, ConnectorTradeFillUpdate,
-    PolymarketDataApiConnector,
-    PolymarketRewardsConnector, normalize_polymarket_order_status_update,
-    normalize_polymarket_trade_fill_update,
+    ConnectorOrderStatusUpdate, ConnectorTradeFillUpdate, PolymarketDataApiConnector,
+    normalize_polymarket_order_status_update, normalize_polymarket_trade_fill_update,
 };
 use polyedge_contracts::{
     AlertSeverity, AlertStatus, ApiMeta, ApiResponse, ArbitrageAnalysisRunData,
@@ -43,20 +39,18 @@ use polyedge_contracts::{
     ConnectorTradeFillCallbackData, ConnectorTradeFillCallbackRequest, DependencyStatus, EventData,
     EventListQuery, EvidenceData, EvidenceListQuery, ExecutionRequestData,
     ExecutionRequestListQuery, HealthData, KillSwitchData, MarketCategoryData, MarketData,
-    MarketListQuery, MarketListResponse,
-    NewsRawEventData, NewsRawEventListQuery, NewsSourceHealthData, NewsSourceHealthListQuery,
-    OrderData, OrderDraftData, OrderDraftListQuery, OrderListQuery,
-    PolymarketOrderStatusCallbackRequest, PolymarketTradeFillCallbackRequest, PositionData,
-    PositionListQuery, ProbabilityEstimateData, ProbabilityEstimateListQuery, ReadinessData,
-    RecomputeSignalData, RecomputeSignalRequest, ReleaseKillSwitchRequest, RiskAlertData,
-    RiskAlertListQuery, RiskBucketData, RiskBucketListQuery, RiskStateData, RuntimeConfigEntryData,
-    RewardBotSnapshotQuery,
-    SignalData, SignalListQuery, SignalTransitionData, SignalTransitionListQuery,
-    SubmitExecutionData, SubmitExecutionRequest, SystemModeData, TradeData, TradeListQuery,
-    TransitionSystemModeRequest, TriggerKillSwitchRequest, UpdateRuntimeConfigRequest,
-    WalletAnalysisData, WalletAnalysisRequest, WalletActivityData, WalletCategoryData,
-    WalletClosedPositionData, WalletPnlData, WalletProfileData, WalletRecentTradeData,
-    WalletRiskData, WalletStyleData, WalletTopMarketData,
+    MarketListQuery, MarketListResponse, NewsRawEventData, NewsRawEventListQuery,
+    NewsSourceHealthData, NewsSourceHealthListQuery, OrderData, OrderDraftData,
+    OrderDraftListQuery, OrderListQuery, PolymarketOrderStatusCallbackRequest,
+    PolymarketTradeFillCallbackRequest, PositionData, PositionListQuery, ProbabilityEstimateData,
+    ProbabilityEstimateListQuery, ReadinessData, RecomputeSignalData, RecomputeSignalRequest,
+    ReleaseKillSwitchRequest, RewardBotSnapshotQuery, RiskAlertData, RiskAlertListQuery,
+    RiskBucketData, RiskBucketListQuery, RiskStateData, RuntimeConfigEntryData, SignalData,
+    SignalListQuery, SignalTransitionData, SignalTransitionListQuery, SubmitExecutionData,
+    SubmitExecutionRequest, SystemModeData, TradeData, TradeListQuery, TransitionSystemModeRequest,
+    TriggerKillSwitchRequest, UpdateRuntimeConfigRequest, WalletActivityData, WalletAnalysisData,
+    WalletAnalysisRequest, WalletCategoryData, WalletClosedPositionData, WalletPnlData,
+    WalletProfileData, WalletRecentTradeData, WalletRiskData, WalletStyleData, WalletTopMarketData,
 };
 use polyedge_domain::{
     AppError, Edge, ExposureRatio, OrderStatus, Probability, Quantity, StepUpScope, SystemMode,
@@ -331,9 +325,10 @@ pub fn build_app(state: AppState) -> Router {
         )
         .route(
             "/api/v1/copy-trading/wallets",
-            axum::routing::post(add_copytrade_wallet).route_layer(
-                middleware::from_fn_with_state(state.clone(), require_console_write_auth),
-            ),
+            axum::routing::post(add_copytrade_wallet).route_layer(middleware::from_fn_with_state(
+                state.clone(),
+                require_console_write_auth,
+            )),
         )
         .route(
             "/api/v1/copy-trading/wallets/remove",
@@ -445,9 +440,7 @@ include!("handlers/market_handlers.rs");
 include!("handlers/rewards.rs");
 include!("handlers/copytrade.rs");
 include!("handlers/runtime_config.rs");
-include!("handlers/reward_inputs.rs");
 include!("handlers/runtime_config_helpers.rs");
-include!("handlers/reward_mappers.rs");
 include!("handlers/execution_lists.rs");
 include!("handlers/callbacks.rs");
 include!("handlers/signal_actions.rs");

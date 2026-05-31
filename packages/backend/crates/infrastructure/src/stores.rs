@@ -1,14 +1,15 @@
 use async_trait::async_trait;
 use polyedge_application::{
-    AuditLogEntry, AuditLogSink, CopyAccountState, CopyEvent, CopyEventSeverity, CopyFill, CopyOrder,
-    CopyOrderStatus, CopyOrderSide, CopyPosition, CopySimulationOutcome, CopySizingMode,
-    CopyTradeConfig, CopyTradeMode, CopyTradeStore, IdempotencyBegin, IdempotencyRequest,
-    IdempotencyStore, ManagedRewardOrder, ManagedRewardOrderStatus, ModeSnapshot, ModeStateStore,
-    ModeTransitionCommand, PostFillStrategy, RewardAccountState, RewardBotConfig,
-    RewardBotStore, RewardFill, RewardFillRole, RewardMarket, RewardOrderSide, RewardPosition,
-    RewardQuotePlan, RewardRiskEvent, RewardRiskSeverity, RewardSimulationOutcome, RewardToken,
-    RiskStateSnapshot, RiskStateStore, SourceTrade, TrackedWallet, TrackedWalletStatus,
-    WalletAnalysisStats,
+    AuditLogEntry, AuditLogSink, CopyAccountState, CopyControlAction, CopyControlCommand,
+    CopyControlCommandStatus, CopyEvent, CopyEventSeverity, CopyFill, CopyOrder, CopyOrderSide,
+    CopyOrderStatus, CopyPosition, CopySimulationOutcome, CopySizingMode, CopyTradeConfig,
+    CopyTradeMode, CopyTradeStore, IdempotencyBegin, IdempotencyRequest, IdempotencyStore,
+    ManagedRewardOrder, ManagedRewardOrderStatus, ModeSnapshot, ModeStateStore,
+    ModeTransitionCommand, PostFillStrategy, RewardAccountState, RewardBotConfig, RewardBotStore,
+    RewardControlAction, RewardControlCommand, RewardControlCommandStatus, RewardFill,
+    RewardFillRole, RewardMarket, RewardOrderSide, RewardPosition, RewardQuotePlan,
+    RewardRiskEvent, RewardRiskSeverity, RewardSimulationOutcome, RewardToken, RiskStateSnapshot,
+    RiskStateStore, SourceTrade, TrackedWallet, TrackedWalletStatus, WalletAnalysisStats,
 };
 use polyedge_domain::{
     AppError, ExposureRatio, IdempotencyStatus, Result, SignedUsdAmount, SystemMode,

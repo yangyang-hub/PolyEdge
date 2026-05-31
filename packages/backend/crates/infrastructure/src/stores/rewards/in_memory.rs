@@ -9,6 +9,7 @@ pub struct InMemoryRewardBotStore {
     events: RwLock<Vec<RewardRiskEvent>>,
     account_state: RwLock<Option<RewardAccountState>>,
     fills: RwLock<Vec<RewardFill>>,
+    control_commands: RwLock<Vec<RewardControlCommand>>,
 }
 
 impl InMemoryRewardBotStore {
@@ -23,6 +24,7 @@ impl InMemoryRewardBotStore {
             events: RwLock::new(Vec::new()),
             account_state: RwLock::new(None),
             fills: RwLock::new(Vec::new()),
+            control_commands: RwLock::new(Vec::new()),
         }
     }
 }
@@ -35,6 +37,63 @@ impl RewardBotStore for InMemoryRewardBotStore {
 
     async fn save_config(&self, config: &RewardBotConfig) -> Result<()> {
         *self.config.write().await = config.clone().normalized();
+        Ok(())
+    }
+
+    async fn enqueue_control_command(&self, command: RewardControlCommand) -> Result<()> {
+        let mut commands = self.control_commands.write().await;
+        commands.push(command);
+        commands.sort_by(|left, right| left.requested_at.cmp(&right.requested_at));
+        Ok(())
+    }
+
+    async fn claim_next_control_command(
+        &self,
+        trace_id: &str,
+        now: OffsetDateTime,
+    ) -> Result<Option<RewardControlCommand>> {
+        let mut commands = self.control_commands.write().await;
+        let Some(command) = commands
+            .iter_mut()
+            .find(|command| command.status == RewardControlCommandStatus::Pending)
+        else {
+            return Ok(None);
+        };
+        command.status = RewardControlCommandStatus::Running;
+        command.started_at = Some(now);
+        command.trace_id = Some(trace_id.to_string());
+        Ok(Some(command.clone()))
+    }
+
+    async fn complete_control_command(
+        &self,
+        command_id: &str,
+        trace_id: &str,
+        now: OffsetDateTime,
+    ) -> Result<()> {
+        let mut commands = self.control_commands.write().await;
+        if let Some(command) = commands.iter_mut().find(|command| command.id == command_id) {
+            command.status = RewardControlCommandStatus::Completed;
+            command.completed_at = Some(now);
+            command.trace_id = Some(trace_id.to_string());
+        }
+        Ok(())
+    }
+
+    async fn fail_control_command(
+        &self,
+        command_id: &str,
+        trace_id: &str,
+        error: &str,
+        now: OffsetDateTime,
+    ) -> Result<()> {
+        let mut commands = self.control_commands.write().await;
+        if let Some(command) = commands.iter_mut().find(|command| command.id == command_id) {
+            command.status = RewardControlCommandStatus::Failed;
+            command.completed_at = Some(now);
+            command.trace_id = Some(trace_id.to_string());
+            command.error = Some(error.to_string());
+        }
         Ok(())
     }
 

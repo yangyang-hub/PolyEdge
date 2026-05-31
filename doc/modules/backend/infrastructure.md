@@ -60,8 +60,10 @@
 | `catalog/postgres/` | `MarketEventStore`、`ArbitrageStore`、`NewsIngestionStore` | PostgreSQL |
 | `catalog/in_memory.rs` | 同上 | 内存（RwLock） |
 | `stores/rewards/postgres.rs` | `RewardBotStore` | PostgreSQL（key-value config + 完整表） |
+| `stores/rewards/postgres_control_commands.rs` / `postgres_writes.rs` | `RewardBotStore` 辅助 | 控制命令 SQL、reserved 释放辅助 |
 | `stores/rewards/in_memory.rs` | 同上 | 内存 |
 | `stores/copytrade/postgres.rs` | `CopyTradeStore` | PostgreSQL（key-value config + 完整表） |
+| `stores/copytrade/postgres_control_commands.rs` / `postgres_rows.rs` / `postgres_writes.rs` | `CopyTradeStore` 辅助 | 控制命令 SQL、行映射、写入辅助 |
 | `stores/copytrade/in_memory.rs` | 同上 | 内存 |
 | `stores/mode_state.rs` | `ModeStateStore` | PostgreSQL/内存 |
 | `stores/risk_state.rs` | `RiskStateStore` | PostgreSQL/内存 |
@@ -78,6 +80,8 @@
 - `db_error(code, context)` 辅助函数统一创建 `dependency_unavailable` 错误
 - `RewardBotStore.cancel_open_orders()` 在 Postgres/内存实现中会同步释放开放买单对应的 `reserved_usd`；订单列表优先返回 open-like 状态，避免大量历史成交/撤单淹没当前开放挂单。
 - `RewardBotStore.list_markets(limit)` 在 Postgres/内存实现中只返回 active reward markets，并按日奖励金额排序，用于 bounded rewards tick candidate pool；`save_quote_plans()` 会替换当前 quote plan 快照，避免旧的全量计划继续出现在 `/rewards`。
+- `RewardBotStore` 在 Postgres/内存实现中维护 `reward_control_commands` 队列；API 写入 pending 命令，worker 使用 claim/complete/fail 方法领取并更新执行状态。
+- `CopyTradeStore` 在 Postgres/内存实现中维护 `copytrade_control_commands` 队列；API 写入 pending 命令，worker 使用 claim/complete/fail 方法领取并更新执行状态。
 
 ### Catalog — 核心数据存储
 
@@ -124,7 +128,7 @@
 - Postgres 和 in-memory 双实现均已就绪
 - 配置通过环境变量加载，支持 `.env` 文件
 - 认证中间件当前在 `off` 模式下运行
-- Orderbook cache 支持 Redis 和内存两种实现
+- Orderbook cache 当前 runtime 使用进程内 `InMemoryOrderbookCache`；Redis 实现保留但未接入默认 runtime
 
 ## 修改检查清单
 

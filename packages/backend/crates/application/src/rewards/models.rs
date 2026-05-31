@@ -759,7 +759,7 @@ pub struct RewardBotSnapshot {
     pub events: Vec<RewardRiskEvent>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RewardBotRunReport {
     pub markets_scanned: usize,
     pub books_fetched: usize,

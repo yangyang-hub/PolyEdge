@@ -12,6 +12,7 @@ const MAX_LIST_LIMIT: u16 = 500;
 const DEFAULT_TICK: Decimal = Decimal::from_parts(1, 0, 0, false, 2);
 
 include!("rewards/models.rs");
+include!("rewards/control.rs");
 include!("rewards/service.rs");
 include!("rewards/planner.rs");
 include!("rewards/engine.rs");
