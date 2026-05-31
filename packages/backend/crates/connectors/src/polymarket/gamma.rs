@@ -3,7 +3,6 @@ use serde_json::Value as JsonValue;
 use time::format_description::well_known::Rfc3339;
 
 const GAMMA_MARKETS_PATH: &str = "markets/keyset";
-const MAX_GAMMA_MARKET_PAGES: usize = 5;
 const GAMMA_TIMEOUT: Duration = Duration::from_secs(15);
 
 #[derive(Debug, Clone)]
@@ -119,20 +118,21 @@ impl PolymarketGammaConnector {
         })
     }
 
-    pub async fn fetch_markets(&self, limit: u16) -> Result<Vec<PolymarketGammaMarket>> {
-        let target_len = usize::from(limit.max(1));
+    pub async fn fetch_markets(&self, page_size: u16) -> Result<Vec<PolymarketGammaMarket>> {
         let mut cursor: Option<String> = None;
-        let mut markets = Vec::with_capacity(target_len);
+        let mut markets = Vec::new();
 
-        for _ in 0..MAX_GAMMA_MARKET_PAGES {
-            let page = self.fetch_market_page(limit, cursor.as_deref()).await?;
+        loop {
+            let page = self.fetch_market_page(page_size, cursor.as_deref()).await?;
+            let had_items = !page.markets.is_empty();
             for raw in page.markets {
                 if let Some(market) = map_gamma_market(raw)? {
                     markets.push(market);
-                    if markets.len() >= target_len {
-                        return Ok(markets);
-                    }
                 }
+            }
+
+            if !had_items {
+                break;
             }
 
             let next_cursor = page.next_cursor.unwrap_or_default();

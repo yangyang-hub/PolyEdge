@@ -8,7 +8,6 @@ use time::OffsetDateTime;
 use tokio::sync::Semaphore;
 
 const LAST_CURSOR: &str = "LTE=";
-const MAX_REWARD_MARKET_PAGES: usize = 20;
 const ENRICH_TIMEOUT: Duration = Duration::from_secs(10);
 const ENRICH_MAX_RETRIES: u32 = 3;
 const ENRICH_RETRY_BASE_DELAY: Duration = Duration::from_millis(500);
@@ -150,7 +149,7 @@ impl PolymarketRewardsConnector {
         let mut markets = Vec::new();
         let mut cursor: Option<String> = None;
 
-        for _ in 0..MAX_REWARD_MARKET_PAGES {
+        loop {
             let mut url =
                 reqwest::Url::parse(&format!("{}/rewards/markets/current", self.clob_host))
                     .map_err(|error| {

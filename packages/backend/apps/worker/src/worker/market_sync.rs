@@ -1,8 +1,8 @@
 async fn sync_markets_once(state: &AppState, trace_id: &str) -> Result<MarketSyncReport> {
     let connector =
         PolymarketGammaConnector::new(&state.settings.polymarket.gamma_host)?;
-    let limit = state.settings.arbitrage.scan_limit;
-    let gamma_markets = connector.fetch_markets(limit).await?;
+    let page_size = state.settings.arbitrage.scan_limit;
+    let gamma_markets = connector.fetch_markets(page_size).await?;
     let views: Vec<MarketView> = gamma_markets
         .into_iter()
         .map(gamma_market_to_view)

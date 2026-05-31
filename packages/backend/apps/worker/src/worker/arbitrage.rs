@@ -234,8 +234,8 @@ async fn poll_arbitrage_radar(
 async fn fetch_gamma_markets(state: &AppState) -> Result<Vec<MarketView>> {
     let connector =
         PolymarketGammaConnector::new(&state.settings.polymarket.gamma_host)?;
-    let limit = state.settings.arbitrage.scan_limit;
-    let markets = connector.fetch_markets(limit).await?;
+    let page_size = state.settings.arbitrage.scan_limit;
+    let markets = connector.fetch_markets(page_size).await?;
     Ok(markets
         .into_iter()
         .map(gamma_market_to_view)
