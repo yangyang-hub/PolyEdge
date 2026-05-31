@@ -31,7 +31,7 @@
 ## 关键交互
 
 - **Run** → `runRewardBotOnce()` → 展示新的 snapshot
-- **Cancel** → `cancelRewardBotOrders()` → 清空未成交订单
+- **Cancel open sim orders** → `cancelRewardBotOrders()` → 撤销未成交模拟订单
 - **Reset** → `resetRewardBot()` → 重置资金池到初始资本
 - **Config 编辑** → `updateRewardBotConfig(patch)` → 即时更新配置
 - 事件面板支持按 `EventCategory` 过滤
