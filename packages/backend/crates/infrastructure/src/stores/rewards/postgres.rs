@@ -320,6 +320,33 @@ impl RewardBotStore for PostgresRewardBotStore {
         rows.iter().map(reward_market_from_row).collect()
     }
 
+    async fn list_all_quote_plans(&self) -> Result<Vec<RewardQuotePlan>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT quote_plan_json
+            FROM reward_quote_plans
+            ORDER BY eligible DESC, score DESC, updated_at DESC
+            "#,
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_QUERY_FAILED",
+                format!("failed to query all reward quote plans: {error}"),
+            )
+        })?;
+
+        rows.iter()
+            .map(|row| {
+                let plan: Json<RewardQuotePlan> = row
+                    .try_get("quote_plan_json")
+                    .map_err(postgres_decode_error)?;
+                Ok(plan.0)
+            })
+            .collect()
+    }
+
     async fn list_quote_plans(&self, limit: u16) -> Result<Vec<RewardQuotePlan>> {
         let rows = sqlx::query(
             r#"

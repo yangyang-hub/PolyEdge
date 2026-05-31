@@ -41,10 +41,7 @@ export function RewardsWorkbench({ initialSnapshot }: { initialSnapshot: RewardB
   const [feedback, setFeedback] = useState<RewardBotActionResult | null>(null);
   const [pending, setPending] = useState(false);
 
-  const visiblePlans = useMemo(
-    () => snapshot.quote_plans.slice(0, 30),
-    [snapshot.quote_plans],
-  );
+  const visiblePlans = snapshot.quote_plans;
   const visibleOrders = useMemo(() => snapshot.orders.slice(0, 50), [snapshot.orders]);
   const visibleEvents = useMemo(() => snapshot.events.slice(0, 60), [snapshot.events]);
   const visibleFills = useMemo(() => snapshot.fills.slice(0, 50), [snapshot.fills]);
