@@ -49,12 +49,39 @@ pub trait RewardBotStore: Send + Sync {
 pub struct RewardBotService {
     store: Arc<dyn RewardBotStore>,
     mode_store: Arc<dyn ModeStateStore>,
+    /// In-memory ring buffer of historical book snapshots per token, used by
+    /// risk-control checks (depth drop, fill velocity, mass cancel).
+    book_history: Arc<std::sync::Mutex<HashMap<String, VecDeque<BookSnapshot>>>>,
 }
 
 impl RewardBotService {
     #[must_use]
     pub fn new(store: Arc<dyn RewardBotStore>, mode_store: Arc<dyn ModeStateStore>) -> Self {
-        Self { store, mode_store }
+        Self {
+            store,
+            mode_store,
+            book_history: Arc::new(std::sync::Mutex::new(HashMap::new())),
+        }
+    }
+
+    /// Record a point-in-time snapshot of each book into the in-memory history
+    /// ring buffer. Keeps at most 20 snapshots per token (~100s at 5s intervals).
+    fn record_book_snapshots(&self, books: &HashMap<String, RewardOrderBook>) {
+        let Ok(mut history) = self.book_history.lock() else {
+            return;
+        };
+        for (token_id, book) in books {
+            let entry = history.entry(token_id.clone()).or_insert_with(VecDeque::new);
+            entry.push_back(BookSnapshot {
+                bids: book.bids.clone(),
+                asks: book.asks.clone(),
+                observed_at: book.observed_at,
+            });
+            // Keep at most 20 snapshots per token.
+            while entry.len() > 20 {
+                entry.pop_front();
+            }
+        }
     }
 
     pub async fn read_config(&self) -> Result<RewardBotConfig> {
@@ -119,6 +146,18 @@ impl RewardBotService {
         }
 
         Ok(token_ids)
+    }
+
+    /// Return distinct token IDs from **all** reward candidate markets, regardless
+    /// of whether the bot currently has orders or positions. This breaks the cold
+    /// start loop: the orderbook stream can subscribe to reward market tokens even
+    /// before the bot has placed its first order.
+    pub async fn list_all_reward_candidate_token_ids(&self) -> Result<Vec<String>> {
+        let config = self.read_config().await?;
+        let limit = reward_run_market_limit(&config);
+        let markets = self.store.list_markets(limit).await?;
+        let candidates = select_reward_quote_candidate_markets(&markets, &config);
+        Ok(select_reward_book_token_ids(&candidates))
     }
 
     pub async fn snapshot(&self) -> Result<RewardBotSnapshot> {
@@ -226,6 +265,7 @@ impl RewardBotService {
                 simulated_orders: 0,
                 cancelled_orders: 0,
                 filled_orders: 0,
+                risk_cancelled_orders: 0,
                 reward_accrued: Decimal::ZERO,
             });
         }
@@ -254,16 +294,23 @@ impl RewardBotService {
             .await?;
         let elapsed_seconds = (OffsetDateTime::now_utc() - account.updated_at).whole_seconds();
 
-        let outcome = run_reward_simulation_tick(
-            &config,
-            account,
-            open_orders,
-            positions,
-            &markets,
-            &books,
-            elapsed_seconds,
-            trace_id,
-        );
+        // Record book snapshots for risk-control history before the tick.
+        self.record_book_snapshots(&books);
+
+        let outcome = {
+            let guard = self.book_history.lock().unwrap_or_else(|e| e.into_inner());
+            run_reward_simulation_tick(
+                &config,
+                account,
+                open_orders,
+                positions,
+                &markets,
+                &books,
+                &guard,
+                elapsed_seconds,
+                trace_id,
+            )
+        };
         let report = outcome.report.clone();
         self.store.apply_simulation_tick(&outcome, trace_id).await?;
 
@@ -278,6 +325,70 @@ impl RewardBotService {
             report.filled_orders,
         )
         .await?;
+
+        Ok(report)
+    }
+
+    /// Fast reconcile-only tick: reads the latest books, runs risk checks,
+    /// fill simulation, reward accrual, and quote placement using the
+    /// **existing** quote plans (does not rebuild them).
+    pub async fn run_reconcile_only(
+        &self,
+        books: HashMap<String, RewardOrderBook>,
+        trace_id: &str,
+    ) -> Result<RewardBotRunReport> {
+        let config = self.read_config().await?;
+
+        // Record book snapshots for risk-control history.
+        self.record_book_snapshots(&books);
+
+        // Load current state.
+        let account = self.store.load_account_state(&config).await?;
+        let open_orders = self.store.list_open_orders(&account.account_id).await?;
+        let positions = self
+            .store
+            .list_account_positions(&account.account_id)
+            .await?;
+        let elapsed_seconds = (OffsetDateTime::now_utc() - account.updated_at).whole_seconds();
+
+        // Reuse existing plans from the database.
+        let plans = self.store.list_all_quote_plans().await?;
+        let markets = self.store.list_all_active_markets().await?;
+
+        let outcome = {
+            let guard = self.book_history.lock().unwrap_or_else(|e| e.into_inner());
+            run_reconcile_tick(
+                &config,
+                account,
+                open_orders,
+                positions,
+                plans,
+                markets,
+                &books,
+                &guard,
+                elapsed_seconds,
+                trace_id,
+            )
+        };
+        let report = outcome.report.clone();
+        self.store.apply_simulation_tick(&outcome, trace_id).await?;
+
+        if report.risk_cancelled_orders > 0 {
+            self.store
+                .log_event(new_risk_event(
+                    Some(config.account_id.clone()),
+                    None,
+                    None,
+                    "reward_risk_reconcile",
+                    RewardRiskSeverity::Info,
+                    format!(
+                        "Fast reconcile: {} risk cancels, {} fills, {} reward",
+                        report.risk_cancelled_orders, report.filled_orders, report.reward_accrued
+                    ),
+                    json!({ "trace_id": trace_id, "risk_cancelled": report.risk_cancelled_orders }),
+                ))
+                .await?;
+        }
 
         Ok(report)
     }

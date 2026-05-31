@@ -20,6 +20,17 @@ export type NumberConfigKey =
   | "single_sided_divisor_c"
   | "fill_rate_per_tick"
   | "max_fill_ratio"
-  | "requote_drift_cents";
+  | "requote_drift_cents"
+  | "min_depth_usd"
+  | "cancel_bid_rank"
+  | "depth_drop_pct"
+  | "depth_drop_window_sec"
+  | "fill_velocity_usd"
+  | "fill_velocity_window_sec"
+  | "mass_cancel_pct"
+  | "mass_cancel_window_sec"
+  | "requote_interval_sec"
+  | "requote_jitter_sec"
+  | "reconcile_interval_sec";
 
 export type EventCategory = "all" | "placements" | "cancels" | "fills" | "rewards";

@@ -67,7 +67,7 @@
 | `stores/risk_state.rs` | `RiskStateStore` | PostgreSQL/内存 |
 | `stores/idempotency.rs` | `IdempotencyStore` | PostgreSQL/内存 |
 | `stores/audit.rs` | `AuditLogSink` | PostgreSQL/内存 |
-| `stores/orderbook_cache.rs` | `OrderbookCache` | Redis + 内存 |
+| `stores/orderbook_cache.rs` | `OrderbookCache` | 内存（TTL + 定期清理）；保留 Redis 实现但 runtime 不再使用 |
 | `stores/runtime_config.rs` | 运行时配置 | PostgreSQL key-value |
 | `stores/helpers.rs` | DB 行映射辅助 | — |
 | `stores/types.rs` | 共享类型 | — |

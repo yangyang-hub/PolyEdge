@@ -64,10 +64,11 @@ mod tests {
         assert_eq!(settings.postgres.max_connections, 20);
         assert!(settings.redis.url.is_none());
         assert!(settings.orderbook_stream.enabled);
-        assert_eq!(settings.orderbook_stream.max_tokens, 200);
+        assert_eq!(settings.orderbook_stream.max_tokens, 5000);
         assert_eq!(settings.orderbook_stream.poll_reconcile_interval_secs, 30);
         assert_eq!(settings.orderbook_stream.stale_threshold_ms, 15_000);
-        assert_eq!(settings.orderbook_stream.book_ttl_secs, 60);
+        assert_eq!(settings.orderbook_stream.book_ttl_ms, 300_000);
+        assert_eq!(settings.orderbook_stream.token_refresh_interval_secs, 60);
         assert_eq!(settings.orderbook_stream.restart_interval_secs, 5);
         assert_eq!(
             settings.auth.force_reauth_after.as_deref(),

@@ -8,7 +8,7 @@ use crate::{
         InMemoryRewardBotStore, InMemoryRiskStateStore, InMemoryRuntimeConfigStore,
         PostgresAuditLogSink, PostgresCopyTradeStore, PostgresExternalEventStore,
         PostgresIdempotencyStore, PostgresModeStateStore, PostgresRewardBotStore,
-        PostgresRiskStateStore, PostgresRuntimeConfigStore, RedisOrderbookCache, RuntimeConfigStore,
+        PostgresRiskStateStore, PostgresRuntimeConfigStore, RuntimeConfigStore,
     },
 };
 use polyedge_application::{
@@ -20,6 +20,7 @@ use polyedge_application::{
 use polyedge_domain::{AppError, Result, SystemMode};
 use sqlx::{PgPool, postgres::PgPoolOptions};
 use std::sync::Arc;
+use std::time::Duration;
 use tracing::info;
 
 static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("../../migrations");
@@ -185,12 +186,12 @@ impl Runtime {
             execution_audit_log_sink,
         ));
 
-        let orderbook_cache: Arc<dyn OrderbookCache> = match &redis {
-            Some(client) => Arc::new(RedisOrderbookCache::new(
-                client.clone(),
-                settings.orderbook_stream.book_ttl_secs,
-            )),
-            None => Arc::new(InMemoryOrderbookCache::new()),
+        let orderbook_cache: Arc<dyn OrderbookCache> = {
+            let cache = Arc::new(InMemoryOrderbookCache::new(
+                settings.orderbook_stream.book_ttl_ms,
+            ));
+            cache.spawn_cleanup(Duration::from_secs(60));
+            cache
         };
 
         Ok(Self {
@@ -264,7 +265,13 @@ impl Runtime {
             execution_audit_log_sink,
         ));
 
-        let orderbook_cache: Arc<dyn OrderbookCache> = Arc::new(InMemoryOrderbookCache::new());
+        let orderbook_cache: Arc<dyn OrderbookCache> = {
+            let cache = Arc::new(InMemoryOrderbookCache::new(
+                settings.orderbook_stream.book_ttl_ms,
+            ));
+            cache.spawn_cleanup(Duration::from_secs(60));
+            cache
+        };
 
         Ok(AppState {
             settings,

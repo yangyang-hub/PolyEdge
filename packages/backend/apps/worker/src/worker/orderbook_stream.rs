@@ -5,6 +5,7 @@ use polymarket_client_sdk::types::U256;
 use std::str::FromStr;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use tokio::sync::RwLock;
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 struct OrderbookStreamReport {
@@ -19,7 +20,7 @@ async fn consume_orderbook_stream(state: &AppState) -> Result<OrderbookStreamRep
     let cache = state.orderbook_cache.clone();
     let mut report = OrderbookStreamReport::default();
 
-    // 1. Collect token IDs from multiple sources
+    // 1. Collect initial token IDs from multiple sources
     let token_ids = collect_orderbook_subscription_tokens(state).await?;
     report.subscribed_tokens = token_ids.len();
 
@@ -64,9 +65,18 @@ async fn consume_orderbook_stream(state: &AppState) -> Result<OrderbookStreamRep
         "orderbook stream subscribed to market channel"
     );
 
-    // 4. Spawn poll reconciler as a background companion task
+    // 4. Shared token list: the poll reconciler reads from this; the refresh
+    //    timer updates it when new reward markets appear.
+    let shared_tokens: Arc<RwLock<Vec<String>>> =
+        Arc::new(RwLock::new(token_ids.clone()));
+    let ws_token_set: Arc<RwLock<Vec<String>>> =
+        Arc::new(RwLock::new(token_ids));
+
+    // 5. Spawn poll reconciler as a background companion task.
+    //    It reads the token list from `shared_tokens` each cycle so newly
+    //    added reward markets are picked up without a WS reconnect.
     let poll_cache = cache.clone();
-    let poll_token_ids = token_ids.clone();
+    let poll_tokens_ref = shared_tokens.clone();
     let poll_interval = settings.poll_reconcile_interval_secs;
     let stale_threshold_ms = settings.stale_threshold_ms as i64;
     let clob_host = state.settings.polymarket.clob_host.clone();
@@ -88,8 +98,11 @@ async fn consume_orderbook_stream(state: &AppState) -> Result<OrderbookStreamRep
         loop {
             tokio::time::sleep(Duration::from_secs(poll_interval.max(1))).await;
 
+            // Read the latest token list (may have been updated by refresh timer).
+            let current_tokens = poll_tokens_ref.read().await.clone();
+
             let stale = match poll_cache
-                .get_stale_tokens(&poll_token_ids, stale_threshold_ms)
+                .get_stale_tokens(&current_tokens, stale_threshold_ms)
                 .await
             {
                 Ok(tokens) => tokens,
@@ -133,29 +146,86 @@ async fn consume_orderbook_stream(state: &AppState) -> Result<OrderbookStreamRep
         }
     });
 
-    // 5. Consume WS stream
-    while let Some(message) = stream.next().await {
-        match message {
-            Ok(book_update) => {
-                let cached = book_update_to_cached(&book_update);
-                if let Err(error) = cache.set_book(&cached).await {
-                    warn!(
-                        token_id = %cached.token_id,
-                        error = %error,
-                        "failed to write orderbook snapshot to cache"
-                    );
-                }
-                report.ws_snapshots_received += 1;
+    // 6. Consume WS stream with periodic token refresh.
+    //    When new reward markets appear the poll reconciler picks them up
+    //    immediately (via `shared_tokens`). If the WS-subscribed set also
+    //    changed, we break the loop so `spawn_restarting_job` reconnects
+    //    with the updated token list.
+    let refresh_interval = Duration::from_secs(
+        settings.token_refresh_interval_secs.max(10),
+    );
+    let mut refresh_timer = tokio::time::interval(refresh_interval);
+    refresh_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    // The first tick fires immediately; skip it (we just subscribed).
+    refresh_timer.tick().await;
 
-                if report.ws_snapshots_received % 100 == 0 {
-                    debug!(
-                        received = report.ws_snapshots_received,
-                        "orderbook stream processing snapshots"
-                    );
+    loop {
+        tokio::select! {
+            message = stream.next() => {
+                match message {
+                    Some(Ok(book_update)) => {
+                        let cached = book_update_to_cached(&book_update);
+                        if let Err(error) = cache.set_book(&cached).await {
+                            warn!(
+                                token_id = %cached.token_id,
+                                error = %error,
+                                "failed to write orderbook snapshot to cache"
+                            );
+                        }
+                        report.ws_snapshots_received += 1;
+
+                        if report.ws_snapshots_received % 100 == 0 {
+                            debug!(
+                                received = report.ws_snapshots_received,
+                                "orderbook stream processing snapshots"
+                            );
+                        }
+                    }
+                    Some(Err(error)) => {
+                        warn!(error = %error, "orderbook WS stream error, poll reconciler will cover gaps");
+                    }
+                    None => {
+                        info!("orderbook WS stream ended");
+                        break;
+                    }
                 }
             }
-            Err(error) => {
-                warn!(error = %error, "orderbook WS stream error, poll reconciler will cover gaps");
+            _ = refresh_timer.tick() => {
+                // Periodically re-evaluate which tokens we should subscribe to.
+                match collect_orderbook_subscription_tokens(state).await {
+                    Ok(new_tokens) => {
+                        let new_count = new_tokens.len();
+                        // Always update the shared list so the poll reconciler
+                        // picks up new markets immediately.
+                        {
+                            let mut shared = shared_tokens.write().await;
+                            *shared = new_tokens.clone();
+                        }
+
+                        // Check if the WS-subscribed set changed.
+                        let old_set = ws_token_set.read().await;
+                        let changed = *old_set != new_tokens;
+                        drop(old_set);
+
+                        if changed {
+                            info!(
+                                old = report.subscribed_tokens,
+                                new = new_count,
+                                "orderbook token list changed, reconnecting WS with new set"
+                            );
+                            report.subscribed_tokens = new_count;
+                            // Update ws_token_set so next comparison is against
+                            // the new baseline.
+                            *ws_token_set.write().await = new_tokens;
+                            // Break to trigger WS reconnect via
+                            // `spawn_restarting_job`.
+                            break;
+                        }
+                    }
+                    Err(error) => {
+                        warn!(error = %error, "orderbook token refresh failed");
+                    }
+                }
             }
         }
     }
@@ -229,10 +299,13 @@ async fn collect_orderbook_subscription_tokens(state: &AppState) -> Result<Vec<S
         }
     }
 
-    // Source 2: Only token IDs from reward markets where the bot has open orders or positions
+    // Source 2: All token IDs from reward candidate markets (not just those with
+    // existing orders/positions). This breaks the cold start loop — the orderbook
+    // stream subscribes to reward market tokens even before the bot has placed its
+    // first order.
     if let Ok(reward_token_ids) = state
         .reward_bot_service
-        .list_active_reward_book_token_ids()
+        .list_all_reward_candidate_token_ids()
         .await
     {
         for token_id in reward_token_ids {

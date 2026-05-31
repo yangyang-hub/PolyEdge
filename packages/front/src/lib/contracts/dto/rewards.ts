@@ -34,6 +34,18 @@ export type RewardBotConfigDto = {
   max_fill_ratio: DecimalValue;
   requote_drift_cents: DecimalValue;
   post_fill_strategy: PostFillStrategy;
+  // Risk control fields
+  min_depth_usd: DecimalValue;
+  cancel_bid_rank: number;
+  depth_drop_pct: DecimalValue;
+  depth_drop_window_sec: number;
+  fill_velocity_usd: DecimalValue;
+  fill_velocity_window_sec: number;
+  mass_cancel_pct: DecimalValue;
+  mass_cancel_window_sec: number;
+  requote_interval_sec: number;
+  requote_jitter_sec: number;
+  reconcile_interval_sec: number;
 };
 
 export type RewardBotConfigPatchDto = Partial<RewardBotConfigDto>;

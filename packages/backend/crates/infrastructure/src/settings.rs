@@ -191,7 +191,8 @@ pub struct OrderbookStreamSettings {
     pub max_tokens: usize,
     pub poll_reconcile_interval_secs: u64,
     pub stale_threshold_ms: u64,
-    pub book_ttl_secs: u64,
+    pub book_ttl_ms: u64,
+    pub token_refresh_interval_secs: u64,
     pub restart_interval_secs: u64,
 }
 

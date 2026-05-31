@@ -221,6 +221,36 @@ pub struct RewardBotConfig {
     pub requote_drift_cents: Decimal,
     /// What to do with inventory once a quote leg is filled.
     pub post_fill_strategy: PostFillStrategy,
+    // -- Risk control fields (0 = disabled) --
+    /// Minimum total bid depth (USD) above our order price to keep resting.
+    /// Cancels when the book above us is thinner than this threshold.
+    pub min_depth_usd: Decimal,
+    /// Cancel when our order's bid rank rises to this level or better (1=best).
+    /// E.g. 2 = cancel when promoted to bid-1 or bid-2. 0 = disabled.
+    pub cancel_bid_rank: u16,
+    /// Cancel when the top-N bid depth drops by this percentage within the
+    /// detection window. E.g. 30 = cancel on 30% drop. 0 = disabled.
+    pub depth_drop_pct: Decimal,
+    /// Sliding window (seconds) for depth-drop detection.
+    pub depth_drop_window_sec: u64,
+    /// Cancel when ask-side depth decreases by this USD amount within the
+    /// window (inferred as aggressive taker fills). 0 = disabled.
+    pub fill_velocity_usd: Decimal,
+    /// Sliding window (seconds) for fill-velocity detection.
+    pub fill_velocity_window_sec: u64,
+    /// Cancel when total bid depth shrinks by this percentage within the
+    /// window (inferred as mass cancel by other makers). 0 = disabled.
+    pub mass_cancel_pct: Decimal,
+    /// Sliding window (seconds) for mass-cancel detection.
+    pub mass_cancel_window_sec: u64,
+    /// Force-cancel and re-place resting orders after this many seconds to
+    /// stay at the back of the queue. 0 = disabled.
+    pub requote_interval_sec: u64,
+    /// Random jitter added to requote interval (0..jitter seconds).
+    pub requote_jitter_sec: u64,
+    /// How often the fast reconcile loop runs (seconds). Full cycle remains
+    /// at the worker's poll_interval_secs.
+    pub reconcile_interval_sec: u64,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
@@ -277,6 +307,29 @@ pub struct RewardBotConfigPatch {
     pub requote_drift_cents: Option<Decimal>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub post_fill_strategy: Option<PostFillStrategy>,
+    // -- Risk control fields --
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_depth_usd: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cancel_bid_rank: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub depth_drop_pct: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub depth_drop_window_sec: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fill_velocity_usd: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fill_velocity_window_sec: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mass_cancel_pct: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mass_cancel_window_sec: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requote_interval_sec: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requote_jitter_sec: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reconcile_interval_sec: Option<u64>,
 }
 
 impl Default for RewardBotConfig {
@@ -308,6 +361,18 @@ impl Default for RewardBotConfig {
             max_fill_ratio: decimal("1"),
             requote_drift_cents: decimal("2"),
             post_fill_strategy: PostFillStrategy::ExitAtMarkup,
+            // Risk control defaults: all disabled (0 = off)
+            min_depth_usd: Decimal::ZERO,
+            cancel_bid_rank: 0,
+            depth_drop_pct: Decimal::ZERO,
+            depth_drop_window_sec: 10,
+            fill_velocity_usd: Decimal::ZERO,
+            fill_velocity_window_sec: 10,
+            mass_cancel_pct: Decimal::ZERO,
+            mass_cancel_window_sec: 10,
+            requote_interval_sec: 0,
+            requote_jitter_sec: 0,
+            reconcile_interval_sec: 5,
         }
     }
 }
@@ -363,6 +428,22 @@ impl RewardBotConfig {
         self.max_fill_ratio = clamp_decimal(self.max_fill_ratio, decimal("0.01"), Decimal::ONE);
         self.requote_drift_cents =
             clamp_decimal(self.requote_drift_cents, Decimal::ZERO, decimal("99"));
+        // Risk control clamps
+        self.min_depth_usd =
+            clamp_decimal(self.min_depth_usd, Decimal::ZERO, decimal("1000000"));
+        self.cancel_bid_rank = self.cancel_bid_rank.clamp(0, 20);
+        self.depth_drop_pct =
+            clamp_decimal(self.depth_drop_pct, Decimal::ZERO, decimal("100"));
+        self.depth_drop_window_sec = self.depth_drop_window_sec.clamp(0, 300);
+        self.fill_velocity_usd =
+            clamp_decimal(self.fill_velocity_usd, Decimal::ZERO, decimal("1000000"));
+        self.fill_velocity_window_sec = self.fill_velocity_window_sec.clamp(0, 300);
+        self.mass_cancel_pct =
+            clamp_decimal(self.mass_cancel_pct, Decimal::ZERO, decimal("100"));
+        self.mass_cancel_window_sec = self.mass_cancel_window_sec.clamp(0, 300);
+        self.requote_interval_sec = self.requote_interval_sec.clamp(0, 3600);
+        self.requote_jitter_sec = self.requote_jitter_sec.clamp(0, 600);
+        self.reconcile_interval_sec = self.reconcile_interval_sec.clamp(1, 60);
         self
     }
 
@@ -447,6 +528,18 @@ impl RewardBotConfig {
         if let Some(post_fill_strategy) = patch.post_fill_strategy {
             next.post_fill_strategy = post_fill_strategy;
         }
+        // Risk control patches
+        if let Some(v) = patch.min_depth_usd { next.min_depth_usd = v; }
+        if let Some(v) = patch.cancel_bid_rank { next.cancel_bid_rank = v; }
+        if let Some(v) = patch.depth_drop_pct { next.depth_drop_pct = v; }
+        if let Some(v) = patch.depth_drop_window_sec { next.depth_drop_window_sec = v; }
+        if let Some(v) = patch.fill_velocity_usd { next.fill_velocity_usd = v; }
+        if let Some(v) = patch.fill_velocity_window_sec { next.fill_velocity_window_sec = v; }
+        if let Some(v) = patch.mass_cancel_pct { next.mass_cancel_pct = v; }
+        if let Some(v) = patch.mass_cancel_window_sec { next.mass_cancel_window_sec = v; }
+        if let Some(v) = patch.requote_interval_sec { next.requote_interval_sec = v; }
+        if let Some(v) = patch.requote_jitter_sec { next.requote_jitter_sec = v; }
+        if let Some(v) = patch.reconcile_interval_sec { next.reconcile_interval_sec = v; }
         next.normalized()
     }
 }
@@ -675,7 +768,17 @@ pub struct RewardBotRunReport {
     pub simulated_orders: usize,
     pub cancelled_orders: usize,
     pub filled_orders: usize,
+    pub risk_cancelled_orders: usize,
     pub reward_accrued: Decimal,
+}
+
+/// Point-in-time snapshot of a token's order book, stored for historical
+/// comparison in risk-control checks (depth drop, fill velocity, mass cancel).
+#[derive(Debug, Clone)]
+pub struct BookSnapshot {
+    pub bids: Vec<RewardBookLevel>,
+    pub asks: Vec<RewardBookLevel>,
+    pub observed_at: OffsetDateTime,
 }
 
 #[derive(Debug, Clone)]

@@ -33,6 +33,7 @@ import { readRewardBotSnapshot, type RewardBotSnapshotQuery } from "@/lib/api/re
 import type { NumberConfigKey } from "../types";
 import { NumberInput } from "./number-input";
 import { EventsPanel } from "./rewards-events-panel";
+import { RiskControlConfig } from "./rewards-risk-config";
 import { OrdersTable, QuotePlansTable } from "./rewards-tables";
 
 export function RewardsWorkbench({ initialSnapshot }: { initialSnapshot: RewardBotSnapshotDto }) {
@@ -306,6 +307,8 @@ export function RewardsWorkbench({ initialSnapshot }: { initialSnapshot: RewardB
           </div>
         </CardContent>
       </Card>
+
+      <RiskControlConfig draft={draft} updateNumber={updateNumber} />
 
       <div className="grid gap-4 xl:grid-cols-[1.25fr_0.75fr]">
         <Card>

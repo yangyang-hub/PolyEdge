@@ -173,6 +173,18 @@ const rewardConfigSchema = z.object({
     "hold_and_requote",
     "flatten_immediately",
   ]),
+  // Risk control fields
+  min_depth_usd: decimalNumber.min(0).max(1_000_000),
+  cancel_bid_rank: z.coerce.number().int().min(0).max(20),
+  depth_drop_pct: decimalNumber.min(0).max(100),
+  depth_drop_window_sec: z.coerce.number().int().min(0).max(300),
+  fill_velocity_usd: decimalNumber.min(0).max(1_000_000),
+  fill_velocity_window_sec: z.coerce.number().int().min(0).max(300),
+  mass_cancel_pct: decimalNumber.min(0).max(100),
+  mass_cancel_window_sec: z.coerce.number().int().min(0).max(300),
+  requote_interval_sec: z.coerce.number().int().min(0).max(3600),
+  requote_jitter_sec: z.coerce.number().int().min(0).max(600),
+  reconcile_interval_sec: z.coerce.number().int().min(1).max(60),
 }).refine((value) => value.max_midpoint > value.min_midpoint, {
   message: "Max midpoint must be greater than min midpoint.",
   path: ["max_midpoint"],

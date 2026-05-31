@@ -11,10 +11,10 @@
 
 ## 数据获取架构（编码时必须遵守）
 
-### Single Source of Truth: Database + Redis Cache
+### Single Source of Truth: Database + In-Memory Cache
 
 ALL external API data MUST be fetched by background workers and stored in the database
-or Redis cache. Strategies, pages, and API handlers MUST read from these stores — NEVER
+or in-memory cache. Strategies, pages, and API handlers MUST read from these stores — NEVER
 fetch directly from external APIs (Polymarket Gamma, CLOB, etc.).
 
 ### Market Data Pipeline
@@ -23,7 +23,7 @@ fetch directly from external APIs (Polymarket Gamma, CLOB, etc.).
 |------|--------|--------|-------|----------|
 | General markets | `sync-markets` | Gamma API `/markets/keyset` | `markets` table (Postgres) | 5 min |
 | Reward markets | `sync-markets` | CLOB API `/rewards/markets/current` | `reward_markets` table (Postgres) | 5 min |
-| Order books | `orderbook-stream` | CLOB WebSocket + `/book` poll | `ob:{token_id}` (Redis) | WS real-time + 30s poll reconcile |
+| Order books | `orderbook-stream` | CLOB WebSocket + `/book` poll | `InMemoryOrderbookCache`（进程内，TTL 5 分钟） | WS real-time + 30s poll reconcile |
 
 All three are written by workers. All consumers read from the store, never from the API.
 
@@ -41,7 +41,7 @@ retries solves this and ensures consistent data across all consumers.
 - ❌ Fetching market metadata (questions, tokens, slugs) from external APIs at request time
 - ❌ Creating new connector calls outside the worker sync pipeline
 - ❌ Reading market data from Polymarket when it exists in the database
-- ❌ Fetching order books directly from CLOB when they exist in the Redis cache
+- ❌ Fetching order books directly from CLOB when they exist in the in-memory cache
 - ❌ Duplicating data fetching logic across workers, API handlers, and strategies
 
 ### Key Data Files
@@ -49,12 +49,12 @@ retries solves this and ensures consistent data across all consumers.
 | File | Role |
 |------|------|
 | `apps/worker/src/worker/market_sync.rs` | Sync worker — fetches markets from Polymarket, writes to Postgres |
-| `apps/worker/src/worker/orderbook_stream.rs` | Orderbook stream — WS + poll, writes to Redis cache |
-| `apps/worker/src/worker/rewards.rs` | Rewards bot — reads markets from Postgres, order books from Redis |
-| `apps/api/src/handlers/reward_inputs.rs` | API handler — reads markets from Postgres, order books from Redis |
-| `crates/application/src/rewards/service.rs` | RewardBotService — `upsert_reward_markets`, `list_active_reward_markets` |
+| `apps/worker/src/worker/orderbook_stream.rs` | Orderbook stream — WS + poll, writes to InMemoryOrderbookCache, 动态 token 刷新 |
+| `apps/worker/src/worker/rewards.rs` | Rewards bot — reads markets from Postgres, order books from InMemoryOrderbookCache |
+| `apps/api/src/handlers/reward_inputs.rs` | API handler — reads markets from Postgres, order books from InMemoryOrderbookCache |
+| `crates/application/src/rewards/service.rs` | RewardBotService — `upsert_reward_markets`, `list_active_reward_markets`, `list_all_reward_candidate_token_ids` |
 | `crates/application/src/orderbook_cache.rs` | OrderbookCache trait — `get_book`, `set_book`, `set_books` |
-| `crates/infrastructure/src/stores/orderbook_cache.rs` | Redis + in-memory OrderbookCache implementations |
+| `crates/infrastructure/src/stores/orderbook_cache.rs` | InMemoryOrderbookCache（TTL + 定期清理）；保留 Redis 实现 |
 
 ## 仓库结构
 
@@ -76,7 +76,7 @@ retries solves this and ensures consistent data across all consumers.
 - 后端 API 已覆盖 markets、events、news、evidences、signals、orders、trades、positions、pricing、arbitrage、rewards bot、risk、approvals、system、SSE 和 connector callback 等主路径。
 - `polyedge-worker` 支持 news ingest、news promotion、arbitrage radar、rewards bot 模拟、execution drain、paper reconciliation、Polymarket order/fill/user-event 任务。
 - 套利雷达是只读链路：发现、记录、校验、分析、展示和 SSE 推送已具备，但不会创建 execution request 或订单。
-- Rewards bot 已是有状态的逐 tick 做市模拟引擎：只使用独立的 `reward_markets` 表作为奖励市场来源，先按 rewards 配置预过滤候选市场，再从 Redis 盘口缓存并发读取候选盘口、生成当前候选快照的 YES/NO post-only 双边买单计划，并维护共享资金池账本（capital/available/reserved/realized_pnl/reward_earned）。模拟买单会占用 reserved 资金，取消未成交买单会释放占用；缺少新鲜缓存盘口时不会模拟成交或计提奖励；成交模拟只在新鲜盘口穿透/触顶时触发（确定性伪随机可复现）；成交后策略（加价出场 / 持有续挂 / 市价平仓 / 成交即撤对侧）、撤单策略（中点漂移、掉出 max_spread）、以及基于 Polymarket Qmin 公式的做市奖励金额累加已具备；当前仍不会实盘下单。
+- Rewards bot 已是有状态的逐 tick 做市模拟引擎：只使用独立的 `reward_markets` 表作为奖励市场来源，先按 rewards 配置预过滤候选市场，再从进程内 InMemoryOrderbookCache（TTL 5 分钟）并发读取候选盘口、生成当前候选快照的 YES/NO post-only 双边买单计划，并维护共享资金池账本（capital/available/reserved/realized_pnl/reward_earned）。模拟买单会占用 reserved 资金，取消未成交买单会释放占用；缺少新鲜缓存盘口时不会模拟成交或计提奖励；成交模拟只在新鲜盘口穿透/触顶时触发（确定性伪随机可复现）；成交后策略（加价出场 / 持有续挂 / 市价平仓 / 成交即撤对侧）、撤单策略（中点漂移、掉出 max_spread）、以及基于 Polymarket Qmin 公式的做市奖励金额累加已具备；当前仍不会实盘下单。
 - Polymarket connector 已迁移到 CLOB V2 Rust crate：`packages/backend/Cargo.toml` 保留 dependency key `polymarket-client-sdk`，实际指向 `polymarket_client_sdk_v2`。
 - 聪明钱跟单（copy-trading）已具备完整子系统：跟踪多个 Polymarket 钱包地址（`TrackedWallet`）、通过 Polymarket Data API（`data-api.polymarket.com`，通过 `PolymarketDataApiConnector`）检测钱包新成交、四种跟单仓位模式（`FixedUsd`/`ProportionalToSource`/`CapitalRatio`/`MirrorPortfolioWeight`）、钱包分析统计（胜率/ROI/成交量）、per-wallet/per-market/total 敞口+单日亏损+冷却+滑点风控、确定性模拟引擎（模拟资金账本：capital/available/reserved/realized_pnl）、`Run/Analyze/Cancel/Reset` 与账户资金设置前端 UI；`mode=live` 已结构化支持但未接入真实下单（记录警告回退模拟）；数据库迁移 `0020`，`POLYEDGE_COPYTRADE__ENABLED=true` 启用 worker 轮询。
 - Polymarket 运行时不再提供 mock mode；市场列表走 Gamma 实时数据，私有订单/成交任务需要真实凭证、真实账户、小额演练和运维 runbook。

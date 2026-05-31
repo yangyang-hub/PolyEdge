@@ -126,7 +126,7 @@ mod tests {
 
     use super::{
         ManagedRewardOrder, ManagedRewardOrderStatus, PostFillStrategy, RewardAccountState,
-        RewardOrderSide, run_reward_simulation_tick, simulate_fill,
+        RewardOrderSide, run_reward_simulation_tick, run_reconcile_tick, simulate_fill,
     };
 
     fn sample_market() -> RewardMarket {
@@ -221,6 +221,7 @@ mod tests {
             Vec::new(),
             &[sample_market()],
             &HashMap::new(),
+            &HashMap::new(),
             60,
             "trc_test",
         );
@@ -263,6 +264,7 @@ mod tests {
             Vec::new(),
             &[sample_market()],
             &empty_fresh_books(),
+            &HashMap::new(),
             86_400,
             "trc_test",
         );
@@ -289,6 +291,7 @@ mod tests {
             Vec::new(),
             &[sample_market()],
             &HashMap::new(),
+            &HashMap::new(),
             86_400,
             "trc_test",
         );
@@ -312,6 +315,7 @@ mod tests {
             Vec::new(),
             &[sample_market()],
             &HashMap::new(),
+            &HashMap::new(),
             60,
             "trc_test",
         );
@@ -334,6 +338,7 @@ mod tests {
             seeds,
             Vec::new(),
             &[sample_market()],
+            &HashMap::new(),
             &HashMap::new(),
             60,
             "trc_test",
@@ -377,6 +382,7 @@ mod tests {
             Vec::new(),
             &[sample_market()],
             &empty_fresh_books(),
+            &HashMap::new(),
             86_400,
             "trc_test",
         );
@@ -414,6 +420,7 @@ mod tests {
             Vec::new(),
             &[sample_market()],
             &books,
+            &HashMap::new(),
             86_400,
             "trc_test",
         );
@@ -510,6 +517,7 @@ mod tests {
             Vec::new(),
             &[sample_market()],
             &books,
+            &HashMap::new(),
             60,
             "trc_test",
         );
@@ -528,5 +536,168 @@ mod tests {
                 .any(|order| order.status == ManagedRewardOrderStatus::ExitPending),
             "expected an exit order after the fill"
         );
+    }
+
+    // ---- Risk control tests ----
+
+    #[test]
+    fn risk_check_disabled_by_default() {
+        // With all risk fields at 0, no risk cancel should trigger.
+        let config = RewardBotConfig::default();
+        assert_eq!(config.min_depth_usd, Decimal::ZERO);
+        assert_eq!(config.cancel_bid_rank, 0);
+        assert_eq!(config.depth_drop_pct, Decimal::ZERO);
+        assert_eq!(config.fill_velocity_usd, Decimal::ZERO);
+        assert_eq!(config.mass_cancel_pct, Decimal::ZERO);
+        assert_eq!(config.requote_interval_sec, 0);
+    }
+
+    #[test]
+    fn min_depth_cancel_thins_book() {
+        // Set min_depth_usd = $1000. A book with only $50 above our price should trigger cancel.
+        let config = RewardBotConfig {
+            min_depth_usd: decimal("1000"),
+            ..RewardBotConfig::default()
+        };
+        let now = OffsetDateTime::now_utc();
+        let mut books = HashMap::new();
+        books.insert(
+            "yes".to_string(),
+            RewardOrderBook {
+                token_id: "yes".to_string(),
+                bids: vec![
+                    RewardBookLevel { price: decimal("0.52"), size: decimal("100") },
+                    RewardBookLevel { price: decimal("0.51"), size: decimal("100") },
+                ],
+                asks: vec![RewardBookLevel { price: decimal("0.55"), size: decimal("100") }],
+                observed_at: now,
+            },
+        );
+        let seeds = vec![open_buy("yes", "YES", "0.51", "20")];
+        let outcome = run_reward_simulation_tick(
+            &config,
+            fresh_account(),
+            seeds,
+            Vec::new(),
+            &[sample_market()],
+            &books,
+            &HashMap::new(),
+            60,
+            "trc_test",
+        );
+        assert!(
+            outcome.report.risk_cancelled_orders >= 1
+                || outcome.report.cancelled_orders >= 1,
+            "expected cancel due to thin book"
+        );
+    }
+
+    #[test]
+    fn bid_rank_cancel_on_promotion() {
+        // cancel_bid_rank = 2: cancel when order is at bid-1 or bid-2.
+        // Our order at 0.51 is bid-1 (only one level) → should cancel.
+        let config = RewardBotConfig {
+            cancel_bid_rank: 2,
+            ..RewardBotConfig::default()
+        };
+        let now = OffsetDateTime::now_utc();
+        let mut books = HashMap::new();
+        books.insert(
+            "yes".to_string(),
+            RewardOrderBook {
+                token_id: "yes".to_string(),
+                bids: vec![RewardBookLevel { price: decimal("0.51"), size: decimal("100") }],
+                asks: vec![RewardBookLevel { price: decimal("0.55"), size: decimal("100") }],
+                observed_at: now,
+            },
+        );
+        let seeds = vec![open_buy("yes", "YES", "0.51", "20")];
+        let outcome = run_reward_simulation_tick(
+            &config,
+            fresh_account(),
+            seeds,
+            Vec::new(),
+            &[sample_market()],
+            &books,
+            &HashMap::new(),
+            60,
+            "trc_test",
+        );
+        assert!(
+            outcome.report.risk_cancelled_orders >= 1
+                || outcome.report.cancelled_orders >= 1,
+            "expected cancel due to bid rank promotion"
+        );
+    }
+
+    #[test]
+    fn requote_age_cancel_after_interval() {
+        // requote_interval_sec = 10, requote_jitter_sec = 0.
+        // An order created 60s ago should be cancelled.
+        let config = RewardBotConfig {
+            requote_interval_sec: 10,
+            requote_jitter_sec: 0,
+            ..RewardBotConfig::default()
+        };
+        let now = OffsetDateTime::now_utc();
+        let mut books = HashMap::new();
+        books.insert(
+            "yes".to_string(),
+            RewardOrderBook {
+                token_id: "yes".to_string(),
+                bids: vec![
+                    RewardBookLevel { price: decimal("0.55"), size: decimal("200") },
+                    RewardBookLevel { price: decimal("0.52"), size: decimal("200") },
+                    RewardBookLevel { price: decimal("0.51"), size: decimal("100") },
+                ],
+                asks: vec![RewardBookLevel { price: decimal("0.58"), size: decimal("100") }],
+                observed_at: now,
+            },
+        );
+
+        // Create an order that was created 60 seconds ago.
+        let mut old_order = open_buy("yes", "YES", "0.51", "20");
+        old_order.created_at = now - time::Duration::seconds(60);
+
+        let outcome = run_reward_simulation_tick(
+            &config,
+            fresh_account(),
+            vec![old_order],
+            Vec::new(),
+            &[sample_market()],
+            &books,
+            &HashMap::new(),
+            60,
+            "trc_test",
+        );
+        assert!(
+            outcome.report.risk_cancelled_orders >= 1
+                || outcome.report.cancelled_orders >= 1,
+            "expected cancel due to requote age"
+        );
+    }
+
+    #[test]
+    fn reconcile_tick_uses_existing_plans() {
+        // run_reconcile_tick should NOT rebuild plans; it uses the supplied ones.
+        let config = RewardBotConfig::default();
+        let plans = build_reward_quote_plans(&[sample_market()], &HashMap::new(), &config);
+        let plan_count = plans.len();
+
+        let outcome = run_reconcile_tick(
+            &config,
+            fresh_account(),
+            Vec::new(),
+            Vec::new(),
+            plans.clone(),
+            vec![sample_market()],
+            &HashMap::new(),
+            &HashMap::new(),
+            60,
+            "trc_test",
+        );
+
+        assert_eq!(outcome.plans.len(), plan_count);
+        assert_eq!(outcome.plans[0].score, plans[0].score);
     }
 }

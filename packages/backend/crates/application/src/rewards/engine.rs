@@ -40,6 +40,7 @@ struct TickContext {
     filled_orders: usize,
     placed_orders: usize,
     cancelled_orders: usize,
+    risk_cancelled_orders: usize,
     reward_accrued: Decimal,
 }
 
@@ -56,6 +57,7 @@ pub fn run_reward_simulation_tick(
     positions: Vec<RewardPosition>,
     markets: &[RewardMarket],
     books: &HashMap<String, RewardOrderBook>,
+    book_history: &HashMap<String, VecDeque<BookSnapshot>>,
     elapsed_seconds: i64,
     trace_id: &str,
 ) -> RewardSimulationOutcome {
@@ -79,6 +81,7 @@ pub fn run_reward_simulation_tick(
         filled_orders: 0,
         placed_orders: 0,
         cancelled_orders: 0,
+        risk_cancelled_orders: 0,
         reward_accrued: Decimal::ZERO,
     };
 
@@ -89,7 +92,7 @@ pub fn run_reward_simulation_tick(
 
     let elapsed = elapsed_seconds.clamp(1, 86_400);
 
-    ctx.reconcile_open_orders(&plan_index, books);
+    ctx.reconcile_open_orders(&plan_index, books, book_history);
     ctx.accrue_rewards(&plan_index, books, elapsed);
     ctx.place_new_quotes(&plans);
 
@@ -104,6 +107,7 @@ pub fn run_reward_simulation_tick(
         simulated_orders: ctx.placed_orders,
         cancelled_orders: ctx.cancelled_orders,
         filled_orders: ctx.filled_orders,
+        risk_cancelled_orders: ctx.risk_cancelled_orders,
         reward_accrued: ctx.reward_accrued,
     };
 
@@ -119,8 +123,86 @@ pub fn run_reward_simulation_tick(
     }
 }
 
+/// Run a fast reconcile tick — reuses the supplied `plans` instead of
+/// rebuilding them. Used by the high-frequency reconcile loop (every N
+/// seconds) between full simulation cycles.
+#[must_use]
+pub fn run_reconcile_tick(
+    config: &RewardBotConfig,
+    account: RewardAccountState,
+    open_orders: Vec<ManagedRewardOrder>,
+    positions: Vec<RewardPosition>,
+    plans: Vec<RewardQuotePlan>,
+    markets: Vec<RewardMarket>,
+    books: &HashMap<String, RewardOrderBook>,
+    book_history: &HashMap<String, VecDeque<BookSnapshot>>,
+    elapsed_seconds: i64,
+    trace_id: &str,
+) -> RewardSimulationOutcome {
+    let now = OffsetDateTime::now_utc();
+    let eligible_plans = plans.iter().filter(|plan| plan.eligible).count();
+
+    let mut ctx = TickContext {
+        now,
+        config: config.clone(),
+        account,
+        orders: open_orders,
+        positions: positions
+            .into_iter()
+            .map(|p| (p.token_id.clone(), p))
+            .collect(),
+        fills: Vec::new(),
+        events: Vec::new(),
+        trace_id: trace_id.to_string(),
+        seq: 0,
+        filled_orders: 0,
+        placed_orders: 0,
+        cancelled_orders: 0,
+        risk_cancelled_orders: 0,
+        reward_accrued: Decimal::ZERO,
+    };
+
+    let plan_index: HashMap<String, RewardQuotePlan> = plans
+        .iter()
+        .map(|plan| (plan.condition_id.clone(), plan.clone()))
+        .collect();
+
+    let elapsed = elapsed_seconds.clamp(1, 86_400);
+
+    ctx.reconcile_open_orders(&plan_index, books, book_history);
+    ctx.accrue_rewards(&plan_index, books, elapsed);
+    ctx.place_new_quotes(&plans);
+
+    ctx.account.tick_index += 1;
+    ctx.account.updated_at = now;
+
+    let report = RewardBotRunReport {
+        markets_scanned: markets.len(),
+        books_fetched: books.len(),
+        plans_built: plans.len(),
+        eligible_plans,
+        simulated_orders: ctx.placed_orders,
+        cancelled_orders: ctx.cancelled_orders,
+        filled_orders: ctx.filled_orders,
+        risk_cancelled_orders: ctx.risk_cancelled_orders,
+        reward_accrued: ctx.reward_accrued,
+    };
+
+    RewardSimulationOutcome {
+        account: ctx.account,
+        markets,
+        plans,
+        orders: ctx.orders,
+        positions: ctx.positions.into_values().collect(),
+        fills: ctx.fills,
+        events: ctx.events,
+        report,
+    }
+}
+
 include!("engine/reconcile.rs");
 include!("engine/fills.rs");
 include!("engine/quoting.rs");
 include!("engine/rewards_calc.rs");
 include!("engine/state.rs");
+include!("engine/risk_checks.rs");

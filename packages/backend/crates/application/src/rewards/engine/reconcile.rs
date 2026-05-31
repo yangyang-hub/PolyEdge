@@ -1,10 +1,11 @@
-// Per-tick reconciliation of resting orders against fresh books: drift cancels and fills.
+// Per-tick reconciliation of resting orders against fresh books: risk checks, drift cancels, and fills.
 
 impl TickContext {
     fn reconcile_open_orders(
         &mut self,
         plan_index: &HashMap<String, RewardQuotePlan>,
         books: &HashMap<String, RewardOrderBook>,
+        book_history: &HashMap<String, VecDeque<BookSnapshot>>,
     ) {
         // Work on a snapshot of the currently open orders so the post-fill
         // handlers can freely push new orders / cancel siblings.
@@ -26,7 +27,7 @@ impl TickContext {
 
             let (best_bid, best_ask, has_book) = book_top(books, &order.token_id, &self.config, self.now);
 
-            // Cancel resting entry buys that drifted out of the scoring band.
+            // --- Existing drift cancel for Buy orders ---
             if order.side == RewardOrderSide::Buy {
                 if let Some(plan) = plan_index.get(&order.condition_id) {
                     if let Some(reason) = self.should_cancel_for_drift(&order, plan) {
@@ -39,6 +40,55 @@ impl TickContext {
                 }
             }
 
+            // --- Risk-control checks (Buy orders only) ---
+            if order.side == RewardOrderSide::Buy {
+                let history = book_history.get(&order.token_id);
+
+                // Feature 1: Minimum depth threshold
+                if let Some(reason) = check_min_depth(&order, books, &self.config) {
+                    self.cancel_order(index, reason);
+                    self.risk_cancelled_orders += 1;
+                    continue;
+                }
+                // Feature 2: Bid-rank promotion cancel
+                if let Some(reason) = check_bid_rank(&order, books, &self.config) {
+                    self.cancel_order(index, reason);
+                    self.risk_cancelled_orders += 1;
+                    continue;
+                }
+                // Feature 3: Depth-drop detection
+                if let Some(hist) = history {
+                    if let Some(reason) = check_depth_drop(&order, books, hist, &self.config, self.now) {
+                        self.cancel_order(index, reason);
+                        self.risk_cancelled_orders += 1;
+                        continue;
+                    }
+                }
+                // Feature 4: Fill-velocity detection
+                if let Some(hist) = history {
+                    if let Some(reason) = check_fill_velocity(&order, books, hist, &self.config, self.now) {
+                        self.cancel_order(index, reason);
+                        self.risk_cancelled_orders += 1;
+                        continue;
+                    }
+                }
+                // Feature 5: Mass-cancel following
+                if let Some(hist) = history {
+                    if let Some(reason) = check_mass_cancel(&order, books, hist, &self.config, self.now) {
+                        self.cancel_order(index, reason);
+                        self.risk_cancelled_orders += 1;
+                        continue;
+                    }
+                }
+                // Feature 6: Periodic requote
+                if let Some(reason) = check_requote_age(&order, &self.config, self.now) {
+                    self.cancel_order(index, reason);
+                    self.risk_cancelled_orders += 1;
+                    continue;
+                }
+            }
+
+            // --- Fill simulation ---
             let draw = self.draw(&order.id);
             if let Some(fill_size) = simulate_fill(&order, best_bid, best_ask, has_book, draw, &self.config) {
                 match order.side {

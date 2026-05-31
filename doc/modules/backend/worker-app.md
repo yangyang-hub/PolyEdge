@@ -95,14 +95,17 @@ fetch_reward_bot_inputs() // 获取奖励市场 + 盘口
 
 Report: `RewardBotRunReport { markets_scanned, books_fetched, plans_built, eligible_plans, simulated_orders, cancelled_orders, filled_orders, reward_accrued }`
 
-约束：worker/API 只从 Postgres 的 `reward_markets` 读取奖励市场、从 Redis orderbook cache 读取盘口。每个 tick 只读取 bounded candidate market pool（默认至少 100、最多 500 个高日奖励市场），先按配置预过滤奖励市场，再并发读取候选盘口缓存；若本 tick 没有新鲜缓存盘口，模拟器不会产生盘口成交或 rewards 计提，只刷新当前候选计划/保留订单状态。
+约束：worker 只从 Postgres 的 `reward_markets` 读取奖励市场、从进程内 `InMemoryOrderbookCache` 读取盘口（TTL 默认 5 分钟，后台清理任务每 60 秒淘汰过期条目）。每个 tick 只读取 bounded candidate market pool（默认至少 100、最多 500 个高日奖励市场），先按配置预过滤奖励市场，再并发读取候选盘口缓存；若本 tick 没有新鲜缓存盘口，模拟器不会产生盘口成交或 rewards 计提，只刷新当前候选计划/保留订单状态。
 
 ### orderbook_stream — 盘口流
 
 ```
-collect_orderbook_subscription_tokens() // 从开放订单和预过滤后的奖励候选市场收集 token ID
-    → ClobWsClient.subscribe_orderbook() // WebSocket 订阅
-    → orderbook_cache.set_book() // 写入 Redis/内存缓存
+collect_orderbook_subscription_tokens() // 从开放订单 + 全量奖励候选市场（不限于已有仓位）收集 token ID
+    → ClobWsClient.subscribe_orderbook() // WebSocket 订阅（连接时固定 token 列表）
+    → tokio::select! { ws消息, token刷新定时器 } // 每 token_refresh_interval_secs 重新评估订阅列表
+    → token_list 变化 → 更新 poll reconciler 的共享 token 列表 + 断开 WS 触发重连
+    → poll reconciler 每 poll_reconcile_interval_secs 拉取 stale token 的盘口（动态读取最新 token 列表）
+    → orderbook_cache.set_book() // 写入 InMemoryOrderbookCache（带 TTL）
 ```
 
 Report: `OrderbookStreamReport { subscribed_tokens, ws_snapshots_received, poll_reconciliations, poll_failures }`

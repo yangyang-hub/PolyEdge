@@ -223,8 +223,11 @@ fn apply_runtime_config_value(
         "orderbook_stream.stale_threshold_ms" => {
             self.orderbook_stream.stale_threshold_ms = parse_u64_runtime_config(key, value)?;
         }
-        "orderbook_stream.book_ttl_secs" => {
-            self.orderbook_stream.book_ttl_secs = parse_u64_runtime_config(key, value)?;
+        "orderbook_stream.book_ttl_ms" => {
+            self.orderbook_stream.book_ttl_ms = parse_u64_runtime_config(key, value)?;
+        }
+        "orderbook_stream.token_refresh_interval_secs" => {
+            self.orderbook_stream.token_refresh_interval_secs = parse_u64_runtime_config(key, value)?;
         }
         "orderbook_stream.restart_interval_secs" => {
             self.orderbook_stream.restart_interval_secs = parse_u64_runtime_config(key, value)?;

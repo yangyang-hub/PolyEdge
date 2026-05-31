@@ -18,42 +18,73 @@ async fn poll_reward_bot(
         simulated_orders: 0,
         cancelled_orders: 0,
         filled_orders: 0,
+        risk_cancelled_orders: 0,
         reward_accrued: rust_decimal::Decimal::ZERO,
     };
-    let mut cycles = 0usize;
-    let interval = Duration::from_secs(state.settings.rewards.poll_interval_secs.max(1));
+    let mut full_cycles = 0usize;
+    let mut reconcile_cycles = 0usize;
+    let full_interval = Duration::from_secs(state.settings.rewards.poll_interval_secs.max(1));
+    // Start with a full cycle immediately.
+    let mut last_full_at = Instant::now() - full_interval;
 
     loop {
-        let trace_id = new_trace_id();
-        let report = run_reward_bot_once(state, &trace_id).await?;
-        total.markets_scanned += report.markets_scanned;
-        total.books_fetched += report.books_fetched;
-        total.plans_built += report.plans_built;
-        total.eligible_plans += report.eligible_plans;
-        total.simulated_orders += report.simulated_orders;
-        total.cancelled_orders += report.cancelled_orders;
-        total.filled_orders += report.filled_orders;
-        total.reward_accrued += report.reward_accrued;
-        cycles += 1;
+        // Read the live config to get the reconcile interval.
+        let config = state.reward_bot_service.read_config().await.unwrap_or_default();
+        let reconcile_interval = Duration::from_secs(config.reconcile_interval_sec.max(1));
+        let now = Instant::now();
+        let since_full = now.duration_since(last_full_at);
 
-        info!(
-            trace_id = %trace_id,
-            cycle = cycles,
-            markets_scanned = report.markets_scanned,
-            books_fetched = report.books_fetched,
-            plans_built = report.plans_built,
-            eligible_plans = report.eligible_plans,
-            simulated_orders = report.simulated_orders,
-            cancelled_orders = report.cancelled_orders,
-            "completed reward bot polling cycle",
-        );
+        if since_full >= full_interval {
+            // --- Full simulation cycle (rebuilds plans) ---
+            let trace_id = new_trace_id();
+            let report = run_reward_bot_once(state, &trace_id).await?;
+            accumulate_report(&mut total, &report);
+            full_cycles += 1;
+            last_full_at = Instant::now();
 
-        if max_cycles.is_some_and(|limit| cycles >= limit) {
-            break;
+            info!(
+                trace_id = %trace_id,
+                full_cycle = full_cycles,
+                markets_scanned = report.markets_scanned,
+                eligible_plans = report.eligible_plans,
+                cancelled = report.cancelled_orders,
+                risk_cancelled = report.risk_cancelled_orders,
+                "completed full reward bot cycle",
+            );
+
+            if max_cycles.is_some_and(|limit| full_cycles >= limit) {
+                break;
+            }
+        } else {
+            // --- Fast reconcile-only cycle (risk checks + fills + quotes) ---
+            let trace_id = new_trace_id();
+            let books = fetch_reward_bot_active_books(state).await?;
+            let report = state
+                .reward_bot_service
+                .run_reconcile_only(books, &trace_id)
+                .await?;
+            accumulate_report(&mut total, &report);
+            reconcile_cycles += 1;
+
+            if report.risk_cancelled_orders > 0 || report.filled_orders > 0 {
+                info!(
+                    trace_id = %trace_id,
+                    reconcile_cycle = reconcile_cycles,
+                    risk_cancelled = report.risk_cancelled_orders,
+                    filled = report.filled_orders,
+                    "fast reconcile cycle",
+                );
+            }
         }
 
+        // Sleep until the next reconcile tick or the next full cycle, whichever
+        // comes first. Also check for shutdown.
+        let elapsed_since_full = Instant::now().duration_since(last_full_at);
+        let next_full_in = full_interval.checked_sub(elapsed_since_full).unwrap_or(reconcile_interval);
+        let sleep_dur = reconcile_interval.min(next_full_in);
+
         tokio::select! {
-            () = tokio::time::sleep(interval) => {}
+            () = tokio::time::sleep(sleep_dur) => {}
             shutdown = tokio::signal::ctrl_c() => {
                 if let Err(error) = shutdown {
                     warn!(error = %error, "failed to listen for ctrl-c during reward bot polling");
@@ -64,6 +95,18 @@ async fn poll_reward_bot(
     }
 
     Ok(total)
+}
+
+fn accumulate_report(total: &mut RewardBotRunReport, report: &RewardBotRunReport) {
+    total.markets_scanned += report.markets_scanned;
+    total.books_fetched += report.books_fetched;
+    total.plans_built += report.plans_built;
+    total.eligible_plans += report.eligible_plans;
+    total.simulated_orders += report.simulated_orders;
+    total.cancelled_orders += report.cancelled_orders;
+    total.filled_orders += report.filled_orders;
+    total.risk_cancelled_orders += report.risk_cancelled_orders;
+    total.reward_accrued += report.reward_accrued;
 }
 
 async fn fetch_reward_bot_inputs(
@@ -95,6 +138,37 @@ async fn fetch_reward_bot_inputs(
     }
 
     Ok((markets, books))
+}
+
+/// Lightweight book fetch for the fast reconcile loop: only reads books for
+/// tokens where the bot currently has open orders or positions (not the full
+/// candidate market set).
+async fn fetch_reward_bot_active_books(
+    state: &AppState,
+) -> Result<HashMap<String, RewardOrderBook>> {
+    let token_ids = state
+        .reward_bot_service
+        .list_active_reward_book_token_ids()
+        .await?;
+
+    let mut books = HashMap::new();
+    let cache = state.orderbook_cache.clone();
+    let cached_books = stream::iter(token_ids)
+        .map(|token_id| {
+            let cache = cache.clone();
+            async move { cache.get_book(&token_id).await }
+        })
+        .buffer_unordered(32)
+        .collect::<Vec<_>>()
+        .await;
+
+    for cached in cached_books {
+        if let Some(cached) = cached? {
+            books.insert(cached.token_id.clone(), cached_order_book_to_reward(&cached));
+        }
+    }
+
+    Ok(books)
 }
 
 fn cached_order_book_to_reward(book: &CachedOrderBook) -> RewardOrderBook {

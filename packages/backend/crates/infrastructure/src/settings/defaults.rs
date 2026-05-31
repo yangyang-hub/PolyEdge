@@ -168,7 +168,8 @@ impl Default for OrderbookStreamSettings {
             max_tokens: 5000,
             poll_reconcile_interval_secs: 30,
             stale_threshold_ms: 15_000,
-            book_ttl_secs: 60,
+            book_ttl_ms: 300_000, // 5 minutes
+            token_refresh_interval_secs: 60,
             restart_interval_secs: 5,
         }
     }
