@@ -25,21 +25,16 @@
 
 ```
 ┌──────────────────┐     ┌──────────────────┐
-│   polyedge-front │────→│   polyedge-api   │
-│   nginx:80       │     │   port:38001     │
-│   (static site)  │     │   (Rust Axum)    │
+│   polyedge-front │────→│   polyedge-api   │────┐
+│   nginx:80       │     │   port:38001     │    │
+│   (static site)  │     │   (Rust Axum)    │    │
+└──────────────────┘     └──────────────────┘    │
+                                                  ↓
+┌──────────────────┐     ┌──────────────────┐
+│  polyedge-worker │────→│ polyedge-orderbook│
+│  (same image)    │     │  port:38002      │
+│                  │     │  (WS + HTTP)     │
 └──────────────────┘     └──────────────────┘
-                                ↑
-                         ┌──────────────────┐
-                         │ polyedge-orderbook│
-                         │  port:38002      │
-                         │  (WS + HTTP)     │
-                         └──────────────────┘
-                                ↑
-                         ┌──────────────────┐
-                         │  polyedge-worker  │
-                         │  (same image)     │
-                         └──────────────────┘
 ```
 
 ### polyedge-api
@@ -47,6 +42,8 @@
 - 镜像：`debian:trixie-slim` + 预构建 `bin/polyedge-api` 二进制
 - 端口：`0.0.0.0:38001 → container:38001`
 - 健康检查：`curl /healthz`（15s 间隔，10 次重试，20s 启动期）
+- 依赖 orderbook 健康检查通过后启动
+- 通过 `POLYEDGE_ORDERBOOK__SERVICE_URL` 连接 orderbook 服务读取盘口数据
 - 环境变量：`.env` + `.env.api`
 - `extra_hosts: host.docker.internal:host-gateway`（访问宿主机数据库）
 
@@ -55,8 +52,9 @@
 - 同 API 镜像，command 覆盖为 `polyedge-orderbook`
 - 端口：`0.0.0.0:38002 → container:38002`
 - 健康检查：`curl /healthz`（15s 间隔，10 次重试，20s 启动期）
-- 依赖 API 健康检查通过后启动
-- 职责：市场同步（Gamma + CLOB → Postgres）、WS + poll 盘口流（→ 进程内缓存）、HTTP API（盘口读取、token 注册）
+- 后端链路中的基础服务，Compose 会先于 API 和 Worker 启动
+- 职责：HTTP API（健康检查、盘口读取、token 注册）、后台市场同步（Gamma + CLOB → Postgres）、WS + poll 盘口流（→ 进程内缓存）
+- 启动顺序：先 bind HTTP 并暴露 `/healthz`，随后后台执行 initial/periodic market sync，避免外部 Polymarket API 慢响应导致容器启动健康检查失败
 - 环境变量：`.env` + `.env.orderbook`
 
 ### polyedge-worker
@@ -95,13 +93,14 @@
 1. 获取部署锁（默认 `/tmp/polyedge-deploy.lock`），避免 cron/CI 重叠执行
 2. `git fetch` + fast-forward merge
 3. 无镜像变更且所有容器运行中 → 跳过
-4. 后端二进制变更 → 重建后端镜像，立即写入 `.deploy-state`，再重启 API + Worker
+4. 后端二进制变更 → 重建后端镜像，立即写入 `.deploy-state`，再按 orderbook → API → Worker 顺序重启
 5. 前端文件变更 → 重建前端镜像，立即写入 `.deploy-state`，再重启 Frontend
 6. 容器未运行但镜像 hash 未变化 → 只 `up -d` 启动已有镜像，不强制 rebuild
 
 ### Manual 模式
 
 - `scripts/deploy.sh all` — 全量重建
+- `scripts/deploy.sh orderbook` — 重建后端，重启 Orderbook
 - `scripts/deploy.sh api` — 重建后端，重启 API
 - `scripts/deploy.sh worker` — 重建后端，重启 Worker
 - `scripts/deploy.sh front` — 重建前端
@@ -130,6 +129,7 @@
 | `POLYEDGE_API_BIND` | `0.0.0.0` | API 绑定地址 |
 | `POLYEDGE_API_PORT` | `38001` | API 宿主机端口 |
 | `POLYEDGE_API_UPSTREAM` | `http://polyedge-api:38001` | 前端代理目标 |
+| `POLYEDGE_ORDERBOOK__SERVICE_URL` | `http://polyedge-orderbook:38002` | API/Worker 访问 orderbook 服务的内部地址 |
 | `POLYEDGE_ALLOW_IN_MEMORY_DEPLOY` | — | 设为 1 允许无数据库部署（仅演示） |
 | `POLYEDGE_LOG_FILE` | `$HOME/polyedge-deploy.log`（cron） | deploy 脚本日志文件；无法写入时回退到 stdout/stderr |
 | `POLYEDGE_DEPLOY_LOCK_FILE` | `/tmp/polyedge-deploy.lock` | deploy 脚本互斥锁 |
@@ -144,7 +144,7 @@
 
 ```bash
 ./scripts/build-backend-bin.sh   # cargo build --release → bin/
-git add bin/polyedge-api bin/polyedge-worker
+git add bin/polyedge-api bin/polyedge-worker bin/polyedge-orderbook
 ```
 
 ## 当前状态
@@ -152,7 +152,7 @@ git add bin/polyedge-api bin/polyedge-worker
 - 部署模板适合原型/内网共享环境
 - Compose 部署使用窄构建上下文：后端只上传 `bin/`，前端只上传 `packages/front/`，避免扫描 Rust `target/`、前端 `node_modules/`、`.next/` 等大目录
 - `polyedge-front` 不再依赖 API 健康后才启动；前端静态 Nginx 可独立运行并在 API 恢复后继续代理请求
-- `scripts/deploy.sh` 已防止重叠执行；前端变更 hash 会直接 prune `node_modules`、`.next`、`out` 等大目录；容器 down 时不会因健康失败而重复 rebuild
+- `scripts/deploy.sh` 已防止重叠执行；前端变更 hash 会直接 prune `node_modules`、`.next`、`out` 等大目录；容器 down 时会按 orderbook → API → Worker 顺序启动已有后端镜像，不会因健康失败而重复 rebuild
 - 认证使用内部 dev-auth 模式
 - 生产前需要：真实会话体系、签名 JWT、key rotation
 

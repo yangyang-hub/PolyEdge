@@ -1,5 +1,5 @@
 use axum::{Router, routing::get};
-use polyedge_infrastructure::Runtime;
+use polyedge_infrastructure::{AppState, Runtime};
 use std::time::Duration;
 use tower_http::trace::TraceLayer;
 use tracing::info;
@@ -33,39 +33,37 @@ async fn main() {
 
     info!(port, "starting polyedge-orderbook service");
 
-    // Run initial market sync so the database is populated before any consumer
-    // starts reading.
-    {
-        let trace_id = polyedge_infrastructure::new_trace_id();
-        match sync_markets_once(&state, &trace_id).await {
-            Ok(report) => info!(
-                general = report.general_upserted,
-                reward = report.reward_upserted,
-                "initial market sync complete"
-            ),
-            Err(error) => tracing::warn!(error = %error, "initial market sync failed"),
-        }
-    }
+    // Build and bind HTTP API before any external market sync. Health checks
+    // should reflect process readiness, not Polymarket API latency.
+    let app = Router::new()
+        .route("/healthz", get(healthz))
+        .route("/orderbook/stats", get(get_orderbook_stats))
+        .route("/orderbook/batch", axum::routing::post(get_orderbook_batch))
+        .route("/orderbook/register", axum::routing::post(register_tokens))
+        .route("/orderbook/ingest", axum::routing::post(ingest_books))
+        .route(
+            "/orderbook/register/{source}",
+            axum::routing::delete(unregister_source),
+        )
+        .route("/orderbook/{token_id}", get(get_orderbook))
+        .layer(TraceLayer::new_for_http())
+        .with_state(state.clone());
+
+    let listener = tokio::net::TcpListener::bind(&listen)
+        .await
+        .expect("failed to bind orderbook HTTP listener");
+
+    info!(address = %listen, "orderbook HTTP server listening");
 
     // Periodic market sync (general + reward markets → Postgres).
     let sync_state = state.clone();
     let sync_handle = tokio::spawn(async move {
-        let interval = Duration::from_secs(
-            sync_state.settings.worker.market_sync_interval_secs.max(60),
-        );
+        let interval =
+            Duration::from_secs(sync_state.settings.worker.market_sync_interval_secs.max(60));
+        run_market_sync(&sync_state, "initial").await;
         loop {
             tokio::time::sleep(interval).await;
-            let trace_id = polyedge_infrastructure::new_trace_id();
-            match sync_markets_once(&sync_state, &trace_id).await {
-                Ok(report) => info!(
-                    general = report.general_upserted,
-                    reward = report.reward_upserted,
-                    "periodic market sync complete"
-                ),
-                Err(error) => {
-                    tracing::warn!(error = %error, "periodic market sync failed")
-                }
-            }
+            run_market_sync(&sync_state, "periodic").await;
         }
     });
 
@@ -74,7 +72,11 @@ async fn main() {
     let stream_state = state.clone();
     let stream_handle = tokio::spawn(async move {
         loop {
-            let token_count = stream_state.orderbook_registry.list_all_tokens().await.len();
+            let token_count = stream_state
+                .orderbook_registry
+                .list_all_tokens()
+                .await
+                .len();
             if token_count == 0 {
                 info!("no tokens registered yet, waiting 10s before retry");
                 tokio::time::sleep(Duration::from_secs(10)).await;
@@ -98,27 +100,6 @@ async fn main() {
         }
     });
 
-    // Build HTTP API.
-    let app = Router::new()
-        .route("/healthz", get(healthz))
-        .route("/orderbook/stats", get(get_orderbook_stats))
-        .route("/orderbook/batch", axum::routing::post(get_orderbook_batch))
-        .route("/orderbook/register", axum::routing::post(register_tokens))
-        .route("/orderbook/ingest", axum::routing::post(ingest_books))
-        .route(
-            "/orderbook/register/{source}",
-            axum::routing::delete(unregister_source),
-        )
-        .route("/orderbook/{token_id}", get(get_orderbook))
-        .layer(TraceLayer::new_for_http())
-        .with_state(state);
-
-    let listener = tokio::net::TcpListener::bind(&listen)
-        .await
-        .expect("failed to bind orderbook HTTP listener");
-
-    info!(address = %listen, "orderbook HTTP server listening");
-
     tokio::select! {
         result = axum::serve(listener, app).with_graceful_shutdown(shutdown_signal()) => {
             if let Err(error) = result {
@@ -136,13 +117,25 @@ async fn healthz() -> &'static str {
     "ok"
 }
 
+async fn run_market_sync(state: &AppState, phase: &'static str) {
+    let trace_id = polyedge_infrastructure::new_trace_id();
+    match sync_markets_once(state, &trace_id).await {
+        Ok(report) => info!(
+            phase,
+            general = report.general_upserted,
+            reward = report.reward_upserted,
+            "orderbook market sync complete"
+        ),
+        Err(error) => tracing::warn!(phase, error = %error, "orderbook market sync failed"),
+    }
+}
+
 async fn shutdown_signal() {
     let ctrl_c = tokio::signal::ctrl_c();
     #[cfg(unix)]
     {
-        let mut sigterm =
-            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-                .expect("failed to install SIGTERM handler");
+        let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("failed to install SIGTERM handler");
         tokio::select! {
             _ = ctrl_c => {}
             _ = sigterm.recv() => {}

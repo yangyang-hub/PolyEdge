@@ -8,12 +8,12 @@ set -Eeuo pipefail
 #   scripts/deploy.sh                 # auto mode (default for cron/CI)
 #   scripts/deploy.sh auto            # same as no args
 #   scripts/deploy.sh all             # force rebuild everything
-#   scripts/deploy.sh api [worker|front ...]
+#   scripts/deploy.sh api [orderbook|worker|front ...]
 #
 # Auto mode (default):
 #   1. git fetch + fast-forward
 #   2. If no changes detected AND all containers are running -> skip entirely
-#   3. If bin/polyedge-api or bin/polyedge-worker changed -> rebuild backend image -> restart api & worker
+#   3. If a backend binary changed -> rebuild backend image -> restart orderbook, api & worker
 #   4. If frontend files changed (packages/front/) -> rebuild frontend image -> restart front
 #   5. If any container is not running -> start existing image without forcing a rebuild
 #   6. Persist image build state to .deploy-state immediately after successful builds
@@ -44,12 +44,13 @@ fail() {
 
 usage() {
   cat >&2 <<'EOF'
-Usage: scripts/deploy.sh [auto|all|api|worker|front] [...]
+Usage: scripts/deploy.sh [auto|all|orderbook|api|worker|front] [...]
 
 Targets:
   no args / auto  Intelligent deploy: pull code, detect changes, deploy only what changed.
   all             Force rebuild backend and frontend images, then restart all services.
-  api worker      Rebuild the backend image and restart both backend services.
+  orderbook       Rebuild the backend image and restart only the orderbook service.
+  api worker      Rebuild the backend image and restart selected backend services.
   api             Rebuild the backend image and restart only the API service.
   worker          Rebuild the backend image and restart only the worker service.
   front           Rebuild the frontend image and restart only the frontend service.
@@ -231,6 +232,7 @@ save_deploy_state() {
   cat > "${state_file}" <<EOF
 api_hash=${current_api_hash}
 worker_hash=${current_worker_hash}
+orderbook_hash=${current_orderbook_hash}
 front_hash=${current_front_hash}
 commit=$(git rev-parse HEAD 2>/dev/null || echo "unknown")
 deployed_at=$(date '+%Y-%m-%d %H:%M:%S')
@@ -378,17 +380,20 @@ if [[ "${mode}" == "auto" ]]; then
   # --- Compute current state ------------------------------------------------
   current_api_hash="$(file_hash bin/polyedge-api)"
   current_worker_hash="$(file_hash bin/polyedge-worker)"
+  current_orderbook_hash="$(file_hash bin/polyedge-orderbook)"
   current_front_hash="$(frontend_hash packages/front)"
 
   # --- Load last deployed state ---------------------------------------------
   state_file="${deploy_dir}/.deploy-state"
   saved_api_hash=""
   saved_worker_hash=""
+  saved_orderbook_hash=""
   saved_front_hash=""
 
   if [[ -f "${state_file}" ]]; then
     saved_api_hash="$(grep '^api_hash=' "${state_file}" | cut -d= -f2 || true)"
     saved_worker_hash="$(grep '^worker_hash=' "${state_file}" | cut -d= -f2 || true)"
+    saved_orderbook_hash="$(grep '^orderbook_hash=' "${state_file}" | cut -d= -f2 || true)"
     saved_front_hash="$(grep '^front_hash=' "${state_file}" | cut -d= -f2 || true)"
   fi
 
@@ -396,9 +401,9 @@ if [[ "${mode}" == "auto" ]]; then
   front_changed=0
 
   # --- Detect backend changes ------------------------------------------------
-  if [[ "${current_api_hash}" != "${saved_api_hash}" || "${current_worker_hash}" != "${saved_worker_hash}" ]]; then
+  if [[ "${current_api_hash}" != "${saved_api_hash}" || "${current_worker_hash}" != "${saved_worker_hash}" || "${current_orderbook_hash}" != "${saved_orderbook_hash}" ]]; then
     backend_changed=1
-    log "backend binary changed (api: ${saved_api_hash:-NONE}->${current_api_hash:0:8}, worker: ${saved_worker_hash:-NONE}->${current_worker_hash:0:8})"
+    log "backend binary changed (api: ${saved_api_hash:-NONE}->${current_api_hash:0:8}, worker: ${saved_worker_hash:-NONE}->${current_worker_hash:0:8}, orderbook: ${saved_orderbook_hash:-NONE}->${current_orderbook_hash:0:8})"
   fi
 
   # --- Detect frontend changes -----------------------------------------------
@@ -422,6 +427,10 @@ if [[ "${mode}" == "auto" ]]; then
     log "polyedge-api container is not running"
     backend_running=0
   fi
+  if ! container_running polyedge-orderbook; then
+    log "polyedge-orderbook container is not running"
+    backend_running=0
+  fi
   if ! container_running polyedge-worker; then
     log "polyedge-worker container is not running"
     backend_running=0
@@ -439,7 +448,7 @@ if [[ "${mode}" == "auto" ]]; then
     build_services+=(polyedge-api)
   fi
   if [[ "${backend_changed}" == "1" || "${backend_running}" == "0" ]]; then
-    restart_services+=(polyedge-api polyedge-worker)
+    restart_services+=(polyedge-orderbook polyedge-api polyedge-worker)
   fi
 
   if [[ "${front_changed}" == "1" ]]; then
@@ -460,6 +469,7 @@ if [[ "${mode}" == "auto" ]]; then
   if [[ "${backend_changed}" == "1" ]]; then
     [[ -f bin/polyedge-api ]] || fail "bin/polyedge-api is missing. Build it with scripts/build-backend-bin.sh."
     [[ -f bin/polyedge-worker ]] || fail "bin/polyedge-worker is missing. Build it with scripts/build-backend-bin.sh."
+    [[ -f bin/polyedge-orderbook ]] || fail "bin/polyedge-orderbook is missing. Build it with scripts/build-backend-bin.sh."
   fi
 
   if [[ ${#build_services[@]} -gt 0 ]]; then
@@ -487,11 +497,11 @@ else
     build_services+=(polyedge-front)
   fi
 
-  if [[ "${target_api}" == "1" ]]; then
-    runtime_services+=(polyedge-api)
-  fi
   if [[ "${target_orderbook}" == "1" ]]; then
     runtime_services+=(polyedge-orderbook)
+  fi
+  if [[ "${target_api}" == "1" ]]; then
+    runtime_services+=(polyedge-api)
   fi
   if [[ "${target_worker}" == "1" ]]; then
     runtime_services+=(polyedge-worker)
@@ -503,6 +513,7 @@ else
   if [[ "${target_api}" == "1" || "${target_worker}" == "1" || "${target_orderbook}" == "1" ]]; then
     [[ -f "bin/polyedge-api" ]] || fail "bin/polyedge-api is missing. Build it with scripts/build-backend-bin.sh and commit it."
     [[ -f "bin/polyedge-worker" ]] || fail "bin/polyedge-worker is missing. Build it with scripts/build-backend-bin.sh and commit it."
+    [[ -f "bin/polyedge-orderbook" ]] || fail "bin/polyedge-orderbook is missing. Build it with scripts/build-backend-bin.sh and commit it."
   fi
 
   log "building images: ${build_services[*]} (COMPOSE_PARALLEL_LIMIT=${COMPOSE_PARALLEL_LIMIT})"

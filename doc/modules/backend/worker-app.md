@@ -64,7 +64,7 @@
 
 ### market_sync — 市场同步（已迁移到 orderbook 服务）
 
-市场同步逻辑已迁移到 `polyedge-orderbook` 服务（`apps/orderbook/src/market_sync.rs`）。Worker 中保留 `sync_markets_once` 函数供 CLI 子命令 `sync-markets-once` 使用，但 daemon 模式不再调度此任务。
+市场同步逻辑已迁移到 `polyedge-orderbook` 服务（`apps/orderbook/src/market_sync.rs`）。Orderbook 服务启动时先暴露 HTTP `/healthz`，再由后台任务执行 initial/periodic market sync，避免外部市场 API 延迟阻塞容器健康检查。Worker 中保留 `sync_markets_once` 函数供 CLI 子命令 `sync-markets-once` 使用，但 daemon 模式不再调度此任务。
 
 ### register-orderbook-tokens — 盘口 token 注册
 

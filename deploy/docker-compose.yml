@@ -1,5 +1,5 @@
 services:
-  polyedge-api:
+  polyedge-orderbook:
     build:
       context: ../bin
       dockerfile: ../deploy/backend.Dockerfile
@@ -12,35 +12,40 @@ services:
         max-file: "3"
     env_file:
       - .env
-      - .env.api
+      - .env.orderbook
     ports:
-      - "${POLYEDGE_API_BIND:-0.0.0.0}:${POLYEDGE_API_PORT:-38001}:38001"
+      - "${POLYEDGE_ORDERBOOK_BIND:-0.0.0.0}:${POLYEDGE_ORDERBOOK_PORT:-38002}:38002"
+    command: ["polyedge-orderbook"]
     extra_hosts:
       - "host.docker.internal:host-gateway"
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:38001/healthz >/dev/null"]
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:38002/healthz >/dev/null"]
       interval: 15s
       timeout: 5s
       retries: 10
       start_period: 20s
 
-  polyedge-orderbook:
+  polyedge-api:
+    build:
+      context: ../bin
+      dockerfile: ../deploy/backend.Dockerfile
     image: ${POLYEDGE_API_IMAGE:-polyedge-api:local}
     restart: unless-stopped
     logging: *default-logging
     env_file:
       - .env
-      - .env.orderbook
+      - .env.api
+    environment:
+      POLYEDGE_ORDERBOOK__SERVICE_URL: ${POLYEDGE_ORDERBOOK__SERVICE_URL:-http://polyedge-orderbook:38002}
     ports:
-      - "${POLYEDGE_ORDERBOOK_BIND:-0.0.0.0}:${POLYEDGE_ORDERBOOK_PORT:-38002}:38002"
-    command: ["polyedge-orderbook"]
+      - "${POLYEDGE_API_BIND:-0.0.0.0}:${POLYEDGE_API_PORT:-38001}:38001"
     depends_on:
-      polyedge-api:
+      polyedge-orderbook:
         condition: service_healthy
     extra_hosts:
       - "host.docker.internal:host-gateway"
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:38002/healthz >/dev/null"]
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:38001/healthz >/dev/null"]
       interval: 15s
       timeout: 5s
       retries: 10

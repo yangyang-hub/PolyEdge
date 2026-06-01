@@ -85,7 +85,7 @@ retries solves this and ensures consistent data across all consumers.
 - 前端不再提供 mock 数据模式；`POLYEDGE_API_BASE_URL` 必须指向 Rust 后端，读写和 SSE 都走真实 `/api/v1/...`。
 - 当前控制台会话只保留 `off`，不是生产级真实会话。
 - 后端 API 已覆盖 markets、events、news、evidences、signals、orders、trades、positions、pricing、arbitrage、rewards bot、risk、approvals、system、SSE、connector callback 和 orderbook（`GET /api/v1/orderbook/{token_id}`）等主路径。
-- `polyedge-worker` 支持 news ingest、news promotion、arbitrage radar、rewards bot 模拟、copytrade 跟单、execution drain、paper reconciliation、Polymarket order/fill/user-event、orderbook token 注册任务。市场同步和 orderbook 订阅已迁移到独立 `polyedge-orderbook` 服务。
+- `polyedge-worker` 支持 news ingest、news promotion、arbitrage radar、rewards bot 模拟、copytrade 跟单、execution drain、paper reconciliation、Polymarket order/fill/user-event、orderbook token 注册任务。市场同步和 orderbook 订阅已迁移到独立 `polyedge-orderbook` 服务；orderbook 服务启动时先暴露 HTTP `/healthz`，再后台执行 initial/periodic market sync，避免外部 Polymarket API 延迟阻塞容器健康检查。
 - 套利雷达是只读链路：发现、记录、校验、分析、展示和 SSE 推送已具备，但不会创建 execution request 或订单。
 - Rewards bot 已是有状态的逐 tick 做市模拟引擎：只使用独立的 `reward_markets` 表作为奖励市场来源，先按 rewards 配置预过滤候选市场，再通过 `OrderbookHttpClient`（HTTP 调用 polyedge-orderbook 服务）并发读取候选盘口、生成当前候选快照的 YES/NO post-only 双边买单计划，并维护共享资金池账本（capital/available/reserved/realized_pnl/reward_earned）。开放模拟买单采用软资金复用：同一 `account_capital_usd` 可在多个市场同时报价，单腿计划 notional 以 `min(quote_size_usd, account_capital_usd)` 为目标，但如果该预算无法满足 Polymarket `rewards_min_size` 则不新挂该腿；只有模拟成交时才消耗 `available_usd`；历史 `reserved_usd` 会在下一次 rewards tick 自动释放。缺少新鲜缓存盘口时不会新挂单、模拟成交或计提奖励；成交模拟只在新鲜盘口穿透/触顶时触发（确定性伪随机可复现），且成交量受可见盘口深度和 `max_fill_ratio` 共同限制；成交后策略（加价出场 / 持有续挂 / 市价平仓 / 成交即撤对侧）、撤单策略（中点漂移、掉出 max_spread）、以及基于 Polymarket Qmin 公式的做市奖励金额累加已具备；当前仍不会实盘下单。API 服务不执行 rewards 策略或任务，前端 Run / Cancel / Reset 会写入数据库控制命令，由 worker 领取执行；`/api/v1/rewards-bot` 的 managed orders 使用后端分页并返回 `orders_page` 元数据。
 - Polymarket connector 已迁移到 CLOB V2 Rust crate：`packages/backend/Cargo.toml` 保留 dependency key `polymarket-client-sdk`，实际指向 `polymarket_client_sdk_v2`。
@@ -184,15 +184,15 @@ cp deploy/.env.example deploy/.env
 
 `deploy/docker-compose.yml` 编排：
 
-- `polyedge-api`
 - `polyedge-orderbook`（独立 orderbook 服务，WS + poll + HTTP API）
+- `polyedge-api`（依赖 orderbook 健康后启动，并通过 `POLYEDGE_ORDERBOOK__SERVICE_URL` 读取盘口）
 - `polyedge-worker`（依赖 orderbook 服务健康）
 - `polyedge-front`
 
 `scripts/deploy.sh` 只接受简单目标参数：
 
-- 不传参数或 `auto`：拉取最新代码，只在后端二进制或前端文件 hash 变化时 rebuild；容器未运行但 hash 未变时只启动已有镜像。
-- `all`：重建后端和前端镜像，并重启 API、orderbook、worker、front。
+- 不传参数或 `auto`：拉取最新代码，只在后端二进制或前端文件 hash 变化时 rebuild；后端容器未运行但 hash 未变时按 orderbook → API → Worker 顺序启动已有镜像。
+- `all`：重建后端和前端镜像，并按 orderbook → API → Worker 顺序重启后端，同时重启 front。
 - `api worker`：重建后端镜像，并重启 API 与 worker。
 - `api`：只重建后端镜像并重启 API。
 - `worker`：只重建后端镜像并重启 worker。
@@ -200,7 +200,7 @@ cp deploy/.env.example deploy/.env
 - `front`：只重建前端镜像并重启前端。
 - 支持组合，例如 `api front` 或 `api,worker`。
 
-部署脚本默认使用 `/tmp/polyedge-deploy.lock` 防止 cron/CI 重叠执行，默认 `COMPOSE_PARALLEL_LIMIT=1` 串行构建镜像；Auto 模式只有后端二进制或前端文件 hash 改变时才 rebuild，容器未运行但 hash 未变时只启动已有镜像。Compose 构建上下文已收窄：后端只上传 `bin/`，前端只上传 `packages/front/`，避免扫描本地 `packages/backend/target`、`node_modules`、`.next` 等大目录。
+部署脚本默认使用 `/tmp/polyedge-deploy.lock` 防止 cron/CI 重叠执行，默认 `COMPOSE_PARALLEL_LIMIT=1` 串行构建镜像；Auto 模式只有后端二进制（api / worker / orderbook）或前端文件 hash 改变时才 rebuild，后端容器未运行但 hash 未变时按 orderbook → API → Worker 顺序启动已有镜像。Compose 构建上下文已收窄：后端只上传 `bin/`，前端只上传 `packages/front/`，避免扫描本地 `packages/backend/target`、`node_modules`、`.next` 等大目录。
 
 默认部署模板仍沿用本地 internal dev-auth 模式，只适合原型/内网共享环境；生产前需要真实会话体系、签名 internal JWT、key rotation 和撤销策略。
 
