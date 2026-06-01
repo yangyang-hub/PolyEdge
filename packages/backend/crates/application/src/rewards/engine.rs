@@ -4,7 +4,9 @@
 // freshest order books, simulates fills (deterministic when the book crosses
 // our price, probabilistic when it merely touches), applies the configured
 // post-fill strategy, accrues Polymarket liquidity rewards, and finally tops
-// up quotes for eligible markets while respecting the shared fund pool.
+// up quotes for eligible markets while respecting the shared fund pool on
+// fills. Resting simulated buys reuse the pool across markets instead of
+// hard-reserving cash per order.
 //
 // Reward accrual follows Polymarket's documented scoring function:
 //   `S(v, spread) = ((v - spread) / v)^2`
@@ -92,6 +94,7 @@ pub fn run_reward_simulation_tick(
 
     let elapsed = elapsed_seconds.clamp(1, 86_400);
 
+    ctx.release_legacy_buy_reserves();
     ctx.reconcile_open_orders(&plan_index, books, book_history);
     ctx.accrue_rewards(&plan_index, books, elapsed);
     ctx.place_new_quotes(&plans);
@@ -169,6 +172,7 @@ pub fn run_reconcile_tick(
 
     let elapsed = elapsed_seconds.clamp(1, 86_400);
 
+    ctx.release_legacy_buy_reserves();
     ctx.reconcile_open_orders(&plan_index, books, book_history);
     ctx.accrue_rewards(&plan_index, books, elapsed);
     ctx.place_new_quotes(&plans);

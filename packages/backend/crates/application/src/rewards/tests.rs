@@ -100,6 +100,23 @@ mod tests {
     }
 
     #[test]
+    fn quote_plan_caps_leg_notional_to_simulated_capital() {
+        let config = RewardBotConfig {
+            account_capital_usd: decimal("200"),
+            per_market_usd: decimal("1000"),
+            quote_size_usd: decimal("1000"),
+            ..RewardBotConfig::default()
+        };
+        let plans = build_reward_quote_plans(&[sample_market()], &HashMap::new(), &config);
+
+        assert!(plans[0].eligible);
+        assert!(plans[0]
+            .legs
+            .iter()
+            .all(|leg| leg.notional_usd <= config.account_capital_usd));
+    }
+
+    #[test]
     fn reward_candidate_filter_runs_before_book_selection() {
         let mut low_reward = sample_market();
         low_reward.condition_id = "low_reward".to_string();
@@ -154,6 +171,15 @@ mod tests {
             active: true,
             updated_at: OffsetDateTime::now_utc(),
         }
+    }
+
+    fn sample_market_with_suffix(suffix: &str) -> RewardMarket {
+        let mut market = sample_market();
+        market.condition_id = format!("cond_sim_{suffix}");
+        market.market_slug = format!("event-{suffix}");
+        market.tokens[0].token_id = format!("yes_{suffix}");
+        market.tokens[1].token_id = format!("no_{suffix}");
+        market
     }
 
     fn open_buy(token: &str, outcome: &str, price: &str, size: &str) -> ManagedRewardOrder {
@@ -212,7 +238,7 @@ mod tests {
     }
 
     #[test]
-    fn places_two_sided_quotes_and_reserves_capital() {
+    fn places_two_sided_quotes_without_hard_reserving_capital() {
         let config = RewardBotConfig::default();
         let outcome = run_reward_simulation_tick(
             &config,
@@ -233,18 +259,79 @@ mod tests {
             .filter(|order| order.status == ManagedRewardOrderStatus::Open)
             .collect();
         assert_eq!(open.len(), 2);
-        let reserved = outcome
+        assert_eq!(outcome.account.reserved_usd, Decimal::ZERO);
+        assert_eq!(outcome.account.available_usd, config.account_capital_usd);
+    }
+
+    #[test]
+    fn pooled_capital_can_quote_multiple_markets_above_cash_balance() {
+        let config = RewardBotConfig {
+            account_capital_usd: decimal("200"),
+            per_market_usd: decimal("400"),
+            quote_size_usd: decimal("200"),
+            max_markets: 3,
+            max_open_orders: 12,
+            max_global_position_usd: Decimal::ZERO,
+            ..RewardBotConfig::default()
+        };
+        let account = RewardAccountState::fresh(
+            "reward_simulator",
+            config.account_capital_usd,
+            OffsetDateTime::now_utc(),
+        );
+        let markets = vec![
+            sample_market_with_suffix("1"),
+            sample_market_with_suffix("2"),
+            sample_market_with_suffix("3"),
+        ];
+        let outcome = run_reward_simulation_tick(
+            &config,
+            account,
+            Vec::new(),
+            Vec::new(),
+            &markets,
+            &HashMap::new(),
+            &HashMap::new(),
+            60,
+            "trc_test",
+        );
+
+        assert_eq!(outcome.report.simulated_orders, 6);
+        let open_notional = outcome
             .orders
             .iter()
             .filter(|order| order.status == ManagedRewardOrderStatus::Open)
-            .map(|order| order.price * order.size)
-            .sum::<Decimal>()
-            .round_dp(4);
-        assert_eq!(outcome.account.reserved_usd, reserved);
-        assert_eq!(
-            outcome.account.available_usd,
-            config.account_capital_usd - reserved
+            .map(|order| (order.price * order.size).round_dp(4))
+            .sum::<Decimal>();
+        assert!(open_notional > config.account_capital_usd);
+        assert_eq!(outcome.account.available_usd, config.account_capital_usd);
+        assert_eq!(outcome.account.reserved_usd, Decimal::ZERO);
+    }
+
+    #[test]
+    fn legacy_open_order_reserve_is_released_on_next_tick() {
+        let config = RewardBotConfig {
+            fill_rate_per_tick: Decimal::ZERO,
+            ..RewardBotConfig::default()
+        };
+        let mut account = fresh_account();
+        account.available_usd = decimal("800");
+        account.reserved_usd = decimal("200");
+
+        let outcome = run_reward_simulation_tick(
+            &config,
+            account,
+            vec![open_buy("yes", "YES", "0.51", "20")],
+            Vec::new(),
+            &[sample_market()],
+            &HashMap::new(),
+            &HashMap::new(),
+            60,
+            "trc_test",
         );
+
+        assert_eq!(outcome.account.available_usd, decimal("1000"));
+        assert_eq!(outcome.account.reserved_usd, Decimal::ZERO);
     }
 
     #[test]

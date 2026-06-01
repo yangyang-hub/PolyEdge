@@ -205,7 +205,8 @@ pub struct RewardBotConfig {
     pub max_global_position_usd: Decimal,
     pub exit_markup_cents: Decimal,
     pub cancel_on_fill: bool,
-    /// Total simulated fund pool shared across every market.
+    /// Total simulated fund pool shared across every market. Resting simulated
+    /// buy orders reuse this pool; cash is consumed only when fills occur.
     pub account_capital_usd: Decimal,
     /// Legacy dry-run competition multiplier. Reward accrual now requires a
     /// fresh cached book and measures competing depth directly from that book.
@@ -658,9 +659,10 @@ pub struct RewardAccountState {
     pub account_id: String,
     /// Total deposited capital (the configured fund pool).
     pub capital_usd: Decimal,
-    /// Cash not reserved by resting buy orders or locked in inventory.
+    /// Cash not consumed by simulated fills.
     pub available_usd: Decimal,
-    /// Notional currently reserved by open buy orders.
+    /// Legacy hard-reserve field. New rewards simulation ticks release it and
+    /// keep resting buy reservations soft across markets.
     pub reserved_usd: Decimal,
     pub realized_pnl: Decimal,
     pub reward_earned_usd: Decimal,

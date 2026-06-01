@@ -77,11 +77,9 @@ impl TickContext {
                 if notional <= Decimal::ZERO {
                     continue;
                 }
-                if self.account.available_usd < notional {
-                    continue;
-                }
                 // Risk gate: stop adding exposure once held inventory plus
-                // resting buy reservations hits the cap.
+                // filled inventory hits the cap. Resting simulated buys reuse
+                // the configured fund pool across markets; fills consume cash.
                 if self.config.max_global_position_usd > Decimal::ZERO
                     && self.global_exposure_notional() + notional
                         > self.config.max_global_position_usd

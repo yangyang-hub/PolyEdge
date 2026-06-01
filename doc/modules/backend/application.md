@@ -1,6 +1,6 @@
 # application（应用/服务层）
 
-最后更新：2026-05-31
+最后更新：2026-06-01
 
 ## 概述
 
@@ -94,11 +94,20 @@
 **模拟引擎：** `run_reward_simulation_tick`（在 `rewards/engine.rs` 中，通过 `include!` 拆分到 `engine/{reconcile,fills,quoting,rewards_calc,state}.rs`）
 
 **资金与盘口约束：**
-- 新建模拟买单时按剩余 notional 从 `available_usd` 转入 `reserved_usd`；撤销未成交买单释放 reserved，买单成交消耗 reserved（兼容历史未 reserved 订单时才扣 available）。
+- 开放模拟买单采用软资金复用：新建买单不会从 `available_usd` 转入 `reserved_usd`，同一资金池可在多个市场同时报价；`reserved_usd` 仅保留为兼容旧账本，下一次 tick 会自动释放到 `available_usd`。
+- 买单计划的单腿目标 notional 使用 `min(quote_size_usd, account_capital_usd)`，再受 `per_market_usd / 2` 和 Polymarket `rewards_min_size` 约束。
+- 模拟买单成交时才消耗 `available_usd`；如果多个软复用报价同时触发，后续成交会按剩余现金缩小或取消。
 - `max_markets=0`、`max_open_orders=0` 或 `quote_size_usd=0` 表示不再新挂单。
 - 缺少新鲜缓存盘口时不会模拟成交，也不会计提 rewards；奖励竞争深度从缓存盘口直接观测。
-- 全局敞口门槛使用「已有库存 notional + 开放买单 reserved」。
+- 全局敞口门槛使用「已有库存 notional + 当前候选单腿 notional」做准入，不再累计所有开放模拟买单软报价。
 - 单次 rewards tick 使用 `list_reward_run_candidate_markets()` 只从 `reward_markets` 表读取有限候选池（默认至少 100、最多 500 个高日奖励市场），再按 active、token、最低日奖励、有效奖励 spread、下单开关做无需盘口的预过滤；只有通过预过滤的奖励市场会读取 worker 进程内 orderbook cache 并生成当前 quote plan 快照。
+
+**未来实盘资金模型：**
+- Rewards live maker 下单应沿用软资金复用语义：未成交的 post-only/GTC maker 买单是链下签名挂单，不应在本地策略层按全局 notional 硬锁同一笔 USDC；同一资金池可同时在多个不同市场报价。
+- 风险控制重点放在成交后：真实成交、部分成交或链上结算回报后，立即更新现金、库存、市场/全局敞口，并撤掉超出 `max_position_usd`、`max_global_position_usd`、可用现金或运营预算的剩余挂单。
+- 本地仍需保留 `max_open_orders`、`max_markets`、单市场预算、per-token 库存和 kill-switch；这些限制控制操作风险和订单风暴，而不是把所有开放买单当作已消耗资金。
+- 实盘实现前需要用真实小额账户验证 Polymarket CLOB 的 balance/allowance validity checks，尤其同市场内开放订单对可下单 size 的影响；跨市场资金复用可以作为 rewards maker 策略假设，但不能依赖 venue 替我们做组合风险管理。
+- 参考官方文档：Order Lifecycle / Requirements 和 Orders Overview / Validity Checks，后续实现时需要复核最新文档。
 
 ### copytrade — 跟单
 
@@ -162,7 +171,7 @@ orderbook_cache ← (共享基础设施 trait)
 ## 当前状态
 
 - 所有模块已实现完整的 Store trait 和 Service struct
-- Rewards 和 Copytrade 的模拟引擎已具备完整功能；Rewards 模拟资金池会占用/释放开放买单资金，且成交/计奖依赖 worker 进程内的新鲜缓存盘口。
+- Rewards 和 Copytrade 的模拟引擎已具备完整功能；Rewards 模拟资金池对开放买单使用软复用，成交时才消耗现金，且成交/计奖依赖 worker 进程内的新鲜缓存盘口。
 - Rewards 已具备数据库控制命令队列，API 负责入队，worker 负责执行 run/cancel/reset。
 - Copytrade 已具备数据库控制命令队列，API 负责入队，worker 负责执行 run/analyze/cancel/reset。
 - Wallet analysis 是纯计算，已完全实现

@@ -1,6 +1,6 @@
 # Agent Guidelines
 
-最后更新：2026-05-31
+最后更新：2026-06-01
 
 ## 维护规则
 
@@ -81,7 +81,7 @@ retries solves this and ensures consistent data across all consumers.
 - 后端 API 已覆盖 markets、events、news、evidences、signals、orders、trades、positions、pricing、arbitrage、rewards bot、risk、approvals、system、SSE 和 connector callback 等主路径。
 - `polyedge-worker` 支持 news ingest、news promotion、arbitrage radar、rewards bot 模拟、execution drain、paper reconciliation、Polymarket order/fill/user-event 任务。
 - 套利雷达是只读链路：发现、记录、校验、分析、展示和 SSE 推送已具备，但不会创建 execution request 或订单。
-- Rewards bot 已是有状态的逐 tick 做市模拟引擎：只使用独立的 `reward_markets` 表作为奖励市场来源，先按 rewards 配置预过滤候选市场，再从 worker 进程内 InMemoryOrderbookCache（TTL 5 分钟）并发读取候选盘口、生成当前候选快照的 YES/NO post-only 双边买单计划，并维护共享资金池账本（capital/available/reserved/realized_pnl/reward_earned）。模拟买单会占用 reserved 资金，取消未成交买单会释放占用；缺少新鲜缓存盘口时不会模拟成交或计提奖励；成交模拟只在新鲜盘口穿透/触顶时触发（确定性伪随机可复现）；成交后策略（加价出场 / 持有续挂 / 市价平仓 / 成交即撤对侧）、撤单策略（中点漂移、掉出 max_spread）、以及基于 Polymarket Qmin 公式的做市奖励金额累加已具备；当前仍不会实盘下单。API 服务不执行 rewards 策略或任务，前端 Run / Cancel / Reset 会写入数据库控制命令，由 worker 领取执行。
+- Rewards bot 已是有状态的逐 tick 做市模拟引擎：只使用独立的 `reward_markets` 表作为奖励市场来源，先按 rewards 配置预过滤候选市场，再从 worker 进程内 InMemoryOrderbookCache（TTL 5 分钟）并发读取候选盘口、生成当前候选快照的 YES/NO post-only 双边买单计划，并维护共享资金池账本（capital/available/reserved/realized_pnl/reward_earned）。开放模拟买单采用软资金复用：同一 `account_capital_usd` 可在多个市场同时报价，单腿计划 notional 以 `min(quote_size_usd, account_capital_usd)` 为目标，只有模拟成交时才消耗 `available_usd`；历史 `reserved_usd` 会在下一次 rewards tick 自动释放。缺少新鲜缓存盘口时不会模拟成交或计提奖励；成交模拟只在新鲜盘口穿透/触顶时触发（确定性伪随机可复现）；成交后策略（加价出场 / 持有续挂 / 市价平仓 / 成交即撤对侧）、撤单策略（中点漂移、掉出 max_spread）、以及基于 Polymarket Qmin 公式的做市奖励金额累加已具备；当前仍不会实盘下单。API 服务不执行 rewards 策略或任务，前端 Run / Cancel / Reset 会写入数据库控制命令，由 worker 领取执行。
 - Polymarket connector 已迁移到 CLOB V2 Rust crate：`packages/backend/Cargo.toml` 保留 dependency key `polymarket-client-sdk`，实际指向 `polymarket_client_sdk_v2`。
 - 聪明钱跟单（copy-trading）已具备完整子系统：跟踪多个 Polymarket 钱包地址（`TrackedWallet`）、通过 Polymarket Data API（`data-api.polymarket.com`，通过 `PolymarketDataApiConnector`）检测钱包新成交、四种跟单仓位模式（`FixedUsd`/`ProportionalToSource`/`CapitalRatio`/`MirrorPortfolioWeight`）、钱包分析统计（胜率/ROI/成交量）、per-wallet/per-market/total 敞口+单日亏损+冷却+滑点风控、确定性模拟引擎（模拟资金账本：capital/available/reserved/realized_pnl）、`Run/Analyze/Cancel/Reset` 与账户资金设置前端 UI；`mode=live` 已结构化支持但未接入真实下单（记录警告回退模拟）。API 服务不执行 copytrade 跟单循环、钱包分析、撤单或重置，前端操作会写入数据库控制命令，由 worker 领取执行；`POLYEDGE_COPYTRADE__ENABLED=true` 启用 worker 轮询。
 - Polymarket 运行时不再提供 mock mode；市场列表走 Gamma 实时数据，私有订单/成交任务需要真实凭证、真实账户、小额演练和运维 runbook。
@@ -93,7 +93,7 @@ retries solves this and ensures consistent data across all consumers.
 - 内部 JWT 签名 helper 已有代码路径，但当前不会从 `off` 签发可信令牌。
 - `signals / risk / events` SSE 仍是 snapshot-backed stream；`arbitrage` 已是 outbox-backed 增量流，但尚未统一到全资源事件总线。
 - 新闻源可以抓取、去重、提升为 events/evidences，但尚未自动生成 signals。
-- Rewards bot 当前只做模拟：已具备资金池账本、成交模拟、Qmin 奖励金额计算、成交后处理与撤单策略，前端 `/rewards` 提供 Run / Cancel / Reset 入队和事件分类（挂单/撤单/吃单/奖励）视图；尚未接入真实 post-only 下单、订单计分查询、真实成交处理或真实库存同步。
+- Rewards bot 当前只做模拟：已具备资金池账本（开放买单软复用、成交扣款）、成交模拟、Qmin 奖励金额计算、成交后处理与撤单策略，前端 `/rewards` 提供 Run / Cancel / Reset 入队和事件分类（挂单/撤单/吃单/奖励）视图；尚未接入真实 post-only 下单、订单计分查询、真实成交处理或真实库存同步。后续实现实盘 rewards maker 时应沿用“未成交 maker 买单不硬锁全局 USDC、成交后才更新现金/库存并撤超额挂单”的策略模型。
 - Polymarket live 链路已具备骨架和 CLOB V2 SDK，仍需真实资金链路验证。
 
 ## 运行命令
@@ -151,6 +151,7 @@ cargo run -p polyedge-worker -- analyze-wallets-once
 - 默认 arbitrage radar 和 news ingestion 是 disabled。
 - 默认 rewards bot worker 模拟是 disabled；前端 `/rewards` 的 Run / Cancel / Reset 只会入队命令，worker 需要同时设置 `POLYEDGE_REWARDS__ENABLED=true` 和 `POLYEDGE_WORKER__POLL_REWARD_BOT=true` 才会领取并执行。
 - Rewards bot 的 `max_markets=0`、`max_open_orders=0` 或 `quote_size_usd=0` 都表示不再新挂单；不是无限制。
+- Rewards bot 模拟开放买单不会逐单锁定资金；`account_capital_usd=200` 时可以在多个市场同时挂 200U 级别买单，但模拟成交会消耗 `available_usd`，后续成交仍受资金池现金限制。
 - 默认跟单 worker 是 disabled；前端 `/copy-trading` 的 Run / Analyze / Cancel / Reset 只会入队命令，worker 需要设置 `POLYEDGE_COPYTRADE__ENABLED=true` + `POLYEDGE_WORKER__POLL_COPYTRADE=true` 才会领取并执行；`POLYEDGE_WORKER__ANALYZE_WALLETS=true` 仍用于独立钱包分析循环。
 - `POLYEDGE_POSTGRES__URL` / `POLYEDGE_REDIS__URL` 为空时，本地可能走内存路径，无法验证多进程共享状态和持久化 outbox。
 - `POLYEDGE_ARBITRAGE__BOOK_SOURCE=polymarket` 会请求真实 Polymarket CLOB `/book`；live 冒烟必须使用真实 Polymarket refs。

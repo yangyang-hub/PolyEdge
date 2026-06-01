@@ -38,33 +38,30 @@ impl TickContext {
     }
 
     fn global_exposure_notional(&self) -> Decimal {
-        self.global_inventory_notional() + self.account.reserved_usd
+        self.global_inventory_notional()
     }
 
-    fn reserve_buy_notional(&mut self, notional: Decimal) {
-        let notional = notional.max(Decimal::ZERO);
-        self.account.available_usd = (self.account.available_usd - notional).max(Decimal::ZERO);
-        self.account.reserved_usd += notional;
-    }
-
-    fn release_buy_reserve(&mut self, notional: Decimal) {
-        let releasable = Decimal::min(self.account.reserved_usd, notional.max(Decimal::ZERO));
-        if releasable <= Decimal::ZERO {
+    fn release_legacy_buy_reserves(&mut self) {
+        if self.account.reserved_usd <= Decimal::ZERO {
             return;
         }
-        self.account.reserved_usd -= releasable;
-        self.account.available_usd += releasable;
+        self.account.available_usd += self.account.reserved_usd;
+        self.account.reserved_usd = Decimal::ZERO;
+    }
+
+    fn reserve_buy_notional(&mut self, _notional: Decimal) {
+        // Simulated resting buys use soft capital reuse across markets. Cash is
+        // consumed only when a buy fill is simulated.
+    }
+
+    fn release_buy_reserve(&mut self, _notional: Decimal) {
+        // No-op for soft buy reservations; kept so old cancel paths remain
+        // harmless when processing orders created before the ledger change.
     }
 
     fn consume_buy_cost(&mut self, cost: Decimal) {
-        let cost = cost.max(Decimal::ZERO);
-        let from_reserved = Decimal::min(self.account.reserved_usd, cost);
-        self.account.reserved_usd -= from_reserved;
-        let shortfall = cost - from_reserved;
-        if shortfall > Decimal::ZERO {
-            self.account.available_usd =
-                (self.account.available_usd - shortfall).max(Decimal::ZERO);
-        }
+        self.account.available_usd =
+            (self.account.available_usd - cost.max(Decimal::ZERO)).max(Decimal::ZERO);
     }
 
     fn position_avg(&self, token_id: &str) -> Option<Decimal> {

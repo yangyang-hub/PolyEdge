@@ -1,6 +1,6 @@
 # 数据库（Migrations + Schema）
 
-最后更新：2026-05-31
+最后更新：2026-06-01
 
 ## 概述
 
@@ -86,7 +86,7 @@
 - **`reward_quote_plans`**：market FK、scoring、quote plan
 - **`reward_managed_orders`**：account_id、condition_id、token_id、filled_size、reward_earned、last_scored_at
 - **`reward_fills`**：order_id、account_id、condition_id、token_id、outcome、side、price、size、notional_usd、role、realized_pnl
-- **`reward_account_state`**：capital_usd、available_usd、reserved_usd、realized_pnl、reward_earned_usd、fees_paid、tick_index
+- **`reward_account_state`**：capital_usd、available_usd、reserved_usd（旧硬占用兼容字段，下一次 rewards tick 自动释放）、realized_pnl、reward_earned_usd、fees_paid、tick_index
 - **`reward_control_commands`**：API 入队给 worker 的 rewards 控制命令（run_once/cancel_all/reset）及 pending/running/completed/failed 状态
 
 ### 9. 跟单

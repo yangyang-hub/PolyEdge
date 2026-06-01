@@ -307,7 +307,12 @@ fn make_leg(
     rewards_min_size: Decimal,
     config: &RewardBotConfig,
 ) -> RewardQuoteLeg {
-    let target_size = config.quote_size_usd / price;
+    let effective_quote_size = if config.account_capital_usd > Decimal::ZERO {
+        Decimal::min(config.quote_size_usd, config.account_capital_usd)
+    } else {
+        config.quote_size_usd
+    };
+    let target_size = effective_quote_size / price;
     let max_leg_size = if config.per_market_usd == Decimal::ZERO {
         Decimal::MAX
     } else {

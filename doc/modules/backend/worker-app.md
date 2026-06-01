@@ -1,6 +1,6 @@
 # Worker App（后台任务服务）
 
-最后更新：2026-05-31
+最后更新：2026-06-01
 
 ## 概述
 
@@ -107,9 +107,11 @@ reward_bot_service.claim_next_control_command()
 
 Report: `RewardBotRunReport { markets_scanned, books_fetched, plans_built, eligible_plans, simulated_orders, cancelled_orders, filled_orders, reward_accrued }`
 
-约束：worker 是 rewards 策略和控制命令的唯一执行者。API 只把 `run_once` / `cancel_all` / `reset` 写入 `reward_control_commands`；worker 每轮先领取并处理待执行命令，处理到命令时跳过本轮自动 tick。`run_once` 命令会强制执行一次模拟（即使自动挂单开关关闭），`cancel_all` 撤销开放模拟订单并释放 reserved，`reset` 重置模拟资金池。
+约束：worker 是 rewards 策略和控制命令的唯一执行者。API 只把 `run_once` / `cancel_all` / `reset` 写入 `reward_control_commands`；worker 每轮先领取并处理待执行命令，处理到命令时跳过本轮自动 tick。`run_once` 命令会强制执行一次模拟（即使自动挂单开关关闭），`cancel_all` 撤销开放模拟订单（兼容释放旧 reserved），`reset` 重置模拟资金池。
 
-自动 tick 只从 Postgres 的 `reward_markets` 读取奖励市场、从进程内 `InMemoryOrderbookCache` 读取盘口（TTL 默认 5 分钟，后台清理任务每 60 秒淘汰过期条目）。每个 tick 只读取 bounded candidate market pool（默认至少 100、最多 500 个高日奖励市场），先按配置预过滤奖励市场，再并发读取候选盘口缓存；若本 tick 没有新鲜缓存盘口，模拟器不会产生盘口成交或 rewards 计提，只刷新当前候选计划/保留订单状态。
+自动 tick 只从 Postgres 的 `reward_markets` 读取奖励市场、从进程内 `InMemoryOrderbookCache` 读取盘口（TTL 默认 5 分钟，后台清理任务每 60 秒淘汰过期条目）。每个 tick 只读取 bounded candidate market pool（默认至少 100、最多 500 个高日奖励市场），先按配置预过滤奖励市场，再并发读取候选盘口缓存；若本 tick 没有新鲜缓存盘口，模拟器不会产生盘口成交或 rewards 计提，只刷新当前候选计划/保留订单状态。开放模拟买单软复用 `account_capital_usd`，成交时才消耗现金。
+
+未来接入 rewards live 下单时，worker 仍应保持同一策略语义：未成交 post-only maker 买单不在本地按全局 notional 硬锁资金；成交/部分成交回报才更新现金与库存，并触发撤单、降规模或 kill-switch。worker 需要独立维护本地组合风险，因为 CLOB 的 balance/allowance 检查不是跨市场组合风控系统。
 
 ### orderbook_stream — 盘口流
 

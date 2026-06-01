@@ -12,7 +12,7 @@ impl TickContext {
             self.cancel_order(index, "invalid buy price for fill");
             return;
         }
-        let affordable_usd = self.account.available_usd + self.account.reserved_usd;
+        let affordable_usd = self.account.available_usd;
         let requested_cost = (order.price * fill_size).round_dp(4);
         let fill_size = if requested_cost > affordable_usd {
             (affordable_usd / order.price).round_dp_with_strategy(2, RoundingStrategy::ToZero)
