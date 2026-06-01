@@ -18,6 +18,7 @@ import type {
   ManagedRewardOrderDto,
   RewardFillDto,
   RewardListPageDto,
+  RewardPositionDto,
   RewardQuotePlanDto,
   RewardRiskEventDto,
 } from "@/lib/contracts/dto";
@@ -132,6 +133,49 @@ export function FillsTable({ fills }: { fills: RewardFillDto[] }) {
       </TableBody>
     </Table>
     <PaginationBar pagination={pagination} totalItems={fills.length} />
+    </div>
+  );
+}
+
+export function PositionsTable({ positions }: { positions: RewardPositionDto[] }) {
+  const { dictionary } = useI18n();
+  const pagination = usePagination(positions.length, 8);
+
+  if (positions.length === 0) {
+    return <p className="py-6 text-center text-sm text-muted-foreground">{dictionary.rewards.none}</p>;
+  }
+
+  return (
+    <div>
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>{dictionary.rewards.market}</TableHead>
+            <TableHead>{dictionary.rewards.outcome}</TableHead>
+            <TableHead>{dictionary.rewards.size}</TableHead>
+            <TableHead>{dictionary.rewards.avgPrice}</TableHead>
+            <TableHead>{dictionary.rewards.pnl}</TableHead>
+            <TableHead>{dictionary.rewards.time}</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {positions.slice(pagination.start, pagination.end).map((position) => (
+            <TableRow key={`${position.condition_id}:${position.token_id}`}>
+              <TableCell className="max-w-[180px] truncate font-mono text-xs text-muted-foreground">
+                {position.condition_id}
+              </TableCell>
+              <TableCell>{position.outcome}</TableCell>
+              <TableCell className="font-mono">{formatFixed(position.size, 2)}</TableCell>
+              <TableCell className="font-mono">{formatFixed(position.avg_price, 3)}</TableCell>
+              <TableCell className="font-mono">{formatSignedFixed(position.realized_pnl, 2)}</TableCell>
+              <TableCell className="font-mono text-xs text-muted-foreground">
+                {formatOptionalClock(position.updated_at)}
+              </TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+      <PaginationBar pagination={pagination} totalItems={positions.length} />
     </div>
   );
 }

@@ -105,10 +105,7 @@ fn build_profile(
     }
 }
 
-fn build_pnl_stats(
-    closed: &[ClosedPositionInput],
-    open: &[OpenPositionInput],
-) -> WalletPnlStats {
+fn build_pnl_stats(closed: &[ClosedPositionInput], open: &[OpenPositionInput]) -> WalletPnlStats {
     let total_realized: Decimal = closed.iter().map(|c| c.realized_pnl).sum();
 
     let mut total_unrealized = Decimal::ZERO;
@@ -131,7 +128,10 @@ fn build_pnl_stats(
     };
 
     // Win rate from closed positions.
-    let winners_closed = closed.iter().filter(|c| c.realized_pnl > Decimal::ZERO).count();
+    let winners_closed = closed
+        .iter()
+        .filter(|c| c.realized_pnl > Decimal::ZERO)
+        .count();
     let win_rate_closed = if closed.is_empty() {
         Decimal::ZERO
     } else {
@@ -265,14 +265,16 @@ fn build_category_breakdown(
     // Aggregate from trades.
     for t in trades {
         let cat = infer_category(&t.title).to_string();
-        let entry = cats.entry(cat.clone()).or_insert_with(|| WalletCategoryItem {
-            category: cat,
-            trade_count: 0,
-            volume_usd: Decimal::ZERO,
-            pnl: Decimal::ZERO,
-            win_count: 0,
-            loss_count: 0,
-        });
+        let entry = cats
+            .entry(cat.clone())
+            .or_insert_with(|| WalletCategoryItem {
+                category: cat,
+                trade_count: 0,
+                volume_usd: Decimal::ZERO,
+                pnl: Decimal::ZERO,
+                win_count: 0,
+                loss_count: 0,
+            });
         entry.trade_count += 1;
         entry.volume_usd += t.price * t.size;
     }
@@ -280,14 +282,16 @@ fn build_category_breakdown(
     // Aggregate P&L from closed positions.
     for c in closed {
         let cat = infer_category(&c.title).to_string();
-        let entry = cats.entry(cat.clone()).or_insert_with(|| WalletCategoryItem {
-            category: cat,
-            trade_count: 0,
-            volume_usd: Decimal::ZERO,
-            pnl: Decimal::ZERO,
-            win_count: 0,
-            loss_count: 0,
-        });
+        let entry = cats
+            .entry(cat.clone())
+            .or_insert_with(|| WalletCategoryItem {
+                category: cat,
+                trade_count: 0,
+                volume_usd: Decimal::ZERO,
+                pnl: Decimal::ZERO,
+                win_count: 0,
+                loss_count: 0,
+            });
         entry.pnl += c.realized_pnl;
         if c.realized_pnl > Decimal::ZERO {
             entry.win_count += 1;
@@ -332,7 +336,8 @@ fn build_style_stats(
                 if first_sell > first_buy {
                     let duration_secs = (first_sell - first_buy).whole_seconds();
                     if duration_secs > 0 {
-                        hold_durations_hours.push(Decimal::from(duration_secs) / Decimal::from(3600));
+                        hold_durations_hours
+                            .push(Decimal::from(duration_secs) / Decimal::from(3600));
                     }
                 }
             }
@@ -452,7 +457,9 @@ fn build_top_markets(
     // Build a P&L map from closed positions.
     let mut pnl_map: HashMap<String, Decimal> = HashMap::new();
     for c in closed {
-        *pnl_map.entry(c.condition_id.clone()).or_insert(Decimal::ZERO) += c.realized_pnl;
+        *pnl_map
+            .entry(c.condition_id.clone())
+            .or_insert(Decimal::ZERO) += c.realized_pnl;
     }
 
     let mut markets: Vec<WalletTopMarket> = market_aggregates

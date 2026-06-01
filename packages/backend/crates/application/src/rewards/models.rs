@@ -1,5 +1,54 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+pub enum RewardExecutionMode {
+    /// Event-validation mode: generate and reconcile local managed-order events
+    /// without submitting to Polymarket or treating rewards as earned.
+    Validation,
+    /// Live mode: worker is allowed to submit/cancel Polymarket orders through
+    /// the rewards live executor. This is configured locally for rewards and is
+    /// intentionally independent from global runtime mode.
+    Live,
+}
+
+impl RewardExecutionMode {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Validation => "validation",
+            Self::Live => "live",
+        }
+    }
+
+    #[must_use]
+    pub const fn is_validation(self) -> bool {
+        matches!(self, Self::Validation)
+    }
+
+    #[must_use]
+    pub const fn is_live(self) -> bool {
+        matches!(self, Self::Live)
+    }
+}
+
+impl FromStr for RewardExecutionMode {
+    type Err = AppError;
+
+    fn from_str(value: &str) -> Result<Self> {
+        match value {
+            "validation" | "validate" | "dry_run" | "paper" | "simulation" => {
+                Ok(Self::Validation)
+            }
+            "live" => Ok(Self::Live),
+            other => Err(AppError::invalid_input(
+                "REWARD_EXECUTION_MODE_INVALID",
+                format!("unknown reward execution mode: {other}"),
+            )),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum RewardOrderSide {
     Buy,
     Sell,
@@ -187,6 +236,7 @@ impl FromStr for RewardRiskSeverity {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RewardBotConfig {
     pub enabled: bool,
+    pub execution_mode: RewardExecutionMode,
     pub account_id: String,
     pub max_markets: u16,
     pub max_open_orders: u16,
@@ -205,8 +255,8 @@ pub struct RewardBotConfig {
     pub max_global_position_usd: Decimal,
     pub exit_markup_cents: Decimal,
     pub cancel_on_fill: bool,
-    /// Total simulated fund pool shared across every market. Resting simulated
-    /// buy orders reuse this pool; cash is consumed only when fills occur.
+    /// Total validation fund pool shared across every market. Resting validation
+    /// buy orders reuse this pool; cash is consumed only when validation fills occur.
     pub account_capital_usd: Decimal,
     /// Legacy dry-run competition multiplier. Reward accrual now requires a
     /// fresh cached book and measures competing depth directly from that book.
@@ -258,6 +308,8 @@ pub struct RewardBotConfig {
 pub struct RewardBotConfigPatch {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub enabled: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_mode: Option<RewardExecutionMode>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub account_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -337,7 +389,8 @@ impl Default for RewardBotConfig {
     fn default() -> Self {
         Self {
             enabled: false,
-            account_id: "reward_simulator".to_string(),
+            execution_mode: RewardExecutionMode::Validation,
+            account_id: "reward_validator".to_string(),
             max_markets: 3,
             max_open_orders: 12,
             per_market_usd: decimal("20"),
@@ -453,6 +506,9 @@ impl RewardBotConfig {
         let mut next = self.clone();
         if let Some(enabled) = patch.enabled {
             next.enabled = enabled;
+        }
+        if let Some(execution_mode) = patch.execution_mode {
+            next.execution_mode = execution_mode;
         }
         if let Some(account_id) = patch.account_id {
             next.account_id = account_id;
@@ -653,15 +709,15 @@ pub struct RewardPosition {
     pub updated_at: OffsetDateTime,
 }
 
-/// Simulated fund-pool ledger shared across every market the bot quotes.
+/// Validation fund-pool ledger shared across every market the bot quotes.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RewardAccountState {
     pub account_id: String,
     /// Total deposited capital (the configured fund pool).
     pub capital_usd: Decimal,
-    /// Cash not consumed by simulated fills.
+    /// Cash not consumed by validation fills.
     pub available_usd: Decimal,
-    /// Legacy hard-reserve field. New rewards simulation ticks release it and
+    /// Legacy hard-reserve field. New rewards validation ticks release it and
     /// keep resting buy reservations soft across markets.
     pub reserved_usd: Decimal,
     pub realized_pnl: Decimal,
@@ -690,8 +746,8 @@ impl RewardAccountState {
     }
 }
 
-/// One simulated execution against a managed order (maker fill) or a taker
-/// flatten. Drives the "吃单" (order-taken) detail view on the frontend.
+/// One validation/live execution event against a managed order (maker fill) or a
+/// taker flatten. Drives the "吃单" (order-taken) detail view on the frontend.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RewardFill {
     pub id: String,
@@ -760,6 +816,17 @@ pub struct RewardBotSnapshot {
     pub positions: Vec<RewardPosition>,
     pub fills: Vec<RewardFill>,
     pub events: Vec<RewardRiskEvent>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct RewardLiveCycle {
+    pub config: RewardBotConfig,
+    pub account: RewardAccountState,
+    pub markets: Vec<RewardMarket>,
+    pub plans: Vec<RewardQuotePlan>,
+    pub open_orders: Vec<ManagedRewardOrder>,
+    pub positions: Vec<RewardPosition>,
+    pub should_execute: bool,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]

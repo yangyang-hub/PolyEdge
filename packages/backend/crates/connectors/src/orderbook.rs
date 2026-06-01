@@ -1,5 +1,7 @@
 use async_trait::async_trait;
-use polyedge_application::{CachedBookLevel, CachedOrderBook, OrderbookCache, OrderbookSubscriptionRegistry};
+use polyedge_application::{
+    CachedBookLevel, CachedOrderBook, OrderbookCache, OrderbookSubscriptionRegistry,
+};
 use polyedge_domain::{AppError, Result};
 use reqwest::Client;
 use rust_decimal::Decimal;
@@ -137,12 +139,18 @@ impl OrderbookCache for OrderbookHttpClient {
             }],
         };
 
-        let resp = self.client.post(&url).json(&body).send().await.map_err(|error| {
-            AppError::dependency_unavailable(
-                "ORDERBOOK_HTTP_INGEST_ERROR",
-                format!("failed to ingest orderbook for {}: {error}", book.token_id),
-            )
-        })?;
+        let resp = self
+            .client
+            .post(&url)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|error| {
+                AppError::dependency_unavailable(
+                    "ORDERBOOK_HTTP_INGEST_ERROR",
+                    format!("failed to ingest orderbook for {}: {error}", book.token_id),
+                )
+            })?;
         if !resp.status().is_success() {
             return Err(AppError::dependency_unavailable(
                 "ORDERBOOK_HTTP_INGEST_FAILED",
@@ -188,12 +196,18 @@ impl OrderbookCache for OrderbookHttpClient {
                 .collect(),
         };
 
-        let resp = self.client.post(&url).json(&body).send().await.map_err(|error| {
-            AppError::dependency_unavailable(
-                "ORDERBOOK_HTTP_INGEST_ERROR",
-                format!("failed to batch ingest orderbooks: {error}"),
-            )
-        })?;
+        let resp = self
+            .client
+            .post(&url)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|error| {
+                AppError::dependency_unavailable(
+                    "ORDERBOOK_HTTP_INGEST_ERROR",
+                    format!("failed to batch ingest orderbooks: {error}"),
+                )
+            })?;
         if !resp.status().is_success() {
             return Err(AppError::dependency_unavailable(
                 "ORDERBOOK_HTTP_INGEST_FAILED",
@@ -203,7 +217,11 @@ impl OrderbookCache for OrderbookHttpClient {
         Ok(())
     }
 
-    async fn get_stale_tokens(&self, _token_ids: &[String], _max_age_ms: i64) -> Result<Vec<String>> {
+    async fn get_stale_tokens(
+        &self,
+        _token_ids: &[String],
+        _max_age_ms: i64,
+    ) -> Result<Vec<String>> {
         // Stale detection is handled internally by the orderbook service.
         Ok(Vec::new())
     }

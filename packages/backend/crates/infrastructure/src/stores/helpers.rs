@@ -8,6 +8,7 @@ fn postgres_decode_error(error: sqlx::Error) -> AppError {
 fn apply_reward_config_value(config: &mut RewardBotConfig, key: &str, value: &str) -> Result<()> {
     match key {
         "enabled" => config.enabled = parse_bool_config(key, value)?,
+        "execution_mode" => config.execution_mode = RewardExecutionMode::from_str(value)?,
         "account_id" => config.account_id = value.to_string(),
         "max_markets" => config.max_markets = parse_u16_config(key, value)?,
         "max_open_orders" => config.max_open_orders = parse_u16_config(key, value)?,
@@ -39,6 +40,19 @@ fn apply_reward_config_value(config: &mut RewardBotConfig, key: &str, value: &st
         "max_fill_ratio" => config.max_fill_ratio = parse_decimal_config(key, value)?,
         "requote_drift_cents" => config.requote_drift_cents = parse_decimal_config(key, value)?,
         "post_fill_strategy" => config.post_fill_strategy = PostFillStrategy::from_str(value)?,
+        "min_depth_usd" => config.min_depth_usd = parse_decimal_config(key, value)?,
+        "cancel_bid_rank" => config.cancel_bid_rank = parse_u16_config(key, value)?,
+        "depth_drop_pct" => config.depth_drop_pct = parse_decimal_config(key, value)?,
+        "depth_drop_window_sec" => config.depth_drop_window_sec = parse_u64_config(key, value)?,
+        "fill_velocity_usd" => config.fill_velocity_usd = parse_decimal_config(key, value)?,
+        "fill_velocity_window_sec" => {
+            config.fill_velocity_window_sec = parse_u64_config(key, value)?;
+        }
+        "mass_cancel_pct" => config.mass_cancel_pct = parse_decimal_config(key, value)?,
+        "mass_cancel_window_sec" => config.mass_cancel_window_sec = parse_u64_config(key, value)?,
+        "requote_interval_sec" => config.requote_interval_sec = parse_u64_config(key, value)?,
+        "requote_jitter_sec" => config.requote_jitter_sec = parse_u64_config(key, value)?,
+        "reconcile_interval_sec" => config.reconcile_interval_sec = parse_u64_config(key, value)?,
         _ => {}
     }
     Ok(())
@@ -47,6 +61,7 @@ fn apply_reward_config_value(config: &mut RewardBotConfig, key: &str, value: &st
 fn reward_config_entries(config: &RewardBotConfig) -> Vec<(&'static str, String)> {
     vec![
         ("enabled", config.enabled.to_string()),
+        ("execution_mode", config.execution_mode.as_str().to_string()),
         ("account_id", config.account_id.clone()),
         ("max_markets", config.max_markets.to_string()),
         ("max_open_orders", config.max_open_orders.to_string()),
@@ -95,6 +110,32 @@ fn reward_config_entries(config: &RewardBotConfig) -> Vec<(&'static str, String)
         (
             "post_fill_strategy",
             config.post_fill_strategy.as_str().to_string(),
+        ),
+        ("min_depth_usd", config.min_depth_usd.to_string()),
+        ("cancel_bid_rank", config.cancel_bid_rank.to_string()),
+        ("depth_drop_pct", config.depth_drop_pct.to_string()),
+        (
+            "depth_drop_window_sec",
+            config.depth_drop_window_sec.to_string(),
+        ),
+        ("fill_velocity_usd", config.fill_velocity_usd.to_string()),
+        (
+            "fill_velocity_window_sec",
+            config.fill_velocity_window_sec.to_string(),
+        ),
+        ("mass_cancel_pct", config.mass_cancel_pct.to_string()),
+        (
+            "mass_cancel_window_sec",
+            config.mass_cancel_window_sec.to_string(),
+        ),
+        (
+            "requote_interval_sec",
+            config.requote_interval_sec.to_string(),
+        ),
+        ("requote_jitter_sec", config.requote_jitter_sec.to_string()),
+        (
+            "reconcile_interval_sec",
+            config.reconcile_interval_sec.to_string(),
         ),
     ]
 }

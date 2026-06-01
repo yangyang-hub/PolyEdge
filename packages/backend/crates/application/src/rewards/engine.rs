@@ -1,19 +1,14 @@
-// Stateful, tick-based rewards market-making simulation.
+// Stateful, tick-based rewards market-making validation engine.
 //
 // Each tick the engine reconciles the existing resting orders against the
-// freshest order books, simulates fills (deterministic when the book crosses
+// freshest order books, validates fills (deterministic when the book crosses
 // our price, probabilistic when it merely touches), applies the configured
-// post-fill strategy, accrues Polymarket liquidity rewards, and finally tops
-// up quotes for eligible markets while respecting the shared fund pool on
-// fills. Resting simulated buys reuse the pool across markets instead of
+// post-fill strategy, and finally tops up quotes for eligible markets while
+// respecting the shared fund pool on fills. Resting validation buys reuse the
+// pool across markets instead of
 // hard-reserving cash per order.
-//
-// Reward accrual follows Polymarket's documented scoring function:
-//   `S(v, spread) = ((v - spread) / v)^2`
-//   `Q_min = max(min(Q_bid, Q_ask), max(Q_bid / c, Q_ask / c))`
-// sampled per tick and pro-rated by the elapsed wall-clock fraction of a day.
 
-/// The full set of state changes produced by a single simulation tick. The
+/// The full set of state changes produced by a single validation tick. The
 /// store persists it atomically via `apply_simulation_tick`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RewardSimulationOutcome {
@@ -46,7 +41,7 @@ struct TickContext {
     reward_accrued: Decimal,
 }
 
-/// Run a single simulation tick over the supplied inputs.
+/// Run a single validation tick over the supplied inputs.
 ///
 /// `open_orders` should contain the account's currently open-like orders and
 /// `positions` its non-zero inventory. `elapsed_seconds` is the wall-clock gap
@@ -96,7 +91,9 @@ pub fn run_reward_simulation_tick(
 
     ctx.release_legacy_buy_reserves();
     ctx.reconcile_open_orders(&plan_index, books, book_history);
-    ctx.accrue_rewards(&plan_index, books, elapsed);
+    if !ctx.config.execution_mode.is_validation() {
+        ctx.accrue_rewards(&plan_index, books, elapsed);
+    }
     ctx.place_new_quotes(&plans, books);
 
     ctx.account.tick_index += 1;
@@ -128,7 +125,7 @@ pub fn run_reward_simulation_tick(
 
 /// Run a fast reconcile tick — reuses the supplied `plans` instead of
 /// rebuilding them. Used by the high-frequency reconcile loop (every N
-/// seconds) between full simulation cycles.
+/// seconds) between full validation cycles.
 #[must_use]
 pub fn run_reconcile_tick(
     config: &RewardBotConfig,
@@ -174,8 +171,12 @@ pub fn run_reconcile_tick(
 
     ctx.release_legacy_buy_reserves();
     ctx.reconcile_open_orders(&plan_index, books, book_history);
-    ctx.accrue_rewards(&plan_index, books, elapsed);
-    ctx.place_new_quotes(&plans, books);
+    if !ctx.config.execution_mode.is_validation() {
+        ctx.accrue_rewards(&plan_index, books, elapsed);
+    }
+    if ctx.config.enabled {
+        ctx.place_new_quotes(&plans, books);
+    }
 
     ctx.account.tick_index += 1;
     ctx.account.updated_at = now;

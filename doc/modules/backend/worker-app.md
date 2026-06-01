@@ -48,8 +48,8 @@
 | `scan-arbitrage-once` | `scan_arbitrage_once` | 一次性套利扫描 |
 | `poll-arbitrage-radar` | `poll_arbitrage_radar` | 持续套利扫描 |
 | `analyze-arbitrage-opportunities` | `analyze_arbitrage_opportunities` | 套利历史分析 |
-| `scan-rewards-once` | `run_reward_bot_once` | 一次性消费 rewards 控制命令或执行奖励模拟 |
-| `poll-reward-bot` | `poll_reward_bot` | 持续消费 rewards 控制命令和奖励模拟轮询 |
+| `scan-rewards-once` | `run_reward_bot_once` | 一次性消费 rewards 控制命令或执行 validation/live 策略 tick |
+| `poll-reward-bot` | `poll_reward_bot` | 持续消费 rewards 控制命令和 validation/live 策略轮询 |
 | `scan-copytrade-once` | `run_copytrade_once` | 一次性消费 copytrade 控制命令或执行跟单循环 |
 | `poll-copytrade` | `poll_copytrade` | 持续消费 copytrade 控制命令和跟单轮询 |
 | `analyze-wallets-once` | `analyze_wallets_once` | 一次性钱包分析 |
@@ -95,7 +95,7 @@ Report: `CopyTradeRunReport { wallets_scanned, trades_detected, orders_placed, o
 
 约束：worker 是 copytrade 手动控制命令和跟单循环的唯一执行者。API 只把 `run_once` / `analyze_wallets` / `cancel_all` / `reset` 写入 `copytrade_control_commands`；worker 每轮先领取并处理待执行命令，处理到命令时跳过本轮自动 tick。
 
-### rewards — 奖励模拟与控制命令
+### rewards — 奖励策略与控制命令
 
 ```
 reward_bot_service.claim_next_control_command()
@@ -104,17 +104,18 @@ reward_bot_service.claim_next_control_command()
 
 无待处理控制命令时：
     fetch_reward_bot_inputs() // 获取奖励市场 + 盘口
-        → reward_bot_service.run_simulation() // 自动模拟 tick
-        → reward_bot_service.run_reconcile_only() // full tick 间隔内按 reconcile_interval_sec 快速吃单/撤单/计奖
+        → execution_mode=validation: reward_bot_service.run_simulation() // 事件验证 tick，不向 CLOB 下单、不计提模拟奖励
+        → execution_mode=live: prepare_live_cycle() + LivePolymarketConnector.submit_token_order()
+        → reconcile_interval_sec: validation 做本地快速吃单/撤单；live 读取活跃盘口并对本系统托管订单做安全撤单检查
 ```
 
 Report: `RewardBotRunReport { markets_scanned, books_fetched, plans_built, eligible_plans, simulated_orders, cancelled_orders, filled_orders, reward_accrued }`
 
-约束：worker 是 rewards 策略和控制命令的唯一执行者。API 只把 `run_once` / `cancel_all` / `reset` 写入 `reward_control_commands`；worker 每轮先领取并处理待执行命令，处理到命令时跳过本轮自动 tick。`run_once` 命令会强制执行一次模拟（即使自动挂单开关关闭），`cancel_all` 撤销开放模拟订单（兼容释放旧 reserved），`reset` 重置模拟资金池。服务模式下 `POLYEDGE_WORKER__POLL_REWARD_BOT=true` 会运行与 `poll-reward-bot` CLI 相同的 full tick + fast reconcile loop，`RewardBotConfig.reconcile_interval_sec` 会生效。
+约束：worker 是 rewards 策略和控制命令的唯一执行者。API 只把 `run_once` / `cancel_all` / `reset` 写入 `reward_control_commands`；worker 每轮先领取并处理待执行命令，处理到命令时跳过本轮自动 tick。`run_once` 会强制执行一次当前 `RewardBotConfig.execution_mode` 对应的策略 tick（即使自动开关关闭）；`cancel_all` 在 validation 下撤销本地开放订单，在 live 下调用 Polymarket cancel 并同步本地状态，任一撤单拒绝会让命令失败；`reset` 只重置 validation 资金池和本地托管状态，live 下按 cancel-all 执行且不会清空本地账本，避免产生孤儿实盘订单。服务模式下 `POLYEDGE_WORKER__POLL_REWARD_BOT=true` 会运行与 `poll-reward-bot` CLI 相同的 full tick + fast reconcile loop，`RewardBotConfig.reconcile_interval_sec` 会生效。
 
-自动 tick 只从 Postgres 的 `reward_markets` 读取奖励市场、通过 `OrderbookHttpClient`（HTTP 调用 polyedge-orderbook 服务）读取盘口。每个 tick 只读取候选 market pool（默认至少 100；随 `max_markets` / `max_open_orders` 扩展到 `u16::MAX`），先按配置预过滤奖励市场，再并发读取候选盘口缓存；若本 tick 没有新鲜缓存盘口，模拟器不会新挂单、产生盘口成交或 rewards 计提，只刷新当前候选计划/保留订单状态。开放模拟买单软复用 `account_capital_usd`，成交时才消耗现金；成交量受可见对手盘深度和 `max_fill_ratio` 共同限制。
+自动 tick 只从 Postgres 的 `reward_markets` 读取奖励市场、通过 `OrderbookHttpClient`（HTTP 调用 polyedge-orderbook 服务）读取盘口。每个 tick 只读取候选 market pool（默认至少 100；随 `max_markets` / `max_open_orders` 扩展到 `u16::MAX`），先按配置预过滤奖励市场，再并发读取候选盘口缓存；若本 tick 没有新鲜缓存盘口，validation 不会新挂单或触发盘口成交，live 不会提交新 post-only 订单。validation fast reconcile 在 `enabled=false` 时不会补挂新单。validation 开放买单软复用 `account_capital_usd`，成交时才消耗现金；成交量受可见对手盘深度和 `max_fill_ratio` 共同限制。
 
-未来接入 rewards live 下单时，worker 仍应保持同一策略语义：未成交 post-only maker 买单不在本地按全局 notional 硬锁资金；成交/部分成交回报才更新现金与库存，并触发撤单、降规模或 kill-switch。worker 需要独立维护本地组合风险，因为 CLOB 的 balance/allowance 检查不是跨市场组合风控系统。
+live 模式会用 `LivePolymarketConnector::submit_token_order()` 提交 post-only GTC token 买单，用 `cancel_order()` 撤销本系统托管订单；未成交 post-only maker 买单不在本地按全局 notional 硬锁资金。live placement 要求目标两腿都有非空盘口，`stale_book_ms=0` 只关闭盘口年龄检查；live reconcile 会读取开放订单活跃 token 的盘口，缺盘口、空盘口或过期盘口会触发立即撤单，即使 `enabled=false` 已停止新增报价。Polymarket 返回非 live 接受状态（如 `matched` / `delayed`）时会被视为 post-only 安全违规并立即尝试撤单。真实成交/部分成交回报后的现金、库存、卖出/平仓和奖励对账尚未闭环，worker 仍需要独立维护组合风险，因为 CLOB 的 balance/allowance 检查不是跨市场组合风控系统。
 
 ### orderbook_stream — 盘口流（已迁移到 orderbook 服务）
 
@@ -153,10 +154,10 @@ Report: `NewsIngestionRunReport { sources_scanned/succeeded/failed, fetched, ins
 
 - 所有 18 个子命令已实现
 - `run` 主循环包含 register-orderbook-tokens、rewards、copytrade、arbitrage、news、execution、signal-recompute 等任务
-- rewards worker 会通过数据库命令队列接收前端 Run / Cancel / Reset 请求，API 进程不再执行 rewards 策略
+- rewards worker 会通过数据库命令队列接收前端 Run / Cancel / Reset 请求，API 进程不再执行 rewards 策略；rewards 自身的 `execution_mode` 决定 validation/live，不依赖全局 system mode
 - copytrade worker 会通过数据库命令队列接收前端 Run / Analyze / Cancel / Reset 请求，API 进程不再执行跟单任务或抓取跟单输入
 - 默认大部分 worker 通过配置开关控制启用/禁用
-- Polymarket live 任务需要真实凭证
+- Polymarket live 任务和 rewards `execution_mode=live` 需要真实凭证
 
 ## 修改检查清单
 

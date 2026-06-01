@@ -288,17 +288,12 @@ impl PolymarketRewardsConnector {
         }))
     }
 
-    async fn fetch_market_detail(
-        &self,
-        condition_id: &str,
-    ) -> Result<Option<RawClobMarketDetail>> {
+    async fn fetch_market_detail(&self, condition_id: &str) -> Result<Option<RawClobMarketDetail>> {
         let url = format!("{}/markets/{condition_id}", self.clob_host);
         let response = self.client.get(&url).send().await.map_err(|error| {
             AppError::dependency_unavailable(
                 "POLYMARKET_CLOB_MARKET_DETAIL_REQUEST_FAILED",
-                format!(
-                    "failed to fetch market detail for {condition_id}: {error}"
-                ),
+                format!("failed to fetch market detail for {condition_id}: {error}"),
             )
         })?;
 
@@ -310,22 +305,20 @@ impl PolymarketRewardsConnector {
         if !status.is_success() {
             return Err(AppError::dependency_unavailable(
                 "POLYMARKET_CLOB_MARKET_DETAIL_STATUS_FAILED",
-                format!(
-                    "CLOB market detail returned HTTP {status} for {condition_id}"
-                ),
+                format!("CLOB market detail returned HTTP {status} for {condition_id}"),
             ));
         }
 
-        response.json::<RawClobMarketDetail>().await.map(Some).map_err(
-            |error| {
+        response
+            .json::<RawClobMarketDetail>()
+            .await
+            .map(Some)
+            .map_err(|error| {
                 AppError::dependency_unavailable(
                     "POLYMARKET_CLOB_MARKET_DETAIL_DECODE_FAILED",
-                    format!(
-                        "failed to decode market detail for {condition_id}: {error}"
-                    ),
+                    format!("failed to decode market detail for {condition_id}: {error}"),
                 )
-            },
-        )
+            })
     }
 
     async fn enrich_reward_markets(

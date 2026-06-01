@@ -6,11 +6,11 @@ use polyedge_application::{
     CopyTradeMode, CopyTradeStore, IdempotencyBegin, IdempotencyRequest, IdempotencyStore,
     ManagedRewardOrder, ManagedRewardOrderStatus, ModeSnapshot, ModeStateStore,
     ModeTransitionCommand, PostFillStrategy, RewardAccountState, RewardBotConfig, RewardBotStore,
-    RewardControlAction, RewardControlCommand, RewardControlCommandStatus, RewardFill,
-    RewardFillRole, RewardMarket, RewardOrderListQuery, RewardOrderPage, RewardOrderSide,
-    RewardOrderSortField, RewardOrderStatusFilter, RewardPosition, RewardQuotePlan,
-    RewardRiskEvent, RewardRiskSeverity, RewardSimulationOutcome, RewardToken, RiskStateSnapshot,
-    RiskStateStore, SortOrder, SourceTrade, TrackedWallet, TrackedWalletStatus,
+    RewardControlAction, RewardControlCommand, RewardControlCommandStatus, RewardExecutionMode,
+    RewardFill, RewardFillRole, RewardMarket, RewardOrderListQuery, RewardOrderPage,
+    RewardOrderSide, RewardOrderSortField, RewardOrderStatusFilter, RewardPosition,
+    RewardQuotePlan, RewardRiskEvent, RewardRiskSeverity, RewardSimulationOutcome, RewardToken,
+    RiskStateSnapshot, RiskStateStore, SortOrder, SourceTrade, TrackedWallet, TrackedWalletStatus,
     WalletAnalysisStats,
 };
 use polyedge_domain::{

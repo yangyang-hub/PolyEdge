@@ -110,7 +110,7 @@ OperationActionResult → 更新 UI 状态
 - 14 个 API 模块文件覆盖所有后端端点
 - `actions.ts` 集中管理所有写操作的 Server Actions
 - DTO 类型镜像完整覆盖后端 contracts crate
-- Rewards snapshot DTO 包含 `orders_page`，`readRewardBotSnapshot()` 支持订单服务端分页 query
+- Rewards snapshot DTO 包含 `orders_page` 和 `config.execution_mode`，`readRewardBotSnapshot()` 支持订单服务端分页 query
 - positions.ts 是唯一使用 `mapItem` 做字段重命名的模块
 
 ## 修改检查清单

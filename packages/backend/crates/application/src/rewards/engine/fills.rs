@@ -20,7 +20,7 @@ impl TickContext {
             fill_size
         };
         if fill_size <= Decimal::ZERO {
-            self.cancel_order(index, "insufficient simulated funds for fill");
+            self.cancel_order(index, "insufficient validation funds for fill");
             return;
         }
         let cost = (order.price * fill_size).round_dp(4);

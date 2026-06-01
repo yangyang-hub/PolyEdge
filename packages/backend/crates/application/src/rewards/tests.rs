@@ -395,6 +395,34 @@ mod tests {
     }
 
     #[test]
+    fn disabled_reconcile_tick_does_not_place_new_orders() {
+        let config = RewardBotConfig {
+            enabled: false,
+            ..RewardBotConfig::default()
+        };
+        let market = sample_market();
+        let books = quote_books_for_market(&market);
+        let plans = build_reward_quote_plans(std::slice::from_ref(&market), &books, &config);
+        assert!(plans[0].eligible);
+
+        let outcome = run_reconcile_tick(
+            &config,
+            fresh_account(),
+            Vec::new(),
+            Vec::new(),
+            plans,
+            vec![market],
+            &books,
+            &HashMap::new(),
+            5,
+            "trc_test",
+        );
+
+        assert_eq!(outcome.report.simulated_orders, 0);
+        assert!(outcome.orders.is_empty());
+    }
+
+    #[test]
     fn legacy_open_order_reserve_is_released_on_next_tick() {
         let config = RewardBotConfig {
             fill_rate_per_tick: Decimal::ZERO,
@@ -421,7 +449,7 @@ mod tests {
     }
 
     #[test]
-    fn accrues_polymarket_rewards_for_resting_two_sided_quotes() {
+    fn validation_mode_does_not_accrue_rewards_for_resting_two_sided_quotes() {
         let config = RewardBotConfig {
             fill_rate_per_tick: decimal("0"),
             ..RewardBotConfig::default()
@@ -442,9 +470,13 @@ mod tests {
             "trc_test",
         );
 
-        assert!(outcome.account.reward_earned_usd > Decimal::ZERO);
-        assert!(outcome.report.reward_accrued > Decimal::ZERO);
+        assert_eq!(outcome.account.reward_earned_usd, Decimal::ZERO);
+        assert_eq!(outcome.report.reward_accrued, Decimal::ZERO);
         assert!(outcome.report.filled_orders == 0);
+        assert!(!outcome
+            .events
+            .iter()
+            .any(|event| event.event_type == "reward_accrued"));
     }
 
     #[test]
@@ -532,10 +564,10 @@ mod tests {
     }
 
     #[test]
-    fn competing_book_depth_reduces_reward_share() {
-        // No fill (asks sit above our bids); fresh books carry competitor depth
-        // inside the reward band, which should shrink our reward versus the
-        // book-less fallback path.
+    fn validation_mode_ignores_reward_share_even_with_competing_depth() {
+        // Validation mode is only for event-path checks. It must not report
+        // simulated reward earnings even when fresh books carry competitor
+        // depth inside the reward band.
         let config = RewardBotConfig {
             fill_rate_per_tick: decimal("0"),
             ..RewardBotConfig::default()
@@ -598,19 +630,14 @@ mod tests {
             "trc_test",
         );
 
-        assert!(with_book.account.reward_earned_usd > Decimal::ZERO);
-        assert!(
-            with_book.account.reward_earned_usd < without_competition.account.reward_earned_usd,
-            "observed competitor depth should reduce our reward share"
-        );
-        assert!(
-            with_book
-                .events
-                .iter()
-                .filter(|event| event.event_type == "reward_accrued")
-                .any(|event| event.metadata.get("competition_source")
-                    == Some(&serde_json::Value::String("observed_book".to_string())))
-        );
+        assert_eq!(without_competition.account.reward_earned_usd, Decimal::ZERO);
+        assert_eq!(with_book.account.reward_earned_usd, Decimal::ZERO);
+        assert_eq!(without_competition.report.reward_accrued, Decimal::ZERO);
+        assert_eq!(with_book.report.reward_accrued, Decimal::ZERO);
+        assert!(!with_book
+            .events
+            .iter()
+            .any(|event| event.event_type == "reward_accrued"));
     }
 
     #[test]

@@ -61,7 +61,10 @@
 - **`LivePolymarketConnector`**：client、private_key、chain_id、account_id、ws_host
 - `connect(config)`：创建 `LocalSigner` → `ClobClient` → `auth_builder.authenticate()`
 - `connect_user_ws()`：创建认证 WebSocket 客户端（订单/成交通道）
-- 用途：live 模式下的订单管理和 copytrade 实盘
+- `submit()`：兼容 execution pipeline 的 YES/NO 买单提交
+- `submit_token_order()`：按 token_id 直接提交 buy/sell GTC 订单，支持 post-only；供 rewards live maker 使用
+- `cancel_order()`：按 Polymarket order id 撤销单笔订单
+- 用途：live 模式下的订单管理、rewards live maker 和 copytrade 实盘骨架
 
 ### Polymarket Rewards（奖励市场）
 
@@ -95,7 +98,7 @@
 
 - 所有 connector 已实现，覆盖 Polymarket 全部公开 API
 - Paper Trading 执行器已完整实现
-- Live connector 结构已具备但需要真实凭证
+- Live connector 已具备认证、用户 WS、订单提交、按 token_id 的 rewards buy/sell 提交和单笔撤单能力；仍需要真实凭证和小额账户验证
 - RSS connector 支持 Atom/RSS 两种格式
 
 ## 修改检查清单

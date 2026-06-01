@@ -1,25 +1,13 @@
 "use client";
 
-import { startTransition, useState } from "react";
-import { Ban, Info, Play, RotateCcw, Save } from "lucide-react";
+import { startTransition, useMemo, useState } from "react";
+import { Activity, CircleDollarSign, ShieldCheck } from "lucide-react";
 
-import { MetricCard } from "@/components/shared/metric-card";
 import { OperationFeedbackBanner } from "@/components/shared/operation-feedback-banner";
 import { PageHeader } from "@/components/shared/page-header";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import type {
-  PostFillStrategy,
-  RewardBotConfigDto,
-  RewardBotSnapshotDto,
-} from "@/lib/contracts/dto";
-import {
-  formatOptionalClock,
-  formatUsdFixed,
-  metricToneForPnl,
-} from "@/lib/formatters";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import type { RewardBotConfigDto, RewardBotSnapshotDto } from "@/lib/contracts/dto";
 import { useI18n } from "@/lib/i18n/client";
 import {
   cancelRewardBotOrdersAction,
@@ -31,10 +19,16 @@ import {
 import { readRewardBotSnapshot, type RewardBotSnapshotQuery } from "@/lib/api/rewards";
 
 import type { NumberConfigKey } from "../types";
-import { NumberInput } from "./number-input";
 import { EventsPanel } from "./rewards-events-panel";
+import { RewardsConfigPanel } from "./rewards-config-panel";
+import {
+  CommandPanel,
+  ModeStatusPanel,
+  SummaryStrip,
+  countRewardEvents,
+} from "./rewards-overview-cards";
 import { RiskControlConfig } from "./rewards-risk-config";
-import { OrdersTable, QuotePlansTable } from "./rewards-tables";
+import { OrdersTable, PositionsTable, QuotePlansTable } from "./rewards-tables";
 
 const REWARD_ORDERS_PAGE_SIZE = 15;
 
@@ -47,27 +41,30 @@ export function RewardsWorkbench({ initialSnapshot }: { initialSnapshot: RewardB
   const [draft, setDraft] = useState<RewardBotConfigDto>(initialSnapshot.config);
   const [feedback, setFeedback] = useState<RewardBotActionResult | null>(null);
   const [pending, setPending] = useState(false);
+  const [filtering, setFiltering] = useState(false);
 
-  // Plan filter/sort state
   const [plansSearch, setPlansSearch] = useState("");
   const [plansEligible, setPlansEligible] = useState<"all" | "eligible" | "ineligible">("eligible");
   const [plansSortBy, setPlansSortBy] = useState("score");
-  const [plansSortOrder, setPlansSortOrder] = useState<"asc" | "desc">("desc");
+  const [plansSortOrder, setPlansSortOrder] = useState<SortOrder>("desc");
 
-  // Order filter/sort state
   const [ordersSearch, setOrdersSearch] = useState("");
   const [ordersStatus, setOrdersStatus] = useState<OrderStatusFilter>("all");
   const [ordersSortBy, setOrdersSortBy] = useState("status");
   const [ordersSortOrder, setOrdersSortOrder] = useState<SortOrder>("desc");
   const [ordersPage, setOrdersPage] = useState(initialSnapshot.orders_page?.page ?? 1);
 
-  function buildQuery(overrides: {
-    search?: string;
-    status?: OrderStatusFilter;
-    sortBy?: string;
-    sortOrder?: SortOrder;
-    page?: number;
-  } = {}): RewardBotSnapshotQuery {
+  const eventCounts = useMemo(() => countRewardEvents(snapshot), [snapshot]);
+
+  function buildQuery(
+    overrides: {
+      search?: string;
+      status?: OrderStatusFilter;
+      sortBy?: string;
+      sortOrder?: SortOrder;
+      page?: number;
+    } = {},
+  ): RewardBotSnapshotQuery {
     const search = overrides.search ?? ordersSearch;
     const status = overrides.status ?? ordersStatus;
     const q: RewardBotSnapshotQuery = {};
@@ -79,8 +76,6 @@ export function RewardsWorkbench({ initialSnapshot }: { initialSnapshot: RewardB
     q.orders_page_size = REWARD_ORDERS_PAGE_SIZE;
     return q;
   }
-
-  const [filtering, setFiltering] = useState(false);
 
   function refetchWithFilters(overrides?: Parameters<typeof buildQuery>[0]) {
     const requestedPage = overrides?.page ?? ordersPage;
@@ -96,7 +91,6 @@ export function RewardsWorkbench({ initialSnapshot }: { initialSnapshot: RewardB
   function applyResult(result: RewardBotActionResult) {
     setFeedback(result);
     if (result.snapshot) {
-      // Re-apply current filters to the fresh snapshot
       setSnapshot(result.snapshot);
       setDraft(result.snapshot.config);
       refetchWithFilters();
@@ -121,7 +115,7 @@ export function RewardsWorkbench({ initialSnapshot }: { initialSnapshot: RewardB
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
       <PageHeader
         eyebrow={dictionary.rewards.eyebrow}
         title={dictionary.rewards.title}
@@ -130,272 +124,133 @@ export function RewardsWorkbench({ initialSnapshot }: { initialSnapshot: RewardB
 
       {feedback ? <OperationFeedbackBanner feedback={feedback} /> : null}
 
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
-        <MetricCard
-          title={dictionary.rewards.status}
-          value={snapshot.status.enabled ? dictionary.common.enabled : dictionary.common.disabled}
-          hint={snapshot.status.running ? dictionary.common.active : dictionary.common.idle}
-          accent={snapshot.status.enabled ? "success" : "primary"}
+      <section className="grid gap-4 xl:grid-cols-[1.15fr_0.85fr]">
+        <ModeStatusPanel snapshot={snapshot} eventCounts={eventCounts} />
+        <CommandPanel
+          config={draft}
+          pending={pending}
+          onRun={() => runAction(runRewardBotOnceAction)}
+          onCancel={() => runAction(cancelRewardBotOrdersAction)}
+          onReset={() => runAction(resetRewardBotAction)}
+          onSave={() => runAction(() => updateRewardBotConfigAction(draft))}
         />
-        <MetricCard
-          title={dictionary.rewards.markets}
-          value={String(snapshot.status.markets_tracked)}
-          hint={formatOptionalClock(snapshot.status.last_scan_at)}
-          accent="violet"
-        />
-        <MetricCard
-          title={dictionary.rewards.eligible}
-          value={String(snapshot.status.eligible_markets)}
-          hint={formatOptionalClock(snapshot.status.last_run_at)}
-          accent="success"
-        />
-        <MetricCard
-          title={dictionary.rewards.openOrders}
-          value={String(snapshot.status.open_orders)}
-          hint={`${snapshot.status.positions} ${dictionary.rewards.positions}`}
-          accent={snapshot.status.open_orders > 0 ? "success" : "primary"}
-        />
-      </div>
+      </section>
 
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
-        <MetricCard
-          title={dictionary.rewards.accountCapital}
-          value={formatUsdFixed(snapshot.account.capital_usd)}
-          hint={dictionary.rewards.account}
-          accent="primary"
-        />
-        <MetricCard
-          title={dictionary.rewards.available}
-          value={formatUsdFixed(snapshot.account.available_usd)}
-          hint={`${dictionary.rewards.reserved} ${formatUsdFixed(snapshot.account.reserved_usd)}`}
-          accent="violet"
-        />
-        <MetricCard
-          title={dictionary.rewards.reserved}
-          value={formatUsdFixed(snapshot.account.reserved_usd)}
-          hint={dictionary.rewards.openOrders}
-          accent="primary"
-        />
-        <MetricCard
-          title={dictionary.rewards.realizedPnl}
-          value={formatUsdFixed(snapshot.account.realized_pnl)}
-          hint={formatOptionalClock(snapshot.account.updated_at)}
-          accent={metricToneForPnl(snapshot.account.realized_pnl)}
-        />
-        <MetricCard
-          title={dictionary.rewards.rewardEarned}
-          value={formatUsdFixed(snapshot.account.reward_earned_usd)}
-          hint={dictionary.rewards.dailyReward}
-          accent="success"
-        />
-      </div>
+      <SummaryStrip snapshot={snapshot} eventCounts={eventCounts} />
 
-      <Card>
-        <CardHeader className="flex flex-col gap-4 border-b border-border/70 xl:flex-row xl:items-center xl:justify-between">
-          <CardTitle className="font-heading text-base">{dictionary.rewards.config}</CardTitle>
-          <div className="flex flex-wrap gap-2">
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              disabled={pending}
-              onClick={() => runAction(runRewardBotOnceAction)}
-            >
-              <Play className="size-4" />
-              {dictionary.rewards.run}
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              variant="destructive"
-              disabled={pending}
-              onClick={() => runAction(cancelRewardBotOrdersAction)}
-            >
-              <Ban className="size-4" />
-              {dictionary.rewards.cancelAll}
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              disabled={pending}
-              onClick={() => runAction(resetRewardBotAction)}
-            >
-              <RotateCcw className="size-4" />
-              {dictionary.rewards.reset}
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              disabled={pending}
-              onClick={() => runAction(() => updateRewardBotConfigAction(draft))}
-            >
-              <Save className="size-4" />
-              {dictionary.rewards.save}
-            </Button>
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-5">
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-            <label className="space-y-1.5">
-              <span className="text-xs font-medium text-muted-foreground">{dictionary.rewards.account}</span>
-              <Input
-                value={draft.account_id}
-                onChange={(event) => setDraft((current) => ({ ...current, account_id: event.target.value }))}
-              />
-            </label>
-            <label className="flex items-center gap-3 pt-6 text-sm">
-              <input
-                type="checkbox"
-                className="size-4 accent-primary"
-                checked={draft.enabled}
-                onChange={(event) => setDraft((current) => ({ ...current, enabled: event.target.checked }))}
-              />
-              {dictionary.rewards.enabled}
-            </label>
-            <label className="flex items-center gap-3 pt-6 text-sm">
-              <input
-                type="checkbox"
-                className="size-4 accent-primary"
-                checked={draft.cancel_on_fill}
-                onChange={(event) =>
-                  setDraft((current) => ({ ...current, cancel_on_fill: event.target.checked }))
-                }
-              />
-              {dictionary.rewards.cancelOnFill}
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Info className="size-3 cursor-help text-muted-foreground/60" />
-                </TooltipTrigger>
-                <TooltipContent side="top" className="max-w-xs text-wrap">
-                  {dictionary.rewards.configHints.cancelOnFill}
-                </TooltipContent>
-              </Tooltip>
-            </label>
+      <Tabs defaultValue="activity" className="gap-4">
+        <TabsList className="h-auto w-full flex-wrap justify-start">
+          <TabsTrigger value="activity">
+            <Activity className="size-4" />
+            {dictionary.rewards.activityTab}
+          </TabsTrigger>
+          <TabsTrigger value="config">
+            <CircleDollarSign className="size-4" />
+            {dictionary.rewards.strategyTab}
+          </TabsTrigger>
+          <TabsTrigger value="risk">
+            <ShieldCheck className="size-4" />
+            {dictionary.rewards.riskTab}
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="activity" className="space-y-4">
+          <div className="grid gap-4 2xl:grid-cols-[1.25fr_0.75fr]">
+            <Card>
+              <CardHeader className="border-b border-border/70">
+                <CardTitle>{dictionary.rewards.quotePlans}</CardTitle>
+                <CardDescription>{dictionary.rewards.quotePlansDescription}</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <QuotePlansTable
+                  plans={snapshot.quote_plans}
+                  search={plansSearch}
+                  onSearchChange={(v) => {
+                    setPlansSearch(v);
+                  }}
+                  eligibility={plansEligible}
+                  onEligibilityChange={setPlansEligible}
+                  sortBy={plansSortBy}
+                  sortOrder={plansSortOrder}
+                  onSortChange={(by, order) => {
+                    setPlansSortBy(by);
+                    setPlansSortOrder(order);
+                  }}
+                  filtering={filtering}
+                />
+              </CardContent>
+            </Card>
+
+            <div className="space-y-4">
+              <Card>
+                <CardHeader className="border-b border-border/70">
+                  <CardTitle>{dictionary.rewards.managedOrders}</CardTitle>
+                  <CardDescription>{dictionary.rewards.managedOrdersDescription}</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <OrdersTable
+                    orders={snapshot.orders}
+                    search={ordersSearch}
+                    onSearchChange={(v) => {
+                      setOrdersSearch(v);
+                      setOrdersPage(1);
+                      refetchWithFilters({ search: v, page: 1 });
+                    }}
+                    status={ordersStatus}
+                    onStatusChange={(v) => {
+                      setOrdersStatus(v);
+                      setOrdersPage(1);
+                      refetchWithFilters({ status: v, page: 1 });
+                    }}
+                    sortBy={ordersSortBy}
+                    sortOrder={ordersSortOrder}
+                    onSortChange={(by, order) => {
+                      setOrdersSortBy(by);
+                      setOrdersSortOrder(order);
+                      setOrdersPage(1);
+                      refetchWithFilters({ sortBy: by, sortOrder: order, page: 1 });
+                    }}
+                    page={snapshot.orders_page}
+                    onPageChange={(page) => {
+                      setOrdersPage(page);
+                      refetchWithFilters({ page });
+                    }}
+                    filtering={filtering}
+                  />
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader className="border-b border-border/70">
+                  <CardTitle>{dictionary.rewards.positions}</CardTitle>
+                  <CardDescription>{dictionary.rewards.positionsDescription}</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <PositionsTable positions={snapshot.positions} />
+                </CardContent>
+              </Card>
+            </div>
           </div>
 
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-6">
-            <NumberInput label={dictionary.rewards.maxMarkets} value={draft.max_markets} hint={dictionary.rewards.configHints.maxMarkets} onChange={(value) => updateNumber("max_markets", value)} />
-            <NumberInput label={dictionary.rewards.maxOpenOrders} value={draft.max_open_orders} hint={dictionary.rewards.configHints.maxOpenOrders} onChange={(value) => updateNumber("max_open_orders", value)} />
-            <NumberInput label={dictionary.rewards.perMarketUsd} value={draft.per_market_usd} suffix="$" hint={dictionary.rewards.configHints.perMarketUsd} onChange={(value) => updateNumber("per_market_usd", value)} />
-            <NumberInput label={dictionary.rewards.quoteSizeUsd} value={draft.quote_size_usd} suffix="$" hint={dictionary.rewards.configHints.quoteSizeUsd} onChange={(value) => updateNumber("quote_size_usd", value)} />
-            <NumberInput label={dictionary.rewards.minDailyReward} value={draft.min_daily_reward} suffix="$" hint={dictionary.rewards.configHints.minDailyReward} onChange={(value) => updateNumber("min_daily_reward", value)} />
-            <NumberInput label={dictionary.rewards.minMarketScore} value={draft.min_market_score} hint={dictionary.rewards.configHints.minMarketScore} onChange={(value) => updateNumber("min_market_score", value)} />
-            <NumberInput label={dictionary.rewards.maxSpreadCents} value={draft.max_spread_cents} suffix="c" hint={dictionary.rewards.configHints.maxSpreadCents} onChange={(value) => updateNumber("max_spread_cents", value)} />
-            <NumberInput label={dictionary.rewards.quoteEdgeCents} value={draft.quote_edge_cents} suffix="c" hint={dictionary.rewards.configHints.quoteEdgeCents} onChange={(value) => updateNumber("quote_edge_cents", value)} />
-            <NumberInput label={dictionary.rewards.safetyMarginCents} value={draft.safety_margin_cents} suffix="c" hint={dictionary.rewards.configHints.safetyMarginCents} onChange={(value) => updateNumber("safety_margin_cents", value)} />
-            <NumberInput label={dictionary.rewards.minMidpoint} value={draft.min_midpoint} hint={dictionary.rewards.configHints.minMidpoint} onChange={(value) => updateNumber("min_midpoint", value)} />
-            <NumberInput label={dictionary.rewards.maxMidpoint} value={draft.max_midpoint} hint={dictionary.rewards.configHints.maxMidpoint} onChange={(value) => updateNumber("max_midpoint", value)} />
-            <NumberInput label={dictionary.rewards.staleBookMs} value={draft.stale_book_ms} suffix="ms" hint={dictionary.rewards.configHints.staleBookMs} onChange={(value) => updateNumber("stale_book_ms", value)} />
-            <NumberInput label={dictionary.rewards.minScoringCheckSec} value={draft.min_scoring_check_sec} suffix="s" hint={dictionary.rewards.configHints.minScoringCheckSec} onChange={(value) => updateNumber("min_scoring_check_sec", value)} />
-            <NumberInput label={dictionary.rewards.maxPositionUsd} value={draft.max_position_usd} suffix="$" hint={dictionary.rewards.configHints.maxPositionUsd} onChange={(value) => updateNumber("max_position_usd", value)} />
-            <NumberInput label={dictionary.rewards.maxGlobalPositionUsd} value={draft.max_global_position_usd} suffix="$" hint={dictionary.rewards.configHints.maxGlobalPositionUsd} onChange={(value) => updateNumber("max_global_position_usd", value)} />
-            <NumberInput label={dictionary.rewards.exitMarkupCents} value={draft.exit_markup_cents} suffix="c" hint={dictionary.rewards.configHints.exitMarkupCents} onChange={(value) => updateNumber("exit_markup_cents", value)} />
-            <NumberInput label={dictionary.rewards.accountCapital} value={draft.account_capital_usd} suffix="$" hint={dictionary.rewards.configHints.accountCapital} onChange={(value) => updateNumber("account_capital_usd", value)} />
-            <NumberInput label={dictionary.rewards.competitionFactor} value={draft.reward_competition_factor} suffix="x" hint={dictionary.rewards.configHints.competitionFactor} onChange={(value) => updateNumber("reward_competition_factor", value)} />
-            <NumberInput label={dictionary.rewards.singleSidedC} value={draft.single_sided_divisor_c} hint={dictionary.rewards.configHints.singleSidedC} onChange={(value) => updateNumber("single_sided_divisor_c", value)} />
-            <NumberInput label={dictionary.rewards.fillRatePerTick} value={draft.fill_rate_per_tick} hint={dictionary.rewards.configHints.fillRatePerTick} onChange={(value) => updateNumber("fill_rate_per_tick", value)} />
-            <NumberInput label={dictionary.rewards.maxFillRatio} value={draft.max_fill_ratio} hint={dictionary.rewards.configHints.maxFillRatio} onChange={(value) => updateNumber("max_fill_ratio", value)} />
-            <NumberInput label={dictionary.rewards.requoteDriftCents} value={draft.requote_drift_cents} suffix="c" hint={dictionary.rewards.configHints.requoteDriftCents} onChange={(value) => updateNumber("requote_drift_cents", value)} />
-            <label className="space-y-1.5">
-              <span className="flex items-center gap-1 text-xs font-medium text-muted-foreground">
-                {dictionary.rewards.postFillStrategy}
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Info className="size-3 cursor-help text-muted-foreground/60" />
-                  </TooltipTrigger>
-                  <TooltipContent side="top" className="max-w-xs text-wrap">
-                    {dictionary.rewards.configHints.postFillStrategy}
-                  </TooltipContent>
-                </Tooltip>
-              </span>
-              <select
-                className="h-8 w-full rounded-lg border border-input bg-background px-2.5 text-sm"
-                value={draft.post_fill_strategy}
-                onChange={(event) =>
-                  setDraft((current) => ({
-                    ...current,
-                    post_fill_strategy: event.target.value as PostFillStrategy,
-                  }))
-                }
-              >
-                <option value="exit_at_markup">{dictionary.rewards.strategyExitMarkup}</option>
-                <option value="hold_and_requote">{dictionary.rewards.strategyHold}</option>
-                <option value="flatten_immediately">{dictionary.rewards.strategyFlatten}</option>
-              </select>
-            </label>
-          </div>
-        </CardContent>
-      </Card>
+          <Card>
+            <CardHeader className="border-b border-border/70">
+              <CardTitle>{dictionary.rewards.riskEvents}</CardTitle>
+              <CardDescription>{dictionary.rewards.eventsDescription}</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <EventsPanel events={snapshot.events} fills={snapshot.fills} />
+            </CardContent>
+          </Card>
+        </TabsContent>
 
-      <RiskControlConfig draft={draft} updateNumber={updateNumber} />
+        <TabsContent value="config">
+          <RewardsConfigPanel draft={draft} setDraft={setDraft} updateNumber={updateNumber} />
+        </TabsContent>
 
-      <div className="grid gap-4 xl:grid-cols-[1.25fr_0.75fr]">
-        <Card>
-          <CardHeader className="border-b border-border/70">
-            <CardTitle className="font-heading text-base">{dictionary.rewards.quotePlans}</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <QuotePlansTable
-              plans={snapshot.quote_plans}
-              search={plansSearch}
-              onSearchChange={(v) => { setPlansSearch(v); }}
-              eligibility={plansEligible}
-              onEligibilityChange={setPlansEligible}
-              sortBy={plansSortBy}
-              sortOrder={plansSortOrder}
-              onSortChange={(by, order) => { setPlansSortBy(by); setPlansSortOrder(order); }}
-              filtering={filtering}
-            />
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="border-b border-border/70">
-            <CardTitle className="font-heading text-base">{dictionary.rewards.managedOrders}</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <OrdersTable
-              orders={snapshot.orders}
-              search={ordersSearch}
-              onSearchChange={(v) => {
-                setOrdersSearch(v);
-                setOrdersPage(1);
-                refetchWithFilters({ search: v, page: 1 });
-              }}
-              status={ordersStatus}
-              onStatusChange={(v) => {
-                setOrdersStatus(v);
-                setOrdersPage(1);
-                refetchWithFilters({ status: v, page: 1 });
-              }}
-              sortBy={ordersSortBy}
-              sortOrder={ordersSortOrder}
-              onSortChange={(by, order) => {
-                setOrdersSortBy(by);
-                setOrdersSortOrder(order);
-                setOrdersPage(1);
-                refetchWithFilters({ sortBy: by, sortOrder: order, page: 1 });
-              }}
-              page={snapshot.orders_page}
-              onPageChange={(page) => {
-                setOrdersPage(page);
-                refetchWithFilters({ page });
-              }}
-              filtering={filtering}
-            />
-          </CardContent>
-        </Card>
-      </div>
-
-      <Card>
-        <CardHeader className="border-b border-border/70">
-          <CardTitle className="font-heading text-base">{dictionary.rewards.riskEvents}</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <EventsPanel events={snapshot.events} fills={snapshot.fills} />
-        </CardContent>
-      </Card>
+        <TabsContent value="risk">
+          <RiskControlConfig draft={draft} updateNumber={updateNumber} />
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

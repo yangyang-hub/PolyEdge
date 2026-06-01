@@ -682,3 +682,130 @@ async fn reconcile_paper_fills_creates_order_trade_position_and_executes_signal(
         }
     );
 }
+
+fn reward_decimal(value: &str) -> Decimal {
+    Decimal::from_str_exact(value).expect("decimal")
+}
+
+fn live_test_plan(now: OffsetDateTime) -> RewardQuotePlan {
+    RewardQuotePlan {
+        condition_id: "cond_live".to_string(),
+        market_slug: "live-market".to_string(),
+        question: "Will the live event happen?".to_string(),
+        score: reward_decimal("50"),
+        eligible: true,
+        reason: "eligible".to_string(),
+        midpoint: Some(reward_decimal("0.50")),
+        total_daily_rate: reward_decimal("25"),
+        rewards_max_spread: reward_decimal("8"),
+        rewards_min_size: reward_decimal("5"),
+        legs: vec![
+            polyedge_application::RewardQuoteLeg {
+                token_id: "yes_live".to_string(),
+                outcome: "YES".to_string(),
+                side: RewardOrderSide::Buy,
+                price: reward_decimal("0.49"),
+                size: reward_decimal("20"),
+                notional_usd: reward_decimal("9.8"),
+            },
+            polyedge_application::RewardQuoteLeg {
+                token_id: "no_live".to_string(),
+                outcome: "NO".to_string(),
+                side: RewardOrderSide::Buy,
+                price: reward_decimal("0.49"),
+                size: reward_decimal("20"),
+                notional_usd: reward_decimal("9.8"),
+            },
+        ],
+        updated_at: now,
+    }
+}
+
+fn live_test_book(token_id: &str, observed_at: OffsetDateTime) -> RewardOrderBook {
+    RewardOrderBook {
+        token_id: token_id.to_string(),
+        bids: vec![RewardBookLevel {
+            price: reward_decimal("0.48"),
+            size: reward_decimal("100"),
+        }],
+        asks: vec![RewardBookLevel {
+            price: reward_decimal("0.52"),
+            size: reward_decimal("100"),
+        }],
+        observed_at,
+    }
+}
+
+fn live_test_open_order(token_id: &str) -> ManagedRewardOrder {
+    let now = OffsetDateTime::now_utc();
+    ManagedRewardOrder {
+        id: format!("rewlive_seed_{token_id}"),
+        account_id: "reward_live".to_string(),
+        condition_id: "cond_live".to_string(),
+        token_id: token_id.to_string(),
+        outcome: "YES".to_string(),
+        side: RewardOrderSide::Buy,
+        price: reward_decimal("0.49"),
+        size: reward_decimal("20"),
+        external_order_id: Some(format!("pm_{token_id}")),
+        status: ManagedRewardOrderStatus::Open,
+        scoring: true,
+        reason: "seed live order".to_string(),
+        filled_size: Decimal::ZERO,
+        reward_earned: Decimal::ZERO,
+        last_scored_at: None,
+        created_at: now,
+        updated_at: now,
+    }
+}
+
+#[test]
+fn live_placement_reuses_cash_and_allows_stale_book_age_check_to_be_disabled() {
+    let config = RewardBotConfig {
+        execution_mode: RewardExecutionMode::Live,
+        account_id: "reward_live".to_string(),
+        stale_book_ms: 0,
+        max_markets: 1,
+        max_open_orders: 2,
+        max_global_position_usd: Decimal::ZERO,
+        ..RewardBotConfig::default()
+    };
+    let now = OffsetDateTime::now_utc();
+    let old = now - TimeDuration::hours(1);
+    let plan = live_test_plan(now);
+    let books = HashMap::from([
+        ("yes_live".to_string(), live_test_book("yes_live", old)),
+        ("no_live".to_string(), live_test_book("no_live", old)),
+    ]);
+
+    let orders = live_placement_orders(
+        &config,
+        "reward_live",
+        &[plan],
+        &books,
+        &[],
+        &[],
+        "trc_live_test",
+    );
+
+    assert_eq!(orders.len(), 2);
+    assert!(orders.iter().all(|order| {
+        order.side == RewardOrderSide::Buy && order.status == ManagedRewardOrderStatus::Planned
+    }));
+}
+
+#[test]
+fn live_cancel_candidates_cancel_when_orderbook_missing() {
+    let config = RewardBotConfig {
+        execution_mode: RewardExecutionMode::Live,
+        account_id: "reward_live".to_string(),
+        ..RewardBotConfig::default()
+    };
+    let plan = live_test_plan(OffsetDateTime::now_utc());
+    let order = live_test_open_order("yes_live");
+
+    let candidates = live_cancel_candidates(&config, &[plan], &[order], &HashMap::new());
+
+    assert_eq!(candidates.len(), 1);
+    assert!(candidates[0].1.contains("orderbook unavailable"));
+}

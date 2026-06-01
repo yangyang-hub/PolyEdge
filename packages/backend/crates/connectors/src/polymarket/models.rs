@@ -67,6 +67,29 @@ pub struct LivePolymarketOrderRequest {
     pub market_refs: PolymarketMarketRefs,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PolymarketTokenOrderSide {
+    Buy,
+    Sell,
+}
+
+#[derive(Debug, Clone)]
+pub struct LivePolymarketTokenOrderRequest {
+    pub client_order_id: String,
+    pub connector_name: String,
+    pub token_id: String,
+    pub side: PolymarketTokenOrderSide,
+    pub limit_price: Probability,
+    pub quantity: Quantity,
+    pub post_only: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct LivePolymarketCancelOrderRequest {
+    pub connector_name: String,
+    pub external_order_id: String,
+}
+
 #[derive(Debug, Clone)]
 pub struct LivePolymarketOrderStatusRequest {
     pub connector_name: String,
@@ -83,12 +106,43 @@ pub struct LivePolymarketTradeSyncRequest {
 #[derive(Debug, Clone)]
 pub struct LivePolymarketOrderAcceptance {
     pub order_id: String,
+    pub status: PolymarketAcceptedOrderStatus,
     pub accepted_at: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PolymarketAcceptedOrderStatus {
+    Live,
+    Matched,
+    Delayed,
+}
+
+impl PolymarketAcceptedOrderStatus {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Live => "live",
+            Self::Matched => "matched",
+            Self::Delayed => "delayed",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct LivePolymarketCancelAcceptance {
+    pub external_order_id: String,
+    pub cancelled_at: OffsetDateTime,
 }
 
 #[derive(Debug, Clone)]
 pub enum LivePolymarketExecutionOutcome {
     Accepted(LivePolymarketOrderAcceptance),
+    Rejected(PolymarketOrderRejection),
+}
+
+#[derive(Debug, Clone)]
+pub enum LivePolymarketCancelOutcome {
+    Accepted(LivePolymarketCancelAcceptance),
     Rejected(PolymarketOrderRejection),
 }
 

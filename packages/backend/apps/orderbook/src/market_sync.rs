@@ -1,5 +1,8 @@
 use polyedge_application::{MarketView, RewardMarket, RewardToken};
-use polyedge_connectors::{PolymarketGammaConnector, PolymarketGammaMarket, PolymarketRewardMarket, PolymarketRewardsConnector};
+use polyedge_connectors::{
+    PolymarketGammaConnector, PolymarketGammaMarket, PolymarketRewardMarket,
+    PolymarketRewardsConnector,
+};
 use polyedge_domain::Result;
 use polyedge_infrastructure::AppState;
 use tracing::info;
@@ -13,8 +16,7 @@ pub struct MarketSyncReport {
 /// into the Postgres database.
 pub async fn sync_markets_once(state: &AppState, trace_id: &str) -> Result<MarketSyncReport> {
     // 1. General markets from Gamma API.
-    let connector =
-        PolymarketGammaConnector::new(&state.settings.polymarket.gamma_host)?;
+    let connector = PolymarketGammaConnector::new(&state.settings.polymarket.gamma_host)?;
     let page_size = state.settings.arbitrage.scan_limit;
     let gamma_markets = connector.fetch_markets(page_size).await?;
     let views: Vec<MarketView> = gamma_markets
@@ -27,8 +29,7 @@ pub async fn sync_markets_once(state: &AppState, trace_id: &str) -> Result<Marke
         .await?;
 
     // 2. Reward markets from CLOB rewards API.
-    let rewards_connector =
-        PolymarketRewardsConnector::new(&state.settings.polymarket.clob_host)?;
+    let rewards_connector = PolymarketRewardsConnector::new(&state.settings.polymarket.clob_host)?;
     let reward_markets_raw = rewards_connector.fetch_current_markets().await?;
     let reward_markets: Vec<RewardMarket> = reward_markets_raw
         .into_iter()

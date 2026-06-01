@@ -85,7 +85,7 @@ impl TickContext {
                     continue;
                 }
                 // Risk gate: stop adding exposure once held inventory plus
-                // filled inventory hits the cap. Resting simulated buys reuse
+                // filled inventory hits the cap. Resting validation buys reuse
                 // the configured fund pool across markets; fills consume cash.
                 if self.config.max_global_position_usd > Decimal::ZERO
                     && self.global_exposure_notional() + notional
@@ -124,7 +124,7 @@ impl TickContext {
                     external_order_id: Some(external),
                     status: ManagedRewardOrderStatus::Open,
                     scoring: true,
-                    reason: "simulated post-only rewards quote".to_string(),
+                    reason: "validation post-only rewards quote".to_string(),
                     filled_size: Decimal::ZERO,
                     reward_earned: Decimal::ZERO,
                     last_scored_at: None,

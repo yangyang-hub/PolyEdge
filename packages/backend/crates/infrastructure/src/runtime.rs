@@ -3,12 +3,13 @@ use crate::{
     catalog::{InMemoryMarketEventStore, PostgresMarketEventStore},
     settings::Settings,
     stores::{
-        ExternalEventStore, InMemoryAuditLogSink, InMemoryCopyTradeStore, InMemoryExternalEventStore,
-        InMemoryIdempotencyStore, InMemoryModeStateStore, InMemoryOrderbookCache,
-        InMemoryOrderbookSubscriptionRegistry, InMemoryRewardBotStore, InMemoryRiskStateStore, InMemoryRuntimeConfigStore,
-        PostgresAuditLogSink, PostgresCopyTradeStore, PostgresExternalEventStore,
-        PostgresIdempotencyStore, PostgresModeStateStore, PostgresRewardBotStore,
-        PostgresRiskStateStore, PostgresRuntimeConfigStore, RuntimeConfigStore,
+        ExternalEventStore, InMemoryAuditLogSink, InMemoryCopyTradeStore,
+        InMemoryExternalEventStore, InMemoryIdempotencyStore, InMemoryModeStateStore,
+        InMemoryOrderbookCache, InMemoryOrderbookSubscriptionRegistry, InMemoryRewardBotStore,
+        InMemoryRiskStateStore, InMemoryRuntimeConfigStore, PostgresAuditLogSink,
+        PostgresCopyTradeStore, PostgresExternalEventStore, PostgresIdempotencyStore,
+        PostgresModeStateStore, PostgresRewardBotStore, PostgresRiskStateStore,
+        PostgresRuntimeConfigStore, RuntimeConfigStore,
     },
 };
 use polyedge_application::{
@@ -171,7 +172,7 @@ impl Runtime {
         let market_event_service = Arc::new(MarketEventService::new(market_event_store));
         let news_ingestion_service = Arc::new(NewsIngestionService::new(news_ingestion_store));
         let arbitrage_service = Arc::new(ArbitrageService::new(arbitrage_store));
-        let reward_bot_service = Arc::new(RewardBotService::new(reward_bot_store, mode_store));
+        let reward_bot_service = Arc::new(RewardBotService::new(reward_bot_store));
         let copytrade_service = Arc::new(CopyTradeService::new(copytrade_store));
         let execution_audit_log_sink = audit_log_sink.clone();
         let risk_service = Arc::new(RiskService::new(
@@ -254,7 +255,7 @@ impl Runtime {
         let news_ingestion_service =
             Arc::new(NewsIngestionService::new(market_event_store.clone()));
         let arbitrage_service = Arc::new(ArbitrageService::new(market_event_store));
-        let reward_bot_service = Arc::new(RewardBotService::new(reward_bot_store, mode_store));
+        let reward_bot_service = Arc::new(RewardBotService::new(reward_bot_store));
         let copytrade_service = Arc::new(CopyTradeService::new(copytrade_store));
         let execution_audit_log_sink = audit_log_sink.clone();
         let risk_service = Arc::new(RiskService::new(

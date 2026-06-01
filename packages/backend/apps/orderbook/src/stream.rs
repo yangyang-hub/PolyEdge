@@ -8,8 +8,8 @@ use polymarket_client_sdk::clob::ws::Client as ClobWsClient;
 use polymarket_client_sdk::types::U256;
 use polymarket_client_sdk::ws::config::Config as WsConfig;
 use std::str::FromStr;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
@@ -117,7 +117,10 @@ pub async fn run_orderbook_stream(state: &AppState) -> Result<OrderbookStreamRep
                 continue;
             }
 
-            debug!(stale_count = stale.len(), "poll reconciler checking stale tokens");
+            debug!(
+                stale_count = stale.len(),
+                "poll reconciler checking stale tokens"
+            );
 
             let fetch_limit = stale.len().min(poll_max_tokens);
             match connector.fetch_order_books(&stale[..fetch_limit]).await {

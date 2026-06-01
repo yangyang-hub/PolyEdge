@@ -1,4 +1,4 @@
-// Per-tick reconciliation of resting orders against fresh books: risk checks, drift cancels, and fills.
+// Per-tick reconciliation of resting orders against fresh books: risk checks, drift cancels, and validation fills.
 
 impl TickContext {
     fn reconcile_open_orders(
@@ -90,7 +90,7 @@ impl TickContext {
                 }
             }
 
-            // --- Fill simulation ---
+            // --- Validation fill trigger ---
             let draw = self.draw(&order.id);
             if let Some(fill_size) = simulate_fill(&order, fresh_order_book, draw, &self.config) {
                 match order.side {

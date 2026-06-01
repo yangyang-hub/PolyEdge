@@ -68,12 +68,12 @@ pub use rewards::{
     ManagedRewardOrder, ManagedRewardOrderStatus, PostFillStrategy, RewardAccountState,
     RewardBookLevel, RewardBotConfig, RewardBotConfigPatch, RewardBotRunReport, RewardBotService,
     RewardBotSnapshot, RewardBotStatus, RewardBotStore, RewardControlAction, RewardControlCommand,
-    RewardControlCommandStatus, RewardFill, RewardFillRole, RewardListPage, RewardMarket,
-    RewardOrderBook, RewardOrderListQuery, RewardOrderPage, RewardOrderSide, RewardOrderSortField,
-    RewardOrderStatusFilter, RewardPosition, RewardQuoteLeg, RewardQuotePlan, RewardRiskEvent,
-    RewardRiskSeverity, RewardSimulationOutcome, RewardToken, build_reward_quote_plans,
-    new_risk_event, run_reward_simulation_tick, select_reward_book_token_ids,
-    validate_reward_list_limit,
+    RewardControlCommandStatus, RewardExecutionMode, RewardFill, RewardFillRole, RewardListPage,
+    RewardLiveCycle, RewardMarket, RewardOrderBook, RewardOrderListQuery, RewardOrderPage,
+    RewardOrderSide, RewardOrderSortField, RewardOrderStatusFilter, RewardPosition, RewardQuoteLeg,
+    RewardQuotePlan, RewardRiskEvent, RewardRiskSeverity, RewardSimulationOutcome, RewardToken,
+    build_reward_quote_plans, new_risk_event, run_reward_simulation_tick,
+    select_reward_book_token_ids, validate_reward_list_limit,
 };
 pub use risk::{
     ApproveSignalCommand, ApproveSignalReceipt, KillSwitchReceipt, RejectSignalCommand,

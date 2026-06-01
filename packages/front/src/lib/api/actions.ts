@@ -144,6 +144,7 @@ const decimalNumber = z.coerce.number().finite();
 
 const rewardConfigSchema = z.object({
   enabled: z.boolean(),
+  execution_mode: z.enum(["validation", "live"]),
   account_id: z.string().trim().min(1),
   max_markets: z.coerce.number().int().min(0).max(65_535),
   max_open_orders: z.coerce.number().int().min(0).max(65_535),
@@ -366,7 +367,7 @@ export async function runRewardBotOnceAction(): Promise<RewardBotActionResult> {
     const response = await runRewardBotOnce();
 
     return {
-      ...createActionSuccessResult("Reward bot simulation queued for worker execution.", {
+      ...createActionSuccessResult("Reward strategy run queued for worker execution.", {
         requestId: response.meta.request_id,
         traceId: response.meta.trace_id,
         operationId: `reward_run_${randomUUID().slice(0, 8)}`,
@@ -375,7 +376,7 @@ export async function runRewardBotOnceAction(): Promise<RewardBotActionResult> {
       snapshot: response.data,
     };
   } catch (error) {
-    return apiActionFailure(error, "Reward bot simulation failed.");
+    return apiActionFailure(error, "Reward strategy run failed.");
   }
 }
 
@@ -402,7 +403,7 @@ export async function resetRewardBotAction(): Promise<RewardBotActionResult> {
     const response = await resetRewardBot();
 
     return {
-      ...createActionSuccessResult("Reward simulation reset queued for worker execution.", {
+      ...createActionSuccessResult("Reward validation state reset queued for worker execution.", {
         requestId: response.meta.request_id,
         traceId: response.meta.trace_id,
         operationId: `reward_reset_${randomUUID().slice(0, 8)}`,
@@ -411,7 +412,7 @@ export async function resetRewardBotAction(): Promise<RewardBotActionResult> {
       snapshot: response.data,
     };
   } catch (error) {
-    return apiActionFailure(error, "Reward simulation reset failed.");
+    return apiActionFailure(error, "Reward validation state reset failed.");
   }
 }
 

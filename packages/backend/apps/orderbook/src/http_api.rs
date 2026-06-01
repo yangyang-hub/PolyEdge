@@ -94,9 +94,7 @@ pub async fn get_orderbook_batch(
     Json(OrderbookBatchResponse { books })
 }
 
-pub async fn get_orderbook_stats(
-    State(state): State<AppState>,
-) -> Json<OrderbookStatsResponse> {
+pub async fn get_orderbook_stats(State(state): State<AppState>) -> Json<OrderbookStatsResponse> {
     let all_tokens = state.orderbook_registry.list_all_tokens().await;
     // Count distinct sources by reading the registry internals is not exposed;
     // report total tokens as the primary metric.
@@ -128,10 +126,7 @@ pub async fn unregister_source(
     State(state): State<AppState>,
     Path(source): Path<String>,
 ) -> Json<MessageResponse> {
-    state
-        .orderbook_registry
-        .unregister_source(&source)
-        .await;
+    state.orderbook_registry.unregister_source(&source).await;
     Json(MessageResponse {
         message: format!("unregistered source '{source}'"),
     })

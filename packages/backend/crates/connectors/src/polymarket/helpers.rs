@@ -171,6 +171,76 @@ fn validate_live_order_request(request: &LivePolymarketOrderRequest) -> Result<(
     Ok(())
 }
 
+fn validate_live_token_order_request(request: &LivePolymarketTokenOrderRequest) -> Result<()> {
+    if request.client_order_id.trim().is_empty() {
+        return Err(AppError::invalid_input(
+            "POLYMARKET_CLIENT_ORDER_ID_REQUIRED",
+            "client_order_id must not be empty",
+        ));
+    }
+
+    if request.connector_name != POLYMARKET_CONNECTOR_NAME {
+        return Err(AppError::invalid_input(
+            "POLYMARKET_CONNECTOR_UNSUPPORTED",
+            format!(
+                "polymarket live connector only handles connector_name={POLYMARKET_CONNECTOR_NAME}, got {}",
+                request.connector_name
+            ),
+        ));
+    }
+
+    if request.token_id.trim().is_empty() {
+        return Err(AppError::invalid_input(
+            "POLYMARKET_TOKEN_ID_REQUIRED",
+            "token_id must not be empty",
+        ));
+    }
+
+    if request.limit_price.value() <= Decimal::ZERO {
+        return Err(AppError::invalid_input(
+            "POLYMARKET_LIMIT_PRICE_INVALID",
+            "polymarket live connector requires a positive limit price",
+        ));
+    }
+
+    if request.quantity.value() <= Decimal::ZERO {
+        return Err(AppError::invalid_input(
+            "POLYMARKET_QUANTITY_INVALID",
+            "polymarket live connector requires a positive quantity",
+        ));
+    }
+
+    if request.limit_price.value() * request.quantity.value() < POLYMARKET_MIN_NOTIONAL_USD {
+        return Err(AppError::invalid_input(
+            "POLYMARKET_NOTIONAL_INVALID",
+            "polymarket live connector requires notional >= 1.00 USD",
+        ));
+    }
+
+    Ok(())
+}
+
+fn validate_live_cancel_order_request(request: &LivePolymarketCancelOrderRequest) -> Result<()> {
+    if request.connector_name != POLYMARKET_CONNECTOR_NAME {
+        return Err(AppError::invalid_input(
+            "POLYMARKET_CONNECTOR_UNSUPPORTED",
+            format!(
+                "polymarket live connector only handles connector_name={POLYMARKET_CONNECTOR_NAME}, got {}",
+                request.connector_name
+            ),
+        ));
+    }
+
+    if request.external_order_id.trim().is_empty() {
+        return Err(AppError::invalid_input(
+            "POLYMARKET_ORDER_ID_REQUIRED",
+            "external_order_id must not be empty",
+        ));
+    }
+
+    Ok(())
+}
+
 fn validate_live_order_status_request(request: &LivePolymarketOrderStatusRequest) -> Result<()> {
     if request.connector_name != POLYMARKET_CONNECTOR_NAME {
         return Err(AppError::invalid_input(

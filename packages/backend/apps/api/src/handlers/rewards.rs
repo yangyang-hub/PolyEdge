@@ -103,7 +103,7 @@ async fn run_reward_bot_once(
         .reward_bot_service
         .enqueue_control_command(
             RewardControlAction::RunOnce,
-            "operator requested one rewards simulation tick",
+            "operator requested one rewards strategy tick",
             &trace_id,
         )
         .await
@@ -125,7 +125,7 @@ async fn cancel_reward_bot_orders(
         .reward_bot_service
         .enqueue_control_command(
             RewardControlAction::CancelAll,
-            "operator requested cancelling all simulated rewards orders",
+            "operator requested cancelling all rewards orders",
             &trace_id,
         )
         .await
@@ -147,7 +147,7 @@ async fn reset_reward_bot(
         .reward_bot_service
         .enqueue_control_command(
             RewardControlAction::Reset,
-            "operator requested resetting rewards simulation account",
+            "operator requested resetting rewards validation state",
             &trace_id,
         )
         .await

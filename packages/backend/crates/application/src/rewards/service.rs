@@ -48,27 +48,26 @@ pub trait RewardBotStore: Send + Sync {
     async fn list_events(&self, limit: u16) -> Result<Vec<RewardRiskEvent>>;
     async fn log_event(&self, event: RewardRiskEvent) -> Result<()>;
 
-    /// Load the simulated fund-pool ledger, seeding a fresh one from `config` if absent.
+    /// Load the validation fund-pool ledger, seeding a fresh one from `config` if absent.
     async fn load_account_state(&self, config: &RewardBotConfig) -> Result<RewardAccountState>;
     /// Currently open-like orders for an account (planned/open/exit_pending).
     async fn list_open_orders(&self, account_id: &str) -> Result<Vec<ManagedRewardOrder>>;
     /// Non-zero inventory for an account.
     async fn list_account_positions(&self, account_id: &str) -> Result<Vec<RewardPosition>>;
     async fn list_fills(&self, limit: u16) -> Result<Vec<RewardFill>>;
-    /// Persist a full simulation tick (orders, fills, positions, ledger, events) atomically.
+    /// Persist a full validation/live local-state tick atomically.
     async fn apply_simulation_tick(
         &self,
         outcome: &RewardSimulationOutcome,
         trace_id: &str,
     ) -> Result<()>;
-    /// Reset the simulation: cancel orders, clear fills/positions, reset the ledger to capital.
+    /// Reset validation state: cancel orders, clear fills/positions, reset the ledger to capital.
     async fn reset_simulation(&self, config: &RewardBotConfig, trace_id: &str) -> Result<()>;
 }
 
 #[derive(Clone)]
 pub struct RewardBotService {
     store: Arc<dyn RewardBotStore>,
-    mode_store: Arc<dyn ModeStateStore>,
     /// In-memory ring buffer of historical book snapshots per token, used by
     /// risk-control checks (depth drop, fill velocity, mass cancel).
     book_history: Arc<std::sync::Mutex<HashMap<String, VecDeque<BookSnapshot>>>>,
@@ -76,10 +75,9 @@ pub struct RewardBotService {
 
 impl RewardBotService {
     #[must_use]
-    pub fn new(store: Arc<dyn RewardBotStore>, mode_store: Arc<dyn ModeStateStore>) -> Self {
+    pub fn new(store: Arc<dyn RewardBotStore>) -> Self {
         Self {
             store,
-            mode_store,
             book_history: Arc::new(std::sync::Mutex::new(HashMap::new())),
         }
     }
@@ -239,7 +237,7 @@ impl RewardBotService {
         self.store.list_all_active_markets().await
     }
 
-    /// List a bounded candidate pool for one rewards simulation tick.
+    /// List a bounded candidate pool for one rewards strategy tick.
     pub async fn list_reward_run_candidate_markets(&self) -> Result<Vec<RewardMarket>> {
         let config = self.read_config().await?;
         let markets = self
@@ -370,6 +368,86 @@ impl RewardBotService {
             .await
     }
 
+    pub async fn prepare_live_cycle(
+        &self,
+        markets: Vec<RewardMarket>,
+        books: HashMap<String, RewardOrderBook>,
+        trace_id: &str,
+        force_orders: bool,
+    ) -> Result<RewardLiveCycle> {
+        let config = self.read_config().await?;
+        let plans = build_reward_quote_plans(&markets, &books, &config);
+        self.store.upsert_markets(&markets).await?;
+        self.store.save_quote_plans(&plans).await?;
+
+        let account = self.store.load_account_state(&config).await?;
+        let open_orders = self.store.list_open_orders(&account.account_id).await?;
+        let positions = self
+            .store
+            .list_account_positions(&account.account_id)
+            .await?;
+        let should_execute = config.enabled || force_orders;
+
+        self.store
+            .log_event(new_risk_event(
+                Some(config.account_id.clone()),
+                None,
+                None,
+                "reward_bot_live_plan_built",
+                RewardRiskSeverity::Info,
+                "Prepared rewards live order plan.",
+                json!({
+                    "trace_id": trace_id,
+                    "execution_mode": config.execution_mode.as_str(),
+                    "markets_scanned": markets.len(),
+                    "books_fetched": books.len(),
+                    "plans_built": plans.len(),
+                    "eligible_plans": plans.iter().filter(|plan| plan.eligible).count(),
+                    "should_execute": should_execute,
+                }),
+            ))
+            .await?;
+
+        Ok(RewardLiveCycle {
+            config,
+            account,
+            markets,
+            plans,
+            open_orders,
+            positions,
+            should_execute,
+        })
+    }
+
+    pub async fn current_live_cycle_state(&self) -> Result<RewardLiveCycle> {
+        let config = self.read_config().await?;
+        let account = self.store.load_account_state(&config).await?;
+        let open_orders = self.store.list_open_orders(&account.account_id).await?;
+        let positions = self
+            .store
+            .list_account_positions(&account.account_id)
+            .await?;
+        let markets = self.store.list_all_active_markets().await?;
+        let plans = self.store.list_all_quote_plans().await?;
+        Ok(RewardLiveCycle {
+            should_execute: config.enabled,
+            config,
+            account,
+            markets,
+            plans,
+            open_orders,
+            positions,
+        })
+    }
+
+    pub async fn apply_live_tick_outcome(
+        &self,
+        outcome: &RewardSimulationOutcome,
+        trace_id: &str,
+    ) -> Result<()> {
+        self.store.apply_simulation_tick(outcome, trace_id).await
+    }
+
     async fn run_simulation_inner(
         &self,
         markets: Vec<RewardMarket>,
@@ -408,22 +486,6 @@ impl RewardBotService {
                 risk_cancelled_orders: 0,
                 reward_accrued: Decimal::ZERO,
             });
-        }
-
-        // Check global system mode — live trading is not wired yet.
-        let system_mode = self.mode_store.current().await?.mode;
-        if system_mode == SystemMode::LiveAuto {
-            self.store
-                .log_event(new_risk_event(
-                    Some(config.account_id.clone()),
-                    None,
-                    None,
-                    "reward_bot_live_auto_unsupported",
-                    RewardRiskSeverity::Warning,
-                    "Global mode is live_auto but rewards bot live trading is not wired yet; running simulation.",
-                    json!({ "trace_id": trace_id, "system_mode": system_mode.as_str() }),
-                ))
-                .await?;
         }
 
         let account = self.store.load_account_state(&config).await?;
@@ -470,7 +532,7 @@ impl RewardBotService {
     }
 
     /// Fast reconcile-only tick: reads the latest books, runs risk checks,
-    /// fill simulation, reward accrual, and quote placement using the
+    /// validation fills, local risk checks, and quote placement using the
     /// **existing** quote plans (does not rebuild them).
     pub async fn run_reconcile_only(
         &self,
@@ -478,6 +540,9 @@ impl RewardBotService {
         trace_id: &str,
     ) -> Result<RewardBotRunReport> {
         let config = self.read_config().await?;
+        if !config.enabled {
+            return Ok(RewardBotRunReport::default());
+        }
 
         // Record book snapshots for risk-control history.
         self.record_book_snapshots(&books);
@@ -550,11 +615,12 @@ impl RewardBotService {
                 Some(config.account_id.clone()),
                 None,
                 None,
-                "reward_bot_simulation_run",
+                "reward_bot_validation_run",
                 RewardRiskSeverity::Info,
-                "Completed rewards simulation tick.",
+                "Completed rewards validation tick.",
                 json!({
                     "trace_id": trace_id,
+                    "execution_mode": config.execution_mode.as_str(),
                     "markets_scanned": markets_scanned,
                     "books_fetched": books_fetched,
                     "plans_built": plans.len(),
@@ -577,7 +643,7 @@ impl RewardBotService {
                 None,
                 "reward_bot_reset",
                 RewardRiskSeverity::Info,
-                "Reset rewards simulation account, orders, positions and fills.",
+                "Reset rewards validation account, orders, positions and fills.",
                 json!({ "trace_id": trace_id, "capital_usd": config.account_capital_usd }),
             ))
             .await

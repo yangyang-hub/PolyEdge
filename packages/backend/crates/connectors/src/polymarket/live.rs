@@ -166,12 +166,14 @@ impl LivePolymarketConnector {
             ));
         }
 
+        let accepted_status = accepted_order_status(&response.status);
         match response.status {
             SdkOrderStatusType::Live
             | SdkOrderStatusType::Matched
             | SdkOrderStatusType::Delayed => Ok(LivePolymarketExecutionOutcome::Accepted(
                 LivePolymarketOrderAcceptance {
                     order_id: response.order_id,
+                    status: accepted_status,
                     accepted_at: OffsetDateTime::now_utc(),
                 },
             )),
@@ -185,6 +187,159 @@ impl LivePolymarketConnector {
                 },
             )),
         }
+    }
+
+    pub async fn submit_token_order(
+        &self,
+        request: &LivePolymarketTokenOrderRequest,
+    ) -> Result<LivePolymarketExecutionOutcome> {
+        validate_live_token_order_request(request)?;
+        let token_id = parse_u256(
+            "polymarket_token_id",
+            &request.token_id,
+            "POLYMARKET_TOKEN_ID_INVALID",
+        )?;
+        let adjusted_quantity = adjusted_order_quantity(request.limit_price, request.quantity)?;
+        let adjusted_notional = request.limit_price.value() * adjusted_quantity.value();
+        let signer = LocalSigner::from_str(&self.private_key)
+            .map_err(|error| {
+                AppError::invalid_input(
+                    "POLYMARKET_PRIVATE_KEY_INVALID",
+                    format!("invalid polymarket private_key: {error}"),
+                )
+            })?
+            .with_chain_id(Some(self.chain_id));
+
+        if adjusted_notional < POLYMARKET_MIN_NOTIONAL_USD {
+            return Ok(LivePolymarketExecutionOutcome::Rejected(
+                PolymarketOrderRejection {
+                    code: "POLYMARKET_MIN_NOTIONAL_NOT_MET".to_string(),
+                    message: format!(
+                        "polymarket live connector requires adjusted notional >= 1.00 USD, got {}",
+                        adjusted_notional
+                    ),
+                },
+            ));
+        }
+
+        let signable = self
+            .client
+            .limit_order()
+            .token_id(token_id)
+            .side(token_order_side(request.side))
+            .price(request.limit_price.value())
+            .size(adjusted_quantity.value())
+            .order_type(OrderType::GTC)
+            .post_only(request.post_only)
+            .build()
+            .await
+            .map_err(|error| {
+                AppError::internal(
+                    "POLYMARKET_ORDER_BUILD_FAILED",
+                    format!(
+                        "failed to build live polymarket rewards order for client_order_id={}: {error}",
+                        request.client_order_id
+                    ),
+                )
+            })?;
+
+        let signed = self.client.sign(&signer, signable).await.map_err(|error| {
+            AppError::internal(
+                "POLYMARKET_ORDER_SIGN_FAILED",
+                format!(
+                    "failed to sign live polymarket rewards order for client_order_id={}: {error}",
+                    request.client_order_id
+                ),
+            )
+        })?;
+
+        let response = self.client.post_order(signed).await.map_err(|error| {
+            AppError::internal(
+                "POLYMARKET_ORDER_POST_FAILED",
+                format!(
+                    "failed to submit live polymarket rewards order for client_order_id={}: {error}",
+                    request.client_order_id
+                ),
+            )
+        })?;
+
+        if !response.success {
+            return Ok(LivePolymarketExecutionOutcome::Rejected(
+                PolymarketOrderRejection {
+                    code: "POLYMARKET_ORDER_REJECTED".to_string(),
+                    message: response
+                        .error_msg
+                        .unwrap_or_else(|| "Polymarket order was rejected".to_string()),
+                },
+            ));
+        }
+
+        let accepted_status = accepted_order_status(&response.status);
+        match response.status {
+            SdkOrderStatusType::Live
+            | SdkOrderStatusType::Matched
+            | SdkOrderStatusType::Delayed => Ok(LivePolymarketExecutionOutcome::Accepted(
+                LivePolymarketOrderAcceptance {
+                    order_id: response.order_id,
+                    status: accepted_status,
+                    accepted_at: OffsetDateTime::now_utc(),
+                },
+            )),
+            other => Ok(LivePolymarketExecutionOutcome::Rejected(
+                PolymarketOrderRejection {
+                    code: "POLYMARKET_ORDER_STATUS_UNSUPPORTED".to_string(),
+                    message: format!(
+                        "Polymarket returned unsupported post_order status={other} for client_order_id={}",
+                        request.client_order_id
+                    ),
+                },
+            )),
+        }
+    }
+
+    pub async fn cancel_order(
+        &self,
+        request: &LivePolymarketCancelOrderRequest,
+    ) -> Result<LivePolymarketCancelOutcome> {
+        validate_live_cancel_order_request(request)?;
+        let response = self
+            .client
+            .cancel_order(&request.external_order_id)
+            .await
+            .map_err(|error| {
+                AppError::internal(
+                    "POLYMARKET_ORDER_CANCEL_FAILED",
+                    format!(
+                        "failed to cancel live polymarket order {}: {error}",
+                        request.external_order_id
+                    ),
+                )
+            })?;
+
+        if response
+            .canceled
+            .iter()
+            .any(|order_id| order_id == &request.external_order_id)
+        {
+            return Ok(LivePolymarketCancelOutcome::Accepted(
+                LivePolymarketCancelAcceptance {
+                    external_order_id: request.external_order_id.clone(),
+                    cancelled_at: OffsetDateTime::now_utc(),
+                },
+            ));
+        }
+
+        let message = response
+            .not_canceled
+            .get(&request.external_order_id)
+            .cloned()
+            .unwrap_or_else(|| "Polymarket did not confirm order cancellation".to_string());
+        Ok(LivePolymarketCancelOutcome::Rejected(
+            PolymarketOrderRejection {
+                code: "POLYMARKET_ORDER_CANCEL_REJECTED".to_string(),
+                message,
+            },
+        ))
     }
 
     pub async fn poll_order_status(
@@ -325,5 +480,21 @@ impl LivePolymarketConnector {
             filled_quantity,
             fee,
         }))
+    }
+}
+
+fn token_order_side(side: PolymarketTokenOrderSide) -> Side {
+    match side {
+        PolymarketTokenOrderSide::Buy => Side::Buy,
+        PolymarketTokenOrderSide::Sell => Side::Sell,
+    }
+}
+
+fn accepted_order_status(status: &SdkOrderStatusType) -> PolymarketAcceptedOrderStatus {
+    match status {
+        SdkOrderStatusType::Live => PolymarketAcceptedOrderStatus::Live,
+        SdkOrderStatusType::Matched => PolymarketAcceptedOrderStatus::Matched,
+        SdkOrderStatusType::Delayed => PolymarketAcceptedOrderStatus::Delayed,
+        _ => PolymarketAcceptedOrderStatus::Delayed,
     }
 }

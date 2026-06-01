@@ -202,13 +202,12 @@ pub fn classify_style(avg_hold_hours: Decimal, trades_per_day: Decimal) -> &'sta
 }
 
 /// Group trades by market (condition_id) and compute per-market aggregates.
-pub fn group_trades_by_market(
-    trades: &[super::TradeInput],
-) -> HashMap<String, MarketAggregate> {
+pub fn group_trades_by_market(trades: &[super::TradeInput]) -> HashMap<String, MarketAggregate> {
     let mut map: HashMap<String, MarketAggregate> = HashMap::new();
     for trade in trades {
-        let entry = map.entry(trade.condition_id.clone()).or_insert_with(|| {
-            MarketAggregate {
+        let entry = map
+            .entry(trade.condition_id.clone())
+            .or_insert_with(|| MarketAggregate {
                 title: trade.title.clone(),
                 slug: trade.slug.clone(),
                 trade_count: 0,
@@ -217,8 +216,7 @@ pub fn group_trades_by_market(
                 sell_count: 0,
                 buy_volume: Decimal::ZERO,
                 sell_volume: Decimal::ZERO,
-            }
-        });
+            });
         entry.trade_count += 1;
         let notional = trade.price * trade.size;
         entry.volume_usd += notional;

@@ -1,4 +1,4 @@
-// Small state accessors, id/event helpers, deterministic RNG, and fill simulation.
+// Small state accessors, id/event helpers, deterministic RNG, and validation fill logic.
 
 impl TickContext {
     // ---- small helpers -------------------------------------------------
@@ -51,7 +51,7 @@ impl TickContext {
 
     fn reserve_buy_notional(&mut self, _notional: Decimal) {
         // Simulated resting buys use soft capital reuse across markets. Cash is
-        // consumed only when a buy fill is simulated.
+        // consumed only when a validation buy fill is triggered.
     }
 
     fn release_buy_reserve(&mut self, _notional: Decimal) {
@@ -150,7 +150,7 @@ impl TickContext {
     }
 
     /// Deterministic pseudo-random draw in `[0, 1)` seeded by the order id and
-    /// the account tick counter, so simulations are reproducible in tests.
+    /// the account tick counter, so validation runs are reproducible in tests.
     fn draw(&self, order_id: &str) -> f64 {
         let seed = fnv1a(order_id)
             ^ splitmix64(self.account.tick_index as u64)

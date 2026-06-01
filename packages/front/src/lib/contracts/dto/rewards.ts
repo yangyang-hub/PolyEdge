@@ -2,6 +2,7 @@ import type {
   DecimalValue,
   ManagedRewardOrderStatus,
   PostFillStrategy,
+  RewardExecutionMode,
   RewardFillRole,
   RewardOrderSide,
   RewardRiskSeverity,
@@ -9,6 +10,7 @@ import type {
 
 export type RewardBotConfigDto = {
   enabled: boolean;
+  execution_mode: RewardExecutionMode;
   account_id: string;
   max_markets: number;
   max_open_orders: number;
