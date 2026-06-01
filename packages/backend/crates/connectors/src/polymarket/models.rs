@@ -3,6 +3,7 @@ pub enum PolymarketSignatureScheme {
     Eoa,
     Proxy,
     GnosisSafe,
+    Poly1271,
 }
 
 impl From<PolymarketSignatureScheme> for SignatureType {
@@ -11,6 +12,7 @@ impl From<PolymarketSignatureScheme> for SignatureType {
             PolymarketSignatureScheme::Eoa => SignatureType::Eoa,
             PolymarketSignatureScheme::Proxy => SignatureType::Proxy,
             PolymarketSignatureScheme::GnosisSafe => SignatureType::GnosisSafe,
+            PolymarketSignatureScheme::Poly1271 => SignatureType::Poly1271,
         }
     }
 }
@@ -159,6 +161,7 @@ pub struct LivePolymarketConnector {
     chain_id: u64,
     account_id: String,
     ws_host: String,
+    signature_type: PolymarketSignatureScheme,
 }
 
 #[derive(Debug, Clone)]

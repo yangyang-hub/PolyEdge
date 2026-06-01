@@ -88,7 +88,7 @@ retries solves this and ensures consistent data across all consumers.
 - `polyedge-worker` 支持 news ingest、news promotion、arbitrage radar、rewards bot validation/live 策略、copytrade 跟单、execution drain、paper reconciliation、Polymarket order/fill/user-event、orderbook token 注册任务。市场同步和 orderbook 订阅已迁移到独立 `polyedge-orderbook` 服务；orderbook 服务启动时先暴露 HTTP `/healthz`，再后台执行 initial/periodic market sync，避免外部 Polymarket API 延迟阻塞容器健康检查。
 - 套利雷达是只读链路：发现、记录、校验、分析、展示和 SSE 推送已具备，但不会创建 execution request 或订单。
 - Rewards bot 已改为 rewards 自身的 `execution_mode=validation/live`，不再由全局 system mode 决定模拟/实盘。它只使用独立的 `reward_markets` 表作为奖励市场来源，先按 rewards 配置预过滤候选市场，再通过 `OrderbookHttpClient`（HTTP 调用 polyedge-orderbook 服务）并发读取候选盘口、生成当前候选快照的 YES/NO post-only 双边买单计划。`validation` 默认模式只验证挂单、买入、撤单、卖出/平仓等事件是否按预期触发，不向 Polymarket 下单，也不把 Qmin 计算当作已赚收益；开放 validation 买单采用软资金复用，只有 validation 成交时才消耗 `available_usd`，且 `enabled=false` 的 fast reconcile 不会补挂新单。`live` 模式通过 `LivePolymarketConnector::submit_token_order()` 提交 post-only GTC token 买单，并通过 `cancel_order()` 撤销本系统托管订单；未成交 maker 买单不在本地按全局 notional 硬锁同一笔 USDC，可跨不同市场同时报价。live 新挂单要求目标两腿都有非空盘口，reconcile 会在开放订单盘口缺失、空盘口或过期时立即撤单；Polymarket 返回非 live 接受状态时会立即尝试撤单；live Reset 不清空本地账本，只按 cancel-all 先撤托管实盘订单，任一撤单被拒绝则命令失败。真实成交对账、成交后卖出/平仓、真实库存/资金同步、订单计分查询和奖励结算对账仍是缺口。API 服务不执行 rewards 策略或任务，前端 Run / Cancel / Reset 会写入数据库控制命令，由 worker 领取执行；`/api/v1/rewards-bot` 的 managed orders 使用后端分页并返回 `orders_page` 元数据。
-- Polymarket connector 已迁移到 CLOB V2 Rust crate：`packages/backend/Cargo.toml` 保留 dependency key `polymarket-client-sdk`，实际指向 `polymarket_client_sdk_v2`。
+- Polymarket connector 已迁移到 CLOB V2 Rust crate：`packages/backend/Cargo.toml` 保留 dependency key `polymarket-client-sdk`，实际指向 `polymarket_client_sdk_v2`；live CLOB 签名类型支持 `eoa`、`proxy`、`gnosis_safe`、`poly_1271`，其中 `poly_1271` 用于已有 Deposit Wallet（`FUNDER` 填 deposit wallet 地址），下单前会调用 CLOB balance allowance update。
 - 聪明钱跟单（copy-trading）已具备完整子系统：跟踪多个 Polymarket 钱包地址（`TrackedWallet`）、通过 Polymarket Data API（`data-api.polymarket.com`，通过 `PolymarketDataApiConnector`）检测钱包新成交、四种跟单仓位模式（`FixedUsd`/`ProportionalToSource`/`CapitalRatio`/`MirrorPortfolioWeight`）、钱包分析统计（胜率/ROI/成交量）、per-wallet/per-market/total 敞口+单日亏损+冷却+滑点风控、确定性模拟引擎（模拟资金账本：capital/available/reserved/realized_pnl）、`Run/Analyze/Cancel/Reset` 与账户资金设置前端 UI；`mode=live` 已结构化支持但未接入真实下单（记录警告回退模拟）。API 服务不执行 copytrade 跟单循环、钱包分析、撤单或重置，前端操作会写入数据库控制命令，由 worker 领取执行；`POLYEDGE_COPYTRADE__ENABLED=true` 启用 worker 轮询。
 - Polymarket 运行时不再提供 mock mode；市场列表走 Gamma 实时数据，私有订单/成交任务需要真实凭证、真实账户、小额演练和运维 runbook。
 - 数据库迁移目前到 `0023_copytrade_control_commands.sql`。
@@ -100,7 +100,7 @@ retries solves this and ensures consistent data across all consumers.
 - `signals / risk / events` SSE 仍是 snapshot-backed stream；`arbitrage` 已是 outbox-backed 增量流，但尚未统一到全资源事件总线。
 - 新闻源可以抓取、去重、提升为 events/evidences，但尚未自动生成 signals。
 - Rewards live maker 已接入真实 post-only 买单提交和撤单，且会在盘口缺失/空盘口/过期盘口或 post-only 返回非 live 状态时优先撤单，但尚未完成真实成交处理、成交后卖出/平仓、真实库存/资金同步、订单计分查询或奖励结算对账。实盘策略仍应沿用“未成交 maker 买单不硬锁全局 USDC、成交后才更新现金/库存并撤超额挂单”的资金模型。
-- Polymarket live 链路已具备 CLOB V2 SDK、认证、token buy/sell 下单和撤单能力，仍需真实资金链路小额验证。
+- Polymarket live 链路已具备 CLOB V2 SDK、认证、token buy/sell 下单和撤单能力，并可配置已有 Deposit Wallet 的 `poly_1271` 签名；仍未实现 relayer 建钱包、pUSD 入金/approval 等 Deposit Wallet 生命周期管理，且仍需真实资金链路小额验证。
 
 ## 运行命令
 
@@ -155,6 +155,7 @@ cargo run -p polyedge-worker -- analyze-wallets-once
 - 后端默认监听 `0.0.0.0:38001`。
 - 默认 runtime mode 是 `manual_confirm`。
 - Polymarket connector 没有 mock mode；未配置真实账户/私钥时，不要开启 Polymarket 私有订单、成交或用户 websocket worker 任务。
+- `POLYEDGE_POLYMARKET__SIGNATURE_TYPE` 可选 `eoa`、`proxy`、`gnosis_safe`、`poly_1271`；新 Deposit Wallet 使用 `poly_1271`，并将 `POLYEDGE_POLYMARKET__FUNDER` 设置为 deposit wallet 地址。
 - 默认 arbitrage radar 和 news ingestion 是 disabled。
 - 默认 rewards bot worker 是 disabled；前端 `/rewards` 的 Run / Cancel / Reset 只会入队命令，worker 需要同时设置 `POLYEDGE_REWARDS__ENABLED=true` 和 `POLYEDGE_WORKER__POLL_REWARD_BOT=true` 才会领取并执行。`RewardBotConfig.execution_mode` 默认为 `validation`；切到 `live` 后还必须配置真实 Polymarket 凭证。要产生新挂单、validation 事件或 live post-only 下单，还需要确保 `polyedge-orderbook` 服务正在运行并同步了 reward 市场数据。
 - Rewards bot 的 `max_markets=0`、`max_open_orders=0` 或 `quote_size_usd=0` 都表示不再新挂单；不是无限制。

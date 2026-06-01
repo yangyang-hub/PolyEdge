@@ -59,6 +59,7 @@ impl LivePolymarketConnector {
             chain_id: config.chain_id,
             account_id,
             ws_host,
+            signature_type: config.signature_type,
         })
     }
 
@@ -114,6 +115,9 @@ impl LivePolymarketConnector {
                 },
             ));
         }
+
+        self.update_deposit_wallet_balance_allowance_if_needed(Side::Buy, Some(asset_id))
+            .await?;
 
         let signable = self
             .client
@@ -222,6 +226,12 @@ impl LivePolymarketConnector {
             ));
         }
 
+        self.update_deposit_wallet_balance_allowance_if_needed(
+            token_order_side(request.side),
+            Some(token_id),
+        )
+        .await?;
+
         let signable = self
             .client
             .limit_order()
@@ -295,6 +305,48 @@ impl LivePolymarketConnector {
                 },
             )),
         }
+    }
+
+    async fn update_deposit_wallet_balance_allowance_if_needed(
+        &self,
+        side: Side,
+        token_id: Option<U256>,
+    ) -> Result<()> {
+        if self.signature_type != PolymarketSignatureScheme::Poly1271 {
+            return Ok(());
+        }
+
+        let mut request = UpdateBalanceAllowanceRequest::default();
+        request.signature_type = Some(SignatureType::Poly1271);
+        match side {
+            Side::Buy => {
+                request.asset_type = AssetType::Collateral;
+                request.token_id = None;
+            }
+            Side::Sell => {
+                request.asset_type = AssetType::Conditional;
+                request.token_id = token_id;
+            }
+            Side::Unknown => {
+                return Err(AppError::invalid_input(
+                    "POLYMARKET_ORDER_SIDE_INVALID",
+                    "cannot update balance allowance for unknown Polymarket side",
+                ));
+            }
+            _ => {
+                return Err(AppError::invalid_input(
+                    "POLYMARKET_ORDER_SIDE_UNSUPPORTED",
+                    "unsupported Polymarket side for balance allowance update",
+                ));
+            }
+        };
+
+        self.client.update_balance_allowance(request).await.map_err(|error| {
+            AppError::internal(
+                "POLYMARKET_BALANCE_ALLOWANCE_UPDATE_FAILED",
+                format!("failed to update Polymarket deposit wallet balance allowance: {error}"),
+            )
+        })
     }
 
     pub async fn cancel_order(

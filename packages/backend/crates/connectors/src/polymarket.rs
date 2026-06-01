@@ -5,11 +5,11 @@ use polyedge_domain::{
 use polymarket_client_sdk::auth::state::{Authenticated, Unauthenticated};
 use polymarket_client_sdk::auth::{Credentials, LocalSigner, Normal, Signer, Uuid};
 use polymarket_client_sdk::clob::types::request::{
-    OrderBookSummaryRequest, OrdersRequest, TradesRequest,
+    OrderBookSummaryRequest, OrdersRequest, TradesRequest, UpdateBalanceAllowanceRequest,
 };
 use polymarket_client_sdk::clob::types::response::OrderSummary;
 use polymarket_client_sdk::clob::types::{
-    OrderStatusType as SdkOrderStatusType, OrderType, Side, SignatureType,
+    AssetType, OrderStatusType as SdkOrderStatusType, OrderType, Side, SignatureType,
     TradeStatusType as SdkTradeStatusType,
 };
 use polymarket_client_sdk::clob::ws::Client as ClobWsClient;

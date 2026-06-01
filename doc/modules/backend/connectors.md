@@ -1,6 +1,6 @@
 # connectors（外部连接器层）
 
-最后更新：2026-05-31
+最后更新：2026-06-01
 
 ## 概述
 
@@ -60,11 +60,13 @@
 
 - **`LivePolymarketConnector`**：client、private_key、chain_id、account_id、ws_host
 - `connect(config)`：创建 `LocalSigner` → `ClobClient` → `auth_builder.authenticate()`
+- 签名类型支持 `eoa`、`proxy`、`gnosis_safe`、`poly_1271`；`poly_1271` 对应 Polymarket Deposit Wallet / `POLY_1271`，需要把 `funder` 配成 deposit wallet 地址。
 - `connect_user_ws()`：创建认证 WebSocket 客户端（订单/成交通道）
 - `submit()`：兼容 execution pipeline 的 YES/NO 买单提交
 - `submit_token_order()`：按 token_id 直接提交 buy/sell GTC 订单，支持 post-only；供 rewards live maker 使用
 - `cancel_order()`：按 Polymarket order id 撤销单笔订单
 - 用途：live 模式下的订单管理、rewards live maker 和 copytrade 实盘骨架
+- 当前范围：支持已有、已 funded、已 approve 的 Deposit Wallet 通过 CLOB V2 下单/撤单；`poly_1271` 下单前会调用 CLOB balance allowance update。尚未实现 relayer 建钱包、pUSD 入金/approval 或 deposit wallet 生命周期管理。
 
 ### Polymarket Rewards（奖励市场）
 
@@ -96,9 +98,9 @@
 
 ## 当前状态
 
-- 所有 connector 已实现，覆盖 Polymarket 全部公开 API
+- 已实现当前系统使用的 Polymarket 公共市场、盘口、Data API、Rewards API 和 CLOB V2 交易 connector；Deposit Wallet relayer 生命周期接口尚未接入
 - Paper Trading 执行器已完整实现
-- Live connector 已具备认证、用户 WS、订单提交、按 token_id 的 rewards buy/sell 提交和单笔撤单能力；仍需要真实凭证和小额账户验证
+- Live connector 已具备 CLOB V2 认证、用户 WS、订单提交、按 token_id 的 rewards buy/sell 提交和单笔撤单能力；签名类型已覆盖 EOA、Proxy、Gnosis Safe 和 Deposit Wallet (`poly_1271`)；仍需要真实凭证和小额账户验证
 - RSS connector 支持 Atom/RSS 两种格式
 
 ## 修改检查清单

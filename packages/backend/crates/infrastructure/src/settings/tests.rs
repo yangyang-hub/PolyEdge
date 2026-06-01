@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use super::{Settings, edge, environment_source, quantity};
+    use super::{PolymarketSignatureType, Settings, edge, environment_source, quantity};
     use std::collections::HashMap;
 
     #[test]
@@ -103,6 +103,10 @@ mod tests {
             (
                 "POLYEDGE_POLYMARKET__ACCOUNT_ID".to_string(),
                 "acct_poly".to_string(),
+            ),
+            (
+                "POLYEDGE_POLYMARKET__SIGNATURE_TYPE".to_string(),
+                "poly_1271".to_string(),
             ),
             (
                 "POLYEDGE_ARBITRAGE__ENABLED".to_string(),
@@ -280,6 +284,10 @@ mod tests {
         );
         assert!(settings.risk.initial_kill_switch);
         assert_eq!(settings.polymarket.account_id, "acct_poly");
+        assert_eq!(
+            settings.polymarket.signature_type,
+            PolymarketSignatureType::Poly1271
+        );
         assert!(settings.polymarket.private_key.is_none());
         assert!(settings.arbitrage.enabled);
         assert_eq!(settings.arbitrage.poll_interval_secs, 7);
@@ -345,6 +353,10 @@ mod tests {
                     "polymarket.account_id".to_string(),
                     "acct_runtime".to_string(),
                 ),
+                (
+                    "polymarket.signature_type".to_string(),
+                    "deposit_wallet".to_string(),
+                ),
                 ("worker.poll_news".to_string(), "true".to_string()),
                 (
                     "news.sources_json".to_string(),
@@ -357,6 +369,10 @@ mod tests {
         assert!(settings.arbitrage.enabled);
         assert_eq!(settings.arbitrage.scan_limit, 25);
         assert_eq!(settings.polymarket.account_id, "acct_runtime");
+        assert_eq!(
+            settings.polymarket.signature_type,
+            PolymarketSignatureType::Poly1271
+        );
         assert!(settings.worker.poll_news);
         assert_eq!(settings.news.sources.len(), 1);
         assert_eq!(settings.news.sources[0].id, "sec");

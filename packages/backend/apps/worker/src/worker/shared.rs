@@ -40,6 +40,7 @@ fn polymarket_signature_scheme(
         PolymarketSignatureType::Eoa => PolymarketSignatureScheme::Eoa,
         PolymarketSignatureType::Proxy => PolymarketSignatureScheme::Proxy,
         PolymarketSignatureType::GnosisSafe => PolymarketSignatureScheme::GnosisSafe,
+        PolymarketSignatureType::Poly1271 => PolymarketSignatureScheme::Poly1271,
     }
 }
 

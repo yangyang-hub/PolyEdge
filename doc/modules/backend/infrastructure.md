@@ -39,6 +39,7 @@
 | `RedisSettings` | url（Option） |
 | `RuntimeSettings` | environment、initial_mode |
 | `RiskSettings` | exposure_reference_nav、daily_pnl limits、gross/net exposure limits、kill_switch、min_signal_confidence 等 12 个字段 |
+| `PolymarketSettings` | account_id、chain_id、signature_type、funder、private_key、API credentials、CLOB/WS/Gamma/Data API host、poll limits |
 | `ArbitrageSettings` | book_source、scan_limit、scanner_version |
 | `RewardsSettings` | enabled、poll_interval、capital、per_market_usd 等 |
 | `NewsSettings` | enabled、sources（列表）、request_timeout_secs |
@@ -47,7 +48,7 @@
 | `AuthSettings` / `AuthKeySettings` | 认证配置和密钥 |
 | `CopytradeSettings` | 跟单配置 |
 
-所有字段使用 `#[serde(default)]`，通过 `POLYEDGE_` 前缀环境变量加载（如 `POLYEDGE_SERVER__PORT`）。
+所有字段使用 `#[serde(default)]`，通过 `POLYEDGE_` 前缀环境变量加载（如 `POLYEDGE_SERVER__PORT`）。`POLYEDGE_POLYMARKET__SIGNATURE_TYPE` 支持 `eoa`、`proxy`、`gnosis_safe`、`poly_1271`；Deposit Wallet 使用 `poly_1271` 并通过 `POLYEDGE_POLYMARKET__FUNDER` 配置 deposit wallet 地址。
 
 另有 `runtime_config` 子模块支持运行时动态配置。
 

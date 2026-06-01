@@ -85,6 +85,8 @@ pub enum PolymarketSignatureType {
     Eoa,
     Proxy,
     GnosisSafe,
+    #[serde(rename = "poly_1271", alias = "poly1271", alias = "POLY_1271")]
+    Poly1271,
 }
 
 #[derive(Debug, Clone, Deserialize)]

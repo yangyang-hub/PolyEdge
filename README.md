@@ -216,7 +216,7 @@ POLYEDGE_WORKER__RECONCILE_POLYMARKET_FILLS=true
 POLYEDGE_WORKER__CONSUME_POLYMARKET_USER_EVENTS=true
 ```
 
-Polymarket 私有订单、成交和用户 websocket 任务会直接使用真实 connector；开启前必须配置真实 `POLYEDGE_POLYMARKET__ACCOUNT_ID` / `POLYEDGE_POLYMARKET__PRIVATE_KEY` 和必要 API 凭证。
+Polymarket 私有订单、成交和用户 websocket 任务会直接使用真实 connector；开启前必须配置真实 `POLYEDGE_POLYMARKET__ACCOUNT_ID` / `POLYEDGE_POLYMARKET__PRIVATE_KEY` 和必要 API 凭证。`POLYEDGE_POLYMARKET__SIGNATURE_TYPE` 支持 `eoa`、`proxy`、`gnosis_safe`、`poly_1271`；已有 Deposit Wallet 使用 `poly_1271`，并将 `POLYEDGE_POLYMARKET__FUNDER` 配成 deposit wallet 地址。
 
 不要同时运行多个 `polyedge-worker` 常驻实例，除非先为具体任务加分布式锁/租约。API 可以多实例，worker 默认按单实例后台调度设计。
 

@@ -157,7 +157,7 @@ Report: `NewsIngestionRunReport { sources_scanned/succeeded/failed, fetched, ins
 - rewards worker 会通过数据库命令队列接收前端 Run / Cancel / Reset 请求，API 进程不再执行 rewards 策略；rewards 自身的 `execution_mode` 决定 validation/live，不依赖全局 system mode
 - copytrade worker 会通过数据库命令队列接收前端 Run / Analyze / Cancel / Reset 请求，API 进程不再执行跟单任务或抓取跟单输入
 - 默认大部分 worker 通过配置开关控制启用/禁用
-- Polymarket live 任务和 rewards `execution_mode=live` 需要真实凭证
+- Polymarket live 任务和 rewards `execution_mode=live` 需要真实凭证；Deposit Wallet 使用 `POLYEDGE_POLYMARKET__SIGNATURE_TYPE=poly_1271` + `POLYEDGE_POLYMARKET__FUNDER=<deposit_wallet>`，worker 会通过 connector 走 CLOB V2 `POLY_1271` 下单/撤单路径。
 
 ## 修改检查清单
 

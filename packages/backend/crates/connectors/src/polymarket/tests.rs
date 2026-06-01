@@ -4,6 +4,13 @@ mod tests {
     use rust_decimal::Decimal;
 
     #[test]
+    fn poly1271_signature_scheme_maps_to_sdk_signature_type() {
+        let signature_type: SignatureType = PolymarketSignatureScheme::Poly1271.into();
+
+        assert_eq!(signature_type, SignatureType::Poly1271);
+    }
+
+    #[test]
     fn live_status_maps_to_open() {
         let update =
             normalize_polymarket_order_status_update("evt_1", "pm_ord_1", "live").expect("map");

@@ -51,6 +51,7 @@ impl PolymarketSignatureType {
             Self::Eoa => "eoa",
             Self::Proxy => "proxy",
             Self::GnosisSafe => "gnosis_safe",
+            Self::Poly1271 => "poly_1271",
         }
     }
 }
@@ -63,6 +64,7 @@ impl FromStr for PolymarketSignatureType {
             "eoa" => Ok(Self::Eoa),
             "proxy" => Ok(Self::Proxy),
             "gnosis_safe" => Ok(Self::GnosisSafe),
+            "poly_1271" | "poly1271" | "POLY_1271" | "deposit_wallet" => Ok(Self::Poly1271),
             other => Err(AppError::invalid_input(
                 "CONFIG_POLYMARKET_SIGNATURE_TYPE_INVALID",
                 format!("unsupported polymarket signature type: {other}"),

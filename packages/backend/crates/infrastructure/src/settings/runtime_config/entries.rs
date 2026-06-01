@@ -133,10 +133,11 @@ pub fn runtime_config_entries(&self) -> Vec<RuntimeConfigEntry> {
             default_value: defaults.polymarket.signature_type.as_str().to_string(),
             value_type: RuntimeConfigValueType::Enum,
             options: vec![
-            "eoa".to_string(),
-            "proxy".to_string(),
-            "gnosis_safe".to_string(),
-        ],
+                "eoa".to_string(),
+                "proxy".to_string(),
+                "gnosis_safe".to_string(),
+                "poly_1271".to_string(),
+            ],
         },
     );
     push_runtime_config_entry(
