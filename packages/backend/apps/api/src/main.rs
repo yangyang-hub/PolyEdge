@@ -1,5 +1,5 @@
 use polyedge_api::build_app;
-use polyedge_infrastructure::{Runtime, telemetry::init_tracing};
+use polyedge_infrastructure::{AppState, Runtime, telemetry::init_tracing};
 use std::net::SocketAddr;
 use tracing::info;
 
@@ -7,7 +7,16 @@ use tracing::info;
 async fn main() -> polyedge_domain::Result<()> {
     init_tracing("polyedge_api");
     let runtime = Runtime::load().await?;
-    let state = runtime.app_state();
+    let state = {
+        let base = runtime.app_state();
+        let url = &base.settings.orderbook.service_url;
+        let client = std::sync::Arc::new(polyedge_connectors::OrderbookHttpClient::new(url));
+        AppState {
+            orderbook_cache: client.clone(),
+            orderbook_registry: client,
+            ..base
+        }
+    };
     let app = build_app(state.clone());
     let addr: SocketAddr = format!(
         "{}:{}",

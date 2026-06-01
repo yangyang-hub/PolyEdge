@@ -46,10 +46,9 @@ fn compute_bid_rank(price: Decimal, book: &RewardOrderBook) -> Option<usize> {
     if seen_prices.is_empty() {
         return None;
     }
-    seen_prices
-        .iter()
-        .position(|p| *p == price)
-        .map(|i| i + 1)
+
+    let better_levels = seen_prices.iter().filter(|level_price| **level_price > price).count();
+    Some(better_levels + 1)
 }
 
 /// Feature 2 — Bid-rank promotion cancel.

@@ -43,7 +43,11 @@ impl TickContext {
         );
     }
 
-    fn place_new_quotes(&mut self, plans: &[RewardQuotePlan]) {
+    fn place_new_quotes(
+        &mut self,
+        plans: &[RewardQuotePlan],
+        books: &HashMap<String, RewardOrderBook>,
+    ) {
         let max_markets = usize::from(self.config.max_markets);
         let max_open_orders = usize::from(self.config.max_open_orders);
         if max_markets == 0 || max_open_orders == 0 {
@@ -59,6 +63,9 @@ impl TickContext {
             .collect();
 
         for plan in plans.iter().filter(|plan| plan.eligible) {
+            if !self.plan_has_fresh_quote_books(plan, books) {
+                continue;
+            }
             if active_markets.len() >= max_markets && !active_markets.contains(&plan.condition_id) {
                 continue;
             }
@@ -127,5 +134,16 @@ impl TickContext {
                 self.placed_orders += 1;
             }
         }
+    }
+
+    fn plan_has_fresh_quote_books(
+        &self,
+        plan: &RewardQuotePlan,
+        books: &HashMap<String, RewardOrderBook>,
+    ) -> bool {
+        plan.legs.iter().all(|leg| {
+            fresh_book(books, &leg.token_id, self.config.stale_book_ms, self.now)
+                .is_some_and(|book| !book.bids.is_empty() && !book.asks.is_empty())
+        })
     }
 }

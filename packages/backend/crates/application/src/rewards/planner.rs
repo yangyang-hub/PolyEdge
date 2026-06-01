@@ -318,8 +318,14 @@ fn make_leg(
     } else {
         config.per_market_usd / decimal("2") / price
     };
-    let size = Decimal::min(Decimal::max(rewards_min_size, target_size), max_leg_size)
-        .round_dp_with_strategy(2, RoundingStrategy::ToZero);
+    let budget_size = Decimal::min(target_size, max_leg_size);
+    let desired_size = Decimal::max(rewards_min_size, target_size);
+    let size = if rewards_min_size > budget_size {
+        budget_size
+    } else {
+        Decimal::min(desired_size, max_leg_size)
+    }
+    .round_dp_with_strategy(2, RoundingStrategy::ToZero);
 
     RewardQuoteLeg {
         token_id: token_id.to_string(),

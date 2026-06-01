@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 async-trait.workspace = true
+polyedge-application = { path = "../application" }
 polyedge-domain = { path = "../domain" }
 polymarket-client-sdk.workspace = true
 reqwest.workspace = true

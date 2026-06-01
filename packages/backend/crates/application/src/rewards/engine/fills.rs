@@ -106,19 +106,22 @@ impl TickContext {
                     ),
                     DEFAULT_TICK,
                 );
-                self.place_exit_order(entry, fill_size, exit_price);
+                self.place_exit_order(entry, fill_size, exit_price, "post-fill exit at markup");
             }
             PostFillStrategy::FlattenImmediately => {
                 let (best_bid, _, _) = book_top(books, &entry.token_id, &self.config, self.now);
-                let exit_price = best_bid
-                    .filter(|bid| *bid > Decimal::ZERO)
-                    .unwrap_or_else(|| {
-                        floor_to_tick(
-                            Decimal::max(decimal("0.01"), entry.price - decimal("0.01")),
-                            DEFAULT_TICK,
-                        )
-                    });
-                self.flatten_now(entry, fill_size, exit_price);
+                if let Some(exit_price) = best_bid.filter(|bid| *bid > Decimal::ZERO) {
+                    self.flatten_now(entry, fill_size, exit_price);
+                } else {
+                    let avg = self.position_avg(&entry.token_id).unwrap_or(entry.price);
+                    let exit_price = floor_to_tick(avg, DEFAULT_TICK);
+                    self.place_exit_order(
+                        entry,
+                        fill_size,
+                        exit_price,
+                        "flatten deferred until bid liquidity is observed",
+                    );
+                }
             }
         }
     }
@@ -219,7 +222,13 @@ impl TickContext {
         );
     }
 
-    fn place_exit_order(&mut self, entry: &ManagedRewardOrder, size: Decimal, price: Decimal) {
+    fn place_exit_order(
+        &mut self,
+        entry: &ManagedRewardOrder,
+        size: Decimal,
+        price: Decimal,
+        reason: &str,
+    ) {
         let id = self.next_id("rewx");
         let external = format!("sim_{id}");
         let order = ManagedRewardOrder {
@@ -234,7 +243,7 @@ impl TickContext {
             external_order_id: Some(external.clone()),
             status: ManagedRewardOrderStatus::ExitPending,
             scoring: false,
-            reason: "post-fill exit at markup".to_string(),
+            reason: reason.to_string(),
             filled_size: Decimal::ZERO,
             reward_earned: Decimal::ZERO,
             last_scored_at: None,
@@ -246,8 +255,8 @@ impl TickContext {
             Some(external),
             "reward_exit_placed",
             RewardRiskSeverity::Info,
-            format!("{} exit quote: {} @ {}", entry.outcome, size, price),
-            json!({ "token_id": entry.token_id, "size": size, "price": price }),
+            format!("{} exit quote: {} @ {} ({reason})", entry.outcome, size, price),
+            json!({ "token_id": entry.token_id, "size": size, "price": price, "reason": reason }),
         );
         self.orders.push(order);
     }

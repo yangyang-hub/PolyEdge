@@ -40,7 +40,8 @@ use polyedge_contracts::{
     EventListQuery, EvidenceData, EvidenceListQuery, ExecutionRequestData,
     ExecutionRequestListQuery, HealthData, KillSwitchData, MarketCategoryData, MarketData,
     MarketListQuery, MarketListResponse, NewsRawEventData, NewsRawEventListQuery,
-    NewsSourceHealthData, NewsSourceHealthListQuery, OrderData, OrderDraftData,
+    NewsSourceHealthData, NewsSourceHealthListQuery, OrderData, OrderbookData, OrderbookLevelData,
+    OrderDraftData,
     OrderDraftListQuery, OrderListQuery, PolymarketOrderStatusCallbackRequest,
     PolymarketTradeFillCallbackRequest, PositionData, PositionListQuery, ProbabilityEstimateData,
     ProbabilityEstimateListQuery, ReadinessData, RecomputeSignalData, RecomputeSignalRequest,
@@ -130,6 +131,13 @@ pub fn build_app(state: AppState) -> Router {
         .route(
             "/api/v1/market-categories",
             get(list_market_categories).route_layer(middleware::from_fn_with_state(
+                state.clone(),
+                require_console_read_auth,
+            )),
+        )
+        .route(
+            "/api/v1/orderbook/{token_id}",
+            get(get_orderbook).route_layer(middleware::from_fn_with_state(
                 state.clone(),
                 require_console_read_auth,
             )),

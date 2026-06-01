@@ -111,56 +111,19 @@ impl RewardBotStore for PostgresRewardBotStore {
     }
 
     async fn upsert_markets(&self, markets: &[RewardMarket]) -> Result<()> {
-        for market in markets {
-            sqlx::query(
-                r#"
-                INSERT INTO reward_markets (
-                  condition_id,
-                  question,
-                  market_slug,
-                  event_slug,
-                  image,
-                  rewards_max_spread,
-                  rewards_min_size,
-                  total_daily_rate,
-                  tokens_json,
-                  active,
-                  updated_at
-                )
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-                ON CONFLICT (condition_id) DO UPDATE
-                SET question = EXCLUDED.question,
-                    market_slug = EXCLUDED.market_slug,
-                    event_slug = EXCLUDED.event_slug,
-                    image = EXCLUDED.image,
-                    rewards_max_spread = EXCLUDED.rewards_max_spread,
-                    rewards_min_size = EXCLUDED.rewards_min_size,
-                    total_daily_rate = EXCLUDED.total_daily_rate,
-                    tokens_json = EXCLUDED.tokens_json,
-                    active = EXCLUDED.active,
-                    updated_at = EXCLUDED.updated_at
-                "#,
+        let mut transaction = self.pool.begin().await.map_err(|error| {
+            db_error(
+                "POSTGRES_TRANSACTION_BEGIN_FAILED",
+                format!("failed to begin reward market transaction: {error}"),
             )
-            .bind(&market.condition_id)
-            .bind(&market.question)
-            .bind(&market.market_slug)
-            .bind(&market.event_slug)
-            .bind(&market.image)
-            .bind(market.rewards_max_spread)
-            .bind(market.rewards_min_size)
-            .bind(market.total_daily_rate)
-            .bind(Json(market.tokens.clone()))
-            .bind(market.active)
-            .bind(market.updated_at)
-            .execute(&self.pool)
-            .await
-            .map_err(|error| {
-                db_error(
-                    "POSTGRES_UPSERT_FAILED",
-                    format!("failed to upsert reward market: {error}"),
-                )
-            })?;
-        }
+        })?;
+        upsert_reward_markets_tx(&mut transaction, markets).await?;
+        transaction.commit().await.map_err(|error| {
+            db_error(
+                "POSTGRES_TRANSACTION_COMMIT_FAILED",
+                format!("failed to commit reward market transaction: {error}"),
+            )
+        })?;
         Ok(())
     }
 
@@ -171,53 +134,7 @@ impl RewardBotStore for PostgresRewardBotStore {
                 format!("failed to begin reward quote plan transaction: {error}"),
             )
         })?;
-
-        sqlx::query("DELETE FROM reward_quote_plans")
-            .execute(&mut *transaction)
-            .await
-            .map_err(|error| {
-                db_error(
-                    "POSTGRES_DELETE_FAILED",
-                    format!("failed to clear reward quote plans: {error}"),
-                )
-            })?;
-
-        for plan in plans {
-            sqlx::query(
-                r#"
-                INSERT INTO reward_quote_plans (
-                  condition_id,
-                  score,
-                  eligible,
-                  reason,
-                  quote_plan_json,
-                  updated_at
-                )
-                VALUES ($1, $2, $3, $4, $5, $6)
-                ON CONFLICT (condition_id) DO UPDATE
-                SET score = EXCLUDED.score,
-                    eligible = EXCLUDED.eligible,
-                    reason = EXCLUDED.reason,
-                    quote_plan_json = EXCLUDED.quote_plan_json,
-                    updated_at = EXCLUDED.updated_at
-                "#,
-            )
-            .bind(&plan.condition_id)
-            .bind(plan.score)
-            .bind(plan.eligible)
-            .bind(&plan.reason)
-            .bind(Json(plan.clone()))
-            .bind(plan.updated_at)
-            .execute(&mut *transaction)
-            .await
-            .map_err(|error| {
-                db_error(
-                    "POSTGRES_UPSERT_FAILED",
-                    format!("failed to upsert reward quote plan: {error}"),
-                )
-            })?;
-        }
-
+        replace_reward_quote_plans_tx(&mut transaction, plans).await?;
         transaction.commit().await.map_err(|error| {
             db_error(
                 "POSTGRES_TRANSACTION_COMMIT_FAILED",
@@ -711,9 +628,6 @@ impl RewardBotStore for PostgresRewardBotStore {
         outcome: &RewardSimulationOutcome,
         trace_id: &str,
     ) -> Result<()> {
-        self.upsert_markets(&outcome.markets).await?;
-        self.save_quote_plans(&outcome.plans).await?;
-
         let mut transaction = self.pool.begin().await.map_err(|error| {
             db_error(
                 "POSTGRES_TRANSACTION_BEGIN_FAILED",
@@ -721,6 +635,8 @@ impl RewardBotStore for PostgresRewardBotStore {
             )
         })?;
 
+        upsert_reward_markets_tx(&mut transaction, &outcome.markets).await?;
+        replace_reward_quote_plans_tx(&mut transaction, &outcome.plans).await?;
         for order in &outcome.orders {
             insert_reward_order(&mut transaction, order, trace_id).await?;
         }

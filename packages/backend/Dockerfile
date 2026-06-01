@@ -6,7 +6,8 @@ RUN apt-get update \
 
 COPY bin/polyedge-api /usr/local/bin/polyedge-api
 COPY bin/polyedge-worker /usr/local/bin/polyedge-worker
-RUN chmod 0755 /usr/local/bin/polyedge-api /usr/local/bin/polyedge-worker
+COPY bin/polyedge-orderbook /usr/local/bin/polyedge-orderbook
+RUN chmod 0755 /usr/local/bin/polyedge-api /usr/local/bin/polyedge-worker /usr/local/bin/polyedge-orderbook
 
 ENV POLYEDGE_SERVER__HOST=0.0.0.0
 ENV POLYEDGE_SERVER__PORT=38001

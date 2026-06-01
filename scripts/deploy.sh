@@ -67,12 +67,13 @@ parse_targets() {
   local -n target_api_ref="$1"
   local -n target_worker_ref="$2"
   local -n target_front_ref="$3"
+  local -n target_orderbook_ref="$4"
   local raw
   local target
   local part
   local -a parts
 
-  shift 3
+  shift 4
 
   if [[ $# -eq 0 ]]; then
     # default: auto mode
@@ -92,6 +93,7 @@ parse_targets() {
           target_api_ref=1
           target_worker_ref=1
           target_front_ref=1
+          target_orderbook_ref=1
           ;;
         api)
           mode="manual"
@@ -100,6 +102,10 @@ parse_targets() {
         worker)
           mode="manual"
           target_worker_ref=1
+          ;;
+        orderbook|ob)
+          mode="manual"
+          target_orderbook_ref=1
           ;;
         front)
           mode="manual"
@@ -111,7 +117,7 @@ parse_targets() {
           ;;
         *)
           usage
-          fail "unknown deploy target: ${part}. Expected auto, all, api, worker, or front."
+          fail "unknown deploy target: ${part}. Expected auto, all, api, worker, orderbook, or front."
           ;;
       esac
     done
@@ -246,8 +252,9 @@ skip_git_pull="${POLYEDGE_SKIP_GIT_PULL:-0}"
 target_api=0
 target_worker=0
 target_front=0
+target_orderbook=0
 
-parse_targets target_api target_worker target_front "$@"
+parse_targets target_api target_worker target_front target_orderbook "$@"
 
 # ---- setup logging: tee to file when running non-interactively -----------
 log_file="${POLYEDGE_LOG_FILE:-}"
@@ -341,13 +348,22 @@ fi
 compose_file="${POLYEDGE_COMPOSE_FILE:-${deploy_dir}/deploy/docker-compose.yml}"
 env_file="${POLYEDGE_ENV_FILE:-${deploy_dir}/deploy/.env}"
 env_example="${deploy_dir}/deploy/.env.example"
+deploy_dir_path="${deploy_dir}/deploy"
 
 [[ -f "${compose_file}" ]] || fail "compose file not found: ${compose_file}"
 
 if [[ ! -f "${env_file}" ]]; then
   [[ -f "${env_example}" ]] || fail "env example not found: ${env_example}"
   cp "${env_example}" "${env_file}"
-  fail "created ${env_file}. Edit the PostgreSQL URL and console step-up code, then rerun this script."
+  # Copy service-specific env examples if they don't exist yet.
+  for suffix in api orderbook worker front; do
+    local_example="${deploy_dir_path}/.env.${suffix}.example"
+    local_target="${deploy_dir_path}/.env.${suffix}"
+    if [[ -f "${local_example}" && ! -f "${local_target}" ]]; then
+      cp "${local_example}" "${local_target}"
+    fi
+  done
+  fail "created ${env_file} and service env files. Edit the PostgreSQL URL and console step-up code, then rerun this script."
 fi
 
 validate_env_file "${env_file}"
@@ -464,7 +480,7 @@ else
   build_services=()
   runtime_services=()
 
-  if [[ "${target_api}" == "1" || "${target_worker}" == "1" ]]; then
+  if [[ "${target_api}" == "1" || "${target_worker}" == "1" || "${target_orderbook}" == "1" ]]; then
     build_services+=(polyedge-api)
   fi
   if [[ "${target_front}" == "1" ]]; then
@@ -474,6 +490,9 @@ else
   if [[ "${target_api}" == "1" ]]; then
     runtime_services+=(polyedge-api)
   fi
+  if [[ "${target_orderbook}" == "1" ]]; then
+    runtime_services+=(polyedge-orderbook)
+  fi
   if [[ "${target_worker}" == "1" ]]; then
     runtime_services+=(polyedge-worker)
   fi
@@ -481,7 +500,7 @@ else
     runtime_services+=(polyedge-front)
   fi
 
-  if [[ "${target_api}" == "1" || "${target_worker}" == "1" ]]; then
+  if [[ "${target_api}" == "1" || "${target_worker}" == "1" || "${target_orderbook}" == "1" ]]; then
     [[ -f "bin/polyedge-api" ]] || fail "bin/polyedge-api is missing. Build it with scripts/build-backend-bin.sh and commit it."
     [[ -f "bin/polyedge-worker" ]] || fail "bin/polyedge-worker is missing. Build it with scripts/build-backend-bin.sh and commit it."
   fi

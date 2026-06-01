@@ -23,9 +23,11 @@ fetch directly from external APIs (Polymarket Gamma, CLOB, etc.).
 |------|--------|--------|-------|----------|
 | General markets | `sync-markets` | Gamma API `/markets/keyset` | `markets` table (Postgres) | 5 min |
 | Reward markets | `sync-markets` | CLOB API `/rewards/markets/current` | `reward_markets` table (Postgres) | 5 min |
-| Order books | `orderbook-stream` | CLOB WebSocket + `/book` poll | `InMemoryOrderbookCache`（进程内，TTL 5 分钟） | WS real-time + 30s poll reconcile |
+| Order books | `polyedge-orderbook` 服务 | CLOB WebSocket + `/book` poll | `InMemoryOrderbookCache`（orderbook 服务进程内，TTL 5 分钟） | WS real-time + 30s poll reconcile |
 
-All three are written by workers. All consumers read from the store, never from the API.
+Orderbook 订阅由独立的 `polyedge-orderbook` 服务管理。该服务运行 WS + poll stream，维护进程内缓存和 `OrderbookSubscriptionRegistry`，暴露 HTTP API（`GET /orderbook/{token_id}`、`POST /orderbook/register` 等）。Worker 和 API 通过 `OrderbookHttpClient`（HTTP 调用 orderbook 服务）读取盘口数据和注册 token。
+
+市场和奖励市场由 orderbook 服务同步写入 Postgres，盘口数据由 orderbook 服务流式写入进程内缓存。所有消费者从数据库或 orderbook 服务读取，不直接调用外部 API。
 
 ### Why This Architecture Exists
 
@@ -49,7 +51,8 @@ retries solves this and ensures consistent data across all consumers.
 | File | Role |
 |------|------|
 | `apps/worker/src/worker/market_sync.rs` | Sync worker — fetches markets from Polymarket, writes to Postgres |
-| `apps/worker/src/worker/orderbook_stream.rs` | Orderbook stream — WS + poll, writes to InMemoryOrderbookCache, 动态 token 刷新 |
+| `apps/worker/src/worker/orderbook_stream.rs` | Orderbook stream — 仅保留 CLI 子命令兼容，核心逻辑已迁移到 polyedge-orderbook 服务 |
+| `apps/orderbook/src/main.rs` | 独立 orderbook 服务入口 — HTTP server + WS stream + token 注册 |
 | `apps/worker/src/worker/rewards.rs` | Rewards bot — executes simulation ticks and queued run/cancel/reset commands |
 | `apps/api/src/handlers/rewards.rs` | Rewards API — reads snapshots/config and enqueues worker control commands |
 | `crates/application/src/rewards/service.rs` | RewardBotService — reward markets, snapshots, simulation persistence, control command queue |
@@ -58,7 +61,9 @@ retries solves this and ensures consistent data across all consumers.
 | `apps/api/src/handlers/copytrade.rs` | Copytrade API — reads snapshots/config and enqueues worker control commands |
 | `crates/application/src/copytrade/service.rs` | CopyTradeService — copytrade config/snapshot/simulation and control command queue |
 | `crates/application/src/orderbook_cache.rs` | OrderbookCache trait — `get_book`, `set_book`, `set_books` |
+| `crates/application/src/orderbook_registry.rs` | OrderbookSubscriptionRegistry trait — 多来源 token 订阅注册 |
 | `crates/infrastructure/src/stores/orderbook_cache.rs` | InMemoryOrderbookCache（TTL + 定期清理）；保留 Redis 实现 |
+| `crates/infrastructure/src/stores/orderbook_registry.rs` | InMemoryOrderbookSubscriptionRegistry — 基于内存的订阅注册中心实现 |
 | `migrations/0022_reward_bot_control_commands.sql` | Rewards API-to-worker command queue table |
 | `migrations/0023_copytrade_control_commands.sql` | Copytrade API-to-worker command queue table |
 
@@ -66,7 +71,7 @@ retries solves this and ensures consistent data across all consumers.
 
 - `doc/`：系统设计、API 契约、鉴权、存储、前后端计划等文档。
 - `packages/front/`：`Next.js 16 + React 19 + Tailwind v4 + shadcn/ui` 控制台前端。前端代码规范（目录结构、数据层、文件行数上限、公共代码提取）见 [packages/front/AGENTS.md](./packages/front/AGENTS.md)，写或改前端代码前必须遵守。
-- `packages/backend/`：Rust workspace，包含 `api / worker / replay` apps，以及 `application / connectors / contracts / domain / infrastructure` crates。后端代码规范（分层架构、`include!` 模块化、文件行数上限、公共代码提取、测试组织）见 [packages/backend/AGENTS.md](./packages/backend/AGENTS.md)，写或改后端 Rust 代码前必须遵守。
+- `packages/backend/`：Rust workspace，包含 `api / worker / orderbook / replay` apps，以及 `application / connectors / contracts / domain / infrastructure` crates。后端代码规范（分层架构、`include!` 模块化、文件行数上限、公共代码提取、测试组织）见 [packages/backend/AGENTS.md](./packages/backend/AGENTS.md)，写或改后端 Rust 代码前必须遵守。
 - `deploy/`：Docker Compose 部署模板和环境变量示例。
 - `scripts/`：构建、部署、冒烟脚本。
 - `bin/`：部署镜像复制的预构建后端二进制。
@@ -79,10 +84,10 @@ retries solves this and ensures consistent data across all consumers.
 - 前端支持 `zh-CN / en-US`，语言由 `polyedge_locale` cookie 控制。
 - 前端不再提供 mock 数据模式；`POLYEDGE_API_BASE_URL` 必须指向 Rust 后端，读写和 SSE 都走真实 `/api/v1/...`。
 - 当前控制台会话只保留 `off`，不是生产级真实会话。
-- 后端 API 已覆盖 markets、events、news、evidences、signals、orders、trades、positions、pricing、arbitrage、rewards bot、risk、approvals、system、SSE 和 connector callback 等主路径。
-- `polyedge-worker` 支持 news ingest、news promotion、arbitrage radar、rewards bot 模拟、execution drain、paper reconciliation、Polymarket order/fill/user-event 任务。
+- 后端 API 已覆盖 markets、events、news、evidences、signals、orders、trades、positions、pricing、arbitrage、rewards bot、risk、approvals、system、SSE、connector callback 和 orderbook（`GET /api/v1/orderbook/{token_id}`）等主路径。
+- `polyedge-worker` 支持 news ingest、news promotion、arbitrage radar、rewards bot 模拟、copytrade 跟单、execution drain、paper reconciliation、Polymarket order/fill/user-event、orderbook token 注册任务。市场同步和 orderbook 订阅已迁移到独立 `polyedge-orderbook` 服务。
 - 套利雷达是只读链路：发现、记录、校验、分析、展示和 SSE 推送已具备，但不会创建 execution request 或订单。
-- Rewards bot 已是有状态的逐 tick 做市模拟引擎：只使用独立的 `reward_markets` 表作为奖励市场来源，先按 rewards 配置预过滤候选市场，再从 worker 进程内 InMemoryOrderbookCache（TTL 5 分钟）并发读取候选盘口、生成当前候选快照的 YES/NO post-only 双边买单计划，并维护共享资金池账本（capital/available/reserved/realized_pnl/reward_earned）。开放模拟买单采用软资金复用：同一 `account_capital_usd` 可在多个市场同时报价，单腿计划 notional 以 `min(quote_size_usd, account_capital_usd)` 为目标，只有模拟成交时才消耗 `available_usd`；历史 `reserved_usd` 会在下一次 rewards tick 自动释放。缺少新鲜缓存盘口时不会模拟成交或计提奖励；成交模拟只在新鲜盘口穿透/触顶时触发（确定性伪随机可复现）；成交后策略（加价出场 / 持有续挂 / 市价平仓 / 成交即撤对侧）、撤单策略（中点漂移、掉出 max_spread）、以及基于 Polymarket Qmin 公式的做市奖励金额累加已具备；当前仍不会实盘下单。API 服务不执行 rewards 策略或任务，前端 Run / Cancel / Reset 会写入数据库控制命令，由 worker 领取执行；`/api/v1/rewards-bot` 的 managed orders 使用后端分页并返回 `orders_page` 元数据。
+- Rewards bot 已是有状态的逐 tick 做市模拟引擎：只使用独立的 `reward_markets` 表作为奖励市场来源，先按 rewards 配置预过滤候选市场，再通过 `OrderbookHttpClient`（HTTP 调用 polyedge-orderbook 服务）并发读取候选盘口、生成当前候选快照的 YES/NO post-only 双边买单计划，并维护共享资金池账本（capital/available/reserved/realized_pnl/reward_earned）。开放模拟买单采用软资金复用：同一 `account_capital_usd` 可在多个市场同时报价，单腿计划 notional 以 `min(quote_size_usd, account_capital_usd)` 为目标，但如果该预算无法满足 Polymarket `rewards_min_size` 则不新挂该腿；只有模拟成交时才消耗 `available_usd`；历史 `reserved_usd` 会在下一次 rewards tick 自动释放。缺少新鲜缓存盘口时不会新挂单、模拟成交或计提奖励；成交模拟只在新鲜盘口穿透/触顶时触发（确定性伪随机可复现），且成交量受可见盘口深度和 `max_fill_ratio` 共同限制；成交后策略（加价出场 / 持有续挂 / 市价平仓 / 成交即撤对侧）、撤单策略（中点漂移、掉出 max_spread）、以及基于 Polymarket Qmin 公式的做市奖励金额累加已具备；当前仍不会实盘下单。API 服务不执行 rewards 策略或任务，前端 Run / Cancel / Reset 会写入数据库控制命令，由 worker 领取执行；`/api/v1/rewards-bot` 的 managed orders 使用后端分页并返回 `orders_page` 元数据。
 - Polymarket connector 已迁移到 CLOB V2 Rust crate：`packages/backend/Cargo.toml` 保留 dependency key `polymarket-client-sdk`，实际指向 `polymarket_client_sdk_v2`。
 - 聪明钱跟单（copy-trading）已具备完整子系统：跟踪多个 Polymarket 钱包地址（`TrackedWallet`）、通过 Polymarket Data API（`data-api.polymarket.com`，通过 `PolymarketDataApiConnector`）检测钱包新成交、四种跟单仓位模式（`FixedUsd`/`ProportionalToSource`/`CapitalRatio`/`MirrorPortfolioWeight`）、钱包分析统计（胜率/ROI/成交量）、per-wallet/per-market/total 敞口+单日亏损+冷却+滑点风控、确定性模拟引擎（模拟资金账本：capital/available/reserved/realized_pnl）、`Run/Analyze/Cancel/Reset` 与账户资金设置前端 UI；`mode=live` 已结构化支持但未接入真实下单（记录警告回退模拟）。API 服务不执行 copytrade 跟单循环、钱包分析、撤单或重置，前端操作会写入数据库控制命令，由 worker 领取执行；`POLYEDGE_COPYTRADE__ENABLED=true` 启用 worker 轮询。
 - Polymarket 运行时不再提供 mock mode；市场列表走 Gamma 实时数据，私有订单/成交任务需要真实凭证、真实账户、小额演练和运维 runbook。
@@ -94,7 +99,7 @@ retries solves this and ensures consistent data across all consumers.
 - 内部 JWT 签名 helper 已有代码路径，但当前不会从 `off` 签发可信令牌。
 - `signals / risk / events` SSE 仍是 snapshot-backed stream；`arbitrage` 已是 outbox-backed 增量流，但尚未统一到全资源事件总线。
 - 新闻源可以抓取、去重、提升为 events/evidences，但尚未自动生成 signals。
-- Rewards bot 当前只做模拟：已具备资金池账本（开放买单软复用、成交扣款）、成交模拟、Qmin 奖励金额计算、成交后处理与撤单策略，前端 `/rewards` 提供 Run / Cancel / Reset 入队和事件分类（挂单/撤单/吃单/奖励）视图；尚未接入真实 post-only 下单、订单计分查询、真实成交处理或真实库存同步。后续实现实盘 rewards maker 时应沿用“未成交 maker 买单不硬锁全局 USDC、成交后才更新现金/库存并撤超额挂单”的策略模型。
+- Rewards bot 当前只做模拟：已具备资金池账本（开放买单软复用、成交扣款）、基于新鲜盘口和可见深度的成交模拟、Qmin 奖励金额计算、成交后处理与撤单策略，前端 `/rewards` 提供 Run / Cancel / Reset 入队和事件分类（挂单/撤单/吃单/奖励）视图；尚未接入真实 post-only 下单、订单计分查询、真实成交处理或真实库存同步。后续实现实盘 rewards maker 时应沿用“未成交 maker 买单不硬锁全局 USDC、成交后才更新现金/库存并撤超额挂单”的策略模型。
 - Polymarket live 链路已具备骨架和 CLOB V2 SDK，仍需真实资金链路验证。
 
 ## 运行命令
@@ -116,6 +121,7 @@ cargo check --workspace
 cargo test --workspace
 cargo run -p polyedge-api
 cargo run -p polyedge-worker
+cargo run -p polyedge-orderbook
 ```
 
 常用 worker 子命令：
@@ -150,21 +156,21 @@ cargo run -p polyedge-worker -- analyze-wallets-once
 - 默认 runtime mode 是 `manual_confirm`。
 - Polymarket connector 没有 mock mode；未配置真实账户/私钥时，不要开启 Polymarket 私有订单、成交或用户 websocket worker 任务。
 - 默认 arbitrage radar 和 news ingestion 是 disabled。
-- 默认 rewards bot worker 模拟是 disabled；前端 `/rewards` 的 Run / Cancel / Reset 只会入队命令，worker 需要同时设置 `POLYEDGE_REWARDS__ENABLED=true` 和 `POLYEDGE_WORKER__POLL_REWARD_BOT=true` 才会领取并执行。
+- 默认 rewards bot worker 模拟是 disabled；前端 `/rewards` 的 Run / Cancel / Reset 只会入队命令，worker 需要同时设置 `POLYEDGE_REWARDS__ENABLED=true` 和 `POLYEDGE_WORKER__POLL_REWARD_BOT=true` 才会领取并执行。要产生新挂单、吃单、撤单和奖励计提，还需要确保 `polyedge-orderbook` 服务正在运行并同步了 reward 市场数据。
 - Rewards bot 的 `max_markets=0`、`max_open_orders=0` 或 `quote_size_usd=0` 都表示不再新挂单；不是无限制。
 - Rewards bot 模拟开放买单不会逐单锁定资金；`account_capital_usd=200` 时可以在多个市场同时挂 200U 级别买单，但模拟成交会消耗 `available_usd`，后续成交仍受资金池现金限制。
 - 默认跟单 worker 是 disabled；前端 `/copy-trading` 的 Run / Analyze / Cancel / Reset 只会入队命令，worker 需要设置 `POLYEDGE_COPYTRADE__ENABLED=true` + `POLYEDGE_WORKER__POLL_COPYTRADE=true` 才会领取并执行；`POLYEDGE_WORKER__ANALYZE_WALLETS=true` 仍用于独立钱包分析循环。
 - `POLYEDGE_POSTGRES__URL` / `POLYEDGE_REDIS__URL` 为空时，本地可能走内存路径，无法验证多进程共享状态和持久化 outbox。
 - `POLYEDGE_ARBITRAGE__BOOK_SOURCE=polymarket` 会请求真实 Polymarket CLOB `/book`；live 冒烟必须使用真实 Polymarket refs。
-- Docker Compose 部署中的 `polyedge-worker` 会把所有 `POLYEDGE_WORKER__...` 后台任务默认覆盖为 `false`；需要运行市场同步、orderbook stream、新闻、套利、rewards 或 copytrade 时必须在 `deploy/.env` 显式设为 `true`。
+- Docker Compose 部署中的 `polyedge-worker` 会把所有 `POLYEDGE_WORKER__...` 后台任务默认覆盖为 `false`；需要运行新闻、套利、rewards 或 copytrade 时必须在 `deploy/.env.worker` 显式设为 `true`。市场同步和 orderbook 订阅由独立 `polyedge-orderbook` 服务管理，不需要在 worker 中启用。
 
 ## Docker 部署
 
-后端镜像从 `bin/polyedge-api` 和 `bin/polyedge-worker` 复制预构建二进制；服务器部署不编译 Rust。构建机/CI 先执行：
+后端镜像从 `bin/polyedge-api`、`bin/polyedge-worker` 和 `bin/polyedge-orderbook` 复制预构建二进制；服务器部署不编译 Rust。构建机/CI 先执行：
 
 ```bash
 ./scripts/build-backend-bin.sh
-git add bin/polyedge-api bin/polyedge-worker
+git add bin/polyedge-api bin/polyedge-worker bin/polyedge-orderbook
 ```
 
 服务器部署入口：
@@ -172,22 +178,25 @@ git add bin/polyedge-api bin/polyedge-worker
 ```bash
 cp deploy/.env.example deploy/.env
 # 编辑 deploy/.env，填入外部 PostgreSQL URL 和控制台 step-up code
+# 各服务专属配置见 deploy/.env.{api,orderbook,worker,front}.example
 ./scripts/deploy.sh all
 ```
 
 `deploy/docker-compose.yml` 编排：
 
 - `polyedge-api`
-- `polyedge-worker`
+- `polyedge-orderbook`（独立 orderbook 服务，WS + poll + HTTP API）
+- `polyedge-worker`（依赖 orderbook 服务健康）
 - `polyedge-front`
 
 `scripts/deploy.sh` 只接受简单目标参数：
 
 - 不传参数或 `auto`：拉取最新代码，只在后端二进制或前端文件 hash 变化时 rebuild；容器未运行但 hash 未变时只启动已有镜像。
-- `all`：重建后端和前端镜像，并重启 API、worker、front。
+- `all`：重建后端和前端镜像，并重启 API、orderbook、worker、front。
 - `api worker`：重建后端镜像，并重启 API 与 worker。
 - `api`：只重建后端镜像并重启 API。
 - `worker`：只重建后端镜像并重启 worker。
+- `orderbook`（或 `ob`）：重建后端镜像并重启 orderbook 服务。
 - `front`：只重建前端镜像并重启前端。
 - 支持组合，例如 `api front` 或 `api,worker`。
 
@@ -214,6 +223,7 @@ cp deploy/.env.example deploy/.env
 - `packages/backend/apps/api/src/handlers/rewards.rs`
 - `packages/backend/apps/api/src/handlers/copytrade.rs`
 - `packages/backend/apps/worker/src/main.rs`
+- `packages/backend/apps/orderbook/src/main.rs`
 - `packages/backend/apps/worker/src/worker/rewards.rs`
 - `packages/backend/apps/worker/src/worker/copytrade.rs`
 - `packages/backend/crates/application/src/rewards/service.rs`
@@ -221,8 +231,11 @@ cp deploy/.env.example deploy/.env
 - `packages/backend/crates/application/src/copytrade.rs`
 - `packages/backend/crates/application/src/copytrade/service.rs`
 - `packages/backend/crates/connectors/src/polymarket/data_api.rs`
+- `packages/backend/crates/connectors/src/orderbook.rs`
 - `packages/backend/crates/infrastructure/src/stores/copytrade.rs`
 - `packages/backend/crates/infrastructure/src/settings.rs`
+- `packages/backend/crates/application/src/orderbook_registry.rs`
+- `packages/backend/crates/infrastructure/src/stores/orderbook_registry.rs`
 - `packages/backend/migrations/0023_copytrade_control_commands.sql`
 
 部署：

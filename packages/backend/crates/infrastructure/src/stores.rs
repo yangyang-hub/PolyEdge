@@ -50,5 +50,6 @@ include!("stores/audit.rs");
 include!("stores/rewards.rs");
 include!("stores/copytrade.rs");
 include!("stores/orderbook_cache.rs");
+include!("stores/orderbook_registry.rs");
 include!("stores/helpers.rs");
 include!("stores/types.rs");

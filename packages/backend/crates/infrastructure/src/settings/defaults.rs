@@ -165,12 +165,21 @@ impl Default for OrderbookStreamSettings {
     fn default() -> Self {
         Self {
             enabled: true,
-            max_tokens: 5000,
+            max_tokens: 20_000,
             poll_reconcile_interval_secs: 30,
             stale_threshold_ms: 15_000,
             book_ttl_ms: 300_000, // 5 minutes
             token_refresh_interval_secs: 60,
             restart_interval_secs: 5,
+        }
+    }
+}
+
+impl Default for OrderbookServiceSettings {
+    fn default() -> Self {
+        Self {
+            port: 38002,
+            service_url: "http://localhost:38002".to_string(),
         }
     }
 }

@@ -26,6 +26,7 @@
 | `arbitrage/` | 套利：`ArbitrageService`、`ArbitrageStore`、机会检测/验证 |
 | `news_ingestion.rs` | 新闻采集：`NewsIngestionService`、`NewsIngestionStore` |
 | `orderbook_cache.rs` | 盘口缓存：`OrderbookCache` trait |
+| `orderbook_registry.rs` | 盘口订阅注册中心：`OrderbookSubscriptionRegistry` trait，多来源 token 聚合 |
 | `wallet_analysis/` | 钱包分析：纯计算（无 I/O），`build_wallet_analysis_report` |
 | `list_filters.rs` | 通用分页/过滤辅助 |
 
@@ -81,7 +82,7 @@
 - Markets：`upsert_markets`、`list_markets`、`list_all_active_markets`
 - Quote Plans：`save_quote_plans`（替换当前计划快照）、`list_quote_plans`
 - Orders/Positions/Events：完整 CRUD；订单支持 `RewardOrderListQuery` 后端分页并在 snapshot 中返回 `orders_page`
-- Simulation：`apply_simulation_tick`（原子持久化 orders/fills/positions/ledger/events）、`reset_simulation`
+- Simulation：`apply_simulation_tick`（原子持久化 markets/plans/orders/fills/positions/ledger/events）、`reset_simulation`
 - Control Commands：`enqueue_control_command`、`claim_next_control_command`、`complete_control_command`、`fail_control_command`
 
 **服务：** `RewardBotService` — 读写配置、市场管理、快照聚合、订单分页快照、rewards 控制命令入队/领取/完成状态管理
@@ -100,12 +101,13 @@
 
 **资金与盘口约束：**
 - 开放模拟买单采用软资金复用：新建买单不会从 `available_usd` 转入 `reserved_usd`，同一资金池可在多个市场同时报价；`reserved_usd` 仅保留为兼容旧账本，下一次 tick 会自动释放到 `available_usd`。
-- 买单计划的单腿目标 notional 使用 `min(quote_size_usd, account_capital_usd)`，再受 `per_market_usd / 2` 和 Polymarket `rewards_min_size` 约束。
+- 买单计划的单腿目标 notional 使用 `min(quote_size_usd, account_capital_usd)`，再受 `per_market_usd / 2` 和 Polymarket `rewards_min_size` 约束；如果该预算无法满足 `rewards_min_size`，计划会标记为不 eligible，不会靠放大模拟订单绕过资金约束。
 - 模拟买单成交时才消耗 `available_usd`；如果多个软复用报价同时触发，后续成交会按剩余现金缩小或取消。
 - `max_markets=0`、`max_open_orders=0` 或 `quote_size_usd=0` 表示不再新挂单。
-- 缺少新鲜缓存盘口时不会模拟成交，也不会计提 rewards；奖励竞争深度从缓存盘口直接观测。
+- 缺少新鲜缓存盘口时不会新挂单、模拟成交或计提 rewards；quote plan 仍可用 token fallback price 做 dry-run 预览，但 placement 必须看到 YES/NO 两腿的新鲜盘口。
+- 成交模拟受新鲜盘口的可见对手盘深度和 `max_fill_ratio` 共同限制，不能只因顶价穿透就把整单无视深度地填满。
 - 全局敞口门槛使用「已有库存 notional + 当前候选单腿 notional」做准入，不再累计所有开放模拟买单软报价。
-- 单次 rewards tick 使用 `list_reward_run_candidate_markets()` 只从 `reward_markets` 表读取有限候选池（默认至少 100、最多 500 个高日奖励市场），再按 active、token、最低日奖励、有效奖励 spread、下单开关做无需盘口的预过滤；只有通过预过滤的奖励市场会读取 worker 进程内 orderbook cache 并生成当前 quote plan 快照。
+- 单次 rewards tick 使用 `list_reward_run_candidate_markets()` 只从 `reward_markets` 表读取候选池（默认至少 100；上限随 `max_markets` / `max_open_orders` 扩展到 `u16::MAX`），再按 active、token、最低日奖励、有效奖励 spread、下单开关做无需盘口的预过滤；只有通过预过滤的奖励市场会读取 worker 进程内 orderbook cache 并生成当前 quote plan 快照。
 
 **未来实盘资金模型：**
 - Rewards live maker 下单应沿用软资金复用语义：未成交的 post-only/GTC maker 买单是链下签名挂单，不应在本地策略层按全局 notional 硬锁同一笔 USDC；同一资金池可同时在多个不同市场报价。
@@ -147,6 +149,19 @@
 - `get_book(token_id)`、`set_book(book)`、`set_books(books)`、`get_stale_tokens(token_ids, max_age_ms)`
 
 **类型：** `CachedOrderBook`（token_id、bids、asks、observed_at、source）
+
+**实现：**
+- `InMemoryOrderbookCache`（infrastructure crate）— 进程内缓存，仅供 orderbook 服务使用
+- `OrderbookHttpClient`（connectors crate）— HTTP 客户端，Worker 和 API 通过此实现调用 orderbook 服务
+
+### orderbook_registry — 盘口订阅注册中心
+
+**Trait：** `OrderbookSubscriptionRegistry`
+- `register_tokens(source, token_ids)`、`unregister_source(source)`、`list_all_tokens()`、`changed_since(instant)`
+
+**实现：**
+- `InMemoryOrderbookSubscriptionRegistry`（infrastructure crate）— 进程内注册中心，仅供 orderbook 服务使用
+- `OrderbookHttpClient`（connectors crate）— HTTP 客户端，Worker 通过此实现注册 token 到 orderbook 服务
 
 ### wallet_analysis — 钱包分析
 

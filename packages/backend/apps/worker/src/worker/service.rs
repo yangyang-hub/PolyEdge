@@ -117,27 +117,19 @@ fn spawn_worker_tasks(state: &AppState, shutdown_rx: watch::Receiver<bool>) -> V
         ));
     }
 
-    if settings.poll_market_sync {
+    // Market sync is now handled by the standalone polyedge-orderbook service.
+    // Worker registers its token interests (exec orders + reward markets) with
+    // the orderbook service so it subscribes to the right markets.
+    {
         let job_state = state.clone();
         handles.push(spawn_interval_job(
-            "sync-markets",
-            settings.market_sync_interval_secs,
+            "register-orderbook-tokens",
+            settings.market_sync_interval_secs.max(60),
             shutdown_rx.clone(),
             move || {
                 let state = job_state.clone();
                 async move {
-                    let trace_id = new_trace_id();
-                    match sync_markets_once(&state, &trace_id).await {
-                        Ok(report) => info!(
-                            trace_id = %trace_id,
-                            fetched = report.fetched,
-                            upserted = report.upserted,
-                            "completed worker market sync cycle",
-                        ),
-                        Err(error) => {
-                            warn!(trace_id = %trace_id, error = %error, "worker market sync cycle failed");
-                        }
-                    }
+                    register_orderbook_tokens(&state).await;
                 }
             },
         ));
@@ -225,27 +217,30 @@ fn spawn_worker_tasks(state: &AppState, shutdown_rx: watch::Receiver<bool>) -> V
     if settings.poll_reward_bot {
         if state.settings.rewards.enabled {
             let job_state = state.clone();
-            handles.push(spawn_interval_job(
+            let job_shutdown_rx = shutdown_rx.clone();
+            handles.push(spawn_restarting_job(
                 "poll-reward-bot",
-                state.settings.rewards.poll_interval_secs,
+                1,
                 shutdown_rx.clone(),
                 move || {
                     let state = job_state.clone();
+                    let shutdown_rx = job_shutdown_rx.clone();
                     async move {
-                        let trace_id = new_trace_id();
-                        match run_reward_bot_once(&state, &trace_id).await {
+                        match poll_reward_bot_until_shutdown(&state, shutdown_rx).await {
                             Ok(report) => info!(
-                                trace_id = %trace_id,
                                 markets_scanned = report.markets_scanned,
                                 books_fetched = report.books_fetched,
                                 plans_built = report.plans_built,
                                 eligible_plans = report.eligible_plans,
                                 simulated_orders = report.simulated_orders,
                                 cancelled_orders = report.cancelled_orders,
+                                filled_orders = report.filled_orders,
+                                risk_cancelled_orders = report.risk_cancelled_orders,
+                                reward_accrued = %report.reward_accrued,
                                 "completed worker reward bot simulation cycle",
                             ),
                             Err(error) => {
-                                warn!(trace_id = %trace_id, error = %error, "worker reward bot simulation cycle failed");
+                                warn!(error = %error, "worker reward bot polling failed");
                             }
                         }
                     }
@@ -495,35 +490,8 @@ fn spawn_worker_tasks(state: &AppState, shutdown_rx: watch::Receiver<bool>) -> V
         ));
     }
 
-    if settings.consume_orderbook_stream {
-        if state.settings.orderbook_stream.enabled {
-            let job_state = state.clone();
-            handles.push(spawn_restarting_job(
-                "consume-orderbook-stream",
-                state.settings.orderbook_stream.restart_interval_secs,
-                shutdown_rx,
-                move || {
-                    let state = job_state.clone();
-                    async move {
-                        match consume_orderbook_stream(&state).await {
-                            Ok(report) => info!(
-                                subscribed_tokens = report.subscribed_tokens,
-                                ws_snapshots_received = report.ws_snapshots_received,
-                                "orderbook stream consumer stopped",
-                            ),
-                            Err(error) => {
-                                warn!(error = %error, "orderbook stream consumer failed");
-                            }
-                        }
-                    }
-                },
-            ));
-        } else {
-            warn!(
-                "worker consume-orderbook-stream is enabled but orderbook_stream is disabled; set POLYEDGE_ORDERBOOK_STREAM__ENABLED=true"
-            );
-        }
-    }
+    // Orderbook stream is now handled by the standalone polyedge-orderbook service.
+    // Workers connect to it via HTTP (configured by POLYEDGE_ORDERBOOK__SERVICE_URL).
 
     handles
 }
@@ -622,4 +590,70 @@ async fn worker_shutdown_signal() {
         _ = ctrl_c => {}
         _ = terminate => {}
     }
+}
+
+/// Collect token IDs from active execution orders and reward candidate markets,
+/// then register them with the orderbook service via HTTP.
+async fn register_orderbook_tokens(state: &AppState) {
+    let max_tokens = state.settings.orderbook_stream.max_tokens;
+    let mut tokens = Vec::new();
+
+    // Source 1: Active execution orders → market YES/NO asset IDs.
+    for status in [
+        OrderStatus::Submitted,
+        OrderStatus::Open,
+        OrderStatus::PartiallyFilled,
+    ] {
+        let fetch_limit =
+            u16::try_from(max_tokens.saturating_mul(2).min(usize::from(u16::MAX)))
+                .unwrap_or(u16::MAX);
+        let filters = match OrderListFilters::new(
+            None,
+            None,
+            Some(POLYMARKET_CONNECTOR_NAME.to_string()),
+            Some(status),
+            Some(fetch_limit),
+        ) {
+            Ok(f) => f,
+            Err(error) => {
+                warn!(error = %error, "failed to build order filters for token registration");
+                continue;
+            }
+        };
+        let orders = match state.execution_service.list_orders(filters).await {
+            Ok(orders) => orders,
+            Err(error) => {
+                warn!(error = %error, "failed to list orders for token registration");
+                continue;
+            }
+        };
+
+        for order in orders {
+            if tokens.len() >= max_tokens {
+                break;
+            }
+            let market = match state.market_event_service.get_market(&order.market_id).await {
+                Ok(m) => m,
+                Err(_) => continue,
+            };
+            let refs = match polymarket_market_refs(&market) {
+                Ok(r) => r,
+                Err(_) => continue,
+            };
+            tokens.push(refs.yes_asset_id);
+            tokens.push(refs.no_asset_id);
+        }
+    }
+
+    // Unregister old exec_orders and register new set.
+    state.orderbook_registry.unregister_source("exec_orders").await;
+    state.orderbook_registry.register_tokens("exec_orders", &tokens).await;
+
+    // Source 2: Reward candidate market token IDs.
+    if let Ok(reward_tokens) = state.reward_bot_service.list_all_reward_candidate_token_ids().await {
+        state.orderbook_registry.unregister_source("rewards").await;
+        state.orderbook_registry.register_tokens("rewards", &reward_tokens).await;
+    }
+
+    info!(exec_tokens = tokens.len(), "registered orderbook tokens with orderbook service");
 }

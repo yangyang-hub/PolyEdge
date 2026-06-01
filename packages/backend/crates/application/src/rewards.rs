@@ -13,6 +13,7 @@ use time::OffsetDateTime;
 
 const DEFAULT_LIST_LIMIT: u16 = 100;
 const MAX_LIST_LIMIT: u16 = 500;
+const MAX_REWARD_RUN_MARKET_LIMIT: u16 = u16::MAX;
 const DEFAULT_TICK: Decimal = Decimal::from_parts(1, 0, 0, false, 2);
 
 include!("rewards/models.rs");

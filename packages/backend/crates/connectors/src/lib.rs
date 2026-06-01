@@ -1,6 +1,7 @@
 #![allow(clippy::missing_const_for_fn)]
 
 mod news;
+mod orderbook;
 mod polymarket;
 mod rewards;
 
@@ -11,6 +12,7 @@ use rust_decimal::Decimal;
 use time::OffsetDateTime;
 
 pub use news::{ConnectorNewsItem, NewsSource, RssNewsConnector, RssNewsSourceConfig};
+pub use orderbook::OrderbookHttpClient;
 pub use polymarket::{
     ConnectorOrderStatusUpdate, ConnectorTradeFillUpdate, LivePolymarketConfig,
     LivePolymarketConnector, LivePolymarketExecutionOutcome, LivePolymarketOrderAcceptance,

@@ -20,7 +20,11 @@ async fn consume_orderbook_stream(state: &AppState) -> Result<OrderbookStreamRep
     let cache = state.orderbook_cache.clone();
     let mut report = OrderbookStreamReport::default();
 
-    // 1. Collect initial token IDs from multiple sources
+    // 1. Register token sources into the subscription registry, then collect the
+    //    aggregated & deduplicated set.
+    register_exec_order_tokens(state).await?;
+    register_reward_tokens(state).await?;
+
     let token_ids = collect_orderbook_subscription_tokens(state).await?;
     report.subscribed_tokens = token_ids.len();
 
@@ -191,40 +195,34 @@ async fn consume_orderbook_stream(state: &AppState) -> Result<OrderbookStreamRep
                 }
             }
             _ = refresh_timer.tick() => {
-                // Periodically re-evaluate which tokens we should subscribe to.
-                match collect_orderbook_subscription_tokens(state).await {
-                    Ok(new_tokens) => {
-                        let new_count = new_tokens.len();
-                        // Always update the shared list so the poll reconciler
-                        // picks up new markets immediately.
-                        {
-                            let mut shared = shared_tokens.write().await;
-                            *shared = new_tokens.clone();
-                        }
+                // Re-register token sources so the registry reflects latest state.
+                let _ = register_exec_order_tokens(state).await;
+                let _ = register_reward_tokens(state).await;
 
-                        // Check if the WS-subscribed set changed.
-                        let old_set = ws_token_set.read().await;
-                        let changed = *old_set != new_tokens;
-                        drop(old_set);
+                // Always update the shared list so the poll reconciler picks up
+                // new markets immediately.
+                let new_tokens = collect_orderbook_subscription_tokens(state).await
+                    .unwrap_or_default();
+                let new_count = new_tokens.len();
+                {
+                    let mut shared = shared_tokens.write().await;
+                    *shared = new_tokens.clone();
+                }
 
-                        if changed {
-                            info!(
-                                old = report.subscribed_tokens,
-                                new = new_count,
-                                "orderbook token list changed, reconnecting WS with new set"
-                            );
-                            report.subscribed_tokens = new_count;
-                            // Update ws_token_set so next comparison is against
-                            // the new baseline.
-                            *ws_token_set.write().await = new_tokens;
-                            // Break to trigger WS reconnect via
-                            // `spawn_restarting_job`.
-                            break;
-                        }
-                    }
-                    Err(error) => {
-                        warn!(error = %error, "orderbook token refresh failed");
-                    }
+                // Check if the WS-subscribed set changed.
+                let old_set = ws_token_set.read().await;
+                let changed = *old_set != new_tokens;
+                drop(old_set);
+
+                if changed {
+                    info!(
+                        old = report.subscribed_tokens,
+                        new = new_count,
+                        "orderbook token list changed, reconnecting WS with new set"
+                    );
+                    report.subscribed_tokens = new_count;
+                    *ws_token_set.write().await = new_tokens;
+                    break;
                 }
             }
         }
@@ -246,10 +244,15 @@ async fn consume_orderbook_stream(state: &AppState) -> Result<OrderbookStreamRep
 
 async fn collect_orderbook_subscription_tokens(state: &AppState) -> Result<Vec<String>> {
     let max_tokens = state.settings.orderbook_stream.max_tokens;
-    let mut seen = HashSet::new();
+    let all = state.orderbook_registry.list_all_tokens().await;
+    Ok(all.into_iter().take(max_tokens).collect())
+}
+
+/// Register tokens from active execution orders into the subscription registry.
+async fn register_exec_order_tokens(state: &AppState) -> Result<()> {
+    let max_tokens = state.settings.orderbook_stream.max_tokens;
     let mut tokens = Vec::new();
 
-    // Source 1: Active orders (Submitted/Open/PartiallyFilled)
     for status in [
         OrderStatus::Submitted,
         OrderStatus::Open,
@@ -270,7 +273,7 @@ async fn collect_orderbook_subscription_tokens(state: &AppState) -> Result<Vec<S
 
         for order in orders {
             if tokens.len() >= max_tokens {
-                return Ok(tokens);
+                break;
             }
             let market = match state
                 .market_event_service
@@ -284,42 +287,39 @@ async fn collect_orderbook_subscription_tokens(state: &AppState) -> Result<Vec<S
                 Ok(refs) => refs,
                 Err(_) => continue,
             };
-
-            if !seen.contains(&market_refs.yes_asset_id) {
-                seen.insert(market_refs.yes_asset_id.clone());
-                tokens.push(market_refs.yes_asset_id.clone());
-            }
-            if tokens.len() >= max_tokens {
-                return Ok(tokens);
-            }
-            if !seen.contains(&market_refs.no_asset_id) {
-                seen.insert(market_refs.no_asset_id.clone());
-                tokens.push(market_refs.no_asset_id.clone());
-            }
+            tokens.push(market_refs.yes_asset_id);
+            tokens.push(market_refs.no_asset_id);
         }
     }
 
-    // Source 2: All token IDs from reward candidate markets (not just those with
-    // existing orders/positions). This breaks the cold start loop — the orderbook
-    // stream subscribes to reward market tokens even before the bot has placed its
-    // first order.
+    state
+        .orderbook_registry
+        .unregister_source("exec_orders")
+        .await;
+    state
+        .orderbook_registry
+        .register_tokens("exec_orders", &tokens)
+        .await;
+    Ok(())
+}
+
+/// Register tokens from all reward candidate markets into the subscription registry.
+async fn register_reward_tokens(state: &AppState) -> Result<()> {
     if let Ok(reward_token_ids) = state
         .reward_bot_service
         .list_all_reward_candidate_token_ids()
         .await
     {
-        for token_id in reward_token_ids {
-            if tokens.len() >= max_tokens {
-                return Ok(tokens);
-            }
-            if !seen.contains(&token_id) {
-                seen.insert(token_id.clone());
-                tokens.push(token_id);
-            }
-        }
+        state
+            .orderbook_registry
+            .unregister_source("rewards")
+            .await;
+        state
+            .orderbook_registry
+            .register_tokens("rewards", &reward_token_ids)
+            .await;
     }
-
-    Ok(tokens)
+    Ok(())
 }
 
 fn book_update_to_cached(update: &BookUpdate) -> CachedOrderBook {

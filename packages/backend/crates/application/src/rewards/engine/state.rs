@@ -162,9 +162,7 @@ impl TickContext {
 
 fn simulate_fill(
     order: &ManagedRewardOrder,
-    best_bid: Option<Decimal>,
-    best_ask: Option<Decimal>,
-    has_book: bool,
+    book: Option<&RewardOrderBook>,
     draw: f64,
     config: &RewardBotConfig,
 ) -> Option<Decimal> {
@@ -172,6 +170,9 @@ fn simulate_fill(
     if remaining <= Decimal::ZERO {
         return None;
     }
+    let book = book?;
+    let best_bid = book.bids.first().map(|level| level.price);
+    let best_ask = book.asks.first().map(|level| level.price);
 
     let crossed = match order.side {
         RewardOrderSide::Buy => best_ask.is_some_and(|ask| ask <= order.price),
@@ -191,12 +192,15 @@ fn simulate_fill(
         true
     } else if touching {
         draw < rate
-    } else if !has_book {
-        false
     } else {
         false
     };
     if !do_fill {
+        return None;
+    }
+
+    let available_size = opposite_book_available_size(order, book, crossed, touching);
+    if available_size <= Decimal::ZERO {
         return None;
     }
 
@@ -205,7 +209,48 @@ fn simulate_fill(
     if fill <= Decimal::ZERO {
         fill = remaining;
     }
-    Some(Decimal::min(fill, remaining))
+    Some(Decimal::min(Decimal::min(fill, remaining), available_size))
+}
+
+fn opposite_book_available_size(
+    order: &ManagedRewardOrder,
+    book: &RewardOrderBook,
+    crossed: bool,
+    touching: bool,
+) -> Decimal {
+    if crossed {
+        return match order.side {
+            RewardOrderSide::Buy => book
+                .asks
+                .iter()
+                .filter(|level| level.price <= order.price)
+                .map(|level| level.size)
+                .sum(),
+            RewardOrderSide::Sell => book
+                .bids
+                .iter()
+                .filter(|level| level.price >= order.price)
+                .map(|level| level.size)
+                .sum(),
+        };
+    }
+
+    if touching {
+        return match order.side {
+            RewardOrderSide::Buy => book
+                .asks
+                .first()
+                .map(|level| level.size)
+                .unwrap_or_default(),
+            RewardOrderSide::Sell => book
+                .bids
+                .first()
+                .map(|level| level.size)
+                .unwrap_or_default(),
+        };
+    }
+
+    Decimal::ZERO
 }
 
 fn order_remaining_notional(order: &ManagedRewardOrder) -> Decimal {

@@ -620,10 +620,10 @@ fn reward_run_market_limit(config: &RewardBotConfig) -> u16 {
         config.max_open_orders.saturating_mul(10)
     };
 
-    market_limit
-        .max(order_limit)
-        .max(DEFAULT_LIST_LIMIT)
-        .min(MAX_LIST_LIMIT)
+        market_limit
+            .max(order_limit)
+            .max(DEFAULT_LIST_LIMIT)
+            .min(MAX_REWARD_RUN_MARKET_LIMIT)
 }
 
 fn reward_control_command_id(trace_id: &str) -> String {

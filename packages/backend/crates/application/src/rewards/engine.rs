@@ -97,7 +97,7 @@ pub fn run_reward_simulation_tick(
     ctx.release_legacy_buy_reserves();
     ctx.reconcile_open_orders(&plan_index, books, book_history);
     ctx.accrue_rewards(&plan_index, books, elapsed);
-    ctx.place_new_quotes(&plans);
+    ctx.place_new_quotes(&plans, books);
 
     ctx.account.tick_index += 1;
     ctx.account.updated_at = now;
@@ -175,7 +175,7 @@ pub fn run_reconcile_tick(
     ctx.release_legacy_buy_reserves();
     ctx.reconcile_open_orders(&plan_index, books, book_history);
     ctx.accrue_rewards(&plan_index, books, elapsed);
-    ctx.place_new_quotes(&plans);
+    ctx.place_new_quotes(&plans, books);
 
     ctx.account.tick_index += 1;
     ctx.account.updated_at = now;

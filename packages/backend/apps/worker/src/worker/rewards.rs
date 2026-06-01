@@ -113,6 +113,23 @@ async fn poll_reward_bot(
     state: &AppState,
     max_cycles: Option<usize>,
 ) -> Result<RewardBotRunReport> {
+    let (_shutdown_tx, shutdown_rx) = watch::channel(false);
+    poll_reward_bot_loop(state, max_cycles, shutdown_rx, true).await
+}
+
+async fn poll_reward_bot_until_shutdown(
+    state: &AppState,
+    shutdown_rx: watch::Receiver<bool>,
+) -> Result<RewardBotRunReport> {
+    poll_reward_bot_loop(state, None, shutdown_rx, false).await
+}
+
+async fn poll_reward_bot_loop(
+    state: &AppState,
+    max_cycles: Option<usize>,
+    mut shutdown_rx: watch::Receiver<bool>,
+    listen_for_ctrl_c: bool,
+) -> Result<RewardBotRunReport> {
     let mut total = RewardBotRunReport {
         markets_scanned: 0,
         books_fetched: 0,
@@ -188,7 +205,12 @@ async fn poll_reward_bot(
 
         tokio::select! {
             () = tokio::time::sleep(sleep_dur) => {}
-            shutdown = tokio::signal::ctrl_c() => {
+            changed = shutdown_rx.changed() => {
+                if changed.is_err() || *shutdown_rx.borrow() {
+                    break;
+                }
+            }
+            shutdown = tokio::signal::ctrl_c(), if listen_for_ctrl_c => {
                 if let Err(error) = shutdown {
                     warn!(error = %error, "failed to listen for ctrl-c during reward bot polling");
                 }

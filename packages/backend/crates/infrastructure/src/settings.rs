@@ -30,6 +30,7 @@ pub struct Settings {
     pub news: NewsSettings,
     pub worker: WorkerSettings,
     pub orderbook_stream: OrderbookStreamSettings,
+    pub orderbook: OrderbookServiceSettings,
     pub auth: AuthSettings,
     pub copytrade: CopyTradeSettings,
 }
@@ -194,6 +195,15 @@ pub struct OrderbookStreamSettings {
     pub book_ttl_ms: u64,
     pub token_refresh_interval_secs: u64,
     pub restart_interval_secs: u64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct OrderbookServiceSettings {
+    /// HTTP port for the standalone orderbook service.
+    pub port: u16,
+    /// URL of the orderbook service for other services to connect to.
+    pub service_url: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]

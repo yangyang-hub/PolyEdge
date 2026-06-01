@@ -10,8 +10,8 @@ if [[ -n "${POLYEDGE_BACKEND_PACKAGE:-}" || -n "${POLYEDGE_BACKEND_BINARY:-}" ]]
   packages=("${POLYEDGE_BACKEND_PACKAGE:-polyedge-api}")
   binaries=("${POLYEDGE_BACKEND_BINARY:-${POLYEDGE_BACKEND_PACKAGE:-polyedge-api}}")
 else
-  packages=("polyedge-api" "polyedge-worker")
-  binaries=("polyedge-api" "polyedge-worker")
+  packages=("polyedge-api" "polyedge-worker" "polyedge-orderbook")
+  binaries=("polyedge-api" "polyedge-worker" "polyedge-orderbook")
 fi
 
 cargo_args=(build --release)

@@ -43,7 +43,7 @@
 | `RewardsSettings` | enabled、poll_interval、capital、per_market_usd 等 |
 | `NewsSettings` | enabled、sources（列表）、request_timeout_secs |
 | `WorkerSettings` | 各 worker 的启用标志和轮询间隔 |
-| `OrderbookStreamSettings` | WS 连接和轮询配置 |
+| `OrderbookStreamSettings` | WS 连接和轮询配置（默认 `max_tokens=20000`） |
 | `AuthSettings` / `AuthKeySettings` | 认证配置和密钥 |
 | `CopytradeSettings` | 跟单配置 |
 
@@ -69,7 +69,8 @@
 | `stores/risk_state.rs` | `RiskStateStore` | PostgreSQL/内存 |
 | `stores/idempotency.rs` | `IdempotencyStore` | PostgreSQL/内存 |
 | `stores/audit.rs` | `AuditLogSink` | PostgreSQL/内存 |
-| `stores/orderbook_cache.rs` | `OrderbookCache` | 内存（TTL + 定期清理）；保留 Redis 实现但 runtime 不再使用 |
+| `stores/orderbook_cache.rs` | `OrderbookCache` | 内存（TTL + 定期清理）— 仅供 orderbook 服务内部使用；Worker/API 通过 `OrderbookHttpClient` 远程访问 |
+| `stores/orderbook_registry.rs` | `OrderbookSubscriptionRegistry` | 内存（RwLock）— 仅供 orderbook 服务内部使用；Worker/API 通过 HTTP 注册 token |
 | `stores/runtime_config.rs` | 运行时配置 | PostgreSQL key-value |
 | `stores/helpers.rs` | DB 行映射辅助 | — |
 | `stores/types.rs` | 共享类型 | — |
@@ -80,7 +81,8 @@
 - `db_error(code, context)` 辅助函数统一创建 `dependency_unavailable` 错误
 - `RewardBotStore.cancel_open_orders()` 在 Postgres/内存实现中兼容释放旧账本的 `reserved_usd`；新的 rewards 模拟开放买单不再逐单硬占用资金，订单列表优先返回 open-like 状态，避免大量历史成交/撤单淹没当前开放挂单。
 - `RewardBotStore.list_orders_page()` 在 Postgres 实现中通过 count + limit/offset 做服务端分页，支持 outcome/condition/token 搜索、状态过滤和 price/size/status 排序；内存实现保持相同语义。
-- `RewardBotStore.list_markets(limit)` 在 Postgres/内存实现中只返回 active reward markets，并按日奖励金额排序，用于 bounded rewards tick candidate pool；`save_quote_plans()` 会替换当前 quote plan 快照，避免旧的全量计划继续出现在 `/rewards`。
+- `RewardBotStore.list_markets(limit)` 在 Postgres/内存实现中只返回 active reward markets，并按日奖励金额排序，用于 rewards tick candidate pool；`save_quote_plans()` 会替换当前 quote plan 快照，避免旧的全量计划继续出现在 `/rewards`。
+- Postgres `RewardBotStore.apply_simulation_tick()` 会在同一事务中持久化 reward markets、quote plans、orders、fills、positions、account ledger 和 events，避免计划快照与账本/订单半更新。
 - `RewardBotStore` 在 Postgres/内存实现中维护 `reward_control_commands` 队列；API 写入 pending 命令，worker 使用 claim/complete/fail 方法领取并更新执行状态。
 - `CopyTradeStore` 在 Postgres/内存实现中维护 `copytrade_control_commands` 队列；API 写入 pending 命令，worker 使用 claim/complete/fail 方法领取并更新执行状态。
 

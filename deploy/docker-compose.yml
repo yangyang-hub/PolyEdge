@@ -12,6 +12,7 @@ services:
         max-file: "3"
     env_file:
       - .env
+      - .env.api
     ports:
       - "${POLYEDGE_API_BIND:-0.0.0.0}:${POLYEDGE_API_PORT:-38001}:38001"
     extra_hosts:
@@ -23,32 +24,42 @@ services:
       retries: 10
       start_period: 20s
 
+  polyedge-orderbook:
+    image: ${POLYEDGE_API_IMAGE:-polyedge-api:local}
+    restart: unless-stopped
+    logging: *default-logging
+    env_file:
+      - .env
+      - .env.orderbook
+    ports:
+      - "${POLYEDGE_ORDERBOOK_BIND:-0.0.0.0}:${POLYEDGE_ORDERBOOK_PORT:-38002}:38002"
+    command: ["polyedge-orderbook"]
+    depends_on:
+      polyedge-api:
+        condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:38002/healthz >/dev/null"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
   polyedge-worker:
     image: ${POLYEDGE_API_IMAGE:-polyedge-api:local}
     restart: unless-stopped
     logging: *default-logging
     env_file:
       - .env
+      - .env.worker
     environment:
-      POLYEDGE_WORKER__POLL_NEWS: ${POLYEDGE_WORKER__POLL_NEWS:-false}
-      POLYEDGE_WORKER__PROMOTE_NEWS_EVENTS: ${POLYEDGE_WORKER__PROMOTE_NEWS_EVENTS:-false}
-      POLYEDGE_WORKER__POLL_ARBITRAGE_RADAR: ${POLYEDGE_WORKER__POLL_ARBITRAGE_RADAR:-false}
-      POLYEDGE_WORKER__ANALYZE_ARBITRAGE_OPPORTUNITIES: ${POLYEDGE_WORKER__ANALYZE_ARBITRAGE_OPPORTUNITIES:-false}
-      POLYEDGE_WORKER__POLL_REWARD_BOT: ${POLYEDGE_WORKER__POLL_REWARD_BOT:-false}
-      POLYEDGE_WORKER__DRAIN_EXECUTION_QUEUE: ${POLYEDGE_WORKER__DRAIN_EXECUTION_QUEUE:-false}
-      POLYEDGE_WORKER__POLL_PAPER_ORDER_STATUSES: ${POLYEDGE_WORKER__POLL_PAPER_ORDER_STATUSES:-false}
-      POLYEDGE_WORKER__RECONCILE_PAPER_FILLS: ${POLYEDGE_WORKER__RECONCILE_PAPER_FILLS:-false}
-      POLYEDGE_WORKER__POLL_POLYMARKET_ORDER_STATUSES: ${POLYEDGE_WORKER__POLL_POLYMARKET_ORDER_STATUSES:-false}
-      POLYEDGE_WORKER__RECONCILE_POLYMARKET_FILLS: ${POLYEDGE_WORKER__RECONCILE_POLYMARKET_FILLS:-false}
-      POLYEDGE_WORKER__CONSUME_POLYMARKET_USER_EVENTS: ${POLYEDGE_WORKER__CONSUME_POLYMARKET_USER_EVENTS:-false}
-      POLYEDGE_WORKER__POLL_MARKET_SYNC: ${POLYEDGE_WORKER__POLL_MARKET_SYNC:-false}
-      POLYEDGE_WORKER__CONSUME_ORDERBOOK_STREAM: ${POLYEDGE_WORKER__CONSUME_ORDERBOOK_STREAM:-false}
-      POLYEDGE_WORKER__POLL_COPYTRADE: ${POLYEDGE_WORKER__POLL_COPYTRADE:-false}
-      POLYEDGE_WORKER__ANALYZE_WALLETS: ${POLYEDGE_WORKER__ANALYZE_WALLETS:-false}
-      POLYEDGE_WORKER__RECOMPUTE_SIGNALS: ${POLYEDGE_WORKER__RECOMPUTE_SIGNALS:-false}
+      POLYEDGE_ORDERBOOK__SERVICE_URL: ${POLYEDGE_ORDERBOOK__SERVICE_URL:-http://polyedge-orderbook:38002}
     command: ["polyedge-worker"]
     depends_on:
       polyedge-api:
+        condition: service_healthy
+      polyedge-orderbook:
         condition: service_healthy
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -60,8 +71,10 @@ services:
     image: ${POLYEDGE_FRONT_IMAGE:-polyedge-front:local}
     restart: unless-stopped
     logging: *default-logging
+    env_file:
+      - .env
+      - .env.front
     environment:
-      POLYEDGE_API_UPSTREAM: ${POLYEDGE_API_UPSTREAM:-http://polyedge-api:38001}
       POLYEDGE_CONSOLE_STEP_UP_CODE: ${POLYEDGE_CONSOLE_STEP_UP_CODE:?set POLYEDGE_CONSOLE_STEP_UP_CODE in deploy/.env}
     ports:
       - "${POLYEDGE_FRONT_BIND:-0.0.0.0}:${POLYEDGE_FRONT_PORT:-33002}:80"

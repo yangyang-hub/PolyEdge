@@ -117,6 +117,26 @@ mod tests {
     }
 
     #[test]
+    fn quote_plan_rejects_rewards_min_size_above_budget() {
+        let mut market = sample_market();
+        market.rewards_min_size = decimal("1000");
+        let config = RewardBotConfig {
+            account_capital_usd: decimal("200"),
+            per_market_usd: decimal("1000"),
+            quote_size_usd: decimal("1000"),
+            ..RewardBotConfig::default()
+        };
+
+        let plans = build_reward_quote_plans(&[market], &HashMap::new(), &config);
+
+        assert!(!plans[0].eligible);
+        assert_eq!(
+            plans[0].reason,
+            "per-market budget cannot satisfy rewards minimum size"
+        );
+    }
+
+    #[test]
     fn reward_candidate_filter_runs_before_book_selection() {
         let mut low_reward = sample_market();
         low_reward.condition_id = "low_reward".to_string();
@@ -237,16 +257,62 @@ mod tests {
         ])
     }
 
+    fn quote_books_for_market(market: &RewardMarket) -> HashMap<String, RewardOrderBook> {
+        let now = OffsetDateTime::now_utc();
+        HashMap::from([
+            (
+                market.tokens[0].token_id.clone(),
+                RewardOrderBook {
+                    token_id: market.tokens[0].token_id.clone(),
+                    bids: vec![RewardBookLevel {
+                        price: decimal("0.50"),
+                        size: decimal("100"),
+                    }],
+                    asks: vec![RewardBookLevel {
+                        price: decimal("0.54"),
+                        size: decimal("100"),
+                    }],
+                    observed_at: now,
+                },
+            ),
+            (
+                market.tokens[1].token_id.clone(),
+                RewardOrderBook {
+                    token_id: market.tokens[1].token_id.clone(),
+                    bids: vec![RewardBookLevel {
+                        price: decimal("0.46"),
+                        size: decimal("100"),
+                    }],
+                    asks: vec![RewardBookLevel {
+                        price: decimal("0.50"),
+                        size: decimal("100"),
+                    }],
+                    observed_at: now,
+                },
+            ),
+        ])
+    }
+
+    fn quote_books_for_markets(markets: &[RewardMarket]) -> HashMap<String, RewardOrderBook> {
+        let mut books = HashMap::new();
+        for market in markets {
+            books.extend(quote_books_for_market(market));
+        }
+        books
+    }
+
     #[test]
     fn places_two_sided_quotes_without_hard_reserving_capital() {
         let config = RewardBotConfig::default();
+        let market = sample_market();
+        let books = quote_books_for_market(&market);
         let outcome = run_reward_simulation_tick(
             &config,
             fresh_account(),
             Vec::new(),
             Vec::new(),
-            &[sample_market()],
-            &HashMap::new(),
+            &[market],
+            &books,
             &HashMap::new(),
             60,
             "trc_test",
@@ -284,13 +350,14 @@ mod tests {
             sample_market_with_suffix("2"),
             sample_market_with_suffix("3"),
         ];
+        let books = quote_books_for_markets(&markets);
         let outcome = run_reward_simulation_tick(
             &config,
             account,
             Vec::new(),
             Vec::new(),
             &markets,
-            &HashMap::new(),
+            &books,
             &HashMap::new(),
             60,
             "trc_test",
@@ -306,6 +373,25 @@ mod tests {
         assert!(open_notional > config.account_capital_usd);
         assert_eq!(outcome.account.available_usd, config.account_capital_usd);
         assert_eq!(outcome.account.reserved_usd, Decimal::ZERO);
+    }
+
+    #[test]
+    fn missing_books_do_not_place_new_orders() {
+        let config = RewardBotConfig::default();
+        let outcome = run_reward_simulation_tick(
+            &config,
+            fresh_account(),
+            Vec::new(),
+            Vec::new(),
+            &[sample_market()],
+            &HashMap::new(),
+            &HashMap::new(),
+            60,
+            "trc_test",
+        );
+
+        assert_eq!(outcome.report.simulated_orders, 0);
+        assert!(outcome.orders.is_empty());
     }
 
     #[test]
@@ -530,13 +616,24 @@ mod tests {
     #[test]
     fn fill_model_crosses_and_touches() {
         let order = open_buy("yes", "YES", "0.51", "20");
+        let now = OffsetDateTime::now_utc();
+        let crossed_book = RewardOrderBook {
+            token_id: "yes".to_string(),
+            bids: vec![RewardBookLevel {
+                price: decimal("0.49"),
+                size: decimal("100"),
+            }],
+            asks: vec![RewardBookLevel {
+                price: decimal("0.50"),
+                size: decimal("100"),
+            }],
+            observed_at: now,
+        };
 
         // Best ask at or below our bid always fills.
         let crossed = simulate_fill(
             &order,
-            Some(decimal("0.49")),
-            Some(decimal("0.50")),
-            true,
+            Some(&crossed_book),
             0.99,
             &RewardBotConfig::default(),
         );
@@ -549,22 +646,58 @@ mod tests {
         };
         let touched = simulate_fill(
             &order,
-            Some(decimal("0.50")),
-            Some(decimal("0.52")),
-            true,
+            Some(&RewardOrderBook {
+                token_id: "yes".to_string(),
+                bids: vec![RewardBookLevel {
+                    price: decimal("0.50"),
+                    size: decimal("100"),
+                }],
+                asks: vec![RewardBookLevel {
+                    price: decimal("0.52"),
+                    size: decimal("100"),
+                }],
+                observed_at: now,
+            }),
             0.1,
             &config,
         );
         assert!(touched.is_some());
         let missed = simulate_fill(
             &order,
-            Some(decimal("0.50")),
-            Some(decimal("0.52")),
-            true,
+            Some(&RewardOrderBook {
+                token_id: "yes".to_string(),
+                bids: vec![RewardBookLevel {
+                    price: decimal("0.50"),
+                    size: decimal("100"),
+                }],
+                asks: vec![RewardBookLevel {
+                    price: decimal("0.52"),
+                    size: decimal("100"),
+                }],
+                observed_at: now,
+            }),
             0.9,
             &config,
         );
         assert!(missed.is_none());
+    }
+
+    #[test]
+    fn fill_model_caps_to_visible_book_depth() {
+        let order = open_buy("yes", "YES", "0.51", "20");
+        let book = RewardOrderBook {
+            token_id: "yes".to_string(),
+            bids: Vec::new(),
+            asks: vec![RewardBookLevel {
+                price: decimal("0.50"),
+                size: decimal("3"),
+            }],
+            observed_at: OffsetDateTime::now_utc(),
+        };
+
+        let fill = simulate_fill(&order, Some(&book), 0.99, &RewardBotConfig::default());
+
+        assert_eq!(fill, Some(decimal("3")));
     }
 
     #[test]
@@ -623,6 +756,47 @@ mod tests {
                 .any(|order| order.status == ManagedRewardOrderStatus::ExitPending),
             "expected an exit order after the fill"
         );
+    }
+
+    #[test]
+    fn flatten_immediately_defers_when_bid_liquidity_is_missing() {
+        let config = RewardBotConfig {
+            post_fill_strategy: PostFillStrategy::FlattenImmediately,
+            cancel_on_fill: false,
+            ..RewardBotConfig::default()
+        };
+        let seeds = vec![open_buy("yes", "YES", "0.51", "20")];
+        let mut books = HashMap::new();
+        books.insert(
+            "yes".to_string(),
+            RewardOrderBook {
+                token_id: "yes".to_string(),
+                bids: Vec::new(),
+                asks: vec![RewardBookLevel {
+                    price: decimal("0.50"),
+                    size: decimal("100"),
+                }],
+                observed_at: OffsetDateTime::now_utc(),
+            },
+        );
+
+        let outcome = run_reward_simulation_tick(
+            &config,
+            fresh_account(),
+            seeds,
+            Vec::new(),
+            &[sample_market()],
+            &books,
+            &HashMap::new(),
+            60,
+            "trc_test",
+        );
+
+        assert!(outcome.fills.iter().all(|fill| fill.side == RewardOrderSide::Buy));
+        assert!(outcome.orders.iter().any(|order| {
+            order.status == ManagedRewardOrderStatus::ExitPending
+                && order.reason == "flatten deferred until bid liquidity is observed"
+        }));
     }
 
     // ---- Risk control tests ----
@@ -714,6 +888,55 @@ mod tests {
             outcome.report.risk_cancelled_orders >= 1
                 || outcome.report.cancelled_orders >= 1,
             "expected cancel due to bid rank promotion"
+        );
+    }
+
+    #[test]
+    fn bid_rank_cancel_uses_inserted_rank_when_price_absent_from_book() {
+        let config = RewardBotConfig {
+            cancel_bid_rank: 2,
+            ..RewardBotConfig::default()
+        };
+        let now = OffsetDateTime::now_utc();
+        let mut books = HashMap::new();
+        books.insert(
+            "yes".to_string(),
+            RewardOrderBook {
+                token_id: "yes".to_string(),
+                bids: vec![
+                    RewardBookLevel {
+                        price: decimal("0.52"),
+                        size: decimal("100"),
+                    },
+                    RewardBookLevel {
+                        price: decimal("0.50"),
+                        size: decimal("100"),
+                    },
+                ],
+                asks: vec![RewardBookLevel {
+                    price: decimal("0.55"),
+                    size: decimal("100"),
+                }],
+                observed_at: now,
+            },
+        );
+        let seeds = vec![open_buy("yes", "YES", "0.51", "20")];
+        let outcome = run_reward_simulation_tick(
+            &config,
+            fresh_account(),
+            seeds,
+            Vec::new(),
+            &[sample_market()],
+            &books,
+            &HashMap::new(),
+            60,
+            "trc_test",
+        );
+
+        assert!(
+            outcome.report.risk_cancelled_orders >= 1
+                || outcome.report.cancelled_orders >= 1,
+            "expected cancel when inserted bid rank crosses threshold"
         );
     }
 

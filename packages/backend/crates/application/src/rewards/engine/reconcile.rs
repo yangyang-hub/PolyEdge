@@ -25,7 +25,9 @@ impl TickContext {
                 continue;
             }
 
-            let (best_bid, best_ask, has_book) = book_top(books, &order.token_id, &self.config, self.now);
+            let fresh_order_book =
+                fresh_book(books, &order.token_id, self.config.stale_book_ms, self.now);
+            let (best_bid, _, _) = book_top(books, &order.token_id, &self.config, self.now);
 
             // --- Existing drift cancel for Buy orders ---
             if order.side == RewardOrderSide::Buy {
@@ -90,7 +92,7 @@ impl TickContext {
 
             // --- Fill simulation ---
             let draw = self.draw(&order.id);
-            if let Some(fill_size) = simulate_fill(&order, best_bid, best_ask, has_book, draw, &self.config) {
+            if let Some(fill_size) = simulate_fill(&order, fresh_order_book, draw, &self.config) {
                 match order.side {
                     RewardOrderSide::Buy => self.handle_buy_fill(index, fill_size, books),
                     RewardOrderSide::Sell => self.handle_exit_fill(index, fill_size, best_bid),

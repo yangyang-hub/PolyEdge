@@ -351,3 +351,50 @@ async fn list_arbitrage_analysis_runs(
         trace_id,
     )))
 }
+
+async fn get_orderbook(
+    Extension(auth): Extension<AuthContext>,
+    State(state): State<AppState>,
+    Path(token_id): Path<String>,
+) -> std::result::Result<Json<ApiResponse<OrderbookData>>, HttpError> {
+    let trace_id = new_trace_id();
+
+    let book = state
+        .orderbook_cache
+        .get_book(&token_id)
+        .await
+        .map_err(|error| HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone()))?;
+
+    match book {
+        Some(book) => Ok(Json(ApiResponse::new(
+            OrderbookData {
+                token_id: book.token_id,
+                bids: book
+                    .bids
+                    .into_iter()
+                    .map(|l| OrderbookLevelData {
+                        price: l.price.to_string(),
+                        size: l.size.to_string(),
+                    })
+                    .collect(),
+                asks: book
+                    .asks
+                    .into_iter()
+                    .map(|l| OrderbookLevelData {
+                        price: l.price.to_string(),
+                        size: l.size.to_string(),
+                    })
+                    .collect(),
+                observed_at: book.observed_at,
+                source: book.source.to_string(),
+            },
+            auth.request_id,
+            trace_id,
+        ))),
+        None => Err(HttpError::with_meta(
+            AppError::not_found("ORDERBOOK_NOT_FOUND", format!("no orderbook data for token {token_id}")),
+            auth.request_id,
+            trace_id,
+        )),
+    }
+}

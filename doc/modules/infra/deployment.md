@@ -1,10 +1,10 @@
 # 部署（Docker + Nginx + Scripts）
 
-最后更新：2026-05-31
+最后更新：2026-06-01
 
 ## 概述
 
-部署体系基于 Docker Compose，包含 3 个服务（API、Worker、Frontend），通过 Nginx 反向代理前端到后端的 API 请求。
+部署体系基于 Docker Compose，包含 4 个服务（API、Orderbook、Worker、Frontend），通过 Nginx 反向代理前端到后端的 API 请求。
 
 ## 架构与关键文件
 
@@ -31,6 +31,12 @@
 └──────────────────┘     └──────────────────┘
                                 ↑
                          ┌──────────────────┐
+                         │ polyedge-orderbook│
+                         │  port:38002      │
+                         │  (WS + HTTP)     │
+                         └──────────────────┘
+                                ↑
+                         ┌──────────────────┐
                          │  polyedge-worker  │
                          │  (same image)     │
                          └──────────────────┘
@@ -41,15 +47,26 @@
 - 镜像：`debian:trixie-slim` + 预构建 `bin/polyedge-api` 二进制
 - 端口：`0.0.0.0:38001 → container:38001`
 - 健康检查：`curl /healthz`（15s 间隔，10 次重试，20s 启动期）
-- 环境变量：所有 `POLYEDGE_*` 配置
+- 环境变量：`.env` + `.env.api`
 - `extra_hosts: host.docker.internal:host-gateway`（访问宿主机数据库）
+
+### polyedge-orderbook
+
+- 同 API 镜像，command 覆盖为 `polyedge-orderbook`
+- 端口：`0.0.0.0:38002 → container:38002`
+- 健康检查：`curl /healthz`（15s 间隔，10 次重试，20s 启动期）
+- 依赖 API 健康检查通过后启动
+- 职责：市场同步（Gamma + CLOB → Postgres）、WS + poll 盘口流（→ 进程内缓存）、HTTP API（盘口读取、token 注册）
+- 环境变量：`.env` + `.env.orderbook`
 
 ### polyedge-worker
 
 - 同 API 镜像，command 覆盖为 `polyedge-worker`
 - 无端口暴露
-- 依赖 API 健康检查通过后启动
-- Docker 部署中所有 `POLYEDGE_WORKER__...` 后台任务默认由 Compose 覆盖为 `false`，需要在 `deploy/.env` 显式改为 `true` 才会启动对应任务
+- 依赖 API 和 orderbook 健康检查通过后启动
+- Docker 部署中所有 `POLYEDGE_WORKER__...` 后台任务默认由 Compose 覆盖为 `false`，需要在 `deploy/.env.worker` 显式改为 `true` 才会启动对应任务
+- 通过 `POLYEDGE_ORDERBOOK__SERVICE_URL` 连接 orderbook 服务读取盘口数据和注册 token
+- 环境变量：`.env` + `.env.worker`
 
 ### polyedge-front
 
@@ -117,6 +134,11 @@
 | `POLYEDGE_LOG_FILE` | `$HOME/polyedge-deploy.log`（cron） | deploy 脚本日志文件；无法写入时回退到 stdout/stderr |
 | `POLYEDGE_DEPLOY_LOCK_FILE` | `/tmp/polyedge-deploy.lock` | deploy 脚本互斥锁 |
 | `COMPOSE_PARALLEL_LIMIT` | `1` | Docker Compose 构建并发，低配服务器默认串行构建 |
+| `POLYEDGE_WORKER__POLL_MARKET_SYNC` | `false`（Compose 覆盖） | 部署 worker 是否同步 markets/reward_markets |
+| `POLYEDGE_WORKER__CONSUME_ORDERBOOK_STREAM` | `false`（Compose 覆盖） | 部署 worker 是否消费 orderbook stream |
+| `POLYEDGE_WORKER__POLL_REWARD_BOT` | `false`（Compose 覆盖） | 部署 worker 是否运行 rewards full tick + fast reconcile loop |
+| `POLYEDGE_ORDERBOOK_STREAM__ENABLED` | `true` | orderbook stream 功能开关；Compose 中还需打开 worker 任务 |
+| `POLYEDGE_ORDERBOOK_STREAM__MAX_TOKENS` | `20000` | orderbook stream 订阅 token 上限，过低会导致 rewards 覆盖不全 |
 
 ## 后端二进制构建
 

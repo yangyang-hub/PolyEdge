@@ -135,7 +135,16 @@ const WORKER_SERVICE_COMMAND: &str = "run";
 async fn main() -> Result<()> {
     init_tracing("polyedge_worker");
     let runtime = Runtime::load().await?;
-    let state = runtime.app_state();
+    let state = {
+        let base = runtime.app_state();
+        let url = &base.settings.orderbook.service_url;
+        let client = std::sync::Arc::new(polyedge_connectors::OrderbookHttpClient::new(url));
+        AppState {
+            orderbook_cache: client.clone(),
+            orderbook_registry: client,
+            ..base
+        }
+    };
     let mut args = std::env::args().skip(1);
     let command = args.next();
 
@@ -413,17 +422,6 @@ async fn main() -> Result<()> {
             );
             Ok(())
         }
-        Some("consume-orderbook-stream") => {
-            let report = consume_orderbook_stream(&state).await?;
-            info!(
-                subscribed_tokens = report.subscribed_tokens,
-                ws_snapshots_received = report.ws_snapshots_received,
-                poll_reconciliations = report.poll_reconciliations,
-                poll_failures = report.poll_failures,
-                "consumed orderbook stream",
-            );
-            Ok(())
-        }
         Some(other) => Err(AppError::invalid_input(
             "WORKER_COMMAND_UNSUPPORTED",
             format!("unsupported polyedge-worker command: {other}"),
@@ -443,7 +441,6 @@ include!("worker/news_helpers.rs");
 include!("worker/execution_reconcile.rs");
 include!("worker/polymarket_events.rs");
 include!("worker/polymarket_config.rs");
-include!("worker/orderbook_stream.rs");
 include!("worker/execution_dispatch.rs");
 include!("worker/news_promotion.rs");
 include!("worker/signal_recompute.rs");

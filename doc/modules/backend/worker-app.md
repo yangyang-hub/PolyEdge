@@ -4,7 +4,7 @@
 
 ## 概述
 
-`polyedge-worker` 是基于 Tokio 的异步后台任务服务。它运行所有周期性和流式任务：市场同步、新闻采集、信号重算、执行分发、订单对账、盘口流、奖励机器人、套利扫描和跟单执行。
+`polyedge-worker` 是基于 Tokio 的异步后台任务服务。它运行所有周期性任务：新闻采集、信号重算、执行分发、订单对账、奖励机器人、套利扫描、跟单执行和 orderbook token 注册。市场同步和盘口流已迁移到独立的 `polyedge-orderbook` 服务。
 
 ## 设计目标
 
@@ -27,7 +27,7 @@
 | `worker/execution_dispatch.rs` | 执行请求分发到连接器 |
 | `worker/execution_queue.rs` | 执行队列管理 |
 | `worker/execution_reconcile.rs` | 订单/成交对账 |
-| `worker/orderbook_stream.rs` | WebSocket 盘口流实时订阅 |
+| `worker/orderbook_stream.rs` | Orderbook stream — 仅保留 CLI 子命令兼容，核心逻辑已迁移到独立 `polyedge-orderbook` 服务 |
 | `worker/rewards.rs` | 奖励机器人 tick；消费 API 入队的 run/cancel/reset 控制命令 |
 | `worker/arbitrage.rs` | 套利扫描 |
 | `worker/arbitrage_books.rs` | 套利盘口快照 |
@@ -59,23 +59,25 @@
 | `poll-polymarket-order-statuses` | `poll_polymarket_order_statuses` | Live Polymarket 订单状态轮询 |
 | `reconcile-polymarket-fills` | `reconcile_polymarket_fills` | Live Polymarket 成交对账 |
 | `consume-polymarket-user-events` | `consume_polymarket_user_events` | 消费 Polymarket WS 事件 |
-| `consume-orderbook-stream` | `consume_orderbook_stream` | 消费盘口 WS 流 |
 
 ## 核心 Worker 数据流
 
-### market_sync — 市场同步
+### market_sync — 市场同步（已迁移到 orderbook 服务）
+
+市场同步逻辑已迁移到 `polyedge-orderbook` 服务（`apps/orderbook/src/market_sync.rs`）。Worker 中保留 `sync_markets_once` 函数供 CLI 子命令 `sync-markets-once` 使用，但 daemon 模式不再调度此任务。
+
+### register-orderbook-tokens — 盘口 token 注册
 
 ```
-PolymarketGammaConnector.fetch_markets()
-    → gamma_market_to_view() 转换
-    → market_event_service.upsert_markets() 写入 markets 表
-
-PolymarketRewardsConnector.fetch_current_markets()
-    → reward_market_from_connector() 转换
-    → reward_bot_service.upsert_reward_markets() 写入 reward_markets 表
+register_orderbook_tokens()
+    → 遍历活跃执行订单（Submitted/Open/PartiallyFilled）→ 解析市场 YES/NO asset_id
+    → reward_bot_service.list_all_reward_candidate_token_ids() → 奖励候选 token
+    → orderbook_registry.register_tokens("exec_orders", ...)
+    → orderbook_registry.register_tokens("rewards", ...)
+    // 通过 OrderbookHttpClient → HTTP POST /orderbook/register 注册到 orderbook 服务
 ```
 
-Report: `MarketSyncReport { fetched, upserted }`
+此任务替代了原来的 `consume-orderbook-stream` 和 `sync-markets` 任务。Worker 不再直接运行盘口流或市场同步，而是通过 HTTP 告知 orderbook 服务需要订阅哪些 token。
 
 ### copytrade — 跟单
 
@@ -103,28 +105,20 @@ reward_bot_service.claim_next_control_command()
 无待处理控制命令时：
     fetch_reward_bot_inputs() // 获取奖励市场 + 盘口
         → reward_bot_service.run_simulation() // 自动模拟 tick
+        → reward_bot_service.run_reconcile_only() // full tick 间隔内按 reconcile_interval_sec 快速吃单/撤单/计奖
 ```
 
 Report: `RewardBotRunReport { markets_scanned, books_fetched, plans_built, eligible_plans, simulated_orders, cancelled_orders, filled_orders, reward_accrued }`
 
-约束：worker 是 rewards 策略和控制命令的唯一执行者。API 只把 `run_once` / `cancel_all` / `reset` 写入 `reward_control_commands`；worker 每轮先领取并处理待执行命令，处理到命令时跳过本轮自动 tick。`run_once` 命令会强制执行一次模拟（即使自动挂单开关关闭），`cancel_all` 撤销开放模拟订单（兼容释放旧 reserved），`reset` 重置模拟资金池。
+约束：worker 是 rewards 策略和控制命令的唯一执行者。API 只把 `run_once` / `cancel_all` / `reset` 写入 `reward_control_commands`；worker 每轮先领取并处理待执行命令，处理到命令时跳过本轮自动 tick。`run_once` 命令会强制执行一次模拟（即使自动挂单开关关闭），`cancel_all` 撤销开放模拟订单（兼容释放旧 reserved），`reset` 重置模拟资金池。服务模式下 `POLYEDGE_WORKER__POLL_REWARD_BOT=true` 会运行与 `poll-reward-bot` CLI 相同的 full tick + fast reconcile loop，`RewardBotConfig.reconcile_interval_sec` 会生效。
 
-自动 tick 只从 Postgres 的 `reward_markets` 读取奖励市场、从进程内 `InMemoryOrderbookCache` 读取盘口（TTL 默认 5 分钟，后台清理任务每 60 秒淘汰过期条目）。每个 tick 只读取 bounded candidate market pool（默认至少 100、最多 500 个高日奖励市场），先按配置预过滤奖励市场，再并发读取候选盘口缓存；若本 tick 没有新鲜缓存盘口，模拟器不会产生盘口成交或 rewards 计提，只刷新当前候选计划/保留订单状态。开放模拟买单软复用 `account_capital_usd`，成交时才消耗现金。
+自动 tick 只从 Postgres 的 `reward_markets` 读取奖励市场、通过 `OrderbookHttpClient`（HTTP 调用 polyedge-orderbook 服务）读取盘口。每个 tick 只读取候选 market pool（默认至少 100；随 `max_markets` / `max_open_orders` 扩展到 `u16::MAX`），先按配置预过滤奖励市场，再并发读取候选盘口缓存；若本 tick 没有新鲜缓存盘口，模拟器不会新挂单、产生盘口成交或 rewards 计提，只刷新当前候选计划/保留订单状态。开放模拟买单软复用 `account_capital_usd`，成交时才消耗现金；成交量受可见对手盘深度和 `max_fill_ratio` 共同限制。
 
 未来接入 rewards live 下单时，worker 仍应保持同一策略语义：未成交 post-only maker 买单不在本地按全局 notional 硬锁资金；成交/部分成交回报才更新现金与库存，并触发撤单、降规模或 kill-switch。worker 需要独立维护本地组合风险，因为 CLOB 的 balance/allowance 检查不是跨市场组合风控系统。
 
-### orderbook_stream — 盘口流
+### orderbook_stream — 盘口流（已迁移到 orderbook 服务）
 
-```
-collect_orderbook_subscription_tokens() // 从开放订单 + 全量奖励候选市场（不限于已有仓位）收集 token ID
-    → ClobWsClient.subscribe_orderbook() // WebSocket 订阅（连接时固定 token 列表）
-    → tokio::select! { ws消息, token刷新定时器 } // 每 token_refresh_interval_secs 重新评估订阅列表
-    → token_list 变化 → 更新 poll reconciler 的共享 token 列表 + 断开 WS 触发重连
-    → poll reconciler 每 poll_reconcile_interval_secs 拉取 stale token 的盘口（动态读取最新 token 列表）
-    → orderbook_cache.set_book() // 写入 InMemoryOrderbookCache（带 TTL）
-```
-
-Report: `OrderbookStreamReport { subscribed_tokens, ws_snapshots_received, poll_reconciliations, poll_failures }`
+盘口流逻辑已迁移到 `polyedge-orderbook` 服务（`apps/orderbook/src/stream.rs`）。Worker 中 `worker/orderbook_stream.rs` 仅保留 `consume-orderbook-stream` CLI 子命令兼容（daemon 模式不再调度）。Worker 通过 `OrderbookHttpClient`（HTTP）读取 orderbook 服务的缓存数据，通过 `register-orderbook-tokens` 任务注册订阅 token。
 
 ### arbitrage — 套利扫描
 
@@ -153,12 +147,12 @@ Report: `NewsIngestionRunReport { sources_scanned/succeeded/failed, fetched, ins
 
 - **上游**：所有 crate（domain、application、connectors、infrastructure）
 - **下游**：无（终端执行者）
-- **配置来源**：`infrastructure::Settings` 中的 worker、rewards、copytrade、arbitrage、news、orderbook_stream 配置段
+- **配置来源**：`infrastructure::Settings` 中的 worker、rewards、copytrade、arbitrage、news 配置段；盘口数据通过 `POLYEDGE_ORDERBOOK__SERVICE_URL` 连接 orderbook 服务
 
 ## 当前状态
 
 - 所有 18 个子命令已实现
-- `run` 主循环包含 market_sync、orderbook_stream、rewards、copytrade、arbitrage、news、execution 等任务
+- `run` 主循环包含 register-orderbook-tokens、rewards、copytrade、arbitrage、news、execution、signal-recompute 等任务
 - rewards worker 会通过数据库命令队列接收前端 Run / Cancel / Reset 请求，API 进程不再执行 rewards 策略
 - copytrade worker 会通过数据库命令队列接收前端 Run / Analyze / Cancel / Reset 请求，API 进程不再执行跟单任务或抓取跟单输入
 - 默认大部分 worker 通过配置开关控制启用/禁用

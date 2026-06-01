@@ -5,7 +5,7 @@ use crate::{
     stores::{
         ExternalEventStore, InMemoryAuditLogSink, InMemoryCopyTradeStore, InMemoryExternalEventStore,
         InMemoryIdempotencyStore, InMemoryModeStateStore, InMemoryOrderbookCache,
-        InMemoryRewardBotStore, InMemoryRiskStateStore, InMemoryRuntimeConfigStore,
+        InMemoryOrderbookSubscriptionRegistry, InMemoryRewardBotStore, InMemoryRiskStateStore, InMemoryRuntimeConfigStore,
         PostgresAuditLogSink, PostgresCopyTradeStore, PostgresExternalEventStore,
         PostgresIdempotencyStore, PostgresModeStateStore, PostgresRewardBotStore,
         PostgresRiskStateStore, PostgresRuntimeConfigStore, RuntimeConfigStore,
@@ -14,8 +14,8 @@ use crate::{
 use polyedge_application::{
     ArbitrageService, ArbitrageStore, AuditLogSink, CopyTradeService, CopyTradeStore,
     ExecutionService, IdempotencyStore, MarketEventService, MarketEventStore, ModeStateStore,
-    NewsIngestionService, NewsIngestionStore, OrderbookCache, RewardBotService, RewardBotStore,
-    RiskPolicy, RiskService, RiskStateStore, SystemModeService,
+    NewsIngestionService, NewsIngestionStore, OrderbookCache, OrderbookSubscriptionRegistry,
+    RewardBotService, RewardBotStore, RiskPolicy, RiskService, RiskStateStore, SystemModeService,
 };
 use polyedge_domain::{AppError, Result, SystemMode};
 use sqlx::{PgPool, postgres::PgPoolOptions};
@@ -42,6 +42,7 @@ pub struct AppState {
     pub execution_service: Arc<ExecutionService>,
     pub copytrade_service: Arc<CopyTradeService>,
     pub orderbook_cache: Arc<dyn OrderbookCache>,
+    pub orderbook_registry: Arc<dyn OrderbookSubscriptionRegistry>,
 }
 
 pub struct Runtime {
@@ -194,6 +195,9 @@ impl Runtime {
             cache
         };
 
+        let orderbook_registry: Arc<dyn OrderbookSubscriptionRegistry> =
+            Arc::new(InMemoryOrderbookSubscriptionRegistry::new());
+
         Ok(Self {
             state: AppState {
                 settings,
@@ -211,6 +215,7 @@ impl Runtime {
                 risk_service,
                 execution_service,
                 orderbook_cache,
+                orderbook_registry,
             },
         })
     }
@@ -273,6 +278,9 @@ impl Runtime {
             cache
         };
 
+        let orderbook_registry: Arc<dyn OrderbookSubscriptionRegistry> =
+            Arc::new(InMemoryOrderbookSubscriptionRegistry::new());
+
         Ok(AppState {
             settings,
             dependencies: Arc::new(RuntimeDependencies {
@@ -292,6 +300,7 @@ impl Runtime {
             risk_service,
             execution_service,
             orderbook_cache,
+            orderbook_registry,
         })
     }
 
