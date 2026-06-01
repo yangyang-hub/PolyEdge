@@ -265,6 +265,23 @@ impl RewardBotStore for InMemoryRewardBotStore {
         Ok(orders)
     }
 
+    async fn list_orders_page(&self, query: &RewardOrderListQuery) -> Result<RewardOrderPage> {
+        let mut orders = self
+            .orders
+            .read()
+            .await
+            .iter()
+            .filter(|order| query.matches_order(order))
+            .cloned()
+            .collect::<Vec<_>>();
+        orders.sort_by(|left, right| query.compare_orders(left, right));
+
+        let page = query.page_for_total(orders.len());
+        let start = (page.page - 1) * page.page_size;
+        let items = orders.into_iter().skip(start).take(page.page_size).collect();
+        Ok(RewardOrderPage { items, page })
+    }
+
     async fn list_positions(&self, limit: u16) -> Result<Vec<RewardPosition>> {
         let mut positions = self
             .positions

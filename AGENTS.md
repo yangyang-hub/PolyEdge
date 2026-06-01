@@ -53,6 +53,7 @@ retries solves this and ensures consistent data across all consumers.
 | `apps/worker/src/worker/rewards.rs` | Rewards bot — executes simulation ticks and queued run/cancel/reset commands |
 | `apps/api/src/handlers/rewards.rs` | Rewards API — reads snapshots/config and enqueues worker control commands |
 | `crates/application/src/rewards/service.rs` | RewardBotService — reward markets, snapshots, simulation persistence, control command queue |
+| `crates/application/src/rewards/pagination.rs` | Rewards order pagination query and response metadata |
 | `apps/worker/src/worker/copytrade.rs` | Copytrade worker — executes copy cycles and queued run/analyze/cancel/reset commands |
 | `apps/api/src/handlers/copytrade.rs` | Copytrade API — reads snapshots/config and enqueues worker control commands |
 | `crates/application/src/copytrade/service.rs` | CopyTradeService — copytrade config/snapshot/simulation and control command queue |
@@ -81,7 +82,7 @@ retries solves this and ensures consistent data across all consumers.
 - 后端 API 已覆盖 markets、events、news、evidences、signals、orders、trades、positions、pricing、arbitrage、rewards bot、risk、approvals、system、SSE 和 connector callback 等主路径。
 - `polyedge-worker` 支持 news ingest、news promotion、arbitrage radar、rewards bot 模拟、execution drain、paper reconciliation、Polymarket order/fill/user-event 任务。
 - 套利雷达是只读链路：发现、记录、校验、分析、展示和 SSE 推送已具备，但不会创建 execution request 或订单。
-- Rewards bot 已是有状态的逐 tick 做市模拟引擎：只使用独立的 `reward_markets` 表作为奖励市场来源，先按 rewards 配置预过滤候选市场，再从 worker 进程内 InMemoryOrderbookCache（TTL 5 分钟）并发读取候选盘口、生成当前候选快照的 YES/NO post-only 双边买单计划，并维护共享资金池账本（capital/available/reserved/realized_pnl/reward_earned）。开放模拟买单采用软资金复用：同一 `account_capital_usd` 可在多个市场同时报价，单腿计划 notional 以 `min(quote_size_usd, account_capital_usd)` 为目标，只有模拟成交时才消耗 `available_usd`；历史 `reserved_usd` 会在下一次 rewards tick 自动释放。缺少新鲜缓存盘口时不会模拟成交或计提奖励；成交模拟只在新鲜盘口穿透/触顶时触发（确定性伪随机可复现）；成交后策略（加价出场 / 持有续挂 / 市价平仓 / 成交即撤对侧）、撤单策略（中点漂移、掉出 max_spread）、以及基于 Polymarket Qmin 公式的做市奖励金额累加已具备；当前仍不会实盘下单。API 服务不执行 rewards 策略或任务，前端 Run / Cancel / Reset 会写入数据库控制命令，由 worker 领取执行。
+- Rewards bot 已是有状态的逐 tick 做市模拟引擎：只使用独立的 `reward_markets` 表作为奖励市场来源，先按 rewards 配置预过滤候选市场，再从 worker 进程内 InMemoryOrderbookCache（TTL 5 分钟）并发读取候选盘口、生成当前候选快照的 YES/NO post-only 双边买单计划，并维护共享资金池账本（capital/available/reserved/realized_pnl/reward_earned）。开放模拟买单采用软资金复用：同一 `account_capital_usd` 可在多个市场同时报价，单腿计划 notional 以 `min(quote_size_usd, account_capital_usd)` 为目标，只有模拟成交时才消耗 `available_usd`；历史 `reserved_usd` 会在下一次 rewards tick 自动释放。缺少新鲜缓存盘口时不会模拟成交或计提奖励；成交模拟只在新鲜盘口穿透/触顶时触发（确定性伪随机可复现）；成交后策略（加价出场 / 持有续挂 / 市价平仓 / 成交即撤对侧）、撤单策略（中点漂移、掉出 max_spread）、以及基于 Polymarket Qmin 公式的做市奖励金额累加已具备；当前仍不会实盘下单。API 服务不执行 rewards 策略或任务，前端 Run / Cancel / Reset 会写入数据库控制命令，由 worker 领取执行；`/api/v1/rewards-bot` 的 managed orders 使用后端分页并返回 `orders_page` 元数据。
 - Polymarket connector 已迁移到 CLOB V2 Rust crate：`packages/backend/Cargo.toml` 保留 dependency key `polymarket-client-sdk`，实际指向 `polymarket_client_sdk_v2`。
 - 聪明钱跟单（copy-trading）已具备完整子系统：跟踪多个 Polymarket 钱包地址（`TrackedWallet`）、通过 Polymarket Data API（`data-api.polymarket.com`，通过 `PolymarketDataApiConnector`）检测钱包新成交、四种跟单仓位模式（`FixedUsd`/`ProportionalToSource`/`CapitalRatio`/`MirrorPortfolioWeight`）、钱包分析统计（胜率/ROI/成交量）、per-wallet/per-market/total 敞口+单日亏损+冷却+滑点风控、确定性模拟引擎（模拟资金账本：capital/available/reserved/realized_pnl）、`Run/Analyze/Cancel/Reset` 与账户资金设置前端 UI；`mode=live` 已结构化支持但未接入真实下单（记录警告回退模拟）。API 服务不执行 copytrade 跟单循环、钱包分析、撤单或重置，前端操作会写入数据库控制命令，由 worker 领取执行；`POLYEDGE_COPYTRADE__ENABLED=true` 启用 worker 轮询。
 - Polymarket 运行时不再提供 mock mode；市场列表走 Gamma 实时数据，私有订单/成交任务需要真实凭证、真实账户、小额演练和运维 runbook。
@@ -216,6 +217,7 @@ cp deploy/.env.example deploy/.env
 - `packages/backend/apps/worker/src/worker/rewards.rs`
 - `packages/backend/apps/worker/src/worker/copytrade.rs`
 - `packages/backend/crates/application/src/rewards/service.rs`
+- `packages/backend/crates/application/src/rewards/pagination.rs`
 - `packages/backend/crates/application/src/copytrade.rs`
 - `packages/backend/crates/application/src/copytrade/service.rs`
 - `packages/backend/crates/connectors/src/polymarket/data_api.rs`

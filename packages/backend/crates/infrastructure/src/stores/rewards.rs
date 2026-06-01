@@ -5,5 +5,6 @@
 
 include!("rewards/in_memory.rs");
 include!("rewards/postgres_control_commands.rs");
+include!("rewards/postgres_orders.rs");
 include!("rewards/postgres_writes.rs");
 include!("rewards/postgres.rs");

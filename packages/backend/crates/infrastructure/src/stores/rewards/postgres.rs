@@ -506,6 +506,10 @@ impl RewardBotStore for PostgresRewardBotStore {
         rows.iter().map(reward_order_from_row).collect()
     }
 
+    async fn list_orders_page(&self, query: &RewardOrderListQuery) -> Result<RewardOrderPage> {
+        postgres_list_reward_orders_page(&self.pool, query).await
+    }
+
     async fn list_positions(&self, limit: u16) -> Result<Vec<RewardPosition>> {
         let rows = sqlx::query(
             r#"

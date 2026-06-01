@@ -40,59 +40,25 @@ fn apply_plan_filters(
     snapshot
 }
 
-fn apply_order_filters(
-    mut snapshot: RewardBotSnapshot,
-    query: &RewardBotSnapshotQuery,
-) -> RewardBotSnapshot {
-    let mut orders = snapshot.orders;
-
-    // Text search
-    if let Some(ref search) = query.orders_search {
-        let q = search.trim().to_lowercase();
-        if !q.is_empty() {
-            orders.retain(|o| {
-                o.outcome.to_lowercase().contains(&q)
-                    || o.condition_id.to_lowercase().contains(&q)
-            });
-        }
-    }
-
-    // Status filter
-    if let Some(ref status) = query.orders_status {
-        let s = status.trim().to_lowercase();
-        orders.retain(|o| match s.as_str() {
-            "open" => o.status == ManagedRewardOrderStatus::Open || o.status == ManagedRewardOrderStatus::Planned,
-            "filled" => o.status == ManagedRewardOrderStatus::Filled,
-            "cancelled" => o.status == ManagedRewardOrderStatus::Cancelled,
-            "exit_pending" => o.status == ManagedRewardOrderStatus::ExitPending,
-            _ => true,
-        });
-    }
-
-    // Sort
-    let sort_by = query.orders_sort_by.as_deref().unwrap_or("status");
-    let desc = query.orders_sort_order.as_deref() != Some("asc");
-    orders.sort_by(|a, b| {
-        let ord = match sort_by {
-            "price" => a.price.cmp(&b.price),
-            "size" => a.size.cmp(&b.size),
-            _ => a.status.as_str().cmp(b.status.as_str()), // default: status
-        };
-        if desc { ord.reverse() } else { ord }
-    });
-
-    snapshot.orders = orders;
-    snapshot
-}
-
 async fn read_reward_bot_snapshot(
     Extension(auth): Extension<AuthContext>,
     State(state): State<AppState>,
     Query(query): Query<RewardBotSnapshotQuery>,
 ) -> std::result::Result<Json<ApiResponse<RewardBotSnapshot>>, HttpError> {
     let trace_id = new_trace_id();
-    let snapshot =
-        state.reward_bot_service.snapshot().await.map_err(|error| {
+    let order_query = RewardOrderListQuery::new(
+        query.orders_search.clone(),
+        query.orders_status.clone(),
+        query.orders_sort_by.clone(),
+        query.orders_sort_order.clone(),
+        query.orders_page,
+        query.orders_page_size,
+    );
+    let snapshot = state
+        .reward_bot_service
+        .snapshot_with_order_query(&order_query)
+        .await
+        .map_err(|error| {
             HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone())
         })?;
 
@@ -100,18 +66,8 @@ async fn read_reward_bot_snapshot(
         || query.plans_eligible.is_some()
         || query.plans_sort_by.is_some()
         || query.plans_sort_order.is_some();
-    let has_order_filters = query.orders_search.is_some()
-        || query.orders_status.is_some()
-        || query.orders_sort_by.is_some()
-        || query.orders_sort_order.is_some();
-
     let snapshot = if has_plan_filters {
         apply_plan_filters(snapshot, &query)
-    } else {
-        snapshot
-    };
-    let snapshot = if has_order_filters {
-        apply_order_filters(snapshot, &query)
     } else {
         snapshot
     };

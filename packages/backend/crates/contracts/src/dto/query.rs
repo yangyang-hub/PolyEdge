@@ -230,4 +230,10 @@ pub struct RewardBotSnapshotQuery {
     /// Sort direction: "asc" or "desc" (default "desc").
     #[serde(skip_serializing_if = "Option::is_none")]
     pub orders_sort_order: Option<String>,
+    /// 1-based orders page number.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub orders_page: Option<u16>,
+    /// Orders page size, clamped by the backend.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub orders_page_size: Option<u16>,
 }

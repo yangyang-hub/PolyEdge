@@ -14,6 +14,8 @@ export interface RewardBotSnapshotQuery {
   orders_status?: string;
   orders_sort_by?: string;
   orders_sort_order?: string;
+  orders_page?: number;
+  orders_page_size?: number;
 }
 
 export async function readRewardBotSnapshot(

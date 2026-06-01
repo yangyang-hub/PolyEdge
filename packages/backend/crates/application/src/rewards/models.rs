@@ -756,6 +756,7 @@ pub struct RewardBotSnapshot {
     pub markets: Vec<RewardMarket>,
     pub quote_plans: Vec<RewardQuotePlan>,
     pub orders: Vec<ManagedRewardOrder>,
+    pub orders_page: RewardListPage,
     pub positions: Vec<RewardPosition>,
     pub fills: Vec<RewardFill>,
     pub events: Vec<RewardRiskEvent>,

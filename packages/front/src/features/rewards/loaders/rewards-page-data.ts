@@ -7,8 +7,15 @@ export type RewardsPageData = {
   traceId: string;
 };
 
+const REWARD_ORDERS_PAGE_SIZE = 15;
+
 export async function getRewardsPageData(): Promise<RewardsPageData> {
-  const response = await readRewardBotSnapshot();
+  const response = await readRewardBotSnapshot({
+    orders_page: 1,
+    orders_page_size: REWARD_ORDERS_PAGE_SIZE,
+    orders_sort_by: "status",
+    orders_sort_order: "desc",
+  });
 
   return {
     snapshot: response.data,

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, startTransition, useState } from "react";
+import { startTransition, useState } from "react";
 import { Ban, Info, Play, RotateCcw, Save } from "lucide-react";
 
 import { MetricCard } from "@/components/shared/metric-card";
@@ -36,6 +36,11 @@ import { EventsPanel } from "./rewards-events-panel";
 import { RiskControlConfig } from "./rewards-risk-config";
 import { OrdersTable, QuotePlansTable } from "./rewards-tables";
 
+const REWARD_ORDERS_PAGE_SIZE = 15;
+
+type OrderStatusFilter = "all" | "open" | "filled" | "cancelled" | "exit_pending";
+type SortOrder = "asc" | "desc";
+
 export function RewardsWorkbench({ initialSnapshot }: { initialSnapshot: RewardBotSnapshotDto }) {
   const { dictionary } = useI18n();
   const [snapshot, setSnapshot] = useState(initialSnapshot);
@@ -51,25 +56,40 @@ export function RewardsWorkbench({ initialSnapshot }: { initialSnapshot: RewardB
 
   // Order filter/sort state
   const [ordersSearch, setOrdersSearch] = useState("");
-  const [ordersStatus, setOrdersStatus] = useState<"all" | "open" | "filled" | "cancelled" | "exit_pending">("all");
+  const [ordersStatus, setOrdersStatus] = useState<OrderStatusFilter>("all");
   const [ordersSortBy, setOrdersSortBy] = useState("status");
-  const [ordersSortOrder, setOrdersSortOrder] = useState<"asc" | "desc">("desc");
+  const [ordersSortOrder, setOrdersSortOrder] = useState<SortOrder>("desc");
+  const [ordersPage, setOrdersPage] = useState(initialSnapshot.orders_page?.page ?? 1);
 
-  const buildQuery = useCallback((): RewardBotSnapshotQuery => {
+  function buildQuery(overrides: {
+    search?: string;
+    status?: OrderStatusFilter;
+    sortBy?: string;
+    sortOrder?: SortOrder;
+    page?: number;
+  } = {}): RewardBotSnapshotQuery {
+    const search = overrides.search ?? ordersSearch;
+    const status = overrides.status ?? ordersStatus;
     const q: RewardBotSnapshotQuery = {};
-    if (ordersSearch.trim()) q.orders_search = ordersSearch.trim();
-    if (ordersStatus !== "all") q.orders_status = ordersStatus;
-    q.orders_sort_by = ordersSortBy;
-    q.orders_sort_order = ordersSortOrder;
+    if (search.trim()) q.orders_search = search.trim();
+    if (status !== "all") q.orders_status = status;
+    q.orders_sort_by = overrides.sortBy ?? ordersSortBy;
+    q.orders_sort_order = overrides.sortOrder ?? ordersSortOrder;
+    q.orders_page = overrides.page ?? ordersPage;
+    q.orders_page_size = REWARD_ORDERS_PAGE_SIZE;
     return q;
-  }, [ordersSearch, ordersStatus, ordersSortBy, ordersSortOrder]);
+  }
 
   const [filtering, setFiltering] = useState(false);
 
-  function refetchWithFilters() {
+  function refetchWithFilters(overrides?: Parameters<typeof buildQuery>[0]) {
+    const requestedPage = overrides?.page ?? ordersPage;
     setFiltering(true);
-    void readRewardBotSnapshot(buildQuery())
-      .then((response) => setSnapshot(response.data))
+    void readRewardBotSnapshot(buildQuery(overrides))
+      .then((response) => {
+        setSnapshot(response.data);
+        setOrdersPage(response.data.orders_page?.page ?? requestedPage);
+      })
       .finally(() => setFiltering(false));
   }
 
@@ -338,12 +358,30 @@ export function RewardsWorkbench({ initialSnapshot }: { initialSnapshot: RewardB
             <OrdersTable
               orders={snapshot.orders}
               search={ordersSearch}
-              onSearchChange={(v) => { setOrdersSearch(v); }}
+              onSearchChange={(v) => {
+                setOrdersSearch(v);
+                setOrdersPage(1);
+                refetchWithFilters({ search: v, page: 1 });
+              }}
               status={ordersStatus}
-              onStatusChange={(v) => { setOrdersStatus(v); refetchWithFilters(); }}
+              onStatusChange={(v) => {
+                setOrdersStatus(v);
+                setOrdersPage(1);
+                refetchWithFilters({ status: v, page: 1 });
+              }}
               sortBy={ordersSortBy}
               sortOrder={ordersSortOrder}
-              onSortChange={(by, order) => { setOrdersSortBy(by); setOrdersSortOrder(order); refetchWithFilters(); }}
+              onSortChange={(by, order) => {
+                setOrdersSortBy(by);
+                setOrdersSortOrder(order);
+                setOrdersPage(1);
+                refetchWithFilters({ sortBy: by, sortOrder: order, page: 1 });
+              }}
+              page={snapshot.orders_page}
+              onPageChange={(page) => {
+                setOrdersPage(page);
+                refetchWithFilters({ page });
+              }}
               filtering={filtering}
             />
           </CardContent>

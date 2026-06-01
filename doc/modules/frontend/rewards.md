@@ -27,6 +27,7 @@
 ## API 依赖
 
 - `src/lib/api/rewards.ts` — `readRewardBotSnapshot`、`updateRewardBotConfig`、`runRewardBotOnce`、`cancelRewardBotOrders`、`resetRewardBot`
+- `readRewardBotSnapshot()` 会传递订单分页/搜索/状态/排序 query；后端返回 `orders` 当前页和 `orders_page` 总数元数据
 
 ## 关键交互
 
@@ -50,6 +51,7 @@
 - 配置编辑（22 个数值参数）
 - 配置提示说明 `max_markets=0`、`max_open_orders=0`、`quote_size_usd=0` 都会停止新挂单；开放模拟买单软复用 `account_capital_usd`，单腿计划 notional 以 `min(quote_size_usd, account_capital_usd)` 为目标，已赚奖励只会在后端检测到新鲜缓存盘口后计提。
 - 报价计划默认展示可挂市场，本地支持全部/可挂/不可挂切换，并用状态标记说明每个当前候选计划是否符合最终过滤要求。
+- Managed orders 表格使用后端分页（默认每页 15 条），翻页、搜索、状态过滤和排序都会重新请求 `/api/v1/rewards-bot`。
 - 事件分类视图（挂单/撤单/吃单/奖励）
 - 当前只做模拟，不会实盘下单；策略和控制命令由 worker 执行，API 不直接执行 rewards 任务
 

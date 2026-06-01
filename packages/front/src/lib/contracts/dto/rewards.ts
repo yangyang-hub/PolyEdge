@@ -180,6 +180,13 @@ export type RewardBotStatusDto = {
   error?: string | null;
 };
 
+export type RewardListPageDto = {
+  page: number;
+  page_size: number;
+  total_items: number;
+  total_pages: number;
+};
+
 export type RewardBotSnapshotDto = {
   config: RewardBotConfigDto;
   status: RewardBotStatusDto;
@@ -187,6 +194,7 @@ export type RewardBotSnapshotDto = {
   markets: RewardMarketDto[];
   quote_plans: RewardQuotePlanDto[];
   orders: ManagedRewardOrderDto[];
+  orders_page: RewardListPageDto;
   positions: RewardPositionDto[];
   fills: RewardFillDto[];
   events: RewardRiskEventDto[];

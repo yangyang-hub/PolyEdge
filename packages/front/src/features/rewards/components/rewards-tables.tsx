@@ -17,6 +17,7 @@ import {
 import type {
   ManagedRewardOrderDto,
   RewardFillDto,
+  RewardListPageDto,
   RewardQuotePlanDto,
   RewardRiskEventDto,
 } from "@/lib/contracts/dto";
@@ -28,6 +29,7 @@ import {
   formatUsdFixed,
 } from "@/lib/formatters";
 import { usePagination } from "@/hooks/use-pagination";
+import type { PaginationState } from "@/hooks/use-pagination";
 import { useI18n } from "@/lib/i18n/client";
 
 import { rewardTone } from "../lib/rewards-helpers";
@@ -50,7 +52,7 @@ function FilterBar({
   onSearchChange: (v: string) => void;
   onSearchCommit: () => void;
   placeholder: string;
-  tabs: { key: string; label: string; count: number }[];
+  tabs: { key: string; label: string; count?: number }[];
   activeTab: string;
   onTabChange: (key: string) => void;
 }) {
@@ -81,7 +83,7 @@ function FilterBar({
             onClick={() => onTabChange(tab.key)}
           >
             {tab.label}
-            <span className="ml-1 opacity-70">{tab.count}</span>
+            {typeof tab.count === "number" ? <span className="ml-1 opacity-70">{tab.count}</span> : null}
           </button>
         ))}
       </div>
@@ -302,12 +304,14 @@ interface OrdersTableProps {
   sortBy: string;
   sortOrder: "asc" | "desc";
   onSortChange: (by: string, order: "asc" | "desc") => void;
+  page: RewardListPageDto;
+  onPageChange: (page: number) => void;
   filtering?: boolean;
 }
 
 export function OrdersTable({
   orders, search, onSearchChange, status, onStatusChange,
-  sortBy, sortOrder, onSortChange, filtering,
+  sortBy, sortOrder, onSortChange, page, onPageChange, filtering,
 }: OrdersTableProps) {
   const { dictionary } = useI18n();
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -322,11 +326,11 @@ export function OrdersTable({
   }, [onSearchChange]);
 
   const tabs = [
-    { key: "all", label: dictionary.rewards.filterAll, count: orders.length },
-    { key: "open", label: dictionary.rewards.filterOpen, count: orders.filter((o) => o.status === "open" || o.status === "planned").length },
-    { key: "filled", label: dictionary.rewards.filterFilled, count: orders.filter((o) => o.status === "filled").length },
-    { key: "cancelled", label: dictionary.rewards.filterCancelled, count: orders.filter((o) => o.status === "cancelled").length },
-    { key: "exit_pending", label: dictionary.rewards.filterExit, count: orders.filter((o) => o.status === "exit_pending").length },
+    { key: "all", label: dictionary.rewards.filterAll },
+    { key: "open", label: dictionary.rewards.filterOpen },
+    { key: "filled", label: dictionary.rewards.filterFilled },
+    { key: "cancelled", label: dictionary.rewards.filterCancelled },
+    { key: "exit_pending", label: dictionary.rewards.filterExit },
   ];
 
   function handleSort(field: string) {
@@ -337,7 +341,18 @@ export function OrdersTable({
     }
   }
 
-  const pagination = usePagination(orders.length, 15);
+  const pagination: PaginationState = {
+    page: page.page,
+    totalPages: page.total_pages,
+    start: 0,
+    end: orders.length,
+    setPage: onPageChange,
+    goPrevious: () => onPageChange(Math.max(1, page.page - 1)),
+    goNext: () => onPageChange(Math.min(page.total_pages, page.page + 1)),
+    reset: () => onPageChange(1),
+    hasPrevious: page.page > 1,
+    hasNext: page.page < page.total_pages,
+  };
 
   return (
     <div className="space-y-3">
@@ -375,7 +390,7 @@ export function OrdersTable({
               </TableCell>
             </TableRow>
           ) : (
-            orders.slice(pagination.start, pagination.end).map((order) => (
+            orders.map((order) => (
               <TableRow key={order.id}>
                 <TableCell>
                   <StatusPill tone={rewardTone(order.status)}>{order.status}</StatusPill>
@@ -389,7 +404,7 @@ export function OrdersTable({
           )}
         </TableBody>
       </Table>
-      <PaginationBar pagination={pagination} totalItems={orders.length} />
+      <PaginationBar pagination={pagination} totalItems={page.total_items} />
     </div>
   );
 }

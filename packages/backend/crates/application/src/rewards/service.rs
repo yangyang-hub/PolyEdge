@@ -43,6 +43,7 @@ pub trait RewardBotStore: Send + Sync {
     /// List all quote plans without a row limit (used by snapshot).
     async fn list_all_quote_plans(&self) -> Result<Vec<RewardQuotePlan>>;
     async fn list_orders(&self, limit: u16) -> Result<Vec<ManagedRewardOrder>>;
+    async fn list_orders_page(&self, query: &RewardOrderListQuery) -> Result<RewardOrderPage>;
     async fn list_positions(&self, limit: u16) -> Result<Vec<RewardPosition>>;
     async fn list_events(&self, limit: u16) -> Result<Vec<RewardRiskEvent>>;
     async fn log_event(&self, event: RewardRiskEvent) -> Result<()>;
@@ -291,11 +292,19 @@ impl RewardBotService {
     }
 
     pub async fn snapshot(&self) -> Result<RewardBotSnapshot> {
+        self.snapshot_with_order_query(&RewardOrderListQuery::default())
+            .await
+    }
+
+    pub async fn snapshot_with_order_query(
+        &self,
+        order_query: &RewardOrderListQuery,
+    ) -> Result<RewardBotSnapshot> {
         let config = self.read_config().await?;
         let account = self.store.load_account_state(&config).await?;
         let markets = self.store.list_all_active_markets().await?;
         let quote_plans = self.store.list_all_quote_plans().await?;
-        let orders = self.store.list_orders(200).await?;
+        let orders = self.store.list_orders_page(order_query).await?;
         let positions = self.store.list_positions(200).await?;
         let open_order_count = self
             .store
@@ -333,7 +342,8 @@ impl RewardBotService {
             account,
             markets,
             quote_plans,
-            orders,
+            orders: orders.items,
+            orders_page: orders.page,
             positions,
             fills,
             events,

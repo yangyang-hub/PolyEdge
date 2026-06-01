@@ -21,7 +21,7 @@
 | `market_event/` | 核心市场/事件/信号：`MarketEventService`、`MarketEventStore`（最大 Store trait） |
 | `execution/` | 执行管道：`ExecutionService`（组合 MarketEventService + RiskService） |
 | `risk.rs` | 风控：`RiskService`、`RiskStateStore`、`RiskPolicy`、kill-switch 命令 |
-| `rewards/` | 做市奖励：`RewardBotService`、`RewardBotStore`、模拟引擎 |
+| `rewards/` | 做市奖励：`RewardBotService`、`RewardBotStore`、模拟引擎、订单分页查询 |
 | `copytrade/` | 跟单：`CopyTradeService`、`CopyTradeStore`、模拟引擎 |
 | `arbitrage/` | 套利：`ArbitrageService`、`ArbitrageStore`、机会检测/验证 |
 | `news_ingestion.rs` | 新闻采集：`NewsIngestionService`、`NewsIngestionStore` |
@@ -80,16 +80,21 @@
 - Config：`load_config`、`save_config`（key-value 模式）
 - Markets：`upsert_markets`、`list_markets`、`list_all_active_markets`
 - Quote Plans：`save_quote_plans`（替换当前计划快照）、`list_quote_plans`
-- Orders/Positions/Events：完整 CRUD
+- Orders/Positions/Events：完整 CRUD；订单支持 `RewardOrderListQuery` 后端分页并在 snapshot 中返回 `orders_page`
 - Simulation：`apply_simulation_tick`（原子持久化 orders/fills/positions/ledger/events）、`reset_simulation`
 - Control Commands：`enqueue_control_command`、`claim_next_control_command`、`complete_control_command`、`fail_control_command`
 
-**服务：** `RewardBotService` — 读写配置、市场管理、快照聚合、rewards 控制命令入队/领取/完成状态管理
+**服务：** `RewardBotService` — 读写配置、市场管理、快照聚合、订单分页快照、rewards 控制命令入队/领取/完成状态管理
 
 **控制命令类型：**
 - `RewardControlAction`：`run_once`、`cancel_all`、`reset`
 - `RewardControlCommandStatus`：`pending`、`running`、`completed`、`failed`
 - `RewardControlCommand`：API 与 worker 之间的数据库命令消息
+
+**订单分页类型：**
+- `RewardOrderListQuery`：orders search/status/sort/page/page_size 查询
+- `RewardListPage`：`page`、`page_size`、`total_items`、`total_pages`
+- `RewardBotSnapshot.orders_page`：当前 `orders` 数组对应的分页元数据
 
 **模拟引擎：** `run_reward_simulation_tick`（在 `rewards/engine.rs` 中，通过 `include!` 拆分到 `engine/{reconcile,fills,quoting,rewards_calc,state}.rs`）
 

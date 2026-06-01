@@ -60,7 +60,7 @@
 | `catalog/postgres/` | `MarketEventStore`、`ArbitrageStore`、`NewsIngestionStore` | PostgreSQL |
 | `catalog/in_memory.rs` | 同上 | 内存（RwLock） |
 | `stores/rewards/postgres.rs` | `RewardBotStore` | PostgreSQL（key-value config + 完整表） |
-| `stores/rewards/postgres_control_commands.rs` / `postgres_writes.rs` | `RewardBotStore` 辅助 | 控制命令 SQL、旧 reserved 释放辅助 |
+| `stores/rewards/postgres_control_commands.rs` / `postgres_orders.rs` / `postgres_writes.rs` | `RewardBotStore` 辅助 | 控制命令 SQL、订单分页 SQL、旧 reserved 释放辅助 |
 | `stores/rewards/in_memory.rs` | 同上 | 内存 |
 | `stores/copytrade/postgres.rs` | `CopyTradeStore` | PostgreSQL（key-value config + 完整表） |
 | `stores/copytrade/postgres_control_commands.rs` / `postgres_rows.rs` / `postgres_writes.rs` | `CopyTradeStore` 辅助 | 控制命令 SQL、行映射、写入辅助 |
@@ -79,6 +79,7 @@
 - 常量：`SYSTEM_RUNTIME_STATE_ID = "global"`、`RISK_STATE_ID = "global"`
 - `db_error(code, context)` 辅助函数统一创建 `dependency_unavailable` 错误
 - `RewardBotStore.cancel_open_orders()` 在 Postgres/内存实现中兼容释放旧账本的 `reserved_usd`；新的 rewards 模拟开放买单不再逐单硬占用资金，订单列表优先返回 open-like 状态，避免大量历史成交/撤单淹没当前开放挂单。
+- `RewardBotStore.list_orders_page()` 在 Postgres 实现中通过 count + limit/offset 做服务端分页，支持 outcome/condition/token 搜索、状态过滤和 price/size/status 排序；内存实现保持相同语义。
 - `RewardBotStore.list_markets(limit)` 在 Postgres/内存实现中只返回 active reward markets，并按日奖励金额排序，用于 bounded rewards tick candidate pool；`save_quote_plans()` 会替换当前 quote plan 快照，避免旧的全量计划继续出现在 `/rewards`。
 - `RewardBotStore` 在 Postgres/内存实现中维护 `reward_control_commands` 队列；API 写入 pending 命令，worker 使用 claim/complete/fail 方法领取并更新执行状态。
 - `CopyTradeStore` 在 Postgres/内存实现中维护 `copytrade_control_commands` 队列；API 写入 pending 命令，worker 使用 claim/complete/fail 方法领取并更新执行状态。

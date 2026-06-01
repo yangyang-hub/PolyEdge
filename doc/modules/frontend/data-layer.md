@@ -1,6 +1,6 @@
 # 数据层（API Client + Actions + Contracts）
 
-最后更新：2026-05-31
+最后更新：2026-06-01
 
 ## 概述
 
@@ -24,7 +24,7 @@
 | `dto/signal.ts` | SignalDto、SignalLifecycleState 等 |
 | `dto/risk.ts` | RiskStateDto、RiskAlertDto 等 |
 | `dto/arbitrage.ts` | ArbitrageScanDto、ArbitrageOpportunityDto 等 |
-| `dto/rewards.ts` | RewardBotSnapshotDto、RewardBotConfigDto 等 |
+| `dto/rewards.ts` | RewardBotSnapshotDto、RewardBotConfigDto、RewardListPageDto 等 |
 | `dto/copytrade.ts` | CopyTradeSnapshotDto、CopyTradeConfigDto 等 |
 | `dto/position.ts` | PositionDto |
 | `dto/news.ts` | 新闻相关 DTO |
@@ -58,7 +58,7 @@
 | `signals.ts` | 67 | `listSignals`、`submitSignalExecutionRequest` | GET + POST |
 | `risk.ts` | 110 | `readRiskState`、`listRiskAlerts`、`listRiskBuckets`、`requestModeSwitch`、`releaseRiskControls`、`setKillSwitchState` | GET + POST |
 | `arbitrage.ts` | 49 | `listArbitrageScans`、`listArbitrageOpportunities`、`listArbitrageAnalysisRuns` | GET |
-| `rewards.ts` | 45 | `readRewardBotSnapshot`、`updateRewardBotConfig`、`runRewardBotOnce`、`cancelRewardBotOrders`、`resetRewardBot` | GET + POST |
+| `rewards.ts` | 61 | `readRewardBotSnapshot`、`updateRewardBotConfig`、`runRewardBotOnce`、`cancelRewardBotOrders`、`resetRewardBot` | GET + POST |
 | `copytrade.ts` | 86 | `readCopyTradeSnapshot`、`updateCopyTradeConfig`、`addTrackedWallet`、`removeTrackedWallet`、`setWalletStatus`、`runCopyTradeOnce`、`analyzeWallets`、`cancelCopyTradeOrders`、`resetCopyTrade` | GET + POST |
 | `positions.ts` | 45 | `listPositions` | GET（含字段映射） |
 | `events.ts` | 25 | `listEvents`、`listEvidences` | GET |
@@ -110,6 +110,7 @@ OperationActionResult → 更新 UI 状态
 - 14 个 API 模块文件覆盖所有后端端点
 - `actions.ts` 集中管理所有写操作的 Server Actions
 - DTO 类型镜像完整覆盖后端 contracts crate
+- Rewards snapshot DTO 包含 `orders_page`，`readRewardBotSnapshot()` 支持订单服务端分页 query
 - positions.ts 是唯一使用 `mapItem` 做字段重命名的模块
 
 ## 修改检查清单

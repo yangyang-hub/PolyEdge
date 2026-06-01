@@ -1,6 +1,6 @@
 # contracts（HTTP API DTO 层）
 
-最后更新：2026-05-31
+最后更新：2026-06-01
 
 ## 概述
 
@@ -34,6 +34,7 @@
 - 所有 DTO derive `Debug, Clone, Serialize, Deserialize`
 - 查询类型使用 `#[serde(skip_serializing_if = "Option::is_none")]`
 - 列表查询支持分页（limit/offset/cursor）
+- `RewardBotSnapshotQuery` 支持订单分页参数：`orders_page`、`orders_page_size`，并保留订单搜索/状态/排序参数
 - 响应使用 `ApiResponse<T>` 信封：`{ data: T, meta: ApiMeta }`
 - 列表响应使用 `ApiListResponse<T>`：`{ data: Vec<T>, meta: ApiMeta, total_count: i64 }`
 
@@ -46,6 +47,7 @@
 
 - 11 个领域 DTO 模块全部实现
 - 覆盖 markets、events、signals、orders、trades、positions、risk、arbitrage、rewards、copytrade、wallet-analysis、news、system
+- Rewards snapshot 查询契约包含订单后端分页字段，响应分页元数据由 application 的 `RewardBotSnapshot.orders_page` 序列化输出
 
 ## 修改检查清单
 
