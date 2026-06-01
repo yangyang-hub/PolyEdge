@@ -158,6 +158,7 @@ cargo run -p polyedge-worker -- analyze-wallets-once
 - `POLYEDGE_POLYMARKET__SIGNATURE_TYPE` 可选 `eoa`、`proxy`、`gnosis_safe`、`poly_1271`；新 Deposit Wallet 使用 `poly_1271`，并将 `POLYEDGE_POLYMARKET__FUNDER` 设置为 deposit wallet 地址。
 - 默认 arbitrage radar 和 news ingestion 是 disabled。
 - 默认 rewards bot worker 是 disabled；前端 `/rewards` 的 Run / Cancel / Reset 只会入队命令，worker 需要同时设置 `POLYEDGE_REWARDS__ENABLED=true` 和 `POLYEDGE_WORKER__POLL_REWARD_BOT=true` 才会领取并执行。`RewardBotConfig.execution_mode` 默认为 `validation`；切到 `live` 后还必须配置真实 Polymarket 凭证。要产生新挂单、validation 事件或 live post-only 下单，还需要确保 `polyedge-orderbook` 服务正在运行并同步了 reward 市场数据。
+- `deploy/.env*.example` 环境变量模板已为每个变量提供用途说明；`deploy/.env.polymarket.example` 提供 Polymarket CLOB V2 live、Proxy/Gnosis Safe、Deposit Wallet（`poly_1271`）和 Rewards live worker 配置示例，真实凭证默认注释，建议私钥只放 `deploy/.env.worker`。
 - Rewards bot 的 `max_markets=0`、`max_open_orders=0` 或 `quote_size_usd=0` 都表示不再新挂单；不是无限制。
 - Rewards bot validation 开放买单不会逐单锁定资金；`account_capital_usd=200` 时可以在多个市场同时生成 200U 级别 validation 买单，但 validation 成交会消耗 `available_usd`，后续 validation 成交仍受资金池现金限制。live 模式下未成交 post-only maker 买单也不在本地按全局 notional 硬锁资金；`stale_book_ms=0` 只关闭盘口年龄检查，仍要求盘口存在且非空，开放 live 订单缺盘口会被撤单。
 - 默认跟单 worker 是 disabled；前端 `/copy-trading` 的 Run / Analyze / Cancel / Reset 只会入队命令，worker 需要设置 `POLYEDGE_COPYTRADE__ENABLED=true` + `POLYEDGE_WORKER__POLL_COPYTRADE=true` 才会领取并执行；`POLYEDGE_WORKER__ANALYZE_WALLETS=true` 仍用于独立钱包分析循环。
@@ -180,6 +181,7 @@ git add bin/polyedge-api bin/polyedge-worker bin/polyedge-orderbook
 cp deploy/.env.example deploy/.env
 # 编辑 deploy/.env，填入外部 PostgreSQL URL 和控制台 step-up code
 # 各服务专属配置见 deploy/.env.{api,orderbook,worker,front}.example
+# Polymarket live / Deposit Wallet 示例见 deploy/.env.polymarket.example
 ./scripts/deploy.sh all
 ```
 

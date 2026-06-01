@@ -12,7 +12,12 @@
 |---|---|
 | `deploy/docker-compose.yml` | 服务编排 |
 | `deploy/backend.Dockerfile` | 后端部署镜像（debian:trixie-slim + `bin/` 预构建二进制） |
-| `deploy/.env.example` | 环境变量模板 |
+| `deploy/.env.example` | 公共环境变量模板；每个变量均有用途说明 |
+| `deploy/.env.api.example` | API 服务环境变量模板；每个变量均有用途说明 |
+| `deploy/.env.orderbook.example` | Orderbook 服务环境变量模板；每个变量均有用途说明 |
+| `deploy/.env.worker.example` | Worker 服务环境变量模板；每个变量均有用途说明 |
+| `deploy/.env.front.example` | Frontend 服务环境变量模板；每个变量均有用途说明 |
+| `deploy/.env.polymarket.example` | Polymarket CLOB V2 live、Proxy/Gnosis Safe、Deposit Wallet、Rewards live worker 配置示例；每个变量均有用途说明 |
 | `scripts/deploy.sh` | 部署脚本（auto + manual 模式） |
 | `scripts/build-backend-bin.sh` | 后端二进制构建脚本 |
 | `packages/backend/Dockerfile` | 后端镜像兼容模板（旧的仓库根 context 形式；Compose 部署不再使用） |
@@ -65,6 +70,7 @@
 - Docker 部署中所有 `POLYEDGE_WORKER__...` 后台任务默认由 Compose 覆盖为 `false`，需要在 `deploy/.env.worker` 显式改为 `true` 才会启动对应任务
 - 通过 `POLYEDGE_ORDERBOOK__SERVICE_URL` 连接 orderbook 服务读取盘口数据和注册 token
 - 环境变量：`.env` + `.env.worker`
+- Polymarket live / Deposit Wallet 配置示例见 `deploy/.env.polymarket.example`；建议只把私钥放入 `.env.worker`，避免进入 API/Front 容器环境
 
 ### polyedge-front
 
@@ -111,6 +117,7 @@
 - `POLYEDGE_POSTGRES__URL` 不能包含 "change-me"
 - `POLYEDGE_CONSOLE_STEP_UP_CODE` 不能为空或 "change-me"
 - `POLYEDGE_INTERNAL_AUTH_DEV_BYPASS=1` 仅在 `POLYEDGE_RUNTIME__ENVIRONMENT=local` 时允许
+- `deploy/.env*.example` 中每个变量上一段注释说明了变量含义、适用服务和安全注意事项
 
 ## 必需环境变量
 
@@ -139,6 +146,12 @@
 | `POLYEDGE_WORKER__POLL_REWARD_BOT` | `false`（Compose 覆盖） | 部署 worker 是否运行 rewards full tick + fast reconcile loop |
 | `POLYEDGE_ORDERBOOK_STREAM__ENABLED` | `true` | orderbook stream 功能开关；Compose 中还需打开 worker 任务 |
 | `POLYEDGE_ORDERBOOK_STREAM__MAX_TOKENS` | `20000` | orderbook stream 订阅 token 上限，过低会导致 rewards 覆盖不全 |
+
+## Polymarket live 配置示例
+
+`deploy/.env.polymarket.example` 提供 EOA、Proxy/Gnosis Safe、Deposit Wallet（`poly_1271`）三类账户示例，以及 rewards live worker 开关示例。真实凭证默认全部注释，使用时按账户类型复制到 `deploy/.env.worker` 或公共 `.env`；私钥优先只放 `.env.worker`。
+
+Deposit Wallet 路径要求钱包已经部署、已入金 pUSD 并完成必要 approval。当前系统不会执行 relayer wallet-create、pUSD 包装或 approval 批处理；connector 在下单前会调用 CLOB `balance-allowance/update`。
 
 ## 后端二进制构建
 
