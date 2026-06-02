@@ -73,7 +73,7 @@ use std::{
 };
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use tower::ServiceBuilder;
-use tower_http::{limit::RequestBodyLimitLayer, timeout::TimeoutLayer, trace::TraceLayer};
+use tower_http::{cors::CorsLayer, limit::RequestBodyLimitLayer, timeout::TimeoutLayer, trace::TraceLayer};
 
 const CONNECTOR_ORDER_STATUS_SOURCE: &str = "connector.orders.status";
 const CONNECTOR_TRADE_FILL_SOURCE: &str = "connector.trades.fill";
@@ -428,6 +428,7 @@ pub fn build_app(state: AppState) -> Router {
         )
         .nest("/api/v1/system", system_routes)
         .with_state(state)
+        .layer(CorsLayer::permissive())
         .layer(
             ServiceBuilder::new()
                 .layer(RequestBodyLimitLayer::new(1024 * 1024))
