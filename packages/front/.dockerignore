@@ -3,14 +3,12 @@
 .env.*
 !.env.example
 
-# 构建产物和依赖
+# 构建产物和依赖（注意：out/ 不能排除，Dockerfile 需要 COPY 预构建产物）
 node_modules
 .next
-out
 dist
 coverage
 .turbo
-*.tsbuildinfo
 *.tsbuildinfo
 next-env.d.ts
 

@@ -74,7 +74,7 @@
 
 ### polyedge-front
 
-- 镜像：3 阶段构建（node:20 deps → yarn build → nginx:1.27-alpine）
+- 镜像：本机 `yarn build` 预编译静态文件到 `out/`，Docker 镜像仅 `COPY out/` 到 nginx（无容器内编译）
 - 端口：`0.0.0.0:33002 → container:80`
 - 健康检查：`wget /healthz`
 - 入口脚本验证 `POLYEDGE_CONSOLE_STEP_UP_CODE` 已设置

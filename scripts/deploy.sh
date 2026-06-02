@@ -213,6 +213,17 @@ frontend_hash() {
   fi
 }
 
+# Build frontend static files locally (yarn build -> out/).
+# The Dockerfile copies out/ into the nginx image without container-side compilation.
+build_frontend() {
+  local front_dir="${deploy_dir}/packages/front"
+  [[ -f "${front_dir}/package.json" ]] || fail "packages/front/package.json not found"
+  log "building frontend static files (yarn build)"
+  (cd "${front_dir}" && yarn install --frozen-lockfile && yarn build) || fail "frontend yarn build failed"
+  [[ -d "${front_dir}/out" ]] || fail "frontend build did not produce out/ directory"
+  log "frontend build complete ($(du -sh "${front_dir}/out" | cut -f1))"
+}
+
 # Check if a docker compose service container is running.
 # Returns 0 if running, 1 if not.
 container_running() {
@@ -473,6 +484,10 @@ if [[ "${mode}" == "auto" ]]; then
   fi
 
   if [[ ${#build_services[@]} -gt 0 ]]; then
+    # Build frontend static files locally before Docker image build
+    if printf '%s\n' "${build_services[@]}" | grep -qx 'polyedge-front'; then
+      build_frontend
+    fi
     log "building images: ${build_services[*]} (COMPOSE_PARALLEL_LIMIT=${COMPOSE_PARALLEL_LIMIT})"
     ${compose_cmd} --env-file "${env_file}" -f "${compose_file}" build --pull "${build_services[@]}"
     save_deploy_state "${state_file}"
@@ -514,6 +529,11 @@ else
     [[ -f "bin/polyedge-api" ]] || fail "bin/polyedge-api is missing. Build it with scripts/build-backend-bin.sh and commit it."
     [[ -f "bin/polyedge-worker" ]] || fail "bin/polyedge-worker is missing. Build it with scripts/build-backend-bin.sh and commit it."
     [[ -f "bin/polyedge-orderbook" ]] || fail "bin/polyedge-orderbook is missing. Build it with scripts/build-backend-bin.sh and commit it."
+  fi
+
+  # Build frontend static files locally before Docker image build
+  if printf '%s\n' "${build_services[@]}" | grep -qx 'polyedge-front'; then
+    build_frontend
   fi
 
   log "building images: ${build_services[*]} (COMPOSE_PARALLEL_LIMIT=${COMPOSE_PARALLEL_LIMIT})"
