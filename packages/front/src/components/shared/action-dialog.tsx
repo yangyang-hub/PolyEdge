@@ -15,7 +15,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { OperationFeedbackBanner } from "@/components/shared/operation-feedback-banner";
-import { useI18n } from "@/lib/i18n/client";
+import { dictionary } from "@/lib/i18n/dictionaries";
 
 type ActionDialogProps = {
   open: boolean;
@@ -60,8 +60,6 @@ export function ActionDialog({
   context,
   children,
 }: ActionDialogProps) {
-  const { dictionary } = useI18n();
-
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-lg border-white/10 bg-card p-0">

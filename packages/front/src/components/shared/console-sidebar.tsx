@@ -19,12 +19,13 @@ import {
 } from "lucide-react";
 
 
-import { useI18n } from "@/lib/i18n/client";
+import type { Dictionary } from "@/lib/i18n/dictionaries";
+import { dictionary } from "@/lib/i18n/dictionaries";
 import { cn } from "@/lib/utils";
 
 type NavItem = {
   href: string;
-  labelKey: keyof ReturnType<typeof useI18n>["dictionary"]["nav"];
+  labelKey: keyof Dictionary["nav"];
   icon: LucideIcon;
 };
 
@@ -45,10 +46,9 @@ const navItems: NavItem[] = [
 
 export function ConsoleSidebar() {
   const pathname = usePathname();
-  const { dictionary } = useI18n();
 
   return (
-    <aside className="group fixed inset-y-0 left-0 z-40 hidden w-16 overflow-hidden bg-sidebar transition-all duration-300 hover:w-64 md:flex md:flex-col">
+    <aside className="group fixed inset-y-0 left-0 z-40 hidden w-16 overflow-hidden bg-sidebar transition-all duration-300 hover:w-264 md:flex md:flex-col">
       <div className="flex h-14 items-center gap-4 px-4 whitespace-nowrap">
         <div className="flex size-7 shrink-0 items-center justify-center rounded-sm bg-primary/15 font-heading text-sm font-black text-primary">
           P

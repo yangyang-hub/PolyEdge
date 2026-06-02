@@ -1,5 +1,6 @@
 // Per-tick reconciliation of resting orders against fresh books: risk checks, drift cancels, and validation fills.
 
+#[allow(dead_code)]
 impl TickContext {
     fn reconcile_open_orders(
         &mut self,

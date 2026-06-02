@@ -16,9 +16,8 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import type {
   PostFillStrategy,
   RewardBotConfigDto,
-  RewardExecutionMode,
 } from "@/lib/contracts/dto";
-import { useI18n } from "@/lib/i18n/client";
+import { dictionary } from "@/lib/i18n/dictionaries";
 
 import type { NumberConfigKey } from "../types";
 import { NumberInput } from "./number-input";
@@ -36,7 +35,6 @@ export function RewardsConfigPanel({
   setDraft,
   updateNumber,
 }: RewardsConfigPanelProps) {
-  const { dictionary } = useI18n();
   const h = dictionary.rewards.configHints;
 
   return (
@@ -60,26 +58,6 @@ export function RewardsConfigPanel({
                 setDraft((current) => ({ ...current, account_id: event.target.value }))
               }
             />
-          </label>
-
-          <label className="space-y-1.5">
-            <span className="flex items-center gap-1 text-xs font-medium text-muted-foreground">
-              {dictionary.rewards.executionMode}
-              <Hint content={h.executionMode} />
-            </span>
-            <select
-              className={selectClassName}
-              value={draft.execution_mode}
-              onChange={(event) =>
-                setDraft((current) => ({
-                  ...current,
-                  execution_mode: event.target.value as RewardExecutionMode,
-                }))
-              }
-            >
-              <option value="validation">{dictionary.rewards.modeValidation}</option>
-              <option value="live">{dictionary.rewards.modeLive}</option>
-            </select>
           </label>
 
           <ToggleField

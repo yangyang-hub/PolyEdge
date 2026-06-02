@@ -1,7 +1,7 @@
 "use client";
 
 import { ActionDialog } from "@/components/shared/action-dialog";
-import { useI18n } from "@/lib/i18n/client";
+import { dictionary } from "@/lib/i18n/dictionaries";
 import type { OperationActionResult } from "@/lib/api/actions";
 
 import type { RiskDialog, RiskPageData } from "../types";
@@ -33,7 +33,6 @@ export function RiskActionDialogs({
   onSubmitRelease: () => void;
   onSubmitKillSwitch: () => void;
 }) {
-  const { dictionary } = useI18n();
 
   return (
     <>

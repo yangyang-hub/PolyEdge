@@ -1,32 +1,29 @@
-import type { Locale } from "@/lib/i18n/locales";
-import { sharedEn, sharedZh } from "./dictionaries/shared";
-import { enumsEn, enumsZh } from "./dictionaries/enums";
-import { dashboardEn, dashboardZh } from "./dictionaries/dashboard";
-import { marketsEn, marketsZh } from "./dictionaries/markets";
-import { signalsEn, signalsZh } from "./dictionaries/signals";
-import { positionsEn, positionsZh } from "./dictionaries/positions";
-import { riskEn, riskZh } from "./dictionaries/risk";
-import { radarEn, radarZh } from "./dictionaries/radar";
-import { rewardsEn, rewardsZh } from "./dictionaries/rewards";
-import { copytradeEn, copytradeZh } from "./dictionaries/copytrade";
-import { opsEn, opsZh } from "./dictionaries/ops";
-import { walletAnalysisEn, walletAnalysisZh } from "./dictionaries/wallet-analysis";
+import { shared } from "./dictionaries/shared";
+import { enums } from "./dictionaries/enums";
+import { dashboard } from "./dictionaries/dashboard";
+import { markets } from "./dictionaries/markets";
+import { signals } from "./dictionaries/signals";
+import { positions } from "./dictionaries/positions";
+import { risk } from "./dictionaries/risk";
+import { radar } from "./dictionaries/radar";
+import { rewards } from "./dictionaries/rewards";
+import { copytrade } from "./dictionaries/copytrade";
+import { ops } from "./dictionaries/ops";
+import { walletAnalysis } from "./dictionaries/wallet-analysis";
 
-const enUS = {
-  localeName: "English",
-  shortLocaleName: "EN",
-  ...sharedEn,
-  ...enumsEn,
-  ...dashboardEn,
-  ...marketsEn,
-  ...signalsEn,
-  ...positionsEn,
-  ...riskEn,
-  ...radarEn,
-  ...rewardsEn,
-  ...copytradeEn,
-  ...opsEn,
-  ...walletAnalysisEn,
+const _dictionary = {
+  ...shared,
+  ...enums,
+  ...dashboard,
+  ...markets,
+  ...signals,
+  ...positions,
+  ...risk,
+  ...radar,
+  ...rewards,
+  ...copytrade,
+  ...ops,
+  ...walletAnalysis,
 } as const;
 
 type DeepStringRecord<T> = {
@@ -37,34 +34,9 @@ type DeepStringRecord<T> = {
       : T[K];
 };
 
-export type Dictionary = DeepStringRecord<typeof enUS>;
+export type Dictionary = DeepStringRecord<typeof _dictionary>;
 
-const zhCN = {
-  ...enUS,
-  localeName: "中文",
-  shortLocaleName: "中",
-  ...sharedZh,
-  ...enumsZh,
-  ...dashboardZh,
-  ...marketsZh,
-  ...signalsZh,
-  ...positionsZh,
-  ...riskZh,
-  ...radarZh,
-  ...rewardsZh,
-  ...copytradeZh,
-  ...opsZh,
-  ...walletAnalysisZh,
-} satisfies Dictionary;
-
-export const dictionaries = {
-  "en-US": enUS,
-  "zh-CN": zhCN,
-} satisfies Record<Locale, Dictionary>;
-
-export function getDictionary(locale: Locale): Dictionary {
-  return dictionaries[locale];
-}
+export const dictionary: Dictionary = _dictionary;
 
 export function formatMessage(template: string, values?: Record<string, string | number>): string {
   if (!values) {
@@ -77,6 +49,6 @@ export function formatMessage(template: string, values?: Record<string, string |
   );
 }
 
-export function translateEnum(dictionary: Dictionary, value: string): string {
+export function translateEnum(value: string): string {
   return dictionary.enums[value as keyof Dictionary["enums"]] ?? value.replaceAll("_", " ");
 }

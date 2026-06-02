@@ -7,12 +7,8 @@ import { getSettingsPageData } from "@/features/settings/loaders/settings-page-d
 export default function SettingsPage() {
   return (
     <ClientDataBoundary load={getSettingsPageData}>
-      {(data, i18n) => (
-        <SettingsWorkbench
-          data={data}
-          dictionary={i18n.dictionary}
-          format={i18n.format}
-        />
+      {(data) => (
+        <SettingsWorkbench data={data} />
       )}
     </ClientDataBoundary>
   );

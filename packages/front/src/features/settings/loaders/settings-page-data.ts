@@ -1,5 +1,5 @@
 import { getConsoleAuthMode } from "@/lib/console-auth";
-import type { I18nRuntime } from "@/lib/i18n/runtime";
+import { dictionary, translateEnum, formatMessage } from "@/lib/i18n/dictionaries";
 import {
   formatClock,
   formatInteger,
@@ -26,13 +26,12 @@ function sourceHealthTone(healthScore: string, consecutiveFailures: number): Ton
   return "success";
 }
 
-export async function getSettingsPageData(i18n: I18nRuntime) {
+export async function getSettingsPageData() {
   const [{ data: sourceHealth }, { data: rawNews }, { data: runtimeConfig }] = await Promise.all([
     listNewsSourceHealth({ limit: 10 }),
     listNewsRawEvents({ limit: 8 }),
     readRuntimeConfig(),
   ]);
-  const { dictionary, enumLabel, format } = i18n;
   const degradedSources = sourceHealth.filter(
     (source) => sourceHealthTone(source.health_score, source.consecutive_failures) !== "success",
   );
@@ -44,13 +43,13 @@ export async function getSettingsPageData(i18n: I18nRuntime) {
     runtimeConfig,
     sourceHealthSummary: {
       label: degradedSources.length > 0
-        ? format(dictionary.settings.degraded, { count: degradedSources.length })
+        ? formatMessage(dictionary.settings.degraded, { count: degradedSources.length })
         : dictionary.common.healthy,
       tone: degradedSources.length > 0 ? ("warning" as const) : ("success" as const),
     },
     sourceHealth: sourceHealth.map((source) => ({
       source: source.source,
-      typeLabel: enumLabel(source.source_type),
+      typeLabel: translateEnum(source.source_type),
       enabledLabel: source.enabled ? dictionary.common.enabled : dictionary.common.disabled,
       healthScoreLabel: formatPercentFromRatio(source.health_score),
       healthScoreWidth: formatPercentFromRatio(source.health_score),
@@ -68,7 +67,7 @@ export async function getSettingsPageData(i18n: I18nRuntime) {
     rawNews: rawNews.map((event) => ({
       id: event.id,
       source: event.source,
-      typeLabel: enumLabel(event.source_type),
+      typeLabel: translateEnum(event.source_type),
       title: event.title,
       url: event.url,
       externalId: event.external_id,

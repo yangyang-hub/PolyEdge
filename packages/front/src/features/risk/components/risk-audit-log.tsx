@@ -8,7 +8,7 @@ import { EmptyPanel } from "@/components/shared/empty-panel";
 import { PaginationBar } from "@/components/pagination-bar";
 import { StatusPill } from "@/components/shared/status-pill";
 import { usePagination } from "@/hooks/use-pagination";
-import { useI18n } from "@/lib/i18n/client";
+import { dictionary, translateEnum } from "@/lib/i18n/dictionaries";
 
 import type { RiskAlertFilter, RiskPageData } from "../types";
 
@@ -25,7 +25,6 @@ export function RiskAuditLog({
   onExport: () => void;
   onManage: (alert: RiskPageData["alerts"][number]) => void;
 }) {
-  const { dictionary, enumLabel } = useI18n();
   const pagination = usePagination(visibleAlerts.length, 20);
 
   useEffect(() => {
@@ -63,7 +62,7 @@ export function RiskAuditLog({
               }
               onClick={() => onAlertFilterChange(status)}
             >
-              {enumLabel(status)}
+              {translateEnum(status)}
             </Button>
           ))}
           <Button
@@ -96,7 +95,7 @@ export function RiskAuditLog({
               {visibleAlerts.slice(pagination.start, pagination.end).map((alert) => (
                 <tr key={alert.id} className="transition-colors hover:bg-accent/35">
                   <td className="px-5 py-4">
-                    <StatusPill tone={alert.severityTone}>{enumLabel(alert.severity)}</StatusPill>
+                    <StatusPill tone={alert.severityTone}>{translateEnum(alert.severity)}</StatusPill>
                   </td>
                   <td className="px-5 py-4 font-mono text-sm text-foreground">{alert.reason}</td>
                   <td className="px-5 py-4 text-sm text-foreground">{alert.target}</td>

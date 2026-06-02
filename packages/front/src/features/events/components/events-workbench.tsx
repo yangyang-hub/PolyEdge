@@ -8,7 +8,7 @@ import { PaginationBar } from "@/components/pagination-bar";
 import { StatusPill } from "@/components/shared/status-pill";
 import { useConsoleRealtimeChannel } from "@/components/shared/console-realtime-provider";
 import { usePagination } from "@/hooks/use-pagination";
-import { useI18n } from "@/lib/i18n/client";
+import { dictionary, translateEnum, formatMessage, type Dictionary } from "@/lib/i18n/dictionaries";
 import type { ConsoleEventStreamPayload, SignalStreamPayload } from "@/lib/contracts/realtime";
 import {
   formatPercentFromRatio,
@@ -23,7 +23,7 @@ type EventItem = EventsPageData["events"][number];
 function buildEventItem(
   payload: ConsoleEventStreamPayload,
   current: EventItem | undefined,
-  dictionary: ReturnType<typeof useI18n>["dictionary"],
+  dictionary: Dictionary,
 ): EventItem {
   return {
     id: payload.event_id,
@@ -45,7 +45,7 @@ function buildEventItem(
 function upsertEvent(
   events: EventItem[],
   payload: ConsoleEventStreamPayload,
-  dictionary: ReturnType<typeof useI18n>["dictionary"],
+  dictionary: Dictionary,
 ): EventItem[] {
   const current = events.find((event) => event.id === payload.event_id);
   const nextEvent = buildEventItem(payload, current, dictionary);
@@ -60,14 +60,14 @@ function upsertEvent(
 function patchLinkedSignals(
   events: EventItem[],
   payload: SignalStreamPayload,
-  enumLabel: (value: string) => string,
+  translateEnum: (value: string) => string,
 ): EventItem[] {
   const nextSignal = {
     id: payload.signal_id,
     marketId: payload.market_id,
     marketQuestion: payload.market_question ?? payload.market_id,
     edge: payload.edge ? formatSignedFixed(payload.edge) : "0.00",
-    stateLabel: enumLabel(payload.lifecycle_state),
+    stateLabel: translateEnum(payload.lifecycle_state),
     stateTone: signalStateTone(payload.lifecycle_state),
   };
 
@@ -99,7 +99,6 @@ export function EventsWorkbench({ data }: { data: EventsPageData }) {
   const [selectedId, setSelectedId] = useState(data.selectedEventId);
   const { lastEvent: lastConsoleEvent } = useConsoleRealtimeChannel("events");
   const { lastEvent: lastSignalEvent } = useConsoleRealtimeChannel("signals");
-  const { dictionary, enumLabel, format } = useI18n();
 
   useEffect(() => {
     const streamEvent = lastConsoleEvent;
@@ -121,9 +120,9 @@ export function EventsWorkbench({ data }: { data: EventsPageData }) {
     }
 
     startTransition(() => {
-      setEventItems((currentItems) => patchLinkedSignals(currentItems, streamEvent.data, enumLabel));
+      setEventItems((currentItems) => patchLinkedSignals(currentItems, streamEvent.data, translateEnum));
     });
-  }, [enumLabel, lastSignalEvent]);
+  }, [translateEnum, lastSignalEvent]);
 
   const selectedEvent =
     eventItems.find((event) => event.id === selectedId) ??
@@ -140,7 +139,7 @@ export function EventsWorkbench({ data }: { data: EventsPageData }) {
         description={dictionary.events.description}
         actions={
           <>
-            <StatusPill tone="primary">{format(dictionary.events.eventCount, { count: eventItems.length })}</StatusPill>
+            <StatusPill tone="primary">{formatMessage(dictionary.events.eventCount, { count: eventItems.length })}</StatusPill>
             <StatusPill tone="success">{dictionary.common.streamSynced}</StatusPill>
           </>
         }

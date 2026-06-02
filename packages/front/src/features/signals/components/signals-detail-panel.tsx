@@ -5,7 +5,7 @@ import { Send } from "lucide-react";
 import { MeterBar } from "@/components/shared/meter-bar";
 import { StatusPill } from "@/components/shared/status-pill";
 import { Button } from "@/components/ui/button";
-import { useI18n } from "@/lib/i18n/client";
+import { dictionary } from "@/lib/i18n/dictionaries";
 
 import { canSubmitExecution } from "../lib/signals-helpers";
 import type { RuntimeControls, SelectedSignal, SignalActionDialog, SignalItem } from "../types";
@@ -19,7 +19,6 @@ export function SignalsDetailPanel({
   runtimeControls: RuntimeControls;
   onOpenAction?: (signalId: string, dialog: Exclude<SignalActionDialog, null>) => void;
 }) {
-  const { dictionary } = useI18n();
   const executionEnabled = canSubmitExecution(signal, runtimeControls);
 
   return (

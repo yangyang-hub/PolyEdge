@@ -1,5 +1,4 @@
 import { formatMessage, type Dictionary } from "@/lib/i18n/dictionaries";
-import type { Locale } from "@/lib/i18n/locales";
 
 type GeneratedCopyKey = keyof Dictionary["generated"];
 
@@ -44,7 +43,6 @@ const exactGeneratedCopyKeys: Record<string, GeneratedCopyKey> = {
 };
 
 export function localizeGeneratedCopy(
-  locale: Locale,
   dictionary: Dictionary,
   value: string,
 ): string {
@@ -76,26 +74,13 @@ export function localizeGeneratedCopy(
     });
   }
 
-  if (locale === "zh-CN") {
-    return normalizedValue
-      .replaceAll("manual confirmation", "风控校验")
-      .replaceAll("operator confirmation", "风控校验")
-      .replaceAll("operator review", "风控校验")
-      .replaceAll("manual review", dictionary.enums.manual_review)
-      .replaceAll("approval", "风险")
-      .replaceAll("approved", "可执行")
-      .replaceAll("observe only", dictionary.enums.observe_only)
-      .replaceAll("tradable", dictionary.enums.tradable);
-  }
-
   return normalizedValue
-    .replaceAll("manual confirmation", "risk validation")
-    .replaceAll("operator confirmation", "risk validation")
-    .replaceAll("operator review", "risk validation")
+    .replaceAll("manual confirmation", "风控校验")
+    .replaceAll("operator confirmation", "风控校验")
+    .replaceAll("operator review", "风控校验")
     .replaceAll("manual review", dictionary.enums.manual_review)
-    .replaceAll("approval", "risk")
-    .replaceAll("approved", "eligible")
-    .replaceAll("manual review", dictionary.enums.manual_review)
+    .replaceAll("approval", "风险")
+    .replaceAll("approved", "可执行")
     .replaceAll("observe only", dictionary.enums.observe_only)
     .replaceAll("tradable", dictionary.enums.tradable);
 }

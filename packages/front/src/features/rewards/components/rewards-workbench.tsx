@@ -8,7 +8,7 @@ import { PageHeader } from "@/components/shared/page-header";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type { RewardBotConfigDto, RewardBotSnapshotDto } from "@/lib/contracts/dto";
-import { useI18n } from "@/lib/i18n/client";
+import { dictionary } from "@/lib/i18n/dictionaries";
 import {
   cancelRewardBotOrdersAction,
   resetRewardBotAction,
@@ -36,7 +36,6 @@ type OrderStatusFilter = "all" | "open" | "filled" | "cancelled" | "exit_pending
 type SortOrder = "asc" | "desc";
 
 export function RewardsWorkbench({ initialSnapshot }: { initialSnapshot: RewardBotSnapshotDto }) {
-  const { dictionary } = useI18n();
   const [snapshot, setSnapshot] = useState(initialSnapshot);
   const [draft, setDraft] = useState<RewardBotConfigDto>(initialSnapshot.config);
   const [feedback, setFeedback] = useState<RewardBotActionResult | null>(null);

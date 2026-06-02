@@ -9,13 +9,6 @@ import {
   randomUUID,
 } from "@/lib/api/base";
 
-type LiveSystemModeWriteResponse = ApiResponse<{
-  mode: RiskStateDto["mode"];
-  environment: RiskStateDto["environment"];
-  version: number;
-  updated_at: string;
-}>;
-
 export async function readRiskState(): Promise<ApiResponse<RiskStateDto>> {
   return fetchContract<ApiResponse<RiskStateDto>>("/api/v1/risk/state");
 }
@@ -31,31 +24,6 @@ export async function listRiskAlerts(query?: ContractListQuery): Promise<ApiList
 
 export async function listRiskBuckets(query?: ContractListQuery): Promise<ApiListResponse<RiskBucketDto>> {
   return fetchListContract(`/api/v1/risk/buckets${buildQueryString({ limit: query?.limit })}`);
-}
-
-export async function requestModeSwitch(input: {
-  currentMode: string;
-  targetMode: string;
-  note: string;
-  stepUpCode: string;
-}): Promise<WriteResponse> {
-  return fetchWriteContract(
-    "/api/v1/system/mode",
-    {
-      method: "POST",
-      idempotencyKey: `mode-${input.currentMode}-${input.targetMode}-${randomUUID()}`,
-      body: {
-        to_mode: input.targetMode,
-        reason: input.note,
-      },
-      stepUpCode: input.stepUpCode,
-      stepUpScopes: ["system_mode_switch"],
-    },
-    {
-      mapLiveResponse: (payload: LiveSystemModeWriteResponse) =>
-        createWriteResponse(`mode_switch_${payload.data.mode}`, "runtime_mode", "completed"),
-    },
-  );
 }
 
 export async function releaseRiskControls(input: {

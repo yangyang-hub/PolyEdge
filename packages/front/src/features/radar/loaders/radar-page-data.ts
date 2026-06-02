@@ -9,7 +9,7 @@ import {
   formatPercentFromRatio,
 } from "@/lib/formatters";
 import type { Dictionary } from "@/lib/i18n/dictionaries";
-import type { I18nRuntime } from "@/lib/i18n/runtime";
+import { dictionary as dict, translateEnum, formatMessage } from "@/lib/i18n/dictionaries";
 import {
   listArbitrageAnalysisRuns,
   listArbitrageOpportunities,
@@ -117,7 +117,7 @@ function buildAnalysis(
   };
 }
 
-export async function getRadarPageData(i18n: I18nRuntime): Promise<RadarPageData> {
+export async function getRadarPageData(): Promise<RadarPageData> {
   const [{ data: scans }, { data: opportunities }, { data: analysisRuns }, { data: markets }] =
     await Promise.all([
       listArbitrageScans({ limit: 8 }),
@@ -125,7 +125,6 @@ export async function getRadarPageData(i18n: I18nRuntime): Promise<RadarPageData
       listArbitrageAnalysisRuns({ limit: 1 }),
       listMarkets({ limit: 200 }),
     ]);
-  const { dictionary, enumLabel, format } = i18n;
 
   const marketIndex = new Map(markets.map((market) => [market.id, market]));
   const sortedOpportunities = opportunities
@@ -144,46 +143,46 @@ export async function getRadarPageData(i18n: I18nRuntime): Promise<RadarPageData
     selectedOpportunityId,
     metrics: [
       {
-        title: dictionary.metrics.latestScan,
+        title: dict.metrics.latestScan,
         value: latestScan ? formatClock(latestScan.started_at) : "n/a",
         hint: latestScan
-          ? format(dictionary.metricHints.markets, { count: formatInteger(latestScan.market_count) })
-          : dictionary.metricHints.noScan,
+          ? formatMessage(dict.metricHints.markets, { count: formatInteger(latestScan.market_count) })
+          : dict.metricHints.noScan,
         accent: "primary",
       },
       {
-        title: dictionary.metrics.observedOpportunities,
+        title: dict.metrics.observedOpportunities,
         value: formatInteger(sortedOpportunities.length),
         hint: latestScan
-          ? format(dictionary.metricHints.latestScan, { count: formatInteger(latestScan.opportunity_count) })
-          : dictionary.metricHints.allWindows,
+          ? formatMessage(dict.metricHints.latestScan, { count: formatInteger(latestScan.opportunity_count) })
+          : dict.metricHints.allWindows,
         accent: "success",
       },
       {
-        title: dictionary.metrics.maxGrossEdge,
+        title: dict.metrics.maxGrossEdge,
         value: formatPercentFromRatio(maxEdge, 1),
-        hint: dictionary.metricHints.bestObserved,
+        hint: dict.metricHints.bestObserved,
         accent: maxEdge > 0 ? "success" : "primary",
       },
       {
-        title: dictionary.metrics.coveredMarkets,
+        title: dict.metrics.coveredMarkets,
         value: formatInteger(coveredMarketCount),
-        hint: format(dictionary.metricHints.tracked, { count: formatInteger(markets.length) }),
+        hint: formatMessage(dict.metricHints.tracked, { count: formatInteger(markets.length) }),
         accent: "violet",
       },
     ],
     opportunities: sortedOpportunities.map((opportunity) =>
-      buildOpportunity(opportunity, marketIndex, selectedOpportunityId, dictionary, enumLabel),
+      buildOpportunity(opportunity, marketIndex, selectedOpportunityId, dict, translateEnum),
     ),
     scans: scans.map((scan) => ({
       id: scan.id,
       startedClock: formatClock(scan.started_at),
-      finishedClock: scan.finished_at ? formatClock(scan.finished_at) : dictionary.radar.running,
+      finishedClock: scan.finished_at ? formatClock(scan.finished_at) : dict.radar.running,
       marketCount: formatInteger(scan.market_count),
       snapshotCount: formatInteger(scan.snapshot_count),
       opportunityCount: formatInteger(scan.opportunity_count),
       scannerVersion: scan.scanner_version,
     })),
-    analysis: isAnalysisSummary(analysisSummary) ? buildAnalysis(analysisSummary, marketIndex, enumLabel) : null,
+    analysis: isAnalysisSummary(analysisSummary) ? buildAnalysis(analysisSummary, marketIndex, translateEnum) : null,
   };
 }

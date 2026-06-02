@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type { RewardFillDto, RewardRiskEventDto } from "@/lib/contracts/dto";
-import { useI18n } from "@/lib/i18n/client";
+import { dictionary } from "@/lib/i18n/dictionaries";
 
 import { eventCategory } from "../lib/rewards-helpers";
 import type { EventCategory } from "../types";
@@ -17,7 +17,6 @@ export function EventsPanel({
   events: RewardRiskEventDto[];
   fills: RewardFillDto[];
 }) {
-  const { dictionary } = useI18n();
   const [category, setCategory] = useState<EventCategory>("all");
 
   const filteredEvents = useMemo(

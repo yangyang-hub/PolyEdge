@@ -10,7 +10,7 @@ import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle }
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import type { RuntimeConfigEntryDto } from "@/lib/contracts/dto";
-import { useI18n } from "@/lib/i18n/client";
+import { dictionary } from "@/lib/i18n/dictionaries";
 import {
   updateRuntimeConfigAction,
   type RuntimeConfigActionResult,
@@ -36,7 +36,6 @@ function sectionLabel(section: string): string {
 }
 
 export function RuntimeConfigPanel({ entries }: RuntimeConfigPanelProps) {
-  const { dictionary } = useI18n();
   const [configEntries, setConfigEntries] = useState(entries);
   const [values, setValues] = useState(() => Object.fromEntries(entries.map((entry) => [entry.key, entry.value])));
   const [feedback, setFeedback] = useState<RuntimeConfigActionResult | null>(null);

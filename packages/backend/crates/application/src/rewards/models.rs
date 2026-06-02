@@ -1,12 +1,10 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RewardExecutionMode {
-    /// Event-validation mode: generate and reconcile local managed-order events
-    /// without submitting to Polymarket or treating rewards as earned.
+    /// Deprecated: legacy event-validation mode, kept for serde backward compatibility.
     Validation,
-    /// Live mode: worker is allowed to submit/cancel Polymarket orders through
-    /// the rewards live executor. This is configured locally for rewards and is
-    /// intentionally independent from global runtime mode.
+    /// Live mode: worker submits/cancels Polymarket orders through the rewards
+    /// live executor.
     Live,
 }
 
@@ -14,19 +12,20 @@ impl RewardExecutionMode {
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::Validation => "validation",
+            Self::Validation => "live",
             Self::Live => "live",
         }
     }
 
+    /// Always returns false — validation mode is deprecated.
     #[must_use]
     pub const fn is_validation(self) -> bool {
-        matches!(self, Self::Validation)
+        false
     }
 
     #[must_use]
     pub const fn is_live(self) -> bool {
-        matches!(self, Self::Live)
+        true
     }
 }
 
@@ -35,10 +34,9 @@ impl FromStr for RewardExecutionMode {
 
     fn from_str(value: &str) -> Result<Self> {
         match value {
-            "validation" | "validate" | "dry_run" | "paper" | "simulation" => {
-                Ok(Self::Validation)
+            "validation" | "validate" | "dry_run" | "paper" | "simulation" | "live" => {
+                Ok(Self::Live)
             }
-            "live" => Ok(Self::Live),
             other => Err(AppError::invalid_input(
                 "REWARD_EXECUTION_MODE_INVALID",
                 format!("unknown reward execution mode: {other}"),
@@ -389,7 +387,7 @@ impl Default for RewardBotConfig {
     fn default() -> Self {
         Self {
             enabled: false,
-            execution_mode: RewardExecutionMode::Validation,
+            execution_mode: RewardExecutionMode::Live,
             account_id: "reward_validator".to_string(),
             max_markets: 3,
             max_open_orders: 12,
@@ -844,6 +842,7 @@ pub struct RewardBotRunReport {
 
 /// Point-in-time snapshot of a token's order book, stored for historical
 /// comparison in risk-control checks (depth drop, fill velocity, mass cancel).
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct BookSnapshot {
     pub bids: Vec<RewardBookLevel>,

@@ -1,6 +1,6 @@
 import { listEvents } from "@/lib/api/events";
 import { listMarkets, listMarketCategories, type MarketCategory, type MarketListParams } from "@/lib/api/markets";
-import type { I18nRuntime } from "@/lib/i18n/runtime";
+import { dictionary, translateEnum } from "@/lib/i18n/dictionaries";
 import { selectFirstMatchingItem } from "@/lib/loaders/console-loader-utils";
 import {
   ambiguityTone,
@@ -10,13 +10,12 @@ import {
 
 export type { MarketListParams, MarketCategory };
 
-export async function getMarketsPageData(i18n: I18nRuntime, params?: MarketListParams) {
+export async function getMarketsPageData(params?: MarketListParams) {
   const [{ data: markets, totalCount }, { data: events }, categories] = await Promise.all([
     listMarkets(params),
     listEvents(),
     listMarketCategories(),
   ]);
-  const { dictionary, enumLabel } = i18n;
   const selectedMarket = selectFirstMatchingItem(
     markets,
     [
@@ -37,9 +36,9 @@ export async function getMarketsPageData(i18n: I18nRuntime, params?: MarketListP
       midPrice: market.mid_price,
       volume24h: market.volume_24h,
       tradabilityStatus: market.tradability_status,
-      tradabilityLabel: enumLabel(market.tradability_status),
+      tradabilityLabel: translateEnum(market.tradability_status),
       tradabilityTone: marketTradabilityTone(market.tradability_status),
-      ambiguityLabel: enumLabel(market.ambiguity_level),
+      ambiguityLabel: translateEnum(market.ambiguity_level),
       ambiguityTone: ambiguityTone(market.ambiguity_level),
       linkedEventCount: String(events.filter((event) => event.related_market_ids.includes(market.id)).length).padStart(2, "0"),
     })),
@@ -49,9 +48,9 @@ export async function getMarketsPageData(i18n: I18nRuntime, params?: MarketListP
       category: market.category,
       polymarketConditionId: market.polymarket_condition_id ?? null,
       slug: market.slug ?? null,
-      tradabilityLabel: enumLabel(market.tradability_status),
+      tradabilityLabel: translateEnum(market.tradability_status),
       tradabilityTone: marketTradabilityTone(market.tradability_status),
-      ambiguityLabel: enumLabel(market.ambiguity_level),
+      ambiguityLabel: translateEnum(market.ambiguity_level),
       ambiguityTone: ambiguityTone(market.ambiguity_level),
       resolutionSource: market.resolution_source,
       edgeCaseNotes: market.edge_case_notes,

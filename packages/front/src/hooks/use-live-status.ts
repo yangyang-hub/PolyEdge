@@ -1,7 +1,8 @@
 "use client";
 
 import { useConsoleRealtime } from "@/components/shared/console-realtime-provider";
-import { useI18n } from "@/lib/i18n/client";
+import type { Dictionary } from "@/lib/i18n/dictionaries";
+import { dictionary, translateEnum } from "@/lib/i18n/dictionaries";
 import type { RealtimeTone } from "@/lib/realtime-formatters";
 import { formatClock } from "@/lib/realtime-formatters";
 import { useMemo } from "react";
@@ -15,40 +16,39 @@ function describeStream(
   label: string,
   connection: "connecting" | "open" | "error" | "closed",
   lastEventAt: number | null,
-  dictionary: ReturnType<typeof useI18n>["dictionary"],
+  dict: Dictionary,
 ): StatusBadge {
   if (connection === "open") {
     return {
       tone: "success",
       label: lastEventAt
         ? `${label} ${formatClock(new Date(lastEventAt).toISOString())}`
-        : `${label} ${dictionary.common.live}`,
+        : `${label} ${dict.common.live}`,
     };
   }
 
   if (connection === "error") {
     return {
       tone: "warning",
-      label: `${label} ${dictionary.common.reconnecting}`,
+      label: `${label} ${dict.common.reconnecting}`,
     };
   }
 
   if (connection === "connecting") {
     return {
       tone: "neutral",
-      label: `${label} ${dictionary.common.connecting}`,
+      label: `${label} ${dict.common.connecting}`,
     };
   }
 
   return {
     tone: "neutral",
-    label: `${label} ${dictionary.common.idle}`,
+    label: `${label} ${dict.common.idle}`,
   };
 }
 
 export function useLiveStatus() {
   const { signals: signalsStream, risk: riskStream, events: eventsStream } = useConsoleRealtime();
-  const { dictionary, enumLabel } = useI18n();
 
   return useMemo(() => {
     const connections = [signalsStream.connection, riskStream.connection, eventsStream.connection];
@@ -77,7 +77,7 @@ export function useLiveStatus() {
       signalsStream.connection === "open" && signalsStream.lastEvent?.data.lifecycle_state
         ? {
             tone: "primary",
-            label: `${dictionary.statusRail.signal} ${enumLabel(signalsStream.lastEvent.data.lifecycle_state)}`,
+            label: `${dictionary.statusRail.signal} ${translateEnum(signalsStream.lastEvent.data.lifecycle_state)}`,
           }
         : describeStream(dictionary.statusRail.marketStream, signalsStream.connection, signalsStream.lastEvent?.receivedAt ?? null, dictionary);
 
@@ -95,8 +95,5 @@ export function useLiveStatus() {
     riskStream.connection,
     riskStream.lastEvent,
     eventsStream.connection,
-    eventsStream.lastEvent,
-    dictionary,
-    enumLabel,
   ]);
 }

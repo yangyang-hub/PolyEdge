@@ -12,7 +12,7 @@ import {
 import type { OperationActionResult } from "@/lib/api/actions";
 import { useConsoleRealtimeChannel } from "@/components/shared/console-realtime-provider";
 import { Button } from "@/components/ui/button";
-import { useI18n } from "@/lib/i18n/client";
+import { dictionary, translateEnum, formatMessage } from "@/lib/i18n/dictionaries";
 import { localizeGeneratedCopy } from "@/lib/i18n/generated-copy";
 import { normalizeOptionalRuntimeMode, normalizeRuntimeMode } from "@/lib/runtime-mode";
 import { OperationFeedbackBanner } from "@/components/shared/operation-feedback-banner";
@@ -47,11 +47,10 @@ export function RiskControlCenter({ data }: { data: RiskPageData }) {
   const [isPending, startActionTransition] = useTransition();
   const auditLogRef = useRef<HTMLElement | null>(null);
   const { lastEvent } = useConsoleRealtimeChannel("risk");
-  const { locale, dictionary, enumLabel, format } = useI18n();
   const killSwitchAvailable =
     controls.mode === "live_auto" || controls.mode === "kill_switch_locked" || controls.killSwitch;
   const metricLabels = useMemo(() => ({
-    mode: (mode: RuntimeMode) => enumLabel(mode),
+    mode: (mode: RuntimeMode) => translateEnum(mode),
     active: dictionary.common.active,
     armed: dictionary.common.armed,
     halted: dictionary.metricHints.halted,
@@ -63,7 +62,7 @@ export function RiskControlCenter({ data }: { data: RiskPageData }) {
     dictionary.common.critical,
     dictionary.metricHints.halted,
     dictionary.metricHints.readyState,
-    enumLabel,
+    translateEnum,
   ]);
   useEffect(() => {
     const streamEvent = lastEvent;
@@ -79,7 +78,7 @@ export function RiskControlCenter({ data }: { data: RiskPageData }) {
         const nextControls = {
           ...currentControls,
           mode: runtimeMode ?? currentControls.mode,
-          modeLabel: enumLabel(runtimeMode ?? currentControls.mode),
+          modeLabel: translateEnum(runtimeMode ?? currentControls.mode),
           killSwitch: streamEvent.data.kill_switch ?? currentControls.killSwitch,
           environment: streamEvent.data.environment ?? currentControls.environment,
         };
@@ -96,15 +95,14 @@ export function RiskControlCenter({ data }: { data: RiskPageData }) {
         }),
       );
       setAlerts((currentAlerts) =>
-        upsertAlert(currentAlerts, streamEvent.data, enumLabel).map((alert) => ({
+        upsertAlert(currentAlerts, streamEvent.data, translateEnum).map((alert) => ({
           ...alert,
-          reason: localizeGeneratedCopy(locale, dictionary, alert.reason),
-          target: localizeGeneratedCopy(locale, dictionary, alert.target),
+          reason: localizeGeneratedCopy(dictionary, alert.reason),
+          target: localizeGeneratedCopy(dictionary, alert.target),
         })),
       );
-
     });
-  }, [dictionary, dictionary.metricHints.deskBias, enumLabel, lastEvent, locale, metricLabels]);
+  }, [dictionary.metricHints.deskBias, lastEvent, metricLabels, translateEnum]);
 
   function openDialog(dialog: Exclude<RiskDialog, null>) {
     setActiveDialog(dialog);
@@ -139,7 +137,7 @@ export function RiskControlCenter({ data }: { data: RiskPageData }) {
     const nextState = {
       ...controls,
       mode: normalizedControls.mode,
-      modeLabel: enumLabel(normalizedControls.mode),
+      modeLabel: translateEnum(normalizedControls.mode),
       killSwitch: normalizedControls.killSwitch,
     };
 
@@ -283,7 +281,7 @@ export function RiskControlCenter({ data }: { data: RiskPageData }) {
         <StateBanner
           tone="warning"
           title={dictionary.risk.watchModeTitle}
-          detail={format(dictionary.risk.watchModeDetail, {
+          detail={formatMessage(dictionary.risk.watchModeDetail, {
             critical: summary.criticalAlerts,
             warning: summary.warningAlerts,
           })}

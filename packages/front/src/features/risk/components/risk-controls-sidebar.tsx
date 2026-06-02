@@ -2,7 +2,7 @@
 
 import { Button } from "@/components/ui/button";
 import { MeterBar } from "@/components/shared/meter-bar";
-import { useI18n } from "@/lib/i18n/client";
+import { dictionary } from "@/lib/i18n/dictionaries";
 
 import type { RiskPageData } from "../types";
 
@@ -17,7 +17,6 @@ export function RiskControlsSidebar({
   onTriggerKillSwitch: () => void;
   riskBuckets: RiskPageData["riskBuckets"];
 }) {
-  const { dictionary } = useI18n();
 
   return (
     <div className="space-y-4">

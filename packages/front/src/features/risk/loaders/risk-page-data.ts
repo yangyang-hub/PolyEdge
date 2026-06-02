@@ -1,6 +1,6 @@
 import { listRiskAlerts, listRiskBuckets, readRiskState } from "@/lib/api/risk";
 import { localizeGeneratedCopy } from "@/lib/i18n/generated-copy";
-import type { I18nRuntime } from "@/lib/i18n/runtime";
+import { dictionary, translateEnum } from "@/lib/i18n/dictionaries";
 import { normalizeRuntimeMode } from "@/lib/runtime-mode";
 import {
   alertSeverityTone,
@@ -11,13 +11,12 @@ import {
   formatPercentFromRatio,
 } from "@/lib/formatters";
 
-export async function getRiskPageData(i18n: I18nRuntime) {
+export async function getRiskPageData() {
   const [{ data: riskState }, { data: alerts }, { data: riskBuckets }] = await Promise.all([
     readRiskState(),
     listRiskAlerts(),
     listRiskBuckets(),
   ]);
-  const { locale, dictionary, enumLabel } = i18n;
 
   const dailyLossUsage = (
     Number.parseFloat(riskState.daily_loss_used) / Number.parseFloat(riskState.daily_loss_limit)
@@ -29,7 +28,7 @@ export async function getRiskPageData(i18n: I18nRuntime) {
   return {
     controls: {
       mode: runtimeMode,
-      modeLabel: enumLabel(runtimeMode),
+      modeLabel: translateEnum(runtimeMode),
       killSwitch: riskState.kill_switch,
       environment: riskState.environment,
     },
@@ -48,7 +47,7 @@ export async function getRiskPageData(i18n: I18nRuntime) {
       {
         key: "mode",
         title: dictionary.metrics.mode,
-        value: enumLabel(runtimeMode),
+        value: translateEnum(runtimeMode),
         hint: dictionary.metricHints.activeRuntime,
         tone: "primary" as const,
       },
@@ -78,11 +77,11 @@ export async function getRiskPageData(i18n: I18nRuntime) {
       id: alert.id,
       severity: alert.severity,
       severityTone: alertSeverityTone(alert.severity),
-      reason: localizeGeneratedCopy(locale, dictionary, alert.reason),
-      target: localizeGeneratedCopy(locale, dictionary, alert.target),
+      reason: localizeGeneratedCopy(dictionary, alert.reason),
+      target: localizeGeneratedCopy(dictionary, alert.target),
       createdAt: formatClock(alert.created_at),
       status: alert.status,
-      statusLabel: enumLabel(alert.status),
+      statusLabel: translateEnum(alert.status),
       statusTone: alertStatusTone(alert.status),
     })),
     riskBuckets: riskBuckets.map((bucket) => ({

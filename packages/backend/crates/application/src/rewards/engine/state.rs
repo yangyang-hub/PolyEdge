@@ -1,5 +1,6 @@
 // Small state accessors, id/event helpers, deterministic RNG, and validation fill logic.
 
+#[allow(dead_code)]
 impl TickContext {
     // ---- small helpers -------------------------------------------------
 

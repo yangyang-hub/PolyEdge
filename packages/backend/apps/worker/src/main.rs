@@ -1,26 +1,27 @@
 use futures::{StreamExt as _, stream};
 use polyedge_application::{
     ArbitrageAnalysisRunView, ArbitrageOpportunityListFilters, ArbitrageOpportunityView,
-    ArbitrageScanView, ArbitrageValidationConfig, AuthenticatedActor, BookSource, CachedBookLevel,
-    CachedOrderBook, CopyBookLevel, CopyControlAction, CopyControlCommand, CopyOrderBook,
-    CopyTradeRunReport, DispatchExecutionListFilters, ExecutionDispatchCandidate,
+    ArbitrageScanView, ArbitrageValidationConfig, AuthenticatedActor, BookSnapshot, BookSource,
+    CachedBookLevel, CachedOrderBook, CopyBookLevel, CopyControlAction, CopyControlCommand,
+    CopyOrderBook, CopyTradeRunReport, DispatchExecutionListFilters, ExecutionDispatchCandidate,
     ExecutionReconciliationCandidate, FixtureBundle, FixtureEventRecord, FixtureEvidenceRecord,
     ManagedRewardOrder, ManagedRewardOrderStatus, MarkExecutionFailedCommand,
     MarkExecutionSubmittedCommand, MarketBookSnapshotView, MarketListFilters, MarketView,
     NewsIngestSourceCommand, NewsIngestionItem, NewsRawEventListFilters, NewsRawEventView,
     NewsSourceFailureUpdate, NewsSourceHealthListFilters, NewsSourceHealthView, OrderListFilters,
-    ReconcileExecutionListFilters, ReconcileExternalTradeCommand, RewardBookLevel, RewardBotConfig,
-    RewardBotRunReport, RewardControlAction, RewardControlCommand, RewardExecutionMode,
-    RewardMarket, RewardOrderBook, RewardOrderSide, RewardPosition, RewardQuotePlan,
-    RewardRiskEvent, RewardRiskSeverity, RewardSimulationOutcome, RewardToken, SignalListFilters,
-    SyncExternalOrderStatusCommand, WalletActivityInput, WalletFeedInput, WalletPositionInput,
-    build_arbitrage_analysis, market_book_snapshot_id, new_risk_event,
-    select_reward_book_token_ids,
+    PostFillStrategy, ReconcileExecutionListFilters, ReconcileExternalTradeCommand,
+    RewardBookLevel, RewardBotConfig, RewardBotRunReport, RewardControlAction,
+    RewardControlCommand, RewardFill, RewardFillRole, RewardMarket, RewardOrderBook,
+    RewardOrderSide, RewardPosition, RewardQuotePlan, RewardRiskEvent, RewardRiskSeverity,
+    RewardSimulationOutcome, RewardToken, SignalListFilters, SyncExternalOrderStatusCommand,
+    WalletActivityInput, WalletFeedInput, WalletPositionInput, build_arbitrage_analysis,
+    market_book_snapshot_id, new_risk_event, select_reward_book_token_ids,
 };
 use polyedge_connectors::{
-    ConnectorNewsItem, LivePolymarketCancelOrderRequest, LivePolymarketCancelOutcome,
-    LivePolymarketConfig, LivePolymarketConnector, LivePolymarketExecutionOutcome,
-    LivePolymarketOrderRequest, LivePolymarketOrderStatusRequest, LivePolymarketTokenOrderRequest,
+    ConnectorNewsItem, ConnectorOrderStatusUpdate, ConnectorTradeFillUpdate,
+    LivePolymarketCancelOrderRequest, LivePolymarketCancelOutcome, LivePolymarketConfig,
+    LivePolymarketConnector, LivePolymarketExecutionOutcome, LivePolymarketOrderRequest,
+    LivePolymarketOrderStatusRequest, LivePolymarketTokenOrderRequest,
     LivePolymarketTradeSyncRequest, NewsSource, PAPER_ACCOUNT_ID, PAPER_EXECUTOR_NAME,
     POLYMARKET_CONNECTOR_NAME, PaperExecutionOutcome, PaperExecutor, PaperFillRequest,
     PaperOrderRequest, PaperOrderStatusRequest, PolymarketAcceptedOrderStatus,
@@ -42,10 +43,10 @@ use polyedge_infrastructure::{
 };
 use polymarket_client_sdk::clob::ws::WsMessage;
 use polymarket_client_sdk::types::B256;
-use rust_decimal::Decimal;
+use rust_decimal::{Decimal, RoundingStrategy};
 use serde_json::json;
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{HashMap, HashSet, VecDeque},
     future::Future,
     time::{Duration, Instant},
 };
@@ -134,6 +135,8 @@ enum PolymarketOrderEventOutcome {
 }
 
 const WORKER_SERVICE_COMMAND: &str = "run";
+const REWARD_PRICE_TICK: Decimal = Decimal::from_parts(1, 0, 0, false, 2);
+const REWARD_BOOK_HISTORY_LIMIT: usize = 240;
 
 #[tokio::main]
 async fn main() -> Result<()> {

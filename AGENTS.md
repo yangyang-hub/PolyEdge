@@ -1,6 +1,6 @@
 # Agent Guidelines
 
-最后更新：2026-06-01
+最后更新：2026-06-02
 
 ## 维护规则
 
@@ -53,10 +53,14 @@ retries solves this and ensures consistent data across all consumers.
 | `apps/worker/src/worker/market_sync.rs` | Sync worker — fetches markets from Polymarket, writes to Postgres |
 | `apps/worker/src/worker/orderbook_stream.rs` | Orderbook stream — 仅保留 CLI 子命令兼容，核心逻辑已迁移到 polyedge-orderbook 服务 |
 | `apps/orderbook/src/main.rs` | 独立 orderbook 服务入口 — HTTP server + WS stream + token 注册 |
-| `apps/worker/src/worker/rewards.rs` | Rewards bot — executes validation/live strategy ticks and queued run/cancel/reset commands |
+| `apps/worker/src/worker/rewards.rs` | Rewards bot — executes live strategy ticks and queued run/cancel/reset commands |
 | `apps/api/src/handlers/rewards.rs` | Rewards API — reads snapshots/config and enqueues worker control commands |
-| `crates/application/src/rewards/service.rs` | RewardBotService — reward markets, snapshots, validation/live local state persistence, control command queue |
+| `crates/application/src/rewards/service.rs` | RewardBotService — reward markets, snapshots, live order lifecycle, control command queue |
 | `crates/application/src/rewards/pagination.rs` | Rewards order pagination query and response metadata |
+| `apps/worker/src/worker/rewards/live_sync.rs` | Rewards live managed-order trade/status sync |
+| `apps/worker/src/worker/rewards/live_orders.rs` | Rewards live order submit/cancel/fill and post-fill exit/flatten |
+| `apps/worker/src/worker/rewards/live_risk.rs` | Rewards live placement/cancel risk checks |
+| `apps/worker/src/worker/rewards/polling.rs` | Rewards live poll loop, book fetch, in-process book history |
 | `apps/worker/src/worker/copytrade.rs` | Copytrade worker — executes copy cycles and queued run/analyze/cancel/reset commands |
 | `apps/api/src/handlers/copytrade.rs` | Copytrade API — reads snapshots/config and enqueues worker control commands |
 | `crates/application/src/copytrade/service.rs` | CopyTradeService — copytrade config/snapshot/simulation and control command queue |
@@ -81,13 +85,13 @@ retries solves this and ensures consistent data across all consumers.
 - 仓库已经不是纯文档仓库：前端控制台、Rust API、worker、迁移、配置和 Docker 部署入口都已具备。
 - 前端控制台已有 `dashboard / markets / events / radar / rewards / copy-trading / signals / positions / risk / approvals / replay / settings` 页面。
 - 前端数据层统一走 `src/lib/api/*`（读取按领域文件 `markets.ts` / `signals.ts` / `risk.ts`… 基于 `base.ts`，写操作走 `actions.ts`），页面装配在 `src/features/*/loaders` 和 `src/features/*/components`。`src/server/` 目前是空目录（历史遗留）。
-- 前端支持 `zh-CN / en-US`，语言由 `polyedge_locale` cookie 控制。
+- 前端仅支持中文，文案走 `@/lib/i18n/dictionaries` 字典导入。
 - 前端不再提供 mock 数据模式；`POLYEDGE_API_BASE_URL` 必须指向 Rust 后端，读写和 SSE 都走真实 `/api/v1/...`。
 - 当前控制台会话只保留 `off`，不是生产级真实会话。
 - 后端 API 已覆盖 markets、events、news、evidences、signals、orders、trades、positions、pricing、arbitrage、rewards bot、risk、approvals、system、SSE、connector callback 和 orderbook（`GET /api/v1/orderbook/{token_id}`）等主路径。
-- `polyedge-worker` 支持 news ingest、news promotion、arbitrage radar、rewards bot validation/live 策略、copytrade 跟单、execution drain、paper reconciliation、Polymarket order/fill/user-event、orderbook token 注册任务。市场同步和 orderbook 订阅已迁移到独立 `polyedge-orderbook` 服务；orderbook 服务启动时先暴露 HTTP `/healthz`，再后台执行 initial/periodic market sync，避免外部 Polymarket API 延迟阻塞容器健康检查。
+- `polyedge-worker` 支持 news ingest、news promotion、arbitrage radar、rewards bot live 策略、copytrade 跟单、execution drain、paper reconciliation、Polymarket order/fill/user-event、orderbook token 注册任务。市场同步和 orderbook 订阅已迁移到独立 `polyedge-orderbook` 服务；orderbook 服务启动时先暴露 HTTP `/healthz`，再后台执行 initial/periodic market sync，避免外部 Polymarket API 延迟阻塞容器健康检查。
 - 套利雷达是只读链路：发现、记录、校验、分析、展示和 SSE 推送已具备，但不会创建 execution request 或订单。
-- Rewards bot 已改为 rewards 自身的 `execution_mode=validation/live`，不再由全局 system mode 决定模拟/实盘。它只使用独立的 `reward_markets` 表作为奖励市场来源，先按 rewards 配置预过滤候选市场，再通过 `OrderbookHttpClient`（HTTP 调用 polyedge-orderbook 服务）并发读取候选盘口、生成当前候选快照的 YES/NO post-only 双边买单计划。`validation` 默认模式只验证挂单、买入、撤单、卖出/平仓等事件是否按预期触发，不向 Polymarket 下单，也不把 Qmin 计算当作已赚收益；开放 validation 买单采用软资金复用，只有 validation 成交时才消耗 `available_usd`，且 `enabled=false` 的 fast reconcile 不会补挂新单。`live` 模式通过 `LivePolymarketConnector::submit_token_order()` 提交 post-only GTC token 买单，并通过 `cancel_order()` 撤销本系统托管订单；未成交 maker 买单不在本地按全局 notional 硬锁同一笔 USDC，可跨不同市场同时报价。live 新挂单要求目标两腿都有非空盘口，reconcile 会在开放订单盘口缺失、空盘口或过期时立即撤单；Polymarket 返回非 live 接受状态时会立即尝试撤单；live Reset 不清空本地账本，只按 cancel-all 先撤托管实盘订单，任一撤单被拒绝则命令失败。真实成交对账、成交后卖出/平仓、真实库存/资金同步、订单计分查询和奖励结算对账仍是缺口。API 服务不执行 rewards 策略或任务，前端 Run / Cancel / Reset 会写入数据库控制命令，由 worker 领取执行；`/api/v1/rewards-bot` 的 managed orders 使用后端分页并返回 `orders_page` 元数据。
+- Rewards bot 仅支持 `live` 实盘模式（`execution_mode` 字段保留用于向后兼容，始终视为 `live`）。它只使用独立的 `reward_markets` 表作为奖励市场来源，先按 rewards 配置预过滤候选市场，再通过 `OrderbookHttpClient`（HTTP 调用 polyedge-orderbook 服务）并发读取候选盘口、生成当前候选快照的 YES/NO post-only 双边买单计划。worker 通过 `LivePolymarketConnector::submit_token_order()` 提交 post-only GTC token 买单，并通过 `cancel_order()` 撤销本系统托管订单；未成交 maker 买单不在本地按全局 notional 硬锁同一笔 USDC，可跨不同市场同时报价。新挂单要求目标两腿都有非空盘口，reconcile 会在开放订单盘口缺失、空盘口、过期、深度/排名/盘口历史风险或定期 requote 触发时撤单；Polymarket 返回 post-only 非 live 接受状态时会立即尝试撤单。worker 会对本系统托管 rewards 订单轮询 Polymarket 订单关联成交，按 external trade id 幂等写入本地 fills、现金、库存和 PnL；买入成交后按配置撤 sibling legs 并执行 exit-at-markup 或 flatten sell。Reset 不清空本地账本，只按 cancel-all 先撤托管实盘订单，任一撤单被拒绝则命令失败。独立账户余额/库存全量对账、订单计分查询和奖励结算对账仍是缺口。API 服务不执行 rewards 策略或任务，前端 Run / Cancel / Reset 会写入数据库控制命令，由 worker 领取执行；`/api/v1/rewards-bot` 的 managed orders 使用后端分页并返回 `orders_page` 元数据。
 - Polymarket connector 已迁移到 CLOB V2 Rust crate：`packages/backend/Cargo.toml` 保留 dependency key `polymarket-client-sdk`，实际指向 `polymarket_client_sdk_v2`；live CLOB 签名类型支持 `eoa`、`proxy`、`gnosis_safe`、`poly_1271`，其中 `poly_1271` 用于已有 Deposit Wallet（`FUNDER` 填 deposit wallet 地址），下单前会调用 CLOB balance allowance update。
 - 聪明钱跟单（copy-trading）已具备完整子系统：跟踪多个 Polymarket 钱包地址（`TrackedWallet`）、通过 Polymarket Data API（`data-api.polymarket.com`，通过 `PolymarketDataApiConnector`）检测钱包新成交、四种跟单仓位模式（`FixedUsd`/`ProportionalToSource`/`CapitalRatio`/`MirrorPortfolioWeight`）、钱包分析统计（胜率/ROI/成交量）、per-wallet/per-market/total 敞口+单日亏损+冷却+滑点风控、确定性模拟引擎（模拟资金账本：capital/available/reserved/realized_pnl）、`Run/Analyze/Cancel/Reset` 与账户资金设置前端 UI；`mode=live` 已结构化支持但未接入真实下单（记录警告回退模拟）。API 服务不执行 copytrade 跟单循环、钱包分析、撤单或重置，前端操作会写入数据库控制命令，由 worker 领取执行；`POLYEDGE_COPYTRADE__ENABLED=true` 启用 worker 轮询。
 - Polymarket 运行时不再提供 mock mode；市场列表走 Gamma 实时数据，私有订单/成交任务需要真实凭证、真实账户、小额演练和运维 runbook。
@@ -99,7 +103,7 @@ retries solves this and ensures consistent data across all consumers.
 - 内部 JWT 签名 helper 已有代码路径，但当前不会从 `off` 签发可信令牌。
 - `signals / risk / events` SSE 仍是 snapshot-backed stream；`arbitrage` 已是 outbox-backed 增量流，但尚未统一到全资源事件总线。
 - 新闻源可以抓取、去重、提升为 events/evidences，但尚未自动生成 signals。
-- Rewards live maker 已接入真实 post-only 买单提交和撤单，且会在盘口缺失/空盘口/过期盘口或 post-only 返回非 live 状态时优先撤单，但尚未完成真实成交处理、成交后卖出/平仓、真实库存/资金同步、订单计分查询或奖励结算对账。实盘策略仍应沿用“未成交 maker 买单不硬锁全局 USDC、成交后才更新现金/库存并撤超额挂单”的资金模型。
+- Rewards live maker 已接入真实 post-only 买单提交、撤单、本系统托管订单成交同步、成交后现金/库存/PnL 更新、sibling leg 撤单和 exit/flatten sell 下单；仍未完成独立账户余额/库存全量对账、订单计分查询或奖励结算对账。实盘策略仍应沿用“未成交 maker 买单不硬锁全局 USDC、成交后才更新现金/库存并撤超额挂单”的资金模型。
 - Polymarket live 链路已具备 CLOB V2 SDK、认证、token buy/sell 下单和撤单能力，并可配置已有 Deposit Wallet 的 `poly_1271` 签名；仍未实现 relayer 建钱包、pUSD 入金/approval 等 Deposit Wallet 生命周期管理，且仍需真实资金链路小额验证。
 
 ## 运行命令
@@ -157,10 +161,10 @@ cargo run -p polyedge-worker -- analyze-wallets-once
 - Polymarket connector 没有 mock mode；未配置真实账户/私钥时，不要开启 Polymarket 私有订单、成交或用户 websocket worker 任务。
 - `POLYEDGE_POLYMARKET__SIGNATURE_TYPE` 可选 `eoa`、`proxy`、`gnosis_safe`、`poly_1271`；新 Deposit Wallet 使用 `poly_1271`，并将 `POLYEDGE_POLYMARKET__FUNDER` 设置为 deposit wallet 地址。
 - 默认 arbitrage radar 和 news ingestion 是 disabled。
-- 默认 rewards bot worker 是 disabled；前端 `/rewards` 的 Run / Cancel / Reset 只会入队命令，worker 需要同时设置 `POLYEDGE_REWARDS__ENABLED=true` 和 `POLYEDGE_WORKER__POLL_REWARD_BOT=true` 才会领取并执行。`RewardBotConfig.execution_mode` 默认为 `validation`；切到 `live` 后还必须配置真实 Polymarket 凭证。要产生新挂单、validation 事件或 live post-only 下单，还需要确保 `polyedge-orderbook` 服务正在运行并同步了 reward 市场数据。
+- 默认 rewards bot worker 是 disabled；前端 `/rewards` 的 Run / Cancel / Reset 只会入队命令，worker 需要同时设置 `POLYEDGE_REWARDS__ENABLED=true` 和 `POLYEDGE_WORKER__POLL_REWARD_BOT=true` 才会领取并执行。要产生新挂单和 live post-only 下单，还需要配置真实 Polymarket 凭证并确保 `polyedge-orderbook` 服务正在运行并同步了 reward 市场数据。
 - `deploy/.env*.example` 环境变量模板已为每个变量提供用途说明；`deploy/.env.polymarket.example` 提供 Polymarket CLOB V2 live、Proxy/Gnosis Safe、Deposit Wallet（`poly_1271`）和 Rewards live worker 配置示例，真实凭证默认注释，建议私钥只放 `deploy/.env.worker`。
 - Rewards bot 的 `max_markets=0`、`max_open_orders=0` 或 `quote_size_usd=0` 都表示不再新挂单；不是无限制。
-- Rewards bot validation 开放买单不会逐单锁定资金；`account_capital_usd=200` 时可以在多个市场同时生成 200U 级别 validation 买单，但 validation 成交会消耗 `available_usd`，后续 validation 成交仍受资金池现金限制。live 模式下未成交 post-only maker 买单也不在本地按全局 notional 硬锁资金；`stale_book_ms=0` 只关闭盘口年龄检查，仍要求盘口存在且非空，开放 live 订单缺盘口会被撤单。
+- Rewards bot 未成交 post-only maker 买单不在本地按全局 notional 硬锁资金；`stale_book_ms=0` 只关闭盘口年龄检查，仍要求盘口存在且非空，开放 live 订单缺盘口会被撤单。
 - 默认跟单 worker 是 disabled；前端 `/copy-trading` 的 Run / Analyze / Cancel / Reset 只会入队命令，worker 需要设置 `POLYEDGE_COPYTRADE__ENABLED=true` + `POLYEDGE_WORKER__POLL_COPYTRADE=true` 才会领取并执行；`POLYEDGE_WORKER__ANALYZE_WALLETS=true` 仍用于独立钱包分析循环。
 - `POLYEDGE_POSTGRES__URL` / `POLYEDGE_REDIS__URL` 为空时，本地可能走内存路径，无法验证多进程共享状态和持久化 outbox。
 - `POLYEDGE_ARBITRAGE__BOOK_SOURCE=polymarket` 会请求真实 Polymarket CLOB `/book`；live 冒烟必须使用真实 Polymarket refs。

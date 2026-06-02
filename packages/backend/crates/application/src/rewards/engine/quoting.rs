@@ -1,5 +1,6 @@
 // Quote placement for eligible markets and order / sibling-leg cancellation.
 
+#[allow(dead_code)]
 impl TickContext {
     fn cancel_sibling_legs(&mut self, condition_id: &str, filled_token: &str) {
         let indices: Vec<usize> = self
@@ -98,7 +99,7 @@ impl TickContext {
                 self.reserve_buy_notional(notional);
 
                 let id = self.next_id("rew");
-                let external = format!("sim_{id}");
+                let external = id.clone();
                 self.push_event(
                     Some(plan.condition_id.clone()),
                     Some(external.clone()),

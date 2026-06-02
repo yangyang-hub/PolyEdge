@@ -1,5 +1,5 @@
 import { readReplaySnapshot } from "@/lib/api/research";
-import type { I18nRuntime } from "@/lib/i18n/runtime";
+import { dictionary, translateEnum } from "@/lib/i18n/dictionaries";
 import {
   eventStatusTone,
   formatClock,
@@ -9,13 +9,12 @@ import {
   uppercaseEnum,
 } from "@/lib/formatters";
 
-export async function getReplayPageData(i18n: I18nRuntime) {
+export async function getReplayPageData() {
   const [
     {
       data: { replayRun, relatedSignals, relatedEvents },
     },
   ] = await Promise.all([readReplaySnapshot()]);
-  const { dictionary, enumLabel } = i18n;
   const selectedTimelineMoment = replayRun.timeline.at(-1) ?? replayRun.timeline[0];
   const posteriorDelta = (
     Number.parseFloat(replayRun.posterior) - Number.parseFloat(replayRun.prior)
@@ -31,7 +30,7 @@ export async function getReplayPageData(i18n: I18nRuntime) {
       id: `${moment.occurred_at}_${moment.kind}`,
       occurredAt: formatClock(moment.occurred_at),
       kind: moment.kind,
-      kindLabel: enumLabel(moment.kind),
+      kindLabel: translateEnum(moment.kind),
       summary: moment.summary,
     })),
     snapshot: {
@@ -39,7 +38,7 @@ export async function getReplayPageData(i18n: I18nRuntime) {
       prior: replayRun.prior,
       posterior: replayRun.posterior,
       posteriorDelta: formatSignedFixed(posteriorDelta),
-      stateTransition: `${enumLabel(replayRun.signal_state_from)} -> ${enumLabel(replayRun.signal_state_to)}`,
+      stateTransition: `${translateEnum(replayRun.signal_state_from)} -> ${translateEnum(replayRun.signal_state_to)}`,
       createdAt: formatClock(replayRun.created_at),
       updatedAt: formatClock(replayRun.updated_at),
     },
@@ -55,7 +54,7 @@ export async function getReplayPageData(i18n: I18nRuntime) {
       side: uppercaseEnum(signal.side),
       confidence: formatPercentFromRatio(signal.confidence),
       edge: formatSignedFixed(signal.edge),
-      stateLabel: enumLabel(signal.lifecycle_state),
+      stateLabel: translateEnum(signal.lifecycle_state),
       stateTone: signalStateTone(signal.lifecycle_state),
       reason: signal.reason,
     })),
@@ -65,7 +64,7 @@ export async function getReplayPageData(i18n: I18nRuntime) {
       createdAt: formatClock(event.created_at),
       summary: event.summary,
       confidence: formatPercentFromRatio(event.confidence),
-      statusLabel: enumLabel(event.status),
+      statusLabel: translateEnum(event.status),
       statusTone: eventStatusTone(event.status),
     })),
   };

@@ -1,7 +1,7 @@
 import { listEvidences, listEvents } from "@/lib/api/events";
 import { listMarkets } from "@/lib/api/markets";
 import { listSignals } from "@/lib/api/signals";
-import type { I18nRuntime } from "@/lib/i18n/runtime";
+import { dictionary, translateEnum } from "@/lib/i18n/dictionaries";
 import { indexMarkets, selectFirstMatchingItem } from "@/lib/loaders/console-loader-utils";
 import {
   eventStatusTone,
@@ -10,14 +10,13 @@ import {
   signalStateTone,
 } from "@/lib/formatters";
 
-export async function getEventsPageData(i18n: I18nRuntime) {
+export async function getEventsPageData() {
   const [{ data: events }, { data: evidences }, { data: signals }, { data: markets }] = await Promise.all([
     listEvents(),
     listEvidences(),
     listSignals(),
     listMarkets(),
   ]);
-  const { dictionary, enumLabel } = i18n;
   const marketIndex = indexMarkets(markets);
   const selectedEvent = selectFirstMatchingItem(
     events,
@@ -37,7 +36,7 @@ export async function getEventsPageData(i18n: I18nRuntime) {
         id: event.id,
         source: event.source,
         summary: event.summary,
-        statusLabel: enumLabel(event.status),
+        statusLabel: translateEnum(event.status),
         statusTone: eventStatusTone(event.status),
         relevance: formatPercentFromRatio(event.relevance_score),
         confidence: formatPercentFromRatio(event.confidence),
@@ -45,7 +44,7 @@ export async function getEventsPageData(i18n: I18nRuntime) {
         relatedMarketIds: event.related_market_ids,
         evidence: selectedEvidence
           ? {
-              direction: enumLabel(selectedEvidence.direction),
+              direction: translateEnum(selectedEvidence.direction),
               strength: selectedEvidence.strength,
               resolutionRelevance: selectedEvidence.resolution_relevance,
               novelty: selectedEvidence.novelty,
@@ -57,7 +56,7 @@ export async function getEventsPageData(i18n: I18nRuntime) {
           marketId: signal.market_id,
           marketQuestion: marketIndex.get(signal.market_id)?.question ?? signal.market_id,
           edge: formatSignedFixed(signal.edge),
-          stateLabel: enumLabel(signal.lifecycle_state),
+          stateLabel: translateEnum(signal.lifecycle_state),
           stateTone: signalStateTone(signal.lifecycle_state),
         })),
         isSelected: event.id === selectedEvent.id,

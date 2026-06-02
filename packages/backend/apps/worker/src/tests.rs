@@ -2,8 +2,8 @@ use super::*;
 use polyedge_application::{
     ApproveSignalCommand, ArbitrageAnalysisRunListFilters, ArbitrageScanListFilters,
     EventListFilters, EvidenceListFilters, ExecutionRequestListFilters, OrderDraftListFilters,
-    OrderListFilters, PositionListFilters, SignalListFilters, SubmitExecutionCommand,
-    SyncExternalOrderStatusCommand, TradeListFilters, demo_fixture_bundle,
+    OrderListFilters, PositionListFilters, RewardExecutionMode, SignalListFilters,
+    SubmitExecutionCommand, SyncExternalOrderStatusCommand, TradeListFilters, demo_fixture_bundle,
 };
 use polyedge_domain::{
     ExecutionRequestStatus, OrderDraftStatus, OrderStatus, Quantity, SignalLifecycleState,
@@ -804,8 +804,51 @@ fn live_cancel_candidates_cancel_when_orderbook_missing() {
     let plan = live_test_plan(OffsetDateTime::now_utc());
     let order = live_test_open_order("yes_live");
 
-    let candidates = live_cancel_candidates(&config, &[plan], &[order], &HashMap::new());
+    let candidates =
+        live_cancel_candidates(&config, &[plan], &[order], &HashMap::new(), &HashMap::new());
 
     assert_eq!(candidates.len(), 1);
     assert!(candidates[0].1.contains("orderbook unavailable"));
+}
+
+#[test]
+fn live_placement_counts_candidate_notional_against_position_cap() {
+    let config = RewardBotConfig {
+        execution_mode: RewardExecutionMode::Live,
+        account_id: "reward_live".to_string(),
+        max_markets: 1,
+        max_open_orders: 2,
+        max_position_usd: Decimal::from(20_u64),
+        max_global_position_usd: Decimal::ZERO,
+        ..RewardBotConfig::default()
+    };
+    let now = OffsetDateTime::now_utc();
+    let plan = live_test_plan(now);
+    let books = HashMap::from([
+        ("yes_live".to_string(), live_test_book("yes_live", now)),
+        ("no_live".to_string(), live_test_book("no_live", now)),
+    ]);
+    let positions = vec![RewardPosition {
+        account_id: "reward_live".to_string(),
+        condition_id: "cond_live".to_string(),
+        token_id: "yes_live".to_string(),
+        outcome: "Yes".to_string(),
+        size: Decimal::from(38_u64),
+        avg_price: Decimal::from_parts(50, 0, 0, false, 2),
+        realized_pnl: Decimal::ZERO,
+        updated_at: now,
+    }];
+
+    let orders = live_placement_orders(
+        &config,
+        "reward_live",
+        &[plan],
+        &books,
+        &[],
+        &positions,
+        "trc_live_test",
+    );
+
+    assert_eq!(orders.len(), 1);
+    assert_eq!(orders[0].token_id, "no_live");
 }

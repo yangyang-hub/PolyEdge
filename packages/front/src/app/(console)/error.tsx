@@ -5,7 +5,7 @@ import Link from "next/link";
 
 import { Button } from "@/components/ui/button";
 import { RouteStateCard } from "@/components/shared/route-state-card";
-import { useI18n } from "@/lib/i18n/client";
+import { dictionary } from "@/lib/i18n/dictionaries";
 
 export default function Error({
   error,
@@ -14,8 +14,6 @@ export default function Error({
   error: Error & { digest?: string };
   unstable_retry: () => void;
 }) {
-  const { dictionary } = useI18n();
-
   useEffect(() => {
     console.error(error);
   }, [error]);

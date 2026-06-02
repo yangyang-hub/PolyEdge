@@ -14,7 +14,7 @@ import { OperationFeedbackBanner } from "@/components/shared/operation-feedback-
 import { StatusPill } from "@/components/shared/status-pill";
 import { WorkbenchDetailPane, WorkbenchLayout } from "@/components/shared/workbench-layout";
 import { WorkbenchSegmentedControl } from "@/components/shared/workbench-segmented-control";
-import { useI18n } from "@/lib/i18n/client";
+import { dictionary, translateEnum, formatMessage } from "@/lib/i18n/dictionaries";
 import { localizeGeneratedCopy } from "@/lib/i18n/generated-copy";
 import { normalizeOptionalRuntimeMode } from "@/lib/runtime-mode";
 import { upsertStreamedItem } from "@/lib/signal-stream-utils";
@@ -55,7 +55,6 @@ export function SignalsWorkbench({
   const deferredFilter = useDeferredValue(filter);
   const { lastEvent } = useConsoleRealtimeChannel("signals");
   const { lastEvent: lastRiskEvent } = useConsoleRealtimeChannel("risk");
-  const { locale, dictionary, enumLabel, format } = useI18n();
 
   useEffect(() => {
     const streamEvent = lastEvent;
@@ -74,27 +73,27 @@ export function SignalsWorkbench({
               {
                 ...payload,
                 context_label: payload.context_label
-                  ? localizeGeneratedCopy(locale, dictionary, payload.context_label)
+                  ? localizeGeneratedCopy(dictionary, payload.context_label)
                   : payload.context_label,
                 reason: payload.reason
-                  ? localizeGeneratedCopy(locale, dictionary, payload.reason)
+                  ? localizeGeneratedCopy(dictionary, payload.reason)
                   : payload.reason,
                 risk_decision: payload.risk_decision
-                  ? localizeGeneratedCopy(locale, dictionary, payload.risk_decision)
+                  ? localizeGeneratedCopy(dictionary, payload.risk_decision)
                   : payload.risk_decision,
                 evidence_lines: payload.evidence_lines?.map((line) =>
-                  localizeGeneratedCopy(locale, dictionary, line),
+                  localizeGeneratedCopy(dictionary, line),
                 ),
               },
               currentSignal,
               dictionary,
-              enumLabel,
+              translateEnum,
             ),
           streamEvent.type,
         ),
       );
     });
-  }, [dictionary, enumLabel, lastEvent, locale]);
+  }, [dictionary, lastEvent, translateEnum]);
 
   useEffect(() => {
     const streamEvent = lastRiskEvent;
@@ -109,13 +108,13 @@ export function SignalsWorkbench({
 
         setRuntimeControls((currentControls) => ({
           mode: runtimeMode ?? currentControls.mode,
-          modeLabel: runtimeMode ? enumLabel(runtimeMode) : currentControls.modeLabel,
+          modeLabel: runtimeMode ? translateEnum(runtimeMode) : currentControls.modeLabel,
           killSwitch: streamEvent.data.kill_switch ?? currentControls.killSwitch,
         }));
       }
 
     });
-  }, [enumLabel, lastRiskEvent]);
+  }, [translateEnum, lastRiskEvent]);
 
   const filteredSignals = liveSignals.filter((signal) => {
     if (deferredFilter === "high_confidence") {
@@ -229,7 +228,7 @@ export function SignalsWorkbench({
         className="border-none pb-0"
         actions={
           <>
-            <StatusPill tone="success">{format(dictionary.signals.active, { count: activeCount })}</StatusPill>
+            <StatusPill tone="success">{formatMessage(dictionary.signals.active, { count: activeCount })}</StatusPill>
           </>
         }
       />
@@ -247,7 +246,7 @@ export function SignalsWorkbench({
             <div className="flex items-center gap-3">
               <h2 className="font-heading text-xl font-bold tracking-tight text-foreground">{dictionary.signals.liveSignals}</h2>
               <div className="flex flex-wrap gap-2">
-                <StatusPill tone="success">{format(dictionary.signals.active, { count: activeCount })}</StatusPill>
+                <StatusPill tone="success">{formatMessage(dictionary.signals.active, { count: activeCount })}</StatusPill>
               </div>
             </div>
             <div className="flex flex-wrap items-center gap-2">

@@ -13,7 +13,7 @@ import { useConsoleRealtimeChannel } from "@/components/shared/console-realtime-
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { MeterBar } from "@/components/shared/meter-bar";
 import { usePagination } from "@/hooks/use-pagination";
-import { useI18n } from "@/lib/i18n/client";
+import { dictionary, translateEnum, formatMessage } from "@/lib/i18n/dictionaries";
 import { normalizeOptionalRuntimeMode } from "@/lib/runtime-mode";
 import {
   Table,
@@ -41,7 +41,7 @@ type PositionFilter = "all" | "gainers" | "pressure";
 function patchPositionSignal(
   position: PositionItem,
   payload: SignalStreamPayload,
-  enumLabel: (value: string) => string,
+  translateEnum: (value: string) => string,
 ): PositionItem {
   return {
     ...position,
@@ -51,7 +51,7 @@ function patchPositionSignal(
     signalEdge: payload.edge ? formatPercentFromRatio(payload.edge) : position.signalEdge,
     confidence: payload.confidence ? formatPercentFromRatio(payload.confidence) : position.confidence,
     confidenceWidth: payload.confidence ? formatPercentFromRatio(payload.confidence) : position.confidenceWidth,
-    signalStateLabel: enumLabel(payload.lifecycle_state),
+    signalStateLabel: translateEnum(payload.lifecycle_state),
     signalStateTone: signalStateTone(payload.lifecycle_state),
     signalReason: payload.reason ?? position.signalReason,
     riskDecision: payload.risk_decision ?? position.riskDecision,
@@ -62,11 +62,11 @@ function patchPositionSignal(
 function patchPositionsFromSignal(
   positions: PositionItem[],
   payload: SignalStreamPayload,
-  enumLabel: (value: string) => string,
+  translateEnum: (value: string) => string,
 ): PositionItem[] {
   return positions.map((position) =>
     position.marketId === payload.market_id || position.signalId === payload.signal_id
-      ? patchPositionSignal(position, payload, enumLabel)
+      ? patchPositionSignal(position, payload, translateEnum)
       : position,
   );
 }
@@ -103,7 +103,7 @@ export function PositionsWorkbench({ data }: { data: PositionsPageData }) {
   const deferredFilter = useDeferredValue(filter);
   const { lastEvent: lastSignalEvent } = useConsoleRealtimeChannel("signals");
   const { lastEvent: lastRiskEvent } = useConsoleRealtimeChannel("risk");
-  const { dictionary, enumLabel, format } = useI18n();
+  const format = formatMessage;
 
   useEffect(() => {
     const streamEvent = lastSignalEvent;
@@ -113,9 +113,9 @@ export function PositionsWorkbench({ data }: { data: PositionsPageData }) {
     }
 
     startTransition(() => {
-      setPositionItems((currentItems) => patchPositionsFromSignal(currentItems, streamEvent.data, enumLabel));
+      setPositionItems((currentItems) => patchPositionsFromSignal(currentItems, streamEvent.data, translateEnum));
     });
-  }, [enumLabel, lastSignalEvent]);
+  }, [translateEnum, lastSignalEvent]);
 
   useEffect(() => {
     const streamEvent = lastRiskEvent;
@@ -130,14 +130,14 @@ export function PositionsWorkbench({ data }: { data: PositionsPageData }) {
       const runtimeMode = normalizeOptionalRuntimeMode(streamEvent.data.mode);
 
       if (runtimeMode) {
-        setRuntimeModeLabel(enumLabel(runtimeMode));
+        setRuntimeModeLabel(translateEnum(runtimeMode));
       }
 
       if (streamEvent.data.environment) {
         setRuntimeEnvironmentLabel(streamEvent.data.environment);
       }
     });
-  }, [enumLabel, lastRiskEvent]);
+  }, [translateEnum, lastRiskEvent]);
 
   const filteredPositions = positionItems.filter((position) => {
     if (deferredFilter === "gainers") {
@@ -222,8 +222,8 @@ export function PositionsWorkbench({ data }: { data: PositionsPageData }) {
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="flex flex-wrap gap-2">
-              <StatusPill tone="success">{format(dictionary.positions.open, { count: positionItems.length })}</StatusPill>
-              <StatusPill tone="warning">{format(dictionary.positions.pressureCount, { count: pressureCount })}</StatusPill>
+              <StatusPill tone="success">{formatMessage(dictionary.positions.open, { count: positionItems.length })}</StatusPill>
+              <StatusPill tone="warning">{formatMessage(dictionary.positions.pressureCount, { count: pressureCount })}</StatusPill>
             </div>
 
             <div className="overflow-x-auto">
@@ -335,7 +335,7 @@ export function PositionsWorkbench({ data }: { data: PositionsPageData }) {
               <MeterBar value={selectedPosition.bucketUtilizationWidth} tone={selectedPosition.bucketTone} />
               <div className="flex items-center justify-between text-sm text-muted-foreground">
                 <span>{selectedPosition.bucketName}</span>
-                <span>{format(dictionary.positions.utilized, { value: selectedPosition.bucketUtilization })}</span>
+                <span>{formatMessage(dictionary.positions.utilized, { value: selectedPosition.bucketUtilization })}</span>
               </div>
             </div>
 

@@ -449,7 +449,7 @@ mod tests {
     }
 
     #[test]
-    fn validation_mode_does_not_accrue_rewards_for_resting_two_sided_quotes() {
+    fn accrues_rewards_for_resting_two_sided_quotes() {
         let config = RewardBotConfig {
             fill_rate_per_tick: decimal("0"),
             ..RewardBotConfig::default()
@@ -470,10 +470,11 @@ mod tests {
             "trc_test",
         );
 
-        assert_eq!(outcome.account.reward_earned_usd, Decimal::ZERO);
-        assert_eq!(outcome.report.reward_accrued, Decimal::ZERO);
+        // Engine always accrues rewards now (validation mode removed).
+        assert!(outcome.account.reward_earned_usd > Decimal::ZERO);
+        assert!(outcome.report.reward_accrued > Decimal::ZERO);
         assert!(outcome.report.filled_orders == 0);
-        assert!(!outcome
+        assert!(outcome
             .events
             .iter()
             .any(|event| event.event_type == "reward_accrued"));
@@ -564,10 +565,9 @@ mod tests {
     }
 
     #[test]
-    fn validation_mode_ignores_reward_share_even_with_competing_depth() {
-        // Validation mode is only for event-path checks. It must not report
-        // simulated reward earnings even when fresh books carry competitor
-        // depth inside the reward band.
+    fn reward_share_accrues_with_competing_depth() {
+        // Engine always accrues rewards. With competing depth in the reward
+        // band, the accrued amount should be non-zero.
         let config = RewardBotConfig {
             fill_rate_per_tick: decimal("0"),
             ..RewardBotConfig::default()
@@ -630,11 +630,12 @@ mod tests {
             "trc_test",
         );
 
-        assert_eq!(without_competition.account.reward_earned_usd, Decimal::ZERO);
-        assert_eq!(with_book.account.reward_earned_usd, Decimal::ZERO);
-        assert_eq!(without_competition.report.reward_accrued, Decimal::ZERO);
-        assert_eq!(with_book.report.reward_accrued, Decimal::ZERO);
-        assert!(!with_book
+        // Engine always accrues rewards now.
+        assert!(without_competition.account.reward_earned_usd > Decimal::ZERO);
+        assert!(with_book.account.reward_earned_usd > Decimal::ZERO);
+        assert!(without_competition.report.reward_accrued > Decimal::ZERO);
+        assert!(with_book.report.reward_accrued > Decimal::ZERO);
+        assert!(with_book
             .events
             .iter()
             .any(|event| event.event_type == "reward_accrued"));

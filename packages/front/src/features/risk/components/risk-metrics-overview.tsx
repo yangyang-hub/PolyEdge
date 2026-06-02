@@ -2,7 +2,7 @@
 
 import { Button } from "@/components/ui/button";
 import { MeterBar } from "@/components/shared/meter-bar";
-import { useI18n } from "@/lib/i18n/client";
+import { dictionary } from "@/lib/i18n/dictionaries";
 
 import type { RiskPageData } from "../types";
 
@@ -15,7 +15,6 @@ export function RiskMetricsOverview({
   visibleMetrics: RiskPageData["metrics"];
   onViewLog: () => void;
 }) {
-  const { dictionary } = useI18n();
 
   return (
     <section className="grid gap-4 xl:grid-cols-12">

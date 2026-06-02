@@ -12,7 +12,7 @@ import { Input } from "@/components/ui/input";
 import type { WalletAnalysisReportDto } from "@/lib/contracts/dto";
 import { formatUsdFixed, metricToneForPnl } from "@/lib/formatters";
 import { usePagination } from "@/hooks/use-pagination";
-import { useI18n } from "@/lib/i18n/client";
+import { dictionary } from "@/lib/i18n/dictionaries";
 import { analyzeWallet } from "@/lib/api/wallet-analysis";
 
 function toNum(v: string | number | undefined | null): number {
@@ -46,7 +46,6 @@ const styleLabels: Record<string, string> = {
 };
 
 export function WalletAnalysisWorkbench() {
-  const { dictionary } = useI18n();
   const t = dictionary.walletAnalysis;
   const [address, setAddress] = useState("");
   const [report, setReport] = useState<WalletAnalysisReportDto | null>(null);

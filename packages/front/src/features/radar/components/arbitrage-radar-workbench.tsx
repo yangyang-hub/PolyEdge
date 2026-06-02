@@ -12,7 +12,7 @@ import { WorkbenchDetailPane, WorkbenchLayout } from "@/components/shared/workbe
 import { WorkbenchSegmentedControl } from "@/components/shared/workbench-segmented-control";
 import { Button } from "@/components/ui/button";
 import { usePagination } from "@/hooks/use-pagination";
-import { useI18n } from "@/lib/i18n/client";
+import { dictionary, translateEnum, formatMessage } from "@/lib/i18n/dictionaries";
 import type { RadarFilter, RadarPageData, RadarView } from "@/features/radar/types";
 import { isKeyboardSelect } from "@/lib/keyboard";
 
@@ -32,8 +32,8 @@ type ArbitrageRadarWorkbenchProps = {
 };
 
 export function ArbitrageRadarWorkbench({ data }: ArbitrageRadarWorkbenchProps) {
+  const format = formatMessage;
   const arbitrageStream = useConsoleRealtimeChannel("arbitrage");
-  const { dictionary, enumLabel, format } = useI18n();
   const [filter, setFilter] = useState<RadarFilter>("all");
   const [view, setView] = useState<RadarView>("active");
   const [selectedId, setSelectedId] = useState(data.selectedOpportunityId);
@@ -82,7 +82,7 @@ export function ArbitrageRadarWorkbench({ data }: ArbitrageRadarWorkbenchProps) 
     ) {
       startTransition(() => {
         setLiveOpportunities((current) =>
-          upsertOpportunity(current, streamEvent.data, dictionary, enumLabel, format),
+          upsertOpportunity(current, streamEvent.data, dictionary, translateEnum, format),
         );
         setSelectedId((current) => current || streamEvent.data.opportunity_id || "");
       });
@@ -94,7 +94,7 @@ export function ArbitrageRadarWorkbench({ data }: ArbitrageRadarWorkbenchProps) 
       streamEvent.type === "arbitrage.validation.failed"
     ) {
       startTransition(() => {
-        setLiveOpportunities((current) => patchValidation(current, streamEvent.data, dictionary, enumLabel));
+        setLiveOpportunities((current) => patchValidation(current, streamEvent.data, dictionary, translateEnum));
       });
       return;
     }
@@ -107,14 +107,14 @@ export function ArbitrageRadarWorkbench({ data }: ArbitrageRadarWorkbenchProps) 
     }
 
     if (streamEvent.type === "arbitrage.analysis.generated") {
-      const analysis = buildLiveAnalysis(streamEvent.data, enumLabel, marketQuestionById);
+      const analysis = buildLiveAnalysis(streamEvent.data, translateEnum, marketQuestionById);
       if (analysis) {
         startTransition(() => {
           setLiveAnalysis(analysis);
         });
       }
     }
-  }, [arbitrageStream.lastEvent, dictionary, enumLabel, format, marketQuestionById]);
+  }, [arbitrageStream.lastEvent, dictionary, translateEnum, format, marketQuestionById]);
 
   const metrics = useMemo(
     () => buildMetrics(liveOpportunities, liveScans, dictionary, format),
@@ -167,8 +167,8 @@ export function ArbitrageRadarWorkbench({ data }: ArbitrageRadarWorkbenchProps) 
             <StatusPill tone={arbitrageStream.connection === "open" ? "success" : "warning"}>
               {arbitrageStream.connection}
             </StatusPill>
-            <StatusPill tone="success">{format(dictionary.radar.observed, { count: liveOpportunities.length })}</StatusPill>
-            <StatusPill tone="primary">{format(dictionary.radar.scans, { count: liveScans.length })}</StatusPill>
+            <StatusPill tone="success">{formatMessage(dictionary.radar.observed, { count: liveOpportunities.length })}</StatusPill>
+            <StatusPill tone="primary">{formatMessage(dictionary.radar.scans, { count: liveScans.length })}</StatusPill>
           </>
         }
       />
@@ -328,7 +328,7 @@ export function ArbitrageRadarWorkbench({ data }: ArbitrageRadarWorkbenchProps) 
                     {liveAnalysis.generatedClock} / {liveAnalysis.lookbackHours}
                   </p>
                 </div>
-                <StatusPill tone="primary">{format(dictionary.metricHints.markets, { count: liveAnalysis.marketCount })}</StatusPill>
+                <StatusPill tone="primary">{formatMessage(dictionary.metricHints.markets, { count: liveAnalysis.marketCount })}</StatusPill>
               </div>
 
               <div className="grid grid-cols-2 gap-3">
@@ -374,7 +374,7 @@ export function ArbitrageRadarWorkbench({ data }: ArbitrageRadarWorkbenchProps) 
                     </StatusPill>
                   </div>
                   <p className="mt-2 text-xs text-muted-foreground">
-                    {format(dictionary.metricHints.markets, { count: scan.marketCount })} / {scan.snapshotCount} {dictionary.radar.snapshots} / {scan.scannerVersion}
+                    {formatMessage(dictionary.metricHints.markets, { count: scan.marketCount })} / {scan.snapshotCount} {dictionary.radar.snapshots} / {scan.scannerVersion}
                   </p>
                 </div>
               ))}

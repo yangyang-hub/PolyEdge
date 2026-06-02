@@ -8,7 +8,7 @@ import { PageHeader } from "@/components/shared/page-header";
 import { StatusPill } from "@/components/shared/status-pill";
 import { WorkbenchLayout, WorkbenchDetailPane } from "@/components/shared/workbench-layout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { useI18n } from "@/lib/i18n/client";
+import { dictionary, formatMessage } from "@/lib/i18n/dictionaries";
 import { isKeyboardSelect } from "@/lib/keyboard";
 
 type ReplayPageData = Awaited<ReturnType<typeof getReplayPageData>>;
@@ -33,7 +33,7 @@ function replayMomentTone(
 
 export function ReplayWorkbench({ data }: { data: ReplayPageData }) {
   const [selectedId, setSelectedId] = useState(data.selectedMomentId);
-  const { dictionary, format } = useI18n();
+  const format = formatMessage;
   const selectedMoment =
     data.timeline.find((moment) => moment.id === selectedId) ??
     data.timeline.find((moment) => moment.id === data.selectedMomentId) ??

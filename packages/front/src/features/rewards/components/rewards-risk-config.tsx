@@ -2,7 +2,7 @@
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { RewardBotConfigDto } from "@/lib/contracts/dto";
-import { useI18n } from "@/lib/i18n/client";
+import { dictionary } from "@/lib/i18n/dictionaries";
 
 import type { NumberConfigKey } from "../types";
 import { NumberInput } from "./number-input";
@@ -13,7 +13,6 @@ interface Props {
 }
 
 export function RiskControlConfig({ draft, updateNumber }: Props) {
-  const { dictionary } = useI18n();
   const h = dictionary.rewards.configHints;
 
   return (

@@ -7,7 +7,6 @@ import type {
   RewardBotSnapshotDto,
   RuntimeConfigEntryDto,
   RuntimeConfigUpdateDto,
-  RuntimeMode,
 } from "@/lib/contracts/dto";
 import { PolyEdgeApiError, randomUUID } from "@/lib/api/base";
 import {
@@ -28,7 +27,6 @@ import {
 } from "@/lib/api/copytrade";
 import {
   releaseRiskControls,
-  requestModeSwitch,
   setKillSwitchState,
 } from "@/lib/api/risk";
 import { updateRuntimeConfig } from "@/lib/api/settings";
@@ -101,13 +99,6 @@ function apiActionFailure(error: unknown, fallback: string): OperationActionResu
   return createActionFailureResult(error instanceof Error ? error.message : fallback);
 }
 
-const modeSwitchSchema = z.object({
-  currentMode: z.enum(["research", "paper_trade", "manual_confirm", "live_auto", "kill_switch_locked"]),
-  targetMode: z.enum(["research", "paper_trade", "manual_confirm", "live_auto", "kill_switch_locked"]),
-  note: z.string().trim().min(16, "Mode switch note must be at least 16 characters."),
-  stepUpCode: z.string().trim().min(6, "Step-up code is required for mode changes."),
-});
-
 const riskControlSchema = z.object({
   note: z.string().trim().min(16, "Operator note must be at least 16 characters."),
   stepUpCode: z.string().trim().min(6, "Step-up code is required for this control."),
@@ -144,7 +135,6 @@ const decimalNumber = z.coerce.number().finite();
 
 const rewardConfigSchema = z.object({
   enabled: z.boolean(),
-  execution_mode: z.enum(["validation", "live"]),
   account_id: z.string().trim().min(1),
   max_markets: z.coerce.number().int().min(0).max(65_535),
   max_open_orders: z.coerce.number().int().min(0).max(65_535),
@@ -194,39 +184,6 @@ const rewardConfigSchema = z.object({
 const runtimeConfigSchema = z.object({
   values: z.record(z.string().min(1), z.string().max(20_000)),
 });
-
-export async function requestModeSwitchAction(input: {
-  currentMode: RuntimeMode;
-  targetMode: RuntimeMode;
-  note: string;
-  stepUpCode: string;
-}): Promise<OperationActionResult> {
-  try {
-    const parsed = modeSwitchSchema.safeParse(input);
-
-    if (!parsed.success) {
-      const flattened = parsed.error.flatten().fieldErrors;
-      return createActionFailureResult("Mode switch request is invalid.", {
-        fieldErrors: {
-          note: flattened.note?.[0],
-          stepUpCode: flattened.stepUpCode?.[0],
-          targetMode: flattened.targetMode?.[0],
-        },
-      });
-    }
-
-    const response = await requestModeSwitch(parsed.data);
-
-    return createActionSuccessResult("Mode switch accepted by the control plane.", {
-      requestId: response.meta.request_id,
-      traceId: response.meta.trace_id,
-      operationId: response.data.operation_id,
-      status: response.data.status,
-    });
-  } catch (error) {
-    return apiActionFailure(error, "Mode switch request failed unexpectedly.");
-  }
-}
 
 export async function triggerRiskReleaseAction(input: {
   note: string;
@@ -403,7 +360,7 @@ export async function resetRewardBotAction(): Promise<RewardBotActionResult> {
     const response = await resetRewardBot();
 
     return {
-      ...createActionSuccessResult("Reward validation state reset queued for worker execution.", {
+      ...createActionSuccessResult("Rewards reset command queued for worker execution.", {
         requestId: response.meta.request_id,
         traceId: response.meta.trace_id,
         operationId: `reward_reset_${randomUUID().slice(0, 8)}`,
@@ -412,7 +369,7 @@ export async function resetRewardBotAction(): Promise<RewardBotActionResult> {
       snapshot: response.data,
     };
   } catch (error) {
-    return apiActionFailure(error, "Reward validation state reset failed.");
+    return apiActionFailure(error, "Rewards reset command failed.");
   }
 }
 

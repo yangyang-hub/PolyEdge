@@ -1,11 +1,10 @@
 "use client";
 
 import { StatusPill } from "@/components/shared/status-pill";
-import { useI18n } from "@/lib/i18n/client";
+import { dictionary } from "@/lib/i18n/dictionaries";
 import type { RadarOpportunityItem } from "@/features/radar/types";
 
 export function OpportunityDetail({ opportunity }: { opportunity: RadarOpportunityItem | null }) {
-  const { dictionary } = useI18n();
 
   if (!opportunity) {
     return (

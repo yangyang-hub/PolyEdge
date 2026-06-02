@@ -20,7 +20,7 @@ import {
 } from "@/components/ui/table";
 import { listMarkets } from "@/lib/api/markets";
 import { ambiguityTone, formatPercentFromRatio, marketTradabilityTone } from "@/lib/formatters";
-import { useI18n } from "@/lib/i18n/client";
+import { dictionary, translateEnum, formatMessage } from "@/lib/i18n/dictionaries";
 import { isKeyboardSelect } from "@/lib/keyboard";
 import { listEvents } from "@/lib/api/events";
 
@@ -42,7 +42,6 @@ export function MarketsWorkbench({ data }: { data: MarketsPageData }) {
   const [sortDir, setSortDir] = useState<SortDir>("none");
   const [page, setPage] = useState(1);
 
-  const { dictionary, format, enumLabel } = useI18n();
   const abortRef = useRef<AbortController | null>(null);
   const selectedIdRef = useRef(data.selectedMarketId);
 
@@ -73,9 +72,9 @@ export function MarketsWorkbench({ data }: { data: MarketsPageData }) {
         midPrice: market.mid_price,
         volume24h: market.volume_24h,
         tradabilityStatus: market.tradability_status,
-        tradabilityLabel: enumLabel(market.tradability_status),
+        tradabilityLabel: translateEnum(market.tradability_status),
         tradabilityTone: marketTradabilityTone(market.tradability_status),
-        ambiguityLabel: enumLabel(market.ambiguity_level),
+        ambiguityLabel: translateEnum(market.ambiguity_level),
         ambiguityTone: ambiguityTone(market.ambiguity_level),
         linkedEventCount: String(events.filter((event) => event.related_market_ids.includes(market.id)).length).padStart(2, "0"),
       }));
@@ -86,9 +85,9 @@ export function MarketsWorkbench({ data }: { data: MarketsPageData }) {
         category: market.category,
         polymarketConditionId: market.polymarket_condition_id ?? null,
         slug: market.slug ?? null,
-        tradabilityLabel: enumLabel(market.tradability_status),
+        tradabilityLabel: translateEnum(market.tradability_status),
         tradabilityTone: marketTradabilityTone(market.tradability_status),
-        ambiguityLabel: enumLabel(market.ambiguity_level),
+        ambiguityLabel: translateEnum(market.ambiguity_level),
         ambiguityTone: ambiguityTone(market.ambiguity_level),
         resolutionSource: market.resolution_source,
         edgeCaseNotes: market.edge_case_notes,
@@ -115,7 +114,7 @@ export function MarketsWorkbench({ data }: { data: MarketsPageData }) {
         setLoading(false);
       }
     }
-  }, [enumLabel]);
+  }, [translateEnum]);
 
   useEffect(() => {
     const tradabilityStatus =
@@ -289,7 +288,7 @@ export function MarketsWorkbench({ data }: { data: MarketsPageData }) {
 
             <div className="mt-4 flex items-center justify-between border-t border-border/70 pt-3">
               <p className="text-xs text-muted-foreground">
-                {format(dictionary.markets.pageOf, { current: page, total: totalPages })}
+                {formatMessage(dictionary.markets.pageOf, { current: page, total: totalPages })}
               </p>
               <div className="flex items-center gap-2">
                 <Button

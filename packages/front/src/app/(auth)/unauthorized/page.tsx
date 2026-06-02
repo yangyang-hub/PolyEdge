@@ -10,7 +10,7 @@ import {
 } from "@/lib/console-auth";
 import { Button } from "@/components/ui/button";
 import { RouteStateCard } from "@/components/shared/route-state-card";
-import { useI18n } from "@/lib/i18n/client";
+import { dictionary } from "@/lib/i18n/dictionaries";
 
 type UnauthorizedState = {
   nextPath: string;
@@ -19,7 +19,6 @@ type UnauthorizedState = {
 };
 
 export default function UnauthorizedPage() {
-  const { dictionary } = useI18n();
   const [state, setState] = useState<UnauthorizedState>({
     nextPath: "/dashboard",
     requiredRole: null,

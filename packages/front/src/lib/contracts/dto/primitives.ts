@@ -46,7 +46,6 @@ export type ArbitrageValidationStatus =
   | "invalid_market"
   | "error";
 export type RewardOrderSide = "buy" | "sell";
-export type RewardExecutionMode = "validation" | "live";
 export type ManagedRewardOrderStatus =
   | "planned"
   | "open"

@@ -4,7 +4,7 @@ import { listPositions } from "@/lib/api/positions";
 import { readRiskState, listRiskBuckets } from "@/lib/api/risk";
 import { listSignals } from "@/lib/api/signals";
 import { localizeGeneratedCopy } from "@/lib/i18n/generated-copy";
-import type { I18nRuntime } from "@/lib/i18n/runtime";
+import { dictionary, translateEnum } from "@/lib/i18n/dictionaries";
 import { normalizeRuntimeMode } from "@/lib/runtime-mode";
 import { sumNumericStrings } from "@/lib/loaders/console-loader-utils";
 import {
@@ -34,7 +34,7 @@ function indexLatestSignalsByMarket<T extends { market_id: string; version: numb
   return signalsByMarket;
 }
 
-export async function getPositionsPageData(i18n: I18nRuntime) {
+export async function getPositionsPageData() {
   const [
     { data: positions },
     { data: riskBuckets },
@@ -50,7 +50,6 @@ export async function getPositionsPageData(i18n: I18nRuntime) {
     listSignals(),
     listEvents(),
   ]);
-  const { locale, dictionary, enumLabel } = i18n;
 
   const realizedTotal = sumNumericStrings(positions.map((position) => position.realized_pnl));
   const unrealizedTotal = sumNumericStrings(positions.map((position) => position.unrealized_pnl));
@@ -88,20 +87,20 @@ export async function getPositionsPageData(i18n: I18nRuntime) {
       signalEdge: signal ? formatPercentFromRatio(signal.edge) : "0%",
       confidence: signal ? formatPercentFromRatio(signal.confidence) : "n/a",
       confidenceWidth: signal ? formatPercentFromRatio(signal.confidence) : "0%",
-      signalStateLabel: signal ? enumLabel(signal.lifecycle_state) : "monitoring",
+      signalStateLabel: signal ? translateEnum(signal.lifecycle_state) : "monitoring",
       signalStateTone: signal ? signalStateTone(signal.lifecycle_state) : ("neutral" as const),
-      tradabilityLabel: market ? enumLabel(market.tradability_status) : dictionary.common.unknown,
+      tradabilityLabel: market ? translateEnum(market.tradability_status) : dictionary.common.unknown,
       tradabilityTone: market ? marketTradabilityTone(market.tradability_status) : ("neutral" as const),
-      bucketStatusLabel: bucket ? enumLabel(bucket.status) : dictionary.common.healthy,
+      bucketStatusLabel: bucket ? translateEnum(bucket.status) : dictionary.common.healthy,
       bucketStatus: bucket?.status ?? "healthy",
       bucketTone: bucket ? bucketTone(bucket.status) : ("neutral" as const),
       bucketUtilization: bucket ? formatPercentFromRatio(bucket.utilization) : "0%",
       bucketUtilizationWidth: bucket ? formatPercentFromRatio(bucket.utilization) : "0%",
       signalReason: signal
-        ? localizeGeneratedCopy(locale, dictionary, signal.reason)
+        ? localizeGeneratedCopy(dictionary, signal.reason)
         : dictionary.positions.signalFallback,
       riskDecision: signal
-        ? localizeGeneratedCopy(locale, dictionary, signal.risk_decision)
+        ? localizeGeneratedCopy(dictionary, signal.risk_decision)
         : dictionary.positions.riskFallback,
       eventCount: linkedEvents.length,
       linkedEvents: linkedEvents.slice(0, 3).map((event) => ({
@@ -123,7 +122,7 @@ export async function getPositionsPageData(i18n: I18nRuntime) {
   );
 
   return {
-    runtimeModeLabel: enumLabel(runtimeMode),
+    runtimeModeLabel: translateEnum(runtimeMode),
     runtimeEnvironmentLabel: riskState.environment,
     metrics: [
       {
@@ -166,7 +165,7 @@ export async function getPositionsPageData(i18n: I18nRuntime) {
       exposure: formatPercentFromRatio(bucket.exposure),
       limit: formatPercentFromRatio(bucket.limit),
       utilization: formatPercentFromRatio(bucket.utilization),
-      statusLabel: enumLabel(bucket.status),
+      statusLabel: translateEnum(bucket.status),
       tone: bucketTone(bucket.status),
       width: formatBucketWidth(bucket.exposure),
     })),

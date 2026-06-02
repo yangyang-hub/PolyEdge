@@ -13,7 +13,7 @@ import { PaginationBar } from "@/components/pagination-bar";
 import { StateBanner } from "@/components/shared/state-banner";
 import { StatusPill } from "@/components/shared/status-pill";
 import { usePagination } from "@/hooks/use-pagination";
-import { useI18n } from "@/lib/i18n/client";
+import { dictionary, translateEnum, formatMessage } from "@/lib/i18n/dictionaries";
 import { localizeGeneratedCopy } from "@/lib/i18n/generated-copy";
 import { normalizeOptionalRuntimeMode } from "@/lib/runtime-mode";
 import type {
@@ -38,7 +38,7 @@ type DashboardPageData = Awaited<ReturnType<typeof getDashboardPageData>>;
 function buildSignalRow(
   payload: SignalStreamPayload,
   current?: DashboardPageData["signals"][number],
-  enumLabel: (value: string) => string = (value) => value.replaceAll("_", " "),
+  translateEnum: (value: string) => string = (value) => value.replaceAll("_", " "),
 ): DashboardPageData["signals"][number] {
   return {
     id: payload.signal_id,
@@ -49,7 +49,7 @@ function buildSignalRow(
     confidenceWidth: payload.confidence
       ? formatPercentFromRatio(payload.confidence)
       : current?.confidenceWidth ?? "0%",
-    stateLabel: enumLabel(payload.lifecycle_state),
+    stateLabel: translateEnum(payload.lifecycle_state),
     stateTone: signalStateTone(payload.lifecycle_state),
   };
 }
@@ -171,7 +171,7 @@ function readMetricCount(
 export function DashboardOverview({ data }: { data: DashboardPageData }) {
   const [liveData, setLiveData] = useState(data);
   const { signals: signalsStream, risk: riskStream, events: eventsStream } = useConsoleRealtime();
-  const { locale, dictionary, enumLabel, format } = useI18n();
+  const format = formatMessage;
 
   useEffect(() => {
     const streamEvent = signalsStream.lastEvent;
@@ -186,12 +186,12 @@ export function DashboardOverview({ data }: { data: DashboardPageData }) {
         signals: upsertStreamedItem(
           current.signals,
           streamEvent.data,
-          (payload, currentSignal) => buildSignalRow(payload, currentSignal, enumLabel),
+          (payload, currentSignal) => buildSignalRow(payload, currentSignal, translateEnum),
           streamEvent.type,
         ),
       }));
     });
-  }, [enumLabel, signalsStream.lastEvent]);
+  }, [translateEnum, signalsStream.lastEvent]);
 
   useEffect(() => {
     const streamEvent = riskStream.lastEvent;
@@ -205,19 +205,19 @@ export function DashboardOverview({ data }: { data: DashboardPageData }) {
     startTransition(() => {
       setLiveData((current) => ({
         ...current,
-        modeLabel: runtimeMode ? enumLabel(runtimeMode) : current.modeLabel,
+        modeLabel: runtimeMode ? translateEnum(runtimeMode) : current.modeLabel,
         environmentLabel: streamEvent.data.environment ?? current.environmentLabel,
         metrics: patchMetrics(current.metrics, streamEvent.data, {
           critical: dictionary.common.critical,
         }),
         alerts: upsertAlert(current.alerts, streamEvent.data).map((alert) => ({
           ...alert,
-          reason: localizeGeneratedCopy(locale, dictionary, alert.reason),
-          target: localizeGeneratedCopy(locale, dictionary, alert.target),
+          reason: localizeGeneratedCopy(dictionary, alert.reason),
+          target: localizeGeneratedCopy(dictionary, alert.target),
         })),
       }));
     });
-  }, [dictionary, dictionary.common.critical, enumLabel, locale, riskStream.lastEvent]);
+  }, [dictionary.common.critical, translateEnum, riskStream.lastEvent]);
 
   useEffect(() => {
     const streamEvent = eventsStream.lastEvent;
@@ -266,7 +266,7 @@ export function DashboardOverview({ data }: { data: DashboardPageData }) {
           title={openAlertCount > 0 ? dictionary.dashboard.reviewActiveTitle : dictionary.dashboard.reviewQuietTitle}
           detail={
             openAlertCount > 0
-              ? format(dictionary.dashboard.reviewActiveDetail, { count: openAlertCount })
+              ? formatMessage(dictionary.dashboard.reviewActiveDetail, { count: openAlertCount })
               : dictionary.dashboard.reviewQuietDetail
           }
           className="animate-in fade-in-0 duration-300"
@@ -378,7 +378,7 @@ export function DashboardOverview({ data }: { data: DashboardPageData }) {
                 {liveData.alerts.map((alert) => (
                   <div key={alert.id} className="rounded-md bg-accent/45 p-3">
                     <div className="flex items-center justify-between gap-3">
-                      <StatusPill tone={alert.severityTone}>{enumLabel(alert.severity)}</StatusPill>
+                      <StatusPill tone={alert.severityTone}>{translateEnum(alert.severity)}</StatusPill>
                       <span className="font-mono text-[10px] text-muted-foreground">{alert.createdAt}</span>
                     </div>
                     <p className="mt-2 text-sm font-medium text-foreground">{alert.reason}</p>

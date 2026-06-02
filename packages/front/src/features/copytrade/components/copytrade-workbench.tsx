@@ -17,7 +17,7 @@ import type {
 } from "@/lib/contracts/dto";
 import { formatOptionalClock, formatUsdFixed, metricToneForPnl } from "@/lib/formatters";
 import { usePagination } from "@/hooks/use-pagination";
-import { useI18n } from "@/lib/i18n/client";
+import { dictionary } from "@/lib/i18n/dictionaries";
 import {
   addTrackedWalletAction,
   analyzeCopytradeWalletsAction,
@@ -35,7 +35,6 @@ export function CopyTradeWorkbench({
 }: {
   initialSnapshot: CopyTradeSnapshotDto;
 }) {
-  const { dictionary } = useI18n();
   const t = dictionary.copytrade;
   const [snapshot, setSnapshot] = useState(initialSnapshot);
   const [draft, setDraft] = useState<CopyTradeConfigDto>(initialSnapshot.config);

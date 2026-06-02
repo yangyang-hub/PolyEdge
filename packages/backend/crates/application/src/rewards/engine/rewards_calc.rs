@@ -1,5 +1,6 @@
 // Polymarket-faithful reward accrual and the book-top / Q_min math it relies on.
 
+#[allow(dead_code)]
 impl TickContext {
     /// Polymarket-faithful reward accrual for the resting two-sided entry quotes.
     fn accrue_rewards(

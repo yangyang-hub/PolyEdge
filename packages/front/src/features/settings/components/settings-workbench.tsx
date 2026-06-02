@@ -5,17 +5,17 @@ import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle }
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { RuntimeConfigPanel } from "@/features/settings/components/runtime-config-panel";
 import type { getSettingsPageData } from "@/features/settings/loaders/settings-page-data";
-import type { Dictionary } from "@/lib/i18n/dictionaries";
+import { dictionary, formatMessage } from "@/lib/i18n/dictionaries";
 
 type SettingsPageData = Awaited<ReturnType<typeof getSettingsPageData>>;
 
 type SettingsWorkbenchProps = {
   data: SettingsPageData;
-  dictionary: Dictionary;
-  format: (template: string, values?: Record<string, string | number>) => string;
+  format?: (template: string, values?: Record<string, string | number>) => string;
 };
 
-export function SettingsWorkbench({ data, dictionary, format }: SettingsWorkbenchProps) {
+export function SettingsWorkbench({ data }: SettingsWorkbenchProps) {
+  const format = formatMessage;
   const docs = [
     { title: dictionary.docs.systemDesign, path: "doc/polyedge-design.md" },
     { title: dictionary.docs.frontendDesign, path: "doc/polyedge-frontend-design.md" },

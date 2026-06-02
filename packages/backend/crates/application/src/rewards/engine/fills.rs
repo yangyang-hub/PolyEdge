@@ -1,5 +1,6 @@
 // Fill handling: buy and exit fills, post-fill strategy, flatten/exit orders, fill recording.
 
+#[allow(dead_code)]
 impl TickContext {
     fn handle_buy_fill(
         &mut self,
@@ -230,7 +231,7 @@ impl TickContext {
         reason: &str,
     ) {
         let id = self.next_id("rewx");
-        let external = format!("sim_{id}");
+        let external = id.clone();
         let order = ManagedRewardOrder {
             id,
             account_id: self.account.account_id.clone(),

@@ -1,7 +1,7 @@
 import type { OperationActionResult } from "@/lib/api/actions";
 
 import { StatusPill } from "@/components/shared/status-pill";
-import { useI18n } from "@/lib/i18n/client";
+import { dictionary } from "@/lib/i18n/dictionaries";
 import { cn } from "@/lib/utils";
 
 export function OperationFeedbackBanner({
@@ -11,8 +11,6 @@ export function OperationFeedbackBanner({
   feedback: OperationActionResult;
   className?: string;
 }) {
-  const { dictionary } = useI18n();
-
   return (
     <div
       className={cn(

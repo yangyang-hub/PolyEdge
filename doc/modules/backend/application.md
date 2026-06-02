@@ -1,6 +1,6 @@
 # application（应用/服务层）
 
-最后更新：2026-06-01
+最后更新：2026-06-02
 
 ## 概述
 
@@ -21,7 +21,7 @@
 | `market_event/` | 核心市场/事件/信号：`MarketEventService`、`MarketEventStore`（最大 Store trait） |
 | `execution/` | 执行管道：`ExecutionService`（组合 MarketEventService + RiskService） |
 | `risk.rs` | 风控：`RiskService`、`RiskStateStore`、`RiskPolicy`、kill-switch 命令 |
-| `rewards/` | 做市奖励：`RewardBotService`、`RewardBotStore`、validation/live 执行模式、订单分页查询 |
+| `rewards/` | 做市奖励：`RewardBotService`、`RewardBotStore`、live 执行模式、订单分页查询 |
 | `copytrade/` | 跟单：`CopyTradeService`、`CopyTradeStore`、模拟引擎 |
 | `arbitrage/` | 套利：`ArbitrageService`、`ArbitrageStore`、机会检测/验证 |
 | `news_ingestion.rs` | 新闻采集：`NewsIngestionService`、`NewsIngestionStore` |
@@ -81,15 +81,15 @@
 - Config：`load_config`、`save_config`（key-value 模式）
 - Markets：`upsert_markets`、`list_markets`、`list_all_active_markets`
 - Quote Plans：`save_quote_plans`（替换当前计划快照）、`list_quote_plans`
-- Orders/Positions/Events：完整 CRUD；订单支持 `RewardOrderListQuery` 后端分页并在 snapshot 中返回 `orders_page`
-- State Tick：`apply_simulation_tick`（历史命名；原子持久化 markets/plans/orders/fills/positions/ledger/events，供 validation 和 live 本地状态更新复用）、`reset_simulation`（仅用于 validation 本地账本重置）
+- Orders/Positions/Events：完整 CRUD；订单支持 `RewardOrderListQuery` 后端分页并在 snapshot 中返回 `orders_page`；live worker 可按 external Polymarket order id 查 managed order，并用 fill id 做成交幂等
+- State Tick：`apply_simulation_tick`（历史命名；原子持久化 markets/plans/orders/fills/positions/ledger/events，供 live 本地状态更新复用）、`reset_simulation`（保留给本地/历史 validation 状态重置；live Reset 不调用它清账）
 - Control Commands：`enqueue_control_command`、`claim_next_control_command`、`complete_control_command`、`fail_control_command`
 
 **服务：** `RewardBotService` — 读写配置、市场管理、快照聚合、订单分页快照、live tick 计划准备、rewards 控制命令入队/领取/完成状态管理；不再依赖全局 `ModeStateStore`
 
 **执行模式：**
-- `RewardExecutionMode::Validation`（默认）：只验证事件路径，生成本地托管订单、撤单、成交、卖出/平仓等事件；不向 Polymarket 下单，也不把 Qmin 计算当作已赚收益。
-- `RewardExecutionMode::Live`：worker 使用当前 quote plan 通过 `LivePolymarketConnector` 提交 post-only token 买单，并对本系统托管的 live 订单执行撤单；该模式由 rewards 配置控制，与全局 system mode 解耦。Polymarket 返回 `matched` / `delayed` 等非 live 接受状态时，worker 会把它视为 post-only 安全违规并立即尝试撤单，不把该订单标为正常 open。
+- `RewardExecutionMode` 枚举保留用于向后兼容（serde 反序列化旧配置），但所有值均映射为 `Live`。`is_validation()` 始终返回 `false`，`is_live()` 始终返回 `true`。
+- Worker 使用当前 quote plan 通过 `LivePolymarketConnector` 提交 post-only token 买单，并对本系统托管的 live 订单执行撤单；该模式由 rewards 配置控制，与全局 system mode 解耦。Polymarket 返回 `matched` / `delayed` 等非 live 接受状态时，worker 会把它视为 post-only 安全违规并立即尝试撤单，不把该订单标为正常 open。
 
 **控制命令类型：**
 - `RewardControlAction`：`run_once`、`cancel_all`、`reset`
@@ -101,25 +101,23 @@
 - `RewardListPage`：`page`、`page_size`、`total_items`、`total_pages`
 - `RewardBotSnapshot.orders_page`：当前 `orders` 数组对应的分页元数据
 
-**validation 引擎：** `run_reward_simulation_tick`（历史命名；在 `rewards/engine.rs` 中，通过 `include!` 拆分到 `engine/{reconcile,fills,quoting,rewards_calc,state}.rs`）
+**Tick 引擎：** `run_reward_simulation_tick`（历史命名；在 `rewards/engine.rs` 中，通过 `include!` 拆分到 `engine/{reconcile,fills,quoting,rewards_calc,state}.rs`）。`is_validation()` 条件已移除，始终执行 `accrue_rewards`。
 
 **资金与盘口约束：**
-- 开放 validation 买单采用软资金复用：新建买单不会从 `available_usd` 转入 `reserved_usd`，同一资金池可在多个市场同时报价；`reserved_usd` 仅保留为兼容旧账本，下一次 tick 会自动释放到 `available_usd`。
-- 买单计划的单腿目标 notional 使用 `min(quote_size_usd, account_capital_usd)`，再受 `per_market_usd / 2` 和 Polymarket `rewards_min_size` 约束；如果该预算无法满足 `rewards_min_size`，计划会标记为不 eligible，不会靠放大模拟订单绕过资金约束。
-- validation 买单成交时才消耗 `available_usd`；如果多个软复用报价同时触发，后续成交会按剩余现金缩小或取消。
+- 未成交 post-only maker 买单不在本地按全局 notional 硬锁同一笔 USDC，同一资金池可同时在多个不同市场报价。
+- 买单计划的单腿目标 notional 使用 `min(quote_size_usd, account_capital_usd)`，再受 `per_market_usd / 2` 和 Polymarket `rewards_min_size` 约束；如果该预算无法满足 `rewards_min_size`，计划会标记为不 eligible。
 - `max_markets=0`、`max_open_orders=0` 或 `quote_size_usd=0` 表示不再新挂单。
-- 缺少新鲜缓存盘口时不会新挂单或触发 validation 成交；validation fast reconcile 在 `enabled=false` 时不会补挂新单。quote plan 仍可用 token fallback price 做 dry-run 预览，但 placement 必须看到 YES/NO 两腿的新鲜盘口。
-- validation 成交受新鲜盘口的可见对手盘深度和 `max_fill_ratio` 共同限制，不能只因顶价穿透就把整单无视深度地填满。
-- 全局敞口门槛使用「已有库存 notional + 当前候选单腿 notional」做准入，不再累计所有开放 validation 买单软报价。
+- 缺少新鲜缓存盘口时不会提交新 post-only 订单。placement 必须看到 YES/NO 两腿的新鲜盘口。
+- 全局敞口门槛使用「已有库存 notional + 当前候选单腿 notional」做准入。
 - 单次 rewards tick 使用 `list_reward_run_candidate_markets()` 只从 `reward_markets` 表读取候选池（默认至少 100；上限随 `max_markets` / `max_open_orders` 扩展到 `u16::MAX`），再按 active、token、最低日奖励、有效奖励 spread、下单开关做无需盘口的预过滤；只有通过预过滤的奖励市场会读取 worker 进程内 orderbook cache 并生成当前 quote plan 快照。
 
 **live 资金模型：**
 - Rewards live maker 下单沿用软资金复用语义：未成交的 post-only/GTC maker 买单是链下签名挂单，不在本地策略层按全局 notional 硬锁同一笔 USDC；同一资金池可同时在多个不同市场报价。
 - Live 新挂单仍要求目标 YES/NO 两腿都有非空盘口；`stale_book_ms=0` 只关闭盘口年龄检查，不允许在盘口缺失或空盘口时下单。live reconcile 会对本系统托管的开放订单读取活跃 token 盘口；盘口缺失、空盘口或超过 `stale_book_ms` 会触发立即撤单，即使 `enabled=false` 已停止新增报价。
 - Live `reset` 不清空本地账本或删除托管订单；worker 会先按 cancel-all 语义撤销本系统托管 live 订单，若任一 Polymarket 撤单被拒绝，则命令失败并保留本地状态以避免孤儿实盘订单。
-- 风险控制重点放在成交后：真实成交、部分成交或链上结算回报后，立即更新现金、库存、市场/全局敞口，并撤掉超出 `max_position_usd`、`max_global_position_usd`、可用现金或运营预算的剩余挂单。
+- 风险控制重点放在成交后：真实成交或部分成交回报后，worker 对本系统托管 rewards 订单按 external trade id 幂等更新现金、库存、fills 和 PnL，并撤掉 sibling legs；新挂单的 per-token 和全局库存门槛都使用「已有库存 notional + 当前候选订单 notional」准入。
 - 本地仍需保留 `max_open_orders`、`max_markets`、单市场预算、per-token 库存和 kill-switch；这些限制控制操作风险和订单风暴，而不是把所有开放买单当作已消耗资金。
-- 当前 live 已具备 post-only token 买单提交和订单撤单；真实成交对账、成交后卖出/平仓、真实库存/资金同步、订单计分查询和奖励结算对账仍是缺口。
+- 当前 live 已具备 post-only token 买单提交、订单撤单、本系统托管订单成交同步、成交后 sibling leg 撤单以及 `ExitAtMarkup` / `FlattenImmediately` sell 下单；独立账户余额/库存全量对账、订单计分查询和奖励结算对账仍是缺口。
 - 仍需要用真实小额账户验证 Polymarket CLOB 的 balance/allowance validity checks，尤其同市场内开放订单对可下单 size 的影响；跨市场资金复用可以作为 rewards maker 策略假设，但不能依赖 venue 替我们做组合风险管理。
 - 参考官方文档：Order Lifecycle / Requirements 和 Orders Overview / Validity Checks，后续实现时需要复核最新文档。
 
@@ -199,7 +197,7 @@ orderbook_cache ← (共享基础设施 trait)
 
 - 所有模块已实现完整的 Store trait 和 Service struct
 - Rewards 具备 validation 事件验证引擎和 live-first 执行模式；validation 资金池对开放买单使用软复用，成交时才消耗现金，但不再计提模拟奖励收益。
-- Rewards live 模式已接入 post-only token 买单和撤单；真实成交对账、成交后卖出/平仓、真实库存/资金同步和奖励结算对账仍待完成。
+- Rewards live 模式已接入 post-only token 买单、撤单、本系统托管订单成交同步、成交后现金/库存/PnL 更新以及 exit/flatten sell 下单；独立账户余额/库存全量对账、订单计分查询和奖励结算对账仍待完成。
 - Rewards 已具备数据库控制命令队列，API 负责入队，worker 负责执行 run/cancel/reset。
 - Copytrade 已具备数据库控制命令队列，API 负责入队，worker 负责执行 run/analyze/cancel/reset。
 - Wallet analysis 是纯计算，已完全实现

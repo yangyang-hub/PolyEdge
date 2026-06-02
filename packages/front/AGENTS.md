@@ -19,7 +19,7 @@ This version has breaking changes — APIs, conventions, and file structure may 
 | `src/app/*` | App Router 路由、`page` / `layout` / route handler |
 | `src/features/<name>/` | 按页面/领域组织的功能模块，内部分 `components` / `loaders` / `lib` / `types.ts`（见下） |
 | `src/lib/api/*` | **统一数据层**：读取按领域拆文件（`markets.ts` / `signals.ts` / `risk.ts`…，基于 `base.ts`），写操作（server actions）走 `actions.ts` |
-| `src/lib/{contracts,i18n,…}` | 跨 feature 共享库：`contracts/dto` 是后端 DTO 的类型镜像，`i18n` 是多语言字典 |
+| `src/lib/{contracts,i18n,…}` | 跨 feature 共享库：`contracts/dto` 是后端 DTO 的类型镜像，`i18n` 是中文字典 |
 | `src/components/ui/*` | shadcn 生成的基础组件，不手改风格 |
 | `src/components/shared/*` | 跨页面复用的业务组件 |
 
@@ -39,14 +39,14 @@ This version has breaking changes — APIs, conventions, and file structure may 
 - server component 经 `features/*/loaders/*` 调用 `src/lib/api/*` 取数，不在组件里直接 fetch。
 - mutation 用 `src/lib/api/actions.ts` 暴露的 server action。
 - DTO 类型从 `@/lib/contracts/dto` 引用，**不在组件内重新定义后端结构**。
-- 文案一律走 i18n 字典 + `useI18n()`，不硬编码中英文；字典按命名空间拆分（`src/lib/i18n/dictionaries/`）。
+- 文案一律走 i18n 字典（`dictionary`），从 `@/lib/i18n/dictionaries` 直接 import；不硬编码中文。字典按命名空间拆分（`src/lib/i18n/dictionaries/`）。
 
 ## 模块化设计
 
 1. **`"use client"` 只加在确需交互（state/effect/事件）的组件**；能留在 server component 的不要客户端化。
 2. **大组件瘦身三板斧**（按此优先级）：
    - 纯函数（流式 patch、派生、格式化、比较器）**下沉到 `features/<name>/lib/`**，禁止留在组件文件里；
-   - 展示型子组件**拆到独立文件**（接收 props；需要文案时自取 `useI18n()`）；
+   - 展示型子组件**拆到独立文件**（接收 props；需要文案时自取 `import { dictionary } from "@/lib/i18n/dictionaries"`）；
    - 类型定义**移到 `features/<name>/types.ts`**。
 3. **纯类型/纯数据文件用 barrel 收敛**：如 `contracts/dto.ts` 按领域拆到 `dto/` 后用 `export *` 重导出，保证外部 import 路径不变。
 

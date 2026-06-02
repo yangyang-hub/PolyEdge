@@ -144,123 +144,6 @@ impl RewardBotStore for PostgresRewardBotStore {
         Ok(())
     }
 
-    async fn replace_simulated_orders(
-        &self,
-        account_id: &str,
-        orders: &[ManagedRewardOrder],
-        trace_id: &str,
-    ) -> Result<usize> {
-        let now = OffsetDateTime::now_utc();
-        let mut transaction = self.pool.begin().await.map_err(|error| {
-            db_error(
-                "POSTGRES_TRANSACTION_BEGIN_FAILED",
-                format!("failed to begin reward order transaction: {error}"),
-            )
-        })?;
-
-        let cancelled = sqlx::query(
-            r#"
-            UPDATE reward_managed_orders
-            SET status = 'cancelled',
-                reason = 'replaced by latest rewards simulation',
-                updated_at = $1,
-                trace_id = $2
-            WHERE account_id = $3
-              AND status IN ('planned', 'open', 'exit_pending')
-            "#,
-        )
-        .bind(now)
-        .bind(trace_id)
-        .bind(account_id)
-        .execute(&mut *transaction)
-        .await
-        .map_err(|error| {
-            db_error(
-                "POSTGRES_UPDATE_FAILED",
-                format!("failed to cancel stale reward orders: {error}"),
-            )
-        })?
-        .rows_affected() as usize;
-
-        for order in orders {
-            insert_reward_order(&mut transaction, order, trace_id).await?;
-        }
-
-        transaction.commit().await.map_err(|error| {
-            db_error(
-                "POSTGRES_TRANSACTION_COMMIT_FAILED",
-                format!("failed to commit reward order transaction: {error}"),
-            )
-        })?;
-        Ok(cancelled)
-    }
-
-    async fn cancel_open_orders(
-        &self,
-        account_id: Option<&str>,
-        reason: &str,
-        trace_id: &str,
-    ) -> Result<usize> {
-        let now = OffsetDateTime::now_utc();
-        let mut transaction = self.pool.begin().await.map_err(|error| {
-            db_error(
-                "POSTGRES_TRANSACTION_BEGIN_FAILED",
-                format!("failed to begin reward cancel transaction: {error}"),
-            )
-        })?;
-
-        let rows = sqlx::query(
-            r#"
-            UPDATE reward_managed_orders
-            SET status = 'cancelled',
-                reason = $1,
-                updated_at = $2,
-                trace_id = $3
-            WHERE status IN ('planned', 'open', 'exit_pending')
-              AND ($4::text IS NULL OR account_id = $4)
-            RETURNING account_id, side, price, size, filled_size
-            "#,
-        )
-        .bind(reason)
-        .bind(now)
-        .bind(trace_id)
-        .bind(account_id)
-        .fetch_all(&mut *transaction)
-        .await
-        .map_err(|error| {
-            db_error(
-                "POSTGRES_UPDATE_FAILED",
-                format!("failed to cancel reward orders: {error}"),
-            )
-        })?;
-
-        let cancelled = rows.len();
-        let mut release_by_account: HashMap<String, Decimal> = HashMap::new();
-        for row in rows {
-            let side: String = row.try_get("side").map_err(postgres_decode_error)?;
-            if side != RewardOrderSide::Buy.as_str() {
-                continue;
-            }
-            let account_id: String = row.try_get("account_id").map_err(postgres_decode_error)?;
-            let price: Decimal = row.try_get("price").map_err(postgres_decode_error)?;
-            let size: Decimal = row.try_get("size").map_err(postgres_decode_error)?;
-            let filled_size: Decimal = row.try_get("filled_size").map_err(postgres_decode_error)?;
-            let remaining_notional = ((size - filled_size).max(Decimal::ZERO) * price).round_dp(4);
-            *release_by_account.entry(account_id).or_default() += remaining_notional;
-        }
-        for (account_id, release_usd) in release_by_account {
-            release_reward_reserve_tx(&mut transaction, &account_id, release_usd, now).await?;
-        }
-
-        transaction.commit().await.map_err(|error| {
-            db_error(
-                "POSTGRES_TRANSACTION_COMMIT_FAILED",
-                format!("failed to commit reward cancel transaction: {error}"),
-            )
-        })?;
-        Ok(cancelled)
-    }
-
     async fn list_markets(&self, limit: u16) -> Result<Vec<RewardMarket>> {
         let rows = sqlx::query(
             r#"
@@ -350,77 +233,6 @@ impl RewardBotStore for PostgresRewardBotStore {
                 Ok(plan.0)
             })
             .collect()
-    }
-
-    async fn list_quote_plans(&self, limit: u16) -> Result<Vec<RewardQuotePlan>> {
-        let rows = sqlx::query(
-            r#"
-            SELECT quote_plan_json
-            FROM reward_quote_plans
-            ORDER BY eligible DESC, score DESC, updated_at DESC
-            LIMIT $1
-            "#,
-        )
-        .bind(i64::from(limit))
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|error| {
-            db_error(
-                "POSTGRES_QUERY_FAILED",
-                format!("failed to query reward quote plans: {error}"),
-            )
-        })?;
-
-        rows.iter()
-            .map(|row| {
-                let plan: Json<RewardQuotePlan> = row
-                    .try_get("quote_plan_json")
-                    .map_err(postgres_decode_error)?;
-                Ok(plan.0)
-            })
-            .collect()
-    }
-
-    async fn list_orders(&self, limit: u16) -> Result<Vec<ManagedRewardOrder>> {
-        let rows = sqlx::query(
-            r#"
-            SELECT id,
-                   account_id,
-                   condition_id,
-                   token_id,
-                   outcome,
-                   side,
-                   price,
-                   size,
-                   external_order_id,
-                   status,
-                   scoring,
-                   reason,
-                   filled_size,
-                   reward_earned,
-                   last_scored_at,
-                   created_at,
-                   updated_at
-            FROM reward_managed_orders
-            ORDER BY CASE
-                       WHEN status IN ('planned', 'open', 'exit_pending') THEN 0
-                       ELSE 1
-                     END,
-                     updated_at DESC
-            LIMIT $1
-            "#,
-        )
-        .bind(i64::from(limit))
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|error| {
-            db_error(
-                "POSTGRES_QUERY_FAILED",
-                format!("failed to query reward managed orders: {error}"),
-            )
-        })?;
-
-        rows.iter().map(reward_order_from_row).collect()
     }
 
     async fn list_orders_page(&self, query: &RewardOrderListQuery) -> Result<RewardOrderPage> {
@@ -580,6 +392,32 @@ impl RewardBotStore for PostgresRewardBotStore {
         rows.iter().map(reward_order_from_row).collect()
     }
 
+    async fn get_order_by_external_order_id(
+        &self,
+        external_order_id: &str,
+    ) -> Result<Option<ManagedRewardOrder>> {
+        let row = sqlx::query(
+            r#"
+            SELECT id, account_id, condition_id, token_id, outcome, side, price, size,
+                   external_order_id, status, scoring, reason, filled_size, reward_earned,
+                   last_scored_at, created_at, updated_at
+            FROM reward_managed_orders
+            WHERE external_order_id = $1
+            "#,
+        )
+        .bind(external_order_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_QUERY_FAILED",
+                format!("failed to query reward order by external id: {error}"),
+            )
+        })?;
+
+        row.as_ref().map(reward_order_from_row).transpose()
+    }
+
     async fn list_account_positions(&self, account_id: &str) -> Result<Vec<RewardPosition>> {
         let rows = sqlx::query(
             r#"
@@ -621,6 +459,28 @@ impl RewardBotStore for PostgresRewardBotStore {
             )
         })?;
         rows.iter().map(reward_fill_from_row).collect()
+    }
+
+    async fn reward_fill_exists(&self, fill_id: &str) -> Result<bool> {
+        let exists = sqlx::query_scalar::<_, bool>(
+            r#"
+            SELECT EXISTS (
+              SELECT 1
+              FROM reward_fills
+              WHERE id = $1
+            )
+            "#,
+        )
+        .bind(fill_id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_QUERY_FAILED",
+                format!("failed to query reward fill existence: {error}"),
+            )
+        })?;
+        Ok(exists)
     }
 
     async fn apply_simulation_tick(

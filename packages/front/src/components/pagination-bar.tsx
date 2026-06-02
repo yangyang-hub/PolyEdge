@@ -1,7 +1,7 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
-import { useI18n } from "@/lib/i18n/client";
+import { dictionary, formatMessage } from "@/lib/i18n/dictionaries";
 import type { PaginationState } from "@/hooks/use-pagination";
 
 interface PaginationBarProps {
@@ -13,7 +13,6 @@ interface PaginationBarProps {
 }
 
 export function PaginationBar({ pagination, totalItems, className }: PaginationBarProps) {
-  const { dictionary, format } = useI18n();
   const t = dictionary.common.pagination;
 
   if (pagination.totalPages <= 1) {
@@ -27,9 +26,9 @@ export function PaginationBar({ pagination, totalItems, className }: PaginationB
       }
     >
       <p className="text-xs text-muted-foreground">
-        {format(t.pageOf, { current: pagination.page, total: pagination.totalPages })}
+        {formatMessage(t.pageOf, { current: pagination.page, total: pagination.totalPages })}
         <span className="ml-2 text-muted-foreground/60">
-          ({format(t.totalItems, { count: totalItems })})
+          ({formatMessage(t.totalItems, { count: totalItems })})
         </span>
       </p>
       <div className="flex items-center gap-2">

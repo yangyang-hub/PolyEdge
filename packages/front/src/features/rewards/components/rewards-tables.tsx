@@ -31,7 +31,7 @@ import {
 } from "@/lib/formatters";
 import { usePagination } from "@/hooks/use-pagination";
 import type { PaginationState } from "@/hooks/use-pagination";
-import { useI18n } from "@/lib/i18n/client";
+import { dictionary } from "@/lib/i18n/dictionaries";
 
 import { rewardTone } from "../lib/rewards-helpers";
 
@@ -93,7 +93,6 @@ function FilterBar({
 }
 
 export function FillsTable({ fills }: { fills: RewardFillDto[] }) {
-  const { dictionary } = useI18n();
   const pagination = usePagination(fills.length, 15);
 
   if (fills.length === 0) {
@@ -138,7 +137,6 @@ export function FillsTable({ fills }: { fills: RewardFillDto[] }) {
 }
 
 export function PositionsTable({ positions }: { positions: RewardPositionDto[] }) {
-  const { dictionary } = useI18n();
   const pagination = usePagination(positions.length, 8);
 
   if (positions.length === 0) {
@@ -196,7 +194,6 @@ export function QuotePlansTable({
   plans, search, onSearchChange, eligibility, onEligibilityChange,
   sortBy, sortOrder, onSortChange, filtering,
 }: QuotePlansTableProps) {
-  const { dictionary } = useI18n();
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const [localSearch, setLocalSearch] = useState(search);
 
@@ -357,7 +354,6 @@ export function OrdersTable({
   orders, search, onSearchChange, status, onStatusChange,
   sortBy, sortOrder, onSortChange, page, onPageChange, filtering,
 }: OrdersTableProps) {
-  const { dictionary } = useI18n();
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const [localSearch, setLocalSearch] = useState(search);
 
@@ -454,7 +450,6 @@ export function OrdersTable({
 }
 
 export function EventsTable({ events }: { events: RewardRiskEventDto[] }) {
-  const { dictionary } = useI18n();
   const pagination = usePagination(events.length, 15);
 
   return (

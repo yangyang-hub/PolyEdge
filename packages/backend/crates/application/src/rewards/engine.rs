@@ -1,12 +1,15 @@
-// Stateful, tick-based rewards market-making validation engine.
+// Stateful, tick-based rewards market-making engine.
 //
 // Each tick the engine reconciles the existing resting orders against the
 // freshest order books, validates fills (deterministic when the book crosses
 // our price, probabilistic when it merely touches), applies the configured
 // post-fill strategy, and finally tops up quotes for eligible markets while
-// respecting the shared fund pool on fills. Resting validation buys reuse the
+// respecting the shared fund pool on fills. Resting buys reuse the
 // pool across markets instead of
 // hard-reserving cash per order.
+//
+// NOTE: Engine functions are currently only used by tests. The production live
+// path uses the worker's direct Polymarket connector flow instead.
 
 /// The full set of state changes produced by a single validation tick. The
 /// store persists it atomically via `apply_simulation_tick`.
@@ -24,6 +27,7 @@ pub struct RewardSimulationOutcome {
     pub report: RewardBotRunReport,
 }
 
+#[allow(dead_code)]
 struct TickContext {
     now: OffsetDateTime,
     config: RewardBotConfig,
@@ -47,6 +51,7 @@ struct TickContext {
 /// `positions` its non-zero inventory. `elapsed_seconds` is the wall-clock gap
 /// since the previous tick and drives reward accrual.
 #[must_use]
+#[allow(dead_code)]
 pub fn run_reward_simulation_tick(
     config: &RewardBotConfig,
     account: RewardAccountState,
@@ -91,9 +96,7 @@ pub fn run_reward_simulation_tick(
 
     ctx.release_legacy_buy_reserves();
     ctx.reconcile_open_orders(&plan_index, books, book_history);
-    if !ctx.config.execution_mode.is_validation() {
-        ctx.accrue_rewards(&plan_index, books, elapsed);
-    }
+    ctx.accrue_rewards(&plan_index, books, elapsed);
     ctx.place_new_quotes(&plans, books);
 
     ctx.account.tick_index += 1;
@@ -125,8 +128,9 @@ pub fn run_reward_simulation_tick(
 
 /// Run a fast reconcile tick — reuses the supplied `plans` instead of
 /// rebuilding them. Used by the high-frequency reconcile loop (every N
-/// seconds) between full validation cycles.
+/// seconds) between full cycles.
 #[must_use]
+#[allow(dead_code)]
 pub fn run_reconcile_tick(
     config: &RewardBotConfig,
     account: RewardAccountState,
@@ -171,9 +175,7 @@ pub fn run_reconcile_tick(
 
     ctx.release_legacy_buy_reserves();
     ctx.reconcile_open_orders(&plan_index, books, book_history);
-    if !ctx.config.execution_mode.is_validation() {
-        ctx.accrue_rewards(&plan_index, books, elapsed);
-    }
+    ctx.accrue_rewards(&plan_index, books, elapsed);
     if ctx.config.enabled {
         ctx.place_new_quotes(&plans, books);
     }

@@ -114,70 +114,6 @@ impl RewardBotStore for InMemoryRewardBotStore {
         Ok(())
     }
 
-    async fn replace_simulated_orders(
-        &self,
-        account_id: &str,
-        orders: &[ManagedRewardOrder],
-        _trace_id: &str,
-    ) -> Result<usize> {
-        let now = OffsetDateTime::now_utc();
-        let mut store = self.orders.write().await;
-        let mut cancelled = 0;
-        for order in store.iter_mut() {
-            if order.account_id == account_id && order.status.is_open_like() {
-                order.status = ManagedRewardOrderStatus::Cancelled;
-                order.reason = "replaced by latest rewards simulation".to_string();
-                order.updated_at = now;
-                cancelled += 1;
-            }
-        }
-        store.extend(orders.iter().cloned());
-        store.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
-        Ok(cancelled)
-    }
-
-    async fn cancel_open_orders(
-        &self,
-        account_id: Option<&str>,
-        reason: &str,
-        _trace_id: &str,
-    ) -> Result<usize> {
-        let now = OffsetDateTime::now_utc();
-        let mut cancelled = 0;
-        let mut release_by_account: HashMap<String, Decimal> = HashMap::new();
-        let mut store = self.orders.write().await;
-        for order in store.iter_mut() {
-            let account_matches =
-                account_id.is_none_or(|account_id| account_id == order.account_id);
-            if account_matches && order.status.is_open_like() {
-                if order.side == RewardOrderSide::Buy {
-                    let remaining_notional = ((order.size - order.filled_size).max(Decimal::ZERO)
-                        * order.price)
-                        .round_dp(4);
-                    *release_by_account
-                        .entry(order.account_id.clone())
-                        .or_default() += remaining_notional;
-                }
-                order.status = ManagedRewardOrderStatus::Cancelled;
-                order.reason = reason.to_string();
-                order.updated_at = now;
-                cancelled += 1;
-            }
-        }
-        drop(store);
-
-        let mut account_guard = self.account_state.write().await;
-        if let Some(account_state) = account_guard.as_mut()
-            && let Some(release_usd) = release_by_account.get(&account_state.account_id)
-        {
-            let release_usd = Decimal::min(account_state.reserved_usd, *release_usd);
-            account_state.reserved_usd -= release_usd;
-            account_state.available_usd += release_usd;
-            account_state.updated_at = now;
-        }
-        Ok(cancelled)
-    }
-
     async fn list_markets(&self, limit: u16) -> Result<Vec<RewardMarket>> {
         let mut markets = self
             .markets
@@ -231,38 +167,6 @@ impl RewardBotStore for InMemoryRewardBotStore {
                 .then_with(|| right.updated_at.cmp(&left.updated_at))
         });
         Ok(plans)
-    }
-
-    async fn list_quote_plans(&self, limit: u16) -> Result<Vec<RewardQuotePlan>> {
-        let mut plans = self
-            .quote_plans
-            .read()
-            .await
-            .values()
-            .cloned()
-            .collect::<Vec<_>>();
-        plans.sort_by(|left, right| {
-            right
-                .eligible
-                .cmp(&left.eligible)
-                .then_with(|| right.score.cmp(&left.score))
-                .then_with(|| right.updated_at.cmp(&left.updated_at))
-        });
-        plans.truncate(usize::from(limit));
-        Ok(plans)
-    }
-
-    async fn list_orders(&self, limit: u16) -> Result<Vec<ManagedRewardOrder>> {
-        let mut orders = self.orders.read().await.clone();
-        orders.sort_by(|left, right| {
-            left.status
-                .is_open_like()
-                .cmp(&right.status.is_open_like())
-                .reverse()
-                .then_with(|| right.updated_at.cmp(&left.updated_at))
-        });
-        orders.truncate(usize::from(limit));
-        Ok(orders)
     }
 
     async fn list_orders_page(&self, query: &RewardOrderListQuery) -> Result<RewardOrderPage> {
@@ -335,6 +239,19 @@ impl RewardBotStore for InMemoryRewardBotStore {
             .collect())
     }
 
+    async fn get_order_by_external_order_id(
+        &self,
+        external_order_id: &str,
+    ) -> Result<Option<ManagedRewardOrder>> {
+        Ok(self
+            .orders
+            .read()
+            .await
+            .iter()
+            .find(|order| order.external_order_id.as_deref() == Some(external_order_id))
+            .cloned())
+    }
+
     async fn list_account_positions(&self, account_id: &str) -> Result<Vec<RewardPosition>> {
         Ok(self
             .positions
@@ -351,6 +268,10 @@ impl RewardBotStore for InMemoryRewardBotStore {
         fills.sort_by(|left, right| right.created_at.cmp(&left.created_at));
         fills.truncate(usize::from(limit));
         Ok(fills)
+    }
+
+    async fn reward_fill_exists(&self, fill_id: &str) -> Result<bool> {
+        Ok(self.fills.read().await.iter().any(|fill| fill.id == fill_id))
     }
 
     async fn apply_simulation_tick(

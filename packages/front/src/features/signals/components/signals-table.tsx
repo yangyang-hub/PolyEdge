@@ -16,7 +16,7 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet";
 import { usePagination } from "@/hooks/use-pagination";
-import { useI18n } from "@/lib/i18n/client";
+import { dictionary } from "@/lib/i18n/dictionaries";
 import { isKeyboardSelect } from "@/lib/keyboard";
 
 import { SignalsDetailPanel } from "./signals-detail-panel";
@@ -35,7 +35,6 @@ export function SignalsTable({
   onSelect: (signalId: string) => void;
   onOpenAction: (signalId: string, dialog: Exclude<SignalActionDialog, null>) => void;
 }) {
-  const { dictionary } = useI18n();
   const pagination = usePagination(signals.length, 20);
 
   useEffect(() => {

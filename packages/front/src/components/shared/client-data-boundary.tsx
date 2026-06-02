@@ -4,12 +4,11 @@ import { useEffect, useState, type ReactNode } from "react";
 
 import { ConsoleLoadingSkeleton } from "@/components/shared/console-loading-skeleton";
 import { StateBanner } from "@/components/shared/state-banner";
-import { useI18n } from "@/lib/i18n/client";
-import type { I18nRuntime } from "@/lib/i18n/runtime";
+import { dictionary } from "@/lib/i18n/dictionaries";
 
 type ClientDataBoundaryProps<TData> = {
-  load: (i18n: I18nRuntime) => Promise<TData>;
-  children: (data: TData, i18n: I18nRuntime) => ReactNode;
+  load: () => Promise<TData>;
+  children: (data: TData) => ReactNode;
 };
 
 type LoadState<TData> =
@@ -21,7 +20,6 @@ export function ClientDataBoundary<TData>({
   load,
   children,
 }: ClientDataBoundaryProps<TData>) {
-  const i18n = useI18n();
   const [state, setState] = useState<LoadState<TData>>({
     status: "loading",
     data: null,
@@ -31,7 +29,7 @@ export function ClientDataBoundary<TData>({
   useEffect(() => {
     let cancelled = false;
 
-    void load(i18n)
+    void load()
       .then((data) => {
         if (!cancelled) {
           setState({ status: "ready", data, error: null });
@@ -50,17 +48,17 @@ export function ClientDataBoundary<TData>({
     return () => {
       cancelled = true;
     };
-  }, [i18n, load]);
+  }, [load]);
 
   if (state.status === "ready") {
-    return children(state.data, i18n);
+    return children(state.data);
   }
 
   if (state.status === "error") {
     return (
       <StateBanner
         tone="warning"
-        title={i18n.dictionary.routeStates.consoleErrorTitle}
+        title={dictionary.routeStates.consoleErrorTitle}
         detail={state.error}
       />
     );

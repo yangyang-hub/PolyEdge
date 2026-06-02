@@ -2,12 +2,9 @@ import Link from "next/link";
 
 import { Button } from "@/components/ui/button";
 import { RouteStateCard } from "@/components/shared/route-state-card";
-import { DEFAULT_LOCALE } from "@/lib/i18n/locales";
-import { createI18nRuntime } from "@/lib/i18n/runtime";
+import { dictionary } from "@/lib/i18n/dictionaries";
 
 export default function NotFound() {
-  const { dictionary } = createI18nRuntime(DEFAULT_LOCALE);
-
   return (
     <RouteStateCard
       eyebrow={dictionary.routeStates.consoleNotFoundEyebrow}

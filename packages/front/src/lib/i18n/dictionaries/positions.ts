@@ -1,45 +1,4 @@
-export const positionsEn = {
-  positions: {
-    eyebrow: "Portfolio",
-    title: "Positions",
-    description:
-      "Track live position health with signal posture, risk pressure and bucket concentration in one workbench.",
-    review: "{count} risk",
-    livePositions: "Live Positions",
-    livePositionsHint:
-      "Risk queue, PnL drift and signal posture update in place as the console stream moves.",
-    all: "all positions",
-    reviewQueue: "risk queue",
-    positivePnl: "positive pnl",
-    pressure: "under pressure",
-    open: "{count} open",
-    pressureCount: "{count} pressure",
-    manualReview: "{count} restricted",
-    market: "Market",
-    side: "Side",
-    qty: "Qty",
-    pnl: "PnL",
-    signal: "Signal",
-    controls: "Controls",
-    mark: "mark",
-    posterior: "posterior",
-    avgCost: "avg cost",
-    confidence: "confidence",
-    bucketPressure: "Bucket pressure",
-    utilized: "{value} utilized",
-    signalReason: "Signal reason",
-    riskDecision: "Risk decision",
-    catalysts: "Catalysts",
-    noCatalysts: "No linked catalysts are attached to this position yet.",
-    deskBuckets: "Desk Buckets",
-    exposure: "exposure",
-    limit: "limit",
-    signalFallback: "Signal context has not been hydrated for this position yet.",
-    riskFallback: "No active risk action is attached to this position.",
-  },
-} as const;
-
-export const positionsZh = {
+export const positions = {
   positions: {
     eyebrow: "组合",
     title: "持仓",

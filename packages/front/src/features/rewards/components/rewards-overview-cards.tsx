@@ -20,7 +20,7 @@ import {
   formatUsdFixed,
   toFiniteNumber,
 } from "@/lib/formatters";
-import { useI18n } from "@/lib/i18n/client";
+import { dictionary } from "@/lib/i18n/dictionaries";
 
 import { eventCategory } from "../lib/rewards-helpers";
 import type { EventCategory } from "../types";
@@ -37,8 +37,6 @@ export function ModeStatusPanel({
   snapshot: RewardBotSnapshotDto;
   eventCounts: RewardEventCounts;
 }) {
-  const { dictionary } = useI18n();
-  const isLive = snapshot.config.execution_mode === "live";
   const eligibleRatio = ratio(snapshot.status.eligible_markets, snapshot.status.markets_tracked);
   const availableRatio = ratio(snapshot.account.available_usd, snapshot.account.capital_usd);
 
@@ -47,11 +45,11 @@ export function ModeStatusPanel({
       <CardHeader className="border-b border-border/70">
         <CardTitle>{dictionary.rewards.modeSummary}</CardTitle>
         <CardDescription>
-          {isLive ? dictionary.rewards.liveModeSummary : dictionary.rewards.validationModeSummary}
+          {dictionary.rewards.liveModeSummary}
         </CardDescription>
         <CardAction className="flex gap-2">
-          <StatusPill tone={isLive ? "warning" : "primary"}>
-            {isLive ? dictionary.rewards.modeLive : dictionary.rewards.modeValidation}
+          <StatusPill tone="warning">
+            {dictionary.rewards.modeLive}
           </StatusPill>
           <StatusPill tone={snapshot.status.enabled ? "success" : "neutral"}>
             {snapshot.status.enabled ? dictionary.common.enabled : dictionary.common.disabled}
@@ -76,7 +74,7 @@ export function ModeStatusPanel({
             tone={availableRatio > 0.25 ? "success" : "warning"}
           />
           <div className="rounded-lg border border-border/70 bg-muted/20 p-3 text-xs leading-5 text-muted-foreground">
-            {isLive ? dictionary.rewards.liveExecutorNotice : dictionary.rewards.validationNotice}
+            {dictionary.rewards.liveExecutorNotice}
           </div>
         </div>
 
@@ -125,15 +123,12 @@ export function CommandPanel({
   onReset: () => void;
   onSave: () => void;
 }) {
-  const { dictionary } = useI18n();
-  const isLive = config.execution_mode === "live";
-
   return (
     <Card>
       <CardHeader className="border-b border-border/70">
         <CardTitle>{dictionary.rewards.commandCenter}</CardTitle>
         <CardDescription>
-          {isLive ? dictionary.rewards.liveActionNote : dictionary.rewards.validationActionNote}
+          {dictionary.rewards.liveActionNote}
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -171,7 +166,6 @@ export function SummaryStrip({
   snapshot: RewardBotSnapshotDto;
   eventCounts: RewardEventCounts;
 }) {
-  const { dictionary } = useI18n();
 
   return (
     <Card size="sm">
@@ -209,12 +203,12 @@ export function SummaryStrip({
         <SummaryMetric
           label={dictionary.rewards.eventsFills}
           value={String(eventCounts.fills)}
-          hint={dictionary.rewards.validationEvents}
+          hint={dictionary.rewards.eventsTriggered}
         />
         <SummaryMetric
           label={dictionary.rewards.eventsCancels}
           value={String(eventCounts.cancels)}
-          hint={dictionary.rewards.validationEvents}
+          hint={dictionary.rewards.eventsTriggered}
         />
       </CardContent>
     </Card>
