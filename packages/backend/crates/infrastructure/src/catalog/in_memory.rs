@@ -96,30 +96,32 @@ impl MarketEventStore for InMemoryMarketEventStore {
         self.market_event_get_signal(signal_id).await
     }
 
-    async fn list_events(&self, filters: &EventListFilters) -> Result<Vec<EventView>> {
-        self.market_event_list_events(filters).await
+    async fn list_events(&self, filters: &EventListFilters, page: &PageQuery) -> Result<Paginated<EventView>> {
+        self.market_event_list_events(filters, page).await
     }
 
-    async fn list_evidences(&self, filters: &EvidenceListFilters) -> Result<Vec<EvidenceView>> {
-        self.market_event_list_evidences(filters).await
+    async fn list_evidences(&self, filters: &EvidenceListFilters, page: &PageQuery) -> Result<Paginated<EvidenceView>> {
+        self.market_event_list_evidences(filters, page).await
     }
 
-    async fn list_signals(&self, filters: &SignalListFilters) -> Result<Vec<SignalView>> {
-        self.market_event_list_signals(filters).await
+    async fn list_signals(&self, filters: &SignalListFilters, page: &PageQuery) -> Result<Paginated<SignalView>> {
+        self.market_event_list_signals(filters, page).await
     }
 
     async fn list_probability_estimates(
         &self,
         filters: &ProbabilityEstimateListFilters,
-    ) -> Result<Vec<ProbabilityEstimateView>> {
-        self.market_event_list_probability_estimates(filters).await
+        page: &PageQuery,
+    ) -> Result<Paginated<ProbabilityEstimateView>> {
+        self.market_event_list_probability_estimates(filters, page).await
     }
 
     async fn list_signal_transitions(
         &self,
         filters: &SignalTransitionListFilters,
-    ) -> Result<Vec<SignalTransitionView>> {
-        self.market_event_list_signal_transitions(filters).await
+        page: &PageQuery,
+    ) -> Result<Paginated<SignalTransitionView>> {
+        self.market_event_list_signal_transitions(filters, page).await
     }
 
     async fn list_order_drafts(
@@ -156,6 +158,16 @@ impl MarketEventStore for InMemoryMarketEventStore {
     async fn list_positions(&self, filters: &PositionListFilters) -> Result<Vec<PositionView>> {
         self.market_event_list_positions(filters).await
     }
+    async fn count_order_drafts(&self, filters: &OrderDraftListFilters) -> Result<i64> { self.market_event_count_order_drafts(filters).await }
+    async fn list_order_drafts_paginated(&self, filters: &OrderDraftListFilters, page: &PageQuery) -> Result<Paginated<OrderDraftView>> { self.market_event_list_order_drafts_paginated(filters, page).await }
+    async fn count_execution_requests(&self, filters: &ExecutionRequestListFilters) -> Result<i64> { self.market_event_count_execution_requests(filters).await }
+    async fn list_execution_requests_paginated(&self, filters: &ExecutionRequestListFilters, page: &PageQuery) -> Result<Paginated<ExecutionRequestView>> { self.market_event_list_execution_requests_paginated(filters, page).await }
+    async fn count_orders(&self, filters: &OrderListFilters) -> Result<i64> { self.market_event_count_orders(filters).await }
+    async fn list_orders_paginated(&self, filters: &OrderListFilters, page: &PageQuery) -> Result<Paginated<OrderView>> { self.market_event_list_orders_paginated(filters, page).await }
+    async fn count_trades(&self, filters: &TradeListFilters) -> Result<i64> { self.market_event_count_trades(filters).await }
+    async fn list_trades_paginated(&self, filters: &TradeListFilters, page: &PageQuery) -> Result<Paginated<TradeView>> { self.market_event_list_trades_paginated(filters, page).await }
+    async fn count_positions(&self, filters: &PositionListFilters) -> Result<i64> { self.market_event_count_positions(filters).await }
+    async fn list_positions_paginated(&self, filters: &PositionListFilters, page: &PageQuery) -> Result<Paginated<PositionView>> { self.market_event_list_positions_paginated(filters, page).await }
 
     async fn recompute_signal(
         &self,
@@ -308,7 +320,8 @@ impl NewsIngestionStore for InMemoryMarketEventStore {
     async fn list_news_source_health(
         &self,
         filters: &NewsSourceHealthListFilters,
-    ) -> Result<Vec<NewsSourceHealthView>> {
+        page: &PageQuery,
+    ) -> Result<Paginated<NewsSourceHealthView>> {
         let health = self.news_source_health.read().await;
         let mut items: Vec<_> = health
             .values()
@@ -326,14 +339,18 @@ impl NewsIngestionStore for InMemoryMarketEventStore {
                 .cmp(&left.updated_at)
                 .then_with(|| left.source.cmp(&right.source))
         });
-        items.truncate(usize::from(filters.limit));
-        Ok(items)
+        let total = i64::try_from(items.len()).unwrap_or(i64::MAX);
+        let offset = page.offset() as usize;
+        let page_size = page.validated().1 as usize;
+        let paged: Vec<_> = items.into_iter().skip(offset).take(page_size).collect();
+        Ok(Paginated::new(paged, page, total))
     }
 
     async fn list_raw_news_events(
         &self,
         filters: &NewsRawEventListFilters,
-    ) -> Result<Vec<NewsRawEventView>> {
+        page: &PageQuery,
+    ) -> Result<Paginated<NewsRawEventView>> {
         let events = self.raw_news_events.read().await;
         let mut items: Vec<_> = events
             .values()
@@ -356,8 +373,11 @@ impl NewsIngestionStore for InMemoryMarketEventStore {
                 .then_with(|| right.ingested_at.cmp(&left.ingested_at))
                 .then_with(|| left.id.cmp(&right.id))
         });
-        items.truncate(usize::from(filters.limit));
-        Ok(items)
+        let total = i64::try_from(items.len()).unwrap_or(i64::MAX);
+        let offset = page.offset() as usize;
+        let page_size = page.validated().1 as usize;
+        let paged: Vec<_> = items.into_iter().skip(offset).take(page_size).collect();
+        Ok(Paginated::new(paged, page, total))
     }
 
     async fn insert_raw_news_event(&self, event: &NewsRawEventInsert) -> Result<bool> {
@@ -541,8 +561,9 @@ impl ArbitrageStore for InMemoryMarketEventStore {
 
     async fn list_arbitrage_scans(
         &self,
-        filters: &ArbitrageScanListFilters,
-    ) -> Result<Vec<ArbitrageScanView>> {
+        _filters: &ArbitrageScanListFilters,
+        page: &PageQuery,
+    ) -> Result<Paginated<ArbitrageScanView>> {
         let scans = self.arbitrage_scans.read().await;
         let mut items: Vec<_> = scans.values().cloned().collect();
         items.sort_by(|left, right| {
@@ -551,14 +572,18 @@ impl ArbitrageStore for InMemoryMarketEventStore {
                 .cmp(&left.started_at)
                 .then_with(|| left.id.cmp(&right.id))
         });
-        items.truncate(usize::from(filters.limit));
-        Ok(items)
+        let total = i64::try_from(items.len()).unwrap_or(i64::MAX);
+        let offset = page.offset() as usize;
+        let page_size = page.validated().1 as usize;
+        let paged: Vec<_> = items.into_iter().skip(offset).take(page_size).collect();
+        Ok(Paginated::new(paged, page, total))
     }
 
     async fn list_arbitrage_opportunities(
         &self,
         filters: &ArbitrageOpportunityListFilters,
-    ) -> Result<Vec<ArbitrageOpportunityView>> {
+        page: &PageQuery,
+    ) -> Result<Paginated<ArbitrageOpportunityView>> {
         let opportunities = self.arbitrage_opportunities.read().await;
         let validations = self.arbitrage_opportunity_validations.read().await;
         let mut items: Vec<_> = opportunities
@@ -610,8 +635,11 @@ impl ArbitrageStore for InMemoryMarketEventStore {
                 .cmp(&left.observed_at)
                 .then_with(|| left.id.cmp(&right.id))
         });
-        items.truncate(usize::from(filters.limit));
-        Ok(items)
+        let total = i64::try_from(items.len()).unwrap_or(i64::MAX);
+        let offset = page.offset() as usize;
+        let page_size = page.validated().1 as usize;
+        let paged: Vec<_> = items.into_iter().skip(offset).take(page_size).collect();
+        Ok(Paginated::new(paged, page, total))
     }
 
     async fn record_arbitrage_analysis_run(
@@ -627,8 +655,9 @@ impl ArbitrageStore for InMemoryMarketEventStore {
 
     async fn list_arbitrage_analysis_runs(
         &self,
-        filters: &ArbitrageAnalysisRunListFilters,
-    ) -> Result<Vec<ArbitrageAnalysisRunView>> {
+        _filters: &ArbitrageAnalysisRunListFilters,
+        page: &PageQuery,
+    ) -> Result<Paginated<ArbitrageAnalysisRunView>> {
         let runs = self.arbitrage_analysis_runs.read().await;
         let mut items: Vec<_> = runs.values().cloned().collect();
         items.sort_by(|left, right| {
@@ -637,8 +666,11 @@ impl ArbitrageStore for InMemoryMarketEventStore {
                 .cmp(&left.generated_at)
                 .then_with(|| left.id.cmp(&right.id))
         });
-        items.truncate(usize::from(filters.limit));
-        Ok(items)
+        let total = i64::try_from(items.len()).unwrap_or(i64::MAX);
+        let offset = page.offset() as usize;
+        let page_size = page.validated().1 as usize;
+        let paged: Vec<_> = items.into_iter().skip(offset).take(page_size).collect();
+        Ok(Paginated::new(paged, page, total))
     }
 
     async fn record_arbitrage_event(
@@ -656,7 +688,8 @@ impl ArbitrageStore for InMemoryMarketEventStore {
     async fn list_arbitrage_events(
         &self,
         filters: &ArbitrageEventListFilters,
-    ) -> Result<Vec<ArbitrageEventView>> {
+        page: &PageQuery,
+    ) -> Result<Paginated<ArbitrageEventView>> {
         let events = self.arbitrage_events.read().await;
         let mut items = events
             .iter()
@@ -668,8 +701,11 @@ impl ArbitrageStore for InMemoryMarketEventStore {
             .cloned()
             .collect::<Vec<_>>();
         items.sort_by(|left, right| left.sequence.cmp(&right.sequence));
-        items.truncate(usize::from(filters.limit));
-        Ok(items)
+        let total = i64::try_from(items.len()).unwrap_or(i64::MAX);
+        let offset = page.offset() as usize;
+        let page_size = page.validated().1 as usize;
+        let paged: Vec<_> = items.into_iter().skip(offset).take(page_size).collect();
+        Ok(Paginated::new(paged, page, total))
     }
 
     async fn prune_arbitrage_events(&self, occurred_before: OffsetDateTime) -> Result<u64> {

@@ -10,21 +10,23 @@ pub trait MarketEventStore: Send + Sync {
 
     async fn get_signal(&self, signal_id: &str) -> Result<Option<SignalView>>;
 
-    async fn list_events(&self, filters: &EventListFilters) -> Result<Vec<EventView>>;
+    async fn list_events(&self, filters: &EventListFilters, page: &PageQuery) -> Result<Paginated<EventView>>;
 
-    async fn list_evidences(&self, filters: &EvidenceListFilters) -> Result<Vec<EvidenceView>>;
+    async fn list_evidences(&self, filters: &EvidenceListFilters, page: &PageQuery) -> Result<Paginated<EvidenceView>>;
 
-    async fn list_signals(&self, filters: &SignalListFilters) -> Result<Vec<SignalView>>;
+    async fn list_signals(&self, filters: &SignalListFilters, page: &PageQuery) -> Result<Paginated<SignalView>>;
 
     async fn list_probability_estimates(
         &self,
         filters: &ProbabilityEstimateListFilters,
-    ) -> Result<Vec<ProbabilityEstimateView>>;
+        page: &PageQuery,
+    ) -> Result<Paginated<ProbabilityEstimateView>>;
 
     async fn list_signal_transitions(
         &self,
         filters: &SignalTransitionListFilters,
-    ) -> Result<Vec<SignalTransitionView>>;
+        page: &PageQuery,
+    ) -> Result<Paginated<SignalTransitionView>>;
 
     async fn recompute_signal(
         &self,
@@ -70,6 +72,49 @@ pub trait MarketEventStore: Send + Sync {
     async fn list_trades(&self, filters: &TradeListFilters) -> Result<Vec<TradeView>>;
 
     async fn list_positions(&self, filters: &PositionListFilters) -> Result<Vec<PositionView>>;
+
+    async fn count_order_drafts(&self, filters: &OrderDraftListFilters) -> Result<i64>;
+
+    async fn list_order_drafts_paginated(
+        &self,
+        filters: &OrderDraftListFilters,
+        page: &PageQuery,
+    ) -> Result<Paginated<OrderDraftView>>;
+
+    async fn count_execution_requests(
+        &self,
+        filters: &ExecutionRequestListFilters,
+    ) -> Result<i64>;
+
+    async fn list_execution_requests_paginated(
+        &self,
+        filters: &ExecutionRequestListFilters,
+        page: &PageQuery,
+    ) -> Result<Paginated<ExecutionRequestView>>;
+
+    async fn count_orders(&self, filters: &OrderListFilters) -> Result<i64>;
+
+    async fn list_orders_paginated(
+        &self,
+        filters: &OrderListFilters,
+        page: &PageQuery,
+    ) -> Result<Paginated<OrderView>>;
+
+    async fn count_trades(&self, filters: &TradeListFilters) -> Result<i64>;
+
+    async fn list_trades_paginated(
+        &self,
+        filters: &TradeListFilters,
+        page: &PageQuery,
+    ) -> Result<Paginated<TradeView>>;
+
+    async fn count_positions(&self, filters: &PositionListFilters) -> Result<i64>;
+
+    async fn list_positions_paginated(
+        &self,
+        filters: &PositionListFilters,
+        page: &PageQuery,
+    ) -> Result<Paginated<PositionView>>;
 
     async fn submit_execution_request(
         &self,
@@ -179,30 +224,32 @@ impl MarketEventService {
         })
     }
 
-    pub async fn list_events(&self, filters: EventListFilters) -> Result<Vec<EventView>> {
-        self.store.list_events(&filters).await
+    pub async fn list_events(&self, filters: EventListFilters, page: &PageQuery) -> Result<Paginated<EventView>> {
+        self.store.list_events(&filters, page).await
     }
 
-    pub async fn list_evidences(&self, filters: EvidenceListFilters) -> Result<Vec<EvidenceView>> {
-        self.store.list_evidences(&filters).await
+    pub async fn list_evidences(&self, filters: EvidenceListFilters, page: &PageQuery) -> Result<Paginated<EvidenceView>> {
+        self.store.list_evidences(&filters, page).await
     }
 
-    pub async fn list_signals(&self, filters: SignalListFilters) -> Result<Vec<SignalView>> {
-        self.store.list_signals(&filters).await
+    pub async fn list_signals(&self, filters: SignalListFilters, page: &PageQuery) -> Result<Paginated<SignalView>> {
+        self.store.list_signals(&filters, page).await
     }
 
     pub async fn list_probability_estimates(
         &self,
         filters: ProbabilityEstimateListFilters,
-    ) -> Result<Vec<ProbabilityEstimateView>> {
-        self.store.list_probability_estimates(&filters).await
+        page: &PageQuery,
+    ) -> Result<Paginated<ProbabilityEstimateView>> {
+        self.store.list_probability_estimates(&filters, page).await
     }
 
     pub async fn list_signal_transitions(
         &self,
         filters: SignalTransitionListFilters,
-    ) -> Result<Vec<SignalTransitionView>> {
-        self.store.list_signal_transitions(&filters).await
+        page: &PageQuery,
+    ) -> Result<Paginated<SignalTransitionView>> {
+        self.store.list_signal_transitions(&filters, page).await
     }
 
     pub async fn recompute_signal(
@@ -374,6 +421,71 @@ impl MarketEventService {
 
     pub async fn list_positions(&self, filters: PositionListFilters) -> Result<Vec<PositionView>> {
         self.store.list_positions(&filters).await
+    }
+
+    pub async fn count_order_drafts(&self, filters: &OrderDraftListFilters) -> Result<i64> {
+        self.store.count_order_drafts(filters).await
+    }
+
+    pub async fn list_order_drafts_paginated(
+        &self,
+        filters: &OrderDraftListFilters,
+        page: &PageQuery,
+    ) -> Result<Paginated<OrderDraftView>> {
+        self.store.list_order_drafts_paginated(filters, page).await
+    }
+
+    pub async fn count_execution_requests(
+        &self,
+        filters: &ExecutionRequestListFilters,
+    ) -> Result<i64> {
+        self.store.count_execution_requests(filters).await
+    }
+
+    pub async fn list_execution_requests_paginated(
+        &self,
+        filters: &ExecutionRequestListFilters,
+        page: &PageQuery,
+    ) -> Result<Paginated<ExecutionRequestView>> {
+        self.store
+            .list_execution_requests_paginated(filters, page)
+            .await
+    }
+
+    pub async fn count_orders(&self, filters: &OrderListFilters) -> Result<i64> {
+        self.store.count_orders(filters).await
+    }
+
+    pub async fn list_orders_paginated(
+        &self,
+        filters: &OrderListFilters,
+        page: &PageQuery,
+    ) -> Result<Paginated<OrderView>> {
+        self.store.list_orders_paginated(filters, page).await
+    }
+
+    pub async fn count_trades(&self, filters: &TradeListFilters) -> Result<i64> {
+        self.store.count_trades(filters).await
+    }
+
+    pub async fn list_trades_paginated(
+        &self,
+        filters: &TradeListFilters,
+        page: &PageQuery,
+    ) -> Result<Paginated<TradeView>> {
+        self.store.list_trades_paginated(filters, page).await
+    }
+
+    pub async fn count_positions(&self, filters: &PositionListFilters) -> Result<i64> {
+        self.store.count_positions(filters).await
+    }
+
+    pub async fn list_positions_paginated(
+        &self,
+        filters: &PositionListFilters,
+        page: &PageQuery,
+    ) -> Result<Paginated<PositionView>> {
+        self.store.list_positions_paginated(filters, page).await
     }
 
     pub async fn submit_execution_request(

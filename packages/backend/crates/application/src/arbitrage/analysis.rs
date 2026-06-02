@@ -249,26 +249,6 @@ fn analysis_payload(analysis: &ArbitrageAnalysisRunView) -> Value {
     })
 }
 
-fn validate_limit(limit: Option<u16>) -> Result<u16> {
-    crate::list_filters::validate_list_limit(
-        limit,
-        DEFAULT_LIST_LIMIT,
-        MAX_LIST_LIMIT,
-        "ARBITRAGE_LIST_LIMIT_INVALID",
-        "arbitrage list limit must be greater than zero",
-        "ARBITRAGE_LIST_LIMIT_INVALID",
-        format!("arbitrage list limit must be at most {MAX_LIST_LIMIT}"),
-    )
-}
-
-fn normalize_optional_id(field: &'static str, value: Option<String>) -> Result<Option<String>> {
-    crate::list_filters::normalize_optional_filter_id(
-        field,
-        value,
-        "ARBITRAGE_FILTER_INVALID",
-        |field| format!("{field} filter must not be empty"),
-    )
-}
 
 fn id_fragment(value: &str) -> String {
     let fragment: String = value

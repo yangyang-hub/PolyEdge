@@ -10,8 +10,8 @@ use std::{
 };
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
-const DEFAULT_LIST_LIMIT: u16 = 100;
-const MAX_LIST_LIMIT: u16 = 500;
+use crate::pagination::{PageQuery, Paginated};
+
 const DEFAULT_REPEAT_WINDOW_SECONDS: i64 = 300;
 
 include!("arbitrage/models.rs");

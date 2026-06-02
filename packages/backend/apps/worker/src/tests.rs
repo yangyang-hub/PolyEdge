@@ -2,7 +2,7 @@ use super::*;
 use polyedge_application::{
     ApproveSignalCommand, ArbitrageAnalysisRunListFilters, ArbitrageScanListFilters,
     EventListFilters, EvidenceListFilters, ExecutionRequestListFilters, OrderDraftListFilters,
-    OrderListFilters, PositionListFilters, RewardExecutionMode, SignalListFilters,
+    OrderListFilters, PageQuery, PositionListFilters, RewardExecutionMode, SignalListFilters,
     SubmitExecutionCommand, SyncExternalOrderStatusCommand, TradeListFilters, demo_fixture_bundle,
 };
 use polyedge_domain::{
@@ -75,11 +75,13 @@ async fn promote_news_events_creates_market_linked_event_and_evidence() {
         }
     );
 
+    let page = PageQuery::default();
     let promoted_event = state
         .market_event_service
-        .list_events(EventListFilters::new(None, Some(200)).expect("event filters"))
+        .list_events(EventListFilters::new(None, Some(200)).expect("event filters"), &page)
         .await
         .expect("list events")
+        .data
         .into_iter()
         .find(|event| event.summary == "SEC ETF calendar narrows approval window")
         .expect("promoted event");
@@ -98,11 +100,12 @@ async fn promote_news_events_creates_market_linked_event_and_evidence() {
                 Some(200),
             )
             .expect("evidence filters"),
+            &page,
         )
         .await
         .expect("list evidences");
-    assert_eq!(promoted_evidences.len(), 1);
-    let promoted_evidence = &promoted_evidences[0];
+    assert_eq!(promoted_evidences.data.len(), 1);
+    let promoted_evidence = &promoted_evidences.data[0];
     assert_eq!(promoted_evidence.status, EvidenceStatus::Active);
     assert_eq!(promoted_evidence.direction, EvidenceDirection::Background);
     assert_eq!(promoted_evidence.source_reliability, source_reliability);
@@ -122,10 +125,11 @@ async fn promote_news_events_creates_market_linked_event_and_evidence() {
                 Some(200),
             )
             .expect("signal filters"),
+            &page,
         )
         .await
         .expect("list signals");
-    assert!(promoted_signals.is_empty());
+    assert!(promoted_signals.data.is_empty());
 }
 
 #[tokio::test]
@@ -156,17 +160,18 @@ async fn scan_arbitrage_once_records_market_snapshots_without_trade_side_effects
         }
     );
 
+    let page = PageQuery::default();
     let scans = state
         .arbitrage_service
-        .list_scans(ArbitrageScanListFilters::new(Some(10)).expect("scan filters"))
+        .list_scans(ArbitrageScanListFilters::new().expect("scan filters"), &page)
         .await
         .expect("list scans");
-    assert_eq!(scans.len(), 1);
-    assert_eq!(scans[0].id, "scan_arbitrage_scan");
-    assert_eq!(scans[0].market_count, 4);
-    assert_eq!(scans[0].snapshot_count, 4);
-    assert_eq!(scans[0].opportunity_count, 0);
-    assert!(scans[0].finished_at.is_some());
+    assert_eq!(scans.data.len(), 1);
+    assert_eq!(scans.data[0].id, "scan_arbitrage_scan");
+    assert_eq!(scans.data[0].market_count, 4);
+    assert_eq!(scans.data[0].snapshot_count, 4);
+    assert_eq!(scans.data[0].opportunity_count, 0);
+    assert!(scans.data[0].finished_at.is_some());
 }
 
 #[tokio::test]
@@ -190,15 +195,17 @@ async fn analyze_arbitrage_opportunities_records_summary_run() {
     assert_eq!(analysis.opportunity_count, 0);
     assert_eq!(analysis.market_count, 0);
 
+    let page = PageQuery::default();
     let runs = state
         .arbitrage_service
         .list_analysis_runs(
-            ArbitrageAnalysisRunListFilters::new(Some(10)).expect("analysis filters"),
+            ArbitrageAnalysisRunListFilters::new().expect("analysis filters"),
+            &page,
         )
         .await
         .expect("list analysis runs");
-    assert_eq!(runs.len(), 1);
-    assert_eq!(runs[0].id, analysis.id);
+    assert_eq!(runs.data.len(), 1);
+    assert_eq!(runs.data[0].id, analysis.id);
 }
 
 async fn seed_execution_request_for_connector(
@@ -567,15 +574,18 @@ async fn reconcile_paper_fills_creates_order_trade_position_and_executes_signal(
     assert_eq!(positions[0].mark_price, order.avg_fill_price);
     assert_eq!(positions[0].avg_cost, order.avg_fill_price);
 
+    let page = PageQuery::default();
     let signals = state
         .market_event_service
         .list_signals(
             SignalListFilters::new(Some("mkt_120".to_string()), None, None, Some(10))
                 .expect("signal filters"),
+            &page,
         )
         .await
         .expect("list signals");
     let signal = signals
+        .data
         .into_iter()
         .find(|item| item.id == "sig_2411")
         .expect("executed signal");

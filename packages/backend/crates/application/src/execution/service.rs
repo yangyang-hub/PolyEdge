@@ -45,6 +45,81 @@ impl ExecutionService {
         self.market_event_service.list_positions(filters).await
     }
 
+    pub async fn count_order_drafts(&self, filters: &OrderDraftListFilters) -> Result<i64> {
+        self.market_event_service.count_order_drafts(filters).await
+    }
+
+    pub async fn list_order_drafts_paginated(
+        &self,
+        filters: &OrderDraftListFilters,
+        page: &PageQuery,
+    ) -> Result<Paginated<OrderDraftView>> {
+        self.market_event_service
+            .list_order_drafts_paginated(filters, page)
+            .await
+    }
+
+    pub async fn count_execution_requests(
+        &self,
+        filters: &ExecutionRequestListFilters,
+    ) -> Result<i64> {
+        self.market_event_service
+            .count_execution_requests(filters)
+            .await
+    }
+
+    pub async fn list_execution_requests_paginated(
+        &self,
+        filters: &ExecutionRequestListFilters,
+        page: &PageQuery,
+    ) -> Result<Paginated<ExecutionRequestView>> {
+        self.market_event_service
+            .list_execution_requests_paginated(filters, page)
+            .await
+    }
+
+    pub async fn count_orders(&self, filters: &OrderListFilters) -> Result<i64> {
+        self.market_event_service.count_orders(filters).await
+    }
+
+    pub async fn list_orders_paginated(
+        &self,
+        filters: &OrderListFilters,
+        page: &PageQuery,
+    ) -> Result<Paginated<OrderView>> {
+        self.market_event_service
+            .list_orders_paginated(filters, page)
+            .await
+    }
+
+    pub async fn count_trades(&self, filters: &TradeListFilters) -> Result<i64> {
+        self.market_event_service.count_trades(filters).await
+    }
+
+    pub async fn list_trades_paginated(
+        &self,
+        filters: &TradeListFilters,
+        page: &PageQuery,
+    ) -> Result<Paginated<TradeView>> {
+        self.market_event_service
+            .list_trades_paginated(filters, page)
+            .await
+    }
+
+    pub async fn count_positions(&self, filters: &PositionListFilters) -> Result<i64> {
+        self.market_event_service.count_positions(filters).await
+    }
+
+    pub async fn list_positions_paginated(
+        &self,
+        filters: &PositionListFilters,
+        page: &PageQuery,
+    ) -> Result<Paginated<PositionView>> {
+        self.market_event_service
+            .list_positions_paginated(filters, page)
+            .await
+    }
+
     pub async fn list_dispatch_candidates(
         &self,
         filters: DispatchExecutionListFilters,

@@ -266,11 +266,11 @@ async fn connector_trade_fill_callback_is_deduplicated_without_duplicate_trades(
     let trades_response_body = to_bytes(trades_response.into_body(), usize::MAX)
         .await
         .expect("read body");
-    let trades_payload: ApiResponse<Vec<TradeData>> =
+    let trades_payload: ApiResponse<Paginated<TradeData>> =
         serde_json::from_slice(&trades_response_body).expect("deserialize response");
-    assert_eq!(trades_payload.data.len(), 1);
+    assert_eq!(trades_payload.data.data.len(), 1);
     assert_eq!(
-        trades_payload.data[0].external_trade_id,
+        trades_payload.data.data[0].external_trade_id,
         "paper_trade_callback_001"
     );
 }

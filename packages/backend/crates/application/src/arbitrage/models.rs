@@ -332,15 +332,11 @@ pub struct ArbitrageMarketSummary {
 }
 
 #[derive(Debug, Clone)]
-pub struct ArbitrageScanListFilters {
-    pub limit: u16,
-}
+pub struct ArbitrageScanListFilters {}
 
 impl ArbitrageScanListFilters {
-    pub fn new(limit: Option<u16>) -> Result<Self> {
-        Ok(Self {
-            limit: validate_limit(limit)?,
-        })
+    pub fn new() -> Result<Self> {
+        Ok(Self {})
     }
 }
 
@@ -353,7 +349,6 @@ pub struct ArbitrageOpportunityListFilters {
     pub min_net_edge: Option<Edge>,
     pub observed_after: Option<OffsetDateTime>,
     pub active_only: bool,
-    pub limit: u16,
 }
 
 impl ArbitrageOpportunityListFilters {
@@ -365,31 +360,25 @@ impl ArbitrageOpportunityListFilters {
         min_net_edge: Option<Edge>,
         observed_after: Option<OffsetDateTime>,
         active_only: bool,
-        limit: Option<u16>,
     ) -> Result<Self> {
         Ok(Self {
-            market_id: normalize_optional_id("market_id", market_id)?,
+            market_id,
             opportunity_type,
             status,
             validation_status,
             min_net_edge,
             observed_after,
             active_only,
-            limit: validate_limit(limit)?,
         })
     }
 }
 
 #[derive(Debug, Clone)]
-pub struct ArbitrageAnalysisRunListFilters {
-    pub limit: u16,
-}
+pub struct ArbitrageAnalysisRunListFilters {}
 
 impl ArbitrageAnalysisRunListFilters {
-    pub fn new(limit: Option<u16>) -> Result<Self> {
-        Ok(Self {
-            limit: validate_limit(limit)?,
-        })
+    pub fn new() -> Result<Self> {
+        Ok(Self {})
     }
 }
 
@@ -403,7 +392,7 @@ impl ArbitrageEventListFilters {
     pub fn new(after_sequence: Option<u64>, limit: Option<u16>) -> Result<Self> {
         Ok(Self {
             after_sequence,
-            limit: validate_limit(limit)?,
+            limit: limit.unwrap_or(100),
         })
     }
 }

@@ -5,33 +5,38 @@ impl NewsIngestionStore for PostgresMarketEventStore {
     async fn list_news_source_health(
         &self,
         filters: &NewsSourceHealthListFilters,
-    ) -> Result<Vec<NewsSourceHealthView>> {
-        let rows = sqlx::query(
-            r#"
-            SELECT
-              source,
-              source_type,
-              enabled,
-              reliability,
-              last_success_at,
-              last_error_at,
-              consecutive_failures,
-              items_fetched,
-              items_inserted,
-              items_deduped,
-              health_score,
-              last_error,
-              updated_at
-            FROM news_source_health
-            WHERE ($1::TEXT IS NULL OR source_type = $1)
-            ORDER BY updated_at DESC, source ASC
-            LIMIT $2
-            "#,
+        page: &PageQuery,
+    ) -> Result<Paginated<NewsSourceHealthView>> {
+        let offset = page.offset();
+        let limit = i64::from(page.validated().1);
+
+        let (total_count, rows) = tokio::try_join!(
+            sqlx::query_scalar::<_, i64>(
+                r#"
+                SELECT COUNT(*) FROM news_source_health
+                WHERE ($1::TEXT IS NULL OR source_type = $1)
+                "#,
+            )
+            .bind(filters.source_type.as_deref())
+            .fetch_one(&self.pool),
+            sqlx::query(
+                r#"
+                SELECT
+                  source, source_type, enabled, reliability,
+                  last_success_at, last_error_at, consecutive_failures,
+                  items_fetched, items_inserted, items_deduped,
+                  health_score, last_error, updated_at
+                FROM news_source_health
+                WHERE ($1::TEXT IS NULL OR source_type = $1)
+                ORDER BY updated_at DESC, source ASC
+                LIMIT $2 OFFSET $3
+                "#,
+            )
+            .bind(filters.source_type.as_deref())
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(&self.pool),
         )
-        .bind(filters.source_type.as_deref())
-        .bind(i64::from(filters.limit))
-        .fetch_all(&self.pool)
-        .await
         .map_err(|error| {
             db_error(
                 "POSTGRES_QUERY_FAILED",
@@ -39,44 +44,54 @@ impl NewsIngestionStore for PostgresMarketEventStore {
             )
         })?;
 
-        rows.iter().map(parse_news_source_health_row).collect()
+        let items: Result<Vec<_>> = rows.iter().map(parse_news_source_health_row).collect();
+        Ok(Paginated::new(items?, page, total_count))
     }
 
     async fn list_raw_news_events(
         &self,
         filters: &NewsRawEventListFilters,
-    ) -> Result<Vec<NewsRawEventView>> {
-        let rows = sqlx::query(
-            r#"
-            SELECT
-              id,
-              source,
-              source_type,
-              external_id,
-              title,
-              url,
-              author,
-              published_at,
-              event_time,
-              hash,
-              raw_payload,
-              ingested_at,
-              trace_id
-            FROM raw_events
-            WHERE source_type IS NOT NULL
-              AND title IS NOT NULL
-              AND event_time IS NOT NULL
-              AND ($1::TEXT IS NULL OR source = $1)
-              AND ($2::TEXT IS NULL OR source_type = $2)
-            ORDER BY event_time DESC, ingested_at DESC, id ASC
-            LIMIT $3
-            "#,
+        page: &PageQuery,
+    ) -> Result<Paginated<NewsRawEventView>> {
+        let offset = page.offset();
+        let limit = i64::from(page.validated().1);
+
+        let (total_count, rows) = tokio::try_join!(
+            sqlx::query_scalar::<_, i64>(
+                r#"
+                SELECT COUNT(*) FROM raw_events
+                WHERE source_type IS NOT NULL
+                  AND title IS NOT NULL
+                  AND event_time IS NOT NULL
+                  AND ($1::TEXT IS NULL OR source = $1)
+                  AND ($2::TEXT IS NULL OR source_type = $2)
+                "#,
+            )
+            .bind(filters.source.as_deref())
+            .bind(filters.source_type.as_deref())
+            .fetch_one(&self.pool),
+            sqlx::query(
+                r#"
+                SELECT
+                  id, source, source_type, external_id, title, url,
+                  author, published_at, event_time, hash,
+                  raw_payload, ingested_at, trace_id
+                FROM raw_events
+                WHERE source_type IS NOT NULL
+                  AND title IS NOT NULL
+                  AND event_time IS NOT NULL
+                  AND ($1::TEXT IS NULL OR source = $1)
+                  AND ($2::TEXT IS NULL OR source_type = $2)
+                ORDER BY event_time DESC, ingested_at DESC, id ASC
+                LIMIT $3 OFFSET $4
+                "#,
+            )
+            .bind(filters.source.as_deref())
+            .bind(filters.source_type.as_deref())
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(&self.pool),
         )
-        .bind(filters.source.as_deref())
-        .bind(filters.source_type.as_deref())
-        .bind(i64::from(filters.limit))
-        .fetch_all(&self.pool)
-        .await
         .map_err(|error| {
             db_error(
                 "POSTGRES_QUERY_FAILED",
@@ -84,7 +99,8 @@ impl NewsIngestionStore for PostgresMarketEventStore {
             )
         })?;
 
-        rows.iter().map(parse_news_raw_event_row).collect()
+        let items: Result<Vec<_>> = rows.iter().map(parse_news_raw_event_row).collect();
+        Ok(Paginated::new(items?, page, total_count))
     }
 
     async fn insert_raw_news_event(&self, event: &NewsRawEventInsert) -> Result<bool> {

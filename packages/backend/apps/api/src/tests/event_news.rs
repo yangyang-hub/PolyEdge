@@ -36,10 +36,10 @@ async fn events_route_filters_by_status() {
     let body = to_bytes(response.into_body(), usize::MAX)
         .await
         .expect("read body");
-    let payload: ApiResponse<Vec<EventData>> =
+    let payload: ApiResponse<Paginated<EventData>> =
         serde_json::from_slice(&body).expect("deserialize response");
-    assert_eq!(payload.data.len(), 1);
-    assert_eq!(payload.data[0].id, "evt_9001");
+    assert_eq!(payload.data.data.len(), 1);
+    assert_eq!(payload.data.data[0].id, "evt_9001");
 }
 
 #[tokio::test]
@@ -120,14 +120,14 @@ async fn news_source_health_route_filters_by_source_type() {
     let body = to_bytes(response.into_body(), usize::MAX)
         .await
         .expect("read body");
-    let payload: ApiResponse<Vec<NewsSourceHealthData>> =
+    let payload: ApiResponse<Paginated<NewsSourceHealthData>> =
         serde_json::from_slice(&body).expect("deserialize response");
-    assert_eq!(payload.data.len(), 1);
-    assert_eq!(payload.data[0].source, "sec_feed");
-    assert_eq!(payload.data[0].source_type, "official");
-    assert_eq!(payload.data[0].items_fetched, 1);
-    assert_eq!(payload.data[0].items_inserted, 1);
-    assert_eq!(payload.data[0].consecutive_failures, 0);
+    assert_eq!(payload.data.data.len(), 1);
+    assert_eq!(payload.data.data[0].source, "sec_feed");
+    assert_eq!(payload.data.data[0].source_type, "official");
+    assert_eq!(payload.data.data[0].items_fetched, 1);
+    assert_eq!(payload.data.data[0].items_inserted, 1);
+    assert_eq!(payload.data.data[0].consecutive_failures, 0);
 
     let raw_request_id = format!("req_{}", Uuid::now_v7());
     let raw_token = issue_token(&signing_key, "test-key", &raw_request_id);
@@ -147,15 +147,15 @@ async fn news_source_health_route_filters_by_source_type() {
     let raw_body = to_bytes(raw_response.into_body(), usize::MAX)
         .await
         .expect("read raw body");
-    let raw_payload: ApiResponse<Vec<NewsRawEventData>> =
+    let raw_payload: ApiResponse<Paginated<NewsRawEventData>> =
         serde_json::from_slice(&raw_body).expect("deserialize raw response");
-    assert_eq!(raw_payload.data.len(), 1);
-    assert_eq!(raw_payload.data[0].source, "sec_feed");
+    assert_eq!(raw_payload.data.data.len(), 1);
+    assert_eq!(raw_payload.data.data[0].source, "sec_feed");
     assert_eq!(
-        raw_payload.data[0].title,
+        raw_payload.data.data[0].title,
         "SEC publishes ETF calendar update"
     );
-    assert_eq!(raw_payload.data[0].external_id.as_deref(), Some("entry-1"));
+    assert_eq!(raw_payload.data.data[0].external_id.as_deref(), Some("entry-1"));
 }
 
 #[tokio::test]
@@ -196,10 +196,10 @@ async fn evidences_route_filters_by_market() {
     let body = to_bytes(response.into_body(), usize::MAX)
         .await
         .expect("read body");
-    let payload: ApiResponse<Vec<EvidenceData>> =
+    let payload: ApiResponse<Paginated<EvidenceData>> =
         serde_json::from_slice(&body).expect("deserialize response");
-    assert_eq!(payload.data.len(), 2);
-    assert!(payload.data.iter().all(|item| item.market_id == "mkt_121"));
+    assert_eq!(payload.data.data.len(), 2);
+    assert!(payload.data.data.iter().all(|item| item.market_id == "mkt_121"));
 }
 
 #[tokio::test]
@@ -240,8 +240,8 @@ async fn signals_route_filters_by_lifecycle_state_alias() {
     let body = to_bytes(response.into_body(), usize::MAX)
         .await
         .expect("read body");
-    let payload: ApiResponse<Vec<SignalData>> =
+    let payload: ApiResponse<Paginated<SignalData>> =
         serde_json::from_slice(&body).expect("deserialize response");
-    assert_eq!(payload.data.len(), 1);
-    assert_eq!(payload.data[0].id, "sig_2411");
+    assert_eq!(payload.data.data.len(), 1);
+    assert_eq!(payload.data.data[0].id, "sig_2411");
 }

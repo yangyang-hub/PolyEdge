@@ -153,16 +153,18 @@ async fn promote_news_events(
 ) -> Result<NewsPromotionReport> {
     let raw_events = state
         .news_ingestion_service
-        .list_raw_events(NewsRawEventListFilters::new(None, None, limit)?)
-        .await?;
+        .list_raw_events(NewsRawEventListFilters::new(None, None, limit)?, &PageQuery { page: 1, page_size: limit.unwrap_or(200), sort_order: None })
+        .await?
+        .data;
     let markets = state
         .market_event_service
         .list_markets(MarketListFilters::new(None, None, None, None, None, None, Some(200))?)
         .await?;
     let source_health = state
         .news_ingestion_service
-        .list_source_health(NewsSourceHealthListFilters::new(None, Some(200))?)
+        .list_source_health(NewsSourceHealthListFilters::new(None, Some(200))?, &PageQuery { page: 1, page_size: 200, sort_order: None })
         .await?
+        .data
         .into_iter()
         .map(|health| (health.source.clone(), health))
         .collect::<HashMap<_, _>>();

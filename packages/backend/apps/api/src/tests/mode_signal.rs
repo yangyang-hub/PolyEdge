@@ -298,11 +298,11 @@ async fn recompute_signal_route_is_idempotent_and_creates_estimate() {
     let estimates_body = to_bytes(estimates_response.into_body(), usize::MAX)
         .await
         .expect("read body");
-    let estimates_payload: ApiResponse<Vec<ProbabilityEstimateData>> =
+    let estimates_payload: ApiResponse<Paginated<ProbabilityEstimateData>> =
         serde_json::from_slice(&estimates_body).expect("deserialize response");
-    assert_eq!(estimates_payload.data.len(), 1);
+    assert_eq!(estimates_payload.data.data.len(), 1);
     assert_eq!(
-        estimates_payload.data[0].signal_id.as_deref(),
+        estimates_payload.data.data[0].signal_id.as_deref(),
         Some("sig_2412")
     );
 }
@@ -368,16 +368,16 @@ async fn signal_transitions_route_returns_recompute_transition() {
     let transitions_body = to_bytes(transitions_response.into_body(), usize::MAX)
         .await
         .expect("read body");
-    let payload: ApiResponse<Vec<SignalTransitionData>> =
+    let payload: ApiResponse<Paginated<SignalTransitionData>> =
         serde_json::from_slice(&transitions_body).expect("deserialize response");
-    assert_eq!(payload.data.len(), 1);
-    assert_eq!(payload.data[0].signal_id, "sig_2411");
+    assert_eq!(payload.data.data.len(), 1);
+    assert_eq!(payload.data.data[0].signal_id, "sig_2411");
     assert_eq!(
-        payload.data[0].from_state,
+        payload.data.data[0].from_state,
         polyedge_domain::SignalLifecycleState::Active
     );
     assert_eq!(
-        payload.data[0].to_state,
+        payload.data.data[0].to_state,
         polyedge_domain::SignalLifecycleState::Weakened
     );
 }

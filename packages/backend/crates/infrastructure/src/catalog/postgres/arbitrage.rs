@@ -371,28 +371,30 @@ impl ArbitrageStore for PostgresMarketEventStore {
 
     async fn list_arbitrage_scans(
         &self,
-        filters: &ArbitrageScanListFilters,
-    ) -> Result<Vec<ArbitrageScanView>> {
-        let rows = sqlx::query(
-            r#"
-            SELECT
-              id,
-              started_at,
-              finished_at,
-              market_count,
-              snapshot_count,
-              opportunity_count,
-              scanner_version,
-              metadata_json,
-              trace_id
-            FROM arbitrage_scans
-            ORDER BY started_at DESC, id ASC
-            LIMIT $1
-            "#,
+        _filters: &ArbitrageScanListFilters,
+        page: &PageQuery,
+    ) -> Result<Paginated<ArbitrageScanView>> {
+        let (_page_num, page_size) = page.validated();
+        let offset = page.offset();
+        let limit = i64::from(page_size);
+
+        let (total, rows) = tokio::try_join!(
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM arbitrage_scans")
+                .fetch_one(&self.pool),
+            sqlx::query(
+                r#"
+                SELECT
+                  id, started_at, finished_at, market_count, snapshot_count,
+                  opportunity_count, scanner_version, metadata_json, trace_id
+                FROM arbitrage_scans
+                ORDER BY started_at DESC, id ASC
+                LIMIT $1 OFFSET $2
+                "#,
+            )
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(&self.pool),
         )
-        .bind(i64::from(filters.limit))
-        .fetch_all(&self.pool)
-        .await
         .map_err(|error| {
             db_error(
                 "POSTGRES_QUERY_FAILED",
@@ -400,65 +402,20 @@ impl ArbitrageStore for PostgresMarketEventStore {
             )
         })?;
 
-        rows.iter().map(parse_arbitrage_scan_row).collect()
+        let items: Result<Vec<_>> = rows.iter().map(parse_arbitrage_scan_row).collect();
+        Ok(Paginated::new(items?, page, total))
     }
 
     async fn list_arbitrage_opportunities(
         &self,
         filters: &ArbitrageOpportunityListFilters,
-    ) -> Result<Vec<ArbitrageOpportunityView>> {
-        let rows = sqlx::query(
-            r#"
-            SELECT
-              o.id,
-              o.scan_id,
-              o.market_id,
-              o.opportunity_type,
-              o.status,
-              o.gross_edge,
-              o.price_sum,
-              o.capacity,
-              o.yes_price,
-              o.no_price,
-              o.yes_size,
-              o.no_size,
-              o.observed_at,
-              o.reason_codes_json,
-              o.analysis_payload_json,
-              o.trace_id,
-              v.id AS validation_id,
-              v.status AS validation_status,
-              v.gross_edge AS validation_gross_edge,
-              v.net_edge AS validation_net_edge,
-              v.fee_estimate AS validation_fee_estimate,
-              v.slippage_buffer AS validation_slippage_buffer,
-              v.validated_capacity AS validation_validated_capacity,
-              v.book_age_ms AS validation_book_age_ms,
-              v.reason_codes_json AS validation_reason_codes_json,
-              v.validation_payload_json AS validation_payload_json,
-              v.validated_at AS validation_validated_at,
-              v.trace_id AS validation_trace_id
-            FROM arbitrage_opportunities o
-            LEFT JOIN LATERAL (
-              SELECT
-                id,
-                opportunity_id,
-                status,
-                gross_edge,
-                net_edge,
-                fee_estimate,
-                slippage_buffer,
-                validated_capacity,
-                book_age_ms,
-                reason_codes_json,
-                validation_payload_json,
-                validated_at,
-                trace_id
-              FROM arbitrage_opportunity_validations
-              WHERE opportunity_id = o.id
-              ORDER BY validated_at DESC, id ASC
-              LIMIT 1
-            ) v ON TRUE
+        page: &PageQuery,
+    ) -> Result<Paginated<ArbitrageOpportunityView>> {
+        let (_page_num, page_size) = page.validated();
+        let offset = page.offset();
+        let limit = i64::from(page_size);
+
+        let where_clause = r#"
             WHERE ($1::TEXT IS NULL OR o.market_id = $1)
               AND ($2::TEXT IS NULL OR o.opportunity_type = $2)
               AND ($3::TEXT IS NULL OR o.status = $3)
@@ -470,28 +427,72 @@ impl ArbitrageStore for PostgresMarketEventStore {
               AND ($5::NUMERIC IS NULL OR v.net_edge >= $5)
               AND ($6::TIMESTAMPTZ IS NULL OR o.observed_at >= $6)
               AND (NOT $7::BOOL OR o.status <> 'expired')
+        "#;
+
+        let from_clause = r#"
+            FROM arbitrage_opportunities o
+            LEFT JOIN LATERAL (
+              SELECT id, opportunity_id, status, gross_edge, net_edge, fee_estimate,
+                     slippage_buffer, validated_capacity, book_age_ms, reason_codes_json,
+                     validation_payload_json, validated_at, trace_id
+              FROM arbitrage_opportunity_validations
+              WHERE opportunity_id = o.id
+              ORDER BY validated_at DESC, id ASC
+              LIMIT 1
+            ) v ON TRUE
+        "#;
+
+        let market_id = filters.market_id.as_deref();
+        let opp_type = filters.opportunity_type.map(ArbitrageOpportunityType::as_str);
+        let status = filters.status.map(ArbitrageOpportunityStatus::as_str);
+        let val_status = filters.validation_status.map(ArbitrageValidationStatus::as_str);
+        let min_edge = filters.min_net_edge.map(Edge::value);
+        let after = filters.observed_after;
+        let active = filters.active_only;
+
+        let count_sql = format!("SELECT COUNT(*) {from_clause} {where_clause}");
+        let data_sql = format!(
+            r#"SELECT o.id, o.scan_id, o.market_id, o.opportunity_type, o.status,
+              o.gross_edge, o.price_sum, o.capacity, o.yes_price, o.no_price,
+              o.yes_size, o.no_size, o.observed_at, o.reason_codes_json,
+              o.analysis_payload_json, o.trace_id,
+              v.id AS validation_id, v.status AS validation_status,
+              v.gross_edge AS validation_gross_edge, v.net_edge AS validation_net_edge,
+              v.fee_estimate AS validation_fee_estimate,
+              v.slippage_buffer AS validation_slippage_buffer,
+              v.validated_capacity AS validation_validated_capacity,
+              v.book_age_ms AS validation_book_age_ms,
+              v.reason_codes_json AS validation_reason_codes_json,
+              v.validation_payload_json AS validation_payload_json,
+              v.validated_at AS validation_validated_at,
+              v.trace_id AS validation_trace_id
+            {from_clause} {where_clause}
             ORDER BY o.observed_at DESC, o.id ASC
-            LIMIT $8
-            "#,
+            LIMIT $8 OFFSET $9"#
+        );
+
+        let (total, rows) = tokio::try_join!(
+            sqlx::query_scalar::<_, i64>(&count_sql)
+                .bind(market_id)
+                .bind(opp_type)
+                .bind(status)
+                .bind(val_status)
+                .bind(min_edge)
+                .bind(after)
+                .bind(active)
+                .fetch_one(&self.pool),
+            sqlx::query(&data_sql)
+                .bind(market_id)
+                .bind(opp_type)
+                .bind(status)
+                .bind(val_status)
+                .bind(min_edge)
+                .bind(after)
+                .bind(active)
+                .bind(limit)
+                .bind(offset)
+                .fetch_all(&self.pool),
         )
-        .bind(filters.market_id.as_deref())
-        .bind(
-            filters
-                .opportunity_type
-                .map(ArbitrageOpportunityType::as_str),
-        )
-        .bind(filters.status.map(ArbitrageOpportunityStatus::as_str))
-        .bind(
-            filters
-                .validation_status
-                .map(ArbitrageValidationStatus::as_str),
-        )
-        .bind(filters.min_net_edge.map(Edge::value))
-        .bind(filters.observed_after)
-        .bind(filters.active_only)
-        .bind(i64::from(filters.limit))
-        .fetch_all(&self.pool)
-        .await
         .map_err(|error| {
             db_error(
                 "POSTGRES_QUERY_FAILED",
@@ -499,7 +500,8 @@ impl ArbitrageStore for PostgresMarketEventStore {
             )
         })?;
 
-        rows.iter().map(parse_arbitrage_opportunity_row).collect()
+        let items: Result<Vec<_>> = rows.iter().map(parse_arbitrage_opportunity_row).collect();
+        Ok(Paginated::new(items?, page, total))
     }
 
     async fn record_arbitrage_analysis_run(
@@ -552,26 +554,29 @@ impl ArbitrageStore for PostgresMarketEventStore {
 
     async fn list_arbitrage_analysis_runs(
         &self,
-        filters: &ArbitrageAnalysisRunListFilters,
-    ) -> Result<Vec<ArbitrageAnalysisRunView>> {
-        let rows = sqlx::query(
-            r#"
-            SELECT
-              id,
-              generated_at,
-              lookback_hours,
-              opportunity_count,
-              market_count,
-              summary_payload_json,
-              trace_id
-            FROM arbitrage_analysis_runs
-            ORDER BY generated_at DESC, id ASC
-            LIMIT $1
-            "#,
+        _filters: &ArbitrageAnalysisRunListFilters,
+        page: &PageQuery,
+    ) -> Result<Paginated<ArbitrageAnalysisRunView>> {
+        let (_page_num, page_size) = page.validated();
+        let offset = page.offset();
+        let limit = i64::from(page_size);
+
+        let (total, rows) = tokio::try_join!(
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM arbitrage_analysis_runs")
+                .fetch_one(&self.pool),
+            sqlx::query(
+                r#"
+                SELECT id, generated_at, lookback_hours, opportunity_count,
+                       market_count, summary_payload_json, trace_id
+                FROM arbitrage_analysis_runs
+                ORDER BY generated_at DESC, id ASC
+                LIMIT $1 OFFSET $2
+                "#,
+            )
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(&self.pool),
         )
-        .bind(i64::from(filters.limit))
-        .fetch_all(&self.pool)
-        .await
         .map_err(|error| {
             db_error(
                 "POSTGRES_QUERY_FAILED",
@@ -579,7 +584,8 @@ impl ArbitrageStore for PostgresMarketEventStore {
             )
         })?;
 
-        rows.iter().map(parse_arbitrage_analysis_run_row).collect()
+        let items: Result<Vec<_>> = rows.iter().map(parse_arbitrage_analysis_run_row).collect();
+        Ok(Paginated::new(items?, page, total))
     }
 
     async fn record_arbitrage_event(
@@ -639,7 +645,8 @@ impl ArbitrageStore for PostgresMarketEventStore {
     async fn list_arbitrage_events(
         &self,
         filters: &ArbitrageEventListFilters,
-    ) -> Result<Vec<ArbitrageEventView>> {
+        page: &PageQuery,
+    ) -> Result<Paginated<ArbitrageEventView>> {
         let after_sequence = filters
             .after_sequence
             .map(|sequence| {
@@ -651,27 +658,31 @@ impl ArbitrageStore for PostgresMarketEventStore {
                 })
             })
             .transpose()?;
-        let rows = sqlx::query(
-            r#"
-            SELECT
-              sequence,
-              id,
-              event_type,
-              resource_type,
-              resource_id,
-              payload_json,
-              occurred_at,
-              trace_id
-            FROM arbitrage_events
-            WHERE ($1::BIGINT IS NULL OR sequence > $1)
-            ORDER BY sequence ASC
-            LIMIT $2
-            "#,
+        let (_page_num, page_size) = page.validated();
+        let offset = page.offset();
+        let limit = i64::from(page_size);
+
+        let (total, rows) = tokio::try_join!(
+            sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM arbitrage_events WHERE ($1::BIGINT IS NULL OR sequence > $1)"
+            )
+            .bind(after_sequence)
+            .fetch_one(&self.pool),
+            sqlx::query(
+                r#"
+                SELECT sequence, id, event_type, resource_type, resource_id,
+                       payload_json, occurred_at, trace_id
+                FROM arbitrage_events
+                WHERE ($1::BIGINT IS NULL OR sequence > $1)
+                ORDER BY sequence ASC
+                LIMIT $2 OFFSET $3
+                "#,
+            )
+            .bind(after_sequence)
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(&self.pool),
         )
-        .bind(after_sequence)
-        .bind(i64::from(filters.limit))
-        .fetch_all(&self.pool)
-        .await
         .map_err(|error| {
             db_error(
                 "POSTGRES_QUERY_FAILED",
@@ -679,7 +690,8 @@ impl ArbitrageStore for PostgresMarketEventStore {
             )
         })?;
 
-        rows.iter().map(parse_arbitrage_event_row).collect()
+        let items: Result<Vec<_>> = rows.iter().map(parse_arbitrage_event_row).collect();
+        Ok(Paginated::new(items?, page, total))
     }
 
     async fn prune_arbitrage_events(&self, occurred_before: OffsetDateTime) -> Result<u64> {

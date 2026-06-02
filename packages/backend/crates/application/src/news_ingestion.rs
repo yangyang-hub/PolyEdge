@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use crate::pagination::{PageQuery, Paginated};
 use polyedge_domain::{AppError, Probability, Result};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
@@ -188,12 +189,14 @@ pub trait NewsIngestionStore: Send + Sync {
     async fn list_news_source_health(
         &self,
         filters: &NewsSourceHealthListFilters,
-    ) -> Result<Vec<NewsSourceHealthView>>;
+        page: &PageQuery,
+    ) -> Result<Paginated<NewsSourceHealthView>>;
 
     async fn list_raw_news_events(
         &self,
         filters: &NewsRawEventListFilters,
-    ) -> Result<Vec<NewsRawEventView>>;
+        page: &PageQuery,
+    ) -> Result<Paginated<NewsRawEventView>>;
 
     async fn insert_raw_news_event(&self, event: &NewsRawEventInsert) -> Result<bool>;
 
@@ -274,15 +277,17 @@ impl NewsIngestionService {
     pub async fn list_source_health(
         &self,
         filters: NewsSourceHealthListFilters,
-    ) -> Result<Vec<NewsSourceHealthView>> {
-        self.store.list_news_source_health(&filters).await
+        page: &PageQuery,
+    ) -> Result<Paginated<NewsSourceHealthView>> {
+        self.store.list_news_source_health(&filters, page).await
     }
 
     pub async fn list_raw_events(
         &self,
         filters: NewsRawEventListFilters,
-    ) -> Result<Vec<NewsRawEventView>> {
-        self.store.list_raw_news_events(&filters).await
+        page: &PageQuery,
+    ) -> Result<Paginated<NewsRawEventView>> {
+        self.store.list_raw_news_events(&filters, page).await
     }
 }
 
@@ -475,6 +480,7 @@ mod tests {
         NewsSourceHealthListFilters, NewsSourceHealthView, NewsSourceSuccessUpdate,
         normalize_source_type,
     };
+    use crate::pagination::{PageQuery, Paginated};
     use async_trait::async_trait;
     use polyedge_domain::{Probability, Result};
     use rust_decimal::Decimal;
@@ -495,15 +501,17 @@ mod tests {
         async fn list_news_source_health(
             &self,
             _filters: &NewsSourceHealthListFilters,
-        ) -> Result<Vec<NewsSourceHealthView>> {
-            Ok(Vec::new())
+            _page: &PageQuery,
+        ) -> Result<Paginated<NewsSourceHealthView>> {
+            Ok(Paginated::new(Vec::new(), &PageQuery::default(), 0))
         }
 
         async fn list_raw_news_events(
             &self,
             _filters: &NewsRawEventListFilters,
-        ) -> Result<Vec<NewsRawEventView>> {
-            Ok(Vec::new())
+            _page: &PageQuery,
+        ) -> Result<Paginated<NewsRawEventView>> {
+            Ok(Paginated::new(Vec::new(), &PageQuery::default(), 0))
         }
 
         async fn insert_raw_news_event(&self, event: &NewsRawEventInsert) -> Result<bool> {

@@ -23,7 +23,9 @@ pub struct EventListQuery {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub status: Option<EventStatus>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub limit: Option<u16>,
+    pub page: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub page_size: Option<u16>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -31,7 +33,9 @@ pub struct NewsSourceHealthListQuery {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_type: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub limit: Option<u16>,
+    pub page: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub page_size: Option<u16>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -41,7 +45,9 @@ pub struct NewsRawEventListQuery {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_type: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub limit: Option<u16>,
+    pub page: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub page_size: Option<u16>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -53,7 +59,9 @@ pub struct EvidenceListQuery {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub status: Option<EvidenceStatus>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub limit: Option<u16>,
+    pub page: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub page_size: Option<u16>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -65,7 +73,9 @@ pub struct SignalListQuery {
     #[serde(skip_serializing_if = "Option::is_none", alias = "status")]
     pub lifecycle_state: Option<SignalLifecycleState>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub limit: Option<u16>,
+    pub page: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub page_size: Option<u16>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -77,13 +87,17 @@ pub struct ProbabilityEstimateListQuery {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub signal_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub limit: Option<u16>,
+    pub page: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub page_size: Option<u16>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ArbitrageScanListQuery {
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub limit: Option<u16>,
+    pub page: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub page_size: Option<u16>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -103,19 +117,25 @@ pub struct ArbitrageOpportunityListQuery {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub active_only: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub limit: Option<u16>,
+    pub page: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub page_size: Option<u16>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ArbitrageAnalysisRunListQuery {
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub limit: Option<u16>,
+    pub page: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub page_size: Option<u16>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SignalTransitionListQuery {
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub limit: Option<u16>,
+    pub page: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub page_size: Option<u16>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -126,8 +146,12 @@ pub struct OrderDraftListQuery {
     pub connector_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub status: Option<OrderDraftStatus>,
+    /// 1-based page number (default 1).
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub limit: Option<u16>,
+    pub page: Option<u32>,
+    /// Items per page (default 20, max 200).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub page_size: Option<u16>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -138,8 +162,12 @@ pub struct ExecutionRequestListQuery {
     pub connector_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub status: Option<ExecutionRequestStatus>,
+    /// 1-based page number (default 1).
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub limit: Option<u16>,
+    pub page: Option<u32>,
+    /// Items per page (default 20, max 200).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub page_size: Option<u16>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -152,8 +180,12 @@ pub struct OrderListQuery {
     pub connector_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub status: Option<OrderStatus>,
+    /// 1-based page number (default 1).
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub limit: Option<u16>,
+    pub page: Option<u32>,
+    /// Items per page (default 20, max 200).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub page_size: Option<u16>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -166,8 +198,12 @@ pub struct TradeListQuery {
     pub market_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub connector_name: Option<String>,
+    /// 1-based page number (default 1).
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub limit: Option<u16>,
+    pub page: Option<u32>,
+    /// Items per page (default 20, max 200).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub page_size: Option<u16>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -178,8 +214,12 @@ pub struct PositionListQuery {
     pub connector_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub side: Option<SignalSide>,
+    /// 1-based page number (default 1).
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub limit: Option<u16>,
+    pub page: Option<u32>,
+    /// Items per page (default 20, max 200).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub page_size: Option<u16>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -196,12 +236,24 @@ pub struct RiskAlertListQuery {
     pub status: Option<AlertStatus>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub limit: Option<u16>,
+    /// 1-based page number for pagination (default: 1).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub page: Option<u32>,
+    /// Number of items per page (default: 20, max: 200).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub page_size: Option<u16>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct RiskBucketListQuery {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub limit: Option<u16>,
+    /// 1-based page number for pagination (default: 1).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub page: Option<u32>,
+    /// Number of items per page (default: 20, max: 200).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub page_size: Option<u16>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -236,4 +288,34 @@ pub struct RewardBotSnapshotQuery {
     /// Orders page size, clamped by the backend.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub orders_page_size: Option<u16>,
+    /// 1-based markets page number.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub markets_page: Option<u16>,
+    /// Markets page size.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub markets_page_size: Option<u16>,
+    /// 1-based fills page number.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fills_page: Option<u16>,
+    /// Fills page size.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fills_page_size: Option<u16>,
+    /// 1-based positions page number.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub positions_page: Option<u16>,
+    /// Positions page size.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub positions_page_size: Option<u16>,
+    /// 1-based events page number.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub events_page: Option<u16>,
+    /// Events page size.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub events_page_size: Option<u16>,
+    /// 1-based plans page number.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plans_page: Option<u16>,
+    /// Plans page size.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plans_page_size: Option<u16>,
 }

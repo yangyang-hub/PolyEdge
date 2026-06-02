@@ -173,12 +173,14 @@ async fn signal_stream_messages(state: &AppState) -> polyedge_domain::Result<Vec
         .market_event_service
         .list_markets(MarketListFilters::new(None, None, None, None, None, None, Some(100))?)
         .await?;
+    let page_query = PageQuery::default();
     let signals = state
         .market_event_service
-        .list_signals(SignalListFilters::new(None, None, None, Some(50))?)
+        .list_signals(SignalListFilters::new(None, None, None, Some(50))?, &page_query)
         .await?;
 
     Ok(signals
+        .data
         .into_iter()
         .map(|signal| {
             let market = markets.iter().find(|market| market.id == signal.market_id);
@@ -282,12 +284,14 @@ async fn risk_stream_messages(state: &AppState) -> polyedge_domain::Result<Vec<S
 }
 
 async fn event_stream_messages(state: &AppState) -> polyedge_domain::Result<Vec<SseMessage>> {
+    let page_query = PageQuery::default();
     let events = state
         .market_event_service
-        .list_events(EventListFilters::new(None, Some(50))?)
+        .list_events(EventListFilters::new(None, Some(50))?, &page_query)
         .await?;
 
     Ok(events
+        .data
         .into_iter()
         .map(|event| SseMessage {
             id: format!("events:{}:{}", event.id, event.version),
@@ -308,16 +312,22 @@ async fn arbitrage_stream_messages(
     state: &AppState,
     last_sequence: &mut Option<u64>,
 ) -> polyedge_domain::Result<Vec<SseMessage>> {
+    let page_query = PageQuery {
+        page: 1,
+        page_size: 100,
+        sort_order: None,
+    };
     let events = state
         .arbitrage_service
-        .list_events(ArbitrageEventListFilters::new(*last_sequence, Some(100))?)
+        .list_events(ArbitrageEventListFilters::new(*last_sequence, Some(100))?, &page_query)
         .await?;
 
-    if let Some(sequence) = events.last().map(|event| event.sequence) {
+    if let Some(sequence) = events.data.last().map(|event| event.sequence) {
         *last_sequence = Some(sequence);
     }
 
     Ok(events
+        .data
         .into_iter()
         .map(|event| SseMessage {
             id: event.sequence.to_string(),

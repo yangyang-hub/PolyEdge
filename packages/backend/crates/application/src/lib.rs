@@ -8,6 +8,7 @@ mod market_event;
 mod news_ingestion;
 mod orderbook_cache;
 mod orderbook_registry;
+pub mod pagination;
 mod rewards;
 mod risk;
 mod system_mode;
@@ -64,6 +65,7 @@ pub use news_ingestion::{
 };
 pub use orderbook_cache::{BookSource, CachedBookLevel, CachedOrderBook, OrderbookCache};
 pub use orderbook_registry::OrderbookSubscriptionRegistry;
+pub use pagination::{PageMeta, PageQuery, Paginated};
 pub use rewards::{
     BookSnapshot, ManagedRewardOrder, ManagedRewardOrderStatus, PostFillStrategy,
     RewardAccountState, RewardBookLevel, RewardBotConfig, RewardBotConfigPatch, RewardBotRunReport,

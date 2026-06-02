@@ -3,21 +3,23 @@ async fn list_signal_transitions(
     State(state): State<AppState>,
     Path(signal_id): Path<String>,
     Query(query): Query<SignalTransitionListQuery>,
-) -> std::result::Result<Json<ApiResponse<Vec<SignalTransitionData>>>, HttpError> {
+) -> std::result::Result<Json<ApiResponse<Paginated<SignalTransitionData>>>, HttpError> {
     let trace_id = new_trace_id();
-    let filters = SignalTransitionListFilters::new(signal_id, query.limit)
+    let page_query = PageQuery {
+        page: query.page.unwrap_or(1),
+        page_size: query.page_size.unwrap_or(20),
+        sort_order: None,
+    };
+    let filters = SignalTransitionListFilters::new(signal_id, None)
         .map_err(|error| HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone()))?;
-    let transitions = state
+    let result = state
         .market_event_service
-        .list_signal_transitions(filters)
+        .list_signal_transitions(filters, &page_query)
         .await
         .map_err(|error| HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone()))?;
 
     Ok(Json(ApiResponse::new(
-        transitions
-            .into_iter()
-            .map(signal_transition_to_contract)
-            .collect(),
+        result.map(signal_transition_to_contract),
         auth.request_id,
         trace_id,
     )))
@@ -27,26 +29,23 @@ async fn list_order_drafts(
     Extension(auth): Extension<AuthContext>,
     State(state): State<AppState>,
     Query(query): Query<OrderDraftListQuery>,
-) -> std::result::Result<Json<ApiResponse<Vec<OrderDraftData>>>, HttpError> {
+) -> std::result::Result<Json<ApiResponse<Paginated<OrderDraftData>>>, HttpError> {
     let trace_id = new_trace_id();
-    let filters = OrderDraftListFilters::new(
-        query.signal_id,
-        query.connector_name,
-        query.status,
-        query.limit,
-    )
-    .map_err(|error| HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone()))?;
-    let order_drafts = state
+    let page = PageQuery {
+        page: query.page.unwrap_or(1),
+        page_size: query.page_size.unwrap_or(20),
+        sort_order: None,
+    };
+    let filters = OrderDraftListFilters::new(query.signal_id, query.connector_name, query.status, None)
+        .map_err(|error| HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone()))?;
+    let result = state
         .execution_service
-        .list_order_drafts(filters)
+        .list_order_drafts_paginated(&filters, &page)
         .await
         .map_err(|error| HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone()))?;
 
     Ok(Json(ApiResponse::new(
-        order_drafts
-            .into_iter()
-            .map(order_draft_to_contract)
-            .collect(),
+        result.map(order_draft_to_contract),
         auth.request_id,
         trace_id,
     )))
@@ -56,26 +55,28 @@ async fn list_execution_requests(
     Extension(auth): Extension<AuthContext>,
     State(state): State<AppState>,
     Query(query): Query<ExecutionRequestListQuery>,
-) -> std::result::Result<Json<ApiResponse<Vec<ExecutionRequestData>>>, HttpError> {
+) -> std::result::Result<Json<ApiResponse<Paginated<ExecutionRequestData>>>, HttpError> {
     let trace_id = new_trace_id();
+    let page = PageQuery {
+        page: query.page.unwrap_or(1),
+        page_size: query.page_size.unwrap_or(20),
+        sort_order: None,
+    };
     let filters = ExecutionRequestListFilters::new(
         query.signal_id,
         query.connector_name,
         query.status,
-        query.limit,
+        None,
     )
     .map_err(|error| HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone()))?;
-    let execution_requests = state
+    let result = state
         .execution_service
-        .list_execution_requests(filters)
+        .list_execution_requests_paginated(&filters, &page)
         .await
         .map_err(|error| HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone()))?;
 
     Ok(Json(ApiResponse::new(
-        execution_requests
-            .into_iter()
-            .map(execution_request_to_contract)
-            .collect(),
+        result.map(execution_request_to_contract),
         auth.request_id,
         trace_id,
     )))
@@ -85,24 +86,29 @@ async fn list_orders(
     Extension(auth): Extension<AuthContext>,
     State(state): State<AppState>,
     Query(query): Query<OrderListQuery>,
-) -> std::result::Result<Json<ApiResponse<Vec<OrderData>>>, HttpError> {
+) -> std::result::Result<Json<ApiResponse<Paginated<OrderData>>>, HttpError> {
     let trace_id = new_trace_id();
+    let page = PageQuery {
+        page: query.page.unwrap_or(1),
+        page_size: query.page_size.unwrap_or(20),
+        sort_order: None,
+    };
     let filters = OrderListFilters::new(
         query.signal_id,
         query.market_id,
         query.connector_name,
         query.status,
-        query.limit,
+        None,
     )
     .map_err(|error| HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone()))?;
-    let orders = state
+    let result = state
         .execution_service
-        .list_orders(filters)
+        .list_orders_paginated(&filters, &page)
         .await
         .map_err(|error| HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone()))?;
 
     Ok(Json(ApiResponse::new(
-        orders.into_iter().map(order_to_contract).collect(),
+        result.map(order_to_contract),
         auth.request_id,
         trace_id,
     )))
@@ -112,24 +118,29 @@ async fn list_trades(
     Extension(auth): Extension<AuthContext>,
     State(state): State<AppState>,
     Query(query): Query<TradeListQuery>,
-) -> std::result::Result<Json<ApiResponse<Vec<TradeData>>>, HttpError> {
+) -> std::result::Result<Json<ApiResponse<Paginated<TradeData>>>, HttpError> {
     let trace_id = new_trace_id();
+    let page = PageQuery {
+        page: query.page.unwrap_or(1),
+        page_size: query.page_size.unwrap_or(20),
+        sort_order: None,
+    };
     let filters = TradeListFilters::new(
         query.order_id,
         query.signal_id,
         query.market_id,
         query.connector_name,
-        query.limit,
+        None,
     )
     .map_err(|error| HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone()))?;
-    let trades = state
+    let result = state
         .execution_service
-        .list_trades(filters)
+        .list_trades_paginated(&filters, &page)
         .await
         .map_err(|error| HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone()))?;
 
     Ok(Json(ApiResponse::new(
-        trades.into_iter().map(trade_to_contract).collect(),
+        result.map(trade_to_contract),
         auth.request_id,
         trace_id,
     )))
@@ -139,23 +150,28 @@ async fn list_positions(
     Extension(auth): Extension<AuthContext>,
     State(state): State<AppState>,
     Query(query): Query<PositionListQuery>,
-) -> std::result::Result<Json<ApiResponse<Vec<PositionData>>>, HttpError> {
+) -> std::result::Result<Json<ApiResponse<Paginated<PositionData>>>, HttpError> {
     let trace_id = new_trace_id();
+    let page = PageQuery {
+        page: query.page.unwrap_or(1),
+        page_size: query.page_size.unwrap_or(20),
+        sort_order: None,
+    };
     let filters = PositionListFilters::new(
         query.market_id,
         query.connector_name,
         query.side,
-        query.limit,
+        None,
     )
     .map_err(|error| HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone()))?;
-    let positions = state
+    let result = state
         .execution_service
-        .list_positions(filters)
+        .list_positions_paginated(&filters, &page)
         .await
         .map_err(|error| HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone()))?;
 
     Ok(Json(ApiResponse::new(
-        positions.into_iter().map(position_to_contract).collect(),
+        result.map(position_to_contract),
         auth.request_id,
         trace_id,
     )))

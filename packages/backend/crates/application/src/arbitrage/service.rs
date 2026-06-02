@@ -32,12 +32,14 @@ pub trait ArbitrageStore: Send + Sync {
     async fn list_arbitrage_scans(
         &self,
         filters: &ArbitrageScanListFilters,
-    ) -> Result<Vec<ArbitrageScanView>>;
+        page: &PageQuery,
+    ) -> Result<Paginated<ArbitrageScanView>>;
 
     async fn list_arbitrage_opportunities(
         &self,
         filters: &ArbitrageOpportunityListFilters,
-    ) -> Result<Vec<ArbitrageOpportunityView>>;
+        page: &PageQuery,
+    ) -> Result<Paginated<ArbitrageOpportunityView>>;
 
     async fn record_arbitrage_analysis_run(
         &self,
@@ -47,7 +49,8 @@ pub trait ArbitrageStore: Send + Sync {
     async fn list_arbitrage_analysis_runs(
         &self,
         filters: &ArbitrageAnalysisRunListFilters,
-    ) -> Result<Vec<ArbitrageAnalysisRunView>>;
+        page: &PageQuery,
+    ) -> Result<Paginated<ArbitrageAnalysisRunView>>;
 
     async fn record_arbitrage_event(
         &self,
@@ -57,7 +60,8 @@ pub trait ArbitrageStore: Send + Sync {
     async fn list_arbitrage_events(
         &self,
         filters: &ArbitrageEventListFilters,
-    ) -> Result<Vec<ArbitrageEventView>>;
+        page: &PageQuery,
+    ) -> Result<Paginated<ArbitrageEventView>>;
 
     async fn prune_arbitrage_events(&self, occurred_before: OffsetDateTime) -> Result<u64>;
 }
@@ -252,15 +256,17 @@ impl ArbitrageService {
     pub async fn list_opportunities(
         &self,
         filters: ArbitrageOpportunityListFilters,
-    ) -> Result<Vec<ArbitrageOpportunityView>> {
-        self.store.list_arbitrage_opportunities(&filters).await
+        page: &PageQuery,
+    ) -> Result<Paginated<ArbitrageOpportunityView>> {
+        self.store.list_arbitrage_opportunities(&filters, page).await
     }
 
     pub async fn list_scans(
         &self,
         filters: ArbitrageScanListFilters,
-    ) -> Result<Vec<ArbitrageScanView>> {
-        self.store.list_arbitrage_scans(&filters).await
+        page: &PageQuery,
+    ) -> Result<Paginated<ArbitrageScanView>> {
+        self.store.list_arbitrage_scans(&filters, page).await
     }
 
     pub async fn record_analysis_run(
@@ -283,15 +289,17 @@ impl ArbitrageService {
     pub async fn list_analysis_runs(
         &self,
         filters: ArbitrageAnalysisRunListFilters,
-    ) -> Result<Vec<ArbitrageAnalysisRunView>> {
-        self.store.list_arbitrage_analysis_runs(&filters).await
+        page: &PageQuery,
+    ) -> Result<Paginated<ArbitrageAnalysisRunView>> {
+        self.store.list_arbitrage_analysis_runs(&filters, page).await
     }
 
     pub async fn list_events(
         &self,
         filters: ArbitrageEventListFilters,
-    ) -> Result<Vec<ArbitrageEventView>> {
-        self.store.list_arbitrage_events(&filters).await
+        page: &PageQuery,
+    ) -> Result<Paginated<ArbitrageEventView>> {
+        self.store.list_arbitrage_events(&filters, page).await
     }
 
     pub async fn prune_events(&self, occurred_before: OffsetDateTime) -> Result<u64> {
@@ -305,6 +313,7 @@ impl ArbitrageService {
         observed_at: OffsetDateTime,
     ) -> Result<bool> {
         let repeated_after = observed_at - time::Duration::seconds(DEFAULT_REPEAT_WINDOW_SECONDS);
+        let query = PageQuery { page: 1, page_size: 1, sort_order: None };
         let recent = self
             .store
             .list_arbitrage_opportunities(&ArbitrageOpportunityListFilters::new(
@@ -315,11 +324,10 @@ impl ArbitrageService {
                 None,
                 Some(repeated_after),
                 true,
-                Some(1),
-            )?)
+            )?, &query)
             .await?;
 
-        Ok(recent.into_iter().any(|opportunity| {
+        Ok(recent.data.into_iter().any(|opportunity| {
             opportunity.status != ArbitrageOpportunityStatus::Expired
                 && opportunity.observed_at < observed_at
         }))

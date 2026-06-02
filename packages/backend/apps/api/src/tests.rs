@@ -9,7 +9,7 @@ use ed25519_dalek::{Signer, SigningKey};
 use polyedge_application::{
     ArbitrageAnalysisRunView, ArbitrageScanView, ArbitrageValidationConfig, AuthenticatedActor,
     MarkExecutionSubmittedCommand, MarketBookSnapshotView, NewsIngestSourceCommand,
-    NewsIngestionItem, build_arbitrage_analysis, demo_fixture_bundle,
+    NewsIngestionItem, Paginated, build_arbitrage_analysis, demo_fixture_bundle,
 };
 use polyedge_domain::{Edge, Probability, Quantity, StepUpScope, SystemMode, UserRole};
 use polyedge_infrastructure::{AppState, AuthKeySettings, Runtime, Settings};

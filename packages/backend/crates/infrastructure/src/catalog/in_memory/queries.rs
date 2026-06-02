@@ -75,7 +75,7 @@ async fn market_event_get_signal(&self, signal_id: &str) -> Result<Option<Signal
         Ok(self.signals.read().await.get(signal_id).cloned())
     }
 
-async fn market_event_list_events(&self, filters: &EventListFilters) -> Result<Vec<EventView>> {
+async fn market_event_list_events(&self, filters: &EventListFilters, page: &PageQuery) -> Result<Paginated<EventView>> {
         let events = self.events.read().await;
         let mut items: Vec<_> = events
             .values()
@@ -88,11 +88,14 @@ async fn market_event_list_events(&self, filters: &EventListFilters) -> Result<V
                 .cmp(&left.updated_at)
                 .then_with(|| left.id.cmp(&right.id))
         });
-        items.truncate(usize::from(filters.limit));
-        Ok(items)
+        let total = i64::try_from(items.len()).unwrap_or(i64::MAX);
+        let offset = page.offset() as usize;
+        let page_size = page.validated().1 as usize;
+        let paged: Vec<_> = items.into_iter().skip(offset).take(page_size).collect();
+        Ok(Paginated::new(paged, page, total))
     }
 
-async fn market_event_list_evidences(&self, filters: &EvidenceListFilters) -> Result<Vec<EvidenceView>> {
+async fn market_event_list_evidences(&self, filters: &EvidenceListFilters, page: &PageQuery) -> Result<Paginated<EvidenceView>> {
         let evidences = self.evidences.read().await;
         let mut items: Vec<_> = evidences
             .values()
@@ -117,11 +120,14 @@ async fn market_event_list_evidences(&self, filters: &EvidenceListFilters) -> Re
                 .cmp(&left.created_at)
                 .then_with(|| left.id.cmp(&right.id))
         });
-        items.truncate(usize::from(filters.limit));
-        Ok(items)
+        let total = i64::try_from(items.len()).unwrap_or(i64::MAX);
+        let offset = page.offset() as usize;
+        let page_size = page.validated().1 as usize;
+        let paged: Vec<_> = items.into_iter().skip(offset).take(page_size).collect();
+        Ok(Paginated::new(paged, page, total))
     }
 
-async fn market_event_list_signals(&self, filters: &SignalListFilters) -> Result<Vec<SignalView>> {
+async fn market_event_list_signals(&self, filters: &SignalListFilters, page: &PageQuery) -> Result<Paginated<SignalView>> {
         let signals = self.signals.read().await;
         let mut items: Vec<_> = signals
             .values()
@@ -146,14 +152,18 @@ async fn market_event_list_signals(&self, filters: &SignalListFilters) -> Result
                 .cmp(&left.updated_at)
                 .then_with(|| left.id.cmp(&right.id))
         });
-        items.truncate(usize::from(filters.limit));
-        Ok(items)
+        let total = i64::try_from(items.len()).unwrap_or(i64::MAX);
+        let offset = page.offset() as usize;
+        let page_size = page.validated().1 as usize;
+        let paged: Vec<_> = items.into_iter().skip(offset).take(page_size).collect();
+        Ok(Paginated::new(paged, page, total))
     }
 
 async fn market_event_list_probability_estimates(
         &self,
         filters: &ProbabilityEstimateListFilters,
-    ) -> Result<Vec<ProbabilityEstimateView>> {
+        page: &PageQuery,
+    ) -> Result<Paginated<ProbabilityEstimateView>> {
         let estimates = self.probability_estimates.read().await;
         let mut items: Vec<_> = estimates
             .values()
@@ -179,14 +189,18 @@ async fn market_event_list_probability_estimates(
                 .cmp(&left.created_at)
                 .then_with(|| left.id.cmp(&right.id))
         });
-        items.truncate(usize::from(filters.limit));
-        Ok(items)
+        let total = i64::try_from(items.len()).unwrap_or(i64::MAX);
+        let offset = page.offset() as usize;
+        let page_size = page.validated().1 as usize;
+        let paged: Vec<_> = items.into_iter().skip(offset).take(page_size).collect();
+        Ok(Paginated::new(paged, page, total))
     }
 
 async fn market_event_list_signal_transitions(
         &self,
         filters: &SignalTransitionListFilters,
-    ) -> Result<Vec<SignalTransitionView>> {
+        page: &PageQuery,
+    ) -> Result<Paginated<SignalTransitionView>> {
         let transitions = self.signal_transitions.read().await;
         let mut items: Vec<_> = transitions
             .iter()
@@ -199,8 +213,11 @@ async fn market_event_list_signal_transitions(
                 .cmp(&left.created_at)
                 .then_with(|| left.id.cmp(&right.id))
         });
-        items.truncate(usize::from(filters.limit));
-        Ok(items)
+        let total = i64::try_from(items.len()).unwrap_or(i64::MAX);
+        let offset = page.offset() as usize;
+        let page_size = page.validated().1 as usize;
+        let paged: Vec<_> = items.into_iter().skip(offset).take(page_size).collect();
+        Ok(Paginated::new(paged, page, total))
     }
 
 async fn market_event_list_order_drafts(
@@ -377,5 +394,124 @@ async fn market_event_list_positions(&self, filters: &PositionListFilters) -> Re
         });
         items.truncate(usize::from(filters.limit));
         Ok(items)
+    }
+    async fn market_event_count_order_drafts(&self, filters: &OrderDraftListFilters) -> Result<i64> {
+        let drafts = self.order_drafts.read().await;
+        Ok(drafts.values().filter(|d| {
+            filters.signal_id.as_ref().is_none_or(|s| &d.signal_id == s)
+                && filters.connector_name.as_ref().is_none_or(|c| &d.connector_name == c)
+                && filters.status.is_none_or(|s| d.status == s)
+        }).count() as i64)
+    }
+    async fn market_event_list_order_drafts_paginated(&self, filters: &OrderDraftListFilters, page: &PageQuery) -> Result<Paginated<OrderDraftView>> {
+        let drafts = self.order_drafts.read().await;
+        let mut items: Vec<_> = drafts.values().filter(|d| {
+            filters.signal_id.as_ref().is_none_or(|s| &d.signal_id == s)
+                && filters.connector_name.as_ref().is_none_or(|c| &d.connector_name == c)
+                && filters.status.is_none_or(|s| d.status == s)
+        }).cloned().collect();
+        let total = items.len() as i64;
+        items.sort_by(|a, b| b.created_at.cmp(&a.created_at).then_with(|| a.id.cmp(&b.id)));
+        let off = usize::try_from(page.offset()).unwrap_or(usize::MAX);
+        let (_, ps) = page.validated();
+        let off = usize::min(off, items.len());
+        items = items.into_iter().skip(off).take(usize::from(ps)).collect();
+        Ok(Paginated::new(items, page, total))
+    }
+    async fn market_event_count_execution_requests(&self, filters: &ExecutionRequestListFilters) -> Result<i64> {
+        let reqs = self.execution_requests.read().await;
+        Ok(reqs.values().filter(|r| {
+            filters.signal_id.as_ref().is_none_or(|s| &r.signal_id == s)
+                && filters.connector_name.as_ref().is_none_or(|c| &r.connector_name == c)
+                && filters.status.is_none_or(|s| r.status == s)
+        }).count() as i64)
+    }
+    async fn market_event_list_execution_requests_paginated(&self, filters: &ExecutionRequestListFilters, page: &PageQuery) -> Result<Paginated<ExecutionRequestView>> {
+        let reqs = self.execution_requests.read().await;
+        let mut items: Vec<_> = reqs.values().filter(|r| {
+            filters.signal_id.as_ref().is_none_or(|s| &r.signal_id == s)
+                && filters.connector_name.as_ref().is_none_or(|c| &r.connector_name == c)
+                && filters.status.is_none_or(|s| r.status == s)
+        }).cloned().collect();
+        let total = items.len() as i64;
+        items.sort_by(|a, b| b.created_at.cmp(&a.created_at).then_with(|| a.id.cmp(&b.id)));
+        let off = usize::try_from(page.offset()).unwrap_or(usize::MAX);
+        let (_, ps) = page.validated();
+        let off = usize::min(off, items.len());
+        items = items.into_iter().skip(off).take(usize::from(ps)).collect();
+        Ok(Paginated::new(items, page, total))
+    }
+    async fn market_event_count_orders(&self, filters: &OrderListFilters) -> Result<i64> {
+        let orders = self.orders.read().await;
+        Ok(orders.values().filter(|o| {
+            filters.signal_id.as_ref().is_none_or(|s| &o.signal_id == s)
+                && filters.market_id.as_ref().is_none_or(|m| &o.market_id == m)
+                && filters.connector_name.as_ref().is_none_or(|c| &o.connector_name == c)
+                && filters.status.is_none_or(|s| o.status == s)
+        }).count() as i64)
+    }
+    async fn market_event_list_orders_paginated(&self, filters: &OrderListFilters, page: &PageQuery) -> Result<Paginated<OrderView>> {
+        let orders = self.orders.read().await;
+        let mut items: Vec<_> = orders.values().filter(|o| {
+            filters.signal_id.as_ref().is_none_or(|s| &o.signal_id == s)
+                && filters.market_id.as_ref().is_none_or(|m| &o.market_id == m)
+                && filters.connector_name.as_ref().is_none_or(|c| &o.connector_name == c)
+                && filters.status.is_none_or(|s| o.status == s)
+        }).cloned().collect();
+        let total = items.len() as i64;
+        items.sort_by(|a, b| b.updated_at.cmp(&a.updated_at).then_with(|| a.id.cmp(&b.id)));
+        let off = usize::try_from(page.offset()).unwrap_or(usize::MAX);
+        let (_, ps) = page.validated();
+        let off = usize::min(off, items.len());
+        items = items.into_iter().skip(off).take(usize::from(ps)).collect();
+        Ok(Paginated::new(items, page, total))
+    }
+    async fn market_event_count_trades(&self, filters: &TradeListFilters) -> Result<i64> {
+        let trades = self.trades.read().await;
+        Ok(trades.values().filter(|t| {
+            filters.order_id.as_ref().is_none_or(|o| &t.order_id == o)
+                && filters.signal_id.as_ref().is_none_or(|s| &t.signal_id == s)
+                && filters.market_id.as_ref().is_none_or(|m| &t.market_id == m)
+                && filters.connector_name.as_ref().is_none_or(|c| &t.connector_name == c)
+        }).count() as i64)
+    }
+    async fn market_event_list_trades_paginated(&self, filters: &TradeListFilters, page: &PageQuery) -> Result<Paginated<TradeView>> {
+        let trades = self.trades.read().await;
+        let mut items: Vec<_> = trades.values().filter(|t| {
+            filters.order_id.as_ref().is_none_or(|o| &t.order_id == o)
+                && filters.signal_id.as_ref().is_none_or(|s| &t.signal_id == s)
+                && filters.market_id.as_ref().is_none_or(|m| &t.market_id == m)
+                && filters.connector_name.as_ref().is_none_or(|c| &t.connector_name == c)
+        }).cloned().collect();
+        let total = items.len() as i64;
+        items.sort_by(|a, b| b.executed_at.cmp(&a.executed_at).then_with(|| a.id.cmp(&b.id)));
+        let off = usize::try_from(page.offset()).unwrap_or(usize::MAX);
+        let (_, ps) = page.validated();
+        let off = usize::min(off, items.len());
+        items = items.into_iter().skip(off).take(usize::from(ps)).collect();
+        Ok(Paginated::new(items, page, total))
+    }
+    async fn market_event_count_positions(&self, filters: &PositionListFilters) -> Result<i64> {
+        let positions = self.positions.read().await;
+        Ok(positions.values().filter(|p| {
+            filters.market_id.as_ref().is_none_or(|m| &p.market_id == m)
+                && filters.connector_name.as_ref().is_none_or(|c| &p.connector_name == c)
+                && filters.side.is_none_or(|s| p.side == s)
+        }).count() as i64)
+    }
+    async fn market_event_list_positions_paginated(&self, filters: &PositionListFilters, page: &PageQuery) -> Result<Paginated<PositionView>> {
+        let positions = self.positions.read().await;
+        let mut items: Vec<_> = positions.values().filter(|p| {
+            filters.market_id.as_ref().is_none_or(|m| &p.market_id == m)
+                && filters.connector_name.as_ref().is_none_or(|c| &p.connector_name == c)
+                && filters.side.is_none_or(|s| p.side == s)
+        }).cloned().collect();
+        let total = items.len() as i64;
+        items.sort_by(|a, b| b.updated_at.cmp(&a.updated_at).then_with(|| a.id.cmp(&b.id)));
+        let off = usize::try_from(page.offset()).unwrap_or(usize::MAX);
+        let (_, ps) = page.validated();
+        let off = usize::min(off, items.len());
+        items = items.into_iter().skip(off).take(usize::from(ps)).collect();
+        Ok(Paginated::new(items, page, total))
     }
 }

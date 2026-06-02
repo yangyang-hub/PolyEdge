@@ -181,20 +181,20 @@ async fn arbitrage_routes_return_recorded_opportunities() {
     let opportunities_body = to_bytes(opportunities_response.into_body(), usize::MAX)
         .await
         .expect("read opportunities body");
-    let opportunities_payload: ApiResponse<Vec<ArbitrageOpportunityData>> =
+    let opportunities_payload: ApiResponse<Paginated<ArbitrageOpportunityData>> =
         serde_json::from_slice(&opportunities_body).expect("deserialize opportunities");
-    assert_eq!(opportunities_payload.data.len(), 1);
+    assert_eq!(opportunities_payload.data.data.len(), 1);
     assert_eq!(
-        opportunities_payload.data[0].opportunity_type,
+        opportunities_payload.data.data[0].opportunity_type,
         "binary_buy_both"
     );
-    assert_eq!(opportunities_payload.data[0].status, "observed");
-    assert_eq!(opportunities_payload.data[0].price_sum, "0.96");
+    assert_eq!(opportunities_payload.data.data[0].status, "observed");
+    assert_eq!(opportunities_payload.data.data[0].price_sum, "0.96");
     assert_eq!(
-        opportunities_payload.data[0].reason_codes,
+        opportunities_payload.data.data[0].reason_codes,
         vec!["yes_ask_plus_no_ask_below_one"]
     );
-    let validation = opportunities_payload.data[0]
+    let validation = opportunities_payload.data.data[0]
         .validation
         .as_ref()
         .expect("validation");
@@ -218,9 +218,9 @@ async fn arbitrage_routes_return_recorded_opportunities() {
     let high_edge_body = to_bytes(high_edge_response.into_body(), usize::MAX)
         .await
         .expect("read high edge opportunities body");
-    let high_edge_payload: ApiResponse<Vec<ArbitrageOpportunityData>> =
+    let high_edge_payload: ApiResponse<Paginated<ArbitrageOpportunityData>> =
         serde_json::from_slice(&high_edge_body).expect("deserialize high edge opportunities");
-    assert!(high_edge_payload.data.is_empty());
+    assert!(high_edge_payload.data.data.is_empty());
 
     let unvalidated_response = app
         .clone()
@@ -239,18 +239,18 @@ async fn arbitrage_routes_return_recorded_opportunities() {
     let unvalidated_body = to_bytes(unvalidated_response.into_body(), usize::MAX)
         .await
         .expect("read unvalidated opportunities body");
-    let unvalidated_payload: ApiResponse<Vec<ArbitrageOpportunityData>> =
+    let unvalidated_payload: ApiResponse<Paginated<ArbitrageOpportunityData>> =
         serde_json::from_slice(&unvalidated_body)
             .expect("deserialize unvalidated opportunities");
-    assert_eq!(unvalidated_payload.data.len(), 1);
-    assert_eq!(unvalidated_payload.data[0].market_id, "mkt_121");
-    assert!(unvalidated_payload.data[0].validation.is_none());
+    assert_eq!(unvalidated_payload.data.data.len(), 1);
+    assert_eq!(unvalidated_payload.data.data[0].market_id, "mkt_121");
+    assert!(unvalidated_payload.data.data[0].validation.is_none());
 
     let scans_response = app
         .clone()
         .oneshot(
             Request::builder()
-                .uri("/api/v1/arbitrage/scans?limit=1")
+                .uri("/api/v1/arbitrage/scans?page_size=1")
                 .header("Authorization", format!("Bearer {token}"))
                 .header("X-Request-Id", &request_id)
                 .body(Body::empty())
@@ -263,15 +263,15 @@ async fn arbitrage_routes_return_recorded_opportunities() {
     let scans_body = to_bytes(scans_response.into_body(), usize::MAX)
         .await
         .expect("read scans body");
-    let scans_payload: ApiResponse<Vec<ArbitrageScanData>> =
+    let scans_payload: ApiResponse<Paginated<ArbitrageScanData>> =
         serde_json::from_slice(&scans_body).expect("deserialize scans");
-    assert_eq!(scans_payload.data[0].id, scan_id);
-    assert_eq!(scans_payload.data[0].opportunity_count, 2);
+    assert_eq!(scans_payload.data.data[0].id, scan_id);
+    assert_eq!(scans_payload.data.data[0].opportunity_count, 2);
 
     let analysis_response = app
         .oneshot(
             Request::builder()
-                .uri("/api/v1/arbitrage/analysis?limit=1")
+                .uri("/api/v1/arbitrage/analysis?page_size=1")
                 .header("Authorization", format!("Bearer {token}"))
                 .header("X-Request-Id", &request_id)
                 .body(Body::empty())
@@ -284,8 +284,8 @@ async fn arbitrage_routes_return_recorded_opportunities() {
     let analysis_body = to_bytes(analysis_response.into_body(), usize::MAX)
         .await
         .expect("read analysis body");
-    let analysis_payload: ApiResponse<Vec<ArbitrageAnalysisRunData>> =
+    let analysis_payload: ApiResponse<Paginated<ArbitrageAnalysisRunData>> =
         serde_json::from_slice(&analysis_body).expect("deserialize analysis");
-    assert_eq!(analysis_payload.data[0].opportunity_count, 1);
-    assert_eq!(analysis_payload.data[0].market_count, 1);
+    assert_eq!(analysis_payload.data.data[0].opportunity_count, 1);
+    assert_eq!(analysis_payload.data.data[0].market_count, 1);
 }

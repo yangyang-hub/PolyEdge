@@ -252,10 +252,10 @@ async fn submit_execution_request_is_idempotent_and_lists_created_records() {
     let order_drafts_body = to_bytes(order_drafts_response.into_body(), usize::MAX)
         .await
         .expect("read body");
-    let order_drafts_payload: ApiResponse<Vec<OrderDraftData>> =
+    let order_drafts_payload: ApiResponse<Paginated<OrderDraftData>> =
         serde_json::from_slice(&order_drafts_body).expect("deserialize response");
-    assert_eq!(order_drafts_payload.data.len(), 1);
-    assert_eq!(order_drafts_payload.data[0].signal_id, "sig_2412");
+    assert_eq!(order_drafts_payload.data.data.len(), 1);
+    assert_eq!(order_drafts_payload.data.data[0].signal_id, "sig_2412");
 
     let execution_requests_response = app
         .oneshot(
@@ -272,8 +272,8 @@ async fn submit_execution_request_is_idempotent_and_lists_created_records() {
     let execution_requests_body = to_bytes(execution_requests_response.into_body(), usize::MAX)
         .await
         .expect("read body");
-    let execution_requests_payload: ApiResponse<Vec<ExecutionRequestData>> =
+    let execution_requests_payload: ApiResponse<Paginated<ExecutionRequestData>> =
         serde_json::from_slice(&execution_requests_body).expect("deserialize response");
-    assert_eq!(execution_requests_payload.data.len(), 1);
-    assert_eq!(execution_requests_payload.data[0].signal_id, "sig_2412");
+    assert_eq!(execution_requests_payload.data.data.len(), 1);
+    assert_eq!(execution_requests_payload.data.data[0].signal_id, "sig_2412");
 }

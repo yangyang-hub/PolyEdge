@@ -64,18 +64,23 @@ async fn list_events(
     Extension(auth): Extension<AuthContext>,
     State(state): State<AppState>,
     Query(query): Query<EventListQuery>,
-) -> std::result::Result<Json<ApiResponse<Vec<EventData>>>, HttpError> {
+) -> std::result::Result<Json<ApiResponse<Paginated<EventData>>>, HttpError> {
     let trace_id = new_trace_id();
-    let filters = EventListFilters::new(query.status, query.limit)
+    let page_query = PageQuery {
+        page: query.page.unwrap_or(1),
+        page_size: query.page_size.unwrap_or(20),
+        sort_order: None,
+    };
+    let filters = EventListFilters::new(query.status, None)
         .map_err(|error| HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone()))?;
-    let events = state
+    let result = state
         .market_event_service
-        .list_events(filters)
+        .list_events(filters, &page_query)
         .await
         .map_err(|error| HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone()))?;
 
     Ok(Json(ApiResponse::new(
-        events.into_iter().map(event_to_contract).collect(),
+        result.map(event_to_contract),
         auth.request_id,
         trace_id,
     )))
@@ -109,21 +114,23 @@ async fn list_news_source_health(
     Extension(auth): Extension<AuthContext>,
     State(state): State<AppState>,
     Query(query): Query<NewsSourceHealthListQuery>,
-) -> std::result::Result<Json<ApiResponse<Vec<NewsSourceHealthData>>>, HttpError> {
+) -> std::result::Result<Json<ApiResponse<Paginated<NewsSourceHealthData>>>, HttpError> {
     let trace_id = new_trace_id();
-    let filters = NewsSourceHealthListFilters::new(query.source_type, query.limit)
+    let page_query = PageQuery {
+        page: query.page.unwrap_or(1),
+        page_size: query.page_size.unwrap_or(20),
+        sort_order: None,
+    };
+    let filters = NewsSourceHealthListFilters::new(query.source_type, None)
         .map_err(|error| HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone()))?;
-    let sources = state
+    let result = state
         .news_ingestion_service
-        .list_source_health(filters)
+        .list_source_health(filters, &page_query)
         .await
         .map_err(|error| HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone()))?;
 
     Ok(Json(ApiResponse::new(
-        sources
-            .into_iter()
-            .map(news_source_health_to_contract)
-            .collect(),
+        result.map(news_source_health_to_contract),
         auth.request_id,
         trace_id,
     )))
@@ -133,18 +140,23 @@ async fn list_news_raw_events(
     Extension(auth): Extension<AuthContext>,
     State(state): State<AppState>,
     Query(query): Query<NewsRawEventListQuery>,
-) -> std::result::Result<Json<ApiResponse<Vec<NewsRawEventData>>>, HttpError> {
+) -> std::result::Result<Json<ApiResponse<Paginated<NewsRawEventData>>>, HttpError> {
     let trace_id = new_trace_id();
-    let filters = NewsRawEventListFilters::new(query.source, query.source_type, query.limit)
+    let page_query = PageQuery {
+        page: query.page.unwrap_or(1),
+        page_size: query.page_size.unwrap_or(20),
+        sort_order: None,
+    };
+    let filters = NewsRawEventListFilters::new(query.source, query.source_type, None)
         .map_err(|error| HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone()))?;
-    let events = state
+    let result = state
         .news_ingestion_service
-        .list_raw_events(filters)
+        .list_raw_events(filters, &page_query)
         .await
         .map_err(|error| HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone()))?;
 
     Ok(Json(ApiResponse::new(
-        events.into_iter().map(news_raw_event_to_contract).collect(),
+        result.map(news_raw_event_to_contract),
         auth.request_id,
         trace_id,
     )))
@@ -154,21 +166,26 @@ async fn list_evidences(
     Extension(auth): Extension<AuthContext>,
     State(state): State<AppState>,
     Query(query): Query<EvidenceListQuery>,
-) -> std::result::Result<Json<ApiResponse<Vec<EvidenceData>>>, HttpError> {
+) -> std::result::Result<Json<ApiResponse<Paginated<EvidenceData>>>, HttpError> {
     let trace_id = new_trace_id();
+    let page_query = PageQuery {
+        page: query.page.unwrap_or(1),
+        page_size: query.page_size.unwrap_or(20),
+        sort_order: None,
+    };
     let filters =
-        EvidenceListFilters::new(query.market_id, query.event_id, query.status, query.limit)
+        EvidenceListFilters::new(query.market_id, query.event_id, query.status, None)
             .map_err(|error| {
                 HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone())
             })?;
-    let evidences = state
+    let result = state
         .market_event_service
-        .list_evidences(filters)
+        .list_evidences(filters, &page_query)
         .await
         .map_err(|error| HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone()))?;
 
     Ok(Json(ApiResponse::new(
-        evidences.into_iter().map(evidence_to_contract).collect(),
+        result.map(evidence_to_contract),
         auth.request_id,
         trace_id,
     )))
@@ -178,23 +195,28 @@ async fn list_signals(
     Extension(auth): Extension<AuthContext>,
     State(state): State<AppState>,
     Query(query): Query<SignalListQuery>,
-) -> std::result::Result<Json<ApiResponse<Vec<SignalData>>>, HttpError> {
+) -> std::result::Result<Json<ApiResponse<Paginated<SignalData>>>, HttpError> {
     let trace_id = new_trace_id();
+    let page_query = PageQuery {
+        page: query.page.unwrap_or(1),
+        page_size: query.page_size.unwrap_or(20),
+        sort_order: None,
+    };
     let filters = SignalListFilters::new(
         query.market_id,
         query.event_id,
         query.lifecycle_state,
-        query.limit,
+        None,
     )
     .map_err(|error| HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone()))?;
-    let signals = state
+    let result = state
         .market_event_service
-        .list_signals(filters)
+        .list_signals(filters, &page_query)
         .await
         .map_err(|error| HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone()))?;
 
     Ok(Json(ApiResponse::new(
-        signals.into_iter().map(signal_to_contract).collect(),
+        result.map(signal_to_contract),
         auth.request_id,
         trace_id,
     )))
@@ -204,26 +226,28 @@ async fn list_probability_estimates(
     Extension(auth): Extension<AuthContext>,
     State(state): State<AppState>,
     Query(query): Query<ProbabilityEstimateListQuery>,
-) -> std::result::Result<Json<ApiResponse<Vec<ProbabilityEstimateData>>>, HttpError> {
+) -> std::result::Result<Json<ApiResponse<Paginated<ProbabilityEstimateData>>>, HttpError> {
     let trace_id = new_trace_id();
+    let page_query = PageQuery {
+        page: query.page.unwrap_or(1),
+        page_size: query.page_size.unwrap_or(20),
+        sort_order: None,
+    };
     let filters = ProbabilityEstimateListFilters::new(
         query.market_id,
         query.event_id,
         query.signal_id,
-        query.limit,
+        None,
     )
     .map_err(|error| HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone()))?;
-    let estimates = state
+    let result = state
         .market_event_service
-        .list_probability_estimates(filters)
+        .list_probability_estimates(filters, &page_query)
         .await
         .map_err(|error| HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone()))?;
 
     Ok(Json(ApiResponse::new(
-        estimates
-            .into_iter()
-            .map(probability_estimate_to_contract)
-            .collect(),
+        result.map(probability_estimate_to_contract),
         auth.request_id,
         trace_id,
     )))
@@ -233,18 +257,23 @@ async fn list_arbitrage_scans(
     Extension(auth): Extension<AuthContext>,
     State(state): State<AppState>,
     Query(query): Query<ArbitrageScanListQuery>,
-) -> std::result::Result<Json<ApiResponse<Vec<ArbitrageScanData>>>, HttpError> {
+) -> std::result::Result<Json<ApiResponse<Paginated<ArbitrageScanData>>>, HttpError> {
     let trace_id = new_trace_id();
-    let filters = ArbitrageScanListFilters::new(query.limit)
+    let page_query = PageQuery {
+        page: query.page.unwrap_or(1),
+        page_size: query.page_size.unwrap_or(20),
+        sort_order: None,
+    };
+    let filters = ArbitrageScanListFilters::new()
         .map_err(|error| HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone()))?;
-    let scans = state
+    let result = state
         .arbitrage_service
-        .list_scans(filters)
+        .list_scans(filters, &page_query)
         .await
         .map_err(|error| HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone()))?;
 
     Ok(Json(ApiResponse::new(
-        scans.into_iter().map(arbitrage_scan_to_contract).collect(),
+        result.map(arbitrage_scan_to_contract),
         auth.request_id,
         trace_id,
     )))
@@ -254,8 +283,13 @@ async fn list_arbitrage_opportunities(
     Extension(auth): Extension<AuthContext>,
     State(state): State<AppState>,
     Query(query): Query<ArbitrageOpportunityListQuery>,
-) -> std::result::Result<Json<ApiResponse<Vec<ArbitrageOpportunityData>>>, HttpError> {
+) -> std::result::Result<Json<ApiResponse<Paginated<ArbitrageOpportunityData>>>, HttpError> {
     let trace_id = new_trace_id();
+    let page_query = PageQuery {
+        page: query.page.unwrap_or(1),
+        page_size: query.page_size.unwrap_or(20),
+        sort_order: None,
+    };
     let opportunity_type = query
         .opportunity_type
         .as_deref()
@@ -310,20 +344,16 @@ async fn list_arbitrage_opportunities(
         min_net_edge,
         observed_after,
         query.active_only.unwrap_or(false),
-        query.limit,
     )
     .map_err(|error| HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone()))?;
-    let opportunities = state
+    let result = state
         .arbitrage_service
-        .list_opportunities(filters)
+        .list_opportunities(filters, &page_query)
         .await
         .map_err(|error| HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone()))?;
 
     Ok(Json(ApiResponse::new(
-        opportunities
-            .into_iter()
-            .map(arbitrage_opportunity_to_contract)
-            .collect(),
+        result.map(arbitrage_opportunity_to_contract),
         auth.request_id,
         trace_id,
     )))
@@ -333,20 +363,23 @@ async fn list_arbitrage_analysis_runs(
     Extension(auth): Extension<AuthContext>,
     State(state): State<AppState>,
     Query(query): Query<ArbitrageAnalysisRunListQuery>,
-) -> std::result::Result<Json<ApiResponse<Vec<ArbitrageAnalysisRunData>>>, HttpError> {
+) -> std::result::Result<Json<ApiResponse<Paginated<ArbitrageAnalysisRunData>>>, HttpError> {
     let trace_id = new_trace_id();
-    let filters = ArbitrageAnalysisRunListFilters::new(query.limit)
+    let page_query = PageQuery {
+        page: query.page.unwrap_or(1),
+        page_size: query.page_size.unwrap_or(20),
+        sort_order: None,
+    };
+    let filters = ArbitrageAnalysisRunListFilters::new()
         .map_err(|error| HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone()))?;
-    let runs = state
+    let result = state
         .arbitrage_service
-        .list_analysis_runs(filters)
+        .list_analysis_runs(filters, &page_query)
         .await
         .map_err(|error| HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone()))?;
 
     Ok(Json(ApiResponse::new(
-        runs.into_iter()
-            .map(arbitrage_analysis_run_to_contract)
-            .collect(),
+        result.map(arbitrage_analysis_run_to_contract),
         auth.request_id,
         trace_id,
     )))

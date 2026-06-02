@@ -13,8 +13,9 @@ async fn recompute_all_signals(
 ) -> Result<SignalRecomputeReport> {
     let signals = state
         .market_event_service
-        .list_signals(SignalListFilters::new(None, None, None, limit)?)
-        .await?;
+        .list_signals(SignalListFilters::new(None, None, None, limit)?, &PageQuery { page: 1, page_size: limit.unwrap_or(200), sort_order: None })
+        .await?
+        .data;
 
     let mut report = SignalRecomputeReport {
         scanned: signals.len(),

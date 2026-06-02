@@ -2,7 +2,7 @@ use super::{InMemoryMarketEventStore, PostgresMarketEventStore};
 use polyedge_application::{
     ArbitrageEventListFilters, ArbitrageEventType, ArbitrageEventView, ArbitrageStore,
     MarketEventStore, NewsIngestionStore, NewsSourceFailureUpdate, NewsSourceHealthListFilters,
-    NewsSourceSuccessUpdate, RecomputeSignalCommand, demo_fixture_bundle,
+    NewsSourceSuccessUpdate, PageQuery, RecomputeSignalCommand, demo_fixture_bundle,
 };
 use polyedge_domain::{Probability, Result};
 use rust_decimal::Decimal;
@@ -51,18 +51,19 @@ async fn in_memory_arbitrage_events_prune_old_records_and_keep_sequences() -> Re
         .await?;
     assert_eq!(pruned, 1);
 
+    let page = PageQuery::default();
     let remaining = store
-        .list_arbitrage_events(&ArbitrageEventListFilters::new(None, Some(10))?)
+        .list_arbitrage_events(&ArbitrageEventListFilters::new(None, Some(10))?, &page)
         .await?;
-    assert_eq!(remaining.len(), 1);
-    assert_eq!(remaining[0].id, "scan_fresh");
-    assert_eq!(remaining[0].sequence, 2);
+    assert_eq!(remaining.data.len(), 1);
+    assert_eq!(remaining.data[0].id, "scan_fresh");
+    assert_eq!(remaining.data[0].sequence, 2);
 
     let resumed = store
-        .list_arbitrage_events(&ArbitrageEventListFilters::new(Some(1), Some(10))?)
+        .list_arbitrage_events(&ArbitrageEventListFilters::new(Some(1), Some(10))?, &page)
         .await?;
-    assert_eq!(resumed.len(), 1);
-    assert_eq!(resumed[0].id, "scan_fresh");
+    assert_eq!(resumed.data.len(), 1);
+    assert_eq!(resumed.data[0].id, "scan_fresh");
 
     Ok(())
 }
@@ -110,21 +111,22 @@ async fn in_memory_news_source_health_tracks_counts_failures_and_filters() -> Re
         })
         .await?;
 
+    let page = PageQuery::default();
     let all_sources = store
-        .list_news_source_health(&NewsSourceHealthListFilters::new(None, Some(10))?)
+        .list_news_source_health(&NewsSourceHealthListFilters::new(None, Some(10))?, &page)
         .await?;
-    assert_eq!(all_sources.len(), 2);
-    assert_eq!(all_sources[0].source, "sec_feed");
+    assert_eq!(all_sources.data.len(), 2);
+    assert_eq!(all_sources.data[0].source, "sec_feed");
 
     let news_sources = store
         .list_news_source_health(&NewsSourceHealthListFilters::new(
             Some(" news ".to_string()),
             Some(10),
-        )?)
+        )?, &page)
         .await?;
-    assert_eq!(news_sources.len(), 1);
+    assert_eq!(news_sources.data.len(), 1);
 
-    let rss_feed = &news_sources[0];
+    let rss_feed = &news_sources.data[0];
     assert_eq!(rss_feed.source, "rss_feed");
     assert_eq!(rss_feed.items_fetched, 3);
     assert_eq!(rss_feed.items_inserted, 2);
@@ -263,21 +265,22 @@ async fn postgres_news_source_health_round_trips_filters_and_migrates_index()
             })
             .await?;
 
+        let page = PageQuery::default();
         let all_sources = store
-            .list_news_source_health(&NewsSourceHealthListFilters::new(None, Some(10))?)
+            .list_news_source_health(&NewsSourceHealthListFilters::new(None, Some(10))?, &page)
             .await?;
-        assert_eq!(all_sources.len(), 2);
-        assert_eq!(all_sources[0].source, "sec_feed");
+        assert_eq!(all_sources.data.len(), 2);
+        assert_eq!(all_sources.data[0].source, "sec_feed");
 
         let news_sources = store
             .list_news_source_health(&NewsSourceHealthListFilters::new(
                 Some("news".to_string()),
                 Some(10),
-            )?)
+            )?, &page)
             .await?;
-        assert_eq!(news_sources.len(), 1);
+        assert_eq!(news_sources.data.len(), 1);
 
-        let wire_feed = &news_sources[0];
+        let wire_feed = &news_sources.data[0];
         assert_eq!(wire_feed.source, "wire_feed");
         assert_eq!(wire_feed.items_fetched, 4);
         assert_eq!(wire_feed.items_inserted, 3);

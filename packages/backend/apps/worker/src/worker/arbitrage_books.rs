@@ -23,6 +23,7 @@ async fn analyze_arbitrage_opportunities(
 ) -> Result<ArbitrageAnalysisRunView> {
     let generated_at = OffsetDateTime::now_utc();
     let observed_after = generated_at - TimeDuration::hours(i64::from(lookback_hours.max(1)));
+    let page_query = PageQuery { page: 1, page_size: 500, sort_order: None };
     let opportunities = state
         .arbitrage_service
         .list_opportunities(ArbitrageOpportunityListFilters::new(
@@ -33,10 +34,9 @@ async fn analyze_arbitrage_opportunities(
             None,
             Some(observed_after),
             false,
-            Some(500),
-        )?)
+        )?, &page_query)
         .await?;
-    let summary = build_arbitrage_analysis(&opportunities, lookback_hours.max(1), generated_at);
+    let summary = build_arbitrage_analysis(&opportunities.data, lookback_hours.max(1), generated_at);
     let summary_payload = serde_json::to_value(&summary).map_err(|error| {
         AppError::internal(
             "ARBITRAGE_ANALYSIS_ENCODE_FAILED",
