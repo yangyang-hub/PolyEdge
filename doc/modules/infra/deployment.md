@@ -74,7 +74,7 @@
 
 ### polyedge-front
 
-- 镜像：3 阶段构建（node:20 deps → pnpm build → nginx:1.27-alpine）
+- 镜像：3 阶段构建（node:20 deps → yarn build → nginx:1.27-alpine）
 - 端口：`0.0.0.0:33002 → container:80`
 - 健康检查：`wget /healthz`
 - 入口脚本验证 `POLYEDGE_CONSOLE_STEP_UP_CODE` 已设置

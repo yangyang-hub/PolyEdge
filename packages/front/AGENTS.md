@@ -73,9 +73,9 @@ This version has breaking changes — APIs, conventions, and file structure may 
 ```bash
 cd packages/front
 npx tsc --noEmit        # 快速类型检查（拆分/搬移后必跑）
-pnpm lint               # eslint
-pnpm build              # 生产构建（含完整类型检查）
-pnpm test:radar-state   # Node --test（改 radar lib 必跑）
+yarn lint               # eslint
+yarn build              # 生产构建（含完整类型检查）
+yarn test:radar-state   # Node --test（改 radar lib 必跑）
 ```
 
 前端无端到端运行时测试，重构交互组件后**必须人工 smoke** 对应页面（实时更新、过滤、对话框、表格渲染等）。

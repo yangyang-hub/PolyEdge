@@ -4,9 +4,10 @@ ENV NEXT_TELEMETRY_DISABLED=1
 WORKDIR /app/packages/front
 
 RUN corepack enable
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
-RUN pnpm install --frozen-lockfile
+COPY package.json yarn.lock ./
+RUN yarn install --frozen-lockfile
 
+# ──────────────────────────────────────────────
 FROM node:20-bookworm-slim AS builder
 
 ENV NEXT_TELEMETRY_DISABLED=1
@@ -15,9 +16,9 @@ WORKDIR /app/packages/front
 RUN corepack enable
 COPY --from=deps /app/packages/front/node_modules ./node_modules
 COPY . ./
-RUN mkdir -p public
-RUN pnpm build
+RUN mkdir -p public && yarn build
 
+# ──────────────────────────────────────────────
 FROM nginx:1.27-alpine AS runtime
 
 ENV POLYEDGE_API_UPSTREAM=http://polyedge-api:38001

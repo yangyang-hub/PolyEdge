@@ -64,7 +64,7 @@ SSE Stream（radar-stream.ts）
 
 ## 测试
 
-`radar-state.test.ts` 测试 `deriveCandidatePreview` 的各种状态推导场景。使用独立的 `tsconfig.radar-test.json`，通过 `pnpm test:radar-state` 运行。
+`radar-state.test.ts` 测试 `deriveCandidatePreview` 的各种状态推导场景。使用独立的 `tsconfig.radar-test.json`，通过 `yarn test:radar-state` 运行。
 
 ## 当前状态
 
@@ -76,5 +76,5 @@ SSE Stream（radar-stream.ts）
 
 - [ ] 修改候选状态推导逻辑时更新 `radar-state.ts` 和对应测试
 - [ ] 新增视图模型字段时同步更新 `types.ts` 和 loader 映射
-- [ ] 修改后运行 `pnpm test:radar-state`
+- [ ] 修改后运行 `yarn test:radar-state`
 - [ ] 修改后人工 smoke `/radar` 页面（筛选、视图切换、详情面板、实时更新）

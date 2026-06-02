@@ -112,9 +112,9 @@ retries solves this and ensures consistent data across all consumers.
 
 ```bash
 cd packages/front
-pnpm dev
-pnpm lint
-pnpm build
+yarn dev
+yarn lint
+yarn build
 ```
 
 后端：

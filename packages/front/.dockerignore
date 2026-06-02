@@ -1,7 +1,9 @@
+# 环境变量
 .env
 .env.*
 !.env.example
 
+# 构建产物和依赖
 node_modules
 .next
 out
@@ -9,4 +11,20 @@ dist
 coverage
 .turbo
 *.tsbuildinfo
+*.tsbuildinfo
+next-env.d.ts
+
+# 日志
 *.log
+
+# 文档和编辑器配置
+*.md
+Dockerfile
+.gitignore
+.eslintrc*
+.vscode
+.idea
+
+# 测试相关（构建不需要）
+scripts/
+tsconfig.radar-test.json

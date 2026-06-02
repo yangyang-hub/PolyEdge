@@ -80,7 +80,7 @@ Rust workspace，主要结构：
 建议本地至少具备：
 
 - `Node.js 20+`
-- `pnpm`
+- `yarn`
 - `Rust` 与 `cargo`
 - `PostgreSQL` 和 `Redis`（后端真实运行时需要）
 
@@ -95,15 +95,15 @@ cd packages/front
 安装依赖并启动：
 
 ```bash
-pnpm install
-pnpm dev
+yarn install
+yarn dev
 ```
 
 常用命令：
 
 ```bash
-pnpm lint
-pnpm build
+yarn lint
+yarn build
 ```
 
 默认环境变量见 [packages/front/.env.example](./packages/front/.env.example)：

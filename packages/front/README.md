@@ -5,8 +5,8 @@ Next.js 16 + React 19 console frontend. Server deployment uses a static export s
 ## Development
 
 ```bash
-pnpm install
-pnpm dev
+yarn install
+yarn dev
 ```
 
 The dev server runs on [http://localhost:33002](http://localhost:33002).
@@ -14,11 +14,11 @@ The dev server runs on [http://localhost:33002](http://localhost:33002).
 ## Build
 
 ```bash
-pnpm lint
-pnpm build
+yarn lint
+yarn build
 ```
 
-`pnpm build` writes static files to `out/`.
+`yarn build` writes static files to `out/`.
 
 ## Docker Runtime
 
