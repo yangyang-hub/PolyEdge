@@ -2,6 +2,18 @@ async fn upsert_reward_markets_tx(
     transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     markets: &[RewardMarket],
 ) -> Result<()> {
+    // Deactivate all existing reward markets first.
+    // Only markets present in the current API response will be re-activated.
+    sqlx::query("UPDATE reward_markets SET active = false WHERE active = true")
+        .execute(&mut **transaction)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_UPDATE_FAILED",
+                format!("failed to deactivate stale reward markets: {error}"),
+            )
+        })?;
+
     for market in markets {
         sqlx::query(
             r#"
