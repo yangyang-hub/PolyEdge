@@ -170,16 +170,23 @@ cargo run -p polyedge-worker -- analyze-wallets-once
 - `POLYEDGE_ORDERBOOK_STREAM__MAX_TOKENS` 默认 3000；调高会增加 orderbook WS/poll 内存占用，调低会减少 rewards 候选盘口覆盖。`POLYEDGE_ORDERBOOK_STREAM__MAX_LEVELS_PER_SIDE` 默认 100，用于限制进程内缓存和 HTTP ingest 每个 token 的 bids/asks 保留深度。
 - 默认跟单 worker 是 disabled；前端 `/copy-trading` 的 Run / Analyze / Cancel / Reset 只会入队命令，worker 需要设置 `POLYEDGE_COPYTRADE__ENABLED=true` + `POLYEDGE_WORKER__POLL_COPYTRADE=true` 才会领取并执行；`POLYEDGE_WORKER__ANALYZE_WALLETS=true` 仍用于独立钱包分析循环。
 - `POLYEDGE_POSTGRES__URL` / `POLYEDGE_REDIS__URL` 为空时，本地可能走内存路径，无法验证多进程共享状态和持久化 outbox。
+- `POLYEDGE_ORDERBOOK__SERVICE_URL` 默认 `http://localhost:38002`；orderbook 和 API/worker 部署在同一服务器时无需修改，跨服务器部署时在 API 和 worker 的 env 文件中设置为 orderbook 服务器的实际地址（如 `http://192.168.31.10:38002`）。`OrderbookHttpClient` 使用 5 秒连接超时和 30 秒请求超时。
 - `POLYEDGE_ARBITRAGE__BOOK_SOURCE=polymarket` 会请求真实 Polymarket CLOB `/book`；live 冒烟必须使用真实 Polymarket refs。
 - Docker Compose 部署中的 `polyedge-worker` 会把所有 `POLYEDGE_WORKER__...` 后台任务默认覆盖为 `false`；需要运行新闻、套利、rewards 或 copytrade 时必须在 `deploy/.env.worker` 显式设为 `true`。市场同步和 orderbook 订阅由独立 `polyedge-orderbook` 服务管理，不需要在 worker 中启用。
 
 ## Docker 部署
 
-后端镜像从 `bin/polyedge-api`、`bin/polyedge-worker` 和 `bin/polyedge-orderbook` 复制预构建二进制；服务器部署不编译 Rust。构建机/CI 先执行：
+后端镜像从 `bin/` 目录复制预构建二进制；服务器部署不编译 Rust。构建机/CI 先执行：
 
 ```bash
 ./scripts/build-backend-bin.sh
 git add bin/polyedge-api bin/polyedge-worker bin/polyedge-orderbook
+```
+
+跨服务器部署时只需构建目标服务器需要的二进制，例如 orderbook 服务器只需 `polyedge-orderbook`：
+
+```bash
+POLYEDGE_BACKEND_BINARY=polyedge-orderbook ./scripts/build-backend-bin.sh
 ```
 
 服务器部署入口：
@@ -189,30 +196,30 @@ cp deploy/.env.example deploy/.env
 # 编辑 deploy/.env，填入外部 PostgreSQL URL；纯内网默认 POLYEDGE_AUTH__DISABLED=true，不需要 step-up code
 # 各服务专属配置见 deploy/.env.{api,orderbook,worker,front}.example
 # Polymarket live / Deposit Wallet 示例见 deploy/.env.polymarket.example
+# 跨服务器部署时设置 POLYEDGE_ORDERBOOK__SERVICE_URL 指向 orderbook 服务器地址
 ./scripts/deploy.sh all
 ```
 
-`deploy/docker-compose.yml` 编排：
+`deploy/docker-compose.yml` 编排（各服务无启动依赖，可独立部署在不同服务器）：
 
-- `polyedge-orderbook`（独立 orderbook 服务，WS + poll + HTTP API）
-- `polyedge-api`（依赖 orderbook 健康后启动，并通过 `POLYEDGE_ORDERBOOK__SERVICE_URL` 读取盘口）
-- `polyedge-worker`（依赖 orderbook 服务健康）
+- `polyedge-orderbook`（独立 orderbook 服务，WS + poll + HTTP API，使用 `deploy/orderbook.Dockerfile`）
+- `polyedge-api`（通过 `POLYEDGE_ORDERBOOK__SERVICE_URL` 读取盘口，使用 `deploy/api.Dockerfile`）
+- `polyedge-worker`（与 api 共享镜像）
 - `polyedge-front`
 
-`scripts/deploy.sh` 只接受简单目标参数：
+`scripts/deploy.sh` 每个服务独立部署，互不依赖：
 
-- 不传参数或 `auto`：拉取最新代码，只在后端二进制或前端文件 hash 变化时 rebuild；后端容器未运行但 hash 未变时按 orderbook → API → Worker 顺序启动已有镜像。
-- `all`：重建后端和前端镜像，并按 orderbook → API → Worker 顺序重启后端，同时重启 front。
-- `api worker`：重建后端镜像，并重启 API 与 worker。
-- `api`：只重建后端镜像并重启 API。
-- `worker`：只重建后端镜像并重启 worker。
-- `orderbook`（或 `ob`）：重建后端镜像并重启 orderbook 服务。
+- 不传参数或 `auto`：拉取最新代码，per-service 检测二进制 hash 变化，只 rebuild 变化的镜像并 restart 变化或未运行的服务。
+- `all`：重建所有可用镜像并重启所有可用服务。
+- `api worker`：重建 api 镜像并重启 API 与 worker。
+- `api`：只重建 api 镜像并重启 API。
+- `worker`：只重建 api 镜像并重启 worker。
+- `orderbook`（或 `ob`）：重建 orderbook 镜像并重启 orderbook 服务。
 - `front`：只重建前端镜像并重启前端。
 - 支持组合，例如 `api front` 或 `api,worker`。
+- `POLYEDGE_SKIP_SERVICES=orderbook` 排除特定服务，适合同一服务器只部署部分服务的场景。
 
-部署脚本默认使用 `/tmp/polyedge-deploy.lock` 防止 cron/CI 重叠执行，默认 `COMPOSE_PARALLEL_LIMIT=1` 串行构建镜像；Auto 模式只有后端二进制（api / worker / orderbook）或前端文件/`deploy/.env.front` hash 改变时才 rebuild，后端容器未运行但 hash 未变时按 orderbook → API → Worker 顺序启动已有镜像。前端 `yarn build` 前会读取 `deploy/.env.front` 并把 `NEXT_PUBLIC_*` 写入静态 bundle。Compose 构建上下文已收窄：后端只上传 `bin/`，前端只上传 `packages/front/`，避免扫描本地 `packages/backend/target`、`node_modules`、`.next` 等大目录。
-
-默认部署模板使用 `POLYEDGE_AUTH__DISABLED=true` 的纯内网免鉴权模式，API 通过 permissive CORS 支持 front/API 分别部署在不同服务器；生产前需要关闭该开关并接入真实会话体系、签名 internal JWT、key rotation 和撤销策略。
+部署脚本默认使用 `/tmp/polyedge-deploy.lock` 防止 cron/CI 重叠执行，默认 `COMPOSE_PARALLEL_LIMIT=1` 串行构建镜像。Auto 模式 per-service 独立检测：api/worker 共享同一镜像（任一二进制变化触发 rebuild），orderbook 独立镜像，前端独立镜像；容器未运行但 hash 未变时直接启动已有镜像。前端 `yarn build` 前会读取 `deploy/.env.front` 并把 `NEXT_PUBLIC_*` 写入静态 bundle。Compose 构建上下文已收窄：后端只上传 `bin/`，前端只上传 `packages/front/`，避免扫描本地 `packages/backend/target`、`node_modules`、`.next` 等大目录。跨服务器部署时每台服务器只需本地存在的二进制，脚本只检查目标服务所需的文件。
 
 ## 关键入口
 
@@ -250,8 +257,8 @@ cp deploy/.env.example deploy/.env
 
 部署：
 
-- `packages/backend/Dockerfile`
-- `deploy/backend.Dockerfile`
+- `deploy/orderbook.Dockerfile`
+- `deploy/api.Dockerfile`
 - `packages/front/Dockerfile`
 - `deploy/docker-compose.yml`
 - `deploy/.env.example`

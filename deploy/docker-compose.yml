@@ -2,8 +2,8 @@ services:
   polyedge-orderbook:
     build:
       context: ../bin
-      dockerfile: ../deploy/backend.Dockerfile
-    image: ${POLYEDGE_API_IMAGE:-polyedge-api:local}
+      dockerfile: ../deploy/orderbook.Dockerfile
+    image: ${POLYEDGE_ORDERBOOK_IMAGE:-polyedge-orderbook:local}
     restart: unless-stopped
     logging: &default-logging
       driver: json-file
@@ -28,7 +28,7 @@ services:
   polyedge-api:
     build:
       context: ../bin
-      dockerfile: ../deploy/backend.Dockerfile
+      dockerfile: ../deploy/api.Dockerfile
     image: ${POLYEDGE_API_IMAGE:-polyedge-api:local}
     restart: unless-stopped
     logging: *default-logging
@@ -36,12 +36,9 @@ services:
       - .env
       - .env.api
     environment:
-      POLYEDGE_ORDERBOOK__SERVICE_URL: ${POLYEDGE_ORDERBOOK__SERVICE_URL:-http://polyedge-orderbook:38002}
+      POLYEDGE_ORDERBOOK__SERVICE_URL: ${POLYEDGE_ORDERBOOK__SERVICE_URL:-http://localhost:38002}
     ports:
       - "${POLYEDGE_API_BIND:-0.0.0.0}:${POLYEDGE_API_PORT:-38001}:38001"
-    depends_on:
-      polyedge-orderbook:
-        condition: service_healthy
     extra_hosts:
       - "host.docker.internal:host-gateway"
     healthcheck:
@@ -59,13 +56,8 @@ services:
       - .env
       - .env.worker
     environment:
-      POLYEDGE_ORDERBOOK__SERVICE_URL: ${POLYEDGE_ORDERBOOK__SERVICE_URL:-http://polyedge-orderbook:38002}
+      POLYEDGE_ORDERBOOK__SERVICE_URL: ${POLYEDGE_ORDERBOOK__SERVICE_URL:-http://localhost:38002}
     command: ["polyedge-worker"]
-    depends_on:
-      polyedge-api:
-        condition: service_healthy
-      polyedge-orderbook:
-        condition: service_healthy
     extra_hosts:
       - "host.docker.internal:host-gateway"
 

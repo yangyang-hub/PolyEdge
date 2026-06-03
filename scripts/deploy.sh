@@ -10,16 +10,17 @@ set -Eeuo pipefail
 #   scripts/deploy.sh all             # force rebuild everything
 #   scripts/deploy.sh api [orderbook|worker|front ...]
 #
+# Each service is deployed independently — orderbook, api, and worker can
+# run on different servers without cross-dependencies.  Only the binaries
+# required for the targeted services need to exist locally.
+#
 # Auto mode (default):
 #   1. git fetch + fast-forward
-#   2. If no changes detected AND all containers are running -> skip entirely
-#   3. If a backend binary changed -> rebuild backend image -> restart orderbook, api & worker
-#   4. If frontend files changed (packages/front/) -> rebuild frontend image -> restart front
-#   5. If any container is not running -> start existing image without forcing a rebuild
-#   6. Persist image build state to .deploy-state immediately after successful builds
-#
-# Cron example (every 5 minutes; deploy.sh also has an internal lock):
-#   */5 * * * * POLYEDGE_LOG_FILE=/home/polyedge/polyedge-deploy.log /path/to/scripts/deploy.sh
+#   2. If no changes detected AND all targeted containers are running -> skip
+#   3. If api/worker binary changed -> rebuild api image -> restart api & worker
+#   4. If orderbook binary changed -> rebuild orderbook image -> restart orderbook
+#   5. If frontend files changed -> rebuild frontend image -> restart front
+#   6. If any targeted container is not running -> start existing image
 #
 # Environment variables:
 #   POLYEDGE_DEPLOY_DIR       - repo checkout (default: script's parent)
@@ -30,6 +31,7 @@ set -Eeuo pipefail
 #   POLYEDGE_SKIP_ENV_VALIDATION=1 - skip .env sanity checks
 #   POLYEDGE_LOG_FILE         - log file path (default for cron: $HOME/polyedge-deploy.log)
 #   POLYEDGE_DEPLOY_LOCK_FILE - non-overlap lock file (default: /tmp/polyedge-deploy.lock)
+#   POLYEDGE_SKIP_SERVICES    - comma-separated services to exclude (e.g. "orderbook,front")
 #   COMPOSE_PARALLEL_LIMIT    - compose build parallelism (default: 1)
 # ---------------------------------------------------------------------------
 
@@ -48,12 +50,15 @@ Usage: scripts/deploy.sh [auto|all|orderbook|api|worker|front] [...]
 
 Targets:
   no args / auto  Intelligent deploy: pull code, detect changes, deploy only what changed.
-  all             Force rebuild backend and frontend images, then restart all services.
-  orderbook       Rebuild the backend image and restart only the orderbook service.
-  api worker      Rebuild the backend image and restart selected backend services.
-  api             Rebuild the backend image and restart only the API service.
-  worker          Rebuild the backend image and restart only the worker service.
+  all             Force rebuild all available images, then restart all available services.
+  orderbook       Rebuild the orderbook image and restart only the orderbook service.
+  api worker      Rebuild the api image and restart selected backend services.
+  api             Rebuild the api image and restart only the API service.
+  worker          Rebuild the api image and restart only the worker service.
   front           Rebuild the frontend image and restart only the frontend service.
+
+Each service deploys independently. Only the binaries for targeted services need to
+exist locally. Set POLYEDGE_SKIP_SERVICES to exclude services (e.g. "orderbook").
 
 Multiple targets can be passed as separate args or comma-separated, for example:
   scripts/deploy.sh api worker
@@ -77,7 +82,6 @@ parse_targets() {
   shift 4
 
   if [[ $# -eq 0 ]]; then
-    # default: auto mode
     return 0
   fi
 
@@ -91,6 +95,7 @@ parse_targets() {
           ;;
         all)
           mode="manual"
+          # Mark all as targeted; missing binaries will be skipped gracefully.
           target_api_ref=1
           target_worker_ref=1
           target_front_ref=1
@@ -258,7 +263,6 @@ load_frontend_build_env() {
 }
 
 # Build frontend static files locally (yarn build -> out/).
-# The Dockerfile copies out/ into the nginx image without container-side compilation.
 build_frontend() {
   local front_dir="${deploy_dir}/packages/front"
   [[ -f "${front_dir}/package.json" ]] || fail "packages/front/package.json not found"
@@ -270,7 +274,6 @@ build_frontend() {
 }
 
 # Check if a docker compose service container is running.
-# Returns 0 if running, 1 if not.
 container_running() {
   local service="$1"
   local status
@@ -278,7 +281,6 @@ container_running() {
   if [[ -z "${status}" ]]; then
     return 1
   fi
-  # docker compose ps --format json may return multiple lines; check last
   printf '%s' "${status}" | tail -1 | grep -q '"running"' && return 0
   return 1
 }
@@ -294,6 +296,22 @@ commit=$(git rev-parse HEAD 2>/dev/null || echo "unknown")
 deployed_at=$(date '+%Y-%m-%d %H:%M:%S')
 EOF
   log "deploy state saved to ${state_file}"
+}
+
+# Return 0 if the given service should be skipped based on POLYEDGE_SKIP_SERVICES.
+should_skip_service() {
+  local service="$1"
+  local skip="${POLYEDGE_SKIP_SERVICES:-}"
+  [[ -z "${skip}" ]] && return 1
+  local IFS=','
+  for s in ${skip}; do
+    s="${s,,}"
+    s="${s#polyedge-}"
+    if [[ "${s}" == "${service}" ]]; then
+      return 0
+    fi
+  done
+  return 1
 }
 
 # ---------------------------------------------------------------------------
@@ -317,7 +335,6 @@ parse_targets target_api target_worker target_front target_orderbook "$@"
 # ---- setup logging: tee to file when running non-interactively -----------
 log_file="${POLYEDGE_LOG_FILE:-}"
 if [[ -z "${log_file}" && ! -t 0 ]]; then
-  # non-interactive (cron) -> default to a user-writable log file
   log_file="${HOME:-/tmp}/polyedge-deploy.log"
 fi
 if [[ -n "${log_file}" ]]; then
@@ -386,7 +403,6 @@ if [[ "${skip_git_pull}" != "1" ]]; then
     fi
   fi
 
-  # Detect if there are new commits to pull
   local_head="$(git rev-parse HEAD)"
   remote_head="$(git rev-parse "origin/${branch}")"
 
@@ -414,7 +430,6 @@ front_env_file="${deploy_dir_path}/.env.front"
 if [[ ! -f "${env_file}" ]]; then
   [[ -f "${env_example}" ]] || fail "env example not found: ${env_example}"
   cp "${env_example}" "${env_file}"
-  # Copy service-specific env examples if they don't exist yet.
   for suffix in api orderbook worker front; do
     local_example="${deploy_dir_path}/.env.${suffix}.example"
     local_target="${deploy_dir_path}/.env.${suffix}"
@@ -431,16 +446,14 @@ compose_cmd="$(find_compose)" || fail "Docker Compose is not installed."
 export COMPOSE_PARALLEL_LIMIT="${COMPOSE_PARALLEL_LIMIT:-1}"
 
 # ---------------------------------------------------------------------------
-# Auto mode: intelligent change detection via persistent state file
+# Auto mode: per-service intelligent change detection
 # ---------------------------------------------------------------------------
 if [[ "${mode}" == "auto" ]]; then
-  # --- Compute current state ------------------------------------------------
   current_api_hash="$(file_hash bin/polyedge-api)"
   current_worker_hash="$(file_hash bin/polyedge-worker)"
   current_orderbook_hash="$(file_hash bin/polyedge-orderbook)"
   current_front_hash="$(frontend_build_hash packages/front "${front_env_file}")"
 
-  # --- Load last deployed state ---------------------------------------------
   state_file="${deploy_dir}/.deploy-state"
   saved_api_hash=""
   saved_worker_hash=""
@@ -454,18 +467,23 @@ if [[ "${mode}" == "auto" ]]; then
     saved_front_hash="$(grep '^front_hash=' "${state_file}" | cut -d= -f2 || true)"
   fi
 
-  backend_changed=0
+  # Per-service change detection
+  api_image_changed=0
+  orderbook_changed=0
   front_changed=0
 
-  # --- Detect backend changes ------------------------------------------------
-  if [[ "${current_api_hash}" != "${saved_api_hash}" || "${current_worker_hash}" != "${saved_worker_hash}" || "${current_orderbook_hash}" != "${saved_orderbook_hash}" ]]; then
-    backend_changed=1
-    log "backend binary changed (api: ${saved_api_hash:-NONE}->${current_api_hash:0:8}, worker: ${saved_worker_hash:-NONE}->${current_worker_hash:0:8}, orderbook: ${saved_orderbook_hash:-NONE}->${current_orderbook_hash:0:8})"
+  # api and worker share the same image — rebuild if either binary changed
+  if [[ "${current_api_hash}" != "${saved_api_hash}" || "${current_worker_hash}" != "${saved_worker_hash}" ]]; then
+    api_image_changed=1
+    log "api/worker binary changed (api: ${saved_api_hash:-NONE}->${current_api_hash:0:8}, worker: ${saved_worker_hash:-NONE}->${current_worker_hash:0:8})"
   fi
 
-  # --- Detect frontend changes -----------------------------------------------
+  if [[ "${current_orderbook_hash}" != "${saved_orderbook_hash}" ]]; then
+    orderbook_changed=1
+    log "orderbook binary changed (${saved_orderbook_hash:-NONE}->${current_orderbook_hash:0:8})"
+  fi
+
   if [[ "${new_code}" == "1" && -n "${pre_merge_head}" ]]; then
-    # Check if any frontend-related files changed in the pulled commits
     if git diff --name-only "${pre_merge_head}" HEAD -- packages/front/ packages/front/Dockerfile packages/front/nginx.conf.template | grep -q .; then
       front_changed=1
       log "frontend files changed in new commits"
@@ -476,88 +494,124 @@ if [[ "${mode}" == "auto" ]]; then
     log "frontend files changed on disk (${saved_front_hash:-NONE}->${current_front_hash:0:8})"
   fi
 
-  # --- Check container status: down services are started without forcing rebuild
-  backend_running=1
+  # Per-service container status
+  api_running=1
+  worker_running=1
+  orderbook_running=1
   front_running=1
 
-  if ! container_running polyedge-api; then
+  if ! should_skip_service api && ! container_running polyedge-api; then
     log "polyedge-api container is not running"
-    backend_running=0
+    api_running=0
   fi
-  if ! container_running polyedge-orderbook; then
-    log "polyedge-orderbook container is not running"
-    backend_running=0
-  fi
-  if ! container_running polyedge-worker; then
+  if ! should_skip_service worker && ! container_running polyedge-worker; then
     log "polyedge-worker container is not running"
-    backend_running=0
+    worker_running=0
   fi
-  if ! container_running polyedge-front; then
+  if ! should_skip_service orderbook && ! container_running polyedge-orderbook; then
+    log "polyedge-orderbook container is not running"
+    orderbook_running=0
+  fi
+  if ! should_skip_service front && ! container_running polyedge-front; then
     log "polyedge-front container is not running"
     front_running=0
   fi
 
-  # --- Decide what to build and restart --------------------------------------
-  build_services=()
+  # Decide which images to build (per image, not per service)
+  build_images=()
   restart_services=()
 
-  if [[ "${backend_changed}" == "1" ]]; then
-    build_services+=(polyedge-api)
+  # api image (shared by polyedge-api and polyedge-worker)
+  if [[ "${api_image_changed}" == "1" ]]; then
+    build_images+=(polyedge-api)
   fi
-  if [[ "${backend_changed}" == "1" || "${backend_running}" == "0" ]]; then
-    restart_services+=(polyedge-orderbook polyedge-api polyedge-worker)
+  if [[ "${api_image_changed}" == "1" || "${api_running}" == "0" || "${worker_running}" == "0" ]]; then
+    if ! should_skip_service api; then
+      [[ -f bin/polyedge-api ]] || fail "bin/polyedge-api is missing. Build it with scripts/build-backend-bin.sh."
+      restart_services+=(polyedge-api)
+    fi
+    if ! should_skip_service worker; then
+      [[ -f bin/polyedge-worker ]] || fail "bin/polyedge-worker is missing. Build it with scripts/build-backend-bin.sh."
+      restart_services+=(polyedge-worker)
+    fi
   fi
 
+  # orderbook image
+  if [[ "${orderbook_changed}" == "1" ]]; then
+    build_images+=(polyedge-orderbook)
+  fi
+  if [[ "${orderbook_changed}" == "1" || "${orderbook_running}" == "0" ]]; then
+    if ! should_skip_service orderbook; then
+      [[ -f bin/polyedge-orderbook ]] || fail "bin/polyedge-orderbook is missing. Build it with scripts/build-backend-bin.sh."
+      restart_services+=(polyedge-orderbook)
+    fi
+  fi
+
+  # frontend image
   if [[ "${front_changed}" == "1" ]]; then
-    build_services+=(polyedge-front)
+    build_images+=(polyedge-front)
   fi
   if [[ "${front_changed}" == "1" || "${front_running}" == "0" ]]; then
-    restart_services+=(polyedge-front)
+    if ! should_skip_service front; then
+      restart_services+=(polyedge-front)
+    fi
   fi
 
-  # --- Nothing to do? -------------------------------------------------------
-  if [[ ${#build_services[@]} -eq 0 && ${#restart_services[@]} -eq 0 ]]; then
-    log "no changes detected and all containers running -> nothing to do"
+  # Nothing to do?
+  if [[ ${#build_images[@]} -eq 0 && ${#restart_services[@]} -eq 0 ]]; then
+    log "no changes detected and all targeted containers running -> nothing to do"
     log "=== deploy end (skipped) ==="
     exit 0
   fi
 
-  # --- Ensure binaries exist before building backend -------------------------
-  if [[ "${backend_changed}" == "1" ]]; then
-    [[ -f bin/polyedge-api ]] || fail "bin/polyedge-api is missing. Build it with scripts/build-backend-bin.sh."
-    [[ -f bin/polyedge-worker ]] || fail "bin/polyedge-worker is missing. Build it with scripts/build-backend-bin.sh."
-    [[ -f bin/polyedge-orderbook ]] || fail "bin/polyedge-orderbook is missing. Build it with scripts/build-backend-bin.sh."
-  fi
-
-  if [[ ${#build_services[@]} -gt 0 ]]; then
-    # Build frontend static files locally before Docker image build
-    if printf '%s\n' "${build_services[@]}" | grep -qx 'polyedge-front'; then
+  if [[ ${#build_images[@]} -gt 0 ]]; then
+    if printf '%s\n' "${build_images[@]}" | grep -qx 'polyedge-front'; then
       build_frontend
     fi
-    log "building images: ${build_services[*]} (COMPOSE_PARALLEL_LIMIT=${COMPOSE_PARALLEL_LIMIT})"
-    ${compose_cmd} --env-file "${env_file}" -f "${compose_file}" build --pull "${build_services[@]}"
+    log "building images: ${build_images[*]} (COMPOSE_PARALLEL_LIMIT=${COMPOSE_PARALLEL_LIMIT})"
+    ${compose_cmd} --env-file "${env_file}" -f "${compose_file}" build --pull "${build_images[@]}"
     save_deploy_state "${state_file}"
   else
     log "no image changes detected; starting existing images"
   fi
 
-  log "starting containers: ${restart_services[*]}"
-  ${compose_cmd} --env-file "${env_file}" -f "${compose_file}" up -d --remove-orphans "${restart_services[@]}"
+  if [[ ${#restart_services[@]} -gt 0 ]]; then
+    log "starting containers: ${restart_services[*]}"
+    ${compose_cmd} --env-file "${env_file}" -f "${compose_file}" up -d --remove-orphans "${restart_services[@]}"
+  fi
 
 else
   # ---------------------------------------------------------------------------
-  # Manual mode: explicit targets (same as original behavior)
+  # Manual mode: explicit targets, per-service binary checks
   # ---------------------------------------------------------------------------
-  build_services=()
+  build_images=()
   runtime_services=()
 
-  if [[ "${target_api}" == "1" || "${target_worker}" == "1" || "${target_orderbook}" == "1" ]]; then
-    build_services+=(polyedge-api)
+  # Determine which images need building (only if targeted services need them)
+  if [[ "${target_api}" == "1" || "${target_worker}" == "1" ]]; then
+    build_images+=(polyedge-api)
+  fi
+  if [[ "${target_orderbook}" == "1" ]]; then
+    build_images+=(polyedge-orderbook)
   fi
   if [[ "${target_front}" == "1" ]]; then
-    build_services+=(polyedge-front)
+    build_images+=(polyedge-front)
   fi
 
+  # Only check binaries for targeted services
+  if [[ "${target_api}" == "1" || "${target_worker}" == "1" ]]; then
+    if [[ "${target_api}" == "1" ]]; then
+      [[ -f "bin/polyedge-api" ]] || fail "bin/polyedge-api is missing. Build it with: POLYEDGE_BACKEND_BINARY=polyedge-api scripts/build-backend-bin.sh"
+    fi
+    if [[ "${target_worker}" == "1" ]]; then
+      [[ -f "bin/polyedge-worker" ]] || fail "bin/polyedge-worker is missing. Build it with: POLYEDGE_BACKEND_BINARY=polyedge-worker scripts/build-backend-bin.sh"
+    fi
+  fi
+  if [[ "${target_orderbook}" == "1" ]]; then
+    [[ -f "bin/polyedge-orderbook" ]] || fail "bin/polyedge-orderbook is missing. Build it with: POLYEDGE_BACKEND_BINARY=polyedge-orderbook scripts/build-backend-bin.sh"
+  fi
+
+  # Collect runtime services
   if [[ "${target_orderbook}" == "1" ]]; then
     runtime_services+=(polyedge-orderbook)
   fi
@@ -571,22 +625,19 @@ else
     runtime_services+=(polyedge-front)
   fi
 
-  if [[ "${target_api}" == "1" || "${target_worker}" == "1" || "${target_orderbook}" == "1" ]]; then
-    [[ -f "bin/polyedge-api" ]] || fail "bin/polyedge-api is missing. Build it with scripts/build-backend-bin.sh and commit it."
-    [[ -f "bin/polyedge-worker" ]] || fail "bin/polyedge-worker is missing. Build it with scripts/build-backend-bin.sh and commit it."
-    [[ -f "bin/polyedge-orderbook" ]] || fail "bin/polyedge-orderbook is missing. Build it with scripts/build-backend-bin.sh and commit it."
-  fi
-
-  # Build frontend static files locally before Docker image build
-  if printf '%s\n' "${build_services[@]}" | grep -qx 'polyedge-front'; then
+  if printf '%s\n' "${build_images[@]}" | grep -qx 'polyedge-front' 2>/dev/null; then
     build_frontend
   fi
 
-  log "building images: ${build_services[*]} (COMPOSE_PARALLEL_LIMIT=${COMPOSE_PARALLEL_LIMIT})"
-  ${compose_cmd} --env-file "${env_file}" -f "${compose_file}" build --pull "${build_services[@]}"
+  if [[ ${#build_images[@]} -gt 0 ]]; then
+    log "building images: ${build_images[*]} (COMPOSE_PARALLEL_LIMIT=${COMPOSE_PARALLEL_LIMIT})"
+    ${compose_cmd} --env-file "${env_file}" -f "${compose_file}" build --pull "${build_images[@]}"
+  fi
 
-  log "starting containers: ${runtime_services[*]}"
-  ${compose_cmd} --env-file "${env_file}" -f "${compose_file}" up -d --remove-orphans "${runtime_services[@]}"
+  if [[ ${#runtime_services[@]} -gt 0 ]]; then
+    log "starting containers: ${runtime_services[*]}"
+    ${compose_cmd} --env-file "${env_file}" -f "${compose_file}" up -d --remove-orphans "${runtime_services[@]}"
+  fi
 fi
 
 log "current container status"

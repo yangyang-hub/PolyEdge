@@ -7,7 +7,7 @@ use reqwest::Client;
 use rust_decimal::Decimal;
 use serde::Deserialize;
 use std::str::FromStr;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 /// HTTP client that implements `OrderbookCache` by calling the standalone
 /// orderbook service. Used by API and Worker processes to read orderbook data.
@@ -18,9 +18,14 @@ pub struct OrderbookHttpClient {
 
 impl OrderbookHttpClient {
     pub fn new(base_url: &str) -> Self {
+        let client = Client::builder()
+            .connect_timeout(Duration::from_secs(5))
+            .timeout(Duration::from_secs(30))
+            .build()
+            .expect("failed to build orderbook HTTP client");
         Self {
             base_url: base_url.trim_end_matches('/').to_string(),
-            client: Client::new(),
+            client,
         }
     }
 
