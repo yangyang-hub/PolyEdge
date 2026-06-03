@@ -8,6 +8,8 @@ export const rewards = {
     cancelAll: "撤开放挂单",
     status: "状态",
     markets: "奖励市场",
+    quotableMarkets: "可报价市场",
+    totalMarkets: "总奖励市场",
     eligible: "可挂市场",
     openOrders: "开放挂单",
     positions: "库存",

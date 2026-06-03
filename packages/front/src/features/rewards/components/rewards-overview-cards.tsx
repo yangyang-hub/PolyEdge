@@ -37,7 +37,7 @@ export function ModeStatusPanel({
   snapshot: RewardBotSnapshotDto;
   eventCounts: RewardEventCounts;
 }) {
-  const eligibleRatio = ratio(snapshot.status.eligible_markets, snapshot.status.markets_tracked);
+  const eligibleRatio = ratio(snapshot.status.eligible_markets, snapshot.quote_plans.length);
   const availableRatio = ratio(snapshot.account.available_usd, snapshot.account.capital_usd);
 
   return (
@@ -171,9 +171,9 @@ export function SummaryStrip({
     <Card size="sm">
       <CardContent className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 2xl:grid-cols-8">
         <SummaryMetric
-          label={dictionary.rewards.markets}
-          value={String(snapshot.status.markets_tracked)}
-          hint={`${snapshot.status.eligible_markets} ${dictionary.rewards.eligible}`}
+          label={dictionary.rewards.quotableMarkets}
+          value={String(snapshot.status.eligible_markets)}
+          hint={`${snapshot.quote_plans.length} ${dictionary.rewards.quotePlans} / ${snapshot.status.markets_tracked} ${dictionary.rewards.totalMarkets}`}
         />
         <SummaryMetric
           label={dictionary.rewards.openOrders}
