@@ -4,7 +4,7 @@
 
 ## 概述
 
-部署体系基于 Docker Compose，包含 4 个服务（API、Orderbook、Worker、Frontend），通过 Nginx 反向代理前端到后端的 API 请求。
+部署体系基于 Docker Compose，包含 4 个服务（API、Orderbook、Worker、Frontend）。前端是静态站点，浏览器通过 `NEXT_PUBLIC_POLYEDGE_API_BASE_URL` 直连后端 API；API 使用 permissive CORS，支持 front/API 分别部署在不同内网服务器。
 
 ## 架构与关键文件
 
@@ -24,7 +24,7 @@
 | `packages/front/Dockerfile` | 前端镜像（3 阶段：deps → builder → nginx:1.27-alpine；context 为 `packages/front/`） |
 | `packages/front/.dockerignore` | 前端构建 context 排除规则 |
 | `.dockerignore` | 仓库根构建 context 排除规则（兼容旧构建入口） |
-| `packages/front/nginx.conf.template` | Nginx 配置模板 |
+| `packages/front/nginx.conf.template` | Nginx 静态文件配置模板 |
 
 ## 服务架构
 
@@ -77,8 +77,9 @@
 - 镜像：本机 `yarn build` 预编译静态文件到 `out/`，Docker 镜像仅 `COPY out/` 到 nginx（无容器内编译）
 - 端口：`0.0.0.0:33002 → container:80`
 - 健康检查：`wget /healthz`
-- 入口脚本验证 `POLYEDGE_CONSOLE_STEP_UP_CODE` 已设置
-- `envsubst` 将环境变量注入 nginx 配置模板
+- 通过 `NEXT_PUBLIC_POLYEDGE_API_BASE_URL` 指向内网 API 地址，浏览器直连后端
+- 当前内网免鉴权模式不需要设置 `NEXT_PUBLIC_POLYEDGE_INTERNAL_AUTH_DEV_BYPASS`
+- `envsubst` 将环境变量注入 nginx 静态文件配置模板
 
 ## Nginx 配置
 
@@ -86,11 +87,9 @@
 |---|---|
 | `/healthz` | 返回 200 "ok" |
 | `/_next/static/` | 静态资源，1 年不可变缓存 |
-| `/api/v1/stream/` | SSE 代理，完全禁用缓冲（`proxy_buffering off`、`proxy_read_timeout 1h`） |
-| `/api/v1/` | 标准反向代理到后端，附带 step-up 认证头和硬编码身份（"Static Console"、admin 角色） |
 | `/` | 静态文件服务，fallback 到 `$uri.html` 和 `/404.html` |
 
-**Step-up 认证：** nginx 通过 `map` 指令比较请求头 `X-PolyEdge-Step-Up-Code` 与环境变量 `POLYEDGE_CONSOLE_STEP_UP_CODE`，设置 `$polyedge_step_up_verified` 为 "true" 或 "false"。
+API 请求不再经过前端 nginx 反向代理；跨域由 Rust API 的 `CorsLayer::permissive()` 处理。当前纯内网部署通过 `POLYEDGE_AUTH__DISABLED=true` 关闭 API 权限校验。
 
 ## 部署脚本（deploy.sh）
 
@@ -115,8 +114,9 @@
 ### 环境变量验证
 
 - `POLYEDGE_POSTGRES__URL` 不能包含 "change-me"
-- `POLYEDGE_CONSOLE_STEP_UP_CODE` 不能为空或 "change-me"
-- `POLYEDGE_INTERNAL_AUTH_DEV_BYPASS=1` 仅在 `POLYEDGE_RUNTIME__ENVIRONMENT=local` 时允许
+- `POLYEDGE_AUTH__DISABLED=false` 时，`POLYEDGE_AUTH__STEP_UP_CODE` 不能为空或 "change-me"
+- `POLYEDGE_AUTH__DISABLED=true` 时，deploy.sh 不要求 step-up code，API 也不要求前端发送权限头
+- 未关闭鉴权时，`POLYEDGE_INTERNAL_AUTH_DEV_BYPASS=1` 仅在 `POLYEDGE_RUNTIME__ENVIRONMENT=local` 时允许
 - `deploy/.env*.example` 中每个变量上一段注释说明了变量含义、适用服务和安全注意事项
 
 ## 必需环境变量
@@ -124,18 +124,19 @@
 | 变量 | 说明 |
 |---|---|
 | `POLYEDGE_POSTGRES__URL` | PostgreSQL 连接字符串 |
-| `POLYEDGE_CONSOLE_STEP_UP_CODE` | 控制台提权认证码 |
 
 ## 可选环境变量
 
 | 变量 | 默认值 | 说明 |
 |---|---|---|
 | `POLYEDGE_REDIS__URL` | — | Redis URL（可选） |
+| `POLYEDGE_AUTH__DISABLED` | `false`（代码默认；部署模板为 `true`） | 纯内网免鉴权开关，开启后 API 注入内部 admin 上下文 |
+| `POLYEDGE_AUTH__STEP_UP_CODE` | — | `POLYEDGE_AUTH__DISABLED=false` 时用于敏感操作提权 |
 | `POLYEDGE_FRONT_BIND` | `0.0.0.0` | 前端绑定地址 |
 | `POLYEDGE_FRONT_PORT` | `33002` | 前端宿主机端口 |
 | `POLYEDGE_API_BIND` | `0.0.0.0` | API 绑定地址 |
 | `POLYEDGE_API_PORT` | `38001` | API 宿主机端口 |
-| `POLYEDGE_API_UPSTREAM` | `http://polyedge-api:38001` | 前端代理目标 |
+| `NEXT_PUBLIC_POLYEDGE_API_BASE_URL` | — | 前端浏览器直连 API 地址，例如 `http://192.168.31.5:38001` |
 | `POLYEDGE_ORDERBOOK__SERVICE_URL` | `http://polyedge-orderbook:38002` | API/Worker 访问 orderbook 服务的内部地址 |
 | `POLYEDGE_ALLOW_IN_MEMORY_DEPLOY` | — | 设为 1 允许无数据库部署（仅演示） |
 | `POLYEDGE_LOG_FILE` | `$HOME/polyedge-deploy.log`（cron） | deploy 脚本日志文件；无法写入时回退到 stdout/stderr |
@@ -164,10 +165,10 @@ git add bin/polyedge-api bin/polyedge-worker bin/polyedge-orderbook
 
 - 部署模板适合原型/内网共享环境
 - Compose 部署使用窄构建上下文：后端只上传 `bin/`，前端只上传 `packages/front/`，避免扫描 Rust `target/`、前端 `node_modules/`、`.next/` 等大目录
-- `polyedge-front` 不再依赖 API 健康后才启动；前端静态 Nginx 可独立运行并在 API 恢复后继续代理请求
+- `polyedge-front` 不再依赖 API 健康后才启动；前端静态 Nginx 可独立运行，浏览器按 `NEXT_PUBLIC_POLYEDGE_API_BASE_URL` 访问 API
 - `scripts/deploy.sh` 已防止重叠执行；前端变更 hash 会直接 prune `node_modules`、`.next`、`out` 等大目录；容器 down 时会按 orderbook → API → Worker 顺序启动已有后端镜像，不会因健康失败而重复 rebuild
-- 认证使用内部 dev-auth 模式
-- 生产前需要：真实会话体系、签名 JWT、key rotation
+- 当前部署模板默认 `POLYEDGE_AUTH__DISABLED=true`，API/front 内网交互不做权限校验；API CORS 为 permissive
+- 生产前需要：关闭 `POLYEDGE_AUTH__DISABLED`、接入真实会话体系、签名 JWT、key rotation
 
 ## 修改检查清单
 

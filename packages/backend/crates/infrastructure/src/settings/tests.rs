@@ -74,6 +74,7 @@ mod tests {
             settings.auth.force_reauth_after.as_deref(),
             Some("2026-01-01T00:00:00Z")
         );
+        assert!(!settings.auth.disabled);
     }
 
     #[test]
@@ -255,6 +256,7 @@ mod tests {
                 "POLYEDGE_AUTH__REVOKED_SESSIONS".to_string(),
                 "sess_alpha,sess_beta".to_string(),
             ),
+            ("POLYEDGE_AUTH__DISABLED".to_string(), "true".to_string()),
             ("POLYEDGE_AUTH__KEYS_JSON".to_string(), "[]".to_string()),
         ])));
 
@@ -333,6 +335,7 @@ mod tests {
             settings.auth.revoked_sessions,
             vec!["sess_alpha".to_string(), "sess_beta".to_string()],
         );
+        assert!(settings.auth.disabled);
         assert_eq!(settings.auth.keys.len(), 1);
         assert_eq!(settings.auth.keys[0].kid, "local-dev");
         assert_eq!(settings.news.sources.len(), 1);

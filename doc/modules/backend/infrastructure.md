@@ -45,7 +45,7 @@
 | `NewsSettings` | enabled、sources（列表）、request_timeout_secs |
 | `WorkerSettings` | 各 worker 的启用标志和轮询间隔 |
 | `OrderbookStreamSettings` | WS 连接和轮询配置（默认 `max_tokens=3000`） |
-| `AuthSettings` / `AuthKeySettings` | 认证配置和密钥 |
+| `AuthSettings` / `AuthKeySettings` | 认证配置和密钥；`disabled` 可开启内网免鉴权模式 |
 | `CopytradeSettings` | 跟单配置 |
 
 所有字段使用 `#[serde(default)]`，通过 `POLYEDGE_` 前缀环境变量加载（如 `POLYEDGE_SERVER__PORT`）。`POLYEDGE_POLYMARKET__SIGNATURE_TYPE` 支持 `eoa`、`proxy`、`gnosis_safe`、`poly_1271`；Deposit Wallet 使用 `poly_1271` 并通过 `POLYEDGE_POLYMARKET__FUNDER` 配置 deposit wallet 地址。
@@ -104,6 +104,7 @@
 - **`IdempotencyKey`**：幂等键解析
 - **`InternalTokenVerifier`**：内部 JWT 令牌验证
 - **`RequestKind`**：请求类型枚举
+- **`AuthSettings.disabled`**：`POLYEDGE_AUTH__DISABLED=true` 时跳过 console/connector/mode token 和 step-up 校验，直接注入 admin `AuthContext`；仅用于纯内网部署
 - **中间件函数：**
   - `require_connector_write_auth` — 连接器写入认证
   - `require_console_read_auth` — 控制台读取认证
@@ -133,7 +134,7 @@
 
 - Postgres 和 in-memory 双实现均已就绪
 - 配置通过环境变量加载，支持 `.env` 文件
-- 认证中间件当前在 `off` 模式下运行
+- 认证中间件支持 JWT/dev-auth 和内网免鉴权模式；当前部署模板默认 `POLYEDGE_AUTH__DISABLED=true`
 - Orderbook cache 当前 runtime 使用进程内 `InMemoryOrderbookCache`；Redis 实现保留但未接入默认 runtime
 - Orderbook 服务的 `/orderbook/stats` 现在区分真实 cache 条目数、registry 来源数和 registry 去重 token 总数，避免把订阅 token 数误报为缓存条目数
 

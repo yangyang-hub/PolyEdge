@@ -44,12 +44,12 @@ export const ops = {
     documentationLinks: "文档链接",
     buildTargets: "后续构建目标",
     buildTargetApi: "API 路由 {state}。",
-    buildTargetApiUnset: "通过静态 Nginx 代理使用同源 `/api/v1`",
+    buildTargetApiUnset: "未配置 API 地址，将尝试同源 `/api/v1`",
     buildTargetBackendMode: "前端数据模式为 `{mode}`。",
     buildTargetAuthMode: "`POLYEDGE_CONSOLE_AUTH` 当前解析为 `{mode}`。",
     buildTargetLiveMode:
-      "本地 live 模式可使用 `POLYEDGE_INTERNAL_AUTH_DEV_BYPASS=1`；签名模式需要 `POLYEDGE_INTERNAL_AUTH_KID` 和 `POLYEDGE_INTERNAL_AUTH_PRIVATE_KEY`。",
-    buildTargetStepUp: "受保护操作会先验证 `POLYEDGE_CONSOLE_STEP_UP_CODE`，再向下游发送 step-up scopes。",
+      "当前内网部署由 API 侧 `POLYEDGE_AUTH__DISABLED=true` 关闭权限校验；旧 local dev-auth 模式才需要 `NEXT_PUBLIC_POLYEDGE_INTERNAL_AUTH_DEV_BYPASS=1`。",
+    buildTargetStepUp: "内网免鉴权模式下 step-up code 不参与校验；关闭免鉴权后才会验证 step-up scopes。",
     degraded: "{count} 个降级",
   },
   docs: {

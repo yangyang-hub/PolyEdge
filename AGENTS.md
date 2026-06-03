@@ -88,7 +88,7 @@ retries solves this and ensures consistent data across all consumers.
 - 前端控制台已有 `dashboard / markets / events / radar / rewards / copy-trading / signals / positions / risk / approvals / replay / settings` 页面。
 - 前端数据层统一走 `src/lib/api/*`（读取按领域文件 `markets.ts` / `signals.ts` / `risk.ts`… 基于 `base.ts`，写操作走 `actions.ts`），页面装配在 `src/features/*/loaders` 和 `src/features/*/components`。`src/server/` 目前是空目录（历史遗留）。
 - 前端仅支持中文，文案走 `@/lib/i18n/dictionaries` 字典导入。
-- 前端不再提供 mock 数据模式；`POLYEDGE_API_BASE_URL` 必须指向 Rust 后端，读写和 SSE 都走真实 `/api/v1/...`。
+- 前端不再提供 mock 数据模式；`NEXT_PUBLIC_POLYEDGE_API_BASE_URL` 必须指向 Rust 后端，读写和 SSE 都走真实 `/api/v1/...`。
 - 当前控制台会话只保留 `off`，不是生产级真实会话。
 - 后端 API 已覆盖 markets、events、news、evidences、signals、orders、trades、positions、pricing、arbitrage、rewards bot、risk、approvals、system、SSE、connector callback 和 orderbook（`GET /api/v1/orderbook/{token_id}`）等主路径。
 - `polyedge-worker` 支持 news ingest、news promotion、arbitrage radar、rewards bot live 策略、copytrade 跟单、execution drain、paper reconciliation、Polymarket order/fill/user-event、orderbook token 注册任务。市场同步和 orderbook 订阅已迁移到独立 `polyedge-orderbook` 服务；orderbook 服务启动时先暴露 HTTP `/healthz`，再后台执行 initial/periodic market sync，避免外部 Polymarket API 延迟阻塞容器健康检查。
@@ -186,7 +186,7 @@ git add bin/polyedge-api bin/polyedge-worker bin/polyedge-orderbook
 
 ```bash
 cp deploy/.env.example deploy/.env
-# 编辑 deploy/.env，填入外部 PostgreSQL URL 和控制台 step-up code
+# 编辑 deploy/.env，填入外部 PostgreSQL URL；纯内网默认 POLYEDGE_AUTH__DISABLED=true，不需要 step-up code
 # 各服务专属配置见 deploy/.env.{api,orderbook,worker,front}.example
 # Polymarket live / Deposit Wallet 示例见 deploy/.env.polymarket.example
 ./scripts/deploy.sh all
@@ -212,7 +212,7 @@ cp deploy/.env.example deploy/.env
 
 部署脚本默认使用 `/tmp/polyedge-deploy.lock` 防止 cron/CI 重叠执行，默认 `COMPOSE_PARALLEL_LIMIT=1` 串行构建镜像；Auto 模式只有后端二进制（api / worker / orderbook）或前端文件 hash 改变时才 rebuild，后端容器未运行但 hash 未变时按 orderbook → API → Worker 顺序启动已有镜像。Compose 构建上下文已收窄：后端只上传 `bin/`，前端只上传 `packages/front/`，避免扫描本地 `packages/backend/target`、`node_modules`、`.next` 等大目录。
 
-默认部署模板仍沿用本地 internal dev-auth 模式，只适合原型/内网共享环境；生产前需要真实会话体系、签名 internal JWT、key rotation 和撤销策略。
+默认部署模板使用 `POLYEDGE_AUTH__DISABLED=true` 的纯内网免鉴权模式，API 通过 permissive CORS 支持 front/API 分别部署在不同服务器；生产前需要关闭该开关并接入真实会话体系、签名 internal JWT、key rotation 和撤销策略。
 
 ## 关键入口
 

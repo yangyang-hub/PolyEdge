@@ -198,6 +198,7 @@ impl Default for CopyTradeSettings {
 impl Default for AuthSettings {
     fn default() -> Self {
         Self {
+            disabled: false,
             issuer: "polyedge-nextjs".to_string(),
             audience: "polyedge-rust-api".to_string(),
             clock_skew_secs: 30,

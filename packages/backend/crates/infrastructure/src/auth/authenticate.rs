@@ -6,6 +6,10 @@ fn authenticate_request(
     kind: RequestKind,
 ) -> std::result::Result<AuthContext, HttpError> {
     let headers = request.headers();
+    if state.settings.auth.disabled {
+        return Ok(auth_disabled_context(request));
+    }
+
     let is_local_mode =
         state.settings.runtime.environment == "local" && state.settings.auth.keys.is_empty();
 
@@ -165,4 +169,43 @@ fn authenticate_local_dev_request(
         ip: client_ip,
         user_agent: client_user_agent,
     }))
+}
+
+fn auth_disabled_context(request: &Request) -> AuthContext {
+    let headers = request.headers();
+    let request_id = headers
+        .get("x-request-id")
+        .and_then(|value| value.to_str().ok())
+        .filter(|value| !value.trim().is_empty())
+        .map(std::borrow::ToOwned::to_owned)
+        .unwrap_or_else(|| format!("req_intranet_{}", new_trace_id()));
+    let client_ip = headers
+        .get("x-client-ip")
+        .and_then(|value| value.to_str().ok())
+        .map(std::borrow::ToOwned::to_owned);
+    let client_user_agent = headers
+        .get("x-client-user-agent")
+        .and_then(|value| value.to_str().ok())
+        .map(std::borrow::ToOwned::to_owned);
+
+    AuthContext {
+        user_id: "usr_intranet_admin".to_string(),
+        session_id: "sess_intranet_admin".to_string(),
+        roles: vec![UserRole::Admin],
+        request_id,
+        step_up_verified: true,
+        step_up_scopes: vec![
+            StepUpScope::SignalApprove,
+            StepUpScope::SignalReject,
+            StepUpScope::ExecutionSubmit,
+            StepUpScope::OrderCancelForce,
+            StepUpScope::SystemModeSwitch,
+            StepUpScope::SystemKillSwitchTrigger,
+            StepUpScope::SystemKillSwitchRelease,
+            StepUpScope::RiskThresholdUpdate,
+        ],
+        step_up_until: Some(OffsetDateTime::now_utc() + time::Duration::days(3650)),
+        ip: client_ip,
+        user_agent: client_user_agent,
+    }
 }

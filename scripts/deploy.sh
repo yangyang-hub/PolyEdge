@@ -155,6 +155,12 @@ env_value() {
   printf '%s' "${value}"
 }
 
+env_truthy() {
+  local value="${1:-}"
+  value="${value,,}"
+  [[ "${value}" == "1" || "${value}" == "true" || "${value}" == "yes" || "${value}" == "on" ]]
+}
+
 validate_env_file() {
   local file="$1"
 
@@ -174,10 +180,14 @@ validate_env_file() {
     fail "POLYEDGE_POSTGRES__URL still contains change-me in ${file}."
   fi
 
-  local step_up_code
-  step_up_code="$(env_value POLYEDGE_AUTH__STEP_UP_CODE "${file}")"
-  if [[ -z "${step_up_code}" || "${step_up_code}" == "change-me" ]]; then
-    fail "POLYEDGE_AUTH__STEP_UP_CODE must be set to a non-placeholder value in ${file}."
+  local auth_disabled
+  auth_disabled="$(env_value POLYEDGE_AUTH__DISABLED "${file}")"
+  if ! env_truthy "${auth_disabled}"; then
+    local step_up_code
+    step_up_code="$(env_value POLYEDGE_AUTH__STEP_UP_CODE "${file}")"
+    if [[ -z "${step_up_code}" || "${step_up_code}" == "change-me" ]]; then
+      fail "POLYEDGE_AUTH__STEP_UP_CODE must be set to a non-placeholder value in ${file}, or set POLYEDGE_AUTH__DISABLED=true for an intranet-only deployment."
+    fi
   fi
 
   local runtime_environment
@@ -186,7 +196,7 @@ validate_env_file() {
   local dev_bypass
   dev_bypass="$(env_value POLYEDGE_INTERNAL_AUTH_DEV_BYPASS "${file}")"
   dev_bypass="${dev_bypass:-1}"
-  if [[ "${runtime_environment}" != "local" && "${dev_bypass}" == "1" ]]; then
+  if ! env_truthy "${auth_disabled}" && [[ "${runtime_environment}" != "local" && "${dev_bypass}" == "1" ]]; then
     fail "POLYEDGE_INTERNAL_AUTH_DEV_BYPASS=1 is only allowed with POLYEDGE_RUNTIME__ENVIRONMENT=local."
   fi
 }

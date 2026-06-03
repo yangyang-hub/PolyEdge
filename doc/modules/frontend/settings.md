@@ -1,6 +1,6 @@
 # Settings（设置）
 
-最后更新：2026-05-31
+最后更新：2026-06-03
 
 ## 概述
 
@@ -21,7 +21,7 @@
 
 ## 权限
 
-`/settings` 路由要求 `admin` 角色（前端当前 auth mode 为 `off`）。
+`/settings` 路由仍声明 `admin` 角色；当前内网部署由 API 侧 `POLYEDGE_AUTH__DISABLED=true` 关闭后端权限校验，前端 auth mode 仍为 `off`。
 
 ## i18n
 
@@ -29,7 +29,7 @@
 
 ## 当前状态
 
-已实现，支持运行时配置的查看和修改。
+已实现，支持运行时配置的查看和修改。设置页文案显示当前 API 直连地址、前端 auth mode，并说明内网免鉴权模式下不需要 dev-auth 或 step-up code。
 
 ## 修改检查清单
 

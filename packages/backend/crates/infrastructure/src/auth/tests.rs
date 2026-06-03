@@ -78,6 +78,7 @@ mod tests {
         let signing_key = SigningKey::from_bytes(&[7_u8; 32]);
         let public_key = general_purpose::STANDARD.encode(signing_key.verifying_key().as_bytes());
         let settings = AuthSettings {
+            disabled: false,
             issuer: "polyedge-nextjs".to_string(),
             audience: "polyedge-rust-api".to_string(),
             clock_skew_secs: 30,
@@ -114,6 +115,7 @@ mod tests {
         let signing_key = SigningKey::from_bytes(&[7_u8; 32]);
         let public_key = general_purpose::STANDARD.encode(signing_key.verifying_key().as_bytes());
         let settings = AuthSettings {
+            disabled: false,
             issuer: "polyedge-nextjs".to_string(),
             audience: "polyedge-rust-api".to_string(),
             clock_skew_secs: 30,

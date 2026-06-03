@@ -1,6 +1,6 @@
 # 数据层（API Client + Actions + Contracts）
 
-最后更新：2026-06-01
+最后更新：2026-06-03
 
 ## 概述
 
@@ -45,10 +45,11 @@
 - `InternalApiStepUpScope` — 8 个提权操作范围
 
 **连接机制：**
-- 基础 URL 来自 `NEXT_PUBLIC_POLYEDGE_API_BASE_URL` 环境变量
-- 所有请求使用 `cache: "no-store"` 和 `credentials: "same-origin"`
-- Dev 模式下通过 `X-PolyEdge-Dev-Auth` 头绕过认证
-- Step-up 认证通过 `X-PolyEdge-Step-Up-Code` + `X-PolyEdge-Step-Up-Scopes` 头实现
+- 基础 URL 来自 `NEXT_PUBLIC_POLYEDGE_API_BASE_URL` 环境变量；静态部署且 front/API 分离时必须指向 Rust API（例如 `http://192.168.31.5:38001`）
+- 所有请求使用 `cache: "no-store"`；配置了 API base URL 时 `credentials: "omit"`，未配置时才使用同源
+- 当前内网部署由 API 侧 `POLYEDGE_AUTH__DISABLED=true` 关闭权限校验，前端不需要发送 dev-auth header
+- 旧 local dev-auth 模式仍可通过 `NEXT_PUBLIC_POLYEDGE_INTERNAL_AUTH_DEV_BYPASS=1` 发送 `X-PolyEdge-Dev-Auth` 头
+- Step-up header 代码路径保留；API 免鉴权模式下不会校验 step-up code
 
 ### 领域 API 模块 — `src/lib/api/*.ts`
 
@@ -112,6 +113,7 @@ OperationActionResult → 更新 UI 状态
 - DTO 类型镜像完整覆盖后端 contracts crate
 - Rewards snapshot DTO 包含 `orders_page` 和 `config.execution_mode`，`readRewardBotSnapshot()` 支持订单服务端分页 query
 - positions.ts 是唯一使用 `mapItem` 做字段重命名的模块
+- 当前静态部署使用 `NEXT_PUBLIC_POLYEDGE_API_BASE_URL` 浏览器直连 Rust API，不再通过前端 Nginx 反代 `/api/v1`
 
 ## 修改检查清单
 

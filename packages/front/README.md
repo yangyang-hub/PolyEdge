@@ -27,8 +27,7 @@ yarn build
 Runtime settings:
 
 ```bash
-POLYEDGE_API_UPSTREAM=http://polyedge-api:38001
-POLYEDGE_CONSOLE_STEP_UP_CODE=change-me
+NEXT_PUBLIC_POLYEDGE_API_BASE_URL=http://192.168.31.5:38001
 ```
 
-Nginx serves static routes and proxies `/api/v1/*` to the Rust API.
+Nginx serves static routes only. Browser API requests go directly to the Rust API base URL above; the current intranet deployment uses `POLYEDGE_AUTH__DISABLED=true` on the API side.

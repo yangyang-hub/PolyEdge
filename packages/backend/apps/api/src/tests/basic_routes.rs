@@ -57,6 +57,25 @@ async fn protected_read_route_requires_valid_token() {
 }
 
 #[tokio::test]
+async fn auth_disabled_allows_protected_read_route_without_headers() {
+    let mut settings = Settings::for_test(SystemMode::ManualConfirm, "intranet", Vec::new());
+    settings.auth.disabled = true;
+    let app = build_app(Runtime::test_app_state(settings).expect("state"));
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/system/mode")
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
+#[tokio::test]
 async fn markets_route_returns_seeded_market_list() {
     let signing_key = SigningKey::from_bytes(&[12_u8; 32]);
     let settings = Settings::for_test(

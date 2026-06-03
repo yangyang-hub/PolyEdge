@@ -220,6 +220,7 @@ pub struct CopyTradeSettings {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct AuthSettings {
+    pub disabled: bool,
     pub issuer: String,
     pub audience: String,
     pub clock_skew_secs: i64,
