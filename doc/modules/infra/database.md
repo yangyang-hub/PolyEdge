@@ -1,10 +1,10 @@
 # 数据库（Migrations + Schema）
 
-最后更新：2026-06-01
+最后更新：2026-06-03
 
 ## 概述
 
-数据库使用 PostgreSQL，通过 23 个 SQL 迁移文件管理 schema。覆盖审计、市场数据、事件/信号、执行管道、风控、套利、奖励、跟单等领域。
+数据库使用 PostgreSQL，通过 25 个 SQL 迁移文件管理 schema。覆盖审计、市场数据、事件/信号、执行管道、风控、套利、奖励、跟单等领域。
 
 ## 迁移文件列表
 
@@ -33,6 +33,8 @@
 | `0021_copytrade_daily_pnl.sql` | 跟单日 PnL | 修改 `copytrade_account_state`（`daily_realized_pnl`） |
 | `0022_reward_bot_control_commands.sql` | 奖励机器人控制命令 | `reward_control_commands` |
 | `0023_copytrade_control_commands.sql` | 跟单控制命令 | `copytrade_control_commands` |
+| `0024_reward_markets_active_index.sql` | 奖励市场查询索引 | `reward_markets` active + daily rate 索引 |
+| `0025_markets_active_volume_index.sql` | 市场活跃度索引 | `markets` open/tradable + 24h volume 索引 |
 
 ## Schema 领域分组
 
@@ -106,7 +108,7 @@
 
 ## 当前状态
 
-- 23 个迁移文件，最新为 `0023_copytrade_control_commands.sql`
+- 25 个迁移文件，最新为 `0025_markets_active_volume_index.sql`
 - 所有表使用 PostgreSQL 特性（JSONB、NUMERIC 约束、BIGSERIAL、部分索引等）
 - 迁移使用 `sqlx` 管理
 

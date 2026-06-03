@@ -1,6 +1,6 @@
 # 部署（Docker + Nginx + Scripts）
 
-最后更新：2026-06-01
+最后更新：2026-06-03
 
 ## 概述
 
@@ -145,7 +145,7 @@
 | `POLYEDGE_WORKER__CONSUME_ORDERBOOK_STREAM` | `false`（Compose 覆盖） | 部署 worker 是否消费 orderbook stream |
 | `POLYEDGE_WORKER__POLL_REWARD_BOT` | `false`（Compose 覆盖） | 部署 worker 是否运行 rewards full tick + fast reconcile loop |
 | `POLYEDGE_ORDERBOOK_STREAM__ENABLED` | `true` | orderbook stream 功能开关；Compose 中还需打开 worker 任务 |
-| `POLYEDGE_ORDERBOOK_STREAM__MAX_TOKENS` | `20000` | orderbook stream 订阅 token 上限，过低会导致 rewards 覆盖不全 |
+| `POLYEDGE_ORDERBOOK_STREAM__MAX_TOKENS` | `3000` | orderbook stream 订阅 token 上限，过低会导致 rewards 覆盖不全，过高会增加 WS/poll 内存占用 |
 
 ## Polymarket live 配置示例
 

@@ -1,6 +1,6 @@
 # application（应用/服务层）
 
-最后更新：2026-06-02
+最后更新：2026-06-03
 
 ## 概述
 
@@ -109,7 +109,7 @@
 - `max_markets=0`、`max_open_orders=0` 或 `quote_size_usd=0` 表示不再新挂单。
 - 缺少新鲜缓存盘口时不会提交新 post-only 订单。placement 必须看到 YES/NO 两腿的新鲜盘口。
 - 全局敞口门槛使用「已有库存 notional + 当前候选单腿 notional」做准入。
-- 单次 rewards tick 使用 `list_reward_run_candidate_markets()` 只从 `reward_markets` 表读取候选池（默认至少 100；上限随 `max_markets` / `max_open_orders` 扩展到 `u16::MAX`），再按 active、token、最低日奖励、有效奖励 spread、下单开关做无需盘口的预过滤；只有通过预过滤的奖励市场会读取 worker 进程内 orderbook cache 并生成当前 quote plan 快照。
+- 单次 rewards tick 使用 `list_reward_run_candidate_markets()` 从 `reward_markets` 读取候选池；Postgres 路径会关联 Gamma `markets`，优先选择 open + tradable 且 `volume_24h` 高的市场，再按 active、token、最低日奖励、有效奖励 spread、下单开关做无需盘口的预过滤；只有通过预过滤的奖励市场会读取 orderbook 服务缓存并生成当前 quote plan 快照。
 
 **live 资金模型：**
 - Rewards live maker 下单沿用软资金复用语义：未成交的 post-only/GTC maker 买单是链下签名挂单，不在本地策略层按全局 notional 硬锁同一笔 USDC；同一资金池可同时在多个不同市场报价。

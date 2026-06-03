@@ -147,20 +147,26 @@ impl RewardBotStore for PostgresRewardBotStore {
     async fn list_markets(&self, limit: u16) -> Result<Vec<RewardMarket>> {
         let rows = sqlx::query(
             r#"
-            SELECT condition_id,
-                   question,
-                   market_slug,
-                   event_slug,
-                   image,
-                   rewards_max_spread,
-                   rewards_min_size,
-                   total_daily_rate,
-                   tokens_json,
-                   active,
-                   updated_at
-            FROM reward_markets
-            WHERE active = true
-            ORDER BY total_daily_rate DESC, updated_at DESC
+            SELECT rm.condition_id,
+                   rm.question,
+                   rm.market_slug,
+                   rm.event_slug,
+                   rm.image,
+                   rm.rewards_max_spread,
+                   rm.rewards_min_size,
+                   rm.total_daily_rate,
+                   rm.tokens_json,
+                   rm.active,
+                   rm.updated_at
+            FROM reward_markets rm
+            JOIN markets m
+              ON m.polymarket_condition_id = rm.condition_id
+            WHERE rm.active = true
+              AND m.status = 'open'
+              AND m.tradability_status = 'tradable'
+            ORDER BY m.volume_24h DESC,
+                     rm.total_daily_rate DESC,
+                     rm.updated_at DESC
             LIMIT $1
             "#,
         )

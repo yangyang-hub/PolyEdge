@@ -645,15 +645,69 @@ async fn register_orderbook_tokens(state: &AppState) {
         }
     }
 
+    tokens.truncate(max_tokens);
+
     // Unregister old exec_orders and register new set.
     state.orderbook_registry.unregister_source("exec_orders").await;
     state.orderbook_registry.register_tokens("exec_orders", &tokens).await;
 
-    // Source 2: Reward candidate market token IDs.
-    if let Ok(reward_tokens) = state.reward_bot_service.list_all_reward_candidate_token_ids().await {
-        state.orderbook_registry.unregister_source("rewards").await;
-        state.orderbook_registry.register_tokens("rewards", &reward_tokens).await;
+    // Source 2: Reward token IDs. Keep active managed-order/position tokens first,
+    // then fill the remaining subscription budget with candidate market tokens.
+    let reward_capacity = max_tokens.saturating_sub(tokens.len());
+    let mut reward_tokens = Vec::new();
+    let mut reward_seen = HashSet::new();
+
+    if reward_capacity > 0 {
+        if let Ok(active_tokens) = state.reward_bot_service.list_active_reward_book_token_ids().await {
+            push_unique_tokens(
+                &mut reward_tokens,
+                &mut reward_seen,
+                active_tokens,
+                reward_capacity,
+            );
+        }
     }
 
-    info!(exec_tokens = tokens.len(), "registered orderbook tokens with orderbook service");
+    if reward_tokens.len() < reward_capacity {
+        if let Ok(candidate_tokens) = state.reward_bot_service.list_all_reward_candidate_token_ids().await {
+            push_unique_tokens(
+                &mut reward_tokens,
+                &mut reward_seen,
+                candidate_tokens,
+                reward_capacity,
+            );
+        }
+    }
+
+    state.orderbook_registry.unregister_source("rewards").await;
+    if !reward_tokens.is_empty() {
+        state
+            .orderbook_registry
+            .register_tokens("rewards", &reward_tokens)
+            .await;
+    }
+
+    info!(
+        exec_tokens = tokens.len(),
+        reward_tokens = reward_tokens.len(),
+        max_tokens,
+        "registered orderbook tokens with orderbook service"
+    );
+}
+
+fn push_unique_tokens(
+    target: &mut Vec<String>,
+    seen: &mut HashSet<String>,
+    tokens: Vec<String>,
+    limit: usize,
+) {
+    for token in tokens {
+        if target.len() >= limit {
+            break;
+        }
+        if token.trim().is_empty() || !seen.insert(token.clone()) {
+            continue;
+        }
+        target.push(token);
+    }
 }
