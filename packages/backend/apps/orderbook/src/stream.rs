@@ -123,23 +123,25 @@ pub async fn run_orderbook_stream(state: &AppState) -> Result<OrderbookStreamRep
             );
 
             let fetch_limit = stale.len().min(poll_max_tokens);
-            match connector.fetch_order_books(&stale[..fetch_limit]).await {
-                Ok(books) => {
-                    for book in books {
-                        let cached = reward_book_to_cached(&book);
-                        if let Err(error) = poll_cache.set_book(&cached).await {
-                            warn!(
-                                token_id = %cached.token_id,
-                                error = %error,
-                                "poll reconciler failed to write book to cache"
-                            );
+            for chunk in stale[..fetch_limit].chunks(100) {
+                match connector.fetch_order_books(chunk).await {
+                    Ok(books) => {
+                        for book in books {
+                            let cached = reward_book_to_cached(&book);
+                            if let Err(error) = poll_cache.set_book(&cached).await {
+                                warn!(
+                                    token_id = %cached.token_id,
+                                    error = %error,
+                                    "poll reconciler failed to write book to cache"
+                                );
+                            }
                         }
+                        poll_rec_clone.fetch_add(1, Ordering::Relaxed);
                     }
-                    poll_rec_clone.fetch_add(1, Ordering::Relaxed);
-                }
-                Err(error) => {
-                    poll_fail_clone.fetch_add(1, Ordering::Relaxed);
-                    warn!(error = %error, "poll reconciler failed to fetch books");
+                    Err(error) => {
+                        poll_fail_clone.fetch_add(1, Ordering::Relaxed);
+                        warn!(error = %error, "poll reconciler failed to fetch books");
+                    }
                 }
             }
         }

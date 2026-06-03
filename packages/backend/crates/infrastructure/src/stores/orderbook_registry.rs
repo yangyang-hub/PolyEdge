@@ -89,6 +89,11 @@ impl OrderbookSubscriptionRegistry for InMemoryOrderbookSubscriptionRegistry {
         tokens.len()
     }
 
+    async fn has_source(&self, source: &str) -> bool {
+        let tokens = self.tokens.read().await;
+        tokens.contains_key(source)
+    }
+
     async fn changed_since(&self, since: Instant) -> bool {
         let ts = self.last_modified.lock().await;
         *ts > since

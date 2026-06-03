@@ -6,6 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use time::OffsetDateTime;
 use tokio::sync::Semaphore;
+use tokio::task::JoinSet;
 
 const LAST_CURSOR: &str = "LTE=";
 const ENRICH_TIMEOUT: Duration = Duration::from_secs(10);
@@ -121,6 +122,18 @@ struct RawClobMarketDetail {
 
 const ENRICH_CONCURRENCY: usize = 10;
 
+fn spawn_next_orderbook_fetch<'a>(
+    tasks: &mut JoinSet<Result<Option<PolymarketRewardOrderBook>>>,
+    pending: &mut std::slice::Iter<'a, String>,
+    connector: &PolymarketRewardsConnector,
+) {
+    if let Some(token_id) = pending.next() {
+        let conn = connector.clone();
+        let tid = token_id.clone();
+        tasks.spawn(async move { conn.fetch_order_book(&tid).await });
+    }
+}
+
 impl PolymarketRewardsConnector {
     pub fn new(clob_host: &str) -> Result<Self> {
         let clob_host = clob_host.trim().trim_end_matches('/').to_string();
@@ -213,23 +226,16 @@ impl PolymarketRewardsConnector {
         &self,
         token_ids: &[String],
     ) -> Result<Vec<PolymarketRewardOrderBook>> {
-        let semaphore = Arc::new(Semaphore::new(ENRICH_CONCURRENCY));
-        let connector = self.clone();
-        let mut handles = Vec::with_capacity(token_ids.len());
+        let mut pending = token_ids.iter();
+        let mut tasks = JoinSet::new();
+        let mut books = Vec::new();
 
-        for token_id in token_ids {
-            let sem = semaphore.clone();
-            let conn = connector.clone();
-            let tid = token_id.clone();
-            handles.push(tokio::spawn(async move {
-                let _permit = sem.acquire().await.expect("semaphore closed");
-                conn.fetch_order_book(&tid).await
-            }));
+        for _ in 0..ENRICH_CONCURRENCY {
+            spawn_next_orderbook_fetch(&mut tasks, &mut pending, self);
         }
 
-        let mut books = Vec::new();
-        for handle in handles {
-            match handle.await {
+        while let Some(result) = tasks.join_next().await {
+            match result {
                 Ok(Ok(Some(book))) => books.push(book),
                 Ok(Ok(None)) => {}
                 Ok(Err(error)) => {
@@ -239,6 +245,7 @@ impl PolymarketRewardsConnector {
                     tracing::warn!(error = %error, "order book task panicked");
                 }
             }
+            spawn_next_orderbook_fetch(&mut tasks, &mut pending, self);
         }
 
         Ok(books)

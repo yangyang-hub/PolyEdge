@@ -337,6 +337,11 @@ impl OrderbookSubscriptionRegistry for OrderbookHttpClient {
         }
     }
 
+    async fn has_source(&self, _source: &str) -> bool {
+        // Remote clients do not need source-level introspection.
+        false
+    }
+
     async fn changed_since(&self, _since: Instant) -> bool {
         // Remote client cannot track server-side registry changes.
         // Return false (conservative) — the orderbook stream uses direct token

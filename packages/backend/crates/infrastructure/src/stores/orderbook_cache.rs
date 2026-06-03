@@ -13,13 +13,15 @@ struct BookEntry {
 pub struct InMemoryOrderbookCache {
     books: RwLock<HashMap<String, BookEntry>>,
     ttl_ms: i64,
+    max_levels_per_side: usize,
 }
 
 impl InMemoryOrderbookCache {
-    pub fn new(ttl_ms: u64) -> Self {
+    pub fn new(ttl_ms: u64, max_levels_per_side: usize) -> Self {
         Self {
             books: RwLock::new(HashMap::new()),
             ttl_ms: (ttl_ms.max(1_000)) as i64, // minimum 1 second
+            max_levels_per_side: max_levels_per_side.max(1),
         }
     }
 
@@ -39,10 +41,20 @@ impl InMemoryOrderbookCache {
                 let remaining = books.len();
                 drop(books);
                 if dropped > 0 {
-                    debug!(dropped, remaining, "orderbook cache cleanup removed expired entries");
+                    debug!(
+                        dropped,
+                        remaining, "orderbook cache cleanup removed expired entries"
+                    );
                 }
             }
         });
+    }
+
+    fn bounded_book(&self, book: &CachedOrderBook) -> CachedOrderBook {
+        let mut bounded = book.clone();
+        bounded.bids.truncate(self.max_levels_per_side);
+        bounded.asks.truncate(self.max_levels_per_side);
+        bounded
     }
 }
 
@@ -58,11 +70,12 @@ impl OrderbookCache for InMemoryOrderbookCache {
     }
 
     async fn set_book(&self, book: &CachedOrderBook) -> Result<()> {
+        let book = self.bounded_book(book);
         let mut books = self.books.write().await;
         books.insert(
             book.token_id.clone(),
             BookEntry {
-                book: book.clone(),
+                book,
                 expires_at_ms: now_millis() + self.ttl_ms,
             },
         );
@@ -73,10 +86,11 @@ impl OrderbookCache for InMemoryOrderbookCache {
         let mut books = self.books.write().await;
         let expires_at_ms = now_millis() + self.ttl_ms;
         for book in books_slice {
+            let book = self.bounded_book(book);
             books.insert(
                 book.token_id.clone(),
                 BookEntry {
-                    book: book.clone(),
+                    book,
                     expires_at_ms,
                 },
             );

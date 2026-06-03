@@ -166,6 +166,7 @@ impl Default for OrderbookStreamSettings {
         Self {
             enabled: true,
             max_tokens: 3_000,
+            max_levels_per_side: 100,
             poll_reconcile_interval_secs: 30,
             stale_threshold_ms: 15_000,
             book_ttl_ms: 300_000, // 5 minutes

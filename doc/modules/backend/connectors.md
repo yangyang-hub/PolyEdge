@@ -74,6 +74,7 @@
 - **`PolymarketRewardMarket`**：condition_id、question、market_slug、rewards_max_spread、rewards_min_size、total_daily_rate、tokens
 - **`PolymarketRewardOrderBook`**：token_id、bids、asks、observed_at
 - 常量：`ENRICH_TIMEOUT = 10s`、`ENRICH_MAX_RETRIES = 3`、`ENRICH_RETRY_BASE_DELAY = 500ms`
+- `fetch_order_books(token_ids)` 使用固定并发窗口（默认 10）拉取 `/book`，不会为全部 token 一次性创建任务。
 - 用途：`market_sync.rs` 填充 `reward_markets` 表
 
 ### News（RSS/Atom 新闻）

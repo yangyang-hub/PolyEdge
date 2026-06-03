@@ -192,6 +192,7 @@ pub struct WorkerSettings {
 pub struct OrderbookStreamSettings {
     pub enabled: bool,
     pub max_tokens: usize,
+    pub max_levels_per_side: usize,
     pub poll_reconcile_interval_secs: u64,
     pub stale_threshold_ms: u64,
     pub book_ttl_ms: u64,

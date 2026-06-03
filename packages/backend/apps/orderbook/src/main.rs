@@ -71,6 +71,17 @@ async fn main() {
     // It subscribes to tokens registered via the HTTP API by other services.
     let stream_state = state.clone();
     let stream_handle = tokio::spawn(async move {
+        if !stream_state.settings.orderbook_stream.enabled {
+            info!("orderbook stream disabled by configuration");
+            std::future::pending::<()>().await;
+        }
+        let restart_interval = Duration::from_secs(
+            stream_state
+                .settings
+                .orderbook_stream
+                .restart_interval_secs
+                .max(1),
+        );
         loop {
             let token_count = stream_state
                 .orderbook_registry
@@ -89,14 +100,19 @@ async fn main() {
                         subscribed = report.subscribed_tokens,
                         ws_received = report.ws_snapshots_received,
                         poll_reconciliations = report.poll_reconciliations,
-                        "orderbook stream stopped, restarting after 5s"
+                        restart_after_secs = restart_interval.as_secs(),
+                        "orderbook stream stopped, restarting"
                     );
                 }
                 Err(error) => {
-                    tracing::warn!(error = %error, "orderbook stream failed, restarting after 5s");
+                    tracing::warn!(
+                        error = %error,
+                        restart_after_secs = restart_interval.as_secs(),
+                        "orderbook stream failed, restarting"
+                    );
                 }
             }
-            tokio::time::sleep(Duration::from_secs(5)).await;
+            tokio::time::sleep(restart_interval).await;
         }
     });
 

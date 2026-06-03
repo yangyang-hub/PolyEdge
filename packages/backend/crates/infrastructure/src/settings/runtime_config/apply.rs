@@ -216,6 +216,9 @@ fn apply_runtime_config_value(
         "orderbook_stream.max_tokens" => {
             self.orderbook_stream.max_tokens = parse_usize_runtime_config(key, value)?;
         }
+        "orderbook_stream.max_levels_per_side" => {
+            self.orderbook_stream.max_levels_per_side = parse_usize_runtime_config(key, value)?;
+        }
         "orderbook_stream.poll_reconcile_interval_secs" => {
             self.orderbook_stream.poll_reconcile_interval_secs =
                 parse_u64_runtime_config(key, value)?;

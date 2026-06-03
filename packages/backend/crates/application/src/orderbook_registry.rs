@@ -22,6 +22,9 @@ pub trait OrderbookSubscriptionRegistry: Send + Sync {
     /// 返回当前注册来源数量。
     async fn source_count(&self) -> usize;
 
+    /// 返回指定来源当前是否存在。
+    async fn has_source(&self, source: &str) -> bool;
+
     /// 返回自某个时间点之后是否有变更（用于增量判断是否需要 WS 重连）。
     async fn changed_since(&self, since: Instant) -> bool;
 }

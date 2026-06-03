@@ -60,6 +60,7 @@
 - 后端链路中的基础服务，Compose 会先于 API 和 Worker 启动
 - 职责：HTTP API（健康检查、盘口读取、token 注册）、后台市场同步（Gamma + CLOB → Postgres）、WS + poll 盘口流（→ 进程内缓存）
 - 启动顺序：先 bind HTTP 并暴露 `/healthz`，随后后台执行 initial/periodic market sync，避免外部 Polymarket API 慢响应导致容器启动健康检查失败
+- `POLYEDGE_ORDERBOOK_STREAM__ENABLED` 控制 WS + poll stream 是否运行；`POLYEDGE_ORDERBOOK_STREAM__MAX_LEVELS_PER_SIDE` 限制每个 token 缓存的 bid/ask 深度
 - 环境变量：`.env` + `.env.orderbook`
 
 ### polyedge-worker
@@ -146,8 +147,9 @@ API 请求不再经过前端 nginx 反向代理；跨域由 Rust API 的 `CorsLa
 | `POLYEDGE_WORKER__POLL_MARKET_SYNC` | `false`（Compose 覆盖） | 部署 worker 是否同步 markets/reward_markets |
 | `POLYEDGE_WORKER__CONSUME_ORDERBOOK_STREAM` | `false`（Compose 覆盖） | 部署 worker 是否消费 orderbook stream |
 | `POLYEDGE_WORKER__POLL_REWARD_BOT` | `false`（Compose 覆盖） | 部署 worker 是否运行 rewards full tick + fast reconcile loop |
-| `POLYEDGE_ORDERBOOK_STREAM__ENABLED` | `true` | orderbook stream 功能开关；Compose 中还需打开 worker 任务 |
+| `POLYEDGE_ORDERBOOK_STREAM__ENABLED` | `true` | standalone orderbook 服务 WS + poll stream 功能开关 |
 | `POLYEDGE_ORDERBOOK_STREAM__MAX_TOKENS` | `3000` | orderbook stream 订阅 token 上限，过低会导致 rewards 覆盖不全，过高会增加 WS/poll 内存占用 |
+| `POLYEDGE_ORDERBOOK_STREAM__MAX_LEVELS_PER_SIDE` | `100` | 每个 token 在 orderbook 进程内缓存和 HTTP ingest 中最多保留的 bid/ask 深度档数 |
 
 ## Polymarket live 配置示例
 
@@ -169,6 +171,7 @@ git add bin/polyedge-api bin/polyedge-worker bin/polyedge-orderbook
 - `polyedge-front` 不再依赖 API 健康后才启动；前端静态 Nginx 可独立运行，浏览器按 `NEXT_PUBLIC_POLYEDGE_API_BASE_URL` 访问 API
 - `scripts/deploy.sh` 已防止重叠执行；前端变更 hash 包含 `packages/front/` 和 `deploy/.env.front`，会 prune `node_modules`、`.next`、`out` 等大目录；容器 down 时会按 orderbook → API → Worker 顺序启动已有后端镜像，不会因健康失败而重复 rebuild
 - 当前部署模板默认 `POLYEDGE_AUTH__DISABLED=true`，API/front 内网交互不做权限校验；API CORS 为 permissive
+- Orderbook 服务 HTTP register/batch/ingest 入口按 `max_tokens` 和 `max_levels_per_side` 控制请求规模与缓存深度，registry source 固定上限为 32 个，避免深盘口或错误注册导致内存持续增长
 - 生产前需要：关闭 `POLYEDGE_AUTH__DISABLED`、接入真实会话体系、签名 JWT、key rotation
 
 ## 修改检查清单

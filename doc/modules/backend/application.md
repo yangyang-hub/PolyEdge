@@ -162,10 +162,10 @@
 ### orderbook_registry — 盘口订阅注册中心
 
 **Trait：** `OrderbookSubscriptionRegistry`
-- `register_tokens(source, token_ids)`、`unregister_source(source)`、`list_all_tokens()`、`changed_since(instant)`
+- `register_tokens(source, token_ids)`、`unregister_source(source)`、`list_all_tokens()`、`source_count()`、`has_source(source)`、`changed_since(instant)`
 
 **实现：**
-- `InMemoryOrderbookSubscriptionRegistry`（infrastructure crate）— 进程内注册中心，仅供 orderbook 服务使用
+- `InMemoryOrderbookSubscriptionRegistry`（infrastructure crate）— 进程内注册中心，仅供 orderbook 服务使用，支持来源数量统计和来源存在检查
 - `OrderbookHttpClient`（connectors crate）— HTTP 客户端，Worker 通过此实现注册 token 到 orderbook 服务
 
 ### wallet_analysis — 钱包分析

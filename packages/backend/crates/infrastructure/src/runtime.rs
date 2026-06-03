@@ -191,6 +191,7 @@ impl Runtime {
         let orderbook_cache: Arc<dyn OrderbookCache> = {
             let cache = Arc::new(InMemoryOrderbookCache::new(
                 settings.orderbook_stream.book_ttl_ms,
+                settings.orderbook_stream.max_levels_per_side,
             ));
             cache.spawn_cleanup(Duration::from_secs(60));
             cache
@@ -274,6 +275,7 @@ impl Runtime {
         let orderbook_cache: Arc<dyn OrderbookCache> = {
             let cache = Arc::new(InMemoryOrderbookCache::new(
                 settings.orderbook_stream.book_ttl_ms,
+                settings.orderbook_stream.max_levels_per_side,
             ));
             cache.spawn_cleanup(Duration::from_secs(60));
             cache

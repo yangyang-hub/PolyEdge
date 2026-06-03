@@ -44,7 +44,7 @@
 | `RewardsSettings` | enabled、poll_interval、capital、per_market_usd 等 |
 | `NewsSettings` | enabled、sources（列表）、request_timeout_secs |
 | `WorkerSettings` | 各 worker 的启用标志和轮询间隔 |
-| `OrderbookStreamSettings` | WS 连接和轮询配置（默认 `max_tokens=3000`） |
+| `OrderbookStreamSettings` | WS 连接和轮询配置（默认 `max_tokens=3000`、`max_levels_per_side=100`） |
 | `AuthSettings` / `AuthKeySettings` | 认证配置和密钥；`disabled` 可开启内网免鉴权模式 |
 | `CopytradeSettings` | 跟单配置 |
 
@@ -70,8 +70,8 @@
 | `stores/risk_state.rs` | `RiskStateStore` | PostgreSQL/内存 |
 | `stores/idempotency.rs` | `IdempotencyStore` | PostgreSQL/内存 |
 | `stores/audit.rs` | `AuditLogSink` | PostgreSQL/内存 |
-| `stores/orderbook_cache.rs` | `OrderbookCache` | 内存（TTL + 定期清理 + `entry_count` 真实条目统计）— 仅供 orderbook 服务内部使用；Worker/API 通过 `OrderbookHttpClient` 远程访问 |
-| `stores/orderbook_registry.rs` | `OrderbookSubscriptionRegistry` | 内存（RwLock + `source_count` 来源统计）— 仅供 orderbook 服务内部使用；Worker/API 通过 HTTP 注册 token |
+| `stores/orderbook_cache.rs` | `OrderbookCache` | 内存（TTL + 定期清理 + 每侧盘口深度裁剪 + `entry_count` 真实条目统计）— 仅供 orderbook 服务内部使用；Worker/API 通过 `OrderbookHttpClient` 远程访问 |
+| `stores/orderbook_registry.rs` | `OrderbookSubscriptionRegistry` | 内存（RwLock + `source_count` 来源统计 + `has_source` 来源存在检查）— 仅供 orderbook 服务内部使用；Worker/API 通过 HTTP 注册 token |
 | `stores/runtime_config.rs` | 运行时配置 | PostgreSQL key-value |
 | `stores/helpers.rs` | DB 行映射辅助 | — |
 | `stores/types.rs` | 共享类型 | — |
@@ -137,6 +137,7 @@
 - 认证中间件支持 JWT/dev-auth 和内网免鉴权模式；当前部署模板默认 `POLYEDGE_AUTH__DISABLED=true`
 - Orderbook cache 当前 runtime 使用进程内 `InMemoryOrderbookCache`；Redis 实现保留但未接入默认 runtime
 - Orderbook 服务的 `/orderbook/stats` 现在区分真实 cache 条目数、registry 来源数和 registry 去重 token 总数，避免把订阅 token 数误报为缓存条目数
+- Orderbook 进程内缓存按 `POLYEDGE_ORDERBOOK_STREAM__MAX_LEVELS_PER_SIDE` 裁剪每侧 bids/asks 深度，默认 100 档；HTTP register/batch/ingest 入口使用 `max_tokens` 做请求规模上限，register 会替换对应 source 当前 token 集合，registry source 固定上限为 32 个
 
 ## 修改检查清单
 

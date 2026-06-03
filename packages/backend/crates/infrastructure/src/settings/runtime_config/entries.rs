@@ -566,6 +566,19 @@ pub fn runtime_config_entries(&self) -> Vec<RuntimeConfigEntry> {
         &mut entries,
         RuntimeConfigEntryDraft {
             section: "orderbook_stream",
+            field: "max_levels_per_side",
+            label: "Orderbook max levels per side",
+            env_name: "POLYEDGE_ORDERBOOK_STREAM__MAX_LEVELS_PER_SIDE",
+            value: self.orderbook_stream.max_levels_per_side.to_string(),
+            default_value: defaults.orderbook_stream.max_levels_per_side.to_string(),
+            value_type: RuntimeConfigValueType::Integer,
+            options: Vec::new(),
+        },
+    );
+    push_runtime_config_entry(
+        &mut entries,
+        RuntimeConfigEntryDraft {
+            section: "orderbook_stream",
             field: "poll_reconcile_interval_secs",
             label: "Orderbook stream poll reconcile interval seconds",
             env_name: "POLYEDGE_ORDERBOOK_STREAM__POLL_RECONCILE_INTERVAL_SECS",

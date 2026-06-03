@@ -65,6 +65,7 @@ mod tests {
         assert!(settings.redis.url.is_none());
         assert!(settings.orderbook_stream.enabled);
         assert_eq!(settings.orderbook_stream.max_tokens, 3_000);
+        assert_eq!(settings.orderbook_stream.max_levels_per_side, 100);
         assert_eq!(settings.orderbook_stream.poll_reconcile_interval_secs, 30);
         assert_eq!(settings.orderbook_stream.stale_threshold_ms, 15_000);
         assert_eq!(settings.orderbook_stream.book_ttl_ms, 300_000);
@@ -245,6 +246,10 @@ mod tests {
                 "100".to_string(),
             ),
             (
+                "POLYEDGE_ORDERBOOK_STREAM__MAX_LEVELS_PER_SIDE".to_string(),
+                "12".to_string(),
+            ),
+            (
                 "POLYEDGE_ORDERBOOK_STREAM__POLL_RECONCILE_INTERVAL_SECS".to_string(),
                 "15".to_string(),
             ),
@@ -330,6 +335,7 @@ mod tests {
         assert_eq!(settings.worker.task_limit, 33);
         assert!(settings.orderbook_stream.enabled);
         assert_eq!(settings.orderbook_stream.max_tokens, 100);
+        assert_eq!(settings.orderbook_stream.max_levels_per_side, 12);
         assert_eq!(settings.orderbook_stream.poll_reconcile_interval_secs, 15);
         assert_eq!(
             settings.auth.revoked_sessions,
