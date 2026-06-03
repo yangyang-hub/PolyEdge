@@ -210,7 +210,7 @@ cp deploy/.env.example deploy/.env
 - `front`：只重建前端镜像并重启前端。
 - 支持组合，例如 `api front` 或 `api,worker`。
 
-部署脚本默认使用 `/tmp/polyedge-deploy.lock` 防止 cron/CI 重叠执行，默认 `COMPOSE_PARALLEL_LIMIT=1` 串行构建镜像；Auto 模式只有后端二进制（api / worker / orderbook）或前端文件 hash 改变时才 rebuild，后端容器未运行但 hash 未变时按 orderbook → API → Worker 顺序启动已有镜像。Compose 构建上下文已收窄：后端只上传 `bin/`，前端只上传 `packages/front/`，避免扫描本地 `packages/backend/target`、`node_modules`、`.next` 等大目录。
+部署脚本默认使用 `/tmp/polyedge-deploy.lock` 防止 cron/CI 重叠执行，默认 `COMPOSE_PARALLEL_LIMIT=1` 串行构建镜像；Auto 模式只有后端二进制（api / worker / orderbook）或前端文件/`deploy/.env.front` hash 改变时才 rebuild，后端容器未运行但 hash 未变时按 orderbook → API → Worker 顺序启动已有镜像。前端 `yarn build` 前会读取 `deploy/.env.front` 并把 `NEXT_PUBLIC_*` 写入静态 bundle。Compose 构建上下文已收窄：后端只上传 `bin/`，前端只上传 `packages/front/`，避免扫描本地 `packages/backend/target`、`node_modules`、`.next` 等大目录。
 
 默认部署模板使用 `POLYEDGE_AUTH__DISABLED=true` 的纯内网免鉴权模式，API 通过 permissive CORS 支持 front/API 分别部署在不同服务器；生产前需要关闭该开关并接入真实会话体系、签名 internal JWT、key rotation 和撤销策略。
 

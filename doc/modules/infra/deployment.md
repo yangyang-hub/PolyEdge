@@ -79,6 +79,7 @@
 - 健康检查：`wget /healthz`
 - 通过 `NEXT_PUBLIC_POLYEDGE_API_BASE_URL` 指向内网 API 地址，浏览器直连后端
 - 当前内网免鉴权模式不需要设置 `NEXT_PUBLIC_POLYEDGE_INTERNAL_AUTH_DEV_BYPASS`
+- `scripts/deploy.sh` 在 `yarn build` 前会读取 `deploy/.env.front` 并导出 `NEXT_PUBLIC_*`，这些值会被写入静态 JS bundle；修改 API 地址后必须重建前端镜像
 - `envsubst` 将环境变量注入 nginx 静态文件配置模板
 
 ## Nginx 配置
@@ -99,7 +100,7 @@ API 请求不再经过前端 nginx 反向代理；跨域由 Rust API 的 `CorsLa
 2. `git fetch` + fast-forward merge
 3. 无镜像变更且所有容器运行中 → 跳过
 4. 后端二进制变更 → 重建后端镜像，立即写入 `.deploy-state`，再按 orderbook → API → Worker 顺序重启
-5. 前端文件变更 → 重建前端镜像，立即写入 `.deploy-state`，再重启 Frontend
+5. 前端文件或 `deploy/.env.front` 变更 → 重建前端镜像，立即写入 `.deploy-state`，再重启 Frontend
 6. 容器未运行但镜像 hash 未变化 → 只 `up -d` 启动已有镜像，不强制 rebuild
 
 ### Manual 模式
@@ -166,7 +167,7 @@ git add bin/polyedge-api bin/polyedge-worker bin/polyedge-orderbook
 - 部署模板适合原型/内网共享环境
 - Compose 部署使用窄构建上下文：后端只上传 `bin/`，前端只上传 `packages/front/`，避免扫描 Rust `target/`、前端 `node_modules/`、`.next/` 等大目录
 - `polyedge-front` 不再依赖 API 健康后才启动；前端静态 Nginx 可独立运行，浏览器按 `NEXT_PUBLIC_POLYEDGE_API_BASE_URL` 访问 API
-- `scripts/deploy.sh` 已防止重叠执行；前端变更 hash 会直接 prune `node_modules`、`.next`、`out` 等大目录；容器 down 时会按 orderbook → API → Worker 顺序启动已有后端镜像，不会因健康失败而重复 rebuild
+- `scripts/deploy.sh` 已防止重叠执行；前端变更 hash 包含 `packages/front/` 和 `deploy/.env.front`，会 prune `node_modules`、`.next`、`out` 等大目录；容器 down 时会按 orderbook → API → Worker 顺序启动已有后端镜像，不会因健康失败而重复 rebuild
 - 当前部署模板默认 `POLYEDGE_AUTH__DISABLED=true`，API/front 内网交互不做权限校验；API CORS 为 permissive
 - 生产前需要：关闭 `POLYEDGE_AUTH__DISABLED`、接入真实会话体系、签名 JWT、key rotation
 

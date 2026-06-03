@@ -223,11 +223,46 @@ frontend_hash() {
   fi
 }
 
+frontend_build_hash() {
+  local source_hash
+  local env_hash
+  source_hash="$(frontend_hash "$1")"
+  env_hash="$(file_hash "$2")"
+  printf '%s\n%s\n' "${source_hash}" "${env_hash}" | md5sum | awk '{print $1}'
+}
+
+load_frontend_build_env() {
+  local file="$1"
+  [[ -f "${file}" ]] || fail "frontend env file not found: ${file}"
+
+  local api_base_url
+  api_base_url="$(env_value NEXT_PUBLIC_POLYEDGE_API_BASE_URL "${file}")"
+  if [[ -z "${api_base_url}" ]]; then
+    fail "NEXT_PUBLIC_POLYEDGE_API_BASE_URL must be set in ${file} before building the static frontend."
+  fi
+  export NEXT_PUBLIC_POLYEDGE_API_BASE_URL="${api_base_url}"
+
+  local dev_bypass
+  dev_bypass="$(env_value NEXT_PUBLIC_POLYEDGE_INTERNAL_AUTH_DEV_BYPASS "${file}")"
+  if [[ -n "${dev_bypass}" ]]; then
+    export NEXT_PUBLIC_POLYEDGE_INTERNAL_AUTH_DEV_BYPASS="${dev_bypass}"
+  fi
+
+  local console_auth
+  console_auth="$(env_value NEXT_PUBLIC_POLYEDGE_CONSOLE_AUTH "${file}")"
+  if [[ -n "${console_auth}" ]]; then
+    export NEXT_PUBLIC_POLYEDGE_CONSOLE_AUTH="${console_auth}"
+  fi
+
+  log "frontend build env loaded from ${file}: NEXT_PUBLIC_POLYEDGE_API_BASE_URL=${NEXT_PUBLIC_POLYEDGE_API_BASE_URL}"
+}
+
 # Build frontend static files locally (yarn build -> out/).
 # The Dockerfile copies out/ into the nginx image without container-side compilation.
 build_frontend() {
   local front_dir="${deploy_dir}/packages/front"
   [[ -f "${front_dir}/package.json" ]] || fail "packages/front/package.json not found"
+  load_frontend_build_env "${front_env_file}"
   log "building frontend static files (yarn build)"
   (cd "${front_dir}" && yarn install --frozen-lockfile && yarn build) || fail "frontend yarn build failed"
   [[ -d "${front_dir}/out" ]] || fail "frontend build did not produce out/ directory"
@@ -372,6 +407,7 @@ compose_file="${POLYEDGE_COMPOSE_FILE:-${deploy_dir}/deploy/docker-compose.yml}"
 env_file="${POLYEDGE_ENV_FILE:-${deploy_dir}/deploy/.env}"
 env_example="${deploy_dir}/deploy/.env.example"
 deploy_dir_path="${deploy_dir}/deploy"
+front_env_file="${deploy_dir_path}/.env.front"
 
 [[ -f "${compose_file}" ]] || fail "compose file not found: ${compose_file}"
 
@@ -402,7 +438,7 @@ if [[ "${mode}" == "auto" ]]; then
   current_api_hash="$(file_hash bin/polyedge-api)"
   current_worker_hash="$(file_hash bin/polyedge-worker)"
   current_orderbook_hash="$(file_hash bin/polyedge-orderbook)"
-  current_front_hash="$(frontend_hash packages/front)"
+  current_front_hash="$(frontend_build_hash packages/front "${front_env_file}")"
 
   # --- Load last deployed state ---------------------------------------------
   state_file="${deploy_dir}/.deploy-state"
