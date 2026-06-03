@@ -57,6 +57,62 @@ mod tests {
     }
 
     #[test]
+    fn trade_order_fill_uses_order_specific_maker_amount() {
+        let trade = TradeResponse::builder()
+            .id("pm_trade_1")
+            .taker_order_id("pm_taker")
+            .market(B256::ZERO)
+            .asset_id(U256::ZERO)
+            .side(Side::Buy)
+            .size(Decimal::new(125, 1))
+            .fee_rate_bps(Decimal::new(25, 0))
+            .price(Decimal::new(42, 2))
+            .status(SdkTradeStatusType::Matched)
+            .match_time("2024-01-15T12:34:56Z".parse().expect("match time"))
+            .last_update("2024-01-15T12:35:30Z".parse().expect("last update"))
+            .outcome("YES")
+            .bucket_index(0)
+            .owner(Uuid::nil())
+            .maker_address(Address::ZERO)
+            .maker_orders(vec![
+                polymarket_client_sdk::clob::types::response::MakerOrder::builder()
+                    .order_id("pm_maker_1")
+                    .owner(Uuid::nil())
+                    .maker_address(Address::ZERO)
+                    .matched_amount(Decimal::new(50, 1))
+                    .price(Decimal::new(43, 2))
+                    .fee_rate_bps(Decimal::new(10, 0))
+                    .asset_id(U256::ZERO)
+                    .outcome("YES")
+                    .side(Side::Sell)
+                    .build(),
+                polymarket_client_sdk::clob::types::response::MakerOrder::builder()
+                    .order_id("pm_maker_2")
+                    .owner(Uuid::nil())
+                    .maker_address(Address::ZERO)
+                    .matched_amount(Decimal::new(75, 1))
+                    .price(Decimal::new(44, 2))
+                    .fee_rate_bps(Decimal::new(12, 0))
+                    .asset_id(U256::ZERO)
+                    .outcome("YES")
+                    .side(Side::Sell)
+                    .build(),
+            ])
+            .transaction_hash(B256::ZERO)
+            .trader_side(polymarket_client_sdk::clob::types::TraderSide::Taker)
+            .build();
+
+        let taker_fill = trade_order_fill(&trade, "pm_taker").expect("taker fill");
+        let maker_fill = trade_order_fill(&trade, "pm_maker_1").expect("maker fill");
+
+        assert_eq!(taker_fill.size, Decimal::new(125, 1));
+        assert_eq!(taker_fill.price, Decimal::new(42, 2));
+        assert_eq!(maker_fill.size, Decimal::new(50, 1));
+        assert_eq!(maker_fill.price, Decimal::new(43, 2));
+        assert_eq!(maker_fill.fee_rate_bps, Decimal::new(10, 0));
+    }
+
+    #[test]
     fn websocket_cancellation_message_maps_to_canceled() {
         let message = PolymarketWsOrderMessage::builder()
             .id("pm_ord_1".to_string())
@@ -82,7 +138,7 @@ mod tests {
     fn websocket_trade_message_generates_distinct_updates_per_order() {
         let maker_order = MakerOrder::builder()
             .asset_id(U256::ZERO)
-            .matched_amount(Decimal::ONE)
+            .matched_amount(Decimal::new(4, 0))
             .order_id("pm_ord_maker".to_string())
             .outcome("YES".to_string())
             .owner(Uuid::nil())
@@ -93,7 +149,7 @@ mod tests {
             .market(B256::ZERO)
             .asset_id(U256::ZERO)
             .side(Side::Buy)
-            .size(Decimal::ONE)
+            .size(Decimal::new(10, 0))
             .price(Decimal::new(57, 2))
             .status(PolymarketWsTradeMessageStatus::Matched)
             .last_update(1_717_171_717_100)
@@ -112,5 +168,7 @@ mod tests {
         assert_eq!(updates[1].external_order_id, "pm_ord_maker");
         assert_eq!(updates[0].external_trade_id, "pm_trade_1:pm_ord_taker");
         assert_eq!(updates[1].external_trade_id, "pm_trade_1:pm_ord_maker");
+        assert_eq!(updates[0].filled_quantity.value(), Decimal::new(10, 0));
+        assert_eq!(updates[1].filled_quantity.value(), Decimal::new(4, 0));
     }
 }

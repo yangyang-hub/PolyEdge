@@ -109,6 +109,7 @@ pub struct LivePolymarketTradeSyncRequest {
 pub struct LivePolymarketOrderAcceptance {
     pub order_id: String,
     pub status: PolymarketAcceptedOrderStatus,
+    pub submitted_quantity: Quantity,
     pub accepted_at: OffsetDateTime,
 }
 

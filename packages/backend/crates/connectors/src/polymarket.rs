@@ -7,7 +7,7 @@ use polymarket_client_sdk::auth::{Credentials, LocalSigner, Normal, Signer, Uuid
 use polymarket_client_sdk::clob::types::request::{
     OrderBookSummaryRequest, OrdersRequest, TradesRequest, UpdateBalanceAllowanceRequest,
 };
-use polymarket_client_sdk::clob::types::response::OrderSummary;
+use polymarket_client_sdk::clob::types::response::{OrderSummary, TradeResponse};
 use polymarket_client_sdk::clob::types::{
     AssetType, OrderStatusType as SdkOrderStatusType, OrderType, Side, SignatureType,
     TradeStatusType as SdkTradeStatusType,

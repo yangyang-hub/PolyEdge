@@ -28,6 +28,12 @@ fn live_cancel_reason(
     order: &ManagedRewardOrder,
     now: OffsetDateTime,
 ) -> Option<String> {
+    if order.side == RewardOrderSide::Sell
+        && order.status == ManagedRewardOrderStatus::ExitPending
+        && order.external_order_id.is_none()
+    {
+        return None;
+    }
     if let Some(reason) = live_quote_book_unavailable_reason(config, books, &order.token_id, now) {
         return Some(reason);
     }

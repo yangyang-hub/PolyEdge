@@ -1,6 +1,6 @@
 # Rewards（奖励机器人）
 
-最后更新：2026-06-02
+最后更新：2026-06-03
 
 ## 概述
 
@@ -30,6 +30,7 @@
 
 - `src/lib/api/rewards.ts` — `readRewardBotSnapshot`、`updateRewardBotConfig`、`runRewardBotOnce`、`cancelRewardBotOrders`、`resetRewardBot`
 - `readRewardBotSnapshot()` 会传递订单分页/搜索/状态/排序 query；后端返回 `orders` 当前页和 `orders_page` 总数元数据
+- 后端 snapshot 不返回全量 reward markets；页面只使用 `status.markets_tracked`、`status.eligible_markets` 和 `quote_plans` 展示市场覆盖与候选计划
 
 ## 关键交互
 
@@ -57,6 +58,7 @@
 - 配置不包含 `execution_mode` 选择器（始终为 live）。提示说明 `max_markets=0`、`max_open_orders=0`、`quote_size_usd=0` 都会停止新挂单。
 - 报价计划默认展示可挂市场，本地支持全部/可挂/不可挂切换，并用状态标记说明每个当前候选计划是否符合最终过滤要求。
 - Managed orders 表格使用后端分页（默认每页 15 条），翻页、搜索、状态过滤和排序都会重新请求 `/api/v1/rewards-bot`。
+- 首屏不加载全量 reward markets，避免奖励市场数量过大时长时间停留在 loading skeleton。
 - Positions 表格展示 rewards 库存账本；实盘库存仍以后端真实成交对账缺口为准。
 - 事件分类视图（挂单/撤单/吃单/奖励）
 - live 模式已接入 post-only 买单提交和撤单；真实成交对账、成交后卖出/平仓、真实库存/资金同步和奖励结算对账仍是后端缺口

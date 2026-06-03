@@ -78,7 +78,10 @@ async fn promote_news_events_creates_market_linked_event_and_evidence() {
     let page = PageQuery::default();
     let promoted_event = state
         .market_event_service
-        .list_events(EventListFilters::new(None, Some(200)).expect("event filters"), &page)
+        .list_events(
+            EventListFilters::new(None, Some(200)).expect("event filters"),
+            &page,
+        )
         .await
         .expect("list events")
         .data
@@ -163,7 +166,10 @@ async fn scan_arbitrage_once_records_market_snapshots_without_trade_side_effects
     let page = PageQuery::default();
     let scans = state
         .arbitrage_service
-        .list_scans(ArbitrageScanListFilters::new().expect("scan filters"), &page)
+        .list_scans(
+            ArbitrageScanListFilters::new().expect("scan filters"),
+            &page,
+        )
         .await
         .expect("list scans");
     assert_eq!(scans.data.len(), 1);
@@ -769,6 +775,23 @@ fn live_test_open_order(token_id: &str) -> ManagedRewardOrder {
     }
 }
 
+fn live_test_trade_update(
+    external_order_id: &str,
+    external_trade_id: &str,
+    size: Decimal,
+) -> ConnectorTradeFillUpdate {
+    ConnectorTradeFillUpdate {
+        event_id: format!("evt_{external_trade_id}"),
+        connector_name: POLYMARKET_CONNECTOR_NAME.to_string(),
+        external_order_id: external_order_id.to_string(),
+        account_id: "reward_live".to_string(),
+        external_trade_id: external_trade_id.to_string(),
+        fill_price: Probability::new(reward_decimal("0.49")).expect("fill price"),
+        filled_quantity: Quantity::new(size).expect("fill size"),
+        fee: polyedge_domain::UsdAmount::new(Decimal::ZERO).expect("fee"),
+    }
+}
+
 #[test]
 fn live_placement_reuses_cash_and_allows_stale_book_age_check_to_be_disabled() {
     let config = RewardBotConfig {
@@ -805,6 +828,60 @@ fn live_placement_reuses_cash_and_allows_stale_book_age_check_to_be_disabled() {
 }
 
 #[test]
+fn live_fill_update_clamps_multiple_updates_to_remaining_size() {
+    let mut account = polyedge_application::RewardAccountState::fresh(
+        "reward_live",
+        Decimal::from(100_u64),
+        OffsetDateTime::now_utc(),
+    );
+    let mut positions = HashMap::new();
+    let mut order = live_test_open_order("yes_live");
+    order.size = Decimal::from(20_u64);
+    order.external_order_id = Some("pm_yes_live".to_string());
+
+    let first = apply_live_reward_fill_update(
+        order,
+        &mut account,
+        &mut positions,
+        &live_test_trade_update("pm_yes_live", "pm_trade_1", Decimal::from(12_u64)),
+        "rewfill_pm_trade_1_pm_yes_live",
+        "trc_live_fill",
+    )
+    .expect("first fill");
+    let first_fill_size = first.fill.size;
+
+    let second = apply_live_reward_fill_update(
+        first.order,
+        &mut account,
+        &mut positions,
+        &live_test_trade_update("pm_yes_live", "pm_trade_2", Decimal::from(12_u64)),
+        "rewfill_pm_trade_2_pm_yes_live",
+        "trc_live_fill",
+    )
+    .expect("second fill");
+
+    assert_eq!(first_fill_size, Decimal::from(12_u64));
+    assert_eq!(second.fill.size, Decimal::from(8_u64));
+    assert_eq!(second.order.filled_size, Decimal::from(20_u64));
+    assert_eq!(second.order.status, ManagedRewardOrderStatus::Filled);
+    assert_eq!(
+        positions.get("yes_live").expect("position").size,
+        Decimal::from(20_u64)
+    );
+}
+
+#[test]
+fn reward_live_fill_id_includes_order_id_and_keeps_legacy_id() {
+    let update = live_test_trade_update("pm_yes_live", "pm_trade_1", Decimal::ONE);
+
+    assert_eq!(
+        reward_live_fill_id(&update),
+        "rewfill_pm_trade_1_pm_yes_live"
+    );
+    assert_eq!(reward_live_legacy_fill_id(&update), "rewfill_pm_trade_1");
+}
+
+#[test]
 fn live_cancel_candidates_cancel_when_orderbook_missing() {
     let config = RewardBotConfig {
         execution_mode: RewardExecutionMode::Live,
@@ -819,6 +896,26 @@ fn live_cancel_candidates_cancel_when_orderbook_missing() {
 
     assert_eq!(candidates.len(), 1);
     assert!(candidates[0].1.contains("orderbook unavailable"));
+}
+
+#[test]
+fn live_cancel_candidates_keep_local_deferred_exit_without_orderbook() {
+    let config = RewardBotConfig {
+        execution_mode: RewardExecutionMode::Live,
+        account_id: "reward_live".to_string(),
+        ..RewardBotConfig::default()
+    };
+    let plan = live_test_plan(OffsetDateTime::now_utc());
+    let mut order = live_test_open_order("yes_live");
+    order.side = RewardOrderSide::Sell;
+    order.status = ManagedRewardOrderStatus::ExitPending;
+    order.external_order_id = None;
+    order.reason = "flatten deferred until bid liquidity is observed".to_string();
+
+    let candidates =
+        live_cancel_candidates(&config, &[plan], &[order], &HashMap::new(), &HashMap::new());
+
+    assert!(candidates.is_empty());
 }
 
 #[test]

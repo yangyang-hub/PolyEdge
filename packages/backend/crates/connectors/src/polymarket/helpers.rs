@@ -336,15 +336,38 @@ fn greatest_common_divisor(mut left: u64, mut right: u64) -> u64 {
 }
 
 fn trade_matches_order(
-    trade: &polymarket_client_sdk::clob::types::response::TradeResponse,
+    trade: &TradeResponse,
     external_order_id: &str,
 ) -> bool {
+    trade_order_fill(trade, external_order_id).is_some()
+}
+
+#[derive(Debug, Clone, Copy)]
+struct OrderSpecificTradeFill {
+    price: Decimal,
+    size: Decimal,
+    fee_rate_bps: Decimal,
+}
+
+fn trade_order_fill(
+    trade: &TradeResponse,
+    external_order_id: &str,
+) -> Option<OrderSpecificTradeFill> {
     if trade.taker_order_id == external_order_id {
-        return true;
+        return Some(OrderSpecificTradeFill {
+            price: trade.price,
+            size: trade.size,
+            fee_rate_bps: trade.fee_rate_bps,
+        });
     }
 
     trade
         .maker_orders
         .iter()
-        .any(|maker_order| maker_order.order_id == external_order_id)
+        .find(|maker_order| maker_order.order_id == external_order_id)
+        .map(|maker_order| OrderSpecificTradeFill {
+            price: maker_order.price,
+            size: maker_order.matched_amount,
+            fee_rate_bps: maker_order.fee_rate_bps,
+        })
 }

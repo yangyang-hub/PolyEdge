@@ -214,6 +214,36 @@ impl RewardBotStore for PostgresRewardBotStore {
         rows.iter().map(reward_market_from_row).collect()
     }
 
+    async fn active_market_summary(&self) -> Result<(usize, Option<OffsetDateTime>)> {
+        let row = sqlx::query(
+            r#"
+            SELECT COUNT(*) AS markets_tracked,
+                   MAX(updated_at) AS last_scan_at
+            FROM reward_markets
+            WHERE active = true
+            "#,
+        )
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_QUERY_FAILED",
+                format!("failed to summarize active reward markets: {error}"),
+            )
+        })?;
+
+        let count: i64 = row.try_get("markets_tracked").map_err(postgres_decode_error)?;
+        let markets_tracked = usize::try_from(count).map_err(|error| {
+            db_error(
+                "POSTGRES_DECODE_FAILED",
+                format!("failed to decode reward market count: {error}"),
+            )
+        })?;
+        let last_scan_at = row.try_get("last_scan_at").map_err(postgres_decode_error)?;
+
+        Ok((markets_tracked, last_scan_at))
+    }
+
     async fn list_all_quote_plans(&self) -> Result<Vec<RewardQuotePlan>> {
         let rows = sqlx::query(
             r#"

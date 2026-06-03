@@ -151,6 +151,19 @@ impl RewardBotStore for InMemoryRewardBotStore {
         Ok(markets)
     }
 
+    async fn active_market_summary(&self) -> Result<(usize, Option<OffsetDateTime>)> {
+        let markets = self.markets.read().await;
+        let mut markets_tracked = 0usize;
+        let mut last_scan_at = None;
+
+        for market in markets.values().filter(|market| market.active) {
+            markets_tracked += 1;
+            last_scan_at = last_scan_at.max(Some(market.updated_at));
+        }
+
+        Ok((markets_tracked, last_scan_at))
+    }
+
     async fn list_all_quote_plans(&self) -> Result<Vec<RewardQuotePlan>> {
         let mut plans = self
             .quote_plans

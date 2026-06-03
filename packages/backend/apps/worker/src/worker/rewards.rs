@@ -194,14 +194,20 @@ async fn run_reward_bot_live_tick(
         cycle.positions = latest.positions;
     }
 
-    if !cycle.should_execute {
-        return Ok(report);
-    }
-
     let mut open_orders = cycle.open_orders.clone();
     let mut changed_orders = Vec::new();
     let mut events = Vec::new();
     let mut cancel_rejected = false;
+
+    submit_deferred_live_exit_orders(
+        &connector,
+        &mut open_orders,
+        &books,
+        &mut changed_orders,
+        &mut events,
+        &mut report,
+    )
+    .await?;
 
     for (order_id, reason) in
         live_cancel_candidates(&cycle.config, &cycle.plans, &open_orders, &books, book_history)
@@ -225,6 +231,29 @@ async fn run_reward_bot_live_tick(
     }
 
     if cancel_rejected {
+        if !changed_orders.is_empty() || !events.is_empty() {
+            let mut account = cycle.account;
+            account.tick_index += 1;
+            account.updated_at = OffsetDateTime::now_utc();
+            let outcome = RewardSimulationOutcome {
+                account,
+                markets: cycle.markets,
+                plans: cycle.plans,
+                orders: changed_orders,
+                positions: cycle.positions,
+                fills: Vec::new(),
+                events,
+                report: report.clone(),
+            };
+            state
+                .reward_bot_service
+                .apply_live_tick_outcome(&outcome, trace_id)
+                .await?;
+        }
+        return Ok(report);
+    }
+
+    if !cycle.should_execute {
         if !changed_orders.is_empty() || !events.is_empty() {
             let mut account = cycle.account;
             account.tick_index += 1;
@@ -314,7 +343,7 @@ async fn cancel_live_reward_orders(
     let target_orders = cycle
         .open_orders
         .iter()
-        .filter(|order| account_id.map_or(true, |id| id == order.account_id.as_str()))
+        .filter(|order| account_id.is_none_or(|id| id == order.account_id.as_str()))
         .cloned()
         .collect::<Vec<_>>();
     if target_orders.is_empty() {

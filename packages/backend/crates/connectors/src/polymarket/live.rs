@@ -178,6 +178,7 @@ impl LivePolymarketConnector {
                 LivePolymarketOrderAcceptance {
                     order_id: response.order_id,
                     status: accepted_status,
+                    submitted_quantity: adjusted_quantity,
                     accepted_at: OffsetDateTime::now_utc(),
                 },
             )),
@@ -292,6 +293,7 @@ impl LivePolymarketConnector {
                 LivePolymarketOrderAcceptance {
                     order_id: response.order_id,
                     status: accepted_status,
+                    submitted_quantity: adjusted_quantity,
                     accepted_at: OffsetDateTime::now_utc(),
                 },
             )),
@@ -500,20 +502,29 @@ impl LivePolymarketConnector {
             return Ok(None);
         }
 
-        let fill_price = Probability::new(trade.price).map_err(|error| {
+        let Some(fill) = trade_order_fill(&trade, external_order_id) else {
+            warn!(
+                external_trade_id,
+                external_order_id,
+                "polymarket trade response did not include order-specific fill details"
+            );
+            return Ok(None);
+        };
+
+        let fill_price = Probability::new(fill.price).map_err(|error| {
             AppError::internal(
                 "POLYMARKET_TRADE_PRICE_INVALID",
                 format!("failed to decode trade price for {external_trade_id}: {error}"),
             )
         })?;
-        let filled_quantity = Quantity::new(trade.size).map_err(|error| {
+        let filled_quantity = Quantity::new(fill.size).map_err(|error| {
             AppError::internal(
                 "POLYMARKET_TRADE_SIZE_INVALID",
                 format!("failed to decode trade size for {external_trade_id}: {error}"),
             )
         })?;
         let fee = UsdAmount::new(
-            trade.price * trade.size * trade.fee_rate_bps / Decimal::from(10_000_u64),
+            fill.price * fill.size * fill.fee_rate_bps / Decimal::from(10_000_u64),
         )
         .map_err(|error| {
             AppError::internal(

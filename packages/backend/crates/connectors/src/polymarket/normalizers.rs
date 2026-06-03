@@ -131,29 +131,6 @@ pub fn normalize_polymarket_ws_trade_message(
     let trade_id = normalize_required("trade_id", &message.id, "POLYMARKET_TRADE_ID_REQUIRED")?;
     let account_id =
         normalize_required("account_id", account_id, "POLYMARKET_ACCOUNT_ID_REQUIRED")?;
-    let fill_price = Probability::new(message.price).map_err(|error| {
-        AppError::internal(
-            "POLYMARKET_TRADE_PRICE_INVALID",
-            format!("failed to decode websocket trade price for {trade_id}: {error}"),
-        )
-    })?;
-    let filled_quantity = Quantity::new(message.size).map_err(|error| {
-        AppError::internal(
-            "POLYMARKET_TRADE_SIZE_INVALID",
-            format!("failed to decode websocket trade size for {trade_id}: {error}"),
-        )
-    })?;
-    let fee = UsdAmount::new(
-        message.price * message.size * message.fee_rate_bps.unwrap_or(Decimal::ZERO)
-            / Decimal::from(10_000_u64),
-    )
-    .map_err(|error| {
-        AppError::internal(
-            "POLYMARKET_TRADE_FEE_INVALID",
-            format!("failed to decode websocket trade fee for {trade_id}: {error}"),
-        )
-    })?;
-
     let order_ids = candidate_order_ids_from_trade_message(
         message.taker_order_id.as_deref(),
         &message.maker_orders,
@@ -170,6 +147,31 @@ pub fn normalize_polymarket_ws_trade_message(
         } else {
             trade_id.clone()
         };
+        let Some(fill) = websocket_trade_order_fill(message, &order_id) else {
+            continue;
+        };
+        let fill_price = Probability::new(fill.price).map_err(|error| {
+            AppError::internal(
+                "POLYMARKET_TRADE_PRICE_INVALID",
+                format!("failed to decode websocket trade price for {trade_id}: {error}"),
+            )
+        })?;
+        let filled_quantity = Quantity::new(fill.size).map_err(|error| {
+            AppError::internal(
+                "POLYMARKET_TRADE_SIZE_INVALID",
+                format!("failed to decode websocket trade size for {trade_id}: {error}"),
+            )
+        })?;
+        let fee = UsdAmount::new(
+            fill.price * fill.size * message.fee_rate_bps.unwrap_or(Decimal::ZERO)
+                / Decimal::from(10_000_u64),
+        )
+        .map_err(|error| {
+            AppError::internal(
+                "POLYMARKET_TRADE_FEE_INVALID",
+                format!("failed to decode websocket trade fee for {trade_id}: {error}"),
+            )
+        })?;
         updates.push(normalize_polymarket_trade_fill_update(
             &format!("evt_pm_ws_trade:{trade_id}:{order_id}"),
             &order_id,
@@ -182,4 +184,31 @@ pub fn normalize_polymarket_ws_trade_message(
     }
 
     Ok(updates)
+}
+
+#[derive(Debug, Clone, Copy)]
+struct WebsocketOrderSpecificTradeFill {
+    price: Decimal,
+    size: Decimal,
+}
+
+fn websocket_trade_order_fill(
+    message: &PolymarketWsTradeMessage,
+    external_order_id: &str,
+) -> Option<WebsocketOrderSpecificTradeFill> {
+    if message.taker_order_id.as_deref() == Some(external_order_id) {
+        return Some(WebsocketOrderSpecificTradeFill {
+            price: message.price,
+            size: message.size,
+        });
+    }
+
+    message
+        .maker_orders
+        .iter()
+        .find(|maker_order| maker_order.order_id == external_order_id)
+        .map(|maker_order| WebsocketOrderSpecificTradeFill {
+            price: maker_order.price,
+            size: maker_order.matched_amount,
+        })
 }

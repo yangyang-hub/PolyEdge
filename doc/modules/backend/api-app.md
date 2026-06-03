@@ -64,7 +64,7 @@
 - `CorsLayer::permissive()` — 允许前端和 API 分别部署在不同内网主机/端口
 - 认证中间件：按路由组使用不同的认证级别；`POLYEDGE_AUTH__DISABLED=true` 时不校验 token、dev-auth 头或 step-up code，直接注入内部 admin `AuthContext`
 
-Rewards Bot 的 `run` / `cancel-all` / `reset` 端点不执行策略、不读取 orderbook cache，也不直接修改托管订单。API 只把控制命令写入 `reward_control_commands`，随后返回当前 snapshot；命令由 `polyedge-worker` 在 rewards tick 中领取并按 `RewardBotConfig.execution_mode` 执行 validation 或 live 逻辑。`GET /api/v1/rewards-bot` 支持订单服务端分页：`orders_page`、`orders_page_size`、`orders_search`、`orders_status`、`orders_sort_by`、`orders_sort_order` 会映射到 `RewardBotService::snapshot_with_order_query()`。
+Rewards Bot 的 `run` / `cancel-all` / `reset` 端点不执行策略、不读取 orderbook cache，也不直接修改托管订单。API 只把控制命令写入 `reward_control_commands`，随后返回当前 snapshot；命令由 `polyedge-worker` 在 rewards tick 中领取并按 `RewardBotConfig.execution_mode` 执行 validation 或 live 逻辑。`GET /api/v1/rewards-bot` 支持订单服务端分页：`orders_page`、`orders_page_size`、`orders_search`、`orders_status`、`orders_sort_by`、`orders_sort_order` 会映射到 `RewardBotService::snapshot_with_order_query()`；snapshot 返回市场统计但不返回全量 reward markets 列表，避免 9000+ 市场导致控制台首屏响应过大。
 
 Copy Trading 的 `run` / `analyze` / `cancel-all` / `reset` 端点同样不抓取 Polymarket Data API / CLOB，也不直接执行跟单循环；API 只写入 `copytrade_control_commands`，worker 负责领取并执行。
 
@@ -99,7 +99,7 @@ HTTP Response
 - ~40 个 REST 端点已实现
 - SSE 流式端点已覆盖 signals、risk、events、arbitrage
 - Rewards Bot 与 Copy Trading 控制端点只作为前端接口和命令入口，具体 validation/live 策略、分析、撤单、重置由 worker 处理
-- Rewards Bot snapshot 的 `orders` 是后端分页结果，响应同时包含 `orders_page`（page/page_size/total_items/total_pages）
+- Rewards Bot snapshot 的 `orders` 是后端分页结果，响应同时包含 `orders_page`（page/page_size/total_items/total_pages）；`markets` 数组不再承载全量 reward markets，市场数量从 `status.markets_tracked` 读取
 - 当前内网部署使用 `POLYEDGE_AUTH__DISABLED=true`，前端请求不需要权限头或 step-up code
 - CORS 当前为 permissive，支持纯内网中 front/API 分别部署在不同服务器
 - Step-up 认证代码路径仍保留；当 `POLYEDGE_AUTH__DISABLED=false` 时用于敏感操作（模式切换、kill switch、执行提交）

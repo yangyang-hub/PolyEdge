@@ -79,13 +79,13 @@
 
 **Store Trait：** `RewardBotStore`
 - Config：`load_config`、`save_config`（key-value 模式）
-- Markets：`upsert_markets`、`list_markets`、`list_all_active_markets`
+- Markets：`upsert_markets`、`list_markets`、`list_all_active_markets`、`active_market_summary`
 - Quote Plans：`save_quote_plans`（替换当前计划快照）、`list_quote_plans`
 - Orders/Positions/Events：完整 CRUD；订单支持 `RewardOrderListQuery` 后端分页并在 snapshot 中返回 `orders_page`；live worker 可按 external Polymarket order id 查 managed order，并用 fill id 做成交幂等
 - State Tick：`apply_simulation_tick`（历史命名；原子持久化 markets/plans/orders/fills/positions/ledger/events，供 live 本地状态更新复用）、`reset_simulation`（保留给本地/历史 validation 状态重置；live Reset 不调用它清账）
 - Control Commands：`enqueue_control_command`、`claim_next_control_command`、`complete_control_command`、`fail_control_command`
 
-**服务：** `RewardBotService` — 读写配置、市场管理、快照聚合、订单分页快照、live tick 计划准备、rewards 控制命令入队/领取/完成状态管理；不再依赖全局 `ModeStateStore`
+**服务：** `RewardBotService` — 读写配置、市场管理、快照聚合、订单分页快照、live tick 计划准备、轻量 live state 读取、rewards 控制命令入队/领取/完成状态管理；不再依赖全局 `ModeStateStore`。面向控制台的 snapshot 只通过 `active_market_summary` 返回市场统计（`status.markets_tracked` / `last_scan_at`），不读取或携带全量 active reward markets，避免 `/rewards` 首屏响应随奖励市场数量膨胀；sync/cancel/reconcile 使用的 `current_live_cycle_state` 也不扫描全量 active reward markets，完整候选市场只在 full tick 的 `prepare_live_cycle` 中传入。
 
 **执行模式：**
 - `RewardExecutionMode` 枚举保留用于向后兼容（serde 反序列化旧配置），但所有值均映射为 `Live`。`is_validation()` 始终返回 `false`，`is_live()` 始终返回 `true`。
@@ -117,7 +117,7 @@
 - Live `reset` 不清空本地账本或删除托管订单；worker 会先按 cancel-all 语义撤销本系统托管 live 订单，若任一 Polymarket 撤单被拒绝，则命令失败并保留本地状态以避免孤儿实盘订单。
 - 风险控制重点放在成交后：真实成交或部分成交回报后，worker 对本系统托管 rewards 订单按 external trade id 幂等更新现金、库存、fills 和 PnL，并撤掉 sibling legs；新挂单的 per-token 和全局库存门槛都使用「已有库存 notional + 当前候选订单 notional」准入。
 - 本地仍需保留 `max_open_orders`、`max_markets`、单市场预算、per-token 库存和 kill-switch；这些限制控制操作风险和订单风暴，而不是把所有开放买单当作已消耗资金。
-- 当前 live 已具备 post-only token 买单提交、订单撤单、本系统托管订单成交同步、成交后 sibling leg 撤单以及 `ExitAtMarkup` / `FlattenImmediately` sell 下单；独立账户余额/库存全量对账、订单计分查询和奖励结算对账仍是缺口。
+- 当前 live 已具备 post-only token 买单提交、订单撤单、本系统托管订单成交同步、同轮多笔 trade 累计入账、成交后 sibling leg 撤单以及 `ExitAtMarkup` / `FlattenImmediately` sell 下单；`FlattenImmediately` 无 bid 时会保留本地 deferred exit 并在盘口恢复后重试。独立账户余额/库存全量对账、订单计分查询和奖励结算对账仍是缺口。
 - 仍需要用真实小额账户验证 Polymarket CLOB 的 balance/allowance validity checks，尤其同市场内开放订单对可下单 size 的影响；跨市场资金复用可以作为 rewards maker 策略假设，但不能依赖 venue 替我们做组合风险管理。
 - 参考官方文档：Order Lifecycle / Requirements 和 Orders Overview / Validity Checks，后续实现时需要复核最新文档。
 
