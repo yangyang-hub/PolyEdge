@@ -324,7 +324,10 @@ impl RewardBotService {
     ) -> Result<RewardLiveCycle> {
         let config = self.read_config().await?;
         let plans = build_reward_quote_plans(&markets, &books, &config);
-        self.store.upsert_markets(&markets).await?;
+        // NOTE: Do NOT call upsert_markets() here.  The full reward-market catalog is
+        // synced by the orderbook service (every 5 min).  Calling upsert_markets() with
+        // only the filtered candidate subset would deactivate all other active markets
+        // and collapse markets_tracked from ~10k down to the candidate count.
         self.store.save_quote_plans(&plans).await?;
 
         let account = self.store.load_account_state(&config).await?;
