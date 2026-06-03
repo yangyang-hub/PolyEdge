@@ -167,7 +167,7 @@ async function fetchJson<T>(
     ...init,
     headers,
     cache: "no-store",
-    credentials: "same-origin",
+    credentials: apiBaseUrl ? "omit" : "same-origin",
   });
 
   if (!response.ok) {

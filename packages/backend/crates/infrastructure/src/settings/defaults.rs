@@ -204,6 +204,7 @@ impl Default for AuthSettings {
             max_query_ttl_secs: 60,
             max_write_ttl_secs: 30,
             max_step_up_window_secs: 600,
+            step_up_code: String::new(),
             revoked_sessions: Vec::new(),
             force_reauth_after: Some("2026-01-01T00:00:00Z".to_string()),
             keys: Vec::new(),

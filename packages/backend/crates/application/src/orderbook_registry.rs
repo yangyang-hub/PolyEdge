@@ -19,6 +19,9 @@ pub trait OrderbookSubscriptionRegistry: Send + Sync {
     /// 返回当前所有已注册的去重 token 列表。
     async fn list_all_tokens(&self) -> Vec<String>;
 
+    /// 返回当前注册来源数量。
+    async fn source_count(&self) -> usize;
+
     /// 返回自某个时间点之后是否有变更（用于增量判断是否需要 WS 重连）。
     async fn changed_since(&self, since: Instant) -> bool;
 }

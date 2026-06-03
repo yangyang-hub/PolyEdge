@@ -96,11 +96,16 @@ pub async fn get_orderbook_batch(
 
 pub async fn get_orderbook_stats(State(state): State<AppState>) -> Json<OrderbookStatsResponse> {
     let all_tokens = state.orderbook_registry.list_all_tokens().await;
-    // Count distinct sources by reading the registry internals is not exposed;
-    // report total tokens as the primary metric.
+    let cache_entries = state
+        .orderbook_cache
+        .entry_count()
+        .await
+        .unwrap_or_default();
+    let registry_sources = state.orderbook_registry.source_count().await;
+
     Json(OrderbookStatsResponse {
-        cache_entries: all_tokens.len(), // approximate: registry ≈ cache
-        registry_sources: 0,             // not exposed by trait
+        cache_entries,
+        registry_sources,
         registry_total_tokens: all_tokens.len(),
     })
 }

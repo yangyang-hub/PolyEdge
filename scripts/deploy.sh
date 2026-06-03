@@ -175,9 +175,9 @@ validate_env_file() {
   fi
 
   local step_up_code
-  step_up_code="$(env_value POLYEDGE_CONSOLE_STEP_UP_CODE "${file}")"
+  step_up_code="$(env_value POLYEDGE_AUTH__STEP_UP_CODE "${file}")"
   if [[ -z "${step_up_code}" || "${step_up_code}" == "change-me" ]]; then
-    fail "POLYEDGE_CONSOLE_STEP_UP_CODE must be set to a non-placeholder value in ${file}."
+    fail "POLYEDGE_AUTH__STEP_UP_CODE must be set to a non-placeholder value in ${file}."
   fi
 
   local runtime_environment

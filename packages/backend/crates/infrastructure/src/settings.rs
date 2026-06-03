@@ -226,6 +226,7 @@ pub struct AuthSettings {
     pub max_query_ttl_secs: i64,
     pub max_write_ttl_secs: i64,
     pub max_step_up_window_secs: i64,
+    pub step_up_code: String,
     #[serde(default)]
     pub revoked_sessions: Vec<String>,
     pub force_reauth_after: Option<String>,

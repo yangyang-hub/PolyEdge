@@ -2,6 +2,7 @@
 
 import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 
+import { getApiBaseUrl } from "@/lib/api/base";
 import {
   CHANNEL_EVENT_TYPES,
   type RealtimeChannel,
@@ -84,7 +85,7 @@ export function useSseStream<TChannel extends RealtimeChannel>({
     }
 
     seenEventIdsRef.current.clear();
-    const stream = new EventSource(`/api/v1/stream/${channel}`);
+    const stream = new EventSource(`${getApiBaseUrl()}/api/v1/stream/${channel}`);
 
     stream.onopen = () => {
       setConnectionState("open");

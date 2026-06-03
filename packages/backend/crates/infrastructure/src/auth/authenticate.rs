@@ -6,11 +6,17 @@ fn authenticate_request(
     kind: RequestKind,
 ) -> std::result::Result<AuthContext, HttpError> {
     let headers = request.headers();
+    let is_local_mode =
+        state.settings.runtime.environment == "local" && state.settings.auth.keys.is_empty();
+
+    // In local mode, generate a fallback request ID when the header is missing
+    // (e.g. EventSource connections cannot set custom headers).
     let request_id = headers
         .get("x-request-id")
         .and_then(|value| value.to_str().ok())
         .filter(|value| !value.trim().is_empty())
         .map(std::borrow::ToOwned::to_owned)
+        .or_else(|| is_local_mode.then(|| format!("req_local_{}", new_trace_id())))
         .ok_or_else(|| {
             HttpError::with_meta(
                 AppError::unauthorized(
@@ -24,6 +30,30 @@ fn authenticate_request(
 
     if let Some(auth) = authenticate_local_dev_request(state, request, &request_id)? {
         return Ok(auth);
+    }
+
+    // In local mode with no auth keys configured, requests without dev-auth headers
+    // (e.g. EventSource which cannot set custom headers) are granted viewer access.
+    if is_local_mode {
+        let client_ip = headers
+            .get("x-client-ip")
+            .and_then(|value| value.to_str().ok())
+            .map(std::borrow::ToOwned::to_owned);
+        let client_user_agent = headers
+            .get("x-client-user-agent")
+            .and_then(|value| value.to_str().ok())
+            .map(std::borrow::ToOwned::to_owned);
+        return Ok(AuthContext {
+            user_id: "usr_local_anonymous".to_string(),
+            session_id: "sess_local_anonymous".to_string(),
+            roles: vec![UserRole::Viewer],
+            request_id,
+            step_up_verified: false,
+            step_up_scopes: Vec::new(),
+            step_up_until: None,
+            ip: client_ip,
+            user_agent: client_user_agent,
+        });
     }
 
     let token = headers
@@ -71,6 +101,9 @@ fn authenticate_local_dev_request(
         .get("x-polyedge-dev-auth")
         .and_then(|value| value.to_str().ok());
 
+    // In local mode: require X-PolyEdge-Dev-Auth header.
+    // EventSource cannot set custom headers, so requests without the header
+    // are rejected here and fall through to JWT auth (which will also fail).
     if dev_auth != Some("local") {
         return Ok(None);
     }
@@ -87,10 +120,18 @@ fn authenticate_local_dev_request(
         .and_then(|value| value.to_str().ok())
         .unwrap_or("local-console");
     let actor_id = normalize_dev_actor(actor);
-    let step_up_verified = headers
-        .get("x-polyedge-step-up-verified")
+
+    // Step-up verification: compare client-sent code against configured secret.
+    let configured_code = state.settings.auth.step_up_code.trim();
+    let step_up_code = headers
+        .get("x-polyedge-step-up-code")
         .and_then(|value| value.to_str().ok())
-        .is_some_and(|value| value == "true");
+        .unwrap_or("")
+        .trim();
+    let step_up_verified = !configured_code.is_empty()
+        && !step_up_code.is_empty()
+        && step_up_code == configured_code;
+
     let step_up_scopes = if step_up_verified {
         headers
             .get("x-polyedge-step-up-scopes")

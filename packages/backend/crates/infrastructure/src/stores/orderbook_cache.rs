@@ -101,6 +101,11 @@ impl OrderbookCache for InMemoryOrderbookCache {
         }
         Ok(stale)
     }
+
+    async fn entry_count(&self) -> Result<usize> {
+        let books = self.books.read().await;
+        Ok(books.len())
+    }
 }
 
 fn now_millis() -> i64 {

@@ -23,6 +23,28 @@ impl OrderbookHttpClient {
             client: Client::new(),
         }
     }
+
+    async fn fetch_stats(&self) -> Result<OrderbookStatsResponse> {
+        let url = format!("{}/orderbook/stats", self.base_url);
+        let resp = self.client.get(&url).send().await.map_err(|error| {
+            AppError::dependency_unavailable(
+                "ORDERBOOK_HTTP_STATS_ERROR",
+                format!("failed to fetch orderbook stats: {error}"),
+            )
+        })?;
+        if !resp.status().is_success() {
+            return Err(AppError::dependency_unavailable(
+                "ORDERBOOK_HTTP_STATS_FAILED",
+                format!("orderbook stats returned status {}", resp.status()),
+            ));
+        }
+        resp.json().await.map_err(|error| {
+            AppError::dependency_unavailable(
+                "ORDERBOOK_HTTP_STATS_DECODE_ERROR",
+                format!("failed to decode orderbook stats response: {error}"),
+            )
+        })
+    }
 }
 
 #[derive(Deserialize)]
@@ -32,6 +54,12 @@ struct OrderbookResponse {
     asks: Vec<LevelResponse>,
     observed_at: i64,
     source: String,
+}
+
+#[derive(Deserialize)]
+struct OrderbookStatsResponse {
+    cache_entries: usize,
+    registry_sources: usize,
 }
 
 #[derive(Deserialize)]
@@ -225,6 +253,10 @@ impl OrderbookCache for OrderbookHttpClient {
         // Stale detection is handled internally by the orderbook service.
         Ok(Vec::new())
     }
+
+    async fn entry_count(&self) -> Result<usize> {
+        Ok(self.fetch_stats().await?.cache_entries)
+    }
 }
 
 // ── Register request types ──────────────────────────────────────────────────
@@ -293,6 +325,16 @@ impl OrderbookSubscriptionRegistry for OrderbookHttpClient {
         // Token aggregation is handled by the orderbook service.
         // Remote consumers don't need the full list.
         Vec::new()
+    }
+
+    async fn source_count(&self) -> usize {
+        match self.fetch_stats().await {
+            Ok(stats) => stats.registry_sources,
+            Err(error) => {
+                tracing::warn!(error = %error, "failed to fetch orderbook registry source count");
+                0
+            }
+        }
     }
 
     async fn changed_since(&self, _since: Instant) -> bool {

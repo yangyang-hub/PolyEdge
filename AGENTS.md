@@ -1,6 +1,6 @@
 # Agent Guidelines
 
-最后更新：2026-06-02
+最后更新：2026-06-03
 
 ## 维护规则
 
@@ -25,7 +25,7 @@ fetch directly from external APIs (Polymarket Gamma, CLOB, etc.).
 | Reward markets | `sync-markets` | CLOB API `/rewards/markets/current` | `reward_markets` table (Postgres) | 5 min |
 | Order books | `polyedge-orderbook` 服务 | CLOB WebSocket + `/book` poll | `InMemoryOrderbookCache`（orderbook 服务进程内，TTL 5 分钟） | WS real-time + 30s poll reconcile |
 
-Orderbook 订阅由独立的 `polyedge-orderbook` 服务管理。该服务运行 WS + poll stream，维护进程内缓存和 `OrderbookSubscriptionRegistry`，暴露 HTTP API（`GET /orderbook/{token_id}`、`POST /orderbook/register` 等）。Worker 和 API 通过 `OrderbookHttpClient`（HTTP 调用 orderbook 服务）读取盘口数据和注册 token。
+Orderbook 订阅由独立的 `polyedge-orderbook` 服务管理。该服务运行 WS + poll stream，维护进程内缓存和 `OrderbookSubscriptionRegistry`，暴露 HTTP API（`GET /orderbook/{token_id}`、`GET /orderbook/stats`、`POST /orderbook/register` 等）。Worker 和 API 通过 `OrderbookHttpClient`（HTTP 调用 orderbook 服务）读取盘口数据和注册 token。`/orderbook/stats` 返回真实 cache 条目数、registry 来源数和 registry 去重 token 总数。
 
 市场和奖励市场由 orderbook 服务同步写入 Postgres，盘口数据由 orderbook 服务流式写入进程内缓存。所有消费者从数据库或 orderbook 服务读取，不直接调用外部 API。
 
@@ -64,8 +64,8 @@ retries solves this and ensures consistent data across all consumers.
 | `apps/worker/src/worker/copytrade.rs` | Copytrade worker — executes copy cycles and queued run/analyze/cancel/reset commands |
 | `apps/api/src/handlers/copytrade.rs` | Copytrade API — reads snapshots/config and enqueues worker control commands |
 | `crates/application/src/copytrade/service.rs` | CopyTradeService — copytrade config/snapshot/simulation and control command queue |
-| `crates/application/src/orderbook_cache.rs` | OrderbookCache trait — `get_book`, `set_book`, `set_books` |
-| `crates/application/src/orderbook_registry.rs` | OrderbookSubscriptionRegistry trait — 多来源 token 订阅注册 |
+| `crates/application/src/orderbook_cache.rs` | OrderbookCache trait — `get_book`, `set_book`, `set_books`, `entry_count` |
+| `crates/application/src/orderbook_registry.rs` | OrderbookSubscriptionRegistry trait — 多来源 token 订阅注册与来源统计 |
 | `crates/infrastructure/src/stores/orderbook_cache.rs` | InMemoryOrderbookCache（TTL + 定期清理）；保留 Redis 实现 |
 | `crates/infrastructure/src/stores/orderbook_registry.rs` | InMemoryOrderbookSubscriptionRegistry — 基于内存的订阅注册中心实现 |
 | `migrations/0022_reward_bot_control_commands.sql` | Rewards API-to-worker command queue table |
@@ -93,7 +93,7 @@ retries solves this and ensures consistent data across all consumers.
 - 套利雷达是只读链路：发现、记录、校验、分析、展示和 SSE 推送已具备，但不会创建 execution request 或订单。
 - Rewards bot 仅支持 `live` 实盘模式（`execution_mode` 字段保留用于向后兼容，始终视为 `live`）。它只使用独立的 `reward_markets` 表作为奖励市场来源，先按 rewards 配置预过滤候选市场，再通过 `OrderbookHttpClient`（HTTP 调用 polyedge-orderbook 服务）并发读取候选盘口、生成当前候选快照的 YES/NO post-only 双边买单计划。worker 通过 `LivePolymarketConnector::submit_token_order()` 提交 post-only GTC token 买单，并通过 `cancel_order()` 撤销本系统托管订单；未成交 maker 买单不在本地按全局 notional 硬锁同一笔 USDC，可跨不同市场同时报价。新挂单要求目标两腿都有非空盘口，reconcile 会在开放订单盘口缺失、空盘口、过期、深度/排名/盘口历史风险或定期 requote 触发时撤单；Polymarket 返回 post-only 非 live 接受状态时会立即尝试撤单。worker 会对本系统托管 rewards 订单轮询 Polymarket 订单关联成交，按 external trade id 幂等写入本地 fills、现金、库存和 PnL；买入成交后按配置撤 sibling legs 并执行 exit-at-markup 或 flatten sell。Reset 不清空本地账本，只按 cancel-all 先撤托管实盘订单，任一撤单被拒绝则命令失败。独立账户余额/库存全量对账、订单计分查询和奖励结算对账仍是缺口。API 服务不执行 rewards 策略或任务，前端 Run / Cancel / Reset 会写入数据库控制命令，由 worker 领取执行；`/api/v1/rewards-bot` 的 managed orders 使用后端分页并返回 `orders_page` 元数据。
 - Polymarket connector 已迁移到 CLOB V2 Rust crate：`packages/backend/Cargo.toml` 保留 dependency key `polymarket-client-sdk`，实际指向 `polymarket_client_sdk_v2`；live CLOB 签名类型支持 `eoa`、`proxy`、`gnosis_safe`、`poly_1271`，其中 `poly_1271` 用于已有 Deposit Wallet（`FUNDER` 填 deposit wallet 地址），下单前会调用 CLOB balance allowance update。
-- 聪明钱跟单（copy-trading）已具备完整子系统：跟踪多个 Polymarket 钱包地址（`TrackedWallet`）、通过 Polymarket Data API（`data-api.polymarket.com`，通过 `PolymarketDataApiConnector`）检测钱包新成交、四种跟单仓位模式（`FixedUsd`/`ProportionalToSource`/`CapitalRatio`/`MirrorPortfolioWeight`）、钱包分析统计（胜率/ROI/成交量）、per-wallet/per-market/total 敞口+单日亏损+冷却+滑点风控、确定性模拟引擎（模拟资金账本：capital/available/reserved/realized_pnl）、`Run/Analyze/Cancel/Reset` 与账户资金设置前端 UI；`mode=live` 已结构化支持但未接入真实下单（记录警告回退模拟）。API 服务不执行 copytrade 跟单循环、钱包分析、撤单或重置，前端操作会写入数据库控制命令，由 worker 领取执行；`POLYEDGE_COPYTRADE__ENABLED=true` 启用 worker 轮询。
+- 聪明钱跟单（copy-trading）已具备完整子系统：跟踪多个 Polymarket 钱包地址（`TrackedWallet`）、通过 Polymarket Data API（`data-api.polymarket.com`，通过 `PolymarketDataApiConnector`）检测钱包新成交、四种跟单仓位模式（`FixedUsd`/`ProportionalToSource`/`CapitalRatio`/`MirrorPortfolioWeight`）、钱包分析统计（胜率/ROI/成交量）、per-wallet/per-market/total 敞口+单日亏损+冷却+滑点风控、确定性模拟引擎（模拟资金账本：capital/available/reserved/realized_pnl）、`Run/Analyze/Cancel/Reset` 与账户资金设置前端 UI；`mode=live` 已结构化支持但未接入真实下单（记录警告回退模拟）。API 服务不执行 copytrade 跟单循环、钱包分析、撤单或重置，前端操作会写入数据库控制命令，由 worker 领取执行；`POLYEDGE_COPYTRADE__ENABLED=true` 启用 worker 轮询。copytrade 每轮注册 orderbook token 时会先替换 `copytrade` source 当前集合，避免历史钱包活动 token 长期留在 orderbook 订阅 registry。
 - Polymarket 运行时不再提供 mock mode；市场列表走 Gamma 实时数据，私有订单/成交任务需要真实凭证、真实账户、小额演练和运维 runbook。
 - 数据库迁移目前到 `0023_copytrade_control_commands.sql`。
 

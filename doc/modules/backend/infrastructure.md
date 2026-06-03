@@ -1,6 +1,6 @@
 # infrastructure（基础设施层）
 
-最后更新：2026-06-02
+最后更新：2026-06-03
 
 ## 概述
 
@@ -70,8 +70,8 @@
 | `stores/risk_state.rs` | `RiskStateStore` | PostgreSQL/内存 |
 | `stores/idempotency.rs` | `IdempotencyStore` | PostgreSQL/内存 |
 | `stores/audit.rs` | `AuditLogSink` | PostgreSQL/内存 |
-| `stores/orderbook_cache.rs` | `OrderbookCache` | 内存（TTL + 定期清理）— 仅供 orderbook 服务内部使用；Worker/API 通过 `OrderbookHttpClient` 远程访问 |
-| `stores/orderbook_registry.rs` | `OrderbookSubscriptionRegistry` | 内存（RwLock）— 仅供 orderbook 服务内部使用；Worker/API 通过 HTTP 注册 token |
+| `stores/orderbook_cache.rs` | `OrderbookCache` | 内存（TTL + 定期清理 + `entry_count` 真实条目统计）— 仅供 orderbook 服务内部使用；Worker/API 通过 `OrderbookHttpClient` 远程访问 |
+| `stores/orderbook_registry.rs` | `OrderbookSubscriptionRegistry` | 内存（RwLock + `source_count` 来源统计）— 仅供 orderbook 服务内部使用；Worker/API 通过 HTTP 注册 token |
 | `stores/runtime_config.rs` | 运行时配置 | PostgreSQL key-value |
 | `stores/helpers.rs` | DB 行映射辅助 | — |
 | `stores/types.rs` | 共享类型 | — |
@@ -135,6 +135,7 @@
 - 配置通过环境变量加载，支持 `.env` 文件
 - 认证中间件当前在 `off` 模式下运行
 - Orderbook cache 当前 runtime 使用进程内 `InMemoryOrderbookCache`；Redis 实现保留但未接入默认 runtime
+- Orderbook 服务的 `/orderbook/stats` 现在区分真实 cache 条目数、registry 来源数和 registry 去重 token 总数，避免把订阅 token 数误报为缓存条目数
 
 ## 修改检查清单
 

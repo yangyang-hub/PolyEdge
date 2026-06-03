@@ -39,4 +39,5 @@ pub trait OrderbookCache: Send + Sync {
     async fn set_book(&self, book: &CachedOrderBook) -> Result<()>;
     async fn set_books(&self, books: &[CachedOrderBook]) -> Result<()>;
     async fn get_stale_tokens(&self, token_ids: &[String], max_age_ms: i64) -> Result<Vec<String>>;
+    async fn entry_count(&self) -> Result<usize>;
 }

@@ -1,6 +1,6 @@
 # Worker App（后台任务服务）
 
-最后更新：2026-06-02
+最后更新：2026-06-03
 
 ## 概述
 
@@ -92,12 +92,15 @@ copytrade_service.claim_next_control_command()
 
 无待处理控制命令时：
     fetch_copytrade_inputs() // 获取钱包活动 + 盘口
+        → orderbook_registry.unregister_source("copytrade")
+        → orderbook_registry.register_tokens("copytrade", current_activity_tokens)
         → copytrade_service.run_copy_cycle() // 业务逻辑
 ```
 
 Report: `CopyTradeRunReport { wallets_scanned, trades_detected, orders_placed, orders_filled, orders_skipped }`
 
 约束：worker 是 copytrade 手动控制命令和跟单循环的唯一执行者。API 只把 `run_once` / `analyze_wallets` / `cancel_all` / `reset` 写入 `copytrade_control_commands`；worker 每轮先领取并处理待执行命令，处理到命令时跳过本轮自动 tick。
+Copytrade 每轮会用当前钱包活动 token 替换 `copytrade` 来源的 orderbook 订阅集合，不保留历史活动 token，避免 orderbook 服务 registry 长期单调增长。
 
 ### rewards — 奖励策略与控制命令
 
@@ -161,6 +164,7 @@ Report: `NewsIngestionRunReport { sources_scanned/succeeded/failed, fetched, ins
 - `run` 主循环包含 register-orderbook-tokens、rewards、copytrade、arbitrage、news、execution、signal-recompute 等任务
 - rewards worker 会通过数据库命令队列接收前端 Run / Cancel / Reset 请求，API 进程不再执行 rewards 策略；仅支持 live 实盘模式，不依赖全局 system mode
 - copytrade worker 会通过数据库命令队列接收前端 Run / Analyze / Cancel / Reset 请求，API 进程不再执行跟单任务或抓取跟单输入
+- copytrade worker 注册 orderbook token 时会先清理 `copytrade` source，再注册当前活动 token 集合，防止历史钱包活动 token 无限留在 orderbook 订阅 registry 中
 - 默认大部分 worker 通过配置开关控制启用/禁用
 - Polymarket live 任务需要真实凭证；Deposit Wallet 使用 `POLYEDGE_POLYMARKET__SIGNATURE_TYPE=poly_1271` + `POLYEDGE_POLYMARKET__FUNDER=<deposit_wallet>`，worker 会通过 connector 走 CLOB V2 `POLY_1271` 下单/撤单路径。
 - 当前 `cargo check --workspace --tests` 编译通过；worker 生产入口不保留仅测试目标使用的 `RewardExecutionMode` 间接导入，测试目标显式导入该类型。

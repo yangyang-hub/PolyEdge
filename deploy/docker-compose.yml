@@ -79,8 +79,6 @@ services:
     env_file:
       - .env
       - .env.front
-    environment:
-      POLYEDGE_CONSOLE_STEP_UP_CODE: ${POLYEDGE_CONSOLE_STEP_UP_CODE:?set POLYEDGE_CONSOLE_STEP_UP_CODE in deploy/.env}
     ports:
       - "${POLYEDGE_FRONT_BIND:-0.0.0.0}:${POLYEDGE_FRONT_PORT:-33002}:80"
     healthcheck:

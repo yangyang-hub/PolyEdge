@@ -201,8 +201,12 @@ async fn fetch_copytrade_inputs(
     }
     let token_ids: Vec<String> = token_ids_set.into_iter().collect();
 
-    // Register tokens so the orderbook stream will subscribe to them on the
-    // next refresh cycle.
+    // Replace copytrade's token set so historic wallet activity does not keep
+    // stale orderbook subscriptions alive forever.
+    state
+        .orderbook_registry
+        .unregister_source("copytrade")
+        .await;
     if !token_ids.is_empty() {
         state
             .orderbook_registry
