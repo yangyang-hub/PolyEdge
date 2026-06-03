@@ -19,10 +19,10 @@
 | `lib.rs` | 模块入口 + Paper Trading 执行器定义（~316 行） |
 | `polymarket/` | Polymarket 多 API 集成子目录 |
 | `polymarket/live.rs` | 认证 CLOB 连接器：`LivePolymarketConnector` |
-| `polymarket/gamma.rs` | 公共市场元数据：`PolymarketGammaConnector` |
+| `polymarket/gamma.rs` | 公共市场元数据：`PolymarketGammaConnector`；Gamma keyset 分页 guard |
 | `polymarket/data_api.rs` | 钱包活动 API：`PolymarketDataApiConnector` |
 | `polymarket/book.rs` | 盘口快照：`PolymarketBookConnector` |
-| `polymarket/rewards.rs` | 奖励市场：`PolymarketRewardsConnector` |
+| `rewards.rs` | 奖励市场：`PolymarketRewardsConnector` |
 | `polymarket/models.rs` | 共享数据模型 |
 | `polymarket/normalizers.rs` | WebSocket 消息规范化函数 |
 | `polymarket/helpers.rs` | 共享辅助函数 |
@@ -35,7 +35,8 @@
 - **`PolymarketGammaConnector`**：`gamma_host` + `reqwest::Client`
 - **`PolymarketGammaMarket`**：id、slug、question、category、status、best_bid/ask/mid_price、volume_24h、ambiguity_level、tradability_status、condition_id、yes/no_asset_id 等
 - **`GammaMarketPage`**：分页响应（markets + next_cursor）
-- 常量：`GAMMA_MARKETS_PATH = "markets/keyset"`、`GAMMA_TIMEOUT = 15s`
+- 常量：`GAMMA_MARKETS_PATH = "markets/keyset"`、`GAMMA_TIMEOUT = 15s`、`GAMMA_LAST_CURSOR = "LTE="`、`GAMMA_MAX_PAGES = 1000`
+- `fetch_markets()` 对 Gamma keyset 分页做防御：记录已请求 cursor、遇到重复 `next_cursor` 或末页 sentinel 即停止，并按 market id 去重，避免上游重复游标导致进程内存持续增长
 - 用途：`market_sync.rs` worker 的主要数据源，`arbitrage.rs` 的回退数据源
 
 ### Polymarket Data API（钱包活动）
@@ -100,6 +101,7 @@
 ## 当前状态
 
 - 已实现当前系统使用的 Polymarket 公共市场、盘口、Data API、Rewards API 和 CLOB V2 交易 connector；Deposit Wallet relayer 生命周期接口尚未接入
+- Gamma keyset 分页已具备重复 cursor / 末页 sentinel / 最大页数保护，并按 market id 去重，避免外部 API 游标异常导致 market sync 无限累积内存
 - Paper Trading 执行器已完整实现
 - Live connector 已具备 CLOB V2 认证、用户 WS、订单提交、按 token_id 的 rewards buy/sell 提交和单笔撤单能力；签名类型已覆盖 EOA、Proxy、Gnosis Safe 和 Deposit Wallet (`poly_1271`)；订单 acceptance 返回实际提交 quantity，trade/WS 成交归一化按订单自身成交量入账；仍需要真实凭证和小额账户验证
 - RSS connector 支持 Atom/RSS 两种格式

@@ -4,6 +4,8 @@ use time::format_description::well_known::Rfc3339;
 
 const GAMMA_MARKETS_PATH: &str = "markets/keyset";
 const GAMMA_TIMEOUT: Duration = Duration::from_secs(15);
+const GAMMA_LAST_CURSOR: &str = "LTE=";
+const GAMMA_MAX_PAGES: usize = 1_000;
 
 #[derive(Debug, Clone)]
 pub struct PolymarketGammaMarket {
@@ -121,25 +123,64 @@ impl PolymarketGammaConnector {
     pub async fn fetch_markets(&self, page_size: u16) -> Result<Vec<PolymarketGammaMarket>> {
         let mut cursor: Option<String> = None;
         let mut markets = Vec::new();
+        let mut requested_cursors = std::collections::HashSet::new();
+        let mut market_ids = std::collections::HashSet::new();
+        let mut stopped_by_page_guard = true;
 
-        loop {
+        for page_index in 0..GAMMA_MAX_PAGES {
+            if let Some(cursor) = cursor.as_ref() {
+                if !requested_cursors.insert(cursor.clone()) {
+                    stopped_by_page_guard = false;
+                    warn!(
+                        cursor = %cursor,
+                        page_index,
+                        markets = markets.len(),
+                        "stopping Gamma market pagination after repeated cursor"
+                    );
+                    break;
+                }
+            }
+
             let page = self.fetch_market_page(page_size, cursor.as_deref()).await?;
             let had_items = !page.markets.is_empty();
             for raw in page.markets {
                 if let Some(market) = map_gamma_market(raw)? {
-                    markets.push(market);
+                    if market_ids.insert(market.id.clone()) {
+                        markets.push(market);
+                    }
                 }
             }
 
             if !had_items {
+                stopped_by_page_guard = false;
                 break;
             }
 
             let next_cursor = page.next_cursor.unwrap_or_default();
-            if next_cursor.trim().is_empty() {
+            let next_cursor = next_cursor.trim();
+            if next_cursor.is_empty() || next_cursor == GAMMA_LAST_CURSOR {
+                stopped_by_page_guard = false;
                 break;
             }
-            cursor = Some(next_cursor);
+            if cursor.as_deref() == Some(next_cursor) {
+                stopped_by_page_guard = false;
+                warn!(
+                    cursor = %next_cursor,
+                    page_index,
+                    markets = markets.len(),
+                    "stopping Gamma market pagination after next_cursor repeated"
+                );
+                break;
+            }
+            cursor = Some(next_cursor.to_string());
+        }
+
+        if stopped_by_page_guard && cursor.is_some() {
+            warn!(
+                max_pages = GAMMA_MAX_PAGES,
+                markets = markets.len(),
+                "stopping Gamma market pagination after max page guard"
+            );
         }
 
         Ok(markets)
@@ -190,20 +231,14 @@ impl PolymarketGammaConnector {
         map_gamma_market(raw)
     }
 
-    async fn fetch_market_page(
-        &self,
-        limit: u16,
-        cursor: Option<&str>,
-    ) -> Result<GammaMarketPage> {
-        let mut url =
-            reqwest::Url::parse(&format!("{}/{}", self.gamma_host, GAMMA_MARKETS_PATH)).map_err(
-                |error| {
-                    AppError::invalid_input(
-                        "POLYMARKET_GAMMA_MARKETS_URL_INVALID",
-                        format!("failed to construct Polymarket Gamma markets URL: {error}"),
-                    )
-                },
-            )?;
+    async fn fetch_market_page(&self, limit: u16, cursor: Option<&str>) -> Result<GammaMarketPage> {
+        let url = format!("{}/{}", self.gamma_host, GAMMA_MARKETS_PATH);
+        let mut url = reqwest::Url::parse(&url).map_err(|error| {
+            AppError::invalid_input(
+                "POLYMARKET_GAMMA_MARKETS_URL_INVALID",
+                format!("failed to construct Polymarket Gamma markets URL: {error}"),
+            )
+        })?;
         {
             let mut query = url.query_pairs_mut();
             query.append_pair("active", "true");
@@ -275,7 +310,8 @@ fn map_gamma_market(raw: RawGammaMarket) -> Result<Option<PolymarketGammaMarket>
             .unwrap_or(Decimal::ZERO)
             .max(Decimal::ZERO),
     )?;
-    let updated_at = parse_rfc3339(raw.updated_at.as_deref()).unwrap_or_else(OffsetDateTime::now_utc);
+    let updated_at =
+        parse_rfc3339(raw.updated_at.as_deref()).unwrap_or_else(OffsetDateTime::now_utc);
     let status = if raw.closed {
         MarketStatus::Closed
     } else {
