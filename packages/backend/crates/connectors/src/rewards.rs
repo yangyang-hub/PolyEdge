@@ -6,13 +6,16 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 use time::OffsetDateTime;
-use tokio::sync::Semaphore;
+use tokio::sync::{Mutex, Semaphore};
 use tokio::task::JoinSet;
 
 const LAST_CURSOR: &str = "LTE=";
 const ENRICH_TIMEOUT: Duration = Duration::from_secs(10);
 const ENRICH_MAX_RETRIES: u32 = 3;
 const ENRICH_RETRY_BASE_DELAY: Duration = Duration::from_millis(500);
+const ENRICH_RATE_LIMIT_MAX_RETRIES: u32 = 5;
+const ENRICH_RATE_LIMIT_BASE_DELAY: Duration = Duration::from_secs(2);
+const ENRICH_REQUEST_INTERVAL: Duration = Duration::from_millis(150);
 const MAX_REWARD_MARKET_PAGES: usize = 1_000;
 
 #[derive(Debug, Clone)]
@@ -105,14 +108,14 @@ struct RawOrderBook {
     asks: Option<Vec<RawBookLevel>>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 struct RawClobMarketToken {
     token_id: Option<String>,
     outcome: Option<String>,
     price: Option<Decimal>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[allow(dead_code)]
 struct RawClobMarketDetail {
     condition_id: Option<String>,
@@ -122,7 +125,7 @@ struct RawClobMarketDetail {
     tokens: Option<Vec<RawClobMarketToken>>,
 }
 
-const ENRICH_CONCURRENCY: usize = 10;
+const ENRICH_CONCURRENCY: usize = 3;
 
 fn spawn_next_orderbook_fetch<'a>(
     tasks: &mut JoinSet<Result<Option<PolymarketRewardOrderBook>>>,
@@ -354,6 +357,12 @@ impl PolymarketRewardsConnector {
         }
 
         let status = response.status();
+        if status.as_u16() == 429 {
+            return Err(AppError::dependency_unavailable(
+                "POLYMARKET_CLOB_MARKET_DETAIL_RATE_LIMITED",
+                format!("CLOB market detail returned HTTP 429 Too Many Requests for {condition_id}"),
+            ));
+        }
         if !status.is_success() {
             return Err(AppError::dependency_unavailable(
                 "POLYMARKET_CLOB_MARKET_DETAIL_STATUS_FAILED",
@@ -378,26 +387,63 @@ impl PolymarketRewardsConnector {
         markets: Vec<PolymarketRewardMarket>,
     ) -> Result<Vec<PolymarketRewardMarket>> {
         let semaphore = Arc::new(Semaphore::new(ENRICH_CONCURRENCY));
+        let last_request = Arc::new(Mutex::new(std::time::Instant::now()));
         let client = self.clone();
-        let mut handles = Vec::with_capacity(markets.len());
+        let mut handles: Vec<
+            tokio::task::JoinHandle<std::result::Result<Option<RawClobMarketDetail>, AppError>>,
+        > = Vec::with_capacity(markets.len());
 
         for market in &markets {
             let sem = semaphore.clone();
             let connector = client.clone();
             let cid = market.condition_id.clone();
+            let lr = last_request.clone();
             handles.push(tokio::spawn(async move {
                 let _permit = sem.acquire().await.expect("semaphore closed");
-                for attempt in 0..=ENRICH_MAX_RETRIES {
+
+                // Enforce minimum interval between outgoing requests to smooth traffic.
+                {
+                    let mut last = lr.lock().await;
+                    let elapsed = last.elapsed();
+                    if elapsed < ENRICH_REQUEST_INTERVAL {
+                        tokio::time::sleep(ENRICH_REQUEST_INTERVAL - elapsed).await;
+                    }
+                    *last = std::time::Instant::now();
+                }
+
+                let mut is_rate_limited = false;
+                for attempt in 0..=ENRICH_RATE_LIMIT_MAX_RETRIES {
                     match connector.fetch_market_detail(&cid).await {
-                        Ok(Some(detail)) => return Ok(detail),
+                        Ok(Some(detail)) => return Ok(Some(detail)),
                         Ok(None) => {
-                            return Err(AppError::dependency_unavailable(
-                                "POLYMARKET_CLOB_MARKET_DETAIL_NOT_FOUND",
-                                format!("CLOB market detail was not found for {cid}"),
-                            ));
+                            return Ok(None);
+                        }
+                        Err(error)
+                            if error.code()
+                                == "POLYMARKET_CLOB_MARKET_DETAIL_RATE_LIMITED" =>
+                        {
+                            is_rate_limited = true;
+                            if attempt < ENRICH_RATE_LIMIT_MAX_RETRIES {
+                                let delay =
+                                    ENRICH_RATE_LIMIT_BASE_DELAY * 2u32.pow(attempt);
+                                tracing::warn!(
+                                    condition_id = %cid,
+                                    attempt = attempt + 1,
+                                    "rate limited (429), retrying after {:?}",
+                                    delay,
+                                );
+                                tokio::time::sleep(delay).await;
+                            } else {
+                                tracing::warn!(
+                                    condition_id = %cid,
+                                    "rate limited (429) after {} retries, skipping",
+                                    ENRICH_RATE_LIMIT_MAX_RETRIES,
+                                );
+                                return Ok(None);
+                            }
                         }
                         Err(error) => {
-                            if attempt < ENRICH_MAX_RETRIES {
+                            if attempt < ENRICH_MAX_RETRIES && !is_rate_limited {
                                 let delay = ENRICH_RETRY_BASE_DELAY * 2u32.pow(attempt);
                                 tracing::debug!(
                                     condition_id = %cid,
@@ -411,10 +457,10 @@ impl PolymarketRewardsConnector {
                                 tracing::warn!(
                                     condition_id = %cid,
                                     error = %error,
-                                    "failed to enrich reward market after {} retries",
-                                    ENRICH_MAX_RETRIES,
+                                    "failed to enrich reward market after {} retries, skipping",
+                                    if is_rate_limited { ENRICH_RATE_LIMIT_MAX_RETRIES } else { ENRICH_MAX_RETRIES },
                                 );
-                                return Err(error);
+                                return Ok(None);
                             }
                         }
                     }
@@ -424,63 +470,91 @@ impl PolymarketRewardsConnector {
         }
 
         let mut enriched = Vec::with_capacity(handles.len());
+        let mut failed = 0usize;
         for (market, handle) in markets.into_iter().zip(handles) {
-            let detail = handle.await.map_err(|error| {
-                AppError::dependency_unavailable(
-                    "POLYMARKET_REWARD_MARKET_ENRICH_TASK_FAILED",
-                    format!(
-                        "reward market enrichment task failed for {}: {error}",
-                        market.condition_id
-                    ),
-                )
-            })??;
+            let detail = match handle.await {
+                Ok(Ok(Some(detail))) => Some(detail),
+                Ok(Ok(None)) => {
+                    failed += 1;
+                    None
+                }
+                Ok(Err(error)) => {
+                    tracing::warn!(
+                        condition_id = %market.condition_id,
+                        error = %error,
+                        "reward market enrichment task error, skipping",
+                    );
+                    failed += 1;
+                    None
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        condition_id = %market.condition_id,
+                        error = %error,
+                        "reward market enrichment task panicked, skipping",
+                    );
+                    failed += 1;
+                    None
+                }
+            };
 
             let mut market = market;
             dedupe_reward_tokens(&mut market.tokens);
-            if market.question == market.condition_id {
-                if let Some(question) = detail.question {
-                    market.question = question;
+            if let Some(ref detail) = detail {
+                if market.question == market.condition_id {
+                    if let Some(question) = detail.question.clone() {
+                        market.question = question;
+                    }
                 }
-            }
-            if market.image.is_empty() {
-                if let Some(image) = detail.image {
-                    market.image = image;
+                if market.image.is_empty() {
+                    if let Some(image) = detail.image.clone() {
+                        market.image = image;
+                    }
                 }
-            }
-            if market.market_slug == market.condition_id {
-                if let Some(slug) = detail.market_slug {
-                    market.market_slug = slug;
+                if market.market_slug == market.condition_id {
+                    if let Some(slug) = detail.market_slug.clone() {
+                        market.market_slug = slug;
+                    }
                 }
-            }
-            if market.tokens.len() < 2
-                && let Some(tokens) = detail.tokens
-            {
-                market.tokens = tokens
-                    .into_iter()
-                    .filter_map(|raw| {
-                        let token_id = raw.token_id.unwrap_or_default().trim().to_string();
-                        if token_id.is_empty() {
-                            return None;
-                        }
-                        Some(PolymarketRewardToken {
-                            token_id,
-                            outcome: raw.outcome.unwrap_or_default(),
-                            price: raw.price,
+                if market.tokens.len() < 2
+                    && let Some(tokens) = detail.tokens.clone()
+                {
+                    market.tokens = tokens
+                        .into_iter()
+                        .filter_map(|raw| {
+                            let token_id = raw.token_id.unwrap_or_default().trim().to_string();
+                            if token_id.is_empty() {
+                                return None;
+                            }
+                            Some(PolymarketRewardToken {
+                                token_id,
+                                outcome: raw.outcome.unwrap_or_default(),
+                                price: raw.price,
+                            })
                         })
-                    })
-                    .collect();
+                        .collect();
+                }
             }
             dedupe_reward_tokens(&mut market.tokens);
             if market.tokens.len() < 2 {
-                return Err(AppError::dependency_unavailable(
-                    "POLYMARKET_REWARD_MARKET_TOKENS_INCOMPLETE",
-                    format!(
-                        "reward market {} has fewer than two enriched tokens",
-                        market.condition_id
-                    ),
-                ));
+                tracing::warn!(
+                    condition_id = %market.condition_id,
+                    token_count = market.tokens.len(),
+                    "reward market has fewer than two tokens after enrichment, skipping",
+                );
+                failed += 1;
+                continue;
             }
             enriched.push(market);
+        }
+
+        if failed > 0 {
+            tracing::warn!(
+                total = enriched.len() + failed,
+                enriched = enriched.len(),
+                failed,
+                "reward market enrichment completed with failures",
+            );
         }
 
         Ok(enriched)

@@ -2,9 +2,7 @@ use serde::Deserialize;
 use serde_json::Value as JsonValue;
 use time::format_description::well_known::Rfc3339;
 
-const GAMMA_MARKETS_PATH: &str = "markets/keyset";
 const GAMMA_TIMEOUT: Duration = Duration::from_secs(15);
-const GAMMA_LAST_CURSOR: &str = "LTE=";
 const GAMMA_MAX_PAGES: usize = 1_000;
 
 #[derive(Debug, Clone)]
@@ -33,12 +31,6 @@ pub struct PolymarketGammaMarket {
 pub struct PolymarketGammaConnector {
     gamma_host: String,
     client: reqwest::Client,
-}
-
-#[derive(Debug, Deserialize)]
-struct GammaMarketPage {
-    markets: Vec<RawGammaMarket>,
-    next_cursor: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -121,29 +113,17 @@ impl PolymarketGammaConnector {
     }
 
     pub async fn fetch_markets(&self, page_size: u16) -> Result<Vec<PolymarketGammaMarket>> {
-        let mut cursor: Option<String> = None;
         let mut markets = Vec::new();
-        let mut requested_cursors = std::collections::HashSet::new();
         let mut market_ids = std::collections::HashSet::new();
-        let mut stopped_by_page_guard = true;
+        let limit = page_size.max(1);
 
         for page_index in 0..GAMMA_MAX_PAGES {
-            if let Some(cursor) = cursor.as_ref() {
-                if !requested_cursors.insert(cursor.clone()) {
-                    stopped_by_page_guard = false;
-                    warn!(
-                        cursor = %cursor,
-                        page_index,
-                        markets = markets.len(),
-                        "stopping Gamma market pagination after repeated cursor"
-                    );
-                    break;
-                }
-            }
+            let offset = (page_index as u64) * (limit as u64);
+            let page = self.fetch_market_page_offset(limit, offset).await?;
+            let had_items = !page.is_empty();
+            let page_len = page.len();
 
-            let page = self.fetch_market_page(page_size, cursor.as_deref()).await?;
-            let had_items = !page.markets.is_empty();
-            for raw in page.markets {
+            for raw in page {
                 if let Some(market) = map_gamma_market(raw)? {
                     if market_ids.insert(market.id.clone()) {
                         markets.push(market);
@@ -151,36 +131,9 @@ impl PolymarketGammaConnector {
                 }
             }
 
-            if !had_items {
-                stopped_by_page_guard = false;
+            if !had_items || page_len < limit as usize {
                 break;
             }
-
-            let next_cursor = page.next_cursor.unwrap_or_default();
-            let next_cursor = next_cursor.trim();
-            if next_cursor.is_empty() || next_cursor == GAMMA_LAST_CURSOR {
-                stopped_by_page_guard = false;
-                break;
-            }
-            if cursor.as_deref() == Some(next_cursor) {
-                stopped_by_page_guard = false;
-                warn!(
-                    cursor = %next_cursor,
-                    page_index,
-                    markets = markets.len(),
-                    "stopping Gamma market pagination after next_cursor repeated"
-                );
-                break;
-            }
-            cursor = Some(next_cursor.to_string());
-        }
-
-        if stopped_by_page_guard && cursor.is_some() {
-            warn!(
-                max_pages = GAMMA_MAX_PAGES,
-                markets = markets.len(),
-                "stopping Gamma market pagination after max page guard"
-            );
         }
 
         Ok(markets)
@@ -231,8 +184,12 @@ impl PolymarketGammaConnector {
         map_gamma_market(raw)
     }
 
-    async fn fetch_market_page(&self, limit: u16, cursor: Option<&str>) -> Result<GammaMarketPage> {
-        let url = format!("{}/{}", self.gamma_host, GAMMA_MARKETS_PATH);
+    async fn fetch_market_page_offset(
+        &self,
+        limit: u16,
+        offset: u64,
+    ) -> Result<Vec<RawGammaMarket>> {
+        let url = format!("{}/markets", self.gamma_host);
         let mut url = reqwest::Url::parse(&url).map_err(|error| {
             AppError::invalid_input(
                 "POLYMARKET_GAMMA_MARKETS_URL_INVALID",
@@ -247,9 +204,7 @@ impl PolymarketGammaConnector {
             query.append_pair("order", "volume24hr");
             query.append_pair("ascending", "false");
             query.append_pair("limit", &limit.max(1).to_string());
-            if let Some(cursor) = cursor {
-                query.append_pair("next_cursor", cursor);
-            }
+            query.append_pair("offset", &offset.to_string());
         }
 
         let response = self.client.get(url).send().await.map_err(|error| {
@@ -266,12 +221,15 @@ impl PolymarketGammaConnector {
             ));
         }
 
-        response.json::<GammaMarketPage>().await.map_err(|error| {
-            AppError::dependency_unavailable(
-                "POLYMARKET_GAMMA_MARKETS_DECODE_FAILED",
-                format!("failed to decode Polymarket Gamma markets: {error}"),
-            )
-        })
+        response
+            .json::<Vec<RawGammaMarket>>()
+            .await
+            .map_err(|error| {
+                AppError::dependency_unavailable(
+                    "POLYMARKET_GAMMA_MARKETS_DECODE_FAILED",
+                    format!("failed to decode Polymarket Gamma markets: {error}"),
+                )
+            })
     }
 }
 
