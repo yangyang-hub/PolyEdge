@@ -180,6 +180,7 @@ export function PositionsTable({ positions }: { positions: RewardPositionDto[] }
 
 interface QuotePlansTableProps {
   plans: RewardQuotePlanDto[];
+  plansPage: RewardListPageDto;
   search: string;
   onSearchChange: (v: string) => void;
   eligibility: "all" | "eligible" | "ineligible";
@@ -187,12 +188,13 @@ interface QuotePlansTableProps {
   sortBy: string;
   sortOrder: "asc" | "desc";
   onSortChange: (by: string, order: "asc" | "desc") => void;
+  onPageChange: (page: number) => void;
   filtering?: boolean;
 }
 
 export function QuotePlansTable({
-  plans, search, onSearchChange, eligibility, onEligibilityChange,
-  sortBy, sortOrder, onSortChange, filtering,
+  plans, plansPage, search, onSearchChange, eligibility, onEligibilityChange,
+  sortBy, sortOrder, onSortChange, onPageChange, filtering,
 }: QuotePlansTableProps) {
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const [localSearch, setLocalSearch] = useState(search);
@@ -205,50 +207,11 @@ export function QuotePlansTable({
     debounceRef.current = setTimeout(() => onSearchChange(v), 300);
   }, [onSearchChange]);
 
-  const searchedPlans = useMemo(() => {
-    const query = localSearch.trim().toLowerCase();
-    if (!query) {
-      return plans;
-    }
-    return plans.filter((plan) =>
-      plan.question.toLowerCase().includes(query)
-        || plan.market_slug.toLowerCase().includes(query)
-        || plan.reason.toLowerCase().includes(query)
-    );
-  }, [plans, localSearch]);
-
-  const visiblePlans = useMemo(() => {
-    const next = searchedPlans.filter((plan) => {
-      if (eligibility === "eligible") {
-        return plan.eligible;
-      }
-      if (eligibility === "ineligible") {
-        return !plan.eligible;
-      }
-      return true;
-    });
-    next.sort((a, b) => {
-      const ord = (() => {
-        if (sortBy === "daily_reward") {
-          return Number(a.total_daily_rate) - Number(b.total_daily_rate);
-        }
-        if (sortBy === "midpoint") {
-          if (a.midpoint == null && b.midpoint == null) return 0;
-          if (a.midpoint == null) return -1;
-          if (b.midpoint == null) return 1;
-          return Number(a.midpoint) - Number(b.midpoint);
-        }
-        return Number(a.score) - Number(b.score);
-      })();
-      return sortOrder === "asc" ? ord : -ord;
-    });
-    return next;
-  }, [searchedPlans, eligibility, sortBy, sortOrder]);
-
+  // Server-side pagination: plans are already filtered/sorted/paged by the API.
   const tabs = [
-    { key: "all", label: dictionary.rewards.filterAll, count: searchedPlans.length },
-    { key: "eligible", label: dictionary.rewards.filterEligible, count: searchedPlans.filter((p) => p.eligible).length },
-    { key: "ineligible", label: dictionary.rewards.filterIneligible, count: searchedPlans.filter((p) => !p.eligible).length },
+    { key: "all", label: dictionary.rewards.filterAll, count: plansPage.total_items },
+    { key: "eligible", label: dictionary.rewards.filterEligible, count: plansPage.total_items },
+    { key: "ineligible", label: dictionary.rewards.filterIneligible, count: plansPage.total_items },
   ];
 
   function handleSort(field: string) {
@@ -259,7 +222,18 @@ export function QuotePlansTable({
     }
   }
 
-  const pagination = usePagination(visiblePlans.length, 15);
+  const pagination: PaginationState = {
+    page: plansPage.page,
+    totalPages: plansPage.total_pages,
+    start: 0,
+    end: plans.length,
+    setPage: onPageChange,
+    goPrevious: () => onPageChange(Math.max(1, plansPage.page - 1)),
+    goNext: () => onPageChange(Math.min(plansPage.total_pages, plansPage.page + 1)),
+    reset: () => onPageChange(1),
+    hasPrevious: plansPage.page > 1,
+    hasNext: plansPage.page < plansPage.total_pages,
+  };
 
   return (
     <div className="space-y-3">
@@ -294,14 +268,14 @@ export function QuotePlansTable({
           </TableRow>
         </TableHeader>
         <TableBody>
-          {visiblePlans.length === 0 ? (
+          {plans.length === 0 ? (
             <TableRow>
               <TableCell colSpan={6} className="py-6 text-center text-sm text-muted-foreground">
                 {dictionary.rewards.none}
               </TableCell>
             </TableRow>
           ) : (
-            visiblePlans.slice(pagination.start, pagination.end).map((plan) => (
+            plans.map((plan) => (
               <TableRow key={plan.condition_id}>
                 <TableCell className="max-w-[360px]">
                   <div className="space-y-1">
@@ -331,7 +305,7 @@ export function QuotePlansTable({
           )}
         </TableBody>
       </Table>
-      <PaginationBar pagination={pagination} totalItems={visiblePlans.length} />
+      <PaginationBar pagination={pagination} totalItems={plansPage.total_items} />
     </div>
   );
 }

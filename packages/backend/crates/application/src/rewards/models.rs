@@ -790,6 +790,7 @@ pub struct RewardBotStatus {
     pub account_id: String,
     pub markets_tracked: usize,
     pub eligible_markets: usize,
+    pub plans_total: usize,
     pub open_orders: usize,
     pub positions: usize,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -809,6 +810,7 @@ pub struct RewardBotSnapshot {
     pub account: RewardAccountState,
     pub markets: Vec<RewardMarket>,
     pub quote_plans: Vec<RewardQuotePlan>,
+    pub plans_page: RewardListPage,
     pub orders: Vec<ManagedRewardOrder>,
     pub orders_page: RewardListPage,
     pub positions: Vec<RewardPosition>,

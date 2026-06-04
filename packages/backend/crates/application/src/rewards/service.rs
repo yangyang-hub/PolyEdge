@@ -29,8 +29,15 @@ pub trait RewardBotStore: Send + Sync {
     async fn list_all_active_markets(&self) -> Result<Vec<RewardMarket>>;
     /// Count active markets and return their latest update timestamp without loading rows.
     async fn active_market_summary(&self) -> Result<(usize, Option<OffsetDateTime>)>;
-    /// List all quote plans without a row limit (used by snapshot).
+    /// List all quote plans without a row limit (used by worker live cycle).
     async fn list_all_quote_plans(&self) -> Result<Vec<RewardQuotePlan>>;
+    /// Count total and eligible quote plans without loading JSON rows.
+    async fn count_quote_plans(&self) -> Result<(usize, usize)>;
+    /// List a single page of quote plans with server-side filter/sort/pagination.
+    async fn list_quote_plans_page(
+        &self,
+        query: &RewardQuotePlanListQuery,
+    ) -> Result<RewardQuotePlanPage>;
     async fn list_orders_page(&self, query: &RewardOrderListQuery) -> Result<RewardOrderPage>;
     async fn list_positions(&self, limit: u16) -> Result<Vec<RewardPosition>>;
     async fn list_events(&self, limit: u16) -> Result<Vec<RewardRiskEvent>>;
@@ -40,6 +47,8 @@ pub trait RewardBotStore: Send + Sync {
     async fn load_account_state(&self, config: &RewardBotConfig) -> Result<RewardAccountState>;
     /// Currently open-like orders for an account (planned/open/exit_pending).
     async fn list_open_orders(&self, account_id: &str) -> Result<Vec<ManagedRewardOrder>>;
+    /// Count open-like orders without loading full rows.
+    async fn count_open_orders(&self, account_id: &str) -> Result<usize>;
     /// Lookup a managed rewards order by its external Polymarket order id.
     async fn get_order_by_external_order_id(
         &self,
@@ -47,9 +56,14 @@ pub trait RewardBotStore: Send + Sync {
     ) -> Result<Option<ManagedRewardOrder>>;
     /// Non-zero inventory for an account.
     async fn list_account_positions(&self, account_id: &str) -> Result<Vec<RewardPosition>>;
+    /// Count non-zero positions without loading full rows.
+    async fn count_account_positions(&self, account_id: &str) -> Result<usize>;
     async fn list_fills(&self, limit: u16) -> Result<Vec<RewardFill>>;
     async fn reward_fill_exists(&self, fill_id: &str) -> Result<bool>;
-    /// Persist a full validation/live local-state tick atomically.
+    /// Persist validation/live account, order, fill, position, and event changes atomically.
+    ///
+    /// Reward market catalogs and quote-plan snapshots have separate full-replacement
+    /// methods and must not be changed by incremental live-state persistence.
     async fn apply_simulation_tick(
         &self,
         outcome: &RewardSimulationOutcome,
@@ -80,6 +94,15 @@ impl RewardBotService {
     pub async fn update_config(&self, patch: RewardBotConfigPatch) -> Result<RewardBotConfig> {
         let current = self.read_config().await?;
         let next = current.apply_patch(patch);
+        if next.account_id != current.account_id
+            && (self.store.count_open_orders(&current.account_id).await? > 0
+                || self.store.count_account_positions(&current.account_id).await? > 0)
+        {
+            return Err(AppError::conflict(
+                "REWARD_ACCOUNT_CHANGE_BLOCKED",
+                "cannot change rewards account_id while the current account has open orders or non-zero positions",
+            ));
+        }
         self.store.save_config(&next).await?;
         Ok(next)
     }
@@ -258,33 +281,40 @@ impl RewardBotService {
     }
 
     pub async fn snapshot(&self) -> Result<RewardBotSnapshot> {
-        self.snapshot_with_order_query(&RewardOrderListQuery::default())
-            .await
+        self.snapshot_with_order_query(
+            &RewardOrderListQuery::default(),
+            &RewardQuotePlanListQuery::default(),
+        )
+        .await
     }
 
     pub async fn snapshot_with_order_query(
         &self,
         order_query: &RewardOrderListQuery,
+        plans_query: &RewardQuotePlanListQuery,
     ) -> Result<RewardBotSnapshot> {
         let config = self.read_config().await?;
         let account = self.store.load_account_state(&config).await?;
         let (markets_tracked, last_scan_at) = self.store.active_market_summary().await?;
-        let quote_plans = self.store.list_all_quote_plans().await?;
+        let (plans_total, eligible_total) = self.store.count_quote_plans().await?;
+        let plans_page_data = self.store.list_quote_plans_page(plans_query).await?;
         let orders = self.store.list_orders_page(order_query).await?;
         let positions = self.store.list_positions(200).await?;
         let open_order_count = self
             .store
-            .list_open_orders(&account.account_id)
-            .await?
-            .len();
+            .count_open_orders(&account.account_id)
+            .await?;
         let position_count = self
             .store
-            .list_account_positions(&account.account_id)
-            .await?
-            .len();
+            .count_account_positions(&account.account_id)
+            .await?;
         let fills = self.store.list_fills(200).await?;
         let events = self.store.list_events(100).await?;
-        let last_run_at = quote_plans.iter().map(|plan| plan.updated_at).max();
+        let last_run_at = plans_page_data
+            .items
+            .iter()
+            .map(|plan| plan.updated_at)
+            .max();
         let error = events
             .iter()
             .find(|event| event.severity == RewardRiskSeverity::Critical)
@@ -296,17 +326,19 @@ impl RewardBotService {
                 running: config.enabled,
                 account_id: config.account_id.clone(),
                 markets_tracked,
-                eligible_markets: quote_plans.iter().filter(|plan| plan.eligible).count(),
+                eligible_markets: eligible_total,
                 open_orders: open_order_count,
                 positions: position_count,
                 last_scan_at,
                 last_run_at,
                 error,
+                plans_total,
             },
             config,
             account,
             markets: Vec::new(),
-            quote_plans,
+            quote_plans: plans_page_data.items,
+            plans_page: plans_page_data.page,
             orders: orders.items,
             orders_page: orders.page,
             positions,

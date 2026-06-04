@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use polyedge_domain::Result;
 use std::time::Instant;
 
 /// 订阅注册中心 — 任何服务可以注册/注销感兴趣的 token ID。
@@ -7,17 +8,20 @@ use std::time::Instant;
 /// 新消费者只需调用 `register_tokens`，无需修改 stream worker 代码。
 #[async_trait]
 pub trait OrderbookSubscriptionRegistry: Send + Sync {
-    /// 注册一组 token ID（幂等，重复注册不产生副作用）。
-    async fn register_tokens(&self, source: &str, token_ids: &[String]);
+    /// Atomically replace a source's ordered token set.
+    async fn register_tokens(&self, source: &str, token_ids: &[String]) -> Result<()>;
 
     /// 注销某来源的所有 token。
-    async fn unregister_source(&self, source: &str);
+    async fn unregister_source(&self, source: &str) -> Result<()>;
 
     /// 注销某来源的指定 token。
-    async fn unregister_tokens(&self, source: &str, token_ids: &[String]);
+    async fn unregister_tokens(&self, source: &str, token_ids: &[String]) -> Result<()>;
 
     /// 返回当前所有已注册的去重 token 列表。
     async fn list_all_tokens(&self) -> Vec<String>;
+
+    /// 返回去重 token 总数（不需要构建完整列表）。
+    async fn total_token_count(&self) -> usize;
 
     /// 返回当前注册来源数量。
     async fn source_count(&self) -> usize;

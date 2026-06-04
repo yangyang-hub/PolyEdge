@@ -181,6 +181,7 @@ impl Default for OrderbookServiceSettings {
         Self {
             port: 38002,
             service_url: "http://localhost:38002".to_string(),
+            write_token: None,
         }
     }
 }

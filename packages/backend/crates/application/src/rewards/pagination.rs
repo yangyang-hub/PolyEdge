@@ -193,6 +193,87 @@ fn normalize_order_search(search: Option<String>) -> Option<String> {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Quote-plan pagination
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RewardQuotePlanSortField {
+    Score,
+    DailyReward,
+    Midpoint,
+    Eligible,
+}
+
+impl RewardQuotePlanSortField {
+    #[must_use]
+    pub fn from_optional_str(value: Option<String>) -> Self {
+        match value.as_deref().map(str::trim) {
+            Some("daily_reward") => Self::DailyReward,
+            Some("midpoint") => Self::Midpoint,
+            Some("eligible") => Self::Eligible,
+            _ => Self::Score,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RewardQuotePlanListQuery {
+    pub search: Option<String>,
+    pub eligible: Option<bool>,
+    pub sort_by: RewardQuotePlanSortField,
+    pub sort_order: SortOrder,
+    pub page: usize,
+    pub page_size: usize,
+}
+
+impl RewardQuotePlanListQuery {
+    #[must_use]
+    pub fn new(
+        search: Option<String>,
+        eligible: Option<bool>,
+        sort_by: Option<String>,
+        sort_order: Option<String>,
+        page: Option<u16>,
+        page_size: Option<u16>,
+    ) -> Self {
+        Self {
+            search: normalize_plan_search(search),
+            eligible,
+            sort_by: RewardQuotePlanSortField::from_optional_str(sort_by),
+            sort_order: parse_sort_order(sort_order),
+            page: usize::from(page.unwrap_or(1).max(1)),
+            page_size: usize::from(validate_reward_list_limit(page_size)),
+        }
+    }
+
+    #[must_use]
+    pub fn page_for_total(&self, total_items: usize) -> RewardListPage {
+        RewardListPage::new(self.page, self.page_size, total_items)
+    }
+}
+
+impl Default for RewardQuotePlanListQuery {
+    fn default() -> Self {
+        Self::new(None, None, None, None, Some(1), Some(DEFAULT_LIST_LIMIT))
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RewardQuotePlanPage {
+    pub items: Vec<RewardQuotePlan>,
+    pub page: RewardListPage,
+}
+
+fn normalize_plan_search(search: Option<String>) -> Option<String> {
+    let search = search?.trim().to_lowercase();
+    if search.is_empty() {
+        None
+    } else {
+        Some(search)
+    }
+}
+
 fn parse_sort_order(sort_order: Option<String>) -> SortOrder {
     match sort_order.as_deref().map(str::trim) {
         Some("asc") => SortOrder::Asc,

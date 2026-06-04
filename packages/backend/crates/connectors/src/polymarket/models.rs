@@ -106,6 +106,12 @@ pub struct LivePolymarketTradeSyncRequest {
 }
 
 #[derive(Debug, Clone)]
+pub struct LivePolymarketTradeSyncOutcome {
+    pub updates: Vec<ConnectorTradeFillUpdate>,
+    pub order_status: Option<ConnectorOrderStatusUpdate>,
+}
+
+#[derive(Debug, Clone)]
 pub struct LivePolymarketOrderAcceptance {
     pub order_id: String,
     pub status: PolymarketAcceptedOrderStatus,

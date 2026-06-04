@@ -10,6 +10,8 @@ export interface RewardBotSnapshotQuery {
   plans_eligible?: boolean;
   plans_sort_by?: string;
   plans_sort_order?: string;
+  plans_page?: number;
+  plans_page_size?: number;
   orders_search?: string;
   orders_status?: string;
   orders_sort_by?: string;

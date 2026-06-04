@@ -271,6 +271,17 @@ impl RewardBotStore for PostgresRewardBotStore {
             .collect()
     }
 
+    async fn count_quote_plans(&self) -> Result<(usize, usize)> {
+        postgres_count_quote_plans(&self.pool).await
+    }
+
+    async fn list_quote_plans_page(
+        &self,
+        query: &RewardQuotePlanListQuery,
+    ) -> Result<RewardQuotePlanPage> {
+        postgres_list_quote_plans_page(&self.pool, query).await
+    }
+
     async fn list_orders_page(&self, query: &RewardOrderListQuery) -> Result<RewardOrderPage> {
         postgres_list_reward_orders_page(&self.pool, query).await
     }
@@ -428,6 +439,27 @@ impl RewardBotStore for PostgresRewardBotStore {
         rows.iter().map(reward_order_from_row).collect()
     }
 
+    async fn count_open_orders(&self, account_id: &str) -> Result<usize> {
+        let count: i64 = sqlx::query_scalar(
+            r#"
+            SELECT COUNT(*)
+            FROM reward_managed_orders
+            WHERE account_id = $1
+              AND status IN ('planned', 'open', 'exit_pending')
+            "#,
+        )
+        .bind(account_id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_QUERY_FAILED",
+                format!("failed to count open reward orders: {error}"),
+            )
+        })?;
+        Ok(count.max(0) as usize)
+    }
+
     async fn get_order_by_external_order_id(
         &self,
         external_order_id: &str,
@@ -473,6 +505,26 @@ impl RewardBotStore for PostgresRewardBotStore {
             )
         })?;
         rows.iter().map(reward_position_from_row).collect()
+    }
+
+    async fn count_account_positions(&self, account_id: &str) -> Result<usize> {
+        let count: i64 = sqlx::query_scalar(
+            r#"
+            SELECT COUNT(*)
+            FROM reward_positions
+            WHERE account_id = $1 AND size <> 0
+            "#,
+        )
+        .bind(account_id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_QUERY_FAILED",
+                format!("failed to count reward account positions: {error}"),
+            )
+        })?;
+        Ok(count.max(0) as usize)
     }
 
     async fn list_fills(&self, limit: u16) -> Result<Vec<RewardFill>> {
@@ -531,8 +583,6 @@ impl RewardBotStore for PostgresRewardBotStore {
             )
         })?;
 
-        upsert_reward_markets_tx(&mut transaction, &outcome.markets).await?;
-        replace_reward_quote_plans_tx(&mut transaction, &outcome.plans).await?;
         for order in &outcome.orders {
             insert_reward_order(&mut transaction, order, trace_id).await?;
         }

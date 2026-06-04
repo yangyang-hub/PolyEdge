@@ -10,7 +10,7 @@ use polyedge_application::{
     NewsIngestSourceCommand, NewsIngestionItem, NewsRawEventListFilters, NewsRawEventView,
     NewsSourceFailureUpdate, NewsSourceHealthListFilters, NewsSourceHealthView, OrderListFilters,
     PageQuery, PostFillStrategy, ReconcileExecutionListFilters, ReconcileExternalTradeCommand,
-    RewardBookLevel, RewardBotConfig, RewardBotRunReport, RewardControlAction,
+    RewardAccountState, RewardBookLevel, RewardBotConfig, RewardBotRunReport, RewardControlAction,
     RewardControlCommand, RewardFill, RewardFillRole, RewardMarket, RewardOrderBook,
     RewardOrderSide, RewardPosition, RewardQuotePlan, RewardRiskEvent, RewardRiskSeverity,
     RewardSimulationOutcome, RewardToken, SignalListFilters, SyncExternalOrderStatusCommand,
@@ -145,7 +145,10 @@ async fn main() -> Result<()> {
     let state = {
         let base = runtime.app_state();
         let url = &base.settings.orderbook.service_url;
-        let client = std::sync::Arc::new(polyedge_connectors::OrderbookHttpClient::new(url));
+        let client = std::sync::Arc::new(polyedge_connectors::OrderbookHttpClient::new(
+            url,
+            base.settings.orderbook.write_token.as_deref(),
+        ));
         AppState {
             orderbook_cache: client.clone(),
             orderbook_registry: client,

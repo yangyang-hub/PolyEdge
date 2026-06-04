@@ -43,8 +43,13 @@ async fn poll_reward_bot_loop(
         let reconcile_interval = Duration::from_secs(config.reconcile_interval_sec.max(1));
         let now = Instant::now();
         let since_full = now.duration_since(last_full_at);
+        let command_report =
+            process_pending_reward_control_commands(state, &mut book_history).await?;
 
-        if since_full >= full_interval {
+        if command_report.processed > 0 {
+            accumulate_report(&mut total, &command_report.report);
+            last_full_at = Instant::now();
+        } else if since_full >= full_interval {
             // --- Full simulation cycle (rebuilds plans) ---
             let trace_id = new_trace_id();
             let report = run_reward_bot_once_with_history(state, &trace_id, &mut book_history).await?;
@@ -130,7 +135,20 @@ async fn fetch_reward_bot_inputs(
         .await?;
 
     // Read order books from the worker-local cache maintained by orderbook-stream.
-    let token_ids = select_reward_book_token_ids(&markets);
+    let active_token_ids = state
+        .reward_bot_service
+        .list_active_reward_book_token_ids()
+        .await?;
+    let mut seen = HashSet::new();
+    let mut token_ids = Vec::new();
+    for token_id in active_token_ids
+        .into_iter()
+        .chain(select_reward_book_token_ids(&markets))
+    {
+        if seen.insert(token_id.clone()) {
+            token_ids.push(token_id);
+        }
+    }
     let mut books = HashMap::new();
     let cache = state.orderbook_cache.clone();
     let cached_books = stream::iter(token_ids)
@@ -189,7 +207,7 @@ fn record_reward_book_history(
     for book in books.values() {
         let snapshots = history
             .entry(book.token_id.clone())
-            .or_insert_with(VecDeque::new);
+            .or_default();
         if snapshots
             .back()
             .is_some_and(|snapshot| snapshot.observed_at >= book.observed_at)

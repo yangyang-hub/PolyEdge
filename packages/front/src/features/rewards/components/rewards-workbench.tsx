@@ -31,8 +31,10 @@ import { RiskControlConfig } from "./rewards-risk-config";
 import { OrdersTable, PositionsTable, QuotePlansTable } from "./rewards-tables";
 
 const REWARD_ORDERS_PAGE_SIZE = 15;
+const REWARD_PLANS_PAGE_SIZE = 15;
 
 type OrderStatusFilter = "all" | "open" | "filled" | "cancelled" | "exit_pending";
+type PlansEligibilityFilter = "all" | "eligible" | "ineligible";
 type SortOrder = "asc" | "desc";
 
 export function RewardsWorkbench({ initialSnapshot }: { initialSnapshot: RewardBotSnapshotDto }) {
@@ -43,9 +45,10 @@ export function RewardsWorkbench({ initialSnapshot }: { initialSnapshot: RewardB
   const [filtering, setFiltering] = useState(false);
 
   const [plansSearch, setPlansSearch] = useState("");
-  const [plansEligible, setPlansEligible] = useState<"all" | "eligible" | "ineligible">("eligible");
+  const [plansEligible, setPlansEligible] = useState<PlansEligibilityFilter>("eligible");
   const [plansSortBy, setPlansSortBy] = useState("score");
   const [plansSortOrder, setPlansSortOrder] = useState<SortOrder>("desc");
+  const [plansPage, setPlansPage] = useState(initialSnapshot.plans_page?.page ?? 1);
 
   const [ordersSearch, setOrdersSearch] = useState("");
   const [ordersStatus, setOrdersStatus] = useState<OrderStatusFilter>("all");
@@ -67,6 +70,15 @@ export function RewardsWorkbench({ initialSnapshot }: { initialSnapshot: RewardB
     const search = overrides.search ?? ordersSearch;
     const status = overrides.status ?? ordersStatus;
     const q: RewardBotSnapshotQuery = {};
+    // Plans pagination
+    if (plansSearch.trim()) q.plans_search = plansSearch.trim();
+    if (plansEligible === "eligible") q.plans_eligible = true;
+    else if (plansEligible === "ineligible") q.plans_eligible = false;
+    q.plans_sort_by = plansSortBy;
+    q.plans_sort_order = plansSortOrder;
+    q.plans_page = plansPage;
+    q.plans_page_size = REWARD_PLANS_PAGE_SIZE;
+    // Orders pagination
     if (search.trim()) q.orders_search = search.trim();
     if (status !== "all") q.orders_status = status;
     q.orders_sort_by = overrides.sortBy ?? ordersSortBy;
@@ -77,12 +89,13 @@ export function RewardsWorkbench({ initialSnapshot }: { initialSnapshot: RewardB
   }
 
   function refetchWithFilters(overrides?: Parameters<typeof buildQuery>[0]) {
-    const requestedPage = overrides?.page ?? ordersPage;
+    const requestedOrdersPage = overrides?.page ?? ordersPage;
     setFiltering(true);
     void readRewardBotSnapshot(buildQuery(overrides))
       .then((response) => {
         setSnapshot(response.data);
-        setOrdersPage(response.data.orders_page?.page ?? requestedPage);
+        setOrdersPage(response.data.orders_page?.page ?? requestedOrdersPage);
+        setPlansPage(response.data.plans_page?.page ?? plansPage);
       })
       .finally(() => setFiltering(false));
   }
@@ -163,17 +176,29 @@ export function RewardsWorkbench({ initialSnapshot }: { initialSnapshot: RewardB
               <CardContent>
                 <QuotePlansTable
                   plans={snapshot.quote_plans}
+                  plansPage={snapshot.plans_page}
                   search={plansSearch}
                   onSearchChange={(v) => {
                     setPlansSearch(v);
+                    setPlansPage(1);
+                    refetchWithFilters();
                   }}
                   eligibility={plansEligible}
-                  onEligibilityChange={setPlansEligible}
+                  onEligibilityChange={(v) => {
+                    setPlansEligible(v);
+                    setPlansPage(1);
+                    refetchWithFilters();
+                  }}
                   sortBy={plansSortBy}
                   sortOrder={plansSortOrder}
                   onSortChange={(by, order) => {
                     setPlansSortBy(by);
                     setPlansSortOrder(order);
+                    refetchWithFilters();
+                  }}
+                  onPageChange={(p) => {
+                    setPlansPage(p);
+                    refetchWithFilters();
                   }}
                   filtering={filtering}
                 />

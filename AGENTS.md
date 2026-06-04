@@ -1,6 +1,6 @@
 # Agent Guidelines
 
-最后更新：2026-06-03
+最后更新：2026-06-04
 
 ## 维护规则
 
@@ -25,7 +25,7 @@ fetch directly from external APIs (Polymarket Gamma, CLOB, etc.).
 | Reward markets | `sync-markets` | CLOB API `/rewards/markets/current` | `reward_markets` table (Postgres) | 5 min |
 | Order books | `polyedge-orderbook` 服务 | CLOB WebSocket + `/book` poll | `InMemoryOrderbookCache`（orderbook 服务进程内，TTL 5 分钟） | WS real-time + 30s poll reconcile |
 
-Orderbook 订阅由独立的 `polyedge-orderbook` 服务管理。该服务按 `POLYEDGE_ORDERBOOK_STREAM__ENABLED` 运行 WS + poll stream，维护进程内缓存和 `OrderbookSubscriptionRegistry`，暴露 HTTP API（`GET /orderbook/{token_id}`、`GET /orderbook/stats`、`POST /orderbook/register` 等）。Worker 和 API 通过 `OrderbookHttpClient`（HTTP 调用 orderbook 服务）读取盘口数据和注册 token。`/orderbook/register` 会替换对应 source 当前 token 集合，避免同一 source 单调增长；HTTP registry 最多保留 32 个 source；`/orderbook/stats` 返回真实 cache 条目数、registry 来源数和 registry 去重 token 总数。Worker 注册 exec_orders + rewards token 的总量受 `POLYEDGE_ORDERBOOK_STREAM__MAX_TOKENS` 限制，rewards 会优先保留活跃订单/持仓 token，再用 open/tradable 且 24h volume 高的候选市场 token 填充剩余订阅预算。盘口缓存每侧最多保留 `POLYEDGE_ORDERBOOK_STREAM__MAX_LEVELS_PER_SIDE` 档深度（默认 100），降低深盘口内存占用。
+Orderbook 订阅由独立的 `polyedge-orderbook` 服务管理。该服务按 `POLYEDGE_ORDERBOOK_STREAM__ENABLED` 运行 WS + poll stream，维护进程内缓存和 `OrderbookSubscriptionRegistry`，暴露 HTTP API（`GET /orderbook/{token_id}`、`GET /orderbook/stats`、`POST /orderbook/register` 等）。Worker 和 API 通过 `OrderbookHttpClient`（HTTP 调用 orderbook 服务）读取盘口数据，Worker 通过携带 `POLYEDGE_ORDERBOOK__WRITE_TOKEN` 注册 token。`/orderbook/register` 会原子替换对应 source 当前有序 token 集合，避免 DELETE/POST 空窗和同一 source 单调增长；HTTP registry 最多保留 32 个 source；`/orderbook/stats` 返回真实 cache 条目数、registry 来源数和 registry 去重 token 总数。聚合优先级固定为 `rewards_active`、`exec_orders`、`rewards_candidates`、`copytrade`；总量受 `POLYEDGE_ORDERBOOK_STREAM__MAX_TOKENS` 限制。register/ingest/delete 写接口要求共享写 token，未配置时写接口关闭；HTTP ingest 会先校验整批盘口，再批量写入并传播缓存错误。盘口缓存每侧最多保留 `POLYEDGE_ORDERBOOK_STREAM__MAX_LEVELS_PER_SIDE` 档深度（默认 100），降低深盘口内存占用。
 
 市场和奖励市场由 orderbook 服务同步写入 Postgres，盘口数据由 orderbook 服务流式写入进程内缓存。所有消费者从数据库或 orderbook 服务读取，不直接调用外部 API。
 
@@ -68,7 +68,7 @@ retries solves this and ensures consistent data across all consumers.
 | `crates/application/src/orderbook_cache.rs` | OrderbookCache trait — `get_book`, `set_book`, `set_books`, `entry_count` |
 | `crates/application/src/orderbook_registry.rs` | OrderbookSubscriptionRegistry trait — 多来源 token 订阅注册与来源统计 |
 | `crates/infrastructure/src/stores/orderbook_cache.rs` | InMemoryOrderbookCache（TTL + 定期清理 + 每侧盘口深度裁剪）；保留 Redis 实现 |
-| `crates/infrastructure/src/stores/orderbook_registry.rs` | InMemoryOrderbookSubscriptionRegistry — 基于内存的订阅注册中心实现，支持来源数量统计和来源存在检查 |
+| `crates/infrastructure/src/stores/orderbook_registry.rs` | InMemoryOrderbookSubscriptionRegistry — 来源有序 token 原子替换、确定性优先级聚合、来源与去重总数统计 |
 | `migrations/0022_reward_bot_control_commands.sql` | Rewards API-to-worker command queue table |
 | `migrations/0023_copytrade_control_commands.sql` | Copytrade API-to-worker command queue table |
 | `migrations/0024_reward_markets_active_index.sql` | Reward market active/daily-rate query index |
@@ -92,9 +92,9 @@ retries solves this and ensures consistent data across all consumers.
 - 前端不再提供 mock 数据模式；`NEXT_PUBLIC_POLYEDGE_API_BASE_URL` 必须指向 Rust 后端，读写和 SSE 都走真实 `/api/v1/...`。
 - 当前控制台会话只保留 `off`，不是生产级真实会话。
 - 后端 API 已覆盖 markets、events、news、evidences、signals、orders、trades、positions、pricing、arbitrage、rewards bot、risk、approvals、system、SSE、connector callback 和 orderbook（`GET /api/v1/orderbook/{token_id}`）等主路径。
-- `polyedge-worker` 支持 news ingest、news promotion、arbitrage radar、rewards bot live 策略、copytrade 跟单、execution drain、paper reconciliation、Polymarket order/fill/user-event、orderbook token 注册任务。市场同步和 orderbook 订阅已迁移到独立 `polyedge-orderbook` 服务；orderbook 服务启动时先暴露 HTTP `/healthz`，再后台执行 initial/periodic market sync，避免外部 Polymarket API 延迟阻塞容器健康检查；Gamma keyset 同步会在重复 cursor、末页 sentinel 或最大页数 guard 触发时停止，并按 market id 去重，避免上游分页异常导致内存持续增长；orderbook WS + poll stream 会遵守 `POLYEDGE_ORDERBOOK_STREAM__ENABLED` 和 `POLYEDGE_ORDERBOOK_STREAM__RESTART_INTERVAL_SECS`。
+- `polyedge-worker` 支持 news ingest、news promotion、arbitrage radar、rewards bot live 策略、copytrade 跟单、execution drain、paper reconciliation、Polymarket order/fill/user-event、orderbook token 注册任务。市场同步和 orderbook 订阅已迁移到独立 `polyedge-orderbook` 服务；orderbook 服务启动时先暴露 HTTP `/healthz`，再后台执行 initial/periodic market sync，避免外部 Polymarket API 延迟阻塞容器健康检查；Gamma keyset 同步会在重复 cursor、末页 sentinel 或最大页数 guard 触发时停止，并按 market id 去重，避免上游分页异常导致内存持续增长；orderbook WS + poll stream 会遵守 `POLYEDGE_ORDERBOOK_STREAM__ENABLED` 和 `POLYEDGE_ORDERBOOK_STREAM__RESTART_INTERVAL_SECS`，内部写接口要求 `POLYEDGE_ORDERBOOK__WRITE_TOKEN`。
 - 套利雷达是只读链路：发现、记录、校验、分析、展示和 SSE 推送已具备，但不会创建 execution request 或订单。
-- Rewards bot 仅支持 `live` 实盘模式（`execution_mode` 字段保留用于向后兼容，始终视为 `live`）。它只使用独立的 `reward_markets` 表作为奖励市场来源，并在 Postgres 路径关联 Gamma `markets` 优先选择 open/tradable 且 `volume_24h` 高的候选市场，再按 rewards 配置预过滤，通过 `OrderbookHttpClient`（HTTP 调用 polyedge-orderbook 服务）并发读取候选盘口、生成当前候选快照的 YES/NO post-only 双边买单计划。worker 通过 `LivePolymarketConnector::submit_token_order()` 提交 post-only GTC token 买单，并通过 `cancel_order()` 撤销本系统托管订单；未成交 maker 买单不在本地按全局 notional 硬锁同一笔 USDC，可跨不同市场同时报价。新挂单要求目标两腿都有非空盘口，full tick/reconcile 会在开放订单盘口缺失、空盘口、过期、深度/排名/盘口历史风险或定期 requote 触发时撤单，即使 `enabled=false` 也会继续安全撤单但不新增报价；Polymarket 返回 post-only 非 live 接受状态时会立即尝试撤单。worker 会对本系统托管 rewards 订单轮询 Polymarket 订单关联成交，按 external trade id + external order id 幂等写入本地 fills、现金、库存和 PnL，同轮多笔 trade 会累计本轮 filled size 防止 overfill；买入成交后按配置撤 sibling legs 并执行 exit-at-markup 或 flatten sell，flatten 无 bid 时会持久化本地 deferred exit 并在盘口恢复后重试。Reset 不清空本地账本，只按 cancel-all 先撤托管实盘订单，任一撤单被拒绝则命令失败。独立账户余额/库存全量对账、订单计分查询和奖励结算对账仍是缺口。API 服务不执行 rewards 策略或任务，前端 Run / Cancel / Reset 会写入数据库控制命令，由 worker 领取执行；`/api/v1/rewards-bot` 的 managed orders 使用后端分页并返回 `orders_page` 元数据，snapshot 通过统计查询返回 reward 市场数量/最近扫描时间而不读取或携带全量 active reward markets，避免 `/rewards` 首屏响应过大；sync/cancel/reconcile live state 读取也不扫描全量 active reward markets。
+- Rewards bot 仅支持 `live` 实盘模式（`execution_mode` 字段保留用于向后兼容，始终视为 `live`）。它只使用独立的 `reward_markets` 表作为奖励市场来源，并在 Postgres 路径关联 Gamma `markets` 优先选择 open/tradable 且 `volume_24h` 高的候选市场，再按 rewards 配置预过滤，通过 `OrderbookHttpClient` 并发读取候选和活跃订单/持仓盘口、生成当前候选快照的 YES/NO post-only 双边买单计划。worker 通过 `LivePolymarketConnector::submit_token_order()` 提交 post-only GTC token 买单，flatten 使用 FAK，并通过 `cancel_order()` 撤销本系统托管订单；未成交 maker 买单不在本地按全局 notional 硬锁同一笔 USDC，可跨不同市场同时报价。新挂单要求目标两腿都有非空盘口并遵守全局 kill switch；full tick/reconcile 会在开放买单盘口缺失、空盘口、过期、深度/排名/盘口历史风险、定期 requote 或 kill switch 触发时撤单，即使 `enabled=false` 也会继续安全撤单但不新增报价。每笔外部订单/撤单/已确认成交/状态变化立即落库，增量 live tick 不修改全量 reward market 目录或 quote plan 快照；撤单接受后订单保留为待最终对账，下一轮先同步成交再确认取消，若交易所仍明确返回 live 则强制重试撤单。worker 通过 Polymarket 单订单接口查询关联成交，仅在 trade 达到 `CONFIRMED` 后按 external trade id + external order id 幂等写入 fills、现金、库存和 PnL；取消或 FAK 部分成交余量会等待所有关联 trade 进入终态后再关闭本地订单。买入成交先落库，再按配置撤 sibling legs 并执行 exit-at-markup 或 flatten sell，缺 bid、退出单拒绝，或非 cancel-all 的退出单确认取消/终态部分成交后仍有持仓时，会持久化新的本地 deferred exit 并重试。Reset 不清空本地账本，只按 cancel-all 先撤托管实盘订单，撤单被拒绝或结果未知则命令失败；`account_id` 在旧账户仍有开放订单或持仓时禁止切换。独立账户余额/库存全量对账、订单计分查询和奖励结算对账仍是缺口。API 服务不执行 rewards 策略或任务，前端 Run / Cancel / Reset 会写入数据库控制命令，由 worker 在 full/reconcile 周期前领取执行；`/api/v1/rewards-bot` 的 managed orders 使用后端分页并返回 `orders_page` 元数据，snapshot 通过统计查询返回 reward 市场数量/最近扫描时间而不读取或携带全量 active reward markets。
 - Polymarket connector 已迁移到 CLOB V2 Rust crate：`packages/backend/Cargo.toml` 保留 dependency key `polymarket-client-sdk`，实际指向 `polymarket_client_sdk_v2`；live CLOB 签名类型支持 `eoa`、`proxy`、`gnosis_safe`、`poly_1271`，其中 `poly_1271` 用于已有 Deposit Wallet（`FUNDER` 填 deposit wallet 地址），下单前会调用 CLOB balance allowance update。
 - 聪明钱跟单（copy-trading）已具备完整子系统：跟踪多个 Polymarket 钱包地址（`TrackedWallet`）、通过 Polymarket Data API（`data-api.polymarket.com`，通过 `PolymarketDataApiConnector`）检测钱包新成交、四种跟单仓位模式（`FixedUsd`/`ProportionalToSource`/`CapitalRatio`/`MirrorPortfolioWeight`）、钱包分析统计（胜率/ROI/成交量）、per-wallet/per-market/total 敞口+单日亏损+冷却+滑点风控、确定性模拟引擎（模拟资金账本：capital/available/reserved/realized_pnl）、`Run/Analyze/Cancel/Reset` 与账户资金设置前端 UI；`mode=live` 已结构化支持但未接入真实下单（记录警告回退模拟）。API 服务不执行 copytrade 跟单循环、钱包分析、撤单或重置，前端操作会写入数据库控制命令，由 worker 领取执行；`POLYEDGE_COPYTRADE__ENABLED=true` 启用 worker 轮询。copytrade 每轮注册 orderbook token 时会先替换 `copytrade` source 当前集合，避免历史钱包活动 token 长期留在 orderbook 订阅 registry。
 - Polymarket 运行时不再提供 mock mode；市场列表走 Gamma 实时数据，私有订单/成交任务需要真实凭证、真实账户、小额演练和运维 runbook。
@@ -168,10 +168,10 @@ cargo run -p polyedge-worker -- analyze-wallets-once
 - `deploy/.env*.example` 环境变量模板已为每个变量提供用途说明；`deploy/.env.polymarket.example` 提供 Polymarket CLOB V2 live、Proxy/Gnosis Safe、Deposit Wallet（`poly_1271`）和 Rewards live worker 配置示例，真实凭证默认注释，建议私钥只放 `deploy/.env.worker`。
 - Rewards bot 的 `max_markets=0`、`max_open_orders=0` 或 `quote_size_usd=0` 都表示不再新挂单；不是无限制。
 - Rewards bot 未成交 post-only maker 买单不在本地按全局 notional 硬锁资金；`stale_book_ms=0` 只关闭盘口年龄检查，仍要求盘口存在且非空，开放 live 订单缺盘口会被撤单。
-- `POLYEDGE_ORDERBOOK_STREAM__MAX_TOKENS` 默认 3000；调高会增加 orderbook WS/poll 内存占用，调低会减少 rewards 候选盘口覆盖。`POLYEDGE_ORDERBOOK_STREAM__MAX_LEVELS_PER_SIDE` 默认 100，用于限制进程内缓存和 HTTP ingest 每个 token 的 bids/asks 保留深度。
+- `POLYEDGE_ORDERBOOK_STREAM__MAX_TOKENS` 默认 3000；调高会增加 orderbook WS/poll 内存占用，调低会减少 rewards 候选盘口覆盖。活跃 rewards token 优先于 execution 和候选 token。`POLYEDGE_ORDERBOOK_STREAM__MAX_LEVELS_PER_SIDE` 默认 100，用于限制进程内缓存和 HTTP ingest 每个 token 的 bids/asks 保留深度。
 - 默认跟单 worker 是 disabled；前端 `/copy-trading` 的 Run / Analyze / Cancel / Reset 只会入队命令，worker 需要设置 `POLYEDGE_COPYTRADE__ENABLED=true` + `POLYEDGE_WORKER__POLL_COPYTRADE=true` 才会领取并执行；`POLYEDGE_WORKER__ANALYZE_WALLETS=true` 仍用于独立钱包分析循环。
 - `POLYEDGE_POSTGRES__URL` / `POLYEDGE_REDIS__URL` 为空时，本地可能走内存路径，无法验证多进程共享状态和持久化 outbox。
-- `POLYEDGE_ORDERBOOK__SERVICE_URL` 默认 `http://localhost:38002`；orderbook 和 API/worker 部署在同一服务器时无需修改，跨服务器部署时在 API 和 worker 的 env 文件中设置为 orderbook 服务器的实际地址（如 `http://192.168.31.10:38002`）。`OrderbookHttpClient` 使用 5 秒连接超时和 30 秒请求超时。
+- `POLYEDGE_ORDERBOOK__SERVICE_URL` 默认 `http://localhost:38002`；orderbook 和 API/worker 部署在同一服务器时无需修改，跨服务器部署时设置为 orderbook 服务器的实际地址（如 `http://192.168.31.10:38002`）。`POLYEDGE_ORDERBOOK__WRITE_TOKEN` 是 orderbook/worker 部署必填共享密钥，分别放在 `deploy/.env.orderbook` 与 `deploy/.env.worker` 且值必须一致，不放入公共 `.env` 或 API/front 环境；`OrderbookHttpClient` 使用 5 秒连接超时和 30 秒请求超时。
 - `POLYEDGE_ARBITRAGE__BOOK_SOURCE=polymarket` 会请求真实 Polymarket CLOB `/book`；live 冒烟必须使用真实 Polymarket refs。
 - Docker Compose 部署中的 `polyedge-worker` 会把所有 `POLYEDGE_WORKER__...` 后台任务默认覆盖为 `false`；需要运行新闻、套利、rewards 或 copytrade 时必须在 `deploy/.env.worker` 显式设为 `true`。市场同步和 orderbook 订阅由独立 `polyedge-orderbook` 服务管理，不需要在 worker 中启用。
 
@@ -194,7 +194,7 @@ POLYEDGE_BACKEND_BINARY=polyedge-orderbook ./scripts/build-backend-bin.sh
 
 ```bash
 cp deploy/.env.example deploy/.env
-# 编辑 deploy/.env，填入外部 PostgreSQL URL；纯内网默认 POLYEDGE_AUTH__DISABLED=true，不需要 step-up code
+# 编辑 deploy/.env，填入外部 PostgreSQL URL；在 deploy/.env.orderbook 和 deploy/.env.worker 设置相同的 POLYEDGE_ORDERBOOK__WRITE_TOKEN；纯内网默认 POLYEDGE_AUTH__DISABLED=true，不需要 step-up code
 # 各服务专属配置见 deploy/.env.{api,orderbook,worker,front}.example
 # Polymarket live / Deposit Wallet 示例见 deploy/.env.polymarket.example
 # 跨服务器部署时设置 POLYEDGE_ORDERBOOK__SERVICE_URL 指向 orderbook 服务器地址

@@ -10,6 +10,14 @@ struct LiveRewardFillUpdate {
     fill_size: Decimal,
 }
 
+fn live_cancel_result_is_unknown(order: &ManagedRewardOrder) -> bool {
+    order.reason.contains("cancel result unknown")
+}
+
+fn live_order_has_post_only_violation(order: &ManagedRewardOrder) -> bool {
+    order.reason.starts_with("Polymarket returned ")
+}
+
 async fn submit_one_live_reward_order(
     connector: &LivePolymarketConnector,
     order: &mut ManagedRewardOrder,
@@ -128,13 +136,23 @@ async fn submit_one_live_exit_order(
             ))
         }
         LivePolymarketExecutionOutcome::Rejected(rejection) => {
-            Ok(LiveRewardOrderUpdate::Unchanged(reward_live_event(
-                order,
-                "reward_live_exit_order_rejected",
-                RewardRiskSeverity::Warning,
-                format!("live rewards exit order rejected: {}", rejection.message),
-                json!({ "code": rejection.code, "post_only": post_only }),
-            )))
+            order.status = ManagedRewardOrderStatus::ExitPending;
+            order.scoring = false;
+            order.reason = format!(
+                "retryable live exit rejected (post_only={post_only}): {}",
+                rejection.message
+            );
+            order.updated_at = OffsetDateTime::now_utc();
+            Ok(LiveRewardOrderUpdate::Changed(
+                order.clone(),
+                reward_live_event(
+                    order,
+                    "reward_live_exit_order_rejected",
+                    RewardRiskSeverity::Warning,
+                    order.reason.clone(),
+                    json!({ "code": rejection.code, "post_only": post_only }),
+                ),
+            ))
         }
     }
 }
@@ -168,12 +186,12 @@ async fn handle_non_live_reward_order_acceptance(
         connector_name: POLYMARKET_CONNECTOR_NAME.to_string(),
         external_order_id: external_order_id.clone(),
     };
-    match connector.cancel_order(&cancel_request).await? {
-        LivePolymarketCancelOutcome::Accepted(acceptance) => {
-            order.status = ManagedRewardOrderStatus::Cancelled;
+    match connector.cancel_order(&cancel_request).await {
+        Ok(LivePolymarketCancelOutcome::Accepted(acceptance)) => {
+            order.status = ManagedRewardOrderStatus::Open;
             order.scoring = false;
             order.reason = format!(
-                "Polymarket returned {} for a post-only rewards quote; order cancelled immediately",
+                "Polymarket returned {} for a post-only rewards quote; cancel accepted; awaiting final reconciliation",
                 accepted_status.as_str()
             );
             order.updated_at = acceptance.cancelled_at;
@@ -181,7 +199,7 @@ async fn handle_non_live_reward_order_acceptance(
                 order.clone(),
                 reward_live_event(
                     order,
-                    "reward_live_order_post_only_violation_cancelled",
+                    "reward_live_order_post_only_violation_cancel_pending",
                     RewardRiskSeverity::Critical,
                     order.reason.clone(),
                     json!({
@@ -191,11 +209,11 @@ async fn handle_non_live_reward_order_acceptance(
                 ),
             ))
         }
-        LivePolymarketCancelOutcome::Rejected(rejection) => {
-            order.status = ManagedRewardOrderStatus::Error;
+        Ok(LivePolymarketCancelOutcome::Rejected(rejection)) => {
+            order.status = ManagedRewardOrderStatus::Open;
             order.scoring = false;
             order.reason = format!(
-                "Polymarket returned {} for a post-only rewards quote and cancel was rejected: {}",
+                "Polymarket returned {} for a post-only rewards quote and cancel was rejected; cancellation must be retried: {}",
                 accepted_status.as_str(),
                 rejection.message
             );
@@ -209,6 +227,28 @@ async fn handle_non_live_reward_order_acceptance(
                     order.reason.clone(),
                     json!({
                         "code": rejection.code,
+                        "external_order_id": external_order_id,
+                        "polymarket_status": accepted_status.as_str(),
+                    }),
+                ),
+            ))
+        }
+        Err(error) => {
+            order.status = ManagedRewardOrderStatus::Open;
+            order.scoring = false;
+            order.reason = format!(
+                "Polymarket returned {} for a post-only rewards quote; cancel result unknown and awaiting final reconciliation: {error}",
+                accepted_status.as_str()
+            );
+            order.updated_at = OffsetDateTime::now_utc();
+            Ok(LiveRewardOrderUpdate::Changed(
+                order.clone(),
+                reward_live_event(
+                    order,
+                    "reward_live_order_post_only_violation_cancel_unknown",
+                    RewardRiskSeverity::Critical,
+                    order.reason.clone(),
+                    json!({
                         "external_order_id": external_order_id,
                         "polymarket_status": accepted_status.as_str(),
                     }),
@@ -245,24 +285,30 @@ async fn cancel_one_live_reward_order(
         connector_name: POLYMARKET_CONNECTOR_NAME.to_string(),
         external_order_id: external_order_id.clone(),
     };
-    match connector.cancel_order(&request).await? {
-        LivePolymarketCancelOutcome::Accepted(acceptance) => {
-            order.status = ManagedRewardOrderStatus::Cancelled;
+    match connector.cancel_order(&request).await {
+        Ok(LivePolymarketCancelOutcome::Accepted(acceptance)) => {
+            let prior_reason = order.reason.clone();
+            order.status = ManagedRewardOrderStatus::Open;
             order.scoring = false;
-            order.reason = reason.to_string();
+            order.reason = format!(
+                "{prior_reason}; cancel requested because {reason}; cancel accepted; awaiting final reconciliation"
+            );
             order.updated_at = acceptance.cancelled_at;
             Ok(LiveRewardOrderUpdate::Changed(
                 order.clone(),
                 reward_live_event(
                     &order,
-                    "reward_live_order_cancelled",
+                    "reward_live_order_cancel_pending",
                     RewardRiskSeverity::Info,
-                    format!("{} live order cancelled: {reason}", order.outcome),
+                    format!(
+                        "{} live order cancel accepted and awaiting final reconciliation: {reason}",
+                        order.outcome
+                    ),
                     json!({ "external_order_id": acceptance.external_order_id }),
                 ),
             ))
         }
-        LivePolymarketCancelOutcome::Rejected(rejection) => {
+        Ok(LivePolymarketCancelOutcome::Rejected(rejection)) => {
             Ok(LiveRewardOrderUpdate::Unchanged(reward_live_event(
                 &order,
                 "reward_live_order_cancel_rejected",
@@ -270,6 +316,25 @@ async fn cancel_one_live_reward_order(
                 format!("live rewards cancel rejected: {}", rejection.message),
                 json!({ "code": rejection.code, "external_order_id": external_order_id }),
             )))
+        }
+        Err(error) => {
+            let prior_reason = order.reason.clone();
+            order.status = ManagedRewardOrderStatus::Open;
+            order.scoring = false;
+            order.reason = format!(
+                "{prior_reason}; cancel requested because {reason}; cancel result unknown and awaiting final reconciliation: {error}"
+            );
+            order.updated_at = OffsetDateTime::now_utc();
+            Ok(LiveRewardOrderUpdate::Changed(
+                order.clone(),
+                reward_live_event(
+                    &order,
+                    "reward_live_order_cancel_unknown",
+                    RewardRiskSeverity::Critical,
+                    order.reason.clone(),
+                    json!({ "external_order_id": external_order_id }),
+                ),
+            ))
         }
     }
 }
@@ -282,6 +347,12 @@ fn apply_live_reward_fill_update(
     fill_id: &str,
     trace_id: &str,
 ) -> Option<LiveRewardFillUpdate> {
+    let preserved_partial_fill_reason = (order.reason.contains("awaiting final reconciliation")
+        || order.reason.contains("cancellation must be retried")
+        || live_order_has_post_only_violation(&order)
+        || (order.side == RewardOrderSide::Sell
+            && order.status == ManagedRewardOrderStatus::ExitPending))
+    .then(|| order.reason.clone());
     let remaining = (order.size - order.filled_size).max(Decimal::ZERO);
     let fill_size = Decimal::min(update.filled_quantity.value(), remaining)
         .round_dp_with_strategy(2, RoundingStrategy::ToZero);
@@ -355,6 +426,8 @@ fn apply_live_reward_fill_update(
         order.status = ManagedRewardOrderStatus::Filled;
         order.scoring = false;
         order.reason = "live rewards order fully filled on Polymarket".to_string();
+    } else if let Some(reason) = preserved_partial_fill_reason {
+        order.reason = format!("{reason}; live rewards order partially filled on Polymarket");
     } else {
         order.reason = "live rewards order partially filled on Polymarket".to_string();
     }
@@ -411,41 +484,6 @@ fn reward_fill_role_for_live_order(order: &ManagedRewardOrder) -> RewardFillRole
         RewardFillRole::Taker
     } else {
         RewardFillRole::Maker
-    }
-}
-
-fn apply_live_reward_status_update_to_order(
-    mut order: ManagedRewardOrder,
-    update: ConnectorOrderStatusUpdate,
-    trace_id: &str,
-) -> Option<(ManagedRewardOrder, RewardRiskEvent)> {
-    if order.external_order_id.as_deref() != Some(update.external_order_id.as_str())
-        || !order.status.is_open_like()
-    {
-        return None;
-    }
-
-    match update.status {
-        OrderStatus::Canceled => {
-            order.status = ManagedRewardOrderStatus::Cancelled;
-            order.scoring = false;
-            order.reason = "live rewards order was cancelled on Polymarket".to_string();
-            order.updated_at = OffsetDateTime::now_utc();
-            let event = reward_live_event(
-                &order,
-                "reward_live_order_status_cancelled",
-                RewardRiskSeverity::Info,
-                "live rewards order cancellation observed on Polymarket",
-                json!({
-                    "event_id": update.event_id,
-                    "trace_id": trace_id,
-                    "external_order_id": update.external_order_id,
-                }),
-            );
-            Some((order, event))
-        }
-        OrderStatus::Open | OrderStatus::Submitted | OrderStatus::PartiallyFilled => None,
-        _ => None,
     }
 }
 
@@ -571,8 +609,9 @@ async fn cancel_sibling_live_reward_orders(
     working_orders: &mut HashMap<String, ManagedRewardOrder>,
     filled_order: &ManagedRewardOrder,
     sibling_cancelled: &mut HashSet<String>,
-    changed_orders: &mut Vec<ManagedRewardOrder>,
-    events: &mut Vec<RewardRiskEvent>,
+    state: &AppState,
+    account: &mut RewardAccountState,
+    positions: &HashMap<String, RewardPosition>,
     report: &mut RewardBotRunReport,
     trace_id: &str,
 ) -> Result<()> {
@@ -602,12 +641,35 @@ async fn cancel_sibling_live_reward_orders(
         {
             LiveRewardOrderUpdate::Changed(order, event) => {
                 working_orders.insert(order.id.clone(), order.clone());
-                changed_orders.push(order);
-                events.push(event);
-                report.cancelled_orders += 1;
-                report.risk_cancelled_orders += 1;
+                if !live_cancel_result_is_unknown(&order) {
+                    report.cancelled_orders += 1;
+                    report.risk_cancelled_orders += 1;
+                }
+                persist_live_reward_updates(
+                    state,
+                    account,
+                    positions.values().cloned().collect(),
+                    vec![order],
+                    Vec::new(),
+                    vec![event],
+                    report,
+                    trace_id,
+                )
+                .await?;
             }
-            LiveRewardOrderUpdate::Unchanged(event) => events.push(event),
+            LiveRewardOrderUpdate::Unchanged(event) => {
+                persist_live_reward_updates(
+                    state,
+                    account,
+                    positions.values().cloned().collect(),
+                    Vec::new(),
+                    Vec::new(),
+                    vec![event],
+                    report,
+                    trace_id,
+                )
+                .await?;
+            }
         }
     }
     Ok(())
@@ -617,82 +679,70 @@ async fn submit_deferred_live_exit_orders(
     connector: &LivePolymarketConnector,
     open_orders: &mut [ManagedRewardOrder],
     books: &HashMap<String, RewardOrderBook>,
-    changed_orders: &mut Vec<ManagedRewardOrder>,
-    events: &mut Vec<RewardRiskEvent>,
+    state: &AppState,
+    account: &mut RewardAccountState,
+    positions: &[RewardPosition],
     report: &mut RewardBotRunReport,
+    trace_id: &str,
 ) -> Result<()> {
     for order in open_orders.iter_mut().filter(|order| {
         order.side == RewardOrderSide::Sell
             && order.status == ManagedRewardOrderStatus::ExitPending
             && order.external_order_id.is_none()
-            && order
-                .reason
-                .contains("flatten deferred until bid liquidity is observed")
     }) {
-        let Some(best_bid) = books
-            .get(&order.token_id)
-            .and_then(|book| book.bids.first())
-            .map(|level| level.price)
-            .filter(|price| *price > Decimal::ZERO)
-        else {
-            continue;
-        };
-
-        order.price = floor_reward_price_to_tick(best_bid);
-        order.reason = "post-fill flatten immediately".to_string();
+        let post_only = deferred_live_exit_is_post_only(order);
+        if !post_only {
+            let Some(best_bid) = books
+                .get(&order.token_id)
+                .and_then(|book| book.bids.first())
+                .map(|level| level.price)
+                .filter(|price| *price > Decimal::ZERO)
+            else {
+                continue;
+            };
+            order.price = floor_reward_price_to_tick(best_bid);
+            order.reason = "post-fill flatten immediately".to_string();
+        }
         order.updated_at = OffsetDateTime::now_utc();
 
-        match submit_one_live_exit_order(connector, order, false).await? {
+        match submit_one_live_exit_order(connector, order, post_only).await? {
             LiveRewardOrderUpdate::Changed(updated, event) => {
                 *order = updated.clone();
-                changed_orders.push(updated);
-                events.push(event);
-                report.simulated_orders += 1;
+                if updated.external_order_id.is_some() {
+                    report.simulated_orders += 1;
+                }
+                persist_live_reward_updates(
+                    state,
+                    account,
+                    positions.to_vec(),
+                    vec![updated],
+                    Vec::new(),
+                    vec![event],
+                    report,
+                    trace_id,
+                )
+                .await?;
             }
-            LiveRewardOrderUpdate::Unchanged(event) => events.push(event),
+            LiveRewardOrderUpdate::Unchanged(event) => {
+                persist_live_reward_updates(
+                    state,
+                    account,
+                    positions.to_vec(),
+                    Vec::new(),
+                    Vec::new(),
+                    vec![event],
+                    report,
+                    trace_id,
+                )
+                .await?;
+            }
         }
     }
     Ok(())
 }
 
-fn floor_reward_price_to_tick(price: Decimal) -> Decimal {
-    price
-        .max(REWARD_PRICE_TICK)
-        .min(Decimal::ONE - REWARD_PRICE_TICK)
-        .round_dp_with_strategy(2, RoundingStrategy::ToZero)
-}
-
-fn reward_live_fill_id(update: &ConnectorTradeFillUpdate) -> String {
-    format!(
-        "rewfill_{}_{}",
-        sanitize_reward_id_fragment(reward_live_fill_source_id(update)),
-        sanitize_reward_id_fragment(&update.external_order_id)
-    )
-}
-
-fn reward_live_legacy_fill_id(update: &ConnectorTradeFillUpdate) -> String {
-    format!(
-        "rewfill_{}",
-        sanitize_reward_id_fragment(reward_live_fill_source_id(update))
-    )
-}
-
-fn reward_live_fill_source_id(update: &ConnectorTradeFillUpdate) -> &str {
-    if update.external_trade_id.trim().is_empty() {
-        update.event_id.as_str()
-    } else {
-        update.external_trade_id.as_str()
-    }
-}
-
-fn sanitize_reward_id_fragment(raw: &str) -> String {
-    raw.chars()
-        .map(|ch| {
-            if ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-') {
-                ch
-            } else {
-                '_'
-            }
-        })
-        .collect()
+fn deferred_live_exit_is_post_only(order: &ManagedRewardOrder) -> bool {
+    order.reason.contains("post-only")
+        || order.reason.contains("exit at markup")
+        || order.reason.contains("post_only=true")
 }

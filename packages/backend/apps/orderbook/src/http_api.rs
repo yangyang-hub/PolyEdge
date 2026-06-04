@@ -1,7 +1,7 @@
 use axum::{
     Json,
     extract::{Path, State},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
 };
 use polyedge_application::{BookSource, CachedBookLevel, CachedOrderBook};
 use polyedge_infrastructure::AppState;
@@ -103,7 +103,7 @@ pub async fn get_orderbook_batch(
 }
 
 pub async fn get_orderbook_stats(State(state): State<AppState>) -> Json<OrderbookStatsResponse> {
-    let all_tokens = state.orderbook_registry.list_all_tokens().await;
+    let total_tokens = state.orderbook_registry.total_token_count().await;
     let cache_entries = state
         .orderbook_cache
         .entry_count()
@@ -114,17 +114,20 @@ pub async fn get_orderbook_stats(State(state): State<AppState>) -> Json<Orderboo
     Json(OrderbookStatsResponse {
         cache_entries,
         registry_sources,
-        registry_total_tokens: all_tokens.len(),
+        registry_total_tokens: total_tokens,
     })
 }
 
 pub async fn register_tokens(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(req): Json<RegisterRequest>,
 ) -> ApiResult<MessageResponse> {
+    authorize_write(&state, &headers)?;
     let source = validate_source(req.source)?;
     let token_ids = validate_token_ids(req.token_ids, state.settings.orderbook_stream.max_tokens)?;
-    if !state.orderbook_registry.has_source(&source).await
+    if !token_ids.is_empty()
+        && !state.orderbook_registry.has_source(&source).await
         && state.orderbook_registry.source_count().await >= MAX_REGISTRY_SOURCES
     {
         return Err(error_response(
@@ -133,11 +136,11 @@ pub async fn register_tokens(
         ));
     }
 
-    state.orderbook_registry.unregister_source(&source).await;
     state
         .orderbook_registry
         .register_tokens(&source, &token_ids)
-        .await;
+        .await
+        .map_err(registry_error_response)?;
     Ok(Json(MessageResponse {
         message: format!(
             "registered {} tokens for source '{}'",
@@ -149,10 +152,16 @@ pub async fn register_tokens(
 
 pub async fn unregister_source(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Path(source): Path<String>,
 ) -> ApiResult<MessageResponse> {
+    authorize_write(&state, &headers)?;
     let source = validate_source(source)?;
-    state.orderbook_registry.unregister_source(&source).await;
+    state
+        .orderbook_registry
+        .unregister_source(&source)
+        .await
+        .map_err(registry_error_response)?;
     Ok(Json(MessageResponse {
         message: format!("unregistered source '{source}'"),
     }))
@@ -160,8 +169,10 @@ pub async fn unregister_source(
 
 pub async fn ingest_books(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(req): Json<IngestRequest>,
 ) -> ApiResult<MessageResponse> {
+    authorize_write(&state, &headers)?;
     let max_tokens = state.settings.orderbook_stream.max_tokens;
     if req.books.len() > max_tokens {
         return Err(error_response(
@@ -171,9 +182,10 @@ pub async fn ingest_books(
     }
     let max_levels = state.settings.orderbook_stream.max_levels_per_side;
     let count = req.books.len();
+    let mut cached_books = Vec::with_capacity(count);
     for book in req.books {
         let token_id = validate_token_id(book.token_id)?;
-        let cached = CachedOrderBook {
+        cached_books.push(CachedOrderBook {
             token_id,
             bids: parse_levels(book.bids, max_levels)?,
             asks: parse_levels(book.asks, max_levels)?,
@@ -182,9 +194,13 @@ pub async fn ingest_books(
                 "ws" => BookSource::Ws,
                 _ => BookSource::Poll,
             },
-        };
-        let _ = state.orderbook_cache.set_book(&cached).await;
+        });
     }
+    state
+        .orderbook_cache
+        .set_books(&cached_books)
+        .await
+        .map_err(cache_error_response)?;
     Ok(Json(MessageResponse {
         message: format!("ingested {count} books"),
     }))
@@ -214,6 +230,35 @@ fn validate_source(source: String) -> Result<String, (StatusCode, Json<MessageRe
         ));
     }
     Ok(source.to_string())
+}
+
+fn authorize_write(
+    state: &AppState,
+    headers: &HeaderMap,
+) -> Result<(), (StatusCode, Json<MessageResponse>)> {
+    let Some(expected) = state
+        .settings
+        .orderbook
+        .write_token
+        .as_deref()
+        .map(str::trim)
+        .filter(|token| !token.is_empty())
+    else {
+        return Err(error_response(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "orderbook write endpoints are disabled until POLYEDGE_ORDERBOOK__WRITE_TOKEN is configured",
+        ));
+    };
+    let actual = headers
+        .get("x-polyedge-orderbook-token")
+        .and_then(|value| value.to_str().ok());
+    if actual != Some(expected) {
+        return Err(error_response(
+            StatusCode::UNAUTHORIZED,
+            "invalid orderbook write token",
+        ));
+    }
+    Ok(())
 }
 
 fn validate_token_ids(
@@ -293,6 +338,22 @@ fn error_response(
     )
 }
 
+fn registry_error_response(
+    error: polyedge_domain::AppError,
+) -> (StatusCode, Json<MessageResponse>) {
+    error_response(
+        StatusCode::INTERNAL_SERVER_ERROR,
+        format!("orderbook registry update failed: {error}"),
+    )
+}
+
+fn cache_error_response(error: polyedge_domain::AppError) -> (StatusCode, Json<MessageResponse>) {
+    error_response(
+        StatusCode::INTERNAL_SERVER_ERROR,
+        format!("orderbook cache update failed: {error}"),
+    )
+}
+
 fn to_response(book: polyedge_application::CachedOrderBook) -> OrderbookResponse {
     OrderbookResponse {
         token_id: book.token_id,
@@ -314,5 +375,53 @@ fn to_response(book: polyedge_application::CachedOrderBook) -> OrderbookResponse
             .collect(),
         observed_at: book.observed_at,
         source: book.source.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use polyedge_domain::SystemMode;
+    use polyedge_infrastructure::{Runtime, Settings};
+
+    fn test_state(write_token: Option<&str>) -> AppState {
+        let mut settings = Settings::for_test(SystemMode::ManualConfirm, "test", Vec::new());
+        settings.orderbook.write_token = write_token.map(ToString::to_string);
+        Runtime::test_app_state(settings).expect("test app state")
+    }
+
+    #[tokio::test]
+    async fn orderbook_write_auth_is_disabled_without_configured_token() {
+        let error = authorize_write(&test_state(None), &HeaderMap::new())
+            .expect_err("write auth must reject missing configuration");
+
+        assert_eq!(error.0, StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    #[tokio::test]
+    async fn orderbook_write_auth_rejects_wrong_token() {
+        let state = test_state(Some("secret"));
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-polyedge-orderbook-token",
+            "wrong".parse().expect("header"),
+        );
+
+        let error =
+            authorize_write(&state, &headers).expect_err("write auth must reject wrong token");
+
+        assert_eq!(error.0, StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn orderbook_write_auth_accepts_matching_token() {
+        let state = test_state(Some("secret"));
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-polyedge-orderbook-token",
+            "secret".parse().expect("header"),
+        );
+
+        assert!(authorize_write(&state, &headers).is_ok());
     }
 }

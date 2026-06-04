@@ -207,6 +207,8 @@ pub struct OrderbookServiceSettings {
     pub port: u16,
     /// URL of the orderbook service for other services to connect to.
     pub service_url: String,
+    /// Shared secret required by orderbook write/register endpoints.
+    pub write_token: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

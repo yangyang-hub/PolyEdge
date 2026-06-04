@@ -238,7 +238,7 @@ async fn reconcile_live_polymarket_candidate(
         .or(candidate.order_draft.external_order_id.clone())
         .unwrap_or_default();
 
-    let updates = connector
+    let outcome = connector
         .collect_trade_updates(&LivePolymarketTradeSyncRequest {
             connector_name: candidate.execution_request.connector_name.clone(),
             account_id: connector.account_id().to_string(),
@@ -246,7 +246,7 @@ async fn reconcile_live_polymarket_candidate(
         })
         .await?;
 
-    for update in updates {
+    for update in outcome.updates {
         let request_id = new_trace_id();
         let trace_id = new_trace_id();
         let actor = worker_actor(&request_id);

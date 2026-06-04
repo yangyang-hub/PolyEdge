@@ -9,7 +9,8 @@ use polyedge_application::{
     RewardControlAction, RewardControlCommand, RewardControlCommandStatus, RewardExecutionMode,
     RewardFill, RewardFillRole, RewardMarket, RewardOrderListQuery, RewardOrderPage,
     RewardOrderSide, RewardOrderSortField, RewardOrderStatusFilter, RewardPosition,
-    RewardQuotePlan, RewardRiskEvent, RewardRiskSeverity, RewardSimulationOutcome, RewardToken,
+    RewardQuotePlan, RewardQuotePlanListQuery, RewardQuotePlanPage, RewardQuotePlanSortField,
+    RewardRiskEvent, RewardRiskSeverity, RewardSimulationOutcome, RewardToken,
     RiskStateSnapshot, RiskStateStore, SortOrder, SourceTrade, TrackedWallet, TrackedWalletStatus,
     WalletAnalysisStats,
 };
@@ -53,3 +54,4 @@ include!("stores/orderbook_cache.rs");
 include!("stores/orderbook_registry.rs");
 include!("stores/helpers.rs");
 include!("stores/types.rs");
+include!("stores/orderbook_registry_tests.rs");

@@ -174,6 +174,7 @@ export type RewardBotStatusDto = {
   account_id: string;
   markets_tracked: number;
   eligible_markets: number;
+  plans_total: number;
   open_orders: number;
   positions: number;
   last_scan_at?: string | null;
@@ -194,6 +195,7 @@ export type RewardBotSnapshotDto = {
   account: RewardAccountStateDto;
   markets: RewardMarketDto[];
   quote_plans: RewardQuotePlanDto[];
+  plans_page: RewardListPageDto;
   orders: ManagedRewardOrderDto[];
   orders_page: RewardListPageDto;
   positions: RewardPositionDto[];

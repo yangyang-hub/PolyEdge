@@ -10,7 +10,7 @@ async fn main() -> polyedge_domain::Result<()> {
     let state = {
         let base = runtime.app_state();
         let url = &base.settings.orderbook.service_url;
-        let client = std::sync::Arc::new(polyedge_connectors::OrderbookHttpClient::new(url));
+        let client = std::sync::Arc::new(polyedge_connectors::OrderbookHttpClient::new(url, None));
         AppState {
             orderbook_cache: client.clone(),
             orderbook_registry: client,

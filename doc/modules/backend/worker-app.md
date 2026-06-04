@@ -1,6 +1,6 @@
 # Worker App（后台任务服务）
 
-最后更新：2026-06-03
+最后更新：2026-06-04
 
 ## 概述
 
@@ -24,15 +24,17 @@
 | `worker/news_helpers.rs` | 新闻采集辅助函数 |
 | `worker/news_promotion.rs` | 新闻提升为 events/evidence |
 | `worker/signal_recompute.rs` | 信号重算 |
-| `worker/execution_dispatch.rs` | 执行请求分发到连接器 |
+| `worker/execution_dispatch.rs` | 执行请求分发与 confirmed live trade 对账 |
 | `worker/execution_queue.rs` | 执行队列管理 |
 | `worker/execution_reconcile.rs` | 订单/成交对账 |
 | `worker/orderbook_stream.rs` | Orderbook stream — 仅保留 CLI 子命令兼容，核心逻辑已迁移到独立 `polyedge-orderbook` 服务 |
 | `worker/rewards.rs` | 奖励机器人 tick；消费 API 入队的 run/cancel/reset 控制命令 |
 | `worker/rewards/live_sync.rs` | rewards live 托管订单成交/状态同步、Reset cancel-all 语义 |
 | `worker/rewards/live_orders.rs` | rewards live 下单、撤单、成交入账、post-fill exit/flatten |
+| `worker/rewards/live_helpers.rs` | rewards live 价格 tick、fill id、退出重试与订单状态转换辅助函数 |
 | `worker/rewards/live_risk.rs` | rewards live placement/cancel 风控：盘口可用性、depth/rank/history/requote、库存 cap |
 | `worker/rewards/polling.rs` | rewards poll loop、盘口读取和进程内盘口历史 |
+| `tests/rewards.rs` | rewards live 下单、成交、撤单、kill switch 与增量持久化回归测试 |
 | `worker/arbitrage.rs` | 套利扫描 |
 | `worker/arbitrage_books.rs` | 套利盘口快照 |
 | `worker/copytrade.rs` | 跟单执行；消费 API 入队的 run/analyze/cancel/reset 控制命令 |
@@ -77,13 +79,14 @@ register_orderbook_tokens()
     → 遍历活跃执行订单（Submitted/Open/PartiallyFilled）→ 解析市场 YES/NO asset_id
     → reward_bot_service.list_active_reward_book_token_ids() → rewards 活跃订单/持仓 token
     → reward_bot_service.list_all_reward_candidate_token_ids() → rewards 候选 token 填充剩余额度
+    → orderbook_registry.register_tokens("rewards_active", ...)
     → orderbook_registry.register_tokens("exec_orders", ...)
-    → orderbook_registry.register_tokens("rewards", ...)
+    → orderbook_registry.register_tokens("rewards_candidates", ...)
     // 通过 OrderbookHttpClient → HTTP POST /orderbook/register 注册到 orderbook 服务
 ```
 
 此任务替代了原来的 `consume-orderbook-stream` 和 `sync-markets` 任务。Worker 不再直接运行盘口流或市场同步，而是通过 HTTP 告知 orderbook 服务需要订阅哪些 token。
-注册总量受 `POLYEDGE_ORDERBOOK_STREAM__MAX_TOKENS` 限制；rewards 会优先保留活跃订单/持仓 token，再用候选市场 token 填充剩余订阅预算。
+注册总量受 `POLYEDGE_ORDERBOOK_STREAM__MAX_TOKENS` 限制；分配顺序固定为 rewards 活跃订单/持仓 token、活跃 execution token、rewards 候选 token。每个 source 使用一次原子替换注册，不再先 DELETE 再 POST，避免注册空窗。
 
 ### copytrade — 跟单
 
@@ -94,7 +97,6 @@ copytrade_service.claim_next_control_command()
 
 无待处理控制命令时：
     fetch_copytrade_inputs() // 获取钱包活动 + 盘口
-        → orderbook_registry.unregister_source("copytrade")
         → orderbook_registry.register_tokens("copytrade", current_activity_tokens)
         → copytrade_service.run_copy_cycle() // 业务逻辑
 ```
@@ -121,15 +123,15 @@ reward_bot_service.claim_next_control_command()
 
 Report: `RewardBotRunReport { markets_scanned, books_fetched, plans_built, eligible_plans, simulated_orders, cancelled_orders, filled_orders, reward_accrued }`
 
-约束：worker 是 rewards 策略和控制命令的唯一执行者。API 只把 `run_once` / `cancel_all` / `reset` 写入 `reward_control_commands`；worker 每轮先领取并处理待执行命令，处理到命令时跳过本轮自动 tick。`run_once` 会强制执行一次 live 策略 tick（即使自动开关关闭）；`cancel_all` 调用 Polymarket cancel 并同步本地状态，任一撤单拒绝会让命令失败；`reset` 按 cancel-all 执行且不会清空本地账本，避免产生孤儿实盘订单。服务模式下 `POLYEDGE_WORKER__POLL_REWARD_BOT=true` 会运行与 `poll-reward-bot` CLI 相同的 full tick + fast reconcile loop，`RewardBotConfig.reconcile_interval_sec` 会生效。
+约束：worker 是 rewards 策略和控制命令的唯一执行者。API 只把 `run_once` / `cancel_all` / `reset` 写入 `reward_control_commands`；worker 在 full tick 和每个 fast reconcile 周期前都领取待执行命令，避免命令等待完整轮询周期。`run_once` 会强制执行一次 live 策略 tick（即使自动开关关闭，但不会绕过全局 kill switch）；`cancel_all` 调用 Polymarket cancel，撤单拒绝或结果未知会让命令失败；`reset` 按 cancel-all 执行且不会清空本地账本，避免产生孤儿实盘订单。服务模式下 `POLYEDGE_WORKER__POLL_REWARD_BOT=true` 会运行与 `poll-reward-bot` CLI 相同的 full tick + fast reconcile loop，`RewardBotConfig.reconcile_interval_sec` 会生效。
 
 自动 tick 只从 Postgres 的 `reward_markets` 读取奖励市场、通过 `OrderbookHttpClient`（HTTP 调用 polyedge-orderbook 服务）读取盘口。Postgres 候选 market pool 会关联 Gamma `markets`，优先选择 open + tradable 且 `volume_24h` 高的市场，随后按配置预过滤奖励市场，再并发读取候选盘口缓存；若本 tick 没有新鲜缓存盘口，不会提交新 post-only 订单。
 
-live 模式会用 `LivePolymarketConnector::submit_token_order()` 提交 post-only GTC token 买单，用 `cancel_order()` 撤销本系统托管订单；未成交 post-only maker 买单不在本地按全局 notional 硬锁资金。live placement 要求目标两腿都有非空盘口，`stale_book_ms=0` 只关闭盘口年龄检查；live full tick 和 fast reconcile 都会读取开放订单活跃 token 的盘口，缺盘口、空盘口、过期盘口、深度不足、bid rank 过高、盘口历史窗口风险或定期 requote 会触发撤单，即使 `enabled=false` 已停止新增报价。Polymarket 返回 post-only 非 live 接受状态（如 `matched` / `delayed`）时会被视为安全违规并立即尝试撤单。worker 会对本系统托管 rewards 订单轮询 Polymarket 关联 trades，按 external trade id + external order id 幂等写入 fills、现金、库存和 PnL；同一订单同轮多笔 trade 会基于本轮 working order 累计 `filled_size`，避免 overfill。买入成交后按配置撤 sibling legs，并提交 `ExitAtMarkup` 或 `FlattenImmediately` sell；`FlattenImmediately` 无 bid 时会持久化本地 `ExitPending` deferred sell，后续 full/reconcile 在 bid 恢复后重试提交真实 flatten sell。独立账户余额/库存全量对账、订单计分查询和奖励结算对账尚未闭环，worker 仍需要独立维护组合风险，因为 CLOB 的 balance/allowance 检查不是跨市场组合风控系统。
+live 模式会用 `LivePolymarketConnector::submit_token_order()` 提交 post-only GTC token 买单，用 `cancel_order()` 撤销本系统托管订单；未成交 post-only maker 买单不在本地按全局 notional 硬锁资金。live placement 要求目标两腿都有非空盘口，`stale_book_ms=0` 只关闭盘口年龄检查；live full tick 和 fast reconcile 都会读取开放订单/持仓活跃 token 的盘口，缺盘口、空盘口、过期盘口、深度不足、bid rank 过高、盘口历史窗口风险、定期 requote 或全局 kill switch 会触发买单撤单，即使 `enabled=false` 已停止新增报价。每笔外部下单、撤单、已确认成交和状态变化会立即落库；撤单接受后本地订单保留为待最终对账，下一轮先同步成交再确认取消，避免 cancel/fill 竞态丢成交；若单订单接口仍明确返回 live，则转为强制撤单重试。Polymarket 返回 post-only 非 live 接受状态（如 `matched` / `delayed`）时会被视为安全违规并立即尝试撤单；撤单明确拒绝会在后续 reconcile 重试，结果未知才保留待最终对账状态。worker 会对本系统托管 rewards 订单通过单订单接口轮询关联 trades，仅在 trade 达到 `CONFIRMED` 后按 external trade id + external order id 幂等写入 fills、现金、库存和 PnL；同一订单同轮多笔 trade 会基于本轮 working order 累计 `filled_size`，避免 overfill。取消、matched 或 FAK unmatched 终态会等待全部关联 trade 进入 confirmed/failed 终态后再落本地终态，避免 pending settlement 导致重复退出。买入成交会先持久化成交，再撤 sibling legs 并提交 `ExitAtMarkup` 或 `FlattenImmediately` sell；`FlattenImmediately` 使用 FAK，缺 bid、退出单被拒绝，或非 cancel-all 的退出单被外部确认取消/终态部分成交且仍有持仓时，会持久化新的本地 `ExitPending` deferred sell 并在后续 full/reconcile 重试。独立账户余额/库存全量对账、订单计分查询和奖励结算对账尚未闭环，worker 仍需要独立维护组合风险，因为 CLOB 的 balance/allowance 检查不是跨市场组合风控系统。
 
 ### orderbook_stream — 盘口流（已迁移到 orderbook 服务）
 
-盘口流逻辑已迁移到 `polyedge-orderbook` 服务（`apps/orderbook/src/stream.rs`）。Worker 中 `worker/orderbook_stream.rs` 仅保留 `consume-orderbook-stream` CLI 子命令兼容（daemon 模式不再调度）。Worker 通过 `OrderbookHttpClient`（HTTP）读取 orderbook 服务的缓存数据，通过 `register-orderbook-tokens` 任务注册订阅 token。Standalone orderbook 服务会遵守 `POLYEDGE_ORDERBOOK_STREAM__ENABLED` 和 `POLYEDGE_ORDERBOOK_STREAM__RESTART_INTERVAL_SECS`，HTTP `/orderbook/register` 会替换对应 source 的 token 集合，缓存每侧盘口深度受 `POLYEDGE_ORDERBOOK_STREAM__MAX_LEVELS_PER_SIDE` 限制。
+盘口流逻辑已迁移到 `polyedge-orderbook` 服务（`apps/orderbook/src/stream.rs`）。Worker 中 `worker/orderbook_stream.rs` 仅保留 `consume-orderbook-stream` CLI 子命令兼容（daemon 模式不再调度）。Worker 通过 `OrderbookHttpClient`（HTTP）读取 orderbook 服务的缓存数据，通过携带 `POLYEDGE_ORDERBOOK__WRITE_TOKEN` 的 `register-orderbook-tokens` 任务注册订阅 token。Standalone orderbook 服务会遵守 `POLYEDGE_ORDERBOOK_STREAM__ENABLED` 和 `POLYEDGE_ORDERBOOK_STREAM__RESTART_INTERVAL_SECS`，HTTP `/orderbook/register` 原子替换对应 source 的 token 集合，缓存每侧盘口深度受 `POLYEDGE_ORDERBOOK_STREAM__MAX_LEVELS_PER_SIDE` 限制。
 
 ### arbitrage — 套利扫描
 
@@ -164,10 +166,10 @@ Report: `NewsIngestionRunReport { sources_scanned/succeeded/failed, fetched, ins
 
 - 所有 18 个子命令已实现
 - `run` 主循环包含 register-orderbook-tokens、rewards、copytrade、arbitrage、news、execution、signal-recompute 等任务
-- rewards worker 会通过数据库命令队列接收前端 Run / Cancel / Reset 请求，API 进程不再执行 rewards 策略；仅支持 live 实盘模式，不依赖全局 system mode
+- rewards worker 会通过数据库命令队列接收前端 Run / Cancel / Reset 请求，API 进程不再执行 rewards 策略；仅支持 live 实盘模式，策略配置不依赖全局 system mode，但新买单和现有买单撤单遵守全局 kill switch
 - copytrade worker 会通过数据库命令队列接收前端 Run / Analyze / Cancel / Reset 请求，API 进程不再执行跟单任务或抓取跟单输入
-- copytrade worker 注册 orderbook token 时会先清理 `copytrade` source，再注册当前活动 token 集合，防止历史钱包活动 token 无限留在 orderbook 订阅 registry 中
-- register-orderbook-tokens 会按 `POLYEDGE_ORDERBOOK_STREAM__MAX_TOKENS` 限制 exec_orders + rewards 注册总量，rewards 候选 token 优先来自 open/tradable 且 `volume_24h` 高的市场，避免 orderbook 服务订阅全量 rewards 候选 token
+- copytrade worker 注册 orderbook token 时会原子替换 `copytrade` source 当前活动 token 集合，防止历史钱包活动 token 无限留在 orderbook 订阅 registry 中
+- register-orderbook-tokens 会按 `POLYEDGE_ORDERBOOK_STREAM__MAX_TOKENS` 限制总量并固定优先级：`rewards_active`、`exec_orders`、`rewards_candidates`；候选 token 优先来自 open/tradable 且 `volume_24h` 高的市场
 - 默认大部分 worker 通过配置开关控制启用/禁用
 - Polymarket live 任务需要真实凭证；Deposit Wallet 使用 `POLYEDGE_POLYMARKET__SIGNATURE_TYPE=poly_1271` + `POLYEDGE_POLYMARKET__FUNDER=<deposit_wallet>`，worker 会通过 connector 走 CLOB V2 `POLY_1271` 下单/撤单路径。
 - 当前 `cargo check --workspace --tests` 编译通过；worker 生产入口不保留仅测试目标使用的 `RewardExecutionMode` 间接导入，测试目标显式导入该类型。

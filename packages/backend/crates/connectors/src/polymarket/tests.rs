@@ -57,6 +57,73 @@ mod tests {
     }
 
     #[test]
+    fn live_trade_reconciliation_only_books_confirmed_trades() {
+        assert_eq!(
+            live_trade_settlement(&SdkTradeStatusType::Confirmed),
+            LivePolymarketTradeSettlement::Confirmed
+        );
+        assert_eq!(
+            live_trade_settlement(&SdkTradeStatusType::Failed),
+            LivePolymarketTradeSettlement::SettledWithoutFill
+        );
+        assert_eq!(
+            live_trade_settlement(&SdkTradeStatusType::Matched),
+            LivePolymarketTradeSettlement::Pending
+        );
+        assert_eq!(
+            live_trade_settlement(&SdkTradeStatusType::Retrying),
+            LivePolymarketTradeSettlement::Pending
+        );
+    }
+
+    #[test]
+    fn live_trade_reconciliation_waits_before_closing_terminal_fak_order() {
+        let order = polymarket_client_sdk::clob::types::response::OpenOrderResponse::builder()
+            .id("pm_fak_1")
+            .status(SdkOrderStatusType::Matched)
+            .owner(Uuid::nil())
+            .maker_address(Address::ZERO)
+            .market(B256::ZERO)
+            .asset_id(U256::ZERO)
+            .side(Side::Sell)
+            .original_size(Decimal::from(20_u64))
+            .size_matched(Decimal::from(7_u64))
+            .price(Decimal::new(49, 2))
+            .associate_trades(vec!["pm_trade_1".to_string()])
+            .outcome("YES")
+            .created_at("2024-01-15T12:34:56Z".parse().expect("created at"))
+            .expiration("2024-01-15T12:34:56Z".parse().expect("expiration"))
+            .order_type(OrderType::FAK)
+            .build();
+
+        assert!(reconciled_order_status_update(&order, false).is_none());
+        assert_eq!(
+            reconciled_order_status_update(&order, true)
+                .expect("settled FAK match must be terminal")
+                .status,
+            OrderStatus::Filled
+        );
+
+        let mut live_order = order;
+        live_order.status = SdkOrderStatusType::Live;
+        assert_eq!(
+            reconciled_order_status_update(&live_order, false)
+                .expect("live status is safe before trade settlement")
+                .status,
+            OrderStatus::Open
+        );
+
+        live_order.status = SdkOrderStatusType::Unmatched;
+        live_order.order_type = OrderType::GTC;
+        assert_eq!(
+            reconciled_order_status_update(&live_order, false)
+                .expect("unmatched GTC order rests on the book")
+                .status,
+            OrderStatus::Open
+        );
+    }
+
+    #[test]
     fn trade_order_fill_uses_order_specific_maker_amount() {
         let trade = TradeResponse::builder()
             .id("pm_trade_1")

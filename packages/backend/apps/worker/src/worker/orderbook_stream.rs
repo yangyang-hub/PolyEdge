@@ -294,12 +294,8 @@ async fn register_exec_order_tokens(state: &AppState) -> Result<()> {
 
     state
         .orderbook_registry
-        .unregister_source("exec_orders")
-        .await;
-    state
-        .orderbook_registry
         .register_tokens("exec_orders", &tokens)
-        .await;
+        .await?;
     Ok(())
 }
 
@@ -312,12 +308,8 @@ async fn register_reward_tokens(state: &AppState) -> Result<()> {
     {
         state
             .orderbook_registry
-            .unregister_source("rewards")
-            .await;
-        state
-            .orderbook_registry
             .register_tokens("rewards", &reward_token_ids)
-            .await;
+            .await?;
     }
     Ok(())
 }

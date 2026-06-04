@@ -4,6 +4,7 @@ fn live_cancel_candidates(
     open_orders: &[ManagedRewardOrder],
     books: &HashMap<String, RewardOrderBook>,
     book_history: &HashMap<String, VecDeque<BookSnapshot>>,
+    kill_switch: bool,
 ) -> Vec<(String, String)> {
     let plan_index: HashMap<&str, &RewardQuotePlan> = plans
         .iter()
@@ -14,7 +15,15 @@ fn live_cancel_candidates(
         .iter()
         .filter(|order| order.status.is_open_like())
         .filter_map(|order| {
-            live_cancel_reason(config, &plan_index, books, book_history, order, now)
+            live_cancel_reason(
+                config,
+                &plan_index,
+                books,
+                book_history,
+                order,
+                now,
+                kill_switch,
+            )
                 .map(|reason| (order.id.clone(), reason))
         })
         .collect()
@@ -27,7 +36,20 @@ fn live_cancel_reason(
     book_history: &HashMap<String, VecDeque<BookSnapshot>>,
     order: &ManagedRewardOrder,
     now: OffsetDateTime,
+    kill_switch: bool,
 ) -> Option<String> {
+    if order.reason.contains("awaiting final reconciliation") {
+        return None;
+    }
+    if live_order_has_post_only_violation(order) {
+        return Some("post-only violation requires cancellation".to_string());
+    }
+    if order.reason.contains("cancellation must be retried") {
+        return Some("previous cancellation attempt left the order live".to_string());
+    }
+    if kill_switch && order.side == RewardOrderSide::Buy {
+        return Some("global kill switch is active".to_string());
+    }
     if order.side == RewardOrderSide::Sell
         && order.status == ManagedRewardOrderStatus::ExitPending
         && order.external_order_id.is_none()

@@ -206,6 +206,37 @@ validate_env_file() {
   fi
 }
 
+validate_orderbook_write_token() {
+  local file="$1"
+  local service="$2"
+  if [[ "${POLYEDGE_SKIP_ENV_VALIDATION:-0}" == "1" ]]; then
+    return 0
+  fi
+  [[ -f "${file}" ]] || fail "${service} env file not found: ${file}"
+
+  local orderbook_write_token
+  orderbook_write_token="$(env_value POLYEDGE_ORDERBOOK__WRITE_TOKEN "${file}")"
+  if [[ -z "${orderbook_write_token}" || "${orderbook_write_token}" == *change-me* ]]; then
+    fail "POLYEDGE_ORDERBOOK__WRITE_TOKEN must be set to a non-placeholder value in ${file} for ${service}."
+  fi
+}
+
+validate_matching_orderbook_write_tokens() {
+  local orderbook_file="$1"
+  local worker_file="$2"
+  if [[ "${POLYEDGE_SKIP_ENV_VALIDATION:-0}" == "1" ]]; then
+    return 0
+  fi
+
+  local orderbook_write_token
+  local worker_write_token
+  orderbook_write_token="$(env_value POLYEDGE_ORDERBOOK__WRITE_TOKEN "${orderbook_file}")"
+  worker_write_token="$(env_value POLYEDGE_ORDERBOOK__WRITE_TOKEN "${worker_file}")"
+  if [[ "${orderbook_write_token}" != "${worker_write_token}" ]]; then
+    fail "POLYEDGE_ORDERBOOK__WRITE_TOKEN must match between ${orderbook_file} and ${worker_file}."
+  fi
+}
+
 # Compute a checksum of a file, or "MISSING" if it does not exist.
 file_hash() {
   if [[ -f "$1" ]]; then
@@ -437,10 +468,35 @@ if [[ ! -f "${env_file}" ]]; then
       cp "${local_example}" "${local_target}"
     fi
   done
-  fail "created ${env_file} and service env files. Edit the PostgreSQL URL and console step-up code, then rerun this script."
+  fail "created ${env_file} and service env files. Edit the PostgreSQL URL, matching orderbook/worker write tokens, and console step-up code, then rerun this script."
 fi
 
 validate_env_file "${env_file}"
+if [[ "${mode}" == "auto" ]]; then
+  if ! should_skip_service orderbook; then
+    validate_orderbook_write_token "${deploy_dir_path}/.env.orderbook" "orderbook"
+  fi
+  if ! should_skip_service worker; then
+    validate_orderbook_write_token "${deploy_dir_path}/.env.worker" "worker"
+  fi
+  if ! should_skip_service orderbook && ! should_skip_service worker; then
+    validate_matching_orderbook_write_tokens \
+      "${deploy_dir_path}/.env.orderbook" \
+      "${deploy_dir_path}/.env.worker"
+  fi
+else
+  if [[ "${target_orderbook}" == "1" ]]; then
+    validate_orderbook_write_token "${deploy_dir_path}/.env.orderbook" "orderbook"
+  fi
+  if [[ "${target_worker}" == "1" ]]; then
+    validate_orderbook_write_token "${deploy_dir_path}/.env.worker" "worker"
+  fi
+  if [[ "${target_orderbook}" == "1" && "${target_worker}" == "1" ]]; then
+    validate_matching_orderbook_write_tokens \
+      "${deploy_dir_path}/.env.orderbook" \
+      "${deploy_dir_path}/.env.worker"
+  fi
+fi
 
 compose_cmd="$(find_compose)" || fail "Docker Compose is not installed."
 export COMPOSE_PARALLEL_LIMIT="${COMPOSE_PARALLEL_LIMIT:-1}"

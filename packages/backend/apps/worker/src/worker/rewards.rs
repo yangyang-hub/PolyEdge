@@ -48,6 +48,40 @@ impl LiveCancelReport {
     }
 }
 
+async fn persist_live_reward_updates(
+    state: &AppState,
+    account: &mut RewardAccountState,
+    positions: Vec<RewardPosition>,
+    orders: Vec<ManagedRewardOrder>,
+    fills: Vec<RewardFill>,
+    events: Vec<RewardRiskEvent>,
+    report: &RewardBotRunReport,
+    trace_id: &str,
+) -> Result<()> {
+    if orders.is_empty() && fills.is_empty() && events.is_empty() {
+        return Ok(());
+    }
+
+    account.tick_index += 1;
+    account.updated_at = OffsetDateTime::now_utc();
+    state
+        .reward_bot_service
+        .apply_live_tick_outcome(
+            &RewardSimulationOutcome {
+                account: account.clone(),
+                markets: Vec::new(),
+                plans: Vec::new(),
+                orders,
+                positions,
+                fills,
+                events,
+                report: report.clone(),
+            },
+            trace_id,
+        )
+        .await
+}
+
 async fn process_pending_reward_control_commands(
     state: &AppState,
     book_history: &mut HashMap<String, VecDeque<BookSnapshot>>,
@@ -167,6 +201,10 @@ async fn run_reward_bot_live_tick(
         .reward_bot_service
         .prepare_live_cycle(markets, books.clone(), trace_id, force_orders)
         .await?;
+    let kill_switch = state.risk_service.read_state().await?.kill_switch;
+    if kill_switch {
+        cycle.should_execute = false;
+    }
     let mut report = RewardBotRunReport {
         markets_scanned: cycle.markets.len(),
         books_fetched,
@@ -194,23 +232,31 @@ async fn run_reward_bot_live_tick(
         cycle.positions = latest.positions;
     }
 
+    let mut account = cycle.account.clone();
     let mut open_orders = cycle.open_orders.clone();
-    let mut changed_orders = Vec::new();
-    let mut events = Vec::new();
     let mut cancel_rejected = false;
 
     submit_deferred_live_exit_orders(
         &connector,
         &mut open_orders,
         &books,
-        &mut changed_orders,
-        &mut events,
+        state,
+        &mut account,
+        &cycle.positions,
         &mut report,
+        trace_id,
     )
     .await?;
 
     for (order_id, reason) in
-        live_cancel_candidates(&cycle.config, &cycle.plans, &open_orders, &books, book_history)
+        live_cancel_candidates(
+            &cycle.config,
+            &cycle.plans,
+            &open_orders,
+            &books,
+            book_history,
+            kill_switch,
+        )
     {
         let Some(index) = open_orders.iter().position(|order| order.id == order_id) else {
             continue;
@@ -219,66 +265,51 @@ async fn run_reward_bot_live_tick(
         match cancel_one_live_reward_order(&connector, order, &reason, trace_id).await? {
             LiveRewardOrderUpdate::Changed(updated, event) => {
                 open_orders[index] = updated.clone();
-                changed_orders.push(updated);
-                events.push(event);
-                report.cancelled_orders += 1;
+                if live_cancel_result_is_unknown(&updated) {
+                    cancel_rejected = true;
+                } else {
+                    report.cancelled_orders += 1;
+                }
+                persist_live_reward_updates(
+                    state,
+                    &mut account,
+                    cycle.positions.clone(),
+                    vec![updated],
+                    Vec::new(),
+                    vec![event],
+                    &report,
+                    trace_id,
+                )
+                .await?;
             }
             LiveRewardOrderUpdate::Unchanged(event) => {
-                events.push(event);
                 cancel_rejected = true;
+                persist_live_reward_updates(
+                    state,
+                    &mut account,
+                    cycle.positions.clone(),
+                    Vec::new(),
+                    Vec::new(),
+                    vec![event],
+                    &report,
+                    trace_id,
+                )
+                .await?;
             }
         }
     }
 
     if cancel_rejected {
-        if !changed_orders.is_empty() || !events.is_empty() {
-            let mut account = cycle.account;
-            account.tick_index += 1;
-            account.updated_at = OffsetDateTime::now_utc();
-            let outcome = RewardSimulationOutcome {
-                account,
-                markets: cycle.markets,
-                plans: cycle.plans,
-                orders: changed_orders,
-                positions: cycle.positions,
-                fills: Vec::new(),
-                events,
-                report: report.clone(),
-            };
-            state
-                .reward_bot_service
-                .apply_live_tick_outcome(&outcome, trace_id)
-                .await?;
-        }
         return Ok(report);
     }
 
     if !cycle.should_execute {
-        if !changed_orders.is_empty() || !events.is_empty() {
-            let mut account = cycle.account;
-            account.tick_index += 1;
-            account.updated_at = OffsetDateTime::now_utc();
-            let outcome = RewardSimulationOutcome {
-                account,
-                markets: cycle.markets,
-                plans: cycle.plans,
-                orders: changed_orders,
-                positions: cycle.positions,
-                fills: Vec::new(),
-                events,
-                report: report.clone(),
-            };
-            state
-                .reward_bot_service
-                .apply_live_tick_outcome(&outcome, trace_id)
-                .await?;
-        }
         return Ok(report);
     }
 
     let placement_orders = live_placement_orders(
         &cycle.config,
-        &cycle.account.account_id,
+        &account.account_id,
         &cycle.plans,
         &books,
         &open_orders,
@@ -290,45 +321,43 @@ async fn run_reward_bot_live_tick(
         match submit_one_live_reward_order(&connector, &mut order).await? {
             LiveRewardOrderUpdate::Changed(updated, event) => {
                 open_orders.push(updated.clone());
-                match updated.status {
-                    ManagedRewardOrderStatus::Open => report.simulated_orders += 1,
-                    ManagedRewardOrderStatus::Cancelled => report.cancelled_orders += 1,
-                    _ => {}
+                if updated.reason == "live post-only rewards quote accepted" {
+                    report.simulated_orders += 1;
                 }
-                changed_orders.push(updated);
-                events.push(event);
+                let stop_placements = live_order_has_post_only_violation(&updated);
+                persist_live_reward_updates(
+                    state,
+                    &mut account,
+                    cycle.positions.clone(),
+                    vec![updated],
+                    Vec::new(),
+                    vec![event],
+                    &report,
+                    trace_id,
+                )
+                .await?;
+                if stop_placements {
+                    break;
+                }
             }
             LiveRewardOrderUpdate::Unchanged(event) => {
                 order.status = ManagedRewardOrderStatus::Error;
                 order.reason = event.message.clone();
                 order.updated_at = OffsetDateTime::now_utc();
-                changed_orders.push(order);
-                events.push(event);
+                persist_live_reward_updates(
+                    state,
+                    &mut account,
+                    cycle.positions.clone(),
+                    vec![order],
+                    Vec::new(),
+                    vec![event],
+                    &report,
+                    trace_id,
+                )
+                .await?;
             }
         }
     }
-
-    if changed_orders.is_empty() && events.is_empty() {
-        return Ok(report);
-    }
-
-    let mut account = cycle.account;
-    account.tick_index += 1;
-    account.updated_at = OffsetDateTime::now_utc();
-    let outcome = RewardSimulationOutcome {
-        account,
-        markets: cycle.markets,
-        plans: cycle.plans,
-        orders: changed_orders,
-        positions: cycle.positions,
-        fills: Vec::new(),
-        events,
-        report: report.clone(),
-    };
-    state
-        .reward_bot_service
-        .apply_live_tick_outcome(&outcome, trace_id)
-        .await?;
 
     Ok(report)
 }
@@ -351,49 +380,50 @@ async fn cancel_live_reward_orders(
     }
 
     let connector = build_live_polymarket_connector(state).await?;
-    let mut changed_orders = Vec::new();
-    let mut events = Vec::new();
+    let mut account = cycle.account.clone();
     let mut report = LiveCancelReport::default();
 
     for order in target_orders {
         match cancel_one_live_reward_order(&connector, order, reason, trace_id).await? {
             LiveRewardOrderUpdate::Changed(updated, event) => {
-                changed_orders.push(updated);
-                events.push(event);
-                report.cancelled += 1;
+                if live_cancel_result_is_unknown(&updated) {
+                    report.rejected += 1;
+                } else {
+                    report.cancelled += 1;
+                }
+                persist_live_reward_updates(
+                    state,
+                    &mut account,
+                    cycle.positions.clone(),
+                    vec![updated],
+                    Vec::new(),
+                    vec![event],
+                    &report.as_run_report(),
+                    trace_id,
+                )
+                .await?;
             }
             LiveRewardOrderUpdate::Unchanged(event) => {
-                events.push(event);
                 report.rejected += 1;
+                persist_live_reward_updates(
+                    state,
+                    &mut account,
+                    cycle.positions.clone(),
+                    Vec::new(),
+                    Vec::new(),
+                    vec![event],
+                    &report.as_run_report(),
+                    trace_id,
+                )
+                .await?;
             }
         }
     }
-
-    if changed_orders.is_empty() && events.is_empty() {
-        return Ok(report);
-    }
-
-    let mut account = cycle.account;
-    account.tick_index += 1;
-    account.updated_at = OffsetDateTime::now_utc();
-    let outcome = RewardSimulationOutcome {
-        account,
-        markets: cycle.markets,
-        plans: cycle.plans,
-        orders: changed_orders,
-        positions: cycle.positions,
-        fills: Vec::new(),
-        events,
-        report: report.as_run_report(),
-    };
-    state
-        .reward_bot_service
-        .apply_live_tick_outcome(&outcome, trace_id)
-        .await?;
     Ok(report)
 }
 
 include!("rewards/live_sync.rs");
 include!("rewards/live_orders.rs");
+include!("rewards/live_helpers.rs");
 include!("rewards/live_risk.rs");
 include!("rewards/polling.rs");

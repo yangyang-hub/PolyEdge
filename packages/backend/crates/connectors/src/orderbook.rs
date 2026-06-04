@@ -14,10 +14,11 @@ use std::time::{Duration, Instant};
 pub struct OrderbookHttpClient {
     base_url: String,
     client: Client,
+    write_token: Option<String>,
 }
 
 impl OrderbookHttpClient {
-    pub fn new(base_url: &str) -> Self {
+    pub fn new(base_url: &str, write_token: Option<&str>) -> Self {
         let client = Client::builder()
             .connect_timeout(Duration::from_secs(5))
             .timeout(Duration::from_secs(30))
@@ -26,6 +27,17 @@ impl OrderbookHttpClient {
         Self {
             base_url: base_url.trim_end_matches('/').to_string(),
             client,
+            write_token: write_token
+                .map(str::trim)
+                .filter(|token| !token.is_empty())
+                .map(ToString::to_string),
+        }
+    }
+
+    fn authorize_write(&self, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        match self.write_token.as_deref() {
+            Some(token) => request.header("x-polyedge-orderbook-token", token),
+            None => request,
         }
     }
 
@@ -65,6 +77,7 @@ struct OrderbookResponse {
 struct OrderbookStatsResponse {
     cache_entries: usize,
     registry_sources: usize,
+    registry_total_tokens: usize,
 }
 
 #[derive(Deserialize)]
@@ -173,8 +186,7 @@ impl OrderbookCache for OrderbookHttpClient {
         };
 
         let resp = self
-            .client
-            .post(&url)
+            .authorize_write(self.client.post(&url))
             .json(&body)
             .send()
             .await
@@ -230,8 +242,7 @@ impl OrderbookCache for OrderbookHttpClient {
         };
 
         let resp = self
-            .client
-            .post(&url)
+            .authorize_write(self.client.post(&url))
             .json(&body)
             .send()
             .await
@@ -276,60 +287,80 @@ struct RegisterRequest {
 
 #[async_trait]
 impl OrderbookSubscriptionRegistry for OrderbookHttpClient {
-    async fn register_tokens(&self, source: &str, token_ids: &[String]) {
+    async fn register_tokens(&self, source: &str, token_ids: &[String]) -> Result<()> {
         let url = format!("{}/orderbook/register", self.base_url);
         let body = RegisterRequest {
             source: source.to_string(),
             token_ids: token_ids.to_vec(),
         };
-        match self.client.post(&url).json(&body).send().await {
-            Ok(resp) if !resp.status().is_success() => {
-                tracing::warn!(
-                    source,
-                    status = %resp.status(),
-                    "orderbook register tokens returned non-success status"
-                );
-            }
-            Err(error) => {
-                tracing::warn!(
-                    source,
-                    error = %error,
-                    "orderbook register tokens HTTP call failed"
-                );
-            }
-            _ => {}
+        let resp = self
+            .authorize_write(self.client.post(&url))
+            .json(&body)
+            .send()
+            .await
+            .map_err(|error| {
+                AppError::dependency_unavailable(
+                    "ORDERBOOK_HTTP_REGISTER_ERROR",
+                    format!("failed to register orderbook tokens for source {source}: {error}"),
+                )
+            })?;
+        if !resp.status().is_success() {
+            return Err(AppError::dependency_unavailable(
+                "ORDERBOOK_HTTP_REGISTER_FAILED",
+                format!(
+                    "orderbook register returned status {} for source {source}",
+                    resp.status()
+                ),
+            ));
         }
+        Ok(())
     }
 
-    async fn unregister_source(&self, source: &str) {
+    async fn unregister_source(&self, source: &str) -> Result<()> {
         let url = format!("{}/orderbook/register/{source}", self.base_url);
-        match self.client.delete(&url).send().await {
-            Ok(resp) if !resp.status().is_success() => {
-                tracing::warn!(
-                    source,
-                    status = %resp.status(),
-                    "orderbook unregister source returned non-success status"
-                );
-            }
-            Err(error) => {
-                tracing::warn!(
-                    source,
-                    error = %error,
-                    "orderbook unregister source HTTP call failed"
-                );
-            }
-            _ => {}
+        let resp = self
+            .authorize_write(self.client.delete(&url))
+            .send()
+            .await
+            .map_err(|error| {
+                AppError::dependency_unavailable(
+                    "ORDERBOOK_HTTP_UNREGISTER_ERROR",
+                    format!("failed to unregister orderbook source {source}: {error}"),
+                )
+            })?;
+        if !resp.status().is_success() {
+            return Err(AppError::dependency_unavailable(
+                "ORDERBOOK_HTTP_UNREGISTER_FAILED",
+                format!(
+                    "orderbook unregister returned status {} for source {source}",
+                    resp.status()
+                ),
+            ));
         }
+        Ok(())
     }
 
-    async fn unregister_tokens(&self, _source: &str, _token_ids: &[String]) {
-        // Not implemented — use unregister_source + re-register instead.
+    async fn unregister_tokens(&self, _source: &str, _token_ids: &[String]) -> Result<()> {
+        Err(AppError::invalid_input(
+            "ORDERBOOK_HTTP_PARTIAL_UNREGISTER_UNSUPPORTED",
+            "remote orderbook registry only supports atomic source replacement",
+        ))
     }
 
     async fn list_all_tokens(&self) -> Vec<String> {
         // Token aggregation is handled by the orderbook service.
         // Remote consumers don't need the full list.
         Vec::new()
+    }
+
+    async fn total_token_count(&self) -> usize {
+        match self.fetch_stats().await {
+            Ok(stats) => stats.registry_total_tokens,
+            Err(error) => {
+                tracing::warn!(error = %error, "failed to fetch orderbook registry token count");
+                0
+            }
+        }
     }
 
     async fn source_count(&self) -> usize {

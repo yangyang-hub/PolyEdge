@@ -205,14 +205,8 @@ async fn fetch_copytrade_inputs(
     // stale orderbook subscriptions alive forever.
     state
         .orderbook_registry
-        .unregister_source("copytrade")
-        .await;
-    if !token_ids.is_empty() {
-        state
-            .orderbook_registry
-            .register_tokens("copytrade", &token_ids)
-            .await;
-    }
+        .register_tokens("copytrade", &token_ids)
+        .await?;
 
     // Read from shared cache first; collect cache misses for fallback.
     let mut books = HashMap::new();

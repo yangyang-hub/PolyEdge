@@ -596,7 +596,8 @@ async fn worker_shutdown_signal() {
 /// then register them with the orderbook service via HTTP.
 async fn register_orderbook_tokens(state: &AppState) {
     let max_tokens = state.settings.orderbook_stream.max_tokens;
-    let mut tokens = Vec::new();
+    let mut exec_candidates = Vec::new();
+    let mut exec_candidate_seen = HashSet::new();
 
     // Source 1: Active execution orders → market YES/NO asset IDs.
     for status in [
@@ -604,9 +605,8 @@ async fn register_orderbook_tokens(state: &AppState) {
         OrderStatus::Open,
         OrderStatus::PartiallyFilled,
     ] {
-        let fetch_limit =
-            u16::try_from(max_tokens.saturating_mul(2).min(usize::from(u16::MAX)))
-                .unwrap_or(u16::MAX);
+        // Cap at 200 to satisfy OrderListFilters validation (execution MAX_LIST_LIMIT).
+        let fetch_limit = max_tokens.saturating_mul(2).min(200) as u16;
         let filters = match OrderListFilters::new(
             None,
             None,
@@ -629,7 +629,7 @@ async fn register_orderbook_tokens(state: &AppState) {
         };
 
         for order in orders {
-            if tokens.len() >= max_tokens {
+            if exec_candidates.len() >= max_tokens {
                 break;
             }
             let market = match state.market_event_service.get_market(&order.market_id).await {
@@ -640,56 +640,72 @@ async fn register_orderbook_tokens(state: &AppState) {
                 Ok(r) => r,
                 Err(_) => continue,
             };
-            tokens.push(refs.yes_asset_id);
-            tokens.push(refs.no_asset_id);
+            for token_id in [refs.yes_asset_id, refs.no_asset_id] {
+                if exec_candidate_seen.insert(token_id.clone()) {
+                    exec_candidates.push(token_id);
+                }
+            }
         }
     }
 
-    tokens.truncate(max_tokens);
-
-    // Unregister old exec_orders and register new set.
-    state.orderbook_registry.unregister_source("exec_orders").await;
-    state.orderbook_registry.register_tokens("exec_orders", &tokens).await;
-
-    // Source 2: Reward token IDs. Keep active managed-order/position tokens first,
-    // then fill the remaining subscription budget with candidate market tokens.
-    let reward_capacity = max_tokens.saturating_sub(tokens.len());
-    let mut reward_tokens = Vec::new();
-    let mut reward_seen = HashSet::new();
-
-    if reward_capacity > 0 {
-        if let Ok(active_tokens) = state.reward_bot_service.list_active_reward_book_token_ids().await {
-            push_unique_tokens(
-                &mut reward_tokens,
-                &mut reward_seen,
-                active_tokens,
-                reward_capacity,
-            );
-        }
+    // Allocate the global subscription budget deterministically: active rewards
+    // inventory/orders first, then active execution orders, then reward candidates.
+    let mut seen = HashSet::new();
+    let mut reward_active_tokens = Vec::new();
+    if let Ok(active_tokens) = state.reward_bot_service.list_active_reward_book_token_ids().await {
+        push_unique_tokens(
+            &mut reward_active_tokens,
+            &mut seen,
+            active_tokens,
+            max_tokens,
+        );
     }
 
-    if reward_tokens.len() < reward_capacity {
-        if let Ok(candidate_tokens) = state.reward_bot_service.list_all_reward_candidate_token_ids().await {
-            push_unique_tokens(
-                &mut reward_tokens,
-                &mut reward_seen,
-                candidate_tokens,
-                reward_capacity,
-            );
-        }
+    let mut exec_tokens = Vec::new();
+    push_unique_tokens(
+        &mut exec_tokens,
+        &mut seen,
+        exec_candidates,
+        max_tokens.saturating_sub(reward_active_tokens.len()),
+    );
+
+    let mut reward_candidate_tokens = Vec::new();
+    let reward_candidate_capacity = max_tokens
+        .saturating_sub(reward_active_tokens.len())
+        .saturating_sub(exec_tokens.len());
+    if reward_candidate_capacity > 0
+        && let Ok(candidate_tokens) = state
+            .reward_bot_service
+            .list_all_reward_candidate_token_ids()
+            .await
+    {
+        push_unique_tokens(
+            &mut reward_candidate_tokens,
+            &mut seen,
+            candidate_tokens,
+            reward_candidate_capacity,
+        );
     }
 
-    state.orderbook_registry.unregister_source("rewards").await;
-    if !reward_tokens.is_empty() {
-        state
+    for (source, source_tokens) in [
+        ("rewards_active", reward_active_tokens.as_slice()),
+        ("exec_orders", exec_tokens.as_slice()),
+        ("rewards_candidates", reward_candidate_tokens.as_slice()),
+        ("rewards", &[]),
+    ] {
+        if let Err(error) = state
             .orderbook_registry
-            .register_tokens("rewards", &reward_tokens)
-            .await;
+            .register_tokens(source, source_tokens)
+            .await
+        {
+            warn!(source, error = %error, "failed to replace orderbook token registration");
+        }
     }
 
     info!(
-        exec_tokens = tokens.len(),
-        reward_tokens = reward_tokens.len(),
+        reward_active_tokens = reward_active_tokens.len(),
+        exec_tokens = exec_tokens.len(),
+        reward_candidate_tokens = reward_candidate_tokens.len(),
         max_tokens,
         "registered orderbook tokens with orderbook service"
     );

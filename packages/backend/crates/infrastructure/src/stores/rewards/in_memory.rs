@@ -182,6 +182,77 @@ impl RewardBotStore for InMemoryRewardBotStore {
         Ok(plans)
     }
 
+    async fn count_quote_plans(&self) -> Result<(usize, usize)> {
+        let plans = self.quote_plans.read().await;
+        let total = plans.len();
+        let eligible = plans.values().filter(|p| p.eligible).count();
+        Ok((total, eligible))
+    }
+
+    async fn list_quote_plans_page(
+        &self,
+        query: &RewardQuotePlanListQuery,
+    ) -> Result<RewardQuotePlanPage> {
+        let mut plans = self
+            .quote_plans
+            .read()
+            .await
+            .values()
+            .filter(|plan| {
+                if let Some(eligible) = query.eligible {
+                    if plan.eligible != eligible {
+                        return false;
+                    }
+                }
+                if let Some(ref search) = query.search {
+                    let q: &str = search.as_str();
+                    if !plan.question.to_lowercase().contains(q)
+                        && !plan.reason.to_lowercase().contains(q)
+                        && !plan.market_slug.to_lowercase().contains(q)
+                    {
+                        return false;
+                    }
+                }
+                true
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+
+        plans.sort_by(|a, b| {
+            let primary = match query.sort_by {
+                RewardQuotePlanSortField::Score => a.score.cmp(&b.score),
+                RewardQuotePlanSortField::DailyReward => {
+                    a.total_daily_rate.cmp(&b.total_daily_rate)
+                }
+                RewardQuotePlanSortField::Midpoint => {
+                    a.midpoint.cmp(&b.midpoint)
+                }
+                RewardQuotePlanSortField::Eligible => a.eligible.cmp(&b.eligible),
+            };
+            let ord = match query.sort_order {
+                SortOrder::Asc => primary,
+                SortOrder::Desc => primary.reverse(),
+            };
+            ord.then_with(|| {
+                b.eligible
+                    .cmp(&a.eligible)
+                    .then_with(|| b.updated_at.cmp(&a.updated_at))
+            })
+        });
+
+        let total_items = plans.len();
+        let page = query.page_for_total(total_items);
+        let start = (page.page - 1) * page.page_size;
+        let end = (start + page.page_size).min(plans.len());
+        let items = if start < plans.len() {
+            plans[start..end].to_vec()
+        } else {
+            Vec::new()
+        };
+
+        Ok(RewardQuotePlanPage { items, page })
+    }
+
     async fn list_orders_page(&self, query: &RewardOrderListQuery) -> Result<RewardOrderPage> {
         let mut orders = self
             .orders
@@ -252,6 +323,16 @@ impl RewardBotStore for InMemoryRewardBotStore {
             .collect())
     }
 
+    async fn count_open_orders(&self, account_id: &str) -> Result<usize> {
+        Ok(self
+            .orders
+            .read()
+            .await
+            .iter()
+            .filter(|order| order.account_id == account_id && order.status.is_open_like())
+            .count())
+    }
+
     async fn get_order_by_external_order_id(
         &self,
         external_order_id: &str,
@@ -276,6 +357,16 @@ impl RewardBotStore for InMemoryRewardBotStore {
             .collect())
     }
 
+    async fn count_account_positions(&self, account_id: &str) -> Result<usize> {
+        Ok(self
+            .positions
+            .read()
+            .await
+            .values()
+            .filter(|position| position.account_id == account_id && position.size != Decimal::ZERO)
+            .count())
+    }
+
     async fn list_fills(&self, limit: u16) -> Result<Vec<RewardFill>> {
         let mut fills = self.fills.read().await.clone();
         fills.sort_by(|left, right| right.created_at.cmp(&left.created_at));
@@ -292,18 +383,6 @@ impl RewardBotStore for InMemoryRewardBotStore {
         outcome: &RewardSimulationOutcome,
         _trace_id: &str,
     ) -> Result<()> {
-        {
-            let mut markets = self.markets.write().await;
-            for market in &outcome.markets {
-                markets.insert(market.condition_id.clone(), market.clone());
-            }
-        }
-        {
-            let mut plans = self.quote_plans.write().await;
-            for plan in &outcome.plans {
-                plans.insert(plan.condition_id.clone(), plan.clone());
-            }
-        }
         {
             let mut orders = self.orders.write().await;
             for order in &outcome.orders {

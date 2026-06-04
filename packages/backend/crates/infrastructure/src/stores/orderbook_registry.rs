@@ -4,11 +4,11 @@ use std::time::Instant;
 
 /// 基于内存的订阅注册中心实现。
 ///
-/// 每个 `source`（如 "rewards"、"copytrade"、"exec_orders"）维护独立的 token 集合。
-/// `list_all_tokens` 返回所有来源的并集；`changed_since` 用于增量判断 WS 是否需要重连。
+/// 每个 `source` 维护独立的有序 token 集合。注册会原子替换来源集合，
+/// `list_all_tokens` 按 live rewards、execution、candidate、copytrade 优先级返回并集。
 pub struct InMemoryOrderbookSubscriptionRegistry {
-    /// source -> set of token_ids
-    tokens: RwLock<HashMap<String, HashSet<String>>>,
+    /// source -> ordered token_ids
+    tokens: RwLock<HashMap<String, Vec<String>>>,
     /// 最后一次写操作的时间戳
     last_modified: Mutex<Instant>,
 }
@@ -29,36 +29,44 @@ impl InMemoryOrderbookSubscriptionRegistry {
 
 #[async_trait]
 impl OrderbookSubscriptionRegistry for InMemoryOrderbookSubscriptionRegistry {
-    async fn register_tokens(&self, source: &str, token_ids: &[String]) {
+    async fn register_tokens(&self, source: &str, token_ids: &[String]) -> Result<()> {
+        let mut seen = HashSet::new();
+        let replacement = token_ids
+            .iter()
+            .filter(|id| !id.trim().is_empty() && seen.insert((*id).clone()))
+            .cloned()
+            .collect::<Vec<_>>();
         let mut tokens = self.tokens.write().await;
-        let entry = tokens.entry(source.to_string()).or_default();
-        let before = entry.len();
-        for id in token_ids {
-            entry.insert(id.clone());
-        }
-        let added = entry.len().saturating_sub(before);
+        let changed = if replacement.is_empty() {
+            tokens.remove(source).is_some()
+        } else if tokens.get(source) == Some(&replacement) {
+            false
+        } else {
+            tokens.insert(source.to_string(), replacement);
+            true
+        };
         drop(tokens);
-        if added > 0 {
+        if changed {
             self.touch().await;
         }
+        Ok(())
     }
 
-    async fn unregister_source(&self, source: &str) {
+    async fn unregister_source(&self, source: &str) -> Result<()> {
         let mut tokens = self.tokens.write().await;
         let removed = tokens.remove(source).is_some();
         drop(tokens);
         if removed {
             self.touch().await;
         }
+        Ok(())
     }
 
-    async fn unregister_tokens(&self, source: &str, token_ids: &[String]) {
+    async fn unregister_tokens(&self, source: &str, token_ids: &[String]) -> Result<()> {
         let mut tokens = self.tokens.write().await;
         if let Some(entry) = tokens.get_mut(source) {
             let before = entry.len();
-            for id in token_ids {
-                entry.remove(id);
-            }
+            entry.retain(|id| !token_ids.contains(id));
             let removed = before.saturating_sub(entry.len());
             if entry.is_empty() {
                 tokens.remove(source);
@@ -68,13 +76,20 @@ impl OrderbookSubscriptionRegistry for InMemoryOrderbookSubscriptionRegistry {
                 self.touch().await;
             }
         }
+        Ok(())
     }
 
     async fn list_all_tokens(&self) -> Vec<String> {
         let tokens = self.tokens.read().await;
+        let mut sources = tokens.iter().collect::<Vec<_>>();
+        sources.sort_by(|(left, _), (right, _)| {
+            registry_source_priority(left)
+                .cmp(&registry_source_priority(right))
+                .then_with(|| left.cmp(right))
+        });
         let mut seen = HashSet::new();
         let mut result = Vec::new();
-        for entry in tokens.values() {
+        for (_, entry) in sources {
             for id in entry {
                 if seen.insert(id.clone()) {
                     result.push(id.clone());
@@ -82,6 +97,17 @@ impl OrderbookSubscriptionRegistry for InMemoryOrderbookSubscriptionRegistry {
             }
         }
         result
+    }
+
+    async fn total_token_count(&self) -> usize {
+        let tokens = self.tokens.read().await;
+        let mut seen = HashSet::new();
+        for entry in tokens.values() {
+            for id in entry {
+                seen.insert(id);
+            }
+        }
+        seen.len()
     }
 
     async fn source_count(&self) -> usize {
@@ -97,5 +123,15 @@ impl OrderbookSubscriptionRegistry for InMemoryOrderbookSubscriptionRegistry {
     async fn changed_since(&self, since: Instant) -> bool {
         let ts = self.last_modified.lock().await;
         *ts > since
+    }
+}
+
+fn registry_source_priority(source: &str) -> u8 {
+    match source {
+        "rewards_active" => 0,
+        "exec_orders" => 1,
+        "rewards" | "rewards_candidates" => 2,
+        "copytrade" => 3,
+        _ => 4,
     }
 }

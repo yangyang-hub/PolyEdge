@@ -1,45 +1,3 @@
-fn apply_plan_filters(
-    mut snapshot: RewardBotSnapshot,
-    query: &RewardBotSnapshotQuery,
-) -> RewardBotSnapshot {
-    let mut plans = snapshot.quote_plans;
-
-    // Text search
-    if let Some(ref search) = query.plans_search {
-        let q = search.trim().to_lowercase();
-        if !q.is_empty() {
-            plans.retain(|p| {
-                p.question.to_lowercase().contains(&q) || p.reason.to_lowercase().contains(&q)
-            });
-        }
-    }
-
-    // Eligibility filter
-    if let Some(eligible) = query.plans_eligible {
-        plans.retain(|p| p.eligible == eligible);
-    }
-
-    // Sort
-    let sort_by = query.plans_sort_by.as_deref().unwrap_or("score");
-    let desc = query.plans_sort_order.as_deref() != Some("asc");
-    plans.sort_by(|a, b| {
-        let ord = match sort_by {
-            "daily_reward" => a.total_daily_rate.cmp(&b.total_daily_rate),
-            "midpoint" => match (a.midpoint, b.midpoint) {
-                (Some(a_m), Some(b_m)) => a_m.cmp(&b_m),
-                (Some(_), None) => std::cmp::Ordering::Greater,
-                (None, Some(_)) => std::cmp::Ordering::Less,
-                (None, None) => std::cmp::Ordering::Equal,
-            },
-            _ => a.score.cmp(&b.score), // default: score
-        };
-        if desc { ord.reverse() } else { ord }
-    });
-
-    snapshot.quote_plans = plans;
-    snapshot
-}
-
 async fn read_reward_bot_snapshot(
     Extension(auth): Extension<AuthContext>,
     State(state): State<AppState>,
@@ -54,23 +12,21 @@ async fn read_reward_bot_snapshot(
         query.orders_page,
         query.orders_page_size,
     );
+    let plans_query = RewardQuotePlanListQuery::new(
+        query.plans_search.clone(),
+        query.plans_eligible,
+        query.plans_sort_by.clone(),
+        query.plans_sort_order.clone(),
+        query.plans_page,
+        query.plans_page_size,
+    );
     let snapshot = state
         .reward_bot_service
-        .snapshot_with_order_query(&order_query)
+        .snapshot_with_order_query(&order_query, &plans_query)
         .await
         .map_err(|error| {
             HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone())
         })?;
-
-    let has_plan_filters = query.plans_search.is_some()
-        || query.plans_eligible.is_some()
-        || query.plans_sort_by.is_some()
-        || query.plans_sort_order.is_some();
-    let snapshot = if has_plan_filters {
-        apply_plan_filters(snapshot, &query)
-    } else {
-        snapshot
-    };
 
     Ok(Json(ApiResponse::new(snapshot, auth.request_id, trace_id)))
 }

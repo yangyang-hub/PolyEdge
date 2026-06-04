@@ -71,6 +71,7 @@ mod tests {
         assert_eq!(settings.orderbook_stream.book_ttl_ms, 300_000);
         assert_eq!(settings.orderbook_stream.token_refresh_interval_secs, 60);
         assert_eq!(settings.orderbook_stream.restart_interval_secs, 5);
+        assert!(settings.orderbook.write_token.is_none());
         assert_eq!(
             settings.auth.force_reauth_after.as_deref(),
             Some("2026-01-01T00:00:00Z")
@@ -254,6 +255,10 @@ mod tests {
                 "15".to_string(),
             ),
             (
+                "POLYEDGE_ORDERBOOK__WRITE_TOKEN".to_string(),
+                "orderbook-test-token".to_string(),
+            ),
+            (
                 "POLYEDGE_POLYMARKET__PRIVATE_KEY".to_string(),
                 "".to_string(),
             ),
@@ -337,6 +342,10 @@ mod tests {
         assert_eq!(settings.orderbook_stream.max_tokens, 100);
         assert_eq!(settings.orderbook_stream.max_levels_per_side, 12);
         assert_eq!(settings.orderbook_stream.poll_reconcile_interval_secs, 15);
+        assert_eq!(
+            settings.orderbook.write_token.as_deref(),
+            Some("orderbook-test-token")
+        );
         assert_eq!(
             settings.auth.revoked_sessions,
             vec!["sess_alpha".to_string(), "sess_beta".to_string()],
