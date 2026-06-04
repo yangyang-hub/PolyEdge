@@ -3,6 +3,8 @@
 // `RewardBotStore` and are split by backend; the row mappers and SQL helpers they share
 // live in the parent `stores` module.
 
+const REWARD_CONTROL_COMMAND_LEASE: Duration = Duration::minutes(5);
+
 include!("rewards/in_memory.rs");
 include!("rewards/postgres_control_commands.rs");
 include!("rewards/postgres_orders.rs");

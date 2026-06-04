@@ -1,10 +1,10 @@
 # 数据库（Migrations + Schema）
 
-最后更新：2026-06-03
+最后更新：2026-06-04
 
 ## 概述
 
-数据库使用 PostgreSQL，通过 25 个 SQL 迁移文件管理 schema。覆盖审计、市场数据、事件/信号、执行管道、风控、套利、奖励、跟单等领域。
+数据库使用 PostgreSQL，通过 26 个 SQL 迁移文件管理 schema。覆盖审计、市场数据、事件/信号、执行管道、风控、套利、奖励、跟单等领域。
 
 ## 迁移文件列表
 
@@ -35,6 +35,7 @@
 | `0023_copytrade_control_commands.sql` | 跟单控制命令 | `copytrade_control_commands` |
 | `0024_reward_markets_active_index.sql` | 奖励市场查询索引 | `reward_markets` active + daily rate 索引 |
 | `0025_markets_active_volume_index.sql` | 市场活跃度索引 | `markets` open/tradable + 24h volume 索引 |
+| `0026_reward_control_running_lease_index.sql` | Rewards 控制命令租约索引 | `reward_control_commands` running + started_at 部分索引 |
 
 ## Schema 领域分组
 
@@ -89,7 +90,7 @@
 - **`reward_managed_orders`**：account_id、condition_id、token_id、filled_size、reward_earned、last_scored_at
 - **`reward_fills`**：order_id、account_id、condition_id、token_id、outcome、side、price、size、notional_usd、role、realized_pnl
 - **`reward_account_state`**：capital_usd、available_usd、reserved_usd（旧硬占用兼容字段，下一次 rewards tick 自动释放）、realized_pnl、reward_earned_usd、fees_paid、tick_index
-- **`reward_control_commands`**：API 入队给 worker 的 rewards 控制命令（run_once/cancel_all/reset）及 pending/running/completed/failed 状态
+- **`reward_control_commands`**：API 入队给 worker 的 rewards 控制命令（run_once/cancel_all/reset）及 pending/running/completed/failed 状态；running 超过 5 分钟可重新领取
 
 ### 9. 跟单
 
@@ -108,7 +109,7 @@
 
 ## 当前状态
 
-- 25 个迁移文件，最新为 `0025_markets_active_volume_index.sql`
+- 26 个迁移文件，最新为 `0026_reward_control_running_lease_index.sql`
 - 所有表使用 PostgreSQL 特性（JSONB、NUMERIC 约束、BIGSERIAL、部分索引等）
 - 迁移使用 `sqlx` 管理
 

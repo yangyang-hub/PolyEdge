@@ -124,7 +124,7 @@ fn spawn_worker_tasks(state: &AppState, shutdown_rx: watch::Receiver<bool>) -> V
         let job_state = state.clone();
         handles.push(spawn_interval_job(
             "register-orderbook-tokens",
-            settings.market_sync_interval_secs.max(60),
+            settings.market_sync_interval_secs.clamp(10, 60),
             shutdown_rx.clone(),
             move || {
                 let state = job_state.clone();
@@ -598,6 +598,7 @@ async fn register_orderbook_tokens(state: &AppState) {
     let max_tokens = state.settings.orderbook_stream.max_tokens;
     let mut exec_candidates = Vec::new();
     let mut exec_candidate_seen = HashSet::new();
+    let mut exec_query_complete = true;
 
     // Source 1: Active execution orders → market YES/NO asset IDs.
     for status in [
@@ -617,6 +618,7 @@ async fn register_orderbook_tokens(state: &AppState) {
             Ok(f) => f,
             Err(error) => {
                 warn!(error = %error, "failed to build order filters for token registration");
+                exec_query_complete = false;
                 continue;
             }
         };
@@ -624,6 +626,7 @@ async fn register_orderbook_tokens(state: &AppState) {
             Ok(orders) => orders,
             Err(error) => {
                 warn!(error = %error, "failed to list orders for token registration");
+                exec_query_complete = false;
                 continue;
             }
         };
@@ -652,14 +655,25 @@ async fn register_orderbook_tokens(state: &AppState) {
     // inventory/orders first, then active execution orders, then reward candidates.
     let mut seen = HashSet::new();
     let mut reward_active_tokens = Vec::new();
-    if let Ok(active_tokens) = state.reward_bot_service.list_active_reward_book_token_ids().await {
-        push_unique_tokens(
-            &mut reward_active_tokens,
-            &mut seen,
-            active_tokens,
-            max_tokens,
-        );
-    }
+    let reward_active_complete = match state
+        .reward_bot_service
+        .list_active_reward_book_token_ids()
+        .await
+    {
+        Ok(active_tokens) => {
+            push_unique_tokens(
+                &mut reward_active_tokens,
+                &mut seen,
+                active_tokens,
+                max_tokens,
+            );
+            true
+        }
+        Err(error) => {
+            warn!(error = %error, "failed to list active rewards tokens for registration");
+            false
+        }
+    };
 
     let mut exec_tokens = Vec::new();
     push_unique_tokens(
@@ -670,29 +684,46 @@ async fn register_orderbook_tokens(state: &AppState) {
     );
 
     let mut reward_candidate_tokens = Vec::new();
+    let mut reward_candidates_complete = true;
     let reward_candidate_capacity = max_tokens
         .saturating_sub(reward_active_tokens.len())
         .saturating_sub(exec_tokens.len());
-    if reward_candidate_capacity > 0
-        && let Ok(candidate_tokens) = state
+    if reward_candidate_capacity > 0 {
+        match state
             .reward_bot_service
             .list_all_reward_candidate_token_ids()
             .await
-    {
-        push_unique_tokens(
-            &mut reward_candidate_tokens,
-            &mut seen,
-            candidate_tokens,
-            reward_candidate_capacity,
-        );
+        {
+            Ok(candidate_tokens) => push_unique_tokens(
+                &mut reward_candidate_tokens,
+                &mut seen,
+                candidate_tokens,
+                reward_candidate_capacity,
+            ),
+            Err(error) => {
+                reward_candidates_complete = false;
+                warn!(error = %error, "failed to list reward candidate tokens for registration");
+            }
+        }
     }
 
-    for (source, source_tokens) in [
-        ("rewards_active", reward_active_tokens.as_slice()),
-        ("exec_orders", exec_tokens.as_slice()),
-        ("rewards_candidates", reward_candidate_tokens.as_slice()),
-        ("rewards", &[]),
+    for (source, source_tokens, complete) in [
+        (
+            "rewards_active",
+            reward_active_tokens.as_slice(),
+            reward_active_complete,
+        ),
+        ("exec_orders", exec_tokens.as_slice(), exec_query_complete),
+        (
+            "rewards_candidates",
+            reward_candidate_tokens.as_slice(),
+            reward_candidates_complete,
+        ),
+        ("rewards", &[], true),
     ] {
+        if !complete {
+            continue;
+        }
         if let Err(error) = state
             .orderbook_registry
             .register_tokens(source, source_tokens)

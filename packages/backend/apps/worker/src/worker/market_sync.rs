@@ -1,32 +1,62 @@
 async fn sync_markets_once(state: &AppState, trace_id: &str) -> Result<MarketSyncReport> {
-    let connector =
-        PolymarketGammaConnector::new(&state.settings.polymarket.gamma_host)?;
-    let page_size = state.settings.arbitrage.scan_limit;
-    let gamma_markets = connector.fetch_markets(page_size).await?;
-    let views: Vec<MarketView> = gamma_markets
-        .into_iter()
-        .map(gamma_market_to_view)
-        .collect();
-    let fetched = views.len();
-    let upserted = state
-        .market_event_service
-        .upsert_markets(&views, trace_id)
-        .await?;
+    let general_result: Result<(usize, usize)> = async {
+        let connector = PolymarketGammaConnector::new(&state.settings.polymarket.gamma_host)?;
+        let page_size = state.settings.arbitrage.scan_limit;
+        let gamma_markets = connector.fetch_markets(page_size).await?;
+        let views: Vec<MarketView> = gamma_markets
+            .into_iter()
+            .map(gamma_market_to_view)
+            .collect();
+        let fetched = views.len();
+        let upserted = state
+            .market_event_service
+            .upsert_markets(&views, trace_id)
+            .await?;
+        Ok((fetched, upserted))
+    }
+    .await;
 
     // Sync reward markets from CLOB rewards API into reward_markets table.
-    let rewards_connector =
-        PolymarketRewardsConnector::new(&state.settings.polymarket.clob_host)?;
-    let reward_markets_raw = rewards_connector.fetch_current_markets().await?;
-    let reward_raw_count = reward_markets_raw.len();
-    let reward_markets: Vec<RewardMarket> = reward_markets_raw
-        .into_iter()
-        .map(reward_market_from_connector)
-        .collect();
-    let reward_enriched_count = reward_markets.len();
-    state
-        .reward_bot_service
-        .upsert_reward_markets(&reward_markets)
-        .await?;
+    let reward_result: Result<(usize, usize)> = async {
+        let rewards_connector =
+            PolymarketRewardsConnector::new(&state.settings.polymarket.clob_host)?;
+        let reward_markets_raw = rewards_connector.fetch_current_markets().await?;
+        let reward_raw_count = reward_markets_raw.len();
+        let reward_markets: Vec<RewardMarket> = reward_markets_raw
+            .into_iter()
+            .map(reward_market_from_connector)
+            .collect();
+        let reward_enriched_count = reward_markets.len();
+        state
+            .reward_bot_service
+            .upsert_reward_markets(&reward_markets)
+            .await?;
+        Ok((reward_raw_count, reward_enriched_count))
+    }
+    .await;
+
+    let (fetched, upserted, reward_raw_count, reward_enriched_count) =
+        match (general_result, reward_result) {
+            (Ok((fetched, upserted)), Ok((reward_raw, reward_enriched))) => {
+                (fetched, upserted, reward_raw, reward_enriched)
+            }
+            (Err(error), Ok((reward_raw, reward_enriched))) => {
+                warn!(trace_id, error = %error, "general market sync failed; reward catalog still updated");
+                (0, 0, reward_raw, reward_enriched)
+            }
+            (Ok((fetched, upserted)), Err(error)) => {
+                warn!(trace_id, error = %error, "reward market sync failed; preserving prior reward catalog");
+                (fetched, upserted, 0, 0)
+            }
+            (Err(general_error), Err(reward_error)) => {
+                return Err(AppError::dependency_unavailable(
+                    "MARKET_SYNC_FAILED",
+                    format!(
+                        "general market sync failed: {general_error}; reward market sync failed: {reward_error}"
+                    ),
+                ));
+            }
+        };
 
     info!(
         trace_id = %trace_id,

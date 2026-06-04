@@ -1,3 +1,5 @@
+const REWARD_WORKER_ADVISORY_LOCK_KEY: i64 = 0x504f_4c59_5245_5744;
+
 async fn run_reward_bot_once(state: &AppState, trace_id: &str) -> Result<RewardBotRunReport> {
     let mut book_history = HashMap::new();
     run_reward_bot_once_with_history(state, trace_id, &mut book_history).await
@@ -8,12 +10,24 @@ async fn run_reward_bot_once_with_history(
     trace_id: &str,
     book_history: &mut HashMap<String, VecDeque<BookSnapshot>>,
 ) -> Result<RewardBotRunReport> {
-    let command_report = process_pending_reward_control_commands(state, book_history).await?;
-    if command_report.processed > 0 {
-        return Ok(command_report.report);
-    }
+    let Some(lease) = state
+        .try_acquire_postgres_advisory_lease(REWARD_WORKER_ADVISORY_LOCK_KEY)
+        .await?
+    else {
+        debug!("skipping rewards full cycle because another worker holds the live lease");
+        return Ok(RewardBotRunReport::default());
+    };
+    let result = async {
+        let command_report =
+            process_pending_reward_control_commands_unlocked(state, book_history).await?;
+        if command_report.processed > 0 {
+            return Ok(command_report.report);
+        }
 
-    run_reward_bot_tick(state, trace_id, false, book_history).await
+        run_reward_bot_tick(state, trace_id, false, book_history).await
+    }
+    .await;
+    finish_reward_worker_lease(lease, result).await
 }
 
 async fn run_reward_bot_tick(
@@ -90,6 +104,21 @@ async fn process_pending_reward_control_commands(
     state: &AppState,
     book_history: &mut HashMap<String, VecDeque<BookSnapshot>>,
 ) -> Result<RewardCommandProcessReport> {
+    let Some(lease) = state
+        .try_acquire_postgres_advisory_lease(REWARD_WORKER_ADVISORY_LOCK_KEY)
+        .await?
+    else {
+        debug!("skipping rewards commands because another worker holds the live lease");
+        return Ok(RewardCommandProcessReport::default());
+    };
+    let result = process_pending_reward_control_commands_unlocked(state, book_history).await;
+    finish_reward_worker_lease(lease, result).await
+}
+
+async fn process_pending_reward_control_commands_unlocked(
+    state: &AppState,
+    book_history: &mut HashMap<String, VecDeque<BookSnapshot>>,
+) -> Result<RewardCommandProcessReport> {
     let mut total = RewardCommandProcessReport::default();
     let max_commands = usize::from(task_limit(state).unwrap_or(10).max(1));
 
@@ -140,6 +169,19 @@ async fn process_pending_reward_control_commands(
     }
 
     Ok(total)
+}
+
+async fn finish_reward_worker_lease<T>(
+    lease: polyedge_infrastructure::PostgresAdvisoryLease,
+    result: Result<T>,
+) -> Result<T> {
+    if let Err(release_error) = lease.release().await {
+        if result.is_ok() {
+            return Err(release_error);
+        }
+        warn!(error = %release_error, "failed to release rewards worker advisory lease");
+    }
+    result
 }
 
 async fn execute_reward_control_command(
@@ -243,18 +285,6 @@ async fn run_reward_bot_live_tick(
     let mut open_orders = cycle.open_orders.clone();
     let mut cancel_rejected = false;
 
-    submit_deferred_live_exit_orders(
-        &connector,
-        &mut open_orders,
-        &books,
-        state,
-        &mut account,
-        &cycle.positions,
-        &mut report,
-        trace_id,
-    )
-    .await?;
-
     for (order_id, reason) in
         live_cancel_candidates(
             &cycle.config,
@@ -306,7 +336,24 @@ async fn run_reward_bot_live_tick(
         }
     }
 
-    if cancel_rejected {
+    // Validate and cancel stale persisted intents before submitting them.
+    // Unknown submissions are protected by live_cancel_reason and recovered
+    // here without issuing a duplicate order.
+    let unresolved_before_recovery = has_unresolved_live_reconciliation(&open_orders);
+    submit_pending_live_reward_orders(
+        &connector,
+        &mut open_orders,
+        &books,
+        state,
+        &mut account,
+        &cycle.positions,
+        &mut report,
+        trace_id,
+        cycle.should_execute && !cancel_rejected && !unresolved_before_recovery,
+    )
+    .await?;
+
+    if cancel_rejected || has_unresolved_live_reconciliation(&open_orders) {
         return Ok(report);
     }
 
@@ -324,46 +371,48 @@ async fn run_reward_bot_live_tick(
         trace_id,
     );
 
-    for mut order in placement_orders {
-        match submit_one_live_reward_order(&connector, &mut order).await? {
-            LiveRewardOrderUpdate::Changed(updated, event) => {
-                open_orders.push(updated.clone());
-                if updated.reason == "live post-only rewards quote accepted" {
-                    report.placed_orders += 1;
-                }
-                let stop_placements = live_order_has_post_only_violation(&updated);
-                persist_live_reward_updates(
-                    state,
-                    &mut account,
-                    cycle.positions.clone(),
-                    vec![updated],
-                    Vec::new(),
-                    vec![event],
-                    &report,
-                    trace_id,
+    if !placement_orders.is_empty() {
+        let events = placement_orders
+            .iter()
+            .map(|order| {
+                reward_live_event(
+                    order,
+                    "reward_live_order_planned",
+                    RewardRiskSeverity::Info,
+                    "persisted rewards quote intent before live submission",
+                    json!({
+                        "token_id": order.token_id,
+                        "side": order.side.as_str(),
+                        "size": order.size,
+                        "price": order.price,
+                    }),
                 )
-                .await?;
-                if stop_placements {
-                    break;
-                }
-            }
-            LiveRewardOrderUpdate::Unchanged(event) => {
-                order.status = ManagedRewardOrderStatus::Error;
-                order.reason = event.message.clone();
-                order.updated_at = OffsetDateTime::now_utc();
-                persist_live_reward_updates(
-                    state,
-                    &mut account,
-                    cycle.positions.clone(),
-                    vec![order],
-                    Vec::new(),
-                    vec![event],
-                    &report,
-                    trace_id,
-                )
-                .await?;
-            }
-        }
+            })
+            .collect();
+        persist_live_reward_updates(
+            state,
+            &mut account,
+            cycle.positions.clone(),
+            placement_orders.clone(),
+            Vec::new(),
+            events,
+            &report,
+            trace_id,
+        )
+        .await?;
+        open_orders.extend(placement_orders);
+        submit_pending_live_reward_orders(
+            &connector,
+            &mut open_orders,
+            &books,
+            state,
+            &mut account,
+            &cycle.positions,
+            &mut report,
+            trace_id,
+            true,
+        )
+        .await?;
     }
 
     Ok(report)
@@ -431,6 +480,8 @@ async fn cancel_live_reward_orders(
 
 include!("rewards/live_sync.rs");
 include!("rewards/live_orders.rs");
+include!("rewards/live_submission.rs");
+include!("rewards/live_pending.rs");
 include!("rewards/live_helpers.rs");
 include!("rewards/live_risk.rs");
 include!("rewards/polling.rs");

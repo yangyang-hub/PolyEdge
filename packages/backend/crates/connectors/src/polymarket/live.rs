@@ -157,6 +157,49 @@ impl LivePolymarketConnector {
         Ok(all_orders)
     }
 
+    /// Recover a previously-submitted token order after the caller lost the
+    /// `post_order` response. Matching is deliberately strict so a managed
+    /// rewards order never adopts an unrelated account order.
+    pub async fn find_matching_open_token_order(
+        &self,
+        request: &LivePolymarketTokenOrderRequest,
+    ) -> Result<Option<LivePolymarketOrderAcceptance>> {
+        validate_live_token_order_request(request)?;
+        let adjusted_quantity = adjusted_order_quantity(request.limit_price, request.quantity)?;
+        let tick_price = request.limit_price.value().round_dp(2);
+        let expected_size = adjusted_quantity.value().round_dp(4);
+        let mut matches = self
+            .list_open_orders()
+            .await?
+            .into_iter()
+            .filter(|order| {
+                order.asset_id == request.token_id
+                    && order.side == request.side
+                    && order.price.round_dp(2) == tick_price
+                    && order.original_size.round_dp(4) == expected_size
+            });
+
+        let Some(order) = matches.next() else {
+            return Ok(None);
+        };
+        if matches.next().is_some() {
+            return Err(AppError::conflict(
+                "POLYMARKET_ORDER_RECOVERY_AMBIGUOUS",
+                format!(
+                    "multiple open Polymarket orders match client_order_id={}",
+                    request.client_order_id
+                ),
+            ));
+        }
+
+        Ok(Some(LivePolymarketOrderAcceptance {
+            order_id: order.id,
+            status: PolymarketAcceptedOrderStatus::Live,
+            submitted_quantity: adjusted_quantity,
+            accepted_at: OffsetDateTime::now_utc(),
+        }))
+    }
+
     pub async fn submit(
         &self,
         request: &LivePolymarketOrderRequest,
@@ -232,7 +275,7 @@ impl LivePolymarketConnector {
             )
         })?;
 
-        if !response.success {
+        if !response.success && response.order_id.trim().is_empty() {
             return Ok(LivePolymarketExecutionOutcome::Rejected(
                 PolymarketOrderRejection {
                     code: "POLYMARKET_ORDER_REJECTED".to_string(),
@@ -242,29 +285,24 @@ impl LivePolymarketConnector {
                 },
             ));
         }
-
-        let accepted_status = accepted_order_status(&response.status);
-        match response.status {
-            SdkOrderStatusType::Live
-            | SdkOrderStatusType::Matched
-            | SdkOrderStatusType::Delayed => Ok(LivePolymarketExecutionOutcome::Accepted(
-                LivePolymarketOrderAcceptance {
-                    order_id: response.order_id,
-                    status: accepted_status,
-                    submitted_quantity: adjusted_quantity,
-                    accepted_at: OffsetDateTime::now_utc(),
-                },
-            )),
-            other => Ok(LivePolymarketExecutionOutcome::Rejected(
-                PolymarketOrderRejection {
-                    code: "POLYMARKET_ORDER_STATUS_UNSUPPORTED".to_string(),
-                    message: format!(
-                        "Polymarket returned unsupported post_order status={other} for execution_request_id={}",
-                        request.execution_request_id
-                    ),
-                },
-            )),
+        if response.order_id.trim().is_empty() {
+            return Err(AppError::internal(
+                "POLYMARKET_ORDER_POST_FAILED",
+                format!(
+                    "Polymarket accepted live order without order_id for execution_request_id={}",
+                    request.execution_request_id
+                ),
+            ));
         }
+
+        Ok(LivePolymarketExecutionOutcome::Accepted(
+            LivePolymarketOrderAcceptance {
+                order_id: response.order_id,
+                status: accepted_order_status(&response.status),
+                submitted_quantity: adjusted_quantity,
+                accepted_at: OffsetDateTime::now_utc(),
+            },
+        ))
     }
 
     pub async fn submit_token_order(
@@ -356,7 +394,7 @@ impl LivePolymarketConnector {
             )
         })?;
 
-        if !response.success {
+        if !response.success && response.order_id.trim().is_empty() {
             return Ok(LivePolymarketExecutionOutcome::Rejected(
                 PolymarketOrderRejection {
                     code: "POLYMARKET_ORDER_REJECTED".to_string(),
@@ -366,29 +404,24 @@ impl LivePolymarketConnector {
                 },
             ));
         }
-
-        let accepted_status = accepted_order_status(&response.status);
-        match response.status {
-            SdkOrderStatusType::Live
-            | SdkOrderStatusType::Matched
-            | SdkOrderStatusType::Delayed => Ok(LivePolymarketExecutionOutcome::Accepted(
-                LivePolymarketOrderAcceptance {
-                    order_id: response.order_id,
-                    status: accepted_status,
-                    submitted_quantity: adjusted_quantity,
-                    accepted_at: OffsetDateTime::now_utc(),
-                },
-            )),
-            other => Ok(LivePolymarketExecutionOutcome::Rejected(
-                PolymarketOrderRejection {
-                    code: "POLYMARKET_ORDER_STATUS_UNSUPPORTED".to_string(),
-                    message: format!(
-                        "Polymarket returned unsupported post_order status={other} for client_order_id={}",
-                        request.client_order_id
-                    ),
-                },
-            )),
+        if response.order_id.trim().is_empty() {
+            return Err(AppError::internal(
+                "POLYMARKET_ORDER_POST_FAILED",
+                format!(
+                    "Polymarket accepted live rewards order without order_id for client_order_id={}",
+                    request.client_order_id
+                ),
+            ));
         }
+
+        Ok(LivePolymarketExecutionOutcome::Accepted(
+            LivePolymarketOrderAcceptance {
+                order_id: response.order_id,
+                status: accepted_order_status(&response.status),
+                submitted_quantity: adjusted_quantity,
+                accepted_at: OffsetDateTime::now_utc(),
+            },
+        ))
     }
 
     async fn update_deposit_wallet_balance_allowance_if_needed(
@@ -706,6 +739,8 @@ fn accepted_order_status(status: &SdkOrderStatusType) -> PolymarketAcceptedOrder
         SdkOrderStatusType::Live => PolymarketAcceptedOrderStatus::Live,
         SdkOrderStatusType::Matched => PolymarketAcceptedOrderStatus::Matched,
         SdkOrderStatusType::Delayed => PolymarketAcceptedOrderStatus::Delayed,
-        _ => PolymarketAcceptedOrderStatus::Delayed,
+        SdkOrderStatusType::Unmatched => PolymarketAcceptedOrderStatus::Unmatched,
+        SdkOrderStatusType::Canceled => PolymarketAcceptedOrderStatus::Canceled,
+        _ => PolymarketAcceptedOrderStatus::Unknown,
     }
 }

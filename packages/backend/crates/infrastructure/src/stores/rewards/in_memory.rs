@@ -55,13 +55,21 @@ impl RewardBotStore for InMemoryRewardBotStore {
         let mut commands = self.control_commands.write().await;
         let Some(command) = commands
             .iter_mut()
-            .find(|command| command.status == RewardControlCommandStatus::Pending)
+            .find(|command| {
+                command.status == RewardControlCommandStatus::Pending
+                    || (command.status == RewardControlCommandStatus::Running
+                        && command
+                            .started_at
+                            .is_some_and(|started_at| started_at <= now - REWARD_CONTROL_COMMAND_LEASE))
+            })
         else {
             return Ok(None);
         };
         command.status = RewardControlCommandStatus::Running;
         command.started_at = Some(now);
+        command.completed_at = None;
         command.trace_id = Some(trace_id.to_string());
+        command.error = None;
         Ok(Some(command.clone()))
     }
 

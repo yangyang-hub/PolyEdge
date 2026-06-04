@@ -39,10 +39,13 @@ fn reward_market_prefilter_reason(
     if !market.active {
         return Some("reward market is inactive");
     }
+    let mut token_ids = std::collections::HashSet::new();
     if market
         .tokens
         .iter()
-        .filter(|token| !token.token_id.trim().is_empty())
+        .filter(|token| {
+            !token.token_id.trim().is_empty() && token_ids.insert(token.token_id.as_str())
+        })
         .take(2)
         .count()
         < 2
@@ -96,6 +99,9 @@ fn build_reward_quote_plan(
     let (Some(yes_token), Some(no_token)) = (yes_token, no_token) else {
         return empty_plan(market, "missing YES/NO token", now, None);
     };
+    if yes_token.token_id == no_token.token_id {
+        return empty_plan(market, "YES/NO outcomes resolve to the same token", now, None);
+    }
 
     let yes_state = get_token_book_state(yes_token, books, config, now);
     let no_state = get_token_book_state(no_token, books, config, now);

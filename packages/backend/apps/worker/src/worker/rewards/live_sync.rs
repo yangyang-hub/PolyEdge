@@ -54,7 +54,41 @@ async fn sync_live_reward_orders(
             .await
         {
             Ok(outcome) => outcome,
-            Err(error) if error.code() == "POLYMARKET_ORDER_NOT_FOUND" => continue,
+            Err(error) if error.code() == "POLYMARKET_ORDER_NOT_FOUND" => {
+                let Some(mut missing_order) = working_orders.get(&order.id).cloned() else {
+                    continue;
+                };
+                if !missing_order
+                    .reason
+                    .contains("external order lookup returned not found")
+                {
+                    missing_order.scoring = false;
+                    missing_order.reason = format!(
+                        "external order lookup returned not found; manual reconciliation required: {external_order_id}"
+                    );
+                    missing_order.updated_at = OffsetDateTime::now_utc();
+                    let event = reward_live_event(
+                        &missing_order,
+                        "reward_live_external_order_not_found",
+                        RewardRiskSeverity::Critical,
+                        missing_order.reason.clone(),
+                        json!({ "external_order_id": external_order_id }),
+                    );
+                    working_orders.insert(missing_order.id.clone(), missing_order.clone());
+                    persist_live_reward_updates(
+                        state,
+                        &mut account,
+                        positions.values().cloned().collect(),
+                        vec![missing_order],
+                        Vec::new(),
+                        vec![event],
+                        &report,
+                        trace_id,
+                    )
+                    .await?;
+                }
+                continue;
+            }
             Err(error) => return Err(error),
         };
 
@@ -102,65 +136,40 @@ async fn sync_live_reward_orders(
                 fill_size,
             } = fill_update;
             working_orders.insert(filled_order.id.clone(), filled_order.clone());
-            persist_live_reward_updates(
-                state,
-                &mut account,
-                positions.values().cloned().collect(),
-                vec![filled_order.clone()],
-                vec![fill],
-                vec![event],
-                &report,
-                trace_id,
-            )
-            .await?;
-
+            let mut changed_orders = vec![filled_order.clone()];
+            let mut events = vec![event];
             if filled_order.side == RewardOrderSide::Buy {
-                let exit_updates = submit_live_post_fill_orders(
-                    connector,
+                for update in plan_live_post_fill_orders(
                     &cycle.config,
                     &filled_order,
                     fill_size,
                     &positions,
                     books,
                     trace_id,
-                )
-                .await?;
-                for update in exit_updates {
+                ) {
                     match update {
                         LiveRewardOrderUpdate::Changed(order, event) => {
-                            let submitted = order.external_order_id.is_some();
                             working_orders.insert(order.id.clone(), order.clone());
-                            if submitted {
-                                report.placed_orders += 1;
-                            }
-                            persist_live_reward_updates(
-                                state,
-                                &mut account,
-                                positions.values().cloned().collect(),
-                                vec![order],
-                                Vec::new(),
-                                vec![event],
-                                &report,
-                                trace_id,
-                            )
-                            .await?;
+                            changed_orders.push(order);
+                            events.push(event);
                         }
-                        LiveRewardOrderUpdate::Unchanged(event) => {
-                            persist_live_reward_updates(
-                                state,
-                                &mut account,
-                                positions.values().cloned().collect(),
-                                Vec::new(),
-                                Vec::new(),
-                                vec![event],
-                                &report,
-                                trace_id,
-                            )
-                            .await?;
-                        }
+                        LiveRewardOrderUpdate::Unchanged(event) => events.push(event),
                     }
                 }
+            }
+            persist_live_reward_updates(
+                state,
+                &mut account,
+                positions.values().cloned().collect(),
+                changed_orders,
+                vec![fill],
+                events,
+                &report,
+                trace_id,
+            )
+            .await?;
 
+            if filled_order.side == RewardOrderSide::Buy {
                 if cycle.config.cancel_on_fill {
                     cancel_sibling_live_reward_orders(
                         connector,
@@ -240,6 +249,22 @@ async fn run_reward_bot_live_reconcile(
     trace_id: &str,
     book_history: &mut HashMap<String, VecDeque<BookSnapshot>>,
 ) -> Result<RewardBotRunReport> {
+    let Some(lease) = state
+        .try_acquire_postgres_advisory_lease(REWARD_WORKER_ADVISORY_LOCK_KEY)
+        .await?
+    else {
+        debug!("skipping rewards reconcile because another worker holds the live lease");
+        return Ok(RewardBotRunReport::default());
+    };
+    let result = run_reward_bot_live_reconcile_unlocked(state, trace_id, book_history).await;
+    finish_reward_worker_lease(lease, result).await
+}
+
+async fn run_reward_bot_live_reconcile_unlocked(
+    state: &AppState,
+    trace_id: &str,
+    book_history: &mut HashMap<String, VecDeque<BookSnapshot>>,
+) -> Result<RewardBotRunReport> {
     let mut cycle = state.reward_bot_service.current_live_cycle_state().await?;
     let books = fetch_reward_bot_active_books(state).await?;
     record_reward_book_history(book_history, &books);
@@ -263,29 +288,6 @@ async fn run_reward_bot_live_reconcile(
     let mut open_orders = cycle.open_orders.clone();
     let kill_switch = state.risk_service.read_state().await?.kill_switch;
 
-    if open_orders.iter().any(|order| {
-        order.side == RewardOrderSide::Sell
-            && order.status == ManagedRewardOrderStatus::ExitPending
-            && order.external_order_id.is_none()
-    }) {
-        let live_connector = match connector.take() {
-            Some(connector) => connector,
-            None => build_live_polymarket_connector(state).await?,
-        };
-        submit_deferred_live_exit_orders(
-            &live_connector,
-            &mut open_orders,
-            &books,
-            state,
-            &mut account,
-            &cycle.positions,
-            &mut report,
-            trace_id,
-        )
-        .await?;
-        connector = Some(live_connector);
-    }
-
     let cancel_candidates = live_cancel_candidates(
         &cycle.config,
         &cycle.plans,
@@ -295,52 +297,74 @@ async fn run_reward_bot_live_reconcile(
         kill_switch,
     );
 
-    if cancel_candidates.is_empty() {
-        return Ok(report);
-    }
-
-    let connector = match connector {
-        Some(connector) => connector,
-        None => build_live_polymarket_connector(state).await?,
-    };
-    for (order_id, reason) in cancel_candidates {
-        let Some(index) = open_orders.iter().position(|order| order.id == order_id) else {
-            continue;
+    if !cancel_candidates.is_empty() {
+        let live_connector = match connector.take() {
+            Some(connector) => connector,
+            None => build_live_polymarket_connector(state).await?,
         };
-        let order = open_orders[index].clone();
-        match cancel_one_live_reward_order(&connector, order, &reason, trace_id).await? {
-            LiveRewardOrderUpdate::Changed(updated, event) => {
-                open_orders[index] = updated.clone();
-                if !live_cancel_result_is_unknown(&updated) {
-                    report.cancelled_orders += 1;
-                    report.risk_cancelled_orders += 1;
+        for (order_id, reason) in cancel_candidates {
+            let Some(index) = open_orders.iter().position(|order| order.id == order_id) else {
+                continue;
+            };
+            let order = open_orders[index].clone();
+            match cancel_one_live_reward_order(&live_connector, order, &reason, trace_id).await? {
+                LiveRewardOrderUpdate::Changed(updated, event) => {
+                    open_orders[index] = updated.clone();
+                    if !live_cancel_result_is_unknown(&updated) {
+                        report.cancelled_orders += 1;
+                        report.risk_cancelled_orders += 1;
+                    }
+                    persist_live_reward_updates(
+                        state,
+                        &mut account,
+                        cycle.positions.clone(),
+                        vec![updated],
+                        Vec::new(),
+                        vec![event],
+                        &report,
+                        trace_id,
+                    )
+                    .await?;
                 }
-                persist_live_reward_updates(
-                    state,
-                    &mut account,
-                    cycle.positions.clone(),
-                    vec![updated],
-                    Vec::new(),
-                    vec![event],
-                    &report,
-                    trace_id,
-                )
-                .await?;
-            }
-            LiveRewardOrderUpdate::Unchanged(event) => {
-                persist_live_reward_updates(
-                    state,
-                    &mut account,
-                    cycle.positions.clone(),
-                    Vec::new(),
-                    Vec::new(),
-                    vec![event],
-                    &report,
-                    trace_id,
-                )
-                .await?;
+                LiveRewardOrderUpdate::Unchanged(event) => {
+                    persist_live_reward_updates(
+                        state,
+                        &mut account,
+                        cycle.positions.clone(),
+                        Vec::new(),
+                        Vec::new(),
+                        vec![event],
+                        &report,
+                        trace_id,
+                    )
+                    .await?;
+                }
             }
         }
+        connector = Some(live_connector);
+    }
+
+    if open_orders.iter().any(|order| {
+        order.external_order_id.is_none()
+            && (order.status == ManagedRewardOrderStatus::Planned
+                || order.status == ManagedRewardOrderStatus::ExitPending)
+    }) {
+        let live_connector = match connector {
+            Some(connector) => connector,
+            None => build_live_polymarket_connector(state).await?,
+        };
+        submit_pending_live_reward_orders(
+            &live_connector,
+            &mut open_orders,
+            &books,
+            state,
+            &mut account,
+            &cycle.positions,
+            &mut report,
+            trace_id,
+            false,
+        )
+        .await?;
     }
 
     Ok(report)

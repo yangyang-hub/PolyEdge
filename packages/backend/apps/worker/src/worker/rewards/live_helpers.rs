@@ -60,7 +60,7 @@ fn deferred_live_exit_after_cancellation(
     }
 
     let reason = if deferred_live_exit_is_post_only(order) {
-        "retry post-fill exit after external cancellation"
+        "retry post-fill exit at markup after external cancellation"
     } else {
         "retry post-fill flatten after external cancellation"
     };

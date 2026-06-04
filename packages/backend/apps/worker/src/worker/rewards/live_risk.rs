@@ -38,7 +38,12 @@ fn live_cancel_reason(
     now: OffsetDateTime,
     kill_switch: bool,
 ) -> Option<String> {
-    if order.reason.contains("awaiting final reconciliation") {
+    if order.reason.contains("awaiting final reconciliation")
+        || live_submission_was_attempted(order)
+        || order
+            .reason
+            .contains("external order lookup returned not found")
+    {
         return None;
     }
     if live_order_has_post_only_violation(order) {

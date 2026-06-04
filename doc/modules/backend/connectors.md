@@ -66,6 +66,8 @@
 - `connect_user_ws()`：创建认证 WebSocket 客户端（订单/成交通道）
 - `balance()`：查询认证资金账户的 collateral balance
 - `list_open_orders()`：分页读取认证账户全部开放订单；遇到空 cursor、`LTE=`、空页、重复 cursor 或 1000 页 guard 时停止
+- `find_matching_open_token_order()`：按 token/side/price/size 严格匹配唯一开放订单，用于 rewards 提交响应丢失后的恢复；多个匹配会返回冲突而不是猜测归属
+- `post_order` 返回订单 ID 时，无论状态为 `live` / `matched` / `delayed` / `unmatched` / `canceled` / 未知值，connector 都保留为 accepted 供后续成交和订单状态对账；成功响应缺少订单 ID 会按提交结果未知处理
 - `submit()`：兼容 execution pipeline 的 YES/NO 买单提交
 - `submit_token_order()`：按 token_id 直接提交 buy/sell；post-only 使用 GTC，非 post-only flatten 使用 FAK；提交前把价格收敛到最多 2 位小数，并返回实际提交 quantity，供 rewards live maker 使用
 - `cancel_order()`：按 Polymarket order id 撤销单笔订单
@@ -80,8 +82,9 @@
 - **`PolymarketRewardsConnector`**：`clob_host` + `reqwest::Client`
 - **`PolymarketRewardMarket`**：condition_id、question、market_slug、rewards_max_spread、rewards_min_size、total_daily_rate、tokens
 - **`PolymarketRewardOrderBook`**：token_id、bids、asks、observed_at
-- 常量：`ENRICH_TIMEOUT = 10s`、`ENRICH_MAX_RETRIES = 3`、`ENRICH_RETRY_BASE_DELAY = 500ms`
-- `fetch_order_books(token_ids)` 使用固定并发窗口（默认 10）拉取 `/book`，不会为全部 token 一次性创建任务。
+- 常量：`ENRICH_TIMEOUT = 10s`、`ENRICH_MAX_RETRIES = 3`、`ENRICH_RETRY_BASE_DELAY = 500ms`、`MAX_REWARD_MARKET_PAGES = 1000`
+- `fetch_current_markets()` 对分页做重复 cursor / 最大页数 / condition id 去重保护；token 会按 ID 去重，空目录、任一详情补全失败或少于两个不同 token 都会返回错误，调用方保留上一版 catalog。
+- `fetch_order_books(token_ids)` 使用固定并发窗口（默认 10）拉取 `/book`，不会为全部 token 一次性创建任务；整批全部失败时返回 dependency error，部分失败会记录告警。
 - 用途：`market_sync.rs` 填充 `reward_markets` 表
 
 ### Orderbook HTTP
@@ -115,6 +118,7 @@
 
 - 已实现当前系统使用的 Polymarket 公共市场、盘口、Data API、Rewards API 和 CLOB V2 交易 connector；Deposit Wallet relayer 生命周期接口尚未接入
 - Gamma keyset 分页已具备重复 cursor / 末页 sentinel / 最大页数保护，并按 market id 去重，避免外部 API 游标异常导致 market sync 无限累积内存
+- Rewards markets 分页和 enrichment 已具备完整性保护，不再把部分补全结果作为完整目录写入
 - Paper Trading 执行器已完整实现
 - Live connector 已具备 CLOB V2 认证、余额查询、开放订单全量分页、用户 WS、订单提交、按 token_id 的 rewards buy/sell 提交和单笔撤单能力；post-only 使用 GTC，immediate flatten 使用 FAK，订单价格当前统一收敛到 0.01 精度，更粗的 per-market tick-size 尚未接入；订单/关联成交通过单订单接口对账，轮询路径仅在 trade `CONFIRMED` 后返回成交；签名类型已覆盖 EOA、Proxy、Gnosis Safe 和 Deposit Wallet (`poly_1271`)；订单 acceptance 返回实际提交 quantity，trade/WS 成交归一化按订单自身成交量入账；仍需要真实凭证和小额账户验证
 - RSS connector 支持 Atom/RSS 两种格式

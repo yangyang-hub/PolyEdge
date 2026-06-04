@@ -1,10 +1,13 @@
 use futures::StreamExt;
-use polyedge_application::{BookSource, CachedBookLevel, CachedOrderBook};
+use polyedge_application::{BookSource, CachedBookLevel, CachedOrderBook, OrderbookCache};
 use polyedge_connectors::PolymarketRewardsConnector;
 use polyedge_domain::{AppError, Result};
 use polyedge_infrastructure::AppState;
-use polymarket_client_sdk::clob::ws::BookUpdate;
 use polymarket_client_sdk::clob::ws::Client as ClobWsClient;
+use polymarket_client_sdk::clob::{
+    types::Side,
+    ws::{BookUpdate, PriceChange},
+};
 use polymarket_client_sdk::types::U256;
 use polymarket_client_sdk::ws::config::Config as WsConfig;
 use std::str::FromStr;
@@ -18,6 +21,7 @@ use tracing::{debug, info, warn};
 pub struct OrderbookStreamReport {
     pub subscribed_tokens: usize,
     pub ws_snapshots_received: usize,
+    pub ws_price_changes_received: usize,
     pub poll_reconciliations: usize,
     pub poll_failures: usize,
 }
@@ -58,7 +62,7 @@ pub async fn run_orderbook_stream(state: &AppState) -> Result<OrderbookStreamRep
                 format!("failed to create orderbook websocket client: {error}"),
             )
         })?;
-    let stream = ws_client
+    let book_stream = ws_client
         .subscribe_orderbook(u256_ids.clone())
         .map_err(|error| {
             AppError::internal(
@@ -66,7 +70,16 @@ pub async fn run_orderbook_stream(state: &AppState) -> Result<OrderbookStreamRep
                 format!("failed to subscribe to orderbook websocket: {error}"),
             )
         })?;
-    let mut stream = Box::pin(stream);
+    let price_stream = ws_client
+        .subscribe_prices(u256_ids.clone())
+        .map_err(|error| {
+            AppError::internal(
+                "ORDERBOOK_WS_PRICE_SUBSCRIBE_FAILED",
+                format!("failed to subscribe to orderbook price changes: {error}"),
+            )
+        })?;
+    let mut book_stream = Box::pin(book_stream);
+    let mut price_stream = Box::pin(price_stream);
 
     info!(
         subscribed_tokens = u256_ids.len(),
@@ -157,7 +170,7 @@ pub async fn run_orderbook_stream(state: &AppState) -> Result<OrderbookStreamRep
 
     loop {
         tokio::select! {
-            message = stream.next() => {
+            message = book_stream.next() => {
                 match message {
                     Some(Ok(book_update)) => {
                         let cached = book_update_to_cached(&book_update);
@@ -182,6 +195,23 @@ pub async fn run_orderbook_stream(state: &AppState) -> Result<OrderbookStreamRep
                     }
                     None => {
                         info!("orderbook WS stream ended");
+                        break;
+                    }
+                }
+            }
+            message = price_stream.next() => {
+                match message {
+                    Some(Ok(price_change)) => {
+                        if let Err(error) = apply_price_change_to_cache(&cache, &price_change).await {
+                            warn!(error = %error, "failed to apply orderbook price change");
+                        }
+                        report.ws_price_changes_received += 1;
+                    }
+                    Some(Err(error)) => {
+                        warn!(error = %error, "orderbook price-change WS stream error, poll reconciler will cover gaps");
+                    }
+                    None => {
+                        info!("orderbook price-change WS stream ended");
                         break;
                     }
                 }
@@ -222,6 +252,7 @@ pub async fn run_orderbook_stream(state: &AppState) -> Result<OrderbookStreamRep
     info!(
         subscribed_tokens = report.subscribed_tokens,
         ws_snapshots_received = report.ws_snapshots_received,
+        ws_price_changes_received = report.ws_price_changes_received,
         "orderbook stream consumer stopped"
     );
 
@@ -258,6 +289,44 @@ fn book_update_to_cached(update: &BookUpdate) -> CachedOrderBook {
     }
 }
 
+async fn apply_price_change_to_cache(
+    cache: &Arc<dyn OrderbookCache>,
+    update: &PriceChange,
+) -> Result<()> {
+    for change in &update.price_changes {
+        let token_id = change.asset_id.to_string();
+        let Some(mut book) = cache.get_book(&token_id).await? else {
+            continue;
+        };
+        if update.timestamp < book.observed_at {
+            continue;
+        }
+
+        let levels = match change.side {
+            Side::Buy => &mut book.bids,
+            Side::Sell => &mut book.asks,
+            _ => continue,
+        };
+        let Some(size) = change.size else {
+            continue;
+        };
+        if size <= rust_decimal::Decimal::ZERO {
+            levels.retain(|level| level.price != change.price);
+        } else if let Some(level) = levels.iter_mut().find(|level| level.price == change.price) {
+            level.size = size;
+        } else {
+            levels.push(CachedBookLevel {
+                price: change.price,
+                size,
+            });
+        }
+        book.observed_at = update.timestamp;
+        book.source = BookSource::Ws;
+        cache.set_book(&book).await?;
+    }
+    Ok(())
+}
+
 fn reward_book_to_cached(book: &polyedge_connectors::PolymarketRewardOrderBook) -> CachedOrderBook {
     let now_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -284,5 +353,56 @@ fn reward_book_to_cached(book: &polyedge_connectors::PolymarketRewardOrderBook) 
             .collect(),
         observed_at: now_ms,
         source: BookSource::Poll,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use polyedge_infrastructure::stores::InMemoryOrderbookCache;
+    use rust_decimal::Decimal;
+
+    #[tokio::test]
+    async fn price_change_updates_and_removes_levels() {
+        let cache: Arc<dyn OrderbookCache> = Arc::new(InMemoryOrderbookCache::new(60_000, 10));
+        cache
+            .set_book(&CachedOrderBook {
+                token_id: "123".to_string(),
+                bids: vec![CachedBookLevel {
+                    price: Decimal::new(49, 2),
+                    size: Decimal::from(10_u64),
+                }],
+                asks: vec![CachedBookLevel {
+                    price: Decimal::new(52, 2),
+                    size: Decimal::from(10_u64),
+                }],
+                observed_at: 100,
+                source: BookSource::Poll,
+            })
+            .await
+            .expect("seed book");
+        let update: PriceChange = serde_json::from_value(serde_json::json!({
+            "market": format!("0x{:064x}", 1),
+            "timestamp": "200",
+            "price_changes": [
+                {"asset_id": "123", "price": "0.50", "size": "7", "side": "BUY"},
+                {"asset_id": "123", "price": "0.49", "size": "0", "side": "BUY"}
+            ]
+        }))
+        .expect("decode price change");
+
+        apply_price_change_to_cache(&cache, &update)
+            .await
+            .expect("apply price change");
+        let book = cache
+            .get_book("123")
+            .await
+            .expect("get book")
+            .expect("book present");
+
+        assert_eq!(book.observed_at, 200);
+        assert_eq!(book.bids.len(), 1);
+        assert_eq!(book.bids[0].price, Decimal::new(50, 2));
+        assert_eq!(book.bids[0].size, Decimal::from(7_u64));
     }
 }

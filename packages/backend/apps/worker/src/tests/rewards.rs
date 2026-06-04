@@ -237,6 +237,41 @@ fn partial_live_exit_fill_preserves_post_only_retry_strategy() {
 }
 
 #[test]
+fn post_fill_exit_is_planned_before_live_submission() {
+    let entry = live_test_open_order("yes_live");
+    let positions = HashMap::from([(
+        "yes_live".to_string(),
+        RewardPosition {
+            account_id: "reward_live".to_string(),
+            condition_id: "cond_live".to_string(),
+            token_id: "yes_live".to_string(),
+            outcome: "YES".to_string(),
+            size: Decimal::from(5_u64),
+            avg_price: reward_decimal("0.49"),
+            realized_pnl: Decimal::ZERO,
+            updated_at: OffsetDateTime::now_utc(),
+        },
+    )]);
+
+    let updates = plan_live_post_fill_orders(
+        &RewardBotConfig::default(),
+        &entry,
+        Decimal::from(5_u64),
+        &positions,
+        &HashMap::new(),
+        "trc_exit_plan",
+    );
+
+    let LiveRewardOrderUpdate::Changed(exit, event) = &updates[0] else {
+        panic!("post-fill exit must be a persisted order update");
+    };
+    assert_eq!(exit.status, ManagedRewardOrderStatus::ExitPending);
+    assert!(exit.external_order_id.is_none());
+    assert!(deferred_live_exit_is_post_only(exit));
+    assert_eq!(event.event_type, "reward_live_exit_planned");
+}
+
+#[test]
 fn reward_live_fill_id_includes_order_id_and_keeps_legacy_id() {
     let update = live_test_trade_update("pm_yes_live", "pm_trade_1", Decimal::ONE);
 
@@ -329,6 +364,60 @@ fn live_cancel_candidates_do_not_repeat_pending_cancel() {
         live_cancel_candidates(&config, &[plan], &[order], &HashMap::new(), &HashMap::new(), false);
 
     assert!(candidates.is_empty());
+}
+
+#[test]
+fn live_cancel_candidates_keep_unknown_submission_locked() {
+    let config = RewardBotConfig {
+        account_id: "reward_live".to_string(),
+        ..RewardBotConfig::default()
+    };
+    let plan = live_test_plan(OffsetDateTime::now_utc());
+    let mut order = live_test_open_order("yes_live");
+    order.external_order_id = None;
+    order.status = ManagedRewardOrderStatus::Planned;
+    order.reason =
+        format!("quote intent; {LIVE_SUBMISSION_ATTEMPTED_MARKER}; {LIVE_SUBMISSION_UNKNOWN_MARKER}");
+
+    let candidates =
+        live_cancel_candidates(&config, &[plan], &[order], &HashMap::new(), &HashMap::new(), true);
+
+    assert!(candidates.is_empty());
+}
+
+#[test]
+fn sibling_cancel_retry_preserves_unknown_submission_marker() {
+    let mut order = live_test_open_order("yes_live");
+    order.external_order_id = None;
+    order.status = ManagedRewardOrderStatus::Planned;
+    order.reason =
+        format!("quote intent; {LIVE_SUBMISSION_ATTEMPTED_MARKER}; {LIVE_SUBMISSION_UNKNOWN_MARKER}");
+
+    let retry = mark_sibling_cancel_for_retry(order);
+
+    assert!(live_submission_was_attempted(&retry));
+    assert!(live_submission_result_is_unknown(&retry));
+    assert!(retry.reason.contains("sibling cancellation must be retried"));
+}
+
+#[test]
+fn unresolved_live_reconciliation_blocks_new_buy_submission() {
+    let mut unknown = live_test_open_order("yes_live");
+    unknown.external_order_id = None;
+    unknown.status = ManagedRewardOrderStatus::Planned;
+    unknown.reason =
+        format!("quote intent; {LIVE_SUBMISSION_ATTEMPTED_MARKER}; {LIVE_SUBMISSION_UNKNOWN_MARKER}");
+
+    assert!(has_unresolved_live_reconciliation(&[unknown]));
+
+    let mut missing = live_test_open_order("no_live");
+    missing.reason =
+        "external order lookup returned not found; manual reconciliation required".to_string();
+    assert!(has_unresolved_live_reconciliation(&[missing]));
+
+    let mut pending_cancel = live_test_open_order("pending_cancel");
+    pending_cancel.reason = "cancel accepted; awaiting final reconciliation".to_string();
+    assert!(has_unresolved_live_reconciliation(&[pending_cancel]));
 }
 
 #[test]
@@ -425,6 +514,7 @@ fn cancelled_live_exit_defers_remaining_position_for_retry() {
     assert_eq!(retry.size, reward_decimal("10"));
     assert!(retry.external_order_id.is_none());
     assert!(retry.reason.contains("retry post-fill exit"));
+    assert!(deferred_live_exit_is_post_only(&retry));
 }
 
 #[test]

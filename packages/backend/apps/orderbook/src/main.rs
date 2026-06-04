@@ -99,6 +99,7 @@ async fn main() {
                     info!(
                         subscribed = report.subscribed_tokens,
                         ws_received = report.ws_snapshots_received,
+                        ws_price_changes = report.ws_price_changes_received,
                         poll_reconciliations = report.poll_reconciliations,
                         restart_after_secs = restart_interval.as_secs(),
                         "orderbook stream stopped, restarting"

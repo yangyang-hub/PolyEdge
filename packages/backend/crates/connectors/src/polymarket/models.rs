@@ -139,6 +139,9 @@ pub enum PolymarketAcceptedOrderStatus {
     Live,
     Matched,
     Delayed,
+    Unmatched,
+    Canceled,
+    Unknown,
 }
 
 impl PolymarketAcceptedOrderStatus {
@@ -148,6 +151,9 @@ impl PolymarketAcceptedOrderStatus {
             Self::Live => "live",
             Self::Matched => "matched",
             Self::Delayed => "delayed",
+            Self::Unmatched => "unmatched",
+            Self::Canceled => "canceled",
+            Self::Unknown => "unknown",
         }
     }
 }

@@ -220,6 +220,12 @@ impl RewardBotService {
 
     /// Persist reward markets fetched by the sync worker.
     pub async fn upsert_reward_markets(&self, markets: &[RewardMarket]) -> Result<()> {
+        if markets.is_empty() {
+            return Err(AppError::conflict(
+                "REWARD_MARKET_REPLACEMENT_EMPTY",
+                "refusing to replace the reward market catalog with an empty snapshot",
+            ));
+        }
         self.store.upsert_markets(markets).await
     }
 

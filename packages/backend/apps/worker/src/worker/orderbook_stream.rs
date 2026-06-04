@@ -1,4 +1,8 @@
-use polymarket_client_sdk::clob::ws::BookUpdate;
+use polyedge_application::OrderbookCache;
+use polymarket_client_sdk::clob::{
+    types::Side,
+    ws::{BookUpdate, PriceChange},
+};
 use polymarket_client_sdk::clob::ws::Client as ClobWsClient;
 use polymarket_client_sdk::ws::config::Config as WsConfig;
 use polymarket_client_sdk::types::U256;
@@ -11,6 +15,7 @@ use tokio::sync::RwLock;
 struct OrderbookStreamReport {
     subscribed_tokens: usize,
     ws_snapshots_received: usize,
+    ws_price_changes_received: usize,
     poll_reconciliations: usize,
     poll_failures: usize,
 }
@@ -56,13 +61,20 @@ async fn consume_orderbook_stream(state: &AppState) -> Result<OrderbookStreamRep
             format!("failed to create orderbook websocket client: {error}"),
         )
     })?;
-    let stream = ws_client.subscribe_orderbook(u256_ids.clone()).map_err(|error| {
+    let book_stream = ws_client.subscribe_orderbook(u256_ids.clone()).map_err(|error| {
         AppError::internal(
             "ORDERBOOK_WS_SUBSCRIBE_FAILED",
             format!("failed to subscribe to orderbook websocket: {error}"),
         )
     })?;
-    let mut stream = Box::pin(stream);
+    let price_stream = ws_client.subscribe_prices(u256_ids.clone()).map_err(|error| {
+        AppError::internal(
+            "ORDERBOOK_WS_PRICE_SUBSCRIBE_FAILED",
+            format!("failed to subscribe to orderbook price changes: {error}"),
+        )
+    })?;
+    let mut book_stream = Box::pin(book_stream);
+    let mut price_stream = Box::pin(price_stream);
 
     info!(
         subscribed_tokens = u256_ids.len(),
@@ -165,7 +177,7 @@ async fn consume_orderbook_stream(state: &AppState) -> Result<OrderbookStreamRep
 
     loop {
         tokio::select! {
-            message = stream.next() => {
+            message = book_stream.next() => {
                 match message {
                     Some(Ok(book_update)) => {
                         let cached = book_update_to_cached(&book_update);
@@ -190,6 +202,23 @@ async fn consume_orderbook_stream(state: &AppState) -> Result<OrderbookStreamRep
                     }
                     None => {
                         info!("orderbook WS stream ended");
+                        break;
+                    }
+                }
+            }
+            message = price_stream.next() => {
+                match message {
+                    Some(Ok(price_change)) => {
+                        if let Err(error) = apply_price_change_to_cache(&cache, &price_change).await {
+                            warn!(error = %error, "failed to apply orderbook price change");
+                        }
+                        report.ws_price_changes_received += 1;
+                    }
+                    Some(Err(error)) => {
+                        warn!(error = %error, "orderbook price-change WS stream error, poll reconciler will cover gaps");
+                    }
+                    None => {
+                        info!("orderbook price-change WS stream ended");
                         break;
                     }
                 }
@@ -236,6 +265,7 @@ async fn consume_orderbook_stream(state: &AppState) -> Result<OrderbookStreamRep
     info!(
         subscribed_tokens = report.subscribed_tokens,
         ws_snapshots_received = report.ws_snapshots_received,
+        ws_price_changes_received = report.ws_price_changes_received,
         "orderbook stream consumer stopped"
     );
 
@@ -340,6 +370,44 @@ fn book_update_to_cached(update: &BookUpdate) -> CachedOrderBook {
         observed_at: update.timestamp,
         source: BookSource::Ws,
     }
+}
+
+async fn apply_price_change_to_cache(
+    cache: &Arc<dyn OrderbookCache>,
+    update: &PriceChange,
+) -> Result<()> {
+    for change in &update.price_changes {
+        let token_id = change.asset_id.to_string();
+        let Some(mut book) = cache.get_book(&token_id).await? else {
+            continue;
+        };
+        if update.timestamp < book.observed_at {
+            continue;
+        }
+
+        let levels = match change.side {
+            Side::Buy => &mut book.bids,
+            Side::Sell => &mut book.asks,
+            _ => continue,
+        };
+        let Some(size) = change.size else {
+            continue;
+        };
+        if size <= Decimal::ZERO {
+            levels.retain(|level| level.price != change.price);
+        } else if let Some(level) = levels.iter_mut().find(|level| level.price == change.price) {
+            level.size = size;
+        } else {
+            levels.push(CachedBookLevel {
+                price: change.price,
+                size,
+            });
+        }
+        book.observed_at = update.timestamp;
+        book.source = BookSource::Ws;
+        cache.set_book(&book).await?;
+    }
+    Ok(())
 }
 
 fn reward_book_to_cached(book: &PolymarketRewardOrderBook) -> CachedOrderBook {

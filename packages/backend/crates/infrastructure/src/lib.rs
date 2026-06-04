@@ -18,7 +18,7 @@ pub use auth::{
     require_console_read_auth, require_console_write_auth, require_mode_write_auth,
 };
 pub use http::{HttpError, hash_json, new_trace_id, request_id_from_headers};
-pub use runtime::{AppState, Runtime, RuntimeDependencies};
+pub use runtime::{AppState, PostgresAdvisoryLease, Runtime, RuntimeDependencies};
 pub use settings::{
     ArbitrageSettings, AuthKeySettings, AuthSettings, NewsSettings, NewsSourceSettings,
     PolymarketSignatureType, RewardsSettings, RuntimeSettings, ServerSettings, Settings,

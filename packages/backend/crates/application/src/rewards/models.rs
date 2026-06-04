@@ -380,7 +380,7 @@ impl Default for RewardBotConfig {
             safety_margin_cents: decimal("1"),
             min_midpoint: decimal("0.1"),
             max_midpoint: decimal("0.9"),
-            stale_book_ms: 10_000,
+            stale_book_ms: 45_000,
             min_scoring_check_sec: 45,
             max_position_usd: decimal("20"),
             max_global_position_usd: decimal("50"),

@@ -1,6 +1,7 @@
 use polyedge_domain::{AppError, Result};
 use rust_decimal::Decimal;
 use serde::Deserialize;
+use std::collections::HashSet;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -12,6 +13,7 @@ const LAST_CURSOR: &str = "LTE=";
 const ENRICH_TIMEOUT: Duration = Duration::from_secs(10);
 const ENRICH_MAX_RETRIES: u32 = 3;
 const ENRICH_RETRY_BASE_DELAY: Duration = Duration::from_millis(500);
+const MAX_REWARD_MARKET_PAGES: usize = 1_000;
 
 #[derive(Debug, Clone)]
 pub struct PolymarketRewardToken {
@@ -161,8 +163,19 @@ impl PolymarketRewardsConnector {
     pub async fn fetch_current_markets(&self) -> Result<Vec<PolymarketRewardMarket>> {
         let mut markets = Vec::new();
         let mut cursor: Option<String> = None;
+        let mut seen_cursors = HashSet::new();
+        let mut seen_condition_ids = HashSet::new();
+        let mut completed = false;
 
-        loop {
+        for _ in 0..MAX_REWARD_MARKET_PAGES {
+            if let Some(cursor) = cursor.as_ref()
+                && !seen_cursors.insert(cursor.clone())
+            {
+                return Err(AppError::dependency_unavailable(
+                    "POLYMARKET_REWARDS_CURSOR_REPEATED",
+                    format!("Polymarket rewards markets repeated cursor {cursor}"),
+                ));
+            }
             let mut url =
                 reqwest::Url::parse(&format!("{}/rewards/markets/current", self.clob_host))
                     .map_err(|error| {
@@ -201,18 +214,33 @@ impl PolymarketRewardsConnector {
 
             for raw in payload.data {
                 let market = map_reward_market(raw);
-                markets.push(market);
+                if seen_condition_ids.insert(market.condition_id.clone()) {
+                    markets.push(market);
+                }
             }
 
             let next_cursor = payload.next_cursor.unwrap_or_default();
             if next_cursor.is_empty() || next_cursor == LAST_CURSOR || payload.count == 0 {
+                completed = true;
                 break;
             }
             cursor = Some(next_cursor);
         }
+        if !completed {
+            return Err(AppError::dependency_unavailable(
+                "POLYMARKET_REWARDS_MAX_PAGES_EXCEEDED",
+                format!("Polymarket rewards markets exceeded {MAX_REWARD_MARKET_PAGES} pages"),
+            ));
+        }
+        if markets.is_empty() {
+            return Err(AppError::dependency_unavailable(
+                "POLYMARKET_REWARDS_MARKETS_EMPTY",
+                "Polymarket rewards markets returned an empty replacement catalog",
+            ));
+        }
 
         let raw_count = markets.len();
-        let markets = self.enrich_reward_markets(markets).await;
+        let markets = self.enrich_reward_markets(markets).await?;
         tracing::info!(
             raw_count,
             enriched_count = markets.len(),
@@ -229,6 +257,7 @@ impl PolymarketRewardsConnector {
         let mut pending = token_ids.iter();
         let mut tasks = JoinSet::new();
         let mut books = Vec::new();
+        let mut failures = 0usize;
 
         for _ in 0..ENRICH_CONCURRENCY {
             spawn_next_orderbook_fetch(&mut tasks, &mut pending, self);
@@ -237,17 +266,33 @@ impl PolymarketRewardsConnector {
         while let Some(result) = tasks.join_next().await {
             match result {
                 Ok(Ok(Some(book))) => books.push(book),
-                Ok(Ok(None)) => {}
+                Ok(Ok(None)) => failures += 1,
                 Ok(Err(error)) => {
+                    failures += 1;
                     tracing::warn!(error = %error, "failed to fetch reward order book");
                 }
                 Err(error) => {
+                    failures += 1;
                     tracing::warn!(error = %error, "order book task panicked");
                 }
             }
             spawn_next_orderbook_fetch(&mut tasks, &mut pending, self);
         }
 
+        if books.is_empty() && failures > 0 {
+            return Err(AppError::dependency_unavailable(
+                "POLYMARKET_BOOK_BATCH_FAILED",
+                format!("failed to fetch all {failures} requested Polymarket order books"),
+            ));
+        }
+        if failures > 0 {
+            tracing::warn!(
+                requested = token_ids.len(),
+                fetched = books.len(),
+                failures,
+                "partially fetched Polymarket order books"
+            );
+        }
         Ok(books)
     }
 
@@ -331,7 +376,7 @@ impl PolymarketRewardsConnector {
     async fn enrich_reward_markets(
         &self,
         markets: Vec<PolymarketRewardMarket>,
-    ) -> Vec<PolymarketRewardMarket> {
+    ) -> Result<Vec<PolymarketRewardMarket>> {
         let semaphore = Arc::new(Semaphore::new(ENRICH_CONCURRENCY));
         let client = self.clone();
         let mut handles = Vec::with_capacity(markets.len());
@@ -344,7 +389,13 @@ impl PolymarketRewardsConnector {
                 let _permit = sem.acquire().await.expect("semaphore closed");
                 for attempt in 0..=ENRICH_MAX_RETRIES {
                     match connector.fetch_market_detail(&cid).await {
-                        Ok(result) => return result,
+                        Ok(Some(detail)) => return Ok(detail),
+                        Ok(None) => {
+                            return Err(AppError::dependency_unavailable(
+                                "POLYMARKET_CLOB_MARKET_DETAIL_NOT_FOUND",
+                                format!("CLOB market detail was not found for {cid}"),
+                            ));
+                        }
                         Err(error) => {
                             if attempt < ENRICH_MAX_RETRIES {
                                 let delay = ENRICH_RETRY_BASE_DELAY * 2u32.pow(attempt);
@@ -363,7 +414,7 @@ impl PolymarketRewardsConnector {
                                     "failed to enrich reward market after {} retries",
                                     ENRICH_MAX_RETRIES,
                                 );
-                                return None;
+                                return Err(error);
                             }
                         }
                     }
@@ -374,63 +425,71 @@ impl PolymarketRewardsConnector {
 
         let mut enriched = Vec::with_capacity(handles.len());
         for (market, handle) in markets.into_iter().zip(handles) {
-            let detail = match handle.await {
-                Ok(Some(detail)) => Some(detail),
-                Ok(None) => None,
-                Err(error) => {
-                    tracing::warn!(
-                        condition_id = %market.condition_id,
-                        error = %error,
-                        "enrichment task panicked"
-                    );
-                    None
-                }
-            };
+            let detail = handle.await.map_err(|error| {
+                AppError::dependency_unavailable(
+                    "POLYMARKET_REWARD_MARKET_ENRICH_TASK_FAILED",
+                    format!(
+                        "reward market enrichment task failed for {}: {error}",
+                        market.condition_id
+                    ),
+                )
+            })??;
 
             let mut market = market;
-            if let Some(detail) = detail {
-                if market.question == market.condition_id {
-                    if let Some(question) = detail.question {
-                        market.question = question;
-                    }
+            dedupe_reward_tokens(&mut market.tokens);
+            if market.question == market.condition_id {
+                if let Some(question) = detail.question {
+                    market.question = question;
                 }
-                if market.image.is_empty() {
-                    if let Some(image) = detail.image {
-                        market.image = image;
-                    }
+            }
+            if market.image.is_empty() {
+                if let Some(image) = detail.image {
+                    market.image = image;
                 }
-                if market.market_slug == market.condition_id {
-                    if let Some(slug) = detail.market_slug {
-                        market.market_slug = slug;
-                    }
+            }
+            if market.market_slug == market.condition_id {
+                if let Some(slug) = detail.market_slug {
+                    market.market_slug = slug;
                 }
-                if market.tokens.len() < 2 {
-                    if let Some(tokens) = detail.tokens {
-                        market.tokens = tokens
-                            .into_iter()
-                            .filter_map(|raw| {
-                                let token_id = raw.token_id.unwrap_or_default();
-                                if token_id.trim().is_empty() {
-                                    return None;
-                                }
-                                Some(PolymarketRewardToken {
-                                    token_id,
-                                    outcome: raw.outcome.unwrap_or_default(),
-                                    price: raw.price,
-                                })
-                            })
-                            .collect();
-                    }
-                }
+            }
+            if market.tokens.len() < 2
+                && let Some(tokens) = detail.tokens
+            {
+                market.tokens = tokens
+                    .into_iter()
+                    .filter_map(|raw| {
+                        let token_id = raw.token_id.unwrap_or_default().trim().to_string();
+                        if token_id.is_empty() {
+                            return None;
+                        }
+                        Some(PolymarketRewardToken {
+                            token_id,
+                            outcome: raw.outcome.unwrap_or_default(),
+                            price: raw.price,
+                        })
+                    })
+                    .collect();
+            }
+            dedupe_reward_tokens(&mut market.tokens);
+            if market.tokens.len() < 2 {
+                return Err(AppError::dependency_unavailable(
+                    "POLYMARKET_REWARD_MARKET_TOKENS_INCOMPLETE",
+                    format!(
+                        "reward market {} has fewer than two enriched tokens",
+                        market.condition_id
+                    ),
+                ));
             }
             enriched.push(market);
         }
 
-        enriched
-            .into_iter()
-            .filter(|market| market.tokens.len() >= 2)
-            .collect()
+        Ok(enriched)
     }
+}
+
+fn dedupe_reward_tokens(tokens: &mut Vec<PolymarketRewardToken>) {
+    let mut seen = HashSet::new();
+    tokens.retain(|token| !token.token_id.trim().is_empty() && seen.insert(token.token_id.clone()));
 }
 
 fn map_reward_market(raw: RawRewardMarket) -> PolymarketRewardMarket {
@@ -473,8 +532,8 @@ fn map_reward_market(raw: RawRewardMarket) -> PolymarketRewardMarket {
 }
 
 fn map_reward_token(raw: RawRewardToken) -> Option<PolymarketRewardToken> {
-    let token_id = raw.token_id.unwrap_or_default();
-    if token_id.trim().is_empty() {
+    let token_id = raw.token_id.unwrap_or_default().trim().to_string();
+    if token_id.is_empty() {
         return None;
     }
 
@@ -521,4 +580,40 @@ fn parse_decimal(value: Option<&str>) -> Option<Decimal> {
         return None;
     }
     Decimal::from_str(raw).ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reward_tokens_are_deduplicated_before_catalog_write() {
+        let mut tokens = vec![
+            PolymarketRewardToken {
+                token_id: "yes".to_string(),
+                outcome: "YES".to_string(),
+                price: None,
+            },
+            PolymarketRewardToken {
+                token_id: "yes".to_string(),
+                outcome: "YES duplicate".to_string(),
+                price: None,
+            },
+            PolymarketRewardToken {
+                token_id: "no".to_string(),
+                outcome: "NO".to_string(),
+                price: None,
+            },
+        ];
+
+        dedupe_reward_tokens(&mut tokens);
+
+        assert_eq!(
+            tokens
+                .iter()
+                .map(|token| token.token_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["yes", "no"]
+        );
+    }
 }

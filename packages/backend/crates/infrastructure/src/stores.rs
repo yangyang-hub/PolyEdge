@@ -55,3 +55,4 @@ include!("stores/helpers.rs");
 include!("stores/types.rs");
 include!("stores/orderbook_registry_tests.rs");
 include!("stores/orderbook_cache_tests.rs");
+include!("stores/rewards_tests.rs");

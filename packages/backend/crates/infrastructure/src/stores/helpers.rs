@@ -208,7 +208,9 @@ async fn insert_reward_order(
         )
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
         ON CONFLICT (id) DO UPDATE
-        SET external_order_id = EXCLUDED.external_order_id,
+        SET price = EXCLUDED.price,
+            size = EXCLUDED.size,
+            external_order_id = EXCLUDED.external_order_id,
             status = EXCLUDED.status,
             scoring = EXCLUDED.scoring,
             reason = EXCLUDED.reason,

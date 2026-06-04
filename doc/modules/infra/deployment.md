@@ -166,6 +166,8 @@ API 请求不再经过前端 nginx 反向代理；跨域由 Rust API 的 `CorsLa
 
 Deposit Wallet 路径要求钱包已经部署、已入金 pUSD 并完成必要 approval。当前系统不会执行 relayer wallet-create、pUSD 包装或 approval 批处理；connector 在下单前会调用 CLOB `balance-allowance/update`。
 
+Rewards live worker 在 Postgres 路径持有一个 advisory lease 连接来串行化命令、full tick 和 reconcile；`POLYEDGE_POSTGRES__MAX_CONNECTIONS` 必须至少为 2，默认 20。
+
 ## 后端二进制构建
 
 ```bash

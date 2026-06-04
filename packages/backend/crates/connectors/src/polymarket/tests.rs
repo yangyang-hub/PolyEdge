@@ -11,6 +11,22 @@ mod tests {
     }
 
     #[test]
+    fn successful_terminal_post_statuses_remain_accepted_for_reconciliation() {
+        assert_eq!(
+            accepted_order_status(&SdkOrderStatusType::Unmatched),
+            PolymarketAcceptedOrderStatus::Unmatched
+        );
+        assert_eq!(
+            accepted_order_status(&SdkOrderStatusType::Canceled),
+            PolymarketAcceptedOrderStatus::Canceled
+        );
+        assert_eq!(
+            accepted_order_status(&SdkOrderStatusType::Unknown("new_status".to_string())),
+            PolymarketAcceptedOrderStatus::Unknown
+        );
+    }
+
+    #[test]
     fn live_status_maps_to_open() {
         let update =
             normalize_polymarket_order_status_update("evt_1", "pm_ord_1", "live").expect("map");

@@ -44,4 +44,63 @@ mod orderbook_cache_tests {
             ]
         );
     }
+
+    #[tokio::test]
+    async fn cache_rejects_older_snapshot_overwrite() {
+        let cache = InMemoryOrderbookCache::new(60_000, 10);
+        let newer = polyedge_application::CachedOrderBook {
+            token_id: "tok1".to_string(),
+            bids: vec![level(60, 10)],
+            asks: vec![level(62, 10)],
+            observed_at: 200,
+            source: polyedge_application::BookSource::Ws,
+        };
+        let older = polyedge_application::CachedOrderBook {
+            token_id: "tok1".to_string(),
+            bids: vec![level(40, 10)],
+            asks: vec![level(80, 10)],
+            observed_at: 100,
+            source: polyedge_application::BookSource::Poll,
+        };
+
+        cache.set_book(&newer).await.expect("set newer");
+        cache.set_book(&older).await.expect("ignore older");
+        let got = cache
+            .get_book("tok1")
+            .await
+            .expect("get book")
+            .expect("book present");
+
+        assert_eq!(got.observed_at, 200);
+        assert_eq!(got.bids[0].price, rust_decimal::Decimal::new(60, 2));
+    }
+
+    #[tokio::test]
+    async fn batch_cache_rejects_older_snapshot_overwrite() {
+        let cache = InMemoryOrderbookCache::new(60_000, 10);
+        let newer = polyedge_application::CachedOrderBook {
+            token_id: "tok1".to_string(),
+            bids: vec![level(60, 10)],
+            asks: vec![],
+            observed_at: 200,
+            source: polyedge_application::BookSource::Ws,
+        };
+        let older = polyedge_application::CachedOrderBook {
+            observed_at: 100,
+            ..newer.clone()
+        };
+
+        cache.set_book(&newer).await.expect("set newer");
+        cache.set_books(&[older]).await.expect("ignore older batch");
+
+        assert_eq!(
+            cache
+                .get_book("tok1")
+                .await
+                .expect("get book")
+                .expect("book present")
+                .observed_at,
+            200
+        );
+    }
 }

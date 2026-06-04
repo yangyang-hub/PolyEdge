@@ -3,9 +3,9 @@ use polyedge_connectors::{
     PolymarketGammaConnector, PolymarketGammaMarket, PolymarketRewardMarket,
     PolymarketRewardsConnector,
 };
-use polyedge_domain::Result;
+use polyedge_domain::{AppError, Result};
 use polyedge_infrastructure::AppState;
-use tracing::info;
+use tracing::{info, warn};
 
 pub struct MarketSyncReport {
     pub general_upserted: usize,
@@ -16,30 +16,58 @@ pub struct MarketSyncReport {
 /// into the Postgres database.
 pub async fn sync_markets_once(state: &AppState, trace_id: &str) -> Result<MarketSyncReport> {
     // 1. General markets from Gamma API.
-    let connector = PolymarketGammaConnector::new(&state.settings.polymarket.gamma_host)?;
-    let page_size = state.settings.arbitrage.scan_limit;
-    let gamma_markets = connector.fetch_markets(page_size).await?;
-    let views: Vec<MarketView> = gamma_markets
-        .into_iter()
-        .map(gamma_market_to_view)
-        .collect();
-    let general_upserted = state
-        .market_event_service
-        .upsert_markets(&views, trace_id)
-        .await?;
+    let general_result: Result<usize> = async {
+        let connector = PolymarketGammaConnector::new(&state.settings.polymarket.gamma_host)?;
+        let page_size = state.settings.arbitrage.scan_limit;
+        let gamma_markets = connector.fetch_markets(page_size).await?;
+        let views: Vec<MarketView> = gamma_markets
+            .into_iter()
+            .map(gamma_market_to_view)
+            .collect();
+        state
+            .market_event_service
+            .upsert_markets(&views, trace_id)
+            .await
+    }
+    .await;
 
     // 2. Reward markets from CLOB rewards API.
-    let rewards_connector = PolymarketRewardsConnector::new(&state.settings.polymarket.clob_host)?;
-    let reward_markets_raw = rewards_connector.fetch_current_markets().await?;
-    let reward_markets: Vec<RewardMarket> = reward_markets_raw
-        .into_iter()
-        .map(reward_market_from_connector)
-        .collect();
-    let reward_upserted = reward_markets.len();
-    state
-        .reward_bot_service
-        .upsert_reward_markets(&reward_markets)
-        .await?;
+    let reward_result: Result<usize> = async {
+        let rewards_connector =
+            PolymarketRewardsConnector::new(&state.settings.polymarket.clob_host)?;
+        let reward_markets_raw = rewards_connector.fetch_current_markets().await?;
+        let reward_markets: Vec<RewardMarket> = reward_markets_raw
+            .into_iter()
+            .map(reward_market_from_connector)
+            .collect();
+        let reward_upserted = reward_markets.len();
+        state
+            .reward_bot_service
+            .upsert_reward_markets(&reward_markets)
+            .await?;
+        Ok(reward_upserted)
+    }
+    .await;
+
+    let (general_upserted, reward_upserted) = match (general_result, reward_result) {
+        (Ok(general), Ok(reward)) => (general, reward),
+        (Err(error), Ok(reward)) => {
+            warn!(trace_id, error = %error, "general market sync failed; reward catalog still updated");
+            (0, reward)
+        }
+        (Ok(general), Err(error)) => {
+            warn!(trace_id, error = %error, "reward market sync failed; preserving prior reward catalog");
+            (general, 0)
+        }
+        (Err(general_error), Err(reward_error)) => {
+            return Err(AppError::dependency_unavailable(
+                "MARKET_SYNC_FAILED",
+                format!(
+                    "general market sync failed: {general_error}; reward market sync failed: {reward_error}"
+                ),
+            ));
+        }
+    };
 
     info!(
         trace_id = %trace_id,

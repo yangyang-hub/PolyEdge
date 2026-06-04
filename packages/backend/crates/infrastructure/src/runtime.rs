@@ -19,7 +19,7 @@ use polyedge_application::{
     RewardBotService, RewardBotStore, RiskPolicy, RiskService, RiskStateStore, SystemModeService,
 };
 use polyedge_domain::{AppError, Result, SystemMode};
-use sqlx::{PgPool, postgres::PgPoolOptions};
+use sqlx::{PgPool, Postgres, pool::PoolConnection, postgres::PgPoolOptions};
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::info;
@@ -54,6 +54,96 @@ pub struct Runtime {
 pub struct RuntimeDependencies {
     pub postgres: Option<PgPool>,
     pub redis: Option<redis::Client>,
+}
+
+pub struct PostgresAdvisoryLease {
+    connection: Option<PoolConnection<Postgres>>,
+    key: i64,
+}
+
+impl Drop for PostgresAdvisoryLease {
+    fn drop(&mut self) {
+        if let Some(connection) = self.connection.as_mut() {
+            connection.close_on_drop();
+        }
+    }
+}
+
+impl PostgresAdvisoryLease {
+    pub async fn release(mut self) -> Result<()> {
+        let Some(mut connection) = self.connection.take() else {
+            return Ok(());
+        };
+        let released = match sqlx::query_scalar::<_, bool>("SELECT pg_advisory_unlock($1)")
+            .bind(self.key)
+            .fetch_one(&mut *connection)
+            .await
+        {
+            Ok(released) => released,
+            Err(error) => {
+                connection.close_on_drop();
+                return Err(AppError::dependency_unavailable(
+                    "POSTGRES_ADVISORY_LEASE_RELEASE_FAILED",
+                    format!("failed to release Postgres advisory lease: {error}"),
+                ));
+            }
+        };
+        if released {
+            return Ok(());
+        }
+        connection.close_on_drop();
+        Err(AppError::dependency_unavailable(
+            "POSTGRES_ADVISORY_LEASE_RELEASE_FAILED",
+            "Postgres advisory lease was not owned by the releasing session",
+        ))
+    }
+}
+
+impl AppState {
+    pub async fn try_acquire_postgres_advisory_lease(
+        &self,
+        key: i64,
+    ) -> Result<Option<PostgresAdvisoryLease>> {
+        let Some(pool) = self.dependencies.postgres.as_ref() else {
+            return Ok(Some(PostgresAdvisoryLease {
+                connection: None,
+                key,
+            }));
+        };
+        if self.settings.postgres.max_connections < 2 {
+            return Err(AppError::conflict(
+                "POSTGRES_ADVISORY_LEASE_POOL_TOO_SMALL",
+                "Postgres advisory leases require postgres.max_connections >= 2",
+            ));
+        }
+        let mut connection = pool.acquire().await.map_err(|error| {
+            AppError::dependency_unavailable(
+                "POSTGRES_ADVISORY_LEASE_BEGIN_FAILED",
+                format!("failed to acquire Postgres advisory lease connection: {error}"),
+            )
+        })?;
+        let acquired = match sqlx::query_scalar::<_, bool>("SELECT pg_try_advisory_lock($1)")
+            .bind(key)
+            .fetch_one(&mut *connection)
+            .await
+        {
+            Ok(acquired) => acquired,
+            Err(error) => {
+                connection.close_on_drop();
+                return Err(AppError::dependency_unavailable(
+                    "POSTGRES_ADVISORY_LEASE_ACQUIRE_FAILED",
+                    format!("failed to acquire Postgres advisory lease: {error}"),
+                ));
+            }
+        };
+        if !acquired {
+            return Ok(None);
+        }
+        Ok(Some(PostgresAdvisoryLease {
+            connection: Some(connection),
+            key,
+        }))
+    }
 }
 
 impl Runtime {

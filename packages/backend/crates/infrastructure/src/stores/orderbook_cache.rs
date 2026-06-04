@@ -78,6 +78,12 @@ impl OrderbookCache for InMemoryOrderbookCache {
     async fn set_book(&self, book: &CachedOrderBook) -> Result<()> {
         let book = self.bounded_book(book);
         let mut books = self.books.write().await;
+        if books
+            .get(&book.token_id)
+            .is_some_and(|entry| entry.book.observed_at > book.observed_at)
+        {
+            return Ok(());
+        }
         books.insert(
             book.token_id.clone(),
             BookEntry {
@@ -93,6 +99,12 @@ impl OrderbookCache for InMemoryOrderbookCache {
         let expires_at_ms = now_millis() + self.ttl_ms;
         for book in books_slice {
             let book = self.bounded_book(book);
+            if books
+                .get(&book.token_id)
+                .is_some_and(|entry| entry.book.observed_at > book.observed_at)
+            {
+                continue;
+            }
             books.insert(
                 book.token_id.clone(),
                 BookEntry {

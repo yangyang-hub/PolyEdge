@@ -66,11 +66,13 @@ async fn postgres_claim_next_reward_control_command(
                error
         FROM reward_control_commands
         WHERE status = 'pending'
+           OR (status = 'running' AND started_at <= $1)
         ORDER BY requested_at ASC
         LIMIT 1
         FOR UPDATE SKIP LOCKED
         "#,
     )
+    .bind(now - REWARD_CONTROL_COMMAND_LEASE)
     .fetch_optional(&mut *transaction)
     .await
     .map_err(|error| {
@@ -97,7 +99,8 @@ async fn postgres_claim_next_reward_control_command(
         SET status = 'running',
             started_at = $2,
             trace_id = $3,
-            error = NULL
+            error = NULL,
+            completed_at = NULL
         WHERE id = $1
         "#,
     )
