@@ -63,7 +63,6 @@ mod tests {
         assert!(settings.postgres.url.is_none());
         assert_eq!(settings.postgres.max_connections, 20);
         assert!(settings.redis.url.is_none());
-        assert!(settings.orderbook_stream.enabled);
         assert_eq!(settings.orderbook_stream.max_tokens, 3_000);
         assert_eq!(settings.orderbook_stream.max_levels_per_side, 100);
         assert_eq!(settings.orderbook_stream.poll_reconcile_interval_secs, 30);
@@ -239,10 +238,6 @@ mod tests {
             ),
             ("POLYEDGE_WORKER__TASK_LIMIT".to_string(), "33".to_string()),
             (
-                "POLYEDGE_ORDERBOOK_STREAM__ENABLED".to_string(),
-                "true".to_string(),
-            ),
-            (
                 "POLYEDGE_ORDERBOOK_STREAM__MAX_TOKENS".to_string(),
                 "100".to_string(),
             ),
@@ -338,7 +333,6 @@ mod tests {
             10
         );
         assert_eq!(settings.worker.task_limit, 33);
-        assert!(settings.orderbook_stream.enabled);
         assert_eq!(settings.orderbook_stream.max_tokens, 100);
         assert_eq!(settings.orderbook_stream.max_levels_per_side, 12);
         assert_eq!(settings.orderbook_stream.poll_reconcile_interval_secs, 15);

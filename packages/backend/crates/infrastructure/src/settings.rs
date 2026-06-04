@@ -190,7 +190,6 @@ pub struct WorkerSettings {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct OrderbookStreamSettings {
-    pub enabled: bool,
     pub max_tokens: usize,
     pub max_levels_per_side: usize,
     pub poll_reconcile_interval_secs: u64,

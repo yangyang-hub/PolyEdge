@@ -22,7 +22,7 @@
 1. 加载 `Runtime` 并绑定 `0.0.0.0:${POLYEDGE_ORDERBOOK__PORT}`。
 2. 立即暴露 `/healthz` 和 orderbook HTTP API，避免 Polymarket 延迟阻塞容器健康检查。
 3. 后台执行 initial market sync，之后按 `market_sync_interval_secs` 周期同步。
-4. `POLYEDGE_ORDERBOOK_STREAM__ENABLED=true` 时运行盘口流；没有注册 token 时每 10 秒等待一次。
+4. 始终运行盘口流；没有注册 token 时每 10 秒等待一次。
 5. registry token 集合变化、WS 结束或 stream 报错后，按 `restart_interval_secs` 重建订阅。
 
 ## HTTP API

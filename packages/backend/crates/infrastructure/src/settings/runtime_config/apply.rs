@@ -210,9 +210,6 @@ fn apply_runtime_config_value(
                 parse_u64_runtime_config(key, value)?;
         }
         "worker.task_limit" => self.worker.task_limit = parse_u16_runtime_config(key, value)?,
-        "orderbook_stream.enabled" => {
-            self.orderbook_stream.enabled = parse_bool_runtime_config(key, value)?;
-        }
         "orderbook_stream.max_tokens" => {
             self.orderbook_stream.max_tokens = parse_usize_runtime_config(key, value)?;
         }

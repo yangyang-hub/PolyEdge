@@ -540,19 +540,6 @@ pub fn runtime_config_entries(&self) -> Vec<RuntimeConfigEntry> {
         &mut entries,
         RuntimeConfigEntryDraft {
             section: "orderbook_stream",
-            field: "enabled",
-            label: "Orderbook stream enabled",
-            env_name: "POLYEDGE_ORDERBOOK_STREAM__ENABLED",
-            value: self.orderbook_stream.enabled.to_string(),
-            default_value: defaults.orderbook_stream.enabled.to_string(),
-            value_type: RuntimeConfigValueType::Boolean,
-            options: Vec::new(),
-        },
-    );
-    push_runtime_config_entry(
-        &mut entries,
-        RuntimeConfigEntryDraft {
-            section: "orderbook_stream",
             field: "max_tokens",
             label: "Orderbook stream max tokens",
             env_name: "POLYEDGE_ORDERBOOK_STREAM__MAX_TOKENS",

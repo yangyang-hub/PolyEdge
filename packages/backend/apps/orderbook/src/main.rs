@@ -71,10 +71,6 @@ async fn main() {
     // It subscribes to tokens registered via the HTTP API by other services.
     let stream_state = state.clone();
     let stream_handle = tokio::spawn(async move {
-        if !stream_state.settings.orderbook_stream.enabled {
-            info!("orderbook stream disabled by configuration");
-            std::future::pending::<()>().await;
-        }
         let restart_interval = Duration::from_secs(
             stream_state
                 .settings

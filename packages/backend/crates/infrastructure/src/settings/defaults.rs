@@ -164,7 +164,6 @@ impl Default for WorkerSettings {
 impl Default for OrderbookStreamSettings {
     fn default() -> Self {
         Self {
-            enabled: true,
             max_tokens: 3_000,
             max_levels_per_side: 100,
             poll_reconcile_interval_secs: 30,

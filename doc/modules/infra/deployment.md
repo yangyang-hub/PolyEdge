@@ -62,7 +62,6 @@
 - Compose 不声明启动依赖，可单独部署在盘口服务器
 - 职责：HTTP API（健康检查、盘口读取、token 注册）、后台市场同步（Gamma + CLOB → Postgres）、WS + poll 盘口流（→ 进程内缓存）
 - 启动顺序：先 bind HTTP 并暴露 `/healthz`，随后后台执行 initial/periodic market sync，避免外部 Polymarket API 慢响应导致容器启动健康检查失败
-- `POLYEDGE_ORDERBOOK_STREAM__ENABLED` 控制 WS + poll stream 是否运行；`POLYEDGE_ORDERBOOK_STREAM__MAX_LEVELS_PER_SIDE` 限制每个 token 缓存的 bid/ask 深度
 - register/ingest/delete 写接口要求 `.env.orderbook` 中的 `POLYEDGE_ORDERBOOK__WRITE_TOKEN`，读盘口、stats 和健康检查不需要该 token
 - 环境变量：`.env` + `.env.orderbook`
 
@@ -155,7 +154,6 @@ API 请求不再经过前端 nginx 反向代理；跨域由 Rust API 的 `CorsLa
 | `POLYEDGE_WORKER__POLL_MARKET_SYNC` | `false`（代码默认） | 部署 worker 是否同步 markets/reward_markets；daemon 市场同步已迁移到 orderbook 服务 |
 | `POLYEDGE_WORKER__CONSUME_ORDERBOOK_STREAM` | `false`（代码默认） | 部署 worker 是否消费 orderbook stream；daemon 盘口流已迁移到 orderbook 服务 |
 | `POLYEDGE_WORKER__POLL_REWARD_BOT` | `false`（代码默认） | 部署 worker 是否运行 rewards full tick + fast reconcile loop |
-| `POLYEDGE_ORDERBOOK_STREAM__ENABLED` | `true` | standalone orderbook 服务 WS + poll stream 功能开关 |
 | `POLYEDGE_ORDERBOOK_STREAM__MAX_TOKENS` | `3000` | orderbook stream 订阅 token 上限，过低会导致 rewards 覆盖不全，过高会增加 WS/poll 内存占用 |
 | `POLYEDGE_ORDERBOOK_STREAM__MAX_LEVELS_PER_SIDE` | `100` | 每个 token 在 orderbook 进程内缓存和 HTTP ingest 中最多保留的 bid/ask 深度档数 |
 | `POLYEDGE_ORDERBOOK_STREAM__STALE_THRESHOLD_MS` | `15000` | poll reconcile 盘口年龄阈值；0 只关闭年龄检查，TTL 过期仍生效 |
