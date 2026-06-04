@@ -31,6 +31,7 @@ polymarket-client-sdk = { package = "polymarket_client_sdk_v2", version = "0.6.0
 redis = { version = "0.32.7", default-features = false, features = ["tokio-comp"] }
 reqwest = "0.13.2"
 rust_decimal = { version = "1.39.0", features = ["serde"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = { version = "1.0.145", features = ["raw_value"] }
 sha2 = "0.10.9"

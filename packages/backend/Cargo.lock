@@ -3190,6 +3190,7 @@ dependencies = [
  "polyedge-domain",
  "redis",
  "rust_decimal",
+ "rustls",
  "serde",
  "serde_json",
  "sha2",

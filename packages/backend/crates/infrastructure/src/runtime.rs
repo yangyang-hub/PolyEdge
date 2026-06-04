@@ -148,6 +148,11 @@ impl AppState {
 
 impl Runtime {
     pub async fn load() -> Result<Self> {
+        // Install the ring crypto provider for rustls before any TLS connections.
+        rustls::crypto::ring::default_provider()
+            .install_default()
+            .ok();
+
         let settings = Settings::load()?;
         Self::from_settings(settings).await
     }
