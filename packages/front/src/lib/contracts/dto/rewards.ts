@@ -9,7 +9,6 @@ import type {
 
 export type RewardBotConfigDto = {
   enabled: boolean;
-  execution_mode: string;
   account_id: string;
   max_markets: number;
   max_open_orders: number;

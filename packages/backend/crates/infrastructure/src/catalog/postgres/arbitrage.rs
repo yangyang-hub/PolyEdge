@@ -443,9 +443,13 @@ impl ArbitrageStore for PostgresMarketEventStore {
         "#;
 
         let market_id = filters.market_id.as_deref();
-        let opp_type = filters.opportunity_type.map(ArbitrageOpportunityType::as_str);
+        let opp_type = filters
+            .opportunity_type
+            .map(ArbitrageOpportunityType::as_str);
         let status = filters.status.map(ArbitrageOpportunityStatus::as_str);
-        let val_status = filters.validation_status.map(ArbitrageValidationStatus::as_str);
+        let val_status = filters
+            .validation_status
+            .map(ArbitrageValidationStatus::as_str);
         let min_edge = filters.min_net_edge.map(Edge::value);
         let after = filters.observed_after;
         let active = filters.active_only;

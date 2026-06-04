@@ -119,10 +119,10 @@ async fn in_memory_news_source_health_tracks_counts_failures_and_filters() -> Re
     assert_eq!(all_sources.data[0].source, "sec_feed");
 
     let news_sources = store
-        .list_news_source_health(&NewsSourceHealthListFilters::new(
-            Some(" news ".to_string()),
-            Some(10),
-        )?, &page)
+        .list_news_source_health(
+            &NewsSourceHealthListFilters::new(Some(" news ".to_string()), Some(10))?,
+            &page,
+        )
         .await?;
     assert_eq!(news_sources.data.len(), 1);
 
@@ -273,10 +273,10 @@ async fn postgres_news_source_health_round_trips_filters_and_migrates_index()
         assert_eq!(all_sources.data[0].source, "sec_feed");
 
         let news_sources = store
-            .list_news_source_health(&NewsSourceHealthListFilters::new(
-                Some("news".to_string()),
-                Some(10),
-            )?, &page)
+            .list_news_source_health(
+                &NewsSourceHealthListFilters::new(Some("news".to_string()), Some(10))?,
+                &page,
+            )
             .await?;
         assert_eq!(news_sources.data.len(), 1);
 

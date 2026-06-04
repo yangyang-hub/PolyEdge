@@ -30,6 +30,10 @@ async fn run_reward_bot_tick(
 #[derive(Debug, Default)]
 struct RewardCommandProcessReport {
     processed: usize,
+    /// True if at least one processed command ran a full quote-rebuilding tick
+    /// (RunOnce). Lets the poll loop avoid an immediately-redundant full cycle
+    /// without resetting the full-cycle timer for cancel/reset-only commands.
+    ran_full_cycle: bool,
     report: RewardBotRunReport,
 }
 
@@ -67,7 +71,7 @@ async fn persist_live_reward_updates(
     state
         .reward_bot_service
         .apply_live_tick_outcome(
-            &RewardSimulationOutcome {
+            &RewardTickOutcome {
                 account: account.clone(),
                 markets: Vec::new(),
                 plans: Vec::new(),
@@ -108,6 +112,9 @@ async fn process_pending_reward_control_commands(
                     .await?;
                 accumulate_report(&mut total.report, &report);
                 total.processed += 1;
+                if command.action == RewardControlAction::RunOnce {
+                    total.ran_full_cycle = true;
+                }
                 info!(
                     trace_id = %trace_id,
                     command_id = %command.id,
@@ -210,7 +217,7 @@ async fn run_reward_bot_live_tick(
         books_fetched,
         plans_built: cycle.plans.len(),
         eligible_plans: cycle.plans.iter().filter(|plan| plan.eligible).count(),
-        simulated_orders: 0,
+        placed_orders: 0,
         cancelled_orders: 0,
         filled_orders: 0,
         risk_cancelled_orders: 0,
@@ -322,7 +329,7 @@ async fn run_reward_bot_live_tick(
             LiveRewardOrderUpdate::Changed(updated, event) => {
                 open_orders.push(updated.clone());
                 if updated.reason == "live post-only rewards quote accepted" {
-                    report.simulated_orders += 1;
+                    report.placed_orders += 1;
                 }
                 let stop_placements = live_order_has_post_only_violation(&updated);
                 persist_live_reward_updates(

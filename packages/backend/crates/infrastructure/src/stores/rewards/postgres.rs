@@ -571,9 +571,9 @@ impl RewardBotStore for PostgresRewardBotStore {
         Ok(exists)
     }
 
-    async fn apply_simulation_tick(
+    async fn apply_tick_outcome(
         &self,
-        outcome: &RewardSimulationOutcome,
+        outcome: &RewardTickOutcome,
         trace_id: &str,
     ) -> Result<()> {
         let mut transaction = self.pool.begin().await.map_err(|error| {
@@ -606,7 +606,7 @@ impl RewardBotStore for PostgresRewardBotStore {
         Ok(())
     }
 
-    async fn reset_simulation(&self, config: &RewardBotConfig, _trace_id: &str) -> Result<()> {
+    async fn reset_state(&self, config: &RewardBotConfig, _trace_id: &str) -> Result<()> {
         let mut transaction = self.pool.begin().await.map_err(|error| {
             db_error(
                 "POSTGRES_TRANSACTION_BEGIN_FAILED",
@@ -626,7 +626,7 @@ impl RewardBotStore for PostgresRewardBotStore {
                 .map_err(|error| {
                     db_error(
                         "POSTGRES_DELETE_FAILED",
-                        format!("failed to reset reward simulation: {error}"),
+                        format!("failed to reset reward state: {error}"),
                     )
                 })?;
         }

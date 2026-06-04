@@ -1,6 +1,6 @@
 # Copy Trading（跟单）
 
-最后更新：2026-05-31
+最后更新：2026-06-04
 
 ## 概述
 
@@ -62,6 +62,8 @@ Client Component（copytrade-workbench.tsx）
 - 三个分页列表（成交/订单/事件）
 - `mode=live` 已结构化支持但未接入真实下单
 - 跟单循环、钱包分析、撤单和重置由 worker 执行，API 不直接执行任务
+- 模拟跟单按 source trade 时间顺序处理，暂停钱包和 wallet+token cooldown 会跳过遗留交易；同一 tick 内 per-wallet/per-market/total exposure 会累计并硬裁剪新买单
+- `MirrorPortfolioWeight` 使用源钱包完整持仓组合权重；无本地持仓的 sell 不会生成模拟收益，crossed order 会完整成交并释放 reserve
 
 ## 修改检查清单
 

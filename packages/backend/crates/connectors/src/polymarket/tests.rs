@@ -180,6 +180,61 @@ mod tests {
     }
 
     #[test]
+    fn trade_order_fill_aggregates_repeated_maker_entries() {
+        // The same maker order can appear more than once in a single trade when
+        // multiple maker fills cross in one match event; all must be summed.
+        let trade = TradeResponse::builder()
+            .id("pm_trade_2")
+            .taker_order_id("pm_taker")
+            .market(B256::ZERO)
+            .asset_id(U256::ZERO)
+            .side(Side::Buy)
+            .size(Decimal::new(100, 1))
+            .fee_rate_bps(Decimal::new(25, 0))
+            .price(Decimal::new(42, 2))
+            .status(SdkTradeStatusType::Matched)
+            .match_time("2024-01-15T12:34:56Z".parse().expect("match time"))
+            .last_update("2024-01-15T12:35:30Z".parse().expect("last update"))
+            .outcome("YES")
+            .bucket_index(0)
+            .owner(Uuid::nil())
+            .maker_address(Address::ZERO)
+            .maker_orders(vec![
+                polymarket_client_sdk::clob::types::response::MakerOrder::builder()
+                    .order_id("pm_maker_1")
+                    .owner(Uuid::nil())
+                    .maker_address(Address::ZERO)
+                    .matched_amount(Decimal::new(40, 1)) // 4.0 @ 0.40
+                    .price(Decimal::new(40, 2))
+                    .fee_rate_bps(Decimal::new(10, 0))
+                    .asset_id(U256::ZERO)
+                    .outcome("YES")
+                    .side(Side::Sell)
+                    .build(),
+                polymarket_client_sdk::clob::types::response::MakerOrder::builder()
+                    .order_id("pm_maker_1")
+                    .owner(Uuid::nil())
+                    .maker_address(Address::ZERO)
+                    .matched_amount(Decimal::new(60, 1)) // 6.0 @ 0.50
+                    .price(Decimal::new(50, 2))
+                    .fee_rate_bps(Decimal::new(10, 0))
+                    .asset_id(U256::ZERO)
+                    .outcome("YES")
+                    .side(Side::Sell)
+                    .build(),
+            ])
+            .transaction_hash(B256::ZERO)
+            .trader_side(polymarket_client_sdk::clob::types::TraderSide::Taker)
+            .build();
+
+        let maker_fill = trade_order_fill(&trade, "pm_maker_1").expect("maker fill");
+        // Total size = 4.0 + 6.0 = 10.0; notional = 1.6 + 3.0 = 4.6 → price 0.46.
+        assert_eq!(maker_fill.size, Decimal::new(100, 1));
+        assert_eq!(maker_fill.price, Decimal::new(46, 2));
+        assert_eq!(maker_fill.fee_rate_bps, Decimal::new(10, 0));
+    }
+
+    #[test]
     fn websocket_cancellation_message_maps_to_canceled() {
         let message = PolymarketWsOrderMessage::builder()
             .id("pm_ord_1".to_string())

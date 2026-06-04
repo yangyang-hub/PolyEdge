@@ -96,15 +96,27 @@ impl MarketEventStore for InMemoryMarketEventStore {
         self.market_event_get_signal(signal_id).await
     }
 
-    async fn list_events(&self, filters: &EventListFilters, page: &PageQuery) -> Result<Paginated<EventView>> {
+    async fn list_events(
+        &self,
+        filters: &EventListFilters,
+        page: &PageQuery,
+    ) -> Result<Paginated<EventView>> {
         self.market_event_list_events(filters, page).await
     }
 
-    async fn list_evidences(&self, filters: &EvidenceListFilters, page: &PageQuery) -> Result<Paginated<EvidenceView>> {
+    async fn list_evidences(
+        &self,
+        filters: &EvidenceListFilters,
+        page: &PageQuery,
+    ) -> Result<Paginated<EvidenceView>> {
         self.market_event_list_evidences(filters, page).await
     }
 
-    async fn list_signals(&self, filters: &SignalListFilters, page: &PageQuery) -> Result<Paginated<SignalView>> {
+    async fn list_signals(
+        &self,
+        filters: &SignalListFilters,
+        page: &PageQuery,
+    ) -> Result<Paginated<SignalView>> {
         self.market_event_list_signals(filters, page).await
     }
 
@@ -113,7 +125,8 @@ impl MarketEventStore for InMemoryMarketEventStore {
         filters: &ProbabilityEstimateListFilters,
         page: &PageQuery,
     ) -> Result<Paginated<ProbabilityEstimateView>> {
-        self.market_event_list_probability_estimates(filters, page).await
+        self.market_event_list_probability_estimates(filters, page)
+            .await
     }
 
     async fn list_signal_transitions(
@@ -121,7 +134,8 @@ impl MarketEventStore for InMemoryMarketEventStore {
         filters: &SignalTransitionListFilters,
         page: &PageQuery,
     ) -> Result<Paginated<SignalTransitionView>> {
-        self.market_event_list_signal_transitions(filters, page).await
+        self.market_event_list_signal_transitions(filters, page)
+            .await
     }
 
     async fn list_order_drafts(
@@ -158,16 +172,59 @@ impl MarketEventStore for InMemoryMarketEventStore {
     async fn list_positions(&self, filters: &PositionListFilters) -> Result<Vec<PositionView>> {
         self.market_event_list_positions(filters).await
     }
-    async fn count_order_drafts(&self, filters: &OrderDraftListFilters) -> Result<i64> { self.market_event_count_order_drafts(filters).await }
-    async fn list_order_drafts_paginated(&self, filters: &OrderDraftListFilters, page: &PageQuery) -> Result<Paginated<OrderDraftView>> { self.market_event_list_order_drafts_paginated(filters, page).await }
-    async fn count_execution_requests(&self, filters: &ExecutionRequestListFilters) -> Result<i64> { self.market_event_count_execution_requests(filters).await }
-    async fn list_execution_requests_paginated(&self, filters: &ExecutionRequestListFilters, page: &PageQuery) -> Result<Paginated<ExecutionRequestView>> { self.market_event_list_execution_requests_paginated(filters, page).await }
-    async fn count_orders(&self, filters: &OrderListFilters) -> Result<i64> { self.market_event_count_orders(filters).await }
-    async fn list_orders_paginated(&self, filters: &OrderListFilters, page: &PageQuery) -> Result<Paginated<OrderView>> { self.market_event_list_orders_paginated(filters, page).await }
-    async fn count_trades(&self, filters: &TradeListFilters) -> Result<i64> { self.market_event_count_trades(filters).await }
-    async fn list_trades_paginated(&self, filters: &TradeListFilters, page: &PageQuery) -> Result<Paginated<TradeView>> { self.market_event_list_trades_paginated(filters, page).await }
-    async fn count_positions(&self, filters: &PositionListFilters) -> Result<i64> { self.market_event_count_positions(filters).await }
-    async fn list_positions_paginated(&self, filters: &PositionListFilters, page: &PageQuery) -> Result<Paginated<PositionView>> { self.market_event_list_positions_paginated(filters, page).await }
+    async fn count_order_drafts(&self, filters: &OrderDraftListFilters) -> Result<i64> {
+        self.market_event_count_order_drafts(filters).await
+    }
+    async fn list_order_drafts_paginated(
+        &self,
+        filters: &OrderDraftListFilters,
+        page: &PageQuery,
+    ) -> Result<Paginated<OrderDraftView>> {
+        self.market_event_list_order_drafts_paginated(filters, page)
+            .await
+    }
+    async fn count_execution_requests(&self, filters: &ExecutionRequestListFilters) -> Result<i64> {
+        self.market_event_count_execution_requests(filters).await
+    }
+    async fn list_execution_requests_paginated(
+        &self,
+        filters: &ExecutionRequestListFilters,
+        page: &PageQuery,
+    ) -> Result<Paginated<ExecutionRequestView>> {
+        self.market_event_list_execution_requests_paginated(filters, page)
+            .await
+    }
+    async fn count_orders(&self, filters: &OrderListFilters) -> Result<i64> {
+        self.market_event_count_orders(filters).await
+    }
+    async fn list_orders_paginated(
+        &self,
+        filters: &OrderListFilters,
+        page: &PageQuery,
+    ) -> Result<Paginated<OrderView>> {
+        self.market_event_list_orders_paginated(filters, page).await
+    }
+    async fn count_trades(&self, filters: &TradeListFilters) -> Result<i64> {
+        self.market_event_count_trades(filters).await
+    }
+    async fn list_trades_paginated(
+        &self,
+        filters: &TradeListFilters,
+        page: &PageQuery,
+    ) -> Result<Paginated<TradeView>> {
+        self.market_event_list_trades_paginated(filters, page).await
+    }
+    async fn count_positions(&self, filters: &PositionListFilters) -> Result<i64> {
+        self.market_event_count_positions(filters).await
+    }
+    async fn list_positions_paginated(
+        &self,
+        filters: &PositionListFilters,
+        page: &PageQuery,
+    ) -> Result<Paginated<PositionView>> {
+        self.market_event_list_positions_paginated(filters, page)
+            .await
+    }
 
     async fn recompute_signal(
         &self,

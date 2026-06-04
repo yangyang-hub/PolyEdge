@@ -13,6 +13,7 @@
 | [contracts.md](backend/contracts.md) | `crates/contracts` | HTTP API DTO 定义 |
 | [api-app.md](backend/api-app.md) | `apps/api` | Axum HTTP API 服务 |
 | [worker-app.md](backend/worker-app.md) | `apps/worker` | Tokio 后台任务服务 |
+| [orderbook-app.md](backend/orderbook-app.md) | `apps/orderbook` | 独立市场同步、盘口流和盘口 HTTP 服务 |
 | [replay-app.md](backend/replay-app.md) | `apps/replay` | 历史回放工具 |
 
 ## 前端（Next.js + React）

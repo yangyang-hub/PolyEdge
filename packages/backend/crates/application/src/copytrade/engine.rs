@@ -103,7 +103,7 @@ impl CopyTickContext {
             };
 
             if is_crossed {
-                self.fill_order(index, remaining, "crossed_by_book".into());
+                self.fill_order(index, remaining, true, "crossed_by_book".into());
             } else {
                 // Probabilistic fill for resting orders.
                 let seed = (self.account.tick_index as u64)
@@ -112,7 +112,7 @@ impl CopyTickContext {
                 let roll = deterministic_probability(seed);
                 if roll < self.config.fill_rate_per_tick {
                     // Pass raw remaining — fill_order applies max_fill_ratio once.
-                    self.fill_order(index, remaining, "probabilistic_fill".into());
+                    self.fill_order(index, remaining, false, "probabilistic_fill".into());
                 }
             }
             self.seq += 1;
@@ -160,7 +160,7 @@ impl CopyTickContext {
             if is_crossed {
                 let index = self.orders.len();
                 self.orders.push(order);
-                self.fill_order(index, remaining, "immediate_fill".into());
+                self.fill_order(index, remaining, true, "immediate_fill".into());
             } else {
                 order.status = CopyOrderStatus::Open;
                 order.updated_at = self.now;
@@ -169,11 +169,32 @@ impl CopyTickContext {
         }
     }
 
-    fn fill_order(&mut self, index: usize, fill_size: Decimal, reason: String) {
+    /// Fill (part of) an order against the book.
+    ///
+    /// `full_fill = true` marks a marketable (crossed) execution that takes the
+    /// whole remaining size — this is what releases the order's reserved capital
+    /// in full and drives it to `Filled`. `full_fill = false` is the
+    /// probabilistic resting-fill path, which fills at most `max_fill_ratio` of
+    /// the remaining size and legitimately leaves the order open.
+    fn fill_order(&mut self, index: usize, available: Decimal, full_fill: bool, reason: String) {
+        // Dust below this many shares is absorbed into a fill so partial-fill
+        // orders converge to `Filled` instead of resting forever with a tiny
+        // unfilled remainder (which would strand its reserved capital).
+        let dust = Decimal::new(1, 2); // 0.01 shares
+
         let order = &mut self.orders[index];
-        let fill_size = (fill_size * self.config.max_fill_ratio)
-            .min(order.remaining_size())
-            .round_dp_with_strategy(8, RoundingStrategy::MidpointNearestEven);
+        let remaining = order.remaining_size();
+        let mut fill_size = if full_fill {
+            available.min(remaining)
+        } else {
+            (available * self.config.max_fill_ratio).min(remaining)
+        }
+        .round_dp_with_strategy(8, RoundingStrategy::MidpointNearestEven);
+
+        // Absorb a sub-dust tail so the order can close and release its reserve.
+        if remaining - fill_size <= dust {
+            fill_size = remaining;
+        }
 
         if fill_size <= Decimal::ZERO {
             return;
@@ -183,12 +204,18 @@ impl CopyTickContext {
         order.filled_size += fill_size;
         order.updated_at = self.now;
 
-        if order.remaining_size() <= Decimal::ZERO {
+        let closed = order.remaining_size() <= Decimal::ZERO;
+        if closed {
             order.status = CopyOrderStatus::Filled;
         }
 
         match order.side {
             CopyOrderSide::Buy => {
+                // Release the filled notional from reserve. Because crossed
+                // orders take the whole remaining (full_fill) and sub-dust tails
+                // are absorbed, every order converges to `Filled`, at which point
+                // the cumulative released notional equals the reserved amount —
+                // so reserved_usd does not leak even when max_fill_ratio < 1.
                 self.account.reserved_usd =
                     (self.account.reserved_usd - notional).max(Decimal::ZERO);
                 // Update position.
@@ -216,7 +243,10 @@ impl CopyTickContext {
                 position.updated_at = self.now;
             }
             CopyOrderSide::Sell => {
-                // Realized P&L.
+                // Realized P&L. A sell only ever reduces a held position; orders
+                // for unheld inventory are rejected upstream in compute_copy_size,
+                // so the no-position branch is a defensive no-op that must NOT
+                // credit phantom proceeds.
                 if let Some(position) = self.positions.get_mut(&order.token_id) {
                     let pnl = (order.price - position.avg_price) * fill_size;
                     order.realized_pnl += pnl;
@@ -226,9 +256,6 @@ impl CopyTickContext {
                     position.size = (position.size - fill_size).max(Decimal::ZERO);
                     position.realized_pnl += pnl;
                     position.updated_at = self.now;
-                } else {
-                    // No position to sell — still credit the proceeds.
-                    self.account.available_usd += notional;
                 }
             }
         }

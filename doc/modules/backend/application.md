@@ -21,8 +21,8 @@
 | `market_event/` | 核心市场/事件/信号：`MarketEventService`、`MarketEventStore`（最大 Store trait） |
 | `execution/` | 执行管道：`ExecutionService`（组合 MarketEventService + RiskService） |
 | `risk.rs` | 风控：`RiskService`、`RiskStateStore`、`RiskPolicy`、kill-switch 命令 |
-| `rewards/` | 做市奖励：`RewardBotService`、`RewardBotStore`、live 执行模式、订单分页查询 |
-| `copytrade/` | 跟单：`CopyTradeService`、`CopyTradeStore`、模拟引擎 |
+| `rewards/` | 做市奖励：`RewardBotService`、`RewardBotStore`、live-only 状态与订单分页查询 |
+| `copytrade/` | 跟单：`CopyTradeService`、`CopyTradeStore`、确定性模拟引擎和风险准入 |
 | `arbitrage/` | 套利：`ArbitrageService`、`ArbitrageStore`、机会检测/验证 |
 | `news_ingestion.rs` | 新闻采集：`NewsIngestionService`、`NewsIngestionStore` |
 | `orderbook_cache.rs` | 盘口缓存：`OrderbookCache` trait |
@@ -82,13 +82,13 @@
 - Markets：`upsert_markets`、`list_markets`、`list_all_active_markets`、`active_market_summary`
 - Quote Plans：`save_quote_plans`（替换当前计划快照）、`list_quote_plans`
 - Orders/Positions/Events：完整 CRUD；订单支持 `RewardOrderListQuery` 后端分页并在 snapshot 中返回 `orders_page`；live worker 可按 external Polymarket order id 查 managed order，并用 fill id 做成交幂等
-- State Tick：`apply_simulation_tick`（历史命名；只原子持久化 orders/fills/positions/ledger/events，不修改奖励市场目录或 quote plan 快照）、`reset_simulation`（保留给本地/历史 validation 状态重置；live Reset 不调用它清账）
+- State Tick：`apply_tick_outcome`（原子持久化 orders/fills/positions/ledger/events，不修改奖励市场目录或 quote plan 快照）、`reset_state`（重置账户状态、清空 orders/fills/positions）
 - Control Commands：`enqueue_control_command`、`claim_next_control_command`、`complete_control_command`、`fail_control_command`
 
 **服务：** `RewardBotService` — 读写配置、市场管理、快照聚合、订单分页快照、live tick 计划准备、轻量 live state 读取、rewards 控制命令入队/领取/完成状态管理；不再依赖全局 `ModeStateStore`。修改 `account_id` 前会检查旧账户是否仍有 open-like 订单或非零持仓，有任一存在则拒绝切换。面向控制台的 snapshot 只通过 `active_market_summary` 返回市场统计（`status.markets_tracked` / `last_scan_at`），不读取或携带全量 active reward markets，避免 `/rewards` 首屏响应随奖励市场数量膨胀；sync/cancel/reconcile 使用的 `current_live_cycle_state` 也不扫描全量 active reward markets，完整候选市场只在 full tick 的 `prepare_live_cycle` 中传入。
 
 **执行模式：**
-- `RewardExecutionMode` 枚举保留用于向后兼容（serde 反序列化旧配置），但所有值均映射为 `Live`。`is_validation()` 始终返回 `false`，`is_live()` 始终返回 `true`。
+- `RewardExecutionMode` 枚举仅保留 `Live` 变体，`FromStr` 仍把旧字符串（`validation`、`dry_run`、`paper`、`simulation`）归一为 live；`execution_mode` 字段已从 `RewardBotConfig` / patch 中移除，Store 读取旧 `execution_mode` 配置键时直接忽略。
 - Worker 使用当前 quote plan 通过 `LivePolymarketConnector` 提交 post-only token 买单，并对本系统托管的 live 订单执行撤单；该模式由 rewards 配置控制，与全局 system mode 解耦，但遵守 `RiskService` 全局 kill switch。Polymarket 返回 `matched` / `delayed` 等非 live 接受状态时，worker 会把它视为 post-only 安全违规并立即尝试撤单，并保留为待最终成交/取消对账状态。
 
 **控制命令类型：**
@@ -99,9 +99,9 @@
 **订单分页类型：**
 - `RewardOrderListQuery`：orders search/status/sort/page/page_size 查询
 - `RewardListPage`：`page`、`page_size`、`total_items`、`total_pages`
-- `RewardBotSnapshot.orders_page`：当前 `orders` 数组对应的分页元数据
+- `RewardBotSnapshot.orders_page`：service 层当前 `orders` 数组对应的分页元数据；API live overlay 覆盖 `orders` 后目前不会同步改写它
 
-**Tick 引擎：** `run_reward_simulation_tick`（历史命名；在 `rewards/engine.rs` 中，通过 `include!` 拆分到 `engine/{reconcile,fills,quoting,rewards_calc,state}.rs`）。`is_validation()` 条件已移除，始终执行 `accrue_rewards`。
+**Tick 结果类型：** `RewardTickOutcome`（在 `rewards/engine.rs` 中定义），包含 account、markets、plans、orders、positions、fills、events 和 report。模拟引擎已移除；生产 live 路径通过 worker 的 `LivePolymarketConnector` 直接执行。
 
 **资金与盘口约束：**
 - 未成交 post-only maker 买单不在本地按全局 notional 硬锁同一笔 USDC，同一资金池可同时在多个不同市场报价。
@@ -134,6 +134,15 @@
 
 **模拟引擎：** `run_copy_simulation_tick`、`compute_copy_size`
 
+**跟单决策与风控语义：**
+- 未处理 source trades 按 `source_timestamp + id` 排序后依次决策；暂停/删除钱包遗留的未处理交易会以 `wallet_paused` 跳过。
+- cooldown 按 wallet + token 生效，并用已有 open orders / positions 的最近时间初始化；同一 tick 内已接受的交易会立即推进 cooldown。
+- per-wallet、per-market、total exposure 使用运行中累加器，并把同一 tick 先前计划的买单计入；新买单 size 会硬裁剪到三个 cap 的剩余 headroom。
+- UTC 日期切换时在 risk gate 前重置 `daily_realized_pnl`。
+- `MirrorPortfolioWeight` 使用源钱包全部持仓的 mark value 计算真实市场权重；缺少组合总值时回退固定小额，而不是退化成 all-in。
+- source trade ID 包含 wallet、tx、token、side、标准化 price/size 和 timestamp，既保持重扫幂等，也区分同交易哈希/同秒内的多笔 fill。
+- 无本地持仓的 sell 会被拒绝，避免模拟账本产生 phantom proceeds；crossed/marketable order 会完整成交，resting 概率成交才应用 `max_fill_ratio`，小于 0.01 share 的尾差会被吸收以释放 reserve。
+
 ### arbitrage — 套利
 
 **Store Trait：** `ArbitrageStore`
@@ -151,7 +160,8 @@
 ### orderbook_cache — 盘口缓存
 
 **Trait：** `OrderbookCache`
-- `get_book(token_id)`、`set_book(book)`、`set_books(books)`、`get_stale_tokens(token_ids, max_age_ms)`
+- `get_book(token_id)`、`set_book(book)`、`set_books(books)`、`get_stale_tokens(token_ids, max_age_ms)`、`entry_count()`
+- `max_age_ms <= 0` 表示关闭年龄 stale 检查，但具体实现仍可按 TTL 判定过期。
 
 **类型：** `CachedOrderBook`（token_id、bids、asks、observed_at、source）
 
@@ -186,7 +196,7 @@ execution ← (组合 market_event + risk + audit)
     ↑
 risk ← (依赖 market_event + system_mode)
     ↑
-rewards ← (独立；执行模式由 RewardBotConfig.execution_mode 控制)
+rewards ← (独立；仅支持 live 实盘模式)
 copytrade ← (独立，集成 wallet_analysis)
 arbitrage ← (可能使用 orderbook_cache)
 news_ingestion ← (独立，输出供 signal pipeline 使用)
@@ -196,10 +206,11 @@ orderbook_cache ← (共享基础设施 trait)
 ## 当前状态
 
 - 所有模块已实现完整的 Store trait 和 Service struct
-- Rewards 具备 validation 事件验证引擎和 live-first 执行模式；validation 资金池对开放买单使用软复用，成交时才消耗现金，但不再计提模拟奖励收益。
+- Rewards 已移除旧 validation/simulation tick 引擎，仅保留 live-only 配置、quote planner、状态类型和增量持久化端口。
 - Rewards live 模式已接入 post-only token 买单、撤单、本系统托管订单成交同步、成交后现金/库存/PnL 更新以及 exit/flatten sell 下单；独立账户余额/库存全量对账、订单计分查询和奖励结算对账仍待完成。
 - Rewards 已具备数据库控制命令队列，API 负责入队，worker 负责执行 run/cancel/reset。
 - Copytrade 已具备数据库控制命令队列，API 负责入队，worker 负责执行 run/analyze/cancel/reset。
+- Copytrade 模拟决策已按时间顺序处理并在同一 tick 内执行 cooldown、暂停钱包、日亏损和运行中 exposure cap；crossed fill、无仓卖出和组合权重计算已收敛到资金账本一致语义。
 - Wallet analysis 是纯计算，已完全实现
 - Arbitrage 是只读链路（发现/记录/校验/分析/展示），不会创建执行请求
 

@@ -1,6 +1,6 @@
 # 数据层（API Client + Actions + Contracts）
 
-最后更新：2026-06-03
+最后更新：2026-06-04
 
 ## 概述
 
@@ -111,7 +111,7 @@ OperationActionResult → 更新 UI 状态
 - 14 个 API 模块文件覆盖所有后端端点
 - `actions.ts` 集中管理所有写操作的 Server Actions
 - DTO 类型镜像完整覆盖后端 contracts crate
-- Rewards snapshot DTO 包含 `orders_page` 和 `config.execution_mode`，`readRewardBotSnapshot()` 支持订单服务端分页 query
+- Rewards snapshot DTO 包含 `orders_page`，但 `RewardBotConfigDto.execution_mode` 已移除；`readRewardBotSnapshot()` 仍支持订单分页 query。当前后端 handler 会用 Polymarket live open orders 覆盖 `orders`，因此 `orders_page` 暂时仍描述本地 managed-order 查询，而不是 live orders 的真实分页
 - positions.ts 是唯一使用 `mapItem` 做字段重命名的模块
 - 当前静态部署使用 `NEXT_PUBLIC_POLYEDGE_API_BASE_URL` 浏览器直连 Rust API，不再通过前端 Nginx 反代 `/api/v1`
 

@@ -1,31 +1,15 @@
+/// Execution mode is always live. The enum and legacy string aliases are kept
+/// only for backward-compatible deserialization of existing DB rows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RewardExecutionMode {
-    /// Deprecated: legacy event-validation mode, kept for serde backward compatibility.
-    Validation,
-    /// Live mode: worker submits/cancels Polymarket orders through the rewards
-    /// live executor.
     Live,
 }
 
 impl RewardExecutionMode {
     #[must_use]
     pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Validation => "live",
-            Self::Live => "live",
-        }
-    }
-
-    /// Always returns false — validation mode is deprecated.
-    #[must_use]
-    pub const fn is_validation(self) -> bool {
-        false
-    }
-
-    #[must_use]
-    pub const fn is_live(self) -> bool {
-        true
+        "live"
     }
 }
 
@@ -234,7 +218,6 @@ impl FromStr for RewardRiskSeverity {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RewardBotConfig {
     pub enabled: bool,
-    pub execution_mode: RewardExecutionMode,
     pub account_id: String,
     pub max_markets: u16,
     pub max_open_orders: u16,
@@ -253,11 +236,11 @@ pub struct RewardBotConfig {
     pub max_global_position_usd: Decimal,
     pub exit_markup_cents: Decimal,
     pub cancel_on_fill: bool,
-    /// Total validation fund pool shared across every market. Resting validation
-    /// buy orders reuse this pool; cash is consumed only when validation fills occur.
+    /// Total fund pool shared across every market. Resting buy orders reuse
+    /// this pool; cash is consumed only when fills occur.
     pub account_capital_usd: Decimal,
-    /// Legacy dry-run competition multiplier. Reward accrual now requires a
-    /// fresh cached book and measures competing depth directly from that book.
+    /// Competition multiplier. Reward accrual requires a fresh cached book
+    /// and measures competing depth directly from that book.
     pub reward_competition_factor: Decimal,
     /// Polymarket single-sided divisor `c` in the `Qmin` formula.
     pub single_sided_divisor_c: Decimal,
@@ -306,8 +289,6 @@ pub struct RewardBotConfig {
 pub struct RewardBotConfigPatch {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub enabled: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub execution_mode: Option<RewardExecutionMode>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub account_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -387,8 +368,7 @@ impl Default for RewardBotConfig {
     fn default() -> Self {
         Self {
             enabled: false,
-            execution_mode: RewardExecutionMode::Live,
-            account_id: "reward_validator".to_string(),
+            account_id: "reward_bot".to_string(),
             max_markets: 3,
             max_open_orders: 12,
             per_market_usd: decimal("20"),
@@ -504,9 +484,6 @@ impl RewardBotConfig {
         let mut next = self.clone();
         if let Some(enabled) = patch.enabled {
             next.enabled = enabled;
-        }
-        if let Some(execution_mode) = patch.execution_mode {
-            next.execution_mode = execution_mode;
         }
         if let Some(account_id) = patch.account_id {
             next.account_id = account_id;
@@ -707,16 +684,16 @@ pub struct RewardPosition {
     pub updated_at: OffsetDateTime,
 }
 
-/// Validation fund-pool ledger shared across every market the bot quotes.
+/// Fund-pool ledger shared across every market the bot quotes.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RewardAccountState {
     pub account_id: String,
     /// Total deposited capital (the configured fund pool).
     pub capital_usd: Decimal,
-    /// Cash not consumed by validation fills.
+    /// Cash not consumed by fills.
     pub available_usd: Decimal,
-    /// Legacy hard-reserve field. New rewards validation ticks release it and
-    /// keep resting buy reservations soft across markets.
+    /// Legacy hard-reserve field. New rewards ticks release it and keep resting
+    /// buy reservations soft across markets.
     pub reserved_usd: Decimal,
     pub realized_pnl: Decimal,
     pub reward_earned_usd: Decimal,
@@ -744,8 +721,8 @@ impl RewardAccountState {
     }
 }
 
-/// One validation/live execution event against a managed order (maker fill) or a
-/// taker flatten. Drives the "吃单" (order-taken) detail view on the frontend.
+/// One execution event against a managed order (maker fill) or a taker flatten.
+/// Drives the "吃单" (order-taken) detail view on the frontend.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RewardFill {
     pub id: String,
@@ -835,7 +812,7 @@ pub struct RewardBotRunReport {
     pub books_fetched: usize,
     pub plans_built: usize,
     pub eligible_plans: usize,
-    pub simulated_orders: usize,
+    pub placed_orders: usize,
     pub cancelled_orders: usize,
     pub filled_orders: usize,
     pub risk_cancelled_orders: usize,

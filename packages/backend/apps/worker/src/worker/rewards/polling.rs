@@ -24,7 +24,7 @@ async fn poll_reward_bot_loop(
         books_fetched: 0,
         plans_built: 0,
         eligible_plans: 0,
-        simulated_orders: 0,
+        placed_orders: 0,
         cancelled_orders: 0,
         filled_orders: 0,
         risk_cancelled_orders: 0,
@@ -41,16 +41,25 @@ async fn poll_reward_bot_loop(
         // Read the live config to get the reconcile interval.
         let config = state.reward_bot_service.read_config().await.unwrap_or_default();
         let reconcile_interval = Duration::from_secs(config.reconcile_interval_sec.max(1));
-        let now = Instant::now();
-        let since_full = now.duration_since(last_full_at);
+
+        // Always drain queued control commands first.
         let command_report =
             process_pending_reward_control_commands(state, &mut book_history).await?;
-
         if command_report.processed > 0 {
             accumulate_report(&mut total, &command_report.report);
-            last_full_at = Instant::now();
-        } else if since_full >= full_interval {
-            // --- Full simulation cycle (rebuilds plans) ---
+            // A RunOnce command already rebuilt quotes, so treat it as a full
+            // cycle; cancel/reset-only commands must NOT reset the timer or a
+            // steady stream of them would starve quote rebuilding entirely.
+            if command_report.ran_full_cycle {
+                last_full_at = Instant::now();
+            }
+        }
+
+        // Then advance the full/reconcile schedule on its own timer, independent
+        // of command activity.
+        let since_full = Instant::now().duration_since(last_full_at);
+        if since_full >= full_interval {
+            // --- Full cycle (rebuilds plans) ---
             let trace_id = new_trace_id();
             let report = run_reward_bot_once_with_history(state, &trace_id, &mut book_history).await?;
             accumulate_report(&mut total, &report);
@@ -118,7 +127,7 @@ fn accumulate_report(total: &mut RewardBotRunReport, report: &RewardBotRunReport
     total.books_fetched += report.books_fetched;
     total.plans_built += report.plans_built;
     total.eligible_plans += report.eligible_plans;
-    total.simulated_orders += report.simulated_orders;
+    total.placed_orders += report.placed_orders;
     total.cancelled_orders += report.cancelled_orders;
     total.filled_orders += report.filled_orders;
     total.risk_cancelled_orders += report.risk_cancelled_orders;

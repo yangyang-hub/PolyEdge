@@ -52,6 +52,12 @@ impl InMemoryOrderbookCache {
 
     fn bounded_book(&self, book: &CachedOrderBook) -> CachedOrderBook {
         let mut bounded = book.clone();
+        // Keep the BEST levels regardless of the writer's ordering: bids by
+        // descending price, asks by ascending price. Sorting here — the single
+        // choke-point every writer (WS, poll, ingest) passes through — guarantees
+        // the depth trim never discards top-of-book.
+        bounded.bids.sort_by(|a, b| b.price.cmp(&a.price));
+        bounded.asks.sort_by(|a, b| a.price.cmp(&b.price));
         bounded.bids.truncate(self.max_levels_per_side);
         bounded.asks.truncate(self.max_levels_per_side);
         bounded
@@ -105,7 +111,11 @@ impl OrderbookCache for InMemoryOrderbookCache {
         for token_id in token_ids {
             let is_stale = match books.get(token_id) {
                 Some(entry) => {
-                    entry.expires_at_ms <= now || now - entry.book.observed_at > max_age_ms
+                    // A non-positive max_age_ms disables the age-based check (only
+                    // TTL expiry counts); otherwise a 0 threshold would mark every
+                    // cached book stale on every poll and refetch the whole set.
+                    entry.expires_at_ms <= now
+                        || (max_age_ms > 0 && now - entry.book.observed_at > max_age_ms)
                 }
                 None => true,
             };

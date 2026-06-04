@@ -64,13 +64,16 @@
 - `connect(config)`：创建 `LocalSigner` → `ClobClient` → `auth_builder.authenticate()`
 - 签名类型支持 `eoa`、`proxy`、`gnosis_safe`、`poly_1271`；`poly_1271` 对应 Polymarket Deposit Wallet / `POLY_1271`，需要把 `funder` 配成 deposit wallet 地址。
 - `connect_user_ws()`：创建认证 WebSocket 客户端（订单/成交通道）
+- `balance()`：查询认证资金账户的 collateral balance
+- `list_open_orders()`：分页读取认证账户全部开放订单；遇到空 cursor、`LTE=`、空页、重复 cursor 或 1000 页 guard 时停止
 - `submit()`：兼容 execution pipeline 的 YES/NO 买单提交
-- `submit_token_order()`：按 token_id 直接提交 buy/sell；post-only 使用 GTC，非 post-only flatten 使用 FAK；返回实际提交 quantity，供 rewards live maker 使用
+- `submit_token_order()`：按 token_id 直接提交 buy/sell；post-only 使用 GTC，非 post-only flatten 使用 FAK；提交前把价格收敛到最多 2 位小数，并返回实际提交 quantity，供 rewards live maker 使用
 - `cancel_order()`：按 Polymarket order id 撤销单笔订单
 - `poll_order_status()` / `collect_trade_updates()`：通过 CLOB 单订单接口查询；仅返回 `CONFIRMED` trade 供入账，live / 普通 GTC unmatched 状态可立即按 open 返回，并在所有关联 trade 终态后返回取消、matched 或 FAK unmatched 终态
 - **`LivePolymarketTradeSyncOutcome`**：包含 confirmed `updates` 与安全可应用的 `order_status`；pending/mined/retrying trade 会阻止 terminal status 提前返回
+- **`PolymarketOpenOrder`**：隔离 SDK 的开放订单类型，供 API live snapshot overlay 使用
 - 用途：live 模式下的订单管理、rewards live maker 和 copytrade 实盘骨架
-- 当前范围：支持已有、已 funded、已 approve 的 Deposit Wallet 通过 CLOB V2 下单/撤单；`poly_1271` 下单前会调用 CLOB balance allowance update。成交同步会对 maker 订单使用对应 maker order 的 `matched_amount`，避免把整笔 taker trade size 误记到单个 maker 订单。尚未实现 relayer 建钱包、pUSD 入金/approval 或 deposit wallet 生命周期管理。
+- 当前范围：支持已有、已 funded、已 approve 的 Deposit Wallet 通过 CLOB V2 下单/撤单；`poly_1271` 下单前会调用 CLOB balance allowance update。成交同步按 maker order 聚合同一 trade 中重复出现的全部 `matched_amount`，使用 size-weighted price/fee，避免把整笔 taker trade size 误记到单个 maker 订单或漏记重复 maker entry。尚未实现 relayer 建钱包、pUSD 入金/approval 或 deposit wallet 生命周期管理。
 
 ### Polymarket Rewards（奖励市场）
 
@@ -86,6 +89,7 @@
 - **`OrderbookHttpClient`**：API/Worker 读取独立 orderbook 服务缓存；Worker 通过 `register_tokens()` 原子替换来源 token 集合
 - register/ingest/delete 写请求携带 `x-polyedge-orderbook-token`，值来自 `POLYEDGE_ORDERBOOK__WRITE_TOKEN`
 - HTTP 注册和注销失败会返回 `Result` 错误，不再静默吞掉非成功响应
+- 单盘口读取只把 404 映射为 `None`；其他非成功 HTTP 状态会作为 dependency error 返回，不尝试把错误响应解码成盘口
 
 ### News（RSS/Atom 新闻）
 
@@ -105,14 +109,14 @@
 ## 依赖关系
 
 - **上游**：`domain`（AppError、枚举、数值类型）、`application`（部分 trait）
-- **下游**：`apps/worker`（market_sync、arbitrage、copytrade、rewards、news、orderbook_stream）
+- **下游**：`apps/orderbook`（market sync、WS/poll）、`apps/worker`（arbitrage、copytrade、rewards、news）、`apps/api`（Rewards live snapshot overlay）
 
 ## 当前状态
 
 - 已实现当前系统使用的 Polymarket 公共市场、盘口、Data API、Rewards API 和 CLOB V2 交易 connector；Deposit Wallet relayer 生命周期接口尚未接入
 - Gamma keyset 分页已具备重复 cursor / 末页 sentinel / 最大页数保护，并按 market id 去重，避免外部 API 游标异常导致 market sync 无限累积内存
 - Paper Trading 执行器已完整实现
-- Live connector 已具备 CLOB V2 认证、用户 WS、订单提交、按 token_id 的 rewards buy/sell 提交和单笔撤单能力；post-only 使用 GTC，immediate flatten 使用 FAK，订单/关联成交通过单订单接口对账，轮询路径仅在 trade `CONFIRMED` 后返回成交；签名类型已覆盖 EOA、Proxy、Gnosis Safe 和 Deposit Wallet (`poly_1271`)；订单 acceptance 返回实际提交 quantity，trade/WS 成交归一化按订单自身成交量入账；仍需要真实凭证和小额账户验证
+- Live connector 已具备 CLOB V2 认证、余额查询、开放订单全量分页、用户 WS、订单提交、按 token_id 的 rewards buy/sell 提交和单笔撤单能力；post-only 使用 GTC，immediate flatten 使用 FAK，订单价格当前统一收敛到 0.01 精度，更粗的 per-market tick-size 尚未接入；订单/关联成交通过单订单接口对账，轮询路径仅在 trade `CONFIRMED` 后返回成交；签名类型已覆盖 EOA、Proxy、Gnosis Safe 和 Deposit Wallet (`poly_1271`)；订单 acceptance 返回实际提交 quantity，trade/WS 成交归一化按订单自身成交量入账；仍需要真实凭证和小额账户验证
 - RSS connector 支持 Atom/RSS 两种格式
 
 ## 修改检查清单

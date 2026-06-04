@@ -2,9 +2,8 @@ use super::*;
 use polyedge_application::{
     ApproveSignalCommand, ArbitrageAnalysisRunListFilters, ArbitrageScanListFilters,
     EventListFilters, EvidenceListFilters, ExecutionRequestListFilters, OrderDraftListFilters,
-    OrderListFilters, PageQuery, PositionListFilters, RewardBotConfigPatch, RewardExecutionMode,
-    SignalListFilters, SubmitExecutionCommand, SyncExternalOrderStatusCommand, TradeListFilters,
-    demo_fixture_bundle,
+    OrderListFilters, PageQuery, PositionListFilters, RewardBotConfigPatch, SignalListFilters,
+    SubmitExecutionCommand, SyncExternalOrderStatusCommand, TradeListFilters, demo_fixture_bundle,
 };
 use polyedge_domain::{
     ExecutionRequestStatus, OrderDraftStatus, OrderStatus, Quantity, SignalLifecycleState,

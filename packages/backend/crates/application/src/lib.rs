@@ -74,10 +74,9 @@ pub use rewards::{
     RewardFillRole, RewardListPage, RewardLiveCycle, RewardMarket, RewardOrderBook,
     RewardOrderListQuery, RewardOrderPage, RewardOrderSide, RewardOrderSortField,
     RewardOrderStatusFilter, RewardPosition, RewardQuoteLeg, RewardQuotePlan,
-    RewardQuotePlanListQuery, RewardQuotePlanPage, RewardQuotePlanSortField,
-    RewardRiskEvent,
-    RewardRiskSeverity, RewardSimulationOutcome, RewardToken, build_reward_quote_plans,
-    new_risk_event, select_reward_book_token_ids, validate_reward_list_limit,
+    RewardQuotePlanListQuery, RewardQuotePlanPage, RewardQuotePlanSortField, RewardRiskEvent,
+    RewardRiskSeverity, RewardTickOutcome, RewardToken, build_reward_quote_plans, new_risk_event,
+    select_reward_book_token_ids, validate_reward_list_limit,
 };
 pub use risk::{
     ApproveSignalCommand, ApproveSignalReceipt, KillSwitchReceipt, RejectSignalCommand,

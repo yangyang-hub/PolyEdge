@@ -246,7 +246,7 @@ fn live_min_depth_cancel_reason(
     let depth_usd: Decimal = book
         .bids
         .iter()
-        .filter(|level| level.price >= order.price)
+        .filter(|level| level.price > order.price)
         .map(|level| (level.price * level.size).round_dp(4))
         .sum();
     if depth_usd < config.min_depth_usd {

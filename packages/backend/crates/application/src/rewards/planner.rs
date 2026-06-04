@@ -217,7 +217,7 @@ fn build_reward_quote_plan(
         score,
         eligible,
         reason: if eligible {
-            "eligible for validation/live post-only quotes".to_string()
+            "eligible for live post-only quotes".to_string()
         } else {
             "score is below threshold".to_string()
         },

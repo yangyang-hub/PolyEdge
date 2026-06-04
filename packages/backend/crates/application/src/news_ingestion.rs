@@ -1,5 +1,5 @@
-use async_trait::async_trait;
 use crate::pagination::{PageQuery, Paginated};
+use async_trait::async_trait;
 use polyedge_domain::{AppError, Probability, Result};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};

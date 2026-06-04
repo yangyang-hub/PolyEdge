@@ -21,7 +21,7 @@ pub use polymarket::{
     LivePolymarketTradeSyncRequest, POLYMARKET_CONNECTOR_NAME, PolymarketAcceptedOrderStatus,
     PolymarketBinaryBookSnapshot, PolymarketBookConnector, PolymarketBookLevel,
     PolymarketClosedPosition, PolymarketDataApiConnector, PolymarketGammaConnector,
-    PolymarketGammaMarket, PolymarketLeaderboardEntry, PolymarketMarketRefs,
+    PolymarketGammaMarket, PolymarketLeaderboardEntry, PolymarketMarketRefs, PolymarketOpenOrder,
     PolymarketOrderRejection, PolymarketPublicProfile, PolymarketSignatureScheme,
     PolymarketSingleTokenBook, PolymarketTokenOrderSide, PolymarketTrade, PolymarketWalletActivity,
     PolymarketWalletPosition, normalize_polymarket_order_status_update,

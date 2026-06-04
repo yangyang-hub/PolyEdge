@@ -105,6 +105,7 @@ Report: `CopyTradeRunReport { wallets_scanned, trades_detected, orders_placed, o
 
 约束：worker 是 copytrade 手动控制命令和跟单循环的唯一执行者。API 只把 `run_once` / `analyze_wallets` / `cancel_all` / `reset` 写入 `copytrade_control_commands`；worker 每轮先领取并处理待执行命令，处理到命令时跳过本轮自动 tick。
 Copytrade 每轮会用当前钱包活动 token 替换 `copytrade` 来源的 orderbook 订阅集合，不保留历史活动 token，避免 orderbook 服务 registry 长期单调增长。
+应用服务会把未处理 source trades 按时间排序，并在同一 tick 内依次执行暂停钱包、wallet+token cooldown、UTC 日亏损和运行中 per-wallet/per-market/total exposure cap；accepted buy 会立即占用后续决策的 headroom。crossed 模拟订单完整成交，resting 概率成交才应用 `max_fill_ratio`，无本地持仓的 sell 会被跳过。
 
 ### rewards — 奖励策略与控制命令
 
@@ -121,13 +122,13 @@ reward_bot_service.claim_next_control_command()
         → reconcile_interval_sec: 读取活跃盘口并对本系统托管订单做成交同步和安全撤单检查
 ```
 
-Report: `RewardBotRunReport { markets_scanned, books_fetched, plans_built, eligible_plans, simulated_orders, cancelled_orders, filled_orders, reward_accrued }`
+Report: `RewardBotRunReport { markets_scanned, books_fetched, plans_built, eligible_plans, placed_orders, cancelled_orders, filled_orders, risk_cancelled_orders, reward_accrued }`
 
-约束：worker 是 rewards 策略和控制命令的唯一执行者。API 只把 `run_once` / `cancel_all` / `reset` 写入 `reward_control_commands`；worker 在 full tick 和每个 fast reconcile 周期前都领取待执行命令，避免命令等待完整轮询周期。`run_once` 会强制执行一次 live 策略 tick（即使自动开关关闭，但不会绕过全局 kill switch）；`cancel_all` 调用 Polymarket cancel，撤单拒绝或结果未知会让命令失败；`reset` 按 cancel-all 执行且不会清空本地账本，避免产生孤儿实盘订单。服务模式下 `POLYEDGE_WORKER__POLL_REWARD_BOT=true` 会运行与 `poll-reward-bot` CLI 相同的 full tick + fast reconcile loop，`RewardBotConfig.reconcile_interval_sec` 会生效。
+约束：worker 是 rewards 策略和控制命令的唯一执行者。API 只把 `run_once` / `cancel_all` / `reset` 写入 `reward_control_commands`；worker 在 full tick 和每个 fast reconcile 周期前都领取待执行命令，避免命令等待完整轮询周期。`run_once` 会强制执行一次 live 策略 tick（即使自动开关关闭，但不会绕过全局 kill switch）并重置 full-cycle 计时；仅处理 cancel/reset 不会重置该计时，避免持续控制命令饿死报价重建。`cancel_all` 调用 Polymarket cancel，撤单拒绝或结果未知会让命令失败；`reset` 按 cancel-all 执行且不会清空本地账本，避免产生孤儿实盘订单。服务模式下 `POLYEDGE_WORKER__POLL_REWARD_BOT=true` 会运行与 `poll-reward-bot` CLI 相同的 full tick + fast reconcile loop，`RewardBotConfig.reconcile_interval_sec` 会生效。
 
 自动 tick 只从 Postgres 的 `reward_markets` 读取奖励市场、通过 `OrderbookHttpClient`（HTTP 调用 polyedge-orderbook 服务）读取盘口。Postgres 候选 market pool 会关联 Gamma `markets`，优先选择 open + tradable 且 `volume_24h` 高的市场，随后按配置预过滤奖励市场，再并发读取候选盘口缓存；若本 tick 没有新鲜缓存盘口，不会提交新 post-only 订单。
 
-live 模式会用 `LivePolymarketConnector::submit_token_order()` 提交 post-only GTC token 买单，用 `cancel_order()` 撤销本系统托管订单；未成交 post-only maker 买单不在本地按全局 notional 硬锁资金。live placement 要求目标两腿都有非空盘口，`stale_book_ms=0` 只关闭盘口年龄检查；live full tick 和 fast reconcile 都会读取开放订单/持仓活跃 token 的盘口，缺盘口、空盘口、过期盘口、深度不足、bid rank 过高、盘口历史窗口风险、定期 requote 或全局 kill switch 会触发买单撤单，即使 `enabled=false` 已停止新增报价。每笔外部下单、撤单、已确认成交和状态变化会立即落库；撤单接受后本地订单保留为待最终对账，下一轮先同步成交再确认取消，避免 cancel/fill 竞态丢成交；若单订单接口仍明确返回 live，则转为强制撤单重试。Polymarket 返回 post-only 非 live 接受状态（如 `matched` / `delayed`）时会被视为安全违规并立即尝试撤单；撤单明确拒绝会在后续 reconcile 重试，结果未知才保留待最终对账状态。worker 会对本系统托管 rewards 订单通过单订单接口轮询关联 trades，仅在 trade 达到 `CONFIRMED` 后按 external trade id + external order id 幂等写入 fills、现金、库存和 PnL；同一订单同轮多笔 trade 会基于本轮 working order 累计 `filled_size`，避免 overfill。取消、matched 或 FAK unmatched 终态会等待全部关联 trade 进入 confirmed/failed 终态后再落本地终态，避免 pending settlement 导致重复退出。买入成交会先持久化成交，再撤 sibling legs 并提交 `ExitAtMarkup` 或 `FlattenImmediately` sell；`FlattenImmediately` 使用 FAK，缺 bid、退出单被拒绝，或非 cancel-all 的退出单被外部确认取消/终态部分成交且仍有持仓时，会持久化新的本地 `ExitPending` deferred sell 并在后续 full/reconcile 重试。独立账户余额/库存全量对账、订单计分查询和奖励结算对账尚未闭环，worker 仍需要独立维护组合风险，因为 CLOB 的 balance/allowance 检查不是跨市场组合风控系统。
+live 模式会用 `LivePolymarketConnector::submit_token_order()` 提交 post-only GTC token 买单，用 `cancel_order()` 撤销本系统托管订单；未成交 post-only maker 买单不在本地按全局 notional 硬锁资金。live placement 要求目标两腿都有非空盘口，`stale_book_ms=0` 只关闭盘口年龄检查；live full tick 和 fast reconcile 都会读取开放订单/持仓活跃 token 的盘口，缺盘口、空盘口、过期盘口、严格优于本单价格的 bid 深度不足、bid rank 过高、盘口历史窗口风险、定期 requote 或全局 kill switch 会触发买单撤单，即使 `enabled=false` 已停止新增报价。每笔外部下单、撤单、已确认成交和状态变化会立即落库；撤单/成交同步会跳过 `rew_` / `rewx_` / `rewfill_` / `rewevt_` 等本地 synthetic ID，避免把内部 ID 发送给 CLOB。撤单接受后本地订单保留为待最终对账，下一轮先同步成交再确认取消，避免 cancel/fill 竞态丢成交；若单订单接口仍明确返回 live，则转为强制撤单重试。Polymarket 返回 post-only 非 live 接受状态（如 `matched` / `delayed`）时会被视为安全违规并立即尝试撤单；撤单明确拒绝会在后续 reconcile 重试，结果未知才保留待最终对账状态。worker 会对本系统托管 rewards 订单通过单订单接口轮询关联 trades，仅在 trade 达到 `CONFIRMED` 后按 external trade id + external order id 幂等写入 fills、现金、库存和 PnL；同一订单同轮多笔 trade 会基于本轮 working order 累计 `filled_size`，避免 overfill。取消、matched 或 FAK unmatched 终态会等待全部关联 trade 进入 confirmed/failed 终态后再落本地终态，避免 pending settlement 导致重复退出。买入成交会先持久化成交，再撤 sibling legs 并提交 `ExitAtMarkup` 或 `FlattenImmediately` sell；卖出只在本地已有已知成本基准时计算 realized PnL，但始终按净 proceeds 更新 available cash。`FlattenImmediately` 使用 FAK，缺 bid、退出单被拒绝，或非 cancel-all 的退出单被外部确认取消/终态部分成交且仍有持仓时，会持久化新的本地 `ExitPending` deferred sell 并在后续 full/reconcile 重试。独立账户余额/库存全量对账、订单计分查询和奖励结算对账尚未闭环，worker 仍需要独立维护组合风险，因为 CLOB 的 balance/allowance 检查不是跨市场组合风控系统。
 
 ### orderbook_stream — 盘口流（已迁移到 orderbook 服务）
 
@@ -172,7 +173,7 @@ Report: `NewsIngestionRunReport { sources_scanned/succeeded/failed, fetched, ins
 - register-orderbook-tokens 会按 `POLYEDGE_ORDERBOOK_STREAM__MAX_TOKENS` 限制总量并固定优先级：`rewards_active`、`exec_orders`、`rewards_candidates`；候选 token 优先来自 open/tradable 且 `volume_24h` 高的市场
 - 默认大部分 worker 通过配置开关控制启用/禁用
 - Polymarket live 任务需要真实凭证；Deposit Wallet 使用 `POLYEDGE_POLYMARKET__SIGNATURE_TYPE=poly_1271` + `POLYEDGE_POLYMARKET__FUNDER=<deposit_wallet>`，worker 会通过 connector 走 CLOB V2 `POLY_1271` 下单/撤单路径。
-- 当前 `cargo check --workspace --tests` 编译通过；worker 生产入口不保留仅测试目标使用的 `RewardExecutionMode` 间接导入，测试目标显式导入该类型。
+- Rewards 生产与测试入口均已移除 `RewardSimulationOutcome` / `simulated_orders` 旧命名，统一使用 `RewardTickOutcome` / `placed_orders`。
 
 ## 修改检查清单
 

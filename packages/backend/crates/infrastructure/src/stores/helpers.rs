@@ -8,7 +8,9 @@ fn postgres_decode_error(error: sqlx::Error) -> AppError {
 fn apply_reward_config_value(config: &mut RewardBotConfig, key: &str, value: &str) -> Result<()> {
     match key {
         "enabled" => config.enabled = parse_bool_config(key, value)?,
-        "execution_mode" => config.execution_mode = RewardExecutionMode::from_str(value)?,
+        "execution_mode" => {
+            // Legacy key: accept and ignore; always live.
+        }
         "account_id" => config.account_id = value.to_string(),
         "max_markets" => config.max_markets = parse_u16_config(key, value)?,
         "max_open_orders" => config.max_open_orders = parse_u16_config(key, value)?,
@@ -61,7 +63,6 @@ fn apply_reward_config_value(config: &mut RewardBotConfig, key: &str, value: &st
 fn reward_config_entries(config: &RewardBotConfig) -> Vec<(&'static str, String)> {
     vec![
         ("enabled", config.enabled.to_string()),
-        ("execution_mode", config.execution_mode.as_str().to_string()),
         ("account_id", config.account_id.clone()),
         ("max_markets", config.max_markets.to_string()),
         ("max_open_orders", config.max_open_orders.to_string()),

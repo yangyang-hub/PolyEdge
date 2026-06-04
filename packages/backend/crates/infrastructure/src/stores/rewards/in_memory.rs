@@ -378,9 +378,9 @@ impl RewardBotStore for InMemoryRewardBotStore {
         Ok(self.fills.read().await.iter().any(|fill| fill.id == fill_id))
     }
 
-    async fn apply_simulation_tick(
+    async fn apply_tick_outcome(
         &self,
-        outcome: &RewardSimulationOutcome,
+        outcome: &RewardTickOutcome,
         _trace_id: &str,
     ) -> Result<()> {
         {
@@ -421,7 +421,7 @@ impl RewardBotStore for InMemoryRewardBotStore {
         Ok(())
     }
 
-    async fn reset_simulation(&self, config: &RewardBotConfig, _trace_id: &str) -> Result<()> {
+    async fn reset_state(&self, config: &RewardBotConfig, _trace_id: &str) -> Result<()> {
         self.orders.write().await.clear();
         self.positions.write().await.clear();
         self.fills.write().await.clear();

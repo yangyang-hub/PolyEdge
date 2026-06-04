@@ -2,6 +2,10 @@ use polyedge_application::OrderbookSubscriptionRegistry;
 use std::collections::HashSet;
 use std::time::Instant;
 
+/// Maximum distinct sources the registry retains. Enforced atomically inside
+/// `register_tokens` (the HTTP layer also rejects early with a friendlier 400).
+const MAX_REGISTRY_SOURCES: usize = 32;
+
 /// 基于内存的订阅注册中心实现。
 ///
 /// 每个 `source` 维护独立的有序 token 集合。注册会原子替换来源集合，
@@ -37,6 +41,19 @@ impl OrderbookSubscriptionRegistry for InMemoryOrderbookSubscriptionRegistry {
             .cloned()
             .collect::<Vec<_>>();
         let mut tokens = self.tokens.write().await;
+        // Enforce the source cap atomically under the write lock: a brand-new
+        // source registering while already at capacity is rejected. Doing this
+        // here (rather than a separate count-then-insert in the caller) closes
+        // the check-then-act race that could push the registry past the cap.
+        if !replacement.is_empty()
+            && !tokens.contains_key(source)
+            && tokens.len() >= MAX_REGISTRY_SOURCES
+        {
+            return Err(polyedge_domain::AppError::invalid_input(
+                "ORDERBOOK_REGISTRY_FULL",
+                format!("orderbook registry supports at most {MAX_REGISTRY_SOURCES} sources"),
+            ));
+        }
         let changed = if replacement.is_empty() {
             tokens.remove(source).is_some()
         } else if tokens.get(source) == Some(&replacement) {

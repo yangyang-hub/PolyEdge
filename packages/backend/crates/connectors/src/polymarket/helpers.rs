@@ -361,13 +361,31 @@ fn trade_order_fill(
         });
     }
 
-    trade
+    // A single trade can list the same maker order more than once (multiple
+    // maker fills crossed in one match event). Aggregate every matching entry
+    // so the full matched size is credited — not just the first — otherwise the
+    // order's filled size and inventory are understated.
+    let mut total_size = Decimal::ZERO;
+    let mut total_notional = Decimal::ZERO;
+    let mut fee_weighted = Decimal::ZERO;
+    for maker_order in trade
         .maker_orders
         .iter()
-        .find(|maker_order| maker_order.order_id == external_order_id)
-        .map(|maker_order| OrderSpecificTradeFill {
-            price: maker_order.price,
-            size: maker_order.matched_amount,
-            fee_rate_bps: maker_order.fee_rate_bps,
-        })
+        .filter(|maker_order| maker_order.order_id == external_order_id)
+    {
+        total_size += maker_order.matched_amount;
+        total_notional += maker_order.price * maker_order.matched_amount;
+        fee_weighted += maker_order.fee_rate_bps * maker_order.matched_amount;
+    }
+
+    if total_size <= Decimal::ZERO {
+        return None;
+    }
+
+    Some(OrderSpecificTradeFill {
+        // Size-weighted average price/fee across the aggregated maker fills.
+        price: total_notional / total_size,
+        size: total_size,
+        fee_rate_bps: fee_weighted / total_size,
+    })
 }

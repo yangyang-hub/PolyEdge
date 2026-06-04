@@ -13,7 +13,7 @@ use polyedge_application::{
     RewardAccountState, RewardBookLevel, RewardBotConfig, RewardBotRunReport, RewardControlAction,
     RewardControlCommand, RewardFill, RewardFillRole, RewardMarket, RewardOrderBook,
     RewardOrderSide, RewardPosition, RewardQuotePlan, RewardRiskEvent, RewardRiskSeverity,
-    RewardSimulationOutcome, RewardToken, SignalListFilters, SyncExternalOrderStatusCommand,
+    RewardTickOutcome, RewardToken, SignalListFilters, SyncExternalOrderStatusCommand,
     WalletActivityInput, WalletFeedInput, WalletPositionInput, build_arbitrage_analysis,
     market_book_snapshot_id, new_risk_event, select_reward_book_token_ids,
 };
@@ -285,9 +285,9 @@ async fn main() -> Result<()> {
                 books_fetched = report.books_fetched,
                 plans_built = report.plans_built,
                 eligible_plans = report.eligible_plans,
-                simulated_orders = report.simulated_orders,
+                placed_orders = report.placed_orders,
                 cancelled_orders = report.cancelled_orders,
-                "ran rewards bot simulation once",
+                "ran rewards bot once",
             );
             Ok(())
         }
@@ -299,7 +299,7 @@ async fn main() -> Result<()> {
                 books_fetched = report.books_fetched,
                 plans_built = report.plans_built,
                 eligible_plans = report.eligible_plans,
-                simulated_orders = report.simulated_orders,
+                placed_orders = report.placed_orders,
                 cancelled_orders = report.cancelled_orders,
                 "reward bot polling stopped",
             );

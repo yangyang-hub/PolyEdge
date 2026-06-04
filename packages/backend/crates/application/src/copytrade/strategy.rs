@@ -1,13 +1,31 @@
 /// Compute the copy size for a source trade based on the configured sizing mode.
 /// Pure function — no I/O. Called only after `check_skip_reasons` returns `None`.
+///
+/// `source_portfolio_usd` is the source wallet's total portfolio value (sum of
+/// position market values), used by `MirrorPortfolioWeight`. Pass `Decimal::ZERO`
+/// when it is unknown (the mode then falls back to a small fixed allocation).
 pub fn compute_copy_size(
     config: &CopyTradeConfig,
     source_trade: &SourceTrade,
     source_position: Option<&WalletPositionInput>,
+    source_portfolio_usd: Decimal,
     account: &CopyAccountState,
     our_position: Option<&CopyPosition>,
 ) -> CopyDecision {
     let sizing = config.sizing_mode;
+
+    // Never sell what we do not hold locally — otherwise the simulation ledger
+    // would mint phantom proceeds for a position that was never funded.
+    if source_trade.side == CopyOrderSide::Sell
+        && our_position.is_none_or(|pos| pos.size <= Decimal::ZERO)
+    {
+        return CopyDecision {
+            copy: false,
+            reason: "no_local_position_to_sell".into(),
+            size: Decimal::ZERO,
+            price: source_trade.price,
+        };
+    }
 
     let target_usd = match sizing {
         CopySizingMode::FixedUsd => {
@@ -25,15 +43,13 @@ pub fn compute_copy_size(
             target.min(account.available_usd)
         }
         CopySizingMode::MirrorPortfolioWeight => {
-            // Mirror the source wallet's portfolio weight in this market.
-            // Approximate: source portfolio value ≈ sum of their position
-            // cur_prices × sizes + available (which we don't have). Instead,
-            // use the position's cost basis as a proxy for their total
-            // allocation and compute our target proportionally.
+            // Mirror the weight this market holds inside the source wallet's
+            // portfolio: weight = market_value / total_portfolio_value, then
+            // target = our_capital × weight.
             let Some(source_pos) = source_position else {
                 // No source position data — fall back to a small allocation.
-                let fallback_size =
-                    config.fixed_usd_per_trade.min(account.available_usd) / source_trade.price.max(Decimal::from_str_exact("0.01").expect("valid"));
+                let fallback_size = config.fixed_usd_per_trade.min(account.available_usd)
+                    / source_trade.price.max(Decimal::from_str_exact("0.01").expect("valid"));
                 return CopyDecision {
                     copy: true,
                     reason: "mirror_weight_no_source_position_fallback".into(),
@@ -41,9 +57,26 @@ pub fn compute_copy_size(
                     price: source_trade.price,
                 };
             };
-            let source_cost = source_pos.size * source_pos.avg_price;
-            let source_portfolio_approx = source_cost.max(Decimal::ONE);
-            let weight = source_cost / source_portfolio_approx;
+            // Use live price when available, else cost basis, to value the leg.
+            let mark_price = if source_pos.cur_price > Decimal::ZERO {
+                source_pos.cur_price
+            } else {
+                source_pos.avg_price
+            };
+            let market_value = source_pos.size * mark_price;
+            if source_portfolio_usd <= Decimal::ZERO || market_value <= Decimal::ZERO {
+                // Unknown portfolio total — fall back to a small allocation
+                // rather than the degenerate weight=1 (all-in) result.
+                let fallback_size = config.fixed_usd_per_trade.min(account.available_usd)
+                    / source_trade.price.max(Decimal::from_str_exact("0.01").expect("valid"));
+                return CopyDecision {
+                    copy: true,
+                    reason: "mirror_weight_no_portfolio_total_fallback".into(),
+                    size: fallback_size,
+                    price: source_trade.price,
+                };
+            }
+            let weight = (market_value / source_portfolio_usd).min(Decimal::ONE);
             let target_usd = account.capital_usd * weight;
             target_usd.min(account.available_usd)
         }

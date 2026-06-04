@@ -57,13 +57,17 @@ fn decimal(value: &str) -> Decimal {
     Decimal::from_str_exact(value).expect("static copytrade configuration default must be valid")
 }
 
-/// Generate a deterministic source trade ID from the wallet/tx/token/side/timestamp
-/// so that re-scans of the same Data API page produce the same ID and dedup correctly.
+/// Generate a deterministic source trade ID from the wallet/tx/token/side/price/size/timestamp
+/// so that re-scans of the same Data API page produce the same ID and dedup correctly,
+/// while still distinguishing multiple distinct fills that share a tx hash and second
+/// (price/size are immutable per execution, so re-scans stay idempotent).
 fn source_trade_id(
     wallet_address: &str,
     tx_hash: &str,
     token_id: &str,
     side: &str,
+    price: Decimal,
+    size: Decimal,
     timestamp_secs: i64,
 ) -> String {
     use std::collections::hash_map::DefaultHasher;
@@ -74,6 +78,9 @@ fn source_trade_id(
     tx_hash.hash(&mut hasher);
     token_id.hash(&mut hasher);
     side.hash(&mut hasher);
+    // Normalize scale so "0.50" and "0.5" hash identically across re-scans.
+    price.normalize().to_string().hash(&mut hasher);
+    size.normalize().to_string().hash(&mut hasher);
     timestamp_secs.hash(&mut hasher);
     let hash = hasher.finish();
     format!("ct_st_{hash:016x}")

@@ -46,7 +46,7 @@ fn floor_to_tick(value: Decimal, tick: Decimal) -> Decimal {
 fn normalize_account_id(value: &str) -> String {
     let trimmed = value.trim();
     if trimmed.is_empty() {
-        "reward_simulator".to_string()
+        "reward_bot".to_string()
     } else {
         trimmed.to_string()
     }

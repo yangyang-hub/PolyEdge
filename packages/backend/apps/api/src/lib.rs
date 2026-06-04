@@ -14,23 +14,25 @@ use polyedge_application::{
     ArbitrageOpportunityStatus, ArbitrageOpportunityType, ArbitrageOpportunityValidationView,
     ArbitrageOpportunityView, ArbitrageScanListFilters, ArbitrageScanView,
     ArbitrageValidationStatus, AuthenticatedActor, CopyControlAction, CopyTradeConfigPatch,
-    CopyTradeSnapshot, EventListFilters, EventView,
-    EvidenceListFilters, EvidenceView, ExecutionFillResult, ExecutionRequestListFilters,
-    ExecutionRequestView, ExecutionSubmissionReceipt, IdempotencyBegin, IdempotencyRequest,
-    KillSwitchReceipt, MarketListFilters, MarketSortField, MarketView, ModeTransitionCommand,
-    NewsRawEventListFilters, NewsRawEventView, NewsSourceHealthListFilters, NewsSourceHealthView,
-    OrderDraftListFilters, OrderDraftView, OrderListFilters, OrderView, PageQuery, Paginated,
-    PositionListFilters, PositionView, ProbabilityEstimateListFilters, ProbabilityEstimateView,
-    ReconcileExternalTradeCommand, ReleaseKillSwitchCommand, RewardBotConfigPatch,
-    RewardBotSnapshot, RewardControlAction, RewardOrderListQuery, RewardQuotePlanListQuery,
-    RiskPolicy, RiskStateView,
+    CopyTradeSnapshot, EventListFilters, EventView, EvidenceListFilters, EvidenceView,
+    ExecutionFillResult, ExecutionRequestListFilters, ExecutionRequestView,
+    ExecutionSubmissionReceipt, IdempotencyBegin, IdempotencyRequest, KillSwitchReceipt,
+    ManagedRewardOrder, ManagedRewardOrderStatus, MarketListFilters, MarketSortField, MarketView,
+    ModeTransitionCommand, NewsRawEventListFilters, NewsRawEventView, NewsSourceHealthListFilters,
+    NewsSourceHealthView, OrderDraftListFilters, OrderDraftView, OrderListFilters, OrderView,
+    PageQuery, Paginated, PositionListFilters, PositionView, ProbabilityEstimateListFilters,
+    ProbabilityEstimateView, ReconcileExternalTradeCommand, ReleaseKillSwitchCommand,
+    RewardBotConfigPatch, RewardBotSnapshot, RewardControlAction, RewardOrderListQuery,
+    RewardOrderSide, RewardPosition, RewardQuotePlanListQuery, RiskPolicy, RiskStateView,
     SignalListFilters, SignalTransitionListFilters, SignalTransitionView, SignalView, SortOrder,
     SubmitExecutionCommand, SyncExternalOrderStatusCommand, TrackedWalletStatus, TradeListFilters,
     TradeView, TriggerKillSwitchCommand, WalletActionInput,
 };
 use polyedge_connectors::{
-    ConnectorOrderStatusUpdate, ConnectorTradeFillUpdate, PolymarketDataApiConnector,
-    normalize_polymarket_order_status_update, normalize_polymarket_trade_fill_update,
+    ConnectorOrderStatusUpdate, ConnectorTradeFillUpdate, LivePolymarketConfig,
+    LivePolymarketConnector, PolymarketDataApiConnector, PolymarketOpenOrder,
+    PolymarketSignatureScheme, PolymarketWalletPosition, normalize_polymarket_order_status_update,
+    normalize_polymarket_trade_fill_update,
 };
 use polyedge_contracts::{
     AlertSeverity, AlertStatus, ApiMeta, ApiResponse, ArbitrageAnalysisRunData,
@@ -60,8 +62,8 @@ use polyedge_domain::{
 };
 use polyedge_infrastructure::stores::ExternalEventBegin;
 use polyedge_infrastructure::{
-    AppState, AuthContext, HttpError, IdempotencyKey, hash_json, new_trace_id,
-    request_id_from_headers, require_connector_write_auth, require_console_read_auth,
+    AppState, AuthContext, HttpError, IdempotencyKey, PolymarketSignatureType, hash_json,
+    new_trace_id, request_id_from_headers, require_connector_write_auth, require_console_read_auth,
     require_console_write_auth, require_mode_write_auth,
 };
 use rust_decimal::Decimal;
@@ -74,7 +76,9 @@ use std::{
 };
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use tower::ServiceBuilder;
-use tower_http::{cors::CorsLayer, limit::RequestBodyLimitLayer, timeout::TimeoutLayer, trace::TraceLayer};
+use tower_http::{
+    cors::CorsLayer, limit::RequestBodyLimitLayer, timeout::TimeoutLayer, trace::TraceLayer,
+};
 
 const CONNECTOR_ORDER_STATUS_SOURCE: &str = "connector.orders.status";
 const CONNECTOR_TRADE_FILL_SOURCE: &str = "connector.trades.fill";

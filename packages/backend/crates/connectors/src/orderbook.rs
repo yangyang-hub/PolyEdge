@@ -148,6 +148,17 @@ impl OrderbookCache for OrderbookHttpClient {
             return Ok(None);
         }
 
+        // Any other non-success status is an upstream failure, not a book —
+        // surface it as a dependency error instead of trying to decode an
+        // error body as an OrderbookResponse.
+        if !resp.status().is_success() {
+            let status = resp.status();
+            return Err(AppError::dependency_unavailable(
+                "ORDERBOOK_HTTP_STATUS",
+                format!("orderbook service returned {status} for {token_id}"),
+            ));
+        }
+
         let book: OrderbookResponse = resp.json().await.map_err(|error| {
             AppError::dependency_unavailable(
                 "ORDERBOOK_HTTP_DECODE_ERROR",

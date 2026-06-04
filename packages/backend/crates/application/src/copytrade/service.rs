@@ -389,15 +389,29 @@ impl CopyTradeService {
             .await?;
 
         // 2. Load unprocessed source trades and build copy decisions.
-        let unprocessed = self
+        //    Process chronologically so per-wallet/market cooldown gating is
+        //    deterministic regardless of store return order.
+        let mut unprocessed = self
             .store
             .list_source_trades(DEFAULT_LIST_LIMIT)
             .await?
             .into_iter()
             .filter(|trade| !trade.copied)
             .collect::<Vec<_>>();
+        unprocessed.sort_by(|a, b| {
+            a.source_timestamp
+                .cmp(&b.source_timestamp)
+                .then_with(|| a.id.cmp(&b.id))
+        });
 
-        let account = self.store.load_account_state(&config).await?;
+        let mut account = self.store.load_account_state(&config).await?;
+        // Roll the daily-loss counter at the UTC date boundary BEFORE the risk
+        // checks run, so the daily-loss gate uses today's PnL rather than
+        // yesterday's (the engine resets it again, idempotently).
+        let cycle_now = OffsetDateTime::now_utc();
+        if cycle_now.date() != account.updated_at.date() {
+            account.daily_realized_pnl = Decimal::ZERO;
+        }
         let open_orders = self
             .store
             .list_open_orders(&account.account_id)
@@ -407,13 +421,79 @@ impl CopyTradeService {
             .list_account_positions(&account.account_id)
             .await?;
 
-        // Build lookup indexes for risk gating.
-        let wallet_exposure = build_wallet_exposure_map(&positions, &open_orders);
-        let total_exposure = compute_total_exposure(&positions, &open_orders);
+        // Paused/removed wallets must not be copied even though trades recorded
+        // while they were active may still be sitting unprocessed in the store.
+        let active_wallets: std::collections::HashSet<String> = self
+            .store
+            .list_wallets()
+            .await?
+            .into_iter()
+            .filter(|wallet| wallet.status == TrackedWalletStatus::Active)
+            .map(|wallet| wallet.address)
+            .collect();
+
+        // Running exposure accumulators — caps must bound the *resulting*
+        // exposure, including orders planned earlier in this same tick.
+        let mut wallet_exposure = build_wallet_exposure_map(&positions, &open_orders);
+        let mut total_exposure = compute_total_exposure(&positions, &open_orders);
+        let mut market_exposure = build_market_exposure_map(&positions, &open_orders);
+
+        // Per-(wallet, market) cooldown clock, seeded from the most recent copy
+        // activity we can observe (open orders + recently-touched positions).
+        let mut last_copy_at: HashMap<(String, String), OffsetDateTime> = HashMap::new();
+        for order in &open_orders {
+            let key = (order.wallet_address.clone(), order.token_id.clone());
+            let entry = last_copy_at.entry(key).or_insert(order.created_at);
+            if order.created_at > *entry {
+                *entry = order.created_at;
+            }
+        }
+        for position in &positions {
+            let key = (position.wallet_address.clone(), position.token_id.clone());
+            let entry = last_copy_at.entry(key).or_insert(position.updated_at);
+            if position.updated_at > *entry {
+                *entry = position.updated_at;
+            }
+        }
+        let cooldown = time::Duration::seconds(config.cooldown_secs as i64);
 
         let mut decisions = Vec::new();
         for source_trade in &unprocessed {
-            let wallet = wallet_feeds.iter().find(|f| f.address == source_trade.wallet_address);
+            // Wallet-pause gate.
+            if !active_wallets.contains(&source_trade.wallet_address) {
+                decisions.push((
+                    source_trade.id.clone(),
+                    false,
+                    CopySkipReason::WalletPaused.as_str().to_string(),
+                    Decimal::ZERO,
+                    Decimal::ZERO,
+                ));
+                continue;
+            }
+
+            let cooldown_key = (
+                source_trade.wallet_address.clone(),
+                source_trade.token_id.clone(),
+            );
+            // Cooldown gate (per wallet+market). cooldown_secs == 0 disables it.
+            let on_cooldown = config.cooldown_secs > 0
+                && last_copy_at
+                    .get(&cooldown_key)
+                    .is_some_and(|last| cycle_now - *last < cooldown);
+            if on_cooldown {
+                decisions.push((
+                    source_trade.id.clone(),
+                    false,
+                    CopySkipReason::CooldownActive.as_str().to_string(),
+                    Decimal::ZERO,
+                    Decimal::ZERO,
+                ));
+                continue;
+            }
+
+            let wallet = wallet_feeds
+                .iter()
+                .find(|f| f.address == source_trade.wallet_address);
 
             let skip = check_skip_reasons(
                 &config,
@@ -421,39 +501,107 @@ impl CopyTradeService {
                 &account,
                 &positions,
                 &open_orders,
-                wallet_exposure.get(&source_trade.wallet_address).copied().unwrap_or(Decimal::ZERO),
+                wallet_exposure
+                    .get(&source_trade.wallet_address)
+                    .copied()
+                    .unwrap_or(Decimal::ZERO),
                 total_exposure,
             );
             if let Some(reason) = skip {
-                decisions.push((source_trade.id.clone(), false, reason.as_str().to_string(), Decimal::ZERO, Decimal::ZERO));
+                decisions.push((
+                    source_trade.id.clone(),
+                    false,
+                    reason.as_str().to_string(),
+                    Decimal::ZERO,
+                    Decimal::ZERO,
+                ));
                 continue;
             }
 
-            let _position_key = format!("{}:{}", account.account_id, source_trade.token_id);
             let current_position = positions.iter().find(|p| p.token_id == source_trade.token_id);
-            let source_position = wallet.and_then(|f| {
-                f.positions.iter().find(|p| p.asset == source_trade.token_id)
-            });
+            let source_position = wallet
+                .and_then(|f| f.positions.iter().find(|p| p.asset == source_trade.token_id));
+            let source_portfolio_usd = wallet
+                .map(|f| source_portfolio_value(&f.positions))
+                .unwrap_or(Decimal::ZERO);
 
             let decision = compute_copy_size(
                 &config,
                 source_trade,
                 source_position,
+                source_portfolio_usd,
                 &account,
                 current_position,
             );
 
-            let price = if decision.copy && decision.size > Decimal::ZERO {
-                apply_slippage(source_trade.price, source_trade.side, &config)
-            } else {
-                Decimal::ZERO
-            };
+            if !decision.copy || decision.size <= Decimal::ZERO {
+                decisions.push((
+                    source_trade.id.clone(),
+                    false,
+                    decision.reason.clone(),
+                    Decimal::ZERO,
+                    Decimal::ZERO,
+                ));
+                continue;
+            }
+
+            let price = apply_slippage(source_trade.price, source_trade.side, &config);
+
+            // Hard-clamp buys to the remaining headroom of every cap so a single
+            // trade (or several within this tick) cannot overshoot a limit. Sells
+            // reduce exposure, so they are not clamped.
+            let mut size = decision.size;
+            if source_trade.side == CopyOrderSide::Buy && price > Decimal::ZERO {
+                let wallet_room = (config.per_wallet_max_exposure_usd
+                    - wallet_exposure
+                        .get(&source_trade.wallet_address)
+                        .copied()
+                        .unwrap_or(Decimal::ZERO))
+                .max(Decimal::ZERO);
+                let total_room = (config.max_total_exposure_usd - total_exposure).max(Decimal::ZERO);
+                let market_room = (config.max_position_per_market_usd
+                    - market_exposure
+                        .get(&source_trade.token_id)
+                        .copied()
+                        .unwrap_or(Decimal::ZERO))
+                .max(Decimal::ZERO);
+                let max_notional = wallet_room.min(total_room).min(market_room);
+                if size * price > max_notional {
+                    size = (max_notional / price)
+                        .round_dp_with_strategy(8, RoundingStrategy::ToZero);
+                }
+            }
+
+            if size <= Decimal::ZERO {
+                decisions.push((
+                    source_trade.id.clone(),
+                    false,
+                    "exposure_cap_no_headroom".to_string(),
+                    Decimal::ZERO,
+                    Decimal::ZERO,
+                ));
+                continue;
+            }
+
+            // Commit: advance the running caps + cooldown clock so later trades
+            // in this same tick see the effect of this one.
+            if source_trade.side == CopyOrderSide::Buy {
+                let notional = size * price;
+                *wallet_exposure
+                    .entry(source_trade.wallet_address.clone())
+                    .or_insert(Decimal::ZERO) += notional;
+                total_exposure += notional;
+                *market_exposure
+                    .entry(source_trade.token_id.clone())
+                    .or_insert(Decimal::ZERO) += notional;
+            }
+            last_copy_at.insert(cooldown_key, cycle_now);
 
             decisions.push((
                 source_trade.id.clone(),
-                decision.copy,
+                true,
                 decision.reason.clone(),
-                decision.size,
+                size,
                 price,
             ));
         }
@@ -644,6 +792,8 @@ fn wallets_to_source_trades(
                 &activity.transaction_hash,
                 &activity.asset,
                 activity.side.to_uppercase().as_str(),
+                activity.price,
+                activity.size,
                 timestamp_secs,
             );
 
@@ -699,6 +849,43 @@ fn compute_total_exposure(
         .map(|o| o.remaining_size() * o.price)
         .sum();
     position_exposure + order_exposure
+}
+
+/// Per-market (token) exposure = held position notional + open-order pending
+/// notional, used to hard-clamp new copies against `max_position_per_market_usd`.
+fn build_market_exposure_map(
+    positions: &[CopyPosition],
+    open_orders: &[CopyOrder],
+) -> HashMap<String, Decimal> {
+    let mut map: HashMap<String, Decimal> = HashMap::new();
+    for position in positions {
+        *map.entry(position.token_id.clone()).or_insert(Decimal::ZERO) +=
+            position.size * position.avg_price;
+    }
+    for order in open_orders {
+        if order.status.is_open_like() {
+            *map.entry(order.token_id.clone()).or_insert(Decimal::ZERO) +=
+                order.remaining_size() * order.price;
+        }
+    }
+    map
+}
+
+/// Total market value of a source wallet's positions, used by
+/// `MirrorPortfolioWeight` to compute this market's weight in their portfolio.
+/// Prefers live `cur_price`, falling back to cost basis when unavailable.
+fn source_portfolio_value(positions: &[WalletPositionInput]) -> Decimal {
+    positions
+        .iter()
+        .map(|p| {
+            let price = if p.cur_price > Decimal::ZERO {
+                p.cur_price
+            } else {
+                p.avg_price
+            };
+            p.size * price
+        })
+        .sum()
 }
 
 fn apply_slippage(

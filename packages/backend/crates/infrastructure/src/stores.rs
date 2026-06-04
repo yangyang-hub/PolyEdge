@@ -6,13 +6,12 @@ use polyedge_application::{
     CopyTradeMode, CopyTradeStore, IdempotencyBegin, IdempotencyRequest, IdempotencyStore,
     ManagedRewardOrder, ManagedRewardOrderStatus, ModeSnapshot, ModeStateStore,
     ModeTransitionCommand, PostFillStrategy, RewardAccountState, RewardBotConfig, RewardBotStore,
-    RewardControlAction, RewardControlCommand, RewardControlCommandStatus, RewardExecutionMode,
-    RewardFill, RewardFillRole, RewardMarket, RewardOrderListQuery, RewardOrderPage,
-    RewardOrderSide, RewardOrderSortField, RewardOrderStatusFilter, RewardPosition,
-    RewardQuotePlan, RewardQuotePlanListQuery, RewardQuotePlanPage, RewardQuotePlanSortField,
-    RewardRiskEvent, RewardRiskSeverity, RewardSimulationOutcome, RewardToken,
-    RiskStateSnapshot, RiskStateStore, SortOrder, SourceTrade, TrackedWallet, TrackedWalletStatus,
-    WalletAnalysisStats,
+    RewardControlAction, RewardControlCommand, RewardControlCommandStatus, RewardFill,
+    RewardFillRole, RewardMarket, RewardOrderListQuery, RewardOrderPage, RewardOrderSide,
+    RewardOrderSortField, RewardOrderStatusFilter, RewardPosition, RewardQuotePlan,
+    RewardQuotePlanListQuery, RewardQuotePlanPage, RewardQuotePlanSortField, RewardRiskEvent,
+    RewardRiskSeverity, RewardTickOutcome, RewardToken, RiskStateSnapshot, RiskStateStore,
+    SortOrder, SourceTrade, TrackedWallet, TrackedWalletStatus, WalletAnalysisStats,
 };
 use polyedge_domain::{
     AppError, ExposureRatio, IdempotencyStatus, Result, SignedUsdAmount, SystemMode,
@@ -55,3 +54,4 @@ include!("stores/orderbook_registry.rs");
 include!("stores/helpers.rs");
 include!("stores/types.rs");
 include!("stores/orderbook_registry_tests.rs");
+include!("stores/orderbook_cache_tests.rs");

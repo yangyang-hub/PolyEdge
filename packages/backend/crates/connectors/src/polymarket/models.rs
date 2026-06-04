@@ -75,6 +75,21 @@ pub enum PolymarketTokenOrderSide {
     Sell,
 }
 
+/// An open order returned from the Polymarket CLOB API, converted to a
+/// crate-local type so downstream crates do not need to depend on the SDK.
+#[derive(Debug, Clone)]
+pub struct PolymarketOpenOrder {
+    pub id: String,
+    pub market: String,
+    pub asset_id: String,
+    pub side: PolymarketTokenOrderSide,
+    pub original_size: Decimal,
+    pub size_matched: Decimal,
+    pub price: Decimal,
+    pub outcome: String,
+    pub status: String,
+}
+
 #[derive(Debug, Clone)]
 pub struct LivePolymarketTokenOrderRequest {
     pub client_order_id: String,

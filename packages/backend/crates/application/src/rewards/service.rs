@@ -43,7 +43,7 @@ pub trait RewardBotStore: Send + Sync {
     async fn list_events(&self, limit: u16) -> Result<Vec<RewardRiskEvent>>;
     async fn log_event(&self, event: RewardRiskEvent) -> Result<()>;
 
-    /// Load the validation fund-pool ledger, seeding a fresh one from `config` if absent.
+    /// Load the fund-pool ledger, seeding a fresh one from `config` if absent.
     async fn load_account_state(&self, config: &RewardBotConfig) -> Result<RewardAccountState>;
     /// Currently open-like orders for an account (planned/open/exit_pending).
     async fn list_open_orders(&self, account_id: &str) -> Result<Vec<ManagedRewardOrder>>;
@@ -60,17 +60,17 @@ pub trait RewardBotStore: Send + Sync {
     async fn count_account_positions(&self, account_id: &str) -> Result<usize>;
     async fn list_fills(&self, limit: u16) -> Result<Vec<RewardFill>>;
     async fn reward_fill_exists(&self, fill_id: &str) -> Result<bool>;
-    /// Persist validation/live account, order, fill, position, and event changes atomically.
+    /// Persist account, order, fill, position, and event changes atomically.
     ///
     /// Reward market catalogs and quote-plan snapshots have separate full-replacement
     /// methods and must not be changed by incremental live-state persistence.
-    async fn apply_simulation_tick(
+    async fn apply_tick_outcome(
         &self,
-        outcome: &RewardSimulationOutcome,
+        outcome: &RewardTickOutcome,
         trace_id: &str,
     ) -> Result<()>;
-    /// Reset validation state: cancel orders, clear fills/positions, reset the ledger to capital.
-    async fn reset_simulation(&self, config: &RewardBotConfig, trace_id: &str) -> Result<()>;
+    /// Reset state: cancel orders, clear fills/positions, reset the ledger to capital.
+    async fn reset_state(&self, config: &RewardBotConfig, trace_id: &str) -> Result<()>;
 }
 
 #[derive(Clone)]
@@ -380,7 +380,6 @@ impl RewardBotService {
                 "Prepared rewards live order plan.",
                 json!({
                     "trace_id": trace_id,
-                    "execution_mode": config.execution_mode.as_str(),
                     "markets_scanned": markets.len(),
                     "books_fetched": books.len(),
                     "plans_built": plans.len(),
@@ -454,15 +453,15 @@ impl RewardBotService {
 
     pub async fn apply_live_tick_outcome(
         &self,
-        outcome: &RewardSimulationOutcome,
+        outcome: &RewardTickOutcome,
         trace_id: &str,
     ) -> Result<()> {
-        self.store.apply_simulation_tick(outcome, trace_id).await
+        self.store.apply_tick_outcome(outcome, trace_id).await
     }
 
-    pub async fn reset_simulation(&self, trace_id: &str) -> Result<()> {
+    pub async fn reset_state(&self, trace_id: &str) -> Result<()> {
         let config = self.read_config().await?;
-        self.store.reset_simulation(&config, trace_id).await?;
+        self.store.reset_state(&config, trace_id).await?;
         self.store
             .log_event(new_risk_event(
                 Some(config.account_id.clone()),
@@ -470,7 +469,7 @@ impl RewardBotService {
                 None,
                 "reward_bot_reset",
                 RewardRiskSeverity::Info,
-                "Reset rewards validation account, orders, positions and fills.",
+                "Reset rewards account, orders, positions and fills.",
                 json!({ "trace_id": trace_id, "capital_usd": config.account_capital_usd }),
             ))
             .await

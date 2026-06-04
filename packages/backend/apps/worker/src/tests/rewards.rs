@@ -94,7 +94,6 @@ fn live_test_trade_update(
 #[test]
 fn live_placement_reuses_cash_and_allows_stale_book_age_check_to_be_disabled() {
     let config = RewardBotConfig {
-        execution_mode: RewardExecutionMode::Live,
         account_id: "reward_live".to_string(),
         stale_book_ms: 0,
         max_markets: 1,
@@ -251,7 +250,6 @@ fn reward_live_fill_id_includes_order_id_and_keeps_legacy_id() {
 #[test]
 fn live_cancel_candidates_cancel_when_orderbook_missing() {
     let config = RewardBotConfig {
-        execution_mode: RewardExecutionMode::Live,
         account_id: "reward_live".to_string(),
         ..RewardBotConfig::default()
     };
@@ -274,7 +272,6 @@ fn live_cancel_candidates_cancel_when_orderbook_missing() {
 #[test]
 fn live_cancel_candidates_keep_local_deferred_exit_without_orderbook() {
     let config = RewardBotConfig {
-        execution_mode: RewardExecutionMode::Live,
         account_id: "reward_live".to_string(),
         ..RewardBotConfig::default()
     };
@@ -300,7 +297,6 @@ fn live_cancel_candidates_keep_local_deferred_exit_without_orderbook() {
 #[test]
 fn live_cancel_candidates_cancel_buys_when_global_kill_switch_is_active() {
     let config = RewardBotConfig {
-        execution_mode: RewardExecutionMode::Live,
         account_id: "reward_live".to_string(),
         ..RewardBotConfig::default()
     };
@@ -322,7 +318,6 @@ fn live_cancel_candidates_cancel_buys_when_global_kill_switch_is_active() {
 #[test]
 fn live_cancel_candidates_do_not_repeat_pending_cancel() {
     let config = RewardBotConfig {
-        execution_mode: RewardExecutionMode::Live,
         account_id: "reward_live".to_string(),
         ..RewardBotConfig::default()
     };
@@ -339,7 +334,6 @@ fn live_cancel_candidates_do_not_repeat_pending_cancel() {
 #[test]
 fn live_status_after_pending_cancel_requires_retry() {
     let config = RewardBotConfig {
-        execution_mode: RewardExecutionMode::Live,
         account_id: "reward_live".to_string(),
         ..RewardBotConfig::default()
     };
@@ -380,7 +374,6 @@ fn live_status_after_pending_cancel_requires_retry() {
 #[test]
 fn live_cancel_candidates_retry_rejected_post_only_violation_cancel() {
     let config = RewardBotConfig {
-        execution_mode: RewardExecutionMode::Live,
         account_id: "reward_live".to_string(),
         ..RewardBotConfig::default()
     };
@@ -514,7 +507,7 @@ async fn live_tick_persistence_keeps_market_catalog_and_blocks_active_account_ch
     state
         .reward_bot_service
         .apply_live_tick_outcome(
-            &RewardSimulationOutcome {
+            &RewardTickOutcome {
                 account: RewardAccountState::fresh(
                     "reward_live",
                     Decimal::from(100_u64),
@@ -556,7 +549,6 @@ async fn live_tick_persistence_keeps_market_catalog_and_blocks_active_account_ch
 #[test]
 fn live_placement_counts_candidate_notional_against_position_cap() {
     let config = RewardBotConfig {
-        execution_mode: RewardExecutionMode::Live,
         account_id: "reward_live".to_string(),
         max_markets: 1,
         max_open_orders: 2,

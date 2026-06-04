@@ -34,7 +34,12 @@ async fn sync_live_reward_orders(
 
     for order in open_orders
         .iter()
-        .filter(|order| order.external_order_id.is_some())
+        .filter(|order| {
+            order
+                .external_order_id
+                .as_ref()
+                .is_some_and(|id| !is_internal_reward_order_id(id))
+        })
     {
         let Some(external_order_id) = order.external_order_id.as_deref() else {
             continue;
@@ -126,7 +131,7 @@ async fn sync_live_reward_orders(
                             let submitted = order.external_order_id.is_some();
                             working_orders.insert(order.id.clone(), order.clone());
                             if submitted {
-                                report.simulated_orders += 1;
+                                report.placed_orders += 1;
                             }
                             persist_live_reward_updates(
                                 state,

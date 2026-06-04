@@ -4,7 +4,7 @@ use rust_decimal::{Decimal, RoundingStrategy};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{HashMap, HashSet},
     str::FromStr,
     sync::Arc,
 };
@@ -21,4 +21,3 @@ include!("rewards/service.rs");
 include!("rewards/planner.rs");
 include!("rewards/engine.rs");
 include!("rewards/helpers.rs");
-include!("rewards/tests.rs");

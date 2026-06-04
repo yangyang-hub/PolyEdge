@@ -187,8 +187,8 @@ pub async fn ingest_books(
         let token_id = validate_token_id(book.token_id)?;
         cached_books.push(CachedOrderBook {
             token_id,
-            bids: parse_levels(book.bids, max_levels)?,
-            asks: parse_levels(book.asks, max_levels)?,
+            bids: parse_levels(book.bids, max_levels, true)?,
+            asks: parse_levels(book.asks, max_levels, false)?,
             observed_at: book.observed_at,
             source: match book.source.as_str() {
                 "ws" => BookSource::Ws,
@@ -303,10 +303,10 @@ fn validate_token_id(token_id: String) -> Result<String, (StatusCode, Json<Messa
 fn parse_levels(
     levels: Vec<LevelResponse>,
     max_levels: usize,
+    descending: bool,
 ) -> Result<Vec<CachedBookLevel>, (StatusCode, Json<MessageResponse>)> {
-    levels
+    let mut parsed = levels
         .into_iter()
-        .take(max_levels.max(1))
         .map(|level| {
             Ok(CachedBookLevel {
                 price: Decimal::from_str(&level.price).map_err(|error| {
@@ -323,7 +323,16 @@ fn parse_levels(
                 })?,
             })
         })
-        .collect()
+        .collect::<Result<Vec<_>, _>>()?;
+    // Keep the BEST levels (bids descending, asks ascending) before trimming, so
+    // an unsorted ingest payload never drops top-of-book.
+    if descending {
+        parsed.sort_by(|a, b| b.price.cmp(&a.price));
+    } else {
+        parsed.sort_by(|a, b| a.price.cmp(&b.price));
+    }
+    parsed.truncate(max_levels.max(1));
+    Ok(parsed)
 }
 
 fn error_response(

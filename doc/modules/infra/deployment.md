@@ -11,7 +11,8 @@
 | 文件 | 职责 |
 |---|---|
 | `deploy/docker-compose.yml` | 服务编排 |
-| `deploy/backend.Dockerfile` | 后端部署镜像（debian:trixie-slim + `bin/` 预构建二进制） |
+| `deploy/api.Dockerfile` | API/Worker 部署镜像（debian:trixie-slim + `bin/polyedge-api` / `bin/polyedge-worker`） |
+| `deploy/orderbook.Dockerfile` | Orderbook 独立部署镜像（debian:trixie-slim + `bin/polyedge-orderbook`） |
 | `deploy/.env.example` | 公共环境变量模板；每个变量均有用途说明 |
 | `deploy/.env.api.example` | API 服务环境变量模板；每个变量均有用途说明 |
 | `deploy/.env.orderbook.example` | Orderbook 服务环境变量模板；每个变量均有用途说明 |
@@ -37,7 +38,7 @@
                                                   ↓
 ┌──────────────────┐     ┌──────────────────┐
 │  polyedge-worker │────→│ polyedge-orderbook│
-│  (same image)    │     │  port:38002      │
+│  (API image)     │     │  port:38002      │
 │                  │     │  (WS + HTTP)     │
 └──────────────────┘     └──────────────────┘
 ```
@@ -47,17 +48,18 @@
 - 镜像：`debian:trixie-slim` + 预构建 `bin/polyedge-api` 二进制
 - 端口：`0.0.0.0:38001 → container:38001`
 - 健康检查：`curl /healthz`（15s 间隔，10 次重试，20s 启动期）
-- 依赖 orderbook 健康检查通过后启动
+- Compose 不声明启动依赖，可独立部署；需要盘口的 API 路由通过 service URL 访问 orderbook
 - 通过 `POLYEDGE_ORDERBOOK__SERVICE_URL` 连接 orderbook 服务读取盘口数据
 - 环境变量：`.env` + `.env.api`
 - `extra_hosts: host.docker.internal:host-gateway`（访问宿主机数据库）
+- Rewards snapshot 当前会在 API handler 内直接读取 Polymarket balance/open orders/positions。只配置 `ACCOUNT_ID` 可读取 Data API positions；要读取 CLOB balance/open orders 还需把账户私钥、签名类型和对应 funder 配置放入 `.env.api`，也可选复用预配置 CLOB API credentials。这会扩大密钥暴露面并违反目标 SSOT 架构。推荐仍只在 worker 保存私钥，并接受 API 中对应字段暂时为零/空，直到该 overlay 迁移到 worker/store。
 
 ### polyedge-orderbook
 
-- 同 API 镜像，command 覆盖为 `polyedge-orderbook`
+- 独立 `deploy/orderbook.Dockerfile` 镜像，只复制 `bin/polyedge-orderbook`
 - 端口：`0.0.0.0:38002 → container:38002`
 - 健康检查：`curl /healthz`（15s 间隔，10 次重试，20s 启动期）
-- 后端链路中的基础服务，Compose 会先于 API 和 Worker 启动
+- Compose 不声明启动依赖，可单独部署在盘口服务器
 - 职责：HTTP API（健康检查、盘口读取、token 注册）、后台市场同步（Gamma + CLOB → Postgres）、WS + poll 盘口流（→ 进程内缓存）
 - 启动顺序：先 bind HTTP 并暴露 `/healthz`，随后后台执行 initial/periodic market sync，避免外部 Polymarket API 慢响应导致容器启动健康检查失败
 - `POLYEDGE_ORDERBOOK_STREAM__ENABLED` 控制 WS + poll stream 是否运行；`POLYEDGE_ORDERBOOK_STREAM__MAX_LEVELS_PER_SIDE` 限制每个 token 缓存的 bid/ask 深度
@@ -68,12 +70,12 @@
 
 - 同 API 镜像，command 覆盖为 `polyedge-worker`
 - 无端口暴露
-- 依赖 API 和 orderbook 健康检查通过后启动
-- Docker 部署中所有 `POLYEDGE_WORKER__...` 后台任务默认由 Compose 覆盖为 `false`，需要在 `deploy/.env.worker` 显式改为 `true` 才会启动对应任务
+- Compose 不声明启动依赖，可独立部署；启用需要盘口的任务前必须保证 orderbook service URL 可用
+- Docker 部署中所有 `POLYEDGE_WORKER__...` 后台任务按代码默认值为 `false`，需要在 `deploy/.env.worker` 显式改为 `true` 才会启动对应任务
 - 通过 `POLYEDGE_ORDERBOOK__SERVICE_URL` 连接 orderbook 服务读取盘口数据和注册 token
 - `.env.worker` 中的 `POLYEDGE_ORDERBOOK__WRITE_TOKEN` 必须与 orderbook 服务一致；API/front 不需要该密钥
 - 环境变量：`.env` + `.env.worker`
-- Polymarket live / Deposit Wallet 配置示例见 `deploy/.env.polymarket.example`；建议只把私钥放入 `.env.worker`，避免进入 API/Front 容器环境
+- Polymarket live / Deposit Wallet 配置示例见 `deploy/.env.polymarket.example`；建议只把私钥放入 `.env.worker`，避免进入 API/Front 容器环境。当前代价是 Rewards API 的 live balance/open orders 显示为零/空
 
 ### polyedge-front
 
@@ -102,16 +104,16 @@ API 请求不再经过前端 nginx 反向代理；跨域由 Rust API 的 `CorsLa
 1. 获取部署锁（默认 `/tmp/polyedge-deploy.lock`），避免 cron/CI 重叠执行
 2. `git fetch` + fast-forward merge
 3. 无镜像变更且所有容器运行中 → 跳过
-4. 后端二进制变更 → 重建后端镜像，立即写入 `.deploy-state`，再按 orderbook → API → Worker 顺序重启
+4. api/worker 二进制任一变化 → 重建共享 API 镜像并重启目标 API/Worker；orderbook 二进制变化 → 独立重建 orderbook 镜像
 5. 前端文件或 `deploy/.env.front` 变更 → 重建前端镜像，立即写入 `.deploy-state`，再重启 Frontend
 6. 容器未运行但镜像 hash 未变化 → 只 `up -d` 启动已有镜像，不强制 rebuild
 
 ### Manual 模式
 
 - `scripts/deploy.sh all` — 全量重建
-- `scripts/deploy.sh orderbook` — 重建后端，重启 Orderbook
-- `scripts/deploy.sh api` — 重建后端，重启 API
-- `scripts/deploy.sh worker` — 重建后端，重启 Worker
+- `scripts/deploy.sh orderbook` — 重建 orderbook 镜像，只重启 Orderbook
+- `scripts/deploy.sh api` — 重建 API/Worker 共享镜像，只重启 API
+- `scripts/deploy.sh worker` — 重建 API/Worker 共享镜像，只重启 Worker
 - `scripts/deploy.sh front` — 重建前端
 - 支持组合：`api worker`、`api,front` 等
 
@@ -142,22 +144,25 @@ API 请求不再经过前端 nginx 反向代理；跨域由 Rust API 的 `CorsLa
 | `POLYEDGE_FRONT_PORT` | `33002` | 前端宿主机端口 |
 | `POLYEDGE_API_BIND` | `0.0.0.0` | API 绑定地址 |
 | `POLYEDGE_API_PORT` | `38001` | API 宿主机端口 |
+| `POLYEDGE_API_IMAGE` | `polyedge-api:local` | API/Worker 共享镜像名 |
+| `POLYEDGE_ORDERBOOK_IMAGE` | `polyedge-orderbook:local` | Orderbook 独立镜像名 |
 | `NEXT_PUBLIC_POLYEDGE_API_BASE_URL` | — | 前端浏览器直连 API 地址，例如 `http://192.168.31.5:38001` |
 | `POLYEDGE_ORDERBOOK__SERVICE_URL` | `http://localhost:38002` | API/Worker 访问 orderbook 服务的地址 |
 | `POLYEDGE_ALLOW_IN_MEMORY_DEPLOY` | — | 设为 1 允许无数据库部署（仅演示） |
 | `POLYEDGE_LOG_FILE` | `$HOME/polyedge-deploy.log`（cron） | deploy 脚本日志文件；无法写入时回退到 stdout/stderr |
 | `POLYEDGE_DEPLOY_LOCK_FILE` | `/tmp/polyedge-deploy.lock` | deploy 脚本互斥锁 |
 | `COMPOSE_PARALLEL_LIMIT` | `1` | Docker Compose 构建并发，低配服务器默认串行构建 |
-| `POLYEDGE_WORKER__POLL_MARKET_SYNC` | `false`（Compose 覆盖） | 部署 worker 是否同步 markets/reward_markets |
-| `POLYEDGE_WORKER__CONSUME_ORDERBOOK_STREAM` | `false`（Compose 覆盖） | 部署 worker 是否消费 orderbook stream |
-| `POLYEDGE_WORKER__POLL_REWARD_BOT` | `false`（Compose 覆盖） | 部署 worker 是否运行 rewards full tick + fast reconcile loop |
+| `POLYEDGE_WORKER__POLL_MARKET_SYNC` | `false`（代码默认） | 部署 worker 是否同步 markets/reward_markets；daemon 市场同步已迁移到 orderbook 服务 |
+| `POLYEDGE_WORKER__CONSUME_ORDERBOOK_STREAM` | `false`（代码默认） | 部署 worker 是否消费 orderbook stream；daemon 盘口流已迁移到 orderbook 服务 |
+| `POLYEDGE_WORKER__POLL_REWARD_BOT` | `false`（代码默认） | 部署 worker 是否运行 rewards full tick + fast reconcile loop |
 | `POLYEDGE_ORDERBOOK_STREAM__ENABLED` | `true` | standalone orderbook 服务 WS + poll stream 功能开关 |
 | `POLYEDGE_ORDERBOOK_STREAM__MAX_TOKENS` | `3000` | orderbook stream 订阅 token 上限，过低会导致 rewards 覆盖不全，过高会增加 WS/poll 内存占用 |
 | `POLYEDGE_ORDERBOOK_STREAM__MAX_LEVELS_PER_SIDE` | `100` | 每个 token 在 orderbook 进程内缓存和 HTTP ingest 中最多保留的 bid/ask 深度档数 |
+| `POLYEDGE_ORDERBOOK_STREAM__STALE_THRESHOLD_MS` | `15000` | poll reconcile 盘口年龄阈值；0 只关闭年龄检查，TTL 过期仍生效 |
 
 ## Polymarket live 配置示例
 
-`deploy/.env.polymarket.example` 提供 EOA、Proxy/Gnosis Safe、Deposit Wallet（`poly_1271`）三类账户示例，以及 rewards live worker 开关示例。真实凭证默认全部注释，使用时按账户类型复制到 `deploy/.env.worker` 或公共 `.env`；私钥优先只放 `.env.worker`。
+`deploy/.env.polymarket.example` 提供 EOA、Proxy/Gnosis Safe、Deposit Wallet（`poly_1271`）三类账户示例，以及 rewards live worker 开关示例。真实凭证默认全部注释，执行链路按账户类型复制到 `deploy/.env.worker`。只有明确接受 API 持有交易私钥风险、并需要当前 Rewards live snapshot 的 CLOB balance/open orders overlay 时，才把同一账户配置复制到 `deploy/.env.api`；`ACCOUNT_ID` 和 Data API host 足以读取 positions。
 
 Deposit Wallet 路径要求钱包已经部署、已入金 pUSD 并完成必要 approval。当前系统不会执行 relayer wallet-create、pUSD 包装或 approval 批处理；connector 在下单前会调用 CLOB `balance-allowance/update`。
 
@@ -173,9 +178,9 @@ git add bin/polyedge-api bin/polyedge-worker bin/polyedge-orderbook
 - 部署模板适合原型/内网共享环境
 - Compose 部署使用窄构建上下文：后端只上传 `bin/`，前端只上传 `packages/front/`，避免扫描 Rust `target/`、前端 `node_modules/`、`.next/` 等大目录
 - `polyedge-front` 不再依赖 API 健康后才启动；前端静态 Nginx 可独立运行，浏览器按 `NEXT_PUBLIC_POLYEDGE_API_BASE_URL` 访问 API
-- `scripts/deploy.sh` 已防止重叠执行；前端变更 hash 包含 `packages/front/` 和 `deploy/.env.front`，会 prune `node_modules`、`.next`、`out` 等大目录；容器 down 时会按 orderbook → API → Worker 顺序启动已有后端镜像，不会因健康失败而重复 rebuild
+- `scripts/deploy.sh` 已防止重叠执行；前端变更 hash 包含 `packages/front/` 和 `deploy/.env.front`，会 prune `node_modules`、`.next`、`out` 等大目录；服务按目标独立部署，容器 down 且 hash 未变化时直接启动已有镜像，不会因其他服务健康失败而重复 rebuild
 - 当前部署模板默认 `POLYEDGE_AUTH__DISABLED=true`，API/front 内网交互不做权限校验；API CORS 为 permissive
-- Orderbook 服务 HTTP register/batch/ingest 入口按 `max_tokens` 和 `max_levels_per_side` 控制请求规模与缓存深度，registry source 固定上限为 32 个；register/ingest/delete 写接口还要求仅配置在 orderbook/worker 服务 env 的共享写 token，register 使用原子 source 替换
+- Orderbook 服务 HTTP register/batch/ingest 入口按 `max_tokens` 和 `max_levels_per_side` 控制请求规模与缓存深度，写入时先排序再裁剪最优档位，registry source 固定上限为 32 个并在写锁内原子校验；register/ingest/delete 写接口还要求仅配置在 orderbook/worker 服务 env 的共享写 token，register 使用原子 source 替换
 - 生产前需要：关闭 `POLYEDGE_AUTH__DISABLED`、接入真实会话体系、签名 JWT、key rotation
 
 ## 修改检查清单

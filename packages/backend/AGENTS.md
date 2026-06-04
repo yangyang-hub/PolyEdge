@@ -34,7 +34,7 @@ crate 依赖**单向**，不可逆向：
    - 路径相对**根文件物理目录**解析，可多层嵌套（范例：`catalog/postgres/market_event/execution_updates/`）；
    - 子文件按**职责**命名（`fills.rs`/`quoting.rs`/`verifier.rs`/`parsers.rs`），不要按类型机械堆叠。
 
-   范例：`rewards/engine.rs`（根：结构 + 入口 `run_reward_simulation_tick`）→ `engine/{reconcile,fills,quoting,rewards_calc,state}.rs`。
+   范例：`copytrade.rs`（根：共享导入 + `include!` 聚合）→ `copytrade/{models,control,inputs,service,analysis,strategy,risk,engine,helpers,tests}.rs`。
 
 3. **`mod` vs `include!`**：要对外暴露子命名空间（独立可见性边界）用真正的 `mod`（如 `settings::runtime_config`、`infrastructure` 的 `pub mod`）；同一逻辑单元的纯物理拆分用 `include!`。
 
@@ -58,7 +58,7 @@ crate 依赖**单向**，不可逆向：
 
 ## 测试组织
 
-- 库 crate：模块内 `#[cfg(test)] mod tests { use super::*; … }`，可作为 `tests.rs` 被 `include!`（范例：`rewards/tests.rs`、`auth/tests.rs`、`settings/tests.rs`）。
+- 库 crate：模块内 `#[cfg(test)] mod tests { use super::*; … }`，可作为 `tests.rs` 被 `include!`（范例：`copytrade/tests.rs`、`auth/tests.rs`、`settings/tests.rs`）。
 - 二进制 crate：`src/tests/` 目录 + `src/tests.rs` 聚合（范例：`apps/api/src/tests/`）。
 - 测试与被测代码同 crate，通过 `super::` 访问私有项。
 

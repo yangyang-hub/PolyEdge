@@ -86,6 +86,77 @@ impl LivePolymarketConnector {
             })
     }
 
+    /// Query the authenticated account's USDC balance from Polymarket.
+    pub async fn balance(&self) -> Result<BalanceAllowanceResponse> {
+        let request = BalanceAllowanceRequest::builder()
+            .asset_type(AssetType::Collateral)
+            .signature_type(self.signature_type.into())
+            .build();
+        self.client.balance_allowance(request).await.map_err(|error| {
+            AppError::dependency_unavailable(
+                "POLYMARKET_BALANCE_QUERY_FAILED",
+                format!("failed to query Polymarket balance: {error}"),
+            )
+        })
+    }
+
+    /// List all open orders for the authenticated account, paginating
+    /// through all available pages.
+    pub async fn list_open_orders(&self) -> Result<Vec<PolymarketOpenOrder>> {
+        // Polymarket's CLOB signals end-of-results with the terminal cursor
+        // "LTE=" (base64 of -1); it is non-empty and the final page can still
+        // carry rows, so we must break on it (and on a repeated cursor) to
+        // avoid re-requesting past the end forever.
+        const TERMINAL_CURSOR: &str = "LTE=";
+        const MAX_PAGES: usize = 1000;
+
+        let request = OrdersRequest::builder().build();
+        let mut all_orders = Vec::new();
+        let mut next_cursor: Option<String> = None;
+
+        for _ in 0..MAX_PAGES {
+            let page = self
+                .client
+                .orders(&request, next_cursor.clone())
+                .await
+                .map_err(|error| {
+                    AppError::dependency_unavailable(
+                        "POLYMARKET_ORDERS_QUERY_FAILED",
+                        format!("failed to query Polymarket orders: {error}"),
+                    )
+                })?;
+
+            for o in page.data {
+                all_orders.push(PolymarketOpenOrder {
+                    id: o.id,
+                    market: format!("0x{:064x}", o.market),
+                    asset_id: format!("{}", o.asset_id),
+                    side: match o.side {
+                        Side::Buy => PolymarketTokenOrderSide::Buy,
+                        Side::Sell => PolymarketTokenOrderSide::Sell,
+                        _ => PolymarketTokenOrderSide::Buy,
+                    },
+                    original_size: o.original_size,
+                    size_matched: o.size_matched,
+                    price: o.price,
+                    outcome: o.outcome,
+                    status: format!("{:?}", o.status),
+                });
+            }
+
+            if page.next_cursor.is_empty()
+                || page.next_cursor == TERMINAL_CURSOR
+                || page.count == 0
+                || next_cursor.as_deref() == Some(page.next_cursor.as_str())
+            {
+                break;
+            }
+            next_cursor = Some(page.next_cursor);
+        }
+
+        Ok(all_orders)
+    }
+
     pub async fn submit(
         &self,
         request: &LivePolymarketOrderRequest,
@@ -94,7 +165,9 @@ impl LivePolymarketConnector {
         let _ = request.market_refs.condition_id()?;
         let asset_id = request.market_refs.asset_id_for_side(request.side)?;
         let adjusted_quantity = adjusted_order_quantity(request.limit_price, request.quantity)?;
-        let adjusted_notional = request.limit_price.value() * adjusted_quantity.value();
+        // Snap to a 0.01-tick-safe price (<= 2 dp); see submit_token_order.
+        let tick_price = request.limit_price.value().round_dp(2);
+        let adjusted_notional = tick_price * adjusted_quantity.value();
         let signer = LocalSigner::from_str(&self.private_key)
             .map_err(|error| {
                 AppError::invalid_input(
@@ -124,7 +197,7 @@ impl LivePolymarketConnector {
             .limit_order()
             .token_id(asset_id)
             .side(Side::Buy)
-            .price(request.limit_price.value())
+            .price(tick_price)
             .size(adjusted_quantity.value())
             .order_type(OrderType::GTC)
             .build()
@@ -205,7 +278,12 @@ impl LivePolymarketConnector {
             "POLYMARKET_TOKEN_ID_INVALID",
         )?;
         let adjusted_quantity = adjusted_order_quantity(request.limit_price, request.quantity)?;
-        let adjusted_notional = request.limit_price.value() * adjusted_quantity.value();
+        // Snap to a 0.01-tick-safe price (<= 2 dp) so the CLOB order builder never
+        // rejects for over-precision. The rewards planner already floors to 0.01,
+        // so this is identity for the live caller; markets with a coarser tick
+        // than 0.01 would need per-market tick-size plumbing (not yet wired).
+        let tick_price = request.limit_price.value().round_dp(2);
+        let adjusted_notional = tick_price * adjusted_quantity.value();
         let signer = LocalSigner::from_str(&self.private_key)
             .map_err(|error| {
                 AppError::invalid_input(
@@ -238,7 +316,7 @@ impl LivePolymarketConnector {
             .limit_order()
             .token_id(token_id)
             .side(token_order_side(request.side))
-            .price(request.limit_price.value())
+            .price(tick_price)
             .size(adjusted_quantity.value())
             .order_type(if request.post_only {
                 OrderType::GTC

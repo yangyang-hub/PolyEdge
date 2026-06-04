@@ -232,12 +232,12 @@ fn spawn_worker_tasks(state: &AppState, shutdown_rx: watch::Receiver<bool>) -> V
                                 books_fetched = report.books_fetched,
                                 plans_built = report.plans_built,
                                 eligible_plans = report.eligible_plans,
-                                simulated_orders = report.simulated_orders,
+                                placed_orders = report.placed_orders,
                                 cancelled_orders = report.cancelled_orders,
                                 filled_orders = report.filled_orders,
                                 risk_cancelled_orders = report.risk_cancelled_orders,
                                 reward_accrued = %report.reward_accrued,
-                                "completed worker reward bot simulation cycle",
+                                "completed worker reward bot cycle",
                             ),
                             Err(error) => {
                                 warn!(error = %error, "worker reward bot polling failed");
