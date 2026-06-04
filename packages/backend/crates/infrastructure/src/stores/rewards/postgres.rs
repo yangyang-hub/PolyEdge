@@ -618,6 +618,7 @@ impl RewardBotStore for PostgresRewardBotStore {
             "DELETE FROM reward_managed_orders WHERE account_id = $1",
             "DELETE FROM reward_positions WHERE account_id = $1",
             "DELETE FROM reward_fills WHERE account_id = $1",
+            "DELETE FROM reward_risk_events WHERE account_id = $1",
         ] {
             sqlx::query(statement)
                 .bind(&config.account_id)

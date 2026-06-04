@@ -433,6 +433,7 @@ impl RewardBotStore for InMemoryRewardBotStore {
         self.orders.write().await.clear();
         self.positions.write().await.clear();
         self.fills.write().await.clear();
+        self.events.write().await.clear();
         *self.account_state.write().await = Some(RewardAccountState::fresh(
             &config.account_id,
             config.account_capital_usd,
