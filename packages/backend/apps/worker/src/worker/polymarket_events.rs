@@ -85,12 +85,14 @@ async fn collect_polymarket_user_event_markets(
         return Ok(Vec::new());
     }
 
+    // Cap at 200 to match OrderListFilters MAX_LIST_LIMIT.
     let fetch_limit = u16::try_from(
         state
             .settings
             .polymarket
             .ws_max_instruments
             .saturating_mul(4)
+            .min(200)
             .min(usize::from(u16::MAX)),
     )
     .expect("bounded polymarket websocket fetch limit");
