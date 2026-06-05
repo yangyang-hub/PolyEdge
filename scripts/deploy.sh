@@ -10,17 +10,18 @@ set -Eeuo pipefail
 #   scripts/deploy.sh all             # force rebuild everything
 #   scripts/deploy.sh api [orderbook|worker|front ...]
 #
-# Each service is deployed independently — orderbook, api, and worker can
-# run on different servers without cross-dependencies.  Only the binaries
-# required for the targeted services need to exist locally.
+# Each service is deployed independently with its own image — orderbook, api,
+# worker, and front can run on different servers without cross-dependencies.
+# Only the binaries required for the targeted services need to exist locally.
 #
 # Auto mode (default):
 #   1. git fetch + fast-forward
 #   2. If no changes detected AND all targeted containers are running -> skip
-#   3. If api/worker binary changed -> rebuild api image -> restart api & worker
-#   4. If orderbook binary changed -> rebuild orderbook image -> restart orderbook
-#   5. If frontend files changed -> rebuild frontend image -> restart front
-#   6. If any targeted container is not running -> start existing image
+#   3. If api binary changed -> rebuild api image -> restart api
+#   4. If worker binary changed -> rebuild worker image -> restart worker
+#   5. If orderbook binary changed -> rebuild orderbook image -> restart orderbook
+#   6. If frontend files changed -> rebuild frontend image -> restart front
+#   7. If any targeted container is not running -> start existing image
 #
 # Environment variables:
 #   POLYEDGE_DEPLOY_DIR       - repo checkout (default: script's parent)
@@ -52,9 +53,9 @@ Targets:
   no args / auto  Intelligent deploy: pull code, detect changes, deploy only what changed.
   all             Force rebuild all available images, then restart all available services.
   orderbook       Rebuild the orderbook image and restart only the orderbook service.
-  api worker      Rebuild the api image and restart selected backend services.
+  api worker      Rebuild api and worker images and restart selected backend services.
   api             Rebuild the api image and restart only the API service.
-  worker          Rebuild the api image and restart only the worker service.
+  worker          Rebuild the worker image and restart only the worker service.
   front           Rebuild the frontend image and restart only the frontend service.
 
 Each service deploys independently. Only the binaries for targeted services need to
@@ -525,13 +526,18 @@ if [[ "${mode}" == "auto" ]]; then
 
   # Per-service change detection
   api_image_changed=0
+  worker_image_changed=0
   orderbook_changed=0
   front_changed=0
 
-  # api and worker share the same image — rebuild if either binary changed
-  if [[ "${current_api_hash}" != "${saved_api_hash}" || "${current_worker_hash}" != "${saved_worker_hash}" ]]; then
+  if [[ "${current_api_hash}" != "${saved_api_hash}" ]]; then
     api_image_changed=1
-    log "api/worker binary changed (api: ${saved_api_hash:-NONE}->${current_api_hash:0:8}, worker: ${saved_worker_hash:-NONE}->${current_worker_hash:0:8})"
+    log "api binary changed (${saved_api_hash:-NONE}->${current_api_hash:0:8})"
+  fi
+
+  if [[ "${current_worker_hash}" != "${saved_worker_hash}" ]]; then
+    worker_image_changed=1
+    log "worker binary changed (${saved_worker_hash:-NONE}->${current_worker_hash:0:8})"
   fi
 
   if [[ "${current_orderbook_hash}" != "${saved_orderbook_hash}" ]]; then
@@ -577,15 +583,22 @@ if [[ "${mode}" == "auto" ]]; then
   build_images=()
   restart_services=()
 
-  # api image (shared by polyedge-api and polyedge-worker)
+  # api image
   if [[ "${api_image_changed}" == "1" ]]; then
     build_images+=(polyedge-api)
   fi
-  if [[ "${api_image_changed}" == "1" || "${api_running}" == "0" || "${worker_running}" == "0" ]]; then
+  if [[ "${api_image_changed}" == "1" || "${api_running}" == "0" ]]; then
     if ! should_skip_service api; then
       [[ -f bin/polyedge-api ]] || fail "bin/polyedge-api is missing. Build it with scripts/build-backend-bin.sh."
       restart_services+=(polyedge-api)
     fi
+  fi
+
+  # worker image
+  if [[ "${worker_image_changed}" == "1" ]]; then
+    build_images+=(polyedge-worker)
+  fi
+  if [[ "${worker_image_changed}" == "1" || "${worker_running}" == "0" ]]; then
     if ! should_skip_service worker; then
       [[ -f bin/polyedge-worker ]] || fail "bin/polyedge-worker is missing. Build it with scripts/build-backend-bin.sh."
       restart_services+=(polyedge-worker)
@@ -644,8 +657,11 @@ else
   runtime_services=()
 
   # Determine which images need building (only if targeted services need them)
-  if [[ "${target_api}" == "1" || "${target_worker}" == "1" ]]; then
+  if [[ "${target_api}" == "1" ]]; then
     build_images+=(polyedge-api)
+  fi
+  if [[ "${target_worker}" == "1" ]]; then
+    build_images+=(polyedge-worker)
   fi
   if [[ "${target_orderbook}" == "1" ]]; then
     build_images+=(polyedge-orderbook)
@@ -655,13 +671,11 @@ else
   fi
 
   # Only check binaries for targeted services
-  if [[ "${target_api}" == "1" || "${target_worker}" == "1" ]]; then
-    if [[ "${target_api}" == "1" ]]; then
-      [[ -f "bin/polyedge-api" ]] || fail "bin/polyedge-api is missing. Build it with: POLYEDGE_BACKEND_BINARY=polyedge-api scripts/build-backend-bin.sh"
-    fi
-    if [[ "${target_worker}" == "1" ]]; then
-      [[ -f "bin/polyedge-worker" ]] || fail "bin/polyedge-worker is missing. Build it with: POLYEDGE_BACKEND_BINARY=polyedge-worker scripts/build-backend-bin.sh"
-    fi
+  if [[ "${target_api}" == "1" ]]; then
+    [[ -f "bin/polyedge-api" ]] || fail "bin/polyedge-api is missing. Build it with: POLYEDGE_BACKEND_BINARY=polyedge-api scripts/build-backend-bin.sh"
+  fi
+  if [[ "${target_worker}" == "1" ]]; then
+    [[ -f "bin/polyedge-worker" ]] || fail "bin/polyedge-worker is missing. Build it with: POLYEDGE_BACKEND_BINARY=polyedge-worker scripts/build-backend-bin.sh"
   fi
   if [[ "${target_orderbook}" == "1" ]]; then
     [[ -f "bin/polyedge-orderbook" ]] || fail "bin/polyedge-orderbook is missing. Build it with: POLYEDGE_BACKEND_BINARY=polyedge-orderbook scripts/build-backend-bin.sh"

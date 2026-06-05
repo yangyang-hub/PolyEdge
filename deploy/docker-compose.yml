@@ -49,7 +49,10 @@ services:
       start_period: 20s
 
   polyedge-worker:
-    image: ${POLYEDGE_API_IMAGE:-polyedge-api:local}
+    build:
+      context: ../bin
+      dockerfile: ../deploy/worker.Dockerfile
+    image: ${POLYEDGE_WORKER_IMAGE:-polyedge-worker:local}
     restart: unless-stopped
     logging: *default-logging
     env_file:

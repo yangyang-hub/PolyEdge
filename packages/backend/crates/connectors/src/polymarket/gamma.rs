@@ -4,6 +4,10 @@ use time::format_description::well_known::Rfc3339;
 
 const GAMMA_TIMEOUT: Duration = Duration::from_secs(15);
 const GAMMA_MAX_PAGES: usize = 1_000;
+const GAMMA_MAX_RETRIES: u32 = 3;
+const GAMMA_RETRY_BASE_DELAY: Duration = Duration::from_millis(500);
+const GAMMA_RATE_LIMIT_MAX_RETRIES: u32 = 5;
+const GAMMA_RATE_LIMIT_BASE_DELAY: Duration = Duration::from_secs(2);
 
 #[derive(Debug, Clone)]
 pub struct PolymarketGammaMarket {
@@ -207,29 +211,67 @@ impl PolymarketGammaConnector {
             query.append_pair("offset", &offset.to_string());
         }
 
-        let response = self.client.get(url).send().await.map_err(|error| {
-            AppError::dependency_unavailable(
-                "POLYMARKET_GAMMA_MARKETS_REQUEST_FAILED",
-                format!("failed to request Polymarket Gamma markets: {error}"),
-            )
-        })?;
-        let status = response.status();
-        if !status.is_success() {
-            return Err(AppError::dependency_unavailable(
-                "POLYMARKET_GAMMA_MARKETS_STATUS_FAILED",
-                format!("Polymarket Gamma markets returned HTTP {status}"),
-            ));
+        let mut is_rate_limited = false;
+        for attempt in 0..=GAMMA_RATE_LIMIT_MAX_RETRIES {
+            let response = self.client.get(url.clone()).send().await.map_err(|error| {
+                AppError::dependency_unavailable(
+                    "POLYMARKET_GAMMA_MARKETS_REQUEST_FAILED",
+                    format!("failed to request Polymarket Gamma markets: {error}"),
+                )
+            })?;
+            let status = response.status();
+
+            if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+                is_rate_limited = true;
+                if attempt < GAMMA_RATE_LIMIT_MAX_RETRIES {
+                    let delay = GAMMA_RATE_LIMIT_BASE_DELAY * 2u32.pow(attempt);
+                    tracing::warn!(
+                        offset,
+                        attempt = attempt + 1,
+                        "Gamma markets rate limited (429), retrying after {:?}",
+                        delay,
+                    );
+                    tokio::time::sleep(delay).await;
+                    continue;
+                }
+                return Err(AppError::dependency_unavailable(
+                    "POLYMARKET_GAMMA_MARKETS_STATUS_FAILED",
+                    format!("Polymarket Gamma markets returned HTTP {status} after {} retries", GAMMA_RATE_LIMIT_MAX_RETRIES),
+                ));
+            }
+
+            if !status.is_success() {
+                if attempt < GAMMA_MAX_RETRIES && !is_rate_limited {
+                    let delay = GAMMA_RETRY_BASE_DELAY * 2u32.pow(attempt);
+                    tracing::warn!(
+                        offset,
+                        attempt = attempt + 1,
+                        status = %status,
+                        "Gamma markets returned HTTP {}, retrying after {:?}",
+                        status,
+                        delay,
+                    );
+                    tokio::time::sleep(delay).await;
+                    continue;
+                }
+                return Err(AppError::dependency_unavailable(
+                    "POLYMARKET_GAMMA_MARKETS_STATUS_FAILED",
+                    format!("Polymarket Gamma markets returned HTTP {status}"),
+                ));
+            }
+
+            return response
+                .json::<Vec<RawGammaMarket>>()
+                .await
+                .map_err(|error| {
+                    AppError::dependency_unavailable(
+                        "POLYMARKET_GAMMA_MARKETS_DECODE_FAILED",
+                        format!("failed to decode Polymarket Gamma markets: {error}"),
+                    )
+                });
         }
 
-        response
-            .json::<Vec<RawGammaMarket>>()
-            .await
-            .map_err(|error| {
-                AppError::dependency_unavailable(
-                    "POLYMARKET_GAMMA_MARKETS_DECODE_FAILED",
-                    format!("failed to decode Polymarket Gamma markets: {error}"),
-                )
-            })
+        unreachable!()
     }
 }
 
