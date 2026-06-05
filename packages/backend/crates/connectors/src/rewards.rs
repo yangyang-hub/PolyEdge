@@ -127,18 +127,6 @@ struct RawClobMarketDetail {
 
 const ENRICH_CONCURRENCY: usize = 3;
 
-fn spawn_next_orderbook_fetch<'a>(
-    tasks: &mut JoinSet<Result<Option<PolymarketRewardOrderBook>>>,
-    pending: &mut std::slice::Iter<'a, String>,
-    connector: &PolymarketRewardsConnector,
-) {
-    if let Some(token_id) = pending.next() {
-        let conn = connector.clone();
-        let tid = token_id.clone();
-        tasks.spawn(async move { conn.fetch_order_book(&tid).await });
-    }
-}
-
 impl PolymarketRewardsConnector {
     pub fn new(clob_host: &str) -> Result<Self> {
         let clob_host = clob_host.trim().trim_end_matches('/').to_string();
@@ -253,96 +241,6 @@ impl PolymarketRewardsConnector {
         Ok(markets)
     }
 
-    pub async fn fetch_order_books(
-        &self,
-        token_ids: &[String],
-    ) -> Result<Vec<PolymarketRewardOrderBook>> {
-        let mut pending = token_ids.iter();
-        let mut tasks = JoinSet::new();
-        let mut books = Vec::new();
-        let mut failures = 0usize;
-
-        for _ in 0..ENRICH_CONCURRENCY {
-            spawn_next_orderbook_fetch(&mut tasks, &mut pending, self);
-        }
-
-        while let Some(result) = tasks.join_next().await {
-            match result {
-                Ok(Ok(Some(book))) => books.push(book),
-                Ok(Ok(None)) => failures += 1,
-                Ok(Err(error)) => {
-                    failures += 1;
-                    tracing::warn!(error = %error, "failed to fetch reward order book");
-                }
-                Err(error) => {
-                    failures += 1;
-                    tracing::warn!(error = %error, "order book task panicked");
-                }
-            }
-            spawn_next_orderbook_fetch(&mut tasks, &mut pending, self);
-        }
-
-        if books.is_empty() && failures > 0 {
-            return Err(AppError::dependency_unavailable(
-                "POLYMARKET_BOOK_BATCH_FAILED",
-                format!("failed to fetch all {failures} requested Polymarket order books"),
-            ));
-        }
-        if failures > 0 {
-            tracing::warn!(
-                requested = token_ids.len(),
-                fetched = books.len(),
-                failures,
-                "partially fetched Polymarket order books"
-            );
-        }
-        Ok(books)
-    }
-
-    async fn fetch_order_book(&self, token_id: &str) -> Result<Option<PolymarketRewardOrderBook>> {
-        let mut url =
-            reqwest::Url::parse(&format!("{}/book", self.clob_host)).map_err(|error| {
-                AppError::invalid_input(
-                    "POLYMARKET_BOOK_URL_INVALID",
-                    format!("failed to construct order book URL: {error}"),
-                )
-            })?;
-        url.query_pairs_mut().append_pair("token_id", token_id);
-
-        let response = self.client.get(url).send().await.map_err(|error| {
-            AppError::dependency_unavailable(
-                "POLYMARKET_BOOK_REQUEST_FAILED",
-                format!("failed to request Polymarket order book for token_id={token_id}: {error}"),
-            )
-        })?;
-
-        if response.status().as_u16() == 404 {
-            return Ok(None);
-        }
-
-        let status = response.status();
-        if !status.is_success() {
-            return Err(AppError::dependency_unavailable(
-                "POLYMARKET_BOOK_STATUS_FAILED",
-                format!("Polymarket order book returned HTTP {status} for token_id={token_id}"),
-            ));
-        }
-
-        let raw = response.json::<RawOrderBook>().await.map_err(|error| {
-            AppError::dependency_unavailable(
-                "POLYMARKET_BOOK_DECODE_FAILED",
-                format!("failed to decode Polymarket order book for token_id={token_id}: {error}"),
-            )
-        })?;
-
-        Ok(Some(PolymarketRewardOrderBook {
-            token_id: raw.asset_id.unwrap_or_else(|| token_id.to_string()),
-            bids: parse_levels(raw.bids, SortDirection::Descending),
-            asks: parse_levels(raw.asks, SortDirection::Ascending),
-            observed_at: OffsetDateTime::now_utc(),
-        }))
-    }
-
     async fn fetch_market_detail(&self, condition_id: &str) -> Result<Option<RawClobMarketDetail>> {
         let url = format!("{}/markets/{condition_id}", self.clob_host);
         let response = self.client.get(&url).send().await.map_err(|error| {
@@ -360,7 +258,9 @@ impl PolymarketRewardsConnector {
         if status.as_u16() == 429 {
             return Err(AppError::dependency_unavailable(
                 "POLYMARKET_CLOB_MARKET_DETAIL_RATE_LIMITED",
-                format!("CLOB market detail returned HTTP 429 Too Many Requests for {condition_id}"),
+                format!(
+                    "CLOB market detail returned HTTP 429 Too Many Requests for {condition_id}"
+                ),
             ));
         }
         if !status.is_success() {
@@ -618,43 +518,7 @@ fn map_reward_token(raw: RawRewardToken) -> Option<PolymarketRewardToken> {
     })
 }
 
-#[derive(Debug, Clone, Copy)]
-enum SortDirection {
-    Ascending,
-    Descending,
-}
-
-fn parse_levels(
-    levels: Option<Vec<RawBookLevel>>,
-    direction: SortDirection,
-) -> Vec<PolymarketRewardBookLevel> {
-    let mut parsed = levels
-        .unwrap_or_default()
-        .into_iter()
-        .filter_map(|level| {
-            let price = parse_decimal(level.price.as_deref())?;
-            let size = parse_decimal(level.size.as_deref())?;
-            if size <= Decimal::ZERO {
-                return None;
-            }
-            Some(PolymarketRewardBookLevel { price, size })
-        })
-        .collect::<Vec<_>>();
-
-    parsed.sort_by(|left, right| match direction {
-        SortDirection::Ascending => left.price.cmp(&right.price),
-        SortDirection::Descending => right.price.cmp(&left.price),
-    });
-    parsed
-}
-
-fn parse_decimal(value: Option<&str>) -> Option<Decimal> {
-    let raw = value?.trim();
-    if raw.is_empty() {
-        return None;
-    }
-    Decimal::from_str(raw).ok()
-}
+include!("rewards/orderbooks.rs");
 
 #[cfg(test)]
 mod tests {

@@ -3,7 +3,8 @@ use polyedge_application::{
     ApproveSignalCommand, ArbitrageAnalysisRunListFilters, ArbitrageScanListFilters,
     EventListFilters, EvidenceListFilters, ExecutionRequestListFilters, OrderDraftListFilters,
     OrderListFilters, PageQuery, PositionListFilters, RewardBotConfigPatch, SignalListFilters,
-    SubmitExecutionCommand, SyncExternalOrderStatusCommand, TradeListFilters, demo_fixture_bundle,
+    SubmitExecutionStoreCommand, SyncExternalOrderStatusCommand,
+    TradeListFilters, demo_fixture_bundle,
 };
 use polyedge_domain::{
     ExecutionRequestStatus, OrderDraftStatus, OrderStatus, Quantity, SignalLifecycleState,
@@ -29,7 +30,7 @@ fn test_actor(request_id: &str) -> AuthenticatedActor {
 
 #[tokio::test]
 async fn promote_news_events_creates_market_linked_event_and_evidence() {
-    let state = test_state(SystemMode::ManualConfirm);
+    let state = test_state(SystemMode::LiveAuto);
     state
         .market_event_service
         .ingest_fixture_bundle(demo_fixture_bundle(), "trace_seed")
@@ -137,7 +138,7 @@ async fn promote_news_events_creates_market_linked_event_and_evidence() {
 
 #[tokio::test]
 async fn scan_arbitrage_once_records_market_snapshots_without_trade_side_effects() {
-    let state = test_state(SystemMode::ManualConfirm);
+    let state = test_state(SystemMode::LiveAuto);
     state
         .market_event_service
         .ingest_fixture_bundle(demo_fixture_bundle(), "trace_seed")
@@ -182,7 +183,7 @@ async fn scan_arbitrage_once_records_market_snapshots_without_trade_side_effects
 
 #[tokio::test]
 async fn analyze_arbitrage_opportunities_records_summary_run() {
-    let state = test_state(SystemMode::ManualConfirm);
+    let state = test_state(SystemMode::LiveAuto);
     state
         .market_event_service
         .ingest_fixture_bundle(demo_fixture_bundle(), "trace_seed")
@@ -214,11 +215,16 @@ async fn analyze_arbitrage_opportunities_records_summary_run() {
     assert_eq!(runs.data[0].id, analysis.id);
 }
 
+struct TestExecutionReceipt {
+    execution_request: polyedge_application::ExecutionRequestView,
+    order_draft: polyedge_application::OrderDraftView,
+}
+
 async fn seed_execution_request_for_connector(
     state: &AppState,
     quantity_units: i64,
     connector_name: &str,
-) -> polyedge_application::ExecutionSubmissionReceipt {
+) -> TestExecutionReceipt {
     state
         .market_event_service
         .ingest_fixture_bundle(demo_fixture_bundle(), "trace_seed")
@@ -238,33 +244,41 @@ async fn seed_execution_request_for_connector(
         .await
         .expect("approve signal");
 
-    state
-        .execution_service
-        .submit_execution_request(SubmitExecutionCommand {
+    let risk_state = state
+        .risk_service
+        .read_state()
+        .await
+        .expect("read risk state");
+    let result = state
+        .market_event_service
+        .submit_execution_request(SubmitExecutionStoreCommand {
             signal_id: approval.signal.id.clone(),
             expected_signal_version: Some(approval.signal.version),
             limit_price: approval.signal.market_price,
             quantity: Quantity::new(quantity_units.into()).expect("quantity"),
-            connector_name: Some(connector_name.to_string()),
+            connector_name: connector_name.to_string(),
             reason: "queue execution request for worker dispatch test".to_string(),
-            request_id: "req_submit".to_string(),
+            requested_by_user_id: "test-user".to_string(),
             trace_id: "trace_submit".to_string(),
-            actor: test_actor("req_submit"),
+            mode: risk_state.mode,
+            risk_state_version: risk_state.version,
         })
         .await
-        .expect("submit execution request")
+        .expect("submit execution request");
+
+    TestExecutionReceipt {
+        execution_request: result.execution_request,
+        order_draft: result.order_draft,
+    }
 }
 
-async fn seed_execution_request(
-    state: &AppState,
-    quantity_units: i64,
-) -> polyedge_application::ExecutionSubmissionReceipt {
+async fn seed_execution_request(state: &AppState, quantity_units: i64) -> TestExecutionReceipt {
     seed_execution_request_for_connector(state, quantity_units, PAPER_EXECUTOR_NAME).await
 }
 
 #[tokio::test]
 async fn drain_execution_queue_marks_submitted_for_eligible_orders() {
-    let state = test_state(SystemMode::ManualConfirm);
+    let state = test_state(SystemMode::LiveAuto);
     let receipt = seed_execution_request(&state, 3).await;
 
     let report = drain_execution_queue(&state, None, Some(10))
@@ -338,7 +352,7 @@ async fn drain_execution_queue_marks_submitted_for_eligible_orders() {
 
 #[tokio::test]
 async fn poll_paper_order_statuses_promotes_submitted_orders_to_open() {
-    let state = test_state(SystemMode::ManualConfirm);
+    let state = test_state(SystemMode::LiveAuto);
     seed_execution_request(&state, 3).await;
     drain_execution_queue(&state, None, Some(10))
         .await
@@ -370,7 +384,7 @@ async fn poll_paper_order_statuses_promotes_submitted_orders_to_open() {
 
 #[tokio::test]
 async fn polymarket_worker_requires_live_credentials() {
-    let state = test_state(SystemMode::ManualConfirm);
+    let state = test_state(SystemMode::LiveAuto);
 
     let error = poll_polymarket_order_statuses(
         &state,
@@ -385,7 +399,7 @@ async fn polymarket_worker_requires_live_credentials() {
 
 #[tokio::test]
 async fn sync_external_order_status_cancels_open_order_and_request() {
-    let state = test_state(SystemMode::ManualConfirm);
+    let state = test_state(SystemMode::LiveAuto);
     let receipt = seed_execution_request(&state, 3).await;
     drain_execution_queue(&state, None, Some(10))
         .await
@@ -435,7 +449,7 @@ async fn sync_external_order_status_cancels_open_order_and_request() {
 
 #[tokio::test]
 async fn drain_execution_queue_marks_failed_for_sub_min_notional_orders() {
-    let state = test_state(SystemMode::ManualConfirm);
+    let state = test_state(SystemMode::LiveAuto);
     let receipt = seed_execution_request(&state, 1).await;
 
     let report = drain_execution_queue(&state, None, Some(10))
@@ -496,7 +510,7 @@ async fn drain_execution_queue_marks_failed_for_sub_min_notional_orders() {
 
 #[tokio::test]
 async fn reconcile_paper_fills_creates_order_trade_position_and_executes_signal() {
-    let state = test_state(SystemMode::ManualConfirm);
+    let state = test_state(SystemMode::LiveAuto);
     let receipt = seed_execution_request(&state, 3).await;
     drain_execution_queue(&state, None, Some(10))
         .await

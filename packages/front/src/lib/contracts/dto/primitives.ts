@@ -20,9 +20,6 @@ export type SignalLifecycleState =
   | "reversed"
   | "expired";
 export type RuntimeMode =
-  | "research"
-  | "paper_trade"
-  | "manual_confirm"
   | "live_auto"
   | "kill_switch_locked";
 export type RuntimeEnvironment = "local" | "paper" | "staging" | "production";

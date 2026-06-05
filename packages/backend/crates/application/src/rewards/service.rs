@@ -69,6 +69,15 @@ pub trait RewardBotStore: Send + Sync {
         outcome: &RewardTickOutcome,
         trace_id: &str,
     ) -> Result<()>;
+    /// Persist account state from external sync and optionally replace all positions
+    /// for the account. `None` preserves the stored positions when the external
+    /// position request failed; `Some` is a complete authoritative snapshot.
+    async fn apply_account_sync(
+        &self,
+        account: &RewardAccountState,
+        positions: Option<&[RewardPosition]>,
+        trace_id: &str,
+    ) -> Result<()>;
     /// Reset state: cancel orders, clear fills/positions, reset the ledger to capital.
     async fn reset_state(&self, config: &RewardBotConfig, trace_id: &str) -> Result<()>;
 }
@@ -463,6 +472,18 @@ impl RewardBotService {
         trace_id: &str,
     ) -> Result<()> {
         self.store.apply_tick_outcome(outcome, trace_id).await
+    }
+
+    /// Persist external-synced account state and optionally replace positions.
+    pub async fn apply_account_sync(
+        &self,
+        account: &RewardAccountState,
+        positions: Option<&[RewardPosition]>,
+        trace_id: &str,
+    ) -> Result<()> {
+        self.store
+            .apply_account_sync(account, positions, trace_id)
+            .await
     }
 
     pub async fn reset_state(&self, trace_id: &str) -> Result<()> {

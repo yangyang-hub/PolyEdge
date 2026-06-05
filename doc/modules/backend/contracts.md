@@ -48,7 +48,7 @@
 - 11 个领域 DTO 模块全部实现
 - 覆盖 markets、events、signals、orders、trades、positions、risk、arbitrage、rewards、copytrade、wallet-analysis、news、system
 - Rewards snapshot 查询契约包含订单后端分页字段，响应分页元数据由 application 的 `RewardBotSnapshot.orders_page` 序列化输出
-- 当前 Rewards API handler 会在 service snapshot 序列化前用全部 CLOB open orders 覆盖 `orders`，但不改写 `orders_page`；这是 handler 实现与契约语义之间的已知偏差，不代表分页契约已改为 live orders
+- Rewards snapshot 的 `orders` 与 `orders_page` 都描述本地 managed-order 查询；外部账户全量开放订单不属于当前响应契约
 
 ## 修改检查清单
 

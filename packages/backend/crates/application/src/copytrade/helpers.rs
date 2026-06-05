@@ -85,13 +85,3 @@ fn source_trade_id(
     let hash = hasher.finish();
     format!("ct_st_{hash:016x}")
 }
-
-fn new_copy_order_id() -> String {
-    let now = OffsetDateTime::now_utc();
-    format!("ct_ord_{}", now.unix_timestamp_nanos())
-}
-
-fn new_copy_fill_id() -> String {
-    let now = OffsetDateTime::now_utc();
-    format!("ct_fill_{}", now.unix_timestamp_nanos())
-}

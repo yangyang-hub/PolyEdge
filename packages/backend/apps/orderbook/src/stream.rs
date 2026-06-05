@@ -10,6 +10,7 @@ use polymarket_client_sdk::clob::{
 };
 use polymarket_client_sdk::types::U256;
 use polymarket_client_sdk::ws::config::Config as WsConfig;
+use std::collections::HashSet;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -122,21 +123,22 @@ pub async fn run_orderbook_stream(state: &AppState) -> Result<OrderbookStreamRep
                 Ok(tokens) => tokens,
                 Err(error) => {
                     warn!(error = %error, "poll reconciler failed to get stale tokens");
-                    continue;
+                    Vec::new()
                 }
             };
+            let targets = poll_reconcile_targets(&current_tokens, &stale, poll_max_tokens);
 
-            if stale.is_empty() {
+            if targets.is_empty() {
                 continue;
             }
 
             debug!(
                 stale_count = stale.len(),
-                "poll reconciler checking stale tokens"
+                target_count = targets.len(),
+                "poll reconciler refreshing registered tokens"
             );
 
-            let fetch_limit = stale.len().min(poll_max_tokens);
-            for chunk in stale[..fetch_limit].chunks(100) {
+            for chunk in targets.chunks(100) {
                 match connector.fetch_order_books(chunk).await {
                     Ok(books) => {
                         for book in books {
@@ -263,6 +265,28 @@ async fn collect_orderbook_subscription_tokens(state: &AppState) -> Vec<String> 
     let max_tokens = state.settings.orderbook_stream.max_tokens;
     let all = state.orderbook_registry.list_all_tokens().await;
     all.into_iter().take(max_tokens).collect()
+}
+
+fn poll_reconcile_targets(
+    current_tokens: &[String],
+    stale_tokens: &[String],
+    max_tokens: usize,
+) -> Vec<String> {
+    if max_tokens == 0 {
+        return Vec::new();
+    }
+    let current = current_tokens.iter().collect::<HashSet<_>>();
+    let mut seen = HashSet::new();
+    let mut targets = Vec::with_capacity(current_tokens.len().min(max_tokens));
+    for token_id in stale_tokens.iter().chain(current_tokens) {
+        if current.contains(token_id) && seen.insert(token_id.as_str()) {
+            targets.push(token_id.clone());
+            if targets.len() >= max_tokens {
+                break;
+            }
+        }
+    }
+    targets
 }
 
 fn book_update_to_cached(update: &BookUpdate) -> CachedOrderBook {
@@ -404,5 +428,16 @@ mod tests {
         assert_eq!(book.bids.len(), 1);
         assert_eq!(book.bids[0].price, Decimal::new(50, 2));
         assert_eq!(book.bids[0].size, Decimal::from(7_u64));
+    }
+
+    #[test]
+    fn poll_reconcile_targets_include_fresh_tokens_after_stale_priority() {
+        let current = vec!["fresh".to_string(), "stale".to_string()];
+        let stale = vec!["stale".to_string()];
+
+        assert_eq!(
+            poll_reconcile_targets(&current, &stale, 2),
+            vec!["stale".to_string(), "fresh".to_string()]
+        );
     }
 }

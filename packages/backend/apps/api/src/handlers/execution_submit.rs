@@ -46,7 +46,6 @@ async fn submit_execution_request(
                     )
                 })?;
             replayed.replayed = true;
-            normalize_submit_execution_modes(&mut replayed);
 
             return Ok(Json(ApiResponse::new(replayed, auth.request_id, trace_id)));
         }

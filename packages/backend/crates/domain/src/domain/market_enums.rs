@@ -1,9 +1,6 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SystemMode {
-    Research,
-    PaperTrade,
-    ManualConfirm,
     LiveAuto,
     KillSwitchLocked,
 }
@@ -12,9 +9,6 @@ impl SystemMode {
     #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
-            Self::Research => "research",
-            Self::PaperTrade => "paper_trade",
-            Self::ManualConfirm => "manual_confirm",
             Self::LiveAuto => "live_auto",
             Self::KillSwitchLocked => "kill_switch_locked",
         }
@@ -590,10 +584,7 @@ impl FromStr for SystemMode {
 
     fn from_str(value: &str) -> Result<Self> {
         match value {
-            "research" => Ok(Self::Research),
-            "paper_trade" => Ok(Self::PaperTrade),
-            "manual_confirm" => Ok(Self::ManualConfirm),
-            "live_auto" => Ok(Self::LiveAuto),
+            "live_auto" | "research" | "paper_trade" | "manual_confirm" => Ok(Self::LiveAuto),
             "kill_switch_locked" => Ok(Self::KillSwitchLocked),
             _ => Err(AppError::invalid_input(
                 "DOMAIN_SYSTEM_MODE_INVALID",

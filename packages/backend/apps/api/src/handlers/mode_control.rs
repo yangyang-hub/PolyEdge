@@ -43,7 +43,6 @@ async fn trigger_kill_switch(
                     )
                 })?;
             replayed.replayed = true;
-            normalize_kill_switch_modes(&mut replayed);
 
             return Ok(Json(ApiResponse::new(replayed, auth.request_id, trace_id)));
         }
@@ -158,7 +157,6 @@ async fn release_kill_switch(
                     )
                 })?;
             replayed.replayed = true;
-            normalize_kill_switch_modes(&mut replayed);
 
             return Ok(Json(ApiResponse::new(replayed, auth.request_id, trace_id)));
         }
@@ -272,7 +270,7 @@ async fn transition_system_mode(
 
     Ok(Json(ApiResponse::new(
         SystemModeData {
-            mode: console_runtime_mode(receipt.snapshot.mode),
+            mode: receipt.snapshot.mode,
             environment: receipt.snapshot.environment,
             version: receipt.snapshot.version,
             replayed: receipt.replayed,

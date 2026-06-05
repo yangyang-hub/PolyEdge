@@ -12,7 +12,7 @@
 |---|---|
 | `apps/orderbook/src/main.rs` | 服务入口：先 bind HTTP，再启动市场同步和可重启盘口流后台任务 |
 | `apps/orderbook/src/market_sync.rs` | Gamma markets + CLOB reward markets → Postgres |
-| `apps/orderbook/src/stream.rs` | 聚合 registry token，消费 CLOB `book` + `price_change` WS，并用 `/book` poll 对 stale token 做 reconcile |
+| `apps/orderbook/src/stream.rs` | 聚合 registry token，消费 CLOB `book` + `price_change` WS，并周期性全量 poll 注册 token 做 reconcile |
 | `apps/orderbook/src/http_api.rs` | 盘口读取、批量读取、stats、token 注册/注销和内部 ingest HTTP API |
 | `crates/infrastructure/src/stores/orderbook_cache.rs` | `InMemoryOrderbookCache`：TTL、最优档排序、深度裁剪 |
 | `crates/infrastructure/src/stores/orderbook_registry.rs` | 多来源 token 原子替换、优先级聚合和来源上限 |
@@ -47,7 +47,7 @@
 - WS 同时消费完整 `book` 快照和挂单/撤单触发的 `price_change` 增量；无 size 的增量不修改深度，等待后续快照/poll 对账。
 - 缓存拒绝 `observed_at` 早于当前条目的快照或增量，避免延迟 poll/WS 覆盖更新盘口。
 - HTTP ingest 会在写入前完成整批 token/price/size 校验，并同样按最优价格排序后裁剪。
-- poll reconciler 只抓取缺失、TTL 过期或超过 stale threshold 的 token；`stale_threshold_ms <= 0` 关闭年龄检查，但 TTL 过期仍会触发 reconcile。
+- poll reconciler 每个周期都会刷新当前注册 token，优先处理缺失、TTL 过期或超过 stale threshold 的 token，再覆盖其余 token，以修复未被检测到的 WS 增量丢失；`stale_threshold_ms <= 0` 只关闭年龄 stale 优先级。
 - `OrderbookHttpClient` 把单盘口 404 映射为 `None`，其他非成功 HTTP 状态映射为 dependency error。
 
 ## 数据流
@@ -60,14 +60,14 @@ Gamma API / CLOB rewards API
 Worker register sources
     → POST /orderbook/register
     → OrderbookSubscriptionRegistry
-    → CLOB WS + /book poll
+    → CLOB WS + /books batch poll（遗漏/失败时回退 /book）
     → InMemoryOrderbookCache
     → API / Worker 通过 OrderbookHttpClient 读取
 ```
 
 ## 当前状态与缺口
 
-- 市场同步、registry、WS `book` + `price_change`、poll reconcile、HTTP 读取和内部写认证已实现。
+- 市场同步、registry、WS `book` + `price_change`、全注册 token 周期 poll reconcile、HTTP 读取和内部写认证已实现；poll 可修复 fresh cache 中未被察觉的 WS 增量丢失。
 - Gamma 与 rewards 目录同步相互独立；rewards 分页、详情补全或空目录异常时保留上一版 rewards catalog，不执行破坏性全量替换。
 - 盘口只保存在单个 orderbook 进程内；服务重启会丢失缓存，横向多实例之间也不会共享缓存或 registry。
 - 读接口和 `/healthz` 当前不鉴权，应依赖内网边界限制访问。

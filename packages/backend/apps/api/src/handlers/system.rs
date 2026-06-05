@@ -1,19 +1,3 @@
-fn console_runtime_mode(mode: SystemMode) -> SystemMode {
-    match mode {
-        SystemMode::ManualConfirm => SystemMode::PaperTrade,
-        other => other,
-    }
-}
-
-fn normalize_submit_execution_modes(data: &mut SubmitExecutionData) {
-    data.execution_request.mode = console_runtime_mode(data.execution_request.mode);
-    data.risk_state.mode = console_runtime_mode(data.risk_state.mode);
-}
-
-fn normalize_kill_switch_modes(data: &mut KillSwitchData) {
-    data.risk_state.mode = console_runtime_mode(data.risk_state.mode);
-}
-
 async fn read_system_mode(
     Extension(auth): Extension<AuthContext>,
     State(state): State<AppState>,
@@ -27,7 +11,7 @@ async fn read_system_mode(
 
     Ok(Json(ApiResponse::new(
         SystemModeData {
-            mode: console_runtime_mode(snapshot.mode),
+            mode: snapshot.mode,
             environment: snapshot.environment,
             version: snapshot.version,
             replayed: false,

@@ -49,10 +49,6 @@ export function hasExecutableLifecycle(signal: SignalItem | SelectedSignal): boo
   return signal.lifecycleState === "new" || signal.lifecycleState === "active";
 }
 
-export function canSubmitExecution(signal: SignalItem | SelectedSignal, controls: RuntimeControls): boolean {
-  if (controls.killSwitch || signal.rejectedAt || !hasExecutableLifecycle(signal)) {
-    return false;
-  }
-
-  return controls.mode === "paper_trade" || controls.mode === "live_auto";
+export function canSubmitExecution(_signal: SignalItem | SelectedSignal, _controls: RuntimeControls): boolean {
+  return false;
 }

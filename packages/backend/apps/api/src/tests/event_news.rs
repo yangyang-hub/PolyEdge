@@ -2,7 +2,7 @@
 async fn events_route_filters_by_status() {
     let signing_key = SigningKey::from_bytes(&[13_u8; 32]);
     let settings = Settings::for_test(
-        SystemMode::ManualConfirm,
+        SystemMode::LiveAuto,
         "test",
         vec![AuthKeySettings {
             kid: "test-key".to_string(),
@@ -46,7 +46,7 @@ async fn events_route_filters_by_status() {
 async fn news_source_health_route_filters_by_source_type() {
     let signing_key = SigningKey::from_bytes(&[17_u8; 32]);
     let settings = Settings::for_test(
-        SystemMode::ManualConfirm,
+        SystemMode::LiveAuto,
         "test",
         vec![AuthKeySettings {
             kid: "test-key".to_string(),
@@ -162,7 +162,7 @@ async fn news_source_health_route_filters_by_source_type() {
 async fn evidences_route_filters_by_market() {
     let signing_key = SigningKey::from_bytes(&[14_u8; 32]);
     let settings = Settings::for_test(
-        SystemMode::ManualConfirm,
+        SystemMode::LiveAuto,
         "test",
         vec![AuthKeySettings {
             kid: "test-key".to_string(),
@@ -206,7 +206,7 @@ async fn evidences_route_filters_by_market() {
 async fn signals_route_filters_by_lifecycle_state_alias() {
     let signing_key = SigningKey::from_bytes(&[15_u8; 32]);
     let settings = Settings::for_test(
-        SystemMode::ManualConfirm,
+        SystemMode::LiveAuto,
         "test",
         vec![AuthKeySettings {
             kid: "test-key".to_string(),

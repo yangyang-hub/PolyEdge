@@ -100,54 +100,6 @@ impl FromStr for CopyOrderSide {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum CopyOrderStatus {
-    Planned,
-    Open,
-    Filled,
-    Cancelled,
-    Skipped,
-    Error,
-}
-
-impl CopyOrderStatus {
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Planned => "planned",
-            Self::Open => "open",
-            Self::Filled => "filled",
-            Self::Cancelled => "cancelled",
-            Self::Skipped => "skipped",
-            Self::Error => "error",
-        }
-    }
-
-    #[must_use]
-    pub const fn is_open_like(self) -> bool {
-        matches!(self, Self::Planned | Self::Open)
-    }
-}
-
-impl FromStr for CopyOrderStatus {
-    type Err = AppError;
-
-    fn from_str(value: &str) -> Result<Self> {
-        match value {
-            "planned" => Ok(Self::Planned),
-            "open" => Ok(Self::Open),
-            "filled" => Ok(Self::Filled),
-            "cancelled" => Ok(Self::Cancelled),
-            "skipped" => Ok(Self::Skipped),
-            "error" => Ok(Self::Error),
-            other => Err(AppError::invalid_input(
-                "COPYTRADE_ORDER_STATUS_INVALID",
-                format!("unknown copytrade order status: {other}"),
-            )),
-        }
-    }
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -500,88 +452,6 @@ pub struct SourceTrade {
     pub decision_reason: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct CopyOrder {
-    pub id: String,
-    pub account_id: String,
-    pub wallet_address: String,
-    pub source_trade_id: String,
-    pub condition_id: String,
-    pub token_id: String,
-    pub outcome: String,
-    pub side: CopyOrderSide,
-    pub price: Decimal,
-    pub size: Decimal,
-    pub notional_usd: Decimal,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub external_order_id: Option<String>,
-    pub status: CopyOrderStatus,
-    pub reason: String,
-    #[serde(default)]
-    pub filled_size: Decimal,
-    #[serde(default)]
-    pub realized_pnl: Decimal,
-    #[serde(with = "time::serde::rfc3339")]
-    pub created_at: OffsetDateTime,
-    #[serde(with = "time::serde::rfc3339")]
-    pub updated_at: OffsetDateTime,
-}
-
-impl CopyOrder {
-    /// Is this order status one that still has open or fillable inventory?
-    #[must_use]
-    pub fn remaining_size(&self) -> Decimal {
-        (self.size - self.filled_size).max(Decimal::ZERO)
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct CopyPosition {
-    pub account_id: String,
-    pub wallet_address: String,
-    pub condition_id: String,
-    pub token_id: String,
-    pub outcome: String,
-    pub size: Decimal,
-    pub avg_price: Decimal,
-    pub realized_pnl: Decimal,
-    #[serde(with = "time::serde::rfc3339")]
-    pub updated_at: OffsetDateTime,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct CopyAccountState {
-    pub account_id: String,
-    pub capital_usd: Decimal,
-    pub available_usd: Decimal,
-    pub reserved_usd: Decimal,
-    pub realized_pnl: Decimal,
-    /// PnL realized today (UTC date). Reset to zero when the date rolls over.
-    /// Used by the daily loss limit risk check.
-    #[serde(default)]
-    pub daily_realized_pnl: Decimal,
-    pub fees_paid: Decimal,
-    pub tick_index: i64,
-    #[serde(with = "time::serde::rfc3339")]
-    pub updated_at: OffsetDateTime,
-}
-
-impl CopyAccountState {
-    #[must_use]
-    pub fn fresh(account_id: &str, capital_usd: Decimal, now: OffsetDateTime) -> Self {
-        Self {
-            account_id: account_id.to_string(),
-            capital_usd,
-            available_usd: capital_usd,
-            reserved_usd: Decimal::ZERO,
-            realized_pnl: Decimal::ZERO,
-            daily_realized_pnl: Decimal::ZERO,
-            fees_paid: Decimal::ZERO,
-            tick_index: 0,
-            updated_at: now,
-        }
-    }
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct CopyEvent {
@@ -602,19 +472,12 @@ pub struct CopyEvent {
 pub struct CopyTradeStatus {
     pub enabled: bool,
     pub running: bool,
-    pub mode: CopyTradeMode,
-    pub account_id: String,
     pub wallets_tracked: usize,
     pub active_wallets: usize,
-    pub open_orders: usize,
-    pub positions: usize,
     pub source_trades_detected: usize,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[serde(with = "time::serde::rfc3339::option")]
     pub last_scan_at: Option<OffsetDateTime>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[serde(with = "time::serde::rfc3339::option")]
-    pub last_run_at: Option<OffsetDateTime>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
@@ -623,11 +486,8 @@ pub struct CopyTradeStatus {
 pub struct CopyTradeSnapshot {
     pub config: CopyTradeConfig,
     pub status: CopyTradeStatus,
-    pub account: CopyAccountState,
     pub wallets: Vec<TrackedWallet>,
     pub source_trades: Vec<SourceTrade>,
-    pub orders: Vec<CopyOrder>,
-    pub positions: Vec<CopyPosition>,
     pub events: Vec<CopyEvent>,
 }
 
@@ -640,148 +500,3 @@ pub struct CopyTradeRunReport {
     pub orders_skipped: usize,
 }
 
-// ── Strategy / Engine internals ─────────────────────────────────────────────
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct CopyBookLevel {
-    pub price: Decimal,
-    pub size: Decimal,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct CopyOrderBook {
-    pub token_id: String,
-    pub bids: Vec<CopyBookLevel>,
-    pub asks: Vec<CopyBookLevel>,
-    #[serde(with = "time::serde::rfc3339")]
-    pub observed_at: OffsetDateTime,
-}
-
-/// Internal decision returned by the strategy layer (not persisted).
-#[derive(Debug, Clone)]
-pub struct CopyDecision {
-    pub copy: bool,
-    pub reason: String,
-    pub size: Decimal,
-    pub price: Decimal,
-}
-
-/// The full set of state changes produced by a single copy-trading tick.
-/// Persisted atomically by `CopyTradeStore::apply_copy_tick`.
-#[derive(Debug, Clone, PartialEq)]
-pub struct CopySimulationOutcome {
-    pub account: CopyAccountState,
-    /// Orders to upsert, keyed by `id`.
-    pub orders: Vec<CopyOrder>,
-    /// Positions to upsert, keyed by `(account_id, token_id)`.
-    pub positions: Vec<CopyPosition>,
-    pub fills: Vec<CopyFill>,
-    pub events: Vec<CopyEvent>,
-    /// Source trades to mark as processed (copied=true).
-    pub processed_source_trade_ids: Vec<String>,
-    pub report: CopyTradeRunReport,
-}
-
-/// A fill against a simulated copy order.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct CopyFill {
-    pub id: String,
-    pub order_id: String,
-    pub account_id: String,
-    pub wallet_address: String,
-    pub condition_id: String,
-    pub token_id: String,
-    pub outcome: String,
-    pub side: CopyOrderSide,
-    pub price: Decimal,
-    pub size: Decimal,
-    pub notional_usd: Decimal,
-    pub realized_pnl: Decimal,
-    pub reason: String,
-    pub trace_id: String,
-    #[serde(with = "time::serde::rfc3339")]
-    pub created_at: OffsetDateTime,
-}
-
-/// How the strategy engine resolved its sizing for a given source trade.
-/// Logged as the `reason` field on the copy order for audit / debugging.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum CopySkipReason {
-    BelowMinSize,
-    PriceOutOfRange,
-    CopySellsDisabled,
-    MaxOrdersReached,
-    PositionCapExceeded,
-    WalletExposureCapExceeded,
-    TotalExposureCapExceeded,
-    DailyLossLimit,
-    CooldownActive,
-    SlippageExceeded,
-    NoOrderBook,
-    NoSufficientLiquidity,
-    WalletPaused,
-}
-
-impl CopySkipReason {
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::BelowMinSize => "below_min_size",
-            Self::PriceOutOfRange => "price_out_of_range",
-            Self::CopySellsDisabled => "copy_sells_disabled",
-            Self::MaxOrdersReached => "max_orders_reached",
-            Self::PositionCapExceeded => "position_cap_exceeded",
-            Self::WalletExposureCapExceeded => "wallet_exposure_cap_exceeded",
-            Self::TotalExposureCapExceeded => "total_exposure_cap_exceeded",
-            Self::DailyLossLimit => "daily_loss_limit",
-            Self::CooldownActive => "cooldown_active",
-            Self::SlippageExceeded => "slippage_exceeded",
-            Self::NoOrderBook => "no_order_book",
-            Self::NoSufficientLiquidity => "no_sufficient_liquidity",
-            Self::WalletPaused => "wallet_paused",
-        }
-    }
-}
-
-impl FromStr for CopySkipReason {
-    type Err = AppError;
-
-    fn from_str(value: &str) -> Result<Self> {
-        match value {
-            "below_min_size" => Ok(Self::BelowMinSize),
-            "price_out_of_range" => Ok(Self::PriceOutOfRange),
-            "copy_sells_disabled" => Ok(Self::CopySellsDisabled),
-            "max_orders_reached" => Ok(Self::MaxOrdersReached),
-            "position_cap_exceeded" => Ok(Self::PositionCapExceeded),
-            "wallet_exposure_cap_exceeded" => Ok(Self::WalletExposureCapExceeded),
-            "total_exposure_cap_exceeded" => Ok(Self::TotalExposureCapExceeded),
-            "daily_loss_limit" => Ok(Self::DailyLossLimit),
-            "cooldown_active" => Ok(Self::CooldownActive),
-            "slippage_exceeded" => Ok(Self::SlippageExceeded),
-            "no_order_book" => Ok(Self::NoOrderBook),
-            "no_sufficient_liquidity" => Ok(Self::NoSufficientLiquidity),
-            "wallet_paused" => Ok(Self::WalletPaused),
-            other => Err(AppError::invalid_input(
-                "COPYTRADE_SKIP_REASON_INVALID",
-                format!("unknown copytrade skip reason: {other}"),
-            )),
-        }
-    }
-}
-
-/// Internal tick context for the simulation engine.
-pub(crate) struct CopyTickContext {
-    pub now: OffsetDateTime,
-    pub config: CopyTradeConfig,
-    pub account: CopyAccountState,
-    pub orders: Vec<CopyOrder>,
-    pub positions: HashMap<String, CopyPosition>,
-    pub fills: Vec<CopyFill>,
-    pub events: Vec<CopyEvent>,
-    pub processed_source_trade_ids: Vec<String>,
-    pub trace_id: String,
-    pub seq: usize,
-    pub filled_orders: usize,
-    pub placed_orders: usize,
-}

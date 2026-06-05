@@ -266,11 +266,8 @@ async fn run_reward_bot_live_tick(
         reward_accrued: Decimal::ZERO,
     };
 
-    if !cycle.should_execute && cycle.open_orders.is_empty() {
-        return Ok(report);
-    }
-
     let connector = build_live_polymarket_connector(state).await?;
+
     if !cycle.open_orders.is_empty() {
         let sync_report =
             sync_live_reward_orders(state, &connector, &cycle.open_orders, &books, trace_id).await?;
@@ -279,6 +276,24 @@ async fn run_reward_bot_live_tick(
         cycle.account = latest.account;
         cycle.open_orders = latest.open_orders;
         cycle.positions = latest.positions;
+    }
+
+    // A newly confirmed fill was just applied to the local ledger and may not yet
+    // be visible in the eventually-consistent Data API snapshot. Refresh only on
+    // cycles without new fills so the same fill cannot be counted twice.
+    if can_refresh_external_account_after_order_sync(&report) {
+        sync_external_account_state(
+            state,
+            &connector,
+            &mut cycle.account,
+            &mut cycle.positions,
+            trace_id,
+        )
+        .await;
+    }
+
+    if !cycle.should_execute && cycle.open_orders.is_empty() {
+        return Ok(report);
     }
 
     let mut account = cycle.account.clone();
@@ -478,6 +493,7 @@ async fn cancel_live_reward_orders(
     Ok(report)
 }
 
+include!("rewards/account_sync.rs");
 include!("rewards/live_sync.rs");
 include!("rewards/live_orders.rs");
 include!("rewards/live_submission.rs");

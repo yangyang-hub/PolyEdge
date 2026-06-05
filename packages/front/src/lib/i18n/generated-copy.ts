@@ -16,7 +16,7 @@ const exactGeneratedCopyKeys: Record<string, GeneratedCopyKey> = {
     "signalQueuedManualReview",
   "ETH staking ETF short requires manual confirmation due to ambiguity.":
     "ethStakingManualConfirmation",
-  "Request to switch runtime from paper_trade to manual_confirm.":
+  "Request to switch runtime from live_auto to kill_switch_locked.":
     "requestRuntimeSwitch",
   "Potential market data stale condition across macro markets.":
     "potentialStaleMarketData",

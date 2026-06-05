@@ -145,7 +145,7 @@ fn execution_request_to_contract(execution_request: ExecutionRequestView) -> Exe
         signal_version: execution_request.signal_version,
         order_draft_id: execution_request.order_draft_id,
         connector_name: execution_request.connector_name,
-        mode: console_runtime_mode(execution_request.mode),
+        mode: execution_request.mode,
         requested_by_user_id: execution_request.requested_by_user_id,
         status: execution_request.status,
         reason: execution_request.reason,
@@ -222,7 +222,7 @@ fn risk_state_to_contract(
 ) -> polyedge_domain::Result<RiskStateData> {
     Ok(RiskStateData {
         id: "risk_state_global".to_string(),
-        mode: console_runtime_mode(risk_state.mode),
+        mode: risk_state.mode,
         environment,
         kill_switch: risk_state.kill_switch,
         daily_pnl: risk_state.daily_pnl,

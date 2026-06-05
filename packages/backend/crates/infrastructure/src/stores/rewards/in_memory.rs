@@ -429,6 +429,26 @@ impl RewardBotStore for InMemoryRewardBotStore {
         Ok(())
     }
 
+    async fn apply_account_sync(
+        &self,
+        account: &RewardAccountState,
+        positions: Option<&[RewardPosition]>,
+        _trace_id: &str,
+    ) -> Result<()> {
+        *self.account_state.write().await = Some(account.clone());
+        if let Some(positions) = positions {
+            let mut stored = self.positions.write().await;
+            stored.retain(|(account_id, _), _| account_id != &account.account_id);
+            for position in positions {
+                stored.insert(
+                    (position.account_id.clone(), position.token_id.clone()),
+                    position.clone(),
+                );
+            }
+        }
+        Ok(())
+    }
+
     async fn reset_state(&self, config: &RewardBotConfig, _trace_id: &str) -> Result<()> {
         self.orders.write().await.clear();
         self.positions.write().await.clear();

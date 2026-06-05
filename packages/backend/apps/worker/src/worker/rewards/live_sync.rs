@@ -273,17 +273,27 @@ async fn run_reward_bot_live_reconcile_unlocked(
         ..RewardBotRunReport::default()
     };
 
-    let mut connector = None;
+    let live_connector = build_live_polymarket_connector(state).await?;
     if !cycle.open_orders.is_empty() {
-        let live_connector = build_live_polymarket_connector(state).await?;
         let sync_report =
             sync_live_reward_orders(state, &live_connector, &cycle.open_orders, &books, trace_id)
                 .await?;
         accumulate_report(&mut report, &sync_report);
-        connector = Some(live_connector);
         cycle = state.reward_bot_service.current_live_cycle_state().await?;
     }
 
+    if can_refresh_external_account_after_order_sync(&report) {
+        sync_external_account_state(
+            state,
+            &live_connector,
+            &mut cycle.account,
+            &mut cycle.positions,
+            trace_id,
+        )
+        .await;
+    }
+
+    let mut connector = Some(live_connector);
     let mut account = cycle.account.clone();
     let mut open_orders = cycle.open_orders.clone();
     let kill_switch = state.risk_service.read_state().await?.kill_switch;

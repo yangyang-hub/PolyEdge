@@ -2,7 +2,7 @@
 async fn trigger_kill_switch_requires_specific_scope() {
     let signing_key = SigningKey::from_bytes(&[21_u8; 32]);
     let settings = Settings::for_test(
-        SystemMode::ManualConfirm,
+        SystemMode::LiveAuto,
         "test",
         vec![AuthKeySettings {
             kid: "test-key".to_string(),
@@ -135,7 +135,7 @@ async fn kill_switch_trigger_and_release_are_idempotent() {
     );
     let release_body = serde_json::to_vec(&ReleaseKillSwitchRequest {
         reason: "resume controlled paper trading".to_string(),
-        to_mode: SystemMode::PaperTrade,
+        to_mode: SystemMode::LiveAuto,
         expected_version: Some(2),
     })
     .expect("serialize body");
@@ -162,7 +162,7 @@ async fn kill_switch_trigger_and_release_are_idempotent() {
         .expect("read body");
     let release_payload: ApiResponse<KillSwitchData> =
         serde_json::from_slice(&release_response_body).expect("deserialize response");
-    assert_eq!(release_payload.data.risk_state.mode, SystemMode::PaperTrade);
+    assert_eq!(release_payload.data.risk_state.mode, SystemMode::LiveAuto);
     assert!(!release_payload.data.risk_state.kill_switch);
     assert_eq!(release_payload.data.risk_state.version, 3);
     assert!(!release_payload.data.replayed);
@@ -196,7 +196,7 @@ async fn kill_switch_trigger_and_release_are_idempotent() {
 async fn recompute_signal_route_is_idempotent_and_creates_estimate() {
     let signing_key = SigningKey::from_bytes(&[16_u8; 32]);
     let settings = Settings::for_test(
-        SystemMode::ManualConfirm,
+        SystemMode::LiveAuto,
         "test",
         vec![AuthKeySettings {
             kid: "test-key".to_string(),
@@ -311,7 +311,7 @@ async fn recompute_signal_route_is_idempotent_and_creates_estimate() {
 async fn signal_transitions_route_returns_recompute_transition() {
     let signing_key = SigningKey::from_bytes(&[17_u8; 32]);
     let settings = Settings::for_test(
-        SystemMode::ManualConfirm,
+        SystemMode::LiveAuto,
         "test",
         vec![AuthKeySettings {
             kid: "test-key".to_string(),
@@ -386,7 +386,7 @@ async fn signal_transitions_route_returns_recompute_transition() {
 async fn mode_transition_is_idempotent() {
     let signing_key = SigningKey::from_bytes(&[11_u8; 32]);
     let settings = Settings::for_test(
-        SystemMode::ManualConfirm,
+        SystemMode::LiveAuto,
         "test",
         vec![AuthKeySettings {
             kid: "test-key".to_string(),
@@ -398,8 +398,8 @@ async fn mode_transition_is_idempotent() {
     let request_id = "req_test_2";
     let token = issue_token(&signing_key, "test-key", request_id);
     let body = serde_json::to_vec(&TransitionSystemModeRequest {
-        to_mode: SystemMode::Research,
-        reason: "operator switched to research mode".to_string(),
+        to_mode: SystemMode::KillSwitchLocked,
+        reason: "operator activated kill switch".to_string(),
     })
     .expect("serialize body");
 

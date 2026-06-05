@@ -2,7 +2,7 @@
 async fn risk_state_route_returns_current_snapshot() {
     let signing_key = SigningKey::from_bytes(&[18_u8; 32]);
     let settings = Settings::for_test(
-        SystemMode::ManualConfirm,
+        SystemMode::LiveAuto,
         "test",
         vec![AuthKeySettings {
             kid: "test-key".to_string(),
@@ -32,7 +32,7 @@ async fn risk_state_route_returns_current_snapshot() {
         .expect("read body");
     let payload: ApiResponse<RiskStateData> =
         serde_json::from_slice(&body).expect("deserialize response");
-    assert_eq!(payload.data.mode, SystemMode::PaperTrade);
+    assert_eq!(payload.data.mode, SystemMode::LiveAuto);
     assert_eq!(payload.data.id, "risk_state_global");
     assert_eq!(payload.data.environment, "test");
     assert!(!payload.data.kill_switch);
@@ -43,7 +43,7 @@ async fn risk_state_route_returns_current_snapshot() {
 async fn console_risk_routes_return_derived_resources() {
     let signing_key = SigningKey::from_bytes(&[28_u8; 32]);
     let settings = Settings::for_test(
-        SystemMode::ManualConfirm,
+        SystemMode::LiveAuto,
         "test",
         vec![AuthKeySettings {
             kid: "test-key".to_string(),
@@ -90,7 +90,7 @@ async fn console_risk_routes_return_derived_resources() {
 async fn submit_execution_request_requires_execution_submit_scope() {
     let signing_key = SigningKey::from_bytes(&[25_u8; 32]);
     let settings = Settings::for_test(
-        SystemMode::ManualConfirm,
+        SystemMode::LiveAuto,
         "test",
         vec![AuthKeySettings {
             kid: "test-key".to_string(),
@@ -135,10 +135,10 @@ async fn submit_execution_request_requires_execution_submit_scope() {
 }
 
 #[tokio::test]
-async fn submit_execution_request_is_idempotent_and_lists_created_records() {
+async fn submit_execution_request_is_rejected_when_disabled() {
     let signing_key = SigningKey::from_bytes(&[26_u8; 32]);
     let settings = Settings::for_test(
-        SystemMode::ManualConfirm,
+        SystemMode::LiveAuto,
         "test",
         vec![AuthKeySettings {
             kid: "test-key".to_string(),
@@ -172,45 +172,6 @@ async fn submit_execution_request_is_idempotent_and_lists_created_records() {
     .expect("serialize body");
 
     let submit_response = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/v1/signals/sig_2412/execution-requests")
-                .header("Authorization", format!("Bearer {submit_token}"))
-                .header("X-Request-Id", &submit_request_id)
-                .header("Idempotency-Key", "idem-execution-submit")
-                .header("Content-Type", "application/json")
-                .body(Body::from(submit_body.clone()))
-                .expect("request"),
-        )
-        .await
-        .expect("response");
-
-    assert_eq!(submit_response.status(), StatusCode::OK);
-    let submit_response_body = to_bytes(submit_response.into_body(), usize::MAX)
-        .await
-        .expect("read body");
-    let submit_payload: ApiResponse<SubmitExecutionData> =
-        serde_json::from_slice(&submit_response_body).expect("deserialize response");
-    assert_eq!(submit_payload.data.order_draft.signal_id, "sig_2412");
-    assert_eq!(submit_payload.data.order_draft.status.as_str(), "queued");
-    assert_eq!(
-        submit_payload.data.execution_request.status.as_str(),
-        "queued"
-    );
-    assert_eq!(
-        submit_payload.data.execution_request.mode,
-        SystemMode::PaperTrade
-    );
-    assert_eq!(
-        submit_payload.data.execution_request.connector_name,
-        "paper_executor"
-    );
-    assert!(!submit_payload.data.replayed);
-
-    let submit_replay = app
-        .clone()
         .oneshot(
             Request::builder()
                 .method("POST")
@@ -225,55 +186,5 @@ async fn submit_execution_request_is_idempotent_and_lists_created_records() {
         .await
         .expect("response");
 
-    assert_eq!(submit_replay.status(), StatusCode::OK);
-    let submit_replay_body = to_bytes(submit_replay.into_body(), usize::MAX)
-        .await
-        .expect("read body");
-    let submit_replay_payload: ApiResponse<SubmitExecutionData> =
-        serde_json::from_slice(&submit_replay_body).expect("deserialize response");
-    assert!(submit_replay_payload.data.replayed);
-
-    let list_request_id = format!("req_{}", Uuid::now_v7());
-    let list_token = issue_token(&signing_key, "test-key", &list_request_id);
-
-    let order_drafts_response = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri("/api/v1/orders/drafts?signal_id=sig_2412")
-                .header("Authorization", format!("Bearer {list_token}"))
-                .header("X-Request-Id", &list_request_id)
-                .body(Body::empty())
-                .expect("request"),
-        )
-        .await
-        .expect("response");
-    assert_eq!(order_drafts_response.status(), StatusCode::OK);
-    let order_drafts_body = to_bytes(order_drafts_response.into_body(), usize::MAX)
-        .await
-        .expect("read body");
-    let order_drafts_payload: ApiResponse<Paginated<OrderDraftData>> =
-        serde_json::from_slice(&order_drafts_body).expect("deserialize response");
-    assert_eq!(order_drafts_payload.data.data.len(), 1);
-    assert_eq!(order_drafts_payload.data.data[0].signal_id, "sig_2412");
-
-    let execution_requests_response = app
-        .oneshot(
-            Request::builder()
-                .uri("/api/v1/execution/requests?signal_id=sig_2412")
-                .header("Authorization", format!("Bearer {list_token}"))
-                .header("X-Request-Id", &list_request_id)
-                .body(Body::empty())
-                .expect("request"),
-        )
-        .await
-        .expect("response");
-    assert_eq!(execution_requests_response.status(), StatusCode::OK);
-    let execution_requests_body = to_bytes(execution_requests_response.into_body(), usize::MAX)
-        .await
-        .expect("read body");
-    let execution_requests_payload: ApiResponse<Paginated<ExecutionRequestData>> =
-        serde_json::from_slice(&execution_requests_body).expect("deserialize response");
-    assert_eq!(execution_requests_payload.data.data.len(), 1);
-    assert_eq!(execution_requests_payload.data.data[0].signal_id, "sig_2412");
+    assert_eq!(submit_response.status(), StatusCode::CONFLICT);
 }

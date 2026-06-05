@@ -7,15 +7,21 @@ async fn run_copytrade_once(
         return Ok(command_report.report);
     }
 
-    run_copytrade_tick(state, trace_id).await
-}
-
-async fn run_copytrade_tick(state: &AppState, trace_id: &str) -> Result<CopyTradeRunReport> {
-    let (wallet_feeds, books) = fetch_copytrade_inputs(state).await?;
-    state
+    // Detect and record source trades from tracked wallets.
+    let config = state.copytrade_service.read_config().await?;
+    if !config.enabled {
+        return Ok(CopyTradeRunReport::default());
+    }
+    let wallet_feeds = fetch_wallet_analysis_inputs(state).await?;
+    let detected = state
         .copytrade_service
-        .run_copy_cycle(wallet_feeds, books, trace_id)
-        .await
+        .detect_and_record_source_trades(&config, &wallet_feeds, trace_id)
+        .await?;
+    Ok(CopyTradeRunReport {
+        wallets_scanned: wallet_feeds.len(),
+        trades_detected: detected,
+        ..CopyTradeRunReport::default()
+    })
 }
 
 #[derive(Debug, Default)]
@@ -82,7 +88,10 @@ async fn execute_copytrade_control_command(
     trace_id: &str,
 ) -> Result<CopyTradeRunReport> {
     match command.action {
-        CopyControlAction::RunOnce => run_copytrade_tick(state, trace_id).await,
+        CopyControlAction::RunOnce => {
+            // Simulation engine removed — run-once is a no-op.
+            Ok(CopyTradeRunReport::default())
+        }
         CopyControlAction::AnalyzeWallets => {
             let wallet_feeds = fetch_wallet_analysis_inputs(state).await?;
             let analyzed = state.copytrade_service.analyze_wallets(wallet_feeds).await?;
@@ -94,18 +103,11 @@ async fn execute_copytrade_control_command(
             Ok(CopyTradeRunReport::default())
         }
         CopyControlAction::CancelAll => {
-            state
-                .copytrade_service
-                .cancel_all_orders(
-                    command.account_id.as_deref(),
-                    "worker processed queued copytrade cancel-all command",
-                    trace_id,
-                )
-                .await?;
+            // Simulation engine removed — cancel-all is a no-op.
             Ok(CopyTradeRunReport::default())
         }
         CopyControlAction::Reset => {
-            state.copytrade_service.reset_simulation(trace_id).await?;
+            // Simulation engine removed — reset is a no-op.
             Ok(CopyTradeRunReport::default())
         }
     }
@@ -181,164 +183,6 @@ async fn analyze_wallets_once(state: &AppState, trace_id: &str) -> Result<usize>
     );
 
     Ok(analyzed)
-}
-
-// ── Input fetching ──────────────────────────────────────────────────────────
-
-async fn fetch_copytrade_inputs(
-    state: &AppState,
-) -> Result<(Vec<WalletFeedInput>, HashMap<String, CopyOrderBook>)> {
-    let wallet_feeds = fetch_wallet_analysis_inputs(state).await?;
-
-    // Collect token IDs from wallet trade activities.
-    let mut token_ids_set = std::collections::HashSet::new();
-    for feed in &wallet_feeds {
-        for activity in &feed.activities {
-            if activity.kind.eq_ignore_ascii_case("TRADE") && !activity.asset.is_empty() {
-                token_ids_set.insert(activity.asset.clone());
-            }
-        }
-    }
-    let token_ids: Vec<String> = token_ids_set.into_iter().collect();
-
-    // Replace copytrade's token set so historic wallet activity does not keep
-    // stale orderbook subscriptions alive forever.
-    state
-        .orderbook_registry
-        .register_tokens("copytrade", &token_ids)
-        .await?;
-
-    // Read from shared cache first; collect cache misses for fallback.
-    let mut books = HashMap::new();
-    let mut missing = Vec::new();
-
-    for token_id in &token_ids {
-        match state.orderbook_cache.get_book(token_id).await? {
-            Some(cached) => {
-                books.insert(token_id.clone(), cached_to_copy_book(cached));
-            }
-            None => {
-                missing.push(token_id.clone());
-            }
-        }
-    }
-
-    // Fallback: cache miss tokens are fetched directly from CLOB REST API
-    // (cold start / subscription delay). Results are written into the cache so
-    // subsequent reads succeed without a network call.
-    if !missing.is_empty() {
-        debug!(
-            missing_count = missing.len(),
-            "copytrade orderbook cache miss, falling back to direct CLOB poll"
-        );
-        let connector =
-            PolymarketRewardsConnector::new(&state.settings.polymarket.clob_host)?;
-        match connector.fetch_order_books(&missing).await {
-            Ok(polled) => {
-                for book in polled {
-                    let cached = polled_book_to_cached(&book);
-                    if let Err(error) = state.orderbook_cache.set_book(&cached).await {
-                        warn!(
-                            token_id = %cached.token_id,
-                            error = %error,
-                            "copytrade failed to write fallback book to cache"
-                        );
-                    }
-                    books.insert(book.token_id.clone(), polled_book_to_copy_book(book));
-                }
-            }
-            Err(error) => {
-                warn!(
-                    error = %error,
-                    "copytrade fallback CLOB poll failed, some markets will lack orderbook data"
-                );
-            }
-        }
-    }
-
-    Ok((wallet_feeds, books))
-}
-
-/// Convert a `CachedOrderBook` (from in-memory cache) to `CopyOrderBook`.
-fn cached_to_copy_book(cached: CachedOrderBook) -> CopyOrderBook {
-    CopyOrderBook {
-        token_id: cached.token_id,
-        bids: cached
-            .bids
-            .into_iter()
-            .map(|l| CopyBookLevel {
-                price: l.price,
-                size: l.size,
-            })
-            .collect(),
-        asks: cached
-            .asks
-            .into_iter()
-            .map(|l| CopyBookLevel {
-                price: l.price,
-                size: l.size,
-            })
-            .collect(),
-        observed_at: OffsetDateTime::from_unix_timestamp(cached.observed_at / 1000)
-            .unwrap_or(OffsetDateTime::UNIX_EPOCH)
-            + TimeDuration::milliseconds(cached.observed_at % 1000),
-    }
-}
-
-/// Convert a `PolymarketRewardOrderBook` (from CLOB REST) to `CachedOrderBook`
-/// for writing into the shared cache.
-fn polled_book_to_cached(book: &PolymarketRewardOrderBook) -> CachedOrderBook {
-    let now_ms = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as i64;
-
-    CachedOrderBook {
-        token_id: book.token_id.clone(),
-        bids: book
-            .bids
-            .iter()
-            .map(|l| CachedBookLevel {
-                price: l.price,
-                size: l.size,
-            })
-            .collect(),
-        asks: book
-            .asks
-            .iter()
-            .map(|l| CachedBookLevel {
-                price: l.price,
-                size: l.size,
-            })
-            .collect(),
-        observed_at: now_ms,
-        source: BookSource::Poll,
-    }
-}
-
-/// Convert a `PolymarketRewardOrderBook` (from CLOB REST) to `CopyOrderBook`.
-fn polled_book_to_copy_book(book: PolymarketRewardOrderBook) -> CopyOrderBook {
-    let now = OffsetDateTime::now_utc();
-    CopyOrderBook {
-        token_id: book.token_id,
-        bids: book
-            .bids
-            .into_iter()
-            .map(|l| CopyBookLevel {
-                price: l.price,
-                size: l.size,
-            })
-            .collect(),
-        asks: book
-            .asks
-            .into_iter()
-            .map(|l| CopyBookLevel {
-                price: l.price,
-                size: l.size,
-            })
-            .collect(),
-        observed_at: now,
-    }
 }
 
 async fn fetch_wallet_analysis_inputs(state: &AppState) -> Result<Vec<WalletFeedInput>> {

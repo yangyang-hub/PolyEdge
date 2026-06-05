@@ -25,15 +25,13 @@ pub use arbitrage::{
     market_book_snapshot_id, validate_arbitrage_opportunity,
 };
 pub use copytrade::{
-    AddTrackedWalletInput, CopyAccountState, CopyBookLevel, CopyControlAction, CopyControlCommand,
-    CopyControlCommandStatus, CopyDecision, CopyEvent, CopyEventSeverity, CopyFill, CopyOrder,
-    CopyOrderBook, CopyOrderSide, CopyOrderStatus, CopyPosition, CopySimulationOutcome,
-    CopySizingMode, CopySkipReason, CopyTradeConfig, CopyTradeConfigPatch, CopyTradeMode,
-    CopyTradeRunReport, CopyTradeService, CopyTradeSnapshot, CopyTradeStatus, CopyTradeStore,
-    SourceTrade, TrackedWallet, TrackedWalletStatus, WalletActionInput, WalletActivityInput,
-    WalletAnalysisStats, WalletFeedInput, WalletPositionInput, build_wallet_analysis,
-    check_skip_reasons, compute_copy_size, new_copy_event, normalize_address,
-    run_copy_simulation_tick, validate_copytrade_list_limit,
+    AddTrackedWalletInput, CopyControlAction, CopyControlCommand, CopyControlCommandStatus,
+    CopyEvent, CopyEventSeverity, CopyOrderSide, CopySizingMode, CopyTradeConfig,
+    CopyTradeConfigPatch, CopyTradeMode, CopyTradeRunReport, CopyTradeService, CopyTradeSnapshot,
+    CopyTradeStatus, CopyTradeStore, SourceTrade, TrackedWallet, TrackedWalletStatus,
+    WalletActionInput, WalletActivityInput, WalletAnalysisStats, WalletFeedInput,
+    WalletPositionInput, build_wallet_analysis, new_copy_event, normalize_address,
+    validate_copytrade_list_limit,
 };
 pub use execution::{
     DEFAULT_EXECUTION_CONNECTOR, DispatchExecutionListFilters, ExecutionDispatchCandidate,

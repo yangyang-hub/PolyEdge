@@ -37,40 +37,9 @@ pub trait CopyTradeStore: Send + Sync {
     async fn list_source_trades(&self, limit: u16) -> Result<Vec<SourceTrade>>;
     async fn mark_source_trade_processed(&self, trade_id: &str) -> Result<()>;
 
-    // Orders
-    async fn list_orders(&self, limit: u16) -> Result<Vec<CopyOrder>>;
-    async fn list_open_orders(&self, account_id: &str) -> Result<Vec<CopyOrder>>;
-
-    // Positions
-    async fn list_positions(&self, limit: u16) -> Result<Vec<CopyPosition>>;
-    async fn list_account_positions(&self, account_id: &str) -> Result<Vec<CopyPosition>>;
-
-    // Account state (simulation ledger)
-    async fn load_account_state(&self, config: &CopyTradeConfig) -> Result<CopyAccountState>;
-
     // Events
     async fn list_events(&self, limit: u16) -> Result<Vec<CopyEvent>>;
     async fn log_event(&self, event: CopyEvent) -> Result<()>;
-
-    // Atomic tick persistence
-    async fn apply_copy_tick(
-        &self,
-        outcome: &CopySimulationOutcome,
-        trace_id: &str,
-    ) -> Result<()>;
-
-    // Cancellation and reset
-    async fn cancel_open_orders(
-        &self,
-        account_id: Option<&str>,
-        reason: &str,
-        trace_id: &str,
-    ) -> Result<usize>;
-    async fn reset_simulation(
-        &self,
-        config: &CopyTradeConfig,
-        trace_id: &str,
-    ) -> Result<()>;
 }
 
 #[derive(Clone)]
@@ -208,29 +177,21 @@ impl CopyTradeService {
 
     pub async fn snapshot(&self) -> Result<CopyTradeSnapshot> {
         let config = self.read_config().await?;
-        let account = self.store.load_account_state(&config).await?;
         let wallets = self.store.list_wallets().await?;
         let source_trades = self
             .store
             .list_source_trades(DEFAULT_LIST_LIMIT)
             .await?;
-        let orders = self.store.list_orders(200).await?;
-        let positions = self.store.list_positions(200).await?;
         let events = self.store.list_events(100).await?;
 
         let active_wallets = wallets
             .iter()
             .filter(|wallet| wallet.status == TrackedWalletStatus::Active)
             .count();
-        let open_orders = orders
-            .iter()
-            .filter(|order| order.status.is_open_like())
-            .count();
         let last_scan_at = source_trades
             .iter()
             .map(|trade| trade.observed_at)
             .max();
-        let last_run_at = orders.iter().map(|order| order.updated_at).max();
         let error = events
             .iter()
             .find(|event| event.severity == CopyEventSeverity::Critical)
@@ -240,23 +201,15 @@ impl CopyTradeService {
             status: CopyTradeStatus {
                 enabled: config.enabled,
                 running: config.enabled,
-                mode: config.mode,
-                account_id: config.account_id.clone(),
                 wallets_tracked: wallets.len(),
                 active_wallets,
-                open_orders,
-                positions: positions.len(),
                 source_trades_detected: source_trades.len(),
                 last_scan_at,
-                last_run_at,
                 error,
             },
             config,
-            account,
             wallets,
             source_trades,
-            orders,
-            positions,
             events,
         })
     }
@@ -342,359 +295,6 @@ impl CopyTradeService {
         self.store.upsert_wallet(wallet).await
     }
 
-    /// Run one full copy-trading cycle (called by the worker).
-    ///
-    /// `wallet_feeds` is per-wallet Data API results (pre-fetched by the worker
-    /// so the service stays connector-agnostic). `books` is order books keyed
-    /// by token_id.
-    pub async fn run_copy_cycle(
-        &self,
-        wallet_feeds: Vec<WalletFeedInput>,
-        books: HashMap<String, CopyOrderBook>,
-        trace_id: &str,
-    ) -> Result<CopyTradeRunReport> {
-        let config = self.read_config().await?;
-
-        if !config.enabled {
-            // Even when disabled, still detect + record source trades so the
-            // source_trades view stays populated.
-            let detected = self
-                .detect_and_record_source_trades(&config, &wallet_feeds, trace_id)
-                .await?;
-            return Ok(CopyTradeRunReport {
-                wallets_scanned: wallet_feeds.len(),
-                trades_detected: detected,
-                orders_placed: 0,
-                orders_filled: 0,
-                orders_skipped: 0,
-            });
-        }
-
-        if config.mode == CopyTradeMode::Live {
-            self.store
-                .log_event(new_copy_event(
-                    Some(config.account_id.clone()),
-                    None,
-                    "copytrade_live_unsupported",
-                    CopyEventSeverity::Warning,
-                    "Copy trading live mode is not wired yet; falling back to simulation.",
-                    json!({"trace_id": trace_id}),
-                ))
-                .await?;
-        }
-
-        // 1. Detect new source trades from wallet activity feeds.
-        let detected = self
-            .detect_and_record_source_trades(&config, &wallet_feeds, trace_id)
-            .await?;
-
-        // 2. Load unprocessed source trades and build copy decisions.
-        //    Process chronologically so per-wallet/market cooldown gating is
-        //    deterministic regardless of store return order.
-        let mut unprocessed = self
-            .store
-            .list_source_trades(DEFAULT_LIST_LIMIT)
-            .await?
-            .into_iter()
-            .filter(|trade| !trade.copied)
-            .collect::<Vec<_>>();
-        unprocessed.sort_by(|a, b| {
-            a.source_timestamp
-                .cmp(&b.source_timestamp)
-                .then_with(|| a.id.cmp(&b.id))
-        });
-
-        let mut account = self.store.load_account_state(&config).await?;
-        // Roll the daily-loss counter at the UTC date boundary BEFORE the risk
-        // checks run, so the daily-loss gate uses today's PnL rather than
-        // yesterday's (the engine resets it again, idempotently).
-        let cycle_now = OffsetDateTime::now_utc();
-        if cycle_now.date() != account.updated_at.date() {
-            account.daily_realized_pnl = Decimal::ZERO;
-        }
-        let open_orders = self
-            .store
-            .list_open_orders(&account.account_id)
-            .await?;
-        let positions = self
-            .store
-            .list_account_positions(&account.account_id)
-            .await?;
-
-        // Paused/removed wallets must not be copied even though trades recorded
-        // while they were active may still be sitting unprocessed in the store.
-        let active_wallets: std::collections::HashSet<String> = self
-            .store
-            .list_wallets()
-            .await?
-            .into_iter()
-            .filter(|wallet| wallet.status == TrackedWalletStatus::Active)
-            .map(|wallet| wallet.address)
-            .collect();
-
-        // Running exposure accumulators — caps must bound the *resulting*
-        // exposure, including orders planned earlier in this same tick.
-        let mut wallet_exposure = build_wallet_exposure_map(&positions, &open_orders);
-        let mut total_exposure = compute_total_exposure(&positions, &open_orders);
-        let mut market_exposure = build_market_exposure_map(&positions, &open_orders);
-
-        // Per-(wallet, market) cooldown clock, seeded from the most recent copy
-        // activity we can observe (open orders + recently-touched positions).
-        let mut last_copy_at: HashMap<(String, String), OffsetDateTime> = HashMap::new();
-        for order in &open_orders {
-            let key = (order.wallet_address.clone(), order.token_id.clone());
-            let entry = last_copy_at.entry(key).or_insert(order.created_at);
-            if order.created_at > *entry {
-                *entry = order.created_at;
-            }
-        }
-        for position in &positions {
-            let key = (position.wallet_address.clone(), position.token_id.clone());
-            let entry = last_copy_at.entry(key).or_insert(position.updated_at);
-            if position.updated_at > *entry {
-                *entry = position.updated_at;
-            }
-        }
-        let cooldown = time::Duration::seconds(config.cooldown_secs as i64);
-
-        let mut decisions = Vec::new();
-        for source_trade in &unprocessed {
-            // Wallet-pause gate.
-            if !active_wallets.contains(&source_trade.wallet_address) {
-                decisions.push((
-                    source_trade.id.clone(),
-                    false,
-                    CopySkipReason::WalletPaused.as_str().to_string(),
-                    Decimal::ZERO,
-                    Decimal::ZERO,
-                ));
-                continue;
-            }
-
-            let cooldown_key = (
-                source_trade.wallet_address.clone(),
-                source_trade.token_id.clone(),
-            );
-            // Cooldown gate (per wallet+market). cooldown_secs == 0 disables it.
-            let on_cooldown = config.cooldown_secs > 0
-                && last_copy_at
-                    .get(&cooldown_key)
-                    .is_some_and(|last| cycle_now - *last < cooldown);
-            if on_cooldown {
-                decisions.push((
-                    source_trade.id.clone(),
-                    false,
-                    CopySkipReason::CooldownActive.as_str().to_string(),
-                    Decimal::ZERO,
-                    Decimal::ZERO,
-                ));
-                continue;
-            }
-
-            let wallet = wallet_feeds
-                .iter()
-                .find(|f| f.address == source_trade.wallet_address);
-
-            let skip = check_skip_reasons(
-                &config,
-                source_trade,
-                &account,
-                &positions,
-                &open_orders,
-                wallet_exposure
-                    .get(&source_trade.wallet_address)
-                    .copied()
-                    .unwrap_or(Decimal::ZERO),
-                total_exposure,
-            );
-            if let Some(reason) = skip {
-                decisions.push((
-                    source_trade.id.clone(),
-                    false,
-                    reason.as_str().to_string(),
-                    Decimal::ZERO,
-                    Decimal::ZERO,
-                ));
-                continue;
-            }
-
-            let current_position = positions.iter().find(|p| p.token_id == source_trade.token_id);
-            let source_position = wallet
-                .and_then(|f| f.positions.iter().find(|p| p.asset == source_trade.token_id));
-            let source_portfolio_usd = wallet
-                .map(|f| source_portfolio_value(&f.positions))
-                .unwrap_or(Decimal::ZERO);
-
-            let decision = compute_copy_size(
-                &config,
-                source_trade,
-                source_position,
-                source_portfolio_usd,
-                &account,
-                current_position,
-            );
-
-            if !decision.copy || decision.size <= Decimal::ZERO {
-                decisions.push((
-                    source_trade.id.clone(),
-                    false,
-                    decision.reason.clone(),
-                    Decimal::ZERO,
-                    Decimal::ZERO,
-                ));
-                continue;
-            }
-
-            let price = apply_slippage(source_trade.price, source_trade.side, &config);
-
-            // Hard-clamp buys to the remaining headroom of every cap so a single
-            // trade (or several within this tick) cannot overshoot a limit. Sells
-            // reduce exposure, so they are not clamped.
-            let mut size = decision.size;
-            if source_trade.side == CopyOrderSide::Buy && price > Decimal::ZERO {
-                let wallet_room = (config.per_wallet_max_exposure_usd
-                    - wallet_exposure
-                        .get(&source_trade.wallet_address)
-                        .copied()
-                        .unwrap_or(Decimal::ZERO))
-                .max(Decimal::ZERO);
-                let total_room = (config.max_total_exposure_usd - total_exposure).max(Decimal::ZERO);
-                let market_room = (config.max_position_per_market_usd
-                    - market_exposure
-                        .get(&source_trade.token_id)
-                        .copied()
-                        .unwrap_or(Decimal::ZERO))
-                .max(Decimal::ZERO);
-                let max_notional = wallet_room.min(total_room).min(market_room);
-                if size * price > max_notional {
-                    size = (max_notional / price)
-                        .round_dp_with_strategy(8, RoundingStrategy::ToZero);
-                }
-            }
-
-            if size <= Decimal::ZERO {
-                decisions.push((
-                    source_trade.id.clone(),
-                    false,
-                    "exposure_cap_no_headroom".to_string(),
-                    Decimal::ZERO,
-                    Decimal::ZERO,
-                ));
-                continue;
-            }
-
-            // Commit: advance the running caps + cooldown clock so later trades
-            // in this same tick see the effect of this one.
-            if source_trade.side == CopyOrderSide::Buy {
-                let notional = size * price;
-                *wallet_exposure
-                    .entry(source_trade.wallet_address.clone())
-                    .or_insert(Decimal::ZERO) += notional;
-                total_exposure += notional;
-                *market_exposure
-                    .entry(source_trade.token_id.clone())
-                    .or_insert(Decimal::ZERO) += notional;
-            }
-            last_copy_at.insert(cooldown_key, cycle_now);
-
-            decisions.push((
-                source_trade.id.clone(),
-                true,
-                decision.reason.clone(),
-                size,
-                price,
-            ));
-        }
-
-        // 3. Build copy orders from positive decisions.
-        let order_now = OffsetDateTime::now_utc();
-        let mut new_orders = Vec::new();
-        let mut processed_ids = Vec::new();
-        let mut skipped = 0usize;
-        let mut placed = 0usize;
-
-        for (trade_id, should_copy, reason, size, price) in &decisions {
-            processed_ids.push(trade_id.clone());
-
-            if !*should_copy || *size <= Decimal::ZERO {
-                skipped += 1;
-                continue;
-            }
-
-            let source = unprocessed.iter().find(|t| &t.id == trade_id).unwrap();
-            let notional = *size * *price;
-
-            new_orders.push(CopyOrder {
-                id: new_copy_order_id(),
-                account_id: config.account_id.clone(),
-                wallet_address: source.wallet_address.clone(),
-                source_trade_id: trade_id.clone(),
-                condition_id: source.condition_id.clone(),
-                token_id: source.token_id.clone(),
-                outcome: source.outcome.clone(),
-                side: source.side,
-                price: *price,
-                size: *size,
-                notional_usd: notional,
-                external_order_id: None,
-                status: CopyOrderStatus::Planned,
-                reason: reason.clone(),
-                filled_size: Decimal::ZERO,
-                realized_pnl: Decimal::ZERO,
-                created_at: order_now,
-                updated_at: order_now,
-            });
-            placed += 1;
-        }
-
-        // 4. Run the simulation engine on the new + existing orders.
-        let elapsed_seconds = (OffsetDateTime::now_utc() - account.updated_at).whole_seconds();
-        let outcome = run_copy_simulation_tick(
-            &config,
-            account,
-            open_orders,
-            positions,
-            new_orders,
-            &books,
-            &processed_ids,
-            elapsed_seconds,
-            trace_id,
-        );
-
-        let report = CopyTradeRunReport {
-            wallets_scanned: wallet_feeds.len(),
-            trades_detected: detected,
-            orders_placed: placed,
-            orders_filled: outcome.fills.len(),
-            orders_skipped: skipped,
-        };
-
-        let mut full_outcome = outcome;
-        full_outcome.report = report;
-
-        self.store.apply_copy_tick(&full_outcome, trace_id).await?;
-
-        self.store
-            .log_event(new_copy_event(
-                Some(config.account_id.clone()),
-                None,
-                "copytrade_simulation_run",
-                CopyEventSeverity::Info,
-                "Completed copy-trading simulation tick.",
-                json!({
-                    "trace_id": trace_id,
-                    "wallets_scanned": wallet_feeds.len(),
-                    "trades_detected": detected,
-                    "orders_placed": placed,
-                    "orders_filled": full_outcome.fills.len(),
-                    "orders_skipped": skipped,
-                }),
-            ))
-            .await?;
-
-        Ok(full_outcome.report)
-    }
-
     pub async fn analyze_wallets(
         &self,
         wallet_feeds: Vec<WalletFeedInput>,
@@ -716,45 +316,7 @@ impl CopyTradeService {
         Ok(analyzed)
     }
 
-    pub async fn cancel_all_orders(
-        &self,
-        account_id: Option<&str>,
-        reason: &str,
-        trace_id: &str,
-    ) -> Result<usize> {
-        let cancelled = self
-            .store
-            .cancel_open_orders(account_id, reason, trace_id)
-            .await?;
-        self.store
-            .log_event(new_copy_event(
-                account_id.map(str::to_string),
-                None,
-                "copytrade_cancel_all",
-                CopyEventSeverity::Info,
-                reason,
-                json!({"trace_id": trace_id, "cancelled_orders": cancelled}),
-            ))
-            .await?;
-        Ok(cancelled)
-    }
-
-    pub async fn reset_simulation(&self, trace_id: &str) -> Result<()> {
-        let config = self.read_config().await?;
-        self.store.reset_simulation(&config, trace_id).await?;
-        self.store
-            .log_event(new_copy_event(
-                Some(config.account_id.clone()),
-                None,
-                "copytrade_reset",
-                CopyEventSeverity::Info,
-                "Reset copy-trading simulation account, orders, positions.",
-                json!({"trace_id": trace_id, "capital_usd": config.account_capital_usd}),
-            ))
-            .await
-    }
-
-    async fn detect_and_record_source_trades(
+    pub async fn detect_and_record_source_trades(
         &self,
         config: &CopyTradeConfig,
         wallet_feeds: &[WalletFeedInput],
@@ -818,86 +380,6 @@ fn wallets_to_source_trades(
     }
 
     trades
-}
-
-fn build_wallet_exposure_map(
-    positions: &[CopyPosition],
-    open_orders: &[CopyOrder],
-) -> HashMap<String, Decimal> {
-    let mut map: HashMap<String, Decimal> = HashMap::new();
-    for position in positions {
-        let notional = position.size * position.avg_price;
-        *map.entry(position.wallet_address.clone())
-            .or_insert(Decimal::ZERO) += notional;
-    }
-    for order in open_orders {
-        let notional = order.remaining_size() * order.price;
-        *map.entry(order.wallet_address.clone())
-            .or_insert(Decimal::ZERO) += notional;
-    }
-    map
-}
-
-fn compute_total_exposure(
-    positions: &[CopyPosition],
-    open_orders: &[CopyOrder],
-) -> Decimal {
-    let position_exposure: Decimal = positions.iter().map(|p| p.size * p.avg_price).sum();
-    let order_exposure: Decimal = open_orders
-        .iter()
-        .filter(|o| o.status.is_open_like())
-        .map(|o| o.remaining_size() * o.price)
-        .sum();
-    position_exposure + order_exposure
-}
-
-/// Per-market (token) exposure = held position notional + open-order pending
-/// notional, used to hard-clamp new copies against `max_position_per_market_usd`.
-fn build_market_exposure_map(
-    positions: &[CopyPosition],
-    open_orders: &[CopyOrder],
-) -> HashMap<String, Decimal> {
-    let mut map: HashMap<String, Decimal> = HashMap::new();
-    for position in positions {
-        *map.entry(position.token_id.clone()).or_insert(Decimal::ZERO) +=
-            position.size * position.avg_price;
-    }
-    for order in open_orders {
-        if order.status.is_open_like() {
-            *map.entry(order.token_id.clone()).or_insert(Decimal::ZERO) +=
-                order.remaining_size() * order.price;
-        }
-    }
-    map
-}
-
-/// Total market value of a source wallet's positions, used by
-/// `MirrorPortfolioWeight` to compute this market's weight in their portfolio.
-/// Prefers live `cur_price`, falling back to cost basis when unavailable.
-fn source_portfolio_value(positions: &[WalletPositionInput]) -> Decimal {
-    positions
-        .iter()
-        .map(|p| {
-            let price = if p.cur_price > Decimal::ZERO {
-                p.cur_price
-            } else {
-                p.avg_price
-            };
-            p.size * price
-        })
-        .sum()
-}
-
-fn apply_slippage(
-    source_price: Decimal,
-    side: CopyOrderSide,
-    config: &CopyTradeConfig,
-) -> Decimal {
-    let slippage = config.max_slippage_cents / decimal("100");
-    match side {
-        CopyOrderSide::Buy => (source_price + slippage).min(config.max_price),
-        CopyOrderSide::Sell => (source_price - slippage).max(config.min_price),
-    }
 }
 
 fn copy_control_command_id(trace_id: &str) -> String {

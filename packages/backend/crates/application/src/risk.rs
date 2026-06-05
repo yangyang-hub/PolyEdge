@@ -457,13 +457,10 @@ impl RiskService {
             ));
         }
 
-        if matches!(
-            command.to_mode,
-            SystemMode::KillSwitchLocked | SystemMode::LiveAuto | SystemMode::ManualConfirm
-        ) {
+        if matches!(command.to_mode, SystemMode::KillSwitchLocked) {
             return Err(AppError::invalid_input(
                 "KILL_SWITCH_RELEASE_MODE_INVALID",
-                "kill switch release target must be research or paper_trade",
+                "kill switch release target must be live_auto",
             ));
         }
 
@@ -556,10 +553,10 @@ fn evaluate_signal_approval(
         ));
     }
 
-    if risk_state.mode != SystemMode::ManualConfirm {
+    if risk_state.mode != SystemMode::LiveAuto {
         return Err(AppError::conflict(
             "STATE_APPROVAL_MODE_INVALID",
-            "signal approval is only available in manual_confirm mode",
+            "signal approval is only available in live_auto mode",
         ));
     }
 
@@ -651,11 +648,11 @@ fn evaluate_signal_approval(
 fn evaluate_signal_rejection(signal: &SignalView, risk_state: &RiskStateView) -> Result<()> {
     if !matches!(
         risk_state.mode,
-        SystemMode::ManualConfirm | SystemMode::KillSwitchLocked
+        SystemMode::LiveAuto | SystemMode::KillSwitchLocked
     ) {
         return Err(AppError::conflict(
             "STATE_REJECTION_MODE_INVALID",
-            "signal rejection is only available in manual_confirm or kill_switch_locked mode",
+            "signal rejection is only available in live_auto or kill_switch_locked mode",
         ));
     }
 

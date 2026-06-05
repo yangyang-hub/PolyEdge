@@ -2,7 +2,7 @@
 async fn connector_order_status_callback_is_deduplicated_without_idempotency_key() {
     let signing_key = SigningKey::from_bytes(&[27_u8; 32]);
     let settings = Settings::for_test(
-        SystemMode::ManualConfirm,
+        SystemMode::LiveAuto,
         "test",
         vec![AuthKeySettings {
             kid: "test-key".to_string(),
@@ -18,13 +18,13 @@ async fn connector_order_status_callback_is_deduplicated_without_idempotency_key
         .expect("seed fixtures");
     let app = build_app(state.clone());
     let submission =
-        submit_execution_for_test(app.clone(), &signing_key, "sig_2412", "paper_executor")
+        submit_execution_for_test(&state, "sig_2412", "paper_executor")
             .await;
     let external_order_id = "paper_ord_callback_001";
 
     dispatch_execution(
         &state,
-        &submission.execution_request.id,
+        &submission.execution_request_id,
         "acct_paper_main",
         external_order_id,
     )
@@ -107,7 +107,7 @@ async fn connector_order_status_callback_is_deduplicated_without_idempotency_key
 async fn connector_trade_fill_callback_is_deduplicated_without_duplicate_trades() {
     let signing_key = SigningKey::from_bytes(&[28_u8; 32]);
     let settings = Settings::for_test(
-        SystemMode::ManualConfirm,
+        SystemMode::LiveAuto,
         "test",
         vec![AuthKeySettings {
             kid: "test-key".to_string(),
@@ -123,13 +123,13 @@ async fn connector_trade_fill_callback_is_deduplicated_without_duplicate_trades(
         .expect("seed fixtures");
     let app = build_app(state.clone());
     let submission =
-        submit_execution_for_test(app.clone(), &signing_key, "sig_2412", "paper_executor")
+        submit_execution_for_test(&state, "sig_2412", "paper_executor")
             .await;
     let external_order_id = "paper_ord_callback_002";
 
     dispatch_execution(
         &state,
-        &submission.execution_request.id,
+        &submission.execution_request_id,
         "acct_paper_main",
         external_order_id,
     )
@@ -279,7 +279,7 @@ async fn connector_trade_fill_callback_is_deduplicated_without_duplicate_trades(
 async fn polymarket_order_status_callback_normalizes_live_to_open() {
     let signing_key = SigningKey::from_bytes(&[29_u8; 32]);
     let settings = Settings::for_test(
-        SystemMode::ManualConfirm,
+        SystemMode::LiveAuto,
         "test",
         vec![AuthKeySettings {
             kid: "test-key".to_string(),
@@ -295,8 +295,7 @@ async fn polymarket_order_status_callback_normalizes_live_to_open() {
         .expect("seed fixtures");
     let app = build_app(state.clone());
     let submission = submit_execution_for_test(
-        app.clone(),
-        &signing_key,
+        &state,
         "sig_2412",
         polyedge_connectors::POLYMARKET_CONNECTOR_NAME,
     )
@@ -305,7 +304,7 @@ async fn polymarket_order_status_callback_normalizes_live_to_open() {
 
     dispatch_execution(
         &state,
-        &submission.execution_request.id,
+        &submission.execution_request_id,
         "acct_poly_main",
         external_order_id,
     )
@@ -358,7 +357,7 @@ async fn polymarket_order_status_callback_normalizes_live_to_open() {
 async fn polymarket_trade_fill_callback_normalizes_trade_payload() {
     let signing_key = SigningKey::from_bytes(&[30_u8; 32]);
     let settings = Settings::for_test(
-        SystemMode::ManualConfirm,
+        SystemMode::LiveAuto,
         "test",
         vec![AuthKeySettings {
             kid: "test-key".to_string(),
@@ -374,8 +373,7 @@ async fn polymarket_trade_fill_callback_normalizes_trade_payload() {
         .expect("seed fixtures");
     let app = build_app(state.clone());
     let submission = submit_execution_for_test(
-        app.clone(),
-        &signing_key,
+        &state,
         "sig_2412",
         polyedge_connectors::POLYMARKET_CONNECTOR_NAME,
     )
@@ -384,7 +382,7 @@ async fn polymarket_trade_fill_callback_normalizes_trade_payload() {
 
     dispatch_execution(
         &state,
-        &submission.execution_request.id,
+        &submission.execution_request_id,
         "acct_poly_main",
         external_order_id,
     )

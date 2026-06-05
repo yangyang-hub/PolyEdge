@@ -172,7 +172,7 @@ export function RiskControlCenter({ data }: { data: RiskPageData }) {
 
       if (result.ok) {
         applyControls({
-          mode: controls.mode === "kill_switch_locked" ? "paper_trade" : controls.mode,
+          mode: controls.mode === "kill_switch_locked" ? "live_auto" : controls.mode,
           killSwitch: false,
         });
         closeDialog();
@@ -195,7 +195,7 @@ export function RiskControlCenter({ data }: { data: RiskPageData }) {
 
       if (result.ok) {
         applyControls({
-          mode: nextEnabled ? "kill_switch_locked" : controls.mode === "kill_switch_locked" ? "paper_trade" : controls.mode,
+          mode: nextEnabled ? "kill_switch_locked" : controls.mode === "kill_switch_locked" ? "live_auto" : controls.mode,
           killSwitch: nextEnabled,
         });
         closeDialog();

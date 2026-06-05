@@ -394,7 +394,7 @@ mod tests {
     use polyedge_infrastructure::{Runtime, Settings};
 
     fn test_state(write_token: Option<&str>) -> AppState {
-        let mut settings = Settings::for_test(SystemMode::ManualConfirm, "test", Vec::new());
+        let mut settings = Settings::for_test(SystemMode::LiveAuto, "test", Vec::new());
         settings.orderbook.write_token = write_token.map(ToString::to_string);
         Runtime::test_app_state(settings).expect("test app state")
     }

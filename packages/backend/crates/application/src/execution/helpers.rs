@@ -15,29 +15,11 @@ impl From<AuditResultMarker> for polyedge_domain::AuditResult {
     }
 }
 
-fn validate_execution_mode(mode: SystemMode, kill_switch: bool) -> Result<()> {
-    if kill_switch || mode == SystemMode::KillSwitchLocked {
-        return Err(AppError::forbidden(
-            "RISK_KILL_SWITCH_ACTIVE",
-            "execution submission is blocked while the kill switch is active",
-        ));
-    }
-
-    match mode {
-        SystemMode::ManualConfirm | SystemMode::PaperTrade => Ok(()),
-        SystemMode::Research => Err(AppError::conflict(
-            "STATE_EXECUTION_MODE_INVALID",
-            "execution submission is not available in research mode",
-        )),
-        SystemMode::LiveAuto => Err(AppError::conflict(
-            "STATE_EXECUTION_MODE_NOT_SUPPORTED",
-            "live_auto execution submission is not available until the connector is enabled",
-        )),
-        SystemMode::KillSwitchLocked => Err(AppError::forbidden(
-            "RISK_KILL_SWITCH_ACTIVE",
-            "execution submission is blocked while the kill switch is active",
-        )),
-    }
+fn validate_execution_mode(_mode: SystemMode, _kill_switch: bool) -> Result<()> {
+    Err(AppError::conflict(
+        "EXECUTION_SUBMISSION_DISABLED",
+        "signal execution is read-only; orders are not submitted",
+    ))
 }
 
 fn aggregate_execution_risk_metrics(

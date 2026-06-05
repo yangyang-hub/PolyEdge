@@ -5,5 +5,4 @@
 include!("copytrade/in_memory.rs");
 include!("copytrade/postgres_rows.rs");
 include!("copytrade/postgres_control_commands.rs");
-include!("copytrade/postgres_writes.rs");
 include!("copytrade/postgres.rs");

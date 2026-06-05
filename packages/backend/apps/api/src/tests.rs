@@ -1,6 +1,5 @@
 use super::*;
 use axum::{
-    Router,
     body::{Body, to_bytes},
     http::{Request, StatusCode},
 };
@@ -9,7 +8,8 @@ use ed25519_dalek::{Signer, SigningKey};
 use polyedge_application::{
     ArbitrageAnalysisRunView, ArbitrageScanView, ArbitrageValidationConfig, AuthenticatedActor,
     MarkExecutionSubmittedCommand, MarketBookSnapshotView, NewsIngestSourceCommand,
-    NewsIngestionItem, Paginated, build_arbitrage_analysis, demo_fixture_bundle,
+    NewsIngestionItem, Paginated, SubmitExecutionStoreCommand, build_arbitrage_analysis,
+    demo_fixture_bundle,
 };
 use polyedge_domain::{Edge, Probability, Quantity, StepUpScope, SystemMode, UserRole};
 use polyedge_infrastructure::{AppState, AuthKeySettings, Runtime, Settings};
@@ -182,51 +182,40 @@ fn test_actor(request_id: &str) -> AuthenticatedActor {
     }
 }
 
+struct TestExecutionSubmission {
+    execution_request_id: String,
+}
+
 async fn submit_execution_for_test(
-    app: Router,
-    signing_key: &SigningKey,
+    state: &AppState,
     signal_id: &str,
     connector_name: &str,
-) -> SubmitExecutionData {
-    let submit_request_id = format!("req_{}", Uuid::now_v7());
-    let submit_token = issue_token_with(
-        signing_key,
-        "test-key",
-        &submit_request_id,
-        vec![UserRole::RiskAdmin],
-        vec![StepUpScope::ExecutionSubmit],
-    );
-    let submit_body = serde_json::to_vec(&serde_json::json!({
-        "limit_price": "0.48",
-        "quantity": "25",
-        "reason": "queue manual execution request for connector callback flow",
-        "expected_signal_version": 9,
-        "connector_name": connector_name
-    }))
-    .expect("serialize execution body");
-    let submit_response = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri(format!("/api/v1/signals/{signal_id}/execution-requests"))
-                .header("Authorization", format!("Bearer {submit_token}"))
-                .header("X-Request-Id", &submit_request_id)
-                .header("Idempotency-Key", format!("idem-submit-{signal_id}"))
-                .header("Content-Type", "application/json")
-                .body(Body::from(submit_body))
-                .expect("submit request"),
-        )
+) -> TestExecutionSubmission {
+    let risk_state = state
+        .risk_service
+        .read_state()
         .await
-        .expect("submit response");
-    assert_eq!(submit_response.status(), StatusCode::OK);
-    let submit_response_body = to_bytes(submit_response.into_body(), usize::MAX)
+        .expect("read risk state");
+    let result = state
+        .market_event_service
+        .submit_execution_request(SubmitExecutionStoreCommand {
+            signal_id: signal_id.to_string(),
+            expected_signal_version: Some(9),
+            limit_price: Probability::new("0.48".parse().expect("decimal")).expect("probability"),
+            quantity: Quantity::new("25".parse().expect("decimal")).expect("quantity"),
+            connector_name: connector_name.to_string(),
+            reason: "queue manual execution request for connector callback flow".to_string(),
+            requested_by_user_id: "test-user".to_string(),
+            trace_id: format!("trc_{}", Uuid::now_v7()),
+            mode: risk_state.mode,
+            risk_state_version: risk_state.version,
+        })
         .await
-        .expect("read submit body");
-    let submit_payload: ApiResponse<SubmitExecutionData> =
-        serde_json::from_slice(&submit_response_body).expect("deserialize submit response");
+        .expect("submit execution request");
 
-    submit_payload.data
+    TestExecutionSubmission {
+        execution_request_id: result.execution_request.id,
+    }
 }
 
 async fn dispatch_execution(

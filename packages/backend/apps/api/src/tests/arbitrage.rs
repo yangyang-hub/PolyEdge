@@ -2,7 +2,7 @@
 async fn arbitrage_routes_return_recorded_opportunities() {
     let signing_key = SigningKey::from_bytes(&[42_u8; 32]);
     let settings = Settings::for_test(
-        SystemMode::ManualConfirm,
+        SystemMode::LiveAuto,
         "test",
         vec![AuthKeySettings {
             kid: "test-key".to_string(),

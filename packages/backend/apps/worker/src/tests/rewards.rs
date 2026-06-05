@@ -283,6 +283,19 @@ fn reward_live_fill_id_includes_order_id_and_keeps_legacy_id() {
 }
 
 #[test]
+fn external_account_refresh_waits_when_order_sync_records_a_fill() {
+    assert!(can_refresh_external_account_after_order_sync(
+        &RewardBotRunReport::default()
+    ));
+    assert!(!can_refresh_external_account_after_order_sync(
+        &RewardBotRunReport {
+            filled_orders: 1,
+            ..RewardBotRunReport::default()
+        }
+    ));
+}
+
+#[test]
 fn live_cancel_candidates_cancel_when_orderbook_missing() {
     let config = RewardBotConfig {
         account_id: "reward_live".to_string(),
@@ -566,7 +579,7 @@ fn terminal_match_closes_partial_live_exit_for_remaining_retry() {
 
 #[tokio::test]
 async fn live_tick_persistence_keeps_market_catalog_and_blocks_active_account_change() {
-    let state = test_state(SystemMode::ManualConfirm);
+    let state = test_state(SystemMode::LiveAuto);
     state
         .reward_bot_service
         .update_config(RewardBotConfigPatch {

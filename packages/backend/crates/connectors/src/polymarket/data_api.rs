@@ -6,6 +6,7 @@
 // `parse_decimal_value`/`normalize_optional_text` items brought in by `gamma.rs`.
 
 const MAX_DATA_API_LIMIT: u16 = 500;
+const MAX_DATA_API_POSITION_PAGES: usize = 100;
 const DATA_API_TIMEOUT: Duration = Duration::from_secs(15);
 
 #[derive(Debug, Clone)]
@@ -344,25 +345,49 @@ impl PolymarketDataApiConnector {
         address: &str,
     ) -> Result<Vec<PolymarketWalletPosition>> {
         let address = normalize_data_api_address(address)?;
-        let mut url = reqwest::Url::parse(&format!("{}/positions", self.data_api_host)).map_err(
-            |error| {
-                AppError::invalid_input(
-                    "POLYMARKET_DATA_API_URL_INVALID",
-                    format!("failed to construct Polymarket positions URL: {error}"),
-                )
-            },
-        )?;
-        {
-            let mut query = url.query_pairs_mut();
-            query.append_pair("user", &address);
-            query.append_pair("sizeThreshold", "0.1");
-            query.append_pair("limit", "500");
+        let mut positions = Vec::new();
+        let mut seen_assets = std::collections::HashSet::new();
+        let mut offset = 0u32;
+
+        for _ in 0..MAX_DATA_API_POSITION_PAGES {
+            let mut url =
+                reqwest::Url::parse(&format!("{}/positions", self.data_api_host)).map_err(
+                    |error| {
+                        AppError::invalid_input(
+                            "POLYMARKET_DATA_API_URL_INVALID",
+                            format!("failed to construct Polymarket positions URL: {error}"),
+                        )
+                    },
+                )?;
+            {
+                let mut query = url.query_pairs_mut();
+                query.append_pair("user", &address);
+                query.append_pair("sizeThreshold", "0");
+                query.append_pair("limit", &MAX_DATA_API_LIMIT.to_string());
+                query.append_pair("offset", &offset.to_string());
+            }
+
+            let raws = self
+                .fetch_json::<Vec<RawWalletPosition>>(url, "positions", &address)
+                .await?;
+            let raw_count = raws.len();
+            positions.extend(
+                raws.into_iter()
+                    .filter_map(map_wallet_position)
+                    .filter(|position| seen_assets.insert(position.asset.clone())),
+            );
+            if raw_count < usize::from(MAX_DATA_API_LIMIT) {
+                return Ok(positions);
+            }
+            offset = offset.saturating_add(raw_count as u32);
         }
 
-        let raws = self
-            .fetch_json::<Vec<RawWalletPosition>>(url, "positions", &address)
-            .await?;
-        Ok(raws.into_iter().filter_map(map_wallet_position).collect())
+        Err(AppError::dependency_unavailable(
+            "POLYMARKET_DATA_API_POSITION_MAX_PAGES_EXCEEDED",
+            format!(
+                "Polymarket positions for {address} exceeded {MAX_DATA_API_POSITION_PAGES} pages"
+            ),
+        ))
     }
 
     async fn fetch_json<T: serde::de::DeserializeOwned>(

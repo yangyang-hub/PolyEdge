@@ -4,7 +4,7 @@
 
 ## 概述
 
-数据库使用 PostgreSQL，通过 26 个 SQL 迁移文件管理 schema。覆盖审计、市场数据、事件/信号、执行管道、风控、套利、奖励、跟单等领域。
+数据库使用 PostgreSQL，通过 28 个 SQL 迁移文件管理 schema。覆盖审计、市场数据、事件/信号、执行管道、风控、套利、奖励、跟单等领域。
 
 ## 迁移文件列表
 
@@ -36,6 +36,8 @@
 | `0024_reward_markets_active_index.sql` | 奖励市场查询索引 | `reward_markets` active + daily rate 索引 |
 | `0025_markets_active_volume_index.sql` | 市场活跃度索引 | `markets` open/tradable + 24h volume 索引 |
 | `0026_reward_control_running_lease_index.sql` | Rewards 控制命令租约索引 | `reward_control_commands` running + started_at 部分索引 |
+| `0027_remove_paper_trade_manual_confirm.sql` | 收敛系统运行模式 | 修改 runtime/mode transition/execution request mode 约束 |
+| `0028_reward_positions_external_inventory.sql` | Rewards 外部账户持仓 | 移除 `reward_positions.condition_id` 到奖励目录的外键 |
 
 ## Schema 领域分组
 
@@ -89,6 +91,7 @@
 - **`reward_quote_plans`**：market FK、scoring、quote plan
 - **`reward_managed_orders`**：account_id、condition_id、token_id、filled_size、reward_earned、last_scored_at
 - **`reward_fills`**：order_id、account_id、condition_id、token_id、outcome、side、price、size、notional_usd、role、realized_pnl
+- **`reward_positions`**：按 account_id + token_id 保存外部完整持仓；可包含当前 rewards catalog 之外的市场，不再依赖 `reward_markets` 外键
 - **`reward_account_state`**：capital_usd、available_usd、reserved_usd（旧硬占用兼容字段，下一次 rewards tick 自动释放）、realized_pnl、reward_earned_usd、fees_paid、tick_index
 - **`reward_control_commands`**：API 入队给 worker 的 rewards 控制命令（run_once/cancel_all/reset）及 pending/running/completed/failed 状态；running 超过 5 分钟可重新领取
 
@@ -109,7 +112,7 @@
 
 ## 当前状态
 
-- 26 个迁移文件，最新为 `0026_reward_control_running_lease_index.sql`
+- 28 个迁移文件，最新为 `0028_reward_positions_external_inventory.sql`
 - 所有表使用 PostgreSQL 特性（JSONB、NUMERIC 约束、BIGSERIAL、部分索引等）
 - 迁移使用 `sqlx` 管理
 

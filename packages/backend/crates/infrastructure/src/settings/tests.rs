@@ -13,7 +13,7 @@ mod tests {
         assert_eq!(settings.runtime.environment, "local");
         assert_eq!(
             settings.runtime.initial_mode,
-            polyedge_domain::SystemMode::PaperTrade
+            polyedge_domain::SystemMode::LiveAuto
         );
         assert!(settings.polymarket.account_id.is_empty());
         assert!(settings.news.enabled);

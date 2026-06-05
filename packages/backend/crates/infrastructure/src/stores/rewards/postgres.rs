@@ -606,6 +606,45 @@ impl RewardBotStore for PostgresRewardBotStore {
         Ok(())
     }
 
+    async fn apply_account_sync(
+        &self,
+        account: &RewardAccountState,
+        positions: Option<&[RewardPosition]>,
+        _trace_id: &str,
+    ) -> Result<()> {
+        let mut transaction = self.pool.begin().await.map_err(|error| {
+            db_error(
+                "POSTGRES_TRANSACTION_BEGIN_FAILED",
+                format!("failed to begin reward sync transaction: {error}"),
+            )
+        })?;
+
+        upsert_reward_account_state_tx(&mut transaction, account).await?;
+        if let Some(positions) = positions {
+            sqlx::query("DELETE FROM reward_positions WHERE account_id = $1")
+                .bind(&account.account_id)
+                .execute(&mut *transaction)
+                .await
+                .map_err(|error| {
+                    db_error(
+                        "POSTGRES_DELETE_FAILED",
+                        format!("failed to replace externally synced reward positions: {error}"),
+                    )
+                })?;
+            for position in positions {
+                upsert_reward_position_tx(&mut transaction, position).await?;
+            }
+        }
+
+        transaction.commit().await.map_err(|error| {
+            db_error(
+                "POSTGRES_TRANSACTION_COMMIT_FAILED",
+                format!("failed to commit reward sync transaction: {error}"),
+            )
+        })?;
+        Ok(())
+    }
+
     async fn reset_state(&self, config: &RewardBotConfig, _trace_id: &str) -> Result<()> {
         let mut transaction = self.pool.begin().await.map_err(|error| {
             db_error(

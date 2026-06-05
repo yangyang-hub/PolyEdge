@@ -20,9 +20,9 @@
 | `polymarket/` | Polymarket 多 API 集成子目录 |
 | `polymarket/live.rs` | 认证 CLOB 连接器：`LivePolymarketConnector` |
 | `polymarket/gamma.rs` | 公共市场元数据：`PolymarketGammaConnector`；Gamma keyset 分页 guard |
-| `polymarket/data_api.rs` | 钱包活动 API：`PolymarketDataApiConnector` |
+| `polymarket/data_api.rs` | 钱包活动与账户持仓 API：`PolymarketDataApiConnector` |
 | `polymarket/book.rs` | 盘口快照：`PolymarketBookConnector` |
-| `rewards.rs` | 奖励市场：`PolymarketRewardsConnector` |
+| `rewards.rs` + `rewards/orderbooks.rs` | 奖励市场目录与 CLOB 批量盘口：`PolymarketRewardsConnector` |
 | `orderbook.rs` | 独立 orderbook 服务 HTTP 客户端：读盘口、原子注册 token、内部写 token |
 | `polymarket/models.rs` | 共享数据模型 |
 | `polymarket/normalizers.rs` | WebSocket 消息规范化函数 |
@@ -47,8 +47,9 @@
 - **`PolymarketWalletPosition`**：当前持仓
 - **`PolymarketClosedPosition`**：已结算持仓
 - **`PolymarketTrade`**：单笔交易记录
-- 常量：`MAX_DATA_API_LIMIT = 500`、`DATA_API_TIMEOUT = 15s`
-- 用途：`copytrade.rs` worker 检测跟踪钱包的新成交
+- 常量：`MAX_DATA_API_LIMIT = 500`、`MAX_DATA_API_POSITION_PAGES = 100`、`DATA_API_TIMEOUT = 15s`
+- `fetch_wallet_positions()` 使用 `sizeThreshold=0`、limit/offset 分页和 asset 去重读取完整账户持仓；超过最大页数返回错误，不把不完整快照交给下游替换。
+- 用途：`copytrade.rs` worker 检测跟踪钱包的新成交，以及 rewards worker 同步外部账户持仓
 
 ### Polymarket Book（盘口）
 
@@ -73,7 +74,7 @@
 - `cancel_order()`：按 Polymarket order id 撤销单笔订单
 - `poll_order_status()` / `collect_trade_updates()`：通过 CLOB 单订单接口查询；仅返回 `CONFIRMED` trade 供入账，live / 普通 GTC unmatched 状态可立即按 open 返回，并在所有关联 trade 终态后返回取消、matched 或 FAK unmatched 终态
 - **`LivePolymarketTradeSyncOutcome`**：包含 confirmed `updates` 与安全可应用的 `order_status`；pending/mined/retrying trade 会阻止 terminal status 提前返回
-- **`PolymarketOpenOrder`**：隔离 SDK 的开放订单类型，供 API live snapshot overlay 使用
+- **`PolymarketOpenOrder`**：隔离 SDK 的开放订单类型，供 live 订单恢复与对账使用
 - 用途：live 模式下的订单管理、rewards live maker 和 copytrade 实盘骨架
 - 当前范围：支持已有、已 funded、已 approve 的 Deposit Wallet 通过 CLOB V2 下单/撤单；`poly_1271` 下单前会调用 CLOB balance allowance update。成交同步按 maker order 聚合同一 trade 中重复出现的全部 `matched_amount`，使用 size-weighted price/fee，避免把整笔 taker trade size 误记到单个 maker 订单或漏记重复 maker entry。尚未实现 relayer 建钱包、pUSD 入金/approval 或 deposit wallet 生命周期管理。
 
@@ -84,7 +85,7 @@
 - **`PolymarketRewardOrderBook`**：token_id、bids、asks、observed_at
 - 常量：`ENRICH_TIMEOUT = 10s`、`ENRICH_MAX_RETRIES = 3`、`ENRICH_RETRY_BASE_DELAY = 500ms`、`MAX_REWARD_MARKET_PAGES = 1000`
 - `fetch_current_markets()` 对分页做重复 cursor / 最大页数 / condition id 去重保护；token 会按 ID 去重，空目录、任一详情补全失败或少于两个不同 token 都会返回错误，调用方保留上一版 catalog。
-- `fetch_order_books(token_ids)` 使用固定并发窗口（默认 10）拉取 `/book`，不会为全部 token 一次性创建任务；整批全部失败时返回 dependency error，部分失败会记录告警。
+- `fetch_order_books(token_ids)` 优先使用 CLOB `POST /books` 批量拉取盘口；批量请求失败或遗漏 token 时，再使用固定并发窗口逐个调用 `GET /book` 补齐。整批无可用盘口时返回 dependency error，部分失败会记录告警。
 - 用途：`market_sync.rs` 填充 `reward_markets` 表
 
 ### Orderbook HTTP
@@ -112,13 +113,15 @@
 ## 依赖关系
 
 - **上游**：`domain`（AppError、枚举、数值类型）、`application`（部分 trait）
-- **下游**：`apps/orderbook`（market sync、WS/poll）、`apps/worker`（arbitrage、copytrade、rewards、news）、`apps/api`（Rewards live snapshot overlay）
+- **下游**：`apps/orderbook`（market sync、WS/poll）、`apps/worker`（arbitrage、copytrade、rewards、news）
 
 ## 当前状态
 
 - 已实现当前系统使用的 Polymarket 公共市场、盘口、Data API、Rewards API 和 CLOB V2 交易 connector；Deposit Wallet relayer 生命周期接口尚未接入
 - Gamma keyset 分页已具备重复 cursor / 末页 sentinel / 最大页数保护，并按 market id 去重，避免外部 API 游标异常导致 market sync 无限累积内存
 - Rewards markets 分页和 enrichment 已具备完整性保护，不再把部分补全结果作为完整目录写入
+- Rewards 盘口连接器优先走 CLOB 批量 `/books`，并对失败或遗漏项使用单 token `/book` 回退
+- Data API positions 已按完整快照分页读取；不完整或失败的响应不会被 rewards worker 用于替换持仓
 - Paper Trading 执行器已完整实现
 - Live connector 已具备 CLOB V2 认证、余额查询、开放订单全量分页、用户 WS、订单提交、按 token_id 的 rewards buy/sell 提交和单笔撤单能力；post-only 使用 GTC，immediate flatten 使用 FAK，订单价格当前统一收敛到 0.01 精度，更粗的 per-market tick-size 尚未接入；订单/关联成交通过单订单接口对账，轮询路径仅在 trade `CONFIRMED` 后返回成交；签名类型已覆盖 EOA、Proxy、Gnosis Safe 和 Deposit Wallet (`poly_1271`)；订单 acceptance 返回实际提交 quantity，trade/WS 成交归一化按订单自身成交量入账；仍需要真实凭证和小额账户验证
 - RSS connector 支持 Atom/RSS 两种格式

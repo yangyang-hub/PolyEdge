@@ -107,14 +107,7 @@ pub struct SystemModeService {
     audit_log_sink: std::sync::Arc<dyn AuditLogSink>,
 }
 
-fn validate_transition_target(mode: SystemMode) -> Result<()> {
-    if mode == SystemMode::ManualConfirm {
-        return Err(AppError::invalid_input(
-            "SYSTEM_MODE_MANUAL_CONFIRM_DISABLED",
-            "manual_confirm mode has been removed; use paper_trade for simulated execution",
-        ));
-    }
-
+fn validate_transition_target(_mode: SystemMode) -> Result<()> {
     Ok(())
 }
 

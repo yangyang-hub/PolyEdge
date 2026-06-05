@@ -22,7 +22,7 @@ impl Default for RuntimeSettings {
     fn default() -> Self {
         Self {
             environment: "local".to_string(),
-            initial_mode: SystemMode::PaperTrade,
+            initial_mode: SystemMode::LiveAuto,
         }
     }
 }

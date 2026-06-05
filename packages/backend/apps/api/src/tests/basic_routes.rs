@@ -2,7 +2,7 @@
 async fn healthz_is_available_without_authentication() {
     let signing_key = SigningKey::from_bytes(&[11_u8; 32]);
     let settings = Settings::for_test(
-        SystemMode::ManualConfirm,
+        SystemMode::LiveAuto,
         "test",
         vec![AuthKeySettings {
             kid: "test-key".to_string(),
@@ -29,7 +29,7 @@ async fn healthz_is_available_without_authentication() {
 async fn protected_read_route_requires_valid_token() {
     let signing_key = SigningKey::from_bytes(&[11_u8; 32]);
     let settings = Settings::for_test(
-        SystemMode::ManualConfirm,
+        SystemMode::LiveAuto,
         "test",
         vec![AuthKeySettings {
             kid: "test-key".to_string(),
@@ -58,7 +58,7 @@ async fn protected_read_route_requires_valid_token() {
 
 #[tokio::test]
 async fn auth_disabled_allows_protected_read_route_without_headers() {
-    let mut settings = Settings::for_test(SystemMode::ManualConfirm, "intranet", Vec::new());
+    let mut settings = Settings::for_test(SystemMode::LiveAuto, "intranet", Vec::new());
     settings.auth.disabled = true;
     let app = build_app(Runtime::test_app_state(settings).expect("state"));
 
@@ -79,7 +79,7 @@ async fn auth_disabled_allows_protected_read_route_without_headers() {
 async fn markets_route_returns_seeded_market_list() {
     let signing_key = SigningKey::from_bytes(&[12_u8; 32]);
     let settings = Settings::for_test(
-        SystemMode::ManualConfirm,
+        SystemMode::LiveAuto,
         "test",
         vec![AuthKeySettings {
             kid: "test-key".to_string(),

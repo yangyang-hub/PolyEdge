@@ -94,7 +94,6 @@ async fn consume_orderbook_stream(state: &AppState) -> Result<OrderbookStreamRep
     let poll_cache = cache.clone();
     let poll_tokens_ref = shared_tokens.clone();
     let poll_interval = settings.poll_reconcile_interval_secs;
-    let stale_threshold_ms = settings.stale_threshold_ms as i64;
     let clob_host = state.settings.polymarket.clob_host.clone();
     let poll_max_tokens = settings.max_tokens;
     let poll_reconciliations = Arc::new(AtomicUsize::new(0));
@@ -116,47 +115,37 @@ async fn consume_orderbook_stream(state: &AppState) -> Result<OrderbookStreamRep
 
             // Read the latest token list (may have been updated by refresh timer).
             let current_tokens = poll_tokens_ref.read().await.clone();
-
-            let stale = match poll_cache
-                .get_stale_tokens(&current_tokens, stale_threshold_ms)
-                .await
-            {
-                Ok(tokens) => tokens,
-                Err(error) => {
-                    warn!(error = %error, "orderbook poll reconciler failed to get stale tokens");
-                    continue;
-                }
-            };
-
-            if stale.is_empty() {
+            let fetch_limit = current_tokens.len().min(poll_max_tokens);
+            if fetch_limit == 0 {
                 continue;
             }
 
-            debug!(stale_count = stale.len(), "orderbook poll reconciler checking stale tokens");
-
-            let fetch_limit = stale.len().min(poll_max_tokens);
-            let to_fetch = &stale[..fetch_limit];
-
-            match connector.fetch_order_books(to_fetch).await {
-                Ok(books) => {
-                    for book in books {
-                        let cached = reward_book_to_cached(&book);
-                        if let Err(error) = poll_cache.set_book(&cached).await {
-                            warn!(
-                                token_id = %cached.token_id,
-                                error = %error,
-                                "orderbook poll reconciler failed to write book to cache"
-                            );
+            debug!(
+                target_count = fetch_limit,
+                "orderbook poll reconciler refreshing registered tokens"
+            );
+            for chunk in current_tokens[..fetch_limit].chunks(100) {
+                match connector.fetch_order_books(chunk).await {
+                    Ok(books) => {
+                        for book in books {
+                            let cached = reward_book_to_cached(&book);
+                            if let Err(error) = poll_cache.set_book(&cached).await {
+                                warn!(
+                                    token_id = %cached.token_id,
+                                    error = %error,
+                                    "orderbook poll reconciler failed to write book to cache"
+                                );
+                            }
                         }
+                        poll_reconciliations_clone.fetch_add(1, Ordering::Relaxed);
                     }
-                    poll_reconciliations_clone.fetch_add(1, Ordering::Relaxed);
-                }
-                Err(error) => {
-                    poll_failures_clone.fetch_add(1, Ordering::Relaxed);
-                    warn!(
-                        error = %error,
-                        "orderbook poll reconciler failed to fetch books"
-                    );
+                    Err(error) => {
+                        poll_failures_clone.fetch_add(1, Ordering::Relaxed);
+                        warn!(
+                            error = %error,
+                            "orderbook poll reconciler failed to fetch books"
+                        );
+                    }
                 }
             }
         }
