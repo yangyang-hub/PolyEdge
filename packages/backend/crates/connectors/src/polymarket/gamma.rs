@@ -123,7 +123,10 @@ impl PolymarketGammaConnector {
 
         for page_index in 0..GAMMA_MAX_PAGES {
             let offset = (page_index as u64) * (limit as u64);
-            let page = self.fetch_market_page_offset(limit, offset).await?;
+            let Some(page) = self.fetch_market_page_offset(limit, offset).await? else {
+                tracing::info!(offset, "Gamma markets pagination boundary reached (422)");
+                break;
+            };
             let had_items = !page.is_empty();
             let page_len = page.len();
 
@@ -188,11 +191,15 @@ impl PolymarketGammaConnector {
         map_gamma_market(raw)
     }
 
+    /// Returns `Ok(None)` when the Gamma API returns 422 (offset exceeds server
+    /// limit), signaling that pagination has been exhausted.  Returns
+    /// `Ok(Some(vec))` on success, and `Err` on transport/server errors that
+    /// are worth propagating.
     async fn fetch_market_page_offset(
         &self,
         limit: u16,
         offset: u64,
-    ) -> Result<Vec<RawGammaMarket>> {
+    ) -> Result<Option<Vec<RawGammaMarket>>> {
         let url = format!("{}/markets", self.gamma_host);
         let mut url = reqwest::Url::parse(&url).map_err(|error| {
             AppError::invalid_input(
@@ -240,6 +247,17 @@ impl PolymarketGammaConnector {
                 ));
             }
 
+            // 422 Unprocessable Entity at large offsets signals pagination
+            // boundary — the server rejects offsets beyond its configured
+            // limit.  Treat this as end-of-data rather than a retryable error.
+            if status == reqwest::StatusCode::UNPROCESSABLE_ENTITY {
+                tracing::debug!(
+                    offset,
+                    "Gamma markets returned 422 — offset exceeds server limit"
+                );
+                return Ok(None);
+            }
+
             if !status.is_success() {
                 if attempt < GAMMA_MAX_RETRIES && !is_rate_limited {
                     let delay = GAMMA_RETRY_BASE_DELAY * 2u32.pow(attempt);
@@ -263,6 +281,7 @@ impl PolymarketGammaConnector {
             return response
                 .json::<Vec<RawGammaMarket>>()
                 .await
+                .map(Some)
                 .map_err(|error| {
                     AppError::dependency_unavailable(
                         "POLYMARKET_GAMMA_MARKETS_DECODE_FAILED",
