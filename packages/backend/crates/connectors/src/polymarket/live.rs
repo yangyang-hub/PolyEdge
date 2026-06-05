@@ -116,7 +116,7 @@ impl LivePolymarketConnector {
             }
         }
         let result = self.balance().await?;
-        tracing::info!(
+        tracing::warn!(
             balance = %result.balance,
             signature_type = ?self.signature_type,
             account_id = %self.account_id,

@@ -10,6 +10,7 @@ async fn sync_external_account_state(
     cycle_positions: &mut Vec<RewardPosition>,
     trace_id: &str,
 ) {
+    warn!(trace_id = %trace_id, "sync_external_account_state started");
     let mut balance_updated = false;
     match connector.refresh_balance().await {
         Ok(balance) => {

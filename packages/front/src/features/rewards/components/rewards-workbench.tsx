@@ -177,6 +177,8 @@ export function RewardsWorkbench({ initialSnapshot }: { initialSnapshot: RewardB
                 <QuotePlansTable
                   plans={snapshot.quote_plans}
                   plansPage={snapshot.plans_page}
+                  plansTotal={snapshot.status.plans_total}
+                  eligibleTotal={snapshot.status.eligible_markets}
                   search={plansSearch}
                   onSearchChange={(v) => {
                     setPlansSearch(v);

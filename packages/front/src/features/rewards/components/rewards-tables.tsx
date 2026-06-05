@@ -181,6 +181,8 @@ export function PositionsTable({ positions }: { positions: RewardPositionDto[] }
 interface QuotePlansTableProps {
   plans: RewardQuotePlanDto[];
   plansPage: RewardListPageDto;
+  plansTotal: number;
+  eligibleTotal: number;
   search: string;
   onSearchChange: (v: string) => void;
   eligibility: "all" | "eligible" | "ineligible";
@@ -193,7 +195,7 @@ interface QuotePlansTableProps {
 }
 
 export function QuotePlansTable({
-  plans, plansPage, search, onSearchChange, eligibility, onEligibilityChange,
+  plans, plansPage, plansTotal, eligibleTotal, search, onSearchChange, eligibility, onEligibilityChange,
   sortBy, sortOrder, onSortChange, onPageChange, filtering,
 }: QuotePlansTableProps) {
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -209,9 +211,9 @@ export function QuotePlansTable({
 
   // Server-side pagination: plans are already filtered/sorted/paged by the API.
   const tabs = [
-    { key: "all", label: dictionary.rewards.filterAll, count: plansPage.total_items },
-    { key: "eligible", label: dictionary.rewards.filterEligible, count: plansPage.total_items },
-    { key: "ineligible", label: dictionary.rewards.filterIneligible, count: plansPage.total_items },
+    { key: "all", label: dictionary.rewards.filterAll, count: plansTotal },
+    { key: "eligible", label: dictionary.rewards.filterEligible, count: eligibleTotal },
+    { key: "ineligible", label: dictionary.rewards.filterIneligible, count: plansTotal - eligibleTotal },
   ];
 
   function handleSort(field: string) {
