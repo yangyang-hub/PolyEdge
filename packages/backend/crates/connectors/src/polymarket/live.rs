@@ -100,6 +100,15 @@ impl LivePolymarketConnector {
         })
     }
 
+    /// Force the CLOB to refresh its cached collateral balance, then query it.
+    /// Required for `poly_1271` deposit wallets where the cached balance may be
+    /// stale after a deposit; for EOA wallets this is a no-op update + query.
+    pub async fn refresh_balance(&self) -> Result<BalanceAllowanceResponse> {
+        self.update_deposit_wallet_balance_allowance_if_needed(Side::Buy, None)
+            .await?;
+        self.balance().await
+    }
+
     /// List all open orders for the authenticated account, paginating
     /// through all available pages.
     pub async fn list_open_orders(&self) -> Result<Vec<PolymarketOpenOrder>> {

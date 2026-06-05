@@ -11,7 +11,7 @@ async fn sync_external_account_state(
     trace_id: &str,
 ) {
     let mut balance_updated = false;
-    match connector.balance().await {
+    match connector.refresh_balance().await {
         Ok(balance) => {
             cycle_account.available_usd = balance.balance;
             balance_updated = true;
