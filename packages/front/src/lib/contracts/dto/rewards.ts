@@ -116,6 +116,7 @@ export type ManagedRewardOrderDto = {
 
 export type RewardAccountStateDto = {
   account_id: string;
+  wallet_address?: string | null;
   capital_usd: DecimalValue;
   available_usd: DecimalValue;
   reserved_usd: DecimalValue;

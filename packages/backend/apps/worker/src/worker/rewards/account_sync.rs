@@ -22,6 +22,10 @@ async fn sync_external_account_state(
     }
 
     let settings = &state.settings.polymarket;
+    // Sync wallet address from Polymarket configuration if not yet set.
+    if cycle_account.wallet_address.as_deref() != Some(&settings.account_id) {
+        cycle_account.wallet_address = Some(settings.account_id.clone());
+    }
     let position_snapshot = if settings.account_id.trim().is_empty() {
         warn!("Polymarket account_id not configured, skipping external position sync");
         None

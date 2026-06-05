@@ -365,6 +365,7 @@ fn reward_fill_from_row(row: &sqlx::postgres::PgRow) -> Result<RewardFill> {
 fn reward_account_state_from_row(row: &sqlx::postgres::PgRow) -> Result<RewardAccountState> {
     Ok(RewardAccountState {
         account_id: row.try_get("account_id").map_err(postgres_decode_error)?,
+        wallet_address: row.try_get("wallet_address").map_err(postgres_decode_error)?,
         capital_usd: row.try_get("capital_usd").map_err(postgres_decode_error)?,
         available_usd: row.try_get("available_usd").map_err(postgres_decode_error)?,
         reserved_usd: row.try_get("reserved_usd").map_err(postgres_decode_error)?,
@@ -380,12 +381,13 @@ fn reward_account_state_from_row(row: &sqlx::postgres::PgRow) -> Result<RewardAc
 
 const REWARD_ACCOUNT_STATE_UPSERT: &str = r#"
     INSERT INTO reward_account_state (
-      account_id, capital_usd, available_usd, reserved_usd, realized_pnl,
+      account_id, wallet_address, capital_usd, available_usd, reserved_usd, realized_pnl,
       reward_earned_usd, fees_paid, tick_index, updated_at
     )
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
     ON CONFLICT (account_id) DO UPDATE
-    SET capital_usd = EXCLUDED.capital_usd,
+    SET wallet_address = EXCLUDED.wallet_address,
+        capital_usd = EXCLUDED.capital_usd,
         available_usd = EXCLUDED.available_usd,
         reserved_usd = EXCLUDED.reserved_usd,
         realized_pnl = EXCLUDED.realized_pnl,
@@ -401,6 +403,7 @@ fn bind_reward_account_state<'q>(
 ) -> sqlx::query::Query<'q, sqlx::Postgres, sqlx::postgres::PgArguments> {
     query
         .bind(&state.account_id)
+        .bind(&state.wallet_address)
         .bind(state.capital_usd)
         .bind(state.available_usd)
         .bind(state.reserved_usd)

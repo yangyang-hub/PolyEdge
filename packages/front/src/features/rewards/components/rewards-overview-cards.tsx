@@ -80,6 +80,10 @@ export function ModeStatusPanel({
 
         <dl className="grid grid-cols-2 gap-3 text-sm">
           <StatusDatum label={dictionary.rewards.account} value={snapshot.account.account_id} />
+          {snapshot.account.wallet_address ? (
+            <StatusDatum label={dictionary.rewards.walletAddress} value={snapshot.account.wallet_address} />
+          ) : null}
+          <StatusDatum label={dictionary.rewards.walletBalance} value={formatUsdFixed(snapshot.account.available_usd)} />
           <StatusDatum label={dictionary.rewards.tick} value={String(snapshot.account.tick_index)} />
           <StatusDatum
             label={dictionary.rewards.lastScan}
@@ -186,9 +190,9 @@ export function SummaryStrip({
           hint={dictionary.rewards.accountSummary}
         />
         <SummaryMetric
-          label={dictionary.rewards.available}
+          label={dictionary.rewards.walletBalance}
           value={formatUsdFixed(snapshot.account.available_usd)}
-          hint={`${dictionary.rewards.reserved} ${formatUsdFixed(snapshot.account.reserved_usd)}`}
+          hint={dictionary.rewards.walletBalanceHint}
         />
         <SummaryMetric
           label={dictionary.rewards.realizedPnl}

@@ -688,6 +688,8 @@ pub struct RewardPosition {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RewardAccountState {
     pub account_id: String,
+    /// Polymarket wallet address (0x…) synced from worker `POLYEDGE_POLYMARKET__ACCOUNT_ID`.
+    pub wallet_address: Option<String>,
     /// Total deposited capital (the configured fund pool).
     pub capital_usd: Decimal,
     /// Cash not consumed by fills.
@@ -709,6 +711,7 @@ impl RewardAccountState {
     pub fn fresh(account_id: &str, capital_usd: Decimal, now: OffsetDateTime) -> Self {
         Self {
             account_id: account_id.to_string(),
+            wallet_address: None,
             capital_usd,
             available_usd: capital_usd,
             reserved_usd: Decimal::ZERO,
