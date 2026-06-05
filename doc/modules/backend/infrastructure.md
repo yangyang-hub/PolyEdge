@@ -1,6 +1,6 @@
 # infrastructure（基础设施层）
 
-最后更新：2026-06-04
+最后更新：2026-06-05
 
 ## 概述
 
@@ -82,6 +82,7 @@
 
 **关键模式：**
 - Config 存储使用 key-value 表（`reward_bot_config`、`copytrade_config`、`runtime_config`）
+- `runtime_config` bootstrap 在每次启动时用环境变量值覆盖数据库值（`ON CONFLICT ... DO UPDATE ... WHERE value IS DISTINCT FROM EXCLUDED.value`），确保环境变量始终优先；API 运行时修改仅在当前进程生命周期内生效，重启后恢复为环境变量值
 - 常量：`SYSTEM_RUNTIME_STATE_ID = "global"`、`RISK_STATE_ID = "global"`
 - `db_error(code, context)` 辅助函数统一创建 `dependency_unavailable` 错误
 - `RewardBotStore` 的 Postgres key-value 配置读写覆盖全部 rewards 风控配置字段（depth/rank/velocity/requote/reconcile 等）；`execution_mode` 键保留用于向后兼容但被忽略。

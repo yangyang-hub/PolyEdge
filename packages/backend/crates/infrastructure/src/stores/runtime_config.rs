@@ -55,7 +55,7 @@ impl PostgresRuntimeConfigStore {
                 ON CONFLICT (key) DO UPDATE
                 SET value = EXCLUDED.value,
                     updated_at = now()
-                WHERE runtime_config.value = ''
+                WHERE runtime_config.value IS DISTINCT FROM EXCLUDED.value
                 "#,
             )
             .bind(key)
