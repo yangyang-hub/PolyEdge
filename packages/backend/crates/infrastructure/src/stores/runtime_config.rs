@@ -52,7 +52,10 @@ impl PostgresRuntimeConfigStore {
                 r#"
                 INSERT INTO runtime_config (key, value, updated_at)
                 VALUES ($1, $2, now())
-                ON CONFLICT (key) DO NOTHING
+                ON CONFLICT (key) DO UPDATE
+                SET value = EXCLUDED.value,
+                    updated_at = now()
+                WHERE runtime_config.value = ''
                 "#,
             )
             .bind(key)
