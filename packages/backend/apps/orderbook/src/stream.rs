@@ -56,7 +56,11 @@ pub async fn run_orderbook_stream(state: &AppState) -> Result<OrderbookStreamRep
     }
 
     // 3. Create WS client and subscribe.
-    let ws_client = ClobWsClient::new(&state.settings.polymarket.ws_host, WsConfig::default())
+    // Use a longer heartbeat timeout (30s vs SDK default 15s) to reduce
+    // false-positive heartbeat warnings on networks with occasional latency.
+    let mut ws_config = WsConfig::default();
+    ws_config.heartbeat_timeout = Duration::from_secs(30);
+    let ws_client = ClobWsClient::new(&state.settings.polymarket.ws_host, ws_config)
         .map_err(|error| {
             AppError::internal(
                 "ORDERBOOK_WS_INIT_FAILED",

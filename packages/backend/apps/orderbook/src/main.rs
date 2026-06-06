@@ -3,6 +3,8 @@ use polyedge_infrastructure::{AppState, Runtime};
 use std::time::Duration;
 use tower_http::trace::TraceLayer;
 use tracing::info;
+use tracing_subscriber::filter::{FilterExt, FilterFn};
+use tracing_subscriber::{prelude::*, EnvFilter};
 
 mod market_sync;
 use market_sync::sync_markets_once;
@@ -18,10 +20,23 @@ use http_api::{
 
 #[tokio::main]
 async fn main() {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+    let env_filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new("info"));
+
+    // Suppress expected ERROR-level logs from the SDK's internal WS reconnection
+    // cycle. The SDK already retries with exponential backoff, so these errors
+    // are normal operational noise. Keep WARN heartbeat diagnostics visible.
+    let suppress_sdk_ws_error = FilterFn::new(|metadata| {
+        !(metadata
+            .target()
+            .starts_with("polymarket_client_sdk_v2::ws::connection")
+            && *metadata.level() == tracing::Level::ERROR)
+    });
+
+    tracing_subscriber::registry()
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_filter(env_filter.and(suppress_sdk_ws_error)),
         )
         .init();
 
