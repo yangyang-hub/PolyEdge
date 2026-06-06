@@ -638,7 +638,7 @@ if [[ "${mode}" == "auto" ]]; then
       build_frontend
     fi
     log "building images: ${build_images[*]} (COMPOSE_PARALLEL_LIMIT=${COMPOSE_PARALLEL_LIMIT})"
-    ${compose_cmd} --env-file "${env_file}" -f "${compose_file}" build --pull missing "${build_images[@]}"
+    ${compose_cmd} --env-file "${env_file}" -f "${compose_file}" build --pull "${build_images[@]}"
     save_deploy_state "${state_file}"
   else
     log "no image changes detected; starting existing images"
@@ -701,7 +701,7 @@ else
 
   if [[ ${#build_images[@]} -gt 0 ]]; then
     log "building images: ${build_images[*]} (COMPOSE_PARALLEL_LIMIT=${COMPOSE_PARALLEL_LIMIT})"
-    ${compose_cmd} --env-file "${env_file}" -f "${compose_file}" build --pull missing "${build_images[@]}"
+    ${compose_cmd} --env-file "${env_file}" -f "${compose_file}" build --pull "${build_images[@]}"
   fi
 
   if [[ ${#runtime_services[@]} -gt 0 ]]; then
