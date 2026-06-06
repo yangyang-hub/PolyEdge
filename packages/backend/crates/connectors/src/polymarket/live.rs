@@ -105,24 +105,10 @@ impl LivePolymarketConnector {
     /// stale after a deposit; for EOA wallets this is a no-op update + query.
     pub async fn refresh_balance(&self) -> Result<BalanceAllowanceResponse> {
         if self.signature_type == PolymarketSignatureScheme::Poly1271 {
-            match self
-                .update_deposit_wallet_balance_allowance_if_needed(Side::Buy, None)
-                .await
-            {
-                Ok(()) => tracing::debug!("poly_1271 balance allowance update succeeded"),
-                Err(error) => {
-                    tracing::warn!(error = %error, "poly_1271 balance allowance update failed");
-                }
-            }
+            self.update_deposit_wallet_balance_allowance_if_needed(Side::Buy, None)
+                .await?;
         }
-        let result = self.balance().await?;
-        tracing::warn!(
-            balance = %result.balance,
-            signature_type = ?self.signature_type,
-            account_id = %self.account_id,
-            "polymarket balance query result"
-        );
-        Ok(result)
+        self.balance().await
     }
 
     /// List all open orders for the authenticated account, paginating

@@ -3,6 +3,8 @@
 /// A failed balance request preserves the local balance. A failed position request
 /// preserves the stored positions; a successful position request, including an
 /// empty response, atomically replaces all positions for the rewards account.
+const REWARD_ACCOUNT_SYNC_FILL_GRACE: TimeDuration = TimeDuration::seconds(120);
+
 async fn sync_external_account_state(
     state: &AppState,
     connector: &LivePolymarketConnector,
@@ -10,7 +12,10 @@ async fn sync_external_account_state(
     cycle_positions: &mut Vec<RewardPosition>,
     trace_id: &str,
 ) {
-    warn!(trace_id = %trace_id, "sync_external_account_state started");
+    if !external_account_sync_allowed(state, cycle_account, trace_id).await {
+        return;
+    }
+
     let mut balance_updated = false;
     match connector.refresh_balance().await {
         Ok(balance) => {
@@ -18,7 +23,7 @@ async fn sync_external_account_state(
             balance_updated = true;
         }
         Err(error) => {
-            warn!(error = %error, "failed to fetch live Polymarket balance during sync");
+            warn!(error = %error, "polymarket balance query failed");
         }
     }
 
@@ -78,6 +83,38 @@ async fn sync_external_account_state(
     }
 }
 
+async fn external_account_sync_allowed(
+    state: &AppState,
+    account: &RewardAccountState,
+    trace_id: &str,
+) -> bool {
+    let now = OffsetDateTime::now_utc();
+    match state
+        .reward_bot_service
+        .latest_reward_fill_at(&account.account_id)
+        .await
+    {
+        Ok(Some(fill_at)) if !account_sync_is_outside_fill_grace(Some(fill_at), now) => {
+            debug!(
+                trace_id,
+                fill_at = %fill_at,
+                grace_secs = REWARD_ACCOUNT_SYNC_FILL_GRACE.whole_seconds(),
+                "skipping external account replacement while a confirmed fill propagates"
+            );
+            false
+        }
+        Ok(_) => true,
+        Err(error) => {
+            warn!(
+                trace_id,
+                error = %error,
+                "failed to check recent rewards fills; preserving local account state"
+            );
+            false
+        }
+    }
+}
+
 fn polymarket_position_to_reward(
     account_id: &str,
     position: &PolymarketWalletPosition,
@@ -96,4 +133,11 @@ fn polymarket_position_to_reward(
 
 fn can_refresh_external_account_after_order_sync(report: &RewardBotRunReport) -> bool {
     report.filled_orders == 0
+}
+
+fn account_sync_is_outside_fill_grace(
+    latest_fill_at: Option<OffsetDateTime>,
+    now: OffsetDateTime,
+) -> bool {
+    latest_fill_at.is_none_or(|fill_at| now >= fill_at + REWARD_ACCOUNT_SYNC_FILL_GRACE)
 }

@@ -147,8 +147,9 @@ fn registry_source_priority(source: &str) -> u8 {
     match source {
         "rewards_active" => 0,
         "exec_orders" => 1,
-        "rewards" | "rewards_candidates" => 2,
-        "copytrade" => 3,
-        _ => 4,
+        "rewards_eligible" => 2,
+        "rewards" | "rewards_candidates" => 3,
+        "copytrade" => 4,
+        _ => 5,
     }
 }

@@ -386,6 +386,17 @@ impl RewardBotStore for InMemoryRewardBotStore {
         Ok(self.fills.read().await.iter().any(|fill| fill.id == fill_id))
     }
 
+    async fn latest_fill_at(&self, account_id: &str) -> Result<Option<OffsetDateTime>> {
+        Ok(self
+            .fills
+            .read()
+            .await
+            .iter()
+            .filter(|fill| fill.account_id == account_id)
+            .map(|fill| fill.created_at)
+            .max())
+    }
+
     async fn apply_tick_outcome(
         &self,
         outcome: &RewardTickOutcome,

@@ -291,8 +291,43 @@ async fn insert_reward_fill(
 }
 
 fn reward_market_from_row(row: &sqlx::postgres::PgRow) -> Result<RewardMarket> {
-    let tokens: Json<Vec<RewardToken>> =
-        row.try_get("tokens_json").map_err(postgres_decode_error)?;
+    let mut tokens: Vec<RewardToken> = row
+        .try_get::<Json<Vec<RewardToken>>, _>("tokens_json")
+        .map_err(postgres_decode_error)?
+        .0;
+
+    // Inject Gamma market prices as fallback when token.price is absent.
+    // The planner uses token.price when live orderbook data is unavailable.
+    let best_bid: Option<Decimal> = row
+        .try_get("best_bid")
+        .map_err(postgres_decode_error)?;
+    let best_ask: Option<Decimal> = row
+        .try_get("best_ask")
+        .map_err(postgres_decode_error)?;
+    if let (Some(bid), Some(ask)) = (best_bid, best_ask)
+        && bid > Decimal::ZERO
+        && bid < Decimal::ONE
+        && ask > Decimal::ZERO
+        && ask < Decimal::ONE
+        && bid <= ask
+    {
+        let midpoint = (bid + ask) / Decimal::from(2);
+        if midpoint > Decimal::ZERO && midpoint < Decimal::ONE {
+            for token in &mut tokens {
+                if token.price.is_some() {
+                    continue;
+                }
+                let is_yes = token.outcome.to_lowercase().contains("yes");
+                let is_no = token.outcome.to_lowercase().contains("no");
+                if is_yes {
+                    token.price = Some(midpoint);
+                } else if is_no {
+                    token.price = Some(Decimal::ONE - midpoint);
+                }
+            }
+        }
+    }
+
     Ok(RewardMarket {
         condition_id: row.try_get("condition_id").map_err(postgres_decode_error)?,
         question: row.try_get("question").map_err(postgres_decode_error)?,
@@ -308,7 +343,7 @@ fn reward_market_from_row(row: &sqlx::postgres::PgRow) -> Result<RewardMarket> {
         total_daily_rate: row
             .try_get("total_daily_rate")
             .map_err(postgres_decode_error)?,
-        tokens: tokens.0,
+        tokens,
         active: row.try_get("active").map_err(postgres_decode_error)?,
         updated_at: row.try_get("updated_at").map_err(postgres_decode_error)?,
     })

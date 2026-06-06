@@ -15,8 +15,7 @@ pub struct MarketSyncReport {
 /// Sync general markets from Gamma API and reward markets from CLOB API
 /// into the Postgres database.
 pub async fn sync_markets_once(state: &AppState, trace_id: &str) -> Result<MarketSyncReport> {
-    // 1. General markets from Gamma API.
-    let general_result: Result<usize> = async {
+    let general_sync = async {
         let connector = PolymarketGammaConnector::new(&state.settings.polymarket.gamma_host)?;
         let page_size = state.settings.arbitrage.scan_limit;
         let gamma_markets = connector.fetch_markets(page_size).await?;
@@ -28,11 +27,9 @@ pub async fn sync_markets_once(state: &AppState, trace_id: &str) -> Result<Marke
             .market_event_service
             .upsert_markets(&views, trace_id)
             .await
-    }
-    .await;
+    };
 
-    // 2. Reward markets from CLOB rewards API.
-    let reward_result: Result<usize> = async {
+    let reward_sync = async {
         let rewards_connector =
             PolymarketRewardsConnector::new(&state.settings.polymarket.clob_host)?;
         let reward_markets_raw = rewards_connector.fetch_current_markets().await?;
@@ -46,8 +43,12 @@ pub async fn sync_markets_once(state: &AppState, trace_id: &str) -> Result<Marke
             .upsert_reward_markets(&reward_markets)
             .await?;
         Ok(reward_upserted)
-    }
-    .await;
+    };
+
+    // The two catalogs are independent. A slow or retrying Gamma pagination must
+    // not delay the rewards catalog request (and vice versa).
+    let (general_result, reward_result): (Result<usize>, Result<usize>) =
+        tokio::join!(general_sync, reward_sync);
 
     let (general_upserted, reward_upserted) = match (general_result, reward_result) {
         (Ok(general), Ok(reward)) => (general, reward),

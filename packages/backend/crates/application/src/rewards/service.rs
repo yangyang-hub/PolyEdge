@@ -60,6 +60,8 @@ pub trait RewardBotStore: Send + Sync {
     async fn count_account_positions(&self, account_id: &str) -> Result<usize>;
     async fn list_fills(&self, limit: u16) -> Result<Vec<RewardFill>>;
     async fn reward_fill_exists(&self, fill_id: &str) -> Result<bool>;
+    /// Timestamp of the latest confirmed managed fill for an account.
+    async fn latest_fill_at(&self, account_id: &str) -> Result<Option<OffsetDateTime>>;
     /// Persist account, order, fill, position, and event changes atomically.
     ///
     /// Reward market catalogs and quote-plan snapshots have separate full-replacement
@@ -295,6 +297,23 @@ impl RewardBotService {
         Ok(select_reward_book_token_ids(&candidates))
     }
 
+    /// Return distinct token IDs from the latest eligible quote plans. Candidate
+    /// registration still provides cold-start coverage before these plans exist.
+    pub async fn list_eligible_reward_book_token_ids(&self) -> Result<Vec<String>> {
+        let plans = self.store.list_all_quote_plans().await?;
+        let mut seen = HashSet::new();
+        let mut token_ids = Vec::new();
+        for plan in plans.iter().filter(|plan| plan.eligible) {
+            for leg in &plan.legs {
+                if leg.token_id.trim().is_empty() || !seen.insert(leg.token_id.clone()) {
+                    continue;
+                }
+                token_ids.push(leg.token_id.clone());
+            }
+        }
+        Ok(token_ids)
+    }
+
     pub async fn snapshot(&self) -> Result<RewardBotSnapshot> {
         self.snapshot_with_order_query(
             &RewardOrderListQuery::default(),
@@ -449,6 +468,13 @@ impl RewardBotService {
 
     pub async fn reward_fill_exists(&self, fill_id: &str) -> Result<bool> {
         self.store.reward_fill_exists(fill_id).await
+    }
+
+    pub async fn latest_reward_fill_at(
+        &self,
+        account_id: &str,
+    ) -> Result<Option<OffsetDateTime>> {
+        self.store.latest_fill_at(account_id).await
     }
 
     pub async fn record_live_reset_cancel_all(&self, trace_id: &str) -> Result<()> {

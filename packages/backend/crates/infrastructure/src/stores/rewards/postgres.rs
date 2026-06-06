@@ -157,7 +157,9 @@ impl RewardBotStore for PostgresRewardBotStore {
                    rm.total_daily_rate,
                    rm.tokens_json,
                    rm.active,
-                   rm.updated_at
+                   rm.updated_at,
+                   m.best_bid,
+                   m.best_ask
             FROM reward_markets rm
             JOIN markets m
               ON m.polymarket_condition_id = rm.condition_id
@@ -196,7 +198,9 @@ impl RewardBotStore for PostgresRewardBotStore {
                    total_daily_rate,
                    tokens_json,
                    active,
-                   updated_at
+                   updated_at,
+                   NULL::NUMERIC AS best_bid,
+                   NULL::NUMERIC AS best_ask
             FROM reward_markets
             WHERE active = true
             ORDER BY total_daily_rate DESC, updated_at DESC
@@ -569,6 +573,25 @@ impl RewardBotStore for PostgresRewardBotStore {
             )
         })?;
         Ok(exists)
+    }
+
+    async fn latest_fill_at(&self, account_id: &str) -> Result<Option<OffsetDateTime>> {
+        sqlx::query_scalar(
+            r#"
+            SELECT MAX(created_at)
+            FROM reward_fills
+            WHERE account_id = $1
+            "#,
+        )
+        .bind(account_id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_QUERY_FAILED",
+                format!("failed to query latest reward fill timestamp: {error}"),
+            )
+        })
     }
 
     async fn apply_tick_outcome(

@@ -592,8 +592,8 @@ async fn worker_shutdown_signal() {
     }
 }
 
-/// Collect token IDs from active execution orders and reward candidate markets,
-/// then register them with the orderbook service via HTTP.
+/// Collect token IDs from active rewards state, execution orders, eligible plans,
+/// and reward candidates, then register them with the orderbook service via HTTP.
 async fn register_orderbook_tokens(state: &AppState) {
     let max_tokens = state.settings.orderbook_stream.max_tokens;
     let mut exec_candidates = Vec::new();
@@ -652,7 +652,8 @@ async fn register_orderbook_tokens(state: &AppState) {
     }
 
     // Allocate the global subscription budget deterministically: active rewards
-    // inventory/orders first, then active execution orders, then reward candidates.
+    // inventory/orders first, then active execution orders, eligible plans, and
+    // finally candidate discovery tokens that break the cold-start loop.
     let mut seen = HashSet::new();
     let mut reward_active_tokens = Vec::new();
     let reward_active_complete = match state
@@ -683,29 +684,54 @@ async fn register_orderbook_tokens(state: &AppState) {
         max_tokens.saturating_sub(reward_active_tokens.len()),
     );
 
+    let mut reward_eligible_tokens = Vec::new();
+    let reward_eligible_complete = match state
+        .reward_bot_service
+        .list_eligible_reward_book_token_ids()
+        .await
+    {
+        Ok(eligible_tokens) => {
+            let capacity = max_tokens
+                .saturating_sub(reward_active_tokens.len())
+                .saturating_sub(exec_tokens.len());
+            push_unique_tokens(
+                &mut reward_eligible_tokens,
+                &mut seen,
+                eligible_tokens,
+                capacity,
+            );
+            true
+        }
+        Err(error) => {
+            warn!(error = %error, "failed to list eligible rewards tokens for registration");
+            false
+        }
+    };
+
     let mut reward_candidate_tokens = Vec::new();
-    let mut reward_candidates_complete = true;
-    let reward_candidate_capacity = max_tokens
-        .saturating_sub(reward_active_tokens.len())
-        .saturating_sub(exec_tokens.len());
-    if reward_candidate_capacity > 0 {
-        match state
-            .reward_bot_service
-            .list_all_reward_candidate_token_ids()
-            .await
-        {
-            Ok(candidate_tokens) => push_unique_tokens(
+    let reward_candidates_complete = match state
+        .reward_bot_service
+        .list_all_reward_candidate_token_ids()
+        .await
+    {
+        Ok(candidate_tokens) => {
+            let capacity = max_tokens
+                .saturating_sub(reward_active_tokens.len())
+                .saturating_sub(exec_tokens.len())
+                .saturating_sub(reward_eligible_tokens.len());
+            push_unique_tokens(
                 &mut reward_candidate_tokens,
                 &mut seen,
                 candidate_tokens,
-                reward_candidate_capacity,
-            ),
-            Err(error) => {
-                reward_candidates_complete = false;
-                warn!(error = %error, "failed to list reward candidate tokens for registration");
-            }
+                capacity,
+            );
+            true
         }
-    }
+        Err(error) => {
+            warn!(error = %error, "failed to list reward candidate tokens for registration");
+            false
+        }
+    };
 
     for (source, source_tokens, complete) in [
         (
@@ -714,6 +740,11 @@ async fn register_orderbook_tokens(state: &AppState) {
             reward_active_complete,
         ),
         ("exec_orders", exec_tokens.as_slice(), exec_query_complete),
+        (
+            "rewards_eligible",
+            reward_eligible_tokens.as_slice(),
+            reward_eligible_complete,
+        ),
         (
             "rewards_candidates",
             reward_candidate_tokens.as_slice(),
@@ -736,6 +767,7 @@ async fn register_orderbook_tokens(state: &AppState) {
     info!(
         reward_active_tokens = reward_active_tokens.len(),
         exec_tokens = exec_tokens.len(),
+        reward_eligible_tokens = reward_eligible_tokens.len(),
         reward_candidate_tokens = reward_candidate_tokens.len(),
         max_tokens,
         "registered orderbook tokens with orderbook service"

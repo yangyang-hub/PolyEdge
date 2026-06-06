@@ -296,6 +296,21 @@ fn external_account_refresh_waits_when_order_sync_records_a_fill() {
 }
 
 #[test]
+fn external_account_sync_waits_for_recent_fill_grace_period() {
+    let now = OffsetDateTime::now_utc();
+
+    assert!(!account_sync_is_outside_fill_grace(
+        Some(now - TimeDuration::seconds(119)),
+        now,
+    ));
+    assert!(account_sync_is_outside_fill_grace(
+        Some(now - TimeDuration::seconds(120)),
+        now,
+    ));
+    assert!(account_sync_is_outside_fill_grace(None, now));
+}
+
+#[test]
 fn live_cancel_candidates_cancel_when_orderbook_missing() {
     let config = RewardBotConfig {
         account_id: "reward_live".to_string(),

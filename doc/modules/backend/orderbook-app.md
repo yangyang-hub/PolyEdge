@@ -1,6 +1,6 @@
 # Orderbook App（市场同步与盘口服务）
 
-最后更新：2026-06-04
+最后更新：2026-06-06
 
 ## 概述
 
@@ -42,7 +42,7 @@
 ## 缓存与订阅约束
 
 - 每个 source 的 `register_tokens()` 是原子全量替换，不是增量追加；空集合等同删除 source。
-- registry 聚合顺序由 infrastructure 固定，优先级为 `rewards_active`、`exec_orders`、`rewards_candidates`、`copytrade`，最终受 `POLYEDGE_ORDERBOOK_STREAM__MAX_TOKENS` 限制。
+- registry 聚合顺序由 infrastructure 固定，优先级为 `rewards_active`、`exec_orders`、`rewards_eligible`、`rewards_candidates`、`copytrade`，最终受 `POLYEDGE_ORDERBOOK_STREAM__MAX_TOKENS` 限制。
 - 所有缓存写入都会先把 bids 按价格降序、asks 按价格升序排序，再裁剪到 `POLYEDGE_ORDERBOOK_STREAM__MAX_LEVELS_PER_SIDE`，避免上游无序数据丢失 top-of-book。
 - WS 同时消费完整 `book` 快照和挂单/撤单触发的 `price_change` 增量；无 size 的增量不修改深度，等待后续快照/poll 对账。
 - 缓存拒绝 `observed_at` 早于当前条目的快照或增量，避免延迟 poll/WS 覆盖更新盘口。
@@ -68,7 +68,7 @@ Worker register sources
 ## 当前状态与缺口
 
 - 市场同步、registry、WS `book` + `price_change`、全注册 token 周期 poll reconcile、HTTP 读取和内部写认证已实现；poll 可修复 fresh cache 中未被察觉的 WS 增量丢失。
-- Gamma 与 rewards 目录同步相互独立；rewards 分页、详情补全或空目录异常时保留上一版 rewards catalog，不执行破坏性全量替换。
+- Gamma 与 rewards 目录同步使用 `tokio::join!` 并发执行并独立处理结果；rewards 分页、详情补全后仍缺 token 或空目录异常时保留上一版 rewards catalog，不执行破坏性全量替换。
 - 盘口只保存在单个 orderbook 进程内；服务重启会丢失缓存，横向多实例之间也不会共享缓存或 registry。
 - 读接口和 `/healthz` 当前不鉴权，应依赖内网边界限制访问。
 - 市场同步失败不会使 HTTP 健康检查失败；需要通过日志和数据新鲜度单独监控外部依赖。

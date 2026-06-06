@@ -286,6 +286,7 @@ impl PolymarketRewardsConnector {
         &self,
         markets: Vec<PolymarketRewardMarket>,
     ) -> Result<Vec<PolymarketRewardMarket>> {
+        let total_markets = markets.len();
         let semaphore = Arc::new(Semaphore::new(ENRICH_CONCURRENCY));
         let last_request = Arc::new(Mutex::new(std::time::Instant::now()));
         let client = self.clone();
@@ -370,12 +371,13 @@ impl PolymarketRewardsConnector {
         }
 
         let mut enriched = Vec::with_capacity(handles.len());
-        let mut failed = 0usize;
+        let mut detail_failures = 0usize;
+        let mut incomplete_condition_ids = Vec::new();
         for (market, handle) in markets.into_iter().zip(handles) {
             let detail = match handle.await {
                 Ok(Ok(Some(detail))) => Some(detail),
                 Ok(Ok(None)) => {
-                    failed += 1;
+                    detail_failures += 1;
                     None
                 }
                 Ok(Err(error)) => {
@@ -384,7 +386,7 @@ impl PolymarketRewardsConnector {
                         error = %error,
                         "reward market enrichment task error, skipping",
                     );
-                    failed += 1;
+                    detail_failures += 1;
                     None
                 }
                 Err(error) => {
@@ -393,7 +395,7 @@ impl PolymarketRewardsConnector {
                         error = %error,
                         "reward market enrichment task panicked, skipping",
                     );
-                    failed += 1;
+                    detail_failures += 1;
                     None
                 }
             };
@@ -442,20 +444,23 @@ impl PolymarketRewardsConnector {
                     token_count = market.tokens.len(),
                     "reward market has fewer than two tokens after enrichment, skipping",
                 );
-                failed += 1;
+                incomplete_condition_ids.push(market.condition_id.clone());
                 continue;
             }
             enriched.push(market);
         }
 
-        if failed > 0 {
+        if detail_failures > 0 || !incomplete_condition_ids.is_empty() {
             tracing::warn!(
-                total = enriched.len() + failed,
+                total = total_markets,
                 enriched = enriched.len(),
-                failed,
+                detail_failures,
+                incomplete = incomplete_condition_ids.len(),
                 "reward market enrichment completed with failures",
             );
         }
+
+        ensure_reward_catalog_complete(&incomplete_condition_ids)?;
 
         Ok(enriched)
     }
@@ -464,6 +469,25 @@ impl PolymarketRewardsConnector {
 fn dedupe_reward_tokens(tokens: &mut Vec<PolymarketRewardToken>) {
     let mut seen = HashSet::new();
     tokens.retain(|token| !token.token_id.trim().is_empty() && seen.insert(token.token_id.clone()));
+}
+
+fn ensure_reward_catalog_complete(incomplete_condition_ids: &[String]) -> Result<()> {
+    if incomplete_condition_ids.is_empty() {
+        return Ok(());
+    }
+    let sample = incomplete_condition_ids
+        .iter()
+        .take(10)
+        .cloned()
+        .collect::<Vec<_>>()
+        .join(",");
+    Err(AppError::dependency_unavailable(
+        "POLYMARKET_REWARDS_ENRICHMENT_INCOMPLETE",
+        format!(
+            "refusing partial reward catalog replacement: {} markets still lack two tokens (sample: {sample})",
+            incomplete_condition_ids.len()
+        ),
+    ))
 }
 
 fn map_reward_market(raw: RawRewardMarket) -> PolymarketRewardMarket {
@@ -553,5 +577,13 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["yes", "no"]
         );
+    }
+
+    #[test]
+    fn incomplete_reward_catalog_is_rejected_before_replacement() {
+        let error = ensure_reward_catalog_complete(&["cond_missing".to_string()])
+            .expect_err("partial catalog must be rejected");
+
+        assert_eq!(error.code(), "POLYMARKET_REWARDS_ENRICHMENT_INCOMPLETE");
     }
 }
