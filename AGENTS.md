@@ -182,6 +182,7 @@ cargo run -p polyedge-worker -- analyze-wallets-once
 - `deploy/.env*.example` 环境变量模板已为每个变量提供用途说明；`deploy/.env.polymarket.example` 提供 Polymarket CLOB V2 live、Proxy/Gnosis Safe、Deposit Wallet（`poly_1271`）和 Rewards live worker 配置示例，真实凭证默认注释。建议私钥只放 `deploy/.env.worker`；API 不再需要 Polymarket 凭证，余额和持仓由 worker 同步到数据库后 API 从数据库读取。
 - Rewards bot 的 `max_markets=0`、`max_open_orders=0` 或 `quote_size_usd=0` 都表示不再新挂单；不是无限制。
 - Rewards bot 未成交 post-only maker 买单不在本地按全局 notional 硬锁资金；`stale_book_ms` 默认 45000，`stale_book_ms=0` 只关闭盘口年龄检查，仍要求盘口存在且非空，开放 live 订单缺盘口会被撤单。
+- Rewards bot 的 `per_market_usd` 是 YES + NO 两腿合计预算：报价计划先满足两腿 `rewards_min_size`，再按单腿目标 notional 缺口分配剩余额度，不再固定均分预算而误拒绝价格不对称市场。
 - `POLYEDGE_ORDERBOOK_STREAM__MAX_TOKENS` 默认 3000；调高会增加 orderbook WS/poll 内存占用，调低会减少 rewards 候选盘口覆盖。订阅预算依次分配给活跃 rewards、execution、当前 eligible rewards 和其余候选 token。`POLYEDGE_ORDERBOOK_STREAM__MAX_LEVELS_PER_SIDE` 默认 100，用于限制进程内缓存和 HTTP ingest 每个 token 的 bids/asks 保留深度；写入时先排序再裁剪，保留最优档位。poll 每周期会刷新全部注册 token；`POLYEDGE_ORDERBOOK_STREAM__STALE_THRESHOLD_MS=0` 只关闭年龄 stale 优先级。
 - 默认跟单 worker 是 disabled；前端 `/copy-trading` 的 Run / Analyze / Cancel / Reset 只会入队命令，worker 需要设置 `POLYEDGE_COPYTRADE__ENABLED=true` + `POLYEDGE_WORKER__POLL_COPYTRADE=true` 才会领取并执行；`POLYEDGE_WORKER__ANALYZE_WALLETS=true` 仍用于独立钱包分析循环。
 - `POLYEDGE_POSTGRES__URL` / `POLYEDGE_REDIS__URL` 为空时，本地可能走内存路径，无法验证多进程共享状态和持久化 outbox。
@@ -199,7 +200,7 @@ cargo run -p polyedge-worker -- analyze-wallets-once
 git add bin/polyedge-api bin/polyedge-worker bin/polyedge-orderbook
 ```
 
-跨服务器部署时只需构建目标服务器需要的二进制，例如 orderbook 服务器只需 `polyedge-orderbook`：
+跨服务器部署时只需构建目标服务器需要的二进制，例如 orderbook 服务器只需 `polyedge-orderbook`；只设置 `POLYEDGE_BACKEND_BINARY` 时构建脚本会自动选择同名 Cargo package：
 
 ```bash
 POLYEDGE_BACKEND_BINARY=polyedge-orderbook ./scripts/build-backend-bin.sh

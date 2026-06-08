@@ -7,8 +7,9 @@ repo_root="$(cd "${script_dir}/.." && pwd)"
 target="${CARGO_BUILD_TARGET:-}"
 
 if [[ -n "${POLYEDGE_BACKEND_PACKAGE:-}" || -n "${POLYEDGE_BACKEND_BINARY:-}" ]]; then
-  packages=("${POLYEDGE_BACKEND_PACKAGE:-polyedge-api}")
-  binaries=("${POLYEDGE_BACKEND_BINARY:-${POLYEDGE_BACKEND_PACKAGE:-polyedge-api}}")
+  selected_package="${POLYEDGE_BACKEND_PACKAGE:-${POLYEDGE_BACKEND_BINARY:-polyedge-api}}"
+  packages=("${selected_package}")
+  binaries=("${POLYEDGE_BACKEND_BINARY:-${selected_package}}")
 else
   packages=("polyedge-api" "polyedge-worker" "polyedge-orderbook")
   binaries=("polyedge-api" "polyedge-worker" "polyedge-orderbook")

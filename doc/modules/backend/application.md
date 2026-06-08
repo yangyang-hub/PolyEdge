@@ -105,7 +105,7 @@
 
 **资金与盘口约束：**
 - 未成交 post-only maker 买单不在本地按全局 notional 硬锁同一笔 USDC，同一资金池可同时在多个不同市场报价。
-- 买单计划的单腿目标 notional 使用 `min(quote_size_usd, account_capital_usd)`，再受 `per_market_usd / 2` 和 Polymarket `rewards_min_size` 约束；如果该预算无法满足 `rewards_min_size`，计划会标记为不 eligible。
+- 买单计划把 `per_market_usd` 作为 YES + NO 两腿总预算：先保障两腿各自的 Polymarket `rewards_min_size`，再按各腿距离 `min(quote_size_usd, account_capital_usd)` 目标 notional 的缺口分配剩余额度；只有两腿最小份额的合计 notional 已超过总预算时才标记为不 eligible，避免非 50/50 市场被固定均分预算误拒绝。
 - `max_markets=0`、`max_open_orders=0` 或 `quote_size_usd=0` 表示不再新挂单。
 - 缺少新鲜缓存盘口时不会提交新 post-only 订单。placement 必须看到 YES/NO 两腿的新鲜盘口。
 - 全局敞口门槛使用「已有库存 notional + 当前候选单腿 notional」做准入。

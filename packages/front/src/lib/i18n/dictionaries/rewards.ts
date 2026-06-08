@@ -136,7 +136,7 @@ export const rewards = {
     configHints: {
       maxMarkets: "同时报价的最大市场数。0 表示停止新挂单。",
       maxOpenOrders: "所有市场的最大开放/挂单总数。0 表示停止新挂单。",
-      perMarketUsd: "每个市场的资金分配（平均分配给 YES 和 NO 两侧）。设为 0 表示不限制。",
+      perMarketUsd: "YES 与 NO 两腿合计资金上限。计划会先满足两腿最小份额，再在剩余额度内靠近单腿目标金额；0 表示不限制。",
       quoteSizeUsd: "每个报价腿的目标 USD 名义额，受单市场预算限制。0 会使计划不可挂。",
       minDailyReward: "过滤规则：拒绝日奖励率低于此值的市场。",
       minMarketScore: "过滤规则：拒绝综合评分低于此值的市场（满分 100）。评分 = 奖励率(50) + 价差(25) + 中点(15) + 规模(10)。",

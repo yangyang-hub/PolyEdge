@@ -185,33 +185,21 @@ fn build_reward_quote_plan(
         return empty_plan(market, "quote size is zero", now, Some(midpoint));
     }
 
-    let legs = vec![
-        make_leg(
-            &yes_token.token_id,
-            &yes_token.outcome,
-            yes_bid,
-            market.rewards_min_size,
-            config,
-        ),
-        make_leg(
-            &no_token.token_id,
-            &no_token.outcome,
-            no_bid,
-            market.rewards_min_size,
-            config,
-        ),
-    ];
-
-    if market.rewards_min_size > Decimal::ZERO
-        && legs.iter().any(|leg| leg.size < market.rewards_min_size)
-    {
+    let Some(legs) = make_quote_legs(
+        yes_token,
+        yes_bid,
+        no_token,
+        no_bid,
+        market.rewards_min_size,
+        config,
+    ) else {
         return empty_plan(
             market,
             "per-market budget cannot satisfy rewards minimum size",
             now,
             Some(midpoint),
         );
-    }
+    };
 
     let score = score_market(market, max_spread_cents, midpoint, &legs);
     let eligible = score >= config.min_market_score;
@@ -306,39 +294,97 @@ fn get_token_book_state(
     None
 }
 
-fn make_leg(
-    token_id: &str,
-    outcome: &str,
-    price: Decimal,
+fn make_quote_legs(
+    yes_token: &RewardToken,
+    yes_price: Decimal,
+    no_token: &RewardToken,
+    no_price: Decimal,
     rewards_min_size: Decimal,
     config: &RewardBotConfig,
-) -> RewardQuoteLeg {
+) -> Option<Vec<RewardQuoteLeg>> {
     let effective_quote_size = if config.account_capital_usd > Decimal::ZERO {
         Decimal::min(config.quote_size_usd, config.account_capital_usd)
     } else {
         config.quote_size_usd
     };
-    let target_size = effective_quote_size / price;
-    let max_leg_size = if config.per_market_usd == Decimal::ZERO {
-        Decimal::MAX
-    } else {
-        config.per_market_usd / decimal("2") / price
-    };
-    let budget_size = Decimal::min(target_size, max_leg_size);
-    let desired_size = Decimal::max(rewards_min_size, target_size);
-    let size = if rewards_min_size > budget_size {
-        budget_size
-    } else {
-        Decimal::min(desired_size, max_leg_size)
-    }
-    .round_dp_with_strategy(2, RoundingStrategy::ToZero);
 
+    let prices = [yes_price, no_price];
+    let minimum_notionals = prices.map(|price| price * rewards_min_size);
+    let target_notionals =
+        minimum_notionals.map(|minimum| Decimal::max(minimum, effective_quote_size));
+    let allocated_notionals = if config.per_market_usd <= Decimal::ZERO {
+        target_notionals
+    } else {
+        allocate_quote_notionals(
+            minimum_notionals,
+            target_notionals,
+            config.per_market_usd,
+        )?
+    };
+
+    let legs = [
+        (yes_token, yes_price, allocated_notionals[0]),
+        (no_token, no_price, allocated_notionals[1]),
+    ]
+    .into_iter()
+    .map(|(token, price, notional)| make_leg(token, price, notional))
+    .collect::<Vec<_>>();
+
+    if rewards_min_size > Decimal::ZERO
+        && legs.iter().any(|leg| leg.size < rewards_min_size)
+    {
+        return None;
+    }
+
+    let total_notional = legs
+        .iter()
+        .fold(Decimal::ZERO, |sum, leg| sum + leg.price * leg.size);
+    if config.per_market_usd > Decimal::ZERO && total_notional > config.per_market_usd {
+        return None;
+    }
+
+    Some(legs)
+}
+
+fn allocate_quote_notionals(
+    minimum_notionals: [Decimal; 2],
+    target_notionals: [Decimal; 2],
+    per_market_usd: Decimal,
+) -> Option<[Decimal; 2]> {
+    let minimum_total = minimum_notionals[0] + minimum_notionals[1];
+    if minimum_total > per_market_usd {
+        return None;
+    }
+
+    let target_total = target_notionals[0] + target_notionals[1];
+    if target_total <= per_market_usd {
+        return Some(target_notionals);
+    }
+
+    let extra_budget = per_market_usd - minimum_total;
+    let gaps = [
+        target_notionals[0] - minimum_notionals[0],
+        target_notionals[1] - minimum_notionals[1],
+    ];
+    let total_gap = gaps[0] + gaps[1];
+    if total_gap <= Decimal::ZERO {
+        return Some(minimum_notionals);
+    }
+
+    Some([
+        minimum_notionals[0] + extra_budget * gaps[0] / total_gap,
+        minimum_notionals[1] + extra_budget * gaps[1] / total_gap,
+    ])
+}
+
+fn make_leg(token: &RewardToken, price: Decimal, notional_usd: Decimal) -> RewardQuoteLeg {
+    let size = (notional_usd / price).round_dp_with_strategy(2, RoundingStrategy::ToZero);
     RewardQuoteLeg {
-        token_id: token_id.to_string(),
-        outcome: if outcome.trim().is_empty() {
-            token_id.to_string()
+        token_id: token.token_id.clone(),
+        outcome: if token.outcome.trim().is_empty() {
+            token.token_id.clone()
         } else {
-            outcome.to_string()
+            token.outcome.clone()
         },
         side: RewardOrderSide::Buy,
         price,
@@ -363,4 +409,9 @@ fn score_market(
     let size_score = if notional > Decimal::ZERO { 10.0 } else { 0.0 };
 
     decimal_from_f64(reward_score + spread_score + midpoint_score + size_score).round_dp(2)
+}
+
+#[cfg(test)]
+mod planner_tests {
+    include!("planner_tests.rs");
 }
