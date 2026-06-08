@@ -53,14 +53,14 @@
 ## 当前状态
 
 - 完整的 Run / Cancel / Reset 入队交互
-- 顶部执行概览展示实盘模式、启停/运行状态、市场就绪度、可用资金比例、最近扫描/运行时间和事件触发计数。
+- 顶部执行概览展示实盘模式、启停/运行状态、市场就绪度、钱包余额/策略上限比例、最近扫描/运行时间和事件触发计数；account_capital_usd 在页面上明确标为策略资金上限，不代表链上钱包余额。
 - 操作中心集中 Run / Save / Cancel / Reset，文案提醒当前命令可能提交或取消 Polymarket 实盘订单。
 - 配置编辑按执行、市场筛选、报价构造、库存与控制分组，包含数值参数、布尔开关和成交后策略。
 - 配置不包含 `execution_mode` 选择器（始终为 live）。提示说明 `max_markets=0`、`max_open_orders=0`、`quote_size_usd=0` 都会停止新挂单。
 - 报价计划默认展示可挂市场，本地支持全部/可挂/不可挂切换，并用状态标记说明每个当前候选计划是否符合最终过滤要求。
 - Managed orders 表格发送后端分页/搜索/状态过滤/排序 query（默认每页 15 条），表格数据与 `orders_page` 均来自本地 managed-order 查询。
 - 首屏不加载全量 reward markets，避免奖励市场数量过大时长时间停留在 loading skeleton。
-- Available funds、Positions 和 Orders 表格展示 worker 同步到数据库的 rewards 账户视图；余额显示资金钱包 pUSD，资金钱包地址优先使用 `POLYEDGE_POLYMARKET__FUNDER`，未配置时使用 `ACCOUNT_ID`。
+- Wallet balance、Positions 和 Orders 表格展示 worker 同步到数据库的 rewards 账户视图；余额显示资金钱包 pUSD，资金钱包地址优先使用 `POLYEDGE_POLYMARKET__FUNDER`，未配置时使用 `ACCOUNT_ID`。
 - 事件分类视图（挂单/撤单/吃单/奖励）
 - live worker 已接入 post-only 买单、撤单、confirmed 成交同步、成交后卖出/平仓和本地账本更新；独立账户全量对账、订单计分和奖励结算仍是后端缺口
 - API 不直连 Polymarket 私有账户；账户余额、完整 positions 和本系统托管订单都从数据库读取。`status.open_orders` / `status.positions` 描述本地 managed state。
