@@ -21,7 +21,12 @@ async fn sync_external_account_state(
     let mut balance_updated = false;
     match connector.refresh_balance().await {
         Ok(balance) => {
-            synced_account.available_usd = balance.balance;
+            // CLOB balance-allowance returns the balance in 6-decimal fixed-point
+            // units (e.g. 100 USDC → "100000000").  Convert to human-readable USD
+            // so the value is consistent with the on-chain fallback path and the
+            // database NUMERIC(18,4) column.
+            synced_account.available_usd =
+                (balance.balance / Decimal::from(1_000_000_u64)).round_dp(4);
             balance_updated = true;
         }
         Err(error) => {
