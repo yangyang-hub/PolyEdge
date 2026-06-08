@@ -26,11 +26,11 @@ use polyedge_connectors::{
     POLYMARKET_CONNECTOR_NAME, PaperExecutionOutcome, PaperExecutor, PaperFillRequest,
     PaperOrderRequest, PaperOrderStatusRequest, PolymarketAcceptedOrderStatus,
     PolymarketBinaryBookSnapshot, PolymarketBookConnector, PolymarketBookLevel,
-    PolymarketDataApiConnector, PolymarketGammaConnector, PolymarketGammaMarket,
-    PolymarketMarketRefs, PolymarketRewardMarket, PolymarketRewardsConnector,
-    PolymarketSignatureScheme, PolymarketTokenOrderSide, PolymarketWalletPosition,
-    RssNewsConnector, RssNewsSourceConfig, normalize_polymarket_ws_order_message,
-    normalize_polymarket_ws_trade_message,
+    PolymarketChainConnector, PolymarketDataApiConnector, PolymarketGammaConnector,
+    PolymarketGammaMarket, PolymarketMarketRefs, PolymarketRewardMarket,
+    PolymarketRewardsConnector, PolymarketSignatureScheme, PolymarketTokenOrderSide,
+    PolymarketWalletPosition, RssNewsConnector, RssNewsSourceConfig,
+    normalize_polymarket_ws_order_message, normalize_polymarket_ws_trade_message,
 };
 use polyedge_domain::{
     AppError, EventStatus, EvidenceDirection, EvidenceStatus, MarketStatus, OrderStatus,

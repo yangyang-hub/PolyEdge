@@ -257,9 +257,9 @@ cargo run -p polyedge-worker -- scan-rewards-once
 1. `/rewards` 页面的 Run / Cancel / Reset 会写入数据库控制命令，由 worker 领取执行；API 服务本身不执行策略。
 2. 要产生新挂单和 live 下单，需要配置真实 Polymarket 凭证并确保 `polyedge-orderbook` 服务正在运行并同步了 reward 市场数据。
 3. 未成交 maker 买单不在本地按全局 notional 硬锁资金；`stale_book_ms=0` 只关闭盘口年龄检查，仍要求盘口存在且非空。
-4. `/api/v1/rewards-bot` 当前会直接从 Polymarket 覆盖 `available_usd`、open orders 和 positions；API 未配置对应账户地址、私钥、签名/funder 配置（可选预配置 CLOB API credentials）或外部请求失败时，相应字段显示零/空。
-5. live orders 当前覆盖本地订单分页结果，但 `orders_page` 和 `status.open_orders` / `status.positions` 仍描述本地 managed state；API 直连外部账户数据也违反目标 SSOT 架构，均是待收敛缺口。
-6. worker 账户余额/库存全量对账、订单计分查询和奖励结算对账仍未完成。
+4. `/api/v1/rewards-bot` 只读取 worker 写入数据库的账户快照、托管订单和 positions；API 不持有 Polymarket 私钥或 CLOB 凭证。
+5. worker 同步账户状态时，资金钱包地址优先使用 `POLYEDGE_POLYMARKET__FUNDER`，未配置时使用 `ACCOUNT_ID`；CLOB balance 为 0 或失败但链上 pUSD 余额大于 0 时，会用 Polygon pUSD 余额回填 `available_usd`。
+6. 账户范围外开放订单同步、订单计分查询和奖励结算对账仍未完成。
 
 ### 聪明钱跟单（Copy-trading）
 
@@ -367,7 +367,7 @@ POLYEDGE_GIT_BRANCH=main \
 
 ## 数据获取架构
 
-目标架构要求所有外部 API 数据由后台 worker/orderbook 服务获取并写入数据库或内存缓存，策略、页面和 API handler 只从这些 store 读取，不直接调用外部 API。当前 Rewards snapshot handler 直接读取 Polymarket 私有账户数据，是已知架构偏差，后续应迁移到 worker/store。
+目标架构要求所有外部 API 数据由后台 worker/orderbook 服务获取并写入数据库或内存缓存，策略、页面和 API handler 只从这些 store 读取，不直接调用外部 API。Rewards snapshot 已迁移为只读数据库账户快照，私有账户余额和完整持仓由 worker 同步。
 
 | 数据 | 来源 | 存储 | 间隔 |
 |------|------|------|------|
@@ -393,9 +393,9 @@ POLYEDGE_GIT_BRANCH=main \
 - worker 侧支持 news ingest、news promotion、arbitrage radar、rewards bot live 策略、copytrade 跟单、execution drain、Polymarket order/fill/user-event、orderbook token 注册
 - worker 侧只读套利雷达，可扫描盘口、记录机会、校验、分析，不会创建 execution request 或订单
 - 套利雷达 outbox-backed 增量 SSE，支持 `Last-Event-ID` 续传
-- Rewards bot live 实盘：post-only GTC 下单、撤单、confirmed 成交同步、cash/库存/PnL 更新、sibling leg 撤单和 exit/flatten sell
+- Rewards bot live 实盘：post-only GTC 下单、撤单、confirmed 成交同步、cash/库存/PnL 更新、资金钱包 pUSD 余额回填、sibling leg 撤单和 exit/flatten sell
 - 聪明钱跟单：四种仓位模式、钱包分析统计、按时间顺序决策、运行中 exposure/cooldown 风控、确定性模拟引擎、控制命令队列
-- Polymarket CLOB V2 connector，支持 `eoa` / `proxy` / `gnosis_safe` / `poly_1271` 签名、balance 查询和开放订单分页
+- Polymarket CLOB V2 connector，支持 `eoa` / `proxy` / `gnosis_safe` / `poly_1271` 签名、balance 查询、Polygon pUSD 余额读取和开放订单分页
 - RSS/Atom 新闻源抓取、标准化、去重入库和 source health 记录
 - PostgreSQL schema 迁移
 
@@ -404,8 +404,8 @@ POLYEDGE_GIT_BRANCH=main \
 1. 生产级真实会话体系未完成；前端只保留 `off` 模式。签名内部 JWT 代码路径已具备，但真实环境还需要 key rotation、会话来源和撤销策略。
 2. `signals / risk / events` SSE 仍是 snapshot-backed stream；`arbitrage` 已是 outbox-backed 增量流，但尚未统一到全资源事件总线。
 3. 新闻源可以抓取、去重、提升为 events/evidences，但尚未自动生成 signals。
-4. Rewards live maker 已接入真实下单和成交同步；仍未完成 worker 账户余额/库存全量对账、订单计分查询或奖励结算对账。
-5. Rewards API live snapshot 直接调用 Polymarket，违反目标 SSOT 架构；API 需要交易账户私钥与签名配置才能展示 balance/open orders，且 live orders/positions 与本地 `orders_page`、status 统计不一致。
+4. Rewards live maker 已接入真实下单、成交同步、worker 账户余额/完整持仓快照和链上 pUSD 余额回填；仍未完成账户范围外开放订单同步、订单计分查询或奖励结算对账。
+5. Rewards API snapshot 已改为只读数据库；API 不需要 Polymarket 私钥，但 worker 仍需要真实凭证和资金链路小额验证。
 6. 聪明钱跟单 `mode=live` 已结构化支持但未接入真实下单。
 7. Polymarket live 链路已具备 CLOB V2 SDK 和认证能力；仍未实现 Deposit Wallet 生命周期管理，且仍需真实资金链路小额验证。
 8. 默认部署模板关闭 API 鉴权，只适合原型/内网共享环境。

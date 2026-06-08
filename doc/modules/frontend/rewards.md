@@ -1,6 +1,6 @@
 # Rewards（奖励机器人）
 
-最后更新：2026-06-04
+最后更新：2026-06-08
 
 ## 概述
 
@@ -29,9 +29,9 @@
 ## API 依赖
 
 - `src/lib/api/rewards.ts` — `readRewardBotSnapshot`、`updateRewardBotConfig`、`runRewardBotOnce`、`cancelRewardBotOrders`、`resetRewardBot`
-- `readRewardBotSnapshot()` 会传递订单分页/搜索/状态/排序 query；当前后端先查询本地 managed-order 分页，再用全部 Polymarket live open orders 覆盖 `orders`，因此 `orders_page` 与最终 `orders` 暂时不一致
+- `readRewardBotSnapshot()` 会传递订单分页/搜索/状态/排序 query；后端分页结果和 `orders_page` 都描述本地 managed orders，不再用 Polymarket live open orders 覆盖
 - 后端 snapshot 不返回全量 reward markets；页面只使用 `status.markets_tracked`、`status.eligible_markets` 和 `quote_plans` 展示市场覆盖与候选计划
-- snapshot 的 `available_usd` / `orders` / `positions` 当前分别来自 Polymarket CLOB balance、CLOB open orders 和 Data API positions；缺少 API 进程凭证或外部调用失败时，对应字段显示零/空
+- snapshot 的 `available_usd` / `positions` 来自 worker 写入数据库的账户快照；API 不持有 Polymarket 私钥，也不直接请求外部账户数据。`available_usd` 优先使用 CLOB `balance-allowance`，当 CLOB 返回 0 或失败但资金钱包链上 pUSD 余额大于 0 时，worker 使用链上 pUSD 回填
 
 ## 关键交互
 
@@ -44,7 +44,7 @@
 
 ## 数据流
 
-所有 mutation 通过 Server Actions。配置保存会立即返回更新后的 `RewardBotSnapshotDto`；Run / Cancel / Reset 只表示命令已入队，返回的是入队后的当前 snapshot，实际外部订单变化会在 worker 处理命令后出现在后续 live snapshot 中。live overlay 不展示本地 reason、scoring、pending-cancel 或 deferred-exit 元数据。
+所有 mutation 通过 Server Actions。配置保存会立即返回更新后的 `RewardBotSnapshotDto`；Run / Cancel / Reset 只表示命令已入队，返回的是入队后的当前 snapshot，实际外部订单变化会在 worker 处理命令后由数据库 snapshot 反映。
 
 ## i18n
 
@@ -58,13 +58,12 @@
 - 配置编辑按执行、市场筛选、报价构造、库存与控制分组，包含数值参数、布尔开关和成交后策略。
 - 配置不包含 `execution_mode` 选择器（始终为 live）。提示说明 `max_markets=0`、`max_open_orders=0`、`quote_size_usd=0` 都会停止新挂单。
 - 报价计划默认展示可挂市场，本地支持全部/可挂/不可挂切换，并用状态标记说明每个当前候选计划是否符合最终过滤要求。
-- Managed orders 表格仍发送后端分页/搜索/状态过滤/排序 query（默认每页 15 条），但后端 live overlay 当前返回全部 CLOB open orders，分页元数据与表格数据尚未统一。
+- Managed orders 表格发送后端分页/搜索/状态过滤/排序 query（默认每页 15 条），表格数据与 `orders_page` 均来自本地 managed-order 查询。
 - 首屏不加载全量 reward markets，避免奖励市场数量过大时长时间停留在 loading skeleton。
-- Available funds、Positions 和 Orders 表格展示 Polymarket live 账户视图；仅在 API 进程具备对应账户配置且外部 API 成功时可见。
+- Available funds、Positions 和 Orders 表格展示 worker 同步到数据库的 rewards 账户视图；余额显示资金钱包 pUSD，资金钱包地址优先使用 `POLYEDGE_POLYMARKET__FUNDER`，未配置时使用 `ACCOUNT_ID`。
 - 事件分类视图（挂单/撤单/吃单/奖励）
 - live worker 已接入 post-only 买单、撤单、confirmed 成交同步、成交后卖出/平仓和本地账本更新；独立账户全量对账、订单计分和奖励结算仍是后端缺口
-- API live overlay 目前直连 Polymarket，且 live orders 与 `orders_page` 不一致，属于待收敛缺口
-- `status.open_orders` / `status.positions` 仍是本地 snapshot 统计，可能与 live 表格数量不同；账户卡片也混合本地 capital/reward 字段和外部 available/realized 字段
+- API 不直连 Polymarket 私有账户；账户余额、完整 positions 和本系统托管订单都从数据库读取。`status.open_orders` / `status.positions` 描述本地 managed state。
 
 ## 修改检查清单
 

@@ -11,6 +11,29 @@ mod tests {
     }
 
     #[test]
+    fn polygon_pusd_balance_hex_is_converted_to_decimal_usd() {
+        let balance = erc20_hex_units_to_decimal(
+            "0x00000000000000000000000000000000000000000000000000000000013125b5",
+            6,
+        )
+        .expect("balance");
+
+        assert_eq!(balance, Decimal::from_str_exact("19.9981").expect("decimal"));
+    }
+
+    #[test]
+    fn polygon_wallet_address_requires_twenty_bytes() {
+        let error = normalize_evm_address(
+            "wallet_address",
+            "0x1234",
+            "POLYGON_WALLET_ADDRESS_INVALID",
+        )
+        .expect_err("short address");
+
+        assert_eq!(error.code(), "POLYGON_WALLET_ADDRESS_INVALID");
+    }
+
+    #[test]
     fn successful_terminal_post_statuses_remain_accepted_for_reconciliation() {
         assert_eq!(
             accepted_order_status(&SdkOrderStatusType::Unmatched),

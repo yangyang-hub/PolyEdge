@@ -1,6 +1,6 @@
 # Worker App（后台任务服务）
 
-最后更新：2026-06-06
+最后更新：2026-06-08
 
 ## 概述
 
@@ -123,7 +123,7 @@ reward_bot_service.claim_next_control_command()
     fetch_reward_bot_inputs() // 获取奖励市场 + 盘口
         → prepare_live_cycle()
         → sync managed rewards order trades/statuses
-        → 无近期 confirmed fill 时同步外部 balance + 完整 positions 快照
+        → 无近期 confirmed fill 时同步外部 balance + 链上 pUSD 余额回退 + 完整 positions 快照
         → LivePolymarketConnector.submit_token_order()
         → reconcile_interval_sec: 读取活跃盘口并对本系统托管订单做成交同步和安全撤单检查
 ```
@@ -182,7 +182,7 @@ Report: `NewsIngestionRunReport { sources_scanned/succeeded/failed, fetched, ins
 - rewards 命令、full tick 和 fast reconcile 在 Postgres 路径由 advisory lease 串行化；控制命令具备 5 分钟 running lease
 - scheduled full tick 不再二次消费控制命令；拿不到 advisory lease 时保留到期状态并在后续轮询重试，不会把 command-only 周期记作已完成 full tick
 - rewards poll loop 按账户写入 `reward_worker_heartbeats`；snapshot 的 `status.running` 仅在配置启用且最近 2 分钟存在 heartbeat 时为 true
-- rewards full tick 和 fast reconcile 在 managed order 同步后刷新外部余额/完整持仓快照；新确认成交所在周期及其后 120 秒会延后整次账户快照替换，避免 CLOB/Data API 最终一致性回滚本地账本
+- rewards full tick 和 fast reconcile 在 managed order 同步后刷新外部余额/完整持仓快照；资金钱包地址优先使用 `POLYEDGE_POLYMARKET__FUNDER`，未配置时使用 `ACCOUNT_ID`；CLOB balance 为 0 或失败但链上 pUSD 余额大于 0 时，账户 snapshot 用 Polygon pUSD 余额回填；新确认成交所在周期及其后 120 秒会延后整次账户快照替换，避免 CLOB/Data API 最终一致性回滚本地账本
 - 默认大部分 worker 通过配置开关控制启用/禁用
 - Polymarket live 任务需要真实凭证；Deposit Wallet 使用 `POLYEDGE_POLYMARKET__SIGNATURE_TYPE=poly_1271` + `POLYEDGE_POLYMARKET__FUNDER=<deposit_wallet>`，worker 会通过 connector 走 CLOB V2 `POLY_1271` 下单/撤单路径。
 - Rewards 生产与测试入口均已移除 `RewardSimulationOutcome` / `simulated_orders` 旧命名，统一使用 `RewardTickOutcome` / `placed_orders`。

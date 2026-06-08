@@ -9,9 +9,9 @@ use polyedge_application::{
     AddTrackedWalletInput, ArbitrageAnalysisRunListFilters, ArbitrageAnalysisRunView,
     ArbitrageOpportunityListFilters, ArbitrageOpportunityStatus, ArbitrageOpportunityType,
     ArbitrageOpportunityValidationView, ArbitrageOpportunityView, ArbitrageScanListFilters,
-    ArbitrageScanView, ArbitrageValidationStatus, AuthenticatedActor, CopyControlAction, CopyTradeConfigPatch,
-    CopyTradeSnapshot, EventListFilters, EventView, EvidenceListFilters, EvidenceView,
-    ExecutionFillResult, ExecutionRequestListFilters, ExecutionRequestView,
+    ArbitrageScanView, ArbitrageValidationStatus, AuthenticatedActor, CopyControlAction,
+    CopyTradeConfigPatch, CopyTradeSnapshot, EventListFilters, EventView, EvidenceListFilters,
+    EvidenceView, ExecutionFillResult, ExecutionRequestListFilters, ExecutionRequestView,
     ExecutionSubmissionReceipt, IdempotencyBegin, IdempotencyRequest, KillSwitchReceipt,
     MarketListFilters, MarketSortField, MarketView, ModeTransitionCommand, NewsRawEventListFilters,
     NewsRawEventView, NewsSourceHealthListFilters, NewsSourceHealthView, OrderDraftListFilters,
@@ -60,10 +60,7 @@ use polyedge_infrastructure::{
     require_console_write_auth, require_mode_write_auth,
 };
 use rust_decimal::Decimal;
-use std::{
-    collections::HashMap,
-    str::FromStr,
-};
+use std::{collections::HashMap, str::FromStr};
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use tower::ServiceBuilder;
 use tower_http::{

@@ -2,6 +2,26 @@ fn reward_decimal(value: &str) -> Decimal {
     Decimal::from_str_exact(value).expect("decimal")
 }
 
+#[test]
+fn rewards_account_sync_prefers_funding_wallet_address() {
+    assert_eq!(
+        polymarket_funding_wallet_address(
+            "0x0000000000000000000000000000000000000001",
+            Some(" 0x0000000000000000000000000000000000000002 "),
+        )
+        .as_deref(),
+        Some("0x0000000000000000000000000000000000000002"),
+    );
+    assert_eq!(
+        polymarket_funding_wallet_address(
+            " 0x0000000000000000000000000000000000000001 ",
+            None,
+        )
+        .as_deref(),
+        Some("0x0000000000000000000000000000000000000001"),
+    );
+}
+
 fn live_test_plan(now: OffsetDateTime) -> RewardQuotePlan {
     RewardQuotePlan {
         condition_id: "cond_live".to_string(),

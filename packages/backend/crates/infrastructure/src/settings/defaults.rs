@@ -67,6 +67,7 @@ impl Default for PolymarketSettings {
             ws_host: "wss://ws-subscriptions-clob.polymarket.com/ws/market".to_string(),
             gamma_host: "https://gamma-api.polymarket.com".to_string(),
             data_api_host: "https://data-api.polymarket.com".to_string(),
+            polygon_rpc_url: "https://polygon-bor-rpc.publicnode.com".to_string(),
             order_status_poll_limit: 100,
             fill_poll_limit: 100,
             ws_max_instruments: 100,

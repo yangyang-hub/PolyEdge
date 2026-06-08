@@ -1,6 +1,6 @@
 # 部署（Docker + Nginx + Scripts）
 
-最后更新：2026-06-04
+最后更新：2026-06-08
 
 ## 概述
 
@@ -52,7 +52,7 @@
 - 通过 `POLYEDGE_ORDERBOOK__SERVICE_URL` 连接 orderbook 服务读取盘口数据
 - 环境变量：`.env` + `.env.api`
 - `extra_hosts: host.docker.internal:host-gateway`（访问宿主机数据库）
-- Rewards snapshot 当前会在 API handler 内直接读取 Polymarket balance/open orders/positions。只配置 `ACCOUNT_ID` 可读取 Data API positions；要读取 CLOB balance/open orders 还需把账户私钥、签名类型和对应 funder 配置放入 `.env.api`，也可选复用预配置 CLOB API credentials。这会扩大密钥暴露面并违反目标 SSOT 架构。推荐仍只在 worker 保存私钥，并接受 API 中对应字段暂时为零/空，直到该 overlay 迁移到 worker/store。
+- Rewards snapshot 只读取 worker 写入数据库的账户快照、托管订单和持仓；API 不需要 Polymarket 私钥、CLOB API 凭证或 funder 配置。
 
 ### polyedge-orderbook
 
@@ -74,7 +74,7 @@
 - 通过 `POLYEDGE_ORDERBOOK__SERVICE_URL` 连接 orderbook 服务读取盘口数据和注册 token
 - `.env.worker` 中的 `POLYEDGE_ORDERBOOK__WRITE_TOKEN` 必须与 orderbook 服务一致；API/front 不需要该密钥
 - 环境变量：`.env` + `.env.worker`
-- Polymarket live / Deposit Wallet 配置示例见 `deploy/.env.polymarket.example`；建议只把私钥放入 `.env.worker`，避免进入 API/Front 容器环境。当前代价是 Rewards API 的 live balance/open orders 显示为零/空
+- Polymarket live / Deposit Wallet 配置示例见 `deploy/.env.polymarket.example`；建议只把私钥放入 `.env.worker`，避免进入 API/Front 容器环境。Rewards 账户余额由 worker 同步到数据库，资金钱包地址优先使用 `FUNDER`，CLOB balance 为 0/失败时会用链上 pUSD 余额回填 snapshot
 
 ### polyedge-front
 
@@ -154,13 +154,14 @@ API 请求不再经过前端 nginx 反向代理；跨域由 Rust API 的 `CorsLa
 | `POLYEDGE_WORKER__POLL_MARKET_SYNC` | `false`（代码默认） | 部署 worker 是否同步 markets/reward_markets；daemon 市场同步已迁移到 orderbook 服务 |
 | `POLYEDGE_WORKER__CONSUME_ORDERBOOK_STREAM` | `false`（代码默认） | 部署 worker 是否消费 orderbook stream；daemon 盘口流已迁移到 orderbook 服务 |
 | `POLYEDGE_WORKER__POLL_REWARD_BOT` | `false`（代码默认） | 部署 worker 是否运行 rewards full tick + fast reconcile loop |
+| `POLYEDGE_POLYMARKET__POLYGON_RPC_URL` | `https://polygon-bor-rpc.publicnode.com` | Worker 读取资金钱包链上 pUSD 余额的 Polygon JSON-RPC 地址 |
 | `POLYEDGE_ORDERBOOK_STREAM__MAX_TOKENS` | `3000` | orderbook stream 订阅 token 上限，过低会导致 rewards 覆盖不全，过高会增加 WS/poll 内存占用 |
 | `POLYEDGE_ORDERBOOK_STREAM__MAX_LEVELS_PER_SIDE` | `100` | 每个 token 在 orderbook 进程内缓存和 HTTP ingest 中最多保留的 bid/ask 深度档数 |
 | `POLYEDGE_ORDERBOOK_STREAM__STALE_THRESHOLD_MS` | `15000` | poll reconcile 盘口年龄阈值；0 只关闭年龄检查，TTL 过期仍生效 |
 
 ## Polymarket live 配置示例
 
-`deploy/.env.polymarket.example` 提供 EOA、Proxy/Gnosis Safe、Deposit Wallet（`poly_1271`）三类账户示例，以及 rewards live worker 开关示例。真实凭证默认全部注释，执行链路按账户类型复制到 `deploy/.env.worker`。只有明确接受 API 持有交易私钥风险、并需要当前 Rewards live snapshot 的 CLOB balance/open orders overlay 时，才把同一账户配置复制到 `deploy/.env.api`；`ACCOUNT_ID` 和 Data API host 足以读取 positions。
+`deploy/.env.polymarket.example` 提供 EOA、Proxy/Gnosis Safe、Deposit Wallet（`poly_1271`）三类账户示例，以及 rewards live worker 开关示例。真实凭证默认全部注释，执行链路按账户类型复制到 `deploy/.env.worker`。API 不持有 Polymarket 私钥；余额、positions 和托管订单都由 worker 同步到数据库后供 API 返回。`POLYEDGE_POLYMARKET__POLYGON_RPC_URL` 可替换为自有或有 SLA 的 Polygon RPC，用于链上 pUSD 余额回填。
 
 Deposit Wallet 路径要求钱包已经部署、已入金 pUSD 并完成必要 approval。当前系统不会执行 relayer wallet-create、pUSD 包装或 approval 批处理；connector 在下单前会调用 CLOB `balance-allowance/update`。
 

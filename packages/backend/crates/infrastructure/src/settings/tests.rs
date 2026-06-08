@@ -111,6 +111,10 @@ mod tests {
                 "poly_1271".to_string(),
             ),
             (
+                "POLYEDGE_POLYMARKET__POLYGON_RPC_URL".to_string(),
+                "https://polygon.example/rpc".to_string(),
+            ),
+            (
                 "POLYEDGE_ARBITRAGE__ENABLED".to_string(),
                 "true".to_string(),
             ),
@@ -294,6 +298,10 @@ mod tests {
         assert_eq!(
             settings.polymarket.signature_type,
             PolymarketSignatureType::Poly1271
+        );
+        assert_eq!(
+            settings.polymarket.polygon_rpc_url,
+            "https://polygon.example/rpc"
         );
         assert!(settings.polymarket.private_key.is_none());
         assert!(settings.arbitrage.enabled);

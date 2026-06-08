@@ -37,6 +37,7 @@ const POLYMARKET_MIN_NOTIONAL_USD: Decimal = Decimal::ONE;
 include!("polymarket/models.rs");
 include!("polymarket/gamma.rs");
 include!("polymarket/data_api.rs");
+include!("polymarket/chain.rs");
 include!("polymarket/book.rs");
 include!("polymarket/live.rs");
 include!("polymarket/normalizers.rs");

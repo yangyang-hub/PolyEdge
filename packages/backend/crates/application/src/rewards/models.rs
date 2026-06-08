@@ -688,7 +688,7 @@ pub struct RewardPosition {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RewardAccountState {
     pub account_id: String,
-    /// Polymarket wallet address (0x…) synced from worker `POLYEDGE_POLYMARKET__ACCOUNT_ID`.
+    /// Polymarket funding wallet address (0x…), preferring configured `FUNDER`.
     pub wallet_address: Option<String>,
     /// Total deposited capital (the configured fund pool).
     pub capital_usd: Decimal,

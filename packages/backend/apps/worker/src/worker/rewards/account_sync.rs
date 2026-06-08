@@ -1,8 +1,9 @@
 /// Refresh the externally authoritative Polymarket balance and position snapshot.
 ///
-/// A failed balance request preserves the local balance. A failed position request
-/// preserves the stored positions; a successful position request, including an
-/// empty response, atomically replaces all positions for the rewards account.
+/// A failed CLOB balance request preserves the local balance unless the funding
+/// wallet pUSD balance can be read from Polygon. A failed position request preserves
+/// the stored positions; a successful position request, including an empty response,
+/// atomically replaces all positions for the rewards account.
 const REWARD_ACCOUNT_SYNC_FILL_GRACE: TimeDuration = TimeDuration::seconds(120);
 
 async fn sync_external_account_state(
@@ -29,17 +30,62 @@ async fn sync_external_account_state(
     }
 
     let settings = &state.settings.polymarket;
-    // Sync wallet address from Polymarket configuration if not yet set.
-    if synced_account.wallet_address.as_deref() != Some(&settings.account_id) {
-        synced_account.wallet_address = Some(settings.account_id.clone());
+    let wallet_address =
+        polymarket_funding_wallet_address(&settings.account_id, settings.funder.as_deref());
+    let wallet_address_updated = synced_account.wallet_address != wallet_address;
+    if wallet_address_updated {
+        synced_account.wallet_address.clone_from(&wallet_address);
     }
-    let position_snapshot = if settings.account_id.trim().is_empty() {
-        warn!("Polymarket account_id not configured, skipping external position sync");
-        None
-    } else {
-        match PolymarketDataApiConnector::new(&settings.data_api_host) {
+
+    if let Some(wallet_address) = wallet_address.as_deref() {
+        match PolymarketChainConnector::new(&settings.polygon_rpc_url) {
+            Ok(chain_connector) => match chain_connector.fetch_pusd_balance(wallet_address).await {
+                Ok(wallet_balance)
+                    if !balance_updated
+                        || (synced_account.available_usd == Decimal::ZERO
+                            && wallet_balance > Decimal::ZERO) =>
+                {
+                    if balance_updated {
+                        warn!(
+                            trace_id,
+                            wallet_address,
+                            clob_balance = %synced_account.available_usd,
+                            wallet_balance = %wallet_balance,
+                            "CLOB balance is zero while the funding wallet has pUSD; using on-chain balance for rewards snapshot"
+                        );
+                    }
+                    synced_account.available_usd = wallet_balance;
+                    balance_updated = true;
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    warn!(
+                        trace_id,
+                        wallet_address,
+                        error = %error,
+                        "failed to query funding wallet pUSD balance"
+                    );
+                }
+            },
+            Err(error) => {
+                warn!(
+                    trace_id,
+                    wallet_address,
+                    error = %error,
+                    "failed to create Polygon chain connector"
+                );
+            }
+        }
+    }
+
+    let position_snapshot = match wallet_address.as_deref() {
+        None => {
+            warn!("Polymarket funding wallet not configured, skipping external position sync");
+            None
+        }
+        Some(wallet_address) => match PolymarketDataApiConnector::new(&settings.data_api_host) {
             Ok(data_connector) => {
-                match data_connector.fetch_wallet_positions(&settings.account_id).await {
+                match data_connector.fetch_wallet_positions(wallet_address).await {
                     Ok(raw_positions) => {
                         let mut positions = raw_positions
                             .into_iter()
@@ -64,10 +110,10 @@ async fn sync_external_account_state(
                 warn!(error = %error, "failed to create Polymarket Data API connector during sync");
                 None
             }
-        }
+        },
     };
 
-    if !balance_updated && position_snapshot.is_none() {
+    if !balance_updated && position_snapshot.is_none() && !wallet_address_updated {
         return;
     }
 
@@ -87,6 +133,21 @@ async fn sync_external_account_state(
             warn!(error = %error, "failed to persist external account sync outcome");
         }
     }
+}
+
+fn polymarket_funding_wallet_address(
+    account_id: &str,
+    funder: Option<&str>,
+) -> Option<String> {
+    funder
+        .and_then(|value| {
+            let normalized = value.trim();
+            (!normalized.is_empty()).then(|| normalized.to_string())
+        })
+        .or_else(|| {
+            let normalized = account_id.trim();
+            (!normalized.is_empty()).then(|| normalized.to_string())
+        })
 }
 
 async fn external_account_sync_allowed(

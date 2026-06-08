@@ -104,6 +104,7 @@ pub struct PolymarketSettings {
     pub ws_host: String,
     pub gamma_host: String,
     pub data_api_host: String,
+    pub polygon_rpc_url: String,
     pub order_status_poll_limit: u16,
     pub fill_poll_limit: u16,
     pub ws_max_instruments: usize,

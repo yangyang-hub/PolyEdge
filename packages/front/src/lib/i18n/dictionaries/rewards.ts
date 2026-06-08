@@ -30,7 +30,7 @@ export const rewards = {
     accountSummary: "账户状态",
     walletAddress: "钱包地址",
     walletBalance: "钱包余额",
-    walletBalanceHint: "Polymarket CLOB USDC 余额（实时同步）",
+    walletBalanceHint: "Polymarket 资金钱包 pUSD 余额（worker 实时同步）",
     modeLive: "实盘",
     modeSummary: "执行概览",
     liveModeSummary: "实盘模式由 worker 提交 post-only maker 订单并管理撤单。",

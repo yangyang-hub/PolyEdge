@@ -1,6 +1,6 @@
 # application（应用/服务层）
 
-最后更新：2026-06-06
+最后更新：2026-06-08
 
 ## 概述
 
@@ -117,7 +117,7 @@
 - Live `reset` 不清空本地账本或删除托管订单；worker 会先按 cancel-all 语义撤销本系统托管 live 订单，若任一 Polymarket 撤单被拒绝，则命令失败并保留本地状态以避免孤儿实盘订单。
 - 风险控制重点放在成交后：trade 达到 `CONFIRMED` 后，worker 对本系统托管 rewards 订单按 external trade id 幂等更新现金、库存、fills 和 PnL，并撤掉 sibling legs；新挂单的 per-token 和全局库存门槛都使用「已有库存 notional + 当前候选订单 notional」准入。
 - 本地仍需保留 `max_open_orders`、`max_markets`、单市场预算、per-token 库存和 kill-switch；这些限制控制操作风险和订单风暴，而不是把所有开放买单当作已消耗资金。
-- 当前 live 已具备 post-only token 买单提交、订单撤单、本系统托管订单 confirmed 成交同步、同轮多笔 trade 累计入账、成交后对侧 buy sibling 撤单以及 `ExitAtMarkup` / `FlattenImmediately` sell 下单；既有 sell exit 不属于 sibling cancel 目标。报价与退出订单先持久化 intent，买入 fill 与退出 intent 同事务写入，提交结果未知时保持 open-like 锁定状态等待开放订单匹配恢复或人工对账，不自动重复提交；外部订单 404 会锁住新买单，但后续成功查询会自动清除锁定。`FlattenImmediately` 无 bid 或 FAK 终态部分成交后仍有持仓时会保留本地 deferred exit 并重试。worker 会把外部 balance 和完整 positions 快照写入 store，但会根据 `latest_fill_at` 在 confirmed fill 后保护本地账户状态 120 秒；保护期结束后，成功 positions 快照原子替换该账户全部持仓，失败时保留上一版。账户范围外开放订单、订单计分查询和奖励结算对账仍是缺口。
+- 当前 live 已具备 post-only token 买单提交、订单撤单、本系统托管订单 confirmed 成交同步、同轮多笔 trade 累计入账、成交后对侧 buy sibling 撤单以及 `ExitAtMarkup` / `FlattenImmediately` sell 下单；既有 sell exit 不属于 sibling cancel 目标。报价与退出订单先持久化 intent，买入 fill 与退出 intent 同事务写入，提交结果未知时保持 open-like 锁定状态等待开放订单匹配恢复或人工对账，不自动重复提交；外部订单 404 会锁住新买单，但后续成功查询会自动清除锁定。`FlattenImmediately` 无 bid 或 FAK 终态部分成交后仍有持仓时会保留本地 deferred exit 并重试。worker 会把外部 balance 和完整 positions 快照写入 store，资金钱包地址优先使用 `FUNDER`，且 CLOB balance 为 0/失败时会用链上 pUSD 余额回填账户 snapshot；同时会根据 `latest_fill_at` 在 confirmed fill 后保护本地账户状态 120 秒。保护期结束后，成功 positions 快照原子替换该账户全部持仓，失败时保留上一版。账户范围外开放订单、订单计分查询和奖励结算对账仍是缺口。
 - 未决提交、待最终对账或外部订单 404 会暂停新增 live 买单但继续卖出退出；post-only exit 取消后的 replacement 保留 post-only 策略。
 - 仍需要用真实小额账户验证 Polymarket CLOB 的 balance/allowance validity checks，尤其同市场内开放订单对可下单 size 的影响；跨市场资金复用可以作为 rewards maker 策略假设，但不能依赖 venue 替我们做组合风险管理。
 - 参考官方文档：Order Lifecycle / Requirements 和 Orders Overview / Validity Checks，后续实现时需要复核最新文档。
