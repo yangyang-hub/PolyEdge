@@ -40,6 +40,10 @@ async fn poll_reward_bot_loop(
     loop {
         // Read the live config to get the reconcile interval.
         let config = state.reward_bot_service.read_config().await.unwrap_or_default();
+        state
+            .reward_bot_service
+            .record_worker_heartbeat(&config.account_id, OffsetDateTime::now_utc())
+            .await?;
         let reconcile_interval = Duration::from_secs(config.reconcile_interval_sec.max(1));
 
         // Always drain queued control commands first.
@@ -61,23 +65,40 @@ async fn poll_reward_bot_loop(
         if since_full >= full_interval {
             // --- Full cycle (rebuilds plans) ---
             let trace_id = new_trace_id();
-            let report = run_reward_bot_once_with_history(state, &trace_id, &mut book_history).await?;
-            accumulate_report(&mut total, &report);
-            full_cycles += 1;
-            last_full_at = Instant::now();
+            let report = run_reward_bot_scheduled_full_cycle(
+                state,
+                &trace_id,
+                &mut book_history,
+            )
+            .await?;
+            if let Some(report) = report {
+                accumulate_report(&mut total, &report);
+                full_cycles += 1;
+                last_full_at = Instant::now();
 
-            info!(
-                trace_id = %trace_id,
-                full_cycle = full_cycles,
-                markets_scanned = report.markets_scanned,
-                eligible_plans = report.eligible_plans,
-                cancelled = report.cancelled_orders,
-                risk_cancelled = report.risk_cancelled_orders,
-                "completed full reward bot cycle",
-            );
+                info!(
+                    trace_id = %trace_id,
+                    full_cycle = full_cycles,
+                    markets_scanned = report.markets_scanned,
+                    eligible_plans = report.eligible_plans,
+                    cancelled = report.cancelled_orders,
+                    risk_cancelled = report.risk_cancelled_orders,
+                    "completed full reward bot cycle",
+                );
 
-            if max_cycles.is_some_and(|limit| full_cycles >= limit) {
-                break;
+                if max_cycles.is_some_and(|limit| full_cycles >= limit) {
+                    break;
+                }
+            } else {
+                tokio::select! {
+                    () = tokio::time::sleep(reconcile_interval) => {}
+                    changed = shutdown_rx.changed() => {
+                        if changed.is_err() || *shutdown_rx.borrow() {
+                            break;
+                        }
+                    }
+                }
+                continue;
             }
         } else {
             // --- Fast reconcile-only cycle (risk checks + cancel stale orders) ---
@@ -158,24 +179,7 @@ async fn fetch_reward_bot_inputs(
             token_ids.push(token_id);
         }
     }
-    let mut books = HashMap::new();
-    let cache = state.orderbook_cache.clone();
-    let cached_books = stream::iter(token_ids)
-        .map(|token_id| {
-            let cache = cache.clone();
-            async move { cache.get_book(&token_id).await }
-        })
-        .buffer_unordered(32)
-        .collect::<Vec<_>>()
-        .await;
-
-    for cached in cached_books {
-        if let Some(cached) = cached? {
-            books.insert(cached.token_id.clone(), cached_order_book_to_reward(&cached));
-        }
-    }
-
-    Ok((markets, books))
+    Ok((markets, fetch_cached_reward_books(state, &token_ids).await?))
 }
 
 /// Lightweight book fetch for the fast reconcile loop: only reads books for
@@ -189,23 +193,24 @@ async fn fetch_reward_bot_active_books(
         .list_active_reward_book_token_ids()
         .await?;
 
-    let mut books = HashMap::new();
-    let cache = state.orderbook_cache.clone();
-    let cached_books = stream::iter(token_ids)
-        .map(|token_id| {
-            let cache = cache.clone();
-            async move { cache.get_book(&token_id).await }
-        })
-        .buffer_unordered(32)
-        .collect::<Vec<_>>()
-        .await;
+    fetch_cached_reward_books(state, &token_ids).await
+}
 
-    for cached in cached_books {
-        if let Some(cached) = cached? {
+async fn fetch_cached_reward_books(
+    state: &AppState,
+    token_ids: &[String],
+) -> Result<HashMap<String, RewardOrderBook>> {
+    let batch_size = state.settings.orderbook_stream.max_tokens;
+    if batch_size == 0 || token_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+
+    let mut books = HashMap::new();
+    for chunk in token_ids.chunks(batch_size) {
+        for cached in state.orderbook_cache.get_books(chunk).await? {
             books.insert(cached.token_id.clone(), cached_order_book_to_reward(&cached));
         }
     }
-
     Ok(books)
 }
 

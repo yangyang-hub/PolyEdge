@@ -1,6 +1,6 @@
 # API App（HTTP API 服务）
 
-最后更新：2026-06-04
+最后更新：2026-06-06
 
 ## 概述
 
@@ -29,7 +29,6 @@
 | `handlers/rewards.rs` | 奖励机器人管理；run/cancel/reset 只入队 worker 控制命令 |
 | `handlers/copytrade.rs` | 跟单管理；run/analyze/cancel/reset 只入队 worker 控制命令 |
 | `handlers/wallet_analysis.rs` | 钱包分析 |
-| `handlers/streams.rs` | SSE 流式端点 |
 | `handlers/health.rs` | 健康检查 |
 | `handlers/runtime_config.rs` + `runtime_config_helpers.rs` | 运行时配置管理 |
 | `handlers/list_helpers.rs` + `mappers.rs` | 通用分页和 DTO 映射辅助 |
@@ -54,19 +53,18 @@
 | Runtime Config | `/api/v1/runtime-config` | console_read/write |
 | Risk | `/api/v1/risk/state`、`alerts`、`buckets` | console_read |
 | System | `/api/v1/system/mode`、`kill-switch/trigger`、`kill-switch/release` | console_read/mode_write/console_write |
-| Streaming | `/api/v1/stream/{channel}` | console_read |
 
 ## 中间件栈
 
 - `RequestBodyLimitLayer`（1MB）— 防止过大请求体
 - `TraceLayer` — 请求追踪日志
-- `TimeoutLayer`（10s）— 请求超时保护
+- `TimeoutLayer`（30s）— 请求超时保护
 - `CorsLayer::permissive()` — 允许前端和 API 分别部署在不同内网主机/端口
 - 认证中间件：按路由组使用不同的认证级别；`POLYEDGE_AUTH__DISABLED=true` 时不校验 token、dev-auth 头或 step-up code，直接注入内部 admin `AuthContext`
 
 Rewards Bot 的 `run` / `cancel-all` / `reset` 端点不执行策略、不读取 orderbook cache，也不直接修改托管订单。API 只把控制命令写入 `reward_control_commands`，随后返回当前 snapshot；命令由 `polyedge-worker` 在 rewards tick 中领取并执行 live 逻辑。
 
-所有 Rewards snapshot 响应只读取 `RewardBotService` / store。外部 balance 和完整 positions 快照由 worker 同步到数据库，API 不持有 Polymarket 私钥，也不直接请求 CLOB/Data API。`GET /api/v1/rewards-bot` 的订单查询参数与 `orders_page` 都描述本地 managed orders。
+所有 Rewards snapshot 响应只读取 `RewardBotService` / store。外部 balance 和完整 positions 快照由 worker 同步到数据库，API 不持有 Polymarket 私钥，也不直接请求 CLOB/Data API。`GET /api/v1/rewards-bot` 的订单查询参数与 `orders_page` 都描述本地 managed orders；`status.running` 由最近 2 分钟的 rewards worker heartbeat 与配置开关共同决定，不再等同于 `enabled`。
 
 Copy Trading 的 `run` / `analyze` / `cancel-all` / `reset` 端点同样不抓取 Polymarket Data API / CLOB，也不直接执行跟单循环；API 只写入 `copytrade_control_commands`，worker 负责领取并执行。
 
@@ -99,7 +97,7 @@ HTTP Response
 ## 当前状态
 
 - ~40 个 REST 端点已实现
-- SSE 流式端点已覆盖 signals、risk、events、arbitrage
+- SSE 流式端点已移除，前端通过 REST API 加载数据
 - Rewards Bot 与 Copy Trading 控制端点只作为前端接口和命令入口，具体 live 策略、分析、撤单、重置由 worker 处理
 - Rewards Bot snapshot 不承载全量 reward markets，市场数量从 `status.markets_tracked` 读取；账户余额、positions 和 managed orders 均从 store 读取
 - 当前内网部署使用 `POLYEDGE_AUTH__DISABLED=true`，前端请求不需要权限头或 step-up code

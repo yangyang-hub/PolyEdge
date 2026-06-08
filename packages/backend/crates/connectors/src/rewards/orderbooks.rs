@@ -190,11 +190,12 @@ fn map_reward_order_book(raw: RawOrderBook) -> Option<PolymarketRewardOrderBook>
     if token_id.is_empty() {
         return None;
     }
+    let observed_at = parse_order_book_timestamp(raw.timestamp.as_deref())?;
     Some(PolymarketRewardOrderBook {
         token_id,
         bids: parse_levels(raw.bids, SortDirection::Descending),
         asks: parse_levels(raw.asks, SortDirection::Ascending),
-        observed_at: OffsetDateTime::now_utc(),
+        observed_at,
     })
 }
 
@@ -263,6 +264,11 @@ fn parse_decimal(value: Option<&str>) -> Option<Decimal> {
     Decimal::from_str(raw).ok()
 }
 
+fn parse_order_book_timestamp(value: Option<&str>) -> Option<OffsetDateTime> {
+    let timestamp_ms = value?.trim().parse::<i128>().ok()?;
+    OffsetDateTime::from_unix_timestamp_nanos(timestamp_ms.checked_mul(1_000_000)?).ok()
+}
+
 #[cfg(test)]
 mod orderbook_tests {
     use super::*;
@@ -271,6 +277,7 @@ mod orderbook_tests {
     fn batch_order_book_mapping_keeps_best_level_order() {
         let book = map_reward_order_book(RawOrderBook {
             asset_id: Some("123".to_string()),
+            timestamp: Some("1717171717000".to_string()),
             bids: Some(vec![
                 RawBookLevel {
                     price: Some("0.40".to_string()),
@@ -296,12 +303,14 @@ mod orderbook_tests {
 
         assert_eq!(book.bids[0].price, Decimal::new(50, 2));
         assert_eq!(book.asks[0].price, Decimal::new(60, 2));
+        assert_eq!(book.observed_at.unix_timestamp(), 1_717_171_717);
     }
 
     #[test]
     fn batch_order_book_mapping_deduplicates_and_filters_unrequested_books() {
         let raw = |token_id: &str| RawOrderBook {
             asset_id: Some(token_id.to_string()),
+            timestamp: Some("1717171717000".to_string()),
             bids: None,
             asks: None,
         };
@@ -312,5 +321,18 @@ mod orderbook_tests {
 
         assert_eq!(books.len(), 1);
         assert_eq!(books[0].token_id, "requested");
+    }
+
+    #[test]
+    fn order_book_without_exchange_timestamp_is_rejected() {
+        assert!(
+            map_reward_order_book(RawOrderBook {
+                asset_id: Some("123".to_string()),
+                timestamp: None,
+                bids: None,
+                asks: None,
+            })
+            .is_none()
+        );
     }
 }

@@ -10,6 +10,7 @@ pub struct InMemoryRewardBotStore {
     account_state: RwLock<Option<RewardAccountState>>,
     fills: RwLock<Vec<RewardFill>>,
     control_commands: RwLock<Vec<RewardControlCommand>>,
+    worker_heartbeats: RwLock<HashMap<String, OffsetDateTime>>,
 }
 
 impl InMemoryRewardBotStore {
@@ -25,6 +26,7 @@ impl InMemoryRewardBotStore {
             account_state: RwLock::new(None),
             fills: RwLock::new(Vec::new()),
             control_commands: RwLock::new(Vec::new()),
+            worker_heartbeats: RwLock::new(HashMap::new()),
         }
     }
 }
@@ -38,6 +40,25 @@ impl RewardBotStore for InMemoryRewardBotStore {
     async fn save_config(&self, config: &RewardBotConfig) -> Result<()> {
         *self.config.write().await = config.clone().normalized();
         Ok(())
+    }
+
+    async fn record_worker_heartbeat(
+        &self,
+        account_id: &str,
+        observed_at: OffsetDateTime,
+    ) -> Result<()> {
+        self.worker_heartbeats
+            .write()
+            .await
+            .insert(account_id.to_string(), observed_at);
+        Ok(())
+    }
+
+    async fn latest_worker_heartbeat(
+        &self,
+        account_id: &str,
+    ) -> Result<Option<OffsetDateTime>> {
+        Ok(self.worker_heartbeats.read().await.get(account_id).copied())
     }
 
     async fn enqueue_control_command(&self, command: RewardControlCommand) -> Result<()> {
@@ -80,7 +101,9 @@ impl RewardBotStore for InMemoryRewardBotStore {
         now: OffsetDateTime,
     ) -> Result<()> {
         let mut commands = self.control_commands.write().await;
-        if let Some(command) = commands.iter_mut().find(|command| command.id == command_id) {
+        if let Some(command) = commands.iter_mut().find(|command| {
+            command.id == command_id && command.status == RewardControlCommandStatus::Running
+        }) {
             command.status = RewardControlCommandStatus::Completed;
             command.completed_at = Some(now);
             command.trace_id = Some(trace_id.to_string());
@@ -96,7 +119,9 @@ impl RewardBotStore for InMemoryRewardBotStore {
         now: OffsetDateTime,
     ) -> Result<()> {
         let mut commands = self.control_commands.write().await;
-        if let Some(command) = commands.iter_mut().find(|command| command.id == command_id) {
+        if let Some(command) = commands.iter_mut().find(|command| {
+            command.id == command_id && command.status == RewardControlCommandStatus::Running
+        }) {
             command.status = RewardControlCommandStatus::Failed;
             command.completed_at = Some(now);
             command.trace_id = Some(trace_id.to_string());
@@ -197,6 +222,11 @@ impl RewardBotStore for InMemoryRewardBotStore {
         Ok((total, eligible))
     }
 
+    async fn latest_quote_plan_updated_at(&self) -> Result<Option<OffsetDateTime>> {
+        let plans = self.quote_plans.read().await;
+        Ok(plans.values().map(|plan| plan.updated_at).max())
+    }
+
     async fn list_quote_plans_page(
         &self,
         query: &RewardQuotePlanListQuery,
@@ -267,7 +297,7 @@ impl RewardBotStore for InMemoryRewardBotStore {
             .read()
             .await
             .iter()
-            .filter(|order| query.matches_order(order))
+            .filter(|order| order.account_id == query.account_id && query.matches_order(order))
             .cloned()
             .collect::<Vec<_>>();
         orders.sort_by(|left, right| query.compare_orders(left, right));
@@ -278,12 +308,13 @@ impl RewardBotStore for InMemoryRewardBotStore {
         Ok(RewardOrderPage { items, page })
     }
 
-    async fn list_positions(&self, limit: u16) -> Result<Vec<RewardPosition>> {
+    async fn list_positions(&self, account_id: &str, limit: u16) -> Result<Vec<RewardPosition>> {
         let mut positions = self
             .positions
             .read()
             .await
             .values()
+            .filter(|p| p.account_id == account_id)
             .cloned()
             .collect::<Vec<_>>();
         positions.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
@@ -291,8 +322,15 @@ impl RewardBotStore for InMemoryRewardBotStore {
         Ok(positions)
     }
 
-    async fn list_events(&self, limit: u16) -> Result<Vec<RewardRiskEvent>> {
-        let mut events = self.events.read().await.clone();
+    async fn list_events(&self, account_id: &str, limit: u16) -> Result<Vec<RewardRiskEvent>> {
+        let mut events = self
+            .events
+            .read()
+            .await
+            .iter()
+            .filter(|e| e.account_id.as_deref() == Some(account_id))
+            .cloned()
+            .collect::<Vec<_>>();
         events.sort_by(|left, right| right.created_at.cmp(&left.created_at));
         events.truncate(usize::from(limit));
         Ok(events)
@@ -375,8 +413,15 @@ impl RewardBotStore for InMemoryRewardBotStore {
             .count())
     }
 
-    async fn list_fills(&self, limit: u16) -> Result<Vec<RewardFill>> {
-        let mut fills = self.fills.read().await.clone();
+    async fn list_fills(&self, account_id: &str, limit: u16) -> Result<Vec<RewardFill>> {
+        let mut fills = self
+            .fills
+            .read()
+            .await
+            .iter()
+            .filter(|f| f.account_id == account_id)
+            .cloned()
+            .collect::<Vec<_>>();
         fills.sort_by(|left, right| right.created_at.cmp(&left.created_at));
         fills.truncate(usize::from(limit));
         Ok(fills)

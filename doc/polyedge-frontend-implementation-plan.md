@@ -1,5 +1,7 @@
 # PolyEdge 前端实现计划
 
+> **注意（2026-06-07）**：SSE 实时流机制已移除。前端所有页面数据通过 REST API 初始加载，不再使用 `EventSource`、`use-sse-stream.ts`、`console-realtime-provider.tsx` 或 `use-live-status.ts`。本文档中关于 SSE 的设计描述仅作历史参考。
+
 ## 1. 当前起点
 
 `packages/front/` 已经不是空目录，当前具备：

@@ -145,7 +145,7 @@ async fn postgres_complete_reward_control_command(
             completed_at = $2,
             trace_id = $3,
             error = NULL
-        WHERE id = $1
+        WHERE id = $1 AND status = 'running'
         "#,
     )
     .bind(command_id)
@@ -176,7 +176,7 @@ async fn postgres_fail_reward_control_command(
             completed_at = $2,
             trace_id = $3,
             error = $4
-        WHERE id = $1
+        WHERE id = $1 AND status = 'running'
         "#,
     )
     .bind(command_id)

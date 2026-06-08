@@ -103,4 +103,56 @@ mod orderbook_cache_tests {
             200
         );
     }
+
+    #[tokio::test]
+    async fn equal_timestamp_poll_does_not_overwrite_ws() {
+        let cache = InMemoryOrderbookCache::new(60_000, 10);
+        let ws = polyedge_application::CachedOrderBook {
+            token_id: "tok1".to_string(),
+            bids: vec![level(60, 10)],
+            asks: vec![],
+            observed_at: 200,
+            source: polyedge_application::BookSource::Ws,
+        };
+        let poll = polyedge_application::CachedOrderBook {
+            bids: vec![level(40, 10)],
+            source: polyedge_application::BookSource::Poll,
+            ..ws.clone()
+        };
+
+        cache.set_book(&ws).await.expect("set ws");
+        cache.set_book(&poll).await.expect("ignore equal poll");
+
+        let got = cache
+            .get_book("tok1")
+            .await
+            .expect("get book")
+            .expect("book present");
+        assert_eq!(got.source, polyedge_application::BookSource::Ws);
+        assert_eq!(got.bids[0].price, rust_decimal::Decimal::new(60, 2));
+    }
+
+    #[tokio::test]
+    async fn batch_read_returns_requested_live_books() {
+        let cache = InMemoryOrderbookCache::new(60_000, 10);
+        for token_id in ["tok1", "tok2"] {
+            cache
+                .set_book(&polyedge_application::CachedOrderBook {
+                    token_id: token_id.to_string(),
+                    bids: vec![level(50, 10)],
+                    asks: vec![],
+                    observed_at: 200,
+                    source: polyedge_application::BookSource::Poll,
+                })
+                .await
+                .expect("set book");
+        }
+
+        let books = cache
+            .get_books(&["tok2".to_string(), "missing".to_string()])
+            .await
+            .expect("get books");
+        assert_eq!(books.len(), 1);
+        assert_eq!(books[0].token_id, "tok2");
+    }
 }

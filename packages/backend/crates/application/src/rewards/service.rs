@@ -2,6 +2,13 @@
 pub trait RewardBotStore: Send + Sync {
     async fn load_config(&self) -> Result<RewardBotConfig>;
     async fn save_config(&self, config: &RewardBotConfig) -> Result<()>;
+    async fn record_worker_heartbeat(
+        &self,
+        account_id: &str,
+        observed_at: OffsetDateTime,
+    ) -> Result<()>;
+    async fn latest_worker_heartbeat(&self, account_id: &str)
+    -> Result<Option<OffsetDateTime>>;
     async fn enqueue_control_command(&self, command: RewardControlCommand) -> Result<()>;
     async fn claim_next_control_command(
         &self,
@@ -33,14 +40,16 @@ pub trait RewardBotStore: Send + Sync {
     async fn list_all_quote_plans(&self) -> Result<Vec<RewardQuotePlan>>;
     /// Count total and eligible quote plans without loading JSON rows.
     async fn count_quote_plans(&self) -> Result<(usize, usize)>;
+    /// Return the latest `updated_at` across all quote plans.
+    async fn latest_quote_plan_updated_at(&self) -> Result<Option<OffsetDateTime>>;
     /// List a single page of quote plans with server-side filter/sort/pagination.
     async fn list_quote_plans_page(
         &self,
         query: &RewardQuotePlanListQuery,
     ) -> Result<RewardQuotePlanPage>;
     async fn list_orders_page(&self, query: &RewardOrderListQuery) -> Result<RewardOrderPage>;
-    async fn list_positions(&self, limit: u16) -> Result<Vec<RewardPosition>>;
-    async fn list_events(&self, limit: u16) -> Result<Vec<RewardRiskEvent>>;
+    async fn list_positions(&self, account_id: &str, limit: u16) -> Result<Vec<RewardPosition>>;
+    async fn list_events(&self, account_id: &str, limit: u16) -> Result<Vec<RewardRiskEvent>>;
     async fn log_event(&self, event: RewardRiskEvent) -> Result<()>;
 
     /// Load the fund-pool ledger, seeding a fresh one from `config` if absent.
@@ -58,7 +67,7 @@ pub trait RewardBotStore: Send + Sync {
     async fn list_account_positions(&self, account_id: &str) -> Result<Vec<RewardPosition>>;
     /// Count non-zero positions without loading full rows.
     async fn count_account_positions(&self, account_id: &str) -> Result<usize>;
-    async fn list_fills(&self, limit: u16) -> Result<Vec<RewardFill>>;
+    async fn list_fills(&self, account_id: &str, limit: u16) -> Result<Vec<RewardFill>>;
     async fn reward_fill_exists(&self, fill_id: &str) -> Result<bool>;
     /// Timestamp of the latest confirmed managed fill for an account.
     async fn latest_fill_at(&self, account_id: &str) -> Result<Option<OffsetDateTime>>;
@@ -157,6 +166,16 @@ impl RewardBotService {
             ))
             .await?;
         Ok(command)
+    }
+
+    pub async fn record_worker_heartbeat(
+        &self,
+        account_id: &str,
+        observed_at: OffsetDateTime,
+    ) -> Result<()> {
+        self.store
+            .record_worker_heartbeat(account_id, observed_at)
+            .await
     }
 
     pub async fn claim_next_control_command(
@@ -329,26 +348,47 @@ impl RewardBotService {
     ) -> Result<RewardBotSnapshot> {
         let config = self.read_config().await?;
         let account = self.store.load_account_state(&config).await?;
-        let (markets_tracked, last_scan_at) = self.store.active_market_summary().await?;
-        let (plans_total, eligible_total) = self.store.count_quote_plans().await?;
-        let plans_page_data = self.store.list_quote_plans_page(plans_query).await?;
-        let orders = self.store.list_orders_page(order_query).await?;
-        let positions = self.store.list_positions(200).await?;
-        let open_order_count = self
-            .store
-            .count_open_orders(&account.account_id)
-            .await?;
-        let position_count = self
-            .store
-            .count_account_positions(&account.account_id)
-            .await?;
-        let fills = self.store.list_fills(200).await?;
-        let events = self.store.list_events(100).await?;
-        let last_run_at = plans_page_data
-            .items
-            .iter()
-            .map(|plan| plan.updated_at)
-            .max();
+
+        // Inject the real account_id from config into the order query so that
+        // the SQL always filters by account_id, using the existing composite
+        // index (account_id, status, updated_at DESC) instead of a full scan.
+        let order_query = RewardOrderListQuery {
+            account_id: account.account_id.clone(),
+            ..order_query.clone()
+        };
+
+        // Queries 3–13 are independent of each other (they only need
+        // account_id from the account loaded above).  Run them concurrently
+        // to avoid accumulating per-query round-trip latency.
+        //
+        // All list/count queries now filter by account_id so the existing
+        // composite indexes (account_id, created_at/updated_at DESC) are
+        // used instead of full table scans.
+        let (
+            (markets_tracked, last_scan_at),
+            (plans_total, eligible_total),
+            plans_page_data,
+            orders,
+            positions,
+            open_order_count,
+            position_count,
+            fills,
+            events,
+            last_run_at,
+            worker_heartbeat,
+        ) = tokio::try_join!(
+            self.store.active_market_summary(),
+            self.store.count_quote_plans(),
+            self.store.list_quote_plans_page(plans_query),
+            self.store.list_orders_page(&order_query),
+            self.store.list_positions(&account.account_id, 200),
+            self.store.count_open_orders(&account.account_id),
+            self.store.count_account_positions(&account.account_id),
+            self.store.list_fills(&account.account_id, 200),
+            self.store.list_events(&account.account_id, 100),
+            self.store.latest_quote_plan_updated_at(),
+            self.store.latest_worker_heartbeat(&account.account_id),
+        )?;
         let error = events
             .iter()
             .find(|event| event.severity == RewardRiskSeverity::Critical)
@@ -357,7 +397,7 @@ impl RewardBotService {
         Ok(RewardBotSnapshot {
             status: RewardBotStatus {
                 enabled: config.enabled,
-                running: config.enabled,
+                running: reward_worker_is_running(&config, worker_heartbeat, OffsetDateTime::now_utc()),
                 account_id: config.account_id.clone(),
                 markets_tracked,
                 eligible_markets: eligible_total,
@@ -542,6 +582,46 @@ fn reward_run_market_limit(config: &RewardBotConfig) -> u16 {
     };
 
     market_limit.max(order_limit).max(DEFAULT_LIST_LIMIT)
+}
+
+fn reward_worker_is_running(
+    config: &RewardBotConfig,
+    heartbeat: Option<OffsetDateTime>,
+    now: OffsetDateTime,
+) -> bool {
+    const HEARTBEAT_TTL: TimeDuration = TimeDuration::minutes(2);
+
+    config.enabled && heartbeat.is_some_and(|heartbeat| heartbeat >= now - HEARTBEAT_TTL)
+}
+
+#[cfg(test)]
+mod reward_service_tests {
+    use super::*;
+
+    #[test]
+    fn worker_running_requires_enabled_config_and_fresh_heartbeat() {
+        let now = OffsetDateTime::now_utc();
+        let enabled = RewardBotConfig {
+            enabled: true,
+            ..RewardBotConfig::default()
+        };
+
+        assert!(reward_worker_is_running(
+            &enabled,
+            Some(now - TimeDuration::seconds(30)),
+            now,
+        ));
+        assert!(!reward_worker_is_running(
+            &enabled,
+            Some(now - TimeDuration::minutes(3)),
+            now,
+        ));
+        assert!(!reward_worker_is_running(
+            &RewardBotConfig::default(),
+            Some(now),
+            now,
+        ));
+    }
 }
 
 fn reward_control_command_id(trace_id: &str) -> String {

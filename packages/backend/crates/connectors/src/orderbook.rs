@@ -5,7 +5,7 @@ use polyedge_application::{
 use polyedge_domain::{AppError, Result};
 use reqwest::Client;
 use rust_decimal::Decimal;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 use std::time::{Duration, Instant};
 
@@ -74,6 +74,16 @@ struct OrderbookResponse {
 }
 
 #[derive(Deserialize)]
+struct OrderbookBatchResponse {
+    books: Vec<OrderbookResponse>,
+}
+
+#[derive(Serialize)]
+struct BatchRequest {
+    token_ids: Vec<String>,
+}
+
+#[derive(Deserialize)]
 struct OrderbookStatsResponse {
     cache_entries: usize,
     registry_sources: usize,
@@ -112,17 +122,19 @@ fn to_cached(resp: OrderbookResponse) -> CachedOrderBook {
         bids: resp
             .bids
             .into_iter()
-            .map(|l| CachedBookLevel {
-                price: Decimal::from_str(&l.price).unwrap_or_default(),
-                size: Decimal::from_str(&l.size).unwrap_or_default(),
+            .filter_map(|l| {
+                let price = Decimal::from_str(&l.price).ok()?;
+                let size = Decimal::from_str(&l.size).ok()?;
+                Some(CachedBookLevel { price, size })
             })
             .collect(),
         asks: resp
             .asks
             .into_iter()
-            .map(|l| CachedBookLevel {
-                price: Decimal::from_str(&l.price).unwrap_or_default(),
-                size: Decimal::from_str(&l.size).unwrap_or_default(),
+            .filter_map(|l| {
+                let price = Decimal::from_str(&l.price).ok()?;
+                let size = Decimal::from_str(&l.size).ok()?;
+                Some(CachedBookLevel { price, size })
             })
             .collect(),
         observed_at: resp.observed_at,
@@ -167,6 +179,43 @@ impl OrderbookCache for OrderbookHttpClient {
         })?;
 
         Ok(Some(to_cached(book)))
+    }
+
+    async fn get_books(&self, token_ids: &[String]) -> Result<Vec<CachedOrderBook>> {
+        if token_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let url = format!("{}/orderbook/batch", self.base_url);
+        let resp = self
+            .client
+            .post(&url)
+            .json(&BatchRequest {
+                token_ids: token_ids.to_vec(),
+            })
+            .send()
+            .await
+            .map_err(|error| {
+                AppError::dependency_unavailable(
+                    "ORDERBOOK_HTTP_BATCH_ERROR",
+                    format!("failed to fetch orderbook batch: {error}"),
+                )
+            })?;
+
+        if !resp.status().is_success() {
+            return Err(AppError::dependency_unavailable(
+                "ORDERBOOK_HTTP_BATCH_STATUS",
+                format!("orderbook batch returned status {}", resp.status()),
+            ));
+        }
+
+        let response: OrderbookBatchResponse = resp.json().await.map_err(|error| {
+            AppError::dependency_unavailable(
+                "ORDERBOOK_HTTP_BATCH_DECODE_ERROR",
+                format!("failed to decode orderbook batch response: {error}"),
+            )
+        })?;
+        Ok(response.books.into_iter().map(to_cached).collect())
     }
 
     async fn set_book(&self, book: &CachedOrderBook) -> Result<()> {

@@ -104,6 +104,7 @@ impl RewardOrderSortField {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RewardOrderListQuery {
+    pub account_id: String,
     pub search: Option<String>,
     pub status: Option<RewardOrderStatusFilter>,
     pub sort_by: RewardOrderSortField,
@@ -115,6 +116,7 @@ pub struct RewardOrderListQuery {
 impl RewardOrderListQuery {
     #[must_use]
     pub fn new(
+        account_id: String,
         search: Option<String>,
         status: Option<String>,
         sort_by: Option<String>,
@@ -123,6 +125,7 @@ impl RewardOrderListQuery {
         page_size: Option<u16>,
     ) -> Self {
         Self {
+            account_id,
             search: normalize_order_search(search),
             status: RewardOrderStatusFilter::from_optional_str(status),
             sort_by: RewardOrderSortField::from_optional_str(sort_by),
@@ -180,7 +183,15 @@ impl RewardOrderListQuery {
 
 impl Default for RewardOrderListQuery {
     fn default() -> Self {
-        Self::new(None, None, None, None, Some(1), Some(DEFAULT_LIST_LIMIT))
+        Self::new(
+            String::new(),
+            None,
+            None,
+            None,
+            None,
+            Some(1),
+            Some(DEFAULT_LIST_LIMIT),
+        )
     }
 }
 

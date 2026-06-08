@@ -62,7 +62,7 @@
 | `catalog/postgres/` | `MarketEventStore`、`ArbitrageStore`、`NewsIngestionStore` | PostgreSQL |
 | `catalog/in_memory.rs` | 同上 | 内存（RwLock） |
 | `stores/rewards/postgres.rs` | `RewardBotStore` | PostgreSQL（key-value config + 完整表） |
-| `stores/rewards/postgres_control_commands.rs` / `postgres_orders.rs` / `postgres_writes.rs` | `RewardBotStore` 辅助 | 控制命令 SQL、订单分页 SQL、旧 reserved 释放辅助 |
+| `stores/rewards/postgres_control_commands.rs` / `postgres_heartbeat.rs` / `postgres_orders.rs` / `postgres_writes.rs` | `RewardBotStore` 辅助 | 控制命令、worker heartbeat、订单分页 SQL、旧 reserved 释放辅助 |
 | `stores/rewards/in_memory.rs` | 同上 | 内存 |
 | `stores/copytrade/postgres.rs` | `CopyTradeStore` | PostgreSQL（key-value config + 完整表） |
 | `stores/copytrade/postgres_control_commands.rs` / `postgres_rows.rs` / `postgres_writes.rs` | `CopyTradeStore` 辅助 | 控制命令 SQL、行映射、写入辅助 |
@@ -93,8 +93,9 @@
 - Postgres `RewardBotStore.apply_tick_outcome()` 会在同一事务中只持久化 orders、fills、positions、account ledger 和 events；reward market 全量目录只由 `upsert_markets()` 更新，quote plan 快照只由 `save_quote_plans()` 替换，避免增量 live tick 误停用全量奖励市场。
 - Postgres/内存 `RewardBotStore.apply_account_sync()` 会更新账户状态；外部 positions 成功时原子替换目标账户全部 `reward_positions`，失败时通过 `None` 保留上一版持仓。worker 会结合 `latest_fill_at` 在 confirmed fill 后 120 秒内跳过整次外部账户替换，避免最终一致性响应回滚本地现金或库存。外部持仓可来自当前 rewards catalog 之外的市场，因此 `reward_positions.condition_id` 不再依赖 `reward_markets` 外键。
 - `RewardBotStore` 在 Postgres/内存实现中维护 `reward_control_commands` 队列；API 写入 pending 命令，worker 使用 claim/complete/fail 方法领取并更新执行状态；running 命令超过 5 分钟会重新进入可领取范围。
+- `RewardBotStore` 在 Postgres/内存实现中按 account 维护 rewards worker heartbeat；API snapshot 只把配置已启用且最近 2 分钟有 heartbeat 的 worker 标记为 running。Postgres 表由迁移 `0032_reward_worker_heartbeats.sql` 创建。
 - `CopyTradeStore` 在 Postgres/内存实现中维护 `copytrade_control_commands` 队列；API 写入 pending 命令，worker 使用 claim/complete/fail 方法领取并更新执行状态。
-- `InMemoryOrderbookCache` 在所有写入入口统一按 bids 降序、asks 升序排序后裁剪，确保无序 WS/poll/ingest 数据也保留 top-of-book；写入时间戳早于当前条目的盘口会被忽略；`get_stale_tokens(..., max_age_ms <= 0)` 只检查 TTL，不执行年龄 stale 检查。
+- `InMemoryOrderbookCache` 在所有写入入口统一按 bids 降序、asks 升序排序后裁剪，确保无序 WS/poll/ingest 数据也保留 top-of-book；写入时间戳早于当前条目的盘口会被忽略，相同时间戳下 WS 优先于 poll；`get_books()` 在一次读锁内返回多个未过期盘口；`get_stale_tokens(..., max_age_ms <= 0)` 只检查 TTL，不执行年龄 stale 检查。
 - `InMemoryOrderbookSubscriptionRegistry.register_tokens()` 在持有写锁时原子执行 32-source 上限检查，关闭并发新 source 绕过 HTTP 预检查的竞态；空 token 集合会删除 source，聚合优先级为 `rewards_active`、`exec_orders`、`rewards_eligible`、`rewards_candidates`、`copytrade`。
 
 ### Catalog — 核心数据存储

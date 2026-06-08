@@ -22,6 +22,23 @@ async fn postgres_count_quote_plans(pool: &PgPool) -> Result<(usize, usize)> {
     Ok((total.max(0) as usize, eligible.max(0) as usize))
 }
 
+async fn postgres_latest_quote_plan_updated_at(
+    pool: &PgPool,
+) -> Result<Option<OffsetDateTime>> {
+    let row: Option<OffsetDateTime> = sqlx::query_scalar(
+        "SELECT MAX(updated_at) FROM reward_quote_plans",
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(|error| {
+        db_error(
+            "POSTGRES_QUERY_FAILED",
+            format!("failed to query latest quote plan updated_at: {error}"),
+        )
+    })?;
+    Ok(row)
+}
+
 async fn postgres_list_quote_plans_page(
     pool: &PgPool,
     query: &RewardQuotePlanListQuery,

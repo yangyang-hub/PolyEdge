@@ -108,6 +108,25 @@ fn apply_live_reward_status_update_to_order(
             );
             Some((order, event))
         }
+        OrderStatus::Open | OrderStatus::Submitted | OrderStatus::PartiallyFilled
+            if order.reason.contains(LIVE_EXTERNAL_ORDER_NOT_FOUND_MARKER) =>
+        {
+            order.scoring = order.side == RewardOrderSide::Buy;
+            order.reason = "external order lookup recovered; live order confirmed".to_string();
+            order.updated_at = OffsetDateTime::now_utc();
+            let event = reward_live_event(
+                &order,
+                "reward_live_external_order_recovered",
+                RewardRiskSeverity::Info,
+                order.reason.clone(),
+                json!({
+                    "event_id": update.event_id,
+                    "trace_id": trace_id,
+                    "external_order_id": update.external_order_id,
+                }),
+            );
+            Some((order, event))
+        }
         OrderStatus::Open if order.reason.contains("awaiting final reconciliation") => {
             order.scoring = false;
             order.reason =

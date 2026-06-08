@@ -446,17 +446,14 @@ async fn cancel_sibling_live_reward_orders(
     sibling_cancelled: &mut HashSet<String>,
     state: &AppState,
     account: &mut RewardAccountState,
-    positions: &HashMap<String, RewardPosition>,
+    _positions: &HashMap<String, RewardPosition>,
     report: &mut RewardBotRunReport,
     trace_id: &str,
 ) -> Result<()> {
     let sibling_ids = working_orders
         .values()
         .filter(|order| {
-            order.id != filled_order.id
-                && order.condition_id == filled_order.condition_id
-                && order.token_id != filled_order.token_id
-                && order.status.is_open_like()
+            is_sibling_live_buy_order(order, filled_order)
                 && sibling_cancelled.insert(order.id.clone())
         })
         .map(|order| order.id.clone())
@@ -483,7 +480,7 @@ async fn cancel_sibling_live_reward_orders(
                 persist_live_reward_updates(
                     state,
                     account,
-                    positions.values().cloned().collect(),
+                    Vec::new(), // positions unchanged during sibling cancel
                     vec![order],
                     Vec::new(),
                     vec![event],
@@ -498,7 +495,7 @@ async fn cancel_sibling_live_reward_orders(
                 persist_live_reward_updates(
                     state,
                     account,
-                    positions.values().cloned().collect(),
+                    Vec::new(), // positions unchanged during sibling cancel
                     vec![sibling],
                     Vec::new(),
                     vec![event],
@@ -510,6 +507,17 @@ async fn cancel_sibling_live_reward_orders(
         }
     }
     Ok(())
+}
+
+fn is_sibling_live_buy_order(
+    candidate: &ManagedRewardOrder,
+    filled_order: &ManagedRewardOrder,
+) -> bool {
+    candidate.id != filled_order.id
+        && candidate.condition_id == filled_order.condition_id
+        && candidate.token_id != filled_order.token_id
+        && candidate.side == RewardOrderSide::Buy
+        && candidate.status.is_open_like()
 }
 
 fn mark_sibling_cancel_for_retry(mut sibling: ManagedRewardOrder) -> ManagedRewardOrder {

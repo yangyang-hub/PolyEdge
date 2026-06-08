@@ -1,4 +1,5 @@
 const REWARD_WORKER_ADVISORY_LOCK_KEY: i64 = 0x504f_4c59_5245_5744;
+const LIVE_EXTERNAL_ORDER_NOT_FOUND_MARKER: &str = "external order lookup returned not found";
 
 async fn run_reward_bot_once(state: &AppState, trace_id: &str) -> Result<RewardBotRunReport> {
     let mut book_history = HashMap::new();
@@ -28,6 +29,22 @@ async fn run_reward_bot_once_with_history(
     }
     .await;
     finish_reward_worker_lease(lease, result).await
+}
+
+async fn run_reward_bot_scheduled_full_cycle(
+    state: &AppState,
+    trace_id: &str,
+    book_history: &mut HashMap<String, VecDeque<BookSnapshot>>,
+) -> Result<Option<RewardBotRunReport>> {
+    let Some(lease) = state
+        .try_acquire_postgres_advisory_lease(REWARD_WORKER_ADVISORY_LOCK_KEY)
+        .await?
+    else {
+        debug!("deferring rewards full cycle because another worker holds the live lease");
+        return Ok(None);
+    };
+    let result = run_reward_bot_tick(state, trace_id, false, book_history).await;
+    finish_reward_worker_lease(lease, result).await.map(Some)
 }
 
 async fn run_reward_bot_tick(
@@ -325,7 +342,7 @@ async fn run_reward_bot_live_tick(
                 persist_live_reward_updates(
                     state,
                     &mut account,
-                    cycle.positions.clone(),
+                    Vec::new(), // positions unchanged during cancel
                     vec![updated],
                     Vec::new(),
                     vec![event],
@@ -339,7 +356,7 @@ async fn run_reward_bot_live_tick(
                 persist_live_reward_updates(
                     state,
                     &mut account,
-                    cycle.positions.clone(),
+                    Vec::new(), // positions unchanged during cancel
                     Vec::new(),
                     Vec::new(),
                     vec![event],
@@ -407,7 +424,7 @@ async fn run_reward_bot_live_tick(
         persist_live_reward_updates(
             state,
             &mut account,
-            cycle.positions.clone(),
+            Vec::new(), // positions unchanged during placement
             placement_orders.clone(),
             Vec::new(),
             events,
@@ -465,7 +482,7 @@ async fn cancel_live_reward_orders(
                 persist_live_reward_updates(
                     state,
                     &mut account,
-                    cycle.positions.clone(),
+                    Vec::new(), // positions unchanged during cancel
                     vec![updated],
                     Vec::new(),
                     vec![event],
@@ -479,7 +496,7 @@ async fn cancel_live_reward_orders(
                 persist_live_reward_updates(
                     state,
                     &mut account,
-                    cycle.positions.clone(),
+                    Vec::new(), // positions unchanged during cancel
                     Vec::new(),
                     Vec::new(),
                     vec![event],

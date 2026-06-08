@@ -36,8 +36,30 @@ pub struct CachedOrderBook {
 #[async_trait]
 pub trait OrderbookCache: Send + Sync {
     async fn get_book(&self, token_id: &str) -> Result<Option<CachedOrderBook>>;
+    async fn get_books(&self, token_ids: &[String]) -> Result<Vec<CachedOrderBook>> {
+        let mut books = Vec::new();
+        for token_id in token_ids {
+            if let Some(book) = self.get_book(token_id).await? {
+                books.push(book);
+            }
+        }
+        Ok(books)
+    }
     async fn set_book(&self, book: &CachedOrderBook) -> Result<()>;
     async fn set_books(&self, books: &[CachedOrderBook]) -> Result<()>;
     async fn get_stale_tokens(&self, token_ids: &[String], max_age_ms: i64) -> Result<Vec<String>>;
     async fn entry_count(&self) -> Result<usize>;
+
+    /// Replace a cached book only if it exists and the new `observed_at` is not
+    /// older than the current cached value.  Returns `true` if the book was
+    /// replaced, `false` if the book does not exist or the replacement was
+    /// rejected as stale.
+    async fn replace_book(&self, book: &CachedOrderBook) -> Result<bool> {
+        let existed = self.get_book(&book.token_id).await?.is_some();
+        if !existed {
+            return Ok(false);
+        }
+        self.set_book(book).await?;
+        Ok(true)
+    }
 }

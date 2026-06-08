@@ -60,11 +60,11 @@ async fn sync_live_reward_orders(
                 };
                 if !missing_order
                     .reason
-                    .contains("external order lookup returned not found")
+                    .contains(LIVE_EXTERNAL_ORDER_NOT_FOUND_MARKER)
                 {
                     missing_order.scoring = false;
                     missing_order.reason = format!(
-                        "external order lookup returned not found; manual reconciliation required: {external_order_id}"
+                        "{LIVE_EXTERNAL_ORDER_NOT_FOUND_MARKER}; manual reconciliation required: {external_order_id}"
                     );
                     missing_order.updated_at = OffsetDateTime::now_utc();
                     let event = reward_live_event(
@@ -78,7 +78,7 @@ async fn sync_live_reward_orders(
                     persist_live_reward_updates(
                         state,
                         &mut account,
-                        positions.values().cloned().collect(),
+                        Vec::new(), // positions unchanged
                         vec![missing_order],
                         Vec::new(),
                         vec![event],
@@ -169,21 +169,19 @@ async fn sync_live_reward_orders(
             )
             .await?;
 
-            if filled_order.side == RewardOrderSide::Buy {
-                if cycle.config.cancel_on_fill {
-                    cancel_sibling_live_reward_orders(
-                        connector,
-                        &mut working_orders,
-                        &filled_order,
-                        &mut sibling_cancelled,
-                        state,
-                        &mut account,
-                        &positions,
-                        &mut report,
-                        trace_id,
-                    )
-                    .await?;
-                }
+            if filled_order.side == RewardOrderSide::Buy && cycle.config.cancel_on_fill {
+                cancel_sibling_live_reward_orders(
+                    connector,
+                    &mut working_orders,
+                    &filled_order,
+                    &mut sibling_cancelled,
+                    state,
+                    &mut account,
+                    &positions,
+                    &mut report,
+                    trace_id,
+                )
+                .await?;
             }
         }
 
@@ -230,7 +228,7 @@ async fn sync_live_reward_orders(
                 persist_live_reward_updates(
                     state,
                     &mut account,
-                    positions.values().cloned().collect(),
+                    Vec::new(), // positions unchanged during status update
                     changed_orders,
                     Vec::new(),
                     events,
@@ -327,7 +325,7 @@ async fn run_reward_bot_live_reconcile_unlocked(
                     persist_live_reward_updates(
                         state,
                         &mut account,
-                        cycle.positions.clone(),
+                        Vec::new(), // positions unchanged during cancel
                         vec![updated],
                         Vec::new(),
                         vec![event],
@@ -340,7 +338,7 @@ async fn run_reward_bot_live_reconcile_unlocked(
                     persist_live_reward_updates(
                         state,
                         &mut account,
-                        cycle.positions.clone(),
+                        Vec::new(), // positions unchanged during cancel
                         Vec::new(),
                         Vec::new(),
                         vec![event],

@@ -4,7 +4,7 @@ async fn submit_pending_live_reward_orders(
     books: &HashMap<String, RewardOrderBook>,
     state: &AppState,
     account: &mut RewardAccountState,
-    positions: &[RewardPosition],
+    _positions: &[RewardPosition],
     report: &mut RewardBotRunReport,
     trace_id: &str,
     allow_buy_submit: bool,
@@ -80,7 +80,7 @@ async fn submit_pending_live_reward_orders(
                     persist_live_reward_updates(
                         state,
                         account,
-                        positions.to_vec(),
+                        Vec::new(), // positions unchanged during submission
                         vec![order.clone()],
                         Vec::new(),
                         vec![event],
@@ -105,7 +105,7 @@ async fn submit_pending_live_reward_orders(
                         persist_live_reward_updates(
                             state,
                             account,
-                            positions.to_vec(),
+                            Vec::new(), // positions unchanged during submission
                             vec![order.clone()],
                             Vec::new(),
                             vec![event],
@@ -133,7 +133,7 @@ async fn submit_pending_live_reward_orders(
                         persist_live_reward_updates(
                             state,
                             account,
-                            positions.to_vec(),
+                            Vec::new(), // positions unchanged during submission
                             vec![order.clone()],
                             Vec::new(),
                             vec![event],
@@ -169,7 +169,7 @@ async fn submit_pending_live_reward_orders(
         persist_live_reward_updates(
             state,
             account,
-            positions.to_vec(),
+            Vec::new(), // positions unchanged during submission
             vec![order.clone()],
             Vec::new(),
             Vec::new(),
@@ -215,7 +215,7 @@ async fn submit_pending_live_reward_orders(
                 persist_live_reward_updates(
                     state,
                     account,
-                    positions.to_vec(),
+                    Vec::new(), // positions unchanged during submission
                     vec![order.clone()],
                     Vec::new(),
                     vec![event],
@@ -234,7 +234,7 @@ async fn submit_pending_live_reward_orders(
                 persist_live_reward_updates(
                     state,
                     account,
-                    positions.to_vec(),
+                    Vec::new(), // positions unchanged during submission
                     vec![updated],
                     Vec::new(),
                     vec![event],
@@ -256,7 +256,7 @@ async fn submit_pending_live_reward_orders(
                 persist_live_reward_updates(
                     state,
                     account,
-                    positions.to_vec(),
+                    Vec::new(), // positions unchanged during submission
                     (order.side == RewardOrderSide::Buy)
                         .then(|| order.clone())
                         .into_iter()

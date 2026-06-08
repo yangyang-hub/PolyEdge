@@ -1,12 +1,11 @@
 "use client";
 
-import { startTransition, useDeferredValue, useEffect, useState, useTransition } from "react";
+import { startTransition, useDeferredValue, useState, useTransition } from "react";
 import { Filter } from "lucide-react";
 import { toast } from "sonner";
 
 import { PageHeader } from "@/components/shared/page-header";
 import { ActionDialog } from "@/components/shared/action-dialog";
-import { useConsoleRealtimeChannel } from "@/components/shared/console-realtime-provider";
 import { EmptyPanel } from "@/components/shared/empty-panel";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -15,13 +14,10 @@ import { StatusPill } from "@/components/shared/status-pill";
 import { WorkbenchDetailPane, WorkbenchLayout } from "@/components/shared/workbench-layout";
 import { WorkbenchSegmentedControl } from "@/components/shared/workbench-segmented-control";
 import { dictionary, translateEnum, formatMessage } from "@/lib/i18n/dictionaries";
-import { localizeGeneratedCopy } from "@/lib/i18n/generated-copy";
-import { normalizeOptionalRuntimeMode } from "@/lib/runtime-mode";
-import { upsertStreamedItem } from "@/lib/signal-stream-utils";
 import { submitSignalExecutionAction } from "@/lib/api/actions";
 import type { OperationActionResult } from "@/lib/api/actions";
 
-import { buildSignalItem, canSubmitExecution } from "@/features/signals/lib/signals-helpers";
+import { canSubmitExecution } from "@/features/signals/lib/signals-helpers";
 import type {
   SignalActionDialog,
   SignalFilter,
@@ -53,68 +49,6 @@ export function SignalsWorkbench({
   const [fieldErrors, setFieldErrors] = useState<OperationActionResult["fieldErrors"]>({});
   const [isPending, startActionTransition] = useTransition();
   const deferredFilter = useDeferredValue(filter);
-  const { lastEvent } = useConsoleRealtimeChannel("signals");
-  const { lastEvent: lastRiskEvent } = useConsoleRealtimeChannel("risk");
-
-  useEffect(() => {
-    const streamEvent = lastEvent;
-
-    if (!streamEvent) {
-      return;
-    }
-
-    startTransition(() => {
-      setLiveSignals((currentSignals) =>
-        upsertStreamedItem(
-          currentSignals,
-          streamEvent.data,
-          (payload, currentSignal) =>
-            buildSignalItem(
-              {
-                ...payload,
-                context_label: payload.context_label
-                  ? localizeGeneratedCopy(dictionary, payload.context_label)
-                  : payload.context_label,
-                reason: payload.reason
-                  ? localizeGeneratedCopy(dictionary, payload.reason)
-                  : payload.reason,
-                risk_decision: payload.risk_decision
-                  ? localizeGeneratedCopy(dictionary, payload.risk_decision)
-                  : payload.risk_decision,
-                evidence_lines: payload.evidence_lines?.map((line) =>
-                  localizeGeneratedCopy(dictionary, line),
-                ),
-              },
-              currentSignal,
-              dictionary,
-              translateEnum,
-            ),
-          streamEvent.type,
-        ),
-      );
-    });
-  }, [dictionary, lastEvent, translateEnum]);
-
-  useEffect(() => {
-    const streamEvent = lastRiskEvent;
-
-    if (!streamEvent) {
-      return;
-    }
-
-    startTransition(() => {
-      if (streamEvent.data.mode || typeof streamEvent.data.kill_switch === "boolean") {
-        const runtimeMode = normalizeOptionalRuntimeMode(streamEvent.data.mode);
-
-        setRuntimeControls((currentControls) => ({
-          mode: runtimeMode ?? currentControls.mode,
-          modeLabel: runtimeMode ? translateEnum(runtimeMode) : currentControls.modeLabel,
-          killSwitch: streamEvent.data.kill_switch ?? currentControls.killSwitch,
-        }));
-      }
-
-    });
-  }, [translateEnum, lastRiskEvent]);
 
   const filteredSignals = liveSignals.filter((signal) => {
     if (deferredFilter === "high_confidence") {

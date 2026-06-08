@@ -19,7 +19,7 @@ use rust_decimal::Decimal;
 use serde_json::Value;
 use sqlx::{PgPool, Row, types::Json};
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, HashMap, HashSet},
     str::FromStr,
     sync::Arc,
 };

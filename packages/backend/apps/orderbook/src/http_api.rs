@@ -93,12 +93,19 @@ pub async fn get_orderbook_batch(
 ) -> ApiResult<OrderbookBatchResponse> {
     let max_tokens = state.settings.orderbook_stream.max_tokens;
     let token_ids = validate_token_ids(req.token_ids, max_tokens)?;
-    let mut books = Vec::new();
-    for token_id in &token_ids {
-        if let Ok(Some(book)) = state.orderbook_cache.get_book(token_id).await {
-            books.push(to_response(book));
-        }
-    }
+    let books = state
+        .orderbook_cache
+        .get_books(&token_ids)
+        .await
+        .map_err(|error| {
+            error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("failed to read orderbook batch: {error}"),
+            )
+        })?
+        .into_iter()
+        .map(to_response)
+        .collect();
     Ok(Json(OrderbookBatchResponse { books }))
 }
 

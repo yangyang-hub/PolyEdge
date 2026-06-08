@@ -1,135 +1,27 @@
 "use client";
 
-import { startTransition, useEffect, useState } from "react";
+import { startTransition, useState } from "react";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { PageHeader } from "@/components/shared/page-header";
 import { PaginationBar } from "@/components/pagination-bar";
 import { StatusPill } from "@/components/shared/status-pill";
-import { useConsoleRealtimeChannel } from "@/components/shared/console-realtime-provider";
 import { usePagination } from "@/hooks/use-pagination";
-import { dictionary, translateEnum, formatMessage, type Dictionary } from "@/lib/i18n/dictionaries";
-import type { ConsoleEventStreamPayload, SignalStreamPayload } from "@/lib/contracts/realtime";
-import {
-  formatPercentFromRatio,
-  formatSignedFixed,
-  signalStateTone,
-} from "@/lib/realtime-formatters";
+import { dictionary, formatMessage } from "@/lib/i18n/dictionaries";
 import type { getEventsPageData } from "@/features/events/loaders/events-page-data";
 
 type EventsPageData = Awaited<ReturnType<typeof getEventsPageData>>;
 type EventItem = EventsPageData["events"][number];
 
-function buildEventItem(
-  payload: ConsoleEventStreamPayload,
-  current: EventItem | undefined,
-  dictionary: Dictionary,
-): EventItem {
-  return {
-    id: payload.event_id,
-    source: payload.source,
-    summary: payload.summary,
-    statusLabel: current?.statusLabel ?? dictionary.common.active,
-    statusTone: current?.statusTone ?? "success",
-    relevance: current?.relevance ?? formatPercentFromRatio(payload.confidence),
-    confidence: formatPercentFromRatio(payload.confidence),
-    reasonTrace:
-      current?.reasonTrace ?? dictionary.events.realtimeReasonTraceFallback,
-    relatedMarketIds: current?.relatedMarketIds ?? [],
-    evidence: current?.evidence ?? null,
-    linkedSignals: current?.linkedSignals ?? [],
-    isSelected: current?.isSelected ?? false,
-  };
-}
-
-function upsertEvent(
-  events: EventItem[],
-  payload: ConsoleEventStreamPayload,
-  dictionary: Dictionary,
-): EventItem[] {
-  const current = events.find((event) => event.id === payload.event_id);
-  const nextEvent = buildEventItem(payload, current, dictionary);
-
-  if (current) {
-    return events.map((event) => (event.id === nextEvent.id ? nextEvent : event));
-  }
-
-  return [nextEvent, ...events];
-}
-
-function patchLinkedSignals(
-  events: EventItem[],
-  payload: SignalStreamPayload,
-  translateEnum: (value: string) => string,
-): EventItem[] {
-  const nextSignal = {
-    id: payload.signal_id,
-    marketId: payload.market_id,
-    marketQuestion: payload.market_question ?? payload.market_id,
-    edge: payload.edge ? formatSignedFixed(payload.edge) : "0.00",
-    stateLabel: translateEnum(payload.lifecycle_state),
-    stateTone: signalStateTone(payload.lifecycle_state),
-  };
-
-  return events.map((event) => {
-    if (!event.relatedMarketIds.includes(payload.market_id)) {
-      return event;
-    }
-
-    const currentLinkedSignal = event.linkedSignals.find((signal) => signal.id === payload.signal_id);
-
-    if (currentLinkedSignal) {
-      return {
-        ...event,
-        linkedSignals: event.linkedSignals.map((signal) =>
-          signal.id === nextSignal.id ? nextSignal : signal,
-        ),
-      };
-    }
-
-    return {
-      ...event,
-      linkedSignals: [nextSignal, ...event.linkedSignals],
-    };
-  });
-}
-
 export function EventsWorkbench({ data }: { data: EventsPageData }) {
-  const [eventItems, setEventItems] = useState(data.events);
   const [selectedId, setSelectedId] = useState(data.selectedEventId);
-  const { lastEvent: lastConsoleEvent } = useConsoleRealtimeChannel("events");
-  const { lastEvent: lastSignalEvent } = useConsoleRealtimeChannel("signals");
-
-  useEffect(() => {
-    const streamEvent = lastConsoleEvent;
-
-    if (!streamEvent) {
-      return;
-    }
-
-    startTransition(() => {
-      setEventItems((currentItems) => upsertEvent(currentItems, streamEvent.data, dictionary));
-    });
-  }, [dictionary, lastConsoleEvent]);
-
-  useEffect(() => {
-    const streamEvent = lastSignalEvent;
-
-    if (!streamEvent) {
-      return;
-    }
-
-    startTransition(() => {
-      setEventItems((currentItems) => patchLinkedSignals(currentItems, streamEvent.data, translateEnum));
-    });
-  }, [translateEnum, lastSignalEvent]);
 
   const selectedEvent =
-    eventItems.find((event) => event.id === selectedId) ??
-    eventItems.find((event) => event.isSelected) ??
-    eventItems[0];
+    data.events.find((event) => event.id === selectedId) ??
+    data.events.find((event) => event.isSelected) ??
+    data.events[0];
 
-  const pagination = usePagination(eventItems.length, 15);
+  const pagination = usePagination(data.events.length, 15);
 
   return (
     <div className="space-y-6">
@@ -139,8 +31,7 @@ export function EventsWorkbench({ data }: { data: EventsPageData }) {
         description={dictionary.events.description}
         actions={
           <>
-            <StatusPill tone="primary">{formatMessage(dictionary.events.eventCount, { count: eventItems.length })}</StatusPill>
-            <StatusPill tone="success">{dictionary.common.streamSynced}</StatusPill>
+            <StatusPill tone="primary">{formatMessage(dictionary.events.eventCount, { count: data.events.length })}</StatusPill>
           </>
         }
       />
@@ -151,7 +42,7 @@ export function EventsWorkbench({ data }: { data: EventsPageData }) {
             <CardTitle className="font-heading text-base">{dictionary.events.timeline}</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
-            {eventItems.slice(pagination.start, pagination.end).map((event) => {
+            {data.events.slice(pagination.start, pagination.end).map((event) => {
               const active = event.id === selectedEvent?.id;
 
               return (
@@ -177,7 +68,7 @@ export function EventsWorkbench({ data }: { data: EventsPageData }) {
                 </button>
               );
             })}
-            <PaginationBar pagination={pagination} totalItems={eventItems.length} />
+            <PaginationBar pagination={pagination} totalItems={data.events.length} />
           </CardContent>
         </Card>
 

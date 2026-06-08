@@ -1,5 +1,4 @@
 use polyedge_application::OrderbookSubscriptionRegistry;
-use std::collections::HashSet;
 use std::time::Instant;
 
 /// Maximum distinct sources the registry retains. Enforced atomically inside

@@ -1,10 +1,11 @@
 use axum::{Router, routing::get};
 use polyedge_infrastructure::{AppState, Runtime};
 use std::time::Duration;
+use tower_http::limit::RequestBodyLimitLayer;
 use tower_http::trace::TraceLayer;
 use tracing::info;
 use tracing_subscriber::filter::{FilterExt, FilterFn};
-use tracing_subscriber::{prelude::*, EnvFilter};
+use tracing_subscriber::{EnvFilter, prelude::*};
 
 mod market_sync;
 use market_sync::sync_markets_once;
@@ -20,8 +21,7 @@ use http_api::{
 
 #[tokio::main]
 async fn main() {
-    let env_filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("info"));
+    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
 
     // Suppress expected ERROR-level logs from the SDK's internal WS reconnection
     // cycle. The SDK already retries with exponential backoff, so these errors
@@ -34,10 +34,7 @@ async fn main() {
     });
 
     tracing_subscriber::registry()
-        .with(
-            tracing_subscriber::fmt::layer()
-                .with_filter(env_filter.and(suppress_sdk_ws_error)),
-        )
+        .with(tracing_subscriber::fmt::layer().with_filter(env_filter.and(suppress_sdk_ws_error)))
         .init();
 
     let runtime = Runtime::load().await.expect("failed to load runtime");
@@ -62,6 +59,7 @@ async fn main() {
         )
         .route("/orderbook/{token_id}", get(get_orderbook))
         .layer(TraceLayer::new_for_http())
+        .layer(RequestBodyLimitLayer::new(2 * 1024 * 1024)) // 2 MB
         .with_state(state.clone());
 
     let listener = tokio::net::TcpListener::bind(&listen)

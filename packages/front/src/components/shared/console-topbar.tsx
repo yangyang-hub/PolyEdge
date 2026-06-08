@@ -3,14 +3,12 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Power } from "lucide-react";
-import { startTransition, useEffect, useState } from "react";
+import { useState } from "react";
 
-import { useConsoleRealtimeChannel } from "@/components/shared/console-realtime-provider";
 import { Button } from "@/components/ui/button";
 import { StatusPill } from "@/components/shared/status-pill";
 import type { RuntimeMode } from "@/lib/contracts/dto";
 import { dictionary, translateEnum } from "@/lib/i18n/dictionaries";
-import { normalizeOptionalRuntimeMode } from "@/lib/runtime-mode";
 import { cn } from "@/lib/utils";
 
 const topNavLinks = [
@@ -29,41 +27,14 @@ export function ConsoleTopbar({
   initialMode: RuntimeMode | null;
 }) {
   const pathname = usePathname();
-  const { lastEvent } = useConsoleRealtimeChannel("risk");
-  const [runtimeMode, setRuntimeMode] = useState<RuntimeMode | null>(initialMode);
-  const [environment, setEnvironment] = useState<string | null>(initialEnvironment);
-  const [killSwitch, setKillSwitch] = useState(initialKillSwitch ?? false);
+  const [runtimeMode] = useState<RuntimeMode | null>(initialMode);
+  const [environment] = useState<string | null>(initialEnvironment);
+  const [killSwitch] = useState(initialKillSwitch ?? false);
   const modeLabel = runtimeMode ? translateEnum(runtimeMode) : dictionary.topbar.runtimeSync;
   const environmentLabel = environment ?? dictionary.topbar.streamSync;
-  const warningCount = lastEvent?.data.warning_alerts;
-  const criticalCount = lastEvent?.data.critical_alerts;
   const killSwitchActive = killSwitch;
   const killSwitchAvailable =
     runtimeMode === "live_auto" || runtimeMode === "kill_switch_locked" || killSwitchActive;
-
-  useEffect(() => {
-    const nextMode = normalizeOptionalRuntimeMode(lastEvent?.data.mode);
-    const nextEnvironment = lastEvent?.data.environment;
-    const nextKillSwitch = lastEvent?.data.kill_switch;
-
-    if (!nextMode && !nextEnvironment && typeof nextKillSwitch !== "boolean") {
-      return;
-    }
-
-    startTransition(() => {
-      if (nextMode) {
-        setRuntimeMode(nextMode);
-      }
-
-      if (nextEnvironment) {
-        setEnvironment(nextEnvironment);
-      }
-
-      if (typeof nextKillSwitch === "boolean") {
-        setKillSwitch(nextKillSwitch);
-      }
-    });
-  }, [lastEvent]);
 
   return (
     <header className="fixed inset-x-0 top-0 z-30 bg-background/95 backdrop-blur md:left-16">
@@ -96,12 +67,6 @@ export function ConsoleTopbar({
             <StatusPill tone={killSwitchActive ? "danger" : "warning"}>{modeLabel}</StatusPill>
             <StatusPill tone="primary">{environmentLabel}</StatusPill>
           </div>
-          <StatusPill tone={warningCount && warningCount > 0 ? "warning" : "neutral"}>
-            {warningCount !== undefined ? `${warningCount} ${dictionary.common.warnings}` : dictionary.topbar.riskSync}
-          </StatusPill>
-          <StatusPill tone="neutral" className="hidden md:inline-flex">
-            {criticalCount !== undefined ? `${criticalCount} ${dictionary.common.critical}` : dictionary.topbar.alertsSync}
-          </StatusPill>
           {killSwitchAvailable ? (
             <Button
               asChild

@@ -41,8 +41,6 @@ shadcn 生成的 Radix UI 基础组件（style: radix-nova）：
 | `console-shell.tsx` | 控制台主布局外壳（sidebar + topbar + content） |
 | `console-sidebar.tsx` | 侧边导航栏 |
 | `console-topbar.tsx` | 顶部栏 |
-| `console-status-rail.tsx` | 状态栏 |
-| `console-realtime-provider.tsx` | 实时数据 Provider |
 | `console-loading-skeleton.tsx` | 加载骨架屏 |
 | `workbench-layout.tsx` | 标准工作台页面布局 |
 | `workbench-segmented-control.tsx` | 分段控制器 |
@@ -68,9 +66,7 @@ shadcn 生成的 Radix UI 基础组件（style: radix-nova）：
 
 | Hook | 用途 |
 |---|---|
-| `use-live-status.ts` | 实时状态监听 |
 | `use-pagination.ts` | 分页状态管理（currentPage、pageSize、分页数据切片） |
-| `use-sse-stream.ts` | SSE 流式数据订阅 |
 
 ## 当前状态
 

@@ -9,12 +9,10 @@ import { PaginationBar } from "@/components/pagination-bar";
 import { StatusPill } from "@/components/shared/status-pill";
 import { WorkbenchLayout, WorkbenchDetailPane } from "@/components/shared/workbench-layout";
 import { WorkbenchSegmentedControl } from "@/components/shared/workbench-segmented-control";
-import { useConsoleRealtimeChannel } from "@/components/shared/console-realtime-provider";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { MeterBar } from "@/components/shared/meter-bar";
 import { usePagination } from "@/hooks/use-pagination";
 import { dictionary, translateEnum, formatMessage } from "@/lib/i18n/dictionaries";
-import { normalizeOptionalRuntimeMode } from "@/lib/runtime-mode";
 import {
   Table,
   TableBody,
@@ -23,123 +21,19 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import type { RiskStreamPayload, SignalStreamPayload } from "@/lib/contracts/realtime";
 import { isKeyboardSelect } from "@/lib/keyboard";
-import {
-  formatClock,
-  formatCurrency,
-  formatPercentFromRatio,
-  metricToneForPnl,
-  signalStateTone,
-} from "@/lib/realtime-formatters";
 
 type PositionsPageData = Awaited<ReturnType<typeof getPositionsPageData>>;
 type PositionItem = PositionsPageData["positions"][number];
-type PositionMetric = PositionsPageData["metrics"][number];
 type PositionFilter = "all" | "gainers" | "pressure";
-
-function patchPositionSignal(
-  position: PositionItem,
-  payload: SignalStreamPayload,
-  translateEnum: (value: string) => string,
-): PositionItem {
-  return {
-    ...position,
-    signalId: payload.signal_id,
-    marketQuestion: payload.market_question ?? position.marketQuestion,
-    posterior: payload.fair_price ?? position.posterior,
-    signalEdge: payload.edge ? formatPercentFromRatio(payload.edge) : position.signalEdge,
-    confidence: payload.confidence ? formatPercentFromRatio(payload.confidence) : position.confidence,
-    confidenceWidth: payload.confidence ? formatPercentFromRatio(payload.confidence) : position.confidenceWidth,
-    signalStateLabel: translateEnum(payload.lifecycle_state),
-    signalStateTone: signalStateTone(payload.lifecycle_state),
-    signalReason: payload.reason ?? position.signalReason,
-    riskDecision: payload.risk_decision ?? position.riskDecision,
-    signalUpdatedAt: payload.updated_at ?? position.signalUpdatedAt,
-  };
-}
-
-function patchPositionsFromSignal(
-  positions: PositionItem[],
-  payload: SignalStreamPayload,
-  translateEnum: (value: string) => string,
-): PositionItem[] {
-  return positions.map((position) =>
-    position.marketId === payload.market_id || position.signalId === payload.signal_id
-      ? patchPositionSignal(position, payload, translateEnum)
-      : position,
-  );
-}
-
-function patchMetrics(metrics: PositionMetric[], payload: RiskStreamPayload): PositionMetric[] {
-  return metrics.map((metric) => {
-    if (metric.key === "daily_pnl" && payload.daily_pnl) {
-      return {
-        ...metric,
-        value: formatCurrency(payload.daily_pnl),
-        tone: metricToneForPnl(payload.daily_pnl),
-        hint: payload.updated_at ? formatClock(payload.updated_at) : metric.hint,
-      };
-    }
-
-    if (metric.key === "net_exposure" && payload.net_exposure) {
-      return {
-        ...metric,
-        value: formatPercentFromRatio(payload.net_exposure),
-      };
-    }
-
-    return metric;
-  });
-}
 
 export function PositionsWorkbench({ data }: { data: PositionsPageData }) {
   const [filter, setFilter] = useState<PositionFilter>("all");
-  const [metrics, setMetrics] = useState(data.metrics);
-  const [runtimeModeLabel, setRuntimeModeLabel] = useState(data.runtimeModeLabel);
-  const [runtimeEnvironmentLabel, setRuntimeEnvironmentLabel] = useState(data.runtimeEnvironmentLabel);
-  const [positionItems, setPositionItems] = useState(data.positions);
   const [selectedId, setSelectedId] = useState(data.selectedPositionId);
   const deferredFilter = useDeferredValue(filter);
-  const { lastEvent: lastSignalEvent } = useConsoleRealtimeChannel("signals");
-  const { lastEvent: lastRiskEvent } = useConsoleRealtimeChannel("risk");
   const format = formatMessage;
 
-  useEffect(() => {
-    const streamEvent = lastSignalEvent;
-
-    if (!streamEvent) {
-      return;
-    }
-
-    startTransition(() => {
-      setPositionItems((currentItems) => patchPositionsFromSignal(currentItems, streamEvent.data, translateEnum));
-    });
-  }, [translateEnum, lastSignalEvent]);
-
-  useEffect(() => {
-    const streamEvent = lastRiskEvent;
-
-    if (!streamEvent) {
-      return;
-    }
-
-    startTransition(() => {
-      setMetrics((currentMetrics) => patchMetrics(currentMetrics, streamEvent.data));
-
-      const runtimeMode = normalizeOptionalRuntimeMode(streamEvent.data.mode);
-
-      if (runtimeMode) {
-        setRuntimeModeLabel(translateEnum(runtimeMode));
-      }
-
-      if (streamEvent.data.environment) {
-        setRuntimeEnvironmentLabel(streamEvent.data.environment);
-      }
-    });
-  }, [translateEnum, lastRiskEvent]);
-
-  const filteredPositions = positionItems.filter((position) => {
+  const filteredPositions = data.positions.filter((position) => {
     if (deferredFilter === "gainers") {
       return position.pnlValue > 0;
     }
@@ -160,11 +54,11 @@ export function PositionsWorkbench({ data }: { data: PositionsPageData }) {
   const activeSelectedId =
     filteredPositions.find((position) => position.id === selectedId)?.id ??
     filteredPositions[0]?.id ??
-    positionItems[0]?.id ??
+    data.positions[0]?.id ??
     "";
   const selectedPosition =
-    positionItems.find((position) => position.id === activeSelectedId) ?? positionItems[0];
-  const pressureCount = positionItems.filter(
+    data.positions.find((position) => position.id === activeSelectedId) ?? data.positions[0];
+  const pressureCount = data.positions.filter(
     (position) => position.bucketStatus !== "healthy" || position.pnlValue < 0,
   ).length;
   const filterButtons: Array<{ key: PositionFilter; label: string }> = [
@@ -191,14 +85,14 @@ export function PositionsWorkbench({ data }: { data: PositionsPageData }) {
         description={dictionary.positions.description}
         actions={
           <>
-            <StatusPill tone="primary">{runtimeModeLabel}</StatusPill>
-            <StatusPill tone="neutral">{runtimeEnvironmentLabel}</StatusPill>
+            <StatusPill tone="primary">{data.runtimeModeLabel}</StatusPill>
+            <StatusPill tone="neutral">{data.runtimeEnvironmentLabel}</StatusPill>
           </>
         }
       />
 
       <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        {metrics.map((metric) => (
+        {data.metrics.map((metric) => (
           <MetricCard
             key={metric.key}
             title={metric.title}
@@ -222,7 +116,7 @@ export function PositionsWorkbench({ data }: { data: PositionsPageData }) {
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="flex flex-wrap gap-2">
-              <StatusPill tone="success">{formatMessage(dictionary.positions.open, { count: positionItems.length })}</StatusPill>
+              <StatusPill tone="success">{formatMessage(dictionary.positions.open, { count: data.positions.length })}</StatusPill>
               <StatusPill tone="warning">{formatMessage(dictionary.positions.pressureCount, { count: pressureCount })}</StatusPill>
             </div>
 

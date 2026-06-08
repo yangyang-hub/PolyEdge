@@ -3,8 +3,8 @@ use polyedge_application::{
     ApproveSignalCommand, ArbitrageAnalysisRunListFilters, ArbitrageScanListFilters,
     EventListFilters, EvidenceListFilters, ExecutionRequestListFilters, OrderDraftListFilters,
     OrderListFilters, PageQuery, PositionListFilters, RewardBotConfigPatch, SignalListFilters,
-    SubmitExecutionStoreCommand, SyncExternalOrderStatusCommand,
-    TradeListFilters, demo_fixture_bundle,
+    SubmitExecutionStoreCommand, SyncExternalOrderStatusCommand, TradeListFilters,
+    demo_fixture_bundle,
 };
 use polyedge_domain::{
     ExecutionRequestStatus, OrderDraftStatus, OrderStatus, Quantity, SignalLifecycleState,

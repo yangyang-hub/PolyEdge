@@ -1,19 +1,15 @@
 use axum::{
     Router,
-    body::{Body, Bytes},
     extract::{Extension, Json, Path, Query, State},
-    http::{HeaderMap, StatusCode, header},
+    http::{HeaderMap, StatusCode},
     middleware,
-    response::Response,
     routing::get,
 };
-use futures::stream;
 use polyedge_application::{
     AddTrackedWalletInput, ArbitrageAnalysisRunListFilters, ArbitrageAnalysisRunView,
-    ArbitrageEventListFilters, ArbitrageEventView, ArbitrageOpportunityListFilters,
-    ArbitrageOpportunityStatus, ArbitrageOpportunityType, ArbitrageOpportunityValidationView,
-    ArbitrageOpportunityView, ArbitrageScanListFilters, ArbitrageScanView,
-    ArbitrageValidationStatus, AuthenticatedActor, CopyControlAction, CopyTradeConfigPatch,
+    ArbitrageOpportunityListFilters, ArbitrageOpportunityStatus, ArbitrageOpportunityType,
+    ArbitrageOpportunityValidationView, ArbitrageOpportunityView, ArbitrageScanListFilters,
+    ArbitrageScanView, ArbitrageValidationStatus, AuthenticatedActor, CopyControlAction, CopyTradeConfigPatch,
     CopyTradeSnapshot, EventListFilters, EventView, EvidenceListFilters, EvidenceView,
     ExecutionFillResult, ExecutionRequestListFilters, ExecutionRequestView,
     ExecutionSubmissionReceipt, IdempotencyBegin, IdempotencyRequest, KillSwitchReceipt,
@@ -64,12 +60,9 @@ use polyedge_infrastructure::{
     require_console_write_auth, require_mode_write_auth,
 };
 use rust_decimal::Decimal;
-use serde_json::{Map, Value, json};
 use std::{
-    collections::{HashMap, HashSet, VecDeque},
-    convert::Infallible,
+    collections::HashMap,
     str::FromStr,
-    time::Duration,
 };
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use tower::ServiceBuilder;
@@ -81,7 +74,6 @@ const CONNECTOR_ORDER_STATUS_SOURCE: &str = "connector.orders.status";
 const CONNECTOR_TRADE_FILL_SOURCE: &str = "connector.trades.fill";
 const DEFAULT_CONSOLE_LIST_LIMIT: u16 = 100;
 const MAX_CONSOLE_LIST_LIMIT: u16 = 200;
-const MAX_STREAM_EMITTED_IDS: usize = 1_024;
 
 pub fn build_app(state: AppState) -> Router {
     let system_routes =
@@ -421,31 +413,23 @@ pub fn build_app(state: AppState) -> Router {
                 require_console_read_auth,
             )),
         )
-        .route(
-            "/api/v1/stream/{channel}",
-            get(stream_channel).route_layer(middleware::from_fn_with_state(
-                state.clone(),
-                require_console_read_auth,
-            )),
-        )
         .nest("/api/v1/system", system_routes)
         .with_state(state)
-        .layer(CorsLayer::permissive())
         .layer(
             ServiceBuilder::new()
                 .layer(RequestBodyLimitLayer::new(1024 * 1024))
                 .layer(TraceLayer::new_for_http())
                 .layer(TimeoutLayer::with_status_code(
                     StatusCode::REQUEST_TIMEOUT,
-                    std::time::Duration::from_secs(10),
+                    std::time::Duration::from_secs(30),
                 )),
         )
+        .layer(CorsLayer::permissive())
 }
 
 include!("handlers/health.rs");
 include!("handlers/console_risk.rs");
 include!("handlers/list_helpers.rs");
-include!("handlers/streams.rs");
 include!("handlers/system.rs");
 include!("handlers/market_handlers.rs");
 include!("handlers/rewards.rs");

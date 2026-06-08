@@ -13,6 +13,16 @@ struct BucketAccumulator {
     version: i64,
 }
 
+fn daily_loss_used(risk_state: &RiskStateView) -> polyedge_domain::Result<UsdAmount> {
+    let daily_pnl = risk_state.daily_pnl.value();
+
+    if daily_pnl < Decimal::ZERO {
+        return UsdAmount::new(-daily_pnl);
+    }
+
+    UsdAmount::new(Decimal::ZERO)
+}
+
 async fn read_console_risk_snapshot(
     state: &AppState,
 ) -> polyedge_domain::Result<ConsoleRiskSnapshot> {

@@ -60,8 +60,8 @@ pub async fn run_orderbook_stream(state: &AppState) -> Result<OrderbookStreamRep
     // false-positive heartbeat warnings on networks with occasional latency.
     let mut ws_config = WsConfig::default();
     ws_config.heartbeat_timeout = Duration::from_secs(30);
-    let ws_client = ClobWsClient::new(&state.settings.polymarket.ws_host, ws_config)
-        .map_err(|error| {
+    let ws_client =
+        ClobWsClient::new(&state.settings.polymarket.ws_host, ws_config).map_err(|error| {
             AppError::internal(
                 "ORDERBOOK_WS_INIT_FAILED",
                 format!("failed to create orderbook websocket client: {error}"),
@@ -324,6 +324,7 @@ async fn apply_price_change_to_cache(
     for change in &update.price_changes {
         let token_id = change.asset_id.to_string();
         let Some(mut book) = cache.get_book(&token_id).await? else {
+            debug!(token_id, "price change skipped: book not in cache");
             continue;
         };
         if update.timestamp < book.observed_at {
@@ -350,16 +351,26 @@ async fn apply_price_change_to_cache(
         }
         book.observed_at = update.timestamp;
         book.source = BookSource::Ws;
-        cache.set_book(&book).await?;
+        // Use replace_book which checks freshness atomically under the lock,
+        // preventing the race where a poll reconciler writes a newer snapshot
+        // between our get_book and set_book.
+        cache.replace_book(&book).await?;
     }
     Ok(())
 }
 
 fn reward_book_to_cached(book: &polyedge_connectors::PolymarketRewardOrderBook) -> CachedOrderBook {
-    let now_ms = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as i64;
+    let observed_at_ms = book
+        .observed_at
+        .unix_timestamp_nanos()
+        .div_euclid(1_000_000);
+    let observed_at = i64::try_from(observed_at_ms).unwrap_or_else(|_| {
+        if observed_at_ms.is_negative() {
+            i64::MIN
+        } else {
+            i64::MAX
+        }
+    });
 
     CachedOrderBook {
         token_id: book.token_id.clone(),
@@ -379,7 +390,7 @@ fn reward_book_to_cached(book: &polyedge_connectors::PolymarketRewardOrderBook) 
                 size: l.size,
             })
             .collect(),
-        observed_at: now_ms,
+        observed_at,
         source: BookSource::Poll,
     }
 }

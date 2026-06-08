@@ -42,7 +42,7 @@ fn live_cancel_reason(
         || live_submission_was_attempted(order)
         || order
             .reason
-            .contains("external order lookup returned not found")
+            .contains(LIVE_EXTERNAL_ORDER_NOT_FOUND_MARKER)
     {
         return None;
     }

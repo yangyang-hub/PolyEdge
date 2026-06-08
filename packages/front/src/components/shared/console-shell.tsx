@@ -2,9 +2,7 @@
 
 import { useEffect, useState, type ReactNode } from "react";
 
-import { ConsoleRealtimeProvider } from "@/components/shared/console-realtime-provider";
 import { ConsoleSidebar } from "@/components/shared/console-sidebar";
-import { ConsoleStatusRail } from "@/components/shared/console-status-rail";
 import { ConsoleTopbar } from "@/components/shared/console-topbar";
 import type { RuntimeMode } from "@/lib/contracts/dto";
 import { normalizeRuntimeMode } from "@/lib/runtime-mode";
@@ -53,15 +51,12 @@ export function ConsoleShell({ children }: { children: ReactNode }) {
     <div className="min-h-screen bg-background text-foreground">
       <ConsoleSidebar />
       <div className="md:pl-16">
-        <ConsoleRealtimeProvider>
-          <ConsoleTopbar
-            initialEnvironment={runtimeState?.environment ?? null}
-            initialKillSwitch={runtimeState?.killSwitch ?? null}
-            initialMode={runtimeState?.mode ?? null}
-          />
-          <main className="px-4 pb-12 pt-[4.5rem] md:px-6">{children}</main>
-          <ConsoleStatusRail />
-        </ConsoleRealtimeProvider>
+        <ConsoleTopbar
+          initialEnvironment={runtimeState?.environment ?? null}
+          initialKillSwitch={runtimeState?.killSwitch ?? null}
+          initialMode={runtimeState?.mode ?? null}
+        />
+        <main className="px-4 pb-12 pt-[4.5rem] md:px-6">{children}</main>
       </div>
     </div>
   );

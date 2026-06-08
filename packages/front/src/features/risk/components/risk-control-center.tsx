@@ -1,6 +1,6 @@
 "use client";
 
-import { startTransition, useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { startTransition, useMemo, useRef, useState, useTransition } from "react";
 import { ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
 
@@ -10,22 +10,14 @@ import {
   triggerRiskReleaseAction,
 } from "@/lib/api/actions";
 import type { OperationActionResult } from "@/lib/api/actions";
-import { useConsoleRealtimeChannel } from "@/components/shared/console-realtime-provider";
 import { Button } from "@/components/ui/button";
 import { dictionary, translateEnum, formatMessage } from "@/lib/i18n/dictionaries";
-import { localizeGeneratedCopy } from "@/lib/i18n/generated-copy";
-import { normalizeOptionalRuntimeMode, normalizeRuntimeMode } from "@/lib/runtime-mode";
+import { normalizeRuntimeMode } from "@/lib/runtime-mode";
 import { OperationFeedbackBanner } from "@/components/shared/operation-feedback-banner";
 import { PageHeader } from "@/components/shared/page-header";
 import { StateBanner } from "@/components/shared/state-banner";
 import { StatusPill } from "@/components/shared/status-pill";
 
-import {
-  patchMetricValues,
-  patchMetricsFromStream,
-  patchSummaryFromStream,
-  upsertAlert,
-} from "../lib/risk-stream";
 import type { RiskAlertFilter, RiskDialog, RiskPageData } from "../types";
 import { RiskActionDialogs } from "./risk-action-dialogs";
 import { RiskAuditLog } from "./risk-audit-log";
@@ -46,7 +38,6 @@ export function RiskControlCenter({ data }: { data: RiskPageData }) {
   const [fieldErrors, setFieldErrors] = useState<OperationActionResult["fieldErrors"]>({});
   const [isPending, startActionTransition] = useTransition();
   const auditLogRef = useRef<HTMLElement | null>(null);
-  const { lastEvent } = useConsoleRealtimeChannel("risk");
   const killSwitchAvailable =
     controls.mode === "live_auto" || controls.mode === "kill_switch_locked" || controls.killSwitch;
   const metricLabels = useMemo(() => ({
@@ -55,54 +46,35 @@ export function RiskControlCenter({ data }: { data: RiskPageData }) {
     armed: dictionary.common.armed,
     halted: dictionary.metricHints.halted,
     readyState: dictionary.metricHints.readyState,
-    critical: dictionary.common.critical,
   }), [
     dictionary.common.active,
     dictionary.common.armed,
-    dictionary.common.critical,
     dictionary.metricHints.halted,
     dictionary.metricHints.readyState,
     translateEnum,
   ]);
-  useEffect(() => {
-    const streamEvent = lastEvent;
 
-    if (!streamEvent) {
-      return;
-    }
+  function patchMetricValues(
+    metrics: RiskPageData["metrics"],
+    nextControls: { mode: RuntimeMode; killSwitch: boolean },
+  ): RiskPageData["metrics"] {
+    return metrics.map((metric) => {
+      if (metric.key === "mode") {
+        return { ...metric, value: metricLabels.mode(nextControls.mode) };
+      }
 
-    startTransition(() => {
-      const runtimeMode = normalizeOptionalRuntimeMode(streamEvent.data.mode);
-
-      setControls((currentControls) => {
-        const nextControls = {
-          ...currentControls,
-          mode: runtimeMode ?? currentControls.mode,
-          modeLabel: translateEnum(runtimeMode ?? currentControls.mode),
-          killSwitch: streamEvent.data.kill_switch ?? currentControls.killSwitch,
-          environment: streamEvent.data.environment ?? currentControls.environment,
+      if (metric.key === "kill_switch") {
+        return {
+          ...metric,
+          value: nextControls.killSwitch ? metricLabels.active : metricLabels.armed,
+          hint: nextControls.killSwitch ? metricLabels.halted : metricLabels.readyState,
+          tone: nextControls.killSwitch ? ("danger" as const) : ("primary" as const),
         };
+      }
 
-        setMetrics((currentMetrics) =>
-          patchMetricsFromStream(currentMetrics, streamEvent.data, nextControls, metricLabels),
-        );
-        return nextControls;
-      });
-
-      setSummary((currentSummary) =>
-        patchSummaryFromStream(currentSummary, streamEvent.data, {
-          deskBias: dictionary.metricHints.deskBias,
-        }),
-      );
-      setAlerts((currentAlerts) =>
-        upsertAlert(currentAlerts, streamEvent.data, translateEnum).map((alert) => ({
-          ...alert,
-          reason: localizeGeneratedCopy(dictionary, alert.reason),
-          target: localizeGeneratedCopy(dictionary, alert.target),
-        })),
-      );
+      return metric;
     });
-  }, [dictionary.metricHints.deskBias, lastEvent, metricLabels, translateEnum]);
+  }
 
   function openDialog(dialog: Exclude<RiskDialog, null>) {
     setActiveDialog(dialog);
@@ -142,7 +114,7 @@ export function RiskControlCenter({ data }: { data: RiskPageData }) {
     };
 
     setControls(nextState);
-    setMetrics((currentMetrics) => patchMetricValues(currentMetrics, normalizedControls, metricLabels));
+    setMetrics((currentMetrics) => patchMetricValues(currentMetrics, normalizedControls));
   }
 
   function handleResult(result: OperationActionResult) {

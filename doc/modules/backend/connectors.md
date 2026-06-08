@@ -85,12 +85,13 @@
 - **`PolymarketRewardOrderBook`**：token_id、bids、asks、observed_at
 - 常量：`ENRICH_TIMEOUT = 10s`、`ENRICH_MAX_RETRIES = 3`、`ENRICH_RETRY_BASE_DELAY = 500ms`、`MAX_REWARD_MARKET_PAGES = 1000`
 - `fetch_current_markets()` 对分页做重复 cursor / 最大页数 / condition id 去重保护；token 会按 ID 去重。仅当原始 market 缺少两个 token 时才要求详情补全，补全后仍不完整或目录为空会返回错误，调用方保留上一版 catalog；详情请求失败但原始记录已完整时不阻断目录替换。
-- `fetch_order_books(token_ids)` 优先使用 CLOB `POST /books` 批量拉取盘口；批量请求失败或遗漏 token 时，再使用固定并发窗口逐个调用 `GET /book` 补齐。整批无可用盘口时返回 dependency error，部分失败会记录告警。
+- `fetch_order_books(token_ids)` 优先使用 CLOB `POST /books` 批量拉取盘口；批量请求失败或遗漏 token 时，再使用固定并发窗口逐个调用 `GET /book` 补齐。每个盘口必须携带可解析的 CLOB 毫秒 `timestamp`，并作为 `observed_at` 传给缓存；整批无可用盘口时返回 dependency error，部分失败会记录告警。
 - 用途：`market_sync.rs` 填充 `reward_markets` 表
 
 ### Orderbook HTTP
 
 - **`OrderbookHttpClient`**：API/Worker 读取独立 orderbook 服务缓存；Worker 通过 `register_tokens()` 原子替换来源 token 集合
+- `get_books()` 使用 `POST /orderbook/batch` 一次读取多个 token；rewards full/reconcile 不再逐 token 发 HTTP 请求
 - register/ingest/delete 写请求携带 `x-polyedge-orderbook-token`，值来自 `POLYEDGE_ORDERBOOK__WRITE_TOKEN`
 - HTTP 注册和注销失败会返回 `Result` 错误，不再静默吞掉非成功响应
 - 单盘口读取只把 404 映射为 `None`；其他非成功 HTTP 状态会作为 dependency error 返回，不尝试把错误响应解码成盘口

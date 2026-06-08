@@ -115,51 +115,6 @@ async fn arbitrage_routes_return_recorded_opportunities() {
         .await
         .expect("record analysis");
 
-    let mut emitted_ids = HashSet::new();
-    let mut emitted_id_order = VecDeque::new();
-    let mut last_arbitrage_sequence = None;
-    let stream_chunk = build_stream_chunk(
-        &state,
-        "arbitrage",
-        0,
-        &mut emitted_ids,
-        &mut emitted_id_order,
-        &mut last_arbitrage_sequence,
-    )
-    .await
-    .expect("build arbitrage stream");
-    assert!(stream_chunk.contains("event: arbitrage.scan.started"));
-    assert!(stream_chunk.contains("event: arbitrage.validation.passed"));
-    assert!(last_arbitrage_sequence.is_some());
-
-    let mut resumed_ids = HashSet::new();
-    let mut resumed_id_order = VecDeque::new();
-    let mut resumed_sequence = Some(1);
-    let resumed_stream_chunk = build_stream_chunk(
-        &state,
-        "arbitrage",
-        0,
-        &mut resumed_ids,
-        &mut resumed_id_order,
-        &mut resumed_sequence,
-    )
-    .await
-    .expect("build resumed arbitrage stream");
-    assert!(!resumed_stream_chunk.contains("event: arbitrage.scan.started"));
-    assert!(resumed_stream_chunk.contains("event: arbitrage.opportunity.observed"));
-
-    let second_stream_chunk = build_stream_chunk(
-        &state,
-        "arbitrage",
-        1,
-        &mut emitted_ids,
-        &mut emitted_id_order,
-        &mut last_arbitrage_sequence,
-    )
-    .await
-    .expect("build arbitrage stream heartbeat");
-    assert!(second_stream_chunk.contains("polyedge arbitrage stream heartbeat"));
-
     let app = build_app(state);
     let request_id = format!("req_{}", Uuid::now_v7());
     let token = issue_token(&signing_key, "test-key", &request_id);

@@ -17,7 +17,7 @@ fn has_unresolved_live_reconciliation(orders: &[ManagedRewardOrder]) -> bool {
                 || order.reason.contains("awaiting final reconciliation")
                 || order
                     .reason
-                    .contains("external order lookup returned not found"))
+                    .contains(LIVE_EXTERNAL_ORDER_NOT_FOUND_MARKER))
     })
 }
 

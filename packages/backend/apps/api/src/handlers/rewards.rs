@@ -5,6 +5,7 @@ async fn read_reward_bot_snapshot(
 ) -> std::result::Result<Json<ApiResponse<RewardBotSnapshot>>, HttpError> {
     let trace_id = new_trace_id();
     let order_query = RewardOrderListQuery::new(
+        String::new(), // account_id injected by service from config
         query.orders_search.clone(),
         query.orders_status.clone(),
         query.orders_sort_by.clone(),

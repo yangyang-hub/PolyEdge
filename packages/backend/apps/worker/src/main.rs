@@ -1,4 +1,4 @@
-use futures::{StreamExt as _, stream};
+use futures::StreamExt as _;
 use polyedge_application::{
     ArbitrageAnalysisRunView, ArbitrageOpportunityListFilters, ArbitrageOpportunityView,
     ArbitrageScanView, ArbitrageValidationConfig, AuthenticatedActor, BookSnapshot,
@@ -27,10 +27,10 @@ use polyedge_connectors::{
     PaperOrderRequest, PaperOrderStatusRequest, PolymarketAcceptedOrderStatus,
     PolymarketBinaryBookSnapshot, PolymarketBookConnector, PolymarketBookLevel,
     PolymarketDataApiConnector, PolymarketGammaConnector, PolymarketGammaMarket,
-    PolymarketMarketRefs, PolymarketRewardMarket,
-    PolymarketRewardsConnector, PolymarketSignatureScheme, PolymarketTokenOrderSide,
-    PolymarketWalletPosition, RssNewsConnector, RssNewsSourceConfig,
-    normalize_polymarket_ws_order_message, normalize_polymarket_ws_trade_message,
+    PolymarketMarketRefs, PolymarketRewardMarket, PolymarketRewardsConnector,
+    PolymarketSignatureScheme, PolymarketTokenOrderSide, PolymarketWalletPosition,
+    RssNewsConnector, RssNewsSourceConfig, normalize_polymarket_ws_order_message,
+    normalize_polymarket_ws_trade_message,
 };
 use polyedge_domain::{
     AppError, EventStatus, EvidenceDirection, EvidenceStatus, MarketStatus, OrderStatus,

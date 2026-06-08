@@ -489,6 +489,47 @@ fn live_status_after_pending_cancel_requires_retry() {
 }
 
 #[test]
+fn successful_live_lookup_clears_external_order_not_found_lock() {
+    let mut order = live_test_open_order("yes_live");
+    order.scoring = false;
+    order.reason = format!(
+        "{LIVE_EXTERNAL_ORDER_NOT_FOUND_MARKER}; manual reconciliation required: pm_yes_live"
+    );
+    let external_order_id = order.external_order_id.clone().expect("external order id");
+
+    let (recovered, event) = apply_live_reward_status_update_to_order(
+        order,
+        ConnectorOrderStatusUpdate {
+            event_id: "evt_lookup_recovered".to_string(),
+            connector_name: POLYMARKET_CONNECTOR_NAME.to_string(),
+            external_order_id,
+            status: OrderStatus::Open,
+        },
+        "trc_lookup_recovered",
+    )
+    .expect("successful lookup must clear not-found lock");
+
+    assert!(recovered.scoring);
+    assert!(!recovered.reason.contains(LIVE_EXTERNAL_ORDER_NOT_FOUND_MARKER));
+    assert_eq!(event.event_type, "reward_live_external_order_recovered");
+    assert!(!has_unresolved_live_reconciliation(&[recovered]));
+}
+
+#[test]
+fn sibling_cancel_targets_only_opposite_buy_quote() {
+    let filled = live_test_open_order("yes_live");
+    let mut opposite_buy = live_test_open_order("no_live");
+    opposite_buy.outcome = "NO".to_string();
+    let mut opposite_exit = opposite_buy.clone();
+    opposite_exit.id = "rewexit_no_live".to_string();
+    opposite_exit.side = RewardOrderSide::Sell;
+    opposite_exit.status = ManagedRewardOrderStatus::ExitPending;
+
+    assert!(is_sibling_live_buy_order(&opposite_buy, &filled));
+    assert!(!is_sibling_live_buy_order(&opposite_exit, &filled));
+}
+
+#[test]
 fn live_cancel_candidates_retry_rejected_post_only_violation_cancel() {
     let config = RewardBotConfig {
         account_id: "reward_live".to_string(),

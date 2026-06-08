@@ -79,6 +79,21 @@ impl RewardBotStore for PostgresRewardBotStore {
         Ok(())
     }
 
+    async fn record_worker_heartbeat(
+        &self,
+        account_id: &str,
+        observed_at: OffsetDateTime,
+    ) -> Result<()> {
+        postgres_record_reward_worker_heartbeat(&self.pool, account_id, observed_at).await
+    }
+
+    async fn latest_worker_heartbeat(
+        &self,
+        account_id: &str,
+    ) -> Result<Option<OffsetDateTime>> {
+        postgres_latest_reward_worker_heartbeat(&self.pool, account_id).await
+    }
+
     async fn enqueue_control_command(&self, command: RewardControlCommand) -> Result<()> {
         postgres_enqueue_reward_control_command(&self.pool, command).await
     }
@@ -279,6 +294,10 @@ impl RewardBotStore for PostgresRewardBotStore {
         postgres_count_quote_plans(&self.pool).await
     }
 
+    async fn latest_quote_plan_updated_at(&self) -> Result<Option<OffsetDateTime>> {
+        postgres_latest_quote_plan_updated_at(&self.pool).await
+    }
+
     async fn list_quote_plans_page(
         &self,
         query: &RewardQuotePlanListQuery,
@@ -290,7 +309,7 @@ impl RewardBotStore for PostgresRewardBotStore {
         postgres_list_reward_orders_page(&self.pool, query).await
     }
 
-    async fn list_positions(&self, limit: u16) -> Result<Vec<RewardPosition>> {
+    async fn list_positions(&self, account_id: &str, limit: u16) -> Result<Vec<RewardPosition>> {
         let rows = sqlx::query(
             r#"
             SELECT account_id,
@@ -302,11 +321,12 @@ impl RewardBotStore for PostgresRewardBotStore {
                    realized_pnl,
                    updated_at
             FROM reward_positions
-            WHERE size <> 0
+            WHERE account_id = $1 AND size <> 0
             ORDER BY updated_at DESC
-            LIMIT $1
+            LIMIT $2
             "#,
         )
+        .bind(account_id)
         .bind(i64::from(limit))
         .fetch_all(&self.pool)
         .await
@@ -320,7 +340,7 @@ impl RewardBotStore for PostgresRewardBotStore {
         rows.iter().map(reward_position_from_row).collect()
     }
 
-    async fn list_events(&self, limit: u16) -> Result<Vec<RewardRiskEvent>> {
+    async fn list_events(&self, account_id: &str, limit: u16) -> Result<Vec<RewardRiskEvent>> {
         let rows = sqlx::query(
             r#"
             SELECT id,
@@ -333,10 +353,12 @@ impl RewardBotStore for PostgresRewardBotStore {
                    metadata_json,
                    created_at
             FROM reward_risk_events
+            WHERE account_id = $1
             ORDER BY created_at DESC
-            LIMIT $1
+            LIMIT $2
             "#,
         )
+        .bind(account_id)
         .bind(i64::from(limit))
         .fetch_all(&self.pool)
         .await
@@ -531,16 +553,18 @@ impl RewardBotStore for PostgresRewardBotStore {
         Ok(count.max(0) as usize)
     }
 
-    async fn list_fills(&self, limit: u16) -> Result<Vec<RewardFill>> {
+    async fn list_fills(&self, account_id: &str, limit: u16) -> Result<Vec<RewardFill>> {
         let rows = sqlx::query(
             r#"
             SELECT id, order_id, account_id, condition_id, token_id, outcome, side,
                    price, size, notional_usd, role, realized_pnl, reason, trace_id, created_at
             FROM reward_fills
+            WHERE account_id = $1
             ORDER BY created_at DESC
-            LIMIT $1
+            LIMIT $2
             "#,
         )
+        .bind(account_id)
         .bind(i64::from(limit))
         .fetch_all(&self.pool)
         .await

@@ -16,10 +16,11 @@ async fn sync_external_account_state(
         return;
     }
 
+    let mut synced_account = cycle_account.clone();
     let mut balance_updated = false;
     match connector.refresh_balance().await {
         Ok(balance) => {
-            cycle_account.available_usd = balance.balance;
+            synced_account.available_usd = balance.balance;
             balance_updated = true;
         }
         Err(error) => {
@@ -29,8 +30,8 @@ async fn sync_external_account_state(
 
     let settings = &state.settings.polymarket;
     // Sync wallet address from Polymarket configuration if not yet set.
-    if cycle_account.wallet_address.as_deref() != Some(&settings.account_id) {
-        cycle_account.wallet_address = Some(settings.account_id.clone());
+    if synced_account.wallet_address.as_deref() != Some(&settings.account_id) {
+        synced_account.wallet_address = Some(settings.account_id.clone());
     }
     let position_snapshot = if settings.account_id.trim().is_empty() {
         warn!("Polymarket account_id not configured, skipping external position sync");
@@ -45,7 +46,7 @@ async fn sync_external_account_state(
                             .filter(|position| position.size > Decimal::ZERO)
                             .map(|position| {
                                 polymarket_position_to_reward(
-                                    &cycle_account.account_id,
+                                    &synced_account.account_id,
                                     &position,
                                 )
                             })
@@ -70,16 +71,21 @@ async fn sync_external_account_state(
         return;
     }
 
-    if let Some(positions) = position_snapshot.as_ref() {
-        cycle_positions.clone_from(positions);
-    }
-    cycle_account.updated_at = OffsetDateTime::now_utc();
-    if let Err(error) = state
+    synced_account.updated_at = OffsetDateTime::now_utc();
+    match state
         .reward_bot_service
-        .apply_account_sync(cycle_account, position_snapshot.as_deref(), trace_id)
+        .apply_account_sync(&synced_account, position_snapshot.as_deref(), trace_id)
         .await
     {
-        warn!(error = %error, "failed to persist external account sync outcome");
+        Ok(()) => {
+            *cycle_account = synced_account;
+            if let Some(positions) = position_snapshot {
+                *cycle_positions = positions;
+            }
+        }
+        Err(error) => {
+            warn!(error = %error, "failed to persist external account sync outcome");
+        }
     }
 }
 

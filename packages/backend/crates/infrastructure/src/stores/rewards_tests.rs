@@ -100,6 +100,7 @@ mod rewards_tests {
             .expect("list account a");
         assert_eq!(account_a_positions.len(), 1);
         assert_eq!(account_a_positions[0].token_id, "replacement");
+        assert_eq!(account_a_positions[0].size, Decimal::from(9));
         assert_eq!(
             store
                 .list_account_positions("account_b")
@@ -107,6 +108,18 @@ mod rewards_tests {
                 .expect("list account b")[0]
                 .token_id,
             "other"
+        );
+
+        store
+            .apply_account_sync(&account_a, Some(&[]), "trc_empty")
+            .await
+            .expect("apply empty account snapshot");
+        assert!(
+            store
+                .list_account_positions("account_a")
+                .await
+                .expect("list empty account a")
+                .is_empty()
         );
     }
 

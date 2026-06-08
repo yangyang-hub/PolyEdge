@@ -81,6 +81,9 @@ The designated sync producer is now the standalone `polyedge-orderbook` service.
 | `migrations/0025_markets_active_volume_index.sql` | Open/tradable market 24h-volume query index |
 | `migrations/0026_reward_control_running_lease_index.sql` | Rewards running control command lease query index |
 | `migrations/0028_reward_positions_external_inventory.sql` | Allow complete external rewards account inventory outside the reward catalog |
+| `migrations/0030_rewards_snapshot_indexes.sql` | Indexes for reward_fills and reward_positions snapshot queries |
+| `migrations/0031_worker_query_indexes.sql` | Indexes for worker orders, raw_events event_time, and copytrade source_trades queries |
+| `migrations/0032_reward_worker_heartbeats.sql` | Rewards worker heartbeat used by snapshot running status |
 
 ## 仓库结构
 
@@ -97,23 +100,23 @@ The designated sync producer is now the standalone `polyedge-orderbook` service.
 - 前端控制台已有 `dashboard / markets / events / radar / rewards / copy-trading / signals / positions / risk / approvals / replay / settings` 页面。
 - 前端数据层统一走 `src/lib/api/*`（读取按领域文件 `markets.ts` / `signals.ts` / `risk.ts`… 基于 `base.ts`，写操作走 `actions.ts`），页面装配在 `src/features/*/loaders` 和 `src/features/*/components`。`src/server/` 目前是空目录（历史遗留）。
 - 前端仅支持中文，文案走 `@/lib/i18n/dictionaries` 字典导入。
-- 前端不再提供 mock 数据模式；`NEXT_PUBLIC_POLYEDGE_API_BASE_URL` 必须指向 Rust 后端，读写和 SSE 都走真实 `/api/v1/...`。
+- 前端不再提供 mock 数据模式；`NEXT_PUBLIC_POLYEDGE_API_BASE_URL` 必须指向 Rust 后端，读写都走真实 `/api/v1/...`。
 - 当前控制台会话只保留 `off`，不是生产级真实会话。
-- 后端 API 已覆盖 markets、events、news、evidences、signals、orders、trades、positions、pricing、arbitrage、rewards bot、risk、approvals、system、SSE、connector callback 和 orderbook（`GET /api/v1/orderbook/{token_id}`）等主路径。
-- `polyedge-worker` 支持 news ingest、news promotion、arbitrage radar、rewards bot live 策略、copytrade 跟单、execution drain、paper reconciliation、Polymarket order/fill/user-event、orderbook token 注册任务。市场同步和 orderbook 订阅已迁移到独立 `polyedge-orderbook` 服务；orderbook 服务启动时先暴露 HTTP `/healthz`，再后台执行 initial/periodic market sync，避免外部 Polymarket API 延迟阻塞容器健康检查；Gamma 与 rewards 目录同步并发执行且互不阻断，Gamma keyset 与 rewards 分页均具备重复 cursor、末页 sentinel、最大页数和去重保护，rewards 空目录或详情补全后仍不完整时保留上一版目录；orderbook WS + poll stream 遵守 `POLYEDGE_ORDERBOOK_STREAM__RESTART_INTERVAL_SECS`，消费 `book` + `price_change`，每个 poll 周期对全部注册 token 做批量快照恢复，内部写接口要求 `POLYEDGE_ORDERBOOK__WRITE_TOKEN`，缓存统一排序后裁剪最优档位并拒绝旧快照覆盖。
-- 套利雷达是只读链路：发现、记录、校验、分析、展示和 SSE 推送已具备，但不会创建 execution request 或订单。
-- Rewards bot 仅支持 `live` 实盘模式（`execution_mode` 字段已移除，旧配置键读取时忽略）。它只使用 `reward_markets` 表作为奖励市场来源，并通过 `OrderbookHttpClient` 读取候选和活跃订单/持仓盘口，生成 YES/NO post-only 双边买单计划。worker 使用 `LivePolymarketConnector` 提交 post-only GTC token 买单、FAK flatten 卖单并撤销本系统托管订单；confirmed fill 按 external trade id + external order id 幂等入账，买入 fill 与退出 intent 同事务落库，提交结果未知、待最终对账或外部订单 404 会暂停新增买单但继续同步、撤单和卖出退出。full tick 和 fast reconcile 会先同步 managed orders；本轮有新增 confirmed fill，或数据库最新 confirmed fill 距今不足 120 秒时，都会保留本地 balance/positions，等待 CLOB/Data API 最终一致性追平后再同步完整外部账户快照。成功 positions 快照原子替换该账户全部持仓，失败时保留上一版。即使 `enabled=false` 且没有开放订单，worker 仍会尝试刷新外部账户状态。API 只从数据库读取 rewards snapshot，不直接请求 Polymarket；`orders` 与 `orders_page` 都描述本地 managed orders。账户范围外开放订单、订单计分查询和奖励结算对账仍是缺口。
+- 后端 API 已覆盖 markets、events、news、evidences、signals、orders、trades、positions、pricing、arbitrage、rewards bot、risk、approvals、system、connector callback 和 orderbook（`GET /api/v1/orderbook/{token_id}`）等主路径。
+- `polyedge-worker` 支持 news ingest、news promotion、arbitrage radar、rewards bot live 策略、copytrade 跟单、execution drain、paper reconciliation、Polymarket order/fill/user-event、orderbook token 注册任务。市场同步和 orderbook 订阅已迁移到独立 `polyedge-orderbook` 服务；orderbook 服务启动时先暴露 HTTP `/healthz`，再后台执行 initial/periodic market sync，避免外部 Polymarket API 延迟阻塞容器健康检查；Gamma 与 rewards 目录同步并发执行且互不阻断，Gamma keyset 与 rewards 分页均具备重复 cursor、末页 sentinel、最大页数和去重保护，rewards 空目录或详情补全后仍不完整时保留上一版目录；orderbook WS + poll stream 遵守 `POLYEDGE_ORDERBOOK_STREAM__RESTART_INTERVAL_SECS`，消费 `book` + `price_change`，每个 poll 周期对全部注册 token 做批量快照恢复，poll 使用 CLOB 服务端时间戳且同时间戳 WS 优先，内部写接口要求 `POLYEDGE_ORDERBOOK__WRITE_TOKEN`，缓存统一排序后裁剪最优档位并拒绝旧快照覆盖。
+- 套利雷达是只读链路：发现、记录、校验、分析和展示已具备，但不会创建 execution request 或订单。
+- Rewards bot 仅支持 `live` 实盘模式（`execution_mode` 字段已移除，旧配置键读取时忽略）。它只使用 `reward_markets` 表作为奖励市场来源，并通过 `OrderbookHttpClient` batch API 读取候选和活跃订单/持仓盘口，生成 YES/NO post-only 双边买单计划。worker 使用 `LivePolymarketConnector` 提交 post-only GTC token 买单、FAK flatten 卖单并撤销本系统托管订单；confirmed fill 按 external trade id + external order id 幂等入账，买入 fill 与退出 intent 同事务落库，提交结果未知、待最终对账或外部订单 404 会暂停新增买单但继续同步、撤单和卖出退出，后续成功查询会自动解除 404 锁；成交后 sibling cancel 只撤同 condition 对侧 buy，不撤 sell exit。full tick 和 fast reconcile 会先同步 managed orders；本轮有新增 confirmed fill，或数据库最新 confirmed fill 距今不足 120 秒时，都会保留本地 balance/positions，等待 CLOB/Data API 最终一致性追平后再同步完整外部账户快照。成功 positions 快照原子替换该账户全部持仓，失败时保留上一版。即使 `enabled=false` 且没有开放订单，worker 仍会尝试刷新外部账户状态。worker 按账户写入 heartbeat，API snapshot 仅在配置启用且 heartbeat 不超过 2 分钟时返回 `running=true`；API 不直接请求 Polymarket，`orders` 与 `orders_page` 都描述本地 managed orders。账户范围外开放订单、订单计分查询和奖励结算对账仍是缺口。
 - Rewards live 会在提交旧 intent 前先执行当前盘口/资格撤单检查；任一提交结果未知、待最终对账或外部订单 404 会暂停全部新增买单，但继续同步、撤单和卖出退出。CLOB `post_order` 只要返回订单 ID 就保留为 accepted 供后续成交/状态对账，包含 `unmatched` / `canceled` / 未知状态；managed order 的后续 upsert 会同步更新实际提交价格和数量，post-only exit 被取消后的重试仍保持 post-only。
 - Polymarket connector 已迁移到 CLOB V2 Rust crate：`packages/backend/Cargo.toml` 保留 dependency key `polymarket-client-sdk`，实际指向 `polymarket_client_sdk_v2`；live CLOB 签名类型支持 `eoa`、`proxy`、`gnosis_safe`、`poly_1271`，其中 `poly_1271` 用于已有 Deposit Wallet（`FUNDER` 填 deposit wallet 地址），下单前会调用 CLOB balance allowance update，刷新失败时该次余额读取直接失败，不再继续使用可能陈旧的 allowance/balance；已支持 collateral balance 查询和开放订单全量分页，下单价格当前收敛到最多 2 位小数，同一 trade 内重复 maker entry 会聚合后入账。
 - 聪明钱跟单（copy-trading）已精简为只读跟踪+分析子系统：跟踪多个 Polymarket 钱包地址（`TrackedWallet`）、通过 Polymarket Data API（`data-api.polymarket.com`，通过 `PolymarketDataApiConnector`）检测钱包新成交、钱包分析统计（胜率/ROI/成交量）、`Analyze` 与钱包管理前端 UI。模拟引擎（模拟资金账本、仓位、订单、PnL）已移除，跟单不会下单。未处理 source trades 按时间排序并记录。API 服务不执行 copytrade 跟单循环或钱包分析，前端操作会写入数据库控制命令，由 worker 领取执行；`POLYEDGE_COPYTRADE__ENABLED=true` 启用 worker 轮询。
 - Polymarket 运行时不再提供 mock mode；市场列表走 Gamma 实时数据，私有订单/成交任务需要真实凭证、真实账户、小额演练和运维 runbook。
-- 数据库迁移目前到 `0028_reward_positions_external_inventory.sql`。
+- 数据库迁移目前到 `0032_reward_worker_heartbeats.sql`。
 
 ## 主要缺口
 
 - 生产级真实会话体系未完成；当前前端只保留 `off` 模式。
 - 内部 JWT 签名 helper 已有代码路径，但当前不会从 `off` 签发可信令牌。
-- `signals / risk / events` SSE 仍是 snapshot-backed stream；`arbitrage` 已是 outbox-backed 增量流，但尚未统一到全资源事件总线。
+- 前端已移除 SSE 实时流机制，所有页面数据通过 REST API 初始加载。
 - 新闻源可以抓取、去重、提升为 events/evidences，但尚未自动生成 signals。
 - Rewards live maker 已接入真实 post-only 买单提交、撤单、本系统托管订单成交同步、成交后现金/库存/PnL 更新、sibling leg 撤单和 exit/flatten sell 下单；worker 在 managed order 同步后刷新 CLOB 余额和 Data API 完整持仓快照，API 只从数据库读取且不再需要 Polymarket 凭证。仍未完成账户范围外开放订单同步、订单计分查询或奖励结算对账。实盘策略仍应沿用“未成交 maker 买单不硬锁全局 USDC、成交后才更新现金/库存并撤超额挂单”的资金模型。
 - Polymarket live 链路已具备 CLOB V2 SDK、认证、token buy/sell 下单和撤单能力，并可配置已有 Deposit Wallet 的 `poly_1271` 签名；仍未实现 relayer 建钱包、pUSD 入金/approval 等 Deposit Wallet 生命周期管理，且仍需真实资金链路小额验证。
@@ -239,7 +242,6 @@ cp deploy/.env.example deploy/.env
 - `packages/front/src/lib/api/base.ts`
 - `packages/front/src/lib/api/actions.ts`
 - `packages/front/src/lib/api/copytrade.ts`
-- `packages/front/src/app/api/stream/[channel]/route.ts`
 - `packages/front/src/proxy.ts`
 - `packages/front/src/lib/i18n/*`
 - `packages/front/src/features/radar/*`
@@ -269,6 +271,9 @@ cp deploy/.env.example deploy/.env
 - `packages/backend/crates/application/src/orderbook_registry.rs`
 - `packages/backend/crates/infrastructure/src/stores/orderbook_registry.rs`
 - `packages/backend/migrations/0028_reward_positions_external_inventory.sql`
+- `packages/backend/migrations/0030_rewards_snapshot_indexes.sql`
+- `packages/backend/migrations/0031_worker_query_indexes.sql`
+- `packages/backend/migrations/0032_reward_worker_heartbeats.sql`
 
 部署：
 
@@ -287,5 +292,5 @@ cp deploy/.env.example deploy/.env
 
 - 是否新增、删除或重命名页面、API、worker 子命令、迁移或部署服务。
 - 是否修改环境变量、默认端口、运行模式、鉴权方式或依赖。
-- 是否改变前后端贯通状态、SSE 状态、Polymarket live 状态或部署命令。
+- 是否改变前后端贯通状态、Polymarket live 状态或部署命令。
 - 顶部日期是否需要更新。

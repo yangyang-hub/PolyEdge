@@ -7,7 +7,6 @@ import { MetricCard } from "@/components/shared/metric-card";
 import { PageHeader } from "@/components/shared/page-header";
 import { PaginationBar } from "@/components/pagination-bar";
 import { StatusPill } from "@/components/shared/status-pill";
-import { useConsoleRealtimeChannel } from "@/components/shared/console-realtime-provider";
 import { WorkbenchDetailPane, WorkbenchLayout } from "@/components/shared/workbench-layout";
 import { WorkbenchSegmentedControl } from "@/components/shared/workbench-segmented-control";
 import { Button } from "@/components/ui/button";
@@ -16,15 +15,7 @@ import { dictionary, translateEnum, formatMessage } from "@/lib/i18n/dictionarie
 import type { RadarFilter, RadarPageData, RadarView } from "@/features/radar/types";
 import { isKeyboardSelect } from "@/lib/keyboard";
 
-import {
-  buildLiveAnalysis,
-  buildMetrics,
-  compareRadarPriority,
-  patchValidation,
-  upsertOpportunity,
-  upsertScan,
-  viewMatches,
-} from "@/features/radar/lib/radar-stream";
+import { viewMatches, compareRadarPriority } from "@/features/radar/lib/radar-helpers";
 import { OpportunityDetail } from "./opportunity-detail";
 
 type ArbitrageRadarWorkbenchProps = {
@@ -33,29 +24,11 @@ type ArbitrageRadarWorkbenchProps = {
 
 export function ArbitrageRadarWorkbench({ data }: ArbitrageRadarWorkbenchProps) {
   const format = formatMessage;
-  const arbitrageStream = useConsoleRealtimeChannel("arbitrage");
   const [filter, setFilter] = useState<RadarFilter>("all");
   const [view, setView] = useState<RadarView>("active");
   const [selectedId, setSelectedId] = useState(data.selectedOpportunityId);
-  const [liveOpportunities, setLiveOpportunities] = useState(data.opportunities);
-  const [liveScans, setLiveScans] = useState(data.scans);
-  const [liveAnalysis, setLiveAnalysis] = useState(data.analysis);
   const deferredFilter = useDeferredValue(filter);
 
-  // Build a market-question lookup from live opportunities for SSE analysis updates.
-  const marketQuestions = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const opp of liveOpportunities) {
-      if (!map.has(opp.marketId)) {
-        map.set(opp.marketId, opp.marketQuestion);
-      }
-    }
-    return map;
-  }, [liveOpportunities]);
-  const marketQuestionById = useMemo(
-    () => (id: string) => marketQuestions.get(id) ?? id,
-    [marketQuestions],
-  );
   const filterButtons: Array<{ key: RadarFilter; label: string }> = [
     { key: "all", label: dictionary.radar.all },
     { key: "binary_buy_both", label: dictionary.radar.buyBoth },
@@ -68,69 +41,16 @@ export function ArbitrageRadarWorkbench({ data }: ArbitrageRadarWorkbenchProps) 
     { key: "history", label: dictionary.radar.history },
   ];
 
-  useEffect(() => {
-    const streamEvent = arbitrageStream.lastEvent;
-
-    if (!streamEvent) {
-      return;
-    }
-
-    if (
-      streamEvent.type === "arbitrage.opportunity.observed" ||
-      streamEvent.type === "arbitrage.opportunity.repeated" ||
-      streamEvent.type === "arbitrage.opportunity.expired"
-    ) {
-      startTransition(() => {
-        setLiveOpportunities((current) =>
-          upsertOpportunity(current, streamEvent.data, dictionary, translateEnum, format),
-        );
-        setSelectedId((current) => current || streamEvent.data.opportunity_id || "");
-      });
-      return;
-    }
-
-    if (
-      streamEvent.type === "arbitrage.validation.passed" ||
-      streamEvent.type === "arbitrage.validation.failed"
-    ) {
-      startTransition(() => {
-        setLiveOpportunities((current) => patchValidation(current, streamEvent.data, dictionary, translateEnum));
-      });
-      return;
-    }
-
-    if (streamEvent.type === "arbitrage.scan.started" || streamEvent.type === "arbitrage.scan.completed") {
-      startTransition(() => {
-        setLiveScans((current) => upsertScan(current, streamEvent.data, dictionary));
-      });
-      return;
-    }
-
-    if (streamEvent.type === "arbitrage.analysis.generated") {
-      const analysis = buildLiveAnalysis(streamEvent.data, translateEnum, marketQuestionById);
-      if (analysis) {
-        startTransition(() => {
-          setLiveAnalysis(analysis);
-        });
-      }
-    }
-  }, [arbitrageStream.lastEvent, dictionary, translateEnum, format, marketQuestionById]);
-
-  const metrics = useMemo(
-    () => buildMetrics(liveOpportunities, liveScans, dictionary, format),
-    [dictionary, format, liveOpportunities, liveScans],
-  );
-
   const filteredOpportunities = useMemo(() => {
-    return liveOpportunities
+    return data.opportunities
       .filter((opportunity) => viewMatches(view, opportunity))
       .filter((opportunity) => deferredFilter === "all" || opportunity.opportunityType === deferredFilter)
       .slice()
       .sort(compareRadarPriority);
-  }, [liveOpportunities, deferredFilter, view]);
+  }, [data.opportunities, deferredFilter, view]);
 
   const oppsPagination = usePagination(filteredOpportunities.length, 20);
-  const scansPagination = usePagination(liveScans.length, 15);
+  const scansPagination = usePagination(data.scans.length, 15);
 
   useEffect(() => {
     oppsPagination.reset();
@@ -139,8 +59,8 @@ export function ArbitrageRadarWorkbench({ data }: ArbitrageRadarWorkbenchProps) 
   const selectedOpportunity =
     filteredOpportunities.find((opportunity) => opportunity.id === selectedId) ??
     filteredOpportunities[0] ??
-    liveOpportunities.find((opportunity) => opportunity.id === selectedId) ??
-    liveOpportunities[0] ??
+    data.opportunities.find((opportunity) => opportunity.id === selectedId) ??
+    data.opportunities[0] ??
     null;
 
   function selectOpportunity(opportunityId: string) {
@@ -164,17 +84,14 @@ export function ArbitrageRadarWorkbench({ data }: ArbitrageRadarWorkbenchProps) 
         className="border-none pb-0"
         actions={
           <>
-            <StatusPill tone={arbitrageStream.connection === "open" ? "success" : "warning"}>
-              {arbitrageStream.connection}
-            </StatusPill>
-            <StatusPill tone="success">{formatMessage(dictionary.radar.observed, { count: liveOpportunities.length })}</StatusPill>
-            <StatusPill tone="primary">{formatMessage(dictionary.radar.scans, { count: liveScans.length })}</StatusPill>
+            <StatusPill tone="success">{formatMessage(dictionary.radar.observed, { count: data.opportunities.length })}</StatusPill>
+            <StatusPill tone="primary">{formatMessage(dictionary.radar.scans, { count: data.scans.length })}</StatusPill>
           </>
         }
       />
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        {metrics.map((metric) => (
+        {data.metrics.map((metric) => (
           <MetricCard
             key={metric.title}
             title={metric.title}
@@ -317,7 +234,7 @@ export function ArbitrageRadarWorkbench({ data }: ArbitrageRadarWorkbenchProps) 
         <WorkbenchDetailPane className="space-y-5">
           <OpportunityDetail opportunity={selectedOpportunity} />
 
-          {liveAnalysis ? (
+          {data.analysis ? (
             <div className="space-y-4 rounded-md bg-popover/70 p-4">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
@@ -325,14 +242,14 @@ export function ArbitrageRadarWorkbench({ data }: ArbitrageRadarWorkbenchProps) 
                     {dictionary.radar.analysis}
                   </p>
                   <p className="mt-1 text-sm text-foreground">
-                    {liveAnalysis.generatedClock} / {liveAnalysis.lookbackHours}
+                    {data.analysis.generatedClock} / {data.analysis.lookbackHours}
                   </p>
                 </div>
-                <StatusPill tone="primary">{formatMessage(dictionary.metricHints.markets, { count: liveAnalysis.marketCount })}</StatusPill>
+                <StatusPill tone="primary">{formatMessage(dictionary.metricHints.markets, { count: data.analysis.marketCount })}</StatusPill>
               </div>
 
               <div className="grid grid-cols-2 gap-3">
-                {liveAnalysis.typeCounts.map((count) => (
+                {data.analysis.typeCounts.map((count) => (
                   <div key={count.typeLabel} className="rounded-md bg-accent/45 p-3">
                     <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">
                       {count.typeLabel}
@@ -343,7 +260,7 @@ export function ArbitrageRadarWorkbench({ data }: ArbitrageRadarWorkbenchProps) 
               </div>
 
               <div className="space-y-3">
-                {liveAnalysis.topMarkets.map((market) => (
+                {data.analysis.topMarkets.map((market) => (
                   <div key={market.marketId} className="rounded-md bg-accent/35 p-3">
                     <div className="flex items-start justify-between gap-3">
                       <p className="text-sm font-semibold text-foreground">{market.marketQuestion}</p>
@@ -365,7 +282,7 @@ export function ArbitrageRadarWorkbench({ data }: ArbitrageRadarWorkbenchProps) 
               {dictionary.radar.scanHistory}
             </p>
             <div className="mt-3 space-y-3">
-              {liveScans.slice(scansPagination.start, scansPagination.end).map((scan) => (
+              {data.scans.slice(scansPagination.start, scansPagination.end).map((scan) => (
                 <div key={scan.id} className="rounded-md bg-accent/35 p-3">
                   <div className="flex items-center justify-between gap-3">
                     <p className="font-mono text-xs text-foreground">{scan.startedClock}</p>
@@ -379,7 +296,7 @@ export function ArbitrageRadarWorkbench({ data }: ArbitrageRadarWorkbenchProps) 
                 </div>
               ))}
             </div>
-            <PaginationBar pagination={scansPagination} totalItems={liveScans.length} className="mt-3 flex items-center justify-between border-t border-border/70 pt-3" />
+            <PaginationBar pagination={scansPagination} totalItems={data.scans.length} className="mt-3 flex items-center justify-between border-t border-border/70 pt-3" />
           </div>
         </WorkbenchDetailPane>
       </WorkbenchLayout>

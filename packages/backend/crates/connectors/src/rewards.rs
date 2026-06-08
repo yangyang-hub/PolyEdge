@@ -104,6 +104,7 @@ struct RawBookLevel {
 #[derive(Debug, Deserialize)]
 struct RawOrderBook {
     asset_id: Option<String>,
+    timestamp: Option<String>,
     bids: Option<Vec<RawBookLevel>>,
     asks: Option<Vec<RawBookLevel>>,
 }

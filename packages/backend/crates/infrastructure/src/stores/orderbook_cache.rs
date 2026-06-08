@@ -62,6 +62,13 @@ impl InMemoryOrderbookCache {
         bounded.asks.truncate(self.max_levels_per_side);
         bounded
     }
+
+    fn rejects_replacement(current: &CachedOrderBook, replacement: &CachedOrderBook) -> bool {
+        current.observed_at > replacement.observed_at
+            || (current.observed_at == replacement.observed_at
+                && current.source == polyedge_application::BookSource::Ws
+                && replacement.source == polyedge_application::BookSource::Poll)
+    }
 }
 
 #[async_trait]
@@ -75,12 +82,26 @@ impl OrderbookCache for InMemoryOrderbookCache {
             .map(|entry| entry.book.clone()))
     }
 
+    async fn get_books(&self, token_ids: &[String]) -> Result<Vec<CachedOrderBook>> {
+        let books = self.books.read().await;
+        let now = now_millis();
+        Ok(token_ids
+            .iter()
+            .filter_map(|token_id| {
+                books
+                    .get(token_id)
+                    .filter(|entry| entry.expires_at_ms > now)
+                    .map(|entry| entry.book.clone())
+            })
+            .collect())
+    }
+
     async fn set_book(&self, book: &CachedOrderBook) -> Result<()> {
         let book = self.bounded_book(book);
         let mut books = self.books.write().await;
         if books
             .get(&book.token_id)
-            .is_some_and(|entry| entry.book.observed_at > book.observed_at)
+            .is_some_and(|entry| Self::rejects_replacement(&entry.book, &book))
         {
             return Ok(());
         }
@@ -101,7 +122,7 @@ impl OrderbookCache for InMemoryOrderbookCache {
             let book = self.bounded_book(book);
             if books
                 .get(&book.token_id)
-                .is_some_and(|entry| entry.book.observed_at > book.observed_at)
+                .is_some_and(|entry| Self::rejects_replacement(&entry.book, &book))
             {
                 continue;
             }
@@ -136,6 +157,24 @@ impl OrderbookCache for InMemoryOrderbookCache {
             }
         }
         Ok(stale)
+    }
+
+    async fn replace_book(&self, book: &CachedOrderBook) -> Result<bool> {
+        let book = self.bounded_book(book);
+        let mut books = self.books.write().await;
+        let now = now_millis();
+        let Some(entry) = books.get_mut(&book.token_id) else {
+            return Ok(false);
+        };
+        if entry.expires_at_ms <= now {
+            return Ok(false);
+        }
+        if Self::rejects_replacement(&entry.book, &book) {
+            return Ok(false);
+        }
+        entry.book = book;
+        entry.expires_at_ms = now + self.ttl_ms;
+        Ok(true)
     }
 
     async fn entry_count(&self) -> Result<usize> {

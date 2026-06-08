@@ -2,9 +2,10 @@ async fn postgres_list_reward_orders_page(
     pool: &PgPool,
     query: &RewardOrderListQuery,
 ) -> Result<RewardOrderPage> {
+    let account_id = query.account_id.as_str();
     let search = query.search.as_deref();
     let status = query.status.map(RewardOrderStatusFilter::as_str);
-    let total_items = postgres_count_reward_orders(pool, search, status).await?;
+    let total_items = postgres_count_reward_orders(pool, account_id, search, status).await?;
     let page = query.page_for_total(total_items);
     let offset = (page.page - 1) * page.page_size;
 
@@ -28,23 +29,25 @@ async fn postgres_list_reward_orders_page(
                created_at,
                updated_at
         FROM reward_managed_orders
-        WHERE ($1::text IS NULL
-               OR outcome ILIKE '%' || $1 || '%'
-               OR condition_id ILIKE '%' || $1 || '%'
-               OR token_id ILIKE '%' || $1 || '%')
+        WHERE account_id = $1
           AND ($2::text IS NULL
-               OR ($2 = 'open' AND status IN ('planned', 'open'))
-               OR ($2 = 'filled' AND status = 'filled')
-               OR ($2 = 'cancelled' AND status = 'cancelled')
-               OR ($2 = 'exit_pending' AND status = 'exit_pending'))
+               OR outcome ILIKE '%' || $2 || '%'
+               OR condition_id ILIKE '%' || $2 || '%'
+               OR token_id ILIKE '%' || $2 || '%')
+          AND ($3::text IS NULL
+               OR ($3 = 'open' AND status IN ('planned', 'open'))
+               OR ($3 = 'filled' AND status = 'filled')
+               OR ($3 = 'cancelled' AND status = 'cancelled')
+               OR ($3 = 'exit_pending' AND status = 'exit_pending'))
         ORDER BY {}
-        LIMIT $3
-        OFFSET $4
+        LIMIT $4
+        OFFSET $5
         "#,
         reward_order_order_by(query),
     );
 
     let rows = sqlx::query(&sql)
+        .bind(account_id)
         .bind(search)
         .bind(status)
         .bind(page.page_size as i64)
@@ -68,6 +71,7 @@ async fn postgres_list_reward_orders_page(
 
 async fn postgres_count_reward_orders(
     pool: &PgPool,
+    account_id: &str,
     search: Option<&str>,
     status: Option<&str>,
 ) -> Result<usize> {
@@ -75,17 +79,19 @@ async fn postgres_count_reward_orders(
         r#"
         SELECT COUNT(*)
         FROM reward_managed_orders
-        WHERE ($1::text IS NULL
-               OR outcome ILIKE '%' || $1 || '%'
-               OR condition_id ILIKE '%' || $1 || '%'
-               OR token_id ILIKE '%' || $1 || '%')
+        WHERE account_id = $1
           AND ($2::text IS NULL
-               OR ($2 = 'open' AND status IN ('planned', 'open'))
-               OR ($2 = 'filled' AND status = 'filled')
-               OR ($2 = 'cancelled' AND status = 'cancelled')
-               OR ($2 = 'exit_pending' AND status = 'exit_pending'))
+               OR outcome ILIKE '%' || $2 || '%'
+               OR condition_id ILIKE '%' || $2 || '%'
+               OR token_id ILIKE '%' || $2 || '%')
+          AND ($3::text IS NULL
+               OR ($3 = 'open' AND status IN ('planned', 'open'))
+               OR ($3 = 'filled' AND status = 'filled')
+               OR ($3 = 'cancelled' AND status = 'cancelled')
+               OR ($3 = 'exit_pending' AND status = 'exit_pending'))
         "#,
     )
+    .bind(account_id)
     .bind(search)
     .bind(status)
     .fetch_one(pool)
