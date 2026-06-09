@@ -215,6 +215,22 @@ impl FromStr for RewardRiskSeverity {
     }
 }
 
+/// Parameters extracted from `RewardBotConfig` for SQL-level candidate market
+/// filtering. These are the conditions that can be pushed into the database
+/// query, leaving only orderbook-dependent checks for the Rust planner.
+#[derive(Debug, Clone)]
+pub struct RewardCandidateFilter {
+    /// Minimum total_daily_rate (from `config.min_daily_reward`).
+    pub min_daily_reward: Decimal,
+    /// Minimum midpoint value (from `config.min_midpoint`).
+    pub min_midpoint: Decimal,
+    /// Maximum midpoint value (from `config.max_midpoint`).
+    pub max_midpoint: Decimal,
+    /// Per-market budget in USD (from `config.per_market_usd`).
+    /// Zero disables the budget filter in SQL.
+    pub per_market_usd: Decimal,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RewardBotConfig {
     pub enabled: bool,
@@ -477,6 +493,17 @@ impl RewardBotConfig {
         self.requote_jitter_sec = self.requote_jitter_sec.clamp(0, 600);
         self.reconcile_interval_sec = self.reconcile_interval_sec.clamp(1, 60);
         self
+    }
+
+    /// Build a `RewardCandidateFilter` from this config for SQL-level filtering.
+    #[must_use]
+    pub fn candidate_filter(&self) -> RewardCandidateFilter {
+        RewardCandidateFilter {
+            min_daily_reward: self.min_daily_reward,
+            min_midpoint: self.min_midpoint,
+            max_midpoint: self.max_midpoint,
+            per_market_usd: self.per_market_usd,
+        }
     }
 
     #[must_use]

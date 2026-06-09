@@ -166,6 +166,42 @@ impl RewardBotStore for InMemoryRewardBotStore {
         Ok(markets)
     }
 
+    async fn list_candidate_markets(
+        &self,
+        filter: &RewardCandidateFilter,
+        safety_limit: u16,
+    ) -> Result<Vec<RewardMarket>> {
+        // In-memory store lacks best_bid/best_ask data, so midpoint and budget
+        // filters are left for the Rust planner safety net. Apply only the
+        // reward_markets-side filters.
+        let mut markets: Vec<RewardMarket> = self
+            .markets
+            .read()
+            .await
+            .values()
+            .filter(|market| {
+                market.active
+                    && market
+                        .tokens
+                        .iter()
+                        .filter(|t| !t.token_id.trim().is_empty())
+                        .count()
+                        >= 2
+                    && market.total_daily_rate >= filter.min_daily_reward
+                    && market.rewards_max_spread > rust_decimal::Decimal::ZERO
+            })
+            .cloned()
+            .collect();
+        markets.sort_by(|left, right| {
+            right
+                .total_daily_rate
+                .cmp(&left.total_daily_rate)
+                .then_with(|| right.updated_at.cmp(&left.updated_at))
+        });
+        markets.truncate(usize::from(safety_limit));
+        Ok(markets)
+    }
+
     async fn list_all_active_markets(&self) -> Result<Vec<RewardMarket>> {
         let mut markets = self
             .markets

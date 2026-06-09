@@ -67,7 +67,8 @@ pub use pagination::{PageMeta, PageQuery, Paginated};
 pub use rewards::{
     BookSnapshot, ManagedRewardOrder, ManagedRewardOrderStatus, PostFillStrategy,
     RewardAccountState, RewardBookLevel, RewardBotConfig, RewardBotConfigPatch, RewardBotRunReport,
-    RewardBotService, RewardBotSnapshot, RewardBotStatus, RewardBotStore, RewardControlAction,
+    RewardBotService, RewardBotSnapshot, RewardBotStatus, RewardBotStore, RewardCandidateFilter,
+    RewardControlAction,
     RewardControlCommand, RewardControlCommandStatus, RewardExecutionMode, RewardFill,
     RewardFillRole, RewardListPage, RewardLiveCycle, RewardMarket, RewardOrderBook,
     RewardOrderListQuery, RewardOrderPage, RewardOrderSide, RewardOrderSortField,

@@ -32,6 +32,16 @@ pub trait RewardBotStore: Send + Sync {
     /// Replace the current rewards quote plan snapshot.
     async fn save_quote_plans(&self, plans: &[RewardQuotePlan]) -> Result<()>;
     async fn list_markets(&self, limit: u16) -> Result<Vec<RewardMarket>>;
+    /// List candidate markets with SQL-level filtering by config parameters.
+    /// The SQL WHERE clause pushes down midpoint, daily-rate, spread, token-count,
+    /// and budget-feasibility checks, returning only markets likely to pass
+    /// the Rust planner. `safety_limit` is a generous upper bound, not the
+    /// primary filter.
+    async fn list_candidate_markets(
+        &self,
+        filter: &RewardCandidateFilter,
+        safety_limit: u16,
+    ) -> Result<Vec<RewardMarket>>;
     /// List all active markets without a row limit for explicit catalog exports.
     async fn list_all_active_markets(&self) -> Result<Vec<RewardMarket>>;
     /// Count active markets and return their latest update timestamp without loading rows.
@@ -267,9 +277,11 @@ impl RewardBotService {
     /// List a bounded candidate pool for one rewards strategy tick.
     pub async fn list_reward_run_candidate_markets(&self) -> Result<Vec<RewardMarket>> {
         let config = self.read_config().await?;
+        let filter = config.candidate_filter();
+        let safety_limit = reward_candidate_safety_limit(&config);
         let markets = self
             .store
-            .list_markets(reward_run_market_limit(&config))
+            .list_candidate_markets(&filter, safety_limit)
             .await?;
         Ok(select_reward_quote_candidate_markets(&markets, &config))
     }
@@ -310,8 +322,12 @@ impl RewardBotService {
     /// before the bot has placed its first order.
     pub async fn list_all_reward_candidate_token_ids(&self) -> Result<Vec<String>> {
         let config = self.read_config().await?;
-        let limit = reward_run_market_limit(&config);
-        let markets = self.store.list_markets(limit).await?;
+        let filter = config.candidate_filter();
+        let safety_limit = reward_candidate_safety_limit(&config);
+        let markets = self
+            .store
+            .list_candidate_markets(&filter, safety_limit)
+            .await?;
         let candidates = select_reward_quote_candidate_markets(&markets, &config);
         Ok(select_reward_book_token_ids(&candidates))
     }
@@ -569,19 +585,16 @@ impl RewardBotService {
     }
 }
 
-fn reward_run_market_limit(config: &RewardBotConfig) -> u16 {
-    let market_limit = if config.max_markets == 0 {
-        DEFAULT_LIST_LIMIT
+/// Safety cap for candidate market queries. This is NOT the primary filter —
+/// the SQL WHERE clause does the real filtering. This LIMIT exists only to
+/// prevent unbounded result sets in pathological cases.
+fn reward_candidate_safety_limit(config: &RewardBotConfig) -> u16 {
+    let cap = if config.max_markets == 0 {
+        1000u16
     } else {
-        config.max_markets.saturating_mul(20)
+        config.max_markets.saturating_mul(50).max(1000)
     };
-    let order_limit = if config.max_open_orders == 0 {
-        DEFAULT_LIST_LIMIT
-    } else {
-        config.max_open_orders.saturating_mul(10)
-    };
-
-    market_limit.max(order_limit).max(DEFAULT_LIST_LIMIT)
+    cap.min(5000)
 }
 
 fn reward_worker_is_running(
