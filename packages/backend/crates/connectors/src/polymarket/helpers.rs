@@ -67,6 +67,22 @@ fn maybe_credentials(config: &LivePolymarketConfig) -> Result<Option<Credentials
     }
 }
 
+fn explicit_order_post_rejection(
+    error: &PolymarketSdkError,
+) -> Option<PolymarketOrderRejection> {
+    let status = error.downcast_ref::<PolymarketSdkStatus>()?;
+    status
+        .status_code
+        .is_client_error()
+        .then(|| PolymarketOrderRejection {
+            code: "POLYMARKET_ORDER_REJECTED".to_string(),
+            message: format!(
+                "CLOB rejected order with HTTP {}: {}",
+                status.status_code, status.message
+            ),
+        })
+}
+
 fn parse_address(field_name: &str, value: &str, error_code: &'static str) -> Result<Address> {
     Address::from_str(value.trim()).map_err(|error| {
         AppError::invalid_input(error_code, format!("invalid {field_name}: {error}"))

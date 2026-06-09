@@ -276,15 +276,21 @@ impl LivePolymarketConnector {
             )
         })?;
 
-        let response = self.client.post_order(signed).await.map_err(|error| {
-            AppError::internal(
-                "POLYMARKET_ORDER_POST_FAILED",
-                format!(
-                    "failed to submit live polymarket order for execution_request_id={}: {error}",
-                    request.execution_request_id
-                ),
-            )
-        })?;
+        let response = match self.client.post_order(signed).await {
+            Ok(response) => response,
+            Err(error) => {
+                if let Some(rejection) = explicit_order_post_rejection(&error) {
+                    return Ok(LivePolymarketExecutionOutcome::Rejected(rejection));
+                }
+                return Err(AppError::internal(
+                    "POLYMARKET_ORDER_POST_FAILED",
+                    format!(
+                        "failed to submit live polymarket order for execution_request_id={}: {error}",
+                        request.execution_request_id
+                    ),
+                ));
+            }
+        };
 
         if !response.success && response.order_id.trim().is_empty() {
             return Ok(LivePolymarketExecutionOutcome::Rejected(
@@ -395,15 +401,21 @@ impl LivePolymarketConnector {
             )
         })?;
 
-        let response = self.client.post_order(signed).await.map_err(|error| {
-            AppError::internal(
-                "POLYMARKET_ORDER_POST_FAILED",
-                format!(
-                    "failed to submit live polymarket rewards order for client_order_id={}: {error}",
-                    request.client_order_id
-                ),
-            )
-        })?;
+        let response = match self.client.post_order(signed).await {
+            Ok(response) => response,
+            Err(error) => {
+                if let Some(rejection) = explicit_order_post_rejection(&error) {
+                    return Ok(LivePolymarketExecutionOutcome::Rejected(rejection));
+                }
+                return Err(AppError::internal(
+                    "POLYMARKET_ORDER_POST_FAILED",
+                    format!(
+                        "failed to submit live polymarket rewards order for client_order_id={}: {error}",
+                        request.client_order_id
+                    ),
+                ));
+            }
+        };
 
         if !response.success && response.order_id.trim().is_empty() {
             return Ok(LivePolymarketExecutionOutcome::Rejected(

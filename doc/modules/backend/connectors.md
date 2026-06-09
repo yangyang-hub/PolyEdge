@@ -1,6 +1,6 @@
 # connectors（外部连接器层）
 
-最后更新：2026-06-08
+最后更新：2026-06-09
 
 ## 概述
 
@@ -76,6 +76,7 @@
 - `list_open_orders()`：分页读取认证账户全部开放订单；遇到空 cursor、`LTE=`、空页、重复 cursor 或 1000 页 guard 时停止
 - `find_matching_open_token_order()`：按 token/side/price/size 严格匹配唯一开放订单，用于 rewards 提交响应丢失后的恢复；多个匹配会返回冲突而不是猜测归属
 - `post_order` 返回订单 ID 时，无论状态为 `live` / `matched` / `delayed` / `unmatched` / `canceled` / 未知值，connector 都保留为 accepted 供后续成交和订单状态对账；成功响应缺少订单 ID 会按提交结果未知处理
+- `post_order` 返回 HTTP 4xx 时视为 CLOB 明确拒单，不进入提交结果未知锁；网络中断、5xx 或成功响应缺少订单 ID 仍按结果未知处理
 - `submit()`：兼容 execution pipeline 的 YES/NO 买单提交
 - `submit_token_order()`：按 token_id 直接提交 buy/sell；post-only 使用 GTC，非 post-only flatten 使用 FAK；提交前把价格收敛到最多 2 位小数，并返回实际提交 quantity，供 rewards live maker 使用
 - `cancel_order()`：按 Polymarket order id 撤销单笔订单

@@ -22,6 +22,7 @@ use polymarket_client_sdk::clob::ws::types::response::{
     TradeMessageStatus as PolymarketWsTradeMessageStatus,
 };
 use polymarket_client_sdk::clob::{Client as ClobClient, Config as ClobConfig};
+use polymarket_client_sdk::error::{Error as PolymarketSdkError, Status as PolymarketSdkStatus};
 use polymarket_client_sdk::types::{Address, B256, U256};
 use polymarket_client_sdk::ws::config::Config as WsConfig;
 use rust_decimal::Decimal;

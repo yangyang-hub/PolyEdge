@@ -50,6 +50,34 @@ mod tests {
     }
 
     #[test]
+    fn explicit_client_error_from_order_post_is_a_rejection() {
+        let error = PolymarketSdkError::status(
+            polymarket_client_sdk::error::StatusCode::BAD_REQUEST,
+            polymarket_client_sdk::error::Method::POST,
+            "/order".to_string(),
+            r#"{"error":"the order signer address has to be the address of the API KEY"}"#,
+        );
+
+        let rejection = explicit_order_post_rejection(&error).expect("explicit rejection");
+
+        assert_eq!(rejection.code, "POLYMARKET_ORDER_REJECTED");
+        assert!(rejection.message.contains("HTTP 400 Bad Request"));
+        assert!(rejection.message.contains("order signer address"));
+    }
+
+    #[test]
+    fn server_error_from_order_post_remains_unknown() {
+        let error = PolymarketSdkError::status(
+            polymarket_client_sdk::error::StatusCode::INTERNAL_SERVER_ERROR,
+            polymarket_client_sdk::error::Method::POST,
+            "/order".to_string(),
+            "upstream unavailable",
+        );
+
+        assert!(explicit_order_post_rejection(&error).is_none());
+    }
+
+    #[test]
     fn live_status_maps_to_open() {
         let update =
             normalize_polymarket_order_status_update("evt_1", "pm_ord_1", "live").expect("map");
