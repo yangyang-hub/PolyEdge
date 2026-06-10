@@ -109,6 +109,7 @@ fn live_placement_orders(
     books: &HashMap<String, RewardOrderBook>,
     open_orders: &[ManagedRewardOrder],
     positions: &[RewardPosition],
+    available_usd: Decimal,
     trace_id: &str,
 ) -> Vec<ManagedRewardOrder> {
     let max_markets = usize::from(config.max_markets);
@@ -162,6 +163,22 @@ fn live_placement_orders(
                     > config.max_global_position_usd
             {
                 continue;
+            }
+            // Guard against CLOB "not enough balance" rejections: sum the
+            // notional of all open-like buy orders (existing + already planned
+            // in this cycle) and skip if it would exceed the last-synced CLOB
+            // available balance.
+            if available_usd > Decimal::ZERO {
+                let committed_buy_notional: Decimal = orders
+                    .iter()
+                    .filter(|o| {
+                        o.side == RewardOrderSide::Buy && o.status.is_open_like()
+                    })
+                    .map(|o| (o.price * o.size).round_dp(4))
+                    .sum();
+                if committed_buy_notional + notional > available_usd {
+                    continue;
+                }
             }
 
             active_markets.insert(plan.condition_id.clone());

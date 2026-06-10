@@ -402,6 +402,7 @@ async fn run_reward_bot_live_tick(
         &books,
         &open_orders,
         &cycle.positions,
+        account.available_usd,
         trace_id,
     );
 
