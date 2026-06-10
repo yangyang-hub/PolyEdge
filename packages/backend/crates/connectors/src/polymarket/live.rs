@@ -135,17 +135,32 @@ impl LivePolymarketConnector {
     /// asset's exchange rate from the CLOB response.
     pub async fn reward_earnings_today_usd(&self) -> Result<Decimal> {
         let date = chrono::Utc::now().date_naive();
-        let earnings = self
-            .client
-            .total_earnings_for_user_for_day(date)
-            .await
-            .map_err(|error| {
-                AppError::dependency_unavailable(
-                    "POLYMARKET_REWARD_EARNINGS_QUERY_FAILED",
-                    format!("failed to query Polymarket reward earnings for {date}: {error}"),
-                )
-            })?;
-        Ok(earnings
+        // Use the detailed per-order endpoint (rewards/user) instead of the
+        // aggregated total endpoint (rewards/user/total). The total endpoint
+        // may omit unsettled rewards that the detailed endpoint includes,
+        // causing a mismatch with the Polymarket website display.
+        let mut all_earnings = Vec::new();
+        let mut next_cursor: Option<String> = None;
+        loop {
+            let page = self
+                .client
+                .earnings_for_user_for_day(date, next_cursor.clone())
+                .await
+                .map_err(|error| {
+                    AppError::dependency_unavailable(
+                        "POLYMARKET_REWARD_EARNINGS_QUERY_FAILED",
+                        format!(
+                            "failed to query Polymarket reward earnings for {date}: {error}"
+                        ),
+                    )
+                })?;
+            all_earnings.extend(page.data);
+            if page.next_cursor.is_empty() || next_cursor.as_deref() == Some(page.next_cursor.as_str()) {
+                break;
+            }
+            next_cursor = Some(page.next_cursor);
+        }
+        Ok(all_earnings
             .into_iter()
             .map(|earning| earning.earnings * earning.asset_rate)
             .sum::<Decimal>()
