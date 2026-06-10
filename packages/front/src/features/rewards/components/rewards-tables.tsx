@@ -396,12 +396,13 @@ export function OrdersTable({
               <SortIndicator active={sortBy === "size"} order={sortOrder} />
             </TableHead>
             <TableHead>{dictionary.rewards.scoring}</TableHead>
+            <TableHead>{dictionary.rewards.reason}</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
           {orders.length === 0 ? (
             <TableRow>
-              <TableCell colSpan={5} className="py-6 text-center text-sm text-muted-foreground">
+              <TableCell colSpan={6} className="py-6 text-center text-sm text-muted-foreground">
                 {dictionary.rewards.none}
               </TableCell>
             </TableRow>
@@ -415,6 +416,9 @@ export function OrdersTable({
                 <TableCell className="font-mono">{formatFixed(order.price, 2)}</TableCell>
                 <TableCell className="font-mono">{formatFixed(order.size, 2)}</TableCell>
                 <TableCell>{order.scoring ? dictionary.common.active : dictionary.common.idle}</TableCell>
+                <TableCell className="max-w-[320px] truncate text-xs text-muted-foreground" title={order.reason}>
+                  {order.reason}
+                </TableCell>
               </TableRow>
             ))
           )}

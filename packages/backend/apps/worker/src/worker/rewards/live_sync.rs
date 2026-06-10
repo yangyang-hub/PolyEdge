@@ -157,7 +157,8 @@ async fn sync_live_reward_orders(
                             changed_orders.push(order);
                             events.push(event);
                         }
-                        LiveRewardOrderUpdate::Unchanged(event) => events.push(event),
+                        LiveRewardOrderUpdate::Unchanged(event)
+                        | LiveRewardOrderUpdate::Retryable(event) => events.push(event),
                     }
                 }
             }
@@ -339,7 +340,8 @@ async fn run_reward_bot_live_reconcile_unlocked(
                     )
                     .await?;
                 }
-                LiveRewardOrderUpdate::Unchanged(event) => {
+                LiveRewardOrderUpdate::Unchanged(event)
+                | LiveRewardOrderUpdate::Retryable(event) => {
                     persist_live_reward_updates(
                         state,
                         &mut account,

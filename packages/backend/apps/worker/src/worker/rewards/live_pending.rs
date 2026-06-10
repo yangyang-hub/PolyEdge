@@ -268,6 +268,27 @@ async fn submit_pending_live_reward_orders(
                 )
                 .await?;
             }
+            Ok(LiveRewardOrderUpdate::Retryable(event)) => {
+                // Transient rejection (e.g. HTTP 425 "order manager not ready").
+                // Keep the order as Planned so it is retried on the next cycle.
+                order.reason = format!(
+                    "{}; transient rejection, will retry: {}",
+                    pre_submit_reason,
+                    event.message
+                );
+                order.updated_at = OffsetDateTime::now_utc();
+                persist_live_reward_updates(
+                    state,
+                    account,
+                    Vec::new(), // positions unchanged during submission
+                    Vec::new(), // order status unchanged (stays Planned)
+                    Vec::new(),
+                    vec![event],
+                    report,
+                    trace_id,
+                )
+                .await?;
+            }
         }
     }
     Ok(())

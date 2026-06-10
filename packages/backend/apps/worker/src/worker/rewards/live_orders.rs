@@ -1,6 +1,7 @@
 enum LiveRewardOrderUpdate {
     Changed(ManagedRewardOrder, RewardRiskEvent),
     Unchanged(RewardRiskEvent),
+    Retryable(RewardRiskEvent),
 }
 
 struct LiveRewardFillUpdate {
@@ -509,7 +510,8 @@ async fn cancel_sibling_live_reward_orders(
                 )
                 .await?;
             }
-            LiveRewardOrderUpdate::Unchanged(event) => {
+            LiveRewardOrderUpdate::Unchanged(event)
+            | LiveRewardOrderUpdate::Retryable(event) => {
                 let sibling = mark_sibling_cancel_for_retry(sibling);
                 working_orders.insert(sibling.id.clone(), sibling.clone());
                 persist_live_reward_updates(

@@ -352,7 +352,8 @@ async fn run_reward_bot_live_tick(
                 )
                 .await?;
             }
-            LiveRewardOrderUpdate::Unchanged(event) => {
+            LiveRewardOrderUpdate::Unchanged(event)
+            | LiveRewardOrderUpdate::Retryable(event) => {
                 cancel_rejected = true;
                 persist_live_reward_updates(
                     state,
@@ -492,7 +493,8 @@ async fn cancel_live_reward_orders(
                 )
                 .await?;
             }
-            LiveRewardOrderUpdate::Unchanged(event) => {
+            LiveRewardOrderUpdate::Unchanged(event)
+            | LiveRewardOrderUpdate::Retryable(event) => {
                 report.rejected += 1;
                 persist_live_reward_updates(
                     state,

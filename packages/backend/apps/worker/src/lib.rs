@@ -27,9 +27,9 @@ use polyedge_connectors::{
     PaperOrderRequest, PaperOrderStatusRequest, PolymarketAcceptedOrderStatus,
     PolymarketBinaryBookSnapshot, PolymarketBookConnector, PolymarketBookLevel,
     PolymarketChainConnector, PolymarketDataApiConnector, PolymarketGammaConnector,
-    PolymarketGammaMarket, PolymarketMarketRefs, PolymarketRewardMarket,
-    PolymarketRewardsConnector, PolymarketSignatureScheme, PolymarketTokenOrderSide,
-    PolymarketWalletPosition, RssNewsConnector, RssNewsSourceConfig,
+    PolymarketGammaMarket, PolymarketMarketRefs, PolymarketOrderRejection,
+    PolymarketRewardMarket, PolymarketRewardsConnector, PolymarketSignatureScheme,
+    PolymarketTokenOrderSide, PolymarketWalletPosition, RssNewsConnector, RssNewsSourceConfig,
     normalize_polymarket_ws_order_message, normalize_polymarket_ws_trade_message,
 };
 use polyedge_domain::{

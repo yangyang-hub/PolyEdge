@@ -3,6 +3,14 @@ const LIVE_SUBMISSION_UNKNOWN_MARKER: &str =
     "live submission result unknown; manual reconciliation required";
 const MAX_EXIT_REJECTION_COUNT: usize = 10;
 
+fn is_transient_order_rejection(rejection: &PolymarketOrderRejection) -> bool {
+    let msg = rejection.message.to_lowercase();
+    msg.contains("425")
+        || msg.contains("429")
+        || msg.contains("order manager not ready")
+        || msg.contains("please retry")
+}
+
 fn live_submission_was_attempted(order: &ManagedRewardOrder) -> bool {
     order.reason.contains(LIVE_SUBMISSION_ATTEMPTED_MARKER)
 }
@@ -72,13 +80,26 @@ async fn submit_one_live_reward_order(
             ))
         }
         LivePolymarketExecutionOutcome::Rejected(rejection) => {
-            Ok(LiveRewardOrderUpdate::Unchanged(reward_live_event(
-                order,
-                "reward_live_order_rejected",
-                RewardRiskSeverity::Warning,
-                format!("live rewards order rejected: {}", rejection.message),
-                json!({ "code": rejection.code }),
-            )))
+            if is_transient_order_rejection(&rejection) {
+                Ok(LiveRewardOrderUpdate::Retryable(reward_live_event(
+                    order,
+                    "reward_live_order_rejected_transient",
+                    RewardRiskSeverity::Warning,
+                    format!(
+                        "live rewards order rejected (will retry): {}",
+                        rejection.message
+                    ),
+                    json!({ "code": rejection.code }),
+                )))
+            } else {
+                Ok(LiveRewardOrderUpdate::Unchanged(reward_live_event(
+                    order,
+                    "reward_live_order_rejected",
+                    RewardRiskSeverity::Warning,
+                    format!("live rewards order rejected: {}", rejection.message),
+                    json!({ "code": rejection.code }),
+                )))
+            }
         }
     }
 }
