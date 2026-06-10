@@ -1,6 +1,6 @@
 # Agent Guidelines
 
-最后更新：2026-06-09
+最后更新：2026-06-10
 
 ## 维护规则
 
@@ -198,7 +198,7 @@ cargo run -p polyedge-worker -- analyze-wallets-once
 
 ```bash
 ./scripts/build-backend-bin.sh
-git add bin/polyedge-api bin/polyedge-worker bin/polyedge-orderbook
+git add bin/polyedge-api bin/polyedge-orderbook
 ```
 
 跨服务器部署时只需构建目标服务器需要的二进制，例如 orderbook 服务器只需 `polyedge-orderbook`；只设置 `POLYEDGE_BACKEND_BINARY` 时构建脚本会自动选择同名 Cargo package：
@@ -221,20 +221,17 @@ cp deploy/.env.example deploy/.env
 `deploy/docker-compose.yml` 编排（各服务无启动依赖，可独立部署在不同服务器）：
 
 - `polyedge-orderbook`（独立 orderbook 服务，WS + poll + HTTP API，使用 `deploy/orderbook.Dockerfile`）
-- `polyedge-api`（通过 `POLYEDGE_ORDERBOOK__SERVICE_URL` 读取盘口，使用 `deploy/api.Dockerfile`）
-- `polyedge-worker`（独立 worker 服务，使用 `deploy/worker.Dockerfile`）
+- `polyedge-api`（内嵌 worker runtime，通过 `POLYEDGE_ORDERBOOK__SERVICE_URL` 读取盘口，使用 `deploy/api.Dockerfile`，同时加载 `.env.api` 和 `.env.worker`）
 - `polyedge-front`
 
 `scripts/deploy.sh` 每个服务独立部署，互不依赖：
 
 - 不传参数或 `auto`：拉取最新代码，per-service 检测二进制 hash 变化，只 rebuild 变化的镜像并 restart 变化或未运行的服务。
 - `all`：重建所有可用镜像并重启所有可用服务。
-- `api worker`：重建 api 和 worker 镜像并重启 API 与 worker。
-- `api`：只重建 api 镜像并重启 API。
-- `worker`：只重建 worker 镜像并重启 worker。
+- `api`（或 `worker`）：重建 api 镜像并重启 API（`worker` 是兼容别名）。
 - `orderbook`（或 `ob`）：重建 orderbook 镜像并重启 orderbook 服务。
 - `front`：只重建前端镜像并重启前端。
-- 支持组合，例如 `api front` 或 `api,worker`。
+- 支持组合，例如 `api front` 或 `api,orderbook`。
 - `POLYEDGE_SKIP_SERVICES=orderbook` 排除特定服务，适合同一服务器只部署部分服务的场景。
 
 部署脚本默认使用 `/tmp/polyedge-deploy.lock` 防止 cron/CI 重叠执行，默认 `COMPOSE_PARALLEL_LIMIT=1` 串行构建镜像。Auto 模式 per-service 独立检测：api、worker、orderbook、front 各自独立镜像（每个二进制变化只触发对应镜像 rebuild），容器未运行但 hash 未变时直接启动已有镜像。前端 `yarn build` 前会读取 `deploy/.env.front` 并把 `NEXT_PUBLIC_*` 写入静态 bundle。Compose 构建上下文已收窄：后端只上传 `bin/`，前端只上传 `packages/front/`，避免扫描本地 `packages/backend/target`、`node_modules`、`.next` 等大目录。跨服务器部署时每台服务器只需本地存在的二进制，脚本只检查目标服务所需的文件。
@@ -256,7 +253,6 @@ cp deploy/.env.example deploy/.env
 - `packages/backend/apps/api/src/lib.rs`
 - `packages/backend/apps/api/src/handlers/rewards.rs`
 - `packages/backend/apps/api/src/handlers/copytrade.rs`
-- `packages/backend/apps/worker/src/main.rs`
 - `packages/backend/apps/orderbook/src/main.rs`
 - `packages/backend/apps/worker/src/worker/rewards.rs`
 - `packages/backend/apps/worker/src/worker/rewards/account_sync.rs`
@@ -283,7 +279,6 @@ cp deploy/.env.example deploy/.env
 
 - `deploy/orderbook.Dockerfile`
 - `deploy/api.Dockerfile`
-- `deploy/worker.Dockerfile`
 - `packages/front/Dockerfile`
 - `deploy/docker-compose.yml`
 - `deploy/.env.example`

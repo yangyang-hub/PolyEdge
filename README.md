@@ -311,7 +311,7 @@ POLYEDGE_FRONT_BASE_URL=http://127.0.0.1:3001 \
 
 ```bash
 ./scripts/build-backend-bin.sh
-git add bin/polyedge-api bin/polyedge-worker bin/polyedge-orderbook
+git add bin/polyedge-api bin/polyedge-orderbook
 git commit -m "Build backend binaries"
 ```
 
