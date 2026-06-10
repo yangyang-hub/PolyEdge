@@ -85,6 +85,22 @@ async fn sync_external_account_state(
         }
     }
 
+    // Sync all active buy orders on Polymarket (including orders not managed by
+    // this bot) so the placement pre-check can avoid "not enough balance" rejections.
+    match connector.list_open_orders().await {
+        Ok(open_orders) => {
+            let buy_notional: Decimal = open_orders
+                .iter()
+                .filter(|o| o.side == PolymarketTokenOrderSide::Buy)
+                .map(|o| (o.price * (o.original_size - o.size_matched).max(Decimal::ZERO)).round_dp(4))
+                .sum();
+            synced_account.external_buy_notional = buy_notional;
+        }
+        Err(error) => {
+            warn!(error = %error, "failed to list Polymarket open orders for notional sync");
+        }
+    }
+
     let settings = &state.settings.polymarket;
     let wallet_address =
         polymarket_funding_wallet_address(&settings.account_id, settings.funder.as_deref());

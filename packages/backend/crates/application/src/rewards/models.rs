@@ -721,6 +721,10 @@ pub struct RewardAccountState {
     pub capital_usd: Decimal,
     /// Cash not consumed by fills.
     pub available_usd: Decimal,
+    /// Total notional of all active buy orders on Polymarket (bot-managed +
+    /// external), synced from `list_open_orders()`. Used by the placement
+    /// pre-check to avoid CLOB "not enough balance" rejections.
+    pub external_buy_notional: Decimal,
     /// Legacy hard-reserve field. New rewards ticks release it and keep resting
     /// buy reservations soft across markets.
     pub reserved_usd: Decimal,
@@ -741,6 +745,7 @@ impl RewardAccountState {
             wallet_address: None,
             capital_usd,
             available_usd: capital_usd,
+            external_buy_notional: Decimal::ZERO,
             reserved_usd: Decimal::ZERO,
             realized_pnl: Decimal::ZERO,
             reward_earned_usd: Decimal::ZERO,
