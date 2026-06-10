@@ -90,30 +90,31 @@ async fn submit_pending_live_reward_orders(
                     .await?;
                 }
                 Ok(None) => {
-                    if !live_submission_result_is_unknown(order) {
-                        order.scoring = false;
-                        order.reason =
-                            format!("{}; {LIVE_SUBMISSION_UNKNOWN_MARKER}", order.reason);
-                        order.updated_at = OffsetDateTime::now_utc();
-                        let event = reward_live_event(
-                            order,
-                            "reward_live_order_submission_unknown",
-                            RewardRiskSeverity::Critical,
-                            order.reason.clone(),
-                            json!({ "post_only": post_only }),
-                        );
-                        persist_live_reward_updates(
-                            state,
-                            account,
-                            Vec::new(), // positions unchanged during submission
-                            vec![order.clone()],
-                            Vec::new(),
-                            vec![event],
-                            report,
-                            trace_id,
-                        )
-                        .await?;
-                    }
+                    // Order not found on Polymarket — the submission never landed.
+                    // Auto-cancel instead of leaving it stuck blocking the bot.
+                    order.status = ManagedRewardOrderStatus::Cancelled;
+                    order.scoring = false;
+                    order.reason =
+                        "order not found on Polymarket during recovery; auto-cancelled".to_string();
+                    order.updated_at = OffsetDateTime::now_utc();
+                    let event = reward_live_event(
+                        order,
+                        "reward_live_order_recovery_not_found_cancelled",
+                        RewardRiskSeverity::Info,
+                        order.reason.clone(),
+                        json!({ "post_only": post_only }),
+                    );
+                    persist_live_reward_updates(
+                        state,
+                        account,
+                        Vec::new(), // positions unchanged during submission
+                        vec![order.clone()],
+                        Vec::new(),
+                        vec![event],
+                        report,
+                        trace_id,
+                    )
+                    .await?;
                 }
                 Err(error) => {
                     if !live_submission_result_is_unknown(order) {
