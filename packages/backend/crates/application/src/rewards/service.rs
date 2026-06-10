@@ -103,22 +103,71 @@ pub trait RewardBotStore: Send + Sync {
     async fn reset_state(&self, config: &RewardBotConfig, trace_id: &str) -> Result<()>;
 }
 
+const MEMORY_EVENT_LIMIT: usize = 200;
+const MEMORY_FILL_LIMIT: usize = 200;
+
 #[derive(Clone)]
 pub struct RewardBotService {
     store: Arc<dyn RewardBotStore>,
+    memory: Arc<RwLock<RewardBotMemoryState>>,
+    runtime_revision_tx: watch::Sender<(u64, u64)>,
+    command_wake_tx: watch::Sender<bool>,
+}
+
+#[derive(Default)]
+struct RewardBotMemoryState {
+    config: Option<RewardBotConfig>,
+    account: Option<RewardAccountState>,
+    positions: Option<Vec<RewardPosition>>,
+    worker_heartbeats: HashMap<String, OffsetDateTime>,
+    events: Vec<RewardRiskEvent>,
+    fills: Vec<RewardFill>,
+    open_order_count: Option<usize>,
 }
 
 impl RewardBotService {
     #[must_use]
     pub fn new(store: Arc<dyn RewardBotStore>) -> Self {
-        Self { store }
+        let (runtime_revision_tx, _) = watch::channel((0, 0));
+        let (command_wake_tx, _) = watch::channel(false);
+        Self {
+            store,
+            memory: Arc::new(RwLock::new(RewardBotMemoryState::default())),
+            runtime_revision_tx,
+            command_wake_tx,
+        }
     }
 
     pub async fn read_config(&self) -> Result<RewardBotConfig> {
-        self.store
-            .load_config()
-            .await
-            .map(RewardBotConfig::normalized)
+        if let Some(config) = self.memory.read().await.config.clone() {
+            return Ok(config);
+        }
+        let config = self.store.load_config().await?.normalized();
+        self.memory.write().await.config = Some(config.clone());
+        Ok(config)
+    }
+
+    #[must_use]
+    pub fn subscribe_runtime_changes(&self) -> watch::Receiver<(u64, u64)> {
+        self.runtime_revision_tx.subscribe()
+    }
+
+    #[must_use]
+    pub fn subscribe_command_wake(&self) -> watch::Receiver<bool> {
+        self.command_wake_tx.subscribe()
+    }
+
+    fn wake_command_processor(&self) {
+        self.command_wake_tx.send_modify(|flag| *flag = !*flag);
+    }
+
+    fn notify_runtime_change(&self, config_changed: bool) {
+        self.runtime_revision_tx.send_modify(|(revision, config_revision)| {
+            *revision = revision.wrapping_add(1);
+            if config_changed {
+                *config_revision = config_revision.wrapping_add(1);
+            }
+        });
     }
 
     pub async fn update_config(&self, patch: RewardBotConfigPatch) -> Result<RewardBotConfig> {
@@ -134,6 +183,18 @@ impl RewardBotService {
             ));
         }
         self.store.save_config(&next).await?;
+        {
+            let mut memory = self.memory.write().await;
+            memory.config = Some(next.clone());
+            if next.account_id != current.account_id {
+                memory.account = None;
+                memory.positions = None;
+                memory.events.clear();
+                memory.fills.clear();
+                memory.open_order_count = None;
+            }
+        }
+        self.notify_runtime_change(true);
         Ok(next)
     }
 
@@ -159,8 +220,7 @@ impl RewardBotService {
         };
 
         self.store.enqueue_control_command(command.clone()).await?;
-        self.store
-            .log_event(new_risk_event(
+        self.log_event_to_store_and_memory(new_risk_event(
                 Some(config.account_id),
                 None,
                 None,
@@ -175,6 +235,8 @@ impl RewardBotService {
                 }),
             ))
             .await?;
+        self.notify_runtime_change(false);
+        self.wake_command_processor();
         Ok(command)
     }
 
@@ -185,7 +247,13 @@ impl RewardBotService {
     ) -> Result<()> {
         self.store
             .record_worker_heartbeat(account_id, observed_at)
+            .await?;
+        self.memory
+            .write()
             .await
+            .worker_heartbeats
+            .insert(account_id.to_string(), observed_at);
+        Ok(())
     }
 
     pub async fn claim_next_control_command(
@@ -205,8 +273,7 @@ impl RewardBotService {
         self.store
             .complete_control_command(&command.id, trace_id, OffsetDateTime::now_utc())
             .await?;
-        self.store
-            .log_event(new_risk_event(
+        self.log_event_to_store_and_memory(new_risk_event(
                 command.account_id.clone(),
                 None,
                 None,
@@ -237,8 +304,7 @@ impl RewardBotService {
                 OffsetDateTime::now_utc(),
             )
             .await?;
-        self.store
-            .log_event(new_risk_event(
+        self.log_event_to_store_and_memory(new_risk_event(
                 command.account_id.clone(),
                 None,
                 None,
@@ -363,7 +429,7 @@ impl RewardBotService {
         plans_query: &RewardQuotePlanListQuery,
     ) -> Result<RewardBotSnapshot> {
         let config = self.read_config().await?;
-        let account = self.store.load_account_state(&config).await?;
+        let account = self.load_account_state_cached(&config).await?;
 
         // Inject the real account_id from config into the order query so that
         // the SQL always filters by account_id, using the existing composite
@@ -385,9 +451,8 @@ impl RewardBotService {
             (plans_total, eligible_total),
             plans_page_data,
             orders,
-            positions,
+            stored_positions,
             open_order_count,
-            position_count,
             fills,
             events,
             last_run_at,
@@ -397,13 +462,12 @@ impl RewardBotService {
             self.store.count_quote_plans(),
             self.store.list_quote_plans_page(plans_query),
             self.store.list_orders_page(&order_query),
-            self.store.list_positions(&account.account_id, 200),
-            self.store.count_open_orders(&account.account_id),
-            self.store.count_account_positions(&account.account_id),
-            self.store.list_fills(&account.account_id, 200),
-            self.store.list_events(&account.account_id, 100),
+            self.list_positions_cached(&account.account_id, 200),
+            self.count_open_orders_cached(&account.account_id),
+            self.list_fills_cached(&account.account_id, 200),
+            self.list_events_cached(&account.account_id, 100),
             self.store.latest_quote_plan_updated_at(),
-            self.store.latest_worker_heartbeat(&account.account_id),
+            self.latest_worker_heartbeat_cached(&account.account_id),
         )?;
         let error = events
             .iter()
@@ -418,7 +482,7 @@ impl RewardBotService {
                 markets_tracked,
                 eligible_markets: eligible_total,
                 open_orders: open_order_count,
-                positions: position_count,
+                positions: stored_positions.len(),
                 last_scan_at,
                 last_run_at,
                 error,
@@ -431,7 +495,7 @@ impl RewardBotService {
             plans_page: plans_page_data.page,
             orders: orders.items,
             orders_page: orders.page,
-            positions,
+            positions: stored_positions,
             fills,
             events,
         })
@@ -441,7 +505,7 @@ impl RewardBotService {
         &self,
         markets: Vec<RewardMarket>,
         books: HashMap<String, RewardOrderBook>,
-        trace_id: &str,
+        _trace_id: &str,
         force_orders: bool,
     ) -> Result<RewardLiveCycle> {
         let config = self.read_config().await?;
@@ -452,32 +516,10 @@ impl RewardBotService {
         // and collapse markets_tracked from ~10k down to the candidate count.
         self.store.save_quote_plans(&plans).await?;
 
-        let account = self.store.load_account_state(&config).await?;
+        let account = self.load_account_state_cached(&config).await?;
         let open_orders = self.store.list_open_orders(&account.account_id).await?;
-        let positions = self
-            .store
-            .list_account_positions(&account.account_id)
-            .await?;
+        let positions = self.list_account_positions_cached(&account.account_id).await?;
         let should_execute = config.enabled || force_orders;
-
-        self.store
-            .log_event(new_risk_event(
-                Some(config.account_id.clone()),
-                None,
-                None,
-                "reward_bot_live_plan_built",
-                RewardRiskSeverity::Info,
-                "Prepared rewards live order plan.",
-                json!({
-                    "trace_id": trace_id,
-                    "markets_scanned": markets.len(),
-                    "books_fetched": books.len(),
-                    "plans_built": plans.len(),
-                    "eligible_plans": plans.iter().filter(|plan| plan.eligible).count(),
-                    "should_execute": should_execute,
-                }),
-            ))
-            .await?;
 
         Ok(RewardLiveCycle {
             config,
@@ -495,12 +537,9 @@ impl RewardBotService {
     /// `prepare_live_cycle`.
     pub async fn current_live_cycle_state(&self) -> Result<RewardLiveCycle> {
         let config = self.read_config().await?;
-        let account = self.store.load_account_state(&config).await?;
+        let account = self.load_account_state_cached(&config).await?;
         let open_orders = self.store.list_open_orders(&account.account_id).await?;
-        let positions = self
-            .store
-            .list_account_positions(&account.account_id)
-            .await?;
+        let positions = self.list_account_positions_cached(&account.account_id).await?;
         let plans = self.store.list_all_quote_plans().await?;
         Ok(RewardLiveCycle {
             should_execute: config.enabled,
@@ -535,8 +574,7 @@ impl RewardBotService {
 
     pub async fn record_live_reset_cancel_all(&self, trace_id: &str) -> Result<()> {
         let config = self.read_config().await?;
-        self.store
-            .log_event(new_risk_event(
+        self.log_event_to_store_and_memory(new_risk_event(
                 Some(config.account_id.clone()),
                 None,
                 None,
@@ -553,7 +591,33 @@ impl RewardBotService {
         outcome: &RewardTickOutcome,
         trace_id: &str,
     ) -> Result<()> {
-        self.store.apply_tick_outcome(outcome, trace_id).await
+        self.store.apply_tick_outcome(outcome, trace_id).await?;
+        let mut memory = self.memory.write().await;
+        memory.account = Some(outcome.account.clone());
+        if let Some(positions) = memory.positions.as_mut() {
+            for position in &outcome.positions {
+                if let Some(existing) = positions.iter_mut().find(|stored| {
+                    stored.account_id == position.account_id && stored.token_id == position.token_id
+                }) {
+                    *existing = position.clone();
+                } else if position.size != Decimal::ZERO {
+                    positions.push(position.clone());
+                }
+            }
+            positions.retain(|position| position.size != Decimal::ZERO);
+        }
+        if !outcome.events.is_empty() {
+            memory.events.extend(outcome.events.iter().cloned());
+            memory.events.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+            memory.events.truncate(MEMORY_EVENT_LIMIT);
+        }
+        if !outcome.fills.is_empty() {
+            memory.fills.extend(outcome.fills.iter().cloned());
+            memory.fills.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+            memory.fills.truncate(MEMORY_FILL_LIMIT);
+        }
+        memory.open_order_count = None;
+        Ok(())
     }
 
     /// Persist external-synced account state and optionally replace positions.
@@ -565,14 +629,31 @@ impl RewardBotService {
     ) -> Result<()> {
         self.store
             .apply_account_sync(account, positions, trace_id)
-            .await
+            .await?;
+        let mut memory = self.memory.write().await;
+        memory.account = Some(account.clone());
+        if let Some(positions) = positions {
+            memory.positions = Some(positions.to_vec());
+        }
+        Ok(())
     }
 
     pub async fn reset_state(&self, trace_id: &str) -> Result<()> {
         let config = self.read_config().await?;
         self.store.reset_state(&config, trace_id).await?;
-        self.store
-            .log_event(new_risk_event(
+        {
+            let mut memory = self.memory.write().await;
+            memory.account = Some(RewardAccountState::fresh(
+                &config.account_id,
+                config.account_capital_usd,
+                OffsetDateTime::now_utc(),
+            ));
+            memory.positions = Some(Vec::new());
+            memory.events.clear();
+            memory.fills.clear();
+            memory.open_order_count = None;
+        }
+        self.log_event_to_store_and_memory(new_risk_event(
                 Some(config.account_id.clone()),
                 None,
                 None,
@@ -584,6 +665,8 @@ impl RewardBotService {
             .await
     }
 }
+
+include!("service_cache.rs");
 
 /// Safety cap for candidate market queries. This is NOT the primary filter —
 /// the SQL WHERE clause does the real filtering. This LIMIT exists only to

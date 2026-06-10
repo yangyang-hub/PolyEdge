@@ -65,18 +65,28 @@ export function RewardsWorkbench({ initialSnapshot }: { initialSnapshot: RewardB
       sortBy?: string;
       sortOrder?: SortOrder;
       page?: number;
+      plansSearch?: string;
+      plansEligible?: PlansEligibilityFilter;
+      plansSortBy?: string;
+      plansSortOrder?: SortOrder;
+      plansPage?: number;
     } = {},
   ): RewardBotSnapshotQuery {
     const search = overrides.search ?? ordersSearch;
     const status = overrides.status ?? ordersStatus;
     const q: RewardBotSnapshotQuery = {};
     // Plans pagination
-    if (plansSearch.trim()) q.plans_search = plansSearch.trim();
-    if (plansEligible === "eligible") q.plans_eligible = true;
-    else if (plansEligible === "ineligible") q.plans_eligible = false;
-    q.plans_sort_by = plansSortBy;
-    q.plans_sort_order = plansSortOrder;
-    q.plans_page = plansPage;
+    const resolvedPlansSearch = overrides.plansSearch ?? plansSearch;
+    const resolvedPlansEligible = overrides.plansEligible ?? plansEligible;
+    const resolvedPlansSortBy = overrides.plansSortBy ?? plansSortBy;
+    const resolvedPlansSortOrder = overrides.plansSortOrder ?? plansSortOrder;
+    const resolvedPlansPage = overrides.plansPage ?? plansPage;
+    if (resolvedPlansSearch.trim()) q.plans_search = resolvedPlansSearch.trim();
+    if (resolvedPlansEligible === "eligible") q.plans_eligible = true;
+    else if (resolvedPlansEligible === "ineligible") q.plans_eligible = false;
+    q.plans_sort_by = resolvedPlansSortBy;
+    q.plans_sort_order = resolvedPlansSortOrder;
+    q.plans_page = resolvedPlansPage;
     q.plans_page_size = REWARD_PLANS_PAGE_SIZE;
     // Orders pagination
     if (search.trim()) q.orders_search = search.trim();
@@ -90,12 +100,13 @@ export function RewardsWorkbench({ initialSnapshot }: { initialSnapshot: RewardB
 
   function refetchWithFilters(overrides?: Parameters<typeof buildQuery>[0]) {
     const requestedOrdersPage = overrides?.page ?? ordersPage;
+    const requestedPlansPage = overrides?.plansPage ?? plansPage;
     setFiltering(true);
     void readRewardBotSnapshot(buildQuery(overrides))
       .then((response) => {
         setSnapshot(response.data);
         setOrdersPage(response.data.orders_page?.page ?? requestedOrdersPage);
-        setPlansPage(response.data.plans_page?.page ?? plansPage);
+        setPlansPage(response.data.plans_page?.page ?? requestedPlansPage);
       })
       .finally(() => setFiltering(false));
   }
@@ -122,7 +133,7 @@ export function RewardsWorkbench({ initialSnapshot }: { initialSnapshot: RewardB
     const nextValue = Number(value);
     setDraft((current) => ({
       ...current,
-      [key]: Number.isFinite(nextValue) ? nextValue : 0,
+      [key]: Number.isFinite(nextValue) ? Math.max(0, nextValue) : 0,
     }));
   }
 
@@ -183,24 +194,24 @@ export function RewardsWorkbench({ initialSnapshot }: { initialSnapshot: RewardB
                   onSearchChange={(v) => {
                     setPlansSearch(v);
                     setPlansPage(1);
-                    refetchWithFilters();
+                    refetchWithFilters({ plansSearch: v, plansPage: 1 });
                   }}
                   eligibility={plansEligible}
                   onEligibilityChange={(v) => {
                     setPlansEligible(v);
                     setPlansPage(1);
-                    refetchWithFilters();
+                    refetchWithFilters({ plansEligible: v, plansPage: 1 });
                   }}
                   sortBy={plansSortBy}
                   sortOrder={plansSortOrder}
                   onSortChange={(by, order) => {
                     setPlansSortBy(by);
                     setPlansSortOrder(order);
-                    refetchWithFilters();
+                    refetchWithFilters({ plansSortBy: by, plansSortOrder: order });
                   }}
                   onPageChange={(p) => {
                     setPlansPage(p);
-                    refetchWithFilters();
+                    refetchWithFilters({ plansPage: p });
                   }}
                   filtering={filtering}
                 />

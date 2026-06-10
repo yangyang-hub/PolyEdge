@@ -35,6 +35,7 @@ services:
     env_file:
       - .env
       - .env.api
+      - .env.worker
     environment:
       POLYEDGE_ORDERBOOK__SERVICE_URL: ${POLYEDGE_ORDERBOOK__SERVICE_URL:-http://localhost:38002}
     ports:
@@ -47,22 +48,6 @@ services:
       timeout: 5s
       retries: 10
       start_period: 20s
-
-  polyedge-worker:
-    build:
-      context: ../bin
-      dockerfile: ../deploy/worker.Dockerfile
-    image: ${POLYEDGE_WORKER_IMAGE:-polyedge-worker:local}
-    restart: unless-stopped
-    logging: *default-logging
-    env_file:
-      - .env
-      - .env.worker
-    environment:
-      POLYEDGE_ORDERBOOK__SERVICE_URL: ${POLYEDGE_ORDERBOOK__SERVICE_URL:-http://localhost:38002}
-    command: ["polyedge-worker"]
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
 
   polyedge-front:
     build:

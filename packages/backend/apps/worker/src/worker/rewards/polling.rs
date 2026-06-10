@@ -36,6 +36,9 @@ async fn poll_reward_bot_loop(
     let full_interval = Duration::from_secs(state.settings.rewards.poll_interval_secs.max(1));
     // Start with a full cycle immediately.
     let mut last_full_at = Instant::now() - full_interval;
+    let mut runtime_revision_rx = state.reward_bot_service.subscribe_runtime_changes();
+    let mut command_wake_rx = state.reward_bot_service.subscribe_command_wake();
+    let mut config_revision = runtime_revision_rx.borrow().1;
 
     loop {
         // Read the live config to get the reconcile interval.
@@ -92,6 +95,17 @@ async fn poll_reward_bot_loop(
             } else {
                 tokio::select! {
                     () = tokio::time::sleep(reconcile_interval) => {}
+                    changed = runtime_revision_rx.changed() => {
+                        if changed.is_err() {
+                            break;
+                        }
+                        let next_config_revision = runtime_revision_rx.borrow_and_update().1;
+                        if next_config_revision != config_revision {
+                            config_revision = next_config_revision;
+                            last_full_at = Instant::now() - full_interval;
+                        }
+                    }
+                    _ = command_wake_rx.changed() => {}
                     changed = shutdown_rx.changed() => {
                         if changed.is_err() || *shutdown_rx.borrow() {
                             break;
@@ -126,6 +140,17 @@ async fn poll_reward_bot_loop(
 
         tokio::select! {
             () = tokio::time::sleep(sleep_dur) => {}
+            changed = runtime_revision_rx.changed() => {
+                if changed.is_err() {
+                    break;
+                }
+                let next_config_revision = runtime_revision_rx.borrow_and_update().1;
+                if next_config_revision != config_revision {
+                    config_revision = next_config_revision;
+                    last_full_at = Instant::now() - full_interval;
+                }
+            }
+            _ = command_wake_rx.changed() => {}
             changed = shutdown_rx.changed() => {
                 if changed.is_err() || *shutdown_rx.borrow() {
                     break;

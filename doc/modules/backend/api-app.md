@@ -1,10 +1,10 @@
 # API App（HTTP API 服务）
 
-最后更新：2026-06-06
+最后更新：2026-06-10
 
 ## 概述
 
-`polyedge-api` 是基于 Axum 的 HTTP API 服务。它组装所有路由、应用认证中间件，将 HTTP 请求映射到 application 层的服务调用。是用户和前端与后端交互的唯一入口；当前内网部署可通过 `POLYEDGE_AUTH__DISABLED=true` 关闭权限校验。
+`polyedge-api` 是基于 Axum 的统一后端进程。它组装 HTTP 路由、认证中间件和原 `polyedge-worker` 后台 runtime，HTTP handler 与后台任务共享同一个 `AppState` / application service 实例。当前内网部署可通过 `POLYEDGE_AUTH__DISABLED=true` 关闭权限校验。
 
 ## 设计目标
 
@@ -16,6 +16,7 @@
 
 | 文件 | 职责 |
 |---|---|
+| `main.rs` | 加载 Runtime、连接 orderbook 服务、启动 `WorkerRuntime` 和 Axum server，并统一优雅关闭 |
 | `lib.rs` | 路由组装入口：`build_app(state: AppState) -> Router`（~458 行） |
 | `handlers/system.rs` | 健康检查、就绪检查、系统模式 |
 | `handlers/market_handlers.rs` | 市场列表和详情 |
@@ -62,9 +63,9 @@
 - `CorsLayer::permissive()` — 允许前端和 API 分别部署在不同内网主机/端口
 - 认证中间件：按路由组使用不同的认证级别；`POLYEDGE_AUTH__DISABLED=true` 时不校验 token、dev-auth 头或 step-up code，直接注入内部 admin `AuthContext`
 
-Rewards Bot 的 `run` / `cancel-all` / `reset` 端点不执行策略、不读取 orderbook cache，也不直接修改托管订单。API 只把控制命令写入 `reward_control_commands`，随后返回当前 snapshot；命令由 `polyedge-worker` 在 rewards tick 中领取并执行 live 逻辑。
+Rewards Bot 的 `run` / `cancel-all` / `reset` handler 不直接执行策略、不读取 orderbook cache，也不直接修改托管订单。Handler 把控制命令写入 `reward_control_commands`，同时通过共享 `RewardBotService` revision 立即唤醒同进程 rewards loop；后台 runtime 领取命令并执行 live 逻辑。
 
-所有 Rewards snapshot 响应只读取 `RewardBotService` / store。外部 balance 和完整 positions 快照由 worker 同步到数据库，API 不持有 Polymarket 私钥，也不直接请求 CLOB/Data API。`GET /api/v1/rewards-bot` 的订单查询参数与 `orders_page` 都描述本地 managed orders；`status.running` 由最近 2 分钟的 rewards worker heartbeat 与配置开关共同决定，不再等同于 `enabled`。
+所有 Rewards snapshot 响应只读取 `RewardBotService` / store；handler 不直接请求 CLOB/Data API。配置、账户、positions 和 heartbeat 在同进程 service 内有热缓存，分页 orders/plans、fills、events 等历史查询仍从 store 读取。外部 balance、positions、订单 scoring 和当日 settled maker rewards 由内嵌后台 runtime 同步。
 
 Copy Trading 的 `run` / `analyze` / `cancel-all` / `reset` 端点同样不抓取 Polymarket Data API / CLOB，也不直接执行跟单循环；API 只写入 `copytrade_control_commands`，worker 负责领取并执行。
 
@@ -98,15 +99,16 @@ HTTP Response
 
 - ~40 个 REST 端点已实现
 - SSE 流式端点已移除，前端通过 REST API 加载数据
-- Rewards Bot 与 Copy Trading 控制端点只作为前端接口和命令入口，具体 live 策略、分析、撤单、重置由 worker 处理
-- Rewards Bot snapshot 不承载全量 reward markets，市场数量从 `status.markets_tracked` 读取；账户余额、positions 和 managed orders 均从 store 读取
+- API 进程内嵌 worker runtime；`polyedge-worker` 二进制仅保留 CLI/运维兼容入口，不再单独部署常驻容器
+- Rewards Bot 与 Copy Trading 控制端点只作为前端接口和命令入口，具体 live 策略、分析、撤单、重置由同进程后台 runtime 处理
+- Rewards Bot snapshot 不承载全量 reward markets；配置、账户、positions、heartbeat 优先从共享内存读取
 - 当前内网部署使用 `POLYEDGE_AUTH__DISABLED=true`，前端请求不需要权限头或 step-up code
 - CORS 当前为 permissive，支持纯内网中 front/API 分别部署在不同服务器
 - Step-up 认证代码路径仍保留；当 `POLYEDGE_AUTH__DISABLED=false` 时用于敏感操作（模式切换、kill switch、执行提交）
 
 ## 已知缺口
 
-- Rewards snapshot 的 balance/positions 新鲜度取决于 worker rewards poll 周期和外部 API 成功率；失败时 worker 保留上一版 store 数据。
+- Rewards snapshot 的外部 balance/positions/earnings 新鲜度取决于 rewards poll 周期和外部 API 成功率；失败时保留上一版状态。
 - `orders` / `orders_page` 只覆盖本系统 managed orders，尚未提供账户范围全部外部开放订单视图。
 
 ## 修改检查清单

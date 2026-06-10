@@ -111,6 +111,47 @@ impl LivePolymarketConnector {
         self.balance().await
     }
 
+    /// Check the current rewards-scoring status for a batch of managed orders.
+    pub async fn orders_scoring(
+        &self,
+        order_ids: &[String],
+    ) -> Result<std::collections::HashMap<String, bool>> {
+        if order_ids.is_empty() {
+            return Ok(std::collections::HashMap::new());
+        }
+        let order_ids = order_ids.iter().map(String::as_str).collect::<Vec<_>>();
+        self.client
+            .are_orders_scoring(&order_ids)
+            .await
+            .map_err(|error| {
+                AppError::dependency_unavailable(
+                    "POLYMARKET_ORDER_SCORING_QUERY_FAILED",
+                    format!("failed to query Polymarket order scoring: {error}"),
+                )
+            })
+    }
+
+    /// Return today's settled maker rewards converted to USD using each reward
+    /// asset's exchange rate from the CLOB response.
+    pub async fn reward_earnings_today_usd(&self) -> Result<Decimal> {
+        let date = chrono::Utc::now().date_naive();
+        let earnings = self
+            .client
+            .total_earnings_for_user_for_day(date)
+            .await
+            .map_err(|error| {
+                AppError::dependency_unavailable(
+                    "POLYMARKET_REWARD_EARNINGS_QUERY_FAILED",
+                    format!("failed to query Polymarket reward earnings for {date}: {error}"),
+                )
+            })?;
+        Ok(earnings
+            .into_iter()
+            .map(|earning| earning.earnings * earning.asset_rate)
+            .sum::<Decimal>()
+            .round_dp(4))
+    }
+
     /// List all open orders for the authenticated account, paginating
     /// through all available pages.
     pub async fn list_open_orders(&self) -> Result<Vec<PolymarketOpenOrder>> {

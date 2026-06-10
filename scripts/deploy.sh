@@ -8,20 +8,20 @@ set -Eeuo pipefail
 #   scripts/deploy.sh                 # auto mode (default for cron/CI)
 #   scripts/deploy.sh auto            # same as no args
 #   scripts/deploy.sh all             # force rebuild everything
-#   scripts/deploy.sh api [orderbook|worker|front ...]
+#   scripts/deploy.sh api [orderbook|front ...]
 #
 # Each service is deployed independently with its own image — orderbook, api,
-# worker, and front can run on different servers without cross-dependencies.
+# and front can run on different servers without cross-dependencies. The API
+# binary embeds the worker runtime and loads its task settings from .env.worker.
 # Only the binaries required for the targeted services need to exist locally.
 #
 # Auto mode (default):
 #   1. git fetch + fast-forward
 #   2. If no changes detected AND all targeted containers are running -> skip
 #   3. If api binary changed -> rebuild api image -> restart api
-#   4. If worker binary changed -> rebuild worker image -> restart worker
-#   5. If orderbook binary changed -> rebuild orderbook image -> restart orderbook
-#   6. If frontend files changed -> rebuild frontend image -> restart front
-#   7. If any targeted container is not running -> start existing image
+#   4. If orderbook binary changed -> rebuild orderbook image -> restart orderbook
+#   5. If frontend files changed -> rebuild frontend image -> restart front
+#   6. If any targeted container is not running -> start existing image
 #
 # Environment variables:
 #   POLYEDGE_DEPLOY_DIR       - repo checkout (default: script's parent)
@@ -53,16 +53,15 @@ Targets:
   no args / auto  Intelligent deploy: pull code, detect changes, deploy only what changed.
   all             Force rebuild all available images, then restart all available services.
   orderbook       Rebuild the orderbook image and restart only the orderbook service.
-  api worker      Rebuild api and worker images and restart selected backend services.
-  api             Rebuild the api image and restart only the API service.
-  worker          Rebuild the worker image and restart only the worker service.
+  api             Rebuild the API image and restart API plus embedded worker tasks.
+  worker          Compatibility alias for api.
   front           Rebuild the frontend image and restart only the frontend service.
 
 Each service deploys independently. Only the binaries for targeted services need to
 exist locally. Set POLYEDGE_SKIP_SERVICES to exclude services (e.g. "orderbook").
 
 Multiple targets can be passed as separate args or comma-separated, for example:
-  scripts/deploy.sh api worker
+  scripts/deploy.sh worker
   scripts/deploy.sh api,front
 EOF
 }
@@ -72,15 +71,14 @@ mode="auto"
 
 parse_targets() {
   local -n target_api_ref="$1"
-  local -n target_worker_ref="$2"
-  local -n target_front_ref="$3"
-  local -n target_orderbook_ref="$4"
+  local -n target_front_ref="$2"
+  local -n target_orderbook_ref="$3"
   local raw
   local target
   local part
   local -a parts
 
-  shift 4
+  shift 3
 
   if [[ $# -eq 0 ]]; then
     return 0
@@ -98,7 +96,6 @@ parse_targets() {
           mode="manual"
           # Mark all as targeted; missing binaries will be skipped gracefully.
           target_api_ref=1
-          target_worker_ref=1
           target_front_ref=1
           target_orderbook_ref=1
           ;;
@@ -108,7 +105,7 @@ parse_targets() {
           ;;
         worker)
           mode="manual"
-          target_worker_ref=1
+          target_api_ref=1
           ;;
         orderbook|ob)
           mode="manual"
@@ -321,7 +318,6 @@ save_deploy_state() {
   local state_file="$1"
   cat > "${state_file}" <<EOF
 api_hash=${current_api_hash}
-worker_hash=${current_worker_hash}
 orderbook_hash=${current_orderbook_hash}
 front_hash=${current_front_hash}
 commit=$(git rev-parse HEAD 2>/dev/null || echo "unknown")
@@ -358,11 +354,10 @@ branch="${POLYEDGE_GIT_BRANCH:-}"
 skip_git_pull="${POLYEDGE_SKIP_GIT_PULL:-0}"
 
 target_api=0
-target_worker=0
 target_front=0
 target_orderbook=0
 
-parse_targets target_api target_worker target_front target_orderbook "$@"
+parse_targets target_api target_front target_orderbook "$@"
 
 # ---- setup logging: tee to file when running non-interactively -----------
 log_file="${POLYEDGE_LOG_FILE:-}"
@@ -469,7 +464,7 @@ if [[ ! -f "${env_file}" ]]; then
       cp "${local_example}" "${local_target}"
     fi
   done
-  fail "created ${env_file} and service env files. Edit the PostgreSQL URL, matching orderbook/worker write tokens, and console step-up code, then rerun this script."
+  fail "created ${env_file} and service env files. Edit the PostgreSQL URL, matching orderbook/API-runtime write tokens, and console step-up code, then rerun this script."
 fi
 
 validate_env_file "${env_file}"
@@ -477,10 +472,10 @@ if [[ "${mode}" == "auto" ]]; then
   if ! should_skip_service orderbook; then
     validate_orderbook_write_token "${deploy_dir_path}/.env.orderbook" "orderbook"
   fi
-  if ! should_skip_service worker; then
-    validate_orderbook_write_token "${deploy_dir_path}/.env.worker" "worker"
+  if ! should_skip_service api; then
+    validate_orderbook_write_token "${deploy_dir_path}/.env.worker" "api embedded worker runtime"
   fi
-  if ! should_skip_service orderbook && ! should_skip_service worker; then
+  if ! should_skip_service orderbook && ! should_skip_service api; then
     validate_matching_orderbook_write_tokens \
       "${deploy_dir_path}/.env.orderbook" \
       "${deploy_dir_path}/.env.worker"
@@ -489,10 +484,10 @@ else
   if [[ "${target_orderbook}" == "1" ]]; then
     validate_orderbook_write_token "${deploy_dir_path}/.env.orderbook" "orderbook"
   fi
-  if [[ "${target_worker}" == "1" ]]; then
-    validate_orderbook_write_token "${deploy_dir_path}/.env.worker" "worker"
+  if [[ "${target_api}" == "1" ]]; then
+    validate_orderbook_write_token "${deploy_dir_path}/.env.worker" "api embedded worker runtime"
   fi
-  if [[ "${target_orderbook}" == "1" && "${target_worker}" == "1" ]]; then
+  if [[ "${target_orderbook}" == "1" && "${target_api}" == "1" ]]; then
     validate_matching_orderbook_write_tokens \
       "${deploy_dir_path}/.env.orderbook" \
       "${deploy_dir_path}/.env.worker"
@@ -507,37 +502,28 @@ export COMPOSE_PARALLEL_LIMIT="${COMPOSE_PARALLEL_LIMIT:-1}"
 # ---------------------------------------------------------------------------
 if [[ "${mode}" == "auto" ]]; then
   current_api_hash="$(file_hash bin/polyedge-api)"
-  current_worker_hash="$(file_hash bin/polyedge-worker)"
   current_orderbook_hash="$(file_hash bin/polyedge-orderbook)"
   current_front_hash="$(frontend_build_hash packages/front "${front_env_file}")"
 
   state_file="${deploy_dir}/.deploy-state"
   saved_api_hash=""
-  saved_worker_hash=""
   saved_orderbook_hash=""
   saved_front_hash=""
 
   if [[ -f "${state_file}" ]]; then
     saved_api_hash="$(grep '^api_hash=' "${state_file}" | cut -d= -f2 || true)"
-    saved_worker_hash="$(grep '^worker_hash=' "${state_file}" | cut -d= -f2 || true)"
     saved_orderbook_hash="$(grep '^orderbook_hash=' "${state_file}" | cut -d= -f2 || true)"
     saved_front_hash="$(grep '^front_hash=' "${state_file}" | cut -d= -f2 || true)"
   fi
 
   # Per-service change detection
   api_image_changed=0
-  worker_image_changed=0
   orderbook_changed=0
   front_changed=0
 
   if [[ "${current_api_hash}" != "${saved_api_hash}" ]]; then
     api_image_changed=1
     log "api binary changed (${saved_api_hash:-NONE}->${current_api_hash:0:8})"
-  fi
-
-  if [[ "${current_worker_hash}" != "${saved_worker_hash}" ]]; then
-    worker_image_changed=1
-    log "worker binary changed (${saved_worker_hash:-NONE}->${current_worker_hash:0:8})"
   fi
 
   if [[ "${current_orderbook_hash}" != "${saved_orderbook_hash}" ]]; then
@@ -558,17 +544,12 @@ if [[ "${mode}" == "auto" ]]; then
 
   # Per-service container status
   api_running=1
-  worker_running=1
   orderbook_running=1
   front_running=1
 
   if ! should_skip_service api && ! container_running polyedge-api; then
     log "polyedge-api container is not running"
     api_running=0
-  fi
-  if ! should_skip_service worker && ! container_running polyedge-worker; then
-    log "polyedge-worker container is not running"
-    worker_running=0
   fi
   if ! should_skip_service orderbook && ! container_running polyedge-orderbook; then
     log "polyedge-orderbook container is not running"
@@ -591,17 +572,6 @@ if [[ "${mode}" == "auto" ]]; then
     if ! should_skip_service api; then
       [[ -f bin/polyedge-api ]] || fail "bin/polyedge-api is missing. Build it with scripts/build-backend-bin.sh."
       restart_services+=(polyedge-api)
-    fi
-  fi
-
-  # worker image
-  if [[ "${worker_image_changed}" == "1" ]]; then
-    build_images+=(polyedge-worker)
-  fi
-  if [[ "${worker_image_changed}" == "1" || "${worker_running}" == "0" ]]; then
-    if ! should_skip_service worker; then
-      [[ -f bin/polyedge-worker ]] || fail "bin/polyedge-worker is missing. Build it with scripts/build-backend-bin.sh."
-      restart_services+=(polyedge-worker)
     fi
   fi
 
@@ -660,9 +630,6 @@ else
   if [[ "${target_api}" == "1" ]]; then
     build_images+=(polyedge-api)
   fi
-  if [[ "${target_worker}" == "1" ]]; then
-    build_images+=(polyedge-worker)
-  fi
   if [[ "${target_orderbook}" == "1" ]]; then
     build_images+=(polyedge-orderbook)
   fi
@@ -674,9 +641,6 @@ else
   if [[ "${target_api}" == "1" ]]; then
     [[ -f "bin/polyedge-api" ]] || fail "bin/polyedge-api is missing. Build it with: POLYEDGE_BACKEND_BINARY=polyedge-api scripts/build-backend-bin.sh"
   fi
-  if [[ "${target_worker}" == "1" ]]; then
-    [[ -f "bin/polyedge-worker" ]] || fail "bin/polyedge-worker is missing. Build it with: POLYEDGE_BACKEND_BINARY=polyedge-worker scripts/build-backend-bin.sh"
-  fi
   if [[ "${target_orderbook}" == "1" ]]; then
     [[ -f "bin/polyedge-orderbook" ]] || fail "bin/polyedge-orderbook is missing. Build it with: POLYEDGE_BACKEND_BINARY=polyedge-orderbook scripts/build-backend-bin.sh"
   fi
@@ -687,9 +651,6 @@ else
   fi
   if [[ "${target_api}" == "1" ]]; then
     runtime_services+=(polyedge-api)
-  fi
-  if [[ "${target_worker}" == "1" ]]; then
-    runtime_services+=(polyedge-worker)
   fi
   if [[ "${target_front}" == "1" ]]; then
     runtime_services+=(polyedge-front)

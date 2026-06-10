@@ -1,6 +1,7 @@
 const LIVE_SUBMISSION_ATTEMPTED_MARKER: &str = "live submission attempted";
 const LIVE_SUBMISSION_UNKNOWN_MARKER: &str =
     "live submission result unknown; manual reconciliation required";
+const MAX_EXIT_REJECTION_COUNT: usize = 10;
 
 fn live_submission_was_attempted(order: &ManagedRewardOrder) -> bool {
     order.reason.contains(LIVE_SUBMISSION_ATTEMPTED_MARKER)
@@ -143,10 +144,36 @@ async fn submit_one_live_exit_order(
             ))
         }
         LivePolymarketExecutionOutcome::Rejected(rejection) => {
+            let current_rejections = parse_exit_rejection_count(&order.reason);
+            let next_rejections = current_rejections + 1;
+            if next_rejections > MAX_EXIT_REJECTION_COUNT {
+                order.status = ManagedRewardOrderStatus::Error;
+                order.scoring = false;
+                order.reason = format!(
+                    "exit abandoned after {MAX_EXIT_REJECTION_COUNT} rejections (post_only={post_only}): {}",
+                    rejection.message
+                );
+                order.updated_at = OffsetDateTime::now_utc();
+                return Ok(LiveRewardOrderUpdate::Changed(
+                    order.clone(),
+                    reward_live_event(
+                        order,
+                        "reward_live_exit_order_rejected",
+                        RewardRiskSeverity::Critical,
+                        order.reason.clone(),
+                        json!({
+                            "code": rejection.code,
+                            "post_only": post_only,
+                            "rejections": next_rejections,
+                            "max_rejections": MAX_EXIT_REJECTION_COUNT,
+                        }),
+                    ),
+                ));
+            }
             order.status = ManagedRewardOrderStatus::ExitPending;
             order.scoring = false;
             order.reason = format!(
-                "retryable live exit rejected (post_only={post_only}): {}",
+                "retryable live exit rejected [{next_rejections}/{MAX_EXIT_REJECTION_COUNT}] (post_only={post_only}): {}",
                 rejection.message
             );
             order.updated_at = OffsetDateTime::now_utc();
@@ -157,7 +184,12 @@ async fn submit_one_live_exit_order(
                     "reward_live_exit_order_rejected",
                     RewardRiskSeverity::Warning,
                     order.reason.clone(),
-                    json!({ "code": rejection.code, "post_only": post_only }),
+                    json!({
+                        "code": rejection.code,
+                        "post_only": post_only,
+                        "rejections": next_rejections,
+                        "max_rejections": MAX_EXIT_REJECTION_COUNT,
+                    }),
                 ),
             ))
         }
@@ -263,4 +295,21 @@ async fn handle_non_live_reward_order_acceptance(
             ))
         }
     }
+}
+
+/// Parse the exit rejection counter from a reason string formatted as
+/// `"retryable live exit rejected [N/M] ..."`. Returns 0 if the pattern
+/// is not found (first rejection or non-rejection reason).
+fn parse_exit_rejection_count(reason: &str) -> usize {
+    let marker = "rejected [";
+    let Some(marker_start) = reason.find(marker) else {
+        return 0;
+    };
+    let count_start = marker_start + marker.len();
+    let Some(slash_pos) = reason[count_start..].find('/') else {
+        return 0;
+    };
+    reason[count_start..count_start + slash_pos]
+        .parse()
+        .unwrap_or(0)
 }

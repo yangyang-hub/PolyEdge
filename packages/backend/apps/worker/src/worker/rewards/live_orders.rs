@@ -8,6 +8,7 @@ struct LiveRewardFillUpdate {
     fill: RewardFill,
     event: RewardRiskEvent,
     fill_size: Decimal,
+    overdraft_warning: Option<RewardRiskEvent>,
 }
 
 fn live_cancel_result_is_unknown(order: &ManagedRewardOrder) -> bool {
@@ -172,10 +173,28 @@ fn apply_live_reward_fill_update(
     let now = OffsetDateTime::now_utc();
     let mut realized_pnl = Decimal::ZERO;
     let fill_role = reward_fill_role_for_live_order(&order);
+    let mut overdraft_warning: Option<RewardRiskEvent> = None;
 
     match order.side {
         RewardOrderSide::Buy => {
+            let previous_available = account.available_usd;
             account.available_usd = (account.available_usd - notional - fee).max(Decimal::ZERO);
+            if previous_available < notional + fee {
+                overdraft_warning = Some(reward_live_event(
+                    &order,
+                    "reward_live_buy_fill_overdraft",
+                    RewardRiskSeverity::Warning,
+                    format!(
+                        "buy fill deducted {notional:.4} + fee {fee:.4} from available_usd {previous_available:.4}; local balance clamped to zero — external account sync will correct",
+                    ),
+                    json!({
+                        "previous_available_usd": previous_available,
+                        "notional": notional,
+                        "fee": fee,
+                        "shortfall": (notional + fee - previous_available).round_dp(4),
+                    }),
+                ));
+            }
             let position =
                 positions
                     .entry(order.token_id.clone())
@@ -288,6 +307,7 @@ fn apply_live_reward_fill_update(
         fill,
         event,
         fill_size,
+        overdraft_warning,
     })
 }
 

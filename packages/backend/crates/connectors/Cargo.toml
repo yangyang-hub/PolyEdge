@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 async-trait.workspace = true
+chrono.workspace = true
 polyedge-application = { path = "../application" }
 polyedge-domain = { path = "../domain" }
 polymarket-client-sdk.workspace = true

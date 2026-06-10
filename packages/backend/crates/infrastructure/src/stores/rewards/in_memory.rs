@@ -364,7 +364,10 @@ impl RewardBotStore for InMemoryRewardBotStore {
             .read()
             .await
             .iter()
-            .filter(|e| e.account_id.as_deref() == Some(account_id))
+            .filter(|event| {
+                event.account_id.as_deref() == Some(account_id)
+                    && event.event_type != "reward_bot_live_plan_built"
+            })
             .cloned()
             .collect::<Vec<_>>();
         events.sort_by(|left, right| right.created_at.cmp(&left.created_at));
@@ -383,7 +386,9 @@ impl RewardBotStore for InMemoryRewardBotStore {
     async fn load_account_state(&self, config: &RewardBotConfig) -> Result<RewardAccountState> {
         let mut guard = self.account_state.write().await;
         if let Some(state) = guard.as_ref() {
-            return Ok(state.clone());
+            if state.account_id == config.account_id {
+                return Ok(state.clone());
+            }
         }
         let state = RewardAccountState::fresh(
             &config.account_id,
@@ -542,10 +547,11 @@ impl RewardBotStore for InMemoryRewardBotStore {
     }
 
     async fn reset_state(&self, config: &RewardBotConfig, _trace_id: &str) -> Result<()> {
-        self.orders.write().await.clear();
-        self.positions.write().await.clear();
-        self.fills.write().await.clear();
-        self.events.write().await.clear();
+        let account_id = &config.account_id;
+        self.orders.write().await.retain(|order| order.account_id != *account_id);
+        self.positions.write().await.retain(|_, position| position.account_id != *account_id);
+        self.fills.write().await.retain(|fill| fill.account_id != *account_id);
+        self.events.write().await.retain(|event| event.account_id.as_deref() != Some(account_id));
         *self.account_state.write().await = Some(RewardAccountState::fresh(
             &config.account_id,
             config.account_capital_usd,

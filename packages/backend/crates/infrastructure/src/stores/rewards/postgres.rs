@@ -425,6 +425,7 @@ impl RewardBotStore for PostgresRewardBotStore {
                    created_at
             FROM reward_risk_events
             WHERE account_id = $1
+              AND event_type <> 'reward_bot_live_plan_built'
             ORDER BY created_at DESC
             LIMIT $2
             "#,

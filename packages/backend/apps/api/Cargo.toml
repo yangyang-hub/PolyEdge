@@ -12,6 +12,7 @@ polyedge-connectors = { path = "../../crates/connectors" }
 polyedge-contracts = { path = "../../crates/contracts" }
 polyedge-domain = { path = "../../crates/domain" }
 polyedge-infrastructure = { path = "../../crates/infrastructure" }
+polyedge-worker = { path = "../worker" }
 rust_decimal.workspace = true
 serde.workspace = true
 serde_json.workspace = true

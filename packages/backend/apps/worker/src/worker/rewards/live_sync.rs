@@ -134,10 +134,14 @@ async fn sync_live_reward_orders(
                 fill,
                 event,
                 fill_size,
+                overdraft_warning,
             } = fill_update;
             working_orders.insert(filled_order.id.clone(), filled_order.clone());
             let mut changed_orders = vec![filled_order.clone()];
             let mut events = vec![event];
+            if let Some(warning) = overdraft_warning {
+                events.push(warning);
+            }
             if filled_order.side == RewardOrderSide::Buy {
                 for update in plan_live_post_fill_orders(
                     &cycle.config,
@@ -286,6 +290,7 @@ async fn run_reward_bot_live_reconcile_unlocked(
             &live_connector,
             &mut cycle.account,
             &mut cycle.positions,
+            &mut cycle.open_orders,
             trace_id,
         )
         .await;

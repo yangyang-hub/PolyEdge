@@ -304,6 +304,7 @@ async fn run_reward_bot_live_tick(
             &connector,
             &mut cycle.account,
             &mut cycle.positions,
+            &mut cycle.open_orders,
             trace_id,
         )
         .await;

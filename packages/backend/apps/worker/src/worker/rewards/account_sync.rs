@@ -11,8 +11,59 @@ async fn sync_external_account_state(
     connector: &LivePolymarketConnector,
     cycle_account: &mut RewardAccountState,
     cycle_positions: &mut Vec<RewardPosition>,
+    cycle_orders: &mut Vec<ManagedRewardOrder>,
     trace_id: &str,
 ) {
+    sync_managed_reward_scoring(
+        state,
+        connector,
+        cycle_account,
+        cycle_orders,
+        trace_id,
+    )
+    .await;
+
+    match connector.reward_earnings_today_usd().await {
+        Ok(reward_earned_usd) if reward_earned_usd != cycle_account.reward_earned_usd => {
+            let previous = cycle_account.reward_earned_usd;
+            cycle_account.reward_earned_usd = reward_earned_usd;
+            let event = new_risk_event(
+                Some(cycle_account.account_id.clone()),
+                None,
+                None,
+                "reward_live_reward_earnings_synced",
+                RewardRiskSeverity::Info,
+                "Synced today's settled Polymarket maker rewards.",
+                json!({
+                    "date": OffsetDateTime::now_utc().date().to_string(),
+                    "previous_reward_earned_usd": previous,
+                    "reward_earned_usd": reward_earned_usd,
+                }),
+            );
+            if let Err(error) = persist_live_reward_updates(
+                state,
+                cycle_account,
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                vec![event],
+                &RewardBotRunReport {
+                    reward_accrued: (reward_earned_usd - previous).max(Decimal::ZERO),
+                    ..RewardBotRunReport::default()
+                },
+                trace_id,
+            )
+            .await
+            {
+                warn!(error = %error, "failed to persist Polymarket reward earnings sync");
+            }
+        }
+        Ok(_) => {}
+        Err(error) => {
+            warn!(error = %error, "failed to query Polymarket reward earnings");
+        }
+    }
+
     if !external_account_sync_allowed(state, cycle_account, trace_id).await {
         return;
     }
@@ -137,6 +188,105 @@ async fn sync_external_account_state(
         Err(error) => {
             warn!(error = %error, "failed to persist external account sync outcome");
         }
+    }
+}
+
+async fn sync_managed_reward_scoring(
+    state: &AppState,
+    connector: &LivePolymarketConnector,
+    account: &mut RewardAccountState,
+    orders: &mut [ManagedRewardOrder],
+    trace_id: &str,
+) {
+    let config = match state.reward_bot_service.read_config().await {
+        Ok(config) => config,
+        Err(error) => {
+            warn!(error = %error, "failed to load rewards config before scoring sync");
+            return;
+        }
+    };
+    let now = OffsetDateTime::now_utc();
+    let scoring_interval = TimeDuration::seconds(config.min_scoring_check_sec as i64);
+    let due = orders
+        .iter()
+        .enumerate()
+        .filter_map(|(index, order)| {
+            let external_order_id = order.external_order_id.as_ref()?;
+            let should_check = order.side == RewardOrderSide::Buy
+                && order.status.is_open_like()
+                && order
+                    .last_scored_at
+                    .is_none_or(|last_scored_at| last_scored_at + scoring_interval <= now);
+            should_check.then(|| (index, external_order_id.clone()))
+        })
+        .collect::<Vec<_>>();
+
+    if due.is_empty() {
+        return;
+    }
+
+    let mut scoring_by_order = HashMap::new();
+    for chunk in due.chunks(100) {
+        let order_ids = chunk
+            .iter()
+            .map(|(_, order_id)| order_id.clone())
+            .collect::<Vec<_>>();
+        match connector.orders_scoring(&order_ids).await {
+            Ok(scoring) => scoring_by_order.extend(scoring),
+            Err(error) => {
+                warn!(error = %error, "failed to query managed rewards order scoring");
+                return;
+            }
+        }
+    }
+
+    let mut updates = Vec::new();
+    let mut events = Vec::new();
+    for (index, external_order_id) in due {
+        let Some(scoring) = scoring_by_order.get(&external_order_id).copied() else {
+            continue;
+        };
+        let order = &mut orders[index];
+        let changed = order.scoring != scoring;
+        order.scoring = scoring;
+        order.last_scored_at = Some(now);
+        order.updated_at = now;
+        updates.push(order.clone());
+        if changed {
+            events.push(reward_live_event(
+                order,
+                if scoring {
+                    "reward_live_order_scoring_started"
+                } else {
+                    "reward_live_order_scoring_stopped"
+                },
+                RewardRiskSeverity::Info,
+                if scoring {
+                    "managed rewards order is now scoring"
+                } else {
+                    "managed rewards order is no longer scoring"
+                },
+                json!({ "scoring": scoring }),
+            ));
+        }
+    }
+
+    if updates.is_empty() {
+        return;
+    }
+    if let Err(error) = persist_live_reward_updates(
+        state,
+        account,
+        Vec::new(),
+        updates,
+        Vec::new(),
+        events,
+        &RewardBotRunReport::default(),
+        trace_id,
+    )
+    .await
+    {
+        warn!(error = %error, "failed to persist managed rewards scoring sync");
     }
 }
 

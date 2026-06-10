@@ -173,7 +173,7 @@ export function SummaryStrip({
 
   return (
     <Card size="sm">
-      <CardContent className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 2xl:grid-cols-8">
+      <CardContent className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 2xl:grid-cols-9">
         <SummaryMetric
           label={dictionary.rewards.quotableMarkets}
           value={String(snapshot.status.eligible_markets)}
@@ -213,6 +213,11 @@ export function SummaryStrip({
           label={dictionary.rewards.eventsCancels}
           value={String(eventCounts.cancels)}
           hint={dictionary.rewards.eventsTriggered}
+        />
+        <SummaryMetric
+          label={dictionary.rewards.eventsRewards}
+          value={String(eventCounts.rewards)}
+          hint={`${dictionary.rewards.rewardEarned}: ${formatUsdFixed(snapshot.account.reward_earned_usd)}`}
         />
       </CardContent>
     </Card>

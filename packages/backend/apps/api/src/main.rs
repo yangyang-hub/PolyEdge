@@ -1,5 +1,6 @@
 use polyedge_api::build_app;
 use polyedge_infrastructure::{AppState, Runtime, telemetry::init_tracing};
+use polyedge_worker::WorkerRuntime;
 use std::net::SocketAddr;
 use tracing::info;
 
@@ -10,13 +11,17 @@ async fn main() -> polyedge_domain::Result<()> {
     let state = {
         let base = runtime.app_state();
         let url = &base.settings.orderbook.service_url;
-        let client = std::sync::Arc::new(polyedge_connectors::OrderbookHttpClient::new(url, None));
+        let client = std::sync::Arc::new(polyedge_connectors::OrderbookHttpClient::new(
+            url,
+            base.settings.orderbook.write_token.as_deref(),
+        ));
         AppState {
             orderbook_cache: client.clone(),
             orderbook_registry: client,
             ..base
         }
     };
+    let worker_runtime = WorkerRuntime::start(&state);
     let app = build_app(state.clone());
     let addr: SocketAddr = format!(
         "{}:{}",
@@ -39,7 +44,7 @@ async fn main() -> polyedge_domain::Result<()> {
 
     info!(address = %addr, "polyedge api listening");
     axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
+        .with_graceful_shutdown(shutdown_signal(worker_runtime))
         .await
         .map_err(|error| {
             polyedge_domain::AppError::internal(
@@ -49,7 +54,7 @@ async fn main() -> polyedge_domain::Result<()> {
         })
 }
 
-async fn shutdown_signal() {
+async fn shutdown_signal(worker_runtime: WorkerRuntime) {
     let ctrl_c = async {
         let _ = tokio::signal::ctrl_c().await;
     };
@@ -70,4 +75,6 @@ async fn shutdown_signal() {
         _ = ctrl_c => {}
         _ = terminate => {}
     }
+
+    worker_runtime.shutdown().await;
 }

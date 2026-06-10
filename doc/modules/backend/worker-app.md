@@ -1,10 +1,10 @@
 # Worker App（后台任务服务）
 
-最后更新：2026-06-09
+最后更新：2026-06-10
 
 ## 概述
 
-`polyedge-worker` 是基于 Tokio 的异步后台任务服务。它运行所有周期性任务：新闻采集、信号重算、执行分发、订单对账、奖励机器人、套利扫描、跟单执行和 orderbook token 注册。市场同步和盘口流已迁移到独立的 `polyedge-orderbook` 服务。
+Worker 代码现在同时提供共享库和兼容 CLI。`polyedge-api` 在同一进程内启动 `WorkerRuntime`，运行新闻采集、信号重算、执行分发、订单对账、奖励机器人、套利扫描、跟单执行和 orderbook token 注册；`polyedge-worker` 二进制继续提供维护/调试子命令，但 Docker 不再部署独立常驻 worker 容器。
 
 ## 设计目标
 
@@ -17,8 +17,9 @@
 
 | 文件 | 职责 |
 |---|---|
-| `main.rs` | 入口：CLI 参数解析（18 个子命令）、`run_worker_service()` 主循环（~455 行） |
-| `worker/service.rs` | Worker 编排服务 |
+| `lib.rs` | 共享 runtime：CLI 参数解析、任务实现聚合，对 API 暴露 `WorkerRuntime` |
+| `main.rs` | 薄 CLI 入口，调用 `polyedge_worker::run_cli()` |
+| `worker/service.rs` | `WorkerRuntime` 生命周期与后台任务编排 |
 | `worker/market_sync.rs` | 市场同步：Gamma API → `markets` 表 + Rewards API → `reward_markets` 表 |
 | `worker/news.rs` | 新闻采集入口 |
 | `worker/news_helpers.rs` | 新闻采集辅助函数 |
@@ -29,7 +30,7 @@
 | `worker/execution_reconcile.rs` | 订单/成交对账 |
 | `worker/orderbook_stream.rs` | Orderbook stream — 仅保留 CLI 子命令兼容，核心逻辑已迁移到独立 `polyedge-orderbook` 服务 |
 | `worker/rewards.rs` | 奖励机器人 tick；消费 API 入队的 run/cancel/reset 控制命令 |
-| `worker/rewards/account_sync.rs` | rewards 外部余额与完整持仓快照同步 |
+| `worker/rewards/account_sync.rs` | rewards 外部余额、完整持仓、订单 scoring 与当日 settled rewards 同步 |
 | `worker/rewards/live_sync.rs` | rewards live 托管订单成交/状态同步、Reset cancel-all 语义 |
 | `worker/rewards/live_orders.rs` | rewards live 撤单、成交入账、post-fill exit/flatten intent |
 | `worker/rewards/live_submission.rs` | rewards live 单笔提交、post-only 接受状态处理和 submission marker |
@@ -49,7 +50,7 @@
 
 | 命令 | 函数 | 描述 |
 |---|---|---|
-| `run`（默认） | `run_worker_service` | 长期运行的 worker 服务循环 |
+| `run`（默认） | `run_worker_service` | 兼容长期 worker 循环；正常部署由 API 内嵌 runtime 代替 |
 | `sync-markets-once` | `sync_markets_once` | 一次性市场同步 |
 | `ingest-news-once` | `ingest_news_once` | 一次性新闻采集 |
 | `poll-news` | `poll_news` | 持续新闻轮询 |
@@ -123,6 +124,7 @@ reward_bot_service.claim_next_control_command()
     fetch_reward_bot_inputs() // 获取奖励市场 + 盘口
         → prepare_live_cycle()
         → sync managed rewards order trades/statuses
+        → 批量同步 managed order scoring 状态与当日 settled maker rewards
         → 无近期 confirmed fill 时同步外部 balance + 链上 pUSD 余额回退 + 完整 positions 快照
         → LivePolymarketConnector.submit_token_order()
         → reconcile_interval_sec: 读取活跃盘口并对本系统托管订单做成交同步和安全撤单检查
@@ -130,7 +132,7 @@ reward_bot_service.claim_next_control_command()
 
 Report: `RewardBotRunReport { markets_scanned, books_fetched, plans_built, eligible_plans, placed_orders, cancelled_orders, filled_orders, risk_cancelled_orders, reward_accrued }`
 
-约束：worker 是 rewards 策略和控制命令的唯一执行者。Postgres 路径通过 advisory lease 串行化 rewards 命令、full tick 和 fast reconcile，避免多 worker 同时操作实盘订单。API 只把 `run_once` / `cancel_all` / `reset` 写入 `reward_control_commands`；worker 在 full tick 和每个 fast reconcile 周期前都领取待执行命令，`running` 命令超过 5 分钟会被重新领取，避免 worker 崩溃后永久卡住。`run_once` 会强制执行一次 live 策略 tick（即使自动开关关闭，但不会绕过全局 kill switch）并重置 full-cycle 计时；仅处理 cancel/reset 不会重置该计时，避免持续控制命令饿死报价重建。`cancel_all` 调用 Polymarket cancel，撤单拒绝或结果未知会让命令失败；`reset` 按 cancel-all 执行且不会清空本地账本，避免产生孤儿实盘订单。服务模式下 `POLYEDGE_WORKER__POLL_REWARD_BOT=true` 会运行与 `poll-reward-bot` CLI 相同的 full tick + fast reconcile loop，`RewardBotConfig.reconcile_interval_sec` 会生效。
+约束：后台 runtime 是 rewards 策略和控制命令的唯一执行者。Postgres advisory lease 串行化 rewards 命令、full tick 和 fast reconcile。API handler 只写控制命令；共享 `RewardBotService` 会立即唤醒同进程 loop，配置 revision 变化还会立即触发 full cycle。`POLYEDGE_WORKER__POLL_REWARD_BOT=true` 控制 API 内嵌 runtime 是否启动 rewards loop。
 
 自动 tick 只从 Postgres 的 `reward_markets` 读取奖励市场、通过 `OrderbookHttpClient`（HTTP 调用 polyedge-orderbook 服务）批量读取盘口。Postgres 候选 market pool 会关联 Gamma `markets`，优先选择 open + tradable 且 `volume_24h` 高的市场，随后按配置预过滤奖励市场；worker 使用 `POST /orderbook/batch` 按配置上限分批读取候选和活跃 token，避免持有 rewards advisory lease 时逐 token 发起 HTTP 请求。若本 tick 没有新鲜缓存盘口，不会提交新 post-only 订单。
 

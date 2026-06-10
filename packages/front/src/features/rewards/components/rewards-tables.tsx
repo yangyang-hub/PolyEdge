@@ -105,7 +105,7 @@ export function FillsTable({ fills }: { fills: RewardFillDto[] }) {
       <TableHeader>
         <TableRow>
           <TableHead>{dictionary.rewards.outcome}</TableHead>
-          <TableHead>{dictionary.rewards.state}</TableHead>
+          <TableHead>{dictionary.rewards.side}</TableHead>
           <TableHead>{dictionary.rewards.role}</TableHead>
           <TableHead>{dictionary.rewards.price}</TableHead>
           <TableHead>{dictionary.rewards.size}</TableHead>

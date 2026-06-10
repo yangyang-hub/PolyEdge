@@ -1,23 +1,42 @@
-async fn run_worker_service(state: AppState) -> Result<()> {
-    let (shutdown_tx, shutdown_rx) = watch::channel(false);
-    let handles = spawn_worker_tasks(&state, shutdown_rx);
+pub struct WorkerRuntime {
+    shutdown_tx: watch::Sender<bool>,
+    handles: Vec<JoinHandle<()>>,
+}
 
-    if handles.is_empty() {
-        warn!("polyedge-worker service started with no enabled jobs");
-    } else {
-        info!(jobs = handles.len(), "polyedge-worker service started");
-    }
+impl WorkerRuntime {
+    #[must_use]
+    pub fn start(state: &AppState) -> Self {
+        let (shutdown_tx, shutdown_rx) = watch::channel(false);
+        let handles = spawn_worker_tasks(state, shutdown_rx);
 
-    worker_shutdown_signal().await;
-    let _ = shutdown_tx.send(true);
+        if handles.is_empty() {
+            warn!("embedded worker runtime started with no enabled jobs");
+        } else {
+            info!(jobs = handles.len(), "embedded worker runtime started");
+        }
 
-    for handle in handles {
-        if let Err(error) = handle.await {
-            warn!(error = %error, "worker task failed to join");
+        Self {
+            shutdown_tx,
+            handles,
         }
     }
 
-    info!("polyedge-worker service stopped");
+    pub async fn shutdown(self) {
+        let _ = self.shutdown_tx.send(true);
+        for handle in self.handles {
+            if let Err(error) = handle.await {
+                warn!(error = %error, "worker task failed to join");
+            }
+        }
+        info!("embedded worker runtime stopped");
+    }
+}
+
+async fn run_worker_service(state: AppState) -> Result<()> {
+    let runtime = WorkerRuntime::start(&state);
+
+    worker_shutdown_signal().await;
+    runtime.shutdown().await;
     Ok(())
 }
 

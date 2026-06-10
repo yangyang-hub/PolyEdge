@@ -1,6 +1,6 @@
 # application（应用/服务层）
 
-最后更新：2026-06-08
+最后更新：2026-06-10
 
 ## 概述
 
@@ -21,7 +21,7 @@
 | `market_event/` | 核心市场/事件/信号：`MarketEventService`、`MarketEventStore`（最大 Store trait） |
 | `execution/` | 执行管道：`ExecutionService`（组合 MarketEventService + RiskService） |
 | `risk.rs` | 风控：`RiskService`、`RiskStateStore`、`RiskPolicy`、kill-switch 命令 |
-| `rewards/` | 做市奖励：`RewardBotService`、`RewardBotStore`、live-only 状态与订单分页查询 |
+| `rewards/` | 做市奖励：`RewardBotService`、`RewardBotStore`、live-only 状态与订单分页查询、events/fills/open_order_count 内存缓存、in-process command wake channel |
 | `copytrade/` | 跟单：`CopyTradeService`、`CopyTradeStore`、确定性模拟引擎和风险准入 |
 | `arbitrage/` | 套利：`ArbitrageService`、`ArbitrageStore`、机会检测/验证 |
 | `news_ingestion.rs` | 新闻采集：`NewsIngestionService`、`NewsIngestionStore` |
@@ -85,7 +85,7 @@
 - State Tick：`apply_tick_outcome`（原子持久化 orders/fills/positions/ledger/events，不修改奖励市场目录或 quote plan 快照）、`apply_account_sync`（更新账户；`Some(positions)` 原子替换该账户全部持仓，`None` 保留持仓）、`reset_state`（重置账户状态、清空 orders/fills/positions）
 - Control Commands：`enqueue_control_command`、`claim_next_control_command`、`complete_control_command`、`fail_control_command`
 
-**服务：** `RewardBotService` — 读写配置、市场管理、快照聚合、订单分页快照、live tick 计划准备、轻量 live state 读取、rewards 控制命令入队/领取/完成状态管理；不再依赖全局 `ModeStateStore`。奖励市场目录替换拒绝空 snapshot，避免异常上游响应停用全部目录。修改 `account_id` 前会检查旧账户是否仍有 open-like 订单或非零持仓，有任一存在则拒绝切换。服务分别提供活跃订单/持仓 token、当前 eligible quote plan token 和全部候选 token 集合，供 worker 按优先级注册盘口且保留候选预热路径。面向控制台的 snapshot 只通过 `active_market_summary` 返回市场统计（`status.markets_tracked` / `last_scan_at`），不读取或携带全量 active reward markets，避免 `/rewards` 首屏响应随奖励市场数量膨胀；sync/cancel/reconcile 使用的 `current_live_cycle_state` 也不扫描全量 active reward markets，完整候选市场只在 full tick 的 `prepare_live_cycle` 中传入。
+**服务：** `RewardBotService` — 读写配置、市场管理、快照聚合、订单分页快照、live tick 计划准备、轻量 live state 读取、rewards 控制命令入队/领取/完成状态管理。服务内部缓存 config、account、positions、events（最新 200 条）、fills（最新 200 条）、open_order_count 和 worker heartbeat，API 与内嵌后台 runtime 共享实例时直接读写这些热状态；缓存为空时回退到数据库。配置保存和控制命令入队会推进 runtime revision 并通过 command_wake channel 立即唤醒 worker poll loop。奖励市场目录替换拒绝空 snapshot，修改 `account_id` 前会检查旧账户状态。面向控制台的 snapshot 不携带全量 active reward markets。缓存辅助方法拆分在 `service_cache.rs`。
 
 **执行模式：**
 - `RewardExecutionMode` 枚举仅保留 `Live` 变体，`FromStr` 仍把旧字符串（`validation`、`dry_run`、`paper`、`simulation`）归一为 live；`execution_mode` 字段已从 `RewardBotConfig` / patch 中移除，Store 读取旧 `execution_mode` 配置键时直接忽略。
@@ -208,8 +208,8 @@ orderbook_cache ← (共享基础设施 trait)
 
 - 所有模块已实现完整的 Store trait 和 Service struct
 - Rewards 已移除旧 validation/simulation tick 引擎，仅保留 live-only 配置、quote planner、状态类型和增量持久化端口。
-- Rewards live 模式已接入 post-only token 买单、撤单、本系统托管订单成交同步、成交后现金/库存/PnL 更新、exit/flatten sell 下单，以及 worker 驱动的外部余额/完整持仓快照同步；账户范围外开放订单、订单计分查询和奖励结算对账仍待完成。
-- Rewards 已具备数据库控制命令队列，API 负责入队，worker 负责执行 run/cancel/reset。
+- Rewards live 模式已接入 post-only token 买单、撤单、本系统托管订单成交同步、成交后现金/库存/PnL 更新、exit/flatten sell 下单、外部余额/完整持仓快照、managed order scoring 和当日 settled maker rewards 同步；账户范围外开放订单仍待完成。
+- Rewards 保留数据库控制命令队列用于持久恢复，API 入队后通过共享 runtime revision 立即唤醒后台执行。
 - Copytrade 已具备数据库控制命令队列，API 负责入队，worker 负责执行 run/analyze/cancel/reset。
 - Copytrade 模拟决策已按时间顺序处理并在同一 tick 内执行 cooldown、暂停钱包、日亏损和运行中 exposure cap；crossed fill、无仓卖出和组合权重计算已收敛到资金账本一致语义。
 - Wallet analysis 是纯计算，已完全实现
