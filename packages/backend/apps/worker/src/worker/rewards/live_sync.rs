@@ -58,20 +58,20 @@ async fn sync_live_reward_orders(
                 let Some(mut missing_order) = working_orders.get(&order.id).cloned() else {
                     continue;
                 };
-                if !missing_order
-                    .reason
-                    .contains(LIVE_EXTERNAL_ORDER_NOT_FOUND_MARKER)
-                {
+                if missing_order.status.is_open_like() {
+                    missing_order.status = ManagedRewardOrderStatus::Cancelled;
                     missing_order.scoring = false;
                     missing_order.reason = format!(
-                        "{LIVE_EXTERNAL_ORDER_NOT_FOUND_MARKER}; manual reconciliation required: {external_order_id}"
+                        "order not found on Polymarket (404); auto-cancelled: {external_order_id}"
                     );
                     missing_order.updated_at = OffsetDateTime::now_utc();
                     let event = reward_live_event(
                         &missing_order,
-                        "reward_live_external_order_not_found",
-                        RewardRiskSeverity::Critical,
-                        missing_order.reason.clone(),
+                        "reward_live_order_not_found_auto_cancelled",
+                        RewardRiskSeverity::Info,
+                        format!(
+                            "order {external_order_id} not found on Polymarket; auto-cancelled"
+                        ),
                         json!({ "external_order_id": external_order_id }),
                     );
                     working_orders.insert(missing_order.id.clone(), missing_order.clone());

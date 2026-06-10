@@ -40,9 +40,6 @@ fn live_cancel_reason(
 ) -> Option<String> {
     if order.reason.contains("awaiting final reconciliation")
         || live_submission_was_attempted(order)
-        || order
-            .reason
-            .contains(LIVE_EXTERNAL_ORDER_NOT_FOUND_MARKER)
     {
         return None;
     }
