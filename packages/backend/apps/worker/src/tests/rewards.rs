@@ -13,11 +13,8 @@ fn rewards_account_sync_prefers_funding_wallet_address() {
         Some("0x0000000000000000000000000000000000000002"),
     );
     assert_eq!(
-        polymarket_funding_wallet_address(
-            " 0x0000000000000000000000000000000000000001 ",
-            None,
-        )
-        .as_deref(),
+        polymarket_funding_wallet_address(" 0x0000000000000000000000000000000000000001 ", None,)
+            .as_deref(),
         Some("0x0000000000000000000000000000000000000001"),
     );
 }
@@ -136,6 +133,8 @@ fn live_placement_reuses_cash_and_allows_stale_book_age_check_to_be_disabled() {
         &books,
         &[],
         &[],
+        Decimal::ZERO,
+        Decimal::ZERO,
         "trc_live_test",
     );
 
@@ -209,7 +208,12 @@ fn partial_live_fill_preserves_pending_cancellation_intent() {
     )
     .expect("partial fill");
 
-    assert!(update.order.reason.contains("awaiting final reconciliation"));
+    assert!(
+        update
+            .order
+            .reason
+            .contains("awaiting final reconciliation")
+    );
     assert!(
         update
             .order
@@ -386,10 +390,7 @@ fn live_cancel_candidates_cancel_buys_when_global_kill_switch_is_active() {
     let now = OffsetDateTime::now_utc();
     let plan = live_test_plan(now);
     let order = live_test_open_order("yes_live");
-    let books = HashMap::from([(
-        "yes_live".to_string(),
-        live_test_book("yes_live", now),
-    )]);
+    let books = HashMap::from([("yes_live".to_string(), live_test_book("yes_live", now))]);
 
     let candidates =
         live_cancel_candidates(&config, &[plan], &[order], &books, &HashMap::new(), true);
@@ -408,8 +409,14 @@ fn live_cancel_candidates_do_not_repeat_pending_cancel() {
     let mut order = live_test_open_order("yes_live");
     order.reason = "risk cancel; cancel accepted; awaiting final reconciliation".to_string();
 
-    let candidates =
-        live_cancel_candidates(&config, &[plan], &[order], &HashMap::new(), &HashMap::new(), false);
+    let candidates = live_cancel_candidates(
+        &config,
+        &[plan],
+        &[order],
+        &HashMap::new(),
+        &HashMap::new(),
+        false,
+    );
 
     assert!(candidates.is_empty());
 }
@@ -424,11 +431,18 @@ fn live_cancel_candidates_keep_unknown_submission_locked() {
     let mut order = live_test_open_order("yes_live");
     order.external_order_id = None;
     order.status = ManagedRewardOrderStatus::Planned;
-    order.reason =
-        format!("quote intent; {LIVE_SUBMISSION_ATTEMPTED_MARKER}; {LIVE_SUBMISSION_UNKNOWN_MARKER}");
+    order.reason = format!(
+        "quote intent; {LIVE_SUBMISSION_ATTEMPTED_MARKER}; {LIVE_SUBMISSION_UNKNOWN_MARKER}"
+    );
 
-    let candidates =
-        live_cancel_candidates(&config, &[plan], &[order], &HashMap::new(), &HashMap::new(), true);
+    let candidates = live_cancel_candidates(
+        &config,
+        &[plan],
+        &[order],
+        &HashMap::new(),
+        &HashMap::new(),
+        true,
+    );
 
     assert!(candidates.is_empty());
 }
@@ -438,14 +452,19 @@ fn sibling_cancel_retry_preserves_unknown_submission_marker() {
     let mut order = live_test_open_order("yes_live");
     order.external_order_id = None;
     order.status = ManagedRewardOrderStatus::Planned;
-    order.reason =
-        format!("quote intent; {LIVE_SUBMISSION_ATTEMPTED_MARKER}; {LIVE_SUBMISSION_UNKNOWN_MARKER}");
+    order.reason = format!(
+        "quote intent; {LIVE_SUBMISSION_ATTEMPTED_MARKER}; {LIVE_SUBMISSION_UNKNOWN_MARKER}"
+    );
 
     let retry = mark_sibling_cancel_for_retry(order);
 
     assert!(live_submission_was_attempted(&retry));
     assert!(live_submission_result_is_unknown(&retry));
-    assert!(retry.reason.contains("sibling cancellation must be retried"));
+    assert!(
+        retry
+            .reason
+            .contains("sibling cancellation must be retried")
+    );
 }
 
 #[test]
@@ -453,8 +472,9 @@ fn unresolved_live_reconciliation_blocks_new_buy_submission() {
     let mut unknown = live_test_open_order("yes_live");
     unknown.external_order_id = None;
     unknown.status = ManagedRewardOrderStatus::Planned;
-    unknown.reason =
-        format!("quote intent; {LIVE_SUBMISSION_ATTEMPTED_MARKER}; {LIVE_SUBMISSION_UNKNOWN_MARKER}");
+    unknown.reason = format!(
+        "quote intent; {LIVE_SUBMISSION_ATTEMPTED_MARKER}; {LIVE_SUBMISSION_UNKNOWN_MARKER}"
+    );
 
     assert!(has_unresolved_live_reconciliation(&[unknown]));
 
@@ -466,6 +486,21 @@ fn unresolved_live_reconciliation_blocks_new_buy_submission() {
     let mut pending_cancel = live_test_open_order("pending_cancel");
     pending_cancel.reason = "cancel accepted; awaiting final reconciliation".to_string();
     assert!(has_unresolved_live_reconciliation(&[pending_cancel]));
+}
+
+#[test]
+fn missing_external_order_stays_open_for_trade_reconciliation() {
+    let order = live_test_open_order("yes_live");
+    let external_order_id = order.external_order_id.clone().expect("external order id");
+
+    let (locked, event) = mark_live_external_order_not_found(order, &external_order_id)
+        .expect("missing external order must create a reconciliation lock");
+
+    assert!(locked.status.is_open_like());
+    assert!(!locked.scoring);
+    assert!(locked.reason.contains(LIVE_EXTERNAL_ORDER_NOT_FOUND_MARKER));
+    assert_eq!(event.event_type, "reward_live_external_order_not_found");
+    assert!(has_unresolved_live_reconciliation(&[locked]));
 }
 
 #[test]
@@ -491,10 +526,7 @@ fn live_status_after_pending_cancel_requires_retry() {
         "trc_live_after_cancel",
     )
     .expect("live order after cancellation attempt must require retry");
-    let books = HashMap::from([(
-        "yes_live".to_string(),
-        live_test_book("yes_live", now),
-    )]);
+    let books = HashMap::from([("yes_live".to_string(), live_test_book("yes_live", now))]);
 
     let candidates =
         live_cancel_candidates(&config, &[plan], &[order], &books, &HashMap::new(), false);
@@ -530,7 +562,11 @@ fn successful_live_lookup_clears_external_order_not_found_lock() {
     .expect("successful lookup must clear not-found lock");
 
     assert!(recovered.scoring);
-    assert!(!recovered.reason.contains(LIVE_EXTERNAL_ORDER_NOT_FOUND_MARKER));
+    assert!(
+        !recovered
+            .reason
+            .contains(LIVE_EXTERNAL_ORDER_NOT_FOUND_MARKER)
+    );
     assert_eq!(event.event_type, "reward_live_external_order_recovered");
     assert!(!has_unresolved_live_reconciliation(&[recovered]));
 }
@@ -559,10 +595,7 @@ fn live_cancel_candidates_retry_rejected_post_only_violation_cancel() {
     let plan = live_test_plan(now);
     let mut order = live_test_open_order("yes_live");
     order.reason = "Polymarket returned matched for a post-only rewards quote and cancel was rejected; cancellation must be retried".to_string();
-    let books = HashMap::from([(
-        "yes_live".to_string(),
-        live_test_book("yes_live", now),
-    )]);
+    let books = HashMap::from([("yes_live".to_string(), live_test_book("yes_live", now))]);
 
     let candidates =
         live_cancel_candidates(&config, &[plan], &[order], &books, &HashMap::new(), false);
@@ -583,8 +616,8 @@ fn cancelled_live_exit_defers_remaining_position_for_retry() {
     order.status = ManagedRewardOrderStatus::ExitPending;
     order.size = reward_decimal("20");
     order.filled_size = reward_decimal("7");
-    order.reason =
-        "live post-only rewards exit accepted; cancel requested because orderbook stale".to_string();
+    order.reason = "live post-only rewards exit accepted; cancel requested because orderbook stale"
+        .to_string();
     let position = RewardPosition {
         account_id: order.account_id.clone(),
         condition_id: order.condition_id.clone(),
@@ -611,8 +644,8 @@ fn cancelled_live_exit_does_not_retry_explicit_cancel_all() {
     let mut order = live_test_open_order("yes_live");
     order.side = RewardOrderSide::Sell;
     order.status = ManagedRewardOrderStatus::ExitPending;
-    order.reason = "worker processed queued rewards live cancel-all command; cancel accepted"
-        .to_string();
+    order.reason =
+        "worker processed queued rewards live cancel-all command; cancel accepted".to_string();
     let position = RewardPosition {
         account_id: order.account_id.clone(),
         condition_id: order.condition_id.clone(),
@@ -687,11 +720,7 @@ async fn live_tick_persistence_keeps_market_catalog_and_blocks_active_account_ch
         .reward_bot_service
         .apply_live_tick_outcome(
             &RewardTickOutcome {
-                account: RewardAccountState::fresh(
-                    "reward_live",
-                    Decimal::from(100_u64),
-                    now,
-                ),
+                account: RewardAccountState::fresh("reward_live", Decimal::from(100_u64), now),
                 markets: Vec::new(),
                 plans: Vec::new(),
                 orders: vec![live_test_open_order("yes_live")],
@@ -759,6 +788,8 @@ fn live_placement_counts_candidate_notional_against_position_cap() {
         &books,
         &[],
         &positions,
+        Decimal::ZERO,
+        Decimal::ZERO,
         "trc_live_test",
     );
 

@@ -32,15 +32,12 @@ async fn sync_live_reward_orders(
         })
         .collect();
 
-    for order in open_orders
-        .iter()
-        .filter(|order| {
-            order
-                .external_order_id
-                .as_ref()
-                .is_some_and(|id| !is_internal_reward_order_id(id))
-        })
-    {
+    for order in open_orders.iter().filter(|order| {
+        order
+            .external_order_id
+            .as_ref()
+            .is_some_and(|id| !is_internal_reward_order_id(id))
+    }) {
         let Some(external_order_id) = order.external_order_id.as_deref() else {
             continue;
         };
@@ -50,30 +47,19 @@ async fn sync_live_reward_orders(
                 connector_name: POLYMARKET_CONNECTOR_NAME.to_string(),
                 account_id: connector.account_id().to_string(),
                 external_order_id: external_order_id.to_string(),
+                fallback_token_id: Some(order.token_id.clone()),
+                fallback_after: Some(order.created_at.unix_timestamp().saturating_sub(300)),
             })
             .await
         {
             Ok(outcome) => outcome,
             Err(error) if error.code() == "POLYMARKET_ORDER_NOT_FOUND" => {
-                let Some(mut missing_order) = working_orders.get(&order.id).cloned() else {
+                let Some(missing_order) = working_orders.get(&order.id).cloned() else {
                     continue;
                 };
-                if missing_order.status.is_open_like() {
-                    missing_order.status = ManagedRewardOrderStatus::Cancelled;
-                    missing_order.scoring = false;
-                    missing_order.reason = format!(
-                        "order not found on Polymarket (404); auto-cancelled: {external_order_id}"
-                    );
-                    missing_order.updated_at = OffsetDateTime::now_utc();
-                    let event = reward_live_event(
-                        &missing_order,
-                        "reward_live_order_not_found_auto_cancelled",
-                        RewardRiskSeverity::Info,
-                        format!(
-                            "order {external_order_id} not found on Polymarket; auto-cancelled"
-                        ),
-                        json!({ "external_order_id": external_order_id }),
-                    );
+                if let Some((missing_order, event)) =
+                    mark_live_external_order_not_found(missing_order, external_order_id)
+                {
                     working_orders.insert(missing_order.id.clone(), missing_order.clone());
                     persist_live_reward_updates(
                         state,
@@ -91,6 +77,9 @@ async fn sync_live_reward_orders(
             }
             Err(error) => return Err(error),
         };
+
+        let order_not_found = trade_sync.order_not_found;
+        let order_status = trade_sync.order_status;
 
         for update in trade_sync.updates {
             let fill_id = reward_live_fill_id(&update);
@@ -190,7 +179,7 @@ async fn sync_live_reward_orders(
             }
         }
 
-        if let Some(status_update) = trade_sync.order_status {
+        if let Some(status_update) = order_status {
             let Some(current_order) = external_order_index
                 .get(&status_update.external_order_id)
                 .and_then(|order_id| working_orders.get(order_id))
@@ -202,8 +191,7 @@ async fn sync_live_reward_orders(
                 current_order.clone(),
                 status_update,
                 trace_id,
-            )
-            {
+            ) {
                 working_orders.insert(order.id.clone(), order.clone());
                 let should_retry_exit = order.status == ManagedRewardOrderStatus::Cancelled;
                 let mut changed_orders = vec![order];
@@ -237,6 +225,28 @@ async fn sync_live_reward_orders(
                     changed_orders,
                     Vec::new(),
                     events,
+                    &report,
+                    trace_id,
+                )
+                .await?;
+            }
+        }
+
+        if order_not_found {
+            let Some(current_order) = working_orders.get(&order.id).cloned() else {
+                continue;
+            };
+            if let Some((missing_order, event)) =
+                mark_live_external_order_not_found(current_order, external_order_id)
+            {
+                working_orders.insert(missing_order.id.clone(), missing_order.clone());
+                persist_live_reward_updates(
+                    state,
+                    &mut account,
+                    Vec::new(),
+                    vec![missing_order],
+                    Vec::new(),
+                    vec![event],
                     &report,
                     trace_id,
                 )

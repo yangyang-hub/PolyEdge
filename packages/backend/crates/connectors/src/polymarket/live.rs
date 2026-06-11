@@ -92,12 +92,15 @@ impl LivePolymarketConnector {
             .asset_type(AssetType::Collateral)
             .signature_type(self.signature_type.into())
             .build();
-        self.client.balance_allowance(request).await.map_err(|error| {
-            AppError::dependency_unavailable(
-                "POLYMARKET_BALANCE_QUERY_FAILED",
-                format!("failed to query Polymarket balance: {error}"),
-            )
-        })
+        self.client
+            .balance_allowance(request)
+            .await
+            .map_err(|error| {
+                AppError::dependency_unavailable(
+                    "POLYMARKET_BALANCE_QUERY_FAILED",
+                    format!("failed to query Polymarket balance: {error}"),
+                )
+            })
     }
 
     /// Force the CLOB to refresh its cached collateral balance, then query it.
@@ -149,13 +152,13 @@ impl LivePolymarketConnector {
                 .map_err(|error| {
                     AppError::dependency_unavailable(
                         "POLYMARKET_REWARD_EARNINGS_QUERY_FAILED",
-                        format!(
-                            "failed to query Polymarket reward earnings for {date}: {error}"
-                        ),
+                        format!("failed to query Polymarket reward earnings for {date}: {error}"),
                     )
                 })?;
             all_earnings.extend(page.data);
-            if page.next_cursor.is_empty() || next_cursor.as_deref() == Some(page.next_cursor.as_str()) {
+            if page.next_cursor.is_empty()
+                || next_cursor.as_deref() == Some(page.next_cursor.as_str())
+            {
                 break;
             }
             next_cursor = Some(page.next_cursor);
@@ -235,16 +238,12 @@ impl LivePolymarketConnector {
         let adjusted_quantity = adjusted_order_quantity(request.limit_price, request.quantity)?;
         let tick_price = request.limit_price.value().round_dp(2);
         let expected_size = adjusted_quantity.value().round_dp(4);
-        let mut matches = self
-            .list_open_orders()
-            .await?
-            .into_iter()
-            .filter(|order| {
-                order.asset_id == request.token_id
-                    && order.side == request.side
-                    && order.price.round_dp(2) == tick_price
-                    && order.original_size.round_dp(4) == expected_size
-            });
+        let mut matches = self.list_open_orders().await?.into_iter().filter(|order| {
+            order.asset_id == request.token_id
+                && order.side == request.side
+                && order.price.round_dp(2) == tick_price
+                && order.original_size.round_dp(4) == expected_size
+        });
 
         let Some(order) = matches.next() else {
             return Ok(None);
@@ -537,12 +536,17 @@ impl LivePolymarketConnector {
             }
         };
 
-        self.client.update_balance_allowance(request).await.map_err(|error| {
-            AppError::internal(
-                "POLYMARKET_BALANCE_ALLOWANCE_UPDATE_FAILED",
-                format!("failed to update Polymarket deposit wallet balance allowance: {error}"),
-            )
-        })
+        self.client
+            .update_balance_allowance(request)
+            .await
+            .map_err(|error| {
+                AppError::internal(
+                    "POLYMARKET_BALANCE_ALLOWANCE_UPDATE_FAILED",
+                    format!(
+                        "failed to update Polymarket deposit wallet balance allowance: {error}"
+                    ),
+                )
+            })
     }
 
     pub async fn cancel_order(
@@ -598,15 +602,14 @@ impl LivePolymarketConnector {
         let order = self.fetch_order(&request.external_order_id).await?;
 
         match order.status {
-            SdkOrderStatusType::Live
-            | SdkOrderStatusType::Unmatched
+            SdkOrderStatusType::Live | SdkOrderStatusType::Unmatched
                 if !matches!(order.order_type, OrderType::FAK | OrderType::FOK) =>
             {
                 Ok(Some(ConnectorOrderStatusUpdate {
-                event_id: format!("evt_pm_order_poll:{}:live", order.id),
-                connector_name: POLYMARKET_CONNECTOR_NAME.to_string(),
-                external_order_id: order.id,
-                status: OrderStatus::Open,
+                    event_id: format!("evt_pm_order_poll:{}:live", order.id),
+                    connector_name: POLYMARKET_CONNECTOR_NAME.to_string(),
+                    external_order_id: order.id,
+                    status: OrderStatus::Open,
                 }))
             }
             SdkOrderStatusType::Canceled => Ok(Some(ConnectorOrderStatusUpdate {
@@ -628,10 +631,19 @@ impl LivePolymarketConnector {
         request: &LivePolymarketTradeSyncRequest,
     ) -> Result<LivePolymarketTradeSyncOutcome> {
         validate_live_trade_sync_request(request)?;
-        let order = self.fetch_order(&request.external_order_id).await?;
+        let order = match self.fetch_order(&request.external_order_id).await {
+            Ok(order) => order,
+            Err(error)
+                if error.code() == "POLYMARKET_ORDER_NOT_FOUND"
+                    && request.fallback_token_id.is_some() =>
+            {
+                return self.collect_missing_order_trade_updates(request).await;
+            }
+            Err(error) => return Err(error),
+        };
         let mut updates = Vec::new();
-        let mut associated_trades_terminal = !order.associate_trades.is_empty()
-            || order.size_matched <= Decimal::ZERO;
+        let mut associated_trades_terminal =
+            !order.associate_trades.is_empty() || order.size_matched <= Decimal::ZERO;
 
         for trade_id in &order.associate_trades {
             match self
@@ -649,6 +661,74 @@ impl LivePolymarketConnector {
         Ok(LivePolymarketTradeSyncOutcome {
             updates,
             order_status: reconciled_order_status_update(&order, associated_trades_terminal),
+            order_not_found: false,
+        })
+    }
+
+    async fn collect_missing_order_trade_updates(
+        &self,
+        request: &LivePolymarketTradeSyncRequest,
+    ) -> Result<LivePolymarketTradeSyncOutcome> {
+        const TERMINAL_CURSOR: &str = "LTE=";
+        const MAX_PAGES: usize = 1000;
+
+        let token_id = parse_u256(
+            "fallback_token_id",
+            request.fallback_token_id.as_deref().unwrap_or_default(),
+            "POLYMARKET_ASSET_ID_INVALID",
+        )?;
+        let trades_request = match request.fallback_after {
+            Some(after) => TradesRequest::builder()
+                .asset_id(token_id)
+                .after(after)
+                .build(),
+            None => TradesRequest::builder().asset_id(token_id).build(),
+        };
+        let mut updates = Vec::new();
+        let mut next_cursor: Option<String> = None;
+
+        for _ in 0..MAX_PAGES {
+            let page = self
+                .client
+                .trades(&trades_request, next_cursor.clone())
+                .await
+                .map_err(|error| {
+                    AppError::internal(
+                        "POLYMARKET_TRADE_QUERY_FAILED",
+                        format!(
+                            "failed to query fallback trades for missing order {}: {error}",
+                            request.external_order_id
+                        ),
+                    )
+                })?;
+
+            for trade in page
+                .data
+                .iter()
+                .filter(|trade| trade_matches_order(trade, &request.external_order_id))
+            {
+                match reconcile_live_trade(trade, &request.external_order_id, &request.account_id)?
+                {
+                    LivePolymarketTradeReconciliation::Confirmed(update) => updates.push(update),
+                    LivePolymarketTradeReconciliation::SettledWithoutFill
+                    | LivePolymarketTradeReconciliation::Pending => {}
+                }
+            }
+
+            if page.next_cursor.is_empty()
+                || page.next_cursor == TERMINAL_CURSOR
+                || page.count == 0
+                || next_cursor.as_deref() == Some(page.next_cursor.as_str())
+            {
+                break;
+            }
+            next_cursor = Some(page.next_cursor);
+        }
+
+        Ok(LivePolymarketTradeSyncOutcome {
+            updates,
+            order_status: None,
+            order_not_found: true,
         })
     }
 
@@ -704,60 +784,67 @@ impl LivePolymarketConnector {
             return Ok(LivePolymarketTradeReconciliation::Pending);
         };
 
-        match live_trade_settlement(&trade.status) {
-            LivePolymarketTradeSettlement::Confirmed => {}
-            LivePolymarketTradeSettlement::SettledWithoutFill => {
-                return Ok(LivePolymarketTradeReconciliation::SettledWithoutFill);
-            }
-            LivePolymarketTradeSettlement::Pending => {
-                return Ok(LivePolymarketTradeReconciliation::Pending);
-            }
+        reconcile_live_trade(&trade, external_order_id, account_id)
+    }
+}
+
+fn reconcile_live_trade(
+    trade: &TradeResponse,
+    external_order_id: &str,
+    account_id: &str,
+) -> Result<LivePolymarketTradeReconciliation> {
+    match live_trade_settlement(&trade.status) {
+        LivePolymarketTradeSettlement::Confirmed => {}
+        LivePolymarketTradeSettlement::SettledWithoutFill => {
+            return Ok(LivePolymarketTradeReconciliation::SettledWithoutFill);
         }
-
-        let Some(fill) = trade_order_fill(&trade, external_order_id) else {
-            warn!(
-                external_trade_id,
-                external_order_id,
-                "polymarket trade response did not include order-specific fill details"
-            );
+        LivePolymarketTradeSettlement::Pending => {
             return Ok(LivePolymarketTradeReconciliation::Pending);
-        };
+        }
+    }
 
-        let fill_price = Probability::new(fill.price).map_err(|error| {
-            AppError::internal(
-                "POLYMARKET_TRADE_PRICE_INVALID",
-                format!("failed to decode trade price for {external_trade_id}: {error}"),
-            )
-        })?;
-        let filled_quantity = Quantity::new(fill.size).map_err(|error| {
-            AppError::internal(
-                "POLYMARKET_TRADE_SIZE_INVALID",
-                format!("failed to decode trade size for {external_trade_id}: {error}"),
-            )
-        })?;
-        let fee = UsdAmount::new(
-            fill.price * fill.size * fill.fee_rate_bps / Decimal::from(10_000_u64),
+    let Some(fill) = trade_order_fill(trade, external_order_id) else {
+        warn!(
+            external_trade_id = %trade.id,
+            external_order_id,
+            "polymarket trade response did not include order-specific fill details"
+        );
+        return Ok(LivePolymarketTradeReconciliation::Pending);
+    };
+
+    let fill_price = Probability::new(fill.price).map_err(|error| {
+        AppError::internal(
+            "POLYMARKET_TRADE_PRICE_INVALID",
+            format!("failed to decode trade price for {}: {error}", trade.id),
         )
-        .map_err(|error| {
-            AppError::internal(
-                "POLYMARKET_TRADE_FEE_INVALID",
-                format!("failed to decode trade fee for {external_trade_id}: {error}"),
-            )
-        })?;
+    })?;
+    let filled_quantity = Quantity::new(fill.size).map_err(|error| {
+        AppError::internal(
+            "POLYMARKET_TRADE_SIZE_INVALID",
+            format!("failed to decode trade size for {}: {error}", trade.id),
+        )
+    })?;
+    let fee =
+        UsdAmount::new(fill.price * fill.size * fill.fee_rate_bps / Decimal::from(10_000_u64))
+            .map_err(|error| {
+                AppError::internal(
+                    "POLYMARKET_TRADE_FEE_INVALID",
+                    format!("failed to decode trade fee for {}: {error}", trade.id),
+                )
+            })?;
 
-        Ok(LivePolymarketTradeReconciliation::Confirmed(
-            ConnectorTradeFillUpdate {
+    Ok(LivePolymarketTradeReconciliation::Confirmed(
+        ConnectorTradeFillUpdate {
             event_id: format!("evt_pm_trade_poll:{}:{}", external_order_id, trade.id),
             connector_name: POLYMARKET_CONNECTOR_NAME.to_string(),
             external_order_id: external_order_id.to_string(),
             account_id: account_id.to_string(),
-            external_trade_id: trade.id,
+            external_trade_id: trade.id.clone(),
             fill_price,
             filled_quantity,
             fee,
-            },
-        ))
-    }
+        },
+    ))
 }
 
 enum LivePolymarketTradeReconciliation {
@@ -789,7 +876,9 @@ fn reconciled_order_status_update(
         SdkOrderStatusType::Live => OrderStatus::Open,
         SdkOrderStatusType::Canceled if associated_trades_terminal => OrderStatus::Canceled,
         SdkOrderStatusType::Matched if associated_trades_terminal => OrderStatus::Filled,
-        SdkOrderStatusType::Unmatched if matches!(order.order_type, OrderType::FAK | OrderType::FOK) => {
+        SdkOrderStatusType::Unmatched
+            if matches!(order.order_type, OrderType::FAK | OrderType::FOK) =>
+        {
             if !associated_trades_terminal {
                 return None;
             }

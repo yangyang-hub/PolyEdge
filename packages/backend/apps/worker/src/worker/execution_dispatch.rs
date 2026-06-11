@@ -243,6 +243,8 @@ async fn reconcile_live_polymarket_candidate(
             connector_name: candidate.execution_request.connector_name.clone(),
             account_id: connector.account_id().to_string(),
             external_order_id: external_order_id.clone(),
+            fallback_token_id: None,
+            fallback_after: None,
         })
         .await?;
 

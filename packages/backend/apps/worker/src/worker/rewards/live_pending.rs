@@ -26,8 +26,7 @@ async fn submit_pending_live_reward_orders(
                 || (order.side == RewardOrderSide::Sell
                     && matches!(
                         order.status,
-                        ManagedRewardOrderStatus::Planned
-                            | ManagedRewardOrderStatus::ExitPending
+                        ManagedRewardOrderStatus::Planned | ManagedRewardOrderStatus::ExitPending
                     )))
     }) {
         let post_only =
@@ -62,7 +61,8 @@ async fn submit_pending_live_reward_orders(
                                 .to_string()
                         }
                         (RewardOrderSide::Sell, false) => {
-                            "recovered live rewards flatten after interrupted submission".to_string()
+                            "recovered live rewards flatten after interrupted submission"
+                                .to_string()
                         }
                     };
                     order.updated_at = acceptance.accepted_at;
@@ -90,31 +90,32 @@ async fn submit_pending_live_reward_orders(
                     .await?;
                 }
                 Ok(None) => {
-                    // Order not found on Polymarket — the submission never landed.
-                    // Auto-cancel instead of leaving it stuck blocking the bot.
-                    order.status = ManagedRewardOrderStatus::Cancelled;
-                    order.scoring = false;
-                    order.reason =
-                        "order not found on Polymarket during recovery; auto-cancelled".to_string();
-                    order.updated_at = OffsetDateTime::now_utc();
-                    let event = reward_live_event(
-                        order,
-                        "reward_live_order_recovery_not_found_cancelled",
-                        RewardRiskSeverity::Info,
-                        order.reason.clone(),
-                        json!({ "post_only": post_only }),
-                    );
-                    persist_live_reward_updates(
-                        state,
-                        account,
-                        Vec::new(), // positions unchanged during submission
-                        vec![order.clone()],
-                        Vec::new(),
-                        vec![event],
-                        report,
-                        trace_id,
-                    )
-                    .await?;
+                    if !live_submission_result_is_unknown(order) {
+                        order.scoring = false;
+                        order.reason = format!(
+                            "{}; {LIVE_SUBMISSION_UNKNOWN_MARKER}: no matching open order found",
+                            order.reason
+                        );
+                        order.updated_at = OffsetDateTime::now_utc();
+                        let event = reward_live_event(
+                            order,
+                            "reward_live_order_submission_recovery_unresolved",
+                            RewardRiskSeverity::Critical,
+                            order.reason.clone(),
+                            json!({ "post_only": post_only }),
+                        );
+                        persist_live_reward_updates(
+                            state,
+                            account,
+                            Vec::new(), // positions unchanged during submission
+                            vec![order.clone()],
+                            Vec::new(),
+                            vec![event],
+                            report,
+                            trace_id,
+                        )
+                        .await?;
+                    }
                 }
                 Err(error) => {
                     if !live_submission_result_is_unknown(order) {
@@ -191,7 +192,9 @@ async fn submit_pending_live_reward_orders(
                 }
                 order.scoring = false;
                 order.reason = if error.code() == "POLYMARKET_ORDER_POST_FAILED" {
-                    format!("{pre_submit_reason}; {LIVE_SUBMISSION_ATTEMPTED_MARKER}; {LIVE_SUBMISSION_UNKNOWN_MARKER}: {error}")
+                    format!(
+                        "{pre_submit_reason}; {LIVE_SUBMISSION_ATTEMPTED_MARKER}; {LIVE_SUBMISSION_UNKNOWN_MARKER}: {error}"
+                    )
                 } else {
                     format!(
                         "retryable live submission failed before post: {error}; {pre_submit_reason}"
@@ -274,8 +277,7 @@ async fn submit_pending_live_reward_orders(
                 // Keep the order as Planned so it is retried on the next cycle.
                 order.reason = format!(
                     "{}; transient rejection, will retry: {}",
-                    pre_submit_reason,
-                    event.message
+                    pre_submit_reason, event.message
                 );
                 order.updated_at = OffsetDateTime::now_utc();
                 persist_live_reward_updates(

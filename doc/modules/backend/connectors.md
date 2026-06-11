@@ -1,6 +1,6 @@
 # connectors（外部连接器层）
 
-最后更新：2026-06-10
+最后更新：2026-06-11
 
 ## 概述
 
@@ -82,8 +82,8 @@
 - `submit()`：兼容 execution pipeline 的 YES/NO 买单提交
 - `submit_token_order()`：按 token_id 直接提交 buy/sell；post-only 使用 GTC，非 post-only flatten 使用 FAK；提交前把价格收敛到最多 2 位小数，并返回实际提交 quantity，供 rewards live maker 使用
 - `cancel_order()`：按 Polymarket order id 撤销单笔订单
-- `poll_order_status()` / `collect_trade_updates()`：通过 CLOB 单订单接口查询；仅返回 `CONFIRMED` trade 供入账，live / 普通 GTC unmatched 状态可立即按 open 返回，并在所有关联 trade 终态后返回取消、matched 或 FAK unmatched 终态
-- **`LivePolymarketTradeSyncOutcome`**：包含 confirmed `updates` 与安全可应用的 `order_status`；pending/mined/retrying trade 会阻止 terminal status 提前返回
+- `poll_order_status()` / `collect_trade_updates()`：优先通过 CLOB 单订单接口查询；单订单返回 404 且调用方提供 fallback token/time 时，分页查询认证账户 trades，再按 external order id 精确匹配；仅返回 `CONFIRMED` trade 供入账，live / 普通 GTC unmatched 状态可立即按 open 返回，并在所有关联 trade 终态后返回取消、matched 或 FAK unmatched 终态
+- **`LivePolymarketTradeSyncOutcome`**：包含 confirmed `updates`、安全可应用的 `order_status` 和 `order_not_found`；pending/mined/retrying trade 会阻止 terminal status 提前返回，404 fallback 不会伪造取消状态
 - **`PolymarketOpenOrder`**：隔离 SDK 的开放订单类型，供 live 订单恢复与对账使用
 - 用途：live 模式下的订单管理、rewards live maker 和 copytrade 实盘骨架
 - 当前范围：支持已有、已 funded、已 approve 的 Deposit Wallet 通过 CLOB V2 下单/撤单；`poly_1271` 查询余额前会调用 CLOB balance allowance update，刷新失败会直接返回错误，不再继续读取可能陈旧的账户状态。成交同步按 maker order 聚合同一 trade 中重复出现的全部 `matched_amount`，使用 size-weighted price/fee，避免把整笔 taker trade size 误记到单个 maker 订单或漏记重复 maker entry。尚未实现 relayer 建钱包、pUSD 入金/approval 或 deposit wallet 生命周期管理。

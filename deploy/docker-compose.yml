@@ -36,8 +36,6 @@ services:
       - .env
       - .env.api
       - .env.worker
-    environment:
-      POLYEDGE_ORDERBOOK__SERVICE_URL: ${POLYEDGE_ORDERBOOK__SERVICE_URL:-http://localhost:38002}
     ports:
       - "${POLYEDGE_API_BIND:-0.0.0.0}:${POLYEDGE_API_PORT:-38001}:38001"
     extra_hosts:

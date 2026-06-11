@@ -150,3 +150,26 @@ fn apply_live_reward_status_update_to_order(
         _ => None,
     }
 }
+
+fn mark_live_external_order_not_found(
+    mut order: ManagedRewardOrder,
+    external_order_id: &str,
+) -> Option<(ManagedRewardOrder, RewardRiskEvent)> {
+    if !order.status.is_open_like() || order.reason.contains(LIVE_EXTERNAL_ORDER_NOT_FOUND_MARKER) {
+        return None;
+    }
+
+    order.scoring = false;
+    order.reason = format!(
+        "{LIVE_EXTERNAL_ORDER_NOT_FOUND_MARKER}; manual reconciliation required: {external_order_id}"
+    );
+    order.updated_at = OffsetDateTime::now_utc();
+    let event = reward_live_event(
+        &order,
+        "reward_live_external_order_not_found",
+        RewardRiskSeverity::Critical,
+        order.reason.clone(),
+        json!({ "external_order_id": external_order_id }),
+    );
+    Some((order, event))
+}

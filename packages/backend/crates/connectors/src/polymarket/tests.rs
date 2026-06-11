@@ -18,17 +18,17 @@ mod tests {
         )
         .expect("balance");
 
-        assert_eq!(balance, Decimal::from_str_exact("19.9981").expect("decimal"));
+        assert_eq!(
+            balance,
+            Decimal::from_str_exact("19.9981").expect("decimal")
+        );
     }
 
     #[test]
     fn polygon_wallet_address_requires_twenty_bytes() {
-        let error = normalize_evm_address(
-            "wallet_address",
-            "0x1234",
-            "POLYGON_WALLET_ADDRESS_INVALID",
-        )
-        .expect_err("short address");
+        let error =
+            normalize_evm_address("wallet_address", "0x1234", "POLYGON_WALLET_ADDRESS_INVALID")
+                .expect_err("short address");
 
         assert_eq!(error.code(), "POLYGON_WALLET_ADDRESS_INVALID");
     }
@@ -244,6 +244,17 @@ mod tests {
         assert_eq!(maker_fill.size, Decimal::new(50, 1));
         assert_eq!(maker_fill.price, Decimal::new(43, 2));
         assert_eq!(maker_fill.fee_rate_bps, Decimal::new(10, 0));
+
+        let mut confirmed_trade = trade;
+        confirmed_trade.status = SdkTradeStatusType::Confirmed;
+        let reconciliation =
+            reconcile_live_trade(&confirmed_trade, "pm_maker_1", "acct_polymarket")
+                .expect("confirmed maker trade reconciliation");
+        let LivePolymarketTradeReconciliation::Confirmed(update) = reconciliation else {
+            panic!("confirmed matching trade must produce a fill update");
+        };
+        assert_eq!(update.external_order_id, "pm_maker_1");
+        assert_eq!(update.filled_quantity.value(), Decimal::new(50, 1));
     }
 
     #[test]

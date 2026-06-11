@@ -23,7 +23,8 @@ fn has_unresolved_live_reconciliation(orders: &[ManagedRewardOrder]) -> bool {
     orders.iter().any(|order| {
         order.status.is_open_like()
             && ((order.external_order_id.is_none() && live_submission_was_attempted(order))
-                || order.reason.contains("awaiting final reconciliation"))
+                || order.reason.contains("awaiting final reconciliation")
+                || order.reason.contains(LIVE_EXTERNAL_ORDER_NOT_FOUND_MARKER))
     })
 }
 

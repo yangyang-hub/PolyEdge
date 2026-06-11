@@ -1,10 +1,10 @@
 # 数据库（Migrations + Schema）
 
-最后更新：2026-06-04
+最后更新：2026-06-11
 
 ## 概述
 
-数据库使用 PostgreSQL，通过 28 个 SQL 迁移文件管理 schema。覆盖审计、市场数据、事件/信号、执行管道、风控、套利、奖励、跟单等领域。
+数据库使用 PostgreSQL，通过 36 个 SQL 迁移文件管理 schema。覆盖审计、市场数据、事件/信号、执行管道、风控、套利、奖励、跟单等领域。
 
 ## 迁移文件列表
 
@@ -38,6 +38,14 @@
 | `0026_reward_control_running_lease_index.sql` | Rewards 控制命令租约索引 | `reward_control_commands` running + started_at 部分索引 |
 | `0027_remove_paper_trade_manual_confirm.sql` | 收敛系统运行模式 | 修改 runtime/mode transition/execution request mode 约束 |
 | `0028_reward_positions_external_inventory.sql` | Rewards 外部账户持仓 | 移除 `reward_positions.condition_id` 到奖励目录的外键 |
+| `0029_reward_account_wallet_address.sql` | Rewards 资金钱包 | 为 `reward_account_state` 增加 wallet address |
+| `0030_rewards_snapshot_indexes.sql` | Rewards snapshot 索引 | `reward_fills`、`reward_positions` 查询索引 |
+| `0031_worker_query_indexes.sql` | Worker 查询索引 | orders、raw_events、copytrade source trades 索引 |
+| `0032_reward_worker_heartbeats.sql` | Rewards worker 心跳 | `reward_worker_heartbeats` |
+| `0033_reward_candidate_filter.sql` | Rewards 候选过滤 | 修改 `reward_bot_config` |
+| `0034_reward_account_external_buy_notional.sql` | Rewards 外部买单占用 | 修改 `reward_account_state` |
+| `0035_auto_cancel_not_found_orders.sql` | 历史订单修复 | 调整历史 rewards managed order 状态 |
+| `0036_restore_not_found_reconciliation.sql` | 恢复 404 对账 | 将被错误自动取消的外部订单恢复为待成交对账状态 |
 
 ## Schema 领域分组
 
@@ -112,7 +120,7 @@
 
 ## 当前状态
 
-- 28 个迁移文件，最新为 `0028_reward_positions_external_inventory.sql`
+- 36 个迁移文件，最新为 `0036_restore_not_found_reconciliation.sql`
 - 所有表使用 PostgreSQL 特性（JSONB、NUMERIC 约束、BIGSERIAL、部分索引等）
 - 迁移使用 `sqlx` 管理
 

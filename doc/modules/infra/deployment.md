@@ -1,6 +1,6 @@
 # 部署（Docker + Nginx + Scripts）
 
-最后更新：2026-06-10
+最后更新：2026-06-11
 
 ## 概述
 
@@ -49,7 +49,8 @@
 - 端口：`0.0.0.0:38001 → container:38001`
 - 健康检查：`curl /healthz`（15s 间隔，10 次重试，20s 启动期）
 - Compose 不声明启动依赖，可独立部署；需要盘口的 API 路由通过 service URL 访问 orderbook
-- 通过 `POLYEDGE_ORDERBOOK__SERVICE_URL` 连接 orderbook 服务读取盘口数据
+- 通过 `POLYEDGE_ORDERBOOK__SERVICE_URL` 连接 orderbook 服务读取盘口数据；同一 Compose 项目使用 `http://polyedge-orderbook:38002`，跨服务器使用实际地址，容器内不能用 `localhost` 指向另一个服务
+- Compose 不再用宿主机变量展开覆盖 `env_file` 中的 `POLYEDGE_ORDERBOOK__SERVICE_URL`，`.env.api` 的配置会原样传入容器
 - 环境变量：`.env` + `.env.api` + `.env.worker`
 - `extra_hosts: host.docker.internal:host-gateway`（访问宿主机数据库）
 - API 服务启动时内嵌启动 `WorkerRuntime`，共享同一进程；worker 后台任务通过 `deploy/.env.worker` 配置
@@ -135,7 +136,7 @@ API 请求不再经过前端 nginx 反向代理；跨域由 Rust API 的 `CorsLa
 | `POLYEDGE_API_IMAGE` | `polyedge-api:local` | API/Worker 共享镜像名 |
 | `POLYEDGE_ORDERBOOK_IMAGE` | `polyedge-orderbook:local` | Orderbook 独立镜像名 |
 | `NEXT_PUBLIC_POLYEDGE_API_BASE_URL` | — | 前端浏览器直连 API 地址，例如 `http://192.168.31.5:38001` |
-| `POLYEDGE_ORDERBOOK__SERVICE_URL` | `http://localhost:38002` | API/Worker 访问 orderbook 服务的地址 |
+| `POLYEDGE_ORDERBOOK__SERVICE_URL` | `.env.api.example` 为 `http://polyedge-orderbook:38002` | API/Worker 访问 orderbook 服务的地址；跨服务器改为实际 IP/域名 |
 | `POLYEDGE_ALLOW_IN_MEMORY_DEPLOY` | — | 设为 1 允许无数据库部署（仅演示） |
 | `POLYEDGE_LOG_FILE` | `$HOME/polyedge-deploy.log`（cron） | deploy 脚本日志文件；无法写入时回退到 stdout/stderr |
 | `POLYEDGE_DEPLOY_LOCK_FILE` | `/tmp/polyedge-deploy.lock` | deploy 脚本互斥锁 |

@@ -118,12 +118,15 @@ pub struct LivePolymarketTradeSyncRequest {
     pub connector_name: String,
     pub account_id: String,
     pub external_order_id: String,
+    pub fallback_token_id: Option<String>,
+    pub fallback_after: Option<i64>,
 }
 
 #[derive(Debug, Clone)]
 pub struct LivePolymarketTradeSyncOutcome {
     pub updates: Vec<ConnectorTradeFillUpdate>,
     pub order_status: Option<ConnectorOrderStatusUpdate>,
+    pub order_not_found: bool,
 }
 
 #[derive(Debug, Clone)]
