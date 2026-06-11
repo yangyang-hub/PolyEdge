@@ -403,7 +403,6 @@ async fn run_reward_bot_live_tick(
         &open_orders,
         &cycle.positions,
         account.available_usd,
-        account.external_buy_notional,
         trace_id,
     );
 

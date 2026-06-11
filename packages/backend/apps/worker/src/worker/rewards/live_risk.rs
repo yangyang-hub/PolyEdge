@@ -110,7 +110,6 @@ fn live_placement_orders(
     open_orders: &[ManagedRewardOrder],
     positions: &[RewardPosition],
     available_usd: Decimal,
-    external_buy_notional: Decimal,
     trace_id: &str,
 ) -> Vec<ManagedRewardOrder> {
     let max_markets = usize::from(config.max_markets);
@@ -165,21 +164,11 @@ fn live_placement_orders(
             {
                 continue;
             }
-            // Guard against CLOB "not enough balance" rejections: sum the
-            // notional of all open-like buy orders (existing + already planned
-            // in this cycle) plus external orders synced from Polymarket, and
-            // skip if it would exceed the last-synced CLOB total balance.
-            if available_usd > Decimal::ZERO {
-                let bot_committed: Decimal = orders
-                    .iter()
-                    .filter(|o| {
-                        o.side == RewardOrderSide::Buy && o.status.is_open_like()
-                    })
-                    .map(|o| (o.price * o.size).round_dp(4))
-                    .sum();
-                if external_buy_notional + bot_committed + notional > available_usd {
-                    continue;
-                }
+            // Resting maker buys reuse the same collateral across markets.
+            // Only require this individual quote to fit the latest balance;
+            // do not reserve funds for other unfilled orders.
+            if notional > available_usd.max(Decimal::ZERO) {
+                continue;
             }
 
             active_markets.insert(plan.condition_id.clone());

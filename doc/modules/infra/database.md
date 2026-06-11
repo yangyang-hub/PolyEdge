@@ -43,7 +43,7 @@
 | `0031_worker_query_indexes.sql` | Worker 查询索引 | orders、raw_events、copytrade source trades 索引 |
 | `0032_reward_worker_heartbeats.sql` | Rewards worker 心跳 | `reward_worker_heartbeats` |
 | `0033_reward_candidate_filter.sql` | Rewards 候选过滤 | 修改 `reward_bot_config` |
-| `0034_reward_account_external_buy_notional.sql` | Rewards 外部买单占用 | 修改 `reward_account_state` |
+| `0034_reward_account_external_buy_notional.sql` | Rewards 外部买单观测 | 修改 `reward_account_state`；不作为开放 maker 买单的硬资金占用 |
 | `0035_auto_cancel_not_found_orders.sql` | 历史订单修复 | 调整历史 rewards managed order 状态 |
 | `0036_restore_not_found_reconciliation.sql` | 恢复 404 对账 | 将被错误自动取消的外部订单恢复为待成交对账状态 |
 

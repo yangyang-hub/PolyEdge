@@ -109,7 +109,56 @@ fn live_test_trade_update(
 }
 
 #[test]
-fn live_placement_reuses_cash_and_allows_stale_book_age_check_to_be_disabled() {
+fn live_placement_reuses_cash_across_markets() {
+    let config = RewardBotConfig {
+        account_id: "reward_live".to_string(),
+        stale_book_ms: 0,
+        max_markets: 2,
+        max_open_orders: 4,
+        max_global_position_usd: Decimal::ZERO,
+        ..RewardBotConfig::default()
+    };
+    let now = OffsetDateTime::now_utc();
+    let old = now - TimeDuration::hours(1);
+    let first_plan = live_test_plan(now);
+    let mut second_plan = live_test_plan(now);
+    second_plan.condition_id = "cond_live_2".to_string();
+    second_plan.market_slug = "live-market-2".to_string();
+    second_plan.legs[0].token_id = "yes_live_2".to_string();
+    second_plan.legs[1].token_id = "no_live_2".to_string();
+    let books = HashMap::from([
+        ("yes_live".to_string(), live_test_book("yes_live", old)),
+        ("no_live".to_string(), live_test_book("no_live", old)),
+        ("yes_live_2".to_string(), live_test_book("yes_live_2", old)),
+        ("no_live_2".to_string(), live_test_book("no_live_2", old)),
+    ]);
+
+    let orders = live_placement_orders(
+        &config,
+        "reward_live",
+        &[first_plan, second_plan],
+        &books,
+        &[],
+        &[],
+        Decimal::from(10_u64),
+        "trc_live_test",
+    );
+
+    assert_eq!(orders.len(), 4);
+    assert_eq!(
+        orders
+            .iter()
+            .map(|order| order.condition_id.as_str())
+            .collect::<HashSet<_>>(),
+        HashSet::from(["cond_live", "cond_live_2"])
+    );
+    assert!(orders.iter().all(|order| {
+        order.side == RewardOrderSide::Buy && order.status == ManagedRewardOrderStatus::Planned
+    }));
+}
+
+#[test]
+fn live_placement_requires_each_quote_to_fit_available_cash() {
     let config = RewardBotConfig {
         account_id: "reward_live".to_string(),
         stale_book_ms: 0,
@@ -119,11 +168,10 @@ fn live_placement_reuses_cash_and_allows_stale_book_age_check_to_be_disabled() {
         ..RewardBotConfig::default()
     };
     let now = OffsetDateTime::now_utc();
-    let old = now - TimeDuration::hours(1);
     let plan = live_test_plan(now);
     let books = HashMap::from([
-        ("yes_live".to_string(), live_test_book("yes_live", old)),
-        ("no_live".to_string(), live_test_book("no_live", old)),
+        ("yes_live".to_string(), live_test_book("yes_live", now)),
+        ("no_live".to_string(), live_test_book("no_live", now)),
     ]);
 
     let orders = live_placement_orders(
@@ -133,15 +181,11 @@ fn live_placement_reuses_cash_and_allows_stale_book_age_check_to_be_disabled() {
         &books,
         &[],
         &[],
-        Decimal::ZERO,
-        Decimal::ZERO,
+        reward_decimal("9.79"),
         "trc_live_test",
     );
 
-    assert_eq!(orders.len(), 2);
-    assert!(orders.iter().all(|order| {
-        order.side == RewardOrderSide::Buy && order.status == ManagedRewardOrderStatus::Planned
-    }));
+    assert!(orders.is_empty());
 }
 
 #[test]
@@ -788,8 +832,7 @@ fn live_placement_counts_candidate_notional_against_position_cap() {
         &books,
         &[],
         &positions,
-        Decimal::ZERO,
-        Decimal::ZERO,
+        Decimal::from(100_u64),
         "trc_live_test",
     );
 

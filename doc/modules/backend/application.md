@@ -1,6 +1,6 @@
 # application（应用/服务层）
 
-最后更新：2026-06-10
+最后更新：2026-06-11
 
 ## 概述
 
@@ -112,7 +112,7 @@
 - 单次 rewards tick 使用 `list_reward_run_candidate_markets()` 从 `reward_markets` 读取候选池；Postgres 路径会关联 Gamma `markets`，优先选择 open + tradable 且 `volume_24h` 高的市场，再按 active、至少两个不同 token、最低日奖励、有效奖励 spread、下单开关做无需盘口的预过滤；只有通过预过滤的奖励市场会读取 orderbook 服务缓存并生成当前 quote plan 快照。
 
 **live 资金模型：**
-- Rewards live maker 下单沿用软资金复用语义：未成交的 post-only/GTC maker 买单是链下签名挂单，不在本地策略层按全局 notional 硬锁同一笔 USDC；同一资金池可同时在多个不同市场报价。
+- Rewards live maker 下单沿用软资金复用语义：未成交的 post-only/GTC maker 买单是链下签名挂单，不在本地策略层按全局 notional 硬锁同一笔 USDC；同一资金池可同时在多个不同市场报价。placement 只检查单笔候选报价能否由最近同步的 `available_usd` 覆盖，不累计 managed/external 开放买单 notional；`external_buy_notional` 仅作为账户观测字段。
 - Live 新挂单仍要求目标 YES/NO 两腿都有非空盘口；`stale_book_ms` 默认 45000，高于 orderbook 默认 30 秒 poll 周期，`stale_book_ms=0` 只关闭盘口年龄检查，不允许在盘口缺失或空盘口时下单。live reconcile 会对本系统托管的开放订单读取活跃 token 盘口；盘口缺失、空盘口或超过 `stale_book_ms` 会触发立即撤单，即使 `enabled=false` 已停止新增报价。
 - Live `reset` 不清空本地账本或删除托管订单；worker 会先按 cancel-all 语义撤销本系统托管 live 订单，若任一 Polymarket 撤单被拒绝，则命令失败并保留本地状态以避免孤儿实盘订单。
 - 风险控制重点放在成交后：trade 达到 `CONFIRMED` 后，worker 对本系统托管 rewards 订单按 external trade id 幂等更新现金、库存、fills 和 PnL，并撤掉 sibling legs；新挂单的 per-token 和全局库存门槛都使用「已有库存 notional + 当前候选订单 notional」准入。
