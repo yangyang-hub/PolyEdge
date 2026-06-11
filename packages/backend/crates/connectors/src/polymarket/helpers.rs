@@ -44,6 +44,13 @@ fn normalize_optional(value: Option<&str>) -> Option<String> {
     })
 }
 
+fn clob_page_is_terminal(next_cursor: &str, count: u64, requested_cursor: Option<&str>) -> bool {
+    next_cursor.is_empty()
+        || next_cursor == CLOB_TERMINAL_CURSOR
+        || count == 0
+        || requested_cursor == Some(next_cursor)
+}
+
 fn maybe_credentials(config: &LivePolymarketConfig) -> Result<Option<Credentials>> {
     let api_key = normalize_optional(config.api_key.as_deref());
     let api_secret = normalize_optional(config.api_secret.as_deref());

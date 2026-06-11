@@ -74,7 +74,7 @@
 - `connect_user_ws()`：创建认证 WebSocket 客户端（订单/成交通道）
 - `balance()`：查询认证资金账户的 collateral balance
 - `orders_scoring()`：通过 CLOB `POST /orders-scoring` 批量查询 managed orders 是否正在参与奖励计分
-- `reward_earnings_today_usd()`：读取 CLOB `GET /rewards/user/total` 当日 settled maker earnings，并按每项 `asset_rate` 换算为 USD
+- `reward_earnings_today_usd()`：分页读取 CLOB `GET /rewards/user` 当日逐市场 maker earnings，按每项 `asset_rate` 换算为 USD；遇到空 cursor、`LTE=`、空页、重复 cursor 或 1000 页 guard 时停止
 - `list_open_orders()`：分页读取认证账户全部开放订单；遇到空 cursor、`LTE=`、空页、重复 cursor 或 1000 页 guard 时停止
 - `find_matching_open_token_order()`：按 token/side/price/size 严格匹配唯一开放订单，用于 rewards 提交响应丢失后的恢复；多个匹配会返回冲突而不是猜测归属
 - `post_order` 返回订单 ID 时，无论状态为 `live` / `matched` / `delayed` / `unmatched` / `canceled` / 未知值，connector 都保留为 accepted 供后续成交和订单状态对账；成功响应缺少订单 ID 会按提交结果未知处理

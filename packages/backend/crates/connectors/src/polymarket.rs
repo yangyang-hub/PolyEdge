@@ -34,6 +34,8 @@ use tracing::warn;
 
 pub const POLYMARKET_CONNECTOR_NAME: &str = "polymarket";
 const POLYMARKET_MIN_NOTIONAL_USD: Decimal = Decimal::ONE;
+const CLOB_TERMINAL_CURSOR: &str = "LTE=";
+const CLOB_MAX_PAGES: usize = 1000;
 
 include!("polymarket/models.rs");
 include!("polymarket/gamma.rs");

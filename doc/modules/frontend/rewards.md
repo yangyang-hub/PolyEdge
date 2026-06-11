@@ -1,6 +1,6 @@
 # Rewards（奖励机器人）
 
-最后更新：2026-06-08
+最后更新：2026-06-11
 
 ## 概述
 
@@ -62,8 +62,9 @@
 - Managed orders 表格发送后端分页/搜索/状态过滤/排序 query（默认每页 15 条），表格数据与 `orders_page` 均来自本地 managed-order 查询。
 - 首屏不加载全量 reward markets，避免奖励市场数量过大时长时间停留在 loading skeleton。
 - Wallet balance、Positions 和 Orders 表格展示 worker 同步到数据库的 rewards 账户视图；余额显示资金钱包 pUSD，资金钱包地址优先使用 `POLYEDGE_POLYMARKET__FUNDER`，未配置时使用 `ACCOUNT_ID`。
+- 今日已赚奖励展示 worker 通过认证 CLOB `GET /rewards/user` 同步到 `account.reward_earned_usd` 的当日 maker earnings；前端不直接访问 Polymarket，账户快照停更或认证配置缺失时不会自行回退官网数据。
 - 事件分类视图（挂单/撤单/吃单/奖励）
-- live worker 已接入 post-only 买单、撤单、confirmed 成交同步、成交后卖出/平仓和本地账本更新；独立账户全量对账、订单计分和奖励结算仍是后端缺口
+- live worker 已接入 post-only 买单、撤单、confirmed 成交同步、成交后卖出/平仓、本地账本更新、managed order 计分状态和当日 maker earnings 同步；账户范围外开放订单同步与奖励结算对账仍是后端缺口
 - API 不直连 Polymarket 私有账户；账户余额、完整 positions 和本系统托管订单都从数据库读取。`status.open_orders` / `status.positions` 描述本地 managed state。
 
 ## 修改检查清单

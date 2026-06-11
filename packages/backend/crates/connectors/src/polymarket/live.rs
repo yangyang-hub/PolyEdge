@@ -144,7 +144,7 @@ impl LivePolymarketConnector {
         // causing a mismatch with the Polymarket website display.
         let mut all_earnings = Vec::new();
         let mut next_cursor: Option<String> = None;
-        loop {
+        for _ in 0..CLOB_MAX_PAGES {
             let page = self
                 .client
                 .earnings_for_user_for_day(date, next_cursor.clone())
@@ -156,9 +156,7 @@ impl LivePolymarketConnector {
                     )
                 })?;
             all_earnings.extend(page.data);
-            if page.next_cursor.is_empty()
-                || next_cursor.as_deref() == Some(page.next_cursor.as_str())
-            {
+            if clob_page_is_terminal(&page.next_cursor, page.count, next_cursor.as_deref()) {
                 break;
             }
             next_cursor = Some(page.next_cursor);
@@ -177,14 +175,11 @@ impl LivePolymarketConnector {
         // "LTE=" (base64 of -1); it is non-empty and the final page can still
         // carry rows, so we must break on it (and on a repeated cursor) to
         // avoid re-requesting past the end forever.
-        const TERMINAL_CURSOR: &str = "LTE=";
-        const MAX_PAGES: usize = 1000;
-
         let request = OrdersRequest::builder().build();
         let mut all_orders = Vec::new();
         let mut next_cursor: Option<String> = None;
 
-        for _ in 0..MAX_PAGES {
+        for _ in 0..CLOB_MAX_PAGES {
             let page = self
                 .client
                 .orders(&request, next_cursor.clone())
@@ -214,11 +209,7 @@ impl LivePolymarketConnector {
                 });
             }
 
-            if page.next_cursor.is_empty()
-                || page.next_cursor == TERMINAL_CURSOR
-                || page.count == 0
-                || next_cursor.as_deref() == Some(page.next_cursor.as_str())
-            {
+            if clob_page_is_terminal(&page.next_cursor, page.count, next_cursor.as_deref()) {
                 break;
             }
             next_cursor = Some(page.next_cursor);
@@ -669,9 +660,6 @@ impl LivePolymarketConnector {
         &self,
         request: &LivePolymarketTradeSyncRequest,
     ) -> Result<LivePolymarketTradeSyncOutcome> {
-        const TERMINAL_CURSOR: &str = "LTE=";
-        const MAX_PAGES: usize = 1000;
-
         let token_id = parse_u256(
             "fallback_token_id",
             request.fallback_token_id.as_deref().unwrap_or_default(),
@@ -687,7 +675,7 @@ impl LivePolymarketConnector {
         let mut updates = Vec::new();
         let mut next_cursor: Option<String> = None;
 
-        for _ in 0..MAX_PAGES {
+        for _ in 0..CLOB_MAX_PAGES {
             let page = self
                 .client
                 .trades(&trades_request, next_cursor.clone())
@@ -715,11 +703,7 @@ impl LivePolymarketConnector {
                 }
             }
 
-            if page.next_cursor.is_empty()
-                || page.next_cursor == TERMINAL_CURSOR
-                || page.count == 0
-                || next_cursor.as_deref() == Some(page.next_cursor.as_str())
-            {
+            if clob_page_is_terminal(&page.next_cursor, page.count, next_cursor.as_deref()) {
                 break;
             }
             next_cursor = Some(page.next_cursor);

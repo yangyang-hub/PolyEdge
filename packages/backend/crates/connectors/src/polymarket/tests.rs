@@ -11,6 +11,15 @@ mod tests {
     }
 
     #[test]
+    fn clob_pagination_stops_at_documented_terminal_cursor() {
+        assert!(clob_page_is_terminal(CLOB_TERMINAL_CURSOR, 1, None));
+        assert!(clob_page_is_terminal("", 1, None));
+        assert!(clob_page_is_terminal("next", 0, None));
+        assert!(clob_page_is_terminal("next", 1, Some("next")));
+        assert!(!clob_page_is_terminal("next", 1, None));
+    }
+
+    #[test]
     fn polygon_pusd_balance_hex_is_converted_to_decimal_usd() {
         let balance = erc20_hex_units_to_decimal(
             "0x00000000000000000000000000000000000000000000000000000000013125b5",
