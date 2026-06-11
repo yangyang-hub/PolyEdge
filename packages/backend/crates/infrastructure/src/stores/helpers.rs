@@ -55,6 +55,7 @@ fn apply_reward_config_value(config: &mut RewardBotConfig, key: &str, value: &st
         "requote_interval_sec" => config.requote_interval_sec = parse_u64_config(key, value)?,
         "requote_jitter_sec" => config.requote_jitter_sec = parse_u64_config(key, value)?,
         "reconcile_interval_sec" => config.reconcile_interval_sec = parse_u64_config(key, value)?,
+        "auto_cancel_stale_minutes" => config.auto_cancel_stale_minutes = parse_u64_config(key, value)?,
         _ => {}
     }
     Ok(())
@@ -137,6 +138,10 @@ fn reward_config_entries(config: &RewardBotConfig) -> Vec<(&'static str, String)
         (
             "reconcile_interval_sec",
             config.reconcile_interval_sec.to_string(),
+        ),
+        (
+            "auto_cancel_stale_minutes",
+            config.auto_cancel_stale_minutes.to_string(),
         ),
     ]
 }

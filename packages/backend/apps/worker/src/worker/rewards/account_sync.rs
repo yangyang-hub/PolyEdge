@@ -23,47 +23,6 @@ async fn sync_external_account_state(
     )
     .await;
 
-    match connector.reward_earnings_today_usd().await {
-        Ok(reward_earned_usd) if reward_earned_usd != cycle_account.reward_earned_usd => {
-            let previous = cycle_account.reward_earned_usd;
-            cycle_account.reward_earned_usd = reward_earned_usd;
-            let event = new_risk_event(
-                Some(cycle_account.account_id.clone()),
-                None,
-                None,
-                "reward_live_reward_earnings_synced",
-                RewardRiskSeverity::Info,
-                "Synced today's settled Polymarket maker rewards.",
-                json!({
-                    "date": OffsetDateTime::now_utc().date().to_string(),
-                    "previous_reward_earned_usd": previous,
-                    "reward_earned_usd": reward_earned_usd,
-                }),
-            );
-            if let Err(error) = persist_live_reward_updates(
-                state,
-                cycle_account,
-                Vec::new(),
-                Vec::new(),
-                Vec::new(),
-                vec![event],
-                &RewardBotRunReport {
-                    reward_accrued: (reward_earned_usd - previous).max(Decimal::ZERO),
-                    ..RewardBotRunReport::default()
-                },
-                trace_id,
-            )
-            .await
-            {
-                warn!(error = %error, "failed to persist Polymarket reward earnings sync");
-            }
-        }
-        Ok(_) => {}
-        Err(error) => {
-            warn!(error = %error, "failed to query Polymarket reward earnings");
-        }
-    }
-
     if !external_account_sync_allowed(state, cycle_account, trace_id).await {
         return;
     }
@@ -203,6 +162,58 @@ async fn sync_external_account_state(
         }
         Err(error) => {
             warn!(error = %error, "failed to persist external account sync outcome");
+        }
+    }
+}
+
+/// Query Polymarket for today's settled reward earnings and persist the result.
+/// Always runs regardless of fill state — the value is an authoritative daily
+/// total from Polymarket, not a locally accumulated figure, so there is no
+/// double-counting risk.
+async fn sync_reward_earnings(
+    state: &AppState,
+    connector: &LivePolymarketConnector,
+    cycle_account: &mut RewardAccountState,
+    trace_id: &str,
+) {
+    match connector.reward_earnings_today_usd().await {
+        Ok(reward_earned_usd) if reward_earned_usd != cycle_account.reward_earned_usd => {
+            let previous = cycle_account.reward_earned_usd;
+            cycle_account.reward_earned_usd = reward_earned_usd;
+            let event = new_risk_event(
+                Some(cycle_account.account_id.clone()),
+                None,
+                None,
+                "reward_live_reward_earnings_synced",
+                RewardRiskSeverity::Info,
+                "Synced today's settled Polymarket maker rewards.",
+                json!({
+                    "date": OffsetDateTime::now_utc().date().to_string(),
+                    "previous_reward_earned_usd": previous,
+                    "reward_earned_usd": reward_earned_usd,
+                }),
+            );
+            if let Err(error) = persist_live_reward_updates(
+                state,
+                cycle_account,
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                vec![event],
+                &RewardBotRunReport {
+                    reward_accrued: (reward_earned_usd - previous).max(Decimal::ZERO),
+                    ..RewardBotRunReport::default()
+                },
+                trace_id,
+            )
+            .await
+            {
+                warn!(error = %error, "failed to persist Polymarket reward earnings sync");
+            }
+        }
+        Ok(_) => {}
+        Err(error) => {
+            warn!(error = %error, "failed to query Polymarket reward earnings");
         }
     }
 }

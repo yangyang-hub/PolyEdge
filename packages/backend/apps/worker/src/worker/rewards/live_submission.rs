@@ -332,3 +332,75 @@ fn parse_exit_rejection_count(reason: &str) -> usize {
         .parse()
         .unwrap_or(0)
 }
+
+/// Returns true if the order is in a known stuck-reconciliation state.
+/// These are orders that block new placements via `has_unresolved_live_reconciliation`
+/// or are otherwise stuck awaiting external resolution that may never come.
+fn is_stuck_reconciliation_order(order: &ManagedRewardOrder) -> bool {
+    order.reason.contains(LIVE_EXTERNAL_ORDER_NOT_FOUND_MARKER)
+        || live_submission_result_is_unknown(order)
+        || order.reason.contains("awaiting final reconciliation")
+        || order.reason.contains("cancellation must be retried")
+        || order.reason.contains("cancel result unknown")
+        || live_order_has_post_only_violation(order)
+}
+
+/// Identifies orders that have been stuck in a reconciliation state for longer
+/// than `config.auto_cancel_stale_minutes`. Returns `(order_id, reason_string)`
+/// pairs for each expired order.
+fn live_stale_auto_cancel_candidates(
+    config: &RewardBotConfig,
+    open_orders: &[ManagedRewardOrder],
+    now: OffsetDateTime,
+) -> Vec<(String, String)> {
+    if config.auto_cancel_stale_minutes == 0 {
+        return Vec::new();
+    }
+    let threshold_sec = (config.auto_cancel_stale_minutes as i64) * 60;
+    open_orders
+        .iter()
+        .filter(|order| order.status.is_open_like() && is_stuck_reconciliation_order(order))
+        .filter_map(|order| {
+            let age_sec = (now - order.updated_at).whole_seconds().max(0);
+            if age_sec >= threshold_sec {
+                Some((
+                    order.id.clone(),
+                    format!(
+                        "auto-cancelled stale order: stuck {age_sec}s in reconciliation (threshold {}m)",
+                        config.auto_cancel_stale_minutes,
+                    ),
+                ))
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+/// Force-cancel a stuck order by updating local state only. Does NOT call
+/// Polymarket's cancel API because the order is already gone or already
+/// cancelled on the exchange side.
+fn force_cancel_stale_live_reward_order(
+    mut order: ManagedRewardOrder,
+    reason: &str,
+) -> (ManagedRewardOrder, RewardRiskEvent) {
+    let age_sec = (OffsetDateTime::now_utc() - order.updated_at)
+        .whole_seconds()
+        .max(0);
+    order.status = ManagedRewardOrderStatus::Cancelled;
+    order.scoring = false;
+    order.reason = reason.to_string();
+    order.updated_at = OffsetDateTime::now_utc();
+    let event = reward_live_event(
+        &order,
+        "reward_live_stale_order_auto_cancelled",
+        RewardRiskSeverity::Warning,
+        reason.to_string(),
+        json!({
+            "order_id": order.id,
+            "stuck_duration_sec": age_sec,
+            "external_order_id": order.external_order_id,
+        }),
+    );
+    (order, event)
+}

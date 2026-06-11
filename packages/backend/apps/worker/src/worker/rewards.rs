@@ -295,6 +295,10 @@ async fn run_reward_bot_live_tick(
         cycle.positions = latest.positions;
     }
 
+    // Reward earnings sync always runs — it queries Polymarket's authoritative
+    // daily total and does not risk double-counting fills.
+    sync_reward_earnings(state, &connector, &mut cycle.account, trace_id).await;
+
     // A newly confirmed fill was just applied to the local ledger and may not yet
     // be visible in the eventually-consistent Data API snapshot. Refresh only on
     // cycles without new fills so the same fill cannot be counted twice.
@@ -310,12 +314,53 @@ async fn run_reward_bot_live_tick(
         .await;
     }
 
+    let mut account = cycle.account.clone();
+    let mut open_orders = cycle.open_orders.clone();
+
+    // Auto-expire stale stuck-reconciliation orders after configured threshold.
+    // Runs after sync (gives Polymarket one last chance) and before cancel
+    // candidates so that `has_unresolved_live_reconciliation` sees the
+    // cleaned-up order list.
+    {
+        let stale_candidates = live_stale_auto_cancel_candidates(
+            &cycle.config,
+            &open_orders,
+            OffsetDateTime::now_utc(),
+        );
+        if !stale_candidates.is_empty() {
+            for (order_id, reason) in &stale_candidates {
+                let Some(index) = open_orders.iter().position(|o| o.id == *order_id) else {
+                    continue;
+                };
+                let (updated, event) =
+                    force_cancel_stale_live_reward_order(open_orders[index].clone(), reason);
+                open_orders[index] = updated.clone();
+                report.cancelled_orders += 1;
+                report.risk_cancelled_orders += 1;
+                persist_live_reward_updates(
+                    state,
+                    &mut account,
+                    Vec::new(),
+                    vec![updated],
+                    Vec::new(),
+                    vec![event],
+                    &report,
+                    trace_id,
+                )
+                .await?;
+            }
+            info!(
+                trace_id = %trace_id,
+                stale_auto_cancelled = stale_candidates.len(),
+                "auto-cancelled stale stuck-reconciliation orders",
+            );
+        }
+    }
+
     if !cycle.should_execute && cycle.open_orders.is_empty() {
         return Ok(report);
     }
 
-    let mut account = cycle.account.clone();
-    let mut open_orders = cycle.open_orders.clone();
     let mut cancel_rejected = false;
 
     for (order_id, reason) in

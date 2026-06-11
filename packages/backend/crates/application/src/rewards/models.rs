@@ -299,6 +299,9 @@ pub struct RewardBotConfig {
     /// How often the fast reconcile loop runs (seconds). Full cycle remains
     /// at the worker's poll_interval_secs.
     pub reconcile_interval_sec: u64,
+    /// Auto-cancel open-like orders stuck in reconciliation for longer than
+    /// this many minutes. 0 = disabled. Default 10.
+    pub auto_cancel_stale_minutes: u64,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
@@ -378,6 +381,8 @@ pub struct RewardBotConfigPatch {
     pub requote_jitter_sec: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reconcile_interval_sec: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_cancel_stale_minutes: Option<u64>,
 }
 
 impl Default for RewardBotConfig {
@@ -421,6 +426,7 @@ impl Default for RewardBotConfig {
             requote_interval_sec: 0,
             requote_jitter_sec: 0,
             reconcile_interval_sec: 5,
+            auto_cancel_stale_minutes: 10,
         }
     }
 }
@@ -492,6 +498,7 @@ impl RewardBotConfig {
         self.requote_interval_sec = self.requote_interval_sec.clamp(0, 3600);
         self.requote_jitter_sec = self.requote_jitter_sec.clamp(0, 600);
         self.reconcile_interval_sec = self.reconcile_interval_sec.clamp(1, 60);
+        self.auto_cancel_stale_minutes = self.auto_cancel_stale_minutes.clamp(0, 1440);
         self
     }
 
@@ -599,6 +606,7 @@ impl RewardBotConfig {
         if let Some(v) = patch.requote_interval_sec { next.requote_interval_sec = v; }
         if let Some(v) = patch.requote_jitter_sec { next.requote_jitter_sec = v; }
         if let Some(v) = patch.reconcile_interval_sec { next.reconcile_interval_sec = v; }
+        if let Some(v) = patch.auto_cancel_stale_minutes { next.auto_cancel_stale_minutes = v; }
         next.normalized()
     }
 }

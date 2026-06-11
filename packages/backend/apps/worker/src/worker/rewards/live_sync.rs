@@ -295,6 +295,10 @@ async fn run_reward_bot_live_reconcile_unlocked(
         cycle = state.reward_bot_service.current_live_cycle_state().await?;
     }
 
+    // Reward earnings sync always runs — it queries Polymarket's authoritative
+    // daily total and does not risk double-counting fills.
+    sync_reward_earnings(state, &live_connector, &mut cycle.account, trace_id).await;
+
     if can_refresh_external_account_after_order_sync(&report) {
         sync_external_account_state(
             state,
@@ -307,9 +311,47 @@ async fn run_reward_bot_live_reconcile_unlocked(
         .await;
     }
 
-    let mut connector = Some(live_connector);
     let mut account = cycle.account.clone();
     let mut open_orders = cycle.open_orders.clone();
+
+    // Auto-expire stale stuck-reconciliation orders after configured threshold.
+    {
+        let stale_candidates = live_stale_auto_cancel_candidates(
+            &cycle.config,
+            &open_orders,
+            OffsetDateTime::now_utc(),
+        );
+        if !stale_candidates.is_empty() {
+            for (order_id, reason) in &stale_candidates {
+                let Some(index) = open_orders.iter().position(|o| o.id == *order_id) else {
+                    continue;
+                };
+                let (updated, event) =
+                    force_cancel_stale_live_reward_order(open_orders[index].clone(), reason);
+                open_orders[index] = updated.clone();
+                report.cancelled_orders += 1;
+                report.risk_cancelled_orders += 1;
+                persist_live_reward_updates(
+                    state,
+                    &mut account,
+                    Vec::new(),
+                    vec![updated],
+                    Vec::new(),
+                    vec![event],
+                    &report,
+                    trace_id,
+                )
+                .await?;
+            }
+            info!(
+                trace_id = %trace_id,
+                stale_auto_cancelled = stale_candidates.len(),
+                "reconcile: auto-cancelled stale stuck-reconciliation orders",
+            );
+        }
+    }
+
+    let mut connector = Some(live_connector);
     let kill_switch = state.risk_service.read_state().await?.kill_switch;
 
     let cancel_candidates = live_cancel_candidates(
