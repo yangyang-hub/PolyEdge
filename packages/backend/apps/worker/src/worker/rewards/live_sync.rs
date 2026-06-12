@@ -53,7 +53,14 @@ async fn sync_live_reward_orders(
             .await
         {
             Ok(outcome) => outcome,
-            Err(error) if error.code() == "POLYMARKET_ORDER_NOT_FOUND" => {
+            Err(error) if is_missing_external_order_reconciliation_error(&error) => {
+                if error.code() == "POLYMARKET_MISSING_ORDER_TRADE_QUERY_FAILED" {
+                    warn!(
+                        external_order_id,
+                        error = %error,
+                        "fallback trade query failed for missing rewards order; keeping the reconciliation lock and continuing the cycle",
+                    );
+                }
                 let Some(missing_order) = working_orders.get(&order.id).cloned() else {
                     continue;
                 };
@@ -255,6 +262,13 @@ async fn sync_live_reward_orders(
         }
     }
     Ok(report)
+}
+
+fn is_missing_external_order_reconciliation_error(error: &AppError) -> bool {
+    matches!(
+        error.code(),
+        "POLYMARKET_ORDER_NOT_FOUND" | "POLYMARKET_MISSING_ORDER_TRADE_QUERY_FAILED"
+    )
 }
 
 async fn run_reward_bot_live_reconcile(

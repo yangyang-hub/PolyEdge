@@ -19,6 +19,7 @@
 | `lib.rs` | 模块入口 + Paper Trading 执行器定义（~316 行） |
 | `polymarket/` | Polymarket 多 API 集成子目录 |
 | `polymarket/live.rs` | 认证 CLOB 连接器：`LivePolymarketConnector` |
+| `polymarket/live/trade_reconciliation.rs` | CLOB 订单/成交终态映射与 order-specific fill 对账 helper |
 | `polymarket/gamma.rs` | 公共市场元数据：`PolymarketGammaConnector`；Gamma keyset 分页 guard |
 | `polymarket/data_api.rs` | 钱包活动与账户持仓 API：`PolymarketDataApiConnector` |
 | `polymarket/chain.rs` | Polygon JSON-RPC ERC20 余额读取：`PolymarketChainConnector` |
@@ -82,7 +83,7 @@
 - `submit()`：兼容 execution pipeline 的 YES/NO 买单提交
 - `submit_token_order()`：按 token_id 直接提交 buy/sell；post-only 使用 GTC，非 post-only flatten 使用 FAK；提交前把价格收敛到最多 2 位小数，并返回实际提交 quantity，供 rewards live maker 使用
 - `cancel_order()`：按 Polymarket order id 撤销单笔订单
-- `poll_order_status()` / `collect_trade_updates()`：优先通过 CLOB 单订单接口查询；单订单返回 404 且调用方提供 fallback token/time 时，分页查询认证账户 trades，再按 external order id 精确匹配；仅返回 `CONFIRMED` trade 供入账，live / 普通 GTC unmatched 状态可立即按 open 返回，并在所有关联 trade 终态后返回取消、matched 或 FAK unmatched 终态
+- `poll_order_status()` / `collect_trade_updates()`：优先通过 CLOB 单订单接口查询；单订单返回 404 且调用方提供 fallback token/time 时，分页查询认证账户 trades，再按 external order id 精确匹配；仅返回 `CONFIRMED` trade 供入账，live / 普通 GTC unmatched 状态可立即按 open 返回，并在所有关联 trade 终态后返回取消、matched 或 FAK unmatched 终态。404 后的 fallback trades 查询失败使用独立错误码 `POLYMARKET_MISSING_ORDER_TRADE_QUERY_FAILED`，供 worker 保持该订单对账锁但继续处理整轮任务。
 - **`LivePolymarketTradeSyncOutcome`**：包含 confirmed `updates`、安全可应用的 `order_status` 和 `order_not_found`；pending/mined/retrying trade 会阻止 terminal status 提前返回，404 fallback 不会伪造取消状态
 - **`PolymarketOpenOrder`**：隔离 SDK 的开放订单类型，供 live 订单恢复与对账使用
 - 用途：live 模式下的订单管理、rewards live maker 和 copytrade 实盘骨架
@@ -134,7 +135,7 @@
 - Rewards 盘口连接器优先走 CLOB 批量 `/books`，并对失败或遗漏项使用单 token `/book` 回退
 - Data API positions 已按完整快照分页读取；不完整或失败的响应不会被 rewards worker 用于替换持仓
 - Paper Trading 执行器已完整实现
-- Live connector 已具备 CLOB V2 认证、余额查询、开放订单全量分页、用户 WS、订单提交、按 token_id 的 rewards buy/sell 提交和单笔撤单能力；post-only 使用 GTC，immediate flatten 使用 FAK，订单价格当前统一收敛到 0.01 精度，更粗的 per-market tick-size 尚未接入；订单/关联成交通过单订单接口对账，轮询路径仅在 trade `CONFIRMED` 后返回成交；签名类型已覆盖 EOA、Proxy、Gnosis Safe 和 Deposit Wallet (`poly_1271`)，其 balance allowance refresh 失败会传播给调用方；Polygon pUSD 余额 connector 已作为 rewards snapshot 的链上余额回退；订单 acceptance 返回实际提交 quantity，trade/WS 成交归一化按订单自身成交量入账；仍需要真实凭证和小额账户验证
+- Live connector 已具备 CLOB V2 认证、余额查询、开放订单全量分页、用户 WS、订单提交、按 token_id 的 rewards buy/sell 提交和单笔撤单能力；post-only 使用 GTC，immediate flatten 使用 FAK，订单价格当前统一收敛到 0.01 精度，更粗的 per-market tick-size 尚未接入；订单/关联成交通过单订单接口对账，轮询路径仅在 trade `CONFIRMED` 后返回成交，missing-order fallback 查询失败可被 worker 单订单隔离；签名类型已覆盖 EOA、Proxy、Gnosis Safe 和 Deposit Wallet (`poly_1271`)，其 balance allowance refresh 失败会传播给调用方；Polygon pUSD 余额 connector 已作为 rewards snapshot 的链上余额回退；订单 acceptance 返回实际提交 quantity，trade/WS 成交归一化按订单自身成交量入账；仍需要真实凭证和小额账户验证
 - RSS connector 支持 Atom/RSS 两种格式
 
 ## 修改检查清单

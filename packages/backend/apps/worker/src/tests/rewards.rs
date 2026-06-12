@@ -548,6 +548,19 @@ fn missing_external_order_stays_open_for_trade_reconciliation() {
 }
 
 #[test]
+fn missing_order_fallback_trade_query_failure_does_not_abort_reconciliation() {
+    let error = AppError::internal(
+        "POLYMARKET_MISSING_ORDER_TRADE_QUERY_FAILED",
+        "malformed fallback trade response",
+    );
+
+    assert!(is_missing_external_order_reconciliation_error(&error));
+    assert!(!is_missing_external_order_reconciliation_error(
+        &AppError::internal("POLYMARKET_TRADE_QUERY_FAILED", "regular trade query failed")
+    ));
+}
+
+#[test]
 fn live_status_after_pending_cancel_requires_retry() {
     let config = RewardBotConfig {
         account_id: "reward_live".to_string(),
