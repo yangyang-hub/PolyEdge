@@ -68,6 +68,8 @@ pub trait RewardBotStore: Send + Sync {
     async fn list_open_orders(&self, account_id: &str) -> Result<Vec<ManagedRewardOrder>>;
     /// Count open-like orders without loading full rows.
     async fn count_open_orders(&self, account_id: &str) -> Result<usize>;
+    /// Count open-like orders that have been submitted to Polymarket.
+    async fn count_external_open_orders(&self, account_id: &str) -> Result<usize>;
     /// Lookup a managed rewards order by its external Polymarket order id.
     async fn get_order_by_external_order_id(
         &self,
@@ -122,7 +124,7 @@ struct RewardBotMemoryState {
     worker_heartbeats: HashMap<String, OffsetDateTime>,
     events: Vec<RewardRiskEvent>,
     fills: Vec<RewardFill>,
-    open_order_count: Option<usize>,
+    external_open_order_count: Option<usize>,
 }
 
 impl RewardBotService {
@@ -191,7 +193,7 @@ impl RewardBotService {
                 memory.positions = None;
                 memory.events.clear();
                 memory.fills.clear();
-                memory.open_order_count = None;
+                memory.external_open_order_count = None;
             }
         }
         self.notify_runtime_change(true);
@@ -463,7 +465,7 @@ impl RewardBotService {
             self.store.list_quote_plans_page(plans_query),
             self.store.list_orders_page(&order_query),
             self.list_positions_cached(&account.account_id, 200),
-            self.count_open_orders_cached(&account.account_id),
+            self.count_external_open_orders_cached(&account.account_id),
             self.list_fills_cached(&account.account_id, 200),
             self.list_events_cached(&account.account_id, 100),
             self.store.latest_quote_plan_updated_at(),
@@ -616,7 +618,7 @@ impl RewardBotService {
             memory.fills.sort_by(|a, b| b.created_at.cmp(&a.created_at));
             memory.fills.truncate(MEMORY_FILL_LIMIT);
         }
-        memory.open_order_count = None;
+        memory.external_open_order_count = None;
         Ok(())
     }
 
@@ -651,7 +653,7 @@ impl RewardBotService {
             memory.positions = Some(Vec::new());
             memory.events.clear();
             memory.fills.clear();
-            memory.open_order_count = None;
+            memory.external_open_order_count = None;
         }
         self.log_event_to_store_and_memory(new_risk_event(
                 Some(config.account_id.clone()),

@@ -87,7 +87,7 @@
 - `db_error(code, context)` 辅助函数统一创建 `dependency_unavailable` 错误
 - `RewardBotStore` 的 Postgres key-value 配置读写覆盖全部 rewards 风控配置字段（depth/rank/velocity/requote/reconcile 等）；`execution_mode` 键保留用于向后兼容但被忽略。
 - `RewardBotStore` 支持按 external Polymarket order id 查询 rewards managed order、通过 fill id 判断成交是否已入账，并通过 `latest_fill_at(account_id)` 查询最近 confirmed fill；live worker 用这些读路径完成托管订单成交幂等同步和外部账户快照保护。
-- `RewardBotStore.cancel_open_orders()` 在 Postgres/内存实现中兼容释放旧账本的 `reserved_usd`；新的 rewards 开放买单不再逐单硬占用资金，订单列表优先返回 open-like 状态，避免大量历史成交/撤单淹没当前开放挂单。
+- `RewardBotStore.cancel_open_orders()` 在 Postgres/内存实现中兼容释放旧账本的 `reserved_usd`；新的 rewards 开放买单不再逐单硬占用资金，订单列表优先返回 open-like 状态，避免大量历史成交/撤单淹没当前开放挂单。worker 的 `list_open_orders()` 仍包含本地 planned/exit intent；控制台 `status.open_orders` 使用独立的 external count，只统计已有 `external_order_id` 的 open-like 订单。
 - `RewardBotStore.list_orders_page()` 在 Postgres 实现中通过 count + limit/offset 做服务端分页，支持 outcome/condition/token 搜索、状态过滤和 price/size/status 排序；内存实现保持相同语义。
 - `RewardBotStore.list_markets(limit)` 只返回 active reward markets；Postgres 实现会先关联 Gamma `markets`，只选择 open + tradable 市场，并按 `volume_24h`、日奖励金额、更新时间排序，用于 rewards tick candidate pool。Gamma 同行的有效、未交叉 best bid/ask 可在 reward token 缺 price 时注入 YES midpoint 和 NO complement 作为候选规划回退；内存实现按日奖励金额排序。`save_quote_plans()` 会替换当前 quote plan 快照，避免旧的全量计划继续出现在 `/rewards`。
 - Postgres `RewardBotStore.apply_tick_outcome()` 会在同一事务中只持久化 orders、fills、positions、account ledger 和 events；reward market 全量目录只由 `upsert_markets()` 更新，quote plan 快照只由 `save_quote_plans()` 替换，避免增量 live tick 误停用全量奖励市场。

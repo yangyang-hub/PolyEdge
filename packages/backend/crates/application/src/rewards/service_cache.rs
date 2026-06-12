@@ -140,14 +140,14 @@ impl RewardBotService {
         Ok(fills)
     }
 
-    /// Return the cached open-order count, falling back to the database when the
-    /// count has not been loaded yet or was invalidated by a tick outcome.
-    async fn count_open_orders_cached(&self, account_id: &str) -> Result<usize> {
-        if let Some(count) = self.memory.read().await.open_order_count {
+    /// Return the cached count of externally submitted open orders, falling
+    /// back to the database when invalidated by a tick outcome.
+    async fn count_external_open_orders_cached(&self, account_id: &str) -> Result<usize> {
+        if let Some(count) = self.memory.read().await.external_open_order_count {
             return Ok(count);
         }
-        let count = self.store.count_open_orders(account_id).await?;
-        self.memory.write().await.open_order_count = Some(count);
+        let count = self.store.count_external_open_orders(account_id).await?;
+        self.memory.write().await.external_open_order_count = Some(count);
         Ok(count)
     }
 }

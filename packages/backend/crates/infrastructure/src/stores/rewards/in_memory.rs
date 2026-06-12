@@ -420,6 +420,20 @@ impl RewardBotStore for InMemoryRewardBotStore {
             .count())
     }
 
+    async fn count_external_open_orders(&self, account_id: &str) -> Result<usize> {
+        Ok(self
+            .orders
+            .read()
+            .await
+            .iter()
+            .filter(|order| {
+                order.account_id == account_id
+                    && order.status.is_open_like()
+                    && order.external_order_id.is_some()
+            })
+            .count())
+    }
+
     async fn get_order_by_external_order_id(
         &self,
         external_order_id: &str,

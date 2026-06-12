@@ -30,6 +30,29 @@ mod rewards_tests {
         }
     }
 
+    fn open_order(id: &str, external_order_id: Option<&str>) -> ManagedRewardOrder {
+        let now = OffsetDateTime::now_utc();
+        ManagedRewardOrder {
+            id: id.to_string(),
+            account_id: "reward_live".to_string(),
+            condition_id: "cond_live".to_string(),
+            token_id: format!("token_{id}"),
+            outcome: "YES".to_string(),
+            side: RewardOrderSide::Buy,
+            price: Decimal::new(49, 2),
+            size: Decimal::from(20),
+            external_order_id: external_order_id.map(str::to_string),
+            status: ManagedRewardOrderStatus::Open,
+            scoring: false,
+            reason: "test order".to_string(),
+            filled_size: Decimal::ZERO,
+            reward_earned: Decimal::ZERO,
+            last_scored_at: None,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
     #[tokio::test]
     async fn stale_running_reward_command_is_reclaimed() {
         let store = InMemoryRewardBotStore::new();
@@ -67,6 +90,30 @@ mod rewards_tests {
                 .await
                 .expect("claim command")
                 .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn external_open_order_count_excludes_local_intents() {
+        let store = InMemoryRewardBotStore::new();
+        store.orders.write().await.extend([
+            open_order("submitted", Some("pm_order")),
+            open_order("local_intent", None),
+        ]);
+
+        assert_eq!(
+            store
+                .count_open_orders("reward_live")
+                .await
+                .expect("count all open-like orders"),
+            2
+        );
+        assert_eq!(
+            store
+                .count_external_open_orders("reward_live")
+                .await
+                .expect("count submitted open orders"),
+            1
         );
     }
 

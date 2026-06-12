@@ -559,6 +559,28 @@ impl RewardBotStore for PostgresRewardBotStore {
         Ok(count.max(0) as usize)
     }
 
+    async fn count_external_open_orders(&self, account_id: &str) -> Result<usize> {
+        let count: i64 = sqlx::query_scalar(
+            r#"
+            SELECT COUNT(*)
+            FROM reward_managed_orders
+            WHERE account_id = $1
+              AND status IN ('planned', 'open', 'exit_pending')
+              AND external_order_id IS NOT NULL
+            "#,
+        )
+        .bind(account_id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_QUERY_FAILED",
+                format!("failed to count external open reward orders: {error}"),
+            )
+        })?;
+        Ok(count.max(0) as usize)
+    }
+
     async fn get_order_by_external_order_id(
         &self,
         external_order_id: &str,

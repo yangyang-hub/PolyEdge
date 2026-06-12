@@ -85,7 +85,7 @@
 - State Tick：`apply_tick_outcome`（原子持久化 orders/fills/positions/ledger/events，不修改奖励市场目录或 quote plan 快照）、`apply_account_sync`（更新账户；`Some(positions)` 原子替换该账户全部持仓，`None` 保留持仓）、`reset_state`（重置账户状态、清空 orders/fills/positions）
 - Control Commands：`enqueue_control_command`、`claim_next_control_command`、`complete_control_command`、`fail_control_command`
 
-**服务：** `RewardBotService` — 读写配置、市场管理、快照聚合、订单分页快照、live tick 计划准备、轻量 live state 读取、rewards 控制命令入队/领取/完成状态管理。服务内部缓存 config、account、positions、events（最新 200 条）、fills（最新 200 条）、open_order_count 和 worker heartbeat，API 与内嵌后台 runtime 共享实例时直接读写这些热状态；缓存为空时回退到数据库。配置保存和控制命令入队会推进 runtime revision 并通过 command_wake channel 立即唤醒 worker poll loop。奖励市场目录替换拒绝空 snapshot，修改 `account_id` 前会检查旧账户状态。面向控制台的 snapshot 不携带全量 active reward markets。缓存辅助方法拆分在 `service_cache.rs`。
+**服务：** `RewardBotService` — 读写配置、市场管理、快照聚合、订单分页快照、live tick 计划准备、轻量 live state 读取、rewards 控制命令入队/领取/完成状态管理。服务内部缓存 config、account、positions、events（最新 200 条）、fills（最新 200 条）、external_open_order_count 和 worker heartbeat，API 与内嵌后台 runtime 共享实例时直接读写这些热状态；缓存为空时回退到数据库。`status.open_orders` 只统计已有 `external_order_id` 的 open-like managed orders，本地尚未提交的 planned/exit intent 仍留在 worker 队列但不作为 Polymarket 开放挂单展示。配置保存和控制命令入队会推进 runtime revision 并通过 command_wake channel 立即唤醒 worker poll loop。奖励市场目录替换拒绝空 snapshot，修改 `account_id` 前会检查旧账户状态。面向控制台的 snapshot 不携带全量 active reward markets。缓存辅助方法拆分在 `service_cache.rs`。
 
 **执行模式：**
 - `RewardExecutionMode` 枚举仅保留 `Live` 变体，`FromStr` 仍把旧字符串（`validation`、`dry_run`、`paper`、`simulation`）归一为 live；`execution_mode` 字段已从 `RewardBotConfig` / patch 中移除，Store 读取旧 `execution_mode` 配置键时直接忽略。
