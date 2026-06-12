@@ -61,26 +61,44 @@ async fn sync_live_reward_orders(
                         "fallback trade query failed for missing rewards order; keeping the reconciliation lock and continuing the cycle",
                     );
                 }
-                let Some(missing_order) = working_orders.get(&order.id).cloned() else {
-                    continue;
-                };
-                if let Some((missing_order, event)) =
-                    mark_live_external_order_not_found(missing_order, external_order_id)
+                match collect_data_api_reward_trade_fallback(
+                    state,
+                    connector,
+                    order,
+                    open_orders,
+                    &cycle.account,
+                    &cycle.positions,
+                    true,
+                )
+                .await
                 {
-                    working_orders.insert(missing_order.id.clone(), missing_order.clone());
-                    persist_live_reward_updates(
-                        state,
-                        &mut account,
-                        Vec::new(), // positions unchanged
-                        vec![missing_order],
-                        Vec::new(),
-                        vec![event],
-                        &report,
-                        trace_id,
-                    )
-                    .await?;
+                    Ok(Some(fallback)) => (
+                        fallback.outcome,
+                        fallback.external_snapshot_includes_fill,
+                    ),
+                    Ok(None) | Err(_) => {
+                        let Some(missing_order) = working_orders.get(&order.id).cloned() else {
+                            continue;
+                        };
+                        if let Some((missing_order, event)) =
+                            mark_live_external_order_not_found(missing_order, external_order_id)
+                        {
+                            working_orders.insert(missing_order.id.clone(), missing_order.clone());
+                            persist_live_reward_updates(
+                                state,
+                                &mut account,
+                                Vec::new(), // positions unchanged
+                                vec![missing_order],
+                                Vec::new(),
+                                vec![event],
+                                &report,
+                                trace_id,
+                            )
+                            .await?;
+                        }
+                        continue;
+                    }
                 }
-                continue;
             }
             Err(error) => {
                 warn!(
@@ -96,6 +114,7 @@ async fn sync_live_reward_orders(
                     open_orders,
                     &cycle.account,
                     &cycle.positions,
+                    false,
                 )
                 .await
                 {
@@ -308,19 +327,24 @@ async fn collect_data_api_reward_trade_fallback(
     open_orders: &[ManagedRewardOrder],
     account: &RewardAccountState,
     positions: &[RewardPosition],
+    allow_missing_order: bool,
 ) -> Result<Option<DataApiRewardTradeFallback>> {
     if order.side != RewardOrderSide::Buy {
         return Ok(None);
     }
-    let Some(hint) = connector
+    let matched_size = match connector
         .matched_order_hint(order.external_order_id.as_deref().unwrap_or_default())
-        .await?
-    else {
-        return Ok(None);
+        .await
+    {
+        Ok(Some(hint)) if hint.token_id == order.token_id && hint.price == order.price => {
+            hint.size_matched
+        }
+        Ok(Some(_)) | Ok(None) if !allow_missing_order => return Ok(None),
+        Err(error) if !allow_missing_order || error.code() != "POLYMARKET_ORDER_NOT_FOUND" => {
+            return Err(error);
+        }
+        Ok(Some(_)) | Ok(None) | Err(_) => order.size,
     };
-    if hint.token_id != order.token_id || hint.price != order.price {
-        return Ok(None);
-    }
     let wallet = polymarket_funding_wallet_address(
         &state.settings.polymarket.account_id,
         state.settings.polymarket.funder.as_deref(),
@@ -340,7 +364,7 @@ async fn collect_data_api_reward_trade_fallback(
     matches.sort_by_key(|activity| activity.timestamp);
     matches.dedup_by(|left, right| left.transaction_hash == right.transaction_hash);
 
-    let remaining = (hint.size_matched.min(order.size) - order.filled_size).max(Decimal::ZERO);
+    let remaining = (matched_size.min(order.size) - order.filled_size).max(Decimal::ZERO);
     let matched_size: Decimal = matches.iter().map(|activity| activity.size).sum();
     if remaining <= Decimal::ZERO || matched_size != remaining {
         return Ok(None);
@@ -360,6 +384,9 @@ async fn collect_data_api_reward_trade_fallback(
         remaining,
         latest_trade_at,
     );
+    if allow_missing_order && !external_snapshot_includes_fill {
+        return Ok(None);
+    }
     Ok(Some(DataApiRewardTradeFallback {
         outcome: LivePolymarketTradeSyncOutcome {
             updates,
