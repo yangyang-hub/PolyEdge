@@ -207,6 +207,7 @@ fn live_fill_update_clamps_multiple_updates_to_remaining_size() {
         &live_test_trade_update("pm_yes_live", "pm_trade_1", Decimal::from(12_u64)),
         "rewfill_pm_trade_1_pm_yes_live",
         "trc_live_fill",
+        false,
     )
     .expect("first fill");
     let first_fill_size = first.fill.size;
@@ -218,6 +219,7 @@ fn live_fill_update_clamps_multiple_updates_to_remaining_size() {
         &live_test_trade_update("pm_yes_live", "pm_trade_2", Decimal::from(12_u64)),
         "rewfill_pm_trade_2_pm_yes_live",
         "trc_live_fill",
+        false,
     )
     .expect("second fill");
 
@@ -229,6 +231,91 @@ fn live_fill_update_clamps_multiple_updates_to_remaining_size() {
         positions.get("yes_live").expect("position").size,
         Decimal::from(20_u64)
     );
+}
+
+#[test]
+fn data_api_fill_does_not_double_apply_an_external_account_snapshot() {
+    let now = OffsetDateTime::now_utc();
+    let mut account = polyedge_application::RewardAccountState::fresh(
+        "reward_live",
+        Decimal::from(80_u64),
+        now,
+    );
+    let mut positions = HashMap::from([(
+        "yes_live".to_string(),
+        RewardPosition {
+            account_id: "reward_live".to_string(),
+            condition_id: "cond_live".to_string(),
+            token_id: "yes_live".to_string(),
+            outcome: "YES".to_string(),
+            size: Decimal::from(20_u64),
+            avg_price: reward_decimal("0.49"),
+            realized_pnl: Decimal::ZERO,
+            updated_at: now,
+        },
+    )]);
+    let available_before = account.available_usd;
+    let mut order = live_test_open_order("yes_live");
+    order.size = Decimal::from(20_u64);
+
+    assert!(external_snapshot_covers_buy_fill(
+        &account,
+        &positions.values().cloned().collect::<Vec<_>>(),
+        &order,
+        Decimal::from(20_u64),
+        now,
+    ));
+
+    let update = apply_live_reward_fill_update(
+        order,
+        &mut account,
+        &mut positions,
+        &live_test_trade_update("pm_yes_live", "data_api:tx_1", Decimal::from(20_u64)),
+        "rewfill_data_api_tx_1_pm_yes_live",
+        "trc_data_api_fill",
+        true,
+    )
+    .expect("Data API fill");
+
+    assert_eq!(account.available_usd, available_before);
+    assert_eq!(positions["yes_live"].size, Decimal::from(20_u64));
+    assert_eq!(update.order.status, ManagedRewardOrderStatus::Filled);
+    assert_eq!(update.fill.size, Decimal::from(20_u64));
+}
+
+#[test]
+fn data_api_trade_fallback_requires_one_matching_local_order() {
+    let order = live_test_open_order("yes_live");
+    let activity = PolymarketWalletActivity {
+        proxy_wallet: "0x0000000000000000000000000000000000000001".to_string(),
+        kind: "TRADE".to_string(),
+        side: "BUY".to_string(),
+        asset: order.token_id.clone(),
+        condition_id: order.condition_id.clone(),
+        outcome: order.outcome.clone(),
+        outcome_index: 0,
+        title: "test".to_string(),
+        slug: "test".to_string(),
+        transaction_hash: "0xtx1".to_string(),
+        price: order.price,
+        size: Decimal::from(20_u64),
+        usdc_size: order.price * Decimal::from(20_u64),
+        timestamp: order.created_at + TimeDuration::seconds(1),
+    };
+
+    assert!(data_api_activity_matches_reward_order(
+        &activity,
+        &order,
+        std::slice::from_ref(&order),
+    ));
+
+    let mut duplicate = order.clone();
+    duplicate.id = "duplicate_order".to_string();
+    assert!(!data_api_activity_matches_reward_order(
+        &activity,
+        &order,
+        &[order.clone(), duplicate],
+    ));
 }
 
 #[test]
@@ -249,6 +336,7 @@ fn partial_live_fill_preserves_pending_cancellation_intent() {
         &live_test_trade_update("pm_yes_live", "pm_trade_partial", Decimal::from(5_u64)),
         "rewfill_pm_trade_partial_pm_yes_live",
         "trc_partial_cancel",
+        false,
     )
     .expect("partial fill");
 
@@ -298,6 +386,7 @@ fn partial_live_exit_fill_preserves_post_only_retry_strategy() {
         &live_test_trade_update("pm_yes_live", "pm_trade_exit_partial", Decimal::from(5_u64)),
         "rewfill_pm_trade_exit_partial_pm_yes_live",
         "trc_partial_exit",
+        false,
     )
     .expect("partial exit fill");
 

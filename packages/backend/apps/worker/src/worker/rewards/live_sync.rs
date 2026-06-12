@@ -42,7 +42,7 @@ async fn sync_live_reward_orders(
             continue;
         };
 
-        let trade_sync = match connector
+        let (trade_sync, external_snapshot_includes_fill) = match connector
             .collect_trade_updates(&LivePolymarketTradeSyncRequest {
                 connector_name: POLYMARKET_CONNECTOR_NAME.to_string(),
                 account_id: connector.account_id().to_string(),
@@ -52,7 +52,7 @@ async fn sync_live_reward_orders(
             })
             .await
         {
-            Ok(outcome) => outcome,
+            Ok(outcome) => (outcome, false),
             Err(error) if is_missing_external_order_reconciliation_error(&error) => {
                 if error.code() == "POLYMARKET_MISSING_ORDER_TRADE_QUERY_FAILED" {
                     warn!(
@@ -89,7 +89,30 @@ async fn sync_live_reward_orders(
                     error = %error,
                     "failed to reconcile managed rewards order; continuing with remaining orders"
                 );
-                continue;
+                match collect_data_api_reward_trade_fallback(
+                    state,
+                    connector,
+                    order,
+                    open_orders,
+                    &cycle.account,
+                    &cycle.positions,
+                )
+                .await
+                {
+                    Ok(Some(fallback)) => (
+                        fallback.outcome,
+                        fallback.external_snapshot_includes_fill,
+                    ),
+                    Ok(None) => continue,
+                    Err(fallback_error) => {
+                        warn!(
+                            external_order_id,
+                            error = %fallback_error,
+                            "Data API trade fallback failed; continuing with remaining orders"
+                        );
+                        continue;
+                    }
+                }
             }
         };
 
@@ -129,6 +152,7 @@ async fn sync_live_reward_orders(
                 &update,
                 &fill_id,
                 trace_id,
+                external_snapshot_includes_fill,
             ) else {
                 continue;
             };
@@ -270,6 +294,143 @@ async fn sync_live_reward_orders(
         }
     }
     Ok(report)
+}
+
+struct DataApiRewardTradeFallback {
+    outcome: LivePolymarketTradeSyncOutcome,
+    external_snapshot_includes_fill: bool,
+}
+
+async fn collect_data_api_reward_trade_fallback(
+    state: &AppState,
+    connector: &LivePolymarketConnector,
+    order: &ManagedRewardOrder,
+    open_orders: &[ManagedRewardOrder],
+    account: &RewardAccountState,
+    positions: &[RewardPosition],
+) -> Result<Option<DataApiRewardTradeFallback>> {
+    if order.side != RewardOrderSide::Buy {
+        return Ok(None);
+    }
+    let Some(hint) = connector
+        .matched_order_hint(order.external_order_id.as_deref().unwrap_or_default())
+        .await?
+    else {
+        return Ok(None);
+    };
+    if hint.token_id != order.token_id || hint.price != order.price {
+        return Ok(None);
+    }
+    let wallet = polymarket_funding_wallet_address(
+        &state.settings.polymarket.account_id,
+        state.settings.polymarket.funder.as_deref(),
+    )
+    .ok_or_else(|| {
+        AppError::invalid_input(
+            "POLYMARKET_FUNDING_WALLET_REQUIRED",
+            "funding wallet is required for Data API trade fallback",
+        )
+    })?;
+    let data_connector = PolymarketDataApiConnector::new(&state.settings.polymarket.data_api_host)?;
+    let activities = data_connector.fetch_wallet_activity(&wallet, 500).await?;
+    let mut matches = activities
+        .into_iter()
+        .filter(|activity| data_api_activity_matches_reward_order(activity, order, open_orders))
+        .collect::<Vec<_>>();
+    matches.sort_by_key(|activity| activity.timestamp);
+    matches.dedup_by(|left, right| left.transaction_hash == right.transaction_hash);
+
+    let remaining = (hint.size_matched.min(order.size) - order.filled_size).max(Decimal::ZERO);
+    let matched_size: Decimal = matches.iter().map(|activity| activity.size).sum();
+    if remaining <= Decimal::ZERO || matched_size != remaining {
+        return Ok(None);
+    }
+    let latest_trade_at = matches
+        .last()
+        .map(|activity| activity.timestamp)
+        .unwrap_or(order.created_at);
+    let updates = matches
+        .into_iter()
+        .map(|activity| data_api_activity_to_fill_update(activity, order))
+        .collect::<Result<Vec<_>>>()?;
+    let external_snapshot_includes_fill = external_snapshot_covers_buy_fill(
+        account,
+        positions,
+        order,
+        remaining,
+        latest_trade_at,
+    );
+    Ok(Some(DataApiRewardTradeFallback {
+        outcome: LivePolymarketTradeSyncOutcome {
+            updates,
+            order_status: None,
+            order_not_found: false,
+        },
+        external_snapshot_includes_fill,
+    }))
+}
+
+fn data_api_activity_matches_reward_order(
+    activity: &PolymarketWalletActivity,
+    order: &ManagedRewardOrder,
+    open_orders: &[ManagedRewardOrder],
+) -> bool {
+    if activity.kind != "TRADE"
+        || activity.side != "BUY"
+        || activity.asset != order.token_id
+        || activity.price != order.price
+        || activity.size <= Decimal::ZERO
+        || activity.transaction_hash.is_empty()
+        || activity.timestamp < order.created_at - TimeDuration::seconds(5)
+    {
+        return false;
+    }
+    open_orders
+        .iter()
+        .filter(|candidate| {
+            candidate.status.is_open_like()
+                && candidate.side == order.side
+                && candidate.token_id == order.token_id
+                && candidate.price == order.price
+                && candidate.created_at <= activity.timestamp + TimeDuration::seconds(5)
+        })
+        .count()
+        == 1
+}
+
+fn data_api_activity_to_fill_update(
+    activity: PolymarketWalletActivity,
+    order: &ManagedRewardOrder,
+) -> Result<ConnectorTradeFillUpdate> {
+    Ok(ConnectorTradeFillUpdate {
+        event_id: format!(
+            "evt_pm_data_trade:{}:{}",
+            order.external_order_id.as_deref().unwrap_or_default(),
+            activity.transaction_hash
+        ),
+        connector_name: POLYMARKET_CONNECTOR_NAME.to_string(),
+        external_order_id: order.external_order_id.clone().unwrap_or_default(),
+        account_id: order.account_id.clone(),
+        external_trade_id: format!("data_api:{}", activity.transaction_hash),
+        fill_price: Probability::new(activity.price)?,
+        filled_quantity: Quantity::new(activity.size)?,
+        fee: UsdAmount::new(Decimal::ZERO)?,
+    })
+}
+
+fn external_snapshot_covers_buy_fill(
+    account: &RewardAccountState,
+    positions: &[RewardPosition],
+    order: &ManagedRewardOrder,
+    fill_size: Decimal,
+    latest_trade_at: OffsetDateTime,
+) -> bool {
+    account.updated_at >= latest_trade_at
+        && positions.iter().any(|position| {
+            position.token_id == order.token_id
+                && position.updated_at >= latest_trade_at
+                && position.size >= order.filled_size + fill_size
+        })
 }
 
 fn is_missing_external_order_reconciliation_error(error: &AppError) -> bool {

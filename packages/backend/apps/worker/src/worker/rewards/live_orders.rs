@@ -154,6 +154,7 @@ fn apply_live_reward_fill_update(
     update: &ConnectorTradeFillUpdate,
     fill_id: &str,
     trace_id: &str,
+    external_snapshot_includes_fill: bool,
 ) -> Option<LiveRewardFillUpdate> {
     let preserved_partial_fill_reason = (order.reason.contains("awaiting final reconciliation")
         || order.reason.contains("cancellation must be retried")
@@ -176,7 +177,8 @@ fn apply_live_reward_fill_update(
     let fill_role = reward_fill_role_for_live_order(&order);
     let mut overdraft_warning: Option<RewardRiskEvent> = None;
 
-    match order.side {
+    if !external_snapshot_includes_fill {
+        match order.side {
         RewardOrderSide::Buy => {
             let previous_available = account.available_usd;
             account.available_usd = (account.available_usd - notional - fee).max(Decimal::ZERO);
@@ -249,8 +251,9 @@ fn apply_live_reward_fill_update(
             position.realized_pnl += realized_pnl;
             position.updated_at = now;
         }
+        }
+        account.fees_paid += fee;
     }
-    account.fees_paid += fee;
 
     order.filled_size = (order.filled_size + fill_size).min(order.size);
     order.updated_at = now;

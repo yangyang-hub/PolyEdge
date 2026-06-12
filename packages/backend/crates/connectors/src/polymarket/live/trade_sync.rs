@@ -1,4 +1,25 @@
 impl LivePolymarketConnector {
+    pub async fn matched_order_hint(
+        &self,
+        external_order_id: &str,
+    ) -> Result<Option<PolymarketMatchedOrderHint>> {
+        let order = self.fetch_order(external_order_id).await?;
+        if order.size_matched <= Decimal::ZERO
+            || !matches!(
+                order.status,
+                SdkOrderStatusType::Matched | SdkOrderStatusType::Canceled
+            )
+        {
+            return Ok(None);
+        }
+        Ok(Some(PolymarketMatchedOrderHint {
+            external_order_id: order.id,
+            token_id: order.asset_id.to_string(),
+            price: order.price,
+            size_matched: order.size_matched,
+        }))
+    }
+
     pub async fn collect_trade_updates(
         &self,
         request: &LivePolymarketTradeSyncRequest,

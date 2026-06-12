@@ -91,6 +91,14 @@ pub struct PolymarketOpenOrder {
 }
 
 #[derive(Debug, Clone)]
+pub struct PolymarketMatchedOrderHint {
+    pub external_order_id: String,
+    pub token_id: String,
+    pub price: Decimal,
+    pub size_matched: Decimal,
+}
+
+#[derive(Debug, Clone)]
 pub struct LivePolymarketTokenOrderRequest {
     pub client_order_id: String,
     pub connector_name: String,

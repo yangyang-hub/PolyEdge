@@ -22,19 +22,19 @@ use polyedge_connectors::{
     LivePolymarketCancelOrderRequest, LivePolymarketCancelOutcome, LivePolymarketConfig,
     LivePolymarketConnector, LivePolymarketExecutionOutcome, LivePolymarketOrderRequest,
     LivePolymarketOrderStatusRequest, LivePolymarketTokenOrderRequest,
-    LivePolymarketTradeSyncRequest, NewsSource, PAPER_ACCOUNT_ID, PAPER_EXECUTOR_NAME,
-    POLYMARKET_CONNECTOR_NAME, PaperExecutionOutcome, PaperExecutor, PaperFillRequest,
-    PaperOrderRequest, PaperOrderStatusRequest, PolymarketAcceptedOrderStatus,
+    LivePolymarketTradeSyncOutcome, LivePolymarketTradeSyncRequest, NewsSource, PAPER_ACCOUNT_ID,
+    PAPER_EXECUTOR_NAME, POLYMARKET_CONNECTOR_NAME, PaperExecutionOutcome, PaperExecutor,
+    PaperFillRequest, PaperOrderRequest, PaperOrderStatusRequest, PolymarketAcceptedOrderStatus,
     PolymarketBinaryBookSnapshot, PolymarketBookConnector, PolymarketBookLevel,
     PolymarketChainConnector, PolymarketDataApiConnector, PolymarketGammaConnector,
-    PolymarketGammaMarket, PolymarketMarketRefs, PolymarketOrderRejection,
-    PolymarketRewardMarket, PolymarketRewardsConnector, PolymarketSignatureScheme,
-    PolymarketTokenOrderSide, PolymarketWalletPosition, RssNewsConnector, RssNewsSourceConfig,
+    PolymarketGammaMarket, PolymarketMarketRefs, PolymarketOrderRejection, PolymarketRewardMarket,
+    PolymarketRewardsConnector, PolymarketSignatureScheme, PolymarketTokenOrderSide,
+    PolymarketWalletActivity, PolymarketWalletPosition, RssNewsConnector, RssNewsSourceConfig,
     normalize_polymarket_ws_order_message, normalize_polymarket_ws_trade_message,
 };
 use polyedge_domain::{
     AppError, EventStatus, EvidenceDirection, EvidenceStatus, MarketStatus, OrderStatus,
-    Probability, Quantity, Result, UserRole,
+    Probability, Quantity, Result, UsdAmount, UserRole,
 };
 use polyedge_infrastructure::{
     AppState, Runtime, new_trace_id,

@@ -142,7 +142,7 @@ live 模式会用 `LivePolymarketConnector::submit_token_order()` 提交 post-on
 
 旧的未提交 quote intent 会先经过当前计划、盘口、kill switch 和撤单风险检查，再允许提交。任一提交结果未知、待最终对账或外部订单 404 会暂停全部新增买单，但不会阻断订单同步、风险撤单或卖出退出；同一批次第一笔 POST 结果未知后也不会继续发送后续买单。CLOB 已明确返回的 HTTP 4xx 拒单会将当前 intent 标记为 error，不会误进入提交未知锁。managed order 会持久化实际提交价格/数量，post-only exit 被取消后的 replacement 仍保持 post-only。
 
-关联 trade 按 ID 单独查询失败时，connector 会按该订单 token 和下单时间窗口扫描认证账户 trades，并按 external order id 精确匹配；只有所有预期关联 trade 都达到终态后才关闭订单。任一订单的单查与回退都失败时，worker 只跳过该订单并继续处理其余订单、账户快照和 stale 清理，不再中止整轮 reconcile。
+关联 trade 按 ID 单独查询失败时，connector 会按该订单 token 和下单时间窗口扫描认证账户 trades，并按 external order id 精确匹配；只有所有预期关联 trade 都达到终态后才关闭订单。若认证 CLOB 已明确给出 matched size，但认证 trade 明细与历史页仍无法解码，worker 会再读取 Data API 钱包活动，并且只在 token、BUY、价格、时间窗口、累计数量与唯一 managed order 全部严格匹配时生成补账 fill。外部账户/持仓快照时间已覆盖该成交时，补账不会再次扣减现金或增加库存，但仍会关闭本地订单并创建退出 intent。任一订单的全部回退都失败时，worker 只跳过该订单并继续处理其余订单、账户快照和 stale 清理，不再中止整轮 reconcile。
 
 ### orderbook_stream — 盘口流（已迁移到 orderbook 服务）
 

@@ -86,6 +86,7 @@
 - `cancel_order()`：按 Polymarket order id 撤销单笔订单
 - `poll_order_status()` / `collect_trade_updates()`：优先通过 CLOB 单订单接口查询；单订单返回 404，或订单返回的关联 trade 无法按 ID 单独查询时，会按 token/time 分页扫描认证账户 trades，并按 external order id 精确匹配。仅返回 `CONFIRMED` trade 供入账，live / 普通 GTC unmatched 状态可立即按 open 返回，并且只有预期关联 trade 全部达到终态后才返回取消、matched 或 FAK unmatched 终态。404 与关联 trade 回退失败分别使用 `POLYMARKET_MISSING_ORDER_TRADE_QUERY_FAILED`、`POLYMARKET_ASSOCIATED_TRADE_FALLBACK_FAILED`，worker 会隔离单笔失败并继续其余订单对账。
 - **`LivePolymarketTradeSyncOutcome`**：包含 confirmed `updates`、安全可应用的 `order_status` 和 `order_not_found`；pending/mined/retrying trade 会阻止 terminal status 提前返回，404 fallback 不会伪造取消状态
+- **`PolymarketMatchedOrderHint`**：当 worker 的认证 trade 回退仍失败时，重新读取单订单并只暴露 terminal matched/canceled 订单的 token、价格和 matched size，供 worker 与 Data API 钱包交易做严格最终核验
 - **`PolymarketOpenOrder`**：隔离 SDK 的开放订单类型，供 live 订单恢复与对账使用
 - 用途：live 模式下的订单管理、rewards live maker 和 copytrade 实盘骨架
 - 当前范围：支持已有、已 funded、已 approve 的 Deposit Wallet 通过 CLOB V2 下单/撤单；`poly_1271` 查询余额前会调用 CLOB balance allowance update，刷新失败会直接返回错误，不再继续读取可能陈旧的账户状态。成交同步按 maker order 聚合同一 trade 中重复出现的全部 `matched_amount`，使用 size-weighted price/fee，避免把整笔 taker trade size 误记到单个 maker 订单或漏记重复 maker entry。尚未实现 relayer 建钱包、pUSD 入金/approval 或 deposit wallet 生命周期管理。
