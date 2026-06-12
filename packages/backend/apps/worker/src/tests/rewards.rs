@@ -561,6 +561,31 @@ fn missing_order_fallback_trade_query_failure_does_not_abort_reconciliation() {
 }
 
 #[test]
+fn scoring_sync_skips_reconciliation_locks_and_preserves_state_age() {
+    let now = OffsetDateTime::now_utc();
+    let interval = TimeDuration::seconds(45);
+    let mut healthy = live_test_open_order("healthy_scoring");
+    let state_updated_at = healthy.updated_at;
+
+    assert!(should_check_managed_reward_scoring(
+        &healthy, now, interval
+    ));
+    assert!(apply_managed_reward_scoring_observation(
+        &mut healthy,
+        false,
+        now
+    ));
+    assert_eq!(healthy.last_scored_at, Some(now));
+    assert_eq!(healthy.updated_at, state_updated_at);
+
+    let mut stuck = live_test_open_order("stuck_scoring");
+    stuck.reason = format!(
+        "{LIVE_EXTERNAL_ORDER_NOT_FOUND_MARKER}; manual reconciliation required: pm_stuck_scoring"
+    );
+    assert!(!should_check_managed_reward_scoring(&stuck, now, interval));
+}
+
+#[test]
 fn live_status_after_pending_cancel_requires_retry() {
     let config = RewardBotConfig {
         account_id: "reward_live".to_string(),

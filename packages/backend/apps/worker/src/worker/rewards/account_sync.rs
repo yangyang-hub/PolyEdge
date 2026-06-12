@@ -239,11 +239,7 @@ async fn sync_managed_reward_scoring(
         .enumerate()
         .filter_map(|(index, order)| {
             let external_order_id = order.external_order_id.as_ref()?;
-            let should_check = order.side == RewardOrderSide::Buy
-                && order.status.is_open_like()
-                && order
-                    .last_scored_at
-                    .is_none_or(|last_scored_at| last_scored_at + scoring_interval <= now);
+            let should_check = should_check_managed_reward_scoring(order, now, scoring_interval);
             should_check.then(|| (index, external_order_id.clone()))
         })
         .collect::<Vec<_>>();
@@ -274,10 +270,7 @@ async fn sync_managed_reward_scoring(
             continue;
         };
         let order = &mut orders[index];
-        let changed = order.scoring != scoring;
-        order.scoring = scoring;
-        order.last_scored_at = Some(now);
-        order.updated_at = now;
+        let changed = apply_managed_reward_scoring_observation(order, scoring, now);
         updates.push(order.clone());
         if changed {
             events.push(reward_live_event(
@@ -315,6 +308,30 @@ async fn sync_managed_reward_scoring(
     {
         warn!(error = %error, "failed to persist managed rewards scoring sync");
     }
+}
+
+fn should_check_managed_reward_scoring(
+    order: &ManagedRewardOrder,
+    now: OffsetDateTime,
+    scoring_interval: TimeDuration,
+) -> bool {
+    order.side == RewardOrderSide::Buy
+        && order.status.is_open_like()
+        && !is_stuck_reconciliation_order(order)
+        && order
+            .last_scored_at
+            .is_none_or(|last_scored_at| last_scored_at + scoring_interval <= now)
+}
+
+fn apply_managed_reward_scoring_observation(
+    order: &mut ManagedRewardOrder,
+    scoring: bool,
+    checked_at: OffsetDateTime,
+) -> bool {
+    let changed = order.scoring != scoring;
+    order.scoring = scoring;
+    order.last_scored_at = Some(checked_at);
+    changed
 }
 
 fn polymarket_funding_wallet_address(
