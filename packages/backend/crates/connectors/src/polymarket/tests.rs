@@ -322,6 +322,17 @@ mod tests {
     }
 
     #[test]
+    fn trade_history_is_terminal_only_after_every_associated_trade_settles() {
+        let expected = vec!["trade_1".to_string(), "trade_2".to_string()];
+        let mut terminal = std::collections::HashSet::from(["trade_1".to_string()]);
+
+        assert!(!expected_trade_ids_are_terminal(&expected, &terminal));
+        terminal.insert("trade_2".to_string());
+        assert!(expected_trade_ids_are_terminal(&expected, &terminal));
+        assert!(!expected_trade_ids_are_terminal(&[], &terminal));
+    }
+
+    #[test]
     fn websocket_cancellation_message_maps_to_canceled() {
         let message = PolymarketWsOrderMessage::builder()
             .id("pm_ord_1".to_string())

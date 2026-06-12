@@ -82,7 +82,15 @@ async fn sync_live_reward_orders(
                 }
                 continue;
             }
-            Err(error) => return Err(error),
+            Err(error) => {
+                warn!(
+                    external_order_id,
+                    error_code = error.code(),
+                    error = %error,
+                    "failed to reconcile managed rewards order; continuing with remaining orders"
+                );
+                continue;
+            }
         };
 
         let order_not_found = trade_sync.order_not_found;
