@@ -52,6 +52,33 @@ async fn sync_live_reward_orders(
             })
             .await
         {
+            Ok(outcome) if should_try_data_api_fallback_for_clob_outcome(&outcome) => {
+                match collect_data_api_reward_trade_fallback(
+                    state,
+                    connector,
+                    order,
+                    open_orders,
+                    &cycle.account,
+                    &cycle.positions,
+                    true,
+                )
+                .await
+                {
+                    Ok(Some(fallback)) => (
+                        fallback.outcome,
+                        fallback.external_snapshot_includes_fill,
+                    ),
+                    Ok(None) => (outcome, false),
+                    Err(error) => {
+                        warn!(
+                            external_order_id,
+                            error = %error,
+                            "Data API fallback failed after an empty missing-order trade scan"
+                        );
+                        (outcome, false)
+                    }
+                }
+            }
             Ok(outcome) => (outcome, false),
             Err(error) if is_missing_external_order_reconciliation_error(&error) => {
                 if error.code() == "POLYMARKET_MISSING_ORDER_TRADE_QUERY_FAILED" {
@@ -465,6 +492,12 @@ fn is_missing_external_order_reconciliation_error(error: &AppError) -> bool {
         error.code(),
         "POLYMARKET_ORDER_NOT_FOUND" | "POLYMARKET_MISSING_ORDER_TRADE_QUERY_FAILED"
     )
+}
+
+fn should_try_data_api_fallback_for_clob_outcome(
+    outcome: &LivePolymarketTradeSyncOutcome,
+) -> bool {
+    outcome.order_not_found && outcome.updates.is_empty()
 }
 
 async fn run_reward_bot_live_reconcile(

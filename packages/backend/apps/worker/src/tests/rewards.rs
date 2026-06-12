@@ -650,6 +650,26 @@ fn missing_order_fallback_trade_query_failure_does_not_abort_reconciliation() {
 }
 
 #[test]
+fn empty_missing_order_trade_scan_uses_data_api_fallback() {
+    let empty_missing = LivePolymarketTradeSyncOutcome {
+        updates: Vec::new(),
+        order_status: None,
+        order_not_found: true,
+    };
+    assert!(should_try_data_api_fallback_for_clob_outcome(
+        &empty_missing
+    ));
+
+    let live_order = LivePolymarketTradeSyncOutcome {
+        order_not_found: false,
+        ..empty_missing
+    };
+    assert!(!should_try_data_api_fallback_for_clob_outcome(
+        &live_order
+    ));
+}
+
+#[test]
 fn scoring_sync_skips_reconciliation_locks_and_preserves_state_age() {
     let now = OffsetDateTime::now_utc();
     let interval = TimeDuration::seconds(45);
