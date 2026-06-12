@@ -134,34 +134,24 @@ impl LivePolymarketConnector {
             })
     }
 
-    /// Return today's settled maker rewards converted to USD using each reward
-    /// asset's exchange rate from the CLOB response.
+    /// Return today's maker rewards converted to USD using each reward asset's
+    /// exchange rate from the CLOB response.
     pub async fn reward_earnings_today_usd(&self) -> Result<Decimal> {
         let date = chrono::Utc::now().date_naive();
-        // Use the detailed per-order endpoint (rewards/user) instead of the
-        // aggregated total endpoint (rewards/user/total). The total endpoint
-        // may omit unsettled rewards that the detailed endpoint includes,
-        // causing a mismatch with the Polymarket website display.
-        let mut all_earnings = Vec::new();
-        let mut next_cursor: Option<String> = None;
-        for _ in 0..CLOB_MAX_PAGES {
-            let page = self
-                .client
-                .earnings_for_user_for_day(date, next_cursor.clone())
-                .await
-                .map_err(|error| {
-                    AppError::dependency_unavailable(
-                        "POLYMARKET_REWARD_EARNINGS_QUERY_FAILED",
-                        format!("failed to query Polymarket reward earnings for {date}: {error}"),
-                    )
-                })?;
-            all_earnings.extend(page.data);
-            if clob_page_is_terminal(&page.next_cursor, page.count, next_cursor.as_deref()) {
-                break;
-            }
-            next_cursor = Some(page.next_cursor);
-        }
-        Ok(all_earnings
+        // Polymarket's rewards page uses the aggregated daily endpoint for its
+        // "Daily Rewards" total. The detailed /rewards/user response can be
+        // empty while this account-level total is already non-zero.
+        let earnings = self
+            .client
+            .total_earnings_for_user_for_day(date)
+            .await
+            .map_err(|error| {
+                AppError::dependency_unavailable(
+                    "POLYMARKET_REWARD_EARNINGS_QUERY_FAILED",
+                    format!("failed to query Polymarket reward earnings for {date}: {error}"),
+                )
+            })?;
+        Ok(earnings
             .into_iter()
             .map(|earning| earning.earnings * earning.asset_rate)
             .sum::<Decimal>()

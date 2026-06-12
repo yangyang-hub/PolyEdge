@@ -1,6 +1,6 @@
 # API App（HTTP API 服务）
 
-最后更新：2026-06-10
+最后更新：2026-06-12
 
 ## 概述
 
@@ -65,7 +65,7 @@
 
 Rewards Bot 的 `run` / `cancel-all` / `reset` handler 不直接执行策略、不读取 orderbook cache，也不直接修改托管订单。Handler 把控制命令写入 `reward_control_commands`，同时通过共享 `RewardBotService` revision 立即唤醒同进程 rewards loop；后台 runtime 领取命令并执行 live 逻辑。
 
-所有 Rewards snapshot 响应只读取 `RewardBotService` / store；handler 不直接请求 CLOB/Data API。配置、账户、positions 和 heartbeat 在同进程 service 内有热缓存，分页 orders/plans、fills、events 等历史查询仍从 store 读取。外部 balance、positions、订单 scoring 和当日 settled maker rewards 由内嵌后台 runtime 同步。
+所有 Rewards snapshot 响应只读取 `RewardBotService` / store；handler 不直接请求 CLOB/Data API。配置、账户、positions 和 heartbeat 在同进程 service 内有热缓存，分页 orders/plans、fills、events 等历史查询仍从 store 读取。外部 balance、positions、订单 scoring 和 UTC 当日账户级 maker rewards 聚合由内嵌后台 runtime 同步。
 
 Copy Trading 的 `run` / `analyze` / `cancel-all` / `reset` 端点同样不抓取 Polymarket Data API / CLOB，也不直接执行跟单循环；API 只写入 `copytrade_control_commands`，worker 负责领取并执行。
 

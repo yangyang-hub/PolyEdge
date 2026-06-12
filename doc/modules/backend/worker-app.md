@@ -1,6 +1,6 @@
 # Worker App（后台任务服务）
 
-最后更新：2026-06-11
+最后更新：2026-06-12
 
 ## 概述
 
@@ -30,7 +30,7 @@ Worker 代码现在同时提供共享库和兼容 CLI。`polyedge-api` 在同一
 | `worker/execution_reconcile.rs` | 订单/成交对账 |
 | `worker/orderbook_stream.rs` | Orderbook stream — 仅保留 CLI 子命令兼容，核心逻辑已迁移到独立 `polyedge-orderbook` 服务 |
 | `worker/rewards.rs` | 奖励机器人 tick；消费 API 入队的 run/cancel/reset 控制命令 |
-| `worker/rewards/account_sync.rs` | rewards 外部余额、完整持仓、订单 scoring 与当日 settled rewards 同步 |
+| `worker/rewards/account_sync.rs` | rewards 外部余额、完整持仓、订单 scoring 与 UTC 当日账户级 rewards 聚合同步 |
 | `worker/rewards/live_sync.rs` | rewards live 托管订单成交/状态同步、Reset cancel-all 语义 |
 | `worker/rewards/live_orders.rs` | rewards live 撤单、成交入账、post-fill exit/flatten intent |
 | `worker/rewards/live_submission.rs` | rewards live 单笔提交、post-only 接受状态处理和 submission marker |
@@ -124,7 +124,7 @@ reward_bot_service.claim_next_control_command()
     fetch_reward_bot_inputs() // 获取奖励市场 + 盘口
         → prepare_live_cycle()
         → sync managed rewards order trades/statuses
-        → 批量同步 managed order scoring 状态与当日 settled maker rewards
+        → 批量同步 managed order scoring 状态与 UTC 当日账户级 maker rewards 聚合
         → 无近期 confirmed fill 时同步外部 balance + 链上 pUSD 余额回退 + 完整 positions 快照
         → LivePolymarketConnector.submit_token_order()
         → reconcile_interval_sec: 读取活跃盘口并对本系统托管订单做成交同步和安全撤单检查

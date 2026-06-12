@@ -166,7 +166,7 @@ async fn sync_external_account_state(
     }
 }
 
-/// Query Polymarket for today's settled reward earnings and persist the result.
+/// Query Polymarket for today's account-level reward total and persist it.
 /// Always runs regardless of fill state — the value is an authoritative daily
 /// total from Polymarket, not a locally accumulated figure, so there is no
 /// double-counting risk.
@@ -186,7 +186,7 @@ async fn sync_reward_earnings(
                 None,
                 "reward_live_reward_earnings_synced",
                 RewardRiskSeverity::Info,
-                "Synced today's settled Polymarket maker rewards.",
+                "Synced today's Polymarket maker reward total.",
                 json!({
                     "date": OffsetDateTime::now_utc().date().to_string(),
                     "previous_reward_earned_usd": previous,
