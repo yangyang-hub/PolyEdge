@@ -10,8 +10,8 @@
 
 | 文件 | 职责 |
 |---|---|
-| `apps/orderbook/src/main.rs` | 服务入口：先 bind HTTP，再启动独立 Gamma/rewards 市场同步循环和可重启盘口流后台任务 |
-| `apps/orderbook/src/market_sync.rs` | Gamma markets（含 liquidity/end time）与 CLOB reward markets 的单次同步实现 → Postgres |
+| `apps/orderbook/src/main.rs` | 服务入口：先 bind HTTP，再启动独立 Gamma full/priority sync、rewards catalog sync 和可重启盘口流后台任务 |
+| `apps/orderbook/src/market_sync.rs` | Gamma full sync、priority condition sync（已注册 token/rewards 重点市场）与 CLOB reward markets 单次同步实现 → Postgres |
 | `apps/orderbook/src/stream.rs` | 聚合 registry token，消费 CLOB `book` + `price_change` WS，并周期性全量 poll 注册 token 做 reconcile |
 | `apps/orderbook/src/http_api.rs` | 盘口读取、批量读取、stats、内部 WS stream、token 注册/注销和内部 ingest HTTP API |
 | `apps/orderbook/src/updates.rs` | Orderbook cache 更新广播器：为 WS/poll/ingest 写入分配 sequence 并 fan-out 给内部 WS 客户端 |
@@ -22,10 +22,12 @@
 
 1. 加载 `Runtime` 并绑定 `0.0.0.0:${POLYEDGE_ORDERBOOK__PORT}`。
 2. 立即暴露 `/healthz` 和 orderbook HTTP API，避免 Polymarket 延迟阻塞容器健康检查。
-3. 后台启动 Gamma market sync 独立循环：initial 立即执行，之后按 `market_sync_interval_secs` 固定节拍同步；单次超时为 interval 的 80%，并限制在 60-240 秒。
-4. 后台启动 rewards catalog 独立循环：initial 立即执行，之后每次完成后等待 `market_sync_interval_secs`；单次超时 45 分钟，超时或失败时保留上一版 rewards catalog。
-5. 始终运行盘口流；没有注册 token 时每 10 秒等待一次。
-6. registry token 集合变化、WS 结束或 stream 报错后，按 `restart_interval_secs` 重建订阅。
+3. 后台启动 Gamma full sync 独立循环：initial 立即执行，之后按 `market_sync_interval_secs` 固定节拍同步；单次超时为 interval 的 80%，并限制在 60-240 秒。
+4. 后台启动 Gamma priority sync 独立循环：优先刷新已注册 token 映射的 condition、活跃 rewards 订单/持仓、eligible quote plans 和放宽新鲜度后的 rewards 候选 condition；最多 500 个 condition，单次超时最多 120 秒。
+5. priority sync 间隔由 rewards `max_market_data_age_minutes` 动态推导，约为新鲜度窗口三分之一，并限制在 30-300 秒；配置窗口越小，重点市场刷新越频繁。
+6. 后台启动 rewards catalog 独立循环：initial 立即执行，之后每次完成后等待 `market_sync_interval_secs`；单次超时 45 分钟，超时或失败时保留上一版 rewards catalog。
+7. 始终运行盘口流；没有注册 token 时每 10 秒等待一次。
+8. registry token 集合变化、WS 结束或 stream 报错后，按 `restart_interval_secs` 重建订阅。
 
 ## HTTP API
 
@@ -61,6 +63,11 @@ Gamma API / CLOB rewards API
     → market_sync.rs
     → markets / reward_markets (Postgres)
 
+Orderbook registry + rewards active/planned/candidate condition ids
+    → market_sync.rs priority sync
+    → Gamma `/markets?condition_ids=...`
+    → markets.synced_at refresh for priority markets
+
 Worker register sources
     → POST /orderbook/register
     → OrderbookSubscriptionRegistry
@@ -74,8 +81,9 @@ Worker register sources
 
 - 市场同步、registry、WS `book` + `price_change`、全注册 token 周期 poll reconcile、HTTP 读取、内部 WS 推送和内部写认证已实现；poll 可修复 fresh cache 中未被察觉的 WS 增量丢失，并通过内部 WS 广播给 worker 本地 cache。
 - poll 盘口保留 CLOB 返回的服务端毫秒时间戳，不再用 HTTP 响应完成时间伪造新鲜度；batch HTTP 读取通过一次 cache 批量读锁返回。
-- Gamma 与 rewards 目录同步在 orderbook 服务中使用两个独立后台循环；rewards 分页和详情补全可能持续很多分钟，但不会阻塞 Gamma `markets.synced_at` 刷新。rewards 详情补全后仍缺 token 或空目录异常时保留上一版 rewards catalog，不执行破坏性全量替换。
+- Gamma full sync、Gamma priority sync 与 rewards 目录同步在 orderbook 服务中使用三个独立后台循环；rewards 分页和详情补全可能持续很多分钟，但不会阻塞 Gamma `markets.synced_at` 刷新。priority sync 会在全量目录之间刷新重点 condition，避免已挂单/已订阅/rewards 筛选市场仅因目录新鲜度过低被策略撤单。rewards 详情补全后仍缺 token 或空目录异常时保留上一版 rewards catalog，不执行破坏性全量替换。
 - Gamma market upsert 保存 `liquidity_usd`、`end_at` 并在每次成功同步时刷新本地 `synced_at`；rewards 候选使用该本地同步时间判断目录新鲜度，不依赖市场是否刚好发生上游业务更新。
+- Priority sync 使用本地 `markets` 表把 registry token 映射到 Gamma condition id；无 Postgres 时跳过该映射，仍可使用 rewards service 提供的重点 condition。
 - 盘口只保存在单个 orderbook 进程内；服务重启会丢失缓存，横向多实例之间也不会共享缓存或 registry。
 - 读接口和 `/healthz` 当前不鉴权，应依赖内网边界限制访问。
 - 市场同步失败或超时不会使 HTTP 健康检查失败；需要通过日志和数据新鲜度单独监控外部依赖。

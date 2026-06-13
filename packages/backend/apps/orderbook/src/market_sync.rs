@@ -3,9 +3,16 @@ use polyedge_connectors::{
     PolymarketGammaConnector, PolymarketGammaMarket, PolymarketRewardMarket,
     PolymarketRewardsConnector,
 };
-use polyedge_domain::Result;
+use polyedge_domain::{AppError, Result};
 use polyedge_infrastructure::AppState;
 use rust_decimal::Decimal;
+use sqlx::Row;
+
+pub struct PriorityMarketSyncReport {
+    pub condition_ids: usize,
+    pub fetched: usize,
+    pub upserted: usize,
+}
 
 pub async fn sync_general_markets_once(state: &AppState, trace_id: &str) -> Result<usize> {
     let connector = PolymarketGammaConnector::new(&state.settings.polymarket.gamma_host)?;
@@ -34,6 +41,187 @@ pub async fn sync_reward_markets_once(state: &AppState) -> Result<usize> {
         .upsert_reward_markets(&reward_markets)
         .await?;
     Ok(reward_upserted)
+}
+
+pub async fn sync_priority_markets_once(
+    state: &AppState,
+    trace_id: &str,
+    max_condition_ids: usize,
+    reward_candidate_stale_minutes: u64,
+) -> Result<PriorityMarketSyncReport> {
+    let condition_ids =
+        collect_priority_condition_ids(state, max_condition_ids, reward_candidate_stale_minutes)
+            .await;
+    if condition_ids.is_empty() {
+        return Ok(PriorityMarketSyncReport {
+            condition_ids: 0,
+            fetched: 0,
+            upserted: 0,
+        });
+    }
+
+    let connector = PolymarketGammaConnector::new(&state.settings.polymarket.gamma_host)?;
+    let gamma_markets = connector
+        .fetch_markets_by_condition_ids(&condition_ids)
+        .await?;
+    let fetched = gamma_markets.len();
+    let views: Vec<MarketView> = gamma_markets
+        .into_iter()
+        .map(gamma_market_to_view)
+        .collect();
+    let upserted = state
+        .market_event_service
+        .upsert_markets(&views, trace_id)
+        .await?;
+
+    Ok(PriorityMarketSyncReport {
+        condition_ids: condition_ids.len(),
+        fetched,
+        upserted,
+    })
+}
+
+async fn collect_priority_condition_ids(
+    state: &AppState,
+    max_condition_ids: usize,
+    reward_candidate_stale_minutes: u64,
+) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    let mut condition_ids = Vec::new();
+
+    match registered_token_condition_ids(state, max_condition_ids.saturating_mul(2)).await {
+        Ok(registered) => {
+            for condition_id in registered {
+                push_condition_id(
+                    &mut condition_ids,
+                    &mut seen,
+                    condition_id,
+                    max_condition_ids,
+                );
+            }
+        }
+        Err(error) => {
+            tracing::warn!(error = %error, "failed to map registered orderbook tokens to markets");
+        }
+    }
+
+    if condition_ids.len() < max_condition_ids {
+        let remaining = max_condition_ids.saturating_sub(condition_ids.len());
+        match state
+            .reward_bot_service
+            .list_priority_reward_condition_ids(reward_candidate_stale_minutes, remaining)
+            .await
+        {
+            Ok(reward_condition_ids) => {
+                for condition_id in reward_condition_ids {
+                    push_condition_id(
+                        &mut condition_ids,
+                        &mut seen,
+                        condition_id,
+                        max_condition_ids,
+                    );
+                }
+            }
+            Err(error) => {
+                tracing::warn!(error = %error, "failed to list priority rewards markets");
+            }
+        }
+    }
+
+    condition_ids
+}
+
+async fn registered_token_condition_ids(
+    state: &AppState,
+    max_token_ids: usize,
+) -> Result<Vec<String>> {
+    let token_ids = state
+        .orderbook_registry
+        .list_all_tokens()
+        .await
+        .into_iter()
+        .take(max_token_ids)
+        .collect::<Vec<_>>();
+    if token_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let Some(pool) = state.dependencies.postgres.as_ref() else {
+        return Ok(Vec::new());
+    };
+
+    let rows = sqlx::query(
+        r#"
+        SELECT token_id, condition_id
+        FROM (
+            SELECT polymarket_yes_asset_id AS token_id,
+                   polymarket_condition_id AS condition_id
+            FROM markets
+            WHERE polymarket_yes_asset_id = ANY($1)
+              AND polymarket_yes_asset_id IS NOT NULL
+              AND polymarket_condition_id IS NOT NULL
+            UNION ALL
+            SELECT polymarket_no_asset_id AS token_id,
+                   polymarket_condition_id AS condition_id
+            FROM markets
+            WHERE polymarket_no_asset_id = ANY($1)
+              AND polymarket_no_asset_id IS NOT NULL
+              AND polymarket_condition_id IS NOT NULL
+        ) refs
+        "#,
+    )
+    .bind(&token_ids)
+    .fetch_all(pool)
+    .await
+    .map_err(|error| {
+        AppError::dependency_unavailable(
+            "POSTGRES_QUERY_FAILED",
+            format!("failed to map orderbook token ids to Gamma condition ids: {error}"),
+        )
+    })?;
+
+    let mut token_to_condition = std::collections::HashMap::new();
+    for row in rows {
+        let token_id: String = row.try_get("token_id").map_err(postgres_decode_error)?;
+        let condition_id: String = row.try_get("condition_id").map_err(postgres_decode_error)?;
+        token_to_condition.insert(token_id, condition_id);
+    }
+
+    let mut seen = std::collections::HashSet::new();
+    let mut condition_ids = Vec::new();
+    for token_id in token_ids {
+        let Some(condition_id) = token_to_condition.get(&token_id) else {
+            continue;
+        };
+        if seen.insert(condition_id.clone()) {
+            condition_ids.push(condition_id.clone());
+        }
+    }
+
+    Ok(condition_ids)
+}
+
+fn push_condition_id(
+    condition_ids: &mut Vec<String>,
+    seen: &mut std::collections::HashSet<String>,
+    condition_id: String,
+    max_condition_ids: usize,
+) {
+    if condition_ids.len() >= max_condition_ids {
+        return;
+    }
+    let condition_id = condition_id.trim();
+    if condition_id.is_empty() || !seen.insert(condition_id.to_string()) {
+        return;
+    }
+    condition_ids.push(condition_id.to_string());
+}
+
+fn postgres_decode_error(error: sqlx::Error) -> AppError {
+    AppError::dependency_unavailable(
+        "POSTGRES_DECODE_FAILED",
+        format!("failed to decode Postgres row: {error}"),
+    )
 }
 
 fn gamma_market_to_view(market: PolymarketGammaMarket) -> MarketView {

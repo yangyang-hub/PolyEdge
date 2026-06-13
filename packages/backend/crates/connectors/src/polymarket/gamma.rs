@@ -8,6 +8,7 @@ const GAMMA_MAX_RETRIES: u32 = 3;
 const GAMMA_RETRY_BASE_DELAY: Duration = Duration::from_millis(500);
 const GAMMA_RATE_LIMIT_MAX_RETRIES: u32 = 5;
 const GAMMA_RATE_LIMIT_BASE_DELAY: Duration = Duration::from_secs(2);
+const GAMMA_CONDITION_BATCH_SIZE: usize = 50;
 
 #[derive(Debug, Clone)]
 pub struct PolymarketGammaMarket {
@@ -146,6 +147,39 @@ impl PolymarketGammaConnector {
 
             if !had_items || page_len < limit as usize {
                 break;
+            }
+        }
+
+        Ok(markets)
+    }
+
+    pub async fn fetch_markets_by_condition_ids(
+        &self,
+        condition_ids: &[String],
+    ) -> Result<Vec<PolymarketGammaMarket>> {
+        let mut normalized = Vec::new();
+        let mut seen_conditions = std::collections::HashSet::new();
+        for condition_id in condition_ids {
+            let condition_id = condition_id.trim();
+            if condition_id.is_empty() || !seen_conditions.insert(condition_id.to_string()) {
+                continue;
+            }
+            normalized.push(condition_id.to_string());
+        }
+        if normalized.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut markets = Vec::new();
+        let mut seen_markets = std::collections::HashSet::new();
+        for chunk in normalized.chunks(GAMMA_CONDITION_BATCH_SIZE) {
+            let page = self.fetch_market_page_by_condition_ids(chunk).await?;
+            for raw in page {
+                if let Some(market) = map_gamma_market(raw)? {
+                    if seen_markets.insert(market.id.clone()) {
+                        markets.push(market);
+                    }
+                }
             }
         }
 
@@ -294,6 +328,88 @@ impl PolymarketGammaConnector {
                         format!("failed to decode Polymarket Gamma markets: {error}"),
                     )
                 });
+        }
+
+        unreachable!()
+    }
+
+    async fn fetch_market_page_by_condition_ids(
+        &self,
+        condition_ids: &[String],
+    ) -> Result<Vec<RawGammaMarket>> {
+        let url = format!("{}/markets", self.gamma_host);
+        let mut url = reqwest::Url::parse(&url).map_err(|error| {
+            AppError::invalid_input(
+                "POLYMARKET_GAMMA_MARKETS_URL_INVALID",
+                format!("failed to construct Polymarket Gamma markets URL: {error}"),
+            )
+        })?;
+        {
+            let mut query = url.query_pairs_mut();
+            query.append_pair("limit", &condition_ids.len().max(1).to_string());
+            for condition_id in condition_ids {
+                query.append_pair("condition_ids", condition_id);
+            }
+        }
+
+        let mut is_rate_limited = false;
+        for attempt in 0..=GAMMA_RATE_LIMIT_MAX_RETRIES {
+            let response = self.client.get(url.clone()).send().await.map_err(|error| {
+                AppError::dependency_unavailable(
+                    "POLYMARKET_GAMMA_MARKETS_REQUEST_FAILED",
+                    format!("failed to request Polymarket Gamma markets by condition id: {error}"),
+                )
+            })?;
+            let status = response.status();
+
+            if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+                is_rate_limited = true;
+                if attempt < GAMMA_RATE_LIMIT_MAX_RETRIES {
+                    let delay = GAMMA_RATE_LIMIT_BASE_DELAY * 2u32.pow(attempt);
+                    tracing::warn!(
+                        condition_count = condition_ids.len(),
+                        attempt = attempt + 1,
+                        "Gamma markets condition query rate limited (429), retrying after {:?}",
+                        delay,
+                    );
+                    tokio::time::sleep(delay).await;
+                    continue;
+                }
+                return Err(AppError::dependency_unavailable(
+                    "POLYMARKET_GAMMA_MARKETS_STATUS_FAILED",
+                    format!(
+                        "Polymarket Gamma markets condition query returned HTTP {status} after {} retries",
+                        GAMMA_RATE_LIMIT_MAX_RETRIES
+                    ),
+                ));
+            }
+
+            if !status.is_success() {
+                if attempt < GAMMA_MAX_RETRIES && !is_rate_limited {
+                    let delay = GAMMA_RETRY_BASE_DELAY * 2u32.pow(attempt);
+                    tracing::warn!(
+                        condition_count = condition_ids.len(),
+                        attempt = attempt + 1,
+                        status = %status,
+                        "Gamma markets condition query returned HTTP {}, retrying after {:?}",
+                        status,
+                        delay,
+                    );
+                    tokio::time::sleep(delay).await;
+                    continue;
+                }
+                return Err(AppError::dependency_unavailable(
+                    "POLYMARKET_GAMMA_MARKETS_STATUS_FAILED",
+                    format!("Polymarket Gamma markets condition query returned HTTP {status}"),
+                ));
+            }
+
+            return response.json::<Vec<RawGammaMarket>>().await.map_err(|error| {
+                AppError::dependency_unavailable(
+                    "POLYMARKET_GAMMA_MARKETS_DECODE_FAILED",
+                    format!("failed to decode Polymarket Gamma markets condition query: {error}"),
+                )
+            });
         }
 
         unreachable!()

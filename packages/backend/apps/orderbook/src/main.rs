@@ -8,7 +8,9 @@ use tracing_subscriber::filter::{FilterExt, FilterFn};
 use tracing_subscriber::{EnvFilter, prelude::*};
 
 mod market_sync;
-use market_sync::{sync_general_markets_once, sync_reward_markets_once};
+use market_sync::{
+    sync_general_markets_once, sync_priority_markets_once, sync_reward_markets_once,
+};
 
 mod stream;
 use stream::run_orderbook_stream;
@@ -25,6 +27,11 @@ use http_api::{
 const MIN_GENERAL_MARKET_SYNC_TIMEOUT_SECS: u64 = 60;
 const MAX_GENERAL_MARKET_SYNC_TIMEOUT_SECS: u64 = 240;
 const REWARD_MARKET_SYNC_TIMEOUT_SECS: u64 = 45 * 60;
+const PRIORITY_MARKET_SYNC_MAX_CONDITION_IDS: usize = 500;
+const PRIORITY_REWARD_DISCOVERY_MAX_STALE_MINUTES: u64 = 24 * 60;
+const MIN_PRIORITY_MARKET_SYNC_INTERVAL_SECS: u64 = 30;
+const MAX_PRIORITY_MARKET_SYNC_INTERVAL_SECS: u64 = 300;
+const MAX_PRIORITY_MARKET_SYNC_TIMEOUT_SECS: u64 = 120;
 
 #[tokio::main]
 async fn main() {
@@ -84,6 +91,11 @@ async fn main() {
     let general_sync_state = state.clone();
     let general_sync_handle = tokio::spawn(async move {
         run_general_market_sync_loop(general_sync_state).await;
+    });
+
+    let priority_sync_state = state.clone();
+    let priority_sync_handle = tokio::spawn(async move {
+        run_priority_market_sync_loop(priority_sync_state).await;
     });
 
     let reward_sync_state = state.clone();
@@ -146,6 +158,7 @@ async fn main() {
         }
         _ = stream_handle => {}
         _ = general_sync_handle => {}
+        _ = priority_sync_handle => {}
         _ = reward_sync_handle => {}
     }
 
@@ -182,6 +195,24 @@ async fn run_reward_market_sync_loop(state: AppState) {
     }
 }
 
+async fn run_priority_market_sync_loop(state: AppState) {
+    let full_interval =
+        Duration::from_secs(state.settings.worker.market_sync_interval_secs.max(60));
+    let mut phase = "initial";
+    loop {
+        let (interval, freshness_minutes) =
+            priority_market_sync_interval(&state, full_interval).await;
+        let timeout = priority_market_sync_timeout(interval);
+        let started = std::time::Instant::now();
+        run_priority_market_sync(&state, phase, timeout, freshness_minutes).await;
+        phase = "periodic";
+        let elapsed = started.elapsed();
+        if elapsed < interval {
+            tokio::time::sleep(interval - elapsed).await;
+        }
+    }
+}
+
 fn general_market_sync_timeout(interval: Duration) -> Duration {
     let timeout_secs = interval
         .as_secs()
@@ -192,6 +223,49 @@ fn general_market_sync_timeout(interval: Duration) -> Duration {
             MAX_GENERAL_MARKET_SYNC_TIMEOUT_SECS,
         );
     Duration::from_secs(timeout_secs)
+}
+
+async fn priority_market_sync_interval(
+    state: &AppState,
+    full_interval: Duration,
+) -> (Duration, u64) {
+    match state.reward_bot_service.read_config().await {
+        Ok(config) => {
+            let freshness_minutes = config.max_market_data_age_minutes.max(1);
+            let freshness_secs = freshness_minutes.saturating_mul(60);
+            let upper = full_interval
+                .as_secs()
+                .min(MAX_PRIORITY_MARKET_SYNC_INTERVAL_SECS)
+                .max(MIN_PRIORITY_MARKET_SYNC_INTERVAL_SECS);
+            let interval_secs = freshness_secs
+                .saturating_div(3)
+                .max(1)
+                .clamp(MIN_PRIORITY_MARKET_SYNC_INTERVAL_SECS, upper);
+            (Duration::from_secs(interval_secs), freshness_minutes)
+        }
+        Err(error) => {
+            tracing::warn!(
+                error = %error,
+                "failed to read rewards config for priority market sync interval"
+            );
+            (
+                Duration::from_secs(
+                    full_interval
+                        .as_secs()
+                        .min(60)
+                        .max(MIN_PRIORITY_MARKET_SYNC_INTERVAL_SECS),
+                ),
+                0,
+            )
+        }
+    }
+}
+
+fn priority_market_sync_timeout(interval: Duration) -> Duration {
+    Duration::from_secs(interval.as_secs().clamp(
+        MIN_PRIORITY_MARKET_SYNC_INTERVAL_SECS,
+        MAX_PRIORITY_MARKET_SYNC_TIMEOUT_SECS,
+    ))
 }
 
 async fn run_general_market_sync(state: &AppState, phase: &'static str, timeout: Duration) {
@@ -214,6 +288,56 @@ async fn run_general_market_sync(state: &AppState, phase: &'static str, timeout:
             phase,
             timeout_secs = timeout.as_secs(),
             "orderbook general market sync timed out"
+        ),
+    }
+}
+
+async fn run_priority_market_sync(
+    state: &AppState,
+    phase: &'static str,
+    timeout: Duration,
+    freshness_minutes: u64,
+) {
+    let trace_id = polyedge_infrastructure::new_trace_id();
+    let started = std::time::Instant::now();
+    match tokio::time::timeout(
+        timeout,
+        sync_priority_markets_once(
+            state,
+            &trace_id,
+            PRIORITY_MARKET_SYNC_MAX_CONDITION_IDS,
+            PRIORITY_REWARD_DISCOVERY_MAX_STALE_MINUTES,
+        ),
+    )
+    .await
+    {
+        Ok(Ok(report)) if report.condition_ids > 0 => info!(
+            phase,
+            freshness_minutes,
+            condition_ids = report.condition_ids,
+            fetched = report.fetched,
+            upserted = report.upserted,
+            elapsed_ms = started.elapsed().as_millis() as u64,
+            "orderbook priority market sync complete"
+        ),
+        Ok(Ok(_)) => tracing::debug!(
+            phase,
+            freshness_minutes,
+            elapsed_ms = started.elapsed().as_millis() as u64,
+            "orderbook priority market sync skipped with no priority markets"
+        ),
+        Ok(Err(error)) => tracing::warn!(
+            phase,
+            freshness_minutes,
+            error = %error,
+            elapsed_ms = started.elapsed().as_millis() as u64,
+            "orderbook priority market sync failed"
+        ),
+        Err(_) => tracing::warn!(
+            phase,
+            freshness_minutes,
+            timeout_secs = timeout.as_secs(),
+            "orderbook priority market sync timed out"
         ),
     }
 }

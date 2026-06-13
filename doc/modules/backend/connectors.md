@@ -21,7 +21,7 @@
 | `polymarket/live.rs` | 认证 CLOB 连接器：`LivePolymarketConnector` |
 | `polymarket/live/trade_reconciliation.rs` | CLOB 订单/成交终态映射与 order-specific fill 对账 helper |
 | `polymarket/live/trade_sync.rs` | CLOB 托管订单成交同步、关联 trade 单查和账户 trade 历史回退 |
-| `polymarket/gamma.rs` | 公共市场元数据：`PolymarketGammaConnector`；Gamma keyset 分页 guard |
+| `polymarket/gamma.rs` | 公共市场元数据：`PolymarketGammaConnector`；Gamma `/markets` offset 分页和 condition_ids 批量查询 |
 | `polymarket/data_api.rs` | 钱包活动与账户持仓 API：`PolymarketDataApiConnector` |
 | `polymarket/chain.rs` | Polygon JSON-RPC ERC20 余额读取：`PolymarketChainConnector` |
 | `polymarket/book.rs` | 盘口快照：`PolymarketBookConnector` |
@@ -38,9 +38,9 @@
 
 - **`PolymarketGammaConnector`**：`gamma_host` + `reqwest::Client`
 - **`PolymarketGammaMarket`**：id、slug、question、category、status、best_bid/ask/mid_price、`liquidity_usd`、volume_24h、`end_at`、ambiguity_level、tradability_status、condition_id、yes/no_asset_id 等
-- **`GammaMarketPage`**：分页响应（markets + next_cursor）
-- 常量：`GAMMA_MARKETS_PATH = "markets/keyset"`、`GAMMA_TIMEOUT = 15s`、`GAMMA_LAST_CURSOR = "LTE="`、`GAMMA_MAX_PAGES = 1000`
-- `fetch_markets()` 对 Gamma keyset 分页做防御：记录已请求 cursor、遇到重复 `next_cursor` 或末页 sentinel 即停止，并按 market id 去重，避免上游重复游标导致进程内存持续增长
+- 常量：`GAMMA_TIMEOUT = 15s`、`GAMMA_MAX_PAGES = 1000`、`GAMMA_CONDITION_BATCH_SIZE = 50`
+- `fetch_markets()` 使用 Gamma `/markets` offset 分页，按 active/open/non-archived、24h volume 降序拉取，并在 422 offset 边界、空页或短页时停止；结果按 market id 去重。
+- `fetch_markets_by_condition_ids()` 使用 Gamma `/markets` 的重复 `condition_ids` query 参数做小批量定向查询，每批最多 50 个 condition，用于 orderbook priority sync 刷新已订阅/rewards 重点市场。
 - 流动性优先解析 Gamma `liquidityClob`，缺失时回退 `liquidity`；结算时间解析 `endDate`。歧义等级只在 market/event 提供显式 `resolutionSource` 时为 Low，仅 description 可用时为 Medium，两者都缺失时为 High，避免把描述文本误当成明确结算来源。
 - 用途：`market_sync.rs` worker 的主要数据源，`arbitrage.rs` 的回退数据源
 
@@ -136,8 +136,8 @@
 ## 当前状态
 
 - 已实现当前系统使用的 Polymarket 公共市场、盘口、Data API、Rewards API、订单 scoring、当日 maker earnings 和 CLOB V2 交易 connector；Deposit Wallet relayer 生命周期接口尚未接入
-- Gamma keyset 分页已具备重复 cursor / 末页 sentinel / 最大页数保护，并按 market id 去重，避免外部 API 游标异常导致 market sync 无限累积内存
-- Gamma 市场同步已提供 rewards 质量筛选所需的 CLOB liquidity、end time 和分级 ambiguity 数据
+- Gamma `/markets` offset 分页已具备 422 边界 / 最大页数保护，并按 market id 去重；condition_ids 定向查询用于重点市场新鲜度刷新。
+- Gamma 市场同步已提供 rewards 质量筛选所需的 CLOB liquidity、end time 和分级 ambiguity 数据，并支持 priority condition 刷新降低全量目录延迟对 live rewards 的影响。
 - Rewards markets 分页和 enrichment 已具备完整性保护，不再把部分补全结果作为完整目录写入
 - Rewards 盘口连接器优先走 CLOB 批量 `/books`，并对失败或遗漏项使用单 token `/book` 回退
 - Orderbook 服务客户端已支持 HTTP batch/bootstrap 与内部 WS 推送；worker 长期 rewards loop 可用 WS 更新本地 cache，缺失或重连时回退 HTTP batch

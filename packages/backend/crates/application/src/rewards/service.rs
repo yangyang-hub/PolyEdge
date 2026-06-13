@@ -417,6 +417,85 @@ impl RewardBotService {
         Ok(token_ids)
     }
 
+    /// Return condition ids that should receive prioritized Gamma metadata
+    /// refreshes. Active managed markets are first, followed by eligible quote
+    /// plans, then rewards candidates selected with a relaxed freshness window
+    /// so a stale catalog can recover without waiting for a full Gamma sync.
+    pub async fn list_priority_reward_condition_ids(
+        &self,
+        max_stale_minutes: u64,
+        limit: usize,
+    ) -> Result<Vec<String>> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+
+        let config = self.read_config().await?;
+        let account_id = &config.account_id;
+        let mut seen = HashSet::new();
+        let mut condition_ids = Vec::new();
+
+        let open_orders = self.store.list_open_orders(account_id).await?;
+        for order in open_orders {
+            push_unique_condition_id(
+                &mut condition_ids,
+                &mut seen,
+                order.condition_id,
+                limit,
+            );
+        }
+
+        if condition_ids.len() < limit {
+            let positions = self.store.list_account_positions(account_id).await?;
+            for position in positions {
+                push_unique_condition_id(
+                    &mut condition_ids,
+                    &mut seen,
+                    position.condition_id,
+                    limit,
+                );
+            }
+        }
+
+        if condition_ids.len() < limit {
+            let plans = self.store.list_all_quote_plans().await?;
+            for plan in plans.into_iter().filter(|plan| plan.eligible) {
+                push_unique_condition_id(
+                    &mut condition_ids,
+                    &mut seen,
+                    plan.condition_id,
+                    limit,
+                );
+            }
+        }
+
+        if condition_ids.len() < limit {
+            let mut relaxed_config = config.clone();
+            relaxed_config.max_market_data_age_minutes = max_stale_minutes
+                .max(config.max_market_data_age_minutes)
+                .clamp(1, 1440);
+            let remaining = limit.saturating_sub(condition_ids.len());
+            let candidate_limit = u16::try_from(remaining.saturating_mul(10).max(100))
+                .unwrap_or(u16::MAX)
+                .min(reward_candidate_safety_limit(&relaxed_config));
+            let markets = self
+                .store
+                .list_candidate_markets(&relaxed_config.candidate_filter(), candidate_limit)
+                .await?;
+            let candidates = select_reward_quote_candidate_markets(&markets, &relaxed_config);
+            for market in candidates {
+                push_unique_condition_id(
+                    &mut condition_ids,
+                    &mut seen,
+                    market.condition_id,
+                    limit,
+                );
+            }
+        }
+
+        Ok(condition_ids)
+    }
+
     pub async fn snapshot(&self) -> Result<RewardBotSnapshot> {
         self.snapshot_with_order_query(
             &RewardOrderListQuery::default(),
@@ -682,6 +761,22 @@ fn reward_candidate_safety_limit(config: &RewardBotConfig) -> u16 {
         config.max_markets.saturating_mul(50).max(1000)
     };
     cap.min(5000)
+}
+
+fn push_unique_condition_id(
+    condition_ids: &mut Vec<String>,
+    seen: &mut HashSet<String>,
+    condition_id: String,
+    limit: usize,
+) {
+    if condition_ids.len() >= limit {
+        return;
+    }
+    let condition_id = condition_id.trim();
+    if condition_id.is_empty() || !seen.insert(condition_id.to_string()) {
+        return;
+    }
+    condition_ids.push(condition_id.to_string());
 }
 
 fn reward_worker_is_running(
