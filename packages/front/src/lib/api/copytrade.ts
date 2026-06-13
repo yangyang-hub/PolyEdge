@@ -52,34 +52,10 @@ export async function setWalletStatus(
   });
 }
 
-export async function runCopyTradeOnce(): Promise<ApiResponse<CopyTradeSnapshotDto>> {
-  return fetchWriteContract<ApiResponse<CopyTradeSnapshotDto>>("/api/v1/copy-trading/run", {
-    method: "POST",
-    idempotencyKey: `copytrade-run-${randomUUID()}`,
-    body: {},
-  });
-}
-
 export async function analyzeWallets(): Promise<ApiResponse<CopyTradeSnapshotDto>> {
   return fetchWriteContract<ApiResponse<CopyTradeSnapshotDto>>("/api/v1/copy-trading/analyze", {
     method: "POST",
     idempotencyKey: `copytrade-analyze-${randomUUID()}`,
-    body: {},
-  });
-}
-
-export async function cancelCopyTradeOrders(): Promise<ApiResponse<CopyTradeSnapshotDto>> {
-  return fetchWriteContract<ApiResponse<CopyTradeSnapshotDto>>("/api/v1/copy-trading/cancel-all", {
-    method: "POST",
-    idempotencyKey: `copytrade-cancel-${randomUUID()}`,
-    body: {},
-  });
-}
-
-export async function resetCopyTrade(): Promise<ApiResponse<CopyTradeSnapshotDto>> {
-  return fetchWriteContract<ApiResponse<CopyTradeSnapshotDto>>("/api/v1/copy-trading/reset", {
-    method: "POST",
-    idempotencyKey: `copytrade-reset-${randomUUID()}`,
     body: {},
   });
 }

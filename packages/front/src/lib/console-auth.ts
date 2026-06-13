@@ -21,10 +21,12 @@ const CONSOLE_ROUTE_REQUIREMENTS: Array<{ prefix: string; minRole: ConsoleRole }
   { prefix: "/dashboard", minRole: "viewer" },
   { prefix: "/markets", minRole: "viewer" },
   { prefix: "/events", minRole: "viewer" },
+  { prefix: "/radar", minRole: "viewer" },
   { prefix: "/rewards", minRole: "operator" },
+  { prefix: "/copy-trading", minRole: "operator" },
+  { prefix: "/wallet-analysis", minRole: "viewer" },
   { prefix: "/signals", minRole: "viewer" },
   { prefix: "/positions", minRole: "viewer" },
-  { prefix: "/replay", minRole: "viewer" },
   { prefix: "/risk", minRole: "risk_admin" },
   { prefix: "/settings", minRole: "admin" },
 ];

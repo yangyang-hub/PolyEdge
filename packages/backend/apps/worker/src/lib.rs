@@ -28,7 +28,7 @@ use polyedge_connectors::{
     PaperOrderStatusRequest, PolymarketAcceptedOrderStatus, PolymarketBinaryBookSnapshot,
     PolymarketBookConnector, PolymarketBookLevel, PolymarketChainConnector,
     PolymarketDataApiConnector, PolymarketGammaConnector, PolymarketGammaMarket,
-    PolymarketMarketRefs, PolymarketOrderRejection, PolymarketRewardMarket,
+    PolymarketMarketRefs, PolymarketOpenOrder, PolymarketOrderRejection, PolymarketRewardMarket,
     PolymarketRewardsConnector, PolymarketSignatureScheme, PolymarketTokenOrderSide,
     PolymarketWalletActivity, PolymarketWalletPosition, RssNewsConnector, RssNewsSourceConfig,
     normalize_polymarket_ws_order_message, normalize_polymarket_ws_trade_message,

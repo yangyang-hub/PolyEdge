@@ -18,10 +18,7 @@ import {
 import {
   addTrackedWallet,
   analyzeWallets,
-  cancelCopyTradeOrders,
   removeTrackedWallet,
-  resetCopyTrade,
-  runCopyTradeOnce,
   setWalletStatus,
   updateCopyTradeConfig,
 } from "@/lib/api/copytrade";
@@ -394,7 +391,7 @@ const addWalletSchema = z.object({
   address: z
     .string()
     .trim()
-    .regex(HEX_ADDRESS_PATTERN, "Address must be a 0x-prefixed 40-hex-char Ethereum address."),
+    .regex(HEX_ADDRESS_PATTERN, "地址必须是 0x 开头的 40 位十六进制 Ethereum 地址。"),
   label: z.string().trim().max(100).optional().default(""),
 });
 
@@ -402,7 +399,7 @@ const walletActionSchema = z.object({
   address: z
     .string()
     .trim()
-    .regex(HEX_ADDRESS_PATTERN, "Address must be a 0x-prefixed 40-hex-char Ethereum address."),
+    .regex(HEX_ADDRESS_PATTERN, "地址必须是 0x 开头的 40 位十六进制 Ethereum 地址。"),
 });
 
 const copytradeConfigSchema = z.object({
@@ -438,11 +435,11 @@ export async function updateCopyTradeConfigAction(
       const issues = parsed.error.issues
         .map((i) => `${i.path.join(".")}: ${i.message}`)
         .join("; ");
-      return createActionFailureResult(`Copy trading config is invalid: ${issues}`);
+      return createActionFailureResult(`跟踪配置无效：${issues}`);
     }
     const response = await updateCopyTradeConfig(parsed.data);
     return {
-      ...createActionSuccessResult("Copy trading configuration saved.", {
+      ...createActionSuccessResult("跟踪配置已保存。", {
         requestId: response.meta.request_id,
         traceId: response.meta.trace_id,
         operationId: `copytrade_config_${randomUUID().slice(0, 8)}`,
@@ -451,7 +448,7 @@ export async function updateCopyTradeConfigAction(
       snapshot: response.data,
     };
   } catch (error) {
-    return apiActionFailure(error, "Copy trading configuration update failed.");
+    return apiActionFailure(error, "跟踪配置保存失败。");
   }
 }
 
@@ -463,13 +460,13 @@ export async function addTrackedWalletAction(input: {
     const parsed = addWalletSchema.safeParse(input);
     if (!parsed.success) {
       const fieldErrors = parsed.error.flatten().fieldErrors;
-      return createActionFailureResult("Wallet address is invalid.", {
+      return createActionFailureResult("钱包地址无效。", {
         fieldErrors: { address: fieldErrors.address?.[0] },
       });
     }
     const response = await addTrackedWallet(parsed.data);
     return {
-      ...createActionSuccessResult("Wallet added for tracking.", {
+      ...createActionSuccessResult("钱包已加入跟踪。", {
         requestId: response.meta.request_id,
         traceId: response.meta.trace_id,
         operationId: `copytrade_add_wallet_${randomUUID().slice(0, 8)}`,
@@ -478,7 +475,7 @@ export async function addTrackedWalletAction(input: {
       snapshot: response.data,
     };
   } catch (error) {
-    return apiActionFailure(error, "Adding wallet failed.");
+    return apiActionFailure(error, "添加钱包失败。");
   }
 }
 
@@ -486,11 +483,11 @@ export async function removeTrackedWalletAction(address: string): Promise<CopyTr
   try {
     const parsed = walletActionSchema.safeParse({ address });
     if (!parsed.success) {
-      return createActionFailureResult("Invalid wallet address.");
+      return createActionFailureResult("钱包地址无效。");
     }
     const response = await removeTrackedWallet(parsed.data);
     return {
-      ...createActionSuccessResult("Wallet removed from tracking.", {
+      ...createActionSuccessResult("钱包已停止跟踪。", {
         requestId: response.meta.request_id,
         traceId: response.meta.trace_id,
         operationId: `copytrade_remove_wallet_${randomUUID().slice(0, 8)}`,
@@ -499,7 +496,7 @@ export async function removeTrackedWalletAction(address: string): Promise<CopyTr
       snapshot: response.data,
     };
   } catch (error) {
-    return apiActionFailure(error, "Removing wallet failed.");
+    return apiActionFailure(error, "移除钱包失败。");
   }
 }
 
@@ -510,7 +507,7 @@ export async function setCopytradeWalletStatusAction(
   try {
     const response = await setWalletStatus(address, status);
     return {
-      ...createActionSuccessResult(`Wallet ${status === "active" ? "resumed" : "paused"}.`, {
+      ...createActionSuccessResult(`钱包已${status === "active" ? "恢复" : "暂停"}。`, {
         requestId: response.meta.request_id,
         traceId: response.meta.trace_id,
         operationId: `copytrade_wallet_status_${randomUUID().slice(0, 8)}`,
@@ -519,24 +516,7 @@ export async function setCopytradeWalletStatusAction(
       snapshot: response.data,
     };
   } catch (error) {
-    return apiActionFailure(error, "Updating wallet status failed.");
-  }
-}
-
-export async function runCopyTradeOnceAction(): Promise<CopyTradeActionResult> {
-  try {
-    const response = await runCopyTradeOnce();
-    return {
-      ...createActionSuccessResult("Copy trading cycle queued for worker execution.", {
-        requestId: response.meta.request_id,
-        traceId: response.meta.trace_id,
-        operationId: `copytrade_run_${randomUUID().slice(0, 8)}`,
-        status: "queued",
-      }),
-      snapshot: response.data,
-    };
-  } catch (error) {
-    return apiActionFailure(error, "Copy trading run failed.");
+    return apiActionFailure(error, "更新钱包状态失败。");
   }
 }
 
@@ -544,7 +524,7 @@ export async function analyzeCopytradeWalletsAction(): Promise<CopyTradeActionRe
   try {
     const response = await analyzeWallets();
     return {
-      ...createActionSuccessResult("Wallet analysis queued for worker execution.", {
+      ...createActionSuccessResult("钱包分析命令已入队。", {
         requestId: response.meta.request_id,
         traceId: response.meta.trace_id,
         operationId: `copytrade_analyze_${randomUUID().slice(0, 8)}`,
@@ -553,41 +533,7 @@ export async function analyzeCopytradeWalletsAction(): Promise<CopyTradeActionRe
       snapshot: response.data,
     };
   } catch (error) {
-    return apiActionFailure(error, "Wallet analysis failed.");
-  }
-}
-
-export async function cancelCopyTradeOrdersAction(): Promise<CopyTradeActionResult> {
-  try {
-    const response = await cancelCopyTradeOrders();
-    return {
-      ...createActionSuccessResult("Copy trading order cancellation queued for worker execution.", {
-        requestId: response.meta.request_id,
-        traceId: response.meta.trace_id,
-        operationId: `copytrade_cancel_${randomUUID().slice(0, 8)}`,
-        status: "queued",
-      }),
-      snapshot: response.data,
-    };
-  } catch (error) {
-    return apiActionFailure(error, "Copy order cancellation failed.");
-  }
-}
-
-export async function resetCopyTradeAction(): Promise<CopyTradeActionResult> {
-  try {
-    const response = await resetCopyTrade();
-    return {
-      ...createActionSuccessResult("Copy trading simulation reset queued for worker execution.", {
-        requestId: response.meta.request_id,
-        traceId: response.meta.trace_id,
-        operationId: `copytrade_reset_${randomUUID().slice(0, 8)}`,
-        status: "queued",
-      }),
-      snapshot: response.data,
-    };
-  } catch (error) {
-    return apiActionFailure(error, "Copy trading reset failed.");
+    return apiActionFailure(error, "钱包分析失败。");
   }
 }
 

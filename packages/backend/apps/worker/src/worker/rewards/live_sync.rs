@@ -542,17 +542,16 @@ async fn run_reward_bot_live_reconcile_unlocked(
     // daily total and does not risk double-counting fills.
     sync_reward_earnings(state, connector, &mut cycle.account, trace_id).await;
 
-    if can_refresh_external_account_after_order_sync(&report) {
-        sync_external_account_state(
-            state,
-            connector,
-            &mut cycle.account,
-            &mut cycle.positions,
-            &mut cycle.open_orders,
-            trace_id,
-        )
-        .await;
-    }
+    sync_external_account_state(
+        state,
+        connector,
+        &mut cycle.account,
+        &mut cycle.positions,
+        &mut cycle.open_orders,
+        trace_id,
+        can_refresh_external_account_after_order_sync(&report),
+    )
+    .await;
 
     let mut account = cycle.account.clone();
     let mut open_orders = cycle.open_orders.clone();

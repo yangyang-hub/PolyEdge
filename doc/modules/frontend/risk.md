@@ -1,6 +1,6 @@
 # Risk（风控中心）
 
-最后更新：2026-05-31
+最后更新：2026-06-13
 
 ## 概述
 
@@ -17,7 +17,6 @@
 | `src/features/risk/components/risk-action-dialogs.tsx` | 操作对话框（kill switch / release） |
 | `src/features/risk/components/risk-audit-log.tsx` | 审计日志 |
 | `src/features/risk/loaders/risk-page-data.ts` | 服务端数据装配 |
-| `src/features/risk/lib/risk-stream.ts` | SSE 流式更新 |
 | `src/features/risk/types.ts` | 类型定义（~6 行） |
 
 ## 核心类型（types.ts）
@@ -50,7 +49,7 @@
 - 完整的风控仪表盘
 - Kill switch 触发/释放（需 step-up 认证）
 - 模式切换
-- SSE 流式更新
+- 页面通过 REST API 初始加载，前端不再维护 SSE 风控流
 - 审计日志
 
 ## 修改检查清单

@@ -18,7 +18,7 @@
 
 | 文件 | 职责 |
 |---|---|
-| `dto.ts` | Barrel re-export，聚合 12 个领域 DTO 文件 |
+| `dto.ts` | Barrel re-export，聚合 11 个 DTO 文件 |
 | `dto/primitives.ts` | 基础类型（ApiMeta、ApiResponse 等） |
 | `dto/market.ts` | MarketDto 及相关类型 |
 | `dto/signal.ts` | SignalDto、SignalLifecycleState 等 |
@@ -29,10 +29,8 @@
 | `dto/position.ts` | PositionDto |
 | `dto/news.ts` | 新闻相关 DTO |
 | `dto/probability.ts` | 概率相关 DTO |
-| `dto/replay.ts` | 回放相关 DTO |
 | `dto/wallet-analysis.ts` | WalletAnalysisReportDto |
 | `api.ts` | API 响应信封类型 |
-| `realtime.ts` | 实时数据类型 |
 
 ### HTTP 客户端层 — `src/lib/api/base.ts`（~263 行）
 
@@ -55,18 +53,17 @@
 
 | 文件 | 行数 | 主要函数 | 方法 |
 |---|---|---|---|
-| `markets.ts` | 55 | `listMarkets`、`listMarketCategories` | GET |
-| `signals.ts` | 67 | `listSignals`、`submitSignalExecutionRequest` | GET + POST |
-| `risk.ts` | 110 | `readRiskState`、`listRiskAlerts`、`listRiskBuckets`、`requestModeSwitch`、`releaseRiskControls`、`setKillSwitchState` | GET + POST |
-| `arbitrage.ts` | 49 | `listArbitrageScans`、`listArbitrageOpportunities`、`listArbitrageAnalysisRuns` | GET |
-| `rewards.ts` | 61 | `readRewardBotSnapshot`、`updateRewardBotConfig`、`runRewardBotOnce`、`cancelRewardBotOrders`、`resetRewardBot` | GET + POST |
-| `copytrade.ts` | 86 | `readCopyTradeSnapshot`、`updateCopyTradeConfig`、`addTrackedWallet`、`removeTrackedWallet`、`setWalletStatus`、`runCopyTradeOnce`、`analyzeWallets`、`cancelCopyTradeOrders`、`resetCopyTrade` | GET + POST |
-| `positions.ts` | 45 | `listPositions` | GET（含字段映射） |
-| `events.ts` | 25 | `listEvents`、`listEvidences` | GET |
+| `markets.ts` | 54 | `listMarkets`、`listMarketCategories` | GET |
+| `signals.ts` | 66 | `listSignals`、`submitSignalExecutionRequest` | GET + POST |
+| `risk.ts` | 77 | `readRiskState`、`listRiskAlerts`、`listRiskBuckets`、`requestModeSwitch`、`releaseRiskControls`、`setKillSwitchState` | GET + POST |
+| `arbitrage.ts` | 48 | `listArbitrageScans`、`listArbitrageOpportunities`、`listArbitrageAnalysisRuns` | GET |
+| `rewards.ts` | 63 | `readRewardBotSnapshot`、`updateRewardBotConfig`、`runRewardBotOnce`、`cancelRewardBotOrders`、`resetRewardBot` | GET + POST |
+| `copytrade.ts` | 61 | `readCopyTradeSnapshot`、`updateCopyTradeConfig`、`addTrackedWallet`、`removeTrackedWallet`、`setWalletStatus`、`analyzeWallets` | GET + POST |
+| `positions.ts` | 44 | `listPositions` | GET（含字段映射） |
+| `events.ts` | 24 | `listEvents`、`listEvidences` | GET |
 | `wallet-analysis.ts` | 13 | `analyzeWallet` | POST |
-| `settings.ts` | 21 | `readRuntimeConfig`、`updateRuntimeConfig` | GET + POST |
-| `news.ts` | — | 新闻数据 | GET |
-| `research.ts` | — | 研究数据 | GET |
+| `settings.ts` | 20 | `readRuntimeConfig`、`updateRuntimeConfig` | GET + POST |
+| `news.ts` | 26 | 新闻数据 | GET |
 
 ### Server Actions — `src/lib/api/actions.ts`
 
@@ -79,7 +76,7 @@
 - `createActionSuccessResult` / `createActionFailureResult` — 构建标准化结果
 - `apiActionFailure` — 错误标准化（PolyEdgeApiError → OperationActionResult）
 
-**动作函数（15+）：** 模式切换、风控控制、kill switch、信号执行、奖励机器人 CRUD、跟单 CRUD、运行时配置更新等
+**动作函数：** 模式切换、风控控制、kill switch、信号执行、奖励机器人 CRUD、跟单钱包管理/分析、运行时配置更新等
 
 ## 数据流
 
@@ -108,10 +105,11 @@ OperationActionResult → 更新 UI 状态
 
 ## 当前状态
 
-- 14 个 API 模块文件覆盖所有后端端点
+- 11 个领域 API 模块覆盖当前前端页面使用的后端端点，`base.ts` 和 `actions.ts` 提供共享请求与写操作封装
 - `actions.ts` 集中管理所有写操作的 Server Actions
-- DTO 类型镜像完整覆盖后端 contracts crate
+- DTO 类型镜像当前前端消费的后端响应；`CopyTradeSnapshotDto` 已与只读跟踪后端对齐，只包含 config、status、wallets、source_trades、events，不再声明模拟账户、订单或持仓字段
 - Rewards snapshot DTO 包含 `orders_page`，但 `RewardBotConfigDto.execution_mode`、旧 `quote_edge_cents`、模拟填单参数和 stale force-cancel 参数已移除；报价配置改为 `quote_bid_rank: 1|2|3`（TypeScript 以 number 表达，Server Action 用 Zod 限制范围），并新增 liquidity/volume/end-time/spread/data-age 市场质量门槛。`readRewardBotSnapshot()` 支持计划/订单分页、搜索、状态和排序 query；首屏 loader 显式请求 `plans_eligible=true`，与默认可挂页签一致。当前后端 handler 和 `orders_page` 都描述本地 managed-order 查询；账户余额和 positions 由 worker 同步到数据库后返回
+- `/replay` 前端派生数据层已移除；当前没有面向控制台的 replay API 页面
 - `MarketDto` 新增 `liquidity_usd` 与 `end_at`，镜像后端 `MarketData`
 - positions.ts 是唯一使用 `mapItem` 做字段重命名的模块
 - 当前静态部署使用 `NEXT_PUBLIC_POLYEDGE_API_BASE_URL` 浏览器直连 Rust API，不再通过前端 Nginx 反代 `/api/v1`

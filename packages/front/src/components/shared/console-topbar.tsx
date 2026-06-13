@@ -14,7 +14,7 @@ import { cn } from "@/lib/utils";
 const topNavLinks = [
   { href: "/dashboard", labelKey: "dashboard" },
   { href: "/signals", labelKey: "signals" },
-  { href: "/replay", labelKey: "replay" },
+  { href: "/rewards", labelKey: "rewards" },
 ] as const;
 
 export function ConsoleTopbar({

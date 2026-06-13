@@ -13,6 +13,7 @@ async fn sync_external_account_state(
     cycle_positions: &mut Vec<RewardPosition>,
     cycle_orders: &mut Vec<ManagedRewardOrder>,
     trace_id: &str,
+    refresh_account_snapshot: bool,
 ) {
     sync_managed_reward_scoring(
         state,
@@ -23,7 +24,11 @@ async fn sync_external_account_state(
     )
     .await;
 
-    if !external_account_sync_allowed(state, cycle_account, trace_id).await {
+    sync_external_open_order_state(state, connector, cycle_account, cycle_orders, trace_id).await;
+
+    if !refresh_account_snapshot
+        || !external_account_sync_allowed(state, cycle_account, trace_id).await
+    {
         return;
     }
 
@@ -45,22 +50,7 @@ async fn sync_external_account_state(
         }
     }
 
-    // Sync all active buy orders on Polymarket (including orders not managed by
-    // this bot) for account exposure observability. Resting maker orders remain
-    // soft reservations; confirmed fills drive the local cash and inventory model.
-    match connector.list_open_orders().await {
-        Ok(open_orders) => {
-            let buy_notional: Decimal = open_orders
-                .iter()
-                .filter(|o| o.side == PolymarketTokenOrderSide::Buy)
-                .map(|o| (o.price * (o.original_size - o.size_matched).max(Decimal::ZERO)).round_dp(4))
-                .sum();
-            synced_account.external_buy_notional = buy_notional;
-        }
-        Err(error) => {
-            warn!(error = %error, "failed to list Polymarket open orders for notional sync");
-        }
-    }
+    synced_account.external_buy_notional = cycle_account.external_buy_notional;
 
     let settings = &state.settings.polymarket;
     let wallet_address =
@@ -166,6 +156,137 @@ async fn sync_external_account_state(
             warn!(error = %error, "failed to persist external account sync outcome");
         }
     }
+}
+
+async fn sync_external_open_order_state(
+    state: &AppState,
+    connector: &LivePolymarketConnector,
+    account: &mut RewardAccountState,
+    cycle_orders: &mut Vec<ManagedRewardOrder>,
+    trace_id: &str,
+) {
+    let open_orders = match connector.list_open_orders().await {
+        Ok(open_orders) => open_orders,
+        Err(error) => {
+            warn!(error = %error, "failed to list Polymarket open orders for managed order sync");
+            return;
+        }
+    };
+
+    let previous_external_buy_notional = account.external_buy_notional;
+    account.external_buy_notional = external_open_buy_notional(&open_orders);
+
+    let closed = close_managed_orders_absent_from_open_snapshot(
+        cycle_orders,
+        &open_orders,
+        trace_id,
+    );
+    for (order, _) in &closed {
+        if let Some(current) = cycle_orders.iter_mut().find(|current| current.id == order.id) {
+            *current = order.clone();
+        }
+    }
+    cycle_orders.retain(|order| order.status.is_open_like());
+
+    if closed.is_empty() {
+        if account.external_buy_notional != previous_external_buy_notional {
+            account.updated_at = OffsetDateTime::now_utc();
+            if let Err(error) = state
+                .reward_bot_service
+                .apply_account_sync(account, None, trace_id)
+                .await
+            {
+                warn!(
+                    error = %error,
+                    "failed to persist external open-order notional sync"
+                );
+            }
+        }
+        return;
+    }
+
+    let closed_count = closed.len();
+    let (orders, events): (Vec<_>, Vec<_>) = closed.into_iter().unzip();
+    if let Err(error) = persist_live_reward_updates(
+        state,
+        account,
+        Vec::new(),
+        orders,
+        Vec::new(),
+        events,
+        &RewardBotRunReport {
+            cancelled_orders: closed_count,
+            ..RewardBotRunReport::default()
+        },
+        trace_id,
+    )
+    .await
+    {
+        warn!(error = %error, "failed to persist managed open-order snapshot sync");
+    }
+}
+
+fn external_open_buy_notional(open_orders: &[PolymarketOpenOrder]) -> Decimal {
+    open_orders
+        .iter()
+        .filter(|order| order.side == PolymarketTokenOrderSide::Buy)
+        .map(|order| {
+            (order.price * (order.original_size - order.size_matched).max(Decimal::ZERO))
+                .round_dp(4)
+        })
+        .sum()
+}
+
+fn close_managed_orders_absent_from_open_snapshot(
+    orders: &[ManagedRewardOrder],
+    open_orders: &[PolymarketOpenOrder],
+    trace_id: &str,
+) -> Vec<(ManagedRewardOrder, RewardRiskEvent)> {
+    let open_order_ids = open_orders
+        .iter()
+        .map(|order| order.id.as_str())
+        .collect::<HashSet<_>>();
+
+    orders
+        .iter()
+        .filter_map(|order| {
+            let external_order_id = order.external_order_id.as_deref()?;
+            if !managed_reward_order_can_close_from_open_snapshot(order, external_order_id)
+                || open_order_ids.contains(external_order_id)
+            {
+                return None;
+            }
+
+            let mut closed = order.clone();
+            closed.status = ManagedRewardOrderStatus::Cancelled;
+            closed.scoring = false;
+            closed.reason = "live rewards buy order is no longer present in Polymarket open orders; local remainder closed".to_string();
+            closed.updated_at = OffsetDateTime::now_utc();
+            let event = reward_live_event(
+                &closed,
+                "reward_live_order_missing_from_open_orders_closed",
+                RewardRiskSeverity::Info,
+                closed.reason.clone(),
+                json!({
+                    "trace_id": trace_id,
+                    "external_order_id": external_order_id,
+                    "token_id": closed.token_id.clone(),
+                    "remaining_size": (closed.size - closed.filled_size).max(Decimal::ZERO),
+                }),
+            );
+            Some((closed, event))
+        })
+        .collect()
+}
+
+fn managed_reward_order_can_close_from_open_snapshot(
+    order: &ManagedRewardOrder,
+    external_order_id: &str,
+) -> bool {
+    order.status.is_open_like()
+        && order.side == RewardOrderSide::Buy
+        && !is_internal_reward_order_id(external_order_id)
+        && !is_stuck_reconciliation_order(order)
 }
 
 /// Query Polymarket for today's account-level reward total and persist it.

@@ -307,20 +307,19 @@ async fn run_reward_bot_live_tick(
     // daily total and does not risk double-counting fills.
     sync_reward_earnings(state, connector, &mut cycle.account, trace_id).await;
 
-    // A newly confirmed fill was just applied to the local ledger and may not yet
-    // be visible in the eventually-consistent Data API snapshot. Refresh only on
-    // cycles without new fills so the same fill cannot be counted twice.
-    if can_refresh_external_account_after_order_sync(&report) {
-        sync_external_account_state(
-            state,
-            connector,
-            &mut cycle.account,
-            &mut cycle.positions,
-            &mut cycle.open_orders,
-            trace_id,
-        )
-        .await;
-    }
+    // Always reconcile the authoritative open-order list so venue-side automatic
+    // cancels release local open-order capacity immediately. Balance/position
+    // replacement still waits when a fresh fill may not have propagated yet.
+    sync_external_account_state(
+        state,
+        connector,
+        &mut cycle.account,
+        &mut cycle.positions,
+        &mut cycle.open_orders,
+        trace_id,
+        can_refresh_external_account_after_order_sync(&report),
+    )
+    .await;
 
     let mut account = cycle.account.clone();
     let mut open_orders = cycle.open_orders.clone();

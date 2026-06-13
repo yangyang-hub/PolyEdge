@@ -6,7 +6,6 @@ import type { LucideIcon } from "lucide-react";
 import {
   Activity,
   HandCoins,
-  History,
   LayoutDashboard,
   Newspaper,
   Radar,
@@ -40,7 +39,6 @@ const navItems: NavItem[] = [
   { href: "/signals", labelKey: "signals", icon: Activity },
   { href: "/positions", labelKey: "positions", icon: WalletCards },
   { href: "/risk", labelKey: "risk", icon: ShieldAlert },
-  { href: "/replay", labelKey: "replay", icon: History },
   { href: "/settings", labelKey: "settings", icon: Settings },
 ];
 

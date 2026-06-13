@@ -1,6 +1,6 @@
 # Radar（套利雷达）
 
-最后更新：2026-05-31
+最后更新：2026-06-13
 
 ## 概述
 
@@ -17,7 +17,7 @@
 | `src/features/radar/lib/radar-state.ts` | 纯函数：候选状态推导（~含测试） |
 | `src/features/radar/lib/radar-state.test.ts` | 状态推导单元测试 |
 | `src/features/radar/lib/radar-formatters.ts` | 格式化函数 |
-| `src/features/radar/lib/radar-stream.ts` | SSE 流式更新处理 |
+| `src/features/radar/lib/radar-helpers.ts` | 视图辅助函数 |
 | `src/features/radar/types.ts` | 视图模型类型（~101 行） |
 
 ## 核心类型（types.ts）
@@ -42,7 +42,6 @@
 ## API 依赖
 
 - `src/lib/api/arbitrage.ts` — `listArbitrageScans`、`listArbitrageOpportunities`、`listArbitrageAnalysisRuns`
-- `src/lib/api/stream/[channel]` — SSE 流式更新（arbitrage 频道）
 
 ## 数据流
 
@@ -52,10 +51,6 @@ Loader（radar-page-data.ts）
     → 遍历机会，调用 deriveCandidatePreview() 推导 UI 状态
     → 计算 metrics、topMarkets、typeCounts
     → 返回 RadarPageData
-
-SSE Stream（radar-stream.ts）
-    → 监听 arbitrage 频道
-    → 增量更新机会列表（outbox-backed 增量流）
 ```
 
 ## i18n
@@ -68,7 +63,8 @@ SSE Stream（radar-stream.ts）
 
 ## 当前状态
 
-- 完整实现：列表、筛选、视图切换、详情面板、SSE 增量更新
+- 完整实现：列表、筛选、视图切换、详情面板
+- 页面通过 REST API 初始加载，前端不再维护 SSE 增量流
 - 套利雷达是只读链路（不会创建执行请求）
 - 测试覆盖状态推导纯函数
 
@@ -77,4 +73,4 @@ SSE Stream（radar-stream.ts）
 - [ ] 修改候选状态推导逻辑时更新 `radar-state.ts` 和对应测试
 - [ ] 新增视图模型字段时同步更新 `types.ts` 和 loader 映射
 - [ ] 修改后运行 `yarn test:radar-state`
-- [ ] 修改后人工 smoke `/radar` 页面（筛选、视图切换、详情面板、实时更新）
+- [ ] 修改后人工 smoke `/radar` 页面（筛选、视图切换、详情面板）

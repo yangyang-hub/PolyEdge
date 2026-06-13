@@ -1,6 +1,6 @@
 # 共享组件（Shared Components + UI Primitives）
 
-最后更新：2026-05-31
+最后更新：2026-06-13
 
 ## 概述
 
@@ -34,7 +34,7 @@ shadcn 生成的 Radix UI 基础组件（style: radix-nova）：
 | `textarea.tsx` | 多行输入 |
 | `tooltip.tsx` | 提示气泡 |
 
-### Shared Business Components — `src/components/shared/`（20 个文件）
+### Shared Business Components — `src/components/shared/`（16 个文件）
 
 | 组件 | 用途 |
 |---|---|
@@ -54,7 +54,6 @@ shadcn 生成的 Radix UI 基础组件（style: radix-nova）：
 | `meter-bar.tsx` | 进度条/计量条 |
 | `status-pill.tsx` | 状态指示标签 |
 | `route-state-card.tsx` | 路由状态卡片 |
-| `language-switcher.tsx` | 语言切换器（zh-CN / en-US） |
 
 ### 根级组件
 
@@ -72,6 +71,7 @@ shadcn 生成的 Radix UI 基础组件（style: radix-nova）：
 
 - UI 组件基于 shadcn/ui v4（radix-nova 风格）
 - 共享组件覆盖所有跨页面复用场景
+- 控制台侧边栏不再提供 `/replay` 入口；顶栏快捷入口为 dashboard、signals、rewards
 - 暗色主题（`globals.css` 中仅定义暗色变量）
 
 ## 修改检查清单

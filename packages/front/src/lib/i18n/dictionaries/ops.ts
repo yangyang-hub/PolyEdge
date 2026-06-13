@@ -1,17 +1,4 @@
 export const ops = {
-  replay: {
-    eyebrow: "研究",
-    title: "回放",
-    description: "查看证据如何改变后验概率，以及信号为何进入当前状态迁移路径。",
-    replayTimeline: "回放时间线",
-    prior: "先验",
-    posterior: "后验",
-    delta: "变化",
-    selectedMoment: "选中时刻",
-    runUpdated: "运行创建于 {createdAt}，最后更新于 {updatedAt}。",
-    relatedSignals: "相关信号",
-    relatedEvents: "相关事件",
-  },
   settings: {
     eyebrow: "配置",
     title: "设置",
@@ -68,7 +55,7 @@ export const ops = {
     switchRole: "切换角色",
     goToDashboard: "前往仪表盘",
     roleCopy: {
-      viewer: "只读访问仪表盘、市场、信号、持仓和回放。",
+      viewer: "只读访问仪表盘、市场、事件、雷达、信号、持仓和钱包分析。",
       operator: "可监控风险队列并执行标准台面干预。",
       risk_admin: "可管理风控控制、模式切换和受保护台面状态。",
       admin: "完整访问权限，包括设置和环境管理。",

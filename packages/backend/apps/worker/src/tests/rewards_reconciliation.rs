@@ -177,6 +177,67 @@ fn sibling_cancel_targets_only_opposite_buy_quote() {
     assert!(!is_sibling_live_buy_order(&opposite_exit, &filled));
 }
 
+fn open_snapshot_order(id: &str, token_id: &str) -> PolymarketOpenOrder {
+    PolymarketOpenOrder {
+        id: id.to_string(),
+        market: "0x0000000000000000000000000000000000000000000000000000000000000000"
+            .to_string(),
+        asset_id: token_id.to_string(),
+        side: PolymarketTokenOrderSide::Buy,
+        original_size: reward_decimal("20"),
+        size_matched: Decimal::ZERO,
+        price: reward_decimal("0.49"),
+        outcome: "YES".to_string(),
+        status: "Live".to_string(),
+    }
+}
+
+#[test]
+fn external_open_order_snapshot_closes_missing_managed_buy() {
+    let present = live_test_open_order("yes_live");
+    let mut missing = live_test_open_order("no_live");
+    missing.outcome = "NO".to_string();
+    let snapshot = vec![open_snapshot_order("pm_yes_live", "yes_live")];
+
+    let updates = close_managed_orders_absent_from_open_snapshot(
+        &[present, missing],
+        &snapshot,
+        "trc_open_snapshot",
+    );
+
+    assert_eq!(updates.len(), 1);
+    let (closed, event) = &updates[0];
+    assert_eq!(closed.id, "rewlive_seed_no_live");
+    assert_eq!(closed.status, ManagedRewardOrderStatus::Cancelled);
+    assert!(!closed.scoring);
+    assert!(closed.reason.contains("no longer present"));
+    assert_eq!(
+        event.event_type,
+        "reward_live_order_missing_from_open_orders_closed"
+    );
+    assert!(!has_unresolved_live_reconciliation(&[closed.clone()]));
+}
+
+#[test]
+fn external_open_order_snapshot_preserves_stuck_or_sell_orders() {
+    let mut pending_cancel = live_test_open_order("pending_cancel");
+    pending_cancel.reason = "risk cancel; cancel accepted; awaiting final reconciliation".to_string();
+    let mut missing_lock = live_test_open_order("missing_lock");
+    missing_lock.reason =
+        "external order lookup returned not found; manual reconciliation required".to_string();
+    let mut exit = live_test_open_order("exit_live");
+    exit.side = RewardOrderSide::Sell;
+    exit.status = ManagedRewardOrderStatus::ExitPending;
+
+    let updates = close_managed_orders_absent_from_open_snapshot(
+        &[pending_cancel, missing_lock, exit],
+        &[],
+        "trc_open_snapshot",
+    );
+
+    assert!(updates.is_empty());
+}
+
 #[test]
 fn live_cancel_candidates_retry_rejected_post_only_violation_cancel() {
     let config = RewardBotConfig {

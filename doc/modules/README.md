@@ -31,7 +31,6 @@
 | [radar.md](frontend/radar.md) | `features/radar` | 套利雷达（前端范例模块） |
 | [rewards.md](frontend/rewards.md) | `features/rewards` | 奖励机器人 |
 | [risk.md](frontend/risk.md) | `features/risk` | 风控中心 |
-| [replay.md](frontend/replay.md) | `features/replay` | 回放 |
 | [copytrade.md](frontend/copytrade.md) | `features/copytrade` | 跟单 |
 | [settings.md](frontend/settings.md) | `features/settings` | 设置 |
 | [wallet-analysis.md](frontend/wallet-analysis.md) | `features/wallet-analysis` | 钱包分析 |

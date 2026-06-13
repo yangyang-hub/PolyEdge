@@ -1,6 +1,5 @@
 import type {
   CopyOrderSide,
-  CopyOrderStatus,
   CopyEventSeverity,
   CopySizingMode,
   CopyTradeMode,
@@ -75,50 +74,6 @@ export type SourceTradeDto = {
   decision_reason: string;
 };
 
-export type CopyOrderDto = {
-  id: string;
-  account_id: string;
-  wallet_address: string;
-  source_trade_id: string;
-  condition_id: string;
-  token_id: string;
-  outcome: string;
-  side: CopyOrderSide;
-  price: DecimalValue;
-  size: DecimalValue;
-  notional_usd: DecimalValue;
-  external_order_id?: string | null;
-  status: CopyOrderStatus;
-  reason: string;
-  filled_size?: DecimalValue;
-  realized_pnl?: DecimalValue;
-  created_at: string;
-  updated_at: string;
-};
-
-export type CopyPositionDto = {
-  account_id: string;
-  wallet_address: string;
-  condition_id: string;
-  token_id: string;
-  outcome: string;
-  size: DecimalValue;
-  avg_price: DecimalValue;
-  realized_pnl: DecimalValue;
-  updated_at: string;
-};
-
-export type CopyAccountStateDto = {
-  account_id: string;
-  capital_usd: DecimalValue;
-  available_usd: DecimalValue;
-  reserved_usd: DecimalValue;
-  realized_pnl: DecimalValue;
-  fees_paid: DecimalValue;
-  tick_index: number;
-  updated_at: string;
-};
-
 export type CopyEventDto = {
   id: string;
   wallet_address?: string | null;
@@ -133,26 +88,18 @@ export type CopyEventDto = {
 export type CopyTradeStatusDto = {
   enabled: boolean;
   running: boolean;
-  mode: CopyTradeMode;
-  account_id: string;
   wallets_tracked: number;
   active_wallets: number;
-  open_orders: number;
-  positions: number;
   source_trades_detected: number;
   last_scan_at?: string | null;
-  last_run_at?: string | null;
   error?: string | null;
 };
 
 export type CopyTradeSnapshotDto = {
   config: CopyTradeConfigDto;
   status: CopyTradeStatusDto;
-  account: CopyAccountStateDto;
   wallets: TrackedWalletDto[];
   source_trades: SourceTradeDto[];
-  orders: CopyOrderDto[];
-  positions: CopyPositionDto[];
   events: CopyEventDto[];
 };
 
