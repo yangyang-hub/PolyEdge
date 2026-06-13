@@ -163,15 +163,43 @@ fn mark_live_external_order_not_found(
     mut order: ManagedRewardOrder,
     external_order_id: &str,
 ) -> Option<(ManagedRewardOrder, RewardRiskEvent)> {
-    if !order.status.is_open_like() || order.reason.contains(LIVE_EXTERNAL_ORDER_NOT_FOUND_MARKER) {
+    if !order.status.is_open_like() {
         return None;
+    }
+
+    let now = OffsetDateTime::now_utc();
+    if order.reason.contains(LIVE_EXTERNAL_ORDER_NOT_FOUND_MARKER) {
+        if now
+            < order.updated_at
+                + TimeDuration::seconds(LIVE_EXTERNAL_ORDER_NOT_FOUND_CLOSE_AFTER_SECS)
+        {
+            return None;
+        }
+
+        order.status = ManagedRewardOrderStatus::Cancelled;
+        order.scoring = false;
+        order.reason = format!(
+            "external order lookup remained not found for 5 minutes; local order closed with no confirmed fill: {external_order_id}"
+        );
+        order.updated_at = now;
+        let event = reward_live_event(
+            &order,
+            "reward_live_external_order_not_found_closed",
+            RewardRiskSeverity::Warning,
+            order.reason.clone(),
+            json!({
+                "external_order_id": external_order_id,
+                "close_after_seconds": LIVE_EXTERNAL_ORDER_NOT_FOUND_CLOSE_AFTER_SECS,
+            }),
+        );
+        return Some((order, event));
     }
 
     order.scoring = false;
     order.reason = format!(
         "{LIVE_EXTERNAL_ORDER_NOT_FOUND_MARKER}; manual reconciliation required: {external_order_id}"
     );
-    order.updated_at = OffsetDateTime::now_utc();
+    order.updated_at = now;
     let event = reward_live_event(
         &order,
         "reward_live_external_order_not_found",

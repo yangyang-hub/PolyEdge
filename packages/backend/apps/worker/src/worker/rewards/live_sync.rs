@@ -110,6 +110,9 @@ async fn sync_live_reward_orders(
                         if let Some((missing_order, event)) =
                             mark_live_external_order_not_found(missing_order, external_order_id)
                         {
+                            if missing_order.status == ManagedRewardOrderStatus::Cancelled {
+                                report.cancelled_orders += 1;
+                            }
                             working_orders.insert(missing_order.id.clone(), missing_order.clone());
                             persist_live_reward_updates(
                                 state,
@@ -324,6 +327,9 @@ async fn sync_live_reward_orders(
             if let Some((missing_order, event)) =
                 mark_live_external_order_not_found(current_order, external_order_id)
             {
+                if missing_order.status == ManagedRewardOrderStatus::Cancelled {
+                    report.cancelled_orders += 1;
+                }
                 working_orders.insert(missing_order.id.clone(), missing_order.clone());
                 persist_live_reward_updates(
                     state,

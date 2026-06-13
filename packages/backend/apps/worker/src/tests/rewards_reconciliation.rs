@@ -14,6 +14,30 @@ fn missing_external_order_stays_open_for_trade_reconciliation() {
 }
 
 #[test]
+fn stale_missing_external_order_closes_after_timeout() {
+    let mut order = live_test_open_order("yes_live");
+    let external_order_id = order.external_order_id.clone().expect("external order id");
+    order.scoring = false;
+    order.reason = format!(
+        "{LIVE_EXTERNAL_ORDER_NOT_FOUND_MARKER}; manual reconciliation required: {external_order_id}"
+    );
+    order.updated_at = OffsetDateTime::now_utc()
+        - TimeDuration::seconds(LIVE_EXTERNAL_ORDER_NOT_FOUND_CLOSE_AFTER_SECS + 1);
+
+    let (closed, event) = mark_live_external_order_not_found(order, &external_order_id)
+        .expect("stale missing external order must be closed locally");
+
+    assert_eq!(closed.status, ManagedRewardOrderStatus::Cancelled);
+    assert!(!closed.scoring);
+    assert!(closed.reason.contains("local order closed"));
+    assert_eq!(
+        event.event_type,
+        "reward_live_external_order_not_found_closed"
+    );
+    assert!(!has_unresolved_live_reconciliation(&[closed]));
+}
+
+#[test]
 fn missing_order_fallback_trade_query_failure_does_not_abort_reconciliation() {
     let error = AppError::internal(
         "POLYMARKET_MISSING_ORDER_TRADE_QUERY_FAILED",
