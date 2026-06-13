@@ -4,7 +4,7 @@
 
 ## 概述
 
-`polyedge_connectors` crate 实现所有外部系统的适配器：Polymarket CLOB（交易）、Gamma API（市场数据）、Data API（钱包活动）、Order Book（盘口）、Rewards API（奖励市场）、Rewards AI advisory、RSS 新闻源，以及内置的 Paper Trading 执行器。
+`polyedge_connectors` crate 实现所有外部系统的适配器：Polymarket CLOB（交易）、Gamma API（市场数据）、Data API（钱包活动）、Order Book（盘口）、Rewards API（奖励市场）、Rewards AI advisory、Rewards 信息风险评估、RSS 新闻源，以及内置的 Paper Trading 执行器。
 
 ## 设计目标
 
@@ -28,6 +28,7 @@
 | `rewards.rs` + `rewards/orderbooks.rs` | 奖励市场目录与 CLOB 批量盘口：`PolymarketRewardsConnector` |
 | `orderbook.rs` | 独立 orderbook 服务客户端：HTTP 读盘口/原子注册 token/内部写 token，内部 WS stream 消费 |
 | `reward_ai.rs` | Rewards AI advisory 连接器：OpenAI Responses、OpenAI Chat Completions、Anthropic Messages |
+| `reward_info_risk.rs` | Rewards 信息风险连接器：OpenAI Responses / Chat Completions、Anthropic Messages；OpenAI Responses 可选 web search tool |
 | `polymarket/models.rs` | 共享数据模型 |
 | `polymarket/normalizers.rs` | WebSocket 消息规范化函数 |
 | `polymarket/helpers.rs` | 共享辅助函数 |
@@ -121,6 +122,13 @@
 - 输出统一解析为 `RewardAiAdvisoryDecision`：`suitability=allow|watch|avoid`、`quote_mode=double|single_yes|single_no|none`、`exit_policy`、`confidence`、`reasons` 和 `metrics`。provider HTTP、状态码、解码或 JSON 结构错误会返回 dependency error，由 worker 记录告警并保留确定性计划。
 - 该 connector 只接收 application 层已构建的 DB/orderbook/planner/account payload，不直接访问 Polymarket 或其他市场数据源。
 
+### Rewards Info Risk
+
+- **`RewardInfoRiskConnector`**：`base_url` + API key + reqwest client，供 rewards worker 异步判断候选市场的信息流风险。
+- 支持三种请求格式：`openai_responses`、`openai_chat_completions`、`anthropic_messages`。OpenAI Responses 可通过 `POLYEDGE_REWARDS__INFO_RISK_WEB_SEARCH_ENABLED=true` 附加 `web_search_preview` 工具；默认关闭。
+- 输出统一解析为 `RewardInfoRiskAssessmentDecision`：`risk_level`、`risk_type`、`directional_risk`、`resolution_imminent`、`expected_event_at`、`confidence`、`summary`、`sources` 和 `metrics`。
+- 该 connector 不直接访问 Polymarket；它只接收 application 层基于数据库、quote plan 和账户状态构建的 payload。provider 失败由 worker 记录 warning，不阻断 live tick。
+
 ### News（RSS/Atom 新闻）
 
 - **`NewsSource`** trait：`async fn fetch(&self) -> Result<Vec<ConnectorNewsItem>>`
@@ -143,12 +151,12 @@
 
 ## 当前状态
 
-- 已实现当前系统使用的 Polymarket 公共市场、盘口、Data API、Rewards API、Rewards AI advisory、订单 scoring、带明细 fallback 的当日 maker earnings 和 CLOB V2 交易 connector；Deposit Wallet relayer 生命周期接口尚未接入
+- 已实现当前系统使用的 Polymarket 公共市场、盘口、Data API、Rewards API、Rewards AI advisory、Rewards 信息风险评估、订单 scoring、带明细 fallback 的当日 maker earnings 和 CLOB V2 交易 connector；Deposit Wallet relayer 生命周期接口尚未接入
 - Gamma `/markets` offset 分页已具备 422 边界 / 最大页数保护，并按 market id 去重；condition_ids 定向查询用于重点市场新鲜度刷新。
 - Gamma 市场同步已提供 rewards 质量筛选所需的 CLOB liquidity、end time 和分级 ambiguity 数据，并支持 priority condition 刷新降低全量目录延迟对 live rewards 的影响。
 - Rewards markets 分页和 enrichment 已具备完整性保护，不再把部分补全结果作为完整目录写入
 - Rewards 盘口连接器优先走 CLOB 批量 `/books`，并对失败或遗漏项使用单 token `/book` 回退
-- Rewards AI advisory connector 已支持 OpenAI Responses、OpenAI Chat Completions 和 Anthropic Messages 三种格式；模型密钥来自 worker 环境变量，失败不阻断 live tick。
+- Rewards AI advisory 和信息风险 connector 已支持 OpenAI Responses、OpenAI Chat Completions 和 Anthropic Messages 三种格式；模型密钥来自 worker 环境变量，失败不阻断 live tick。信息风险 connector 的 OpenAI web search 工具默认关闭，仅在显式环境变量开启时使用。
 - Orderbook 服务客户端已支持 HTTP batch/bootstrap 与内部 WS 推送；worker 长期 rewards loop 可用 WS 更新本地 cache，缺失或重连时回退 HTTP batch
 - Data API positions 已按完整快照分页读取；不完整或失败的响应不会被 rewards worker 用于替换持仓
 - Paper Trading 执行器已完整实现

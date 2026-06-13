@@ -4,7 +4,7 @@
 
 ## 概述
 
-数据库使用 PostgreSQL，通过 38 个 SQL 迁移文件管理 schema。覆盖审计、市场数据、事件/信号、执行管道、风控、套利、奖励、跟单等领域。
+数据库使用 PostgreSQL，通过 39 个 SQL 迁移文件管理 schema。覆盖审计、市场数据、事件/信号、执行管道、风控、套利、奖励、跟单等领域。
 
 ## 迁移文件列表
 
@@ -48,6 +48,7 @@
 | `0036_restore_not_found_reconciliation.sql` | 恢复 404 对账 | 将被错误自动取消的外部订单恢复为待成交对账状态 |
 | `0037_reward_market_quality.sql` | Rewards 市场质量与安全修复 | `markets` 增加 liquidity/end/synced 字段和质量索引；恢复旧 stale auto-cancel 订单的对账锁 |
 | `0038_reward_market_advisories.sql` | Rewards AI advisory 缓存 | `reward_market_advisories` |
+| `0039_reward_market_info_risks.sql` | Rewards 信息风险缓存 | `reward_market_info_risks` |
 
 ## Schema 领域分组
 
@@ -96,7 +97,7 @@
 
 ### 8. 奖励机器人
 
-- **`reward_bot_config`**：key-value 配置，包含报价/风控、市场质量、quote/selection mode、dominant 单边阈值、盘口集中度阈值、偏好分类和 AI advisory 开关/provider/request format/TTL
+- **`reward_bot_config`**：key-value 配置，包含报价/风控、市场质量、quote/selection mode、dominant 单边阈值、盘口集中度阈值、偏好分类、AI advisory 开关/provider/request format/TTL 和信息风险开关/mode/过滤等级/TTL
 - **`reward_markets`**：condition_id、question、market_slug、rewards_max_spread/min_size、total_daily_rate、tokens JSON
 - **`reward_quote_plans`**：market FK、scoring、quote plan
 - **`reward_managed_orders`**：account_id、condition_id、token_id、filled_size、reward_earned、last_scored_at
@@ -105,6 +106,7 @@
 - **`reward_account_state`**：capital_usd、available_usd、reserved_usd（旧硬占用兼容字段，下一次 rewards tick 自动释放）、realized_pnl、reward_earned_usd、fees_paid、tick_index
 - **`reward_control_commands`**：API 入队给 worker 的 rewards 控制命令（run_once/cancel_all/reset）及 pending/running/completed/failed 状态；running 超过 5 分钟可重新领取
 - **`reward_market_advisories`**：AI advisory 缓存表，按 condition/provider/request_format/model/input_hash 保存 suitability、推荐 quote mode、exit policy、confidence、reasons/metrics JSON 和 expires_at；worker 只读取未过期记录，缓存未命中时调用 provider 后写入
+- **`reward_market_info_risks`**：信息风险缓存表，按 condition/provider/request_format/model/input_hash 保存 query_hash、risk_level、risk_type、directional_risk、resolution_imminent、expected_event_at、confidence、summary、sources/metrics JSON 和 expires_at；异步 worker 写入，live rewards tick 只读取未过期缓存
 
 ### 9. 跟单
 
@@ -123,7 +125,7 @@
 
 ## 当前状态
 
-- 38 个迁移文件，最新为 `0038_reward_market_advisories.sql`
+- 39 个迁移文件，最新为 `0039_reward_market_info_risks.sql`
 - 所有表使用 PostgreSQL 特性（JSONB、NUMERIC 约束、BIGSERIAL、部分索引等）
 - 迁移使用 `sqlx` 管理
 

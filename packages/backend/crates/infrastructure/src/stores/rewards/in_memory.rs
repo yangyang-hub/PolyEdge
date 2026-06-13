@@ -12,6 +12,7 @@ pub struct InMemoryRewardBotStore {
     control_commands: RwLock<Vec<RewardControlCommand>>,
     worker_heartbeats: RwLock<HashMap<String, OffsetDateTime>>,
     advisories: RwLock<Vec<RewardMarketAdvisory>>,
+    info_risks: RwLock<Vec<RewardMarketInfoRisk>>,
 }
 
 impl InMemoryRewardBotStore {
@@ -29,6 +30,7 @@ impl InMemoryRewardBotStore {
             control_commands: RwLock::new(Vec::new()),
             worker_heartbeats: RwLock::new(HashMap::new()),
             advisories: RwLock::new(Vec::new()),
+            info_risks: RwLock::new(Vec::new()),
         }
     }
 }
@@ -173,6 +175,54 @@ impl RewardBotStore for InMemoryRewardBotStore {
 
     async fn save_market_advisory(&self, advisory: &RewardMarketAdvisory) -> Result<()> {
         self.advisories.write().await.push(advisory.clone());
+        Ok(())
+    }
+
+    async fn latest_market_info_risk(
+        &self,
+        request: &RewardInfoRiskAssessmentRequest,
+        now: OffsetDateTime,
+    ) -> Result<Option<RewardMarketInfoRisk>> {
+        Ok(self
+            .info_risks
+            .read()
+            .await
+            .iter()
+            .filter(|risk| {
+                risk.condition_id == request.condition_id
+                    && risk.provider == request.provider
+                    && risk.request_format == request.request_format
+                    && risk.model == request.model
+                    && risk.input_hash == request.input_hash
+                    && risk.expires_at > now
+            })
+            .max_by_key(|risk| risk.expires_at)
+            .cloned())
+    }
+
+    async fn latest_market_info_risks(
+        &self,
+        condition_ids: &[String],
+        now: OffsetDateTime,
+    ) -> Result<Vec<RewardMarketInfoRisk>> {
+        let wanted = condition_ids.iter().collect::<HashSet<_>>();
+        let mut latest = HashMap::<String, RewardMarketInfoRisk>::new();
+        for risk in self.info_risks.read().await.iter() {
+            if !wanted.contains(&risk.condition_id) || risk.expires_at <= now {
+                continue;
+            }
+            let replace = latest
+                .get(&risk.condition_id)
+                .is_none_or(|existing| risk.expires_at > existing.expires_at);
+            if replace {
+                latest.insert(risk.condition_id.clone(), risk.clone());
+            }
+        }
+        Ok(latest.into_values().collect())
+    }
+
+    async fn save_market_info_risk(&self, risk: &RewardMarketInfoRisk) -> Result<()> {
+        self.info_risks.write().await.push(risk.clone());
         Ok(())
     }
 

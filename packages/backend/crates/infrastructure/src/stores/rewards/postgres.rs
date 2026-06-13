@@ -253,6 +253,26 @@ impl RewardBotStore for PostgresRewardBotStore {
         Ok(())
     }
 
+    async fn latest_market_info_risk(
+        &self,
+        request: &RewardInfoRiskAssessmentRequest,
+        now: OffsetDateTime,
+    ) -> Result<Option<RewardMarketInfoRisk>> {
+        postgres_latest_market_info_risk(&self.pool, request, now).await
+    }
+
+    async fn latest_market_info_risks(
+        &self,
+        condition_ids: &[String],
+        now: OffsetDateTime,
+    ) -> Result<Vec<RewardMarketInfoRisk>> {
+        postgres_latest_market_info_risks(&self.pool, condition_ids, now).await
+    }
+
+    async fn save_market_info_risk(&self, risk: &RewardMarketInfoRisk) -> Result<()> {
+        postgres_save_market_info_risk(&self.pool, risk).await
+    }
+
     async fn list_markets(&self, limit: u16) -> Result<Vec<RewardMarket>> {
         postgres_list_reward_markets(self, limit).await
     }

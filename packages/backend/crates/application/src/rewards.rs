@@ -19,6 +19,8 @@ const DEFAULT_TICK: Decimal = Decimal::from_parts(1, 0, 0, false, 2);
 include!("rewards/models.rs");
 include!("rewards/quote_selection_models.rs");
 include!("rewards/ai_advisory_models.rs");
+include!("rewards/info_risk_models.rs");
+include!("rewards/config_impl.rs");
 include!("rewards/runtime_models.rs");
 include!("rewards/pagination.rs");
 include!("rewards/control.rs");

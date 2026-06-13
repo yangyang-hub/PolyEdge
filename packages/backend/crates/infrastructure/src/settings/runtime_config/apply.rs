@@ -160,6 +160,9 @@ fn apply_runtime_config_value(
         "worker.poll_reward_bot" => {
             self.worker.poll_reward_bot = parse_bool_runtime_config(key, value)?;
         }
+        "worker.poll_reward_info_risks" => {
+            self.worker.poll_reward_info_risks = parse_bool_runtime_config(key, value)?;
+        }
         "worker.drain_execution_queue" => {
             self.worker.drain_execution_queue = parse_bool_runtime_config(key, value)?;
         }

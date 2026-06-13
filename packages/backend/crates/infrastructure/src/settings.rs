@@ -143,6 +143,10 @@ pub struct RewardsSettings {
     pub ai_min_confidence_bps: u16,
     pub ai_request_timeout_secs: u64,
     pub ai_max_markets_per_cycle: u16,
+    pub info_risk_interval_secs: u64,
+    pub info_risk_max_markets_per_cycle: u16,
+    pub info_risk_min_confidence_bps: u16,
+    pub info_risk_web_search_enabled: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -174,6 +178,7 @@ pub struct WorkerSettings {
     pub poll_arbitrage_radar: bool,
     pub analyze_arbitrage_opportunities: bool,
     pub poll_reward_bot: bool,
+    pub poll_reward_info_risks: bool,
     pub drain_execution_queue: bool,
     pub poll_paper_order_statuses: bool,
     pub reconcile_paper_fills: bool,

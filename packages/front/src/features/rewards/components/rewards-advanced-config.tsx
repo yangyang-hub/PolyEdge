@@ -7,6 +7,7 @@ import type {
   RewardAiProvider,
   RewardAiRequestFormat,
   RewardBotConfigDto,
+  RewardInfoRiskLevel,
   RewardQuoteMode,
   RewardSelectionMode,
 } from "@/lib/contracts/dto";
@@ -221,6 +222,60 @@ export function AiAdvisoryConfig({
         suffix="s"
         hint={h.aiAdvisoryTtlSec}
         onChange={(value) => updateNumber("ai_advisory_ttl_sec", value)}
+      />
+      <ToggleField
+        label={dictionary.rewards.infoRiskEnabled}
+        hint={h.infoRiskEnabled}
+        checked={draft.info_risk_enabled}
+        onChange={(checked) =>
+          setDraft((current) => ({ ...current, info_risk_enabled: checked }))
+        }
+      />
+      <label className="space-y-1.5">
+        <span className="flex items-center gap-1 text-xs font-medium text-muted-foreground">
+          {dictionary.rewards.infoRiskMode}
+          <Hint content={h.infoRiskMode} />
+        </span>
+        <select
+          className={selectClassName}
+          value={draft.info_risk_mode}
+          onChange={(event) =>
+            setDraft((current) => ({
+              ...current,
+              info_risk_mode: event.target.value as RewardSelectionMode,
+            }))
+          }
+        >
+          <option value="observe">{dictionary.rewards.selectionObserve}</option>
+          <option value="enforce">{dictionary.rewards.selectionEnforce}</option>
+        </select>
+      </label>
+      <label className="space-y-1.5">
+        <span className="flex items-center gap-1 text-xs font-medium text-muted-foreground">
+          {dictionary.rewards.infoRiskAvoidLevel}
+          <Hint content={h.infoRiskAvoidLevel} />
+        </span>
+        <select
+          className={selectClassName}
+          value={draft.info_risk_avoid_level}
+          onChange={(event) =>
+            setDraft((current) => ({
+              ...current,
+              info_risk_avoid_level: event.target.value as RewardInfoRiskLevel,
+            }))
+          }
+        >
+          <option value="medium">{dictionary.rewards.infoRiskMedium}</option>
+          <option value="high">{dictionary.rewards.infoRiskHigh}</option>
+          <option value="critical">{dictionary.rewards.infoRiskCritical}</option>
+        </select>
+      </label>
+      <NumberInput
+        label={dictionary.rewards.infoRiskTtlSec}
+        value={draft.info_risk_ttl_sec}
+        suffix="s"
+        hint={h.infoRiskTtlSec}
+        onChange={(value) => updateNumber("info_risk_ttl_sec", value)}
       />
     </ConfigSection>
   );

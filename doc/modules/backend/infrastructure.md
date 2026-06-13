@@ -41,7 +41,7 @@
 | `RiskSettings` | exposure_reference_nav、daily_pnl limits、gross/net exposure limits、kill_switch、min_signal_confidence 等 12 个字段 |
 | `PolymarketSettings` | account_id、chain_id、signature_type、funder、private_key、API credentials、CLOB/WS/Gamma/Data API/Polygon RPC host、poll limits |
 | `ArbitrageSettings` | book_source、scan_limit、scanner_version |
-| `RewardsSettings` | enabled、poll_interval、AI provider API key/base URL/model/timeout/min confidence/max markets 等 |
+| `RewardsSettings` | enabled、poll_interval、AI provider API key/base URL/model/timeout/min confidence/max markets、信息风险扫描间隔/数量/置信度/web search 开关等 |
 | `NewsSettings` | enabled、sources（列表）、request_timeout_secs |
 | `WorkerSettings` | 各 worker 的启用标志和轮询间隔 |
 | `OrderbookStreamSettings` | WS 连接和轮询配置（默认 `max_tokens=3000`、`max_levels_per_side=100`） |
@@ -51,7 +51,7 @@
 
 所有字段使用 `#[serde(default)]`，通过 `POLYEDGE_` 前缀环境变量加载（如 `POLYEDGE_SERVER__PORT`）。`POLYEDGE_POLYMARKET__SIGNATURE_TYPE` 支持 `eoa`、`proxy`、`gnosis_safe`、`poly_1271`；Deposit Wallet 使用 `poly_1271` 并通过 `POLYEDGE_POLYMARKET__FUNDER` 配置 deposit wallet 地址。`POLYEDGE_POLYMARKET__POLYGON_RPC_URL` 用于 worker 读取资金钱包链上 pUSD 余额，默认 `https://polygon-bor-rpc.publicnode.com`。
 
-进程级 rewards 默认关闭：`RewardsSettings.enabled=false`、`WorkerSettings.poll_reward_bot=false`。只有部署环境显式同时开启两个开关时才启动 live poll loop。AI advisory provider 密钥只在 `RewardsSettings` 中读取（`POLYEDGE_REWARDS__AI_OPENAI_API_KEY` / `POLYEDGE_REWARDS__AI_ANTHROPIC_API_KEY`），不会进入 `RewardBotConfig`、API snapshot 或前端 public env；默认模型 `gpt-4.1-mini`、最低置信度 `6500` bps、单次超时 20 秒、每轮最多 12 个市场。
+进程级 rewards 默认关闭：`RewardsSettings.enabled=false`、`WorkerSettings.poll_reward_bot=false`、`WorkerSettings.poll_reward_info_risks=false`。只有部署环境显式同时开启对应 worker 开关时才启动 live poll loop 或异步信息风险扫描。AI provider 密钥只在 `RewardsSettings` 中读取（`POLYEDGE_REWARDS__AI_OPENAI_API_KEY` / `POLYEDGE_REWARDS__AI_ANTHROPIC_API_KEY`），不会进入 `RewardBotConfig`、API snapshot 或前端 public env；默认模型 `gpt-4.1-mini`、AI advisory 最低置信度 `6500` bps、信息风险最低置信度 `7000` bps、单次超时 20 秒、每轮最多 12 个市场。信息风险 OpenAI web search 默认关闭。
 
 另有 `runtime_config` 子模块支持运行时动态配置。
 
@@ -67,6 +67,7 @@
 | `stores/rewards/postgres.rs` | `RewardBotStore` | PostgreSQL（key-value config + 完整表） |
 | `stores/rewards/postgres_market_methods.rs` | Rewards Postgres 市场查询 helper | 质量硬过滤、综合排序、row mapping |
 | `stores/rewards/postgres_control_commands.rs` / `postgres_heartbeat.rs` / `postgres_orders.rs` / `postgres_writes.rs` | `RewardBotStore` 辅助 | 控制命令、worker heartbeat、订单分页 SQL、旧 reserved 释放辅助 |
+| `stores/rewards/postgres_info_risk.rs` | `RewardBotStore` 辅助 | 信息风险缓存查询和写入 SQL |
 | `stores/rewards/in_memory.rs` | 同上 | 内存 |
 | `stores/copytrade/postgres.rs` | `CopyTradeStore` | PostgreSQL（key-value config + 完整表） |
 | `stores/copytrade/postgres_control_commands.rs` / `postgres_rows.rs` / `postgres_writes.rs` | `CopyTradeStore` 辅助 | 控制命令 SQL、行映射、写入辅助 |
@@ -89,8 +90,9 @@
 - `runtime_config` bootstrap 在每次启动时用环境变量值覆盖数据库值（`ON CONFLICT ... DO UPDATE ... WHERE value IS DISTINCT FROM EXCLUDED.value`），确保环境变量始终优先；API 运行时修改仅在当前进程生命周期内生效，重启后恢复为环境变量值
 - 常量：`SYSTEM_RUNTIME_STATE_ID = "global"`、`RISK_STATE_ID = "global"`
 - `db_error(code, context)` 辅助函数统一创建 `dependency_unavailable` 错误
-- `RewardBotStore` 的 Postgres key-value 配置读写覆盖全部 rewards 报价/风控配置字段（市场质量门槛、`quote_bid_rank`、quote/selection mode、dominant probability/depth/concentration、preferred categories、AI advisory 开关/provider/request format/TTL、depth/rank/velocity/requote/reconcile 等）；`execution_mode`、`quote_edge_cents`、`reward_competition_factor`、`single_sided_divisor_c`、`fill_rate_per_tick`、`max_fill_ratio` 和 `auto_cancel_stale_minutes` 旧键保留用于向后兼容但被忽略。`quote_bid_rank` 保存为 1–3，默认 1。
+- `RewardBotStore` 的 Postgres key-value 配置读写覆盖全部 rewards 报价/风控配置字段（市场质量门槛、`quote_bid_rank`、quote/selection mode、dominant probability/depth/concentration、preferred categories、AI advisory 开关/provider/request format/TTL、信息风险开关/mode/过滤等级/TTL、depth/rank/velocity/requote/reconcile 等）；`execution_mode`、`quote_edge_cents`、`reward_competition_factor`、`single_sided_divisor_c`、`fill_rate_per_tick`、`max_fill_ratio` 和 `auto_cancel_stale_minutes` 旧键保留用于向后兼容但被忽略。`quote_bid_rank` 保存为 1–3，默认 1。
 - `RewardBotStore.latest_market_advisory()` 和 `save_market_advisory()` 在 Postgres 与内存实现中读写 `reward_market_advisories`；缓存 key 为 condition/provider/request_format/model/input_hash，且只返回 `expires_at > now` 的记录。Postgres 行映射 helper 解析 suitability、quote mode、exit policy、reasons JSON 和 metrics JSON。
+- `RewardBotStore.latest_market_info_risk(s)` 和 `save_market_info_risk()` 在 Postgres 与内存实现中读写 `reward_market_info_risks`；请求缓存 key 为 condition/provider/request_format/model/input_hash，批量读取按 condition 返回最新未过期记录。Postgres 行映射 helper 解析 risk level/type/direction、sources JSON 和 metrics JSON。
 - `RewardBotStore` 支持按 external Polymarket order id 查询 rewards managed order、通过 fill id 判断成交是否已入账，并通过 `latest_fill_at(account_id)` 查询最近 confirmed fill；live worker 用这些读路径完成托管订单成交幂等同步和外部账户快照保护。
 - `RewardBotStore.cancel_open_orders()` 在 Postgres/内存实现中兼容释放旧账本的 `reserved_usd`；新的 rewards 开放买单不再逐单硬占用资金，订单列表优先返回 open-like 状态，避免大量历史成交/撤单淹没当前开放挂单。worker 的 `list_open_orders()` 仍包含本地 planned/exit intent；控制台 `status.open_orders` 使用独立的 external count，只统计已有 `external_order_id` 的 open-like 订单。
 - `RewardBotStore.list_orders_page()` 在 Postgres 实现中通过 count + limit/offset 做服务端分页，支持 outcome/condition/token 搜索、状态过滤和 price/size/status 排序；内存实现保持相同语义。
@@ -155,7 +157,7 @@
 - Orderbook 进程内缓存会先保留最优价格顺序，再按 `POLYEDGE_ORDERBOOK_STREAM__MAX_LEVELS_PER_SIDE` 裁剪每侧 bids/asks 深度，默认 100 档；HTTP register/batch/ingest 入口使用 `max_tokens` 做请求规模上限，register 会原子替换对应 source 当前有序 token 集合，ingest 会先校验整批数据再批量写入并传播缓存错误，registry source 固定上限为 32 个
 - Orderbook 缓存拒绝旧 `observed_at` 覆盖更新条目；rewards 控制命令具备 5 分钟 running lease，Postgres rewards live worker 通过 advisory lease 避免多实例并发执行
 - Rewards managed order upsert 会更新后续实际提交的 `price` / `size`，保证 flatten 改价、CLOB 数量调整和未知提交恢复使用持久化后的真实参数
-- Rewards store 已持久化 quote/selection mode、dominant 单边阈值、盘口集中度阈值、偏好分类和 AI advisory 配置；`reward_market_advisories` 表已由迁移创建，并已接入 Postgres/内存 advisory 缓存读写，供 worker 跳过重复模型判断。
+- Rewards store 已持久化 quote/selection mode、dominant 单边阈值、盘口集中度阈值、偏好分类、AI advisory 配置和信息风险配置；`reward_market_advisories` 与 `reward_market_info_risks` 表已由迁移创建，并已接入 Postgres/内存缓存读写，供 worker 跳过重复模型判断。
 - Rewards store 已支持外部账户余额和完整持仓快照同步；成功空持仓快照会清空目标账户持仓，失败响应不会破坏上一版，最近 confirmed fill 时间用于 worker 的 120 秒账户快照保护；worker 写入的资金钱包地址优先使用 `FUNDER`，CLOB 余额为 0/失败时可用 Polygon pUSD 链上余额回填 snapshot
 - `markets` 保存 Gamma `liquidity_usd`、`end_at` 和本地 `synced_at`；每次成功 upsert 都刷新 `synced_at`，即使 Gamma `updatedAt` 未变化，避免把安静但同步正常的市场误判为目录陈旧
 - Orderbook register/ingest/delete 写接口要求 `x-polyedge-orderbook-token` 与 `POLYEDGE_ORDERBOOK__WRITE_TOKEN` 匹配；该密钥仅配置在 orderbook/worker 服务 env，未配置 token 时写接口关闭，读接口和健康检查仍可用

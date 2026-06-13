@@ -19,6 +19,7 @@ export type NumberConfigKey =
   | "max_book_hhi"
   | "preferred_category_score_bonus"
   | "ai_advisory_ttl_sec"
+  | "info_risk_ttl_sec"
   | "safety_margin_cents"
   | "min_midpoint"
   | "max_midpoint"

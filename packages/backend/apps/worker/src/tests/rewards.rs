@@ -31,6 +31,7 @@ fn live_test_plan(now: OffsetDateTime) -> RewardQuotePlan {
         recommended_quote_mode: Some(polyedge_application::RewardPlanQuoteMode::Double),
         book_metrics: None,
         ai_advisory: None,
+        info_risk: None,
         midpoint: Some(reward_decimal("0.50")),
         total_daily_rate: reward_decimal("25"),
         rewards_max_spread: reward_decimal("8"),

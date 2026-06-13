@@ -45,6 +45,14 @@ fn push_worker_runtime_config_entries(
             RuntimeConfigValueType::Boolean,
         ),
         (
+            "poll_reward_info_risks",
+            "Worker poll reward info risks",
+            "POLYEDGE_WORKER__POLL_REWARD_INFO_RISKS",
+            settings.worker.poll_reward_info_risks.to_string(),
+            defaults.worker.poll_reward_info_risks.to_string(),
+            RuntimeConfigValueType::Boolean,
+        ),
+        (
             "drain_execution_queue",
             "Worker drain execution queue",
             "POLYEDGE_WORKER__DRAIN_EXECUTION_QUEUE",

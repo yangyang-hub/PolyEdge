@@ -47,6 +47,13 @@ function aiSuitabilityTone(suitability?: string | null) {
   return "neutral";
 }
 
+function infoRiskTone(level?: string | null) {
+  if (level === "critical" || level === "high") return "danger";
+  if (level === "medium" || level === "unknown") return "warning";
+  if (level === "low") return "success";
+  return "neutral";
+}
+
 function FilterBar({
   search,
   onSearchChange,
@@ -306,13 +313,14 @@ export function QuotePlansTable({
               <SortIndicator active={sortBy === "midpoint"} order={sortOrder} />
             </TableHead>
             <TableHead>{dictionary.rewards.quotes}</TableHead>
+            <TableHead>{dictionary.rewards.infoRisk}</TableHead>
             <TableHead>{dictionary.rewards.aiAdvisory}</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
           {plans.length === 0 ? (
             <TableRow>
-              <TableCell colSpan={7} className="py-6 text-center text-sm text-muted-foreground">
+              <TableCell colSpan={8} className="py-6 text-center text-sm text-muted-foreground">
                 {dictionary.rewards.none}
               </TableCell>
             </TableRow>
@@ -341,6 +349,25 @@ export function QuotePlansTable({
                   {plan.legs.length === 0
                     ? dictionary.rewards.none
                     : plan.legs.map((leg) => `${leg.outcome} ${formatFixed(leg.size, 2)}@${formatFixed(leg.price, 2)}`).join(" / ")}
+                </TableCell>
+                <TableCell className="max-w-[220px] text-xs">
+                  {plan.info_risk == null ? (
+                    <span className="text-muted-foreground">{dictionary.rewards.none}</span>
+                  ) : (
+                    <div className="space-y-1">
+                      <div className="flex flex-wrap items-center gap-1">
+                        <StatusPill tone={infoRiskTone(plan.info_risk.risk_level)}>
+                          {plan.info_risk.risk_level}
+                        </StatusPill>
+                        <span className="font-mono text-muted-foreground">
+                          {plan.info_risk.risk_type} · {formatFixed(plan.info_risk.confidence, 2)}
+                        </span>
+                      </div>
+                      <p className="truncate text-muted-foreground" title={plan.info_risk.summary}>
+                        {plan.info_risk.summary}
+                      </p>
+                    </div>
+                  )}
                 </TableCell>
                 <TableCell className="max-w-[220px] text-xs">
                   {plan.ai_advisory == null ? (

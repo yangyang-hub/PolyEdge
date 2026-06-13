@@ -63,6 +63,17 @@ export type RewardAiRequestFormat =
   | "openai_chat_completions"
   | "anthropic_messages";
 export type RewardAiSuitability = "allow" | "watch" | "avoid";
+export type RewardInfoRiskLevel = "low" | "medium" | "high" | "critical" | "unknown";
+export type RewardInfoRiskType =
+  | "imminent_resolution"
+  | "breaking_news"
+  | "scheduled_event"
+  | "official_result"
+  | "rumor"
+  | "stale"
+  | "none"
+  | "unknown";
+export type RewardInfoDirectionalRisk = "yes" | "no" | "unclear";
 export type RewardFillRole = "maker" | "taker";
 export type CopyTradeMode = "paper" | "live";
 export type CopySizingMode = "fixed_usd" | "proportional_to_source" | "capital_ratio" | "mirror_portfolio_weight";

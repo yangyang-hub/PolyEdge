@@ -100,6 +100,8 @@ pub struct RewardQuotePlan {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ai_advisory: Option<RewardMarketAdvisory>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub info_risk: Option<RewardMarketInfoRisk>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub midpoint: Option<Decimal>,
     pub total_daily_rate: Decimal,
     pub rewards_max_spread: Decimal,

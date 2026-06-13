@@ -37,6 +37,17 @@ pub trait RewardBotStore: Send + Sync {
         now: OffsetDateTime,
     ) -> Result<Option<RewardMarketAdvisory>>;
     async fn save_market_advisory(&self, advisory: &RewardMarketAdvisory) -> Result<()>;
+    async fn latest_market_info_risk(
+        &self,
+        request: &RewardInfoRiskAssessmentRequest,
+        now: OffsetDateTime,
+    ) -> Result<Option<RewardMarketInfoRisk>>;
+    async fn latest_market_info_risks(
+        &self,
+        condition_ids: &[String],
+        now: OffsetDateTime,
+    ) -> Result<Vec<RewardMarketInfoRisk>>;
+    async fn save_market_info_risk(&self, risk: &RewardMarketInfoRisk) -> Result<()>;
     async fn list_markets(&self, limit: u16) -> Result<Vec<RewardMarket>>;
     /// List candidate markets with SQL-level filtering by config parameters.
     /// The SQL WHERE clause pushes down midpoint, daily-rate, spread, token-count,
@@ -362,6 +373,28 @@ impl RewardBotService {
         advisory: &RewardMarketAdvisory,
     ) -> Result<()> {
         self.store.save_market_advisory(advisory).await
+    }
+
+    pub async fn latest_market_info_risk(
+        &self,
+        request: &RewardInfoRiskAssessmentRequest,
+    ) -> Result<Option<RewardMarketInfoRisk>> {
+        self.store
+            .latest_market_info_risk(request, OffsetDateTime::now_utc())
+            .await
+    }
+
+    pub async fn latest_market_info_risks(
+        &self,
+        condition_ids: &[String],
+    ) -> Result<Vec<RewardMarketInfoRisk>> {
+        self.store
+            .latest_market_info_risks(condition_ids, OffsetDateTime::now_utc())
+            .await
+    }
+
+    pub async fn save_market_info_risk(&self, risk: &RewardMarketInfoRisk) -> Result<()> {
+        self.store.save_market_info_risk(risk).await
     }
 
     pub async fn save_quote_plans(&self, plans: &[RewardQuotePlan]) -> Result<()> {

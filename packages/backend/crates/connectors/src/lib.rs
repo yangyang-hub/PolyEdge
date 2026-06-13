@@ -4,6 +4,7 @@ mod news;
 mod orderbook;
 mod polymarket;
 mod reward_ai;
+mod reward_info_risk;
 mod rewards;
 
 use polyedge_domain::{
@@ -31,6 +32,7 @@ pub use polymarket::{
     normalize_polymarket_ws_order_message, normalize_polymarket_ws_trade_message,
 };
 pub use reward_ai::RewardAiAdvisoryConnector;
+pub use reward_info_risk::RewardInfoRiskConnector;
 pub use rewards::{
     PolymarketRewardBookLevel, PolymarketRewardMarket, PolymarketRewardOrderBook,
     PolymarketRewardToken, PolymarketRewardsConnector,

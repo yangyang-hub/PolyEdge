@@ -110,6 +110,10 @@ impl Default for RewardsSettings {
             ai_min_confidence_bps: 6500,
             ai_request_timeout_secs: 20,
             ai_max_markets_per_cycle: 12,
+            info_risk_interval_secs: 300,
+            info_risk_max_markets_per_cycle: 12,
+            info_risk_min_confidence_bps: 7000,
+            info_risk_web_search_enabled: false,
         }
     }
 }
@@ -146,6 +150,7 @@ impl Default for WorkerSettings {
             poll_arbitrage_radar: true,
             analyze_arbitrage_opportunities: true,
             poll_reward_bot: false,
+            poll_reward_info_risks: false,
             drain_execution_queue: true,
             poll_paper_order_statuses: true,
             reconcile_paper_fills: true,

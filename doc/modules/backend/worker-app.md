@@ -20,6 +20,7 @@ Worker 代码现在同时提供共享库和兼容 CLI。`polyedge-api` 在同一
 | `lib.rs` | 共享 runtime：CLI 参数解析、任务实现聚合，对 API 暴露 `WorkerRuntime` |
 | `main.rs` | 薄 CLI 入口，调用 `polyedge_worker::run_cli()` |
 | `worker/service.rs` | `WorkerRuntime` 生命周期与后台任务编排 |
+| `worker/service_info_risk.rs` | WorkerRuntime 中 rewards 信息风险扫描任务接线 |
 | `worker/market_sync.rs` | 市场同步 CLI 兼容入口：Gamma liquidity/end time → `markets` + Rewards API → `reward_markets` |
 | `worker/news.rs` | 新闻采集入口 |
 | `worker/news_helpers.rs` | 新闻采集辅助函数 |
@@ -39,6 +40,7 @@ Worker 代码现在同时提供共享库和兼容 CLI。`polyedge-api` 在同一
 | `worker/rewards/live_risk.rs` | rewards live placement/cancel 风控：盘口可用性、depth/rank/history/requote、库存 cap |
 | `worker/rewards/orderbook_events.rs` | rewards worker 本地盘口 cache、orderbook 内部 WS 消费、HTTP bootstrap 和活跃 token 事件唤醒 |
 | `worker/rewards/polling.rs` | rewards poll loop、盘口读取、事件驱动 fast reconcile 和进程内盘口历史 |
+| `worker/rewards/info_risk.rs` | rewards 信息风险异步扫描、provider 缓存命中、quote plan 风险应用 |
 | `tests/rewards.rs` / `tests/rewards_reconciliation.rs` | rewards live 下单、风控、成交、对账、退出重试与增量持久化回归测试 |
 | `worker/arbitrage.rs` | 套利扫描 |
 | `worker/arbitrage_books.rs` | 套利盘口快照 |
@@ -61,6 +63,8 @@ Worker 代码现在同时提供共享库和兼容 CLI。`polyedge-api` 在同一
 | `analyze-arbitrage-opportunities` | `analyze_arbitrage_opportunities` | 套利历史分析 |
 | `scan-rewards-once` | `run_reward_bot_once` | 一次性消费 rewards 控制命令或执行 live 策略 tick；仅适合诊断，不维持长期订单 heartbeat |
 | `poll-reward-bot` | `poll_reward_bot` | 持续消费 rewards 控制命令和 live 策略轮询 |
+| `scan-reward-info-risks-once` | `scan_reward_info_risks_once` | 一次性异步扫描 rewards 候选、开放订单和持仓市场信息风险并写入缓存 |
+| `poll-reward-info-risks` | `poll_reward_info_risks` | 持续异步扫描 rewards 候选、开放订单和持仓市场信息风险 |
 | `scan-copytrade-once` | `run_copytrade_once` | 一次性消费 copytrade 控制命令或执行跟单循环 |
 | `poll-copytrade` | `poll_copytrade` | 持续消费 copytrade 控制命令和跟单轮询 |
 | `analyze-wallets-once` | `analyze_wallets_once` | 一次性钱包分析 |
@@ -125,6 +129,7 @@ reward_bot_service.claim_next_control_command()
     fetch_reward_bot_inputs() // 获取奖励市场 + 盘口
         → prepare_live_cycle()
         → 可选低频刷新 AI advisory（缓存命中跳过 provider 调用）
+        → 读取已缓存的信息风险并按配置标记/过滤 quote plan
         → sync managed rewards order trades/statuses
         → 批量同步 managed order scoring 状态与 CLOB open-order snapshot
         → 同步 UTC 当日账户级 maker rewards（`/rewards/user/total` 聚合优先，`/rewards/user` 明细 fallback）
@@ -142,6 +147,8 @@ Report: `RewardBotRunReport { markets_scanned, books_fetched, plans_built, eligi
 报价价格由 `quote_bid_rank=1|2|3` 选择 YES/NO 盘口的买一/买二/买三（按不同买价计档）；任一腿缺少目标档位或目标价格超出有效 rewards spread 时不挂单。报价大小把 `per_market_usd` 作为 YES + NO 两腿合计上限；planner 先把两腿 `rewards_min_size` 对齐到 CLOB 成本精度，再分配剩余额度，计划数量与 connector 实际提交数量一致。默认 `quote_mode=double` 且 `selection_mode=observe`，仍生成既有双边计划；当配置为 `quote_mode=auto`、`selection_mode=enforce` 且启用 dominant single-side 时，planner 会基于 YES 概率、退出深度、top1/top3 买盘集中度和 HHI 推荐并执行 `single_yes` / `single_no` / `none`。`observe` 模式只把推荐模式和 `book_metrics` 写入 quote plan，不改变实际挂单。
 
 AI advisory 启用后只在 full tick 的 `prepare_live_cycle()` 之后运行，不参与 fast reconcile。worker 为每个候选计划构建包含 DB reward market、确定性计划、账户/仓位/开放订单和 orderbook top levels 的结构化输入，按 input hash 查询 `reward_market_advisories`；缓存未命中时最多请求 `POLYEDGE_REWARDS__AI_MAX_MARKETS_PER_CYCLE` 个市场。OpenAI/Anthropic API key、base URL、模型、超时和最低置信度来自 worker 环境变量。provider 失败只记录 warning 并保留确定性计划；只有 `selection_mode=enforce` 且 advisory 置信度达到 `POLYEDGE_REWARDS__AI_MIN_CONFIDENCE_BPS` 时，`avoid/watch/none` 会拒绝计划，`single_yes/single_no` 会把已 eligible 的 auto 计划收窄为单腿。AI advisory 也可在成交后选择 `exit_policy`，但同样要求 allow、enforce 和置信度达标。
+
+信息风险扫描是独立异步任务，不参与 live tick 的外部网络路径。`scan-reward-info-risks-once` / `poll-reward-info-risks` 会读取当前 rewards 配置、candidate markets、quote plans、开放订单和持仓，按开放订单、持仓、eligible quote plan、候选市场的顺序构建结构化风险请求；市场详情从 active rewards catalog 补齐，因此已持仓或已挂单市场即使不再适合新增报价也会被评估。请求按 input hash 查询 `reward_market_info_risks`；缓存未命中时最多请求 `POLYEDGE_REWARDS__INFO_RISK_MAX_MARKETS_PER_CYCLE` 个市场。OpenAI/Anthropic API key、base URL、模型和超时复用 AI provider 环境变量；OpenAI Responses 可通过 `POLYEDGE_REWARDS__INFO_RISK_WEB_SEARCH_ENABLED=true` 启用 provider-native web search。provider 失败只记录 warning。live full tick 只读取最新未过期缓存，并在 `info_risk_enabled=true` 时把结果附加到 quote plan；只有 `info_risk_mode=enforce` 且置信度达到 `POLYEDGE_REWARDS__INFO_RISK_MIN_CONFIDENCE_BPS` 时，达到过滤等级、临近结算或官方结果风险才会把计划置为不可挂，既有 buy 会沿用“计划不可挂即撤单”的 live 风控路径。
 
 live 模式会用 `LivePolymarketConnector::submit_token_order()` 提交 post-only GTC token 买单，用 `cancel_order()` 撤销本系统托管订单；未成交 post-only maker 买单不在本地按全局 notional 硬锁资金。不同 condition 可复用资金，但同一 condition 会累计已有 managed BUY 剩余 notional 与待补 YES/NO 腿，整组超过 `available_usd` 时不生成新 intent，符合 CLOB 同市场余额有效性规则。所有新报价和 post-fill exit/flatten 会先持久化本地 intent，再记录 submission attempt 后调用 CLOB；瞬时明确拒单会持久化回 Planned 并停止本轮后续买单，响应丢失则锁住本地订单并只通过严格开放订单匹配恢复 external order id。新建/恢复订单先保持 `scoring=false`，仅权威 scoring 查询可以置 true；`min_depth_usd` 会扣除自身剩余挂单，只统计外部 bid 深度。live placement 要求目标两腿都有非空盘口，默认 `stale_book_ms=45000`，`stale_book_ms=0` 只关闭盘口年龄检查；live full tick 和 fast reconcile 都会读取开放订单/持仓活跃 token 的盘口，缺盘口、空盘口、过期盘口、外部 bid 深度不足、bid rank 过高、盘口历史窗口风险、目标档位价格移动超过 `requote_drift_cents`、定期 requote 或全局 kill switch 会触发买单撤单，即使 `enabled=false` 已停止新增报价。每笔外部下单、撤单、已确认成交和状态变化会立即落库；撤单/成交同步会跳过本地 synthetic ID。外部单订单查询返回 404 时，worker 会按 token 和下单时间窗口分页查询认证账户 trades，并按 external order id 精确匹配 confirmed fill；仍无法确认时持久化 critical 对账锁并暂停新买单，后续成功查询会自动解除；若该 404 锁超过 5 分钟且仍无 CLOB/Data API 成交证据，worker 会把本地订单标记为 `cancelled` 以释放开放挂单计数。提交结果未知和取消结果未知不会仅因本地超时而 force-cancel；旧 `auto_cancel_stale_minutes` 配置已忽略。撤单接受后本地订单保留为待最终对账，下一轮先同步成交再确认取消，避免 cancel/fill 竞态丢成交。worker 每轮还会读取 CLOB 账户开放订单 snapshot：已提交、open-like、普通 BUY managed order 若不在 snapshot 中且不处于提交未知、404、pending cancel、post-only violation 或其他对账锁状态，会本地标记为 `cancelled`，释放开放挂单计数；sell exit 仍走单订单/成交对账和 retry 逻辑。worker 仅在 trade 达到 `CONFIRMED` 后按 external trade id + external order id 幂等写入 fills、现金、库存和 PnL；买入 fill 与对应 exit intent 同事务落库，之后只撤同 condition 对侧仍开放的 buy sibling。`ExitAtMarkup` 卖价向上取整到 0.01 tick；退出拒单和提交前低于 1 美元最小名义金额都会保持 `ExitPending` 并按最多 300 秒的有界指数退避持续重试，同 token 有未完成 sell exit 时暂停新增 buy。`FlattenImmediately` 使用 FAK，缺 bid、退出单被拒绝，或终态部分成交且仍有持仓时，会持久化 deferred sell 并重试。每轮先同步 managed order 的 confirmed fills；CLOB open-order snapshot 和账户开放 buy notional 观测不受 confirmed fill 保护期影响。本轮新增 fill，或最新 confirmed fill 距今不足 120 秒时，只跳过外部 balance/positions 替换，防止最终一致性延迟回滚本地现金和库存。保护期结束后，成功 positions 快照原子替换该 rewards 账户全部持仓，失败时保留上一版。该同步在 `enabled=false` 且没有开放订单时也会尝试运行。账户范围外开放订单明细和奖励结算对账仍是缺口，worker 仍需要独立维护组合风险。
 
@@ -186,7 +193,7 @@ Report: `NewsIngestionRunReport { sources_scanned/succeeded/failed, fetched, ins
 
 ## 当前状态
 
-- 所有 18 个子命令已实现
+- 所有 20 个子命令已实现
 - `run` 主循环包含 register-orderbook-tokens、rewards、copytrade、arbitrage、news、execution、signal-recompute 等任务
 - rewards worker 会通过数据库命令队列接收前端 Run / Cancel / Reset 请求，API 进程不再执行 rewards 策略；仅支持 live 实盘模式，策略配置不依赖全局 system mode，但新买单和现有买单撤单遵守全局 kill switch
 - copytrade worker 会通过数据库命令队列接收前端 Run / Analyze / Cancel / Reset 请求，API 进程不再执行跟单任务或抓取跟单输入
@@ -196,7 +203,7 @@ Report: `NewsIngestionRunReport { sources_scanned/succeeded/failed, fetched, ins
 - rewards orderbook 内部 WS client 建连最多等待 5 秒；已连接后若约 3 个 orderbook poll reconcile 周期无事件，会主动重连并重新 HTTP bootstrap 本地盘口 cache
 - scheduled full tick 不再二次消费控制命令；拿不到 advisory lease 时保留到期状态并在后续轮询重试，不会把 command-only 周期记作已完成 full tick
 - rewards poll loop 按账户写入 `reward_worker_heartbeats`；snapshot 的 `status.running` 仅在配置启用且最近 2 分钟存在 heartbeat 时为 true
-- rewards full tick 已读取 Gamma `markets.category` 作为候选评分输入；命中 `preferred_categories` 时只增加候选排序分，不绕过市场质量、盘口和风控硬过滤。AI advisory 已接入 full tick：按 input hash 缓存、支持 OpenAI/Anthropic provider、失败降级为确定性计划，且不会放宽任何硬过滤。
+- rewards full tick 已读取 Gamma `markets.category` 作为候选评分输入；命中 `preferred_categories` 时只增加候选排序分，不绕过市场质量、盘口和风控硬过滤。AI advisory 已接入 full tick：按 input hash 缓存、支持 OpenAI/Anthropic provider、失败降级为确定性计划，且不会放宽任何硬过滤。信息风险已作为独立异步 worker 接入：扫描结果落库，live tick 只读缓存并在 enforce 模式下过滤高风险/临近结算/官方结果盘口。
 - rewards full tick 和 fast reconcile 在 managed order 同步后总会读取 CLOB open-order snapshot，关闭缺失的普通 managed BUY 并刷新账户开放 buy notional；资金钱包地址优先使用 `POLYEDGE_POLYMARKET__FUNDER`，未配置时使用 `ACCOUNT_ID`；CLOB balance 为 0 或失败但链上 pUSD 余额大于 0 时，账户 snapshot 用 Polygon pUSD 余额回填；新确认成交所在周期及其后 120 秒只延后外部 balance/positions 替换，避免 CLOB/Data API 最终一致性回滚本地账本
 - 默认大部分 worker 通过配置开关控制启用/禁用
 - Polymarket live 任务需要真实凭证；Deposit Wallet 使用 `POLYEDGE_POLYMARKET__SIGNATURE_TYPE=poly_1271` + `POLYEDGE_POLYMARKET__FUNDER=<deposit_wallet>`，worker 会通过 connector 走 CLOB V2 `POLY_1271` 下单/撤单路径。

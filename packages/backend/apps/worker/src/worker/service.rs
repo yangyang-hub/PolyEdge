@@ -272,6 +272,8 @@ fn spawn_worker_tasks(state: &AppState, shutdown_rx: watch::Receiver<bool>) -> V
         }
     }
 
+    maybe_spawn_reward_info_risk_task(state, shutdown_rx.clone(), &mut handles);
+
     if settings.poll_copytrade {
         if state.settings.copytrade.enabled {
             let job_state = state.clone();

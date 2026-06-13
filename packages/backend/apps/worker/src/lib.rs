@@ -12,11 +12,13 @@ use polyedge_application::{
     PostFillStrategy, ReconcileExecutionListFilters, ReconcileExternalTradeCommand,
     RewardAccountState, RewardBookLevel, RewardBotConfig, RewardBotRunReport, RewardControlAction,
     RewardControlCommand, RewardFill, RewardFillRole, RewardLiveCycle, RewardMarket,
-    RewardMarketAdvisory, RewardOrderBook, RewardOrderSide, RewardPosition, RewardQuotePlan,
-    RewardRiskEvent, RewardRiskSeverity, RewardTickOutcome, RewardToken, SignalListFilters,
-    SyncExternalOrderStatusCommand, WalletActivityInput, WalletFeedInput, WalletPositionInput,
-    apply_reward_ai_advisories, build_arbitrage_analysis, build_reward_ai_advisory_request,
-    market_book_snapshot_id, new_risk_event, select_reward_book_token_ids,
+    RewardMarketAdvisory, RewardMarketInfoRisk, RewardOrderBook, RewardOrderSide, RewardPosition,
+    RewardQuotePlan, RewardRiskEvent, RewardRiskSeverity, RewardTickOutcome, RewardToken,
+    SignalListFilters, SyncExternalOrderStatusCommand, WalletActivityInput, WalletFeedInput,
+    WalletPositionInput, apply_reward_ai_advisories, apply_reward_info_risks,
+    build_arbitrage_analysis, build_reward_ai_advisory_request,
+    build_reward_info_risk_assessment_request, market_book_snapshot_id, new_risk_event,
+    select_reward_book_token_ids,
 };
 use polyedge_connectors::{
     ConnectorNewsItem, ConnectorOrderStatusUpdate, ConnectorTradeFillUpdate,
@@ -32,8 +34,8 @@ use polyedge_connectors::{
     PolymarketMarketRefs, PolymarketOpenOrder, PolymarketOrderRejection, PolymarketRewardMarket,
     PolymarketRewardsConnector, PolymarketSignatureScheme, PolymarketTokenOrderSide,
     PolymarketWalletActivity, PolymarketWalletPosition, RewardAiAdvisoryConnector,
-    RssNewsConnector, RssNewsSourceConfig, normalize_polymarket_ws_order_message,
-    normalize_polymarket_ws_trade_message,
+    RewardInfoRiskConnector, RssNewsConnector, RssNewsSourceConfig,
+    normalize_polymarket_ws_order_message, normalize_polymarket_ws_trade_message,
 };
 use polyedge_domain::{
     AppError, EventStatus, EvidenceDirection, EvidenceStatus, MarketStatus, OrderStatus,
@@ -119,6 +121,15 @@ struct NewsPromotionReport {
     promoted: usize,
     evidences_promoted: usize,
     skipped_unmatched: usize,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+struct RewardInfoRiskScanReport {
+    candidates: usize,
+    cache_hits: usize,
+    requested: usize,
+    saved: usize,
+    applied_plans: usize,
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -311,6 +322,33 @@ pub async fn run_cli() -> Result<()> {
             );
             Ok(())
         }
+        Some("scan-reward-info-risks-once") => {
+            let trace_id = new_trace_id();
+            let report = scan_reward_info_risks_once(&state, &trace_id).await?;
+            info!(
+                trace_id = %trace_id,
+                candidates = report.candidates,
+                cache_hits = report.cache_hits,
+                requested = report.requested,
+                saved = report.saved,
+                applied_plans = report.applied_plans,
+                "scanned reward market info risks once",
+            );
+            Ok(())
+        }
+        Some("poll-reward-info-risks") => {
+            let max_cycles = parse_limit_arg(args.next())?.map(usize::from);
+            let report = poll_reward_info_risks(&state, max_cycles).await?;
+            info!(
+                candidates = report.candidates,
+                cache_hits = report.cache_hits,
+                requested = report.requested,
+                saved = report.saved,
+                applied_plans = report.applied_plans,
+                "reward info risk polling stopped",
+            );
+            Ok(())
+        }
         Some("scan-copytrade-once") => {
             let trace_id = new_trace_id();
             let report = run_copytrade_once(&state, &trace_id).await?;
@@ -446,6 +484,7 @@ pub async fn run_cli() -> Result<()> {
 }
 
 include!("worker/service.rs");
+include!("worker/service_info_risk.rs");
 include!("worker/execution_queue.rs");
 include!("worker/news.rs");
 include!("worker/arbitrage.rs");

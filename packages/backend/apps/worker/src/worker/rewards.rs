@@ -278,6 +278,7 @@ async fn run_reward_bot_live_tick(
         .prepare_live_cycle(markets, books.clone(), trace_id, force_orders)
         .await?;
     refresh_reward_ai_advisories(state, &mut cycle, &books, trace_id).await?;
+    apply_cached_reward_info_risks_to_cycle(state, &mut cycle, trace_id).await?;
     let kill_switch = state.risk_service.read_state().await?.kill_switch;
     if kill_switch {
         cycle.should_execute = false;
@@ -661,3 +662,4 @@ include!("rewards/live_helpers.rs");
 include!("rewards/live_risk.rs");
 include!("rewards/orderbook_events.rs");
 include!("rewards/polling.rs");
+include!("rewards/info_risk.rs");

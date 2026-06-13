@@ -67,6 +67,12 @@ fn apply_reward_config_value(config: &mut RewardBotConfig, key: &str, value: &st
             config.ai_request_format = RewardAiRequestFormat::from_str(value)?;
         }
         "ai_advisory_ttl_sec" => config.ai_advisory_ttl_sec = parse_u64_config(key, value)?,
+        "info_risk_enabled" => config.info_risk_enabled = parse_bool_config(key, value)?,
+        "info_risk_mode" => config.info_risk_mode = RewardSelectionMode::from_str(value)?,
+        "info_risk_avoid_level" => {
+            config.info_risk_avoid_level = RewardInfoRiskLevel::from_str(value)?;
+        }
+        "info_risk_ttl_sec" => config.info_risk_ttl_sec = parse_u64_config(key, value)?,
         "safety_margin_cents" => config.safety_margin_cents = parse_decimal_config(key, value)?,
         "min_midpoint" => config.min_midpoint = parse_decimal_config(key, value)?,
         "max_midpoint" => config.max_midpoint = parse_decimal_config(key, value)?,
@@ -185,6 +191,22 @@ fn reward_config_entries(config: &RewardBotConfig) -> Vec<(&'static str, String)
             config.ai_advisory_ttl_sec.to_string(),
         ),
         (
+            "info_risk_enabled",
+            config.info_risk_enabled.to_string(),
+        ),
+        (
+            "info_risk_mode",
+            config.info_risk_mode.as_str().to_string(),
+        ),
+        (
+            "info_risk_avoid_level",
+            config.info_risk_avoid_level.as_str().to_string(),
+        ),
+        (
+            "info_risk_ttl_sec",
+            config.info_risk_ttl_sec.to_string(),
+        ),
+        (
             "safety_margin_cents",
             config.safety_margin_cents.to_string(),
         ),
@@ -283,6 +305,52 @@ fn parse_reward_advisory_reasons(value: Value) -> Result<Vec<String>> {
         .iter()
         .filter_map(|item| item.as_str().map(ToString::to_string))
         .collect())
+}
+
+fn reward_market_info_risk_from_row(row: &sqlx::postgres::PgRow) -> Result<RewardMarketInfoRisk> {
+    let provider: String = row.try_get("provider").map_err(postgres_decode_error)?;
+    let request_format: String = row
+        .try_get("request_format")
+        .map_err(postgres_decode_error)?;
+    let risk_level: String = row.try_get("risk_level").map_err(postgres_decode_error)?;
+    let risk_type: String = row.try_get("risk_type").map_err(postgres_decode_error)?;
+    let directional_risk: String = row
+        .try_get("directional_risk")
+        .map_err(postgres_decode_error)?;
+    let sources: Json<Value> = row.try_get("sources_json").map_err(postgres_decode_error)?;
+    let metrics: Json<Value> = row.try_get("metrics_json").map_err(postgres_decode_error)?;
+    Ok(RewardMarketInfoRisk {
+        condition_id: row.try_get("condition_id").map_err(postgres_decode_error)?,
+        provider: RewardAiProvider::from_str(&provider)?,
+        request_format: RewardAiRequestFormat::from_str(&request_format)?,
+        model: row.try_get("model").map_err(postgres_decode_error)?,
+        query_hash: row.try_get("query_hash").map_err(postgres_decode_error)?,
+        input_hash: row.try_get("input_hash").map_err(postgres_decode_error)?,
+        risk_level: RewardInfoRiskLevel::from_str(&risk_level)?,
+        risk_type: RewardInfoRiskType::from_str(&risk_type)?,
+        directional_risk: RewardInfoDirectionalRisk::from_str(&directional_risk)?,
+        resolution_imminent: row
+            .try_get("resolution_imminent")
+            .map_err(postgres_decode_error)?,
+        expected_event_at: row
+            .try_get("expected_event_at")
+            .map_err(postgres_decode_error)?,
+        confidence: row.try_get("confidence").map_err(postgres_decode_error)?,
+        summary: row.try_get("summary").map_err(postgres_decode_error)?,
+        sources: parse_reward_info_risk_sources(sources.0)?,
+        metrics: metrics.0,
+        created_at: row.try_get("created_at").map_err(postgres_decode_error)?,
+        expires_at: row.try_get("expires_at").map_err(postgres_decode_error)?,
+    })
+}
+
+fn parse_reward_info_risk_sources(value: Value) -> Result<Vec<RewardInfoRiskSource>> {
+    serde_json::from_value(value).map_err(|error| {
+        db_error(
+            "POSTGRES_DECODE_FAILED",
+            format!("failed to decode reward info risk sources_json: {error}"),
+        )
+    })
 }
 
 fn parse_bool_config(key: &str, value: &str) -> Result<bool> {

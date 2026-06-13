@@ -77,7 +77,6 @@ cargo clippy --workspace --tests  # lint
 下列文件超过软上限但未达硬上限，建议后续按本文件的 `include!` 模式继续拆分；新增改动不应让它们继续膨胀：
 
 - `catalog/postgres/market_event/queries.rs`（~782；市场查询已拆到 `market_queries.rs`）
-- `application/rewards/models.rs`（~633）
 - `application/copytrade/models.rs`（~787）
 - `stores/rewards/postgres.rs`（~701，受单 trait impl 约束，优先级低）
 - `stores/copytrade/postgres.rs`（~713，受单 trait impl 约束，优先级低）

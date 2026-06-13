@@ -21,7 +21,7 @@
 | `market_event/` | 核心市场/事件/信号：`MarketEventService`、`MarketEventStore`（最大 Store trait） |
 | `execution/` | 执行管道：`ExecutionService`（组合 MarketEventService + RiskService） |
 | `risk.rs` | 风控：`RiskService`、`RiskStateStore`、`RiskPolicy`、kill-switch 命令 |
-| `rewards/` | 做市奖励：`RewardBotService`、`RewardBotStore`、质量过滤/排序、盘口指标/单边报价推荐、AI advisory 输入/决策/执行约束、priority condition 列表、live-only 状态与订单分页查询、events/fills/open_order_count 内存缓存、in-process command wake channel；运行时模型拆在 `runtime_models.rs`，quote/selection/AI 枚举拆在 `quote_selection_models.rs`，AI 模型拆在 `ai_advisory_models.rs`，deterministic 盘口选择 helper 拆在 `planner_selection.rs` |
+| `rewards/` | 做市奖励：`RewardBotService`、`RewardBotStore`、质量过滤/排序、盘口指标/单边报价推荐、AI advisory 输入/决策/执行约束、异步信息风险缓存、priority condition 列表、live-only 状态与订单分页查询、events/fills/open_order_count 内存缓存、in-process command wake channel；配置默认值/归一化/patch 逻辑拆在 `config_impl.rs`，运行时模型拆在 `runtime_models.rs`，quote/selection/AI 枚举拆在 `quote_selection_models.rs`，AI 模型拆在 `ai_advisory_models.rs`，信息风险模型拆在 `info_risk_models.rs`，deterministic 盘口选择 helper 拆在 `planner_selection.rs` |
 | `copytrade/` | 跟单：`CopyTradeService`、`CopyTradeStore`、确定性模拟引擎和风险准入 |
 | `arbitrage/` | 套利：`ArbitrageService`、`ArbitrageStore`、机会检测/验证 |
 | `news_ingestion.rs` | 新闻采集：`NewsIngestionService`、`NewsIngestionStore` |
@@ -81,7 +81,7 @@
 - Config：`load_config`、`save_config`（key-value 模式）
 - Markets：`upsert_markets`、`list_markets`、`list_all_active_markets`、`active_market_summary`
 - Quote Plans：`save_quote_plans`（替换当前计划快照）、`list_quote_plans`
-- AI Advisory：`latest_market_advisory`、`save_market_advisory`，按 condition/provider/request_format/model/input_hash 缓存未过期模型判断
+- AI Advisory / Info Risk：`latest_market_advisory`、`save_market_advisory`、`latest_market_info_risk(s)`、`save_market_info_risk`，按 condition/provider/request_format/model/input_hash 缓存未过期模型判断；信息风险结果还保存 query hash、风险等级、风险类型、方向性、来源和有效期
 - Orders/Positions/Events：完整 CRUD；订单支持 `RewardOrderListQuery` 后端分页并在 snapshot 中返回 `orders_page`；live worker 可按 external Polymarket order id 查 managed order、用 fill id 做成交幂等，并通过 `latest_fill_at(account_id)` 查询账户最近 confirmed fill 时间
 - State Tick：`apply_tick_outcome`（原子持久化 orders/fills/positions/ledger/events，不修改奖励市场目录或 quote plan 快照）、`apply_account_sync`（更新账户；`Some(positions)` 原子替换该账户全部持仓，`None` 保留持仓）、`reset_state`（重置账户状态、清空 orders/fills/positions）
 - Control Commands：`enqueue_control_command`、`claim_next_control_command`、`complete_control_command`、`fail_control_command`
@@ -93,6 +93,7 @@
 - `RewardBotConfig.quote_bid_rank` 仅允许 1–3，分别选择 YES/NO 盘口中第 1/2/3 个不同买价，默认 1（买一）；旧的中间价偏移字段 `quote_edge_cents` 已移除。
 - `RewardBotConfig.quote_mode=double|auto` 与 `selection_mode=observe|enforce` 控制确定性盘口选择。默认 `double + observe` 保持既有双边报价；`auto + enforce + dominant_single_side_enabled=true` 时，planner 可在 YES/NO 概率达到 `dominant_min_probability..dominant_max_probability` 且退出深度、top1/top3 深度占比和 HHI 通过阈值后生成 `single_yes` / `single_no` 单腿计划。`observe` 只在 quote plan 记录推荐模式和 `book_metrics`，不改变实际挂单。
 - AI advisory 定义低频模型判断的输入、输出和执行约束：`build_reward_ai_advisory_request()` 从奖励市场、确定性计划、账户/仓位/开放订单和盘口 top levels 构建结构化 payload，并用 SHA-256 生成 input hash；`apply_reward_ai_advisories()` 会把 advisory 挂到 quote plan。默认 `ai_advisory_enabled=false`；只有 `selection_mode=enforce` 且置信度达到 worker 设置阈值时才影响计划。`avoid/watch` 或 `quote_mode=none` 只能拒绝计划；`single_yes/single_no` 只能在 `quote_mode=auto` 下把已经 eligible 的双边计划收窄为单腿，不能绕过市场质量、盘口和风控硬过滤。
+- Info risk 定义异步信息流风险判断的输入、输出和执行约束：`build_reward_info_risk_assessment_request()` 从奖励市场、当前 quote plan、账户/仓位/开放订单和策略配置构建结构化 payload 与搜索 query，并用 SHA-256 生成 query/input hash；`apply_reward_info_risks()` 会把最新未过期风险挂到 quote plan。默认 `info_risk_enabled=false`；只有 `info_risk_mode=enforce` 且置信度达到 worker 设置阈值时才影响计划。达到 `info_risk_avoid_level`、临近结算或官方结果风险会把计划置为不可挂；该结果不能绕过市场质量、盘口和风控硬过滤。
 - 市场质量默认门槛为 `min_market_liquidity_usd=1000`、`min_market_volume_24h_usd=1000`、`min_hours_to_end=48`、`max_market_spread_cents=10`、`max_market_data_age_minutes=15`。旧 `reward_competition_factor`、`single_sided_divisor_c`、`fill_rate_per_tick`、`max_fill_ratio` 和 `auto_cancel_stale_minutes` 配置键读取时忽略。
 - Worker 使用当前 quote plan 通过 `LivePolymarketConnector` 提交 post-only token 买单，并对本系统托管的 live 订单执行撤单；该模式由 rewards 配置控制，与全局 system mode 解耦，但遵守 `RiskService` 全局 kill switch。Polymarket 返回 `matched` / `delayed` 等非 live 接受状态时，worker 会把它视为 post-only 安全违规并立即尝试撤单，并保留为待最终成交/取消对账状态。
 
@@ -219,7 +220,7 @@ orderbook_cache ← (共享基础设施 trait)
 ## 当前状态
 
 - 所有模块已实现完整的 Store trait 和 Service struct
-- Rewards 已移除旧 validation/simulation tick 引擎，仅保留 live-only 配置、quote planner、确定性盘口指标/单边 quote mode、AI advisory 输入/决策/缓存端口、状态类型和增量持久化端口。
+- Rewards 已移除旧 validation/simulation tick 引擎，仅保留 live-only 配置、quote planner、确定性盘口指标/单边 quote mode、AI advisory 输入/决策/缓存端口、信息风险输入/决策/缓存端口、状态类型和增量持久化端口。
 - Rewards live 模式已接入质量硬过滤与综合排序、post-only token 买单、撤单、本系统托管订单成交同步、成交后现金/库存/PnL 更新、可持续重试的 exit/flatten sell、CLOB open-order 反查、外部余额/完整持仓快照、managed order scoring 和 UTC 当日账户级 maker rewards 同步（聚合端点优先、明细端点 fallback）；账户范围外开放订单明细与奖励结算对账仍待完成。
 - Rewards 保留数据库控制命令队列用于持久恢复，API 入队后通过共享 runtime revision 立即唤醒后台执行。
 - Copytrade 已具备数据库控制命令队列，API 负责入队，worker 负责执行 run/analyze/cancel/reset。
