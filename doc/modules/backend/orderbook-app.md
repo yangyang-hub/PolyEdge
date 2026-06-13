@@ -15,6 +15,7 @@
 | `apps/orderbook/src/stream.rs` | 聚合 registry token，消费 CLOB `book` + `price_change` WS，并周期性全量 poll 注册 token 做 reconcile |
 | `apps/orderbook/src/http_api.rs` | 盘口读取、批量读取、stats、内部 WS stream、token 注册/注销和内部 ingest HTTP API |
 | `apps/orderbook/src/updates.rs` | Orderbook cache 更新广播器：为 WS/poll/ingest 写入分配 sequence 并 fan-out 给内部 WS 客户端 |
+| `crates/connectors/src/orderbook.rs` | Orderbook service client：HTTP 读写/注册和内部 WS stream 连接 |
 | `crates/infrastructure/src/stores/orderbook_cache.rs` | `InMemoryOrderbookCache`：TTL、最优档排序、深度裁剪 |
 | `crates/infrastructure/src/stores/orderbook_registry.rs` | 多来源 token 原子替换、优先级聚合和来源上限 |
 
@@ -52,7 +53,7 @@
 - WS 同时消费完整 `book` 快照和挂单/撤单触发的 `price_change` 增量；无 size 的增量不修改深度，等待后续快照/poll 对账。
 - 缓存拒绝 `observed_at` 早于当前条目的快照或增量；时间戳相同时 WS 条目优先于 poll，避免延迟 poll 覆盖更新盘口。
 - HTTP ingest 会在写入前完成整批 token/price/size 校验，并同样按最优价格排序后裁剪。
-- 每次 WS snapshot、WS price_change、poll reconcile 或 HTTP ingest 成功写入缓存后，都会向 `/orderbook/stream` 广播 `OrderbookStreamEvent`；广播消息携带单调 `sequence`、`reason` 和裁剪后的 `CachedOrderBook`。慢消费者会在服务端日志记录 lag，客户端需断线后重新 HTTP bootstrap。
+- 每次 WS snapshot、WS price_change、poll reconcile 或 HTTP ingest 成功写入缓存后，都会向 `/orderbook/stream` 广播 `OrderbookStreamEvent`；广播消息携带单调 `sequence`、`reason` 和裁剪后的 `CachedOrderBook`。慢消费者会在服务端日志记录 lag，客户端需断线后重新 HTTP bootstrap；`OrderbookStreamClient` 建立内部 WS 连接最多等待 5 秒，避免 orderbook 地址不可达时阻塞 worker 事件循环。
 - poll reconciler 每个周期都会刷新当前注册 token，优先处理缺失、TTL 过期或超过 stale threshold 的 token，再覆盖其余 token，以修复未被检测到的 WS 增量丢失；`stale_threshold_ms <= 0` 只关闭年龄 stale 优先级。
 - `OrderbookHttpClient` 把单盘口 404 映射为 `None`，其他非成功 HTTP 状态映射为 dependency error。
 
@@ -79,7 +80,7 @@ Worker register sources
 
 ## 当前状态与缺口
 
-- 市场同步、registry、WS `book` + `price_change`、全注册 token 周期 poll reconcile、HTTP 读取、内部 WS 推送和内部写认证已实现；poll 可修复 fresh cache 中未被察觉的 WS 增量丢失，并通过内部 WS 广播给 worker 本地 cache。
+- 市场同步、registry、WS `book` + `price_change`、全注册 token 周期 poll reconcile、HTTP 读取、内部 WS 推送和内部写认证已实现；poll 可修复 fresh cache 中未被察觉的 WS 增量丢失，并通过内部 WS 广播给 worker 本地 cache；内部 WS client 建连最多等待 5 秒，避免不可达地址阻塞调用方。
 - poll 盘口保留 CLOB 返回的服务端毫秒时间戳，不再用 HTTP 响应完成时间伪造新鲜度；batch HTTP 读取通过一次 cache 批量读锁返回。
 - Gamma full sync、Gamma priority sync 与 rewards 目录同步在 orderbook 服务中使用三个独立后台循环；rewards 分页和详情补全可能持续很多分钟，但不会阻塞 Gamma `markets.synced_at` 刷新。priority sync 会在全量目录之间刷新重点 condition，避免已挂单/已订阅/rewards 筛选市场仅因目录新鲜度过低被策略撤单。rewards 详情补全后仍缺 token 或空目录异常时保留上一版 rewards catalog，不执行破坏性全量替换。
 - Gamma market upsert 保存 `liquidity_usd`、`end_at` 并在每次成功同步时刷新本地 `synced_at`；rewards 候选使用该本地同步时间判断目录新鲜度，不依赖市场是否刚好发生上游业务更新。

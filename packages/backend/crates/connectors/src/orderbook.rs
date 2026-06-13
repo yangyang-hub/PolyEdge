@@ -15,6 +15,8 @@ use tokio_tungstenite::{
     MaybeTlsStream, WebSocketStream, connect_async, tungstenite::protocol::Message,
 };
 
+const ORDERBOOK_STREAM_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+
 /// HTTP client that implements `OrderbookCache` by calling the standalone
 /// orderbook service. Used by API and Worker processes to read orderbook data.
 pub struct OrderbookHttpClient {
@@ -90,14 +92,26 @@ impl OrderbookStreamClient {
     }
 
     pub async fn connect(&self) -> Result<OrderbookStreamConnection> {
-        let (stream, _) = connect_async(self.stream_url.as_str())
-            .await
-            .map_err(|error| {
-                AppError::dependency_unavailable(
-                    "ORDERBOOK_STREAM_CONNECT_FAILED",
-                    format!("failed to connect orderbook stream: {error}"),
-                )
-            })?;
+        let connect = tokio::time::timeout(
+            ORDERBOOK_STREAM_CONNECT_TIMEOUT,
+            connect_async(self.stream_url.as_str()),
+        )
+        .await
+        .map_err(|_| {
+            AppError::dependency_unavailable(
+                "ORDERBOOK_STREAM_CONNECT_TIMEOUT",
+                format!(
+                    "timed out connecting to orderbook stream after {:?}",
+                    ORDERBOOK_STREAM_CONNECT_TIMEOUT
+                ),
+            )
+        })?;
+        let (stream, _) = connect.map_err(|error| {
+            AppError::dependency_unavailable(
+                "ORDERBOOK_STREAM_CONNECT_FAILED",
+                format!("failed to connect orderbook stream: {error}"),
+            )
+        })?;
         Ok(OrderbookStreamConnection { stream })
     }
 }

@@ -1,5 +1,5 @@
-const REWARD_ORDERBOOK_STREAM_RECONNECT_DELAY: Duration = Duration::from_secs(1);
 const REWARD_ORDERBOOK_ACTIVE_TOKEN_REFRESH: Duration = Duration::from_secs(5);
+const REWARD_ORDERBOOK_MIN_IDLE_TIMEOUT: Duration = Duration::from_secs(5);
 
 struct RewardOrderbookRuntime {
     cache: Arc<RewardOrderbookLocalCache>,
@@ -131,6 +131,9 @@ async fn consume_reward_orderbook_stream(
     let client = OrderbookStreamClient::new(&state.settings.orderbook.service_url);
     let mut active_tokens = HashSet::new();
     let mut last_active_refresh = Instant::now() - REWARD_ORDERBOOK_ACTIVE_TOKEN_REFRESH;
+    let reconnect_delay =
+        Duration::from_secs(state.settings.orderbook_stream.restart_interval_secs.max(1));
+    let idle_timeout = reward_orderbook_stream_idle_timeout(&state);
 
     loop {
         if let Err(error) = bootstrap_reward_orderbook_cache(&state, &cache).await {
@@ -151,13 +154,22 @@ async fn consume_reward_orderbook_stream(
                     )
                     .await;
 
-                    let event = match connection.next_event().await {
-                        Ok(Some(event)) => event,
-                        Ok(None) => {
+                    let next_event =
+                        tokio::time::timeout(idle_timeout, connection.next_event()).await;
+                    let event = match next_event {
+                        Err(_) => {
+                            warn!(
+                                idle_timeout_ms = idle_timeout.as_millis() as u64,
+                                "orderbook internal stream idle timeout; reconnecting"
+                            );
+                            break;
+                        }
+                        Ok(Ok(Some(event))) => event,
+                        Ok(Ok(None)) => {
                             info!("orderbook internal stream closed by server");
                             break;
                         }
-                        Err(error) => {
+                        Ok(Err(error)) => {
                             warn!(error = %error, "orderbook internal stream receive failed");
                             break;
                         }
@@ -184,8 +196,20 @@ async fn consume_reward_orderbook_stream(
             }
         }
 
-        tokio::time::sleep(REWARD_ORDERBOOK_STREAM_RECONNECT_DELAY).await;
+        tokio::time::sleep(reconnect_delay).await;
     }
+}
+
+fn reward_orderbook_stream_idle_timeout(state: &AppState) -> Duration {
+    let fallback_ms = state
+        .settings
+        .orderbook_stream
+        .poll_reconcile_interval_secs
+        .max(1)
+        .saturating_mul(3)
+        .saturating_mul(1_000);
+    let ttl_ms = state.settings.orderbook_stream.book_ttl_ms.max(1_000);
+    Duration::from_millis(fallback_ms.min(ttl_ms)).max(REWARD_ORDERBOOK_MIN_IDLE_TIMEOUT)
 }
 
 async fn refresh_reward_orderbook_active_tokens(
