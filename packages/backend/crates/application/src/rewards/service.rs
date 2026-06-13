@@ -455,6 +455,7 @@ impl RewardBotService {
             orders,
             stored_positions,
             open_order_count,
+            active_orders,
             fills,
             events,
             last_run_at,
@@ -466,15 +467,16 @@ impl RewardBotService {
             self.store.list_orders_page(&order_query),
             self.list_positions_cached(&account.account_id, 200),
             self.count_external_open_orders_cached(&account.account_id),
+            self.store.list_open_orders(&account.account_id),
             self.list_fills_cached(&account.account_id, 200),
             self.list_events_cached(&account.account_id, 100),
             self.store.latest_quote_plan_updated_at(),
             self.latest_worker_heartbeat_cached(&account.account_id),
         )?;
-        let error = events
+        let error = active_orders
             .iter()
-            .find(|event| event.severity == RewardRiskSeverity::Critical)
-            .map(|event| event.message.clone());
+            .find(|order| reward_order_has_active_reconciliation_error(order))
+            .map(|order| order.reason.clone());
 
         Ok(RewardBotSnapshot {
             status: RewardBotStatus {

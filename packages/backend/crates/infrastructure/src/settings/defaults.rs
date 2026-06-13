@@ -100,7 +100,7 @@ impl Default for ArbitrageSettings {
 impl Default for RewardsSettings {
     fn default() -> Self {
         Self {
-            enabled: true,
+            enabled: false,
             poll_interval_secs: 60,
         }
     }
@@ -137,7 +137,7 @@ impl Default for WorkerSettings {
             promote_news_events: true,
             poll_arbitrage_radar: true,
             analyze_arbitrage_opportunities: true,
-            poll_reward_bot: true,
+            poll_reward_bot: false,
             drain_execution_queue: true,
             poll_paper_order_statuses: true,
             reconcile_paper_fills: true,

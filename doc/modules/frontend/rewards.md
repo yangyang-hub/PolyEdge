@@ -1,6 +1,6 @@
 # Rewards（奖励机器人）
 
-最后更新：2026-06-12
+最后更新：2026-06-13
 
 ## 概述
 
@@ -23,13 +23,13 @@
 
 ## 核心类型（types.ts）
 
-- **`NumberConfigKey`**：数值配置参数的字符串联合类型 — `max_markets`、`max_open_orders`、`per_market_usd`、`quote_size_usd`、`min_daily_reward`、`max_spread_cents`、`quote_edge_cents`、`account_capital_usd` 等
+- **`NumberConfigKey`**：数值输入参数的字符串联合类型 — `max_markets`、`max_open_orders`、`per_market_usd`、`quote_size_usd`、`min_daily_reward`、`min_market_liquidity_usd`、`min_market_volume_24h_usd`、`min_hours_to_end`、`max_market_spread_cents`、`max_market_data_age_minutes`、`account_capital_usd` 等；`quote_bid_rank` 使用受限下拉框，不进入该联合类型
 - **`EventCategory`**：`"all" | "placements" | "cancels" | "fills" | "rewards"`
 
 ## API 依赖
 
 - `src/lib/api/rewards.ts` — `readRewardBotSnapshot`、`updateRewardBotConfig`、`runRewardBotOnce`、`cancelRewardBotOrders`、`resetRewardBot`
-- `readRewardBotSnapshot()` 会传递订单分页/搜索/状态/排序 query；后端分页结果和 `orders_page` 都描述本地 managed orders，不再用 Polymarket live open orders 覆盖
+- `readRewardBotSnapshot()` 会传递计划/订单分页、搜索、状态和排序 query；首屏明确请求 `plans_eligible=true`，与默认选中的“可挂”页签一致。后端分页结果和 `orders_page` 都描述本地 managed orders，不再用 Polymarket live open orders 覆盖
 - 后端 snapshot 不返回全量 reward markets；页面只使用 `status.markets_tracked`、`status.eligible_markets` 和 `quote_plans` 展示市场覆盖与候选计划
 - snapshot 的 `available_usd` / `positions` 来自 worker 写入数据库的账户快照；API 不持有 Polymarket 私钥，也不直接请求外部账户数据。`available_usd` 优先使用 CLOB `balance-allowance`，当 CLOB 返回 0 或失败但资金钱包链上 pUSD 余额大于 0 时，worker 使用链上 pUSD 回填
 
@@ -39,8 +39,11 @@
 - **Cancel open orders** → `cancelRewardBotOrders()` → API 写入 `cancel_all` 控制命令，worker 领取后撤销 Polymarket live 托管订单
 - **Reset** → `resetRewardBot()` → API 写入 `reset` 控制命令，worker 领取后按 cancel-all 撤销 live 订单
 - **Config 编辑** → `updateRewardBotConfig(patch)` → 即时更新配置
+- **挂单档位** → `quote_bid_rank=1|2|3` → 分别选择买一/买二/买三；任一 YES/NO 盘口缺少所选档位时本轮不挂单
+- **市场质量** → 可配置最低流动性、最低 24h 成交量、最短剩余结算时间、最大 Gamma spread 和最大目录同步年龄；后端还固定拒绝高歧义和非唯一 YES/NO 市场
 - 事件面板支持按 `EventCategory` 过滤
 - 页面默认展示活动视图：左侧候选报价计划，右侧托管订单与本地库存，下方事件/成交流；策略配置和风控配置通过 tabs 切换，减少实盘盯盘时的配置噪音。
+- 筛选刷新使用单调请求序号，只接收最新 REST 响应，避免快速搜索/翻页时旧请求覆盖新状态；读取失败会进入页面反馈栏，不产生未处理 Promise。
 
 ## 数据流
 
@@ -53,18 +56,22 @@
 ## 当前状态
 
 - 完整的 Run / Cancel / Reset 入队交互
-- 顶部执行概览展示实盘模式、启停/运行状态、市场就绪度、钱包余额/策略上限比例、最近扫描/运行时间和事件触发计数；account_capital_usd 在页面上明确标为策略资金上限，不代表链上钱包余额。
+- 顶部执行概览展示实盘模式、启停/运行状态、市场就绪度、钱包余额/策略上限比例、最近扫描/运行时间和事件触发计数；策略上限直接读取当前 `snapshot.config.account_capital_usd`，不再使用可能保留历史初始值的账户账本字段，也不代表链上钱包余额。
 - 操作中心集中 Run / Save / Cancel / Reset，文案提醒当前命令可能提交或取消 Polymarket 实盘订单。
 - 配置编辑按执行、市场筛选、报价构造、库存与控制分组，包含数值参数、布尔开关和成交后策略。
-- `per_market_usd` 表示 YES + NO 两腿合计资金上限；后端先保障两腿最小份额，再在剩余额度内靠近 `quote_size_usd` 单腿目标，页面提示与该联合预算语义一致。
+- 市场筛选面板公开质量硬门槛；通过门槛的市场由后端继续按奖励、流动性、成交量、剩余时长和奖励 spread 综合排序。
+- 报价构造使用“挂单档位”下拉框选择买一/买二/买三，不再提供中间价“报价偏移”；默认买一。
+- `per_market_usd` 表示 YES + NO 两腿合计资金上限；后端先保障按 CLOB 成本精度对齐后的两腿最小份额，再在剩余额度内靠近 `quote_size_usd` 单腿目标，页面提示与该联合预算语义一致。
 - 配置不包含 `execution_mode` 选择器（始终为 live）。提示说明 `max_markets=0`、`max_open_orders=0`、`quote_size_usd=0` 都会停止新挂单。
 - 报价计划默认展示可挂市场，本地支持全部/可挂/不可挂切换，并用状态标记说明每个当前候选计划是否符合最终过滤要求。
 - Managed orders 表格发送后端分页/搜索/状态过滤/排序 query（默认每页 15 条），表格数据与 `orders_page` 均来自本地 managed-order 查询。
+- 报价计划和订单搜索框使用独立防抖输入组件；外部 query 重置通过组件 key 同步，不在 React effect 中同步 setState。
 - 首屏不加载全量 reward markets，避免奖励市场数量过大时长时间停留在 loading skeleton。
 - Wallet balance、Positions 和 Orders 表格展示 worker 同步到数据库的 rewards 账户视图；余额显示资金钱包 pUSD，资金钱包地址优先使用 `POLYEDGE_POLYMARKET__FUNDER`，未配置时使用 `ACCOUNT_ID`。
 - 今日已赚奖励展示 worker 通过认证 CLOB `GET /rewards/user/total` 同步到 `account.reward_earned_usd` 的 UTC 当日 maker rewards 聚合值；该接口与 Polymarket `/rewards` 页面顶部 Daily Rewards 使用同一口径。前端不直接访问 Polymarket，账户快照停更或认证配置缺失时不会自行回退官网数据。
 - 事件分类视图（挂单/撤单/吃单/奖励）
-- live worker 已接入 post-only 买单、撤单、confirmed 成交同步、成交后卖出/平仓、本地账本更新、managed order 计分状态和 UTC 当日账户级 maker rewards 聚合同步；账户范围外开放订单同步与奖励结算对账仍是后端缺口
+- live worker 已接入 post-only 买单、撤单、confirmed 成交同步、成交后卖出/平仓、本地账本更新、managed order 计分状态、账户开放买单总 notional 观测和 UTC 当日账户级 maker rewards 聚合同步；账户范围外开放订单明细与奖励结算对账仍是后端缺口
+- 页面不再暴露仅用于旧模拟逻辑或可能错误释放对账锁的配置；历史 critical event 不会永久占用 `status.error`，当前错误只反映活跃对账锁
 - API 不直连 Polymarket 私有账户；账户余额、完整 positions 和本系统托管订单都从数据库读取。`status.open_orders` / `status.positions` 描述本地 managed state。
 
 ## 修改检查清单

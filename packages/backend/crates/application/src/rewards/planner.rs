@@ -3,7 +3,10 @@ pub fn select_reward_book_token_ids(markets: &[RewardMarket]) -> Vec<String> {
     let mut seen = std::collections::HashSet::new();
 
     for market in markets {
-        for token in market.tokens.iter().take(2) {
+        let Some((yes_token, no_token)) = reward_quote_tokens(market) else {
+            continue;
+        };
+        for token in [yes_token, no_token] {
             if token.token_id.trim().is_empty() || !seen.insert(token.token_id.clone()) {
                 continue;
             }
@@ -36,24 +39,39 @@ fn reward_market_prefilter_reason(
     market: &RewardMarket,
     config: &RewardBotConfig,
 ) -> Option<&'static str> {
+    let now = OffsetDateTime::now_utc();
     if !market.active {
         return Some("reward market is inactive");
     }
-    let mut token_ids = std::collections::HashSet::new();
-    if market
-        .tokens
-        .iter()
-        .filter(|token| {
-            !token.token_id.trim().is_empty() && token_ids.insert(token.token_id.as_str())
-        })
-        .take(2)
-        .count()
-        < 2
-    {
+    if reward_quote_tokens(market).is_none() {
         return Some("missing quoteable reward tokens");
     }
     if market.total_daily_rate < config.min_daily_reward {
         return Some("daily reward is below threshold");
+    }
+    if market.liquidity_usd < config.min_market_liquidity_usd {
+        return Some("market liquidity is below threshold");
+    }
+    if market.volume_24h_usd < config.min_market_volume_24h_usd {
+        return Some("market 24h volume is below threshold");
+    }
+    if market.market_spread_cents > config.max_market_spread_cents {
+        return Some("market top-of-book spread is too wide");
+    }
+    if market.ambiguity_level == "high" {
+        return Some("market resolution metadata is high risk");
+    }
+    if market
+        .end_at
+        .is_none_or(|end_at| end_at < now + TimeDuration::hours(config.min_hours_to_end as i64))
+    {
+        return Some("market settlement is unknown or too close");
+    }
+    if market.market_synced_at.is_none_or(|synced_at| {
+        synced_at < now - TimeDuration::minutes(config.max_market_data_age_minutes as i64)
+            || synced_at > now + TimeDuration::minutes(5)
+    }) {
+        return Some("market metadata is stale");
     }
     if normalize_reward_spread_cents(market.rewards_max_spread) <= Decimal::ZERO {
         return Some("invalid rewards spread setting");
@@ -86,22 +104,9 @@ fn build_reward_quote_plan(
     config: &RewardBotConfig,
 ) -> RewardQuotePlan {
     let now = OffsetDateTime::now_utc();
-    let yes_token = market
-        .tokens
-        .iter()
-        .find(|token| token.outcome.to_lowercase().contains("yes"))
-        .or_else(|| market.tokens.first());
-    let no_token = market
-        .tokens
-        .iter()
-        .find(|token| token.outcome.to_lowercase().contains("no"))
-        .or_else(|| market.tokens.get(1));
-    let (Some(yes_token), Some(no_token)) = (yes_token, no_token) else {
+    let Some((yes_token, no_token)) = reward_quote_tokens(market) else {
         return empty_plan(market, "missing YES/NO token", now, None);
     };
-    if yes_token.token_id == no_token.token_id {
-        return empty_plan(market, "YES/NO outcomes resolve to the same token", now, None);
-    }
 
     let yes_state = get_token_book_state(yes_token, books, config, now);
     let no_state = get_token_book_state(no_token, books, config, now);
@@ -144,17 +149,45 @@ fn build_reward_quote_plan(
         );
     }
 
-    let quote_edge = Decimal::min(config.quote_edge_cents, max_spread_cents) / decimal("100");
     let safety = config.safety_margin_cents / decimal("100");
-    let yes_bid = floor_to_tick(
-        Decimal::max(decimal("0.01"), midpoint - quote_edge),
-        DEFAULT_TICK,
-    );
     let no_mid = Decimal::ONE - midpoint;
-    let no_bid = floor_to_tick(
-        Decimal::max(decimal("0.01"), no_mid - quote_edge),
-        DEFAULT_TICK,
-    );
+    let Some(yes_bid) = yes_state
+        .as_ref()
+        .and_then(|state| quote_bid_price(state, config.quote_bid_rank))
+    else {
+        return empty_plan(
+            market,
+            format!("YES book does not have bid-{}", config.quote_bid_rank),
+            now,
+            Some(midpoint),
+        );
+    };
+    let Some(no_bid) = no_state
+        .as_ref()
+        .and_then(|state| quote_bid_price(state, config.quote_bid_rank))
+    else {
+        return empty_plan(
+            market,
+            format!("NO book does not have bid-{}", config.quote_bid_rank),
+            now,
+            Some(midpoint),
+        );
+    };
+    let max_spread = max_spread_cents / decimal("100");
+
+    let yes_quote_midpoint = yes_state.as_ref().map_or(midpoint, |state| state.midpoint);
+    let no_quote_midpoint = no_state.as_ref().map_or(no_mid, |state| state.midpoint);
+    if yes_quote_midpoint - yes_bid > max_spread || no_quote_midpoint - no_bid > max_spread {
+        return empty_plan(
+            market,
+            format!(
+                "bid-{} is outside the rewards spread limit",
+                config.quote_bid_rank
+            ),
+            now,
+            Some(midpoint),
+        );
+    }
 
     if yes_state
         .as_ref()
@@ -224,6 +257,30 @@ fn build_reward_quote_plan(
     }
 }
 
+fn reward_quote_tokens(market: &RewardMarket) -> Option<(&RewardToken, &RewardToken)> {
+    let mut tokens = market
+        .tokens
+        .iter()
+        .filter(|token| !token.token_id.trim().is_empty());
+    let (Some(first), Some(second)) = (tokens.next(), tokens.next()) else {
+        return None;
+    };
+    if tokens.next().is_some() || first.token_id == second.token_id {
+        return None;
+    }
+    if first.outcome.trim().eq_ignore_ascii_case("yes")
+        && second.outcome.trim().eq_ignore_ascii_case("no")
+    {
+        Some((first, second))
+    } else if first.outcome.trim().eq_ignore_ascii_case("no")
+        && second.outcome.trim().eq_ignore_ascii_case("yes")
+    {
+        Some((second, first))
+    } else {
+        None
+    }
+}
+
 fn empty_plan(
     market: &RewardMarket,
     reason: impl Into<String>,
@@ -270,6 +327,11 @@ fn get_token_book_state(
     } else {
         (None, None)
     };
+    let bid_prices = if fresh {
+        book.map(distinct_bid_prices).unwrap_or_default()
+    } else {
+        Vec::new()
+    };
 
     if let (Some(best_bid), Some(best_ask)) = (best_bid, best_ask)
         && best_bid > Decimal::ZERO
@@ -278,6 +340,7 @@ fn get_token_book_state(
         return Some(TokenBookState {
             midpoint: (best_bid + best_ask) / decimal("2"),
             best_ask: Some(best_ask),
+            bid_prices,
         });
     }
 
@@ -288,10 +351,30 @@ fn get_token_book_state(
         return Some(TokenBookState {
             midpoint: price,
             best_ask: None,
+            bid_prices,
         });
     }
 
     None
+}
+
+fn distinct_bid_prices(book: &RewardOrderBook) -> Vec<Decimal> {
+    let mut prices = Vec::new();
+    for level in &book.bids {
+        if level.price <= Decimal::ZERO || prices.last() == Some(&level.price) {
+            continue;
+        }
+        prices.push(level.price);
+    }
+    prices
+}
+
+fn quote_bid_price(state: &TokenBookState, rank: u16) -> Option<Decimal> {
+    state
+        .bid_prices
+        .get(usize::from(rank.saturating_sub(1)))
+        .copied()
+        .map(|price| floor_to_tick(price, DEFAULT_TICK))
 }
 
 fn make_quote_legs(
@@ -309,7 +392,12 @@ fn make_quote_legs(
     };
 
     let prices = [yes_price, no_price];
-    let minimum_notionals = prices.map(|price| price * rewards_min_size);
+    let minimum_sizes =
+        prices.map(|price| ceil_reward_size_for_cost_precision(price, rewards_min_size));
+    let minimum_notionals = [
+        prices[0] * minimum_sizes[0],
+        prices[1] * minimum_sizes[1],
+    ];
     let target_notionals =
         minimum_notionals.map(|minimum| Decimal::max(minimum, effective_quote_size));
     let allocated_notionals = if config.per_market_usd <= Decimal::ZERO {
@@ -378,7 +466,10 @@ fn allocate_quote_notionals(
 }
 
 fn make_leg(token: &RewardToken, price: Decimal, notional_usd: Decimal) -> RewardQuoteLeg {
-    let size = (notional_usd / price).round_dp_with_strategy(2, RoundingStrategy::ToZero);
+    let size = floor_reward_size_for_cost_precision(
+        price,
+        (notional_usd / price).round_dp_with_strategy(2, RoundingStrategy::ToZero),
+    );
     RewardQuoteLeg {
         token_id: token.token_id.clone(),
         outcome: if token.outcome.trim().is_empty() {
@@ -400,15 +491,37 @@ fn score_market(
     legs: &[RewardQuoteLeg],
 ) -> Decimal {
     let reward_rate = decimal_to_f64(market.total_daily_rate).sqrt();
-    let reward_score = f64::min(50.0, reward_rate * 12.0);
-    let spread_score = f64::min(25.0, decimal_to_f64(max_spread_cents) * 4.0);
-    let midpoint_score = f64::max(0.0, 15.0 - f64::abs(decimal_to_f64(midpoint) - 0.5) * 30.0);
+    let reward_score = f64::min(35.0, reward_rate * 10.0);
+    let liquidity_score = f64::min(
+        20.0,
+        decimal_to_f64(market.liquidity_usd).ln_1p() / 10_f64.ln() * 4.0,
+    );
+    let volume_score = f64::min(
+        15.0,
+        decimal_to_f64(market.volume_24h_usd).ln_1p() / 10_f64.ln() * 3.0,
+    );
+    let hours_to_end = market
+        .end_at
+        .map(|end_at| (end_at - OffsetDateTime::now_utc()).whole_hours().max(0) as f64)
+        .unwrap_or_default();
+    let duration_score = f64::min(10.0, (hours_to_end / 24.0).sqrt() * 2.0);
+    let spread_score = f64::min(10.0, decimal_to_f64(max_spread_cents) * 1.25);
+    let midpoint_score = f64::max(0.0, 5.0 - f64::abs(decimal_to_f64(midpoint) - 0.5) * 10.0);
     let notional = legs
         .iter()
         .fold(Decimal::ZERO, |sum, leg| sum + leg.notional_usd);
-    let size_score = if notional > Decimal::ZERO { 10.0 } else { 0.0 };
+    let size_score = if notional > Decimal::ZERO { 5.0 } else { 0.0 };
 
-    decimal_from_f64(reward_score + spread_score + midpoint_score + size_score).round_dp(2)
+    decimal_from_f64(
+        reward_score
+            + liquidity_score
+            + volume_score
+            + duration_score
+            + spread_score
+            + midpoint_score
+            + size_score,
+    )
+    .round_dp(2)
 }
 
 #[cfg(test)]

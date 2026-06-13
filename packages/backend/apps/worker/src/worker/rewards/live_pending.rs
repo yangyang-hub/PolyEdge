@@ -10,6 +10,7 @@ async fn submit_pending_live_reward_orders(
     allow_buy_submit: bool,
 ) -> Result<()> {
     let mut allow_buy_submit = allow_buy_submit;
+    let now = OffsetDateTime::now_utc();
     open_orders.sort_by_key(|order| {
         if live_submission_was_attempted(order) {
             0
@@ -27,7 +28,8 @@ async fn submit_pending_live_reward_orders(
                     && matches!(
                         order.status,
                         ManagedRewardOrderStatus::Planned | ManagedRewardOrderStatus::ExitPending
-                    )))
+                    )
+                    && live_exit_retry_due(order, now)))
     }) {
         let post_only =
             order.side == RewardOrderSide::Buy || deferred_live_exit_is_post_only(order);
@@ -50,7 +52,7 @@ async fn submit_pending_live_reward_orders(
                     } else {
                         ManagedRewardOrderStatus::ExitPending
                     };
-                    order.scoring = order.side == RewardOrderSide::Buy;
+                    order.scoring = false;
                     order.reason = match (order.side, post_only) {
                         (RewardOrderSide::Buy, _) => {
                             "recovered live post-only rewards quote after interrupted submission"
@@ -275,6 +277,9 @@ async fn submit_pending_live_reward_orders(
             Ok(LiveRewardOrderUpdate::Retryable(event)) => {
                 // Transient rejection (e.g. HTTP 425 "order manager not ready").
                 // Keep the order as Planned so it is retried on the next cycle.
+                if order.side == RewardOrderSide::Buy {
+                    allow_buy_submit = false;
+                }
                 order.reason = format!(
                     "{}; transient rejection, will retry: {}",
                     pre_submit_reason, event.message
@@ -284,7 +289,7 @@ async fn submit_pending_live_reward_orders(
                     state,
                     account,
                     Vec::new(), // positions unchanged during submission
-                    Vec::new(), // order status unchanged (stays Planned)
+                    vec![order.clone()],
                     Vec::new(),
                     vec![event],
                     report,

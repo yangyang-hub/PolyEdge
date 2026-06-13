@@ -1,156 +1,5 @@
 impl PostgresMarketEventStore {
-async fn market_event_list_markets(&self, filters: &MarketListFilters) -> Result<Vec<MarketView>> {
-        let order_column = match filters.sort_by {
-            MarketSortField::Volume24h => "m.volume_24h",
-            MarketSortField::UpdatedAt => "m.updated_at",
-        };
-        let order_dir = match filters.sort_order {
-            SortOrder::Asc => "ASC",
-            SortOrder::Desc => "DESC",
-        };
-        let sql = format!(
-            r#"
-            SELECT
-              m.id,
-              m.slug,
-              m.question,
-              m.category,
-              m.status,
-              m.best_bid,
-              m.best_ask,
-              m.mid_price,
-              m.volume_24h,
-              m.ambiguity_level,
-              m.tradability_status,
-              r.resolution_source,
-              r.edge_case_notes,
-              m.polymarket_condition_id,
-              m.polymarket_yes_asset_id,
-              m.polymarket_no_asset_id,
-              m.updated_at,
-              m.version
-            FROM markets m
-            INNER JOIN market_resolution_rules r ON r.market_id = m.id
-            WHERE ($1::TEXT IS NULL OR m.status = $1)
-              AND ($2::TEXT IS NULL OR m.tradability_status = $2)
-              AND ($3::TEXT IS NULL OR m.category = $3)
-            ORDER BY {order_column} {order_dir}, m.id ASC
-            LIMIT $4 OFFSET $5
-            "#,
-        );
-        let rows = sqlx::query(&sql)
-            .bind(filters.status.map(MarketStatus::as_str))
-            .bind(filters.tradability_status.map(TradabilityStatus::as_str))
-            .bind(filters.category.as_deref())
-            .bind(i64::from(filters.limit))
-            .bind(i64::from(filters.offset))
-            .fetch_all(&self.pool)
-            .await
-            .map_err(|error| {
-                db_error(
-                    "POSTGRES_QUERY_FAILED",
-                    format!("failed to list markets: {error}"),
-                )
-            })?;
-
-        rows.iter().map(parse_market_row).collect()
-    }
-
-async fn market_event_count_markets(&self, filters: &MarketListFilters) -> Result<i64> {
-        let row = sqlx::query_scalar::<_, i64>(
-            r#"
-            SELECT COUNT(*)
-            FROM markets m
-            WHERE ($1::TEXT IS NULL OR m.status = $1)
-              AND ($2::TEXT IS NULL OR m.tradability_status = $2)
-              AND ($3::TEXT IS NULL OR m.category = $3)
-            "#,
-        )
-        .bind(filters.status.map(MarketStatus::as_str))
-        .bind(filters.tradability_status.map(TradabilityStatus::as_str))
-        .bind(filters.category.as_deref())
-        .fetch_one(&self.pool)
-        .await
-        .map_err(|error| {
-            db_error(
-                "POSTGRES_QUERY_FAILED",
-                format!("failed to count markets: {error}"),
-            )
-        })?;
-
-        Ok(row)
-    }
-
-async fn market_event_list_market_categories(&self) -> Result<Vec<MarketCategoryView>> {
-        let rows = sqlx::query(
-            r#"
-            SELECT id, label, sort_order
-            FROM market_categories
-            ORDER BY sort_order ASC
-            LIMIT 100
-            "#,
-        )
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|error| {
-            db_error(
-                "POSTGRES_QUERY_FAILED",
-                format!("failed to list market categories: {error}"),
-            )
-        })?;
-
-        rows.iter()
-            .map(|row| {
-                Ok(MarketCategoryView {
-                    id: decode_column(row, "id")?,
-                    label: decode_column(row, "label")?,
-                    sort_order: decode_column(row, "sort_order")?,
-                })
-            })
-            .collect()
-    }
-
-async fn market_event_get_market(&self, market_id: &str) -> Result<Option<MarketView>> {
-        let row = sqlx::query(
-            r#"
-            SELECT
-              m.id,
-              m.slug,
-              m.question,
-              m.category,
-              m.status,
-              m.best_bid,
-              m.best_ask,
-              m.mid_price,
-              m.volume_24h,
-              m.ambiguity_level,
-              m.tradability_status,
-              r.resolution_source,
-              r.edge_case_notes,
-              m.polymarket_condition_id,
-              m.polymarket_yes_asset_id,
-              m.polymarket_no_asset_id,
-              m.updated_at,
-              m.version
-            FROM markets m
-            INNER JOIN market_resolution_rules r ON r.market_id = m.id
-            WHERE m.id = $1
-            "#,
-        )
-        .bind(market_id)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|error| {
-            db_error(
-                "POSTGRES_QUERY_FAILED",
-                format!("failed to fetch market {market_id}: {error}"),
-            )
-        })?;
-
-        row.as_ref().map(parse_market_row).transpose()
-    }
-
-async fn market_event_get_signal(&self, signal_id: &str) -> Result<Option<SignalView>> {
+    async fn market_event_get_signal(&self, signal_id: &str) -> Result<Option<SignalView>> {
         let row = sqlx::query(
             r#"
             SELECT
@@ -214,7 +63,11 @@ async fn market_event_get_signal(&self, signal_id: &str) -> Result<Option<Signal
         row.as_ref().map(parse_signal_row).transpose()
     }
 
-async fn market_event_list_events(&self, filters: &EventListFilters, page: &PageQuery) -> Result<Paginated<EventView>> {
+    async fn market_event_list_events(
+        &self,
+        filters: &EventListFilters,
+        page: &PageQuery,
+    ) -> Result<Paginated<EventView>> {
         let offset = page.offset();
         let limit = i64::from(page.validated().1);
 
@@ -274,7 +127,11 @@ async fn market_event_list_events(&self, filters: &EventListFilters, page: &Page
         Ok(Paginated::new(items?, page, total_count))
     }
 
-async fn market_event_list_evidences(&self, filters: &EvidenceListFilters, page: &PageQuery) -> Result<Paginated<EvidenceView>> {
+    async fn market_event_list_evidences(
+        &self,
+        filters: &EvidenceListFilters,
+        page: &PageQuery,
+    ) -> Result<Paginated<EvidenceView>> {
         let offset = page.offset();
         let limit = i64::from(page.validated().1);
 
@@ -323,7 +180,11 @@ async fn market_event_list_evidences(&self, filters: &EvidenceListFilters, page:
         Ok(Paginated::new(items?, page, total_count))
     }
 
-async fn market_event_list_signals(&self, filters: &SignalListFilters, page: &PageQuery) -> Result<Paginated<SignalView>> {
+    async fn market_event_list_signals(
+        &self,
+        filters: &SignalListFilters,
+        page: &PageQuery,
+    ) -> Result<Paginated<SignalView>> {
         let offset = page.offset();
         let limit = i64::from(page.validated().1);
 
@@ -390,7 +251,7 @@ async fn market_event_list_signals(&self, filters: &SignalListFilters, page: &Pa
         Ok(Paginated::new(items?, page, total_count))
     }
 
-async fn market_event_list_probability_estimates(
+    async fn market_event_list_probability_estimates(
         &self,
         filters: &ProbabilityEstimateListFilters,
         page: &PageQuery,
@@ -431,12 +292,12 @@ async fn market_event_list_probability_estimates(
             .bind(filters.signal_id.as_deref())
             .fetch_one(&self.pool),
             sqlx::query(&data_sql)
-            .bind(filters.market_id.as_deref())
-            .bind(filters.event_id.as_deref())
-            .bind(filters.signal_id.as_deref())
-            .bind(limit)
-            .bind(offset)
-            .fetch_all(&self.pool),
+                .bind(filters.market_id.as_deref())
+                .bind(filters.event_id.as_deref())
+                .bind(filters.signal_id.as_deref())
+                .bind(limit)
+                .bind(offset)
+                .fetch_all(&self.pool),
         )
         .map_err(|error| {
             db_error(
@@ -452,7 +313,7 @@ async fn market_event_list_probability_estimates(
         Ok(Paginated::new(items, page, total_count))
     }
 
-async fn market_event_list_signal_transitions(
+    async fn market_event_list_signal_transitions(
         &self,
         filters: &SignalTransitionListFilters,
         page: &PageQuery,
@@ -486,10 +347,10 @@ async fn market_event_list_signal_transitions(
             .bind(&filters.signal_id)
             .fetch_one(&self.pool),
             sqlx::query(&data_sql)
-            .bind(&filters.signal_id)
-            .bind(limit)
-            .bind(offset)
-            .fetch_all(&self.pool),
+                .bind(&filters.signal_id)
+                .bind(limit)
+                .bind(offset)
+                .fetch_all(&self.pool),
         )
         .map_err(|error| {
             db_error(
@@ -505,7 +366,7 @@ async fn market_event_list_signal_transitions(
         Ok(Paginated::new(items, page, total_count))
     }
 
-async fn market_event_list_order_drafts(
+    async fn market_event_list_order_drafts(
         &self,
         filters: &OrderDraftListFilters,
     ) -> Result<Vec<OrderDraftView>> {
@@ -554,7 +415,7 @@ async fn market_event_list_order_drafts(
         rows.iter().map(parse_order_draft_row).collect()
     }
 
-async fn market_event_list_execution_requests(
+    async fn market_event_list_execution_requests(
         &self,
         filters: &ExecutionRequestListFilters,
     ) -> Result<Vec<ExecutionRequestView>> {
@@ -601,7 +462,7 @@ async fn market_event_list_execution_requests(
         rows.iter().map(parse_execution_request_row).collect()
     }
 
-async fn market_event_get_order_by_external_ref(
+    async fn market_event_get_order_by_external_ref(
         &self,
         connector_name: &str,
         external_order_id: &str,
@@ -658,7 +519,7 @@ async fn market_event_get_order_by_external_ref(
         parse_order_row(&row)
     }
 
-async fn market_event_list_orders(&self, filters: &OrderListFilters) -> Result<Vec<OrderView>> {
+    async fn market_event_list_orders(&self, filters: &OrderListFilters) -> Result<Vec<OrderView>> {
         let rows = sqlx::query(
             r#"
             SELECT
@@ -705,7 +566,7 @@ async fn market_event_list_orders(&self, filters: &OrderListFilters) -> Result<V
         rows.iter().map(parse_order_row).collect()
     }
 
-async fn market_event_list_trades(&self, filters: &TradeListFilters) -> Result<Vec<TradeView>> {
+    async fn market_event_list_trades(&self, filters: &TradeListFilters) -> Result<Vec<TradeView>> {
         let rows = sqlx::query(
             r#"
             SELECT
@@ -746,7 +607,10 @@ async fn market_event_list_trades(&self, filters: &TradeListFilters) -> Result<V
         rows.iter().map(parse_trade_row).collect()
     }
 
-async fn market_event_list_positions(&self, filters: &PositionListFilters) -> Result<Vec<PositionView>> {
+    async fn market_event_list_positions(
+        &self,
+        filters: &PositionListFilters,
+    ) -> Result<Vec<PositionView>> {
         let rows = sqlx::query(
             r#"
             SELECT
@@ -785,79 +649,134 @@ async fn market_event_list_positions(&self, filters: &PositionListFilters) -> Re
         rows.iter().map(parse_position_row).collect()
     }
 
-    async fn market_event_count_order_drafts(&self, filters: &OrderDraftListFilters) -> Result<i64> {
+    async fn market_event_count_order_drafts(
+        &self,
+        filters: &OrderDraftListFilters,
+    ) -> Result<i64> {
         sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM order_drafts WHERE ($1::TEXT IS NULL OR signal_id = $1) AND ($2::TEXT IS NULL OR connector_name = $2) AND ($3::TEXT IS NULL OR status = $3)")
             .bind(filters.signal_id.as_deref()).bind(filters.connector_name.as_deref()).bind(filters.status.map(OrderDraftStatus::as_str))
             .fetch_one(&self.pool).await.map_err(|e| db_error("POSTGRES_QUERY_FAILED", format!("failed to count order drafts: {e}")))
     }
-    async fn market_event_list_order_drafts_paginated(&self, filters: &OrderDraftListFilters, page: &PageQuery) -> Result<Paginated<OrderDraftView>> {
-        let (_, ps) = page.validated(); let off = page.offset();
+    async fn market_event_list_order_drafts_paginated(
+        &self,
+        filters: &OrderDraftListFilters,
+        page: &PageQuery,
+    ) -> Result<Paginated<OrderDraftView>> {
+        let (_, ps) = page.validated();
+        let off = page.offset();
         let (rows, total) = tokio::try_join!(
             sqlx::query("SELECT id,signal_id,signal_version,market_id,connector_name,side,limit_price,quantity,notional,status,created_by_user_id,external_order_id,submitted_at,failure_code,failure_message,created_at,updated_at,version FROM order_drafts WHERE ($1::TEXT IS NULL OR signal_id=$1) AND ($2::TEXT IS NULL OR connector_name=$2) AND ($3::TEXT IS NULL OR status=$3) ORDER BY created_at DESC, id ASC LIMIT $4 OFFSET $5")
                 .bind(filters.signal_id.as_deref()).bind(filters.connector_name.as_deref()).bind(filters.status.map(OrderDraftStatus::as_str)).bind(i64::from(ps)).bind(off).fetch_all(&self.pool),
             sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM order_drafts WHERE ($1::TEXT IS NULL OR signal_id=$1) AND ($2::TEXT IS NULL OR connector_name=$2) AND ($3::TEXT IS NULL OR status=$3)")
                 .bind(filters.signal_id.as_deref()).bind(filters.connector_name.as_deref()).bind(filters.status.map(OrderDraftStatus::as_str)).fetch_one(&self.pool)
         ).map_err(|e| db_error("POSTGRES_QUERY_FAILED", format!("failed to list order drafts: {e}")))?;
-        Ok(Paginated::new(rows.iter().map(parse_order_draft_row).collect::<Result<_>>()?, page, total))
+        Ok(Paginated::new(
+            rows.iter()
+                .map(parse_order_draft_row)
+                .collect::<Result<_>>()?,
+            page,
+            total,
+        ))
     }
-    async fn market_event_count_execution_requests(&self, filters: &ExecutionRequestListFilters) -> Result<i64> {
+    async fn market_event_count_execution_requests(
+        &self,
+        filters: &ExecutionRequestListFilters,
+    ) -> Result<i64> {
         sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM execution_requests WHERE ($1::TEXT IS NULL OR signal_id=$1) AND ($2::TEXT IS NULL OR connector_name=$2) AND ($3::TEXT IS NULL OR status=$3)")
             .bind(filters.signal_id.as_deref()).bind(filters.connector_name.as_deref()).bind(filters.status.map(ExecutionRequestStatus::as_str))
             .fetch_one(&self.pool).await.map_err(|e| db_error("POSTGRES_QUERY_FAILED", format!("failed to count execution requests: {e}")))
     }
-    async fn market_event_list_execution_requests_paginated(&self, filters: &ExecutionRequestListFilters, page: &PageQuery) -> Result<Paginated<ExecutionRequestView>> {
-        let (_, ps) = page.validated(); let off = page.offset();
+    async fn market_event_list_execution_requests_paginated(
+        &self,
+        filters: &ExecutionRequestListFilters,
+        page: &PageQuery,
+    ) -> Result<Paginated<ExecutionRequestView>> {
+        let (_, ps) = page.validated();
+        let off = page.offset();
         let (rows, total) = tokio::try_join!(
             sqlx::query("SELECT id,signal_id,signal_version,order_draft_id,connector_name,mode,requested_by_user_id,status,reason,external_order_id,submitted_at,failure_code,failure_message,created_at,updated_at,version FROM execution_requests WHERE ($1::TEXT IS NULL OR signal_id=$1) AND ($2::TEXT IS NULL OR connector_name=$2) AND ($3::TEXT IS NULL OR status=$3) ORDER BY created_at DESC, id ASC LIMIT $4 OFFSET $5")
                 .bind(filters.signal_id.as_deref()).bind(filters.connector_name.as_deref()).bind(filters.status.map(ExecutionRequestStatus::as_str)).bind(i64::from(ps)).bind(off).fetch_all(&self.pool),
             sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM execution_requests WHERE ($1::TEXT IS NULL OR signal_id=$1) AND ($2::TEXT IS NULL OR connector_name=$2) AND ($3::TEXT IS NULL OR status=$3)")
                 .bind(filters.signal_id.as_deref()).bind(filters.connector_name.as_deref()).bind(filters.status.map(ExecutionRequestStatus::as_str)).fetch_one(&self.pool)
         ).map_err(|e| db_error("POSTGRES_QUERY_FAILED", format!("failed to list execution requests: {e}")))?;
-        Ok(Paginated::new(rows.iter().map(parse_execution_request_row).collect::<Result<_>>()?, page, total))
+        Ok(Paginated::new(
+            rows.iter()
+                .map(parse_execution_request_row)
+                .collect::<Result<_>>()?,
+            page,
+            total,
+        ))
     }
     async fn market_event_count_orders(&self, filters: &OrderListFilters) -> Result<i64> {
         sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM orders WHERE ($1::TEXT IS NULL OR signal_id=$1) AND ($2::TEXT IS NULL OR market_id=$2) AND ($3::TEXT IS NULL OR connector_name=$3) AND ($4::TEXT IS NULL OR status=$4)")
             .bind(filters.signal_id.as_deref()).bind(filters.market_id.as_deref()).bind(filters.connector_name.as_deref()).bind(filters.status.map(OrderStatus::as_str))
             .fetch_one(&self.pool).await.map_err(|e| db_error("POSTGRES_QUERY_FAILED", format!("failed to count orders: {e}")))
     }
-    async fn market_event_list_orders_paginated(&self, filters: &OrderListFilters, page: &PageQuery) -> Result<Paginated<OrderView>> {
-        let (_, ps) = page.validated(); let off = page.offset();
+    async fn market_event_list_orders_paginated(
+        &self,
+        filters: &OrderListFilters,
+        page: &PageQuery,
+    ) -> Result<Paginated<OrderView>> {
+        let (_, ps) = page.validated();
+        let off = page.offset();
         let (rows, total) = tokio::try_join!(
             sqlx::query("SELECT id,signal_id,execution_request_id,order_draft_id,market_id,connector_name,account_id,external_order_id,side,limit_price,quantity,filled_quantity,avg_fill_price,status,submitted_at,updated_at,version FROM orders WHERE ($1::TEXT IS NULL OR signal_id=$1) AND ($2::TEXT IS NULL OR market_id=$2) AND ($3::TEXT IS NULL OR connector_name=$3) AND ($4::TEXT IS NULL OR status=$4) ORDER BY updated_at DESC, id ASC LIMIT $5 OFFSET $6")
                 .bind(filters.signal_id.as_deref()).bind(filters.market_id.as_deref()).bind(filters.connector_name.as_deref()).bind(filters.status.map(OrderStatus::as_str)).bind(i64::from(ps)).bind(off).fetch_all(&self.pool),
             sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM orders WHERE ($1::TEXT IS NULL OR signal_id=$1) AND ($2::TEXT IS NULL OR market_id=$2) AND ($3::TEXT IS NULL OR connector_name=$3) AND ($4::TEXT IS NULL OR status=$4)")
                 .bind(filters.signal_id.as_deref()).bind(filters.market_id.as_deref()).bind(filters.connector_name.as_deref()).bind(filters.status.map(OrderStatus::as_str)).fetch_one(&self.pool)
         ).map_err(|e| db_error("POSTGRES_QUERY_FAILED", format!("failed to list orders: {e}")))?;
-        Ok(Paginated::new(rows.iter().map(parse_order_row).collect::<Result<_>>()?, page, total))
+        Ok(Paginated::new(
+            rows.iter().map(parse_order_row).collect::<Result<_>>()?,
+            page,
+            total,
+        ))
     }
     async fn market_event_count_trades(&self, filters: &TradeListFilters) -> Result<i64> {
         sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM trades WHERE ($1::TEXT IS NULL OR order_id=$1) AND ($2::TEXT IS NULL OR signal_id=$2) AND ($3::TEXT IS NULL OR market_id=$3) AND ($4::TEXT IS NULL OR connector_name=$4)")
             .bind(filters.order_id.as_deref()).bind(filters.signal_id.as_deref()).bind(filters.market_id.as_deref()).bind(filters.connector_name.as_deref())
             .fetch_one(&self.pool).await.map_err(|e| db_error("POSTGRES_QUERY_FAILED", format!("failed to count trades: {e}")))
     }
-    async fn market_event_list_trades_paginated(&self, filters: &TradeListFilters, page: &PageQuery) -> Result<Paginated<TradeView>> {
-        let (_, ps) = page.validated(); let off = page.offset();
+    async fn market_event_list_trades_paginated(
+        &self,
+        filters: &TradeListFilters,
+        page: &PageQuery,
+    ) -> Result<Paginated<TradeView>> {
+        let (_, ps) = page.validated();
+        let off = page.offset();
         let (rows, total) = tokio::try_join!(
             sqlx::query("SELECT id,order_id,signal_id,market_id,connector_name,external_trade_id,side,price,quantity,fee,executed_at FROM trades WHERE ($1::TEXT IS NULL OR order_id=$1) AND ($2::TEXT IS NULL OR signal_id=$2) AND ($3::TEXT IS NULL OR market_id=$3) AND ($4::TEXT IS NULL OR connector_name=$4) ORDER BY executed_at DESC, id ASC LIMIT $5 OFFSET $6")
                 .bind(filters.order_id.as_deref()).bind(filters.signal_id.as_deref()).bind(filters.market_id.as_deref()).bind(filters.connector_name.as_deref()).bind(i64::from(ps)).bind(off).fetch_all(&self.pool),
             sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM trades WHERE ($1::TEXT IS NULL OR order_id=$1) AND ($2::TEXT IS NULL OR signal_id=$2) AND ($3::TEXT IS NULL OR market_id=$3) AND ($4::TEXT IS NULL OR connector_name=$4)")
                 .bind(filters.order_id.as_deref()).bind(filters.signal_id.as_deref()).bind(filters.market_id.as_deref()).bind(filters.connector_name.as_deref()).fetch_one(&self.pool)
         ).map_err(|e| db_error("POSTGRES_QUERY_FAILED", format!("failed to list trades: {e}")))?;
-        Ok(Paginated::new(rows.iter().map(parse_trade_row).collect::<Result<_>>()?, page, total))
+        Ok(Paginated::new(
+            rows.iter().map(parse_trade_row).collect::<Result<_>>()?,
+            page,
+            total,
+        ))
     }
     async fn market_event_count_positions(&self, filters: &PositionListFilters) -> Result<i64> {
         sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM positions WHERE ($1::TEXT IS NULL OR market_id=$1) AND ($2::TEXT IS NULL OR connector_name=$2) AND ($3::TEXT IS NULL OR side=$3)")
             .bind(filters.market_id.as_deref()).bind(filters.connector_name.as_deref()).bind(filters.side.map(SignalSide::as_str))
             .fetch_one(&self.pool).await.map_err(|e| db_error("POSTGRES_QUERY_FAILED", format!("failed to count positions: {e}")))
     }
-    async fn market_event_list_positions_paginated(&self, filters: &PositionListFilters, page: &PageQuery) -> Result<Paginated<PositionView>> {
-        let (_, ps) = page.validated(); let off = page.offset();
+    async fn market_event_list_positions_paginated(
+        &self,
+        filters: &PositionListFilters,
+        page: &PageQuery,
+    ) -> Result<Paginated<PositionView>> {
+        let (_, ps) = page.validated();
+        let off = page.offset();
         let (rows, total) = tokio::try_join!(
             sqlx::query("SELECT id,market_id,connector_name,account_id,side,net_quantity,avg_cost,mark_price,unrealized_pnl,realized_pnl,updated_at,version FROM positions WHERE ($1::TEXT IS NULL OR market_id=$1) AND ($2::TEXT IS NULL OR connector_name=$2) AND ($3::TEXT IS NULL OR side=$3) ORDER BY updated_at DESC, id ASC LIMIT $4 OFFSET $5")
                 .bind(filters.market_id.as_deref()).bind(filters.connector_name.as_deref()).bind(filters.side.map(SignalSide::as_str)).bind(i64::from(ps)).bind(off).fetch_all(&self.pool),
             sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM positions WHERE ($1::TEXT IS NULL OR market_id=$1) AND ($2::TEXT IS NULL OR connector_name=$2) AND ($3::TEXT IS NULL OR side=$3)")
                 .bind(filters.market_id.as_deref()).bind(filters.connector_name.as_deref()).bind(filters.side.map(SignalSide::as_str)).fetch_one(&self.pool)
         ).map_err(|e| db_error("POSTGRES_QUERY_FAILED", format!("failed to list positions: {e}")))?;
-        Ok(Paginated::new(rows.iter().map(parse_position_row).collect::<Result<_>>()?, page, total))
+        Ok(Paginated::new(
+            rows.iter().map(parse_position_row).collect::<Result<_>>()?,
+            page,
+            total,
+        ))
     }
 }

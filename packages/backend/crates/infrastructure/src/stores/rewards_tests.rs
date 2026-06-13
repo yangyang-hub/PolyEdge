@@ -53,6 +53,40 @@ mod rewards_tests {
         }
     }
 
+    fn candidate_market() -> RewardMarket {
+        let now = OffsetDateTime::now_utc();
+        RewardMarket {
+            condition_id: "cond_candidate".to_string(),
+            question: "Candidate market".to_string(),
+            market_slug: "candidate-market".to_string(),
+            event_slug: "candidate-event".to_string(),
+            image: String::new(),
+            rewards_max_spread: Decimal::from(8),
+            rewards_min_size: Decimal::from(5),
+            total_daily_rate: Decimal::from(25),
+            liquidity_usd: Decimal::from(10_000),
+            volume_24h_usd: Decimal::from(25_000),
+            market_spread_cents: Decimal::from(2),
+            end_at: Some(now + Duration::days(30)),
+            ambiguity_level: "low".to_string(),
+            market_synced_at: Some(now),
+            tokens: vec![
+                RewardToken {
+                    token_id: "yes_candidate".to_string(),
+                    outcome: "YES".to_string(),
+                    price: Some(Decimal::new(49, 2)),
+                },
+                RewardToken {
+                    token_id: "no_candidate".to_string(),
+                    outcome: "NO".to_string(),
+                    price: Some(Decimal::new(51, 2)),
+                },
+            ],
+            active: true,
+            updated_at: now,
+        }
+    }
+
     #[tokio::test]
     async fn stale_running_reward_command_is_reclaimed() {
         let store = InMemoryRewardBotStore::new();
@@ -205,5 +239,36 @@ mod rewards_tests {
                 .available_usd,
             Decimal::from(80)
         );
+    }
+
+
+    #[tokio::test]
+    async fn in_memory_candidate_filter_matches_binary_midpoint_and_budget_rules() {
+        let store = InMemoryRewardBotStore::new();
+        let filter = RewardBotConfig::default().candidate_filter();
+        let valid = candidate_market();
+        let mut invalid_outcome = valid.clone();
+        invalid_outcome.condition_id = "invalid_outcome".to_string();
+        invalid_outcome.tokens[1].outcome = "MAYBE".to_string();
+        let mut invalid_midpoint = valid.clone();
+        invalid_midpoint.condition_id = "invalid_midpoint".to_string();
+        invalid_midpoint.tokens[0].price = Some(Decimal::new(1, 2));
+        invalid_midpoint.tokens[1].price = Some(Decimal::new(99, 2));
+        let mut invalid_budget = valid.clone();
+        invalid_budget.condition_id = "invalid_budget".to_string();
+        invalid_budget.rewards_min_size = filter.per_market_usd + Decimal::ONE;
+
+        store
+            .upsert_markets(&[valid.clone(), invalid_outcome, invalid_midpoint, invalid_budget])
+            .await
+            .expect("seed candidate markets");
+
+        let candidates = store
+            .list_candidate_markets(&filter, 100)
+            .await
+            .expect("list candidates");
+
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].condition_id, valid.condition_id);
     }
 }

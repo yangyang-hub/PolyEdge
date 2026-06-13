@@ -15,6 +15,8 @@ export type MarketDto = ResourceVersion & {
   best_ask: string;
   mid_price: string;
   volume_24h: string;
+  liquidity_usd: string;
+  end_at?: string | null;
   ambiguity_level: AmbiguityLevel;
   tradability_status: TradabilityStatus;
   resolution_source: string;

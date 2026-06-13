@@ -23,6 +23,8 @@ async fn market_event_ingest_fixture_bundle(
                   best_ask,
                   mid_price,
                   volume_24h,
+                  liquidity_usd,
+                  end_at,
                   ambiguity_level,
                   tradability_status,
                   polymarket_condition_id,
@@ -32,7 +34,7 @@ async fn market_event_ingest_fixture_bundle(
                   version,
                   trace_id
                 )
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
                 ON CONFLICT (id) DO UPDATE
                 SET
                   question = EXCLUDED.question,
@@ -42,6 +44,9 @@ async fn market_event_ingest_fixture_bundle(
                   best_ask = EXCLUDED.best_ask,
                   mid_price = EXCLUDED.mid_price,
                   volume_24h = EXCLUDED.volume_24h,
+                  liquidity_usd = EXCLUDED.liquidity_usd,
+                  end_at = EXCLUDED.end_at,
+                  synced_at = now(),
                   ambiguity_level = EXCLUDED.ambiguity_level,
                   tradability_status = EXCLUDED.tradability_status,
                   polymarket_condition_id = EXCLUDED.polymarket_condition_id,
@@ -60,6 +65,8 @@ async fn market_event_ingest_fixture_bundle(
             .bind(market.best_ask.value())
             .bind(market.mid_price.value())
             .bind(market.volume_24h.value())
+            .bind(market.liquidity_usd.value())
+            .bind(market.end_at)
             .bind(market.ambiguity_level.as_str())
             .bind(market.tradability_status.as_str())
             .bind(&market.polymarket_condition_id)

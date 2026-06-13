@@ -1,6 +1,6 @@
 # Orderbook App（市场同步与盘口服务）
 
-最后更新：2026-06-06
+最后更新：2026-06-12
 
 ## 概述
 
@@ -11,7 +11,7 @@
 | 文件 | 职责 |
 |---|---|
 | `apps/orderbook/src/main.rs` | 服务入口：先 bind HTTP，再启动市场同步和可重启盘口流后台任务 |
-| `apps/orderbook/src/market_sync.rs` | Gamma markets + CLOB reward markets → Postgres |
+| `apps/orderbook/src/market_sync.rs` | Gamma markets（含 liquidity/end time）+ CLOB reward markets → Postgres |
 | `apps/orderbook/src/stream.rs` | 聚合 registry token，消费 CLOB `book` + `price_change` WS，并周期性全量 poll 注册 token 做 reconcile |
 | `apps/orderbook/src/http_api.rs` | 盘口读取、批量读取、stats、token 注册/注销和内部 ingest HTTP API |
 | `crates/infrastructure/src/stores/orderbook_cache.rs` | `InMemoryOrderbookCache`：TTL、最优档排序、深度裁剪 |
@@ -70,6 +70,7 @@ Worker register sources
 - 市场同步、registry、WS `book` + `price_change`、全注册 token 周期 poll reconcile、HTTP 读取和内部写认证已实现；poll 可修复 fresh cache 中未被察觉的 WS 增量丢失。
 - poll 盘口保留 CLOB 返回的服务端毫秒时间戳，不再用 HTTP 响应完成时间伪造新鲜度；batch HTTP 读取通过一次 cache 批量读锁返回。
 - Gamma 与 rewards 目录同步使用 `tokio::join!` 并发执行并独立处理结果；rewards 分页、详情补全后仍缺 token 或空目录异常时保留上一版 rewards catalog，不执行破坏性全量替换。
+- Gamma market upsert 保存 `liquidity_usd`、`end_at` 并在每次成功同步时刷新本地 `synced_at`；rewards 候选使用该本地同步时间判断目录新鲜度，不依赖市场是否刚好发生上游业务更新。
 - 盘口只保存在单个 orderbook 进程内；服务重启会丢失缓存，横向多实例之间也不会共享缓存或 registry。
 - 读接口和 `/healthz` 当前不鉴权，应依赖内网边界限制访问。
 - 市场同步失败不会使 HTTP 健康检查失败；需要通过日志和数据新鲜度单独监控外部依赖。

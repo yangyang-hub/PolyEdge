@@ -1,6 +1,6 @@
 "use client";
 
-import { startTransition, useMemo, useState } from "react";
+import { startTransition, useMemo, useRef, useState } from "react";
 import { Activity, CircleDollarSign, ShieldCheck } from "lucide-react";
 
 import { OperationFeedbackBanner } from "@/components/shared/operation-feedback-banner";
@@ -43,6 +43,7 @@ export function RewardsWorkbench({ initialSnapshot }: { initialSnapshot: RewardB
   const [feedback, setFeedback] = useState<RewardBotActionResult | null>(null);
   const [pending, setPending] = useState(false);
   const [filtering, setFiltering] = useState(false);
+  const refetchSequence = useRef(0);
 
   const [plansSearch, setPlansSearch] = useState("");
   const [plansEligible, setPlansEligible] = useState<PlansEligibilityFilter>("eligible");
@@ -99,16 +100,31 @@ export function RewardsWorkbench({ initialSnapshot }: { initialSnapshot: RewardB
   }
 
   function refetchWithFilters(overrides?: Parameters<typeof buildQuery>[0]) {
+    const sequence = refetchSequence.current + 1;
+    refetchSequence.current = sequence;
     const requestedOrdersPage = overrides?.page ?? ordersPage;
     const requestedPlansPage = overrides?.plansPage ?? plansPage;
     setFiltering(true);
     void readRewardBotSnapshot(buildQuery(overrides))
       .then((response) => {
+        if (sequence !== refetchSequence.current) return;
         setSnapshot(response.data);
         setOrdersPage(response.data.orders_page?.page ?? requestedOrdersPage);
         setPlansPage(response.data.plans_page?.page ?? requestedPlansPage);
       })
-      .finally(() => setFiltering(false));
+      .catch((error: unknown) => {
+        if (sequence !== refetchSequence.current) return;
+        setFeedback({
+          ok: false,
+          message:
+            error instanceof Error
+              ? error.message
+              : dictionary.rewards.snapshotRefreshFailed,
+        });
+      })
+      .finally(() => {
+        if (sequence === refetchSequence.current) setFiltering(false);
+      });
   }
 
   function applyResult(result: RewardBotActionResult) {
@@ -150,7 +166,6 @@ export function RewardsWorkbench({ initialSnapshot }: { initialSnapshot: RewardB
       <section className="grid gap-4 xl:grid-cols-[1.15fr_0.85fr]">
         <ModeStatusPanel snapshot={snapshot} eventCounts={eventCounts} />
         <CommandPanel
-          config={draft}
           pending={pending}
           onRun={() => runAction(runRewardBotOnceAction)}
           onCancel={() => runAction(cancelRewardBotOrdersAction)}

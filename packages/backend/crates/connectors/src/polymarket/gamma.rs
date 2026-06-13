@@ -20,6 +20,8 @@ pub struct PolymarketGammaMarket {
     pub best_ask: Probability,
     pub mid_price: Probability,
     pub volume_24h: UsdAmount,
+    pub liquidity_usd: UsdAmount,
+    pub end_at: Option<OffsetDateTime>,
     pub ambiguity_level: AmbiguityLevel,
     pub tradability_status: TradabilityStatus,
     pub resolution_source: String,
@@ -77,6 +79,10 @@ struct RawGammaMarket {
     volume_24h: Option<JsonValue>,
     #[serde(default)]
     volume: Option<JsonValue>,
+    #[serde(rename = "liquidityClob", default)]
+    liquidity_clob: Option<JsonValue>,
+    #[serde(default)]
+    liquidity: Option<JsonValue>,
     #[serde(rename = "updatedAt")]
     updated_at: Option<String>,
     #[serde(rename = "endDate")]
@@ -305,7 +311,8 @@ fn map_gamma_market(raw: RawGammaMarket) -> Result<Option<PolymarketGammaMarket>
     if token_ids.len() < 2 {
         return Ok(None);
     };
-    let resolution_source = resolution_source(&raw);
+    let explicit_resolution_source = explicit_resolution_source(&raw);
+    let resolution_source = resolution_source(&raw, explicit_resolution_source.as_deref());
     let edge_case_notes = edge_case_notes(&raw, &condition_id);
 
     let outcome_prices = parse_decimal_array(raw.outcome_prices.clone());
@@ -329,6 +336,13 @@ fn map_gamma_market(raw: RawGammaMarket) -> Result<Option<PolymarketGammaMarket>
             .unwrap_or(Decimal::ZERO)
             .max(Decimal::ZERO),
     )?;
+    let liquidity_usd = UsdAmount::new(
+        parse_decimal_value(raw.liquidity_clob.clone())
+            .or_else(|| parse_decimal_value(raw.liquidity.clone()))
+            .unwrap_or(Decimal::ZERO)
+            .max(Decimal::ZERO),
+    )?;
+    let end_at = parse_rfc3339(raw.end_date.as_deref());
     let updated_at =
         parse_rfc3339(raw.updated_at.as_deref()).unwrap_or_else(OffsetDateTime::now_utc);
     let status = if raw.closed {
@@ -343,10 +357,12 @@ fn map_gamma_market(raw: RawGammaMarket) -> Result<Option<PolymarketGammaMarket>
     } else {
         TradabilityStatus::ObserveOnly
     };
-    let ambiguity_level = if resolution_source.trim().is_empty() {
+    let ambiguity_level = if explicit_resolution_source.is_some() {
+        AmbiguityLevel::Low
+    } else if normalize_optional_text(raw.description.clone()).is_some() {
         AmbiguityLevel::Medium
     } else {
-        AmbiguityLevel::Low
+        AmbiguityLevel::High
     };
     let version = updated_at.unix_timestamp().max(1);
 
@@ -361,6 +377,8 @@ fn map_gamma_market(raw: RawGammaMarket) -> Result<Option<PolymarketGammaMarket>
         best_ask,
         mid_price,
         volume_24h,
+        liquidity_usd,
+        end_at,
         ambiguity_level,
         tradability_status,
         resolution_source,
@@ -441,13 +459,18 @@ fn normalize_optional_text(value: Option<String>) -> Option<String> {
     }
 }
 
-fn resolution_source(raw: &RawGammaMarket) -> String {
+fn explicit_resolution_source(raw: &RawGammaMarket) -> Option<String> {
     normalize_optional_text(raw.resolution_source.clone())
         .or_else(|| {
             raw.events
                 .iter()
                 .find_map(|event| normalize_optional_text(event.resolution_source.clone()))
         })
+}
+
+fn resolution_source(raw: &RawGammaMarket, explicit: Option<&str>) -> String {
+    explicit
+        .map(str::to_string)
         .or_else(|| normalize_optional_text(raw.description.clone()))
         .unwrap_or_else(|| "Polymarket Gamma market metadata.".to_string())
 }

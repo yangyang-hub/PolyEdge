@@ -19,6 +19,8 @@ async fn market_event_ingest_fixture_bundle(
                         best_ask: market.best_ask,
                         mid_price: market.mid_price,
                         volume_24h: market.volume_24h,
+                        liquidity_usd: market.liquidity_usd,
+                        end_at: market.end_at,
                         ambiguity_level: market.ambiguity_level,
                         tradability_status: market.tradability_status,
                         resolution_source: market.resolution_source.clone(),

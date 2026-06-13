@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowDown, ArrowUp, Search } from "lucide-react";
 
 import { StatusPill } from "@/components/shared/status-pill";
@@ -89,6 +89,49 @@ function FilterBar({
         ))}
       </div>
     </div>
+  );
+}
+
+function DebouncedFilterBar({
+  initialSearch,
+  onSearchChange,
+  placeholder,
+  tabs,
+  activeTab,
+  onTabChange,
+}: {
+  initialSearch: string;
+  onSearchChange: (value: string) => void;
+  placeholder: string;
+  tabs: { key: string; label: string; count?: number }[];
+  activeTab: string;
+  onTabChange: (key: string) => void;
+}) {
+  const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const [search, setSearch] = useState(initialSearch);
+
+  useEffect(() => () => clearTimeout(debounceRef.current), []);
+
+  const handleSearchChange = useCallback((value: string) => {
+    setSearch(value);
+    clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => onSearchChange(value), 300);
+  }, [onSearchChange]);
+  const handleSearchCommit = useCallback(() => {
+    clearTimeout(debounceRef.current);
+    onSearchChange(search);
+  }, [onSearchChange, search]);
+
+  return (
+    <FilterBar
+      search={search}
+      onSearchChange={handleSearchChange}
+      onSearchCommit={handleSearchCommit}
+      placeholder={placeholder}
+      tabs={tabs}
+      activeTab={activeTab}
+      onTabChange={onTabChange}
+    />
   );
 }
 
@@ -198,17 +241,6 @@ export function QuotePlansTable({
   plans, plansPage, plansTotal, eligibleTotal, search, onSearchChange, eligibility, onEligibilityChange,
   sortBy, sortOrder, onSortChange, onPageChange, filtering,
 }: QuotePlansTableProps) {
-  const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
-  const [localSearch, setLocalSearch] = useState(search);
-
-  useEffect(() => { setLocalSearch(search); }, [search]);
-
-  const handleSearchChange = useCallback((v: string) => {
-    setLocalSearch(v);
-    clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => onSearchChange(v), 300);
-  }, [onSearchChange]);
-
   // Server-side pagination: plans are already filtered/sorted/paged by the API.
   const tabs = [
     { key: "all", label: dictionary.rewards.filterAll, count: plansTotal },
@@ -239,10 +271,10 @@ export function QuotePlansTable({
 
   return (
     <div className="space-y-3">
-      <FilterBar
-        search={localSearch}
-        onSearchChange={handleSearchChange}
-        onSearchCommit={() => onSearchChange(localSearch)}
+      <DebouncedFilterBar
+        key={search}
+        initialSearch={search}
+        onSearchChange={onSearchChange}
         placeholder={dictionary.rewards.searchPlaceholder}
         tabs={tabs}
         activeTab={eligibility}
@@ -330,17 +362,6 @@ export function OrdersTable({
   orders, search, onSearchChange, status, onStatusChange,
   sortBy, sortOrder, onSortChange, page, onPageChange, filtering,
 }: OrdersTableProps) {
-  const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
-  const [localSearch, setLocalSearch] = useState(search);
-
-  useEffect(() => { setLocalSearch(search); }, [search]);
-
-  const handleSearchChange = useCallback((v: string) => {
-    setLocalSearch(v);
-    clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => onSearchChange(v), 300);
-  }, [onSearchChange]);
-
   const tabs = [
     { key: "all", label: dictionary.rewards.filterAll },
     { key: "open", label: dictionary.rewards.filterOpen },
@@ -372,10 +393,10 @@ export function OrdersTable({
 
   return (
     <div className="space-y-3">
-      <FilterBar
-        search={localSearch}
-        onSearchChange={handleSearchChange}
-        onSearchCommit={() => onSearchChange(localSearch)}
+      <DebouncedFilterBar
+        key={search}
+        initialSearch={search}
+        onSearchChange={onSearchChange}
         placeholder={dictionary.rewards.searchOrdersPlaceholder}
         tabs={tabs}
         activeTab={status}

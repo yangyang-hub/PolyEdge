@@ -17,9 +17,25 @@ fn apply_reward_config_value(config: &mut RewardBotConfig, key: &str, value: &st
         "per_market_usd" => config.per_market_usd = parse_decimal_config(key, value)?,
         "quote_size_usd" => config.quote_size_usd = parse_decimal_config(key, value)?,
         "min_daily_reward" => config.min_daily_reward = parse_decimal_config(key, value)?,
+        "min_market_liquidity_usd" => {
+            config.min_market_liquidity_usd = parse_decimal_config(key, value)?;
+        }
+        "min_market_volume_24h_usd" => {
+            config.min_market_volume_24h_usd = parse_decimal_config(key, value)?;
+        }
+        "min_hours_to_end" => config.min_hours_to_end = parse_u64_config(key, value)?,
+        "max_market_spread_cents" => {
+            config.max_market_spread_cents = parse_decimal_config(key, value)?;
+        }
+        "max_market_data_age_minutes" => {
+            config.max_market_data_age_minutes = parse_u64_config(key, value)?;
+        }
         "min_market_score" => config.min_market_score = parse_decimal_config(key, value)?,
         "max_spread_cents" => config.max_spread_cents = parse_decimal_config(key, value)?,
-        "quote_edge_cents" => config.quote_edge_cents = parse_decimal_config(key, value)?,
+        "quote_edge_cents" => {
+            // Legacy key: midpoint-offset quoting was replaced by bid-rank quoting.
+        }
+        "quote_bid_rank" => config.quote_bid_rank = parse_u16_config(key, value)?,
         "safety_margin_cents" => config.safety_margin_cents = parse_decimal_config(key, value)?,
         "min_midpoint" => config.min_midpoint = parse_decimal_config(key, value)?,
         "max_midpoint" => config.max_midpoint = parse_decimal_config(key, value)?,
@@ -32,14 +48,10 @@ fn apply_reward_config_value(config: &mut RewardBotConfig, key: &str, value: &st
         "exit_markup_cents" => config.exit_markup_cents = parse_decimal_config(key, value)?,
         "cancel_on_fill" => config.cancel_on_fill = parse_bool_config(key, value)?,
         "account_capital_usd" => config.account_capital_usd = parse_decimal_config(key, value)?,
-        "reward_competition_factor" => {
-            config.reward_competition_factor = parse_decimal_config(key, value)?;
+        "reward_competition_factor" | "single_sided_divisor_c" | "fill_rate_per_tick"
+        | "max_fill_ratio" => {
+            // Legacy validation/simulation settings; rewards execution is live-only.
         }
-        "single_sided_divisor_c" => {
-            config.single_sided_divisor_c = parse_decimal_config(key, value)?;
-        }
-        "fill_rate_per_tick" => config.fill_rate_per_tick = parse_decimal_config(key, value)?,
-        "max_fill_ratio" => config.max_fill_ratio = parse_decimal_config(key, value)?,
         "requote_drift_cents" => config.requote_drift_cents = parse_decimal_config(key, value)?,
         "post_fill_strategy" => config.post_fill_strategy = PostFillStrategy::from_str(value)?,
         "min_depth_usd" => config.min_depth_usd = parse_decimal_config(key, value)?,
@@ -55,7 +67,10 @@ fn apply_reward_config_value(config: &mut RewardBotConfig, key: &str, value: &st
         "requote_interval_sec" => config.requote_interval_sec = parse_u64_config(key, value)?,
         "requote_jitter_sec" => config.requote_jitter_sec = parse_u64_config(key, value)?,
         "reconcile_interval_sec" => config.reconcile_interval_sec = parse_u64_config(key, value)?,
-        "auto_cancel_stale_minutes" => config.auto_cancel_stale_minutes = parse_u64_config(key, value)?,
+        "auto_cancel_stale_minutes" => {
+            // Legacy unsafe setting: unresolved external orders are never
+            // force-cancelled from local state without exchange confirmation.
+        }
         _ => {}
     }
     Ok(())
@@ -70,9 +85,26 @@ fn reward_config_entries(config: &RewardBotConfig) -> Vec<(&'static str, String)
         ("per_market_usd", config.per_market_usd.to_string()),
         ("quote_size_usd", config.quote_size_usd.to_string()),
         ("min_daily_reward", config.min_daily_reward.to_string()),
+        (
+            "min_market_liquidity_usd",
+            config.min_market_liquidity_usd.to_string(),
+        ),
+        (
+            "min_market_volume_24h_usd",
+            config.min_market_volume_24h_usd.to_string(),
+        ),
+        ("min_hours_to_end", config.min_hours_to_end.to_string()),
+        (
+            "max_market_spread_cents",
+            config.max_market_spread_cents.to_string(),
+        ),
+        (
+            "max_market_data_age_minutes",
+            config.max_market_data_age_minutes.to_string(),
+        ),
         ("min_market_score", config.min_market_score.to_string()),
         ("max_spread_cents", config.max_spread_cents.to_string()),
-        ("quote_edge_cents", config.quote_edge_cents.to_string()),
+        ("quote_bid_rank", config.quote_bid_rank.to_string()),
         (
             "safety_margin_cents",
             config.safety_margin_cents.to_string(),
@@ -95,16 +127,6 @@ fn reward_config_entries(config: &RewardBotConfig) -> Vec<(&'static str, String)
             "account_capital_usd",
             config.account_capital_usd.to_string(),
         ),
-        (
-            "reward_competition_factor",
-            config.reward_competition_factor.to_string(),
-        ),
-        (
-            "single_sided_divisor_c",
-            config.single_sided_divisor_c.to_string(),
-        ),
-        ("fill_rate_per_tick", config.fill_rate_per_tick.to_string()),
-        ("max_fill_ratio", config.max_fill_ratio.to_string()),
         (
             "requote_drift_cents",
             config.requote_drift_cents.to_string(),
@@ -138,10 +160,6 @@ fn reward_config_entries(config: &RewardBotConfig) -> Vec<(&'static str, String)
         (
             "reconcile_interval_sec",
             config.reconcile_interval_sec.to_string(),
-        ),
-        (
-            "auto_cancel_stale_minutes",
-            config.auto_cancel_stale_minutes.to_string(),
         ),
     ]
 }
@@ -322,8 +340,8 @@ fn reward_market_from_row(row: &sqlx::postgres::PgRow) -> Result<RewardMarket> {
                 if token.price.is_some() {
                     continue;
                 }
-                let is_yes = token.outcome.to_lowercase().contains("yes");
-                let is_no = token.outcome.to_lowercase().contains("no");
+                let is_yes = token.outcome.trim().eq_ignore_ascii_case("yes");
+                let is_no = token.outcome.trim().eq_ignore_ascii_case("no");
                 if is_yes {
                     token.price = Some(midpoint);
                 } else if is_no {
@@ -347,6 +365,18 @@ fn reward_market_from_row(row: &sqlx::postgres::PgRow) -> Result<RewardMarket> {
             .map_err(postgres_decode_error)?,
         total_daily_rate: row
             .try_get("total_daily_rate")
+            .map_err(postgres_decode_error)?,
+        liquidity_usd: row.try_get("liquidity_usd").map_err(postgres_decode_error)?,
+        volume_24h_usd: row.try_get("volume_24h_usd").map_err(postgres_decode_error)?,
+        market_spread_cents: row
+            .try_get("market_spread_cents")
+            .map_err(postgres_decode_error)?,
+        end_at: row.try_get("end_at").map_err(postgres_decode_error)?,
+        ambiguity_level: row
+            .try_get("ambiguity_level")
+            .map_err(postgres_decode_error)?,
+        market_synced_at: row
+            .try_get("market_synced_at")
             .map_err(postgres_decode_error)?,
         tokens,
         active: row.try_get("active").map_err(postgres_decode_error)?,

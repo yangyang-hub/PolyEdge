@@ -5,6 +5,7 @@ use polyedge_connectors::{
 };
 use polyedge_domain::{AppError, Result};
 use polyedge_infrastructure::AppState;
+use rust_decimal::Decimal;
 use tracing::{info, warn};
 
 pub struct MarketSyncReport {
@@ -94,6 +95,8 @@ fn gamma_market_to_view(market: PolymarketGammaMarket) -> MarketView {
         best_ask: market.best_ask,
         mid_price: market.mid_price,
         volume_24h: market.volume_24h,
+        liquidity_usd: market.liquidity_usd,
+        end_at: market.end_at,
         ambiguity_level: market.ambiguity_level,
         tradability_status: market.tradability_status,
         resolution_source: market.resolution_source,
@@ -116,6 +119,12 @@ fn reward_market_from_connector(market: PolymarketRewardMarket) -> RewardMarket 
         rewards_max_spread: market.rewards_max_spread,
         rewards_min_size: market.rewards_min_size,
         total_daily_rate: market.total_daily_rate,
+        liquidity_usd: Decimal::ZERO,
+        volume_24h_usd: Decimal::ZERO,
+        market_spread_cents: Decimal::ZERO,
+        end_at: None,
+        ambiguity_level: "unknown".to_string(),
+        market_synced_at: None,
         tokens: market
             .tokens
             .into_iter()

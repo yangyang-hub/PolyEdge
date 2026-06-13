@@ -13,7 +13,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import type { RewardBotConfigDto, RewardBotSnapshotDto } from "@/lib/contracts/dto";
+import type { RewardBotSnapshotDto } from "@/lib/contracts/dto";
 import {
   formatFixed,
   formatOptionalClock,
@@ -38,7 +38,10 @@ export function ModeStatusPanel({
   eventCounts: RewardEventCounts;
 }) {
   const eligibleRatio = ratio(snapshot.status.eligible_markets, snapshot.status.plans_total);
-  const availableRatio = ratio(snapshot.account.available_usd, snapshot.account.capital_usd);
+  const availableRatio = ratio(
+    snapshot.account.available_usd,
+    snapshot.config.account_capital_usd,
+  );
 
   return (
     <Card>
@@ -113,14 +116,12 @@ export function ModeStatusPanel({
 }
 
 export function CommandPanel({
-  config,
   pending,
   onRun,
   onCancel,
   onReset,
   onSave,
 }: {
-  config: RewardBotConfigDto;
   pending: boolean;
   onRun: () => void;
   onCancel: () => void;
@@ -186,7 +187,7 @@ export function SummaryStrip({
         />
         <SummaryMetric
           label={dictionary.rewards.accountCapital}
-          value={formatUsdFixed(snapshot.account.capital_usd)}
+          value={formatUsdFixed(snapshot.config.account_capital_usd)}
           hint={dictionary.rewards.accountSummary}
         />
         <SummaryMetric

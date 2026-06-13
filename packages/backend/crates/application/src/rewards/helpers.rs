@@ -28,19 +28,50 @@ pub fn new_risk_event(
 }
 
 fn normalize_reward_spread_cents(raw: Decimal) -> Decimal {
-    if raw <= Decimal::ZERO {
-        return Decimal::ZERO;
-    }
-
-    if raw > decimal("10") {
-        raw / decimal("100")
-    } else {
-        raw
-    }
+    raw.max(Decimal::ZERO)
 }
 
 fn floor_to_tick(value: Decimal, tick: Decimal) -> Decimal {
     (value / tick).floor() * tick
+}
+
+fn floor_reward_size_for_cost_precision(price: Decimal, size: Decimal) -> Decimal {
+    reward_size_for_cost_precision(price, size, false)
+}
+
+fn ceil_reward_size_for_cost_precision(price: Decimal, size: Decimal) -> Decimal {
+    reward_size_for_cost_precision(price, size, true)
+}
+
+fn reward_size_for_cost_precision(price: Decimal, size: Decimal, round_up: bool) -> Decimal {
+    let price_cents = (price * decimal("100")).normalize().mantissa().unsigned_abs() as u64;
+    if price_cents == 0 {
+        return Decimal::ZERO;
+    }
+    let step_hundredths = 100 / reward_greatest_common_divisor(price_cents, 100);
+    let raw_hundredths = if round_up {
+        (size * decimal("100")).ceil()
+    } else {
+        (size * decimal("100")).floor()
+    }
+    .normalize()
+    .mantissa()
+    .max(0) as u64;
+    let adjusted_hundredths = if round_up {
+        raw_hundredths.div_ceil(step_hundredths) * step_hundredths
+    } else {
+        (raw_hundredths / step_hundredths) * step_hundredths
+    };
+    Decimal::new(adjusted_hundredths as i64, 2)
+}
+
+fn reward_greatest_common_divisor(mut left: u64, mut right: u64) -> u64 {
+    while right != 0 {
+        let remainder = left % right;
+        left = right;
+        right = remainder;
+    }
+    left.max(1)
 }
 
 fn normalize_account_id(value: &str) -> String {
@@ -62,6 +93,19 @@ fn clamp_decimal(value: Decimal, min: Decimal, max: Decimal) -> Decimal {
 
 fn decimal(value: &str) -> Decimal {
     Decimal::from_str_exact(value).expect("static reward configuration default must be valid")
+}
+
+fn reward_order_has_active_reconciliation_error(order: &ManagedRewardOrder) -> bool {
+    order.status.is_open_like()
+        && [
+            "manual reconciliation required",
+            "live submission result unknown",
+            "awaiting final reconciliation",
+            "cancel result unknown",
+            "cancellation must be retried",
+        ]
+        .iter()
+        .any(|marker| order.reason.contains(marker))
 }
 
 fn decimal_from_f64(value: f64) -> Decimal {

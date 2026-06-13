@@ -1,5 +1,6 @@
 use super::*;
 
+include!("market_event/market_queries.rs");
 include!("market_event/queries.rs");
 include!("market_event/signals.rs");
 include!("market_event/execution_submit.rs");

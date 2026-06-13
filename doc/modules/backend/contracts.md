@@ -1,6 +1,6 @@
 # contracts（HTTP API DTO 层）
 
-最后更新：2026-06-04
+最后更新：2026-06-12
 
 ## 概述
 
@@ -35,6 +35,7 @@
 - 查询类型使用 `#[serde(skip_serializing_if = "Option::is_none")]`
 - 列表查询支持分页（limit/offset/cursor）
 - `RewardBotSnapshotQuery` 支持订单分页参数：`orders_page`、`orders_page_size`，并保留订单搜索/状态/排序参数
+- `MarketData` 包含 `liquidity_usd` 和 `end_at`，与 application `MarketView` 及前端 `MarketDto` 保持一致
 - 响应使用 `ApiResponse<T>` 信封：`{ data: T, meta: ApiMeta }`
 - 列表响应使用 `ApiListResponse<T>`：`{ data: Vec<T>, meta: ApiMeta, total_count: i64 }`
 
@@ -49,6 +50,7 @@
 - 覆盖 markets、events、signals、orders、trades、positions、risk、arbitrage、rewards、copytrade、wallet-analysis、news、system
 - Rewards snapshot 查询契约包含订单后端分页字段，响应分页元数据由 application 的 `RewardBotSnapshot.orders_page` 序列化输出
 - Rewards snapshot 的 `orders` 与 `orders_page` 都描述本地 managed-order 查询；外部账户全量开放订单不属于当前响应契约
+- Rewards config DTO 公开市场质量门槛和 `quote_bid_rank`，不再公开旧报价偏移、模拟填单或 stale force-cancel 配置
 
 ## 修改检查清单
 

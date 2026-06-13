@@ -141,9 +141,14 @@ const rewardConfigSchema = z.object({
   per_market_usd: decimalNumber.min(0),
   quote_size_usd: decimalNumber.min(0),
   min_daily_reward: decimalNumber.min(0),
+  min_market_liquidity_usd: decimalNumber.min(0).max(1_000_000_000),
+  min_market_volume_24h_usd: decimalNumber.min(0).max(1_000_000_000),
+  min_hours_to_end: z.coerce.number().int().min(0).max(87_600),
+  max_market_spread_cents: decimalNumber.min(0.1).max(100),
+  max_market_data_age_minutes: z.coerce.number().int().min(1).max(1440),
   min_market_score: decimalNumber.min(0).max(100),
   max_spread_cents: decimalNumber.min(0.1).max(99),
-  quote_edge_cents: decimalNumber.min(0).max(50),
+  quote_bid_rank: z.coerce.number().int().min(1).max(3),
   safety_margin_cents: decimalNumber.min(0).max(20),
   min_midpoint: decimalNumber.min(0).max(0.49),
   max_midpoint: decimalNumber.min(0.51).max(0.99),
@@ -154,10 +159,6 @@ const rewardConfigSchema = z.object({
   exit_markup_cents: decimalNumber.min(0).max(50),
   cancel_on_fill: z.boolean(),
   account_capital_usd: decimalNumber.min(1),
-  reward_competition_factor: decimalNumber.min(1).max(10_000),
-  single_sided_divisor_c: decimalNumber.min(1).max(100),
-  fill_rate_per_tick: decimalNumber.min(0).max(1),
-  max_fill_ratio: decimalNumber.min(0.01).max(1),
   requote_drift_cents: decimalNumber.min(0).max(99),
   post_fill_strategy: z.enum([
     "exit_at_markup",
@@ -176,10 +177,18 @@ const rewardConfigSchema = z.object({
   requote_interval_sec: z.coerce.number().int().min(0).max(3600),
   requote_jitter_sec: z.coerce.number().int().min(0).max(600),
   reconcile_interval_sec: z.coerce.number().int().min(1).max(60),
-}).refine((value) => value.max_midpoint > value.min_midpoint, {
-  message: "Max midpoint must be greater than min midpoint.",
-  path: ["max_midpoint"],
-});
+})
+  .refine((value) => value.max_midpoint > value.min_midpoint, {
+    message: "Max midpoint must be greater than min midpoint.",
+    path: ["max_midpoint"],
+  })
+  .refine(
+    (value) => value.cancel_bid_rank === 0 || value.cancel_bid_rank < value.quote_bid_rank,
+    {
+      message: "Cancel bid rank must be disabled or deeper than the quote rank.",
+      path: ["cancel_bid_rank"],
+    },
+  );
 
 const runtimeConfigSchema = z.object({
   values: z.record(z.string().min(1), z.string().max(20_000)),

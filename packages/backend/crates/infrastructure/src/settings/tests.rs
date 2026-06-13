@@ -21,13 +21,13 @@ mod tests {
         assert_eq!(settings.news.request_timeout_secs, 10);
         assert_eq!(settings.news.max_items_per_source, 50);
         assert!(settings.news.sources.is_empty());
-        assert!(settings.rewards.enabled);
+        assert!(!settings.rewards.enabled);
         assert_eq!(settings.rewards.poll_interval_secs, 60);
         assert!(settings.worker.poll_news);
         assert!(settings.worker.promote_news_events);
         assert!(settings.worker.poll_arbitrage_radar);
         assert!(settings.worker.analyze_arbitrage_opportunities);
-        assert!(settings.worker.poll_reward_bot);
+        assert!(!settings.worker.poll_reward_bot);
         assert!(settings.worker.drain_execution_queue);
         assert!(settings.worker.poll_paper_order_statuses);
         assert!(settings.worker.reconcile_paper_fills);

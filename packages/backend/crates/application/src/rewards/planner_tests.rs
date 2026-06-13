@@ -10,6 +10,12 @@ fn test_market(rewards_min_size: Decimal) -> RewardMarket {
         rewards_max_spread: decimal("8"),
         rewards_min_size,
         total_daily_rate: decimal("50"),
+        liquidity_usd: decimal("10000"),
+        volume_24h_usd: decimal("25000"),
+        market_spread_cents: decimal("2"),
+        end_at: Some(OffsetDateTime::now_utc() + TimeDuration::days(30)),
+        ambiguity_level: "low".to_string(),
+        market_synced_at: Some(OffsetDateTime::now_utc()),
         tokens: vec![
             RewardToken {
                 token_id: "yes_budget".to_string(),
@@ -99,4 +105,259 @@ fn combined_market_budget_rejects_unaffordable_minimum_sizes() {
         "per-market budget cannot satisfy rewards minimum size"
     );
     assert!(plan.legs.is_empty());
+}
+
+#[test]
+fn quote_plan_accounts_for_clob_cost_precision_before_minimum_size_check() {
+    let config = RewardBotConfig {
+        per_market_usd: decimal("20.50"),
+        quote_size_usd: decimal("1"),
+        min_market_score: Decimal::ZERO,
+        ..RewardBotConfig::default()
+    };
+
+    let plan = build_reward_quote_plan(&test_market(decimal("20.30")), &test_books(), &config);
+
+    assert!(!plan.eligible);
+    assert_eq!(
+        plan.reason,
+        "per-market budget cannot satisfy rewards minimum size"
+    );
+}
+
+#[test]
+fn quote_plan_sizes_already_match_clob_cost_precision() {
+    let config = RewardBotConfig {
+        per_market_usd: decimal("25"),
+        quote_size_usd: decimal("1"),
+        min_market_score: Decimal::ZERO,
+        ..RewardBotConfig::default()
+    };
+
+    let plan = build_reward_quote_plan(&test_market(decimal("20.30")), &test_books(), &config);
+
+    assert!(plan.eligible, "{}", plan.reason);
+    assert_eq!(plan.legs[0].size, decimal("21"));
+    assert_eq!(plan.legs[1].size, decimal("20.5"));
+    assert!(plan.legs.iter().all(|leg| leg.size >= decimal("20.30")));
+}
+
+#[test]
+fn quote_bid_rank_selects_requested_distinct_bid_level() {
+    let config = RewardBotConfig {
+        quote_bid_rank: 2,
+        min_market_score: Decimal::ZERO,
+        ..RewardBotConfig::default()
+    };
+    let mut books = test_books();
+    books.get_mut("yes_budget").expect("YES book").bids = vec![
+        RewardBookLevel {
+            price: decimal("0.77"),
+            size: decimal("100"),
+        },
+        RewardBookLevel {
+            price: decimal("0.77"),
+            size: decimal("50"),
+        },
+        RewardBookLevel {
+            price: decimal("0.76"),
+            size: decimal("100"),
+        },
+    ];
+    books.get_mut("no_budget").expect("NO book").bids = vec![
+        RewardBookLevel {
+            price: decimal("0.22"),
+            size: decimal("100"),
+        },
+        RewardBookLevel {
+            price: decimal("0.21"),
+            size: decimal("100"),
+        },
+    ];
+
+    let plan = build_reward_quote_plan(&test_market(decimal("5")), &books, &config);
+
+    assert!(plan.eligible, "{}", plan.reason);
+    assert_eq!(plan.legs[0].price, decimal("0.76"));
+    assert_eq!(plan.legs[1].price, decimal("0.21"));
+}
+
+#[test]
+fn quote_bid_rank_rejects_book_without_requested_depth() {
+    let config = RewardBotConfig {
+        quote_bid_rank: 3,
+        min_market_score: Decimal::ZERO,
+        ..RewardBotConfig::default()
+    };
+
+    let plan = build_reward_quote_plan(&test_market(decimal("5")), &test_books(), &config);
+
+    assert!(!plan.eligible);
+    assert_eq!(plan.reason, "YES book does not have bid-3");
+    assert!(plan.legs.is_empty());
+}
+
+#[test]
+fn quote_bid_rank_rejects_level_outside_rewards_spread() {
+    let config = RewardBotConfig {
+        quote_bid_rank: 2,
+        min_market_score: Decimal::ZERO,
+        max_spread_cents: decimal("2"),
+        ..RewardBotConfig::default()
+    };
+    let mut books = test_books();
+    books.get_mut("yes_budget").expect("YES book").bids.push(RewardBookLevel {
+        price: decimal("0.70"),
+        size: decimal("100"),
+    });
+    books.get_mut("no_budget").expect("NO book").bids.push(RewardBookLevel {
+        price: decimal("0.15"),
+        size: decimal("100"),
+    });
+
+    let plan = build_reward_quote_plan(&test_market(decimal("5")), &books, &config);
+
+    assert!(!plan.eligible);
+    assert_eq!(plan.reason, "bid-2 is outside the rewards spread limit");
+    assert!(plan.legs.is_empty());
+}
+
+#[test]
+fn quote_bid_rank_is_limited_to_supported_levels() {
+    assert_eq!(
+        RewardBotConfig {
+            quote_bid_rank: 0,
+            ..RewardBotConfig::default()
+        }
+        .normalized()
+        .quote_bid_rank,
+        1
+    );
+    assert_eq!(
+        RewardBotConfig {
+            quote_bid_rank: 9,
+            ..RewardBotConfig::default()
+        }
+        .normalized()
+        .quote_bid_rank,
+        3
+    );
+}
+
+#[test]
+fn rewards_spread_limit_is_bounded_to_probability_range() {
+    assert_eq!(
+        RewardBotConfig {
+            max_spread_cents: decimal("1000"),
+            ..RewardBotConfig::default()
+        }
+        .normalized()
+        .max_spread_cents,
+        decimal("99")
+    );
+}
+
+#[test]
+fn market_rewards_spread_is_already_expressed_in_cents() {
+    assert_eq!(normalize_reward_spread_cents(decimal("99")), decimal("99"));
+}
+
+#[test]
+fn candidate_prefilter_rejects_low_quality_or_near_expiry_markets() {
+    let config = RewardBotConfig::default();
+    let mut market = test_market(decimal("5"));
+
+    market.liquidity_usd = config.min_market_liquidity_usd - Decimal::ONE;
+    assert!(select_reward_quote_candidate_markets(&[market.clone()], &config).is_empty());
+
+    market.liquidity_usd = config.min_market_liquidity_usd;
+    market.volume_24h_usd = config.min_market_volume_24h_usd - Decimal::ONE;
+    assert!(select_reward_quote_candidate_markets(&[market.clone()], &config).is_empty());
+
+    market.volume_24h_usd = config.min_market_volume_24h_usd;
+    market.end_at = Some(
+        OffsetDateTime::now_utc()
+            + TimeDuration::hours(config.min_hours_to_end.saturating_sub(1) as i64),
+    );
+    assert!(select_reward_quote_candidate_markets(&[market.clone()], &config).is_empty());
+
+    market.end_at = Some(
+        OffsetDateTime::now_utc() + TimeDuration::hours(config.min_hours_to_end as i64 + 1),
+    );
+    market.ambiguity_level = "high".to_string();
+    assert!(select_reward_quote_candidate_markets(&[market], &config).is_empty());
+}
+
+#[test]
+fn candidate_prefilter_rejects_implausible_future_sync_time() {
+    let config = RewardBotConfig::default();
+    let mut market = test_market(decimal("5"));
+    market.market_synced_at = Some(OffsetDateTime::now_utc() + TimeDuration::minutes(6));
+
+    assert!(select_reward_quote_candidate_markets(&[market], &config).is_empty());
+}
+
+#[test]
+fn candidate_prefilter_requires_exactly_one_yes_and_one_no_token() {
+    let config = RewardBotConfig::default();
+    let mut market = test_market(decimal("5"));
+    market.tokens.push(RewardToken {
+        token_id: "extra_yes".to_string(),
+        outcome: "Yes".to_string(),
+        price: None,
+    });
+    assert!(select_reward_quote_candidate_markets(&[market.clone()], &config).is_empty());
+
+    market.tokens.pop();
+    market.tokens[1].outcome = "Maybe".to_string();
+    assert!(select_reward_quote_candidate_markets(&[market], &config).is_empty());
+}
+
+#[test]
+fn market_quality_increases_quote_plan_score() {
+    let config = RewardBotConfig::default();
+    let books = test_books();
+    let mut lower_quality = test_market(decimal("5"));
+    lower_quality.condition_id = "lower_quality".to_string();
+    lower_quality.total_daily_rate = decimal("1");
+    lower_quality.liquidity_usd = decimal("1000");
+    lower_quality.volume_24h_usd = decimal("1000");
+    lower_quality.end_at = Some(OffsetDateTime::now_utc() + TimeDuration::days(3));
+
+    let mut higher_quality = lower_quality.clone();
+    higher_quality.condition_id = "higher_quality".to_string();
+    higher_quality.total_daily_rate = decimal("25");
+    higher_quality.liquidity_usd = decimal("100000");
+    higher_quality.volume_24h_usd = decimal("500000");
+    higher_quality.end_at = Some(OffsetDateTime::now_utc() + TimeDuration::days(90));
+
+    let plans = build_reward_quote_plans(&[lower_quality, higher_quality], &books, &config);
+    let high = plans
+        .iter()
+        .find(|plan| plan.condition_id == "higher_quality")
+        .expect("higher-quality plan");
+    let low = plans
+        .iter()
+        .find(|plan| plan.condition_id == "lower_quality")
+        .expect("lower-quality plan");
+    assert!(high.score > low.score);
+}
+
+#[test]
+fn cancel_bid_rank_cannot_cancel_a_new_quote_immediately() {
+    let config = RewardBotConfig {
+        quote_bid_rank: 2,
+        cancel_bid_rank: 2,
+        ..RewardBotConfig::default()
+    }
+    .normalized();
+    assert_eq!(config.cancel_bid_rank, 1);
+
+    let best_bid_config = RewardBotConfig {
+        quote_bid_rank: 1,
+        cancel_bid_rank: 1,
+        ..RewardBotConfig::default()
+    }
+    .normalized();
+    assert_eq!(best_bid_config.cancel_bid_rank, 0);
 }

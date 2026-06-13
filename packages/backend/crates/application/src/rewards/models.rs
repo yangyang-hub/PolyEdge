@@ -229,6 +229,12 @@ pub struct RewardCandidateFilter {
     /// Per-market budget in USD (from `config.per_market_usd`).
     /// Zero disables the budget filter in SQL.
     pub per_market_usd: Decimal,
+    pub min_market_liquidity_usd: Decimal,
+    pub min_market_volume_24h_usd: Decimal,
+    pub min_hours_to_end: u64,
+    pub max_market_spread_cents: Decimal,
+    pub max_market_data_age_minutes: u64,
+    pub max_rewards_spread_cents: Decimal,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -240,9 +246,20 @@ pub struct RewardBotConfig {
     pub per_market_usd: Decimal,
     pub quote_size_usd: Decimal,
     pub min_daily_reward: Decimal,
+    /// Minimum Gamma-reported CLOB liquidity required for a new quote.
+    pub min_market_liquidity_usd: Decimal,
+    /// Minimum Gamma-reported 24h volume required for a new quote.
+    pub min_market_volume_24h_usd: Decimal,
+    /// Minimum known time remaining before market settlement.
+    pub min_hours_to_end: u64,
+    /// Maximum Gamma top-of-book bid/ask spread accepted for a candidate.
+    pub max_market_spread_cents: Decimal,
+    /// Maximum age of the synchronized Gamma market metadata.
+    pub max_market_data_age_minutes: u64,
     pub min_market_score: Decimal,
     pub max_spread_cents: Decimal,
-    pub quote_edge_cents: Decimal,
+    /// Bid price level used for new YES/NO quotes (1=best bid, 3=third bid).
+    pub quote_bid_rank: u16,
     pub safety_margin_cents: Decimal,
     pub min_midpoint: Decimal,
     pub max_midpoint: Decimal,
@@ -255,23 +272,14 @@ pub struct RewardBotConfig {
     /// Total fund pool shared across every market. Resting buy orders reuse
     /// this pool; cash is consumed only when fills occur.
     pub account_capital_usd: Decimal,
-    /// Competition multiplier. Reward accrual requires a fresh cached book
-    /// and measures competing depth directly from that book.
-    pub reward_competition_factor: Decimal,
-    /// Polymarket single-sided divisor `c` in the `Qmin` formula.
-    pub single_sided_divisor_c: Decimal,
-    /// Per-tick fill probability for a resting order whose price merely touches the
-    /// opposite top of book (orders crossed through always fill).
-    pub fill_rate_per_tick: Decimal,
-    /// Fraction of an order's remaining size consumed by a single fill event.
-    pub max_fill_ratio: Decimal,
-    /// Cancel and re-quote when the midpoint drifts more than this many cents.
+    /// Cancel and re-quote when the selected bid-level target moves by more
+    /// than this many cents.
     pub requote_drift_cents: Decimal,
     /// What to do with inventory once a quote leg is filled.
     pub post_fill_strategy: PostFillStrategy,
     // -- Risk control fields (0 = disabled) --
-    /// Minimum total bid depth (USD) above our order price to keep resting.
-    /// Cancels when the book above us is thinner than this threshold.
+    /// Minimum external bid depth (USD) at or above our order price to keep resting.
+    /// The managed order's own remaining notional is excluded.
     pub min_depth_usd: Decimal,
     /// Cancel when our order's bid rank rises to this level or better (1=best).
     /// E.g. 2 = cancel when promoted to bid-1 or bid-2. 0 = disabled.
@@ -299,9 +307,6 @@ pub struct RewardBotConfig {
     /// How often the fast reconcile loop runs (seconds). Full cycle remains
     /// at the worker's poll_interval_secs.
     pub reconcile_interval_sec: u64,
-    /// Auto-cancel open-like orders stuck in reconciliation for longer than
-    /// this many minutes. 0 = disabled. Default 10.
-    pub auto_cancel_stale_minutes: u64,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
@@ -321,11 +326,21 @@ pub struct RewardBotConfigPatch {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub min_daily_reward: Option<Decimal>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_market_liquidity_usd: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_market_volume_24h_usd: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_hours_to_end: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_market_spread_cents: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_market_data_age_minutes: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub min_market_score: Option<Decimal>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_spread_cents: Option<Decimal>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub quote_edge_cents: Option<Decimal>,
+    pub quote_bid_rank: Option<u16>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub safety_margin_cents: Option<Decimal>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -346,14 +361,6 @@ pub struct RewardBotConfigPatch {
     pub cancel_on_fill: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub account_capital_usd: Option<Decimal>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reward_competition_factor: Option<Decimal>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub single_sided_divisor_c: Option<Decimal>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub fill_rate_per_tick: Option<Decimal>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_fill_ratio: Option<Decimal>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub requote_drift_cents: Option<Decimal>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -381,8 +388,6 @@ pub struct RewardBotConfigPatch {
     pub requote_jitter_sec: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reconcile_interval_sec: Option<u64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub auto_cancel_stale_minutes: Option<u64>,
 }
 
 impl Default for RewardBotConfig {
@@ -395,9 +400,14 @@ impl Default for RewardBotConfig {
             per_market_usd: decimal("20"),
             quote_size_usd: decimal("10"),
             min_daily_reward: decimal("1"),
+            min_market_liquidity_usd: decimal("1000"),
+            min_market_volume_24h_usd: decimal("1000"),
+            min_hours_to_end: 48,
+            max_market_spread_cents: decimal("10"),
+            max_market_data_age_minutes: 15,
             min_market_score: decimal("15"),
             max_spread_cents: decimal("8"),
-            quote_edge_cents: decimal("1"),
+            quote_bid_rank: 1,
             safety_margin_cents: decimal("1"),
             min_midpoint: decimal("0.1"),
             max_midpoint: decimal("0.9"),
@@ -408,10 +418,6 @@ impl Default for RewardBotConfig {
             exit_markup_cents: decimal("1"),
             cancel_on_fill: true,
             account_capital_usd: decimal("1000"),
-            reward_competition_factor: decimal("4"),
-            single_sided_divisor_c: decimal("3"),
-            fill_rate_per_tick: decimal("0.2"),
-            max_fill_ratio: decimal("1"),
             requote_drift_cents: decimal("2"),
             post_fill_strategy: PostFillStrategy::ExitAtMarkup,
             // Risk control defaults: all disabled (0 = off)
@@ -426,7 +432,6 @@ impl Default for RewardBotConfig {
             requote_interval_sec: 0,
             requote_jitter_sec: 0,
             reconcile_interval_sec: 5,
-            auto_cancel_stale_minutes: 10,
         }
     }
 }
@@ -446,10 +451,27 @@ impl RewardBotConfig {
         self.quote_size_usd = clamp_decimal(self.quote_size_usd, Decimal::ZERO, quote_size_cap);
         self.min_daily_reward =
             clamp_decimal(self.min_daily_reward, Decimal::ZERO, decimal("100000"));
+        self.min_market_liquidity_usd = clamp_decimal(
+            self.min_market_liquidity_usd,
+            Decimal::ZERO,
+            decimal("1000000000"),
+        );
+        self.min_market_volume_24h_usd = clamp_decimal(
+            self.min_market_volume_24h_usd,
+            Decimal::ZERO,
+            decimal("1000000000"),
+        );
+        self.min_hours_to_end = self.min_hours_to_end.clamp(0, 24 * 365 * 10);
+        self.max_market_spread_cents = clamp_decimal(
+            self.max_market_spread_cents,
+            decimal("0.1"),
+            decimal("100"),
+        );
+        self.max_market_data_age_minutes = self.max_market_data_age_minutes.clamp(1, 1440);
         self.min_market_score = clamp_decimal(self.min_market_score, Decimal::ZERO, decimal("100"));
         self.max_spread_cents =
-            clamp_decimal(self.max_spread_cents, decimal("0.1"), decimal("1000"));
-        self.quote_edge_cents = clamp_decimal(self.quote_edge_cents, Decimal::ZERO, decimal("50"));
+            clamp_decimal(self.max_spread_cents, decimal("0.1"), decimal("99"));
+        self.quote_bid_rank = self.quote_bid_rank.clamp(1, 3);
         self.safety_margin_cents =
             clamp_decimal(self.safety_margin_cents, Decimal::ZERO, decimal("20"));
         self.min_midpoint = clamp_decimal(self.min_midpoint, Decimal::ZERO, decimal("0.49"));
@@ -470,22 +492,14 @@ impl RewardBotConfig {
             clamp_decimal(self.exit_markup_cents, Decimal::ZERO, decimal("50"));
         self.account_capital_usd =
             clamp_decimal(self.account_capital_usd, decimal("1"), decimal("100000000"));
-        self.reward_competition_factor = clamp_decimal(
-            self.reward_competition_factor,
-            decimal("1"),
-            decimal("10000"),
-        );
-        self.single_sided_divisor_c =
-            clamp_decimal(self.single_sided_divisor_c, decimal("1"), decimal("100"));
-        self.fill_rate_per_tick =
-            clamp_decimal(self.fill_rate_per_tick, Decimal::ZERO, Decimal::ONE);
-        self.max_fill_ratio = clamp_decimal(self.max_fill_ratio, decimal("0.01"), Decimal::ONE);
         self.requote_drift_cents =
             clamp_decimal(self.requote_drift_cents, Decimal::ZERO, decimal("99"));
         // Risk control clamps
         self.min_depth_usd =
             clamp_decimal(self.min_depth_usd, Decimal::ZERO, decimal("1000000"));
-        self.cancel_bid_rank = self.cancel_bid_rank.clamp(0, 20);
+        self.cancel_bid_rank = self
+            .cancel_bid_rank
+            .clamp(0, self.quote_bid_rank.saturating_sub(1));
         self.depth_drop_pct =
             clamp_decimal(self.depth_drop_pct, Decimal::ZERO, decimal("100"));
         self.depth_drop_window_sec = self.depth_drop_window_sec.clamp(0, 300);
@@ -498,7 +512,6 @@ impl RewardBotConfig {
         self.requote_interval_sec = self.requote_interval_sec.clamp(0, 3600);
         self.requote_jitter_sec = self.requote_jitter_sec.clamp(0, 600);
         self.reconcile_interval_sec = self.reconcile_interval_sec.clamp(1, 60);
-        self.auto_cancel_stale_minutes = self.auto_cancel_stale_minutes.clamp(0, 1440);
         self
     }
 
@@ -510,6 +523,12 @@ impl RewardBotConfig {
             min_midpoint: self.min_midpoint,
             max_midpoint: self.max_midpoint,
             per_market_usd: self.per_market_usd,
+            min_market_liquidity_usd: self.min_market_liquidity_usd,
+            min_market_volume_24h_usd: self.min_market_volume_24h_usd,
+            min_hours_to_end: self.min_hours_to_end,
+            max_market_spread_cents: self.max_market_spread_cents,
+            max_market_data_age_minutes: self.max_market_data_age_minutes,
+            max_rewards_spread_cents: self.max_spread_cents,
         }
     }
 
@@ -537,14 +556,29 @@ impl RewardBotConfig {
         if let Some(min_daily_reward) = patch.min_daily_reward {
             next.min_daily_reward = min_daily_reward;
         }
+        if let Some(value) = patch.min_market_liquidity_usd {
+            next.min_market_liquidity_usd = value;
+        }
+        if let Some(value) = patch.min_market_volume_24h_usd {
+            next.min_market_volume_24h_usd = value;
+        }
+        if let Some(value) = patch.min_hours_to_end {
+            next.min_hours_to_end = value;
+        }
+        if let Some(value) = patch.max_market_spread_cents {
+            next.max_market_spread_cents = value;
+        }
+        if let Some(value) = patch.max_market_data_age_minutes {
+            next.max_market_data_age_minutes = value;
+        }
         if let Some(min_market_score) = patch.min_market_score {
             next.min_market_score = min_market_score;
         }
         if let Some(max_spread_cents) = patch.max_spread_cents {
             next.max_spread_cents = max_spread_cents;
         }
-        if let Some(quote_edge_cents) = patch.quote_edge_cents {
-            next.quote_edge_cents = quote_edge_cents;
+        if let Some(quote_bid_rank) = patch.quote_bid_rank {
+            next.quote_bid_rank = quote_bid_rank;
         }
         if let Some(safety_margin_cents) = patch.safety_margin_cents {
             next.safety_margin_cents = safety_margin_cents;
@@ -576,18 +610,6 @@ impl RewardBotConfig {
         if let Some(account_capital_usd) = patch.account_capital_usd {
             next.account_capital_usd = account_capital_usd;
         }
-        if let Some(reward_competition_factor) = patch.reward_competition_factor {
-            next.reward_competition_factor = reward_competition_factor;
-        }
-        if let Some(single_sided_divisor_c) = patch.single_sided_divisor_c {
-            next.single_sided_divisor_c = single_sided_divisor_c;
-        }
-        if let Some(fill_rate_per_tick) = patch.fill_rate_per_tick {
-            next.fill_rate_per_tick = fill_rate_per_tick;
-        }
-        if let Some(max_fill_ratio) = patch.max_fill_ratio {
-            next.max_fill_ratio = max_fill_ratio;
-        }
         if let Some(requote_drift_cents) = patch.requote_drift_cents {
             next.requote_drift_cents = requote_drift_cents;
         }
@@ -606,274 +628,6 @@ impl RewardBotConfig {
         if let Some(v) = patch.requote_interval_sec { next.requote_interval_sec = v; }
         if let Some(v) = patch.requote_jitter_sec { next.requote_jitter_sec = v; }
         if let Some(v) = patch.reconcile_interval_sec { next.reconcile_interval_sec = v; }
-        if let Some(v) = patch.auto_cancel_stale_minutes { next.auto_cancel_stale_minutes = v; }
         next.normalized()
     }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct RewardToken {
-    pub token_id: String,
-    pub outcome: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub price: Option<Decimal>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct RewardMarket {
-    pub condition_id: String,
-    pub question: String,
-    pub market_slug: String,
-    pub event_slug: String,
-    pub image: String,
-    pub rewards_max_spread: Decimal,
-    pub rewards_min_size: Decimal,
-    pub total_daily_rate: Decimal,
-    pub tokens: Vec<RewardToken>,
-    pub active: bool,
-    #[serde(with = "time::serde::rfc3339")]
-    pub updated_at: OffsetDateTime,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct RewardBookLevel {
-    pub price: Decimal,
-    pub size: Decimal,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct RewardOrderBook {
-    pub token_id: String,
-    pub bids: Vec<RewardBookLevel>,
-    pub asks: Vec<RewardBookLevel>,
-    #[serde(with = "time::serde::rfc3339")]
-    pub observed_at: OffsetDateTime,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct RewardQuoteLeg {
-    pub token_id: String,
-    pub outcome: String,
-    pub side: RewardOrderSide,
-    pub price: Decimal,
-    pub size: Decimal,
-    pub notional_usd: Decimal,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct RewardQuotePlan {
-    pub condition_id: String,
-    pub market_slug: String,
-    pub question: String,
-    pub score: Decimal,
-    pub eligible: bool,
-    pub reason: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub midpoint: Option<Decimal>,
-    pub total_daily_rate: Decimal,
-    pub rewards_max_spread: Decimal,
-    pub rewards_min_size: Decimal,
-    pub legs: Vec<RewardQuoteLeg>,
-    #[serde(with = "time::serde::rfc3339")]
-    pub updated_at: OffsetDateTime,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct ManagedRewardOrder {
-    pub id: String,
-    pub account_id: String,
-    pub condition_id: String,
-    pub token_id: String,
-    pub outcome: String,
-    pub side: RewardOrderSide,
-    pub price: Decimal,
-    pub size: Decimal,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub external_order_id: Option<String>,
-    pub status: ManagedRewardOrderStatus,
-    pub scoring: bool,
-    pub reason: String,
-    #[serde(default)]
-    pub filled_size: Decimal,
-    #[serde(default)]
-    pub reward_earned: Decimal,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[serde(with = "time::serde::rfc3339::option")]
-    pub last_scored_at: Option<OffsetDateTime>,
-    #[serde(with = "time::serde::rfc3339")]
-    pub created_at: OffsetDateTime,
-    #[serde(with = "time::serde::rfc3339")]
-    pub updated_at: OffsetDateTime,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct RewardPosition {
-    pub account_id: String,
-    pub condition_id: String,
-    pub token_id: String,
-    pub outcome: String,
-    pub size: Decimal,
-    pub avg_price: Decimal,
-    pub realized_pnl: Decimal,
-    #[serde(with = "time::serde::rfc3339")]
-    pub updated_at: OffsetDateTime,
-}
-
-/// Fund-pool ledger shared across every market the bot quotes.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct RewardAccountState {
-    pub account_id: String,
-    /// Polymarket funding wallet address (0x…), preferring configured `FUNDER`.
-    pub wallet_address: Option<String>,
-    /// Total deposited capital (the configured fund pool).
-    pub capital_usd: Decimal,
-    /// Cash not consumed by fills.
-    pub available_usd: Decimal,
-    /// Total notional of all active buy orders on Polymarket (bot-managed +
-    /// external), synced from `list_open_orders()` for account observability.
-    /// Resting maker orders do not reserve this amount in placement checks.
-    pub external_buy_notional: Decimal,
-    /// Legacy hard-reserve field. New rewards ticks release it and keep resting
-    /// buy reservations soft across markets.
-    pub reserved_usd: Decimal,
-    pub realized_pnl: Decimal,
-    pub reward_earned_usd: Decimal,
-    pub fees_paid: Decimal,
-    /// Monotonic per-account tick counter; also seeds the deterministic fill RNG.
-    pub tick_index: i64,
-    #[serde(with = "time::serde::rfc3339")]
-    pub updated_at: OffsetDateTime,
-}
-
-impl RewardAccountState {
-    #[must_use]
-    pub fn fresh(account_id: &str, capital_usd: Decimal, now: OffsetDateTime) -> Self {
-        Self {
-            account_id: account_id.to_string(),
-            wallet_address: None,
-            capital_usd,
-            available_usd: capital_usd,
-            external_buy_notional: Decimal::ZERO,
-            reserved_usd: Decimal::ZERO,
-            realized_pnl: Decimal::ZERO,
-            reward_earned_usd: Decimal::ZERO,
-            fees_paid: Decimal::ZERO,
-            tick_index: 0,
-            updated_at: now,
-        }
-    }
-}
-
-/// One execution event against a managed order (maker fill) or a taker flatten.
-/// Drives the "吃单" (order-taken) detail view on the frontend.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct RewardFill {
-    pub id: String,
-    pub order_id: String,
-    pub account_id: String,
-    pub condition_id: String,
-    pub token_id: String,
-    pub outcome: String,
-    pub side: RewardOrderSide,
-    pub price: Decimal,
-    pub size: Decimal,
-    pub notional_usd: Decimal,
-    pub role: RewardFillRole,
-    pub realized_pnl: Decimal,
-    pub reason: String,
-    pub trace_id: String,
-    #[serde(with = "time::serde::rfc3339")]
-    pub created_at: OffsetDateTime,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct RewardRiskEvent {
-    pub id: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub account_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub condition_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub external_order_id: Option<String>,
-    pub event_type: String,
-    pub severity: RewardRiskSeverity,
-    pub message: String,
-    pub metadata: Value,
-    #[serde(with = "time::serde::rfc3339")]
-    pub created_at: OffsetDateTime,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct RewardBotStatus {
-    pub enabled: bool,
-    pub running: bool,
-    pub account_id: String,
-    pub markets_tracked: usize,
-    pub eligible_markets: usize,
-    pub plans_total: usize,
-    pub open_orders: usize,
-    pub positions: usize,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[serde(with = "time::serde::rfc3339::option")]
-    pub last_scan_at: Option<OffsetDateTime>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[serde(with = "time::serde::rfc3339::option")]
-    pub last_run_at: Option<OffsetDateTime>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct RewardBotSnapshot {
-    pub config: RewardBotConfig,
-    pub status: RewardBotStatus,
-    pub account: RewardAccountState,
-    pub markets: Vec<RewardMarket>,
-    pub quote_plans: Vec<RewardQuotePlan>,
-    pub plans_page: RewardListPage,
-    pub orders: Vec<ManagedRewardOrder>,
-    pub orders_page: RewardListPage,
-    pub positions: Vec<RewardPosition>,
-    pub fills: Vec<RewardFill>,
-    pub events: Vec<RewardRiskEvent>,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct RewardLiveCycle {
-    pub config: RewardBotConfig,
-    pub account: RewardAccountState,
-    pub markets: Vec<RewardMarket>,
-    pub plans: Vec<RewardQuotePlan>,
-    pub open_orders: Vec<ManagedRewardOrder>,
-    pub positions: Vec<RewardPosition>,
-    pub should_execute: bool,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
-pub struct RewardBotRunReport {
-    pub markets_scanned: usize,
-    pub books_fetched: usize,
-    pub plans_built: usize,
-    pub eligible_plans: usize,
-    pub placed_orders: usize,
-    pub cancelled_orders: usize,
-    pub filled_orders: usize,
-    pub risk_cancelled_orders: usize,
-    pub reward_accrued: Decimal,
-}
-
-/// Point-in-time snapshot of a token's order book, stored for historical
-/// comparison in risk-control checks (depth drop, fill velocity, mass cancel).
-#[allow(dead_code)]
-#[derive(Debug, Clone)]
-pub struct BookSnapshot {
-    pub bids: Vec<RewardBookLevel>,
-    pub asks: Vec<RewardBookLevel>,
-    pub observed_at: OffsetDateTime,
-}
-
-#[derive(Debug, Clone)]
-struct TokenBookState {
-    midpoint: Decimal,
-    best_ask: Option<Decimal>,
 }

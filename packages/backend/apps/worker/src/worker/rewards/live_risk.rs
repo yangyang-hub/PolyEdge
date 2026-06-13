@@ -77,7 +77,7 @@ fn live_cancel_reason(
         let drift_cents = ((order.price - leg.price).abs()) * Decimal::from(100_u64);
         if drift_cents > config.requote_drift_cents {
             return Some(format!(
-                "midpoint drifted {drift_cents} cents beyond requote threshold"
+                "quote target moved {drift_cents} cents beyond requote threshold"
             ));
         }
     }
@@ -134,6 +134,32 @@ fn live_placement_orders(
         if active_markets.len() >= max_markets && !active_markets.contains(&plan.condition_id) {
             continue;
         }
+        let existing_market_buy_notional = live_market_buy_notional(&orders, &plan.condition_id);
+        let missing_plan_buy_notional: Decimal = plan
+            .legs
+            .iter()
+            .filter(|leg| {
+                !orders.iter().any(|order| {
+                    order.condition_id == plan.condition_id
+                        && order.token_id == leg.token_id
+                        && order.side == RewardOrderSide::Buy
+                        && order.status.is_open_like()
+                }) && !orders.iter().any(|order| {
+                    order.token_id == leg.token_id
+                        && order.side == RewardOrderSide::Sell
+                        && order.status.is_open_like()
+                })
+            })
+            .map(|leg| (leg.price * leg.size).round_dp(4))
+            .sum();
+        // Polymarket applies its collateral validity check to the sum of all
+        // open BUY orders in the same condition. Different conditions may reuse
+        // the same collateral, but both YES/NO legs in one condition must fit.
+        if existing_market_buy_notional + missing_plan_buy_notional
+            > available_usd.max(Decimal::ZERO)
+        {
+            continue;
+        }
         for leg in &plan.legs {
             if orders.iter().filter(|order| order.status.is_open_like()).count()
                 >= max_open_orders
@@ -144,6 +170,13 @@ fn live_placement_orders(
                 order.condition_id == plan.condition_id
                     && order.token_id == leg.token_id
                     && order.side == RewardOrderSide::Buy
+                    && order.status.is_open_like()
+            }) {
+                continue;
+            }
+            if orders.iter().any(|order| {
+                order.token_id == leg.token_id
+                    && order.side == RewardOrderSide::Sell
                     && order.status.is_open_like()
             }) {
                 continue;
@@ -164,13 +197,6 @@ fn live_placement_orders(
             {
                 continue;
             }
-            // Resting maker buys reuse the same collateral across markets.
-            // Only require this individual quote to fit the latest balance;
-            // do not reserve funds for other unfilled orders.
-            if notional > available_usd.max(Decimal::ZERO) {
-                continue;
-            }
-
             active_markets.insert(plan.condition_id.clone());
             seq += 1;
             let now = OffsetDateTime::now_utc();
@@ -190,7 +216,7 @@ fn live_placement_orders(
                 size: leg.size,
                 external_order_id: None,
                 status: ManagedRewardOrderStatus::Planned,
-                scoring: true,
+                scoring: false,
                 reason: "pending live post-only rewards quote".to_string(),
                 filled_size: Decimal::ZERO,
                 reward_earned: Decimal::ZERO,
@@ -252,20 +278,40 @@ fn live_min_depth_cancel_reason(
         return None;
     }
     let book = books.get(&order.token_id)?;
-    let depth_usd: Decimal = book
+    let aggregate_depth_usd: Decimal = book
         .bids
         .iter()
-        .filter(|level| level.price > order.price)
+        .filter(|level| level.price >= order.price)
         .map(|level| (level.price * level.size).round_dp(4))
         .sum();
+    let own_remaining_notional = if order.external_order_id.is_some() {
+        (order.price * (order.size - order.filled_size).max(Decimal::ZERO)).round_dp(4)
+    } else {
+        Decimal::ZERO
+    };
+    let depth_usd = (aggregate_depth_usd - own_remaining_notional).max(Decimal::ZERO);
     if depth_usd < config.min_depth_usd {
         Some(format!(
-            "bid depth {depth_usd} above order price {} is below minimum {}",
+            "external bid depth {depth_usd} at or above order price {} is below minimum {}",
             order.price, config.min_depth_usd
         ))
     } else {
         None
     }
+}
+
+fn live_market_buy_notional(orders: &[ManagedRewardOrder], condition_id: &str) -> Decimal {
+    orders
+        .iter()
+        .filter(|order| {
+            order.condition_id == condition_id
+                && order.side == RewardOrderSide::Buy
+                && order.status.is_open_like()
+        })
+        .map(|order| {
+            (order.price * (order.size - order.filled_size).max(Decimal::ZERO)).round_dp(4)
+        })
+        .sum()
 }
 
 fn live_bid_rank_cancel_reason(

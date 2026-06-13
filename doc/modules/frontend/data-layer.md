@@ -1,6 +1,6 @@
 # 数据层（API Client + Actions + Contracts）
 
-最后更新：2026-06-08
+最后更新：2026-06-13
 
 ## 概述
 
@@ -111,7 +111,8 @@ OperationActionResult → 更新 UI 状态
 - 14 个 API 模块文件覆盖所有后端端点
 - `actions.ts` 集中管理所有写操作的 Server Actions
 - DTO 类型镜像完整覆盖后端 contracts crate
-- Rewards snapshot DTO 包含 `orders_page`，但 `RewardBotConfigDto.execution_mode` 已移除；`readRewardBotSnapshot()` 仍支持订单分页 query。当前后端 handler 和 `orders_page` 都描述本地 managed-order 查询；账户余额和 positions 由 worker 同步到数据库后返回
+- Rewards snapshot DTO 包含 `orders_page`，但 `RewardBotConfigDto.execution_mode`、旧 `quote_edge_cents`、模拟填单参数和 stale force-cancel 参数已移除；报价配置改为 `quote_bid_rank: 1|2|3`（TypeScript 以 number 表达，Server Action 用 Zod 限制范围），并新增 liquidity/volume/end-time/spread/data-age 市场质量门槛。`readRewardBotSnapshot()` 支持计划/订单分页、搜索、状态和排序 query；首屏 loader 显式请求 `plans_eligible=true`，与默认可挂页签一致。当前后端 handler 和 `orders_page` 都描述本地 managed-order 查询；账户余额和 positions 由 worker 同步到数据库后返回
+- `MarketDto` 新增 `liquidity_usd` 与 `end_at`，镜像后端 `MarketData`
 - positions.ts 是唯一使用 `mapItem` 做字段重命名的模块
 - 当前静态部署使用 `NEXT_PUBLIC_POLYEDGE_API_BASE_URL` 浏览器直连 Rust API，不再通过前端 Nginx 反代 `/api/v1`
 

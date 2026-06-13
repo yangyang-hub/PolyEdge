@@ -343,7 +343,7 @@ fn plan_live_post_fill_orders(
                 .map(|position| position.avg_price)
                 .filter(|price| *price > Decimal::ZERO)
                 .unwrap_or(entry.price);
-            let exit_price = floor_reward_price_to_tick(Decimal::min(
+            let exit_price = ceil_reward_price_to_tick(Decimal::min(
                 Decimal::from_parts(99, 0, 0, false, 2),
                 avg_price + config.exit_markup_cents / Decimal::from(100_u64),
             ));

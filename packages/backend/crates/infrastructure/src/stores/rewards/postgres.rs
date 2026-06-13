@@ -160,44 +160,7 @@ impl RewardBotStore for PostgresRewardBotStore {
     }
 
     async fn list_markets(&self, limit: u16) -> Result<Vec<RewardMarket>> {
-        let rows = sqlx::query(
-            r#"
-            SELECT rm.condition_id,
-                   rm.question,
-                   rm.market_slug,
-                   rm.event_slug,
-                   rm.image,
-                   rm.rewards_max_spread,
-                   rm.rewards_min_size,
-                   rm.total_daily_rate,
-                   rm.tokens_json,
-                   rm.active,
-                   rm.updated_at,
-                   m.best_bid,
-                   m.best_ask
-            FROM reward_markets rm
-            JOIN markets m
-              ON m.polymarket_condition_id = rm.condition_id
-            WHERE rm.active = true
-              AND m.status = 'open'
-              AND m.tradability_status = 'tradable'
-            ORDER BY m.volume_24h DESC,
-                     rm.total_daily_rate DESC,
-                     rm.updated_at DESC
-            LIMIT $1
-            "#,
-        )
-        .bind(i64::from(limit))
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|error| {
-            db_error(
-                "POSTGRES_QUERY_FAILED",
-                format!("failed to query reward markets: {error}"),
-            )
-        })?;
-
-        rows.iter().map(reward_market_from_row).collect()
+        postgres_list_reward_markets(self, limit).await
     }
 
     async fn list_candidate_markets(
@@ -205,105 +168,12 @@ impl RewardBotStore for PostgresRewardBotStore {
         filter: &RewardCandidateFilter,
         safety_limit: u16,
     ) -> Result<Vec<RewardMarket>> {
-        let rows = sqlx::query(
-            r#"
-            SELECT rm.condition_id,
-                   rm.question,
-                   rm.market_slug,
-                   rm.event_slug,
-                   rm.image,
-                   rm.rewards_max_spread,
-                   rm.rewards_min_size,
-                   rm.total_daily_rate,
-                   rm.tokens_json,
-                   rm.active,
-                   rm.updated_at,
-                   m.best_bid,
-                   m.best_ask
-            FROM reward_markets rm
-            JOIN markets m
-              ON m.polymarket_condition_id = rm.condition_id
-            WHERE rm.active = true
-              AND m.status = 'open'
-              AND m.tradability_status = 'tradable'
-              -- Token count >= 2
-              AND jsonb_array_length(rm.tokens_json) >= 2
-              -- Daily reward must meet threshold
-              AND rm.total_daily_rate >= $1
-              -- Spread must be positive (normalize treats <= 0 as invalid)
-              AND rm.rewards_max_spread > 0
-              -- Valid midpoint range from market best bid/ask
-              AND m.best_bid > 0
-              AND m.best_ask > 0
-              AND m.best_bid <= m.best_ask
-              AND (m.best_bid + m.best_ask) / 2 >= $2
-              AND (m.best_bid + m.best_ask) / 2 <= $3
-              -- Budget feasibility (conservative): both legs must fit in
-              -- per-market budget.  LEAST(midpoint, 1-midpoint) gives the
-              -- cheaper leg; multiplied by min_size * 2 approximates total.
-              AND CASE
-                  WHEN $4 > 0 THEN
-                      LEAST((m.best_bid + m.best_ask) / 2,
-                            1 - (m.best_bid + m.best_ask) / 2)
-                      * rm.rewards_min_size * 2 <= $4
-                  ELSE true
-              END
-            ORDER BY rm.total_daily_rate DESC,
-                     m.volume_24h DESC,
-                     rm.updated_at DESC
-            LIMIT $5
-            "#,
-        )
-        .bind(filter.min_daily_reward)
-        .bind(filter.min_midpoint)
-        .bind(filter.max_midpoint)
-        .bind(filter.per_market_usd)
-        .bind(i64::from(safety_limit))
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|error| {
-            db_error(
-                "POSTGRES_QUERY_FAILED",
-                format!("failed to query candidate reward markets: {error}"),
-            )
-        })?;
-
-        rows.iter().map(reward_market_from_row).collect()
+        postgres_list_reward_candidate_markets(self, filter, safety_limit).await
     }
 
     async fn list_all_active_markets(&self) -> Result<Vec<RewardMarket>> {
-        let rows = sqlx::query(
-            r#"
-            SELECT condition_id,
-                   question,
-                   market_slug,
-                   event_slug,
-                   image,
-                   rewards_max_spread,
-                   rewards_min_size,
-                   total_daily_rate,
-                   tokens_json,
-                   active,
-                   updated_at,
-                   NULL::NUMERIC AS best_bid,
-                   NULL::NUMERIC AS best_ask
-            FROM reward_markets
-            WHERE active = true
-            ORDER BY total_daily_rate DESC, updated_at DESC
-            "#,
-        )
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|error| {
-            db_error(
-                "POSTGRES_QUERY_FAILED",
-                format!("failed to query all reward markets: {error}"),
-            )
-        })?;
-
-        rows.iter().map(reward_market_from_row).collect()
+        postgres_list_all_active_reward_markets(self).await
     }
-
     async fn active_market_summary(&self) -> Result<(usize, Option<OffsetDateTime>)> {
         let row = sqlx::query(
             r#"

@@ -65,7 +65,7 @@
 
 Rewards Bot 的 `run` / `cancel-all` / `reset` handler 不直接执行策略、不读取 orderbook cache，也不直接修改托管订单。Handler 把控制命令写入 `reward_control_commands`，同时通过共享 `RewardBotService` revision 立即唤醒同进程 rewards loop；后台 runtime 领取命令并执行 live 逻辑。
 
-所有 Rewards snapshot 响应只读取 `RewardBotService` / store；handler 不直接请求 CLOB/Data API。配置、账户、positions 和 heartbeat 在同进程 service 内有热缓存，分页 orders/plans、fills、events 等历史查询仍从 store 读取。`status.open_orders` 只统计已有 `external_order_id` 的 open-like managed orders，不把尚未提交到 Polymarket 的本地 planned/exit intent 显示为开放挂单。外部 balance、positions、订单 scoring 和 UTC 当日账户级 maker rewards 聚合由内嵌后台 runtime 同步。
+所有 Rewards snapshot 响应只读取 `RewardBotService` / store；handler 不直接请求 CLOB/Data API。配置、账户、positions 和 heartbeat 在同进程 service 内有热缓存，分页 orders/plans、fills、events 等历史查询仍从 store 读取。`status.open_orders` 只统计已有 `external_order_id` 的 open-like managed orders，不把尚未提交到 Polymarket 的本地 planned/exit intent 显示为开放挂单；`status.error` 只报告当前开放订单上的活跃对账锁，不会因为历史 critical event 一直保持错误。外部 balance、positions、订单 scoring 和 UTC 当日账户级 maker rewards 聚合由内嵌后台 runtime 同步。
 
 Copy Trading 的 `run` / `analyze` / `cancel-all` / `reset` 端点同样不抓取 Polymarket Data API / CLOB，也不直接执行跟单循环；API 只写入 `copytrade_control_commands`，worker 负责领取并执行。
 
@@ -102,6 +102,7 @@ HTTP Response
 - API 进程内嵌 worker runtime；`polyedge-worker` 二进制仅保留 CLI/运维兼容入口，不再单独部署常驻容器
 - Rewards Bot 与 Copy Trading 控制端点只作为前端接口和命令入口，具体 live 策略、分析、撤单、重置由同进程后台 runtime 处理
 - Rewards Bot snapshot 不承载全量 reward markets；配置、账户、positions、heartbeat 优先从共享内存读取
+- Markets DTO 返回 Gamma 同步的 `liquidity_usd` 与 `end_at`，供控制台和其他数据库消费者使用
 - 当前内网部署使用 `POLYEDGE_AUTH__DISABLED=true`，前端请求不需要权限头或 step-up code
 - CORS 当前为 permissive，支持纯内网中 front/API 分别部署在不同服务器
 - Step-up 认证代码路径仍保留；当 `POLYEDGE_AUTH__DISABLED=false` 时用于敏感操作（模式切换、kill switch、执行提交）

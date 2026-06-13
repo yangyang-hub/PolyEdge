@@ -6,6 +6,7 @@ fn parse_market_row(row: &sqlx::postgres::PgRow) -> Result<MarketView> {
     let best_ask: Decimal = decode_column(row, "best_ask")?;
     let mid_price: Decimal = decode_column(row, "mid_price")?;
     let volume_24h: Decimal = decode_column(row, "volume_24h")?;
+    let liquidity_usd: Decimal = decode_column(row, "liquidity_usd")?;
 
     Ok(MarketView {
         id: decode_column(row, "id")?,
@@ -42,6 +43,13 @@ fn parse_market_row(row: &sqlx::postgres::PgRow) -> Result<MarketView> {
                 format!("failed to decode market volume_24h: {error}"),
             )
         })?,
+        liquidity_usd: UsdAmount::new(liquidity_usd).map_err(|error| {
+            db_error(
+                "POSTGRES_DECODE_FAILED",
+                format!("failed to decode market liquidity_usd: {error}"),
+            )
+        })?,
+        end_at: decode_column(row, "end_at")?,
         ambiguity_level: AmbiguityLevel::from_str(&ambiguity_level_raw).map_err(|error| {
             db_error(
                 "POSTGRES_DECODE_FAILED",

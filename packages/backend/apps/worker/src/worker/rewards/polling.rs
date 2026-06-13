@@ -19,6 +19,17 @@ async fn poll_reward_bot_loop(
     mut shutdown_rx: watch::Receiver<bool>,
     listen_for_ctrl_c: bool,
 ) -> Result<RewardBotRunReport> {
+    let Some(lease) = state
+        .try_acquire_postgres_advisory_lease(REWARD_WORKER_ADVISORY_LOCK_KEY)
+        .await?
+    else {
+        debug!("rewards poll loop is standing by because another worker owns the live lease");
+        return Ok(RewardBotRunReport::default());
+    };
+    // Keep exactly one authenticated connector alive for the whole poll loop.
+    // A separate guarded task sends the CLOB heartbeat every five seconds.
+    let connector = build_live_polymarket_connector(state).await?;
+    let _heartbeat_guard = RewardHeartbeatGuard::spawn(connector.clone());
     let mut total = RewardBotRunReport {
         markets_scanned: 0,
         books_fetched: 0,
@@ -42,16 +53,34 @@ async fn poll_reward_bot_loop(
 
     loop {
         // Read the live config to get the reconcile interval.
-        let config = state.reward_bot_service.read_config().await.unwrap_or_default();
-        state
+        let config = match state.reward_bot_service.read_config().await {
+            Ok(config) => config,
+            Err(error) => {
+                warn!(error = %error, "failed to read rewards config; retrying poll loop");
+                tokio::select! {
+                    () = tokio::time::sleep(Duration::from_secs(1)) => {}
+                    changed = shutdown_rx.changed() => {
+                        if changed.is_err() || *shutdown_rx.borrow() {
+                            break;
+                        }
+                    }
+                }
+                continue;
+            }
+        };
+        if let Err(error) = state
             .reward_bot_service
             .record_worker_heartbeat(&config.account_id, OffsetDateTime::now_utc())
-            .await?;
+            .await
+        {
+            warn!(error = %error, "failed to record rewards worker heartbeat");
+        }
         let reconcile_interval = Duration::from_secs(config.reconcile_interval_sec.max(1));
 
         // Always drain queued control commands first.
         let command_report =
-            process_pending_reward_control_commands(state, &mut book_history).await?;
+            process_pending_reward_control_commands_unlocked(state, &connector, &mut book_history)
+                .await?;
         if command_report.processed > 0 {
             accumulate_report(&mut total, &command_report.report);
             // A RunOnce command already rebuilt quotes, so treat it as a full
@@ -68,56 +97,41 @@ async fn poll_reward_bot_loop(
         if since_full >= full_interval {
             // --- Full cycle (rebuilds plans) ---
             let trace_id = new_trace_id();
-            let report = run_reward_bot_scheduled_full_cycle(
+            let report = run_reward_bot_tick(
                 state,
+                &connector,
                 &trace_id,
+                false,
                 &mut book_history,
             )
             .await?;
-            if let Some(report) = report {
-                accumulate_report(&mut total, &report);
-                full_cycles += 1;
-                last_full_at = Instant::now();
+            accumulate_report(&mut total, &report);
+            full_cycles += 1;
+            last_full_at = Instant::now();
 
-                info!(
-                    trace_id = %trace_id,
-                    full_cycle = full_cycles,
-                    markets_scanned = report.markets_scanned,
-                    eligible_plans = report.eligible_plans,
-                    cancelled = report.cancelled_orders,
-                    risk_cancelled = report.risk_cancelled_orders,
-                    "completed full reward bot cycle",
-                );
+            info!(
+                trace_id = %trace_id,
+                full_cycle = full_cycles,
+                markets_scanned = report.markets_scanned,
+                eligible_plans = report.eligible_plans,
+                cancelled = report.cancelled_orders,
+                risk_cancelled = report.risk_cancelled_orders,
+                "completed full reward bot cycle",
+            );
 
-                if max_cycles.is_some_and(|limit| full_cycles >= limit) {
-                    break;
-                }
-            } else {
-                tokio::select! {
-                    () = tokio::time::sleep(reconcile_interval) => {}
-                    changed = runtime_revision_rx.changed() => {
-                        if changed.is_err() {
-                            break;
-                        }
-                        let next_config_revision = runtime_revision_rx.borrow_and_update().1;
-                        if next_config_revision != config_revision {
-                            config_revision = next_config_revision;
-                            last_full_at = Instant::now() - full_interval;
-                        }
-                    }
-                    _ = command_wake_rx.changed() => {}
-                    changed = shutdown_rx.changed() => {
-                        if changed.is_err() || *shutdown_rx.borrow() {
-                            break;
-                        }
-                    }
-                }
-                continue;
+            if max_cycles.is_some_and(|limit| full_cycles >= limit) {
+                break;
             }
         } else {
             // --- Fast reconcile-only cycle (risk checks + cancel stale orders) ---
             let trace_id = new_trace_id();
-            let report = run_reward_bot_live_reconcile(state, &trace_id, &mut book_history).await?;
+            let report = run_reward_bot_live_reconcile_unlocked(
+                state,
+                &connector,
+                &trace_id,
+                &mut book_history,
+            )
+            .await?;
             accumulate_report(&mut total, &report);
             reconcile_cycles += 1;
 
@@ -165,7 +179,52 @@ async fn poll_reward_bot_loop(
         }
     }
 
+    drop(_heartbeat_guard);
+    lease.release().await?;
     Ok(total)
+}
+
+struct RewardHeartbeatGuard {
+    handle: tokio::task::JoinHandle<()>,
+}
+
+impl RewardHeartbeatGuard {
+    fn spawn(connector: LivePolymarketConnector) -> Self {
+        let handle = tokio::spawn(async move {
+            let mut heartbeat_id: Option<String> = None;
+            let mut interval = tokio::time::interval(Duration::from_secs(5));
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+
+            loop {
+                interval.tick().await;
+                match tokio::time::timeout(
+                    Duration::from_secs(4),
+                    connector.post_heartbeat(heartbeat_id.as_deref()),
+                )
+                .await
+                {
+                    Ok(Ok(next_heartbeat_id)) => heartbeat_id = Some(next_heartbeat_id),
+                    Ok(Err(error)) => {
+                        // Resetting the id lets the next request establish a new
+                        // heartbeat chain after an expired or invalid id.
+                        heartbeat_id = None;
+                        warn!(error = %error, "failed to maintain Polymarket rewards heartbeat");
+                    }
+                    Err(_) => {
+                        heartbeat_id = None;
+                        warn!("timed out while maintaining Polymarket rewards heartbeat");
+                    }
+                }
+            }
+        });
+        Self { handle }
+    }
+}
+
+impl Drop for RewardHeartbeatGuard {
+    fn drop(&mut self) {
+        self.handle.abort();
+    }
 }
 
 fn accumulate_report(total: &mut RewardBotRunReport, report: &RewardBotRunReport) {
@@ -303,6 +362,12 @@ fn reward_market_from_connector(market: PolymarketRewardMarket) -> RewardMarket 
         rewards_max_spread: market.rewards_max_spread,
         rewards_min_size: market.rewards_min_size,
         total_daily_rate: market.total_daily_rate,
+        liquidity_usd: Decimal::ZERO,
+        volume_24h_usd: Decimal::ZERO,
+        market_spread_cents: Decimal::ZERO,
+        end_at: None,
+        ambiguity_level: "unknown".to_string(),
+        market_synced_at: None,
         tokens: market
             .tokens
             .into_iter()

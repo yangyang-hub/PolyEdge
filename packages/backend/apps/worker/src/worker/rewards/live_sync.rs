@@ -359,8 +359,11 @@ async fn collect_data_api_reward_trade_fallback(
     if order.side != RewardOrderSide::Buy {
         return Ok(None);
     }
+    let Some(external_order_id) = order.external_order_id.as_deref() else {
+        return Ok(None);
+    };
     let matched_size = match connector
-        .matched_order_hint(order.external_order_id.as_deref().unwrap_or_default())
+        .matched_order_hint(external_order_id)
         .await
     {
         Ok(Some(hint)) if hint.token_id == order.token_id && hint.price == order.price => {
@@ -456,14 +459,20 @@ fn data_api_activity_to_fill_update(
     activity: PolymarketWalletActivity,
     order: &ManagedRewardOrder,
 ) -> Result<ConnectorTradeFillUpdate> {
+    let external_order_id = order.external_order_id.clone().ok_or_else(|| {
+        AppError::invalid_input(
+            "REWARD_EXTERNAL_ORDER_REQUIRED",
+            "Data API fill fallback requires an external order id",
+        )
+    })?;
     Ok(ConnectorTradeFillUpdate {
         event_id: format!(
             "evt_pm_data_trade:{}:{}",
-            order.external_order_id.as_deref().unwrap_or_default(),
+            external_order_id,
             activity.transaction_hash
         ),
         connector_name: POLYMARKET_CONNECTOR_NAME.to_string(),
-        external_order_id: order.external_order_id.clone().unwrap_or_default(),
+        external_order_id,
         account_id: order.account_id.clone(),
         external_trade_id: format!("data_api:{}", activity.transaction_hash),
         fill_price: Probability::new(activity.price)?,
@@ -500,24 +509,9 @@ fn should_try_data_api_fallback_for_clob_outcome(
     outcome.order_not_found && outcome.updates.is_empty()
 }
 
-async fn run_reward_bot_live_reconcile(
-    state: &AppState,
-    trace_id: &str,
-    book_history: &mut HashMap<String, VecDeque<BookSnapshot>>,
-) -> Result<RewardBotRunReport> {
-    let Some(lease) = state
-        .try_acquire_postgres_advisory_lease(REWARD_WORKER_ADVISORY_LOCK_KEY)
-        .await?
-    else {
-        debug!("skipping rewards reconcile because another worker holds the live lease");
-        return Ok(RewardBotRunReport::default());
-    };
-    let result = run_reward_bot_live_reconcile_unlocked(state, trace_id, book_history).await;
-    finish_reward_worker_lease(lease, result).await
-}
-
 async fn run_reward_bot_live_reconcile_unlocked(
     state: &AppState,
+    connector: &LivePolymarketConnector,
     trace_id: &str,
     book_history: &mut HashMap<String, VecDeque<BookSnapshot>>,
 ) -> Result<RewardBotRunReport> {
@@ -529,10 +523,9 @@ async fn run_reward_bot_live_reconcile_unlocked(
         ..RewardBotRunReport::default()
     };
 
-    let live_connector = build_live_polymarket_connector(state).await?;
     if !cycle.open_orders.is_empty() {
         let sync_report =
-            sync_live_reward_orders(state, &live_connector, &cycle.open_orders, &books, trace_id)
+            sync_live_reward_orders(state, connector, &cycle.open_orders, &books, trace_id)
                 .await?;
         accumulate_report(&mut report, &sync_report);
         cycle = state.reward_bot_service.current_live_cycle_state().await?;
@@ -540,12 +533,12 @@ async fn run_reward_bot_live_reconcile_unlocked(
 
     // Reward earnings sync always runs — it queries Polymarket's authoritative
     // daily total and does not risk double-counting fills.
-    sync_reward_earnings(state, &live_connector, &mut cycle.account, trace_id).await;
+    sync_reward_earnings(state, connector, &mut cycle.account, trace_id).await;
 
     if can_refresh_external_account_after_order_sync(&report) {
         sync_external_account_state(
             state,
-            &live_connector,
+            connector,
             &mut cycle.account,
             &mut cycle.positions,
             &mut cycle.open_orders,
@@ -557,44 +550,6 @@ async fn run_reward_bot_live_reconcile_unlocked(
     let mut account = cycle.account.clone();
     let mut open_orders = cycle.open_orders.clone();
 
-    // Auto-expire stale stuck-reconciliation orders after configured threshold.
-    {
-        let stale_candidates = live_stale_auto_cancel_candidates(
-            &cycle.config,
-            &open_orders,
-            OffsetDateTime::now_utc(),
-        );
-        if !stale_candidates.is_empty() {
-            for (order_id, reason) in &stale_candidates {
-                let Some(index) = open_orders.iter().position(|o| o.id == *order_id) else {
-                    continue;
-                };
-                let (updated, event) =
-                    force_cancel_stale_live_reward_order(open_orders[index].clone(), reason);
-                open_orders[index] = updated.clone();
-                report.cancelled_orders += 1;
-                report.risk_cancelled_orders += 1;
-                persist_live_reward_updates(
-                    state,
-                    &mut account,
-                    Vec::new(),
-                    vec![updated],
-                    Vec::new(),
-                    vec![event],
-                    &report,
-                    trace_id,
-                )
-                .await?;
-            }
-            info!(
-                trace_id = %trace_id,
-                stale_auto_cancelled = stale_candidates.len(),
-                "reconcile: auto-cancelled stale stuck-reconciliation orders",
-            );
-        }
-    }
-
-    let mut connector = Some(live_connector);
     let kill_switch = state.risk_service.read_state().await?.kill_switch;
 
     let cancel_candidates = live_cancel_candidates(
@@ -607,16 +562,12 @@ async fn run_reward_bot_live_reconcile_unlocked(
     );
 
     if !cancel_candidates.is_empty() {
-        let live_connector = match connector.take() {
-            Some(connector) => connector,
-            None => build_live_polymarket_connector(state).await?,
-        };
         for (order_id, reason) in cancel_candidates {
             let Some(index) = open_orders.iter().position(|order| order.id == order_id) else {
                 continue;
             };
             let order = open_orders[index].clone();
-            match cancel_one_live_reward_order(&live_connector, order, &reason, trace_id).await? {
+            match cancel_one_live_reward_order(connector, order, &reason, trace_id).await? {
                 LiveRewardOrderUpdate::Changed(updated, event) => {
                     open_orders[index] = updated.clone();
                     if !live_cancel_result_is_unknown(&updated) {
@@ -651,7 +602,6 @@ async fn run_reward_bot_live_reconcile_unlocked(
                 }
             }
         }
-        connector = Some(live_connector);
     }
 
     if open_orders.iter().any(|order| {
@@ -659,12 +609,8 @@ async fn run_reward_bot_live_reconcile_unlocked(
             && (order.status == ManagedRewardOrderStatus::Planned
                 || order.status == ManagedRewardOrderStatus::ExitPending)
     }) {
-        let live_connector = match connector {
-            Some(connector) => connector,
-            None => build_live_polymarket_connector(state).await?,
-        };
         submit_pending_live_reward_orders(
-            &live_connector,
+            connector,
             &mut open_orders,
             &books,
             state,

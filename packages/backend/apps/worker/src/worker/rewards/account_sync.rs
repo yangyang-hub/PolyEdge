@@ -28,6 +28,7 @@ async fn sync_external_account_state(
     }
 
     let mut synced_account = cycle_account.clone();
+    synced_account.reserved_usd = Decimal::ZERO;
     let mut balance_updated = false;
     match connector.refresh_balance().await {
         Ok(balance) => {
@@ -45,7 +46,8 @@ async fn sync_external_account_state(
     }
 
     // Sync all active buy orders on Polymarket (including orders not managed by
-    // this bot) so the placement pre-check can avoid "not enough balance" rejections.
+    // this bot) for account exposure observability. Resting maker orders remain
+    // soft reservations; confirmed fills drive the local cash and inventory model.
     match connector.list_open_orders().await {
         Ok(open_orders) => {
             let buy_notional: Decimal = open_orders

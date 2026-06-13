@@ -21,7 +21,7 @@ async fn market_event_upsert_markets(
 
     for chunk in markets.chunks(UPSERT_BATCH_SIZE) {
         // -- markets batch upsert --
-        let market_cols = 17usize;
+        let market_cols = 19usize;
         let values_placeholders: String = chunk
             .iter()
             .enumerate()
@@ -38,7 +38,7 @@ async fn market_event_upsert_markets(
         let market_sql = format!(
             r#"INSERT INTO markets (
               id, slug, question, category, status,
-              best_bid, best_ask, mid_price, volume_24h,
+              best_bid, best_ask, mid_price, volume_24h, liquidity_usd, end_at,
               ambiguity_level, tradability_status,
               polymarket_condition_id, polymarket_yes_asset_id, polymarket_no_asset_id,
               updated_at, version, trace_id
@@ -54,6 +54,9 @@ async fn market_event_upsert_markets(
               best_ask = EXCLUDED.best_ask,
               mid_price = EXCLUDED.mid_price,
               volume_24h = EXCLUDED.volume_24h,
+              liquidity_usd = EXCLUDED.liquidity_usd,
+              end_at = EXCLUDED.end_at,
+              synced_at = now(),
               ambiguity_level = EXCLUDED.ambiguity_level,
               tradability_status = EXCLUDED.tradability_status,
               polymarket_condition_id = EXCLUDED.polymarket_condition_id,
@@ -62,7 +65,7 @@ async fn market_event_upsert_markets(
               updated_at = EXCLUDED.updated_at,
               version = EXCLUDED.version,
               trace_id = EXCLUDED.trace_id
-            WHERE EXCLUDED.version > markets.version"#,
+            WHERE EXCLUDED.version >= markets.version"#,
         );
 
         let mut query = sqlx::query(&market_sql);
@@ -77,6 +80,8 @@ async fn market_event_upsert_markets(
                 .bind(market.best_ask.value())
                 .bind(market.mid_price.value())
                 .bind(market.volume_24h.value())
+                .bind(market.liquidity_usd.value())
+                .bind(market.end_at)
                 .bind(market.ambiguity_level.as_str())
                 .bind(market.tradability_status.as_str())
                 .bind(&market.polymarket_condition_id)

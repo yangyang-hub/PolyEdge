@@ -8,9 +8,15 @@ export type RewardsPageData = {
 };
 
 const REWARD_ORDERS_PAGE_SIZE = 15;
+const REWARD_PLANS_PAGE_SIZE = 15;
 
 export async function getRewardsPageData(): Promise<RewardsPageData> {
   const response = await readRewardBotSnapshot({
+    plans_eligible: true,
+    plans_page: 1,
+    plans_page_size: REWARD_PLANS_PAGE_SIZE,
+    plans_sort_by: "score",
+    plans_sort_order: "desc",
     orders_page: 1,
     orders_page_size: REWARD_ORDERS_PAGE_SIZE,
     orders_sort_by: "status",

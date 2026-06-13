@@ -525,6 +525,8 @@ fn fixture_market(
         best_ask: probability(best_ask),
         mid_price: probability(mid_price),
         volume_24h: usd_amount(volume_24h),
+        liquidity_usd: usd_amount("0"),
+        end_at: None,
         ambiguity_level,
         tradability_status,
         resolution_source: resolution_source.to_string(),

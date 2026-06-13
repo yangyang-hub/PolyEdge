@@ -10,6 +10,10 @@ pub struct MarketView {
     pub best_ask: Probability,
     pub mid_price: Probability,
     pub volume_24h: UsdAmount,
+    pub liquidity_usd: UsdAmount,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(with = "time::serde::rfc3339::option")]
+    pub end_at: Option<OffsetDateTime>,
     pub ambiguity_level: AmbiguityLevel,
     pub tradability_status: TradabilityStatus,
     pub resolution_source: String,
@@ -297,6 +301,10 @@ pub struct FixtureMarketRecord {
     pub best_ask: Probability,
     pub mid_price: Probability,
     pub volume_24h: UsdAmount,
+    pub liquidity_usd: UsdAmount,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(with = "time::serde::rfc3339::option")]
+    pub end_at: Option<OffsetDateTime>,
     pub ambiguity_level: AmbiguityLevel,
     pub tradability_status: TradabilityStatus,
     pub resolution_source: String,

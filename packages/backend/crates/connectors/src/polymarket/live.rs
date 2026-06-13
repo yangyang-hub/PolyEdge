@@ -68,6 +68,29 @@ impl LivePolymarketConnector {
         &self.account_id
     }
 
+    /// Send one CLOB heartbeat and return the id required by the next call.
+    pub async fn post_heartbeat(&self, heartbeat_id: Option<&str>) -> Result<String> {
+        let heartbeat_id = heartbeat_id
+            .map(Uuid::from_str)
+            .transpose()
+            .map_err(|error| {
+                AppError::invalid_input(
+                    "POLYMARKET_HEARTBEAT_ID_INVALID",
+                    format!("invalid Polymarket heartbeat id: {error}"),
+                )
+            })?;
+        self.client
+            .post_heartbeat(heartbeat_id)
+            .await
+            .map(|response| response.heartbeat_id.to_string())
+            .map_err(|error| {
+                AppError::dependency_unavailable(
+                    "POLYMARKET_HEARTBEAT_FAILED",
+                    format!("failed to post Polymarket heartbeat: {error}"),
+                )
+            })
+    }
+
     pub fn connect_user_ws(&self) -> Result<ClobWsClient<Authenticated<Normal>>> {
         let client = ClobWsClient::new(&self.ws_host, WsConfig::default()).map_err(|error| {
             AppError::internal(

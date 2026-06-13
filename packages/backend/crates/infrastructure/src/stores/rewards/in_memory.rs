@@ -171,9 +171,7 @@ impl RewardBotStore for InMemoryRewardBotStore {
         filter: &RewardCandidateFilter,
         safety_limit: u16,
     ) -> Result<Vec<RewardMarket>> {
-        // In-memory store lacks best_bid/best_ask data, so midpoint and budget
-        // filters are left for the Rust planner safety net. Apply only the
-        // reward_markets-side filters.
+        let now = OffsetDateTime::now_utc();
         let mut markets: Vec<RewardMarket> = self
             .markets
             .read()
@@ -181,21 +179,39 @@ impl RewardBotStore for InMemoryRewardBotStore {
             .values()
             .filter(|market| {
                 market.active
-                    && market
-                        .tokens
-                        .iter()
-                        .filter(|t| !t.token_id.trim().is_empty())
-                        .count()
-                        >= 2
+                    && in_memory_reward_tokens_are_binary(market)
                     && market.total_daily_rate >= filter.min_daily_reward
                     && market.rewards_max_spread > rust_decimal::Decimal::ZERO
+                    && in_memory_reward_midpoint(market).is_some_and(|midpoint| {
+                        midpoint >= filter.min_midpoint && midpoint <= filter.max_midpoint
+                    })
+                    && (filter.per_market_usd <= rust_decimal::Decimal::ZERO
+                        || market.rewards_min_size <= filter.per_market_usd)
+                    && market.liquidity_usd >= filter.min_market_liquidity_usd
+                    && market.volume_24h_usd >= filter.min_market_volume_24h_usd
+                    && market.market_spread_cents <= filter.max_market_spread_cents
+                    && market.ambiguity_level != "high"
+                    && market.end_at.is_some_and(|end_at| {
+                        end_at >= now + Duration::hours(filter.min_hours_to_end as i64)
+                    })
+                    && market.market_synced_at.is_some_and(|synced_at| {
+                        synced_at
+                            >= now
+                                - Duration::minutes(
+                                    filter.max_market_data_age_minutes as i64,
+                                )
+                            && synced_at <= now + Duration::minutes(5)
+                    })
             })
             .cloned()
             .collect();
         markets.sort_by(|left, right| {
             right
-                .total_daily_rate
-                .cmp(&left.total_daily_rate)
+                .liquidity_usd
+                .cmp(&left.liquidity_usd)
+                .then_with(|| right.volume_24h_usd.cmp(&left.volume_24h_usd))
+                .then_with(|| right.end_at.cmp(&left.end_at))
+                .then_with(|| right.total_daily_rate.cmp(&left.total_daily_rate))
                 .then_with(|| right.updated_at.cmp(&left.updated_at))
         });
         markets.truncate(usize::from(safety_limit));
@@ -573,4 +589,34 @@ impl RewardBotStore for InMemoryRewardBotStore {
         ));
         Ok(())
     }
+}
+
+fn in_memory_reward_tokens_are_binary(market: &RewardMarket) -> bool {
+    if market.tokens.len() != 2 {
+        return false;
+    }
+    let first = &market.tokens[0];
+    let second = &market.tokens[1];
+    if first.token_id.trim().is_empty()
+        || second.token_id.trim().is_empty()
+        || first.token_id == second.token_id
+    {
+        return false;
+    }
+    (first.outcome.eq_ignore_ascii_case("yes") && second.outcome.eq_ignore_ascii_case("no"))
+        || (first.outcome.eq_ignore_ascii_case("no")
+            && second.outcome.eq_ignore_ascii_case("yes"))
+}
+
+fn in_memory_reward_midpoint(market: &RewardMarket) -> Option<Decimal> {
+    market.tokens.iter().find_map(|token| {
+        let price = token.price?;
+        if token.outcome.eq_ignore_ascii_case("yes") {
+            Some(price)
+        } else if token.outcome.eq_ignore_ascii_case("no") {
+            Some(Decimal::ONE - price)
+        } else {
+            None
+        }
+    })
 }

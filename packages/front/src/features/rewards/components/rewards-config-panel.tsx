@@ -117,6 +117,41 @@ export function RewardsConfigPanel({
             onChange={(value) => updateNumber("min_daily_reward", value)}
           />
           <NumberInput
+            label={dictionary.rewards.minMarketLiquidityUsd}
+            value={draft.min_market_liquidity_usd}
+            suffix="$"
+            hint={h.minMarketLiquidityUsd}
+            onChange={(value) => updateNumber("min_market_liquidity_usd", value)}
+          />
+          <NumberInput
+            label={dictionary.rewards.minMarketVolume24hUsd}
+            value={draft.min_market_volume_24h_usd}
+            suffix="$"
+            hint={h.minMarketVolume24hUsd}
+            onChange={(value) => updateNumber("min_market_volume_24h_usd", value)}
+          />
+          <NumberInput
+            label={dictionary.rewards.minHoursToEnd}
+            value={draft.min_hours_to_end}
+            suffix="h"
+            hint={h.minHoursToEnd}
+            onChange={(value) => updateNumber("min_hours_to_end", value)}
+          />
+          <NumberInput
+            label={dictionary.rewards.maxMarketSpreadCents}
+            value={draft.max_market_spread_cents}
+            suffix="c"
+            hint={h.maxMarketSpreadCents}
+            onChange={(value) => updateNumber("max_market_spread_cents", value)}
+          />
+          <NumberInput
+            label={dictionary.rewards.maxMarketDataAgeMinutes}
+            value={draft.max_market_data_age_minutes}
+            suffix="min"
+            hint={h.maxMarketDataAgeMinutes}
+            onChange={(value) => updateNumber("max_market_data_age_minutes", value)}
+          />
+          <NumberInput
             label={dictionary.rewards.minMarketScore}
             value={draft.min_market_score}
             hint={h.minMarketScore}
@@ -183,13 +218,26 @@ export function RewardsConfigPanel({
             hint={h.maxSpreadCents}
             onChange={(value) => updateNumber("max_spread_cents", value)}
           />
-          <NumberInput
-            label={dictionary.rewards.quoteEdgeCents}
-            value={draft.quote_edge_cents}
-            suffix="c"
-            hint={h.quoteEdgeCents}
-            onChange={(value) => updateNumber("quote_edge_cents", value)}
-          />
+          <label className="space-y-1.5">
+            <span className="flex items-center gap-1 text-xs font-medium text-muted-foreground">
+              {dictionary.rewards.quoteBidRank}
+              <Hint content={h.quoteBidRank} />
+            </span>
+            <select
+              className={selectClassName}
+              value={draft.quote_bid_rank}
+              onChange={(event) =>
+                setDraft((current) => ({
+                  ...current,
+                  quote_bid_rank: Number(event.target.value),
+                }))
+              }
+            >
+              <option value={1}>{dictionary.rewards.bidRank1}</option>
+              <option value={2}>{dictionary.rewards.bidRank2}</option>
+              <option value={3}>{dictionary.rewards.bidRank3}</option>
+            </select>
+          </label>
           <NumberInput
             label={dictionary.rewards.safetyMarginCents}
             value={draft.safety_margin_cents}
@@ -239,31 +287,6 @@ export function RewardsConfigPanel({
             suffix="$"
             hint={h.accountCapital}
             onChange={(value) => updateNumber("account_capital_usd", value)}
-          />
-          <NumberInput
-            label={dictionary.rewards.competitionFactor}
-            value={draft.reward_competition_factor}
-            suffix="x"
-            hint={h.competitionFactor}
-            onChange={(value) => updateNumber("reward_competition_factor", value)}
-          />
-          <NumberInput
-            label={dictionary.rewards.singleSidedC}
-            value={draft.single_sided_divisor_c}
-            hint={h.singleSidedC}
-            onChange={(value) => updateNumber("single_sided_divisor_c", value)}
-          />
-          <NumberInput
-            label={dictionary.rewards.fillRatePerTick}
-            value={draft.fill_rate_per_tick}
-            hint={h.fillRatePerTick}
-            onChange={(value) => updateNumber("fill_rate_per_tick", value)}
-          />
-          <NumberInput
-            label={dictionary.rewards.maxFillRatio}
-            value={draft.max_fill_ratio}
-            hint={h.maxFillRatio}
-            onChange={(value) => updateNumber("max_fill_ratio", value)}
           />
         </ConfigSection>
       </CardContent>

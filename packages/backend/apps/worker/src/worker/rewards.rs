@@ -2,12 +2,15 @@ const REWARD_WORKER_ADVISORY_LOCK_KEY: i64 = 0x504f_4c59_5245_5744;
 const LIVE_EXTERNAL_ORDER_NOT_FOUND_MARKER: &str = "external order lookup returned not found";
 
 async fn run_reward_bot_once(state: &AppState, trace_id: &str) -> Result<RewardBotRunReport> {
+    let connector = build_live_polymarket_connector(state).await?;
+    let _heartbeat_guard = RewardHeartbeatGuard::spawn(connector.clone());
     let mut book_history = HashMap::new();
-    run_reward_bot_once_with_history(state, trace_id, &mut book_history).await
+    run_reward_bot_once_with_history(state, &connector, trace_id, &mut book_history).await
 }
 
 async fn run_reward_bot_once_with_history(
     state: &AppState,
+    connector: &LivePolymarketConnector,
     trace_id: &str,
     book_history: &mut HashMap<String, VecDeque<BookSnapshot>>,
 ) -> Result<RewardBotRunReport> {
@@ -20,42 +23,37 @@ async fn run_reward_bot_once_with_history(
     };
     let result = async {
         let command_report =
-            process_pending_reward_control_commands_unlocked(state, book_history).await?;
+            process_pending_reward_control_commands_unlocked(state, connector, book_history)
+                .await?;
         if command_report.processed > 0 {
             return Ok(command_report.report);
         }
 
-        run_reward_bot_tick(state, trace_id, false, book_history).await
+        run_reward_bot_tick(state, connector, trace_id, false, book_history).await
     }
     .await;
     finish_reward_worker_lease(lease, result).await
 }
 
-async fn run_reward_bot_scheduled_full_cycle(
-    state: &AppState,
-    trace_id: &str,
-    book_history: &mut HashMap<String, VecDeque<BookSnapshot>>,
-) -> Result<Option<RewardBotRunReport>> {
-    let Some(lease) = state
-        .try_acquire_postgres_advisory_lease(REWARD_WORKER_ADVISORY_LOCK_KEY)
-        .await?
-    else {
-        debug!("deferring rewards full cycle because another worker holds the live lease");
-        return Ok(None);
-    };
-    let result = run_reward_bot_tick(state, trace_id, false, book_history).await;
-    finish_reward_worker_lease(lease, result).await.map(Some)
-}
-
 async fn run_reward_bot_tick(
     state: &AppState,
+    connector: &LivePolymarketConnector,
     trace_id: &str,
     force_orders: bool,
     book_history: &mut HashMap<String, VecDeque<BookSnapshot>>,
 ) -> Result<RewardBotRunReport> {
     let (markets, books) = fetch_reward_bot_inputs(state).await?;
     record_reward_book_history(book_history, &books);
-    run_reward_bot_live_tick(state, markets, books, trace_id, force_orders, book_history).await
+    run_reward_bot_live_tick(
+        state,
+        connector,
+        markets,
+        books,
+        trace_id,
+        force_orders,
+        book_history,
+    )
+    .await
 }
 
 #[derive(Debug, Default)]
@@ -117,23 +115,9 @@ async fn persist_live_reward_updates(
         .await
 }
 
-async fn process_pending_reward_control_commands(
-    state: &AppState,
-    book_history: &mut HashMap<String, VecDeque<BookSnapshot>>,
-) -> Result<RewardCommandProcessReport> {
-    let Some(lease) = state
-        .try_acquire_postgres_advisory_lease(REWARD_WORKER_ADVISORY_LOCK_KEY)
-        .await?
-    else {
-        debug!("skipping rewards commands because another worker holds the live lease");
-        return Ok(RewardCommandProcessReport::default());
-    };
-    let result = process_pending_reward_control_commands_unlocked(state, book_history).await;
-    finish_reward_worker_lease(lease, result).await
-}
-
 async fn process_pending_reward_control_commands_unlocked(
     state: &AppState,
+    connector: &LivePolymarketConnector,
     book_history: &mut HashMap<String, VecDeque<BookSnapshot>>,
 ) -> Result<RewardCommandProcessReport> {
     let mut total = RewardCommandProcessReport::default();
@@ -149,7 +133,9 @@ async fn process_pending_reward_control_commands_unlocked(
             break;
         };
 
-        let result = execute_reward_control_command(state, &command, &trace_id, book_history).await;
+        let result =
+            execute_reward_control_command(state, connector, &command, &trace_id, book_history)
+                .await;
         match result {
             Ok(report) => {
                 state
@@ -203,15 +189,19 @@ async fn finish_reward_worker_lease<T>(
 
 async fn execute_reward_control_command(
     state: &AppState,
+    connector: &LivePolymarketConnector,
     command: &RewardControlCommand,
     trace_id: &str,
     book_history: &mut HashMap<String, VecDeque<BookSnapshot>>,
 ) -> Result<RewardBotRunReport> {
     match command.action {
-        RewardControlAction::RunOnce => run_reward_bot_tick(state, trace_id, true, book_history).await,
+        RewardControlAction::RunOnce => {
+            run_reward_bot_tick(state, connector, trace_id, true, book_history).await
+        }
         RewardControlAction::CancelAll => {
             let cancel_report = cancel_live_reward_orders(
                 state,
+                connector,
                 command.account_id.as_deref(),
                 "worker processed queued rewards live cancel-all command",
                 trace_id,
@@ -231,6 +221,7 @@ async fn execute_reward_control_command(
         RewardControlAction::Reset => {
             let cancel_report = cancel_live_reward_orders(
                 state,
+                connector,
                 command.account_id.as_deref(),
                 "worker processed queued rewards live reset as cancel-all command",
                 trace_id,
@@ -256,6 +247,7 @@ async fn execute_reward_control_command(
 
 async fn run_reward_bot_live_tick(
     state: &AppState,
+    connector: &LivePolymarketConnector,
     markets: Vec<RewardMarket>,
     books: HashMap<String, RewardOrderBook>,
     trace_id: &str,
@@ -283,11 +275,9 @@ async fn run_reward_bot_live_tick(
         reward_accrued: Decimal::ZERO,
     };
 
-    let connector = build_live_polymarket_connector(state).await?;
-
     if !cycle.open_orders.is_empty() {
         let sync_report =
-            sync_live_reward_orders(state, &connector, &cycle.open_orders, &books, trace_id).await?;
+            sync_live_reward_orders(state, connector, &cycle.open_orders, &books, trace_id).await?;
         accumulate_report(&mut report, &sync_report);
         let latest = state.reward_bot_service.current_live_cycle_state().await?;
         cycle.account = latest.account;
@@ -297,7 +287,7 @@ async fn run_reward_bot_live_tick(
 
     // Reward earnings sync always runs — it queries Polymarket's authoritative
     // daily total and does not risk double-counting fills.
-    sync_reward_earnings(state, &connector, &mut cycle.account, trace_id).await;
+    sync_reward_earnings(state, connector, &mut cycle.account, trace_id).await;
 
     // A newly confirmed fill was just applied to the local ledger and may not yet
     // be visible in the eventually-consistent Data API snapshot. Refresh only on
@@ -305,7 +295,7 @@ async fn run_reward_bot_live_tick(
     if can_refresh_external_account_after_order_sync(&report) {
         sync_external_account_state(
             state,
-            &connector,
+            connector,
             &mut cycle.account,
             &mut cycle.positions,
             &mut cycle.open_orders,
@@ -316,46 +306,6 @@ async fn run_reward_bot_live_tick(
 
     let mut account = cycle.account.clone();
     let mut open_orders = cycle.open_orders.clone();
-
-    // Auto-expire stale stuck-reconciliation orders after configured threshold.
-    // Runs after sync (gives Polymarket one last chance) and before cancel
-    // candidates so that `has_unresolved_live_reconciliation` sees the
-    // cleaned-up order list.
-    {
-        let stale_candidates = live_stale_auto_cancel_candidates(
-            &cycle.config,
-            &open_orders,
-            OffsetDateTime::now_utc(),
-        );
-        if !stale_candidates.is_empty() {
-            for (order_id, reason) in &stale_candidates {
-                let Some(index) = open_orders.iter().position(|o| o.id == *order_id) else {
-                    continue;
-                };
-                let (updated, event) =
-                    force_cancel_stale_live_reward_order(open_orders[index].clone(), reason);
-                open_orders[index] = updated.clone();
-                report.cancelled_orders += 1;
-                report.risk_cancelled_orders += 1;
-                persist_live_reward_updates(
-                    state,
-                    &mut account,
-                    Vec::new(),
-                    vec![updated],
-                    Vec::new(),
-                    vec![event],
-                    &report,
-                    trace_id,
-                )
-                .await?;
-            }
-            info!(
-                trace_id = %trace_id,
-                stale_auto_cancelled = stale_candidates.len(),
-                "auto-cancelled stale stuck-reconciliation orders",
-            );
-        }
-    }
 
     if !cycle.should_execute && cycle.open_orders.is_empty() {
         return Ok(report);
@@ -377,7 +327,7 @@ async fn run_reward_bot_live_tick(
             continue;
         };
         let order = open_orders[index].clone();
-        match cancel_one_live_reward_order(&connector, order, &reason, trace_id).await? {
+        match cancel_one_live_reward_order(connector, order, &reason, trace_id).await? {
             LiveRewardOrderUpdate::Changed(updated, event) => {
                 open_orders[index] = updated.clone();
                 if live_cancel_result_is_unknown(&updated) {
@@ -420,7 +370,7 @@ async fn run_reward_bot_live_tick(
     // here without issuing a duplicate order.
     let unresolved_before_recovery = has_unresolved_live_reconciliation(&open_orders);
     submit_pending_live_reward_orders(
-        &connector,
+        connector,
         &mut open_orders,
         &books,
         state,
@@ -482,7 +432,7 @@ async fn run_reward_bot_live_tick(
         .await?;
         open_orders.extend(placement_orders);
         submit_pending_live_reward_orders(
-            &connector,
+            connector,
             &mut open_orders,
             &books,
             state,
@@ -500,6 +450,7 @@ async fn run_reward_bot_live_tick(
 
 async fn cancel_live_reward_orders(
     state: &AppState,
+    connector: &LivePolymarketConnector,
     account_id: Option<&str>,
     reason: &str,
     trace_id: &str,
@@ -515,12 +466,11 @@ async fn cancel_live_reward_orders(
         return Ok(LiveCancelReport::default());
     }
 
-    let connector = build_live_polymarket_connector(state).await?;
     let mut account = cycle.account.clone();
     let mut report = LiveCancelReport::default();
 
     for order in target_orders {
-        match cancel_one_live_reward_order(&connector, order, reason, trace_id).await? {
+        match cancel_one_live_reward_order(connector, order, reason, trace_id).await? {
             LiveRewardOrderUpdate::Changed(updated, event) => {
                 if live_cancel_result_is_unknown(&updated) {
                     report.rejected += 1;

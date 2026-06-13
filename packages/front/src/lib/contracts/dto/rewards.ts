@@ -15,9 +15,14 @@ export type RewardBotConfigDto = {
   per_market_usd: DecimalValue;
   quote_size_usd: DecimalValue;
   min_daily_reward: DecimalValue;
+  min_market_liquidity_usd: DecimalValue;
+  min_market_volume_24h_usd: DecimalValue;
+  min_hours_to_end: number;
+  max_market_spread_cents: DecimalValue;
+  max_market_data_age_minutes: number;
   min_market_score: DecimalValue;
   max_spread_cents: DecimalValue;
-  quote_edge_cents: DecimalValue;
+  quote_bid_rank: number;
   safety_margin_cents: DecimalValue;
   min_midpoint: DecimalValue;
   max_midpoint: DecimalValue;
@@ -28,10 +33,6 @@ export type RewardBotConfigDto = {
   exit_markup_cents: DecimalValue;
   cancel_on_fill: boolean;
   account_capital_usd: DecimalValue;
-  reward_competition_factor: DecimalValue;
-  single_sided_divisor_c: DecimalValue;
-  fill_rate_per_tick: DecimalValue;
-  max_fill_ratio: DecimalValue;
   requote_drift_cents: DecimalValue;
   post_fill_strategy: PostFillStrategy;
   // Risk control fields
@@ -65,6 +66,12 @@ export type RewardMarketDto = {
   rewards_max_spread: DecimalValue;
   rewards_min_size: DecimalValue;
   total_daily_rate: DecimalValue;
+  liquidity_usd: DecimalValue;
+  volume_24h_usd: DecimalValue;
+  market_spread_cents: DecimalValue;
+  end_at?: string | null;
+  ambiguity_level: string;
+  market_synced_at?: string | null;
   tokens: RewardTokenDto[];
   active: boolean;
   updated_at: string;
@@ -119,6 +126,7 @@ export type RewardAccountStateDto = {
   wallet_address?: string | null;
   capital_usd: DecimalValue;
   available_usd: DecimalValue;
+  external_buy_notional: DecimalValue;
   reserved_usd: DecimalValue;
   realized_pnl: DecimalValue;
   reward_earned_usd: DecimalValue;

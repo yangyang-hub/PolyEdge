@@ -5,6 +5,14 @@ fn floor_reward_price_to_tick(price: Decimal) -> Decimal {
         .round_dp_with_strategy(2, RoundingStrategy::ToZero)
 }
 
+fn ceil_reward_price_to_tick(price: Decimal) -> Decimal {
+    let bounded = price
+        .max(REWARD_PRICE_TICK)
+        .min(Decimal::ONE - REWARD_PRICE_TICK);
+    ((bounded / REWARD_PRICE_TICK).ceil() * REWARD_PRICE_TICK)
+        .min(Decimal::ONE - REWARD_PRICE_TICK)
+}
+
 fn reward_live_fill_id(update: &ConnectorTradeFillUpdate) -> String {
     format!(
         "rewfill_{}_{}",
@@ -111,7 +119,7 @@ fn apply_live_reward_status_update_to_order(
         OrderStatus::Open | OrderStatus::Submitted | OrderStatus::PartiallyFilled
             if order.reason.contains(LIVE_EXTERNAL_ORDER_NOT_FOUND_MARKER) =>
         {
-            order.scoring = order.side == RewardOrderSide::Buy;
+            order.scoring = false;
             order.reason = "external order lookup recovered; live order confirmed".to_string();
             order.updated_at = OffsetDateTime::now_utc();
             let event = reward_live_event(

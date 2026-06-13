@@ -6,6 +6,7 @@ async fn fetch_market_by_id(
         r#"
         SELECT
           m.id,
+          m.slug,
           m.question,
           m.category,
           m.status,
@@ -13,6 +14,8 @@ async fn fetch_market_by_id(
           m.best_ask,
           m.mid_price,
           m.volume_24h,
+          m.liquidity_usd,
+          m.end_at,
           m.ambiguity_level,
           m.tradability_status,
           r.resolution_source,

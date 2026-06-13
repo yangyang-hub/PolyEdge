@@ -37,6 +37,8 @@ mod tests {
             best_ask: record.best_ask,
             mid_price: record.mid_price,
             volume_24h: record.volume_24h,
+            liquidity_usd: record.liquidity_usd,
+            end_at: record.end_at,
             ambiguity_level: record.ambiguity_level,
             tradability_status: record.tradability_status,
             resolution_source: record.resolution_source.clone(),
