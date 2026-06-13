@@ -12,6 +12,8 @@ pub struct RewardMarket {
     pub question: String,
     pub market_slug: String,
     pub event_slug: String,
+    #[serde(default)]
+    pub category: String,
     pub image: String,
     pub rewards_max_spread: Decimal,
     pub rewards_min_size: Decimal,
@@ -62,6 +64,26 @@ pub struct RewardQuoteLeg {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RewardBookSideMetrics {
+    pub top1_depth_share: Decimal,
+    pub top3_depth_share: Decimal,
+    pub book_hhi: Decimal,
+    pub exit_depth_usd: Decimal,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RewardMarketBookMetrics {
+    pub yes_probability: Decimal,
+    pub recommended_quote_mode: RewardPlanQuoteMode,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub yes: Option<RewardBookSideMetrics>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub no: Option<RewardBookSideMetrics>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RewardQuotePlan {
     pub condition_id: String,
     pub market_slug: String,
@@ -69,6 +91,14 @@ pub struct RewardQuotePlan {
     pub score: Decimal,
     pub eligible: bool,
     pub reason: String,
+    #[serde(default = "default_reward_plan_quote_mode")]
+    pub quote_mode: RewardPlanQuoteMode,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recommended_quote_mode: Option<RewardPlanQuoteMode>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub book_metrics: Option<RewardMarketBookMetrics>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ai_advisory: Option<RewardMarketAdvisory>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub midpoint: Option<Decimal>,
     pub total_daily_rate: Decimal,
@@ -77,6 +107,10 @@ pub struct RewardQuotePlan {
     pub legs: Vec<RewardQuoteLeg>,
     #[serde(with = "time::serde::rfc3339")]
     pub updated_at: OffsetDateTime,
+}
+
+const fn default_reward_plan_quote_mode() -> RewardPlanQuoteMode {
+    RewardPlanQuoteMode::Double
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

@@ -11,7 +11,6 @@ import { dictionary, formatMessage } from "@/lib/i18n/dictionaries";
 import type { getEventsPageData } from "@/features/events/loaders/events-page-data";
 
 type EventsPageData = Awaited<ReturnType<typeof getEventsPageData>>;
-type EventItem = EventsPageData["events"][number];
 
 export function EventsWorkbench({ data }: { data: EventsPageData }) {
   const [selectedId, setSelectedId] = useState(data.selectedEventId);

@@ -117,22 +117,41 @@ fn build_reward_quote_plan(
     let Some(midpoint) = midpoint else {
         return empty_plan(market, "missing book or fallback token price", now, None);
     };
+    let metrics = build_market_book_metrics(yes_token, no_token, books, midpoint, config);
+    let quote_mode = selected_reward_quote_mode(config, metrics.as_ref());
 
-    if midpoint < config.min_midpoint || midpoint > config.max_midpoint {
-        return empty_plan(
+    if quote_mode == RewardPlanQuoteMode::None {
+        let reason = metrics
+            .as_ref()
+            .and_then(|metrics| metrics.reason.clone())
+            .unwrap_or_else(|| "auto quote mode skipped this market".to_string());
+        return empty_plan_with_metrics(market, reason, now, Some(midpoint), metrics);
+    }
+
+    let midpoint_is_in_double_range =
+        midpoint >= config.min_midpoint && midpoint <= config.max_midpoint;
+    if !midpoint_is_in_double_range
+        && !matches!(
+            quote_mode,
+            RewardPlanQuoteMode::SingleYes | RewardPlanQuoteMode::SingleNo
+        )
+    {
+        return empty_plan_with_metrics(
             market,
             "midpoint is too close to 0/1 for the first rewards strategy",
             now,
             Some(midpoint),
+            metrics,
         );
     }
 
     if market.total_daily_rate < config.min_daily_reward {
-        return empty_plan(
+        return empty_plan_with_metrics(
             market,
             "daily reward is below threshold",
             now,
             Some(midpoint),
+            metrics,
         );
     }
 
@@ -141,100 +160,207 @@ fn build_reward_quote_plan(
         config.max_spread_cents,
     );
     if max_spread_cents <= Decimal::ZERO {
-        return empty_plan(
+        return empty_plan_with_metrics(
             market,
             "invalid rewards spread setting",
             now,
             Some(midpoint),
+            metrics,
         );
     }
 
     let safety = config.safety_margin_cents / decimal("100");
     let no_mid = Decimal::ONE - midpoint;
-    let Some(yes_bid) = yes_state
+    let yes_bid = yes_state
         .as_ref()
-        .and_then(|state| quote_bid_price(state, config.quote_bid_rank))
-    else {
-        return empty_plan(
-            market,
-            format!("YES book does not have bid-{}", config.quote_bid_rank),
-            now,
-            Some(midpoint),
-        );
-    };
-    let Some(no_bid) = no_state
+        .and_then(|state| quote_bid_price(state, config.quote_bid_rank));
+    let no_bid = no_state
         .as_ref()
-        .and_then(|state| quote_bid_price(state, config.quote_bid_rank))
-    else {
-        return empty_plan(
-            market,
-            format!("NO book does not have bid-{}", config.quote_bid_rank),
-            now,
-            Some(midpoint),
-        );
-    };
+        .and_then(|state| quote_bid_price(state, config.quote_bid_rank));
     let max_spread = max_spread_cents / decimal("100");
 
     let yes_quote_midpoint = yes_state.as_ref().map_or(midpoint, |state| state.midpoint);
     let no_quote_midpoint = no_state.as_ref().map_or(no_mid, |state| state.midpoint);
-    if yes_quote_midpoint - yes_bid > max_spread || no_quote_midpoint - no_bid > max_spread {
-        return empty_plan(
-            market,
-            format!(
-                "bid-{} is outside the rewards spread limit",
-                config.quote_bid_rank
-            ),
-            now,
-            Some(midpoint),
-        );
-    }
-
-    if yes_state
-        .as_ref()
-        .and_then(|state| state.best_ask)
-        .is_some_and(|best_ask| yes_bid >= best_ask)
-    {
-        return empty_plan(market, "YES bid would touch best ask", now, Some(midpoint));
-    }
-
-    if no_state
-        .as_ref()
-        .and_then(|state| state.best_ask)
-        .is_some_and(|best_ask| no_bid >= best_ask)
-    {
-        return empty_plan(market, "NO bid would touch best ask", now, Some(midpoint));
-    }
-
-    if yes_bid + no_bid > Decimal::ONE - safety {
-        return empty_plan(
-            market,
-            "YES/NO bids do not leave enough safety margin",
-            now,
-            Some(midpoint),
-        );
-    }
 
     if config.quote_size_usd <= Decimal::ZERO {
-        return empty_plan(market, "quote size is zero", now, Some(midpoint));
-    }
-
-    let Some(legs) = make_quote_legs(
-        yes_token,
-        yes_bid,
-        no_token,
-        no_bid,
-        market.rewards_min_size,
-        config,
-    ) else {
-        return empty_plan(
+        return empty_plan_with_metrics(
             market,
-            "per-market budget cannot satisfy rewards minimum size",
+            "quote size is zero",
             now,
             Some(midpoint),
+            metrics,
         );
+    }
+
+    let legs = match quote_mode {
+        RewardPlanQuoteMode::Double => {
+            let Some(yes_bid) = yes_bid else {
+                return empty_plan_with_metrics(
+                    market,
+                    format!("YES book does not have bid-{}", config.quote_bid_rank),
+                    now,
+                    Some(midpoint),
+                    metrics,
+                );
+            };
+            let Some(no_bid) = no_bid else {
+                return empty_plan_with_metrics(
+                    market,
+                    format!("NO book does not have bid-{}", config.quote_bid_rank),
+                    now,
+                    Some(midpoint),
+                    metrics,
+                );
+            };
+            if yes_quote_midpoint - yes_bid > max_spread
+                || no_quote_midpoint - no_bid > max_spread
+            {
+                return empty_plan_with_metrics(
+                    market,
+                    format!(
+                        "bid-{} is outside the rewards spread limit",
+                        config.quote_bid_rank
+                    ),
+                    now,
+                    Some(midpoint),
+                    metrics,
+                );
+            }
+            if bid_touches_ask(&yes_state, yes_bid) {
+                return empty_plan_with_metrics(
+                    market,
+                    "YES bid would touch best ask",
+                    now,
+                    Some(midpoint),
+                    metrics,
+                );
+            }
+            if bid_touches_ask(&no_state, no_bid) {
+                return empty_plan_with_metrics(
+                    market,
+                    "NO bid would touch best ask",
+                    now,
+                    Some(midpoint),
+                    metrics,
+                );
+            }
+            if yes_bid + no_bid > Decimal::ONE - safety {
+                return empty_plan_with_metrics(
+                    market,
+                    "YES/NO bids do not leave enough safety margin",
+                    now,
+                    Some(midpoint),
+                    metrics,
+                );
+            }
+            let Some(legs) = make_quote_legs(
+                yes_token,
+                yes_bid,
+                no_token,
+                no_bid,
+                market.rewards_min_size,
+                config,
+            ) else {
+                return empty_plan_with_metrics(
+                    market,
+                    "per-market budget cannot satisfy rewards minimum size",
+                    now,
+                    Some(midpoint),
+                    metrics,
+                );
+            };
+            legs
+        }
+        RewardPlanQuoteMode::SingleYes => {
+            let Some(yes_bid) = yes_bid else {
+                return empty_plan_with_metrics(
+                    market,
+                    format!("YES book does not have bid-{}", config.quote_bid_rank),
+                    now,
+                    Some(midpoint),
+                    metrics,
+                );
+            };
+            if yes_quote_midpoint - yes_bid > max_spread {
+                return empty_plan_with_metrics(
+                    market,
+                    format!(
+                        "YES bid-{} is outside the rewards spread limit",
+                        config.quote_bid_rank
+                    ),
+                    now,
+                    Some(midpoint),
+                    metrics,
+                );
+            }
+            if bid_touches_ask(&yes_state, yes_bid) {
+                return empty_plan_with_metrics(
+                    market,
+                    "YES bid would touch best ask",
+                    now,
+                    Some(midpoint),
+                    metrics,
+                );
+            }
+            let Some(leg) = make_single_quote_leg(yes_token, yes_bid, market.rewards_min_size, config)
+            else {
+                return empty_plan_with_metrics(
+                    market,
+                    "per-market budget cannot satisfy rewards minimum size",
+                    now,
+                    Some(midpoint),
+                    metrics,
+                );
+            };
+            vec![leg]
+        }
+        RewardPlanQuoteMode::SingleNo => {
+            let Some(no_bid) = no_bid else {
+                return empty_plan_with_metrics(
+                    market,
+                    format!("NO book does not have bid-{}", config.quote_bid_rank),
+                    now,
+                    Some(midpoint),
+                    metrics,
+                );
+            };
+            if no_quote_midpoint - no_bid > max_spread {
+                return empty_plan_with_metrics(
+                    market,
+                    format!(
+                        "NO bid-{} is outside the rewards spread limit",
+                        config.quote_bid_rank
+                    ),
+                    now,
+                    Some(midpoint),
+                    metrics,
+                );
+            }
+            if bid_touches_ask(&no_state, no_bid) {
+                return empty_plan_with_metrics(
+                    market,
+                    "NO bid would touch best ask",
+                    now,
+                    Some(midpoint),
+                    metrics,
+                );
+            }
+            let Some(leg) = make_single_quote_leg(no_token, no_bid, market.rewards_min_size, config)
+            else {
+                return empty_plan_with_metrics(
+                    market,
+                    "per-market budget cannot satisfy rewards minimum size",
+                    now,
+                    Some(midpoint),
+                    metrics,
+                );
+            };
+            vec![leg]
+        }
+        RewardPlanQuoteMode::None => unreachable!("none quote mode returned earlier"),
     };
 
-    let score = score_market(market, max_spread_cents, midpoint, &legs);
+    let score = score_market(market, max_spread_cents, midpoint, &legs, config);
     let eligible = score >= config.min_market_score;
 
     RewardQuotePlan {
@@ -244,10 +370,16 @@ fn build_reward_quote_plan(
         score,
         eligible,
         reason: if eligible {
-            "eligible for live post-only quotes".to_string()
+            format!("eligible for live post-only {} quotes", quote_mode.as_str())
         } else {
             "score is below threshold".to_string()
         },
+        quote_mode,
+        recommended_quote_mode: metrics
+            .as_ref()
+            .map(|metrics| metrics.recommended_quote_mode),
+        book_metrics: metrics,
+        ai_advisory: None,
         midpoint: Some(midpoint),
         total_daily_rate: market.total_daily_rate,
         rewards_max_spread: market.rewards_max_spread,
@@ -294,6 +426,10 @@ fn empty_plan(
         score: Decimal::ZERO,
         eligible: false,
         reason: reason.into(),
+        quote_mode: RewardPlanQuoteMode::None,
+        recommended_quote_mode: None,
+        book_metrics: None,
+        ai_advisory: None,
         midpoint,
         total_daily_rate: market.total_daily_rate,
         rewards_max_spread: market.rewards_max_spread,
@@ -301,6 +437,19 @@ fn empty_plan(
         legs: Vec::new(),
         updated_at: now,
     }
+}
+
+fn empty_plan_with_metrics(
+    market: &RewardMarket,
+    reason: impl Into<String>,
+    now: OffsetDateTime,
+    midpoint: Option<Decimal>,
+    metrics: Option<RewardMarketBookMetrics>,
+) -> RewardQuotePlan {
+    let mut plan = empty_plan(market, reason, now, midpoint);
+    plan.recommended_quote_mode = metrics.as_ref().map(|metrics| metrics.recommended_quote_mode);
+    plan.book_metrics = metrics;
+    plan
 }
 
 fn get_token_book_state(
@@ -489,6 +638,7 @@ fn score_market(
     max_spread_cents: Decimal,
     midpoint: Decimal,
     legs: &[RewardQuoteLeg],
+    config: &RewardBotConfig,
 ) -> Decimal {
     let reward_rate = decimal_to_f64(market.total_daily_rate).sqrt();
     let reward_score = f64::min(35.0, reward_rate * 10.0);
@@ -512,7 +662,7 @@ fn score_market(
         .fold(Decimal::ZERO, |sum, leg| sum + leg.notional_usd);
     let size_score = if notional > Decimal::ZERO { 5.0 } else { 0.0 };
 
-    decimal_from_f64(
+    let base_score = decimal_from_f64(
         reward_score
             + liquidity_score
             + volume_score
@@ -521,7 +671,8 @@ fn score_market(
             + midpoint_score
             + size_score,
     )
-    .round_dp(2)
+    .round_dp(2);
+    (base_score + preferred_category_bonus(market, config)).round_dp(2)
 }
 
 #[cfg(test)]

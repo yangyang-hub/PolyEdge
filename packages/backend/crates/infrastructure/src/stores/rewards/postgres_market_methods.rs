@@ -9,6 +9,7 @@ async fn postgres_list_reward_markets(
                    rm.market_slug,
                    rm.event_slug,
                    rm.image,
+                   m.category,
                    rm.rewards_max_spread,
                    rm.rewards_min_size,
                    rm.total_daily_rate,
@@ -62,6 +63,7 @@ async fn postgres_list_reward_candidate_markets(
                    rm.market_slug,
                    rm.event_slug,
                    rm.image,
+                   m.category,
                    rm.rewards_max_spread,
                    rm.rewards_min_size,
                    rm.total_daily_rate,
@@ -94,8 +96,19 @@ async fn postgres_list_reward_candidate_markets(
               AND m.best_bid > 0
               AND m.best_ask > 0
               AND m.best_bid <= m.best_ask
-              AND (m.best_bid + m.best_ask) / 2 >= $2
-              AND (m.best_bid + m.best_ask) / 2 <= $3
+              AND (
+                  ((m.best_bid + m.best_ask) / 2 >= $2
+                   AND (m.best_bid + m.best_ask) / 2 <= $3)
+                  OR (
+                      $11
+                      AND (
+                          ((m.best_bid + m.best_ask) / 2 >= $12
+                           AND (m.best_bid + m.best_ask) / 2 <= $13)
+                          OR ((m.best_bid + m.best_ask) / 2 >= 1 - $13
+                              AND (m.best_bid + m.best_ask) / 2 <= 1 - $12)
+                      )
+                  )
+              )
               AND m.liquidity_usd >= $5
               AND m.volume_24h >= $6
               AND m.end_at IS NOT NULL
@@ -131,7 +144,7 @@ async fn postgres_list_reward_candidate_markets(
                      m.volume_24h DESC,
                      m.end_at DESC,
                      rm.updated_at DESC
-            LIMIT $11
+            LIMIT $14
             "#,
     )
     .bind(filter.min_daily_reward)
@@ -144,6 +157,9 @@ async fn postgres_list_reward_candidate_markets(
     .bind(filter.max_market_spread_cents)
     .bind(i64::try_from(filter.max_market_data_age_minutes).unwrap_or(i64::MAX))
     .bind(filter.max_rewards_spread_cents)
+    .bind(filter.allow_dominant_single_side)
+    .bind(filter.dominant_min_probability)
+    .bind(filter.dominant_max_probability)
     .bind(i64::from(safety_limit))
     .fetch_all(&store.pool)
     .await
@@ -167,6 +183,7 @@ async fn postgres_list_all_active_reward_markets(
                    market_slug,
                    event_slug,
                    image,
+                   ''::TEXT AS category,
                    rewards_max_spread,
                    rewards_min_size,
                    total_daily_rate,

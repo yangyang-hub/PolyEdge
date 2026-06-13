@@ -159,6 +159,100 @@ impl RewardBotStore for PostgresRewardBotStore {
         Ok(())
     }
 
+    async fn latest_market_advisory(
+        &self,
+        request: &RewardAiAdvisoryRequest,
+        now: OffsetDateTime,
+    ) -> Result<Option<RewardMarketAdvisory>> {
+        let row = sqlx::query(
+            r#"
+            SELECT condition_id,
+                   provider,
+                   request_format,
+                   model,
+                   input_hash,
+                   suitability,
+                   quote_mode,
+                   exit_policy,
+                   confidence,
+                   reasons_json,
+                   metrics_json,
+                   created_at,
+                   expires_at
+            FROM reward_market_advisories
+            WHERE condition_id = $1
+              AND provider = $2
+              AND request_format = $3
+              AND model = $4
+              AND input_hash = $5
+              AND expires_at > $6
+            ORDER BY expires_at DESC
+            LIMIT 1
+            "#,
+        )
+        .bind(&request.condition_id)
+        .bind(request.provider.as_str())
+        .bind(request.request_format.as_str())
+        .bind(&request.model)
+        .bind(&request.input_hash)
+        .bind(now)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_QUERY_FAILED",
+                format!("failed to query reward market advisory: {error}"),
+            )
+        })?;
+
+        row.as_ref().map(reward_market_advisory_from_row).transpose()
+    }
+
+    async fn save_market_advisory(&self, advisory: &RewardMarketAdvisory) -> Result<()> {
+        sqlx::query(
+            r#"
+            INSERT INTO reward_market_advisories (
+              condition_id,
+              provider,
+              request_format,
+              model,
+              input_hash,
+              suitability,
+              quote_mode,
+              exit_policy,
+              confidence,
+              reasons_json,
+              metrics_json,
+              created_at,
+              expires_at
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+            "#,
+        )
+        .bind(&advisory.condition_id)
+        .bind(advisory.provider.as_str())
+        .bind(advisory.request_format.as_str())
+        .bind(&advisory.model)
+        .bind(&advisory.input_hash)
+        .bind(advisory.suitability.as_str())
+        .bind(advisory.quote_mode.as_str())
+        .bind(advisory.exit_policy.as_str())
+        .bind(advisory.confidence)
+        .bind(Json(json!(advisory.reasons)))
+        .bind(Json(advisory.metrics.clone()))
+        .bind(advisory.created_at)
+        .bind(advisory.expires_at)
+        .execute(&self.pool)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_INSERT_FAILED",
+                format!("failed to insert reward market advisory: {error}"),
+            )
+        })?;
+        Ok(())
+    }
+
     async fn list_markets(&self, limit: u16) -> Result<Vec<RewardMarket>> {
         postgres_list_reward_markets(self, limit).await
     }

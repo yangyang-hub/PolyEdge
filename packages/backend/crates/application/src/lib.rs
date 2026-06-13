@@ -69,14 +69,18 @@ pub use orderbook_registry::OrderbookSubscriptionRegistry;
 pub use pagination::{PageMeta, PageQuery, Paginated};
 pub use rewards::{
     BookSnapshot, ManagedRewardOrder, ManagedRewardOrderStatus, PostFillStrategy,
-    RewardAccountState, RewardBookLevel, RewardBotConfig, RewardBotConfigPatch, RewardBotRunReport,
-    RewardBotService, RewardBotSnapshot, RewardBotStatus, RewardBotStore, RewardCandidateFilter,
-    RewardControlAction, RewardControlCommand, RewardControlCommandStatus, RewardExecutionMode,
-    RewardFill, RewardFillRole, RewardListPage, RewardLiveCycle, RewardMarket, RewardOrderBook,
-    RewardOrderListQuery, RewardOrderPage, RewardOrderSide, RewardOrderSortField,
-    RewardOrderStatusFilter, RewardPosition, RewardQuoteLeg, RewardQuotePlan,
-    RewardQuotePlanListQuery, RewardQuotePlanPage, RewardQuotePlanSortField, RewardRiskEvent,
-    RewardRiskSeverity, RewardTickOutcome, RewardToken, build_reward_quote_plans, new_risk_event,
+    RewardAccountState, RewardAiAdvisoryDecision, RewardAiAdvisoryRequest, RewardAiProvider,
+    RewardAiRequestFormat, RewardAiSuitability, RewardBookLevel, RewardBookSideMetrics,
+    RewardBotConfig, RewardBotConfigPatch, RewardBotRunReport, RewardBotService, RewardBotSnapshot,
+    RewardBotStatus, RewardBotStore, RewardCandidateFilter, RewardControlAction,
+    RewardControlCommand, RewardControlCommandStatus, RewardExecutionMode, RewardFill,
+    RewardFillRole, RewardListPage, RewardLiveCycle, RewardMarket, RewardMarketAdvisory,
+    RewardMarketBookMetrics, RewardOrderBook, RewardOrderListQuery, RewardOrderPage,
+    RewardOrderSide, RewardOrderSortField, RewardOrderStatusFilter, RewardPlanQuoteMode,
+    RewardPosition, RewardQuoteLeg, RewardQuoteMode, RewardQuotePlan, RewardQuotePlanListQuery,
+    RewardQuotePlanPage, RewardQuotePlanSortField, RewardRiskEvent, RewardRiskSeverity,
+    RewardSelectionMode, RewardTickOutcome, RewardToken, apply_reward_ai_advisories,
+    build_reward_ai_advisory_request, build_reward_quote_plans, new_risk_event,
     select_reward_book_token_ids, validate_reward_list_limit,
 };
 pub use risk::{

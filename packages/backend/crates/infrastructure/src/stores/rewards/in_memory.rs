@@ -11,6 +11,7 @@ pub struct InMemoryRewardBotStore {
     fills: RwLock<Vec<RewardFill>>,
     control_commands: RwLock<Vec<RewardControlCommand>>,
     worker_heartbeats: RwLock<HashMap<String, OffsetDateTime>>,
+    advisories: RwLock<Vec<RewardMarketAdvisory>>,
 }
 
 impl InMemoryRewardBotStore {
@@ -27,6 +28,7 @@ impl InMemoryRewardBotStore {
             fills: RwLock::new(Vec::new()),
             control_commands: RwLock::new(Vec::new()),
             worker_heartbeats: RwLock::new(HashMap::new()),
+            advisories: RwLock::new(Vec::new()),
         }
     }
 }
@@ -147,6 +149,33 @@ impl RewardBotStore for InMemoryRewardBotStore {
         Ok(())
     }
 
+    async fn latest_market_advisory(
+        &self,
+        request: &RewardAiAdvisoryRequest,
+        now: OffsetDateTime,
+    ) -> Result<Option<RewardMarketAdvisory>> {
+        Ok(self
+            .advisories
+            .read()
+            .await
+            .iter()
+            .filter(|advisory| {
+                advisory.condition_id == request.condition_id
+                    && advisory.provider == request.provider
+                    && advisory.request_format == request.request_format
+                    && advisory.model == request.model
+                    && advisory.input_hash == request.input_hash
+                    && advisory.expires_at > now
+            })
+            .max_by_key(|advisory| advisory.expires_at)
+            .cloned())
+    }
+
+    async fn save_market_advisory(&self, advisory: &RewardMarketAdvisory) -> Result<()> {
+        self.advisories.write().await.push(advisory.clone());
+        Ok(())
+    }
+
     async fn list_markets(&self, limit: u16) -> Result<Vec<RewardMarket>> {
         let mut markets = self
             .markets
@@ -182,9 +211,8 @@ impl RewardBotStore for InMemoryRewardBotStore {
                     && in_memory_reward_tokens_are_binary(market)
                     && market.total_daily_rate >= filter.min_daily_reward
                     && market.rewards_max_spread > rust_decimal::Decimal::ZERO
-                    && in_memory_reward_midpoint(market).is_some_and(|midpoint| {
-                        midpoint >= filter.min_midpoint && midpoint <= filter.max_midpoint
-                    })
+                    && in_memory_reward_midpoint(market)
+                        .is_some_and(|midpoint| in_memory_reward_midpoint_allowed(midpoint, filter))
                     && (filter.per_market_usd <= rust_decimal::Decimal::ZERO
                         || market.rewards_min_size <= filter.per_market_usd)
                     && market.liquidity_usd >= filter.min_market_liquidity_usd
@@ -619,4 +647,17 @@ fn in_memory_reward_midpoint(market: &RewardMarket) -> Option<Decimal> {
             None
         }
     })
+}
+
+fn in_memory_reward_midpoint_allowed(midpoint: Decimal, filter: &RewardCandidateFilter) -> bool {
+    if midpoint >= filter.min_midpoint && midpoint <= filter.max_midpoint {
+        return true;
+    }
+    if !filter.allow_dominant_single_side {
+        return false;
+    }
+    (midpoint >= filter.dominant_min_probability
+        && midpoint <= filter.dominant_max_probability)
+        || (midpoint >= Decimal::ONE - filter.dominant_max_probability
+            && midpoint <= Decimal::ONE - filter.dominant_min_probability)
 }

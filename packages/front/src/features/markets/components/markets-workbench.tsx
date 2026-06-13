@@ -114,7 +114,7 @@ export function MarketsWorkbench({ data }: { data: MarketsPageData }) {
         setLoading(false);
       }
     }
-  }, [translateEnum]);
+  }, []);
 
   useEffect(() => {
     const tradabilityStatus =
@@ -124,13 +124,15 @@ export function MarketsWorkbench({ data }: { data: MarketsPageData }) {
 
     const offset = (page - 1) * PAGE_SIZE;
 
-    fetchMarkets({
-      limit: PAGE_SIZE,
-      offset,
-      tradability_status: tradabilityStatus,
-      category: category !== "all" ? category : undefined,
-      sort_by: sortDir !== "none" ? "volume_24h" : undefined,
-      sort_order: sortDir !== "none" ? sortDir : undefined,
+    startTransition(() => {
+      void fetchMarkets({
+        limit: PAGE_SIZE,
+        offset,
+        tradability_status: tradabilityStatus,
+        category: category !== "all" ? category : undefined,
+        sort_by: sortDir !== "none" ? "volume_24h" : undefined,
+        sort_order: sortDir !== "none" ? sortDir : undefined,
+      });
     });
 
     return () => {

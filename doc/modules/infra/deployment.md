@@ -144,6 +144,14 @@ API 请求不再经过前端 nginx 反向代理；跨域由 Rust API 的 `CorsLa
 | `POLYEDGE_WORKER__POLL_MARKET_SYNC` | `false`（代码默认） | 部署 worker 是否同步 markets/reward_markets；daemon 市场同步已迁移到 orderbook 服务 |
 | `POLYEDGE_WORKER__CONSUME_ORDERBOOK_STREAM` | `false`（代码默认） | 部署 worker 是否消费 orderbook stream；daemon 盘口流已迁移到 orderbook 服务 |
 | `POLYEDGE_WORKER__POLL_REWARD_BOT` | `false`（代码默认） | 部署 worker 是否运行 rewards full tick + fast reconcile loop |
+| `POLYEDGE_REWARDS__AI_OPENAI_API_KEY` | — | 可选；Rewards AI advisory 使用 OpenAI/OpenAI-compatible 格式时的 API key，仅放 worker 环境 |
+| `POLYEDGE_REWARDS__AI_ANTHROPIC_API_KEY` | — | 可选；Rewards AI advisory 使用 Anthropic Messages 格式时的 API key，仅放 worker 环境 |
+| `POLYEDGE_REWARDS__AI_OPENAI_BASE_URL` | `https://api.openai.com/v1` | OpenAI/OpenAI-compatible API base URL |
+| `POLYEDGE_REWARDS__AI_ANTHROPIC_BASE_URL` | `https://api.anthropic.com` | Anthropic API base URL |
+| `POLYEDGE_REWARDS__AI_MODEL` | `gpt-4.1-mini` | Rewards AI advisory 模型名；Anthropic provider 时应改为对应模型 |
+| `POLYEDGE_REWARDS__AI_MIN_CONFIDENCE_BPS` | `6500` | AI advisory 在 enforce 模式影响计划前的最低置信度，6500=65% |
+| `POLYEDGE_REWARDS__AI_REQUEST_TIMEOUT_SECS` | `20` | 单次 AI advisory provider 请求超时秒数 |
+| `POLYEDGE_REWARDS__AI_MAX_MARKETS_PER_CYCLE` | `12` | 每个 rewards full tick 最多请求 provider 判断的市场数 |
 | `POLYEDGE_POLYMARKET__POLYGON_RPC_URL` | `https://polygon-bor-rpc.publicnode.com` | Worker 读取资金钱包链上 pUSD 余额的 Polygon JSON-RPC 地址 |
 | `POLYEDGE_ORDERBOOK_STREAM__MAX_TOKENS` | `3000` | orderbook stream 订阅 token 上限，过低会导致 rewards 覆盖不全，过高会增加 WS/poll 内存占用 |
 | `POLYEDGE_ORDERBOOK_STREAM__MAX_LEVELS_PER_SIDE` | `100` | 每个 token 在 orderbook 进程内缓存和 HTTP ingest 中最多保留的 bid/ask 深度档数 |
@@ -151,7 +159,7 @@ API 请求不再经过前端 nginx 反向代理；跨域由 Rust API 的 `CorsLa
 
 ## Polymarket live 配置示例
 
-`deploy/.env.polymarket.example` 提供 EOA、Proxy/Gnosis Safe、Deposit Wallet（`poly_1271`）三类账户示例，以及 rewards live worker 开关示例。真实凭证默认全部注释，执行链路按账户类型复制到 `deploy/.env.worker`。API 不持有 Polymarket 私钥；余额、positions 和托管订单都由 worker 同步到数据库后供 API 返回。`POLYEDGE_POLYMARKET__POLYGON_RPC_URL` 可替换为自有或有 SLA 的 Polygon RPC，用于链上 pUSD 余额回填。
+`deploy/.env.polymarket.example` 提供 EOA、Proxy/Gnosis Safe、Deposit Wallet（`poly_1271`）三类账户示例、rewards live worker 开关示例，以及可选 Rewards AI advisory provider 配置。真实凭证默认全部注释，执行链路按账户类型复制到 `deploy/.env.worker`。API 不持有 Polymarket 私钥或 AI provider key；余额、positions、托管订单和 AI advisory 结果都由 worker/数据库链路提供。`POLYEDGE_POLYMARKET__POLYGON_RPC_URL` 可替换为自有或有 SLA 的 Polygon RPC，用于链上 pUSD 余额回填。
 
 Deposit Wallet 路径要求钱包已经部署、已入金 pUSD 并完成必要 approval。当前系统不会执行 relayer wallet-create、pUSD 包装或 approval 批处理；connector 在下单前会调用 CLOB `balance-allowance/update`。
 

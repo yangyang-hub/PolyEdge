@@ -421,6 +421,7 @@ fn reward_market_from_connector(market: PolymarketRewardMarket) -> RewardMarket 
         question: market.question,
         market_slug: market.market_slug,
         event_slug: market.event_slug,
+        category: String::new(),
         image: market.image,
         rewards_max_spread: market.rewards_max_spread,
         rewards_min_size: market.rewards_min_size,

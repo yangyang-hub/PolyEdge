@@ -21,7 +21,7 @@
 | `market_event/` | 核心市场/事件/信号：`MarketEventService`、`MarketEventStore`（最大 Store trait） |
 | `execution/` | 执行管道：`ExecutionService`（组合 MarketEventService + RiskService） |
 | `risk.rs` | 风控：`RiskService`、`RiskStateStore`、`RiskPolicy`、kill-switch 命令 |
-| `rewards/` | 做市奖励：`RewardBotService`、`RewardBotStore`、质量过滤/排序、priority condition 列表、live-only 状态与订单分页查询、events/fills/open_order_count 内存缓存、in-process command wake channel；运行时模型拆在 `runtime_models.rs` |
+| `rewards/` | 做市奖励：`RewardBotService`、`RewardBotStore`、质量过滤/排序、盘口指标/单边报价推荐、AI advisory 输入/决策/执行约束、priority condition 列表、live-only 状态与订单分页查询、events/fills/open_order_count 内存缓存、in-process command wake channel；运行时模型拆在 `runtime_models.rs`，quote/selection/AI 枚举拆在 `quote_selection_models.rs`，AI 模型拆在 `ai_advisory_models.rs`，deterministic 盘口选择 helper 拆在 `planner_selection.rs` |
 | `copytrade/` | 跟单：`CopyTradeService`、`CopyTradeStore`、确定性模拟引擎和风险准入 |
 | `arbitrage/` | 套利：`ArbitrageService`、`ArbitrageStore`、机会检测/验证 |
 | `news_ingestion.rs` | 新闻采集：`NewsIngestionService`、`NewsIngestionStore` |
@@ -81,6 +81,7 @@
 - Config：`load_config`、`save_config`（key-value 模式）
 - Markets：`upsert_markets`、`list_markets`、`list_all_active_markets`、`active_market_summary`
 - Quote Plans：`save_quote_plans`（替换当前计划快照）、`list_quote_plans`
+- AI Advisory：`latest_market_advisory`、`save_market_advisory`，按 condition/provider/request_format/model/input_hash 缓存未过期模型判断
 - Orders/Positions/Events：完整 CRUD；订单支持 `RewardOrderListQuery` 后端分页并在 snapshot 中返回 `orders_page`；live worker 可按 external Polymarket order id 查 managed order、用 fill id 做成交幂等，并通过 `latest_fill_at(account_id)` 查询账户最近 confirmed fill 时间
 - State Tick：`apply_tick_outcome`（原子持久化 orders/fills/positions/ledger/events，不修改奖励市场目录或 quote plan 快照）、`apply_account_sync`（更新账户；`Some(positions)` 原子替换该账户全部持仓，`None` 保留持仓）、`reset_state`（重置账户状态、清空 orders/fills/positions）
 - Control Commands：`enqueue_control_command`、`claim_next_control_command`、`complete_control_command`、`fail_control_command`
@@ -90,6 +91,8 @@
 **执行模式：**
 - `RewardExecutionMode` 枚举仅保留 `Live` 变体，`FromStr` 仍把旧字符串（`validation`、`dry_run`、`paper`、`simulation`）归一为 live；`execution_mode` 字段已从 `RewardBotConfig` / patch 中移除，Store 读取旧 `execution_mode` 配置键时直接忽略。
 - `RewardBotConfig.quote_bid_rank` 仅允许 1–3，分别选择 YES/NO 盘口中第 1/2/3 个不同买价，默认 1（买一）；旧的中间价偏移字段 `quote_edge_cents` 已移除。
+- `RewardBotConfig.quote_mode=double|auto` 与 `selection_mode=observe|enforce` 控制确定性盘口选择。默认 `double + observe` 保持既有双边报价；`auto + enforce + dominant_single_side_enabled=true` 时，planner 可在 YES/NO 概率达到 `dominant_min_probability..dominant_max_probability` 且退出深度、top1/top3 深度占比和 HHI 通过阈值后生成 `single_yes` / `single_no` 单腿计划。`observe` 只在 quote plan 记录推荐模式和 `book_metrics`，不改变实际挂单。
+- AI advisory 定义低频模型判断的输入、输出和执行约束：`build_reward_ai_advisory_request()` 从奖励市场、确定性计划、账户/仓位/开放订单和盘口 top levels 构建结构化 payload，并用 SHA-256 生成 input hash；`apply_reward_ai_advisories()` 会把 advisory 挂到 quote plan。默认 `ai_advisory_enabled=false`；只有 `selection_mode=enforce` 且置信度达到 worker 设置阈值时才影响计划。`avoid/watch` 或 `quote_mode=none` 只能拒绝计划；`single_yes/single_no` 只能在 `quote_mode=auto` 下把已经 eligible 的双边计划收窄为单腿，不能绕过市场质量、盘口和风控硬过滤。
 - 市场质量默认门槛为 `min_market_liquidity_usd=1000`、`min_market_volume_24h_usd=1000`、`min_hours_to_end=48`、`max_market_spread_cents=10`、`max_market_data_age_minutes=15`。旧 `reward_competition_factor`、`single_sided_divisor_c`、`fill_rate_per_tick`、`max_fill_ratio` 和 `auto_cancel_stale_minutes` 配置键读取时忽略。
 - Worker 使用当前 quote plan 通过 `LivePolymarketConnector` 提交 post-only token 买单，并对本系统托管的 live 订单执行撤单；该模式由 rewards 配置控制，与全局 system mode 解耦，但遵守 `RiskService` 全局 kill switch。Polymarket 返回 `matched` / `delayed` 等非 live 接受状态时，worker 会把它视为 post-only 安全违规并立即尝试撤单，并保留为待最终成交/取消对账状态。
 
@@ -108,12 +111,12 @@
 **资金与盘口约束：**
 - 未成交 post-only maker 买单不在本地按全局 notional 硬锁同一笔 USDC，同一资金池可同时在多个不同市场报价。
 - 买单计划把 `per_market_usd` 作为 YES + NO 两腿总预算：先把 `rewards_min_size` 向上对齐到 CLOB 两位小数成本精度要求，再保障两腿的有效最小份额，最后按各腿距离 `min(quote_size_usd, account_capital_usd)` 目标 notional 的缺口分配剩余额度；实际计划数量也预先按同一精度向下对齐，避免 connector 提交时缩量后跌破奖励最小份额。
-- 报价价格直接取 `quote_bid_rank` 指定的盘口档位；任一 YES/NO 盘口缺少该档位，或该档价格距离各自中间价超过 `min(market rewards_max_spread, config.max_spread_cents)`，计划标记为不可挂且不回退其他档位。开放订单与最新目标档位价格相差超过 `requote_drift_cents` 时撤单重挂。
+- 报价价格直接取 `quote_bid_rank` 指定的盘口档位；双边计划要求 YES/NO 两腿都存在目标档位，单边计划只要求目标侧存在。目标档位价格距离各自中间价超过 `min(market rewards_max_spread, config.max_spread_cents)` 时，计划标记为不可挂且不回退其他档位。开放订单与最新目标档位价格相差超过 `requote_drift_cents` 时撤单重挂。
 - `max_spread_cents` 归一化范围是 `0.1..=99`，与前端校验及二元概率价格有效范围一致；市场 `rewards_max_spread` 按 CLOB 原始 cents 直接使用，不做百分比换算。
 - `max_markets=0`、`max_open_orders=0` 或 `quote_size_usd=0` 表示不再新挂单。
 - 缺少新鲜缓存盘口时不会提交新 post-only 订单。placement 必须看到 YES/NO 两腿的新鲜盘口。
 - 全局敞口门槛使用「已有库存 notional + 当前候选单腿 notional」做准入。
-- 单次 rewards tick 使用 `list_reward_run_candidate_markets()` 从 `reward_markets` 读取候选池；Postgres 路径关联 Gamma `markets`，硬过滤非 open/tradable、高歧义、低流动性、低 24h 成交量、临近结算、Gamma spread 过宽、同步过期或异常超前、奖励不足、奖励 spread 无效、最小份额预算不可行以及不具备唯一 YES/NO token 的市场。SQL 按 CLOB 原始 cents 使用 rewards spread，再按奖励、流动性、成交量、剩余时长和有效奖励 spread 的综合质量分排序。
+- 单次 rewards tick 使用 `list_reward_run_candidate_markets()` 从 `reward_markets` 读取候选池；Postgres 路径关联 Gamma `markets`，硬过滤非 open/tradable、高歧义、低流动性、低 24h 成交量、临近结算、Gamma spread 过宽、同步过期或异常超前、奖励不足、奖励 spread 无效、最小份额预算不可行以及不具备唯一 YES/NO token 的市场。默认 midpoint 仍受 `min_midpoint..max_midpoint` 限制；auto 单边开启后 SQL 会额外允许 `dominant_min_probability..dominant_max_probability` 及其反向区间进入候选。SQL 按 CLOB 原始 cents 使用 rewards spread，再按奖励、流动性、成交量、剩余时长和有效奖励 spread 的综合质量分排序；planner 可对 `preferred_categories` 命中的 Gamma 分类追加评分。
 - `list_priority_reward_condition_ids()` 为 orderbook priority sync 返回重点 condition：当前开放/持仓市场优先，其次 eligible quote plans，最后使用放宽新鲜度窗口的 rewards 候选，以便 stale catalog 仍能恢复重点市场 `markets.synced_at`。
 
 **live 资金模型：**
@@ -216,7 +219,7 @@ orderbook_cache ← (共享基础设施 trait)
 ## 当前状态
 
 - 所有模块已实现完整的 Store trait 和 Service struct
-- Rewards 已移除旧 validation/simulation tick 引擎，仅保留 live-only 配置、quote planner、状态类型和增量持久化端口。
+- Rewards 已移除旧 validation/simulation tick 引擎，仅保留 live-only 配置、quote planner、确定性盘口指标/单边 quote mode、AI advisory 输入/决策/缓存端口、状态类型和增量持久化端口。
 - Rewards live 模式已接入质量硬过滤与综合排序、post-only token 买单、撤单、本系统托管订单成交同步、成交后现金/库存/PnL 更新、可持续重试的 exit/flatten sell、CLOB open-order 反查、外部余额/完整持仓快照、managed order scoring 和 UTC 当日账户级 maker rewards 同步（聚合端点优先、明细端点 fallback）；账户范围外开放订单明细与奖励结算对账仍待完成。
 - Rewards 保留数据库控制命令队列用于持久恢复，API 入队后通过共享 runtime revision 立即唤醒后台执行。
 - Copytrade 已具备数据库控制命令队列，API 负责入队，worker 负责执行 run/analyze/cancel/reset。

@@ -60,6 +60,7 @@ mod rewards_tests {
             question: "Candidate market".to_string(),
             market_slug: "candidate-market".to_string(),
             event_slug: "candidate-event".to_string(),
+            category: "politics".to_string(),
             image: String::new(),
             rewards_max_spread: Decimal::from(8),
             rewards_min_size: Decimal::from(5),

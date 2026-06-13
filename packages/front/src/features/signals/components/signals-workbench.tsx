@@ -13,7 +13,7 @@ import { OperationFeedbackBanner } from "@/components/shared/operation-feedback-
 import { StatusPill } from "@/components/shared/status-pill";
 import { WorkbenchDetailPane, WorkbenchLayout } from "@/components/shared/workbench-layout";
 import { WorkbenchSegmentedControl } from "@/components/shared/workbench-segmented-control";
-import { dictionary, translateEnum, formatMessage } from "@/lib/i18n/dictionaries";
+import { dictionary, formatMessage } from "@/lib/i18n/dictionaries";
 import { submitSignalExecutionAction } from "@/lib/api/actions";
 import type { OperationActionResult } from "@/lib/api/actions";
 
@@ -32,8 +32,8 @@ export function SignalsWorkbench({
   runtimeControls: initialRuntimeControls,
 }: SignalsWorkbenchProps) {
   const [filter, setFilter] = useState<SignalFilter>("all");
-  const [liveSignals, setLiveSignals] = useState(signals);
-  const [runtimeControls, setRuntimeControls] = useState(initialRuntimeControls);
+  const [liveSignals] = useState(signals);
+  const [runtimeControls] = useState(initialRuntimeControls);
   const [selectedId, setSelectedId] = useState<string>(
     signals.find((signal) => signal.isSelected)?.id ?? signals[0]?.id ?? "",
   );
@@ -88,7 +88,7 @@ export function SignalsWorkbench({
 
   function openSignalAction(signalId: string, dialog: Exclude<SignalActionDialog, null>) {
     const signal = liveSignals.find((item) => item.id === signalId) ?? selectedSignal;
-    if (!signal || (dialog === "execution" && !canSubmitExecution(signal, runtimeControls))) {
+    if (!signal || (dialog === "execution" && !canSubmitExecution())) {
       return;
     }
 
@@ -129,7 +129,7 @@ export function SignalsWorkbench({
   }
 
   function submitExecutionRequest() {
-    if (!actionSignal || !canSubmitExecution(actionSignal, runtimeControls)) {
+    if (!actionSignal || !canSubmitExecution()) {
       return;
     }
 
@@ -232,7 +232,7 @@ export function SignalsWorkbench({
           onStepUpCodeChange={setStepUpCode}
           stepUpCodeError={fieldErrors?.stepUpCode}
           requiresStepUp
-          confirmDisabled={!actionSignal || !canSubmitExecution(actionSignal, runtimeControls)}
+          confirmDisabled={!actionSignal || !canSubmitExecution()}
           onSubmit={submitExecutionRequest}
           feedback={dialogFeedback}
           context={

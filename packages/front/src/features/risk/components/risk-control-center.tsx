@@ -1,6 +1,6 @@
 "use client";
 
-import { startTransition, useMemo, useRef, useState, useTransition } from "react";
+import { useRef, useState, useTransition } from "react";
 import { ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
 
@@ -27,8 +27,8 @@ import { RiskMetricsOverview } from "./risk-metrics-overview";
 export function RiskControlCenter({ data }: { data: RiskPageData }) {
   const [controls, setControls] = useState(data.controls);
   const [metrics, setMetrics] = useState(data.metrics);
-  const [summary, setSummary] = useState(data.summary);
-  const [alerts, setAlerts] = useState(data.alerts);
+  const [summary] = useState(data.summary);
+  const [alerts] = useState(data.alerts);
   const [alertFilter, setAlertFilter] = useState<RiskAlertFilter>("all");
   const [activeDialog, setActiveDialog] = useState<RiskDialog>(null);
   const [note, setNote] = useState("");
@@ -40,19 +40,13 @@ export function RiskControlCenter({ data }: { data: RiskPageData }) {
   const auditLogRef = useRef<HTMLElement | null>(null);
   const killSwitchAvailable =
     controls.mode === "live_auto" || controls.mode === "kill_switch_locked" || controls.killSwitch;
-  const metricLabels = useMemo(() => ({
+  const metricLabels = {
     mode: (mode: RuntimeMode) => translateEnum(mode),
     active: dictionary.common.active,
     armed: dictionary.common.armed,
     halted: dictionary.metricHints.halted,
     readyState: dictionary.metricHints.readyState,
-  }), [
-    dictionary.common.active,
-    dictionary.common.armed,
-    dictionary.metricHints.halted,
-    dictionary.metricHints.readyState,
-    translateEnum,
-  ]);
+  };
 
   function patchMetricValues(
     metrics: RiskPageData["metrics"],

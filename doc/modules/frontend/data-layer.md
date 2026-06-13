@@ -108,7 +108,7 @@ OperationActionResult → 更新 UI 状态
 - 11 个领域 API 模块覆盖当前前端页面使用的后端端点，`base.ts` 和 `actions.ts` 提供共享请求与写操作封装
 - `actions.ts` 集中管理所有写操作的 Server Actions
 - DTO 类型镜像当前前端消费的后端响应；`CopyTradeSnapshotDto` 已与只读跟踪后端对齐，只包含 config、status、wallets、source_trades、events，不再声明模拟账户、订单或持仓字段
-- Rewards snapshot DTO 包含 `orders_page`，但 `RewardBotConfigDto.execution_mode`、旧 `quote_edge_cents`、模拟填单参数和 stale force-cancel 参数已移除；报价配置改为 `quote_bid_rank: 1|2|3`（TypeScript 以 number 表达，Server Action 用 Zod 限制范围），并新增 liquidity/volume/end-time/spread/data-age 市场质量门槛。`readRewardBotSnapshot()` 支持计划/订单分页、搜索、状态和排序 query；首屏 loader 显式请求 `plans_eligible=true`，与默认可挂页签一致。当前后端 handler 和 `orders_page` 都描述本地 managed-order 查询；账户余额和 positions 由 worker 同步到数据库后返回
+- Rewards snapshot DTO 包含 `orders_page`，但 `RewardBotConfigDto.execution_mode`、旧 `quote_edge_cents`、模拟填单参数和 stale force-cancel 参数已移除；报价配置改为 `quote_bid_rank: 1|2|3`（TypeScript 以 number 表达，Server Action 用 Zod 限制范围），并新增 liquidity/volume/end-time/spread/data-age 市场质量门槛。DTO 已镜像 rewards quote/selection mode、dominant 单边阈值、盘口集中度阈值、偏好分类、AI advisory 配置字段，以及 quote plan 的 `quote_mode` / `recommended_quote_mode` / `book_metrics` / `ai_advisory`；`actions.ts` 校验 OpenAI 与 Anthropic 请求格式匹配。AI API key、base URL 和模型名不进入 DTO，只从 worker 环境读取。`readRewardBotSnapshot()` 支持计划/订单分页、搜索、状态和排序 query；首屏 loader 显式请求 `plans_eligible=true`，与默认可挂页签一致。当前后端 handler 和 `orders_page` 都描述本地 managed-order 查询；账户余额和 positions 由 worker 同步到数据库后返回
 - `/replay` 前端派生数据层已移除；当前没有面向控制台的 replay API 页面
 - `MarketDto` 新增 `liquidity_usd` 与 `end_at`，镜像后端 `MarketData`
 - positions.ts 是唯一使用 `mapItem` 做字段重命名的模块

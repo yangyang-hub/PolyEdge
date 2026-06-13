@@ -12,7 +12,7 @@ import { WorkbenchSegmentedControl } from "@/components/shared/workbench-segment
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { MeterBar } from "@/components/shared/meter-bar";
 import { usePagination } from "@/hooks/use-pagination";
-import { dictionary, translateEnum, formatMessage } from "@/lib/i18n/dictionaries";
+import { dictionary, formatMessage } from "@/lib/i18n/dictionaries";
 import {
   Table,
   TableBody,
@@ -24,14 +24,12 @@ import {
 import { isKeyboardSelect } from "@/lib/keyboard";
 
 type PositionsPageData = Awaited<ReturnType<typeof getPositionsPageData>>;
-type PositionItem = PositionsPageData["positions"][number];
 type PositionFilter = "all" | "gainers" | "pressure";
 
 export function PositionsWorkbench({ data }: { data: PositionsPageData }) {
   const [filter, setFilter] = useState<PositionFilter>("all");
   const [selectedId, setSelectedId] = useState(data.selectedPositionId);
   const deferredFilter = useDeferredValue(filter);
-  const format = formatMessage;
 
   const filteredPositions = data.positions.filter((position) => {
     if (deferredFilter === "gainers") {
@@ -46,10 +44,11 @@ export function PositionsWorkbench({ data }: { data: PositionsPageData }) {
   });
 
   const pagination = usePagination(filteredPositions.length, 20);
+  const { reset: resetPagination } = pagination;
 
   useEffect(() => {
-    pagination.reset();
-  }, [deferredFilter, pagination.reset]);
+    resetPagination();
+  }, [deferredFilter, resetPagination]);
 
   const activeSelectedId =
     filteredPositions.find((position) => position.id === selectedId)?.id ??

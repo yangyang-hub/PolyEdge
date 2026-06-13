@@ -4,7 +4,7 @@
 
 ## 概述
 
-`polyedge_connectors` crate 实现所有外部系统的适配器：Polymarket CLOB（交易）、Gamma API（市场数据）、Data API（钱包活动）、Order Book（盘口）、Rewards API（奖励市场）、RSS 新闻源，以及内置的 Paper Trading 执行器。
+`polyedge_connectors` crate 实现所有外部系统的适配器：Polymarket CLOB（交易）、Gamma API（市场数据）、Data API（钱包活动）、Order Book（盘口）、Rewards API（奖励市场）、Rewards AI advisory、RSS 新闻源，以及内置的 Paper Trading 执行器。
 
 ## 设计目标
 
@@ -27,6 +27,7 @@
 | `polymarket/book.rs` | 盘口快照：`PolymarketBookConnector` |
 | `rewards.rs` + `rewards/orderbooks.rs` | 奖励市场目录与 CLOB 批量盘口：`PolymarketRewardsConnector` |
 | `orderbook.rs` | 独立 orderbook 服务客户端：HTTP 读盘口/原子注册 token/内部写 token，内部 WS stream 消费 |
+| `reward_ai.rs` | Rewards AI advisory 连接器：OpenAI Responses、OpenAI Chat Completions、Anthropic Messages |
 | `polymarket/models.rs` | 共享数据模型 |
 | `polymarket/normalizers.rs` | WebSocket 消息规范化函数 |
 | `polymarket/helpers.rs` | 共享辅助函数 |
@@ -113,6 +114,13 @@
 - 单盘口读取只把 404 映射为 `None`；其他非成功 HTTP 状态会作为 dependency error 返回，不尝试把错误响应解码成盘口
 - `OrderbookStreamClient` 会把 `http://` / `https://` service URL 转换为 `ws://` / `wss://`，断线、接收失败或消息解码失败都以 dependency error 交给 worker 重连循环处理
 
+### Rewards AI Advisory
+
+- **`RewardAiAdvisoryConnector`**：`base_url` + API key + reqwest client，供 rewards worker 低频请求盘口适合度判断。
+- 支持三种请求格式：`openai_responses` 调用 `{base}/responses` 并使用 JSON schema structured output；`openai_chat_completions` 调用 `{base}/chat/completions` 并使用 `response_format=json_schema`；`anthropic_messages` 调用 `{base}/v1/messages`，通过 system/user prompt 要求仅返回 JSON。
+- 输出统一解析为 `RewardAiAdvisoryDecision`：`suitability=allow|watch|avoid`、`quote_mode=double|single_yes|single_no|none`、`exit_policy`、`confidence`、`reasons` 和 `metrics`。provider HTTP、状态码、解码或 JSON 结构错误会返回 dependency error，由 worker 记录告警并保留确定性计划。
+- 该 connector 只接收 application 层已构建的 DB/orderbook/planner/account payload，不直接访问 Polymarket 或其他市场数据源。
+
 ### News（RSS/Atom 新闻）
 
 - **`NewsSource`** trait：`async fn fetch(&self) -> Result<Vec<ConnectorNewsItem>>`
@@ -135,11 +143,12 @@
 
 ## 当前状态
 
-- 已实现当前系统使用的 Polymarket 公共市场、盘口、Data API、Rewards API、订单 scoring、带明细 fallback 的当日 maker earnings 和 CLOB V2 交易 connector；Deposit Wallet relayer 生命周期接口尚未接入
+- 已实现当前系统使用的 Polymarket 公共市场、盘口、Data API、Rewards API、Rewards AI advisory、订单 scoring、带明细 fallback 的当日 maker earnings 和 CLOB V2 交易 connector；Deposit Wallet relayer 生命周期接口尚未接入
 - Gamma `/markets` offset 分页已具备 422 边界 / 最大页数保护，并按 market id 去重；condition_ids 定向查询用于重点市场新鲜度刷新。
 - Gamma 市场同步已提供 rewards 质量筛选所需的 CLOB liquidity、end time 和分级 ambiguity 数据，并支持 priority condition 刷新降低全量目录延迟对 live rewards 的影响。
 - Rewards markets 分页和 enrichment 已具备完整性保护，不再把部分补全结果作为完整目录写入
 - Rewards 盘口连接器优先走 CLOB 批量 `/books`，并对失败或遗漏项使用单 token `/book` 回退
+- Rewards AI advisory connector 已支持 OpenAI Responses、OpenAI Chat Completions 和 Anthropic Messages 三种格式；模型密钥来自 worker 环境变量，失败不阻断 live tick。
 - Orderbook 服务客户端已支持 HTTP batch/bootstrap 与内部 WS 推送；worker 长期 rewards loop 可用 WS 更新本地 cache，缺失或重连时回退 HTTP batch
 - Data API positions 已按完整快照分页读取；不完整或失败的响应不会被 rewards worker 用于替换持仓
 - Paper Trading 执行器已完整实现

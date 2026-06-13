@@ -31,6 +31,12 @@ pub trait RewardBotStore: Send + Sync {
     async fn upsert_markets(&self, markets: &[RewardMarket]) -> Result<()>;
     /// Replace the current rewards quote plan snapshot.
     async fn save_quote_plans(&self, plans: &[RewardQuotePlan]) -> Result<()>;
+    async fn latest_market_advisory(
+        &self,
+        request: &RewardAiAdvisoryRequest,
+        now: OffsetDateTime,
+    ) -> Result<Option<RewardMarketAdvisory>>;
+    async fn save_market_advisory(&self, advisory: &RewardMarketAdvisory) -> Result<()>;
     async fn list_markets(&self, limit: u16) -> Result<Vec<RewardMarket>>;
     /// List candidate markets with SQL-level filtering by config parameters.
     /// The SQL WHERE clause pushes down midpoint, daily-rate, spread, token-count,
@@ -340,6 +346,26 @@ impl RewardBotService {
     /// List all active reward markets from the database.
     pub async fn list_active_reward_markets(&self) -> Result<Vec<RewardMarket>> {
         self.store.list_all_active_markets().await
+    }
+
+    pub async fn latest_market_advisory(
+        &self,
+        request: &RewardAiAdvisoryRequest,
+    ) -> Result<Option<RewardMarketAdvisory>> {
+        self.store
+            .latest_market_advisory(request, OffsetDateTime::now_utc())
+            .await
+    }
+
+    pub async fn save_market_advisory(
+        &self,
+        advisory: &RewardMarketAdvisory,
+    ) -> Result<()> {
+        self.store.save_market_advisory(advisory).await
+    }
+
+    pub async fn save_quote_plans(&self, plans: &[RewardQuotePlan]) -> Result<()> {
+        self.store.save_quote_plans(plans).await
     }
 
     /// List a bounded candidate pool for one rewards strategy tick.

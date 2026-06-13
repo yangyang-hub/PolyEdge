@@ -277,6 +277,7 @@ async fn run_reward_bot_live_tick(
         .reward_bot_service
         .prepare_live_cycle(markets, books.clone(), trace_id, force_orders)
         .await?;
+    refresh_reward_ai_advisories(state, &mut cycle, &books, trace_id).await?;
     let kill_switch = state.risk_service.read_state().await?.kill_switch;
     if kill_switch {
         cycle.should_execute = false;
@@ -463,6 +464,131 @@ async fn run_reward_bot_live_tick(
     }
 
     Ok(report)
+}
+
+async fn refresh_reward_ai_advisories(
+    state: &AppState,
+    cycle: &mut RewardLiveCycle,
+    books: &HashMap<String, RewardOrderBook>,
+    trace_id: &str,
+) -> Result<()> {
+    if !cycle.config.ai_advisory_enabled || cycle.plans.is_empty() {
+        return Ok(());
+    }
+    let Some(connector) = build_reward_ai_advisory_connector(state, &cycle.config)? else {
+        warn!(
+            trace_id = %trace_id,
+            provider = cycle.config.ai_provider.as_str(),
+            "reward AI advisory is enabled but provider configuration is incomplete",
+        );
+        return Ok(());
+    };
+
+    let model = state.settings.rewards.ai_model.trim();
+    if model.is_empty() {
+        warn!(trace_id = %trace_id, "reward AI advisory model is empty");
+        return Ok(());
+    }
+
+    let max_markets = usize::from(state.settings.rewards.ai_max_markets_per_cycle.max(1));
+    let min_confidence = reward_ai_min_confidence(state.settings.rewards.ai_min_confidence_bps);
+    let markets_by_condition = cycle
+        .markets
+        .iter()
+        .map(|market| (market.condition_id.as_str(), market))
+        .collect::<HashMap<_, _>>();
+    let mut advisories = HashMap::<String, RewardMarketAdvisory>::new();
+
+    for plan in cycle.plans.iter().take(max_markets) {
+        let Some(market) = markets_by_condition.get(plan.condition_id.as_str()) else {
+            continue;
+        };
+        let request = build_reward_ai_advisory_request(
+            market,
+            plan,
+            &cycle.account,
+            &cycle.positions,
+            &cycle.open_orders,
+            books,
+            &cycle.config,
+            cycle.config.ai_provider,
+            cycle.config.ai_request_format,
+            model,
+        )?;
+        if let Some(cached) = state
+            .reward_bot_service
+            .latest_market_advisory(&request)
+            .await?
+        {
+            advisories.insert(plan.condition_id.clone(), cached);
+            continue;
+        }
+
+        match connector.advise(&request).await {
+            Ok(decision) => {
+                let advisory = decision.into_advisory(
+                    &request,
+                    cycle.config.ai_advisory_ttl_sec,
+                    OffsetDateTime::now_utc(),
+                );
+                state
+                    .reward_bot_service
+                    .save_market_advisory(&advisory)
+                    .await?;
+                advisories.insert(plan.condition_id.clone(), advisory);
+            }
+            Err(error) => {
+                warn!(
+                    trace_id = %trace_id,
+                    condition_id = %plan.condition_id,
+                    error = %error,
+                    "reward AI advisory request failed; keeping deterministic plan",
+                );
+            }
+        }
+    }
+
+    if advisories.is_empty() {
+        return Ok(());
+    }
+    apply_reward_ai_advisories(
+        &mut cycle.plans,
+        &advisories,
+        &cycle.config,
+        min_confidence,
+    );
+    state.reward_bot_service.save_quote_plans(&cycle.plans).await?;
+    Ok(())
+}
+
+fn build_reward_ai_advisory_connector(
+    state: &AppState,
+    config: &RewardBotConfig,
+) -> Result<Option<RewardAiAdvisoryConnector>> {
+    let rewards = &state.settings.rewards;
+    let (api_key, base_url) = match config.ai_provider {
+        polyedge_application::RewardAiProvider::OpenAi => (
+            rewards.ai_openai_api_key.as_deref(),
+            rewards.ai_openai_base_url.as_str(),
+        ),
+        polyedge_application::RewardAiProvider::Anthropic => (
+            rewards.ai_anthropic_api_key.as_deref(),
+            rewards.ai_anthropic_base_url.as_str(),
+        ),
+    };
+    let Some(api_key) = api_key.filter(|value| !value.trim().is_empty()) else {
+        return Ok(None);
+    };
+    RewardAiAdvisoryConnector::new(
+        base_url,
+        api_key,
+        rewards.ai_request_timeout_secs.max(1),
+    )
+    .map(Some)
+}
+
+fn reward_ai_min_confidence(bps: u16) -> Decimal {
+    Decimal::from(bps.min(10_000)) / Decimal::from(10_000_u64)
 }
 
 async fn cancel_live_reward_orders(

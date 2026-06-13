@@ -40,6 +40,13 @@ function SortIndicator({ active, order }: { active: boolean; order: "asc" | "des
   return order === "asc" ? <ArrowUp className="ml-1 inline size-3" /> : <ArrowDown className="ml-1 inline size-3" />;
 }
 
+function aiSuitabilityTone(suitability?: string | null) {
+  if (suitability === "allow") return "success";
+  if (suitability === "avoid") return "danger";
+  if (suitability === "watch") return "warning";
+  return "neutral";
+}
+
 function FilterBar({
   search,
   onSearchChange,
@@ -299,12 +306,13 @@ export function QuotePlansTable({
               <SortIndicator active={sortBy === "midpoint"} order={sortOrder} />
             </TableHead>
             <TableHead>{dictionary.rewards.quotes}</TableHead>
+            <TableHead>{dictionary.rewards.aiAdvisory}</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
           {plans.length === 0 ? (
             <TableRow>
-              <TableCell colSpan={6} className="py-6 text-center text-sm text-muted-foreground">
+              <TableCell colSpan={7} className="py-6 text-center text-sm text-muted-foreground">
                 {dictionary.rewards.none}
               </TableCell>
             </TableRow>
@@ -333,6 +341,25 @@ export function QuotePlansTable({
                   {plan.legs.length === 0
                     ? dictionary.rewards.none
                     : plan.legs.map((leg) => `${leg.outcome} ${formatFixed(leg.size, 2)}@${formatFixed(leg.price, 2)}`).join(" / ")}
+                </TableCell>
+                <TableCell className="max-w-[220px] text-xs">
+                  {plan.ai_advisory == null ? (
+                    <span className="text-muted-foreground">{dictionary.rewards.none}</span>
+                  ) : (
+                    <div className="space-y-1">
+                      <div className="flex flex-wrap items-center gap-1">
+                        <StatusPill tone={aiSuitabilityTone(plan.ai_advisory.suitability)}>
+                          {plan.ai_advisory.suitability}
+                        </StatusPill>
+                        <span className="font-mono text-muted-foreground">
+                          {plan.ai_advisory.quote_mode} · {formatFixed(plan.ai_advisory.confidence, 2)}
+                        </span>
+                      </div>
+                      <p className="truncate text-muted-foreground" title={plan.ai_advisory.reasons[0]}>
+                        {plan.ai_advisory.reasons[0] ?? dictionary.rewards.none}
+                      </p>
+                    </div>
+                  )}
                 </TableCell>
               </TableRow>
             ))

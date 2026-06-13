@@ -102,6 +102,14 @@ impl Default for RewardsSettings {
         Self {
             enabled: false,
             poll_interval_secs: 60,
+            ai_openai_api_key: None,
+            ai_anthropic_api_key: None,
+            ai_openai_base_url: "https://api.openai.com/v1".to_string(),
+            ai_anthropic_base_url: "https://api.anthropic.com".to_string(),
+            ai_model: "gpt-4.1-mini".to_string(),
+            ai_min_confidence_bps: 6500,
+            ai_request_timeout_secs: 20,
+            ai_max_markets_per_cycle: 12,
         }
     }
 }

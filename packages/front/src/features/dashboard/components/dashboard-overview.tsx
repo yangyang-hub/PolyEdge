@@ -1,6 +1,5 @@
 "use client";
 
-import { useState } from "react";
 import { TriangleAlert } from "lucide-react";
 
 import type { getDashboardPageData } from "@/features/dashboard/loaders/dashboard-page-data";
@@ -13,12 +12,6 @@ import { StateBanner } from "@/components/shared/state-banner";
 import { StatusPill } from "@/components/shared/status-pill";
 import { usePagination } from "@/hooks/use-pagination";
 import { dictionary, translateEnum, formatMessage } from "@/lib/i18n/dictionaries";
-import {
-  formatPercentFromRatio,
-  formatSignedFixed,
-  signalStateTone,
-  uppercaseEnum,
-} from "@/lib/formatters";
 
 type DashboardPageData = Awaited<ReturnType<typeof getDashboardPageData>>;
 
@@ -33,9 +26,6 @@ function readMetricCount(
 }
 
 export function DashboardOverview({ data }: { data: DashboardPageData }) {
-  const [selectedSignalId, setSelectedSignalId] = useState<string | null>(null);
-  const format = formatMessage;
-
   const openAlertCount = readMetricCount(data.metrics, "open_alerts", data.alerts.length);
 
   const signalsPagination = usePagination(data.signals.length, 10);

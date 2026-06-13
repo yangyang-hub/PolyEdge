@@ -19,7 +19,7 @@ export function SignalsDetailPanel({
   runtimeControls: RuntimeControls;
   onOpenAction?: (signalId: string, dialog: Exclude<SignalActionDialog, null>) => void;
 }) {
-  const executionEnabled = canSubmitExecution(signal, runtimeControls);
+  const executionEnabled = canSubmitExecution();
 
   return (
     <div className="space-y-4">

@@ -1,9 +1,9 @@
-import type { RuntimeControls, SelectedSignal, SignalItem } from "../types";
+import type { SelectedSignal, SignalItem } from "../types";
 
 export function hasExecutableLifecycle(signal: SignalItem | SelectedSignal): boolean {
   return signal.lifecycleState === "new" || signal.lifecycleState === "active";
 }
 
-export function canSubmitExecution(_signal: SignalItem | SelectedSignal, _controls: RuntimeControls): boolean {
+export function canSubmitExecution(): boolean {
   return false;
 }

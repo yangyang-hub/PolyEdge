@@ -235,6 +235,9 @@ pub struct RewardCandidateFilter {
     pub max_market_spread_cents: Decimal,
     pub max_market_data_age_minutes: u64,
     pub max_rewards_spread_cents: Decimal,
+    pub allow_dominant_single_side: bool,
+    pub dominant_min_probability: Decimal,
+    pub dominant_max_probability: Decimal,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -258,8 +261,24 @@ pub struct RewardBotConfig {
     pub max_market_data_age_minutes: u64,
     pub min_market_score: Decimal,
     pub max_spread_cents: Decimal,
+    pub quote_mode: RewardQuoteMode,
+    pub selection_mode: RewardSelectionMode,
     /// Bid price level used for new YES/NO quotes (1=best bid, 3=third bid).
     pub quote_bid_rank: u16,
+    /// Allow auto mode to quote only the dominant outcome in one-sided markets.
+    pub dominant_single_side_enabled: bool,
+    pub dominant_min_probability: Decimal,
+    pub dominant_max_probability: Decimal,
+    pub dominant_min_exit_depth_usd: Decimal,
+    pub max_top1_depth_share: Decimal,
+    pub max_top3_depth_share: Decimal,
+    pub max_book_hhi: Decimal,
+    pub preferred_categories: Vec<String>,
+    pub preferred_category_score_bonus: Decimal,
+    pub ai_advisory_enabled: bool,
+    pub ai_provider: RewardAiProvider,
+    pub ai_request_format: RewardAiRequestFormat,
+    pub ai_advisory_ttl_sec: u64,
     pub safety_margin_cents: Decimal,
     pub min_midpoint: Decimal,
     pub max_midpoint: Decimal,
@@ -340,7 +359,37 @@ pub struct RewardBotConfigPatch {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_spread_cents: Option<Decimal>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quote_mode: Option<RewardQuoteMode>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selection_mode: Option<RewardSelectionMode>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub quote_bid_rank: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dominant_single_side_enabled: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dominant_min_probability: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dominant_max_probability: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dominant_min_exit_depth_usd: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_top1_depth_share: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_top3_depth_share: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_book_hhi: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preferred_categories: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preferred_category_score_bonus: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ai_advisory_enabled: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ai_provider: Option<RewardAiProvider>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ai_request_format: Option<RewardAiRequestFormat>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ai_advisory_ttl_sec: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub safety_margin_cents: Option<Decimal>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -407,7 +456,26 @@ impl Default for RewardBotConfig {
             max_market_data_age_minutes: 15,
             min_market_score: decimal("15"),
             max_spread_cents: decimal("8"),
+            quote_mode: RewardQuoteMode::Double,
+            selection_mode: RewardSelectionMode::Observe,
             quote_bid_rank: 1,
+            dominant_single_side_enabled: false,
+            dominant_min_probability: decimal("0.90"),
+            dominant_max_probability: decimal("0.97"),
+            dominant_min_exit_depth_usd: decimal("50"),
+            max_top1_depth_share: decimal("1"),
+            max_top3_depth_share: decimal("1"),
+            max_book_hhi: decimal("1"),
+            preferred_categories: vec![
+                "politics".to_string(),
+                "elections".to_string(),
+                "geopolitics".to_string(),
+            ],
+            preferred_category_score_bonus: decimal("0"),
+            ai_advisory_enabled: false,
+            ai_provider: RewardAiProvider::OpenAi,
+            ai_request_format: RewardAiRequestFormat::OpenAiResponses,
+            ai_advisory_ttl_sec: 3600,
             safety_margin_cents: decimal("1"),
             min_midpoint: decimal("0.1"),
             max_midpoint: decimal("0.9"),
@@ -472,6 +540,44 @@ impl RewardBotConfig {
         self.max_spread_cents =
             clamp_decimal(self.max_spread_cents, decimal("0.1"), decimal("99"));
         self.quote_bid_rank = self.quote_bid_rank.clamp(1, 3);
+        self.dominant_min_probability = clamp_decimal(
+            self.dominant_min_probability,
+            decimal("0.51"),
+            decimal("0.99"),
+        );
+        self.dominant_max_probability = clamp_decimal(
+            self.dominant_max_probability,
+            self.dominant_min_probability,
+            decimal("0.99"),
+        );
+        self.dominant_min_exit_depth_usd = clamp_decimal(
+            self.dominant_min_exit_depth_usd,
+            Decimal::ZERO,
+            decimal("1000000"),
+        );
+        self.max_top1_depth_share =
+            clamp_decimal(self.max_top1_depth_share, Decimal::ZERO, Decimal::ONE);
+        self.max_top3_depth_share =
+            clamp_decimal(self.max_top3_depth_share, Decimal::ZERO, Decimal::ONE);
+        if self.max_top3_depth_share < self.max_top1_depth_share {
+            self.max_top3_depth_share = self.max_top1_depth_share;
+        }
+        self.max_book_hhi = clamp_decimal(self.max_book_hhi, Decimal::ZERO, Decimal::ONE);
+        self.preferred_categories = normalize_reward_categories(&self.preferred_categories);
+        self.preferred_category_score_bonus = clamp_decimal(
+            self.preferred_category_score_bonus,
+            Decimal::ZERO,
+            decimal("20"),
+        );
+        self.ai_advisory_ttl_sec = self.ai_advisory_ttl_sec.clamp(60, 86_400);
+        if matches!(self.ai_provider, RewardAiProvider::Anthropic) {
+            self.ai_request_format = RewardAiRequestFormat::AnthropicMessages;
+        } else if matches!(
+            self.ai_request_format,
+            RewardAiRequestFormat::AnthropicMessages
+        ) {
+            self.ai_request_format = RewardAiRequestFormat::OpenAiResponses;
+        }
         self.safety_margin_cents =
             clamp_decimal(self.safety_margin_cents, Decimal::ZERO, decimal("20"));
         self.min_midpoint = clamp_decimal(self.min_midpoint, Decimal::ZERO, decimal("0.49"));
@@ -529,6 +635,10 @@ impl RewardBotConfig {
             max_market_spread_cents: self.max_market_spread_cents,
             max_market_data_age_minutes: self.max_market_data_age_minutes,
             max_rewards_spread_cents: self.max_spread_cents,
+            allow_dominant_single_side: self.quote_mode == RewardQuoteMode::Auto
+                && self.dominant_single_side_enabled,
+            dominant_min_probability: self.dominant_min_probability,
+            dominant_max_probability: self.dominant_max_probability,
         }
     }
 
@@ -577,8 +687,53 @@ impl RewardBotConfig {
         if let Some(max_spread_cents) = patch.max_spread_cents {
             next.max_spread_cents = max_spread_cents;
         }
+        if let Some(quote_mode) = patch.quote_mode {
+            next.quote_mode = quote_mode;
+        }
+        if let Some(selection_mode) = patch.selection_mode {
+            next.selection_mode = selection_mode;
+        }
         if let Some(quote_bid_rank) = patch.quote_bid_rank {
             next.quote_bid_rank = quote_bid_rank;
+        }
+        if let Some(value) = patch.dominant_single_side_enabled {
+            next.dominant_single_side_enabled = value;
+        }
+        if let Some(value) = patch.dominant_min_probability {
+            next.dominant_min_probability = value;
+        }
+        if let Some(value) = patch.dominant_max_probability {
+            next.dominant_max_probability = value;
+        }
+        if let Some(value) = patch.dominant_min_exit_depth_usd {
+            next.dominant_min_exit_depth_usd = value;
+        }
+        if let Some(value) = patch.max_top1_depth_share {
+            next.max_top1_depth_share = value;
+        }
+        if let Some(value) = patch.max_top3_depth_share {
+            next.max_top3_depth_share = value;
+        }
+        if let Some(value) = patch.max_book_hhi {
+            next.max_book_hhi = value;
+        }
+        if let Some(value) = patch.preferred_categories {
+            next.preferred_categories = value;
+        }
+        if let Some(value) = patch.preferred_category_score_bonus {
+            next.preferred_category_score_bonus = value;
+        }
+        if let Some(value) = patch.ai_advisory_enabled {
+            next.ai_advisory_enabled = value;
+        }
+        if let Some(value) = patch.ai_provider {
+            next.ai_provider = value;
+        }
+        if let Some(value) = patch.ai_request_format {
+            next.ai_request_format = value;
+        }
+        if let Some(value) = patch.ai_advisory_ttl_sec {
+            next.ai_advisory_ttl_sec = value;
         }
         if let Some(safety_margin_cents) = patch.safety_margin_cents {
             next.safety_margin_cents = safety_margin_cents;

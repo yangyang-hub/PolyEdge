@@ -54,6 +54,15 @@ export type PostFillStrategy =
   | "exit_at_markup"
   | "hold_and_requote"
   | "flatten_immediately";
+export type RewardQuoteMode = "double" | "auto";
+export type RewardSelectionMode = "observe" | "enforce";
+export type RewardPlanQuoteMode = "double" | "single_yes" | "single_no" | "none";
+export type RewardAiProvider = "openai" | "anthropic";
+export type RewardAiRequestFormat =
+  | "openai_responses"
+  | "openai_chat_completions"
+  | "anthropic_messages";
+export type RewardAiSuitability = "allow" | "watch" | "avoid";
 export type RewardFillRole = "maker" | "taker";
 export type CopyTradeMode = "paper" | "live";
 export type CopySizingMode = "fixed_usd" | "proportional_to_source" | "capital_ratio" | "mirror_portfolio_weight";

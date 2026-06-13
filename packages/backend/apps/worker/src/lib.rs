@@ -11,10 +11,11 @@ use polyedge_application::{
     NewsSourceHealthListFilters, NewsSourceHealthView, OrderListFilters, PageQuery,
     PostFillStrategy, ReconcileExecutionListFilters, ReconcileExternalTradeCommand,
     RewardAccountState, RewardBookLevel, RewardBotConfig, RewardBotRunReport, RewardControlAction,
-    RewardControlCommand, RewardFill, RewardFillRole, RewardMarket, RewardOrderBook,
-    RewardOrderSide, RewardPosition, RewardQuotePlan, RewardRiskEvent, RewardRiskSeverity,
-    RewardTickOutcome, RewardToken, SignalListFilters, SyncExternalOrderStatusCommand,
-    WalletActivityInput, WalletFeedInput, WalletPositionInput, build_arbitrage_analysis,
+    RewardControlCommand, RewardFill, RewardFillRole, RewardLiveCycle, RewardMarket,
+    RewardMarketAdvisory, RewardOrderBook, RewardOrderSide, RewardPosition, RewardQuotePlan,
+    RewardRiskEvent, RewardRiskSeverity, RewardTickOutcome, RewardToken, SignalListFilters,
+    SyncExternalOrderStatusCommand, WalletActivityInput, WalletFeedInput, WalletPositionInput,
+    apply_reward_ai_advisories, build_arbitrage_analysis, build_reward_ai_advisory_request,
     market_book_snapshot_id, new_risk_event, select_reward_book_token_ids,
 };
 use polyedge_connectors::{
@@ -30,8 +31,9 @@ use polyedge_connectors::{
     PolymarketDataApiConnector, PolymarketGammaConnector, PolymarketGammaMarket,
     PolymarketMarketRefs, PolymarketOpenOrder, PolymarketOrderRejection, PolymarketRewardMarket,
     PolymarketRewardsConnector, PolymarketSignatureScheme, PolymarketTokenOrderSide,
-    PolymarketWalletActivity, PolymarketWalletPosition, RssNewsConnector, RssNewsSourceConfig,
-    normalize_polymarket_ws_order_message, normalize_polymarket_ws_trade_message,
+    PolymarketWalletActivity, PolymarketWalletPosition, RewardAiAdvisoryConnector,
+    RssNewsConnector, RssNewsSourceConfig, normalize_polymarket_ws_order_message,
+    normalize_polymarket_ws_trade_message,
 };
 use polyedge_domain::{
     AppError, EventStatus, EvidenceDirection, EvidenceStatus, MarketStatus, OrderStatus,

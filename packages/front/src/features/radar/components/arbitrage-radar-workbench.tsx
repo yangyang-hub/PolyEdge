@@ -11,7 +11,7 @@ import { WorkbenchDetailPane, WorkbenchLayout } from "@/components/shared/workbe
 import { WorkbenchSegmentedControl } from "@/components/shared/workbench-segmented-control";
 import { Button } from "@/components/ui/button";
 import { usePagination } from "@/hooks/use-pagination";
-import { dictionary, translateEnum, formatMessage } from "@/lib/i18n/dictionaries";
+import { dictionary, formatMessage } from "@/lib/i18n/dictionaries";
 import type { RadarFilter, RadarPageData, RadarView } from "@/features/radar/types";
 import { isKeyboardSelect } from "@/lib/keyboard";
 
@@ -23,7 +23,6 @@ type ArbitrageRadarWorkbenchProps = {
 };
 
 export function ArbitrageRadarWorkbench({ data }: ArbitrageRadarWorkbenchProps) {
-  const format = formatMessage;
   const [filter, setFilter] = useState<RadarFilter>("all");
   const [view, setView] = useState<RadarView>("active");
   const [selectedId, setSelectedId] = useState(data.selectedOpportunityId);
@@ -51,10 +50,11 @@ export function ArbitrageRadarWorkbench({ data }: ArbitrageRadarWorkbenchProps) 
 
   const oppsPagination = usePagination(filteredOpportunities.length, 20);
   const scansPagination = usePagination(data.scans.length, 15);
+  const { reset: resetOppsPagination } = oppsPagination;
 
   useEffect(() => {
-    oppsPagination.reset();
-  }, [view, deferredFilter, oppsPagination.reset]);
+    resetOppsPagination();
+  }, [view, deferredFilter, resetOppsPagination]);
 
   const selectedOpportunity =
     filteredOpportunities.find((opportunity) => opportunity.id === selectedId) ??

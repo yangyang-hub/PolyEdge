@@ -135,6 +135,14 @@ pub struct ArbitrageSettings {
 pub struct RewardsSettings {
     pub enabled: bool,
     pub poll_interval_secs: u64,
+    pub ai_openai_api_key: Option<String>,
+    pub ai_anthropic_api_key: Option<String>,
+    pub ai_openai_base_url: String,
+    pub ai_anthropic_base_url: String,
+    pub ai_model: String,
+    pub ai_min_confidence_bps: u16,
+    pub ai_request_timeout_secs: u64,
+    pub ai_max_markets_per_cycle: u16,
 }
 
 #[derive(Debug, Clone, Deserialize)]

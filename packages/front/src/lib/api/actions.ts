@@ -145,7 +145,26 @@ const rewardConfigSchema = z.object({
   max_market_data_age_minutes: z.coerce.number().int().min(1).max(1440),
   min_market_score: decimalNumber.min(0).max(100),
   max_spread_cents: decimalNumber.min(0.1).max(99),
+  quote_mode: z.enum(["double", "auto"]),
+  selection_mode: z.enum(["observe", "enforce"]),
   quote_bid_rank: z.coerce.number().int().min(1).max(3),
+  dominant_single_side_enabled: z.boolean(),
+  dominant_min_probability: decimalNumber.min(0.51).max(0.99),
+  dominant_max_probability: decimalNumber.min(0.51).max(0.99),
+  dominant_min_exit_depth_usd: decimalNumber.min(0).max(1_000_000),
+  max_top1_depth_share: decimalNumber.min(0).max(1),
+  max_top3_depth_share: decimalNumber.min(0).max(1),
+  max_book_hhi: decimalNumber.min(0).max(1),
+  preferred_categories: z.array(z.string().trim().min(1)).max(32),
+  preferred_category_score_bonus: decimalNumber.min(0).max(20),
+  ai_advisory_enabled: z.boolean(),
+  ai_provider: z.enum(["openai", "anthropic"]),
+  ai_request_format: z.enum([
+    "openai_responses",
+    "openai_chat_completions",
+    "anthropic_messages",
+  ]),
+  ai_advisory_ttl_sec: z.coerce.number().int().min(60).max(86_400),
   safety_margin_cents: decimalNumber.min(0).max(20),
   min_midpoint: decimalNumber.min(0).max(0.49),
   max_midpoint: decimalNumber.min(0.51).max(0.99),
@@ -179,6 +198,24 @@ const rewardConfigSchema = z.object({
     message: "Max midpoint must be greater than min midpoint.",
     path: ["max_midpoint"],
   })
+  .refine((value) => value.dominant_max_probability >= value.dominant_min_probability, {
+    message: "Dominant max probability must be at least the dominant min probability.",
+    path: ["dominant_max_probability"],
+  })
+  .refine((value) => value.max_top3_depth_share >= value.max_top1_depth_share, {
+    message: "Top-3 depth share cap must be at least the top-1 cap.",
+    path: ["max_top3_depth_share"],
+  })
+  .refine(
+    (value) =>
+      value.ai_provider === "anthropic"
+        ? value.ai_request_format === "anthropic_messages"
+        : value.ai_request_format !== "anthropic_messages",
+    {
+      message: "AI request format must match the selected provider.",
+      path: ["ai_request_format"],
+    },
+  )
   .refine(
     (value) => value.cancel_bid_rank === 0 || value.cancel_bid_rank < value.quote_bid_rank,
     {

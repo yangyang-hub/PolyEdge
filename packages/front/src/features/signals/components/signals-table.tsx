@@ -36,10 +36,11 @@ export function SignalsTable({
   onOpenAction: (signalId: string, dialog: Exclude<SignalActionDialog, null>) => void;
 }) {
   const pagination = usePagination(signals.length, 20);
+  const { reset: resetPagination } = pagination;
 
   useEffect(() => {
-    pagination.reset();
-  }, [signals.length, pagination.reset]);
+    resetPagination();
+  }, [signals.length, resetPagination]);
 
   if (signals.length === 0) {
     return (

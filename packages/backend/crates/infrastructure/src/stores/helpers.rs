@@ -32,10 +32,41 @@ fn apply_reward_config_value(config: &mut RewardBotConfig, key: &str, value: &st
         }
         "min_market_score" => config.min_market_score = parse_decimal_config(key, value)?,
         "max_spread_cents" => config.max_spread_cents = parse_decimal_config(key, value)?,
+        "quote_mode" => config.quote_mode = RewardQuoteMode::from_str(value)?,
+        "selection_mode" => config.selection_mode = RewardSelectionMode::from_str(value)?,
         "quote_edge_cents" => {
             // Legacy key: midpoint-offset quoting was replaced by bid-rank quoting.
         }
         "quote_bid_rank" => config.quote_bid_rank = parse_u16_config(key, value)?,
+        "dominant_single_side_enabled" => {
+            config.dominant_single_side_enabled = parse_bool_config(key, value)?;
+        }
+        "dominant_min_probability" => {
+            config.dominant_min_probability = parse_decimal_config(key, value)?;
+        }
+        "dominant_max_probability" => {
+            config.dominant_max_probability = parse_decimal_config(key, value)?;
+        }
+        "dominant_min_exit_depth_usd" => {
+            config.dominant_min_exit_depth_usd = parse_decimal_config(key, value)?;
+        }
+        "max_top1_depth_share" => {
+            config.max_top1_depth_share = parse_decimal_config(key, value)?;
+        }
+        "max_top3_depth_share" => {
+            config.max_top3_depth_share = parse_decimal_config(key, value)?;
+        }
+        "max_book_hhi" => config.max_book_hhi = parse_decimal_config(key, value)?,
+        "preferred_categories" => config.preferred_categories = parse_csv_config(value),
+        "preferred_category_score_bonus" => {
+            config.preferred_category_score_bonus = parse_decimal_config(key, value)?;
+        }
+        "ai_advisory_enabled" => config.ai_advisory_enabled = parse_bool_config(key, value)?,
+        "ai_provider" => config.ai_provider = RewardAiProvider::from_str(value)?,
+        "ai_request_format" => {
+            config.ai_request_format = RewardAiRequestFormat::from_str(value)?;
+        }
+        "ai_advisory_ttl_sec" => config.ai_advisory_ttl_sec = parse_u64_config(key, value)?,
         "safety_margin_cents" => config.safety_margin_cents = parse_decimal_config(key, value)?,
         "min_midpoint" => config.min_midpoint = parse_decimal_config(key, value)?,
         "max_midpoint" => config.max_midpoint = parse_decimal_config(key, value)?,
@@ -104,7 +135,55 @@ fn reward_config_entries(config: &RewardBotConfig) -> Vec<(&'static str, String)
         ),
         ("min_market_score", config.min_market_score.to_string()),
         ("max_spread_cents", config.max_spread_cents.to_string()),
+        ("quote_mode", config.quote_mode.as_str().to_string()),
+        ("selection_mode", config.selection_mode.as_str().to_string()),
         ("quote_bid_rank", config.quote_bid_rank.to_string()),
+        (
+            "dominant_single_side_enabled",
+            config.dominant_single_side_enabled.to_string(),
+        ),
+        (
+            "dominant_min_probability",
+            config.dominant_min_probability.to_string(),
+        ),
+        (
+            "dominant_max_probability",
+            config.dominant_max_probability.to_string(),
+        ),
+        (
+            "dominant_min_exit_depth_usd",
+            config.dominant_min_exit_depth_usd.to_string(),
+        ),
+        (
+            "max_top1_depth_share",
+            config.max_top1_depth_share.to_string(),
+        ),
+        (
+            "max_top3_depth_share",
+            config.max_top3_depth_share.to_string(),
+        ),
+        ("max_book_hhi", config.max_book_hhi.to_string()),
+        (
+            "preferred_categories",
+            config.preferred_categories.join(","),
+        ),
+        (
+            "preferred_category_score_bonus",
+            config.preferred_category_score_bonus.to_string(),
+        ),
+        (
+            "ai_advisory_enabled",
+            config.ai_advisory_enabled.to_string(),
+        ),
+        ("ai_provider", config.ai_provider.as_str().to_string()),
+        (
+            "ai_request_format",
+            config.ai_request_format.as_str().to_string(),
+        ),
+        (
+            "ai_advisory_ttl_sec",
+            config.ai_advisory_ttl_sec.to_string(),
+        ),
         (
             "safety_margin_cents",
             config.safety_margin_cents.to_string(),
@@ -164,6 +243,48 @@ fn reward_config_entries(config: &RewardBotConfig) -> Vec<(&'static str, String)
     ]
 }
 
+fn reward_market_advisory_from_row(row: &sqlx::postgres::PgRow) -> Result<RewardMarketAdvisory> {
+    let provider: String = row.try_get("provider").map_err(postgres_decode_error)?;
+    let request_format: String = row
+        .try_get("request_format")
+        .map_err(postgres_decode_error)?;
+    let suitability: String = row
+        .try_get("suitability")
+        .map_err(postgres_decode_error)?;
+    let quote_mode: String = row.try_get("quote_mode").map_err(postgres_decode_error)?;
+    let exit_policy: String = row.try_get("exit_policy").map_err(postgres_decode_error)?;
+    let reasons: Json<Value> = row.try_get("reasons_json").map_err(postgres_decode_error)?;
+    let metrics: Json<Value> = row.try_get("metrics_json").map_err(postgres_decode_error)?;
+    Ok(RewardMarketAdvisory {
+        condition_id: row.try_get("condition_id").map_err(postgres_decode_error)?,
+        provider: RewardAiProvider::from_str(&provider)?,
+        request_format: RewardAiRequestFormat::from_str(&request_format)?,
+        model: row.try_get("model").map_err(postgres_decode_error)?,
+        input_hash: row.try_get("input_hash").map_err(postgres_decode_error)?,
+        suitability: RewardAiSuitability::from_str(&suitability)?,
+        quote_mode: RewardPlanQuoteMode::from_str(&quote_mode)?,
+        exit_policy: PostFillStrategy::from_str(&exit_policy)?,
+        confidence: row.try_get("confidence").map_err(postgres_decode_error)?,
+        reasons: parse_reward_advisory_reasons(reasons.0)?,
+        metrics: metrics.0,
+        created_at: row.try_get("created_at").map_err(postgres_decode_error)?,
+        expires_at: row.try_get("expires_at").map_err(postgres_decode_error)?,
+    })
+}
+
+fn parse_reward_advisory_reasons(value: Value) -> Result<Vec<String>> {
+    let Some(items) = value.as_array() else {
+        return Err(db_error(
+            "POSTGRES_DECODE_FAILED",
+            "reward advisory reasons_json must be an array",
+        ));
+    };
+    Ok(items
+        .iter()
+        .filter_map(|item| item.as_str().map(ToString::to_string))
+        .collect())
+}
+
 fn parse_bool_config(key: &str, value: &str) -> Result<bool> {
     match value {
         "true" | "1" => Ok(true),
@@ -200,6 +321,14 @@ fn parse_decimal_config(key: &str, value: &str) -> Result<Decimal> {
             format!("reward config key {key} must be a decimal: {error}"),
         )
     })
+}
+
+fn parse_csv_config(value: &str) -> Vec<String> {
+    value
+        .split(',')
+        .map(|item| item.trim().to_string())
+        .filter(|item| !item.is_empty())
+        .collect()
 }
 
 async fn insert_reward_order(
@@ -356,6 +485,7 @@ fn reward_market_from_row(row: &sqlx::postgres::PgRow) -> Result<RewardMarket> {
         question: row.try_get("question").map_err(postgres_decode_error)?,
         market_slug: row.try_get("market_slug").map_err(postgres_decode_error)?,
         event_slug: row.try_get("event_slug").map_err(postgres_decode_error)?,
+        category: row.try_get("category").map_err(postgres_decode_error)?,
         image: row.try_get("image").map_err(postgres_decode_error)?,
         rewards_max_spread: row
             .try_get("rewards_max_spread")

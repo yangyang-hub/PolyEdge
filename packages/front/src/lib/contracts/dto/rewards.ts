@@ -2,9 +2,15 @@ import type {
   DecimalValue,
   ManagedRewardOrderStatus,
   PostFillStrategy,
+  RewardAiProvider,
+  RewardAiRequestFormat,
+  RewardAiSuitability,
   RewardFillRole,
   RewardOrderSide,
+  RewardPlanQuoteMode,
+  RewardQuoteMode,
   RewardRiskSeverity,
+  RewardSelectionMode,
 } from "./primitives";
 
 export type RewardBotConfigDto = {
@@ -22,7 +28,22 @@ export type RewardBotConfigDto = {
   max_market_data_age_minutes: number;
   min_market_score: DecimalValue;
   max_spread_cents: DecimalValue;
+  quote_mode: RewardQuoteMode;
+  selection_mode: RewardSelectionMode;
   quote_bid_rank: number;
+  dominant_single_side_enabled: boolean;
+  dominant_min_probability: DecimalValue;
+  dominant_max_probability: DecimalValue;
+  dominant_min_exit_depth_usd: DecimalValue;
+  max_top1_depth_share: DecimalValue;
+  max_top3_depth_share: DecimalValue;
+  max_book_hhi: DecimalValue;
+  preferred_categories: string[];
+  preferred_category_score_bonus: DecimalValue;
+  ai_advisory_enabled: boolean;
+  ai_provider: RewardAiProvider;
+  ai_request_format: RewardAiRequestFormat;
+  ai_advisory_ttl_sec: number;
   safety_margin_cents: DecimalValue;
   min_midpoint: DecimalValue;
   max_midpoint: DecimalValue;
@@ -62,6 +83,7 @@ export type RewardMarketDto = {
   question: string;
   market_slug: string;
   event_slug: string;
+  category: string;
   image: string;
   rewards_max_spread: DecimalValue;
   rewards_min_size: DecimalValue;
@@ -86,6 +108,37 @@ export type RewardQuoteLegDto = {
   notional_usd: DecimalValue;
 };
 
+export type RewardBookSideMetricsDto = {
+  top1_depth_share: DecimalValue;
+  top3_depth_share: DecimalValue;
+  book_hhi: DecimalValue;
+  exit_depth_usd: DecimalValue;
+};
+
+export type RewardMarketBookMetricsDto = {
+  yes_probability: DecimalValue;
+  recommended_quote_mode: RewardPlanQuoteMode;
+  reason?: string | null;
+  yes?: RewardBookSideMetricsDto | null;
+  no?: RewardBookSideMetricsDto | null;
+};
+
+export type RewardMarketAdvisoryDto = {
+  condition_id: string;
+  provider: RewardAiProvider;
+  request_format: RewardAiRequestFormat;
+  model: string;
+  input_hash: string;
+  suitability: RewardAiSuitability;
+  quote_mode: RewardPlanQuoteMode;
+  exit_policy: PostFillStrategy;
+  confidence: DecimalValue;
+  reasons: string[];
+  metrics: unknown;
+  created_at: string;
+  expires_at: string;
+};
+
 export type RewardQuotePlanDto = {
   condition_id: string;
   market_slug: string;
@@ -93,6 +146,10 @@ export type RewardQuotePlanDto = {
   score: DecimalValue;
   eligible: boolean;
   reason: string;
+  quote_mode: RewardPlanQuoteMode;
+  recommended_quote_mode?: RewardPlanQuoteMode | null;
+  book_metrics?: RewardMarketBookMetricsDto | null;
+  ai_advisory?: RewardMarketAdvisoryDto | null;
   midpoint?: DecimalValue | null;
   total_daily_rate: DecimalValue;
   rewards_max_spread: DecimalValue;

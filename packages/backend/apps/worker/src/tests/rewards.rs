@@ -27,6 +27,10 @@ fn live_test_plan(now: OffsetDateTime) -> RewardQuotePlan {
         score: reward_decimal("50"),
         eligible: true,
         reason: "eligible".to_string(),
+        quote_mode: polyedge_application::RewardPlanQuoteMode::Double,
+        recommended_quote_mode: Some(polyedge_application::RewardPlanQuoteMode::Double),
+        book_metrics: None,
+        ai_advisory: None,
         midpoint: Some(reward_decimal("0.50")),
         total_daily_rate: reward_decimal("25"),
         rewards_max_spread: reward_decimal("8"),
@@ -444,10 +448,12 @@ fn post_fill_exit_is_planned_before_live_submission() {
 
     let updates = plan_live_post_fill_orders(
         &RewardBotConfig::default(),
+        &[],
         &entry,
         Decimal::from(5_u64),
         &positions,
         &HashMap::new(),
+        Decimal::ZERO,
         "trc_exit_plan",
     );
 

@@ -26,10 +26,11 @@ export function RiskAuditLog({
   onManage: (alert: RiskPageData["alerts"][number]) => void;
 }) {
   const pagination = usePagination(visibleAlerts.length, 20);
+  const { reset: resetPagination } = pagination;
 
   useEffect(() => {
-    pagination.reset();
-  }, [alertFilter, pagination.reset]);
+    resetPagination();
+  }, [alertFilter, resetPagination]);
 
   return (
     <div className="overflow-hidden rounded-lg bg-card/95 ring-1 ring-white/5">

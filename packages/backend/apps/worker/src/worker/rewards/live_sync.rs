@@ -222,10 +222,12 @@ async fn sync_live_reward_orders(
             if filled_order.side == RewardOrderSide::Buy {
                 for update in plan_live_post_fill_orders(
                     &cycle.config,
+                    &cycle.plans,
                     &filled_order,
                     fill_size,
                     &positions,
                     books,
+                    reward_ai_min_confidence(state.settings.rewards.ai_min_confidence_bps),
                     trace_id,
                 ) {
                     match update {

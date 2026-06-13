@@ -4,19 +4,22 @@ use polyedge_application::{
     CopyEvent, CopyEventSeverity, CopyOrderSide, CopySizingMode, CopyTradeConfig, CopyTradeMode,
     CopyTradeStore, IdempotencyBegin, IdempotencyRequest, IdempotencyStore, ManagedRewardOrder,
     ManagedRewardOrderStatus, ModeSnapshot, ModeStateStore, ModeTransitionCommand,
-    PostFillStrategy, RewardAccountState, RewardBotConfig, RewardBotStore, RewardCandidateFilter,
-    RewardControlAction, RewardControlCommand, RewardControlCommandStatus, RewardFill,
-    RewardFillRole, RewardMarket, RewardOrderListQuery, RewardOrderPage, RewardOrderSide,
-    RewardOrderSortField, RewardOrderStatusFilter, RewardPosition, RewardQuotePlan,
+    PostFillStrategy, RewardAccountState, RewardAiAdvisoryRequest, RewardAiProvider,
+    RewardAiRequestFormat, RewardAiSuitability, RewardBotConfig, RewardBotStore,
+    RewardCandidateFilter, RewardControlAction, RewardControlCommand, RewardControlCommandStatus,
+    RewardFill, RewardFillRole, RewardMarket, RewardMarketAdvisory, RewardOrderListQuery,
+    RewardOrderPage, RewardOrderSide, RewardOrderSortField, RewardOrderStatusFilter,
+    RewardPlanQuoteMode, RewardPosition, RewardQuoteMode, RewardQuotePlan,
     RewardQuotePlanListQuery, RewardQuotePlanPage, RewardQuotePlanSortField, RewardRiskEvent,
-    RewardRiskSeverity, RewardTickOutcome, RewardToken, RiskStateSnapshot, RiskStateStore,
-    SortOrder, SourceTrade, TrackedWallet, TrackedWalletStatus, WalletAnalysisStats,
+    RewardRiskSeverity, RewardSelectionMode, RewardTickOutcome, RewardToken, RiskStateSnapshot,
+    RiskStateStore, SortOrder, SourceTrade, TrackedWallet, TrackedWalletStatus,
+    WalletAnalysisStats,
 };
 use polyedge_domain::{
     AppError, ExposureRatio, IdempotencyStatus, Result, SignedUsdAmount, SystemMode,
 };
 use rust_decimal::Decimal;
-use serde_json::Value;
+use serde_json::{Value, json};
 use sqlx::{PgPool, Row, types::Json};
 use std::{
     collections::{BTreeMap, HashMap, HashSet},

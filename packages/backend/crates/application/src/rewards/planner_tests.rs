@@ -6,6 +6,7 @@ fn test_market(rewards_min_size: Decimal) -> RewardMarket {
         question: "Budget allocation market".to_string(),
         market_slug: "budget-allocation-market".to_string(),
         event_slug: "budget-allocation-event".to_string(),
+        category: "politics".to_string(),
         image: String::new(),
         rewards_max_spread: decimal("8"),
         rewards_min_size,
@@ -66,6 +67,49 @@ fn test_books() -> HashMap<String, RewardOrderBook> {
     .collect()
 }
 
+fn dominant_yes_books() -> HashMap<String, RewardOrderBook> {
+    let now = OffsetDateTime::now_utc();
+    [
+        RewardOrderBook {
+            token_id: "yes_budget".to_string(),
+            bids: vec![
+                RewardBookLevel {
+                    price: decimal("0.91"),
+                    size: decimal("1000"),
+                },
+                RewardBookLevel {
+                    price: decimal("0.90"),
+                    size: decimal("500"),
+                },
+                RewardBookLevel {
+                    price: decimal("0.89"),
+                    size: decimal("500"),
+                },
+            ],
+            asks: vec![RewardBookLevel {
+                price: decimal("0.93"),
+                size: decimal("1000"),
+            }],
+            observed_at: now,
+        },
+        RewardOrderBook {
+            token_id: "no_budget".to_string(),
+            bids: vec![RewardBookLevel {
+                price: decimal("0.07"),
+                size: decimal("1000"),
+            }],
+            asks: vec![RewardBookLevel {
+                price: decimal("0.08"),
+                size: decimal("1000"),
+            }],
+            observed_at: now,
+        },
+    ]
+    .into_iter()
+    .map(|book| (book.token_id.clone(), book))
+    .collect()
+}
+
 #[test]
 fn combined_market_budget_can_satisfy_asymmetric_minimum_sizes() {
     let config = RewardBotConfig {
@@ -79,6 +123,7 @@ fn combined_market_budget_can_satisfy_asymmetric_minimum_sizes() {
 
     assert!(plan.eligible, "{}", plan.reason);
     assert_eq!(plan.legs.len(), 2);
+    assert_eq!(plan.quote_mode, RewardPlanQuoteMode::Double);
     assert!(plan.legs.iter().all(|leg| leg.size >= decimal("20")));
     assert!(
         plan.legs
@@ -86,6 +131,105 @@ fn combined_market_budget_can_satisfy_asymmetric_minimum_sizes() {
             .fold(Decimal::ZERO, |sum, leg| sum + leg.price * leg.size)
             <= config.per_market_usd
     );
+}
+
+#[test]
+fn auto_enforce_quotes_only_dominant_yes_side() {
+    let config = RewardBotConfig {
+        quote_mode: RewardQuoteMode::Auto,
+        selection_mode: RewardSelectionMode::Enforce,
+        dominant_single_side_enabled: true,
+        min_market_score: Decimal::ZERO,
+        ..RewardBotConfig::default()
+    };
+
+    let plan = build_reward_quote_plan(&test_market(decimal("5")), &dominant_yes_books(), &config);
+
+    assert!(plan.eligible, "{}", plan.reason);
+    assert_eq!(plan.quote_mode, RewardPlanQuoteMode::SingleYes);
+    assert_eq!(plan.recommended_quote_mode, Some(RewardPlanQuoteMode::SingleYes));
+    assert_eq!(plan.legs.len(), 1);
+    assert_eq!(plan.legs[0].outcome, "Yes");
+    assert_eq!(plan.legs[0].price, decimal("0.91"));
+}
+
+#[test]
+fn auto_enforce_rejects_concentrated_dominant_book() {
+    let config = RewardBotConfig {
+        quote_mode: RewardQuoteMode::Auto,
+        selection_mode: RewardSelectionMode::Enforce,
+        dominant_single_side_enabled: true,
+        max_top1_depth_share: decimal("0.40"),
+        min_market_score: Decimal::ZERO,
+        ..RewardBotConfig::default()
+    };
+
+    let plan = build_reward_quote_plan(&test_market(decimal("5")), &dominant_yes_books(), &config);
+
+    assert!(!plan.eligible);
+    assert_eq!(plan.quote_mode, RewardPlanQuoteMode::None);
+    assert!(plan.reason.contains("top-1 depth share"));
+    assert_eq!(plan.recommended_quote_mode, Some(RewardPlanQuoteMode::None));
+}
+
+#[test]
+fn ai_enforce_can_filter_double_plan_to_single_side() {
+    let config = RewardBotConfig {
+        ai_advisory_enabled: true,
+        quote_mode: RewardQuoteMode::Auto,
+        selection_mode: RewardSelectionMode::Enforce,
+        min_market_score: Decimal::ZERO,
+        ..RewardBotConfig::default()
+    };
+    let mut plans = vec![build_reward_quote_plan(
+        &test_market(decimal("5")),
+        &test_books(),
+        &config,
+    )];
+    assert_eq!(plans[0].legs.len(), 2);
+
+    let advisory = test_advisory(
+        RewardAiSuitability::Allow,
+        RewardPlanQuoteMode::SingleNo,
+        decimal("0.80"),
+    );
+    let advisories = HashMap::from([(advisory.condition_id.clone(), advisory)]);
+
+    apply_reward_ai_advisories(&mut plans, &advisories, &config, decimal("0.65"));
+
+    assert!(plans[0].eligible);
+    assert_eq!(plans[0].quote_mode, RewardPlanQuoteMode::SingleNo);
+    assert_eq!(plans[0].legs.len(), 1);
+    assert_eq!(plans[0].legs[0].outcome, "No");
+    assert!(plans[0].ai_advisory.is_some());
+}
+
+#[test]
+fn ai_enforce_avoid_rejects_plan_without_relaxing_checks() {
+    let config = RewardBotConfig {
+        ai_advisory_enabled: true,
+        selection_mode: RewardSelectionMode::Enforce,
+        min_market_score: Decimal::ZERO,
+        ..RewardBotConfig::default()
+    };
+    let mut plans = vec![build_reward_quote_plan(
+        &test_market(decimal("5")),
+        &test_books(),
+        &config,
+    )];
+    let advisory = test_advisory(
+        RewardAiSuitability::Avoid,
+        RewardPlanQuoteMode::Double,
+        decimal("0.90"),
+    );
+    let advisories = HashMap::from([(advisory.condition_id.clone(), advisory)]);
+
+    apply_reward_ai_advisories(&mut plans, &advisories, &config, decimal("0.65"));
+
+    assert!(!plans[0].eligible);
+    assert!(plans[0].legs.is_empty());
+    assert_eq!(plans[0].quote_mode, RewardPlanQuoteMode::None);
+    assert!(plans[0].reason.contains("AI advisory avoid"));
 }
 
 #[test]
@@ -105,6 +249,29 @@ fn combined_market_budget_rejects_unaffordable_minimum_sizes() {
         "per-market budget cannot satisfy rewards minimum size"
     );
     assert!(plan.legs.is_empty());
+}
+
+fn test_advisory(
+    suitability: RewardAiSuitability,
+    quote_mode: RewardPlanQuoteMode,
+    confidence: Decimal,
+) -> RewardMarketAdvisory {
+    let now = OffsetDateTime::now_utc();
+    RewardMarketAdvisory {
+        condition_id: "cond_budget".to_string(),
+        provider: RewardAiProvider::OpenAi,
+        request_format: RewardAiRequestFormat::OpenAiResponses,
+        model: "test-model".to_string(),
+        input_hash: "hash".to_string(),
+        suitability,
+        quote_mode,
+        exit_policy: PostFillStrategy::ExitAtMarkup,
+        confidence,
+        reasons: vec!["test advisory".to_string()],
+        metrics: json!({}),
+        created_at: now,
+        expires_at: now + TimeDuration::hours(1),
+    }
 }
 
 #[test]

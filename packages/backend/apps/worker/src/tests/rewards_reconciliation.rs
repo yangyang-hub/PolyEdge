@@ -356,6 +356,7 @@ async fn live_tick_persistence_keeps_market_catalog_and_blocks_active_account_ch
         question: "Catalog market".to_string(),
         market_slug: "catalog-market".to_string(),
         event_slug: "catalog-event".to_string(),
+        category: "politics".to_string(),
         image: String::new(),
         rewards_max_spread: reward_decimal("8"),
         rewards_min_size: reward_decimal("5"),

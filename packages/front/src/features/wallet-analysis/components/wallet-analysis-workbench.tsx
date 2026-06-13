@@ -281,8 +281,8 @@ function AnalysisReport({
 
       {/* Winners & Losers */}
       <div className="grid gap-6 lg:grid-cols-2">
-        <WinnersLosersCard title={t.winners} items={winners} t={t} positive />
-        <WinnersLosersCard title={t.losers} items={losers} t={t} />
+        <WinnersLosersCard title={t.winners} items={winners} positive />
+        <WinnersLosersCard title={t.losers} items={losers} />
       </div>
 
       {/* Recent Trades */}
@@ -374,12 +374,10 @@ function InfoItem({ label, value, highlight }: { label: string; value: string; h
 function WinnersLosersCard({
   title,
   items,
-  t,
   positive,
 }: {
   title: string;
   items: WalletAnalysisReportDto["winners"];
-  t: Record<string, string>;
   positive?: boolean;
 }) {
   return (
