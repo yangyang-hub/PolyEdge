@@ -77,7 +77,7 @@
 - `connect_user_ws()`：创建认证 WebSocket 客户端（订单/成交通道）
 - `balance()`：查询认证资金账户的 collateral balance
 - `orders_scoring()`：通过 CLOB `POST /orders-scoring` 批量查询 managed orders 是否正在参与奖励计分
-- `reward_earnings_today_usd()`：读取 CLOB `GET /rewards/user/total` 的 UTC 当日账户级 maker rewards 聚合结果，并按每项 `asset_rate` 换算为 USD；该口径与 Polymarket `/rewards` 页面顶部 Daily Rewards 一致
+- `reward_earnings_today_usd()`：优先读取 CLOB `GET /rewards/user/total` 的 UTC 当日账户级 maker rewards 聚合结果，并按每项 `asset_rate` 换算为 USD；当聚合端点为空、为 0 或不可用时，回退分页读取 `GET /rewards/user` 明细并按 `earnings * asset_rate` 求和。该口径与 Polymarket `/rewards` 页面顶部 Daily Rewards 一致
 - `post_heartbeat(heartbeat_id)`：调用 CLOB `/v1/heartbeats` 并返回下一次请求必须携带的 heartbeat id；worker 显式维护 5 秒链式心跳、对单次调用施加 4 秒超时，不依赖 canary SDK 的自动 heartbeat feature
 - `list_open_orders()`：分页读取认证账户全部开放订单；遇到空 cursor、`LTE=`、空页、重复 cursor 或 1000 页 guard 时停止
 - `find_matching_open_token_order()`：按 token/side/price/size 严格匹配唯一开放订单，用于 rewards 提交响应丢失后的恢复；多个匹配会返回冲突而不是猜测归属
@@ -135,7 +135,7 @@
 
 ## 当前状态
 
-- 已实现当前系统使用的 Polymarket 公共市场、盘口、Data API、Rewards API、订单 scoring、当日 maker earnings 和 CLOB V2 交易 connector；Deposit Wallet relayer 生命周期接口尚未接入
+- 已实现当前系统使用的 Polymarket 公共市场、盘口、Data API、Rewards API、订单 scoring、带明细 fallback 的当日 maker earnings 和 CLOB V2 交易 connector；Deposit Wallet relayer 生命周期接口尚未接入
 - Gamma `/markets` offset 分页已具备 422 边界 / 最大页数保护，并按 market id 去重；condition_ids 定向查询用于重点市场新鲜度刷新。
 - Gamma 市场同步已提供 rewards 质量筛选所需的 CLOB liquidity、end time 和分级 ambiguity 数据，并支持 priority condition 刷新降低全量目录延迟对 live rewards 的影响。
 - Rewards markets 分页和 enrichment 已具备完整性保护，不再把部分补全结果作为完整目录写入

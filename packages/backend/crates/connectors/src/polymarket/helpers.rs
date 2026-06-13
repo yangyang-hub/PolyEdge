@@ -51,6 +51,17 @@ fn clob_page_is_terminal(next_cursor: &str, count: u64, requested_cursor: Option
         || requested_cursor == Some(next_cursor)
 }
 
+fn sum_reward_earning_amounts_usd<I>(amounts: I) -> Decimal
+where
+    I: IntoIterator<Item = (Decimal, Decimal)>,
+{
+    amounts
+        .into_iter()
+        .map(|(earnings, asset_rate)| earnings * asset_rate)
+        .sum::<Decimal>()
+        .round_dp(4)
+}
+
 fn maybe_credentials(config: &LivePolymarketConfig) -> Result<Option<Credentials>> {
     let api_key = normalize_optional(config.api_key.as_deref());
     let api_secret = normalize_optional(config.api_secret.as_deref());

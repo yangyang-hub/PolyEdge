@@ -125,7 +125,7 @@ reward_bot_service.claim_next_control_command()
     fetch_reward_bot_inputs() // 获取奖励市场 + 盘口
         → prepare_live_cycle()
         → sync managed rewards order trades/statuses
-        → 批量同步 managed order scoring 状态与 UTC 当日账户级 maker rewards 聚合
+        → 批量同步 managed order scoring 状态与 UTC 当日账户级 maker rewards（`/rewards/user/total` 聚合优先，`/rewards/user` 明细 fallback）
         → 无近期 confirmed fill 时同步外部 balance + 链上 pUSD 余额回退 + 完整 positions 快照
         → LivePolymarketConnector.submit_token_order()
         → orderbook stream active-token event 或 reconcile_interval_sec 兜底：读取活跃盘口并对本系统托管订单做成交同步和安全撤单检查

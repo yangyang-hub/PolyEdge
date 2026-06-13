@@ -217,7 +217,7 @@ orderbook_cache ← (共享基础设施 trait)
 
 - 所有模块已实现完整的 Store trait 和 Service struct
 - Rewards 已移除旧 validation/simulation tick 引擎，仅保留 live-only 配置、quote planner、状态类型和增量持久化端口。
-- Rewards live 模式已接入质量硬过滤与综合排序、post-only token 买单、撤单、本系统托管订单成交同步、成交后现金/库存/PnL 更新、可持续重试的 exit/flatten sell、外部余额/完整持仓快照、managed order scoring 和 UTC 当日账户级 maker rewards 聚合同步；账户范围外开放订单明细与奖励结算对账仍待完成。
+- Rewards live 模式已接入质量硬过滤与综合排序、post-only token 买单、撤单、本系统托管订单成交同步、成交后现金/库存/PnL 更新、可持续重试的 exit/flatten sell、外部余额/完整持仓快照、managed order scoring 和 UTC 当日账户级 maker rewards 同步（聚合端点优先、明细端点 fallback）；账户范围外开放订单明细与奖励结算对账仍待完成。
 - Rewards 保留数据库控制命令队列用于持久恢复，API 入队后通过共享 runtime revision 立即唤醒后台执行。
 - Copytrade 已具备数据库控制命令队列，API 负责入队，worker 负责执行 run/analyze/cancel/reset。
 - Copytrade 模拟决策已按时间顺序处理并在同一 tick 内执行 cooldown、暂停钱包、日亏损和运行中 exposure cap；crossed fill、无仓卖出和组合权重计算已收敛到资金账本一致语义。

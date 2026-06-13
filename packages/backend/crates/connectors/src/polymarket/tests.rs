@@ -20,6 +20,26 @@ mod tests {
     }
 
     #[test]
+    fn reward_earnings_sum_uses_asset_rates_and_rounds_to_usd() {
+        let total = sum_reward_earning_amounts_usd([
+            (Decimal::from_str_exact("1.23456").expect("decimal"), Decimal::ONE),
+            (
+                Decimal::from_str_exact("2.5000").expect("decimal"),
+                Decimal::from_str_exact("0.25").expect("decimal"),
+            ),
+        ]);
+
+        assert_eq!(total, Decimal::from_str_exact("1.8596").expect("decimal"));
+    }
+
+    #[test]
+    fn reward_earnings_sum_handles_empty_responses() {
+        let total = sum_reward_earning_amounts_usd(std::iter::empty::<(Decimal, Decimal)>());
+
+        assert_eq!(total, Decimal::ZERO);
+    }
+
+    #[test]
     fn polygon_pusd_balance_hex_is_converted_to_decimal_usd() {
         let balance = erc20_hex_units_to_decimal(
             "0x00000000000000000000000000000000000000000000000000000000013125b5",

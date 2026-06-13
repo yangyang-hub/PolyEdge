@@ -161,9 +161,35 @@ impl LivePolymarketConnector {
     /// exchange rate from the CLOB response.
     pub async fn reward_earnings_today_usd(&self) -> Result<Decimal> {
         let date = chrono::Utc::now().date_naive();
-        // Polymarket's rewards page uses the aggregated daily endpoint for its
-        // "Daily Rewards" total. The detailed /rewards/user response can be
-        // empty while this account-level total is already non-zero.
+        let total_result = self.reward_total_earnings_for_day_usd(date).await;
+
+        match total_result {
+            Ok(total) if total > Decimal::ZERO => Ok(total),
+            Ok(total) => match self.reward_detailed_earnings_for_day_usd(date).await {
+                Ok(detailed) => Ok(detailed),
+                Err(error) => {
+                    warn!(
+                        error = %error,
+                        "failed to query detailed Polymarket reward earnings fallback"
+                    );
+                    Ok(total)
+                }
+            },
+            Err(total_error) => match self.reward_detailed_earnings_for_day_usd(date).await {
+                Ok(detailed) => Ok(detailed),
+                Err(detail_error) => Err(AppError::dependency_unavailable(
+                    "POLYMARKET_REWARD_EARNINGS_QUERY_FAILED",
+                    format!(
+                        "failed to query Polymarket reward earnings for {date}: total endpoint failed: {total_error}; detail endpoint failed: {detail_error}"
+                    ),
+                )),
+            },
+        }
+    }
+
+    async fn reward_total_earnings_for_day_usd(&self, date: chrono::NaiveDate) -> Result<Decimal> {
+        // Polymarket's rewards page usually uses the aggregated daily endpoint
+        // for its "Daily Rewards" total.
         let earnings = self
             .client
             .total_earnings_for_user_for_day(date)
@@ -174,11 +200,50 @@ impl LivePolymarketConnector {
                     format!("failed to query Polymarket reward earnings for {date}: {error}"),
                 )
             })?;
-        Ok(earnings
-            .into_iter()
-            .map(|earning| earning.earnings * earning.asset_rate)
-            .sum::<Decimal>()
-            .round_dp(4))
+        Ok(sum_reward_earning_amounts_usd(
+            earnings
+                .into_iter()
+                .map(|earning| (earning.earnings, earning.asset_rate)),
+        ))
+    }
+
+    async fn reward_detailed_earnings_for_day_usd(
+        &self,
+        date: chrono::NaiveDate,
+    ) -> Result<Decimal> {
+        // Some account/signature combinations can return an empty aggregate
+        // response while the detailed per-market endpoint carries the same
+        // reward totals.
+        let mut next_cursor: Option<String> = None;
+        let mut amounts = Vec::new();
+
+        for _ in 0..CLOB_MAX_PAGES {
+            let page = self
+                .client
+                .earnings_for_user_for_day(date, next_cursor.clone())
+                .await
+                .map_err(|error| {
+                    AppError::dependency_unavailable(
+                        "POLYMARKET_REWARD_EARNINGS_QUERY_FAILED",
+                        format!(
+                            "failed to query detailed Polymarket reward earnings for {date}: {error}"
+                        ),
+                    )
+                })?;
+
+            amounts.extend(
+                page.data
+                    .into_iter()
+                    .map(|earning| (earning.earnings, earning.asset_rate)),
+            );
+
+            if clob_page_is_terminal(&page.next_cursor, page.count, next_cursor.as_deref()) {
+                break;
+            }
+            next_cursor = Some(page.next_cursor);
+        }
+
+        Ok(sum_reward_earning_amounts_usd(amounts))
     }
 
     /// List all open orders for the authenticated account, paginating
