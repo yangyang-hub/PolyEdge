@@ -8,16 +8,23 @@ use tracing_subscriber::filter::{FilterExt, FilterFn};
 use tracing_subscriber::{EnvFilter, prelude::*};
 
 mod market_sync;
-use market_sync::sync_markets_once;
+use market_sync::{sync_general_markets_once, sync_reward_markets_once};
 
 mod stream;
 use stream::run_orderbook_stream;
 
+mod updates;
+use updates::OrderbookUpdateBroadcaster;
+
 mod http_api;
 use http_api::{
-    get_orderbook, get_orderbook_batch, get_orderbook_stats, ingest_books, register_tokens,
-    unregister_source,
+    OrderbookApiState, get_orderbook, get_orderbook_batch, get_orderbook_stats, ingest_books,
+    register_tokens, stream_orderbooks, unregister_source,
 };
+
+const MIN_GENERAL_MARKET_SYNC_TIMEOUT_SECS: u64 = 60;
+const MAX_GENERAL_MARKET_SYNC_TIMEOUT_SECS: u64 = 240;
+const REWARD_MARKET_SYNC_TIMEOUT_SECS: u64 = 45 * 60;
 
 #[tokio::main]
 async fn main() {
@@ -45,12 +52,15 @@ async fn main() {
 
     info!(port, "starting polyedge-orderbook service");
 
+    let broadcaster = OrderbookUpdateBroadcaster::new(16_384);
+
     // Build and bind HTTP API before any external market sync. Health checks
     // should reflect process readiness, not Polymarket API latency.
     let app = Router::new()
         .route("/healthz", get(healthz))
         .route("/orderbook/stats", get(get_orderbook_stats))
         .route("/orderbook/batch", axum::routing::post(get_orderbook_batch))
+        .route("/orderbook/stream", get(stream_orderbooks))
         .route("/orderbook/register", axum::routing::post(register_tokens))
         .route("/orderbook/ingest", axum::routing::post(ingest_books))
         .route(
@@ -60,7 +70,7 @@ async fn main() {
         .route("/orderbook/{token_id}", get(get_orderbook))
         .layer(TraceLayer::new_for_http())
         .layer(RequestBodyLimitLayer::new(2 * 1024 * 1024)) // 2 MB
-        .with_state(state.clone());
+        .with_state(OrderbookApiState::new(state.clone(), broadcaster.clone()));
 
     let listener = tokio::net::TcpListener::bind(&listen)
         .await
@@ -68,21 +78,23 @@ async fn main() {
 
     info!(address = %listen, "orderbook HTTP server listening");
 
-    // Periodic market sync (general + reward markets → Postgres).
-    let sync_state = state.clone();
-    let sync_handle = tokio::spawn(async move {
-        let interval =
-            Duration::from_secs(sync_state.settings.worker.market_sync_interval_secs.max(60));
-        run_market_sync(&sync_state, "initial").await;
-        loop {
-            tokio::time::sleep(interval).await;
-            run_market_sync(&sync_state, "periodic").await;
-        }
+    // Periodic market syncs. Gamma market metadata must keep its own cadence:
+    // rewards catalog enrichment can take many minutes when CLOB details are
+    // rate-limited, but rewards quoting depends on fresh `markets.synced_at`.
+    let general_sync_state = state.clone();
+    let general_sync_handle = tokio::spawn(async move {
+        run_general_market_sync_loop(general_sync_state).await;
+    });
+
+    let reward_sync_state = state.clone();
+    let reward_sync_handle = tokio::spawn(async move {
+        run_reward_market_sync_loop(reward_sync_state).await;
     });
 
     // Spawn the WS + poll stream as a restarting background task.
     // It subscribes to tokens registered via the HTTP API by other services.
     let stream_state = state.clone();
+    let stream_broadcaster = broadcaster.clone();
     let stream_handle = tokio::spawn(async move {
         let restart_interval = Duration::from_secs(
             stream_state
@@ -103,7 +115,7 @@ async fn main() {
                 continue;
             }
 
-            match run_orderbook_stream(&stream_state).await {
+            match run_orderbook_stream(&stream_state, &stream_broadcaster).await {
                 Ok(report) => {
                     info!(
                         subscribed = report.subscribed_tokens,
@@ -133,7 +145,8 @@ async fn main() {
             }
         }
         _ = stream_handle => {}
-        _ = sync_handle => {}
+        _ = general_sync_handle => {}
+        _ = reward_sync_handle => {}
     }
 
     info!("polyedge-orderbook service shutting down");
@@ -143,16 +156,88 @@ async fn healthz() -> &'static str {
     "ok"
 }
 
-async fn run_market_sync(state: &AppState, phase: &'static str) {
+async fn run_general_market_sync_loop(state: AppState) {
+    let interval = Duration::from_secs(state.settings.worker.market_sync_interval_secs.max(60));
+    let timeout = general_market_sync_timeout(interval);
+    let mut phase = "initial";
+    loop {
+        let started = std::time::Instant::now();
+        run_general_market_sync(&state, phase, timeout).await;
+        phase = "periodic";
+        let elapsed = started.elapsed();
+        if elapsed < interval {
+            tokio::time::sleep(interval - elapsed).await;
+        }
+    }
+}
+
+async fn run_reward_market_sync_loop(state: AppState) {
+    let interval = Duration::from_secs(state.settings.worker.market_sync_interval_secs.max(60));
+    let timeout = Duration::from_secs(REWARD_MARKET_SYNC_TIMEOUT_SECS);
+    let mut phase = "initial";
+    loop {
+        run_reward_market_sync(&state, phase, timeout).await;
+        phase = "periodic";
+        tokio::time::sleep(interval).await;
+    }
+}
+
+fn general_market_sync_timeout(interval: Duration) -> Duration {
+    let timeout_secs = interval
+        .as_secs()
+        .saturating_mul(4)
+        .saturating_div(5)
+        .clamp(
+            MIN_GENERAL_MARKET_SYNC_TIMEOUT_SECS,
+            MAX_GENERAL_MARKET_SYNC_TIMEOUT_SECS,
+        );
+    Duration::from_secs(timeout_secs)
+}
+
+async fn run_general_market_sync(state: &AppState, phase: &'static str, timeout: Duration) {
     let trace_id = polyedge_infrastructure::new_trace_id();
-    match sync_markets_once(state, &trace_id).await {
-        Ok(report) => info!(
+    let started = std::time::Instant::now();
+    match tokio::time::timeout(timeout, sync_general_markets_once(state, &trace_id)).await {
+        Ok(Ok(general)) => info!(
             phase,
-            general = report.general_upserted,
-            reward = report.reward_upserted,
-            "orderbook market sync complete"
+            general,
+            elapsed_ms = started.elapsed().as_millis() as u64,
+            "orderbook general market sync complete"
         ),
-        Err(error) => tracing::warn!(phase, error = %error, "orderbook market sync failed"),
+        Ok(Err(error)) => tracing::warn!(
+            phase,
+            error = %error,
+            elapsed_ms = started.elapsed().as_millis() as u64,
+            "orderbook general market sync failed"
+        ),
+        Err(_) => tracing::warn!(
+            phase,
+            timeout_secs = timeout.as_secs(),
+            "orderbook general market sync timed out"
+        ),
+    }
+}
+
+async fn run_reward_market_sync(state: &AppState, phase: &'static str, timeout: Duration) {
+    let started = std::time::Instant::now();
+    match tokio::time::timeout(timeout, sync_reward_markets_once(state)).await {
+        Ok(Ok(reward)) => info!(
+            phase,
+            reward,
+            elapsed_ms = started.elapsed().as_millis() as u64,
+            "orderbook reward market sync complete"
+        ),
+        Ok(Err(error)) => tracing::warn!(
+            phase,
+            error = %error,
+            elapsed_ms = started.elapsed().as_millis() as u64,
+            "orderbook reward market sync failed; preserving prior reward catalog"
+        ),
+        Err(_) => tracing::warn!(
+            phase,
+            timeout_secs = timeout.as_secs(),
+            "orderbook reward market sync timed out; preserving prior reward catalog"
+        ),
     }
 }
 

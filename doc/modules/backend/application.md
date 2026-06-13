@@ -25,7 +25,7 @@
 | `copytrade/` | 跟单：`CopyTradeService`、`CopyTradeStore`、确定性模拟引擎和风险准入 |
 | `arbitrage/` | 套利：`ArbitrageService`、`ArbitrageStore`、机会检测/验证 |
 | `news_ingestion.rs` | 新闻采集：`NewsIngestionService`、`NewsIngestionStore` |
-| `orderbook_cache.rs` | 盘口缓存：`OrderbookCache` trait |
+| `orderbook_cache.rs` | 盘口缓存：`OrderbookCache` trait、`CachedOrderBook` 和内部推送事件 `OrderbookStreamEvent` |
 | `orderbook_registry.rs` | 盘口订阅注册中心：`OrderbookSubscriptionRegistry` trait，多来源 token 聚合 |
 | `wallet_analysis/` | 钱包分析：纯计算（无 I/O），`build_wallet_analysis_report` |
 | `list_filters.rs` | 通用分页/过滤辅助 |
@@ -169,7 +169,10 @@
 - `get_book(token_id)`、`set_book(book)`、`set_books(books)`、`get_stale_tokens(token_ids, max_age_ms)`、`entry_count()`
 - `max_age_ms <= 0` 表示关闭年龄 stale 检查，但具体实现仍可按 TTL 判定过期。
 
-**类型：** `CachedOrderBook`（token_id、bids、asks、observed_at、source）
+**类型：**
+- `CachedOrderBook`：token_id、bids、asks、observed_at、source
+- `OrderbookStreamReason`：`book`、`price_change`、`poll_reconcile`、`ingest`
+- `OrderbookStreamEvent`：orderbook 服务内部 WS 推送事件，包含单调 sequence、reason 和规范化 `CachedOrderBook`
 
 **实现：**
 - `InMemoryOrderbookCache`（infrastructure crate）— 进程内缓存，仅供 orderbook 服务使用

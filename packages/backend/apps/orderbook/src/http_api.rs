@@ -1,19 +1,40 @@
+use crate::updates::OrderbookUpdateBroadcaster;
 use axum::{
     Json,
-    extract::{Path, State},
+    extract::{
+        Path, State,
+        ws::{Message, WebSocket, WebSocketUpgrade},
+    },
     http::{HeaderMap, StatusCode},
+    response::IntoResponse,
 };
-use polyedge_application::{BookSource, CachedBookLevel, CachedOrderBook};
+use polyedge_application::{
+    BookSource, CachedBookLevel, CachedOrderBook, OrderbookStreamEvent, OrderbookStreamReason,
+};
 use polyedge_infrastructure::AppState;
 use polymarket_client_sdk::types::U256;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashSet, str::FromStr};
+use tokio::sync::broadcast;
+use tracing::warn;
 
 const MAX_REGISTRY_SOURCES: usize = 32;
 const MAX_SOURCE_LEN: usize = 64;
 
 type ApiResult<T> = Result<Json<T>, (StatusCode, Json<MessageResponse>)>;
+
+#[derive(Clone)]
+pub struct OrderbookApiState {
+    pub app: AppState,
+    pub broadcaster: OrderbookUpdateBroadcaster,
+}
+
+impl OrderbookApiState {
+    pub fn new(app: AppState, broadcaster: OrderbookUpdateBroadcaster) -> Self {
+        Self { app, broadcaster }
+    }
+}
 
 // ── Response types ──────────────────────────────────────────────────────────
 
@@ -77,10 +98,10 @@ pub struct MessageResponse {
 // ── Handlers ────────────────────────────────────────────────────────────────
 
 pub async fn get_orderbook(
-    State(state): State<AppState>,
+    State(state): State<OrderbookApiState>,
     Path(token_id): Path<String>,
 ) -> Result<Json<OrderbookResponse>, StatusCode> {
-    match state.orderbook_cache.get_book(&token_id).await {
+    match state.app.orderbook_cache.get_book(&token_id).await {
         Ok(Some(book)) => Ok(Json(to_response(book))),
         Ok(None) => Err(StatusCode::NOT_FOUND),
         Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
@@ -88,12 +109,13 @@ pub async fn get_orderbook(
 }
 
 pub async fn get_orderbook_batch(
-    State(state): State<AppState>,
+    State(state): State<OrderbookApiState>,
     Json(req): Json<BatchRequest>,
 ) -> ApiResult<OrderbookBatchResponse> {
-    let max_tokens = state.settings.orderbook_stream.max_tokens;
+    let max_tokens = state.app.settings.orderbook_stream.max_tokens;
     let token_ids = validate_token_ids(req.token_ids, max_tokens)?;
     let books = state
+        .app
         .orderbook_cache
         .get_books(&token_ids)
         .await
@@ -109,14 +131,17 @@ pub async fn get_orderbook_batch(
     Ok(Json(OrderbookBatchResponse { books }))
 }
 
-pub async fn get_orderbook_stats(State(state): State<AppState>) -> Json<OrderbookStatsResponse> {
-    let total_tokens = state.orderbook_registry.total_token_count().await;
+pub async fn get_orderbook_stats(
+    State(state): State<OrderbookApiState>,
+) -> Json<OrderbookStatsResponse> {
+    let total_tokens = state.app.orderbook_registry.total_token_count().await;
     let cache_entries = state
+        .app
         .orderbook_cache
         .entry_count()
         .await
         .unwrap_or_default();
-    let registry_sources = state.orderbook_registry.source_count().await;
+    let registry_sources = state.app.orderbook_registry.source_count().await;
 
     Json(OrderbookStatsResponse {
         cache_entries,
@@ -126,16 +151,19 @@ pub async fn get_orderbook_stats(State(state): State<AppState>) -> Json<Orderboo
 }
 
 pub async fn register_tokens(
-    State(state): State<AppState>,
+    State(state): State<OrderbookApiState>,
     headers: HeaderMap,
     Json(req): Json<RegisterRequest>,
 ) -> ApiResult<MessageResponse> {
-    authorize_write(&state, &headers)?;
+    authorize_write(&state.app, &headers)?;
     let source = validate_source(req.source)?;
-    let token_ids = validate_token_ids(req.token_ids, state.settings.orderbook_stream.max_tokens)?;
+    let token_ids = validate_token_ids(
+        req.token_ids,
+        state.app.settings.orderbook_stream.max_tokens,
+    )?;
     if !token_ids.is_empty()
-        && !state.orderbook_registry.has_source(&source).await
-        && state.orderbook_registry.source_count().await >= MAX_REGISTRY_SOURCES
+        && !state.app.orderbook_registry.has_source(&source).await
+        && state.app.orderbook_registry.source_count().await >= MAX_REGISTRY_SOURCES
     {
         return Err(error_response(
             StatusCode::BAD_REQUEST,
@@ -144,6 +172,7 @@ pub async fn register_tokens(
     }
 
     state
+        .app
         .orderbook_registry
         .register_tokens(&source, &token_ids)
         .await
@@ -158,13 +187,14 @@ pub async fn register_tokens(
 }
 
 pub async fn unregister_source(
-    State(state): State<AppState>,
+    State(state): State<OrderbookApiState>,
     headers: HeaderMap,
     Path(source): Path<String>,
 ) -> ApiResult<MessageResponse> {
-    authorize_write(&state, &headers)?;
+    authorize_write(&state.app, &headers)?;
     let source = validate_source(source)?;
     state
+        .app
         .orderbook_registry
         .unregister_source(&source)
         .await
@@ -175,19 +205,19 @@ pub async fn unregister_source(
 }
 
 pub async fn ingest_books(
-    State(state): State<AppState>,
+    State(state): State<OrderbookApiState>,
     headers: HeaderMap,
     Json(req): Json<IngestRequest>,
 ) -> ApiResult<MessageResponse> {
-    authorize_write(&state, &headers)?;
-    let max_tokens = state.settings.orderbook_stream.max_tokens;
+    authorize_write(&state.app, &headers)?;
+    let max_tokens = state.app.settings.orderbook_stream.max_tokens;
     if req.books.len() > max_tokens {
         return Err(error_response(
             StatusCode::BAD_REQUEST,
             format!("orderbook ingest supports at most {max_tokens} books per request"),
         ));
     }
-    let max_levels = state.settings.orderbook_stream.max_levels_per_side;
+    let max_levels = state.app.settings.orderbook_stream.max_levels_per_side;
     let count = req.books.len();
     let mut cached_books = Vec::with_capacity(count);
     for book in req.books {
@@ -204,13 +234,75 @@ pub async fn ingest_books(
         });
     }
     state
+        .app
         .orderbook_cache
         .set_books(&cached_books)
         .await
         .map_err(cache_error_response)?;
+    publish_ingested_books(&state, &cached_books).await;
     Ok(Json(MessageResponse {
         message: format!("ingested {count} books"),
     }))
+}
+
+async fn publish_ingested_books(state: &OrderbookApiState, books: &[CachedOrderBook]) {
+    for book in books {
+        match state.app.orderbook_cache.get_book(&book.token_id).await {
+            Ok(Some(current))
+                if current.observed_at == book.observed_at && current.source == book.source =>
+            {
+                state
+                    .broadcaster
+                    .publish(OrderbookStreamReason::Ingest, current);
+            }
+            Ok(_) => {}
+            Err(error) => {
+                warn!(
+                    token_id = %book.token_id,
+                    error = %error,
+                    "failed to confirm ingested orderbook before broadcast"
+                );
+            }
+        }
+    }
+}
+
+pub async fn stream_orderbooks(
+    State(state): State<OrderbookApiState>,
+    ws: WebSocketUpgrade,
+) -> impl IntoResponse {
+    ws.on_upgrade(move |socket| stream_orderbooks_socket(socket, state.broadcaster.subscribe()))
+}
+
+async fn stream_orderbooks_socket(
+    mut socket: WebSocket,
+    mut rx: broadcast::Receiver<OrderbookStreamEvent>,
+) {
+    loop {
+        let event = match rx.recv().await {
+            Ok(event) => event,
+            Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                warn!(
+                    skipped,
+                    "orderbook stream client lagged behind broadcast channel"
+                );
+                continue;
+            }
+            Err(broadcast::error::RecvError::Closed) => break,
+        };
+
+        let payload = match serde_json::to_string(&event) {
+            Ok(payload) => payload,
+            Err(error) => {
+                warn!(error = %error, "failed to encode orderbook stream event");
+                continue;
+            }
+        };
+
+        if socket.send(Message::Text(payload.into())).await.is_err() {
+            break;
+        }
+    }
 }
 
 fn validate_source(source: String) -> Result<String, (StatusCode, Json<MessageResponse>)> {

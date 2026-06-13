@@ -7,11 +7,13 @@ license.workspace = true
 [dependencies]
 async-trait.workspace = true
 chrono.workspace = true
+futures.workspace = true
 polyedge-application = { path = "../application" }
 polyedge-domain = { path = "../domain" }
 polymarket-client-sdk.workspace = true
 reqwest.workspace = true
 tokio.workspace = true
+tokio-tungstenite.workspace = true
 rust_decimal.workspace = true
 serde.workspace = true
 serde_json.workspace = true

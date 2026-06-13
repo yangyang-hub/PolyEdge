@@ -12,7 +12,7 @@ use rust_decimal::Decimal;
 use time::OffsetDateTime;
 
 pub use news::{ConnectorNewsItem, NewsSource, RssNewsConnector, RssNewsSourceConfig};
-pub use orderbook::OrderbookHttpClient;
+pub use orderbook::{OrderbookHttpClient, OrderbookStreamClient, OrderbookStreamConnection};
 pub use polymarket::{
     ConnectorOrderStatusUpdate, ConnectorTradeFillUpdate, LivePolymarketCancelAcceptance,
     LivePolymarketCancelOrderRequest, LivePolymarketCancelOutcome, LivePolymarketConfig,

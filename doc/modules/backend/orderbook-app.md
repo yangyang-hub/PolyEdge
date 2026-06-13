@@ -1,19 +1,20 @@
 # Orderbook App（市场同步与盘口服务）
 
-最后更新：2026-06-12
+最后更新：2026-06-13
 
 ## 概述
 
-`polyedge-orderbook` 是独立的 Axum/Tokio 服务，负责从 Polymarket 同步通用市场和奖励市场、维护 CLOB WS + poll 盘口流、保存进程内盘口缓存，并通过 HTTP 向 API/worker 提供盘口读取和订阅注册能力。
+`polyedge-orderbook` 是独立的 Axum/Tokio 服务，负责从 Polymarket 同步通用市场和奖励市场、维护 CLOB WS + poll 盘口流、保存进程内盘口缓存，并通过 HTTP/内部 WS 向 API/worker 提供盘口读取、实时推送和订阅注册能力。
 
 ## 架构与关键文件
 
 | 文件 | 职责 |
 |---|---|
-| `apps/orderbook/src/main.rs` | 服务入口：先 bind HTTP，再启动市场同步和可重启盘口流后台任务 |
-| `apps/orderbook/src/market_sync.rs` | Gamma markets（含 liquidity/end time）+ CLOB reward markets → Postgres |
+| `apps/orderbook/src/main.rs` | 服务入口：先 bind HTTP，再启动独立 Gamma/rewards 市场同步循环和可重启盘口流后台任务 |
+| `apps/orderbook/src/market_sync.rs` | Gamma markets（含 liquidity/end time）与 CLOB reward markets 的单次同步实现 → Postgres |
 | `apps/orderbook/src/stream.rs` | 聚合 registry token，消费 CLOB `book` + `price_change` WS，并周期性全量 poll 注册 token 做 reconcile |
-| `apps/orderbook/src/http_api.rs` | 盘口读取、批量读取、stats、token 注册/注销和内部 ingest HTTP API |
+| `apps/orderbook/src/http_api.rs` | 盘口读取、批量读取、stats、内部 WS stream、token 注册/注销和内部 ingest HTTP API |
+| `apps/orderbook/src/updates.rs` | Orderbook cache 更新广播器：为 WS/poll/ingest 写入分配 sequence 并 fan-out 给内部 WS 客户端 |
 | `crates/infrastructure/src/stores/orderbook_cache.rs` | `InMemoryOrderbookCache`：TTL、最优档排序、深度裁剪 |
 | `crates/infrastructure/src/stores/orderbook_registry.rs` | 多来源 token 原子替换、优先级聚合和来源上限 |
 
@@ -21,9 +22,10 @@
 
 1. 加载 `Runtime` 并绑定 `0.0.0.0:${POLYEDGE_ORDERBOOK__PORT}`。
 2. 立即暴露 `/healthz` 和 orderbook HTTP API，避免 Polymarket 延迟阻塞容器健康检查。
-3. 后台执行 initial market sync，之后按 `market_sync_interval_secs` 周期同步。
-4. 始终运行盘口流；没有注册 token 时每 10 秒等待一次。
-5. registry token 集合变化、WS 结束或 stream 报错后，按 `restart_interval_secs` 重建订阅。
+3. 后台启动 Gamma market sync 独立循环：initial 立即执行，之后按 `market_sync_interval_secs` 固定节拍同步；单次超时为 interval 的 80%，并限制在 60-240 秒。
+4. 后台启动 rewards catalog 独立循环：initial 立即执行，之后每次完成后等待 `market_sync_interval_secs`；单次超时 45 分钟，超时或失败时保留上一版 rewards catalog。
+5. 始终运行盘口流；没有注册 token 时每 10 秒等待一次。
+6. registry token 集合变化、WS 结束或 stream 报错后，按 `restart_interval_secs` 重建订阅。
 
 ## HTTP API
 
@@ -33,6 +35,7 @@
 | `GET /orderbook/{token_id}` | 读取单 token 缓存盘口；不存在返回 404 | 无 |
 | `POST /orderbook/batch` | 批量读取存在的缓存盘口 | 无 |
 | `GET /orderbook/stats` | 返回 cache 条目数、registry 来源数、registry 去重 token 数 | 无 |
+| `GET /orderbook/stream` | 内部 WebSocket；推送规范化 `OrderbookStreamEvent`（sequence、reason、book） | 无 |
 | `POST /orderbook/register` | 原子替换一个 source 的有序 token 集合 | `x-polyedge-orderbook-token` |
 | `DELETE /orderbook/register/{source}` | 删除一个 source | `x-polyedge-orderbook-token` |
 | `POST /orderbook/ingest` | 校验整批盘口后批量写入缓存 | `x-polyedge-orderbook-token` |
@@ -47,6 +50,7 @@
 - WS 同时消费完整 `book` 快照和挂单/撤单触发的 `price_change` 增量；无 size 的增量不修改深度，等待后续快照/poll 对账。
 - 缓存拒绝 `observed_at` 早于当前条目的快照或增量；时间戳相同时 WS 条目优先于 poll，避免延迟 poll 覆盖更新盘口。
 - HTTP ingest 会在写入前完成整批 token/price/size 校验，并同样按最优价格排序后裁剪。
+- 每次 WS snapshot、WS price_change、poll reconcile 或 HTTP ingest 成功写入缓存后，都会向 `/orderbook/stream` 广播 `OrderbookStreamEvent`；广播消息携带单调 `sequence`、`reason` 和裁剪后的 `CachedOrderBook`。慢消费者会在服务端日志记录 lag，客户端需断线后重新 HTTP bootstrap。
 - poll reconciler 每个周期都会刷新当前注册 token，优先处理缺失、TTL 过期或超过 stale threshold 的 token，再覆盖其余 token，以修复未被检测到的 WS 增量丢失；`stale_threshold_ms <= 0` 只关闭年龄 stale 优先级。
 - `OrderbookHttpClient` 把单盘口 404 映射为 `None`，其他非成功 HTTP 状态映射为 dependency error。
 
@@ -63,17 +67,18 @@ Worker register sources
     → CLOB WS + /books batch poll（使用 CLOB 响应 timestamp；遗漏/失败时回退 /book）
     → InMemoryOrderbookCache
     → API / Worker 通过 OrderbookHttpClient 读取
+    → Worker 通过 GET /orderbook/stream 接收内部实时推送并维护本地 cache
 ```
 
 ## 当前状态与缺口
 
-- 市场同步、registry、WS `book` + `price_change`、全注册 token 周期 poll reconcile、HTTP 读取和内部写认证已实现；poll 可修复 fresh cache 中未被察觉的 WS 增量丢失。
+- 市场同步、registry、WS `book` + `price_change`、全注册 token 周期 poll reconcile、HTTP 读取、内部 WS 推送和内部写认证已实现；poll 可修复 fresh cache 中未被察觉的 WS 增量丢失，并通过内部 WS 广播给 worker 本地 cache。
 - poll 盘口保留 CLOB 返回的服务端毫秒时间戳，不再用 HTTP 响应完成时间伪造新鲜度；batch HTTP 读取通过一次 cache 批量读锁返回。
-- Gamma 与 rewards 目录同步使用 `tokio::join!` 并发执行并独立处理结果；rewards 分页、详情补全后仍缺 token 或空目录异常时保留上一版 rewards catalog，不执行破坏性全量替换。
+- Gamma 与 rewards 目录同步在 orderbook 服务中使用两个独立后台循环；rewards 分页和详情补全可能持续很多分钟，但不会阻塞 Gamma `markets.synced_at` 刷新。rewards 详情补全后仍缺 token 或空目录异常时保留上一版 rewards catalog，不执行破坏性全量替换。
 - Gamma market upsert 保存 `liquidity_usd`、`end_at` 并在每次成功同步时刷新本地 `synced_at`；rewards 候选使用该本地同步时间判断目录新鲜度，不依赖市场是否刚好发生上游业务更新。
 - 盘口只保存在单个 orderbook 进程内；服务重启会丢失缓存，横向多实例之间也不会共享缓存或 registry。
 - 读接口和 `/healthz` 当前不鉴权，应依赖内网边界限制访问。
-- 市场同步失败不会使 HTTP 健康检查失败；需要通过日志和数据新鲜度单独监控外部依赖。
+- 市场同步失败或超时不会使 HTTP 健康检查失败；需要通过日志和数据新鲜度单独监控外部依赖。
 
 ## 修改检查清单
 

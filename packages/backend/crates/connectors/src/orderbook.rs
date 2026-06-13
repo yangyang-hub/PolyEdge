@@ -1,6 +1,8 @@
 use async_trait::async_trait;
+use futures::StreamExt;
 use polyedge_application::{
-    CachedBookLevel, CachedOrderBook, OrderbookCache, OrderbookSubscriptionRegistry,
+    CachedBookLevel, CachedOrderBook, OrderbookCache, OrderbookStreamEvent,
+    OrderbookSubscriptionRegistry,
 };
 use polyedge_domain::{AppError, Result};
 use reqwest::Client;
@@ -8,6 +10,10 @@ use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 use std::time::{Duration, Instant};
+use tokio::net::TcpStream;
+use tokio_tungstenite::{
+    MaybeTlsStream, WebSocketStream, connect_async, tungstenite::protocol::Message,
+};
 
 /// HTTP client that implements `OrderbookCache` by calling the standalone
 /// orderbook service. Used by API and Worker processes to read orderbook data.
@@ -15,6 +21,14 @@ pub struct OrderbookHttpClient {
     base_url: String,
     client: Client,
     write_token: Option<String>,
+}
+
+pub struct OrderbookStreamClient {
+    stream_url: String,
+}
+
+pub struct OrderbookStreamConnection {
+    stream: WebSocketStream<MaybeTlsStream<TcpStream>>,
 }
 
 impl OrderbookHttpClient {
@@ -62,6 +76,79 @@ impl OrderbookHttpClient {
             )
         })
     }
+}
+
+impl OrderbookStreamClient {
+    pub fn new(base_url: &str) -> Self {
+        Self {
+            stream_url: orderbook_stream_url(base_url),
+        }
+    }
+
+    pub fn stream_url(&self) -> &str {
+        &self.stream_url
+    }
+
+    pub async fn connect(&self) -> Result<OrderbookStreamConnection> {
+        let (stream, _) = connect_async(self.stream_url.as_str())
+            .await
+            .map_err(|error| {
+                AppError::dependency_unavailable(
+                    "ORDERBOOK_STREAM_CONNECT_FAILED",
+                    format!("failed to connect orderbook stream: {error}"),
+                )
+            })?;
+        Ok(OrderbookStreamConnection { stream })
+    }
+}
+
+impl OrderbookStreamConnection {
+    pub async fn next_event(&mut self) -> Result<Option<OrderbookStreamEvent>> {
+        while let Some(message) = self.stream.next().await {
+            let message = message.map_err(|error| {
+                AppError::dependency_unavailable(
+                    "ORDERBOOK_STREAM_RECV_FAILED",
+                    format!("failed to receive orderbook stream message: {error}"),
+                )
+            })?;
+            match message {
+                Message::Text(payload) => {
+                    return serde_json::from_str(payload.as_ref())
+                        .map(Some)
+                        .map_err(|error| {
+                            AppError::dependency_unavailable(
+                                "ORDERBOOK_STREAM_DECODE_FAILED",
+                                format!("failed to decode orderbook stream event: {error}"),
+                            )
+                        });
+                }
+                Message::Binary(payload) => {
+                    return serde_json::from_slice(&payload).map(Some).map_err(|error| {
+                        AppError::dependency_unavailable(
+                            "ORDERBOOK_STREAM_DECODE_FAILED",
+                            format!("failed to decode orderbook stream event: {error}"),
+                        )
+                    });
+                }
+                Message::Close(_) => return Ok(None),
+                Message::Ping(_) | Message::Pong(_) => continue,
+                _ => continue,
+            }
+        }
+        Ok(None)
+    }
+}
+
+fn orderbook_stream_url(base_url: &str) -> String {
+    let base_url = base_url.trim().trim_end_matches('/');
+    let ws_base = if let Some(rest) = base_url.strip_prefix("http://") {
+        format!("ws://{rest}")
+    } else if let Some(rest) = base_url.strip_prefix("https://") {
+        format!("wss://{rest}")
+    } else {
+        base_url.to_string()
+    };
+    format!("{ws_base}/orderbook/stream")
 }
 
 #[derive(Deserialize)]

@@ -33,6 +33,22 @@ pub struct CachedOrderBook {
     pub source: BookSource,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OrderbookStreamReason {
+    Book,
+    PriceChange,
+    PollReconcile,
+    Ingest,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OrderbookStreamEvent {
+    pub sequence: u64,
+    pub reason: OrderbookStreamReason,
+    pub book: CachedOrderBook,
+}
+
 #[async_trait]
 pub trait OrderbookCache: Send + Sync {
     async fn get_book(&self, token_id: &str) -> Result<Option<CachedOrderBook>>;

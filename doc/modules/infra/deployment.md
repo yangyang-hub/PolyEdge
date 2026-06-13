@@ -1,6 +1,6 @@
 # 部署（Docker + Nginx + Scripts）
 
-最后更新：2026-06-11
+最后更新：2026-06-13
 
 ## 概述
 
@@ -62,9 +62,9 @@
 - 端口：`0.0.0.0:38002 → container:38002`
 - 健康检查：`curl /healthz`（15s 间隔，10 次重试，20s 启动期）
 - Compose 不声明启动依赖，可单独部署在盘口服务器
-- 职责：HTTP API（健康检查、盘口读取、token 注册）、后台市场同步（Gamma + CLOB → Postgres）、WS + poll 盘口流（→ 进程内缓存）
+- 职责：HTTP API（健康检查、盘口读取、内部 WS stream、token 注册）、后台市场同步（Gamma + CLOB → Postgres）、WS + poll 盘口流（→ 进程内缓存）
 - 启动顺序：先 bind HTTP 并暴露 `/healthz`，随后后台执行 initial/periodic market sync，避免外部 Polymarket API 慢响应导致容器启动健康检查失败
-- register/ingest/delete 写接口要求 `.env.orderbook` 中的 `POLYEDGE_ORDERBOOK__WRITE_TOKEN`，读盘口、stats 和健康检查不需要该 token
+- register/ingest/delete 写接口要求 `.env.orderbook` 中的 `POLYEDGE_ORDERBOOK__WRITE_TOKEN`；读盘口、batch、stats、内部 `/orderbook/stream` 和健康检查不需要该 token，需依赖内网边界限制访问
 - 环境变量：`.env` + `.env.orderbook`
 
 ### polyedge-front
@@ -136,7 +136,7 @@ API 请求不再经过前端 nginx 反向代理；跨域由 Rust API 的 `CorsLa
 | `POLYEDGE_API_IMAGE` | `polyedge-api:local` | API/Worker 共享镜像名 |
 | `POLYEDGE_ORDERBOOK_IMAGE` | `polyedge-orderbook:local` | Orderbook 独立镜像名 |
 | `NEXT_PUBLIC_POLYEDGE_API_BASE_URL` | — | 前端浏览器直连 API 地址，例如 `http://192.168.31.5:38001` |
-| `POLYEDGE_ORDERBOOK__SERVICE_URL` | `.env.api.example` 为 `http://polyedge-orderbook:38002` | API/Worker 访问 orderbook 服务的地址；跨服务器改为实际 IP/域名 |
+| `POLYEDGE_ORDERBOOK__SERVICE_URL` | `.env.api.example` 为 `http://polyedge-orderbook:38002` | API/Worker 访问 orderbook 服务的地址；worker 会用同一地址转换为 `ws(s)://.../orderbook/stream` 连接内部盘口推送，跨服务器改为实际 IP/域名 |
 | `POLYEDGE_ALLOW_IN_MEMORY_DEPLOY` | — | 设为 1 允许无数据库部署（仅演示） |
 | `POLYEDGE_LOG_FILE` | `$HOME/polyedge-deploy.log`（cron） | deploy 脚本日志文件；无法写入时回退到 stdout/stderr |
 | `POLYEDGE_DEPLOY_LOCK_FILE` | `/tmp/polyedge-deploy.lock` | deploy 脚本互斥锁 |
@@ -178,7 +178,7 @@ POLYEDGE_BACKEND_BINARY=polyedge-worker ./scripts/build-backend-bin.sh
 - `polyedge-front` 不再依赖 API 健康后才启动；前端静态 Nginx 可独立运行，浏览器按 `NEXT_PUBLIC_POLYEDGE_API_BASE_URL` 访问 API
 - `scripts/deploy.sh` 已防止重叠执行；前端变更 hash 包含 `packages/front/` 和 `deploy/.env.front`，会 prune `node_modules`、`.next`、`out` 等大目录；服务按目标独立部署，容器 down 且 hash 未变化时直接启动已有镜像，不会因其他服务健康失败而重复 rebuild
 - 当前部署模板默认 `POLYEDGE_AUTH__DISABLED=true`，API/front 内网交互不做权限校验；API CORS 为 permissive
-- Orderbook 服务 HTTP register/batch/ingest 入口按 `max_tokens` 和 `max_levels_per_side` 控制请求规模与缓存深度，写入时先排序再裁剪最优档位，registry source 固定上限为 32 个并在写锁内原子校验；register/ingest/delete 写接口还要求仅配置在 orderbook/worker 服务 env 的共享写 token，register 使用原子 source 替换
+- Orderbook 服务 HTTP register/batch/ingest 入口按 `max_tokens` 和 `max_levels_per_side` 控制请求规模与缓存深度，写入时先排序再裁剪最优档位，registry source 固定上限为 32 个并在写锁内原子校验；register/ingest/delete 写接口还要求仅配置在 orderbook/worker 服务 env 的共享写 token，register 使用原子 source 替换。`/orderbook/stream` 是内部 WS 推送接口，worker rewards loop 用它更新本地盘口 cache，缺失或重连时仍通过 HTTP batch bootstrap
 - 生产前需要：关闭 `POLYEDGE_AUTH__DISABLED`、接入真实会话体系、签名 JWT、key rotation
 
 ## 修改检查清单

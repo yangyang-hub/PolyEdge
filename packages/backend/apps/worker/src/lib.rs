@@ -1,7 +1,7 @@
 use futures::StreamExt as _;
 use polyedge_application::{
     ArbitrageAnalysisRunView, ArbitrageOpportunityListFilters, ArbitrageOpportunityView,
-    ArbitrageScanView, ArbitrageValidationConfig, AuthenticatedActor, BookSnapshot,
+    ArbitrageScanView, ArbitrageValidationConfig, AuthenticatedActor, BookSnapshot, BookSource,
     CachedOrderBook, CopyControlAction, CopyControlCommand, CopyTradeRunReport,
     DispatchExecutionListFilters, ExecutionDispatchCandidate, ExecutionReconciliationCandidate,
     FixtureBundle, FixtureEventRecord, FixtureEvidenceRecord, ManagedRewardOrder,
@@ -22,12 +22,13 @@ use polyedge_connectors::{
     LivePolymarketCancelOrderRequest, LivePolymarketCancelOutcome, LivePolymarketConfig,
     LivePolymarketConnector, LivePolymarketExecutionOutcome, LivePolymarketOrderRequest,
     LivePolymarketOrderStatusRequest, LivePolymarketTokenOrderRequest,
-    LivePolymarketTradeSyncOutcome, LivePolymarketTradeSyncRequest, NewsSource, PAPER_ACCOUNT_ID,
-    PAPER_EXECUTOR_NAME, POLYMARKET_CONNECTOR_NAME, PaperExecutionOutcome, PaperExecutor,
-    PaperFillRequest, PaperOrderRequest, PaperOrderStatusRequest, PolymarketAcceptedOrderStatus,
-    PolymarketBinaryBookSnapshot, PolymarketBookConnector, PolymarketBookLevel,
-    PolymarketChainConnector, PolymarketDataApiConnector, PolymarketGammaConnector,
-    PolymarketGammaMarket, PolymarketMarketRefs, PolymarketOrderRejection, PolymarketRewardMarket,
+    LivePolymarketTradeSyncOutcome, LivePolymarketTradeSyncRequest, NewsSource,
+    OrderbookStreamClient, PAPER_ACCOUNT_ID, PAPER_EXECUTOR_NAME, POLYMARKET_CONNECTOR_NAME,
+    PaperExecutionOutcome, PaperExecutor, PaperFillRequest, PaperOrderRequest,
+    PaperOrderStatusRequest, PolymarketAcceptedOrderStatus, PolymarketBinaryBookSnapshot,
+    PolymarketBookConnector, PolymarketBookLevel, PolymarketChainConnector,
+    PolymarketDataApiConnector, PolymarketGammaConnector, PolymarketGammaMarket,
+    PolymarketMarketRefs, PolymarketOrderRejection, PolymarketRewardMarket,
     PolymarketRewardsConnector, PolymarketSignatureScheme, PolymarketTokenOrderSide,
     PolymarketWalletActivity, PolymarketWalletPosition, RssNewsConnector, RssNewsSourceConfig,
     normalize_polymarket_ws_order_message, normalize_polymarket_ws_trade_message,
@@ -48,10 +49,14 @@ use serde_json::json;
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     future::Future,
+    sync::Arc,
     time::{Duration, Instant},
 };
 use time::{Duration as TimeDuration, OffsetDateTime};
-use tokio::{sync::watch, task::JoinHandle};
+use tokio::{
+    sync::{RwLock, watch},
+    task::JoinHandle,
+};
 use tracing::{debug, info, warn};
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]

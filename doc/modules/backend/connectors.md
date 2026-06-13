@@ -26,7 +26,7 @@
 | `polymarket/chain.rs` | Polygon JSON-RPC ERC20 余额读取：`PolymarketChainConnector` |
 | `polymarket/book.rs` | 盘口快照：`PolymarketBookConnector` |
 | `rewards.rs` + `rewards/orderbooks.rs` | 奖励市场目录与 CLOB 批量盘口：`PolymarketRewardsConnector` |
-| `orderbook.rs` | 独立 orderbook 服务 HTTP 客户端：读盘口、原子注册 token、内部写 token |
+| `orderbook.rs` | 独立 orderbook 服务客户端：HTTP 读盘口/原子注册 token/内部写 token，内部 WS stream 消费 |
 | `polymarket/models.rs` | 共享数据模型 |
 | `polymarket/normalizers.rs` | WebSocket 消息规范化函数 |
 | `polymarket/helpers.rs` | 共享辅助函数 |
@@ -103,13 +103,15 @@
 - `fetch_order_books(token_ids)` 优先使用 CLOB `POST /books` 批量拉取盘口；批量请求失败或遗漏 token 时，再使用固定并发窗口逐个调用 `GET /book` 补齐。每个盘口必须携带可解析的 CLOB 毫秒 `timestamp`，并作为 `observed_at` 传给缓存；整批无可用盘口时返回 dependency error，部分失败会记录告警。
 - 用途：`market_sync.rs` 填充 `reward_markets` 表
 
-### Orderbook HTTP
+### Orderbook HTTP / 内部 WS
 
 - **`OrderbookHttpClient`**：API/Worker 读取独立 orderbook 服务缓存；Worker 通过 `register_tokens()` 原子替换来源 token 集合
+- **`OrderbookStreamClient`**：Worker 连接 orderbook 服务内部 `GET /orderbook/stream`，接收 `OrderbookStreamEvent`（sequence、reason、book）用于更新本地盘口 cache 和唤醒 rewards fast reconcile
 - `get_books()` 使用 `POST /orderbook/batch` 一次读取多个 token；rewards full/reconcile 不再逐 token 发 HTTP 请求
 - register/ingest/delete 写请求携带 `x-polyedge-orderbook-token`，值来自 `POLYEDGE_ORDERBOOK__WRITE_TOKEN`
 - HTTP 注册和注销失败会返回 `Result` 错误，不再静默吞掉非成功响应
 - 单盘口读取只把 404 映射为 `None`；其他非成功 HTTP 状态会作为 dependency error 返回，不尝试把错误响应解码成盘口
+- `OrderbookStreamClient` 会把 `http://` / `https://` service URL 转换为 `ws://` / `wss://`，断线、接收失败或消息解码失败都以 dependency error 交给 worker 重连循环处理
 
 ### News（RSS/Atom 新闻）
 
@@ -138,6 +140,7 @@
 - Gamma 市场同步已提供 rewards 质量筛选所需的 CLOB liquidity、end time 和分级 ambiguity 数据
 - Rewards markets 分页和 enrichment 已具备完整性保护，不再把部分补全结果作为完整目录写入
 - Rewards 盘口连接器优先走 CLOB 批量 `/books`，并对失败或遗漏项使用单 token `/book` 回退
+- Orderbook 服务客户端已支持 HTTP batch/bootstrap 与内部 WS 推送；worker 长期 rewards loop 可用 WS 更新本地 cache，缺失或重连时回退 HTTP batch
 - Data API positions 已按完整快照分页读取；不完整或失败的响应不会被 rewards worker 用于替换持仓
 - Paper Trading 执行器已完整实现
 - Live connector 已具备 CLOB V2 认证、显式 heartbeat、余额查询、开放订单全量分页、用户 WS、订单提交、按 token_id 的 rewards buy/sell 提交和单笔撤单能力；post-only 使用 GTC，immediate flatten 使用 FAK，订单价格当前统一收敛到 0.01 精度，更粗的 per-market tick-size 尚未接入；订单/关联成交优先通过单订单接口对账，关联 trade 单查失败和 missing-order 都会按 token/time 扫描账户 trades 精确回退，轮询路径仅在 trade `CONFIRMED` 后返回成交，任一订单回退失败可被 worker 单订单隔离；签名类型已覆盖 EOA、Proxy、Gnosis Safe 和 Deposit Wallet (`poly_1271`)，其 balance allowance refresh 失败会传播给调用方；Polygon pUSD 余额 connector 已作为 rewards snapshot 的链上余额回退；订单 acceptance 返回实际提交 quantity，trade/WS 成交归一化按订单自身成交量入账；仍需要真实凭证和小额账户验证

@@ -1,5 +1,8 @@
+use crate::updates::OrderbookUpdateBroadcaster;
 use futures::StreamExt;
-use polyedge_application::{BookSource, CachedBookLevel, CachedOrderBook, OrderbookCache};
+use polyedge_application::{
+    BookSource, CachedBookLevel, CachedOrderBook, OrderbookCache, OrderbookStreamReason,
+};
 use polyedge_connectors::PolymarketRewardsConnector;
 use polyedge_domain::{AppError, Result};
 use polyedge_infrastructure::AppState;
@@ -30,9 +33,13 @@ pub struct OrderbookStreamReport {
 /// Run a single orderbook stream lifecycle (WS + poll reconciler).
 /// Subscribes to tokens currently registered in the subscription registry.
 /// Returns when the WS ends or the token set changes; the caller should restart.
-pub async fn run_orderbook_stream(state: &AppState) -> Result<OrderbookStreamReport> {
+pub async fn run_orderbook_stream(
+    state: &AppState,
+    broadcaster: &OrderbookUpdateBroadcaster,
+) -> Result<OrderbookStreamReport> {
     let settings = &state.settings.orderbook_stream;
     let cache = state.orderbook_cache.clone();
+    let max_levels_per_side = settings.max_levels_per_side;
     let mut report = OrderbookStreamReport::default();
 
     // 1. Collect aggregated tokens from the registry.
@@ -97,11 +104,13 @@ pub async fn run_orderbook_stream(state: &AppState) -> Result<OrderbookStreamRep
 
     // 5. Spawn poll reconciler.
     let poll_cache = cache.clone();
+    let poll_broadcaster = broadcaster.clone();
     let poll_tokens_ref = shared_tokens.clone();
     let poll_interval = settings.poll_reconcile_interval_secs;
     let stale_threshold_ms = settings.stale_threshold_ms as i64;
     let clob_host = state.settings.polymarket.clob_host.clone();
     let poll_max_tokens = settings.max_tokens;
+    let poll_max_levels = max_levels_per_side;
     let poll_reconciliations = Arc::new(AtomicUsize::new(0));
     let poll_failures = Arc::new(AtomicUsize::new(0));
     let poll_rec_clone = poll_reconciliations.clone();
@@ -146,8 +155,18 @@ pub async fn run_orderbook_stream(state: &AppState) -> Result<OrderbookStreamRep
                 match connector.fetch_order_books(chunk).await {
                     Ok(books) => {
                         for book in books {
-                            let cached = reward_book_to_cached(&book);
-                            if let Err(error) = poll_cache.set_book(&cached).await {
+                            let cached = normalized_cached_book(
+                                reward_book_to_cached(&book),
+                                poll_max_levels,
+                            );
+                            if let Err(error) = set_book_and_publish_if_current(
+                                &poll_cache,
+                                &poll_broadcaster,
+                                OrderbookStreamReason::PollReconcile,
+                                &cached,
+                            )
+                            .await
+                            {
                                 warn!(
                                     token_id = %cached.token_id,
                                     error = %error,
@@ -179,8 +198,18 @@ pub async fn run_orderbook_stream(state: &AppState) -> Result<OrderbookStreamRep
             message = book_stream.next() => {
                 match message {
                     Some(Ok(book_update)) => {
-                        let cached = book_update_to_cached(&book_update);
-                        if let Err(error) = cache.set_book(&cached).await {
+                        let cached = normalized_cached_book(
+                            book_update_to_cached(&book_update),
+                            max_levels_per_side,
+                        );
+                        if let Err(error) = set_book_and_publish_if_current(
+                            &cache,
+                            broadcaster,
+                            OrderbookStreamReason::Book,
+                            &cached,
+                        )
+                        .await
+                        {
                             warn!(
                                 token_id = %cached.token_id,
                                 error = %error,
@@ -208,7 +237,13 @@ pub async fn run_orderbook_stream(state: &AppState) -> Result<OrderbookStreamRep
             message = price_stream.next() => {
                 match message {
                     Some(Ok(price_change)) => {
-                        if let Err(error) = apply_price_change_to_cache(&cache, &price_change).await {
+                        if let Err(error) = apply_price_change_to_cache(
+                            &cache,
+                            broadcaster,
+                            &price_change,
+                        )
+                        .await
+                        {
                             warn!(error = %error, "failed to apply orderbook price change");
                         }
                         report.ws_price_changes_received += 1;
@@ -317,8 +352,34 @@ fn book_update_to_cached(update: &BookUpdate) -> CachedOrderBook {
     }
 }
 
+async fn set_book_and_publish_if_current(
+    cache: &Arc<dyn OrderbookCache>,
+    broadcaster: &OrderbookUpdateBroadcaster,
+    reason: OrderbookStreamReason,
+    book: &CachedOrderBook,
+) -> Result<()> {
+    cache.set_book(book).await?;
+    publish_if_current(cache, broadcaster, reason, book).await
+}
+
+async fn publish_if_current(
+    cache: &Arc<dyn OrderbookCache>,
+    broadcaster: &OrderbookUpdateBroadcaster,
+    reason: OrderbookStreamReason,
+    candidate: &CachedOrderBook,
+) -> Result<()> {
+    let Some(current) = cache.get_book(&candidate.token_id).await? else {
+        return Ok(());
+    };
+    if current.observed_at == candidate.observed_at && current.source == candidate.source {
+        broadcaster.publish(reason, current);
+    }
+    Ok(())
+}
+
 async fn apply_price_change_to_cache(
     cache: &Arc<dyn OrderbookCache>,
+    broadcaster: &OrderbookUpdateBroadcaster,
     update: &PriceChange,
 ) -> Result<()> {
     for change in &update.price_changes {
@@ -354,9 +415,23 @@ async fn apply_price_change_to_cache(
         // Use replace_book which checks freshness atomically under the lock,
         // preventing the race where a poll reconciler writes a newer snapshot
         // between our get_book and set_book.
-        cache.replace_book(&book).await?;
+        if cache.replace_book(&book).await? {
+            broadcaster.publish(OrderbookStreamReason::PriceChange, book);
+        }
     }
     Ok(())
+}
+
+fn normalized_cached_book(
+    mut book: CachedOrderBook,
+    max_levels_per_side: usize,
+) -> CachedOrderBook {
+    let max_levels = max_levels_per_side.max(1);
+    book.bids.sort_by(|a, b| b.price.cmp(&a.price));
+    book.asks.sort_by(|a, b| a.price.cmp(&b.price));
+    book.bids.truncate(max_levels);
+    book.asks.truncate(max_levels);
+    book
 }
 
 fn reward_book_to_cached(book: &polyedge_connectors::PolymarketRewardOrderBook) -> CachedOrderBook {
@@ -430,7 +505,9 @@ mod tests {
         }))
         .expect("decode price change");
 
-        apply_price_change_to_cache(&cache, &update)
+        let broadcaster = OrderbookUpdateBroadcaster::new(16);
+
+        apply_price_change_to_cache(&cache, &broadcaster, &update)
             .await
             .expect("apply price change");
         let book = cache

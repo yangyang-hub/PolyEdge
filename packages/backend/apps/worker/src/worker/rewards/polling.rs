@@ -30,6 +30,8 @@ async fn poll_reward_bot_loop(
     // A separate guarded task sends the CLOB heartbeat every five seconds.
     let connector = build_live_polymarket_connector(state).await?;
     let _heartbeat_guard = RewardHeartbeatGuard::spawn(connector.clone());
+    let orderbook_runtime = RewardOrderbookRuntime::spawn(state);
+    let mut orderbook_wake_rx = orderbook_runtime.subscribe();
     let mut total = RewardBotRunReport {
         markets_scanned: 0,
         books_fetched: 0,
@@ -43,6 +45,7 @@ async fn poll_reward_bot_loop(
     };
     let mut full_cycles = 0usize;
     let mut reconcile_cycles = 0usize;
+    let mut last_reconcile_at: Instant;
     let mut book_history: HashMap<String, VecDeque<BookSnapshot>> = HashMap::new();
     let full_interval = Duration::from_secs(state.settings.rewards.poll_interval_secs.max(1));
     // Start with a full cycle immediately.
@@ -78,9 +81,13 @@ async fn poll_reward_bot_loop(
         let reconcile_interval = Duration::from_secs(config.reconcile_interval_sec.max(1));
 
         // Always drain queued control commands first.
-        let command_report =
-            process_pending_reward_control_commands_unlocked(state, &connector, &mut book_history)
-                .await?;
+        let command_report = process_pending_reward_control_commands_unlocked(
+            state,
+            &connector,
+            &mut book_history,
+            Some(orderbook_runtime.cache()),
+        )
+        .await?;
         if command_report.processed > 0 {
             accumulate_report(&mut total, &command_report.report);
             // A RunOnce command already rebuilt quotes, so treat it as a full
@@ -103,11 +110,13 @@ async fn poll_reward_bot_loop(
                 &trace_id,
                 false,
                 &mut book_history,
+                Some(orderbook_runtime.cache()),
             )
             .await?;
             accumulate_report(&mut total, &report);
             full_cycles += 1;
             last_full_at = Instant::now();
+            last_reconcile_at = last_full_at;
 
             info!(
                 trace_id = %trace_id,
@@ -130,10 +139,12 @@ async fn poll_reward_bot_loop(
                 &connector,
                 &trace_id,
                 &mut book_history,
+                Some(orderbook_runtime.cache()),
             )
             .await?;
             accumulate_report(&mut total, &report);
             reconcile_cycles += 1;
+            last_reconcile_at = Instant::now();
 
             if report.risk_cancelled_orders > 0 || report.filled_orders > 0 {
                 info!(
@@ -165,6 +176,14 @@ async fn poll_reward_bot_loop(
                 }
             }
             _ = command_wake_rx.changed() => {}
+            changed = orderbook_wake_rx.changed() => {
+                if changed.is_err() {
+                    break;
+                }
+                if throttle_reward_orderbook_reconcile(last_reconcile_at, &mut shutdown_rx).await {
+                    break;
+                }
+            }
             changed = shutdown_rx.changed() => {
                 if changed.is_err() || *shutdown_rx.borrow() {
                     break;
@@ -182,6 +201,23 @@ async fn poll_reward_bot_loop(
     drop(_heartbeat_guard);
     lease.release().await?;
     Ok(total)
+}
+
+async fn throttle_reward_orderbook_reconcile(
+    last_reconcile_at: Instant,
+    shutdown_rx: &mut watch::Receiver<bool>,
+) -> bool {
+    let min_interval = Duration::from_secs(1);
+    let elapsed = Instant::now().duration_since(last_reconcile_at);
+    if elapsed >= min_interval {
+        return false;
+    }
+    tokio::select! {
+        () = tokio::time::sleep(min_interval - elapsed) => false,
+        changed = shutdown_rx.changed() => {
+            changed.is_err() || *shutdown_rx.borrow()
+        }
+    }
 }
 
 struct RewardHeartbeatGuard {
@@ -241,6 +277,7 @@ fn accumulate_report(total: &mut RewardBotRunReport, report: &RewardBotRunReport
 
 async fn fetch_reward_bot_inputs(
     state: &AppState,
+    orderbook_cache: Option<&RewardOrderbookLocalCache>,
 ) -> Result<(Vec<RewardMarket>, HashMap<String, RewardOrderBook>)> {
     // Read a bounded candidate pool from database (synced by the sync-markets worker).
     let markets = state
@@ -263,7 +300,10 @@ async fn fetch_reward_bot_inputs(
             token_ids.push(token_id);
         }
     }
-    Ok((markets, fetch_cached_reward_books(state, &token_ids).await?))
+    Ok((
+        markets,
+        fetch_cached_reward_books(state, orderbook_cache, &token_ids).await?,
+    ))
 }
 
 /// Lightweight book fetch for the fast reconcile loop: only reads books for
@@ -271,17 +311,19 @@ async fn fetch_reward_bot_inputs(
 /// candidate market set).
 async fn fetch_reward_bot_active_books(
     state: &AppState,
+    orderbook_cache: Option<&RewardOrderbookLocalCache>,
 ) -> Result<HashMap<String, RewardOrderBook>> {
     let token_ids = state
         .reward_bot_service
         .list_active_reward_book_token_ids()
         .await?;
 
-    fetch_cached_reward_books(state, &token_ids).await
+    fetch_cached_reward_books(state, orderbook_cache, &token_ids).await
 }
 
 async fn fetch_cached_reward_books(
     state: &AppState,
+    orderbook_cache: Option<&RewardOrderbookLocalCache>,
     token_ids: &[String],
 ) -> Result<HashMap<String, RewardOrderBook>> {
     let batch_size = state.settings.orderbook_stream.max_tokens;
@@ -289,11 +331,32 @@ async fn fetch_cached_reward_books(
         return Ok(HashMap::new());
     }
 
-    let mut books = HashMap::new();
-    for chunk in token_ids.chunks(batch_size) {
-        for cached in state.orderbook_cache.get_books(chunk).await? {
-            books.insert(cached.token_id.clone(), cached_order_book_to_reward(&cached));
+    let cached_books = if let Some(orderbook_cache) = orderbook_cache {
+        let mut cached_books = orderbook_cache.get_books(token_ids).await;
+        let present = cached_books
+            .iter()
+            .map(|book| book.token_id.clone())
+            .collect::<HashSet<_>>();
+        let missing = token_ids
+            .iter()
+            .filter(|token_id| !present.contains(*token_id))
+            .cloned()
+            .collect::<Vec<_>>();
+        if !missing.is_empty() {
+            let remote_books = fetch_remote_cached_orderbooks(state, &missing).await?;
+            for book in &remote_books {
+                cached_books.push(book.clone());
+            }
+            orderbook_cache.apply_books(remote_books).await;
         }
+        cached_books
+    } else {
+        fetch_remote_cached_orderbooks(state, token_ids).await?
+    };
+
+    let mut books = HashMap::new();
+    for cached in cached_books {
+        books.insert(cached.token_id.clone(), cached_order_book_to_reward(&cached));
     }
     Ok(books)
 }

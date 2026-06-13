@@ -520,9 +520,10 @@ async fn run_reward_bot_live_reconcile_unlocked(
     connector: &LivePolymarketConnector,
     trace_id: &str,
     book_history: &mut HashMap<String, VecDeque<BookSnapshot>>,
+    orderbook_cache: Option<&RewardOrderbookLocalCache>,
 ) -> Result<RewardBotRunReport> {
     let mut cycle = state.reward_bot_service.current_live_cycle_state().await?;
-    let books = fetch_reward_bot_active_books(state).await?;
+    let books = fetch_reward_bot_active_books(state, orderbook_cache).await?;
     record_reward_book_history(book_history, &books);
     let mut report = RewardBotRunReport {
         books_fetched: books.len(),

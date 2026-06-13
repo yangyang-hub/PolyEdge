@@ -61,7 +61,10 @@ pub use news_ingestion::{
     NewsSourceHealthListFilters, NewsSourceHealthView, NewsSourceIngestionReport,
     NewsSourceSuccessUpdate, degraded_health_score,
 };
-pub use orderbook_cache::{BookSource, CachedBookLevel, CachedOrderBook, OrderbookCache};
+pub use orderbook_cache::{
+    BookSource, CachedBookLevel, CachedOrderBook, OrderbookCache, OrderbookStreamEvent,
+    OrderbookStreamReason,
+};
 pub use orderbook_registry::OrderbookSubscriptionRegistry;
 pub use pagination::{PageMeta, PageQuery, Paginated};
 pub use rewards::{
