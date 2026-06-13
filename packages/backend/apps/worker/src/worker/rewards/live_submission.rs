@@ -328,6 +328,31 @@ fn live_exit_retry_due(order: &ManagedRewardOrder, now: OffsetDateTime) -> bool 
     now >= order.updated_at + TimeDuration::seconds(delay_seconds)
 }
 
+fn live_exit_pre_submit_failure(
+    order: &ManagedRewardOrder,
+    error: &AppError,
+    post_only: bool,
+    pre_submit_reason: &str,
+) -> Option<(String, RewardRiskSeverity)> {
+    if order.side != RewardOrderSide::Sell || error.code() != "POLYMARKET_NOTIONAL_INVALID" {
+        return None;
+    }
+
+    let current_rejections = parse_exit_rejection_count(&order.reason);
+    let next_rejections = (current_rejections + 1).min(MAX_EXIT_REJECTION_COUNT);
+    let severity = if next_rejections >= MAX_EXIT_REJECTION_COUNT {
+        RewardRiskSeverity::Critical
+    } else {
+        RewardRiskSeverity::Warning
+    };
+    Some((
+        format!(
+            "retryable live exit rejected [{next_rejections}/{MAX_EXIT_REJECTION_COUNT}] (post_only={post_only}): {error}; {pre_submit_reason}"
+        ),
+        severity,
+    ))
+}
+
 /// Returns true if the order is in a known stuck-reconciliation state.
 /// These are orders that block new placements via `has_unresolved_live_reconciliation`
 /// or are otherwise stuck awaiting external resolution that may never come.

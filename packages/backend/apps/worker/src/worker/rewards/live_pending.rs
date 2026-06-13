@@ -193,7 +193,11 @@ async fn submit_pending_live_reward_orders(
                     allow_buy_submit = false;
                 }
                 order.scoring = false;
-                order.reason = if error.code() == "POLYMARKET_ORDER_POST_FAILED" {
+                let exit_pre_submit_failure =
+                    live_exit_pre_submit_failure(order, &error, post_only, &pre_submit_reason);
+                order.reason = if let Some((reason, _)) = &exit_pre_submit_failure {
+                    reason.clone()
+                } else if error.code() == "POLYMARKET_ORDER_POST_FAILED" {
                     format!(
                         "{pre_submit_reason}; {LIVE_SUBMISSION_ATTEMPTED_MARKER}; {LIVE_SUBMISSION_UNKNOWN_MARKER}: {error}"
                     )
@@ -207,10 +211,14 @@ async fn submit_pending_live_reward_orders(
                     order,
                     if error.code() == "POLYMARKET_ORDER_POST_FAILED" {
                         "reward_live_order_submission_unknown"
+                    } else if exit_pre_submit_failure.is_some() {
+                        "reward_live_exit_order_rejected"
                     } else {
                         "reward_live_order_submission_failed_before_post"
                     },
-                    if error.code() == "POLYMARKET_ORDER_POST_FAILED" {
+                    if let Some((_, severity)) = exit_pre_submit_failure {
+                        severity
+                    } else if error.code() == "POLYMARKET_ORDER_POST_FAILED" {
                         RewardRiskSeverity::Critical
                     } else {
                         RewardRiskSeverity::Warning
