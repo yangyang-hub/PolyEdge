@@ -1,6 +1,6 @@
 # 数据库（Migrations + Schema）
 
-最后更新：2026-06-13
+最后更新：2026-06-14
 
 ## 概述
 
@@ -29,8 +29,8 @@
 | `0017_market_slug.sql` | 市场 slug | 修改 `markets` |
 | `0018_market_categories.sql` | 市场分类 | `market_categories`（预置 13 个分类） |
 | `0019_reward_simulation.sql` | 奖励模拟 | 修改 `reward_managed_orders`、`reward_fills`、`reward_account_state` |
-| `0020_copy_trading.sql` | 跟单 | `copytrade_config`、`copytrade_wallets`、`copytrade_source_trades`、`copytrade_copy_orders`、`copytrade_positions`、`copytrade_account_state`、`copytrade_events` |
-| `0021_copytrade_daily_pnl.sql` | 跟单日 PnL | 修改 `copytrade_account_state`（`daily_realized_pnl`） |
+| `0020_copy_trading.sql` | 跟单历史 schema | `copytrade_config`、`copytrade_wallets`、`copytrade_source_trades`、旧模拟表 `copytrade_copy_orders` / `copytrade_positions` / `copytrade_account_state`、`copytrade_events` |
+| `0021_copytrade_daily_pnl.sql` | 旧跟单日 PnL | 修改旧模拟表 `copytrade_account_state`（`daily_realized_pnl`） |
 | `0022_reward_bot_control_commands.sql` | 奖励机器人控制命令 | `reward_control_commands` |
 | `0023_copytrade_control_commands.sql` | 跟单控制命令 | `copytrade_control_commands` |
 | `0024_reward_markets_active_index.sql` | 奖励市场查询索引 | `reward_markets` active + daily rate 索引 |
@@ -108,16 +108,14 @@
 - **`reward_market_advisories`**：AI advisory 缓存表，按 condition/provider/request_format/model/input_hash 保存 suitability、推荐 quote mode、exit policy、confidence、reasons/metrics JSON 和 expires_at；worker 只读取未过期记录，缓存未命中时调用 provider 后写入
 - **`reward_market_info_risks`**：信息风险缓存表，按 condition/provider/request_format/model/input_hash 保存 query_hash、risk_level、risk_type、directional_risk、resolution_imminent、expected_event_at、confidence、summary、sources/metrics JSON 和 expires_at；异步 worker 写入，live rewards tick 只读取未过期缓存
 
-### 9. 跟单
+### 9. Copytrade 钱包跟踪与分析
 
 - **`copytrade_config`**：key-value 配置
 - **`copytrade_wallets`**：address、label、status（active/paused）、sizing overrides、rolling stats（trades/volume/PnL/win_rate/ROI）
 - **`copytrade_source_trades`**：检测到的源交易（deterministic ID 去重）
-- **`copytrade_copy_orders`**：镜像的跟单订单
-- **`copytrade_positions`**：按 wallet+market 聚合
-- **`copytrade_account_state`**：资金池账本（同 reward_account_state 结构 + daily_realized_pnl）
 - **`copytrade_events`**：活动/风险事件日志
-- **`copytrade_control_commands`**：API 入队给 worker 的 copytrade 控制命令（run_once/analyze_wallets/cancel_all/reset）及 pending/running/completed/failed 状态
+- **`copytrade_control_commands`**：API 入队给 worker 的 copytrade 控制命令（run_once/analyze_wallets/cancel_all/reset）及 pending/running/completed/failed 状态；当前只有 analyze_wallets 有实际分析语义，run/cancel/reset 为历史兼容 no-op
+- **旧模拟表**：`copytrade_copy_orders`、`copytrade_positions`、`copytrade_account_state` 仍随迁移存在，用于历史兼容和避免破坏旧数据；当前前端/API snapshot 不再展示模拟账户、订单或持仓，worker 也不会写入新的模拟订单。
 
 ### 10. 运行时配置
 

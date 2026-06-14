@@ -443,12 +443,11 @@ fn live_placement_counts_candidate_notional_against_position_cap() {
 
     let orders = live_placement_orders(
         &config,
-        "reward_live",
+        &live_test_account(Decimal::from(100_u64)),
         &[plan],
         &books,
         &[],
         &positions,
-        Decimal::from(100_u64),
         "trc_live_test",
     );
 

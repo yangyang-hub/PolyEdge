@@ -1,5 +1,7 @@
 # PolyEdge 存储 Schema 补充规范
 
+> **状态（2026-06-14）**：本文是早期 schema 补充规范，部分表名和 outbox/SSE 规划已不代表当前迁移。当前数据库状态以 [modules/infra/database.md](modules/infra/database.md) 和 [../packages/backend/migrations/](../packages/backend/migrations/) 为准。
+
 ## 1. 文档目标
 
 本文档补充 PolyEdge 在 PostgreSQL 侧的实现级 schema 约束，重点覆盖：

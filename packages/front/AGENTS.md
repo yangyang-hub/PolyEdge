@@ -6,7 +6,7 @@ This version has breaking changes — APIs, conventions, and file structure may 
 
 # 前端代码规范
 
-`packages/front/`（Next.js 16 + React 19 + Tailwind v4 + shadcn/ui）的代码规范。仓库级状态快照见根 [AGENT.md](../../AGENT.md)；后端规范见 [packages/backend/AGENTS.md](../backend/AGENTS.md)。本文件的规则在写或改 `packages/front/` 下任何代码时必须遵守，违背即应拆分/重构而非沿用。上面的 `Next.js 16` 提醒同样必须遵守。
+`packages/front/`（Next.js 16 + React 19 + Tailwind v4 + shadcn/ui）的代码规范。仓库级状态快照见根 [AGENTS.md](../../AGENTS.md)；后端规范见 [packages/backend/AGENTS.md](../backend/AGENTS.md)。本文件的规则在写或改 `packages/front/` 下任何代码时必须遵守，违背即应拆分/重构而非沿用。上面的 `Next.js 16` 提醒同样必须遵守。
 
 ## 适用范围
 

@@ -411,12 +411,11 @@ async fn run_reward_bot_live_tick(
 
     let placement_orders = live_placement_orders(
         &cycle.config,
-        &account.account_id,
+        &account,
         &cycle.plans,
         &books,
         &open_orders,
         &cycle.positions,
-        account.available_usd,
         trace_id,
     );
 

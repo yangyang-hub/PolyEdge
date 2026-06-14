@@ -96,6 +96,16 @@ fn live_test_open_order(token_id: &str) -> ManagedRewardOrder {
     }
 }
 
+fn live_test_account(available_usd: Decimal) -> RewardAccountState {
+    let mut account = RewardAccountState::fresh(
+        "reward_live",
+        Decimal::from(100_u64),
+        OffsetDateTime::now_utc(),
+    );
+    account.available_usd = available_usd;
+    account
+}
+
 fn live_test_trade_update(
     external_order_id: &str,
     external_trade_id: &str,
@@ -140,12 +150,11 @@ fn live_placement_reuses_cash_across_markets() {
 
     let orders = live_placement_orders(
         &config,
-        "reward_live",
+        &live_test_account(Decimal::from(20_u64)),
         &[first_plan, second_plan],
         &books,
         &[],
         &[],
-        Decimal::from(20_u64),
         "trc_live_test",
     );
 
@@ -181,12 +190,11 @@ fn live_placement_requires_the_whole_market_to_fit_available_cash() {
 
     let orders = live_placement_orders(
         &config,
-        "reward_live",
+        &live_test_account(reward_decimal("19.59")),
         &[plan],
         &books,
         &[],
         &[],
-        reward_decimal("19.59"),
         "trc_live_test",
     );
 
@@ -213,16 +221,82 @@ fn live_placement_counts_existing_same_market_buys_against_cash() {
 
     let orders = live_placement_orders(
         &config,
-        "reward_live",
+        &live_test_account(reward_decimal("15")),
         &[plan],
         &books,
         &[existing],
         &[],
-        reward_decimal("15"),
         "trc_live_test",
     );
 
     assert!(orders.is_empty());
+}
+
+#[test]
+fn live_placement_reserves_unmanaged_external_buy_notional() {
+    let config = RewardBotConfig {
+        account_id: "reward_live".to_string(),
+        stale_book_ms: 0,
+        max_markets: 1,
+        max_open_orders: 2,
+        max_global_position_usd: Decimal::ZERO,
+        ..RewardBotConfig::default()
+    };
+    let now = OffsetDateTime::now_utc();
+    let plan = live_test_plan(now);
+    let books = HashMap::from([
+        ("yes_live".to_string(), live_test_book("yes_live", now)),
+        ("no_live".to_string(), live_test_book("no_live", now)),
+    ]);
+    let mut account = live_test_account(Decimal::from(25_u64));
+    account.external_buy_notional = Decimal::from(10_u64);
+
+    let orders = live_placement_orders(
+        &config,
+        &account,
+        &[plan],
+        &books,
+        &[],
+        &[],
+        "trc_live_test",
+    );
+
+    assert!(orders.is_empty());
+}
+
+#[test]
+fn live_placement_does_not_double_reserve_managed_external_buys() {
+    let config = RewardBotConfig {
+        account_id: "reward_live".to_string(),
+        stale_book_ms: 0,
+        max_markets: 1,
+        max_open_orders: 2,
+        max_global_position_usd: Decimal::ZERO,
+        ..RewardBotConfig::default()
+    };
+    let now = OffsetDateTime::now_utc();
+    let mut plan = live_test_plan(now);
+    plan.legs.retain(|leg| leg.token_id == "no_live");
+    let books = HashMap::from([
+        ("yes_live".to_string(), live_test_book("yes_live", now)),
+        ("no_live".to_string(), live_test_book("no_live", now)),
+    ]);
+    let existing = live_test_open_order("yes_live");
+    let mut account = live_test_account(Decimal::from(25_u64));
+    account.external_buy_notional = reward_decimal("9.8");
+
+    let orders = live_placement_orders(
+        &config,
+        &account,
+        &[plan],
+        &books,
+        &[existing],
+        &[],
+        "trc_live_test",
+    );
+
+    assert_eq!(orders.len(), 1);
+    assert_eq!(orders[0].token_id, "no_live");
 }
 
 #[test]
@@ -681,12 +755,11 @@ fn live_placement_does_not_add_inventory_while_exit_is_pending() {
 
     let placements = live_placement_orders(
         &config,
-        "reward_live",
+        &live_test_account(reward_decimal("100")),
         &[plan],
         &books,
         &[exit],
         &[],
-        reward_decimal("100"),
         "trc_exit_pending",
     );
 

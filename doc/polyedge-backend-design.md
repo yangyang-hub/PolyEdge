@@ -1,5 +1,7 @@
 # PolyEdge 后端设计文档
 
+> **状态（2026-06-14）**：本文是后端早期设计文档，包含部分历史规划。当前后端实现和缺口以 [../AGENTS.md](../AGENTS.md)、[../README.md](../README.md) 和 [modules/backend/](modules/backend/) 为准。
+
 ## 1. 文档目标
 
 本文档定义 PolyEdge 后端的运行架构、服务边界、模块设计、数据流、API 设计、并发与一致性策略，以及基于 Rust 的工程组织方式。

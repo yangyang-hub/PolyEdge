@@ -1,6 +1,6 @@
 # application（应用/服务层）
 
-最后更新：2026-06-13
+最后更新：2026-06-14
 
 ## 概述
 
@@ -22,7 +22,7 @@
 | `execution/` | 执行管道：`ExecutionService`（组合 MarketEventService + RiskService） |
 | `risk.rs` | 风控：`RiskService`、`RiskStateStore`、`RiskPolicy`、kill-switch 命令 |
 | `rewards/` | 做市奖励：`RewardBotService`、`RewardBotStore`、质量过滤/排序、盘口指标/单边报价推荐、AI advisory 输入/决策/执行约束、异步信息风险缓存、priority condition 列表、live-only 状态与订单分页查询、events/fills/open_order_count 内存缓存、in-process command wake channel；配置默认值/归一化/patch 逻辑拆在 `config_impl.rs`，运行时模型拆在 `runtime_models.rs`，quote/selection/AI 枚举拆在 `quote_selection_models.rs`，AI 模型拆在 `ai_advisory_models.rs`，信息风险模型拆在 `info_risk_models.rs`，deterministic 盘口选择 helper 拆在 `planner_selection.rs` |
-| `copytrade/` | 跟单：`CopyTradeService`、`CopyTradeStore`、确定性模拟引擎和风险准入 |
+| `copytrade/` | 钱包跟踪与分析：`CopyTradeService`、`CopyTradeStore`、tracked wallets、source trades、钱包分析和控制命令队列；旧模拟引擎已移除 |
 | `arbitrage/` | 套利：`ArbitrageService`、`ArbitrageStore`、机会检测/验证 |
 | `news_ingestion.rs` | 新闻采集：`NewsIngestionService`、`NewsIngestionStore` |
 | `orderbook_cache.rs` | 盘口缓存：`OrderbookCache` trait、`CachedOrderBook` 和内部推送事件 `OrderbookStreamEvent` |
@@ -92,8 +92,8 @@
 - `RewardExecutionMode` 枚举仅保留 `Live` 变体，`FromStr` 仍把旧字符串（`validation`、`dry_run`、`paper`、`simulation`）归一为 live；`execution_mode` 字段已从 `RewardBotConfig` / patch 中移除，Store 读取旧 `execution_mode` 配置键时直接忽略。
 - `RewardBotConfig.quote_bid_rank` 仅允许 1–3，分别选择 YES/NO 盘口中第 1/2/3 个不同买价，默认 1（买一）；旧的中间价偏移字段 `quote_edge_cents` 已移除。
 - `RewardBotConfig.quote_mode=double|auto` 与 `selection_mode=observe|enforce` 控制确定性盘口选择。默认 `double + observe` 保持既有双边报价；`auto + enforce + dominant_single_side_enabled=true` 时，planner 可在 YES/NO 概率达到 `dominant_min_probability..dominant_max_probability` 且退出深度、top1/top3 深度占比和 HHI 通过阈值后生成 `single_yes` / `single_no` 单腿计划。`observe` 只在 quote plan 记录推荐模式和 `book_metrics`，不改变实际挂单。
-- AI advisory 定义低频模型判断的输入、输出和执行约束：`build_reward_ai_advisory_request()` 从奖励市场、确定性计划、账户/仓位/开放订单和盘口 top levels 构建结构化 payload，并用 SHA-256 生成 input hash；`apply_reward_ai_advisories()` 会把 advisory 挂到 quote plan。默认 `ai_advisory_enabled=false`；只有 `selection_mode=enforce` 且置信度达到 worker 设置阈值时才影响计划。`avoid/watch` 或 `quote_mode=none` 只能拒绝计划；`single_yes/single_no` 只能在 `quote_mode=auto` 下把已经 eligible 的双边计划收窄为单腿，不能绕过市场质量、盘口和风控硬过滤。
-- Info risk 定义异步信息流风险判断的输入、输出和执行约束：`build_reward_info_risk_assessment_request()` 从奖励市场、当前 quote plan、账户/仓位/开放订单和策略配置构建结构化 payload 与搜索 query，并用 SHA-256 生成 query/input hash；`apply_reward_info_risks()` 会把最新未过期风险挂到 quote plan。默认 `info_risk_enabled=false`；只有 `info_risk_mode=enforce` 且置信度达到 worker 设置阈值时才影响计划。达到 `info_risk_avoid_level`、临近结算或官方结果风险会把计划置为不可挂；该结果不能绕过市场质量、盘口和风控硬过滤。
+- AI advisory 定义低频模型判断的输入、输出和执行约束：`build_reward_ai_advisory_request()` 从奖励市场、确定性计划、账户/仓位/开放订单和盘口 top levels 构建结构化 payload，并用 SHA-256 生成 input hash；`apply_reward_ai_advisories()` 会把 advisory 挂到 quote plan。默认 `ai_advisory_enabled=false`；provider confidence 在 connector 解析时钳制到 `0..=1`，且只有 `selection_mode=enforce` 且置信度达到 worker 设置阈值时才影响计划。`avoid/watch` 或 `quote_mode=none` 只能拒绝计划；`single_yes/single_no` 只能在 `quote_mode=auto` 下把已经 eligible 的双边计划收窄为单腿，不能绕过市场质量、盘口和风控硬过滤。
+- Info risk 定义异步信息流风险判断的输入、输出和执行约束：`build_reward_info_risk_assessment_request()` 从奖励市场、当前 quote plan、账户/仓位/开放订单和策略配置构建结构化 payload 与搜索 query，并用 SHA-256 生成 query/input hash；`apply_reward_info_risks()` 会把最新未过期风险挂到 quote plan。默认 `info_risk_enabled=false`；provider confidence 在 connector 解析时钳制到 `0..=1`，且只有 `info_risk_mode=enforce` 且置信度达到 worker 设置阈值时才影响计划。达到 `info_risk_avoid_level`、临近结算或官方结果风险会把计划置为不可挂；该结果不能绕过市场质量、盘口和风控硬过滤。
 - 市场质量默认门槛为 `min_market_liquidity_usd=1000`、`min_market_volume_24h_usd=1000`、`min_hours_to_end=48`、`max_market_spread_cents=10`、`max_market_data_age_minutes=15`。旧 `reward_competition_factor`、`single_sided_divisor_c`、`fill_rate_per_tick`、`max_fill_ratio` 和 `auto_cancel_stale_minutes` 配置键读取时忽略。
 - Worker 使用当前 quote plan 通过 `LivePolymarketConnector` 提交 post-only token 买单，并对本系统托管的 live 订单执行撤单；该模式由 rewards 配置控制，与全局 system mode 解耦，但遵守 `RiskService` 全局 kill switch。Polymarket 返回 `matched` / `delayed` 等非 live 接受状态时，worker 会把它视为 post-only 安全违规并立即尝试撤单，并保留为待最终成交/取消对账状态。
 
@@ -121,38 +121,35 @@
 - `list_priority_reward_condition_ids()` 为 orderbook priority sync 返回重点 condition：当前开放/持仓市场优先，其次 eligible quote plans，最后使用放宽新鲜度窗口的 rewards 候选，以便 stale catalog 仍能恢复重点市场 `markets.synced_at`。
 
 **live 资金模型：**
-- Rewards live maker 下单沿用跨市场软资金复用语义：不同 condition 的未成交 post-only/GTC 买单可复用同一资金池；但 Polymarket 会对同一 condition 的全部开放 BUY 订单累计做余额有效性检查，因此 placement 会先计算该 condition 已有 managed BUY 剩余 notional 与待补 YES/NO 腿总 notional，合计超过最近同步 `available_usd` 时整组跳过，避免第二条腿被交易所拒绝。账户范围外开放订单仍只汇总到 `external_buy_notional`，尚未按 condition 映射。
+- Rewards live maker 下单沿用跨市场软资金复用语义：不同 condition 的本系统未成交 post-only/GTC 买单可复用同一资金池；但 Polymarket 会对同一 condition 的全部开放 BUY 订单累计做余额有效性检查，因此 placement 会先计算该 condition 已有 managed BUY 剩余 notional 与待补 YES/NO 腿总 notional。账户开放 BUY 总额会同步到 `external_buy_notional`；其中无法归属到本系统 managed order 的外部 BUY notional 会先从 `available_usd` 中保守扣除，再做同 condition 准入，避免人工/其它机器人挂单与本系统新单叠加。账户范围外开放订单明细仍未按 condition 映射。
 - Live 新挂单仍要求目标 YES/NO 两腿都有非空盘口；`stale_book_ms` 默认 45000，高于 orderbook 默认 30 秒 poll 周期，`stale_book_ms=0` 只关闭盘口年龄检查，不允许在盘口缺失或空盘口时下单。live reconcile 会对本系统托管的开放订单读取活跃 token 盘口；盘口缺失、空盘口或超过 `stale_book_ms` 会触发立即撤单，即使 `enabled=false` 已停止新增报价。
 - Live `reset` 不清空本地账本或删除托管订单；worker 会先按 cancel-all 语义撤销本系统托管 live 订单，若任一 Polymarket 撤单被拒绝，则命令失败并保留本地状态以避免孤儿实盘订单。
 - 风险控制重点放在成交后：trade 达到 `CONFIRMED` 后，worker 对本系统托管 rewards 订单按 external trade id 幂等更新现金、库存、fills 和 PnL，并撤掉 sibling legs；新挂单的 per-token 和全局库存门槛都使用「已有库存 notional + 当前候选订单 notional」准入。
 - 本地仍需保留 `max_open_orders`、`max_markets`、单市场预算、per-token 库存和 kill-switch；这些限制控制操作风险和订单风暴，而不是把所有开放买单当作已消耗资金。
-- 当前 live 已具备 post-only token 买单提交、订单撤单、本系统托管订单 confirmed 成交同步、同轮多笔 trade 累计入账、成交后对侧 buy sibling 撤单以及 `ExitAtMarkup` / `FlattenImmediately` sell 下单；既有 sell exit 不属于 sibling cancel 目标。报价与退出订单先持久化 intent，买入 fill 与退出 intent 同事务写入，提交结果未知时保持 open-like 锁定状态等待开放订单匹配恢复或人工对账，不自动重复提交；外部订单 404 会先保持 open-like 对账锁，若超过 5 分钟仍无 CLOB/Data API 成交证据则自动本地标记为 `cancelled`，提交结果未知和取消结果未知仍不会因本地超时而自动 force-cancel。worker 还会用 CLOB open orders snapshot 反查普通 managed BUY：已提交、open-like 且无提交未知、404、pending cancel、post-only violation 等对账锁的 BUY 若已不在外部开放订单列表中，会本地关闭为 `cancelled`，释放开放挂单计数；sell exit 不走该快速关闭路径。`ExitAtMarkup` 价格向上取整到 0.01 tick，退出拒单和提交前低于 1 美元最小名义金额都会以最多 300 秒的有界指数退避持续重试，并在同 token 退出未完成时暂停新增买单。`FlattenImmediately` 无 bid 或 FAK 终态部分成交后仍有持仓时会保留本地 deferred exit 并重试。worker 会把外部 balance、账户开放买单总 notional 观测和完整 positions 快照写入 store，资金钱包地址优先使用 `FUNDER`，且 CLOB balance 为 0/失败时会用链上 pUSD 余额回填账户 snapshot；账户开放买单总 notional 与 managed BUY open-list 反查不受 confirmed fill 保护期影响，balance/positions 替换仍会根据 `latest_fill_at` 在 confirmed fill 后保护本地账户状态 120 秒。保护期结束后，成功 positions 快照原子替换该账户全部持仓，失败时保留上一版。账户范围外开放订单明细和奖励结算对账仍是缺口。
+- 当前 live 已具备 post-only token 买单提交、订单撤单、本系统托管订单 confirmed 成交同步、同轮多笔 trade 累计入账、成交后对侧 buy sibling 撤单以及 `ExitAtMarkup` / `FlattenImmediately` sell 下单；既有 sell exit 不属于 sibling cancel 目标。报价与退出订单先持久化 intent，买入 fill 与退出 intent 同事务写入，提交结果未知时保持 open-like 锁定状态等待开放订单匹配恢复或人工对账，不自动重复提交；外部订单 404 会先保持 open-like 对账锁，若超过 5 分钟仍无 CLOB/Data API 成交证据则自动本地标记为 `cancelled`，提交结果未知和取消结果未知仍不会因本地超时而自动 force-cancel。worker 还会用 CLOB open orders snapshot 反查普通 managed BUY：已提交、open-like 且无提交未知、404、pending cancel、post-only violation 等对账锁的 BUY 若已不在外部开放订单列表中，会本地关闭为 `cancelled`，释放开放挂单计数；sell exit 不走该快速关闭路径。`ExitAtMarkup` 价格向上取整到 0.01 tick，退出拒单和提交前低于 1 美元最小名义金额都会以最多 300 秒的有界指数退避持续重试，并在同 token 退出未完成时暂停新增买单。`FlattenImmediately` 无 bid 或 FAK 终态部分成交后仍有持仓时会保留本地 deferred exit 并重试。worker 会把外部 balance、账户开放买单总 notional 观测和完整 positions 快照写入 store，资金钱包地址优先使用 `FUNDER`，且 CLOB balance 为 0/失败时会用链上 pUSD 余额回填账户 snapshot；账户开放买单总 notional 与 managed BUY open-list 反查不受 confirmed fill 保护期影响，并用于估算未归属到本系统的外部 BUY notional 以保守限制新增买单；balance/positions 替换仍会根据 `latest_fill_at` 在 confirmed fill 后保护本地账户状态 120 秒。保护期结束后，成功 positions 快照原子替换该账户全部持仓，失败时保留上一版。账户范围外开放订单明细和奖励结算对账仍是缺口。
 - 未决提交、待最终对账或外部订单 404 会暂停新增 live 买单但继续卖出退出；外部订单 404 锁超过 5 分钟且仍无成交证据时会自动本地关闭；post-only exit 取消后的 replacement 保留 post-only 策略。
 - 新建或恢复的 buy order 初始 `scoring=false`，只有 CLOB `orders_scoring` 权威查询可以置为 true；`min_depth_usd` 检查会从聚合盘口中扣除本系统订单自身的剩余 notional，只把外部支撑深度计入阈值。
 - 仍需要用真实小额账户验证跨市场资金复用和账户范围外开放订单的组合影响，不能依赖 venue 替系统做组合风险管理。
 - 参考官方文档：Order Lifecycle / Requirements 和 Orders Overview / Validity Checks，后续实现时需要复核最新文档。
 
-### copytrade — 跟单
+### copytrade — 钱包跟踪与分析
 
 **Store Trait：** `CopyTradeStore`
-- Config/Wallets/SourceTrades/Orders/Positions/Events/AccountState 完整 CRUD
-- 原子 tick：`apply_copy_tick(outcome, trace_id)`
+- Config/Wallets/SourceTrades/Events/AccountState 读写，以及旧 Orders/Positions 表的兼容读写路径
+- Source trades：记录 Data API 检测到的钱包成交，按 deterministic id 去重
+- Wallet analysis：保存钱包滚动统计（trades、volume、PnL、win_rate、ROI 等）
 - Control Commands：`enqueue_control_command`、`claim_next_control_command`、`complete_control_command`、`fail_control_command`
 
-**服务：** `CopyTradeService` — 配置管理、钱包管理、跟单模拟、控制命令入队/领取/完成状态管理
+**服务：** `CopyTradeService` — 配置管理、钱包管理、source trade 检测与记录、钱包分析统计、控制命令入队/领取/完成状态管理。
 
 **控制命令类型：** `CopyControlAction`（run_once/analyze_wallets/cancel_all/reset）、`CopyControlCommandStatus`、`CopyControlCommand`
 
-**模拟引擎：** `run_copy_simulation_tick`、`compute_copy_size`
-
-**跟单决策与风控语义：**
-- 未处理 source trades 按 `source_timestamp + id` 排序后依次决策；暂停/删除钱包遗留的未处理交易会以 `wallet_paused` 跳过。
-- cooldown 按 wallet + token 生效，并用已有 open orders / positions 的最近时间初始化；同一 tick 内已接受的交易会立即推进 cooldown。
-- per-wallet、per-market、total exposure 使用运行中累加器，并把同一 tick 先前计划的买单计入；新买单 size 会硬裁剪到三个 cap 的剩余 headroom。
-- UTC 日期切换时在 risk gate 前重置 `daily_realized_pnl`。
-- `MirrorPortfolioWeight` 使用源钱包全部持仓的 mark value 计算真实市场权重；缺少组合总值时回退固定小额，而不是退化成 all-in。
-- source trade ID 包含 wallet、tx、token、side、标准化 price/size 和 timestamp，既保持重扫幂等，也区分同交易哈希/同秒内的多笔 fill。
-- 无本地持仓的 sell 会被拒绝，避免模拟账本产生 phantom proceeds；crossed/marketable order 会完整成交，resting 概率成交才应用 `max_fill_ratio`，小于 0.01 share 的尾差会被吸收以释放 reserve。
+**当前语义：**
+- Copytrade 不下单、不撤单，也不维护模拟资金账本、模拟订单、模拟持仓或 PnL 面板。
+- Worker 从 Polymarket Data API 读取 active tracked wallets 的 activity/positions，用 `detect_and_record_source_trades()` 写入 source trades。
+- `AnalyzeWallets` 控制命令和 `analyze-wallets-once` 会读取同一批钱包输入并更新钱包分析统计。
+- `RunOnce`、`CancelAll`、`Reset` 仍作为数据库控制命令兼容值存在；当前 worker 中这些动作是 no-op，不应在产品文案里描述成真实跟单或模拟交易。
+- 旧 `copytrade_copy_orders`、`copytrade_positions`、`copytrade_account_state` 表仍存在用于迁移兼容和历史数据，但当前前端/API snapshot 不再展示模拟账户、订单或持仓。
 
 ### arbitrage — 套利
 
@@ -221,10 +218,9 @@ orderbook_cache ← (共享基础设施 trait)
 
 - 所有模块已实现完整的 Store trait 和 Service struct
 - Rewards 已移除旧 validation/simulation tick 引擎，仅保留 live-only 配置、quote planner、确定性盘口指标/单边 quote mode、AI advisory 输入/决策/缓存端口、信息风险输入/决策/缓存端口、状态类型和增量持久化端口。
-- Rewards live 模式已接入质量硬过滤与综合排序、post-only token 买单、撤单、本系统托管订单成交同步、成交后现金/库存/PnL 更新、可持续重试的 exit/flatten sell、CLOB open-order 反查、外部余额/完整持仓快照、managed order scoring 和 UTC 当日账户级 maker rewards 同步（聚合端点优先、明细端点 fallback）；账户范围外开放订单明细与奖励结算对账仍待完成。
+- Rewards live 模式已接入质量硬过滤与综合排序、post-only token 买单、撤单、本系统托管订单成交同步、成交后现金/库存/PnL 更新、可持续重试的 exit/flatten sell、CLOB open-order 反查、外部余额/完整持仓快照、managed order scoring 和 UTC 当日账户级 maker rewards 同步（聚合端点优先、明细端点 fallback）；新增买单会把未归属到本系统 managed order 的外部 BUY notional 从可用资金中保守扣除。账户范围外开放订单明细与奖励结算对账仍待完成。
 - Rewards 保留数据库控制命令队列用于持久恢复，API 入队后通过共享 runtime revision 立即唤醒后台执行。
-- Copytrade 已具备数据库控制命令队列，API 负责入队，worker 负责执行 run/analyze/cancel/reset。
-- Copytrade 模拟决策已按时间顺序处理并在同一 tick 内执行 cooldown、暂停钱包、日亏损和运行中 exposure cap；crossed fill、无仓卖出和组合权重计算已收敛到资金账本一致语义。
+- Copytrade 已精简为只读钱包跟踪和分析：API 负责钱包配置和控制命令入队，worker 负责检测 source trades 与执行 Analyze；Run/Cancel/Reset 兼容命令当前不执行交易逻辑。
 - Wallet analysis 是纯计算，已完全实现
 - Arbitrage 是只读链路（发现/记录/校验/分析/展示），不会创建执行请求
 

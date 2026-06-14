@@ -1,6 +1,6 @@
 # connectors（外部连接器层）
 
-最后更新：2026-06-13
+最后更新：2026-06-14
 
 ## 概述
 
@@ -69,7 +69,7 @@
 - `fetch_binary_book(market_refs)`：获取 YES+NO 双侧盘口
 - `fetch_token_book(asset_id)`：获取单 token 盘口
 - **`PolymarketBinaryBookSnapshot`**：condition_id + yes/no book + observed_at
-- 用途：arbitrage scanner、rewards bot、orderbook stream
+- 用途：arbitrage scanner 和独立 orderbook 服务；rewards bot 通过 orderbook 服务读取缓存盘口，不直接调用该 connector 获取盘口
 
 ### Polymarket Live（认证交易）
 
@@ -92,7 +92,7 @@
 - **`LivePolymarketTradeSyncOutcome`**：包含 confirmed `updates`、安全可应用的 `order_status` 和 `order_not_found`；pending/mined/retrying trade 会阻止 terminal status 提前返回，404 fallback 不会伪造取消状态
 - **`PolymarketMatchedOrderHint`**：当 worker 的认证 trade 回退仍失败时，重新读取单订单并只暴露 terminal matched/canceled 订单的 token、价格和 matched size，供 worker 与 Data API 钱包交易做严格最终核验
 - **`PolymarketOpenOrder`**：隔离 SDK 的开放订单类型，供 live 订单恢复与对账使用
-- 用途：live 模式下的订单管理、rewards live maker 和 copytrade 实盘骨架
+- 用途：live 模式下的订单管理和 rewards live maker；copytrade 当前只做钱包跟踪/分析，不使用 live connector 下单
 - 当前范围：支持已有、已 funded、已 approve 的 Deposit Wallet 通过 CLOB V2 下单/撤单；`poly_1271` 查询余额前会调用 CLOB balance allowance update，刷新失败会直接返回错误，不再继续读取可能陈旧的账户状态。成交同步按 maker order 聚合同一 trade 中重复出现的全部 `matched_amount`，使用 size-weighted price/fee，避免把整笔 taker trade size 误记到单个 maker 订单或漏记重复 maker entry。尚未实现 relayer 建钱包、pUSD 入金/approval 或 deposit wallet 生命周期管理。
 
 ### Polymarket Rewards（奖励市场）
@@ -101,9 +101,9 @@
 - **`PolymarketRewardMarket`**：condition_id、question、market_slug、rewards_max_spread、rewards_min_size、total_daily_rate、tokens
 - **`PolymarketRewardOrderBook`**：token_id、bids、asks、observed_at
 - 常量：`ENRICH_TIMEOUT = 10s`、`ENRICH_MAX_RETRIES = 3`、`ENRICH_RETRY_BASE_DELAY = 500ms`、`MAX_REWARD_MARKET_PAGES = 1000`
-- `fetch_current_markets()` 对分页做重复 cursor / 最大页数 / condition id 去重保护；token 会按 ID 去重。仅当原始 market 缺少两个 token 时才要求详情补全，补全后仍不完整或目录为空会返回错误，调用方保留上一版 catalog；详情请求失败但原始记录已完整时不阻断目录替换。
+- `fetch_current_markets()` 对分页做重复 cursor / 最大页数 / condition id 去重保护；token 会按 ID 去重。仅当原始 market 缺少唯一 YES/NO token 或缺有效 question 时才请求 CLOB `/markets/{condition_id}` 详情补全，避免对完整 catalog 做大规模详情请求；补全后仍不完整或目录为空会返回错误，调用方保留上一版 catalog；详情请求失败但原始记录已完整时不阻断目录替换。
 - `fetch_order_books(token_ids)` 优先使用 CLOB `POST /books` 批量拉取盘口；批量请求失败或遗漏 token 时，再使用固定并发窗口逐个调用 `GET /book` 补齐。每个盘口必须携带可解析的 CLOB 毫秒 `timestamp`，并作为 `observed_at` 传给缓存；整批无可用盘口时返回 dependency error，部分失败会记录告警。
-- 用途：`market_sync.rs` 填充 `reward_markets` 表
+- 用途：`polyedge-orderbook` 的 rewards catalog sync 填充 `reward_markets` 表；worker 的 `market_sync.rs` 仅保留 CLI 兼容入口
 
 ### Orderbook HTTP / 内部 WS
 
@@ -119,14 +119,14 @@
 
 - **`RewardAiAdvisoryConnector`**：`base_url` + API key + reqwest client，供 rewards worker 低频请求盘口适合度判断。
 - 支持三种请求格式：`openai_responses` 调用 `{base}/responses` 并使用 JSON schema structured output；`openai_chat_completions` 调用 `{base}/chat/completions` 并使用 `response_format=json_schema`；`anthropic_messages` 调用 `{base}/v1/messages`，通过 system/user prompt 要求仅返回 JSON。
-- 输出统一解析为 `RewardAiAdvisoryDecision`：`suitability=allow|watch|avoid`、`quote_mode=double|single_yes|single_no|none`、`exit_policy`、`confidence`、`reasons` 和 `metrics`。provider HTTP、状态码、解码或 JSON 结构错误会返回 dependency error，由 worker 记录告警并保留确定性计划。
+- 输出统一解析为 `RewardAiAdvisoryDecision`：`suitability=allow|watch|avoid`、`quote_mode=double|single_yes|single_no|none`、`exit_policy`、`confidence`、`reasons` 和 `metrics`；解析时会把 provider 返回的 confidence 钳制到 `0..=1`。provider HTTP、状态码、解码或 JSON 结构错误会返回 dependency error，由 worker 记录告警并保留确定性计划。
 - 该 connector 只接收 application 层已构建的 DB/orderbook/planner/account payload，不直接访问 Polymarket 或其他市场数据源。
 
 ### Rewards Info Risk
 
 - **`RewardInfoRiskConnector`**：`base_url` + API key + reqwest client，供 rewards worker 异步判断候选市场的信息流风险。
 - 支持三种请求格式：`openai_responses`、`openai_chat_completions`、`anthropic_messages`。OpenAI Responses 可通过 `POLYEDGE_REWARDS__INFO_RISK_WEB_SEARCH_ENABLED=true` 附加 `web_search_preview` 工具；默认关闭。
-- 输出统一解析为 `RewardInfoRiskAssessmentDecision`：`risk_level`、`risk_type`、`directional_risk`、`resolution_imminent`、`expected_event_at`、`confidence`、`summary`、`sources` 和 `metrics`。
+- 输出统一解析为 `RewardInfoRiskAssessmentDecision`：`risk_level`、`risk_type`、`directional_risk`、`resolution_imminent`、`expected_event_at`、`confidence`、`summary`、`sources` 和 `metrics`；解析时会把 provider 返回的 confidence 钳制到 `0..=1`。
 - 该 connector 不直接访问 Polymarket；它只接收 application 层基于数据库、quote plan 和账户状态构建的 payload。provider 失败由 worker 记录 warning，不阻断 live tick。
 
 ### News（RSS/Atom 新闻）
@@ -154,9 +154,9 @@
 - 已实现当前系统使用的 Polymarket 公共市场、盘口、Data API、Rewards API、Rewards AI advisory、Rewards 信息风险评估、订单 scoring、带明细 fallback 的当日 maker earnings 和 CLOB V2 交易 connector；Deposit Wallet relayer 生命周期接口尚未接入
 - Gamma `/markets` offset 分页已具备 422 边界 / 最大页数保护，并按 market id 去重；condition_ids 定向查询用于重点市场新鲜度刷新。
 - Gamma 市场同步已提供 rewards 质量筛选所需的 CLOB liquidity、end time 和分级 ambiguity 数据，并支持 priority condition 刷新降低全量目录延迟对 live rewards 的影响。
-- Rewards markets 分页和 enrichment 已具备完整性保护，不再把部分补全结果作为完整目录写入
+- Rewards markets 分页和 enrichment 已具备完整性保护，不再把部分补全结果作为完整目录写入；详情补全只针对缺唯一 YES/NO token 或缺有效 question 的市场，降低 CLOB 429 风险
 - Rewards 盘口连接器优先走 CLOB 批量 `/books`，并对失败或遗漏项使用单 token `/book` 回退
-- Rewards AI advisory 和信息风险 connector 已支持 OpenAI Responses、OpenAI Chat Completions 和 Anthropic Messages 三种格式；模型密钥来自 worker 环境变量，失败不阻断 live tick。信息风险 connector 的 OpenAI web search 工具默认关闭，仅在显式环境变量开启时使用。
+- Rewards AI advisory 和信息风险 connector 已支持 OpenAI Responses、OpenAI Chat Completions 和 Anthropic Messages 三种格式；模型密钥来自 worker 环境变量，失败不阻断 live tick，provider confidence 输出会在解析时钳制到 `0..=1`。信息风险 connector 的 OpenAI web search 工具默认关闭，仅在显式环境变量开启时使用。
 - Orderbook 服务客户端已支持 HTTP batch/bootstrap 与内部 WS 推送；worker 长期 rewards loop 可用 WS 更新本地 cache，缺失或重连时回退 HTTP batch
 - Data API positions 已按完整快照分页读取；不完整或失败的响应不会被 rewards worker 用于替换持仓
 - Paper Trading 执行器已完整实现

@@ -1,5 +1,7 @@
 # PolyEdge 前端设计文档
 
+> **状态（2026-06-14）**：本文是前端早期设计，包含已移除的 approvals、replay 和 SSE 规划。当前前端状态以 [../AGENTS.md](../AGENTS.md)、[../README.md](../README.md) 和 [modules/frontend/](modules/frontend/) 为准。
+
 ## 1. 文档目标
 
 本文档定义 PolyEdge 前端控制台的产品定位、页面结构、数据获取方式、实时交互模式、权限边界和性能原则。

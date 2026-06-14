@@ -1,6 +1,6 @@
 # packages/backend/AGENTS.md
 
-后端（Rust workspace）代码规范。仓库级状态快照见根 [AGENT.md](../../AGENT.md)；前端规范见 [packages/front](../front)。本文件的规则在写或改 `packages/backend/` 下任何 Rust 代码时必须遵守，违背即应拆分/重构而非沿用。
+后端（Rust workspace）代码规范。仓库级状态快照见根 [AGENTS.md](../../AGENTS.md)；前端规范见 [packages/front/AGENTS.md](../front/AGENTS.md)。本文件的规则在写或改 `packages/backend/` 下任何 Rust 代码时必须遵守，违背即应拆分/重构而非沿用。
 
 ## 适用范围
 
@@ -17,7 +17,7 @@ crate 依赖**单向**，不可逆向：
 | `connectors` | 外部数据源适配（Polymarket / news） | `domain` `application` |
 | `infrastructure` | port 的具体实现：`catalog`(postgres/in-memory)、`stores`、`settings`、`auth`、`http`、`runtime` | `domain` `application` |
 | `contracts` | HTTP API DTO（纯数据结构 + serde） | `domain` |
-| `apps/{api,worker,replay}` | 可执行入口，组装上述 crate | 全部 |
+| `apps/{api,worker,orderbook,replay}` | 可执行入口，组装上述 crate | 全部 |
 
 **红线：**
 - `domain` 不得 `use` 任何上层；领域逻辑不下沉到 `infrastructure`。
@@ -34,7 +34,7 @@ crate 依赖**单向**，不可逆向：
    - 路径相对**根文件物理目录**解析，可多层嵌套（范例：`catalog/postgres/market_event/execution_updates/`）；
    - 子文件按**职责**命名（`fills.rs`/`quoting.rs`/`verifier.rs`/`parsers.rs`），不要按类型机械堆叠。
 
-   范例：`copytrade.rs`（根：共享导入 + `include!` 聚合）→ `copytrade/{models,control,inputs,service,analysis,strategy,risk,engine,helpers,tests}.rs`。
+   范例：`copytrade.rs`（根：共享导入 + `include!` 聚合）→ `copytrade/{models,control,inputs,service,analysis,helpers,tests}.rs`。
 
 3. **`mod` vs `include!`**：要对外暴露子命名空间（独立可见性边界）用真正的 `mod`（如 `settings::runtime_config`、`infrastructure` 的 `pub mod`）；同一逻辑单元的纯物理拆分用 `include!`。
 

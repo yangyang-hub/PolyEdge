@@ -48,6 +48,29 @@ fn sanitize_reward_id_fragment(raw: &str) -> String {
         .collect()
 }
 
+fn live_available_usd_after_unmanaged_external_buys(
+    account: &RewardAccountState,
+    open_orders: &[ManagedRewardOrder],
+) -> Decimal {
+    let managed_external_buy_notional: Decimal = open_orders
+        .iter()
+        .filter(|order| {
+            order.side == RewardOrderSide::Buy
+                && order.status.is_open_like()
+                && order
+                    .external_order_id
+                    .as_deref()
+                    .is_some_and(|id| !is_internal_reward_order_id(id))
+        })
+        .map(|order| {
+            (order.price * (order.size - order.filled_size).max(Decimal::ZERO)).round_dp(4)
+        })
+        .sum();
+    let unmanaged_external_buy_notional =
+        (account.external_buy_notional - managed_external_buy_notional).max(Decimal::ZERO);
+    (account.available_usd - unmanaged_external_buy_notional).max(Decimal::ZERO)
+}
+
 fn deferred_live_exit_after_cancellation(
     order: &ManagedRewardOrder,
     position: Option<&RewardPosition>,

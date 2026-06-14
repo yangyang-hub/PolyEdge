@@ -1,5 +1,7 @@
 # PolyEdge LLM 调用治理文档
 
+> **状态（2026-06-14）**：本文是 LLM 治理设计背景。当前已落地的 LLM 路径主要是 rewards AI advisory 和 rewards 信息风险，实际实现以 [../AGENTS.md](../AGENTS.md)、[modules/backend/application.md](modules/backend/application.md) 和 [modules/backend/connectors.md](modules/backend/connectors.md) 为准。
+
 ## 1. 文档目标
 
 本文档定义 PolyEdge 中 LLM 的使用边界、调用策略、Prompt 管理、结构化输出、失败降级、成本控制和评估治理。

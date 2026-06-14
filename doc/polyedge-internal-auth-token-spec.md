@@ -1,5 +1,7 @@
 # PolyEdge 内部鉴权 Token 协议
 
+> **状态（2026-06-14）**：本文是内部鉴权 token 协议草案。当前前端 `off` 会话不会签发可信令牌，生产级会话体系仍是缺口；当前状态以 [../AGENTS.md](../AGENTS.md) 和 [modules/backend/api-app.md](modules/backend/api-app.md) 为准。
+
 ## 1. 文档目标
 
 本文档将 [polyedge-auth-design.md](./polyedge-auth-design.md) 中的“Next.js 向 Rust 传递短期签名 token”落到可实现协议，明确：

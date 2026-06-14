@@ -1,5 +1,7 @@
 # PolyEdge 枚举与定点数规范
 
+> **状态（2026-06-14）**：本文是枚举和定点数设计背景。当前实际枚举、DTO 和数据库约束以代码、迁移和 [modules/infra/database.md](modules/infra/database.md) 为准。
+
 ## 1. 文档目标
 
 本文档定义 PolyEdge 在 API、Rust domain model 和 PostgreSQL schema 之间共用的：

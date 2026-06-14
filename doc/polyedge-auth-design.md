@@ -1,5 +1,7 @@
 # PolyEdge 鉴权与会话设计文档
 
+> **状态（2026-06-14）**：本文是鉴权设计背景，不代表当前生产级会话已完成。当前仓库只保留前端 `off` 会话模式；仓库状态以 [../AGENTS.md](../AGENTS.md)、[../README.md](../README.md) 和 [modules/](modules/README.md) 为准。
+
 ## 1. 文档目标
 
 本文档定义 PolyEdge 的身份认证、会话管理、权限模型、高风险操作保护和审计要求。

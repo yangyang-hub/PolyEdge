@@ -1,5 +1,7 @@
 # PolyEdge 后端实现计划
 
+> **状态（2026-06-14）**：本文是早期实施计划，开头所述“仓库基本还是设计文档阶段”等内容已经过时。当前实现以 [../AGENTS.md](../AGENTS.md)、[../README.md](../README.md) 和 [modules/backend/](modules/backend/) 为准。
+
 ## 1. 当前起点
 
 当前仓库基本还是设计文档阶段，`packages/backend/` 目录为空，还没有现成的 Rust workspace、数据库迁移、CI 或运行配置。

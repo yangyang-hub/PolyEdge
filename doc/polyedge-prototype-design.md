@@ -1,5 +1,7 @@
 # PolyEdge 前端原型设计文档
 
+> **状态（2026-06-14）**：本文是前端原型设计背景，包含已移除或未落地的 approvals、research/replay 和早期页面规划。当前控制台页面以 [../AGENTS.md](../AGENTS.md)、[../README.md](../README.md) 和 [modules/frontend/](modules/frontend/) 为准。
+
 ## 1. 文档目标
 
 本文档用于指导 PolyEdge 前端原型页面设计，面向低保真线框图、中保真交互原型和高保真视觉稿。

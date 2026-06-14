@@ -1,6 +1,6 @@
 # 数据层（API Client + Actions + Contracts）
 
-最后更新：2026-06-13
+最后更新：2026-06-14
 
 ## 概述
 
@@ -46,7 +46,7 @@
 - 基础 URL 来自 `NEXT_PUBLIC_POLYEDGE_API_BASE_URL` 环境变量；静态部署且 front/API 分离时必须指向 Rust API（例如 `http://192.168.31.5:38001`）
 - 所有请求使用 `cache: "no-store"`；配置了 API base URL 时 `credentials: "omit"`，未配置时才使用同源
 - 当前内网部署由 API 侧 `POLYEDGE_AUTH__DISABLED=true` 关闭权限校验，前端不需要发送 dev-auth header
-- 旧 local dev-auth 模式仍可通过 `NEXT_PUBLIC_POLYEDGE_INTERNAL_AUTH_DEV_BYPASS=1` 发送 `X-PolyEdge-Dev-Auth` 头
+- 旧 local dev-auth 模式仍可手动设置 `NEXT_PUBLIC_POLYEDGE_INTERNAL_AUTH_DEV_BYPASS=1` 发送 `X-PolyEdge-Dev-Auth` 头；默认前端 env 示例不再包含该遗留变量
 - Step-up header 代码路径保留；API 免鉴权模式下不会校验 step-up code
 
 ### 领域 API 模块 — `src/lib/api/*.ts`

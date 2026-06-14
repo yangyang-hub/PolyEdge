@@ -281,10 +281,12 @@ fn parse_reward_ai_decision(text: &str) -> Result<RewardAiAdvisoryDecision> {
 
 fn parse_confidence(value: Option<&Value>) -> Option<Decimal> {
     let raw = value?;
-    if let Some(number) = raw.as_f64() {
-        return Decimal::from_str(&number.to_string()).ok();
-    }
-    raw.as_str().and_then(|value| Decimal::from_str(value).ok())
+    let parsed = if let Some(number) = raw.as_f64() {
+        Decimal::from_str(&number.to_string()).ok()
+    } else {
+        raw.as_str().and_then(|value| Decimal::from_str(value).ok())
+    }?;
+    Some(parsed.max(Decimal::ZERO).min(Decimal::ONE))
 }
 
 fn extract_json_object(text: &str) -> std::result::Result<&str, serde_json::Error> {
@@ -319,4 +321,38 @@ fn reward_ai_status_error(status: u16, body: Value) -> AppError {
         "REWARD_AI_STATUS_FAILED",
         format!("reward AI provider returned HTTP {status}: {body}"),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reward_ai_confidence_is_clamped_to_unit_interval() {
+        let high = parse_reward_ai_decision(
+            r#"{
+                "suitability": "allow",
+                "quote_mode": "double",
+                "exit_policy": "exit_at_markup",
+                "confidence": 1.5,
+                "reasons": [],
+                "metrics": {}
+            }"#,
+        )
+        .expect("parse high confidence");
+        assert_eq!(high.confidence, Decimal::ONE);
+
+        let low = parse_reward_ai_decision(
+            r#"{
+                "suitability": "watch",
+                "quote_mode": "none",
+                "exit_policy": "flatten_immediately",
+                "confidence": "-0.2",
+                "reasons": [],
+                "metrics": {}
+            }"#,
+        )
+        .expect("parse low confidence");
+        assert_eq!(low.confidence, Decimal::ZERO);
+    }
 }

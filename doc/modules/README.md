@@ -40,7 +40,7 @@
 | 文档 | 模块 | 职责 |
 |---|---|---|
 | [deployment.md](infra/deployment.md) | `deploy/` + `scripts/` | Docker Compose 部署、Nginx、构建脚本 |
-| [database.md](infra/database.md) | `migrations/` | 数据库迁移和 Schema |
+| [database.md](infra/database.md) | `packages/backend/migrations/` | 数据库迁移和 Schema |
 
 ## 维护规则
 

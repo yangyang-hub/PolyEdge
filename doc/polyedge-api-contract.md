@@ -1,5 +1,7 @@
 # PolyEdge API 契约文档
 
+> **状态（2026-06-14）**：本文是历史 API 契约草案，部分路由和实时流设计已经过时。当前 API 状态以 [../AGENTS.md](../AGENTS.md)、[../README.md](../README.md)、[modules/backend/api-app.md](modules/backend/api-app.md) 和代码为准。
+
 ## 1. 文档目标
 
 本文档定义 PolyEdge 前端 `Next.js` 控制台与 Rust 后端之间的稳定契约，包括：
@@ -30,7 +32,7 @@
 
 ### 3.1 资源命名
 
-当前实现统一挂在 `/api/v1` 前缀下，资源使用复数名词：
+当前实现统一挂在 `/api/v1` 前缀下，主要资源使用复数名词；完整路由以代码和 [modules/backend/api-app.md](modules/backend/api-app.md) 为准：
 
 1. `/api/v1/markets`
 2. `/api/v1/events`
@@ -38,14 +40,17 @@
 4. `/api/v1/signals`
 5. `/api/v1/orders`
 6. `/api/v1/positions`
-7. `/api/v1/approvals`
-8. `/api/v1/risk/state`
-9. `/api/v1/risk/alerts`
-10. `/api/v1/risk/buckets`
-11. `/api/v1/system`
-12. `/api/v1/news/source-health`
-13. `/api/v1/rewards-bot`
-14. `/api/v1/stream/{channel}`
+7. `/api/v1/pricing/estimates`
+8. `/api/v1/arbitrage/*`
+9. `/api/v1/rewards-bot`
+10. `/api/v1/copy-trading`
+11. `/api/v1/wallet-analysis`
+12. `/api/v1/risk/state`
+13. `/api/v1/system`
+14. `/api/v1/news/source-health`
+15. `/api/v1/orderbook/{token_id}`
+
+历史草案里的 `/api/v1/approvals` 和 `/api/v1/stream/{channel}` 当前不是控制台入口；前端已移除 SSE 实时流。
 
 ### 3.2 字段命名
 
@@ -340,44 +345,14 @@ Returned by `GET /api/v1/news/source-health`.
 
 ### 6.10 `RewardBotSnapshotDto`
 
-Returned by `GET /api/v1/rewards-bot`. Mutation routes currently return the same snapshot after applying the operation:
+Returned by `GET /api/v1/rewards-bot`. Mutation routes enqueue worker commands or update config, then return the latest local snapshot:
 
 1. `POST /api/v1/rewards-bot/config`
 2. `POST /api/v1/rewards-bot/run`
 3. `POST /api/v1/rewards-bot/cancel-all`
+4. `POST /api/v1/rewards-bot/reset`
 
-Current behavior is simulation-only. `mode=live` is accepted for configuration compatibility but does not submit live orders.
-
-```json
-{
-  "config": {
-    "enabled": false,
-    "mode": "dry_run",
-    "account_id": "reward_simulator",
-    "max_markets": 3,
-    "max_open_orders": 12,
-    "per_market_usd": "20",
-    "quote_size_usd": "10",
-    "min_daily_reward": "1",
-    "min_market_score": "15"
-  },
-  "status": {
-    "enabled": false,
-    "running": false,
-    "mode": "dry_run",
-    "account_id": "reward_simulator",
-    "markets_tracked": 0,
-    "eligible_markets": 0,
-    "open_orders": 0,
-    "positions": 0
-  },
-  "markets": [],
-  "quote_plans": [],
-  "orders": [],
-  "positions": [],
-  "events": []
-}
-```
+Current behavior is live-only. Current DTO fields are defined in `packages/backend/crates/contracts/src/dto/rewards.rs` and summarized in [modules/frontend/data-layer.md](modules/frontend/data-layer.md). Historical `execution_mode` / `mode=dry_run` fields have been removed from the active config surface.
 
 ---
 
@@ -463,9 +438,9 @@ Current behavior is simulation-only. `mode=live` is accepted for configuration c
 
 ---
 
-## 9. SSE 契约
+## 9. SSE 契约（历史）
 
-SSE 适合信号、风险、事件等控制台级实时状态流。
+前端 SSE 实时流已经移除，当前页面通过 REST API 初始加载。以下内容保留为历史草案，不代表当前已实现路由。
 
 ### 9.1 事件格式
 
@@ -494,7 +469,7 @@ data: {"signal_id":"sig_xxx","version":9,"lifecycle_state":"active","edge":"0.06
 8. `event.created`
 9. `order.updated`
 
-当前实现中的 `/api/v1/stream/{channel}` 是 snapshot-backed SSE：后端按间隔读取当前资源状态并输出稳定事件 ID，客户端应按 `id` 去重。后续若接入 outbox/Redis stream，应保持事件类型和 payload 兼容。
+当前后端不再暴露控制台 `/api/v1/stream/{channel}` SSE 路由；orderbook 服务另有内部 WebSocket `GET /orderbook/stream`，仅供 worker 消费 orderbook cache 更新。
 
 ---
 

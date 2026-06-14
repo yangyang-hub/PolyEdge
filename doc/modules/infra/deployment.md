@@ -1,6 +1,6 @@
 # 部署（Docker + Nginx + Scripts）
 
-最后更新：2026-06-13
+最后更新：2026-06-14
 
 ## 概述
 
@@ -13,16 +13,13 @@
 | `deploy/docker-compose.yml` | 服务编排 |
 | `deploy/api.Dockerfile` | API/Worker 合并部署镜像（debian:trixie-slim + `bin/polyedge-api`，内嵌 worker runtime） |
 | `deploy/orderbook.Dockerfile` | Orderbook 独立部署镜像（debian:trixie-slim + `bin/polyedge-orderbook`） |
-| `deploy/.env.example` | 公共环境变量模板；每个变量均有用途说明 |
-| `deploy/.env.api.example` | API 服务环境变量模板；每个变量均有用途说明 |
-| `deploy/.env.orderbook.example` | Orderbook 服务环境变量模板；每个变量均有用途说明 |
-| `deploy/.env.worker.example` | Worker 服务环境变量模板；每个变量均有用途说明 |
-| `deploy/.env.front.example` | Frontend 服务环境变量模板；每个变量均有用途说明 |
-| `deploy/.env.polymarket.example` | Polymarket CLOB V2 live、Proxy/Gnosis Safe、Deposit Wallet、Rewards live worker 配置示例；每个变量均有用途说明 |
+| `deploy/.env.api.example` | API + 内嵌 worker runtime 环境变量模板：Postgres、鉴权、orderbook service URL、worker 开关、Polymarket/AI 可选凭证 |
+| `deploy/.env.orderbook.example` | Orderbook 服务环境变量模板：Postgres、写 token、端口映射和盘口容量常用项 |
+| `deploy/.env.front.example` | Frontend 服务环境变量模板：前端端口和 build-time public API URL |
 | `scripts/deploy.sh` | 部署脚本（auto + manual 模式） |
 | `scripts/build-backend-bin.sh` | 后端二进制构建脚本 |
 | `packages/backend/Dockerfile` | 后端镜像兼容模板（旧的仓库根 context 形式；Compose 部署不再使用） |
-| `packages/front/Dockerfile` | 前端镜像（3 阶段：deps → builder → nginx:1.27-alpine；context 为 `packages/front/`） |
+| `packages/front/Dockerfile` | 前端静态镜像（本机/脚本先 `yarn build` 到 `out/`，镜像只 COPY 到 nginx:1.27-alpine；context 为 `packages/front/`） |
 | `packages/front/.dockerignore` | 前端构建 context 排除规则 |
 | `.dockerignore` | 仓库根构建 context 排除规则（兼容旧构建入口） |
 | `packages/front/nginx.conf.template` | Nginx 静态文件配置模板 |
@@ -51,12 +48,14 @@
 - Compose 不声明启动依赖，可独立部署；需要盘口的 API 路由通过 service URL 访问 orderbook
 - 通过 `POLYEDGE_ORDERBOOK__SERVICE_URL` 连接 orderbook 服务读取盘口数据；同一 Compose 项目使用 `http://polyedge-orderbook:38002`，跨服务器使用实际地址，容器内不能用 `localhost` 指向另一个服务
 - Compose 不再用宿主机变量展开覆盖 `env_file` 中的 `POLYEDGE_ORDERBOOK__SERVICE_URL`，`.env.api` 的配置会原样传入容器
-- 环境变量：`.env` + `.env.api` + `.env.worker`
+- 环境变量：`.env.api`
 - `extra_hosts: host.docker.internal:host-gateway`（访问宿主机数据库）
-- API 服务启动时内嵌启动 `WorkerRuntime`，共享同一进程；worker 后台任务通过 `deploy/.env.worker` 配置
-- Docker 部署中所有 `POLYEDGE_WORKER__...` 后台任务按代码默认值为 `false`，需要在 `deploy/.env.worker` 显式改为 `true` 才会启动对应任务
-- `.env.worker` 中的 `POLYEDGE_ORDERBOOK__WRITE_TOKEN` 必须与 orderbook 服务一致；API/front 不需要该密钥
-- Polymarket live / Deposit Wallet 配置示例见 `deploy/.env.polymarket.example`；建议只把私钥放入 `.env.worker`，避免进入 API/Front 容器环境。Rewards 账户余额由 worker 同步到数据库，资金钱包地址优先使用 `FUNDER`，CLOB balance 为 0/失败时会用链上 pUSD 余额回填 snapshot
+- API 服务启动时内嵌启动 `WorkerRuntime`，共享同一进程；worker 后台任务通过 `deploy/.env.api` 配置
+- 后端代码默认仍包含若干历史 worker 循环；Docker 模板在 `deploy/.env.api` 中显式设为 `false`，需要运行新闻、套利、rewards、copytrade 或私有对账任务时再改为 `true`
+- `.env.api` 中的 `POLYEDGE_ORDERBOOK__WRITE_TOKEN` 必须与 orderbook 服务一致；front 不需要该密钥
+- Polymarket live / Deposit Wallet / AI provider 可选配置已合并到 `deploy/.env.api.example`；建议私钥和 AI provider key 只放 `.env.api`，避免进入 Front/Orderbook 容器环境。Rewards 账户余额由 worker 同步到数据库，资金钱包地址优先使用 `FUNDER`，CLOB balance 为 0/失败时会用链上 pUSD 余额回填 snapshot
+
+### polyedge-orderbook
 
 - 独立 `deploy/orderbook.Dockerfile` 镜像，只复制 `bin/polyedge-orderbook`
 - 端口：`0.0.0.0:38002 → container:38002`
@@ -65,7 +64,7 @@
 - 职责：HTTP API（健康检查、盘口读取、内部 WS stream、token 注册）、后台市场同步（Gamma + CLOB → Postgres）、WS + poll 盘口流（→ 进程内缓存）
 - 启动顺序：先 bind HTTP 并暴露 `/healthz`，随后后台执行 initial/periodic market sync，避免外部 Polymarket API 慢响应导致容器启动健康检查失败
 - register/ingest/delete 写接口要求 `.env.orderbook` 中的 `POLYEDGE_ORDERBOOK__WRITE_TOKEN`；读盘口、batch、stats、内部 `/orderbook/stream` 和健康检查不需要该 token，需依赖内网边界限制访问
-- 环境变量：`.env` + `.env.orderbook`
+- 环境变量：`.env.orderbook`
 
 ### polyedge-front
 
@@ -108,63 +107,46 @@ API 请求不再经过前端 nginx 反向代理；跨域由 Rust API 的 `CorsLa
 
 ### 环境变量验证
 
-- `POLYEDGE_POSTGRES__URL` 不能包含 "change-me"
-- 部署 orderbook 时，`POLYEDGE_ORDERBOOK__WRITE_TOKEN` 必须存在、不能包含 "change-me"；部署 API 时（含内嵌 worker），`.env.worker` 中的同一 token 也必须存在且不能包含 "change-me"；同次部署两项服务时脚本还会校验两端值一致
+- `POLYEDGE_POSTGRES__URL` 不能包含 "change-me"；API 和 orderbook 各自的 env 文件都会独立校验
+- 部署 orderbook 时，`.env.orderbook` 的 `POLYEDGE_ORDERBOOK__WRITE_TOKEN` 必须存在、不能包含 "change-me"；部署 API 时，`.env.api` 中的同一 token 也必须存在且不能包含 "change-me"；同次部署两项服务时脚本还会校验两端值一致
 - `POLYEDGE_AUTH__DISABLED=false` 时，`POLYEDGE_AUTH__STEP_UP_CODE` 不能为空或 "change-me"
 - `POLYEDGE_AUTH__DISABLED=true` 时，deploy.sh 不要求 step-up code，API 也不要求前端发送权限头
 - 未关闭鉴权时，`POLYEDGE_INTERNAL_AUTH_DEV_BYPASS=1` 仅在 `POLYEDGE_RUNTIME__ENVIRONMENT=local` 时允许
-- `deploy/.env*.example` 中每个变量上一段注释说明了变量含义、适用服务和安全注意事项
+- 部署脚本只会自动创建目标服务需要的 `.env.api`、`.env.orderbook`、`.env.front`；高级调参优先使用前端 Settings/runtime_config 或代码默认值
 
 ## 必需环境变量
 
 | 变量 | 说明 |
 |---|---|
-| `POLYEDGE_POSTGRES__URL` | PostgreSQL 连接字符串 |
-| `POLYEDGE_ORDERBOOK__WRITE_TOKEN` | Orderbook 内部写接口共享密钥；仅放 `.env.orderbook` / `.env.worker`，两端值必须一致 |
+| `POLYEDGE_POSTGRES__URL` | PostgreSQL 连接字符串；API 和 orderbook env 都需要配置 |
+| `POLYEDGE_ORDERBOOK__WRITE_TOKEN` | Orderbook 内部写接口共享密钥；仅放 `.env.orderbook` / `.env.api`，两端值必须一致 |
+| `POLYEDGE_ORDERBOOK__SERVICE_URL` | API/内嵌 worker 访问 orderbook 服务的 HTTP 地址；放 `.env.api` |
+| `NEXT_PUBLIC_POLYEDGE_API_BASE_URL` | 前端静态构建写入浏览器 bundle 的 API 地址；放 `.env.front` |
 
-## 可选环境变量
+## 常用可选环境变量
 
-| 变量 | 默认值 | 说明 |
+精简模板不再列出所有代码默认值；部署侧只保留 `deploy/.env.api.example`、`deploy/.env.orderbook.example`、`deploy/.env.front.example` 三个服务级模板。更细的业务阈值和轮询参数优先通过 Settings/runtime_config 或代码默认值管理。
+
+| 变量/前缀 | 放置位置 | 说明 |
 |---|---|---|
-| `POLYEDGE_REDIS__URL` | — | Redis URL（可选） |
-| `POLYEDGE_AUTH__DISABLED` | `false`（代码默认；部署模板为 `true`） | 纯内网免鉴权开关，开启后 API 注入内部 admin 上下文 |
-| `POLYEDGE_AUTH__STEP_UP_CODE` | — | `POLYEDGE_AUTH__DISABLED=false` 时用于敏感操作提权 |
-| `POLYEDGE_FRONT_BIND` | `0.0.0.0` | 前端绑定地址 |
-| `POLYEDGE_FRONT_PORT` | `33002` | 前端宿主机端口 |
-| `POLYEDGE_API_BIND` | `0.0.0.0` | API 绑定地址 |
-| `POLYEDGE_API_PORT` | `38001` | API 宿主机端口 |
-| `POLYEDGE_API_IMAGE` | `polyedge-api:local` | API/Worker 共享镜像名 |
-| `POLYEDGE_ORDERBOOK_IMAGE` | `polyedge-orderbook:local` | Orderbook 独立镜像名 |
-| `NEXT_PUBLIC_POLYEDGE_API_BASE_URL` | — | 前端浏览器直连 API 地址，例如 `http://192.168.31.5:38001` |
-| `POLYEDGE_ORDERBOOK__SERVICE_URL` | `.env.api.example` 为 `http://polyedge-orderbook:38002` | API/Worker 访问 orderbook 服务的地址；worker 会用同一地址转换为 `ws(s)://.../orderbook/stream` 连接内部盘口推送，跨服务器改为实际 IP/域名 |
-| `POLYEDGE_ALLOW_IN_MEMORY_DEPLOY` | — | 设为 1 允许无数据库部署（仅演示） |
-| `POLYEDGE_LOG_FILE` | `$HOME/polyedge-deploy.log`（cron） | deploy 脚本日志文件；无法写入时回退到 stdout/stderr |
-| `POLYEDGE_DEPLOY_LOCK_FILE` | `/tmp/polyedge-deploy.lock` | deploy 脚本互斥锁 |
-| `COMPOSE_PARALLEL_LIMIT` | `1` | Docker Compose 构建并发，低配服务器默认串行构建 |
-| `POLYEDGE_WORKER__POLL_MARKET_SYNC` | `false`（代码默认） | 部署 worker 是否同步 markets/reward_markets；daemon 市场同步已迁移到 orderbook 服务 |
-| `POLYEDGE_WORKER__CONSUME_ORDERBOOK_STREAM` | `false`（代码默认） | 部署 worker 是否消费 orderbook stream；daemon 盘口流已迁移到 orderbook 服务 |
-| `POLYEDGE_WORKER__POLL_REWARD_BOT` | `false`（代码默认） | 部署 worker 是否运行 rewards full tick + fast reconcile loop |
-| `POLYEDGE_WORKER__POLL_REWARD_INFO_RISKS` | `false`（代码默认） | 部署 worker 是否运行 rewards 信息风险异步扫描；结果写入数据库缓存，live tick 只读缓存 |
-| `POLYEDGE_REWARDS__AI_OPENAI_API_KEY` | — | 可选；Rewards AI advisory 使用 OpenAI/OpenAI-compatible 格式时的 API key，仅放 worker 环境 |
-| `POLYEDGE_REWARDS__AI_ANTHROPIC_API_KEY` | — | 可选；Rewards AI advisory 使用 Anthropic Messages 格式时的 API key，仅放 worker 环境 |
-| `POLYEDGE_REWARDS__AI_OPENAI_BASE_URL` | `https://api.openai.com/v1` | OpenAI/OpenAI-compatible API base URL |
-| `POLYEDGE_REWARDS__AI_ANTHROPIC_BASE_URL` | `https://api.anthropic.com` | Anthropic API base URL |
-| `POLYEDGE_REWARDS__AI_MODEL` | `gpt-4.1-mini` | Rewards AI advisory 模型名；Anthropic provider 时应改为对应模型 |
-| `POLYEDGE_REWARDS__AI_MIN_CONFIDENCE_BPS` | `6500` | AI advisory 在 enforce 模式影响计划前的最低置信度，6500=65% |
-| `POLYEDGE_REWARDS__AI_REQUEST_TIMEOUT_SECS` | `20` | 单次 AI advisory provider 请求超时秒数 |
-| `POLYEDGE_REWARDS__AI_MAX_MARKETS_PER_CYCLE` | `12` | 每个 rewards full tick 最多请求 provider 判断的市场数 |
-| `POLYEDGE_REWARDS__INFO_RISK_INTERVAL_SECS` | `300` | 信息风险异步扫描间隔秒数 |
-| `POLYEDGE_REWARDS__INFO_RISK_MAX_MARKETS_PER_CYCLE` | `12` | 每轮信息风险最多请求 provider 判断的市场数 |
-| `POLYEDGE_REWARDS__INFO_RISK_MIN_CONFIDENCE_BPS` | `7000` | 信息风险在 enforce 模式影响计划前的最低置信度，7000=70% |
-| `POLYEDGE_REWARDS__INFO_RISK_WEB_SEARCH_ENABLED` | `false` | 仅 OpenAI Responses 格式下启用 `web_search_preview` 工具 |
-| `POLYEDGE_POLYMARKET__POLYGON_RPC_URL` | `https://polygon-bor-rpc.publicnode.com` | Worker 读取资金钱包链上 pUSD 余额的 Polygon JSON-RPC 地址 |
-| `POLYEDGE_ORDERBOOK_STREAM__MAX_TOKENS` | `3000` | orderbook stream 订阅 token 上限，过低会导致 rewards 覆盖不全，过高会增加 WS/poll 内存占用 |
-| `POLYEDGE_ORDERBOOK_STREAM__MAX_LEVELS_PER_SIDE` | `100` | 每个 token 在 orderbook 进程内缓存和 HTTP ingest 中最多保留的 bid/ask 深度档数 |
-| `POLYEDGE_ORDERBOOK_STREAM__STALE_THRESHOLD_MS` | `15000` | poll reconcile 盘口年龄阈值；0 只关闭年龄检查，TTL 过期仍生效 |
+| `POLYEDGE_RUNTIME__ENVIRONMENT` | `.env.api` / `.env.orderbook` | 部署模板为 `production`；非本地环境不要使用 `local` |
+| `POLYEDGE_AUTH__DISABLED` / `POLYEDGE_AUTH__STEP_UP_CODE` / `POLYEDGE_AUTH__KEYS_JSON` | `.env.api` | 内网免鉴权或 JWT/step-up 鉴权配置 |
+| `POLYEDGE_API_BIND` / `POLYEDGE_API_PORT` | `.env.api` | API 宿主机暴露地址和端口 |
+| `POLYEDGE_FRONT_BIND` / `POLYEDGE_FRONT_PORT` / `NEXT_PUBLIC_POLYEDGE_API_BASE_URL` | `.env.front` | 前端宿主机端口和 build-time API 地址 |
+| `POLYEDGE_ORDERBOOK__SERVICE_URL` | `.env.api` | API/内嵌 worker 访问 orderbook 服务的 HTTP 地址 |
+| `POLYEDGE_ORDERBOOK_STREAM__MAX_TOKENS` / `MAX_LEVELS_PER_SIDE` / `STALE_THRESHOLD_MS` | `.env.orderbook` | orderbook 订阅容量、盘口深度和 stale reconcile 常用调参 |
+| `POLYEDGE_NEWS__ENABLED` / `POLYEDGE_ARBITRAGE__ENABLED` / `POLYEDGE_REWARDS__ENABLED` / `POLYEDGE_COPYTRADE__ENABLED` | `.env.api` | 业务子系统总开关，部署模板默认 `false` |
+| `POLYEDGE_WORKER__POLL_*` / `POLYEDGE_WORKER__ANALYZE_*` / `POLYEDGE_WORKER__RECOMPUTE_SIGNALS` | `.env.api` | API 内嵌 worker 后台循环开关，部署模板显式设为 `false` |
+| `POLYEDGE_REWARDS__AI_*` / `POLYEDGE_REWARDS__INFO_RISK_*` | `.env.api` | AI advisory / 信息风险 provider 的 key、模型、置信度等可选配置 |
+| `POLYEDGE_POLYMARKET__ACCOUNT_ID` / `SIGNATURE_TYPE` / `FUNDER` / `PRIVATE_KEY` / `API_*` / `POLYGON_RPC_URL` | `.env.api` | Polymarket live 账户和凭证 |
+| `POLYEDGE_API_IMAGE` / `POLYEDGE_ORDERBOOK_IMAGE` / `POLYEDGE_FRONT_IMAGE` | 对应服务 env | 可选镜像 tag 覆盖；deploy.sh 会导出给 Compose interpolation |
+| `POLYEDGE_ALLOW_IN_MEMORY_DEPLOY` | `.env.api` / `.env.orderbook` | 仅演示环境允许无数据库启动 |
+
+`deploy.sh` 仍支持 `POLYEDGE_LOG_FILE`、`POLYEDGE_DEPLOY_LOCK_FILE`、`COMPOSE_PARALLEL_LIMIT`、`POLYEDGE_SKIP_SERVICES` 等脚本级变量；它们不是常规应用配置，未放入精简模板。
 
 ## Polymarket live 配置示例
 
-`deploy/.env.polymarket.example` 提供 EOA、Proxy/Gnosis Safe、Deposit Wallet（`poly_1271`）三类账户示例、rewards live worker 开关示例，以及可选 Rewards AI advisory / 信息风险 provider 配置。真实凭证默认全部注释，执行链路按账户类型复制到 `deploy/.env.worker`。API 不持有 Polymarket 私钥或 AI provider key；余额、positions、托管订单、AI advisory 和信息风险结果都由 worker/数据库链路提供。`POLYEDGE_POLYMARKET__POLYGON_RPC_URL` 可替换为自有或有 SLA 的 Polygon RPC，用于链上 pUSD 余额回填。
+Polymarket live、Deposit Wallet（`poly_1271`）和 rewards live 最小开关示例已合并到 `deploy/.env.api.example`。真实凭证默认全部注释，按账户类型在 `.env.api` 中启用。Front/Orderbook 不持有 Polymarket 私钥或 AI provider key；余额、positions、托管订单、AI advisory 和信息风险结果都由 API 内嵌 worker/数据库链路提供。`POLYEDGE_POLYMARKET__POLYGON_RPC_URL` 可替换为自有或有 SLA 的 Polygon RPC，用于链上 pUSD 余额回填。
 
 Deposit Wallet 路径要求钱包已经部署、已入金 pUSD 并完成必要 approval。当前系统不会执行 relayer wallet-create、pUSD 包装或 approval 批处理；connector 在下单前会调用 CLOB `balance-allowance/update`。
 
@@ -180,7 +162,7 @@ git add bin/polyedge-api bin/polyedge-orderbook
 只构建单个服务时可仅设置二进制名，脚本会自动选择同名 Cargo package，避免复制未重新编译的旧二进制：
 
 ```bash
-POLYEDGE_BACKEND_BINARY=polyedge-worker ./scripts/build-backend-bin.sh
+POLYEDGE_BACKEND_BINARY=polyedge-orderbook ./scripts/build-backend-bin.sh
 ```
 
 ## 当前状态
@@ -190,14 +172,14 @@ POLYEDGE_BACKEND_BINARY=polyedge-worker ./scripts/build-backend-bin.sh
 - Compose 部署使用窄构建上下文：后端只上传 `bin/`，前端只上传 `packages/front/`，避免扫描 Rust `target/`、前端 `node_modules/`、`.next/` 等大目录
 - `polyedge-front` 不再依赖 API 健康后才启动；前端静态 Nginx 可独立运行，浏览器按 `NEXT_PUBLIC_POLYEDGE_API_BASE_URL` 访问 API
 - `scripts/deploy.sh` 已防止重叠执行；前端变更 hash 包含 `packages/front/` 和 `deploy/.env.front`，会 prune `node_modules`、`.next`、`out` 等大目录；服务按目标独立部署，容器 down 且 hash 未变化时直接启动已有镜像，不会因其他服务健康失败而重复 rebuild
-- 当前部署模板默认 `POLYEDGE_AUTH__DISABLED=true`，API/front 内网交互不做权限校验；API CORS 为 permissive
-- Orderbook 服务 HTTP register/batch/ingest 入口按 `max_tokens` 和 `max_levels_per_side` 控制请求规模与缓存深度，写入时先排序再裁剪最优档位，registry source 固定上限为 32 个并在写锁内原子校验；register/ingest/delete 写接口还要求仅配置在 orderbook/worker 服务 env 的共享写 token，register 使用原子 source 替换。`/orderbook/stream` 是内部 WS 推送接口，worker rewards loop 用它更新本地盘口 cache，缺失或重连时仍通过 HTTP batch bootstrap
+- 当前 `.env.api` 模板默认 `POLYEDGE_RUNTIME__ENVIRONMENT=production` 且 `POLYEDGE_AUTH__DISABLED=true`，API/front 内网交互不做权限校验；API CORS 为 permissive
+- Orderbook 服务 HTTP register/batch/ingest 入口按 `max_tokens` 和 `max_levels_per_side` 控制请求规模与缓存深度，写入时先排序再裁剪最优档位，registry source 固定上限为 32 个并在写锁内原子校验；register/ingest/delete 写接口还要求仅配置在 `.env.orderbook` / `.env.api` 的共享写 token，register 使用原子 source 替换。`/orderbook/stream` 是内部 WS 推送接口，worker rewards loop 用它更新本地盘口 cache，缺失或重连时仍通过 HTTP batch bootstrap
 - 生产前需要：关闭 `POLYEDGE_AUTH__DISABLED`、接入真实会话体系、签名 JWT、key rotation
 
 ## 修改检查清单
 
 - [ ] 新增服务时更新 `docker-compose.yml`
-- [ ] 新增环境变量时更新 `.env.example` 和 `deploy.sh` 的验证逻辑
+- [ ] 新增环境变量时更新对应的 `deploy/.env.{api,orderbook,front}.example` 和 `deploy.sh` 的验证逻辑
 - [ ] 修改 nginx 路由时更新 `nginx.conf.template`
 - [ ] 修改构建流程时更新 Dockerfile 和构建脚本
 - [ ] 部署后验证所有容器健康检查通过

@@ -22,7 +22,7 @@ yarn build
 
 ## Docker Runtime
 
-`packages/front/Dockerfile` builds the static export and copies `out/` into an `nginx:1.27-alpine` runtime image.
+`yarn build` writes the static export to `out/`. `packages/front/Dockerfile` only copies that prebuilt `out/` directory into an `nginx:1.27-alpine` runtime image.
 
 Runtime settings:
 

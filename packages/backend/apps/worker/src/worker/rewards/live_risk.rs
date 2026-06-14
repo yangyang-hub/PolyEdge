@@ -104,12 +104,11 @@ fn live_cancel_reason(
 
 fn live_placement_orders(
     config: &RewardBotConfig,
-    account_id: &str,
+    account: &RewardAccountState,
     plans: &[RewardQuotePlan],
     books: &HashMap<String, RewardOrderBook>,
     open_orders: &[ManagedRewardOrder],
     positions: &[RewardPosition],
-    available_usd: Decimal,
     trace_id: &str,
 ) -> Vec<ManagedRewardOrder> {
     let max_markets = usize::from(config.max_markets);
@@ -126,6 +125,8 @@ fn live_placement_orders(
     let mut orders = open_orders.to_vec();
     let mut placements = Vec::new();
     let mut seq = 0usize;
+    let available_for_new_condition =
+        live_available_usd_after_unmanaged_external_buys(account, open_orders);
 
     for plan in plans.iter().filter(|plan| plan.eligible) {
         if !live_plan_has_fresh_quote_books(plan, books, config) {
@@ -155,8 +156,10 @@ fn live_placement_orders(
         // Polymarket applies its collateral validity check to the sum of all
         // open BUY orders in the same condition. Different conditions may reuse
         // the same collateral, but both YES/NO legs in one condition must fit.
+        // Open BUY orders outside this system are only available as an account
+        // aggregate, so reserve the unassigned portion conservatively.
         if existing_market_buy_notional + missing_plan_buy_notional
-            > available_usd.max(Decimal::ZERO)
+            > available_for_new_condition
         {
             continue;
         }
@@ -207,7 +210,7 @@ fn live_placement_orders(
                     seq,
                     trace_id.trim_start_matches("trc_")
                 ),
-                account_id: account_id.to_string(),
+                account_id: account.account_id.clone(),
                 condition_id: plan.condition_id.clone(),
                 token_id: leg.token_id.clone(),
                 outcome: leg.outcome.clone(),

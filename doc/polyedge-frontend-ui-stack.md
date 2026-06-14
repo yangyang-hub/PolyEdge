@@ -1,5 +1,7 @@
 # PolyEdge 前端 UI 框架与依赖建议
 
+> **状态（2026-06-14）**：本文是前端 UI 栈建议和原型背景，其中部分页面名称来自早期原型。当前前端页面和模块以 [../AGENTS.md](../AGENTS.md)、[../README.md](../README.md) 和 [modules/frontend/](modules/frontend/) 为准。
+
 ## 1. 文档目标
 
 本文档基于 `stitch_polyedge_frontend_prototype_document` 下的原型页面，确定 PolyEdge 前端在 `Next.js` 中应采用的 UI 框架路线、核心依赖和可用 skill。

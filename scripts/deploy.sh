@@ -12,7 +12,7 @@ set -Eeuo pipefail
 #
 # Each service is deployed independently with its own image — orderbook, api,
 # and front can run on different servers without cross-dependencies. The API
-# binary embeds the worker runtime and loads its task settings from .env.worker.
+# binary embeds the worker runtime and loads its task settings from .env.api.
 # Only the binaries required for the targeted services need to exist locally.
 #
 # Auto mode (default):
@@ -28,8 +28,10 @@ set -Eeuo pipefail
 #   POLYEDGE_GIT_REPO         - remote URL (only used for first clone)
 #   POLYEDGE_GIT_BRANCH       - branch to track (default: current)
 #   POLYEDGE_COMPOSE_FILE     - docker-compose file path
-#   POLYEDGE_ENV_FILE         - .env file path
-#   POLYEDGE_SKIP_ENV_VALIDATION=1 - skip .env sanity checks
+#   POLYEDGE_API_ENV_FILE     - api env file path
+#   POLYEDGE_ORDERBOOK_ENV_FILE - orderbook env file path
+#   POLYEDGE_FRONT_ENV_FILE   - frontend env file path
+#   POLYEDGE_SKIP_ENV_VALIDATION=1 - skip env sanity checks
 #   POLYEDGE_LOG_FILE         - log file path (default for cron: $HOME/polyedge-deploy.log)
 #   POLYEDGE_DEPLOY_LOCK_FILE - non-overlap lock file (default: /tmp/polyedge-deploy.lock)
 #   POLYEDGE_SKIP_SERVICES    - comma-separated services to exclude (e.g. "orderbook,front")
@@ -164,13 +166,15 @@ env_truthy() {
   [[ "${value}" == "1" || "${value}" == "true" || "${value}" == "yes" || "${value}" == "on" ]]
 }
 
-validate_env_file() {
+validate_postgres_env_file() {
   local file="$1"
+  local service="$2"
 
   if [[ "${POLYEDGE_SKIP_ENV_VALIDATION:-0}" == "1" ]]; then
     log "skipping env validation because POLYEDGE_SKIP_ENV_VALIDATION=1"
     return 0
   fi
+  [[ -f "${file}" ]] || fail "${service} env file not found: ${file}"
 
   local postgres_url
   postgres_url="$(env_value POLYEDGE_POSTGRES__URL "${file}")"
@@ -182,6 +186,16 @@ validate_env_file() {
   if [[ "${postgres_url}" == *change-me* ]]; then
     fail "POLYEDGE_POSTGRES__URL still contains change-me in ${file}."
   fi
+}
+
+validate_api_env_file() {
+  local file="$1"
+  if [[ "${POLYEDGE_SKIP_ENV_VALIDATION:-0}" == "1" ]]; then
+    log "skipping api env validation because POLYEDGE_SKIP_ENV_VALIDATION=1"
+    return 0
+  fi
+
+  validate_postgres_env_file "${file}" "api"
 
   local auth_disabled
   auth_disabled="$(env_value POLYEDGE_AUTH__DISABLED "${file}")"
@@ -198,10 +212,18 @@ validate_env_file() {
   runtime_environment="${runtime_environment:-local}"
   local dev_bypass
   dev_bypass="$(env_value POLYEDGE_INTERNAL_AUTH_DEV_BYPASS "${file}")"
-  dev_bypass="${dev_bypass:-1}"
+  dev_bypass="${dev_bypass:-0}"
   if ! env_truthy "${auth_disabled}" && [[ "${runtime_environment}" != "local" && "${dev_bypass}" == "1" ]]; then
     fail "POLYEDGE_INTERNAL_AUTH_DEV_BYPASS=1 is only allowed with POLYEDGE_RUNTIME__ENVIRONMENT=local."
   fi
+
+  local orderbook_service_url
+  orderbook_service_url="$(env_value POLYEDGE_ORDERBOOK__SERVICE_URL "${file}")"
+  if [[ -z "${orderbook_service_url}" ]]; then
+    fail "POLYEDGE_ORDERBOOK__SERVICE_URL must be set in ${file}."
+  fi
+
+  validate_orderbook_write_token "${file}" "api embedded worker runtime"
 }
 
 validate_orderbook_write_token() {
@@ -221,17 +243,59 @@ validate_orderbook_write_token() {
 
 validate_matching_orderbook_write_tokens() {
   local orderbook_file="$1"
-  local worker_file="$2"
+  local api_file="$2"
   if [[ "${POLYEDGE_SKIP_ENV_VALIDATION:-0}" == "1" ]]; then
     return 0
   fi
 
   local orderbook_write_token
-  local worker_write_token
+  local api_write_token
   orderbook_write_token="$(env_value POLYEDGE_ORDERBOOK__WRITE_TOKEN "${orderbook_file}")"
-  worker_write_token="$(env_value POLYEDGE_ORDERBOOK__WRITE_TOKEN "${worker_file}")"
-  if [[ "${orderbook_write_token}" != "${worker_write_token}" ]]; then
-    fail "POLYEDGE_ORDERBOOK__WRITE_TOKEN must match between ${orderbook_file} and ${worker_file}."
+  api_write_token="$(env_value POLYEDGE_ORDERBOOK__WRITE_TOKEN "${api_file}")"
+  if [[ "${orderbook_write_token}" != "${api_write_token}" ]]; then
+    fail "POLYEDGE_ORDERBOOK__WRITE_TOKEN must match between ${orderbook_file} and ${api_file}."
+  fi
+}
+
+ensure_env_file() {
+  local file="$1"
+  local example="$2"
+  local label="$3"
+  local -n created_ref="$4"
+
+  if [[ -f "${file}" ]]; then
+    return 0
+  fi
+  [[ -f "${example}" ]] || fail "${label} env example not found: ${example}"
+  cp "${example}" "${file}"
+  created_ref+=("${file}")
+}
+
+export_env_if_set() {
+  local file="$1"
+  local key="$2"
+  local value
+  value="$(env_value "${key}" "${file}")"
+  if [[ -n "${value}" ]]; then
+    export "${key}=${value}"
+  fi
+}
+
+load_compose_interpolation_env() {
+  if [[ -f "${api_env_file}" ]]; then
+    export_env_if_set "${api_env_file}" POLYEDGE_API_IMAGE
+    export_env_if_set "${api_env_file}" POLYEDGE_API_BIND
+    export_env_if_set "${api_env_file}" POLYEDGE_API_PORT
+  fi
+  if [[ -f "${orderbook_env_file}" ]]; then
+    export_env_if_set "${orderbook_env_file}" POLYEDGE_ORDERBOOK_IMAGE
+    export_env_if_set "${orderbook_env_file}" POLYEDGE_ORDERBOOK_BIND
+    export_env_if_set "${orderbook_env_file}" POLYEDGE_ORDERBOOK_PORT
+  fi
+  if [[ -f "${front_env_file}" ]]; then
+    export_env_if_set "${front_env_file}" POLYEDGE_FRONT_IMAGE
+    export_env_if_set "${front_env_file}" POLYEDGE_FRONT_BIND
+    export_env_if_set "${front_env_file}" POLYEDGE_FRONT_PORT
   fi
 }
 
@@ -447,55 +511,71 @@ fi
 
 # ---- compose & env setup -------------------------------------------------
 compose_file="${POLYEDGE_COMPOSE_FILE:-${deploy_dir}/deploy/docker-compose.yml}"
-env_file="${POLYEDGE_ENV_FILE:-${deploy_dir}/deploy/.env}"
-env_example="${deploy_dir}/deploy/.env.example"
 deploy_dir_path="${deploy_dir}/deploy"
-front_env_file="${deploy_dir_path}/.env.front"
+api_env_file="${POLYEDGE_API_ENV_FILE:-${deploy_dir_path}/.env.api}"
+orderbook_env_file="${POLYEDGE_ORDERBOOK_ENV_FILE:-${deploy_dir_path}/.env.orderbook}"
+front_env_file="${POLYEDGE_FRONT_ENV_FILE:-${deploy_dir_path}/.env.front}"
 
 [[ -f "${compose_file}" ]] || fail "compose file not found: ${compose_file}"
 
-if [[ ! -f "${env_file}" ]]; then
-  [[ -f "${env_example}" ]] || fail "env example not found: ${env_example}"
-  cp "${env_example}" "${env_file}"
-  for suffix in api orderbook worker front; do
-    local_example="${deploy_dir_path}/.env.${suffix}.example"
-    local_target="${deploy_dir_path}/.env.${suffix}"
-    if [[ -f "${local_example}" && ! -f "${local_target}" ]]; then
-      cp "${local_example}" "${local_target}"
-    fi
-  done
-  fail "created ${env_file} and service env files. Edit the PostgreSQL URL, matching orderbook/API-runtime write tokens, and console step-up code, then rerun this script."
+created_env_files=()
+if [[ "${mode}" == "auto" ]]; then
+  if ! should_skip_service api; then
+    ensure_env_file "${api_env_file}" "${deploy_dir_path}/.env.api.example" "api" created_env_files
+  fi
+  if ! should_skip_service orderbook; then
+    ensure_env_file "${orderbook_env_file}" "${deploy_dir_path}/.env.orderbook.example" "orderbook" created_env_files
+  fi
+  if ! should_skip_service front; then
+    ensure_env_file "${front_env_file}" "${deploy_dir_path}/.env.front.example" "front" created_env_files
+  fi
+else
+  if [[ "${target_api}" == "1" ]]; then
+    ensure_env_file "${api_env_file}" "${deploy_dir_path}/.env.api.example" "api" created_env_files
+  fi
+  if [[ "${target_orderbook}" == "1" ]]; then
+    ensure_env_file "${orderbook_env_file}" "${deploy_dir_path}/.env.orderbook.example" "orderbook" created_env_files
+  fi
+  if [[ "${target_front}" == "1" ]]; then
+    ensure_env_file "${front_env_file}" "${deploy_dir_path}/.env.front.example" "front" created_env_files
+  fi
 fi
 
-validate_env_file "${env_file}"
+if [[ ${#created_env_files[@]} -gt 0 ]]; then
+  fail "created env file(s): ${created_env_files[*]}. Edit PostgreSQL URLs, matching orderbook write tokens, frontend API URL, and auth settings, then rerun this script."
+fi
+
 if [[ "${mode}" == "auto" ]]; then
   if ! should_skip_service orderbook; then
-    validate_orderbook_write_token "${deploy_dir_path}/.env.orderbook" "orderbook"
+    validate_postgres_env_file "${orderbook_env_file}" "orderbook"
+    validate_orderbook_write_token "${orderbook_env_file}" "orderbook"
   fi
   if ! should_skip_service api; then
-    validate_orderbook_write_token "${deploy_dir_path}/.env.worker" "api embedded worker runtime"
+    validate_api_env_file "${api_env_file}"
   fi
   if ! should_skip_service orderbook && ! should_skip_service api; then
     validate_matching_orderbook_write_tokens \
-      "${deploy_dir_path}/.env.orderbook" \
-      "${deploy_dir_path}/.env.worker"
+      "${orderbook_env_file}" \
+      "${api_env_file}"
   fi
 else
   if [[ "${target_orderbook}" == "1" ]]; then
-    validate_orderbook_write_token "${deploy_dir_path}/.env.orderbook" "orderbook"
+    validate_postgres_env_file "${orderbook_env_file}" "orderbook"
+    validate_orderbook_write_token "${orderbook_env_file}" "orderbook"
   fi
   if [[ "${target_api}" == "1" ]]; then
-    validate_orderbook_write_token "${deploy_dir_path}/.env.worker" "api embedded worker runtime"
+    validate_api_env_file "${api_env_file}"
   fi
   if [[ "${target_orderbook}" == "1" && "${target_api}" == "1" ]]; then
     validate_matching_orderbook_write_tokens \
-      "${deploy_dir_path}/.env.orderbook" \
-      "${deploy_dir_path}/.env.worker"
+      "${orderbook_env_file}" \
+      "${api_env_file}"
   fi
 fi
 
 compose_cmd="$(find_compose)" || fail "Docker Compose is not installed."
 export COMPOSE_PARALLEL_LIMIT="${COMPOSE_PARALLEL_LIMIT:-1}"
+load_compose_interpolation_env
 
 # ---------------------------------------------------------------------------
 # Auto mode: per-service intelligent change detection
@@ -608,7 +688,7 @@ if [[ "${mode}" == "auto" ]]; then
       build_frontend
     fi
     log "building images: ${build_images[*]} (COMPOSE_PARALLEL_LIMIT=${COMPOSE_PARALLEL_LIMIT})"
-    ${compose_cmd} --env-file "${env_file}" -f "${compose_file}" build --pull "${build_images[@]}"
+    ${compose_cmd} -f "${compose_file}" build --pull "${build_images[@]}"
     save_deploy_state "${state_file}"
   else
     log "no image changes detected; starting existing images"
@@ -616,7 +696,7 @@ if [[ "${mode}" == "auto" ]]; then
 
   if [[ ${#restart_services[@]} -gt 0 ]]; then
     log "starting containers: ${restart_services[*]}"
-    ${compose_cmd} --env-file "${env_file}" -f "${compose_file}" up -d --remove-orphans "${restart_services[@]}"
+    ${compose_cmd} -f "${compose_file}" up -d --remove-orphans "${restart_services[@]}"
   fi
 
 else
@@ -662,16 +742,16 @@ else
 
   if [[ ${#build_images[@]} -gt 0 ]]; then
     log "building images: ${build_images[*]} (COMPOSE_PARALLEL_LIMIT=${COMPOSE_PARALLEL_LIMIT})"
-    ${compose_cmd} --env-file "${env_file}" -f "${compose_file}" build --pull "${build_images[@]}"
+    ${compose_cmd} -f "${compose_file}" build --pull "${build_images[@]}"
   fi
 
   if [[ ${#runtime_services[@]} -gt 0 ]]; then
     log "starting containers: ${runtime_services[*]}"
-    ${compose_cmd} --env-file "${env_file}" -f "${compose_file}" up -d --remove-orphans "${runtime_services[@]}"
+    ${compose_cmd} -f "${compose_file}" up -d --remove-orphans "${runtime_services[@]}"
   fi
 fi
 
 log "current container status"
-${compose_cmd} --env-file "${env_file}" -f "${compose_file}" ps
+${compose_cmd} -f "${compose_file}" ps
 
 log "=== deploy end ==="
