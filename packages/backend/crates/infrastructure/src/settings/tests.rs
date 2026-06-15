@@ -1,6 +1,8 @@
 #[cfg(test)]
 mod tests {
-    use super::{PolymarketSignatureType, Settings, edge, environment_source, quantity};
+    use super::{
+        PolymarketSignatureType, Settings, edge, environment_source, probability, quantity,
+    };
     use std::collections::HashMap;
 
     #[test]
@@ -20,7 +22,64 @@ mod tests {
         assert_eq!(settings.news.poll_interval_secs, 60);
         assert_eq!(settings.news.request_timeout_secs, 10);
         assert_eq!(settings.news.max_items_per_source, 50);
-        assert!(settings.news.sources.is_empty());
+        assert_eq!(settings.news.sources.len(), 8);
+        let expected_news_sources = [
+            (
+                "fed_press",
+                "official",
+                "https://www.federalreserve.gov/feeds/press_all.xml",
+                "0.98",
+            ),
+            (
+                "sec_press",
+                "official",
+                "https://www.sec.gov/news/pressreleases.rss",
+                "0.96",
+            ),
+            (
+                "nasa_news",
+                "official",
+                "https://www.nasa.gov/news-release/feed/",
+                "0.95",
+            ),
+            (
+                "bbc_world",
+                "news",
+                "https://feeds.bbci.co.uk/news/world/rss.xml",
+                "0.85",
+            ),
+            (
+                "npr_news",
+                "news",
+                "https://feeds.npr.org/1001/rss.xml",
+                "0.84",
+            ),
+            (
+                "coindesk",
+                "news",
+                "https://www.coindesk.com/arc/outboundfeeds/rss",
+                "0.80",
+            ),
+            (
+                "cointelegraph",
+                "news",
+                "https://cointelegraph.com/rss",
+                "0.74",
+            ),
+            ("decrypt", "news", "https://decrypt.co/feed", "0.74"),
+        ];
+        for (source, (id, source_type, url, reliability)) in settings
+            .news
+            .sources
+            .iter()
+            .zip(expected_news_sources.iter().copied())
+        {
+            assert_eq!(source.id, id);
+            assert_eq!(source.source_type, source_type);
+            assert_eq!(source.url, url);
+            assert_eq!(source.reliability, probability(reliability));
+            assert!(source.enabled);
+        }
         assert!(!settings.rewards.enabled);
         assert_eq!(settings.rewards.poll_interval_secs, 60);
         assert!(settings.worker.poll_news);

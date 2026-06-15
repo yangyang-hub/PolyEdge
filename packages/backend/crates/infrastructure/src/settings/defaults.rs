@@ -125,7 +125,7 @@ impl Default for NewsSettings {
             poll_interval_secs: 60,
             request_timeout_secs: 10,
             max_items_per_source: 50,
-            sources: Vec::new(),
+            sources: default_news_sources(),
         }
     }
 }
@@ -139,6 +139,64 @@ impl Default for NewsSourceSettings {
             reliability: probability("0.50"),
             enabled: true,
         }
+    }
+}
+
+fn default_news_sources() -> Vec<NewsSourceSettings> {
+    vec![
+        news_source(
+            "fed_press",
+            "official",
+            "https://www.federalreserve.gov/feeds/press_all.xml",
+            "0.98",
+        ),
+        news_source(
+            "sec_press",
+            "official",
+            "https://www.sec.gov/news/pressreleases.rss",
+            "0.96",
+        ),
+        news_source(
+            "nasa_news",
+            "official",
+            "https://www.nasa.gov/news-release/feed/",
+            "0.95",
+        ),
+        news_source(
+            "bbc_world",
+            "news",
+            "https://feeds.bbci.co.uk/news/world/rss.xml",
+            "0.85",
+        ),
+        news_source(
+            "npr_news",
+            "news",
+            "https://feeds.npr.org/1001/rss.xml",
+            "0.84",
+        ),
+        news_source(
+            "coindesk",
+            "news",
+            "https://www.coindesk.com/arc/outboundfeeds/rss",
+            "0.80",
+        ),
+        news_source(
+            "cointelegraph",
+            "news",
+            "https://cointelegraph.com/rss",
+            "0.74",
+        ),
+        news_source("decrypt", "news", "https://decrypt.co/feed", "0.74"),
+    ]
+}
+
+fn news_source(id: &str, source_type: &str, url: &str, reliability: &str) -> NewsSourceSettings {
+    NewsSourceSettings {
+        id: id.to_string(),
+        source_type: source_type.to_string(),
+        url: url.to_string(),
+        reliability: probability(reliability),
+        enabled: true,
     }
 }
 
