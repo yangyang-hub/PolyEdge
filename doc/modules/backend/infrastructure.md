@@ -1,6 +1,6 @@
 # infrastructure（基础设施层）
 
-最后更新：2026-06-15
+最后更新：2026-06-16
 
 ## 概述
 
@@ -41,7 +41,7 @@
 | `RiskSettings` | exposure_reference_nav、daily_pnl limits、gross/net exposure limits、kill_switch、min_signal_confidence 等 12 个字段 |
 | `PolymarketSettings` | account_id、chain_id、signature_type、funder、private_key、API credentials、CLOB/WS/Gamma/Data API/Polygon RPC host、poll limits |
 | `ArbitrageSettings` | book_source、scan_limit、scanner_version |
-| `RewardsSettings` | enabled、poll_interval、AI provider API key/base URL/model/timeout/min confidence/max markets、信息风险扫描间隔/数量/置信度/web search 开关等 |
+| `RewardsSettings` | enabled、poll_interval、AI provider API key/base URL/model/timeout/min confidence、信息风险扫描间隔/置信度/web search 开关等；旧 max markets 字段读取兼容但不再截断扫描 |
 | `NewsSettings` | enabled、poll_interval_secs、request_timeout_secs、max_items_per_source、sources（RSS/Atom 源列表） |
 | `WorkerSettings` | 各 worker 的启用标志和轮询间隔 |
 | `OrderbookStreamSettings` | WS 连接和轮询配置（默认 `max_tokens=3000`、`max_levels_per_side=100`） |
@@ -51,7 +51,7 @@
 
 所有字段使用 `#[serde(default)]`，通过 `POLYEDGE_` 前缀环境变量加载（如 `POLYEDGE_SERVER__PORT`）。`packages/backend/.env.example` 只保留本地运行常用项和安全关闭 worker 循环的必要覆盖；完整默认值以 `settings/defaults.rs` 为准，业务阈值优先通过 runtime_config/Settings 调整。未配置 `POLYEDGE_NEWS__SOURCES_JSON` 时，`NewsSettings.sources` 默认包含 8 个已验证可访问的 RSS/Atom 源：`fed_press`、`sec_press`、`nasa_news`、`bbc_world`、`npr_news`、`coindesk`、`cointelegraph`、`decrypt`；设置该变量或 runtime config `news.sources_json` 会覆盖整个列表。`POLYEDGE_POLYMARKET__SIGNATURE_TYPE` 支持 `eoa`、`proxy`、`gnosis_safe`、`poly_1271`；Deposit Wallet 使用 `poly_1271` 并通过 `POLYEDGE_POLYMARKET__FUNDER` 配置 deposit wallet 地址。`POLYEDGE_POLYMARKET__POLYGON_RPC_URL` 用于 worker 读取资金钱包链上 pUSD 余额，默认 `https://polygon-bor-rpc.publicnode.com`。
 
-进程级 rewards 默认关闭：`RewardsSettings.enabled=false`、`WorkerSettings.poll_reward_bot=false`、`WorkerSettings.poll_reward_info_risks=false`。其他历史 worker 循环在代码默认值中仍可能为 true，因此本地模板和部署侧 `deploy/.env.api.example` 会显式写入 `false` 防止 `polyedge-api` 内嵌 runtime 意外启动任务。只有部署环境显式同时开启对应 worker 开关时才启动 live poll loop 或异步信息风险扫描。AI provider 密钥只在 `RewardsSettings` 中读取（`POLYEDGE_REWARDS__AI_OPENAI_API_KEY` / `POLYEDGE_REWARDS__AI_ANTHROPIC_API_KEY`），不会进入 `RewardBotConfig`、API snapshot 或前端 public env；默认模型 `gpt-4.1-mini`、AI advisory 最低置信度 `6500` bps、信息风险最低置信度 `7000` bps、单次超时 20 秒、每轮最多 12 个市场。信息风险 OpenAI web search 默认关闭。
+进程级 rewards 默认关闭：`RewardsSettings.enabled=false`、`WorkerSettings.poll_reward_bot=false`、`WorkerSettings.poll_reward_info_risks=false`。其他历史 worker 循环在代码默认值中仍可能为 true，因此本地模板和部署侧 `deploy/.env.api.example` 会显式写入 `false` 防止 `polyedge-api` 内嵌 runtime 意外启动任务。只有部署环境显式同时开启对应 worker 开关时才启动 live poll loop 或异步信息风险扫描。AI provider 密钥只在 `RewardsSettings` 中读取（`POLYEDGE_REWARDS__AI_OPENAI_API_KEY` / `POLYEDGE_REWARDS__AI_ANTHROPIC_API_KEY`），不会进入 `RewardBotConfig`、API snapshot 或前端 public env；默认模型 `gpt-4.1-mini`、AI advisory 最低置信度 `6500` bps、信息风险最低置信度 `7000` bps、单次超时 20 秒。旧 max markets 环境变量保留读取兼容，但 AI advisory 和信息风险扫描不再按每轮最大市场数截断。信息风险 OpenAI web search 默认关闭。
 
 另有 `runtime_config` 子模块支持运行时动态配置。
 

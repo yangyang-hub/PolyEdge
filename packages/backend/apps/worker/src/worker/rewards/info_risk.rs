@@ -87,14 +87,11 @@ async fn scan_reward_info_risks_unlocked(
         .iter()
         .map(|plan| (plan.condition_id.as_str(), plan))
         .collect::<HashMap<_, _>>();
-    let max_markets =
-        usize::from(state.settings.rewards.info_risk_max_markets_per_cycle.max(1));
     let ordered_conditions = reward_info_risk_candidate_conditions(
         &candidate_markets,
         &cycle.plans,
         &cycle.open_orders,
         &cycle.positions,
-        max_markets,
     );
     report.candidates = ordered_conditions.len();
 
@@ -222,7 +219,6 @@ fn reward_info_risk_candidate_conditions(
     plans: &[RewardQuotePlan],
     open_orders: &[ManagedRewardOrder],
     positions: &[RewardPosition],
-    limit: usize,
 ) -> Vec<String> {
     let mut seen = HashSet::new();
     let mut condition_ids = Vec::new();
@@ -231,7 +227,6 @@ fn reward_info_risk_candidate_conditions(
             &mut condition_ids,
             &mut seen,
             &order.condition_id,
-            limit,
         );
     }
     for position in positions {
@@ -239,7 +234,6 @@ fn reward_info_risk_candidate_conditions(
             &mut condition_ids,
             &mut seen,
             &position.condition_id,
-            limit,
         );
     }
     for plan in plans.iter().filter(|plan| plan.eligible) {
@@ -247,7 +241,6 @@ fn reward_info_risk_candidate_conditions(
             &mut condition_ids,
             &mut seen,
             &plan.condition_id,
-            limit,
         );
     }
     for market in markets {
@@ -255,7 +248,6 @@ fn reward_info_risk_candidate_conditions(
             &mut condition_ids,
             &mut seen,
             &market.condition_id,
-            limit,
         );
     }
     condition_ids
@@ -265,11 +257,7 @@ fn push_info_risk_condition(
     condition_ids: &mut Vec<String>,
     seen: &mut HashSet<String>,
     condition_id: &str,
-    limit: usize,
 ) {
-    if condition_ids.len() >= limit {
-        return;
-    }
     let condition_id = condition_id.trim();
     if condition_id.is_empty() || !seen.insert(condition_id.to_string()) {
         return;

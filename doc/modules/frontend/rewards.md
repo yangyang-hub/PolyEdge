@@ -1,6 +1,6 @@
 # Rewards（奖励机器人）
 
-最后更新：2026-06-13
+最后更新：2026-06-16
 
 ## 概述
 
@@ -67,7 +67,7 @@
 - 市场筛选面板公开质量硬门槛；通过门槛的市场由后端继续按奖励、流动性、成交量、剩余时长和奖励 spread 综合排序。
 - 报价构造使用“挂单档位”下拉框选择买一/买二/买三，不再提供中间价“报价偏移”；默认买一。
 - 盘口选择公开 quote/selection mode、dominant 单边概率区间、退出深度、top1/top3 买盘集中度、HHI 和偏好分类评分加成；默认 `double + observe` 不改变既有双边挂单。
-- AI 建议面板保存 OpenAI/Anthropic provider、请求格式、advisory TTL、信息风险启用、observe/enforce、过滤等级和信息风险 TTL；API key、base URL、模型名、请求超时、web search 开关和每轮最大判断数只来自 worker 环境变量，不会出现在前端配置或 snapshot。报价计划表展示 AI suitability、推荐 quote mode、confidence 和首条 reason，也展示信息风险等级、类型、confidence 和摘要。
+- AI 建议面板保存 OpenAI/Anthropic provider、请求格式、advisory TTL、信息风险启用、observe/enforce、过滤等级和信息风险 TTL；API key、base URL、模型名、请求超时和 web search 开关只来自 worker 环境变量，不会出现在前端配置或 snapshot。AI advisory 与信息风险扫描由 worker 全量覆盖当前候选，优先开放订单、持仓和可挂 quote plan。报价计划表展示 AI suitability、推荐 quote mode、confidence 和首条 reason，也展示信息风险等级、类型、confidence 和摘要。
 - `per_market_usd` 表示 YES + NO 两腿合计资金上限；后端先保障按 CLOB 成本精度对齐后的两腿最小份额，再在剩余额度内靠近 `quote_size_usd` 单腿目标，页面提示与该联合预算语义一致。
 - 配置不包含 `execution_mode` 选择器（始终为 live）。提示说明 `max_markets=0`、`max_open_orders=0`、`quote_size_usd=0` 都会停止新挂单。
 - 报价计划默认展示可挂市场，本地支持全部/可挂/不可挂切换，并用状态标记说明每个当前候选计划是否符合最终过滤要求。

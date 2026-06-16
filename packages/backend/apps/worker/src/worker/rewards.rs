@@ -490,7 +490,6 @@ async fn refresh_reward_ai_advisories(
         return Ok(());
     }
 
-    let max_markets = usize::from(state.settings.rewards.ai_max_markets_per_cycle.max(1));
     let min_confidence = reward_ai_min_confidence(state.settings.rewards.ai_min_confidence_bps);
     let markets_by_condition = cycle
         .markets
@@ -498,9 +497,18 @@ async fn refresh_reward_ai_advisories(
         .map(|market| (market.condition_id.as_str(), market))
         .collect::<HashMap<_, _>>();
     let mut advisories = HashMap::<String, RewardMarketAdvisory>::new();
+    let candidate_plans =
+        reward_ai_advisory_candidate_plans(&cycle.plans, &cycle.open_orders, &cycle.positions);
+    let candidates = candidate_plans.len();
+    let mut cache_hits = 0usize;
+    let mut requested = 0usize;
+    let mut saved = 0usize;
+    let mut failures = 0usize;
+    let mut skipped_missing_market = 0usize;
 
-    for plan in cycle.plans.iter().take(max_markets) {
+    for plan in candidate_plans {
         let Some(market) = markets_by_condition.get(plan.condition_id.as_str()) else {
+            skipped_missing_market += 1;
             continue;
         };
         let request = build_reward_ai_advisory_request(
@@ -520,10 +528,12 @@ async fn refresh_reward_ai_advisories(
             .latest_market_advisory(&request)
             .await?
         {
+            cache_hits += 1;
             advisories.insert(plan.condition_id.clone(), cached);
             continue;
         }
 
+        requested += 1;
         match connector.advise(&request).await {
             Ok(decision) => {
                 let advisory = decision.into_advisory(
@@ -535,9 +545,11 @@ async fn refresh_reward_ai_advisories(
                     .reward_bot_service
                     .save_market_advisory(&advisory)
                     .await?;
+                saved += 1;
                 advisories.insert(plan.condition_id.clone(), advisory);
             }
             Err(error) => {
+                failures += 1;
                 warn!(
                     trace_id = %trace_id,
                     condition_id = %plan.condition_id,
@@ -547,6 +559,18 @@ async fn refresh_reward_ai_advisories(
             }
         }
     }
+
+    info!(
+        trace_id = %trace_id,
+        candidates,
+        cache_hits,
+        requested,
+        saved,
+        failures,
+        skipped_missing_market,
+        applied = advisories.len(),
+        "completed reward AI advisory refresh",
+    );
 
     if advisories.is_empty() {
         return Ok(());
@@ -559,6 +583,72 @@ async fn refresh_reward_ai_advisories(
     );
     state.reward_bot_service.save_quote_plans(&cycle.plans).await?;
     Ok(())
+}
+
+fn reward_ai_advisory_candidate_plans<'a>(
+    plans: &'a [RewardQuotePlan],
+    open_orders: &[ManagedRewardOrder],
+    positions: &[RewardPosition],
+) -> Vec<&'a RewardQuotePlan> {
+    let plans_by_condition = plans
+        .iter()
+        .map(|plan| (plan.condition_id.as_str(), plan))
+        .collect::<HashMap<_, _>>();
+    let mut seen = HashSet::new();
+    let mut ordered = Vec::with_capacity(plans.len());
+
+    for order in open_orders {
+        push_reward_ai_advisory_plan(
+            &mut ordered,
+            &mut seen,
+            &plans_by_condition,
+            &order.condition_id,
+        );
+    }
+    for position in positions {
+        push_reward_ai_advisory_plan(
+            &mut ordered,
+            &mut seen,
+            &plans_by_condition,
+            &position.condition_id,
+        );
+    }
+    for plan in plans.iter().filter(|plan| plan.eligible) {
+        push_reward_ai_advisory_plan(
+            &mut ordered,
+            &mut seen,
+            &plans_by_condition,
+            &plan.condition_id,
+        );
+    }
+    for plan in plans {
+        push_reward_ai_advisory_plan(
+            &mut ordered,
+            &mut seen,
+            &plans_by_condition,
+            &plan.condition_id,
+        );
+    }
+
+    ordered
+}
+
+fn push_reward_ai_advisory_plan<'a>(
+    ordered: &mut Vec<&'a RewardQuotePlan>,
+    seen: &mut HashSet<String>,
+    plans_by_condition: &HashMap<&str, &'a RewardQuotePlan>,
+    condition_id: &str,
+) {
+    let condition_id = condition_id.trim();
+    if condition_id.is_empty() {
+        return;
+    }
+    let Some(plan) = plans_by_condition.get(condition_id) else {
+        return;
+    };
+    if seen.insert(condition_id.to_string()) {
+        ordered.push(*plan);
+    }
 }
 
 fn build_reward_ai_advisory_connector(

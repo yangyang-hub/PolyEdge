@@ -164,7 +164,9 @@ async fn submit_pending_live_reward_orders(
                 continue;
             };
             order.price = floor_reward_price_to_tick(best_bid);
-            order.reason = "post-fill flatten immediately".to_string();
+            if parse_exit_rejection_count(&order.reason) == 0 {
+                order.reason = "post-fill flatten immediately".to_string();
+            }
         }
 
         let pre_submit_reason = order.reason.clone();

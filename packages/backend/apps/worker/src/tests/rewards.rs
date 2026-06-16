@@ -647,6 +647,32 @@ fn exit_min_notional_pre_submit_failure_uses_retry_backoff_marker() {
 }
 
 #[test]
+fn exit_min_notional_pre_submit_failure_increments_existing_retry_marker() {
+    let mut order = live_test_open_order("yes_live");
+    order.side = RewardOrderSide::Sell;
+    order.status = ManagedRewardOrderStatus::ExitPending;
+    order.reason =
+        "retryable live exit rejected [1/10] (post_only=false): prior rejection".to_string();
+    let error = AppError::invalid_input(
+        "POLYMARKET_NOTIONAL_INVALID",
+        "polymarket live connector requires notional >= 1.00 USD",
+    );
+
+    let (reason, severity) =
+        live_exit_pre_submit_failure(&order, &error, false, &order.reason)
+            .expect("exit notional failure should increment retry state");
+
+    assert_eq!(severity, RewardRiskSeverity::Warning);
+    assert!(reason.contains("retryable live exit rejected [2/10]"));
+
+    order.reason = reason;
+    let now = OffsetDateTime::now_utc();
+    order.updated_at = now;
+    assert!(!live_exit_retry_due(&order, now + TimeDuration::seconds(9)));
+    assert!(live_exit_retry_due(&order, now + TimeDuration::seconds(10)));
+}
+
+#[test]
 fn live_cancel_candidates_cancel_when_orderbook_missing() {
     let config = RewardBotConfig {
         account_id: "reward_live".to_string(),
