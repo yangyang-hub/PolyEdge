@@ -109,9 +109,8 @@ impl Default for RewardsSettings {
             ai_model: "gpt-4.1-mini".to_string(),
             ai_min_confidence_bps: 6500,
             ai_request_timeout_secs: 180,
-            ai_max_markets_per_cycle: 12,
             info_risk_interval_secs: 300,
-            info_risk_max_markets_per_cycle: 12,
+            info_risk_max_markets_per_cycle: u16::MAX,
             info_risk_min_confidence_bps: 7000,
             info_risk_web_search_enabled: false,
         }

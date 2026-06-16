@@ -515,14 +515,31 @@ async fn refresh_reward_ai_advisories(
         warn!(
             trace_id = %trace_id,
             provider = cycle.config.ai_provider.as_str(),
-            "reward AI advisory is enabled but provider configuration is incomplete",
+            "reward AI advisory is enabled but provider configuration is incomplete; blocking new eligible plans until provider filter passes",
         );
+        apply_reward_ai_advisories(
+            &mut cycle.plans,
+            &HashMap::new(),
+            &cycle.config,
+            reward_ai_min_confidence(state.settings.rewards.ai_min_confidence_bps),
+        );
+        state.reward_bot_service.save_quote_plans(&cycle.plans).await?;
         return Ok(());
     };
 
     let model = state.settings.rewards.ai_model.trim();
     if model.is_empty() {
-        warn!(trace_id = %trace_id, "reward AI advisory model is empty");
+        warn!(
+            trace_id = %trace_id,
+            "reward AI advisory model is empty; blocking new eligible plans until provider filter passes"
+        );
+        apply_reward_ai_advisories(
+            &mut cycle.plans,
+            &HashMap::new(),
+            &cycle.config,
+            reward_ai_min_confidence(state.settings.rewards.ai_min_confidence_bps),
+        );
+        state.reward_bot_service.save_quote_plans(&cycle.plans).await?;
         return Ok(());
     }
 
@@ -590,7 +607,7 @@ async fn refresh_reward_ai_advisories(
                     trace_id = %trace_id,
                     condition_id = %plan.condition_id,
                     error = %error,
-                    "reward AI advisory request failed; keeping deterministic plan",
+                    "reward AI advisory request failed; blocking plan until provider filter passes",
                 );
             }
         }
@@ -608,9 +625,6 @@ async fn refresh_reward_ai_advisories(
         "completed reward AI advisory refresh",
     );
 
-    if advisories.is_empty() {
-        return Ok(());
-    }
     apply_reward_ai_advisories(
         &mut cycle.plans,
         &advisories,
@@ -650,14 +664,6 @@ fn reward_ai_advisory_candidate_plans<'a>(
         );
     }
     for plan in plans.iter().filter(|plan| plan.eligible) {
-        push_reward_ai_advisory_plan(
-            &mut ordered,
-            &mut seen,
-            &plans_by_condition,
-            &plan.condition_id,
-        );
-    }
-    for plan in plans {
         push_reward_ai_advisory_plan(
             &mut ordered,
             &mut seen,

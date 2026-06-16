@@ -120,7 +120,7 @@
 
 - **`RewardAiAdvisoryConnector`**：`base_url` + API key + reqwest client，供 rewards worker 低频请求盘口适合度判断。
 - 支持三种请求格式：`openai_responses` 调用 `{base}/responses` 并使用 JSON schema structured output；`openai_chat_completions` 调用 `{base}/chat/completions` 并使用 `response_format=json_schema`；`anthropic_messages` 调用 `{base}/v1/messages`，通过 system/user prompt 要求仅返回 JSON。
-- 输出统一解析为 `RewardAiAdvisoryDecision`：`suitability=allow|watch|avoid`、`quote_mode=double|single_yes|single_no|none`、`exit_policy`、`confidence`、`reasons` 和 `metrics`；解析时会把 provider 返回的 confidence 钳制到 `0..=1`。provider HTTP、状态码、解码或 JSON 结构错误会返回 dependency error，由 worker 记录告警并保留确定性计划。
+- 输出统一解析为 `RewardAiAdvisoryDecision`：`suitability=allow|watch|avoid`、`quote_mode=double|single_yes|single_no|none`、`exit_policy`、`confidence`、`reasons` 和 `metrics`；解析时会把 provider 返回的 confidence 钳制到 `0..=1`。provider HTTP、状态码、解码或 JSON 结构错误会返回 dependency error，由 worker 记录告警，并在 AI advisory 启用时按 gating 规则阻断对应 eligible 计划，直到 provider 过滤通过。
 - 该 connector 只接收 application 层已构建的 DB/orderbook/planner/account payload，不直接访问 Polymarket 或其他市场数据源。
 
 ### Rewards Info Risk
@@ -157,7 +157,7 @@
 - Gamma 市场同步已提供 rewards 质量筛选所需的 CLOB liquidity、end time 和分级 ambiguity 数据，并支持 priority condition 刷新降低全量目录延迟对 live rewards 的影响。
 - Rewards markets 分页和 enrichment 已具备完整性保护，不再把部分补全结果作为完整目录写入；详情补全只针对缺唯一 YES/NO token 或缺有效 question 的市场，降低 CLOB 429 风险
 - Rewards 盘口连接器优先走 CLOB 批量 `/books`，并对失败或遗漏项使用单 token `/book` 回退
-- Rewards AI advisory 和信息风险 connector 已支持 OpenAI Responses、OpenAI Chat Completions 和 Anthropic Messages 三种格式；模型密钥来自 worker 环境变量，失败不阻断 live tick，provider confidence 输出会在解析时钳制到 `0..=1`。信息风险 connector 的 OpenAI web search 工具默认关闭，仅在显式环境变量开启时使用。
+- Rewards AI advisory 和信息风险 connector 已支持 OpenAI Responses、OpenAI Chat Completions 和 Anthropic Messages 三种格式；模型密钥来自 worker 环境变量，provider confidence 输出会在解析时钳制到 `0..=1`。AI advisory provider 失败不终止 live tick，但在 AI 开启时会让对应 eligible 计划保持不可挂；信息风险 provider 失败只保留上一版缓存/确定性路径。信息风险 connector 的 OpenAI web search 工具默认关闭，仅在显式环境变量开启时使用。
 - Orderbook 服务客户端已支持 HTTP batch/bootstrap 与内部 WS 推送；worker 长期 rewards loop 可用 WS 更新本地 cache，缺失或重连时回退 HTTP batch
 - Data API positions 已按完整快照分页读取；不完整或失败的响应不会被 rewards worker 用于替换持仓
 - Paper Trading 执行器已完整实现

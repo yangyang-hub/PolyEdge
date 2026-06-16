@@ -198,16 +198,35 @@ pub fn apply_reward_ai_advisories(
 
     for plan in plans {
         let Some(advisory) = advisories.get(&plan.condition_id).cloned() else {
+            reject_ai_gated_plan(
+                plan,
+                "AI advisory pending: market has not passed provider filter",
+            );
             continue;
         };
         plan.ai_advisory = Some(advisory.clone());
-        if config.selection_mode != RewardSelectionMode::Enforce
-            || advisory.confidence < min_confidence
-        {
+        if advisory.confidence < min_confidence {
+            reject_ai_gated_plan(
+                plan,
+                &format!(
+                    "AI advisory confidence {} below required {}",
+                    advisory.confidence, min_confidence
+                ),
+            );
             continue;
         }
         enforce_reward_ai_advisory(plan, &advisory, config);
     }
+}
+
+fn reject_ai_gated_plan(plan: &mut RewardQuotePlan, reason: &str) {
+    if !plan.eligible {
+        return;
+    }
+    plan.eligible = false;
+    plan.quote_mode = RewardPlanQuoteMode::None;
+    plan.legs.clear();
+    plan.reason = reason.to_string();
 }
 
 fn enforce_reward_ai_advisory(
@@ -233,7 +252,10 @@ fn enforce_reward_ai_advisory(
         return;
     }
 
-    if !plan.eligible || config.quote_mode != RewardQuoteMode::Auto {
+    if !plan.eligible
+        || config.selection_mode != RewardSelectionMode::Enforce
+        || config.quote_mode != RewardQuoteMode::Auto
+    {
         return;
     }
 

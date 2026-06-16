@@ -138,7 +138,7 @@ API 请求不再经过前端 nginx 反向代理；跨域由 Rust API 的 `CorsLa
 | `POLYEDGE_ORDERBOOK_STREAM__MAX_TOKENS` / `MAX_LEVELS_PER_SIDE` / `STALE_THRESHOLD_MS` | `.env.orderbook` | orderbook 订阅容量、盘口深度和 stale reconcile 常用调参 |
 | `POLYEDGE_NEWS__ENABLED` / `POLYEDGE_NEWS__SOURCES_JSON` / `POLYEDGE_ARBITRAGE__ENABLED` / `POLYEDGE_REWARDS__ENABLED` / `POLYEDGE_COPYTRADE__ENABLED` | `.env.api` | 业务子系统总开关；新闻采集默认 `true`，其余业务子系统默认 `false`；新闻源列表在模板中显式写入当前默认 RSS/Atom 源 |
 | `POLYEDGE_WORKER__POLL_*` / `POLYEDGE_WORKER__ANALYZE_*` / `POLYEDGE_WORKER__RECOMPUTE_SIGNALS` | `.env.api` | API 内嵌 worker 后台循环开关；新闻 poll 默认 `true`，其他循环默认 `false` |
-| `POLYEDGE_REWARDS__AI_*` / `POLYEDGE_REWARDS__INFO_RISK_*` | `.env.api` | AI advisory / 信息风险 provider 的 key、模型、置信度等可选配置；AI provider 单次请求默认超时 180 秒 |
+| `POLYEDGE_REWARDS__AI_*` / `POLYEDGE_REWARDS__INFO_RISK_*` | `.env.api` | AI advisory / 信息风险 provider 的 key、模型、置信度等可选配置；AI provider 单次请求默认超时 180 秒；AI advisory 每轮最大市场数环境变量已移除，信息风险旧 max markets 变量只兼容读取且不再限制每轮扫描数量 |
 | `POLYEDGE_POLYMARKET__ACCOUNT_ID` / `SIGNATURE_TYPE` / `FUNDER` / `PRIVATE_KEY` / `API_*` / `POLYGON_RPC_URL` | `.env.api` | Polymarket live 账户和凭证 |
 | `POLYEDGE_API_IMAGE` / `POLYEDGE_ORDERBOOK_IMAGE` / `POLYEDGE_FRONT_IMAGE` | 对应服务 env | 可选镜像 tag 覆盖；deploy.sh 会导出给 Compose interpolation |
 | `POLYEDGE_ALLOW_IN_MEMORY_DEPLOY` | `.env.api` / `.env.orderbook` | 仅演示环境允许无数据库启动 |

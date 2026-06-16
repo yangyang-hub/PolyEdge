@@ -58,6 +58,48 @@ fn live_test_plan(now: OffsetDateTime) -> RewardQuotePlan {
     }
 }
 
+#[test]
+fn reward_ai_advisory_candidates_include_open_orders_positions_and_eligible_plans() {
+    let now = OffsetDateTime::now_utc();
+    let mut eligible = live_test_plan(now);
+    eligible.condition_id = "cond_eligible".to_string();
+
+    let mut open_order_plan = live_test_plan(now);
+    open_order_plan.condition_id = "cond_open".to_string();
+    open_order_plan.eligible = false;
+
+    let mut position_plan = live_test_plan(now);
+    position_plan.condition_id = "cond_position".to_string();
+    position_plan.eligible = false;
+
+    let mut rejected = live_test_plan(now);
+    rejected.condition_id = "cond_rejected".to_string();
+    rejected.eligible = false;
+    rejected.reason = "below initial score".to_string();
+
+    let mut open_order = live_test_open_order("yes_live");
+    open_order.condition_id = "cond_open".to_string();
+    let position = RewardPosition {
+        account_id: "reward_live".to_string(),
+        condition_id: "cond_position".to_string(),
+        token_id: "yes_live".to_string(),
+        outcome: "YES".to_string(),
+        size: reward_decimal("5"),
+        avg_price: reward_decimal("0.50"),
+        realized_pnl: Decimal::ZERO,
+        updated_at: now,
+    };
+
+    let plans = vec![rejected, eligible, position_plan, open_order_plan];
+    let candidates = reward_ai_advisory_candidate_plans(&plans, &[open_order], &[position]);
+    let condition_ids = candidates
+        .iter()
+        .map(|plan| plan.condition_id.as_str())
+        .collect::<Vec<_>>();
+
+    assert_eq!(condition_ids, vec!["cond_open", "cond_position", "cond_eligible"]);
+}
+
 fn live_test_book(token_id: &str, observed_at: OffsetDateTime) -> RewardOrderBook {
     RewardOrderBook {
         token_id: token_id.to_string(),

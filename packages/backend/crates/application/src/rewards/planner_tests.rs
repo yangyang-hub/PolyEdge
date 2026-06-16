@@ -233,6 +233,84 @@ fn ai_enforce_avoid_rejects_plan_without_relaxing_checks() {
 }
 
 #[test]
+fn ai_enabled_rejects_eligible_plan_without_provider_decision() {
+    let config = RewardBotConfig {
+        ai_advisory_enabled: true,
+        min_market_score: Decimal::ZERO,
+        ..RewardBotConfig::default()
+    };
+    let mut plans = vec![build_reward_quote_plan(
+        &test_market(decimal("5")),
+        &test_books(),
+        &config,
+    )];
+
+    apply_reward_ai_advisories(&mut plans, &HashMap::new(), &config, decimal("0.65"));
+
+    assert!(!plans[0].eligible);
+    assert!(plans[0].legs.is_empty());
+    assert_eq!(plans[0].quote_mode, RewardPlanQuoteMode::None);
+    assert!(plans[0].reason.contains("AI advisory pending"));
+}
+
+#[test]
+fn ai_enabled_rejects_low_confidence_allow_decision() {
+    let config = RewardBotConfig {
+        ai_advisory_enabled: true,
+        min_market_score: Decimal::ZERO,
+        ..RewardBotConfig::default()
+    };
+    let mut plans = vec![build_reward_quote_plan(
+        &test_market(decimal("5")),
+        &test_books(),
+        &config,
+    )];
+    let advisory = test_advisory(
+        RewardAiSuitability::Allow,
+        RewardPlanQuoteMode::Double,
+        decimal("0.40"),
+    );
+    let advisories = HashMap::from([(advisory.condition_id.clone(), advisory)]);
+
+    apply_reward_ai_advisories(&mut plans, &advisories, &config, decimal("0.65"));
+
+    assert!(!plans[0].eligible);
+    assert!(plans[0].legs.is_empty());
+    assert_eq!(plans[0].quote_mode, RewardPlanQuoteMode::None);
+    assert!(plans[0].reason.contains("below required"));
+    assert!(plans[0].ai_advisory.is_some());
+}
+
+#[test]
+fn ai_enabled_allows_high_confidence_provider_pass_in_observe_mode() {
+    let config = RewardBotConfig {
+        ai_advisory_enabled: true,
+        selection_mode: RewardSelectionMode::Observe,
+        quote_mode: RewardQuoteMode::Auto,
+        min_market_score: Decimal::ZERO,
+        ..RewardBotConfig::default()
+    };
+    let mut plans = vec![build_reward_quote_plan(
+        &test_market(decimal("5")),
+        &test_books(),
+        &config,
+    )];
+    let advisory = test_advisory(
+        RewardAiSuitability::Allow,
+        RewardPlanQuoteMode::SingleNo,
+        decimal("0.80"),
+    );
+    let advisories = HashMap::from([(advisory.condition_id.clone(), advisory)]);
+
+    apply_reward_ai_advisories(&mut plans, &advisories, &config, decimal("0.65"));
+
+    assert!(plans[0].eligible);
+    assert_eq!(plans[0].quote_mode, RewardPlanQuoteMode::Double);
+    assert_eq!(plans[0].legs.len(), 2);
+    assert!(plans[0].ai_advisory.is_some());
+}
+
+#[test]
 fn combined_market_budget_rejects_unaffordable_minimum_sizes() {
     let config = RewardBotConfig {
         per_market_usd: decimal("20"),

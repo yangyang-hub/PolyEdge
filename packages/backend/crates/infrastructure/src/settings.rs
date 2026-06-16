@@ -142,7 +142,6 @@ pub struct RewardsSettings {
     pub ai_model: String,
     pub ai_min_confidence_bps: u16,
     pub ai_request_timeout_secs: u64,
-    pub ai_max_markets_per_cycle: u16,
     pub info_risk_interval_secs: u64,
     pub info_risk_max_markets_per_cycle: u16,
     pub info_risk_min_confidence_bps: u16,
