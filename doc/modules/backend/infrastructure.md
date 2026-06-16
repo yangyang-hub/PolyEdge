@@ -24,7 +24,7 @@
 | `auth.rs` + `auth/` | 认证中间件和令牌验证 |
 | `runtime.rs` | `AppState`、`Runtime`、`RuntimeDependencies` |
 | `http.rs` | `HttpError`、hash/trace 辅助函数 |
-| `telemetry.rs` | 结构化日志初始化 |
+| `telemetry.rs` | 结构化日志初始化；默认 filter 覆盖 API 内嵌 worker info 日志 |
 
 ## 核心数据结构
 
@@ -151,6 +151,7 @@
 
 - Postgres 和 in-memory 双实现均已就绪
 - 配置通过环境变量加载，支持 `.env` 文件
+- 未设置 `RUST_LOG` 时，默认 tracing filter 为 `{service_name}=debug,polyedge_worker=info,tower_http=info,sqlx=info`，因此 `polyedge-api` 内嵌 worker runtime 的 info/warn 日志会出现在 API 服务日志中；显式设置 `RUST_LOG` 会覆盖该默认值
 - 新闻源默认值已内置在 `settings/defaults.rs`；部署模板仍默认关闭 news 子系统和 worker poll loop，只有显式开启后才会抓取默认或自定义 RSS/Atom 源
 - 认证中间件支持 JWT/dev-auth 和内网免鉴权模式；当前部署模板默认 `POLYEDGE_AUTH__DISABLED=true`
 - Orderbook cache 当前 runtime 使用进程内 `InMemoryOrderbookCache`；Redis 实现保留但未接入默认 runtime
