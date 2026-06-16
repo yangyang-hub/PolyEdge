@@ -3146,8 +3146,10 @@ name = "polyedge-connectors"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "base64",
  "chrono",
  "futures",
+ "hmac",
  "polyedge-application",
  "polyedge-domain",
  "polymarket_client_sdk_v2",
@@ -3155,6 +3157,7 @@ dependencies = [
  "rust_decimal",
  "serde",
  "serde_json",
+ "sha2",
  "time",
  "tokio",
  "tokio-tungstenite",

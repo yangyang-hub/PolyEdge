@@ -40,6 +40,36 @@ mod tests {
     }
 
     #[test]
+    fn reward_earnings_json_sum_handles_total_and_detail_shapes() {
+        let value = serde_json::json!({
+            "data": [
+                {
+                    "condition_id": "0x1",
+                    "earnings": [
+                        { "earnings": "1.25", "asset_rate": "1" },
+                        { "earnings": "2.00", "asset_rate": "0.5" }
+                    ]
+                },
+                { "earnings": "0.75", "asset_rate": "2" }
+            ],
+            "next_cursor": "LTE=",
+            "count": 2
+        });
+
+        assert_eq!(
+            sum_reward_earnings_json_usd(&value),
+            Decimal::from_str_exact("3.75").expect("decimal")
+        );
+    }
+
+    #[test]
+    fn raw_json_parser_accepts_first_value_with_trailing_input() {
+        let value = parse_first_json_value(r#"{"heartbeat_id":"abc"} trailing"#).expect("json");
+
+        assert_eq!(json_string_field(&value, "heartbeat_id").as_deref(), Some("abc"));
+    }
+
+    #[test]
     fn polygon_pusd_balance_hex_is_converted_to_decimal_usd() {
         let balance = erc20_hex_units_to_decimal(
             "0x00000000000000000000000000000000000000000000000000000000013125b5",

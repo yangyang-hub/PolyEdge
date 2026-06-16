@@ -1,9 +1,12 @@
+use base64::Engine as _;
+use base64::engine::general_purpose::URL_SAFE;
+use hmac::{Hmac, Mac as _};
 use polyedge_domain::{
     AmbiguityLevel, AppError, MarketStatus, OrderStatus, Probability, Quantity, Result, SignalSide,
     TradabilityStatus, UsdAmount,
 };
 use polymarket_client_sdk::auth::state::{Authenticated, Unauthenticated};
-use polymarket_client_sdk::auth::{Credentials, LocalSigner, Normal, Signer, Uuid};
+use polymarket_client_sdk::auth::{Credentials, ExposeSecret, LocalSigner, Normal, Signer, Uuid};
 use polymarket_client_sdk::clob::types::request::{
     BalanceAllowanceRequest, OrderBookSummaryRequest, OrdersRequest, TradesRequest,
     UpdateBalanceAllowanceRequest,
@@ -27,6 +30,7 @@ use polymarket_client_sdk::types::{Address, B256, U256};
 use polymarket_client_sdk::ws::config::Config as WsConfig;
 use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive;
+use sha2::Sha256;
 use std::str::FromStr;
 use std::time::Duration;
 use time::OffsetDateTime;

@@ -79,16 +79,25 @@ impl LivePolymarketConnector {
                     format!("invalid Polymarket heartbeat id: {error}"),
                 )
             })?;
-        self.client
+        match self
+            .client
             .post_heartbeat(heartbeat_id)
             .await
             .map(|response| response.heartbeat_id.to_string())
-            .map_err(|error| {
-                AppError::dependency_unavailable(
-                    "POLYMARKET_HEARTBEAT_FAILED",
-                    format!("failed to post Polymarket heartbeat: {error}"),
-                )
-            })
+        {
+            Ok(next_heartbeat_id) => Ok(next_heartbeat_id),
+            Err(error) => self
+                .raw_post_heartbeat(None)
+                .await
+                .map_err(|fallback_error| {
+                    AppError::dependency_unavailable(
+                        "POLYMARKET_HEARTBEAT_FAILED",
+                        format!(
+                            "failed to post Polymarket heartbeat: {error}; raw restart failed: {fallback_error}"
+                        ),
+                    )
+                }),
+        }
     }
 
     pub fn connect_user_ws(&self) -> Result<ClobWsClient<Authenticated<Normal>>> {
@@ -190,21 +199,27 @@ impl LivePolymarketConnector {
     async fn reward_total_earnings_for_day_usd(&self, date: chrono::NaiveDate) -> Result<Decimal> {
         // Polymarket's rewards page usually uses the aggregated daily endpoint
         // for its "Daily Rewards" total.
-        let earnings = self
+        match self
             .client
             .total_earnings_for_user_for_day(date)
             .await
-            .map_err(|error| {
-                AppError::dependency_unavailable(
-                    "POLYMARKET_REWARD_EARNINGS_QUERY_FAILED",
-                    format!("failed to query Polymarket reward earnings for {date}: {error}"),
-                )
-            })?;
-        Ok(sum_reward_earning_amounts_usd(
-            earnings
-                .into_iter()
-                .map(|earning| (earning.earnings, earning.asset_rate)),
-        ))
+        {
+            Ok(earnings) => Ok(sum_reward_earning_amounts_usd(
+                earnings
+                    .into_iter()
+                    .map(|earning| (earning.earnings, earning.asset_rate)),
+            )),
+            Err(error) => self.raw_reward_total_earnings_for_day_usd(date).await.map_err(
+                |fallback_error| {
+                    AppError::dependency_unavailable(
+                        "POLYMARKET_REWARD_EARNINGS_QUERY_FAILED",
+                        format!(
+                            "failed to query Polymarket reward earnings for {date}: {error}; raw fallback failed: {fallback_error}"
+                        ),
+                    )
+                },
+            ),
+        }
     }
 
     async fn reward_detailed_earnings_for_day_usd(
@@ -218,18 +233,26 @@ impl LivePolymarketConnector {
         let mut amounts = Vec::new();
 
         for _ in 0..CLOB_MAX_PAGES {
-            let page = self
+            let page = match self
                 .client
                 .earnings_for_user_for_day(date, next_cursor.clone())
                 .await
-                .map_err(|error| {
-                    AppError::dependency_unavailable(
-                        "POLYMARKET_REWARD_EARNINGS_QUERY_FAILED",
-                        format!(
-                            "failed to query detailed Polymarket reward earnings for {date}: {error}"
-                        ),
-                    )
-                })?;
+            {
+                Ok(page) => page,
+                Err(error) => {
+                    return self
+                        .raw_reward_detailed_earnings_for_day_usd(date)
+                        .await
+                        .map_err(|fallback_error| {
+                            AppError::dependency_unavailable(
+                                "POLYMARKET_REWARD_EARNINGS_QUERY_FAILED",
+                                format!(
+                                    "failed to query detailed Polymarket reward earnings for {date}: {error}; raw fallback failed: {fallback_error}"
+                                ),
+                            )
+                        });
+                }
+            };
 
             amounts.extend(
                 page.data
@@ -697,6 +720,7 @@ impl LivePolymarketConnector {
 
 }
 
+include!("live/raw.rs");
 include!("live/trade_reconciliation.rs");
 include!("live/trade_sync.rs");
 

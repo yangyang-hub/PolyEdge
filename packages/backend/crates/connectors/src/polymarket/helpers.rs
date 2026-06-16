@@ -369,6 +369,106 @@ fn greatest_common_divisor(mut left: u64, mut right: u64) -> u64 {
     left
 }
 
+fn signature_type_query(signature_type: PolymarketSignatureScheme) -> String {
+    let signature_type: SignatureType = signature_type.into();
+    (signature_type as u8).to_string()
+}
+
+fn parse_first_json_value(body: &str) -> Result<serde_json::Value> {
+    serde_json::Deserializer::from_str(body)
+        .into_iter::<serde_json::Value>()
+        .next()
+        .transpose()
+        .map_err(|error| {
+            AppError::dependency_unavailable(
+                "POLYMARKET_RAW_RESPONSE_DECODE_FAILED",
+                format!("failed to decode Polymarket raw JSON response: {error}"),
+            )
+        })?
+        .ok_or_else(|| {
+            AppError::dependency_unavailable(
+                "POLYMARKET_RAW_RESPONSE_EMPTY",
+                "Polymarket raw JSON response was empty",
+            )
+        })
+}
+
+fn json_string_field(value: &serde_json::Value, field: &str) -> Option<String> {
+    value
+        .get(field)
+        .and_then(serde_json::Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .map(ToString::to_string)
+}
+
+fn sum_reward_earnings_json_usd(value: &serde_json::Value) -> Decimal {
+    match value {
+        serde_json::Value::Array(items) => items.iter().map(sum_reward_earnings_json_usd).sum(),
+        serde_json::Value::Object(object) => {
+            if let Some(data) = object.get("data") {
+                return sum_reward_earnings_json_usd(data);
+            }
+
+            match object.get("earnings") {
+                Some(serde_json::Value::Array(items)) => {
+                    items.iter().map(sum_reward_earnings_json_usd).sum()
+                }
+                Some(earnings) => {
+                    let earnings = decimal_from_json(earnings).unwrap_or(Decimal::ZERO);
+                    let asset_rate = object
+                        .get("asset_rate")
+                        .and_then(decimal_from_json)
+                        .unwrap_or(Decimal::ONE);
+                    earnings * asset_rate
+                }
+                None => Decimal::ZERO,
+            }
+        }
+        _ => Decimal::ZERO,
+    }
+}
+
+fn decimal_from_json(value: &serde_json::Value) -> Option<Decimal> {
+    match value {
+        serde_json::Value::String(value) => Decimal::from_str_exact(value).ok(),
+        serde_json::Value::Number(value) => Decimal::from_str_exact(&value.to_string()).ok(),
+        _ => None,
+    }
+}
+
+fn insert_header(
+    headers: &mut reqwest::header::HeaderMap,
+    name: &'static str,
+    value: String,
+) -> Result<()> {
+    let value = reqwest::header::HeaderValue::from_str(&value).map_err(|error| {
+        AppError::internal(
+            "POLYMARKET_RAW_HEADER_INVALID",
+            format!("failed to build Polymarket raw header {name}: {error}"),
+        )
+    })?;
+    headers.insert(name, value);
+    Ok(())
+}
+
+fn l2_hmac_signature(secret: &str, message: &str) -> Result<String> {
+    let decoded_secret = URL_SAFE.decode(secret).map_err(|error| {
+        AppError::internal(
+            "POLYMARKET_RAW_SECRET_DECODE_FAILED",
+            format!("failed to decode Polymarket API secret: {error}"),
+        )
+    })?;
+    let mut mac = Hmac::<Sha256>::new_from_slice(&decoded_secret).map_err(|error| {
+        AppError::internal(
+            "POLYMARKET_RAW_SIGNATURE_FAILED",
+            format!("failed to initialize Polymarket HMAC: {error}"),
+        )
+    })?;
+    mac.update(message.as_bytes());
+
+    Ok(URL_SAFE.encode(mac.finalize().into_bytes()))
+}
+
 fn trade_matches_order(
     trade: &TradeResponse,
     external_order_id: &str,
