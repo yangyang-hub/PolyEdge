@@ -1,6 +1,6 @@
 # contracts（HTTP API DTO 层）
 
-最后更新：2026-06-12
+最后更新：2026-06-16
 
 ## 概述
 
@@ -50,7 +50,7 @@
 - 覆盖 markets、events、signals、orders、trades、positions、risk、arbitrage、rewards、copytrade、wallet-analysis、news、system
 - Rewards snapshot 查询契约包含订单后端分页字段，响应分页元数据由 application 的 `RewardBotSnapshot.orders_page` 序列化输出
 - Rewards snapshot 的 `orders` 与 `orders_page` 都描述本地 managed-order 查询；外部账户全量开放订单不属于当前响应契约
-- Rewards config DTO 公开市场质量门槛和 `quote_bid_rank`，不再公开旧报价偏移、模拟填单或 stale force-cancel 配置
+- Rewards config DTO 公开市场质量门槛、`quote_bid_rank`、AI provider/request format 和信息风险配置；`RewardAiProvider::OpenAi` 的 wire value 固定为 `openai`，OpenAI request format 固定为 `openai_responses` / `openai_chat_completions`，并兼容读取旧的 `open_ai*` 拼写。不再公开旧报价偏移、模拟填单或 stale force-cancel 配置
 
 ## 修改检查清单
 

@@ -70,7 +70,7 @@ impl LivePolymarketConnector {
 
     /// Send one CLOB heartbeat and return the id required by the next call.
     pub async fn post_heartbeat(&self, heartbeat_id: Option<&str>) -> Result<String> {
-        let heartbeat_id = heartbeat_id
+        let parsed_heartbeat_id = heartbeat_id
             .map(Uuid::from_str)
             .transpose()
             .map_err(|error| {
@@ -81,22 +81,32 @@ impl LivePolymarketConnector {
             })?;
         match self
             .client
-            .post_heartbeat(heartbeat_id)
+            .post_heartbeat(parsed_heartbeat_id)
             .await
             .map(|response| response.heartbeat_id.to_string())
         {
             Ok(next_heartbeat_id) => Ok(next_heartbeat_id),
-            Err(error) => self
-                .raw_post_heartbeat(None)
-                .await
-                .map_err(|fallback_error| {
+            Err(error) => {
+                let same_chain_error = if heartbeat_id.is_some() {
+                    match self.raw_post_heartbeat(heartbeat_id).await {
+                        Ok(next_heartbeat_id) => return Ok(next_heartbeat_id),
+                        Err(error) => Some(error),
+                    }
+                } else {
+                    None
+                };
+                self.raw_post_heartbeat(None).await.map_err(|restart_error| {
+                    let same_chain_detail = same_chain_error
+                        .map(|error| error.to_string())
+                        .unwrap_or_else(|| "not attempted".to_string());
                     AppError::dependency_unavailable(
                         "POLYMARKET_HEARTBEAT_FAILED",
                         format!(
-                            "failed to post Polymarket heartbeat: {error}; raw restart failed: {fallback_error}"
+                            "failed to post Polymarket heartbeat: {error}; raw same-chain fallback failed: {same_chain_detail}; raw restart failed: {restart_error}"
                         ),
                     )
-                }),
+                })
+            }
         }
     }
 
@@ -198,7 +208,21 @@ impl LivePolymarketConnector {
 
     async fn reward_total_earnings_for_day_usd(&self, date: chrono::NaiveDate) -> Result<Decimal> {
         // Polymarket's rewards page usually uses the aggregated daily endpoint
-        // for its "Daily Rewards" total.
+        // for its "Daily Rewards" total. The SDK endpoint wrapper does not
+        // expose `sponsored=true`, so use the raw authenticated path first.
+        match self
+            .raw_reward_total_earnings_for_day_usd(date, true)
+            .await
+        {
+            Ok(total) => return Ok(total),
+            Err(error) => {
+                warn!(
+                    error = %error,
+                    "failed to query sponsored Polymarket reward earnings total; falling back to SDK total"
+                );
+            }
+        }
+
         match self
             .client
             .total_earnings_for_user_for_day(date)
@@ -209,16 +233,17 @@ impl LivePolymarketConnector {
                     .into_iter()
                     .map(|earning| (earning.earnings, earning.asset_rate)),
             )),
-            Err(error) => self.raw_reward_total_earnings_for_day_usd(date).await.map_err(
-                |fallback_error| {
+            Err(error) => self
+                .raw_reward_total_earnings_for_day_usd(date, false)
+                .await
+                .map_err(|fallback_error| {
                     AppError::dependency_unavailable(
                         "POLYMARKET_REWARD_EARNINGS_QUERY_FAILED",
                         format!(
                             "failed to query Polymarket reward earnings for {date}: {error}; raw fallback failed: {fallback_error}"
                         ),
                     )
-                },
-            ),
+                }),
         }
     }
 
@@ -240,8 +265,8 @@ impl LivePolymarketConnector {
             {
                 Ok(page) => page,
                 Err(error) => {
-                    return self
-                        .raw_reward_detailed_earnings_for_day_usd(date)
+                    let native = self
+                        .raw_reward_detailed_earnings_for_day_usd(date, false)
                         .await
                         .map_err(|fallback_error| {
                             AppError::dependency_unavailable(
@@ -250,7 +275,9 @@ impl LivePolymarketConnector {
                                     "failed to query detailed Polymarket reward earnings for {date}: {error}; raw fallback failed: {fallback_error}"
                                 ),
                             )
-                        });
+                        })?;
+                    return Ok((native + self.sponsored_detailed_earnings_for_day_usd(date).await)
+                        .round_dp(4));
                 }
             };
 
@@ -266,7 +293,22 @@ impl LivePolymarketConnector {
             next_cursor = Some(page.next_cursor);
         }
 
-        Ok(sum_reward_earning_amounts_usd(amounts))
+        Ok((sum_reward_earning_amounts_usd(amounts)
+            + self.sponsored_detailed_earnings_for_day_usd(date).await)
+        .round_dp(4))
+    }
+
+    async fn sponsored_detailed_earnings_for_day_usd(&self, date: chrono::NaiveDate) -> Decimal {
+        match self.raw_reward_detailed_earnings_for_day_usd(date, true).await {
+            Ok(total) => total,
+            Err(error) => {
+                warn!(
+                    error = %error,
+                    "failed to query sponsored Polymarket reward earnings detail fallback"
+                );
+                Decimal::ZERO
+            }
+        }
     }
 
     /// List all open orders for the authenticated account, paginating

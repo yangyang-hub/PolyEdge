@@ -75,7 +75,7 @@
 - 报价计划和订单搜索框使用独立防抖输入组件；外部 query 重置通过组件 key 同步，不在 React effect 中同步 setState。
 - 首屏不加载全量 reward markets，避免奖励市场数量过大时长时间停留在 loading skeleton。
 - Wallet balance、Positions 和 Orders 表格展示 worker 同步到数据库的 rewards 账户视图；余额显示资金钱包 pUSD，资金钱包地址优先使用 `POLYEDGE_POLYMARKET__FUNDER`，未配置时使用 `ACCOUNT_ID`。
-- 今日已赚奖励展示 worker 同步到 `account.reward_earned_usd` 的 UTC 当日 maker rewards 值；worker 优先读取认证 CLOB `GET /rewards/user/total` 聚合端点，聚合端点为空、为 0 或不可用时回退分页读取 `GET /rewards/user` 明细并按 `earnings * asset_rate` 求和。前端不直接访问 Polymarket，账户快照停更或认证配置缺失时不会自行回退官网数据。
+- 今日已赚奖励展示 worker 同步到 `account.reward_earned_usd` 的 UTC 当日 maker rewards 值；worker 优先读取认证 CLOB `GET /rewards/user/total?sponsored=true` 聚合端点，以对齐 Polymarket `/rewards` 页面顶部 Daily Rewards 的 native+sponsored 口径。聚合端点为空、为 0 或不可用时回退分页读取 `GET /rewards/user` native 明细并合并 `sponsored=true` sponsored-only 明细，按 `earnings * asset_rate` 求和。前端不直接访问 Polymarket，账户快照停更或认证配置缺失时不会自行回退官网数据。
 - 事件分类视图（挂单/撤单/吃单/奖励）
 - live worker 已接入 post-only 买单、撤单、confirmed 成交同步、成交后卖出/平仓、本地账本更新、managed order 计分状态、账户开放买单总 notional 观测和 UTC 当日账户级 maker rewards 同步（聚合端点优先、明细端点 fallback）；账户范围外开放订单明细与奖励结算对账仍是后端缺口
 - 页面不再暴露仅用于旧模拟逻辑或可能错误释放对账锁的配置；历史 critical event 不会永久占用 `status.error`，当前错误只反映活跃对账锁

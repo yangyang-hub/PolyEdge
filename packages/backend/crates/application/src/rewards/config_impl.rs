@@ -382,3 +382,86 @@ impl RewardBotConfig {
         next.normalized()
     }
 }
+
+#[cfg(test)]
+mod reward_config_tests {
+    use super::*;
+
+    #[test]
+    fn reward_config_patch_accepts_console_payload() {
+        let payload = r#"{
+            "enabled": true,
+            "account_id": "reward_bot",
+            "max_markets": 10,
+            "max_open_orders": 100,
+            "per_market_usd": 35,
+            "quote_size_usd": 15,
+            "min_daily_reward": 10,
+            "min_market_liquidity_usd": 1000,
+            "min_market_volume_24h_usd": 1000,
+            "min_hours_to_end": 48,
+            "max_market_spread_cents": 4,
+            "max_market_data_age_minutes": 15,
+            "min_market_score": 30,
+            "max_spread_cents": 8,
+            "quote_mode": "auto",
+            "selection_mode": "enforce",
+            "quote_bid_rank": 3,
+            "dominant_single_side_enabled": true,
+            "dominant_min_probability": 0.9,
+            "dominant_max_probability": 0.97,
+            "dominant_min_exit_depth_usd": 50,
+            "max_top1_depth_share": 1,
+            "max_top3_depth_share": 1,
+            "max_book_hhi": 1,
+            "preferred_categories": ["politics", "elections", "geopolitics"],
+            "preferred_category_score_bonus": 0,
+            "ai_advisory_enabled": true,
+            "ai_provider": "openai",
+            "ai_request_format": "openai_chat_completions",
+            "ai_advisory_ttl_sec": 36000,
+            "info_risk_enabled": true,
+            "info_risk_mode": "enforce",
+            "info_risk_avoid_level": "high",
+            "info_risk_ttl_sec": 36000,
+            "safety_margin_cents": 2,
+            "min_midpoint": 0.4,
+            "max_midpoint": 0.6,
+            "stale_book_ms": 45000,
+            "min_scoring_check_sec": 30,
+            "max_position_usd": 20,
+            "max_global_position_usd": 1000,
+            "exit_markup_cents": 1,
+            "cancel_on_fill": true,
+            "account_capital_usd": 1000,
+            "requote_drift_cents": 2,
+            "post_fill_strategy": "flatten_immediately",
+            "min_depth_usd": 100,
+            "cancel_bid_rank": 2,
+            "depth_drop_pct": 30,
+            "depth_drop_window_sec": 3,
+            "fill_velocity_usd": 300,
+            "fill_velocity_window_sec": 3,
+            "mass_cancel_pct": 30,
+            "mass_cancel_window_sec": 3,
+            "requote_interval_sec": 300,
+            "requote_jitter_sec": 305,
+            "reconcile_interval_sec": 3
+        }"#;
+
+        let patch: RewardBotConfigPatch =
+            serde_json::from_str(payload).expect("console rewards config payload deserializes");
+        let config = RewardBotConfig::default().apply_patch(patch);
+
+        assert_eq!(config.quote_bid_rank, 3);
+        assert_eq!(config.cancel_bid_rank, 2);
+        assert_eq!(config.requote_jitter_sec, 305);
+
+        let serialized = serde_json::to_value(config).expect("config serializes");
+        assert_eq!(serialized["ai_provider"], "openai");
+        assert_eq!(
+            serialized["ai_request_format"],
+            "openai_chat_completions"
+        );
+    }
+}

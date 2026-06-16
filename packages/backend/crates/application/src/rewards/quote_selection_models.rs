@@ -107,6 +107,7 @@ impl FromStr for RewardPlanQuoteMode {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RewardAiProvider {
+    #[serde(rename = "openai", alias = "open_ai")]
     OpenAi,
     Anthropic,
 }
@@ -139,7 +140,12 @@ impl FromStr for RewardAiProvider {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RewardAiRequestFormat {
+    #[serde(rename = "openai_responses", alias = "open_ai_responses")]
     OpenAiResponses,
+    #[serde(
+        rename = "openai_chat_completions",
+        alias = "open_ai_chat_completions"
+    )]
     OpenAiChatCompletions,
     AnthropicMessages,
 }

@@ -80,8 +80,8 @@
 - `connect_user_ws()`：创建认证 WebSocket 客户端（订单/成交通道）
 - `balance()`：查询认证资金账户的 collateral balance
 - `orders_scoring()`：通过 CLOB `POST /orders-scoring` 批量查询 managed orders 是否正在参与奖励计分
-- `reward_earnings_today_usd()`：优先读取 CLOB `GET /rewards/user/total` 的 UTC 当日账户级 maker rewards 聚合结果，并按每项 `asset_rate` 换算为 USD；当聚合端点为空、为 0 或不可用时，回退分页读取 `GET /rewards/user` 明细并按 `earnings * asset_rate` 求和；SDK 解码失败时会使用同一 L2 签名的 raw HTTP fallback，宽容解析带 trailing input 的 JSON 响应。该口径与 Polymarket `/rewards` 页面顶部 Daily Rewards 一致
-- `post_heartbeat(heartbeat_id)`：调用 CLOB `/v1/heartbeats` 并返回下一次请求必须携带的 heartbeat id；worker 显式维护 5 秒链式心跳、对单次调用施加 4 秒超时，不依赖 canary SDK 的自动 heartbeat feature；SDK heartbeat 被服务端拒绝时会用 raw authenticated POST `{}` 重建 heartbeat 链
+- `reward_earnings_today_usd()`：优先用 raw authenticated CLOB `GET /rewards/user/total?sponsored=true` 读取 UTC 当日账户级 maker rewards 聚合结果，并按每项 `asset_rate` 换算为 USD；`sponsored=true` 对齐 Polymarket `/rewards` 页面顶部 Daily Rewards 的 native+sponsored 口径。聚合端点为空、为 0 或不可用时，回退分页读取 `GET /rewards/user` native 明细并合并 `sponsored=true` sponsored-only 明细，按 `earnings * asset_rate` 求和；SDK 解码失败时会使用同一 L2 签名的 raw HTTP fallback，宽容解析带 trailing input 的 JSON 响应。
+- `post_heartbeat(heartbeat_id)`：调用 CLOB `/v1/heartbeats` 并返回下一次请求必须携带的 heartbeat id；worker 显式维护 5 秒链式心跳、对单次调用施加 4 秒超时，不依赖 canary SDK 的自动 heartbeat feature；SDK heartbeat 被服务端拒绝时，connector 会先用 raw authenticated POST 续写同一 heartbeat id，仍失败则用与 SDK 对齐的 `{"heartbeat_id":null}` 请求体重建 heartbeat 链
 - `list_open_orders()`：分页读取认证账户全部开放订单；遇到空 cursor、`LTE=`、空页、重复 cursor 或 1000 页 guard 时停止
 - `find_matching_open_token_order()`：按 token/side/price/size 严格匹配唯一开放订单，用于 rewards 提交响应丢失后的恢复；多个匹配会返回冲突而不是猜测归属
 - `post_order` 返回订单 ID 时，无论状态为 `live` / `matched` / `delayed` / `unmatched` / `canceled` / 未知值，connector 都保留为 accepted 供后续成交和订单状态对账；成功响应缺少订单 ID 会按提交结果未知处理
@@ -161,7 +161,7 @@
 - Orderbook 服务客户端已支持 HTTP batch/bootstrap 与内部 WS 推送；worker 长期 rewards loop 可用 WS 更新本地 cache，缺失或重连时回退 HTTP batch
 - Data API positions 已按完整快照分页读取；不完整或失败的响应不会被 rewards worker 用于替换持仓
 - Paper Trading 执行器已完整实现
-- Live connector 已具备 CLOB V2 认证、显式 heartbeat、余额查询、开放订单全量分页、用户 WS、订单提交、按 token_id 的 rewards buy/sell 提交和单笔撤单能力；heartbeat 在 SDK 链式请求失败时可 raw authenticated 重建，rewards earnings 在 SDK 解码失败时可 raw authenticated 宽容解析；post-only 使用 GTC，immediate flatten 使用 FAK，订单价格当前统一收敛到 0.01 精度，更粗的 per-market tick-size 尚未接入；订单/关联成交优先通过单订单接口对账，关联 trade 单查失败和 missing-order 都会按 token/time 扫描账户 trades 精确回退，轮询路径仅在 trade `CONFIRMED` 后返回成交，任一订单回退失败可被 worker 单订单隔离；签名类型已覆盖 EOA、Proxy、Gnosis Safe 和 Deposit Wallet (`poly_1271`)，其 balance allowance refresh 失败会传播给调用方；Polygon pUSD 余额 connector 已作为 rewards snapshot 的链上余额回退；订单 acceptance 返回实际提交 quantity，trade/WS 成交归一化按订单自身成交量入账；仍需要真实凭证和小额账户验证
+- Live connector 已具备 CLOB V2 认证、显式 heartbeat、余额查询、开放订单全量分页、用户 WS、订单提交、按 token_id 的 rewards buy/sell 提交和单笔撤单能力；heartbeat 在 SDK 链式请求失败时可 raw authenticated 续链或用 `heartbeat_id:null` 重建，rewards earnings 在 SDK 解码失败时可 raw authenticated 宽容解析；post-only 使用 GTC，immediate flatten 使用 FAK，订单价格当前统一收敛到 0.01 精度，更粗的 per-market tick-size 尚未接入；订单/关联成交优先通过单订单接口对账，关联 trade 单查失败和 missing-order 都会按 token/time 扫描账户 trades 精确回退，轮询路径仅在 trade `CONFIRMED` 后返回成交，任一订单回退失败可被 worker 单订单隔离；签名类型已覆盖 EOA、Proxy、Gnosis Safe 和 Deposit Wallet (`poly_1271`)，其 balance allowance refresh 失败会传播给调用方；Polygon pUSD 余额 connector 已作为 rewards snapshot 的链上余额回退；订单 acceptance 返回实际提交 quantity，trade/WS 成交归一化按订单自身成交量入账；仍需要真实凭证和小额账户验证
 - RSS connector 支持 Atom/RSS 两种格式
 
 ## 修改检查清单

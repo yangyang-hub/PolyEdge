@@ -229,6 +229,7 @@ impl RewardHeartbeatGuard {
     fn spawn(connector: LivePolymarketConnector) -> Self {
         let handle = tokio::spawn(async move {
             let mut heartbeat_id: Option<String> = None;
+            let mut consecutive_failures = 0u32;
             let mut interval = tokio::time::interval(Duration::from_secs(5));
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
@@ -240,22 +241,72 @@ impl RewardHeartbeatGuard {
                 )
                 .await
                 {
-                    Ok(Ok(next_heartbeat_id)) => heartbeat_id = Some(next_heartbeat_id),
+                    Ok(Ok(next_heartbeat_id)) => {
+                        if consecutive_failures > 0 {
+                            info!(
+                                recovered_after_failures = consecutive_failures,
+                                "restored Polymarket rewards heartbeat",
+                            );
+                        }
+                        consecutive_failures = 0;
+                        heartbeat_id = Some(next_heartbeat_id);
+                    }
                     Ok(Err(error)) => {
                         // Resetting the id lets the next request establish a new
                         // heartbeat chain after an expired or invalid id.
                         heartbeat_id = None;
-                        warn!(error = %error, "failed to maintain Polymarket rewards heartbeat");
+                        consecutive_failures = consecutive_failures.saturating_add(1);
+                        let retry_after = reward_heartbeat_retry_backoff(consecutive_failures);
+                        if reward_heartbeat_failure_should_warn(consecutive_failures) {
+                            warn!(
+                                error = %error,
+                                consecutive_failures,
+                                retry_after_secs = retry_after.as_secs(),
+                                "failed to maintain Polymarket rewards heartbeat",
+                            );
+                        } else {
+                            debug!(
+                                error = %error,
+                                consecutive_failures,
+                                retry_after_secs = retry_after.as_secs(),
+                                "failed to maintain Polymarket rewards heartbeat",
+                            );
+                        }
+                        tokio::time::sleep(retry_after).await;
                     }
                     Err(_) => {
                         heartbeat_id = None;
-                        warn!("timed out while maintaining Polymarket rewards heartbeat");
+                        consecutive_failures = consecutive_failures.saturating_add(1);
+                        let retry_after = reward_heartbeat_retry_backoff(consecutive_failures);
+                        if reward_heartbeat_failure_should_warn(consecutive_failures) {
+                            warn!(
+                                consecutive_failures,
+                                retry_after_secs = retry_after.as_secs(),
+                                "timed out while maintaining Polymarket rewards heartbeat",
+                            );
+                        } else {
+                            debug!(
+                                consecutive_failures,
+                                retry_after_secs = retry_after.as_secs(),
+                                "timed out while maintaining Polymarket rewards heartbeat",
+                            );
+                        }
+                        tokio::time::sleep(retry_after).await;
                     }
                 }
             }
         });
         Self { handle }
     }
+}
+
+fn reward_heartbeat_retry_backoff(consecutive_failures: u32) -> Duration {
+    let exponent = consecutive_failures.saturating_sub(1).min(4);
+    Duration::from_secs((5u64 * (1u64 << exponent)).min(60))
+}
+
+fn reward_heartbeat_failure_should_warn(consecutive_failures: u32) -> bool {
+    consecutive_failures == 1 || consecutive_failures.is_multiple_of(6)
 }
 
 impl Drop for RewardHeartbeatGuard {

@@ -1,9 +1,6 @@
 impl LivePolymarketConnector {
     async fn raw_post_heartbeat(&self, heartbeat_id: Option<&str>) -> Result<String> {
-        let body = match heartbeat_id {
-            Some(heartbeat_id) => serde_json::json!({ "heartbeat_id": heartbeat_id }),
-            None => serde_json::json!({}),
-        };
+        let body = serde_json::json!({ "heartbeat_id": heartbeat_id });
         let value = self
             .raw_clob_json(reqwest::Method::POST, "v1/heartbeats", &[], Some(body))
             .await?;
@@ -18,17 +15,18 @@ impl LivePolymarketConnector {
     async fn raw_reward_total_earnings_for_day_usd(
         &self,
         date: chrono::NaiveDate,
+        include_sponsored: bool,
     ) -> Result<Decimal> {
+        let mut query = vec![
+            ("date", date.to_string()),
+            ("signature_type", signature_type_query(self.signature_type)),
+        ];
+        if include_sponsored {
+            query.push(("sponsored", "true".to_string()));
+        }
+
         let value = self
-            .raw_clob_json(
-                reqwest::Method::GET,
-                "rewards/user/total",
-                &[
-                    ("date", date.to_string()),
-                    ("signature_type", signature_type_query(self.signature_type)),
-                ],
-                None,
-            )
+            .raw_clob_json(reqwest::Method::GET, "rewards/user/total", &query, None)
             .await?;
         Ok(sum_reward_earnings_json_usd(&value))
     }
@@ -36,6 +34,7 @@ impl LivePolymarketConnector {
     async fn raw_reward_detailed_earnings_for_day_usd(
         &self,
         date: chrono::NaiveDate,
+        sponsored_only: bool,
     ) -> Result<Decimal> {
         let mut next_cursor: Option<String> = None;
         let mut total = Decimal::ZERO;
@@ -45,6 +44,9 @@ impl LivePolymarketConnector {
                 ("date", date.to_string()),
                 ("signature_type", signature_type_query(self.signature_type)),
             ];
+            if sponsored_only {
+                query.push(("sponsored", "true".to_string()));
+            }
             if let Some(cursor) = &next_cursor {
                 query.push(("next_cursor", cursor.clone()));
             }
