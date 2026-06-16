@@ -23,9 +23,10 @@ async fn poll_reward_bot_loop(
         .try_acquire_postgres_advisory_lease(REWARD_WORKER_ADVISORY_LOCK_KEY)
         .await?
     else {
-        debug!("rewards poll loop is standing by because another worker owns the live lease");
+        info!("rewards poll loop is standing by because another worker owns the live lease");
         return Ok(RewardBotRunReport::default());
     };
+    info!("rewards poll loop acquired live lease");
     // Keep exactly one authenticated connector alive for the whole poll loop.
     // A separate guarded task sends the CLOB heartbeat every five seconds.
     let connector = build_live_polymarket_connector(state).await?;

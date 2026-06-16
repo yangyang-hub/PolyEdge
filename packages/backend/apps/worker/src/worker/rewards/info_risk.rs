@@ -8,7 +8,7 @@ async fn scan_reward_info_risks_once(
         .try_acquire_postgres_advisory_lease(REWARD_INFO_RISK_ADVISORY_LOCK_KEY)
         .await?
     else {
-        debug!("skipping reward info risk scan because another worker holds the lease");
+        info!("skipping reward info risk scan because another worker holds the lease");
         return Ok(RewardInfoRiskScanReport::default());
     };
     let result = scan_reward_info_risks_unlocked(state, trace_id).await;
@@ -52,8 +52,20 @@ async fn scan_reward_info_risks_unlocked(
 ) -> Result<RewardInfoRiskScanReport> {
     let config = state.reward_bot_service.read_config().await?;
     if !config.info_risk_enabled {
+        info!(
+            trace_id = %trace_id,
+            "skipping reward info risk scan because it is disabled in rewards config",
+        );
         return Ok(RewardInfoRiskScanReport::default());
     }
+    info!(
+        trace_id = %trace_id,
+        provider = config.ai_provider.as_str(),
+        request_format = config.ai_request_format.as_str(),
+        mode = config.info_risk_mode.as_str(),
+        web_search_enabled = state.settings.rewards.info_risk_web_search_enabled,
+        "starting reward info risk scan",
+    );
     let Some(connector) = build_reward_info_risk_connector(state, &config)? else {
         warn!(
             trace_id = %trace_id,
@@ -97,6 +109,7 @@ async fn scan_reward_info_risks_unlocked(
 
     for condition_id in ordered_conditions {
         let Some(market) = markets_by_condition.get(&condition_id) else {
+            report.skipped_missing_market += 1;
             continue;
         };
         let request = build_reward_info_risk_assessment_request(
@@ -132,6 +145,7 @@ async fn scan_reward_info_risks_unlocked(
                 report.saved += 1;
             }
             Err(error) => {
+                report.failures += 1;
                 warn!(
                     trace_id = %trace_id,
                     condition_id = %condition_id,
@@ -143,6 +157,17 @@ async fn scan_reward_info_risks_unlocked(
     }
 
     report.applied_plans = apply_cached_reward_info_risks(state, trace_id).await?;
+    info!(
+        trace_id = %trace_id,
+        candidates = report.candidates,
+        cache_hits = report.cache_hits,
+        requested = report.requested,
+        saved = report.saved,
+        failures = report.failures,
+        skipped_missing_market = report.skipped_missing_market,
+        applied_plans = report.applied_plans,
+        "completed reward info risk scan",
+    );
     Ok(report)
 }
 
@@ -302,5 +327,7 @@ fn accumulate_info_risk_report(
     total.cache_hits += report.cache_hits;
     total.requested += report.requested;
     total.saved += report.saved;
+    total.failures += report.failures;
+    total.skipped_missing_market += report.skipped_missing_market;
     total.applied_plans += report.applied_plans;
 }

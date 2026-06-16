@@ -277,6 +277,21 @@ async fn run_reward_bot_live_tick(
         .reward_bot_service
         .prepare_live_cycle(markets, books.clone(), trace_id, force_orders)
         .await?;
+    info!(
+        trace_id = %trace_id,
+        markets = cycle.markets.len(),
+        books = books_fetched,
+        plans = cycle.plans.len(),
+        eligible_plans = cycle.plans.iter().filter(|plan| plan.eligible).count(),
+        open_orders = cycle.open_orders.len(),
+        positions = cycle.positions.len(),
+        ai_advisory_enabled = cycle.config.ai_advisory_enabled,
+        ai_provider = cycle.config.ai_provider.as_str(),
+        ai_request_format = cycle.config.ai_request_format.as_str(),
+        info_risk_enabled = cycle.config.info_risk_enabled,
+        info_risk_mode = cycle.config.info_risk_mode.as_str(),
+        "prepared rewards live cycle",
+    );
     refresh_reward_ai_advisories(state, &mut cycle, &books, trace_id).await?;
     apply_cached_reward_info_risks_to_cycle(state, &mut cycle, trace_id).await?;
     let kill_switch = state.risk_service.read_state().await?.kill_switch;
@@ -472,9 +487,30 @@ async fn refresh_reward_ai_advisories(
     books: &HashMap<String, RewardOrderBook>,
     trace_id: &str,
 ) -> Result<()> {
-    if !cycle.config.ai_advisory_enabled || cycle.plans.is_empty() {
+    if !cycle.config.ai_advisory_enabled {
+        info!(
+            trace_id = %trace_id,
+            plans = cycle.plans.len(),
+            "skipping reward AI advisory refresh because it is disabled in rewards config",
+        );
         return Ok(());
     }
+    if cycle.plans.is_empty() {
+        info!(
+            trace_id = %trace_id,
+            "skipping reward AI advisory refresh because no quote plans were built",
+        );
+        return Ok(());
+    }
+    info!(
+        trace_id = %trace_id,
+        provider = cycle.config.ai_provider.as_str(),
+        request_format = cycle.config.ai_request_format.as_str(),
+        plans = cycle.plans.len(),
+        open_orders = cycle.open_orders.len(),
+        positions = cycle.positions.len(),
+        "starting reward AI advisory refresh",
+    );
     let Some(connector) = build_reward_ai_advisory_connector(state, &cycle.config)? else {
         warn!(
             trace_id = %trace_id,

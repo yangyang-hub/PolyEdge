@@ -235,6 +235,23 @@ fn spawn_worker_tasks(state: &AppState, shutdown_rx: watch::Receiver<bool>) -> V
 
     if settings.poll_reward_bot {
         if state.settings.rewards.enabled {
+            info!(
+                poll_interval_secs = state.settings.rewards.poll_interval_secs,
+                ai_openai_key_configured = state
+                    .settings
+                    .rewards
+                    .ai_openai_api_key
+                    .as_ref()
+                    .is_some_and(|value| !value.trim().is_empty()),
+                ai_anthropic_key_configured = state
+                    .settings
+                    .rewards
+                    .ai_anthropic_api_key
+                    .as_ref()
+                    .is_some_and(|value| !value.trim().is_empty()),
+                ai_model = %state.settings.rewards.ai_model,
+                "spawning worker reward bot poll loop",
+            );
             let job_state = state.clone();
             let job_shutdown_rx = shutdown_rx.clone();
             handles.push(spawn_restarting_job(
@@ -270,6 +287,10 @@ fn spawn_worker_tasks(state: &AppState, shutdown_rx: watch::Receiver<bool>) -> V
                 "worker poll-reward-bot is enabled but rewards bot is disabled; set POLYEDGE_REWARDS__ENABLED=true"
             );
         }
+    } else {
+        info!(
+            "worker reward bot poll loop is disabled; set POLYEDGE_WORKER__POLL_REWARD_BOT=true"
+        );
     }
 
     maybe_spawn_reward_info_risk_task(state, shutdown_rx.clone(), &mut handles);

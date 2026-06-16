@@ -129,6 +129,8 @@ struct RewardInfoRiskScanReport {
     cache_hits: usize,
     requested: usize,
     saved: usize,
+    failures: usize,
+    skipped_missing_market: usize,
     applied_plans: usize,
 }
 

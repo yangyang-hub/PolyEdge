@@ -5,6 +5,9 @@ fn maybe_spawn_reward_info_risk_task(
 ) {
     let settings = &state.settings.worker;
     if !settings.poll_reward_info_risks {
+        info!(
+            "worker reward info risk polling is disabled; set POLYEDGE_WORKER__POLL_REWARD_INFO_RISKS=true"
+        );
         return;
     }
     if !state.settings.rewards.enabled {
@@ -15,6 +18,11 @@ fn maybe_spawn_reward_info_risk_task(
     }
 
     let job_state = state.clone();
+    info!(
+        interval_secs = state.settings.rewards.info_risk_interval_secs,
+        web_search_enabled = state.settings.rewards.info_risk_web_search_enabled,
+        "spawning worker reward info risk polling task",
+    );
     handles.push(spawn_interval_job(
         "poll-reward-info-risks",
         state.settings.rewards.info_risk_interval_secs,
@@ -30,6 +38,8 @@ fn maybe_spawn_reward_info_risk_task(
                         cache_hits = report.cache_hits,
                         requested = report.requested,
                         saved = report.saved,
+                        failures = report.failures,
+                        skipped_missing_market = report.skipped_missing_market,
                         applied_plans = report.applied_plans,
                         "completed worker reward info risk cycle",
                     ),
