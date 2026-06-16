@@ -1,6 +1,6 @@
 # 部署（Docker + Nginx + Scripts）
 
-最后更新：2026-06-14
+最后更新：2026-06-16
 
 ## 概述
 
@@ -51,7 +51,8 @@
 - 环境变量：`.env.api`
 - `extra_hosts: host.docker.internal:host-gateway`（访问宿主机数据库）
 - API 服务启动时内嵌启动 `WorkerRuntime`，共享同一进程；worker 后台任务通过 `deploy/.env.api` 配置
-- 后端代码默认仍包含若干历史 worker 循环；Docker 模板在 `deploy/.env.api` 中显式设为 `false`，需要运行新闻、套利、rewards、copytrade 或私有对账任务时再改为 `true`
+- 后端代码默认仍包含若干历史 worker 循环；Docker 模板默认开启新闻采集，其他 worker 循环在 `deploy/.env.api` 中显式设为 `false`，需要运行新闻提升、套利、rewards、copytrade 或私有对账任务时再改为 `true`
+- `.env.api.example` 显式写入当前默认 RSS/Atom 新闻源 `POLYEDGE_NEWS__SOURCES_JSON`，并默认开启 `POLYEDGE_NEWS__ENABLED=true` 和 `POLYEDGE_WORKER__POLL_NEWS=true`
 - `.env.api` 中的 `POLYEDGE_ORDERBOOK__WRITE_TOKEN` 必须与 orderbook 服务一致；front 不需要该密钥
 - Polymarket live / Deposit Wallet / AI provider 可选配置已合并到 `deploy/.env.api.example`；建议私钥和 AI provider key 只放 `.env.api`，避免进入 Front/Orderbook 容器环境。Rewards 账户余额由 worker 同步到数据库，资金钱包地址优先使用 `FUNDER`，CLOB balance 为 0/失败时会用链上 pUSD 余额回填 snapshot
 
@@ -135,9 +136,9 @@ API 请求不再经过前端 nginx 反向代理；跨域由 Rust API 的 `CorsLa
 | `POLYEDGE_FRONT_BIND` / `POLYEDGE_FRONT_PORT` / `NEXT_PUBLIC_POLYEDGE_API_BASE_URL` | `.env.front` | 前端宿主机端口和 build-time API 地址 |
 | `POLYEDGE_ORDERBOOK__SERVICE_URL` | `.env.api` | API/内嵌 worker 访问 orderbook 服务的 HTTP 地址 |
 | `POLYEDGE_ORDERBOOK_STREAM__MAX_TOKENS` / `MAX_LEVELS_PER_SIDE` / `STALE_THRESHOLD_MS` | `.env.orderbook` | orderbook 订阅容量、盘口深度和 stale reconcile 常用调参 |
-| `POLYEDGE_NEWS__ENABLED` / `POLYEDGE_ARBITRAGE__ENABLED` / `POLYEDGE_REWARDS__ENABLED` / `POLYEDGE_COPYTRADE__ENABLED` | `.env.api` | 业务子系统总开关，部署模板默认 `false` |
-| `POLYEDGE_WORKER__POLL_*` / `POLYEDGE_WORKER__ANALYZE_*` / `POLYEDGE_WORKER__RECOMPUTE_SIGNALS` | `.env.api` | API 内嵌 worker 后台循环开关，部署模板显式设为 `false` |
-| `POLYEDGE_REWARDS__AI_*` / `POLYEDGE_REWARDS__INFO_RISK_*` | `.env.api` | AI advisory / 信息风险 provider 的 key、模型、置信度等可选配置 |
+| `POLYEDGE_NEWS__ENABLED` / `POLYEDGE_NEWS__SOURCES_JSON` / `POLYEDGE_ARBITRAGE__ENABLED` / `POLYEDGE_REWARDS__ENABLED` / `POLYEDGE_COPYTRADE__ENABLED` | `.env.api` | 业务子系统总开关；新闻采集默认 `true`，其余业务子系统默认 `false`；新闻源列表在模板中显式写入当前默认 RSS/Atom 源 |
+| `POLYEDGE_WORKER__POLL_*` / `POLYEDGE_WORKER__ANALYZE_*` / `POLYEDGE_WORKER__RECOMPUTE_SIGNALS` | `.env.api` | API 内嵌 worker 后台循环开关；新闻 poll 默认 `true`，其他循环默认 `false` |
+| `POLYEDGE_REWARDS__AI_*` / `POLYEDGE_REWARDS__INFO_RISK_*` | `.env.api` | AI advisory / 信息风险 provider 的 key、模型、置信度等可选配置；AI provider 单次请求默认超时 180 秒 |
 | `POLYEDGE_POLYMARKET__ACCOUNT_ID` / `SIGNATURE_TYPE` / `FUNDER` / `PRIVATE_KEY` / `API_*` / `POLYGON_RPC_URL` | `.env.api` | Polymarket live 账户和凭证 |
 | `POLYEDGE_API_IMAGE` / `POLYEDGE_ORDERBOOK_IMAGE` / `POLYEDGE_FRONT_IMAGE` | 对应服务 env | 可选镜像 tag 覆盖；deploy.sh 会导出给 Compose interpolation |
 | `POLYEDGE_ALLOW_IN_MEMORY_DEPLOY` | `.env.api` / `.env.orderbook` | 仅演示环境允许无数据库启动 |
