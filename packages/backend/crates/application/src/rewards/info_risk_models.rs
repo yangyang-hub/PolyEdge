@@ -325,6 +325,13 @@ pub fn apply_reward_info_risks(
 
     for plan in plans {
         let Some(risk) = risks.get(&plan.condition_id).cloned() else {
+            if config.info_risk_mode == RewardSelectionMode::Enforce && plan.eligible {
+                plan.eligible = false;
+                plan.quote_mode = RewardPlanQuoteMode::None;
+                plan.legs.clear();
+                plan.reason =
+                    "info risk pending: market has not passed provider risk filter".to_string();
+            }
             continue;
         };
         plan.info_risk = Some(risk.clone());

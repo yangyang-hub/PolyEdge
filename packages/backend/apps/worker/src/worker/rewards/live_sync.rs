@@ -621,6 +621,7 @@ async fn run_reward_bot_live_reconcile_unlocked(
             connector,
             &mut open_orders,
             &books,
+            None,
             state,
             &mut account,
             &cycle.positions,

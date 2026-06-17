@@ -91,13 +91,54 @@ fn reward_ai_advisory_candidates_include_open_orders_positions_and_eligible_plan
     };
 
     let plans = vec![rejected, eligible, position_plan, open_order_plan];
-    let candidates = reward_ai_advisory_candidate_plans(&plans, &[open_order], &[position]);
-    let condition_ids = candidates
-        .iter()
-        .map(|plan| plan.condition_id.as_str())
-        .collect::<Vec<_>>();
+    let condition_ids =
+        reward_ai_advisory_candidate_condition_ids(&plans, &[open_order], &[position]);
 
     assert_eq!(condition_ids, vec!["cond_open", "cond_position", "cond_eligible"]);
+}
+
+#[test]
+fn reward_ai_advisory_incremental_apply_only_updates_matching_plan() {
+    let now = OffsetDateTime::now_utc();
+    let mut target = live_test_plan(now);
+    target.condition_id = "cond_ai".to_string();
+    let mut waiting = live_test_plan(now);
+    waiting.condition_id = "cond_waiting".to_string();
+    let config = RewardBotConfig {
+        ai_advisory_enabled: true,
+        ai_request_format: polyedge_application::RewardAiRequestFormat::OpenAiChatCompletions,
+        ..RewardBotConfig::default()
+    };
+    let advisory = RewardMarketAdvisory {
+        condition_id: target.condition_id.clone(),
+        provider: polyedge_application::RewardAiProvider::OpenAi,
+        request_format: config.ai_request_format,
+        model: "mimo-v2.5-pro".to_string(),
+        input_hash: "hash_ai".to_string(),
+        suitability: polyedge_application::RewardAiSuitability::Allow,
+        quote_mode: polyedge_application::RewardPlanQuoteMode::Double,
+        exit_policy: PostFillStrategy::ExitAtMarkup,
+        confidence: reward_decimal("0.95"),
+        reasons: vec!["market passed advisory filter".to_string()],
+        metrics: serde_json::json!({}),
+        created_at: now,
+        expires_at: now + TimeDuration::hours(1),
+    };
+
+    let mut plans = vec![target, waiting];
+    let applied = apply_reward_ai_advisory_to_quote_plan(
+        &mut plans,
+        &config,
+        "cond_ai",
+        advisory,
+        reward_decimal("0.65"),
+    );
+
+    assert!(applied);
+    assert!(plans[0].ai_advisory.is_some());
+    assert!(plans[0].eligible);
+    assert!(plans[1].ai_advisory.is_none());
+    assert!(plans[1].eligible);
 }
 
 fn live_test_book(token_id: &str, observed_at: OffsetDateTime) -> RewardOrderBook {
@@ -195,8 +236,10 @@ fn live_placement_reuses_cash_across_markets() {
         &live_test_account(Decimal::from(20_u64)),
         &[first_plan, second_plan],
         &books,
+        &HashMap::new(),
         &[],
         &[],
+        false,
         "trc_live_test",
     );
 
@@ -235,8 +278,10 @@ fn live_placement_requires_the_whole_market_to_fit_available_cash() {
         &live_test_account(reward_decimal("19.59")),
         &[plan],
         &books,
+        &HashMap::new(),
         &[],
         &[],
+        false,
         "trc_live_test",
     );
 
@@ -266,8 +311,10 @@ fn live_placement_counts_existing_same_market_buys_against_cash() {
         &live_test_account(reward_decimal("15")),
         &[plan],
         &books,
+        &HashMap::new(),
         &[existing],
         &[],
+        false,
         "trc_live_test",
     );
 
@@ -298,8 +345,10 @@ fn live_placement_reserves_unmanaged_external_buy_notional() {
         &account,
         &[plan],
         &books,
+        &HashMap::new(),
         &[],
         &[],
+        false,
         "trc_live_test",
     );
 
@@ -332,8 +381,10 @@ fn live_placement_does_not_double_reserve_managed_external_buys() {
         &account,
         &[plan],
         &books,
+        &HashMap::new(),
         &[existing],
         &[],
+        false,
         "trc_live_test",
     );
 
@@ -804,6 +855,48 @@ fn minimum_depth_excludes_our_own_liquidity_at_the_order_price() {
 }
 
 #[test]
+fn live_placement_applies_min_depth_before_submission() {
+    let config = RewardBotConfig {
+        account_id: "reward_live".to_string(),
+        min_depth_usd: reward_decimal("100"),
+        max_markets: 1,
+        max_open_orders: 2,
+        ..RewardBotConfig::default()
+    };
+    let now = OffsetDateTime::now_utc();
+    let plan = live_test_plan(now);
+    let mut yes_book = live_test_book("yes_live", now);
+    yes_book.bids = vec![RewardBookLevel {
+        price: reward_decimal("0.49"),
+        size: reward_decimal("10"),
+    }];
+    let mut no_book = live_test_book("no_live", now);
+    no_book.bids = vec![RewardBookLevel {
+        price: reward_decimal("0.49"),
+        size: reward_decimal("1000"),
+    }];
+    let books = HashMap::from([
+        ("yes_live".to_string(), yes_book),
+        ("no_live".to_string(), no_book),
+    ]);
+
+    let placements = live_placement_orders(
+        &config,
+        &live_test_account(reward_decimal("100")),
+        &[plan],
+        &books,
+        &HashMap::new(),
+        &[],
+        &[],
+        false,
+        "trc_depth",
+    );
+
+    assert_eq!(placements.len(), 1);
+    assert_eq!(placements[0].token_id, "no_live");
+}
+
+#[test]
 fn live_placement_does_not_add_inventory_while_exit_is_pending() {
     let config = RewardBotConfig {
         account_id: "reward_live".to_string(),
@@ -826,12 +919,48 @@ fn live_placement_does_not_add_inventory_while_exit_is_pending() {
         &live_test_account(reward_decimal("100")),
         &[plan],
         &books,
+        &HashMap::new(),
         &[exit],
         &[],
+        false,
         "trc_exit_pending",
     );
 
     assert!(placements.iter().all(|order| order.token_id != "yes_live"));
+}
+
+#[test]
+fn dust_exit_is_deferred_without_reason_growth() {
+    let mut order = live_test_open_order("yes_live");
+    order.side = RewardOrderSide::Sell;
+    order.status = ManagedRewardOrderStatus::ExitPending;
+    order.price = reward_decimal("0.02");
+    order.size = reward_decimal("21");
+    order.reason = "post-fill flatten immediately".to_string();
+
+    let (reason, _) = live_exit_dust_deferred(&order).expect("dust exit");
+    assert!(reason.contains(LIVE_EXIT_DUST_DEFERRED_MARKER));
+    assert!(!reason.contains("post-fill flatten immediately"));
+
+    order.reason = reason;
+    let now = OffsetDateTime::now_utc();
+    order.updated_at = now;
+    assert!(!live_exit_retry_due(&order, now + TimeDuration::seconds(299)));
+    assert!(live_exit_retry_due(&order, now + TimeDuration::seconds(300)));
+}
+
+#[test]
+fn max_exit_rejections_stop_retrying() {
+    let mut order = live_test_open_order("yes_live");
+    order.side = RewardOrderSide::Sell;
+    order.status = ManagedRewardOrderStatus::ExitPending;
+    order.reason =
+        "retryable live exit rejected [10/10] (post_only=false): prior rejection".to_string();
+
+    assert!(!live_exit_retry_due(
+        &order,
+        OffsetDateTime::now_utc() + TimeDuration::hours(1)
+    ));
 }
 
 #[test]

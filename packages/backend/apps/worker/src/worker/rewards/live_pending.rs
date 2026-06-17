@@ -1,7 +1,16 @@
+#[derive(Clone, Copy)]
+struct LiveBuySubmitRiskContext<'a> {
+    config: &'a RewardBotConfig,
+    plans: &'a HashMap<&'a str, &'a RewardQuotePlan>,
+    book_history: &'a HashMap<String, VecDeque<BookSnapshot>>,
+    kill_switch: bool,
+}
+
 async fn submit_pending_live_reward_orders(
     connector: &LivePolymarketConnector,
     open_orders: &mut [ManagedRewardOrder],
     books: &HashMap<String, RewardOrderBook>,
+    risk_context: Option<LiveBuySubmitRiskContext<'_>>,
     state: &AppState,
     account: &mut RewardAccountState,
     _positions: &[RewardPosition],
@@ -154,6 +163,42 @@ async fn submit_pending_live_reward_orders(
         if order.side == RewardOrderSide::Buy && !allow_buy_submit {
             continue;
         }
+        if order.side == RewardOrderSide::Buy
+            && let Some(context) = risk_context
+            && let Some(reason) = live_cancel_reason(
+                context.config,
+                context.plans,
+                books,
+                context.book_history,
+                order,
+                OffsetDateTime::now_utc(),
+                context.kill_switch,
+            )
+        {
+            order.status = ManagedRewardOrderStatus::Cancelled;
+            order.scoring = false;
+            order.reason = format!("local-only order cancelled before live submission: {reason}");
+            order.updated_at = OffsetDateTime::now_utc();
+            let event = reward_live_event(
+                order,
+                "reward_live_order_pre_submit_cancelled",
+                RewardRiskSeverity::Info,
+                order.reason.clone(),
+                json!({ "reason": reason }),
+            );
+            persist_live_reward_updates(
+                state,
+                account,
+                Vec::new(),
+                vec![order.clone()],
+                Vec::new(),
+                vec![event],
+                report,
+                trace_id,
+            )
+            .await?;
+            continue;
+        }
         if order.side == RewardOrderSide::Sell && !post_only {
             let Some(best_bid) = books
                 .get(&order.token_id)
@@ -166,6 +211,22 @@ async fn submit_pending_live_reward_orders(
             order.price = floor_reward_price_to_tick(best_bid);
             if parse_exit_rejection_count(&order.reason) == 0 {
                 order.reason = "post-fill flatten immediately".to_string();
+            }
+            if let Some((reason, event)) = live_exit_dust_deferred(order) {
+                order.reason = reason;
+                order.updated_at = OffsetDateTime::now_utc();
+                persist_live_reward_updates(
+                    state,
+                    account,
+                    Vec::new(),
+                    vec![order.clone()],
+                    Vec::new(),
+                    vec![event],
+                    report,
+                    trace_id,
+                )
+                .await?;
+                continue;
             }
         }
 

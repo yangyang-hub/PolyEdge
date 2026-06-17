@@ -1,6 +1,6 @@
 # Rewards（奖励机器人）
 
-最后更新：2026-06-16
+最后更新：2026-06-17
 
 ## 概述
 
@@ -44,8 +44,8 @@
 - **挂单档位** → `quote_bid_rank=1|2|3` → 分别选择买一/买二/买三；任一 YES/NO 盘口缺少所选档位时本轮不挂单
 - **盘口选择** → `quote_mode=double|auto` + `selection_mode=observe|enforce` → 默认只保留双边报价；auto/enforce 可让后端基于一边倒概率、退出深度和盘口集中度执行单边或跳过
 - **AI 建议配置** → 保存 provider、request format 和 TTL；worker 启用且环境变量配置 provider key 后，会在 full tick 中低频调用模型并缓存 advisory
-- **信息风险配置** → 保存启用开关、observe/enforce、过滤等级和 TTL；异步 worker 启用且环境变量配置 provider key 后，会扫描候选市场最新信息风险并缓存，页面展示风险等级/类型/摘要
-- **市场质量** → 可配置最低流动性、最低 24h 成交量、最短剩余结算时间、最大 Gamma spread 和最大目录同步年龄；后端还固定拒绝高歧义和非唯一 YES/NO 市场
+- **信息风险配置** → 保存启用开关、observe/enforce、过滤等级和 TTL；异步 worker 启用且环境变量配置 provider key 后，会扫描候选市场最新信息风险并缓存，页面展示风险等级/类型/摘要；enforce 模式下缺少未过期风险缓存的计划会被后端置为不可挂
+- **市场质量** → 可配置最低流动性、最低 24h 成交量、最短剩余结算时间、最大 Gamma spread 和最大目录同步年龄；后端还固定拒绝高歧义、非唯一 YES/NO、FDV/launch/token/official-result 等高跳变事件风险市场
 - 事件面板支持按 `EventCategory` 过滤
 - 页面默认展示活动视图：左侧候选报价计划，右侧托管订单与本地库存，下方事件/成交流；策略配置和风控配置通过 tabs 切换，减少实盘盯盘时的配置噪音。
 - 筛选刷新使用单调请求序号，只接收最新 REST 响应，避免快速搜索/翻页时旧请求覆盖新状态；读取失败会进入页面反馈栏，不产生未处理 Promise。
@@ -67,7 +67,7 @@
 - 市场筛选面板公开质量硬门槛；通过门槛的市场由后端继续按奖励、流动性、成交量、剩余时长和奖励 spread 综合排序。
 - 报价构造使用“挂单档位”下拉框选择买一/买二/买三，不再提供中间价“报价偏移”；默认买一。
 - 盘口选择公开 quote/selection mode、dominant 单边概率区间、退出深度、top1/top3 买盘集中度、HHI 和偏好分类评分加成；默认 `double + observe` 不改变既有双边挂单。
-- AI 建议面板保存 OpenAI/Anthropic provider、请求格式、advisory TTL、信息风险启用、observe/enforce、过滤等级和信息风险 TTL；API key、base URL、模型名、请求超时和 web search 开关只来自 worker 环境变量，不会出现在前端配置或 snapshot。AI advisory 与信息风险扫描由 worker 全量覆盖当前候选，优先开放订单、持仓和可挂 quote plan。报价计划表展示 AI suitability、推荐 quote mode、confidence 和首条 reason，也展示信息风险等级、类型、confidence 和摘要。
+- AI 建议面板保存 OpenAI/Anthropic provider、请求格式、advisory TTL、信息风险启用、observe/enforce、过滤等级和信息风险 TTL；API key、base URL、模型名、请求超时和 web search 开关只来自 worker 环境变量，不会出现在前端配置或 snapshot。AI advisory 与信息风险扫描由 worker 全量覆盖当前候选，优先开放订单、持仓和可挂 quote plan。报价计划表展示 AI suitability、推荐 quote mode、confidence 和首条 reason，也展示信息风险等级、类型、confidence 和摘要；信息风险 enforce 且缓存缺失时，后端会把对应计划显示为不可挂。
 - `per_market_usd` 表示 YES + NO 两腿合计资金上限；后端先保障按 CLOB 成本精度对齐后的两腿最小份额，再在剩余额度内靠近 `quote_size_usd` 单腿目标，页面提示与该联合预算语义一致。
 - 配置不包含 `execution_mode` 选择器（始终为 live）。提示说明 `max_markets=0`、`max_open_orders=0`、`quote_size_usd=0` 都会停止新挂单。
 - 报价计划默认展示可挂市场，本地支持全部/可挂/不可挂切换，并用状态标记说明每个当前候选计划是否符合最终过滤要求。

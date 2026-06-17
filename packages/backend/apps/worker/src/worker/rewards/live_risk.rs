@@ -107,8 +107,10 @@ fn live_placement_orders(
     account: &RewardAccountState,
     plans: &[RewardQuotePlan],
     books: &HashMap<String, RewardOrderBook>,
+    book_history: &HashMap<String, VecDeque<BookSnapshot>>,
     open_orders: &[ManagedRewardOrder],
     positions: &[RewardPosition],
+    kill_switch: bool,
     trace_id: &str,
 ) -> Vec<ManagedRewardOrder> {
     let max_markets = usize::from(config.max_markets);
@@ -127,6 +129,11 @@ fn live_placement_orders(
     let mut seq = 0usize;
     let available_for_new_condition =
         live_available_usd_after_unmanaged_external_buys(account, open_orders);
+
+    let plan_index: HashMap<&str, &RewardQuotePlan> = plans
+        .iter()
+        .map(|plan| (plan.condition_id.as_str(), plan))
+        .collect();
 
     for plan in plans.iter().filter(|plan| plan.eligible) {
         if !live_plan_has_fresh_quote_books(plan, books, config) {
@@ -200,7 +207,6 @@ fn live_placement_orders(
             {
                 continue;
             }
-            active_markets.insert(plan.condition_id.clone());
             seq += 1;
             let now = OffsetDateTime::now_utc();
             let order = ManagedRewardOrder {
@@ -227,6 +233,20 @@ fn live_placement_orders(
                 created_at: now,
                 updated_at: now,
             };
+            if live_cancel_reason(
+                config,
+                &plan_index,
+                books,
+                book_history,
+                &order,
+                now,
+                kill_switch,
+            )
+            .is_some()
+            {
+                continue;
+            }
+            active_markets.insert(plan.condition_id.clone());
             orders.push(order.clone());
             placements.push(order);
         }

@@ -401,6 +401,18 @@ async fn run_reward_bot_live_tick(
         }
     }
 
+    let plan_index: HashMap<&str, &RewardQuotePlan> = cycle
+        .plans
+        .iter()
+        .map(|plan| (plan.condition_id.as_str(), plan))
+        .collect();
+    let buy_submit_risk = LiveBuySubmitRiskContext {
+        config: &cycle.config,
+        plans: &plan_index,
+        book_history,
+        kill_switch,
+    };
+
     // Validate and cancel stale persisted intents before submitting them.
     // Unknown submissions are protected by live_cancel_reason and recovered
     // here without issuing a duplicate order.
@@ -409,6 +421,7 @@ async fn run_reward_bot_live_tick(
         connector,
         &mut open_orders,
         &books,
+        Some(buy_submit_risk),
         state,
         &mut account,
         &cycle.positions,
@@ -431,8 +444,10 @@ async fn run_reward_bot_live_tick(
         &account,
         &cycle.plans,
         &books,
+        book_history,
         &open_orders,
         &cycle.positions,
+        kill_switch,
         trace_id,
     );
 
@@ -470,6 +485,7 @@ async fn run_reward_bot_live_tick(
             connector,
             &mut open_orders,
             &books,
+            Some(buy_submit_risk),
             state,
             &mut account,
             &cycle.positions,
@@ -549,26 +565,37 @@ async fn refresh_reward_ai_advisories(
     let markets_by_condition = cycle
         .markets
         .iter()
-        .map(|market| (market.condition_id.as_str(), market))
+        .map(|market| (market.condition_id.clone(), market.clone()))
         .collect::<HashMap<_, _>>();
     let mut advisories = HashMap::<String, RewardMarketAdvisory>::new();
-    let candidate_plans =
-        reward_ai_advisory_candidate_plans(&cycle.plans, &cycle.open_orders, &cycle.positions);
-    let candidates = candidate_plans.len();
+    let candidate_condition_ids = reward_ai_advisory_candidate_condition_ids(
+        &cycle.plans,
+        &cycle.open_orders,
+        &cycle.positions,
+    );
+    let candidates = candidate_condition_ids.len();
     let mut cache_hits = 0usize;
     let mut requested = 0usize;
     let mut saved = 0usize;
     let mut failures = 0usize;
     let mut skipped_missing_market = 0usize;
 
-    for plan in candidate_plans {
-        let Some(market) = markets_by_condition.get(plan.condition_id.as_str()) else {
+    for condition_id in candidate_condition_ids {
+        let Some(plan_index) = cycle
+            .plans
+            .iter()
+            .position(|plan| plan.condition_id == condition_id)
+        else {
+            continue;
+        };
+        let plan_for_request = cycle.plans[plan_index].clone();
+        let Some(market) = markets_by_condition.get(condition_id.as_str()) else {
             skipped_missing_market += 1;
             continue;
         };
         let request = build_reward_ai_advisory_request(
             market,
-            plan,
+            &plan_for_request,
             &cycle.account,
             &cycle.positions,
             &cycle.open_orders,
@@ -584,14 +611,24 @@ async fn refresh_reward_ai_advisories(
             .await?
         {
             cache_hits += 1;
-            advisories.insert(plan.condition_id.clone(), cached);
+            advisories.insert(condition_id.clone(), cached.clone());
+            persist_reward_ai_advisory_on_quote_plan(
+                state,
+                cycle,
+                &condition_id,
+                cached,
+                min_confidence,
+                trace_id,
+                "cache",
+            )
+            .await?;
             continue;
         }
 
         requested += 1;
         info!(
             trace_id = %trace_id,
-            condition_id = %plan.condition_id,
+            condition_id = %condition_id,
             requested,
             "requesting reward AI advisory provider",
         );
@@ -610,17 +647,27 @@ async fn refresh_reward_ai_advisories(
                 saved += 1;
                 info!(
                     trace_id = %trace_id,
-                    condition_id = %plan.condition_id,
+                    condition_id = %condition_id,
                     saved,
                     "saved reward AI advisory",
                 );
-                advisories.insert(plan.condition_id.clone(), advisory);
+                advisories.insert(condition_id.clone(), advisory.clone());
+                persist_reward_ai_advisory_on_quote_plan(
+                    state,
+                    cycle,
+                    &condition_id,
+                    advisory,
+                    min_confidence,
+                    trace_id,
+                    "provider",
+                )
+                .await?;
             }
             Err(error) => {
                 failures += 1;
                 warn!(
                     trace_id = %trace_id,
-                    condition_id = %plan.condition_id,
+                    condition_id = %condition_id,
                     error = %error,
                     "reward AI advisory request failed; blocking plan until provider filter passes",
                 );
@@ -659,11 +706,62 @@ async fn refresh_reward_ai_advisories(
     Ok(())
 }
 
-fn reward_ai_advisory_candidate_plans<'a>(
-    plans: &'a [RewardQuotePlan],
+async fn persist_reward_ai_advisory_on_quote_plan(
+    state: &AppState,
+    cycle: &mut RewardLiveCycle,
+    condition_id: &str,
+    advisory: RewardMarketAdvisory,
+    min_confidence: Decimal,
+    trace_id: &str,
+    source: &str,
+) -> Result<()> {
+    if !apply_reward_ai_advisory_to_quote_plan(
+        &mut cycle.plans,
+        &cycle.config,
+        condition_id,
+        advisory,
+        min_confidence,
+    ) {
+        return Ok(());
+    }
+    state.reward_bot_service.save_quote_plans(&cycle.plans).await?;
+    info!(
+        trace_id = %trace_id,
+        condition_id = %condition_id,
+        source,
+        "applied reward AI advisory to quote plan snapshot",
+    );
+    Ok(())
+}
+
+fn apply_reward_ai_advisory_to_quote_plan(
+    plans: &mut [RewardQuotePlan],
+    config: &RewardBotConfig,
+    condition_id: &str,
+    advisory: RewardMarketAdvisory,
+    min_confidence: Decimal,
+) -> bool {
+    let Some(plan) = plans
+        .iter_mut()
+        .find(|plan| plan.condition_id == condition_id)
+    else {
+        return false;
+    };
+    let advisories = HashMap::from([(condition_id.to_string(), advisory)]);
+    apply_reward_ai_advisories(
+        std::slice::from_mut(plan),
+        &advisories,
+        config,
+        min_confidence,
+    );
+    true
+}
+
+fn reward_ai_advisory_candidate_condition_ids(
+    plans: &[RewardQuotePlan],
     open_orders: &[ManagedRewardOrder],
     positions: &[RewardPosition],
-) -> Vec<&'a RewardQuotePlan> {
+) -> Vec<String> {
     let plans_by_condition = plans
         .iter()
         .map(|plan| (plan.condition_id.as_str(), plan))
@@ -700,7 +798,7 @@ fn reward_ai_advisory_candidate_plans<'a>(
 }
 
 fn push_reward_ai_advisory_plan<'a>(
-    ordered: &mut Vec<&'a RewardQuotePlan>,
+    ordered: &mut Vec<String>,
     seen: &mut HashSet<String>,
     plans_by_condition: &HashMap<&str, &'a RewardQuotePlan>,
     condition_id: &str,
@@ -709,11 +807,11 @@ fn push_reward_ai_advisory_plan<'a>(
     if condition_id.is_empty() {
         return;
     }
-    let Some(plan) = plans_by_condition.get(condition_id) else {
+    if plans_by_condition.get(condition_id).is_none() {
         return;
-    };
+    }
     if seen.insert(condition_id.to_string()) {
-        ordered.push(*plan);
+        ordered.push(condition_id.to_string());
     }
 }
 

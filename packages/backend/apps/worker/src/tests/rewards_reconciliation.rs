@@ -446,8 +446,10 @@ fn live_placement_counts_candidate_notional_against_position_cap() {
         &live_test_account(Decimal::from(100_u64)),
         &[plan],
         &books,
+        &HashMap::new(),
         &[],
         &positions,
+        false,
         "trc_live_test",
     );
 

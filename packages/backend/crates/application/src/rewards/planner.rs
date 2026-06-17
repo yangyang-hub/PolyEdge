@@ -61,6 +61,9 @@ fn reward_market_prefilter_reason(
     if market.ambiguity_level == "high" {
         return Some("market resolution metadata is high risk");
     }
+    if reward_market_event_risk_reason(market).is_some() {
+        return Some("market has high event/tail-risk characteristics");
+    }
     if market
         .end_at
         .is_none_or(|end_at| end_at < now + TimeDuration::hours(config.min_hours_to_end as i64))
@@ -75,6 +78,26 @@ fn reward_market_prefilter_reason(
     }
     if normalize_reward_spread_cents(market.rewards_max_spread) <= Decimal::ZERO {
         return Some("invalid rewards spread setting");
+    }
+    None
+}
+
+fn reward_market_event_risk_reason(market: &RewardMarket) -> Option<&'static str> {
+    let text = format!(
+        "{} {} {} {}",
+        market.question, market.market_slug, market.event_slug, market.category
+    )
+    .to_ascii_lowercase();
+    let has_any = |needles: &[&str]| needles.iter().any(|needle| text.contains(needle));
+
+    if has_any(&["one day after launch", "fdv above", "fully diluted valuation"]) {
+        return Some("launch valuation market has high jump risk");
+    }
+    if has_any(&["launch a token", "token launch", "launch token", "airdrop"]) {
+        return Some("token launch market has high announcement risk");
+    }
+    if has_any(&["official result", "announced by", "will be listed", "listing by"]) {
+        return Some("official-result market has high announcement risk");
     }
     None
 }

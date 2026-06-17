@@ -254,6 +254,28 @@ fn ai_enabled_rejects_eligible_plan_without_provider_decision() {
 }
 
 #[test]
+fn info_risk_enforce_rejects_eligible_plan_without_provider_decision() {
+    let config = RewardBotConfig {
+        info_risk_enabled: true,
+        info_risk_mode: RewardSelectionMode::Enforce,
+        min_market_score: Decimal::ZERO,
+        ..RewardBotConfig::default()
+    };
+    let mut plans = vec![build_reward_quote_plan(
+        &test_market(decimal("5")),
+        &test_books(),
+        &config,
+    )];
+
+    apply_reward_info_risks(&mut plans, &HashMap::new(), &config, decimal("0.65"));
+
+    assert!(!plans[0].eligible);
+    assert!(plans[0].legs.is_empty());
+    assert_eq!(plans[0].quote_mode, RewardPlanQuoteMode::None);
+    assert!(plans[0].reason.contains("info risk pending"));
+}
+
+#[test]
 fn ai_enabled_rejects_low_confidence_allow_decision() {
     let config = RewardBotConfig {
         ai_advisory_enabled: true,
@@ -556,6 +578,21 @@ fn candidate_prefilter_requires_exactly_one_yes_and_one_no_token() {
     market.tokens.pop();
     market.tokens[1].outcome = "Maybe".to_string();
     assert!(select_reward_quote_candidate_markets(&[market], &config).is_empty());
+}
+
+#[test]
+fn candidate_prefilter_rejects_high_event_risk_launch_markets() {
+    let config = RewardBotConfig::default();
+    let mut market = test_market(decimal("5"));
+    market.question = "Extended FDV above $300M one day after launch?".to_string();
+    market.market_slug = "extended-fdv-above-300m-one-day-after-launch".to_string();
+
+    assert!(select_reward_quote_candidate_markets(&[market], &config).is_empty());
+
+    let mut token_launch = test_market(decimal("5"));
+    token_launch.question = "Will OpenSea launch a token by December 31, 2026?".to_string();
+
+    assert!(select_reward_quote_candidate_markets(&[token_launch], &config).is_empty());
 }
 
 #[test]

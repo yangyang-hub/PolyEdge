@@ -1,7 +1,9 @@
 const LIVE_SUBMISSION_ATTEMPTED_MARKER: &str = "live submission attempted";
 const LIVE_SUBMISSION_UNKNOWN_MARKER: &str =
     "live submission result unknown; manual reconciliation required";
+const LIVE_EXIT_DUST_DEFERRED_MARKER: &str = "dust live exit deferred below minimum notional";
 const MAX_EXIT_REJECTION_COUNT: usize = 10;
+const MIN_POLYMARKET_ORDER_NOTIONAL_USD: Decimal = Decimal::ONE;
 
 fn is_transient_order_rejection(rejection: &PolymarketOrderRejection) -> bool {
     let code = rejection.code.to_lowercase();
@@ -319,20 +321,53 @@ fn parse_exit_rejection_count(reason: &str) -> usize {
 }
 
 fn live_exit_retry_due(order: &ManagedRewardOrder, now: OffsetDateTime) -> bool {
+    if order.reason.contains(LIVE_EXIT_DUST_DEFERRED_MARKER) {
+        return now >= order.updated_at + TimeDuration::seconds(300);
+    }
     let rejection_count = parse_exit_rejection_count(&order.reason);
     if rejection_count == 0 {
         return true;
+    }
+    if rejection_count >= MAX_EXIT_REJECTION_COUNT {
+        return false;
     }
     let exponent = u32::try_from(rejection_count.saturating_sub(1).min(6)).unwrap_or(6);
     let delay_seconds = (5_i64 * 2_i64.pow(exponent)).min(300);
     now >= order.updated_at + TimeDuration::seconds(delay_seconds)
 }
 
+fn live_exit_dust_deferred(order: &ManagedRewardOrder) -> Option<(String, RewardRiskEvent)> {
+    if order.side != RewardOrderSide::Sell {
+        return None;
+    }
+    let remaining = (order.size - order.filled_size).max(Decimal::ZERO);
+    let notional = (order.price * remaining).round_dp(4);
+    if notional >= MIN_POLYMARKET_ORDER_NOTIONAL_USD {
+        return None;
+    }
+    let reason = format!(
+        "{LIVE_EXIT_DUST_DEFERRED_MARKER}: notional {notional} < {MIN_POLYMARKET_ORDER_NOTIONAL_USD}; awaiting larger position or higher bid"
+    );
+    let event = reward_live_event(
+        order,
+        "reward_live_exit_dust_deferred",
+        RewardRiskSeverity::Warning,
+        reason.clone(),
+        json!({
+            "notional": notional,
+            "min_notional": MIN_POLYMARKET_ORDER_NOTIONAL_USD,
+            "price": order.price,
+            "remaining_size": remaining,
+        }),
+    );
+    Some((reason, event))
+}
+
 fn live_exit_pre_submit_failure(
     order: &ManagedRewardOrder,
     error: &AppError,
     post_only: bool,
-    pre_submit_reason: &str,
+    _pre_submit_reason: &str,
 ) -> Option<(String, RewardRiskSeverity)> {
     if order.side != RewardOrderSide::Sell || error.code() != "POLYMARKET_NOTIONAL_INVALID" {
         return None;
@@ -347,7 +382,7 @@ fn live_exit_pre_submit_failure(
     };
     Some((
         format!(
-            "retryable live exit rejected [{next_rejections}/{MAX_EXIT_REJECTION_COUNT}] (post_only={post_only}): {error}; {pre_submit_reason}"
+            "retryable live exit rejected [{next_rejections}/{MAX_EXIT_REJECTION_COUNT}] (post_only={post_only}): {error}"
         ),
         severity,
     ))
