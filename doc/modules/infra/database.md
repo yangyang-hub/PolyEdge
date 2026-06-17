@@ -1,10 +1,10 @@
 # 数据库（Migrations + Schema）
 
-最后更新：2026-06-14
+最后更新：2026-06-17
 
 ## 概述
 
-数据库使用 PostgreSQL，通过 39 个 SQL 迁移文件管理 schema。覆盖审计、市场数据、事件/信号、执行管道、风控、套利、奖励、跟单等领域。
+数据库使用 PostgreSQL，通过 40 个 SQL 迁移文件管理 schema。覆盖审计、市场数据、事件/信号、执行管道、风控、套利、奖励、跟单等领域。
 
 ## 迁移文件列表
 
@@ -49,6 +49,7 @@
 | `0037_reward_market_quality.sql` | Rewards 市场质量与安全修复 | `markets` 增加 liquidity/end/synced 字段和质量索引；恢复旧 stale auto-cancel 订单的对账锁 |
 | `0038_reward_market_advisories.sql` | Rewards AI advisory 缓存 | `reward_market_advisories` |
 | `0039_reward_market_info_risks.sql` | Rewards 信息风险缓存 | `reward_market_info_risks` |
+| `0040_markets_quality_index_no_synced_at.sql` | Rewards 市场质量索引写放大优化 | 重建 `idx_markets_reward_quality`，移除高频变化的 `markets.synced_at` |
 
 ## Schema 领域分组
 
@@ -123,7 +124,7 @@
 
 ## 当前状态
 
-- 39 个迁移文件，最新为 `0039_reward_market_info_risks.sql`
+- 40 个迁移文件，最新为 `0040_markets_quality_index_no_synced_at.sql`
 - 所有表使用 PostgreSQL 特性（JSONB、NUMERIC 约束、BIGSERIAL、部分索引等）
 - 迁移使用 `sqlx` 管理
 

@@ -1,4 +1,4 @@
-use polyedge_application::{MarketView, RewardMarket, RewardToken};
+use polyedge_application::{MarketUpsertOptions, MarketView, RewardMarket, RewardToken};
 use polyedge_connectors::{
     PolymarketGammaConnector, PolymarketGammaMarket, PolymarketRewardMarket,
     PolymarketRewardsConnector,
@@ -14,7 +14,11 @@ pub struct PriorityMarketSyncReport {
     pub upserted: usize,
 }
 
-pub async fn sync_general_markets_once(state: &AppState, trace_id: &str) -> Result<usize> {
+pub async fn sync_general_markets_once(
+    state: &AppState,
+    trace_id: &str,
+    upsert_options: MarketUpsertOptions,
+) -> Result<usize> {
     let connector = PolymarketGammaConnector::new(&state.settings.polymarket.gamma_host)?;
     let page_size = state.settings.arbitrage.scan_limit;
     let gamma_markets = connector.fetch_markets(page_size).await?;
@@ -24,7 +28,7 @@ pub async fn sync_general_markets_once(state: &AppState, trace_id: &str) -> Resu
         .collect();
     state
         .market_event_service
-        .upsert_markets(&views, trace_id)
+        .upsert_markets_with_options(&views, trace_id, upsert_options)
         .await
 }
 

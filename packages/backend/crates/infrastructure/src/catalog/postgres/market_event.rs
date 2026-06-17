@@ -300,4 +300,14 @@ impl MarketEventStore for PostgresMarketEventStore {
     async fn upsert_markets(&self, markets: &[MarketView], trace_id: &str) -> Result<usize> {
         self.market_event_upsert_markets(markets, trace_id).await
     }
+
+    async fn upsert_markets_with_options(
+        &self,
+        markets: &[MarketView],
+        trace_id: &str,
+        options: MarketUpsertOptions,
+    ) -> Result<usize> {
+        self.market_event_upsert_markets_with_options(markets, trace_id, options)
+            .await
+    }
 }

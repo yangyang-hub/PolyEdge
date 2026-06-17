@@ -1,4 +1,5 @@
 use axum::{Router, routing::get};
+use polyedge_application::MarketUpsertOptions;
 use polyedge_infrastructure::{AppState, Runtime};
 use std::time::Duration;
 use tower_http::limit::RequestBodyLimitLayer;
@@ -32,6 +33,8 @@ const PRIORITY_REWARD_DISCOVERY_MAX_STALE_MINUTES: u64 = 24 * 60;
 const MIN_PRIORITY_MARKET_SYNC_INTERVAL_SECS: u64 = 30;
 const MAX_PRIORITY_MARKET_SYNC_INTERVAL_SECS: u64 = 300;
 const MAX_PRIORITY_MARKET_SYNC_TIMEOUT_SECS: u64 = 120;
+const DEFAULT_MARKET_DATA_MAX_AGE_MINUTES: u64 = 15;
+const MIN_GENERAL_MARKET_SYNCED_AT_REFRESH_AFTER_SECS: u64 = 30;
 
 #[tokio::main]
 async fn main() {
@@ -270,11 +273,19 @@ fn priority_market_sync_timeout(interval: Duration) -> Duration {
 
 async fn run_general_market_sync(state: &AppState, phase: &'static str, timeout: Duration) {
     let trace_id = polyedge_infrastructure::new_trace_id();
+    let upsert_options = general_market_upsert_options(state).await;
+    let refresh_synced_at_after_secs = upsert_options.refresh_synced_at_after_secs.unwrap_or(0);
     let started = std::time::Instant::now();
-    match tokio::time::timeout(timeout, sync_general_markets_once(state, &trace_id)).await {
-        Ok(Ok(general)) => info!(
+    match tokio::time::timeout(
+        timeout,
+        sync_general_markets_once(state, &trace_id, upsert_options),
+    )
+    .await
+    {
+        Ok(Ok(written)) => info!(
             phase,
-            general,
+            written,
+            refresh_synced_at_after_secs,
             elapsed_ms = started.elapsed().as_millis() as u64,
             "orderbook general market sync complete"
         ),
@@ -290,6 +301,27 @@ async fn run_general_market_sync(state: &AppState, phase: &'static str, timeout:
             "orderbook general market sync timed out"
         ),
     }
+}
+
+async fn general_market_upsert_options(state: &AppState) -> MarketUpsertOptions {
+    let freshness_minutes = state
+        .reward_bot_service
+        .read_config()
+        .await
+        .map(|config| config.max_market_data_age_minutes.max(1))
+        .unwrap_or(DEFAULT_MARKET_DATA_MAX_AGE_MINUTES);
+    MarketUpsertOptions::refresh_when_older_than(general_synced_at_refresh_after_secs(
+        freshness_minutes,
+    ))
+}
+
+fn general_synced_at_refresh_after_secs(freshness_minutes: u64) -> u64 {
+    let max_age_secs = freshness_minutes.max(1).saturating_mul(60);
+    let refresh_after_secs = max_age_secs.saturating_mul(2).saturating_div(3);
+    let upper = max_age_secs
+        .saturating_sub(1)
+        .max(MIN_GENERAL_MARKET_SYNCED_AT_REFRESH_AFTER_SECS);
+    refresh_after_secs.clamp(MIN_GENERAL_MARKET_SYNCED_AT_REFRESH_AFTER_SECS, upper)
 }
 
 async fn run_priority_market_sync(

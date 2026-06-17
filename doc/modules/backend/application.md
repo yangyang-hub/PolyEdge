@@ -50,14 +50,14 @@
 ### market_event — 核心数据管理
 
 **Store Trait：** `MarketEventStore` — 系统最大的 Store trait
-- Markets：`list_markets`、`count_markets`、`get_market`、`upsert_markets`、`list_market_categories`
+- Markets：`list_markets`、`count_markets`、`get_market`、`upsert_markets`、`upsert_markets_with_options`、`list_market_categories`
 - Signals：`get_signal`、`list_signals`、`recompute_signal`、`approve_signal`、`reject_signal`
 - Events/Evidence：`list_events`、`list_evidences`、`list_probability_estimates`
 - Execution：`list_order_drafts`、`list_execution_requests`、`submit_execution_request`
 - Orders/Trades/Positions：`list_orders`、`list_trades`、`get_order_by_external_ref`、`list_positions`
 - Dispatch/Reconciliation：`list_dispatch_candidates`、`list_reconciliation_candidates`、`mark_execution_submitted`、`reconcile_execution_fill` 等
 
-**服务：** `MarketEventService` — 所有方法是对 Store 的薄代理
+**服务：** `MarketEventService` — 所有方法是对 Store 的薄代理；`MarketUpsertOptions` 可控制 market upsert 对 `markets.synced_at` 是每次刷新还是仅在超过指定秒数后刷新，供 orderbook full sync 降低无变化市场的写放大。
 
 ### execution — 执行管道
 

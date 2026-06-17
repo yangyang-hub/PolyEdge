@@ -1,6 +1,6 @@
 # infrastructure（基础设施层）
 
-最后更新：2026-06-16
+最后更新：2026-06-17
 
 ## 概述
 
@@ -161,7 +161,8 @@
 - Rewards managed order upsert 会更新后续实际提交的 `price` / `size`，保证 flatten 改价、CLOB 数量调整和未知提交恢复使用持久化后的真实参数
 - Rewards store 已持久化 quote/selection mode、dominant 单边阈值、盘口集中度阈值、偏好分类、AI advisory 配置和信息风险配置；`reward_market_advisories` 与 `reward_market_info_risks` 表已由迁移创建，并已接入 Postgres/内存缓存读写，供 worker 跳过重复模型判断。
 - Rewards store 已支持外部账户余额和完整持仓快照同步；成功空持仓快照会清空目标账户持仓，失败响应不会破坏上一版，最近 confirmed fill 时间用于 worker 的 120 秒账户快照保护；worker 写入的资金钱包地址优先使用 `FUNDER`，CLOB 余额为 0/失败时可用 Polygon pUSD 链上余额回填 snapshot
-- `markets` 保存 Gamma `liquidity_usd`、`end_at` 和本地 `synced_at`；每次成功 upsert 都刷新 `synced_at`，即使 Gamma `updatedAt` 未变化，避免把安静但同步正常的市场误判为目录陈旧
+- `markets` 保存 Gamma `liquidity_usd`、`end_at` 和本地 `synced_at`；Postgres market upsert 会分离新增、真实数据变化更新和 freshness-only 刷新，返回实际写入行数。默认调用仍刷新 `synced_at`，orderbook full sync 通过 `MarketUpsertOptions` 只刷新超过新鲜度阈值的安静市场，priority sync 继续强制刷新重点市场，避免 rewards 关键市场因目录新鲜度过低被误判。
+- `idx_markets_reward_quality` 不包含高频变化的 `synced_at`，降低 freshness-only 刷新对索引和 WAL 的写放大；rewards 候选查询仍在关联 Gamma `markets` 后按 `synced_at` 做新鲜度过滤。
 - Orderbook register/ingest/delete 写接口要求 `x-polyedge-orderbook-token` 与 `POLYEDGE_ORDERBOOK__WRITE_TOKEN` 匹配；该密钥仅配置在 `deploy/.env.orderbook` 和 `deploy/.env.api`，未配置 token 时写接口关闭，读接口和健康检查仍可用
 
 ## 修改检查清单

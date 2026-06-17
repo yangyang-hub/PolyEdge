@@ -39,6 +39,33 @@ impl MarketView {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MarketUpsertOptions {
+    pub refresh_synced_at_after_secs: Option<u64>,
+}
+
+impl MarketUpsertOptions {
+    #[must_use]
+    pub const fn refresh_always() -> Self {
+        Self {
+            refresh_synced_at_after_secs: None,
+        }
+    }
+
+    #[must_use]
+    pub const fn refresh_when_older_than(seconds: u64) -> Self {
+        Self {
+            refresh_synced_at_after_secs: Some(seconds),
+        }
+    }
+}
+
+impl Default for MarketUpsertOptions {
+    fn default() -> Self {
+        Self::refresh_always()
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EventView {
     pub id: String,
