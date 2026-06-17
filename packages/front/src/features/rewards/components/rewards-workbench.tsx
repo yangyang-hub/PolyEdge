@@ -1,6 +1,6 @@
 "use client";
 
-import { startTransition, useMemo, useRef, useState } from "react";
+import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Activity, CircleDollarSign, ShieldCheck } from "lucide-react";
 
 import { OperationFeedbackBanner } from "@/components/shared/operation-feedback-banner";
@@ -32,6 +32,7 @@ import { OrdersTable, PositionsTable, QuotePlansTable } from "./rewards-tables";
 
 const REWARD_ORDERS_PAGE_SIZE = 15;
 const REWARD_PLANS_PAGE_SIZE = 15;
+const REWARD_SNAPSHOT_REFRESH_MS = 10_000;
 
 type OrderStatusFilter = "all" | "open" | "filled" | "cancelled" | "exit_pending";
 type PlansEligibilityFilter = "all" | "eligible" | "ineligible";
@@ -59,73 +60,100 @@ export function RewardsWorkbench({ initialSnapshot }: { initialSnapshot: RewardB
 
   const eventCounts = useMemo(() => countRewardEvents(snapshot), [snapshot]);
 
-  function buildQuery(
-    overrides: {
-      search?: string;
-      status?: OrderStatusFilter;
-      sortBy?: string;
-      sortOrder?: SortOrder;
-      page?: number;
-      plansSearch?: string;
-      plansEligible?: PlansEligibilityFilter;
-      plansSortBy?: string;
-      plansSortOrder?: SortOrder;
-      plansPage?: number;
-    } = {},
-  ): RewardBotSnapshotQuery {
-    const search = overrides.search ?? ordersSearch;
-    const status = overrides.status ?? ordersStatus;
-    const q: RewardBotSnapshotQuery = {};
-    // Plans pagination
-    const resolvedPlansSearch = overrides.plansSearch ?? plansSearch;
-    const resolvedPlansEligible = overrides.plansEligible ?? plansEligible;
-    const resolvedPlansSortBy = overrides.plansSortBy ?? plansSortBy;
-    const resolvedPlansSortOrder = overrides.plansSortOrder ?? plansSortOrder;
-    const resolvedPlansPage = overrides.plansPage ?? plansPage;
-    if (resolvedPlansSearch.trim()) q.plans_search = resolvedPlansSearch.trim();
-    if (resolvedPlansEligible === "eligible") q.plans_eligible = true;
-    else if (resolvedPlansEligible === "ineligible") q.plans_eligible = false;
-    q.plans_sort_by = resolvedPlansSortBy;
-    q.plans_sort_order = resolvedPlansSortOrder;
-    q.plans_page = resolvedPlansPage;
-    q.plans_page_size = REWARD_PLANS_PAGE_SIZE;
-    // Orders pagination
-    if (search.trim()) q.orders_search = search.trim();
-    if (status !== "all") q.orders_status = status;
-    q.orders_sort_by = overrides.sortBy ?? ordersSortBy;
-    q.orders_sort_order = overrides.sortOrder ?? ordersSortOrder;
-    q.orders_page = overrides.page ?? ordersPage;
-    q.orders_page_size = REWARD_ORDERS_PAGE_SIZE;
-    return q;
-  }
+  const buildQuery = useCallback(
+    (
+      overrides: {
+        search?: string;
+        status?: OrderStatusFilter;
+        sortBy?: string;
+        sortOrder?: SortOrder;
+        page?: number;
+        plansSearch?: string;
+        plansEligible?: PlansEligibilityFilter;
+        plansSortBy?: string;
+        plansSortOrder?: SortOrder;
+        plansPage?: number;
+      } = {},
+    ): RewardBotSnapshotQuery => {
+      const search = overrides.search ?? ordersSearch;
+      const status = overrides.status ?? ordersStatus;
+      const q: RewardBotSnapshotQuery = {};
+      const resolvedPlansSearch = overrides.plansSearch ?? plansSearch;
+      const resolvedPlansEligible = overrides.plansEligible ?? plansEligible;
+      const resolvedPlansSortBy = overrides.plansSortBy ?? plansSortBy;
+      const resolvedPlansSortOrder = overrides.plansSortOrder ?? plansSortOrder;
+      const resolvedPlansPage = overrides.plansPage ?? plansPage;
+      if (resolvedPlansSearch.trim()) q.plans_search = resolvedPlansSearch.trim();
+      if (resolvedPlansEligible === "eligible") q.plans_eligible = true;
+      else if (resolvedPlansEligible === "ineligible") q.plans_eligible = false;
+      q.plans_sort_by = resolvedPlansSortBy;
+      q.plans_sort_order = resolvedPlansSortOrder;
+      q.plans_page = resolvedPlansPage;
+      q.plans_page_size = REWARD_PLANS_PAGE_SIZE;
+      if (search.trim()) q.orders_search = search.trim();
+      if (status !== "all") q.orders_status = status;
+      q.orders_sort_by = overrides.sortBy ?? ordersSortBy;
+      q.orders_sort_order = overrides.sortOrder ?? ordersSortOrder;
+      q.orders_page = overrides.page ?? ordersPage;
+      q.orders_page_size = REWARD_ORDERS_PAGE_SIZE;
+      return q;
+    },
+    [
+      ordersPage,
+      ordersSearch,
+      ordersSortBy,
+      ordersSortOrder,
+      ordersStatus,
+      plansEligible,
+      plansPage,
+      plansSearch,
+      plansSortBy,
+      plansSortOrder,
+    ],
+  );
 
-  function refetchWithFilters(overrides?: Parameters<typeof buildQuery>[0]) {
-    const sequence = refetchSequence.current + 1;
-    refetchSequence.current = sequence;
-    const requestedOrdersPage = overrides?.page ?? ordersPage;
-    const requestedPlansPage = overrides?.plansPage ?? plansPage;
-    setFiltering(true);
-    void readRewardBotSnapshot(buildQuery(overrides))
-      .then((response) => {
-        if (sequence !== refetchSequence.current) return;
-        setSnapshot(response.data);
-        setOrdersPage(response.data.orders_page?.page ?? requestedOrdersPage);
-        setPlansPage(response.data.plans_page?.page ?? requestedPlansPage);
-      })
-      .catch((error: unknown) => {
-        if (sequence !== refetchSequence.current) return;
-        setFeedback({
-          ok: false,
-          message:
-            error instanceof Error
-              ? error.message
-              : dictionary.rewards.snapshotRefreshFailed,
+  const refetchWithFilters = useCallback(
+    (
+      overrides?: Parameters<typeof buildQuery>[0],
+      options: { silent?: boolean } = {},
+    ) => {
+      const sequence = refetchSequence.current + 1;
+      refetchSequence.current = sequence;
+      const requestedOrdersPage = overrides?.page ?? ordersPage;
+      const requestedPlansPage = overrides?.plansPage ?? plansPage;
+      if (!options.silent) setFiltering(true);
+      void readRewardBotSnapshot(buildQuery(overrides))
+        .then((response) => {
+          if (sequence !== refetchSequence.current) return;
+          setSnapshot(response.data);
+          setOrdersPage(response.data.orders_page?.page ?? requestedOrdersPage);
+          setPlansPage(response.data.plans_page?.page ?? requestedPlansPage);
+        })
+        .catch((error: unknown) => {
+          if (sequence !== refetchSequence.current) return;
+          setFeedback({
+            ok: false,
+            message:
+              error instanceof Error
+                ? error.message
+                : dictionary.rewards.snapshotRefreshFailed,
+          });
+        })
+        .finally(() => {
+          if (sequence === refetchSequence.current && !options.silent) {
+            setFiltering(false);
+          }
         });
-      })
-      .finally(() => {
-        if (sequence === refetchSequence.current) setFiltering(false);
-      });
-  }
+    },
+    [buildQuery, ordersPage, plansPage],
+  );
+
+  useEffect(() => {
+    const interval = window.setInterval(() => {
+      refetchWithFilters(undefined, { silent: true });
+    }, REWARD_SNAPSHOT_REFRESH_MS);
+    return () => window.clearInterval(interval);
+  }, [refetchWithFilters]);
 
   function applyResult(result: RewardBotActionResult) {
     setFeedback(result);
