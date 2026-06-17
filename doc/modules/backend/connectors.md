@@ -1,6 +1,6 @@
 # connectors（外部连接器层）
 
-最后更新：2026-06-16
+最后更新：2026-06-17
 
 ## 概述
 
@@ -28,6 +28,7 @@
 | `polymarket/book.rs` | 盘口快照：`PolymarketBookConnector` |
 | `rewards.rs` + `rewards/orderbooks.rs` | 奖励市场目录与 CLOB 批量盘口：`PolymarketRewardsConnector` |
 | `orderbook.rs` | 独立 orderbook 服务客户端：HTTP 读盘口/原子注册 token/内部写 token，内部 WS stream 消费 |
+| `openai_compat.rs` | OpenAI-compatible provider helper：root base URL 自动补 `/v1`，请求同时携带 Bearer 与 `api-key` 认证头 |
 | `reward_ai.rs` | Rewards AI advisory 连接器：OpenAI Responses、OpenAI Chat Completions、Anthropic Messages |
 | `reward_info_risk.rs` | Rewards 信息风险连接器：OpenAI Responses / Chat Completions、Anthropic Messages；OpenAI Responses 可选 web search tool |
 | `polymarket/models.rs` | 共享数据模型 |
@@ -119,14 +120,14 @@
 ### Rewards AI Advisory
 
 - **`RewardAiAdvisoryConnector`**：`base_url` + API key + reqwest client，供 rewards worker 低频请求盘口适合度判断。
-- 支持三种请求格式：`openai_responses` 调用 `{base}/responses` 并使用 JSON schema structured output；`openai_chat_completions` 调用 `{base}/chat/completions` 并使用 `response_format=json_schema`；`anthropic_messages` 调用 `{base}/v1/messages`，通过 system/user prompt 要求仅返回 JSON。
+- 支持三种请求格式：`openai_responses` 调用 OpenAI-compatible `{base}/responses` 并使用 JSON schema structured output；`openai_chat_completions` 调用 OpenAI-compatible `{base}/chat/completions` 并使用 `response_format=json_schema`；`anthropic_messages` 调用 `{base}/v1/messages`，通过 system/user prompt 要求仅返回 JSON。OpenAI-compatible 路径会在 base URL 未以 `/v1` 结尾时自动补 `/v1`，并同时发送 `Authorization: Bearer` 与 `api-key`，兼容 OpenAI 原生和 MiMo 等网关；MiMo 当前应配置为 `openai_chat_completions`。
 - 输出统一解析为 `RewardAiAdvisoryDecision`：`suitability=allow|watch|avoid`、`quote_mode=double|single_yes|single_no|none`、`exit_policy`、`confidence`、`reasons` 和 `metrics`；解析时会把 provider 返回的 confidence 钳制到 `0..=1`。provider HTTP、状态码、解码或 JSON 结构错误会返回 dependency error，由 worker 记录告警，并在 AI advisory 启用时按 gating 规则阻断对应 eligible 计划，直到 provider 过滤通过。
 - 该 connector 只接收 application 层已构建的 DB/orderbook/planner/account payload，不直接访问 Polymarket 或其他市场数据源。
 
 ### Rewards Info Risk
 
 - **`RewardInfoRiskConnector`**：`base_url` + API key + reqwest client，供 rewards worker 异步判断候选市场的信息流风险。
-- 支持三种请求格式：`openai_responses`、`openai_chat_completions`、`anthropic_messages`。OpenAI Responses 可通过 `POLYEDGE_REWARDS__INFO_RISK_WEB_SEARCH_ENABLED=true` 附加 `web_search_preview` 工具；默认关闭。
+- 支持三种请求格式：`openai_responses`、`openai_chat_completions`、`anthropic_messages`。OpenAI-compatible 路径同样会规范化 root base URL 到 `/v1` 并携带 Bearer + `api-key` 认证头；OpenAI Responses 可通过 `POLYEDGE_REWARDS__INFO_RISK_WEB_SEARCH_ENABLED=true` 附加 `web_search_preview` 工具；默认关闭。
 - 输出统一解析为 `RewardInfoRiskAssessmentDecision`：`risk_level`、`risk_type`、`directional_risk`、`resolution_imminent`、`expected_event_at`、`confidence`、`summary`、`sources` 和 `metrics`；解析时会把 provider 返回的 confidence 钳制到 `0..=1`。
 - 该 connector 不直接访问 Polymarket；它只接收 application 层基于数据库、quote plan 和账户状态构建的 payload。provider 失败由 worker 记录 warning，不阻断 live tick。
 
@@ -157,7 +158,7 @@
 - Gamma 市场同步已提供 rewards 质量筛选所需的 CLOB liquidity、end time 和分级 ambiguity 数据，并支持 priority condition 刷新降低全量目录延迟对 live rewards 的影响。
 - Rewards markets 分页和 enrichment 已具备完整性保护，不再把部分补全结果作为完整目录写入；详情补全只针对缺唯一 YES/NO token 或缺有效 question 的市场，降低 CLOB 429 风险
 - Rewards 盘口连接器优先走 CLOB 批量 `/books`，并对失败或遗漏项使用单 token `/book` 回退
-- Rewards AI advisory 和信息风险 connector 已支持 OpenAI Responses、OpenAI Chat Completions 和 Anthropic Messages 三种格式；模型密钥来自 worker 环境变量，provider confidence 输出会在解析时钳制到 `0..=1`。AI advisory provider 失败不终止 live tick，但在 AI 开启时会让对应 eligible 计划保持不可挂；信息风险 provider 失败只保留上一版缓存/确定性路径。信息风险 connector 的 OpenAI web search 工具默认关闭，仅在显式环境变量开启时使用。
+- Rewards AI advisory 和信息风险 connector 已支持 OpenAI Responses、OpenAI Chat Completions 和 Anthropic Messages 三种格式；OpenAI-compatible base URL 可配置为根地址或 `/v1` 地址，connector 会统一请求 `/v1/...` 并兼容 Bearer / `api-key` 认证头；MiMo provider 已验证 root gateway + `openai_chat_completions` + JSON schema 可用，`openai_responses` 会返回 provider 未实现错误；模型密钥来自 worker 环境变量，provider confidence 输出会在解析时钳制到 `0..=1`。AI advisory provider 失败不终止 live tick，但在 AI 开启时会让对应 eligible 计划保持不可挂；信息风险 provider 失败只保留上一版缓存/确定性路径。信息风险 connector 的 OpenAI web search 工具默认关闭，仅在显式环境变量开启时使用。
 - Orderbook 服务客户端已支持 HTTP batch/bootstrap 与内部 WS 推送；worker 长期 rewards loop 可用 WS 更新本地 cache，缺失或重连时回退 HTTP batch
 - Data API positions 已按完整快照分页读取；不完整或失败的响应不会被 rewards worker 用于替换持仓
 - Paper Trading 执行器已完整实现

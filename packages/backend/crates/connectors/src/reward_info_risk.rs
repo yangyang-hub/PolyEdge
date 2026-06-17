@@ -1,3 +1,4 @@
+use crate::openai_compat::{openai_compatible_endpoint, with_openai_compatible_auth};
 use polyedge_application::{
     RewardAiProvider, RewardAiRequestFormat, RewardInfoDirectionalRisk,
     RewardInfoRiskAssessmentDecision, RewardInfoRiskAssessmentRequest, RewardInfoRiskLevel,
@@ -81,14 +82,15 @@ impl RewardInfoRiskConnector {
         if self.web_search_enabled {
             body["tools"] = json!([{ "type": "web_search_preview" }]);
         }
-        let response = self
-            .client
-            .post(format!("{}/responses", self.base_url))
-            .bearer_auth(&self.api_key)
-            .json(&body)
-            .send()
-            .await
-            .map_err(reward_info_risk_http_error)?;
+        let response = with_openai_compatible_auth(
+            self.client
+                .post(openai_compatible_endpoint(&self.base_url, "responses")),
+            &self.api_key,
+        )
+        .json(&body)
+        .send()
+        .await
+        .map_err(reward_info_risk_http_error)?;
         let status = response.status();
         let body: Value = response
             .json()
@@ -105,28 +107,31 @@ impl RewardInfoRiskConnector {
         request: &RewardInfoRiskAssessmentRequest,
     ) -> Result<String> {
         ensure_info_risk_provider(request, RewardAiProvider::OpenAi)?;
-        let response = self
-            .client
-            .post(format!("{}/chat/completions", self.base_url))
-            .bearer_auth(&self.api_key)
-            .json(&json!({
-                "model": request.model,
-                "messages": [
-                    {"role": "system", "content": reward_info_risk_system_prompt()},
-                    {"role": "user", "content": reward_info_risk_user_prompt(request)}
-                ],
-                "response_format": {
-                    "type": "json_schema",
-                    "json_schema": {
-                        "name": "reward_market_info_risk",
-                        "schema": reward_info_risk_json_schema(),
-                        "strict": true
-                    }
+        let response = with_openai_compatible_auth(
+            self.client.post(openai_compatible_endpoint(
+                &self.base_url,
+                "chat/completions",
+            )),
+            &self.api_key,
+        )
+        .json(&json!({
+            "model": request.model,
+            "messages": [
+                {"role": "system", "content": reward_info_risk_system_prompt()},
+                {"role": "user", "content": reward_info_risk_user_prompt(request)}
+            ],
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "reward_market_info_risk",
+                    "schema": reward_info_risk_json_schema(),
+                    "strict": true
                 }
-            }))
-            .send()
-            .await
-            .map_err(reward_info_risk_http_error)?;
+            }
+        }))
+        .send()
+        .await
+        .map_err(reward_info_risk_http_error)?;
         let status = response.status();
         let body: Value = response
             .json()

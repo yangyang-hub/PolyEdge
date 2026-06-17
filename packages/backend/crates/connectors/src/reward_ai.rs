@@ -1,3 +1,4 @@
+use crate::openai_compat::{openai_compatible_endpoint, with_openai_compatible_auth};
 use polyedge_application::{
     RewardAiAdvisoryDecision, RewardAiAdvisoryRequest, RewardAiProvider, RewardAiRequestFormat,
     RewardAiSuitability, RewardPlanQuoteMode,
@@ -55,10 +56,11 @@ impl RewardAiAdvisoryConnector {
 
     async fn call_openai_responses(&self, request: &RewardAiAdvisoryRequest) -> Result<String> {
         ensure_provider(request, RewardAiProvider::OpenAi)?;
-        let response = self
-            .client
-            .post(format!("{}/responses", self.base_url))
-            .bearer_auth(&self.api_key)
+        let response = with_openai_compatible_auth(
+            self.client
+                .post(openai_compatible_endpoint(&self.base_url, "responses")),
+            &self.api_key,
+        )
             .json(&json!({
                 "model": request.model,
                 "input": [
@@ -90,28 +92,31 @@ impl RewardAiAdvisoryConnector {
         request: &RewardAiAdvisoryRequest,
     ) -> Result<String> {
         ensure_provider(request, RewardAiProvider::OpenAi)?;
-        let response = self
-            .client
-            .post(format!("{}/chat/completions", self.base_url))
-            .bearer_auth(&self.api_key)
-            .json(&json!({
-                "model": request.model,
-                "messages": [
-                    {"role": "system", "content": reward_ai_system_prompt()},
-                    {"role": "user", "content": reward_ai_user_prompt(request)}
-                ],
-                "response_format": {
-                    "type": "json_schema",
-                    "json_schema": {
-                        "name": "reward_market_advisory",
-                        "schema": reward_ai_json_schema(),
-                        "strict": true
-                    }
+        let response = with_openai_compatible_auth(
+            self.client.post(openai_compatible_endpoint(
+                &self.base_url,
+                "chat/completions",
+            )),
+            &self.api_key,
+        )
+        .json(&json!({
+            "model": request.model,
+            "messages": [
+                {"role": "system", "content": reward_ai_system_prompt()},
+                {"role": "user", "content": reward_ai_user_prompt(request)}
+            ],
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "reward_market_advisory",
+                    "schema": reward_ai_json_schema(),
+                    "strict": true
                 }
-            }))
-            .send()
-            .await
-            .map_err(reward_ai_http_error)?;
+            }
+        }))
+        .send()
+        .await
+        .map_err(reward_ai_http_error)?;
         let status = response.status();
         let body: Value = response.json().await.map_err(reward_ai_decode_error)?;
         if !status.is_success() {

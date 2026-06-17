@@ -267,9 +267,9 @@ pub async fn run_orderbook_stream(
                     *shared = new_tokens.clone();
                 }
 
-                let old_set = ws_token_set.read().await;
-                let changed = *old_set != new_tokens;
-                drop(old_set);
+                let old_tokens = ws_token_set.read().await;
+                let changed = !token_lists_have_same_members(&old_tokens, &new_tokens);
+                drop(old_tokens);
 
                 if changed {
                     info!(
@@ -304,6 +304,15 @@ async fn collect_orderbook_subscription_tokens(state: &AppState) -> Vec<String> 
     let max_tokens = state.settings.orderbook_stream.max_tokens;
     let all = state.orderbook_registry.list_all_tokens().await;
     all.into_iter().take(max_tokens).collect()
+}
+
+fn token_lists_have_same_members(left: &[String], right: &[String]) -> bool {
+    if left.len() != right.len() {
+        return false;
+    }
+    let left = left.iter().map(String::as_str).collect::<HashSet<_>>();
+    let right = right.iter().map(String::as_str).collect::<HashSet<_>>();
+    left == right
 }
 
 fn poll_reconcile_targets(
@@ -531,5 +540,15 @@ mod tests {
             poll_reconcile_targets(&current, &stale, 2),
             vec!["stale".to_string(), "fresh".to_string()]
         );
+    }
+
+    #[test]
+    fn token_list_member_comparison_ignores_order_only_changes() {
+        let left = vec!["a".to_string(), "b".to_string(), "c".to_string()];
+        let reordered = vec!["c".to_string(), "a".to_string(), "b".to_string()];
+        let changed = vec!["a".to_string(), "b".to_string(), "d".to_string()];
+
+        assert!(token_lists_have_same_members(&left, &reordered));
+        assert!(!token_lists_have_same_members(&left, &changed));
     }
 }
