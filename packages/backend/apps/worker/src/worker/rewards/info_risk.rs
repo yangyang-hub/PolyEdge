@@ -134,6 +134,12 @@ async fn scan_reward_info_risks_unlocked(
         }
 
         report.requested += 1;
+        info!(
+            trace_id = %trace_id,
+            condition_id = %condition_id,
+            requested = report.requested,
+            "requesting reward info risk provider",
+        );
         let _provider_permit = acquire_reward_ai_provider_request_permit().await?;
         match connector.assess(&request).await {
             Ok(decision) => {
@@ -144,6 +150,12 @@ async fn scan_reward_info_risks_unlocked(
                 );
                 state.reward_bot_service.save_market_info_risk(&risk).await?;
                 report.saved += 1;
+                info!(
+                    trace_id = %trace_id,
+                    condition_id = %condition_id,
+                    saved = report.saved,
+                    "saved reward info risk",
+                );
             }
             Err(error) => {
                 report.failures += 1;

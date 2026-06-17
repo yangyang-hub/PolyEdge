@@ -589,6 +589,12 @@ async fn refresh_reward_ai_advisories(
         }
 
         requested += 1;
+        info!(
+            trace_id = %trace_id,
+            condition_id = %plan.condition_id,
+            requested,
+            "requesting reward AI advisory provider",
+        );
         let _provider_permit = acquire_reward_ai_provider_request_permit().await?;
         match connector.advise(&request).await {
             Ok(decision) => {
@@ -602,6 +608,12 @@ async fn refresh_reward_ai_advisories(
                     .save_market_advisory(&advisory)
                     .await?;
                 saved += 1;
+                info!(
+                    trace_id = %trace_id,
+                    condition_id = %plan.condition_id,
+                    saved,
+                    "saved reward AI advisory",
+                );
                 advisories.insert(plan.condition_id.clone(), advisory);
             }
             Err(error) => {
