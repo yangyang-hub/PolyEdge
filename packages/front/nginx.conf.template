@@ -14,11 +14,11 @@ server {
   location ^~ /_next/static/ {
     try_files $uri =404;
     access_log off;
-    expires 1y;
-    add_header Cache-Control "public, immutable";
+    add_header Cache-Control "no-cache, must-revalidate" always;
   }
 
   location / {
     try_files $uri $uri.html $uri/ /404.html;
+    add_header Cache-Control "no-cache, must-revalidate" always;
   }
 }

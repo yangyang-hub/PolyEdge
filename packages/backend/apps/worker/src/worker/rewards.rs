@@ -275,9 +275,18 @@ async fn run_reward_bot_live_tick(
     book_history: &HashMap<String, VecDeque<BookSnapshot>>,
 ) -> Result<RewardBotRunReport> {
     let books_fetched = books.len();
+    let ai_min_confidence = reward_ai_min_confidence(state.settings.rewards.ai_min_confidence_bps);
+    let ai_model = state.settings.rewards.ai_model.trim().to_string();
     let mut cycle = state
         .reward_bot_service
-        .prepare_live_cycle(markets, books.clone(), trace_id, force_orders)
+        .prepare_live_cycle(
+            markets,
+            books.clone(),
+            trace_id,
+            force_orders,
+            ai_min_confidence,
+            &ai_model,
+        )
         .await?;
     info!(
         trace_id = %trace_id,

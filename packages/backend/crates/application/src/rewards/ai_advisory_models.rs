@@ -219,6 +219,27 @@ pub fn apply_reward_ai_advisories(
     }
 }
 
+#[must_use]
+pub fn reward_ai_advisories_from_quote_plans(
+    plans: &[RewardQuotePlan],
+    config: &RewardBotConfig,
+    model: &str,
+    now: OffsetDateTime,
+) -> HashMap<String, RewardMarketAdvisory> {
+    let model = model.trim();
+    plans
+        .iter()
+        .filter_map(|plan| plan.ai_advisory.as_ref())
+        .filter(|advisory| {
+            advisory.expires_at > now
+                && advisory.provider == config.ai_provider
+                && advisory.request_format == config.ai_request_format
+                && advisory.model == model
+        })
+        .map(|advisory| (advisory.condition_id.clone(), advisory.clone()))
+        .collect()
+}
+
 fn reject_ai_gated_plan(plan: &mut RewardQuotePlan, reason: &str) {
     if !plan.eligible {
         return;

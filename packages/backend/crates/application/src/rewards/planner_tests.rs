@@ -333,6 +333,44 @@ fn ai_enabled_allows_high_confidence_provider_pass_in_observe_mode() {
 }
 
 #[test]
+fn ai_advisory_carry_forward_reuses_unexpired_matching_snapshot_decision() {
+    let config = RewardBotConfig {
+        ai_advisory_enabled: true,
+        min_market_score: Decimal::ZERO,
+        ..RewardBotConfig::default()
+    };
+    let now = OffsetDateTime::now_utc();
+    let mut previous_plan = build_reward_quote_plan(&test_market(decimal("5")), &test_books(), &config);
+    previous_plan.ai_advisory = Some(test_advisory(
+        RewardAiSuitability::Allow,
+        RewardPlanQuoteMode::Double,
+        decimal("0.80"),
+    ));
+
+    let carried =
+        reward_ai_advisories_from_quote_plans(&[previous_plan.clone()], &config, "test-model", now);
+    assert_eq!(carried.len(), 1);
+    assert!(reward_ai_advisories_from_quote_plans(
+        &[previous_plan],
+        &config,
+        "other-model",
+        now,
+    )
+    .is_empty());
+
+    let mut next_plans = vec![build_reward_quote_plan(
+        &test_market(decimal("5")),
+        &test_books(),
+        &config,
+    )];
+    apply_reward_ai_advisories(&mut next_plans, &carried, &config, decimal("0.65"));
+
+    assert!(next_plans[0].eligible);
+    assert!(next_plans[0].ai_advisory.is_some());
+    assert_eq!(next_plans[0].legs.len(), 2);
+}
+
+#[test]
 fn combined_market_budget_rejects_unaffordable_minimum_sizes() {
     let config = RewardBotConfig {
         per_market_usd: decimal("20"),

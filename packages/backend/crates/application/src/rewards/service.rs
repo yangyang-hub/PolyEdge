@@ -649,9 +649,26 @@ impl RewardBotService {
         books: HashMap<String, RewardOrderBook>,
         _trace_id: &str,
         force_orders: bool,
+        ai_min_confidence: Decimal,
+        ai_model: &str,
     ) -> Result<RewardLiveCycle> {
         let config = self.read_config().await?;
-        let plans = build_reward_quote_plans(&markets, &books, &config);
+        let mut plans = build_reward_quote_plans(&markets, &books, &config);
+        if config.ai_advisory_enabled {
+            let previous_plans = self.store.list_all_quote_plans().await?;
+            let carried_advisories = reward_ai_advisories_from_quote_plans(
+                &previous_plans,
+                &config,
+                ai_model,
+                OffsetDateTime::now_utc(),
+            );
+            apply_reward_ai_advisories(
+                &mut plans,
+                &carried_advisories,
+                &config,
+                ai_min_confidence,
+            );
+        }
         // NOTE: Do NOT call upsert_markets() here.  The full reward-market catalog is
         // synced by the orderbook service (every 5 min).  Calling upsert_markets() with
         // only the filtered candidate subset would deactivate all other active markets

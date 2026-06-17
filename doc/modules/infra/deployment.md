@@ -1,6 +1,6 @@
 # 部署（Docker + Nginx + Scripts）
 
-最后更新：2026-06-16
+最后更新：2026-06-17
 
 ## 概述
 
@@ -74,7 +74,7 @@
 - 健康检查：`wget /healthz`
 - 通过 `NEXT_PUBLIC_POLYEDGE_API_BASE_URL` 指向内网 API 地址，浏览器直连后端
 - 当前内网免鉴权模式不需要设置 `NEXT_PUBLIC_POLYEDGE_INTERNAL_AUTH_DEV_BYPASS`
-- `scripts/deploy.sh` 在 `yarn build` 前会读取 `deploy/.env.front` 并导出 `NEXT_PUBLIC_*`，这些值会被写入静态 JS bundle；修改 API 地址后必须重建前端镜像
+- `scripts/deploy.sh` 在 `yarn build` 前会读取 `deploy/.env.front` 并导出 `NEXT_PUBLIC_*`，这些值会被写入静态 JS bundle；修改 API 地址后必须重建前端镜像。build 前会删除旧 `.next/` 和 `out/`，并在 build 后给 HTML 中的 `/_next/static/*.js/css` 引用追加 front hash query，避免复用旧静态导出产物或旧浏览器缓存
 - `envsubst` 将环境变量注入 nginx 静态文件配置模板
 
 ## Nginx 配置
@@ -82,8 +82,8 @@
 | 路径 | 行为 |
 |---|---|
 | `/healthz` | 返回 200 "ok" |
-| `/_next/static/` | 静态资源，1 年不可变缓存 |
-| `/` | 静态文件服务，fallback 到 `$uri.html` 和 `/404.html` |
+| `/_next/static/` | 静态资源，`Cache-Control: no-cache, must-revalidate`，避免静态导出 chunk 文件名复用时浏览器长期运行旧 JS |
+| `/` | 静态文件服务，fallback 到 `$uri.html` 和 `/404.html`，HTML 同样要求 revalidate |
 
 API 请求不再经过前端 nginx 反向代理；跨域由 Rust API 的 `CorsLayer::permissive()` 处理。当前纯内网部署通过 `POLYEDGE_AUTH__DISABLED=true` 关闭 API 权限校验。
 
@@ -172,7 +172,7 @@ POLYEDGE_BACKEND_BINARY=polyedge-orderbook ./scripts/build-backend-bin.sh
 - `scripts/build-backend-bin.sh` 的单服务模式会让 `POLYEDGE_BACKEND_BINARY` 同时作为默认 Cargo package，确保 worker/orderbook 定向构建不会误编译 API 后复制旧目标文件。
 - Compose 部署使用窄构建上下文：后端只上传 `bin/`，前端只上传 `packages/front/`，避免扫描 Rust `target/`、前端 `node_modules/`、`.next/` 等大目录
 - `polyedge-front` 不再依赖 API 健康后才启动；前端静态 Nginx 可独立运行，浏览器按 `NEXT_PUBLIC_POLYEDGE_API_BASE_URL` 访问 API
-- `scripts/deploy.sh` 已防止重叠执行；前端变更 hash 包含 `packages/front/` 和 `deploy/.env.front`，会 prune `node_modules`、`.next`、`out` 等大目录；服务按目标独立部署，容器 down 且 hash 未变化时直接启动已有镜像，不会因其他服务健康失败而重复 rebuild
+- `scripts/deploy.sh` 已防止重叠执行；前端变更 hash 包含 `packages/front/` 和 `deploy/.env.front`，会 prune `node_modules`、`.next`、`out` 等大目录，实际 build 前也会清理 `.next/` 和 `out/`，并用同一 front hash 版本化 HTML 中的静态资源引用；服务按目标独立部署，容器 down 且 hash 未变化时直接启动已有镜像，不会因其他服务健康失败而重复 rebuild
 - 当前 `.env.api` 模板默认 `POLYEDGE_RUNTIME__ENVIRONMENT=production` 且 `POLYEDGE_AUTH__DISABLED=true`，API/front 内网交互不做权限校验；API CORS 为 permissive
 - Orderbook 服务 HTTP register/batch/ingest 入口按 `max_tokens` 和 `max_levels_per_side` 控制请求规模与缓存深度，写入时先排序再裁剪最优档位，registry source 固定上限为 32 个并在写锁内原子校验；register/ingest/delete 写接口还要求仅配置在 `.env.orderbook` / `.env.api` 的共享写 token，register 使用原子 source 替换。`/orderbook/stream` 是内部 WS 推送接口，worker rewards loop 用它更新本地盘口 cache，缺失或重连时仍通过 HTTP batch bootstrap
 - 生产前需要：关闭 `POLYEDGE_AUTH__DISABLED`、接入真实会话体系、签名 JWT、key rotation

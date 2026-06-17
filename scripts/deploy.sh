@@ -355,14 +355,55 @@ load_frontend_build_env() {
   log "frontend build env loaded from ${file}: NEXT_PUBLIC_POLYEDGE_API_BASE_URL=${NEXT_PUBLIC_POLYEDGE_API_BASE_URL}"
 }
 
+version_frontend_static_assets() {
+  local front_dir="$1"
+  local asset_version="$2"
+
+  log "versioning frontend static asset references (${asset_version:0:12})"
+  FRONT_OUT_DIR="${front_dir}/out" FRONT_ASSET_VERSION="${asset_version}" node <<'NODE'
+const fs = require("fs");
+const path = require("path");
+
+const outDir = process.env.FRONT_OUT_DIR;
+const version = process.env.FRONT_ASSET_VERSION;
+if (!outDir || !version) {
+  process.exit(1);
+}
+
+function walk(dir, files = []) {
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const fullPath = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      walk(fullPath, files);
+    } else if (entry.isFile() && entry.name.endsWith(".html")) {
+      files.push(fullPath);
+    }
+  }
+  return files;
+}
+
+const pattern = /(\/_next\/static\/[^"'<>\\\s]+?\.(?:js|css))(?:\?v=[0-9a-f]+)?/g;
+for (const file of walk(outDir)) {
+  const current = fs.readFileSync(file, "utf8");
+  const next = current.replace(pattern, `$1?v=${version}`);
+  if (next !== current) {
+    fs.writeFileSync(file, next);
+  }
+}
+NODE
+}
+
 # Build frontend static files locally (yarn build -> out/).
 build_frontend() {
   local front_dir="${deploy_dir}/packages/front"
+  local asset_version
   [[ -f "${front_dir}/package.json" ]] || fail "packages/front/package.json not found"
   load_frontend_build_env "${front_env_file}"
+  asset_version="$(frontend_build_hash "${front_dir}" "${front_env_file}")"
   log "building frontend static files (yarn build)"
-  (cd "${front_dir}" && yarn install --frozen-lockfile && yarn build) || fail "frontend yarn build failed"
+  (cd "${front_dir}" && rm -rf .next out && yarn install --frozen-lockfile && yarn build) || fail "frontend yarn build failed"
   [[ -d "${front_dir}/out" ]] || fail "frontend build did not produce out/ directory"
+  version_frontend_static_assets "${front_dir}" "${asset_version}"
   log "frontend build complete ($(du -sh "${front_dir}/out" | cut -f1))"
 }
 

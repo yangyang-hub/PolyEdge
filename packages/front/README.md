@@ -30,4 +30,4 @@ Runtime settings:
 NEXT_PUBLIC_POLYEDGE_API_BASE_URL=http://192.168.31.5:38001
 ```
 
-Nginx serves static routes only. Browser API requests go directly to the Rust API base URL above; the current intranet deployment uses `POLYEDGE_AUTH__DISABLED=true` on the API side.
+Nginx serves static routes only. Browser API requests go directly to the Rust API base URL above; the current intranet deployment uses `POLYEDGE_AUTH__DISABLED=true` on the API side. Static assets and HTML are served with `Cache-Control: no-cache, must-revalidate`; `scripts/deploy.sh` also appends a front hash query to exported `/_next/static/*.js/css` references so dashboard updates are not hidden behind stale chunks.
