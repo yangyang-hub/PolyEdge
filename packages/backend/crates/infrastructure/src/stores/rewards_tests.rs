@@ -272,4 +272,32 @@ mod rewards_tests {
         assert_eq!(candidates.len(), 1);
         assert_eq!(candidates[0].condition_id, valid.condition_id);
     }
+
+    #[tokio::test]
+    async fn in_memory_candidate_filter_keeps_auto_single_side_budget_fallback_markets() {
+        let store = InMemoryRewardBotStore::new();
+        let filter = RewardBotConfig {
+            quote_mode: RewardQuoteMode::Auto,
+            selection_mode: RewardSelectionMode::Enforce,
+            dominant_single_side_enabled: true,
+            per_market_usd: Decimal::from(20),
+            ..RewardBotConfig::default()
+        }
+        .candidate_filter();
+        let mut valid = candidate_market();
+        valid.rewards_min_size = Decimal::from(50);
+
+        store
+            .upsert_markets(&[valid.clone()])
+            .await
+            .expect("seed candidate markets");
+
+        let candidates = store
+            .list_candidate_markets(&filter, 100)
+            .await
+            .expect("list candidates");
+
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].condition_id, valid.condition_id);
+    }
 }

@@ -50,7 +50,7 @@ export function ModeStatusPanel({
         <CardDescription>
           {dictionary.rewards.liveModeSummary}
         </CardDescription>
-        <CardAction className="flex gap-2">
+        <CardAction className="flex flex-wrap justify-end gap-2">
           <StatusPill tone="warning">
             {dictionary.rewards.modeLive}
           </StatusPill>
@@ -81,7 +81,7 @@ export function ModeStatusPanel({
           </div>
         </div>
 
-        <dl className="grid grid-cols-2 gap-3 text-sm">
+        <dl className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
           <StatusDatum label={dictionary.rewards.account} value={snapshot.account.account_id} />
           {snapshot.account.wallet_address ? (
             <StatusDatum label={dictionary.rewards.walletAddress} value={snapshot.account.wallet_address} />
@@ -105,7 +105,7 @@ export function ModeStatusPanel({
             value={formatUsdFixed(snapshot.account.reward_earned_usd)}
           />
           {snapshot.status.error ? (
-            <div className="col-span-2 rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-xs text-destructive">
+            <div className="rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-xs text-destructive sm:col-span-2">
               {snapshot.status.error}
             </div>
           ) : null}
@@ -246,9 +246,9 @@ export function countRewardEvents(snapshot: RewardBotSnapshotDto): RewardEventCo
 function SummaryMetric({ label, value, hint }: { label: string; value: string; hint: string }) {
   return (
     <div className="min-w-0 rounded-lg border border-border/70 bg-background/30 p-3">
-      <p className="truncate text-[11px] font-semibold uppercase text-muted-foreground">{label}</p>
-      <p className="mt-2 truncate font-mono text-xl font-semibold text-foreground">{value}</p>
-      <p className="mt-1 truncate text-xs text-muted-foreground">{hint}</p>
+      <p className="break-words text-[11px] font-semibold uppercase leading-4 text-muted-foreground">{label}</p>
+      <p className="mt-2 break-words font-mono text-xl font-semibold leading-tight text-foreground">{value}</p>
+      <p className="mt-1 break-words text-xs leading-4 text-muted-foreground">{hint}</p>
     </div>
   );
 }
@@ -277,9 +277,9 @@ function ProgressLine({
 
 function StatusDatum({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-lg border border-border/70 bg-background/30 p-3">
-      <dt className="truncate text-[11px] font-semibold uppercase text-muted-foreground">{label}</dt>
-      <dd className="mt-1 truncate font-mono text-sm text-foreground">{value}</dd>
+    <div className="min-w-0 rounded-lg border border-border/70 bg-background/30 p-3">
+      <dt className="break-words text-[11px] font-semibold uppercase leading-4 text-muted-foreground">{label}</dt>
+      <dd className="mt-1 break-all font-mono text-sm leading-snug text-foreground">{value}</dd>
     </div>
   );
 }

@@ -38,7 +38,7 @@ export function EventsPanel({
       onValueChange={(value) => setCategory(value as EventCategory)}
       className="gap-4"
     >
-      <TabsList>
+      <TabsList className="h-auto flex-wrap justify-start">
         <TabsTrigger value="all">{dictionary.rewards.eventsAll}</TabsTrigger>
         <TabsTrigger value="placements">{dictionary.rewards.eventsPlacements}</TabsTrigger>
         <TabsTrigger value="cancels">{dictionary.rewards.eventsCancels}</TabsTrigger>

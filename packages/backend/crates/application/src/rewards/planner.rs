@@ -284,6 +284,25 @@ fn build_reward_quote_plan(
                 market.rewards_min_size,
                 config,
             ) else {
+                if let Some((quote_mode, legs)) = make_single_side_budget_fallback_legs(
+                    yes_token,
+                    yes_bid,
+                    no_token,
+                    no_bid,
+                    market.rewards_min_size,
+                    config,
+                ) {
+                    return build_ready_quote_plan(
+                        market,
+                        quote_mode,
+                        metrics,
+                        midpoint,
+                        max_spread_cents,
+                        legs,
+                        config,
+                        now,
+                    );
+                }
                 return empty_plan_with_metrics(
                     market,
                     "per-market budget cannot satisfy rewards minimum size",
@@ -383,6 +402,28 @@ fn build_reward_quote_plan(
         RewardPlanQuoteMode::None => unreachable!("none quote mode returned earlier"),
     };
 
+    build_ready_quote_plan(
+        market,
+        quote_mode,
+        metrics,
+        midpoint,
+        max_spread_cents,
+        legs,
+        config,
+        now,
+    )
+}
+
+fn build_ready_quote_plan(
+    market: &RewardMarket,
+    quote_mode: RewardPlanQuoteMode,
+    metrics: Option<RewardMarketBookMetrics>,
+    midpoint: Decimal,
+    max_spread_cents: Decimal,
+    legs: Vec<RewardQuoteLeg>,
+    config: &RewardBotConfig,
+    now: OffsetDateTime,
+) -> RewardQuotePlan {
     let score = score_market(market, max_spread_cents, midpoint, &legs, config);
     let eligible = score >= config.min_market_score;
 
@@ -606,6 +647,40 @@ fn make_quote_legs(
     }
 
     Some(legs)
+}
+
+fn make_single_side_budget_fallback_legs(
+    yes_token: &RewardToken,
+    yes_price: Decimal,
+    no_token: &RewardToken,
+    no_price: Decimal,
+    rewards_min_size: Decimal,
+    config: &RewardBotConfig,
+) -> Option<(RewardPlanQuoteMode, Vec<RewardQuoteLeg>)> {
+    if config.quote_mode != RewardQuoteMode::Auto
+        || config.selection_mode != RewardSelectionMode::Enforce
+        || !config.dominant_single_side_enabled
+    {
+        return None;
+    }
+
+    let yes = make_single_quote_leg(yes_token, yes_price, rewards_min_size, config)
+        .map(|leg| (RewardPlanQuoteMode::SingleYes, leg));
+    let no = make_single_quote_leg(no_token, no_price, rewards_min_size, config)
+        .map(|leg| (RewardPlanQuoteMode::SingleNo, leg));
+
+    let selected = match (yes, no) {
+        (Some(yes), Some(no)) => {
+            let yes_notional = yes.1.price * yes.1.size;
+            let no_notional = no.1.price * no.1.size;
+            if yes_notional <= no_notional { yes } else { no }
+        }
+        (Some(yes), None) => yes,
+        (None, Some(no)) => no,
+        (None, None) => return None,
+    };
+
+    Some((selected.0, vec![selected.1]))
 }
 
 fn allocate_quote_notionals(

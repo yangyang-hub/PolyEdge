@@ -191,7 +191,7 @@ export function RewardsWorkbench({ initialSnapshot }: { initialSnapshot: RewardB
 
       {feedback ? <OperationFeedbackBanner feedback={feedback} /> : null}
 
-      <section className="grid gap-4 xl:grid-cols-[1.15fr_0.85fr]">
+      <section className="grid items-start gap-4 xl:grid-cols-[1.15fr_0.85fr]">
         <ModeStatusPanel snapshot={snapshot} eventCounts={eventCounts} />
         <CommandPanel
           pending={pending}
@@ -221,95 +221,93 @@ export function RewardsWorkbench({ initialSnapshot }: { initialSnapshot: RewardB
         </TabsList>
 
         <TabsContent value="activity" className="space-y-4">
-          <div className="grid gap-4 2xl:grid-cols-[1.25fr_0.75fr]">
+          <Card>
+            <CardHeader className="border-b border-border/70">
+              <CardTitle>{dictionary.rewards.quotePlans}</CardTitle>
+              <CardDescription>{dictionary.rewards.quotePlansDescription}</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <QuotePlansTable
+                plans={snapshot.quote_plans}
+                plansPage={snapshot.plans_page}
+                plansTotal={snapshot.status.plans_total}
+                eligibleTotal={snapshot.status.eligible_markets}
+                search={plansSearch}
+                onSearchChange={(v) => {
+                  setPlansSearch(v);
+                  setPlansPage(1);
+                  refetchWithFilters({ plansSearch: v, plansPage: 1 });
+                }}
+                eligibility={plansEligible}
+                onEligibilityChange={(v) => {
+                  setPlansEligible(v);
+                  setPlansPage(1);
+                  refetchWithFilters({ plansEligible: v, plansPage: 1 });
+                }}
+                sortBy={plansSortBy}
+                sortOrder={plansSortOrder}
+                onSortChange={(by, order) => {
+                  setPlansSortBy(by);
+                  setPlansSortOrder(order);
+                  refetchWithFilters({ plansSortBy: by, plansSortOrder: order });
+                }}
+                onPageChange={(p) => {
+                  setPlansPage(p);
+                  refetchWithFilters({ plansPage: p });
+                }}
+                filtering={filtering}
+              />
+            </CardContent>
+          </Card>
+
+          <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(340px,0.65fr)]">
             <Card>
               <CardHeader className="border-b border-border/70">
-                <CardTitle>{dictionary.rewards.quotePlans}</CardTitle>
-                <CardDescription>{dictionary.rewards.quotePlansDescription}</CardDescription>
+                <CardTitle>{dictionary.rewards.managedOrders}</CardTitle>
+                <CardDescription>{dictionary.rewards.managedOrdersDescription}</CardDescription>
               </CardHeader>
               <CardContent>
-                <QuotePlansTable
-                  plans={snapshot.quote_plans}
-                  plansPage={snapshot.plans_page}
-                  plansTotal={snapshot.status.plans_total}
-                  eligibleTotal={snapshot.status.eligible_markets}
-                  search={plansSearch}
+                <OrdersTable
+                  orders={snapshot.orders}
+                  search={ordersSearch}
                   onSearchChange={(v) => {
-                    setPlansSearch(v);
-                    setPlansPage(1);
-                    refetchWithFilters({ plansSearch: v, plansPage: 1 });
+                    setOrdersSearch(v);
+                    setOrdersPage(1);
+                    refetchWithFilters({ search: v, page: 1 });
                   }}
-                  eligibility={plansEligible}
-                  onEligibilityChange={(v) => {
-                    setPlansEligible(v);
-                    setPlansPage(1);
-                    refetchWithFilters({ plansEligible: v, plansPage: 1 });
+                  status={ordersStatus}
+                  onStatusChange={(v) => {
+                    setOrdersStatus(v);
+                    setOrdersPage(1);
+                    refetchWithFilters({ status: v, page: 1 });
                   }}
-                  sortBy={plansSortBy}
-                  sortOrder={plansSortOrder}
+                  sortBy={ordersSortBy}
+                  sortOrder={ordersSortOrder}
                   onSortChange={(by, order) => {
-                    setPlansSortBy(by);
-                    setPlansSortOrder(order);
-                    refetchWithFilters({ plansSortBy: by, plansSortOrder: order });
+                    setOrdersSortBy(by);
+                    setOrdersSortOrder(order);
+                    setOrdersPage(1);
+                    refetchWithFilters({ sortBy: by, sortOrder: order, page: 1 });
                   }}
-                  onPageChange={(p) => {
-                    setPlansPage(p);
-                    refetchWithFilters({ plansPage: p });
+                  page={snapshot.orders_page}
+                  onPageChange={(page) => {
+                    setOrdersPage(page);
+                    refetchWithFilters({ page });
                   }}
                   filtering={filtering}
                 />
               </CardContent>
             </Card>
 
-            <div className="space-y-4">
-              <Card>
-                <CardHeader className="border-b border-border/70">
-                  <CardTitle>{dictionary.rewards.managedOrders}</CardTitle>
-                  <CardDescription>{dictionary.rewards.managedOrdersDescription}</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <OrdersTable
-                    orders={snapshot.orders}
-                    search={ordersSearch}
-                    onSearchChange={(v) => {
-                      setOrdersSearch(v);
-                      setOrdersPage(1);
-                      refetchWithFilters({ search: v, page: 1 });
-                    }}
-                    status={ordersStatus}
-                    onStatusChange={(v) => {
-                      setOrdersStatus(v);
-                      setOrdersPage(1);
-                      refetchWithFilters({ status: v, page: 1 });
-                    }}
-                    sortBy={ordersSortBy}
-                    sortOrder={ordersSortOrder}
-                    onSortChange={(by, order) => {
-                      setOrdersSortBy(by);
-                      setOrdersSortOrder(order);
-                      setOrdersPage(1);
-                      refetchWithFilters({ sortBy: by, sortOrder: order, page: 1 });
-                    }}
-                    page={snapshot.orders_page}
-                    onPageChange={(page) => {
-                      setOrdersPage(page);
-                      refetchWithFilters({ page });
-                    }}
-                    filtering={filtering}
-                  />
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader className="border-b border-border/70">
-                  <CardTitle>{dictionary.rewards.positions}</CardTitle>
-                  <CardDescription>{dictionary.rewards.positionsDescription}</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <PositionsTable positions={snapshot.positions} />
-                </CardContent>
-              </Card>
-            </div>
+            <Card>
+              <CardHeader className="border-b border-border/70">
+                <CardTitle>{dictionary.rewards.positions}</CardTitle>
+                <CardDescription>{dictionary.rewards.positionsDescription}</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <PositionsTable positions={snapshot.positions} />
+              </CardContent>
+            </Card>
           </div>
 
           <Card>

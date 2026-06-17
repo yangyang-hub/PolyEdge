@@ -389,6 +389,28 @@ fn combined_market_budget_rejects_unaffordable_minimum_sizes() {
     assert!(plan.legs.is_empty());
 }
 
+#[test]
+fn auto_enforce_falls_back_to_affordable_single_side_when_double_budget_fails() {
+    let config = RewardBotConfig {
+        quote_mode: RewardQuoteMode::Auto,
+        selection_mode: RewardSelectionMode::Enforce,
+        dominant_single_side_enabled: true,
+        per_market_usd: decimal("20"),
+        quote_size_usd: decimal("10"),
+        min_market_score: Decimal::ZERO,
+        ..RewardBotConfig::default()
+    };
+
+    let plan = build_reward_quote_plan(&test_market(decimal("50")), &test_books(), &config);
+
+    assert!(plan.eligible, "{}", plan.reason);
+    assert_eq!(plan.quote_mode, RewardPlanQuoteMode::SingleNo);
+    assert_eq!(plan.legs.len(), 1);
+    assert_eq!(plan.legs[0].outcome, "No");
+    assert!(plan.legs[0].size >= decimal("50"));
+    assert!(plan.legs[0].price * plan.legs[0].size <= config.per_market_usd);
+}
+
 fn test_advisory(
     suitability: RewardAiSuitability,
     quote_mode: RewardPlanQuoteMode,

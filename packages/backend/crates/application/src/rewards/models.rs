@@ -236,6 +236,9 @@ pub struct RewardCandidateFilter {
     pub max_market_data_age_minutes: u64,
     pub max_rewards_spread_cents: Decimal,
     pub allow_dominant_single_side: bool,
+    /// Keep markets whose double-sided minimum-size budget may fail so the
+    /// planner can test exact single-leg affordability with fresh order books.
+    pub allow_single_side_budget_fallback: bool,
     pub dominant_min_probability: Decimal,
     pub dominant_max_probability: Decimal,
 }

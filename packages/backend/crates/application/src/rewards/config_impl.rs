@@ -199,6 +199,9 @@ impl RewardBotConfig {
             max_rewards_spread_cents: self.max_spread_cents,
             allow_dominant_single_side: self.quote_mode == RewardQuoteMode::Auto
                 && self.dominant_single_side_enabled,
+            allow_single_side_budget_fallback: self.quote_mode == RewardQuoteMode::Auto
+                && self.selection_mode == RewardSelectionMode::Enforce
+                && self.dominant_single_side_enabled,
             dominant_min_probability: self.dominant_min_probability,
             dominant_max_probability: self.dominant_max_probability,
         }

@@ -84,7 +84,7 @@ function FilterBar({
           onBlur={onSearchCommit}
         />
       </div>
-      <div className="flex gap-1">
+      <div className="flex flex-wrap gap-1">
         {tabs.map((tab) => (
           <button
             key={tab.key}
@@ -158,7 +158,7 @@ export function FillsTable({ fills }: { fills: RewardFillDto[] }) {
 
   return (
     <div>
-    <Table>
+    <Table className="min-w-[700px]">
       <TableHeader>
         <TableRow>
           <TableHead>{dictionary.rewards.outcome}</TableHead>
@@ -202,7 +202,7 @@ export function PositionsTable({ positions }: { positions: RewardPositionDto[] }
 
   return (
     <div>
-      <Table>
+      <Table className="min-w-[720px]">
         <TableHeader>
           <TableRow>
             <TableHead>{dictionary.rewards.market}</TableHead>
@@ -216,7 +216,7 @@ export function PositionsTable({ positions }: { positions: RewardPositionDto[] }
         <TableBody>
           {positions.slice(pagination.start, pagination.end).map((position) => (
             <TableRow key={`${position.condition_id}:${position.token_id}`}>
-              <TableCell className="max-w-[180px] truncate font-mono text-xs text-muted-foreground">
+              <TableCell className="max-w-[220px] whitespace-normal break-all font-mono text-xs leading-5 text-muted-foreground">
                 {position.condition_id}
               </TableCell>
               <TableCell>{position.outcome}</TableCell>
@@ -295,10 +295,10 @@ export function QuotePlansTable({
         onTabChange={(key) => onEligibilityChange(key as typeof eligibility)}
       />
       {filtering && <p className="text-xs text-muted-foreground">…</p>}
-      <Table>
+      <Table className="min-w-[1180px] table-fixed">
         <TableHeader>
           <TableRow>
-            <TableHead>{dictionary.rewards.market}</TableHead>
+            <TableHead className="w-[34%]">{dictionary.rewards.market}</TableHead>
             <TableHead>{dictionary.rewards.state}</TableHead>
             <TableHead className="cursor-pointer select-none" onClick={() => handleSort("score")}>
               {dictionary.rewards.score}
@@ -312,9 +312,9 @@ export function QuotePlansTable({
               {dictionary.rewards.midpoint}
               <SortIndicator active={sortBy === "midpoint"} order={sortOrder} />
             </TableHead>
-            <TableHead>{dictionary.rewards.quotes}</TableHead>
-            <TableHead>{dictionary.rewards.infoRisk}</TableHead>
-            <TableHead>{dictionary.rewards.aiAdvisory}</TableHead>
+            <TableHead className="w-[180px]">{dictionary.rewards.quotes}</TableHead>
+            <TableHead className="w-[230px]">{dictionary.rewards.infoRisk}</TableHead>
+            <TableHead className="w-[230px]">{dictionary.rewards.aiAdvisory}</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -327,30 +327,30 @@ export function QuotePlansTable({
           ) : (
             plans.map((plan) => (
               <TableRow key={plan.condition_id}>
-                <TableCell className="max-w-[360px]">
+                <TableCell className="whitespace-normal align-top">
                   <div className="space-y-1">
-                    <p className="truncate font-medium">{plan.question}</p>
-                    <p className="text-xs text-muted-foreground">{plan.reason}</p>
+                    <p className="break-words font-medium leading-snug">{plan.question}</p>
+                    <p className="break-words text-xs leading-5 text-muted-foreground">{plan.reason}</p>
                   </div>
                 </TableCell>
-                <TableCell>
+                <TableCell className="align-top">
                   <StatusPill tone={plan.eligible ? "success" : "warning"}>
                     {plan.eligible ? dictionary.rewards.filterEligible : dictionary.rewards.filterIneligible}
                   </StatusPill>
                 </TableCell>
-                <TableCell>
+                <TableCell className="align-top">
                   <StatusPill tone={plan.eligible ? "success" : "neutral"}>
                     {formatFixed(plan.score, 1)}
                   </StatusPill>
                 </TableCell>
-                <TableCell className="font-mono">{formatUsdFixed(plan.total_daily_rate)}</TableCell>
-                <TableCell className="font-mono">{plan.midpoint == null ? "n/a" : formatFixed(plan.midpoint, 3)}</TableCell>
-                <TableCell className="font-mono text-xs">
+                <TableCell className="align-top font-mono">{formatUsdFixed(plan.total_daily_rate)}</TableCell>
+                <TableCell className="align-top font-mono">{plan.midpoint == null ? "n/a" : formatFixed(plan.midpoint, 3)}</TableCell>
+                <TableCell className="whitespace-normal break-words align-top font-mono text-xs leading-5">
                   {plan.legs.length === 0
                     ? dictionary.rewards.none
                     : plan.legs.map((leg) => `${leg.outcome} ${formatFixed(leg.size, 2)}@${formatFixed(leg.price, 2)}`).join(" / ")}
                 </TableCell>
-                <TableCell className="max-w-[220px] text-xs">
+                <TableCell className="whitespace-normal align-top text-xs">
                   {plan.info_risk == null ? (
                     <span className="text-muted-foreground">{dictionary.rewards.none}</span>
                   ) : (
@@ -363,13 +363,13 @@ export function QuotePlansTable({
                           {plan.info_risk.risk_type} · {formatFixed(plan.info_risk.confidence, 2)}
                         </span>
                       </div>
-                      <p className="truncate text-muted-foreground" title={plan.info_risk.summary}>
+                      <p className="break-words leading-5 text-muted-foreground">
                         {plan.info_risk.summary}
                       </p>
                     </div>
                   )}
                 </TableCell>
-                <TableCell className="max-w-[220px] text-xs">
+                <TableCell className="whitespace-normal align-top text-xs">
                   {plan.ai_advisory == null ? (
                     <span className="text-muted-foreground">{dictionary.rewards.none}</span>
                   ) : (
@@ -382,7 +382,7 @@ export function QuotePlansTable({
                           {plan.ai_advisory.quote_mode} · {formatFixed(plan.ai_advisory.confidence, 2)}
                         </span>
                       </div>
-                      <p className="truncate text-muted-foreground" title={plan.ai_advisory.reasons[0]}>
+                      <p className="break-words leading-5 text-muted-foreground">
                         {plan.ai_advisory.reasons[0] ?? dictionary.rewards.none}
                       </p>
                     </div>
@@ -457,10 +457,10 @@ export function OrdersTable({
         onTabChange={(key) => onStatusChange(key as typeof status)}
       />
       {filtering && <p className="text-xs text-muted-foreground">…</p>}
-      <Table>
+      <Table className="min-w-[780px] table-fixed">
         <TableHeader>
           <TableRow>
-            <TableHead>{dictionary.rewards.state}</TableHead>
+            <TableHead className="w-[120px]">{dictionary.rewards.state}</TableHead>
             <TableHead>{dictionary.rewards.outcome}</TableHead>
             <TableHead className="cursor-pointer select-none" onClick={() => handleSort("price")}>
               {dictionary.rewards.price}
@@ -471,7 +471,7 @@ export function OrdersTable({
               <SortIndicator active={sortBy === "size"} order={sortOrder} />
             </TableHead>
             <TableHead>{dictionary.rewards.scoring}</TableHead>
-            <TableHead>{dictionary.rewards.reason}</TableHead>
+            <TableHead className="w-[320px]">{dictionary.rewards.reason}</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -484,14 +484,14 @@ export function OrdersTable({
           ) : (
             orders.map((order) => (
               <TableRow key={order.id}>
-                <TableCell>
+                <TableCell className="align-top">
                   <StatusPill tone={rewardTone(order.status)}>{order.status}</StatusPill>
                 </TableCell>
-                <TableCell>{order.outcome}</TableCell>
-                <TableCell className="font-mono">{formatFixed(order.price, 2)}</TableCell>
-                <TableCell className="font-mono">{formatFixed(order.size, 2)}</TableCell>
-                <TableCell>{order.scoring ? dictionary.common.active : dictionary.common.idle}</TableCell>
-                <TableCell className="max-w-[320px] truncate text-xs text-muted-foreground" title={order.reason}>
+                <TableCell className="align-top">{order.outcome}</TableCell>
+                <TableCell className="align-top font-mono">{formatFixed(order.price, 2)}</TableCell>
+                <TableCell className="align-top font-mono">{formatFixed(order.size, 2)}</TableCell>
+                <TableCell className="align-top">{order.scoring ? dictionary.common.active : dictionary.common.idle}</TableCell>
+                <TableCell className="whitespace-normal break-words align-top text-xs leading-5 text-muted-foreground">
                   {order.reason}
                 </TableCell>
               </TableRow>
@@ -509,12 +509,12 @@ export function EventsTable({ events }: { events: RewardRiskEventDto[] }) {
 
   return (
     <div>
-    <Table>
+    <Table className="min-w-[760px] table-fixed">
       <TableHeader>
         <TableRow>
           <TableHead>{dictionary.rewards.severity}</TableHead>
           <TableHead>{dictionary.rewards.type}</TableHead>
-          <TableHead>{dictionary.rewards.message}</TableHead>
+          <TableHead className="w-[50%]">{dictionary.rewards.message}</TableHead>
           <TableHead>{dictionary.common.published}</TableHead>
         </TableRow>
       </TableHeader>
@@ -525,7 +525,7 @@ export function EventsTable({ events }: { events: RewardRiskEventDto[] }) {
               <StatusPill tone={approvalSeverityTone(event.severity)}>{event.severity}</StatusPill>
             </TableCell>
             <TableCell className="font-mono text-xs">{event.event_type}</TableCell>
-            <TableCell className="max-w-[520px] truncate">{event.message}</TableCell>
+            <TableCell className="whitespace-normal break-words leading-5">{event.message}</TableCell>
             <TableCell className="font-mono text-xs text-muted-foreground">{formatOptionalClock(event.created_at)}</TableCell>
           </TableRow>
         ))}
