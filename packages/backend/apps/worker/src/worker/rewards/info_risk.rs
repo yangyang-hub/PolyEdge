@@ -134,6 +134,7 @@ async fn scan_reward_info_risks_unlocked(
         }
 
         report.requested += 1;
+        let _provider_permit = acquire_reward_ai_provider_request_permit().await?;
         match connector.assess(&request).await {
             Ok(decision) => {
                 let risk = decision.into_info_risk(
@@ -152,6 +153,15 @@ async fn scan_reward_info_risks_unlocked(
                     error = %error,
                     "reward info risk request failed; keeping existing cached state",
                 );
+                if reward_ai_provider_is_overloaded(&error) {
+                    warn!(
+                        trace_id = %trace_id,
+                        requested = report.requested,
+                        failures = report.failures,
+                        "reward info risk provider is overloaded; stopping provider requests for this cycle",
+                    );
+                    break;
+                }
             }
         }
     }

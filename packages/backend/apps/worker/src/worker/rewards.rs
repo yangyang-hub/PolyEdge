@@ -1,6 +1,8 @@
 const REWARD_WORKER_ADVISORY_LOCK_KEY: i64 = 0x504f_4c59_5245_5744;
 const LIVE_EXTERNAL_ORDER_NOT_FOUND_MARKER: &str = "external order lookup returned not found";
 const LIVE_EXTERNAL_ORDER_NOT_FOUND_CLOSE_AFTER_SECS: i64 = 300;
+static REWARD_AI_PROVIDER_REQUEST_SEMAPHORE: tokio::sync::Semaphore =
+    tokio::sync::Semaphore::const_new(1);
 
 async fn run_reward_bot_once(state: &AppState, trace_id: &str) -> Result<RewardBotRunReport> {
     let connector = build_live_polymarket_connector(state).await?;
@@ -587,6 +589,7 @@ async fn refresh_reward_ai_advisories(
         }
 
         requested += 1;
+        let _provider_permit = acquire_reward_ai_provider_request_permit().await?;
         match connector.advise(&request).await {
             Ok(decision) => {
                 let advisory = decision.into_advisory(
@@ -609,6 +612,15 @@ async fn refresh_reward_ai_advisories(
                     error = %error,
                     "reward AI advisory request failed; blocking plan until provider filter passes",
                 );
+                if reward_ai_provider_is_overloaded(&error) {
+                    warn!(
+                        trace_id = %trace_id,
+                        requested,
+                        failures,
+                        "reward AI advisory provider is overloaded; stopping advisory requests for this cycle",
+                    );
+                    break;
+                }
             }
         }
     }
@@ -721,6 +733,77 @@ fn build_reward_ai_advisory_connector(
 
 fn reward_ai_min_confidence(bps: u16) -> Decimal {
     Decimal::from(bps.min(10_000)) / Decimal::from(10_000_u64)
+}
+
+async fn acquire_reward_ai_provider_request_permit()
+-> Result<tokio::sync::SemaphorePermit<'static>> {
+    REWARD_AI_PROVIDER_REQUEST_SEMAPHORE
+        .acquire()
+        .await
+        .map_err(|error| {
+            AppError::internal(
+                "REWARD_AI_PROVIDER_SEMAPHORE_CLOSED",
+                format!("reward AI provider request semaphore closed: {error}"),
+            )
+        })
+}
+
+fn reward_ai_provider_is_overloaded(error: &AppError) -> bool {
+    if !matches!(
+        error.code(),
+        "REWARD_AI_STATUS_FAILED" | "REWARD_INFO_RISK_STATUS_FAILED"
+    ) {
+        return false;
+    }
+    let message = error.message().to_ascii_lowercase();
+    message.contains("http 503")
+        || message.contains("system_cpu_overloaded")
+        || message.contains("overloaded")
+}
+
+#[cfg(test)]
+mod reward_ai_provider_error_tests {
+    use super::*;
+
+    #[test]
+    fn reward_ai_provider_overload_detects_status_errors() {
+        let error = AppError::dependency_unavailable(
+            "REWARD_INFO_RISK_STATUS_FAILED",
+            r#"reward info risk provider returned HTTP 503: {"error":{"code":"system_cpu_overloaded"}}"#,
+        );
+        assert!(reward_ai_provider_is_overloaded(&error));
+    }
+
+    #[test]
+    fn reward_ai_provider_overload_ignores_non_status_errors() {
+        let error = AppError::dependency_unavailable(
+            "REWARD_INFO_RISK_RESPONSE_INVALID",
+            "provider response missing risk_level",
+        );
+        assert!(!reward_ai_provider_is_overloaded(&error));
+    }
+
+    #[tokio::test]
+    async fn reward_ai_provider_request_permit_is_single_flight() {
+        let first = acquire_reward_ai_provider_request_permit()
+            .await
+            .expect("acquire first permit");
+        let second = tokio::time::timeout(
+            Duration::from_millis(10),
+            acquire_reward_ai_provider_request_permit(),
+        )
+        .await;
+        assert!(second.is_err());
+
+        drop(first);
+        let _second = tokio::time::timeout(
+            Duration::from_millis(100),
+            acquire_reward_ai_provider_request_permit(),
+        )
+        .await
+        .expect("second permit should acquire after release")
+        .expect("acquire second permit");
+    }
 }
 
 async fn cancel_live_reward_orders(
