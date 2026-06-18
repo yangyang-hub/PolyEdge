@@ -320,11 +320,17 @@ async fn register_exec_order_tokens(state: &AppState) -> Result<()> {
 
 /// Register tokens from all reward candidate markets into the subscription registry.
 async fn register_reward_tokens(state: &AppState) -> Result<()> {
+    let cap = state.settings.orderbook_stream.reward_candidate_token_cap;
+    if cap == 0 {
+        state.orderbook_registry.register_tokens("rewards", &[]).await?;
+        return Ok(());
+    }
     if let Ok(reward_token_ids) = state
         .reward_bot_service
         .list_all_reward_candidate_token_ids()
         .await
     {
+        let reward_token_ids: Vec<String> = reward_token_ids.into_iter().take(cap).collect();
         state
             .orderbook_registry
             .register_tokens("rewards", &reward_token_ids)

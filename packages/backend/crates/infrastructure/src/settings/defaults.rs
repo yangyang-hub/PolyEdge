@@ -236,6 +236,7 @@ impl Default for OrderbookStreamSettings {
     fn default() -> Self {
         Self {
             max_tokens: 3_000,
+            reward_candidate_token_cap: 100,
             ws_chunk_size: 250,
             max_levels_per_side: 100,
             poll_reconcile_interval_secs: 30,

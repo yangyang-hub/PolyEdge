@@ -216,6 +216,10 @@ fn apply_runtime_config_value(
         "orderbook_stream.max_tokens" => {
             self.orderbook_stream.max_tokens = parse_usize_runtime_config(key, value)?;
         }
+        "orderbook_stream.reward_candidate_token_cap" => {
+            self.orderbook_stream.reward_candidate_token_cap =
+                parse_usize_runtime_config(key, value)?;
+        }
         "orderbook_stream.ws_chunk_size" => {
             self.orderbook_stream.ws_chunk_size = parse_usize_runtime_config(key, value)?;
         }

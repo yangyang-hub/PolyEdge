@@ -97,7 +97,7 @@ register_orderbook_tokens()
 ```
 
 此任务替代了原来的 `consume-orderbook-stream` 和 `sync-markets` 任务。Worker 不再直接运行盘口流或市场同步，而是通过 HTTP 告知 orderbook 服务需要订阅哪些 token。
-注册任务最长每 60 秒执行一次，orderbook 服务重启后可自动恢复订阅。注册总量受 `POLYEDGE_ORDERBOOK_STREAM__MAX_TOKENS` 限制；分配顺序固定为 rewards 活跃订单/持仓 token、活跃 execution token、当前 eligible quote plan token、其余 rewards 候选 token。候选来源始终保留，用于给尚未产生 quote plan 的市场预热盘口，避免 eligible-only 冷启动。每个成功查询的 source 使用一次原子替换注册，空集合会清理远端旧 source；任一 source 的数据库查询失败时保留远端上一版集合，不会用空集合误删订阅。
+注册任务最长每 60 秒执行一次，orderbook 服务重启后可自动恢复订阅。注册总量受 `POLYEDGE_ORDERBOOK_STREAM__MAX_TOKENS` 限制；分配顺序固定为 rewards 活跃订单/持仓 token、活跃 execution token、当前 eligible quote plan token、其余 rewards 候选 token。候选来源用于给尚未产生 quote plan 的市场预热盘口，但还会受 `POLYEDGE_ORDERBOOK_STREAM__REWARD_CANDIDATE_TOKEN_CAP` 限制，默认只预热 100 个候选 token，设为 0 会清空 `rewards_candidates` source。每个成功查询的 source 使用一次原子替换注册，空集合会清理远端旧 source；任一 source 的数据库查询失败时保留远端上一版集合，不会用空集合误删订阅。
 
 ### copytrade — 钱包跟踪与分析
 
@@ -198,7 +198,7 @@ Report: `NewsIngestionRunReport { sources_scanned/succeeded/failed, fetched, ins
 - news worker 当前只抓取 RSS/Atom XML feed；未配置 `POLYEDGE_NEWS__SOURCES_JSON` 时会读取内置默认源列表，部署模板显式写入默认源并默认设置 `POLYEDGE_NEWS__ENABLED=true`、`POLYEDGE_WORKER__POLL_NEWS=true`
 - rewards worker 会通过数据库命令队列接收前端 Run / Cancel / Reset 请求，API 进程不再执行 rewards 策略；仅支持 live 实盘模式，策略配置不依赖全局 system mode，但新买单和现有买单撤单遵守全局 kill switch
 - copytrade worker 会通过数据库命令队列接收前端兼容控制命令；当前前端只暴露 Analyze，Run/Cancel/Reset 不再作为产品入口。API 进程不抓取 copytrade 输入，worker 负责 Data API 抓取、source trades 检测和钱包分析
-- register-orderbook-tokens 会按 `POLYEDGE_ORDERBOOK_STREAM__MAX_TOKENS` 限制总量并固定优先级：`rewards_active`、`exec_orders`、`rewards_eligible`、`rewards_candidates`；候选 token 优先来自 open/tradable 且 `volume_24h` 高的市场，空集合会清除对应旧 source
+- register-orderbook-tokens 会按 `POLYEDGE_ORDERBOOK_STREAM__MAX_TOKENS` 限制总量并固定优先级：`rewards_active`、`exec_orders`、`rewards_eligible`、`rewards_candidates`；候选 token 优先来自 open/tradable 且 `volume_24h` 高的市场，并额外受 `POLYEDGE_ORDERBOOK_STREAM__REWARD_CANDIDATE_TOKEN_CAP` 限制，空集合会清除对应旧 source
 - rewards poll loop 在 Postgres 路径全程持有 advisory lease，统一覆盖 CLOB heartbeat、命令、orderbook 内部 WS 本地 cache、full tick 和 fast reconcile；本地盘口 cache 按本地接收 TTL 过期，避免上游未来时间戳延长缓存寿命；控制命令具备 5 分钟 running lease
 - rewards orderbook 内部 WS client 建连最多等待 5 秒；已连接后若约 3 个 orderbook poll reconcile 周期无事件，会主动重连并重新 HTTP bootstrap 本地盘口 cache
 - scheduled full tick 不再二次消费控制命令；拿不到 advisory lease 时保留到期状态并在后续轮询重试，不会把 command-only 周期记作已完成 full tick

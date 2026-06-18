@@ -553,6 +553,25 @@ pub fn runtime_config_entries(&self) -> Vec<RuntimeConfigEntry> {
         &mut entries,
         RuntimeConfigEntryDraft {
             section: "orderbook_stream",
+            field: "reward_candidate_token_cap",
+            label: "Orderbook reward candidate token cap",
+            env_name: "POLYEDGE_ORDERBOOK_STREAM__REWARD_CANDIDATE_TOKEN_CAP",
+            value: self
+                .orderbook_stream
+                .reward_candidate_token_cap
+                .to_string(),
+            default_value: defaults
+                .orderbook_stream
+                .reward_candidate_token_cap
+                .to_string(),
+            value_type: RuntimeConfigValueType::Integer,
+            options: Vec::new(),
+        },
+    );
+    push_runtime_config_entry(
+        &mut entries,
+        RuntimeConfigEntryDraft {
+            section: "orderbook_stream",
             field: "max_levels_per_side",
             label: "Orderbook max levels per side",
             env_name: "POLYEDGE_ORDERBOOK_STREAM__MAX_LEVELS_PER_SIDE",

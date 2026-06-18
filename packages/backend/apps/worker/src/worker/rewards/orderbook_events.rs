@@ -262,6 +262,7 @@ async fn bootstrap_reward_orderbook_cache(
 
 async fn reward_orderbook_bootstrap_tokens(state: &AppState) -> Result<Vec<String>> {
     let max_tokens = state.settings.orderbook_stream.max_tokens;
+    let reward_candidate_token_cap = state.settings.orderbook_stream.reward_candidate_token_cap;
     if max_tokens == 0 {
         return Ok(Vec::new());
     }
@@ -282,12 +283,16 @@ async fn reward_orderbook_bootstrap_tokens(state: &AppState) -> Result<Vec<Strin
         push_reward_orderbook_tokens(&mut token_ids, &mut seen, eligible, max_tokens);
     }
 
-    if token_ids.len() < max_tokens {
+    if token_ids.len() < max_tokens && reward_candidate_token_cap > 0 {
         let candidates = state
             .reward_bot_service
             .list_all_reward_candidate_token_ids()
             .await?;
-        push_reward_orderbook_tokens(&mut token_ids, &mut seen, candidates, max_tokens);
+        let candidate_limit = token_ids.len()
+            + max_tokens
+                .saturating_sub(token_ids.len())
+                .min(reward_candidate_token_cap);
+        push_reward_orderbook_tokens(&mut token_ids, &mut seen, candidates, candidate_limit);
     }
 
     Ok(token_ids)

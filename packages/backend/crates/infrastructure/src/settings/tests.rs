@@ -123,6 +123,7 @@ mod tests {
         assert_eq!(settings.postgres.max_connections, 20);
         assert!(settings.redis.url.is_none());
         assert_eq!(settings.orderbook_stream.max_tokens, 3_000);
+        assert_eq!(settings.orderbook_stream.reward_candidate_token_cap, 100);
         assert_eq!(settings.orderbook_stream.ws_chunk_size, 250);
         assert_eq!(settings.orderbook_stream.max_levels_per_side, 100);
         assert_eq!(settings.orderbook_stream.poll_reconcile_interval_secs, 30);
@@ -306,6 +307,10 @@ mod tests {
                 "100".to_string(),
             ),
             (
+                "POLYEDGE_ORDERBOOK_STREAM__REWARD_CANDIDATE_TOKEN_CAP".to_string(),
+                "7".to_string(),
+            ),
+            (
                 "POLYEDGE_ORDERBOOK_STREAM__WS_CHUNK_SIZE".to_string(),
                 "25".to_string(),
             ),
@@ -406,6 +411,7 @@ mod tests {
         );
         assert_eq!(settings.worker.task_limit, 33);
         assert_eq!(settings.orderbook_stream.max_tokens, 100);
+        assert_eq!(settings.orderbook_stream.reward_candidate_token_cap, 7);
         assert_eq!(settings.orderbook_stream.ws_chunk_size, 25);
         assert_eq!(settings.orderbook_stream.max_levels_per_side, 12);
         assert_eq!(settings.orderbook_stream.poll_reconcile_interval_secs, 15);

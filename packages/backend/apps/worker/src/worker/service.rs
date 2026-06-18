@@ -638,6 +638,7 @@ async fn worker_shutdown_signal() {
 /// and reward candidates, then register them with the orderbook service via HTTP.
 async fn register_orderbook_tokens(state: &AppState) {
     let max_tokens = state.settings.orderbook_stream.max_tokens;
+    let reward_candidate_token_cap = state.settings.orderbook_stream.reward_candidate_token_cap;
     let mut exec_candidates = Vec::new();
     let mut exec_candidate_seen = HashSet::new();
     let mut exec_query_complete = true;
@@ -751,27 +752,32 @@ async fn register_orderbook_tokens(state: &AppState) {
     };
 
     let mut reward_candidate_tokens = Vec::new();
-    let reward_candidates_complete = match state
-        .reward_bot_service
-        .list_all_reward_candidate_token_ids()
-        .await
-    {
-        Ok(candidate_tokens) => {
-            let capacity = max_tokens
-                .saturating_sub(reward_active_tokens.len())
-                .saturating_sub(exec_tokens.len())
-                .saturating_sub(reward_eligible_tokens.len());
-            push_unique_tokens(
-                &mut reward_candidate_tokens,
-                &mut seen,
-                candidate_tokens,
-                capacity,
-            );
-            true
-        }
-        Err(error) => {
-            warn!(error = %error, "failed to list reward candidate tokens for registration");
-            false
+    let reward_candidate_capacity = max_tokens
+        .saturating_sub(reward_active_tokens.len())
+        .saturating_sub(exec_tokens.len())
+        .saturating_sub(reward_eligible_tokens.len())
+        .min(reward_candidate_token_cap);
+    let reward_candidates_complete = if reward_candidate_capacity == 0 {
+        true
+    } else {
+        match state
+            .reward_bot_service
+            .list_all_reward_candidate_token_ids()
+            .await
+        {
+            Ok(candidate_tokens) => {
+                push_unique_tokens(
+                    &mut reward_candidate_tokens,
+                    &mut seen,
+                    candidate_tokens,
+                    reward_candidate_capacity,
+                );
+                true
+            }
+            Err(error) => {
+                warn!(error = %error, "failed to list reward candidate tokens for registration");
+                false
+            }
         }
     };
 
@@ -811,6 +817,7 @@ async fn register_orderbook_tokens(state: &AppState) {
         exec_tokens = exec_tokens.len(),
         reward_eligible_tokens = reward_eligible_tokens.len(),
         reward_candidate_tokens = reward_candidate_tokens.len(),
+        reward_candidate_token_cap,
         max_tokens,
         "registered orderbook tokens with orderbook service"
     );
