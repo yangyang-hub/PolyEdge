@@ -441,10 +441,11 @@ fn live_placement_counts_candidate_notional_against_position_cap() {
         updated_at: now,
     }];
 
-    let orders = live_placement_orders(
+    let mut plans = vec![plan];
+    let (orders, _) = live_placement_orders(
         &config,
         &live_test_account(Decimal::from(100_u64)),
-        &[plan],
+        &mut plans,
         &books,
         &HashMap::new(),
         &[],

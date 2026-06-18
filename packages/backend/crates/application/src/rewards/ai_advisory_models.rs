@@ -317,19 +317,12 @@ fn enforce_reward_ai_advisory(
 }
 
 fn keep_single_ai_leg(plan: &mut RewardQuotePlan, outcome: &str) {
-    if plan.legs.len() < 2 {
-        return;
-    }
-    plan.legs
-        .retain(|leg| leg.outcome.trim().eq_ignore_ascii_case(outcome));
-    if plan.legs.len() == 1 {
-        plan.quote_mode = if outcome == "yes" {
-            RewardPlanQuoteMode::SingleYes
-        } else {
-            RewardPlanQuoteMode::SingleNo
-        };
-        plan.reason = format!("eligible with AI-assisted {} single-side quote", outcome);
-    }
+    plan.quote_mode = if outcome == "yes" {
+        RewardPlanQuoteMode::SingleYes
+    } else {
+        RewardPlanQuoteMode::SingleNo
+    };
+    plan.reason = format!("eligible with AI-assisted {} single-side quote", outcome);
 }
 
 fn top_reward_book_levels(levels: &[RewardBookLevel]) -> Vec<RewardBookLevel> {

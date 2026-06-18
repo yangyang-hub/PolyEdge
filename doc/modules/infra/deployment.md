@@ -1,10 +1,22 @@
 # 部署（Docker + Nginx + Scripts）
 
-最后更新：2026-06-17
+最后更新：2026-06-18
 
 ## 概述
 
 部署体系基于 Docker Compose，包含 3 个服务（API 内嵌 Worker、Orderbook、Frontend）。前端是静态站点，浏览器通过 `NEXT_PUBLIC_POLYEDGE_API_BASE_URL` 直连后端 API；API 使用 permissive CORS，支持 front/API 分别部署在不同内网服务器。
+
+## 默认生产排查环境
+
+除非用户明确指定其他环境，线上/生产问题排查默认使用以下地址：
+
+| 服务 | 地址 | 说明 |
+|---|---|---|
+| Frontend Rewards 工作台 | `http://192.168.31.5:33002/rewards` | 浏览器入口 |
+| API 服务 | `http://100.87.45.72:38001` | 前端 `NEXT_PUBLIC_POLYEDGE_API_BASE_URL` 应指向该地址 |
+| Orderbook 服务 | `http://100.87.45.72:38002` | 盘口 HTTP、stats、内部 stream 的服务地址 |
+
+当前生产形态是前端和 API/orderbook 分别在不同内网地址上暴露；排查浏览器/API 连通性时按上表访问。API 容器内部如果和 orderbook 位于同一 Compose 项目，`POLYEDGE_ORDERBOOK__SERVICE_URL` 仍可使用 `http://polyedge-orderbook:38002`；从宿主机或跨服务器排查 orderbook 时默认使用 `http://100.87.45.72:38002`。
 
 ## 架构与关键文件
 
@@ -72,7 +84,7 @@
 - 镜像：本机 `yarn build` 预编译静态文件到 `out/`，Docker 镜像仅 `COPY out/` 到 nginx（无容器内编译）
 - 端口：`0.0.0.0:33002 → container:80`
 - 健康检查：`wget /healthz`
-- 通过 `NEXT_PUBLIC_POLYEDGE_API_BASE_URL` 指向内网 API 地址，浏览器直连后端
+- 通过 `NEXT_PUBLIC_POLYEDGE_API_BASE_URL` 指向内网 API 地址，浏览器直连后端；默认生产排查环境下为 `http://100.87.45.72:38001`
 - 当前内网免鉴权模式不需要设置 `NEXT_PUBLIC_POLYEDGE_INTERNAL_AUTH_DEV_BYPASS`
 - `scripts/deploy.sh` 在 `yarn build` 前会读取 `deploy/.env.front` 并导出 `NEXT_PUBLIC_*`，这些值会被写入静态 JS bundle；修改 API 地址后必须重建前端镜像。build 前会删除旧 `.next/` 和 `out/`，并在 build 后给 HTML 中的 `/_next/static/*.js/css` 引用追加 front hash query，避免复用旧静态导出产物或旧浏览器缓存
 - `envsubst` 将环境变量注入 nginx 静态文件配置模板
@@ -121,8 +133,8 @@ API 请求不再经过前端 nginx 反向代理；跨域由 Rust API 的 `CorsLa
 |---|---|
 | `POLYEDGE_POSTGRES__URL` | PostgreSQL 连接字符串；API 和 orderbook env 都需要配置 |
 | `POLYEDGE_ORDERBOOK__WRITE_TOKEN` | Orderbook 内部写接口共享密钥；仅放 `.env.orderbook` / `.env.api`，两端值必须一致 |
-| `POLYEDGE_ORDERBOOK__SERVICE_URL` | API/内嵌 worker 访问 orderbook 服务的 HTTP 地址；放 `.env.api` |
-| `NEXT_PUBLIC_POLYEDGE_API_BASE_URL` | 前端静态构建写入浏览器 bundle 的 API 地址；放 `.env.front` |
+| `POLYEDGE_ORDERBOOK__SERVICE_URL` | API/内嵌 worker 访问 orderbook 服务的 HTTP 地址；放 `.env.api`，跨服务器排查默认 orderbook 地址为 `http://100.87.45.72:38002` |
+| `NEXT_PUBLIC_POLYEDGE_API_BASE_URL` | 前端静态构建写入浏览器 bundle 的 API 地址；放 `.env.front`，默认生产值为 `http://100.87.45.72:38001` |
 
 ## 常用可选环境变量
 
@@ -169,6 +181,7 @@ POLYEDGE_BACKEND_BINARY=polyedge-orderbook ./scripts/build-backend-bin.sh
 ## 当前状态
 
 - 部署模板适合原型/内网共享环境
+- 默认生产排查环境：Frontend Rewards 工作台 `http://192.168.31.5:33002/rewards`，API `http://100.87.45.72:38001`，Orderbook `http://100.87.45.72:38002`
 - `scripts/build-backend-bin.sh` 的单服务模式会让 `POLYEDGE_BACKEND_BINARY` 同时作为默认 Cargo package，确保 worker/orderbook 定向构建不会误编译 API 后复制旧目标文件。
 - Compose 部署使用窄构建上下文：后端只上传 `bin/`，前端只上传 `packages/front/`，避免扫描 Rust `target/`、前端 `node_modules/`、`.next/` 等大目录
 - `polyedge-front` 不再依赖 API 健康后才启动；前端静态 Nginx 可独立运行，浏览器按 `NEXT_PUBLIC_POLYEDGE_API_BASE_URL` 访问 API

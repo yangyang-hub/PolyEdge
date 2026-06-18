@@ -12,6 +12,32 @@ fn selected_reward_quote_mode(
     RewardPlanQuoteMode::Double
 }
 
+fn selected_reward_quote_mode_for_planning(
+    config: &RewardBotConfig,
+    yes_probability: Decimal,
+) -> RewardPlanQuoteMode {
+    if config.quote_mode != RewardQuoteMode::Auto
+        || config.selection_mode != RewardSelectionMode::Enforce
+        || !config.dominant_single_side_enabled
+    {
+        return RewardPlanQuoteMode::Double;
+    }
+
+    let no_probability = Decimal::ONE - yes_probability;
+    if yes_probability > config.dominant_max_probability
+        || no_probability > config.dominant_max_probability
+    {
+        return RewardPlanQuoteMode::None;
+    }
+    if yes_probability >= config.dominant_min_probability {
+        return RewardPlanQuoteMode::SingleYes;
+    }
+    if no_probability >= config.dominant_min_probability {
+        return RewardPlanQuoteMode::SingleNo;
+    }
+    RewardPlanQuoteMode::Double
+}
+
 fn build_market_book_metrics(
     yes_token: &RewardToken,
     no_token: &RewardToken,

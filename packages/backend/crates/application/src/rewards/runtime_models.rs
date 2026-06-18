@@ -103,6 +103,11 @@ pub struct RewardQuotePlan {
     pub info_risk: Option<RewardMarketInfoRisk>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub midpoint: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(with = "time::serde::rfc3339::option")]
+    pub live_skip_until: Option<OffsetDateTime>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub live_skip_reason: Option<String>,
     pub total_daily_rate: Decimal,
     pub rewards_max_spread: Decimal,
     pub rewards_min_size: Decimal,
@@ -113,6 +118,15 @@ pub struct RewardQuotePlan {
 
 const fn default_reward_plan_quote_mode() -> RewardPlanQuoteMode {
     RewardPlanQuoteMode::Double
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct RewardLiveQuoteMaterialization {
+    pub quote_mode: RewardPlanQuoteMode,
+    pub recommended_quote_mode: Option<RewardPlanQuoteMode>,
+    pub book_metrics: Option<RewardMarketBookMetrics>,
+    pub midpoint: Decimal,
+    pub legs: Vec<RewardQuoteLeg>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

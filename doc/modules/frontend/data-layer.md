@@ -1,6 +1,6 @@
 # 数据层（API Client + Actions + Contracts）
 
-最后更新：2026-06-14
+最后更新：2026-06-18
 
 ## 概述
 
@@ -43,7 +43,7 @@
 - `InternalApiStepUpScope` — 8 个提权操作范围
 
 **连接机制：**
-- 基础 URL 来自 `NEXT_PUBLIC_POLYEDGE_API_BASE_URL` 环境变量；静态部署且 front/API 分离时必须指向 Rust API（例如 `http://192.168.31.5:38001`）
+- 基础 URL 来自 `NEXT_PUBLIC_POLYEDGE_API_BASE_URL` 环境变量；静态部署且 front/API 分离时必须指向 Rust API（默认生产排查环境为 `http://100.87.45.72:38001`）
 - 所有请求使用 `cache: "no-store"`；配置了 API base URL 时 `credentials: "omit"`，未配置时才使用同源
 - 当前内网部署由 API 侧 `POLYEDGE_AUTH__DISABLED=true` 关闭权限校验，前端不需要发送 dev-auth header
 - 旧 local dev-auth 模式仍可手动设置 `NEXT_PUBLIC_POLYEDGE_INTERNAL_AUTH_DEV_BYPASS=1` 发送 `X-PolyEdge-Dev-Auth` 头；默认前端 env 示例不再包含该遗留变量
@@ -108,11 +108,12 @@ OperationActionResult → 更新 UI 状态
 - 11 个领域 API 模块覆盖当前前端页面使用的后端端点，`base.ts` 和 `actions.ts` 提供共享请求与写操作封装
 - `actions.ts` 集中管理所有写操作的 Server Actions
 - DTO 类型镜像当前前端消费的后端响应；`CopyTradeSnapshotDto` 已与只读跟踪后端对齐，只包含 config、status、wallets、source_trades、events，不再声明模拟账户、订单或持仓字段
-- Rewards snapshot DTO 包含 `orders_page`，但 `RewardBotConfigDto.execution_mode`、旧 `quote_edge_cents`、模拟填单参数和 stale force-cancel 参数已移除；报价配置改为 `quote_bid_rank: 1|2|3`（TypeScript 以 number 表达，Server Action 用 Zod 限制范围），并新增 liquidity/volume/end-time/spread/data-age 市场质量门槛。DTO 已镜像 rewards quote/selection mode、dominant 单边阈值、盘口集中度阈值、偏好分类、AI advisory 配置字段、信息风险配置字段，以及 quote plan 的 `quote_mode` / `recommended_quote_mode` / `book_metrics` / `ai_advisory` / `info_risk`；`actions.ts` 校验 OpenAI 与 Anthropic 请求格式匹配，并校验信息风险 observe/enforce、过滤等级和 TTL。AI API key、base URL 和模型名不进入 DTO，只从 worker 环境读取。`readRewardBotSnapshot()` 支持计划/订单分页、搜索、状态和排序 query；首屏 loader 显式请求 `plans_eligible=true`，与默认可挂页签一致。当前后端 handler 和 `orders_page` 都描述本地 managed-order 查询；账户余额和 positions 由 worker 同步到数据库后返回
+- Rewards snapshot DTO 包含 `orders_page`，但 `RewardBotConfigDto.execution_mode`、旧 `quote_edge_cents`、模拟填单参数和 stale force-cancel 参数已移除；报价配置改为 `quote_bid_rank: 1|2|3`（TypeScript 以 number 表达，Server Action 用 Zod 限制范围），并新增 liquidity/volume/end-time/spread/data-age 市场质量门槛。DTO 已镜像 rewards quote/selection mode、dominant 单边阈值、盘口集中度阈值、偏好分类、AI advisory 配置字段、信息风险配置字段，以及 quote plan 的 `quote_mode` / `recommended_quote_mode` / `book_metrics` / `ai_advisory` / `info_risk` / `live_skip_until` / `live_skip_reason`；`actions.ts` 校验 OpenAI 与 Anthropic 请求格式匹配，并校验信息风险 observe/enforce、过滤等级和 TTL。AI API key、base URL 和模型名不进入 DTO，只从 worker 环境读取。`readRewardBotSnapshot()` 支持计划/订单分页、搜索、状态和排序 query；首屏 loader 显式请求 `plans_eligible=true`，与默认可挂页签一致。当前后端 handler 和 `orders_page` 都描述本地 managed-order 查询；账户余额和 positions 由 worker 同步到数据库后返回
 - `/replay` 前端派生数据层已移除；当前没有面向控制台的 replay API 页面
 - `MarketDto` 新增 `liquidity_usd` 与 `end_at`，镜像后端 `MarketData`
 - positions.ts 是唯一使用 `mapItem` 做字段重命名的模块
 - 当前静态部署使用 `NEXT_PUBLIC_POLYEDGE_API_BASE_URL` 浏览器直连 Rust API，不再通过前端 Nginx 反代 `/api/v1`
+- 默认生产排查入口为 `http://192.168.31.5:33002/rewards`，该静态前端应通过 `NEXT_PUBLIC_POLYEDGE_API_BASE_URL=http://100.87.45.72:38001` 访问 API
 
 ## 修改检查清单
 

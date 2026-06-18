@@ -186,6 +186,8 @@ export type RewardQuotePlanDto = {
   ai_advisory?: RewardMarketAdvisoryDto | null;
   info_risk?: RewardMarketInfoRiskDto | null;
   midpoint?: DecimalValue | null;
+  live_skip_until?: string | null;
+  live_skip_reason?: string | null;
   total_daily_rate: DecimalValue;
   rewards_max_spread: DecimalValue;
   rewards_min_size: DecimalValue;

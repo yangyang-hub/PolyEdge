@@ -1,3 +1,5 @@
+const LIVE_ORDERBOOK_VALIDATION_SKIP_TTL: TimeDuration = TimeDuration::hours(12);
+
 fn live_cancel_candidates(
     config: &RewardBotConfig,
     plans: &[RewardQuotePlan],
@@ -105,18 +107,18 @@ fn live_cancel_reason(
 fn live_placement_orders(
     config: &RewardBotConfig,
     account: &RewardAccountState,
-    plans: &[RewardQuotePlan],
+    plans: &mut [RewardQuotePlan],
     books: &HashMap<String, RewardOrderBook>,
     book_history: &HashMap<String, VecDeque<BookSnapshot>>,
     open_orders: &[ManagedRewardOrder],
     positions: &[RewardPosition],
     kill_switch: bool,
     trace_id: &str,
-) -> Vec<ManagedRewardOrder> {
+) -> (Vec<ManagedRewardOrder>, bool) {
     let max_markets = usize::from(config.max_markets);
     let max_open_orders = usize::from(config.max_open_orders);
     if max_markets == 0 || max_open_orders == 0 {
-        return Vec::new();
+        return (Vec::new(), false);
     }
 
     let mut active_markets: HashSet<String> = open_orders
@@ -126,19 +128,53 @@ fn live_placement_orders(
         .collect();
     let mut orders = open_orders.to_vec();
     let mut placements = Vec::new();
+    let mut plans_changed = false;
     let mut seq = 0usize;
     let available_for_new_condition =
         live_available_usd_after_unmanaged_external_buys(account, open_orders);
 
-    let plan_index: HashMap<&str, &RewardQuotePlan> = plans
-        .iter()
-        .map(|plan| (plan.condition_id.as_str(), plan))
-        .collect();
-
-    for plan in plans.iter().filter(|plan| plan.eligible) {
-        if !live_plan_has_fresh_quote_books(plan, books, config) {
+    for plan_index in 0..plans.len() {
+        if !plans[plan_index].eligible {
             continue;
         }
+        let materialized =
+            match materialize_reward_quote_plan_for_live_orderbook(&plans[plan_index], books, config)
+            {
+                Ok(materialized) => materialized,
+                Err(reason) => {
+                    mark_live_orderbook_validation_skip(
+                        &mut plans[plan_index],
+                        reason,
+                        OffsetDateTime::now_utc(),
+                    );
+                    plans_changed = true;
+                    continue;
+                }
+            };
+        {
+            let plan = &mut plans[plan_index];
+            if plan.quote_mode != materialized.quote_mode
+                || plan.recommended_quote_mode != materialized.recommended_quote_mode
+                || plan.book_metrics != materialized.book_metrics
+                || plan.midpoint != Some(materialized.midpoint)
+                || plan.legs != materialized.legs
+            {
+                plans_changed = true;
+            }
+            plan.quote_mode = materialized.quote_mode;
+            plan.recommended_quote_mode = materialized.recommended_quote_mode;
+            plan.book_metrics = materialized.book_metrics;
+            plan.midpoint = Some(materialized.midpoint);
+            plan.legs = materialized.legs;
+            plan.reason = format!(
+                "eligible for live post-only {} quotes",
+                plan.quote_mode.as_str()
+            );
+            plan.live_skip_until = None;
+            plan.live_skip_reason = None;
+            plan.updated_at = OffsetDateTime::now_utc();
+        }
+        let plan = &plans[plan_index];
         if active_markets.len() >= max_markets && !active_markets.contains(&plan.condition_id) {
             continue;
         }
@@ -174,7 +210,7 @@ fn live_placement_orders(
             if orders.iter().filter(|order| order.status.is_open_like()).count()
                 >= max_open_orders
             {
-                return placements;
+                return (placements, plans_changed);
             }
             if orders.iter().any(|order| {
                 order.condition_id == plan.condition_id
@@ -233,9 +269,11 @@ fn live_placement_orders(
                 created_at: now,
                 updated_at: now,
             };
+            let mut single_plan_index = HashMap::new();
+            single_plan_index.insert(plan.condition_id.as_str(), plan);
             if live_cancel_reason(
                 config,
-                &plan_index,
+                &single_plan_index,
                 books,
                 book_history,
                 &order,
@@ -252,18 +290,21 @@ fn live_placement_orders(
         }
     }
 
-    placements
+    (placements, plans_changed)
 }
 
-fn live_plan_has_fresh_quote_books(
-    plan: &RewardQuotePlan,
-    books: &HashMap<String, RewardOrderBook>,
-    config: &RewardBotConfig,
-) -> bool {
-    let now = OffsetDateTime::now_utc();
-    plan.legs.iter().all(|leg| {
-        live_quote_book_unavailable_reason(config, books, &leg.token_id, now).is_none()
-    })
+fn mark_live_orderbook_validation_skip(
+    plan: &mut RewardQuotePlan,
+    reason: String,
+    now: OffsetDateTime,
+) {
+    let skip_until = now + LIVE_ORDERBOOK_VALIDATION_SKIP_TTL;
+    plan.eligible = false;
+    plan.quote_mode = RewardPlanQuoteMode::None;
+    plan.reason = format!("live orderbook validation skipped until {skip_until}: {reason}");
+    plan.live_skip_until = Some(skip_until);
+    plan.live_skip_reason = Some(reason);
+    plan.updated_at = now;
 }
 
 fn live_quote_book_unavailable_reason(

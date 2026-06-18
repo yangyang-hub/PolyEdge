@@ -33,6 +33,8 @@ fn live_test_plan(now: OffsetDateTime) -> RewardQuotePlan {
         ai_advisory: None,
         info_risk: None,
         midpoint: Some(reward_decimal("0.50")),
+        live_skip_until: None,
+        live_skip_reason: None,
         total_daily_rate: reward_decimal("25"),
         rewards_max_spread: reward_decimal("8"),
         rewards_min_size: reward_decimal("5"),
@@ -301,10 +303,11 @@ fn live_placement_reuses_cash_across_markets() {
         ("no_live_2".to_string(), live_test_book("no_live_2", old)),
     ]);
 
-    let orders = live_placement_orders(
+    let mut plans = vec![first_plan, second_plan];
+    let (orders, _) = live_placement_orders(
         &config,
         &live_test_account(Decimal::from(20_u64)),
-        &[first_plan, second_plan],
+        &mut plans,
         &books,
         &HashMap::new(),
         &[],
@@ -343,10 +346,11 @@ fn live_placement_requires_the_whole_market_to_fit_available_cash() {
         ("no_live".to_string(), live_test_book("no_live", now)),
     ]);
 
-    let orders = live_placement_orders(
+    let mut plans = vec![plan];
+    let (orders, _) = live_placement_orders(
         &config,
         &live_test_account(reward_decimal("19.59")),
-        &[plan],
+        &mut plans,
         &books,
         &HashMap::new(),
         &[],
@@ -376,10 +380,11 @@ fn live_placement_counts_existing_same_market_buys_against_cash() {
     ]);
     let existing = live_test_open_order("yes_live");
 
-    let orders = live_placement_orders(
+    let mut plans = vec![plan];
+    let (orders, _) = live_placement_orders(
         &config,
         &live_test_account(reward_decimal("15")),
-        &[plan],
+        &mut plans,
         &books,
         &HashMap::new(),
         &[existing],
@@ -410,10 +415,11 @@ fn live_placement_reserves_unmanaged_external_buy_notional() {
     let mut account = live_test_account(Decimal::from(25_u64));
     account.external_buy_notional = Decimal::from(10_u64);
 
-    let orders = live_placement_orders(
+    let mut plans = vec![plan];
+    let (orders, _) = live_placement_orders(
         &config,
         &account,
-        &[plan],
+        &mut plans,
         &books,
         &HashMap::new(),
         &[],
@@ -437,7 +443,7 @@ fn live_placement_does_not_double_reserve_managed_external_buys() {
     };
     let now = OffsetDateTime::now_utc();
     let mut plan = live_test_plan(now);
-    plan.legs.retain(|leg| leg.token_id == "no_live");
+    plan.quote_mode = polyedge_application::RewardPlanQuoteMode::SingleNo;
     let books = HashMap::from([
         ("yes_live".to_string(), live_test_book("yes_live", now)),
         ("no_live".to_string(), live_test_book("no_live", now)),
@@ -446,10 +452,11 @@ fn live_placement_does_not_double_reserve_managed_external_buys() {
     let mut account = live_test_account(Decimal::from(25_u64));
     account.external_buy_notional = reward_decimal("9.8");
 
-    let orders = live_placement_orders(
+    let mut plans = vec![plan];
+    let (orders, _) = live_placement_orders(
         &config,
         &account,
-        &[plan],
+        &mut plans,
         &books,
         &HashMap::new(),
         &[existing],
@@ -950,10 +957,11 @@ fn live_placement_applies_min_depth_before_submission() {
         ("no_live".to_string(), no_book),
     ]);
 
-    let placements = live_placement_orders(
+    let mut plans = vec![plan];
+    let (placements, _) = live_placement_orders(
         &config,
         &live_test_account(reward_decimal("100")),
-        &[plan],
+        &mut plans,
         &books,
         &HashMap::new(),
         &[],
@@ -984,10 +992,11 @@ fn live_placement_does_not_add_inventory_while_exit_is_pending() {
     exit.side = RewardOrderSide::Sell;
     exit.status = ManagedRewardOrderStatus::ExitPending;
 
-    let placements = live_placement_orders(
+    let mut plans = vec![plan];
+    let (placements, _) = live_placement_orders(
         &config,
         &live_test_account(reward_decimal("100")),
-        &[plan],
+        &mut plans,
         &books,
         &HashMap::new(),
         &[exit],

@@ -27,7 +27,9 @@ yarn build
 Runtime settings:
 
 ```bash
-NEXT_PUBLIC_POLYEDGE_API_BASE_URL=http://192.168.31.5:38001
+NEXT_PUBLIC_POLYEDGE_API_BASE_URL=http://100.87.45.72:38001
 ```
+
+Current production troubleshooting URLs: Front Rewards at `http://192.168.31.5:33002/rewards`, API at `http://100.87.45.72:38001`, and orderbook at `http://100.87.45.72:38002`.
 
 Nginx serves static routes only. Browser API requests go directly to the Rust API base URL above; the current intranet deployment uses `POLYEDGE_AUTH__DISABLED=true` on the API side. Static assets and HTML are served with `Cache-Control: no-cache, must-revalidate`; `scripts/deploy.sh` also appends a front hash query to exported `/_next/static/*.js/css` references so dashboard updates are not hidden behind stale chunks.

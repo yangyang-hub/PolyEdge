@@ -654,13 +654,18 @@ impl RewardBotService {
     ) -> Result<RewardLiveCycle> {
         let config = self.read_config().await?;
         let mut plans = build_reward_quote_plans(&markets, &books, &config);
+        let previous_plans = self.store.list_all_quote_plans().await?;
+        apply_unexpired_live_orderbook_skips(
+            &mut plans,
+            &previous_plans,
+            OffsetDateTime::now_utc(),
+        );
         let pre_ai_eligible_condition_ids = plans
             .iter()
             .filter(|plan| plan.eligible)
             .map(|plan| plan.condition_id.clone())
             .collect::<Vec<_>>();
         if config.ai_advisory_enabled {
-            let previous_plans = self.store.list_all_quote_plans().await?;
             let carried_advisories = reward_ai_advisories_from_quote_plans(
                 &previous_plans,
                 &config,
@@ -834,6 +839,41 @@ impl RewardBotService {
                 json!({ "trace_id": trace_id, "capital_usd": config.account_capital_usd }),
             ))
             .await
+    }
+}
+
+fn apply_unexpired_live_orderbook_skips(
+    plans: &mut [RewardQuotePlan],
+    previous_plans: &[RewardQuotePlan],
+    now: OffsetDateTime,
+) {
+    let previous_by_condition = previous_plans
+        .iter()
+        .filter_map(|plan| {
+            let skip_until = plan.live_skip_until?;
+            if skip_until <= now {
+                return None;
+            }
+            Some((plan.condition_id.as_str(), (skip_until, plan.live_skip_reason.clone())))
+        })
+        .collect::<HashMap<_, _>>();
+
+    for plan in plans {
+        let Some((skip_until, skip_reason)) = previous_by_condition.get(plan.condition_id.as_str())
+        else {
+            continue;
+        };
+        plan.eligible = false;
+        plan.quote_mode = RewardPlanQuoteMode::None;
+        plan.reason = format!(
+            "live orderbook validation skipped until {}: {}",
+            skip_until,
+            skip_reason
+                .as_deref()
+                .unwrap_or("recent live orderbook validation failed")
+        );
+        plan.live_skip_until = Some(*skip_until);
+        plan.live_skip_reason = skip_reason.clone();
     }
 }
 

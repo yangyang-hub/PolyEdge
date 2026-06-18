@@ -92,6 +92,14 @@ cargo run -p polyedge-worker -- analyze-wallets-once
 - Orderbook：`0.0.0.0:38002`
 - Front Docker runtime：宿主机默认 `33002 -> container:80`
 
+默认生产排查环境：
+
+- Frontend Rewards 工作台：`http://192.168.31.5:33002/rewards`
+- API 服务：`http://100.87.45.72:38001`
+- Orderbook 服务：`http://100.87.45.72:38002`
+
+除非另行说明，线上问题排查默认使用这组地址；前端静态构建的 `NEXT_PUBLIC_POLYEDGE_API_BASE_URL` 应指向 `http://100.87.45.72:38001`。
+
 ## 数据获取架构
 
 外部市场数据必须由后台 producer 获取并写入数据库或缓存，策略、页面和 API handler 只读这些存储。
@@ -177,7 +185,7 @@ cp deploy/.env.front.example deploy/.env.front
 ./scripts/deploy.sh all
 ```
 
-部署侧只有三个服务级 env：`deploy/.env.api`、`deploy/.env.orderbook`、`deploy/.env.front`。同一 Compose 项目中 `POLYEDGE_ORDERBOOK__SERVICE_URL` 通常是 `http://polyedge-orderbook:38002`；跨服务器部署时使用 orderbook 服务器实际地址。`deploy/.env.api.example` 会显式关闭各 worker 后台任务，需要运行时再改为 `true`。
+部署侧只有三个服务级 env：`deploy/.env.api`、`deploy/.env.orderbook`、`deploy/.env.front`。同一 Compose 项目中 `POLYEDGE_ORDERBOOK__SERVICE_URL` 通常是 `http://polyedge-orderbook:38002`；跨服务器部署时使用 orderbook 服务器实际地址，当前默认生产排查地址是 `http://100.87.45.72:38002`。`deploy/.env.front` 的 `NEXT_PUBLIC_POLYEDGE_API_BASE_URL` 当前默认生产值是 `http://100.87.45.72:38001`。`deploy/.env.api.example` 会显式关闭各 worker 后台任务，需要运行时再改为 `true`。
 
 ## 主要缺口
 

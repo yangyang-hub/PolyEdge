@@ -120,13 +120,17 @@ fn combined_market_budget_can_satisfy_asymmetric_minimum_sizes() {
     };
 
     let plan = build_reward_quote_plan(&test_market(decimal("20")), &test_books(), &config);
+    let materialized =
+        materialize_reward_quote_plan_for_live_orderbook(&plan, &test_books(), &config)
+            .expect("live materialization");
 
     assert!(plan.eligible, "{}", plan.reason);
     assert_eq!(plan.legs.len(), 2);
     assert_eq!(plan.quote_mode, RewardPlanQuoteMode::Double);
-    assert!(plan.legs.iter().all(|leg| leg.size >= decimal("20")));
+    assert!(materialized.legs.iter().all(|leg| leg.size >= decimal("20")));
     assert!(
-        plan.legs
+        materialized
+            .legs
             .iter()
             .fold(Decimal::ZERO, |sum, leg| sum + leg.price * leg.size)
             <= config.per_market_usd
@@ -144,17 +148,21 @@ fn auto_enforce_quotes_only_dominant_yes_side() {
     };
 
     let plan = build_reward_quote_plan(&test_market(decimal("5")), &dominant_yes_books(), &config);
+    let materialized =
+        materialize_reward_quote_plan_for_live_orderbook(&plan, &dominant_yes_books(), &config)
+            .expect("live materialization");
 
     assert!(plan.eligible, "{}", plan.reason);
     assert_eq!(plan.quote_mode, RewardPlanQuoteMode::SingleYes);
     assert_eq!(plan.recommended_quote_mode, Some(RewardPlanQuoteMode::SingleYes));
-    assert_eq!(plan.legs.len(), 1);
-    assert_eq!(plan.legs[0].outcome, "Yes");
-    assert_eq!(plan.legs[0].price, decimal("0.91"));
+    assert_eq!(plan.legs.len(), 2);
+    assert_eq!(materialized.legs.len(), 1);
+    assert_eq!(materialized.legs[0].outcome, "Yes");
+    assert_eq!(materialized.legs[0].price, decimal("0.91"));
 }
 
 #[test]
-fn auto_enforce_rejects_concentrated_dominant_book() {
+fn auto_enforce_concentration_is_checked_during_live_materialization() {
     let config = RewardBotConfig {
         quote_mode: RewardQuoteMode::Auto,
         selection_mode: RewardSelectionMode::Enforce,
@@ -165,10 +173,13 @@ fn auto_enforce_rejects_concentrated_dominant_book() {
     };
 
     let plan = build_reward_quote_plan(&test_market(decimal("5")), &dominant_yes_books(), &config);
+    let error =
+        materialize_reward_quote_plan_for_live_orderbook(&plan, &dominant_yes_books(), &config)
+            .expect_err("live materialization should reject concentrated book");
 
-    assert!(!plan.eligible);
-    assert_eq!(plan.quote_mode, RewardPlanQuoteMode::None);
-    assert!(plan.reason.contains("top-1 depth share"));
+    assert!(plan.eligible, "{}", plan.reason);
+    assert_eq!(plan.quote_mode, RewardPlanQuoteMode::SingleYes);
+    assert!(error.contains("top-1 depth share"));
     assert_eq!(plan.recommended_quote_mode, Some(RewardPlanQuoteMode::None));
 }
 
@@ -199,8 +210,15 @@ fn ai_enforce_can_filter_double_plan_to_single_side() {
 
     assert!(plans[0].eligible);
     assert_eq!(plans[0].quote_mode, RewardPlanQuoteMode::SingleNo);
-    assert_eq!(plans[0].legs.len(), 1);
-    assert_eq!(plans[0].legs[0].outcome, "No");
+    assert_eq!(plans[0].legs.len(), 2);
+    let materialized = materialize_reward_quote_plan_for_live_orderbook(
+        &plans[0],
+        &test_books(),
+        &config,
+    )
+    .expect("live materialization");
+    assert_eq!(materialized.legs.len(), 1);
+    assert_eq!(materialized.legs[0].outcome, "No");
     assert!(plans[0].ai_advisory.is_some());
 }
 
@@ -401,13 +419,14 @@ fn combined_market_budget_rejects_unaffordable_minimum_sizes() {
     };
 
     let plan = build_reward_quote_plan(&test_market(decimal("50")), &test_books(), &config);
+    let error = materialize_reward_quote_plan_for_live_orderbook(&plan, &test_books(), &config)
+        .expect_err("live materialization should reject unaffordable minimum sizes");
 
-    assert!(!plan.eligible);
+    assert!(plan.eligible, "{}", plan.reason);
     assert_eq!(
-        plan.reason,
+        error,
         "per-market budget cannot satisfy rewards minimum size"
     );
-    assert!(plan.legs.is_empty());
 }
 
 #[test]
@@ -423,13 +442,17 @@ fn auto_enforce_falls_back_to_affordable_single_side_when_double_budget_fails() 
     };
 
     let plan = build_reward_quote_plan(&test_market(decimal("50")), &test_books(), &config);
+    let materialized =
+        materialize_reward_quote_plan_for_live_orderbook(&plan, &test_books(), &config)
+            .expect("live materialization");
 
     assert!(plan.eligible, "{}", plan.reason);
-    assert_eq!(plan.quote_mode, RewardPlanQuoteMode::SingleNo);
-    assert_eq!(plan.legs.len(), 1);
-    assert_eq!(plan.legs[0].outcome, "No");
-    assert!(plan.legs[0].size >= decimal("50"));
-    assert!(plan.legs[0].price * plan.legs[0].size <= config.per_market_usd);
+    assert_eq!(plan.quote_mode, RewardPlanQuoteMode::Double);
+    assert_eq!(materialized.quote_mode, RewardPlanQuoteMode::SingleNo);
+    assert_eq!(materialized.legs.len(), 1);
+    assert_eq!(materialized.legs[0].outcome, "No");
+    assert!(materialized.legs[0].size >= decimal("50"));
+    assert!(materialized.legs[0].price * materialized.legs[0].size <= config.per_market_usd);
 }
 
 fn test_advisory(
@@ -465,10 +488,12 @@ fn quote_plan_accounts_for_clob_cost_precision_before_minimum_size_check() {
     };
 
     let plan = build_reward_quote_plan(&test_market(decimal("20.30")), &test_books(), &config);
+    let error = materialize_reward_quote_plan_for_live_orderbook(&plan, &test_books(), &config)
+        .expect_err("live materialization should reject unaffordable CLOB-sized legs");
 
-    assert!(!plan.eligible);
+    assert!(plan.eligible, "{}", plan.reason);
     assert_eq!(
-        plan.reason,
+        error,
         "per-market budget cannot satisfy rewards minimum size"
     );
 }
@@ -483,11 +508,17 @@ fn quote_plan_sizes_already_match_clob_cost_precision() {
     };
 
     let plan = build_reward_quote_plan(&test_market(decimal("20.30")), &test_books(), &config);
+    let materialized =
+        materialize_reward_quote_plan_for_live_orderbook(&plan, &test_books(), &config)
+            .expect("live materialization");
 
     assert!(plan.eligible, "{}", plan.reason);
-    assert_eq!(plan.legs[0].size, decimal("21"));
-    assert_eq!(plan.legs[1].size, decimal("20.5"));
-    assert!(plan.legs.iter().all(|leg| leg.size >= decimal("20.30")));
+    assert_eq!(materialized.legs[0].size, decimal("21"));
+    assert_eq!(materialized.legs[1].size, decimal("20.5"));
+    assert!(materialized
+        .legs
+        .iter()
+        .all(|leg| leg.size >= decimal("20.30")));
 }
 
 #[test]
@@ -524,14 +555,16 @@ fn quote_bid_rank_selects_requested_distinct_bid_level() {
     ];
 
     let plan = build_reward_quote_plan(&test_market(decimal("5")), &books, &config);
+    let materialized = materialize_reward_quote_plan_for_live_orderbook(&plan, &books, &config)
+        .expect("live materialization");
 
     assert!(plan.eligible, "{}", plan.reason);
-    assert_eq!(plan.legs[0].price, decimal("0.76"));
-    assert_eq!(plan.legs[1].price, decimal("0.21"));
+    assert_eq!(materialized.legs[0].price, decimal("0.76"));
+    assert_eq!(materialized.legs[1].price, decimal("0.21"));
 }
 
 #[test]
-fn quote_bid_rank_rejects_book_without_requested_depth() {
+fn quote_bid_rank_depth_is_checked_during_live_materialization() {
     let config = RewardBotConfig {
         quote_bid_rank: 3,
         min_market_score: Decimal::ZERO,
@@ -539,14 +572,15 @@ fn quote_bid_rank_rejects_book_without_requested_depth() {
     };
 
     let plan = build_reward_quote_plan(&test_market(decimal("5")), &test_books(), &config);
+    let error = materialize_reward_quote_plan_for_live_orderbook(&plan, &test_books(), &config)
+        .expect_err("live materialization should reject missing bid depth");
 
-    assert!(!plan.eligible);
-    assert_eq!(plan.reason, "YES book does not have bid-3");
-    assert!(plan.legs.is_empty());
+    assert!(plan.eligible, "{}", plan.reason);
+    assert_eq!(error, "YES book does not have bid-3");
 }
 
 #[test]
-fn quote_bid_rank_rejects_level_outside_rewards_spread() {
+fn quote_bid_rank_spread_is_checked_during_live_materialization() {
     let config = RewardBotConfig {
         quote_bid_rank: 2,
         min_market_score: Decimal::ZERO,
@@ -564,10 +598,11 @@ fn quote_bid_rank_rejects_level_outside_rewards_spread() {
     });
 
     let plan = build_reward_quote_plan(&test_market(decimal("5")), &books, &config);
+    let error = materialize_reward_quote_plan_for_live_orderbook(&plan, &books, &config)
+        .expect_err("live materialization should reject out-of-spread bid");
 
-    assert!(!plan.eligible);
-    assert_eq!(plan.reason, "bid-2 is outside the rewards spread limit");
-    assert!(plan.legs.is_empty());
+    assert!(plan.eligible, "{}", plan.reason);
+    assert_eq!(error, "YES bid-2 is outside the rewards spread limit");
 }
 
 #[test]

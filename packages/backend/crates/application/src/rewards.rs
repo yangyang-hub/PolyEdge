@@ -27,5 +27,6 @@ include!("rewards/control.rs");
 include!("rewards/service.rs");
 include!("rewards/planner.rs");
 include!("rewards/planner_selection.rs");
+include!("rewards/planner_live.rs");
 include!("rewards/engine.rs");
 include!("rewards/helpers.rs");

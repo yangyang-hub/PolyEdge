@@ -413,27 +413,26 @@ async fn run_reward_bot_live_tick(
         }
     }
 
-    let plan_index: HashMap<&str, &RewardQuotePlan> = cycle
-        .plans
-        .iter()
-        .map(|plan| (plan.condition_id.as_str(), plan))
-        .collect();
-    let buy_submit_risk = LiveBuySubmitRiskContext {
-        config: &cycle.config,
-        plans: &plan_index,
-        book_history,
-        kill_switch,
-    };
-
     // Validate and cancel stale persisted intents before submitting them.
     // Unknown submissions are protected by live_cancel_reason and recovered
     // here without issuing a duplicate order.
     let unresolved_before_recovery = has_unresolved_live_reconciliation(&open_orders);
+    let pending_plan_index: HashMap<&str, &RewardQuotePlan> = cycle
+        .plans
+        .iter()
+        .map(|plan| (plan.condition_id.as_str(), plan))
+        .collect();
+    let pending_buy_submit_risk = LiveBuySubmitRiskContext {
+        config: &cycle.config,
+        plans: &pending_plan_index,
+        book_history,
+        kill_switch,
+    };
     submit_pending_live_reward_orders(
         connector,
         &mut open_orders,
         &books,
-        Some(buy_submit_risk),
+        Some(pending_buy_submit_risk),
         state,
         &mut account,
         &cycle.positions,
@@ -451,10 +450,10 @@ async fn run_reward_bot_live_tick(
         return Ok(report);
     }
 
-    let placement_orders = live_placement_orders(
+    let (placement_orders, plans_changed) = live_placement_orders(
         &cycle.config,
         &account,
-        &cycle.plans,
+        &mut cycle.plans,
         &books,
         book_history,
         &open_orders,
@@ -462,6 +461,9 @@ async fn run_reward_bot_live_tick(
         kill_switch,
         trace_id,
     );
+    if plans_changed {
+        state.reward_bot_service.save_quote_plans(&cycle.plans).await?;
+    }
 
     if !placement_orders.is_empty() {
         let events = placement_orders
@@ -493,11 +495,22 @@ async fn run_reward_bot_live_tick(
         )
         .await?;
         open_orders.extend(placement_orders);
+        let placement_plan_index: HashMap<&str, &RewardQuotePlan> = cycle
+            .plans
+            .iter()
+            .map(|plan| (plan.condition_id.as_str(), plan))
+            .collect();
+        let placement_buy_submit_risk = LiveBuySubmitRiskContext {
+            config: &cycle.config,
+            plans: &placement_plan_index,
+            book_history,
+            kill_switch,
+        };
         submit_pending_live_reward_orders(
             connector,
             &mut open_orders,
             &books,
-            Some(buy_submit_risk),
+            Some(placement_buy_submit_risk),
             state,
             &mut account,
             &cycle.positions,
