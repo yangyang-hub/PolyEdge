@@ -312,6 +312,9 @@ async fn run_reward_bot_live_tick(
     if kill_switch {
         cycle.should_execute = false;
     }
+    if cycle.should_execute {
+        register_live_eligible_orderbook_tokens(state, &cycle.plans, trace_id).await;
+    }
     let mut report = RewardBotRunReport {
         markets_scanned: cycle.markets.len(),
         books_fetched,
@@ -592,6 +595,7 @@ include!("rewards/live_submission.rs");
 include!("rewards/live_pending.rs");
 include!("rewards/live_helpers.rs");
 include!("rewards/live_risk.rs");
+include!("rewards/orderbook_registration.rs");
 include!("rewards/orderbook_events.rs");
 include!("rewards/polling.rs");
 include!("rewards/provider_advisory.rs");

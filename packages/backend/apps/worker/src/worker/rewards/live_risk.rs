@@ -1,4 +1,6 @@
 const LIVE_ORDERBOOK_VALIDATION_SKIP_TTL: TimeDuration = TimeDuration::hours(12);
+const LIVE_ORDERBOOK_WAITING_REASON_PREFIX: &str =
+    "waiting for fresh orderbook data from subscription";
 
 fn live_cancel_candidates(
     config: &RewardBotConfig,
@@ -142,12 +144,21 @@ fn live_placement_orders(
             {
                 Ok(materialized) => materialized,
                 Err(reason) => {
-                    mark_live_orderbook_validation_skip(
-                        &mut plans[plan_index],
-                        reason,
-                        OffsetDateTime::now_utc(),
-                    );
-                    plans_changed = true;
+                    let now = OffsetDateTime::now_utc();
+                    if let Some(wait_reason) =
+                        live_orderbook_wait_reason(config, &plans[plan_index], books, now)
+                    {
+                        if mark_live_orderbook_waiting(
+                            &mut plans[plan_index],
+                            wait_reason,
+                            now,
+                        ) {
+                            plans_changed = true;
+                        }
+                    } else {
+                        mark_live_orderbook_validation_skip(&mut plans[plan_index], reason, now);
+                        plans_changed = true;
+                    }
                     continue;
                 }
             };
@@ -305,6 +316,73 @@ fn mark_live_orderbook_validation_skip(
     plan.live_skip_until = Some(skip_until);
     plan.live_skip_reason = Some(reason);
     plan.updated_at = now;
+}
+
+fn mark_live_orderbook_waiting(
+    plan: &mut RewardQuotePlan,
+    reason: String,
+    now: OffsetDateTime,
+) -> bool {
+    let changed = !plan.eligible
+        || plan.reason != reason
+        || plan.live_skip_until.is_some()
+        || plan.live_skip_reason.is_some();
+    if changed {
+        plan.eligible = true;
+        plan.reason = reason;
+        plan.live_skip_until = None;
+        plan.live_skip_reason = None;
+        plan.updated_at = now;
+    }
+    changed
+}
+
+fn live_orderbook_wait_reason(
+    config: &RewardBotConfig,
+    plan: &RewardQuotePlan,
+    books: &HashMap<String, RewardOrderBook>,
+    now: OffsetDateTime,
+) -> Option<String> {
+    let mut reasons = Vec::new();
+    let mut seen = HashSet::new();
+
+    for leg in &plan.legs {
+        if !seen.insert(leg.token_id.clone()) {
+            continue;
+        }
+        let label = if leg.outcome.trim().is_empty() {
+            leg.token_id.as_str()
+        } else {
+            leg.outcome.as_str()
+        };
+        let Some(book) = books.get(&leg.token_id) else {
+            reasons.push(format!("{label} orderbook unavailable"));
+            continue;
+        };
+        if book.bids.is_empty() || book.asks.is_empty() {
+            reasons.push(format!("{label} orderbook is empty"));
+            continue;
+        }
+        if config.stale_book_ms == 0 {
+            continue;
+        }
+        let age_ms = (now - book.observed_at).whole_milliseconds();
+        if age_ms < 0 || age_ms > i128::from(config.stale_book_ms) {
+            reasons.push(format!(
+                "{label} orderbook stale: age_ms={age_ms}, max_age_ms={}",
+                config.stale_book_ms
+            ));
+        }
+    }
+
+    if reasons.is_empty() {
+        None
+    } else {
+        Some(format!(
+            "{LIVE_ORDERBOOK_WAITING_REASON_PREFIX}: {}",
+            reasons.join("; ")
+        ))
+    }
 }
 
 fn live_quote_book_unavailable_reason(

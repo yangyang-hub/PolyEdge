@@ -854,6 +854,9 @@ fn apply_unexpired_live_orderbook_skips(
             if skip_until <= now {
                 return None;
             }
+            if live_orderbook_skip_reason_is_transient(plan.live_skip_reason.as_deref()) {
+                return None;
+            }
             Some((plan.condition_id.as_str(), (skip_until, plan.live_skip_reason.clone())))
         })
         .collect::<HashMap<_, _>>();
@@ -875,6 +878,18 @@ fn apply_unexpired_live_orderbook_skips(
         plan.live_skip_until = Some(*skip_until);
         plan.live_skip_reason = skip_reason.clone();
     }
+}
+
+fn live_orderbook_skip_reason_is_transient(skip_reason: Option<&str>) -> bool {
+    let Some(reason) = skip_reason else {
+        return false;
+    };
+    let reason = reason.to_ascii_lowercase();
+    reason.contains("missing fresh orderbook midpoint")
+        || reason.contains("waiting for fresh orderbook")
+        || reason.contains("orderbook unavailable")
+        || reason.contains("orderbook is empty")
+        || reason.contains("orderbook stale")
 }
 
 include!("service_cache.rs");
@@ -944,6 +959,23 @@ mod reward_service_tests {
             Some(now),
             now,
         ));
+    }
+
+    #[test]
+    fn transient_live_orderbook_skip_reasons_are_not_carried() {
+        assert!(live_orderbook_skip_reason_is_transient(Some(
+            "missing fresh orderbook midpoint for live quote",
+        )));
+        assert!(live_orderbook_skip_reason_is_transient(Some(
+            "waiting for fresh orderbook data from subscription: YES orderbook unavailable",
+        )));
+        assert!(live_orderbook_skip_reason_is_transient(Some(
+            "YES orderbook stale: age_ms=50000, max_age_ms=45000",
+        )));
+        assert!(!live_orderbook_skip_reason_is_transient(Some(
+            "YES bid-3 is outside the rewards spread limit",
+        )));
+        assert!(!live_orderbook_skip_reason_is_transient(None));
     }
 }
 

@@ -392,6 +392,67 @@ fn live_placement_requires_the_whole_market_to_fit_available_cash() {
 }
 
 #[test]
+fn live_placement_waits_for_fresh_orderbook_without_long_skip() {
+    let config = RewardBotConfig {
+        account_id: "reward_live".to_string(),
+        stale_book_ms: 45_000,
+        max_markets: 1,
+        max_open_orders: 2,
+        max_global_position_usd: Decimal::ZERO,
+        ..RewardBotConfig::default()
+    };
+    let now = OffsetDateTime::now_utc();
+    let plan = live_test_plan(now);
+
+    let mut plans = vec![plan];
+    let (orders, plans_changed) = live_placement_orders(
+        &config,
+        &live_test_account(Decimal::from(20_u64)),
+        &mut plans,
+        &HashMap::new(),
+        &HashMap::new(),
+        &[],
+        &[],
+        false,
+        "trc_live_test",
+    );
+
+    assert!(orders.is_empty());
+    assert!(plans_changed);
+    assert!(plans[0].eligible);
+    assert!(plans[0].live_skip_until.is_none());
+    assert!(plans[0].live_skip_reason.is_none());
+    assert!(
+        plans[0]
+            .reason
+            .contains("waiting for fresh orderbook data from subscription")
+    );
+}
+
+#[test]
+fn live_eligible_orderbook_tokens_dedupe_and_respect_cap() {
+    let now = OffsetDateTime::now_utc();
+    let first = live_test_plan(now);
+    let mut duplicate = live_test_plan(now);
+    duplicate.condition_id = "cond_live_duplicate".to_string();
+    let mut ineligible = live_test_plan(now);
+    ineligible.condition_id = "cond_live_ineligible".to_string();
+    ineligible.eligible = false;
+    ineligible.legs[0].token_id = "yes_live_ineligible".to_string();
+
+    assert_eq!(
+        live_eligible_orderbook_tokens(&[first.clone(), duplicate, ineligible.clone()], 10),
+        vec!["yes_live".to_string(), "no_live".to_string()]
+    );
+    assert_eq!(
+        live_eligible_orderbook_tokens(&[first, ineligible], 1),
+        vec!["yes_live".to_string()]
+    );
+    assert!(live_eligible_orderbook_tokens(&[], 10).is_empty());
+    assert!(live_eligible_orderbook_tokens(&[live_test_plan(now)], 0).is_empty());
+}
+
+#[test]
 fn live_placement_counts_existing_same_market_buys_against_cash() {
     let config = RewardBotConfig {
         account_id: "reward_live".to_string(),
