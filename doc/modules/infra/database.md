@@ -4,7 +4,13 @@
 
 ## 概述
 
-数据库使用 PostgreSQL，通过 41 个 SQL 迁移文件管理 schema。覆盖审计、市场数据、事件/信号、执行管道、风控、套利、奖励、跟单等领域。
+数据库使用 PostgreSQL，通过 41 个 SQL 迁移文件管理 schema。覆盖审计、市场数据、事件/信号、执行管道、风控、套利、奖励、跟单等领域。为了空库一次性初始化，`packages/backend/init.sql` 机械合并了当前全部迁移内容；运行时仍通过 `sqlx` 使用 `packages/backend/migrations/` 做迁移校验和增量升级。
+
+## 初始化入口
+
+- `packages/backend/init.sql`：完整空库初始化脚本，按 `0001` 到 `0041` 顺序展开所有迁移，适合新环境人工执行一次，例如 `psql "$POLYEDGE_POSTGRES__URL" -v ON_ERROR_STOP=1 -f packages/backend/init.sql`。
+- `packages/backend/migrations/*.sql`：保留给 Rust runtime 的 `sqlx::migrate!` 使用。不要删除或重命名已应用的迁移文件，否则现有数据库的 `_sqlx_migrations` 历史可能与二进制内嵌迁移不一致。
+- `init.sql` 只面向空数据库；已存在 schema 的数据库继续使用 runtime 自动迁移或按需执行新增迁移。
 
 ## 迁移文件列表
 
@@ -126,6 +132,7 @@
 ## 当前状态
 
 - 41 个迁移文件，最新为 `0041_market_asset_id_lookup_indexes.sql`
+- `packages/backend/init.sql` 已合并 `0001`–`0041`，作为完整空库初始化脚本
 - 所有表使用 PostgreSQL 特性（JSONB、NUMERIC 约束、BIGSERIAL、部分索引等）
 - 迁移使用 `sqlx` 管理
 

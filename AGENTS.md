@@ -117,6 +117,7 @@ The designated sync producer is now the standalone `polyedge-orderbook` service.
 | `migrations/0039_reward_market_info_risks.sql` | Rewards info-risk cache table keyed by provider/request_format/model/input_hash |
 | `migrations/0040_markets_quality_index_no_synced_at.sql` | Rewards market quality index excludes high-churn `markets.synced_at` |
 | `migrations/0041_market_asset_id_lookup_indexes.sql` | Market yes/no asset id indexes for orderbook priority token-to-condition lookup |
+| `packages/backend/init.sql` | Complete empty-database initialization script generated from migrations 0001–0041 |
 
 ## 仓库结构
 
@@ -151,7 +152,7 @@ The designated sync producer is now the standalone `polyedge-orderbook` service.
 - Rewards CLOB heartbeat 失败或超时后会清空本地 heartbeat id，并按 5-60 秒退避重建链；连续失败首条和每 6 次记录 warn，其余降为 debug，恢复时记录 info。
 - 聪明钱跟单（copy-trading）已精简为只读跟踪+分析子系统：跟踪多个 Polymarket 钱包地址（`TrackedWallet`）、通过 Polymarket Data API（`data-api.polymarket.com`，通过 `PolymarketDataApiConnector`）检测钱包新成交、钱包分析统计（胜率/ROI/成交量）、`Analyze` 与钱包管理前端 UI。模拟引擎（模拟资金账本、仓位、订单、PnL）已移除，跟单不会下单。前端不再展示模拟账户、订单、持仓、Run、Cancel 或 Reset，只保留启停跟踪、钱包管理、Analyze、源成交和事件日志。未处理 source trades 按时间排序并记录。API 服务不执行 copytrade 跟单循环或钱包分析，前端 Analyze 只会写入数据库控制命令，由 worker 领取执行；`POLYEDGE_COPYTRADE__ENABLED=true` 启用 worker 轮询。
 - Polymarket 运行时不再提供 mock mode；市场列表走 Gamma 实时数据，私有订单/成交任务需要真实凭证、真实账户、小额演练和运维 runbook。
-- 数据库迁移目前到 `0041_market_asset_id_lookup_indexes.sql`。
+- 数据库迁移目前到 `0041_market_asset_id_lookup_indexes.sql`；`packages/backend/init.sql` 是按 0001–0041 合并的空库完整初始化脚本，运行时仍保留 `packages/backend/migrations/` 给 `sqlx` 校验和增量迁移使用。
 
 ## 主要缺口
 
