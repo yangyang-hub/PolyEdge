@@ -58,6 +58,13 @@ async fn scan_reward_info_risks_unlocked(
         );
         return Ok(RewardInfoRiskScanReport::default());
     }
+    if config.ai_advisory_enabled {
+        info!(
+            trace_id = %trace_id,
+            "skipping standalone reward info risk provider scan because market provider refresh handles AI advisory and info risk per condition",
+        );
+        return Ok(RewardInfoRiskScanReport::default());
+    }
     info!(
         trace_id = %trace_id,
         provider = config.ai_provider.as_str(),

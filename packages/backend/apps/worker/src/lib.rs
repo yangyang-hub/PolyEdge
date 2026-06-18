@@ -127,6 +127,17 @@ struct NewsPromotionReport {
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+struct RewardAiAdvisoryRefreshReport {
+    candidates: usize,
+    cache_hits: usize,
+    requested: usize,
+    saved: usize,
+    failures: usize,
+    skipped_missing_market: usize,
+    skipped_missing_plan: usize,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 struct RewardInfoRiskScanReport {
     candidates: usize,
     cache_hits: usize,
@@ -135,6 +146,12 @@ struct RewardInfoRiskScanReport {
     failures: usize,
     skipped_missing_market: usize,
     applied_plans: usize,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+struct RewardProviderRefreshReport {
+    ai: RewardAiAdvisoryRefreshReport,
+    info_risk: RewardInfoRiskScanReport,
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]

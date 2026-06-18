@@ -170,6 +170,35 @@ fn reward_ai_advisory_candidates_only_include_pre_ai_eligible_missing_admission(
 }
 
 #[test]
+fn reward_provider_refresh_candidates_use_info_risk_order_and_dedupe_ai() {
+    let info_risk_condition_ids = vec![
+        "cond_open".to_string(),
+        "cond_position".to_string(),
+        "cond_eligible".to_string(),
+        "cond_candidate".to_string(),
+    ];
+    let ai_condition_ids = vec![
+        "cond_eligible".to_string(),
+        "cond_position".to_string(),
+        "cond_ai_only".to_string(),
+    ];
+
+    let ordered =
+        reward_provider_refresh_candidate_condition_ids(&info_risk_condition_ids, &ai_condition_ids);
+
+    assert_eq!(
+        ordered,
+        vec![
+            "cond_open",
+            "cond_position",
+            "cond_eligible",
+            "cond_candidate",
+            "cond_ai_only",
+        ],
+    );
+}
+
+#[test]
 fn reward_ai_advisory_incremental_apply_only_updates_matching_plan() {
     let now = OffsetDateTime::now_utc();
     let mut target = live_test_plan(now);
