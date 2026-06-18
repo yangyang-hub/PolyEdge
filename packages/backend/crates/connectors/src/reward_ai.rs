@@ -1,4 +1,7 @@
-use crate::openai_compat::{openai_compatible_endpoint, with_openai_compatible_auth};
+use crate::openai_compat::{
+    openai_compatible_endpoint, provider_json_candidates, provider_response_preview,
+    with_openai_compatible_auth,
+};
 use polyedge_application::{
     RewardAiAdvisoryDecision, RewardAiAdvisoryRequest, RewardAiProvider, RewardAiRequestFormat,
     RewardAiSuitability, RewardPlanQuoteMode,
@@ -74,7 +77,8 @@ impl RewardAiAdvisoryConnector {
                         "schema": reward_ai_json_schema(),
                         "strict": true
                     }
-                }
+                },
+                "temperature": 0
             }))
             .send()
             .await
@@ -112,7 +116,9 @@ impl RewardAiAdvisoryConnector {
                     "schema": reward_ai_json_schema(),
                     "strict": true
                 }
-            }
+            },
+            "temperature": 0,
+            "max_tokens": 1200
         }))
         .send()
         .await
@@ -143,6 +149,7 @@ impl RewardAiAdvisoryConnector {
             .json(&json!({
                 "model": request.model,
                 "max_tokens": 1200,
+                "temperature": 0,
                 "system": reward_ai_system_prompt(),
                 "messages": [
                     {"role": "user", "content": reward_ai_user_prompt(request)}
@@ -179,12 +186,12 @@ fn ensure_provider(request: &RewardAiAdvisoryRequest, expected: RewardAiProvider
 }
 
 fn reward_ai_system_prompt() -> &'static str {
-    "You are a risk reviewer for Polymarket rewards maker orders. Return only JSON. Do not suggest bypassing deterministic risk checks. Favor watch/avoid when data is thin, concentrated, stale, or reversal risk is unclear."
+    "You are a risk reviewer for Polymarket rewards maker orders. Return exactly one JSON object and nothing else. Do not use markdown, comments, prose, or unquoted keys. Do not suggest bypassing deterministic risk checks. Favor watch/avoid when data is thin, concentrated, stale, or reversal risk is unclear."
 }
 
 fn reward_ai_user_prompt(request: &RewardAiAdvisoryRequest) -> String {
     format!(
-        "Assess whether this rewards market is suitable for maker quoting. Return JSON with fields: suitability allow|watch|avoid, quote_mode double|single_yes|single_no|none, exit_policy exit_at_markup|hold_and_requote|flatten_immediately, confidence 0..1, reasons string array, metrics object.\nInput:\n{}",
+        "Assess whether this rewards market is suitable for maker quoting. Return one valid JSON object with double-quoted keys and these fields: suitability allow|watch|avoid, quote_mode double|single_yes|single_no|none, exit_policy exit_at_markup|hold_and_requote|flatten_immediately, confidence 0..1, reasons string array, metrics object. Use {{}} for metrics when unsure.\nInput:\n{}",
         request.payload
     )
 }
@@ -234,14 +241,34 @@ fn extract_openai_responses_text(body: &Value) -> Result<String> {
 }
 
 fn parse_reward_ai_decision(text: &str) -> Result<RewardAiAdvisoryDecision> {
-    let value: Value = serde_json::from_str(text)
-        .or_else(|_| extract_json_object(text).and_then(|json| serde_json::from_str(json)))
-        .map_err(|error| {
-            AppError::dependency_unavailable(
-                "REWARD_AI_RESPONSE_INVALID_JSON",
-                format!("reward AI response was not valid JSON: {error}"),
-            )
-        })?;
+    let value = parse_reward_ai_value(text)?;
+    parse_reward_ai_decision_value(&value)
+}
+
+fn parse_reward_ai_value(text: &str) -> Result<Value> {
+    let mut last_error = None;
+    for value in provider_json_candidates(text) {
+        if !reward_ai_candidate_has_known_field(&value) {
+            continue;
+        }
+        match parse_reward_ai_decision_value(&value) {
+            Ok(_) => return Ok(value),
+            Err(error) => last_error = Some(error),
+        }
+    }
+    if let Some(error) = last_error {
+        return Err(error);
+    }
+    Err(AppError::dependency_unavailable(
+        "REWARD_AI_RESPONSE_INVALID_JSON",
+        format!(
+            "reward AI response was not valid JSON; preview={}",
+            provider_response_preview(text)
+        ),
+    ))
+}
+
+fn parse_reward_ai_decision_value(value: &Value) -> Result<RewardAiAdvisoryDecision> {
     let suitability = value
         .get("suitability")
         .and_then(Value::as_str)
@@ -284,6 +311,13 @@ fn parse_reward_ai_decision(text: &str) -> Result<RewardAiAdvisoryDecision> {
     })
 }
 
+fn reward_ai_candidate_has_known_field(value: &Value) -> bool {
+    value.get("suitability").is_some()
+        || value.get("quote_mode").is_some()
+        || value.get("exit_policy").is_some()
+        || value.get("confidence").is_some()
+}
+
 fn parse_confidence(value: Option<&Value>) -> Option<Decimal> {
     let raw = value?;
     let parsed = if let Some(number) = raw.as_f64() {
@@ -292,12 +326,6 @@ fn parse_confidence(value: Option<&Value>) -> Option<Decimal> {
         raw.as_str().and_then(|value| Decimal::from_str(value).ok())
     }?;
     Some(parsed.max(Decimal::ZERO).min(Decimal::ONE))
-}
-
-fn extract_json_object(text: &str) -> std::result::Result<&str, serde_json::Error> {
-    let start = text.find('{').unwrap_or(0);
-    let end = text.rfind('}').map_or(text.len(), |index| index + 1);
-    Ok(&text[start..end])
 }
 
 fn reward_ai_missing_field(field: &'static str) -> AppError {
@@ -359,5 +387,30 @@ mod tests {
         )
         .expect("parse low confidence");
         assert_eq!(low.confidence, Decimal::ZERO);
+    }
+
+    #[test]
+    fn reward_ai_parse_skips_embedded_example_object() {
+        let parsed = parse_reward_ai_decision(
+            r#"Example shape: {"example": true}
+Final:
+{"suitability":"allow","quote_mode":"double","exit_policy":"exit_at_markup","confidence":0.8,"reasons":[],"metrics":{}}
+"#,
+        )
+        .expect("parse embedded response");
+
+        assert_eq!(parsed.suitability, RewardAiSuitability::Allow);
+        assert_eq!(parsed.quote_mode, RewardPlanQuoteMode::Double);
+    }
+
+    #[test]
+    fn reward_ai_parse_accepts_json_string_payload() {
+        let parsed = parse_reward_ai_decision(
+            r#""{\"suitability\":\"watch\",\"quote_mode\":\"none\",\"exit_policy\":\"flatten_immediately\",\"confidence\":0.4,\"reasons\":[],\"metrics\":{}}""#,
+        )
+        .expect("parse json string payload");
+
+        assert_eq!(parsed.suitability, RewardAiSuitability::Watch);
+        assert_eq!(parsed.confidence, Decimal::from_str("0.4").unwrap());
     }
 }
