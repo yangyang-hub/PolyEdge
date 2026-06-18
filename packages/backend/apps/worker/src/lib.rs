@@ -53,7 +53,10 @@ use serde_json::json;
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     future::Future,
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     time::{Duration, Instant},
 };
 use time::{Duration as TimeDuration, OffsetDateTime};

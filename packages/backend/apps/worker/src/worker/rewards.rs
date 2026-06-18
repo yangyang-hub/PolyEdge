@@ -3,6 +3,7 @@ const LIVE_EXTERNAL_ORDER_NOT_FOUND_MARKER: &str = "external order lookup return
 const LIVE_EXTERNAL_ORDER_NOT_FOUND_CLOSE_AFTER_SECS: i64 = 300;
 static REWARD_AI_PROVIDER_REQUEST_SEMAPHORE: tokio::sync::Semaphore =
     tokio::sync::Semaphore::const_new(1);
+static REWARD_AI_ADVISORY_REFRESH_RUNNING: AtomicBool = AtomicBool::new(false);
 
 async fn run_reward_bot_once(state: &AppState, trace_id: &str) -> Result<RewardBotRunReport> {
     let connector = build_live_polymarket_connector(state).await?;
@@ -304,7 +305,8 @@ async fn run_reward_bot_live_tick(
         info_risk_mode = cycle.config.info_risk_mode.as_str(),
         "prepared rewards live cycle",
     );
-    refresh_reward_ai_advisories(state, &mut cycle, &books, trace_id).await?;
+    spawn_reward_ai_advisory_refresh(state, &cycle, &books, trace_id);
+    apply_cached_reward_ai_advisories_to_cycle(state, &mut cycle, &books, trace_id).await?;
     apply_cached_reward_info_risks_to_cycle(state, &mut cycle, trace_id).await?;
     let kill_switch = state.risk_service.read_state().await?.kill_switch;
     if kill_switch {
@@ -509,7 +511,7 @@ async fn run_reward_bot_live_tick(
     Ok(report)
 }
 
-async fn refresh_reward_ai_advisories(
+async fn apply_cached_reward_ai_advisories_to_cycle(
     state: &AppState,
     cycle: &mut RewardLiveCycle,
     books: &HashMap<String, RewardOrderBook>,
@@ -538,7 +540,7 @@ async fn refresh_reward_ai_advisories(
         pre_ai_eligible_plans = cycle.pre_ai_eligible_condition_ids.len(),
         open_orders = cycle.open_orders.len(),
         positions = cycle.positions.len(),
-        "starting reward AI advisory refresh",
+        "applying cached reward AI advisories",
     );
     let min_confidence = reward_ai_min_confidence(state.settings.rewards.ai_min_confidence_bps);
     let model = state.settings.rewards.ai_model.trim();
@@ -550,22 +552,6 @@ async fn refresh_reward_ai_advisories(
         model,
         now,
     );
-    let Some(connector) = build_reward_ai_advisory_connector(state, &cycle.config)? else {
-        warn!(
-            trace_id = %trace_id,
-            provider = cycle.config.ai_provider.as_str(),
-            "reward AI advisory is enabled but provider configuration is incomplete; blocking new eligible plans until provider filter passes",
-        );
-        apply_reward_ai_advisories(
-            &mut cycle.plans,
-            &advisories,
-            &cycle.config,
-            min_confidence,
-        );
-        state.reward_bot_service.save_quote_plans(&cycle.plans).await?;
-        return Ok(());
-    };
-
     if model.is_empty() {
         warn!(
             trace_id = %trace_id,
@@ -598,9 +584,6 @@ async fn refresh_reward_ai_advisories(
     );
     let candidates = candidate_condition_ids.len();
     let mut cache_hits = 0usize;
-    let mut requested = 0usize;
-    let mut saved = 0usize;
-    let mut failures = 0usize;
     let mut skipped_missing_market = 0usize;
 
     for condition_id in candidate_condition_ids {
@@ -635,16 +618,159 @@ async fn refresh_reward_ai_advisories(
         {
             cache_hits += 1;
             advisories.insert(condition_id.clone(), cached.clone());
-            persist_reward_ai_advisory_on_quote_plan(
-                state,
-                cycle,
-                &condition_id,
-                cached,
-                min_confidence,
-                trace_id,
-                "cache",
-            )
-            .await?;
+        }
+    }
+
+    let ai_pending_plans =
+        count_missing_reward_ai_advisories(&cycle.pre_ai_eligible_condition_ids, &advisories);
+    info!(
+        trace_id = %trace_id,
+        pre_ai_eligible_plans = cycle.pre_ai_eligible_condition_ids.len(),
+        ai_existing_advisories = existing_advisories,
+        ai_request_candidates = candidates,
+        ai_pending_plans,
+        candidates,
+        cache_hits,
+        skipped_missing_market,
+        applied = advisories.len(),
+        "completed cached reward AI advisory application",
+    );
+
+    apply_reward_ai_advisories(
+        &mut cycle.plans,
+        &advisories,
+        &cycle.config,
+        min_confidence,
+    );
+    state.reward_bot_service.save_quote_plans(&cycle.plans).await?;
+    Ok(())
+}
+
+fn spawn_reward_ai_advisory_refresh(
+    state: &AppState,
+    cycle: &RewardLiveCycle,
+    books: &HashMap<String, RewardOrderBook>,
+    trace_id: &str,
+) {
+    if !cycle.config.ai_advisory_enabled || cycle.plans.is_empty() {
+        return;
+    }
+    if REWARD_AI_ADVISORY_REFRESH_RUNNING
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .is_err()
+    {
+        debug!(
+            trace_id = %trace_id,
+            "skipping reward AI advisory provider refresh because another refresh is running",
+        );
+        return;
+    }
+
+    let state = state.clone();
+    let cycle = cycle.clone();
+    let books = books.clone();
+    let trace_id = trace_id.to_string();
+    tokio::spawn(async move {
+        let result = refresh_reward_ai_advisory_provider_cache(&state, cycle, books, &trace_id).await;
+        REWARD_AI_ADVISORY_REFRESH_RUNNING.store(false, Ordering::Release);
+        if let Err(error) = result {
+            warn!(
+                trace_id = %trace_id,
+                error = %error,
+                "reward AI advisory provider refresh failed",
+            );
+        }
+    });
+}
+
+async fn refresh_reward_ai_advisory_provider_cache(
+    state: &AppState,
+    cycle: RewardLiveCycle,
+    books: HashMap<String, RewardOrderBook>,
+    trace_id: &str,
+) -> Result<()> {
+    if !cycle.config.ai_advisory_enabled || cycle.plans.is_empty() {
+        return Ok(());
+    }
+    let model = state.settings.rewards.ai_model.trim();
+    if model.is_empty() {
+        warn!(
+            trace_id = %trace_id,
+            "reward AI advisory model is empty; skipping provider refresh"
+        );
+        return Ok(());
+    }
+    let Some(connector) = build_reward_ai_advisory_connector(state, &cycle.config)? else {
+        warn!(
+            trace_id = %trace_id,
+            provider = cycle.config.ai_provider.as_str(),
+            "reward AI advisory is enabled but provider configuration is incomplete; skipping provider refresh",
+        );
+        return Ok(());
+    };
+
+    let now = OffsetDateTime::now_utc();
+    let markets_by_condition = cycle
+        .markets
+        .iter()
+        .map(|market| (market.condition_id.clone(), market.clone()))
+        .collect::<HashMap<_, _>>();
+    let candidate_condition_ids = reward_ai_advisory_candidate_condition_ids(
+        &cycle.plans,
+        &cycle.open_orders,
+        &cycle.positions,
+        &cycle.pre_ai_eligible_condition_ids,
+        &cycle.config,
+        model,
+        now,
+    );
+    let candidates = candidate_condition_ids.len();
+    let mut cache_hits = 0usize;
+    let mut requested = 0usize;
+    let mut saved = 0usize;
+    let mut failures = 0usize;
+    let mut skipped_missing_market = 0usize;
+
+    info!(
+        trace_id = %trace_id,
+        provider = cycle.config.ai_provider.as_str(),
+        request_format = cycle.config.ai_request_format.as_str(),
+        candidates,
+        "starting reward AI advisory provider refresh",
+    );
+
+    for condition_id in candidate_condition_ids {
+        let Some(plan_for_request) = cycle
+            .plans
+            .iter()
+            .find(|plan| plan.condition_id == condition_id)
+            .cloned()
+        else {
+            continue;
+        };
+        let Some(market) = markets_by_condition.get(condition_id.as_str()) else {
+            skipped_missing_market += 1;
+            continue;
+        };
+        let request = build_reward_ai_advisory_request(
+            market,
+            &plan_for_request,
+            &cycle.account,
+            &cycle.positions,
+            &cycle.open_orders,
+            &books,
+            &cycle.config,
+            cycle.config.ai_provider,
+            cycle.config.ai_request_format,
+            model,
+        )?;
+        if state
+            .reward_bot_service
+            .latest_market_advisory(&request)
+            .await?
+            .is_some()
+        {
+            cache_hits += 1;
             continue;
         }
 
@@ -674,17 +800,6 @@ async fn refresh_reward_ai_advisories(
                     saved,
                     "saved reward AI advisory",
                 );
-                advisories.insert(condition_id.clone(), advisory.clone());
-                persist_reward_ai_advisory_on_quote_plan(
-                    state,
-                    cycle,
-                    &condition_id,
-                    advisory,
-                    min_confidence,
-                    trace_id,
-                    "provider",
-                )
-                .await?;
             }
             Err(error) => {
                 failures += 1;
@@ -692,7 +807,7 @@ async fn refresh_reward_ai_advisories(
                     trace_id = %trace_id,
                     condition_id = %condition_id,
                     error = %error,
-                    "reward AI advisory request failed; blocking plan until provider filter passes",
+                    "reward AI advisory request failed; keeping existing cached state",
                 );
                 if reward_ai_provider_is_overloaded(&error) {
                     warn!(
@@ -707,62 +822,20 @@ async fn refresh_reward_ai_advisories(
         }
     }
 
-    let ai_pending_plans =
-        count_missing_reward_ai_advisories(&cycle.pre_ai_eligible_condition_ids, &advisories);
     info!(
         trace_id = %trace_id,
-        pre_ai_eligible_plans = cycle.pre_ai_eligible_condition_ids.len(),
-        ai_existing_advisories = existing_advisories,
-        ai_request_candidates = candidates,
-        ai_pending_plans,
         candidates,
         cache_hits,
         requested,
         saved,
         failures,
         skipped_missing_market,
-        applied = advisories.len(),
-        "completed reward AI advisory refresh",
-    );
-
-    apply_reward_ai_advisories(
-        &mut cycle.plans,
-        &advisories,
-        &cycle.config,
-        min_confidence,
-    );
-    state.reward_bot_service.save_quote_plans(&cycle.plans).await?;
-    Ok(())
-}
-
-async fn persist_reward_ai_advisory_on_quote_plan(
-    state: &AppState,
-    cycle: &mut RewardLiveCycle,
-    condition_id: &str,
-    advisory: RewardMarketAdvisory,
-    min_confidence: Decimal,
-    trace_id: &str,
-    source: &str,
-) -> Result<()> {
-    if !apply_reward_ai_advisory_to_quote_plan(
-        &mut cycle.plans,
-        &cycle.config,
-        condition_id,
-        advisory,
-        min_confidence,
-    ) {
-        return Ok(());
-    }
-    state.reward_bot_service.save_quote_plans(&cycle.plans).await?;
-    info!(
-        trace_id = %trace_id,
-        condition_id = %condition_id,
-        source,
-        "applied reward AI advisory to quote plan snapshot",
+        "completed reward AI advisory provider refresh",
     );
     Ok(())
 }
 
+#[cfg(test)]
 fn apply_reward_ai_advisory_to_quote_plan(
     plans: &mut [RewardQuotePlan],
     config: &RewardBotConfig,
