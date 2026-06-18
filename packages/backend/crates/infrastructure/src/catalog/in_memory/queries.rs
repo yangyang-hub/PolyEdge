@@ -71,6 +71,14 @@ async fn market_event_get_market(&self, market_id: &str) -> Result<Option<Market
         Ok(self.markets.read().await.get(market_id).cloned())
     }
 
+async fn market_event_get_markets_by_ids(&self, market_ids: &[String]) -> Result<Vec<MarketView>> {
+        let markets = self.markets.read().await;
+        Ok(market_ids
+            .iter()
+            .filter_map(|market_id| markets.get(market_id).cloned())
+            .collect())
+    }
+
 async fn market_event_get_signal(&self, signal_id: &str) -> Result<Option<SignalView>> {
         Ok(self.signals.read().await.get(signal_id).cloned())
     }

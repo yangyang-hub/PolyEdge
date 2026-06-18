@@ -156,4 +156,54 @@ impl PostgresMarketEventStore {
 
         row.as_ref().map(parse_market_row).transpose()
     }
+
+    async fn market_event_get_markets_by_ids(
+        &self,
+        market_ids: &[String],
+    ) -> Result<Vec<MarketView>> {
+        if market_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let rows = sqlx::query(
+            r#"
+            SELECT
+              m.id,
+              m.slug,
+              m.question,
+              m.category,
+              m.status,
+              m.best_bid,
+              m.best_ask,
+              m.mid_price,
+              m.volume_24h,
+              m.liquidity_usd,
+              m.end_at,
+              m.ambiguity_level,
+              m.tradability_status,
+              r.resolution_source,
+              r.edge_case_notes,
+              m.polymarket_condition_id,
+              m.polymarket_yes_asset_id,
+              m.polymarket_no_asset_id,
+              m.updated_at,
+              m.version
+            FROM markets m
+            INNER JOIN market_resolution_rules r ON r.market_id = m.id
+            WHERE m.id = ANY($1)
+            ORDER BY m.id ASC
+            "#,
+        )
+        .bind(market_ids)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_QUERY_FAILED",
+                format!("failed to fetch markets by ids: {error}"),
+            )
+        })?;
+
+        rows.iter().map(parse_market_row).collect()
+    }
 }

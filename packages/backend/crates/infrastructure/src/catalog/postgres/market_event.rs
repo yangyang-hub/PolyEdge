@@ -26,6 +26,10 @@ impl MarketEventStore for PostgresMarketEventStore {
         self.market_event_get_market(market_id).await
     }
 
+    async fn get_markets_by_ids(&self, market_ids: &[String]) -> Result<Vec<MarketView>> {
+        self.market_event_get_markets_by_ids(market_ids).await
+    }
+
     async fn get_signal(&self, signal_id: &str) -> Result<Option<SignalView>> {
         self.market_event_get_signal(signal_id).await
     }

@@ -8,6 +8,8 @@ pub trait MarketEventStore: Send + Sync {
 
     async fn get_market(&self, market_id: &str) -> Result<Option<MarketView>>;
 
+    async fn get_markets_by_ids(&self, market_ids: &[String]) -> Result<Vec<MarketView>>;
+
     async fn get_signal(&self, signal_id: &str) -> Result<Option<SignalView>>;
 
     async fn list_events(&self, filters: &EventListFilters, page: &PageQuery) -> Result<Paginated<EventView>>;
@@ -216,6 +218,23 @@ impl MarketEventService {
                 format!("market was not found: {market_id}"),
             )
         })
+    }
+
+    pub async fn get_markets_by_ids(&self, market_ids: &[String]) -> Result<Vec<MarketView>> {
+        let mut ids = market_ids
+            .iter()
+            .map(|market_id| market_id.trim())
+            .filter(|market_id| !market_id.is_empty())
+            .map(ToOwned::to_owned)
+            .collect::<Vec<_>>();
+        ids.sort();
+        ids.dedup();
+
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        self.store.get_markets_by_ids(&ids).await
     }
 
     pub async fn get_signal(&self, signal_id: &str) -> Result<SignalView> {

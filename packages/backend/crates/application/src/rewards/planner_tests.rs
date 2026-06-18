@@ -254,6 +254,27 @@ fn ai_enabled_rejects_eligible_plan_without_provider_decision() {
 }
 
 #[test]
+fn ai_prepare_apply_existing_does_not_reject_missing_provider_decision() {
+    let config = RewardBotConfig {
+        ai_advisory_enabled: true,
+        min_market_score: Decimal::ZERO,
+        ..RewardBotConfig::default()
+    };
+    let mut plans = vec![build_reward_quote_plan(
+        &test_market(decimal("5")),
+        &test_books(),
+        &config,
+    )];
+
+    apply_existing_reward_ai_advisories(&mut plans, &HashMap::new(), &config, decimal("0.65"));
+
+    assert!(plans[0].eligible);
+    assert_eq!(plans[0].quote_mode, RewardPlanQuoteMode::Double);
+    assert_eq!(plans[0].legs.len(), 2);
+    assert!(plans[0].ai_advisory.is_none());
+}
+
+#[test]
 fn info_risk_enforce_rejects_eligible_plan_without_provider_decision() {
     let config = RewardBotConfig {
         info_risk_enabled: true,

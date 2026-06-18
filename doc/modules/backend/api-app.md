@@ -1,6 +1,6 @@
 # API App（HTTP API 服务）
 
-最后更新：2026-06-14
+最后更新：2026-06-18
 
 ## 概述
 
@@ -103,6 +103,7 @@ HTTP Response
 - Rewards Bot 控制端点只作为前端接口和命令入口，具体 live 策略、撤单和重置由同进程后台 runtime 处理；Copy Trading 当前只保留钱包跟踪和 Analyze，旧 run/cancel/reset 入口不执行模拟交易
 - Rewards Bot snapshot 不承载全量 reward markets；配置、账户、positions、heartbeat 优先从共享内存读取
 - Markets DTO 返回 Gamma 同步的 `liquidity_usd` 与 `end_at`，供控制台和其他数据库消费者使用
+- Console risk snapshot 先读取当前 positions，再通过 `MarketEventService.get_markets_by_ids()` 批量读取相关 markets 用于分类聚合，不再调用 markets 列表接口全量扫描市场表。
 - 当前内网部署使用 `POLYEDGE_AUTH__DISABLED=true`，前端请求不需要权限头或 step-up code
 - CORS 当前为 permissive，支持纯内网中 front/API 分别部署在不同服务器
 - Step-up 认证代码路径仍保留；当 `POLYEDGE_AUTH__DISABLED=false` 时用于敏感操作（模式切换、kill switch、执行提交）

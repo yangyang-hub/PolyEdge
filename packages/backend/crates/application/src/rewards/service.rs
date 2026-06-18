@@ -654,6 +654,11 @@ impl RewardBotService {
     ) -> Result<RewardLiveCycle> {
         let config = self.read_config().await?;
         let mut plans = build_reward_quote_plans(&markets, &books, &config);
+        let pre_ai_eligible_condition_ids = plans
+            .iter()
+            .filter(|plan| plan.eligible)
+            .map(|plan| plan.condition_id.clone())
+            .collect::<Vec<_>>();
         if config.ai_advisory_enabled {
             let previous_plans = self.store.list_all_quote_plans().await?;
             let carried_advisories = reward_ai_advisories_from_quote_plans(
@@ -662,7 +667,7 @@ impl RewardBotService {
                 ai_model,
                 OffsetDateTime::now_utc(),
             );
-            apply_reward_ai_advisories(
+            apply_existing_reward_ai_advisories(
                 &mut plans,
                 &carried_advisories,
                 &config,
@@ -685,6 +690,7 @@ impl RewardBotService {
             account,
             markets,
             plans,
+            pre_ai_eligible_condition_ids,
             open_orders,
             positions,
             should_execute,
@@ -700,12 +706,18 @@ impl RewardBotService {
         let open_orders = self.store.list_open_orders(&account.account_id).await?;
         let positions = self.list_account_positions_cached(&account.account_id).await?;
         let plans = self.store.list_all_quote_plans().await?;
+        let pre_ai_eligible_condition_ids = plans
+            .iter()
+            .filter(|plan| plan.eligible)
+            .map(|plan| plan.condition_id.clone())
+            .collect::<Vec<_>>();
         Ok(RewardLiveCycle {
             should_execute: config.enabled,
             config,
             account,
             markets: Vec::new(),
             plans,
+            pre_ai_eligible_condition_ids,
             open_orders,
             positions,
         })

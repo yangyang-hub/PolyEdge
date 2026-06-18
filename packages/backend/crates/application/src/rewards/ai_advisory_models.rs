@@ -219,6 +219,35 @@ pub fn apply_reward_ai_advisories(
     }
 }
 
+pub fn apply_existing_reward_ai_advisories(
+    plans: &mut [RewardQuotePlan],
+    advisories: &HashMap<String, RewardMarketAdvisory>,
+    config: &RewardBotConfig,
+    min_confidence: Decimal,
+) {
+    if !config.ai_advisory_enabled {
+        return;
+    }
+
+    for plan in plans {
+        let Some(advisory) = advisories.get(&plan.condition_id).cloned() else {
+            continue;
+        };
+        plan.ai_advisory = Some(advisory.clone());
+        if advisory.confidence < min_confidence {
+            reject_ai_gated_plan(
+                plan,
+                &format!(
+                    "AI advisory confidence {} below required {}",
+                    advisory.confidence, min_confidence
+                ),
+            );
+            continue;
+        }
+        enforce_reward_ai_advisory(plan, &advisory, config);
+    }
+}
+
 #[must_use]
 pub fn reward_ai_advisories_from_quote_plans(
     plans: &[RewardQuotePlan],

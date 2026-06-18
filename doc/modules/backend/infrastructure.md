@@ -62,7 +62,7 @@
 | 实现文件 | 对应 trait | 存储 |
 |---|---|---|
 | `catalog/postgres/` | `MarketEventStore`、`ArbitrageStore`、`NewsIngestionStore` | PostgreSQL |
-| `catalog/postgres/market_event/market_queries.rs` | `MarketEventStore` 市场查询 helper | 市场列表/计数/分类/详情 SQL；从通用 `queries.rs` 拆分 |
+| `catalog/postgres/market_event/market_queries.rs` | `MarketEventStore` 市场查询 helper | 市场列表/计数/分类/详情/按 id 批量读取 SQL；从通用 `queries.rs` 拆分 |
 | `catalog/in_memory.rs` | 同上 | 内存（RwLock） |
 | `stores/rewards/postgres.rs` | `RewardBotStore` | PostgreSQL（key-value config + 完整表） |
 | `stores/rewards/postgres_market_methods.rs` | Rewards Postgres 市场查询 helper | 质量硬过滤、综合排序、row mapping |
@@ -162,6 +162,7 @@
 - Rewards store 已持久化 quote/selection mode、dominant 单边阈值、盘口集中度阈值、偏好分类、AI advisory 配置和信息风险配置；`reward_market_advisories` 与 `reward_market_info_risks` 表已由迁移创建，并已接入 Postgres/内存缓存读写，供 worker 跳过重复模型判断。
 - Rewards store 已支持外部账户余额和完整持仓快照同步；成功空持仓快照会清空目标账户持仓，失败响应不会破坏上一版，最近 confirmed fill 时间用于 worker 的 120 秒账户快照保护；worker 写入的资金钱包地址优先使用 `FUNDER`，CLOB 余额为 0/失败时可用 Polygon pUSD 链上余额回填 snapshot
 - `markets` 保存 Gamma `liquidity_usd`、`end_at` 和本地 `synced_at`；Postgres market upsert 使用单条 `INSERT .. ON CONFLICT DO UPDATE WHERE` 表达新增、真实数据变化更新和 freshness-only 刷新，返回实际写入行数，并在每批事务内设置短 `lock_timeout` / `statement_timeout`。默认调用仍刷新 `synced_at`，orderbook full sync 通过 `MarketUpsertOptions` 只刷新超过新鲜度阈值的安静市场，priority sync 继续强制刷新重点市场，避免 rewards 关键市场因目录新鲜度过低被误判。
+- MarketEventStore 的 Postgres 实现支持 `get_markets_by_ids()` 通过 `m.id = ANY($1)` 批量读取少量相关市场，API 风险快照用它替代全量 markets 列表，避免控制台风险页在大市场表上触发 `LIMIT 65535` 的慢查询。
 - `idx_markets_reward_quality` 不包含高频变化的 `synced_at`，降低 freshness-only 刷新对索引和 WAL 的写放大；`idx_markets_polymarket_yes_asset_id` / `idx_markets_polymarket_no_asset_id` 支撑 orderbook priority sync 的注册 token 到 condition id 反查；rewards 候选查询仍在关联 Gamma `markets` 后按 `synced_at` 做新鲜度过滤。
 - Orderbook register/ingest/delete 写接口要求 `x-polyedge-orderbook-token` 与 `POLYEDGE_ORDERBOOK__WRITE_TOKEN` 匹配；该密钥仅配置在 `deploy/.env.orderbook` 和 `deploy/.env.api`，未配置 token 时写接口关闭，读接口和健康检查仍可用
 

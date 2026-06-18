@@ -293,6 +293,7 @@ async fn run_reward_bot_live_tick(
         markets = cycle.markets.len(),
         books = books_fetched,
         plans = cycle.plans.len(),
+        pre_ai_eligible_plans = cycle.pre_ai_eligible_condition_ids.len(),
         eligible_plans = cycle.plans.iter().filter(|plan| plan.eligible).count(),
         open_orders = cycle.open_orders.len(),
         positions = cycle.positions.len(),
@@ -534,9 +535,20 @@ async fn refresh_reward_ai_advisories(
         provider = cycle.config.ai_provider.as_str(),
         request_format = cycle.config.ai_request_format.as_str(),
         plans = cycle.plans.len(),
+        pre_ai_eligible_plans = cycle.pre_ai_eligible_condition_ids.len(),
         open_orders = cycle.open_orders.len(),
         positions = cycle.positions.len(),
         "starting reward AI advisory refresh",
+    );
+    let min_confidence = reward_ai_min_confidence(state.settings.rewards.ai_min_confidence_bps);
+    let model = state.settings.rewards.ai_model.trim();
+    let now = OffsetDateTime::now_utc();
+    let mut advisories = current_reward_ai_advisories(
+        &cycle.plans,
+        &cycle.pre_ai_eligible_condition_ids,
+        &cycle.config,
+        model,
+        now,
     );
     let Some(connector) = build_reward_ai_advisory_connector(state, &cycle.config)? else {
         warn!(
@@ -546,15 +558,14 @@ async fn refresh_reward_ai_advisories(
         );
         apply_reward_ai_advisories(
             &mut cycle.plans,
-            &HashMap::new(),
+            &advisories,
             &cycle.config,
-            reward_ai_min_confidence(state.settings.rewards.ai_min_confidence_bps),
+            min_confidence,
         );
         state.reward_bot_service.save_quote_plans(&cycle.plans).await?;
         return Ok(());
     };
 
-    let model = state.settings.rewards.ai_model.trim();
     if model.is_empty() {
         warn!(
             trace_id = %trace_id,
@@ -562,25 +573,28 @@ async fn refresh_reward_ai_advisories(
         );
         apply_reward_ai_advisories(
             &mut cycle.plans,
-            &HashMap::new(),
+            &advisories,
             &cycle.config,
-            reward_ai_min_confidence(state.settings.rewards.ai_min_confidence_bps),
+            min_confidence,
         );
         state.reward_bot_service.save_quote_plans(&cycle.plans).await?;
         return Ok(());
     }
 
-    let min_confidence = reward_ai_min_confidence(state.settings.rewards.ai_min_confidence_bps);
     let markets_by_condition = cycle
         .markets
         .iter()
         .map(|market| (market.condition_id.clone(), market.clone()))
         .collect::<HashMap<_, _>>();
-    let mut advisories = HashMap::<String, RewardMarketAdvisory>::new();
+    let existing_advisories = advisories.len();
     let candidate_condition_ids = reward_ai_advisory_candidate_condition_ids(
         &cycle.plans,
         &cycle.open_orders,
         &cycle.positions,
+        &cycle.pre_ai_eligible_condition_ids,
+        &cycle.config,
+        model,
+        now,
     );
     let candidates = candidate_condition_ids.len();
     let mut cache_hits = 0usize;
@@ -693,8 +707,14 @@ async fn refresh_reward_ai_advisories(
         }
     }
 
+    let ai_pending_plans =
+        count_missing_reward_ai_advisories(&cycle.pre_ai_eligible_condition_ids, &advisories);
     info!(
         trace_id = %trace_id,
+        pre_ai_eligible_plans = cycle.pre_ai_eligible_condition_ids.len(),
+        ai_existing_advisories = existing_advisories,
+        ai_request_candidates = candidates,
+        ai_pending_plans,
         candidates,
         cache_hits,
         requested,
@@ -770,20 +790,33 @@ fn reward_ai_advisory_candidate_condition_ids(
     plans: &[RewardQuotePlan],
     open_orders: &[ManagedRewardOrder],
     positions: &[RewardPosition],
+    pre_ai_eligible_condition_ids: &[String],
+    config: &RewardBotConfig,
+    model: &str,
+    now: OffsetDateTime,
 ) -> Vec<String> {
     let plans_by_condition = plans
         .iter()
         .map(|plan| (plan.condition_id.as_str(), plan))
         .collect::<HashMap<_, _>>();
+    let ai_required_condition_ids = pre_ai_eligible_condition_ids
+        .iter()
+        .map(|condition_id| condition_id.trim().to_string())
+        .filter(|condition_id| !condition_id.is_empty())
+        .collect::<HashSet<_>>();
     let mut seen = HashSet::new();
-    let mut ordered = Vec::with_capacity(plans.len());
+    let mut ordered = Vec::with_capacity(ai_required_condition_ids.len());
 
     for order in open_orders {
         push_reward_ai_advisory_plan(
             &mut ordered,
             &mut seen,
             &plans_by_condition,
+            &ai_required_condition_ids,
             &order.condition_id,
+            config,
+            model,
+            now,
         );
     }
     for position in positions {
@@ -791,37 +824,111 @@ fn reward_ai_advisory_candidate_condition_ids(
             &mut ordered,
             &mut seen,
             &plans_by_condition,
+            &ai_required_condition_ids,
             &position.condition_id,
+            config,
+            model,
+            now,
         );
     }
-    for plan in plans.iter().filter(|plan| plan.eligible) {
+    for condition_id in pre_ai_eligible_condition_ids {
         push_reward_ai_advisory_plan(
             &mut ordered,
             &mut seen,
             &plans_by_condition,
-            &plan.condition_id,
+            &ai_required_condition_ids,
+            condition_id,
+            config,
+            model,
+            now,
         );
     }
 
     ordered
 }
 
+fn current_reward_ai_advisories(
+    plans: &[RewardQuotePlan],
+    pre_ai_eligible_condition_ids: &[String],
+    config: &RewardBotConfig,
+    model: &str,
+    now: OffsetDateTime,
+) -> HashMap<String, RewardMarketAdvisory> {
+    let ai_required_condition_ids = pre_ai_eligible_condition_ids
+        .iter()
+        .map(|condition_id| condition_id.trim().to_string())
+        .filter(|condition_id| !condition_id.is_empty())
+        .collect::<HashSet<_>>();
+
+    plans
+        .iter()
+        .filter(|plan| ai_required_condition_ids.contains(plan.condition_id.trim()))
+        .filter_map(|plan| plan.ai_advisory.as_ref())
+        .filter(|advisory| reward_ai_advisory_matches_config(advisory, config, model, now))
+        .map(|advisory| (advisory.condition_id.clone(), advisory.clone()))
+        .collect()
+}
+
+fn count_missing_reward_ai_advisories(
+    pre_ai_eligible_condition_ids: &[String],
+    advisories: &HashMap<String, RewardMarketAdvisory>,
+) -> usize {
+    pre_ai_eligible_condition_ids
+        .iter()
+        .filter(|condition_id| !advisories.contains_key(condition_id.trim()))
+        .count()
+}
+
 fn push_reward_ai_advisory_plan<'a>(
     ordered: &mut Vec<String>,
     seen: &mut HashSet<String>,
     plans_by_condition: &HashMap<&str, &'a RewardQuotePlan>,
+    ai_required_condition_ids: &HashSet<String>,
     condition_id: &str,
+    config: &RewardBotConfig,
+    model: &str,
+    now: OffsetDateTime,
 ) {
     let condition_id = condition_id.trim();
     if condition_id.is_empty() {
         return;
     }
-    if plans_by_condition.get(condition_id).is_none() {
+    if !ai_required_condition_ids.contains(condition_id) {
+        return;
+    }
+    let Some(plan) = plans_by_condition.get(condition_id) else {
+        return;
+    };
+    if !reward_ai_plan_needs_advisory(plan, config, model, now) {
         return;
     }
     if seen.insert(condition_id.to_string()) {
         ordered.push(condition_id.to_string());
     }
+}
+
+fn reward_ai_plan_needs_advisory(
+    plan: &RewardQuotePlan,
+    config: &RewardBotConfig,
+    model: &str,
+    now: OffsetDateTime,
+) -> bool {
+    !plan
+        .ai_advisory
+        .as_ref()
+        .is_some_and(|advisory| reward_ai_advisory_matches_config(advisory, config, model, now))
+}
+
+fn reward_ai_advisory_matches_config(
+    advisory: &RewardMarketAdvisory,
+    config: &RewardBotConfig,
+    model: &str,
+    now: OffsetDateTime,
+) -> bool {
+    advisory.expires_at > now
+        && advisory.provider == config.ai_provider
+        && advisory.request_format == config.ai_request_format
+        && advisory.model == model.trim()
 }
 
 fn build_reward_ai_advisory_connector(

@@ -281,6 +281,7 @@ pub struct RewardLiveCycle {
     pub account: RewardAccountState,
     pub markets: Vec<RewardMarket>,
     pub plans: Vec<RewardQuotePlan>,
+    pub pre_ai_eligible_condition_ids: Vec<String>,
     pub open_orders: Vec<ManagedRewardOrder>,
     pub positions: Vec<RewardPosition>,
     pub should_execute: bool,

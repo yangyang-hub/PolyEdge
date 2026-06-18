@@ -61,6 +61,10 @@ fn live_test_plan(now: OffsetDateTime) -> RewardQuotePlan {
 #[test]
 fn reward_ai_advisory_candidates_include_open_orders_positions_and_eligible_plans() {
     let now = OffsetDateTime::now_utc();
+    let config = RewardBotConfig {
+        ai_request_format: polyedge_application::RewardAiRequestFormat::OpenAiChatCompletions,
+        ..RewardBotConfig::default()
+    };
     let mut eligible = live_test_plan(now);
     eligible.condition_id = "cond_eligible".to_string();
 
@@ -91,10 +95,76 @@ fn reward_ai_advisory_candidates_include_open_orders_positions_and_eligible_plan
     };
 
     let plans = vec![rejected, eligible, position_plan, open_order_plan];
-    let condition_ids =
-        reward_ai_advisory_candidate_condition_ids(&plans, &[open_order], &[position]);
+    let pre_ai_eligible_condition_ids = vec![
+        "cond_eligible".to_string(),
+        "cond_open".to_string(),
+        "cond_position".to_string(),
+    ];
+    let condition_ids = reward_ai_advisory_candidate_condition_ids(
+        &plans,
+        &[open_order],
+        &[position],
+        &pre_ai_eligible_condition_ids,
+        &config,
+        "mimo-v2.5-pro",
+        now,
+    );
 
     assert_eq!(condition_ids, vec!["cond_open", "cond_position", "cond_eligible"]);
+}
+
+#[test]
+fn reward_ai_advisory_candidates_only_include_pre_ai_eligible_missing_admission() {
+    let now = OffsetDateTime::now_utc();
+    let config = RewardBotConfig {
+        ai_advisory_enabled: true,
+        ai_request_format: polyedge_application::RewardAiRequestFormat::OpenAiChatCompletions,
+        ..RewardBotConfig::default()
+    };
+
+    let mut missing = live_test_plan(now);
+    missing.condition_id = "cond_missing".to_string();
+
+    let mut already_admitted = live_test_plan(now);
+    already_admitted.condition_id = "cond_admitted".to_string();
+    already_admitted.ai_advisory = Some(RewardMarketAdvisory {
+        condition_id: already_admitted.condition_id.clone(),
+        provider: polyedge_application::RewardAiProvider::OpenAi,
+        request_format: config.ai_request_format,
+        model: "mimo-v2.5-pro".to_string(),
+        input_hash: "hash_admitted".to_string(),
+        suitability: polyedge_application::RewardAiSuitability::Allow,
+        quote_mode: polyedge_application::RewardPlanQuoteMode::Double,
+        exit_policy: PostFillStrategy::ExitAtMarkup,
+        confidence: reward_decimal("0.95"),
+        reasons: vec!["cached approval".to_string()],
+        metrics: serde_json::json!({}),
+        created_at: now,
+        expires_at: now + TimeDuration::hours(1),
+    });
+
+    let mut hard_rejected = live_test_plan(now);
+    hard_rejected.condition_id = "cond_hard_rejected".to_string();
+    hard_rejected.eligible = false;
+    hard_rejected.reason = "per-market budget cannot satisfy rewards minimum size".to_string();
+
+    let mut open_order = live_test_open_order("yes_live");
+    open_order.condition_id = "cond_hard_rejected".to_string();
+
+    let plans = vec![missing, already_admitted, hard_rejected];
+    let pre_ai_eligible_condition_ids =
+        vec!["cond_missing".to_string(), "cond_admitted".to_string()];
+    let condition_ids = reward_ai_advisory_candidate_condition_ids(
+        &plans,
+        &[open_order],
+        &[],
+        &pre_ai_eligible_condition_ids,
+        &config,
+        "mimo-v2.5-pro",
+        now,
+    );
+
+    assert_eq!(condition_ids, vec!["cond_missing"]);
 }
 
 #[test]

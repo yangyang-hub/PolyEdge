@@ -28,18 +28,6 @@ async fn read_console_risk_snapshot(
 ) -> polyedge_domain::Result<ConsoleRiskSnapshot> {
     let risk_state = state.risk_service.read_state().await?;
     let mode = state.system_mode_service.read_mode().await?;
-    let markets = state
-        .market_event_service
-        .list_markets(MarketListFilters {
-            status: None,
-            tradability_status: None,
-            category: None,
-            sort_by: MarketSortField::default(),
-            sort_order: SortOrder::default(),
-            offset: 0,
-            limit: u16::MAX,
-        })
-        .await?;
     let positions = state
         .execution_service
         .list_positions(PositionListFilters {
@@ -48,6 +36,14 @@ async fn read_console_risk_snapshot(
             side: None,
             limit: u16::MAX,
         })
+        .await?;
+    let market_ids = positions
+        .iter()
+        .map(|position| position.market_id.clone())
+        .collect::<Vec<_>>();
+    let markets = state
+        .market_event_service
+        .get_markets_by_ids(&market_ids)
         .await?;
     let markets_by_id = markets
         .iter()
