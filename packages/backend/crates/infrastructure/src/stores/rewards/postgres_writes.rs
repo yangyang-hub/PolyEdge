@@ -1,20 +1,18 @@
 const REWARD_UPSERT_BATCH_SIZE: usize = 100;
+const REWARD_MARKET_TOUCH_AFTER_SECS: i64 = 60 * 60;
+const REWARD_MARKET_LOCK_TIMEOUT_MS: i64 = 5_000;
+const REWARD_MARKET_STATEMENT_TIMEOUT_MS: i64 = 60_000;
 
 async fn upsert_reward_markets_tx(
     transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     markets: &[RewardMarket],
 ) -> Result<()> {
-    // Deactivate all existing reward markets first.
-    // Only markets present in the current API response will be re-activated.
-    sqlx::query("UPDATE reward_markets SET active = false WHERE active = true")
-        .execute(&mut **transaction)
-        .await
-        .map_err(|error| {
-            db_error(
-                "POSTGRES_UPDATE_FAILED",
-                format!("failed to deactivate stale reward markets: {error}"),
-            )
-        })?;
+    set_local_reward_market_upsert_timeouts(transaction).await?;
+
+    let current_condition_ids = markets
+        .iter()
+        .map(|market| market.condition_id.clone())
+        .collect::<Vec<_>>();
 
     for chunk in markets.chunks(REWARD_UPSERT_BATCH_SIZE) {
         let cols = 11usize;
@@ -56,7 +54,18 @@ async fn upsert_reward_markets_tx(
                 total_daily_rate = EXCLUDED.total_daily_rate,
                 tokens_json = EXCLUDED.tokens_json,
                 active = EXCLUDED.active,
-                updated_at = EXCLUDED.updated_at"#,
+                updated_at = EXCLUDED.updated_at
+            WHERE reward_markets.question IS DISTINCT FROM EXCLUDED.question
+               OR reward_markets.market_slug IS DISTINCT FROM EXCLUDED.market_slug
+               OR reward_markets.event_slug IS DISTINCT FROM EXCLUDED.event_slug
+               OR reward_markets.image IS DISTINCT FROM EXCLUDED.image
+               OR reward_markets.rewards_max_spread IS DISTINCT FROM EXCLUDED.rewards_max_spread
+               OR reward_markets.rewards_min_size IS DISTINCT FROM EXCLUDED.rewards_min_size
+               OR reward_markets.total_daily_rate IS DISTINCT FROM EXCLUDED.total_daily_rate
+               OR reward_markets.tokens_json IS DISTINCT FROM EXCLUDED.tokens_json
+               OR reward_markets.active IS DISTINCT FROM EXCLUDED.active
+               OR reward_markets.updated_at < now() - (${}::BIGINT * interval '1 second')"#,
+            chunk.len() * cols + 1,
         );
 
         let mut query = sqlx::query(&sql);
@@ -74,17 +83,57 @@ async fn upsert_reward_markets_tx(
                 .bind(market.active)
                 .bind(market.updated_at);
         }
-        query.execute(&mut **transaction).await.map_err(|error| {
-            db_error(
-                "POSTGRES_BATCH_UPSERT_REWARD_MARKETS_FAILED",
-                format!(
-                    "failed to batch upsert reward markets (chunk size {}): {error}",
-                    chunk.len()
-                ),
-            )
-        })?;
+        query
+            .bind(REWARD_MARKET_TOUCH_AFTER_SECS)
+            .execute(&mut **transaction)
+            .await
+            .map_err(|error| {
+                db_error(
+                    "POSTGRES_BATCH_UPSERT_REWARD_MARKETS_FAILED",
+                    format!(
+                        "failed to batch upsert reward markets (chunk size {}): {error}",
+                        chunk.len()
+                    ),
+                )
+            })?;
     }
 
+    sqlx::query(
+        r#"
+        UPDATE reward_markets
+        SET active = false,
+            updated_at = now()
+        WHERE active = true
+          AND NOT (condition_id = ANY($1))
+        "#,
+    )
+    .bind(&current_condition_ids)
+    .execute(&mut **transaction)
+    .await
+    .map_err(|error| {
+        db_error(
+            "POSTGRES_UPDATE_FAILED",
+            format!("failed to deactivate stale reward markets: {error}"),
+        )
+    })?;
+
+    Ok(())
+}
+
+async fn set_local_reward_market_upsert_timeouts(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+) -> Result<()> {
+    sqlx::query("SELECT set_config('lock_timeout', $1, true), set_config('statement_timeout', $2, true)")
+        .bind(format!("{REWARD_MARKET_LOCK_TIMEOUT_MS}ms"))
+        .bind(format!("{REWARD_MARKET_STATEMENT_TIMEOUT_MS}ms"))
+        .execute(&mut **transaction)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_REWARD_MARKET_UPSERT_TIMEOUT_CONFIG_FAILED",
+                format!("failed to configure reward market upsert statement timeouts: {error}"),
+            )
+        })?;
     Ok(())
 }
 

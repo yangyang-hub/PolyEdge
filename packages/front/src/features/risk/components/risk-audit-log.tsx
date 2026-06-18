@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { EmptyPanel } from "@/components/shared/empty-panel";
 import { PaginationBar } from "@/components/pagination-bar";
 import { StatusPill } from "@/components/shared/status-pill";
+import { TruncateText } from "@/components/shared/truncate-text";
 import { usePagination } from "@/hooks/use-pagination";
 import { dictionary, translateEnum } from "@/lib/i18n/dictionaries";
 
@@ -81,7 +82,15 @@ export function RiskAuditLog({
       {visibleAlerts.length > 0 ? (
         <>
         <div className="overflow-x-auto">
-          <table className="w-full text-left">
+          <table className="w-full table-fixed text-left">
+            <colgroup>
+              <col className="w-[12%]" />
+              <col className="w-[34%]" />
+              <col className="w-[24%]" />
+              <col className="w-[14%]" />
+              <col className="w-[10%]" />
+              <col className="w-[6%]" />
+            </colgroup>
             <thead className="bg-sidebar/60">
               <tr className="text-[10px] font-bold uppercase tracking-[0.2em] text-muted-foreground">
                 <th className="px-5 py-3">{dictionary.risk.severity}</th>
@@ -98,8 +107,12 @@ export function RiskAuditLog({
                   <td className="px-5 py-4">
                     <StatusPill tone={alert.severityTone}>{translateEnum(alert.severity)}</StatusPill>
                   </td>
-                  <td className="px-5 py-4 font-mono text-sm text-foreground">{alert.reason}</td>
-                  <td className="px-5 py-4 text-sm text-foreground">{alert.target}</td>
+                  <td className="px-5 py-4 text-sm text-foreground">
+                    <TruncateText text={alert.reason} lines={2} className="block font-mono text-sm text-foreground" />
+                  </td>
+                  <td className="px-5 py-4 text-sm text-foreground">
+                    <TruncateText text={alert.target} lines={2} className="block text-sm text-foreground" />
+                  </td>
                   <td className="px-5 py-4 font-mono text-xs text-muted-foreground">{alert.createdAt}</td>
                   <td className="px-5 py-4">
                     <StatusPill tone={alert.statusTone}>{alert.statusLabel}</StatusPill>

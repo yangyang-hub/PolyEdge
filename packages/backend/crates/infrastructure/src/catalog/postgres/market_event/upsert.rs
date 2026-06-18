@@ -1,4 +1,6 @@
 const UPSERT_BATCH_SIZE: usize = 100;
+const MARKET_UPSERT_LOCK_TIMEOUT_MS: i64 = 5_000;
+const MARKET_UPSERT_STATEMENT_TIMEOUT_MS: i64 = 30_000;
 
 impl PostgresMarketEventStore {
     async fn market_event_upsert_markets(
@@ -37,6 +39,7 @@ impl PostgresMarketEventStore {
                     format!("failed to begin market upsert transaction: {error}"),
                 )
             })?;
+            set_local_market_upsert_timeouts(&mut transaction).await?;
 
             // -- markets batch insert/update/refresh --
             let market_cols = 19usize;
@@ -55,122 +58,80 @@ impl PostgresMarketEventStore {
             let refresh_param = chunk.len() * market_cols + 1;
 
             let market_sql = format!(
-                r#"WITH incoming (
+                r#"INSERT INTO markets (
                   id, slug, question, category, status,
                   best_bid, best_ask, mid_price, volume_24h, liquidity_usd, end_at,
                   ambiguity_level, tradability_status,
                   polymarket_condition_id, polymarket_yes_asset_id, polymarket_no_asset_id,
                   updated_at, version, trace_id
-                ) AS (
-                  VALUES {values_placeholders}
-                ),
-                inserted AS (
-                  INSERT INTO markets (
-                    id, slug, question, category, status,
-                    best_bid, best_ask, mid_price, volume_24h, liquidity_usd, end_at,
-                    ambiguity_level, tradability_status,
-                    polymarket_condition_id, polymarket_yes_asset_id, polymarket_no_asset_id,
-                    updated_at, version, trace_id
-                  )
-                  SELECT
-                    id, slug, question, category, status,
-                    best_bid, best_ask, mid_price, volume_24h, liquidity_usd, end_at,
-                    ambiguity_level, tradability_status,
-                    polymarket_condition_id, polymarket_yes_asset_id, polymarket_no_asset_id,
-                    updated_at, version, trace_id
-                  FROM incoming
-                  ON CONFLICT (id) DO NOTHING
-                  RETURNING id
-                ),
-                changed AS (
-                  UPDATE markets m
-                  SET
-                    slug = i.slug,
-                    question = i.question,
-                    category = i.category,
-                    status = i.status,
-                    best_bid = i.best_bid,
-                    best_ask = i.best_ask,
-                    mid_price = i.mid_price,
-                    volume_24h = i.volume_24h,
-                    liquidity_usd = i.liquidity_usd,
-                    end_at = i.end_at,
-                    synced_at = now(),
-                    ambiguity_level = i.ambiguity_level,
-                    tradability_status = i.tradability_status,
-                    polymarket_condition_id = i.polymarket_condition_id,
-                    polymarket_yes_asset_id = i.polymarket_yes_asset_id,
-                    polymarket_no_asset_id = i.polymarket_no_asset_id,
-                    updated_at = i.updated_at,
-                    version = i.version,
-                    trace_id = i.trace_id
-                  FROM incoming i
-                  WHERE m.id = i.id
-                    AND i.version >= m.version
-                    AND NOT EXISTS (SELECT 1 FROM inserted x WHERE x.id = i.id)
-                    AND (
-                      i.version > m.version
-                      OR (
-                        m.slug,
-                        m.question,
-                        m.category,
-                        m.status,
-                        m.best_bid,
-                        m.best_ask,
-                        m.mid_price,
-                        m.volume_24h,
-                        m.liquidity_usd,
-                        m.end_at,
-                        m.ambiguity_level,
-                        m.tradability_status,
-                        m.polymarket_condition_id,
-                        m.polymarket_yes_asset_id,
-                        m.polymarket_no_asset_id,
-                        m.updated_at,
-                        m.version
-                      ) IS DISTINCT FROM (
-                        i.slug,
-                        i.question,
-                        i.category,
-                        i.status,
-                        i.best_bid,
-                        i.best_ask,
-                        i.mid_price,
-                        i.volume_24h,
-                        i.liquidity_usd,
-                        i.end_at,
-                        i.ambiguity_level,
-                        i.tradability_status,
-                        i.polymarket_condition_id,
-                        i.polymarket_yes_asset_id,
-                        i.polymarket_no_asset_id,
-                        i.updated_at,
-                        i.version
-                      )
-                    )
-                  RETURNING m.id
-                ),
-                refreshed AS (
-                  UPDATE markets m
-                  SET
-                    synced_at = now(),
-                    trace_id = i.trace_id
-                  FROM incoming i
-                  WHERE m.id = i.id
-                    AND i.version >= m.version
-                    AND NOT EXISTS (SELECT 1 FROM inserted x WHERE x.id = i.id)
-                    AND NOT EXISTS (SELECT 1 FROM changed x WHERE x.id = i.id)
-                    AND (
-                      ${refresh_param}::BIGINT <= 0
-                      OR m.synced_at < now() - (${refresh_param}::BIGINT * interval '1 second')
-                    )
-                  RETURNING m.id
                 )
-                SELECT (
-                  (SELECT COUNT(*) FROM inserted)
-                  + (SELECT COUNT(*) FROM changed)
-                  + (SELECT COUNT(*) FROM refreshed)
-                )::BIGINT AS written_count"#,
+                VALUES {values_placeholders}
+                ON CONFLICT (id) DO UPDATE
+                SET
+                  slug = EXCLUDED.slug,
+                  question = EXCLUDED.question,
+                  category = EXCLUDED.category,
+                  status = EXCLUDED.status,
+                  best_bid = EXCLUDED.best_bid,
+                  best_ask = EXCLUDED.best_ask,
+                  mid_price = EXCLUDED.mid_price,
+                  volume_24h = EXCLUDED.volume_24h,
+                  liquidity_usd = EXCLUDED.liquidity_usd,
+                  end_at = EXCLUDED.end_at,
+                  synced_at = now(),
+                  ambiguity_level = EXCLUDED.ambiguity_level,
+                  tradability_status = EXCLUDED.tradability_status,
+                  polymarket_condition_id = EXCLUDED.polymarket_condition_id,
+                  polymarket_yes_asset_id = EXCLUDED.polymarket_yes_asset_id,
+                  polymarket_no_asset_id = EXCLUDED.polymarket_no_asset_id,
+                  updated_at = EXCLUDED.updated_at,
+                  version = EXCLUDED.version,
+                  trace_id = EXCLUDED.trace_id
+                WHERE EXCLUDED.version >= markets.version
+                  AND (
+                    EXCLUDED.version > markets.version
+                    OR (
+                      markets.slug,
+                      markets.question,
+                      markets.category,
+                      markets.status,
+                      markets.best_bid,
+                      markets.best_ask,
+                      markets.mid_price,
+                      markets.volume_24h,
+                      markets.liquidity_usd,
+                      markets.end_at,
+                      markets.ambiguity_level,
+                      markets.tradability_status,
+                      markets.polymarket_condition_id,
+                      markets.polymarket_yes_asset_id,
+                      markets.polymarket_no_asset_id,
+                      markets.updated_at,
+                      markets.version
+                    ) IS DISTINCT FROM (
+                      EXCLUDED.slug,
+                      EXCLUDED.question,
+                      EXCLUDED.category,
+                      EXCLUDED.status,
+                      EXCLUDED.best_bid,
+                      EXCLUDED.best_ask,
+                      EXCLUDED.mid_price,
+                      EXCLUDED.volume_24h,
+                      EXCLUDED.liquidity_usd,
+                      EXCLUDED.end_at,
+                      EXCLUDED.ambiguity_level,
+                      EXCLUDED.tradability_status,
+                      EXCLUDED.polymarket_condition_id,
+                      EXCLUDED.polymarket_yes_asset_id,
+                      EXCLUDED.polymarket_no_asset_id,
+                      EXCLUDED.updated_at,
+                      EXCLUDED.version
+                    )
+                    OR (
+                      ${refresh_param}::BIGINT <= 0
+                      OR markets.synced_at < now() - (${refresh_param}::BIGINT * interval '1 second')
+                    )
+                  )"#,
             );
 
             let mut query = sqlx::query(&market_sql);
@@ -196,9 +157,9 @@ impl PostgresMarketEventStore {
                     .bind(market.version)
                     .bind(trace_id);
             }
-            let row = query
+            let written_count = query
                 .bind(refresh_after_secs)
-                .fetch_one(&mut *transaction)
+                .execute(&mut *transaction)
                 .await
                 .map_err(|error| {
                     db_error(
@@ -208,13 +169,8 @@ impl PostgresMarketEventStore {
                             chunk.len()
                         ),
                     )
-                })?;
-            let written_count: i64 = row.try_get("written_count").map_err(|error| {
-                db_error(
-                    "POSTGRES_DECODE_FAILED",
-                    format!("failed to decode market upsert count: {error}"),
-                )
-            })?;
+                })?
+                .rows_affected();
 
             // -- market_resolution_rules batch upsert --
             let rule_cols = 6usize;
@@ -288,9 +244,26 @@ impl PostgresMarketEventStore {
                 )
             })?;
 
-            count = count.saturating_add(written_count.max(0) as usize);
+            count = count.saturating_add(usize::try_from(written_count).unwrap_or(usize::MAX));
         }
 
         Ok(count)
     }
+}
+
+async fn set_local_market_upsert_timeouts(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+) -> Result<()> {
+    sqlx::query("SELECT set_config('lock_timeout', $1, true), set_config('statement_timeout', $2, true)")
+        .bind(format!("{MARKET_UPSERT_LOCK_TIMEOUT_MS}ms"))
+        .bind(format!("{MARKET_UPSERT_STATEMENT_TIMEOUT_MS}ms"))
+        .execute(&mut **transaction)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_MARKET_UPSERT_TIMEOUT_CONFIG_FAILED",
+                format!("failed to configure market upsert statement timeouts: {error}"),
+            )
+        })?;
+    Ok(())
 }

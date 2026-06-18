@@ -105,6 +105,72 @@ mod orderbook_cache_tests {
     }
 
     #[tokio::test]
+    async fn expired_entry_does_not_reject_new_single_write() {
+        let cache = InMemoryOrderbookCache::new(1_000, 10);
+        let newer = polyedge_application::CachedOrderBook {
+            token_id: "tok1".to_string(),
+            bids: vec![level(60, 10)],
+            asks: vec![],
+            observed_at: 200,
+            source: polyedge_application::BookSource::Ws,
+        };
+        let older = polyedge_application::CachedOrderBook {
+            bids: vec![level(40, 10)],
+            observed_at: 100,
+            source: polyedge_application::BookSource::Poll,
+            ..newer.clone()
+        };
+
+        cache.set_book(&newer).await.expect("set newer");
+        tokio::time::sleep(std::time::Duration::from_millis(1_100)).await;
+        cache
+            .set_book(&older)
+            .await
+            .expect("replace expired newer entry");
+
+        let got = cache
+            .get_book("tok1")
+            .await
+            .expect("get book")
+            .expect("book present");
+        assert_eq!(got.observed_at, 100);
+        assert_eq!(got.bids[0].price, rust_decimal::Decimal::new(40, 2));
+    }
+
+    #[tokio::test]
+    async fn expired_entry_does_not_reject_new_batch_write() {
+        let cache = InMemoryOrderbookCache::new(1_000, 10);
+        let newer = polyedge_application::CachedOrderBook {
+            token_id: "tok1".to_string(),
+            bids: vec![level(60, 10)],
+            asks: vec![],
+            observed_at: 200,
+            source: polyedge_application::BookSource::Ws,
+        };
+        let older = polyedge_application::CachedOrderBook {
+            bids: vec![level(40, 10)],
+            observed_at: 100,
+            source: polyedge_application::BookSource::Poll,
+            ..newer.clone()
+        };
+
+        cache.set_book(&newer).await.expect("set newer");
+        tokio::time::sleep(std::time::Duration::from_millis(1_100)).await;
+        cache
+            .set_books(&[older])
+            .await
+            .expect("replace expired newer entry from batch");
+
+        let got = cache
+            .get_book("tok1")
+            .await
+            .expect("get book")
+            .expect("book present");
+        assert_eq!(got.observed_at, 100);
+        assert_eq!(got.bids[0].price, rust_decimal::Decimal::new(40, 2));
+    }
+
+    #[tokio::test]
     async fn equal_timestamp_poll_does_not_overwrite_ws() {
         let cache = InMemoryOrderbookCache::new(60_000, 10);
         let ws = polyedge_application::CachedOrderBook {

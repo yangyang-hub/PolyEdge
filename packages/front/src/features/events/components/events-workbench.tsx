@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { PageHeader } from "@/components/shared/page-header";
 import { PaginationBar } from "@/components/pagination-bar";
 import { StatusPill } from "@/components/shared/status-pill";
+import { TruncateText } from "@/components/shared/truncate-text";
 import { usePagination } from "@/hooks/use-pagination";
 import { dictionary, formatMessage } from "@/lib/i18n/dictionaries";
 import type { getEventsPageData } from "@/features/events/loaders/events-page-data";
@@ -63,7 +64,11 @@ export function EventsWorkbench({ data }: { data: EventsPageData }) {
                     <StatusPill tone="primary">{event.source}</StatusPill>
                     <StatusPill tone={event.statusTone}>{event.statusLabel}</StatusPill>
                   </div>
-                  <p className="mt-2 text-sm text-foreground">{event.summary}</p>
+                  <TruncateText
+                    text={event.summary}
+                    lines={2}
+                    className="mt-2 block max-w-full text-sm text-foreground"
+                  />
                 </button>
               );
             })}
@@ -111,9 +116,11 @@ export function EventsWorkbench({ data }: { data: EventsPageData }) {
                 <p className="font-mono text-xs uppercase tracking-[0.24em] text-muted-foreground">
                   {dictionary.events.reasonTrace}
                 </p>
-                <p className="mt-3 text-sm text-muted-foreground">
-                  {selectedEvent?.reasonTrace ?? dictionary.events.traceUnavailable}
-                </p>
+                <TruncateText
+                  text={selectedEvent?.reasonTrace ?? dictionary.events.traceUnavailable}
+                  lines={5}
+                  className="mt-3 block text-sm text-muted-foreground"
+                />
               </div>
             </div>
 

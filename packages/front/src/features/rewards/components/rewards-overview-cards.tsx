@@ -4,6 +4,7 @@ import { Ban, CheckCircle2, Loader2, Play, RotateCcw, Save } from "lucide-react"
 
 import { MeterBar } from "@/components/shared/meter-bar";
 import { StatusPill } from "@/components/shared/status-pill";
+import { TruncateText } from "@/components/shared/truncate-text";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -106,7 +107,7 @@ export function ModeStatusPanel({
           />
           {snapshot.status.error ? (
             <div className="rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-xs text-destructive sm:col-span-2">
-              {snapshot.status.error}
+              <TruncateText text={snapshot.status.error} lines={3} />
             </div>
           ) : null}
         </dl>
@@ -138,7 +139,7 @@ export function CommandPanel({
           {dictionary.rewards.liveActionNote}
         </CardDescription>
       </CardHeader>
-      <CardContent className="space-y-4">
+      <CardContent className="flex flex-1 flex-col gap-4">
         <div className="grid gap-2 sm:grid-cols-2">
           <Button type="button" size="lg" disabled={pending} aria-busy={pending} onClick={onRun}>
             {pending ? <Loader2 className="size-4 animate-spin" /> : <Play className="size-4" />}
@@ -157,7 +158,7 @@ export function CommandPanel({
             {dictionary.rewards.reset}
           </Button>
         </div>
-        <div className="flex items-start gap-2 rounded-lg border border-border/70 bg-muted/20 p-3 text-xs leading-5 text-muted-foreground">
+        <div className="mt-auto flex items-start gap-2 rounded-lg border border-border/70 bg-muted/20 p-3 text-xs leading-5 text-muted-foreground">
           <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-secondary" />
           <span>{dictionary.rewards.commandCenterHint}</span>
         </div>

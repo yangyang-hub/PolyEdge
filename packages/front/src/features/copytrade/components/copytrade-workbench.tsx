@@ -9,6 +9,7 @@ import { OperationFeedbackBanner } from "@/components/shared/operation-feedback-
 import { PageHeader } from "@/components/shared/page-header";
 import { PaginationBar } from "@/components/pagination-bar";
 import { StatusPill } from "@/components/shared/status-pill";
+import { TruncateText } from "@/components/shared/truncate-text";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -322,7 +323,11 @@ export function CopyTradeWorkbench({
                       <span className="font-mono text-muted-foreground">{formatOptionalClock(event.created_at)}</span>
                     </div>
                     <p className="mt-2 font-medium text-foreground">{event.event_type}</p>
-                    <p className="mt-1 text-muted-foreground">{event.message}</p>
+                    <TruncateText
+                      text={event.message}
+                      lines={2}
+                      className="mt-1 block text-muted-foreground"
+                    />
                   </div>
                 ))
               )}

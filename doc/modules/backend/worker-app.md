@@ -1,6 +1,6 @@
 # Worker App（后台任务服务）
 
-最后更新：2026-06-17
+最后更新：2026-06-18
 
 ## 概述
 
@@ -142,6 +142,8 @@ Report: `RewardBotRunReport { markets_scanned, books_fetched, plans_built, eligi
 
 自动 tick 只从 Postgres 的 `reward_markets` 读取奖励市场。长期 `poll-reward-bot` 启动后会通过 `OrderbookStreamClient` 连接 `polyedge-orderbook` 的内部 `/orderbook/stream`，维护 worker 进程内本地盘口 cache；本地 cache 使用 `POLYEDGE_ORDERBOOK_STREAM__MAX_LEVELS_PER_SIDE` 和 `POLYEDGE_ORDERBOOK_STREAM__BOOK_TTL_MS` 限制深度与过期读取。启动和重连时通过 `OrderbookHttpClient` / `POST /orderbook/batch` bootstrap 当前 rewards 活跃、eligible 和候选 token，后续缺失 token 也会按需 HTTP 补齐；内部 WS 连接建立最多等待 5 秒，已连接后若约 3 个 poll reconcile 周期没有收到任何事件，worker 会主动重连并重新 HTTP bootstrap。Postgres 候选 market pool 关联 Gamma `markets`，硬过滤非 open/tradable、高歧义、低流动性、低 24h 成交量、临近结算、Gamma spread 过宽、市场同步过期、奖励不足以及 FDV/launch/token/official-result 等高事件跳变风险市场；非 auto/enforce 单边回退模式仍预筛双边最小份额预算，auto/enforce 且启用 dominant single-side 时则保留候选到 planner 用真实盘口价格判断双边或单边可负担性；仅唯一且明确的 YES/NO token 会进入候选与订阅。通过门槛后按奖励、流动性、成交量、剩余时长和奖励 spread 综合排序。worker 使用本地 cache 读取候选和活跃 token 盘口，缺失时才回源 orderbook HTTP batch；若本 tick 没有新鲜缓存盘口，不会提交新 post-only 订单。
 
+Worker 本地盘口 cache 的 TTL 按本地接收/写入时间计算，避免上游未来 `observed_at` 延长旧盘口寿命；上游 `observed_at` 仍保留给 planner 和 live 风控判断盘口新鲜度。
+
 报价价格由 `quote_bid_rank=1|2|3` 选择 YES/NO 盘口的买一/买二/买三（按不同买价计档）；任一腿缺少目标档位或目标价格超出有效 rewards spread 时不挂单。报价大小把 `per_market_usd` 作为 YES + NO 两腿合计上限；planner 先把两腿 `rewards_min_size` 对齐到 CLOB 成本精度，再分配剩余额度，计划数量与 connector 实际提交数量一致。默认 `quote_mode=double` 且 `selection_mode=observe`，仍生成既有双边计划；当配置为 `quote_mode=auto`、`selection_mode=enforce` 且启用 dominant single-side 时，planner 会基于 YES 概率、退出深度、top1/top3 买盘集中度和 HHI 推荐并执行 `single_yes` / `single_no` / `none`；若推荐双边但双边最小份额总预算不满足，会继续按实际单腿目标价检查 `price * rewards_min_size`，可负担时回退为单腿计划。`observe` 模式只把推荐模式和 `book_metrics` 写入 quote plan，不改变实际挂单。
 
 AI advisory 启用后只在 full tick 的 `prepare_live_cycle()` 之后运行，不参与 fast reconcile。`prepare_live_cycle()` 保存新计划前会先继承上一版 quote plan 中未过期且 provider/request_format/model 匹配的 advisory，并按当前 `POLYEDGE_REWARDS__AI_MIN_CONFIDENCE_BPS` 应用 fail-closed 过滤，避免 provider 串行刷新期间把控制台 snapshot 覆盖成“可挂但 AI 无”。worker 按开放订单、持仓、初步 eligible quote plan 的顺序，为对应 quote plan 构建包含 DB reward market、确定性计划、账户/仓位/开放订单和 orderbook top levels 的结构化输入，按 input hash 查询 `reward_market_advisories`；缓存未命中时调用 provider，不再按每轮最大市场数截断，也不再为其它未通过初步筛选的普通候选计划发起 AI 请求。AI advisory 和 info-risk 共用进程内 `Semaphore(1)`，同一 worker/API 进程内任意时刻只允许一个 AI provider HTTP 请求在飞。OpenAI/Anthropic API key、base URL、模型、超时和最低置信度来自 worker 环境变量；OpenAI-compatible base URL 可以是根地址或 `/v1` 地址，connector 会统一请求 `/v1/...` 并兼容 Bearer / `api-key` 认证头。MiMo provider 使用 `openai_chat_completions`，`openai_responses` 会返回 provider 未实现错误。API 内嵌 worker 启动时会记录 rewards poll loop 是否启用、AI key 是否配置、模型名和 interval；每轮 full tick 会记录 markets/books/plans/eligible/open_orders/positions 以及 AI/info-risk 配置；每轮 AI advisory 刷新会写入包含 candidates/cache_hits/requested/saved/failures/skipped_missing_market/applied 的 info 日志，provider 请求会逐个记录 requesting/saved 进度；每次缓存命中或新 advisory 保存后会立即把该 condition 的 advisory 应用到完整 quote plan 快照并保存，页面无需等待整轮 provider 刷新结束。AI advisory 一旦启用，新增挂单必须先通过 provider 过滤：缺少未过期 advisory、provider 配置缺失、模型为空、请求失败、`confidence` 低于 `POLYEDGE_REWARDS__AI_MIN_CONFIDENCE_BPS`、`watch/avoid` 或 `quote_mode=none` 都会把原本 eligible 的计划改为不可挂并覆盖保存 quote plan 快照；provider 明确返回过载（如 HTTP 503 / `system_cpu_overloaded`）时，worker 会停止本轮剩余 AI advisory 请求，避免继续压垮 provider。connector 会把 provider 返回的 confidence 钳制到 `0..=1`。只有 provider 高置信度返回 `allow` 时市场才可继续挂单；`single_yes/single_no` 仍只在 `selection_mode=enforce` 且 `quote_mode=auto` 下把已 eligible 的双边计划收窄为单腿。AI advisory 也可在成交后选择 `exit_policy`，但同样要求 allow、enforce 和置信度达标。
@@ -197,7 +199,7 @@ Report: `NewsIngestionRunReport { sources_scanned/succeeded/failed, fetched, ins
 - rewards worker 会通过数据库命令队列接收前端 Run / Cancel / Reset 请求，API 进程不再执行 rewards 策略；仅支持 live 实盘模式，策略配置不依赖全局 system mode，但新买单和现有买单撤单遵守全局 kill switch
 - copytrade worker 会通过数据库命令队列接收前端兼容控制命令；当前前端只暴露 Analyze，Run/Cancel/Reset 不再作为产品入口。API 进程不抓取 copytrade 输入，worker 负责 Data API 抓取、source trades 检测和钱包分析
 - register-orderbook-tokens 会按 `POLYEDGE_ORDERBOOK_STREAM__MAX_TOKENS` 限制总量并固定优先级：`rewards_active`、`exec_orders`、`rewards_eligible`、`rewards_candidates`；候选 token 优先来自 open/tradable 且 `volume_24h` 高的市场，空集合会清除对应旧 source
-- rewards poll loop 在 Postgres 路径全程持有 advisory lease，统一覆盖 CLOB heartbeat、命令、orderbook 内部 WS 本地 cache、full tick 和 fast reconcile；控制命令具备 5 分钟 running lease
+- rewards poll loop 在 Postgres 路径全程持有 advisory lease，统一覆盖 CLOB heartbeat、命令、orderbook 内部 WS 本地 cache、full tick 和 fast reconcile；本地盘口 cache 按本地接收 TTL 过期，避免上游未来时间戳延长缓存寿命；控制命令具备 5 分钟 running lease
 - rewards orderbook 内部 WS client 建连最多等待 5 秒；已连接后若约 3 个 orderbook poll reconcile 周期无事件，会主动重连并重新 HTTP bootstrap 本地盘口 cache
 - scheduled full tick 不再二次消费控制命令；拿不到 advisory lease 时保留到期状态并在后续轮询重试，不会把 command-only 周期记作已完成 full tick
 - rewards poll loop 按账户写入 `reward_worker_heartbeats`；snapshot 的 `status.running` 仅在配置启用且最近 2 分钟存在 heartbeat 时为 true

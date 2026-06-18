@@ -8,6 +8,7 @@ import { EmptyPanel } from "@/components/shared/empty-panel";
 import { PageHeader } from "@/components/shared/page-header";
 import { PaginationBar } from "@/components/pagination-bar";
 import { StatusPill } from "@/components/shared/status-pill";
+import { TruncateText } from "@/components/shared/truncate-text";
 import { WorkbenchLayout, WorkbenchDetailPane } from "@/components/shared/workbench-layout";
 import { WorkbenchSegmentedControl } from "@/components/shared/workbench-segmented-control";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -119,10 +120,10 @@ export function PositionsWorkbench({ data }: { data: PositionsPageData }) {
             </div>
 
             <div className="overflow-x-auto">
-              <Table>
+              <Table className="table-fixed">
                 <TableHeader>
                   <TableRow>
-                    <TableHead>{dictionary.positions.market}</TableHead>
+                    <TableHead className="w-[38%]">{dictionary.positions.market}</TableHead>
                     <TableHead>{dictionary.positions.side}</TableHead>
                     <TableHead>{dictionary.positions.qty}</TableHead>
                     <TableHead>{dictionary.positions.pnl}</TableHead>
@@ -154,9 +155,9 @@ export function PositionsWorkbench({ data }: { data: PositionsPageData }) {
                           : "cursor-pointer outline-none transition-colors hover:bg-accent/35 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/50"
                       }
                     >
-                      <TableCell>
+                      <TableCell className="w-[38%]">
                         <div className="space-y-1">
-                          <p className="font-medium">{position.marketQuestion}</p>
+                          <TruncateText text={position.marketQuestion} lines={2} className="font-medium" />
                           <div className="flex flex-wrap gap-2">
                             <StatusPill tone={position.tradabilityTone}>{position.tradabilityLabel}</StatusPill>
                             <StatusPill tone={position.bucketTone}>{position.bucketName}</StatusPill>
@@ -243,14 +244,14 @@ export function PositionsWorkbench({ data }: { data: PositionsPageData }) {
               <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">
                 {dictionary.positions.signalReason}
               </p>
-              <p className="mt-3 text-sm text-foreground">{selectedPosition.signalReason}</p>
+              <TruncateText text={selectedPosition.signalReason} lines={3} className="mt-3 text-sm text-foreground" />
             </div>
 
             <div className="rounded-md bg-popover/70 p-4">
               <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">
                 {dictionary.positions.riskDecision}
               </p>
-              <p className="mt-3 text-sm text-muted-foreground">{selectedPosition.riskDecision}</p>
+              <TruncateText text={selectedPosition.riskDecision} lines={3} className="mt-3 text-sm text-muted-foreground" />
             </div>
           </WorkbenchDetailPane>
 
@@ -266,7 +267,7 @@ export function PositionsWorkbench({ data }: { data: PositionsPageData }) {
                       <StatusPill tone="primary">{event.source}</StatusPill>
                       <span className="font-mono text-xs text-muted-foreground">{event.relevance}</span>
                     </div>
-                    <p className="mt-2 text-sm text-foreground">{event.summary}</p>
+                    <TruncateText text={event.summary} lines={2} className="mt-2 text-sm text-foreground" />
                   </div>
                 ))
               ) : (

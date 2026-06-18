@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowDown, ArrowUp, Search } from "lucide-react";
 
 import { StatusPill } from "@/components/shared/status-pill";
+import { TruncateText } from "@/components/shared/truncate-text";
 import { PaginationBar } from "@/components/pagination-bar";
 import { Input } from "@/components/ui/input";
 import {
@@ -359,8 +360,8 @@ export function QuotePlansTable({
               <TableRow key={plan.condition_id}>
                 <TableCell className="whitespace-normal align-top">
                   <div className="space-y-1">
-                    <p className="break-words font-medium leading-snug">{plan.question}</p>
-                    <p className="break-words text-xs leading-5 text-muted-foreground">{plan.reason}</p>
+                    <TruncateText text={plan.question} lines={2} className="font-medium leading-snug" />
+                    <TruncateText text={plan.reason} lines={1} className="text-xs leading-5 text-muted-foreground" />
                   </div>
                 </TableCell>
                 <TableCell className="align-top">
@@ -393,9 +394,7 @@ export function QuotePlansTable({
                           {plan.info_risk.risk_type} · {formatFixed(plan.info_risk.confidence, 2)}
                         </span>
                       </div>
-                      <p className="break-words leading-5 text-muted-foreground">
-                        {plan.info_risk.summary}
-                      </p>
+                      <TruncateText text={plan.info_risk.summary} lines={2} className="leading-5 text-muted-foreground" />
                     </div>
                   )}
                 </TableCell>
@@ -412,9 +411,11 @@ export function QuotePlansTable({
                           {plan.ai_advisory.quote_mode} · {formatFixed(plan.ai_advisory.confidence, 2)}
                         </span>
                       </div>
-                      <p className="break-words leading-5 text-muted-foreground">
-                        {plan.ai_advisory.reasons[0] ?? dictionary.rewards.none}
-                      </p>
+                      <TruncateText
+                        text={plan.ai_advisory.reasons[0] ?? dictionary.rewards.none}
+                        lines={2}
+                        className="leading-5 text-muted-foreground"
+                      />
                     </div>
                   )}
                 </TableCell>
@@ -536,8 +537,8 @@ export function OrdersTable({
                 <TableCell className="align-top font-mono">{formatFixed(order.price, 2)}</TableCell>
                 <TableCell className="align-top font-mono">{formatFixed(order.size, 2)}</TableCell>
                 <TableCell className="align-top">{order.scoring ? dictionary.common.active : dictionary.common.idle}</TableCell>
-                <TableCell className="whitespace-normal break-words align-top text-xs leading-5 text-muted-foreground">
-                  {order.reason}
+                <TableCell className="align-top text-xs leading-5 text-muted-foreground">
+                  <TruncateText text={order.reason} lines={2} />
                 </TableCell>
               </TableRow>
             ))
@@ -570,7 +571,9 @@ export function EventsTable({ events }: { events: RewardRiskEventDto[] }) {
               <StatusPill tone={approvalSeverityTone(event.severity)}>{event.severity}</StatusPill>
             </TableCell>
             <TableCell className="font-mono text-xs">{event.event_type}</TableCell>
-            <TableCell className="whitespace-normal break-words leading-5">{event.message}</TableCell>
+            <TableCell className="leading-5">
+              <TruncateText text={event.message} lines={2} />
+            </TableCell>
             <TableCell className="font-mono text-xs text-muted-foreground">{formatOptionalClock(event.created_at)}</TableCell>
           </TableRow>
         ))}

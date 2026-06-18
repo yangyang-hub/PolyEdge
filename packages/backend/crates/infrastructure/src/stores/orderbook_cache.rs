@@ -99,9 +99,12 @@ impl OrderbookCache for InMemoryOrderbookCache {
     async fn set_book(&self, book: &CachedOrderBook) -> Result<()> {
         let book = self.bounded_book(book);
         let mut books = self.books.write().await;
+        let now = now_millis();
         if books
             .get(&book.token_id)
-            .is_some_and(|entry| Self::rejects_replacement(&entry.book, &book))
+            .is_some_and(|entry| {
+                entry.expires_at_ms > now && Self::rejects_replacement(&entry.book, &book)
+            })
         {
             return Ok(());
         }
@@ -109,7 +112,7 @@ impl OrderbookCache for InMemoryOrderbookCache {
             book.token_id.clone(),
             BookEntry {
                 book,
-                expires_at_ms: now_millis() + self.ttl_ms,
+                expires_at_ms: now + self.ttl_ms,
             },
         );
         Ok(())
@@ -117,12 +120,15 @@ impl OrderbookCache for InMemoryOrderbookCache {
 
     async fn set_books(&self, books_slice: &[CachedOrderBook]) -> Result<()> {
         let mut books = self.books.write().await;
-        let expires_at_ms = now_millis() + self.ttl_ms;
+        let now = now_millis();
+        let expires_at_ms = now + self.ttl_ms;
         for book in books_slice {
             let book = self.bounded_book(book);
             if books
                 .get(&book.token_id)
-                .is_some_and(|entry| Self::rejects_replacement(&entry.book, &book))
+                .is_some_and(|entry| {
+                    entry.expires_at_ms > now && Self::rejects_replacement(&entry.book, &book)
+                })
             {
                 continue;
             }

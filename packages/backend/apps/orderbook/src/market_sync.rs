@@ -14,6 +14,8 @@ pub struct PriorityMarketSyncReport {
     pub upserted: usize,
 }
 
+static MARKET_UPSERT_GATE: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 pub async fn sync_general_markets_once(
     state: &AppState,
     trace_id: &str,
@@ -26,6 +28,7 @@ pub async fn sync_general_markets_once(
         .into_iter()
         .map(gamma_market_to_view)
         .collect();
+    let _guard = MARKET_UPSERT_GATE.lock().await;
     state
         .market_event_service
         .upsert_markets_with_options(&views, trace_id, upsert_options)
@@ -39,6 +42,12 @@ pub async fn sync_reward_markets_once(state: &AppState) -> Result<usize> {
         .into_iter()
         .map(reward_market_from_connector)
         .collect();
+    if reward_markets.is_empty() {
+        return Err(AppError::dependency_unavailable(
+            "POLYMARKET_REWARDS_MARKETS_EMPTY",
+            "refusing to replace reward catalog with an empty snapshot",
+        ));
+    }
     let reward_upserted = reward_markets.len();
     state
         .reward_bot_service
@@ -73,6 +82,7 @@ pub async fn sync_priority_markets_once(
         .into_iter()
         .map(gamma_market_to_view)
         .collect();
+    let _guard = MARKET_UPSERT_GATE.lock().await;
     let upserted = state
         .market_event_service
         .upsert_markets(&views, trace_id)
@@ -128,6 +138,27 @@ async fn collect_priority_condition_ids(
             }
             Err(error) => {
                 tracing::warn!(error = %error, "failed to list priority rewards markets");
+            }
+        }
+    }
+
+    if condition_ids.len() < max_condition_ids {
+        match active_reward_catalog_condition_ids(state, max_condition_ids).await {
+            Ok(reward_condition_ids) => {
+                for condition_id in reward_condition_ids {
+                    push_condition_id(
+                        &mut condition_ids,
+                        &mut seen,
+                        condition_id,
+                        max_condition_ids,
+                    );
+                }
+            }
+            Err(error) => {
+                tracing::warn!(
+                    error = %error,
+                    "failed to list active rewards catalog fallback markets"
+                );
             }
         }
     }
@@ -203,6 +234,44 @@ async fn registered_token_condition_ids(
     }
 
     Ok(condition_ids)
+}
+
+async fn active_reward_catalog_condition_ids(
+    state: &AppState,
+    max_condition_ids: usize,
+) -> Result<Vec<String>> {
+    if max_condition_ids == 0 {
+        return Ok(Vec::new());
+    }
+
+    let Some(pool) = state.dependencies.postgres.as_ref() else {
+        return Ok(Vec::new());
+    };
+
+    let rows = sqlx::query(
+        r#"
+        SELECT condition_id
+        FROM reward_markets
+        WHERE active = true
+          AND rewards_max_spread > 0
+          AND jsonb_array_length(tokens_json) = 2
+        ORDER BY total_daily_rate DESC, updated_at DESC
+        LIMIT $1
+        "#,
+    )
+    .bind(i64::try_from(max_condition_ids).unwrap_or(i64::MAX))
+    .fetch_all(pool)
+    .await
+    .map_err(|error| {
+        AppError::dependency_unavailable(
+            "POSTGRES_QUERY_FAILED",
+            format!("failed to list active rewards catalog condition ids: {error}"),
+        )
+    })?;
+
+    rows.into_iter()
+        .map(|row| row.try_get("condition_id").map_err(postgres_decode_error))
+        .collect()
 }
 
 fn push_condition_id(

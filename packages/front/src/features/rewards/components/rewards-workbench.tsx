@@ -211,7 +211,7 @@ export function RewardsWorkbench({ initialSnapshot }: { initialSnapshot: RewardB
 
       {feedback ? <OperationFeedbackBanner feedback={feedback} onDismiss={() => setFeedback(null)} /> : null}
 
-      <section className="grid items-start gap-4 xl:grid-cols-[1.15fr_0.85fr]">
+      <section className="grid gap-4 xl:grid-cols-[1.15fr_0.85fr]">
         <ModeStatusPanel snapshot={snapshot} eventCounts={eventCounts} />
         <CommandPanel
           pending={pending}
@@ -281,8 +281,8 @@ export function RewardsWorkbench({ initialSnapshot }: { initialSnapshot: RewardB
             </CardContent>
           </Card>
 
-          <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(340px,0.65fr)]">
-            <Card>
+          <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(340px,0.65fr)]">
+            <Card className="max-h-[calc(100vh-14rem)] overflow-y-auto">
               <CardHeader className="border-b border-border/70">
                 <CardTitle>{dictionary.rewards.managedOrders}</CardTitle>
                 <CardDescription>{dictionary.rewards.managedOrdersDescription}</CardDescription>
@@ -320,7 +320,7 @@ export function RewardsWorkbench({ initialSnapshot }: { initialSnapshot: RewardB
               </CardContent>
             </Card>
 
-            <Card>
+            <Card className="max-h-[calc(100vh-14rem)] overflow-y-auto">
               <CardHeader className="border-b border-border/70">
                 <CardTitle>{dictionary.rewards.positions}</CardTitle>
                 <CardDescription>{dictionary.rewards.positionsDescription}</CardDescription>

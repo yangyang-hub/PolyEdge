@@ -6,6 +6,7 @@ import type { getMarketsPageData } from "../loaders/markets-page-data";
 import { EmptyPanel } from "@/components/shared/empty-panel";
 import { PageHeader } from "@/components/shared/page-header";
 import { StatusPill } from "@/components/shared/status-pill";
+import { TruncateText } from "@/components/shared/truncate-text";
 import { WorkbenchLayout } from "@/components/shared/workbench-layout";
 import { WorkbenchSegmentedControl } from "@/components/shared/workbench-segmented-control";
 import { Button } from "@/components/ui/button";
@@ -103,10 +104,10 @@ export function MarketsWorkbench({ data }: { data: MarketsPageData }) {
             </div>
           </CardHeader>
           <CardContent>
-            <Table>
+            <Table className="table-fixed">
               <TableHeader>
                 <TableRow>
-                  <TableHead>{dictionary.markets.question}</TableHead>
+                  <TableHead className="w-[40%]">{dictionary.markets.question}</TableHead>
                   <TableHead>{dictionary.markets.mid}</TableHead>
                   <TableHead
                     aria-sort={
@@ -169,9 +170,9 @@ export function MarketsWorkbench({ data }: { data: MarketsPageData }) {
                           : "cursor-pointer outline-none transition-colors hover:bg-accent/35 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/50"
                       }
                     >
-                      <TableCell>
+                      <TableCell className="w-[40%]">
                         <div className="space-y-1">
-                          <p className="font-medium">{market.question}</p>
+                          <TruncateText text={market.question} lines={2} className="font-medium" />
                           <p className="text-xs text-muted-foreground">{market.category}</p>
                         </div>
                       </TableCell>
@@ -227,7 +228,7 @@ export function MarketsWorkbench({ data }: { data: MarketsPageData }) {
                 </CardHeader>
                 <CardContent className="space-y-3">
                   <div>
-                    <p className="text-sm font-medium text-foreground">{selectedMarket.question}</p>
+                    <TruncateText text={selectedMarket.question} lines={2} className="text-sm font-medium text-foreground" />
                     <p className="mt-1 text-xs uppercase tracking-[0.2em] text-muted-foreground">
                       {selectedMarket.category}
                     </p>

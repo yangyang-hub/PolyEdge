@@ -36,10 +36,15 @@ impl Drop for RewardOrderbookRuntime {
 }
 
 struct RewardOrderbookLocalCache {
-    books: RwLock<HashMap<String, CachedOrderBook>>,
+    books: RwLock<HashMap<String, RewardOrderbookLocalEntry>>,
     wake_tx: watch::Sender<u64>,
     max_levels_per_side: usize,
     ttl_ms: i64,
+}
+
+struct RewardOrderbookLocalEntry {
+    book: CachedOrderBook,
+    expires_at_ms: i64,
 }
 
 impl RewardOrderbookLocalCache {
@@ -65,8 +70,8 @@ impl RewardOrderbookLocalCache {
             .filter_map(|token_id| {
                 books
                     .get(token_id)
-                    .filter(|book| now - book.observed_at <= self.ttl_ms)
-                    .cloned()
+                    .filter(|entry| entry.expires_at_ms > now)
+                    .map(|entry| entry.book.clone())
             })
             .collect()
     }
@@ -75,14 +80,20 @@ impl RewardOrderbookLocalCache {
         let book = self.bounded_book(book);
         let mut books = self.books.write().await;
         let now = reward_orderbook_now_millis();
-        books.retain(|_, current| now - current.observed_at <= self.ttl_ms);
+        books.retain(|_, current| current.expires_at_ms > now);
         if books
             .get(&book.token_id)
-            .is_some_and(|current| Self::rejects_replacement(current, &book))
+            .is_some_and(|entry| Self::rejects_replacement(&entry.book, &book))
         {
             return false;
         }
-        books.insert(book.token_id.clone(), book);
+        books.insert(
+            book.token_id.clone(),
+            RewardOrderbookLocalEntry {
+                book,
+                expires_at_ms: now + self.ttl_ms,
+            },
+        );
         true
     }
 
@@ -312,4 +323,37 @@ async fn fetch_remote_cached_orderbooks(
         books.extend(state.orderbook_cache.get_books(chunk).await?);
     }
     Ok(books)
+}
+
+#[cfg(test)]
+mod reward_orderbook_local_cache_tests {
+    use super::*;
+    use polyedge_application::CachedBookLevel;
+    use rust_decimal::Decimal;
+
+    #[tokio::test]
+    async fn local_cache_ttl_uses_receive_time_not_future_observed_at() {
+        let cache = RewardOrderbookLocalCache::new(10, 1_000);
+        let token_id = "123".to_string();
+        let future_observed_at = reward_orderbook_now_millis() + 60_000;
+
+        assert!(
+            cache
+                .apply_book(CachedOrderBook {
+                    token_id: token_id.clone(),
+                    bids: vec![CachedBookLevel {
+                        price: Decimal::new(50, 2),
+                        size: Decimal::from(10_u64),
+                    }],
+                    asks: Vec::new(),
+                    observed_at: future_observed_at,
+                    source: BookSource::Poll,
+                })
+                .await
+        );
+
+        assert_eq!(cache.get_books(std::slice::from_ref(&token_id)).await.len(), 1);
+        tokio::time::sleep(Duration::from_millis(1_100)).await;
+        assert!(cache.get_books(&[token_id]).await.is_empty());
+    }
 }

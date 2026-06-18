@@ -8,6 +8,7 @@ import { MetricCard } from "@/components/shared/metric-card";
 import { MeterBar } from "@/components/shared/meter-bar";
 import { PageHeader } from "@/components/shared/page-header";
 import { PaginationBar } from "@/components/pagination-bar";
+import { TruncateText } from "@/components/shared/truncate-text";
 import { StateBanner } from "@/components/shared/state-banner";
 import { StatusPill } from "@/components/shared/status-pill";
 import { usePagination } from "@/hooks/use-pagination";
@@ -106,7 +107,11 @@ export function DashboardOverview({ data }: { data: DashboardPageData }) {
                     >
                       <td className="px-4 py-3">
                         <div className="space-y-1">
-                          <p className="font-medium text-foreground">{signal.marketQuestion}</p>
+                          <TruncateText
+                            text={signal.marketQuestion}
+                            lines={2}
+                            className="block font-medium text-foreground"
+                          />
                           <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
                             {dictionary.dashboard.signalPrefix} {signal.id}
                           </p>
@@ -170,8 +175,16 @@ export function DashboardOverview({ data }: { data: DashboardPageData }) {
                       <StatusPill tone={alert.severityTone}>{translateEnum(alert.severity)}</StatusPill>
                       <span className="font-mono text-[10px] text-muted-foreground">{alert.createdAt}</span>
                     </div>
-                    <p className="mt-2 text-sm font-medium text-foreground">{alert.reason}</p>
-                    <p className="mt-1 text-[11px] text-muted-foreground">{alert.target}</p>
+                    <TruncateText
+                      text={alert.reason}
+                      lines={2}
+                      className="mt-2 block text-sm font-medium text-foreground"
+                    />
+                    <TruncateText
+                      text={alert.target}
+                      lines={2}
+                      className="mt-1 block text-[11px] text-muted-foreground"
+                    />
                   </div>
                 ))}
               </div>
@@ -193,8 +206,12 @@ export function DashboardOverview({ data }: { data: DashboardPageData }) {
           <div className="space-y-3">
             {data.markets.slice(marketsPagination.start, marketsPagination.end).map((market) => (
               <div key={market.id} className="flex items-start justify-between gap-4 rounded-md bg-accent/35 p-3">
-                <div className="space-y-1">
-                  <p className="text-sm font-medium text-foreground">{market.question}</p>
+                <div className="min-w-0 flex-1 space-y-1">
+                  <TruncateText
+                    text={market.question}
+                    lines={2}
+                    className="block text-sm font-medium text-foreground"
+                  />
                   <p className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
                     {market.category}
                   </p>
@@ -222,7 +239,11 @@ export function DashboardOverview({ data }: { data: DashboardPageData }) {
                     {dictionary.common.confidence} {event.confidence}
                   </span>
                 </div>
-                <p className="mt-2 text-sm text-foreground">{event.summary}</p>
+                <TruncateText
+                  text={event.summary}
+                  lines={2}
+                  className="mt-2 block text-sm text-foreground"
+                />
               </div>
             ))}
           </div>

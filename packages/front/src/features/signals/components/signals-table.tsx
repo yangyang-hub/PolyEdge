@@ -6,6 +6,7 @@ import { ChevronRight } from "lucide-react";
 import { MeterBar } from "@/components/shared/meter-bar";
 import { PaginationBar } from "@/components/pagination-bar";
 import { StatusPill } from "@/components/shared/status-pill";
+import { TruncateText } from "@/components/shared/truncate-text";
 import { Button } from "@/components/ui/button";
 import {
   Sheet,
@@ -88,7 +89,11 @@ export function SignalsTable({
             >
               <td className="px-5 py-3">
                 <div className="space-y-1">
-                  <p className="font-semibold text-foreground">{signal.marketQuestion}</p>
+                  <TruncateText
+                    text={signal.marketQuestion}
+                    lines={2}
+                    className="block max-w-[24rem] font-semibold text-foreground"
+                  />
                   <p className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
                     {signal.contextLabel}
                   </p>

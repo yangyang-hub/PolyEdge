@@ -4,6 +4,7 @@ import { Send } from "lucide-react";
 
 import { MeterBar } from "@/components/shared/meter-bar";
 import { StatusPill } from "@/components/shared/status-pill";
+import { TruncateText } from "@/components/shared/truncate-text";
 import { Button } from "@/components/ui/button";
 import { dictionary } from "@/lib/i18n/dictionaries";
 
@@ -59,14 +60,14 @@ export function SignalsDetailPanel({
         <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">
           {dictionary.signals.reasonTrace}
         </p>
-        <p className="mt-3 text-sm text-foreground">{signal.reason}</p>
+        <TruncateText text={signal.reason} lines={3} className="mt-3 block text-sm text-foreground" />
       </div>
 
       <div className="rounded-md bg-popover/70 p-4">
         <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">
           {dictionary.signals.riskDecision}
         </p>
-        <p className="mt-3 text-sm text-muted-foreground">{signal.riskDecision}</p>
+        <TruncateText text={signal.riskDecision} lines={3} className="mt-3 block text-sm text-muted-foreground" />
       </div>
 
       <div className="rounded-md bg-popover/70 p-4">
@@ -76,7 +77,7 @@ export function SignalsDetailPanel({
         <ul className="mt-3 space-y-3">
           {signal.evidenceLines.map((line, index) => (
             <li key={line} className="space-y-2">
-              <p className="text-sm text-foreground">{line}</p>
+              <TruncateText text={line} lines={2} className="block text-sm text-foreground" />
               <MeterBar
                 value={`${Math.max(30, 85 - index * 18)}%`}
                 tone={index === 0 ? "success" : index === 1 ? "warning" : "primary"}

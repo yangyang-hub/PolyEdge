@@ -1,10 +1,10 @@
 # 数据库（Migrations + Schema）
 
-最后更新：2026-06-17
+最后更新：2026-06-18
 
 ## 概述
 
-数据库使用 PostgreSQL，通过 40 个 SQL 迁移文件管理 schema。覆盖审计、市场数据、事件/信号、执行管道、风控、套利、奖励、跟单等领域。
+数据库使用 PostgreSQL，通过 41 个 SQL 迁移文件管理 schema。覆盖审计、市场数据、事件/信号、执行管道、风控、套利、奖励、跟单等领域。
 
 ## 迁移文件列表
 
@@ -50,6 +50,7 @@
 | `0038_reward_market_advisories.sql` | Rewards AI advisory 缓存 | `reward_market_advisories` |
 | `0039_reward_market_info_risks.sql` | Rewards 信息风险缓存 | `reward_market_info_risks` |
 | `0040_markets_quality_index_no_synced_at.sql` | Rewards 市场质量索引写放大优化 | 重建 `idx_markets_reward_quality`，移除高频变化的 `markets.synced_at` |
+| `0041_market_asset_id_lookup_indexes.sql` | 市场 asset id 反查索引 | `markets.polymarket_yes_asset_id` / `polymarket_no_asset_id` 部分索引 |
 
 ## Schema 领域分组
 
@@ -60,7 +61,7 @@
 
 ### 2. 市场数据
 
-- **`markets`**：question、category、status、best_bid/ask/mid_price（NUMERIC(12,6) 约束 0-1）、`liquidity_usd`、volume_24h、`end_at`、`synced_at`、ambiguity_level、tradability_status、version、slug、polymarket_condition_id/yes_asset_id/no_asset_id
+- **`markets`**：question、category、status、best_bid/ask/mid_price（NUMERIC(12,6) 约束 0-1）、`liquidity_usd`、volume_24h、`end_at`、`synced_at`、ambiguity_level、tradability_status、version、slug、polymarket_condition_id/yes_asset_id/no_asset_id；condition_id 有唯一索引，yes/no asset id 有非空部分索引用于 orderbook priority sync 反查
 - **`market_resolution_rules`**：resolution_source、edge_case_notes（text 数组）
 - **`market_categories`**：id、label、sort_order（预置 13 个分类：Sports、Politics、Crypto 等）
 
@@ -124,7 +125,7 @@
 
 ## 当前状态
 
-- 40 个迁移文件，最新为 `0040_markets_quality_index_no_synced_at.sql`
+- 41 个迁移文件，最新为 `0041_market_asset_id_lookup_indexes.sql`
 - 所有表使用 PostgreSQL 特性（JSONB、NUMERIC 约束、BIGSERIAL、部分索引等）
 - 迁移使用 `sqlx` 管理
 

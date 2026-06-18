@@ -1,6 +1,6 @@
 # infrastructure（基础设施层）
 
-最后更新：2026-06-17
+最后更新：2026-06-18
 
 ## 概述
 
@@ -96,13 +96,13 @@
 - `RewardBotStore` 支持按 external Polymarket order id 查询 rewards managed order、通过 fill id 判断成交是否已入账，并通过 `latest_fill_at(account_id)` 查询最近 confirmed fill；live worker 用这些读路径完成托管订单成交幂等同步和外部账户快照保护。
 - `RewardBotStore.cancel_open_orders()` 在 Postgres/内存实现中兼容释放旧账本的 `reserved_usd`；新的 rewards 开放买单不再逐单硬占用资金，订单列表优先返回 open-like 状态，避免大量历史成交/撤单淹没当前开放挂单。worker 的 `list_open_orders()` 仍包含本地 planned/exit intent；控制台 `status.open_orders` 使用独立的 external count，只统计已有 `external_order_id` 的 open-like 订单。
 - `RewardBotStore.list_orders_page()` 在 Postgres 实现中通过 count + limit/offset 做服务端分页，支持 outcome/condition/token 搜索、状态过滤和 price/size/status 排序；内存实现保持相同语义。
-- `RewardBotStore.list_markets(limit)` 只返回 active reward markets；Postgres candidate query 关联 Gamma `markets`，硬过滤非 open/tradable、高歧义、低 liquidity、低 `volume_24h`、临近 `end_at`、Gamma spread 过宽、`synced_at` 过期或异常超前、奖励不足、奖励 spread 无效及非唯一 YES/NO token 市场。默认 midpoint 仍限制在常规双边区间；auto 单边允许时，查询会额外允许 `dominant_min_probability..dominant_max_probability` 及反向区间进入候选。非 auto/enforce 单边回退模式仍用 `rewards_min_size <= per_market_usd` 预筛双边预算；开启单边预算回退时不在 SQL 中用份额数量硬砍候选，而由 planner 根据实际 orderbook 目标价计算 `price * size` 后决定双边或单边可负担性。综合排序按 CLOB 原始 cents 直接使用 rewards spread，不做会缩小 99c 等合法值的单位换算，并把 Gamma `category` 映射到 `RewardMarket.category` 供 planner 做偏好分类加分。Gamma 同行的有效、未交叉 best bid/ask 可在 reward token 缺 price 时注入 YES midpoint 和 NO complement 作为候选规划回退；内存实现同时校验唯一 YES/NO、midpoint/dominant 区间、预算回退模式和同步时间。`save_quote_plans()` 会替换当前 quote plan 快照，避免旧的全量计划继续出现在 `/rewards`。Postgres 查询实现拆分到 `postgres_market_methods.rs`。
+- `RewardBotStore.list_markets(limit)` 只返回 active reward markets；Postgres candidate query 关联 Gamma `markets`，硬过滤非 open/tradable、高歧义、低 liquidity、低 `volume_24h`、临近 `end_at`、Gamma spread 过宽、`synced_at` 过期或异常超前、奖励不足、奖励 spread 无效及非唯一 YES/NO token 市场。默认 midpoint 仍限制在常规双边区间；auto 单边允许时，查询会额外允许 `dominant_min_probability..dominant_max_probability` 及反向区间进入候选。非 auto/enforce 单边回退模式仍用 `rewards_min_size <= per_market_usd` 预筛双边预算；开启单边预算回退时不在 SQL 中用份额数量硬砍候选，而由 planner 根据实际 orderbook 目标价计算 `price * size` 后决定双边或单边可负担性。综合排序按 CLOB 原始 cents 直接使用 rewards spread，不做会缩小 99c 等合法值的单位换算，并把 Gamma `category` 映射到 `RewardMarket.category` 供 planner 做偏好分类加分。Gamma 同行的有效、未交叉 best bid/ask 可在 reward token 缺 price 时注入 YES midpoint 和 NO complement 作为候选规划回退；内存实现同时校验唯一 YES/NO、midpoint/dominant 区间、预算回退模式和同步时间。`upsert_markets()` 对 reward catalog 先 upsert 当前快照、再只停用缺失的 active rows，且 unchanged rows 最多每小时 touch 一次，避免每轮全量 active=false/true 写放大；`save_quote_plans()` 会替换当前 quote plan 快照，避免旧的全量计划继续出现在 `/rewards`。Postgres 查询实现拆分到 `postgres_market_methods.rs`。
 - Postgres `RewardBotStore.apply_tick_outcome()` 会在同一事务中只持久化 orders、fills、positions、account ledger 和 events；reward market 全量目录只由 `upsert_markets()` 更新，quote plan 快照只由 `save_quote_plans()` 替换，避免增量 live tick 误停用全量奖励市场。
 - Postgres/内存 `RewardBotStore.apply_account_sync()` 会更新账户状态；外部 positions 成功时原子替换目标账户全部 `reward_positions`，失败时通过 `None` 保留上一版持仓。worker 会结合 `latest_fill_at` 在 confirmed fill 后 120 秒内跳过整次外部账户替换，避免最终一致性响应回滚本地现金或库存。外部持仓可来自当前 rewards catalog 之外的市场，因此 `reward_positions.condition_id` 不再依赖 `reward_markets` 外键。
 - `RewardBotStore` 在 Postgres/内存实现中维护 `reward_control_commands` 队列；API 写入 pending 命令，worker 使用 claim/complete/fail 方法领取并更新执行状态；running 命令超过 5 分钟会重新进入可领取范围。
 - `RewardBotStore` 在 Postgres/内存实现中按 account 维护 rewards worker heartbeat；API snapshot 只把配置已启用且最近 2 分钟有 heartbeat 的 worker 标记为 running。Postgres 表由迁移 `0032_reward_worker_heartbeats.sql` 创建。
 - `CopyTradeStore` 在 Postgres/内存实现中维护 `copytrade_control_commands` 队列；API 写入 pending 命令，worker 使用 claim/complete/fail 方法领取并更新执行状态。当前 copytrade worker 只执行 source trade 检测和 Analyze 钱包分析；run/cancel/reset 兼容命令不再触发模拟交易。
-- `InMemoryOrderbookCache` 在所有写入入口统一按 bids 降序、asks 升序排序后裁剪，确保无序 WS/poll/ingest 数据也保留 top-of-book；写入时间戳早于当前条目的盘口会被忽略，相同时间戳下 WS 优先于 poll；`get_books()` 在一次读锁内返回多个未过期盘口；`get_stale_tokens(..., max_age_ms <= 0)` 只检查 TTL，不执行年龄 stale 检查。
+- `InMemoryOrderbookCache` 在所有写入入口统一按 bids 降序、asks 升序排序后裁剪，确保无序 WS/poll/ingest 数据也保留 top-of-book；写入时间戳早于当前未过期条目的盘口会被忽略，相同时间戳下 WS 优先于 poll，已过期条目不会阻挡后续较旧 `observed_at` 的 poll/ingest 快照恢复；`get_books()` 在一次读锁内返回多个未过期盘口；`get_stale_tokens(..., max_age_ms <= 0)` 只检查 TTL，不执行年龄 stale 检查。
 - `InMemoryOrderbookSubscriptionRegistry.register_tokens()` 在持有写锁时原子执行 32-source 上限检查，关闭并发新 source 绕过 HTTP 预检查的竞态；空 token 集合会删除 source，聚合优先级为 `rewards_active`、`exec_orders`、`rewards_eligible`、`rewards_candidates`、`copytrade`。
 
 ### Catalog — 核心数据存储
@@ -157,12 +157,12 @@
 - Orderbook cache 当前 runtime 使用进程内 `InMemoryOrderbookCache`；Redis 实现保留但未接入默认 runtime
 - Orderbook 服务的 `/orderbook/stats` 现在区分真实 cache 条目数、registry 来源数和 registry 去重 token 总数，避免把订阅 token 数误报为缓存条目数
 - Orderbook 进程内缓存会先保留最优价格顺序，再按 `POLYEDGE_ORDERBOOK_STREAM__MAX_LEVELS_PER_SIDE` 裁剪每侧 bids/asks 深度，默认 100 档；HTTP register/batch/ingest 入口使用 `max_tokens` 做请求规模上限，register 会原子替换对应 source 当前有序 token 集合，ingest 会先校验整批数据再批量写入并传播缓存错误，registry source 固定上限为 32 个
-- Orderbook 缓存拒绝旧 `observed_at` 覆盖更新条目；rewards 控制命令具备 5 分钟 running lease，Postgres rewards live worker 通过 advisory lease 避免多实例并发执行
+- Orderbook 缓存拒绝旧 `observed_at` 覆盖未过期条目，但已过期条目可被后续写入恢复；rewards 控制命令具备 5 分钟 running lease，Postgres rewards live worker 通过 advisory lease 避免多实例并发执行
 - Rewards managed order upsert 会更新后续实际提交的 `price` / `size`，保证 flatten 改价、CLOB 数量调整和未知提交恢复使用持久化后的真实参数
 - Rewards store 已持久化 quote/selection mode、dominant 单边阈值、盘口集中度阈值、偏好分类、AI advisory 配置和信息风险配置；`reward_market_advisories` 与 `reward_market_info_risks` 表已由迁移创建，并已接入 Postgres/内存缓存读写，供 worker 跳过重复模型判断。
 - Rewards store 已支持外部账户余额和完整持仓快照同步；成功空持仓快照会清空目标账户持仓，失败响应不会破坏上一版，最近 confirmed fill 时间用于 worker 的 120 秒账户快照保护；worker 写入的资金钱包地址优先使用 `FUNDER`，CLOB 余额为 0/失败时可用 Polygon pUSD 链上余额回填 snapshot
-- `markets` 保存 Gamma `liquidity_usd`、`end_at` 和本地 `synced_at`；Postgres market upsert 会分离新增、真实数据变化更新和 freshness-only 刷新，返回实际写入行数。默认调用仍刷新 `synced_at`，orderbook full sync 通过 `MarketUpsertOptions` 只刷新超过新鲜度阈值的安静市场，priority sync 继续强制刷新重点市场，避免 rewards 关键市场因目录新鲜度过低被误判。
-- `idx_markets_reward_quality` 不包含高频变化的 `synced_at`，降低 freshness-only 刷新对索引和 WAL 的写放大；rewards 候选查询仍在关联 Gamma `markets` 后按 `synced_at` 做新鲜度过滤。
+- `markets` 保存 Gamma `liquidity_usd`、`end_at` 和本地 `synced_at`；Postgres market upsert 使用单条 `INSERT .. ON CONFLICT DO UPDATE WHERE` 表达新增、真实数据变化更新和 freshness-only 刷新，返回实际写入行数，并在每批事务内设置短 `lock_timeout` / `statement_timeout`。默认调用仍刷新 `synced_at`，orderbook full sync 通过 `MarketUpsertOptions` 只刷新超过新鲜度阈值的安静市场，priority sync 继续强制刷新重点市场，避免 rewards 关键市场因目录新鲜度过低被误判。
+- `idx_markets_reward_quality` 不包含高频变化的 `synced_at`，降低 freshness-only 刷新对索引和 WAL 的写放大；`idx_markets_polymarket_yes_asset_id` / `idx_markets_polymarket_no_asset_id` 支撑 orderbook priority sync 的注册 token 到 condition id 反查；rewards 候选查询仍在关联 Gamma `markets` 后按 `synced_at` 做新鲜度过滤。
 - Orderbook register/ingest/delete 写接口要求 `x-polyedge-orderbook-token` 与 `POLYEDGE_ORDERBOOK__WRITE_TOKEN` 匹配；该密钥仅配置在 `deploy/.env.orderbook` 和 `deploy/.env.api`，未配置 token 时写接口关闭，读接口和健康检查仍可用
 
 ## 修改检查清单
