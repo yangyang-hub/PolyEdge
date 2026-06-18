@@ -13,6 +13,7 @@ import type { OperationActionResult } from "@/lib/api/actions";
 import { Button } from "@/components/ui/button";
 import { dictionary, translateEnum, formatMessage } from "@/lib/i18n/dictionaries";
 import { normalizeRuntimeMode } from "@/lib/runtime-mode";
+import { downloadCsv } from "@/lib/csv";
 import { OperationFeedbackBanner } from "@/components/shared/operation-feedback-banner";
 import { PageHeader } from "@/components/shared/page-header";
 import { StateBanner } from "@/components/shared/state-banner";
@@ -189,23 +190,18 @@ export function RiskControlCenter({ data }: { data: RiskPageData }) {
   }
 
   function exportVisibleAlertsCsv() {
-    const header = ["id", "severity", "reason", "target", "created_at", "status"];
-    const rows = visibleAlerts.map((alert) => [
-      alert.id,
-      alert.severity,
-      alert.reason,
-      alert.target,
-      alert.createdAt,
-      alert.status,
-    ]);
-    const escapeCell = (value: string) => `"${value.replaceAll('"', '""')}"`;
-    const csv = [header, ...rows].map((row) => row.map(escapeCell).join(",")).join("\n");
-    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `polyedge-risk-alerts-${new Date().toISOString().slice(0, 10)}.csv`;
-    link.click();
-    URL.revokeObjectURL(url);
+    downloadCsv(
+      `polyedge-risk-alerts-${new Date().toISOString().slice(0, 10)}.csv`,
+      ["id", "severity", "reason", "target", "created_at", "status"],
+      visibleAlerts.map((alert) => [
+        alert.id,
+        alert.severity,
+        alert.reason,
+        alert.target,
+        alert.createdAt,
+        alert.status,
+      ]),
+    );
   }
 
   function manageAlert(alert: RiskPageData["alerts"][number]) {

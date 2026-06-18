@@ -34,5 +34,8 @@ export const positions = {
     limit: "上限",
     signalFallback: "该持仓的信号上下文尚未补齐。",
     riskFallback: "该持仓暂无活跃风控动作。",
+    noPositions: "当前账户暂无持仓。",
+    noMatchingPositions: "当前筛选条件下没有持仓。",
+    emptyDetail: "选择左侧持仓查看信号、风控与风险桶详情。",
   },
 } as const;

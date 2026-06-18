@@ -1,5 +1,9 @@
-import type { OperationActionResult } from "@/lib/api/actions";
+"use client";
 
+import { useEffect } from "react";
+import { X } from "lucide-react";
+
+import type { OperationActionResult } from "@/lib/api/actions";
 import { StatusPill } from "@/components/shared/status-pill";
 import { dictionary } from "@/lib/i18n/dictionaries";
 import { cn } from "@/lib/utils";
@@ -7,21 +11,42 @@ import { cn } from "@/lib/utils";
 export function OperationFeedbackBanner({
   feedback,
   className,
+  onDismiss,
 }: {
   feedback: OperationActionResult;
   className?: string;
+  /** 传入后显示关闭按钮并在 8 秒后自动清除（用于页面级顶部 banner；对话框内的 banner 不传）。 */
+  onDismiss?: () => void;
 }) {
+  useEffect(() => {
+    if (!onDismiss) return;
+    const timer = window.setTimeout(onDismiss, 8000);
+    return () => window.clearTimeout(timer);
+  }, [onDismiss, feedback]);
+
   return (
     <div
+      role="status"
+      aria-live="polite"
       className={cn(
-        "rounded-lg border p-4",
+        "relative rounded-lg border p-4",
         feedback.ok
           ? "border-secondary/20 bg-secondary/8"
           : "border-destructive/20 bg-destructive/8",
         className,
       )}
     >
-      <div className="flex flex-wrap items-center gap-2">
+      {onDismiss ? (
+        <button
+          type="button"
+          onClick={onDismiss}
+          aria-label={dictionary.common.close}
+          className="absolute right-3 top-3 rounded text-muted-foreground transition-colors hover:text-foreground"
+        >
+          <X className="size-4" />
+        </button>
+      ) : null}
+      <div className="flex flex-wrap items-center gap-2 pr-6">
         <StatusPill tone={feedback.ok ? "success" : "danger"}>
           {feedback.ok ? dictionary.feedback.operationQueued : dictionary.feedback.operationFailed}
         </StatusPill>

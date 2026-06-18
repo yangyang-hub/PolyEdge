@@ -1,9 +1,9 @@
 "use client";
 
-import { startTransition, useCallback, useEffect, useRef, useState } from "react";
 import { ArrowUpDown, ExternalLink } from "lucide-react";
 
-import type { getMarketsPageData, MarketListParams } from "@/features/markets/loaders/markets-page-data";
+import type { getMarketsPageData } from "../loaders/markets-page-data";
+import { EmptyPanel } from "@/components/shared/empty-panel";
 import { PageHeader } from "@/components/shared/page-header";
 import { StatusPill } from "@/components/shared/status-pill";
 import { WorkbenchLayout } from "@/components/shared/workbench-layout";
@@ -18,172 +18,58 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { listMarkets } from "@/lib/api/markets";
-import { ambiguityTone, formatPercentFromRatio, marketTradabilityTone } from "@/lib/formatters";
-import { dictionary, translateEnum, formatMessage } from "@/lib/i18n/dictionaries";
+import { dictionary, formatMessage } from "@/lib/i18n/dictionaries";
 import { isKeyboardSelect } from "@/lib/keyboard";
-import { listEvents } from "@/lib/api/events";
+import { useMarketsQuery } from "../lib/use-markets-query";
+import { MARKETS_PAGE_SIZE } from "../lib/markets-query";
+import type { MarketFilter } from "../types";
 
 type MarketsPageData = Awaited<ReturnType<typeof getMarketsPageData>>;
-type MarketFilter = "all" | "review_queue" | "watch_only";
-type SortDir = "desc" | "asc" | "none";
 
-const PAGE_SIZE = 20;
+const SKELETON_ROWS = 6;
 
 export function MarketsWorkbench({ data }: { data: MarketsPageData }) {
-  const [markets, setMarkets] = useState(data.markets);
-  const [marketDetails, setMarketDetails] = useState(data.marketDetails);
-  const [totalCount, setTotalCount] = useState(data.totalCount);
-  const [loading, setLoading] = useState(false);
-  const [selectedId, setSelectedId] = useState(data.selectedMarketId);
+  const {
+    markets,
+    marketDetails,
+    totalCount,
+    loading,
+    error,
+    selectedId,
+    selectMarket,
+    filter,
+    category,
+    sortDir,
+    page,
+    setFilter,
+    setCategory,
+    cycleSort,
+    setPage,
+  } = useMarketsQuery({
+    markets: data.markets,
+    marketDetails: data.marketDetails,
+    events: data.events,
+    totalCount: data.totalCount,
+    selectedId: data.selectedMarketId,
+  });
 
-  const [filter, setFilter] = useState<MarketFilter>("all");
-  const [category, setCategory] = useState<string>("all");
-  const [sortDir, setSortDir] = useState<SortDir>("none");
-  const [page, setPage] = useState(1);
-
-  const abortRef = useRef<AbortController | null>(null);
-  const selectedIdRef = useRef(data.selectedMarketId);
-
-  useEffect(() => {
-    selectedIdRef.current = selectedId;
-  }, [selectedId]);
-
-  const categories = data.categories;
-
-  const fetchMarkets = useCallback(async (params: MarketListParams) => {
-    abortRef.current?.abort();
-    const controller = new AbortController();
-    abortRef.current = controller;
-
-    setLoading(true);
-    try {
-      const [{ data: newMarkets, totalCount: newTotal }, { data: events }] = await Promise.all([
-        listMarkets(params),
-        listEvents(),
-      ]);
-
-      if (controller.signal.aborted) return;
-
-      const mappedMarkets = newMarkets.map((market) => ({
-        id: market.id,
-        question: market.question,
-        category: market.category,
-        midPrice: market.mid_price,
-        volume24h: market.volume_24h,
-        tradabilityStatus: market.tradability_status,
-        tradabilityLabel: translateEnum(market.tradability_status),
-        tradabilityTone: marketTradabilityTone(market.tradability_status),
-        ambiguityLabel: translateEnum(market.ambiguity_level),
-        ambiguityTone: ambiguityTone(market.ambiguity_level),
-        linkedEventCount: String(events.filter((event) => event.related_market_ids.includes(market.id)).length).padStart(2, "0"),
-      }));
-
-      const mappedDetails = newMarkets.map((market) => ({
-        id: market.id,
-        question: market.question,
-        category: market.category,
-        polymarketConditionId: market.polymarket_condition_id ?? null,
-        slug: market.slug ?? null,
-        tradabilityLabel: translateEnum(market.tradability_status),
-        tradabilityTone: marketTradabilityTone(market.tradability_status),
-        ambiguityLabel: translateEnum(market.ambiguity_level),
-        ambiguityTone: ambiguityTone(market.ambiguity_level),
-        resolutionSource: market.resolution_source,
-        edgeCaseNotes: market.edge_case_notes,
-        linkedEvents: events
-          .filter((event) => event.related_market_ids.includes(market.id))
-          .map((event) => ({
-            id: event.id,
-            source: event.source,
-            relevance: formatPercentFromRatio(event.relevance_score),
-            summary: event.summary,
-          })),
-      }));
-
-      setMarkets(mappedMarkets);
-      setMarketDetails(mappedDetails);
-      setTotalCount(newTotal);
-
-      const currentSelected = selectedIdRef.current;
-      if (mappedMarkets.length > 0 && !mappedMarkets.find((m) => m.id === currentSelected)) {
-        setSelectedId(mappedMarkets[0].id);
-      }
-    } finally {
-      if (!controller.signal.aborted) {
-        setLoading(false);
-      }
-    }
-  }, []);
-
-  useEffect(() => {
-    const tradabilityStatus =
-      filter === "review_queue" ? "blocked" :
-      filter === "watch_only" ? "observe_only" :
-      undefined;
-
-    const offset = (page - 1) * PAGE_SIZE;
-
-    startTransition(() => {
-      void fetchMarkets({
-        limit: PAGE_SIZE,
-        offset,
-        tradability_status: tradabilityStatus,
-        category: category !== "all" ? category : undefined,
-        sort_by: sortDir !== "none" ? "volume_24h" : undefined,
-        sort_order: sortDir !== "none" ? sortDir : undefined,
-      });
-    });
-
-    return () => {
-      abortRef.current?.abort();
-    };
-  }, [filter, category, sortDir, page, fetchMarkets]);
-
-  const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
-
+  const totalPages = Math.max(1, Math.ceil(totalCount / MARKETS_PAGE_SIZE));
   const activeSelectedId =
     markets.find((market) => market.id === selectedId)?.id ??
     markets[0]?.id ??
     marketDetails[0]?.id ??
     "";
   const selectedMarket =
-    marketDetails.find((market) => market.id === activeSelectedId) ?? marketDetails[0];
-
-  if (!selectedMarket) {
-    return null;
-  }
+    marketDetails.find((market) => market.id === activeSelectedId) ?? marketDetails[0] ?? null;
+  const polymarketUrl = selectedMarket?.slug
+    ? `https://polymarket.com/event/${selectedMarket.slug}`
+    : null;
 
   const filterButtons: Array<{ key: MarketFilter; label: string }> = [
     { key: "all", label: dictionary.markets.filterAll },
     { key: "review_queue", label: dictionary.markets.filterReview },
     { key: "watch_only", label: dictionary.markets.filterObserve },
   ];
-
-  function selectMarket(marketId: string) {
-    startTransition(() => {
-      setSelectedId(marketId);
-    });
-  }
-
-  function cycleSort() {
-    setSortDir((prev) => (prev === "none" ? "desc" : prev === "desc" ? "asc" : "none"));
-    setPage(1);
-  }
-
-  function handleFilterChange(next: MarketFilter) {
-    setFilter(next);
-    setPage(1);
-  }
-
-  function handleCategoryChange(next: string) {
-    setCategory(next);
-    setPage(1);
-  }
-
-  const polymarketUrl = selectedMarket.slug
-    ? `https://polymarket.com/event/${selectedMarket.slug}`
-    : null;
 
   return (
     <div className="space-y-6">
@@ -205,15 +91,15 @@ export function MarketsWorkbench({ data }: { data: MarketsPageData }) {
             <div className="flex flex-wrap items-center gap-3">
               <select
                 value={category}
-                onChange={(e) => handleCategoryChange(e.target.value)}
+                onChange={(event) => setCategory(event.target.value)}
                 className="h-8 rounded-lg border border-input bg-transparent px-2.5 text-sm transition-colors outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
               >
                 <option value="all">{dictionary.markets.allCategories}</option>
-                {categories.map((cat) => (
+                {data.categories.map((cat) => (
                   <option key={cat.id} value={cat.id}>{cat.label}</option>
                 ))}
               </select>
-              <WorkbenchSegmentedControl items={filterButtons} value={filter} onChange={handleFilterChange} />
+              <WorkbenchSegmentedControl items={filterButtons} value={filter} onChange={setFilter} />
             </div>
           </CardHeader>
           <CardContent>
@@ -222,7 +108,11 @@ export function MarketsWorkbench({ data }: { data: MarketsPageData }) {
                 <TableRow>
                   <TableHead>{dictionary.markets.question}</TableHead>
                   <TableHead>{dictionary.markets.mid}</TableHead>
-                  <TableHead>
+                  <TableHead
+                    aria-sort={
+                      sortDir === "asc" ? "ascending" : sortDir === "desc" ? "descending" : "none"
+                    }
+                  >
                     <button
                       type="button"
                       onClick={cycleSort}
@@ -242,9 +132,23 @@ export function MarketsWorkbench({ data }: { data: MarketsPageData }) {
               </TableHeader>
               <TableBody>
                 {loading ? (
+                  Array.from({ length: SKELETON_ROWS }).map((_, index) => (
+                    <TableRow key={`market-skeleton-${index}`}>
+                      <TableCell colSpan={6} className="py-3">
+                        <div className="h-4 animate-pulse rounded bg-accent/40" />
+                      </TableCell>
+                    </TableRow>
+                  ))
+                ) : error ? (
+                  <TableRow>
+                    <TableCell colSpan={6} className="py-8 text-center text-sm text-destructive">
+                      {error}
+                    </TableCell>
+                  </TableRow>
+                ) : markets.length === 0 ? (
                   <TableRow>
                     <TableCell colSpan={6} className="py-8 text-center text-sm text-muted-foreground">
-                      {dictionary.common.loading}
+                      {dictionary.markets.noResults}
                     </TableCell>
                   </TableRow>
                 ) : (
@@ -261,8 +165,8 @@ export function MarketsWorkbench({ data }: { data: MarketsPageData }) {
                       }}
                       className={
                         market.id === activeSelectedId
-                          ? "cursor-pointer bg-accent/60 shadow-[inset_2px_0_0_#0066ff]"
-                          : "cursor-pointer transition-colors hover:bg-accent/35"
+                          ? "cursor-pointer bg-accent/60 shadow-[inset_2px_0_0_var(--sidebar-primary)] outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/50"
+                          : "cursor-pointer outline-none transition-colors hover:bg-accent/35 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/50"
                       }
                     >
                       <TableCell>
@@ -315,67 +219,73 @@ export function MarketsWorkbench({ data }: { data: MarketsPageData }) {
         </Card>
 
         <div className="space-y-4 max-h-[calc(100vh-14rem)] overflow-y-auto">
-          <Card>
-            <CardHeader className="py-3">
-              <CardTitle className="font-heading text-sm">{dictionary.markets.settlementView}</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <div>
-                <p className="text-sm font-medium text-foreground">{selectedMarket.question}</p>
-                <p className="mt-1 text-xs uppercase tracking-[0.2em] text-muted-foreground">
-                  {selectedMarket.category}
-                </p>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                <StatusPill tone={selectedMarket.tradabilityTone}>
-                  {selectedMarket.tradabilityLabel}
-                </StatusPill>
-                <StatusPill tone={selectedMarket.ambiguityTone}>
-                  {dictionary.markets.ambiguity} {selectedMarket.ambiguityLabel}
-                </StatusPill>
-              </div>
-              {polymarketUrl && (
-                <a
-                  href={polymarketUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1.5 text-sm text-primary underline-offset-4 hover:underline"
-                >
-                  {dictionary.markets.viewOnPolymarket}
-                  <ExternalLink className="size-3.5" />
-                </a>
-              )}
-              <div className="line-clamp-2 rounded-sm border border-border/70 bg-card p-2.5 text-xs text-muted-foreground">
-                {dictionary.markets.resolutionSource}: {selectedMarket.resolutionSource}
-              </div>
-              <div className="space-y-1 text-xs text-muted-foreground">
-                {selectedMarket.edgeCaseNotes.map((note) => (
-                  <p key={note} className="line-clamp-1">{dictionary.markets.edgeCase}: {note}</p>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="py-3">
-              <CardTitle className="font-heading text-sm">{dictionary.markets.linkedEvents}</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-2">
-              {selectedMarket.linkedEvents.length === 0 ? (
-                <p className="text-xs text-muted-foreground">—</p>
-              ) : (
-                selectedMarket.linkedEvents.map((event) => (
-                  <div key={event.id} className="rounded-sm border border-border/70 bg-card px-3 py-2">
-                    <div className="flex items-center justify-between gap-2">
-                      <StatusPill tone="primary">{event.source}</StatusPill>
-                      <span className="shrink-0 font-mono text-xs text-muted-foreground">{event.relevance}</span>
-                    </div>
-                    <p className="mt-1.5 line-clamp-2 text-xs text-muted-foreground">{event.summary}</p>
+          {selectedMarket ? (
+            <>
+              <Card>
+                <CardHeader className="py-3">
+                  <CardTitle className="font-heading text-sm">{dictionary.markets.settlementView}</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <div>
+                    <p className="text-sm font-medium text-foreground">{selectedMarket.question}</p>
+                    <p className="mt-1 text-xs uppercase tracking-[0.2em] text-muted-foreground">
+                      {selectedMarket.category}
+                    </p>
                   </div>
-                ))
-              )}
-            </CardContent>
-          </Card>
+                  <div className="flex flex-wrap gap-2">
+                    <StatusPill tone={selectedMarket.tradabilityTone}>
+                      {selectedMarket.tradabilityLabel}
+                    </StatusPill>
+                    <StatusPill tone={selectedMarket.ambiguityTone}>
+                      {dictionary.markets.ambiguity} {selectedMarket.ambiguityLabel}
+                    </StatusPill>
+                  </div>
+                  {polymarketUrl && (
+                    <a
+                      href={polymarketUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1.5 text-sm text-primary underline-offset-4 hover:underline"
+                    >
+                      {dictionary.markets.viewOnPolymarket}
+                      <ExternalLink className="size-3.5" />
+                    </a>
+                  )}
+                  <div className="line-clamp-2 rounded-sm border border-border/70 bg-card p-2.5 text-xs text-muted-foreground">
+                    {dictionary.markets.resolutionSource}: {selectedMarket.resolutionSource}
+                  </div>
+                  <div className="space-y-1 text-xs text-muted-foreground">
+                    {selectedMarket.edgeCaseNotes.map((note) => (
+                      <p key={note} className="line-clamp-1">{dictionary.markets.edgeCase}: {note}</p>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader className="py-3">
+                  <CardTitle className="font-heading text-sm">{dictionary.markets.linkedEvents}</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-2">
+                  {selectedMarket.linkedEvents.length === 0 ? (
+                    <p className="text-xs text-muted-foreground">—</p>
+                  ) : (
+                    selectedMarket.linkedEvents.map((event) => (
+                      <div key={event.id} className="rounded-sm border border-border/70 bg-card px-3 py-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <StatusPill tone="primary">{event.source}</StatusPill>
+                          <span className="shrink-0 font-mono text-xs text-muted-foreground">{event.relevance}</span>
+                        </div>
+                        <p className="mt-1.5 line-clamp-2 text-xs text-muted-foreground">{event.summary}</p>
+                      </div>
+                    ))
+                  )}
+                </CardContent>
+              </Card>
+            </>
+          ) : (
+            <EmptyPanel title={dictionary.markets.settlementView} detail={dictionary.markets.emptyDetail} />
+          )}
         </div>
       </WorkbenchLayout>
     </div>

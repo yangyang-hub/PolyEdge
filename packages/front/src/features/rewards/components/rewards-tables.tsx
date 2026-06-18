@@ -123,6 +123,13 @@ function DebouncedFilterBar({
 }) {
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const [search, setSearch] = useState(initialSearch);
+  const [lastInitialSearch, setLastInitialSearch] = useState(initialSearch);
+
+  // 外部搜索词变化时同步到内部状态（render 期调整，避免 effect setState 与 key remount 失焦）。
+  if (initialSearch !== lastInitialSearch) {
+    setLastInitialSearch(initialSearch);
+    setSearch(initialSearch);
+  }
 
   useEffect(() => () => clearTimeout(debounceRef.current), []);
 
@@ -286,7 +293,6 @@ export function QuotePlansTable({
   return (
     <div className="space-y-3">
       <DebouncedFilterBar
-        key={search}
         initialSearch={search}
         onSearchChange={onSearchChange}
         placeholder={dictionary.rewards.searchPlaceholder}
@@ -300,17 +306,41 @@ export function QuotePlansTable({
           <TableRow>
             <TableHead className="w-[34%]">{dictionary.rewards.market}</TableHead>
             <TableHead>{dictionary.rewards.state}</TableHead>
-            <TableHead className="cursor-pointer select-none" onClick={() => handleSort("score")}>
-              {dictionary.rewards.score}
-              <SortIndicator active={sortBy === "score"} order={sortOrder} />
+            <TableHead
+              aria-sort={sortBy === "score" ? (sortOrder === "asc" ? "ascending" : "descending") : "none"}
+            >
+              <button
+                type="button"
+                onClick={() => handleSort("score")}
+                className="inline-flex cursor-pointer select-none items-center"
+              >
+                {dictionary.rewards.score}
+                <SortIndicator active={sortBy === "score"} order={sortOrder} />
+              </button>
             </TableHead>
-            <TableHead className="cursor-pointer select-none" onClick={() => handleSort("daily_reward")}>
-              {dictionary.rewards.dailyReward}
-              <SortIndicator active={sortBy === "daily_reward"} order={sortOrder} />
+            <TableHead
+              aria-sort={sortBy === "daily_reward" ? (sortOrder === "asc" ? "ascending" : "descending") : "none"}
+            >
+              <button
+                type="button"
+                onClick={() => handleSort("daily_reward")}
+                className="inline-flex cursor-pointer select-none items-center"
+              >
+                {dictionary.rewards.dailyReward}
+                <SortIndicator active={sortBy === "daily_reward"} order={sortOrder} />
+              </button>
             </TableHead>
-            <TableHead className="cursor-pointer select-none" onClick={() => handleSort("midpoint")}>
-              {dictionary.rewards.midpoint}
-              <SortIndicator active={sortBy === "midpoint"} order={sortOrder} />
+            <TableHead
+              aria-sort={sortBy === "midpoint" ? (sortOrder === "asc" ? "ascending" : "descending") : "none"}
+            >
+              <button
+                type="button"
+                onClick={() => handleSort("midpoint")}
+                className="inline-flex cursor-pointer select-none items-center"
+              >
+                {dictionary.rewards.midpoint}
+                <SortIndicator active={sortBy === "midpoint"} order={sortOrder} />
+              </button>
             </TableHead>
             <TableHead className="w-[180px]">{dictionary.rewards.quotes}</TableHead>
             <TableHead className="w-[230px]">{dictionary.rewards.infoRisk}</TableHead>
@@ -448,7 +478,6 @@ export function OrdersTable({
   return (
     <div className="space-y-3">
       <DebouncedFilterBar
-        key={search}
         initialSearch={search}
         onSearchChange={onSearchChange}
         placeholder={dictionary.rewards.searchOrdersPlaceholder}
@@ -462,13 +491,29 @@ export function OrdersTable({
           <TableRow>
             <TableHead className="w-[120px]">{dictionary.rewards.state}</TableHead>
             <TableHead>{dictionary.rewards.outcome}</TableHead>
-            <TableHead className="cursor-pointer select-none" onClick={() => handleSort("price")}>
-              {dictionary.rewards.price}
-              <SortIndicator active={sortBy === "price"} order={sortOrder} />
+            <TableHead
+              aria-sort={sortBy === "price" ? (sortOrder === "asc" ? "ascending" : "descending") : "none"}
+            >
+              <button
+                type="button"
+                onClick={() => handleSort("price")}
+                className="inline-flex cursor-pointer select-none items-center"
+              >
+                {dictionary.rewards.price}
+                <SortIndicator active={sortBy === "price"} order={sortOrder} />
+              </button>
             </TableHead>
-            <TableHead className="cursor-pointer select-none" onClick={() => handleSort("size")}>
-              {dictionary.rewards.size}
-              <SortIndicator active={sortBy === "size"} order={sortOrder} />
+            <TableHead
+              aria-sort={sortBy === "size" ? (sortOrder === "asc" ? "ascending" : "descending") : "none"}
+            >
+              <button
+                type="button"
+                onClick={() => handleSort("size")}
+                className="inline-flex cursor-pointer select-none items-center"
+              >
+                {dictionary.rewards.size}
+                <SortIndicator active={sortBy === "size"} order={sortOrder} />
+              </button>
             </TableHead>
             <TableHead>{dictionary.rewards.scoring}</TableHead>
             <TableHead className="w-[320px]">{dictionary.rewards.reason}</TableHead>

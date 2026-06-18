@@ -11,6 +11,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import type { WalletAnalysisReportDto } from "@/lib/contracts/dto";
 import { formatUsdFixed, metricToneForPnl } from "@/lib/formatters";
+import { formatShortAddress } from "@/lib/format-address";
 import { usePagination } from "@/hooks/use-pagination";
 import { dictionary } from "@/lib/i18n/dictionaries";
 import { analyzeWallet } from "@/lib/api/wallet-analysis";
@@ -30,11 +31,6 @@ function formatHours(v: string | number): string {
   if (h < 1) return `${(h * 60).toFixed(0)}m`;
   if (h < 24) return `${h.toFixed(1)}h`;
   return `${(h / 24).toFixed(1)}d`;
-}
-
-function truncateAddr(addr: string): string {
-  if (addr.length <= 12) return addr;
-  return `${addr.slice(0, 6)}...${addr.slice(-4)}`;
 }
 
 const styleLabels: Record<string, string> = {
@@ -140,7 +136,7 @@ function AnalysisReport({
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
-            <InfoItem label={t.profile} value={profile.name || profile.pseudonym || truncateAddr(profile.address)} />
+            <InfoItem label={t.profile} value={profile.name || profile.pseudonym || formatShortAddress(profile.address)} />
             {profile.x_username && <InfoItem label={t.xHandle} value={`@${profile.x_username}`} />}
             {profile.created_at && <InfoItem label={t.memberSince} value={profile.created_at.slice(0, 10)} />}
             {profile.verified_badge && <InfoItem label={t.verified} value="✓" />}

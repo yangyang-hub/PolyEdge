@@ -2,6 +2,7 @@
 
 import { startTransition, useState } from "react";
 import { Save, Search, UserPlus, X } from "lucide-react";
+import { toast } from "sonner";
 
 import { MetricCard } from "@/components/shared/metric-card";
 import { OperationFeedbackBanner } from "@/components/shared/operation-feedback-banner";
@@ -24,6 +25,7 @@ import {
   uppercaseEnum,
   type Tone,
 } from "@/lib/formatters";
+import { formatShortAddress } from "@/lib/format-address";
 import { usePagination } from "@/hooks/use-pagination";
 import { dictionary } from "@/lib/i18n/dictionaries";
 import {
@@ -34,10 +36,6 @@ import {
   updateCopyTradeConfigAction,
   type CopyTradeActionResult,
 } from "@/lib/api/actions";
-
-function walletLabel(address: string): string {
-  return `${address.slice(0, 6)}...${address.slice(-4)}`;
-}
 
 function walletStatusTone(status: TrackedWalletStatus): Tone {
   return status === "active" ? "success" : "warning";
@@ -73,6 +71,11 @@ export function CopyTradeWorkbench({
 
   function applyResult(result: CopyTradeActionResult) {
     setFeedback(result);
+    if (result.ok) {
+      toast.success(result.message);
+    } else {
+      toast.error(result.message);
+    }
     if (result.snapshot) {
       setSnapshot(result.snapshot);
       setDraft(result.snapshot.config);
@@ -100,7 +103,7 @@ export function CopyTradeWorkbench({
     <div className="space-y-6">
       <PageHeader eyebrow={t.eyebrow} title={t.title} description={t.description} />
 
-      {feedback ? <OperationFeedbackBanner feedback={feedback} /> : null}
+      {feedback ? <OperationFeedbackBanner feedback={feedback} onDismiss={() => setFeedback(null)} /> : null}
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <MetricCard
@@ -198,7 +201,7 @@ export function CopyTradeWorkbench({
                   key={wallet.address}
                   className="flex flex-wrap items-center gap-3 rounded-md border border-border/40 px-3 py-2 text-sm"
                 >
-                  <span className="font-mono text-xs">{walletLabel(wallet.address)}</span>
+                  <span className="font-mono text-xs">{formatShortAddress(wallet.address)}</span>
                   {wallet.label ? <span className="text-muted-foreground">{wallet.label}</span> : null}
                   <StatusPill tone={walletStatusTone(wallet.status)}>
                     {wallet.status === "active" ? dictionary.common.active : t.paused}
@@ -237,6 +240,7 @@ export function CopyTradeWorkbench({
                       variant="destructive"
                       className="h-6 px-2 text-xs"
                       disabled={pending}
+                      aria-label={t.remove}
                       onClick={() => runAction(() => removeTrackedWalletAction(wallet.address))}
                     >
                       <X className="size-3" />
@@ -277,7 +281,7 @@ export function CopyTradeWorkbench({
                 ) : (
                   snapshot.source_trades.slice(tradesPagination.start, tradesPagination.end).map((trade) => (
                     <tr key={trade.id} className="border-b border-border/20">
-                      <td className="py-2 pr-2 font-mono">{walletLabel(trade.wallet_address)}</td>
+                      <td className="py-2 pr-2 font-mono">{formatShortAddress(trade.wallet_address)}</td>
                       <td className="max-w-72 py-2 pr-2">
                         <p className="truncate text-foreground" title={trade.title}>
                           {trade.title}

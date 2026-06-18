@@ -1,6 +1,6 @@
 "use client";
 
-import { Ban, CheckCircle2, Play, RotateCcw, Save } from "lucide-react";
+import { Ban, CheckCircle2, Loader2, Play, RotateCcw, Save } from "lucide-react";
 
 import { MeterBar } from "@/components/shared/meter-bar";
 import { StatusPill } from "@/components/shared/status-pill";
@@ -117,12 +117,14 @@ export function ModeStatusPanel({
 
 export function CommandPanel({
   pending,
+  isDirty,
   onRun,
   onCancel,
   onReset,
   onSave,
 }: {
   pending: boolean;
+  isDirty: boolean;
   onRun: () => void;
   onCancel: () => void;
   onReset: () => void;
@@ -138,20 +140,20 @@ export function CommandPanel({
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="grid gap-2 sm:grid-cols-2">
-          <Button type="button" size="lg" disabled={pending} onClick={onRun}>
-            <Play className="size-4" />
+          <Button type="button" size="lg" disabled={pending} aria-busy={pending} onClick={onRun}>
+            {pending ? <Loader2 className="size-4 animate-spin" /> : <Play className="size-4" />}
             {dictionary.rewards.run}
           </Button>
-          <Button type="button" size="lg" variant="outline" disabled={pending} onClick={onSave}>
-            <Save className="size-4" />
+          <Button type="button" size="lg" variant="outline" disabled={!isDirty || pending} aria-busy={pending} onClick={onSave}>
+            {pending ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
             {dictionary.rewards.save}
           </Button>
-          <Button type="button" size="lg" variant="destructive" disabled={pending} onClick={onCancel}>
-            <Ban className="size-4" />
+          <Button type="button" size="lg" variant="destructive" disabled={pending} aria-busy={pending} onClick={onCancel}>
+            {pending ? <Loader2 className="size-4 animate-spin" /> : <Ban className="size-4" />}
             {dictionary.rewards.cancelAll}
           </Button>
-          <Button type="button" size="lg" variant="outline" disabled={pending} onClick={onReset}>
-            <RotateCcw className="size-4" />
+          <Button type="button" size="lg" variant="outline" disabled={pending} aria-busy={pending} onClick={onReset}>
+            {pending ? <Loader2 className="size-4 animate-spin" /> : <RotateCcw className="size-4" />}
             {dictionary.rewards.reset}
           </Button>
         </div>

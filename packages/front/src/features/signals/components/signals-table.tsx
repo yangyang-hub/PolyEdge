@@ -82,8 +82,8 @@ export function SignalsTable({
               }}
               className={
                 signal.id === selectedSignalId
-                  ? "cursor-pointer bg-accent/45 shadow-[inset_2px_0_0_#0066ff]"
-                  : "cursor-pointer transition-colors hover:bg-accent/35"
+                  ? "cursor-pointer bg-accent/45 shadow-[inset_2px_0_0_var(--sidebar-primary)] outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/50"
+                  : "cursor-pointer outline-none transition-colors hover:bg-accent/35 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/50"
               }
             >
               <td className="px-5 py-3">

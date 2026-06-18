@@ -10,6 +10,8 @@ export const shared = {
     armed: "待命",
     backToDashboard: "返回仪表盘",
     cancel: "取消",
+    close: "关闭",
+    confirm: "确认执行",
     completed: "已完成",
     confidence: "置信度",
     connecting: "连接中",

@@ -24,6 +24,9 @@ export const markets = {
     previous: "上一页",
     next: "下一页",
     pageOf: "第 {current} 页，共 {total} 页",
+    noResults: "当前筛选条件下没有匹配的市场。",
+    loadFailed: "市场数据加载失败，请调整筛选或稍后重试。",
+    emptyDetail: "选择左侧市场查看结算与事件上下文。",
   },
   events: {
     eyebrow: "认知层",

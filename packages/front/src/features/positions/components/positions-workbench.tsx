@@ -4,6 +4,7 @@ import { startTransition, useDeferredValue, useEffect, useState } from "react";
 
 import type { getPositionsPageData } from "@/features/positions/loaders/positions-page-data";
 import { MetricCard } from "@/components/shared/metric-card";
+import { EmptyPanel } from "@/components/shared/empty-panel";
 import { PageHeader } from "@/components/shared/page-header";
 import { PaginationBar } from "@/components/pagination-bar";
 import { StatusPill } from "@/components/shared/status-pill";
@@ -56,7 +57,9 @@ export function PositionsWorkbench({ data }: { data: PositionsPageData }) {
     data.positions[0]?.id ??
     "";
   const selectedPosition =
-    data.positions.find((position) => position.id === activeSelectedId) ?? data.positions[0];
+    data.positions.find((position) => position.id === activeSelectedId) ??
+    data.positions[0] ??
+    null;
   const pressureCount = data.positions.filter(
     (position) => position.bucketStatus !== "healthy" || position.pnlValue < 0,
   ).length;
@@ -65,10 +68,6 @@ export function PositionsWorkbench({ data }: { data: PositionsPageData }) {
     { key: "gainers", label: dictionary.positions.positivePnl },
     { key: "pressure", label: dictionary.positions.pressure },
   ];
-
-  if (!selectedPosition) {
-    return null;
-  }
 
   function selectPosition(positionId: string) {
     startTransition(() => {
@@ -132,7 +131,13 @@ export function PositionsWorkbench({ data }: { data: PositionsPageData }) {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filteredPositions.slice(pagination.start, pagination.end).map((position) => (
+                  {filteredPositions.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={6} className="py-8 text-center text-sm text-muted-foreground">
+                        {data.positions.length === 0 ? dictionary.positions.noPositions : dictionary.positions.noMatchingPositions}
+                      </TableCell>
+                    </TableRow>
+                  ) : filteredPositions.slice(pagination.start, pagination.end).map((position) => (
                     <TableRow
                       key={position.id}
                       tabIndex={0}
@@ -145,8 +150,8 @@ export function PositionsWorkbench({ data }: { data: PositionsPageData }) {
                       }}
                       className={
                         position.id === activeSelectedId
-                          ? "cursor-pointer bg-accent/60 shadow-[inset_2px_0_0_#0066ff]"
-                          : "cursor-pointer transition-colors hover:bg-accent/35"
+                          ? "cursor-pointer bg-accent/60 shadow-[inset_2px_0_0_var(--sidebar-primary)] outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/50"
+                          : "cursor-pointer outline-none transition-colors hover:bg-accent/35 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/50"
                       }
                     >
                       <TableCell>
@@ -182,6 +187,8 @@ export function PositionsWorkbench({ data }: { data: PositionsPageData }) {
         </Card>
 
         <div className="space-y-4">
+          {selectedPosition ? (
+            <>
           <WorkbenchDetailPane className="space-y-4">
             <div className="space-y-2">
               <p className="font-heading text-lg font-bold tracking-tight text-foreground">
@@ -267,6 +274,10 @@ export function PositionsWorkbench({ data }: { data: PositionsPageData }) {
               )}
             </CardContent>
           </Card>
+            </>
+          ) : (
+            <EmptyPanel title={dictionary.positions.livePositions} detail={dictionary.positions.emptyDetail} />
+          )}
 
           <Card>
             <CardHeader>

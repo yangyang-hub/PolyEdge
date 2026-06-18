@@ -2,7 +2,9 @@
 
 import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Activity, CircleDollarSign, ShieldCheck } from "lucide-react";
+import { toast } from "sonner";
 
+import { ActionDialog } from "@/components/shared/action-dialog";
 import { OperationFeedbackBanner } from "@/components/shared/operation-feedback-banner";
 import { PageHeader } from "@/components/shared/page-header";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -37,6 +39,7 @@ const REWARD_SNAPSHOT_REFRESH_MS = 10_000;
 type OrderStatusFilter = "all" | "open" | "filled" | "cancelled" | "exit_pending";
 type PlansEligibilityFilter = "all" | "eligible" | "ineligible";
 type SortOrder = "asc" | "desc";
+type ConfirmKind = "cancel" | "reset";
 
 export function RewardsWorkbench({ initialSnapshot }: { initialSnapshot: RewardBotSnapshotDto }) {
   const [snapshot, setSnapshot] = useState(initialSnapshot);
@@ -45,6 +48,7 @@ export function RewardsWorkbench({ initialSnapshot }: { initialSnapshot: RewardB
   const [pending, setPending] = useState(false);
   const [filtering, setFiltering] = useState(false);
   const refetchSequence = useRef(0);
+  const [confirm, setConfirm] = useState<{ kind: ConfirmKind; note: string } | null>(null);
 
   const [plansSearch, setPlansSearch] = useState("");
   const [plansEligible, setPlansEligible] = useState<PlansEligibilityFilter>("eligible");
@@ -59,6 +63,8 @@ export function RewardsWorkbench({ initialSnapshot }: { initialSnapshot: RewardB
   const [ordersPage, setOrdersPage] = useState(initialSnapshot.orders_page?.page ?? 1);
 
   const eventCounts = useMemo(() => countRewardEvents(snapshot), [snapshot]);
+
+  const isDirty = JSON.stringify(draft) !== JSON.stringify(snapshot.config);
 
   const buildQuery = useCallback(
     (
@@ -149,14 +155,28 @@ export function RewardsWorkbench({ initialSnapshot }: { initialSnapshot: RewardB
   );
 
   useEffect(() => {
-    const interval = window.setInterval(() => {
+    const tick = () => {
+      if (document.hidden) return;
       refetchWithFilters(undefined, { silent: true });
-    }, REWARD_SNAPSHOT_REFRESH_MS);
-    return () => window.clearInterval(interval);
+    };
+    const interval = window.setInterval(tick, REWARD_SNAPSHOT_REFRESH_MS);
+    const handleVisibilityChange = () => {
+      if (!document.hidden) refetchWithFilters(undefined, { silent: true });
+    };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
   }, [refetchWithFilters]);
 
   function applyResult(result: RewardBotActionResult) {
     setFeedback(result);
+    if (result.ok) {
+      toast.success(result.message);
+    } else {
+      toast.error(result.message);
+    }
     if (result.snapshot) {
       setSnapshot(result.snapshot);
       setDraft(result.snapshot.config);
@@ -189,15 +209,16 @@ export function RewardsWorkbench({ initialSnapshot }: { initialSnapshot: RewardB
         description={dictionary.rewards.description}
       />
 
-      {feedback ? <OperationFeedbackBanner feedback={feedback} /> : null}
+      {feedback ? <OperationFeedbackBanner feedback={feedback} onDismiss={() => setFeedback(null)} /> : null}
 
       <section className="grid items-start gap-4 xl:grid-cols-[1.15fr_0.85fr]">
         <ModeStatusPanel snapshot={snapshot} eventCounts={eventCounts} />
         <CommandPanel
           pending={pending}
+          isDirty={isDirty}
           onRun={() => runAction(runRewardBotOnceAction)}
-          onCancel={() => runAction(cancelRewardBotOrdersAction)}
-          onReset={() => runAction(resetRewardBotAction)}
+          onCancel={() => setConfirm({ kind: "cancel", note: "" })}
+          onReset={() => setConfirm({ kind: "reset", note: "" })}
           onSave={() => runAction(() => updateRewardBotConfigAction(draft))}
         />
       </section>
@@ -329,6 +350,45 @@ export function RewardsWorkbench({ initialSnapshot }: { initialSnapshot: RewardB
           <RiskControlConfig draft={draft} updateNumber={updateNumber} />
         </TabsContent>
       </Tabs>
+
+      {confirm ? (
+        <ActionDialog
+          open
+          onOpenChange={(open) => {
+            if (!open) setConfirm(null);
+          }}
+          title={
+            confirm.kind === "cancel"
+              ? dictionary.rewards.cancelConfirmTitle
+              : dictionary.rewards.resetConfirmTitle
+          }
+          description={
+            confirm.kind === "cancel"
+              ? dictionary.rewards.cancelConfirmDescription
+              : dictionary.rewards.resetConfirmDescription
+          }
+          confirmLabel={dictionary.rewards.confirmAction}
+          confirmVariant={confirm.kind === "cancel" ? "destructive" : "default"}
+          isPending={pending}
+          note={confirm.note}
+          onNoteChange={(value) =>
+            setConfirm((current) => (current ? { ...current, note: value } : current))
+          }
+          requiresStepUp={false}
+          stepUpCode=""
+          onStepUpCodeChange={() => {}}
+          feedback={null}
+          onSubmit={() => {
+            const kind = confirm.kind;
+            setConfirm(null);
+            if (kind === "cancel") {
+              runAction(cancelRewardBotOrdersAction);
+            } else {
+              runAction(resetRewardBotAction);
+            }
+          }}
+        />
+      ) : null}
     </div>
   );
 }
