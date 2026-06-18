@@ -204,6 +204,7 @@ pub struct WorkerSettings {
 #[serde(default)]
 pub struct OrderbookStreamSettings {
     pub max_tokens: usize,
+    pub ws_chunk_size: usize,
     pub max_levels_per_side: usize,
     pub poll_reconcile_interval_secs: u64,
     pub stale_threshold_ms: u64,

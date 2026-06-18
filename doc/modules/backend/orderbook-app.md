@@ -12,7 +12,7 @@
 |---|---|
 | `apps/orderbook/src/main.rs` | 服务入口：先 bind HTTP，再启动独立 Gamma full/priority sync、rewards catalog sync 和可重启盘口流后台任务 |
 | `apps/orderbook/src/market_sync.rs` | Gamma full sync、priority condition sync（已注册 token/rewards 重点市场）与 CLOB reward markets 单次同步实现 → Postgres |
-| `apps/orderbook/src/stream.rs` | 聚合 registry token，消费 CLOB `book` + `price_change` WS，并周期性全量 poll 注册 token 做 reconcile |
+| `apps/orderbook/src/stream.rs` | 聚合 registry token，按 token 分片消费 CLOB `book` + `price_change` WS，并周期性全量 poll 注册 token 做 reconcile |
 | `apps/orderbook/src/http_api.rs` | 盘口读取、批量读取、stats、内部 WS stream、token 注册/注销和内部 ingest HTTP API |
 | `apps/orderbook/src/updates.rs` | Orderbook cache 更新广播器：为 WS/poll/ingest 写入分配 sequence 并 fan-out 给内部 WS 客户端 |
 | `crates/connectors/src/orderbook.rs` | Orderbook service client：HTTP 读写/注册和内部 WS stream 连接 |
@@ -49,6 +49,7 @@
 
 - 每个 source 的 `register_tokens()` 是原子全量替换，不是增量追加；空集合等同删除 source。
 - registry 聚合顺序由 infrastructure 固定，优先级为 `rewards_active`、`exec_orders`、`rewards_eligible`、`rewards_candidates`、`copytrade`，最终受 `POLYEDGE_ORDERBOOK_STREAM__MAX_TOKENS` 限制。
+- Polymarket WS 订阅按 `POLYEDGE_ORDERBOOK_STREAM__WS_CHUNK_SIZE` 分片成多条连接，降低单连接高消息量导致 SDK broadcast lag 的风险；任意分片结束或失败时，当前 stream lifecycle 会整体重建。
 - stream refresh 只用 token 成员集合判断是否需要重建 WS 订阅，避免候选/eligible 查询排序抖动导致同一批 token 反复断线重连；poll reconciler 的共享 token 列表仍每次刷新为最新顺序。
 - 所有缓存写入都会先把 bids 按价格降序、asks 按价格升序排序，再裁剪到 `POLYEDGE_ORDERBOOK_STREAM__MAX_LEVELS_PER_SIDE`，避免上游无序数据丢失 top-of-book。
 - WS 同时消费完整 `book` 快照和挂单/撤单触发的 `price_change` 增量；无 size 的增量不修改深度，等待后续快照/poll 对账。
@@ -82,7 +83,7 @@ Worker register sources
 
 ## 当前状态与缺口
 
-- 市场同步、registry、WS `book` + `price_change`、全注册 token 周期 poll reconcile、HTTP 读取、内部 WS 推送和内部写认证已实现；poll 可修复 fresh cache 中未被察觉的 WS 增量丢失，并通过内部 WS 广播给 worker 本地 cache；内部 WS client 建连最多等待 5 秒，避免不可达地址阻塞调用方。
+- 市场同步、registry、分片 WS `book` + `price_change`、全注册 token 周期 poll reconcile、HTTP 读取、内部 WS 推送和内部写认证已实现；poll 可修复 fresh cache 中未被察觉的 WS 增量丢失，并通过内部 WS 广播给 worker 本地 cache；内部 WS client 建连最多等待 5 秒，避免不可达地址阻塞调用方。
 - orderbook stream 的 token refresh 已避免仅因 registry 聚合顺序变化触发 WS 重连；只有订阅 token 成员真实增删时才重建 Polymarket WS 订阅。
 - poll 盘口保留 CLOB 返回的服务端毫秒时间戳，不再用 HTTP 响应完成时间伪造新鲜度；batch HTTP 读取通过一次 cache 批量读锁返回。
 - Gamma full sync、Gamma priority sync 与 rewards 目录同步在 orderbook 服务中使用三个独立后台循环；rewards 分页和详情补全可能持续很多分钟，但不会阻塞 Gamma `markets.synced_at` 刷新。Gamma full/priority 写入 `markets` 时在 orderbook 进程内串行化，并由 Postgres `lock_timeout` / `statement_timeout` 快速失败，避免一次慢锁等待拖垮后续周期。priority sync 会在全量目录之间强制刷新重点 condition，避免已挂单/已订阅/rewards 筛选市场仅因目录新鲜度过低被策略撤单。rewards 详情补全后仍缺 token 或空目录异常时保留上一版 rewards catalog，不执行破坏性全量替换。

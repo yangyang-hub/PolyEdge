@@ -1,7 +1,5 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 
@@ -15,8 +13,14 @@ const LINE_CLAMP_CLASS = {
 } as const;
 
 /**
- * 多行截断长文本；**仅当内容实际溢出时**才在 hover/focus 时用 Tooltip 显示完整文本，
- * 避免对短文本也弹浮框。line-clamp 只是视觉截断，DOM 内仍保留完整文本，屏幕阅读器可读全文。
+ * 多行截断长文本，hover/focus 时用 Tooltip 显示完整文本。
+ *
+ * 不做「仅溢出才弹浮框」的判定——因为 `display:-webkit-box` + `-webkit-line-clamp`
+ * 元素的 `scrollHeight` 在浏览器里有已知 quirk（常等于 clientHeight），无法可靠检测
+ * 是否被截断。改为始终挂 Tooltip：Radix Tooltip 全局设了 150ms delay，快速划过不弹，
+ * 只有 hover 停留才显示；短文本弹相同内容略冗余但无害，长文本一定能看到全文。
+ *
+ * line-clamp 只是视觉截断，DOM 仍保留完整文本，屏幕阅读器可读全文。
  */
 export function TruncateText({
   text,
@@ -27,30 +31,11 @@ export function TruncateText({
   lines?: 1 | 2 | 3 | 4 | 5;
   className?: string;
 }) {
-  const ref = useRef<HTMLSpanElement>(null);
-  const [overflowing, setOverflowing] = useState(false);
-
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    setOverflowing(el.scrollHeight > el.clientHeight + 1);
-  }, [text, lines, className]);
-
-  const clampClass = LINE_CLAMP_CLASS[lines];
-
-  const content = (
-    <span ref={ref} className={cn(clampClass, className)}>
-      {text}
-    </span>
-  );
-
-  if (!overflowing) {
-    return content;
-  }
-
   return (
     <Tooltip>
-      <TooltipTrigger asChild>{content}</TooltipTrigger>
+      <TooltipTrigger asChild>
+        <span className={cn(LINE_CLAMP_CLASS[lines], className)}>{text}</span>
+      </TooltipTrigger>
       <TooltipContent side="top" className="max-w-sm whitespace-pre-wrap text-wrap">
         {text}
       </TooltipContent>

@@ -19,6 +19,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 use tokio::sync::RwLock;
+use tokio::task::JoinSet;
 use tracing::{debug, info, warn};
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -62,39 +63,41 @@ pub async fn run_orderbook_stream(
         return Ok(report);
     }
 
-    // 3. Create WS client and subscribe.
-    // Use a longer heartbeat timeout (30s vs SDK default 15s) to reduce
-    // false-positive heartbeat warnings on networks with occasional latency.
-    let mut ws_config = WsConfig::default();
-    ws_config.heartbeat_timeout = Duration::from_secs(30);
-    let ws_client =
-        ClobWsClient::new(&state.settings.polymarket.ws_host, ws_config).map_err(|error| {
-            AppError::internal(
-                "ORDERBOOK_WS_INIT_FAILED",
-                format!("failed to create orderbook websocket client: {error}"),
+    // 3. Start WS consumers in token chunks. The SDK uses a fixed-size
+    // broadcast queue per WS connection; splitting large subscriptions keeps
+    // high-volume market updates from lagging one shared receiver.
+    let ws_chunk_size = settings.ws_chunk_size.max(1);
+    let ws_snapshots_received = Arc::new(AtomicUsize::new(0));
+    let ws_price_changes_received = Arc::new(AtomicUsize::new(0));
+    let mut ws_tasks = JoinSet::new();
+    let mut ws_connection_count = 0usize;
+    for (chunk_index, chunk) in u256_ids.chunks(ws_chunk_size).enumerate() {
+        ws_connection_count += 1;
+        let chunk_token_ids = chunk.to_vec();
+        let ws_host = state.settings.polymarket.ws_host.clone();
+        let ws_cache = cache.clone();
+        let ws_broadcaster = broadcaster.clone();
+        let chunk_snapshots = ws_snapshots_received.clone();
+        let chunk_price_changes = ws_price_changes_received.clone();
+        ws_tasks.spawn(async move {
+            run_orderbook_ws_chunk(
+                chunk_index,
+                chunk_token_ids,
+                ws_host,
+                ws_cache,
+                ws_broadcaster,
+                max_levels_per_side,
+                chunk_snapshots,
+                chunk_price_changes,
             )
-        })?;
-    let book_stream = ws_client
-        .subscribe_orderbook(u256_ids.clone())
-        .map_err(|error| {
-            AppError::internal(
-                "ORDERBOOK_WS_SUBSCRIBE_FAILED",
-                format!("failed to subscribe to orderbook websocket: {error}"),
-            )
-        })?;
-    let price_stream = ws_client
-        .subscribe_prices(u256_ids.clone())
-        .map_err(|error| {
-            AppError::internal(
-                "ORDERBOOK_WS_PRICE_SUBSCRIBE_FAILED",
-                format!("failed to subscribe to orderbook price changes: {error}"),
-            )
-        })?;
-    let mut book_stream = Box::pin(book_stream);
-    let mut price_stream = Box::pin(price_stream);
+            .await
+        });
+    }
 
     info!(
         subscribed_tokens = u256_ids.len(),
+        ws_connections = ws_connection_count,
+        ws_chunk_size,
         "orderbook stream subscribed to market channel"
     );
 
@@ -185,7 +188,7 @@ pub async fn run_orderbook_stream(
         }
     });
 
-    // 6. Consume WS stream with periodic token set check.
+    // 6. Keep WS chunk consumers alive with periodic token set checks.
     //    When other services register new tokens via the HTTP API, the registry
     //    changes. We periodically check and reconnect if the set changed.
     let refresh_interval = Duration::from_secs(settings.token_refresh_interval_secs.max(10));
@@ -195,67 +198,22 @@ pub async fn run_orderbook_stream(
 
     loop {
         tokio::select! {
-            message = book_stream.next() => {
-                match message {
-                    Some(Ok(book_update)) => {
-                        let cached = normalized_cached_book(
-                            book_update_to_cached(&book_update),
-                            max_levels_per_side,
-                        );
-                        if let Err(error) = set_book_and_publish_if_current(
-                            &cache,
-                            broadcaster,
-                            OrderbookStreamReason::Book,
-                            &cached,
-                        )
-                        .await
-                        {
-                            warn!(
-                                token_id = %cached.token_id,
-                                error = %error,
-                                "failed to write orderbook snapshot to cache"
-                            );
-                        }
-                        report.ws_snapshots_received += 1;
-
-                        if report.ws_snapshots_received % 100 == 0 {
-                            debug!(
-                                received = report.ws_snapshots_received,
-                                "orderbook stream processing snapshots"
-                            );
-                        }
+            result = ws_tasks.join_next() => {
+                match result {
+                    Some(Ok(Ok(()))) => {
+                        info!("orderbook WS chunk ended, restarting stream");
+                    }
+                    Some(Ok(Err(error))) => {
+                        warn!(error = %error, "orderbook WS chunk failed, restarting stream");
                     }
                     Some(Err(error)) => {
-                        warn!(error = %error, "orderbook WS stream error, poll reconciler will cover gaps");
+                        warn!(error = %error, "orderbook WS chunk task failed, restarting stream");
                     }
                     None => {
-                        info!("orderbook WS stream ended");
-                        break;
+                        info!("all orderbook WS chunks ended");
                     }
                 }
-            }
-            message = price_stream.next() => {
-                match message {
-                    Some(Ok(price_change)) => {
-                        if let Err(error) = apply_price_change_to_cache(
-                            &cache,
-                            broadcaster,
-                            &price_change,
-                        )
-                        .await
-                        {
-                            warn!(error = %error, "failed to apply orderbook price change");
-                        }
-                        report.ws_price_changes_received += 1;
-                    }
-                    Some(Err(error)) => {
-                        warn!(error = %error, "orderbook price-change WS stream error, poll reconciler will cover gaps");
-                    }
-                    None => {
-                        info!("orderbook price-change WS stream ended");
-                        break;
-                    }
-                }
+                break;
             }
             _ = refresh_timer.tick() => {
                 // Check if the registry token set changed (other services may
@@ -285,8 +243,12 @@ pub async fn run_orderbook_stream(
         }
     }
 
+    ws_tasks.abort_all();
+    while ws_tasks.join_next().await.is_some() {}
     poll_handle.abort();
 
+    report.ws_snapshots_received = ws_snapshots_received.load(Ordering::Relaxed);
+    report.ws_price_changes_received = ws_price_changes_received.load(Ordering::Relaxed);
     report.poll_reconciliations = poll_reconciliations.load(Ordering::Relaxed);
     report.poll_failures = poll_failures.load(Ordering::Relaxed);
 
@@ -298,6 +260,135 @@ pub async fn run_orderbook_stream(
     );
 
     Ok(report)
+}
+
+async fn run_orderbook_ws_chunk(
+    chunk_index: usize,
+    token_ids: Vec<U256>,
+    ws_host: String,
+    cache: Arc<dyn OrderbookCache>,
+    broadcaster: OrderbookUpdateBroadcaster,
+    max_levels_per_side: usize,
+    snapshots_received: Arc<AtomicUsize>,
+    price_changes_received: Arc<AtomicUsize>,
+) -> Result<()> {
+    // Use a longer heartbeat timeout (30s vs SDK default 15s) to reduce
+    // false-positive heartbeat warnings on networks with occasional latency.
+    let mut ws_config = WsConfig::default();
+    ws_config.heartbeat_timeout = Duration::from_secs(30);
+    let ws_client = ClobWsClient::new(&ws_host, ws_config).map_err(|error| {
+        AppError::internal(
+            "ORDERBOOK_WS_INIT_FAILED",
+            format!("failed to create orderbook websocket client: {error}"),
+        )
+    })?;
+    let book_stream = ws_client
+        .subscribe_orderbook(token_ids.clone())
+        .map_err(|error| {
+            AppError::internal(
+                "ORDERBOOK_WS_SUBSCRIBE_FAILED",
+                format!("failed to subscribe to orderbook websocket: {error}"),
+            )
+        })?;
+    let price_stream = ws_client
+        .subscribe_prices(token_ids.clone())
+        .map_err(|error| {
+            AppError::internal(
+                "ORDERBOOK_WS_PRICE_SUBSCRIBE_FAILED",
+                format!("failed to subscribe to orderbook price changes: {error}"),
+            )
+        })?;
+    let mut book_stream = Box::pin(book_stream);
+    let mut price_stream = Box::pin(price_stream);
+
+    info!(
+        ws_chunk = chunk_index,
+        subscribed_tokens = token_ids.len(),
+        "orderbook WS chunk subscribed"
+    );
+
+    loop {
+        tokio::select! {
+            message = book_stream.next() => {
+                match message {
+                    Some(Ok(book_update)) => {
+                        let cached = normalized_cached_book(
+                            book_update_to_cached(&book_update),
+                            max_levels_per_side,
+                        );
+                        if let Err(error) = set_book_and_publish_if_current(
+                            &cache,
+                            &broadcaster,
+                            OrderbookStreamReason::Book,
+                            &cached,
+                        )
+                        .await
+                        {
+                            warn!(
+                                ws_chunk = chunk_index,
+                                token_id = %cached.token_id,
+                                error = %error,
+                                "failed to write orderbook snapshot to cache"
+                            );
+                        }
+                        let received = snapshots_received.fetch_add(1, Ordering::Relaxed) + 1;
+
+                        if received % 100 == 0 {
+                            debug!(
+                                ws_chunk = chunk_index,
+                                received,
+                                "orderbook stream processing snapshots"
+                            );
+                        }
+                    }
+                    Some(Err(error)) => {
+                        warn!(
+                            ws_chunk = chunk_index,
+                            error = %error,
+                            "orderbook WS stream error, poll reconciler will cover gaps"
+                        );
+                    }
+                    None => {
+                        info!(ws_chunk = chunk_index, "orderbook WS stream ended");
+                        break;
+                    }
+                }
+            }
+            message = price_stream.next() => {
+                match message {
+                    Some(Ok(price_change)) => {
+                        if let Err(error) = apply_price_change_to_cache(
+                            &cache,
+                            &broadcaster,
+                            &price_change,
+                        )
+                        .await
+                        {
+                            warn!(
+                                ws_chunk = chunk_index,
+                                error = %error,
+                                "failed to apply orderbook price change"
+                            );
+                        }
+                        price_changes_received.fetch_add(1, Ordering::Relaxed);
+                    }
+                    Some(Err(error)) => {
+                        warn!(
+                            ws_chunk = chunk_index,
+                            error = %error,
+                            "orderbook price-change WS stream error, poll reconciler will cover gaps"
+                        );
+                    }
+                    None => {
+                        info!(ws_chunk = chunk_index, "orderbook price-change WS stream ended");
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(())
 }
 
 async fn collect_orderbook_subscription_tokens(state: &AppState) -> Vec<String> {

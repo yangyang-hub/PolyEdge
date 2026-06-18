@@ -566,6 +566,19 @@ pub fn runtime_config_entries(&self) -> Vec<RuntimeConfigEntry> {
         &mut entries,
         RuntimeConfigEntryDraft {
             section: "orderbook_stream",
+            field: "ws_chunk_size",
+            label: "Orderbook WS chunk size",
+            env_name: "POLYEDGE_ORDERBOOK_STREAM__WS_CHUNK_SIZE",
+            value: self.orderbook_stream.ws_chunk_size.to_string(),
+            default_value: defaults.orderbook_stream.ws_chunk_size.to_string(),
+            value_type: RuntimeConfigValueType::Integer,
+            options: Vec::new(),
+        },
+    );
+    push_runtime_config_entry(
+        &mut entries,
+        RuntimeConfigEntryDraft {
+            section: "orderbook_stream",
             field: "poll_reconcile_interval_secs",
             label: "Orderbook stream poll reconcile interval seconds",
             env_name: "POLYEDGE_ORDERBOOK_STREAM__POLL_RECONCILE_INTERVAL_SECS",
