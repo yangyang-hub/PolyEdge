@@ -606,6 +606,39 @@ fn quote_bid_rank_spread_is_checked_during_live_materialization() {
 }
 
 #[test]
+fn auto_enforce_falls_back_to_single_side_when_double_spread_fails() {
+    let config = RewardBotConfig {
+        quote_mode: RewardQuoteMode::Auto,
+        selection_mode: RewardSelectionMode::Enforce,
+        dominant_single_side_enabled: true,
+        quote_bid_rank: 2,
+        min_market_score: Decimal::ZERO,
+        max_spread_cents: decimal("2"),
+        ..RewardBotConfig::default()
+    };
+    let mut books = test_books();
+    books.get_mut("yes_budget").expect("YES book").bids.push(RewardBookLevel {
+        price: decimal("0.70"),
+        size: decimal("100"),
+    });
+    books.get_mut("no_budget").expect("NO book").bids.push(RewardBookLevel {
+        price: decimal("0.21"),
+        size: decimal("100"),
+    });
+
+    let plan = build_reward_quote_plan(&test_market(decimal("5")), &books, &config);
+    let materialized = materialize_reward_quote_plan_for_live_orderbook(&plan, &books, &config)
+        .expect("live materialization should fall back to one valid side");
+
+    assert!(plan.eligible, "{}", plan.reason);
+    assert_eq!(plan.quote_mode, RewardPlanQuoteMode::Double);
+    assert_eq!(materialized.quote_mode, RewardPlanQuoteMode::SingleNo);
+    assert_eq!(materialized.legs.len(), 1);
+    assert_eq!(materialized.legs[0].outcome, "No");
+    assert_eq!(materialized.legs[0].price, decimal("0.21"));
+}
+
+#[test]
 fn quote_bid_rank_is_limited_to_supported_levels() {
     assert_eq!(
         RewardBotConfig {

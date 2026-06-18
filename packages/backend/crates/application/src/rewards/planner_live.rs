@@ -59,51 +59,40 @@ pub fn materialize_reward_quote_plan_for_live_orderbook(
     let mut effective_quote_mode = quote_mode;
     let legs = match quote_mode {
         RewardPlanQuoteMode::Double => {
-            let yes_bid = yes_bid
-                .ok_or_else(|| format!("YES book does not have bid-{}", config.quote_bid_rank))?;
-            let no_bid = no_bid
-                .ok_or_else(|| format!("NO book does not have bid-{}", config.quote_bid_rank))?;
-            validate_live_quote_bid(
-                "YES",
+            match make_double_live_quote_legs(
+                &yes_token,
                 yes_bid,
                 yes_quote_midpoint,
                 &yes_state,
-                max_spread,
-                config.quote_bid_rank,
-            )?;
-            validate_live_quote_bid(
-                "NO",
+                &no_token,
                 no_bid,
                 no_quote_midpoint,
                 &no_state,
                 max_spread,
-                config.quote_bid_rank,
-            )?;
-            let safety = config.safety_margin_cents / decimal("100");
-            if yes_bid + no_bid > Decimal::ONE - safety {
-                return Err("YES/NO bids do not leave enough safety margin".to_string());
-            }
-            if let Some(legs) = make_quote_legs(
-                &yes_token,
-                yes_bid,
-                &no_token,
-                no_bid,
                 plan.rewards_min_size,
                 config,
             ) {
-                legs
-            } else if let Some((fallback_mode, legs)) = make_single_side_budget_fallback_legs(
-                    &yes_token,
-                    yes_bid,
-                    &no_token,
-                    no_bid,
-                    plan.rewards_min_size,
-                    config,
-                ) {
-                effective_quote_mode = fallback_mode;
-                legs
-            } else {
-                return Err("per-market budget cannot satisfy rewards minimum size".to_string());
+                Ok(legs) => legs,
+                Err(double_error) => {
+                    if let Some((fallback_mode, legs)) = make_single_side_live_fallback_legs(
+                        &yes_token,
+                        yes_bid,
+                        yes_quote_midpoint,
+                        &yes_state,
+                        &no_token,
+                        no_bid,
+                        no_quote_midpoint,
+                        &no_state,
+                        max_spread,
+                        plan.rewards_min_size,
+                        config,
+                    ) {
+                        effective_quote_mode = fallback_mode;
+                        legs
+                    } else {
+                        return Err(double_error);
+                    }
+                }
             }
         }
         RewardPlanQuoteMode::SingleYes => {
@@ -152,6 +141,135 @@ pub fn materialize_reward_quote_plan_for_live_orderbook(
         midpoint,
         legs,
     })
+}
+
+fn make_double_live_quote_legs(
+    yes_token: &RewardToken,
+    yes_bid: Option<Decimal>,
+    yes_midpoint: Decimal,
+    yes_state: &Option<TokenBookState>,
+    no_token: &RewardToken,
+    no_bid: Option<Decimal>,
+    no_midpoint: Decimal,
+    no_state: &Option<TokenBookState>,
+    max_spread: Decimal,
+    rewards_min_size: Decimal,
+    config: &RewardBotConfig,
+) -> std::result::Result<Vec<RewardQuoteLeg>, String> {
+    let yes_bid =
+        yes_bid.ok_or_else(|| format!("YES book does not have bid-{}", config.quote_bid_rank))?;
+    let no_bid =
+        no_bid.ok_or_else(|| format!("NO book does not have bid-{}", config.quote_bid_rank))?;
+    validate_live_quote_bid(
+        "YES",
+        yes_bid,
+        yes_midpoint,
+        yes_state,
+        max_spread,
+        config.quote_bid_rank,
+    )?;
+    validate_live_quote_bid(
+        "NO",
+        no_bid,
+        no_midpoint,
+        no_state,
+        max_spread,
+        config.quote_bid_rank,
+    )?;
+    let safety = config.safety_margin_cents / decimal("100");
+    if yes_bid + no_bid > Decimal::ONE - safety {
+        return Err("YES/NO bids do not leave enough safety margin".to_string());
+    }
+    make_quote_legs(
+        yes_token,
+        yes_bid,
+        no_token,
+        no_bid,
+        rewards_min_size,
+        config,
+    )
+    .ok_or_else(|| "per-market budget cannot satisfy rewards minimum size".to_string())
+}
+
+fn make_single_side_live_fallback_legs(
+    yes_token: &RewardToken,
+    yes_bid: Option<Decimal>,
+    yes_midpoint: Decimal,
+    yes_state: &Option<TokenBookState>,
+    no_token: &RewardToken,
+    no_bid: Option<Decimal>,
+    no_midpoint: Decimal,
+    no_state: &Option<TokenBookState>,
+    max_spread: Decimal,
+    rewards_min_size: Decimal,
+    config: &RewardBotConfig,
+) -> Option<(RewardPlanQuoteMode, Vec<RewardQuoteLeg>)> {
+    if config.quote_mode != RewardQuoteMode::Auto
+        || config.selection_mode != RewardSelectionMode::Enforce
+        || !config.dominant_single_side_enabled
+    {
+        return None;
+    }
+
+    let yes = make_single_side_live_fallback_leg(
+        RewardPlanQuoteMode::SingleYes,
+        "YES",
+        yes_token,
+        yes_bid,
+        yes_midpoint,
+        yes_state,
+        max_spread,
+        rewards_min_size,
+        config,
+    );
+    let no = make_single_side_live_fallback_leg(
+        RewardPlanQuoteMode::SingleNo,
+        "NO",
+        no_token,
+        no_bid,
+        no_midpoint,
+        no_state,
+        max_spread,
+        rewards_min_size,
+        config,
+    );
+
+    let selected = match (yes, no) {
+        (Some(yes), Some(no)) => {
+            let yes_notional = yes.1.price * yes.1.size;
+            let no_notional = no.1.price * no.1.size;
+            if yes_notional <= no_notional { yes } else { no }
+        }
+        (Some(yes), None) => yes,
+        (None, Some(no)) => no,
+        (None, None) => return None,
+    };
+
+    Some((selected.0, vec![selected.1]))
+}
+
+fn make_single_side_live_fallback_leg(
+    quote_mode: RewardPlanQuoteMode,
+    label: &str,
+    token: &RewardToken,
+    bid: Option<Decimal>,
+    midpoint: Decimal,
+    state: &Option<TokenBookState>,
+    max_spread: Decimal,
+    rewards_min_size: Decimal,
+    config: &RewardBotConfig,
+) -> Option<(RewardPlanQuoteMode, RewardQuoteLeg)> {
+    let bid = bid?;
+    validate_live_quote_bid(
+        label,
+        bid,
+        midpoint,
+        state,
+        max_spread,
+        config.quote_bid_rank,
+    )
+    .ok()?;
+    make_single_quote_leg(token, bid, rewards_min_size, config).map(|leg| (quote_mode, leg))
 }
 
 fn selected_live_quote_mode(
