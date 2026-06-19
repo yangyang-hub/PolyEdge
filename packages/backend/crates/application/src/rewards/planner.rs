@@ -17,22 +17,57 @@ pub fn select_reward_book_token_ids(markets: &[RewardMarket]) -> Vec<String> {
     selected
 }
 
+#[cfg(test)]
 pub fn select_reward_quote_candidate_markets(
     markets: &[RewardMarket],
     config: &RewardBotConfig,
 ) -> Vec<RewardMarket> {
-    if config.max_markets == 0
-        || config.max_open_orders == 0
-        || config.quote_size_usd <= Decimal::ZERO
-    {
+    select_reward_quote_candidate_market_profiles(
+        markets,
+        config,
+        RewardStrategyBucket::Standard,
+    )
+    .into_iter()
+    .map(|candidate| candidate.market)
+    .collect()
+}
+
+pub fn select_reward_quote_candidate_market_profiles(
+    markets: &[RewardMarket],
+    config: &RewardBotConfig,
+    strategy_bucket: RewardStrategyBucket,
+) -> Vec<RewardCandidateMarket> {
+    let effective_config = config.config_for_strategy_bucket(strategy_bucket);
+    if reward_candidate_profile_is_disabled(config, &effective_config, strategy_bucket) {
         return Vec::new();
     }
 
     markets
         .iter()
-        .filter(|market| reward_market_prefilter_reason(market, config).is_none())
-        .cloned()
+        .filter(|market| reward_market_prefilter_reason(market, &effective_config).is_none())
+        .map(|market| RewardCandidateMarket {
+            market: market.clone(),
+            strategy_bucket,
+        })
         .collect()
+}
+
+fn reward_candidate_profile_is_disabled(
+    base_config: &RewardBotConfig,
+    effective_config: &RewardBotConfig,
+    strategy_bucket: RewardStrategyBucket,
+) -> bool {
+    if effective_config.max_markets == 0 || effective_config.quote_size_usd <= Decimal::ZERO {
+        return true;
+    }
+    match strategy_bucket {
+        RewardStrategyBucket::Standard => effective_config.max_open_orders == 0,
+        RewardStrategyBucket::LowCompetition => {
+            base_config.low_competition_mode == RewardLowCompetitionMode::Enforce
+                && effective_config.max_open_orders == 0
+        }
+        RewardStrategyBucket::None => true,
+    }
 }
 
 fn reward_market_prefilter_reason(
@@ -107,9 +142,33 @@ pub fn build_reward_quote_plans(
     books: &HashMap<String, RewardOrderBook>,
     config: &RewardBotConfig,
 ) -> Vec<RewardQuotePlan> {
-    let mut plans = markets
+    let candidates = markets
         .iter()
-        .map(|market| build_reward_quote_plan(market, books, config))
+        .cloned()
+        .map(|market| RewardCandidateMarket {
+            market,
+            strategy_bucket: RewardStrategyBucket::Standard,
+        })
+        .collect::<Vec<_>>();
+    build_reward_quote_plans_for_candidates(&candidates, books, config)
+}
+
+pub fn build_reward_quote_plans_for_candidates(
+    candidates: &[RewardCandidateMarket],
+    books: &HashMap<String, RewardOrderBook>,
+    config: &RewardBotConfig,
+) -> Vec<RewardQuotePlan> {
+    let mut plans = candidates
+        .iter()
+        .map(|candidate| {
+            let effective_config = config.config_for_strategy_bucket(candidate.strategy_bucket);
+            build_reward_quote_plan_for_bucket(
+                &candidate.market,
+                books,
+                &effective_config,
+                candidate.strategy_bucket,
+            )
+        })
         .collect::<Vec<_>>();
     plans.sort_by(|left, right| {
         right
@@ -121,14 +180,24 @@ pub fn build_reward_quote_plans(
     plans
 }
 
+#[cfg(test)]
 fn build_reward_quote_plan(
     market: &RewardMarket,
     books: &HashMap<String, RewardOrderBook>,
     config: &RewardBotConfig,
 ) -> RewardQuotePlan {
+    build_reward_quote_plan_for_bucket(market, books, config, RewardStrategyBucket::Standard)
+}
+
+fn build_reward_quote_plan_for_bucket(
+    market: &RewardMarket,
+    books: &HashMap<String, RewardOrderBook>,
+    config: &RewardBotConfig,
+    strategy_bucket: RewardStrategyBucket,
+) -> RewardQuotePlan {
     let now = OffsetDateTime::now_utc();
     let Some((yes_token, no_token)) = reward_quote_tokens(market) else {
-        return empty_plan(market, "missing YES/NO token", now, None);
+        return empty_plan(market, "missing YES/NO token", now, None, strategy_bucket);
     };
 
     let yes_state = get_token_book_state(yes_token, books, config, now);
@@ -138,7 +207,13 @@ fn build_reward_quote_plan(
         .map(|state| state.midpoint)
         .or_else(|| no_state.as_ref().map(|state| Decimal::ONE - state.midpoint));
     let Some(midpoint) = midpoint else {
-        return empty_plan(market, "missing book or fallback token price", now, None);
+        return empty_plan(
+            market,
+            "missing book or fallback token price",
+            now,
+            None,
+            strategy_bucket,
+        );
     };
     let metrics = build_market_book_metrics(yes_token, no_token, books, midpoint, config);
     let quote_mode = selected_reward_quote_mode_for_planning(config, midpoint);
@@ -150,6 +225,7 @@ fn build_reward_quote_plan(
             now,
             Some(midpoint),
             metrics,
+            strategy_bucket,
         );
     }
 
@@ -167,6 +243,7 @@ fn build_reward_quote_plan(
             now,
             Some(midpoint),
             metrics,
+            strategy_bucket,
         );
     }
 
@@ -177,6 +254,7 @@ fn build_reward_quote_plan(
             now,
             Some(midpoint),
             metrics,
+            strategy_bucket,
         );
     }
 
@@ -191,6 +269,7 @@ fn build_reward_quote_plan(
             now,
             Some(midpoint),
             metrics,
+            strategy_bucket,
         );
     }
 
@@ -201,6 +280,7 @@ fn build_reward_quote_plan(
             now,
             Some(midpoint),
             metrics,
+            strategy_bucket,
         );
     }
 
@@ -215,6 +295,7 @@ fn build_reward_quote_plan(
         legs,
         config,
         now,
+        strategy_bucket,
     )
 }
 
@@ -227,6 +308,7 @@ fn build_ready_quote_plan(
     legs: Vec<RewardQuoteLeg>,
     config: &RewardBotConfig,
     now: OffsetDateTime,
+    strategy_bucket: RewardStrategyBucket,
 ) -> RewardQuotePlan {
     let score = score_market(market, max_spread_cents, midpoint, &legs, config);
     let eligible = score >= config.min_market_score;
@@ -245,7 +327,7 @@ fn build_ready_quote_plan(
         } else {
             "score is below threshold".to_string()
         },
-        strategy_bucket: RewardStrategyBucket::None,
+        strategy_bucket,
         quote_mode,
         recommended_quote_mode: metrics
             .as_ref()
@@ -325,6 +407,7 @@ fn empty_plan(
     reason: impl Into<String>,
     now: OffsetDateTime,
     midpoint: Option<Decimal>,
+    strategy_bucket: RewardStrategyBucket,
 ) -> RewardQuotePlan {
     RewardQuotePlan {
         condition_id: market.condition_id.clone(),
@@ -333,7 +416,7 @@ fn empty_plan(
         score: Decimal::ZERO,
         eligible: false,
         reason: reason.into(),
-        strategy_bucket: RewardStrategyBucket::None,
+        strategy_bucket,
         quote_mode: RewardPlanQuoteMode::None,
         recommended_quote_mode: None,
         book_metrics: None,
@@ -357,8 +440,9 @@ fn empty_plan_with_metrics(
     now: OffsetDateTime,
     midpoint: Option<Decimal>,
     metrics: Option<RewardMarketBookMetrics>,
+    strategy_bucket: RewardStrategyBucket,
 ) -> RewardQuotePlan {
-    let mut plan = empty_plan(market, reason, now, midpoint);
+    let mut plan = empty_plan(market, reason, now, midpoint, strategy_bucket);
     plan.recommended_quote_mode = metrics.as_ref().map(|metrics| metrics.recommended_quote_mode);
     plan.book_metrics = metrics;
     plan

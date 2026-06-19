@@ -159,6 +159,22 @@ impl RewardBotStore for PostgresRewardBotStore {
         Ok(())
     }
 
+    async fn record_low_competition_observations(
+        &self,
+        observations: &[RewardLowCompetitionObservation],
+    ) -> Result<()> {
+        postgres_record_low_competition_observations(&self.pool, observations).await
+    }
+
+    async fn list_low_competition_observations(
+        &self,
+        account_id: &str,
+        since: OffsetDateTime,
+        limit: u16,
+    ) -> Result<Vec<RewardLowCompetitionObservation>> {
+        postgres_list_low_competition_observations(&self.pool, account_id, since, limit).await
+    }
+
     async fn latest_market_advisory(
         &self,
         request: &RewardAiAdvisoryRequest,
@@ -502,6 +518,7 @@ impl RewardBotStore for PostgresRewardBotStore {
         let rows = sqlx::query(
             r#"
             SELECT id, account_id, condition_id, token_id, outcome, side, price, size,
+                   strategy_bucket,
                    external_order_id, status, scoring, reason, filled_size, reward_earned,
                    last_scored_at, created_at, updated_at
             FROM reward_managed_orders
@@ -572,6 +589,7 @@ impl RewardBotStore for PostgresRewardBotStore {
         let row = sqlx::query(
             r#"
             SELECT id, account_id, condition_id, token_id, outcome, side, price, size,
+                   strategy_bucket,
                    external_order_id, status, scoring, reason, filled_size, reward_earned,
                    last_scored_at, created_at, updated_at
             FROM reward_managed_orders

@@ -9,12 +9,12 @@ use polyedge_application::{
     RewardCandidateFilter, RewardControlAction, RewardControlCommand, RewardControlCommandStatus,
     RewardFill, RewardFillRole, RewardInfoDirectionalRisk, RewardInfoRiskAssessmentRequest,
     RewardInfoRiskLevel, RewardInfoRiskSource, RewardInfoRiskType, RewardLowCompetitionMode,
-    RewardMarket, RewardMarketAdvisory, RewardMarketInfoRisk, RewardOrderListQuery,
-    RewardOrderPage, RewardOrderSide, RewardOrderSortField, RewardOrderStatusFilter,
-    RewardPlanQuoteMode, RewardPosition, RewardQuoteMode, RewardQuotePlan,
+    RewardLowCompetitionObservation, RewardMarket, RewardMarketAdvisory, RewardMarketInfoRisk,
+    RewardOrderListQuery, RewardOrderPage, RewardOrderSide, RewardOrderSortField,
+    RewardOrderStatusFilter, RewardPlanQuoteMode, RewardPosition, RewardQuoteMode, RewardQuotePlan,
     RewardQuotePlanListQuery, RewardQuotePlanPage, RewardQuotePlanSortField, RewardRiskEvent,
-    RewardRiskSeverity, RewardSelectionMode, RewardTickOutcome, RewardToken, RiskStateSnapshot,
-    RiskStateStore, SortOrder, SourceTrade, TrackedWallet, TrackedWalletStatus,
+    RewardRiskSeverity, RewardSelectionMode, RewardStrategyBucket, RewardTickOutcome, RewardToken,
+    RiskStateSnapshot, RiskStateStore, SortOrder, SourceTrade, TrackedWallet, TrackedWalletStatus,
     WalletAnalysisStats,
 };
 use polyedge_domain::{

@@ -269,7 +269,7 @@ async fn execute_reward_control_command(
 async fn run_reward_bot_live_tick(
     state: &AppState,
     connector: &LivePolymarketConnector,
-    markets: Vec<RewardMarket>,
+    markets: Vec<RewardCandidateMarket>,
     books: HashMap<String, RewardOrderBook>,
     trace_id: &str,
     force_orders: bool,
@@ -289,6 +289,19 @@ async fn run_reward_bot_live_tick(
             &ai_model,
         )
         .await?;
+    apply_low_competition_metrics_to_quote_plans(
+        &mut cycle.plans,
+        &books,
+        book_history,
+        &cycle.open_orders,
+        &cycle.config,
+    );
+    cycle.pre_ai_eligible_condition_ids = cycle
+        .plans
+        .iter()
+        .filter(|plan| plan.eligible)
+        .map(|plan| plan.condition_id.clone())
+        .collect();
     info!(
         trace_id = %trace_id,
         markets = cycle.markets.len(),
@@ -308,6 +321,23 @@ async fn run_reward_bot_live_tick(
     spawn_reward_market_provider_refresh(state, &cycle, &books, trace_id);
     apply_cached_reward_ai_advisories_to_cycle(state, &mut cycle, &books, trace_id).await?;
     apply_cached_reward_info_risks_to_cycle(state, &mut cycle, trace_id).await?;
+    let low_competition_observations = build_low_competition_observations(
+        &cycle.account.account_id,
+        &cycle.plans,
+        &cycle.config,
+        OffsetDateTime::now_utc(),
+    );
+    if !low_competition_observations.is_empty() {
+        state
+            .reward_bot_service
+            .record_low_competition_observations(&low_competition_observations)
+            .await?;
+        info!(
+            trace_id = %trace_id,
+            observations = low_competition_observations.len(),
+            "recorded low-competition sleeve observations",
+        );
+    }
     state.reward_bot_service.save_quote_plans(&cycle.plans).await?;
     let kill_switch = state.risk_service.read_state().await?.kill_switch;
     if kill_switch {

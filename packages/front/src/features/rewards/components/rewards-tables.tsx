@@ -35,6 +35,7 @@ import type { PaginationState } from "@/hooks/use-pagination";
 import { dictionary } from "@/lib/i18n/dictionaries";
 
 import { rewardTone } from "../lib/rewards-helpers";
+import { LowCompetitionSummary } from "./rewards-low-competition-summary";
 
 function SortIndicator({ active, order }: { active: boolean; order: "asc" | "desc" }) {
   if (!active) return null;
@@ -368,6 +369,7 @@ export function QuotePlansTable({
                   <StatusPill tone={plan.eligible ? "success" : "warning"}>
                     {plan.eligible ? dictionary.rewards.filterEligible : dictionary.rewards.filterIneligible}
                   </StatusPill>
+                  <LowCompetitionSummary plan={plan} />
                 </TableCell>
                 <TableCell className="align-top">
                   <StatusPill tone={plan.eligible ? "success" : "neutral"}>
@@ -532,6 +534,9 @@ export function OrdersTable({
               <TableRow key={order.id}>
                 <TableCell className="align-top">
                   <StatusPill tone={rewardTone(order.status)}>{order.status}</StatusPill>
+                  {order.strategy_bucket === "low_competition" ? (
+                    <div className="mt-1 text-[11px] text-muted-foreground">{dictionary.rewards.lowCompetition}</div>
+                  ) : null}
                 </TableCell>
                 <TableCell className="align-top">{order.outcome}</TableCell>
                 <TableCell className="align-top font-mono">{formatFixed(order.price, 2)}</TableCell>

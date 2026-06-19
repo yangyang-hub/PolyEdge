@@ -1,6 +1,6 @@
 # Rewards（奖励机器人）
 
-最后更新：2026-06-18
+最后更新：2026-06-19
 
 ## 概述
 
@@ -13,7 +13,10 @@
 | `src/app/(console)/rewards/page.tsx` | 路由页面 |
 | `src/features/rewards/components/rewards-workbench.tsx` | 主工作台编排：状态/操作区、指标条、活动/配置/风控 tabs |
 | `src/features/rewards/components/rewards-overview-cards.tsx` | 顶部执行概览、操作中心和关键指标条 |
-| `src/features/rewards/components/rewards-config-panel.tsx` | 分组策略配置面板（执行、市场筛选、报价构造、盘口选择、AI 建议/信息风险、库存与控制） |
+| `src/features/rewards/components/rewards-config-panel.tsx` | 分组策略配置面板（执行、市场筛选、低竞争 sleeve、报价构造、盘口选择、AI 建议/信息风险、库存与控制） |
+| `src/features/rewards/components/rewards-low-competition-config.tsx` | 低竞争 sleeve mode、额度、竞争、退出深度和盘口稳定性阈值配置 |
+| `src/features/rewards/components/rewards-low-competition-report.tsx` | 低竞争 shadow report 面板：最近 24 小时 observation、通过率、reward/退出/稳定性和 provider 拦截摘要 |
+| `src/features/rewards/components/rewards-low-competition-summary.tsx` | Quote plan 表格中的低竞争指标摘要 |
 | `src/features/rewards/components/rewards-advanced-config.tsx` | 盘口选择、AI advisory 和信息风险配置子面板 |
 | `src/features/rewards/components/rewards-config-fields.tsx` | 配置面板共享字段、区块和提示组件 |
 | `src/features/rewards/components/rewards-tables.tsx` | 表格组件（订单/持仓等） |
@@ -25,14 +28,14 @@
 
 ## 核心类型（types.ts）
 
-- **`NumberConfigKey`**：数值输入参数的字符串联合类型 — `max_markets`、`max_open_orders`、`per_market_usd`、`quote_size_usd`、`min_daily_reward`、`min_market_liquidity_usd`、`min_market_volume_24h_usd`、`min_hours_to_end`、`max_market_spread_cents`、`max_market_data_age_minutes`、dominant 单边阈值、盘口集中度阈值、AI advisory TTL、信息风险 TTL、`account_capital_usd` 等；`quote_bid_rank`、quote/selection mode、AI provider/request format 和信息风险 mode/等级使用受限下拉框，不进入该联合类型
+- **`NumberConfigKey`**：数值输入参数的字符串联合类型 — `max_markets`、`max_open_orders`、`per_market_usd`、`quote_size_usd`、`min_daily_reward`、`min_market_liquidity_usd`、`min_market_volume_24h_usd`、`min_hours_to_end`、`max_market_spread_cents`、`max_market_data_age_minutes`、低竞争 sleeve 数值阈值、dominant 单边阈值、盘口集中度阈值、AI advisory TTL、信息风险 TTL、`account_capital_usd` 等；`quote_bid_rank`、quote/selection mode、低竞争 mode、AI provider/request format 和信息风险 mode/等级使用受限下拉框，不进入该联合类型
 - **`EventCategory`**：`"all" | "placements" | "cancels" | "fills" | "rewards"`
 
 ## API 依赖
 
 - `src/lib/api/rewards.ts` — `readRewardBotSnapshot`、`updateRewardBotConfig`、`runRewardBotOnce`、`cancelRewardBotOrders`、`resetRewardBot`
 - `readRewardBotSnapshot()` 会传递计划/订单分页、搜索、状态和排序 query；首屏明确请求 `plans_eligible=true`，与默认选中的“可挂”页签一致。后端分页结果和 `orders_page` 都描述本地 managed orders，不再用 Polymarket live open orders 覆盖
-- 后端 snapshot 不返回全量 reward markets；页面只使用 `status.markets_tracked`、`status.eligible_markets` 和 `quote_plans` 展示市场覆盖与候选计划
+- 后端 snapshot 不返回全量 reward markets；页面只使用 `status.markets_tracked`、`status.eligible_markets`、`quote_plans` 和 `low_competition_report` 展示市场覆盖、候选计划与低竞争 shadow report
 - snapshot 的 `available_usd` / `positions` 来自 worker 写入数据库的账户快照；API 不持有 Polymarket 私钥，也不直接请求外部账户数据。`available_usd` 优先使用 CLOB `balance-allowance`，当 CLOB 返回 0 或失败但资金钱包链上 pUSD 余额大于 0 时，worker 使用链上 pUSD 回填
 
 ## 关键交互
@@ -46,7 +49,7 @@
 - **AI 建议配置** → 保存 provider、request format 和 TTL；worker 启用且环境变量配置 provider key 后，会在 full tick 中低频调用模型并缓存 advisory
 - **信息风险配置** → 保存启用开关、observe/enforce、过滤等级和 TTL；异步 worker 启用且环境变量配置 provider key 后，会扫描候选市场最新信息风险并缓存，页面展示风险等级/类型/摘要；enforce 模式下缺少未过期风险缓存的计划会被后端置为不可挂
 - **市场质量** → 可配置最低流动性、最低 24h 成交量、最短剩余结算时间、最大 Gamma spread 和最大目录同步年龄；后端还固定拒绝高歧义、非唯一 YES/NO、FDV/launch/token/official-result 等高跳变事件风险市场
-- **低竞争市场 sleeve** → 当前页面尚未提供配置或指标展示；后续如实现，应按 [Rewards 低竞争市场 Sleeve 实现方案](../../rewards-low-competition-sleeve-plan.md) 先展示 observe 指标，再暴露小额度 enforce 控件，且不能暗示低流动性本身是安全收益来源
+- **低竞争市场 sleeve** → 页面提供 `off/observe/enforce`、独立小额额度、竞争 notional、预估 reward/100/day、退出深度和盘口稳定性阈值配置；quote plan 表格展示低竞争 badge 和指标摘要，活动页展示最近 24 小时 shadow report。`observe` 只展示指标和 observation，不改变执行按钮语义；`enforce` 仍由后端要求 AI advisory 与 info-risk enforce 双 gate，report 不会自动改配置。
 - 事件面板支持按 `EventCategory` 过滤
 - 页面默认展示活动视图：报价计划全宽优先，订单/库存下方分栏，事件/成交流使用独立卡片；策略配置和风控配置通过 tabs 切换，减少实盘盯盘时的配置噪音。
 - 报价计划、订单原因、信息风险摘要、AI reason、事件消息和长账户/钱包字段允许换行，表格在窄屏使用横向滚动，避免关键长文本被一行省略和短卡片被高表格行强制拉伸。
@@ -65,9 +68,9 @@
 - 完整的 Run / Cancel / Reset 入队交互
 - 顶部执行概览展示实盘模式、启停/运行状态、市场就绪度、钱包余额/策略上限比例、最近扫描/运行时间和事件触发计数；策略上限直接读取当前 `snapshot.config.account_capital_usd`，不再使用可能保留历史初始值的账户账本字段，也不代表链上钱包余额。
 - 操作中心集中 Run / Save / Cancel / Reset，文案提醒当前命令可能提交或取消 Polymarket 实盘订单。
-- 配置编辑按执行、市场筛选、报价构造、盘口选择、AI 建议、库存与控制分组，包含数值参数、布尔开关、受限下拉框和成交后策略。
+- 配置编辑按执行、市场筛选、低竞争 sleeve、报价构造、盘口选择、AI 建议、库存与控制分组，包含数值参数、布尔开关、受限下拉框和成交后策略。
 - 市场筛选面板公开质量硬门槛；通过门槛的市场由后端继续按奖励、流动性、成交量、剩余时长和奖励 spread 综合排序。
-- 低竞争市场 sleeve 尚未落地；当前前端 DTO、配置面板、Server Action 校验和 quote plan 表格都不包含 `low_competition_mode`、竞争 notional、预估 reward share、退出滑点或盘口稳定性窗口指标。
+- 低竞争市场 sleeve v2 已接入前端：DTO、Server Action Zod 校验、配置面板、shadow report 面板和 quote plan 表格包含 `low_competition_mode`、独立额度/阈值、`strategy_bucket`、竞争 notional、预估 reward share、退出深度/滑点、盘口稳定性窗口指标、最近 24 小时通过率、样本不足率、AI/信息风险拦截率和小额 enforce 建议；页面不暗示低流动性本身是安全收益来源。
 - 报价构造使用“挂单档位”下拉框选择买一/买二/买三，不再提供中间价“报价偏移”；默认买一。
 - 盘口选择公开 quote/selection mode、dominant 单边概率区间、退出深度、top1/top3 买盘集中度、HHI 和偏好分类评分加成；默认 `double + observe` 不改变既有双边挂单。
 - AI 建议面板保存 OpenAI/Anthropic provider、请求格式、advisory TTL、信息风险启用、observe/enforce、过滤等级和信息风险 TTL；API key、base URL、模型名、请求超时和 web search 开关只来自 worker 环境变量，不会出现在前端配置或 snapshot。AI advisory 与信息风险扫描由 worker 全量覆盖当前候选，优先开放订单、持仓和可挂 quote plan。报价计划表展示 AI suitability、推荐 quote mode、confidence 和首条 reason，也展示信息风险等级、类型、confidence 和摘要；信息风险 enforce 且缓存缺失时，后端会把对应计划显示为不可挂。
@@ -81,7 +84,7 @@
 - Wallet balance、Positions 和 Orders 表格展示 worker 同步到数据库的 rewards 账户视图；余额显示资金钱包 pUSD，资金钱包地址优先使用 `POLYEDGE_POLYMARKET__FUNDER`，未配置时使用 `ACCOUNT_ID`。
 - 今日已赚奖励展示 worker 同步到 `account.reward_earned_usd` 的 UTC 当日 maker rewards 值；worker 优先读取认证 CLOB `GET /rewards/user/total?sponsored=true` 聚合端点，以对齐 Polymarket `/rewards` 页面顶部 Daily Rewards 的 native+sponsored 口径。聚合端点为空、为 0 或不可用时回退分页读取 `GET /rewards/user` native 明细并合并 `sponsored=true` sponsored-only 明细，按 `earnings * asset_rate` 求和。前端不直接访问 Polymarket，账户快照停更或认证配置缺失时不会自行回退官网数据。
 - 事件分类视图（挂单/撤单/吃单/奖励）
-- live worker 已接入 post-only 买单、撤单、confirmed 成交同步、成交后卖出/平仓、本地账本更新、managed order 计分状态、账户开放买单总 notional 观测和 UTC 当日账户级 maker rewards 同步（聚合端点优先、明细端点 fallback）；账户范围外开放订单明细与奖励结算对账仍是后端缺口
+- live worker 已接入 post-only 买单、撤单、confirmed 成交同步、成交后卖出/平仓、本地账本更新、managed order 计分状态、账户开放买单总 notional 观测、可映射 active rewards BUY 的 CLOB open-order 收养/重开和 UTC 当日账户级 maker rewards 同步（聚合端点优先、明细端点 fallback）；SELL、非 rewards 市场和无法唯一映射 token 的外部开放订单明细与奖励结算对账仍是后端缺口
 - 页面不再暴露仅用于旧模拟逻辑或可能错误释放对账锁的配置；历史 critical event 不会永久占用 `status.error`，当前错误只反映活跃对账锁
 - API 不直连 Polymarket 私有账户；账户余额、完整 positions 和本系统托管订单都从数据库读取。`status.open_orders` / `status.positions` 描述本地 managed state。
 

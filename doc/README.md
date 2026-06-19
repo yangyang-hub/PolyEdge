@@ -1,6 +1,6 @@
 # PolyEdge 文档索引
 
-最后更新：2026-06-18
+最后更新：2026-06-19
 
 ## 当前事实来源
 
@@ -45,4 +45,4 @@
 
 | 文档 | 状态 |
 |---|---|
-| [rewards-low-competition-sleeve-plan.md](rewards-low-competition-sleeve-plan.md) | Rewards 低竞争市场 sleeve 设计方案，尚未实现 |
+| [rewards-low-competition-sleeve-plan.md](rewards-low-competition-sleeve-plan.md) | Rewards 低竞争市场 sleeve v2 实现状态、shadow report 和剩余自动启用缺口 |

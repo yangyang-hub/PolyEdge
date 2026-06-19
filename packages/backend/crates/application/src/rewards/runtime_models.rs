@@ -38,6 +38,12 @@ pub struct RewardMarket {
     pub updated_at: OffsetDateTime,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct RewardCandidateMarket {
+    pub market: RewardMarket,
+    pub strategy_bucket: RewardStrategyBucket,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RewardBookLevel {
     pub price: Decimal,
@@ -102,6 +108,77 @@ pub struct RewardLowCompetitionMetrics {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RewardLowCompetitionObservation {
+    pub id: String,
+    pub account_id: String,
+    pub condition_id: String,
+    pub market_slug: String,
+    pub question: String,
+    #[serde(with = "time::serde::rfc3339")]
+    pub observed_at: OffsetDateTime,
+    pub mode: RewardLowCompetitionMode,
+    pub planned_notional_usd: Decimal,
+    pub qualified_competition_usd: Decimal,
+    pub estimated_reward_per_100_usd_day: Decimal,
+    pub competition_density: Decimal,
+    pub exit_depth_usd: Decimal,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exit_slippage_cents: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub midpoint_range_cents: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub top_of_book_flip_count: Option<u64>,
+    pub sample_count: u64,
+    pub sample_insufficient: bool,
+    pub eligible_for_low_competition: bool,
+    pub final_eligible: bool,
+    pub ai_blocked: bool,
+    pub info_risk_blocked: bool,
+    pub standard_plan_overlap: bool,
+    #[serde(default)]
+    pub rejection_reasons: Vec<String>,
+    #[serde(with = "time::serde::rfc3339")]
+    pub created_at: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RewardLowCompetitionShadowReport {
+    pub window_hours: u64,
+    #[serde(with = "time::serde::rfc3339")]
+    pub generated_at: OffsetDateTime,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(with = "time::serde::rfc3339::option")]
+    pub latest_observed_at: Option<OffsetDateTime>,
+    pub observations: usize,
+    pub unique_markets: usize,
+    pub gate_pass_count: usize,
+    pub final_pass_count: usize,
+    pub sample_insufficient_count: usize,
+    pub ai_blocked_count: usize,
+    pub info_risk_blocked_count: usize,
+    pub standard_overlap_count: usize,
+    pub gate_pass_ratio: Decimal,
+    pub final_pass_ratio: Decimal,
+    pub sample_insufficient_ratio: Decimal,
+    pub ai_blocked_ratio: Decimal,
+    pub info_risk_blocked_ratio: Decimal,
+    pub standard_overlap_ratio: Decimal,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub estimated_reward_per_100_usd_day_median: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub estimated_reward_per_100_usd_day_p90: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exit_depth_multiple_median: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub midpoint_range_cents_p95: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exit_slippage_cents_p95: Option<Decimal>,
+    pub should_consider_enforce: bool,
+    #[serde(default)]
+    pub recommendation_reasons: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RewardQuotePlan {
     pub condition_id: String,
     pub market_slug: String,
@@ -146,6 +223,10 @@ const fn default_reward_strategy_bucket() -> RewardStrategyBucket {
     RewardStrategyBucket::None
 }
 
+const fn default_reward_order_strategy_bucket() -> RewardStrategyBucket {
+    RewardStrategyBucket::Standard
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct RewardLiveQuoteMaterialization {
     pub quote_mode: RewardPlanQuoteMode,
@@ -165,6 +246,8 @@ pub struct ManagedRewardOrder {
     pub side: RewardOrderSide,
     pub price: Decimal,
     pub size: Decimal,
+    #[serde(default = "default_reward_order_strategy_bucket")]
+    pub strategy_bucket: RewardStrategyBucket,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub external_order_id: Option<String>,
     pub status: ManagedRewardOrderStatus,
@@ -305,6 +388,7 @@ pub struct RewardBotSnapshot {
     pub config: RewardBotConfig,
     pub status: RewardBotStatus,
     pub account: RewardAccountState,
+    pub low_competition_report: RewardLowCompetitionShadowReport,
     pub markets: Vec<RewardMarket>,
     pub quote_plans: Vec<RewardQuotePlan>,
     pub plans_page: RewardListPage,

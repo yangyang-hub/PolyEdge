@@ -9,11 +9,13 @@ import type {
   RewardInfoDirectionalRisk,
   RewardInfoRiskLevel,
   RewardInfoRiskType,
+  RewardLowCompetitionMode,
   RewardOrderSide,
   RewardPlanQuoteMode,
   RewardQuoteMode,
   RewardRiskSeverity,
   RewardSelectionMode,
+  RewardStrategyBucket,
 } from "./primitives";
 
 export type RewardBotConfigDto = {
@@ -43,6 +45,20 @@ export type RewardBotConfigDto = {
   max_book_hhi: DecimalValue;
   preferred_categories: string[];
   preferred_category_score_bonus: DecimalValue;
+  low_competition_mode: RewardLowCompetitionMode;
+  low_competition_max_markets: number;
+  low_competition_max_open_orders: number;
+  low_competition_per_market_usd: DecimalValue;
+  low_competition_max_position_usd: DecimalValue;
+  low_competition_min_market_liquidity_usd: DecimalValue;
+  low_competition_min_market_volume_24h_usd: DecimalValue;
+  low_competition_max_competition_usd: DecimalValue;
+  low_competition_min_reward_per_100_usd_day: DecimalValue;
+  low_competition_min_exit_depth_usd: DecimalValue;
+  low_competition_min_exit_depth_multiple: DecimalValue;
+  low_competition_max_midpoint_range_cents: DecimalValue;
+  low_competition_observation_window_sec: number;
+  low_competition_min_book_samples: number;
   ai_advisory_enabled: boolean;
   ai_provider: RewardAiProvider;
   ai_request_format: RewardAiRequestFormat;
@@ -130,6 +146,46 @@ export type RewardMarketBookMetricsDto = {
   no?: RewardBookSideMetricsDto | null;
 };
 
+export type RewardLowCompetitionMetricsDto = {
+  qualified_competition_usd: DecimalValue;
+  estimated_reward_per_100_usd_day: DecimalValue;
+  competition_density: DecimalValue;
+  exit_depth_usd: DecimalValue;
+  exit_slippage_cents?: DecimalValue | null;
+  midpoint_range_cents?: DecimalValue | null;
+  top_of_book_flip_count?: number | null;
+  sample_count: number;
+  eligible_for_low_competition: boolean;
+  rejection_reasons: string[];
+};
+
+export type RewardLowCompetitionShadowReportDto = {
+  window_hours: number;
+  generated_at: string;
+  latest_observed_at?: string | null;
+  observations: number;
+  unique_markets: number;
+  gate_pass_count: number;
+  final_pass_count: number;
+  sample_insufficient_count: number;
+  ai_blocked_count: number;
+  info_risk_blocked_count: number;
+  standard_overlap_count: number;
+  gate_pass_ratio: DecimalValue;
+  final_pass_ratio: DecimalValue;
+  sample_insufficient_ratio: DecimalValue;
+  ai_blocked_ratio: DecimalValue;
+  info_risk_blocked_ratio: DecimalValue;
+  standard_overlap_ratio: DecimalValue;
+  estimated_reward_per_100_usd_day_median?: DecimalValue | null;
+  estimated_reward_per_100_usd_day_p90?: DecimalValue | null;
+  exit_depth_multiple_median?: DecimalValue | null;
+  midpoint_range_cents_p95?: DecimalValue | null;
+  exit_slippage_cents_p95?: DecimalValue | null;
+  should_consider_enforce: boolean;
+  recommendation_reasons: string[];
+};
+
 export type RewardMarketAdvisoryDto = {
   condition_id: string;
   provider: RewardAiProvider;
@@ -180,9 +236,11 @@ export type RewardQuotePlanDto = {
   score: DecimalValue;
   eligible: boolean;
   reason: string;
+  strategy_bucket: RewardStrategyBucket;
   quote_mode: RewardPlanQuoteMode;
   recommended_quote_mode?: RewardPlanQuoteMode | null;
   book_metrics?: RewardMarketBookMetricsDto | null;
+  low_competition_metrics?: RewardLowCompetitionMetricsDto | null;
   ai_advisory?: RewardMarketAdvisoryDto | null;
   info_risk?: RewardMarketInfoRiskDto | null;
   midpoint?: DecimalValue | null;
@@ -204,6 +262,7 @@ export type ManagedRewardOrderDto = {
   side: RewardOrderSide;
   price: DecimalValue;
   size: DecimalValue;
+  strategy_bucket: RewardStrategyBucket;
   external_order_id?: string | null;
   status: ManagedRewardOrderStatus;
   scoring: boolean;
@@ -295,6 +354,7 @@ export type RewardBotSnapshotDto = {
   config: RewardBotConfigDto;
   status: RewardBotStatusDto;
   account: RewardAccountStateDto;
+  low_competition_report?: RewardLowCompetitionShadowReportDto | null;
   markets: RewardMarketDto[];
   quote_plans: RewardQuotePlanDto[];
   plans_page: RewardListPageDto;

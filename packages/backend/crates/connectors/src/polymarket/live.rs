@@ -349,6 +349,8 @@ impl LivePolymarketConnector {
                     price: o.price,
                     outcome: o.outcome,
                     status: format!("{:?}", o.status),
+                    created_at: OffsetDateTime::from_unix_timestamp(o.created_at.timestamp())
+                        .unwrap_or_else(|_| OffsetDateTime::now_utc()),
                 });
             }
 

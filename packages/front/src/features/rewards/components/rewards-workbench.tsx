@@ -23,6 +23,7 @@ import { readRewardBotSnapshot, type RewardBotSnapshotQuery } from "@/lib/api/re
 import type { NumberConfigKey } from "../types";
 import { EventsPanel } from "./rewards-events-panel";
 import { RewardsConfigPanel } from "./rewards-config-panel";
+import { LowCompetitionShadowReport } from "./rewards-low-competition-report";
 import {
   CommandPanel,
   ModeStatusPanel,
@@ -224,6 +225,8 @@ export function RewardsWorkbench({ initialSnapshot }: { initialSnapshot: RewardB
       </section>
 
       <SummaryStrip snapshot={snapshot} eventCounts={eventCounts} />
+
+      <LowCompetitionShadowReport snapshot={snapshot} />
 
       <Tabs defaultValue="activity" className="gap-4">
         <TabsList className="h-auto w-full flex-wrap justify-start">

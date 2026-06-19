@@ -128,6 +128,14 @@ fn live_placement_orders(
         .filter(|order| order.status.is_open_like())
         .map(|order| order.condition_id.clone())
         .collect();
+    let mut active_low_competition_markets: HashSet<String> = open_orders
+        .iter()
+        .filter(|order| {
+            order.status.is_open_like()
+                && order.strategy_bucket == RewardStrategyBucket::LowCompetition
+        })
+        .map(|order| order.condition_id.clone())
+        .collect();
     let mut orders = open_orders.to_vec();
     let mut placements = Vec::new();
     let mut plans_changed = false;
@@ -139,14 +147,26 @@ fn live_placement_orders(
         if !plans[plan_index].eligible {
             continue;
         }
+        let strategy_bucket = plans[plan_index].strategy_bucket;
+        let plan_config = config.config_for_strategy_bucket(strategy_bucket);
+        if strategy_bucket == RewardStrategyBucket::LowCompetition {
+            if plan_config.max_markets == 0 || plan_config.max_open_orders == 0 {
+                continue;
+            }
+            if active_low_competition_markets.len() >= usize::from(plan_config.max_markets)
+                && !active_low_competition_markets.contains(&plans[plan_index].condition_id)
+            {
+                continue;
+            }
+        }
         let materialized =
-            match materialize_reward_quote_plan_for_live_orderbook(&plans[plan_index], books, config)
+            match materialize_reward_quote_plan_for_live_orderbook(&plans[plan_index], books, &plan_config)
             {
                 Ok(materialized) => materialized,
                 Err(reason) => {
                     let now = OffsetDateTime::now_utc();
                     if let Some(wait_reason) =
-                        live_orderbook_wait_reason(config, &plans[plan_index], books, now)
+                        live_orderbook_wait_reason(&plan_config, &plans[plan_index], books, now)
                     {
                         if mark_live_orderbook_waiting(
                             &mut plans[plan_index],
@@ -223,6 +243,18 @@ fn live_placement_orders(
             {
                 return (placements, plans_changed);
             }
+            if strategy_bucket == RewardStrategyBucket::LowCompetition
+                && orders
+                    .iter()
+                    .filter(|order| {
+                        order.status.is_open_like()
+                            && order.strategy_bucket == RewardStrategyBucket::LowCompetition
+                    })
+                    .count()
+                    >= usize::from(plan_config.max_open_orders)
+            {
+                continue;
+            }
             if orders.iter().any(|order| {
                 order.condition_id == plan.condition_id
                     && order.token_id == leg.token_id
@@ -242,7 +274,7 @@ fn live_placement_orders(
             if notional <= Decimal::ZERO {
                 continue;
             }
-            if live_position_over_cap(config, positions, &leg.token_id, leg.price, notional) {
+            if live_position_over_cap(&plan_config, positions, &leg.token_id, leg.price, notional) {
                 continue;
             }
             // Live maker buys intentionally do not reserve global cash until a
@@ -270,6 +302,7 @@ fn live_placement_orders(
                 side: RewardOrderSide::Buy,
                 price: leg.price,
                 size: leg.size,
+                strategy_bucket: plan.strategy_bucket,
                 external_order_id: None,
                 status: ManagedRewardOrderStatus::Planned,
                 scoring: false,
@@ -283,7 +316,7 @@ fn live_placement_orders(
             let mut single_plan_index = HashMap::new();
             single_plan_index.insert(plan.condition_id.as_str(), plan);
             if live_cancel_reason(
-                config,
+                &plan_config,
                 &single_plan_index,
                 books,
                 book_history,
@@ -296,6 +329,9 @@ fn live_placement_orders(
                 continue;
             }
             active_markets.insert(plan.condition_id.clone());
+            if strategy_bucket == RewardStrategyBucket::LowCompetition {
+                active_low_competition_markets.insert(plan.condition_id.clone());
+            }
             orders.push(order.clone());
             placements.push(order);
         }

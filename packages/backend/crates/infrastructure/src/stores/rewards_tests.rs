@@ -41,6 +41,7 @@ mod rewards_tests {
             side: RewardOrderSide::Buy,
             price: Decimal::new(49, 2),
             size: Decimal::from(20),
+            strategy_bucket: RewardStrategyBucket::Standard,
             external_order_id: external_order_id.map(str::to_string),
             status: ManagedRewardOrderStatus::Open,
             scoring: false,

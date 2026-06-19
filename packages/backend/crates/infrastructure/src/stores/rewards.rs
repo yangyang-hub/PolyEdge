@@ -9,6 +9,7 @@ include!("rewards/in_memory.rs");
 include!("rewards/postgres_control_commands.rs");
 include!("rewards/postgres_heartbeat.rs");
 include!("rewards/postgres_info_risk.rs");
+include!("rewards/postgres_low_competition.rs");
 include!("rewards/postgres_orders.rs");
 include!("rewards/postgres_plans.rs");
 include!("rewards/postgres_writes.rs");

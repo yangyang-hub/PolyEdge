@@ -522,6 +522,7 @@ async fn insert_reward_order(
           side,
           price,
           size,
+          strategy_bucket,
           external_order_id,
           status,
           scoring,
@@ -533,10 +534,11 @@ async fn insert_reward_order(
           updated_at,
           trace_id
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
         ON CONFLICT (id) DO UPDATE
         SET price = EXCLUDED.price,
             size = EXCLUDED.size,
+            strategy_bucket = EXCLUDED.strategy_bucket,
             external_order_id = EXCLUDED.external_order_id,
             status = EXCLUDED.status,
             scoring = EXCLUDED.scoring,
@@ -556,6 +558,7 @@ async fn insert_reward_order(
     .bind(order.side.as_str())
     .bind(order.price)
     .bind(order.size)
+    .bind(order.strategy_bucket.as_str())
     .bind(&order.external_order_id)
     .bind(order.status.as_str())
     .bind(order.scoring)
@@ -692,6 +695,9 @@ fn reward_market_from_row(row: &sqlx::postgres::PgRow) -> Result<RewardMarket> {
 fn reward_order_from_row(row: &sqlx::postgres::PgRow) -> Result<ManagedRewardOrder> {
     let side_raw: String = row.try_get("side").map_err(postgres_decode_error)?;
     let status_raw: String = row.try_get("status").map_err(postgres_decode_error)?;
+    let strategy_bucket_raw: String = row
+        .try_get("strategy_bucket")
+        .map_err(postgres_decode_error)?;
     Ok(ManagedRewardOrder {
         id: row.try_get("id").map_err(postgres_decode_error)?,
         account_id: row.try_get("account_id").map_err(postgres_decode_error)?,
@@ -701,6 +707,7 @@ fn reward_order_from_row(row: &sqlx::postgres::PgRow) -> Result<ManagedRewardOrd
         side: RewardOrderSide::from_str(&side_raw)?,
         price: row.try_get("price").map_err(postgres_decode_error)?,
         size: row.try_get("size").map_err(postgres_decode_error)?,
+        strategy_bucket: RewardStrategyBucket::from_str(&strategy_bucket_raw)?,
         external_order_id: row
             .try_get("external_order_id")
             .map_err(postgres_decode_error)?,

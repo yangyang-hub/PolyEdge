@@ -176,6 +176,25 @@ async fn sync_external_open_order_state(
     let previous_external_buy_notional = account.external_buy_notional;
     account.external_buy_notional = external_open_buy_notional(&open_orders);
 
+    let adopted = match adopt_external_open_reward_buy_orders(
+        state,
+        account,
+        cycle_orders,
+        &open_orders,
+        trace_id,
+    )
+    .await
+    {
+        Ok(adopted) => adopted,
+        Err(error) => {
+            warn!(
+                error = %error,
+                "failed to adopt external Polymarket open rewards buy orders"
+            );
+            Vec::new()
+        }
+    };
+
     let closed = close_managed_orders_absent_from_open_snapshot(
         cycle_orders,
         &open_orders,
@@ -188,7 +207,7 @@ async fn sync_external_open_order_state(
     }
     cycle_orders.retain(|order| order.status.is_open_like());
 
-    if closed.is_empty() {
+    if adopted.is_empty() && closed.is_empty() {
         if account.external_buy_notional != previous_external_buy_notional {
             account.updated_at = OffsetDateTime::now_utc();
             if let Err(error) = state
@@ -206,7 +225,7 @@ async fn sync_external_open_order_state(
     }
 
     let closed_count = closed.len();
-    let (orders, events): (Vec<_>, Vec<_>) = closed.into_iter().unzip();
+    let (orders, events): (Vec<_>, Vec<_>) = adopted.into_iter().chain(closed).unzip();
     if let Err(error) = persist_live_reward_updates(
         state,
         account,
@@ -226,6 +245,13 @@ async fn sync_external_open_order_state(
     }
 }
 
+#[derive(Debug, Clone)]
+struct RewardOpenOrderTokenMatch {
+    condition_id: String,
+    token_id: String,
+    outcome: String,
+}
+
 fn external_open_buy_notional(open_orders: &[PolymarketOpenOrder]) -> Decimal {
     open_orders
         .iter()
@@ -235,6 +261,248 @@ fn external_open_buy_notional(open_orders: &[PolymarketOpenOrder]) -> Decimal {
                 .round_dp(4)
         })
         .sum()
+}
+
+async fn adopt_external_open_reward_buy_orders(
+    state: &AppState,
+    account: &RewardAccountState,
+    cycle_orders: &mut Vec<ManagedRewardOrder>,
+    open_orders: &[PolymarketOpenOrder],
+    trace_id: &str,
+) -> Result<Vec<(ManagedRewardOrder, RewardRiskEvent)>> {
+    let markets = state.reward_bot_service.list_active_reward_markets().await?;
+    let token_index = reward_open_order_token_index(&markets);
+    if token_index.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut known_external_order_ids = cycle_orders
+        .iter()
+        .filter_map(|order| order.external_order_id.clone())
+        .collect::<HashSet<_>>();
+    let mut adopted = Vec::new();
+
+    for open_order in open_orders {
+        if open_order.side != PolymarketTokenOrderSide::Buy
+            || known_external_order_ids.contains(&open_order.id)
+        {
+            continue;
+        }
+
+        let token_key = normalize_reward_open_order_lookup_key(&open_order.asset_id);
+        let Some(token_match) = token_index.get(&token_key) else {
+            continue;
+        };
+        if !external_open_order_matches_reward_market(open_order, token_match) {
+            continue;
+        }
+
+        let existing = state
+            .reward_bot_service
+            .get_managed_order_by_external_order_id(&open_order.id)
+            .await?;
+        if existing
+            .as_ref()
+            .is_some_and(|order| order.account_id != account.account_id)
+        {
+            warn!(
+                external_order_id = %open_order.id,
+                account_id = %account.account_id,
+                "skipping external rewards open-order adoption because the local order belongs to another account"
+            );
+            continue;
+        }
+
+        let Some((order, event)) = build_external_open_reward_buy_order_adoption(
+            &account.account_id,
+            token_match,
+            open_order,
+            existing,
+            OffsetDateTime::now_utc(),
+            trace_id,
+        ) else {
+            continue;
+        };
+
+        known_external_order_ids.insert(open_order.id.clone());
+        cycle_orders.push(order.clone());
+        adopted.push((order, event));
+    }
+
+    Ok(adopted)
+}
+
+fn reward_open_order_token_index(
+    markets: &[RewardMarket],
+) -> HashMap<String, RewardOpenOrderTokenMatch> {
+    let mut index = HashMap::new();
+    let mut duplicated = HashSet::new();
+
+    for market in markets.iter().filter(|market| market.active) {
+        for token in &market.tokens {
+            let token_key = normalize_reward_open_order_lookup_key(&token.token_id);
+            if token_key.is_empty() {
+                continue;
+            }
+            let token_match = RewardOpenOrderTokenMatch {
+                condition_id: market.condition_id.clone(),
+                token_id: token.token_id.clone(),
+                outcome: token.outcome.clone(),
+            };
+            if index.insert(token_key.clone(), token_match).is_some() {
+                duplicated.insert(token_key);
+            }
+        }
+    }
+
+    for token_key in duplicated {
+        index.remove(&token_key);
+    }
+
+    index
+}
+
+fn build_external_open_reward_buy_order_adoption(
+    account_id: &str,
+    token_match: &RewardOpenOrderTokenMatch,
+    open_order: &PolymarketOpenOrder,
+    existing: Option<ManagedRewardOrder>,
+    now: OffsetDateTime,
+    trace_id: &str,
+) -> Option<(ManagedRewardOrder, RewardRiskEvent)> {
+    if open_order.side != PolymarketTokenOrderSide::Buy
+        || external_open_order_remaining_size(open_order) <= Decimal::ZERO
+        || !external_open_order_matches_reward_market(open_order, token_match)
+    {
+        return None;
+    }
+
+    let (mut order, event_type, message, previous_status) = match existing {
+        Some(existing) if existing.status.is_open_like() => return None,
+        Some(existing) if existing.status == ManagedRewardOrderStatus::Filled => return None,
+        Some(existing) if existing.side != RewardOrderSide::Buy => return None,
+        Some(existing) => {
+            let previous_status = existing.status.as_str().to_string();
+            (
+                existing,
+                "reward_live_external_open_order_reopened",
+                "Reopened a local rewards order because it is still open on Polymarket.",
+                Some(previous_status),
+            )
+        }
+        None => (
+            new_adopted_external_reward_buy_order(account_id, token_match, open_order, now),
+            "reward_live_external_open_order_adopted",
+            "Adopted an existing Polymarket rewards buy order from the open-order snapshot.",
+            None,
+        ),
+    };
+
+    order.account_id = account_id.to_string();
+    order.condition_id = token_match.condition_id.clone();
+    order.token_id = token_match.token_id.clone();
+    order.outcome = token_match.outcome.clone();
+    order.side = RewardOrderSide::Buy;
+    order.price = open_order.price;
+    order.size = open_order.original_size;
+    order.external_order_id = Some(open_order.id.clone());
+    order.status = ManagedRewardOrderStatus::Open;
+    order.scoring = false;
+    order.reason = message.to_string();
+    order.filled_size = order
+        .filled_size
+        .max(Decimal::ZERO)
+        .min(open_order.original_size);
+    order.updated_at = now;
+
+    let event = external_open_reward_buy_adoption_event(
+        &order,
+        token_match,
+        open_order,
+        event_type,
+        message,
+        previous_status,
+        trace_id,
+    );
+
+    Some((order, event))
+}
+
+fn new_adopted_external_reward_buy_order(
+    account_id: &str,
+    token_match: &RewardOpenOrderTokenMatch,
+    open_order: &PolymarketOpenOrder,
+    now: OffsetDateTime,
+) -> ManagedRewardOrder {
+    ManagedRewardOrder {
+        id: format!(
+            "rewadopt_{}_{}",
+            now.unix_timestamp_nanos(),
+            sanitize_reward_id_fragment(&open_order.id)
+        ),
+        account_id: account_id.to_string(),
+        condition_id: token_match.condition_id.clone(),
+        token_id: token_match.token_id.clone(),
+        outcome: token_match.outcome.clone(),
+        side: RewardOrderSide::Buy,
+        price: open_order.price,
+        size: open_order.original_size,
+        strategy_bucket: RewardStrategyBucket::Standard,
+        external_order_id: Some(open_order.id.clone()),
+        status: ManagedRewardOrderStatus::Open,
+        scoring: false,
+        reason: String::new(),
+        filled_size: Decimal::ZERO,
+        reward_earned: Decimal::ZERO,
+        last_scored_at: None,
+        created_at: open_order.created_at,
+        updated_at: now,
+    }
+}
+
+fn external_open_reward_buy_adoption_event(
+    order: &ManagedRewardOrder,
+    token_match: &RewardOpenOrderTokenMatch,
+    open_order: &PolymarketOpenOrder,
+    event_type: &str,
+    message: &str,
+    previous_status: Option<String>,
+    trace_id: &str,
+) -> RewardRiskEvent {
+    reward_live_event(
+        order,
+        event_type,
+        RewardRiskSeverity::Warning,
+        message,
+        json!({
+            "trace_id": trace_id,
+            "external_order_id": open_order.id,
+            "token_id": open_order.asset_id,
+            "condition_id": token_match.condition_id,
+            "price": open_order.price,
+            "original_size": open_order.original_size,
+            "size_matched": open_order.size_matched,
+            "remaining_size": external_open_order_remaining_size(open_order),
+            "previous_status": previous_status,
+        }),
+    )
+}
+
+fn external_open_order_matches_reward_market(
+    open_order: &PolymarketOpenOrder,
+    token_match: &RewardOpenOrderTokenMatch,
+) -> bool {
+    let market_key = normalize_reward_open_order_lookup_key(&open_order.market);
+    market_key.is_empty()
+        || market_key == normalize_reward_open_order_lookup_key(&token_match.condition_id)
+}
+
+fn external_open_order_remaining_size(open_order: &PolymarketOpenOrder) -> Decimal {
+    (open_order.original_size - open_order.size_matched).max(Decimal::ZERO)
+}
+
+fn normalize_reward_open_order_lookup_key(value: &str) -> String {
+    value.trim().to_ascii_lowercase()
 }
 
 fn close_managed_orders_absent_from_open_snapshot(

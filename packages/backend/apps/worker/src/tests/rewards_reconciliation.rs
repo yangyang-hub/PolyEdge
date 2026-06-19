@@ -189,6 +189,7 @@ fn open_snapshot_order(id: &str, token_id: &str) -> PolymarketOpenOrder {
         price: reward_decimal("0.49"),
         outcome: "YES".to_string(),
         status: "Live".to_string(),
+        created_at: OffsetDateTime::now_utc(),
     }
 }
 
@@ -236,6 +237,73 @@ fn external_open_order_snapshot_preserves_stuck_or_sell_orders() {
     );
 
     assert!(updates.is_empty());
+}
+
+#[test]
+fn external_reward_buy_open_order_can_be_adopted_from_snapshot() {
+    let created_at = OffsetDateTime::now_utc() - TimeDuration::minutes(10);
+    let mut snapshot = open_snapshot_order("pm_orphan_yes", "yes_live");
+    snapshot.market = "cond_live".to_string();
+    snapshot.created_at = created_at;
+    let token_match = RewardOpenOrderTokenMatch {
+        condition_id: "cond_live".to_string(),
+        token_id: "yes_live".to_string(),
+        outcome: "YES".to_string(),
+    };
+
+    let (order, event) = build_external_open_reward_buy_order_adoption(
+        "reward_live",
+        &token_match,
+        &snapshot,
+        None,
+        OffsetDateTime::now_utc(),
+        "trc_adopt",
+    )
+    .expect("external open reward buy order should be adopted");
+
+    assert_eq!(order.account_id, "reward_live");
+    assert_eq!(order.condition_id, "cond_live");
+    assert_eq!(order.token_id, "yes_live");
+    assert_eq!(order.external_order_id.as_deref(), Some("pm_orphan_yes"));
+    assert_eq!(order.status, ManagedRewardOrderStatus::Open);
+    assert_eq!(order.created_at, created_at);
+    assert_eq!(
+        event.event_type,
+        "reward_live_external_open_order_adopted"
+    );
+}
+
+#[test]
+fn external_reward_buy_open_order_reopens_cancelled_local_order() {
+    let mut existing = live_test_open_order("yes_live");
+    existing.status = ManagedRewardOrderStatus::Cancelled;
+    existing.external_order_id = Some("pm_yes_live".to_string());
+    existing.reason = "closed locally".to_string();
+    let mut snapshot = open_snapshot_order("pm_yes_live", "yes_live");
+    snapshot.market = existing.condition_id.clone();
+    let account_id = existing.account_id.clone();
+    let token_match = RewardOpenOrderTokenMatch {
+        condition_id: existing.condition_id.clone(),
+        token_id: existing.token_id.clone(),
+        outcome: existing.outcome.clone(),
+    };
+
+    let (order, event) = build_external_open_reward_buy_order_adoption(
+        &account_id,
+        &token_match,
+        &snapshot,
+        Some(existing),
+        OffsetDateTime::now_utc(),
+        "trc_reopen",
+    )
+    .expect("cancelled local order should be reopened when CLOB still reports it open");
+
+    assert_eq!(order.id, "rewlive_seed_yes_live");
+    assert_eq!(order.status, ManagedRewardOrderStatus::Open);
+    assert_eq!(
+        event.event_type,
+        "reward_live_external_open_order_reopened"
+    );
 }
 
 #[test]

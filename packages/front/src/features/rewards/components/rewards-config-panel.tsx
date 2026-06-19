@@ -18,6 +18,7 @@ import type { NumberConfigKey } from "../types";
 import { NumberInput } from "./number-input";
 import { AiAdvisoryConfig, BookSelectionConfig } from "./rewards-advanced-config";
 import { ConfigSection, Hint, ToggleField, selectClassName } from "./rewards-config-fields";
+import { LowCompetitionConfig } from "./rewards-low-competition-config";
 
 type RewardsConfigPanelProps = {
   draft: RewardBotConfigDto;
@@ -179,6 +180,14 @@ export function RewardsConfigPanel({
             onChange={(value) => updateNumber("min_scoring_check_sec", value)}
           />
         </ConfigSection>
+
+        <Separator />
+
+        <LowCompetitionConfig
+          draft={draft}
+          setDraft={setDraft}
+          updateNumber={updateNumber}
+        />
 
         <Separator />
 

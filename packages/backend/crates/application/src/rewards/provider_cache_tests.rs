@@ -106,6 +106,7 @@ fn cache_test_order(updated_at: OffsetDateTime) -> ManagedRewardOrder {
         side: RewardOrderSide::Buy,
         price: decimal("0.55"),
         size: decimal("10"),
+        strategy_bucket: RewardStrategyBucket::Standard,
         external_order_id: Some("external_cache".to_string()),
         status: ManagedRewardOrderStatus::Open,
         scoring: false,

@@ -13,6 +13,7 @@ pub struct InMemoryRewardBotStore {
     worker_heartbeats: RwLock<HashMap<String, OffsetDateTime>>,
     advisories: RwLock<Vec<RewardMarketAdvisory>>,
     info_risks: RwLock<Vec<RewardMarketInfoRisk>>,
+    low_competition_observations: RwLock<Vec<RewardLowCompetitionObservation>>,
 }
 
 impl InMemoryRewardBotStore {
@@ -31,6 +32,7 @@ impl InMemoryRewardBotStore {
             worker_heartbeats: RwLock::new(HashMap::new()),
             advisories: RwLock::new(Vec::new()),
             info_risks: RwLock::new(Vec::new()),
+            low_competition_observations: RwLock::new(Vec::new()),
         }
     }
 }
@@ -149,6 +151,43 @@ impl RewardBotStore for InMemoryRewardBotStore {
             store.insert(plan.condition_id.clone(), plan.clone());
         }
         Ok(())
+    }
+
+    async fn record_low_competition_observations(
+        &self,
+        observations: &[RewardLowCompetitionObservation],
+    ) -> Result<()> {
+        if observations.is_empty() {
+            return Ok(());
+        }
+        let mut stored = self.low_competition_observations.write().await;
+        for observation in observations {
+            if !stored.iter().any(|existing| existing.id == observation.id) {
+                stored.push(observation.clone());
+            }
+        }
+        stored.sort_by(|left, right| right.observed_at.cmp(&left.observed_at));
+        stored.truncate(10_000);
+        Ok(())
+    }
+
+    async fn list_low_competition_observations(
+        &self,
+        account_id: &str,
+        since: OffsetDateTime,
+        limit: u16,
+    ) -> Result<Vec<RewardLowCompetitionObservation>> {
+        Ok(self
+            .low_competition_observations
+            .read()
+            .await
+            .iter()
+            .filter(|observation| {
+                observation.account_id == account_id && observation.observed_at >= since
+            })
+            .take(usize::from(limit))
+            .cloned()
+            .collect())
     }
 
     async fn latest_market_advisory(

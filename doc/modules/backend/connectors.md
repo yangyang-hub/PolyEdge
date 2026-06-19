@@ -83,7 +83,7 @@
 - `orders_scoring()`：通过 CLOB `POST /orders-scoring` 批量查询 managed orders 是否正在参与奖励计分
 - `reward_earnings_today_usd()`：优先用 raw authenticated CLOB `GET /rewards/user/total?sponsored=true` 读取 UTC 当日账户级 maker rewards 聚合结果，并按每项 `asset_rate` 换算为 USD；`sponsored=true` 对齐 Polymarket `/rewards` 页面顶部 Daily Rewards 的 native+sponsored 口径。聚合端点为空、为 0 或不可用时，回退分页读取 `GET /rewards/user` native 明细并合并 `sponsored=true` sponsored-only 明细，按 `earnings * asset_rate` 求和；SDK 解码失败时会使用同一 L2 签名的 raw HTTP fallback，宽容解析带 trailing input 的 JSON 响应。
 - `post_heartbeat(heartbeat_id)`：调用 CLOB `/v1/heartbeats` 并返回下一次请求必须携带的 heartbeat id；worker 显式维护 5 秒链式心跳、对单次调用施加 4 秒超时，不依赖 canary SDK 的自动 heartbeat feature；SDK heartbeat 被服务端拒绝时，connector 会先用 raw authenticated POST 续写同一 heartbeat id，仍失败则用与 SDK 对齐的 `{"heartbeat_id":null}` 请求体重建 heartbeat 链
-- `list_open_orders()`：分页读取认证账户全部开放订单；遇到空 cursor、`LTE=`、空页、重复 cursor 或 1000 页 guard 时停止
+- `list_open_orders()`：分页读取认证账户全部开放订单并保留 CLOB `created_at`；遇到空 cursor、`LTE=`、空页、重复 cursor 或 1000 页 guard 时停止
 - `find_matching_open_token_order()`：按 token/side/price/size 严格匹配唯一开放订单，用于 rewards 提交响应丢失后的恢复；多个匹配会返回冲突而不是猜测归属
 - `post_order` 返回订单 ID 时，无论状态为 `live` / `matched` / `delayed` / `unmatched` / `canceled` / 未知值，connector 都保留为 accepted 供后续成交和订单状态对账；成功响应缺少订单 ID 会按提交结果未知处理
 - `post_order` 返回 HTTP 4xx 时视为 CLOB 明确拒单，不进入提交结果未知锁；网络中断、5xx 或成功响应缺少订单 ID 仍按结果未知处理
@@ -93,7 +93,7 @@
 - `poll_order_status()` / `collect_trade_updates()`：优先通过 CLOB 单订单接口查询；单订单返回 404，或订单返回的关联 trade 无法按 ID 单独查询时，会按 token/time 分页扫描认证账户 trades，并按 external order id 精确匹配。仅返回 `CONFIRMED` trade 供入账，live / 普通 GTC unmatched 状态可立即按 open 返回，并且只有预期关联 trade 全部达到终态后才返回取消、matched 或 FAK unmatched 终态。404 与关联 trade 回退失败分别使用 `POLYMARKET_MISSING_ORDER_TRADE_QUERY_FAILED`、`POLYMARKET_ASSOCIATED_TRADE_FALLBACK_FAILED`，worker 会隔离单笔失败并继续其余订单对账。
 - **`LivePolymarketTradeSyncOutcome`**：包含 confirmed `updates`、安全可应用的 `order_status` 和 `order_not_found`；pending/mined/retrying trade 会阻止 terminal status 提前返回，404 fallback 不会伪造取消状态
 - **`PolymarketMatchedOrderHint`**：当 worker 的认证 trade 回退仍失败时，重新读取单订单并只暴露 terminal matched/canceled 订单的 token、价格和 matched size，供 worker 与 Data API 钱包交易做严格最终核验
-- **`PolymarketOpenOrder`**：隔离 SDK 的开放订单类型，供 live 订单恢复与对账使用
+- **`PolymarketOpenOrder`**：隔离 SDK 的开放订单类型，包含 id、condition market、asset id、side、价格、数量、matched size、状态和 `created_at`，供 live 订单恢复、收养与对账使用
 - 用途：live 模式下的订单管理和 rewards live maker；copytrade 当前只做钱包跟踪/分析，不使用 live connector 下单
 - 当前范围：支持已有、已 funded、已 approve 的 Deposit Wallet 通过 CLOB V2 下单/撤单；`poly_1271` 查询余额前会调用 CLOB balance allowance update，刷新失败会直接返回错误，不再继续读取可能陈旧的账户状态。成交同步按 maker order 聚合同一 trade 中重复出现的全部 `matched_amount`，使用 size-weighted price/fee，避免把整笔 taker trade size 误记到单个 maker 订单或漏记重复 maker entry。尚未实现 relayer 建钱包、pUSD 入金/approval 或 deposit wallet 生命周期管理。
 

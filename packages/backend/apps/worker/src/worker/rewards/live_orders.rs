@@ -474,6 +474,7 @@ fn live_exit_order(
         side: RewardOrderSide::Sell,
         price,
         size,
+        strategy_bucket: entry.strategy_bucket,
         external_order_id: None,
         status: ManagedRewardOrderStatus::Planned,
         scoring: false,

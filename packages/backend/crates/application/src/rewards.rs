@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{HashMap, HashSet, VecDeque},
     str::FromStr,
     sync::Arc,
 };
@@ -25,13 +25,23 @@ include!("rewards/runtime_models.rs");
 include!("rewards/pagination.rs");
 include!("rewards/control.rs");
 include!("rewards/service.rs");
+include!("rewards/service_snapshot.rs");
 include!("rewards/planner.rs");
 include!("rewards/planner_selection.rs");
 include!("rewards/planner_live.rs");
+include!("rewards/low_competition.rs");
+include!("rewards/low_competition_report.rs");
 include!("rewards/engine.rs");
 include!("rewards/helpers.rs");
 
 #[cfg(test)]
 mod provider_cache_tests {
     include!("rewards/provider_cache_tests.rs");
+}
+
+#[cfg(test)]
+mod low_competition_tests {
+    use super::*;
+
+    include!("rewards/low_competition_tests.rs");
 }

@@ -31,6 +31,18 @@ pub trait RewardBotStore: Send + Sync {
     async fn upsert_markets(&self, markets: &[RewardMarket]) -> Result<()>;
     /// Replace the current rewards quote plan snapshot.
     async fn save_quote_plans(&self, plans: &[RewardQuotePlan]) -> Result<()>;
+    /// Append low-competition sleeve observations for shadow reporting.
+    async fn record_low_competition_observations(
+        &self,
+        observations: &[RewardLowCompetitionObservation],
+    ) -> Result<()>;
+    /// Read recent low-competition observations for one account.
+    async fn list_low_competition_observations(
+        &self,
+        account_id: &str,
+        since: OffsetDateTime,
+        limit: u16,
+    ) -> Result<Vec<RewardLowCompetitionObservation>>;
     async fn latest_market_advisory(
         &self,
         request: &RewardAiAdvisoryRequest,
@@ -124,6 +136,8 @@ pub trait RewardBotStore: Send + Sync {
 
 const MEMORY_EVENT_LIMIT: usize = 200;
 const MEMORY_FILL_LIMIT: usize = 200;
+const LOW_COMPETITION_SHADOW_REPORT_WINDOW_HOURS: u64 = 24;
+const LOW_COMPETITION_OBSERVATION_READ_LIMIT: u16 = 5_000;
 
 #[derive(Clone)]
 pub struct RewardBotService {
@@ -401,16 +415,72 @@ impl RewardBotService {
         self.store.save_quote_plans(plans).await
     }
 
+    pub async fn record_low_competition_observations(
+        &self,
+        observations: &[RewardLowCompetitionObservation],
+    ) -> Result<()> {
+        if observations.is_empty() {
+            return Ok(());
+        }
+        self.store
+            .record_low_competition_observations(observations)
+            .await
+    }
+
     /// List a bounded candidate pool for one rewards strategy tick.
     pub async fn list_reward_run_candidate_markets(&self) -> Result<Vec<RewardMarket>> {
+        Ok(self
+            .list_reward_run_candidate_market_profiles()
+            .await?
+            .into_iter()
+            .map(|candidate| candidate.market)
+            .collect())
+    }
+
+    pub async fn list_reward_run_candidate_market_profiles(&self) -> Result<Vec<RewardCandidateMarket>> {
         let config = self.read_config().await?;
+        self.list_candidate_market_profiles_for_config(&config).await
+    }
+
+    async fn list_candidate_market_profiles_for_config(
+        &self,
+        config: &RewardBotConfig,
+    ) -> Result<Vec<RewardCandidateMarket>> {
         let filter = config.candidate_filter();
         let safety_limit = reward_candidate_safety_limit(&config);
         let markets = self
             .store
             .list_candidate_markets(&filter, safety_limit)
             .await?;
-        Ok(select_reward_quote_candidate_markets(&markets, &config))
+        let mut candidates = select_reward_quote_candidate_market_profiles(
+            &markets,
+            config,
+            RewardStrategyBucket::Standard,
+        );
+        let mut seen = candidates
+            .iter()
+            .map(|candidate| candidate.market.condition_id.clone())
+            .collect::<HashSet<_>>();
+
+        if let Some(low_filter) = config.low_competition_candidate_filter() {
+            let low_config = config.config_for_strategy_bucket(RewardStrategyBucket::LowCompetition);
+            let low_safety_limit = reward_candidate_safety_limit(&low_config);
+            let low_markets = self
+                .store
+                .list_candidate_markets(&low_filter, low_safety_limit)
+                .await?;
+            for candidate in select_reward_quote_candidate_market_profiles(
+                &low_markets,
+                config,
+                RewardStrategyBucket::LowCompetition,
+            ) {
+                if seen.insert(candidate.market.condition_id.clone()) {
+                    candidates.push(candidate);
+                }
+            }
+        }
+
+        Ok(candidates)
     }
 
     /// Return distinct token IDs from markets where the reward bot currently has
@@ -448,15 +518,12 @@ impl RewardBotService {
     /// start loop: the orderbook stream can subscribe to reward market tokens even
     /// before the bot has placed its first order.
     pub async fn list_all_reward_candidate_token_ids(&self) -> Result<Vec<String>> {
-        let config = self.read_config().await?;
-        let filter = config.candidate_filter();
-        let safety_limit = reward_candidate_safety_limit(&config);
-        let markets = self
-            .store
-            .list_candidate_markets(&filter, safety_limit)
-            .await?;
-        let candidates = select_reward_quote_candidate_markets(&markets, &config);
-        Ok(select_reward_book_token_ids(&candidates))
+        let candidates = self.list_reward_run_candidate_market_profiles().await?;
+        let markets = candidates
+            .into_iter()
+            .map(|candidate| candidate.market)
+            .collect::<Vec<_>>();
+        Ok(select_reward_book_token_ids(&markets))
     }
 
     /// Return distinct token IDs from the latest eligible quote plans. Candidate
@@ -537,16 +604,14 @@ impl RewardBotService {
             let candidate_limit = u16::try_from(remaining.saturating_mul(10).max(100))
                 .unwrap_or(u16::MAX)
                 .min(reward_candidate_safety_limit(&relaxed_config));
-            let markets = self
-                .store
-                .list_candidate_markets(&relaxed_config.candidate_filter(), candidate_limit)
+            let candidates = self
+                .list_candidate_market_profiles_for_config(&relaxed_config)
                 .await?;
-            let candidates = select_reward_quote_candidate_markets(&markets, &relaxed_config);
-            for market in candidates {
+            for candidate in candidates.into_iter().take(usize::from(candidate_limit)) {
                 push_unique_condition_id(
                     &mut condition_ids,
                     &mut seen,
-                    market.condition_id,
+                    candidate.market.condition_id,
                     limit,
                 );
             }
@@ -555,97 +620,9 @@ impl RewardBotService {
         Ok(condition_ids)
     }
 
-    pub async fn snapshot(&self) -> Result<RewardBotSnapshot> {
-        self.snapshot_with_order_query(
-            &RewardOrderListQuery::default(),
-            &RewardQuotePlanListQuery::default(),
-        )
-        .await
-    }
-
-    pub async fn snapshot_with_order_query(
-        &self,
-        order_query: &RewardOrderListQuery,
-        plans_query: &RewardQuotePlanListQuery,
-    ) -> Result<RewardBotSnapshot> {
-        let config = self.read_config().await?;
-        let account = self.load_account_state_cached(&config).await?;
-
-        // Inject the real account_id from config into the order query so that
-        // the SQL always filters by account_id, using the existing composite
-        // index (account_id, status, updated_at DESC) instead of a full scan.
-        let order_query = RewardOrderListQuery {
-            account_id: account.account_id.clone(),
-            ..order_query.clone()
-        };
-
-        // Queries 3–13 are independent of each other (they only need
-        // account_id from the account loaded above).  Run them concurrently
-        // to avoid accumulating per-query round-trip latency.
-        //
-        // All list/count queries now filter by account_id so the existing
-        // composite indexes (account_id, created_at/updated_at DESC) are
-        // used instead of full table scans.
-        let (
-            (markets_tracked, last_scan_at),
-            (plans_total, eligible_total),
-            plans_page_data,
-            orders,
-            stored_positions,
-            open_order_count,
-            active_orders,
-            fills,
-            events,
-            last_run_at,
-            worker_heartbeat,
-        ) = tokio::try_join!(
-            self.store.active_market_summary(),
-            self.store.count_quote_plans(),
-            self.store.list_quote_plans_page(plans_query),
-            self.store.list_orders_page(&order_query),
-            self.list_positions_cached(&account.account_id, 200),
-            self.count_external_open_orders_cached(&account.account_id),
-            self.store.list_open_orders(&account.account_id),
-            self.list_fills_cached(&account.account_id, 200),
-            self.list_events_cached(&account.account_id, 100),
-            self.store.latest_quote_plan_updated_at(),
-            self.latest_worker_heartbeat_cached(&account.account_id),
-        )?;
-        let error = active_orders
-            .iter()
-            .find(|order| reward_order_has_active_reconciliation_error(order))
-            .map(|order| order.reason.clone());
-
-        Ok(RewardBotSnapshot {
-            status: RewardBotStatus {
-                enabled: config.enabled,
-                running: reward_worker_is_running(&config, worker_heartbeat, OffsetDateTime::now_utc()),
-                account_id: config.account_id.clone(),
-                markets_tracked,
-                eligible_markets: eligible_total,
-                open_orders: open_order_count,
-                positions: stored_positions.len(),
-                last_scan_at,
-                last_run_at,
-                error,
-                plans_total,
-            },
-            config,
-            account,
-            markets: Vec::new(),
-            quote_plans: plans_page_data.items,
-            plans_page: plans_page_data.page,
-            orders: orders.items,
-            orders_page: orders.page,
-            positions: stored_positions,
-            fills,
-            events,
-        })
-    }
-
     pub async fn prepare_live_cycle(
         &self,
-        markets: Vec<RewardMarket>,
+        candidate_markets: Vec<RewardCandidateMarket>,
         books: HashMap<String, RewardOrderBook>,
         _trace_id: &str,
         force_orders: bool,
@@ -653,7 +630,11 @@ impl RewardBotService {
         ai_model: &str,
     ) -> Result<RewardLiveCycle> {
         let config = self.read_config().await?;
-        let mut plans = build_reward_quote_plans(&markets, &books, &config);
+        let markets = candidate_markets
+            .iter()
+            .map(|candidate| candidate.market.clone())
+            .collect::<Vec<_>>();
+        let mut plans = build_reward_quote_plans_for_candidates(&candidate_markets, &books, &config);
         let previous_plans = self.store.list_all_quote_plans().await?;
         apply_unexpired_live_orderbook_skips(
             &mut plans,

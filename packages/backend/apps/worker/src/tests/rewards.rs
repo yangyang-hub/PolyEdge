@@ -270,6 +270,7 @@ fn live_test_open_order(token_id: &str) -> ManagedRewardOrder {
         side: RewardOrderSide::Buy,
         price: reward_decimal("0.49"),
         size: reward_decimal("20"),
+        strategy_bucket: RewardStrategyBucket::Standard,
         external_order_id: Some(format!("pm_{token_id}")),
         status: ManagedRewardOrderStatus::Open,
         scoring: true,

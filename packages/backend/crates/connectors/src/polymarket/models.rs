@@ -88,6 +88,7 @@ pub struct PolymarketOpenOrder {
     pub price: Decimal,
     pub outcome: String,
     pub status: String,
+    pub created_at: OffsetDateTime,
 }
 
 #[derive(Debug, Clone)]

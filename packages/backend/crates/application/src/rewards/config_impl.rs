@@ -291,6 +291,25 @@ impl RewardBotConfig {
     }
 
     #[must_use]
+    pub fn config_for_strategy_bucket(&self, bucket: RewardStrategyBucket) -> Self {
+        if bucket != RewardStrategyBucket::LowCompetition {
+            return self.clone();
+        }
+
+        let mut next = self.clone();
+        next.max_markets = self.low_competition_max_markets;
+        next.max_open_orders = self.low_competition_max_open_orders;
+        next.per_market_usd = self.low_competition_per_market_usd;
+        if self.low_competition_per_market_usd > Decimal::ZERO {
+            next.quote_size_usd = Decimal::min(self.quote_size_usd, self.low_competition_per_market_usd);
+        }
+        next.max_position_usd = self.low_competition_max_position_usd;
+        next.min_market_liquidity_usd = self.low_competition_min_market_liquidity_usd;
+        next.min_market_volume_24h_usd = self.low_competition_min_market_volume_24h_usd;
+        next
+    }
+
+    #[must_use]
     pub fn apply_patch(&self, patch: RewardBotConfigPatch) -> Self {
         let mut next = self.clone();
         if let Some(enabled) = patch.enabled {

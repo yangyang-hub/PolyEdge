@@ -330,12 +330,16 @@ fn accumulate_report(total: &mut RewardBotRunReport, report: &RewardBotRunReport
 async fn fetch_reward_bot_inputs(
     state: &AppState,
     orderbook_cache: Option<&RewardOrderbookLocalCache>,
-) -> Result<(Vec<RewardMarket>, HashMap<String, RewardOrderBook>)> {
+) -> Result<(Vec<RewardCandidateMarket>, HashMap<String, RewardOrderBook>)> {
     // Read a bounded candidate pool from database (synced by the sync-markets worker).
-    let markets = state
+    let candidates = state
         .reward_bot_service
-        .list_reward_run_candidate_markets()
+        .list_reward_run_candidate_market_profiles()
         .await?;
+    let markets = candidates
+        .iter()
+        .map(|candidate| candidate.market.clone())
+        .collect::<Vec<_>>();
 
     // Read order books from the worker-local cache maintained by orderbook-stream.
     let active_token_ids = state
@@ -353,7 +357,7 @@ async fn fetch_reward_bot_inputs(
         }
     }
     Ok((
-        markets,
+        candidates,
         fetch_cached_reward_books(state, orderbook_cache, &token_ids).await?,
     ))
 }

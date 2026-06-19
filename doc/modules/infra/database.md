@@ -4,11 +4,11 @@
 
 ## 概述
 
-数据库使用 PostgreSQL，通过 41 个 SQL 迁移文件管理 schema。覆盖审计、市场数据、事件/信号、执行管道、风控、套利、奖励、跟单等领域。为了空库一次性初始化，`packages/backend/init.sql` 机械合并了当前全部迁移内容；运行时仍通过 `sqlx` 使用 `packages/backend/migrations/` 做迁移校验和增量升级。
+数据库使用 PostgreSQL，通过 43 个 SQL 迁移文件管理 schema。覆盖审计、市场数据、事件/信号、执行管道、风控、套利、奖励、跟单等领域。为了空库一次性初始化，`packages/backend/init.sql` 机械合并了当前全部迁移内容；运行时仍通过 `sqlx` 使用 `packages/backend/migrations/` 做迁移校验和增量升级。
 
 ## 初始化入口
 
-- `packages/backend/init.sql`：完整空库初始化脚本，按 `0001` 到 `0041` 顺序展开所有迁移，适合新环境人工执行一次，例如 `psql "$POLYEDGE_POSTGRES__URL" -v ON_ERROR_STOP=1 -f packages/backend/init.sql`。
+- `packages/backend/init.sql`：完整空库初始化脚本，按 `0001` 到 `0043` 顺序展开所有迁移，适合新环境人工执行一次，例如 `psql "$POLYEDGE_POSTGRES__URL" -v ON_ERROR_STOP=1 -f packages/backend/init.sql`。
 - `packages/backend/migrations/*.sql`：保留给 Rust runtime 的 `sqlx::migrate!` 使用。不要删除或重命名已应用的迁移文件，否则现有数据库的 `_sqlx_migrations` 历史可能与二进制内嵌迁移不一致。
 - `init.sql` 只面向空数据库；已存在 schema 的数据库继续使用 runtime 自动迁移或按需执行新增迁移。
 
@@ -57,6 +57,8 @@
 | `0039_reward_market_info_risks.sql` | Rewards 信息风险缓存 | `reward_market_info_risks` |
 | `0040_markets_quality_index_no_synced_at.sql` | Rewards 市场质量索引写放大优化 | 重建 `idx_markets_reward_quality`，移除高频变化的 `markets.synced_at` |
 | `0041_market_asset_id_lookup_indexes.sql` | 市场 asset id 反查索引 | `markets.polymarket_yes_asset_id` / `polymarket_no_asset_id` 部分索引 |
+| `0042_reward_order_strategy_bucket.sql` | Rewards 订单策略 bucket | `reward_managed_orders.strategy_bucket` 及按 bucket/account/status 查询索引 |
+| `0043_reward_low_competition_observations.sql` | Rewards 低竞争观测 | `reward_low_competition_observations` 及 account/condition 最近观察索引 |
 
 ## Schema 领域分组
 
@@ -105,17 +107,18 @@
 
 ### 8. 奖励机器人
 
-- **`reward_bot_config`**：key-value 配置，包含报价/风控、市场质量、quote/selection mode、dominant 单边阈值、盘口集中度阈值、偏好分类、AI advisory 开关/provider/request format/TTL 和信息风险开关/mode/过滤等级/TTL
+- **`reward_bot_config`**：key-value 配置，包含报价/风控、市场质量、quote/selection mode、dominant 单边阈值、盘口集中度阈值、偏好分类、低竞争 sleeve mode/额度/竞争/退出/稳定性阈值、AI advisory 开关/provider/request format/TTL 和信息风险开关/mode/过滤等级/TTL
 - **`reward_markets`**：condition_id、question、market_slug、rewards_max_spread/min_size、total_daily_rate、tokens JSON
 - **`reward_quote_plans`**：market FK、scoring、quote plan
-- **`reward_managed_orders`**：account_id、condition_id、token_id、filled_size、reward_earned、last_scored_at
+- **`reward_managed_orders`**：account_id、condition_id、token_id、strategy_bucket（standard/low_competition/none）、filled_size、reward_earned、last_scored_at
 - **`reward_fills`**：order_id、account_id、condition_id、token_id、outcome、side、price、size、notional_usd、role、realized_pnl
 - **`reward_positions`**：按 account_id + token_id 保存外部完整持仓；可包含当前 rewards catalog 之外的市场，不再依赖 `reward_markets` 外键
 - **`reward_account_state`**：capital_usd、available_usd、reserved_usd（旧硬占用兼容字段，下一次 rewards tick 自动释放）、realized_pnl、reward_earned_usd、fees_paid、tick_index
 - **`reward_control_commands`**：API 入队给 worker 的 rewards 控制命令（run_once/cancel_all/reset）及 pending/running/completed/failed 状态；running 超过 5 分钟可重新领取
 - **`reward_market_advisories`**：AI advisory 缓存表，按 condition/provider/request_format/model/input_hash 保存 suitability、推荐 quote mode、exit policy、confidence、reasons/metrics JSON 和 expires_at；`input_hash` 使用稳定 cache-key payload（市场身份/问题、奖励参数、计划 quote mode 和相关策略配置），不包含每轮变化的账户、开放订单、持仓或盘口实时字段；worker 只读取未过期记录，缓存未命中时调用 provider 后写入
 - **`reward_market_info_risks`**：信息风险缓存表，按 condition/provider/request_format/model/input_hash 保存 query_hash、risk_level、risk_type、directional_risk、resolution_imminent、expected_event_at、confidence、summary、sources/metrics JSON 和 expires_at；`input_hash` 使用稳定 cache-key payload（搜索 query、市场身份/问题/事件、计划 quote mode 和风险策略配置），不包含账户、开放订单、持仓、quote plan reason/score 或 market_synced_at 等动态字段；异步 worker 写入，live rewards tick 只读取未过期缓存
-- **低竞争 rewards sleeve**：当前尚未实现，也没有独立表或迁移。设计方案首版可复用 `reward_bot_config` key-value 配置和 `reward_quote_plans` JSON 保存 observe 指标；只有需要跨周期日报、回测或审计级样本保留时，才新增类似 `reward_low_competition_observations` 的迁移表。
+- **`reward_low_competition_observations`**：低竞争 sleeve 跨周期 observation，按 account/condition/observed_at 记录模式、计划 notional、竞争资金、预估 reward/100/day、退出深度/滑点、midpoint 波动、样本不足、低竞争 gate、最终可挂、AI/信息风险拦截、主策略重叠和拒绝原因 JSON；snapshot shadow report 读取最近窗口聚合，不会自动改配置。
+- **低竞争 rewards sleeve**：v2 已实现，配置复用 `reward_bot_config` key-value，quote plan 指标复用 `reward_quote_plans` JSON，managed order bucket 使用 `reward_managed_orders.strategy_bucket`，跨周期观察使用 `reward_low_competition_observations`。
 
 ### 9. Copytrade 钱包跟踪与分析
 
@@ -132,11 +135,11 @@
 
 ## 当前状态
 
-- 41 个迁移文件，最新为 `0041_market_asset_id_lookup_indexes.sql`
-- `packages/backend/init.sql` 已合并 `0001`–`0041`，作为完整空库初始化脚本
+- 43 个迁移文件，最新为 `0043_reward_low_competition_observations.sql`
+- `packages/backend/init.sql` 已合并 `0001`–`0043`，作为完整空库初始化脚本
 - 所有表使用 PostgreSQL 特性（JSONB、NUMERIC 约束、BIGSERIAL、部分索引等）
 - 迁移使用 `sqlx` 管理
-- Rewards 低竞争市场 sleeve 目前仅有 [设计方案](../../rewards-low-competition-sleeve-plan.md)，没有新增 schema；如果后续新增持久化观测表，必须同步新增迁移、更新 `init.sql` 和本文档迁移列表。
+- Rewards 低竞争市场 sleeve v2 已落地，新增 schema 包括 managed order 的 `strategy_bucket` 和 `reward_low_competition_observations` 观测表；shadow report 是 snapshot 派生结果，不单独落表。
 
 ## 修改检查清单
 
