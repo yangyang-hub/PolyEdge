@@ -239,6 +239,31 @@ impl RewardBotService {
         self.store.list_all_active_markets().await
     }
 
+    pub async fn record_orderbook_candle_from_cached_book(
+        &self,
+        book: &CachedOrderBook,
+    ) -> Result<()> {
+        let Some(sample) = reward_market_candle_sample_from_cached_book(
+            book,
+            REWARD_AI_CANDLE_INTERVAL_SEC,
+        )?
+        else {
+            return Ok(());
+        };
+        self.store.record_market_candle_sample(&sample).await
+    }
+
+    pub async fn list_recent_market_candles(
+        &self,
+        condition_id: &str,
+        interval_sec: i32,
+        limit_per_token: u16,
+    ) -> Result<Vec<RewardMarketCandle>> {
+        self.store
+            .list_recent_market_candles(condition_id, interval_sec, limit_per_token)
+            .await
+    }
+
     pub async fn latest_market_advisory(
         &self,
         request: &RewardAiAdvisoryRequest,
@@ -313,7 +338,7 @@ impl RewardBotService {
         config: &RewardBotConfig,
     ) -> Result<Vec<RewardCandidateMarket>> {
         let filter = config.candidate_filter();
-        let safety_limit = reward_candidate_safety_limit(&config);
+        let safety_limit = reward_candidate_safety_limit(config);
         let markets = self
             .store
             .list_candidate_markets(&filter, safety_limit)

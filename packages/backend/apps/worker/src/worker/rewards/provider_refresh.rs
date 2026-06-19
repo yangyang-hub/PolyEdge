@@ -160,51 +160,49 @@ async fn refresh_reward_market_provider_cache(
     );
 
     for condition_id in ordered_conditions {
-        if let Some(connector) = ai_connector.as_ref() {
-            if ai_candidate_conditions.contains(&condition_id) {
-                let ai_step = refresh_reward_ai_advisory_for_condition(
-                    state,
-                    connector,
-                    &cycle,
-                    &books,
-                    &markets_by_condition,
-                    &condition_id,
-                    model,
-                    trace_id,
-                    &mut report.ai,
-                )
-                .await?;
-                if let Some(advisory) = ai_step.advisory {
-                    if let Some(plan) = cycle
-                        .plans
-                        .iter_mut()
-                        .find(|plan| plan.condition_id == condition_id)
-                    {
-                        plan.ai_advisory = Some(advisory);
-                    }
-                }
-                if ai_step.stop_cycle {
-                    break;
-                }
+        if let Some(connector) = ai_connector.as_ref()
+            && ai_candidate_conditions.contains(&condition_id)
+        {
+            let ai_step = refresh_reward_ai_advisory_for_condition(
+                state,
+                connector,
+                &cycle,
+                &books,
+                &markets_by_condition,
+                &condition_id,
+                model,
+                trace_id,
+                &mut report.ai,
+            )
+            .await?;
+            if let Some(advisory) = ai_step.advisory
+                && let Some(plan) = cycle
+                    .plans
+                    .iter_mut()
+                    .find(|plan| plan.condition_id == condition_id)
+            {
+                plan.ai_advisory = Some(advisory);
+            }
+            if ai_step.stop_cycle {
+                break;
             }
         }
 
-        if let Some(connector) = info_risk_connector.as_ref() {
-            if info_risk_candidate_conditions.contains(&condition_id)
-                && refresh_reward_info_risk_for_condition(
-                    state,
-                    connector,
-                    &cycle,
-                    &markets_by_condition,
-                    &condition_id,
-                    model,
-                    trace_id,
-                    &mut report.info_risk,
-                )
-                .await?
-            {
-                break;
-            }
+        if let Some(connector) = info_risk_connector.as_ref()
+            && info_risk_candidate_conditions.contains(&condition_id)
+            && refresh_reward_info_risk_for_condition(
+                state,
+                connector,
+                &cycle,
+                &markets_by_condition,
+                &condition_id,
+                model,
+                trace_id,
+                &mut report.info_risk,
+            )
+            .await?
+        {
+            break;
         }
     }
 
@@ -239,6 +237,7 @@ struct RewardAiAdvisoryRefreshStep {
     advisory: Option<RewardMarketAdvisory>,
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn refresh_reward_ai_advisory_for_condition(
     state: &AppState,
     connector: &RewardAiAdvisoryConnector,
@@ -268,6 +267,14 @@ async fn refresh_reward_ai_advisory_for_condition(
             advisory: None,
         });
     };
+    let candles = state
+        .reward_bot_service
+        .list_recent_market_candles(
+            condition_id,
+            REWARD_AI_CANDLE_INTERVAL_SEC,
+            REWARD_AI_CANDLE_LIMIT_PER_TOKEN,
+        )
+        .await?;
     let request = build_reward_ai_advisory_request(
         market,
         plan_for_request,
@@ -275,6 +282,7 @@ async fn refresh_reward_ai_advisory_for_condition(
         &cycle.positions,
         &cycle.open_orders,
         books,
+        &candles,
         &cycle.config,
         cycle.config.ai_provider,
         cycle.config.ai_request_format,
@@ -369,6 +377,7 @@ async fn refresh_reward_ai_advisory_for_condition(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn refresh_reward_info_risk_for_condition(
     state: &AppState,
     connector: &RewardInfoRiskConnector,

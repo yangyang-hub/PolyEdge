@@ -43,6 +43,16 @@ pub trait RewardBotStore: Send + Sync {
         since: OffsetDateTime,
         limit: u16,
     ) -> Result<Vec<RewardLowCompetitionObservation>>;
+    async fn record_market_candle_sample(
+        &self,
+        sample: &RewardMarketCandleSample,
+    ) -> Result<()>;
+    async fn list_recent_market_candles(
+        &self,
+        condition_id: &str,
+        interval_sec: i32,
+        limit_per_token: u16,
+    ) -> Result<Vec<RewardMarketCandle>>;
     async fn latest_market_advisory(
         &self,
         request: &RewardAiAdvisoryRequest,

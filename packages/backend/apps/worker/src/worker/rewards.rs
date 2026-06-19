@@ -86,6 +86,7 @@ impl LiveCancelReport {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn persist_live_reward_updates(
     state: &AppState,
     account: &mut RewardAccountState,

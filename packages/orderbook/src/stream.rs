@@ -79,18 +79,16 @@ pub async fn run_orderbook_stream(
         let ws_broadcaster = broadcaster.clone();
         let chunk_snapshots = ws_snapshots_received.clone();
         let chunk_price_changes = ws_price_changes_received.clone();
+        let context = OrderbookWsChunkContext {
+            ws_host,
+            cache: ws_cache,
+            broadcaster: ws_broadcaster,
+            max_levels_per_side,
+            snapshots_received: chunk_snapshots,
+            price_changes_received: chunk_price_changes,
+        };
         ws_tasks.spawn(async move {
-            run_orderbook_ws_chunk(
-                chunk_index,
-                chunk_token_ids,
-                ws_host,
-                ws_cache,
-                ws_broadcaster,
-                max_levels_per_side,
-                chunk_snapshots,
-                chunk_price_changes,
-            )
-            .await
+            run_orderbook_ws_chunk(chunk_index, chunk_token_ids, context).await
         });
     }
 
@@ -262,21 +260,25 @@ pub async fn run_orderbook_stream(
     Ok(report)
 }
 
-async fn run_orderbook_ws_chunk(
-    chunk_index: usize,
-    token_ids: Vec<U256>,
+struct OrderbookWsChunkContext {
     ws_host: String,
     cache: Arc<dyn OrderbookCache>,
     broadcaster: OrderbookUpdateBroadcaster,
     max_levels_per_side: usize,
     snapshots_received: Arc<AtomicUsize>,
     price_changes_received: Arc<AtomicUsize>,
+}
+
+async fn run_orderbook_ws_chunk(
+    chunk_index: usize,
+    token_ids: Vec<U256>,
+    context: OrderbookWsChunkContext,
 ) -> Result<()> {
     // Use a longer heartbeat timeout (30s vs SDK default 15s) to reduce
     // false-positive heartbeat warnings on networks with occasional latency.
     let mut ws_config = WsConfig::default();
     ws_config.heartbeat_timeout = Duration::from_secs(30);
-    let ws_client = ClobWsClient::new(&ws_host, ws_config).map_err(|error| {
+    let ws_client = ClobWsClient::new(&context.ws_host, ws_config).map_err(|error| {
         AppError::internal(
             "ORDERBOOK_WS_INIT_FAILED",
             format!("failed to create orderbook websocket client: {error}"),
@@ -314,11 +316,11 @@ async fn run_orderbook_ws_chunk(
                     Some(Ok(book_update)) => {
                         let cached = normalized_cached_book(
                             book_update_to_cached(&book_update),
-                            max_levels_per_side,
+                            context.max_levels_per_side,
                         );
                         if let Err(error) = set_book_and_publish_if_current(
-                            &cache,
-                            &broadcaster,
+                            &context.cache,
+                            &context.broadcaster,
                             OrderbookStreamReason::Book,
                             &cached,
                         )
@@ -331,9 +333,9 @@ async fn run_orderbook_ws_chunk(
                                 "failed to write orderbook snapshot to cache"
                             );
                         }
-                        let received = snapshots_received.fetch_add(1, Ordering::Relaxed) + 1;
+                        let received = context.snapshots_received.fetch_add(1, Ordering::Relaxed) + 1;
 
-                        if received % 100 == 0 {
+                        if received.is_multiple_of(100) {
                             debug!(
                                 ws_chunk = chunk_index,
                                 received,
@@ -358,8 +360,8 @@ async fn run_orderbook_ws_chunk(
                 match message {
                     Some(Ok(price_change)) => {
                         if let Err(error) = apply_price_change_to_cache(
-                            &cache,
-                            &broadcaster,
+                            &context.cache,
+                            &context.broadcaster,
                             &price_change,
                         )
                         .await
@@ -370,7 +372,7 @@ async fn run_orderbook_ws_chunk(
                                 "failed to apply orderbook price change"
                             );
                         }
-                        price_changes_received.fetch_add(1, Ordering::Relaxed);
+                        context.price_changes_received.fetch_add(1, Ordering::Relaxed);
                     }
                     Some(Err(error)) => {
                         warn!(

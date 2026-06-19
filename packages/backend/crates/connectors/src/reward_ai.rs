@@ -257,26 +257,26 @@ impl RewardAiAdvisoryConnector {
             )),
             &self.api_key,
         )
-            .json(&json!({
-                "model": requests[0].model,
-                "messages": [
-                    {"role": "system", "content": reward_ai_batch_system_prompt()},
-                    {"role": "user", "content": reward_ai_batch_user_prompt(requests)}
-                ],
-                "response_format": {
-                    "type": "json_schema",
-                    "json_schema": {
-                        "name": "reward_market_advisories",
-                        "schema": reward_ai_batch_json_schema(),
-                        "strict": true
-                    }
-                },
-                "temperature": 0,
-                "max_completion_tokens": max_tokens
-            }))
-            .send()
-            .await
-            .map_err(reward_ai_http_error)?;
+        .json(&json!({
+            "model": requests[0].model,
+            "messages": [
+                {"role": "system", "content": reward_ai_batch_system_prompt()},
+                {"role": "user", "content": reward_ai_batch_user_prompt(requests)}
+            ],
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "reward_market_advisories",
+                    "schema": reward_ai_batch_json_schema(),
+                    "strict": true
+                }
+            },
+            "temperature": 0,
+            "max_completion_tokens": max_tokens
+        }))
+        .send()
+        .await
+        .map_err(reward_ai_http_error)?;
         let status = response.status();
         let body: Value = response.json().await.map_err(reward_ai_decode_error)?;
         if !status.is_success() {
@@ -468,15 +468,15 @@ fn parse_reward_ai_batch_decision(
                 return Ok(items);
             }
         }
-        if single_market_batch && reward_ai_candidate_has_known_field(&value) {
-            if let Some(condition_id) = single_condition {
-                if let Ok(decision) = parse_reward_ai_decision_value(&value) {
-                    return Ok(vec![RewardAiAdvisoryBatchItem {
-                        condition_id: condition_id.to_string(),
-                        decision,
-                    }]);
-                }
-            }
+        if single_market_batch
+            && reward_ai_candidate_has_known_field(&value)
+            && let Some(condition_id) = single_condition
+            && let Ok(decision) = parse_reward_ai_decision_value(&value)
+        {
+            return Ok(vec![RewardAiAdvisoryBatchItem {
+                condition_id: condition_id.to_string(),
+                decision,
+            }]);
         }
     }
     Err(last_error.unwrap_or_else(|| {

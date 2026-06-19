@@ -9,12 +9,13 @@ use polyedge_application::{
     RewardCandidateFilter, RewardControlAction, RewardControlCommand, RewardControlCommandStatus,
     RewardFill, RewardFillRole, RewardInfoDirectionalRisk, RewardInfoRiskAssessmentRequest,
     RewardInfoRiskLevel, RewardInfoRiskSource, RewardInfoRiskType, RewardLowCompetitionMode,
-    RewardLowCompetitionObservation, RewardMarket, RewardMarketAdvisory, RewardMarketInfoRisk,
-    RewardOrderListQuery, RewardOrderPage, RewardOrderSide, RewardOrderSortField,
-    RewardOrderStatusFilter, RewardPlanQuoteMode, RewardPosition, RewardQuoteMode, RewardQuotePlan,
-    RewardQuotePlanListQuery, RewardQuotePlanPage, RewardQuotePlanSortField, RewardRiskEvent,
-    RewardRiskSeverity, RewardSelectionMode, RewardStrategyBucket, RewardTickOutcome, RewardToken,
-    RiskStateSnapshot, RiskStateStore, SortOrder, SourceTrade, TrackedWallet, TrackedWalletStatus,
+    RewardLowCompetitionObservation, RewardMarket, RewardMarketAdvisory, RewardMarketCandle,
+    RewardMarketCandleSample, RewardMarketInfoRisk, RewardOrderListQuery, RewardOrderPage,
+    RewardOrderSide, RewardOrderSortField, RewardOrderStatusFilter, RewardPlanQuoteMode,
+    RewardPosition, RewardQuoteMode, RewardQuotePlan, RewardQuotePlanListQuery,
+    RewardQuotePlanPage, RewardQuotePlanSortField, RewardRiskEvent, RewardRiskSeverity,
+    RewardSelectionMode, RewardStrategyBucket, RewardTickOutcome, RewardToken, RiskStateSnapshot,
+    RiskStateStore, SortOrder, SourceTrade, TrackedWallet, TrackedWalletStatus,
     WalletAnalysisStats,
 };
 use polyedge_domain::{
@@ -52,6 +53,7 @@ include!("stores/idempotency.rs");
 include!("stores/external_event.rs");
 include!("stores/audit.rs");
 include!("stores/rewards/postgres_market_methods.rs");
+include!("stores/rewards/postgres_candles.rs");
 include!("stores/rewards.rs");
 include!("stores/copytrade.rs");
 include!("stores/orderbook_cache.rs");

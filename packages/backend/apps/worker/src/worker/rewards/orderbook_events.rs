@@ -580,7 +580,9 @@ mod reward_orderbook_local_cache_tests {
         assert!(cache.check_condition_readiness(&token_no).await.is_none());
 
         // Clearing the marker lets the next orderbook change re-fire.
-        cache.clear_notified_ready(&[condition_id.clone()]).await;
+        cache
+            .clear_notified_ready(std::slice::from_ref(&condition_id))
+            .await;
         assert_eq!(
             cache.check_condition_readiness(&token_yes).await.as_deref(),
             Some("cond_a"),

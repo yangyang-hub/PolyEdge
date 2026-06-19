@@ -138,10 +138,10 @@ impl PolymarketGammaConnector {
             let page_len = page.len();
 
             for raw in page {
-                if let Some(market) = map_gamma_market(raw)? {
-                    if market_ids.insert(market.id.clone()) {
-                        markets.push(market);
-                    }
+                if let Some(market) = map_gamma_market(raw)?
+                    && market_ids.insert(market.id.clone())
+                {
+                    markets.push(market);
                 }
             }
 
@@ -175,10 +175,10 @@ impl PolymarketGammaConnector {
         for chunk in normalized.chunks(GAMMA_CONDITION_BATCH_SIZE) {
             let page = self.fetch_market_page_by_condition_ids(chunk).await?;
             for raw in page {
-                if let Some(market) = map_gamma_market(raw)? {
-                    if seen_markets.insert(market.id.clone()) {
-                        markets.push(market);
-                    }
+                if let Some(market) = map_gamma_market(raw)?
+                    && seen_markets.insert(market.id.clone())
+                {
+                    markets.push(market);
                 }
             }
         }

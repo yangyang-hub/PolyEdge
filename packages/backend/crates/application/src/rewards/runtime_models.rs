@@ -60,6 +60,40 @@ pub struct RewardOrderBook {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RewardMarketCandle {
+    pub token_id: String,
+    pub condition_id: String,
+    pub outcome: String,
+    pub interval_sec: i32,
+    #[serde(with = "time::serde::rfc3339")]
+    pub bucket_start: OffsetDateTime,
+    pub open: Decimal,
+    pub high: Decimal,
+    pub low: Decimal,
+    pub close: Decimal,
+    pub best_bid_close: Decimal,
+    pub best_ask_close: Decimal,
+    pub spread_cents_close: Decimal,
+    pub sample_count: i32,
+    #[serde(with = "time::serde::rfc3339")]
+    pub close_observed_at: OffsetDateTime,
+    #[serde(with = "time::serde::rfc3339")]
+    pub updated_at: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct RewardMarketCandleSample {
+    pub token_id: String,
+    pub interval_sec: i32,
+    pub bucket_start: OffsetDateTime,
+    pub midpoint: Decimal,
+    pub best_bid: Decimal,
+    pub best_ask: Decimal,
+    pub spread_cents: Decimal,
+    pub observed_at: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RewardQuoteLeg {
     pub token_id: String,
     pub outcome: String,

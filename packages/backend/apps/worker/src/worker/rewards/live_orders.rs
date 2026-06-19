@@ -1,3 +1,4 @@
+#[allow(clippy::large_enum_variant)]
 enum LiveRewardOrderUpdate {
     Changed(ManagedRewardOrder, RewardRiskEvent),
     Unchanged(RewardRiskEvent),
@@ -323,6 +324,7 @@ fn reward_fill_role_for_live_order(order: &ManagedRewardOrder) -> RewardFillRole
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn plan_live_post_fill_orders(
     config: &RewardBotConfig,
     plans: &[RewardQuotePlan],
@@ -487,6 +489,7 @@ fn live_exit_order(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn cancel_sibling_live_reward_orders(
     connector: &LivePolymarketConnector,
     working_orders: &mut HashMap<String, ManagedRewardOrder>,

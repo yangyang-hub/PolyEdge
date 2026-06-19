@@ -106,6 +106,7 @@ fn live_cancel_reason(
     None
 }
 
+#[allow(clippy::needless_range_loop, clippy::too_many_arguments)]
 fn live_placement_orders(
     config: &RewardBotConfig,
     account: &RewardAccountState,

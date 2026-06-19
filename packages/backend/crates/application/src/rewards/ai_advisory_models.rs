@@ -131,6 +131,7 @@ pub fn build_reward_ai_advisory_request(
     positions: &[RewardPosition],
     open_orders: &[ManagedRewardOrder],
     books: &HashMap<String, RewardOrderBook>,
+    candles: &[RewardMarketCandle],
     config: &RewardBotConfig,
     provider: RewardAiProvider,
     request_format: RewardAiRequestFormat,
@@ -158,6 +159,8 @@ pub fn build_reward_ai_advisory_request(
             })
         })
         .collect::<Vec<_>>();
+    let candle_payload = reward_ai_candle_payload(market, candles);
+    let candle_summary = reward_ai_candle_summary(market, candles);
     let payload = json!({
         "schema_version": 1,
         "market": {
@@ -201,6 +204,8 @@ pub fn build_reward_ai_advisory_request(
             "max_global_position_usd": config.max_global_position_usd,
         },
         "books": book_payload,
+        "candles": candle_payload,
+        "candle_summary": candle_summary,
     });
     Ok(RewardAiAdvisoryRequest {
         condition_id: market.condition_id.clone(),
@@ -208,7 +213,10 @@ pub fn build_reward_ai_advisory_request(
         request_format,
         model: model.trim().to_string(),
         input_hash: reward_ai_input_hash(&reward_ai_advisory_cache_key_payload(
-            market, plan, config,
+            market,
+            plan,
+            config,
+            &candle_summary,
         ))?,
         payload,
     })
@@ -218,6 +226,7 @@ fn reward_ai_advisory_cache_key_payload(
     market: &RewardMarket,
     plan: &RewardQuotePlan,
     config: &RewardBotConfig,
+    candle_summary: &Value,
 ) -> Value {
     let mut tokens = market
         .tokens
@@ -238,11 +247,15 @@ fn reward_ai_advisory_cache_key_payload(
     });
 
     json!({
+        // schema_version 4: reward AI advisory now receives orderbook-derived
+        // midpoint candles. The cache key includes only the candle summary,
+        // not the full candle array, to avoid per-tick provider churn.
+        //
         // schema_version 3: provider refresh now defers requests until the
         // orderbook service has published real books, so advisories cached
         // before that change (null bids/asks "no orderbook" watch/avoid) are
         // invalidated and re-evaluated against live books.
-        "schema_version": 3,
+        "schema_version": 4,
         "cache_domain": "reward_ai_advisory",
         "market": {
             "condition_id": market.condition_id,
@@ -272,6 +285,113 @@ fn reward_ai_advisory_cache_key_payload(
             "dominant_min_probability": config.dominant_min_probability,
             "dominant_max_probability": config.dominant_max_probability,
         },
+        "candle_summary": candle_summary,
+    })
+}
+
+fn reward_ai_candle_payload(market: &RewardMarket, candles: &[RewardMarketCandle]) -> Value {
+    let mut groups = Vec::new();
+    for token in &market.tokens {
+        let mut items = candles
+            .iter()
+            .filter(|candle| candle.token_id == token.token_id)
+            .cloned()
+            .collect::<Vec<_>>();
+        items.sort_by_key(|candle| candle.bucket_start);
+        groups.push(json!({
+            "token_id": token.token_id,
+            "outcome": token.outcome,
+            "interval_sec": REWARD_AI_CANDLE_INTERVAL_SEC,
+            "items": items.into_iter().map(|candle| {
+                json!({
+                    "bucket_start": candle.bucket_start,
+                    "open": candle.open,
+                    "high": candle.high,
+                    "low": candle.low,
+                    "close": candle.close,
+                    "best_bid_close": candle.best_bid_close,
+                    "best_ask_close": candle.best_ask_close,
+                    "spread_cents_close": candle.spread_cents_close,
+                    "sample_count": candle.sample_count,
+                })
+            }).collect::<Vec<_>>(),
+        }));
+    }
+    Value::Array(groups)
+}
+
+fn reward_ai_candle_summary(market: &RewardMarket, candles: &[RewardMarketCandle]) -> Value {
+    let mut token_summaries = Vec::new();
+    let mut latest_bucket: Option<OffsetDateTime> = None;
+    let mut total_samples = 0i64;
+    let mut missing_tokens = 0usize;
+
+    for token in &market.tokens {
+        let mut items = candles
+            .iter()
+            .filter(|candle| candle.token_id == token.token_id)
+            .collect::<Vec<_>>();
+        items.sort_by_key(|candle| candle.bucket_start);
+        let Some(first) = items.first().copied() else {
+            missing_tokens += 1;
+            token_summaries.push(json!({
+                "token_id": token.token_id,
+                "outcome": token.outcome,
+                "sample_count": 0,
+                "missing": true,
+            }));
+            continue;
+        };
+        let last = items[items.len() - 1];
+        latest_bucket = Some(latest_bucket.map_or(last.bucket_start, |current| {
+            current.max(last.bucket_start)
+        }));
+        let min_low = items
+            .iter()
+            .map(|candle| candle.low)
+            .min()
+            .unwrap_or(first.low);
+        let max_high = items
+            .iter()
+            .map(|candle| candle.high)
+            .max()
+            .unwrap_or(first.high);
+        let max_spread = items
+            .iter()
+            .map(|candle| candle.spread_cents_close)
+            .max()
+            .unwrap_or(Decimal::ZERO);
+        let sample_count = items
+            .iter()
+            .map(|candle| i64::from(candle.sample_count.max(0)))
+            .sum::<i64>();
+        total_samples += sample_count;
+        token_summaries.push(json!({
+            "token_id": token.token_id,
+            "outcome": token.outcome,
+            "interval_sec": REWARD_AI_CANDLE_INTERVAL_SEC,
+            "first_bucket_start": first.bucket_start,
+            "last_bucket_start": last.bucket_start,
+            "open": first.open,
+            "close": last.close,
+            "return_cents": ((last.close - first.open) * decimal("100")).round_dp(8),
+            "range_cents": ((max_high - min_low) * decimal("100")).round_dp(8),
+            "max_spread_cents": max_spread,
+            "sample_count": sample_count,
+            "missing": false,
+        }));
+    }
+
+    json!({
+        "schema_version": 1,
+        "interval_sec": REWARD_AI_CANDLE_INTERVAL_SEC,
+        "limit_per_token": REWARD_AI_CANDLE_LIMIT_PER_TOKEN,
+        "latest_bucket_start": latest_bucket,
+        "token_count": market.tokens.len(),
+        "missing_token_count": missing_tokens,
+        "sample_count": total_samples,
+        "stale": missing_tokens > 0,
+        "tokens": token_summaries,
     })
 }
 

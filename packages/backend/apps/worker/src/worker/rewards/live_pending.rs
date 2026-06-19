@@ -6,6 +6,7 @@ struct LiveBuySubmitRiskContext<'a> {
     kill_switch: bool,
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn submit_pending_live_reward_orders(
     connector: &LivePolymarketConnector,
     open_orders: &mut [ManagedRewardOrder],

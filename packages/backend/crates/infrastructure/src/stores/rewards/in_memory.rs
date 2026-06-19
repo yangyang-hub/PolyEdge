@@ -14,6 +14,7 @@ pub struct InMemoryRewardBotStore {
     advisories: RwLock<Vec<RewardMarketAdvisory>>,
     info_risks: RwLock<Vec<RewardMarketInfoRisk>>,
     low_competition_observations: RwLock<Vec<RewardLowCompetitionObservation>>,
+    candles: RwLock<HashMap<(String, i32, OffsetDateTime), RewardMarketCandle>>,
 }
 
 impl InMemoryRewardBotStore {
@@ -33,6 +34,7 @@ impl InMemoryRewardBotStore {
             advisories: RwLock::new(Vec::new()),
             info_risks: RwLock::new(Vec::new()),
             low_competition_observations: RwLock::new(Vec::new()),
+            candles: RwLock::new(HashMap::new()),
         }
     }
 }
@@ -188,6 +190,98 @@ impl RewardBotStore for InMemoryRewardBotStore {
             .take(usize::from(limit))
             .cloned()
             .collect())
+    }
+
+    async fn record_market_candle_sample(
+        &self,
+        sample: &RewardMarketCandleSample,
+    ) -> Result<()> {
+        let markets = self.markets.read().await;
+        let Some((condition_id, outcome)) = markets
+            .values()
+            .filter(|market| market.active)
+            .filter_map(|market| {
+                market
+                    .tokens
+                    .iter()
+                    .find(|token| token.token_id == sample.token_id)
+                    .map(|token| (market.condition_id.clone(), token.outcome.clone()))
+            })
+            .next()
+        else {
+            return Ok(());
+        };
+        drop(markets);
+
+        let key = (
+            sample.token_id.clone(),
+            sample.interval_sec,
+            sample.bucket_start,
+        );
+        let mut candles = self.candles.write().await;
+        match candles.get_mut(&key) {
+            Some(existing) if sample.observed_at >= existing.close_observed_at => {
+                existing.high = Decimal::max(existing.high, sample.midpoint);
+                existing.low = Decimal::min(existing.low, sample.midpoint);
+                existing.close = sample.midpoint;
+                existing.best_bid_close = sample.best_bid;
+                existing.best_ask_close = sample.best_ask;
+                existing.spread_cents_close = sample.spread_cents;
+                existing.sample_count += 1;
+                existing.close_observed_at = sample.observed_at;
+                existing.updated_at = OffsetDateTime::now_utc();
+            }
+            Some(_) => {}
+            None => {
+                candles.insert(
+                    key,
+                    RewardMarketCandle {
+                        token_id: sample.token_id.clone(),
+                        condition_id,
+                        outcome,
+                        interval_sec: sample.interval_sec,
+                        bucket_start: sample.bucket_start,
+                        open: sample.midpoint,
+                        high: sample.midpoint,
+                        low: sample.midpoint,
+                        close: sample.midpoint,
+                        best_bid_close: sample.best_bid,
+                        best_ask_close: sample.best_ask,
+                        spread_cents_close: sample.spread_cents,
+                        sample_count: 1,
+                        close_observed_at: sample.observed_at,
+                        updated_at: OffsetDateTime::now_utc(),
+                    },
+                );
+            }
+        }
+        Ok(())
+    }
+
+    async fn list_recent_market_candles(
+        &self,
+        condition_id: &str,
+        interval_sec: i32,
+        limit_per_token: u16,
+    ) -> Result<Vec<RewardMarketCandle>> {
+        let limit = usize::from(limit_per_token.max(1));
+        let mut by_token = BTreeMap::<String, Vec<RewardMarketCandle>>::new();
+        for candle in self.candles.read().await.values() {
+            if candle.condition_id == condition_id && candle.interval_sec == interval_sec {
+                by_token
+                    .entry(candle.token_id.clone())
+                    .or_default()
+                    .push(candle.clone());
+            }
+        }
+        let mut output = Vec::new();
+        for candles in by_token.values_mut() {
+            candles.sort_by_key(|candle| std::cmp::Reverse(candle.bucket_start));
+            candles.truncate(limit);
+            candles.sort_by_key(|candle| candle.bucket_start);
+            output.extend(candles.iter().cloned());
+        }
+        Ok(output)
     }
 
     async fn latest_market_advisory(

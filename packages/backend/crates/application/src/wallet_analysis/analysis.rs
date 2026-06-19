@@ -193,7 +193,7 @@ fn build_activity_stats(trades: &[TradeInput]) -> WalletActivityStats {
     sizes.sort();
     let median_trade = if sizes.is_empty() {
         Decimal::ZERO
-    } else if sizes.len() % 2 == 0 {
+    } else if sizes.len().is_multiple_of(2) {
         let mid = sizes.len() / 2;
         (sizes[mid - 1] + sizes[mid]) / Decimal::from(2)
     } else {
@@ -332,13 +332,12 @@ fn build_style_stats(
     for (cid, buys) in &market_buys {
         if let Some(sells) = market_sells.get(cid) {
             // Pair earliest buy with earliest sell.
-            if let (Some(&first_buy), Some(&first_sell)) = (buys.first(), sells.first()) {
-                if first_sell > first_buy {
-                    let duration_secs = (first_sell - first_buy).whole_seconds();
-                    if duration_secs > 0 {
-                        hold_durations_hours
-                            .push(Decimal::from(duration_secs) / Decimal::from(3600));
-                    }
+            if let (Some(&first_buy), Some(&first_sell)) = (buys.first(), sells.first())
+                && first_sell > first_buy
+            {
+                let duration_secs = (first_sell - first_buy).whole_seconds();
+                if duration_secs > 0 {
+                    hold_durations_hours.push(Decimal::from(duration_secs) / Decimal::from(3600));
                 }
             }
         }

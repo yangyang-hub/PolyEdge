@@ -4,7 +4,7 @@
 
 ## 概述
 
-`polyedge-orderbook` 是独立的 Axum/Tokio 服务，crate 位于 `packages/orderbook`。它负责从 Polymarket 同步通用市场和奖励市场、维护 CLOB WS + poll 盘口流、保存进程内盘口缓存，并通过 HTTP/内部 WS 向 API/worker 提供盘口读取、实时推送和订阅注册能力。
+`polyedge-orderbook` 是独立的 Axum/Tokio 服务，crate 位于 `packages/orderbook`。它负责从 Polymarket 同步通用市场和奖励市场、维护 CLOB WS + poll 盘口流、保存进程内盘口缓存，从内部盘口更新派生 rewards token midpoint K 线，并通过 HTTP/内部 WS 向 API/worker 提供盘口读取、实时推送和订阅注册能力。
 
 ## 架构与关键文件
 
@@ -14,8 +14,9 @@
 | `packages/orderbook/src/market_sync.rs` | Gamma full sync、priority condition sync（已注册 token/rewards 重点市场）与 CLOB reward markets 单次同步实现 → Postgres |
 | `packages/orderbook/src/stream.rs` | 聚合 registry token，按 token 分片消费 CLOB `book` + `price_change` WS，并周期性全量 poll 注册 token 做 reconcile |
 | `packages/orderbook/src/http_api.rs` | 盘口读取、批量读取、stats、内部 WS stream、token 注册/注销和内部 ingest HTTP API |
-| `packages/orderbook/src/updates.rs` | Orderbook cache 更新广播器：为 WS/poll/ingest 写入分配 sequence 并 fan-out 给内部 WS 客户端 |
+| `packages/orderbook/src/updates.rs` | Orderbook cache 更新广播器：为 WS/poll/ingest 写入分配 sequence、fan-out 给内部 WS 客户端，并异步记录 rewards midpoint candles |
 | `packages/backend/crates/connectors/src/orderbook.rs` | Orderbook service client：HTTP 读写/注册和内部 WS stream 连接 |
+| `packages/backend/crates/infrastructure/src/stores/rewards/postgres_candles.rs` | Rewards candle persistence：按 token/5m bucket upsert orderbook midpoint OHLC，并读取 AI advisory 最近 K 线 |
 | `packages/backend/crates/infrastructure/src/stores/orderbook_cache.rs` | `InMemoryOrderbookCache`：TTL、最优档排序、深度裁剪 |
 | `packages/backend/crates/infrastructure/src/stores/orderbook_registry.rs` | 多来源 token 原子替换、优先级聚合和来源上限 |
 
@@ -57,6 +58,7 @@
 - 缓存 TTL 按本地写入时间计算；旧 `observed_at` 拒绝规则只适用于未过期条目，已过期条目可被后续 poll/ingest 覆盖恢复。
 - HTTP ingest 会在写入前完成整批 token/price/size 校验，并同样按最优价格排序后裁剪。
 - 每次 WS snapshot、WS price_change、poll reconcile 或 HTTP ingest 成功写入缓存后，都会向 `/orderbook/stream` 广播 `OrderbookStreamEvent`；广播消息携带单调 `sequence`、`reason` 和裁剪后的 `CachedOrderBook`。慢消费者会在服务端日志记录 lag，客户端需断线后重新 HTTP bootstrap；`OrderbookStreamClient` 建立内部 WS 连接最多等待 5 秒，避免 orderbook 地址不可达时阻塞 worker 事件循环。
+- 每次广播缓存更新时，orderbook 服务会从当前 best bid/ask 派生 5 分钟 midpoint candle，并写入 `reward_market_candles`；只有 bid/ask 都有效且对应 token 属于 active reward market 时才记录，字段是盘口派生 OHLC、收盘 bid/ask、spread 和 sample_count，不表示真实成交 K 线或成交量。
 - poll reconciler 每个周期都会刷新当前注册 token，优先处理缺失、TTL 过期或超过 stale threshold 的 token，再覆盖其余 token，以修复未被检测到的 WS 增量丢失；`stale_threshold_ms <= 0` 只关闭年龄 stale 优先级。
 - `OrderbookHttpClient` 把单盘口 404 映射为 `None`，其他非成功 HTTP 状态映射为 dependency error。
 
@@ -77,6 +79,7 @@ Worker register sources
     → OrderbookSubscriptionRegistry
     → CLOB WS + /books batch poll（使用 CLOB 响应 timestamp；遗漏/失败时回退 /book）
     → InMemoryOrderbookCache
+    → reward_market_candles (Postgres, 5m midpoint candles for rewards AI)
     → API / Worker 通过 OrderbookHttpClient 读取
     → Worker 通过 GET /orderbook/stream 接收内部实时推送并维护本地 cache
 ```
@@ -91,6 +94,7 @@ Worker register sources
 - Gamma market upsert 保存 `liquidity_usd`、`end_at` 和本地 `synced_at`；full sync 跳过同版本同内容行，并按 rewards 新鲜度窗口对安静市场做限频 `synced_at` refresh，priority sync 对重点市场强制 refresh。Postgres upsert 使用单条 `INSERT .. ON CONFLICT DO UPDATE WHERE` 表达新增、内容变化和 freshness-only 刷新。rewards 候选使用该本地同步时间判断目录新鲜度，不依赖市场是否刚好发生上游业务更新。
 - Priority sync 使用本地 `markets` 表把 registry token 映射到 Gamma condition id；无 Postgres 时跳过该映射，仍可使用 rewards service 提供的重点 condition。active rewards catalog fallback 会在 priority 集合未满时按奖励排序继续补充 condition id，避免候选 freshness 全部过期后只能等待 full sync 恢复。
 - 盘口只保存在单个 orderbook 进程内；服务重启会丢失缓存，横向多实例之间也不会共享缓存或 registry。
+- Rewards token 的 5 分钟 midpoint K 线已持久化到 Postgres，作为 AI advisory 的短期价格结构输入；该 K 线由 orderbook 内部 WS/poll/ingest 更新派生，不包含真实成交量。
 - 读接口和 `/healthz` 当前不鉴权，应依赖内网边界限制访问。
 - 市场同步失败或超时不会使 HTTP 健康检查失败；需要通过日志和数据新鲜度单独监控外部依赖。
 

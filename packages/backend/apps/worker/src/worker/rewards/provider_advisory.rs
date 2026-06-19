@@ -85,6 +85,14 @@ async fn apply_cached_reward_ai_advisories_to_cycle(
             skipped_missing_market += 1;
             continue;
         };
+        let candles = state
+            .reward_bot_service
+            .list_recent_market_candles(
+                &condition_id,
+                REWARD_AI_CANDLE_INTERVAL_SEC,
+                REWARD_AI_CANDLE_LIMIT_PER_TOKEN,
+            )
+            .await?;
         let request = build_reward_ai_advisory_request(
             market,
             &plan_for_request,
@@ -92,6 +100,7 @@ async fn apply_cached_reward_ai_advisories_to_cycle(
             &cycle.positions,
             &cycle.open_orders,
             books,
+            &candles,
             &cycle.config,
             cycle.config.ai_provider,
             cycle.config.ai_request_format,
@@ -248,10 +257,11 @@ fn count_missing_reward_ai_advisories(
         .count()
 }
 
-fn push_reward_ai_advisory_plan<'a>(
+#[allow(clippy::too_many_arguments)]
+fn push_reward_ai_advisory_plan(
     ordered: &mut Vec<String>,
     seen: &mut HashSet<String>,
-    plans_by_condition: &HashMap<&str, &'a RewardQuotePlan>,
+    plans_by_condition: &HashMap<&str, &RewardQuotePlan>,
     ai_required_condition_ids: &HashSet<String>,
     condition_id: &str,
     config: &RewardBotConfig,

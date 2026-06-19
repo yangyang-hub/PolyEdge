@@ -119,3 +119,82 @@ fn decimal_from_f64(value: f64) -> Decimal {
 fn decimal_to_f64(value: Decimal) -> f64 {
     value.to_string().parse::<f64>().unwrap_or(0.0)
 }
+
+fn reward_market_candle_sample_from_cached_book(
+    book: &CachedOrderBook,
+    interval_sec: i32,
+) -> Result<Option<RewardMarketCandleSample>> {
+    if interval_sec <= 0 {
+        return Err(AppError::invalid_input(
+            "REWARD_CANDLE_INTERVAL_INVALID",
+            "reward market candle interval must be positive",
+        ));
+    }
+    let Some(best_bid) = book
+        .bids
+        .iter()
+        .filter(|level| level.price > Decimal::ZERO && level.size > Decimal::ZERO)
+        .map(|level| level.price)
+        .max()
+    else {
+        return Ok(None);
+    };
+    let Some(best_ask) = book
+        .asks
+        .iter()
+        .filter(|level| level.price > Decimal::ZERO && level.size > Decimal::ZERO)
+        .map(|level| level.price)
+        .min()
+    else {
+        return Ok(None);
+    };
+    if best_ask < best_bid {
+        return Ok(None);
+    }
+    let observed_at = offset_datetime_from_unix_millis(book.observed_at)?;
+    let midpoint = ((best_bid + best_ask) / Decimal::from(2)).round_dp(8);
+    let bucket_start = reward_candle_bucket_start(observed_at, interval_sec)?;
+    Ok(Some(RewardMarketCandleSample {
+        token_id: book.token_id.clone(),
+        interval_sec,
+        bucket_start,
+        midpoint,
+        best_bid,
+        best_ask,
+        spread_cents: ((best_ask - best_bid) * decimal("100")).round_dp(8),
+        observed_at,
+    }))
+}
+
+fn reward_candle_bucket_start(
+    observed_at: OffsetDateTime,
+    interval_sec: i32,
+) -> Result<OffsetDateTime> {
+    if interval_sec <= 0 {
+        return Err(AppError::invalid_input(
+            "REWARD_CANDLE_INTERVAL_INVALID",
+            "reward market candle interval must be positive",
+        ));
+    }
+    let interval = i64::from(interval_sec);
+    let bucket = observed_at.unix_timestamp().div_euclid(interval) * interval;
+    OffsetDateTime::from_unix_timestamp(bucket).map_err(|error| {
+        AppError::invalid_input(
+            "REWARD_CANDLE_BUCKET_INVALID",
+            format!("failed to build reward candle bucket timestamp: {error}"),
+        )
+    })
+}
+
+fn offset_datetime_from_unix_millis(timestamp_ms: i64) -> Result<OffsetDateTime> {
+    let seconds = timestamp_ms.div_euclid(1_000);
+    let millis = timestamp_ms.rem_euclid(1_000);
+    OffsetDateTime::from_unix_timestamp(seconds)
+        .map(|time| time + TimeDuration::milliseconds(millis))
+        .map_err(|error| {
+            AppError::invalid_input(
+                "REWARD_CANDLE_OBSERVED_AT_INVALID",
+                format!("failed to decode orderbook observed_at milliseconds: {error}"),
+            )
+        })
+}

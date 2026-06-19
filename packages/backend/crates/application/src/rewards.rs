@@ -1,3 +1,4 @@
+use crate::orderbook_cache::CachedOrderBook;
 use async_trait::async_trait;
 use polyedge_domain::{AppError, Result, SortOrder};
 use rust_decimal::{Decimal, RoundingStrategy};
@@ -15,6 +16,8 @@ use tokio::sync::{RwLock, watch};
 const DEFAULT_LIST_LIMIT: u16 = 100;
 const MAX_LIST_LIMIT: u16 = 500;
 const DEFAULT_TICK: Decimal = Decimal::from_parts(1, 0, 0, false, 2);
+pub const REWARD_AI_CANDLE_INTERVAL_SEC: i32 = 300;
+pub const REWARD_AI_CANDLE_LIMIT_PER_TOKEN: u16 = 24;
 
 include!("rewards/models.rs");
 include!("rewards/quote_selection_models.rs");

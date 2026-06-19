@@ -68,7 +68,8 @@ async fn main() -> polyedge_domain::Result<()> {
 
     info!(port, "starting polyedge-orderbook service");
 
-    let broadcaster = OrderbookUpdateBroadcaster::new(16_384);
+    let broadcaster =
+        OrderbookUpdateBroadcaster::with_reward_candles(16_384, state.reward_bot_service.clone());
 
     // Build and bind HTTP API before any external market sync. Health checks
     // should reflect process readiness, not Polymarket API latency.
@@ -241,10 +242,10 @@ async fn priority_market_sync_interval(
         Ok(config) => {
             let freshness_minutes = config.max_market_data_age_minutes.max(1);
             let freshness_secs = freshness_minutes.saturating_mul(60);
-            let upper = full_interval
-                .as_secs()
-                .min(MAX_PRIORITY_MARKET_SYNC_INTERVAL_SECS)
-                .max(MIN_PRIORITY_MARKET_SYNC_INTERVAL_SECS);
+            let upper = full_interval.as_secs().clamp(
+                MIN_PRIORITY_MARKET_SYNC_INTERVAL_SECS,
+                MAX_PRIORITY_MARKET_SYNC_INTERVAL_SECS,
+            );
             let interval_secs = freshness_secs
                 .saturating_div(3)
                 .max(1)
@@ -260,8 +261,7 @@ async fn priority_market_sync_interval(
                 Duration::from_secs(
                     full_interval
                         .as_secs()
-                        .min(60)
-                        .max(MIN_PRIORITY_MARKET_SYNC_INTERVAL_SECS),
+                        .clamp(MIN_PRIORITY_MARKET_SYNC_INTERVAL_SECS, 60),
                 ),
                 0,
             )

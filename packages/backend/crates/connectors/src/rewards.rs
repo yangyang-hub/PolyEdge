@@ -18,6 +18,8 @@ const ENRICH_RATE_LIMIT_MAX_RETRIES: u32 = 5;
 const ENRICH_RATE_LIMIT_BASE_DELAY: Duration = Duration::from_secs(2);
 const ENRICH_REQUEST_INTERVAL: Duration = Duration::from_millis(150);
 const MAX_REWARD_MARKET_PAGES: usize = 1_000;
+type RawMarketDetailHandle =
+    tokio::task::JoinHandle<std::result::Result<Option<RawClobMarketDetail>, AppError>>;
 
 #[derive(Debug, Clone)]
 pub struct PolymarketRewardToken {
@@ -306,20 +308,20 @@ impl PolymarketRewardsConnector {
 
             dedupe_reward_tokens(&mut market.tokens);
             if let Some(ref detail) = detail {
-                if market.question == market.condition_id {
-                    if let Some(question) = detail.question.clone() {
-                        market.question = question;
-                    }
+                if market.question == market.condition_id
+                    && let Some(question) = detail.question.clone()
+                {
+                    market.question = question;
                 }
-                if market.image.is_empty() {
-                    if let Some(image) = detail.image.clone() {
-                        market.image = image;
-                    }
+                if market.image.is_empty()
+                    && let Some(image) = detail.image.clone()
+                {
+                    market.image = image;
                 }
-                if market.market_slug == market.condition_id {
-                    if let Some(slug) = detail.market_slug.clone() {
-                        market.market_slug = slug;
-                    }
+                if market.market_slug == market.condition_id
+                    && let Some(slug) = detail.market_slug.clone()
+                {
+                    market.market_slug = slug;
                 }
                 if market.tokens.len() < 2
                     && let Some(tokens) = detail.tokens.clone()
@@ -384,10 +386,7 @@ impl PolymarketRewardsConnector {
         let semaphore = Arc::new(Semaphore::new(ENRICH_CONCURRENCY));
         let last_request = Arc::new(Mutex::new(std::time::Instant::now()));
         let client = self.clone();
-        let mut handles: Vec<(
-            String,
-            tokio::task::JoinHandle<std::result::Result<Option<RawClobMarketDetail>, AppError>>,
-        )> = Vec::with_capacity(targets.len());
+        let mut handles: Vec<(String, RawMarketDetailHandle)> = Vec::with_capacity(targets.len());
 
         for cid in targets {
             let sem = semaphore.clone();

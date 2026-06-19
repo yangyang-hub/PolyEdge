@@ -175,6 +175,28 @@ impl RewardBotStore for PostgresRewardBotStore {
         postgres_list_low_competition_observations(&self.pool, account_id, since, limit).await
     }
 
+    async fn record_market_candle_sample(
+        &self,
+        sample: &RewardMarketCandleSample,
+    ) -> Result<()> {
+        postgres_record_reward_market_candle_sample(&self.pool, sample).await
+    }
+
+    async fn list_recent_market_candles(
+        &self,
+        condition_id: &str,
+        interval_sec: i32,
+        limit_per_token: u16,
+    ) -> Result<Vec<RewardMarketCandle>> {
+        postgres_list_recent_reward_market_candles(
+            &self.pool,
+            condition_id,
+            interval_sec,
+            limit_per_token,
+        )
+        .await
+    }
+
     async fn latest_market_advisory(
         &self,
         request: &RewardAiAdvisoryRequest,

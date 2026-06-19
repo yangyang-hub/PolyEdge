@@ -197,6 +197,14 @@ async fn run_reward_ai_advisory_batch_flush(
         };
         info_risk_condition_ids.push(condition_id.to_string());
         let books = build_reward_batch_books_from_cache(cache, market).await;
+        let candles = state
+            .reward_bot_service
+            .list_recent_market_candles(
+                condition_id,
+                REWARD_AI_CANDLE_INTERVAL_SEC,
+                REWARD_AI_CANDLE_LIMIT_PER_TOKEN,
+            )
+            .await?;
         let request = match build_reward_ai_advisory_request(
             market,
             plan,
@@ -204,6 +212,7 @@ async fn run_reward_ai_advisory_batch_flush(
             &cycle.positions,
             &cycle.open_orders,
             &books,
+            &candles,
             &cycle.config,
             cycle.config.ai_provider,
             cycle.config.ai_request_format,

@@ -216,7 +216,7 @@ fn external_open_order_snapshot_closes_missing_managed_buy() {
         event.event_type,
         "reward_live_order_missing_from_open_orders_closed"
     );
-    assert!(!has_unresolved_live_reconciliation(&[closed.clone()]));
+    assert!(!has_unresolved_live_reconciliation(std::slice::from_ref(closed)));
 }
 
 #[test]

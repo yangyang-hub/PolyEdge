@@ -503,9 +503,10 @@ impl FromStr for EventStatus {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum MarketSortField {
+    #[default]
     UpdatedAt,
     Volume24h,
 }
@@ -517,12 +518,6 @@ impl MarketSortField {
             Self::UpdatedAt => "updated_at",
             Self::Volume24h => "volume_24h",
         }
-    }
-}
-
-impl Default for MarketSortField {
-    fn default() -> Self {
-        Self::UpdatedAt
     }
 }
 
@@ -541,10 +536,11 @@ impl FromStr for MarketSortField {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum SortOrder {
     Asc,
+    #[default]
     Desc,
 }
 
@@ -555,12 +551,6 @@ impl SortOrder {
             Self::Asc => "asc",
             Self::Desc => "desc",
         }
-    }
-}
-
-impl Default for SortOrder {
-    fn default() -> Self {
-        Self::Desc
     }
 }
 

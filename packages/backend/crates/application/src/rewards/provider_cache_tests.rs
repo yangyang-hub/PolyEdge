@@ -132,6 +132,28 @@ fn cache_test_position(updated_at: OffsetDateTime) -> RewardPosition {
     }
 }
 
+fn cache_test_candle(token_id: &str, outcome: &str, bucket_offset: i64, close: &str) -> RewardMarketCandle {
+    let bucket_start = OffsetDateTime::from_unix_timestamp(1_785_000_000 + bucket_offset)
+        .expect("valid timestamp");
+    RewardMarketCandle {
+        token_id: token_id.to_string(),
+        condition_id: "cond_cache".to_string(),
+        outcome: outcome.to_string(),
+        interval_sec: REWARD_AI_CANDLE_INTERVAL_SEC,
+        bucket_start,
+        open: decimal("0.50"),
+        high: decimal(close).max(decimal("0.50")),
+        low: decimal(close).min(decimal("0.50")),
+        close: decimal(close),
+        best_bid_close: decimal("0.49"),
+        best_ask_close: decimal("0.51"),
+        spread_cents_close: decimal("2"),
+        sample_count: 3,
+        close_observed_at: bucket_start + TimeDuration::seconds(30),
+        updated_at: bucket_start + TimeDuration::seconds(30),
+    }
+}
+
 #[test]
 fn reward_ai_advisory_cache_key_ignores_runtime_context() {
     let market = cache_test_market();
@@ -147,6 +169,7 @@ fn reward_ai_advisory_cache_key_ignores_runtime_context() {
         &[],
         &[],
         &books,
+        &[],
         &config,
         RewardAiProvider::OpenAi,
         RewardAiRequestFormat::OpenAiChatCompletions,
@@ -162,6 +185,7 @@ fn reward_ai_advisory_cache_key_ignores_runtime_context() {
         &[cache_test_position(later_time)],
         &[cache_test_order(later_time)],
         &cache_test_books(later_time, "0.53"),
+        &[],
         &config,
         RewardAiProvider::OpenAi,
         RewardAiRequestFormat::OpenAiChatCompletions,
@@ -171,6 +195,59 @@ fn reward_ai_advisory_cache_key_ignores_runtime_context() {
 
     assert_eq!(first.input_hash, second.input_hash);
     assert_ne!(first.payload, second.payload);
+}
+
+#[test]
+fn reward_ai_advisory_cache_key_tracks_candle_summary_changes() {
+    let market = cache_test_market();
+    let books = cache_test_books(
+        OffsetDateTime::from_unix_timestamp(1_785_000_000).expect("valid timestamp"),
+        "0.54",
+    );
+    let plan = cache_test_plan(&market, &books);
+    let account = cache_test_account("100", 1);
+    let config = RewardBotConfig::default();
+    let first_candles = vec![
+        cache_test_candle("token_yes_cache", "Yes", 0, "0.51"),
+        cache_test_candle("token_no_cache", "No", 0, "0.49"),
+    ];
+    let second_candles = vec![
+        cache_test_candle("token_yes_cache", "Yes", 0, "0.56"),
+        cache_test_candle("token_no_cache", "No", 0, "0.44"),
+    ];
+
+    let first = build_reward_ai_advisory_request(
+        &market,
+        &plan,
+        &account,
+        &[],
+        &[],
+        &books,
+        &first_candles,
+        &config,
+        RewardAiProvider::OpenAi,
+        RewardAiRequestFormat::OpenAiChatCompletions,
+        "mimo-v2.5",
+    )
+    .expect("first request");
+    let second = build_reward_ai_advisory_request(
+        &market,
+        &plan,
+        &account,
+        &[],
+        &[],
+        &books,
+        &second_candles,
+        &config,
+        RewardAiProvider::OpenAi,
+        RewardAiRequestFormat::OpenAiChatCompletions,
+        "mimo-v2.5",
+    )
+    .expect("second request");
+
+    assert_ne!(first.input_hash, second.input_hash);
+    assert!(first.payload.get("candles").is_some());
+    assert!(first.payload.get("candle_summary").is_some());
 }
 
 #[test]
@@ -195,6 +272,7 @@ fn reward_ai_advisory_cache_key_tracks_strategy_changes() {
         &[],
         &[],
         &books,
+        &[],
         &base_config,
         RewardAiProvider::OpenAi,
         RewardAiRequestFormat::OpenAiChatCompletions,
@@ -208,6 +286,7 @@ fn reward_ai_advisory_cache_key_tracks_strategy_changes() {
         &[],
         &[],
         &books,
+        &[],
         &changed_config,
         RewardAiProvider::OpenAi,
         RewardAiRequestFormat::OpenAiChatCompletions,

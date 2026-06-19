@@ -192,7 +192,7 @@ pub fn classify_style(avg_hold_hours: Decimal, trades_per_day: Decimal) -> &'sta
         "scalper"
     } else if freq > 5.0 && hold < 24.0 {
         "day_trader"
-    } else if hold >= 24.0 && hold < 168.0 {
+    } else if (24.0..168.0).contains(&hold) {
         "swing_trader"
     } else if hold >= 168.0 {
         "position_trader"
