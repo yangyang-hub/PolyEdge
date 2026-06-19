@@ -694,108 +694,70 @@ async fn register_orderbook_tokens(state: &AppState) {
         }
     }
 
-    // Allocate the global subscription budget deterministically: active rewards
-    // inventory/orders first, then active execution orders, eligible plans, and
-    // finally candidate discovery tokens that break the cold-start loop.
-    let mut seen = HashSet::new();
-    let mut reward_active_tokens = Vec::new();
-    let reward_active_complete = match state
-        .reward_bot_service
-        .list_active_reward_book_token_ids()
-        .await
-    {
-        Ok(active_tokens) => {
-            push_unique_tokens(
-                &mut reward_active_tokens,
-                &mut seen,
-                active_tokens,
-                max_tokens,
-            );
-            true
-        }
-        Err(error) => {
-            warn!(error = %error, "failed to list active rewards tokens for registration");
-            false
-        }
-    };
-
-    let mut exec_tokens = Vec::new();
-    push_unique_tokens(
-        &mut exec_tokens,
-        &mut seen,
-        exec_candidates,
-        max_tokens.saturating_sub(reward_active_tokens.len()),
-    );
-
-    let mut reward_eligible_tokens = Vec::new();
-    let reward_eligible_complete = match state
-        .reward_bot_service
-        .list_eligible_reward_book_token_ids()
-        .await
-    {
-        Ok(eligible_tokens) => {
-            let capacity = max_tokens
-                .saturating_sub(reward_active_tokens.len())
-                .saturating_sub(exec_tokens.len());
-            push_unique_tokens(
-                &mut reward_eligible_tokens,
-                &mut seen,
-                eligible_tokens,
-                capacity,
-            );
-            true
-        }
-        Err(error) => {
-            warn!(error = %error, "failed to list eligible rewards tokens for registration");
-            false
-        }
-    };
-
-    let mut reward_candidate_tokens = Vec::new();
-    let reward_candidate_capacity = max_tokens
-        .saturating_sub(reward_active_tokens.len())
-        .saturating_sub(exec_tokens.len())
-        .saturating_sub(reward_eligible_tokens.len())
-        .min(reward_candidate_token_cap);
-    let reward_candidates_complete = if reward_candidate_capacity == 0 {
-        true
-    } else {
-        match state
-            .reward_bot_service
-            .list_all_reward_candidate_token_ids()
-            .await
-        {
-            Ok(candidate_tokens) => {
-                push_unique_tokens(
-                    &mut reward_candidate_tokens,
-                    &mut seen,
-                    candidate_tokens,
-                    reward_candidate_capacity,
-                );
-                true
+    // Collect raw token lists per source together with a completeness flag.
+    // On query failure a source is marked incomplete and skipped below, so the
+    // orderbook registry keeps its previous value for that source.
+    let (active_tokens, reward_active_complete) =
+        match state.reward_bot_service.list_active_reward_book_token_ids().await {
+            Ok(tokens) => (tokens, true),
+            Err(error) => {
+                warn!(error = %error, "failed to list active rewards tokens for registration");
+                (Vec::new(), false)
             }
+        };
+    let (eligible_tokens, reward_eligible_complete) =
+        match state.reward_bot_service.list_eligible_reward_book_token_ids().await {
+            Ok(tokens) => (tokens, true),
+            Err(error) => {
+                warn!(error = %error, "failed to list eligible rewards tokens for registration");
+                (Vec::new(), false)
+            }
+        };
+    let (candidate_tokens, reward_candidates_complete) = if reward_candidate_token_cap == 0 {
+        (Vec::new(), true)
+    } else {
+        match state.reward_bot_service.list_all_reward_candidate_token_ids().await {
+            Ok(tokens) => (tokens, true),
             Err(error) => {
                 warn!(error = %error, "failed to list reward candidate tokens for registration");
-                false
+                (Vec::new(), false)
             }
         }
     };
+
+    // Allocate per-source registration buckets. Each source is deduped and
+    // capped independently — cross-source dedup and the global max_tokens cap
+    // are applied by the orderbook registry aggregation layer (`list_all_tokens`
+    // priority merge + `take(max_tokens)`). Registering the full eligible set
+    // here keeps `rewards_eligible` stable instead of being emptied (and the
+    // source deleted) whenever active positions overlap eligible tokens, which
+    // previously drove a cancel/re-place oscillation via WS subscription
+    // rebuilds. `candidate` is still capped by `reward_candidate_token_cap` to
+    // preserve the cold-start prewarm budget.
+    let buckets = allocate_registration_buckets(
+        active_tokens,
+        exec_candidates,
+        eligible_tokens,
+        candidate_tokens,
+        max_tokens,
+        reward_candidate_token_cap,
+    );
 
     for (source, source_tokens, complete) in [
         (
             "rewards_active",
-            reward_active_tokens.as_slice(),
+            buckets.active.as_slice(),
             reward_active_complete,
         ),
-        ("exec_orders", exec_tokens.as_slice(), exec_query_complete),
+        ("exec_orders", buckets.exec.as_slice(), exec_query_complete),
         (
             "rewards_eligible",
-            reward_eligible_tokens.as_slice(),
+            buckets.eligible.as_slice(),
             reward_eligible_complete,
         ),
         (
             "rewards_candidates",
-            reward_candidate_tokens.as_slice(),
+            buckets.candidate.as_slice(),
             reward_candidates_complete,
         ),
         ("rewards", &[], true),
@@ -813,10 +775,10 @@ async fn register_orderbook_tokens(state: &AppState) {
     }
 
     info!(
-        reward_active_tokens = reward_active_tokens.len(),
-        exec_tokens = exec_tokens.len(),
-        reward_eligible_tokens = reward_eligible_tokens.len(),
-        reward_candidate_tokens = reward_candidate_tokens.len(),
+        reward_active_tokens = buckets.active.len(),
+        exec_tokens = buckets.exec.len(),
+        reward_eligible_tokens = buckets.eligible.len(),
+        reward_candidate_tokens = buckets.candidate.len(),
         reward_candidate_token_cap,
         max_tokens,
         "registered orderbook tokens with orderbook service"
@@ -838,4 +800,50 @@ fn push_unique_tokens(
         }
         target.push(token);
     }
+}
+
+struct RegistrationBuckets {
+    active: Vec<String>,
+    exec: Vec<String>,
+    eligible: Vec<String>,
+    candidate: Vec<String>,
+}
+
+/// Dedup and cap each orderbook registration source independently.
+///
+/// Cross-source deduplication and the global `max_tokens` cap are applied by
+/// the orderbook registry aggregation layer, so each source registers its own
+/// full set here. This keeps `rewards_eligible` stable (no longer emptied when
+/// active positions overlap eligible tokens), avoiding the WS subscription
+/// rebuild oscillation that the previous shared-seen budget allocation caused.
+/// `candidate` is capped by `candidate_cap` to preserve the cold-start prewarm
+/// budget.
+fn allocate_registration_buckets(
+    active: Vec<String>,
+    exec: Vec<String>,
+    eligible: Vec<String>,
+    candidate: Vec<String>,
+    max_tokens: usize,
+    candidate_cap: usize,
+) -> RegistrationBuckets {
+    let mut buckets = RegistrationBuckets {
+        active: Vec::new(),
+        exec: Vec::new(),
+        eligible: Vec::new(),
+        candidate: Vec::new(),
+    };
+    let mut active_seen = HashSet::new();
+    let mut exec_seen = HashSet::new();
+    let mut eligible_seen = HashSet::new();
+    let mut candidate_seen = HashSet::new();
+    push_unique_tokens(&mut buckets.active, &mut active_seen, active, max_tokens);
+    push_unique_tokens(&mut buckets.exec, &mut exec_seen, exec, max_tokens);
+    push_unique_tokens(&mut buckets.eligible, &mut eligible_seen, eligible, max_tokens);
+    push_unique_tokens(
+        &mut buckets.candidate,
+        &mut candidate_seen,
+        candidate,
+        candidate_cap,
+    );
+    buckets
 }

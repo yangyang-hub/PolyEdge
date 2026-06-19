@@ -433,26 +433,74 @@ fn live_placement_waits_for_fresh_orderbook_without_long_skip() {
 }
 
 #[test]
-fn live_eligible_orderbook_tokens_dedupe_and_respect_cap() {
-    let now = OffsetDateTime::now_utc();
-    let first = live_test_plan(now);
-    let mut duplicate = live_test_plan(now);
-    duplicate.condition_id = "cond_live_duplicate".to_string();
-    let mut ineligible = live_test_plan(now);
-    ineligible.condition_id = "cond_live_ineligible".to_string();
-    ineligible.eligible = false;
-    ineligible.legs[0].token_id = "yes_live_ineligible".to_string();
+fn allocate_registration_buckets_keeps_eligible_when_active_overlaps() {
+    // Regression: a shared cross-source `seen` set previously emptied
+    // rewards_eligible whenever active positions overlapped eligible tokens,
+    // which deleted the source and drove a WS-rebuild cancel/re-place
+    // oscillation. Each source must now register its full set independently;
+    // cross-source dedup is left to the orderbook registry aggregation layer.
+    let buckets = allocate_registration_buckets(
+        vec!["t1".to_string()],
+        Vec::new(),
+        vec!["t1".to_string(), "t2".to_string()],
+        Vec::new(),
+        10,
+        10,
+    );
+    assert_eq!(buckets.active, vec!["t1".to_string()]);
+    assert_eq!(
+        buckets.eligible,
+        vec!["t1".to_string(), "t2".to_string()]
+    );
+    assert!(buckets.exec.is_empty());
+    assert!(buckets.candidate.is_empty());
+}
 
-    assert_eq!(
-        live_eligible_orderbook_tokens(&[first.clone(), duplicate, ineligible.clone()], 10),
-        vec!["yes_live".to_string(), "no_live".to_string()]
+#[test]
+fn allocate_registration_buckets_caps_each_source_independently() {
+    let active = (0..5).map(|i| format!("a{i}")).collect::<Vec<_>>();
+    let eligible = (0..5).map(|i| format!("e{i}")).collect::<Vec<_>>();
+    let buckets = allocate_registration_buckets(active, Vec::new(), eligible, Vec::new(), 3, 10);
+    assert_eq!(buckets.active.len(), 3);
+    assert_eq!(buckets.eligible.len(), 3);
+}
+
+#[test]
+fn allocate_registration_buckets_caps_candidate_by_candidate_cap() {
+    let candidate = (0..50).map(|i| format!("c{i}")).collect::<Vec<_>>();
+    let buckets =
+        allocate_registration_buckets(Vec::new(), Vec::new(), Vec::new(), candidate, 100, 10);
+    assert_eq!(buckets.candidate.len(), 10);
+
+    let candidate = (0..5).map(|i| format!("c{i}")).collect::<Vec<_>>();
+    let buckets =
+        allocate_registration_buckets(Vec::new(), Vec::new(), Vec::new(), candidate, 100, 0);
+    assert!(buckets.candidate.is_empty());
+}
+
+#[test]
+fn allocate_registration_buckets_dedupes_within_source_and_handles_empty() {
+    let buckets = allocate_registration_buckets(
+        vec![
+            "a".to_string(),
+            "a".to_string(),
+            "  ".to_string(),
+            "b".to_string(),
+        ],
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        10,
+        10,
     );
-    assert_eq!(
-        live_eligible_orderbook_tokens(&[first, ineligible], 1),
-        vec!["yes_live".to_string()]
-    );
-    assert!(live_eligible_orderbook_tokens(&[], 10).is_empty());
-    assert!(live_eligible_orderbook_tokens(&[live_test_plan(now)], 0).is_empty());
+    assert_eq!(buckets.active, vec!["a".to_string(), "b".to_string()]);
+
+    let buckets =
+        allocate_registration_buckets(Vec::new(), Vec::new(), Vec::new(), Vec::new(), 10, 10);
+    assert!(buckets.active.is_empty());
+    assert!(buckets.exec.is_empty());
+    assert!(buckets.eligible.is_empty());
+    assert!(buckets.candidate.is_empty());
 }
 
 #[test]
