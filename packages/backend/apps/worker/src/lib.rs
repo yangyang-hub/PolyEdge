@@ -10,7 +10,7 @@ use polyedge_application::{
     NewsIngestionItem, NewsRawEventListFilters, NewsRawEventView, NewsSourceFailureUpdate,
     NewsSourceHealthListFilters, NewsSourceHealthView, OrderListFilters, PageQuery,
     PostFillStrategy, ReconcileExecutionListFilters, ReconcileExternalTradeCommand,
-    RewardAccountState, RewardBookLevel, RewardBotConfig, RewardBotRunReport,
+    RewardAccountState, RewardAiAdvisoryRequest, RewardBookLevel, RewardBotConfig, RewardBotRunReport,
     RewardCandidateMarket, RewardControlAction, RewardControlCommand, RewardFill, RewardFillRole,
     RewardLiveCycle, RewardMarket, RewardMarketAdvisory, RewardMarketInfoRisk, RewardOrderBook,
     RewardOrderSide, RewardPlanQuoteMode, RewardPosition, RewardQuotePlan, RewardRiskEvent,

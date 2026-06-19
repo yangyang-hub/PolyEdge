@@ -70,7 +70,7 @@ pub use orderbook_registry::OrderbookSubscriptionRegistry;
 pub use pagination::{PageMeta, PageQuery, Paginated};
 pub use rewards::{
     BookSnapshot, ManagedRewardOrder, ManagedRewardOrderStatus, PostFillStrategy,
-    RewardAccountState, RewardAiAdvisoryDecision, RewardAiAdvisoryRequest, RewardAiProvider,
+    RewardAccountState, RewardAiAdvisoryBatchItem, RewardAiAdvisoryDecision, RewardAiAdvisoryRequest, RewardAiProvider,
     RewardAiRequestFormat, RewardAiSuitability, RewardBookLevel, RewardBookSideMetrics,
     RewardBotConfig, RewardBotConfigPatch, RewardBotRunReport, RewardBotService, RewardBotSnapshot,
     RewardBotStatus, RewardBotStore, RewardCandidateFilter, RewardCandidateMarket,

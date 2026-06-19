@@ -63,6 +63,12 @@ pub struct RewardAiAdvisoryDecision {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RewardAiAdvisoryBatchItem {
+    pub condition_id: String,
+    pub decision: RewardAiAdvisoryDecision,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RewardAiAdvisoryRequest {
     pub condition_id: String,
     pub provider: RewardAiProvider,

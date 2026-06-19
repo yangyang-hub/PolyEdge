@@ -38,10 +38,11 @@ Worker 代码现在同时提供共享库和兼容 CLI。`polyedge-api` 在同一
 | `worker/rewards/live_pending.rs` | rewards live 持久化 intent 提交、开放订单匹配恢复和未知结果锁定 |
 | `worker/rewards/live_helpers.rs` | rewards live 价格 tick、fill id、退出重试与订单状态转换辅助函数 |
 | `worker/rewards/live_risk.rs` | rewards live placement/cancel 风控：盘口可用性、depth/rank/history/requote、库存 cap、低竞争 sleeve 独立订单/库存 cap |
-| `worker/rewards/orderbook_events.rs` | rewards worker 本地盘口 cache、orderbook 内部 WS 消费、HTTP bootstrap 和活跃 token 事件唤醒 |
+| `worker/rewards/orderbook_events.rs` | rewards worker 本地盘口 cache、orderbook 内部 WS 消费、HTTP bootstrap、活跃 token 事件唤醒和 condition 盘口首次就绪检测（驱动 AI advisory 批量 worker） |
 | `worker/rewards/polling.rs` | rewards poll loop、盘口读取、事件驱动 fast reconcile 和进程内盘口历史 |
 | `worker/rewards/provider_advisory.rs` | rewards AI advisory cache gate、候选排序 helper、provider connector/permit helper |
 | `worker/rewards/provider_refresh.rs` | rewards AI advisory / 信息风险统一 provider refresh：按 condition 先补 AI advisory 再补 info-risk |
+| `worker/rewards/provider_batch.rs` | rewards AI advisory orderbook 事件驱动批量 worker：盘口首次就绪入队、攒批 `advise_batch`、缺失回退单请求、info-risk 同步推进（默认关闭，与 provider refresh 并存） |
 | `worker/rewards/info_risk.rs` | rewards 信息风险异步扫描、provider 缓存命中、quote plan 风险应用 |
 | `tests/rewards.rs` / `tests/rewards_reconciliation.rs` | rewards live 下单、风控、成交、对账、退出重试与增量持久化回归测试 |
 | `worker/arbitrage.rs` | 套利扫描 |
