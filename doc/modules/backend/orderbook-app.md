@@ -4,20 +4,20 @@
 
 ## 概述
 
-`polyedge-orderbook` 是独立的 Axum/Tokio 服务，负责从 Polymarket 同步通用市场和奖励市场、维护 CLOB WS + poll 盘口流、保存进程内盘口缓存，并通过 HTTP/内部 WS 向 API/worker 提供盘口读取、实时推送和订阅注册能力。
+`polyedge-orderbook` 是独立的 Axum/Tokio 服务，crate 位于 `packages/orderbook`。它负责从 Polymarket 同步通用市场和奖励市场、维护 CLOB WS + poll 盘口流、保存进程内盘口缓存，并通过 HTTP/内部 WS 向 API/worker 提供盘口读取、实时推送和订阅注册能力。
 
 ## 架构与关键文件
 
 | 文件 | 职责 |
 |---|---|
-| `apps/orderbook/src/main.rs` | 服务入口：先 bind HTTP，再启动独立 Gamma full/priority sync、rewards catalog sync 和可重启盘口流后台任务 |
-| `apps/orderbook/src/market_sync.rs` | Gamma full sync、priority condition sync（已注册 token/rewards 重点市场）与 CLOB reward markets 单次同步实现 → Postgres |
-| `apps/orderbook/src/stream.rs` | 聚合 registry token，按 token 分片消费 CLOB `book` + `price_change` WS，并周期性全量 poll 注册 token 做 reconcile |
-| `apps/orderbook/src/http_api.rs` | 盘口读取、批量读取、stats、内部 WS stream、token 注册/注销和内部 ingest HTTP API |
-| `apps/orderbook/src/updates.rs` | Orderbook cache 更新广播器：为 WS/poll/ingest 写入分配 sequence 并 fan-out 给内部 WS 客户端 |
-| `crates/connectors/src/orderbook.rs` | Orderbook service client：HTTP 读写/注册和内部 WS stream 连接 |
-| `crates/infrastructure/src/stores/orderbook_cache.rs` | `InMemoryOrderbookCache`：TTL、最优档排序、深度裁剪 |
-| `crates/infrastructure/src/stores/orderbook_registry.rs` | 多来源 token 原子替换、优先级聚合和来源上限 |
+| `packages/orderbook/src/main.rs` | 服务入口：先 bind HTTP，再启动独立 Gamma full/priority sync、rewards catalog sync 和可重启盘口流后台任务；监听地址和 signal shutdown 复用 `polyedge-common` |
+| `packages/orderbook/src/market_sync.rs` | Gamma full sync、priority condition sync（已注册 token/rewards 重点市场）与 CLOB reward markets 单次同步实现 → Postgres |
+| `packages/orderbook/src/stream.rs` | 聚合 registry token，按 token 分片消费 CLOB `book` + `price_change` WS，并周期性全量 poll 注册 token 做 reconcile |
+| `packages/orderbook/src/http_api.rs` | 盘口读取、批量读取、stats、内部 WS stream、token 注册/注销和内部 ingest HTTP API |
+| `packages/orderbook/src/updates.rs` | Orderbook cache 更新广播器：为 WS/poll/ingest 写入分配 sequence 并 fan-out 给内部 WS 客户端 |
+| `packages/backend/crates/connectors/src/orderbook.rs` | Orderbook service client：HTTP 读写/注册和内部 WS stream 连接 |
+| `packages/backend/crates/infrastructure/src/stores/orderbook_cache.rs` | `InMemoryOrderbookCache`：TTL、最优档排序、深度裁剪 |
+| `packages/backend/crates/infrastructure/src/stores/orderbook_registry.rs` | 多来源 token 原子替换、优先级聚合和来源上限 |
 
 ## 启动流程
 
@@ -84,6 +84,7 @@ Worker register sources
 ## 当前状态与缺口
 
 - 市场同步、registry、分片 WS `book` + `price_change`、全注册 token 周期 poll reconcile、HTTP 读取、内部 WS 推送和内部写认证已实现；poll 可修复 fresh cache 中未被察觉的 WS 增量丢失，并通过内部 WS 广播给 worker 本地 cache；内部 WS client 建连最多等待 5 秒，避免不可达地址阻塞调用方。
+- Orderbook crate 已从 `packages/backend/apps/orderbook` 拆到顶层 `packages/orderbook`，仍作为 `packages/Cargo.toml` Rust workspace member 构建。
 - orderbook stream 的 token refresh 已避免仅因 registry 聚合顺序变化触发 WS 重连；只有订阅 token 成员真实增删时才重建 Polymarket WS 订阅。
 - poll 盘口保留 CLOB 返回的服务端毫秒时间戳，不再用 HTTP 响应完成时间伪造新鲜度；batch HTTP 读取通过一次 cache 批量读锁返回。
 - Gamma full sync、Gamma priority sync 与 rewards 目录同步在 orderbook 服务中使用三个独立后台循环；rewards 分页和详情补全可能持续很多分钟，但不会阻塞 Gamma `markets.synced_at` 刷新。Gamma full/priority 写入 `markets` 时在 orderbook 进程内串行化，并由 Postgres `lock_timeout` / `statement_timeout` 快速失败，避免一次慢锁等待拖垮后续周期。priority sync 会在全量目录之间强制刷新重点 condition，避免已挂单/已订阅/rewards 筛选市场仅因目录新鲜度过低被策略撤单。rewards 详情补全后仍缺 token 或空目录异常时保留上一版 rewards catalog，不执行破坏性全量替换。

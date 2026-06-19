@@ -11,9 +11,10 @@
 | [connectors.md](backend/connectors.md) | `crates/connectors` | 连接器层：Polymarket CLOB/Gamma/DataAPI、RSS、Paper Trading |
 | [infrastructure.md](backend/infrastructure.md) | `crates/infrastructure` | 基础设施层：持久化、认证、配置、运行时 |
 | [contracts.md](backend/contracts.md) | `crates/contracts` | HTTP API DTO 定义 |
-| [api-app.md](backend/api-app.md) | `apps/api` | Axum HTTP API 服务 |
+| [common.md](backend/common.md) | `crates/common` | 后端二进制共享进程外壳 helper |
+| [api-app.md](backend/api-app.md) | `packages/api` | Axum HTTP API 服务 |
 | [worker-app.md](backend/worker-app.md) | `apps/worker` | Tokio 后台任务服务 |
-| [orderbook-app.md](backend/orderbook-app.md) | `apps/orderbook` | 独立市场同步、盘口流和盘口 HTTP 服务 |
+| [orderbook-app.md](backend/orderbook-app.md) | `packages/orderbook` | 独立市场同步、盘口流和盘口 HTTP 服务 |
 | [replay-app.md](backend/replay-app.md) | `apps/replay` | 历史回放工具 |
 
 ## 前端（Next.js + React）

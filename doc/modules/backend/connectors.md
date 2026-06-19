@@ -149,7 +149,7 @@
 ## 依赖关系
 
 - **上游**：`domain`（AppError、枚举、数值类型）、`application`（部分 trait）
-- **下游**：`apps/orderbook`（market sync、WS/poll）、`apps/worker`（arbitrage、copytrade、rewards、news）
+- **下游**：`packages/orderbook`（market sync、WS/poll）、`apps/worker`（arbitrage、copytrade、rewards、news）
 
 ## 当前状态
 

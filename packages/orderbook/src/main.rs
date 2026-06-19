@@ -1,5 +1,6 @@
 use axum::{Router, routing::get};
 use polyedge_application::MarketUpsertOptions;
+use polyedge_common::{bind_service_listener, service_socket_addr};
 use polyedge_infrastructure::{AppState, Runtime};
 use std::time::Duration;
 use tower_http::limit::RequestBodyLimitLayer;
@@ -37,7 +38,7 @@ const DEFAULT_MARKET_DATA_MAX_AGE_MINUTES: u64 = 15;
 const MIN_GENERAL_MARKET_SYNCED_AT_REFRESH_AFTER_SECS: u64 = 30;
 
 #[tokio::main]
-async fn main() {
+async fn main() -> polyedge_domain::Result<()> {
     let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
 
     // Suppress expected ERROR-level logs from the SDK's internal WS reconnection
@@ -54,11 +55,16 @@ async fn main() {
         .with(tracing_subscriber::fmt::layer().with_filter(env_filter.and(suppress_sdk_ws_error)))
         .init();
 
-    let runtime = Runtime::load().await.expect("failed to load runtime");
+    let runtime = Runtime::load().await?;
     let state = runtime.app_state();
 
     let port = state.settings.orderbook.port;
-    let listen = format!("0.0.0.0:{port}");
+    let addr = service_socket_addr(
+        "0.0.0.0",
+        port,
+        "orderbook HTTP",
+        "ORDERBOOK_BIND_ADDR_INVALID",
+    )?;
 
     info!(port, "starting polyedge-orderbook service");
 
@@ -82,11 +88,9 @@ async fn main() {
         .layer(RequestBodyLimitLayer::new(2 * 1024 * 1024)) // 2 MB
         .with_state(OrderbookApiState::new(state.clone(), broadcaster.clone()));
 
-    let listener = tokio::net::TcpListener::bind(&listen)
-        .await
-        .expect("failed to bind orderbook HTTP listener");
+    let listener = bind_service_listener(addr, "orderbook HTTP", "ORDERBOOK_BIND_FAILED").await?;
 
-    info!(address = %listen, "orderbook HTTP server listening");
+    info!(address = %addr, "orderbook HTTP server listening");
 
     // Periodic market syncs. Gamma market metadata must keep its own cadence:
     // rewards catalog enrichment can take many minutes when CLOB details are
@@ -154,7 +158,7 @@ async fn main() {
     });
 
     tokio::select! {
-        result = axum::serve(listener, app).with_graceful_shutdown(shutdown_signal()) => {
+        result = axum::serve(listener, app).with_graceful_shutdown(polyedge_common::shutdown_signal()) => {
             if let Err(error) = result {
                 tracing::error!(error = %error, "orderbook HTTP server failed");
             }
@@ -166,6 +170,7 @@ async fn main() {
     }
 
     info!("polyedge-orderbook service shutting down");
+    Ok(())
 }
 
 async fn healthz() -> &'static str {
@@ -394,22 +399,5 @@ async fn run_reward_market_sync(state: &AppState, phase: &'static str, timeout: 
             timeout_secs = timeout.as_secs(),
             "orderbook reward market sync timed out; preserving prior reward catalog"
         ),
-    }
-}
-
-async fn shutdown_signal() {
-    let ctrl_c = tokio::signal::ctrl_c();
-    #[cfg(unix)]
-    {
-        let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-            .expect("failed to install SIGTERM handler");
-        tokio::select! {
-            _ = ctrl_c => {}
-            _ = sigterm.recv() => {}
-        }
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = ctrl_c.await;
     }
 }

@@ -24,7 +24,7 @@ if [[ -n "${target}" ]]; then
 fi
 
 (
-  cd "${repo_root}/packages/backend"
+  cd "${repo_root}/packages"
   cargo "${cargo_args[@]}"
 )
 
@@ -32,9 +32,9 @@ mkdir -p "${repo_root}/bin"
 
 for binary in "${binaries[@]}"; do
   if [[ -n "${target}" ]]; then
-    source_bin="${repo_root}/packages/backend/target/${target}/release/${binary}"
+    source_bin="${repo_root}/packages/target/${target}/release/${binary}"
   else
-    source_bin="${repo_root}/packages/backend/target/release/${binary}"
+    source_bin="${repo_root}/packages/target/release/${binary}"
   fi
 
   [[ -f "${source_bin}" ]] || {

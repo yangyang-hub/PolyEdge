@@ -53,7 +53,7 @@
 - 事件面板支持按 `EventCategory` 过滤
 - 页面默认展示活动视图：报价计划全宽优先，订单/库存下方分栏，事件/成交流使用独立卡片；策略配置和风控配置通过 tabs 切换，减少实盘盯盘时的配置噪音。
 - 报价计划、订单原因、信息风险摘要、AI reason、事件消息和长账户/钱包字段允许换行，表格在窄屏使用横向滚动，避免关键长文本被一行省略和短卡片被高表格行强制拉伸。
-- 筛选刷新使用单调请求序号，只接收最新 REST 响应，避免快速搜索/翻页时旧请求覆盖新状态；页面每 10 秒静默刷新当前 snapshot，让 worker 刚写入的 AI advisory、信息风险、订单和余额状态自动反映到表格；读取失败会进入页面反馈栏，不产生未处理 Promise。
+- 筛选刷新使用单调请求序号，只接收最新 REST 响应，避免快速搜索/翻页时旧请求覆盖新状态；页面每 10 秒静默刷新当前 snapshot，让 worker 刚写入的 AI advisory、信息风险、订单和余额状态自动反映到表格；静默自动刷新读取失败时保留现有 snapshot 并等待下一轮，不进入页面反馈栏，用户主动筛选/操作触发的读取失败仍会反馈，且不会产生未处理 Promise。
 
 ## 数据流
 
@@ -79,7 +79,7 @@
 - 报价计划默认展示当前通过非盘口依赖过滤且等待 live 盘口验证的可挂市场；若准备挂单时 `quote_bid_rank`、rewards spread、盘口集中度或实际预算导致双边不可行，auto/enforce/dominant 会先尝试单腿回退；没有可行单腿时后端才会把计划标记为不可挂并返回原因和 12 小时 `live_skip_until`，到期后自动重新评估。
 - Managed orders 表格发送后端分页/搜索/状态过滤/排序 query（默认每页 15 条），表格数据与 `orders_page` 均来自本地 managed-order 查询。
 - 报价计划和订单搜索框使用独立防抖输入组件；外部 query 重置通过组件 key 同步，不在 React effect 中同步 setState。
-- Rewards 工作台在保留当前搜索、筛选、排序和分页条件的前提下，每 10 秒通过 REST 重新读取 snapshot；自动刷新不显示过滤 loading 状态，手动筛选仍显示轻量刷新状态。
+- Rewards 工作台在保留当前搜索、筛选、排序和分页条件的前提下，每 10 秒通过 REST 重新读取 snapshot；自动刷新不显示过滤 loading 状态，短暂网络失败不覆盖页面反馈，手动筛选仍显示轻量刷新状态并反馈失败。
 - 首屏不加载全量 reward markets，避免奖励市场数量过大时长时间停留在 loading skeleton。
 - Wallet balance、Positions 和 Orders 表格展示 worker 同步到数据库的 rewards 账户视图；余额显示资金钱包 pUSD，资金钱包地址优先使用 `POLYEDGE_POLYMARKET__FUNDER`，未配置时使用 `ACCOUNT_ID`。
 - 今日已赚奖励展示 worker 同步到 `account.reward_earned_usd` 的 UTC 当日 maker rewards 值；worker 优先读取认证 CLOB `GET /rewards/user/total?sponsored=true` 聚合端点，以对齐 Polymarket `/rewards` 页面顶部 Daily Rewards 的 native+sponsored 口径。聚合端点为空、为 0 或不可用时回退分页读取 `GET /rewards/user` native 明细并合并 `sponsored=true` sponsored-only 明细，按 `earnings * asset_rate` 求和。前端不直接访问 Polymarket，账户快照停更或认证配置缺失时不会自行回退官网数据。

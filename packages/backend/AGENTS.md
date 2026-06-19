@@ -1,10 +1,10 @@
 # packages/backend/AGENTS.md
 
-后端（Rust workspace）代码规范。仓库级状态快照见根 [AGENTS.md](../../AGENTS.md)；前端规范见 [packages/front/AGENTS.md](../front/AGENTS.md)。本文件的规则在写或改 `packages/backend/` 下任何 Rust 代码时必须遵守，违背即应拆分/重构而非沿用。
+后端（Rust workspace）代码规范。Rust workspace 根为 [packages/Cargo.toml](../Cargo.toml)。仓库级状态快照见根 [AGENTS.md](../../AGENTS.md)；前端规范见 [packages/front/AGENTS.md](../front/AGENTS.md)。本文件的规则在写或改 `packages/api/`、`packages/orderbook/`、`packages/backend/` 下任何 Rust 代码时必须遵守，违背即应拆分/重构而非沿用。
 
 ## 适用范围
 
-`packages/backend/` 下所有 crate 与 app。任何改变模块结构、分层依赖、公共抽象位置的改动，都要确认仍符合本文件，必要时同步更新本文件。
+`packages/` Rust workspace 下所有后端 crate 与 app：顶层服务 `packages/api`、`packages/orderbook`，以及 `packages/backend/` 下的 worker/replay app 和共享 crates。任何改变模块结构、分层依赖、公共抽象位置的改动，都要确认仍符合本文件，必要时同步更新本文件。
 
 ## 分层架构
 
@@ -17,7 +17,8 @@ crate 依赖**单向**，不可逆向：
 | `connectors` | 外部数据源适配（Polymarket / news） | `domain` `application` |
 | `infrastructure` | port 的具体实现：`catalog`(postgres/in-memory)、`stores`、`settings`、`auth`、`http`、`runtime` | `domain` `application` |
 | `contracts` | HTTP API DTO（纯数据结构 + serde） | `domain` |
-| `apps/{api,worker,orderbook,replay}` | 可执行入口，组装上述 crate | 全部 |
+| `common` | 跨二进制复用的进程外壳 helper（监听地址、signal shutdown 等），不放业务逻辑 | `domain` |
+| `packages/api` / `packages/orderbook` / `backend/apps/{worker,replay}` | 可执行入口，组装上述 crate | 全部 |
 
 **红线：**
 - `domain` 不得 `use` 任何上层；领域逻辑不下沉到 `infrastructure`。
@@ -52,20 +53,20 @@ crate 依赖**单向**，不可逆向：
 
 - 重复逻辑提到 `helpers.rs`（范例：`rewards/helpers.rs`、`stores/helpers.rs`）。
 - DB 行 ↔ 领域对象映射放 `*_rows.rs`（范例：`catalog/helpers/*_rows.rs`）。
-- HTTP DTO ↔ 领域对象转换放 `mappers.rs`（范例：`apps/api/src/handlers/mappers.rs`）。
-- 仅本模块用的私有 helper 就近放模块内；**跨 crate 复用下沉到 `domain` 或 `application`**，不要在 `apps` 之间复制。
+- HTTP DTO ↔ 领域对象转换放 `mappers.rs`（范例：`packages/api/src/handlers/mappers.rs`）。
+- 仅本模块用的私有 helper 就近放模块内；跨 crate 业务复用下沉到 `domain` 或 `application`，跨二进制进程外壳复用放 `common`，不要在 app 之间复制。
 - 禁止复制粘贴成片逻辑：同一段逻辑第二次出现即提取为共享函数。
 
 ## 测试组织
 
 - 库 crate：模块内 `#[cfg(test)] mod tests { use super::*; … }`，可作为 `tests.rs` 被 `include!`（范例：`copytrade/tests.rs`、`auth/tests.rs`、`settings/tests.rs`）。
-- 二进制 crate：`src/tests/` 目录 + `src/tests.rs` 聚合（范例：`apps/api/src/tests/`）。
+- 二进制 crate：`src/tests/` 目录 + `src/tests.rs` 聚合（范例：`packages/api/src/tests/`）。
 - 测试与被测代码同 crate，通过 `super::` 访问私有项。
 
 ## 验证命令
 
 ```bash
-cd packages/backend
+cd packages
 cargo check --workspace --tests   # 编译（含测试目标），跨 crate 改动后必跑
 cargo test --workspace            # 运行测试
 cargo fmt --all                   # 统一格式（拆分/搬移后必跑）

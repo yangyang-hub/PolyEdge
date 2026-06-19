@@ -21,7 +21,7 @@
 | `market_event/` | 核心市场/事件/信号：`MarketEventService`、`MarketEventStore`（最大 Store trait） |
 | `execution/` | 执行管道：`ExecutionService`（组合 MarketEventService + RiskService） |
 | `risk.rs` | 风控：`RiskService`、`RiskStateStore`、`RiskPolicy`、kill-switch 命令 |
-| `rewards/` | 做市奖励：`RewardBotService`、`RewardBotStore`、质量过滤/排序、盘口指标/单边报价推荐、低竞争 sleeve profile/指标 gate/shadow report、AI advisory 输入/决策/执行约束、异步信息风险缓存、priority condition 列表、live-only 状态与订单分页查询、events/fills/open_order_count 内存缓存、in-process command wake channel；配置默认值/归一化/patch 逻辑拆在 `config_impl.rs`，运行时模型拆在 `runtime_models.rs`，quote/selection/AI 枚举拆在 `quote_selection_models.rs`，AI 模型拆在 `ai_advisory_models.rs`，信息风险模型拆在 `info_risk_models.rs`，deterministic 盘口选择 helper 拆在 `planner_selection.rs`，live 盘口 materializer 拆在 `planner_live.rs`，低竞争指标拆在 `low_competition.rs`，低竞争 observation/report 聚合拆在 `low_competition_report.rs`，snapshot 聚合拆在 `service_snapshot.rs` |
+| `rewards/` | 做市奖励：`RewardBotService`、`RewardBotStore`、质量过滤/排序、盘口指标/单边报价推荐、低竞争 sleeve profile/指标 gate/shadow report、AI advisory 输入/决策/执行约束、异步信息风险缓存、priority condition 列表、live-only 状态与订单分页查询、events/fills/open_order_count 内存缓存、in-process command wake channel；`RewardBotStore` trait 拆在 `service/store.rs`，service 单元测试拆在 `service/tests.rs`，配置默认值/归一化/patch 逻辑拆在 `config_impl.rs`，运行时模型拆在 `runtime_models.rs`，quote/selection/AI 枚举拆在 `quote_selection_models.rs`，AI 模型拆在 `ai_advisory_models.rs`，信息风险模型拆在 `info_risk_models.rs`，deterministic 盘口选择 helper 拆在 `planner_selection.rs`，live 盘口 materializer 拆在 `planner_live.rs`，低竞争指标拆在 `low_competition.rs`，低竞争 observation/report 聚合拆在 `low_competition_report.rs`，snapshot 聚合拆在 `service_snapshot.rs` |
 | `copytrade/` | 钱包跟踪与分析：`CopyTradeService`、`CopyTradeStore`、tracked wallets、source trades、钱包分析和控制命令队列；旧模拟引擎已移除 |
 | `arbitrage/` | 套利：`ArbitrageService`、`ArbitrageStore`、机会检测/验证 |
 | `news_ingestion.rs` | 新闻采集：`NewsIngestionService`、`NewsIngestionStore` |
@@ -77,7 +77,7 @@
 
 ### rewards — 做市奖励
 
-**Store Trait：** `RewardBotStore`
+**Store Trait：** `RewardBotStore`（定义在 `rewards/service/store.rs`）
 - Config：`load_config`、`save_config`（key-value 模式）
 - Markets：`upsert_markets`、`list_markets`、`list_all_active_markets`、`active_market_summary`
 - Quote Plans：`save_quote_plans`（替换当前计划快照）、`list_quote_plans`
@@ -87,7 +87,7 @@
 - State Tick：`apply_tick_outcome`（原子持久化 orders/fills/positions/ledger/events，不修改奖励市场目录或 quote plan 快照）、`apply_account_sync`（更新账户；`Some(positions)` 原子替换该账户全部持仓，`None` 保留持仓）、`reset_state`（重置账户状态、清空 orders/fills/positions）
 - Control Commands：`enqueue_control_command`、`claim_next_control_command`、`complete_control_command`、`fail_control_command`
 
-**服务：** `RewardBotService` — 读写配置、市场管理、快照聚合、订单分页快照、live tick 计划准备、轻量 live state 读取、priority rewards condition 列表、rewards 控制命令入队/领取/完成状态管理。服务内部缓存 config、account、positions、events（最新 200 条）、fills（最新 200 条）、external_open_order_count 和 worker heartbeat，API 与内嵌后台 runtime 共享实例时直接读写这些热状态；缓存为空时回退到数据库。`status.open_orders` 只统计已有 `external_order_id` 的 open-like managed orders，本地尚未提交的 planned/exit intent 仍留在 worker 队列但不作为 Polymarket 开放挂单展示；`status.error` 只从当前 open-like 订单的活跃对账锁推导，不会被历史 critical event 永久污染。配置保存和控制命令入队会推进 runtime revision 并通过 command_wake channel 立即唤醒 worker poll loop。live tick 准备新 quote plans 时会记录 AI 过滤前的 deterministic eligible condition 集合，并从上一版 quote plan 继承未过期且 provider/request_format/model 匹配的 AI advisory，也会继承尚未过期且非 transient 的 live 盘口验证跳过标记；worker 在 AI/info-risk cache gate 完成后才保存最终 quote plan snapshot，并在保存前记录低竞争 observation，避免预过滤 eligible 状态被订阅注册任务读取；缺少/过期 orderbook 的旧跳过标记不再继承，后续 tick 等待订阅缓存恢复后重新 materialize；live tick 只读取已有缓存并对缺失/低置信度/拒绝结果 fail closed，不等待外部 provider；worker 会在后台单实例刷新缺失 advisory 缓存，供后续 tick 使用。奖励市场目录替换拒绝空 snapshot，修改 `account_id` 前会检查旧账户状态。面向控制台的 snapshot 不携带全量 active reward markets，但会返回最近 24 小时低竞争 shadow report。缓存辅助方法拆分在 `service_cache.rs`，账户/订单/成交/事件/report/snapshot 运行时类型拆分在 `runtime_models.rs`。
+**服务：** `RewardBotService` — 读写配置、市场管理、快照聚合、订单分页快照、live tick 计划准备、轻量 live state 读取、priority rewards condition 列表、rewards 控制命令入队/领取/完成状态管理。服务内部缓存 config、account、positions、events（最新 200 条）、fills（最新 200 条）、external_open_order_count 和 worker heartbeat，API 与内嵌后台 runtime 共享实例时直接读写这些热状态；缓存为空时回退到数据库。`status.open_orders` 只统计已有 `external_order_id` 的 open-like managed orders，本地尚未提交的 planned/exit intent 仍留在 worker 队列但不作为 Polymarket 开放挂单展示；`status.error` 只从当前 open-like 订单的活跃对账锁推导，不会被历史 critical event 永久污染。配置保存和控制命令入队会推进 runtime revision 并通过 command_wake channel 立即唤醒 worker poll loop。live tick 准备新 quote plans 时会记录 AI 过滤前的 deterministic eligible condition 集合，并从上一版 quote plan 继承未过期且 provider/request_format/model 匹配的 AI advisory，也会继承尚未过期且非 transient 的 live 盘口验证跳过标记；worker 在 AI/info-risk cache gate 完成后才保存最终 quote plan snapshot，并在保存前记录低竞争 observation，避免预过滤 eligible 状态被订阅注册任务读取；缺少/过期 orderbook 的旧跳过标记不再继承，后续 tick 等待订阅缓存恢复后重新 materialize；live tick 只读取已有缓存并对缺失/低置信度/拒绝结果 fail closed，不等待外部 provider；worker 会在后台单实例刷新缺失 advisory 缓存，供后续 tick 使用。奖励市场目录替换拒绝空 snapshot，修改 `account_id` 前会检查旧账户状态。面向控制台的 snapshot 不携带全量 active reward markets，但会返回最近 24 小时低竞争 shadow report。缓存辅助方法拆分在 `service_cache.rs`，store trait 拆在 `service/store.rs`，service 单元测试拆在 `service/tests.rs`，账户/订单/成交/事件/report/snapshot 运行时类型拆分在 `runtime_models.rs`。
 
 **执行模式：**
 - `RewardExecutionMode` 枚举仅保留 `Live` 变体，`FromStr` 仍把旧字符串（`validation`、`dry_run`、`paper`、`simulation`）归一为 live；`execution_mode` 字段已从 `RewardBotConfig` / patch 中移除，Store 读取旧 `execution_mode` 配置键时直接忽略。
@@ -234,7 +234,7 @@ orderbook_cache ← (共享基础设施 trait)
 ## 修改检查清单
 
 - [ ] 新增 Store trait 方法后，同步更新 `infrastructure` 中的 Postgres 和 in-memory 实现
-- [ ] 修改 Service 方法后，同步更新 `apps/api` 中的 handler 和 `apps/worker` 中的 worker
+- [ ] 修改 Service 方法后，同步更新 `packages/api` 中的 handler 和 `apps/worker` 中的 worker
 - [ ] 修改视图/命令类型后，同步更新 `contracts` crate 中的 DTO
 - [ ] 新增模块后在 `lib.rs` 中添加 `mod` 声明和 `pub use` 导出
 - [ ] 使用 `include!` 拆分时，被 include 文件不写自己的 `use`

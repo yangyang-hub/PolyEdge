@@ -138,6 +138,7 @@ export function RewardsWorkbench({ initialSnapshot }: { initialSnapshot: RewardB
         })
         .catch((error: unknown) => {
           if (sequence !== refetchSequence.current) return;
+          if (options.silent) return;
           setFeedback({
             ok: false,
             message:

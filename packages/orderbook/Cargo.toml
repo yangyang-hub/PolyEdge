@@ -8,10 +8,11 @@ license.workspace = true
 axum.workspace = true
 futures.workspace = true
 polymarket-client-sdk.workspace = true
-polyedge-application = { path = "../../crates/application" }
-polyedge-connectors = { path = "../../crates/connectors" }
-polyedge-domain = { path = "../../crates/domain" }
-polyedge-infrastructure = { path = "../../crates/infrastructure" }
+polyedge-application = { path = "../backend/crates/application" }
+polyedge-common = { path = "../backend/crates/common" }
+polyedge-connectors = { path = "../backend/crates/connectors" }
+polyedge-domain = { path = "../backend/crates/domain" }
+polyedge-infrastructure = { path = "../backend/crates/infrastructure" }
 rust_decimal.workspace = true
 serde.workspace = true
 serde_json.workspace = true

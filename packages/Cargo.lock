@@ -3110,6 +3110,7 @@ dependencies = [
  "ed25519-dalek",
  "futures",
  "polyedge-application",
+ "polyedge-common",
  "polyedge-connectors",
  "polyedge-contracts",
  "polyedge-domain",
@@ -3138,6 +3139,14 @@ dependencies = [
  "serde_json",
  "sha2",
  "time",
+ "tokio",
+]
+
+[[package]]
+name = "polyedge-common"
+version = "0.1.0"
+dependencies = [
+ "polyedge-domain",
  "tokio",
 ]
 
@@ -3220,6 +3229,7 @@ dependencies = [
  "axum",
  "futures",
  "polyedge-application",
+ "polyedge-common",
  "polyedge-connectors",
  "polyedge-domain",
  "polyedge-infrastructure",

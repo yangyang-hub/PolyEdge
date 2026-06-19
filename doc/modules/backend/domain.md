@@ -1,6 +1,6 @@
 # domain（领域层）
 
-最后更新：2026-05-31
+最后更新：2026-06-19
 
 ## 概述
 
@@ -76,7 +76,7 @@
 ## 依赖关系
 
 - **上游**：无（纯基础层）
-- **下游被依赖**：`application`、`connectors`、`infrastructure`、`contracts`、`apps/api`、`apps/worker` — 所有上层 crate 都依赖 `domain`
+- **下游被依赖**：`application`、`connectors`、`infrastructure`、`contracts`、`common`、`packages/api`、`packages/orderbook`、`apps/worker` — 所有上层 crate 都依赖 `domain`
 
 ## 当前状态
 

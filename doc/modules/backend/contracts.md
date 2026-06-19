@@ -1,6 +1,6 @@
 # contracts（HTTP API DTO 层）
 
-最后更新：2026-06-16
+最后更新：2026-06-19
 
 ## 概述
 
@@ -42,7 +42,7 @@
 ## 依赖关系
 
 - **上游**：`domain`（核心枚举和数值类型）
-- **下游**：`apps/api`（handler 中使用 DTO 作为请求/响应类型）、前端 `src/lib/contracts/dto/`（TypeScript 类型镜像）
+- **下游**：`packages/api`（handler 中使用 DTO 作为请求/响应类型）、前端 `src/lib/contracts/dto/`（TypeScript 类型镜像）
 
 ## 当前状态
 

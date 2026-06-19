@@ -56,7 +56,7 @@ yarn build
 后端：
 
 ```bash
-cd packages/backend
+cd packages
 cargo check --workspace
 cargo test --workspace
 cargo run -p polyedge-api

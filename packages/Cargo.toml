@@ -1,14 +1,15 @@
 [workspace]
 members = [
-  "apps/api",
-  "apps/orderbook",
-  "apps/replay",
-  "apps/worker",
-  "crates/application",
-  "crates/connectors",
-  "crates/contracts",
-  "crates/domain",
-  "crates/infrastructure",
+  "api",
+  "orderbook",
+  "backend/apps/replay",
+  "backend/apps/worker",
+  "backend/crates/application",
+  "backend/crates/common",
+  "backend/crates/connectors",
+  "backend/crates/contracts",
+  "backend/crates/domain",
+  "backend/crates/infrastructure",
 ]
 resolver = "3"
 
