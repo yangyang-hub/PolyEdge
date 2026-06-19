@@ -17,7 +17,7 @@
 
 | 文件 | 职责 |
 |---|---|
-| `crates/domain/src/lib.rs` | 模块入口，通过 `include!()` 内联所有子文件 |
+| `packages/backend/crates/domain/src/lib.rs` | 模块入口，通过 `include!()` 内联所有子文件 |
 | `domain/error.rs` | `AppError`、`ErrorKind`、`Result<T>` 类型别名、辅助函数 |
 | `domain/numeric.rs` | 数值 newtype：`Probability`、`Edge`、`ExposureRatio`、`Quantity`、`UsdAmount`、`SignedUsdAmount` |
 | `domain/market_enums.rs` | 18 个业务枚举（市场状态、订单状态、信号生命周期等） |
@@ -76,7 +76,7 @@
 ## 依赖关系
 
 - **上游**：无（纯基础层）
-- **下游被依赖**：`application`、`connectors`、`infrastructure`、`contracts`、`common`、`packages/api`、`packages/orderbook`、`apps/worker` — 所有上层 crate 都依赖 `domain`
+- **下游被依赖**：`application`、`connectors`、`infrastructure`、`contracts`、`common`、`packages/api`、`packages/orderbook`、`packages/backend/apps/worker` — 所有上层 crate 都依赖 `domain`
 
 ## 当前状态
 

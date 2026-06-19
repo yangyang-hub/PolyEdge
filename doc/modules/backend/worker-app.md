@@ -130,7 +130,7 @@ reward_bot_service.claim_next_control_command()
     fetch_reward_bot_inputs() // 获取奖励市场 + 盘口
         → prepare_live_cycle()
         → 低竞争 sleeve 计算竞争资金、预估 reward share、退出深度和盘口稳定性指标
-        → 只应用已缓存 AI advisory，并在后台单实例按 condition 统一刷新缺失 AI advisory + 信息风险缓存
+        → 只应用已缓存 AI advisory，并在后台单实例按 condition 统一刷新缺失 AI advisory + 信息风险缓存（AI advisory 仅在该市场所有报价 token 盘口都已发布后才请求并写缓存，缺盘口的市场本轮跳过请求、不写缓存，等盘口到达后再评估，避免缓存空 watch/avoid 长期卡住市场）
         → 读取已缓存的信息风险并按配置标记/过滤 quote plan
         → 写入低竞争 observation，供 snapshot shadow report 汇总
         → 立即注册当前 eligible quote plan token 到 orderbook `rewards_eligible` source

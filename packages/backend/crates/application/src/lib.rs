@@ -87,8 +87,9 @@ pub use rewards::{
     RewardTickOutcome, RewardToken, apply_low_competition_metrics_to_quote_plans,
     apply_reward_ai_advisories, apply_reward_info_risks, build_low_competition_observations,
     build_reward_ai_advisory_request, build_reward_info_risk_assessment_request,
-    build_reward_quote_plans, materialize_reward_quote_plan_for_live_orderbook, new_risk_event,
-    select_reward_book_token_ids, validate_reward_list_limit,
+    build_reward_quote_plans, materialize_reward_quote_plan_for_live_orderbook,
+    new_risk_event, reward_market_books_available, select_reward_book_token_ids,
+    validate_reward_list_limit,
 };
 pub use risk::{
     ApproveSignalCommand, ApproveSignalReceipt, KillSwitchReceipt, RejectSignalCommand,

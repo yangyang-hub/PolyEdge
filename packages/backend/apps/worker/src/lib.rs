@@ -20,7 +20,7 @@ use polyedge_application::{
     apply_reward_info_risks, build_arbitrage_analysis, build_low_competition_observations,
     build_reward_ai_advisory_request, build_reward_info_risk_assessment_request,
     market_book_snapshot_id, materialize_reward_quote_plan_for_live_orderbook, new_risk_event,
-    select_reward_book_token_ids,
+    reward_market_books_available, select_reward_book_token_ids,
 };
 use polyedge_connectors::{
     ConnectorNewsItem, ConnectorOrderStatusUpdate, ConnectorTradeFillUpdate,
@@ -137,6 +137,7 @@ struct RewardAiAdvisoryRefreshReport {
     failures: usize,
     skipped_missing_market: usize,
     skipped_missing_plan: usize,
+    skipped_missing_book: usize,
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]

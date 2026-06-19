@@ -27,7 +27,7 @@ crate 依赖**单向**，不可逆向：
 
 ## 模块化设计
 
-1. **crate 根 `lib.rs` / 目录 `mod.rs`**：只做 `mod` 声明 + `pub use` 收敛对外 API（范例：`crates/application/src/lib.rs`）。不要在根文件堆实现。
+1. **crate 根 `lib.rs` / 目录 `mod.rs`**：只做 `mod` 声明 + `pub use` 收敛对外 API（范例：`packages/backend/crates/application/src/lib.rs`）。不要在根文件堆实现。
 
 2. **`include!` 拆分模式（项目核心惯例，全仓 100+ 处）**：当单个逻辑模块超过行数阈值，建一个「模块根文件」放共享 `use`/`const`/核心类型，按职责把实现拆到子目录文件，用 `include!("子目录/文件.rs")` 内联：
    - 被 `include!` 的子文件**不写自己的 `use`**，共享根文件作用域的导入；

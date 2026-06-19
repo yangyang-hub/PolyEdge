@@ -147,7 +147,7 @@
 ## 依赖关系
 
 - **上游**：`domain`（枚举、错误类型）、`application`（Store trait、Service struct）
-- **下游**：`packages/api`（使用 AppState、auth middleware）、`packages/orderbook`（使用 AppState、Runtime 和 orderbook stores）、`apps/worker`（使用 AppState、Store 实现）
+- **下游**：`packages/api`（使用 AppState、auth middleware）、`packages/orderbook`（使用 AppState、Runtime 和 orderbook stores）、`packages/backend/apps/worker`（使用 AppState、Store 实现）
 
 ## 当前状态
 

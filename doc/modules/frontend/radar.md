@@ -1,6 +1,6 @@
 # Radar（套利雷达）
 
-最后更新：2026-06-13
+最后更新：2026-06-19
 
 ## 概述
 
@@ -61,12 +61,15 @@ Loader（radar-page-data.ts）
 
 `radar-state.test.ts` 测试 `deriveCandidatePreview` 的各种状态推导场景。使用独立的 `tsconfig.radar-test.json`，通过 `yarn test:radar-state` 运行。
 
+`scripts/smoke-arbitrage-radar.sh` 会调用后端 REST 端点检查最近 scans/opportunities/analysis，并在提供 `POLYEDGE_FRONT_BASE_URL` 时检查前端 `/healthz` 与 `/radar` 页面；前端 SSE 实时流已经移除，smoke 不再检查 `/api/stream/arbitrage`。
+
 ## 当前状态
 
 - 完整实现：列表、筛选、视图切换、详情面板
 - 页面通过 REST API 初始加载，前端不再维护 SSE 增量流
 - 套利雷达是只读链路（不会创建执行请求）
 - 测试覆盖状态推导纯函数
+- 2026-06-19：套利 smoke 脚本已改为 REST API + 页面健康检查，不再探测已移除的前端 SSE 入口
 - 2026-06-13：清理组件未使用代码并收窄分页重置 effect 依赖；交互与 API 依赖不变
 
 ## 修改检查清单

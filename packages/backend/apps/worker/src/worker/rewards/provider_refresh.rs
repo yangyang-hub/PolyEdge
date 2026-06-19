@@ -221,6 +221,7 @@ async fn refresh_reward_market_provider_cache(
         ai_failures = report.ai.failures,
         ai_skipped_missing_market = report.ai.skipped_missing_market,
         ai_skipped_missing_plan = report.ai.skipped_missing_plan,
+        ai_skipped_missing_book = report.ai.skipped_missing_book,
         info_risk_candidates = report.info_risk.candidates,
         info_risk_cache_hits = report.info_risk.cache_hits,
         info_risk_requested = report.info_risk.requested,
@@ -288,6 +289,21 @@ async fn refresh_reward_ai_advisory_for_condition(
         return Ok(RewardAiAdvisoryRefreshStep {
             stop_cycle: false,
             advisory: Some(cached),
+        });
+    }
+
+    // Defer the advisory until the orderbook service has published real books
+    // for this market. The request payload otherwise carries null bids/asks,
+    // and the system prompt tells the model to favor watch/avoid when data is
+    // thin — so a no-book market would get cached as a watch/avoid "no
+    // orderbook" advisory for the full TTL, blocking the market even after the
+    // book arrives in a later tick. The advisory cache key excludes book data
+    // by design, so the only safe fix is to not request until books exist.
+    if !reward_market_books_available(market, books) {
+        report.skipped_missing_book += 1;
+        return Ok(RewardAiAdvisoryRefreshStep {
+            stop_cycle: false,
+            advisory: None,
         });
     }
 

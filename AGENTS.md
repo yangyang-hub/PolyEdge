@@ -52,84 +52,84 @@ The designated sync producer is now the standalone `polyedge-orderbook` service.
 
 | File | Role |
 |------|------|
-| `apps/worker/src/worker/market_sync.rs` | 市场同步 CLI 兼容入口；daemon 同步已迁移到 orderbook 服务 |
-| `apps/worker/src/worker/orderbook_stream.rs` | Orderbook stream — 仅保留 CLI 子命令兼容，核心逻辑已迁移到 polyedge-orderbook 服务 |
+| `packages/backend/apps/worker/src/worker/market_sync.rs` | 市场同步 CLI 兼容入口；daemon 同步已迁移到 orderbook 服务 |
+| `packages/backend/apps/worker/src/worker/orderbook_stream.rs` | Orderbook stream — 仅保留 CLI 子命令兼容，核心逻辑已迁移到 polyedge-orderbook 服务 |
 | `packages/orderbook/src/main.rs` | 独立 orderbook 服务入口 — HTTP server、Gamma full/priority sync、rewards catalog sync、WS stream + token 注册 |
 | `packages/orderbook/src/market_sync.rs` | Orderbook market sync — Gamma full sync、priority condition sync、rewards catalog sync |
 | `packages/orderbook/src/http_api.rs` | Orderbook HTTP/API — read/batch/stats/register/ingest、内部 WS stream、写 token 校验、最优档排序 |
 | `packages/orderbook/src/updates.rs` | Orderbook update broadcaster — 为 WS/poll/ingest 缓存更新分配 sequence 并推送内部 WS |
 | `packages/backend/crates/common/src/lib.rs` | 后端二进制共享进程外壳 helper — bind address、TCP listener、Ctrl-C/SIGTERM shutdown |
-| `crates/connectors/src/polymarket/gamma.rs` | Gamma markets connector — `/markets` offset 分页、condition_ids 批量查询、market id 去重 |
-| `crates/connectors/src/polymarket/chain.rs` | Polygon chain connector — 读取资金钱包链上 pUSD ERC20 余额 |
-| `crates/connectors/src/polymarket/live.rs` + `live/raw.rs` | Polymarket live connector — CLOB V2 认证、heartbeat、收益查询 raw fallback、余额/订单/下单/撤单 |
-| `crates/connectors/src/polymarket/live/trade_reconciliation.rs` | Polymarket live order-specific fill 与订单终态对账 helper |
-| `crates/connectors/src/news.rs` | RSS/Atom 新闻 connector — 抓取 feed、解析 item/entry、标准化 raw news item |
-| `crates/connectors/src/rewards.rs` + `rewards/orderbooks.rs` | Rewards catalog connector + CLOB `/books` batch poll and `/book` fallback |
-| `crates/connectors/src/orderbook.rs` | Orderbook service client — HTTP batch/register/ingest + internal WS stream client |
-| `crates/connectors/src/openai_compat.rs` | OpenAI-compatible provider helper — root base URL 自动补 `/v1`，Bearer + `api-key` 认证头兼容，provider 文本响应候选 JSON 提取 |
-| `crates/connectors/src/reward_ai.rs` | Rewards AI advisory connector — OpenAI Responses/Chat Completions and Anthropic Messages |
-| `crates/connectors/src/reward_info_risk.rs` | Rewards info-risk connector — OpenAI/Anthropic structured risk assessment, optional OpenAI Responses web search |
-| `crates/infrastructure/src/settings/defaults.rs` | 后端默认配置 — 包含未设置 `POLYEDGE_NEWS__SOURCES_JSON` 时的默认新闻源列表 |
-| `apps/worker/src/worker/rewards.rs` | Rewards bot — executes live strategy ticks and queued run/cancel/reset commands |
-| `apps/worker/src/worker/service_info_risk.rs` | Worker runtime hook for async rewards info-risk scans |
-| `apps/worker/src/worker/rewards/provider_advisory.rs` | Rewards AI advisory cache gate, candidate ordering, provider connector/permit helpers |
-| `apps/worker/src/worker/rewards/provider_refresh.rs` | Rewards AI advisory / info-risk provider refresh — 按 condition 先补 AI advisory 再补信息风险 |
-| `apps/worker/src/worker/rewards/info_risk.rs` | Rewards info-risk async scan loop, provider cache lookup/write, quote-plan risk application |
+| `packages/backend/crates/connectors/src/polymarket/gamma.rs` | Gamma markets connector — `/markets` offset 分页、condition_ids 批量查询、market id 去重 |
+| `packages/backend/crates/connectors/src/polymarket/chain.rs` | Polygon chain connector — 读取资金钱包链上 pUSD ERC20 余额 |
+| `packages/backend/crates/connectors/src/polymarket/live.rs` + `live/raw.rs` | Polymarket live connector — CLOB V2 认证、heartbeat、收益查询 raw fallback、余额/订单/下单/撤单 |
+| `packages/backend/crates/connectors/src/polymarket/live/trade_reconciliation.rs` | Polymarket live order-specific fill 与订单终态对账 helper |
+| `packages/backend/crates/connectors/src/news.rs` | RSS/Atom 新闻 connector — 抓取 feed、解析 item/entry、标准化 raw news item |
+| `packages/backend/crates/connectors/src/rewards.rs` + `rewards/orderbooks.rs` | Rewards catalog connector + CLOB `/books` batch poll and `/book` fallback |
+| `packages/backend/crates/connectors/src/orderbook.rs` | Orderbook service client — HTTP batch/register/ingest + internal WS stream client |
+| `packages/backend/crates/connectors/src/openai_compat.rs` | OpenAI-compatible provider helper — root base URL 自动补 `/v1`，Bearer + `api-key` 认证头兼容，provider 文本响应候选 JSON 提取 |
+| `packages/backend/crates/connectors/src/reward_ai.rs` | Rewards AI advisory connector — OpenAI Responses/Chat Completions and Anthropic Messages |
+| `packages/backend/crates/connectors/src/reward_info_risk.rs` | Rewards info-risk connector — OpenAI/Anthropic structured risk assessment, optional OpenAI Responses web search |
+| `packages/backend/crates/infrastructure/src/settings/defaults.rs` | 后端默认配置 — 包含未设置 `POLYEDGE_NEWS__SOURCES_JSON` 时的默认新闻源列表 |
+| `packages/backend/apps/worker/src/worker/rewards.rs` | Rewards bot — executes live strategy ticks and queued run/cancel/reset commands |
+| `packages/backend/apps/worker/src/worker/service_info_risk.rs` | Worker runtime hook for async rewards info-risk scans |
+| `packages/backend/apps/worker/src/worker/rewards/provider_advisory.rs` | Rewards AI advisory cache gate, candidate ordering, provider connector/permit helpers |
+| `packages/backend/apps/worker/src/worker/rewards/provider_refresh.rs` | Rewards AI advisory / info-risk provider refresh — 按 condition 先补 AI advisory 再补信息风险 |
+| `packages/backend/apps/worker/src/worker/rewards/info_risk.rs` | Rewards info-risk async scan loop, provider cache lookup/write, quote-plan risk application |
 | `packages/api/src/handlers/rewards.rs` | Rewards API — reads snapshots/config and enqueues worker control commands |
-| `crates/application/src/rewards/service.rs` | RewardBotService — reward markets, snapshots, live order lifecycle, control command queue, in-process command wake channel |
-| `crates/application/src/rewards/service_cache.rs` | RewardBotService cached reads — events, fills, open_order_count, positions, heartbeat, event log helper |
-| `crates/application/src/rewards/service_snapshot.rs` | RewardBotService snapshot aggregation — orders/plans pagination and low-competition report |
-| `crates/application/src/rewards/runtime_models.rs` | Rewards runtime models — account/position/order/fill/event/report/snapshot types |
-| `crates/application/src/rewards/quote_selection_models.rs` | Rewards quote/selection/AI advisory enums — double/auto、observe/enforce、provider/request format |
-| `crates/application/src/rewards/ai_advisory_models.rs` | Rewards AI advisory request/decision/cache models and guarded plan enforcement |
-| `crates/application/src/rewards/info_risk_models.rs` | Rewards info-risk request/decision/cache models and guarded plan filtering |
-| `crates/application/src/rewards/config_impl.rs` | Rewards config defaults、normalization、candidate filter and patch application |
-| `crates/application/src/rewards/low_competition.rs` | Rewards low-competition sleeve metrics/gate — competition notional、reward/100/day、exit depth/slippage、book stability |
-| `crates/application/src/rewards/planner_selection.rs` | Rewards deterministic quote selection — dominant single-side recommendation, book concentration metrics, preferred category bonus |
-| `crates/application/src/rewards/planner_live.rs` | Rewards live quote materializer — live orderbook rank/spread/auto metrics/budget validation before placement |
-| `crates/application/src/rewards/low_competition_report.rs` | Rewards low-competition observations and shadow report aggregation |
-| `crates/application/src/rewards/pagination.rs` | Rewards order pagination query and response metadata |
-| `crates/infrastructure/src/stores/rewards/postgres_low_competition.rs` | Rewards low-competition observation persistence and recent-window query SQL |
+| `packages/backend/crates/application/src/rewards/service.rs` | RewardBotService — reward markets, snapshots, live order lifecycle, control command queue, in-process command wake channel |
+| `packages/backend/crates/application/src/rewards/service_cache.rs` | RewardBotService cached reads — events, fills, open_order_count, positions, heartbeat, event log helper |
+| `packages/backend/crates/application/src/rewards/service_snapshot.rs` | RewardBotService snapshot aggregation — orders/plans pagination and low-competition report |
+| `packages/backend/crates/application/src/rewards/runtime_models.rs` | Rewards runtime models — account/position/order/fill/event/report/snapshot types |
+| `packages/backend/crates/application/src/rewards/quote_selection_models.rs` | Rewards quote/selection/AI advisory enums — double/auto、observe/enforce、provider/request format |
+| `packages/backend/crates/application/src/rewards/ai_advisory_models.rs` | Rewards AI advisory request/decision/cache models and guarded plan enforcement |
+| `packages/backend/crates/application/src/rewards/info_risk_models.rs` | Rewards info-risk request/decision/cache models and guarded plan filtering |
+| `packages/backend/crates/application/src/rewards/config_impl.rs` | Rewards config defaults、normalization、candidate filter and patch application |
+| `packages/backend/crates/application/src/rewards/low_competition.rs` | Rewards low-competition sleeve metrics/gate — competition notional、reward/100/day、exit depth/slippage、book stability |
+| `packages/backend/crates/application/src/rewards/planner_selection.rs` | Rewards deterministic quote selection — dominant single-side recommendation, book concentration metrics, preferred category bonus |
+| `packages/backend/crates/application/src/rewards/planner_live.rs` | Rewards live quote materializer — live orderbook rank/spread/auto metrics/budget validation before placement |
+| `packages/backend/crates/application/src/rewards/low_competition_report.rs` | Rewards low-competition observations and shadow report aggregation |
+| `packages/backend/crates/application/src/rewards/pagination.rs` | Rewards order pagination query and response metadata |
+| `packages/backend/crates/infrastructure/src/stores/rewards/postgres_low_competition.rs` | Rewards low-competition observation persistence and recent-window query SQL |
 | `packages/front/src/features/rewards/components/rewards-low-competition-report.tsx` | Rewards low-competition shadow report panel |
-| `apps/worker/src/worker/rewards/live_sync.rs` | Rewards live managed-order trade/status sync |
-| `apps/worker/src/worker/rewards/account_sync.rs` | Rewards external balance, CLOB open-order snapshot/adoption, and complete position snapshot sync |
-| `apps/worker/src/worker/rewards/live_orders.rs` | Rewards live cancel/fill and post-fill exit/flatten intents |
-| `apps/worker/src/worker/rewards/live_submission.rs` | Rewards live single-order submit and submission markers |
-| `apps/worker/src/worker/rewards/live_pending.rs` | Rewards durable intent submit/recovery workflow |
-| `apps/worker/src/worker/rewards/live_risk.rs` | Rewards live placement/cancel risk checks |
-| `apps/worker/src/worker/rewards/orderbook_registration.rs` | Rewards eligible quote plan token on-demand orderbook registration |
-| `apps/worker/src/worker/rewards/orderbook_events.rs` | Rewards orderbook event consumer — 内部 WS、本地盘口 cache、HTTP bootstrap、活跃 token wake |
-| `apps/worker/src/worker/rewards/polling.rs` | Rewards live poll loop, book fetch, event-driven fast reconcile, in-process book history, command wake subscription |
-| `apps/worker/src/worker/copytrade.rs` | Copytrade worker — wallet tracking, source trade detection, and queued analyze commands |
+| `packages/backend/apps/worker/src/worker/rewards/live_sync.rs` | Rewards live managed-order trade/status sync |
+| `packages/backend/apps/worker/src/worker/rewards/account_sync.rs` | Rewards external balance, CLOB open-order snapshot/adoption, and complete position snapshot sync |
+| `packages/backend/apps/worker/src/worker/rewards/live_orders.rs` | Rewards live cancel/fill and post-fill exit/flatten intents |
+| `packages/backend/apps/worker/src/worker/rewards/live_submission.rs` | Rewards live single-order submit and submission markers |
+| `packages/backend/apps/worker/src/worker/rewards/live_pending.rs` | Rewards durable intent submit/recovery workflow |
+| `packages/backend/apps/worker/src/worker/rewards/live_risk.rs` | Rewards live placement/cancel risk checks |
+| `packages/backend/apps/worker/src/worker/rewards/orderbook_registration.rs` | Rewards eligible quote plan token on-demand orderbook registration |
+| `packages/backend/apps/worker/src/worker/rewards/orderbook_events.rs` | Rewards orderbook event consumer — 内部 WS、本地盘口 cache、HTTP bootstrap、活跃 token wake |
+| `packages/backend/apps/worker/src/worker/rewards/polling.rs` | Rewards live poll loop, book fetch, event-driven fast reconcile, in-process book history, command wake subscription |
+| `packages/backend/apps/worker/src/worker/copytrade.rs` | Copytrade worker — wallet tracking, source trade detection, and queued analyze commands |
 | `packages/api/src/handlers/copytrade.rs` | Copytrade API — reads snapshots/config and enqueues worker control commands |
-| `crates/application/src/copytrade/service.rs` | CopyTradeService — copytrade config, wallet tracking, source trade detection, and control command queue |
-| `crates/application/src/orderbook_cache.rs` | OrderbookCache trait and stream event models — `CachedOrderBook`、`OrderbookStreamEvent` |
-| `crates/application/src/orderbook_registry.rs` | OrderbookSubscriptionRegistry trait — 多来源 token 订阅注册与来源统计 |
-| `crates/infrastructure/src/stores/orderbook_cache.rs` | InMemoryOrderbookCache（TTL + 定期清理 + 每侧盘口深度裁剪）；保留 Redis 实现 |
-| `crates/infrastructure/src/stores/orderbook_registry.rs` | InMemoryOrderbookSubscriptionRegistry — 来源有序 token 原子替换、确定性优先级聚合、来源与去重总数统计 |
-| `crates/infrastructure/src/stores/rewards/postgres_market_methods.rs` | Rewards Postgres candidate query — 市场质量硬过滤、综合排序、row mapping |
+| `packages/backend/crates/application/src/copytrade/service.rs` | CopyTradeService — copytrade config, wallet tracking, source trade detection, and control command queue |
+| `packages/backend/crates/application/src/orderbook_cache.rs` | OrderbookCache trait and stream event models — `CachedOrderBook`、`OrderbookStreamEvent` |
+| `packages/backend/crates/application/src/orderbook_registry.rs` | OrderbookSubscriptionRegistry trait — 多来源 token 订阅注册与来源统计 |
+| `packages/backend/crates/infrastructure/src/stores/orderbook_cache.rs` | InMemoryOrderbookCache（TTL + 定期清理 + 每侧盘口深度裁剪）；保留 Redis 实现 |
+| `packages/backend/crates/infrastructure/src/stores/orderbook_registry.rs` | InMemoryOrderbookSubscriptionRegistry — 来源有序 token 原子替换、确定性优先级聚合、来源与去重总数统计 |
+| `packages/backend/crates/infrastructure/src/stores/rewards/postgres_market_methods.rs` | Rewards Postgres candidate query — 市场质量硬过滤、综合排序、row mapping |
 | `packages/front/src/features/rewards/components/rewards-low-competition-config.tsx` | Rewards frontend low-competition sleeve config panel |
 | `packages/front/src/features/rewards/components/rewards-low-competition-summary.tsx` | Rewards frontend low-competition quote-plan metrics summary |
-| `migrations/0022_reward_bot_control_commands.sql` | Rewards API-to-worker command queue table |
-| `migrations/0023_copytrade_control_commands.sql` | Copytrade API-to-worker command queue table |
-| `migrations/0024_reward_markets_active_index.sql` | Reward market active/daily-rate query index |
-| `migrations/0025_markets_active_volume_index.sql` | Open/tradable market 24h-volume query index |
-| `migrations/0026_reward_control_running_lease_index.sql` | Rewards running control command lease query index |
-| `migrations/0028_reward_positions_external_inventory.sql` | Allow complete external rewards account inventory outside the reward catalog |
-| `migrations/0030_rewards_snapshot_indexes.sql` | Indexes for reward_fills and reward_positions snapshot queries |
-| `migrations/0031_worker_query_indexes.sql` | Indexes for worker orders, raw_events event_time, and copytrade source_trades queries |
-| `migrations/0032_reward_worker_heartbeats.sql` | Rewards worker heartbeat used by snapshot running status |
-| `migrations/0033_reward_candidate_filter.sql` | Rewards candidate filter config |
-| `migrations/0034_reward_account_external_buy_notional.sql` | Rewards account external buy notional snapshot |
-| `migrations/0035_auto_cancel_not_found_orders.sql` | Historical rewards managed-order repair |
-| `migrations/0036_restore_not_found_reconciliation.sql` | Restore incorrectly auto-cancelled 404 orders for trade reconciliation |
-| `migrations/0037_reward_market_quality.sql` | Gamma market liquidity/end-time/freshness fields, rewards quality index, unsafe stale-cancel repair |
-| `migrations/0038_reward_market_advisories.sql` | Rewards AI advisory cache table keyed by provider/request_format/model/input_hash |
-| `migrations/0039_reward_market_info_risks.sql` | Rewards info-risk cache table keyed by provider/request_format/model/input_hash |
-| `migrations/0040_markets_quality_index_no_synced_at.sql` | Rewards market quality index excludes high-churn `markets.synced_at` |
-| `migrations/0041_market_asset_id_lookup_indexes.sql` | Market yes/no asset id indexes for orderbook priority token-to-condition lookup |
-| `migrations/0042_reward_order_strategy_bucket.sql` | Rewards managed order `strategy_bucket` for standard vs low-competition bucket tracking |
-| `migrations/0043_reward_low_competition_observations.sql` | Rewards low-competition cross-cycle observation table for shadow reports |
+| `packages/backend/migrations/0022_reward_bot_control_commands.sql` | Rewards API-to-worker command queue table |
+| `packages/backend/migrations/0023_copytrade_control_commands.sql` | Copytrade API-to-worker command queue table |
+| `packages/backend/migrations/0024_reward_markets_active_index.sql` | Reward market active/daily-rate query index |
+| `packages/backend/migrations/0025_markets_active_volume_index.sql` | Open/tradable market 24h-volume query index |
+| `packages/backend/migrations/0026_reward_control_running_lease_index.sql` | Rewards running control command lease query index |
+| `packages/backend/migrations/0028_reward_positions_external_inventory.sql` | Allow complete external rewards account inventory outside the reward catalog |
+| `packages/backend/migrations/0030_rewards_snapshot_indexes.sql` | Indexes for reward_fills and reward_positions snapshot queries |
+| `packages/backend/migrations/0031_worker_query_indexes.sql` | Indexes for worker orders, raw_events event_time, and copytrade source_trades queries |
+| `packages/backend/migrations/0032_reward_worker_heartbeats.sql` | Rewards worker heartbeat used by snapshot running status |
+| `packages/backend/migrations/0033_reward_candidate_filter.sql` | Rewards candidate filter config |
+| `packages/backend/migrations/0034_reward_account_external_buy_notional.sql` | Rewards account external buy notional snapshot |
+| `packages/backend/migrations/0035_auto_cancel_not_found_orders.sql` | Historical rewards managed-order repair |
+| `packages/backend/migrations/0036_restore_not_found_reconciliation.sql` | Restore incorrectly auto-cancelled 404 orders for trade reconciliation |
+| `packages/backend/migrations/0037_reward_market_quality.sql` | Gamma market liquidity/end-time/freshness fields, rewards quality index, unsafe stale-cancel repair |
+| `packages/backend/migrations/0038_reward_market_advisories.sql` | Rewards AI advisory cache table keyed by provider/request_format/model/input_hash |
+| `packages/backend/migrations/0039_reward_market_info_risks.sql` | Rewards info-risk cache table keyed by provider/request_format/model/input_hash |
+| `packages/backend/migrations/0040_markets_quality_index_no_synced_at.sql` | Rewards market quality index excludes high-churn `markets.synced_at` |
+| `packages/backend/migrations/0041_market_asset_id_lookup_indexes.sql` | Market yes/no asset id indexes for orderbook priority token-to-condition lookup |
+| `packages/backend/migrations/0042_reward_order_strategy_bucket.sql` | Rewards managed order `strategy_bucket` for standard vs low-competition bucket tracking |
+| `packages/backend/migrations/0043_reward_low_competition_observations.sql` | Rewards low-competition cross-cycle observation table for shadow reports |
 | `packages/backend/init.sql` | Complete empty-database initialization script generated from migrations 0001–0043 |
 
 ## 仓库结构
@@ -163,7 +163,7 @@ The designated sync producer is now the standalone `polyedge-orderbook` service.
 - Rewards CLOB open-order snapshot 会先收养未归属但 token 可唯一映射到 active reward market 的开放 BUY 为 managed order；如果同 external id 的本地 BUY 已被关成非 open，但 CLOB 仍 open，会重开原本 managed order。SELL、非 rewards 市场和无法唯一映射 token 的外部开放订单明细，以及奖励结算对账仍是缺口。
 - Rewards 低竞争市场 sleeve v2 已实现并默认关闭（见 [doc/rewards-low-competition-sleeve-plan.md](./doc/rewards-low-competition-sleeve-plan.md)）：使用独立 `standard` / `low_competition` candidate profile，不全局降低主策略流动性/成交量硬门槛；`observe` 只写入 `strategy_bucket`、低竞争指标和 observation，不实盘下单；`enforce` 需要竞争资金、预估 reward/100/day、退出深度、盘口历史样本和 midpoint 稳定性达标，并要求 AI advisory 开启且 info-risk 为 enforce，之后仍由既有 AI/info-risk cache gate、live materializer、kill switch、订单/库存/账户外部 BUY notional 风控 fail closed。低竞争 managed order 会持久化 `strategy_bucket=low_competition`；worker 会持久化 `reward_low_competition_observations`，API snapshot 返回最近 24 小时 shadow report 和保守小额 enforce 建议，但不会自动切换配置。
 - Rewards 成交对账除 404 fallback 外，也会在关联 trade 按 ID 查询失败时按 token/time 扫描认证账户 trades 并按 external order id 精确匹配；认证 CLOB 明确返回 matched size、但 trade 响应仍无法解码时，worker 仅在 Data API 钱包交易的 token/BUY/price/time/累计 size 与唯一 managed order 全部严格匹配后补账。若外部账户和持仓快照已覆盖该成交，只补订单、fill 和退出 intent，不重复扣现金或叠加持仓。任何单笔订单的全部回退失败都只隔离当前订单，不再阻断其余订单对账、账户持仓同步或 stale 清理。
-- Rewards AI advisory 已不再按每轮最大市场数截断；full tick 会先记录 AI 过滤前的 deterministic eligible condition 集合，新一轮 quote plan 构建时只继承上一版未过期且 provider/request_format/model 匹配的 advisory，不会因缺少 advisory 在 prepare 阶段提前 fail closed；live tick 只读取已有 advisory cache 并立即 gate，仍缺少 advisory、provider 配置缺失、模型为空、请求失败、低置信度、`watch/avoid` 或 `quote_mode=none` 的原本 eligible 计划会 fail closed，但不会等待外部 provider；quote plan 快照只在 AI/info-risk gate 全部完成后统一保存。后台 market provider refresh 用进程内 `AtomicBool` 保证同一进程最多一个任务在跑；候选 condition 按开放订单、持仓、eligible quote plan、候选市场顺序去重，每个 condition 内先用稳定 cache-key payload 构建 AI `input_hash`、查询缓存并在缓存未命中时请求 provider，命中或保存的 advisory 会挂到本轮内存 plan，随后再为同一 condition 用稳定 cache-key payload 构建 info-risk `input_hash`、查询缓存并在缓存未命中时请求 provider，完成后才进入下一个 condition；完整 provider payload 仍包含账户、订单、持仓和盘口上下文，但这些每轮动态字段不再进入缓存键。provider 成功后只写入 `reward_market_advisories` / `reward_market_info_risks` 缓存，供后续 tick 使用，不再用旧 cycle 增量覆盖完整 quote plan 快照。live cache gate 会写入包含 pre_ai_eligible_plans/ai_existing_advisories/ai_request_candidates/ai_pending_plans/cache_hits/skipped_missing_market/applied 的 info 日志；后台 provider refresh 会分别写入 AI 与 info-risk 的 candidates/cache_hits/requested/saved/failures/skipped_missing_market 汇总和逐个 requesting/saved 进度。Rewards config 的 AI provider wire value 使用 `openai|anthropic`，request format 使用 `openai_responses|openai_chat_completions|anthropic_messages`；后端兼容读取旧 `open_ai*` 拼写但序列化始终输出 `openai*`。OpenAI-compatible provider 的 base URL 可配置为根地址或 `/v1` 地址，connector 会统一请求 `/v1/...` 并同时携带 Bearer 与 `api-key` 认证头；MiMo provider 使用 `openai_chat_completions`，不使用未实现的 Responses endpoint；Chat Completions 请求使用 MiMo 官方兼容的 `max_completion_tokens`，AI advisory/info-risk 分别给 4096/6144 completion token 预算，降低 reasoning 模型耗尽预算导致最终 `content` 为空的概率；AI advisory/info-risk 请求温度固定为 0，prompt 要求单个合法 JSON 对象，解析层会从 provider 文本中扫描 markdown fence、解释文字、JSON 字符串或数组包装里的候选对象，并且只有通过现有必填字段与枚举校验的对象才会保存，无法提取时 warning 会携带短 preview。AI provider 单次请求默认超时为 180 秒，可通过 `POLYEDGE_REWARDS__AI_REQUEST_TIMEOUT_SECS` 覆盖；AI advisory 和 info-risk 共用进程内 `Semaphore(1)`，同一 worker/API 进程内任意时刻只允许一个 AI provider HTTP 请求在飞。AI advisory 每轮最大市场数环境变量已移除。API 内嵌 worker 启动会记录 rewards poll loop 是否启用、AI key 是否配置、模型名和 interval；每轮 full tick 会记录 markets/books/plans/pre_ai_eligible_plans/eligible/open_orders/positions 以及 AI/info-risk 配置。信息风险扫描不再按每轮最大市场数截断；AI advisory 启用时由 market provider refresh 与 AI 按 condition 同步推进，独立 info-risk poll task 会跳过 provider 请求；AI advisory 未启用时，独立 info-risk task 仍按开放订单、持仓、eligible quote plan、候选市场顺序覆盖全量候选。provider 明确返回过载（HTTP 503 / `system_cpu_overloaded` / overloaded）时，worker 会停止本轮剩余 provider 请求以避免继续压垮 provider，并保留既有缓存/过滤语义。旧 `POLYEDGE_REWARDS__INFO_RISK_MAX_MARKETS_PER_CYCLE` 保留为兼容读取但不再限制扫描范围。
+- Rewards AI advisory 已不再按每轮最大市场数截断；full tick 会先记录 AI 过滤前的 deterministic eligible condition 集合，新一轮 quote plan 构建时只继承上一版未过期且 provider/request_format/model 匹配的 advisory，不会因缺少 advisory 在 prepare 阶段提前 fail closed；live tick 只读取已有 advisory cache 并立即 gate，仍缺少 advisory、provider 配置缺失、模型为空、请求失败、低置信度、`watch/avoid` 或 `quote_mode=none` 的原本 eligible 计划会 fail closed，但不会等待外部 provider；quote plan 快照只在 AI/info-risk gate 全部完成后统一保存。后台 market provider refresh 用进程内 `AtomicBool` 保证同一进程最多一个任务在跑；候选 condition 按开放订单、持仓、eligible quote plan、候选市场顺序去重，每个 condition 内先用稳定 cache-key payload 构建 AI `input_hash`、查询缓存，缓存未命中且该市场所有报价 token 盘口都已发布（非空 bids 与 asks）时才请求 provider；盘口缺失/为空的市场本轮跳过 AI advisory 请求且不写缓存，等 orderbook 订阅/缓存返回盘口后再评估，避免在缓存键不含盘口的设计下被一条空 watch/avoid 长期卡住整个 TTL（与 live placement 缺盘口即等待订阅数据的模式一致）；命中或保存的 advisory 会挂到本轮内存 plan，随后再为同一 condition 用稳定 cache-key payload 构建 info-risk `input_hash`、查询缓存并在缓存未命中时请求 provider，完成后才进入下一个 condition；完整 provider payload 仍包含账户、订单、持仓和盘口上下文，但这些每轮动态字段不再进入缓存键。advisory cache key `schema_version` 已升到 3，使本次盘口门控改动前以空盘口缓存的 advisory 失效，并按新门控用真实盘口重新评估。provider 成功后只写入 `reward_market_advisories` / `reward_market_info_risks` 缓存，供后续 tick 使用，不再用旧 cycle 增量覆盖完整 quote plan 快照。live cache gate 会写入包含 pre_ai_eligible_plans/ai_existing_advisories/ai_request_candidates/ai_pending_plans/cache_hits/skipped_missing_market/applied 的 info 日志；后台 provider refresh 会分别写入 AI 与 info-risk 的 candidates/cache_hits/requested/saved/failures/skipped_missing_market 汇总（AI 侧额外含 skipped_missing_book）和逐个 requesting/saved 进度。Rewards config 的 AI provider wire value 使用 `openai|anthropic`，request format 使用 `openai_responses|openai_chat_completions|anthropic_messages`；后端兼容读取旧 `open_ai*` 拼写但序列化始终输出 `openai*`。OpenAI-compatible provider 的 base URL 可配置为根地址或 `/v1` 地址，connector 会统一请求 `/v1/...` 并同时携带 Bearer 与 `api-key` 认证头；MiMo provider 使用 `openai_chat_completions`，不使用未实现的 Responses endpoint；Chat Completions 请求使用 MiMo 官方兼容的 `max_completion_tokens`，AI advisory/info-risk 分别给 4096/6144 completion token 预算，降低 reasoning 模型耗尽预算导致最终 `content` 为空的概率；AI advisory/info-risk 请求温度固定为 0，prompt 要求单个合法 JSON 对象，解析层会从 provider 文本中扫描 markdown fence、解释文字、JSON 字符串或数组包装里的候选对象，并且只有通过现有必填字段与枚举校验的对象才会保存，无法提取时 warning 会携带短 preview。AI provider 单次请求默认超时为 180 秒，可通过 `POLYEDGE_REWARDS__AI_REQUEST_TIMEOUT_SECS` 覆盖；AI advisory 和 info-risk 共用进程内 `Semaphore(1)`，同一 worker/API 进程内任意时刻只允许一个 AI provider HTTP 请求在飞。AI advisory 每轮最大市场数环境变量已移除。API 内嵌 worker 启动会记录 rewards poll loop 是否启用、AI key 是否配置、模型名和 interval；每轮 full tick 会记录 markets/books/plans/pre_ai_eligible_plans/eligible/open_orders/positions 以及 AI/info-risk 配置。信息风险扫描不再按每轮最大市场数截断；AI advisory 启用时由 market provider refresh 与 AI 按 condition 同步推进，独立 info-risk poll task 会跳过 provider 请求；AI advisory 未启用时，独立 info-risk task 仍按开放订单、持仓、eligible quote plan、候选市场顺序覆盖全量候选。provider 明确返回过载（HTTP 503 / `system_cpu_overloaded` / overloaded）时，worker 会停止本轮剩余 provider 请求以避免继续压垮 provider，并保留既有缓存/过滤语义。旧 `POLYEDGE_REWARDS__INFO_RISK_MAX_MARKETS_PER_CYCLE` 保留为兼容读取但不再限制扫描范围。
 - Data API 最终成交回退也覆盖单订单已返回 404 的场景，包括认证账户 trade 扫描报错和扫描成功但没有精确 external order id 成交两种结果；此时必须额外满足：钱包交易累计量恰好等于本地订单剩余量，且完整外部持仓快照已覆盖该数量；否则先保持人工对账锁，若 404 锁超过 5 分钟仍无成交证据则本地标记为 cancelled。Rewards snapshot 的 `status.open_orders` 只统计已有 `external_order_id` 的 open-like managed orders，本地尚未提交的 planned/exit intent 不再显示为 Polymarket 开放挂单。
 - Rewards worker 通过认证 CLOB raw HTTP `GET /rewards/user/total?sponsored=true` 同步 UTC 当日账户级 maker rewards 聚合值到 `account.reward_earned_usd`，以对齐 Polymarket `/rewards` 页面顶部 Daily Rewards 的 native+sponsored 口径；当聚合端点为空、为 0 或不可用时，会回退分页读取 `GET /rewards/user` native 明细并合并 `sponsored=true` sponsored-only 明细，按 `earnings * asset_rate` 求和；SDK 解码失败时会使用同一 L2 签名的 raw HTTP fallback，宽容解析带 trailing input 的 JSON 响应。前端只读取数据库/API snapshot，不直连 Polymarket。
 - Rewards live 会在提交旧 intent 前先执行当前盘口/资格撤单检查；任一提交结果未知、待最终对账或外部订单 404 会暂停全部新增买单，但继续同步、撤单和卖出退出；外部订单 404 锁超过 5 分钟且仍无成交证据时会自动本地关闭。提交结果未知时，开放订单严格匹配失败也会继续保持人工对账锁，不会自动取消。CLOB `post_order` 只要返回订单 ID 就保留为 accepted 供后续成交/状态对账，包含 `unmatched` / `canceled` / 未知状态；HTTP 4xx 明确拒单会标记当前 intent 为 error，只有网络中断、5xx 或成功响应缺少订单 ID 才进入提交结果未知锁。managed order 的后续 upsert 会同步更新实际提交价格和数量，post-only exit 被取消后的重试仍保持 post-only。订单 scoring 观测只推进 `last_scored_at`，不修改业务状态 `updated_at`；reconciliation 锁订单跳过 scoring 查询，避免周期性观测掩盖真实业务状态年龄。
@@ -305,6 +305,7 @@ cp deploy/.env.front.example deploy/.env.front
 - `POLYEDGE_SKIP_SERVICES=orderbook` 排除特定服务，适合同一服务器只部署部分服务的场景。
 
 部署脚本默认使用 `/tmp/polyedge-deploy.lock` 防止 cron/CI 重叠执行，默认 `COMPOSE_PARALLEL_LIMIT=1` 串行构建镜像。Auto 模式 per-service 独立检测：api、orderbook、front 各自独立镜像；`worker` 只是 api 目标兼容别名，因为 worker runtime 内嵌在 `polyedge-api` 中。容器未运行但 hash 未变时直接启动已有镜像。前端 `yarn build` 前会读取 `deploy/.env.front` 并把 `NEXT_PUBLIC_*` 写入静态 bundle，build 前会清理旧 `.next/` 和 `out/`，build 后会给 HTML 中的 `/_next/static/*.js/css` 引用追加 front hash query；前端 Nginx 对 HTML 与 `/_next/static/` 使用 `Cache-Control: no-cache, must-revalidate`，避免静态导出 chunk 文件名复用导致浏览器长期运行旧工作台代码。Compose 构建上下文已收窄：后端只上传 `bin/`，前端只上传 `packages/front/`，避免扫描本地 `packages/target`、`node_modules`、`.next` 等大目录。跨服务器部署时每台服务器只需本地存在的二进制，脚本只检查目标服务所需的文件。
+旧的 `packages/backend/Dockerfile` 仅作为仓库根 context 兼容模板保留，当前只复制默认构建脚本产出的 `bin/polyedge-api` 与 `bin/polyedge-orderbook`；Compose 部署不使用它，仍使用 `deploy/api.Dockerfile` 和 `deploy/orderbook.Dockerfile`。
 
 ## 关键入口
 

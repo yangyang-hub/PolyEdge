@@ -6,16 +6,16 @@
 
 | 文档 | 模块 | 职责 |
 |---|---|---|
-| [domain.md](backend/domain.md) | `crates/domain` | 领域层：值对象、枚举、错误类型 |
-| [application.md](backend/application.md) | `crates/application` | 应用层：业务服务、Store trait、命令类型 |
-| [connectors.md](backend/connectors.md) | `crates/connectors` | 连接器层：Polymarket CLOB/Gamma/DataAPI、RSS、Paper Trading |
-| [infrastructure.md](backend/infrastructure.md) | `crates/infrastructure` | 基础设施层：持久化、认证、配置、运行时 |
-| [contracts.md](backend/contracts.md) | `crates/contracts` | HTTP API DTO 定义 |
-| [common.md](backend/common.md) | `crates/common` | 后端二进制共享进程外壳 helper |
+| [domain.md](backend/domain.md) | `packages/backend/crates/domain` | 领域层：值对象、枚举、错误类型 |
+| [application.md](backend/application.md) | `packages/backend/crates/application` | 应用层：业务服务、Store trait、命令类型 |
+| [connectors.md](backend/connectors.md) | `packages/backend/crates/connectors` | 连接器层：Polymarket CLOB/Gamma/DataAPI、RSS、Paper Trading |
+| [infrastructure.md](backend/infrastructure.md) | `packages/backend/crates/infrastructure` | 基础设施层：持久化、认证、配置、运行时 |
+| [contracts.md](backend/contracts.md) | `packages/backend/crates/contracts` | HTTP API DTO 定义 |
+| [common.md](backend/common.md) | `packages/backend/crates/common` | 后端二进制共享进程外壳 helper |
 | [api-app.md](backend/api-app.md) | `packages/api` | Axum HTTP API 服务 |
-| [worker-app.md](backend/worker-app.md) | `apps/worker` | Tokio 后台任务服务 |
+| [worker-app.md](backend/worker-app.md) | `packages/backend/apps/worker` | Tokio 后台任务服务 |
 | [orderbook-app.md](backend/orderbook-app.md) | `packages/orderbook` | 独立市场同步、盘口流和盘口 HTTP 服务 |
-| [replay-app.md](backend/replay-app.md) | `apps/replay` | 历史回放工具 |
+| [replay-app.md](backend/replay-app.md) | `packages/backend/apps/replay` | 历史回放工具 |
 
 ## 前端（Next.js + React）
 

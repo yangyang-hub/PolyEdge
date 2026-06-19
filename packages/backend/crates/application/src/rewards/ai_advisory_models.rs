@@ -98,6 +98,26 @@ impl RewardAiAdvisoryDecision {
     }
 }
 
+/// Whether every token of a rewards market has a populated orderbook (at least
+/// one bid and one ask). The AI advisory provider refresh uses this to defer
+/// requests for markets whose books the orderbook service has not yet
+/// subscribed/published, so it never caches a meaningless "no orderbook"
+/// watch/avoid that would block the market for the full advisory TTL even after
+/// the book arrives in a later tick.
+pub fn reward_market_books_available(
+    market: &RewardMarket,
+    books: &HashMap<String, RewardOrderBook>,
+) -> bool {
+    if market.tokens.is_empty() {
+        return false;
+    }
+    market.tokens.iter().all(|token| {
+        books
+            .get(&token.token_id)
+            .is_some_and(|book| !book.bids.is_empty() && !book.asks.is_empty())
+    })
+}
+
 pub fn build_reward_ai_advisory_request(
     market: &RewardMarket,
     plan: &RewardQuotePlan,
@@ -212,7 +232,11 @@ fn reward_ai_advisory_cache_key_payload(
     });
 
     json!({
-        "schema_version": 2,
+        // schema_version 3: provider refresh now defers requests until the
+        // orderbook service has published real books, so advisories cached
+        // before that change (null bids/asks "no orderbook" watch/avoid) are
+        // invalidated and re-evaluated against live books.
+        "schema_version": 3,
         "cache_domain": "reward_ai_advisory",
         "market": {
             "condition_id": market.condition_id,

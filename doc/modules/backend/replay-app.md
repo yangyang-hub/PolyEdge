@@ -1,6 +1,6 @@
 # Replay App（回放服务）
 
-最后更新：2026-06-14
+最后更新：2026-06-19
 
 ## 概述
 
@@ -16,7 +16,7 @@
 
 | 文件 | 职责 |
 |---|---|
-| `apps/replay/src/main.rs` | 入口和回放逻辑 |
+| `packages/backend/apps/replay/src/main.rs` | 入口和回放逻辑 |
 
 ## 当前状态
 

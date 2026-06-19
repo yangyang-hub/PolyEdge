@@ -30,10 +30,11 @@
 | `deploy/.env.front.example` | Frontend 服务环境变量模板：前端端口和 build-time public API URL |
 | `scripts/deploy.sh` | 部署脚本（auto + manual 模式） |
 | `scripts/build-backend-bin.sh` | 后端二进制构建脚本；从 `packages/Cargo.toml` workspace 构建并复制 `packages/target/...` 下的二进制到 `bin/` |
+| `scripts/smoke-arbitrage-radar.sh` | 套利雷达冒烟脚本；检查 API REST 端点，提供 front URL 时只检查 `/healthz` 和 `/radar` 页面 |
 | `packages/Cargo.toml` | Rust workspace 根；包含 `packages/api`、`packages/orderbook` 和 `packages/backend/...` members |
 | `packages/api/` | `polyedge-api` 服务 crate |
 | `packages/orderbook/` | `polyedge-orderbook` 服务 crate |
-| `packages/backend/Dockerfile` | 后端镜像兼容模板（旧的仓库根 context 形式；Compose 部署不再使用） |
+| `packages/backend/Dockerfile` | 后端镜像兼容模板（旧的仓库根 context 形式；Compose 部署不再使用；只复制默认构建产物 `polyedge-api` / `polyedge-orderbook`） |
 | `packages/front/Dockerfile` | 前端静态镜像（本机/脚本先 `yarn build` 到 `out/`，镜像只 COPY 到 nginx:1.27-alpine；context 为 `packages/front/`） |
 | `packages/front/.dockerignore` | 前端构建 context 排除规则 |
 | `.dockerignore` | 仓库根构建 context 排除规则（兼容旧构建入口） |
@@ -187,8 +188,10 @@ POLYEDGE_BACKEND_BINARY=polyedge-orderbook ./scripts/build-backend-bin.sh
 - 默认生产排查环境：Frontend Rewards 工作台 `http://192.168.31.5:33002/rewards`，API `http://100.87.45.72:38001`，Orderbook `http://100.87.45.72:38002`
 - `scripts/build-backend-bin.sh` 的单服务模式会让 `POLYEDGE_BACKEND_BINARY` 同时作为默认 Cargo package，确保 worker/orderbook 定向构建不会误编译 API 后复制旧目标文件。
 - Compose 部署使用窄构建上下文：后端只上传 `bin/`，前端只上传 `packages/front/`，避免扫描 Rust `packages/target/`、前端 `node_modules/`、`.next/` 等大目录
+- 兼容用 `packages/backend/Dockerfile` 不再要求 `bin/polyedge-worker`，只复制默认构建脚本产出的 `polyedge-api` 和 `polyedge-orderbook`；Compose 仍使用 `deploy/api.Dockerfile` 与 `deploy/orderbook.Dockerfile`
 - `polyedge-front` 不再依赖 API 健康后才启动；前端静态 Nginx 可独立运行，浏览器按 `NEXT_PUBLIC_POLYEDGE_API_BASE_URL` 访问 API
 - `scripts/deploy.sh` 已防止重叠执行；前端变更 hash 包含 `packages/front/` 和 `deploy/.env.front`，会 prune `node_modules`、`.next`、`out` 等大目录，实际 build 前也会清理 `.next/` 和 `out/`，并用同一 front hash 版本化 HTML 中的静态资源引用；服务按目标独立部署，容器 down 且 hash 未变化时直接启动已有镜像，不会因其他服务健康失败而重复 rebuild
+- `scripts/smoke-arbitrage-radar.sh` 与当前 REST-only 前端一致：后端检查 `/api/v1/arbitrage/*` REST 端点，前端只检查静态 `/healthz` 和 `/radar` 页面，不再探测已移除的 SSE stream
 - 当前 `.env.api` 模板默认 `POLYEDGE_RUNTIME__ENVIRONMENT=production` 且 `POLYEDGE_AUTH__DISABLED=true`，API/front 内网交互不做权限校验；API CORS 为 permissive
 - Orderbook 服务 HTTP register/batch/ingest 入口按 `max_tokens` 和 `max_levels_per_side` 控制请求规模与缓存深度，写入时先排序再裁剪最优档位，registry source 固定上限为 32 个并在写锁内原子校验；register/ingest/delete 写接口还要求仅配置在 `.env.orderbook` / `.env.api` 的共享写 token，register 使用原子 source 替换。`/orderbook/stream` 是内部 WS 推送接口，worker rewards loop 用它更新本地盘口 cache，缺失或重连时仍通过 HTTP batch bootstrap
 - 生产前需要：关闭 `POLYEDGE_AUTH__DISABLED`、接入真实会话体系、签名 JWT、key rotation

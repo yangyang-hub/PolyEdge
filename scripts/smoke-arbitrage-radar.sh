@@ -69,32 +69,10 @@ check_json_endpoint "/api/v1/arbitrage/analysis?limit=1" "arbitrage analysis"
 
 if [[ -n "${FRONT_BASE_URL}" ]]; then
   echo "Checking PolyEdge front at ${FRONT_BASE_URL}"
+  curl -fsS "${FRONT_BASE_URL}/healthz" >/dev/null
+  echo "PASS front healthz"
   curl -fsS -I "${FRONT_BASE_URL}/radar" >/dev/null
   echo "PASS front radar"
-
-  sse_output="$(mktemp)"
-  sse_error="$(mktemp)"
-  set +e
-  curl --max-time 3 -fsS -N "${FRONT_BASE_URL}/api/stream/arbitrage" >"${sse_output}" 2>"${sse_error}"
-  sse_status=$?
-  set -e
-  if [[ "${sse_status}" != "0" && "${sse_status}" != "28" ]]; then
-    echo "FAIL front arbitrage SSE: curl exit ${sse_status}" >&2
-    cat "${sse_error}" >&2
-    cat "${sse_output}" >&2
-    rm -f "${sse_output}" "${sse_error}"
-    exit 1
-  fi
-
-  if ! grep -Eq "event: arbitrage\\.|polyedge arbitrage stream heartbeat|polyedge stream ready|keep-alive" "${sse_output}"; then
-    echo "FAIL front arbitrage SSE: no event or heartbeat observed" >&2
-    cat "${sse_output}" >&2
-    rm -f "${sse_output}" "${sse_error}"
-    exit 1
-  fi
-
-  rm -f "${sse_output}" "${sse_error}"
-  echo "PASS front arbitrage SSE"
 fi
 
 echo "Arbitrage radar smoke completed"
