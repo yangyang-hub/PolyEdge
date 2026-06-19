@@ -7,9 +7,6 @@ async fn register_live_eligible_orderbook_tokens(
 ) {
     let token_ids =
         live_eligible_orderbook_tokens(plans, state.settings.orderbook_stream.max_tokens);
-    if token_ids.is_empty() {
-        return;
-    }
 
     match state
         .orderbook_registry

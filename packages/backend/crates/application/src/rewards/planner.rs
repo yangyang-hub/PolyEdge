@@ -245,11 +245,13 @@ fn build_ready_quote_plan(
         } else {
             "score is below threshold".to_string()
         },
+        strategy_bucket: RewardStrategyBucket::None,
         quote_mode,
         recommended_quote_mode: metrics
             .as_ref()
             .map(|metrics| metrics.recommended_quote_mode),
         book_metrics: metrics,
+        low_competition_metrics: None,
         ai_advisory: None,
         info_risk: None,
         midpoint: Some(midpoint),
@@ -331,9 +333,11 @@ fn empty_plan(
         score: Decimal::ZERO,
         eligible: false,
         reason: reason.into(),
+        strategy_bucket: RewardStrategyBucket::None,
         quote_mode: RewardPlanQuoteMode::None,
         recommended_quote_mode: None,
         book_metrics: None,
+        low_competition_metrics: None,
         ai_advisory: None,
         info_risk: None,
         midpoint,

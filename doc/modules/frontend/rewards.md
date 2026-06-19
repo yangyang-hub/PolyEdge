@@ -46,6 +46,7 @@
 - **AI 建议配置** → 保存 provider、request format 和 TTL；worker 启用且环境变量配置 provider key 后，会在 full tick 中低频调用模型并缓存 advisory
 - **信息风险配置** → 保存启用开关、observe/enforce、过滤等级和 TTL；异步 worker 启用且环境变量配置 provider key 后，会扫描候选市场最新信息风险并缓存，页面展示风险等级/类型/摘要；enforce 模式下缺少未过期风险缓存的计划会被后端置为不可挂
 - **市场质量** → 可配置最低流动性、最低 24h 成交量、最短剩余结算时间、最大 Gamma spread 和最大目录同步年龄；后端还固定拒绝高歧义、非唯一 YES/NO、FDV/launch/token/official-result 等高跳变事件风险市场
+- **低竞争市场 sleeve** → 当前页面尚未提供配置或指标展示；后续如实现，应按 [Rewards 低竞争市场 Sleeve 实现方案](../../rewards-low-competition-sleeve-plan.md) 先展示 observe 指标，再暴露小额度 enforce 控件，且不能暗示低流动性本身是安全收益来源
 - 事件面板支持按 `EventCategory` 过滤
 - 页面默认展示活动视图：报价计划全宽优先，订单/库存下方分栏，事件/成交流使用独立卡片；策略配置和风控配置通过 tabs 切换，减少实盘盯盘时的配置噪音。
 - 报价计划、订单原因、信息风险摘要、AI reason、事件消息和长账户/钱包字段允许换行，表格在窄屏使用横向滚动，避免关键长文本被一行省略和短卡片被高表格行强制拉伸。
@@ -66,6 +67,7 @@
 - 操作中心集中 Run / Save / Cancel / Reset，文案提醒当前命令可能提交或取消 Polymarket 实盘订单。
 - 配置编辑按执行、市场筛选、报价构造、盘口选择、AI 建议、库存与控制分组，包含数值参数、布尔开关、受限下拉框和成交后策略。
 - 市场筛选面板公开质量硬门槛；通过门槛的市场由后端继续按奖励、流动性、成交量、剩余时长和奖励 spread 综合排序。
+- 低竞争市场 sleeve 尚未落地；当前前端 DTO、配置面板、Server Action 校验和 quote plan 表格都不包含 `low_competition_mode`、竞争 notional、预估 reward share、退出滑点或盘口稳定性窗口指标。
 - 报价构造使用“挂单档位”下拉框选择买一/买二/买三，不再提供中间价“报价偏移”；默认买一。
 - 盘口选择公开 quote/selection mode、dominant 单边概率区间、退出深度、top1/top3 买盘集中度、HHI 和偏好分类评分加成；默认 `double + observe` 不改变既有双边挂单。
 - AI 建议面板保存 OpenAI/Anthropic provider、请求格式、advisory TTL、信息风险启用、observe/enforce、过滤等级和信息风险 TTL；API key、base URL、模型名、请求超时和 web search 开关只来自 worker 环境变量，不会出现在前端配置或 snapshot。AI advisory 与信息风险扫描由 worker 全量覆盖当前候选，优先开放订单、持仓和可挂 quote plan。报价计划表展示 AI suitability、推荐 quote mode、confidence 和首条 reason，也展示信息风险等级、类型、confidence 和摘要；信息风险 enforce 且缓存缺失时，后端会把对应计划显示为不可挂。

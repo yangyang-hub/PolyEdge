@@ -308,6 +308,7 @@ async fn run_reward_bot_live_tick(
     spawn_reward_market_provider_refresh(state, &cycle, &books, trace_id);
     apply_cached_reward_ai_advisories_to_cycle(state, &mut cycle, &books, trace_id).await?;
     apply_cached_reward_info_risks_to_cycle(state, &mut cycle, trace_id).await?;
+    state.reward_bot_service.save_quote_plans(&cycle.plans).await?;
     let kill_switch = state.risk_service.read_state().await?.kill_switch;
     if kill_switch {
         cycle.should_execute = false;

@@ -68,6 +68,46 @@ impl FromStr for RewardSelectionMode {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+pub enum RewardLowCompetitionMode {
+    Off,
+    Observe,
+    Enforce,
+}
+
+impl RewardLowCompetitionMode {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::Observe => "observe",
+            Self::Enforce => "enforce",
+        }
+    }
+
+    #[must_use]
+    pub const fn is_enabled(self) -> bool {
+        !matches!(self, Self::Off)
+    }
+}
+
+impl FromStr for RewardLowCompetitionMode {
+    type Err = AppError;
+
+    fn from_str(value: &str) -> Result<Self> {
+        match value {
+            "off" => Ok(Self::Off),
+            "observe" => Ok(Self::Observe),
+            "enforce" => Ok(Self::Enforce),
+            other => Err(AppError::invalid_input(
+                "REWARD_LOW_COMPETITION_MODE_INVALID",
+                format!("unknown reward low competition mode: {other}"),
+            )),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum RewardPlanQuoteMode {
     Double,
     SingleYes,
@@ -99,6 +139,41 @@ impl FromStr for RewardPlanQuoteMode {
             other => Err(AppError::invalid_input(
                 "REWARD_PLAN_QUOTE_MODE_INVALID",
                 format!("unknown reward plan quote mode: {other}"),
+            )),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RewardStrategyBucket {
+    Standard,
+    LowCompetition,
+    None,
+}
+
+impl RewardStrategyBucket {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Standard => "standard",
+            Self::LowCompetition => "low_competition",
+            Self::None => "none",
+        }
+    }
+}
+
+impl FromStr for RewardStrategyBucket {
+    type Err = AppError;
+
+    fn from_str(value: &str) -> Result<Self> {
+        match value {
+            "standard" => Ok(Self::Standard),
+            "low_competition" => Ok(Self::LowCompetition),
+            "none" => Ok(Self::None),
+            other => Err(AppError::invalid_input(
+                "REWARD_STRATEGY_BUCKET_INVALID",
+                format!("unknown reward strategy bucket: {other}"),
             )),
         }
     }

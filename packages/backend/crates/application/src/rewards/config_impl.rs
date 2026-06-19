@@ -31,6 +31,20 @@ impl Default for RewardBotConfig {
                 "geopolitics".to_string(),
             ],
             preferred_category_score_bonus: decimal("0"),
+            low_competition_mode: RewardLowCompetitionMode::Off,
+            low_competition_max_markets: 0,
+            low_competition_max_open_orders: 0,
+            low_competition_per_market_usd: decimal("5"),
+            low_competition_max_position_usd: decimal("10"),
+            low_competition_min_market_liquidity_usd: decimal("250"),
+            low_competition_min_market_volume_24h_usd: decimal("100"),
+            low_competition_max_competition_usd: decimal("250"),
+            low_competition_min_reward_per_100_usd_day: decimal("0.25"),
+            low_competition_min_exit_depth_usd: decimal("50"),
+            low_competition_min_exit_depth_multiple: decimal("3"),
+            low_competition_max_midpoint_range_cents: decimal("2"),
+            low_competition_observation_window_sec: 1800,
+            low_competition_min_book_samples: 20,
             ai_advisory_enabled: false,
             ai_provider: RewardAiProvider::OpenAi,
             ai_request_format: RewardAiRequestFormat::OpenAiResponses,
@@ -132,6 +146,59 @@ impl RewardBotConfig {
             Decimal::ZERO,
             decimal("20"),
         );
+        self.low_competition_max_markets =
+            clamp_u16(self.low_competition_max_markets, 0, u16::MAX);
+        self.low_competition_max_open_orders =
+            clamp_u16(self.low_competition_max_open_orders, 0, u16::MAX);
+        self.low_competition_per_market_usd = clamp_decimal(
+            self.low_competition_per_market_usd,
+            Decimal::ZERO,
+            decimal("1000000"),
+        );
+        self.low_competition_max_position_usd = clamp_decimal(
+            self.low_competition_max_position_usd,
+            Decimal::ZERO,
+            decimal("1000000"),
+        );
+        self.low_competition_min_market_liquidity_usd = clamp_decimal(
+            self.low_competition_min_market_liquidity_usd,
+            Decimal::ONE,
+            decimal("1000000000"),
+        );
+        self.low_competition_min_market_volume_24h_usd = clamp_decimal(
+            self.low_competition_min_market_volume_24h_usd,
+            Decimal::ONE,
+            decimal("1000000000"),
+        );
+        self.low_competition_max_competition_usd = clamp_decimal(
+            self.low_competition_max_competition_usd,
+            Decimal::ZERO,
+            decimal("1000000000"),
+        );
+        self.low_competition_min_reward_per_100_usd_day = clamp_decimal(
+            self.low_competition_min_reward_per_100_usd_day,
+            Decimal::ZERO,
+            decimal("100000"),
+        );
+        self.low_competition_min_exit_depth_usd = clamp_decimal(
+            self.low_competition_min_exit_depth_usd,
+            Decimal::ZERO,
+            decimal("1000000"),
+        );
+        self.low_competition_min_exit_depth_multiple = clamp_decimal(
+            self.low_competition_min_exit_depth_multiple,
+            Decimal::ZERO,
+            decimal("100"),
+        );
+        self.low_competition_max_midpoint_range_cents = clamp_decimal(
+            self.low_competition_max_midpoint_range_cents,
+            Decimal::ZERO,
+            decimal("100"),
+        );
+        self.low_competition_observation_window_sec =
+            self.low_competition_observation_window_sec.clamp(60, 86_400);
+        self.low_competition_min_book_samples =
+            self.low_competition_min_book_samples.clamp(1, 10_000);
         self.ai_advisory_ttl_sec = self.ai_advisory_ttl_sec.clamp(60, 86_400);
         self.info_risk_ttl_sec = self.info_risk_ttl_sec.clamp(60, 86_400);
         if matches!(self.ai_provider, RewardAiProvider::Anthropic) {
@@ -205,6 +272,22 @@ impl RewardBotConfig {
             dominant_min_probability: self.dominant_min_probability,
             dominant_max_probability: self.dominant_max_probability,
         }
+    }
+
+    /// Build the relaxed SQL-level filter for low-competition observation.
+    /// This only relaxes liquidity and 24h volume; all shared safety filters
+    /// still apply in the store query and Rust planner.
+    #[must_use]
+    pub fn low_competition_candidate_filter(&self) -> Option<RewardCandidateFilter> {
+        if !self.low_competition_mode.is_enabled() || self.low_competition_max_markets == 0 {
+            return None;
+        }
+
+        let mut filter = self.candidate_filter();
+        filter.per_market_usd = self.low_competition_per_market_usd;
+        filter.min_market_liquidity_usd = self.low_competition_min_market_liquidity_usd;
+        filter.min_market_volume_24h_usd = self.low_competition_min_market_volume_24h_usd;
+        Some(filter)
     }
 
     #[must_use]
@@ -287,6 +370,48 @@ impl RewardBotConfig {
         }
         if let Some(value) = patch.preferred_category_score_bonus {
             next.preferred_category_score_bonus = value;
+        }
+        if let Some(value) = patch.low_competition_mode {
+            next.low_competition_mode = value;
+        }
+        if let Some(value) = patch.low_competition_max_markets {
+            next.low_competition_max_markets = value;
+        }
+        if let Some(value) = patch.low_competition_max_open_orders {
+            next.low_competition_max_open_orders = value;
+        }
+        if let Some(value) = patch.low_competition_per_market_usd {
+            next.low_competition_per_market_usd = value;
+        }
+        if let Some(value) = patch.low_competition_max_position_usd {
+            next.low_competition_max_position_usd = value;
+        }
+        if let Some(value) = patch.low_competition_min_market_liquidity_usd {
+            next.low_competition_min_market_liquidity_usd = value;
+        }
+        if let Some(value) = patch.low_competition_min_market_volume_24h_usd {
+            next.low_competition_min_market_volume_24h_usd = value;
+        }
+        if let Some(value) = patch.low_competition_max_competition_usd {
+            next.low_competition_max_competition_usd = value;
+        }
+        if let Some(value) = patch.low_competition_min_reward_per_100_usd_day {
+            next.low_competition_min_reward_per_100_usd_day = value;
+        }
+        if let Some(value) = patch.low_competition_min_exit_depth_usd {
+            next.low_competition_min_exit_depth_usd = value;
+        }
+        if let Some(value) = patch.low_competition_min_exit_depth_multiple {
+            next.low_competition_min_exit_depth_multiple = value;
+        }
+        if let Some(value) = patch.low_competition_max_midpoint_range_cents {
+            next.low_competition_max_midpoint_range_cents = value;
+        }
+        if let Some(value) = patch.low_competition_observation_window_sec {
+            next.low_competition_observation_window_sec = value;
+        }
+        if let Some(value) = patch.low_competition_min_book_samples {
+            next.low_competition_min_book_samples = value;
         }
         if let Some(value) = patch.ai_advisory_enabled {
             next.ai_advisory_enabled = value;
@@ -419,6 +544,20 @@ mod reward_config_tests {
             "max_book_hhi": 1,
             "preferred_categories": ["politics", "elections", "geopolitics"],
             "preferred_category_score_bonus": 0,
+            "low_competition_mode": "observe",
+            "low_competition_max_markets": 8,
+            "low_competition_max_open_orders": 4,
+            "low_competition_per_market_usd": 5,
+            "low_competition_max_position_usd": 10,
+            "low_competition_min_market_liquidity_usd": 250,
+            "low_competition_min_market_volume_24h_usd": 100,
+            "low_competition_max_competition_usd": 250,
+            "low_competition_min_reward_per_100_usd_day": 0.25,
+            "low_competition_min_exit_depth_usd": 50,
+            "low_competition_min_exit_depth_multiple": 3,
+            "low_competition_max_midpoint_range_cents": 2,
+            "low_competition_observation_window_sec": 1800,
+            "low_competition_min_book_samples": 20,
             "ai_advisory_enabled": true,
             "ai_provider": "openai",
             "ai_request_format": "openai_chat_completions",
@@ -459,8 +598,11 @@ mod reward_config_tests {
         assert_eq!(config.quote_bid_rank, 3);
         assert_eq!(config.cancel_bid_rank, 2);
         assert_eq!(config.requote_jitter_sec, 305);
+        assert_eq!(config.low_competition_mode, RewardLowCompetitionMode::Observe);
+        assert_eq!(config.low_competition_max_markets, 8);
 
         let serialized = serde_json::to_value(config).expect("config serializes");
+        assert_eq!(serialized["low_competition_mode"], "observe");
         assert_eq!(serialized["ai_provider"], "openai");
         assert_eq!(
             serialized["ai_request_format"],

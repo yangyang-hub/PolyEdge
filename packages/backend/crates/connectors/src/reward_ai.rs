@@ -12,6 +12,8 @@ use rust_decimal::Decimal;
 use serde_json::{Value, json};
 use std::{str::FromStr, time::Duration};
 
+const REWARD_AI_CHAT_COMPLETION_MAX_TOKENS: u32 = 4096;
+
 #[derive(Debug, Clone)]
 pub struct RewardAiAdvisoryConnector {
     client: Client,
@@ -118,7 +120,7 @@ impl RewardAiAdvisoryConnector {
                 }
             },
             "temperature": 0,
-            "max_tokens": 1200
+            "max_completion_tokens": REWARD_AI_CHAT_COMPLETION_MAX_TOKENS
         }))
         .send()
         .await

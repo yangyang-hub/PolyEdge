@@ -30,3 +30,8 @@ include!("rewards/planner_selection.rs");
 include!("rewards/planner_live.rs");
 include!("rewards/engine.rs");
 include!("rewards/helpers.rs");
+
+#[cfg(test)]
+mod provider_cache_tests {
+    include!("rewards/provider_cache_tests.rs");
+}

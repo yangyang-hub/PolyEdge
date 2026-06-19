@@ -1,6 +1,6 @@
 # Orderbook App（市场同步与盘口服务）
 
-最后更新：2026-06-18
+最后更新：2026-06-19
 
 ## 概述
 
@@ -48,7 +48,7 @@
 ## 缓存与订阅约束
 
 - 每个 source 的 `register_tokens()` 是原子全量替换，不是增量追加；空集合等同删除 source。
-- registry 聚合顺序由 infrastructure 固定，优先级为 `rewards_active`、`exec_orders`、`rewards_eligible`、`rewards_candidates`、`copytrade`，最终受 `POLYEDGE_ORDERBOOK_STREAM__MAX_TOKENS` 限制；其中 worker 注册的 `rewards_candidates` 预热 token 还受 `POLYEDGE_ORDERBOOK_STREAM__REWARD_CANDIDATE_TOKEN_CAP` 限制，避免候选池填满全局订阅预算。
+- registry 聚合顺序由 infrastructure 固定，优先级为 `rewards_active`、`exec_orders`、`rewards_eligible`、`rewards_candidates`、`copytrade`，最终受 `POLYEDGE_ORDERBOOK_STREAM__MAX_TOKENS` 限制；其中 worker 注册的 `rewards_eligible` 来自 rewards full tick 完成 AI/info-risk gate 后的最终 eligible 计划，空集合会清理旧 source；`rewards_candidates` 预热 token 还受 `POLYEDGE_ORDERBOOK_STREAM__REWARD_CANDIDATE_TOKEN_CAP` 限制，避免候选池填满全局订阅预算。
 - Polymarket WS 订阅按 `POLYEDGE_ORDERBOOK_STREAM__WS_CHUNK_SIZE` 分片成多条连接，降低单连接高消息量导致 SDK broadcast lag 的风险；任意分片结束或失败时，当前 stream lifecycle 会整体重建。
 - stream refresh 只用 token 成员集合判断是否需要重建 WS 订阅，避免候选/eligible 查询排序抖动导致同一批 token 反复断线重连；poll reconciler 的共享 token 列表仍每次刷新为最新顺序。
 - 所有缓存写入都会先把 bids 按价格降序、asks 按价格升序排序，再裁剪到 `POLYEDGE_ORDERBOOK_STREAM__MAX_LEVELS_PER_SIDE`，避免上游无序数据丢失 top-of-book。

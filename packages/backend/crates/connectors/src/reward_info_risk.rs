@@ -14,6 +14,8 @@ use serde_json::{Value, json};
 use std::{str::FromStr, time::Duration};
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
+const REWARD_INFO_RISK_CHAT_COMPLETION_MAX_TOKENS: u32 = 6144;
+
 #[derive(Debug, Clone)]
 pub struct RewardInfoRiskConnector {
     client: Client,
@@ -133,7 +135,7 @@ impl RewardInfoRiskConnector {
                 }
             },
             "temperature": 0,
-            "max_tokens": 1800
+            "max_completion_tokens": REWARD_INFO_RISK_CHAT_COMPLETION_MAX_TOKENS
         }))
         .send()
         .await

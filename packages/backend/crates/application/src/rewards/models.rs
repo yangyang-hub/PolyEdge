@@ -278,6 +278,20 @@ pub struct RewardBotConfig {
     pub max_book_hhi: Decimal,
     pub preferred_categories: Vec<String>,
     pub preferred_category_score_bonus: Decimal,
+    pub low_competition_mode: RewardLowCompetitionMode,
+    pub low_competition_max_markets: u16,
+    pub low_competition_max_open_orders: u16,
+    pub low_competition_per_market_usd: Decimal,
+    pub low_competition_max_position_usd: Decimal,
+    pub low_competition_min_market_liquidity_usd: Decimal,
+    pub low_competition_min_market_volume_24h_usd: Decimal,
+    pub low_competition_max_competition_usd: Decimal,
+    pub low_competition_min_reward_per_100_usd_day: Decimal,
+    pub low_competition_min_exit_depth_usd: Decimal,
+    pub low_competition_min_exit_depth_multiple: Decimal,
+    pub low_competition_max_midpoint_range_cents: Decimal,
+    pub low_competition_observation_window_sec: u64,
+    pub low_competition_min_book_samples: u64,
     pub ai_advisory_enabled: bool,
     pub ai_provider: RewardAiProvider,
     pub ai_request_format: RewardAiRequestFormat,
@@ -389,6 +403,34 @@ pub struct RewardBotConfigPatch {
     pub preferred_categories: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub preferred_category_score_bonus: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub low_competition_mode: Option<RewardLowCompetitionMode>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub low_competition_max_markets: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub low_competition_max_open_orders: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub low_competition_per_market_usd: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub low_competition_max_position_usd: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub low_competition_min_market_liquidity_usd: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub low_competition_min_market_volume_24h_usd: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub low_competition_max_competition_usd: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub low_competition_min_reward_per_100_usd_day: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub low_competition_min_exit_depth_usd: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub low_competition_min_exit_depth_multiple: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub low_competition_max_midpoint_range_cents: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub low_competition_observation_window_sec: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub low_competition_min_book_samples: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ai_advisory_enabled: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

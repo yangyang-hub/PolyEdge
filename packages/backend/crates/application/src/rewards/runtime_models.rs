@@ -84,6 +84,24 @@ pub struct RewardMarketBookMetrics {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RewardLowCompetitionMetrics {
+    pub qualified_competition_usd: Decimal,
+    pub estimated_reward_per_100_usd_day: Decimal,
+    pub competition_density: Decimal,
+    pub exit_depth_usd: Decimal,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exit_slippage_cents: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub midpoint_range_cents: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub top_of_book_flip_count: Option<u64>,
+    pub sample_count: u64,
+    pub eligible_for_low_competition: bool,
+    #[serde(default)]
+    pub rejection_reasons: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RewardQuotePlan {
     pub condition_id: String,
     pub market_slug: String,
@@ -91,12 +109,16 @@ pub struct RewardQuotePlan {
     pub score: Decimal,
     pub eligible: bool,
     pub reason: String,
+    #[serde(default = "default_reward_strategy_bucket")]
+    pub strategy_bucket: RewardStrategyBucket,
     #[serde(default = "default_reward_plan_quote_mode")]
     pub quote_mode: RewardPlanQuoteMode,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recommended_quote_mode: Option<RewardPlanQuoteMode>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub book_metrics: Option<RewardMarketBookMetrics>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub low_competition_metrics: Option<RewardLowCompetitionMetrics>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ai_advisory: Option<RewardMarketAdvisory>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -118,6 +140,10 @@ pub struct RewardQuotePlan {
 
 const fn default_reward_plan_quote_mode() -> RewardPlanQuoteMode {
     RewardPlanQuoteMode::Double
+}
+
+const fn default_reward_strategy_bucket() -> RewardStrategyBucket {
+    RewardStrategyBucket::None
 }
 
 #[derive(Debug, Clone, PartialEq)]

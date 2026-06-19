@@ -679,12 +679,6 @@ impl RewardBotService {
                 ai_min_confidence,
             );
         }
-        // NOTE: Do NOT call upsert_markets() here.  The full reward-market catalog is
-        // synced by the orderbook service (every 5 min).  Calling upsert_markets() with
-        // only the filtered candidate subset would deactivate all other active markets
-        // and collapse markets_tracked from ~10k down to the candidate count.
-        self.store.save_quote_plans(&plans).await?;
-
         let account = self.load_account_state_cached(&config).await?;
         let open_orders = self.store.list_open_orders(&account.account_id).await?;
         let positions = self.list_account_positions_cached(&account.account_id).await?;

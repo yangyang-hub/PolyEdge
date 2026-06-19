@@ -181,8 +181,67 @@ pub fn build_reward_ai_advisory_request(
         provider,
         request_format,
         model: model.trim().to_string(),
-        input_hash: reward_ai_input_hash(&payload)?,
+        input_hash: reward_ai_input_hash(&reward_ai_advisory_cache_key_payload(
+            market, plan, config,
+        ))?,
         payload,
+    })
+}
+
+fn reward_ai_advisory_cache_key_payload(
+    market: &RewardMarket,
+    plan: &RewardQuotePlan,
+    config: &RewardBotConfig,
+) -> Value {
+    let mut tokens = market
+        .tokens
+        .iter()
+        .map(|token| {
+            json!({
+                "token_id": token.token_id,
+                "outcome": token.outcome,
+            })
+        })
+        .collect::<Vec<_>>();
+    tokens.sort_by_key(|token| {
+        token
+            .get("token_id")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string()
+    });
+
+    json!({
+        "schema_version": 2,
+        "cache_domain": "reward_ai_advisory",
+        "market": {
+            "condition_id": market.condition_id,
+            "question": market.question,
+            "market_slug": market.market_slug,
+            "category": market.category,
+            "rewards_max_spread": market.rewards_max_spread,
+            "rewards_min_size": market.rewards_min_size,
+            "end_at": market.end_at,
+            "tokens": tokens,
+        },
+        "deterministic_plan": {
+            "quote_mode": plan.quote_mode,
+            "recommended_quote_mode": plan.recommended_quote_mode,
+            "strategy_bucket": plan.strategy_bucket,
+        },
+        "strategy_config": {
+            "quote_bid_rank": config.quote_bid_rank,
+            "quote_mode": config.quote_mode,
+            "selection_mode": config.selection_mode,
+            "post_fill_strategy": config.post_fill_strategy,
+            "max_spread_cents": config.max_spread_cents,
+            "min_market_score": config.min_market_score,
+            "min_midpoint": config.min_midpoint,
+            "max_midpoint": config.max_midpoint,
+            "dominant_single_side_enabled": config.dominant_single_side_enabled,
+            "dominant_min_probability": config.dominant_min_probability,
+            "dominant_max_probability": config.dominant_max_probability,
+        },
     })
 }
 

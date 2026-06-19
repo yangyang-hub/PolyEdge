@@ -307,9 +307,48 @@ pub fn build_reward_info_risk_assessment_request(
         request_format,
         model: model.trim().to_string(),
         query_hash: reward_info_hash(json!({ "query": &query }))?,
-        input_hash: reward_info_hash(payload.clone())?,
+        input_hash: reward_info_hash(reward_info_risk_cache_key_payload(
+            market, plan, config, &query,
+        ))?,
         query,
         payload,
+    })
+}
+
+fn reward_info_risk_cache_key_payload(
+    market: &RewardMarket,
+    plan: Option<&RewardQuotePlan>,
+    config: &RewardBotConfig,
+    query: &str,
+) -> Value {
+    json!({
+        "schema_version": 2,
+        "cache_domain": "reward_info_risk",
+        "search_query": query,
+        "market": {
+            "condition_id": market.condition_id,
+            "question": market.question,
+            "market_slug": market.market_slug,
+            "event_slug": market.event_slug,
+            "category": market.category,
+            "end_at": market.end_at,
+            "ambiguity_level": market.ambiguity_level,
+        },
+        "current_quote_plan": plan.map(|plan| json!({
+            "quote_mode": plan.quote_mode,
+            "recommended_quote_mode": plan.recommended_quote_mode,
+            "strategy_bucket": plan.strategy_bucket,
+        })),
+        "strategy_config": {
+            "info_risk_mode": config.info_risk_mode,
+            "info_risk_avoid_level": config.info_risk_avoid_level,
+            "selection_mode": config.selection_mode,
+            "quote_mode": config.quote_mode,
+            "dominant_min_probability": config.dominant_min_probability,
+            "dominant_max_probability": config.dominant_max_probability,
+            "min_hours_to_end": config.min_hours_to_end,
+            "preferred_categories": config.preferred_categories,
+        },
     })
 }
 

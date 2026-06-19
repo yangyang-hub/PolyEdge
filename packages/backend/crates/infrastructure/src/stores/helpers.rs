@@ -61,6 +61,49 @@ fn apply_reward_config_value(config: &mut RewardBotConfig, key: &str, value: &st
         "preferred_category_score_bonus" => {
             config.preferred_category_score_bonus = parse_decimal_config(key, value)?;
         }
+        "low_competition_mode" => {
+            config.low_competition_mode = RewardLowCompetitionMode::from_str(value)?;
+        }
+        "low_competition_max_markets" => {
+            config.low_competition_max_markets = parse_u16_config(key, value)?;
+        }
+        "low_competition_max_open_orders" => {
+            config.low_competition_max_open_orders = parse_u16_config(key, value)?;
+        }
+        "low_competition_per_market_usd" => {
+            config.low_competition_per_market_usd = parse_decimal_config(key, value)?;
+        }
+        "low_competition_max_position_usd" => {
+            config.low_competition_max_position_usd = parse_decimal_config(key, value)?;
+        }
+        "low_competition_min_market_liquidity_usd" => {
+            config.low_competition_min_market_liquidity_usd = parse_decimal_config(key, value)?;
+        }
+        "low_competition_min_market_volume_24h_usd" => {
+            config.low_competition_min_market_volume_24h_usd = parse_decimal_config(key, value)?;
+        }
+        "low_competition_max_competition_usd" => {
+            config.low_competition_max_competition_usd = parse_decimal_config(key, value)?;
+        }
+        "low_competition_min_reward_per_100_usd_day" => {
+            config.low_competition_min_reward_per_100_usd_day =
+                parse_decimal_config(key, value)?;
+        }
+        "low_competition_min_exit_depth_usd" => {
+            config.low_competition_min_exit_depth_usd = parse_decimal_config(key, value)?;
+        }
+        "low_competition_min_exit_depth_multiple" => {
+            config.low_competition_min_exit_depth_multiple = parse_decimal_config(key, value)?;
+        }
+        "low_competition_max_midpoint_range_cents" => {
+            config.low_competition_max_midpoint_range_cents = parse_decimal_config(key, value)?;
+        }
+        "low_competition_observation_window_sec" => {
+            config.low_competition_observation_window_sec = parse_u64_config(key, value)?;
+        }
+        "low_competition_min_book_samples" => {
+            config.low_competition_min_book_samples = parse_u64_config(key, value)?;
+        }
         "ai_advisory_enabled" => config.ai_advisory_enabled = parse_bool_config(key, value)?,
         "ai_provider" => config.ai_provider = RewardAiProvider::from_str(value)?,
         "ai_request_format" => {
@@ -176,6 +219,70 @@ fn reward_config_entries(config: &RewardBotConfig) -> Vec<(&'static str, String)
         (
             "preferred_category_score_bonus",
             config.preferred_category_score_bonus.to_string(),
+        ),
+        (
+            "low_competition_mode",
+            config.low_competition_mode.as_str().to_string(),
+        ),
+        (
+            "low_competition_max_markets",
+            config.low_competition_max_markets.to_string(),
+        ),
+        (
+            "low_competition_max_open_orders",
+            config.low_competition_max_open_orders.to_string(),
+        ),
+        (
+            "low_competition_per_market_usd",
+            config.low_competition_per_market_usd.to_string(),
+        ),
+        (
+            "low_competition_max_position_usd",
+            config.low_competition_max_position_usd.to_string(),
+        ),
+        (
+            "low_competition_min_market_liquidity_usd",
+            config
+                .low_competition_min_market_liquidity_usd
+                .to_string(),
+        ),
+        (
+            "low_competition_min_market_volume_24h_usd",
+            config.low_competition_min_market_volume_24h_usd.to_string(),
+        ),
+        (
+            "low_competition_max_competition_usd",
+            config.low_competition_max_competition_usd.to_string(),
+        ),
+        (
+            "low_competition_min_reward_per_100_usd_day",
+            config
+                .low_competition_min_reward_per_100_usd_day
+                .to_string(),
+        ),
+        (
+            "low_competition_min_exit_depth_usd",
+            config.low_competition_min_exit_depth_usd.to_string(),
+        ),
+        (
+            "low_competition_min_exit_depth_multiple",
+            config
+                .low_competition_min_exit_depth_multiple
+                .to_string(),
+        ),
+        (
+            "low_competition_max_midpoint_range_cents",
+            config
+                .low_competition_max_midpoint_range_cents
+                .to_string(),
+        ),
+        (
+            "low_competition_observation_window_sec",
+            config.low_competition_observation_window_sec.to_string(),
+        ),
+        (
+            "low_competition_min_book_samples",
+            config.low_competition_min_book_samples.to_string(),
         ),
         (
             "ai_advisory_enabled",

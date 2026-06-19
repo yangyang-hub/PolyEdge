@@ -1,6 +1,6 @@
 # PolyEdge 文档索引
 
-最后更新：2026-06-14
+最后更新：2026-06-18
 
 ## 当前事实来源
 
@@ -40,3 +40,9 @@
 | [polyedge-domain-enums-and-decimals.md](polyedge-domain-enums-and-decimals.md) | 枚举和定点数设计背景 |
 | [polyedge-llm-governance.md](polyedge-llm-governance.md) | LLM 治理设计背景 |
 | [polyedge-polymarket-connector-design.md](polyedge-polymarket-connector-design.md) | Polymarket 连接器设计背景 |
+
+## 活跃方案文档
+
+| 文档 | 状态 |
+|---|---|
+| [rewards-low-competition-sleeve-plan.md](rewards-low-competition-sleeve-plan.md) | Rewards 低竞争市场 sleeve 设计方案，尚未实现 |

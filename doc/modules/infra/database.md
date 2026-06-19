@@ -1,6 +1,6 @@
 # 数据库（Migrations + Schema）
 
-最后更新：2026-06-18
+最后更新：2026-06-19
 
 ## 概述
 
@@ -113,8 +113,9 @@
 - **`reward_positions`**：按 account_id + token_id 保存外部完整持仓；可包含当前 rewards catalog 之外的市场，不再依赖 `reward_markets` 外键
 - **`reward_account_state`**：capital_usd、available_usd、reserved_usd（旧硬占用兼容字段，下一次 rewards tick 自动释放）、realized_pnl、reward_earned_usd、fees_paid、tick_index
 - **`reward_control_commands`**：API 入队给 worker 的 rewards 控制命令（run_once/cancel_all/reset）及 pending/running/completed/failed 状态；running 超过 5 分钟可重新领取
-- **`reward_market_advisories`**：AI advisory 缓存表，按 condition/provider/request_format/model/input_hash 保存 suitability、推荐 quote mode、exit policy、confidence、reasons/metrics JSON 和 expires_at；worker 只读取未过期记录，缓存未命中时调用 provider 后写入
-- **`reward_market_info_risks`**：信息风险缓存表，按 condition/provider/request_format/model/input_hash 保存 query_hash、risk_level、risk_type、directional_risk、resolution_imminent、expected_event_at、confidence、summary、sources/metrics JSON 和 expires_at；异步 worker 写入，live rewards tick 只读取未过期缓存
+- **`reward_market_advisories`**：AI advisory 缓存表，按 condition/provider/request_format/model/input_hash 保存 suitability、推荐 quote mode、exit policy、confidence、reasons/metrics JSON 和 expires_at；`input_hash` 使用稳定 cache-key payload（市场身份/问题、奖励参数、计划 quote mode 和相关策略配置），不包含每轮变化的账户、开放订单、持仓或盘口实时字段；worker 只读取未过期记录，缓存未命中时调用 provider 后写入
+- **`reward_market_info_risks`**：信息风险缓存表，按 condition/provider/request_format/model/input_hash 保存 query_hash、risk_level、risk_type、directional_risk、resolution_imminent、expected_event_at、confidence、summary、sources/metrics JSON 和 expires_at；`input_hash` 使用稳定 cache-key payload（搜索 query、市场身份/问题/事件、计划 quote mode 和风险策略配置），不包含账户、开放订单、持仓、quote plan reason/score 或 market_synced_at 等动态字段；异步 worker 写入，live rewards tick 只读取未过期缓存
+- **低竞争 rewards sleeve**：当前尚未实现，也没有独立表或迁移。设计方案首版可复用 `reward_bot_config` key-value 配置和 `reward_quote_plans` JSON 保存 observe 指标；只有需要跨周期日报、回测或审计级样本保留时，才新增类似 `reward_low_competition_observations` 的迁移表。
 
 ### 9. Copytrade 钱包跟踪与分析
 
@@ -135,6 +136,7 @@
 - `packages/backend/init.sql` 已合并 `0001`–`0041`，作为完整空库初始化脚本
 - 所有表使用 PostgreSQL 特性（JSONB、NUMERIC 约束、BIGSERIAL、部分索引等）
 - 迁移使用 `sqlx` 管理
+- Rewards 低竞争市场 sleeve 目前仅有 [设计方案](../../rewards-low-competition-sleeve-plan.md)，没有新增 schema；如果后续新增持久化观测表，必须同步新增迁移、更新 `init.sql` 和本文档迁移列表。
 
 ## 修改检查清单
 

@@ -50,7 +50,6 @@ async fn apply_cached_reward_ai_advisories_to_cycle(
             &cycle.config,
             min_confidence,
         );
-        state.reward_bot_service.save_quote_plans(&cycle.plans).await?;
         return Ok(());
     }
 
@@ -129,7 +128,6 @@ async fn apply_cached_reward_ai_advisories_to_cycle(
         &cycle.config,
         min_confidence,
     );
-    state.reward_bot_service.save_quote_plans(&cycle.plans).await?;
     Ok(())
 }
 

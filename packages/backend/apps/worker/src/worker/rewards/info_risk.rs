@@ -210,7 +210,9 @@ async fn apply_cached_reward_info_risks(state: &AppState, trace_id: &str) -> Res
         .current_live_cycle_state()
         .await?
         .plans;
-    apply_cached_reward_info_risks_to_plans(state, &config, &mut plans, trace_id).await
+    let applied = apply_cached_reward_info_risks_to_plans(state, &config, &mut plans, trace_id).await?;
+    state.reward_bot_service.save_quote_plans(&plans).await?;
+    Ok(applied)
 }
 
 async fn apply_cached_reward_info_risks_to_cycle(
@@ -244,13 +246,11 @@ async fn apply_cached_reward_info_risks_to_plans(
         .into_iter()
         .map(|risk| (risk.condition_id.clone(), risk))
         .collect::<HashMap<String, RewardMarketInfoRisk>>();
-    if risks.is_empty() {
-        return Ok(0);
-    }
     let before = plans
         .iter()
         .filter(|plan| plan.info_risk.is_some())
         .count();
+    let risk_count = risks.len();
     let min_confidence =
         reward_ai_min_confidence(state.settings.rewards.info_risk_min_confidence_bps);
     apply_reward_info_risks(plans, &risks, config, min_confidence);
@@ -258,14 +258,13 @@ async fn apply_cached_reward_info_risks_to_plans(
         .iter()
         .filter(|plan| plan.info_risk.is_some())
         .count();
-    state.reward_bot_service.save_quote_plans(plans).await?;
     debug!(
         trace_id = %trace_id,
-        risks = risks.len(),
+        risks = risk_count,
         applied = after.saturating_sub(before),
         "applied cached reward info risks to quote plans",
     );
-    Ok(risks.len())
+    Ok(risk_count)
 }
 
 fn reward_info_risk_candidate_conditions(
