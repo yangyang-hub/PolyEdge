@@ -515,11 +515,40 @@ fn distinct_bid_prices(book: &RewardOrderBook) -> Vec<Decimal> {
 }
 
 fn quote_bid_price(state: &TokenBookState, rank: u16) -> Option<Decimal> {
-    state
-        .bid_prices
-        .get(usize::from(rank.saturating_sub(1)))
+    let price = if bid_prices_use_fine_tick(&state.bid_prices) {
+        quote_fine_tick_bid_price(&state.bid_prices, rank)?
+    } else {
+        state
+            .bid_prices
+            .get(usize::from(rank.saturating_sub(1)))
+            .copied()?
+    };
+    Some(floor_to_tick(price, inferred_bid_price_tick(&state.bid_prices)))
+}
+
+fn quote_fine_tick_bid_price(bid_prices: &[Decimal], rank: u16) -> Option<Decimal> {
+    let best_bid = bid_prices.first().copied()?;
+    let target = best_bid - DEFAULT_TICK * Decimal::from(rank.saturating_sub(1));
+    bid_prices
+        .iter()
         .copied()
-        .map(|price| floor_to_tick(price, DEFAULT_TICK))
+        .find(|price| *price <= target)
+}
+
+fn bid_prices_use_fine_tick(bid_prices: &[Decimal]) -> bool {
+    inferred_bid_price_tick(bid_prices) < DEFAULT_TICK
+}
+
+fn inferred_bid_price_tick(bid_prices: &[Decimal]) -> Decimal {
+    bid_prices
+        .windows(2)
+        .filter_map(|window| {
+            let diff = (window[0] - window[1]).abs();
+            (diff > Decimal::ZERO).then_some(diff)
+        })
+        .min()
+        .unwrap_or(DEFAULT_TICK)
+        .min(DEFAULT_TICK)
 }
 
 fn make_quote_legs(

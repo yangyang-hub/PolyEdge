@@ -564,6 +564,60 @@ fn quote_bid_rank_selects_requested_distinct_bid_level() {
 }
 
 #[test]
+fn quote_bid_rank_on_fine_tick_uses_cent_distance_from_best_bid() {
+    let config = RewardBotConfig {
+        quote_bid_rank: 3,
+        min_market_score: Decimal::ZERO,
+        ..RewardBotConfig::default()
+    };
+    let mut books = test_books();
+    books.get_mut("yes_budget").expect("YES book").bids = vec![
+        RewardBookLevel {
+            price: decimal("0.775"),
+            size: decimal("100"),
+        },
+        RewardBookLevel {
+            price: decimal("0.774"),
+            size: decimal("100"),
+        },
+        RewardBookLevel {
+            price: decimal("0.773"),
+            size: decimal("100"),
+        },
+        RewardBookLevel {
+            price: decimal("0.755"),
+            size: decimal("100"),
+        },
+    ];
+    books.get_mut("no_budget").expect("NO book").bids = vec![
+        RewardBookLevel {
+            price: decimal("0.205"),
+            size: decimal("100"),
+        },
+        RewardBookLevel {
+            price: decimal("0.204"),
+            size: decimal("100"),
+        },
+        RewardBookLevel {
+            price: decimal("0.203"),
+            size: decimal("100"),
+        },
+        RewardBookLevel {
+            price: decimal("0.185"),
+            size: decimal("100"),
+        },
+    ];
+
+    let plan = build_reward_quote_plan(&test_market(decimal("5")), &books, &config);
+    let materialized = materialize_reward_quote_plan_for_live_orderbook(&plan, &books, &config)
+        .expect("live materialization");
+
+    assert!(plan.eligible, "{}", plan.reason);
+    assert_eq!(materialized.legs[0].price, decimal("0.755"));
+    assert_eq!(materialized.legs[1].price, decimal("0.185"));
+}
+
+#[test]
 fn quote_bid_rank_depth_is_checked_during_live_materialization() {
     let config = RewardBotConfig {
         quote_bid_rank: 3,
