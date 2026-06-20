@@ -47,6 +47,7 @@ async fn poll_reward_bot_loop(
     let mut full_cycles = 0usize;
     let mut reconcile_cycles = 0usize;
     let mut last_reconcile_at: Instant;
+    let mut external_sync_throttle = RewardExternalSyncThrottle::default();
     let mut book_history: HashMap<String, VecDeque<BookSnapshot>> = HashMap::new();
     let full_interval = Duration::from_secs(state.settings.rewards.poll_interval_secs.max(1));
     // Start with a full cycle immediately.
@@ -95,7 +96,9 @@ async fn poll_reward_bot_loop(
             // cycle; cancel/reset-only commands must NOT reset the timer or a
             // steady stream of them would starve quote rebuilding entirely.
             if command_report.ran_full_cycle {
-                last_full_at = Instant::now();
+                let now = Instant::now();
+                last_full_at = now;
+                external_sync_throttle.mark_full_sync(now);
             }
         }
 
@@ -116,8 +119,10 @@ async fn poll_reward_bot_loop(
             .await?;
             accumulate_report(&mut total, &report);
             full_cycles += 1;
-            last_full_at = Instant::now();
-            last_reconcile_at = last_full_at;
+            let now = Instant::now();
+            last_full_at = now;
+            last_reconcile_at = now;
+            external_sync_throttle.mark_full_sync(now);
 
             info!(
                 trace_id = %trace_id,
@@ -135,17 +140,21 @@ async fn poll_reward_bot_loop(
         } else {
             // --- Fast reconcile-only cycle (risk checks + cancel stale orders) ---
             let trace_id = new_trace_id();
+            let sync_policy = external_sync_throttle.fast_reconcile_policy(&config, Instant::now());
             let report = run_reward_bot_live_reconcile_unlocked(
                 state,
                 &connector,
                 &trace_id,
                 &mut book_history,
                 Some(orderbook_runtime.cache()),
+                sync_policy,
             )
             .await?;
             accumulate_report(&mut total, &report);
             reconcile_cycles += 1;
-            last_reconcile_at = Instant::now();
+            let now = Instant::now();
+            last_reconcile_at = now;
+            external_sync_throttle.mark_fast_reconcile(sync_policy, now);
 
             if report.risk_cancelled_orders > 0 || report.filled_orders > 0 {
                 info!(
@@ -202,6 +211,111 @@ async fn poll_reward_bot_loop(
     drop(_heartbeat_guard);
     lease.release().await?;
     Ok(total)
+}
+
+const REWARD_FAST_ORDER_SYNC_MIN_SECS: u64 = 5;
+const REWARD_FAST_OPEN_ORDER_SYNC_MIN_SECS: u64 = 15;
+const REWARD_FAST_REWARD_EARNINGS_SYNC_SECS: u64 = 60;
+const REWARD_FAST_ACCOUNT_SNAPSHOT_SYNC_SECS: u64 = 60;
+
+#[derive(Debug, Clone, Copy, Default)]
+struct RewardFastReconcileSyncPolicy {
+    order_statuses: bool,
+    reward_earnings: bool,
+    managed_scoring: bool,
+    open_orders: bool,
+    account_snapshot: bool,
+}
+
+#[derive(Debug, Default)]
+struct RewardExternalSyncThrottle {
+    last_order_status_sync_at: Option<Instant>,
+    last_reward_earnings_sync_at: Option<Instant>,
+    last_managed_scoring_sync_at: Option<Instant>,
+    last_open_order_sync_at: Option<Instant>,
+    last_account_snapshot_sync_at: Option<Instant>,
+}
+
+impl RewardExternalSyncThrottle {
+    fn mark_full_sync(&mut self, now: Instant) {
+        self.last_order_status_sync_at = Some(now);
+        self.last_reward_earnings_sync_at = Some(now);
+        self.last_managed_scoring_sync_at = Some(now);
+        self.last_open_order_sync_at = Some(now);
+        self.last_account_snapshot_sync_at = Some(now);
+    }
+
+    fn fast_reconcile_policy(
+        &self,
+        config: &RewardBotConfig,
+        now: Instant,
+    ) -> RewardFastReconcileSyncPolicy {
+        let order_status_interval = Duration::from_secs(
+            config
+                .reconcile_interval_sec
+                .clamp(REWARD_FAST_ORDER_SYNC_MIN_SECS, 60),
+        );
+        let open_order_interval = Duration::from_secs(
+            config
+                .reconcile_interval_sec
+                .clamp(REWARD_FAST_OPEN_ORDER_SYNC_MIN_SECS, 60),
+        );
+        let scoring_interval = Duration::from_secs(
+            config
+                .min_scoring_check_sec
+                .clamp(REWARD_FAST_OPEN_ORDER_SYNC_MIN_SECS, 600),
+        );
+
+        RewardFastReconcileSyncPolicy {
+            order_statuses: reward_sync_due(
+                self.last_order_status_sync_at,
+                now,
+                order_status_interval,
+            ),
+            reward_earnings: reward_sync_due(
+                self.last_reward_earnings_sync_at,
+                now,
+                Duration::from_secs(REWARD_FAST_REWARD_EARNINGS_SYNC_SECS),
+            ),
+            managed_scoring: reward_sync_due(
+                self.last_managed_scoring_sync_at,
+                now,
+                scoring_interval,
+            ),
+            open_orders: reward_sync_due(
+                self.last_open_order_sync_at,
+                now,
+                open_order_interval,
+            ),
+            account_snapshot: reward_sync_due(
+                self.last_account_snapshot_sync_at,
+                now,
+                Duration::from_secs(REWARD_FAST_ACCOUNT_SNAPSHOT_SYNC_SECS),
+            ),
+        }
+    }
+
+    fn mark_fast_reconcile(&mut self, policy: RewardFastReconcileSyncPolicy, now: Instant) {
+        if policy.order_statuses {
+            self.last_order_status_sync_at = Some(now);
+        }
+        if policy.reward_earnings {
+            self.last_reward_earnings_sync_at = Some(now);
+        }
+        if policy.managed_scoring {
+            self.last_managed_scoring_sync_at = Some(now);
+        }
+        if policy.open_orders {
+            self.last_open_order_sync_at = Some(now);
+        }
+        if policy.account_snapshot {
+            self.last_account_snapshot_sync_at = Some(now);
+        }
+    }
+}
+
+fn reward_sync_due(last_synced_at: Option<Instant>, now: Instant, interval: Duration) -> bool {
+    last_synced_at.is_none_or(|last_synced_at| now.duration_since(last_synced_at) >= interval)
 }
 
 async fn throttle_reward_orderbook_reconcile(

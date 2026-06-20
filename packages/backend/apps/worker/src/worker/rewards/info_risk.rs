@@ -106,13 +106,24 @@ async fn scan_reward_info_risks_unlocked(
         .iter()
         .map(|plan| (plan.condition_id.as_str(), plan))
         .collect::<HashMap<_, _>>();
-    let ordered_conditions = reward_info_risk_candidate_conditions(
+    let mut ordered_conditions = reward_info_risk_candidate_conditions(
         &candidate_markets,
         &cycle.plans,
         &cycle.open_orders,
         &cycle.positions,
     );
     report.candidates = ordered_conditions.len();
+    let max_conditions = reward_provider_max_conditions_per_cycle(state);
+    if ordered_conditions.len() > max_conditions {
+        ordered_conditions.truncate(max_conditions);
+    }
+    info!(
+        trace_id = %trace_id,
+        candidates = report.candidates,
+        selected_conditions = ordered_conditions.len(),
+        max_conditions,
+        "prepared reward info risk provider candidates",
+    );
 
     for condition_id in ordered_conditions {
         let Some(market) = markets_by_condition.get(&condition_id) else {

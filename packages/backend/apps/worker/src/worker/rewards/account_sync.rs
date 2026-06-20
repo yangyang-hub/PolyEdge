@@ -6,6 +6,27 @@
 /// atomically replaces all positions for the rewards account.
 const REWARD_ACCOUNT_SYNC_FILL_GRACE: TimeDuration = TimeDuration::seconds(120);
 
+#[derive(Debug, Clone, Copy)]
+struct RewardAccountSyncPolicy {
+    managed_scoring: bool,
+    open_orders: bool,
+    account_snapshot: bool,
+}
+
+impl RewardAccountSyncPolicy {
+    fn full() -> Self {
+        Self {
+            managed_scoring: true,
+            open_orders: true,
+            account_snapshot: true,
+        }
+    }
+
+    fn any(self) -> bool {
+        self.managed_scoring || self.open_orders || self.account_snapshot
+    }
+}
+
 async fn sync_external_account_state(
     state: &AppState,
     connector: &LivePolymarketConnector,
@@ -15,18 +36,47 @@ async fn sync_external_account_state(
     trace_id: &str,
     refresh_account_snapshot: bool,
 ) {
-    sync_managed_reward_scoring(
+    sync_external_account_state_with_policy(
         state,
         connector,
         cycle_account,
+        cycle_positions,
         cycle_orders,
         trace_id,
+        refresh_account_snapshot,
+        RewardAccountSyncPolicy::full(),
     )
     .await;
+}
 
-    sync_external_open_order_state(state, connector, cycle_account, cycle_orders, trace_id).await;
+async fn sync_external_account_state_with_policy(
+    state: &AppState,
+    connector: &LivePolymarketConnector,
+    cycle_account: &mut RewardAccountState,
+    cycle_positions: &mut Vec<RewardPosition>,
+    cycle_orders: &mut Vec<ManagedRewardOrder>,
+    trace_id: &str,
+    refresh_account_snapshot: bool,
+    policy: RewardAccountSyncPolicy,
+) {
+    if policy.managed_scoring {
+        sync_managed_reward_scoring(
+            state,
+            connector,
+            cycle_account,
+            cycle_orders,
+            trace_id,
+        )
+        .await;
+    }
 
-    if !refresh_account_snapshot
+    if policy.open_orders {
+        sync_external_open_order_state(state, connector, cycle_account, cycle_orders, trace_id)
+            .await;
+    }
+
+    if !policy.account_snapshot
+        || !refresh_account_snapshot
         || !external_account_sync_allowed(state, cycle_account, trace_id).await
     {
         return;

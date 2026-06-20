@@ -107,7 +107,7 @@ fn live_status_after_pending_cancel_requires_retry() {
     order.reason = "risk cancel; cancel accepted; awaiting final reconciliation".to_string();
     let external_order_id = order.external_order_id.clone().expect("external order id");
 
-    let (order, _) = apply_live_reward_status_update_to_order(
+    let (mut order, _) = apply_live_reward_status_update_to_order(
         order,
         ConnectorOrderStatusUpdate {
             event_id: "evt_live_after_cancel".to_string(),
@@ -118,6 +118,7 @@ fn live_status_after_pending_cancel_requires_retry() {
         "trc_live_after_cancel",
     )
     .expect("live order after cancellation attempt must require retry");
+    order.updated_at = now - TimeDuration::seconds(16);
     let books = HashMap::from([("yes_live".to_string(), live_test_book("yes_live", now))]);
 
     let candidates =
@@ -316,6 +317,7 @@ fn live_cancel_candidates_retry_rejected_post_only_violation_cancel() {
     let plan = live_test_plan(now);
     let mut order = live_test_open_order("yes_live");
     order.reason = "Polymarket returned matched for a post-only rewards quote and cancel was rejected; cancellation must be retried".to_string();
+    order.updated_at = now - TimeDuration::seconds(16);
     let books = HashMap::from([("yes_live".to_string(), live_test_book("yes_live", now))]);
 
     let candidates =

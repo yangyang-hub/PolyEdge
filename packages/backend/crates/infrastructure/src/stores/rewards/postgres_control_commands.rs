@@ -1,8 +1,8 @@
 async fn postgres_enqueue_reward_control_command(
     pool: &PgPool,
     command: RewardControlCommand,
-) -> Result<()> {
-    sqlx::query(
+) -> Result<bool> {
+    let result = sqlx::query(
         r#"
         INSERT INTO reward_control_commands (
           id,
@@ -16,7 +16,15 @@ async fn postgres_enqueue_reward_control_command(
           trace_id,
           error
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
+        WHERE NOT EXISTS (
+          SELECT 1
+          FROM reward_control_commands
+          WHERE action = $2
+            AND account_id IS NOT DISTINCT FROM $3
+            AND status IN ('pending', 'running')
+        )
+        ON CONFLICT DO NOTHING
         "#,
     )
     .bind(&command.id)
@@ -37,7 +45,7 @@ async fn postgres_enqueue_reward_control_command(
             format!("failed to enqueue reward control command: {error}"),
         )
     })?;
-    Ok(())
+    Ok(result.rows_affected() > 0)
 }
 
 async fn postgres_claim_next_reward_control_command(

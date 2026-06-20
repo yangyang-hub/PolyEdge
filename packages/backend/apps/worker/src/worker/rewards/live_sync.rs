@@ -523,6 +523,7 @@ async fn run_reward_bot_live_reconcile_unlocked(
     trace_id: &str,
     book_history: &mut HashMap<String, VecDeque<BookSnapshot>>,
     orderbook_cache: Option<&RewardOrderbookLocalCache>,
+    sync_policy: RewardFastReconcileSyncPolicy,
 ) -> Result<RewardBotRunReport> {
     let mut cycle = state.reward_bot_service.current_live_cycle_state().await?;
     let books = fetch_reward_bot_active_books(state, orderbook_cache).await?;
@@ -532,7 +533,7 @@ async fn run_reward_bot_live_reconcile_unlocked(
         ..RewardBotRunReport::default()
     };
 
-    if !cycle.open_orders.is_empty() {
+    if sync_policy.order_statuses && !cycle.open_orders.is_empty() {
         let sync_report =
             sync_live_reward_orders(state, connector, &cycle.open_orders, &books, trace_id)
                 .await?;
@@ -540,20 +541,29 @@ async fn run_reward_bot_live_reconcile_unlocked(
         cycle = state.reward_bot_service.current_live_cycle_state().await?;
     }
 
-    // Reward earnings sync always runs — it queries Polymarket's authoritative
-    // daily total and does not risk double-counting fills.
-    sync_reward_earnings(state, connector, &mut cycle.account, trace_id).await;
+    if sync_policy.reward_earnings {
+        sync_reward_earnings(state, connector, &mut cycle.account, trace_id).await;
+    }
 
-    sync_external_account_state(
-        state,
-        connector,
-        &mut cycle.account,
-        &mut cycle.positions,
-        &mut cycle.open_orders,
-        trace_id,
-        can_refresh_external_account_after_order_sync(&report),
-    )
-    .await;
+    let account_sync_policy = RewardAccountSyncPolicy {
+        managed_scoring: sync_policy.managed_scoring,
+        open_orders: sync_policy.open_orders,
+        account_snapshot: sync_policy.account_snapshot
+            && (sync_policy.order_statuses || cycle.open_orders.is_empty()),
+    };
+    if account_sync_policy.any() {
+        sync_external_account_state_with_policy(
+            state,
+            connector,
+            &mut cycle.account,
+            &mut cycle.positions,
+            &mut cycle.open_orders,
+            trace_id,
+            can_refresh_external_account_after_order_sync(&report),
+            account_sync_policy,
+        )
+        .await;
+    }
 
     let mut account = cycle.account.clone();
     let mut open_orders = cycle.open_orders.clone();

@@ -354,6 +354,12 @@ async fn acquire_reward_ai_provider_request_permit()
 }
 
 fn reward_ai_provider_is_overloaded(error: &AppError) -> bool {
+    if matches!(
+        error.code(),
+        "REWARD_AI_HTTP_FAILED" | "REWARD_INFO_RISK_HTTP_FAILED"
+    ) {
+        return true;
+    }
     if !matches!(
         error.code(),
         "REWARD_AI_STATUS_FAILED" | "REWARD_INFO_RISK_STATUS_FAILED"
@@ -361,7 +367,23 @@ fn reward_ai_provider_is_overloaded(error: &AppError) -> bool {
         return false;
     }
     let message = error.message().to_ascii_lowercase();
-    message.contains("http 503")
+    message.contains("http 401")
+        || message.contains("http 403")
+        || message.contains("http 408")
+        || message.contains("http 409")
+        || message.contains("http 429")
+        || message.contains("http 500")
+        || message.contains("http 502")
+        || message.contains("http 503")
+        || message.contains("http 504")
+        || message.contains("rate limit")
+        || message.contains("too many requests")
+        || message.contains("unauthorized")
+        || message.contains("forbidden")
+        || message.contains("invalid api key")
+        || message.contains("authentication")
+        || message.contains("timeout")
+        || message.contains("timed out")
         || message.contains("system_cpu_overloaded")
         || message.contains("overloaded")
 }
@@ -386,6 +408,15 @@ mod reward_ai_provider_error_tests {
             "provider response missing risk_level",
         );
         assert!(!reward_ai_provider_is_overloaded(&error));
+    }
+
+    #[test]
+    fn reward_ai_provider_overload_detects_transport_errors() {
+        let error = AppError::dependency_unavailable(
+            "REWARD_AI_HTTP_FAILED",
+            "reward AI HTTP request failed: operation timed out",
+        );
+        assert!(reward_ai_provider_is_overloaded(&error));
     }
 
     #[tokio::test]

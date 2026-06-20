@@ -69,11 +69,21 @@ impl RewardBotStore for InMemoryRewardBotStore {
         Ok(self.worker_heartbeats.read().await.get(account_id).copied())
     }
 
-    async fn enqueue_control_command(&self, command: RewardControlCommand) -> Result<()> {
+    async fn enqueue_control_command(&self, command: RewardControlCommand) -> Result<bool> {
         let mut commands = self.control_commands.write().await;
+        if commands.iter().any(|existing| {
+            existing.action == command.action
+                && existing.account_id == command.account_id
+                && matches!(
+                    existing.status,
+                    RewardControlCommandStatus::Pending | RewardControlCommandStatus::Running
+                )
+        }) {
+            return Ok(false);
+        }
         commands.push(command);
         commands.sort_by(|left, right| left.requested_at.cmp(&right.requested_at));
-        Ok(())
+        Ok(true)
     }
 
     async fn claim_next_control_command(

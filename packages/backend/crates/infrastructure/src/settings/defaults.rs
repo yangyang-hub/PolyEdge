@@ -113,7 +113,7 @@ impl Default for RewardsSettings {
             ai_advisory_batch_timeout_secs: 8,
             ai_advisory_event_driven_enabled: false,
             info_risk_interval_secs: 300,
-            info_risk_max_markets_per_cycle: u16::MAX,
+            info_risk_max_markets_per_cycle: 50,
             info_risk_min_confidence_bps: 7000,
             info_risk_web_search_enabled: false,
         }

@@ -130,6 +130,40 @@ mod rewards_tests {
     }
 
     #[tokio::test]
+    async fn duplicate_pending_reward_command_is_coalesced() {
+        let store = InMemoryRewardBotStore::new();
+        let now = OffsetDateTime::now_utc();
+        let mut first = running_command(now);
+        first.id = "rewcmd_first".to_string();
+        first.status = RewardControlCommandStatus::Pending;
+        first.started_at = None;
+        let mut duplicate = first.clone();
+        duplicate.id = "rewcmd_duplicate".to_string();
+        duplicate.trace_id = Some("trc_duplicate".to_string());
+
+        assert!(
+            store
+                .enqueue_control_command(first)
+                .await
+                .expect("enqueue first command")
+        );
+        assert!(
+            !store
+                .enqueue_control_command(duplicate)
+                .await
+                .expect("coalesce duplicate command")
+        );
+
+        let claimed = store
+            .claim_next_control_command("trc_claim", now)
+            .await
+            .expect("claim command")
+            .expect("first command is claimable");
+
+        assert_eq!(claimed.id, "rewcmd_first");
+    }
+
+    #[tokio::test]
     async fn external_open_order_count_excludes_local_intents() {
         let store = InMemoryRewardBotStore::new();
         store.orders.write().await.extend([

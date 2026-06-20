@@ -2,6 +2,9 @@ const LIVE_ORDERBOOK_VALIDATION_SKIP_TTL: TimeDuration = TimeDuration::hours(12)
 const LIVE_ORDERBOOK_WAITING_REASON_PREFIX: &str =
     "waiting for fresh orderbook data from subscription";
 
+const LIVE_CANCEL_RETRY_MIN_INTERVAL: TimeDuration = TimeDuration::seconds(15);
+const LIVE_CANCEL_FINAL_RECONCILIATION_RETRY_AFTER: TimeDuration = TimeDuration::seconds(30);
+
 fn live_cancel_candidates(
     config: &RewardBotConfig,
     plans: &[RewardQuotePlan],
@@ -42,16 +45,24 @@ fn live_cancel_reason(
     now: OffsetDateTime,
     kill_switch: bool,
 ) -> Option<String> {
+    if live_order_has_post_only_violation(order) {
+        if order.reason.contains("cancel accepted; awaiting final reconciliation")
+            && !live_cancel_final_reconciliation_retry_due(order, now)
+        {
+            return None;
+        }
+        return live_cancel_retry_due(order, now)
+            .then(|| "post-only violation requires cancellation".to_string());
+    }
+    if order.reason.contains("cancellation must be retried") {
+        return live_cancel_retry_due(order, now).then(|| {
+            "previous cancellation attempt left the order live".to_string()
+        });
+    }
     if order.reason.contains("awaiting final reconciliation")
         || live_submission_was_attempted(order)
     {
         return None;
-    }
-    if live_order_has_post_only_violation(order) {
-        return Some("post-only violation requires cancellation".to_string());
-    }
-    if order.reason.contains("cancellation must be retried") {
-        return Some("previous cancellation attempt left the order live".to_string());
     }
     if kill_switch && order.side == RewardOrderSide::Buy {
         return Some("global kill switch is active".to_string());
@@ -104,6 +115,17 @@ fn live_cancel_reason(
         return Some(reason);
     }
     None
+}
+
+fn live_cancel_retry_due(order: &ManagedRewardOrder, now: OffsetDateTime) -> bool {
+    now >= order.updated_at + LIVE_CANCEL_RETRY_MIN_INTERVAL
+}
+
+fn live_cancel_final_reconciliation_retry_due(
+    order: &ManagedRewardOrder,
+    now: OffsetDateTime,
+) -> bool {
+    now >= order.updated_at + LIVE_CANCEL_FINAL_RECONCILIATION_RETRY_AFTER
 }
 
 #[allow(clippy::needless_range_loop, clippy::too_many_arguments)]

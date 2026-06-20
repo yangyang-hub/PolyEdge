@@ -82,6 +82,7 @@ mod tests {
         }
         assert!(!settings.rewards.enabled);
         assert_eq!(settings.rewards.poll_interval_secs, 60);
+        assert_eq!(settings.rewards.info_risk_max_markets_per_cycle, 50);
         assert!(settings.worker.poll_news);
         assert!(settings.worker.promote_news_events);
         assert!(settings.worker.poll_arbitrage_radar);

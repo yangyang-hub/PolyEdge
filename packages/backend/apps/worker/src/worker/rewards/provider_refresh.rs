@@ -141,10 +141,15 @@ async fn refresh_reward_market_provider_cache(
         .iter()
         .cloned()
         .collect::<HashSet<_>>();
-    let ordered_conditions = reward_provider_refresh_candidate_condition_ids(
+    let mut ordered_conditions = reward_provider_refresh_candidate_condition_ids(
         &info_risk_candidate_condition_ids,
         &ai_candidate_condition_ids,
     );
+    let original_ordered_conditions = ordered_conditions.len();
+    let max_conditions = reward_provider_max_conditions_per_cycle(state);
+    if ordered_conditions.len() > max_conditions {
+        ordered_conditions.truncate(max_conditions);
+    }
 
     let mut report = RewardProviderRefreshReport::default();
     report.ai.candidates = ai_candidate_condition_ids.len();
@@ -153,7 +158,9 @@ async fn refresh_reward_market_provider_cache(
         trace_id = %trace_id,
         provider = cycle.config.ai_provider.as_str(),
         request_format = cycle.config.ai_request_format.as_str(),
-        conditions = ordered_conditions.len(),
+        conditions = original_ordered_conditions,
+        selected_conditions = ordered_conditions.len(),
+        max_conditions,
         ai_candidates = report.ai.candidates,
         info_risk_candidates = report.info_risk.candidates,
         "starting reward market provider refresh",
@@ -481,4 +488,8 @@ fn reward_provider_refresh_candidate_condition_ids(
         ordered.push(condition_id.to_string());
     }
     ordered
+}
+
+fn reward_provider_max_conditions_per_cycle(state: &AppState) -> usize {
+    usize::from(state.settings.rewards.info_risk_max_markets_per_cycle)
 }

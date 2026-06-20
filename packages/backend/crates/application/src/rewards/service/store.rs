@@ -9,7 +9,7 @@ pub trait RewardBotStore: Send + Sync {
     ) -> Result<()>;
     async fn latest_worker_heartbeat(&self, account_id: &str)
     -> Result<Option<OffsetDateTime>>;
-    async fn enqueue_control_command(&self, command: RewardControlCommand) -> Result<()>;
+    async fn enqueue_control_command(&self, command: RewardControlCommand) -> Result<bool>;
     async fn claim_next_control_command(
         &self,
         trace_id: &str,

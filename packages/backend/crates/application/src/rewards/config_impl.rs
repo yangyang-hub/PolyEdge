@@ -216,8 +216,8 @@ impl RewardBotConfig {
         if self.max_midpoint <= self.min_midpoint {
             self.max_midpoint = Decimal::min(Decimal::ONE, self.min_midpoint + decimal("0.1"));
         }
-        self.stale_book_ms = self.stale_book_ms.clamp(0, 120_000);
-        self.min_scoring_check_sec = self.min_scoring_check_sec.clamp(0, 600);
+        self.stale_book_ms = self.stale_book_ms.clamp(5_000, 120_000);
+        self.min_scoring_check_sec = self.min_scoring_check_sec.clamp(15, 600);
         self.max_position_usd =
             clamp_decimal(self.max_position_usd, Decimal::ZERO, decimal("1000000"));
         self.max_global_position_usd = clamp_decimal(
@@ -627,5 +627,18 @@ mod reward_config_tests {
             serialized["ai_request_format"],
             "openai_chat_completions"
         );
+    }
+
+    #[test]
+    fn reward_config_normalization_keeps_live_sync_guardrails_enabled() {
+        let config = RewardBotConfig {
+            stale_book_ms: 0,
+            min_scoring_check_sec: 0,
+            ..RewardBotConfig::default()
+        }
+        .normalized();
+
+        assert_eq!(config.stale_book_ms, 5_000);
+        assert_eq!(config.min_scoring_check_sec, 15);
     }
 }

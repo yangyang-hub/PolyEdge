@@ -32,7 +32,7 @@ async fn run_reward_ai_advisory_batch_worker(
         debug!("reward AI advisory event-driven batch worker is disabled");
         return;
     }
-    let batch_size = state.settings.rewards.ai_advisory_batch_size.max(1);
+    let batch_size = reward_ai_advisory_batch_size(state.settings.rewards.ai_advisory_batch_size);
     let batch_timeout = Duration::from_secs(state.settings.rewards.ai_advisory_batch_timeout_secs.max(1));
     let mut buffer: Vec<String> = Vec::with_capacity(batch_size);
     info!(
@@ -72,6 +72,10 @@ async fn run_reward_ai_advisory_batch_worker(
         }
     }
     info!("reward AI advisory event-driven batch worker stopped");
+}
+
+fn reward_ai_advisory_batch_size(configured: usize) -> usize {
+    configured.clamp(1, 12)
 }
 
 /// Evaluate a batch of ready conditions, then unconditionally clear their
@@ -456,6 +460,15 @@ async fn single_reward_ai_advise_and_save(
 
 #[cfg(test)]
 mod reward_ai_advisory_batch_tests {
+    use super::*;
+
+    #[test]
+    fn reward_ai_advisory_batch_size_is_bounded() {
+        assert_eq!(reward_ai_advisory_batch_size(0), 1);
+        assert_eq!(reward_ai_advisory_batch_size(8), 8);
+        assert_eq!(reward_ai_advisory_batch_size(100), 12);
+    }
+
     // flush_reward_ai_advisory_batch is exercised end-to-end via the worker test
     // harness in tests.rs; the connector parsing layer is covered in
     // polyedge-connectors. The orderbook readiness state machine is covered in

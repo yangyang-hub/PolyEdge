@@ -94,7 +94,7 @@ impl RewardBotStore for PostgresRewardBotStore {
         postgres_latest_reward_worker_heartbeat(&self.pool, account_id).await
     }
 
-    async fn enqueue_control_command(&self, command: RewardControlCommand) -> Result<()> {
+    async fn enqueue_control_command(&self, command: RewardControlCommand) -> Result<bool> {
         postgres_enqueue_reward_control_command(&self.pool, command).await
     }
 

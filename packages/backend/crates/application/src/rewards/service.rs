@@ -118,8 +118,9 @@ impl RewardBotService {
             error: None,
         };
 
-        self.store.enqueue_control_command(command.clone()).await?;
-        self.log_event_to_store_and_memory(new_risk_event(
+        let queued = self.store.enqueue_control_command(command.clone()).await?;
+        if queued {
+            self.log_event_to_store_and_memory(new_risk_event(
                 Some(config.account_id),
                 None,
                 None,
@@ -131,11 +132,13 @@ impl RewardBotService {
                     "action": action.as_str(),
                     "reason": reason,
                     "trace_id": trace_id,
+                    "queued": queued,
                 }),
             ))
             .await?;
-        self.notify_runtime_change(false);
-        self.wake_command_processor();
+            self.notify_runtime_change(false);
+            self.wake_command_processor();
+        }
         Ok(command)
     }
 

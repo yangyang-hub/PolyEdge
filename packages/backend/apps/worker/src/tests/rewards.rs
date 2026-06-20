@@ -19,6 +19,54 @@ fn rewards_account_sync_prefers_funding_wallet_address() {
     );
 }
 
+#[test]
+fn reward_fast_reconcile_external_sync_policy_throttles_heavy_calls() {
+    let config = RewardBotConfig {
+        reconcile_interval_sec: 1,
+        min_scoring_check_sec: 1,
+        ..RewardBotConfig::default()
+    }
+    .normalized();
+    let mut throttle = RewardExternalSyncThrottle::default();
+    let started_at = Instant::now();
+
+    let first = throttle.fast_reconcile_policy(&config, started_at);
+    assert!(first.order_statuses);
+    assert!(first.reward_earnings);
+    assert!(first.managed_scoring);
+    assert!(first.open_orders);
+    assert!(first.account_snapshot);
+
+    throttle.mark_fast_reconcile(first, started_at);
+    let one_second_later =
+        throttle.fast_reconcile_policy(&config, started_at + Duration::from_secs(1));
+    assert!(!one_second_later.order_statuses);
+    assert!(!one_second_later.reward_earnings);
+    assert!(!one_second_later.managed_scoring);
+    assert!(!one_second_later.open_orders);
+    assert!(!one_second_later.account_snapshot);
+
+    let five_seconds_later =
+        throttle.fast_reconcile_policy(&config, started_at + Duration::from_secs(5));
+    assert!(five_seconds_later.order_statuses);
+    assert!(!five_seconds_later.open_orders);
+    assert!(!five_seconds_later.managed_scoring);
+    assert!(!five_seconds_later.reward_earnings);
+    assert!(!five_seconds_later.account_snapshot);
+
+    let fifteen_seconds_later =
+        throttle.fast_reconcile_policy(&config, started_at + Duration::from_secs(15));
+    assert!(fifteen_seconds_later.open_orders);
+    assert!(fifteen_seconds_later.managed_scoring);
+    assert!(!fifteen_seconds_later.reward_earnings);
+    assert!(!fifteen_seconds_later.account_snapshot);
+
+    let sixty_seconds_later =
+        throttle.fast_reconcile_policy(&config, started_at + Duration::from_secs(60));
+    assert!(sixty_seconds_later.reward_earnings);
+    assert!(sixty_seconds_later.account_snapshot);
+}
+
 fn live_test_plan(now: OffsetDateTime) -> RewardQuotePlan {
     RewardQuotePlan {
         condition_id: "cond_live".to_string(),
@@ -1240,6 +1288,31 @@ fn live_cancel_candidates_do_not_repeat_pending_cancel() {
     );
 
     assert!(candidates.is_empty());
+}
+
+#[test]
+fn live_cancel_candidates_retry_stale_post_only_pending_cancel() {
+    let config = RewardBotConfig {
+        account_id: "reward_live".to_string(),
+        ..RewardBotConfig::default()
+    };
+    let now = OffsetDateTime::now_utc();
+    let plan = live_test_plan(now);
+    let mut order = live_test_open_order("yes_live");
+    order.reason = "Polymarket returned matched for a post-only rewards quote; cancel accepted; awaiting final reconciliation".to_string();
+    order.updated_at = now - TimeDuration::seconds(31);
+    let books = HashMap::from([("yes_live".to_string(), live_test_book("yes_live", now))]);
+
+    let candidates =
+        live_cancel_candidates(&config, &[plan], &[order], &books, &HashMap::new(), false);
+
+    assert_eq!(
+        candidates,
+        vec![(
+            "rewlive_seed_yes_live".to_string(),
+            "post-only violation requires cancellation".to_string()
+        )]
+    );
 }
 
 #[test]
