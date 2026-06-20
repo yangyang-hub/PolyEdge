@@ -43,8 +43,8 @@
 - **`PolymarketGammaConnector`**：`gamma_host` + `reqwest::Client`
 - **`PolymarketGammaMarket`**：id、slug、question、category、status、best_bid/ask/mid_price、`liquidity_usd`、volume_24h、`end_at`、ambiguity_level、tradability_status、condition_id、yes/no_asset_id 等
 - 常量：`GAMMA_TIMEOUT = 15s`、`GAMMA_MAX_PAGES = 1000`、`GAMMA_CONDITION_BATCH_SIZE = 50`
-- `fetch_markets()` 使用 Gamma `/markets` offset 分页，按 active/open/non-archived、24h volume 降序拉取，并在 422 offset 边界、空页或短页时停止；结果按 market id 去重。
-- `fetch_markets_by_condition_ids()` 使用 Gamma `/markets` 的重复 `condition_ids` query 参数做小批量定向查询，每批最多 50 个 condition，用于 orderbook priority sync 刷新已订阅/rewards 重点市场。
+- `fetch_markets()` 使用 Gamma `/markets` offset 分页，按 active/open/non-archived、24h volume 降序拉取，并在 422 offset 边界、空页或短页时停止；结果按 market id 去重；解码失败时错误会携带最多 300 字节的转义响应体 preview。
+- `fetch_markets_by_condition_ids()` 使用 Gamma `/markets` 的重复 `condition_ids` query 参数做小批量定向查询，每批最多 50 个 condition，用于 orderbook priority sync 刷新已订阅/rewards 重点市场；解码失败时错误会携带最多 300 字节的转义响应体 preview。
 - 流动性优先解析 Gamma `liquidityClob`，缺失时回退 `liquidity`；结算时间解析 `endDate`。歧义等级只在 market/event 提供显式 `resolutionSource` 时为 Low，仅 description 可用时为 Medium，两者都缺失时为 High，避免把描述文本误当成明确结算来源。
 - 用途：`market_sync.rs` worker 的主要数据源，`arbitrage.rs` 的回退数据源
 
@@ -104,9 +104,9 @@
 - **`PolymarketRewardOrderBook`**：token_id、bids、asks、observed_at
 - **`PolymarketPriceHistoryPoint`**：`/prices-history` 返回的 observed_at + price，供 orderbook 服务低频写入 rewards 5m candles
 - 常量：`ENRICH_TIMEOUT = 10s`、`ENRICH_MAX_RETRIES = 3`、`ENRICH_RETRY_BASE_DELAY = 500ms`、`MAX_REWARD_MARKET_PAGES = 1000`
-- `fetch_current_markets()` 对分页做重复 cursor / 最大页数 / condition id 去重保护；token 会按 ID 去重。仅当原始 market 缺少唯一 YES/NO token 或缺有效 question 时才请求 CLOB `/markets/{condition_id}` 详情补全，避免对完整 catalog 做大规模详情请求；补全后仍不完整或目录为空会返回错误，调用方保留上一版 catalog；详情请求失败但原始记录已完整时不阻断目录替换。
-- `fetch_order_books(token_ids)` 优先使用 CLOB `POST /books` 批量拉取盘口；批量请求失败或遗漏 token 时，再使用固定并发窗口逐个调用 `GET /book` 补齐。每个盘口必须携带可解析的 CLOB 毫秒 `timestamp`，并作为 `observed_at` 传给缓存；整批无可用盘口时返回 dependency error，部分失败会记录告警。
-- `fetch_price_history(token_id, start, end, fidelity_minutes)` 调用 CLOB `GET /prices-history?market=...&startTs=...&endTs=...&fidelity=...`；解析 seconds 或 millis 时间戳、数字或字符串 price，丢弃 0-1 以外价格并按 observed_at 排序去重。调用方负责按 token 限速；遇到非成功状态会返回 dependency error，404 返回空序列。
+- `fetch_current_markets()` 对分页做重复 cursor / 最大页数 / condition id 去重保护；token 会按 ID 去重。仅当原始 market 缺少唯一 YES/NO token 或缺有效 question 时才请求 CLOB `/markets/{condition_id}` 详情补全，避免对完整 catalog 做大规模详情请求；补全后仍不完整或目录为空会返回错误，调用方保留上一版 catalog；详情请求失败但原始记录已完整时不阻断目录替换；解码失败时错误会携带最多 300 字节的转义响应体 preview。
+- `fetch_order_books(token_ids)` 优先使用 CLOB `POST /books` 批量拉取盘口；批量请求失败或遗漏 token 时，再使用固定并发窗口逐个调用 `GET /book` 补齐。每个盘口必须携带可解析的 CLOB 毫秒 `timestamp`，并作为 `observed_at` 传给缓存；整批无可用盘口时返回 dependency error，部分失败会记录告警；batch 和 individual 解码失败会携带最多 300 字节的转义响应体 preview。
+- `fetch_price_history(token_id, start, end, fidelity_minutes)` 调用 CLOB `GET /prices-history?market=...&startTs=...&endTs=...&fidelity=...`；解析 seconds 或 millis 时间戳、数字或字符串 price，丢弃 0-1 以外价格并按 observed_at 排序去重。调用方负责按 token 限速；遇到非成功状态会返回 dependency error，404 返回空序列；解码失败时错误会携带最多 300 字节的转义响应体 preview。
 - 用途：`polyedge-orderbook` 的 rewards catalog sync 填充 `reward_markets` 表；orderbook candle history sync 低频写入 `reward_market_candles`；worker 的 `market_sync.rs` 仅保留 CLI 兼容入口
 
 ### Orderbook HTTP / 内部 WS
@@ -157,7 +157,7 @@
 ## 当前状态
 
 - 已实现当前系统使用的 Polymarket 公共市场、盘口、Data API、Rewards API、Rewards AI advisory、Rewards 信息风险评估、订单 scoring、带明细和 raw authenticated fallback 的当日 maker earnings，以及 CLOB V2 交易 connector；Deposit Wallet relayer 生命周期接口尚未接入
-- Gamma `/markets` offset 分页已具备 422 边界 / 最大页数保护，并按 market id 去重；condition_ids 定向查询用于重点市场新鲜度刷新。
+- Gamma `/markets` offset 分页已具备 422 边界 / 最大页数保护，并按 market id 去重；condition_ids 定向查询用于重点市场新鲜度刷新；Gamma、CLOB rewards、order book 和 price-history 解码失败会返回最多 300 字节的转义响应体 preview，便于排查 HTML、截断响应或上游结构漂移。
 - Gamma 市场同步已提供 rewards 质量筛选所需的 CLOB liquidity、end time 和分级 ambiguity 数据，并支持 priority condition 刷新降低全量目录延迟对 live rewards 的影响。
 - Rewards markets 分页和 enrichment 已具备完整性保护，不再把部分补全结果作为完整目录写入；详情补全只针对缺唯一 YES/NO token 或缺有效 question 的市场，降低 CLOB 429 风险
 - Rewards 盘口连接器优先走 CLOB 批量 `/books`，并对失败或遗漏项使用单 token `/book` 回退；同一 connector 还提供 `/prices-history` 读取，实际请求节流由 orderbook 服务的 candle history sync loop 控制，避免 worker 或 API 直接打外部历史价格接口

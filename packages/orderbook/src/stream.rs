@@ -18,7 +18,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
-use tokio::sync::RwLock;
+use tokio::sync::{RwLock, mpsc};
 use tokio::task::JoinSet;
 use tracing::{debug, info, warn};
 
@@ -269,6 +269,11 @@ struct OrderbookWsChunkContext {
     price_changes_received: Arc<AtomicUsize>,
 }
 
+enum OrderbookWsEvent {
+    Book(BookUpdate),
+    PriceChange(PriceChange),
+}
+
 async fn run_orderbook_ws_chunk(
     chunk_index: usize,
     token_ids: Vec<U256>,
@@ -300,8 +305,60 @@ async fn run_orderbook_ws_chunk(
                 format!("failed to subscribe to orderbook price changes: {error}"),
             )
         })?;
-    let mut book_stream = Box::pin(book_stream);
-    let mut price_stream = Box::pin(price_stream);
+    let (event_tx, mut event_rx) = mpsc::unbounded_channel();
+    let mut reader_tasks = JoinSet::new();
+
+    {
+        let event_tx = event_tx.clone();
+        reader_tasks.spawn(async move {
+            let mut book_stream = Box::pin(book_stream);
+            while let Some(message) = book_stream.next().await {
+                match message {
+                    Ok(book_update) => {
+                        if event_tx.send(OrderbookWsEvent::Book(book_update)).is_err() {
+                            break;
+                        }
+                    }
+                    Err(error) => {
+                        warn!(
+                            ws_chunk = chunk_index,
+                            error = %error,
+                            "orderbook WS stream error, poll reconciler will cover gaps"
+                        );
+                    }
+                }
+            }
+            Ok::<(), AppError>(())
+        });
+    }
+
+    {
+        let event_tx = event_tx.clone();
+        reader_tasks.spawn(async move {
+            let mut price_stream = Box::pin(price_stream);
+            while let Some(message) = price_stream.next().await {
+                match message {
+                    Ok(price_change) => {
+                        if event_tx
+                            .send(OrderbookWsEvent::PriceChange(price_change))
+                            .is_err()
+                        {
+                            break;
+                        }
+                    }
+                    Err(error) => {
+                        warn!(
+                            ws_chunk = chunk_index,
+                            error = %error,
+                            "orderbook price-change WS stream error, poll reconciler will cover gaps"
+                        );
+                    }
+                }
+            }
+            Ok::<(), AppError>(())
+        });
+    }
+    drop(event_tx);
 
     info!(
         ws_chunk = chunk_index,
@@ -311,9 +368,9 @@ async fn run_orderbook_ws_chunk(
 
     loop {
         tokio::select! {
-            message = book_stream.next() => {
-                match message {
-                    Some(Ok(book_update)) => {
+            Some(event) = event_rx.recv() => {
+                match event {
+                    OrderbookWsEvent::Book(book_update) => {
                         let cached = normalized_cached_book(
                             book_update_to_cached(&book_update),
                             context.max_levels_per_side,
@@ -343,22 +400,7 @@ async fn run_orderbook_ws_chunk(
                             );
                         }
                     }
-                    Some(Err(error)) => {
-                        warn!(
-                            ws_chunk = chunk_index,
-                            error = %error,
-                            "orderbook WS stream error, poll reconciler will cover gaps"
-                        );
-                    }
-                    None => {
-                        info!(ws_chunk = chunk_index, "orderbook WS stream ended");
-                        break;
-                    }
-                }
-            }
-            message = price_stream.next() => {
-                match message {
-                    Some(Ok(price_change)) => {
+                    OrderbookWsEvent::PriceChange(price_change) => {
                         if let Err(error) = apply_price_change_to_cache(
                             &context.cache,
                             &context.broadcaster,
@@ -374,21 +416,30 @@ async fn run_orderbook_ws_chunk(
                         }
                         context.price_changes_received.fetch_add(1, Ordering::Relaxed);
                     }
+                }
+            }
+            result = reader_tasks.join_next() => {
+                match result {
+                    Some(Ok(Ok(()))) => {
+                        info!(ws_chunk = chunk_index, "orderbook WS reader ended");
+                    }
+                    Some(Ok(Err(error))) => {
+                        warn!(ws_chunk = chunk_index, error = %error, "orderbook WS reader failed");
+                    }
                     Some(Err(error)) => {
-                        warn!(
-                            ws_chunk = chunk_index,
-                            error = %error,
-                            "orderbook price-change WS stream error, poll reconciler will cover gaps"
-                        );
+                        warn!(ws_chunk = chunk_index, error = %error, "orderbook WS reader task failed");
                     }
                     None => {
-                        info!(ws_chunk = chunk_index, "orderbook price-change WS stream ended");
-                        break;
+                        info!(ws_chunk = chunk_index, "orderbook WS readers ended");
                     }
                 }
+                break;
             }
         }
     }
+
+    reader_tasks.abort_all();
+    while reader_tasks.join_next().await.is_some() {}
 
     Ok(())
 }

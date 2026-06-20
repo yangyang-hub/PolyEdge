@@ -44,7 +44,7 @@
 | `RewardsSettings` | enabled、poll_interval、AI provider API key/base URL/model/timeout/min confidence、信息风险扫描间隔/每轮 condition cap/置信度/web search 开关等 |
 | `NewsSettings` | enabled、poll_interval_secs、request_timeout_secs、max_items_per_source、sources（RSS/Atom 源列表） |
 | `WorkerSettings` | 各 worker 的启用标志和轮询间隔 |
-| `OrderbookStreamSettings` | WS 连接、轮询和 rewards candle history 配置（默认 `max_tokens=3000`、`reward_candidate_token_cap=100`、`ws_chunk_size=250`、`max_levels_per_side=100`、candle history enabled、interval=300s、request_delay=500ms、max_tokens_per_cycle=600） |
+| `OrderbookStreamSettings` | WS 连接、轮询和 rewards candle history 配置（默认 `max_tokens=3000`、`reward_candidate_token_cap=50`、`ws_chunk_size=100`、`poll_reconcile_interval_secs=60`、`max_levels_per_side=100`、candle history enabled、interval=300s、request_delay=500ms、max_tokens_per_cycle=600） |
 | `OrderbookServiceSettings` | orderbook HTTP port/service_url；`write_token` 控制 register/ingest/delete 内部写认证 |
 | `AuthSettings` / `AuthKeySettings` | 认证配置和密钥；`disabled` 可开启内网免鉴权模式 |
 | `CopytradeSettings` | 跟单配置 |
@@ -161,8 +161,8 @@ Orderbook candle history 默认由 orderbook 服务独立启用：`POLYEDGE_ORDE
 - 新闻源默认值已内置在 `settings/defaults.rs`；部署模板默认开启 news 子系统和 worker poll loop，会抓取模板中显式配置的默认 RSS/Atom 源，新闻提升为 events/evidences 仍默认关闭
 - 认证中间件支持 JWT/dev-auth 和内网免鉴权模式；当前部署模板默认 `POLYEDGE_AUTH__DISABLED=true`
 - Orderbook cache 当前 runtime 使用进程内 `InMemoryOrderbookCache`；Redis 实现保留但未接入默认 runtime
-- Orderbook 服务的 `/orderbook/stats` 现在区分真实 cache 条目数、registry 来源数和 registry 去重 token 总数，避免把订阅 token 数误报为缓存条目数；worker 注册 rewards 候选预热 token 受 `POLYEDGE_ORDERBOOK_STREAM__REWARD_CANDIDATE_TOKEN_CAP` 限制，默认 100，设为 0 可清空候选预热 source
-- Orderbook 进程内缓存会先保留最优价格顺序，再按 `POLYEDGE_ORDERBOOK_STREAM__MAX_LEVELS_PER_SIDE` 裁剪每侧 bids/asks 深度，默认 100 档；HTTP register/batch/ingest 入口使用 `max_tokens` 做请求规模上限，Polymarket WS 订阅使用 `POLYEDGE_ORDERBOOK_STREAM__WS_CHUNK_SIZE` 控制每条连接承载的 token 数，register 会原子替换对应 source 当前有序 token 集合，ingest 会先校验整批数据再批量写入并传播缓存错误，registry source 固定上限为 32 个
+- Orderbook 服务的 `/orderbook/stats` 现在区分真实 cache 条目数、registry 来源数和 registry 去重 token 总数，避免把订阅 token 数误报为缓存条目数；worker 注册 rewards 候选预热 token 受 `POLYEDGE_ORDERBOOK_STREAM__REWARD_CANDIDATE_TOKEN_CAP` 限制，默认 50，设为 0 后周期注册任务会按空结果防抖清空候选预热 source
+- Orderbook 进程内缓存会先保留最优价格顺序，再按 `POLYEDGE_ORDERBOOK_STREAM__MAX_LEVELS_PER_SIDE` 裁剪每侧 bids/asks 深度，默认 100 档；HTTP register/batch/ingest 入口使用 `max_tokens` 做请求规模上限，Polymarket WS 订阅使用 `POLYEDGE_ORDERBOOK_STREAM__WS_CHUNK_SIZE` 控制每条连接承载的 token 数（默认 100），poll reconcile 默认 60 秒，register 会原子替换对应 source 当前有序 token 集合，worker 对周期注册空集合做 active/exec 2 轮、eligible/candidates 3 轮防抖后才发送空集合清源，ingest 会先校验整批数据再批量写入并传播缓存错误，registry source 固定上限为 32 个
 - Orderbook 缓存拒绝旧 `observed_at` 覆盖未过期条目，但已过期条目可被后续写入恢复；rewards 控制命令具备 5 分钟 running lease，并会合并 pending/running 重复命令；Postgres rewards live worker 通过 advisory lease 避免多实例并发执行
 - Rewards managed order upsert 会更新后续实际提交的 `price` / `size` / `strategy_bucket`，保证 flatten 改价、CLOB 数量调整、未知提交恢复和低竞争 bucket 统计使用持久化后的真实参数
 - Rewards store 已持久化 quote/selection mode、dominant 单边阈值、盘口集中度阈值、偏好分类、低竞争 sleeve 配置、AI advisory 配置和信息风险配置；`reward_market_advisories`、`reward_market_info_risks`、`reward_low_competition_observations` 与 `reward_market_candles` 表已由迁移创建，并已接入 Postgres/内存读写，供 worker 跳过重复模型判断、生成低竞争 shadow report，并向 AI advisory 提供 price-history K 线。

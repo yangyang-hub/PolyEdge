@@ -141,14 +141,19 @@ fn spawn_worker_tasks(state: &AppState, shutdown_rx: watch::Receiver<bool>) -> V
     // the orderbook service so it subscribes to the right markets.
     {
         let job_state = state.clone();
+        let registration_state = Arc::new(tokio::sync::Mutex::new(
+            OrderbookRegistrationState::default(),
+        ));
         handles.push(spawn_interval_job(
             "register-orderbook-tokens",
             settings.market_sync_interval_secs.clamp(10, 60),
             shutdown_rx.clone(),
             move || {
                 let state = job_state.clone();
+                let registration_state = registration_state.clone();
                 async move {
-                    register_orderbook_tokens(&state).await;
+                    let mut registration_state = registration_state.lock().await;
+                    register_orderbook_tokens(&state, &mut registration_state).await;
                 }
             },
         ));
@@ -632,218 +637,4 @@ async fn worker_shutdown_signal() {
         _ = ctrl_c => {}
         _ = terminate => {}
     }
-}
-
-/// Collect token IDs from active rewards state, execution orders, eligible plans,
-/// and reward candidates, then register them with the orderbook service via HTTP.
-async fn register_orderbook_tokens(state: &AppState) {
-    let max_tokens = state.settings.orderbook_stream.max_tokens;
-    let reward_candidate_token_cap = state.settings.orderbook_stream.reward_candidate_token_cap;
-    let mut exec_candidates = Vec::new();
-    let mut exec_candidate_seen = HashSet::new();
-    let mut exec_query_complete = true;
-
-    // Source 1: Active execution orders → market YES/NO asset IDs.
-    for status in [
-        OrderStatus::Submitted,
-        OrderStatus::Open,
-        OrderStatus::PartiallyFilled,
-    ] {
-        // Cap at 200 to satisfy OrderListFilters validation (execution MAX_LIST_LIMIT).
-        let fetch_limit = max_tokens.saturating_mul(2).min(200) as u16;
-        let filters = match OrderListFilters::new(
-            None,
-            None,
-            Some(POLYMARKET_CONNECTOR_NAME.to_string()),
-            Some(status),
-            Some(fetch_limit),
-        ) {
-            Ok(f) => f,
-            Err(error) => {
-                warn!(error = %error, "failed to build order filters for token registration");
-                exec_query_complete = false;
-                continue;
-            }
-        };
-        let orders = match state.execution_service.list_orders(filters).await {
-            Ok(orders) => orders,
-            Err(error) => {
-                warn!(error = %error, "failed to list orders for token registration");
-                exec_query_complete = false;
-                continue;
-            }
-        };
-
-        for order in orders {
-            if exec_candidates.len() >= max_tokens {
-                break;
-            }
-            let market = match state.market_event_service.get_market(&order.market_id).await {
-                Ok(m) => m,
-                Err(_) => continue,
-            };
-            let refs = match polymarket_market_refs(&market) {
-                Ok(r) => r,
-                Err(_) => continue,
-            };
-            for token_id in [refs.yes_asset_id, refs.no_asset_id] {
-                if exec_candidate_seen.insert(token_id.clone()) {
-                    exec_candidates.push(token_id);
-                }
-            }
-        }
-    }
-
-    // Collect raw token lists per source together with a completeness flag.
-    // On query failure a source is marked incomplete and skipped below, so the
-    // orderbook registry keeps its previous value for that source.
-    let (active_tokens, reward_active_complete) =
-        match state.reward_bot_service.list_active_reward_book_token_ids().await {
-            Ok(tokens) => (tokens, true),
-            Err(error) => {
-                warn!(error = %error, "failed to list active rewards tokens for registration");
-                (Vec::new(), false)
-            }
-        };
-    let (eligible_tokens, reward_eligible_complete) =
-        match state.reward_bot_service.list_eligible_reward_book_token_ids().await {
-            Ok(tokens) => (tokens, true),
-            Err(error) => {
-                warn!(error = %error, "failed to list eligible rewards tokens for registration");
-                (Vec::new(), false)
-            }
-        };
-    let (candidate_tokens, reward_candidates_complete) = if reward_candidate_token_cap == 0 {
-        (Vec::new(), true)
-    } else {
-        match state.reward_bot_service.list_all_reward_candidate_token_ids().await {
-            Ok(tokens) => (tokens, true),
-            Err(error) => {
-                warn!(error = %error, "failed to list reward candidate tokens for registration");
-                (Vec::new(), false)
-            }
-        }
-    };
-
-    // Allocate per-source registration buckets. Each source is deduped and
-    // capped independently — cross-source dedup and the global max_tokens cap
-    // are applied by the orderbook registry aggregation layer (`list_all_tokens`
-    // priority merge + `take(max_tokens)`). Registering the full eligible set
-    // here keeps `rewards_eligible` stable instead of being emptied (and the
-    // source deleted) whenever active positions overlap eligible tokens, which
-    // previously drove a cancel/re-place oscillation via WS subscription
-    // rebuilds. `candidate` is still capped by `reward_candidate_token_cap` to
-    // preserve the cold-start prewarm budget.
-    let buckets = allocate_registration_buckets(
-        active_tokens,
-        exec_candidates,
-        eligible_tokens,
-        candidate_tokens,
-        max_tokens,
-        reward_candidate_token_cap,
-    );
-
-    for (source, source_tokens, complete) in [
-        (
-            "rewards_active",
-            buckets.active.as_slice(),
-            reward_active_complete,
-        ),
-        ("exec_orders", buckets.exec.as_slice(), exec_query_complete),
-        (
-            "rewards_eligible",
-            buckets.eligible.as_slice(),
-            reward_eligible_complete,
-        ),
-        (
-            "rewards_candidates",
-            buckets.candidate.as_slice(),
-            reward_candidates_complete,
-        ),
-        ("rewards", &[], true),
-    ] {
-        if !complete {
-            continue;
-        }
-        if let Err(error) = state
-            .orderbook_registry
-            .register_tokens(source, source_tokens)
-            .await
-        {
-            warn!(source, error = %error, "failed to replace orderbook token registration");
-        }
-    }
-
-    info!(
-        reward_active_tokens = buckets.active.len(),
-        exec_tokens = buckets.exec.len(),
-        reward_eligible_tokens = buckets.eligible.len(),
-        reward_candidate_tokens = buckets.candidate.len(),
-        reward_candidate_token_cap,
-        max_tokens,
-        "registered orderbook tokens with orderbook service"
-    );
-}
-
-fn push_unique_tokens(
-    target: &mut Vec<String>,
-    seen: &mut HashSet<String>,
-    tokens: Vec<String>,
-    limit: usize,
-) {
-    for token in tokens {
-        if target.len() >= limit {
-            break;
-        }
-        if token.trim().is_empty() || !seen.insert(token.clone()) {
-            continue;
-        }
-        target.push(token);
-    }
-}
-
-struct RegistrationBuckets {
-    active: Vec<String>,
-    exec: Vec<String>,
-    eligible: Vec<String>,
-    candidate: Vec<String>,
-}
-
-/// Dedup and cap each orderbook registration source independently.
-///
-/// Cross-source deduplication and the global `max_tokens` cap are applied by
-/// the orderbook registry aggregation layer, so each source registers its own
-/// full set here. This keeps `rewards_eligible` stable (no longer emptied when
-/// active positions overlap eligible tokens), avoiding the WS subscription
-/// rebuild oscillation that the previous shared-seen budget allocation caused.
-/// `candidate` is capped by `candidate_cap` to preserve the cold-start prewarm
-/// budget.
-fn allocate_registration_buckets(
-    active: Vec<String>,
-    exec: Vec<String>,
-    eligible: Vec<String>,
-    candidate: Vec<String>,
-    max_tokens: usize,
-    candidate_cap: usize,
-) -> RegistrationBuckets {
-    let mut buckets = RegistrationBuckets {
-        active: Vec::new(),
-        exec: Vec::new(),
-        eligible: Vec::new(),
-        candidate: Vec::new(),
-    };
-    let mut active_seen = HashSet::new();
-    let mut exec_seen = HashSet::new();
-    let mut eligible_seen = HashSet::new();
-    let mut candidate_seen = HashSet::new();
-    push_unique_tokens(&mut buckets.active, &mut active_seen, active, max_tokens);
-    push_unique_tokens(&mut buckets.exec, &mut exec_seen, exec, max_tokens);
-    push_unique_tokens(&mut buckets.eligible, &mut eligible_seen, eligible, max_tokens);
-    push_unique_tokens(
-        &mut buckets.candidate,
-        &mut candidate_seen,
-        candidate,
-        candidate_cap,
-    );
-    buckets
 }

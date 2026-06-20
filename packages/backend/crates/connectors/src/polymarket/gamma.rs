@@ -1,4 +1,4 @@
-use serde::Deserialize;
+use serde::{Deserialize, de::DeserializeOwned};
 use serde_json::Value as JsonValue;
 use time::format_description::well_known::Rfc3339;
 
@@ -9,6 +9,7 @@ const GAMMA_RETRY_BASE_DELAY: Duration = Duration::from_millis(500);
 const GAMMA_RATE_LIMIT_MAX_RETRIES: u32 = 5;
 const GAMMA_RATE_LIMIT_BASE_DELAY: Duration = Duration::from_secs(2);
 const GAMMA_CONDITION_BATCH_SIZE: usize = 50;
+const RESPONSE_PREVIEW_BYTES: usize = 300;
 
 #[derive(Debug, Clone)]
 pub struct PolymarketGammaMarket {
@@ -221,12 +222,17 @@ impl PolymarketGammaConnector {
             ));
         }
 
-        let raw = response.json::<RawGammaMarket>().await.map_err(|error| {
+        let body = response.bytes().await.map_err(|error| {
             AppError::dependency_unavailable(
                 "POLYMARKET_GAMMA_MARKET_DECODE_FAILED",
-                format!("failed to decode Polymarket Gamma market {market_id}: {error}"),
+                format!("failed to read Polymarket Gamma market {market_id} response body: {error}"),
             )
         })?;
+        let raw = decode_json_body::<RawGammaMarket>(
+            &body,
+            "POLYMARKET_GAMMA_MARKET_DECODE_FAILED",
+            &format!("Polymarket Gamma market {market_id}"),
+        )?;
 
         map_gamma_market(raw)
     }
@@ -318,16 +324,18 @@ impl PolymarketGammaConnector {
                 ));
             }
 
-            return response
-                .json::<Vec<RawGammaMarket>>()
-                .await
-                .map(Some)
-                .map_err(|error| {
-                    AppError::dependency_unavailable(
-                        "POLYMARKET_GAMMA_MARKETS_DECODE_FAILED",
-                        format!("failed to decode Polymarket Gamma markets: {error}"),
-                    )
-                });
+            let body = response.bytes().await.map_err(|error| {
+                AppError::dependency_unavailable(
+                    "POLYMARKET_GAMMA_MARKETS_DECODE_FAILED",
+                    format!("failed to read Polymarket Gamma markets response body: {error}"),
+                )
+            })?;
+            return decode_json_body::<Vec<RawGammaMarket>>(
+                &body,
+                "POLYMARKET_GAMMA_MARKETS_DECODE_FAILED",
+                "Polymarket Gamma markets",
+            )
+            .map(Some);
         }
 
         unreachable!()
@@ -404,16 +412,44 @@ impl PolymarketGammaConnector {
                 ));
             }
 
-            return response.json::<Vec<RawGammaMarket>>().await.map_err(|error| {
+            let body = response.bytes().await.map_err(|error| {
                 AppError::dependency_unavailable(
                     "POLYMARKET_GAMMA_MARKETS_DECODE_FAILED",
-                    format!("failed to decode Polymarket Gamma markets condition query: {error}"),
+                    format!(
+                        "failed to read Polymarket Gamma markets condition query response body: {error}"
+                    ),
                 )
-            });
+            })?;
+            return decode_json_body::<Vec<RawGammaMarket>>(
+                &body,
+                "POLYMARKET_GAMMA_MARKETS_DECODE_FAILED",
+                "Polymarket Gamma markets condition query",
+            );
         }
 
         unreachable!()
     }
+}
+
+fn decode_json_body<T: DeserializeOwned>(body: &[u8], code: &'static str, label: &str) -> Result<T> {
+    serde_json::from_slice(body).map_err(|error| {
+        AppError::dependency_unavailable(
+            code,
+            format!(
+                "failed to decode {label}: {error}; body_preview=\"{}\"",
+                response_body_preview(body)
+            ),
+        )
+    })
+}
+
+fn response_body_preview(body: &[u8]) -> String {
+    let preview_len = body.len().min(RESPONSE_PREVIEW_BYTES);
+    let mut preview = String::new();
+    for ch in String::from_utf8_lossy(&body[..preview_len]).chars() {
+        preview.extend(ch.escape_debug());
+    }
+    preview
 }
 
 fn map_gamma_market(raw: RawGammaMarket) -> Result<Option<PolymarketGammaMarket>> {

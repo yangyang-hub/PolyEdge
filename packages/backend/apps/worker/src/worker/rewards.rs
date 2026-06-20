@@ -550,6 +550,7 @@ async fn run_reward_bot_live_tick(
         )
         .await?;
         open_orders.extend(placement_orders);
+        register_reward_active_orderbook_tokens(state, trace_id).await;
         let placement_plan_index: HashMap<&str, &RewardQuotePlan> = cycle
             .plans
             .iter()
@@ -646,6 +647,7 @@ include!("rewards/live_orders.rs");
 include!("rewards/live_submission.rs");
 include!("rewards/live_pending.rs");
 include!("rewards/live_helpers.rs");
+include!("rewards/live_orderbook_risk.rs");
 include!("rewards/live_risk.rs");
 include!("rewards/orderbook_events.rs");
 include!("rewards/polling.rs");

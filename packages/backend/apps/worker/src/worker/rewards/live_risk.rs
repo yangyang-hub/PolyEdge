@@ -1,7 +1,3 @@
-const LIVE_ORDERBOOK_VALIDATION_SKIP_TTL: TimeDuration = TimeDuration::hours(12);
-const LIVE_ORDERBOOK_WAITING_REASON_PREFIX: &str =
-    "waiting for fresh orderbook data from subscription";
-
 const LIVE_CANCEL_RETRY_MIN_INTERVAL: TimeDuration = TimeDuration::seconds(15);
 const LIVE_CANCEL_FINAL_RECONCILIATION_RETRY_AFTER: TimeDuration = TimeDuration::seconds(30);
 
@@ -73,11 +69,13 @@ fn live_cancel_reason(
     {
         return None;
     }
-    if let Some(reason) = live_quote_book_unavailable_reason(config, books, &order.token_id, now) {
+    if let Some(reason) = live_quote_book_missing_or_empty_reason(books, &order.token_id) {
         return Some(reason);
     }
+    let stale_age_ms = live_quote_book_stale_age_ms(config, books, &order.token_id, now);
     if order.side != RewardOrderSide::Buy {
-        return None;
+        return stale_age_ms
+            .map(|age_ms| live_orderbook_stale_reason(age_ms, config.stale_book_ms));
     }
     let Some(plan) = plans.get(order.condition_id.as_str()) else {
         return Some("market no longer offers rewards".to_string());
@@ -95,6 +93,12 @@ fn live_cancel_reason(
                 "quote target moved {drift_cents} cents beyond requote threshold"
             ));
         }
+    }
+    if let Some(age_ms) = stale_age_ms {
+        if live_stale_orderbook_cancel_grace_active(config, order, now) {
+            return None;
+        }
+        return Some(live_orderbook_stale_reason(age_ms, config.stale_book_ms));
     }
     if let Some(reason) = live_min_depth_cancel_reason(config, books, order) {
         return Some(reason);
@@ -227,6 +231,15 @@ fn live_placement_orders(
             plan.live_skip_until = None;
             plan.live_skip_reason = None;
             plan.updated_at = OffsetDateTime::now_utc();
+        }
+        let now = OffsetDateTime::now_utc();
+        if let Some(wait_reason) =
+            live_orderbook_placement_wait_reason(&plan_config, &plans[plan_index].legs, books, now)
+        {
+            if mark_live_orderbook_waiting(&mut plans[plan_index], wait_reason, now) {
+                plans_changed = true;
+            }
+            continue;
         }
         let plan = &plans[plan_index];
         if active_markets.len() >= max_markets && !active_markets.contains(&plan.condition_id) {
@@ -394,80 +407,6 @@ fn mark_live_orderbook_waiting(
         plan.updated_at = now;
     }
     changed
-}
-
-fn live_orderbook_wait_reason(
-    config: &RewardBotConfig,
-    plan: &RewardQuotePlan,
-    books: &HashMap<String, RewardOrderBook>,
-    now: OffsetDateTime,
-) -> Option<String> {
-    let mut reasons = Vec::new();
-    let mut seen = HashSet::new();
-
-    for leg in &plan.legs {
-        if !seen.insert(leg.token_id.clone()) {
-            continue;
-        }
-        let label = if leg.outcome.trim().is_empty() {
-            leg.token_id.as_str()
-        } else {
-            leg.outcome.as_str()
-        };
-        let Some(book) = books.get(&leg.token_id) else {
-            reasons.push(format!("{label} orderbook unavailable"));
-            continue;
-        };
-        if book.bids.is_empty() || book.asks.is_empty() {
-            reasons.push(format!("{label} orderbook is empty"));
-            continue;
-        }
-        if config.stale_book_ms == 0 {
-            continue;
-        }
-        let age_ms = (now - book.observed_at).whole_milliseconds();
-        if age_ms < 0 || age_ms > i128::from(config.stale_book_ms) {
-            reasons.push(format!(
-                "{label} orderbook stale: age_ms={age_ms}, max_age_ms={}",
-                config.stale_book_ms
-            ));
-        }
-    }
-
-    if reasons.is_empty() {
-        None
-    } else {
-        Some(format!(
-            "{LIVE_ORDERBOOK_WAITING_REASON_PREFIX}: {}",
-            reasons.join("; ")
-        ))
-    }
-}
-
-fn live_quote_book_unavailable_reason(
-    config: &RewardBotConfig,
-    books: &HashMap<String, RewardOrderBook>,
-    token_id: &str,
-    now: OffsetDateTime,
-) -> Option<String> {
-    let Some(book) = books.get(token_id) else {
-        return Some("orderbook unavailable for live order".to_string());
-    };
-    if book.bids.is_empty() || book.asks.is_empty() {
-        return Some("orderbook is empty for live order".to_string());
-    }
-    if config.stale_book_ms == 0 {
-        return None;
-    }
-
-    let age_ms = (now - book.observed_at).whole_milliseconds();
-    if age_ms < 0 || age_ms > i128::from(config.stale_book_ms) {
-        return Some(format!(
-            "orderbook stale for live order: age_ms={age_ms}, max_age_ms={}",
-            config.stale_book_ms
-        ));
-    }
-    None
 }
 
 fn live_min_depth_cancel_reason(

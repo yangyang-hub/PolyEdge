@@ -714,4 +714,5 @@ async fn reconcile_paper_fills_creates_order_trade_position_and_executes_signal(
 }
 
 include!("tests/rewards.rs");
+include!("tests/rewards_orderbook_risk.rs");
 include!("tests/rewards_reconciliation.rs");

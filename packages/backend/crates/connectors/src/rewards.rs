@@ -1,6 +1,6 @@
 use polyedge_domain::{AppError, Result};
 use rust_decimal::Decimal;
-use serde::Deserialize;
+use serde::{Deserialize, de::DeserializeOwned};
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::str::FromStr;
@@ -18,6 +18,7 @@ const ENRICH_RATE_LIMIT_MAX_RETRIES: u32 = 5;
 const ENRICH_RATE_LIMIT_BASE_DELAY: Duration = Duration::from_secs(2);
 const ENRICH_REQUEST_INTERVAL: Duration = Duration::from_millis(150);
 const MAX_REWARD_MARKET_PAGES: usize = 1_000;
+const RESPONSE_PREVIEW_BYTES: usize = 300;
 type RawMarketDetailHandle =
     tokio::task::JoinHandle<std::result::Result<Option<RawClobMarketDetail>, AppError>>;
 
@@ -214,15 +215,17 @@ impl PolymarketRewardsConnector {
                 ));
             }
 
-            let payload = response
-                .json::<RewardMarketsResponse>()
-                .await
-                .map_err(|error| {
-                    AppError::dependency_unavailable(
-                        "POLYMARKET_REWARDS_MARKETS_DECODE_FAILED",
-                        format!("failed to decode Polymarket rewards markets: {error}"),
-                    )
-                })?;
+            let body = response.bytes().await.map_err(|error| {
+                AppError::dependency_unavailable(
+                    "POLYMARKET_REWARDS_MARKETS_DECODE_FAILED",
+                    format!("failed to read Polymarket rewards markets response body: {error}"),
+                )
+            })?;
+            let payload = decode_json_body::<RewardMarketsResponse>(
+                &body,
+                "POLYMARKET_REWARDS_MARKETS_DECODE_FAILED",
+                "Polymarket rewards markets",
+            )?;
 
             for raw in payload.data {
                 let market = map_reward_market(raw);
@@ -291,16 +294,18 @@ impl PolymarketRewardsConnector {
             ));
         }
 
-        response
-            .json::<RawClobMarketDetail>()
-            .await
-            .map(Some)
-            .map_err(|error| {
-                AppError::dependency_unavailable(
-                    "POLYMARKET_CLOB_MARKET_DETAIL_DECODE_FAILED",
-                    format!("failed to decode market detail for {condition_id}: {error}"),
-                )
-            })
+        let body = response.bytes().await.map_err(|error| {
+            AppError::dependency_unavailable(
+                "POLYMARKET_CLOB_MARKET_DETAIL_DECODE_FAILED",
+                format!("failed to read market detail response body for {condition_id}: {error}"),
+            )
+        })?;
+        decode_json_body::<RawClobMarketDetail>(
+            &body,
+            "POLYMARKET_CLOB_MARKET_DETAIL_DECODE_FAILED",
+            &format!("market detail for {condition_id}"),
+        )
+        .map(Some)
     }
 
     async fn enrich_reward_markets(
@@ -617,6 +622,31 @@ fn map_reward_token(raw: RawRewardToken) -> Option<PolymarketRewardToken> {
         outcome: raw.outcome.unwrap_or_default(),
         price: raw.price,
     })
+}
+
+fn decode_json_body<T: DeserializeOwned>(
+    body: &[u8],
+    code: &'static str,
+    label: &str,
+) -> Result<T> {
+    serde_json::from_slice(body).map_err(|error| {
+        AppError::dependency_unavailable(
+            code,
+            format!(
+                "failed to decode {label}: {error}; body_preview=\"{}\"",
+                response_body_preview(body)
+            ),
+        )
+    })
+}
+
+fn response_body_preview(body: &[u8]) -> String {
+    let preview_len = body.len().min(RESPONSE_PREVIEW_BYTES);
+    let mut preview = String::new();
+    for ch in String::from_utf8_lossy(&body[..preview_len]).chars() {
+        preview.extend(ch.escape_debug());
+    }
+    preview
 }
 
 include!("rewards/orderbooks.rs");

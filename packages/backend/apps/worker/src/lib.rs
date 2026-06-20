@@ -510,6 +510,7 @@ pub async fn run_cli() -> Result<()> {
 }
 
 include!("worker/service.rs");
+include!("worker/orderbook_registration.rs");
 include!("worker/service_info_risk.rs");
 include!("worker/execution_queue.rs");
 include!("worker/news.rs");

@@ -89,15 +89,17 @@ impl PolymarketRewardsConnector {
                 format!("Polymarket order book batch returned HTTP {status}"),
             ));
         }
-        let raws = response
-            .json::<Vec<RawOrderBook>>()
-            .await
-            .map_err(|error| {
-                AppError::dependency_unavailable(
-                    "POLYMARKET_BOOK_BATCH_DECODE_FAILED",
-                    format!("failed to decode Polymarket order book batch: {error}"),
-                )
-            })?;
+        let body = response.bytes().await.map_err(|error| {
+            AppError::dependency_unavailable(
+                "POLYMARKET_BOOK_BATCH_DECODE_FAILED",
+                format!("failed to read Polymarket order book batch response body: {error}"),
+            )
+        })?;
+        let raws = decode_json_body::<Vec<RawOrderBook>>(
+            &body,
+            "POLYMARKET_BOOK_BATCH_DECODE_FAILED",
+            "Polymarket order book batch",
+        )?;
         let books = map_requested_reward_order_books(raws, token_ids);
         if books.len() < token_ids.len() {
             tracing::warn!(
@@ -170,18 +172,18 @@ impl PolymarketRewardsConnector {
                 format!("Polymarket order book returned HTTP {status} for token_id={token_id}"),
             ));
         }
-        response
-            .json::<RawOrderBook>()
-            .await
-            .map_err(|error| {
-                AppError::dependency_unavailable(
-                    "POLYMARKET_BOOK_DECODE_FAILED",
-                    format!(
-                        "failed to decode Polymarket order book for token_id={token_id}: {error}"
-                    ),
-                )
-            })
-            .map(|raw| map_reward_order_book_with_fallback(raw, token_id))
+        let body = response.bytes().await.map_err(|error| {
+            AppError::dependency_unavailable(
+                "POLYMARKET_BOOK_DECODE_FAILED",
+                format!("failed to read Polymarket order book response body for token_id={token_id}: {error}"),
+            )
+        })?;
+        decode_json_body::<RawOrderBook>(
+            &body,
+            "POLYMARKET_BOOK_DECODE_FAILED",
+            &format!("Polymarket order book for token_id={token_id}"),
+        )
+        .map(|raw| map_reward_order_book_with_fallback(raw, token_id))
     }
 }
 

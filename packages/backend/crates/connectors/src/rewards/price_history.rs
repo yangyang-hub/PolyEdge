@@ -40,17 +40,17 @@ impl PolymarketRewardsConnector {
             ));
         }
 
-        let payload = response
-            .json::<RawPriceHistoryResponse>()
-            .await
-            .map_err(|error| {
-                AppError::dependency_unavailable(
-                    "POLYMARKET_PRICE_HISTORY_DECODE_FAILED",
-                    format!(
-                        "failed to decode Polymarket price history for token_id={token_id}: {error}"
-                    ),
-                )
-            })?;
+        let body = response.bytes().await.map_err(|error| {
+            AppError::dependency_unavailable(
+                "POLYMARKET_PRICE_HISTORY_DECODE_FAILED",
+                format!("failed to read Polymarket price history response body for token_id={token_id}: {error}"),
+            )
+        })?;
+        let payload = decode_json_body::<RawPriceHistoryResponse>(
+            &body,
+            "POLYMARKET_PRICE_HISTORY_DECODE_FAILED",
+            &format!("Polymarket price history for token_id={token_id}"),
+        )?;
         Ok(map_price_history_points(payload.history.unwrap_or_default()))
     }
 }
