@@ -1314,3 +1314,24 @@ fn unresolved_live_reconciliation_blocks_new_buy_submission() {
     pending_cancel.reason = "cancel accepted; awaiting final reconciliation".to_string();
     assert!(has_unresolved_live_reconciliation(&[pending_cancel]));
 }
+
+#[test]
+fn reward_orderbook_remote_refresh_treats_old_local_books_as_stale() {
+    let book = CachedOrderBook {
+        token_id: "token_stale".to_string(),
+        bids: Vec::new(),
+        asks: Vec::new(),
+        observed_at: 1_000,
+        source: BookSource::Poll,
+    };
+
+    assert!(reward_orderbook_book_is_stale(&book, 50_001, 45_000));
+    assert!(!reward_orderbook_book_is_stale(&book, 46_000, 45_000));
+    assert!(!reward_orderbook_book_is_stale(&book, 90_000, 0));
+
+    let future_book = CachedOrderBook {
+        observed_at: 100_000,
+        ..book
+    };
+    assert!(reward_orderbook_book_is_stale(&future_book, 90_000, 45_000));
+}

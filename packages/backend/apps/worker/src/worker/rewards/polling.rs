@@ -389,17 +389,15 @@ async fn fetch_cached_reward_books(
 
     let cached_books = if let Some(orderbook_cache) = orderbook_cache {
         let mut cached_books = orderbook_cache.get_books(token_ids).await;
-        let present = cached_books
-            .iter()
-            .map(|book| book.token_id.clone())
-            .collect::<HashSet<_>>();
-        let missing = token_ids
-            .iter()
-            .filter(|token_id| !present.contains(*token_id))
-            .cloned()
-            .collect::<Vec<_>>();
-        if !missing.is_empty() {
-            let remote_books = fetch_remote_cached_orderbooks(state, &missing).await?;
+        let remote_refresh_tokens =
+            reward_orderbook_remote_refresh_tokens(state, token_ids, &cached_books).await?;
+        if !remote_refresh_tokens.is_empty() {
+            let remote_books = fetch_remote_cached_orderbooks(state, &remote_refresh_tokens).await?;
+            let remote_token_ids = remote_books
+                .iter()
+                .map(|book| book.token_id.as_str())
+                .collect::<HashSet<_>>();
+            cached_books.retain(|book| !remote_token_ids.contains(book.token_id.as_str()));
             for book in &remote_books {
                 cached_books.push(book.clone());
             }
@@ -415,6 +413,48 @@ async fn fetch_cached_reward_books(
         books.insert(cached.token_id.clone(), cached_order_book_to_reward(&cached));
     }
     Ok(books)
+}
+
+async fn reward_orderbook_remote_refresh_tokens(
+    state: &AppState,
+    token_ids: &[String],
+    cached_books: &[CachedOrderBook],
+) -> Result<Vec<String>> {
+    let config = state.reward_bot_service.read_config().await?;
+    let stale_book_ms = config.stale_book_ms;
+    let now_ms = reward_orderbook_now_millis();
+    let present = cached_books
+        .iter()
+        .map(|book| book.token_id.as_str())
+        .collect::<HashSet<_>>();
+    let stale = cached_books
+        .iter()
+        .filter(|book| reward_orderbook_book_is_stale(book, now_ms, stale_book_ms))
+        .map(|book| book.token_id.as_str())
+        .collect::<HashSet<_>>();
+
+    let mut seen = HashSet::new();
+    let mut refresh = Vec::new();
+    for token_id in token_ids {
+        if (!present.contains(token_id.as_str()) || stale.contains(token_id.as_str()))
+            && seen.insert(token_id.as_str())
+        {
+            refresh.push(token_id.clone());
+        }
+    }
+    Ok(refresh)
+}
+
+fn reward_orderbook_book_is_stale(
+    book: &CachedOrderBook,
+    now_ms: i64,
+    stale_book_ms: u64,
+) -> bool {
+    if stale_book_ms == 0 {
+        return false;
+    }
+    let age_ms = now_ms.saturating_sub(book.observed_at);
+    book.observed_at > now_ms || age_ms > i64::try_from(stale_book_ms).unwrap_or(i64::MAX)
 }
 
 fn record_reward_book_history(
