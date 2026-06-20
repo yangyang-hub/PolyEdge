@@ -312,6 +312,7 @@ fn build_ready_quote_plan(
 ) -> RewardQuotePlan {
     let score = score_market(market, max_spread_cents, midpoint, &legs, config);
     let eligible = score >= config.min_market_score;
+    let orderbook_token_ids = quote_leg_token_ids(&legs);
 
     RewardQuotePlan {
         condition_id: market.condition_id.clone(),
@@ -319,6 +320,7 @@ fn build_ready_quote_plan(
         question: market.question.clone(),
         score,
         eligible,
+        pre_ai_eligible: eligible,
         reason: if eligible {
             format!(
                 "eligible pending live orderbook validation for {} quotes",
@@ -342,6 +344,7 @@ fn build_ready_quote_plan(
         total_daily_rate: market.total_daily_rate,
         rewards_max_spread: market.rewards_max_spread,
         rewards_min_size: market.rewards_min_size,
+        orderbook_token_ids,
         legs,
         updated_at: now,
     }
@@ -402,6 +405,18 @@ fn placeholder_quote_leg(token: &RewardToken) -> RewardQuoteLeg {
     }
 }
 
+fn quote_leg_token_ids(legs: &[RewardQuoteLeg]) -> Vec<String> {
+    let mut token_ids = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for leg in legs {
+        if leg.token_id.trim().is_empty() || !seen.insert(leg.token_id.clone()) {
+            continue;
+        }
+        token_ids.push(leg.token_id.clone());
+    }
+    token_ids
+}
+
 fn empty_plan(
     market: &RewardMarket,
     reason: impl Into<String>,
@@ -415,6 +430,7 @@ fn empty_plan(
         question: market.question.clone(),
         score: Decimal::ZERO,
         eligible: false,
+        pre_ai_eligible: false,
         reason: reason.into(),
         strategy_bucket,
         quote_mode: RewardPlanQuoteMode::None,
@@ -429,6 +445,7 @@ fn empty_plan(
         total_daily_rate: market.total_daily_rate,
         rewards_max_spread: market.rewards_max_spread,
         rewards_min_size: market.rewards_min_size,
+        orderbook_token_ids: Vec::new(),
         legs: Vec::new(),
         updated_at: now,
     }

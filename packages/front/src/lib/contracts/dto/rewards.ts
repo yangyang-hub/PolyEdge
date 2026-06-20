@@ -235,6 +235,7 @@ export type RewardQuotePlanDto = {
   question: string;
   score: DecimalValue;
   eligible: boolean;
+  pre_ai_eligible: boolean;
   reason: string;
   strategy_bucket: RewardStrategyBucket;
   quote_mode: RewardPlanQuoteMode;
@@ -249,6 +250,7 @@ export type RewardQuotePlanDto = {
   total_daily_rate: DecimalValue;
   rewards_max_spread: DecimalValue;
   rewards_min_size: DecimalValue;
+  orderbook_token_ids?: string[];
   legs: RewardQuoteLegDto[];
   updated_at: string;
 };

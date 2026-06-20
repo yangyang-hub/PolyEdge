@@ -41,3 +41,42 @@ fn transient_live_orderbook_skip_reasons_are_not_carried() {
     )));
     assert!(!live_orderbook_skip_reason_is_transient(None));
 }
+
+#[test]
+fn quote_plan_book_token_registration_uses_persisted_orderbook_tokens() {
+    let now = OffsetDateTime::now_utc();
+    let plan = RewardQuotePlan {
+        condition_id: "cond_pre_ai".to_string(),
+        market_slug: "pre-ai-market".to_string(),
+        question: "Will this market need AI?".to_string(),
+        score: Decimal::ONE,
+        eligible: false,
+        pre_ai_eligible: true,
+        reason: "AI advisory pending: market has not passed provider filter".to_string(),
+        strategy_bucket: RewardStrategyBucket::Standard,
+        quote_mode: RewardPlanQuoteMode::None,
+        recommended_quote_mode: Some(RewardPlanQuoteMode::Double),
+        book_metrics: None,
+        low_competition_metrics: None,
+        ai_advisory: None,
+        info_risk: None,
+        midpoint: Some(Decimal::new(5, 1)),
+        live_skip_until: None,
+        live_skip_reason: None,
+        total_daily_rate: Decimal::ONE,
+        rewards_max_spread: Decimal::ONE,
+        rewards_min_size: Decimal::ONE,
+        orderbook_token_ids: vec!["yes_token".to_string(), "no_token".to_string()],
+        legs: Vec::new(),
+        updated_at: now,
+    };
+    let mut seen = HashSet::new();
+    let mut token_ids = Vec::new();
+
+    RewardBotService::push_reward_quote_plan_book_tokens(&plan, &mut seen, &mut token_ids);
+
+    assert_eq!(
+        token_ids,
+        vec!["yes_token".to_string(), "no_token".to_string()]
+    );
+}

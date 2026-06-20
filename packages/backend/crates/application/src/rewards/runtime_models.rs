@@ -219,6 +219,8 @@ pub struct RewardQuotePlan {
     pub question: String,
     pub score: Decimal,
     pub eligible: bool,
+    #[serde(default)]
+    pub pre_ai_eligible: bool,
     pub reason: String,
     #[serde(default = "default_reward_strategy_bucket")]
     pub strategy_bucket: RewardStrategyBucket,
@@ -244,6 +246,8 @@ pub struct RewardQuotePlan {
     pub total_daily_rate: Decimal,
     pub rewards_max_spread: Decimal,
     pub rewards_min_size: Decimal,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub orderbook_token_ids: Vec<String>,
     pub legs: Vec<RewardQuoteLeg>,
     #[serde(with = "time::serde::rfc3339")]
     pub updated_at: OffsetDateTime,

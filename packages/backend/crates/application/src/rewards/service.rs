@@ -417,21 +417,42 @@ impl RewardBotService {
         Ok(select_reward_book_token_ids(&markets))
     }
 
-    /// Return distinct token IDs from the latest eligible quote plans. Candidate
-    /// registration still provides cold-start coverage before these plans exist.
+    /// Return distinct token IDs from the latest final-eligible or pre-AI
+    /// deterministic-eligible quote plans. Candidate registration still provides
+    /// cold-start coverage before these plans exist.
     pub async fn list_eligible_reward_book_token_ids(&self) -> Result<Vec<String>> {
         let plans = self.store.list_all_quote_plans().await?;
         let mut seen = HashSet::new();
         let mut token_ids = Vec::new();
-        for plan in plans.iter().filter(|plan| plan.eligible) {
+        for plan in plans
+            .iter()
+            .filter(|plan| plan.eligible || plan.pre_ai_eligible)
+        {
+            Self::push_reward_quote_plan_book_tokens(plan, &mut seen, &mut token_ids);
+        }
+        Ok(token_ids)
+    }
+
+    fn push_reward_quote_plan_book_tokens(
+        plan: &RewardQuotePlan,
+        seen: &mut HashSet<String>,
+        token_ids: &mut Vec<String>,
+    ) {
+        if plan.orderbook_token_ids.is_empty() {
             for leg in &plan.legs {
                 if leg.token_id.trim().is_empty() || !seen.insert(leg.token_id.clone()) {
                     continue;
                 }
                 token_ids.push(leg.token_id.clone());
             }
+        } else {
+            for token_id in &plan.orderbook_token_ids {
+                if token_id.trim().is_empty() || !seen.insert(token_id.clone()) {
+                    continue;
+                }
+                token_ids.push(token_id.clone());
+            }
         }
-        Ok(token_ids)
     }
 
     /// Return condition ids that should receive prioritized Gamma metadata
@@ -476,7 +497,10 @@ impl RewardBotService {
 
         if condition_ids.len() < limit {
             let plans = self.store.list_all_quote_plans().await?;
-            for plan in plans.into_iter().filter(|plan| plan.eligible) {
+            for plan in plans
+                .into_iter()
+                .filter(|plan| plan.eligible || plan.pre_ai_eligible)
+            {
                 push_unique_condition_id(
                     &mut condition_ids,
                     &mut seen,
@@ -534,7 +558,7 @@ impl RewardBotService {
         );
         let pre_ai_eligible_condition_ids = plans
             .iter()
-            .filter(|plan| plan.eligible)
+            .filter(|plan| plan.eligible || plan.pre_ai_eligible)
             .map(|plan| plan.condition_id.clone())
             .collect::<Vec<_>>();
         if config.ai_advisory_enabled {
@@ -579,7 +603,7 @@ impl RewardBotService {
         let plans = self.store.list_all_quote_plans().await?;
         let pre_ai_eligible_condition_ids = plans
             .iter()
-            .filter(|plan| plan.eligible)
+            .filter(|plan| plan.eligible || plan.pre_ai_eligible)
             .map(|plan| plan.condition_id.clone())
             .collect::<Vec<_>>();
         Ok(RewardLiveCycle {

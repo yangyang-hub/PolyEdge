@@ -25,7 +25,7 @@
 1. 加载 `Runtime` 并绑定 `0.0.0.0:${POLYEDGE_ORDERBOOK__PORT}`。
 2. 立即暴露 `/healthz` 和 orderbook HTTP API，避免 Polymarket 延迟阻塞容器健康检查。
 3. 后台启动 Gamma full sync 独立循环：initial 立即执行，之后按 `market_sync_interval_secs` 固定节拍同步；单次超时为 interval 的 80%，并限制在 60-240 秒。full sync upsert 会跳过同版本同内容的行，并只在 `synced_at` 超过 rewards 新鲜度窗口约三分之二时刷新安静市场。
-4. 后台启动 Gamma priority sync 独立循环：优先刷新已注册 token 映射的 condition、活跃 rewards 订单/持仓、eligible quote plans 和放宽新鲜度后的 rewards 候选 condition；还有剩余额度时，用 active rewards catalog 中高奖励市场补足作为恢复种子；最多 500 个 condition，单次超时最多 120 秒。priority sync 继续强制刷新 `synced_at`，确保重点市场满足 rewards 新鲜度过滤。
+4. 后台启动 Gamma priority sync 独立循环：优先刷新已注册 token 映射的 condition、活跃 rewards 订单/持仓、最终 eligible 或 pre-AI deterministic eligible quote plans 和放宽新鲜度后的 rewards 候选 condition；还有剩余额度时，用 active rewards catalog 中高奖励市场补足作为恢复种子；最多 500 个 condition，单次超时最多 120 秒。priority sync 继续强制刷新 `synced_at`，确保重点市场满足 rewards 新鲜度过滤。
 5. priority sync 间隔由 rewards `max_market_data_age_minutes` 动态推导，约为新鲜度窗口三分之一，并限制在 30-300 秒；配置窗口越小，重点市场刷新越频繁。
 6. 后台启动 rewards catalog 独立循环：initial 立即执行，之后每次完成后等待 `market_sync_interval_secs`；单次超时 45 分钟，超时或失败时保留上一版 rewards catalog。
 7. 始终运行盘口流；没有注册 token 时每 10 秒等待一次。
@@ -49,7 +49,7 @@
 ## 缓存与订阅约束
 
 - 每个 source 的 `register_tokens()` 是原子全量替换，不是增量追加；空集合等同删除 source。
-- registry 聚合顺序由 infrastructure 固定，优先级为 `rewards_active`、`exec_orders`、`rewards_eligible`、`rewards_candidates`、`copytrade`，最终受 `POLYEDGE_ORDERBOOK_STREAM__MAX_TOKENS` 限制；worker 周期注册任务为每个 source 独立注册全量 token，跨 source 去重和总量截断由聚合层完成，`rewards_eligible` 注册全部 eligible quote plan token（不再因 active 持仓覆盖而被清空，避免两个注册者交替写入触发 WS 重建振荡）；`rewards_candidates` 预热 token 还受 `POLYEDGE_ORDERBOOK_STREAM__REWARD_CANDIDATE_TOKEN_CAP` 限制，避免候选池填满全局订阅预算。
+- registry 聚合顺序由 infrastructure 固定，优先级为 `rewards_active`、`exec_orders`、`rewards_eligible`、`rewards_candidates`、`copytrade`，最终受 `POLYEDGE_ORDERBOOK_STREAM__MAX_TOKENS` 限制；worker 周期注册任务为每个 source 独立注册全量 token，跨 source 去重和总量截断由聚合层完成，`rewards_eligible` 注册全部最终 eligible quote plan token，并包含 AI/info-risk gate 前已 deterministic eligible 且保存到 `orderbook_token_ids` 的 token（不再因 active 持仓覆盖而被清空，也避免 AI advisory pending 与缺盘口互相等待）；`rewards_candidates` 预热 token 还受 `POLYEDGE_ORDERBOOK_STREAM__REWARD_CANDIDATE_TOKEN_CAP` 限制，避免候选池填满全局订阅预算。
 - Polymarket WS 订阅按 `POLYEDGE_ORDERBOOK_STREAM__WS_CHUNK_SIZE` 分片成多条连接，降低单连接高消息量导致 SDK broadcast lag 的风险；任意分片结束或失败时，当前 stream lifecycle 会整体重建。
 - stream refresh 只用 token 成员集合判断是否需要重建 WS 订阅，避免候选/eligible 查询排序抖动导致同一批 token 反复断线重连；poll reconciler 的共享 token 列表仍每次刷新为最新顺序。
 - 所有缓存写入都会先把 bids 按价格降序、asks 按价格升序排序，再裁剪到 `POLYEDGE_ORDERBOOK_STREAM__MAX_LEVELS_PER_SIDE`，避免上游无序数据丢失 top-of-book。

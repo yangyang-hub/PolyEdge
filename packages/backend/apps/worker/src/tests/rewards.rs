@@ -26,6 +26,7 @@ fn live_test_plan(now: OffsetDateTime) -> RewardQuotePlan {
         question: "Will the live event happen?".to_string(),
         score: reward_decimal("50"),
         eligible: true,
+        pre_ai_eligible: true,
         reason: "eligible".to_string(),
         strategy_bucket: polyedge_application::RewardStrategyBucket::None,
         quote_mode: polyedge_application::RewardPlanQuoteMode::Double,
@@ -40,6 +41,7 @@ fn live_test_plan(now: OffsetDateTime) -> RewardQuotePlan {
         total_daily_rate: reward_decimal("25"),
         rewards_max_spread: reward_decimal("8"),
         rewards_min_size: reward_decimal("5"),
+        orderbook_token_ids: vec!["yes_live".to_string(), "no_live".to_string()],
         legs: vec![
             polyedge_application::RewardQuoteLeg {
                 token_id: "yes_live".to_string(),
@@ -453,6 +455,41 @@ fn allocate_registration_buckets_keeps_eligible_when_active_overlaps() {
         vec!["t1".to_string(), "t2".to_string()]
     );
     assert!(buckets.exec.is_empty());
+    assert!(buckets.candidate.is_empty());
+}
+
+#[test]
+fn pre_ai_eligible_plan_keeps_orderbook_tokens_after_ai_gate_clears_legs() {
+    let now = OffsetDateTime::now_utc();
+    let mut plans = vec![live_test_plan(now)];
+    plans[0].orderbook_token_ids.clear();
+
+    let mut pre_ai_condition_ids = Vec::new();
+    mark_pre_ai_eligible_quote_plans(&mut plans, &mut pre_ai_condition_ids);
+
+    assert_eq!(pre_ai_condition_ids, vec!["cond_live".to_string()]);
+    assert!(plans[0].pre_ai_eligible);
+    assert_eq!(
+        plans[0].orderbook_token_ids,
+        vec!["yes_live".to_string(), "no_live".to_string()]
+    );
+
+    plans[0].eligible = false;
+    plans[0].quote_mode = polyedge_application::RewardPlanQuoteMode::None;
+    plans[0].legs.clear();
+
+    let buckets = allocate_registration_buckets(
+        Vec::new(),
+        Vec::new(),
+        plans[0].orderbook_token_ids.clone(),
+        Vec::new(),
+        10,
+        0,
+    );
+    assert_eq!(
+        buckets.eligible,
+        vec!["yes_live".to_string(), "no_live".to_string()]
+    );
     assert!(buckets.candidate.is_empty());
 }
 

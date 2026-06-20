@@ -61,6 +61,34 @@ async fn run_reward_bot_tick(
     .await
 }
 
+fn mark_pre_ai_eligible_quote_plans(
+    plans: &mut [RewardQuotePlan],
+    pre_ai_eligible_condition_ids: &mut Vec<String>,
+) {
+    pre_ai_eligible_condition_ids.clear();
+    for plan in plans {
+        plan.pre_ai_eligible = plan.eligible;
+        if plan.pre_ai_eligible {
+            if plan.orderbook_token_ids.is_empty() {
+                plan.orderbook_token_ids = quote_plan_leg_token_ids(&plan.legs);
+            }
+            pre_ai_eligible_condition_ids.push(plan.condition_id.clone());
+        }
+    }
+}
+
+fn quote_plan_leg_token_ids(legs: &[RewardQuoteLeg]) -> Vec<String> {
+    let mut token_ids = Vec::new();
+    let mut seen = HashSet::new();
+    for leg in legs {
+        if leg.token_id.trim().is_empty() || !seen.insert(leg.token_id.clone()) {
+            continue;
+        }
+        token_ids.push(leg.token_id.clone());
+    }
+    token_ids
+}
+
 #[derive(Debug, Default)]
 struct RewardCommandProcessReport {
     processed: usize,
@@ -297,12 +325,7 @@ async fn run_reward_bot_live_tick(
         &cycle.open_orders,
         &cycle.config,
     );
-    cycle.pre_ai_eligible_condition_ids = cycle
-        .plans
-        .iter()
-        .filter(|plan| plan.eligible)
-        .map(|plan| plan.condition_id.clone())
-        .collect();
+    mark_pre_ai_eligible_quote_plans(&mut cycle.plans, &mut cycle.pre_ai_eligible_condition_ids);
     info!(
         trace_id = %trace_id,
         markets = cycle.markets.len(),
