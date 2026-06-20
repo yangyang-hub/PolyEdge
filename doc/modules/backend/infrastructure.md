@@ -44,7 +44,7 @@
 | `RewardsSettings` | enabled、poll_interval、AI provider API key/base URL/model/timeout/min confidence、信息风险扫描间隔/每轮 condition cap/置信度/web search 开关等 |
 | `NewsSettings` | enabled、poll_interval_secs、request_timeout_secs、max_items_per_source、sources（RSS/Atom 源列表） |
 | `WorkerSettings` | 各 worker 的启用标志和轮询间隔 |
-| `OrderbookStreamSettings` | WS 连接和轮询配置（默认 `max_tokens=3000`、`reward_candidate_token_cap=100`、`ws_chunk_size=250`、`max_levels_per_side=100`） |
+| `OrderbookStreamSettings` | WS 连接、轮询和 rewards candle history 配置（默认 `max_tokens=3000`、`reward_candidate_token_cap=100`、`ws_chunk_size=250`、`max_levels_per_side=100`、candle history enabled、interval=300s、request_delay=500ms、max_tokens_per_cycle=600） |
 | `OrderbookServiceSettings` | orderbook HTTP port/service_url；`write_token` 控制 register/ingest/delete 内部写认证 |
 | `AuthSettings` / `AuthKeySettings` | 认证配置和密钥；`disabled` 可开启内网免鉴权模式 |
 | `CopytradeSettings` | 跟单配置 |
@@ -52,6 +52,8 @@
 所有字段使用 `#[serde(default)]`，通过 `POLYEDGE_` 前缀环境变量加载（如 `POLYEDGE_SERVER__PORT`）。`packages/backend/.env.example` 只保留本地运行常用项和安全关闭 worker 循环的必要覆盖；完整默认值以 `settings/defaults.rs` 为准，业务阈值优先通过 runtime_config/Settings 调整。未配置 `POLYEDGE_NEWS__SOURCES_JSON` 时，`NewsSettings.sources` 默认包含 8 个已验证可访问的 RSS/Atom 源：`fed_press`、`sec_press`、`nasa_news`、`bbc_world`、`npr_news`、`coindesk`、`cointelegraph`、`decrypt`；设置该变量或 runtime config `news.sources_json` 会覆盖整个列表。`POLYEDGE_POLYMARKET__SIGNATURE_TYPE` 支持 `eoa`、`proxy`、`gnosis_safe`、`poly_1271`；Deposit Wallet 使用 `poly_1271` 并通过 `POLYEDGE_POLYMARKET__FUNDER` 配置 deposit wallet 地址。`POLYEDGE_POLYMARKET__POLYGON_RPC_URL` 用于 worker 读取资金钱包链上 pUSD 余额，默认 `https://polygon-bor-rpc.publicnode.com`。
 
 进程级 rewards 默认关闭：`RewardsSettings.enabled=false`、`WorkerSettings.poll_reward_bot=false`、`WorkerSettings.poll_reward_info_risks=false`。其他历史 worker 循环在代码默认值中仍可能为 true，因此本地模板和部署侧 `deploy/.env.api.example` 会显式写入 `false` 防止 `polyedge-api` 内嵌 runtime 意外启动任务。只有部署环境显式同时开启对应 worker 开关时才启动 live poll loop 或异步信息风险扫描。AI provider 密钥只在 `RewardsSettings` 中读取（`POLYEDGE_REWARDS__AI_OPENAI_API_KEY` / `POLYEDGE_REWARDS__AI_ANTHROPIC_API_KEY`），不会进入 `RewardBotConfig`、API snapshot 或前端 public env；默认模型 `gpt-4.1-mini`、AI advisory 最低置信度 `6500` bps、信息风险最低置信度 `7000` bps、单次超时 180 秒。`ai_advisory_enabled=true` 时，缺少可用 provider 配置或未达到最低置信度的 advisory 会阻断新增 rewards 挂单。AI advisory 每轮最大市场数环境变量已移除；`POLYEDGE_REWARDS__INFO_RISK_MAX_MARKETS_PER_CYCLE` 现在作为 AI advisory/info-risk 统一 provider refresh 与独立 info-risk worker 的每轮 condition cap，默认 50，0 表示本轮不发 provider 请求。信息风险 OpenAI web search 默认关闭。
+
+Orderbook candle history 默认由 orderbook 服务独立启用：`POLYEDGE_ORDERBOOK_STREAM__REWARD_CANDLE_HISTORY_ENABLED=true`、`SYNC_INTERVAL_SECS=300`、`REQUEST_DELAY_MS=500`、`MAX_TOKENS_PER_CYCLE=600`、`BACKFILL_SECS=7200`、`INCREMENTAL_SECS=900`。这些字段控制 CLOB `/prices-history` 请求节奏，用于替代原先从本地高频 orderbook 更新派生 candles 的路径；max tokens 设为 0 会跳过本轮外部请求。
 
 另有 `runtime_config` 子模块支持运行时动态配置。
 
@@ -69,7 +71,7 @@
 | `stores/rewards/postgres_control_commands.rs` / `postgres_heartbeat.rs` / `postgres_orders.rs` / `postgres_writes.rs` | `RewardBotStore` 辅助 | 控制命令、worker heartbeat、订单分页 SQL、旧 reserved 释放辅助 |
 | `stores/rewards/postgres_info_risk.rs` | `RewardBotStore` 辅助 | 信息风险缓存查询和写入 SQL |
 | `stores/rewards/postgres_low_competition.rs` | `RewardBotStore` 辅助 | 低竞争 sleeve observation 写入和最近窗口查询 SQL |
-| `stores/rewards/postgres_candles.rs` | `RewardBotStore` 辅助 | orderbook-derived rewards midpoint candle upsert 和最近 K 线查询 SQL |
+| `stores/rewards/postgres_candles.rs` | `RewardBotStore` 辅助 | rewards price-history candle upsert 和最近 K 线查询 SQL |
 | `stores/rewards/in_memory.rs` | 同上 | 内存 |
 | `stores/copytrade/postgres.rs` | `CopyTradeStore` | PostgreSQL（key-value config、tracked wallets、source trades、events、控制命令；旧模拟表兼容） |
 | `stores/copytrade/postgres_control_commands.rs` / `postgres_rows.rs` / `postgres_writes.rs` | `CopyTradeStore` 辅助 | 控制命令 SQL、行映射、写入辅助 |
@@ -96,7 +98,7 @@
 - `RewardBotStore.latest_market_advisory()` 和 `save_market_advisory()` 在 Postgres 与内存实现中读写 `reward_market_advisories`；缓存 key 为 condition/provider/request_format/model/input_hash，且只返回 `expires_at > now` 的记录。Postgres 行映射 helper 解析 suitability、quote mode、exit policy、reasons JSON 和 metrics JSON。
 - `RewardBotStore.latest_market_info_risk(s)` 和 `save_market_info_risk()` 在 Postgres 与内存实现中读写 `reward_market_info_risks`；请求缓存 key 为 condition/provider/request_format/model/input_hash，批量读取按 condition 返回最新未过期记录。Postgres 行映射 helper 解析 risk level/type/direction、sources JSON 和 metrics JSON。
 - `RewardBotStore.record_low_competition_observations()` 和 `list_low_competition_observations()` 在 Postgres 与内存实现中读写 `reward_low_competition_observations`；Postgres 通过 `(account_id, observed_at DESC)` 索引读取最近窗口，用于 API snapshot 生成低竞争 shadow report，不会自动修改配置。
-- `RewardBotStore.record_market_candle_sample()` 和 `list_recent_market_candles()` 在 Postgres 与内存实现中读写 `reward_market_candles`；Postgres 根据 `reward_markets.tokens_json` 把 token 映射到 active reward market，按 `(token_id, interval_sec, bucket_start)` upsert midpoint OHLC，AI advisory 按 condition/interval/window 读取最近 K 线。
+- `RewardBotStore.record_market_candle_sample()` 和 `list_recent_market_candles()` 在 Postgres 与内存实现中读写 `reward_market_candles`；Postgres 根据 `reward_markets.tokens_json` 把 token 映射到 active reward market，按 `(token_id, interval_sec, bucket_start)` upsert price-history OHLC，同一 close timestamp 的重复写入不增加 `sample_count`，AI advisory 按 condition/interval/window 读取最近 K 线。
 - `RewardBotStore` 支持按 external Polymarket order id 查询 rewards managed order、通过 fill id 判断成交是否已入账，并通过 `latest_fill_at(account_id)` 查询最近 confirmed fill；live worker 用这些读路径完成托管订单成交幂等同步和外部账户快照保护。
 - `RewardBotStore.cancel_open_orders()` 在 Postgres/内存实现中兼容释放旧账本的 `reserved_usd`；新的 rewards 开放买单不再逐单硬占用资金，订单列表优先返回 open-like 状态，避免大量历史成交/撤单淹没当前开放挂单。worker 的 `list_open_orders()` 仍包含本地 planned/exit intent；控制台 `status.open_orders` 使用独立的 external count，只统计已有 `external_order_id` 的 open-like 订单。
 - `RewardBotStore.list_orders_page()` 在 Postgres 实现中通过 count + limit/offset 做服务端分页，支持 outcome/condition/token 搜索、状态过滤和 price/size/status 排序；内存实现保持相同语义。
@@ -163,7 +165,7 @@
 - Orderbook 进程内缓存会先保留最优价格顺序，再按 `POLYEDGE_ORDERBOOK_STREAM__MAX_LEVELS_PER_SIDE` 裁剪每侧 bids/asks 深度，默认 100 档；HTTP register/batch/ingest 入口使用 `max_tokens` 做请求规模上限，Polymarket WS 订阅使用 `POLYEDGE_ORDERBOOK_STREAM__WS_CHUNK_SIZE` 控制每条连接承载的 token 数，register 会原子替换对应 source 当前有序 token 集合，ingest 会先校验整批数据再批量写入并传播缓存错误，registry source 固定上限为 32 个
 - Orderbook 缓存拒绝旧 `observed_at` 覆盖未过期条目，但已过期条目可被后续写入恢复；rewards 控制命令具备 5 分钟 running lease，并会合并 pending/running 重复命令；Postgres rewards live worker 通过 advisory lease 避免多实例并发执行
 - Rewards managed order upsert 会更新后续实际提交的 `price` / `size` / `strategy_bucket`，保证 flatten 改价、CLOB 数量调整、未知提交恢复和低竞争 bucket 统计使用持久化后的真实参数
-- Rewards store 已持久化 quote/selection mode、dominant 单边阈值、盘口集中度阈值、偏好分类、低竞争 sleeve 配置、AI advisory 配置和信息风险配置；`reward_market_advisories`、`reward_market_info_risks`、`reward_low_competition_observations` 与 `reward_market_candles` 表已由迁移创建，并已接入 Postgres/内存读写，供 worker 跳过重复模型判断、生成低竞争 shadow report，并向 AI advisory 提供盘口派生 K 线。
+- Rewards store 已持久化 quote/selection mode、dominant 单边阈值、盘口集中度阈值、偏好分类、低竞争 sleeve 配置、AI advisory 配置和信息风险配置；`reward_market_advisories`、`reward_market_info_risks`、`reward_low_competition_observations` 与 `reward_market_candles` 表已由迁移创建，并已接入 Postgres/内存读写，供 worker 跳过重复模型判断、生成低竞争 shadow report，并向 AI advisory 提供 price-history K 线。
 - Rewards store 已支持外部账户余额和完整持仓快照同步；成功空持仓快照会清空目标账户持仓，失败响应不会破坏上一版，最近 confirmed fill 时间用于 worker 的 120 秒账户快照保护；worker 写入的资金钱包地址优先使用 `FUNDER`，CLOB 余额为 0/失败时可用 Polygon pUSD 链上余额回填 snapshot
 - `markets` 保存 Gamma `liquidity_usd`、`end_at` 和本地 `synced_at`；Postgres market upsert 使用单条 `INSERT .. ON CONFLICT DO UPDATE WHERE` 表达新增、真实数据变化更新和 freshness-only 刷新，返回实际写入行数，并在每批事务内设置短 `lock_timeout` / `statement_timeout`。默认调用仍刷新 `synced_at`，orderbook full sync 通过 `MarketUpsertOptions` 只刷新超过新鲜度阈值的安静市场，priority sync 继续强制刷新重点市场，避免 rewards 关键市场因目录新鲜度过低被误判。
 - MarketEventStore 的 Postgres 实现支持 `get_markets_by_ids()` 通过 `m.id = ANY($1)` 批量读取少量相关市场，API 风险快照用它替代全量 markets 列表，避免控制台风险页在大市场表上触发 `LIMIT 65535` 的慢查询。

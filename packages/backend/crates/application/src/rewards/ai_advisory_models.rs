@@ -247,6 +247,10 @@ fn reward_ai_advisory_cache_key_payload(
     });
 
     json!({
+        // schema_version 5: reward candles are sourced from Polymarket
+        // prices-history rather than high-frequency local orderbook updates.
+        // Invalidate advisories cached against the older candle semantics.
+        //
         // schema_version 4: reward AI advisory now receives orderbook-derived
         // midpoint candles. The cache key includes only the candle summary,
         // not the full candle array, to avoid per-tick provider churn.
@@ -255,7 +259,7 @@ fn reward_ai_advisory_cache_key_payload(
         // orderbook service has published real books, so advisories cached
         // before that change (null bids/asks "no orderbook" watch/avoid) are
         // invalidated and re-evaluated against live books.
-        "schema_version": 4,
+        "schema_version": 5,
         "cache_domain": "reward_ai_advisory",
         "market": {
             "condition_id": market.condition_id,

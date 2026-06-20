@@ -230,7 +230,7 @@ impl RewardBotStore for InMemoryRewardBotStore {
         );
         let mut candles = self.candles.write().await;
         match candles.get_mut(&key) {
-            Some(existing) if sample.observed_at >= existing.close_observed_at => {
+            Some(existing) if sample.observed_at > existing.close_observed_at => {
                 existing.high = Decimal::max(existing.high, sample.midpoint);
                 existing.low = Decimal::min(existing.low, sample.midpoint);
                 existing.close = sample.midpoint;
@@ -239,6 +239,21 @@ impl RewardBotStore for InMemoryRewardBotStore {
                 existing.spread_cents_close = sample.spread_cents;
                 existing.sample_count += 1;
                 existing.close_observed_at = sample.observed_at;
+                existing.updated_at = OffsetDateTime::now_utc();
+            }
+            Some(existing)
+                if sample.observed_at == existing.close_observed_at
+                    && (sample.midpoint != existing.close
+                        || sample.best_bid != existing.best_bid_close
+                        || sample.best_ask != existing.best_ask_close
+                        || sample.spread_cents != existing.spread_cents_close) =>
+            {
+                existing.high = Decimal::max(existing.high, sample.midpoint);
+                existing.low = Decimal::min(existing.low, sample.midpoint);
+                existing.close = sample.midpoint;
+                existing.best_bid_close = sample.best_bid;
+                existing.best_ask_close = sample.best_ask;
+                existing.spread_cents_close = sample.spread_cents;
                 existing.updated_at = OffsetDateTime::now_utc();
             }
             Some(_) => {}

@@ -57,6 +57,12 @@ pub struct PolymarketRewardOrderBook {
     pub observed_at: OffsetDateTime,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct PolymarketPriceHistoryPoint {
+    pub observed_at: OffsetDateTime,
+    pub price: Decimal,
+}
+
 #[derive(Debug, Clone)]
 pub struct PolymarketRewardsConnector {
     clob_host: String,
@@ -110,6 +116,17 @@ struct RawOrderBook {
     timestamp: Option<String>,
     bids: Option<Vec<RawBookLevel>>,
     asks: Option<Vec<RawBookLevel>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawPriceHistoryResponse {
+    history: Option<Vec<RawPriceHistoryPoint>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawPriceHistoryPoint {
+    t: Option<i64>,
+    p: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -603,6 +620,7 @@ fn map_reward_token(raw: RawRewardToken) -> Option<PolymarketRewardToken> {
 }
 
 include!("rewards/orderbooks.rs");
+include!("rewards/price_history.rs");
 
 #[cfg(test)]
 mod tests {

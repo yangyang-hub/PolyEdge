@@ -1,6 +1,6 @@
 # connectors（外部连接器层）
 
-最后更新：2026-06-19
+最后更新：2026-06-20
 
 ## 概述
 
@@ -26,7 +26,7 @@
 | `polymarket/data_api.rs` | 钱包活动与账户持仓 API：`PolymarketDataApiConnector` |
 | `polymarket/chain.rs` | Polygon JSON-RPC ERC20 余额读取：`PolymarketChainConnector` |
 | `polymarket/book.rs` | 盘口快照：`PolymarketBookConnector` |
-| `rewards.rs` + `rewards/orderbooks.rs` | 奖励市场目录与 CLOB 批量盘口：`PolymarketRewardsConnector` |
+| `rewards.rs` + `rewards/orderbooks.rs` + `rewards/price_history.rs` | 奖励市场目录、CLOB 批量盘口与 `/prices-history`：`PolymarketRewardsConnector` |
 | `orderbook.rs` | 独立 orderbook 服务客户端：HTTP 读盘口/原子注册 token/内部写 token，内部 WS stream 消费 |
 | `openai_compat.rs` | OpenAI-compatible provider helper：root base URL 自动补 `/v1`，请求同时携带 Bearer 与 `api-key` 认证头，provider 文本响应候选 JSON 提取与错误 preview |
 | `reward_ai.rs` | Rewards AI advisory 连接器：OpenAI Responses、OpenAI Chat Completions、Anthropic Messages |
@@ -102,10 +102,12 @@
 - **`PolymarketRewardsConnector`**：`clob_host` + `reqwest::Client`
 - **`PolymarketRewardMarket`**：condition_id、question、market_slug、rewards_max_spread、rewards_min_size、total_daily_rate、tokens
 - **`PolymarketRewardOrderBook`**：token_id、bids、asks、observed_at
+- **`PolymarketPriceHistoryPoint`**：`/prices-history` 返回的 observed_at + price，供 orderbook 服务低频写入 rewards 5m candles
 - 常量：`ENRICH_TIMEOUT = 10s`、`ENRICH_MAX_RETRIES = 3`、`ENRICH_RETRY_BASE_DELAY = 500ms`、`MAX_REWARD_MARKET_PAGES = 1000`
 - `fetch_current_markets()` 对分页做重复 cursor / 最大页数 / condition id 去重保护；token 会按 ID 去重。仅当原始 market 缺少唯一 YES/NO token 或缺有效 question 时才请求 CLOB `/markets/{condition_id}` 详情补全，避免对完整 catalog 做大规模详情请求；补全后仍不完整或目录为空会返回错误，调用方保留上一版 catalog；详情请求失败但原始记录已完整时不阻断目录替换。
 - `fetch_order_books(token_ids)` 优先使用 CLOB `POST /books` 批量拉取盘口；批量请求失败或遗漏 token 时，再使用固定并发窗口逐个调用 `GET /book` 补齐。每个盘口必须携带可解析的 CLOB 毫秒 `timestamp`，并作为 `observed_at` 传给缓存；整批无可用盘口时返回 dependency error，部分失败会记录告警。
-- 用途：`polyedge-orderbook` 的 rewards catalog sync 填充 `reward_markets` 表；worker 的 `market_sync.rs` 仅保留 CLI 兼容入口
+- `fetch_price_history(token_id, start, end, fidelity_minutes)` 调用 CLOB `GET /prices-history?market=...&startTs=...&endTs=...&fidelity=...`；解析 seconds 或 millis 时间戳、数字或字符串 price，丢弃 0-1 以外价格并按 observed_at 排序去重。调用方负责按 token 限速；遇到非成功状态会返回 dependency error，404 返回空序列。
+- 用途：`polyedge-orderbook` 的 rewards catalog sync 填充 `reward_markets` 表；orderbook candle history sync 低频写入 `reward_market_candles`；worker 的 `market_sync.rs` 仅保留 CLI 兼容入口
 
 ### Orderbook HTTP / 内部 WS
 
@@ -158,7 +160,7 @@
 - Gamma `/markets` offset 分页已具备 422 边界 / 最大页数保护，并按 market id 去重；condition_ids 定向查询用于重点市场新鲜度刷新。
 - Gamma 市场同步已提供 rewards 质量筛选所需的 CLOB liquidity、end time 和分级 ambiguity 数据，并支持 priority condition 刷新降低全量目录延迟对 live rewards 的影响。
 - Rewards markets 分页和 enrichment 已具备完整性保护，不再把部分补全结果作为完整目录写入；详情补全只针对缺唯一 YES/NO token 或缺有效 question 的市场，降低 CLOB 429 风险
-- Rewards 盘口连接器优先走 CLOB 批量 `/books`，并对失败或遗漏项使用单 token `/book` 回退
+- Rewards 盘口连接器优先走 CLOB 批量 `/books`，并对失败或遗漏项使用单 token `/book` 回退；同一 connector 还提供 `/prices-history` 读取，实际请求节流由 orderbook 服务的 candle history sync loop 控制，避免 worker 或 API 直接打外部历史价格接口
 - Rewards AI advisory 和信息风险 connector 已支持 OpenAI Responses、OpenAI Chat Completions 和 Anthropic Messages 三种格式；OpenAI-compatible base URL 可配置为根地址或 `/v1` 地址，connector 会统一请求 `/v1/...` 并兼容 Bearer / `api-key` 认证头；MiMo provider 已验证 root gateway + `openai_chat_completions` + JSON schema 可用，`openai_responses` 会返回 provider 未实现错误；Chat Completions 请求使用 `max_completion_tokens` 而不是旧 `max_tokens`，AI advisory / info-risk 分别给 4096 / 6144 completion token 预算，降低 reasoning 模型返回空 `content` 的概率；模型密钥来自 worker 环境变量，provider 请求温度固定为 0，解析层会从 provider 文本中提取并校验候选 JSON 对象，provider confidence 输出会在解析时钳制到 `0..=1`。AI advisory provider 失败不终止 live tick，但在 AI 开启时会让对应 eligible 计划保持不可挂；信息风险 provider 失败只保留上一版缓存/确定性路径。信息风险 connector 的 OpenAI web search 工具默认关闭，仅在显式环境变量开启时使用。
 - Orderbook 服务客户端已支持 HTTP batch/bootstrap 与内部 WS 推送；worker 长期 rewards loop 可用 WS 更新本地 cache，缺失或重连时回退 HTTP batch
 - Data API positions 已按完整快照分页读取；不完整或失败的响应不会被 rewards worker 用于替换持仓

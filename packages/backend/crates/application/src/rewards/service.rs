@@ -256,6 +256,13 @@ impl RewardBotService {
         self.store.record_market_candle_sample(&sample).await
     }
 
+    pub async fn record_market_candle_sample(
+        &self,
+        sample: &RewardMarketCandleSample,
+    ) -> Result<()> {
+        self.store.record_market_candle_sample(sample).await
+    }
+
     pub async fn list_recent_market_candles(
         &self,
         condition_id: &str,

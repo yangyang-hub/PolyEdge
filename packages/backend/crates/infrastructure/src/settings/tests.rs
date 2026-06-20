@@ -132,6 +132,35 @@ mod tests {
         assert_eq!(settings.orderbook_stream.book_ttl_ms, 300_000);
         assert_eq!(settings.orderbook_stream.token_refresh_interval_secs, 60);
         assert_eq!(settings.orderbook_stream.restart_interval_secs, 5);
+        assert!(settings.orderbook_stream.reward_candle_history_enabled);
+        assert_eq!(
+            settings
+                .orderbook_stream
+                .reward_candle_history_sync_interval_secs,
+            300
+        );
+        assert_eq!(
+            settings
+                .orderbook_stream
+                .reward_candle_history_request_delay_ms,
+            500
+        );
+        assert_eq!(
+            settings
+                .orderbook_stream
+                .reward_candle_history_max_tokens_per_cycle,
+            600
+        );
+        assert_eq!(
+            settings.orderbook_stream.reward_candle_history_backfill_secs,
+            7_200
+        );
+        assert_eq!(
+            settings
+                .orderbook_stream
+                .reward_candle_history_incremental_secs,
+            900
+        );
         assert!(settings.orderbook.write_token.is_none());
         assert_eq!(
             settings.auth.force_reauth_after.as_deref(),
@@ -324,6 +353,31 @@ mod tests {
                 "15".to_string(),
             ),
             (
+                "POLYEDGE_ORDERBOOK_STREAM__REWARD_CANDLE_HISTORY_ENABLED".to_string(),
+                "false".to_string(),
+            ),
+            (
+                "POLYEDGE_ORDERBOOK_STREAM__REWARD_CANDLE_HISTORY_SYNC_INTERVAL_SECS".to_string(),
+                "180".to_string(),
+            ),
+            (
+                "POLYEDGE_ORDERBOOK_STREAM__REWARD_CANDLE_HISTORY_REQUEST_DELAY_MS".to_string(),
+                "750".to_string(),
+            ),
+            (
+                "POLYEDGE_ORDERBOOK_STREAM__REWARD_CANDLE_HISTORY_MAX_TOKENS_PER_CYCLE"
+                    .to_string(),
+                "55".to_string(),
+            ),
+            (
+                "POLYEDGE_ORDERBOOK_STREAM__REWARD_CANDLE_HISTORY_BACKFILL_SECS".to_string(),
+                "3600".to_string(),
+            ),
+            (
+                "POLYEDGE_ORDERBOOK_STREAM__REWARD_CANDLE_HISTORY_INCREMENTAL_SECS".to_string(),
+                "600".to_string(),
+            ),
+            (
                 "POLYEDGE_ORDERBOOK__WRITE_TOKEN".to_string(),
                 "orderbook-test-token".to_string(),
             ),
@@ -416,6 +470,35 @@ mod tests {
         assert_eq!(settings.orderbook_stream.ws_chunk_size, 25);
         assert_eq!(settings.orderbook_stream.max_levels_per_side, 12);
         assert_eq!(settings.orderbook_stream.poll_reconcile_interval_secs, 15);
+        assert!(!settings.orderbook_stream.reward_candle_history_enabled);
+        assert_eq!(
+            settings
+                .orderbook_stream
+                .reward_candle_history_sync_interval_secs,
+            180
+        );
+        assert_eq!(
+            settings
+                .orderbook_stream
+                .reward_candle_history_request_delay_ms,
+            750
+        );
+        assert_eq!(
+            settings
+                .orderbook_stream
+                .reward_candle_history_max_tokens_per_cycle,
+            55
+        );
+        assert_eq!(
+            settings.orderbook_stream.reward_candle_history_backfill_secs,
+            3600
+        );
+        assert_eq!(
+            settings
+                .orderbook_stream
+                .reward_candle_history_incremental_secs,
+            600
+        );
         assert_eq!(
             settings.orderbook.write_token.as_deref(),
             Some("orderbook-test-token")

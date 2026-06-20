@@ -14,6 +14,9 @@ use market_sync::{
     sync_general_markets_once, sync_priority_markets_once, sync_reward_markets_once,
 };
 
+mod candle_history;
+use candle_history::run_reward_candle_history_sync_loop;
+
 mod stream;
 use stream::run_orderbook_stream;
 
@@ -68,8 +71,7 @@ async fn main() -> polyedge_domain::Result<()> {
 
     info!(port, "starting polyedge-orderbook service");
 
-    let broadcaster =
-        OrderbookUpdateBroadcaster::with_reward_candles(16_384, state.reward_bot_service.clone());
+    let broadcaster = OrderbookUpdateBroadcaster::new(16_384);
 
     // Build and bind HTTP API before any external market sync. Health checks
     // should reflect process readiness, not Polymarket API latency.
@@ -109,6 +111,11 @@ async fn main() -> polyedge_domain::Result<()> {
     let reward_sync_state = state.clone();
     let reward_sync_handle = tokio::spawn(async move {
         run_reward_market_sync_loop(reward_sync_state).await;
+    });
+
+    let candle_history_state = state.clone();
+    let _candle_history_handle = tokio::spawn(async move {
+        run_reward_candle_history_sync_loop(candle_history_state).await;
     });
 
     // Spawn the WS + poll stream as a restarting background task.

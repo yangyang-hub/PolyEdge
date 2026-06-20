@@ -54,10 +54,23 @@ async fn postgres_record_reward_market_candle_sample(
             best_bid_close = EXCLUDED.best_bid_close,
             best_ask_close = EXCLUDED.best_ask_close,
             spread_cents_close = EXCLUDED.spread_cents_close,
-            sample_count = reward_market_candles.sample_count + 1,
+            sample_count = CASE
+                WHEN EXCLUDED.close_observed_at > reward_market_candles.close_observed_at
+                    THEN reward_market_candles.sample_count + 1
+                ELSE reward_market_candles.sample_count
+            END,
             close_observed_at = EXCLUDED.close_observed_at,
             updated_at = now()
-        WHERE EXCLUDED.close_observed_at >= reward_market_candles.close_observed_at
+        WHERE EXCLUDED.close_observed_at > reward_market_candles.close_observed_at
+           OR (
+               EXCLUDED.close_observed_at = reward_market_candles.close_observed_at
+               AND (
+                   EXCLUDED.close IS DISTINCT FROM reward_market_candles.close
+                   OR EXCLUDED.best_bid_close IS DISTINCT FROM reward_market_candles.best_bid_close
+                   OR EXCLUDED.best_ask_close IS DISTINCT FROM reward_market_candles.best_ask_close
+                   OR EXCLUDED.spread_cents_close IS DISTINCT FROM reward_market_candles.spread_cents_close
+               )
+           )
         "#,
     )
     .bind(&sample.token_id)

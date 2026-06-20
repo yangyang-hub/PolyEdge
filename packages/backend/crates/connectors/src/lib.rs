@@ -35,8 +35,8 @@ pub use polymarket::{
 pub use reward_ai::RewardAiAdvisoryConnector;
 pub use reward_info_risk::RewardInfoRiskConnector;
 pub use rewards::{
-    PolymarketRewardBookLevel, PolymarketRewardMarket, PolymarketRewardOrderBook,
-    PolymarketRewardToken, PolymarketRewardsConnector,
+    PolymarketPriceHistoryPoint, PolymarketRewardBookLevel, PolymarketRewardMarket,
+    PolymarketRewardOrderBook, PolymarketRewardToken, PolymarketRewardsConnector,
 };
 
 pub const PAPER_EXECUTOR_NAME: &str = "paper_executor";

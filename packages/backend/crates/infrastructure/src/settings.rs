@@ -215,6 +215,12 @@ pub struct OrderbookStreamSettings {
     pub book_ttl_ms: u64,
     pub token_refresh_interval_secs: u64,
     pub restart_interval_secs: u64,
+    pub reward_candle_history_enabled: bool,
+    pub reward_candle_history_sync_interval_secs: u64,
+    pub reward_candle_history_request_delay_ms: u64,
+    pub reward_candle_history_max_tokens_per_cycle: usize,
+    pub reward_candle_history_backfill_secs: u64,
+    pub reward_candle_history_incremental_secs: u64,
 }
 
 #[derive(Debug, Clone, Deserialize)]
