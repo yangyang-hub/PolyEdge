@@ -46,7 +46,6 @@ async fn poll_reward_bot_loop(
     };
     let mut full_cycles = 0usize;
     let mut reconcile_cycles = 0usize;
-    let mut last_reconcile_at: Instant;
     let mut external_sync_throttle = RewardExternalSyncThrottle::default();
     let mut book_history: HashMap<String, VecDeque<BookSnapshot>> = HashMap::new();
     let full_interval = Duration::from_secs(state.settings.rewards.poll_interval_secs.max(1));
@@ -121,7 +120,6 @@ async fn poll_reward_bot_loop(
             full_cycles += 1;
             let now = Instant::now();
             last_full_at = now;
-            last_reconcile_at = now;
             external_sync_throttle.mark_full_sync(now);
 
             info!(
@@ -153,7 +151,6 @@ async fn poll_reward_bot_loop(
             accumulate_report(&mut total, &report);
             reconcile_cycles += 1;
             let now = Instant::now();
-            last_reconcile_at = now;
             external_sync_throttle.mark_fast_reconcile(sync_policy, now);
 
             if report.risk_cancelled_orders > 0 || report.filled_orders > 0 {
@@ -188,9 +185,6 @@ async fn poll_reward_bot_loop(
             _ = command_wake_rx.changed() => {}
             changed = orderbook_wake_rx.changed() => {
                 if changed.is_err() {
-                    break;
-                }
-                if throttle_reward_orderbook_reconcile(last_reconcile_at, &mut shutdown_rx).await {
                     break;
                 }
             }
@@ -316,23 +310,6 @@ impl RewardExternalSyncThrottle {
 
 fn reward_sync_due(last_synced_at: Option<Instant>, now: Instant, interval: Duration) -> bool {
     last_synced_at.is_none_or(|last_synced_at| now.duration_since(last_synced_at) >= interval)
-}
-
-async fn throttle_reward_orderbook_reconcile(
-    last_reconcile_at: Instant,
-    shutdown_rx: &mut watch::Receiver<bool>,
-) -> bool {
-    let min_interval = Duration::from_secs(1);
-    let elapsed = Instant::now().duration_since(last_reconcile_at);
-    if elapsed >= min_interval {
-        return false;
-    }
-    tokio::select! {
-        () = tokio::time::sleep(min_interval - elapsed) => false,
-        changed = shutdown_rx.changed() => {
-            changed.is_err() || *shutdown_rx.borrow()
-        }
-    }
 }
 
 struct RewardHeartbeatGuard {

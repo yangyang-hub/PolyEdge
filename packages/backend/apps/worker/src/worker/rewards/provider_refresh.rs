@@ -42,6 +42,7 @@ const REWARD_AI_PROVIDER_ORDERBOOK_SOURCE: &str = "rewards_ai_provider";
 const REWARD_AI_PROVIDER_ORDERBOOK_MARKETS_PER_BATCH: usize = 10;
 const REWARD_AI_PROVIDER_ORDERBOOK_WAIT_ATTEMPTS: usize = 8;
 const REWARD_AI_PROVIDER_ORDERBOOK_WAIT_DELAY: Duration = Duration::from_secs(2);
+const REWARD_PROVIDER_STANDARD_CONDITIONS_PER_LOW_COMPETITION: usize = 2;
 
 async fn refresh_reward_market_provider_cache(
     state: &AppState,
@@ -149,6 +150,9 @@ async fn refresh_reward_market_provider_cache(
     let mut ordered_conditions = reward_provider_refresh_candidate_condition_ids(
         &info_risk_candidate_condition_ids,
         &ai_candidate_condition_ids,
+        &cycle.plans,
+        &cycle.open_orders,
+        &cycle.positions,
     );
     let original_ordered_conditions = ordered_conditions.len();
     let max_conditions = reward_provider_max_conditions_per_cycle(state);
@@ -699,17 +703,123 @@ async fn refresh_reward_info_risk_for_condition(
 fn reward_provider_refresh_candidate_condition_ids(
     info_risk_condition_ids: &[String],
     ai_condition_ids: &[String],
+    plans: &[RewardQuotePlan],
+    open_orders: &[ManagedRewardOrder],
+    positions: &[RewardPosition],
 ) -> Vec<String> {
+    let available_conditions = info_risk_condition_ids
+        .iter()
+        .chain(ai_condition_ids)
+        .filter_map(|condition_id| reward_provider_normalized_condition_id(condition_id))
+        .collect::<HashSet<_>>();
     let mut seen = HashSet::new();
     let mut ordered = Vec::with_capacity(info_risk_condition_ids.len() + ai_condition_ids.len());
+    let low_competition_priority_conditions = plans
+        .iter()
+        .filter(|plan| reward_provider_low_competition_plan_has_priority(plan))
+        .filter_map(|plan| reward_provider_normalized_condition_id(&plan.condition_id))
+        .collect::<HashSet<_>>();
+
+    for order in open_orders {
+        push_reward_provider_available_condition(
+            &mut ordered,
+            &mut seen,
+            &available_conditions,
+            &order.condition_id,
+        );
+    }
+    for position in positions {
+        push_reward_provider_available_condition(
+            &mut ordered,
+            &mut seen,
+            &available_conditions,
+            &position.condition_id,
+        );
+    }
+
+    let mut queued = seen.clone();
+    let mut standard_conditions = Vec::new();
+    let mut low_competition_conditions = Vec::new();
     for condition_id in info_risk_condition_ids.iter().chain(ai_condition_ids) {
-        let condition_id = condition_id.trim();
-        if condition_id.is_empty() || !seen.insert(condition_id.to_string()) {
+        let Some(condition_id) = reward_provider_normalized_condition_id(condition_id) else {
+            continue;
+        };
+        if !queued.insert(condition_id.clone()) {
             continue;
         }
-        ordered.push(condition_id.to_string());
+        if low_competition_priority_conditions.contains(&condition_id) {
+            low_competition_conditions.push(condition_id);
+        } else {
+            standard_conditions.push(condition_id);
+        }
     }
+    append_reward_provider_condition_mix(
+        &mut ordered,
+        standard_conditions,
+        low_competition_conditions,
+    );
     ordered
+}
+
+fn reward_provider_low_competition_plan_has_priority(plan: &RewardQuotePlan) -> bool {
+    plan.strategy_bucket == RewardStrategyBucket::LowCompetition
+        && (plan.eligible || plan.pre_ai_eligible)
+        && plan
+            .low_competition_metrics
+            .as_ref()
+            .is_some_and(|metrics| metrics.eligible_for_low_competition)
+}
+
+fn push_reward_provider_available_condition(
+    ordered: &mut Vec<String>,
+    seen: &mut HashSet<String>,
+    available_conditions: &HashSet<String>,
+    condition_id: &str,
+) {
+    let Some(condition_id) = reward_provider_normalized_condition_id(condition_id) else {
+        return;
+    };
+    if !available_conditions.contains(&condition_id) {
+        return;
+    }
+    if seen.insert(condition_id.clone()) {
+        ordered.push(condition_id);
+    }
+}
+
+fn append_reward_provider_condition_mix(
+    ordered: &mut Vec<String>,
+    standard_conditions: Vec<String>,
+    low_competition_conditions: Vec<String>,
+) {
+    let mut standard_conditions = standard_conditions.into_iter();
+    let mut low_competition_conditions = low_competition_conditions.into_iter();
+    loop {
+        let mut pushed = false;
+        for _ in 0..REWARD_PROVIDER_STANDARD_CONDITIONS_PER_LOW_COMPETITION {
+            if let Some(condition_id) = standard_conditions.next() {
+                ordered.push(condition_id);
+                pushed = true;
+            } else {
+                break;
+            }
+        }
+        if let Some(condition_id) = low_competition_conditions.next() {
+            ordered.push(condition_id);
+            pushed = true;
+        }
+        if !pushed {
+            break;
+        }
+    }
+}
+
+fn reward_provider_normalized_condition_id(condition_id: &str) -> Option<String> {
+    let condition_id = condition_id.trim();
+    if condition_id.is_empty() {
+        return None;
+    }
+    Some(condition_id.to_string())
 }
 
 fn reward_provider_max_conditions_per_cycle(state: &AppState) -> usize {

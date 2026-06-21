@@ -37,7 +37,7 @@ pub fn build_low_competition_observations(
                 question: plan.question.clone(),
                 observed_at,
                 mode: config.low_competition_mode,
-                planned_notional_usd: low_competition_plan_notional_usd(plan),
+                planned_notional_usd: metrics.planned_notional_usd,
                 qualified_competition_usd: metrics.qualified_competition_usd,
                 estimated_reward_per_100_usd_day: metrics.estimated_reward_per_100_usd_day,
                 competition_density: metrics.competition_density,
@@ -197,20 +197,6 @@ fn low_competition_observation_id(
     hasher.update(b"\0");
     hasher.update(observed_at.unix_timestamp_nanos().to_string().as_bytes());
     format!("{:x}", hasher.finalize())
-}
-
-fn low_competition_plan_notional_usd(plan: &RewardQuotePlan) -> Decimal {
-    plan.legs
-        .iter()
-        .map(|leg| {
-            if leg.notional_usd > Decimal::ZERO {
-                leg.notional_usd
-            } else {
-                leg.price * leg.size
-            }
-        })
-        .sum::<Decimal>()
-        .round_dp(4)
 }
 
 fn low_competition_sample_insufficient(metrics: &RewardLowCompetitionMetrics) -> bool {

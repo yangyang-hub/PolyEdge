@@ -22,6 +22,10 @@ use tokio::sync::{RwLock, mpsc};
 use tokio::task::JoinSet;
 use tracing::{debug, info, warn};
 
+const ORDERBOOK_WS_HEARTBEAT_INTERVAL_SECS: u64 = 15;
+const ORDERBOOK_WS_HEARTBEAT_TIMEOUT_SECS: u64 = 60;
+const ORDERBOOK_WS_RECONNECT_DEBOUNCE_SECS: u64 = 5;
+
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct OrderbookStreamReport {
     pub subscribed_tokens: usize,
@@ -216,50 +220,28 @@ pub async fn run_orderbook_stream(
                 break;
             }
             _ = wait_for_registry_change(&mut registry_changes) => {
-                let new_tokens = collect_orderbook_subscription_tokens(state).await;
-                let new_count = new_tokens.len();
+                if refresh_tokens_and_should_reconnect(
+                    state,
+                    &shared_tokens,
+                    &ws_token_set,
+                    &mut report,
+                )
+                .await
                 {
-                    let mut shared = shared_tokens.write().await;
-                    *shared = new_tokens.clone();
-                }
-
-                let old_tokens = ws_token_set.read().await;
-                let changed = !token_lists_have_same_members(&old_tokens, &new_tokens);
-                drop(old_tokens);
-
-                if changed {
-                    info!(
-                        old = report.subscribed_tokens,
-                        new = new_count,
-                        "orderbook token list changed, reconnecting WS with new set"
-                    );
-                    report.subscribed_tokens = new_count;
-                    *ws_token_set.write().await = new_tokens;
                     break;
                 }
             }
             _ = refresh_timer.tick() => {
                 // Check if the registry token set changed (other services may
                 // have registered new tokens via HTTP API).
-                let new_tokens = collect_orderbook_subscription_tokens(state).await;
-                let new_count = new_tokens.len();
+                if refresh_tokens_and_should_reconnect(
+                    state,
+                    &shared_tokens,
+                    &ws_token_set,
+                    &mut report,
+                )
+                .await
                 {
-                    let mut shared = shared_tokens.write().await;
-                    *shared = new_tokens.clone();
-                }
-
-                let old_tokens = ws_token_set.read().await;
-                let changed = !token_lists_have_same_members(&old_tokens, &new_tokens);
-                drop(old_tokens);
-
-                if changed {
-                    info!(
-                        old = report.subscribed_tokens,
-                        new = new_count,
-                        "orderbook token list changed, reconnecting WS with new set"
-                    );
-                    report.subscribed_tokens = new_count;
-                    *ws_token_set.write().await = new_tokens;
                     break;
                 }
             }
@@ -293,6 +275,54 @@ async fn wait_for_registry_change(change_rx: &mut Option<tokio::sync::watch::Rec
     let _ = rx.changed().await;
 }
 
+async fn refresh_tokens_and_should_reconnect(
+    state: &AppState,
+    shared_tokens: &Arc<RwLock<Vec<String>>>,
+    ws_token_set: &Arc<RwLock<Vec<String>>>,
+    report: &mut OrderbookStreamReport,
+) -> bool {
+    let debounce = Duration::from_secs(ORDERBOOK_WS_RECONNECT_DEBOUNCE_SECS);
+    let mut new_tokens = collect_orderbook_subscription_tokens(state).await;
+    *shared_tokens.write().await = new_tokens.clone();
+    if token_set_matches_current_ws(ws_token_set, &new_tokens).await {
+        return false;
+    }
+
+    if !debounce.is_zero() {
+        debug!(
+            old = report.subscribed_tokens,
+            new = new_tokens.len(),
+            debounce_ms = debounce.as_millis(),
+            "orderbook token set changed, debouncing WS reconnect"
+        );
+        tokio::time::sleep(debounce).await;
+        new_tokens = collect_orderbook_subscription_tokens(state).await;
+        *shared_tokens.write().await = new_tokens.clone();
+        if token_set_matches_current_ws(ws_token_set, &new_tokens).await {
+            return false;
+        }
+    }
+
+    let new_count = new_tokens.len();
+    info!(
+        old = report.subscribed_tokens,
+        new = new_count,
+        debounce_ms = debounce.as_millis(),
+        "orderbook token list changed, reconnecting WS with new set"
+    );
+    report.subscribed_tokens = new_count;
+    *ws_token_set.write().await = new_tokens;
+    true
+}
+
+async fn token_set_matches_current_ws(
+    ws_token_set: &Arc<RwLock<Vec<String>>>,
+    new_tokens: &[String],
+) -> bool {
+    let old_tokens = ws_token_set.read().await;
+    token_lists_have_same_members(&old_tokens, new_tokens)
+}
+
 struct OrderbookWsChunkContext {
     ws_host: String,
     cache: Arc<dyn OrderbookCache>,
@@ -312,16 +342,19 @@ async fn run_orderbook_ws_chunk(
     token_ids: Vec<U256>,
     context: OrderbookWsChunkContext,
 ) -> Result<()> {
-    // Use a longer heartbeat timeout (30s vs SDK default 15s) to reduce
-    // false-positive heartbeat warnings on networks with occasional latency.
+    // Polymarket occasionally delays or drops text PONGs while data still
+    // flows. Keep the SDK heartbeat useful without logging on short stalls.
     let mut ws_config = WsConfig::default();
-    ws_config.heartbeat_timeout = Duration::from_secs(30);
+    ws_config.heartbeat_interval = Duration::from_secs(ORDERBOOK_WS_HEARTBEAT_INTERVAL_SECS);
+    ws_config.heartbeat_timeout = Duration::from_secs(ORDERBOOK_WS_HEARTBEAT_TIMEOUT_SECS);
     let ws_client = ClobWsClient::new(&context.ws_host, ws_config).map_err(|error| {
         AppError::internal(
             "ORDERBOOK_WS_INIT_FAILED",
             format!("failed to create orderbook websocket client: {error}"),
         )
     })?;
+    let mut subscription_guard =
+        OrderbookWsSubscriptionGuard::new(ws_client.clone(), token_ids.clone());
     let book_stream = ws_client
         .subscribe_orderbook(token_ids.clone())
         .map_err(|error| {
@@ -330,6 +363,7 @@ async fn run_orderbook_ws_chunk(
                 format!("failed to subscribe to orderbook websocket: {error}"),
             )
         })?;
+    subscription_guard.mark_subscribed();
     let price_stream = ws_client
         .subscribe_prices(token_ids.clone())
         .map_err(|error| {
@@ -338,6 +372,7 @@ async fn run_orderbook_ws_chunk(
                 format!("failed to subscribe to orderbook price changes: {error}"),
             )
         })?;
+    subscription_guard.mark_subscribed();
     let (event_tx, mut event_rx) = mpsc::unbounded_channel();
     let mut reader_tasks = JoinSet::new();
 
@@ -475,6 +510,38 @@ async fn run_orderbook_ws_chunk(
     while reader_tasks.join_next().await.is_some() {}
 
     Ok(())
+}
+
+struct OrderbookWsSubscriptionGuard {
+    client: ClobWsClient,
+    token_ids: Vec<U256>,
+    subscriptions: u8,
+}
+
+impl OrderbookWsSubscriptionGuard {
+    fn new(client: ClobWsClient, token_ids: Vec<U256>) -> Self {
+        Self {
+            client,
+            token_ids,
+            subscriptions: 0,
+        }
+    }
+
+    fn mark_subscribed(&mut self) {
+        self.subscriptions = self.subscriptions.saturating_add(1);
+    }
+}
+
+impl Drop for OrderbookWsSubscriptionGuard {
+    fn drop(&mut self) {
+        for _ in 0..self.subscriptions {
+            if let Err(error) = self.client.unsubscribe_orderbook(&self.token_ids) {
+                debug!(error = %error, "failed to unsubscribe orderbook WS stream");
+                break;
+            }
+        }
+        self.subscriptions = 0;
+    }
 }
 
 async fn collect_orderbook_subscription_tokens(state: &AppState) -> Vec<String> {

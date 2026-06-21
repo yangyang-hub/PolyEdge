@@ -123,6 +123,7 @@ fn observe_records_metrics_without_live_eligibility() {
         .low_competition_metrics
         .as_ref()
         .expect("low competition metrics");
+    assert!(metrics.planned_notional_usd > Decimal::ZERO);
     assert!(metrics.eligible_for_low_competition);
     assert!(metrics.qualified_competition_usd > Decimal::ZERO);
     assert!(metrics.estimated_reward_per_100_usd_day > Decimal::ZERO);
@@ -175,6 +176,40 @@ fn enforce_can_pass_pre_provider_metrics() {
         .as_ref()
         .expect("low competition metrics");
     assert!(metrics.eligible_for_low_competition);
+}
+
+#[test]
+fn observations_keep_planned_notional_after_provider_gate_clears_legs() {
+    let config = RewardBotConfig {
+        ai_advisory_enabled: true,
+        info_risk_enabled: true,
+        info_risk_mode: RewardSelectionMode::Enforce,
+        ..low_competition_plan_config(RewardLowCompetitionMode::Enforce)
+    };
+    let books = test_books();
+    let history = stable_book_history(&books, config.low_competition_min_book_samples);
+    let mut plans = low_competition_plans(&config);
+
+    apply_low_competition_metrics_to_quote_plans(&mut plans, &books, &history, &[], &config);
+
+    let expected_notional = plans[0]
+        .low_competition_metrics
+        .as_ref()
+        .expect("low competition metrics")
+        .planned_notional_usd;
+    assert!(expected_notional > Decimal::ZERO);
+
+    plans[0].eligible = false;
+    plans[0].quote_mode = RewardPlanQuoteMode::None;
+    plans[0].legs.clear();
+    plans[0].reason = "AI advisory blocked market".to_string();
+
+    let observations =
+        build_low_competition_observations("acct", &plans, &config, OffsetDateTime::now_utc());
+
+    assert_eq!(observations.len(), 1);
+    assert_eq!(observations[0].planned_notional_usd, expected_notional);
+    assert!(observations[0].ai_blocked);
 }
 
 #[test]

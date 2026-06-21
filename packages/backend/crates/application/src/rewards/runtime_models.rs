@@ -125,6 +125,8 @@ pub struct RewardMarketBookMetrics {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RewardLowCompetitionMetrics {
+    #[serde(default)]
+    pub planned_notional_usd: Decimal,
     pub qualified_competition_usd: Decimal,
     pub estimated_reward_per_100_usd_day: Decimal,
     pub competition_density: Decimal,

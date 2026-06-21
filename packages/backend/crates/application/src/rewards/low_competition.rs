@@ -49,6 +49,7 @@ fn apply_low_competition_metrics_to_plan(
             reject_low_competition_plan(
                 plan,
                 RewardLowCompetitionMetrics {
+                    planned_notional_usd: Decimal::ZERO,
                     qualified_competition_usd: Decimal::ZERO,
                     estimated_reward_per_100_usd_day: Decimal::ZERO,
                     competition_density: Decimal::ZERO,
@@ -136,7 +137,8 @@ fn build_low_competition_metrics(
         .legs
         .iter()
         .map(|leg| (leg.price * leg.size).round_dp(4))
-        .sum::<Decimal>();
+        .sum::<Decimal>()
+        .round_dp(4);
     let qualified_competition_usd = plan
         .legs
         .iter()
@@ -210,6 +212,7 @@ fn build_low_competition_metrics(
     }
 
     RewardLowCompetitionMetrics {
+        planned_notional_usd: planned_notional,
         qualified_competition_usd,
         estimated_reward_per_100_usd_day,
         competition_density,

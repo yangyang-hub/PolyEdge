@@ -235,8 +235,13 @@ fn reward_provider_refresh_candidates_use_info_risk_order_and_dedupe_ai() {
         "cond_ai_only".to_string(),
     ];
 
-    let ordered =
-        reward_provider_refresh_candidate_condition_ids(&info_risk_condition_ids, &ai_condition_ids);
+    let ordered = reward_provider_refresh_candidate_condition_ids(
+        &info_risk_condition_ids,
+        &ai_condition_ids,
+        &[],
+        &[],
+        &[],
+    );
 
     assert_eq!(
         ordered,
@@ -248,6 +253,149 @@ fn reward_provider_refresh_candidates_use_info_risk_order_and_dedupe_ai() {
             "cond_ai_only",
         ],
     );
+}
+
+#[test]
+fn reward_provider_refresh_candidates_mix_low_competition_after_active_exposure() {
+    let now = OffsetDateTime::now_utc();
+    let mut standard = live_test_plan(now);
+    standard.condition_id = "cond_standard".to_string();
+    standard.strategy_bucket = RewardStrategyBucket::Standard;
+
+    let low = low_competition_provider_test_plan(now, "cond_low");
+    let ai_only_low = low_competition_provider_test_plan(now, "cond_ai_only_low");
+    let mut low_rejected = low_competition_provider_test_plan(now, "cond_low_rejected");
+    low_rejected.eligible = false;
+    low_rejected.pre_ai_eligible = false;
+    low_rejected
+        .low_competition_metrics
+        .as_mut()
+        .expect("low competition metrics")
+        .eligible_for_low_competition = false;
+
+    let mut open_order = live_test_open_order("yes_live");
+    open_order.condition_id = "cond_open".to_string();
+    let position = RewardPosition {
+        account_id: "reward_live".to_string(),
+        condition_id: "cond_position".to_string(),
+        token_id: "yes_position".to_string(),
+        outcome: "YES".to_string(),
+        size: reward_decimal("5"),
+        avg_price: reward_decimal("0.50"),
+        realized_pnl: Decimal::ZERO,
+        updated_at: now,
+    };
+
+    let info_risk_condition_ids = vec![
+        "cond_open".to_string(),
+        "cond_position".to_string(),
+        "cond_standard".to_string(),
+        "cond_candidate".to_string(),
+        "cond_low".to_string(),
+        "cond_low_rejected".to_string(),
+    ];
+    let ai_condition_ids = vec![
+        "cond_standard".to_string(),
+        "cond_low".to_string(),
+        "cond_ai_only_low".to_string(),
+    ];
+    let ordered = reward_provider_refresh_candidate_condition_ids(
+        &info_risk_condition_ids,
+        &ai_condition_ids,
+        &[standard, low, ai_only_low, low_rejected],
+        &[open_order],
+        &[position],
+    );
+
+    assert_eq!(
+        ordered,
+        vec![
+            "cond_open",
+            "cond_position",
+            "cond_standard",
+            "cond_candidate",
+            "cond_low",
+            "cond_low_rejected",
+            "cond_ai_only_low",
+        ],
+    );
+}
+
+#[test]
+fn reward_provider_refresh_candidates_interleave_low_competition_with_standard_quota() {
+    let now = OffsetDateTime::now_utc();
+    let mut standard_a = live_test_plan(now);
+    standard_a.condition_id = "cond_standard_a".to_string();
+    standard_a.strategy_bucket = RewardStrategyBucket::Standard;
+    let mut standard_b = live_test_plan(now);
+    standard_b.condition_id = "cond_standard_b".to_string();
+    standard_b.strategy_bucket = RewardStrategyBucket::Standard;
+    let mut standard_c = live_test_plan(now);
+    standard_c.condition_id = "cond_standard_c".to_string();
+    standard_c.strategy_bucket = RewardStrategyBucket::Standard;
+    let mut standard_d = live_test_plan(now);
+    standard_d.condition_id = "cond_standard_d".to_string();
+    standard_d.strategy_bucket = RewardStrategyBucket::Standard;
+    let low_a = low_competition_provider_test_plan(now, "cond_low_a");
+    let low_b = low_competition_provider_test_plan(now, "cond_low_b");
+    let low_c = low_competition_provider_test_plan(now, "cond_low_c");
+
+    let info_risk_condition_ids = vec![
+        "cond_standard_a".to_string(),
+        "cond_low_a".to_string(),
+        "cond_standard_b".to_string(),
+        "cond_low_b".to_string(),
+        "cond_standard_c".to_string(),
+        "cond_standard_d".to_string(),
+        "cond_low_c".to_string(),
+    ];
+    let ordered = reward_provider_refresh_candidate_condition_ids(
+        &info_risk_condition_ids,
+        &[],
+        &[
+            standard_a, standard_b, standard_c, standard_d, low_a, low_b, low_c,
+        ],
+        &[],
+        &[],
+    );
+
+    assert_eq!(
+        ordered,
+        vec![
+            "cond_standard_a",
+            "cond_standard_b",
+            "cond_low_a",
+            "cond_standard_c",
+            "cond_standard_d",
+            "cond_low_b",
+            "cond_low_c",
+        ],
+    );
+}
+
+fn low_competition_provider_test_plan(
+    now: OffsetDateTime,
+    condition_id: &str,
+) -> RewardQuotePlan {
+    let mut plan = live_test_plan(now);
+    plan.condition_id = condition_id.to_string();
+    plan.strategy_bucket = RewardStrategyBucket::LowCompetition;
+    plan.eligible = true;
+    plan.pre_ai_eligible = true;
+    plan.low_competition_metrics = Some(polyedge_application::RewardLowCompetitionMetrics {
+        planned_notional_usd: reward_decimal("20"),
+        qualified_competition_usd: reward_decimal("50"),
+        estimated_reward_per_100_usd_day: reward_decimal("1.25"),
+        competition_density: reward_decimal("2"),
+        exit_depth_usd: reward_decimal("100"),
+        exit_slippage_cents: Some(reward_decimal("1")),
+        midpoint_range_cents: Some(reward_decimal("1")),
+        top_of_book_flip_count: Some(0),
+        sample_count: 20,
+        eligible_for_low_competition: true,
+        rejection_reasons: Vec::new(),
+    });
+    plan
 }
 
 #[test]
@@ -442,6 +590,71 @@ fn live_placement_requires_the_whole_market_to_fit_available_cash() {
     );
 
     assert!(orders.is_empty());
+}
+
+#[test]
+fn live_placement_caps_low_competition_share_of_global_open_orders() {
+    let config = RewardBotConfig {
+        account_id: "reward_live".to_string(),
+        stale_book_ms: 0,
+        max_markets: 4,
+        max_open_orders: 3,
+        max_global_position_usd: Decimal::ZERO,
+        low_competition_mode: polyedge_application::RewardLowCompetitionMode::Enforce,
+        low_competition_max_markets: 4,
+        low_competition_max_open_orders: 10,
+        low_competition_per_market_usd: reward_decimal("20"),
+        ..RewardBotConfig::default()
+    };
+    let now = OffsetDateTime::now_utc();
+    let mut low_plan = live_test_plan(now);
+    low_plan.condition_id = "cond_low_new".to_string();
+    low_plan.market_slug = "low-market-new".to_string();
+    low_plan.strategy_bucket = RewardStrategyBucket::LowCompetition;
+    low_plan.legs[0].token_id = "yes_low_new".to_string();
+    low_plan.legs[1].token_id = "no_low_new".to_string();
+    let mut standard_plan = live_test_plan(now);
+    standard_plan.condition_id = "cond_standard_new".to_string();
+    standard_plan.market_slug = "standard-market-new".to_string();
+    standard_plan.strategy_bucket = RewardStrategyBucket::Standard;
+    standard_plan.legs[0].token_id = "yes_standard_new".to_string();
+    standard_plan.legs[1].token_id = "no_standard_new".to_string();
+    let books = HashMap::from([
+        (
+            "yes_low_new".to_string(),
+            live_test_book("yes_low_new", now),
+        ),
+        ("no_low_new".to_string(), live_test_book("no_low_new", now)),
+        (
+            "yes_standard_new".to_string(),
+            live_test_book("yes_standard_new", now),
+        ),
+        (
+            "no_standard_new".to_string(),
+            live_test_book("no_standard_new", now),
+        ),
+    ]);
+    let mut existing_low = live_test_open_order("yes_existing_low");
+    existing_low.condition_id = "cond_existing_low".to_string();
+    existing_low.strategy_bucket = RewardStrategyBucket::LowCompetition;
+
+    let mut plans = vec![low_plan, standard_plan];
+    let (orders, _) = live_placement_orders(
+        &config,
+        &live_test_account(Decimal::from(100_u64)),
+        &mut plans,
+        &books,
+        &HashMap::new(),
+        &[existing_low],
+        &[],
+        false,
+        "trc_live_test",
+    );
+
+    assert_eq!(orders.len(), 2);
+    assert!(orders
+        .iter()
+        .all(|order| order.strategy_bucket == RewardStrategyBucket::Standard));
 }
 
 #[test]

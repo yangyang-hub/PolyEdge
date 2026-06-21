@@ -1,5 +1,6 @@
 const LIVE_CANCEL_RETRY_MIN_INTERVAL: TimeDuration = TimeDuration::seconds(15);
 const LIVE_CANCEL_FINAL_RECONCILIATION_RETRY_AFTER: TimeDuration = TimeDuration::seconds(30);
+const LOW_COMPETITION_GLOBAL_OPEN_ORDER_SHARE_BPS: usize = 3_000;
 
 fn live_cancel_candidates(
     config: &RewardBotConfig,
@@ -159,6 +160,8 @@ fn live_placement_orders(
     if max_markets == 0 || max_open_orders == 0 {
         return (Vec::new(), false);
     }
+    let low_competition_global_open_order_cap =
+        live_low_competition_global_open_order_cap(max_open_orders);
 
     let mut active_markets: HashSet<String> = open_orders
         .iter()
@@ -289,17 +292,14 @@ fn live_placement_orders(
             {
                 return (placements, plans_changed);
             }
-            if strategy_bucket == RewardStrategyBucket::LowCompetition
-                && orders
-                    .iter()
-                    .filter(|order| {
-                        order.status.is_open_like()
-                            && order.strategy_bucket == RewardStrategyBucket::LowCompetition
-                    })
-                    .count()
-                    >= usize::from(plan_config.max_open_orders)
-            {
-                continue;
+            if strategy_bucket == RewardStrategyBucket::LowCompetition {
+                let low_competition_open_orders =
+                    live_low_competition_open_order_count(&orders);
+                if low_competition_open_orders >= usize::from(plan_config.max_open_orders)
+                    || low_competition_open_orders >= low_competition_global_open_order_cap
+                {
+                    continue;
+                }
             }
             if orders.iter().any(|order| {
                 order.condition_id == plan.condition_id
@@ -384,6 +384,23 @@ fn live_placement_orders(
     }
 
     (placements, plans_changed)
+}
+
+fn live_low_competition_global_open_order_cap(max_open_orders: usize) -> usize {
+    if max_open_orders == 0 {
+        return 0;
+    }
+    ((max_open_orders * LOW_COMPETITION_GLOBAL_OPEN_ORDER_SHARE_BPS) / 10_000).max(1)
+}
+
+fn live_low_competition_open_order_count(orders: &[ManagedRewardOrder]) -> usize {
+    orders
+        .iter()
+        .filter(|order| {
+            order.status.is_open_like()
+                && order.strategy_bucket == RewardStrategyBucket::LowCompetition
+        })
+        .count()
 }
 
 fn mark_live_orderbook_validation_skip(

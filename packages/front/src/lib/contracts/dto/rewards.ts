@@ -150,6 +150,7 @@ export type RewardMarketBookMetricsDto = {
 };
 
 export type RewardLowCompetitionMetricsDto = {
+  planned_notional_usd: DecimalValue;
   qualified_competition_usd: DecimalValue;
   estimated_reward_per_100_usd_day: DecimalValue;
   competition_density: DecimalValue;
