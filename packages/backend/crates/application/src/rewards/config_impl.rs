@@ -64,6 +64,9 @@ impl Default for RewardBotConfig {
             cancel_on_fill: true,
             account_capital_usd: decimal("1000"),
             requote_drift_cents: decimal("2"),
+            requote_drift_confirm_sec: 60,
+            requote_drift_cooldown_sec: 300,
+            requote_drift_max_cancels_per_cycle: 1,
             post_fill_strategy: PostFillStrategy::ExitAtMarkup,
             // Risk control defaults: all disabled (0 = off)
             min_depth_usd: Decimal::ZERO,
@@ -231,6 +234,10 @@ impl RewardBotConfig {
             clamp_decimal(self.account_capital_usd, decimal("1"), decimal("100000000"));
         self.requote_drift_cents =
             clamp_decimal(self.requote_drift_cents, Decimal::ZERO, decimal("99"));
+        self.requote_drift_confirm_sec = self.requote_drift_confirm_sec.clamp(0, 3600);
+        self.requote_drift_cooldown_sec = self.requote_drift_cooldown_sec.clamp(0, 86_400);
+        self.requote_drift_max_cancels_per_cycle =
+            self.requote_drift_max_cancels_per_cycle.clamp(0, 100);
         // Risk control clamps
         self.min_depth_usd =
             clamp_decimal(self.min_depth_usd, Decimal::ZERO, decimal("1000000"));
@@ -489,6 +496,17 @@ impl RewardBotConfig {
         if let Some(requote_drift_cents) = patch.requote_drift_cents {
             next.requote_drift_cents = requote_drift_cents;
         }
+        if let Some(requote_drift_confirm_sec) = patch.requote_drift_confirm_sec {
+            next.requote_drift_confirm_sec = requote_drift_confirm_sec;
+        }
+        if let Some(requote_drift_cooldown_sec) = patch.requote_drift_cooldown_sec {
+            next.requote_drift_cooldown_sec = requote_drift_cooldown_sec;
+        }
+        if let Some(requote_drift_max_cancels_per_cycle) =
+            patch.requote_drift_max_cancels_per_cycle
+        {
+            next.requote_drift_max_cancels_per_cycle = requote_drift_max_cancels_per_cycle;
+        }
         if let Some(post_fill_strategy) = patch.post_fill_strategy {
             next.post_fill_strategy = post_fill_strategy;
         }
@@ -596,6 +614,9 @@ mod reward_config_tests {
             "cancel_on_fill": true,
             "account_capital_usd": 1000,
             "requote_drift_cents": 2,
+            "requote_drift_confirm_sec": 90,
+            "requote_drift_cooldown_sec": 240,
+            "requote_drift_max_cancels_per_cycle": 2,
             "post_fill_strategy": "flatten_immediately",
             "min_depth_usd": 100,
             "cancel_bid_rank": 2,
@@ -617,6 +638,9 @@ mod reward_config_tests {
         assert_eq!(config.quote_bid_rank, 3);
         assert_eq!(config.cancel_bid_rank, 2);
         assert_eq!(config.requote_jitter_sec, 305);
+        assert_eq!(config.requote_drift_confirm_sec, 90);
+        assert_eq!(config.requote_drift_cooldown_sec, 240);
+        assert_eq!(config.requote_drift_max_cancels_per_cycle, 2);
         assert_eq!(config.low_competition_mode, RewardLowCompetitionMode::Observe);
         assert_eq!(config.low_competition_max_markets, 8);
 

@@ -648,6 +648,7 @@ include!("rewards/live_submission.rs");
 include!("rewards/live_pending.rs");
 include!("rewards/live_helpers.rs");
 include!("rewards/live_orderbook_risk.rs");
+include!("rewards/live_requote.rs");
 include!("rewards/live_risk.rs");
 include!("rewards/orderbook_events.rs");
 include!("rewards/polling.rs");

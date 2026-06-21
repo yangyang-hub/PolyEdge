@@ -78,6 +78,9 @@ export type RewardBotConfigDto = {
   cancel_on_fill: boolean;
   account_capital_usd: DecimalValue;
   requote_drift_cents: DecimalValue;
+  requote_drift_confirm_sec: number;
+  requote_drift_cooldown_sec: number;
+  requote_drift_max_cancels_per_cycle: number;
   post_fill_strategy: PostFillStrategy;
   // Risk control fields
   min_depth_usd: DecimalValue;

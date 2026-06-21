@@ -313,8 +313,16 @@ pub struct RewardBotConfig {
     /// this pool; cash is consumed only when fills occur.
     pub account_capital_usd: Decimal,
     /// Cancel and re-quote when the selected bid-level target moves by more
-    /// than this many cents.
+    /// than this many cents after the reprice guard confirms the move.
     pub requote_drift_cents: Decimal,
+    /// Require the target drift to persist for this many seconds before
+    /// replacing a resting quote. 0 = no history confirmation.
+    pub requote_drift_confirm_sec: u64,
+    /// Minimum age before a resting order can be cancelled only for drift.
+    pub requote_drift_cooldown_sec: u64,
+    /// Maximum orders cancelled for drift in one reconcile cycle. Hard risk
+    /// cancels are not limited by this setting. 0 = drift reprice disabled.
+    pub requote_drift_max_cancels_per_cycle: u16,
     /// What to do with inventory once a quote leg is filled.
     pub post_fill_strategy: PostFillStrategy,
     // -- Risk control fields (0 = disabled) --
@@ -469,6 +477,12 @@ pub struct RewardBotConfigPatch {
     pub account_capital_usd: Option<Decimal>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub requote_drift_cents: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requote_drift_confirm_sec: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requote_drift_cooldown_sec: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requote_drift_max_cancels_per_cycle: Option<u16>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub post_fill_strategy: Option<PostFillStrategy>,
     // -- Risk control fields --

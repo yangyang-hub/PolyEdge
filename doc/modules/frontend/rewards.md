@@ -1,6 +1,6 @@
 # Rewards（奖励机器人）
 
-最后更新：2026-06-19
+最后更新：2026-06-21
 
 ## 概述
 
@@ -28,7 +28,7 @@
 
 ## 核心类型（types.ts）
 
-- **`NumberConfigKey`**：数值输入参数的字符串联合类型 — `max_markets`、`max_open_orders`、`per_market_usd`、`quote_size_usd`、`min_daily_reward`、`min_market_liquidity_usd`、`min_market_volume_24h_usd`、`min_hours_to_end`、`max_market_spread_cents`、`max_market_data_age_minutes`、低竞争 sleeve 数值阈值、dominant 单边阈值、盘口集中度阈值、AI advisory TTL、信息风险 TTL、`account_capital_usd` 等；`quote_bid_rank`、quote/selection mode、低竞争 mode、AI provider/request format 和信息风险 mode/等级使用受限下拉框，不进入该联合类型
+- **`NumberConfigKey`**：数值输入参数的字符串联合类型 — `max_markets`、`max_open_orders`、`per_market_usd`、`quote_size_usd`、`min_daily_reward`、`min_market_liquidity_usd`、`min_market_volume_24h_usd`、`min_hours_to_end`、`max_market_spread_cents`、`max_market_data_age_minutes`、低竞争 sleeve 数值阈值、dominant 单边阈值、盘口集中度阈值、AI advisory TTL、信息风险 TTL、`account_capital_usd`、`requote_drift_cents` 及 drift 换价 guard 秒数/限速字段等；`quote_bid_rank`、quote/selection mode、低竞争 mode、AI provider/request format 和信息风险 mode/等级使用受限下拉框，不进入该联合类型
 - **`EventCategory`**：`"all" | "placements" | "cancels" | "fills" | "rewards"`
 
 ## API 依赖
@@ -45,6 +45,7 @@
 - **Reset** → `resetRewardBot()` → API 写入 `reset` 控制命令，worker 领取后按 cancel-all 撤销 live 订单
 - **Config 编辑** → `updateRewardBotConfig(patch)` → 即时更新配置
 - **挂单档位** → `quote_bid_rank=1|2|3` → 分别选择买一/买二/买三；后端只在 live placement 准备挂单时用当前盘口验证目标档位，不在 quote plan 构建阶段提前淘汰市场
+- **漂移换价** → `requote_drift_cents` 只决定是否进入换价候选；后端还会应用历史同向确认、订单冷却和单轮最大 drift 撤单数，避免盘口档位抖动导致全量撤空后再重挂
 - **盘口选择** → `quote_mode=double|auto` + `selection_mode=observe|enforce` → 默认只保留双边报价；auto/enforce 的初步计划只用概率区间决定单边/双边，退出深度、盘口集中度、双边点差/档位/安全边际和单腿回退在 live placement 阶段用当前 orderbook 验证
 - **AI 建议配置** → 保存 provider、request format 和 TTL；worker 启用且环境变量配置 provider key 后，会在 full tick 中低频调用模型并缓存 advisory
 - **信息风险配置** → 保存启用开关、observe/enforce、过滤等级和 TTL；异步 worker 启用且环境变量配置 provider key 后，会扫描候选市场最新信息风险并缓存，页面展示风险等级/类型/摘要；enforce 模式下缺少未过期风险缓存的计划会被后端置为不可挂
@@ -84,7 +85,7 @@
 - Wallet balance、Positions 和 Orders 表格展示 worker 同步到数据库的 rewards 账户视图；余额显示资金钱包 pUSD，资金钱包地址优先使用 `POLYEDGE_POLYMARKET__FUNDER`，未配置时使用 `ACCOUNT_ID`。
 - 今日已赚奖励展示 worker 同步到 `account.reward_earned_usd` 的 UTC 当日 maker rewards 值；worker 优先读取认证 CLOB `GET /rewards/user/total?sponsored=true` 聚合端点，以对齐 Polymarket `/rewards` 页面顶部 Daily Rewards 的 native+sponsored 口径。聚合端点为空、为 0 或不可用时回退分页读取 `GET /rewards/user` native 明细并合并 `sponsored=true` sponsored-only 明细，按 `earnings * asset_rate` 求和。前端不直接访问 Polymarket，账户快照停更或认证配置缺失时不会自行回退官网数据。
 - 事件分类视图（挂单/撤单/吃单/奖励）
-- live worker 已接入 post-only 买单、撤单、confirmed 成交同步、成交后卖出/平仓、本地账本更新、managed order 计分状态、账户开放买单总 notional 观测、可映射 active rewards BUY 的 CLOB open-order 收养/重开和 UTC 当日账户级 maker rewards 同步（聚合端点优先、明细端点 fallback）；SELL、非 rewards 市场和无法唯一映射 token 的外部开放订单明细与奖励结算对账仍是后端缺口
+- live worker 已接入 post-only 买单、撤单、drift 换价 guard（历史同向确认、订单冷却、单轮限速）、confirmed 成交同步、成交后卖出/平仓、本地账本更新、managed order 计分状态、账户开放买单总 notional 观测、可映射 active rewards BUY 的 CLOB open-order 收养/重开和 UTC 当日账户级 maker rewards 同步（聚合端点优先、明细端点 fallback）；SELL、非 rewards 市场和无法唯一映射 token 的外部开放订单明细与奖励结算对账仍是后端缺口
 - 页面不再暴露仅用于旧模拟逻辑或可能错误释放对账锁的配置；历史 critical event 不会永久占用 `status.error`，当前错误只反映活跃对账锁
 - API 不直连 Polymarket 私有账户；账户余额、完整 positions 和本系统托管订单都从数据库读取。`status.open_orders` / `status.positions` 描述本地 managed state。
 

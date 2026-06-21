@@ -117,3 +117,130 @@ fn live_cancel_candidates_cancel_old_live_buy_with_stale_orderbook() {
     assert_eq!(candidates.len(), 1);
     assert!(candidates[0].1.contains("orderbook stale for live order"));
 }
+
+#[test]
+fn live_requote_drift_waits_for_order_cooldown() {
+    let config = RewardBotConfig {
+        account_id: "reward_live".to_string(),
+        requote_drift_cents: reward_decimal("2"),
+        requote_drift_confirm_sec: 60,
+        requote_drift_cooldown_sec: 300,
+        requote_drift_max_cancels_per_cycle: 1,
+        ..RewardBotConfig::default()
+    };
+    let now = OffsetDateTime::now_utc();
+    let mut plan = live_test_plan(now);
+    plan.legs[0].price = reward_decimal("0.40");
+    let mut order = live_test_open_order("yes_live");
+    order.created_at = now - TimeDuration::seconds(299);
+    order.updated_at = order.created_at;
+    let books = HashMap::from([(
+        "yes_live".to_string(),
+        live_test_book("yes_live", now),
+    )]);
+    let history = HashMap::from([(
+        "yes_live".to_string(),
+        VecDeque::from([live_test_book_snapshot(
+            reward_decimal("0.40"),
+            now - TimeDuration::seconds(61),
+        )]),
+    )]);
+
+    let candidates = live_cancel_candidates(&config, &[plan], &[order], &books, &history, false);
+
+    assert!(candidates.is_empty());
+}
+
+#[test]
+fn live_requote_drift_is_stable_and_limited_per_cycle() {
+    let config = RewardBotConfig {
+        account_id: "reward_live".to_string(),
+        requote_drift_cents: reward_decimal("2"),
+        requote_drift_confirm_sec: 60,
+        requote_drift_cooldown_sec: 300,
+        requote_drift_max_cancels_per_cycle: 1,
+        ..RewardBotConfig::default()
+    };
+    let now = OffsetDateTime::now_utc();
+    let mut plan = live_test_plan(now);
+    plan.legs[0].price = reward_decimal("0.40");
+    plan.legs[1].price = reward_decimal("0.40");
+    let mut yes_order = live_test_open_order("yes_live");
+    yes_order.created_at = now - TimeDuration::seconds(301);
+    yes_order.updated_at = yes_order.created_at;
+    let mut no_order = live_test_open_order("no_live");
+    no_order.created_at = yes_order.created_at;
+    no_order.updated_at = yes_order.created_at;
+    let books = HashMap::from([
+        ("yes_live".to_string(), live_test_book("yes_live", now)),
+        ("no_live".to_string(), live_test_book("no_live", now)),
+    ]);
+    let history = HashMap::from([
+        (
+            "yes_live".to_string(),
+            VecDeque::from([live_test_book_snapshot(
+                reward_decimal("0.40"),
+                now - TimeDuration::seconds(61),
+            )]),
+        ),
+        (
+            "no_live".to_string(),
+            VecDeque::from([live_test_book_snapshot(
+                reward_decimal("0.40"),
+                now - TimeDuration::seconds(61),
+            )]),
+        ),
+    ]);
+
+    let candidates =
+        live_cancel_candidates(&config, &[plan], &[yes_order, no_order], &books, &history, false);
+
+    assert_eq!(candidates.len(), 1);
+    assert!(candidates[0].1.contains("quote target moved"));
+}
+
+#[test]
+fn live_requote_drift_limit_does_not_throttle_hard_cancels() {
+    let config = RewardBotConfig {
+        account_id: "reward_live".to_string(),
+        requote_drift_max_cancels_per_cycle: 1,
+        ..RewardBotConfig::default()
+    };
+    let now = OffsetDateTime::now_utc();
+    let mut plan = live_test_plan(now);
+    plan.eligible = false;
+    let books = HashMap::from([
+        ("yes_live".to_string(), live_test_book("yes_live", now)),
+        ("no_live".to_string(), live_test_book("no_live", now)),
+    ]);
+
+    let candidates = live_cancel_candidates(
+        &config,
+        &[plan],
+        &[live_test_open_order("yes_live"), live_test_open_order("no_live")],
+        &books,
+        &HashMap::new(),
+        false,
+    );
+
+    assert_eq!(candidates.len(), 2);
+    assert!(
+        candidates
+            .iter()
+            .all(|(_, reason)| reason == "market dropped below eligibility threshold")
+    );
+}
+
+fn live_test_book_snapshot(price: Decimal, observed_at: OffsetDateTime) -> BookSnapshot {
+    BookSnapshot {
+        bids: vec![RewardBookLevel {
+            price,
+            size: reward_decimal("100"),
+        }],
+        asks: vec![RewardBookLevel {
+            price: reward_decimal("0.52"),
+            size: reward_decimal("100"),
+        }],
+        observed_at,
+    }
+}

@@ -14,7 +14,9 @@ fn live_cancel_candidates(
         .map(|plan| (plan.condition_id.as_str(), plan))
         .collect();
     let now = OffsetDateTime::now_utc();
-    open_orders
+    let mut hard_candidates = Vec::new();
+    let mut drift_candidates = Vec::new();
+    for (order_id, reason) in open_orders
         .iter()
         .filter(|order| order.status.is_open_like())
         .filter_map(|order| {
@@ -28,8 +30,19 @@ fn live_cancel_candidates(
                 kill_switch,
             )
                 .map(|reason| (order.id.clone(), reason))
-        })
-        .collect()
+        }) {
+        if live_cancel_reason_is_requote_drift(&reason) {
+            drift_candidates.push((order_id, reason));
+        } else {
+            hard_candidates.push((order_id, reason));
+        }
+    }
+
+    let drift_limit = usize::from(config.requote_drift_max_cancels_per_cycle);
+    if drift_limit > 0 {
+        hard_candidates.extend(drift_candidates.into_iter().take(drift_limit));
+    }
+    hard_candidates
 }
 
 fn live_cancel_reason(
@@ -86,13 +99,10 @@ fn live_cancel_reason(
     let Some(leg) = plan.legs.iter().find(|leg| leg.token_id == order.token_id) else {
         return Some("token no longer appears in live quote plan".to_string());
     };
-    if config.requote_drift_cents > Decimal::ZERO {
-        let drift_cents = ((order.price - leg.price).abs()) * Decimal::from(100_u64);
-        if drift_cents > config.requote_drift_cents {
-            return Some(format!(
-                "quote target moved {drift_cents} cents beyond requote threshold"
-            ));
-        }
+    if let Some(reason) =
+        live_requote_drift_cancel_reason(config, book_history, order, leg.price, now)
+    {
+        return Some(reason);
     }
     if let Some(age_ms) = stale_age_ms {
         if live_stale_orderbook_cancel_grace_active(config, order, now) {

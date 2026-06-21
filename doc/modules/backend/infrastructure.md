@@ -1,6 +1,6 @@
 # infrastructure（基础设施层）
 
-最后更新：2026-06-20
+最后更新：2026-06-21
 
 ## 概述
 
@@ -87,6 +87,7 @@ Orderbook candle history 默认由 orderbook 服务独立启用：`POLYEDGE_ORDE
 | `stores/rewards_tests.rs` | Rewards store 回归测试 | running 控制命令租约、重复命令合并、账户持仓完整替换与失败保留 |
 | `stores/runtime_config.rs` | 运行时配置 | PostgreSQL key-value |
 | `stores/helpers.rs` | DB 行映射辅助 | — |
+| `stores/helpers/reward_config.rs` | Rewards key-value 配置读写 helper | `RewardBotConfig` 与 `reward_bot_config` key-value 行互转 |
 | `stores/types.rs` | 共享类型 | — |
 
 **关键模式：**
@@ -94,7 +95,7 @@ Orderbook candle history 默认由 orderbook 服务独立启用：`POLYEDGE_ORDE
 - `runtime_config` bootstrap 在每次启动时用环境变量值覆盖数据库值（`ON CONFLICT ... DO UPDATE ... WHERE value IS DISTINCT FROM EXCLUDED.value`），确保环境变量始终优先；API 运行时修改仅在当前进程生命周期内生效，重启后恢复为环境变量值
 - 常量：`SYSTEM_RUNTIME_STATE_ID = "global"`、`RISK_STATE_ID = "global"`
 - `db_error(code, context)` 辅助函数统一创建 `dependency_unavailable` 错误
-- `RewardBotStore` 的 Postgres key-value 配置读写覆盖全部 rewards 报价/风控配置字段（市场质量门槛、`quote_bid_rank`、quote/selection mode、dominant probability/depth/concentration、preferred categories、低竞争 sleeve mode/额度/竞争/退出/稳定性阈值、AI advisory 开关/provider/request format/TTL、信息风险开关/mode/过滤等级/TTL、depth/rank/velocity/requote/reconcile 等）；`execution_mode`、`quote_edge_cents`、`reward_competition_factor`、`single_sided_divisor_c`、`fill_rate_per_tick`、`max_fill_ratio` 和 `auto_cancel_stale_minutes` 旧键保留用于向后兼容但被忽略。`quote_bid_rank` 保存为 1–3，默认 1。
+- `RewardBotStore` 的 Postgres key-value 配置读写覆盖全部 rewards 报价/风控配置字段（市场质量门槛、`quote_bid_rank`、quote/selection mode、dominant probability/depth/concentration、preferred categories、低竞争 sleeve mode/额度/竞争/退出/稳定性阈值、AI advisory 开关/provider/request format/TTL、信息风险开关/mode/过滤等级/TTL、depth/rank/velocity/requote/reconcile，以及 `requote_drift_confirm_sec` / `requote_drift_cooldown_sec` / `requote_drift_max_cancels_per_cycle` 换价 guard）；`execution_mode`、`quote_edge_cents`、`reward_competition_factor`、`single_sided_divisor_c`、`fill_rate_per_tick`、`max_fill_ratio` 和 `auto_cancel_stale_minutes` 旧键保留用于向后兼容但被忽略。`quote_bid_rank` 保存为 1–3，默认 1。
 - `RewardBotStore.latest_market_advisory()` 和 `save_market_advisory()` 在 Postgres 与内存实现中读写 `reward_market_advisories`；缓存 key 为 condition/provider/request_format/model/input_hash，且只返回 `expires_at > now` 的记录。Postgres 行映射 helper 解析 suitability、quote mode、exit policy、reasons JSON 和 metrics JSON。
 - `RewardBotStore.latest_market_info_risk(s)` 和 `save_market_info_risk()` 在 Postgres 与内存实现中读写 `reward_market_info_risks`；请求缓存 key 为 condition/provider/request_format/model/input_hash，批量读取按 condition 返回最新未过期记录。Postgres 行映射 helper 解析 risk level/type/direction、sources JSON 和 metrics JSON。
 - `RewardBotStore.record_low_competition_observations()` 和 `list_low_competition_observations()` 在 Postgres 与内存实现中读写 `reward_low_competition_observations`；Postgres 通过 `(account_id, observed_at DESC)` 索引读取最近窗口，用于 API snapshot 生成低竞争 shadow report，不会自动修改配置。

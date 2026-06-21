@@ -85,6 +85,9 @@ const rewardConfigSchema = z.object({
   cancel_on_fill: z.boolean(),
   account_capital_usd: decimalNumber.min(1),
   requote_drift_cents: decimalNumber.min(0).max(99),
+  requote_drift_confirm_sec: z.coerce.number().int().min(0).max(3600),
+  requote_drift_cooldown_sec: z.coerce.number().int().min(0).max(86_400),
+  requote_drift_max_cancels_per_cycle: z.coerce.number().int().min(0).max(100),
   post_fill_strategy: z.enum([
     "exit_at_markup",
     "hold_and_requote",

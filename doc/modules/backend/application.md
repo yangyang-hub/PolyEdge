@@ -1,6 +1,6 @@
 # application（应用/服务层）
 
-最后更新：2026-06-20
+最后更新：2026-06-21
 
 ## 概述
 
@@ -119,7 +119,7 @@
 **资金与盘口约束：**
 - 未成交 post-only maker 买单不在本地按全局 notional 硬锁同一笔 USDC，同一资金池可同时在多个不同市场报价。
 - 买单计划把 `per_market_usd` 作为 YES + NO 两腿总预算：先把 `rewards_min_size` 向上对齐到 CLOB 两位小数成本精度要求，再保障两腿的有效最小份额，最后按各腿距离 `min(quote_size_usd, account_capital_usd)` 目标 notional 的缺口分配剩余额度；实际计划数量也预先按同一精度向下对齐，避免 connector 提交时缩量后跌破奖励最小份额。`rewards_min_size` 是份额数量，单腿成本按 `price * size` 计算；auto/enforce 且启用 dominant single-side 时，双边总预算不足会用实际单腿价格检查并回退到可负担的单腿计划，同一回退也覆盖双边点差、档位和安全边际不可行但存在可行单腿的场景。
-- 报价计划构建阶段不再用 `quote_bid_rank` 缺档、目标价 rewards spread、盘口集中度或盘口价格预算过滤候选；计划腿可只是携带 YES/NO token 的占位元数据。live placement 准备创建订单时才用当前 orderbook materialize 真实腿：报价价格按 `quote_bid_rank` 选择目标盘口价，粗 tick 使用第 N 个不同买价，细 tick 使用从买一回退 `rank-1` 个 0.01 价格步长后的不高于目标价档位；双边计划优先要求 YES/NO 两腿都存在目标档位且通过 rewards spread、touch ask、安全边际和预算校验，auto/enforce/dominant 下若双边不可行则尝试只挂通过同一校验的一条腿；单边计划只要求目标侧存在。缺少/过期新鲜盘口时不提交订单、保持计划 eligible 并等待 orderbook 订阅/缓存返回；没有可行单腿的目标档位价格距离各自中间价超过 `min(market rewards_max_spread, config.max_spread_cents)` 等非 transient 验证失败时不下单且写入 `live_skip_until`/`live_skip_reason`，跳过标记默认 12 小时后失效以便奖励范围或盘口变化后重新评估；开放订单与最新目标档位价格相差超过 `requote_drift_cents` 时撤单重挂。
+- 报价计划构建阶段不再用 `quote_bid_rank` 缺档、目标价 rewards spread、盘口集中度或盘口价格预算过滤候选；计划腿可只是携带 YES/NO token 的占位元数据。live placement 准备创建订单时才用当前 orderbook materialize 真实腿：报价价格按 `quote_bid_rank` 选择目标盘口价，粗 tick 使用第 N 个不同买价，细 tick 使用从买一回退 `rank-1` 个 0.01 价格步长后的不高于目标价档位；双边计划优先要求 YES/NO 两腿都存在目标档位且通过 rewards spread、touch ask、安全边际和预算校验，auto/enforce/dominant 下若双边不可行则尝试只挂通过同一校验的一条腿；单边计划只要求目标侧存在。缺少/过期新鲜盘口时不提交订单、保持计划 eligible 并等待 orderbook 订阅/缓存返回；没有可行单腿的目标档位价格距离各自中间价超过 `min(market rewards_max_spread, config.max_spread_cents)` 等非 transient 验证失败时不下单且写入 `live_skip_until`/`live_skip_reason`，跳过标记默认 12 小时后失效以便奖励范围或盘口变化后重新评估；开放订单与最新目标档位价格相差超过 `requote_drift_cents` 时不会立即全量撤单，而是先经过 `requote_drift_confirm_sec` 历史盘口同向确认、`requote_drift_cooldown_sec` 最小挂单年龄和 `requote_drift_max_cancels_per_cycle` 单轮限速后才作为换价撤单候选。
 - `max_spread_cents` 归一化范围是 `0.1..=99`，与前端校验及二元概率价格有效范围一致；市场 `rewards_max_spread` 按 CLOB 原始 cents 直接使用，不做百分比换算。
 - `max_markets=0`、`max_open_orders=0` 或 `quote_size_usd=0` 表示不再新挂单。
 - 缺少新鲜缓存盘口时不会提交新 post-only 订单，也不会把市场写入长期 live skip；placement 会保持候选等待 orderbook 订阅数据返回，并在本地盘口缺失或超过 `stale_book_ms` 时从 orderbook 服务 HTTP batch 尝试刷新，必须看到 YES/NO 两腿非空且距离 stale 边界仍有余量的新鲜盘口后才会创建 intent，避免 intent 刚落库就因下一轮 reconcile 判定盘口过期而撤单。
@@ -129,7 +129,7 @@
 
 **live 资金模型：**
 - Rewards live maker 下单沿用跨市场软资金复用语义：不同 condition 的本系统未成交 post-only/GTC 买单可复用同一资金池；但 Polymarket 会对同一 condition 的全部开放 BUY 订单累计做余额有效性检查，因此 placement 会先计算该 condition 已有 managed BUY 剩余 notional 与待补 YES/NO 腿总 notional。账户开放 BUY 总额会同步到 `external_buy_notional`；worker 会先把 CLOB open-order snapshot 中可唯一映射到 active reward market YES/NO token 的开放 BUY 收养/重开为 managed order，其余无法归属到本系统 managed order 的外部 BUY notional 才会从 `available_usd` 中保守扣除，再做同 condition 准入，避免人工/其它机器人挂单与本系统新单叠加。SELL、非 rewards 市场和无法唯一映射 token 的外部开放订单明细仍未按 condition 映射。
-- Live 新挂单仍要求目标 YES/NO 两腿都有非空盘口；`stale_book_ms` 默认 45000，低于 orderbook 默认 60 秒 poll 周期但可由 WS 更新保持新鲜，配置归一化下限为 5000ms，不再允许生产配置把盘口年龄检查降到 0。新挂单路径遇到盘口缺失、空盘口、超过 `stale_book_ms` 或已接近 stale 边界时，会先对缺失/过期 token 通过 orderbook 服务 HTTP batch 尝试刷新；仍无足够新鲜度余量的盘口时保持计划等待 orderbook 缓存恢复，而不是写入 12 小时 skip；新建 quote intent 与已落库待提交 BUY 在提交前都会复用 live 撤单风控（计划仍 eligible、报价漂移、min depth、bid rank、depth drop、fill velocity、mass cancel、kill switch 等），风险不通过的本地 intent 会在提交前取消。live reconcile 会对本系统托管的开放订单读取活跃 token 盘口；盘口缺失/空盘口、SELL 盘口过期、BUY 的非 stale 硬风险或超过短暂 grace 的 BUY stale-only 风险会触发撤单，即使 `enabled=false` 已停止新增报价；近期已有 external order id 的 BUY 只在单纯 stale 且仍处于 grace 窗口内时延迟撤单，其他资格、价格漂移、深度、kill switch 等风险不延迟。
+- Live 新挂单仍要求目标 YES/NO 两腿都有非空盘口；`stale_book_ms` 默认 45000，低于 orderbook 默认 60 秒 poll 周期但可由 WS 更新保持新鲜，配置归一化下限为 5000ms，不再允许生产配置把盘口年龄检查降到 0。新挂单路径遇到盘口缺失、空盘口、超过 `stale_book_ms` 或已接近 stale 边界时，会先对缺失/过期 token 通过 orderbook 服务 HTTP batch 尝试刷新；仍无足够新鲜度余量的盘口时保持计划等待 orderbook 缓存恢复，而不是写入 12 小时 skip；新建 quote intent 与已落库待提交 BUY 在提交前都会复用 live 撤单风控（计划仍 eligible、报价漂移、min depth、bid rank、depth drop、fill velocity、mass cancel、kill switch 等），风险不通过的本地 intent 会在提交前取消。live reconcile 会对本系统托管的开放订单读取活跃 token 盘口；盘口缺失/空盘口、SELL 盘口过期、BUY 的非 stale 硬风险或超过短暂 grace 的 BUY stale-only 风险会触发撤单，即使 `enabled=false` 已停止新增报价；近期已有 external order id 的 BUY 只在单纯 stale 且仍处于 grace 窗口内时延迟撤单，价格漂移只在 reprice guard 确认后按单轮上限撤单，资格、深度和 kill switch 等硬风险仍不延迟。
 - Live `reset` 不清空本地账本或删除托管订单；worker 会先按 cancel-all 语义撤销本系统托管 live 订单，若任一 Polymarket 撤单被拒绝，则命令失败并保留本地状态以避免孤儿实盘订单。
 - 风险控制重点放在成交后：trade 达到 `CONFIRMED` 后，worker 对本系统托管 rewards 订单按 external trade id 幂等更新现金、库存、fills 和 PnL，并撤掉 sibling legs；新挂单的 per-token 和全局库存门槛都使用「已有库存 notional + 当前候选订单 notional」准入。
 - 本地仍需保留 `max_open_orders`、`max_markets`、单市场预算、per-token 库存和 kill-switch；这些限制控制操作风险和订单风暴，而不是把所有开放买单当作已消耗资金。
