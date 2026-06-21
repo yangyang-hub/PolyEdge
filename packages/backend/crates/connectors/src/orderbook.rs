@@ -87,6 +87,12 @@ impl OrderbookStreamClient {
         }
     }
 
+    pub fn new_for_source(base_url: &str, source: &str) -> Self {
+        Self {
+            stream_url: orderbook_stream_url_for_source(base_url, source),
+        }
+    }
+
     pub fn stream_url(&self) -> &str {
         &self.stream_url
     }
@@ -154,15 +160,24 @@ impl OrderbookStreamConnection {
 }
 
 fn orderbook_stream_url(base_url: &str) -> String {
+    let ws_base = orderbook_ws_base_url(base_url);
+    format!("{ws_base}/orderbook/stream")
+}
+
+fn orderbook_stream_url_for_source(base_url: &str, source: &str) -> String {
+    let ws_base = orderbook_ws_base_url(base_url);
+    format!("{ws_base}/orderbook/stream?source={source}")
+}
+
+fn orderbook_ws_base_url(base_url: &str) -> String {
     let base_url = base_url.trim().trim_end_matches('/');
-    let ws_base = if let Some(rest) = base_url.strip_prefix("http://") {
+    if let Some(rest) = base_url.strip_prefix("http://") {
         format!("ws://{rest}")
     } else if let Some(rest) = base_url.strip_prefix("https://") {
         format!("wss://{rest}")
     } else {
         base_url.to_string()
-    };
-    format!("{ws_base}/orderbook/stream")
+    }
 }
 
 #[derive(Deserialize)]
@@ -511,6 +526,12 @@ impl OrderbookSubscriptionRegistry for OrderbookHttpClient {
     async fn list_all_tokens(&self) -> Vec<String> {
         // Token aggregation is handled by the orderbook service.
         // Remote consumers don't need the full list.
+        Vec::new()
+    }
+
+    async fn list_source_tokens(&self, _source: &str) -> Vec<String> {
+        // Source token introspection is only available inside the orderbook
+        // process; remote clients replace sources through register_tokens.
         Vec::new()
     }
 

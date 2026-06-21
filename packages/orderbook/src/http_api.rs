@@ -2,15 +2,13 @@ use crate::updates::OrderbookUpdateBroadcaster;
 use axum::{
     Json,
     extract::{
-        Path, State,
+        Path, Query, State,
         ws::{Message, WebSocket, WebSocketUpgrade},
     },
     http::{HeaderMap, StatusCode},
     response::IntoResponse,
 };
-use polyedge_application::{
-    BookSource, CachedBookLevel, CachedOrderBook, OrderbookStreamEvent, OrderbookStreamReason,
-};
+use polyedge_application::{BookSource, CachedBookLevel, CachedOrderBook, OrderbookStreamReason};
 use polyedge_infrastructure::AppState;
 use polymarket_client_sdk::types::U256;
 use rust_decimal::Decimal;
@@ -79,6 +77,11 @@ pub struct BatchRequest {
 #[derive(Deserialize)]
 pub struct IngestRequest {
     pub books: Vec<IngestBook>,
+}
+
+#[derive(Deserialize)]
+pub struct StreamQuery {
+    pub source: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -269,27 +272,64 @@ async fn publish_ingested_books(state: &OrderbookApiState, books: &[CachedOrderB
 
 pub async fn stream_orderbooks(
     State(state): State<OrderbookApiState>,
+    Query(query): Query<StreamQuery>,
     ws: WebSocketUpgrade,
-) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| stream_orderbooks_socket(socket, state.broadcaster.subscribe()))
+) -> Result<impl IntoResponse, (StatusCode, Json<MessageResponse>)> {
+    let source = query.source.map(validate_source).transpose()?;
+    Ok(ws.on_upgrade(move |socket| stream_orderbooks_socket(socket, state, source)))
 }
 
 async fn stream_orderbooks_socket(
     mut socket: WebSocket,
-    mut rx: broadcast::Receiver<OrderbookStreamEvent>,
+    state: OrderbookApiState,
+    source: Option<String>,
 ) {
+    let mut rx = state.broadcaster.subscribe();
+    let mut source_tokens = match source.as_deref() {
+        Some(source) => state
+            .app
+            .orderbook_registry
+            .list_source_tokens(source)
+            .await
+            .into_iter()
+            .collect::<HashSet<_>>(),
+        None => HashSet::new(),
+    };
+    let mut registry_changes = state.app.orderbook_registry.subscribe_changes();
     loop {
-        let event = match rx.recv().await {
-            Ok(event) => event,
-            Err(broadcast::error::RecvError::Lagged(skipped)) => {
-                warn!(
-                    skipped,
-                    "orderbook stream client lagged behind broadcast channel"
-                );
+        let event = tokio::select! {
+            change = wait_for_registry_change(&mut registry_changes), if source.is_some() => {
+                if change {
+                    if let Some(source) = source.as_deref() {
+                        source_tokens = state
+                            .app
+                            .orderbook_registry
+                            .list_source_tokens(source)
+                            .await
+                            .into_iter()
+                            .collect::<HashSet<_>>();
+                    }
+                }
                 continue;
             }
-            Err(broadcast::error::RecvError::Closed) => break,
+            received = rx.recv() => {
+                match received {
+                    Ok(event) => event,
+                    Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                        warn!(
+                            skipped,
+                            "orderbook stream client lagged behind broadcast channel"
+                        );
+                        continue;
+                    }
+                    Err(broadcast::error::RecvError::Closed) => break,
+                }
+            }
         };
+
+        if source.is_some() && !source_tokens.contains(&event.book.token_id) {
+            continue;
+        }
 
         let payload = match serde_json::to_string(&event) {
             Ok(payload) => payload,
@@ -303,6 +343,16 @@ async fn stream_orderbooks_socket(
             break;
         }
     }
+}
+
+async fn wait_for_registry_change(
+    change_rx: &mut Option<tokio::sync::watch::Receiver<u64>>,
+) -> bool {
+    let Some(rx) = change_rx else {
+        std::future::pending::<()>().await;
+        return false;
+    };
+    rx.changed().await.is_ok()
 }
 
 fn validate_source(source: String) -> Result<String, (StatusCode, Json<MessageResponse>)> {

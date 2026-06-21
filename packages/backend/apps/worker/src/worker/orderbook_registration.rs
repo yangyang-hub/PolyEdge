@@ -1,5 +1,7 @@
-/// Collect token IDs from active rewards state, execution orders, eligible plans,
-/// and reward candidates, then register them with the orderbook service via HTTP.
+/// Collect token IDs from active rewards state, execution orders, final eligible
+/// plans, and reward candidates, then register them with the orderbook service
+/// via HTTP. Pre-AI provider candidates use the temporary rewards_ai_provider
+/// source managed by provider_refresh.rs.
 async fn register_orderbook_tokens(
     state: &AppState,
     registration_state: &mut OrderbookRegistrationState,
@@ -299,9 +301,8 @@ struct RegistrationBuckets {
 ///
 /// Cross-source deduplication and the global `max_tokens` cap are applied by
 /// the orderbook registry aggregation layer, so each source registers its own
-/// full set here. This keeps `rewards_eligible` stable (no longer emptied when
-/// active positions overlap eligible tokens), avoiding the WS subscription
-/// rebuild oscillation that the previous shared-seen budget allocation caused.
+/// full set here. `rewards_eligible` is limited to final orderable plans; pre-AI
+/// provider markets are registered separately as a bounded temporary source.
 /// `candidate` is capped by `candidate_cap` to preserve the cold-start prewarm
 /// budget.
 fn allocate_registration_buckets(

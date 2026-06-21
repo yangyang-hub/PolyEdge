@@ -38,6 +38,11 @@ fn spawn_reward_market_provider_refresh(
     });
 }
 
+const REWARD_AI_PROVIDER_ORDERBOOK_SOURCE: &str = "rewards_ai_provider";
+const REWARD_AI_PROVIDER_ORDERBOOK_MARKETS_PER_BATCH: usize = 10;
+const REWARD_AI_PROVIDER_ORDERBOOK_WAIT_ATTEMPTS: usize = 8;
+const REWARD_AI_PROVIDER_ORDERBOOK_WAIT_DELAY: Duration = Duration::from_secs(2);
+
 async fn refresh_reward_market_provider_cache(
     state: &AppState,
     mut cycle: RewardLiveCycle,
@@ -166,52 +171,108 @@ async fn refresh_reward_market_provider_cache(
         "starting reward market provider refresh",
     );
 
-    for condition_id in ordered_conditions {
-        if let Some(connector) = ai_connector.as_ref()
-            && ai_candidate_conditions.contains(&condition_id)
+    let refresh_result: Result<()> = async {
+        let mut stop_cycle = false;
+        let mut ai_promoted_tokens = Vec::new();
+        for condition_batch in ordered_conditions.chunks(REWARD_AI_PROVIDER_ORDERBOOK_MARKETS_PER_BATCH)
         {
-            let ai_step = refresh_reward_ai_advisory_for_condition(
-                state,
-                connector,
-                &cycle,
-                &books,
-                &markets_by_condition,
-                &condition_id,
-                model,
-                trace_id,
-                &mut report.ai,
-            )
-            .await?;
-            if let Some(advisory) = ai_step.advisory
-                && let Some(plan) = cycle
-                    .plans
-                    .iter_mut()
-                    .find(|plan| plan.condition_id == condition_id)
-            {
-                plan.ai_advisory = Some(advisory);
-            }
-            if ai_step.stop_cycle {
+            if stop_cycle {
                 break;
             }
-        }
+            let batch_books = if ai_connector.is_some() {
+                let ai_condition_batch = condition_batch
+                    .iter()
+                    .filter(|condition_id| ai_candidate_conditions.contains(*condition_id))
+                    .cloned()
+                    .collect::<Vec<_>>();
+                prepare_reward_ai_provider_orderbook_batch(
+                    state,
+                    &books,
+                    &markets_by_condition,
+                    &ai_condition_batch,
+                    trace_id,
+                )
+                .await?
+            } else {
+                books.clone()
+            };
 
-        if let Some(connector) = info_risk_connector.as_ref()
-            && info_risk_candidate_conditions.contains(&condition_id)
-            && refresh_reward_info_risk_for_condition(
-                state,
-                connector,
-                &cycle,
-                &markets_by_condition,
-                &condition_id,
-                model,
-                trace_id,
-                &mut report.info_risk,
-            )
-            .await?
-        {
-            break;
+            for condition_id in condition_batch {
+                if let Some(connector) = ai_connector.as_ref()
+                    && ai_candidate_conditions.contains(condition_id)
+                {
+                    let ai_step = refresh_reward_ai_advisory_for_condition(
+                        state,
+                        connector,
+                        &cycle,
+                        &batch_books,
+                        &markets_by_condition,
+                        condition_id,
+                        model,
+                        trace_id,
+                        &mut report.ai,
+                    )
+                    .await?;
+                    if let Some(advisory) = ai_step.advisory
+                        && let Some(plan) = cycle
+                            .plans
+                            .iter_mut()
+                            .find(|plan| plan.condition_id == condition_id.as_str())
+                    {
+                        if let Some(market) = markets_by_condition.get(condition_id) {
+                            promote_reward_ai_provider_passed_market_to_eligible_source(
+                                state,
+                                market,
+                                &advisory,
+                                trace_id,
+                                &mut ai_promoted_tokens,
+                            )
+                            .await;
+                        }
+                        plan.ai_advisory = Some(advisory);
+                    }
+                    if ai_step.stop_cycle {
+                        stop_cycle = true;
+                        break;
+                    }
+                }
+
+                if let Some(connector) = info_risk_connector.as_ref()
+                    && info_risk_candidate_conditions.contains(condition_id)
+                    && refresh_reward_info_risk_for_condition(
+                        state,
+                        connector,
+                        &cycle,
+                        &markets_by_condition,
+                        condition_id,
+                        model,
+                        trace_id,
+                        &mut report.info_risk,
+                    )
+                    .await?
+                {
+                    stop_cycle = true;
+                    break;
+                }
+            }
         }
+        Ok(())
     }
+    .await;
+
+    if let Err(error) = state
+        .orderbook_registry
+        .register_tokens(REWARD_AI_PROVIDER_ORDERBOOK_SOURCE, &[])
+        .await
+    {
+        warn!(
+            trace_id = %trace_id,
+            source = REWARD_AI_PROVIDER_ORDERBOOK_SOURCE,
+            error = %error,
+            "failed to clear temporary reward AI provider orderbook source",
+        );
+    }
+    refresh_result?;
 
     if cycle.config.info_risk_enabled {
         report.info_risk.applied_plans = apply_cached_reward_info_risks(state, trace_id).await?;
@@ -237,6 +298,167 @@ async fn refresh_reward_market_provider_cache(
         "completed reward market provider refresh",
     );
     Ok(report)
+}
+
+async fn prepare_reward_ai_provider_orderbook_batch(
+    state: &AppState,
+    base_books: &HashMap<String, RewardOrderBook>,
+    markets_by_condition: &HashMap<String, RewardMarket>,
+    condition_ids: &[String],
+    trace_id: &str,
+) -> Result<HashMap<String, RewardOrderBook>> {
+    let token_ids = reward_provider_orderbook_batch_token_ids(
+        state,
+        markets_by_condition,
+        condition_ids,
+    );
+    state
+        .orderbook_registry
+        .register_tokens(REWARD_AI_PROVIDER_ORDERBOOK_SOURCE, &token_ids)
+        .await?;
+    info!(
+        trace_id = %trace_id,
+        source = REWARD_AI_PROVIDER_ORDERBOOK_SOURCE,
+        markets = condition_ids.len(),
+        tokens = token_ids.len(),
+        "registered temporary reward AI provider orderbook batch",
+    );
+
+    let mut books = base_books.clone();
+    if token_ids.is_empty() {
+        return Ok(books);
+    }
+
+    for attempt in 0..REWARD_AI_PROVIDER_ORDERBOOK_WAIT_ATTEMPTS {
+        let remote_books = fetch_remote_cached_orderbooks(state, &token_ids).await?;
+        for cached in remote_books {
+            books.insert(cached.token_id.clone(), cached_order_book_to_reward(&cached));
+        }
+        if reward_provider_orderbook_batch_is_ready(markets_by_condition, condition_ids, &books) {
+            return Ok(books);
+        }
+        if attempt + 1 < REWARD_AI_PROVIDER_ORDERBOOK_WAIT_ATTEMPTS {
+            tokio::time::sleep(REWARD_AI_PROVIDER_ORDERBOOK_WAIT_DELAY).await;
+        }
+    }
+
+    Ok(books)
+}
+
+fn reward_provider_orderbook_batch_token_ids(
+    state: &AppState,
+    markets_by_condition: &HashMap<String, RewardMarket>,
+    condition_ids: &[String],
+) -> Vec<String> {
+    let max_tokens = state.settings.orderbook_stream.max_tokens;
+    if max_tokens == 0 {
+        return Vec::new();
+    }
+    let mut seen = HashSet::new();
+    let mut token_ids = Vec::new();
+    for condition_id in condition_ids {
+        let Some(market) = markets_by_condition.get(condition_id) else {
+            continue;
+        };
+        for token in &market.tokens {
+            if token_ids.len() >= max_tokens {
+                return token_ids;
+            }
+            if token.token_id.trim().is_empty() || !seen.insert(token.token_id.clone()) {
+                continue;
+            }
+            token_ids.push(token.token_id.clone());
+        }
+    }
+    token_ids
+}
+
+fn reward_provider_orderbook_batch_is_ready(
+    markets_by_condition: &HashMap<String, RewardMarket>,
+    condition_ids: &[String],
+    books: &HashMap<String, RewardOrderBook>,
+) -> bool {
+    condition_ids.iter().all(|condition_id| {
+        markets_by_condition
+            .get(condition_id)
+            .is_some_and(|market| reward_market_books_available(market, books))
+    })
+}
+
+async fn promote_reward_ai_provider_passed_market_to_eligible_source(
+    state: &AppState,
+    market: &RewardMarket,
+    advisory: &RewardMarketAdvisory,
+    trace_id: &str,
+    promoted_tokens: &mut Vec<String>,
+) {
+    if advisory.suitability != RewardAiSuitability::Allow
+        || advisory.confidence < reward_ai_min_confidence(state.settings.rewards.ai_min_confidence_bps)
+    {
+        return;
+    }
+
+    let max_tokens = state.settings.orderbook_stream.max_tokens;
+    if max_tokens == 0 {
+        return;
+    }
+    let mut tokens = match state
+        .reward_bot_service
+        .list_eligible_reward_book_token_ids()
+        .await
+    {
+        Ok(tokens) => tokens,
+        Err(error) => {
+            warn!(
+                trace_id = %trace_id,
+                condition_id = %market.condition_id,
+                error = %error,
+                "failed to list eligible reward tokens before AI provider promotion",
+            );
+            Vec::new()
+        }
+    };
+    let mut seen = tokens.iter().cloned().collect::<HashSet<_>>();
+    for token_id in promoted_tokens.iter() {
+        if tokens.len() >= max_tokens {
+            break;
+        }
+        if token_id.trim().is_empty() || !seen.insert(token_id.clone()) {
+            continue;
+        }
+        tokens.push(token_id.clone());
+    }
+    let mut newly_promoted = Vec::new();
+    for token in &market.tokens {
+        if tokens.len() >= max_tokens {
+            break;
+        }
+        if token.token_id.trim().is_empty() || !seen.insert(token.token_id.clone()) {
+            continue;
+        }
+        tokens.push(token.token_id.clone());
+        newly_promoted.push(token.token_id.clone());
+    }
+    if let Err(error) = state
+        .orderbook_registry
+        .register_tokens("rewards_eligible", &tokens)
+        .await
+    {
+        warn!(
+            trace_id = %trace_id,
+            condition_id = %market.condition_id,
+            error = %error,
+            "failed to promote AI-allowed reward market to eligible orderbook source",
+        );
+        return;
+    }
+    promoted_tokens.extend(newly_promoted);
+    debug!(
+        trace_id = %trace_id,
+        condition_id = %market.condition_id,
+        tokens = market.tokens.len(),
+        "promoted AI-allowed reward market to eligible orderbook source",
+    );
 }
 
 struct RewardAiAdvisoryRefreshStep {

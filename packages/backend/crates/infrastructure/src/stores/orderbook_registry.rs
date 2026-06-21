@@ -14,19 +14,24 @@ pub struct InMemoryOrderbookSubscriptionRegistry {
     tokens: RwLock<HashMap<String, Vec<String>>>,
     /// 最后一次写操作的时间戳
     last_modified: Mutex<Instant>,
+    change_tx: tokio::sync::watch::Sender<u64>,
 }
 
 impl InMemoryOrderbookSubscriptionRegistry {
     pub fn new() -> Self {
+        let (change_tx, _) = tokio::sync::watch::channel(0);
         Self {
             tokens: RwLock::new(HashMap::new()),
             last_modified: Mutex::new(Instant::now()),
+            change_tx,
         }
     }
 
     async fn touch(&self) {
         let mut ts = self.last_modified.lock().await;
         *ts = Instant::now();
+        let next = self.change_tx.borrow().wrapping_add(1);
+        let _ = self.change_tx.send(next);
     }
 }
 
@@ -115,6 +120,11 @@ impl OrderbookSubscriptionRegistry for InMemoryOrderbookSubscriptionRegistry {
         result
     }
 
+    async fn list_source_tokens(&self, source: &str) -> Vec<String> {
+        let tokens = self.tokens.read().await;
+        tokens.get(source).cloned().unwrap_or_default()
+    }
+
     async fn total_token_count(&self) -> usize {
         let tokens = self.tokens.read().await;
         let mut seen = HashSet::new();
@@ -140,6 +150,10 @@ impl OrderbookSubscriptionRegistry for InMemoryOrderbookSubscriptionRegistry {
         let ts = self.last_modified.lock().await;
         *ts > since
     }
+
+    fn subscribe_changes(&self) -> Option<tokio::sync::watch::Receiver<u64>> {
+        Some(self.change_tx.subscribe())
+    }
 }
 
 fn registry_source_priority(source: &str) -> u8 {
@@ -147,8 +161,9 @@ fn registry_source_priority(source: &str) -> u8 {
         "rewards_active" => 0,
         "exec_orders" => 1,
         "rewards_eligible" => 2,
-        "rewards" | "rewards_candidates" => 3,
-        "copytrade" => 4,
-        _ => 5,
+        "rewards_ai_provider" => 3,
+        "rewards" | "rewards_candidates" => 4,
+        "copytrade" => 5,
+        _ => 6,
     }
 }

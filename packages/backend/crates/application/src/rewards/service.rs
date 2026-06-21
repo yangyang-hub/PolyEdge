@@ -427,17 +427,14 @@ impl RewardBotService {
         Ok(select_reward_book_token_ids(&markets))
     }
 
-    /// Return distinct token IDs from the latest final-eligible or pre-AI
-    /// deterministic-eligible quote plans. Candidate registration still provides
-    /// cold-start coverage before these plans exist.
+    /// Return distinct token IDs from the latest final-eligible quote plans.
+    /// Pre-AI deterministic plans use the rewards_ai_provider temporary
+    /// subscription source while the provider cache is being refreshed.
     pub async fn list_eligible_reward_book_token_ids(&self) -> Result<Vec<String>> {
         let plans = self.store.list_all_quote_plans().await?;
         let mut seen = HashSet::new();
         let mut token_ids = Vec::new();
-        for plan in plans
-            .iter()
-            .filter(|plan| plan.eligible || plan.pre_ai_eligible)
-        {
+        for plan in plans.iter().filter(|plan| plan.eligible) {
             Self::push_reward_quote_plan_book_tokens(plan, &mut seen, &mut token_ids);
         }
         Ok(token_ids)

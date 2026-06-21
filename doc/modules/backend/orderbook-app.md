@@ -41,7 +41,7 @@
 | `GET /orderbook/{token_id}` | 读取单 token 缓存盘口；不存在返回 404 | 无 |
 | `POST /orderbook/batch` | 批量读取存在的缓存盘口 | 无 |
 | `GET /orderbook/stats` | 返回 cache 条目数、registry 来源数、registry 去重 token 数 | 无 |
-| `GET /orderbook/stream` | 内部 WebSocket；推送规范化 `OrderbookStreamEvent`（sequence、reason、book） | 无 |
+| `GET /orderbook/stream` | 内部 WebSocket；推送规范化 `OrderbookStreamEvent`（sequence、reason、book）；可选 `?source=...` 只接收该 registry source 当前 token 的更新 | 无 |
 | `POST /orderbook/register` | 原子替换一个 source 的有序 token 集合 | `x-polyedge-orderbook-token` |
 | `DELETE /orderbook/register/{source}` | 删除一个 source | `x-polyedge-orderbook-token` |
 | `POST /orderbook/ingest` | 校验整批盘口后批量写入缓存 | `x-polyedge-orderbook-token` |
@@ -51,15 +51,15 @@
 ## 缓存与订阅约束
 
 - 每个 source 的 `register_tokens()` 是原子全量替换，不是增量追加；orderbook HTTP 层收到空集合时等同删除 source。worker 周期注册任务会对成功空集合做防抖，`rewards_active`/`exec_orders` 连续 2 轮为空、`rewards_eligible`/`rewards_candidates` 连续 3 轮为空才真正发送空集合清源，查询失败或即时 active 刷新读到空集合会保留上一版 source。
-- registry 聚合顺序由 infrastructure 固定，优先级为 `rewards_active`、`exec_orders`、`rewards_eligible`、`rewards_candidates`、`copytrade`，最终受 `POLYEDGE_ORDERBOOK_STREAM__MAX_TOKENS` 限制；worker 周期注册任务为每个 source 独立注册全量 token，跨 source 去重和总量截断由聚合层完成，`rewards_eligible` 注册全部最终 eligible quote plan token，并包含 AI/info-risk gate 前已 deterministic eligible 且保存到 `orderbook_token_ids` 的 token（不再因 active 持仓覆盖而被清空，也避免 AI advisory pending 与缺盘口互相等待）；`rewards_candidates` 预热 token 还受 `POLYEDGE_ORDERBOOK_STREAM__REWARD_CANDIDATE_TOKEN_CAP` 限制，默认 50，避免候选池填满全局订阅预算。
+- registry 聚合顺序由 infrastructure 固定，优先级为 `rewards_active`、`exec_orders`、`rewards_eligible`、`rewards_ai_provider`、`rewards_candidates`、`copytrade`，最终受 `POLYEDGE_ORDERBOOK_STREAM__MAX_TOKENS` 限制；worker 周期注册任务为每个 source 独立注册全量 token，跨 source 去重和总量截断由聚合层完成，`rewards_eligible` 只注册最终可挂单 quote plan token；AI provider refresh 使用 `rewards_ai_provider` 临时 source，每批最多 10 个市场，下一批会原子替换上一批，结束后清空，避免待 AI 过滤市场长期占用可挂单订阅预算；`rewards_candidates` 预热 token 还受 `POLYEDGE_ORDERBOOK_STREAM__REWARD_CANDIDATE_TOKEN_CAP` 限制，默认 50，避免候选池填满全局订阅预算。
 - Polymarket WS 订阅按 `POLYEDGE_ORDERBOOK_STREAM__WS_CHUNK_SIZE` 分片成多条连接（默认 100 token/连接），降低单连接高消息量导致 SDK broadcast lag 的风险；chunk 内 SDK stream reader 会先快速 drain `book` / `price_change` 事件，再交给缓存写入循环处理，减少慢写入阻塞 SDK broadcast receiver；任意分片结束或失败时，当前 stream lifecycle 会整体重建。
-- stream refresh 只用 token 成员集合判断是否需要重建 WS 订阅，避免候选/eligible 查询排序抖动导致同一批 token 反复断线重连；poll reconciler 的共享 token 列表仍每次刷新为最新顺序。
+- stream refresh 由 registry 变更通知实时唤醒，并保留 `token_refresh_interval_secs` 定时兜底；只用 token 成员集合判断是否需要重建 WS 订阅，避免候选/eligible 查询排序抖动导致同一批 token 反复断线重连；poll reconciler 的共享 token 列表仍每次刷新为最新顺序。
 - 所有缓存写入都会先把 bids 按价格降序、asks 按价格升序排序，再裁剪到 `POLYEDGE_ORDERBOOK_STREAM__MAX_LEVELS_PER_SIDE`，避免上游无序数据丢失 top-of-book。
 - WS 同时消费完整 `book` 快照和挂单/撤单触发的 `price_change` 增量；无 size 的增量不修改深度，等待后续快照/poll 对账。
 - 缓存拒绝 `observed_at` 早于当前条目的快照或增量；时间戳相同时 WS 条目优先于 poll，避免延迟 poll 覆盖更新盘口。
 - 缓存 TTL 按本地写入时间计算；旧 `observed_at` 拒绝规则只适用于未过期条目，已过期条目可被后续 poll/ingest 覆盖恢复。
 - HTTP ingest 会在写入前完成整批 token/price/size 校验，并同样按最优价格排序后裁剪。
-- 每次 WS snapshot、WS price_change、poll reconcile 或 HTTP ingest 成功写入缓存后，都会向 `/orderbook/stream` 广播 `OrderbookStreamEvent`；广播消息携带单调 `sequence`、`reason` 和裁剪后的 `CachedOrderBook`。慢消费者会在服务端日志记录 lag，客户端需断线后重新 HTTP bootstrap；`OrderbookStreamClient` 建立内部 WS 连接最多等待 5 秒，避免 orderbook 地址不可达时阻塞 worker 事件循环。
+- 每次 WS snapshot、WS price_change、poll reconcile 或 HTTP ingest 成功写入缓存后，都会向 `/orderbook/stream` 广播 `OrderbookStreamEvent`；广播消息携带单调 `sequence`、`reason` 和裁剪后的 `CachedOrderBook`。带 `?source=...` 的内部 WS 连接会按该 source 当前注册 token 过滤返回；底层 Polymarket WS 仍按聚合 token 统一订阅。慢消费者会在服务端日志记录 lag，客户端需断线后重新 HTTP bootstrap；`OrderbookStreamClient` 建立内部 WS 连接最多等待 5 秒，避免 orderbook 地址不可达时阻塞 worker 事件循环。
 - Rewards candles 不再由每条 orderbook cache 更新派生，避免高频 WS `price_change` 把本地 candle 队列打满。`candle_history.rs` 独立按低频节拍读取 active reward markets，按 `total_daily_rate` 排序后去重 token 并受 `POLYEDGE_ORDERBOOK_STREAM__REWARD_CANDLE_HISTORY_MAX_TOKENS_PER_CYCLE` 限制；每个 token 调用 CLOB `/prices-history` 获取 5 分钟 fidelity 数据并写入 `reward_market_candles`。该数据源不是 bid/ask 盘口，持久化时 `best_bid_close` / `best_ask_close` 等于 provider price、`spread_cents_close=0`，`sample_count` 表示同 bucket 内持久化的 provider history 点数量，不表示成交量。
 - Candle history sync 默认启用；关键限流配置为 `POLYEDGE_ORDERBOOK_STREAM__REWARD_CANDLE_HISTORY_SYNC_INTERVAL_SECS=300`、`POLYEDGE_ORDERBOOK_STREAM__REWARD_CANDLE_HISTORY_REQUEST_DELAY_MS=500`、`POLYEDGE_ORDERBOOK_STREAM__REWARD_CANDLE_HISTORY_MAX_TOKENS_PER_CYCLE=600`、`POLYEDGE_ORDERBOOK_STREAM__REWARD_CANDLE_HISTORY_BACKFILL_SECS=7200`、`POLYEDGE_ORDERBOOK_STREAM__REWARD_CANDLE_HISTORY_INCREMENTAL_SECS=900`。interval 会 clamp 到 60-3600 秒，请求间隔 clamp 到 250-10000ms，lookback clamp 到 5 分钟-24 小时；max tokens 设为 0 可跳过本轮 token 请求。
 - poll reconciler 默认每 60 秒刷新当前注册 token，优先处理缺失、TTL 过期或超过 stale threshold 的 token，再覆盖其余 token，以修复未被检测到的 WS 增量丢失；`stale_threshold_ms <= 0` 只关闭年龄 stale 优先级。
@@ -95,7 +95,7 @@ Active reward tokens
 
 - 市场同步、registry、分片 WS `book` + `price_change`、全注册 token 周期 poll reconcile、HTTP 读取、内部 WS 推送和内部写认证已实现；poll 可修复 fresh cache 中未被察觉的 WS 增量丢失，并通过内部 WS 广播给 worker 本地 cache；内部 WS client 建连最多等待 5 秒，避免不可达地址阻塞调用方。
 - Orderbook crate 已从 `packages/backend/apps/orderbook` 拆到顶层 `packages/orderbook`，仍作为 `packages/Cargo.toml` Rust workspace member 构建。
-- orderbook stream 的 token refresh 已避免仅因 registry 聚合顺序变化触发 WS 重连；只有订阅 token 成员真实增删时才重建 Polymarket WS 订阅。
+- orderbook stream 的 token refresh 已接入 registry 变更通知，首次注册和后续成员变化可立即触发检查；仍避免仅因 registry 聚合顺序变化触发 WS 重连，只有订阅 token 成员真实增删时才重建 Polymarket WS 订阅。
 - poll 盘口保留 CLOB 返回的服务端毫秒时间戳，不再用 HTTP 响应完成时间伪造新鲜度；batch HTTP 读取通过一次 cache 批量读锁返回。
 - Gamma full sync、Gamma priority sync 与 rewards 目录同步在 orderbook 服务中使用三个独立后台循环；rewards 分页和详情补全可能持续很多分钟，但不会阻塞 Gamma `markets.synced_at` 刷新。Gamma full/priority 写入 `markets` 时在 orderbook 进程内串行化，并由 Postgres `lock_timeout` / `statement_timeout` 快速失败，避免一次慢锁等待拖垮后续周期。priority sync 会在全量目录之间强制刷新重点 condition，避免已挂单/已订阅/rewards 筛选市场仅因目录新鲜度过低被策略撤单。rewards 详情补全后仍缺 token 或空目录异常时保留上一版 rewards catalog，不执行破坏性全量替换。
 - Gamma market upsert 保存 `liquidity_usd`、`end_at` 和本地 `synced_at`；full sync 跳过同版本同内容行，并按 rewards 新鲜度窗口对安静市场做限频 `synced_at` refresh，priority sync 对重点市场强制 refresh。Postgres upsert 使用单条 `INSERT .. ON CONFLICT DO UPDATE WHERE` 表达新增、内容变化和 freshness-only 刷新。rewards 候选使用该本地同步时间判断目录新鲜度，不依赖市场是否刚好发生上游业务更新。

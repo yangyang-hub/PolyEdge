@@ -130,6 +130,7 @@ async fn main() -> polyedge_domain::Result<()> {
                 .restart_interval_secs
                 .max(1),
         );
+        let mut registry_changes = stream_state.orderbook_registry.subscribe_changes();
         loop {
             let token_count = stream_state
                 .orderbook_registry
@@ -137,8 +138,8 @@ async fn main() -> polyedge_domain::Result<()> {
                 .await
                 .len();
             if token_count == 0 {
-                info!("no tokens registered yet, waiting 10s before retry");
-                tokio::time::sleep(Duration::from_secs(10)).await;
+                info!("no tokens registered yet, waiting for registry change");
+                wait_for_orderbook_registry_tokens(&stream_state, &mut registry_changes).await;
                 continue;
             }
 
@@ -179,6 +180,29 @@ async fn main() -> polyedge_domain::Result<()> {
 
     info!("polyedge-orderbook service shutting down");
     Ok(())
+}
+
+async fn wait_for_orderbook_registry_tokens(
+    state: &AppState,
+    change_rx: &mut Option<tokio::sync::watch::Receiver<u64>>,
+) {
+    let fallback = tokio::time::sleep(Duration::from_secs(10));
+    tokio::pin!(fallback);
+    tokio::select! {
+        _ = async {
+            let Some(rx) = change_rx else {
+                std::future::pending::<()>().await;
+                return;
+            };
+            loop {
+                let _ = rx.changed().await;
+                if !state.orderbook_registry.list_all_tokens().await.is_empty() {
+                    return;
+                }
+            }
+        } => {}
+        _ = &mut fallback => {}
+    }
 }
 
 async fn healthz() -> &'static str {

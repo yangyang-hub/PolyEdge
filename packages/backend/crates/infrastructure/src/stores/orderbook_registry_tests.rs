@@ -69,4 +69,24 @@ mod orderbook_registry_tests {
             ]
         );
     }
+
+    #[tokio::test]
+    async fn source_tokens_and_change_notifications_are_isolated() {
+        let registry = InMemoryOrderbookSubscriptionRegistry::new();
+        let mut changes = registry
+            .subscribe_changes()
+            .expect("local registry exposes changes");
+
+        registry
+            .register_tokens("rewards_ai_provider", &["7".to_string(), "8".to_string()])
+            .await
+            .expect("register provider source");
+
+        assert!(changes.changed().await.is_ok());
+        assert_eq!(
+            registry.list_source_tokens("rewards_ai_provider").await,
+            vec!["7".to_string(), "8".to_string()]
+        );
+        assert!(registry.list_source_tokens("rewards_eligible").await.is_empty());
+    }
 }

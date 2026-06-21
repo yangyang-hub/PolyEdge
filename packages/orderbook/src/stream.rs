@@ -186,13 +186,15 @@ pub async fn run_orderbook_stream(
         }
     });
 
-    // 6. Keep WS chunk consumers alive with periodic token set checks.
+    // 6. Keep WS chunk consumers alive with immediate registry change checks
+    //    and a periodic fallback.
     //    When other services register new tokens via the HTTP API, the registry
-    //    changes. We periodically check and reconnect if the set changed.
-    let refresh_interval = Duration::from_secs(settings.token_refresh_interval_secs.max(10));
+    //    changes. We reconnect only when the token membership changed.
+    let refresh_interval = Duration::from_secs(settings.token_refresh_interval_secs.max(1));
     let mut refresh_timer = tokio::time::interval(refresh_interval);
     refresh_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     refresh_timer.tick().await; // skip first immediate tick
+    let mut registry_changes = state.orderbook_registry.subscribe_changes();
 
     loop {
         tokio::select! {
@@ -212,6 +214,29 @@ pub async fn run_orderbook_stream(
                     }
                 }
                 break;
+            }
+            _ = wait_for_registry_change(&mut registry_changes) => {
+                let new_tokens = collect_orderbook_subscription_tokens(state).await;
+                let new_count = new_tokens.len();
+                {
+                    let mut shared = shared_tokens.write().await;
+                    *shared = new_tokens.clone();
+                }
+
+                let old_tokens = ws_token_set.read().await;
+                let changed = !token_lists_have_same_members(&old_tokens, &new_tokens);
+                drop(old_tokens);
+
+                if changed {
+                    info!(
+                        old = report.subscribed_tokens,
+                        new = new_count,
+                        "orderbook token list changed, reconnecting WS with new set"
+                    );
+                    report.subscribed_tokens = new_count;
+                    *ws_token_set.write().await = new_tokens;
+                    break;
+                }
             }
             _ = refresh_timer.tick() => {
                 // Check if the registry token set changed (other services may
@@ -258,6 +283,14 @@ pub async fn run_orderbook_stream(
     );
 
     Ok(report)
+}
+
+async fn wait_for_registry_change(change_rx: &mut Option<tokio::sync::watch::Receiver<u64>>) {
+    let Some(rx) = change_rx else {
+        std::future::pending::<()>().await;
+        return;
+    };
+    let _ = rx.changed().await;
 }
 
 struct OrderbookWsChunkContext {
