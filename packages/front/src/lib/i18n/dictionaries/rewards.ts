@@ -271,7 +271,7 @@ export const rewards = {
       minScoringCheckSec: "已有订单的评分重算最小间隔秒数。",
       maxPositionUsd: "门槛：当已有库存 × 价格超过此值时跳过该 token 的报价。",
       maxGlobalPositionUsd: "门槛：当所有市场已成交库存成本加本次候选金额超过此值时停止下单；未成交开放买单不计入。",
-      exitMarkupCents: "退出订单的利润目标，高于平均成交价的分数（exit_at_markup 策略）。",
+      exitMarkupCents: "退出订单相对被吃买单原价的加价分数；设为 0 时按原价挂卖（exit_at_markup 策略）。",
       accountCapital: "策略资金上限（默认 1000U），不是链上钱包余额；真实可用资金以钱包余额为准。",
       requoteDriftCents: "当所选买盘档位的目标价格相对当前挂单移动超过此值时，进入带确认窗口、冷却和限速保护的换价流程。",
       postFillStrategy: "报价腿成交后的处理方式：加价出场、持有并续挂、或市价平仓。",

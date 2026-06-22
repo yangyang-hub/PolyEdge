@@ -343,14 +343,9 @@ fn plan_live_post_fill_orders(
     match post_fill_strategy {
         PostFillStrategy::HoldAndRequote => Vec::new(),
         PostFillStrategy::ExitAtMarkup => {
-            let avg_price = positions
-                .get(&entry.token_id)
-                .map(|position| position.avg_price)
-                .filter(|price| *price > Decimal::ZERO)
-                .unwrap_or(entry.price);
             let exit_price = ceil_reward_price_to_tick(Decimal::min(
                 Decimal::from_parts(99, 0, 0, false, 2),
-                avg_price + config.exit_markup_cents / Decimal::from(100_u64),
+                entry.price + config.exit_markup_cents / Decimal::from(100_u64),
             ));
             let mut exit = live_exit_order(
                 entry,
@@ -437,22 +432,11 @@ fn plan_live_post_fill_orders(
 
 fn reward_post_fill_strategy(
     config: &RewardBotConfig,
-    plans: &[RewardQuotePlan],
-    entry: &ManagedRewardOrder,
-    ai_min_confidence: Decimal,
+    _plans: &[RewardQuotePlan],
+    _entry: &ManagedRewardOrder,
+    _ai_min_confidence: Decimal,
 ) -> PostFillStrategy {
-    if !config.ai_advisory_enabled || config.selection_mode != polyedge_application::RewardSelectionMode::Enforce {
-        return config.post_fill_strategy;
-    }
-    plans
-        .iter()
-        .find(|plan| plan.condition_id == entry.condition_id)
-        .and_then(|plan| plan.ai_advisory.as_ref())
-        .filter(|advisory| {
-            advisory.suitability == polyedge_application::RewardAiSuitability::Allow
-                && advisory.confidence >= ai_min_confidence
-        })
-        .map_or(config.post_fill_strategy, |advisory| advisory.exit_policy)
+    config.post_fill_strategy
 }
 
 fn live_exit_order(

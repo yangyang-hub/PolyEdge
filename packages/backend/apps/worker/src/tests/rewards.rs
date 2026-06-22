@@ -1190,6 +1190,67 @@ fn post_fill_exit_is_planned_before_live_submission() {
 }
 
 #[test]
+fn configured_post_fill_exit_ignores_ai_hold_policy_and_uses_entry_price() {
+    let now = OffsetDateTime::now_utc();
+    let mut entry = live_test_open_order("yes_live");
+    entry.price = reward_decimal("0.49");
+    let config = RewardBotConfig {
+        ai_advisory_enabled: true,
+        selection_mode: polyedge_application::RewardSelectionMode::Enforce,
+        post_fill_strategy: PostFillStrategy::ExitAtMarkup,
+        exit_markup_cents: Decimal::ZERO,
+        ..RewardBotConfig::default()
+    };
+    let mut plan = live_test_plan(now);
+    plan.ai_advisory = Some(RewardMarketAdvisory {
+        condition_id: entry.condition_id.clone(),
+        provider: polyedge_application::RewardAiProvider::OpenAi,
+        request_format: polyedge_application::RewardAiRequestFormat::OpenAiChatCompletions,
+        model: "test-model".to_string(),
+        input_hash: "hash".to_string(),
+        suitability: RewardAiSuitability::Allow,
+        quote_mode: RewardPlanQuoteMode::Double,
+        exit_policy: PostFillStrategy::HoldAndRequote,
+        confidence: Decimal::ONE,
+        reasons: Vec::new(),
+        metrics: json!({}),
+        created_at: now,
+        expires_at: now + TimeDuration::hours(1),
+    });
+    let positions = HashMap::from([(
+        "yes_live".to_string(),
+        RewardPosition {
+            account_id: entry.account_id.clone(),
+            condition_id: entry.condition_id.clone(),
+            token_id: entry.token_id.clone(),
+            outcome: entry.outcome.clone(),
+            size: Decimal::from(5_u64),
+            avg_price: reward_decimal("0.52"),
+            realized_pnl: Decimal::ZERO,
+            updated_at: now,
+        },
+    )]);
+
+    let updates = plan_live_post_fill_orders(
+        &config,
+        &[plan],
+        &entry,
+        Decimal::from(5_u64),
+        &positions,
+        &HashMap::new(),
+        Decimal::ZERO,
+        "trc_exit_plan",
+    );
+
+    let LiveRewardOrderUpdate::Changed(exit, _) = &updates[0] else {
+        panic!("configured post-fill exit must create a sell intent");
+    };
+    assert_eq!(exit.status, ManagedRewardOrderStatus::ExitPending);
+    assert_eq!(exit.price, entry.price);
+    assert_eq!(exit.size, Decimal::from(5_u64));
+}
+
+#[test]
 fn reward_live_fill_id_includes_order_id_and_keeps_legacy_id() {
     let update = live_test_trade_update("pm_yes_live", "pm_trade_1", Decimal::ONE);
 

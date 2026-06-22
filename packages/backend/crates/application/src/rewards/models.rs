@@ -64,7 +64,7 @@ impl FromStr for RewardOrderSide {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PostFillStrategy {
-    /// Rest a reverse sell order at `avg_price + exit_markup_cents` to take profit.
+    /// Rest a reverse sell order at the filled buy order price plus `exit_markup_cents`.
     ExitAtMarkup,
     /// Keep the filled inventory and keep quoting the market for more rewards.
     HoldAndRequote,
