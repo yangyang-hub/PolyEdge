@@ -617,6 +617,62 @@ fn make_leg(token: &RewardToken, price: Decimal, notional_usd: Decimal) -> Rewar
     }
 }
 
+pub fn scale_single_leg_for_budget(
+    token: &RewardToken,
+    price: Decimal,
+    rewards_min_size: Decimal,
+    available_usd: Decimal,
+) -> RewardQuoteLeg {
+    let minimum_size = minimum_live_quote_size(price, rewards_min_size);
+    let budget_size = if price > Decimal::ZERO {
+        floor_reward_size_for_cost_precision(
+            price,
+            (available_usd / price).round_dp_with_strategy(2, RoundingStrategy::ToZero),
+        )
+    } else {
+        Decimal::ZERO
+    };
+    let size = Decimal::max(minimum_size, budget_size);
+    make_leg(token, price, price * size)
+}
+
+pub fn scale_double_legs_for_budget(
+    yes_token: &RewardToken,
+    yes_price: Decimal,
+    no_token: &RewardToken,
+    no_price: Decimal,
+    rewards_min_size: Decimal,
+    available_usd: Decimal,
+) -> Vec<RewardQuoteLeg> {
+    let per_leg = (available_usd / decimal("2")).round_dp(4);
+    let yes_minimum_size = minimum_live_quote_size(yes_price, rewards_min_size);
+    let yes_budget_size = if yes_price > Decimal::ZERO {
+        floor_reward_size_for_cost_precision(
+            yes_price,
+            (per_leg / yes_price).round_dp_with_strategy(2, RoundingStrategy::ToZero),
+        )
+    } else {
+        Decimal::ZERO
+    };
+    let yes_size = Decimal::max(yes_minimum_size, yes_budget_size);
+
+    let no_minimum_size = minimum_live_quote_size(no_price, rewards_min_size);
+    let no_budget_size = if no_price > Decimal::ZERO {
+        floor_reward_size_for_cost_precision(
+            no_price,
+            (per_leg / no_price).round_dp_with_strategy(2, RoundingStrategy::ToZero),
+        )
+    } else {
+        Decimal::ZERO
+    };
+    let no_size = Decimal::max(no_minimum_size, no_budget_size);
+
+    vec![
+        make_leg(yes_token, yes_price, yes_price * yes_size),
+        make_leg(no_token, no_price, no_price * no_size),
+    ]
+}
+
 fn score_market(
     market: &RewardMarket,
     max_spread_cents: Decimal,

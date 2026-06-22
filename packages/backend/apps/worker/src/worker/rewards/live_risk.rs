@@ -182,6 +182,7 @@ fn live_placement_orders(
     let mut seq = 0usize;
     let available_for_new_condition =
         live_available_usd_after_unmanaged_external_buys(account, open_orders);
+    let mut remaining_available = available_for_new_condition;
 
     for plan_index in 0..plans.len() {
         if !plans[plan_index].eligible {
@@ -259,8 +260,68 @@ fn live_placement_orders(
             continue;
         }
         let existing_market_buy_notional = live_market_buy_notional(&orders, &plan.condition_id);
-        let missing_plan_buy_notional: Decimal = plan
-            .legs
+        let raw_budget = (remaining_available - existing_market_buy_notional).max(Decimal::ZERO);
+        // Cap the condition budget by per-leg position limits so rescaled legs
+        // do not exceed max_position_usd when both are open simultaneously.
+        let condition_budget = live_condition_budget_capped_by_positions(
+            config,
+            &plan.legs,
+            positions,
+            raw_budget,
+        );
+        // Rescale legs to use available balance: single-side uses all,
+        // double-side splits 50/50. Plan legs stay at minimum size for
+        // snapshot and price-drift detection.
+        let rescaled_legs = match plan.quote_mode {
+            RewardPlanQuoteMode::SingleYes | RewardPlanQuoteMode::SingleNo => {
+                if let Some(leg) = plan.legs.first() {
+                    let token = RewardToken {
+                        token_id: leg.token_id.clone(),
+                        outcome: leg.outcome.clone(),
+                        price: None,
+                    };
+                    vec![scale_single_leg_for_budget(
+                        &token,
+                        leg.price,
+                        plan.rewards_min_size,
+                        condition_budget,
+                    )]
+                } else {
+                    plan.legs.clone()
+                }
+            }
+            _ => {
+                let yes = plan.legs.iter().find(|l| {
+                    l.outcome.trim().eq_ignore_ascii_case("yes")
+                });
+                let no = plan.legs.iter().find(|l| {
+                    l.outcome.trim().eq_ignore_ascii_case("no")
+                });
+                if let (Some(y), Some(n)) = (yes, no) {
+                    let yt = RewardToken {
+                        token_id: y.token_id.clone(),
+                        outcome: y.outcome.clone(),
+                        price: None,
+                    };
+                    let nt = RewardToken {
+                        token_id: n.token_id.clone(),
+                        outcome: n.outcome.clone(),
+                        price: None,
+                    };
+                    scale_double_legs_for_budget(
+                        &yt,
+                        y.price,
+                        &nt,
+                        n.price,
+                        plan.rewards_min_size,
+                        condition_budget,
+                    )
+                } else {
+                    plan.legs.clone()
+                }
+            }
+        };
+        let missing_plan_buy_notional: Decimal = rescaled_legs
             .iter()
             .filter(|leg| {
                 !orders.iter().any(|order| {
@@ -286,7 +347,7 @@ fn live_placement_orders(
         {
             continue;
         }
-        for leg in &plan.legs {
+        for leg in &rescaled_legs {
             if orders.iter().filter(|order| order.status.is_open_like()).count()
                 >= max_open_orders
             {
@@ -379,11 +440,44 @@ fn live_placement_orders(
                 active_low_competition_markets.insert(plan.condition_id.clone());
             }
             orders.push(order.clone());
+            remaining_available = (remaining_available - notional).max(Decimal::ZERO);
             placements.push(order);
         }
     }
 
     (placements, plans_changed)
+}
+
+fn live_condition_budget_capped_by_positions(
+    config: &RewardBotConfig,
+    plan_legs: &[RewardQuoteLeg],
+    positions: &[RewardPosition],
+    raw_budget: Decimal,
+) -> Decimal {
+    let mut budget = raw_budget;
+    if config.max_position_usd > Decimal::ZERO {
+        let min_headroom = plan_legs
+            .iter()
+            .map(|leg| {
+                let current = positions
+                    .iter()
+                    .find(|p| p.token_id == leg.token_id && p.size > Decimal::ZERO)
+                    .map(|p| (p.size * leg.price).round_dp(4))
+                    .unwrap_or_default();
+                (config.max_position_usd - current).max(Decimal::ZERO)
+            })
+            .min()
+            .unwrap_or(raw_budget);
+        // Both legs share one condition collateral; cap total so each leg
+        // stays within its position limit.
+        budget = Decimal::min(budget, min_headroom * Decimal::from(plan_legs.len().max(1) as u64));
+    }
+    if config.max_global_position_usd > Decimal::ZERO {
+        let current = live_global_inventory_notional(positions);
+        let headroom = (config.max_global_position_usd - current).max(Decimal::ZERO);
+        budget = Decimal::min(budget, headroom);
+    }
+    budget
 }
 
 fn live_low_competition_global_open_order_cap(max_open_orders: usize) -> usize {
