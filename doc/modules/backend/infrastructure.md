@@ -84,7 +84,7 @@ Orderbook candle history 默认由 orderbook 服务独立启用：`POLYEDGE_ORDE
 | `stores/orderbook_registry.rs` | `OrderbookSubscriptionRegistry` | 内存（来源有序 token 原子替换 + 确定性优先级聚合 + 来源/去重总数统计）— 仅供 orderbook 服务内部使用；Worker 通过 HTTP 注册 token |
 | `stores/orderbook_registry_tests.rs` | Registry 回归测试 | 原子 source 替换、优先级和跨 source 去重 |
 | `stores/orderbook_cache_tests.rs` | Cache 回归测试 | 最优档排序/裁剪、批量写入和 stale threshold 语义 |
-| `stores/rewards_tests.rs` | Rewards store 回归测试 | running 控制命令租约、重复命令合并、账户持仓完整替换与失败保留 |
+| `stores/rewards_tests.rs` | Rewards store 回归测试 | running 控制命令租约、重复命令合并、历史清理边界、账户持仓完整替换与失败保留 |
 | `stores/runtime_config.rs` | 运行时配置 | PostgreSQL key-value |
 | `stores/helpers.rs` | DB 行映射辅助 | — |
 | `stores/helpers/reward_config.rs` | Rewards key-value 配置读写 helper | `RewardBotConfig` 与 `reward_bot_config` key-value 行互转 |
@@ -99,6 +99,7 @@ Orderbook candle history 默认由 orderbook 服务独立启用：`POLYEDGE_ORDE
 - `RewardBotStore.latest_market_advisory()` 和 `save_market_advisory()` 在 Postgres 与内存实现中读写 `reward_market_advisories`；缓存 key 为 condition/provider/request_format/model/input_hash，且只返回 `expires_at > now` 的记录。Postgres 行映射 helper 解析 suitability、quote mode、exit policy、reasons JSON 和 metrics JSON。
 - `RewardBotStore.latest_market_info_risk(s)` 和 `save_market_info_risk()` 在 Postgres 与内存实现中读写 `reward_market_info_risks`；请求缓存 key 为 condition/provider/request_format/model/input_hash，批量读取按 condition 返回最新未过期记录。Postgres 行映射 helper 解析 risk level/type/direction、sources JSON 和 metrics JSON。
 - `RewardBotStore.record_low_competition_observations()` 和 `list_low_competition_observations()` 在 Postgres 与内存实现中读写 `reward_low_competition_observations`；Postgres 通过 `(account_id, observed_at DESC)` 索引读取最近窗口，用于 API snapshot 生成低竞争 shadow report，不会自动修改配置。
+- `RewardBotStore.prune_history(cutoff)` 在 Postgres 中使用单事务清理 cutoff 之前的终态 managed orders（`cancelled`/`filled`/`error`）、`reward_risk_events` 和 `reward_low_competition_observations`；内存实现保持相同语义。该清理不会删除 `planned`/`open`/`exit_pending` 订单、`reward_fills`、`reward_positions` 或 `reward_account_state`，避免破坏 live 对账和账本。
 - `RewardBotStore.record_market_candle_sample()` 和 `list_recent_market_candles()` 在 Postgres 与内存实现中读写 `reward_market_candles`；Postgres 根据 `reward_markets.tokens_json` 把 token 映射到 active reward market，按 `(token_id, interval_sec, bucket_start)` upsert price-history OHLC，同一 close timestamp 的重复写入不增加 `sample_count`，AI advisory 按 condition/interval/window 读取最近 K 线。
 - `RewardBotStore` 支持按 external Polymarket order id 查询 rewards managed order、通过 fill id 判断成交是否已入账，并通过 `latest_fill_at(account_id)` 查询最近 confirmed fill；live worker 用这些读路径完成托管订单成交幂等同步和外部账户快照保护。
 - `RewardBotStore.cancel_open_orders()` 在 Postgres/内存实现中兼容释放旧账本的 `reserved_usd`；新的 rewards 开放买单不再逐单硬占用资金，订单列表优先返回 open-like 状态，避免大量历史成交/撤单淹没当前开放挂单。worker 的 `list_open_orders()` 仍包含本地 planned/exit intent；控制台 `status.open_orders` 使用独立的 external count，只统计已有 `external_order_id` 的 open-like 订单。

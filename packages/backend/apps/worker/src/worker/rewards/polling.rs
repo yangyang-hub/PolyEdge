@@ -50,8 +50,10 @@ async fn poll_reward_bot_loop(
     let mut book_history: HashMap<String, VecDeque<BookSnapshot>> = HashMap::new();
     let mut low_competition_probe = LowCompetitionProbeState::default();
     let full_interval = Duration::from_secs(state.settings.rewards.poll_interval_secs.max(1));
+    let history_prune_interval = Duration::from_secs(REWARD_HISTORY_PRUNE_INTERVAL_SECS);
     // Start with a full cycle immediately.
     let mut last_full_at = Instant::now() - full_interval;
+    let mut last_history_prune_at = Instant::now() - history_prune_interval;
     let mut runtime_revision_rx = state.reward_bot_service.subscribe_runtime_changes();
     let mut command_wake_rx = state.reward_bot_service.subscribe_command_wake();
     let mut config_revision = runtime_revision_rx.borrow().1;
@@ -80,6 +82,8 @@ async fn poll_reward_bot_loop(
         {
             warn!(error = %error, "failed to record rewards worker heartbeat");
         }
+        maybe_prune_reward_history(state, &mut last_history_prune_at, history_prune_interval)
+            .await;
         let reconcile_interval = Duration::from_secs(config.reconcile_interval_sec.max(1));
 
         // Always drain queued control commands first.
@@ -209,6 +213,42 @@ async fn poll_reward_bot_loop(
     drop(_heartbeat_guard);
     lease.release().await?;
     Ok(total)
+}
+
+async fn maybe_prune_reward_history(
+    state: &AppState,
+    last_history_prune_at: &mut Instant,
+    interval: Duration,
+) {
+    let now = Instant::now();
+    if now.duration_since(*last_history_prune_at) < interval {
+        return;
+    }
+    *last_history_prune_at = now;
+
+    let cutoff = OffsetDateTime::now_utc() - TimeDuration::seconds(REWARD_HISTORY_RETENTION_SECS);
+    match state.reward_bot_service.prune_history(cutoff).await {
+        Ok(report)
+            if report.terminal_orders_deleted > 0
+                || report.risk_events_deleted > 0
+                || report.low_competition_observations_deleted > 0 =>
+        {
+            info!(
+                terminal_orders_deleted = report.terminal_orders_deleted,
+                risk_events_deleted = report.risk_events_deleted,
+                low_competition_observations_deleted =
+                    report.low_competition_observations_deleted,
+                cutoff = %cutoff,
+                "pruned reward history",
+            );
+        }
+        Ok(_) => {
+            debug!(cutoff = %cutoff, "reward history prune found no old rows");
+        }
+        Err(error) => {
+            warn!(error = %error, cutoff = %cutoff, "failed to prune reward history");
+        }
+    }
 }
 
 const REWARD_FAST_ORDER_SYNC_MIN_SECS: u64 = 5;

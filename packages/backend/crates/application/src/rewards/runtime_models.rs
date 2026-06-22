@@ -214,6 +214,13 @@ pub struct RewardLowCompetitionShadowReport {
     pub recommendation_reasons: Vec<String>,
 }
 
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RewardHistoryPruneReport {
+    pub terminal_orders_deleted: u64,
+    pub risk_events_deleted: u64,
+    pub low_competition_observations_deleted: u64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RewardQuotePlan {
     pub condition_id: String,

@@ -7,6 +7,8 @@ const LIVE_EXTERNAL_ORDER_NOT_FOUND_CLOSE_AFTER_SECS: i64 = 300;
 // reconciliation lock (which pauses new buy placements) self-clears instead of requiring a
 // manual DB fix. Mirrors the 404-lock close above; tunable here if needed.
 const LIVE_SUBMISSION_UNKNOWN_CLOSE_AFTER_SECS: i64 = 600;
+const REWARD_HISTORY_PRUNE_INTERVAL_SECS: u64 = 5 * 24 * 60 * 60;
+const REWARD_HISTORY_RETENTION_SECS: i64 = 5 * 24 * 60 * 60;
 static REWARD_AI_PROVIDER_REQUEST_SEMAPHORE: tokio::sync::Semaphore =
     tokio::sync::Semaphore::const_new(1);
 static REWARD_MARKET_PROVIDER_REFRESH_RUNNING: AtomicBool = AtomicBool::new(false);

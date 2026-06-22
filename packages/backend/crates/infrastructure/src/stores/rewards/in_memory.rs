@@ -69,6 +69,43 @@ impl RewardBotStore for InMemoryRewardBotStore {
         Ok(self.worker_heartbeats.read().await.get(account_id).copied())
     }
 
+    async fn prune_history(&self, cutoff: OffsetDateTime) -> Result<RewardHistoryPruneReport> {
+        let terminal_orders_deleted = {
+            let mut orders = self.orders.write().await;
+            let before = orders.len();
+            orders.retain(|order| {
+                !(order.updated_at < cutoff
+                    && matches!(
+                        order.status,
+                        ManagedRewardOrderStatus::Cancelled
+                            | ManagedRewardOrderStatus::Filled
+                            | ManagedRewardOrderStatus::Error
+                    ))
+            });
+            (before - orders.len()) as u64
+        };
+
+        let risk_events_deleted = {
+            let mut events = self.events.write().await;
+            let before = events.len();
+            events.retain(|event| event.created_at >= cutoff);
+            (before - events.len()) as u64
+        };
+
+        let low_competition_observations_deleted = {
+            let mut observations = self.low_competition_observations.write().await;
+            let before = observations.len();
+            observations.retain(|observation| observation.observed_at >= cutoff);
+            (before - observations.len()) as u64
+        };
+
+        Ok(RewardHistoryPruneReport {
+            terminal_orders_deleted,
+            risk_events_deleted,
+            low_competition_observations_deleted,
+        })
+    }
+
     async fn enqueue_control_command(&self, command: RewardControlCommand) -> Result<bool> {
         let mut commands = self.control_commands.write().await;
         if commands.iter().any(|existing| {

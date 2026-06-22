@@ -94,6 +94,80 @@ impl RewardBotStore for PostgresRewardBotStore {
         postgres_latest_reward_worker_heartbeat(&self.pool, account_id).await
     }
 
+    async fn prune_history(&self, cutoff: OffsetDateTime) -> Result<RewardHistoryPruneReport> {
+        let mut transaction = self.pool.begin().await.map_err(|error| {
+            db_error(
+                "POSTGRES_TRANSACTION_BEGIN_FAILED",
+                format!("failed to begin reward history prune transaction: {error}"),
+            )
+        })?;
+
+        let terminal_orders_deleted = sqlx::query(
+            r#"
+            DELETE FROM reward_managed_orders
+            WHERE updated_at < $1
+              AND status IN ('cancelled', 'filled', 'error')
+            "#,
+        )
+        .bind(cutoff)
+        .execute(&mut *transaction)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_DELETE_FAILED",
+                format!("failed to prune terminal reward orders: {error}"),
+            )
+        })?
+        .rows_affected();
+
+        let risk_events_deleted = sqlx::query(
+            r#"
+            DELETE FROM reward_risk_events
+            WHERE created_at < $1
+            "#,
+        )
+        .bind(cutoff)
+        .execute(&mut *transaction)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_DELETE_FAILED",
+                format!("failed to prune reward risk events: {error}"),
+            )
+        })?
+        .rows_affected();
+
+        let low_competition_observations_deleted = sqlx::query(
+            r#"
+            DELETE FROM reward_low_competition_observations
+            WHERE observed_at < $1
+            "#,
+        )
+        .bind(cutoff)
+        .execute(&mut *transaction)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_DELETE_FAILED",
+                format!("failed to prune reward low-competition observations: {error}"),
+            )
+        })?
+        .rows_affected();
+
+        transaction.commit().await.map_err(|error| {
+            db_error(
+                "POSTGRES_TRANSACTION_COMMIT_FAILED",
+                format!("failed to commit reward history prune transaction: {error}"),
+            )
+        })?;
+
+        Ok(RewardHistoryPruneReport {
+            terminal_orders_deleted,
+            risk_events_deleted,
+            low_competition_observations_deleted,
+        })
+    }
+
     async fn enqueue_control_command(&self, command: RewardControlCommand) -> Result<bool> {
         postgres_enqueue_reward_control_command(&self.pool, command).await
     }

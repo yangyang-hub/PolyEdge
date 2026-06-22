@@ -158,6 +158,16 @@ impl RewardBotService {
         Ok(())
     }
 
+    pub async fn prune_history(&self, cutoff: OffsetDateTime) -> Result<RewardHistoryPruneReport> {
+        let report = self.store.prune_history(cutoff).await?;
+        self.memory
+            .write()
+            .await
+            .events
+            .retain(|event| event.created_at >= cutoff);
+        Ok(report)
+    }
+
     pub async fn claim_next_control_command(
         &self,
         trace_id: &str,

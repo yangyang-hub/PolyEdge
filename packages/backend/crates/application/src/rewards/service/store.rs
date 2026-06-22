@@ -9,6 +9,11 @@ pub trait RewardBotStore: Send + Sync {
     ) -> Result<()>;
     async fn latest_worker_heartbeat(&self, account_id: &str)
     -> Result<Option<OffsetDateTime>>;
+    /// Prune unbounded rewards history older than `cutoff`.
+    ///
+    /// Implementations must preserve open-like orders, fills, positions, and
+    /// account state; this is only for terminal order rows and event-like rows.
+    async fn prune_history(&self, cutoff: OffsetDateTime) -> Result<RewardHistoryPruneReport>;
     async fn enqueue_control_command(&self, command: RewardControlCommand) -> Result<bool>;
     async fn claim_next_control_command(
         &self,
