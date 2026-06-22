@@ -202,20 +202,6 @@ export function RewardsConfigPanel({
             onChange={(value) => updateNumber("max_open_orders", value)}
           />
           <NumberInput
-            label={dictionary.rewards.perMarketUsd}
-            value={draft.per_market_usd}
-            suffix="$"
-            hint={h.perMarketUsd}
-            onChange={(value) => updateNumber("per_market_usd", value)}
-          />
-          <NumberInput
-            label={dictionary.rewards.quoteSizeUsd}
-            value={draft.quote_size_usd}
-            suffix="$"
-            hint={h.quoteSizeUsd}
-            onChange={(value) => updateNumber("quote_size_usd", value)}
-          />
-          <NumberInput
             label={dictionary.rewards.maxSpreadCents}
             value={draft.max_spread_cents}
             suffix="c"

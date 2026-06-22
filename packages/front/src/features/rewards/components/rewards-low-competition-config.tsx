@@ -64,13 +64,6 @@ export function LowCompetitionConfig({
         onChange={(value) => updateNumber("low_competition_max_open_orders", value)}
       />
       <NumberInput
-        label={dictionary.rewards.lowCompetitionPerMarketUsd}
-        value={draft.low_competition_per_market_usd}
-        suffix="$"
-        hint={h.lowCompetitionPerMarketUsd}
-        onChange={(value) => updateNumber("low_competition_per_market_usd", value)}
-      />
-      <NumberInput
         label={dictionary.rewards.lowCompetitionMaxPositionUsd}
         value={draft.low_competition_max_position_usd}
         suffix="$"

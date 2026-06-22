@@ -1,8 +1,6 @@
 export type NumberConfigKey =
   | "max_markets"
   | "max_open_orders"
-  | "per_market_usd"
-  | "quote_size_usd"
   | "min_daily_reward"
   | "min_market_liquidity_usd"
   | "min_market_volume_24h_usd"
@@ -20,7 +18,6 @@ export type NumberConfigKey =
   | "preferred_category_score_bonus"
   | "low_competition_max_markets"
   | "low_competition_max_open_orders"
-  | "low_competition_per_market_usd"
   | "low_competition_max_position_usd"
   | "low_competition_min_market_liquidity_usd"
   | "low_competition_min_market_volume_24h_usd"
