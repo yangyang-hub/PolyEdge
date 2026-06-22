@@ -192,8 +192,9 @@ pub async fn run_orderbook_stream(
         };
         let mut session_tasks: JoinSet<ChunkExit> = JoinSet::new();
         let mut session_cmds: Vec<mpsc::Sender<ChunkCommand>> = Vec::new();
-        for (index, chunk_tokens) in
-            partition_tokens_into_chunks(&token_ids, ws_chunk_size).into_iter().enumerate()
+        for (index, chunk_tokens) in partition_tokens_into_chunks(&token_ids, ws_chunk_size)
+            .into_iter()
+            .enumerate()
         {
             let tokens_u256: Vec<U256> = chunk_tokens
                 .iter()
@@ -764,18 +765,14 @@ async fn handle_orderbook_ws_event(
             if received.is_multiple_of(100) {
                 debug!(
                     ws_chunk = chunk_index,
-                    received,
-                    "orderbook stream processing snapshots"
+                    received, "orderbook stream processing snapshots"
                 );
             }
         }
         OrderbookWsEvent::PriceChange(price_change) => {
-            if let Err(error) = apply_price_change_to_cache(
-                &context.cache,
-                &context.broadcaster,
-                &price_change,
-            )
-            .await
+            if let Err(error) =
+                apply_price_change_to_cache(&context.cache, &context.broadcaster, &price_change)
+                    .await
             {
                 warn!(
                     ws_chunk = chunk_index,
@@ -783,7 +780,9 @@ async fn handle_orderbook_ws_event(
                     "failed to apply orderbook price change"
                 );
             }
-            context.price_changes_received.fetch_add(1, Ordering::Relaxed);
+            context
+                .price_changes_received
+                .fetch_add(1, Ordering::Relaxed);
         }
     }
 }
@@ -839,14 +838,12 @@ async fn subscribe_orderbook_token_set(
             )
         })?;
     guard.mark_subscribed();
-    let price_stream = client
-        .subscribe_prices(tokens.to_vec())
-        .map_err(|error| {
-            AppError::internal(
-                "ORDERBOOK_WS_PRICE_SUBSCRIBE_FAILED",
-                format!("failed to subscribe to orderbook price changes: {error}"),
-            )
-        })?;
+    let price_stream = client.subscribe_prices(tokens.to_vec()).map_err(|error| {
+        AppError::internal(
+            "ORDERBOOK_WS_PRICE_SUBSCRIBE_FAILED",
+            format!("failed to subscribe to orderbook price changes: {error}"),
+        )
+    })?;
     guard.mark_subscribed();
 
     let mut readers = JoinSet::new();
@@ -1386,7 +1383,13 @@ mod tests {
 
     #[test]
     fn partition_tokens_into_chunks_respects_size() {
-        let tokens = vec!["a".to_string(), "b".to_string(), "c".to_string(), "d".to_string(), "e".to_string()];
+        let tokens = vec![
+            "a".to_string(),
+            "b".to_string(),
+            "c".to_string(),
+            "d".to_string(),
+            "e".to_string(),
+        ];
         let chunks = partition_tokens_into_chunks(&tokens, 2);
         assert_eq!(
             chunks,
@@ -1397,7 +1400,10 @@ mod tests {
             ]
         );
         // zero size is treated as 1; empty input yields no chunks.
-        assert_eq!(partition_tokens_into_chunks(&[], 100), Vec::<Vec<String>>::new());
+        assert_eq!(
+            partition_tokens_into_chunks(&[], 100),
+            Vec::<Vec<String>>::new()
+        );
         assert_eq!(partition_tokens_into_chunks(&tokens, 0).len(), 5);
     }
 

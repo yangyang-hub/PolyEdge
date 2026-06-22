@@ -345,6 +345,17 @@ fn live_placement_orders(
         if existing_market_buy_notional + missing_plan_buy_notional
             > available_for_new_condition
         {
+            if missing_plan_buy_notional > Decimal::ZERO
+                && mark_live_funding_skip(
+                    &mut plans[plan_index],
+                    existing_market_buy_notional,
+                    missing_plan_buy_notional,
+                    available_for_new_condition,
+                    OffsetDateTime::now_utc(),
+                )
+            {
+                plans_changed = true;
+            }
             continue;
         }
         for leg in &rescaled_legs {
@@ -522,6 +533,32 @@ fn mark_live_orderbook_waiting(
         || plan.live_skip_reason.is_some();
     if changed {
         plan.eligible = true;
+        plan.reason = reason;
+        plan.live_skip_until = None;
+        plan.live_skip_reason = None;
+        plan.updated_at = now;
+    }
+    changed
+}
+
+fn mark_live_funding_skip(
+    plan: &mut RewardQuotePlan,
+    existing_market_buy_notional: Decimal,
+    missing_plan_buy_notional: Decimal,
+    available_for_new_condition: Decimal,
+    now: OffsetDateTime,
+) -> bool {
+    let reason = format!(
+        "live funding below rewards minimum: existing condition BUY notional {existing_market_buy_notional}, missing minimum quote notional {missing_plan_buy_notional}, available {available_for_new_condition}"
+    );
+    let changed = plan.eligible
+        || plan.quote_mode != RewardPlanQuoteMode::None
+        || plan.reason != reason
+        || plan.live_skip_until.is_some()
+        || plan.live_skip_reason.is_some();
+    if changed {
+        plan.eligible = false;
+        plan.quote_mode = RewardPlanQuoteMode::None;
         plan.reason = reason;
         plan.live_skip_until = None;
         plan.live_skip_reason = None;

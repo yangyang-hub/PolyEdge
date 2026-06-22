@@ -61,6 +61,7 @@ export const shared = {
   },
   topbar: {
     title: "PolyEdge 控制台",
+    openNavigation: "打开导航菜单",
     runtimeSync: "运行状态同步中",
     streamSync: "API 状态同步中",
     riskSync: "风控同步中",

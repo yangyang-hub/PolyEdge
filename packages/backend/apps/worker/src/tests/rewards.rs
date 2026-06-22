@@ -578,7 +578,7 @@ fn live_placement_requires_the_whole_market_to_fit_available_cash() {
     ]);
 
     let mut plans = vec![plan];
-    let (orders, _) = live_placement_orders(
+    let (orders, plans_changed) = live_placement_orders(
         &config,
         &live_test_account(reward_decimal("47.99")),
         &mut plans,
@@ -591,6 +591,15 @@ fn live_placement_requires_the_whole_market_to_fit_available_cash() {
     );
 
     assert!(orders.is_empty());
+    assert!(plans_changed);
+    assert!(!plans[0].eligible);
+    assert_eq!(
+        plans[0].quote_mode,
+        polyedge_application::RewardPlanQuoteMode::None
+    );
+    assert!(plans[0]
+        .reason
+        .contains("live funding below rewards minimum"));
 }
 
 #[test]

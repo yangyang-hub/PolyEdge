@@ -76,7 +76,7 @@
 - 报价构造使用“挂单档位”下拉框选择买一/买二/买三，不再提供中间价“报价偏移”、`per_market_usd`“单市场额度”或 `quote_size_usd`“单腿金额”；默认买一。
 - 盘口选择公开 quote/selection mode、dominant 单边概率区间、退出深度、top1/top3 买盘集中度、HHI 和偏好分类评分加成；默认 `double + observe` 不改变既有双边挂单。
 - AI 建议面板保存 OpenAI/Anthropic provider、请求格式、advisory TTL、AI 批量市场数、信息风险启用、observe/enforce、过滤等级、信息风险 TTL 和信息风险批量市场数；API key、base URL、模型名、请求超时和 web search 开关只来自 worker 环境变量，不会出现在前端配置或 snapshot。AI advisory 与信息风险扫描由 worker 全量覆盖当前候选，优先开放订单、持仓和可挂 quote plan；批量市场数为 1 时保持逐市场 provider 请求，>1 时后端按 condition 拆分保存并对漏项回退单市场。报价计划表展示 AI suitability、推荐 quote mode、confidence 和首条 reason，也展示信息风险等级、类型、confidence 和摘要；信息风险 enforce 且缓存缺失时，后端会把对应计划显示为不可挂。
-- 后端不再用 `per_market_usd`、`quote_size_usd` 或 `low_competition_per_market_usd` 限制报价腿构造；live materializer 只保障按 CLOB 成本精度对齐后的 `rewards_min_size` 和 Polymarket 1 美元最小名义金额。新增报价是否可挂由后端按实际钱包余额、未归属外部 BUY notional 和同一 condition 已有 managed BUY notional 判断。
+- 后端不再用 `per_market_usd`、`quote_size_usd` 或 `low_competition_per_market_usd` 限制报价腿构造；live materializer 只保障按 CLOB 成本精度对齐后的 `rewards_min_size` 和 Polymarket 1 美元最小名义金额。新增报价是否可挂由后端按实际钱包余额、未归属外部 BUY notional 和同一 condition 已有 managed BUY notional 判断；待补最低 rewards size 腿放不下时，quote plan 会显示 funding 不可挂原因，等后续余额/开放订单同步后重新评估。
 - 配置不包含 `execution_mode` 选择器（始终为 live）。前端不再展示或提交 `per_market_usd`、`quote_size_usd`、`low_competition_per_market_usd`；这些字段只保留在 DTO/后端配置中兼容历史快照与旧请求。提示说明 `max_markets=0` 或 `max_open_orders=0` 会停止新挂单。
 - 报价计划默认展示当前通过非盘口依赖过滤且等待 live 盘口验证的可挂市场；若准备挂单时 `quote_bid_rank`、rewards spread、盘口集中度、退出深度或安全边际导致双边不可行，auto/enforce/dominant 会先尝试单腿回退；没有可行单腿时后端才会把计划标记为不可挂并返回原因和 12 小时 `live_skip_until`，到期后自动重新评估。
 - Managed orders 表格发送后端分页/搜索/状态过滤/排序 query（默认每页 15 条），表格数据与 `orders_page` 均来自本地 managed-order 查询。

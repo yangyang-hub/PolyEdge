@@ -1,6 +1,6 @@
 # 共享组件（Shared Components + UI Primitives）
 
-最后更新：2026-06-13
+最后更新：2026-06-22
 
 ## 概述
 
@@ -34,13 +34,14 @@ shadcn 生成的 Radix UI 基础组件（style: radix-nova）：
 | `textarea.tsx` | 多行输入 |
 | `tooltip.tsx` | 提示气泡 |
 
-### Shared Business Components — `src/components/shared/`（16 个文件）
+### Shared Business Components — `src/components/shared/`（17 个文件）
 
 | 组件 | 用途 |
 |---|---|
 | `console-shell.tsx` | 控制台主布局外壳（sidebar + topbar + content） |
 | `console-sidebar.tsx` | 侧边导航栏 |
 | `console-topbar.tsx` | 顶部栏 |
+| `console-nav-items.ts` | 控制台导航项与 active 状态共享配置 |
 | `console-loading-skeleton.tsx` | 加载骨架屏 |
 | `workbench-layout.tsx` | 标准工作台页面布局 |
 | `workbench-segmented-control.tsx` | 分段控制器 |
@@ -71,7 +72,8 @@ shadcn 生成的 Radix UI 基础组件（style: radix-nova）：
 
 - UI 组件基于 shadcn/ui v4（radix-nova 风格）
 - 共享组件覆盖所有跨页面复用场景
-- 控制台侧边栏不再提供 `/replay` 入口；顶栏快捷入口为 dashboard、signals、rewards
+- 控制台侧边栏不再提供 `/replay` 入口；桌面侧栏和移动端抽屉菜单共享同一份导航配置
+- 顶栏不再显示横向导航快捷入口；移动端顶栏显示菜单按钮并从左侧打开导航抽屉
 - 暗色主题（`globals.css` 中仅定义暗色变量）
 
 ## 修改检查清单

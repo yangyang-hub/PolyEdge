@@ -2,45 +2,10 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import type { LucideIcon } from "lucide-react";
-import {
-  Activity,
-  HandCoins,
-  LayoutDashboard,
-  Newspaper,
-  Radar,
-  Search,
-  Settings,
-  ShieldAlert,
-  SquareChartGantt,
-  WalletCards,
-  Users,
-} from "lucide-react";
 
-
-import type { Dictionary } from "@/lib/i18n/dictionaries";
+import { consoleNavItems, isConsoleNavItemActive } from "@/components/shared/console-nav-items";
 import { dictionary } from "@/lib/i18n/dictionaries";
 import { cn } from "@/lib/utils";
-
-type NavItem = {
-  href: string;
-  labelKey: keyof Dictionary["nav"];
-  icon: LucideIcon;
-};
-
-const navItems: NavItem[] = [
-  { href: "/dashboard", labelKey: "dashboard", icon: LayoutDashboard },
-  { href: "/markets", labelKey: "markets", icon: SquareChartGantt },
-  { href: "/events", labelKey: "events", icon: Newspaper },
-  { href: "/radar", labelKey: "radar", icon: Radar },
-  { href: "/rewards", labelKey: "rewards", icon: HandCoins },
-  { href: "/copy-trading", labelKey: "copytrade", icon: Users },
-  { href: "/wallet-analysis", labelKey: "walletAnalysis", icon: Search },
-  { href: "/signals", labelKey: "signals", icon: Activity },
-  { href: "/positions", labelKey: "positions", icon: WalletCards },
-  { href: "/risk", labelKey: "risk", icon: ShieldAlert },
-  { href: "/settings", labelKey: "settings", icon: Settings },
-];
 
 export function ConsoleSidebar() {
   const pathname = usePathname();
@@ -57,8 +22,8 @@ export function ConsoleSidebar() {
       </div>
 
       <nav className="flex-1 space-y-1 px-2 pt-4">
-        {navItems.map(({ href, labelKey, icon: Icon }) => {
-          const active = pathname === href || (href !== "/dashboard" && pathname.startsWith(`${href}/`));
+        {consoleNavItems.map(({ href, labelKey, icon: Icon }) => {
+          const active = isConsoleNavItemActive(pathname, href);
           const label = dictionary.nav[labelKey];
 
           return (
