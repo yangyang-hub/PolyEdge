@@ -200,7 +200,7 @@ fn reward_ai_advisory_candidates_only_include_pre_ai_eligible_missing_admission(
     let mut hard_rejected = live_test_plan(now);
     hard_rejected.condition_id = "cond_hard_rejected".to_string();
     hard_rejected.eligible = false;
-    hard_rejected.reason = "per-market budget cannot satisfy rewards minimum size".to_string();
+    hard_rejected.reason = "market failed non-transient live validation".to_string();
 
     let mut open_order = live_test_open_order("yes_live");
     open_order.condition_id = "cond_hard_rejected".to_string();
@@ -570,7 +570,8 @@ fn live_placement_requires_the_whole_market_to_fit_available_cash() {
         ..RewardBotConfig::default()
     };
     let now = OffsetDateTime::now_utc();
-    let plan = live_test_plan(now);
+    let mut plan = live_test_plan(now);
+    plan.rewards_min_size = reward_decimal("50");
     let books = HashMap::from([
         ("yes_live".to_string(), live_test_book("yes_live", now)),
         ("no_live".to_string(), live_test_book("no_live", now)),
@@ -579,7 +580,7 @@ fn live_placement_requires_the_whole_market_to_fit_available_cash() {
     let mut plans = vec![plan];
     let (orders, _) = live_placement_orders(
         &config,
-        &live_test_account(reward_decimal("19.59")),
+        &live_test_account(reward_decimal("47.99")),
         &mut plans,
         &books,
         &HashMap::new(),
@@ -590,6 +591,44 @@ fn live_placement_requires_the_whole_market_to_fit_available_cash() {
     );
 
     assert!(orders.is_empty());
+}
+
+#[test]
+fn live_placement_uses_wallet_balance_instead_of_config_quote_budgets() {
+    let config = RewardBotConfig {
+        account_id: "reward_live".to_string(),
+        stale_book_ms: 0,
+        max_markets: 1,
+        max_open_orders: 2,
+        per_market_usd: reward_decimal("1"),
+        quote_size_usd: Decimal::ZERO,
+        max_position_usd: reward_decimal("100"),
+        max_global_position_usd: Decimal::ZERO,
+        ..RewardBotConfig::default()
+    };
+    let now = OffsetDateTime::now_utc();
+    let mut plan = live_test_plan(now);
+    plan.rewards_min_size = reward_decimal("50");
+    let books = HashMap::from([
+        ("yes_live".to_string(), live_test_book("yes_live", now)),
+        ("no_live".to_string(), live_test_book("no_live", now)),
+    ]);
+
+    let mut plans = vec![plan];
+    let (orders, _) = live_placement_orders(
+        &config,
+        &live_test_account(reward_decimal("100")),
+        &mut plans,
+        &books,
+        &HashMap::new(),
+        &[],
+        &[],
+        false,
+        "trc_live_test",
+    );
+
+    assert_eq!(orders.len(), 2);
+    assert!(orders.iter().all(|order| order.size >= reward_decimal("50")));
 }
 
 #[test]
@@ -822,7 +861,7 @@ fn live_placement_counts_existing_same_market_buys_against_cash() {
     let mut plans = vec![plan];
     let (orders, _) = live_placement_orders(
         &config,
-        &live_test_account(reward_decimal("15")),
+        &live_test_account(reward_decimal("12.19")),
         &mut plans,
         &books,
         &HashMap::new(),
@@ -852,7 +891,7 @@ fn live_placement_reserves_unmanaged_external_buy_notional() {
         ("no_live".to_string(), live_test_book("no_live", now)),
     ]);
     let mut account = live_test_account(Decimal::from(25_u64));
-    account.external_buy_notional = Decimal::from(10_u64);
+    account.external_buy_notional = Decimal::from(21_u64);
 
     let mut plans = vec![plan];
     let (orders, _) = live_placement_orders(

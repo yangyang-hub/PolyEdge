@@ -111,10 +111,10 @@ fn dominant_yes_books() -> HashMap<String, RewardOrderBook> {
 }
 
 #[test]
-fn combined_market_budget_can_satisfy_asymmetric_minimum_sizes() {
+fn quote_materialization_ignores_config_market_and_leg_budgets() {
     let config = RewardBotConfig {
-        per_market_usd: decimal("20"),
-        quote_size_usd: decimal("10"),
+        per_market_usd: decimal("10"),
+        quote_size_usd: Decimal::ZERO,
         min_market_score: Decimal::ZERO,
         ..RewardBotConfig::default()
     };
@@ -133,7 +133,7 @@ fn combined_market_budget_can_satisfy_asymmetric_minimum_sizes() {
             .legs
             .iter()
             .fold(Decimal::ZERO, |sum, leg| sum + leg.price * leg.size)
-            <= config.per_market_usd
+            > config.per_market_usd
     );
 }
 
@@ -410,7 +410,7 @@ fn ai_advisory_carry_forward_reuses_unexpired_matching_snapshot_decision() {
 }
 
 #[test]
-fn combined_market_budget_rejects_unaffordable_minimum_sizes() {
+fn quote_materialization_allows_minimum_sizes_above_config_market_budget() {
     let config = RewardBotConfig {
         per_market_usd: decimal("20"),
         quote_size_usd: decimal("10"),
@@ -419,18 +419,25 @@ fn combined_market_budget_rejects_unaffordable_minimum_sizes() {
     };
 
     let plan = build_reward_quote_plan(&test_market(decimal("50")), &test_books(), &config);
-    let error = materialize_reward_quote_plan_for_live_orderbook(&plan, &test_books(), &config)
-        .expect_err("live materialization should reject unaffordable minimum sizes");
+    let materialized =
+        materialize_reward_quote_plan_for_live_orderbook(&plan, &test_books(), &config)
+            .expect("live materialization");
 
     assert!(plan.eligible, "{}", plan.reason);
-    assert_eq!(
-        error,
-        "per-market budget cannot satisfy rewards minimum size"
+    assert_eq!(materialized.quote_mode, RewardPlanQuoteMode::Double);
+    assert_eq!(materialized.legs.len(), 2);
+    assert!(materialized.legs.iter().all(|leg| leg.size >= decimal("50")));
+    assert!(
+        materialized
+            .legs
+            .iter()
+            .fold(Decimal::ZERO, |sum, leg| sum + leg.price * leg.size)
+            > config.per_market_usd
     );
 }
 
 #[test]
-fn auto_enforce_falls_back_to_affordable_single_side_when_double_budget_fails() {
+fn auto_enforce_keeps_double_when_only_config_market_budget_would_fail() {
     let config = RewardBotConfig {
         quote_mode: RewardQuoteMode::Auto,
         selection_mode: RewardSelectionMode::Enforce,
@@ -448,11 +455,9 @@ fn auto_enforce_falls_back_to_affordable_single_side_when_double_budget_fails() 
 
     assert!(plan.eligible, "{}", plan.reason);
     assert_eq!(plan.quote_mode, RewardPlanQuoteMode::Double);
-    assert_eq!(materialized.quote_mode, RewardPlanQuoteMode::SingleNo);
-    assert_eq!(materialized.legs.len(), 1);
-    assert_eq!(materialized.legs[0].outcome, "No");
-    assert!(materialized.legs[0].size >= decimal("50"));
-    assert!(materialized.legs[0].price * materialized.legs[0].size <= config.per_market_usd);
+    assert_eq!(materialized.quote_mode, RewardPlanQuoteMode::Double);
+    assert_eq!(materialized.legs.len(), 2);
+    assert!(materialized.legs.iter().all(|leg| leg.size >= decimal("50")));
 }
 
 fn test_advisory(
@@ -479,7 +484,7 @@ fn test_advisory(
 }
 
 #[test]
-fn quote_plan_accounts_for_clob_cost_precision_before_minimum_size_check() {
+fn quote_plan_accounts_for_clob_cost_precision_without_config_budget_rejection() {
     let config = RewardBotConfig {
         per_market_usd: decimal("20.50"),
         quote_size_usd: decimal("1"),
@@ -488,13 +493,19 @@ fn quote_plan_accounts_for_clob_cost_precision_before_minimum_size_check() {
     };
 
     let plan = build_reward_quote_plan(&test_market(decimal("20.30")), &test_books(), &config);
-    let error = materialize_reward_quote_plan_for_live_orderbook(&plan, &test_books(), &config)
-        .expect_err("live materialization should reject unaffordable CLOB-sized legs");
+    let materialized =
+        materialize_reward_quote_plan_for_live_orderbook(&plan, &test_books(), &config)
+            .expect("live materialization");
 
     assert!(plan.eligible, "{}", plan.reason);
-    assert_eq!(
-        error,
-        "per-market budget cannot satisfy rewards minimum size"
+    assert_eq!(materialized.legs[0].size, decimal("21"));
+    assert_eq!(materialized.legs[1].size, decimal("20.5"));
+    assert!(
+        materialized
+            .legs
+            .iter()
+            .fold(Decimal::ZERO, |sum, leg| sum + leg.price * leg.size)
+            > config.per_market_usd
     );
 }
 

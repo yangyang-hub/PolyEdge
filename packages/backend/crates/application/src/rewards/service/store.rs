@@ -73,9 +73,8 @@ pub trait RewardBotStore: Send + Sync {
     async fn list_markets(&self, limit: u16) -> Result<Vec<RewardMarket>>;
     /// List candidate markets with SQL-level filtering by config parameters.
     /// The SQL WHERE clause pushes down midpoint, daily-rate, spread, token-count,
-    /// and budget-feasibility checks, returning only markets likely to pass
-    /// the Rust planner. `safety_limit` is a generous upper bound, not the
-    /// primary filter.
+    /// and market-quality checks, returning only markets likely to pass the Rust
+    /// planner. `safety_limit` is a generous upper bound, not the primary filter.
     async fn list_candidate_markets(
         &self,
         filter: &RewardCandidateFilter,

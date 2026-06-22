@@ -57,7 +57,7 @@ fn reward_candidate_profile_is_disabled(
     effective_config: &RewardBotConfig,
     strategy_bucket: RewardStrategyBucket,
 ) -> bool {
-    if effective_config.max_markets == 0 || effective_config.quote_size_usd <= Decimal::ZERO {
+    if effective_config.max_markets == 0 {
         return true;
     }
     match strategy_bucket {
@@ -266,17 +266,6 @@ fn build_reward_quote_plan_for_bucket(
         return empty_plan_with_metrics(
             market,
             "invalid rewards spread setting",
-            now,
-            Some(midpoint),
-            metrics,
-            strategy_bucket,
-        );
-    }
-
-    if config.quote_size_usd <= Decimal::ZERO {
-        return empty_plan_with_metrics(
-            market,
-            "quote size is zero",
             now,
             Some(midpoint),
             metrics,
@@ -574,36 +563,17 @@ fn make_quote_legs(
     no_token: &RewardToken,
     no_price: Decimal,
     rewards_min_size: Decimal,
-    config: &RewardBotConfig,
 ) -> Option<Vec<RewardQuoteLeg>> {
-    let effective_quote_size = if config.account_capital_usd > Decimal::ZERO {
-        Decimal::min(config.quote_size_usd, config.account_capital_usd)
-    } else {
-        config.quote_size_usd
-    };
-
     let prices = [yes_price, no_price];
-    let minimum_sizes =
-        prices.map(|price| ceil_reward_size_for_cost_precision(price, rewards_min_size));
+    let minimum_sizes = prices.map(|price| minimum_live_quote_size(price, rewards_min_size));
     let minimum_notionals = [
         prices[0] * minimum_sizes[0],
         prices[1] * minimum_sizes[1],
     ];
-    let target_notionals =
-        minimum_notionals.map(|minimum| Decimal::max(minimum, effective_quote_size));
-    let allocated_notionals = if config.per_market_usd <= Decimal::ZERO {
-        target_notionals
-    } else {
-        allocate_quote_notionals(
-            minimum_notionals,
-            target_notionals,
-            config.per_market_usd,
-        )?
-    };
 
     let legs = [
-        (yes_token, yes_price, allocated_notionals[0]),
-        (no_token, no_price, allocated_notionals[1]),
+        (yes_token, yes_price, minimum_notionals[0]),
+        (no_token, no_price, minimum_notionals[1]),
     ]
     .into_iter()
     .map(|(token, price, notional)| make_leg(token, price, notional))
@@ -615,45 +585,17 @@ fn make_quote_legs(
         return None;
     }
 
-    let total_notional = legs
-        .iter()
-        .fold(Decimal::ZERO, |sum, leg| sum + leg.price * leg.size);
-    if config.per_market_usd > Decimal::ZERO && total_notional > config.per_market_usd {
-        return None;
-    }
-
     Some(legs)
 }
 
-fn allocate_quote_notionals(
-    minimum_notionals: [Decimal; 2],
-    target_notionals: [Decimal; 2],
-    per_market_usd: Decimal,
-) -> Option<[Decimal; 2]> {
-    let minimum_total = minimum_notionals[0] + minimum_notionals[1];
-    if minimum_total > per_market_usd {
-        return None;
+fn minimum_live_quote_size(price: Decimal, rewards_min_size: Decimal) -> Decimal {
+    if price <= Decimal::ZERO {
+        return Decimal::ZERO;
     }
-
-    let target_total = target_notionals[0] + target_notionals[1];
-    if target_total <= per_market_usd {
-        return Some(target_notionals);
-    }
-
-    let extra_budget = per_market_usd - minimum_total;
-    let gaps = [
-        target_notionals[0] - minimum_notionals[0],
-        target_notionals[1] - minimum_notionals[1],
-    ];
-    let total_gap = gaps[0] + gaps[1];
-    if total_gap <= Decimal::ZERO {
-        return Some(minimum_notionals);
-    }
-
-    Some([
-        minimum_notionals[0] + extra_budget * gaps[0] / total_gap,
-        minimum_notionals[1] + extra_budget * gaps[1] / total_gap,
-    ])
+    let reward_size = ceil_reward_size_for_cost_precision(price, rewards_min_size);
+    let venue_min_size =
+        ceil_reward_size_for_cost_precision(price, MIN_POLYMARKET_ORDER_NOTIONAL_USD / price);
+    Decimal::max(reward_size, venue_min_size)
 }
 
 fn make_leg(token: &RewardToken, price: Decimal, notional_usd: Decimal) -> RewardQuoteLeg {

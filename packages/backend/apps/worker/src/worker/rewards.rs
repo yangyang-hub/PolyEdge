@@ -653,6 +653,8 @@ include!("rewards/live_risk.rs");
 include!("rewards/orderbook_events.rs");
 include!("rewards/polling.rs");
 include!("rewards/provider_advisory.rs");
+include!("rewards/provider_refresh_batch.rs");
+include!("rewards/provider_refresh_orderbook.rs");
 include!("rewards/provider_refresh.rs");
 include!("rewards/info_risk.rs");
 include!("rewards/provider_batch.rs");

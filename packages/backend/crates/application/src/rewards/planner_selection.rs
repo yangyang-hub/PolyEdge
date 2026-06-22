@@ -205,29 +205,11 @@ fn make_single_quote_leg(
     token: &RewardToken,
     price: Decimal,
     rewards_min_size: Decimal,
-    config: &RewardBotConfig,
 ) -> Option<RewardQuoteLeg> {
-    let effective_quote_size = if config.account_capital_usd > Decimal::ZERO {
-        Decimal::min(config.quote_size_usd, config.account_capital_usd)
-    } else {
-        config.quote_size_usd
-    };
-    let minimum_size = ceil_reward_size_for_cost_precision(price, rewards_min_size);
-    let minimum_notional = price * minimum_size;
-    let target_notional = Decimal::max(minimum_notional, effective_quote_size);
-    let notional = if config.per_market_usd > Decimal::ZERO {
-        if minimum_notional > config.per_market_usd {
-            return None;
-        }
-        Decimal::min(target_notional, config.per_market_usd)
-    } else {
-        target_notional
-    };
+    let minimum_size = minimum_live_quote_size(price, rewards_min_size);
+    let notional = price * minimum_size;
     let leg = make_leg(token, price, notional);
     if rewards_min_size > Decimal::ZERO && leg.size < rewards_min_size {
-        return None;
-    }
-    if config.per_market_usd > Decimal::ZERO && leg.price * leg.size > config.per_market_usd {
         return None;
     }
     Some(leg)

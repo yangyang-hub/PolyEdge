@@ -63,10 +63,12 @@ export type RewardBotConfigDto = {
   ai_provider: RewardAiProvider;
   ai_request_format: RewardAiRequestFormat;
   ai_advisory_ttl_sec: number;
+  ai_advisory_batch_size: number;
   info_risk_enabled: boolean;
   info_risk_mode: RewardSelectionMode;
   info_risk_avoid_level: RewardInfoRiskLevel;
   info_risk_ttl_sec: number;
+  info_risk_batch_size: number;
   safety_margin_cents: DecimalValue;
   min_midpoint: DecimalValue;
   max_midpoint: DecimalValue;

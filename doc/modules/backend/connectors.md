@@ -1,6 +1,6 @@
 # connectors（外部连接器层）
 
-最后更新：2026-06-20
+最后更新：2026-06-21
 
 ## 概述
 
@@ -132,6 +132,7 @@
 - **`RewardInfoRiskConnector`**：`base_url` + API key + reqwest client，供 rewards worker 异步判断候选市场的信息流风险。
 - 支持三种请求格式：`openai_responses`、`openai_chat_completions`、`anthropic_messages`。OpenAI-compatible 路径同样会规范化 root base URL 到 `/v1` 并携带 Bearer + `api-key` 认证头；OpenAI Responses 可通过 `POLYEDGE_REWARDS__INFO_RISK_WEB_SEARCH_ENABLED=true` 附加 `web_search_preview` 工具；默认关闭。Chat Completions 路径使用 `max_completion_tokens=6144`，给 MiMo reasoning 输出和最终 JSON 留足预算。provider 请求温度固定为 0，prompt 要求单个 JSON 对象、双引号 key、无 markdown/prose。
 - 输出统一解析为 `RewardInfoRiskAssessmentDecision`：`risk_level`、`risk_type`、`directional_risk`、`resolution_imminent`、`expected_event_at`、`confidence`、`summary`、`sources` 和 `metrics`；解析时会扫描 provider 文本里的候选 JSON 对象，兼容 markdown fence、嵌入解释文字、JSON 字符串或数组包装；只有通过现有必填字段和枚举校验的对象才会保存，confidence 钳制到 `0..=1`，无法提取时错误带短 preview。
+- `assess_batch()` 是批量变体：单次请求评估多个市场（payload 拼成 `{"markets":[{condition_id,search_query,market}]}`，schema 要求返回 `{"risks":[{condition_id,...}]}` 数组），三种格式各有批量变体并把 `max_completion_tokens` / `max_tokens` 按 batch size 放大、封顶到 16384；OpenAI Responses 批量路径仍可附加 `web_search_preview`。解析按 `condition_id` 白名单匹配，丢弃拼错/多余/重复项，模型漏掉的 condition 由 worker 回退到单市场 `assess()`；batch size=1 时兼容单 object 返回。返回 `RewardInfoRiskAssessmentBatchItem { condition_id, decision }`，决策字段与单市场 `RewardInfoRiskAssessmentDecision` 一致。
 - 该 connector 不直接访问 Polymarket；它只接收 application 层基于数据库、quote plan 和账户状态构建的 payload。provider 失败由 worker 记录 warning，不阻断 live tick。
 
 ### News（RSS/Atom 新闻）

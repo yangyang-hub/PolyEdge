@@ -279,7 +279,7 @@ mod rewards_tests {
 
 
     #[tokio::test]
-    async fn in_memory_candidate_filter_matches_binary_midpoint_and_budget_rules() {
+    async fn in_memory_candidate_filter_matches_binary_midpoint_rules() {
         let store = InMemoryRewardBotStore::new();
         let filter = RewardBotConfig::default().candidate_filter();
         let valid = candidate_market();
@@ -290,12 +290,12 @@ mod rewards_tests {
         invalid_midpoint.condition_id = "invalid_midpoint".to_string();
         invalid_midpoint.tokens[0].price = Some(Decimal::new(1, 2));
         invalid_midpoint.tokens[1].price = Some(Decimal::new(99, 2));
-        let mut invalid_budget = valid.clone();
-        invalid_budget.condition_id = "invalid_budget".to_string();
-        invalid_budget.rewards_min_size = filter.per_market_usd + Decimal::ONE;
+        let mut high_min_size = valid.clone();
+        high_min_size.condition_id = "high_min_size".to_string();
+        high_min_size.rewards_min_size = Decimal::from(1_000);
 
         store
-            .upsert_markets(&[valid.clone(), invalid_outcome, invalid_midpoint, invalid_budget])
+            .upsert_markets(&[valid.clone(), invalid_outcome, invalid_midpoint, high_min_size])
             .await
             .expect("seed candidate markets");
 
@@ -304,12 +304,17 @@ mod rewards_tests {
             .await
             .expect("list candidates");
 
-        assert_eq!(candidates.len(), 1);
-        assert_eq!(candidates[0].condition_id, valid.condition_id);
+        assert_eq!(candidates.len(), 2);
+        assert!(candidates
+            .iter()
+            .any(|candidate| candidate.condition_id == valid.condition_id));
+        assert!(candidates
+            .iter()
+            .any(|candidate| candidate.condition_id == "high_min_size"));
     }
 
     #[tokio::test]
-    async fn in_memory_candidate_filter_keeps_auto_single_side_budget_fallback_markets() {
+    async fn in_memory_candidate_filter_keeps_high_min_size_markets_for_live_balance_check() {
         let store = InMemoryRewardBotStore::new();
         let filter = RewardBotConfig {
             quote_mode: RewardQuoteMode::Auto,

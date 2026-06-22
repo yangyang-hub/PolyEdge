@@ -380,7 +380,18 @@ fn ensure_batch_provider(
             "reward AI advisory batch must not be empty",
         ));
     }
-    ensure_provider(&requests[0], expected)
+    ensure_provider(&requests[0], expected)?;
+    let first = &requests[0];
+    for request in &requests[1..] {
+        ensure_provider(request, expected)?;
+        if request.request_format != first.request_format || request.model != first.model {
+            return Err(AppError::invalid_input(
+                "REWARD_AI_BATCH_MISMATCH",
+                "reward AI advisory batch requests must share request format and model",
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn reward_ai_batch_max_tokens(batch_size: usize) -> u32 {

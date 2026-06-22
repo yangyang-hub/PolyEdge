@@ -226,9 +226,6 @@ pub struct RewardCandidateFilter {
     pub min_midpoint: Decimal,
     /// Maximum midpoint value (from `config.max_midpoint`).
     pub max_midpoint: Decimal,
-    /// Per-market budget in USD (from `config.per_market_usd`).
-    /// Zero disables the budget filter in SQL.
-    pub per_market_usd: Decimal,
     pub min_market_liquidity_usd: Decimal,
     pub min_market_volume_24h_usd: Decimal,
     pub min_hours_to_end: u64,
@@ -236,9 +233,6 @@ pub struct RewardCandidateFilter {
     pub max_market_data_age_minutes: u64,
     pub max_rewards_spread_cents: Decimal,
     pub allow_dominant_single_side: bool,
-    /// Keep markets whose double-sided minimum-size budget may fail so the
-    /// planner can test exact single-leg affordability with fresh order books.
-    pub allow_single_side_budget_fallback: bool,
     pub dominant_min_probability: Decimal,
     pub dominant_max_probability: Decimal,
 }
@@ -296,10 +290,14 @@ pub struct RewardBotConfig {
     pub ai_provider: RewardAiProvider,
     pub ai_request_format: RewardAiRequestFormat,
     pub ai_advisory_ttl_sec: u64,
+    /// Number of advisory markets to send in one provider request. 1 = single-market calls.
+    pub ai_advisory_batch_size: u16,
     pub info_risk_enabled: bool,
     pub info_risk_mode: RewardSelectionMode,
     pub info_risk_avoid_level: RewardInfoRiskLevel,
     pub info_risk_ttl_sec: u64,
+    /// Number of info-risk markets to send in one provider request. 1 = single-market calls.
+    pub info_risk_batch_size: u16,
     pub safety_margin_cents: Decimal,
     pub min_midpoint: Decimal,
     pub max_midpoint: Decimal,
@@ -448,6 +446,8 @@ pub struct RewardBotConfigPatch {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ai_advisory_ttl_sec: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ai_advisory_batch_size: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub info_risk_enabled: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub info_risk_mode: Option<RewardSelectionMode>,
@@ -455,6 +455,8 @@ pub struct RewardBotConfigPatch {
     pub info_risk_avoid_level: Option<RewardInfoRiskLevel>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub info_risk_ttl_sec: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub info_risk_batch_size: Option<u16>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub safety_margin_cents: Option<Decimal>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

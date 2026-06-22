@@ -103,12 +103,18 @@ fn apply_reward_config_value(config: &mut RewardBotConfig, key: &str, value: &st
             config.ai_request_format = RewardAiRequestFormat::from_str(value)?;
         }
         "ai_advisory_ttl_sec" => config.ai_advisory_ttl_sec = parse_u64_config(key, value)?,
+        "ai_advisory_batch_size" => {
+            config.ai_advisory_batch_size = parse_u16_config(key, value)?;
+        }
         "info_risk_enabled" => config.info_risk_enabled = parse_bool_config(key, value)?,
         "info_risk_mode" => config.info_risk_mode = RewardSelectionMode::from_str(value)?,
         "info_risk_avoid_level" => {
             config.info_risk_avoid_level = RewardInfoRiskLevel::from_str(value)?;
         }
         "info_risk_ttl_sec" => config.info_risk_ttl_sec = parse_u64_config(key, value)?,
+        "info_risk_batch_size" => {
+            config.info_risk_batch_size = parse_u16_config(key, value)?;
+        }
         "safety_margin_cents" => config.safety_margin_cents = parse_decimal_config(key, value)?,
         "min_midpoint" => config.min_midpoint = parse_decimal_config(key, value)?,
         "max_midpoint" => config.max_midpoint = parse_decimal_config(key, value)?,
@@ -293,6 +299,10 @@ fn reward_config_entries(config: &RewardBotConfig) -> Vec<(&'static str, String)
             config.ai_advisory_ttl_sec.to_string(),
         ),
         (
+            "ai_advisory_batch_size",
+            config.ai_advisory_batch_size.to_string(),
+        ),
+        (
             "info_risk_enabled",
             config.info_risk_enabled.to_string(),
         ),
@@ -307,6 +317,10 @@ fn reward_config_entries(config: &RewardBotConfig) -> Vec<(&'static str, String)
         (
             "info_risk_ttl_sec",
             config.info_risk_ttl_sec.to_string(),
+        ),
+        (
+            "info_risk_batch_size",
+            config.info_risk_batch_size.to_string(),
         ),
         (
             "safety_margin_cents",

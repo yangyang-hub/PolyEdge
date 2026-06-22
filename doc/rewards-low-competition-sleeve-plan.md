@@ -1,8 +1,8 @@
 # Rewards 低竞争市场 Sleeve 实现方案
 
-最后更新：2026-06-19
+最后更新：2026-06-22
 
-状态：v2 已实现并默认关闭。当前已支持独立 `off/observe/enforce` profile、低竞争指标、前端配置/展示、小额度实盘 gate、managed order bucket 持久化、跨周期 observation 表和 snapshot shadow report；自动切换/自动启用 `enforce` 仍未实现。
+状态：v2 已实现并默认关闭。当前已支持独立 `off/observe/enforce` profile、低竞争指标、前端配置/展示、独立市场数/开放订单/库存 gate、managed order bucket 持久化、跨周期 observation 表和 snapshot shadow report；自动切换/自动启用 `enforce` 仍未实现。
 
 ## 目标
 
@@ -89,7 +89,7 @@ exit_depth_usd >= max(
 | `low_competition_mode` | `off` | `off` / `observe` / `enforce` |
 | `low_competition_max_markets` | `0` | sleeve 可同时参与的新市场数量；0 表示不实盘启用 |
 | `low_competition_max_open_orders` | `0` | sleeve 开放买单上限 |
-| `low_competition_per_market_usd` | `5` | 单市场 sleeve 资金上限，独立小于主策略 |
+| `low_competition_per_market_usd` | `5` | 历史兼容配置字段；当前不再限制报价腿构造 |
 | `low_competition_max_position_usd` | `10` | 单 token/市场库存上限 |
 | `low_competition_min_market_liquidity_usd` | `250` | 可低于主策略，但不能为 0 |
 | `low_competition_min_market_volume_24h_usd` | `100` | 可低于主策略，但不能为 0 |

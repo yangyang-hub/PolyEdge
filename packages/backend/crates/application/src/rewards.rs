@@ -16,6 +16,7 @@ use tokio::sync::{RwLock, watch};
 const DEFAULT_LIST_LIMIT: u16 = 100;
 const MAX_LIST_LIMIT: u16 = 500;
 const DEFAULT_TICK: Decimal = Decimal::from_parts(1, 0, 0, false, 2);
+const MIN_POLYMARKET_ORDER_NOTIONAL_USD: Decimal = Decimal::ONE;
 pub const REWARD_AI_CANDLE_INTERVAL_SEC: i32 = 300;
 pub const REWARD_AI_CANDLE_LIMIT_PER_TOKEN: u16 = 24;
 

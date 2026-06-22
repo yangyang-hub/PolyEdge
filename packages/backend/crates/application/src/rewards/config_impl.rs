@@ -49,10 +49,12 @@ impl Default for RewardBotConfig {
             ai_provider: RewardAiProvider::OpenAi,
             ai_request_format: RewardAiRequestFormat::OpenAiResponses,
             ai_advisory_ttl_sec: 3600,
+            ai_advisory_batch_size: 1,
             info_risk_enabled: false,
             info_risk_mode: RewardSelectionMode::Observe,
             info_risk_avoid_level: RewardInfoRiskLevel::High,
             info_risk_ttl_sec: 3600,
+            info_risk_batch_size: 1,
             safety_margin_cents: decimal("1"),
             min_midpoint: decimal("0.1"),
             max_midpoint: decimal("0.9"),
@@ -91,12 +93,7 @@ impl RewardBotConfig {
         self.max_markets = clamp_u16(self.max_markets, 0, u16::MAX);
         self.max_open_orders = clamp_u16(self.max_open_orders, 0, u16::MAX);
         self.per_market_usd = clamp_decimal(self.per_market_usd, Decimal::ZERO, decimal("1000000"));
-        let quote_size_cap = if self.per_market_usd == Decimal::ZERO {
-            decimal("1000000")
-        } else {
-            self.per_market_usd
-        };
-        self.quote_size_usd = clamp_decimal(self.quote_size_usd, Decimal::ZERO, quote_size_cap);
+        self.quote_size_usd = clamp_decimal(self.quote_size_usd, Decimal::ZERO, decimal("1000000"));
         self.min_daily_reward =
             clamp_decimal(self.min_daily_reward, Decimal::ZERO, decimal("100000"));
         self.min_market_liquidity_usd = clamp_decimal(
@@ -203,7 +200,9 @@ impl RewardBotConfig {
         self.low_competition_min_book_samples =
             self.low_competition_min_book_samples.clamp(1, 10_000);
         self.ai_advisory_ttl_sec = self.ai_advisory_ttl_sec.clamp(60, 86_400);
+        self.ai_advisory_batch_size = self.ai_advisory_batch_size.clamp(1, 12);
         self.info_risk_ttl_sec = self.info_risk_ttl_sec.clamp(60, 86_400);
+        self.info_risk_batch_size = self.info_risk_batch_size.clamp(1, 12);
         if matches!(self.ai_provider, RewardAiProvider::Anthropic) {
             self.ai_request_format = RewardAiRequestFormat::AnthropicMessages;
         } else if matches!(
@@ -264,7 +263,6 @@ impl RewardBotConfig {
             min_daily_reward: self.min_daily_reward,
             min_midpoint: self.min_midpoint,
             max_midpoint: self.max_midpoint,
-            per_market_usd: self.per_market_usd,
             min_market_liquidity_usd: self.min_market_liquidity_usd,
             min_market_volume_24h_usd: self.min_market_volume_24h_usd,
             min_hours_to_end: self.min_hours_to_end,
@@ -272,9 +270,6 @@ impl RewardBotConfig {
             max_market_data_age_minutes: self.max_market_data_age_minutes,
             max_rewards_spread_cents: self.max_spread_cents,
             allow_dominant_single_side: self.quote_mode == RewardQuoteMode::Auto
-                && self.dominant_single_side_enabled,
-            allow_single_side_budget_fallback: self.quote_mode == RewardQuoteMode::Auto
-                && self.selection_mode == RewardSelectionMode::Enforce
                 && self.dominant_single_side_enabled,
             dominant_min_probability: self.dominant_min_probability,
             dominant_max_probability: self.dominant_max_probability,
@@ -291,7 +286,6 @@ impl RewardBotConfig {
         }
 
         let mut filter = self.candidate_filter();
-        filter.per_market_usd = self.low_competition_per_market_usd;
         filter.min_market_liquidity_usd = self.low_competition_min_market_liquidity_usd;
         filter.min_market_volume_24h_usd = self.low_competition_min_market_volume_24h_usd;
         Some(filter)
@@ -306,10 +300,6 @@ impl RewardBotConfig {
         let mut next = self.clone();
         next.max_markets = self.low_competition_max_markets;
         next.max_open_orders = self.low_competition_max_open_orders;
-        next.per_market_usd = self.low_competition_per_market_usd;
-        if self.low_competition_per_market_usd > Decimal::ZERO {
-            next.quote_size_usd = Decimal::min(self.quote_size_usd, self.low_competition_per_market_usd);
-        }
         next.max_position_usd = self.low_competition_max_position_usd;
         next.min_market_liquidity_usd = self.low_competition_min_market_liquidity_usd;
         next.min_market_volume_24h_usd = self.low_competition_min_market_volume_24h_usd;
@@ -451,6 +441,9 @@ impl RewardBotConfig {
         if let Some(value) = patch.ai_advisory_ttl_sec {
             next.ai_advisory_ttl_sec = value;
         }
+        if let Some(value) = patch.ai_advisory_batch_size {
+            next.ai_advisory_batch_size = value;
+        }
         if let Some(value) = patch.info_risk_enabled {
             next.info_risk_enabled = value;
         }
@@ -462,6 +455,9 @@ impl RewardBotConfig {
         }
         if let Some(value) = patch.info_risk_ttl_sec {
             next.info_risk_ttl_sec = value;
+        }
+        if let Some(value) = patch.info_risk_batch_size {
+            next.info_risk_batch_size = value;
         }
         if let Some(safety_margin_cents) = patch.safety_margin_cents {
             next.safety_margin_cents = safety_margin_cents;
@@ -599,10 +595,12 @@ mod reward_config_tests {
             "ai_provider": "openai",
             "ai_request_format": "openai_chat_completions",
             "ai_advisory_ttl_sec": 36000,
+            "ai_advisory_batch_size": 6,
             "info_risk_enabled": true,
             "info_risk_mode": "enforce",
             "info_risk_avoid_level": "high",
             "info_risk_ttl_sec": 36000,
+            "info_risk_batch_size": 3,
             "safety_margin_cents": 2,
             "min_midpoint": 0.4,
             "max_midpoint": 0.6,
@@ -636,6 +634,8 @@ mod reward_config_tests {
         let config = RewardBotConfig::default().apply_patch(patch);
 
         assert_eq!(config.quote_bid_rank, 3);
+        assert_eq!(config.ai_advisory_batch_size, 6);
+        assert_eq!(config.info_risk_batch_size, 3);
         assert_eq!(config.cancel_bid_rank, 2);
         assert_eq!(config.requote_jitter_sec, 305);
         assert_eq!(config.requote_drift_confirm_sec, 90);

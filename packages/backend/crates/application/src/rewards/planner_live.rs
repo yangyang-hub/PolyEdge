@@ -41,10 +41,6 @@ pub fn materialize_reward_quote_plan_for_live_orderbook(
         return Err("invalid rewards spread setting".to_string());
     }
 
-    if config.quote_size_usd <= Decimal::ZERO {
-        return Err("quote size is zero".to_string());
-    }
-
     let yes_bid = yes_state
         .as_ref()
         .and_then(|state| quote_bid_price(state, config.quote_bid_rank));
@@ -106,10 +102,8 @@ pub fn materialize_reward_quote_plan_for_live_orderbook(
                 max_spread,
                 config.quote_bid_rank,
             )?;
-            let leg = make_single_quote_leg(&yes_token, yes_bid, plan.rewards_min_size, config)
-                .ok_or_else(|| {
-                    "per-market budget cannot satisfy rewards minimum size".to_string()
-                })?;
+            let leg = make_single_quote_leg(&yes_token, yes_bid, plan.rewards_min_size)
+                .ok_or_else(|| "rewards minimum size cannot be materialized".to_string())?;
             vec![leg]
         }
         RewardPlanQuoteMode::SingleNo => {
@@ -123,10 +117,8 @@ pub fn materialize_reward_quote_plan_for_live_orderbook(
                 max_spread,
                 config.quote_bid_rank,
             )?;
-            let leg = make_single_quote_leg(&no_token, no_bid, plan.rewards_min_size, config)
-                .ok_or_else(|| {
-                    "per-market budget cannot satisfy rewards minimum size".to_string()
-                })?;
+            let leg = make_single_quote_leg(&no_token, no_bid, plan.rewards_min_size)
+                .ok_or_else(|| "rewards minimum size cannot be materialized".to_string())?;
             vec![leg]
         }
         RewardPlanQuoteMode::None => unreachable!("none quote mode returned earlier"),
@@ -186,9 +178,8 @@ fn make_double_live_quote_legs(
         no_token,
         no_bid,
         rewards_min_size,
-        config,
     )
-    .ok_or_else(|| "per-market budget cannot satisfy rewards minimum size".to_string())
+    .ok_or_else(|| "rewards minimum size cannot be materialized".to_string())
 }
 
 fn make_single_side_live_fallback_legs(
@@ -269,7 +260,7 @@ fn make_single_side_live_fallback_leg(
         config.quote_bid_rank,
     )
     .ok()?;
-    make_single_quote_leg(token, bid, rewards_min_size, config).map(|leg| (quote_mode, leg))
+    make_single_quote_leg(token, bid, rewards_min_size).map(|leg| (quote_mode, leg))
 }
 
 fn selected_live_quote_mode(

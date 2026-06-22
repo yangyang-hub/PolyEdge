@@ -421,9 +421,6 @@ impl RewardBotStore for InMemoryRewardBotStore {
                     && market.rewards_max_spread > rust_decimal::Decimal::ZERO
                     && in_memory_reward_midpoint(market)
                         .is_some_and(|midpoint| in_memory_reward_midpoint_allowed(midpoint, filter))
-                    && (filter.per_market_usd <= rust_decimal::Decimal::ZERO
-                        || filter.allow_single_side_budget_fallback
-                        || market.rewards_min_size <= filter.per_market_usd)
                     && market.liquidity_usd >= filter.min_market_liquidity_usd
                     && market.volume_24h_usd >= filter.min_market_volume_24h_usd
                     && market.market_spread_cents <= filter.max_market_spread_cents

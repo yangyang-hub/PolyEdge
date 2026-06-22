@@ -100,31 +100,22 @@ async fn postgres_list_reward_candidate_markets(
                   ((m.best_bid + m.best_ask) / 2 >= $2
                    AND (m.best_bid + m.best_ask) / 2 <= $3)
                   OR (
-                      $11
+                      $10
                       AND (
-                          ((m.best_bid + m.best_ask) / 2 >= $12
-                           AND (m.best_bid + m.best_ask) / 2 <= $13)
-                          OR ((m.best_bid + m.best_ask) / 2 >= 1 - $13
-                              AND (m.best_bid + m.best_ask) / 2 <= 1 - $12)
+                          ((m.best_bid + m.best_ask) / 2 >= $11
+                           AND (m.best_bid + m.best_ask) / 2 <= $12)
+                          OR ((m.best_bid + m.best_ask) / 2 >= 1 - $12
+                              AND (m.best_bid + m.best_ask) / 2 <= 1 - $11)
                       )
                   )
               )
-              AND m.liquidity_usd >= $5
-              AND m.volume_24h >= $6
+              AND m.liquidity_usd >= $4
+              AND m.volume_24h >= $5
               AND m.end_at IS NOT NULL
-              AND m.end_at >= now() + ($7::BIGINT * interval '1 hour')
-              AND (m.best_ask - m.best_bid) * 100 <= $8
-              AND m.synced_at >= now() - ($9::BIGINT * interval '1 minute')
+              AND m.end_at >= now() + ($6::BIGINT * interval '1 hour')
+              AND (m.best_ask - m.best_bid) * 100 <= $7
+              AND m.synced_at >= now() - ($8::BIGINT * interval '1 minute')
               AND m.synced_at <= now() + interval '5 minutes'
-              -- Double YES/NO minimum-size legs require roughly
-              -- rewards_min_size USD in aggregate. Auto/enforce single-side
-              -- fallback needs exact orderbook prices, so Rust planner checks
-              -- affordability after books are loaded.
-              AND CASE
-                  WHEN $4 <= 0 THEN true
-                  WHEN $14 THEN true
-                  ELSE rm.rewards_min_size <= $4
-              END
             ORDER BY (
                        LEAST(35.0, SQRT(rm.total_daily_rate::DOUBLE PRECISION) * 10.0)
                        + LEAST(20.0, LN(1.0 + m.liquidity_usd::DOUBLE PRECISION) / LN(10.0) * 4.0)
@@ -137,7 +128,7 @@ async fn postgres_list_reward_candidate_markets(
                            10.0,
                            LEAST(
                                rm.rewards_max_spread,
-                               $10
+                               $9
                            )::DOUBLE PRECISION * 1.25
                          )
                      ) DESC,
@@ -146,13 +137,12 @@ async fn postgres_list_reward_candidate_markets(
                      m.volume_24h DESC,
                      m.end_at DESC,
                      rm.updated_at DESC
-            LIMIT $15
+            LIMIT $13
             "#,
     )
     .bind(filter.min_daily_reward)
     .bind(filter.min_midpoint)
     .bind(filter.max_midpoint)
-    .bind(filter.per_market_usd)
     .bind(filter.min_market_liquidity_usd)
     .bind(filter.min_market_volume_24h_usd)
     .bind(i64::try_from(filter.min_hours_to_end).unwrap_or(i64::MAX))
@@ -162,7 +152,6 @@ async fn postgres_list_reward_candidate_markets(
     .bind(filter.allow_dominant_single_side)
     .bind(filter.dominant_min_probability)
     .bind(filter.dominant_max_probability)
-    .bind(filter.allow_single_side_budget_fallback)
     .bind(i64::from(safety_limit))
     .fetch_all(&store.pool)
     .await
