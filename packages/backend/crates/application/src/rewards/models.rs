@@ -66,7 +66,7 @@ impl FromStr for RewardOrderSide {
 pub enum PostFillStrategy {
     /// Rest a reverse sell order at the filled buy order price plus `exit_markup_cents`.
     ExitAtMarkup,
-    /// Keep the filled inventory and keep quoting the market for more rewards.
+    /// Rest a post-only sell at the filled buy order price, then keep quoting normally.
     HoldAndRequote,
     /// Immediately cross the opposite book at market to flatten the position.
     FlattenImmediately,

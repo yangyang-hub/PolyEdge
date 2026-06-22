@@ -341,23 +341,28 @@ fn plan_live_post_fill_orders(
 
     let post_fill_strategy = reward_post_fill_strategy(config, plans, entry, ai_min_confidence);
     match post_fill_strategy {
-        PostFillStrategy::HoldAndRequote => Vec::new(),
-        PostFillStrategy::ExitAtMarkup => {
-            let exit_price = ceil_reward_price_to_tick(Decimal::min(
-                Decimal::from_parts(99, 0, 0, false, 2),
-                entry.price + config.exit_markup_cents / Decimal::from(100_u64),
-            ));
-            let mut exit = live_exit_order(
-                entry,
-                fill_size,
-                exit_price,
-                "post-fill exit at markup",
-                trace_id,
-            );
+        PostFillStrategy::HoldAndRequote | PostFillStrategy::ExitAtMarkup => {
+            let (exit_price, reason, event_type) = match post_fill_strategy {
+                PostFillStrategy::HoldAndRequote => (
+                    ceil_reward_price_to_tick(entry.price),
+                    "post-only hold-and-requote original-price exit",
+                    "reward_live_hold_requote_exit_planned",
+                ),
+                PostFillStrategy::ExitAtMarkup => (
+                    ceil_reward_price_to_tick(Decimal::min(
+                        Decimal::from_parts(99, 0, 0, false, 2),
+                        entry.price + config.exit_markup_cents / Decimal::from(100_u64),
+                    )),
+                    "post-fill exit at markup",
+                    "reward_live_exit_planned",
+                ),
+                PostFillStrategy::FlattenImmediately => unreachable!(),
+            };
+            let mut exit = live_exit_order(entry, fill_size, exit_price, reason, trace_id);
             exit.status = ManagedRewardOrderStatus::ExitPending;
             let event = reward_live_event(
                 &exit,
-                "reward_live_exit_planned",
+                event_type,
                 RewardRiskSeverity::Info,
                 "persisted post-fill rewards exit intent before live submission",
                 json!({

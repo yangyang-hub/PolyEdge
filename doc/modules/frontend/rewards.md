@@ -49,7 +49,7 @@
 - **盘口选择** → `quote_mode=double|auto` + `selection_mode=observe|enforce` → 默认只保留双边报价；auto/enforce 的初步计划只用概率区间决定单边/双边，退出深度、盘口集中度、双边点差/档位/安全边际和单腿回退在 live placement 阶段用当前 orderbook 验证
 - **AI 建议配置** → 保存 provider、request format、TTL 和主 provider refresh 批量市场数；worker 启用且环境变量配置 provider key 后，会在 full tick 中低频调用模型并缓存 advisory
 - **信息风险配置** → 保存启用开关、observe/enforce、过滤等级、TTL 和主 provider refresh 批量市场数；异步 worker 启用且环境变量配置 provider key 后，会扫描候选市场最新信息风险并缓存，页面展示风险等级/类型/摘要；enforce 模式下缺少未过期风险缓存的计划会被后端置为不可挂
-- **成交后策略** → 页面可选择 `exit_at_markup` / `hold_and_requote` / `flatten_immediately`；`exit_at_markup` 的退出加价相对被吃买单原价计算，设为 0 时按原价挂卖
+- **成交后策略** → 页面可选择 `exit_at_markup` / `hold_and_requote` / `flatten_immediately`；`exit_at_markup` 的退出加价相对被吃买单原价计算，`hold_and_requote`（持有并续挂）按被吃买单原价挂 post-only 卖单并继续正常报价
 - **市场质量** → 可配置最低流动性、最低 24h 成交量、最短剩余结算时间、最大 Gamma spread 和最大目录同步年龄；后端还固定拒绝高歧义、非唯一 YES/NO、FDV/launch/token/official-result 等高跳变事件风险市场
 - **低竞争市场 sleeve** → 页面提供 `off/observe/enforce`、独立市场/订单/库存上限、竞争 notional、预估 reward/100/day、退出深度和盘口稳定性阈值配置；quote plan 表格展示低竞争 badge 和指标摘要，活动页展示最近 24 小时 shadow report。`observe` 只展示指标和 observation，不改变执行按钮语义；`enforce` 仍由后端要求 AI advisory 与 info-risk enforce 双 gate，report 不会自动改配置。
 - 事件面板支持按 `EventCategory` 过滤

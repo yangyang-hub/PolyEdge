@@ -1251,6 +1251,51 @@ fn configured_post_fill_exit_ignores_ai_hold_policy_and_uses_entry_price() {
 }
 
 #[test]
+fn hold_and_requote_plans_original_price_post_only_exit() {
+    let now = OffsetDateTime::now_utc();
+    let mut entry = live_test_open_order("yes_live");
+    entry.price = reward_decimal("0.49");
+    let config = RewardBotConfig {
+        post_fill_strategy: PostFillStrategy::HoldAndRequote,
+        exit_markup_cents: reward_decimal("5"),
+        ..RewardBotConfig::default()
+    };
+    let positions = HashMap::from([(
+        "yes_live".to_string(),
+        RewardPosition {
+            account_id: entry.account_id.clone(),
+            condition_id: entry.condition_id.clone(),
+            token_id: entry.token_id.clone(),
+            outcome: entry.outcome.clone(),
+            size: Decimal::from(5_u64),
+            avg_price: reward_decimal("0.52"),
+            realized_pnl: Decimal::ZERO,
+            updated_at: now,
+        },
+    )]);
+
+    let updates = plan_live_post_fill_orders(
+        &config,
+        &[],
+        &entry,
+        Decimal::from(5_u64),
+        &positions,
+        &HashMap::new(),
+        Decimal::ZERO,
+        "trc_hold_requote",
+    );
+
+    let LiveRewardOrderUpdate::Changed(exit, event) = &updates[0] else {
+        panic!("hold-and-requote must create an original-price sell intent");
+    };
+    assert_eq!(exit.status, ManagedRewardOrderStatus::ExitPending);
+    assert_eq!(exit.price, entry.price);
+    assert_eq!(exit.size, Decimal::from(5_u64));
+    assert!(deferred_live_exit_is_post_only(exit));
+    assert_eq!(event.event_type, "reward_live_hold_requote_exit_planned");
+}
+
+#[test]
 fn reward_live_fill_id_includes_order_id_and_keeps_legacy_id() {
     let update = live_test_trade_update("pm_yes_live", "pm_trade_1", Decimal::ONE);
 
