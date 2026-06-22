@@ -215,6 +215,15 @@ pub struct OrderbookStreamSettings {
     pub book_ttl_ms: u64,
     pub token_refresh_interval_secs: u64,
     pub restart_interval_secs: u64,
+    /// When true, the orderbook WS connection(s) stay alive across token-set
+    /// membership changes and apply incremental subscribe/unsubscribe diffs.
+    /// When false, the stream tears down and rebuilds the whole connection on
+    /// every membership change (legacy behavior; emergency rollback lever).
+    pub orderbook_ws_incremental_reconcile: bool,
+    /// Emergency drift escape hatch: if > 0, force a full teardown+rebuild of all
+    /// WS connections every N seconds. 0 (default) disables it — the incremental
+    /// path relies on the poll reconciler + the SDK's reconnect handler instead.
+    pub orderbook_full_resync_interval_secs: u64,
     pub reward_candle_history_enabled: bool,
     pub reward_candle_history_sync_interval_secs: u64,
     pub reward_candle_history_request_delay_ms: u64,

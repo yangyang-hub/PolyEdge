@@ -242,6 +242,14 @@ fn apply_runtime_config_value(
         "orderbook_stream.restart_interval_secs" => {
             self.orderbook_stream.restart_interval_secs = parse_u64_runtime_config(key, value)?;
         }
+        "orderbook_stream.orderbook_ws_incremental_reconcile" => {
+            self.orderbook_stream.orderbook_ws_incremental_reconcile =
+                parse_bool_runtime_config(key, value)?;
+        }
+        "orderbook_stream.orderbook_full_resync_interval_secs" => {
+            self.orderbook_stream.orderbook_full_resync_interval_secs =
+                parse_u64_runtime_config(key, value)?;
+        }
         _ => {}
     }
 

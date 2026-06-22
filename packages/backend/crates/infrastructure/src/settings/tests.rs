@@ -132,6 +132,8 @@ mod tests {
         assert_eq!(settings.orderbook_stream.book_ttl_ms, 300_000);
         assert_eq!(settings.orderbook_stream.token_refresh_interval_secs, 60);
         assert_eq!(settings.orderbook_stream.restart_interval_secs, 5);
+        assert!(settings.orderbook_stream.orderbook_ws_incremental_reconcile);
+        assert_eq!(settings.orderbook_stream.orderbook_full_resync_interval_secs, 0);
         assert!(settings.orderbook_stream.reward_candle_history_enabled);
         assert_eq!(
             settings

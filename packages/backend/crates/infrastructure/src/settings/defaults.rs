@@ -247,6 +247,8 @@ impl Default for OrderbookStreamSettings {
             book_ttl_ms: 300_000, // 5 minutes
             token_refresh_interval_secs: 60,
             restart_interval_secs: 5,
+            orderbook_ws_incremental_reconcile: true,
+            orderbook_full_resync_interval_secs: 0,
             reward_candle_history_enabled: true,
             reward_candle_history_sync_interval_secs: 300,
             reward_candle_history_request_delay_ms: 500,

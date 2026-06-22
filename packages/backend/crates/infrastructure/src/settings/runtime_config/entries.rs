@@ -659,6 +659,44 @@ pub fn runtime_config_entries(&self) -> Vec<RuntimeConfigEntry> {
             options: Vec::new(),
         },
     );
+    push_runtime_config_entry(
+        &mut entries,
+        RuntimeConfigEntryDraft {
+            section: "orderbook_stream",
+            field: "orderbook_ws_incremental_reconcile",
+            label: "Orderbook WS incremental reconcile (keep connections alive)",
+            env_name: "POLYEDGE_ORDERBOOK_STREAM__WS_INCREMENTAL_RECONCILE",
+            value: self
+                .orderbook_stream
+                .orderbook_ws_incremental_reconcile
+                .to_string(),
+            default_value: defaults
+                .orderbook_stream
+                .orderbook_ws_incremental_reconcile
+                .to_string(),
+            value_type: RuntimeConfigValueType::Boolean,
+            options: Vec::new(),
+        },
+    );
+    push_runtime_config_entry(
+        &mut entries,
+        RuntimeConfigEntryDraft {
+            section: "orderbook_stream",
+            field: "orderbook_full_resync_interval_secs",
+            label: "Orderbook WS full resync interval seconds (0 = off)",
+            env_name: "POLYEDGE_ORDERBOOK_STREAM__FULL_RESYNC_INTERVAL_SECS",
+            value: self
+                .orderbook_stream
+                .orderbook_full_resync_interval_secs
+                .to_string(),
+            default_value: defaults
+                .orderbook_stream
+                .orderbook_full_resync_interval_secs
+                .to_string(),
+            value_type: RuntimeConfigValueType::Integer,
+            options: Vec::new(),
+        },
+    );
 
     entries
 }

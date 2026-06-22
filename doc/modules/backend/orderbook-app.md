@@ -31,7 +31,7 @@
 6. 后台启动 rewards catalog 独立循环：initial 立即执行，之后每次完成后等待 `market_sync_interval_secs`；单次超时 45 分钟，超时或失败时保留上一版 rewards catalog。
 7. 后台启动 rewards candle history sync：默认每 300 秒选择最多 600 个 active reward token，按 token 间至少 500ms 的请求间隔调用 CLOB `/prices-history`，首次保留 2 小时 backfill，后续抓取最近 15 分钟增量；遇到 429、认证错误、超时、常见 5xx 或解码失败会停止本轮，避免继续压外部 API。
 8. 始终运行盘口流；没有注册 token 时每 10 秒等待一次。
-9. registry token 成员集合变化会先等待短暂 debounce 并再次确认，仍变化时才按 `restart_interval_secs` 重建订阅；WS 结束或 stream 报错也会重建。仅 token 顺序变化不会重连，poll reconciler 仍会使用最新聚合顺序。
+9. registry token 成员集合变化会先等待短暂 debounce 并再次确认，仍变化时默认（`POLYEDGE_ORDERBOOK_STREAM__WS_INCREMENTAL_RECONCILE=true`）保持 WS 连接存活、只对 diff 做增量 subscribe/unsubscribe（SDK 按资产 refcount 只发新增/退订帧），不再整体重建；只有某个 chunk 的 reader 结束（连接死亡）才重建那一个 chunk，其余连接不受影响。`WS_INCREMENTAL_RECONCILE=false` 回退到成员变化即整体重建的旧行为。仅 token 顺序变化不触发任何重订/重连，poll reconciler 仍会使用最新聚合顺序。
 
 ## HTTP API
 
@@ -52,8 +52,8 @@
 
 - 每个 source 的 `register_tokens()` 是原子全量替换，不是增量追加；orderbook HTTP 层收到空集合时等同删除 source。worker 周期注册任务会对成功空集合做防抖，`rewards_active`/`exec_orders` 连续 2 轮为空、`rewards_eligible`/`rewards_candidates` 连续 3 轮为空才真正发送空集合清源，查询失败或即时 active 刷新读到空集合会保留上一版 source。
 - registry 聚合顺序由 infrastructure 固定，优先级为 `rewards_active`、`exec_orders`、`rewards_eligible`、`rewards_ai_provider`、`rewards_candidates`、`copytrade`，最终受 `POLYEDGE_ORDERBOOK_STREAM__MAX_TOKENS` 限制；worker 周期注册任务为每个 source 独立注册全量 token，跨 source 去重和总量截断由聚合层完成，`rewards_eligible` 只注册最终可挂单 quote plan token；AI provider refresh 使用 `rewards_ai_provider` 临时 source，每批最多 10 个市场，下一批会原子替换上一批，结束后清空，避免待 AI 过滤市场长期占用可挂单订阅预算；`rewards_candidates` 预热 token 还受 `POLYEDGE_ORDERBOOK_STREAM__REWARD_CANDIDATE_TOKEN_CAP` 限制，默认 50，避免候选池填满全局订阅预算。
-- Polymarket WS 订阅按 `POLYEDGE_ORDERBOOK_STREAM__WS_CHUNK_SIZE` 分片成多条连接（默认 100 token/连接），降低单连接高消息量导致 SDK broadcast lag 的风险；chunk 内 SDK stream reader 会先快速 drain `book` / `price_change` 事件，再交给缓存写入循环处理，减少慢写入阻塞 SDK broadcast receiver；chunk 退出或被取消时会成对释放 SDK market subscription；任意分片结束或失败时，当前 stream lifecycle 会整体重建。
-- stream refresh 由 registry 变更通知实时唤醒，并保留 `token_refresh_interval_secs` 定时兜底；只用 token 成员集合判断是否需要重建 WS 订阅，并在成员变化后做短暂 debounce 再确认，避免候选/eligible/AI provider 临时批次短时抖动导致同一批 token 反复断线重连；poll reconciler 的共享 token 列表仍每次刷新为最新顺序。
+- Polymarket WS 订阅按 `POLYEDGE_ORDERBOOK_STREAM__WS_CHUNK_SIZE` 分片成多条连接（默认 100 token/连接），降低单连接高消息量导致 SDK broadcast lag 的风险；每个分片是一个长驻 chunk session，持有自己的 `ClobWsClient`（独立连接）。chunk 内 SDK stream reader 会先快速 drain `book` / `price_change` 事件，再交给缓存写入循环处理，减少慢写入阻塞 SDK broadcast receiver；session 关闭时会成对释放 SDK market subscription。默认增量模式下单个 session 的 reader 结束（连接死亡）只重建那一个 chunk，其余连接不受影响；`WS_INCREMENTAL_RECONCILE=false` 时任意分片结束或失败都会整体重建当前 stream lifecycle。
+- stream refresh 由 registry 变更通知实时唤醒，并保留 `token_refresh_interval_secs` 定时兜底；成员集合变化后做短暂 debounce 再确认，默认增量模式（`WS_INCREMENTAL_RECONCILE=true`）下只对 diff 做增量 subscribe/unsubscribe、保持连接存活（先 subscribe 新集合再 unsubscribe 旧集合，确保共享 Market 通道始终非空），`false` 时回退到整体重建；仅 token 顺序变化不触发重连，poll reconciler 的共享 token 列表仍每次刷新为最新顺序。增量状态若与 CLOB 漂移，由 60s poll reconciler（数据新鲜度）和 SDK 自带的 reconnect 全量重订阅兜底；`POLYEDGE_ORDERBOOK_STREAM__FULL_RESYNC_INTERVAL_SECS>0` 时还会按周期强制 teardown+rebuild 全部连接作为应急逃生口（默认 0=关）。
 - 所有缓存写入都会先把 bids 按价格降序、asks 按价格升序排序，再裁剪到 `POLYEDGE_ORDERBOOK_STREAM__MAX_LEVELS_PER_SIDE`，避免上游无序数据丢失 top-of-book。
 - WS 同时消费完整 `book` 快照和挂单/撤单触发的 `price_change` 增量；无 size 的增量不修改深度，等待后续快照/poll 对账。
 - 缓存拒绝 `observed_at` 早于当前条目的快照或增量；时间戳相同时 WS 条目优先于 poll，避免延迟 poll 覆盖更新盘口。
@@ -95,7 +95,7 @@ Active reward tokens
 
 - 市场同步、registry、分片 WS `book` + `price_change`、全注册 token 周期 poll reconcile、HTTP 读取、内部 WS 推送和内部写认证已实现；poll 可修复 fresh cache 中未被察觉的 WS 增量丢失，并通过内部 WS 广播给 worker 本地 cache；内部 WS client 建连最多等待 5 秒，避免不可达地址阻塞调用方。
 - Orderbook crate 已从 `packages/backend/apps/orderbook` 拆到顶层 `packages/orderbook`，仍作为 `packages/Cargo.toml` Rust workspace member 构建。
-- orderbook stream 的 token refresh 已接入 registry 变更通知，首次注册和后续成员变化可立即触发检查；仍避免仅因 registry 聚合顺序变化触发 WS 重连，只有订阅 token 成员真实增删并经过短暂 debounce 后仍变化时才重建 Polymarket WS 订阅。
+- orderbook stream 的 token refresh 已接入 registry 变更通知，首次注册和后续成员变化可立即触发检查；仍避免仅因 registry 聚合顺序变化触发 WS 重订/重连，只有订阅 token 成员真实增删并经过短暂 debounce 后仍变化时，默认增量模式才对 diff 做 subscribe/unsubscribe（保持连接存活），`WS_INCREMENTAL_RECONCILE=false` 时才整体重建 Polymarket WS 订阅。
 - poll 盘口保留 CLOB 返回的服务端毫秒时间戳，不再用 HTTP 响应完成时间伪造新鲜度；batch HTTP 读取通过一次 cache 批量读锁返回。
 - Gamma full sync、Gamma priority sync 与 rewards 目录同步在 orderbook 服务中使用三个独立后台循环；rewards 分页和详情补全可能持续很多分钟，但不会阻塞 Gamma `markets.synced_at` 刷新。Gamma full/priority 写入 `markets` 时在 orderbook 进程内串行化，并由 Postgres `lock_timeout` / `statement_timeout` 快速失败，避免一次慢锁等待拖垮后续周期。priority sync 会在全量目录之间强制刷新重点 condition，避免已挂单/已订阅/rewards 筛选市场仅因目录新鲜度过低被策略撤单。rewards 详情补全后仍缺 token 或空目录异常时保留上一版 rewards catalog，不执行破坏性全量替换。
 - Gamma market upsert 保存 `liquidity_usd`、`end_at` 和本地 `synced_at`；full sync 跳过同版本同内容行，并按 rewards 新鲜度窗口对安静市场做限频 `synced_at` refresh，priority sync 对重点市场强制 refresh。Postgres upsert 使用单条 `INSERT .. ON CONFLICT DO UPDATE WHERE` 表达新增、内容变化和 freshness-only 刷新。rewards 候选使用该本地同步时间判断目录新鲜度，不依赖市场是否刚好发生上游业务更新。
