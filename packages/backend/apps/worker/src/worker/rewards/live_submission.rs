@@ -24,6 +24,39 @@ fn live_submission_result_is_unknown(order: &ManagedRewardOrder) -> bool {
     order.reason.contains(LIVE_SUBMISSION_UNKNOWN_MARKER)
 }
 
+/// Closes a submission-unknown order locally once the grace period has elapsed after recovery
+/// confirmed no live Polymarket order exists (`find_matching_open_token_order` returned none).
+/// Mirrors the `LIVE_EXTERNAL_ORDER_NOT_FOUND` close in `mark_live_external_order_not_found`:
+/// it releases the global reconciliation lock so new buy placements resume automatically
+/// instead of requiring a manual DB fix. `order.updated_at` is frozen at the moment the order
+/// first became unknown, so it is the grace baseline. Returns `None` while still within grace
+/// or when the order is no longer in a stuck state.
+fn close_stale_submission_unknown_order(
+    mut order: ManagedRewardOrder,
+    now: OffsetDateTime,
+) -> Option<(ManagedRewardOrder, RewardRiskEvent)> {
+    if !order.status.is_open_like() || !live_submission_result_is_unknown(&order) {
+        return None;
+    }
+    if now < order.updated_at + TimeDuration::seconds(LIVE_SUBMISSION_UNKNOWN_CLOSE_AFTER_SECS) {
+        return None;
+    }
+    order.status = ManagedRewardOrderStatus::Cancelled;
+    order.scoring = false;
+    order.reason = format!(
+        "live submission remained unresolved for {LIVE_SUBMISSION_UNKNOWN_CLOSE_AFTER_SECS}s after recovery confirmed no live Polymarket order; local order closed with no confirmed fill"
+    );
+    order.updated_at = now;
+    let event = reward_live_event(
+        &order,
+        "reward_live_order_submission_unknown_closed",
+        RewardRiskSeverity::Warning,
+        order.reason.clone(),
+        json!({ "close_after_seconds": LIVE_SUBMISSION_UNKNOWN_CLOSE_AFTER_SECS }),
+    );
+    Some((order, event))
+}
+
 fn has_unresolved_live_reconciliation(orders: &[ManagedRewardOrder]) -> bool {
     orders.iter().any(|order| {
         order.status.is_open_like()

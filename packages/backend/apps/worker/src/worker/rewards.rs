@@ -1,6 +1,12 @@
 const REWARD_WORKER_ADVISORY_LOCK_KEY: i64 = 0x504f_4c59_5245_5744;
 const LIVE_EXTERNAL_ORDER_NOT_FOUND_MARKER: &str = "external order lookup returned not found";
 const LIVE_EXTERNAL_ORDER_NOT_FOUND_CLOSE_AFTER_SECS: i64 = 300;
+// A submission whose result is unknown (e.g. CLOB 5xx / response without an order id) is
+// recovered every tick via `find_matching_open_token_order`. Once that lookup confirms there
+// is no live Polymarket order, the local intent is closed after this grace so the global
+// reconciliation lock (which pauses new buy placements) self-clears instead of requiring a
+// manual DB fix. Mirrors the 404-lock close above; tunable here if needed.
+const LIVE_SUBMISSION_UNKNOWN_CLOSE_AFTER_SECS: i64 = 600;
 static REWARD_AI_PROVIDER_REQUEST_SEMAPHORE: tokio::sync::Semaphore =
     tokio::sync::Semaphore::const_new(1);
 static REWARD_MARKET_PROVIDER_REFRESH_RUNNING: AtomicBool = AtomicBool::new(false);

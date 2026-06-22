@@ -38,6 +38,58 @@ fn stale_missing_external_order_closes_after_timeout() {
 }
 
 #[test]
+fn stale_submission_unknown_order_closes_after_timeout() {
+    let mut order = live_test_open_order("yes_unknown_stale");
+    order.external_order_id = None;
+    order.status = ManagedRewardOrderStatus::Planned;
+    order.reason = LIVE_SUBMISSION_UNKNOWN_MARKER.to_string();
+    order.updated_at = OffsetDateTime::now_utc()
+        - TimeDuration::seconds(LIVE_SUBMISSION_UNKNOWN_CLOSE_AFTER_SECS + 1);
+
+    let (closed, event) =
+        close_stale_submission_unknown_order(order, OffsetDateTime::now_utc())
+            .expect("stale submission-unknown order must be closed locally");
+
+    assert_eq!(closed.status, ManagedRewardOrderStatus::Cancelled);
+    assert!(!closed.scoring);
+    assert!(closed.reason.contains("local order closed"));
+    assert_eq!(
+        event.event_type,
+        "reward_live_order_submission_unknown_closed"
+    );
+    assert!(!has_unresolved_live_reconciliation(&[closed]));
+}
+
+#[test]
+fn fresh_submission_unknown_order_waits_within_grace() {
+    let mut order = live_test_open_order("yes_unknown_fresh");
+    order.external_order_id = None;
+    order.status = ManagedRewardOrderStatus::Planned;
+    order.reason = LIVE_SUBMISSION_UNKNOWN_MARKER.to_string();
+    order.updated_at = OffsetDateTime::now_utc();
+
+    assert!(
+        close_stale_submission_unknown_order(order, OffsetDateTime::now_utc()).is_none()
+    );
+}
+
+#[test]
+fn submission_unknown_close_requires_unknown_marker() {
+    // An order that is merely "submission attempted" (no unknown marker) is re-submitted by
+    // the recovery path, not auto-closed here.
+    let mut order = live_test_open_order("yes_attempted_only");
+    order.external_order_id = None;
+    order.status = ManagedRewardOrderStatus::Planned;
+    order.reason = format!("quote intent; {LIVE_SUBMISSION_ATTEMPTED_MARKER}");
+    order.updated_at = OffsetDateTime::now_utc()
+        - TimeDuration::seconds(LIVE_SUBMISSION_UNKNOWN_CLOSE_AFTER_SECS + 1);
+
+    assert!(
+        close_stale_submission_unknown_order(order, OffsetDateTime::now_utc()).is_none()
+    );
+}
+
+#[test]
 fn missing_order_fallback_trade_query_failure_does_not_abort_reconciliation() {
     let error = AppError::internal(
         "POLYMARKET_MISSING_ORDER_TRADE_QUERY_FAILED",

@@ -127,6 +127,24 @@ async fn submit_pending_live_reward_orders(
                             trace_id,
                         )
                         .await?;
+                    } else if let Some((updated, event)) =
+                        close_stale_submission_unknown_order(order.clone(), now)
+                    {
+                        // Already unknown and recovery confirmed no live Polymarket order:
+                        // after the grace period, close locally so the global reconciliation
+                        // lock self-clears instead of blocking new buys indefinitely.
+                        persist_live_reward_updates(
+                            state,
+                            account,
+                            Vec::new(), // positions unchanged during submission
+                            vec![updated.clone()],
+                            Vec::new(),
+                            vec![event],
+                            report,
+                            trace_id,
+                        )
+                        .await?;
+                        *order = updated;
                     }
                 }
                 Err(error) => {
