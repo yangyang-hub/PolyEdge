@@ -162,8 +162,9 @@ fn registry_source_priority(source: &str) -> u8 {
         "exec_orders" => 1,
         "rewards_eligible" => 2,
         "rewards_ai_provider" => 3,
-        "rewards" | "rewards_candidates" => 4,
-        "copytrade" => 5,
-        _ => 6,
+        "rewards_low_competition_probe" => 4,
+        "rewards" | "rewards_candidates" => 5,
+        "copytrade" => 6,
+        _ => 7,
     }
 }

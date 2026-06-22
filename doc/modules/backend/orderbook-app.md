@@ -1,6 +1,6 @@
 # Orderbook App（市场同步与盘口服务）
 
-最后更新：2026-06-21
+最后更新：2026-06-22
 
 ## 概述
 
@@ -51,7 +51,7 @@
 ## 缓存与订阅约束
 
 - 每个 source 的 `register_tokens()` 是原子全量替换，不是增量追加；orderbook HTTP 层收到空集合时等同删除 source。worker 周期注册任务会对成功空集合做防抖，`rewards_active`/`exec_orders` 连续 2 轮为空、`rewards_eligible`/`rewards_candidates` 连续 3 轮为空才真正发送空集合清源，查询失败或即时 active 刷新读到空集合会保留上一版 source。
-- registry 聚合顺序由 infrastructure 固定，优先级为 `rewards_active`、`exec_orders`、`rewards_eligible`、`rewards_ai_provider`、`rewards_candidates`、`copytrade`，最终受 `POLYEDGE_ORDERBOOK_STREAM__MAX_TOKENS` 限制；worker 周期注册任务为每个 source 独立注册全量 token，跨 source 去重和总量截断由聚合层完成，`rewards_eligible` 只注册最终可挂单 quote plan token；AI provider refresh 使用 `rewards_ai_provider` 临时 source，每批最多 10 个市场，下一批会原子替换上一批，结束后清空，避免待 AI 过滤市场长期占用可挂单订阅预算；`rewards_candidates` 预热 token 还受 `POLYEDGE_ORDERBOOK_STREAM__REWARD_CANDIDATE_TOKEN_CAP` 限制，默认 50，避免候选池填满全局订阅预算。
+- registry 聚合顺序由 infrastructure 固定，优先级为 `rewards_active`、`exec_orders`、`rewards_eligible`、`rewards_ai_provider`、`rewards_low_competition_probe`、`rewards_candidates`、`copytrade`，最终受 `POLYEDGE_ORDERBOOK_STREAM__MAX_TOKENS` 限制；worker 周期注册任务为每个 source 独立注册全量 token，跨 source 去重和总量截断由聚合层完成，`rewards_eligible` 只注册最终可挂单 quote plan token；AI provider refresh 使用 `rewards_ai_provider` 临时 source，每批最多 10 个市场，下一批会原子替换上一批，结束后清空，避免待 AI 过滤市场长期占用可挂单订阅预算；rewards full tick 会用 `rewards_low_competition_probe` 为低竞争 gate 前候选按最多 10 个市场一批预热盘口，批次达到样本要求或超时后轮转；`rewards_candidates` 预热 token 还受 `POLYEDGE_ORDERBOOK_STREAM__REWARD_CANDIDATE_TOKEN_CAP` 限制，默认 50，避免候选池填满全局订阅预算。
 - Polymarket WS 订阅按 `POLYEDGE_ORDERBOOK_STREAM__WS_CHUNK_SIZE` 分片成多条连接（默认 100 token/连接），降低单连接高消息量导致 SDK broadcast lag 的风险；每个分片是一个长驻 chunk session，持有自己的 `ClobWsClient`（独立连接）。chunk 内 SDK stream reader 会先快速 drain `book` / `price_change` 事件，再交给缓存写入循环处理，减少慢写入阻塞 SDK broadcast receiver；session 关闭时会成对释放 SDK market subscription。默认增量模式下单个 session 的 reader 结束（连接死亡）只重建那一个 chunk，其余连接不受影响；`WS_INCREMENTAL_RECONCILE=false` 时任意分片结束或失败都会整体重建当前 stream lifecycle。
 - stream refresh 由 registry 变更通知实时唤醒，并保留 `token_refresh_interval_secs` 定时兜底；成员集合变化后做短暂 debounce 再确认，默认增量模式（`WS_INCREMENTAL_RECONCILE=true`）下只对 diff 做增量 subscribe/unsubscribe、保持连接存活（先 subscribe 新集合再 unsubscribe 旧集合，确保共享 Market 通道始终非空），`false` 时回退到整体重建；仅 token 顺序变化不触发重连，poll reconciler 的共享 token 列表仍每次刷新为最新顺序。增量状态若与 CLOB 漂移，由 60s poll reconciler（数据新鲜度）和 SDK 自带的 reconnect 全量重订阅兜底；`POLYEDGE_ORDERBOOK_STREAM__FULL_RESYNC_INTERVAL_SECS>0` 时还会按周期强制 teardown+rebuild 全部连接作为应急逃生口（默认 0=关）。
 - 所有缓存写入都会先把 bids 按价格降序、asks 按价格升序排序，再裁剪到 `POLYEDGE_ORDERBOOK_STREAM__MAX_LEVELS_PER_SIDE`，避免上游无序数据丢失 top-of-book。

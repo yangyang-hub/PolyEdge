@@ -156,6 +156,36 @@ fn enforce_requires_ai_and_info_risk_gates() {
 }
 
 #[test]
+fn enforce_preserves_quote_metadata_when_orderbook_data_is_unavailable() {
+    let config = low_competition_plan_config(RewardLowCompetitionMode::Enforce);
+    let mut plans = low_competition_plans(&config);
+    let initial_tokens = plans[0].orderbook_token_ids.clone();
+    let initial_quote_mode = plans[0].quote_mode;
+
+    apply_low_competition_metrics_to_quote_plans(
+        &mut plans,
+        &HashMap::new(),
+        &HashMap::new(),
+        &[],
+        &config,
+    );
+
+    assert!(!plans[0].eligible);
+    assert_eq!(plans[0].quote_mode, initial_quote_mode);
+    assert_eq!(plans[0].orderbook_token_ids, initial_tokens);
+    assert_eq!(plans[0].legs.len(), 2);
+    assert!(plans[0].reason.contains("low-competition data unavailable"));
+    let metrics = plans[0]
+        .low_competition_metrics
+        .as_ref()
+        .expect("low competition metrics");
+    assert!(metrics
+        .rejection_reasons
+        .iter()
+        .any(|reason| reason.contains("missing fresh orderbook midpoint")));
+}
+
+#[test]
 fn enforce_can_pass_pre_provider_metrics() {
     let config = RewardBotConfig {
         ai_advisory_enabled: true,

@@ -110,7 +110,7 @@ Orderbook candle history 默认由 orderbook 服务独立启用：`POLYEDGE_ORDE
 - `RewardBotStore` 在 Postgres/内存实现中按 account 维护 rewards worker heartbeat；API snapshot 只把配置已启用且最近 2 分钟有 heartbeat 的 worker 标记为 running。Postgres 表由迁移 `0032_reward_worker_heartbeats.sql` 创建。
 - `CopyTradeStore` 在 Postgres/内存实现中维护 `copytrade_control_commands` 队列；API 写入 pending 命令，worker 使用 claim/complete/fail 方法领取并更新执行状态。当前 copytrade worker 只执行 source trade 检测和 Analyze 钱包分析；run/cancel/reset 兼容命令不再触发模拟交易。
 - `InMemoryOrderbookCache` 在所有写入入口统一按 bids 降序、asks 升序排序后裁剪，确保无序 WS/poll/ingest 数据也保留 top-of-book；写入时间戳早于当前未过期条目的盘口会被忽略，相同时间戳下 WS 优先于 poll，已过期条目不会阻挡后续较旧 `observed_at` 的 poll/ingest 快照恢复；`get_books()` 在一次读锁内返回多个未过期盘口；`get_stale_tokens(..., max_age_ms <= 0)` 只检查 TTL，不执行年龄 stale 检查。
-- `InMemoryOrderbookSubscriptionRegistry.register_tokens()` 在持有写锁时原子执行 32-source 上限检查，关闭并发新 source 绕过 HTTP 预检查的竞态；空 token 集合会删除 source，聚合优先级为 `rewards_active`、`exec_orders`、`rewards_eligible`、`rewards_candidates`、`copytrade`。
+- `InMemoryOrderbookSubscriptionRegistry.register_tokens()` 在持有写锁时原子执行 32-source 上限检查，关闭并发新 source 绕过 HTTP 预检查的竞态；空 token 集合会删除 source，聚合优先级为 `rewards_active`、`exec_orders`、`rewards_eligible`、`rewards_ai_provider`、`rewards_low_competition_probe`、`rewards_candidates`、`copytrade`。
 
 ### Catalog — 核心数据存储
 

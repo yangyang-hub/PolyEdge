@@ -32,14 +32,19 @@ async fn run_reward_bot_once_with_history(
         return Ok(RewardBotRunReport::default());
     };
     let result = async {
-        let command_report =
-            process_pending_reward_control_commands_unlocked(state, connector, book_history, None)
-                .await?;
+        let command_report = process_pending_reward_control_commands_unlocked(
+            state,
+            connector,
+            book_history,
+            None,
+            None,
+        )
+        .await?;
         if command_report.processed > 0 {
             return Ok(command_report.report);
         }
 
-        run_reward_bot_tick(state, connector, trace_id, false, book_history, None).await
+        run_reward_bot_tick(state, connector, trace_id, false, book_history, None, None).await
     }
     .await;
     finish_reward_worker_lease(lease, result).await
@@ -52,8 +57,16 @@ async fn run_reward_bot_tick(
     force_orders: bool,
     book_history: &mut HashMap<String, VecDeque<BookSnapshot>>,
     orderbook_cache: Option<&RewardOrderbookLocalCache>,
+    low_competition_probe: Option<&mut LowCompetitionProbeState>,
 ) -> Result<RewardBotRunReport> {
-    let (markets, books) = fetch_reward_bot_inputs(state, orderbook_cache).await?;
+    let (markets, books) = fetch_reward_bot_inputs(
+        state,
+        orderbook_cache,
+        book_history,
+        low_competition_probe,
+        trace_id,
+    )
+    .await?;
     record_reward_book_history(book_history, &books);
     run_reward_bot_live_tick(
         state,
@@ -160,6 +173,7 @@ async fn process_pending_reward_control_commands_unlocked(
     connector: &LivePolymarketConnector,
     book_history: &mut HashMap<String, VecDeque<BookSnapshot>>,
     orderbook_cache: Option<&RewardOrderbookLocalCache>,
+    mut low_competition_probe: Option<&mut LowCompetitionProbeState>,
 ) -> Result<RewardCommandProcessReport> {
     let mut total = RewardCommandProcessReport::default();
     let max_commands = usize::from(task_limit(state).unwrap_or(10).max(1));
@@ -181,6 +195,7 @@ async fn process_pending_reward_control_commands_unlocked(
             &trace_id,
             book_history,
             orderbook_cache,
+            low_competition_probe.as_mut().map(|probe| &mut **probe),
         )
         .await;
         match result {
@@ -241,6 +256,7 @@ async fn execute_reward_control_command(
     trace_id: &str,
     book_history: &mut HashMap<String, VecDeque<BookSnapshot>>,
     orderbook_cache: Option<&RewardOrderbookLocalCache>,
+    low_competition_probe: Option<&mut LowCompetitionProbeState>,
 ) -> Result<RewardBotRunReport> {
     match command.action {
         RewardControlAction::RunOnce => {
@@ -251,6 +267,7 @@ async fn execute_reward_control_command(
                 true,
                 book_history,
                 orderbook_cache,
+                low_competition_probe,
             )
             .await
         }
@@ -657,6 +674,7 @@ include!("rewards/live_orderbook_risk.rs");
 include!("rewards/live_requote.rs");
 include!("rewards/live_risk.rs");
 include!("rewards/orderbook_events.rs");
+include!("rewards/low_competition_probe.rs");
 include!("rewards/polling.rs");
 include!("rewards/provider_advisory.rs");
 include!("rewards/provider_refresh_batch.rs");

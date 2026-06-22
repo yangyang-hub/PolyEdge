@@ -46,6 +46,8 @@ fn apply_low_competition_metrics_to_plan(
             let mut rejection_reasons =
                 vec![format!("live orderbook validation failed: {reason}")];
             push_low_competition_mode_rejections(&mut rejection_reasons, config);
+            let data_unavailable =
+                low_competition_rejection_reasons_include_data_unavailable(&rejection_reasons);
             reject_low_competition_plan(
                 plan,
                 RewardLowCompetitionMetrics {
@@ -63,6 +65,7 @@ fn apply_low_competition_metrics_to_plan(
                 },
                 config,
                 now,
+                data_unavailable,
             );
             return;
         }
@@ -106,12 +109,13 @@ fn apply_low_competition_metrics_to_plan(
             "eligible for low-competition sleeve pending AI and info-risk gates".to_string();
     } else {
         plan.eligible = false;
-        plan.quote_mode = RewardPlanQuoteMode::None;
-        plan.legs.clear();
-        plan.reason = format!(
-            "low-competition gate rejected: {}",
-            metrics.rejection_reasons.join("; ")
-        );
+        let data_unavailable =
+            low_competition_rejection_reasons_include_data_unavailable(&metrics.rejection_reasons);
+        if !data_unavailable {
+            plan.quote_mode = RewardPlanQuoteMode::None;
+            plan.legs.clear();
+        }
+        plan.reason = low_competition_rejection_reason(&metrics.rejection_reasons, data_unavailable);
     }
     plan.low_competition_metrics = Some(metrics);
     plan.updated_at = now;
@@ -231,9 +235,11 @@ fn reject_low_competition_plan(
     metrics: RewardLowCompetitionMetrics,
     config: &RewardBotConfig,
     now: OffsetDateTime,
+    preserve_quote_metadata: bool,
 ) {
     plan.eligible = false;
-    if config.low_competition_mode == RewardLowCompetitionMode::Enforce {
+    if config.low_competition_mode == RewardLowCompetitionMode::Enforce && !preserve_quote_metadata
+    {
         plan.quote_mode = RewardPlanQuoteMode::None;
         plan.legs.clear();
     }
@@ -243,13 +249,34 @@ fn reject_low_competition_plan(
             metrics.rejection_reasons.join("; ")
         )
     } else {
-        format!(
-            "low-competition gate rejected: {}",
-            metrics.rejection_reasons.join("; ")
-        )
+        low_competition_rejection_reason(&metrics.rejection_reasons, preserve_quote_metadata)
     };
     plan.low_competition_metrics = Some(metrics);
     plan.updated_at = now;
+}
+
+fn low_competition_rejection_reason(
+    rejection_reasons: &[String],
+    data_unavailable: bool,
+) -> String {
+    let prefix = if data_unavailable {
+        "low-competition data unavailable"
+    } else {
+        "low-competition gate rejected"
+    };
+    format!("{prefix}: {}", rejection_reasons.join("; "))
+}
+
+fn low_competition_rejection_reasons_include_data_unavailable(
+    rejection_reasons: &[String],
+) -> bool {
+    rejection_reasons.iter().any(|reason| {
+        reason.contains("missing fresh orderbook midpoint")
+            || reason.contains("book metrics unavailable")
+            || reason.contains("book history")
+            || reason.contains("samples")
+            || reason.contains("insufficient bid depth to estimate exit slippage")
+    })
 }
 
 fn push_low_competition_mode_rejections(rejection_reasons: &mut Vec<String>, config: &RewardBotConfig) {

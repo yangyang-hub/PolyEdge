@@ -46,6 +46,17 @@ mod orderbook_registry_tests {
             .await
             .expect("register candidates");
         registry
+            .register_tokens(
+                "rewards_low_competition_probe",
+                &["4".to_string(), "6".to_string()],
+            )
+            .await
+            .expect("register low-competition probe");
+        registry
+            .register_tokens("rewards_ai_provider", &["3".to_string(), "7".to_string()])
+            .await
+            .expect("register AI provider");
+        registry
             .register_tokens("rewards_eligible", &["3".to_string(), "4".to_string()])
             .await
             .expect("register eligible rewards");
@@ -65,6 +76,8 @@ mod orderbook_registry_tests {
                 "2".to_string(),
                 "3".to_string(),
                 "4".to_string(),
+                "7".to_string(),
+                "6".to_string(),
                 "5".to_string()
             ]
         );
