@@ -145,14 +145,13 @@ async fn poll_reward_bot_loop(
         } else {
             // --- Fast reconcile-only cycle (risk checks + cancel stale orders) ---
             let trace_id = new_trace_id();
-            // Pre-warm eligible/candidate books so quiet markets stay fresh
-            // between full ticks: the stream only pushes tokens whose books
-            // change, and the reconcile step below only refreshes active tokens.
-            if let Err(error) =
-                refresh_reward_managed_orderbook_cache(state, orderbook_runtime.cache()).await
-            {
-                warn!(error = %error, "failed to pre-warm managed orderbook cache");
-            }
+            // NOTE: pre-warming managed orderbook books here (in the synchronous
+            // fast-reconcile path under the advisory lease) was reverted — it
+            // stretched each reconcile cycle from ~3s to ~14s (DB candidate scan
+            // + HTTP batch) and triggered a storm of AI-advisory batch flushes,
+            // while only partially lowering book age (max stayed ~27-32s). To
+            // keep fast reconcile at 3s, this must run as an independent
+            // throttled background task instead. See refresh_reward_managed_orderbook_cache.
             let sync_policy = external_sync_throttle.fast_reconcile_policy(&config, Instant::now());
             let report = run_reward_bot_live_reconcile_unlocked(
                 state,
@@ -548,6 +547,28 @@ async fn refresh_reward_managed_orderbook_cache(
         return Ok(0);
     }
     Ok(fetch_cached_reward_books(state, Some(orderbook_cache), &token_ids).await?.len())
+}
+
+const REWARD_ORDERBOOK_PREWARM_INTERVAL: Duration = Duration::from_secs(5);
+
+/// Background task that keeps the worker-local orderbook cache fresh for every
+/// token the bot may place orders on next (active + eligible + candidate), so
+/// quiet markets whose books rarely change stay below the placement freshness
+/// threshold between full ticks. Spawned by `RewardOrderbookRuntime` as its own
+/// task, fully independent of the poll loop: it never blocks fast reconcile and
+/// never holds the advisory lease. `fetch_cached_reward_books` only HTTP-fetches
+/// tokens whose local age already exceeds the placement threshold, so it stays
+/// cheap when books are already fresh. Aborted when the runtime is dropped.
+async fn run_reward_managed_orderbook_cache_prewarm(
+    state: AppState,
+    cache: Arc<RewardOrderbookLocalCache>,
+) {
+    loop {
+        tokio::time::sleep(REWARD_ORDERBOOK_PREWARM_INTERVAL).await;
+        if let Err(error) = refresh_reward_managed_orderbook_cache(&state, cache.as_ref()).await {
+            warn!(error = %error, "background orderbook cache pre-warm failed");
+        }
+    }
 }
 
 async fn fetch_cached_reward_books(

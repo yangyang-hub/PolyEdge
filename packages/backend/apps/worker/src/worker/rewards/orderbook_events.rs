@@ -5,6 +5,7 @@ struct RewardOrderbookRuntime {
     cache: Arc<RewardOrderbookLocalCache>,
     handle: JoinHandle<()>,
     batch_handle: JoinHandle<()>,
+    prewarm_handle: JoinHandle<()>,
 }
 
 impl RewardOrderbookRuntime {
@@ -24,10 +25,16 @@ impl RewardOrderbookRuntime {
         let batch_handle = tokio::spawn(async move {
             run_reward_ai_advisory_batch_worker(batch_state, batch_cache, ready_rx).await;
         });
+        let prewarm_state = state.clone();
+        let prewarm_cache = Arc::clone(&cache);
+        let prewarm_handle = tokio::spawn(async move {
+            run_reward_managed_orderbook_cache_prewarm(prewarm_state, prewarm_cache).await;
+        });
         Self {
             cache,
             handle,
             batch_handle,
+            prewarm_handle,
         }
     }
 
@@ -44,6 +51,7 @@ impl Drop for RewardOrderbookRuntime {
     fn drop(&mut self) {
         self.handle.abort();
         self.batch_handle.abort();
+        self.prewarm_handle.abort();
     }
 }
 

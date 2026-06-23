@@ -44,7 +44,7 @@ Worker 代码现在同时提供共享库和兼容 CLI。`polyedge-api` 在同一
 | `worker/rewards/live_risk.rs` | rewards live placement/cancel 风控：depth/rank/history/requote、库存 cap、低竞争 sleeve 独立订单/库存 cap 与全局开放订单占比 cap |
 | `worker/rewards/orderbook_events.rs` | rewards worker 本地盘口 cache、orderbook 内部 WS 消费、HTTP bootstrap、活跃 token 事件唤醒和 condition 盘口首次就绪检测（驱动 AI advisory 批量 worker） |
 | `worker/rewards/low_competition_probe.rs` | rewards 低竞争 gate 前盘口探测：用 `rewards_low_competition_probe` source 按最多 10 个市场一批预热盘口和历史样本 |
-| `worker/rewards/polling.rs` | rewards poll loop、盘口读取、事件驱动 fast reconcile、外部同步节流、5 天历史清理、进程内盘口历史和 full tick 间安静市场盘口预热（`refresh_reward_managed_orderbook_cache`） |
+| `worker/rewards/polling.rs` | rewards poll loop、盘口读取、事件驱动 fast reconcile、外部同步节流、5 天历史清理、进程内盘口历史和独立后台盘口预热 task（`run_reward_managed_orderbook_cache_prewarm`，每 5 秒刷新活跃/eligible/候选 token 本地 cache，不阻塞 fast reconcile） |
 | `worker/rewards/provider_advisory.rs` | rewards AI advisory cache gate、候选排序 helper、provider connector/permit helper |
 | `worker/rewards/provider_refresh_batch.rs` | rewards 主 provider refresh 的批量请求 helper：按配置批量请求 AI advisory / info-risk，逐项保存，漏项或错配回退单市场 |
 | `worker/rewards/provider_refresh_orderbook.rs` | rewards 主 provider refresh 的临时 orderbook source helper：按临时批次订阅 AI 所需盘口，allow 后合并提升 `rewards_eligible` |
