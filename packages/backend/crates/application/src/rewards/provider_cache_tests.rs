@@ -48,6 +48,7 @@ fn cache_test_books(observed_at: OffsetDateTime, yes_bid: &str) -> HashMap<Strin
                 size: decimal("1000"),
             }],
             observed_at,
+            confirmed_at: observed_at,
         },
         RewardOrderBook {
             token_id: "token_no_cache".to_string(),
@@ -60,6 +61,7 @@ fn cache_test_books(observed_at: OffsetDateTime, yes_bid: &str) -> HashMap<Strin
                 size: decimal("1000"),
             }],
             observed_at,
+            confirmed_at: observed_at,
         },
     ]
     .into_iter()

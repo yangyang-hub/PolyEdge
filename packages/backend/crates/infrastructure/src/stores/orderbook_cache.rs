@@ -69,6 +69,20 @@ impl InMemoryOrderbookCache {
                 && current.source == polyedge_application::BookSource::Ws
                 && replacement.source == polyedge_application::BookSource::Poll)
     }
+
+    fn merge_confirmation_if_newer(
+        entry: &mut BookEntry,
+        replacement: &CachedOrderBook,
+        expires_at_ms: i64,
+    ) -> bool {
+        let replacement_confirmed_at = replacement.confirmation_time_ms();
+        if replacement_confirmed_at > entry.book.confirmation_time_ms() {
+            entry.book.confirmed_at = replacement_confirmed_at;
+            entry.expires_at_ms = expires_at_ms;
+            return true;
+        }
+        false
+    }
 }
 
 #[async_trait]
@@ -100,19 +114,18 @@ impl OrderbookCache for InMemoryOrderbookCache {
         let book = self.bounded_book(book);
         let mut books = self.books.write().await;
         let now = now_millis();
-        if books
-            .get(&book.token_id)
-            .is_some_and(|entry| {
-                entry.expires_at_ms > now && Self::rejects_replacement(&entry.book, &book)
-            })
-        {
-            return Ok(());
+        let expires_at_ms = now + self.ttl_ms;
+        if let Some(entry) = books.get_mut(&book.token_id) {
+            if entry.expires_at_ms > now && Self::rejects_replacement(&entry.book, &book) {
+                Self::merge_confirmation_if_newer(entry, &book, expires_at_ms);
+                return Ok(());
+            }
         }
         books.insert(
             book.token_id.clone(),
             BookEntry {
                 book,
-                expires_at_ms: now + self.ttl_ms,
+                expires_at_ms,
             },
         );
         Ok(())
@@ -124,13 +137,11 @@ impl OrderbookCache for InMemoryOrderbookCache {
         let expires_at_ms = now + self.ttl_ms;
         for book in books_slice {
             let book = self.bounded_book(book);
-            if books
-                .get(&book.token_id)
-                .is_some_and(|entry| {
-                    entry.expires_at_ms > now && Self::rejects_replacement(&entry.book, &book)
-                })
-            {
-                continue;
+            if let Some(entry) = books.get_mut(&book.token_id) {
+                if entry.expires_at_ms > now && Self::rejects_replacement(&entry.book, &book) {
+                    Self::merge_confirmation_if_newer(entry, &book, expires_at_ms);
+                    continue;
+                }
             }
             books.insert(
                 book.token_id.clone(),
@@ -154,7 +165,8 @@ impl OrderbookCache for InMemoryOrderbookCache {
                     // TTL expiry counts); otherwise a 0 threshold would mark every
                     // cached book stale on every poll and refetch the whole set.
                     entry.expires_at_ms <= now
-                        || (max_age_ms > 0 && now - entry.book.observed_at > max_age_ms)
+                        || (max_age_ms > 0
+                            && now - entry.book.confirmation_time_ms() > max_age_ms)
                 }
                 None => true,
             };
@@ -176,6 +188,7 @@ impl OrderbookCache for InMemoryOrderbookCache {
             return Ok(false);
         }
         if Self::rejects_replacement(&entry.book, &book) {
+            Self::merge_confirmation_if_newer(entry, &book, now + self.ttl_ms);
             return Ok(false);
         }
         entry.book = book;

@@ -118,11 +118,16 @@ impl RewardOrderbookLocalCache {
         let mut books = self.books.write().await;
         let now = reward_orderbook_now_millis();
         books.retain(|_, current| current.expires_at_ms > now);
-        if books
-            .get(&book.token_id)
-            .is_some_and(|entry| Self::rejects_replacement(&entry.book, &book))
-        {
-            return false;
+        if let Some(entry) = books.get_mut(&book.token_id) {
+            if Self::rejects_replacement(&entry.book, &book) {
+                let replacement_confirmed_at = book.confirmation_time_ms();
+                if replacement_confirmed_at > entry.book.confirmation_time_ms() {
+                    entry.book.confirmed_at = replacement_confirmed_at;
+                    entry.expires_at_ms = now + self.ttl_ms;
+                    return true;
+                }
+                return false;
+            }
         }
         books.insert(
             book.token_id.clone(),
@@ -529,6 +534,7 @@ mod reward_orderbook_local_cache_tests {
                     }],
                     asks: Vec::new(),
                     observed_at: future_observed_at,
+                    confirmed_at: reward_orderbook_now_millis(),
                     source: BookSource::Poll,
                 })
                 .await
@@ -551,6 +557,7 @@ mod reward_orderbook_local_cache_tests {
                 size: Decimal::from(10_u64),
             }],
             observed_at: reward_orderbook_now_millis(),
+            confirmed_at: reward_orderbook_now_millis(),
             source: BookSource::Poll,
         }
     }

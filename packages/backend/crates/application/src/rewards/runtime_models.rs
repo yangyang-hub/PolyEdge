@@ -57,6 +57,8 @@ pub struct RewardOrderBook {
     pub asks: Vec<RewardBookLevel>,
     #[serde(with = "time::serde::rfc3339")]
     pub observed_at: OffsetDateTime,
+    #[serde(with = "time::serde::rfc3339")]
+    pub confirmed_at: OffsetDateTime,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

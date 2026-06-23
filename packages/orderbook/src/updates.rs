@@ -57,6 +57,7 @@ mod tests {
                 size: Decimal::ONE,
             }],
             observed_at,
+            confirmed_at: observed_at,
             source: BookSource::Ws,
         }
     }

@@ -42,6 +42,7 @@ pub struct OrderbookResponse {
     pub bids: Vec<LevelResponse>,
     pub asks: Vec<LevelResponse>,
     pub observed_at: i64,
+    pub confirmed_at: i64,
     pub source: String,
 }
 
@@ -90,6 +91,8 @@ pub struct IngestBook {
     pub bids: Vec<LevelResponse>,
     pub asks: Vec<LevelResponse>,
     pub observed_at: i64,
+    #[serde(default)]
+    pub confirmed_at: Option<i64>,
     pub source: String,
 }
 
@@ -230,6 +233,7 @@ pub async fn ingest_books(
             bids: parse_levels(book.bids, max_levels, true)?,
             asks: parse_levels(book.asks, max_levels, false)?,
             observed_at: book.observed_at,
+            confirmed_at: book.confirmed_at.unwrap_or(book.observed_at),
             source: match book.source.as_str() {
                 "ws" => BookSource::Ws,
                 _ => BookSource::Poll,
@@ -252,7 +256,9 @@ async fn publish_ingested_books(state: &OrderbookApiState, books: &[CachedOrderB
     for book in books {
         match state.app.orderbook_cache.get_book(&book.token_id).await {
             Ok(Some(current))
-                if current.observed_at == book.observed_at && current.source == book.source =>
+                if current.observed_at == book.observed_at
+                    && current.confirmation_time_ms() == book.confirmation_time_ms()
+                    && current.source == book.source =>
             {
                 state
                     .broadcaster
@@ -513,6 +519,7 @@ fn cache_error_response(error: polyedge_domain::AppError) -> (StatusCode, Json<M
 }
 
 fn to_response(book: polyedge_application::CachedOrderBook) -> OrderbookResponse {
+    let confirmed_at = book.confirmation_time_ms();
     OrderbookResponse {
         token_id: book.token_id,
         bids: book
@@ -532,6 +539,7 @@ fn to_response(book: polyedge_application::CachedOrderBook) -> OrderbookResponse
             })
             .collect(),
         observed_at: book.observed_at,
+        confirmed_at,
         source: book.source.to_string(),
     }
 }

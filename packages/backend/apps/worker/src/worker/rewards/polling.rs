@@ -656,8 +656,9 @@ fn reward_orderbook_book_is_stale(
     if stale_book_ms == 0 {
         return false;
     }
-    let age_ms = now_ms.saturating_sub(book.observed_at);
-    book.observed_at > now_ms || age_ms > i64::try_from(stale_book_ms).unwrap_or(i64::MAX)
+    let confirmed_at = book.confirmation_time_ms();
+    let age_ms = now_ms.saturating_sub(confirmed_at);
+    confirmed_at > now_ms || age_ms > i64::try_from(stale_book_ms).unwrap_or(i64::MAX)
 }
 
 fn reward_orderbook_book_needs_remote_refresh(
@@ -672,7 +673,7 @@ fn reward_orderbook_book_needs_remote_refresh(
     if stale_book_ms == 0 || max_placement_age_ms == i128::MAX {
         return false;
     }
-    let age_ms = i128::from(now_ms.saturating_sub(book.observed_at));
+    let age_ms = i128::from(now_ms.saturating_sub(book.confirmation_time_ms()));
     age_ms > reward_orderbook_remote_refresh_age_ms(max_placement_age_ms)
 }
 
@@ -727,13 +728,18 @@ fn cached_order_book_to_reward(book: &CachedOrderBook) -> RewardOrderBook {
             })
             .collect(),
         observed_at: {
-            let secs = book.observed_at / 1000;
-            let nsecs = ((book.observed_at % 1000) * 1_000_000) as u32;
-            OffsetDateTime::from_unix_timestamp(secs)
-                .map(|dt| dt + TimeDuration::nanoseconds(i64::from(nsecs)))
-                .unwrap_or_else(|_| OffsetDateTime::now_utc())
+            cached_unix_millis_to_offset_datetime(book.observed_at)
         },
+        confirmed_at: cached_unix_millis_to_offset_datetime(book.confirmation_time_ms()),
     }
+}
+
+fn cached_unix_millis_to_offset_datetime(timestamp_ms: i64) -> OffsetDateTime {
+    let secs = timestamp_ms.div_euclid(1_000);
+    let millis = timestamp_ms.rem_euclid(1_000);
+    OffsetDateTime::from_unix_timestamp(secs)
+        .map(|dt| dt + TimeDuration::milliseconds(millis))
+        .unwrap_or_else(|_| OffsetDateTime::now_utc())
 }
 
 fn reward_market_from_connector(market: PolymarketRewardMarket) -> RewardMarket {

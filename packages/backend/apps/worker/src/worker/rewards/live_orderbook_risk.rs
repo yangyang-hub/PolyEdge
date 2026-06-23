@@ -113,7 +113,7 @@ fn live_quote_book_stale_age_ms(
 }
 
 fn live_orderbook_age_ms(book: &RewardOrderBook, now: OffsetDateTime) -> i128 {
-    (now - book.observed_at).whole_milliseconds()
+    (now - book.confirmed_at).whole_milliseconds()
 }
 
 fn live_orderbook_age_is_stale(age_ms: i128, stale_book_ms: u64) -> bool {

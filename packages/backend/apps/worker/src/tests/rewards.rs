@@ -488,6 +488,7 @@ fn live_test_book(token_id: &str, observed_at: OffsetDateTime) -> RewardOrderBoo
             size: reward_decimal("100"),
         }],
         observed_at,
+        confirmed_at: observed_at,
     }
 }
 
@@ -1796,6 +1797,7 @@ fn reward_orderbook_remote_refresh_treats_old_local_books_as_stale() {
         bids: Vec::new(),
         asks: Vec::new(),
         observed_at: 1_000,
+        confirmed_at: 1_000,
         source: BookSource::Poll,
     };
 
@@ -1804,10 +1806,30 @@ fn reward_orderbook_remote_refresh_treats_old_local_books_as_stale() {
     assert!(!reward_orderbook_book_is_stale(&book, 90_000, 0));
 
     let future_book = CachedOrderBook {
-        observed_at: 100_000,
+        confirmed_at: 100_000,
         ..book
     };
     assert!(reward_orderbook_book_is_stale(&future_book, 90_000, 45_000));
+}
+
+#[test]
+fn reward_orderbook_remote_refresh_uses_confirmation_time_not_content_time() {
+    let book = CachedOrderBook {
+        token_id: "quiet_token".to_string(),
+        bids: Vec::new(),
+        asks: Vec::new(),
+        observed_at: 1_000,
+        confirmed_at: 40_000,
+        source: BookSource::Poll,
+    };
+
+    assert!(!reward_orderbook_book_is_stale(&book, 50_000, 45_000));
+    assert!(!reward_orderbook_book_needs_remote_refresh(
+        &book,
+        46_000,
+        45_000,
+        15_000,
+    ));
 }
 
 #[test]
@@ -1828,6 +1850,7 @@ fn reward_orderbook_remote_refresh_uses_live_placement_headroom() {
         bids: Vec::new(),
         asks: Vec::new(),
         observed_at: 1_000,
+        confirmed_at: 1_000,
         source: BookSource::Poll,
     };
 

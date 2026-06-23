@@ -37,6 +37,31 @@ fn live_placement_waits_when_orderbook_is_too_close_to_stale() {
 }
 
 #[test]
+fn live_placement_uses_orderbook_confirmation_time_for_freshness() {
+    let config = RewardBotConfig {
+        account_id: "reward_live".to_string(),
+        stale_book_ms: 45_000,
+        max_markets: 1,
+        max_open_orders: 2,
+        max_global_position_usd: Decimal::ZERO,
+        ..RewardBotConfig::default()
+    };
+    let now = OffsetDateTime::now_utc();
+    let content_time = now - TimeDuration::minutes(10);
+    let mut yes_book = live_test_book("yes_live", content_time);
+    yes_book.confirmed_at = now;
+    let mut no_book = live_test_book("no_live", content_time);
+    no_book.confirmed_at = now;
+    let books = HashMap::from([
+        ("yes_live".to_string(), yes_book),
+        ("no_live".to_string(), no_book),
+    ]);
+    let plan = live_test_plan(now);
+
+    assert!(live_orderbook_placement_wait_reason(&config, &plan.legs, &books, now).is_none());
+}
+
+#[test]
 fn live_placement_headroom_scales_for_short_stale_window() {
     let config = RewardBotConfig {
         stale_book_ms: 10_000,

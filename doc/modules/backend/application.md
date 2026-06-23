@@ -131,7 +131,7 @@
 
 **live 资金模型：**
 - Rewards live maker 下单沿用跨市场软资金复用语义：不同 condition 的本系统未成交 post-only/GTC 买单可复用同一资金池；但 Polymarket 会对同一 condition 的全部开放 BUY 订单累计做余额有效性检查，因此 placement 会先计算该 condition 已有 managed BUY 剩余 notional 与待补 YES/NO 腿总 notional。账户开放 BUY 总额会同步到 `external_buy_notional`；worker 会先把 CLOB open-order snapshot 中可唯一映射到 active reward market YES/NO token 的开放 BUY 收养/重开为 managed order，其余无法归属到本系统 managed order 的外部 BUY notional 才会从 `available_usd` 中保守扣除，再做同 condition 准入，避免人工/其它机器人挂单与本系统新单叠加。SELL、非 rewards 市场和无法唯一映射 token 的外部开放订单明细仍未按 condition 映射。
-- Live 新挂单仍要求目标 YES/NO 两腿都有非空盘口；`stale_book_ms` 默认 45000，orderbook 默认 10 秒 poll reconcile 会配合 WS 让盘口保持在新挂单新鲜度窗口内，配置归一化下限为 5000ms，不再允许生产配置把盘口年龄检查降到 0。新挂单路径遇到盘口缺失、空盘口、超过 `stale_book_ms` 或已接近 stale 边界时，会先对缺失、过期或超过新挂单 freshness headroom 的 token 通过 orderbook 服务 HTTP batch 尝试刷新；仍无足够新鲜度余量的盘口时保持计划等待 orderbook 缓存恢复，而不是写入 12 小时 skip；新建 quote intent 与已落库待提交 BUY 在提交前都会复用 live 撤单风控（计划仍 eligible、报价漂移、min depth、bid rank、depth drop、fill velocity、mass cancel、kill switch 等），风险不通过的本地 intent 会在提交前取消。live reconcile 会对本系统托管的开放订单读取活跃 token 盘口；盘口缺失/空盘口、SELL 盘口过期、BUY 的非 stale 硬风险或超过短暂 grace 的 BUY stale-only 风险会触发撤单，即使 `enabled=false` 已停止新增报价；近期已有 external order id 的 BUY 只在单纯 stale 且仍处于 grace 窗口内时延迟撤单，价格漂移只在 reprice guard 确认后按单轮上限撤单，资格、深度和 kill switch 等硬风险仍不延迟。
+- Live 新挂单仍要求目标 YES/NO 两腿都有非空盘口；`stale_book_ms` 默认 45000，orderbook 默认 10 秒 poll reconcile 会配合 WS 让盘口保持在新挂单新鲜度窗口内，配置归一化下限为 5000ms，不再允许生产配置把盘口年龄检查降到 0。新挂单和撤单 stale 判断使用 orderbook `confirmed_at`，因此安静市场只要最近被 poll/WS 确认过，不会因为 `observed_at` 内容版本长期不变而被判过期。新挂单路径遇到盘口缺失、空盘口、超过 `stale_book_ms` 或已接近 stale 边界时，会先对缺失、过期或超过新挂单 freshness headroom 的 token 通过 orderbook 服务 HTTP batch 尝试刷新；仍无足够新鲜度余量的盘口时保持计划等待 orderbook 缓存恢复，而不是写入 12 小时 skip；新建 quote intent 与已落库待提交 BUY 在提交前都会复用 live 撤单风控（计划仍 eligible、报价漂移、min depth、bid rank、depth drop、fill velocity、mass cancel、kill switch 等），风险不通过的本地 intent 会在提交前取消。live reconcile 会对本系统托管的开放订单读取活跃 token 盘口；盘口缺失/空盘口、SELL 盘口过期、BUY 的非 stale 硬风险或超过短暂 grace 的 BUY stale-only 风险会触发撤单，即使 `enabled=false` 已停止新增报价；近期已有 external order id 的 BUY 只在单纯 stale 且仍处于 grace 窗口内时延迟撤单，价格漂移只在 reprice guard 确认后按单轮上限撤单，资格、深度和 kill switch 等硬风险仍不延迟。
 - full tick 的 live action 阶段会重新刷新当前 open-like 订单与 eligible quote plan token 的盘口后再做撤单/提交/新挂单判断；这次刷新复用 worker 本地 cache 与 orderbook HTTP batch，只拉取本地缺失、过期或接近 placement headroom 的 token（默认在 placement 最大年龄前预留刷新余量）。
 - Live `reset` 不清空本地账本或删除托管订单；worker 会先按 cancel-all 语义撤销本系统托管 live 订单，若任一 Polymarket 撤单被拒绝，则命令失败并保留本地状态以避免孤儿实盘订单。
 - 风险控制重点放在成交后：trade 达到 `CONFIRMED` 后，worker 对本系统托管 rewards 订单按 external trade id 幂等更新现金、库存、fills 和 PnL，并撤掉 sibling legs；新挂单的 per-token 和全局库存门槛都使用「已有库存 notional + 当前候选订单 notional」准入。
@@ -195,7 +195,7 @@
 - `max_age_ms <= 0` 表示关闭年龄 stale 检查，但具体实现仍可按 TTL 判定过期。
 
 **类型：**
-- `CachedOrderBook`：token_id、bids、asks、observed_at、source
+- `CachedOrderBook`：token_id、bids、asks、observed_at、confirmed_at、source；`observed_at` 表示盘口内容版本时间，`confirmed_at` 表示服务最近确认该 token 盘口仍可用的时间，旧消息缺失 `confirmed_at` 时回退使用 `observed_at`
 - `OrderbookStreamReason`：`book`、`price_change`、`poll_reconcile`、`ingest`
 - `OrderbookStreamEvent`：orderbook 服务内部 WS 推送事件，包含单调 sequence、reason 和规范化 `CachedOrderBook`
 

@@ -340,6 +340,10 @@ async fn register_reward_tokens(state: &AppState) -> Result<()> {
 }
 
 fn book_update_to_cached(update: &BookUpdate) -> CachedOrderBook {
+    let confirmed_at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as i64;
     let bids: Vec<CachedBookLevel> = update
         .bids
         .iter()
@@ -363,6 +367,7 @@ fn book_update_to_cached(update: &BookUpdate) -> CachedOrderBook {
         bids,
         asks,
         observed_at: update.timestamp,
+        confirmed_at,
         source: BookSource::Ws,
     }
 }
@@ -399,6 +404,10 @@ async fn apply_price_change_to_cache(
             });
         }
         book.observed_at = update.timestamp;
+        book.confirmed_at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as i64;
         book.source = BookSource::Ws;
         cache.set_book(&book).await?;
     }
@@ -406,10 +415,12 @@ async fn apply_price_change_to_cache(
 }
 
 fn reward_book_to_cached(book: &PolymarketRewardOrderBook) -> CachedOrderBook {
-    let now_ms = std::time::SystemTime::now()
+    let confirmed_at = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as i64;
+    let millis = book.observed_at.unix_timestamp_nanos().div_euclid(1_000_000);
+    let observed_at = i64::try_from(millis).unwrap_or(confirmed_at);
 
     CachedOrderBook {
         token_id: book.token_id.clone(),
@@ -429,7 +440,8 @@ fn reward_book_to_cached(book: &PolymarketRewardOrderBook) -> CachedOrderBook {
                 size: l.size,
             })
             .collect(),
-        observed_at: now_ms,
+        observed_at,
+        confirmed_at,
         source: BookSource::Poll,
     }
 }

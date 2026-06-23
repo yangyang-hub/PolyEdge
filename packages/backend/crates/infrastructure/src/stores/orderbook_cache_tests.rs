@@ -19,6 +19,7 @@ mod orderbook_cache_tests {
             // Unsorted asks; the two best (lowest) are 0.62 then 0.65.
             asks: vec![level(70, 10), level(62, 10), level(80, 10), level(65, 10)],
             observed_at: 0,
+            confirmed_at: 0,
             source: polyedge_application::BookSource::Poll,
         };
         cache.set_book(&book).await.expect("set book");
@@ -53,6 +54,7 @@ mod orderbook_cache_tests {
             bids: vec![level(60, 10)],
             asks: vec![level(62, 10)],
             observed_at: 200,
+            confirmed_at: 200,
             source: polyedge_application::BookSource::Ws,
         };
         let older = polyedge_application::CachedOrderBook {
@@ -60,6 +62,7 @@ mod orderbook_cache_tests {
             bids: vec![level(40, 10)],
             asks: vec![level(80, 10)],
             observed_at: 100,
+            confirmed_at: 100,
             source: polyedge_application::BookSource::Poll,
         };
 
@@ -83,6 +86,7 @@ mod orderbook_cache_tests {
             bids: vec![level(60, 10)],
             asks: vec![],
             observed_at: 200,
+            confirmed_at: 200,
             source: polyedge_application::BookSource::Ws,
         };
         let older = polyedge_application::CachedOrderBook {
@@ -112,11 +116,13 @@ mod orderbook_cache_tests {
             bids: vec![level(60, 10)],
             asks: vec![],
             observed_at: 200,
+            confirmed_at: 200,
             source: polyedge_application::BookSource::Ws,
         };
         let older = polyedge_application::CachedOrderBook {
             bids: vec![level(40, 10)],
             observed_at: 100,
+            confirmed_at: 100,
             source: polyedge_application::BookSource::Poll,
             ..newer.clone()
         };
@@ -145,11 +151,13 @@ mod orderbook_cache_tests {
             bids: vec![level(60, 10)],
             asks: vec![],
             observed_at: 200,
+            confirmed_at: 200,
             source: polyedge_application::BookSource::Ws,
         };
         let older = polyedge_application::CachedOrderBook {
             bids: vec![level(40, 10)],
             observed_at: 100,
+            confirmed_at: 100,
             source: polyedge_application::BookSource::Poll,
             ..newer.clone()
         };
@@ -178,6 +186,7 @@ mod orderbook_cache_tests {
             bids: vec![level(60, 10)],
             asks: vec![],
             observed_at: 200,
+            confirmed_at: 200,
             source: polyedge_application::BookSource::Ws,
         };
         let poll = polyedge_application::CachedOrderBook {
@@ -199,6 +208,62 @@ mod orderbook_cache_tests {
     }
 
     #[tokio::test]
+    async fn older_poll_confirmation_refreshes_without_overwriting_ws_content() {
+        let cache = InMemoryOrderbookCache::new(60_000, 10);
+        let ws = polyedge_application::CachedOrderBook {
+            token_id: "tok1".to_string(),
+            bids: vec![level(60, 10)],
+            asks: vec![level(62, 10)],
+            observed_at: 200,
+            confirmed_at: 200,
+            source: polyedge_application::BookSource::Ws,
+        };
+        let poll = polyedge_application::CachedOrderBook {
+            token_id: "tok1".to_string(),
+            bids: vec![level(40, 10)],
+            asks: vec![level(80, 10)],
+            observed_at: 100,
+            confirmed_at: 1_000,
+            source: polyedge_application::BookSource::Poll,
+        };
+
+        cache.set_book(&ws).await.expect("set ws");
+        cache.set_book(&poll).await.expect("merge confirmation");
+
+        let got = cache
+            .get_book("tok1")
+            .await
+            .expect("get book")
+            .expect("book present");
+        assert_eq!(got.observed_at, 200);
+        assert_eq!(got.confirmation_time_ms(), 1_000);
+        assert_eq!(got.source, polyedge_application::BookSource::Ws);
+        assert_eq!(got.bids[0].price, rust_decimal::Decimal::new(60, 2));
+    }
+
+    #[tokio::test]
+    async fn stale_tokens_use_confirmation_time() {
+        let cache = InMemoryOrderbookCache::new(60_000, 10);
+        cache
+            .set_book(&polyedge_application::CachedOrderBook {
+                token_id: "quiet".to_string(),
+                bids: vec![level(50, 10)],
+                asks: vec![level(52, 10)],
+                observed_at: now_millis() - 120_000,
+                confirmed_at: now_millis(),
+                source: polyedge_application::BookSource::Poll,
+            })
+            .await
+            .expect("set quiet book");
+
+        let stale = cache
+            .get_stale_tokens(&["quiet".to_string()], 45_000)
+            .await
+            .expect("stale tokens");
+        assert!(stale.is_empty());
+    }
+
+    #[tokio::test]
     async fn batch_read_returns_requested_live_books() {
         let cache = InMemoryOrderbookCache::new(60_000, 10);
         for token_id in ["tok1", "tok2"] {
@@ -208,6 +273,7 @@ mod orderbook_cache_tests {
                     bids: vec![level(50, 10)],
                     asks: vec![],
                     observed_at: 200,
+                    confirmed_at: 200,
                     source: polyedge_application::BookSource::Poll,
                 })
                 .await

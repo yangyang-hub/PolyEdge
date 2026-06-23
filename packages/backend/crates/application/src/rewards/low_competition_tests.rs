@@ -46,6 +46,7 @@ fn test_books() -> HashMap<String, RewardOrderBook> {
                 size: decimal("1000"),
             }],
             observed_at: now,
+            confirmed_at: now,
         },
         RewardOrderBook {
             token_id: "no_low_comp".to_string(),
@@ -58,6 +59,7 @@ fn test_books() -> HashMap<String, RewardOrderBook> {
                 size: decimal("1000"),
             }],
             observed_at: now,
+            confirmed_at: now,
         },
     ]
     .into_iter()

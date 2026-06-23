@@ -133,10 +133,10 @@ pub async fn run_orderbook_stream(
             for chunk in targets.chunks(100) {
                 match connector.fetch_order_books(chunk).await {
                     Ok(books) => {
-                        let poll_observed_at = current_unix_millis();
+                        let poll_confirmed_at = current_unix_millis();
                         for book in books {
                             let cached = normalized_cached_book(
-                                reward_book_to_cached(&book, poll_observed_at),
+                                reward_book_to_cached(&book, poll_confirmed_at),
                                 poll_max_levels,
                             );
                             if let Err(error) = set_book_and_publish_if_current(
@@ -1169,6 +1169,7 @@ fn poll_reconcile_targets(
 }
 
 fn book_update_to_cached(update: &BookUpdate) -> CachedOrderBook {
+    let confirmed_at = current_unix_millis();
     CachedOrderBook {
         token_id: update.asset_id.to_string(),
         bids: update
@@ -1188,6 +1189,7 @@ fn book_update_to_cached(update: &BookUpdate) -> CachedOrderBook {
             })
             .collect(),
         observed_at: update.timestamp,
+        confirmed_at,
         source: BookSource::Ws,
     }
 }
@@ -1211,7 +1213,9 @@ async fn publish_if_current(
     let Some(current) = cache.get_book(&candidate.token_id).await? else {
         return Ok(());
     };
-    if current.observed_at == candidate.observed_at && current.source == candidate.source {
+    if (current.observed_at == candidate.observed_at && current.source == candidate.source)
+        || current.confirmation_time_ms() == candidate.confirmation_time_ms()
+    {
         broadcaster.publish(reason, current);
     }
     Ok(())
@@ -1251,6 +1255,7 @@ async fn apply_price_change_to_cache(
             });
         }
         book.observed_at = update.timestamp;
+        book.confirmed_at = current_unix_millis();
         book.source = BookSource::Ws;
         // Use replace_book which checks freshness atomically under the lock,
         // preventing the race where a poll reconciler writes a newer snapshot
@@ -1276,7 +1281,7 @@ fn normalized_cached_book(
 
 fn reward_book_to_cached(
     book: &polyedge_connectors::PolymarketRewardOrderBook,
-    observed_at: i64,
+    confirmed_at: i64,
 ) -> CachedOrderBook {
     CachedOrderBook {
         token_id: book.token_id.clone(),
@@ -1296,9 +1301,21 @@ fn reward_book_to_cached(
                 size: l.size,
             })
             .collect(),
-        observed_at,
+        observed_at: offset_datetime_to_unix_millis(book.observed_at),
+        confirmed_at,
         source: BookSource::Poll,
     }
+}
+
+fn offset_datetime_to_unix_millis(time: OffsetDateTime) -> i64 {
+    let millis = time.unix_timestamp_nanos().div_euclid(1_000_000);
+    i64::try_from(millis).unwrap_or_else(|_| {
+        if millis.is_negative() {
+            i64::MIN
+        } else {
+            i64::MAX
+        }
+    })
 }
 
 fn current_unix_millis() -> i64 {
@@ -1336,6 +1353,7 @@ mod tests {
                     size: Decimal::from(10_u64),
                 }],
                 observed_at: 100,
+                confirmed_at: 100,
                 source: BookSource::Poll,
             })
             .await
@@ -1379,7 +1397,7 @@ mod tests {
     }
 
     #[test]
-    fn poll_cached_book_uses_local_poll_observation_time() {
+    fn poll_cached_book_uses_upstream_observation_and_local_confirmation_time() {
         let upstream_observed_at = OffsetDateTime::from_unix_timestamp(1_700_000_000).unwrap();
         let book = PolymarketRewardOrderBook {
             token_id: "123".to_string(),
@@ -1396,7 +1414,8 @@ mod tests {
 
         let cached = reward_book_to_cached(&book, 1_800_000_000_123);
 
-        assert_eq!(cached.observed_at, 1_800_000_000_123);
+        assert_eq!(cached.observed_at, 1_700_000_000_000);
+        assert_eq!(cached.confirmed_at, 1_800_000_000_123);
         assert_eq!(cached.source, BookSource::Poll);
         assert_eq!(cached.bids[0].price, Decimal::new(49, 2));
         assert_eq!(cached.asks[0].price, Decimal::new(51, 2));

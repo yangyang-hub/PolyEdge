@@ -48,6 +48,7 @@ fn test_books() -> HashMap<String, RewardOrderBook> {
                 size: decimal("1000"),
             }],
             observed_at: now,
+            confirmed_at: now,
         },
         RewardOrderBook {
             token_id: "no_budget".to_string(),
@@ -60,6 +61,7 @@ fn test_books() -> HashMap<String, RewardOrderBook> {
                 size: decimal("1000"),
             }],
             observed_at: now,
+            confirmed_at: now,
         },
     ]
     .into_iter()
@@ -91,6 +93,7 @@ fn dominant_yes_books() -> HashMap<String, RewardOrderBook> {
                 size: decimal("1000"),
             }],
             observed_at: now,
+            confirmed_at: now,
         },
         RewardOrderBook {
             token_id: "no_budget".to_string(),
@@ -103,6 +106,7 @@ fn dominant_yes_books() -> HashMap<String, RewardOrderBook> {
                 size: decimal("1000"),
             }],
             observed_at: now,
+            confirmed_at: now,
         },
     ]
     .into_iter()

@@ -38,6 +38,7 @@ fn advisory_book_test_market() -> RewardMarket {
 }
 
 fn book_with(token_id: &str, bids: usize, asks: usize) -> RewardOrderBook {
+    let observed_at = OffsetDateTime::from_unix_timestamp(1_785_000_000).expect("valid timestamp");
     RewardOrderBook {
         token_id: token_id.to_string(),
         bids: (0..bids)
@@ -52,7 +53,8 @@ fn book_with(token_id: &str, bids: usize, asks: usize) -> RewardOrderBook {
                 size: decimal("100"),
             })
             .collect(),
-        observed_at: OffsetDateTime::from_unix_timestamp(1_785_000_000).expect("valid timestamp"),
+        observed_at,
+        confirmed_at: observed_at,
     }
 }
 

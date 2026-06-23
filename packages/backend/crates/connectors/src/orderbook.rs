@@ -186,6 +186,7 @@ struct OrderbookResponse {
     bids: Vec<LevelResponse>,
     asks: Vec<LevelResponse>,
     observed_at: i64,
+    confirmed_at: Option<i64>,
     source: String,
 }
 
@@ -223,6 +224,8 @@ struct IngestBook {
     bids: Vec<IngestLevel>,
     asks: Vec<IngestLevel>,
     observed_at: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    confirmed_at: Option<i64>,
     source: String,
 }
 
@@ -254,6 +257,7 @@ fn to_cached(resp: OrderbookResponse) -> CachedOrderBook {
             })
             .collect(),
         observed_at: resp.observed_at,
+        confirmed_at: resp.confirmed_at.unwrap_or(resp.observed_at),
         source: match resp.source.as_str() {
             "ws" => polyedge_application::BookSource::Ws,
             _ => polyedge_application::BookSource::Poll,
@@ -357,6 +361,7 @@ impl OrderbookCache for OrderbookHttpClient {
                     })
                     .collect(),
                 observed_at: book.observed_at,
+                confirmed_at: Some(book.confirmation_time_ms()),
                 source: book.source.to_string(),
             }],
         };
@@ -412,6 +417,7 @@ impl OrderbookCache for OrderbookHttpClient {
                         })
                         .collect(),
                     observed_at: book.observed_at,
+                    confirmed_at: Some(book.confirmation_time_ms()),
                     source: book.source.to_string(),
                 })
                 .collect(),

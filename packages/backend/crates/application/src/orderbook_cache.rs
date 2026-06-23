@@ -30,7 +30,19 @@ pub struct CachedOrderBook {
     pub bids: Vec<CachedBookLevel>,
     pub asks: Vec<CachedBookLevel>,
     pub observed_at: i64,
+    #[serde(default)]
+    pub confirmed_at: i64,
     pub source: BookSource,
+}
+
+impl CachedOrderBook {
+    pub fn confirmation_time_ms(&self) -> i64 {
+        if self.confirmed_at > 0 {
+            self.confirmed_at
+        } else {
+            self.observed_at
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -66,10 +78,10 @@ pub trait OrderbookCache: Send + Sync {
     async fn get_stale_tokens(&self, token_ids: &[String], max_age_ms: i64) -> Result<Vec<String>>;
     async fn entry_count(&self) -> Result<usize>;
 
-    /// Replace a cached book only if it exists and the new `observed_at` is not
-    /// older than the current cached value.  Returns `true` if the book was
-    /// replaced, `false` if the book does not exist or the replacement was
-    /// rejected as stale.
+    /// Replace a cached book only if it exists and the new content is not older
+    /// than the current cached value. Implementations may merge a newer
+    /// confirmation time from an otherwise rejected replacement. Returns `true`
+    /// only if the book content was replaced.
     async fn replace_book(&self, book: &CachedOrderBook) -> Result<bool> {
         let existed = self.get_book(&book.token_id).await?.is_some();
         if !existed {

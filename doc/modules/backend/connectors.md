@@ -114,6 +114,7 @@
 - **`OrderbookHttpClient`**：API/Worker 读取独立 orderbook 服务缓存；Worker 通过 `register_tokens()` 原子替换来源 token 集合
 - **`OrderbookStreamClient`**：Worker 连接 orderbook 服务内部 `GET /orderbook/stream`，接收 `OrderbookStreamEvent`（sequence、reason、book）用于更新本地盘口 cache 和唤醒 rewards fast reconcile；`new_for_source()` 可连接 `GET /orderbook/stream?source=...`，只接收该 registry source 当前 token 的更新
 - `get_books()` 使用 `POST /orderbook/batch` 一次读取多个 token；rewards full/reconcile 不再逐 token 发 HTTP 请求
+- Orderbook HTTP 响应和内部 WS book 携带 `observed_at` 与 `confirmed_at`：前者是盘口内容版本时间，后者是服务最近确认该 token 盘口仍可用的时间；旧 orderbook 服务未返回 `confirmed_at` 时客户端回退使用 `observed_at`
 - register/ingest/delete 写请求携带 `x-polyedge-orderbook-token`，值来自 `POLYEDGE_ORDERBOOK__WRITE_TOKEN`
 - HTTP 注册和注销失败会返回 `Result` 错误，不再静默吞掉非成功响应
 - 单盘口读取只把 404 映射为 `None`；其他非成功 HTTP 状态会作为 dependency error 返回，不尝试把错误响应解码成盘口
