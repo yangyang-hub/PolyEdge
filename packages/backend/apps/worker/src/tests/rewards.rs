@@ -67,6 +67,39 @@ fn reward_fast_reconcile_external_sync_policy_throttles_heavy_calls() {
     assert!(sixty_seconds_later.account_snapshot);
 }
 
+#[test]
+fn reward_live_action_orderbook_tokens_cover_orders_and_eligible_plans() {
+    let now = OffsetDateTime::now_utc();
+    let mut plan = live_test_plan(now);
+    plan.orderbook_token_ids = vec![
+        "yes_live".to_string(),
+        "no_live".to_string(),
+        "extra_live".to_string(),
+    ];
+
+    let mut inactive_plan = live_test_plan(now);
+    inactive_plan.eligible = false;
+    inactive_plan.orderbook_token_ids = vec!["blocked_live".to_string()];
+
+    let mut cancelled_order = live_test_open_order("cancelled_live");
+    cancelled_order.status = ManagedRewardOrderStatus::Cancelled;
+
+    let tokens = reward_live_action_orderbook_tokens(
+        &[plan, inactive_plan],
+        &[live_test_open_order("open_live"), cancelled_order],
+    );
+
+    assert_eq!(
+        tokens,
+        vec![
+            "open_live".to_string(),
+            "yes_live".to_string(),
+            "no_live".to_string(),
+            "extra_live".to_string(),
+        ]
+    );
+}
+
 fn live_test_plan(now: OffsetDateTime) -> RewardQuotePlan {
     RewardQuotePlan {
         condition_id: "cond_live".to_string(),

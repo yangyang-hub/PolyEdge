@@ -78,6 +78,7 @@ async fn run_reward_bot_tick(
         trace_id,
         force_orders,
         book_history,
+        orderbook_cache,
     )
     .await
 }
@@ -108,6 +109,68 @@ fn quote_plan_leg_token_ids(legs: &[RewardQuoteLeg]) -> Vec<String> {
         token_ids.push(leg.token_id.clone());
     }
     token_ids
+}
+
+fn push_reward_live_action_token(
+    token_ids: &mut Vec<String>,
+    seen: &mut HashSet<String>,
+    token_id: &str,
+) {
+    let token_id = token_id.trim();
+    if token_id.is_empty() || !seen.insert(token_id.to_string()) {
+        return;
+    }
+    token_ids.push(token_id.to_string());
+}
+
+fn reward_live_action_orderbook_tokens(
+    plans: &[RewardQuotePlan],
+    open_orders: &[ManagedRewardOrder],
+) -> Vec<String> {
+    let mut token_ids = Vec::new();
+    let mut seen = HashSet::new();
+
+    for order in open_orders.iter().filter(|order| order.status.is_open_like()) {
+        push_reward_live_action_token(&mut token_ids, &mut seen, &order.token_id);
+    }
+
+    for plan in plans.iter().filter(|plan| plan.eligible) {
+        for token_id in &plan.orderbook_token_ids {
+            push_reward_live_action_token(&mut token_ids, &mut seen, token_id);
+        }
+        for leg in &plan.legs {
+            push_reward_live_action_token(&mut token_ids, &mut seen, &leg.token_id);
+        }
+    }
+
+    token_ids
+}
+
+async fn refresh_reward_live_action_books(
+    state: &AppState,
+    orderbook_cache: Option<&RewardOrderbookLocalCache>,
+    books: &mut HashMap<String, RewardOrderBook>,
+    plans: &[RewardQuotePlan],
+    open_orders: &[ManagedRewardOrder],
+    trace_id: &str,
+) -> Result<usize> {
+    let token_ids = reward_live_action_orderbook_tokens(plans, open_orders);
+    if token_ids.is_empty() {
+        return Ok(0);
+    }
+
+    let refreshed = fetch_cached_reward_books(state, orderbook_cache, &token_ids).await?;
+    let refreshed_count = refreshed.len();
+    for (token_id, book) in refreshed {
+        books.insert(token_id, book);
+    }
+    debug!(
+        trace_id = %trace_id,
+        tokens = token_ids.len(),
+        refreshed_books = refreshed_count,
+        "refreshed reward live action orderbooks before live actions"
+    );
+    Ok(refreshed_count)
 }
 
 #[derive(Debug, Default)]
@@ -324,10 +387,11 @@ async fn run_reward_bot_live_tick(
     state: &AppState,
     connector: &LivePolymarketConnector,
     markets: Vec<RewardCandidateMarket>,
-    books: HashMap<String, RewardOrderBook>,
+    mut books: HashMap<String, RewardOrderBook>,
     trace_id: &str,
     force_orders: bool,
-    book_history: &HashMap<String, VecDeque<BookSnapshot>>,
+    book_history: &mut HashMap<String, VecDeque<BookSnapshot>>,
+    orderbook_cache: Option<&RewardOrderbookLocalCache>,
 ) -> Result<RewardBotRunReport> {
     let books_fetched = books.len();
     let ai_min_confidence = reward_ai_min_confidence(state.settings.rewards.ai_min_confidence_bps);
@@ -434,6 +498,20 @@ async fn run_reward_bot_live_tick(
 
     let mut account = cycle.account.clone();
     let mut open_orders = cycle.open_orders.clone();
+
+    let refreshed_action_books = refresh_reward_live_action_books(
+        state,
+        orderbook_cache,
+        &mut books,
+        &cycle.plans,
+        &open_orders,
+        trace_id,
+    )
+    .await?;
+    if refreshed_action_books > 0 {
+        record_reward_book_history(book_history, &books);
+        report.books_fetched = report.books_fetched.max(books.len());
+    }
 
     if !cycle.should_execute && cycle.open_orders.is_empty() {
         return Ok(report);
