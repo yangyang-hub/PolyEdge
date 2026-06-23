@@ -36,10 +36,44 @@ fn transient_live_orderbook_skip_reasons_are_not_carried() {
     assert!(live_orderbook_skip_reason_is_transient(Some(
         "YES orderbook stale: age_ms=50000, max_age_ms=45000",
     )));
+    assert!(live_orderbook_skip_reason_is_transient(Some(
+        "quote plan missing YES token for live validation",
+    )));
     assert!(!live_orderbook_skip_reason_is_transient(Some(
         "YES bid-3 is outside the rewards spread limit",
     )));
     assert!(!live_orderbook_skip_reason_is_transient(None));
+}
+
+#[test]
+fn status_error_ignores_short_lived_final_reconciliation_pending() {
+    let now = OffsetDateTime::now_utc();
+    let mut order = ManagedRewardOrder {
+        id: "rewlive_pending_cancel".to_string(),
+        account_id: "reward_live".to_string(),
+        condition_id: "cond_live".to_string(),
+        token_id: "yes_token".to_string(),
+        outcome: "Yes".to_string(),
+        side: RewardOrderSide::Buy,
+        price: Decimal::new(5, 1),
+        size: Decimal::ONE,
+        strategy_bucket: RewardStrategyBucket::Standard,
+        external_order_id: Some("pm_live".to_string()),
+        status: ManagedRewardOrderStatus::Open,
+        scoring: false,
+        reason: "cancel accepted; awaiting final reconciliation".to_string(),
+        filled_size: Decimal::ZERO,
+        reward_earned: Decimal::ZERO,
+        last_scored_at: None,
+        created_at: now,
+        updated_at: now,
+    };
+
+    assert!(!reward_order_has_active_reconciliation_error(&order));
+
+    order.reason = "order confirmed live after cancellation attempt; cancellation must be retried"
+        .to_string();
+    assert!(reward_order_has_active_reconciliation_error(&order));
 }
 
 #[test]

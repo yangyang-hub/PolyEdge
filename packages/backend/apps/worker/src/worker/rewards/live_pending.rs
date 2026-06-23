@@ -14,7 +14,7 @@ async fn submit_pending_live_reward_orders(
     risk_context: Option<LiveBuySubmitRiskContext<'_>>,
     state: &AppState,
     account: &mut RewardAccountState,
-    _positions: &[RewardPosition],
+    positions: &[RewardPosition],
     report: &mut RewardBotRunReport,
     trace_id: &str,
     allow_buy_submit: bool,
@@ -39,10 +39,11 @@ async fn submit_pending_live_reward_orders(
                         order.status,
                         ManagedRewardOrderStatus::Planned | ManagedRewardOrderStatus::ExitPending
                     )
-                    && live_exit_retry_due(order, now)))
+                    && live_exit_retry_due_or_crossable(order, now, books, positions)))
     }) {
-        let post_only =
+        let mut post_only =
             order.side == RewardOrderSide::Buy || deferred_live_exit_is_post_only(order);
+        let mut submission_price = order.price;
         if live_submission_was_attempted(order) {
             let request = LivePolymarketTokenOrderRequest {
                 client_order_id: order.id.clone(),
@@ -218,20 +219,62 @@ async fn submit_pending_live_reward_orders(
             .await?;
             continue;
         }
-        if order.side == RewardOrderSide::Sell && !post_only {
-            let Some(best_bid) = books
-                .get(&order.token_id)
-                .and_then(|book| book.bids.first())
-                .map(|level| level.price)
-                .filter(|price| *price > Decimal::ZERO)
-            else {
-                continue;
-            };
-            order.price = floor_reward_price_to_tick(best_bid);
-            if parse_exit_rejection_count(&order.reason) == 0 {
-                order.reason = "post-fill flatten immediately".to_string();
+        if order.side == RewardOrderSide::Sell {
+            let exit_floor = reward_sell_exit_floor(order, positions);
+            if order.price != exit_floor {
+                order.price = exit_floor;
+                order.reason = format!("sell exit floor raised to non-loss price {exit_floor}");
+                order.updated_at = OffsetDateTime::now_utc();
             }
-            if let Some((reason, event)) = live_exit_dust_deferred(order) {
+
+            if let Some(best_bid) = reward_non_loss_exit_bid(order, books, positions) {
+                post_only = false;
+                submission_price = best_bid;
+                order.reason = format!(
+                    "non-loss taker exit crossing current best bid {best_bid} with floor {}",
+                    order.price
+                );
+                order.updated_at = OffsetDateTime::now_utc();
+            } else if !post_only {
+                let best_bid = reward_best_bid_tick(books.get(&order.token_id));
+                order.reason = match best_bid {
+                    Some(best_bid) => format!(
+                        "flatten deferred until non-loss bid is observed; best bid {best_bid} below exit floor {}",
+                        order.price
+                    ),
+                    None => {
+                        "flatten deferred until non-loss bid liquidity is observed".to_string()
+                    }
+                };
+                order.updated_at = OffsetDateTime::now_utc();
+                let event = reward_live_event(
+                    order,
+                    "reward_live_exit_non_loss_deferred",
+                    RewardRiskSeverity::Warning,
+                    order.reason.clone(),
+                    json!({
+                        "token_id": order.token_id,
+                        "price": order.price,
+                        "best_bid": best_bid,
+                    }),
+                );
+                persist_live_reward_updates(
+                    state,
+                    account,
+                    Vec::new(),
+                    vec![order.clone()],
+                    Vec::new(),
+                    vec![event],
+                    report,
+                    trace_id,
+                )
+                .await?;
+                continue;
+            }
+
+            if let Some((reason, event)) =
+                live_exit_dust_deferred_at_price(order, submission_price)
+            {
                 order.reason = reason;
                 order.updated_at = OffsetDateTime::now_utc();
                 persist_live_reward_updates(
@@ -267,7 +310,7 @@ async fn submit_pending_live_reward_orders(
         let submission = if order.side == RewardOrderSide::Buy {
             submit_one_live_reward_order(connector, order).await
         } else {
-            submit_one_live_exit_order(connector, order, post_only).await
+            submit_one_live_exit_order(connector, order, post_only, submission_price).await
         };
         match submission {
             Err(error) => {
@@ -306,7 +349,11 @@ async fn submit_pending_live_reward_orders(
                         RewardRiskSeverity::Warning
                     },
                     order.reason.clone(),
-                    json!({ "post_only": post_only, "code": error.code() }),
+                    json!({
+                        "post_only": post_only,
+                        "submission_price": submission_price,
+                        "code": error.code(),
+                    }),
                 );
                 persist_live_reward_updates(
                     state,

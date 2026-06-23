@@ -797,6 +797,7 @@ fn live_orderbook_skip_reason_is_transient(skip_reason: Option<&str>) -> bool {
         || reason.contains("orderbook unavailable")
         || reason.contains("orderbook is empty")
         || reason.contains("orderbook stale")
+        || reason.contains("quote plan missing")
 }
 
 include!("service_cache.rs");

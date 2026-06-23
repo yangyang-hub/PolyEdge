@@ -457,6 +457,7 @@ pub struct RewardQuotePlanBlockerCounts {
     pub info_risk: usize,
     pub low_competition: usize,
     pub funding: usize,
+    pub live_validation: usize,
     pub other: usize,
 }
 
@@ -515,6 +516,8 @@ impl RewardQuotePlanBlockerCounts {
             self.low_competition += 1;
         } else if reason.starts_with("live funding below rewards minimum:") {
             self.funding += 1;
+        } else if reason.starts_with("live orderbook validation skipped until ") {
+            self.live_validation += 1;
         } else if readiness == RewardQuoteReadiness::Blocked {
             self.other += 1;
         }

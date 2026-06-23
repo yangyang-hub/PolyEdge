@@ -388,6 +388,35 @@ fn info_risk_enforce_keeps_non_imminent_high_risk_as_advisory() {
 }
 
 #[test]
+fn info_risk_enforce_keeps_imminent_type_without_imminent_flag_as_advisory() {
+    let config = RewardBotConfig {
+        info_risk_enabled: true,
+        info_risk_mode: RewardSelectionMode::Enforce,
+        info_risk_avoid_level: RewardInfoRiskLevel::High,
+        min_market_score: Decimal::ZERO,
+        ..RewardBotConfig::default()
+    };
+    let mut plans = vec![build_reward_quote_plan(
+        &test_market(decimal("5")),
+        &test_books(),
+        &config,
+    )];
+    let risk = test_info_risk(
+        RewardInfoRiskLevel::High,
+        RewardInfoRiskType::ImminentResolution,
+        false,
+    );
+    let risks = HashMap::from([(risk.condition_id.clone(), risk)]);
+
+    apply_reward_info_risks(&mut plans, &risks, &config, decimal("0.65"));
+
+    assert!(plans[0].eligible);
+    assert_eq!(plans[0].quote_mode, RewardPlanQuoteMode::Double);
+    assert_eq!(plans[0].legs.len(), 2);
+    assert!(plans[0].info_risk.is_some());
+}
+
+#[test]
 fn info_risk_enforce_rejects_critical_risk() {
     let config = RewardBotConfig {
         info_risk_enabled: true,
@@ -471,14 +500,30 @@ fn quote_plan_counts_classify_provider_and_blocker_reasons() {
     funding.legs.clear();
     funding.reason = "live funding below rewards minimum: available 1".to_string();
 
-    let counts = RewardQuotePlanCounts::from_plans([&base, &ai_pending, &info_risk, &funding]);
+    let mut live_validation = base.clone();
+    live_validation.eligible = false;
+    live_validation.quote_mode = RewardPlanQuoteMode::None;
+    live_validation.legs.clear();
+    live_validation.reason =
+        "live orderbook validation skipped until 2026-06-23T00:00:00Z: no viable leg"
+            .to_string();
 
-    assert_eq!(counts.total, 4);
+    let counts = RewardQuotePlanCounts::from_plans([
+        &base,
+        &ai_pending,
+        &info_risk,
+        &funding,
+        &live_validation,
+    ]);
+
+    assert_eq!(counts.total, 5);
     assert_eq!(counts.eligible, 1);
     assert_eq!(counts.provider_pending, 1);
     assert_eq!(counts.blockers.ai_pending, 1);
     assert_eq!(counts.blockers.info_risk, 1);
     assert_eq!(counts.blockers.funding, 1);
+    assert_eq!(counts.blockers.live_validation, 1);
+    assert_eq!(counts.blockers.other, 0);
 }
 
 #[test]

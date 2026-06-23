@@ -1,13 +1,78 @@
 // Quote-plan server-side pagination: COUNT + filtered/sorted/paged SELECT.
 
 async fn postgres_count_quote_plans(pool: &PgPool) -> Result<RewardQuotePlanCounts> {
-    let rows = sqlx::query(
+    let row = sqlx::query(
         r#"
-        SELECT quote_plan_json
-        FROM reward_quote_plans
+        WITH plan_flags AS (
+            SELECT eligible,
+                   reason,
+                   CASE
+                       WHEN reason LIKE 'waiting for fresh orderbook data%' THEN 'waiting_orderbook'
+                       WHEN eligible
+                            AND quote_mode <> 'none'
+                            AND has_live_legs THEN 'ready_to_quote'
+                       WHEN eligible THEN 'waiting_orderbook'
+                       WHEN pre_ai_eligible
+                            AND (reason LIKE 'AI advisory pending:%'
+                                 OR reason LIKE 'info risk pending:%') THEN 'provider_pending'
+                       ELSE 'blocked'
+                   END AS readiness
+            FROM (
+                SELECT eligible,
+                       reason,
+                       COALESCE(quote_plan_json->>'quote_mode', 'none') AS quote_mode,
+                       COALESCE((quote_plan_json->>'pre_ai_eligible')::boolean, false) AS pre_ai_eligible,
+                       jsonb_array_length(COALESCE(quote_plan_json->'legs', '[]'::jsonb)) > 0
+                       AND NOT EXISTS (
+                           SELECT 1
+                           FROM jsonb_array_elements(COALESCE(quote_plan_json->'legs', '[]'::jsonb)) AS leg
+                           WHERE COALESCE(NULLIF(leg->>'price', '')::numeric, 0) <= 0
+                              OR COALESCE(NULLIF(leg->>'size', '')::numeric, 0) <= 0
+                              OR COALESCE(NULLIF(leg->>'notional_usd', '')::numeric, 0) <= 0
+                       ) AS has_live_legs
+                FROM reward_quote_plans
+            ) plans
+        )
+        SELECT COUNT(*) AS total,
+               COUNT(*) FILTER (WHERE eligible) AS eligible,
+               COUNT(*) FILTER (WHERE readiness = 'ready_to_quote') AS ready_to_quote,
+               COUNT(*) FILTER (WHERE readiness = 'waiting_orderbook') AS waiting_orderbook,
+               COUNT(*) FILTER (WHERE readiness = 'provider_pending') AS provider_pending,
+               COUNT(*) FILTER (WHERE readiness <> 'waiting_orderbook'
+                                AND reason LIKE 'AI advisory pending:%') AS blocker_ai_pending,
+               COUNT(*) FILTER (WHERE readiness <> 'waiting_orderbook'
+                                AND reason LIKE 'info risk pending:%') AS blocker_info_risk_pending,
+               COUNT(*) FILTER (WHERE readiness <> 'waiting_orderbook'
+                                AND reason LIKE 'AI advisory confidence%') AS blocker_ai_confidence_low,
+               COUNT(*) FILTER (WHERE readiness <> 'waiting_orderbook'
+                                AND reason LIKE 'AI advisory watch:%') AS blocker_ai_watch,
+               COUNT(*) FILTER (WHERE readiness <> 'waiting_orderbook'
+                                AND reason LIKE 'AI advisory avoid:%') AS blocker_ai_avoid,
+               COUNT(*) FILTER (WHERE readiness <> 'waiting_orderbook'
+                                AND reason LIKE 'info risk %'
+                                AND reason NOT LIKE 'info risk pending:%') AS blocker_info_risk,
+               COUNT(*) FILTER (WHERE readiness <> 'waiting_orderbook'
+                                AND reason LIKE 'low-competition observe only:%') AS blocker_low_competition,
+               COUNT(*) FILTER (WHERE readiness <> 'waiting_orderbook'
+                                AND reason LIKE 'live funding below rewards minimum:%') AS blocker_funding,
+               COUNT(*) FILTER (WHERE readiness <> 'waiting_orderbook'
+                                AND reason LIKE 'live orderbook validation skipped until %') AS blocker_live_validation,
+               COUNT(*) FILTER (
+                   WHERE readiness = 'blocked'
+                     AND reason NOT LIKE 'AI advisory pending:%'
+                     AND reason NOT LIKE 'info risk pending:%'
+                     AND reason NOT LIKE 'AI advisory confidence%'
+                     AND reason NOT LIKE 'AI advisory watch:%'
+                     AND reason NOT LIKE 'AI advisory avoid:%'
+                     AND reason NOT LIKE 'info risk %'
+                     AND reason NOT LIKE 'low-competition observe only:%'
+                     AND reason NOT LIKE 'live funding below rewards minimum:%'
+                     AND reason NOT LIKE 'live orderbook validation skipped until %'
+               ) AS blocker_other
+        FROM plan_flags
         "#,
     )
-    .fetch_all(pool)
+    .fetch_one(pool)
     .await
     .map_err(|error| {
         db_error(
@@ -16,17 +81,31 @@ async fn postgres_count_quote_plans(pool: &PgPool) -> Result<RewardQuotePlanCoun
         )
     })?;
 
-    let plans = rows
-        .iter()
-        .map(|row| {
-            let plan: Json<RewardQuotePlan> = row
-                .try_get("quote_plan_json")
-                .map_err(postgres_decode_error)?;
-            Ok(plan.0)
-        })
-        .collect::<Result<Vec<_>>>()?;
+    Ok(RewardQuotePlanCounts {
+        total: postgres_count_to_usize(&row, "total")?,
+        eligible: postgres_count_to_usize(&row, "eligible")?,
+        ready_to_quote: postgres_count_to_usize(&row, "ready_to_quote")?,
+        waiting_orderbook: postgres_count_to_usize(&row, "waiting_orderbook")?,
+        provider_pending: postgres_count_to_usize(&row, "provider_pending")?,
+        blockers: RewardQuotePlanBlockerCounts {
+            waiting_orderbook: postgres_count_to_usize(&row, "waiting_orderbook")?,
+            ai_pending: postgres_count_to_usize(&row, "blocker_ai_pending")?,
+            info_risk_pending: postgres_count_to_usize(&row, "blocker_info_risk_pending")?,
+            ai_confidence_low: postgres_count_to_usize(&row, "blocker_ai_confidence_low")?,
+            ai_watch: postgres_count_to_usize(&row, "blocker_ai_watch")?,
+            ai_avoid: postgres_count_to_usize(&row, "blocker_ai_avoid")?,
+            info_risk: postgres_count_to_usize(&row, "blocker_info_risk")?,
+            low_competition: postgres_count_to_usize(&row, "blocker_low_competition")?,
+            funding: postgres_count_to_usize(&row, "blocker_funding")?,
+            live_validation: postgres_count_to_usize(&row, "blocker_live_validation")?,
+            other: postgres_count_to_usize(&row, "blocker_other")?,
+        },
+    })
+}
 
-    Ok(RewardQuotePlanCounts::from_plans(plans.iter()))
+fn postgres_count_to_usize(row: &sqlx::postgres::PgRow, column: &str) -> Result<usize> {
+    let count = row.try_get::<i64, _>(column).map_err(postgres_decode_error)?;
+    Ok(count.max(0) as usize)
 }
 
 async fn postgres_latest_quote_plan_updated_at(

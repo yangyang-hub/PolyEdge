@@ -96,11 +96,10 @@ fn decimal(value: &str) -> Decimal {
 }
 
 fn reward_order_has_active_reconciliation_error(order: &ManagedRewardOrder) -> bool {
-    order.status.is_open_like()
+        order.status.is_open_like()
         && [
             "manual reconciliation required",
             "live submission result unknown",
-            "awaiting final reconciliation",
             "cancel result unknown",
             "cancellation must be retried",
         ]

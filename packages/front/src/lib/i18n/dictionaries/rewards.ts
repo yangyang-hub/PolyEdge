@@ -23,6 +23,7 @@ export const rewards = {
     blockerInfoRisk: "信息风险",
     blockerLowCompetition: "低竞争观察",
     blockerFunding: "资金不足",
+    blockerLiveValidation: "盘口验证",
     blockerOther: "其它拦截",
     totalMarkets: "总奖励市场",
     eligible: "可挂市场",

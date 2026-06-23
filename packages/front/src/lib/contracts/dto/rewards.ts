@@ -349,6 +349,7 @@ export type RewardQuotePlanBlockerCountsDto = {
   info_risk?: number;
   low_competition?: number;
   funding?: number;
+  live_validation?: number;
   other?: number;
 };
 

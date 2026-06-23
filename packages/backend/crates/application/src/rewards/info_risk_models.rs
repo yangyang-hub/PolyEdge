@@ -404,7 +404,7 @@ fn reward_info_risk_blocks_quote(
     risk.resolution_imminent
         || matches!(
             risk.risk_type,
-            RewardInfoRiskType::ImminentResolution | RewardInfoRiskType::OfficialResult
+            RewardInfoRiskType::OfficialResult
         )
         || match avoid_level {
             RewardInfoRiskLevel::Low | RewardInfoRiskLevel::Medium => {

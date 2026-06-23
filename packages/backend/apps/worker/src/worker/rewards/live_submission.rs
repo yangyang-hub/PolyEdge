@@ -149,13 +149,14 @@ async fn submit_one_live_exit_order(
     connector: &LivePolymarketConnector,
     order: &mut ManagedRewardOrder,
     post_only: bool,
+    submission_price: Decimal,
 ) -> Result<LiveRewardOrderUpdate> {
     let request = LivePolymarketTokenOrderRequest {
         client_order_id: order.id.clone(),
         connector_name: POLYMARKET_CONNECTOR_NAME.to_string(),
         token_id: order.token_id.clone(),
         side: reward_side_to_polymarket(order.side),
-        limit_price: Probability::new(order.price)?,
+        limit_price: Probability::new(submission_price)?,
         quantity: Quantity::new(order.size)?,
         post_only,
     };
@@ -176,7 +177,7 @@ async fn submit_one_live_exit_order(
                 "live post-only rewards exit accepted".to_string()
             } else {
                 format!(
-                    "live rewards flatten order accepted with Polymarket status {}",
+                    "live non-loss taker rewards exit accepted with Polymarket status {}",
                     acceptance.status.as_str()
                 )
             };
@@ -196,6 +197,7 @@ async fn submit_one_live_exit_order(
                         "side": order.side.as_str(),
                         "size": order.size,
                         "price": order.price,
+                        "submission_price": submission_price,
                         "post_only": post_only,
                         "polymarket_status": acceptance.status.as_str(),
                     }),
@@ -369,12 +371,15 @@ fn live_exit_retry_due(order: &ManagedRewardOrder, now: OffsetDateTime) -> bool 
     now >= order.updated_at + TimeDuration::seconds(delay_seconds)
 }
 
-fn live_exit_dust_deferred(order: &ManagedRewardOrder) -> Option<(String, RewardRiskEvent)> {
+fn live_exit_dust_deferred_at_price(
+    order: &ManagedRewardOrder,
+    submission_price: Decimal,
+) -> Option<(String, RewardRiskEvent)> {
     if order.side != RewardOrderSide::Sell {
         return None;
     }
     let remaining = (order.size - order.filled_size).max(Decimal::ZERO);
-    let notional = (order.price * remaining).round_dp(4);
+    let notional = (submission_price * remaining).round_dp(4);
     if notional >= MIN_POLYMARKET_ORDER_NOTIONAL_USD {
         return None;
     }
@@ -390,6 +395,7 @@ fn live_exit_dust_deferred(order: &ManagedRewardOrder) -> Option<(String, Reward
             "notional": notional,
             "min_notional": MIN_POLYMARKET_ORDER_NOTIONAL_USD,
             "price": order.price,
+            "submission_price": submission_price,
             "remaining_size": remaining,
         }),
     );

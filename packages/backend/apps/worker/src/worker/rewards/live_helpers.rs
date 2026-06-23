@@ -13,6 +13,46 @@ fn ceil_reward_price_to_tick(price: Decimal) -> Decimal {
         .min(Decimal::ONE - REWARD_PRICE_TICK)
 }
 
+fn reward_best_bid_tick(book: Option<&RewardOrderBook>) -> Option<Decimal> {
+    book.and_then(|book| book.bids.first())
+        .map(|level| floor_reward_price_to_tick(level.price))
+        .filter(|price| *price > Decimal::ZERO)
+}
+
+fn reward_sell_exit_floor(
+    order: &ManagedRewardOrder,
+    positions: &[RewardPosition],
+) -> Decimal {
+    let position_floor = positions
+        .iter()
+        .find(|position| position.token_id == order.token_id)
+        .map(|position| position.avg_price)
+        .filter(|price| *price > Decimal::ZERO)
+        .unwrap_or(Decimal::ZERO);
+    ceil_reward_price_to_tick(Decimal::max(order.price, position_floor))
+}
+
+fn reward_non_loss_exit_bid(
+    order: &ManagedRewardOrder,
+    books: &HashMap<String, RewardOrderBook>,
+    positions: &[RewardPosition],
+) -> Option<Decimal> {
+    if order.side != RewardOrderSide::Sell {
+        return None;
+    }
+    let exit_floor = reward_sell_exit_floor(order, positions);
+    reward_best_bid_tick(books.get(&order.token_id)).filter(|best_bid| *best_bid >= exit_floor)
+}
+
+fn live_exit_retry_due_or_crossable(
+    order: &ManagedRewardOrder,
+    now: OffsetDateTime,
+    books: &HashMap<String, RewardOrderBook>,
+    positions: &[RewardPosition],
+) -> bool {
+    live_exit_retry_due(order, now) || reward_non_loss_exit_bid(order, books, positions).is_some()
+}
+
 fn reward_live_fill_id(update: &ConnectorTradeFillUpdate) -> String {
     format!(
         "rewfill_{}_{}",

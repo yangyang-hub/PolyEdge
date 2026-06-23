@@ -1395,6 +1395,55 @@ fn hold_and_requote_plans_original_price_post_only_exit() {
 }
 
 #[test]
+fn post_fill_post_only_exit_keeps_floor_when_best_bid_crosses() {
+    let now = OffsetDateTime::now_utc();
+    let mut entry = live_test_open_order("yes_live");
+    entry.price = reward_decimal("0.64");
+    let config = RewardBotConfig {
+        post_fill_strategy: PostFillStrategy::HoldAndRequote,
+        ..RewardBotConfig::default()
+    };
+    let mut book = live_test_book("yes_live", now);
+    book.bids[0].price = reward_decimal("0.65");
+    let positions = HashMap::from([(
+        "yes_live".to_string(),
+        RewardPosition {
+            account_id: entry.account_id.clone(),
+            condition_id: entry.condition_id.clone(),
+            token_id: entry.token_id.clone(),
+            outcome: entry.outcome.clone(),
+            size: Decimal::from(5_u64),
+            avg_price: entry.price,
+            realized_pnl: Decimal::ZERO,
+            updated_at: now,
+        },
+    )]);
+    let books = HashMap::from([("yes_live".to_string(), book)]);
+    let position_list = positions.values().cloned().collect::<Vec<_>>();
+
+    let updates = plan_live_post_fill_orders(
+        &config,
+        &[],
+        &entry,
+        Decimal::from(5_u64),
+        &positions,
+        &books,
+        Decimal::ZERO,
+        "trc_hold_requote",
+    );
+
+    let LiveRewardOrderUpdate::Changed(exit, _) = &updates[0] else {
+        panic!("hold-and-requote must create a sell intent");
+    };
+    assert_eq!(exit.price, reward_decimal("0.64"));
+    assert!(deferred_live_exit_is_post_only(exit));
+    assert_eq!(
+        reward_non_loss_exit_bid(exit, &books, &position_list),
+        Some(reward_decimal("0.65"))
+    );
+}
+
+#[test]
 fn reward_live_fill_id_includes_order_id_and_keeps_legacy_id() {
     let update = live_test_trade_update("pm_yes_live", "pm_trade_1", Decimal::ONE);
 
@@ -1458,6 +1507,82 @@ fn exit_markup_price_rounds_up_to_the_exchange_tick() {
     assert_eq!(
         ceil_reward_price_to_tick(reward_decimal("0.999")),
         reward_decimal("0.99")
+    );
+}
+
+#[test]
+fn non_loss_exit_uses_best_bid_not_midpoint() {
+    let now = OffsetDateTime::now_utc();
+    let mut book = live_test_book("yes_live", now);
+    book.bids[0].price = reward_decimal("0.818");
+    book.asks[0].price = reward_decimal("0.922");
+    let mut order = live_test_open_order("yes_live");
+    order.side = RewardOrderSide::Sell;
+    order.status = ManagedRewardOrderStatus::ExitPending;
+    order.price = reward_decimal("0.87");
+    order.reason = "post-only hold-and-requote original-price exit".to_string();
+
+    assert_eq!(
+        reward_non_loss_exit_bid(
+            &order,
+            &HashMap::from([("yes_live".to_string(), book)]),
+            &[],
+        ),
+        None
+    );
+}
+
+#[test]
+fn non_loss_crossing_can_retry_after_post_only_rejection_cap() {
+    let now = OffsetDateTime::now_utc();
+    let mut book = live_test_book("yes_live", now);
+    book.bids[0].price = reward_decimal("0.65");
+    let mut order = live_test_open_order("yes_live");
+    order.side = RewardOrderSide::Sell;
+    order.status = ManagedRewardOrderStatus::ExitPending;
+    order.price = reward_decimal("0.64");
+    order.reason =
+        "retryable live exit rejected [10/10] (post_only=true): order crosses book".to_string();
+    order.updated_at = now;
+    let books = HashMap::from([("yes_live".to_string(), book)]);
+
+    assert!(!live_exit_retry_due(
+        &order,
+        OffsetDateTime::now_utc() + TimeDuration::hours(1)
+    ));
+    assert_eq!(
+        reward_non_loss_exit_bid(&order, &books, &[]),
+        Some(reward_decimal("0.65"))
+    );
+    assert!(live_exit_retry_due_or_crossable(
+        &order,
+        now + TimeDuration::hours(1),
+        &books,
+        &[],
+    ));
+}
+
+#[test]
+fn flatten_exit_floor_uses_position_average_when_order_price_is_lower() {
+    let mut order = live_test_open_order("yes_live");
+    order.side = RewardOrderSide::Sell;
+    order.status = ManagedRewardOrderStatus::ExitPending;
+    order.price = reward_decimal("0.818");
+    order.reason = "post-fill flatten immediately".to_string();
+    let position = RewardPosition {
+        account_id: order.account_id.clone(),
+        condition_id: order.condition_id.clone(),
+        token_id: order.token_id.clone(),
+        outcome: order.outcome.clone(),
+        size: Decimal::from(20_u64),
+        avg_price: reward_decimal("0.87"),
+        realized_pnl: Decimal::ZERO,
+        updated_at: OffsetDateTime::now_utc(),
+    };
+
+    assert_eq!(
+        reward_sell_exit_floor(&order, &[position]),
+        reward_decimal("0.87")
     );
 }
 
@@ -1700,7 +1825,7 @@ fn dust_exit_is_deferred_without_reason_growth() {
     order.size = reward_decimal("21");
     order.reason = "post-fill flatten immediately".to_string();
 
-    let (reason, _) = live_exit_dust_deferred(&order).expect("dust exit");
+    let (reason, _) = live_exit_dust_deferred_at_price(&order, order.price).expect("dust exit");
     assert!(reason.contains(LIVE_EXIT_DUST_DEFERRED_MARKER));
     assert!(!reason.contains("post-fill flatten immediately"));
 

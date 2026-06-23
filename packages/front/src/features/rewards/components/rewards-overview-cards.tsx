@@ -325,6 +325,7 @@ function formatBlockerSummary(snapshot: RewardBotSnapshotDto) {
     { label: dictionary.rewards.blockerInfoRisk, count: blockers?.info_risk ?? 0 },
     { label: dictionary.rewards.blockerLowCompetition, count: blockers?.low_competition ?? 0 },
     { label: dictionary.rewards.blockerFunding, count: blockers?.funding ?? 0 },
+    { label: dictionary.rewards.blockerLiveValidation, count: blockers?.live_validation ?? 0 },
     { label: dictionary.rewards.blockerOther, count: blockers?.other ?? 0 },
   ]
     .filter((item) => item.count > 0)

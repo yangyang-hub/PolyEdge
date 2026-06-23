@@ -317,7 +317,9 @@ fn apply_live_reward_fill_update(
 }
 
 fn reward_fill_role_for_live_order(order: &ManagedRewardOrder) -> RewardFillRole {
-    if order.side == RewardOrderSide::Sell && order.reason.contains("flatten") {
+    if order.side == RewardOrderSide::Sell
+        && (order.reason.contains("flatten") || order.reason.contains("taker"))
+    {
         RewardFillRole::Taker
     } else {
         RewardFillRole::Maker
@@ -342,17 +344,20 @@ fn plan_live_post_fill_orders(
     let post_fill_strategy = reward_post_fill_strategy(config, plans, entry, ai_min_confidence);
     match post_fill_strategy {
         PostFillStrategy::HoldAndRequote | PostFillStrategy::ExitAtMarkup => {
-            let (exit_price, reason, event_type) = match post_fill_strategy {
+            let exit_price = match post_fill_strategy {
+                PostFillStrategy::HoldAndRequote => ceil_reward_price_to_tick(entry.price),
+                PostFillStrategy::ExitAtMarkup => ceil_reward_price_to_tick(Decimal::min(
+                    Decimal::from_parts(99, 0, 0, false, 2),
+                    entry.price + config.exit_markup_cents / Decimal::from(100_u64),
+                )),
+                PostFillStrategy::FlattenImmediately => unreachable!(),
+            };
+            let (reason, event_type) = match post_fill_strategy {
                 PostFillStrategy::HoldAndRequote => (
-                    ceil_reward_price_to_tick(entry.price),
                     "post-only hold-and-requote original-price exit",
                     "reward_live_hold_requote_exit_planned",
                 ),
                 PostFillStrategy::ExitAtMarkup => (
-                    ceil_reward_price_to_tick(Decimal::min(
-                        Decimal::from_parts(99, 0, 0, false, 2),
-                        entry.price + config.exit_markup_cents / Decimal::from(100_u64),
-                    )),
                     "post-fill exit at markup",
                     "reward_live_exit_planned",
                 ),
@@ -376,56 +381,53 @@ fn plan_live_post_fill_orders(
             vec![LiveRewardOrderUpdate::Changed(exit, event)]
         }
         PostFillStrategy::FlattenImmediately => {
-            let Some(best_bid) = books
+            let exit_floor = positions
                 .get(&entry.token_id)
-                .and_then(|book| book.bids.first())
-                .map(|level| level.price)
+                .map(|position| position.avg_price)
                 .filter(|price| *price > Decimal::ZERO)
-            else {
-                let avg_price = positions
-                    .get(&entry.token_id)
-                    .map(|position| position.avg_price)
-                    .filter(|price| *price > Decimal::ZERO)
-                    .unwrap_or(entry.price);
-                let mut exit = live_exit_order(
-                    entry,
-                    fill_size,
-                    floor_reward_price_to_tick(avg_price),
-                    "flatten deferred until bid liquidity is observed",
-                    trace_id,
-                );
-                exit.status = ManagedRewardOrderStatus::ExitPending;
-                let event = reward_live_event(
-                    &exit,
-                    "reward_live_flatten_deferred",
-                    RewardRiskSeverity::Warning,
-                    "deferred rewards flatten because no bid liquidity is available",
-                    json!({
-                        "token_id": entry.token_id,
-                        "size": fill_size,
-                        "deferred_price": exit.price,
-                        "trace_id": trace_id,
-                    }),
-                );
-                return vec![LiveRewardOrderUpdate::Changed(exit, event)];
+                .map(|avg_price| Decimal::max(entry.price, avg_price))
+                .unwrap_or(entry.price);
+            let exit_price = ceil_reward_price_to_tick(exit_floor);
+            let best_bid = reward_best_bid_tick(books.get(&entry.token_id));
+            let can_cross_without_loss = best_bid.is_some_and(|price| price >= exit_price);
+            let reason = if can_cross_without_loss {
+                "post-fill flatten immediately"
+            } else {
+                "flatten deferred until non-loss bid liquidity is observed"
+            };
+            let event_type = if can_cross_without_loss {
+                "reward_live_flatten_planned"
+            } else {
+                "reward_live_flatten_deferred"
+            };
+            let severity = if can_cross_without_loss {
+                RewardRiskSeverity::Info
+            } else {
+                RewardRiskSeverity::Warning
+            };
+            let message = if can_cross_without_loss {
+                "persisted post-fill rewards flatten intent before live submission"
+            } else {
+                "deferred rewards flatten because current best bid is below the exit floor"
             };
             let mut exit = live_exit_order(
                 entry,
                 fill_size,
-                floor_reward_price_to_tick(best_bid),
-                "post-fill flatten immediately",
+                exit_price,
+                reason,
                 trace_id,
             );
             exit.status = ManagedRewardOrderStatus::ExitPending;
             let event = reward_live_event(
                 &exit,
-                "reward_live_flatten_planned",
-                RewardRiskSeverity::Info,
-                "persisted post-fill rewards flatten intent before live submission",
+                event_type,
+                severity,
+                message,
                 json!({
                     "token_id": entry.token_id,
                     "size": fill_size,
                     "price": exit.price,
+                    "best_bid": best_bid,
                     "post_only": false,
                     "trace_id": trace_id,
                 }),
