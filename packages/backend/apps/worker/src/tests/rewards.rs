@@ -516,6 +516,61 @@ fn live_test_open_order(token_id: &str) -> ManagedRewardOrder {
     }
 }
 
+fn live_test_position(token_id: &str, size: &str, avg_price: &str) -> RewardPosition {
+    RewardPosition {
+        account_id: "reward_live".to_string(),
+        condition_id: "cond_live".to_string(),
+        token_id: token_id.to_string(),
+        outcome: "YES".to_string(),
+        size: reward_decimal(size),
+        avg_price: reward_decimal(avg_price),
+        realized_pnl: Decimal::ZERO,
+        updated_at: OffsetDateTime::now_utc(),
+    }
+}
+
+#[test]
+fn external_inventory_sync_plans_original_price_sell_exit() {
+    let position = live_test_position("yes_inventory", "12.345", "0.491");
+
+    let updates = external_inventory_original_price_exit_updates(
+        "reward_live",
+        std::slice::from_ref(&position),
+        &[],
+        "trc_inventory_exit",
+    );
+
+    assert_eq!(updates.len(), 1);
+    let (order, event) = &updates[0];
+    assert_eq!(order.account_id, "reward_live");
+    assert_eq!(order.token_id, "yes_inventory");
+    assert_eq!(order.side, RewardOrderSide::Sell);
+    assert_eq!(order.status, ManagedRewardOrderStatus::ExitPending);
+    assert_eq!(order.price, reward_decimal("0.50"));
+    assert_eq!(order.size, reward_decimal("12.34"));
+    assert!(order.external_order_id.is_none());
+    assert_eq!(order.reason, "external inventory original-price exit");
+    assert_eq!(event.event_type, "reward_live_inventory_exit_planned");
+}
+
+#[test]
+fn external_inventory_sync_does_not_duplicate_existing_sell_exit() {
+    let position = live_test_position("yes_inventory", "12.345", "0.49");
+    let mut sell = live_test_open_order("yes_inventory");
+    sell.side = RewardOrderSide::Sell;
+    sell.status = ManagedRewardOrderStatus::ExitPending;
+    sell.external_order_id = None;
+
+    let updates = external_inventory_original_price_exit_updates(
+        "reward_live",
+        &[position],
+        &[sell],
+        "trc_inventory_exit",
+    );
+
+    assert!(updates.is_empty());
+}
+
 fn live_test_account(available_usd: Decimal) -> RewardAccountState {
     let mut account = RewardAccountState::fresh(
         "reward_live",

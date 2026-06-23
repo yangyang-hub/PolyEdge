@@ -201,11 +201,143 @@ async fn sync_external_account_state_with_policy(
             if let Some(positions) = position_snapshot {
                 *cycle_positions = positions;
             }
+            plan_external_inventory_original_price_exits(
+                state,
+                cycle_account,
+                cycle_positions,
+                cycle_orders,
+                trace_id,
+            )
+            .await;
         }
         Err(error) => {
             warn!(error = %error, "failed to persist external account sync outcome");
         }
     }
+}
+
+async fn plan_external_inventory_original_price_exits(
+    state: &AppState,
+    account: &mut RewardAccountState,
+    positions: &[RewardPosition],
+    cycle_orders: &mut Vec<ManagedRewardOrder>,
+    trace_id: &str,
+) {
+    let planned = external_inventory_original_price_exit_updates(
+        &account.account_id,
+        positions,
+        cycle_orders,
+        trace_id,
+    );
+    if planned.is_empty() {
+        return;
+    }
+
+    let (orders, events): (Vec<_>, Vec<_>) = planned.into_iter().unzip();
+    match persist_live_reward_updates(
+        state,
+        account,
+        Vec::new(), // positions were just persisted by apply_account_sync
+        orders.clone(),
+        Vec::new(),
+        events,
+        &RewardBotRunReport::default(),
+        trace_id,
+    )
+    .await
+    {
+        Ok(()) => cycle_orders.extend(orders),
+        Err(error) => {
+            warn!(
+                error = %error,
+                "failed to persist external inventory original-price exit intents"
+            );
+        }
+    }
+}
+
+fn external_inventory_original_price_exit_updates(
+    account_id: &str,
+    positions: &[RewardPosition],
+    open_orders: &[ManagedRewardOrder],
+    trace_id: &str,
+) -> Vec<(ManagedRewardOrder, RewardRiskEvent)> {
+    let mut covered_sell_tokens = open_orders
+        .iter()
+        .filter(|order| {
+            order.account_id == account_id
+                && order.side == RewardOrderSide::Sell
+                && order.status.is_open_like()
+        })
+        .map(|order| order.token_id.clone())
+        .collect::<HashSet<_>>();
+    let mut updates = Vec::new();
+    for position in positions {
+        if position.account_id != account_id
+            || position.token_id.trim().is_empty()
+            || position.size <= Decimal::ZERO
+            || position.avg_price <= Decimal::ZERO
+            || !covered_sell_tokens.insert(position.token_id.clone())
+        {
+            continue;
+        }
+        let size = position
+            .size
+            .round_dp_with_strategy(2, RoundingStrategy::ToZero);
+        if size <= Decimal::ZERO {
+            continue;
+        }
+        let price = ceil_reward_price_to_tick(Decimal::min(
+            Decimal::from_parts(99, 0, 0, false, 2),
+            position.avg_price,
+        ));
+        if price <= Decimal::ZERO {
+            continue;
+        }
+        let now = OffsetDateTime::now_utc();
+        let sequence = updates.len();
+        let order = ManagedRewardOrder {
+            id: format!(
+                "rewinvexit_{}_{}_{}",
+                now.unix_timestamp_nanos(),
+                sequence,
+                trace_id.trim_start_matches("trc_")
+            ),
+            account_id: position.account_id.clone(),
+            condition_id: position.condition_id.clone(),
+            token_id: position.token_id.clone(),
+            outcome: position.outcome.clone(),
+            side: RewardOrderSide::Sell,
+            price,
+            size,
+            strategy_bucket: RewardStrategyBucket::None,
+            external_order_id: None,
+            status: ManagedRewardOrderStatus::ExitPending,
+            scoring: false,
+            reason: "external inventory original-price exit".to_string(),
+            filled_size: Decimal::ZERO,
+            reward_earned: Decimal::ZERO,
+            last_scored_at: None,
+            created_at: now,
+            updated_at: now,
+        };
+        let event = reward_live_event(
+            &order,
+            "reward_live_inventory_exit_planned",
+            RewardRiskSeverity::Info,
+            "planned original-price sell exit for detected rewards inventory",
+            json!({
+                "token_id": position.token_id,
+                "size": size,
+                "avg_price": position.avg_price,
+                "price": price,
+                "post_only": true,
+                "trace_id": trace_id,
+            }),
+        );
+        updates.push((order, event));
+    }
+    updates
 }
 
 async fn sync_external_open_order_state(
