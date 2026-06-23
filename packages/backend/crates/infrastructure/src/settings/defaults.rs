@@ -107,7 +107,7 @@ impl Default for RewardsSettings {
             ai_openai_base_url: "https://api.openai.com/v1".to_string(),
             ai_anthropic_base_url: "https://api.anthropic.com".to_string(),
             ai_model: "gpt-4.1-mini".to_string(),
-            ai_min_confidence_bps: 6500,
+            ai_min_confidence_bps: 5500,
             ai_request_timeout_secs: 180,
             ai_advisory_batch_size: 8,
             ai_advisory_batch_timeout_secs: 8,
