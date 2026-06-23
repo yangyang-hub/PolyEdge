@@ -1775,3 +1775,35 @@ fn reward_orderbook_remote_refresh_treats_old_local_books_as_stale() {
     };
     assert!(reward_orderbook_book_is_stale(&future_book, 90_000, 45_000));
 }
+
+#[test]
+fn reward_orderbook_remote_refresh_uses_live_placement_headroom() {
+    let config = RewardBotConfig {
+        stale_book_ms: 45_000,
+        ..RewardBotConfig::default()
+    };
+    let max_placement_age_ms = live_orderbook_max_placement_age_ms(&config);
+    assert_eq!(max_placement_age_ms, 15_000);
+
+    let book = CachedOrderBook {
+        token_id: "token_near_stale".to_string(),
+        bids: Vec::new(),
+        asks: Vec::new(),
+        observed_at: 1_000,
+        source: BookSource::Poll,
+    };
+
+    assert!(!reward_orderbook_book_is_stale(&book, 21_000, 45_000));
+    assert!(reward_orderbook_book_needs_remote_refresh(
+        &book,
+        21_000,
+        config.stale_book_ms,
+        max_placement_age_ms,
+    ));
+    assert!(!reward_orderbook_book_needs_remote_refresh(
+        &book,
+        15_000,
+        config.stale_book_ms,
+        max_placement_age_ms,
+    ));
+}

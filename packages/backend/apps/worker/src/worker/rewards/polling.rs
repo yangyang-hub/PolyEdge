@@ -565,6 +565,7 @@ async fn reward_orderbook_remote_refresh_tokens(
 ) -> Result<Vec<String>> {
     let config = state.reward_bot_service.read_config().await?;
     let stale_book_ms = config.stale_book_ms;
+    let max_placement_age_ms = live_orderbook_max_placement_age_ms(&config);
     let now_ms = reward_orderbook_now_millis();
     let present = cached_books
         .iter()
@@ -572,7 +573,14 @@ async fn reward_orderbook_remote_refresh_tokens(
         .collect::<HashSet<_>>();
     let stale = cached_books
         .iter()
-        .filter(|book| reward_orderbook_book_is_stale(book, now_ms, stale_book_ms))
+        .filter(|book| {
+            reward_orderbook_book_needs_remote_refresh(
+                book,
+                now_ms,
+                stale_book_ms,
+                max_placement_age_ms,
+            )
+        })
         .map(|book| book.token_id.as_str())
         .collect::<HashSet<_>>();
 
@@ -598,6 +606,22 @@ fn reward_orderbook_book_is_stale(
     }
     let age_ms = now_ms.saturating_sub(book.observed_at);
     book.observed_at > now_ms || age_ms > i64::try_from(stale_book_ms).unwrap_or(i64::MAX)
+}
+
+fn reward_orderbook_book_needs_remote_refresh(
+    book: &CachedOrderBook,
+    now_ms: i64,
+    stale_book_ms: u64,
+    max_placement_age_ms: i128,
+) -> bool {
+    if reward_orderbook_book_is_stale(book, now_ms, stale_book_ms) {
+        return true;
+    }
+    if stale_book_ms == 0 || max_placement_age_ms == i128::MAX {
+        return false;
+    }
+    let age_ms = i128::from(now_ms.saturating_sub(book.observed_at));
+    age_ms > max_placement_age_ms
 }
 
 fn record_reward_book_history(
