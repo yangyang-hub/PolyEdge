@@ -137,8 +137,48 @@ fn quote_materialization_ignores_config_market_and_leg_budgets() {
             .legs
             .iter()
             .fold(Decimal::ZERO, |sum, leg| sum + leg.price * leg.size)
-            > config.per_market_usd
+        > config.per_market_usd
     );
+}
+
+#[test]
+fn planner_freshness_uses_orderbook_confirmation_time() {
+    let config = RewardBotConfig {
+        min_market_score: Decimal::ZERO,
+        ..RewardBotConfig::default()
+    };
+    let now = OffsetDateTime::now_utc();
+    let mut books = test_books();
+    for book in books.values_mut() {
+        book.observed_at = now - TimeDuration::minutes(10);
+        book.confirmed_at = now;
+    }
+
+    let plan = build_reward_quote_plan(&test_market(decimal("5")), &books, &config);
+    let materialized = materialize_reward_quote_plan_for_live_orderbook(&plan, &books, &config)
+        .expect("live materialization should accept recently confirmed books");
+
+    assert!(plan.eligible, "{}", plan.reason);
+    assert_eq!(materialized.legs.len(), 2);
+}
+
+#[test]
+fn planner_rejects_books_with_stale_confirmation_time() {
+    let config = RewardBotConfig {
+        min_market_score: Decimal::ZERO,
+        ..RewardBotConfig::default()
+    };
+    let now = OffsetDateTime::now_utc();
+    let mut books = test_books();
+    for book in books.values_mut() {
+        book.observed_at = now;
+        book.confirmed_at = now - TimeDuration::minutes(10);
+    }
+
+    let plan = build_reward_quote_plan(&test_market(decimal("5")), &books, &config);
+
+    assert!(!plan.eligible);
+    assert!(plan.reason.contains("missing book or fallback token price"));
 }
 
 #[test]

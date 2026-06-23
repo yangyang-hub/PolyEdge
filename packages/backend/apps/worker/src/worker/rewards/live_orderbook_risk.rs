@@ -1,7 +1,7 @@
 const LIVE_ORDERBOOK_VALIDATION_SKIP_TTL: TimeDuration = TimeDuration::hours(12);
 const LIVE_ORDERBOOK_WAITING_REASON_PREFIX: &str =
     "waiting for fresh orderbook data from subscription";
-const LIVE_ORDERBOOK_PLACEMENT_STALE_HEADROOM_MS: i128 = 30_000;
+const LIVE_ORDERBOOK_PLACEMENT_STALE_HEADROOM_MS: i128 = 10_000;
 const LIVE_ORDERBOOK_STALE_CANCEL_GRACE_MIN_MS: i64 = 60_000;
 const LIVE_ORDERBOOK_STALE_CANCEL_GRACE_MAX_MS: i64 = 180_000;
 
@@ -129,12 +129,8 @@ fn live_orderbook_max_placement_age_ms(config: &RewardBotConfig) -> i128 {
         return i128::MAX;
     }
     let stale_ms = i128::from(config.stale_book_ms);
-    let half_stale_ms = stale_ms / 2;
-    if stale_ms <= LIVE_ORDERBOOK_PLACEMENT_STALE_HEADROOM_MS {
-        return half_stale_ms;
-    }
-    let headroom_age_ms = stale_ms - LIVE_ORDERBOOK_PLACEMENT_STALE_HEADROOM_MS;
-    half_stale_ms.min(headroom_age_ms)
+    let headroom = LIVE_ORDERBOOK_PLACEMENT_STALE_HEADROOM_MS.min(stale_ms / 2);
+    stale_ms.saturating_sub(headroom)
 }
 
 fn live_stale_orderbook_cancel_grace_active(

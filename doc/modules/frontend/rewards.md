@@ -35,7 +35,7 @@
 
 - `src/lib/api/rewards.ts` — `readRewardBotSnapshot`、`updateRewardBotConfig`、`runRewardBotOnce`、`cancelRewardBotOrders`、`resetRewardBot`
 - `readRewardBotSnapshot()` 会传递计划/订单分页、搜索、状态和排序 query；首屏明确请求 `plans_eligible=true`，与默认选中的“可挂”页签一致。后端分页结果和 `orders_page` 都描述本地 managed orders，不再用 Polymarket live open orders 覆盖
-- 后端 snapshot 不返回全量 reward markets；页面使用 `status.markets_tracked`、`status.eligible_markets`、`status.ready_quote_markets`、`status.waiting_orderbook_markets`、`status.provider_pending_markets`、`quote_plans` 和 `low_competition_report` 展示市场覆盖、候选计划、真实可立即报价数量与低竞争 shadow report
+- 后端 snapshot 不返回全量 reward markets；页面使用 `status.markets_tracked`、`status.eligible_markets`、`status.ready_quote_markets`、`status.waiting_orderbook_markets`、`status.provider_pending_markets`、`quote_plans` 和 `low_competition_report` 展示市场覆盖、最终可挂市场、真实可立即报价数量与低竞争 shadow report
 - snapshot 的 `available_usd` / `positions` 来自 worker 写入数据库的账户快照；API 不持有 Polymarket 私钥，也不直接请求外部账户数据。`available_usd` 优先使用 CLOB `balance-allowance`，当 CLOB 返回 0 或失败但资金钱包链上 pUSD 余额大于 0 时，worker 使用链上 pUSD 回填
 
 ## 关键交互
@@ -68,7 +68,7 @@
 ## 当前状态
 
 - 完整的 Run / Cancel / Reset 入队交互
-- 顶部执行概览展示实盘模式、启停/运行状态、市场就绪度、钱包余额/策略上限比例、最近扫描/运行时间和事件触发计数；“可报价市场”和市场就绪度使用 `status.ready_quote_markets`，只统计已有真实报价腿、可立即进入 live 下单检查的计划，提示行同时展示可挂候选、等待盘口和等待风控数量。策略上限直接读取当前 `snapshot.config.account_capital_usd`，不再使用可能保留历史初始值的账户账本字段，也不代表链上钱包余额。
+- 顶部执行概览展示实盘模式、启停/运行状态、可挂比例、钱包余额/策略上限比例、最近扫描/运行时间和事件触发计数；“可挂市场”和可挂比例使用 `status.eligible_markets`，表示通过当前市场质量、AI/info-risk 和 live 非瞬时过滤后仍可挂单/应继续订阅的最终计划，提示行同时展示 `ready_quote_markets`、等待盘口和等待风控数量。策略上限直接读取当前 `snapshot.config.account_capital_usd`，不再使用可能保留历史初始值的账户账本字段，也不代表链上钱包余额。
 - 操作中心集中 Run / Save / Cancel / Reset，文案提醒当前命令可能提交或取消 Polymarket 实盘订单。
 - 配置编辑按执行、市场筛选、低竞争 sleeve、报价构造、盘口选择、AI 建议、库存与控制分组，包含仍生效的数值参数、布尔开关、受限下拉框和成交后策略；退出加价提示明确 0 表示原价卖。
 - 市场筛选面板公开质量硬门槛；通过门槛的市场由后端继续按奖励、流动性、成交量、剩余时长和奖励 spread 综合排序。

@@ -9,7 +9,7 @@ fn live_placement_waits_when_orderbook_is_too_close_to_stale() {
         ..RewardBotConfig::default()
     };
     let now = OffsetDateTime::now_utc();
-    let old = now - TimeDuration::seconds(20);
+    let old = now - TimeDuration::seconds(40);
     let plan = live_test_plan(now);
     let books = HashMap::from([
         ("yes_live".to_string(), live_test_book("yes_live", old)),
@@ -116,7 +116,7 @@ fn refresh_live_quote_plan_readiness_waits_when_books_exceed_placement_headroom(
         ..RewardBotConfig::default()
     };
     let now = OffsetDateTime::now_utc();
-    let old = now - TimeDuration::seconds(20);
+    let old = now - TimeDuration::seconds(40);
     let books = HashMap::from([
         ("yes_live".to_string(), live_test_book("yes_live", old)),
         ("no_live".to_string(), live_test_book("no_live", old)),

@@ -1894,10 +1894,10 @@ fn reward_orderbook_remote_refresh_uses_live_placement_headroom() {
         ..RewardBotConfig::default()
     };
     let max_placement_age_ms = live_orderbook_max_placement_age_ms(&config);
-    assert_eq!(max_placement_age_ms, 15_000);
+    assert_eq!(max_placement_age_ms, 35_000);
     assert_eq!(
         reward_orderbook_remote_refresh_age_ms(max_placement_age_ms),
-        7_500
+        25_000
     );
 
     let book = CachedOrderBook {
@@ -1910,7 +1910,7 @@ fn reward_orderbook_remote_refresh_uses_live_placement_headroom() {
     };
 
     assert!(!reward_orderbook_book_is_stale(&book, 21_000, 45_000));
-    assert!(reward_orderbook_book_needs_remote_refresh(
+    assert!(!reward_orderbook_book_needs_remote_refresh(
         &book,
         21_000,
         config.stale_book_ms,
@@ -1922,9 +1922,15 @@ fn reward_orderbook_remote_refresh_uses_live_placement_headroom() {
         config.stale_book_ms,
         max_placement_age_ms,
     ));
-    assert!(reward_orderbook_book_needs_remote_refresh(
+    assert!(!reward_orderbook_book_needs_remote_refresh(
         &book,
         10_000,
+        config.stale_book_ms,
+        max_placement_age_ms,
+    ));
+    assert!(reward_orderbook_book_needs_remote_refresh(
+        &book,
+        30_000,
         config.stale_book_ms,
         max_placement_age_ms,
     ));

@@ -466,7 +466,7 @@ fn get_token_book_state(
     let fresh = config.stale_book_ms == 0
         || book
             .and_then(|book| {
-                (now - book.observed_at)
+                (now - book.confirmed_at)
                     .whole_milliseconds()
                     .try_into()
                     .ok()
