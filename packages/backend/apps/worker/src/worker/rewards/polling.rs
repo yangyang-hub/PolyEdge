@@ -145,6 +145,14 @@ async fn poll_reward_bot_loop(
         } else {
             // --- Fast reconcile-only cycle (risk checks + cancel stale orders) ---
             let trace_id = new_trace_id();
+            // Pre-warm eligible/candidate books so quiet markets stay fresh
+            // between full ticks: the stream only pushes tokens whose books
+            // change, and the reconcile step below only refreshes active tokens.
+            if let Err(error) =
+                refresh_reward_managed_orderbook_cache(state, orderbook_runtime.cache()).await
+            {
+                warn!(error = %error, "failed to pre-warm managed orderbook cache");
+            }
             let sync_policy = external_sync_throttle.fast_reconcile_policy(&config, Instant::now());
             let report = run_reward_bot_live_reconcile_unlocked(
                 state,
@@ -518,6 +526,28 @@ async fn fetch_reward_bot_active_books(
         .await?;
 
     fetch_cached_reward_books(state, orderbook_cache, &token_ids).await
+}
+
+/// Pre-warm the worker-local orderbook cache for every token the bot may act
+/// on next — active orders/positions plus eligible quote plans and candidates
+/// — so quiet markets stay fresh between full ticks. The reconcile step only
+/// refreshes *active* tokens, and the orderbook stream only pushes tokens
+/// whose books actually change, so without this a quiet eligible market's
+/// local age grows until the next full tick and then fails the placement
+/// freshness check. The orderbook service keeps these books fresh via its poll
+/// reconciler, so an HTTP batch refresh always reads recent data. Reuses
+/// `fetch_cached_reward_books`, which HTTP-fetches only tokens whose local age
+/// already exceeds the placement threshold, so an active token that the
+/// reconcile step refreshes right after is not double-fetched.
+async fn refresh_reward_managed_orderbook_cache(
+    state: &AppState,
+    orderbook_cache: &RewardOrderbookLocalCache,
+) -> Result<usize> {
+    let token_ids = reward_orderbook_bootstrap_tokens(state).await?;
+    if token_ids.is_empty() {
+        return Ok(0);
+    }
+    Ok(fetch_cached_reward_books(state, Some(orderbook_cache), &token_ids).await?.len())
 }
 
 async fn fetch_cached_reward_books(
