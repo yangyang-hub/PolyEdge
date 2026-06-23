@@ -273,6 +273,81 @@ async fn register_reward_active_orderbook_tokens(state: &AppState, trace_id: &st
     );
 }
 
+async fn register_reward_eligible_orderbook_tokens_from_plans(
+    state: &AppState,
+    plans: &[RewardQuotePlan],
+    trace_id: &str,
+) {
+    let max_tokens = state.settings.orderbook_stream.max_tokens;
+    let source_tokens = reward_eligible_orderbook_tokens_from_plans(plans, max_tokens);
+    if source_tokens.is_empty() {
+        debug!(
+            trace_id = %trace_id,
+            "immediate eligible rewards orderbook registration returned empty; preserving previous source"
+        );
+        return;
+    }
+
+    if let Err(error) = state
+        .orderbook_registry
+        .register_tokens("rewards_eligible", &source_tokens)
+        .await
+    {
+        warn!(
+            trace_id = %trace_id,
+            error = %error,
+            "failed to immediately replace eligible rewards orderbook token registration"
+        );
+        return;
+    }
+
+    debug!(
+        trace_id = %trace_id,
+        reward_eligible_tokens = source_tokens.len(),
+        max_tokens,
+        "immediately registered eligible rewards orderbook tokens"
+    );
+}
+
+fn reward_eligible_orderbook_tokens_from_plans(
+    plans: &[RewardQuotePlan],
+    max_tokens: usize,
+) -> Vec<String> {
+    let mut source_tokens = Vec::new();
+    let mut seen = HashSet::new();
+    for plan in plans.iter().filter(|plan| plan.eligible) {
+        if source_tokens.len() >= max_tokens {
+            break;
+        }
+        if plan.orderbook_token_ids.is_empty() {
+            for leg in &plan.legs {
+                push_unique_token(&mut source_tokens, &mut seen, &leg.token_id, max_tokens);
+            }
+        } else {
+            for token_id in &plan.orderbook_token_ids {
+                push_unique_token(&mut source_tokens, &mut seen, token_id, max_tokens);
+            }
+        }
+    }
+    source_tokens
+}
+
+fn push_unique_token(
+    target: &mut Vec<String>,
+    seen: &mut HashSet<String>,
+    token: &str,
+    limit: usize,
+) {
+    if target.len() >= limit {
+        return;
+    }
+    let token = token.trim();
+    if token.is_empty() || !seen.insert(token.to_string()) {
+        return;
+    }
+    target.push(token.to_string());
+}
+
 fn push_unique_tokens(
     target: &mut Vec<String>,
     seen: &mut HashSet<String>,
@@ -280,13 +355,7 @@ fn push_unique_tokens(
     limit: usize,
 ) {
     for token in tokens {
-        if target.len() >= limit {
-            break;
-        }
-        if token.trim().is_empty() || !seen.insert(token.clone()) {
-            continue;
-        }
-        target.push(token);
+        push_unique_token(target, seen, &token, limit);
     }
 }
 
@@ -394,5 +463,69 @@ mod orderbook_registration_tests {
             true,
             REWARDS_CANDIDATES_EMPTY_CLEAR_AFTER,
         ));
+    }
+
+    #[test]
+    fn immediate_eligible_registration_collects_only_eligible_plan_tokens() {
+        let now = OffsetDateTime::now_utc();
+        let plans = vec![
+            RewardQuotePlan {
+                condition_id: "cond_a".to_string(),
+                market_slug: "a".to_string(),
+                question: "A?".to_string(),
+                score: Decimal::ONE,
+                eligible: true,
+                pre_ai_eligible: true,
+                quote_readiness: polyedge_application::RewardQuoteReadiness::ReadyToQuote,
+                reason: "eligible".to_string(),
+                strategy_bucket: RewardStrategyBucket::None,
+                quote_mode: RewardPlanQuoteMode::Double,
+                recommended_quote_mode: None,
+                book_metrics: None,
+                low_competition_metrics: None,
+                ai_advisory: None,
+                info_risk: None,
+                midpoint: None,
+                live_skip_until: None,
+                live_skip_reason: None,
+                total_daily_rate: Decimal::ZERO,
+                rewards_max_spread: Decimal::ZERO,
+                rewards_min_size: Decimal::ZERO,
+                orderbook_token_ids: vec!["yes_a".to_string(), "no_a".to_string()],
+                legs: Vec::new(),
+                updated_at: now,
+            },
+            RewardQuotePlan {
+                condition_id: "cond_b".to_string(),
+                market_slug: "b".to_string(),
+                question: "B?".to_string(),
+                score: Decimal::ONE,
+                eligible: false,
+                pre_ai_eligible: true,
+                quote_readiness: polyedge_application::RewardQuoteReadiness::ProviderPending,
+                reason: "provider pending".to_string(),
+                strategy_bucket: RewardStrategyBucket::None,
+                quote_mode: RewardPlanQuoteMode::None,
+                recommended_quote_mode: None,
+                book_metrics: None,
+                low_competition_metrics: None,
+                ai_advisory: None,
+                info_risk: None,
+                midpoint: None,
+                live_skip_until: None,
+                live_skip_reason: None,
+                total_daily_rate: Decimal::ZERO,
+                rewards_max_spread: Decimal::ZERO,
+                rewards_min_size: Decimal::ZERO,
+                orderbook_token_ids: vec!["yes_b".to_string(), "no_b".to_string()],
+                legs: Vec::new(),
+                updated_at: now,
+            },
+        ];
+
+        assert_eq!(
+            reward_eligible_orderbook_tokens_from_plans(&plans, 10),
+            vec!["yes_a".to_string(), "no_a".to_string()]
+        );
     }
 }

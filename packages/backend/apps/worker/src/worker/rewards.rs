@@ -434,6 +434,7 @@ async fn run_reward_bot_live_tick(
     spawn_reward_market_provider_refresh(state, &cycle, &books, trace_id);
     apply_cached_reward_ai_advisories_to_cycle(state, &mut cycle, &books, trace_id).await?;
     apply_cached_reward_info_risks_to_cycle(state, &mut cycle, trace_id).await?;
+    register_reward_eligible_orderbook_tokens_from_plans(state, &cycle.plans, trace_id).await;
     let low_competition_observations = build_low_competition_observations(
         &cycle.account.account_id,
         &cycle.plans,
