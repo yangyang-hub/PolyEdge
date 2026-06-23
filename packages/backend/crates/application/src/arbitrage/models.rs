@@ -184,6 +184,13 @@ pub struct ArbitrageScanView {
     pub trace_id: String,
 }
 
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct ArbitrageHistoryPruneReport {
+    pub scans_deleted: u64,
+    pub snapshots_deleted: u64,
+    pub opportunities_deleted: u64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MarketBookSnapshotView {
     pub id: String,

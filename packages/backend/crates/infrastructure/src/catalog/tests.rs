@@ -1,10 +1,11 @@
 use super::{InMemoryMarketEventStore, PostgresMarketEventStore};
 use polyedge_application::{
-    ArbitrageEventListFilters, ArbitrageEventType, ArbitrageEventView, ArbitrageStore,
-    MarketEventStore, NewsIngestionStore, NewsSourceFailureUpdate, NewsSourceHealthListFilters,
+    ArbitrageEventListFilters, ArbitrageEventType, ArbitrageEventView, ArbitrageScanListFilters,
+    ArbitrageScanView, ArbitrageStore, MarketBookSnapshotView, MarketEventStore,
+    NewsIngestionStore, NewsSourceFailureUpdate, NewsSourceHealthListFilters,
     NewsSourceSuccessUpdate, PageQuery, RecomputeSignalCommand, demo_fixture_bundle,
 };
-use polyedge_domain::{Probability, Result};
+use polyedge_domain::{Probability, Quantity, Result};
 use rust_decimal::Decimal;
 use sqlx::{Executor, postgres::PgPoolOptions};
 use std::error::Error;
@@ -27,6 +28,46 @@ fn arbitrage_event(id: &str, occurred_at: OffsetDateTime) -> ArbitrageEventView 
         payload: serde_json::json!({ "scan_id": id }),
         occurred_at,
         trace_id: "trc_arbitrage_event_test".to_string(),
+    }
+}
+
+fn arbitrage_scan(id: &str, started_at: OffsetDateTime) -> ArbitrageScanView {
+    ArbitrageScanView {
+        id: id.to_string(),
+        started_at,
+        finished_at: None,
+        market_count: 0,
+        snapshot_count: 0,
+        opportunity_count: 0,
+        scanner_version: "test".to_string(),
+        metadata: serde_json::json!({}),
+        trace_id: "trc_arbitrage_history_prune_test".to_string(),
+    }
+}
+
+fn market_book_snapshot(
+    id: &str,
+    scan_id: &str,
+    observed_at: OffsetDateTime,
+) -> MarketBookSnapshotView {
+    MarketBookSnapshotView {
+        id: id.to_string(),
+        scan_id: scan_id.to_string(),
+        connector_name: "test".to_string(),
+        market_id: "mkt_test".to_string(),
+        yes_asset_id: None,
+        no_asset_id: None,
+        yes_bid: None,
+        yes_ask: None,
+        yes_bid_size: Quantity::new(Decimal::ZERO).expect("zero quantity"),
+        yes_ask_size: Quantity::new(Decimal::ZERO).expect("zero quantity"),
+        no_bid: None,
+        no_ask: None,
+        no_bid_size: Quantity::new(Decimal::ZERO).expect("zero quantity"),
+        no_ask_size: Quantity::new(Decimal::ZERO).expect("zero quantity"),
+        observed_at,
+        raw_payload: serde_json::json!({}),
+        trace_id: "trc_arbitrage_history_prune_test".to_string(),
     }
 }
 
@@ -64,6 +105,44 @@ async fn in_memory_arbitrage_events_prune_old_records_and_keep_sequences() -> Re
         .await?;
     assert_eq!(resumed.data.len(), 1);
     assert_eq!(resumed.data[0].id, "scan_fresh");
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn in_memory_arbitrage_scan_history_prune_cascades_snapshots() -> Result<()> {
+    let store = InMemoryMarketEventStore::new();
+    let old_at = OffsetDateTime::UNIX_EPOCH + Duration::seconds(10);
+    let fresh_at = OffsetDateTime::UNIX_EPOCH + Duration::seconds(30);
+
+    store
+        .start_arbitrage_scan(&arbitrage_scan("scan_old", old_at))
+        .await?;
+    store
+        .start_arbitrage_scan(&arbitrage_scan("scan_fresh", fresh_at))
+        .await?;
+    store
+        .record_market_book_snapshot(&market_book_snapshot("snap_old", "scan_old", old_at))
+        .await?;
+    store
+        .record_market_book_snapshot(&market_book_snapshot("snap_fresh", "scan_fresh", fresh_at))
+        .await?;
+
+    let report = store
+        .prune_arbitrage_scan_history(OffsetDateTime::UNIX_EPOCH + Duration::seconds(20))
+        .await?;
+    assert_eq!(report.scans_deleted, 1);
+    assert_eq!(report.snapshots_deleted, 1);
+    assert_eq!(report.opportunities_deleted, 0);
+
+    let remaining = store
+        .list_arbitrage_scans(
+            &ArbitrageScanListFilters::new().expect("scan filters"),
+            &PageQuery::default(),
+        )
+        .await?;
+    assert_eq!(remaining.data.len(), 1);
+    assert_eq!(remaining.data[0].id, "scan_fresh");
 
     Ok(())
 }

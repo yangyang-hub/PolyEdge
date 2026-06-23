@@ -96,6 +96,8 @@ mod tests {
         assert!(settings.worker.consume_polymarket_user_events);
         assert!(settings.worker.consume_orderbook_stream);
         assert!(settings.worker.recompute_signals);
+        assert!(settings.worker.database_maintenance);
+        assert_eq!(settings.worker.database_maintenance_interval_secs, 3_600);
         assert_eq!(settings.worker.news_promotion_interval_secs, 60);
         assert_eq!(settings.worker.signal_recompute_interval_secs, 120);
         assert_eq!(settings.worker.arbitrage_analysis_interval_secs, 300);
@@ -127,7 +129,7 @@ mod tests {
         assert_eq!(settings.orderbook_stream.reward_candidate_token_cap, 50);
         assert_eq!(settings.orderbook_stream.ws_chunk_size, 100);
         assert_eq!(settings.orderbook_stream.max_levels_per_side, 100);
-        assert_eq!(settings.orderbook_stream.poll_reconcile_interval_secs, 60);
+        assert_eq!(settings.orderbook_stream.poll_reconcile_interval_secs, 10);
         assert_eq!(settings.orderbook_stream.stale_threshold_ms, 15_000);
         assert_eq!(settings.orderbook_stream.book_ttl_ms, 300_000);
         assert_eq!(settings.orderbook_stream.token_refresh_interval_secs, 60);

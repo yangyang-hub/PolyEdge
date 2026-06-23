@@ -160,6 +160,9 @@ async fn scan_arbitrage_once_records_market_snapshots_without_trade_side_effects
             validation_book_failures: 0,
             opportunities_expired: 0,
             events_pruned: 0,
+            scans_pruned: 0,
+            snapshots_pruned: 0,
+            scan_opportunities_pruned: 0,
             failed_books: 0,
         }
     );

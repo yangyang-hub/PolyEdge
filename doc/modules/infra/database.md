@@ -1,6 +1,6 @@
 # 数据库（Migrations + Schema）
 
-最后更新：2026-06-20
+最后更新：2026-06-23
 
 ## 概述
 
@@ -101,10 +101,10 @@
 
 ### 7. 套利
 
-- **`arbitrage_scans`**：market_count、snapshot_count、opportunity_count、scanner_version
-- **`market_book_snapshots`**：scan FK、market FK、yes/no bid/ask price + size
-- **`arbitrage_opportunities`**：buy/sell 引用、gross_edge、net_edge、capacity、status（5 状态）
-- **`arbitrage_opportunity_validations`**：validation_status（9 状态）、gross/net edge、fee_estimate、slippage_buffer、validated_capacity、book_age
+- **`arbitrage_scans`**：market_count、snapshot_count、opportunity_count、scanner_version；worker 按 `arbitrage.event_retention_hours` 删除旧 scan
+- **`market_book_snapshots`**：scan FK、market FK、yes/no bid/ask price + size；旧 scan 删除时通过 `ON DELETE CASCADE` 自动清理
+- **`arbitrage_opportunities`**：buy/sell 引用、gross_edge、net_edge、capacity、status（5 状态）；旧 scan 删除时级联清理
+- **`arbitrage_opportunity_validations`**：validation_status（9 状态）、gross/net edge、fee_estimate、slippage_buffer、validated_capacity、book_age；opportunity 删除时级联清理
 - **`arbitrage_events`**：BIGSERIAL PK、event_type
 
 ### 8. 奖励机器人
@@ -136,12 +136,23 @@
 
 - **`runtime_config`**：key TEXT PK、value TEXT、updated_at
 
+## 数据保留与自动清理
+
+数据库存在两条自动清理链路：
+
+- **套利扫描历史**：worker 每轮套利扫描后按 `arbitrage.event_retention_hours` 删除旧 `arbitrage_scans`；`market_book_snapshots`、`arbitrage_opportunities` 和 validations 通过外键 cascade 一并删除，避免盘口快照无限膨胀。
+- **通用数据库维护**：内嵌 worker runtime 的 `database-maintenance` 周期任务调用 `DatabaseMaintenanceService`，Postgres 实现按表分批删除历史/缓存/队列数据。默认窗口为 raw events 未关联 30 天、已关联 90 天；过期 AI advisory / info-risk cache 额外保留 7 天；`reward_market_candles` 30 天；completed control commands 30 天、failed control commands 90 天；`copytrade_events` 90 天、`copytrade_source_trades` 180 天；published outbox 30 天、failed/dead_letter outbox 90 天；processed external dedup 90 天、stale unprocessed dedup 7 天；`llm_calls` 180 天；`audit_logs` / `mode_transitions` 365 天。
+
+维护任务每个表每轮最多删除 20 批、每批 10,000 行，避免单次大事务；删除后 PostgreSQL 物理文件不会立即缩小，需要依赖 autovacuum 回收可复用空间，若要把 9GB 这类已膨胀文件还给操作系统，需要计划 `VACUUM FULL` / `pg_repack` 等维护窗口。
+
 ## 当前状态
 
 - 45 个迁移文件，最新为 `0045_reward_control_command_dedupe.sql`
 - `packages/backend/init.sql` 已合并 `0001`–`0045`，作为完整空库初始化脚本
 - 所有表使用 PostgreSQL 特性（JSONB、NUMERIC 约束、BIGSERIAL、部分索引等）
 - 迁移使用 `sqlx` 管理
+- 套利扫描历史已接入 retention：worker 每轮扫描完成后按 `arbitrage.event_retention_hours` 分批删除旧 `arbitrage_scans`，并通过 FK cascade 清理 `market_book_snapshots`、`arbitrage_opportunities` 和 validations，避免盘口快照表无限膨胀；`arbitrage_events` 继续按同一窗口单独清理。
+- 通用数据库维护已接入 API 内嵌 worker runtime，生产模板默认开启 `POLYEDGE_WORKER__DATABASE_MAINTENANCE=true`，用于防止缓存、日志、队列和低频 price-history 表持续增长；它不删除 rewards fills/positions/account state 等核心账本表。
 - Rewards 低竞争市场 sleeve v2 已落地，新增 schema 包括 managed order 的 `strategy_bucket` 和 `reward_low_competition_observations` 观测表；shadow report 是 snapshot 派生结果，不单独落表。Rewards AI advisory 已接入 `reward_market_candles`，K 线由 orderbook 服务统一低频限速调用 CLOB `/prices-history` 写入，不由 worker/API 直接请求外部接口。
 
 ## 修改检查清单

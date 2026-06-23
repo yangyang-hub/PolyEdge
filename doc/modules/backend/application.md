@@ -23,8 +23,9 @@
 | `risk.rs` | 风控：`RiskService`、`RiskStateStore`、`RiskPolicy`、kill-switch 命令 |
 | `rewards/` | 做市奖励：`RewardBotService`、`RewardBotStore`、质量过滤/排序、盘口指标/单边报价推荐、price-history candles、低竞争 sleeve profile/指标 gate/shadow report、AI advisory 输入/决策/执行约束、异步信息风险缓存、priority condition 列表、live-only 状态与订单分页查询、历史清理、events/fills/open_order_count 内存缓存、in-process command wake channel；`RewardBotStore` trait 拆在 `service/store.rs`，service 单元测试拆在 `service/tests.rs`，配置默认值/归一化/patch 逻辑拆在 `config_impl.rs`，运行时模型拆在 `runtime_models.rs`，quote/selection/AI 枚举拆在 `quote_selection_models.rs`，AI 模型拆在 `ai_advisory_models.rs`，信息风险模型拆在 `info_risk_models.rs`，deterministic 盘口选择 helper 拆在 `planner_selection.rs`，live 盘口 materializer 拆在 `planner_live.rs`，低竞争指标拆在 `low_competition.rs`，低竞争 observation/report 聚合拆在 `low_competition_report.rs`，snapshot 聚合拆在 `service_snapshot.rs` |
 | `copytrade/` | 钱包跟踪与分析：`CopyTradeService`、`CopyTradeStore`、tracked wallets、source trades、钱包分析和控制命令队列；旧模拟引擎已移除 |
-| `arbitrage/` | 套利：`ArbitrageService`、`ArbitrageStore`、机会检测/验证 |
+| `arbitrage/` | 套利：`ArbitrageService`、`ArbitrageStore`、机会检测/验证、扫描历史清理 |
 | `news_ingestion.rs` | 新闻采集：`NewsIngestionService`、`NewsIngestionStore` |
+| `maintenance.rs` | 数据库维护：`DatabaseMaintenanceService`、`DatabaseMaintenanceStore`、集中 retention cutoffs 与清理统计 |
 | `orderbook_cache.rs` | 盘口缓存：`OrderbookCache` trait、`CachedOrderBook` 和内部推送事件 `OrderbookStreamEvent` |
 | `orderbook_registry.rs` | 盘口订阅注册中心：`OrderbookSubscriptionRegistry` trait，多来源 token 聚合 |
 | `wallet_analysis/` | 钱包分析：纯计算（无 I/O），`build_wallet_analysis_report` |
@@ -129,7 +130,7 @@
 
 **live 资金模型：**
 - Rewards live maker 下单沿用跨市场软资金复用语义：不同 condition 的本系统未成交 post-only/GTC 买单可复用同一资金池；但 Polymarket 会对同一 condition 的全部开放 BUY 订单累计做余额有效性检查，因此 placement 会先计算该 condition 已有 managed BUY 剩余 notional 与待补 YES/NO 腿总 notional。账户开放 BUY 总额会同步到 `external_buy_notional`；worker 会先把 CLOB open-order snapshot 中可唯一映射到 active reward market YES/NO token 的开放 BUY 收养/重开为 managed order，其余无法归属到本系统 managed order 的外部 BUY notional 才会从 `available_usd` 中保守扣除，再做同 condition 准入，避免人工/其它机器人挂单与本系统新单叠加。SELL、非 rewards 市场和无法唯一映射 token 的外部开放订单明细仍未按 condition 映射。
-- Live 新挂单仍要求目标 YES/NO 两腿都有非空盘口；`stale_book_ms` 默认 45000，低于 orderbook 默认 60 秒 poll 周期但可由 WS 更新保持新鲜，配置归一化下限为 5000ms，不再允许生产配置把盘口年龄检查降到 0。新挂单路径遇到盘口缺失、空盘口、超过 `stale_book_ms` 或已接近 stale 边界时，会先对缺失、过期或超过新挂单 freshness headroom 的 token 通过 orderbook 服务 HTTP batch 尝试刷新；仍无足够新鲜度余量的盘口时保持计划等待 orderbook 缓存恢复，而不是写入 12 小时 skip；新建 quote intent 与已落库待提交 BUY 在提交前都会复用 live 撤单风控（计划仍 eligible、报价漂移、min depth、bid rank、depth drop、fill velocity、mass cancel、kill switch 等），风险不通过的本地 intent 会在提交前取消。live reconcile 会对本系统托管的开放订单读取活跃 token 盘口；盘口缺失/空盘口、SELL 盘口过期、BUY 的非 stale 硬风险或超过短暂 grace 的 BUY stale-only 风险会触发撤单，即使 `enabled=false` 已停止新增报价；近期已有 external order id 的 BUY 只在单纯 stale 且仍处于 grace 窗口内时延迟撤单，价格漂移只在 reprice guard 确认后按单轮上限撤单，资格、深度和 kill switch 等硬风险仍不延迟。
+- Live 新挂单仍要求目标 YES/NO 两腿都有非空盘口；`stale_book_ms` 默认 45000，orderbook 默认 10 秒 poll reconcile 会配合 WS 让盘口保持在新挂单新鲜度窗口内，配置归一化下限为 5000ms，不再允许生产配置把盘口年龄检查降到 0。新挂单路径遇到盘口缺失、空盘口、超过 `stale_book_ms` 或已接近 stale 边界时，会先对缺失、过期或超过新挂单 freshness headroom 的 token 通过 orderbook 服务 HTTP batch 尝试刷新；仍无足够新鲜度余量的盘口时保持计划等待 orderbook 缓存恢复，而不是写入 12 小时 skip；新建 quote intent 与已落库待提交 BUY 在提交前都会复用 live 撤单风控（计划仍 eligible、报价漂移、min depth、bid rank、depth drop、fill velocity、mass cancel、kill switch 等），风险不通过的本地 intent 会在提交前取消。live reconcile 会对本系统托管的开放订单读取活跃 token 盘口；盘口缺失/空盘口、SELL 盘口过期、BUY 的非 stale 硬风险或超过短暂 grace 的 BUY stale-only 风险会触发撤单，即使 `enabled=false` 已停止新增报价；近期已有 external order id 的 BUY 只在单纯 stale 且仍处于 grace 窗口内时延迟撤单，价格漂移只在 reprice guard 确认后按单轮上限撤单，资格、深度和 kill switch 等硬风险仍不延迟。
 - Live `reset` 不清空本地账本或删除托管订单；worker 会先按 cancel-all 语义撤销本系统托管 live 订单，若任一 Polymarket 撤单被拒绝，则命令失败并保留本地状态以避免孤儿实盘订单。
 - 风险控制重点放在成交后：trade 达到 `CONFIRMED` 后，worker 对本系统托管 rewards 订单按 external trade id 幂等更新现金、库存、fills 和 PnL，并撤掉 sibling legs；新挂单的 per-token 和全局库存门槛都使用「已有库存 notional + 当前候选订单 notional」准入。
 - 本地仍需保留 `max_open_orders`、`max_markets`、per-token/全局库存和 kill-switch；这些限制控制操作风险和订单风暴，而不是把所有开放买单当作已消耗资金。
@@ -161,9 +162,11 @@
 ### arbitrage — 套利
 
 **Store Trait：** `ArbitrageStore`
-- Scan lifecycle、market book snapshots、opportunities、validations、analysis runs、events
+- Scan lifecycle、market book snapshots、opportunities、validations、analysis runs、events、history prune
 
 **核心函数：** `detect_arbitrage_opportunities`、`validate_arbitrage_opportunity`、`build_arbitrage_analysis`
+
+**历史清理：** `ArbitrageService.prune_scan_history(started_before)` 返回 `ArbitrageHistoryPruneReport`，删除 cutoff 前的 `arbitrage_scans`，依赖数据库 FK cascade 清理 `market_book_snapshots`、`arbitrage_opportunities` 和 validations；`prune_events()` 继续单独清理 `arbitrage_events`。
 
 ### news_ingestion — 新闻采集
 
@@ -171,6 +174,17 @@
 - `insert_raw_news_event`（SHA-256 去重）、`record_news_source_success/failure`、`list_news_source_health`
 
 **服务：** `NewsIngestionService` — 批量采集、去重、健康追踪
+
+### maintenance — 数据库维护
+
+**Store Trait：** `DatabaseMaintenanceStore`
+- `prune_database_history(cutoffs)`：按统一 retention cutoff 清理数据库历史/缓存/队列表。
+
+**关键类型：**
+- `DatabaseMaintenanceCutoffs`：集中定义各类表的保留窗口。当前默认包括 raw events 未关联 30 天、已关联 90 天，AI/info-risk 过期缓存额外 7 天 grace，rewards candles 30 天，completed control commands 30 天、failed control commands 90 天，copytrade events 90 天、source trades 180 天，outbox published 30 天、failed/dead_letter 90 天，external dedup processed 90 天、stale unprocessed 7 天，LLM calls 180 天，audit/mode transitions 365 天。
+- `DatabaseMaintenanceReport`：逐表返回删除行数，并提供 `total_deleted()` 汇总。
+
+**服务：** `DatabaseMaintenanceService` — 由 worker 定期调用，application 层只定义策略和端口，不直接依赖 Postgres。
 
 ### orderbook_cache — 盘口缓存
 
@@ -218,6 +232,7 @@ rewards ← (独立；仅支持 live 实盘模式)
 copytrade ← (独立，集成 wallet_analysis)
 arbitrage ← (可能使用 orderbook_cache)
 news_ingestion ← (独立，输出供 signal pipeline 使用)
+maintenance ← (独立，集中数据库 retention 策略)
 orderbook_cache ← (共享基础设施 trait)
 ```
 
@@ -232,6 +247,7 @@ orderbook_cache ← (共享基础设施 trait)
 - Copytrade 已精简为只读钱包跟踪和分析：API 负责钱包配置和控制命令入队，worker 负责检测 source trades 与执行 Analyze；Run/Cancel/Reset 兼容命令当前不执行交易逻辑。
 - Wallet analysis 是纯计算，已完全实现
 - Arbitrage 是只读链路（发现/记录/校验/分析/展示），不会创建执行请求
+- Database maintenance 已集中覆盖非核心长期账本的高增长历史/缓存/队列表；live 账本类表（如 rewards fills/positions/account state）不在通用维护任务中删除，避免破坏对账。
 
 ## 修改检查清单
 

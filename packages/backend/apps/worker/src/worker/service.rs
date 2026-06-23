@@ -44,6 +44,31 @@ fn spawn_worker_tasks(state: &AppState, shutdown_rx: watch::Receiver<bool>) -> V
     let mut handles = Vec::new();
     let settings = &state.settings.worker;
 
+    if settings.database_maintenance {
+        let job_state = state.clone();
+        handles.push(spawn_interval_job(
+            "database-maintenance",
+            settings.database_maintenance_interval_secs,
+            shutdown_rx.clone(),
+            move || {
+                let state = job_state.clone();
+                async move {
+                    match run_database_maintenance_once(&state).await {
+                        Ok(report) => {
+                            log_database_maintenance_report(
+                                report,
+                                "completed worker database maintenance cycle",
+                            );
+                        }
+                        Err(error) => {
+                            warn!(error = %error, "worker database maintenance cycle failed");
+                        }
+                    }
+                }
+            },
+        ));
+    }
+
     if settings.poll_news {
         if state.settings.news.enabled {
             let job_state = state.clone();
@@ -181,6 +206,9 @@ fn spawn_worker_tasks(state: &AppState, shutdown_rx: watch::Receiver<bool>) -> V
                                 validation_book_failures = report.validation_book_failures,
                                 opportunities_expired = report.opportunities_expired,
                                 events_pruned = report.events_pruned,
+                                scans_pruned = report.scans_pruned,
+                                snapshots_pruned = report.snapshots_pruned,
+                                scan_opportunities_pruned = report.scan_opportunities_pruned,
                                 failed_books = report.failed_books,
                                 "completed worker arbitrage radar cycle",
                             ),

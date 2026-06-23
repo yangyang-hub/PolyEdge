@@ -775,4 +775,56 @@ impl ArbitrageStore for InMemoryMarketEventStore {
         events.retain(|event| event.occurred_at >= occurred_before);
         usize_to_u64(before.saturating_sub(events.len()))
     }
+
+    async fn prune_arbitrage_scan_history(
+        &self,
+        started_before: OffsetDateTime,
+    ) -> Result<ArbitrageHistoryPruneReport> {
+        let mut scans = self.arbitrage_scans.write().await;
+        let prune_scan_ids = scans
+            .values()
+            .filter(|scan| scan.started_at < started_before)
+            .map(|scan| scan.id.clone())
+            .collect::<HashSet<_>>();
+
+        if prune_scan_ids.is_empty() {
+            return Ok(ArbitrageHistoryPruneReport::default());
+        }
+
+        let scans_before = scans.len();
+        scans.retain(|scan_id, _| !prune_scan_ids.contains(scan_id));
+        let scans_deleted = usize_to_u64(scans_before.saturating_sub(scans.len()))?;
+        drop(scans);
+
+        let mut snapshots = self.market_book_snapshots.write().await;
+        let snapshots_before = snapshots.len();
+        snapshots.retain(|_, snapshot| !prune_scan_ids.contains(&snapshot.scan_id));
+        let snapshots_deleted = usize_to_u64(snapshots_before.saturating_sub(snapshots.len()))?;
+        drop(snapshots);
+
+        let mut opportunities = self.arbitrage_opportunities.write().await;
+        let prune_opportunity_ids = opportunities
+            .values()
+            .filter(|opportunity| prune_scan_ids.contains(&opportunity.scan_id))
+            .map(|opportunity| opportunity.id.clone())
+            .collect::<HashSet<_>>();
+        let opportunities_before = opportunities.len();
+        opportunities.retain(|_, opportunity| !prune_scan_ids.contains(&opportunity.scan_id));
+        let opportunities_deleted =
+            usize_to_u64(opportunities_before.saturating_sub(opportunities.len()))?;
+        drop(opportunities);
+
+        if !prune_opportunity_ids.is_empty() {
+            let mut validations = self.arbitrage_opportunity_validations.write().await;
+            validations.retain(|_, validation| {
+                !prune_opportunity_ids.contains(&validation.opportunity_id)
+            });
+        }
+
+        Ok(ArbitrageHistoryPruneReport {
+            scans_deleted,
+            snapshots_deleted,
+            opportunities_deleted,
+        })
+    }
 }

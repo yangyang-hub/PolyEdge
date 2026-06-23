@@ -64,6 +64,11 @@ pub trait ArbitrageStore: Send + Sync {
     ) -> Result<Paginated<ArbitrageEventView>>;
 
     async fn prune_arbitrage_events(&self, occurred_before: OffsetDateTime) -> Result<u64>;
+
+    async fn prune_arbitrage_scan_history(
+        &self,
+        started_before: OffsetDateTime,
+    ) -> Result<ArbitrageHistoryPruneReport>;
 }
 
 pub struct ArbitrageService {
@@ -304,6 +309,13 @@ impl ArbitrageService {
 
     pub async fn prune_events(&self, occurred_before: OffsetDateTime) -> Result<u64> {
         self.store.prune_arbitrage_events(occurred_before).await
+    }
+
+    pub async fn prune_scan_history(
+        &self,
+        started_before: OffsetDateTime,
+    ) -> Result<ArbitrageHistoryPruneReport> {
+        self.store.prune_arbitrage_scan_history(started_before).await
     }
 
     async fn is_repeated_opportunity(

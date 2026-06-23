@@ -3,13 +3,13 @@ use polyedge_application::{
     ArbitrageAnalysisRunView, ArbitrageOpportunityListFilters, ArbitrageOpportunityView,
     ArbitrageScanView, ArbitrageValidationConfig, AuthenticatedActor, BookSnapshot, BookSource,
     CachedOrderBook, CopyControlAction, CopyControlCommand, CopyTradeRunReport,
-    DispatchExecutionListFilters, ExecutionDispatchCandidate, ExecutionReconciliationCandidate,
-    FixtureBundle, FixtureEventRecord, FixtureEvidenceRecord, ManagedRewardOrder,
-    ManagedRewardOrderStatus, MarkExecutionFailedCommand, MarkExecutionSubmittedCommand,
-    MarketBookSnapshotView, MarketListFilters, MarketView, NewsIngestSourceCommand,
-    NewsIngestionItem, NewsRawEventListFilters, NewsRawEventView, NewsSourceFailureUpdate,
-    NewsSourceHealthListFilters, NewsSourceHealthView, OrderListFilters, PageQuery,
-    PostFillStrategy, REWARD_AI_CANDLE_INTERVAL_SEC, REWARD_AI_CANDLE_LIMIT_PER_TOKEN,
+    DatabaseMaintenanceReport, DispatchExecutionListFilters, ExecutionDispatchCandidate,
+    ExecutionReconciliationCandidate, FixtureBundle, FixtureEventRecord, FixtureEvidenceRecord,
+    ManagedRewardOrder, ManagedRewardOrderStatus, MarkExecutionFailedCommand,
+    MarkExecutionSubmittedCommand, MarketBookSnapshotView, MarketListFilters, MarketView,
+    NewsIngestSourceCommand, NewsIngestionItem, NewsRawEventListFilters, NewsRawEventView,
+    NewsSourceFailureUpdate, NewsSourceHealthListFilters, NewsSourceHealthView, OrderListFilters,
+    PageQuery, PostFillStrategy, REWARD_AI_CANDLE_INTERVAL_SEC, REWARD_AI_CANDLE_LIMIT_PER_TOKEN,
     ReconcileExecutionListFilters, ReconcileExternalTradeCommand, RewardAccountState,
     RewardAiAdvisoryRequest, RewardAiSuitability, RewardBookLevel, RewardBotConfig,
     RewardBotRunReport, RewardCandidateMarket, RewardControlAction, RewardControlCommand,
@@ -170,6 +170,9 @@ struct ArbitrageScanRunReport {
     validation_book_failures: usize,
     opportunities_expired: usize,
     events_pruned: u64,
+    scans_pruned: u64,
+    snapshots_pruned: u64,
+    scan_opportunities_pruned: u64,
     failed_books: usize,
 }
 
@@ -269,6 +272,11 @@ pub async fn run_cli() -> Result<()> {
             );
             Ok(())
         }
+        Some("run-database-maintenance-once") => {
+            let report = run_database_maintenance_once(&state).await?;
+            log_database_maintenance_report(report, "completed database maintenance once");
+            Ok(())
+        }
         Some("scan-arbitrage-once") => {
             let trace_id = new_trace_id();
             let report = scan_arbitrage_once(&state, &trace_id).await?;
@@ -282,6 +290,9 @@ pub async fn run_cli() -> Result<()> {
                 validation_book_failures = report.validation_book_failures,
                 opportunities_expired = report.opportunities_expired,
                 events_pruned = report.events_pruned,
+                scans_pruned = report.scans_pruned,
+                snapshots_pruned = report.snapshots_pruned,
+                scan_opportunities_pruned = report.scan_opportunities_pruned,
                 failed_books = report.failed_books,
                 "scanned arbitrage radar once",
             );
@@ -299,6 +310,9 @@ pub async fn run_cli() -> Result<()> {
                 validation_book_failures = report.validation_book_failures,
                 opportunities_expired = report.opportunities_expired,
                 events_pruned = report.events_pruned,
+                scans_pruned = report.scans_pruned,
+                snapshots_pruned = report.snapshots_pruned,
+                scan_opportunities_pruned = report.scan_opportunities_pruned,
                 failed_books = report.failed_books,
                 "arbitrage radar polling stopped",
             );
@@ -512,6 +526,7 @@ pub async fn run_cli() -> Result<()> {
 }
 
 include!("worker/service.rs");
+include!("worker/database_maintenance.rs");
 include!("worker/orderbook_registration.rs");
 include!("worker/service_info_risk.rs");
 include!("worker/execution_queue.rs");

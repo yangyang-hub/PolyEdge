@@ -222,6 +222,8 @@ impl Default for WorkerSettings {
             poll_copytrade: true,
             analyze_wallets: true,
             recompute_signals: true,
+            database_maintenance: true,
+            database_maintenance_interval_secs: 3_600,
             news_promotion_interval_secs: 60,
             signal_recompute_interval_secs: 120,
             arbitrage_analysis_interval_secs: 300,
@@ -242,7 +244,7 @@ impl Default for OrderbookStreamSettings {
             reward_candidate_token_cap: 50,
             ws_chunk_size: 100,
             max_levels_per_side: 100,
-            poll_reconcile_interval_secs: 60,
+            poll_reconcile_interval_secs: 10,
             stale_threshold_ms: 15_000,
             book_ttl_ms: 300_000, // 5 minutes
             token_refresh_interval_secs: 60,

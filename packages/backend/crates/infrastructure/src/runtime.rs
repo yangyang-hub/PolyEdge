@@ -6,17 +6,19 @@ use crate::{
         ExternalEventStore, InMemoryAuditLogSink, InMemoryCopyTradeStore,
         InMemoryExternalEventStore, InMemoryIdempotencyStore, InMemoryModeStateStore,
         InMemoryOrderbookCache, InMemoryOrderbookSubscriptionRegistry, InMemoryRewardBotStore,
-        InMemoryRiskStateStore, InMemoryRuntimeConfigStore, PostgresAuditLogSink,
-        PostgresCopyTradeStore, PostgresExternalEventStore, PostgresIdempotencyStore,
-        PostgresModeStateStore, PostgresRewardBotStore, PostgresRiskStateStore,
-        PostgresRuntimeConfigStore, RuntimeConfigStore,
+        InMemoryRiskStateStore, InMemoryRuntimeConfigStore, NoopDatabaseMaintenanceStore,
+        PostgresAuditLogSink, PostgresCopyTradeStore, PostgresDatabaseMaintenanceStore,
+        PostgresExternalEventStore, PostgresIdempotencyStore, PostgresModeStateStore,
+        PostgresRewardBotStore, PostgresRiskStateStore, PostgresRuntimeConfigStore,
+        RuntimeConfigStore,
     },
 };
 use polyedge_application::{
     ArbitrageService, ArbitrageStore, AuditLogSink, CopyTradeService, CopyTradeStore,
-    ExecutionService, IdempotencyStore, MarketEventService, MarketEventStore, ModeStateStore,
-    NewsIngestionService, NewsIngestionStore, OrderbookCache, OrderbookSubscriptionRegistry,
-    RewardBotService, RewardBotStore, RiskPolicy, RiskService, RiskStateStore, SystemModeService,
+    DatabaseMaintenanceService, DatabaseMaintenanceStore, ExecutionService, IdempotencyStore,
+    MarketEventService, MarketEventStore, ModeStateStore, NewsIngestionService, NewsIngestionStore,
+    OrderbookCache, OrderbookSubscriptionRegistry, RewardBotService, RewardBotStore, RiskPolicy,
+    RiskService, RiskStateStore, SystemModeService,
 };
 use polyedge_domain::{AppError, Result, SystemMode};
 use sqlx::{PgPool, Postgres, pool::PoolConnection, postgres::PgPoolOptions};
@@ -37,6 +39,7 @@ pub struct AppState {
     pub system_mode_service: Arc<SystemModeService>,
     pub market_event_service: Arc<MarketEventService>,
     pub news_ingestion_service: Arc<NewsIngestionService>,
+    pub database_maintenance_service: Arc<DatabaseMaintenanceService>,
     pub arbitrage_service: Arc<ArbitrageService>,
     pub reward_bot_service: Arc<RewardBotService>,
     pub risk_service: Arc<RiskService>,
@@ -232,18 +235,26 @@ impl Runtime {
                 Arc::new(InMemoryAuditLogSink::new()),
             )
         };
-        let (market_event_store, news_ingestion_store, arbitrage_store, reward_bot_store): (
+        let (
+            market_event_store,
+            news_ingestion_store,
+            arbitrage_store,
+            reward_bot_store,
+            database_maintenance_store,
+        ): (
             Arc<dyn MarketEventStore>,
             Arc<dyn NewsIngestionStore>,
             Arc<dyn ArbitrageStore>,
             Arc<dyn RewardBotStore>,
+            Arc<dyn DatabaseMaintenanceStore>,
         ) = if let Some(pool) = postgres.clone() {
             let store = Arc::new(PostgresMarketEventStore::new(pool.clone()));
             (
                 store.clone(),
                 store.clone(),
                 store,
-                Arc::new(PostgresRewardBotStore::new(pool)),
+                Arc::new(PostgresRewardBotStore::new(pool.clone())),
+                Arc::new(PostgresDatabaseMaintenanceStore::new(pool)),
             )
         } else {
             let store = Arc::new(InMemoryMarketEventStore::new());
@@ -252,6 +263,7 @@ impl Runtime {
                 store.clone(),
                 store,
                 Arc::new(InMemoryRewardBotStore::new()),
+                Arc::new(NoopDatabaseMaintenanceStore::new()),
             )
         };
         let copytrade_store: Arc<dyn CopyTradeStore> = if let Some(pool) = postgres.clone() {
@@ -266,6 +278,8 @@ impl Runtime {
         ));
         let market_event_service = Arc::new(MarketEventService::new(market_event_store));
         let news_ingestion_service = Arc::new(NewsIngestionService::new(news_ingestion_store));
+        let database_maintenance_service =
+            Arc::new(DatabaseMaintenanceService::new(database_maintenance_store));
         let arbitrage_service = Arc::new(ArbitrageService::new(arbitrage_store));
         let reward_bot_service = Arc::new(RewardBotService::new(reward_bot_store));
         let copytrade_service = Arc::new(CopyTradeService::new(copytrade_store));
@@ -306,6 +320,7 @@ impl Runtime {
                 system_mode_service,
                 market_event_service,
                 news_ingestion_service,
+                database_maintenance_service,
                 arbitrage_service,
                 reward_bot_service,
                 copytrade_service,
@@ -350,6 +365,9 @@ impl Runtime {
         let market_event_service = Arc::new(MarketEventService::new(market_event_store.clone()));
         let news_ingestion_service =
             Arc::new(NewsIngestionService::new(market_event_store.clone()));
+        let database_maintenance_service = Arc::new(DatabaseMaintenanceService::new(Arc::new(
+            NoopDatabaseMaintenanceStore::new(),
+        )));
         let arbitrage_service = Arc::new(ArbitrageService::new(market_event_store));
         let reward_bot_service = Arc::new(RewardBotService::new(reward_bot_store));
         let copytrade_service = Arc::new(CopyTradeService::new(copytrade_store));
@@ -392,6 +410,7 @@ impl Runtime {
             system_mode_service,
             market_event_service,
             news_ingestion_service,
+            database_maintenance_service,
             arbitrage_service,
             reward_bot_service,
             copytrade_service,

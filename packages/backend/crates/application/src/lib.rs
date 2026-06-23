@@ -4,6 +4,7 @@ mod arbitrage;
 mod copytrade;
 mod execution;
 mod list_filters;
+mod maintenance;
 mod market_event;
 mod news_ingestion;
 mod orderbook_cache;
@@ -16,11 +17,11 @@ pub mod wallet_analysis;
 
 pub use arbitrage::{
     ArbitrageAnalysisRunListFilters, ArbitrageAnalysisRunView, ArbitrageAnalysisSummary,
-    ArbitrageEventListFilters, ArbitrageEventType, ArbitrageEventView, ArbitrageMarketSummary,
-    ArbitrageOpportunityDraft, ArbitrageOpportunityListFilters, ArbitrageOpportunityStatus,
-    ArbitrageOpportunityType, ArbitrageOpportunityValidationView, ArbitrageOpportunityView,
-    ArbitrageScanListFilters, ArbitrageScanView, ArbitrageService, ArbitrageStore,
-    ArbitrageTypeCount, ArbitrageValidationConfig, ArbitrageValidationStatus,
+    ArbitrageEventListFilters, ArbitrageEventType, ArbitrageEventView, ArbitrageHistoryPruneReport,
+    ArbitrageMarketSummary, ArbitrageOpportunityDraft, ArbitrageOpportunityListFilters,
+    ArbitrageOpportunityStatus, ArbitrageOpportunityType, ArbitrageOpportunityValidationView,
+    ArbitrageOpportunityView, ArbitrageScanListFilters, ArbitrageScanView, ArbitrageService,
+    ArbitrageStore, ArbitrageTypeCount, ArbitrageValidationConfig, ArbitrageValidationStatus,
     MarketBookSnapshotView, build_arbitrage_analysis, detect_arbitrage_opportunities,
     market_book_snapshot_id, validate_arbitrage_opportunity,
 };
@@ -42,6 +43,10 @@ pub use execution::{
     OrderListFilters, OrderView, PositionListFilters, PositionView, ReconcileExecutionFillCommand,
     ReconcileExecutionListFilters, ReconcileExternalTradeCommand, SubmitExecutionCommand,
     SubmitExecutionStoreCommand, SyncExternalOrderStatusCommand, TradeListFilters, TradeView,
+};
+pub use maintenance::{
+    DatabaseMaintenanceCutoffs, DatabaseMaintenanceReport, DatabaseMaintenanceService,
+    DatabaseMaintenanceStore,
 };
 #[cfg(any(test, feature = "test-fixtures"))]
 pub use market_event::demo_fixture_bundle;

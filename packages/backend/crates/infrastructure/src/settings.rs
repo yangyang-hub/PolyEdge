@@ -192,6 +192,8 @@ pub struct WorkerSettings {
     pub poll_copytrade: bool,
     pub analyze_wallets: bool,
     pub recompute_signals: bool,
+    pub database_maintenance: bool,
+    pub database_maintenance_interval_secs: u64,
     pub news_promotion_interval_secs: u64,
     pub signal_recompute_interval_secs: u64,
     pub arbitrage_analysis_interval_secs: u64,

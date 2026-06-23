@@ -1,6 +1,6 @@
 # infrastructure（基础设施层）
 
-最后更新：2026-06-22
+最后更新：2026-06-23
 
 ## 概述
 
@@ -43,8 +43,8 @@
 | `ArbitrageSettings` | book_source、scan_limit、scanner_version |
 | `RewardsSettings` | enabled、poll_interval、AI provider API key/base URL/model/timeout/min confidence、信息风险扫描间隔/每轮 condition cap/置信度/web search 开关等 |
 | `NewsSettings` | enabled、poll_interval_secs、request_timeout_secs、max_items_per_source、sources（RSS/Atom 源列表） |
-| `WorkerSettings` | 各 worker 的启用标志和轮询间隔 |
-| `OrderbookStreamSettings` | WS 连接、轮询和 rewards candle history 配置（默认 `max_tokens=3000`、`reward_candidate_token_cap=50`、`ws_chunk_size=100`、`poll_reconcile_interval_secs=60`、`max_levels_per_side=100`、candle history enabled、interval=300s、request_delay=500ms、max_tokens_per_cycle=600） |
+| `WorkerSettings` | 各 worker 的启用标志和轮询间隔，包含数据库维护开关 `database_maintenance` 与 `database_maintenance_interval_secs` |
+| `OrderbookStreamSettings` | WS 连接、轮询和 rewards candle history 配置（默认 `max_tokens=3000`、`reward_candidate_token_cap=50`、`ws_chunk_size=100`、`poll_reconcile_interval_secs=10`、`max_levels_per_side=100`、candle history enabled、interval=300s、request_delay=500ms、max_tokens_per_cycle=600） |
 | `OrderbookServiceSettings` | orderbook HTTP port/service_url；`write_token` 控制 register/ingest/delete 内部写认证 |
 | `AuthSettings` / `AuthKeySettings` | 认证配置和密钥；`disabled` 可开启内网免鉴权模式 |
 | `CopytradeSettings` | 跟单配置 |
@@ -80,6 +80,7 @@ Orderbook candle history 默认由 orderbook 服务独立启用：`POLYEDGE_ORDE
 | `stores/risk_state.rs` | `RiskStateStore` | PostgreSQL/内存 |
 | `stores/idempotency.rs` | `IdempotencyStore` | PostgreSQL/内存 |
 | `stores/audit.rs` | `AuditLogSink` | PostgreSQL/内存 |
+| `stores/maintenance.rs` | `DatabaseMaintenanceStore` | PostgreSQL 分批清理 / 无数据库 no-op |
 | `stores/orderbook_cache.rs` | `OrderbookCache` | 内存（TTL + 定期清理 + 每侧盘口深度裁剪 + `entry_count` 真实条目统计）— 仅供 orderbook 服务内部使用；Worker/API 通过 `OrderbookHttpClient` 远程访问 |
 | `stores/orderbook_registry.rs` | `OrderbookSubscriptionRegistry` | 内存（来源有序 token 原子替换 + 确定性优先级聚合 + 来源/去重总数统计）— 仅供 orderbook 服务内部使用；Worker 通过 HTTP 注册 token |
 | `stores/orderbook_registry_tests.rs` | Registry 回归测试 | 原子 source 替换、优先级和跨 source 去重 |
@@ -95,6 +96,7 @@ Orderbook candle history 默认由 orderbook 服务独立启用：`POLYEDGE_ORDE
 - `runtime_config` bootstrap 在每次启动时用环境变量值覆盖数据库值（`ON CONFLICT ... DO UPDATE ... WHERE value IS DISTINCT FROM EXCLUDED.value`），确保环境变量始终优先；API 运行时修改仅在当前进程生命周期内生效，重启后恢复为环境变量值
 - 常量：`SYSTEM_RUNTIME_STATE_ID = "global"`、`RISK_STATE_ID = "global"`
 - `db_error(code, context)` 辅助函数统一创建 `dependency_unavailable` 错误
+- `PostgresDatabaseMaintenanceStore` 使用 `WITH doomed AS (SELECT ctid ... LIMIT $n) DELETE ... USING doomed` 模式分批删除，每个表每轮最多 20 批、每批 10,000 行，避免单次超大事务；无 Postgres 环境使用 `NoopDatabaseMaintenanceStore`
 - `RewardBotStore` 的 Postgres key-value 配置读写覆盖全部 rewards 报价/风控配置字段（市场质量门槛、`quote_bid_rank`、quote/selection mode、dominant probability/depth/concentration、preferred categories、低竞争 sleeve mode/额度/竞争/退出/稳定性阈值、AI advisory 开关/provider/request format/TTL/批量大小、信息风险开关/mode/过滤等级/TTL/批量大小、depth/rank/velocity/requote/reconcile，以及 `requote_drift_confirm_sec` / `requote_drift_cooldown_sec` / `requote_drift_max_cancels_per_cycle` 换价 guard）；`execution_mode`、`quote_edge_cents`、`reward_competition_factor`、`single_sided_divisor_c`、`fill_rate_per_tick`、`max_fill_ratio` 和 `auto_cancel_stale_minutes` 旧键保留用于向后兼容但被忽略。`quote_bid_rank` 保存为 1–3，默认 1；`exit_markup_cents` 默认 0，表示 `exit_at_markup` 成交后按被吃买单原价挂卖；`ai_advisory_batch_size` / `info_risk_batch_size` 保存为 1–12，默认 1 表示逐市场 provider 请求。
 - `RewardBotStore.latest_market_advisory()` 和 `save_market_advisory()` 在 Postgres 与内存实现中读写 `reward_market_advisories`；缓存 key 为 condition/provider/request_format/model/input_hash，且只返回 `expires_at > now` 的记录。Postgres 行映射 helper 解析 suitability、quote mode、exit policy、reasons JSON 和 metrics JSON。
 - `RewardBotStore.latest_market_info_risk(s)` 和 `save_market_info_risk()` 在 Postgres 与内存实现中读写 `reward_market_info_risks`；请求缓存 key 为 condition/provider/request_format/model/input_hash，批量读取按 condition 返回最新未过期记录。Postgres 行映射 helper 解析 risk level/type/direction、sources JSON 和 metrics JSON。
@@ -117,10 +119,12 @@ Orderbook candle history 默认由 orderbook 服务独立启用：`POLYEDGE_ORDE
 
 **Postgres 实现**（`catalog/postgres/`）：通过 `include!` 拆分为多个子文件
 - `market_event/` — 最大的存储模块，包含 queries、execution_updates 等
-- `arbitrage.rs` — 套利数据存储
+- `arbitrage.rs` — 套利数据存储；扫描历史按 retention 分批删除旧 `arbitrage_scans`，通过 FK cascade 清理 `market_book_snapshots` / opportunities
 - `helpers/` — 共享辅助文件：`fetch.rs`、`market_rows.rs`、`news_rows.rs`、`arbitrage_rows.rs`、`event_rows.rs`、`execution_rows.rs`、`calculations.rs`
 
 **In-memory 实现**（`catalog/in_memory.rs`，~24KB）：用于测试和无数据库环境
+
+Arbitrage store 的 Postgres 和 in-memory 实现均支持 `prune_arbitrage_scan_history()`；Postgres 每次最多执行 20 批、每批 250 个旧 scan 的删除，先统计将被级联删除的 snapshots/opportunities，再删除 scan，避免单次超大事务；in-memory 实现同步移除对应 snapshots、opportunities 和 validations。
 
 ### Auth — 认证中间件
 
@@ -164,10 +168,11 @@ Orderbook candle history 默认由 orderbook 服务独立启用：`POLYEDGE_ORDE
 - 认证中间件支持 JWT/dev-auth 和内网免鉴权模式；当前部署模板默认 `POLYEDGE_AUTH__DISABLED=true`
 - Orderbook cache 当前 runtime 使用进程内 `InMemoryOrderbookCache`；Redis 实现保留但未接入默认 runtime
 - Orderbook 服务的 `/orderbook/stats` 现在区分真实 cache 条目数、registry 来源数和 registry 去重 token 总数，避免把订阅 token 数误报为缓存条目数；worker 注册 rewards 候选预热 token 受 `POLYEDGE_ORDERBOOK_STREAM__REWARD_CANDIDATE_TOKEN_CAP` 限制，默认 50，设为 0 后周期注册任务会按空结果防抖清空候选预热 source
-- Orderbook 进程内缓存会先保留最优价格顺序，再按 `POLYEDGE_ORDERBOOK_STREAM__MAX_LEVELS_PER_SIDE` 裁剪每侧 bids/asks 深度，默认 100 档；HTTP register/batch/ingest 入口使用 `max_tokens` 做请求规模上限，Polymarket WS 订阅使用 `POLYEDGE_ORDERBOOK_STREAM__WS_CHUNK_SIZE` 控制每条连接承载的 token 数（默认 100），poll reconcile 默认 60 秒，register 会原子替换对应 source 当前有序 token 集合，worker 对周期注册空集合做 active/exec 2 轮、eligible/candidates 3 轮防抖后才发送空集合清源，ingest 会先校验整批数据再批量写入并传播缓存错误，registry source 固定上限为 32 个
+- Orderbook 进程内缓存会先保留最优价格顺序，再按 `POLYEDGE_ORDERBOOK_STREAM__MAX_LEVELS_PER_SIDE` 裁剪每侧 bids/asks 深度，默认 100 档；HTTP register/batch/ingest 入口使用 `max_tokens` 做请求规模上限，Polymarket WS 订阅使用 `POLYEDGE_ORDERBOOK_STREAM__WS_CHUNK_SIZE` 控制每条连接承载的 token 数（默认 100），poll reconcile 默认 10 秒，register 会原子替换对应 source 当前有序 token 集合，worker 对周期注册空集合做 active/exec 2 轮、eligible/candidates 3 轮防抖后才发送空集合清源，ingest 会先校验整批数据再批量写入并传播缓存错误，registry source 固定上限为 32 个
 - Orderbook 缓存拒绝旧 `observed_at` 覆盖未过期条目，但已过期条目可被后续写入恢复；rewards 控制命令具备 5 分钟 running lease，并会合并 pending/running 重复命令；Postgres rewards live worker 通过 advisory lease 避免多实例并发执行
 - Rewards managed order upsert 会更新后续实际提交的 `price` / `size` / `strategy_bucket`，保证 flatten 改价、CLOB 数量调整、未知提交恢复和低竞争 bucket 统计使用持久化后的真实参数
 - Rewards store 已持久化 quote/selection mode、dominant 单边阈值、盘口集中度阈值、偏好分类、低竞争 sleeve 配置、AI advisory 配置和信息风险配置；`reward_market_advisories`、`reward_market_info_risks`、`reward_low_competition_observations` 与 `reward_market_candles` 表已由迁移创建，并已接入 Postgres/内存读写，供 worker 跳过重复模型判断、生成低竞争 shadow report，并向 AI advisory 提供 price-history K 线。
+- 数据库维护 store 已接入 runtime：Postgres 环境定期清理 raw events、AI/info-risk cache、reward candles、控制命令、copytrade 历史、outbox/external dedup、LLM call、audit 和 mode transition 历史；in-memory/test runtime 使用 no-op，避免测试状态被后台任务改变。
 - Rewards store 已支持外部账户余额和完整持仓快照同步；成功空持仓快照会清空目标账户持仓，失败响应不会破坏上一版，最近 confirmed fill 时间用于 worker 的 120 秒账户快照保护；worker 写入的资金钱包地址优先使用 `FUNDER`，CLOB 余额为 0/失败时可用 Polygon pUSD 链上余额回填 snapshot
 - `markets` 保存 Gamma `liquidity_usd`、`end_at` 和本地 `synced_at`；Postgres market upsert 使用单条 `INSERT .. ON CONFLICT DO UPDATE WHERE` 表达新增、真实数据变化更新和 freshness-only 刷新，返回实际写入行数，并在每批事务内设置短 `lock_timeout` / `statement_timeout`。默认调用仍刷新 `synced_at`，orderbook full sync 通过 `MarketUpsertOptions` 只刷新超过新鲜度阈值的安静市场，priority sync 继续强制刷新重点市场，避免 rewards 关键市场因目录新鲜度过低被误判。
 - MarketEventStore 的 Postgres 实现支持 `get_markets_by_ids()` 通过 `m.id = ANY($1)` 批量读取少量相关市场，API 风险快照用它替代全量 markets 列表，避免控制台风险页在大市场表上触发 `LIMIT 65535` 的慢查询。

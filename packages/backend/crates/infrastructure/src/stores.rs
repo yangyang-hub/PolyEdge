@@ -2,10 +2,11 @@ use async_trait::async_trait;
 use polyedge_application::{
     AuditLogEntry, AuditLogSink, CopyControlAction, CopyControlCommand, CopyControlCommandStatus,
     CopyEvent, CopyEventSeverity, CopyOrderSide, CopySizingMode, CopyTradeConfig, CopyTradeMode,
-    CopyTradeStore, IdempotencyBegin, IdempotencyRequest, IdempotencyStore, ManagedRewardOrder,
-    ManagedRewardOrderStatus, ModeSnapshot, ModeStateStore, ModeTransitionCommand,
-    PostFillStrategy, RewardAccountState, RewardAiAdvisoryRequest, RewardAiProvider,
-    RewardAiRequestFormat, RewardAiSuitability, RewardBotConfig, RewardBotStore,
+    CopyTradeStore, DatabaseMaintenanceCutoffs, DatabaseMaintenanceReport,
+    DatabaseMaintenanceStore, IdempotencyBegin, IdempotencyRequest, IdempotencyStore,
+    ManagedRewardOrder, ManagedRewardOrderStatus, ModeSnapshot, ModeStateStore,
+    ModeTransitionCommand, PostFillStrategy, RewardAccountState, RewardAiAdvisoryRequest,
+    RewardAiProvider, RewardAiRequestFormat, RewardAiSuitability, RewardBotConfig, RewardBotStore,
     RewardCandidateFilter, RewardControlAction, RewardControlCommand, RewardControlCommandStatus,
     RewardFill, RewardFillRole, RewardHistoryPruneReport, RewardInfoDirectionalRisk,
     RewardInfoRiskAssessmentRequest, RewardInfoRiskLevel, RewardInfoRiskSource, RewardInfoRiskType,
@@ -23,7 +24,7 @@ use polyedge_domain::{
 };
 use rust_decimal::Decimal;
 use serde_json::{Value, json};
-use sqlx::{PgPool, Row, types::Json};
+use sqlx::{PgPool, Postgres, Row, types::Json};
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
     str::FromStr,
@@ -52,6 +53,7 @@ include!("stores/risk_state.rs");
 include!("stores/idempotency.rs");
 include!("stores/external_event.rs");
 include!("stores/audit.rs");
+include!("stores/maintenance.rs");
 include!("stores/rewards/postgres_market_methods.rs");
 include!("stores/rewards/postgres_candles.rs");
 include!("stores/rewards.rs");

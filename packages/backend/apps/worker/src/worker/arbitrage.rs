@@ -172,6 +172,13 @@ async fn scan_arbitrage_once(state: &AppState, trace_id: &str) -> Result<Arbitra
         .arbitrage_service
         .prune_events(event_retention_cutoff)
         .await?;
+    let history_pruned = state
+        .arbitrage_service
+        .prune_scan_history(event_retention_cutoff)
+        .await?;
+    report.scans_pruned = history_pruned.scans_deleted;
+    report.snapshots_pruned = history_pruned.snapshots_deleted;
+    report.scan_opportunities_pruned = history_pruned.opportunities_deleted;
 
     Ok(report)
 }
@@ -195,6 +202,13 @@ async fn poll_arbitrage_radar(
         total.validation_book_failures += report.validation_book_failures;
         total.opportunities_expired += report.opportunities_expired;
         total.events_pruned = total.events_pruned.saturating_add(report.events_pruned);
+        total.scans_pruned = total.scans_pruned.saturating_add(report.scans_pruned);
+        total.snapshots_pruned = total
+            .snapshots_pruned
+            .saturating_add(report.snapshots_pruned);
+        total.scan_opportunities_pruned = total
+            .scan_opportunities_pruned
+            .saturating_add(report.scan_opportunities_pruned);
         total.failed_books += report.failed_books;
         cycles += 1;
 
@@ -209,6 +223,9 @@ async fn poll_arbitrage_radar(
             validation_book_failures = report.validation_book_failures,
             opportunities_expired = report.opportunities_expired,
             events_pruned = report.events_pruned,
+            scans_pruned = report.scans_pruned,
+            snapshots_pruned = report.snapshots_pruned,
+            scan_opportunities_pruned = report.scan_opportunities_pruned,
             failed_books = report.failed_books,
             "completed arbitrage radar polling cycle",
         );

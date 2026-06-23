@@ -1,5 +1,8 @@
 use super::*;
 
+const ARBITRAGE_SCAN_PRUNE_BATCH_SIZE: i64 = 250;
+const ARBITRAGE_SCAN_PRUNE_MAX_BATCHES: usize = 20;
+
 #[async_trait]
 impl ArbitrageStore for PostgresMarketEventStore {
     async fn start_arbitrage_scan(&self, scan: &ArbitrageScanView) -> Result<()> {
@@ -716,5 +719,102 @@ impl ArbitrageStore for PostgresMarketEventStore {
         })?;
 
         Ok(result.rows_affected())
+    }
+
+    async fn prune_arbitrage_scan_history(
+        &self,
+        started_before: OffsetDateTime,
+    ) -> Result<ArbitrageHistoryPruneReport> {
+        let mut total = ArbitrageHistoryPruneReport::default();
+
+        for _ in 0..ARBITRAGE_SCAN_PRUNE_MAX_BATCHES {
+            let mut transaction = self.pool.begin().await.map_err(|error| {
+                db_error(
+                    "POSTGRES_TRANSACTION_BEGIN_FAILED",
+                    format!("failed to begin arbitrage scan history prune: {error}"),
+                )
+            })?;
+
+            let row = sqlx::query(
+                r#"
+                WITH prune_scans AS MATERIALIZED (
+                    SELECT id
+                    FROM arbitrage_scans
+                    WHERE started_at < $1
+                    ORDER BY started_at ASC, id ASC
+                    LIMIT $2
+                ),
+                prune_counts AS (
+                    SELECT
+                        (SELECT COUNT(*) FROM prune_scans) AS scans_deleted,
+                        (
+                            SELECT COUNT(*)
+                            FROM market_book_snapshots
+                            WHERE scan_id IN (SELECT id FROM prune_scans)
+                        ) AS snapshots_deleted,
+                        (
+                            SELECT COUNT(*)
+                            FROM arbitrage_opportunities
+                            WHERE scan_id IN (SELECT id FROM prune_scans)
+                        ) AS opportunities_deleted
+                ),
+                deleted_scans AS (
+                    DELETE FROM arbitrage_scans scans
+                    USING prune_scans prune
+                    WHERE scans.id = prune.id
+                    RETURNING 1
+                )
+                SELECT
+                    COALESCE((SELECT COUNT(*) FROM deleted_scans), 0) AS scans_deleted,
+                    COALESCE(prune_counts.snapshots_deleted, 0) AS snapshots_deleted,
+                    COALESCE(prune_counts.opportunities_deleted, 0) AS opportunities_deleted
+                FROM prune_counts
+                "#,
+            )
+            .bind(started_before)
+            .bind(ARBITRAGE_SCAN_PRUNE_BATCH_SIZE)
+            .fetch_one(&mut *transaction)
+            .await
+            .map_err(|error| {
+                db_error(
+                    "POSTGRES_DELETE_FAILED",
+                    format!("failed to prune arbitrage scan history: {error}"),
+                )
+            })?;
+
+            transaction.commit().await.map_err(|error| {
+                db_error(
+                    "POSTGRES_TRANSACTION_COMMIT_FAILED",
+                    format!("failed to commit arbitrage scan history prune: {error}"),
+                )
+            })?;
+
+            let batch = ArbitrageHistoryPruneReport {
+                scans_deleted: i64_to_u64("scans_deleted", row.get("scans_deleted"))?,
+                snapshots_deleted: i64_to_u64("snapshots_deleted", row.get("snapshots_deleted"))?,
+                opportunities_deleted: i64_to_u64(
+                    "opportunities_deleted",
+                    row.get("opportunities_deleted"),
+                )?,
+            };
+
+            if batch.scans_deleted == 0 {
+                break;
+            }
+
+            total.scans_deleted = total.scans_deleted.saturating_add(batch.scans_deleted);
+            total.snapshots_deleted = total
+                .snapshots_deleted
+                .saturating_add(batch.snapshots_deleted);
+            total.opportunities_deleted = total
+                .opportunities_deleted
+                .saturating_add(batch.opportunities_deleted);
+
+            if batch.scans_deleted < ARBITRAGE_SCAN_PRUNE_BATCH_SIZE as u64 {
+                break;
+            }
+        }
+
+        Ok(total)
     }
 }

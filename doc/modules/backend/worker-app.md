@@ -21,6 +21,7 @@ Worker 代码现在同时提供共享库和兼容 CLI。`polyedge-api` 在同一
 | `main.rs` | 薄 CLI 入口，调用 `polyedge_worker::run_cli()` |
 | `worker/service.rs` | `WorkerRuntime` 生命周期与后台任务编排 |
 | `worker/service_info_risk.rs` | WorkerRuntime 中 rewards 信息风险扫描任务接线 |
+| `worker/database_maintenance.rs` | 数据库维护任务：定期调用 `DatabaseMaintenanceService` 并记录逐表清理统计 |
 | `worker/orderbook_registration.rs` | Worker orderbook token 注册：周期注册 rewards/执行订单 token，并在 rewards 新买单持久化后即时刷新 `rewards_active` source |
 | `worker/market_sync.rs` | 市场同步 CLI 兼容入口：Gamma liquidity/end time → `markets` + Rewards API → `reward_markets` |
 | `worker/news.rs` | 新闻采集入口 |
@@ -65,6 +66,7 @@ Worker 代码现在同时提供共享库和兼容 CLI。`polyedge-api` 在同一
 | `run`（默认） | `run_worker_service` | 兼容长期 worker 循环；正常部署由 API 内嵌 runtime 代替 |
 | `sync-markets-once` | `sync_markets_once` | 一次性市场同步 |
 | `ingest-news-once` | `ingest_news_once` | 一次性新闻采集 |
+| `run-database-maintenance-once` | `run_database_maintenance_once` | 一次性执行数据库历史/缓存/队列表 retention 清理 |
 | `poll-news` | `poll_news` | 持续新闻轮询 |
 | `promote-news-events` | `promote_news_events` | 新闻提升为 events |
 | `scan-arbitrage-once` | `scan_arbitrage_once` | 一次性套利扫描 |
@@ -85,6 +87,17 @@ Worker 代码现在同时提供共享库和兼容 CLI。`polyedge-api` 在同一
 | `consume-polymarket-user-events` | `consume_polymarket_user_events` | 消费 Polymarket WS 事件 |
 
 ## 核心 Worker 数据流
+
+### database-maintenance — 数据库维护
+
+```
+run_database_maintenance_once()
+    → DatabaseMaintenanceService.prune_history(now)
+    → PostgresDatabaseMaintenanceStore 按 retention cutoff 分批 DELETE
+    → 日志输出逐表 deleted 计数和 total_deleted
+```
+
+内嵌 worker runtime 默认通过 `POLYEDGE_WORKER__DATABASE_MAINTENANCE=true` 每 3600 秒执行一次；本地 `.env.example` 默认关闭，避免开发进程意外清历史。当前覆盖 raw events、AI/info-risk 过期缓存、reward price-history candles、rewards/copytrade 控制命令、copytrade events/source trades、outbox/external dedup、LLM calls、audit logs 和 mode transitions。每个表每轮最多 20 批、每批 10,000 行；清理失败只记录 warn，不影响其他 worker 循环。
 
 ### market_sync — 市场同步（已迁移到 orderbook 服务）
 
@@ -185,9 +198,12 @@ market_event_service.list_markets(status=Open)
     → 对每个市场获取盘口
     → detect_arbitrage_opportunities()
     → arbitrage_service.record_*()
+    → prune old arbitrage_events and arbitrage_scans by retention cutoff
 ```
 
-Report: `ArbitrageScanRunReport { markets_scanned, snapshots/opportunities/validations recorded, expired, pruned }`
+Report: `ArbitrageScanRunReport { markets_scanned, snapshots/opportunities/validations recorded, expired, events_pruned, scans_pruned, snapshots_pruned, scan_opportunities_pruned }`
+
+每轮扫描完成后，worker 使用 `arbitrage.event_retention_hours` 计算 cutoff：先清理旧 `arbitrage_events`，再删除 cutoff 前的旧 `arbitrage_scans`。`market_book_snapshots`、`arbitrage_opportunities` 和 validations 通过数据库外键级联删除；Postgres 实现分批删除旧 scan，避免 `market_book_snapshots` 因持续扫描无限膨胀。
 
 ### news — 新闻采集
 
@@ -209,7 +225,9 @@ Report: `NewsIngestionRunReport { sources_scanned/succeeded/failed, fetched, ins
 ## 当前状态
 
 - 常用维护/调试子命令已实现，`polyedge-worker` 仍作为 CLI 兼容入口保留
-- `run` 主循环包含 register-orderbook-tokens、rewards、copytrade、arbitrage、news、execution、signal-recompute 等任务
+- `run` 主循环包含 database-maintenance、register-orderbook-tokens、rewards、copytrade、arbitrage、news、execution、signal-recompute 等任务
+- database-maintenance 默认生产模板开启、本地模板关闭；它集中清理可增长历史/缓存/队列表，避免 `reward_market_candles`、AI/info-risk cache、raw events、copytrade/source trade、控制命令、outbox/dedup、LLM/audit 等表无限膨胀。
+- arbitrage 每轮扫描结束后按 `arbitrage.event_retention_hours` 自动清理旧 scan 历史；旧 `market_book_snapshots` 通过 `arbitrage_scans` 外键级联删除，日志会输出 `scans_pruned`、`snapshots_pruned` 和 `scan_opportunities_pruned`
 - news worker 当前只抓取 RSS/Atom XML feed；未配置 `POLYEDGE_NEWS__SOURCES_JSON` 时会读取内置默认源列表，部署模板显式写入默认源并默认设置 `POLYEDGE_NEWS__ENABLED=true`、`POLYEDGE_WORKER__POLL_NEWS=true`
 - rewards worker 会通过数据库命令队列接收前端 Run / Cancel / Reset 请求，API 进程不再执行 rewards 策略；仅支持 live 实盘模式，策略配置不依赖全局 system mode，但新买单和现有买单撤单遵守全局 kill switch
 - copytrade worker 会通过数据库命令队列接收前端兼容控制命令；当前前端只暴露 Analyze，Run/Cancel/Reset 不再作为产品入口。API 进程不抓取 copytrade 输入，worker 负责 Data API 抓取、source trades 检测和钱包分析
