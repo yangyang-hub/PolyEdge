@@ -18,6 +18,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
+use time::OffsetDateTime;
 use tokio::sync::{RwLock, mpsc};
 use tokio::task::JoinSet;
 use tracing::{debug, info, warn};
@@ -132,9 +133,10 @@ pub async fn run_orderbook_stream(
             for chunk in targets.chunks(100) {
                 match connector.fetch_order_books(chunk).await {
                     Ok(books) => {
+                        let poll_observed_at = current_unix_millis();
                         for book in books {
                             let cached = normalized_cached_book(
-                                reward_book_to_cached(&book),
+                                reward_book_to_cached(&book, poll_observed_at),
                                 poll_max_levels,
                             );
                             if let Err(error) = set_book_and_publish_if_current(
@@ -1272,19 +1274,10 @@ fn normalized_cached_book(
     book
 }
 
-fn reward_book_to_cached(book: &polyedge_connectors::PolymarketRewardOrderBook) -> CachedOrderBook {
-    let observed_at_ms = book
-        .observed_at
-        .unix_timestamp_nanos()
-        .div_euclid(1_000_000);
-    let observed_at = i64::try_from(observed_at_ms).unwrap_or_else(|_| {
-        if observed_at_ms.is_negative() {
-            i64::MIN
-        } else {
-            i64::MAX
-        }
-    });
-
+fn reward_book_to_cached(
+    book: &polyedge_connectors::PolymarketRewardOrderBook,
+    observed_at: i64,
+) -> CachedOrderBook {
     CachedOrderBook {
         token_id: book.token_id.clone(),
         bids: book
@@ -1308,9 +1301,23 @@ fn reward_book_to_cached(book: &polyedge_connectors::PolymarketRewardOrderBook) 
     }
 }
 
+fn current_unix_millis() -> i64 {
+    let millis = OffsetDateTime::now_utc()
+        .unix_timestamp_nanos()
+        .div_euclid(1_000_000);
+    i64::try_from(millis).unwrap_or_else(|_| {
+        if millis.is_negative() {
+            i64::MIN
+        } else {
+            i64::MAX
+        }
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use polyedge_connectors::{PolymarketRewardBookLevel, PolymarketRewardOrderBook};
     use polyedge_infrastructure::stores::InMemoryOrderbookCache;
     use rust_decimal::Decimal;
 
@@ -1369,6 +1376,30 @@ mod tests {
             poll_reconcile_targets(&current, &stale, 2),
             vec!["stale".to_string(), "fresh".to_string()]
         );
+    }
+
+    #[test]
+    fn poll_cached_book_uses_local_poll_observation_time() {
+        let upstream_observed_at = OffsetDateTime::from_unix_timestamp(1_700_000_000).unwrap();
+        let book = PolymarketRewardOrderBook {
+            token_id: "123".to_string(),
+            bids: vec![PolymarketRewardBookLevel {
+                price: Decimal::new(49, 2),
+                size: Decimal::from(10_u64),
+            }],
+            asks: vec![PolymarketRewardBookLevel {
+                price: Decimal::new(51, 2),
+                size: Decimal::from(11_u64),
+            }],
+            observed_at: upstream_observed_at,
+        };
+
+        let cached = reward_book_to_cached(&book, 1_800_000_000_123);
+
+        assert_eq!(cached.observed_at, 1_800_000_000_123);
+        assert_eq!(cached.source, BookSource::Poll);
+        assert_eq!(cached.bids[0].price, Decimal::new(49, 2));
+        assert_eq!(cached.asks[0].price, Decimal::new(51, 2));
     }
 
     #[test]

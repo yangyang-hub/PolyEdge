@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Menu, Power } from "lucide-react";
 import { useState } from "react";
@@ -69,7 +68,7 @@ export function ConsoleTopbar({
                   const label = dictionary.nav[labelKey];
 
                   return (
-                    <Link
+                    <a
                       key={href}
                       href={href}
                       onClick={() => setMobileMenuOpen(false)}
@@ -82,7 +81,7 @@ export function ConsoleTopbar({
                     >
                       <Icon className="size-4 shrink-0" />
                       <span>{label}</span>
-                    </Link>
+                    </a>
                   );
                 })}
               </nav>
@@ -108,10 +107,10 @@ export function ConsoleTopbar({
                   : "rounded-sm bg-destructive/85 text-destructive-foreground shadow-[0_0_18px_rgba(255,180,171,0.12)] hover:bg-destructive hover:shadow-[0_0_18px_rgba(255,180,171,0.32)]"
               }
             >
-              <Link href="/risk">
+              <a href="/risk">
                 <Power className="size-4" />
                 {killSwitchActive ? dictionary.topbar.killSwitchActive : dictionary.topbar.killSwitch}
-              </Link>
+              </a>
             </Button>
           ) : null}
         </div>

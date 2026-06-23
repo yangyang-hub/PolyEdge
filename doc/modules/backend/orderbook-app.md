@@ -80,7 +80,7 @@ Orderbook registry + rewards active/planned/candidate/fallback condition ids
 Worker register sources
     → POST /orderbook/register
     → OrderbookSubscriptionRegistry
-    → CLOB WS + /books batch poll（使用 CLOB 响应 timestamp；遗漏/失败时回退 /book）
+    → CLOB WS + /books batch poll（poll 写入使用本地接收时间刷新缓存 freshness；遗漏/失败时回退 /book）
     → InMemoryOrderbookCache
     → API / Worker 通过 OrderbookHttpClient 读取
     → Worker 通过 GET /orderbook/stream 接收内部实时推送并维护本地 cache
@@ -96,7 +96,7 @@ Active reward tokens
 - 市场同步、registry、分片 WS `book` + `price_change`、全注册 token 周期 poll reconcile、HTTP 读取、内部 WS 推送和内部写认证已实现；poll 可修复 fresh cache 中未被察觉的 WS 增量丢失，并通过内部 WS 广播给 worker 本地 cache；内部 WS client 建连最多等待 5 秒，避免不可达地址阻塞调用方。
 - Orderbook crate 已从 `packages/backend/apps/orderbook` 拆到顶层 `packages/orderbook`，仍作为 `packages/Cargo.toml` Rust workspace member 构建。
 - orderbook stream 的 token refresh 已接入 registry 变更通知，首次注册和后续成员变化可立即触发检查；仍避免仅因 registry 聚合顺序变化触发 WS 重订/重连，只有订阅 token 成员真实增删并经过短暂 debounce 后仍变化时，默认增量模式才对 diff 做 subscribe/unsubscribe（保持连接存活），`WS_INCREMENTAL_RECONCILE=false` 时才整体重建 Polymarket WS 订阅。
-- poll 盘口保留 CLOB 返回的服务端毫秒时间戳，不再用 HTTP 响应完成时间伪造新鲜度；batch HTTP 读取通过一次 cache 批量读锁返回。
+- poll 盘口写入使用本地接收时间作为缓存 `observed_at`，表示服务刚确认过完整盘口；CLOB 响应 timestamp 只代表上游盘口版本，安静市场可能长期不变，不能作为 rewards live placement 的 freshness。batch HTTP 读取通过一次 cache 批量读锁返回。
 - Gamma full sync、Gamma priority sync 与 rewards 目录同步在 orderbook 服务中使用三个独立后台循环；rewards 分页和详情补全可能持续很多分钟，但不会阻塞 Gamma `markets.synced_at` 刷新。Gamma full/priority 写入 `markets` 时在 orderbook 进程内串行化，并由 Postgres `lock_timeout` / `statement_timeout` 快速失败，避免一次慢锁等待拖垮后续周期。priority sync 会在全量目录之间强制刷新重点 condition，避免已挂单/已订阅/rewards 筛选市场仅因目录新鲜度过低被策略撤单。rewards 详情补全后仍缺 token 或空目录异常时保留上一版 rewards catalog，不执行破坏性全量替换。
 - Gamma market upsert 保存 `liquidity_usd`、`end_at` 和本地 `synced_at`；full sync 跳过同版本同内容行，并按 rewards 新鲜度窗口对安静市场做限频 `synced_at` refresh，priority sync 对重点市场强制 refresh。Postgres upsert 使用单条 `INSERT .. ON CONFLICT DO UPDATE WHERE` 表达新增、内容变化和 freshness-only 刷新。rewards 候选使用该本地同步时间判断目录新鲜度，不依赖市场是否刚好发生上游业务更新。
 - Priority sync 使用本地 `markets` 表把 registry token 映射到 Gamma condition id；无 Postgres 时跳过该映射，仍可使用 rewards service 提供的重点 condition。active rewards catalog fallback 会在 priority 集合未满时按奖励排序继续补充 condition id，避免候选 freshness 全部过期后只能等待 full sync 恢复。
