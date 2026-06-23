@@ -43,6 +43,49 @@ fn transient_live_orderbook_skip_reasons_are_not_carried() {
 }
 
 #[test]
+fn waiting_orderbook_readiness_overrides_preserved_live_legs() {
+    let now = OffsetDateTime::now_utc();
+    let plan = RewardQuotePlan {
+        condition_id: "cond_waiting_book".to_string(),
+        market_slug: "waiting-book-market".to_string(),
+        question: "Will this market keep old legs?".to_string(),
+        score: Decimal::ONE,
+        eligible: true,
+        pre_ai_eligible: true,
+        quote_readiness: RewardQuoteReadiness::ReadyToQuote,
+        reason: "waiting for fresh orderbook data from subscription: Yes orderbook too close to stale".to_string(),
+        strategy_bucket: RewardStrategyBucket::Standard,
+        quote_mode: RewardPlanQuoteMode::Double,
+        recommended_quote_mode: Some(RewardPlanQuoteMode::Double),
+        book_metrics: None,
+        low_competition_metrics: None,
+        ai_advisory: None,
+        info_risk: None,
+        midpoint: Some(Decimal::new(5, 1)),
+        live_skip_until: None,
+        live_skip_reason: None,
+        total_daily_rate: Decimal::ONE,
+        rewards_max_spread: Decimal::ONE,
+        rewards_min_size: Decimal::ONE,
+        orderbook_token_ids: vec!["yes_token".to_string(), "no_token".to_string()],
+        legs: vec![RewardQuoteLeg {
+            token_id: "yes_token".to_string(),
+            outcome: "Yes".to_string(),
+            side: RewardOrderSide::Buy,
+            price: Decimal::new(5, 1),
+            size: Decimal::ONE,
+            notional_usd: Decimal::new(5, 1),
+        }],
+        updated_at: now,
+    };
+
+    assert_eq!(
+        reward_quote_plan_readiness(&plan),
+        RewardQuoteReadiness::WaitingOrderbook
+    );
+}
+
+#[test]
 fn quote_plan_book_token_registration_uses_persisted_orderbook_tokens() {
     let now = OffsetDateTime::now_utc();
     let plan = RewardQuotePlan {

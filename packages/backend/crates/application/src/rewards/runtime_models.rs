@@ -473,6 +473,10 @@ impl RewardQuotePlanCounts {
 
 #[must_use]
 pub fn reward_quote_plan_readiness(plan: &RewardQuotePlan) -> RewardQuoteReadiness {
+    if reward_quote_plan_waiting_orderbook(plan) {
+        return RewardQuoteReadiness::WaitingOrderbook;
+    }
+
     if plan.eligible {
         if plan.quote_mode != RewardPlanQuoteMode::None && reward_quote_plan_has_live_legs(plan) {
             return RewardQuoteReadiness::ReadyToQuote;
@@ -496,6 +500,11 @@ fn reward_quote_plan_has_live_legs(plan: &RewardQuotePlan) -> bool {
         && plan.legs.iter().all(|leg| {
             leg.price > Decimal::ZERO && leg.size > Decimal::ZERO && leg.notional_usd > Decimal::ZERO
         })
+}
+
+fn reward_quote_plan_waiting_orderbook(plan: &RewardQuotePlan) -> bool {
+    plan.reason
+        .starts_with("waiting for fresh orderbook data")
 }
 
 fn reward_quote_plan_provider_pending(plan: &RewardQuotePlan) -> bool {
