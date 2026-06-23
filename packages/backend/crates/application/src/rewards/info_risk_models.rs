@@ -406,7 +406,15 @@ fn reward_info_risk_blocks_quote(
             risk.risk_type,
             RewardInfoRiskType::ImminentResolution | RewardInfoRiskType::OfficialResult
         )
-        || risk.risk_level.rank() >= avoid_level.rank()
+        || match avoid_level {
+            RewardInfoRiskLevel::Low | RewardInfoRiskLevel::Medium => {
+                risk.risk_level.rank() >= avoid_level.rank()
+            }
+            RewardInfoRiskLevel::High | RewardInfoRiskLevel::Critical => {
+                risk.risk_level == RewardInfoRiskLevel::Critical
+            }
+            RewardInfoRiskLevel::Unknown => false,
+        }
 }
 
 fn reward_info_risk_query(market: &RewardMarket) -> String {

@@ -76,6 +76,7 @@ impl RewardBotService {
                 ready_quote_markets: plan_counts.ready_to_quote,
                 waiting_orderbook_markets: plan_counts.waiting_orderbook,
                 provider_pending_markets: plan_counts.provider_pending,
+                blocker_counts: plan_counts.blockers,
                 open_orders: open_order_count,
                 positions: stored_positions.len(),
                 last_scan_at,

@@ -359,7 +359,130 @@ fn info_risk_enforce_rejects_eligible_plan_without_provider_decision() {
 }
 
 #[test]
-fn ai_enabled_rejects_low_confidence_allow_decision() {
+fn info_risk_enforce_keeps_non_imminent_high_risk_as_advisory() {
+    let config = RewardBotConfig {
+        info_risk_enabled: true,
+        info_risk_mode: RewardSelectionMode::Enforce,
+        info_risk_avoid_level: RewardInfoRiskLevel::High,
+        min_market_score: Decimal::ZERO,
+        ..RewardBotConfig::default()
+    };
+    let mut plans = vec![build_reward_quote_plan(
+        &test_market(decimal("5")),
+        &test_books(),
+        &config,
+    )];
+    let risk = test_info_risk(
+        RewardInfoRiskLevel::High,
+        RewardInfoRiskType::ScheduledEvent,
+        false,
+    );
+    let risks = HashMap::from([(risk.condition_id.clone(), risk)]);
+
+    apply_reward_info_risks(&mut plans, &risks, &config, decimal("0.65"));
+
+    assert!(plans[0].eligible);
+    assert_eq!(plans[0].quote_mode, RewardPlanQuoteMode::Double);
+    assert_eq!(plans[0].legs.len(), 2);
+    assert!(plans[0].info_risk.is_some());
+}
+
+#[test]
+fn info_risk_enforce_rejects_critical_risk() {
+    let config = RewardBotConfig {
+        info_risk_enabled: true,
+        info_risk_mode: RewardSelectionMode::Enforce,
+        info_risk_avoid_level: RewardInfoRiskLevel::High,
+        min_market_score: Decimal::ZERO,
+        ..RewardBotConfig::default()
+    };
+    let mut plans = vec![build_reward_quote_plan(
+        &test_market(decimal("5")),
+        &test_books(),
+        &config,
+    )];
+    let risk = test_info_risk(
+        RewardInfoRiskLevel::Critical,
+        RewardInfoRiskType::ScheduledEvent,
+        false,
+    );
+    let risks = HashMap::from([(risk.condition_id.clone(), risk)]);
+
+    apply_reward_info_risks(&mut plans, &risks, &config, decimal("0.65"));
+
+    assert!(!plans[0].eligible);
+    assert!(plans[0].legs.is_empty());
+    assert_eq!(plans[0].quote_mode, RewardPlanQuoteMode::None);
+    assert!(plans[0].reason.contains("info risk critical"));
+}
+
+#[test]
+fn info_risk_enforce_rejects_imminent_high_risk() {
+    let config = RewardBotConfig {
+        info_risk_enabled: true,
+        info_risk_mode: RewardSelectionMode::Enforce,
+        info_risk_avoid_level: RewardInfoRiskLevel::High,
+        min_market_score: Decimal::ZERO,
+        ..RewardBotConfig::default()
+    };
+    let mut plans = vec![build_reward_quote_plan(
+        &test_market(decimal("5")),
+        &test_books(),
+        &config,
+    )];
+    let risk = test_info_risk(
+        RewardInfoRiskLevel::High,
+        RewardInfoRiskType::ImminentResolution,
+        true,
+    );
+    let risks = HashMap::from([(risk.condition_id.clone(), risk)]);
+
+    apply_reward_info_risks(&mut plans, &risks, &config, decimal("0.65"));
+
+    assert!(!plans[0].eligible);
+    assert!(plans[0].legs.is_empty());
+    assert_eq!(plans[0].quote_mode, RewardPlanQuoteMode::None);
+    assert!(plans[0].reason.contains("info risk high"));
+}
+
+#[test]
+fn quote_plan_counts_classify_provider_and_blocker_reasons() {
+    let config = RewardBotConfig {
+        min_market_score: Decimal::ZERO,
+        ..RewardBotConfig::default()
+    };
+    let base = build_reward_quote_plan(&test_market(decimal("5")), &test_books(), &config);
+    let mut ai_pending = base.clone();
+    ai_pending.pre_ai_eligible = true;
+    ai_pending.eligible = false;
+    ai_pending.quote_mode = RewardPlanQuoteMode::None;
+    ai_pending.legs.clear();
+    ai_pending.reason = "AI advisory pending: market has not passed provider filter".to_string();
+
+    let mut info_risk = base.clone();
+    info_risk.eligible = false;
+    info_risk.quote_mode = RewardPlanQuoteMode::None;
+    info_risk.legs.clear();
+    info_risk.reason = "info risk critical: imminent official result".to_string();
+
+    let mut funding = base.clone();
+    funding.eligible = false;
+    funding.quote_mode = RewardPlanQuoteMode::None;
+    funding.legs.clear();
+    funding.reason = "live funding below rewards minimum: available 1".to_string();
+
+    let counts = RewardQuotePlanCounts::from_plans([&base, &ai_pending, &info_risk, &funding]);
+
+    assert_eq!(counts.total, 4);
+    assert_eq!(counts.eligible, 1);
+    assert_eq!(counts.provider_pending, 1);
+    assert_eq!(counts.blockers.ai_pending, 1);
+    assert_eq!(counts.blockers.info_risk, 1);
+    assert_eq!(counts.blockers.funding, 1);
+}
+
+#[test]
+fn ai_enabled_keeps_low_confidence_allow_decision_as_deterministic_plan() {
     let config = RewardBotConfig {
         ai_advisory_enabled: true,
         min_market_score: Decimal::ZERO,
@@ -379,10 +502,39 @@ fn ai_enabled_rejects_low_confidence_allow_decision() {
 
     apply_reward_ai_advisories(&mut plans, &advisories, &config, decimal("0.65"));
 
-    assert!(!plans[0].eligible);
-    assert!(plans[0].legs.is_empty());
-    assert_eq!(plans[0].quote_mode, RewardPlanQuoteMode::None);
-    assert!(plans[0].reason.contains("below required"));
+    assert!(plans[0].eligible);
+    assert_eq!(plans[0].quote_mode, RewardPlanQuoteMode::Double);
+    assert_eq!(plans[0].legs.len(), 2);
+    assert!(plans[0].ai_advisory.is_some());
+}
+
+#[test]
+fn ai_enabled_keeps_watch_decision_as_deterministic_plan() {
+    let config = RewardBotConfig {
+        ai_advisory_enabled: true,
+        selection_mode: RewardSelectionMode::Enforce,
+        quote_mode: RewardQuoteMode::Auto,
+        dominant_single_side_enabled: true,
+        min_market_score: Decimal::ZERO,
+        ..RewardBotConfig::default()
+    };
+    let mut plans = vec![build_reward_quote_plan(
+        &test_market(decimal("5")),
+        &test_books(),
+        &config,
+    )];
+    let advisory = test_advisory(
+        RewardAiSuitability::Watch,
+        RewardPlanQuoteMode::None,
+        decimal("0.90"),
+    );
+    let advisories = HashMap::from([(advisory.condition_id.clone(), advisory)]);
+
+    apply_reward_ai_advisories(&mut plans, &advisories, &config, decimal("0.65"));
+
+    assert!(plans[0].eligible);
+    assert_ne!(plans[0].quote_mode, RewardPlanQuoteMode::None);
+    assert!(!plans[0].legs.is_empty());
     assert!(plans[0].ai_advisory.is_some());
 }
 
@@ -521,6 +673,33 @@ fn test_advisory(
         exit_policy: PostFillStrategy::ExitAtMarkup,
         confidence,
         reasons: vec!["test advisory".to_string()],
+        metrics: json!({}),
+        created_at: now,
+        expires_at: now + TimeDuration::hours(1),
+    }
+}
+
+fn test_info_risk(
+    risk_level: RewardInfoRiskLevel,
+    risk_type: RewardInfoRiskType,
+    resolution_imminent: bool,
+) -> RewardMarketInfoRisk {
+    let now = OffsetDateTime::now_utc();
+    RewardMarketInfoRisk {
+        condition_id: "cond_budget".to_string(),
+        provider: RewardAiProvider::OpenAi,
+        request_format: RewardAiRequestFormat::OpenAiResponses,
+        model: "test-model".to_string(),
+        query_hash: "query-hash".to_string(),
+        input_hash: "input-hash".to_string(),
+        risk_level,
+        risk_type,
+        directional_risk: RewardInfoDirectionalRisk::Unclear,
+        resolution_imminent,
+        expected_event_at: None,
+        confidence: decimal("0.90"),
+        summary: "test info risk".to_string(),
+        sources: Vec::new(),
         metrics: json!({}),
         created_at: now,
         expires_at: now + TimeDuration::hours(1),

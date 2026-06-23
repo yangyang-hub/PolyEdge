@@ -179,14 +179,20 @@ export function SummaryStrip({
   const readyQuoteMarkets = readyQuoteMarketCount(snapshot);
   const waitingOrderbookMarkets = snapshot.status.waiting_orderbook_markets ?? 0;
   const providerPendingMarkets = snapshot.status.provider_pending_markets ?? 0;
+  const blockerSummary = formatBlockerSummary(snapshot);
 
   return (
     <Card size="sm">
-      <CardContent className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 2xl:grid-cols-9">
+      <CardContent className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 2xl:grid-cols-10">
         <SummaryMetric
           label={dictionary.rewards.eligible}
           value={String(eligibleMarkets)}
           hint={`${readyQuoteMarkets} ${dictionary.rewards.readyToQuote} / ${waitingOrderbookMarkets} ${dictionary.rewards.waitingOrderbook} / ${providerPendingMarkets} ${dictionary.rewards.providerPending}`}
+        />
+        <SummaryMetric
+          label={dictionary.rewards.blockerBreakdown}
+          value={blockerSummary.value}
+          hint={blockerSummary.hint}
         />
         <SummaryMetric
           label={dictionary.rewards.openOrders}
@@ -302,6 +308,37 @@ function ratio(numerator: number | string, denominator: number | string) {
 
 function readyQuoteMarketCount(snapshot: RewardBotSnapshotDto) {
   return snapshot.status.ready_quote_markets ?? snapshot.status.eligible_markets;
+}
+
+function formatBlockerSummary(snapshot: RewardBotSnapshotDto) {
+  const blockers = snapshot.status.blocker_counts;
+  const items = [
+    {
+      label: dictionary.rewards.waitingOrderbook,
+      count: blockers?.waiting_orderbook ?? snapshot.status.waiting_orderbook_markets ?? 0,
+    },
+    { label: dictionary.rewards.blockerAiPending, count: blockers?.ai_pending ?? 0 },
+    { label: dictionary.rewards.blockerInfoRiskPending, count: blockers?.info_risk_pending ?? 0 },
+    { label: dictionary.rewards.blockerAiConfidenceLow, count: blockers?.ai_confidence_low ?? 0 },
+    { label: dictionary.rewards.blockerAiWatch, count: blockers?.ai_watch ?? 0 },
+    { label: dictionary.rewards.blockerAiAvoid, count: blockers?.ai_avoid ?? 0 },
+    { label: dictionary.rewards.blockerInfoRisk, count: blockers?.info_risk ?? 0 },
+    { label: dictionary.rewards.blockerLowCompetition, count: blockers?.low_competition ?? 0 },
+    { label: dictionary.rewards.blockerFunding, count: blockers?.funding ?? 0 },
+    { label: dictionary.rewards.blockerOther, count: blockers?.other ?? 0 },
+  ]
+    .filter((item) => item.count > 0)
+    .sort((left, right) => right.count - left.count);
+
+  if (items.length === 0) {
+    return { value: "0", hint: dictionary.rewards.none };
+  }
+
+  const [first, ...rest] = items;
+  return {
+    value: `${first.label} ${first.count}`,
+    hint: rest.slice(0, 2).map((item) => `${item.label} ${item.count}`).join(" / ") || dictionary.rewards.none,
+  };
 }
 
 function eligibleMarketCount(snapshot: RewardBotSnapshotDto) {

@@ -87,9 +87,7 @@ async fn promote_reward_ai_provider_passed_market_to_eligible_source(
     trace_id: &str,
     promoted_tokens: &mut Vec<String>,
 ) {
-    if advisory.suitability != RewardAiSuitability::Allow
-        || advisory.confidence < reward_ai_min_confidence(state.settings.rewards.ai_min_confidence_bps)
-    {
+    if reward_ai_advisory_blocks_quote(advisory) {
         return;
     }
 

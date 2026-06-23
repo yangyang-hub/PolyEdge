@@ -1307,7 +1307,7 @@ fn configured_post_fill_exit_ignores_ai_hold_policy_and_uses_entry_price() {
         request_format: polyedge_application::RewardAiRequestFormat::OpenAiChatCompletions,
         model: "test-model".to_string(),
         input_hash: "hash".to_string(),
-        suitability: RewardAiSuitability::Allow,
+        suitability: polyedge_application::RewardAiSuitability::Allow,
         quote_mode: RewardPlanQuoteMode::Double,
         exit_policy: PostFillStrategy::HoldAndRequote,
         confidence: Decimal::ONE,

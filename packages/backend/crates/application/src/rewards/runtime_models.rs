@@ -431,6 +431,8 @@ pub struct RewardBotStatus {
     pub waiting_orderbook_markets: usize,
     #[serde(default)]
     pub provider_pending_markets: usize,
+    #[serde(default)]
+    pub blocker_counts: RewardQuotePlanBlockerCounts,
     pub plans_total: usize,
     pub open_orders: usize,
     pub positions: usize,
@@ -445,12 +447,27 @@ pub struct RewardBotStatus {
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RewardQuotePlanBlockerCounts {
+    pub waiting_orderbook: usize,
+    pub ai_pending: usize,
+    pub info_risk_pending: usize,
+    pub ai_confidence_low: usize,
+    pub ai_watch: usize,
+    pub ai_avoid: usize,
+    pub info_risk: usize,
+    pub low_competition: usize,
+    pub funding: usize,
+    pub other: usize,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RewardQuotePlanCounts {
     pub total: usize,
     pub eligible: usize,
     pub ready_to_quote: usize,
     pub waiting_orderbook: usize,
     pub provider_pending: usize,
+    pub blockers: RewardQuotePlanBlockerCounts,
 }
 
 impl RewardQuotePlanCounts {
@@ -462,7 +479,9 @@ impl RewardQuotePlanCounts {
             if plan.eligible {
                 counts.eligible += 1;
             }
-            match reward_quote_plan_readiness(plan) {
+            let readiness = reward_quote_plan_readiness(plan);
+            counts.blockers.record(plan, readiness);
+            match readiness {
                 RewardQuoteReadiness::ReadyToQuote => counts.ready_to_quote += 1,
                 RewardQuoteReadiness::WaitingOrderbook => counts.waiting_orderbook += 1,
                 RewardQuoteReadiness::ProviderPending => counts.provider_pending += 1,
@@ -470,6 +489,35 @@ impl RewardQuotePlanCounts {
             }
         }
         counts
+    }
+}
+
+impl RewardQuotePlanBlockerCounts {
+    fn record(&mut self, plan: &RewardQuotePlan, readiness: RewardQuoteReadiness) {
+        let reason = plan.reason.as_str();
+        if readiness == RewardQuoteReadiness::WaitingOrderbook {
+            self.waiting_orderbook += 1;
+            return;
+        }
+        if reason.starts_with("AI advisory pending:") {
+            self.ai_pending += 1;
+        } else if reason.starts_with("info risk pending:") {
+            self.info_risk_pending += 1;
+        } else if reason.starts_with("AI advisory confidence") {
+            self.ai_confidence_low += 1;
+        } else if reason.starts_with("AI advisory watch:") {
+            self.ai_watch += 1;
+        } else if reason.starts_with("AI advisory avoid:") {
+            self.ai_avoid += 1;
+        } else if reason.starts_with("info risk ") {
+            self.info_risk += 1;
+        } else if reason.starts_with("low-competition observe only:") {
+            self.low_competition += 1;
+        } else if reason.starts_with("live funding below rewards minimum:") {
+            self.funding += 1;
+        } else if readiness == RewardQuoteReadiness::Blocked {
+            self.other += 1;
+        }
     }
 }
 

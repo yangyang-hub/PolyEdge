@@ -339,6 +339,19 @@ export type RewardRiskEventDto = {
   created_at: string;
 };
 
+export type RewardQuotePlanBlockerCountsDto = {
+  waiting_orderbook?: number;
+  ai_pending?: number;
+  info_risk_pending?: number;
+  ai_confidence_low?: number;
+  ai_watch?: number;
+  ai_avoid?: number;
+  info_risk?: number;
+  low_competition?: number;
+  funding?: number;
+  other?: number;
+};
+
 export type RewardBotStatusDto = {
   enabled: boolean;
   running: boolean;
@@ -348,6 +361,7 @@ export type RewardBotStatusDto = {
   ready_quote_markets?: number;
   waiting_orderbook_markets?: number;
   provider_pending_markets?: number;
+  blocker_counts?: RewardQuotePlanBlockerCountsDto;
   plans_total: number;
   open_orders: number;
   positions: number;
