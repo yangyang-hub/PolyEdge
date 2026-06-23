@@ -34,7 +34,7 @@ import { usePagination } from "@/hooks/use-pagination";
 import type { PaginationState } from "@/hooks/use-pagination";
 import { dictionary } from "@/lib/i18n/dictionaries";
 
-import { rewardTone } from "../lib/rewards-helpers";
+import { quoteReadinessLabel, quoteReadinessTone, rewardTone } from "../lib/rewards-helpers";
 import { LowCompetitionSummary } from "./rewards-low-competition-summary";
 
 function SortIndicator({ active, order }: { active: boolean; order: "asc" | "desc" }) {
@@ -366,8 +366,8 @@ export function QuotePlansTable({
                   </div>
                 </TableCell>
                 <TableCell className="align-top">
-                  <StatusPill tone={plan.eligible ? "success" : "warning"}>
-                    {plan.eligible ? dictionary.rewards.filterEligible : dictionary.rewards.filterIneligible}
+                  <StatusPill tone={quoteReadinessTone(plan)}>
+                    {quoteReadinessLabel(plan)}
                   </StatusPill>
                   <LowCompetitionSummary plan={plan} />
                 </TableCell>

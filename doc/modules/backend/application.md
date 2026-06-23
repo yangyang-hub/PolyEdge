@@ -112,7 +112,7 @@
 - `RewardBotSnapshot.orders_page`：service 层当前本地 managed `orders` 数组对应的分页元数据
 
 **Quote plan 类型：**
-- `RewardQuotePlan`：包含市场、得分、eligible、`pre_ai_eligible`、`strategy_bucket`、quote mode、推荐 mode、`book_metrics`、`low_competition_metrics`、AI advisory、info risk、midpoint、`orderbook_token_ids`、报价腿和 rewards 参数；`orderbook_token_ids` 保存 AI/info-risk gate 前的 YES/NO token，供后台 provider refresh 临时订阅盘口；最终可挂单计划由 `eligible=true` 进入长期 `rewards_eligible` 订阅。live placement 缺少、过期或已接近 stale 边界的新鲜盘口时会保持 eligible 并写入等待 orderbook 订阅数据的 reason，不写 `live_skip_until`；非 transient 盘口验证失败才写入 `live_skip_until` / `live_skip_reason`，后续计划准备阶段在有效期内继承该跳过标记。
+- `RewardQuotePlan`：包含市场、得分、eligible、`pre_ai_eligible`、`quote_readiness`、`strategy_bucket`、quote mode、推荐 mode、`book_metrics`、`low_competition_metrics`、AI advisory、info risk、midpoint、`orderbook_token_ids`、报价腿和 rewards 参数；`eligible=true` 表示策略候选仍值得订阅/跟踪，`quote_readiness=ready_to_quote|waiting_orderbook|provider_pending|blocked` 表示面向 UI 和 snapshot 计数的真实报价就绪状态。`ready_to_quote` 要求计划 eligible、quote mode 非 none 且报价腿已有真实 price/size/notional；等待盘口的计划仍可保持 eligible 以进入长期 `rewards_eligible` 订阅，但不会计入 `status.ready_quote_markets`。`orderbook_token_ids` 保存 AI/info-risk gate 前的 YES/NO token，供后台 provider refresh 临时订阅盘口；live placement 缺少、过期或已接近 stale 边界的新鲜盘口时会保持 eligible 并写入等待 orderbook 订阅数据的 reason，不写 `live_skip_until`；非 transient 盘口验证失败才写入 `live_skip_until` / `live_skip_reason`，后续计划准备阶段在有效期内继承该跳过标记。
 - `RewardLiveQuoteMaterialization`：live placement 用当前 orderbook materialize 后的 quote mode、推荐 mode、盘口指标、midpoint 和真实报价腿。
 
 **Tick 结果类型：** `RewardTickOutcome`（在 `rewards/engine.rs` 中定义），包含 account、markets、plans、orders、positions、fills、events 和 report。模拟引擎已移除；生产 live 路径通过 worker 的 `LivePolymarketConnector` 直接执行。

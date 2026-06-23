@@ -12,6 +12,7 @@ import type {
   RewardLowCompetitionMode,
   RewardOrderSide,
   RewardPlanQuoteMode,
+  RewardQuoteReadiness,
   RewardQuoteMode,
   RewardRiskSeverity,
   RewardSelectionMode,
@@ -242,6 +243,7 @@ export type RewardQuotePlanDto = {
   score: DecimalValue;
   eligible: boolean;
   pre_ai_eligible: boolean;
+  quote_readiness?: RewardQuoteReadiness;
   reason: string;
   strategy_bucket: RewardStrategyBucket;
   quote_mode: RewardPlanQuoteMode;
@@ -343,6 +345,9 @@ export type RewardBotStatusDto = {
   account_id: string;
   markets_tracked: number;
   eligible_markets: number;
+  ready_quote_markets?: number;
+  waiting_orderbook_markets?: number;
+  provider_pending_markets?: number;
   plans_total: number;
   open_orders: number;
   positions: number;

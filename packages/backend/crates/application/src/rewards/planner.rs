@@ -310,6 +310,7 @@ fn build_ready_quote_plan(
         score,
         eligible,
         pre_ai_eligible: eligible,
+        quote_readiness: RewardQuoteReadiness::Blocked,
         reason: if eligible {
             format!(
                 "eligible pending live orderbook validation for {} quotes",
@@ -420,6 +421,7 @@ fn empty_plan(
         score: Decimal::ZERO,
         eligible: false,
         pre_ai_eligible: false,
+        quote_readiness: RewardQuoteReadiness::Blocked,
         reason: reason.into(),
         strategy_bucket,
         quote_mode: RewardPlanQuoteMode::None,

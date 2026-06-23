@@ -1,6 +1,6 @@
 # Rewards（奖励机器人）
 
-最后更新：2026-06-22
+最后更新：2026-06-23
 
 ## 概述
 
@@ -35,7 +35,7 @@
 
 - `src/lib/api/rewards.ts` — `readRewardBotSnapshot`、`updateRewardBotConfig`、`runRewardBotOnce`、`cancelRewardBotOrders`、`resetRewardBot`
 - `readRewardBotSnapshot()` 会传递计划/订单分页、搜索、状态和排序 query；首屏明确请求 `plans_eligible=true`，与默认选中的“可挂”页签一致。后端分页结果和 `orders_page` 都描述本地 managed orders，不再用 Polymarket live open orders 覆盖
-- 后端 snapshot 不返回全量 reward markets；页面只使用 `status.markets_tracked`、`status.eligible_markets`、`quote_plans` 和 `low_competition_report` 展示市场覆盖、候选计划与低竞争 shadow report
+- 后端 snapshot 不返回全量 reward markets；页面使用 `status.markets_tracked`、`status.eligible_markets`、`status.ready_quote_markets`、`status.waiting_orderbook_markets`、`status.provider_pending_markets`、`quote_plans` 和 `low_competition_report` 展示市场覆盖、候选计划、真实可立即报价数量与低竞争 shadow report
 - snapshot 的 `available_usd` / `positions` 来自 worker 写入数据库的账户快照；API 不持有 Polymarket 私钥，也不直接请求外部账户数据。`available_usd` 优先使用 CLOB `balance-allowance`，当 CLOB 返回 0 或失败但资金钱包链上 pUSD 余额大于 0 时，worker 使用链上 pUSD 回填
 
 ## 关键交互
@@ -68,7 +68,7 @@
 ## 当前状态
 
 - 完整的 Run / Cancel / Reset 入队交互
-- 顶部执行概览展示实盘模式、启停/运行状态、市场就绪度、钱包余额/策略上限比例、最近扫描/运行时间和事件触发计数；策略上限直接读取当前 `snapshot.config.account_capital_usd`，不再使用可能保留历史初始值的账户账本字段，也不代表链上钱包余额。
+- 顶部执行概览展示实盘模式、启停/运行状态、市场就绪度、钱包余额/策略上限比例、最近扫描/运行时间和事件触发计数；“可报价市场”和市场就绪度使用 `status.ready_quote_markets`，只统计已有真实报价腿、可立即进入 live 下单检查的计划，提示行同时展示可挂候选、等待盘口和等待风控数量。策略上限直接读取当前 `snapshot.config.account_capital_usd`，不再使用可能保留历史初始值的账户账本字段，也不代表链上钱包余额。
 - 操作中心集中 Run / Save / Cancel / Reset，文案提醒当前命令可能提交或取消 Polymarket 实盘订单。
 - 配置编辑按执行、市场筛选、低竞争 sleeve、报价构造、盘口选择、AI 建议、库存与控制分组，包含仍生效的数值参数、布尔开关、受限下拉框和成交后策略；退出加价提示明确 0 表示原价卖。
 - 市场筛选面板公开质量硬门槛；通过门槛的市场由后端继续按奖励、流动性、成交量、剩余时长和奖励 spread 综合排序。
@@ -78,7 +78,7 @@
 - AI 建议面板保存 OpenAI/Anthropic provider、请求格式、advisory TTL、AI 批量市场数、信息风险启用、observe/enforce、过滤等级、信息风险 TTL 和信息风险批量市场数；API key、base URL、模型名、请求超时和 web search 开关只来自 worker 环境变量，不会出现在前端配置或 snapshot。AI advisory 与信息风险扫描由 worker 全量覆盖当前候选，优先开放订单、持仓和可挂 quote plan；批量市场数为 1 时保持逐市场 provider 请求，>1 时后端按 condition 拆分保存并对漏项回退单市场。报价计划表展示 AI suitability、推荐 quote mode、confidence 和首条 reason，也展示信息风险等级、类型、confidence 和摘要；信息风险 enforce 且缓存缺失时，后端会把对应计划显示为不可挂。
 - 后端不再用 `per_market_usd`、`quote_size_usd` 或 `low_competition_per_market_usd` 限制报价腿构造；live materializer 只保障按 CLOB 成本精度对齐后的 `rewards_min_size` 和 Polymarket 1 美元最小名义金额。新增报价是否可挂由后端按实际钱包余额、未归属外部 BUY notional 和同一 condition 已有 managed BUY notional 判断；待补最低 rewards size 腿放不下时，quote plan 会显示 funding 不可挂原因，等后续余额/开放订单同步后重新评估。
 - 配置不包含 `execution_mode` 选择器（始终为 live）。前端不再展示或提交 `per_market_usd`、`quote_size_usd`、`low_competition_per_market_usd`；这些字段只保留在 DTO/后端配置中兼容历史快照与旧请求。提示说明 `max_markets=0` 或 `max_open_orders=0` 会停止新挂单。
-- 报价计划默认展示当前通过非盘口依赖过滤且等待 live 盘口验证的可挂市场；若准备挂单时 `quote_bid_rank`、rewards spread、盘口集中度、退出深度或安全边际导致双边不可行，auto/enforce/dominant 会先尝试单腿回退；没有可行单腿时后端才会把计划标记为不可挂并返回原因和 12 小时 `live_skip_until`，到期后自动重新评估。
+- 报价计划默认展示当前通过非盘口依赖过滤且等待 live 盘口验证的可挂市场；每条计划携带 `quote_readiness=ready_to_quote|waiting_orderbook|provider_pending|blocked`，表格状态列优先展示“可报价 / 等待盘口 / 等待风控 / 已拦截”。若准备挂单时 `quote_bid_rank`、rewards spread、盘口集中度、退出深度或安全边际导致双边不可行，auto/enforce/dominant 会先尝试单腿回退；没有可行单腿时后端才会把计划标记为不可挂并返回原因和 12 小时 `live_skip_until`，到期后自动重新评估。
 - Managed orders 表格发送后端分页/搜索/状态过滤/排序 query（默认每页 15 条），表格数据与 `orders_page` 均来自本地 managed-order 查询。
 - 报价计划和订单搜索框使用独立防抖输入组件；外部 query 重置通过组件 key 同步，不在 React effect 中同步 setState。
 - Rewards 工作台在保留当前搜索、筛选、排序和分页条件的前提下，每 10 秒通过 REST 重新读取 snapshot；自动刷新不显示过滤 loading 状态，短暂网络失败不覆盖页面反馈，手动筛选仍显示轻量刷新状态并反馈失败。

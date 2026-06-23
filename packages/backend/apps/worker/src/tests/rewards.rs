@@ -75,6 +75,7 @@ fn live_test_plan(now: OffsetDateTime) -> RewardQuotePlan {
         score: reward_decimal("50"),
         eligible: true,
         pre_ai_eligible: true,
+        quote_readiness: polyedge_application::RewardQuoteReadiness::ReadyToQuote,
         reason: "eligible".to_string(),
         strategy_bucket: polyedge_application::RewardStrategyBucket::None,
         quote_mode: polyedge_application::RewardPlanQuoteMode::Double,

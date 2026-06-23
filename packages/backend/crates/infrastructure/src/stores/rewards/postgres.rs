@@ -449,15 +449,17 @@ impl RewardBotStore for PostgresRewardBotStore {
 
         rows.iter()
             .map(|row| {
-                let plan: Json<RewardQuotePlan> = row
-                    .try_get("quote_plan_json")
-                    .map_err(postgres_decode_error)?;
-                Ok(plan.0)
+                let mut plan: RewardQuotePlan = row
+                    .try_get::<Json<RewardQuotePlan>, _>("quote_plan_json")
+                    .map_err(postgres_decode_error)?
+                    .0;
+                refresh_reward_quote_plan_readiness(&mut plan);
+                Ok(plan)
             })
             .collect()
     }
 
-    async fn count_quote_plans(&self) -> Result<(usize, usize)> {
+    async fn count_quote_plans(&self) -> Result<RewardQuotePlanCounts> {
         postgres_count_quote_plans(&self.pool).await
     }
 

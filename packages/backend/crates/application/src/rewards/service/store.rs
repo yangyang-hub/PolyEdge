@@ -91,8 +91,8 @@ pub trait RewardBotStore: Send + Sync {
     async fn active_market_summary(&self) -> Result<(usize, Option<OffsetDateTime>)>;
     /// List all quote plans without a row limit (used by worker live cycle).
     async fn list_all_quote_plans(&self) -> Result<Vec<RewardQuotePlan>>;
-    /// Count total and eligible quote plans without loading JSON rows.
-    async fn count_quote_plans(&self) -> Result<(usize, usize)>;
+    /// Count quote plans by strategy/readiness status.
+    async fn count_quote_plans(&self) -> Result<RewardQuotePlanCounts>;
     /// Return the latest `updated_at` across all quote plans.
     async fn latest_quote_plan_updated_at(&self) -> Result<Option<OffsetDateTime>>;
     /// List a single page of quote plans with server-side filter/sort/pagination.

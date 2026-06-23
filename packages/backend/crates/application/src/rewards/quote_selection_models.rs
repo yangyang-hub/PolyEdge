@@ -146,6 +146,44 @@ impl FromStr for RewardPlanQuoteMode {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+pub enum RewardQuoteReadiness {
+    ReadyToQuote,
+    WaitingOrderbook,
+    ProviderPending,
+    Blocked,
+}
+
+impl RewardQuoteReadiness {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::ReadyToQuote => "ready_to_quote",
+            Self::WaitingOrderbook => "waiting_orderbook",
+            Self::ProviderPending => "provider_pending",
+            Self::Blocked => "blocked",
+        }
+    }
+}
+
+impl FromStr for RewardQuoteReadiness {
+    type Err = AppError;
+
+    fn from_str(value: &str) -> Result<Self> {
+        match value {
+            "ready_to_quote" => Ok(Self::ReadyToQuote),
+            "waiting_orderbook" => Ok(Self::WaitingOrderbook),
+            "provider_pending" => Ok(Self::ProviderPending),
+            "blocked" => Ok(Self::Blocked),
+            other => Err(AppError::invalid_input(
+                "REWARD_QUOTE_READINESS_INVALID",
+                format!("unknown reward quote readiness: {other}"),
+            )),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum RewardStrategyBucket {
     Standard,
     LowCompetition,

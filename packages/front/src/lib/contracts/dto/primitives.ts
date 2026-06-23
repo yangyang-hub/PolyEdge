@@ -58,6 +58,11 @@ export type RewardQuoteMode = "double" | "auto";
 export type RewardSelectionMode = "observe" | "enforce";
 export type RewardLowCompetitionMode = "off" | "observe" | "enforce";
 export type RewardPlanQuoteMode = "double" | "single_yes" | "single_no" | "none";
+export type RewardQuoteReadiness =
+  | "ready_to_quote"
+  | "waiting_orderbook"
+  | "provider_pending"
+  | "blocked";
 export type RewardStrategyBucket = "standard" | "low_competition" | "none";
 export type RewardAiProvider = "openai" | "anthropic";
 export type RewardAiRequestFormat =

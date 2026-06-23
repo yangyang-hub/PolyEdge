@@ -197,6 +197,8 @@ impl RewardBotStore for InMemoryRewardBotStore {
         let mut store = self.quote_plans.write().await;
         store.clear();
         for plan in plans {
+            let mut plan = plan.clone();
+            refresh_reward_quote_plan_readiness(&mut plan);
             store.insert(plan.condition_id.clone(), plan.clone());
         }
         Ok(())
@@ -527,6 +529,10 @@ impl RewardBotStore for InMemoryRewardBotStore {
             .await
             .values()
             .cloned()
+            .map(|mut plan| {
+                refresh_reward_quote_plan_readiness(&mut plan);
+                plan
+            })
             .collect::<Vec<_>>();
         plans.sort_by(|left, right| {
             right
@@ -538,11 +544,9 @@ impl RewardBotStore for InMemoryRewardBotStore {
         Ok(plans)
     }
 
-    async fn count_quote_plans(&self) -> Result<(usize, usize)> {
+    async fn count_quote_plans(&self) -> Result<RewardQuotePlanCounts> {
         let plans = self.quote_plans.read().await;
-        let total = plans.len();
-        let eligible = plans.values().filter(|p| p.eligible).count();
-        Ok((total, eligible))
+        Ok(RewardQuotePlanCounts::from_plans(plans.values()))
     }
 
     async fn latest_quote_plan_updated_at(&self) -> Result<Option<OffsetDateTime>> {
@@ -577,6 +581,10 @@ impl RewardBotStore for InMemoryRewardBotStore {
                 true
             })
             .cloned()
+            .map(|mut plan| {
+                refresh_reward_quote_plan_readiness(&mut plan);
+                plan
+            })
             .collect::<Vec<_>>();
 
         plans.sort_by(|a, b| {

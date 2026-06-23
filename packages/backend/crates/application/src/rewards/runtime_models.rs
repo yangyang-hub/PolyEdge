@@ -230,6 +230,8 @@ pub struct RewardQuotePlan {
     pub eligible: bool,
     #[serde(default)]
     pub pre_ai_eligible: bool,
+    #[serde(default = "default_reward_quote_readiness")]
+    pub quote_readiness: RewardQuoteReadiness,
     pub reason: String,
     #[serde(default = "default_reward_strategy_bucket")]
     pub strategy_bucket: RewardStrategyBucket,
@@ -264,6 +266,10 @@ pub struct RewardQuotePlan {
 
 const fn default_reward_plan_quote_mode() -> RewardPlanQuoteMode {
     RewardPlanQuoteMode::Double
+}
+
+const fn default_reward_quote_readiness() -> RewardQuoteReadiness {
+    RewardQuoteReadiness::Blocked
 }
 
 const fn default_reward_strategy_bucket() -> RewardStrategyBucket {
@@ -417,6 +423,12 @@ pub struct RewardBotStatus {
     pub account_id: String,
     pub markets_tracked: usize,
     pub eligible_markets: usize,
+    #[serde(default)]
+    pub ready_quote_markets: usize,
+    #[serde(default)]
+    pub waiting_orderbook_markets: usize,
+    #[serde(default)]
+    pub provider_pending_markets: usize,
     pub plans_total: usize,
     pub open_orders: usize,
     pub positions: usize,
@@ -428,6 +440,67 @@ pub struct RewardBotStatus {
     pub last_run_at: Option<OffsetDateTime>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RewardQuotePlanCounts {
+    pub total: usize,
+    pub eligible: usize,
+    pub ready_to_quote: usize,
+    pub waiting_orderbook: usize,
+    pub provider_pending: usize,
+}
+
+impl RewardQuotePlanCounts {
+    #[must_use]
+    pub fn from_plans<'a>(plans: impl IntoIterator<Item = &'a RewardQuotePlan>) -> Self {
+        let mut counts = Self::default();
+        for plan in plans {
+            counts.total += 1;
+            if plan.eligible {
+                counts.eligible += 1;
+            }
+            match reward_quote_plan_readiness(plan) {
+                RewardQuoteReadiness::ReadyToQuote => counts.ready_to_quote += 1,
+                RewardQuoteReadiness::WaitingOrderbook => counts.waiting_orderbook += 1,
+                RewardQuoteReadiness::ProviderPending => counts.provider_pending += 1,
+                RewardQuoteReadiness::Blocked => {}
+            }
+        }
+        counts
+    }
+}
+
+#[must_use]
+pub fn reward_quote_plan_readiness(plan: &RewardQuotePlan) -> RewardQuoteReadiness {
+    if plan.eligible {
+        if plan.quote_mode != RewardPlanQuoteMode::None && reward_quote_plan_has_live_legs(plan) {
+            return RewardQuoteReadiness::ReadyToQuote;
+        }
+        return RewardQuoteReadiness::WaitingOrderbook;
+    }
+
+    if plan.pre_ai_eligible && reward_quote_plan_provider_pending(plan) {
+        return RewardQuoteReadiness::ProviderPending;
+    }
+
+    RewardQuoteReadiness::Blocked
+}
+
+pub fn refresh_reward_quote_plan_readiness(plan: &mut RewardQuotePlan) {
+    plan.quote_readiness = reward_quote_plan_readiness(plan);
+}
+
+fn reward_quote_plan_has_live_legs(plan: &RewardQuotePlan) -> bool {
+    !plan.legs.is_empty()
+        && plan.legs.iter().all(|leg| {
+            leg.price > Decimal::ZERO && leg.size > Decimal::ZERO && leg.notional_usd > Decimal::ZERO
+        })
+}
+
+fn reward_quote_plan_provider_pending(plan: &RewardQuotePlan) -> bool {
+    plan.reason.starts_with("AI advisory pending:")
+        || plan.reason.starts_with("info risk pending:")
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

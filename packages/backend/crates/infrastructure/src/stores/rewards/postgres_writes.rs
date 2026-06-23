@@ -186,13 +186,18 @@ async fn replace_reward_quote_plans_tx(
 
         let mut query = sqlx::query(&sql);
         for plan in chunk {
+            let mut plan = plan.clone();
+            refresh_reward_quote_plan_readiness(&mut plan);
+            let condition_id = plan.condition_id.clone();
+            let reason = plan.reason.clone();
+            let updated_at = plan.updated_at;
             query = query
-                .bind(&plan.condition_id)
+                .bind(condition_id)
                 .bind(plan.score)
                 .bind(plan.eligible)
-                .bind(&plan.reason)
-                .bind(Json(plan.clone()))
-                .bind(plan.updated_at);
+                .bind(reason)
+                .bind(Json(plan))
+                .bind(updated_at);
         }
         query.execute(&mut **transaction).await.map_err(|error| {
             db_error(

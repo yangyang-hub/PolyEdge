@@ -1,4 +1,5 @@
-import type { ManagedRewardOrderDto } from "@/lib/contracts/dto";
+import type { ManagedRewardOrderDto, RewardQuotePlanDto } from "@/lib/contracts/dto";
+import { dictionary } from "@/lib/i18n/dictionaries";
 import type { EventCategory } from "../types";
 
 export function eventCategory(eventType: string): Exclude<EventCategory, "all"> | null {
@@ -73,4 +74,18 @@ export function rewardTone(status: ManagedRewardOrderDto["status"]) {
     return "neutral" as const;
   }
   return "warning" as const;
+}
+
+export function quoteReadinessTone(plan: RewardQuotePlanDto) {
+  if (plan.quote_readiness === "ready_to_quote") return "success" as const;
+  if (plan.quote_readiness === "provider_pending") return "neutral" as const;
+  return plan.eligible ? ("success" as const) : ("warning" as const);
+}
+
+export function quoteReadinessLabel(plan: RewardQuotePlanDto) {
+  if (plan.quote_readiness === "ready_to_quote") return dictionary.rewards.readyToQuote;
+  if (plan.quote_readiness === "waiting_orderbook") return dictionary.rewards.waitingOrderbook;
+  if (plan.quote_readiness === "provider_pending") return dictionary.rewards.providerPending;
+  if (plan.quote_readiness === "blocked") return dictionary.rewards.blocked;
+  return plan.eligible ? dictionary.rewards.filterEligible : dictionary.rewards.filterIneligible;
 }

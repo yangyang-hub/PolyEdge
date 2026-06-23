@@ -52,6 +52,7 @@ fn quote_plan_book_token_registration_uses_persisted_orderbook_tokens() {
         score: Decimal::ONE,
         eligible: false,
         pre_ai_eligible: true,
+        quote_readiness: RewardQuoteReadiness::ProviderPending,
         reason: "AI advisory pending: market has not passed provider filter".to_string(),
         strategy_bucket: RewardStrategyBucket::Standard,
         quote_mode: RewardPlanQuoteMode::None,

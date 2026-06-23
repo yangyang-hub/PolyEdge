@@ -1,14 +1,13 @@
 // Quote-plan server-side pagination: COUNT + filtered/sorted/paged SELECT.
 
-async fn postgres_count_quote_plans(pool: &PgPool) -> Result<(usize, usize)> {
-    let row = sqlx::query(
+async fn postgres_count_quote_plans(pool: &PgPool) -> Result<RewardQuotePlanCounts> {
+    let rows = sqlx::query(
         r#"
-        SELECT COUNT(*) AS total,
-               COUNT(*) FILTER (WHERE eligible = true) AS eligible
+        SELECT quote_plan_json
         FROM reward_quote_plans
         "#,
     )
-    .fetch_one(pool)
+    .fetch_all(pool)
     .await
     .map_err(|error| {
         db_error(
@@ -17,9 +16,17 @@ async fn postgres_count_quote_plans(pool: &PgPool) -> Result<(usize, usize)> {
         )
     })?;
 
-    let total: i64 = row.try_get("total").map_err(postgres_decode_error)?;
-    let eligible: i64 = row.try_get("eligible").map_err(postgres_decode_error)?;
-    Ok((total.max(0) as usize, eligible.max(0) as usize))
+    let plans = rows
+        .iter()
+        .map(|row| {
+            let plan: Json<RewardQuotePlan> = row
+                .try_get("quote_plan_json")
+                .map_err(postgres_decode_error)?;
+            Ok(plan.0)
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    Ok(RewardQuotePlanCounts::from_plans(plans.iter()))
 }
 
 async fn postgres_latest_quote_plan_updated_at(
@@ -81,10 +88,12 @@ async fn postgres_list_quote_plans_page(
     let items = rows
         .iter()
         .map(|row| {
-            let plan: Json<RewardQuotePlan> = row
-                .try_get("quote_plan_json")
-                .map_err(postgres_decode_error)?;
-            Ok(plan.0)
+            let mut plan: RewardQuotePlan = row
+                .try_get::<Json<RewardQuotePlan>, _>("quote_plan_json")
+                .map_err(postgres_decode_error)?
+                .0;
+            refresh_reward_quote_plan_readiness(&mut plan);
+            Ok(plan)
         })
         .collect::<Result<Vec<_>>>()?;
 

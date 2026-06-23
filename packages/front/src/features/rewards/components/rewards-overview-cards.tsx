@@ -38,7 +38,8 @@ export function ModeStatusPanel({
   snapshot: RewardBotSnapshotDto;
   eventCounts: RewardEventCounts;
 }) {
-  const eligibleRatio = ratio(snapshot.status.eligible_markets, snapshot.status.plans_total);
+  const readyQuoteMarkets = readyQuoteMarketCount(snapshot);
+  const readyRatio = ratio(readyQuoteMarkets, snapshot.status.plans_total);
   const availableRatio = ratio(
     snapshot.account.available_usd,
     snapshot.config.account_capital_usd,
@@ -67,9 +68,9 @@ export function ModeStatusPanel({
         <div className="space-y-4">
           <ProgressLine
             label={dictionary.rewards.marketReadiness}
-            value={formatRatio(eligibleRatio)}
-            meter={eligibleRatio}
-            tone={eligibleRatio > 0 ? "success" : "neutral"}
+            value={formatRatio(readyRatio)}
+            meter={readyRatio}
+            tone={readyRatio > 0 ? "success" : "neutral"}
           />
           <ProgressLine
             label={dictionary.rewards.availableCapital}
@@ -174,14 +175,17 @@ export function SummaryStrip({
   snapshot: RewardBotSnapshotDto;
   eventCounts: RewardEventCounts;
 }) {
+  const readyQuoteMarkets = readyQuoteMarketCount(snapshot);
+  const waitingOrderbookMarkets = snapshot.status.waiting_orderbook_markets ?? 0;
+  const providerPendingMarkets = snapshot.status.provider_pending_markets ?? 0;
 
   return (
     <Card size="sm">
       <CardContent className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 2xl:grid-cols-9">
         <SummaryMetric
           label={dictionary.rewards.quotableMarkets}
-          value={String(snapshot.status.eligible_markets)}
-          hint={`${snapshot.status.plans_total} ${dictionary.rewards.quotePlans} / ${snapshot.status.markets_tracked} ${dictionary.rewards.totalMarkets}`}
+          value={String(readyQuoteMarkets)}
+          hint={`${snapshot.status.eligible_markets} ${dictionary.rewards.eligibleCandidates} / ${waitingOrderbookMarkets} ${dictionary.rewards.waitingOrderbook} / ${providerPendingMarkets} ${dictionary.rewards.providerPending}`}
         />
         <SummaryMetric
           label={dictionary.rewards.openOrders}
@@ -293,6 +297,10 @@ function ratio(numerator: number | string, denominator: number | string) {
     return 0;
   }
   return toFiniteNumber(numerator) / nextDenominator;
+}
+
+function readyQuoteMarketCount(snapshot: RewardBotSnapshotDto) {
+  return snapshot.status.ready_quote_markets ?? snapshot.status.eligible_markets;
 }
 
 function clamp01(value: number) {
