@@ -1,4 +1,10 @@
-use crate::updates::OrderbookUpdateBroadcaster;
+use crate::{
+    stream::{
+        current_unix_millis, normalized_cached_book, reward_book_to_cached,
+        set_book_and_publish_if_current,
+    },
+    updates::OrderbookUpdateBroadcaster,
+};
 use axum::{
     Json,
     extract::{
@@ -9,13 +15,14 @@ use axum::{
     response::IntoResponse,
 };
 use polyedge_application::{BookSource, CachedBookLevel, CachedOrderBook, OrderbookStreamReason};
+use polyedge_connectors::PolymarketRewardsConnector;
 use polyedge_infrastructure::AppState;
 use polymarket_client_sdk::types::U256;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashSet, str::FromStr};
 use tokio::sync::broadcast;
-use tracing::warn;
+use tracing::{debug, warn};
 
 const MAX_REGISTRY_SOURCES: usize = 32;
 const MAX_SOURCE_LEN: usize = 64;
@@ -73,6 +80,8 @@ pub struct RegisterRequest {
 #[derive(Deserialize)]
 pub struct BatchRequest {
     pub token_ids: Vec<String>,
+    #[serde(default)]
+    pub refresh_if_stale_ms: Option<i64>,
 }
 
 #[derive(Deserialize)]
@@ -120,6 +129,16 @@ pub async fn get_orderbook_batch(
 ) -> ApiResult<OrderbookBatchResponse> {
     let max_tokens = state.app.settings.orderbook_stream.max_tokens;
     let token_ids = validate_token_ids(req.token_ids, max_tokens)?;
+    if let Some(max_age_ms) = req.refresh_if_stale_ms.filter(|max_age_ms| *max_age_ms > 0) {
+        if let Err(error) = refresh_stale_orderbook_batch(&state, &token_ids, max_age_ms).await {
+            warn!(
+                error = %error,
+                requested = token_ids.len(),
+                max_age_ms,
+                "failed to refresh stale orderbook batch before cache read"
+            );
+        }
+    }
     let books = state
         .app
         .orderbook_cache
@@ -135,6 +154,49 @@ pub async fn get_orderbook_batch(
         .map(to_response)
         .collect();
     Ok(Json(OrderbookBatchResponse { books }))
+}
+
+async fn refresh_stale_orderbook_batch(
+    state: &OrderbookApiState,
+    token_ids: &[String],
+    max_age_ms: i64,
+) -> polyedge_domain::Result<usize> {
+    let stale = state
+        .app
+        .orderbook_cache
+        .get_stale_tokens(token_ids, max_age_ms)
+        .await?;
+    if stale.is_empty() {
+        return Ok(0);
+    }
+
+    let connector = PolymarketRewardsConnector::new(&state.app.settings.polymarket.clob_host)?;
+    let max_levels = state.app.settings.orderbook_stream.max_levels_per_side;
+    let mut refreshed = 0usize;
+    for chunk in stale.chunks(100) {
+        let books = connector.fetch_order_books(chunk).await?;
+        let poll_confirmed_at = current_unix_millis();
+        for book in books {
+            let cached =
+                normalized_cached_book(reward_book_to_cached(&book, poll_confirmed_at), max_levels);
+            set_book_and_publish_if_current(
+                &state.app.orderbook_cache,
+                &state.broadcaster,
+                OrderbookStreamReason::PollReconcile,
+                &cached,
+            )
+            .await?;
+            refreshed += 1;
+        }
+    }
+    debug!(
+        requested = token_ids.len(),
+        stale = stale.len(),
+        refreshed,
+        max_age_ms,
+        "refreshed stale orderbook batch on demand"
+    );
+    Ok(refreshed)
 }
 
 pub async fn get_orderbook_stats(

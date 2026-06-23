@@ -73,6 +73,13 @@ pub trait OrderbookCache: Send + Sync {
         }
         Ok(books)
     }
+    async fn get_books_with_max_age(
+        &self,
+        token_ids: &[String],
+        _max_age_ms: i64,
+    ) -> Result<Vec<CachedOrderBook>> {
+        self.get_books(token_ids).await
+    }
     async fn set_book(&self, book: &CachedOrderBook) -> Result<()>;
     async fn set_books(&self, books: &[CachedOrderBook]) -> Result<()>;
     async fn get_stale_tokens(&self, token_ids: &[String], max_age_ms: i64) -> Result<Vec<String>>;

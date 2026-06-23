@@ -504,12 +504,39 @@ async fn fetch_remote_cached_orderbooks(
     if batch_size == 0 || token_ids.is_empty() {
         return Ok(Vec::new());
     }
+    let refresh_max_age_ms = reward_orderbook_remote_refresh_max_age_ms(state).await;
 
     let mut books = Vec::new();
     for chunk in token_ids.chunks(batch_size) {
-        books.extend(state.orderbook_cache.get_books(chunk).await?);
+        books.extend(
+            state
+                .orderbook_cache
+                .get_books_with_max_age(chunk, refresh_max_age_ms)
+                .await?,
+        );
     }
     Ok(books)
+}
+
+async fn reward_orderbook_remote_refresh_max_age_ms(state: &AppState) -> i64 {
+    match state.reward_bot_service.read_config().await {
+        Ok(config) => {
+            let max_placement_age_ms = live_orderbook_max_placement_age_ms(&config);
+            if max_placement_age_ms == i128::MAX {
+                0
+            } else {
+                let refresh_age_ms = reward_orderbook_remote_refresh_age_ms(max_placement_age_ms);
+                i64::try_from(refresh_age_ms).unwrap_or(i64::MAX)
+            }
+        }
+        Err(error) => {
+            warn!(
+                error = %error,
+                "failed to read rewards config for orderbook refresh max age"
+            );
+            0
+        }
+    }
 }
 
 #[cfg(test)]

@@ -123,7 +123,7 @@
 - 报价计划构建阶段不再用 `quote_bid_rank` 缺档、目标价 rewards spread、盘口集中度、盘口价格预算、`per_market_usd` 或 `quote_size_usd` 过滤候选；计划腿可只是携带 YES/NO token 的占位元数据。planner 和 live materializer 读取盘口 midpoint/档位时按 `RewardOrderBook.confirmed_at` 判断新鲜度，`observed_at` 只表示盘口内容版本。live placement 准备创建订单时才用当前 orderbook materialize 真实腿：报价价格按 `quote_bid_rank` 选择目标盘口价，粗 tick 使用第 N 个不同买价，细 tick 使用从买一回退 `rank-1` 个 0.01 价格步长后的不高于目标价档位；双边计划优先要求 YES/NO 两腿都存在目标档位且通过 rewards spread、touch ask 和安全边际校验，auto/enforce/dominant 下若双边的档位、spread、touch ask 或安全边际不可行则尝试只挂通过同一校验的一条腿；单边计划只要求目标侧存在。缺少/过期新鲜盘口时不提交订单、保持计划 eligible 并等待 orderbook 订阅/缓存返回；没有可行单腿的目标档位价格距离各自中间价超过 `min(market rewards_max_spread, config.max_spread_cents)` 等非 transient 验证失败时不下单且写入 `live_skip_until`/`live_skip_reason`，跳过标记默认 12 小时后失效以便奖励范围或盘口变化后重新评估；开放订单与最新目标档位价格相差超过 `requote_drift_cents` 时不会立即全量撤单，而是先经过 `requote_drift_confirm_sec` 历史盘口同向确认、`requote_drift_cooldown_sec` 最小挂单年龄和 `requote_drift_max_cancels_per_cycle` 单轮限速后才作为换价撤单候选。
 - `max_spread_cents` 归一化范围是 `0.1..=99`，与前端校验及二元概率价格有效范围一致；市场 `rewards_max_spread` 按 CLOB 原始 cents 直接使用，不做百分比换算。
 - `max_markets=0` 或 `max_open_orders=0` 表示不再新挂单；`quote_size_usd=0` 不再禁用报价。
-- 缺少新鲜缓存盘口时不会提交新 post-only 订单，也不会把市场写入长期 live skip；placement 会保持候选等待 orderbook 订阅数据返回，并在本地盘口缺失、超过 `stale_book_ms` 或超过新挂单 freshness headroom 时从 orderbook 服务 HTTP batch 尝试刷新，必须看到 YES/NO 两腿非空且距离 stale 边界仍有余量的新鲜盘口后才会创建 intent；默认 `stale_book_ms=45000` 时 placement 最大盘口年龄约 35 秒，HTTP 预刷新阈值约 25 秒，避免 intent 刚落库就因下一轮 reconcile 判定盘口过期而撤单。
+- 缺少新鲜缓存盘口时不会提交新 post-only 订单，也不会把市场写入长期 live skip；placement 会保持候选等待 orderbook 订阅数据返回，并在本地盘口缺失、超过 `stale_book_ms` 或超过新挂单 freshness headroom 时从 orderbook 服务 HTTP batch 尝试刷新，batch 会携带预刷新确认年龄，orderbook 服务若自身缓存也缺失或超龄会同步 CLOB `/books` 后再返回；必须看到 YES/NO 两腿非空且距离 stale 边界仍有余量的新鲜盘口后才会创建 intent；默认 `stale_book_ms=45000` 时 placement 最大盘口年龄约 35 秒，HTTP 预刷新阈值约 25 秒，避免 intent 刚落库就因下一轮 reconcile 判定盘口过期而撤单。
 - live tick 在候选盘口初读之后还会执行 AI/info-risk gate；gate 完成后 worker 会立即用本轮内存 quote plan 注册 `rewards_eligible` orderbook source，避免新 eligible token 等待周期注册任务。订单同步和账户同步完成后，进入撤单、待提交 intent 和新挂单前，worker 会针对当前 open-like 订单与 eligible quote plan token 再做一次本地 cache / orderbook HTTP batch 刷新并合并到本轮 books，随后先 materialize quote readiness 并保存快照，避免 tick 内 I/O 耗时让初读盘口在 placement 阶段变旧，也避免控制台读到未 live 验证的中间态。
 - 全局敞口门槛使用「已有库存 notional + 当前候选单腿 notional」做准入。
 - 单次 rewards tick 使用 `list_reward_run_candidate_markets()` 从 `reward_markets` 读取候选池；Postgres 路径关联 Gamma `markets`，硬过滤非 open/tradable、高歧义、低流动性、低 24h 成交量、临近结算、Gamma spread 过宽、同步过期或异常超前、奖励不足、奖励 spread 无效、不具备唯一 YES/NO token 以及 FDV/launch/token/official-result 等高事件跳变风险市场。默认 midpoint 仍受 `min_midpoint..max_midpoint` 限制；auto 单边开启后 SQL 会额外允许 `dominant_min_probability..dominant_max_probability` 及其反向区间进入候选。SQL 不再用 `rewards_min_size <= per_market_usd` 做预算预筛，高最小份额市场会保留到 live materializer 和实际钱包余额准入层处理；live placement 会按当前账户资金把无法补齐最低 rewards size 的计划标为不可挂。SQL 按 CLOB 原始 cents 使用 rewards spread，再按奖励、流动性、成交量、剩余时长和有效奖励 spread 的综合质量分排序；planner 可对 `preferred_categories` 命中的 Gamma 分类追加评分。
@@ -191,8 +191,9 @@
 ### orderbook_cache — 盘口缓存
 
 **Trait：** `OrderbookCache`
-- `get_book(token_id)`、`set_book(book)`、`set_books(books)`、`get_stale_tokens(token_ids, max_age_ms)`、`entry_count()`
+- `get_book(token_id)`、`get_books(token_ids)`、`get_books_with_max_age(token_ids, max_age_ms)`、`set_book(book)`、`set_books(books)`、`get_stale_tokens(token_ids, max_age_ms)`、`entry_count()`
 - `max_age_ms <= 0` 表示关闭年龄 stale 检查，但具体实现仍可按 TTL 判定过期。
+- `get_books_with_max_age()` 默认退化为 `get_books()`；`OrderbookHttpClient` 会把正数 `max_age_ms` 作为 `refresh_if_stale_ms` 传给 orderbook 服务，由服务端在自身缓存缺失或超龄时同步刷新后返回。
 
 **类型：**
 - `CachedOrderBook`：token_id、bids、asks、observed_at、confirmed_at、source；`observed_at` 表示盘口内容版本时间，`confirmed_at` 表示服务最近确认该 token 盘口仍可用的时间，旧消息缺失 `confirmed_at` 时回退使用 `observed_at`

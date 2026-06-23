@@ -198,6 +198,8 @@ struct OrderbookBatchResponse {
 #[derive(Serialize)]
 struct BatchRequest {
     token_ids: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    refresh_if_stale_ms: Option<i64>,
 }
 
 #[derive(Deserialize)]
@@ -302,40 +304,16 @@ impl OrderbookCache for OrderbookHttpClient {
     }
 
     async fn get_books(&self, token_ids: &[String]) -> Result<Vec<CachedOrderBook>> {
-        if token_ids.is_empty() {
-            return Ok(Vec::new());
-        }
+        self.get_books_request(token_ids, None).await
+    }
 
-        let url = format!("{}/orderbook/batch", self.base_url);
-        let resp = self
-            .client
-            .post(&url)
-            .json(&BatchRequest {
-                token_ids: token_ids.to_vec(),
-            })
-            .send()
+    async fn get_books_with_max_age(
+        &self,
+        token_ids: &[String],
+        max_age_ms: i64,
+    ) -> Result<Vec<CachedOrderBook>> {
+        self.get_books_request(token_ids, (max_age_ms > 0).then_some(max_age_ms))
             .await
-            .map_err(|error| {
-                AppError::dependency_unavailable(
-                    "ORDERBOOK_HTTP_BATCH_ERROR",
-                    format!("failed to fetch orderbook batch: {error}"),
-                )
-            })?;
-
-        if !resp.status().is_success() {
-            return Err(AppError::dependency_unavailable(
-                "ORDERBOOK_HTTP_BATCH_STATUS",
-                format!("orderbook batch returned status {}", resp.status()),
-            ));
-        }
-
-        let response: OrderbookBatchResponse = resp.json().await.map_err(|error| {
-            AppError::dependency_unavailable(
-                "ORDERBOOK_HTTP_BATCH_DECODE_ERROR",
-                format!("failed to decode orderbook batch response: {error}"),
-            )
-        })?;
-        Ok(response.books.into_iter().map(to_cached).collect())
     }
 
     async fn set_book(&self, book: &CachedOrderBook) -> Result<()> {
@@ -454,6 +432,50 @@ impl OrderbookCache for OrderbookHttpClient {
 
     async fn entry_count(&self) -> Result<usize> {
         Ok(self.fetch_stats().await?.cache_entries)
+    }
+}
+
+impl OrderbookHttpClient {
+    async fn get_books_request(
+        &self,
+        token_ids: &[String],
+        refresh_if_stale_ms: Option<i64>,
+    ) -> Result<Vec<CachedOrderBook>> {
+        if token_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let url = format!("{}/orderbook/batch", self.base_url);
+        let resp = self
+            .client
+            .post(&url)
+            .json(&BatchRequest {
+                token_ids: token_ids.to_vec(),
+                refresh_if_stale_ms,
+            })
+            .send()
+            .await
+            .map_err(|error| {
+                AppError::dependency_unavailable(
+                    "ORDERBOOK_HTTP_BATCH_ERROR",
+                    format!("failed to fetch orderbook batch: {error}"),
+                )
+            })?;
+
+        if !resp.status().is_success() {
+            return Err(AppError::dependency_unavailable(
+                "ORDERBOOK_HTTP_BATCH_STATUS",
+                format!("orderbook batch returned status {}", resp.status()),
+            ));
+        }
+
+        let response: OrderbookBatchResponse = resp.json().await.map_err(|error| {
+            AppError::dependency_unavailable(
+                "ORDERBOOK_HTTP_BATCH_DECODE_ERROR",
+                format!("failed to decode orderbook batch response: {error}"),
+            )
+        })?;
+        Ok(response.books.into_iter().map(to_cached).collect())
     }
 }
 

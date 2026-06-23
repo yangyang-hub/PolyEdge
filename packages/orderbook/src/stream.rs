@@ -1194,7 +1194,7 @@ fn book_update_to_cached(update: &BookUpdate) -> CachedOrderBook {
     }
 }
 
-async fn set_book_and_publish_if_current(
+pub(crate) async fn set_book_and_publish_if_current(
     cache: &Arc<dyn OrderbookCache>,
     broadcaster: &OrderbookUpdateBroadcaster,
     reason: OrderbookStreamReason,
@@ -1267,7 +1267,7 @@ async fn apply_price_change_to_cache(
     Ok(())
 }
 
-fn normalized_cached_book(
+pub(crate) fn normalized_cached_book(
     mut book: CachedOrderBook,
     max_levels_per_side: usize,
 ) -> CachedOrderBook {
@@ -1279,7 +1279,7 @@ fn normalized_cached_book(
     book
 }
 
-fn reward_book_to_cached(
+pub(crate) fn reward_book_to_cached(
     book: &polyedge_connectors::PolymarketRewardOrderBook,
     confirmed_at: i64,
 ) -> CachedOrderBook {
@@ -1318,7 +1318,7 @@ fn offset_datetime_to_unix_millis(time: OffsetDateTime) -> i64 {
     })
 }
 
-fn current_unix_millis() -> i64 {
+pub(crate) fn current_unix_millis() -> i64 {
     let millis = OffsetDateTime::now_utc()
         .unix_timestamp_nanos()
         .div_euclid(1_000_000);

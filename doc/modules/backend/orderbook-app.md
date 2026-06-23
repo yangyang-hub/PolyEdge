@@ -39,7 +39,7 @@
 |---|---|---|
 | `GET /healthz` | 进程健康检查 | 无 |
 | `GET /orderbook/{token_id}` | 读取单 token 缓存盘口；不存在返回 404 | 无 |
-| `POST /orderbook/batch` | 批量读取存在的缓存盘口 | 无 |
+| `POST /orderbook/batch` | 批量读取存在的缓存盘口；请求体可选 `refresh_if_stale_ms`，仅当目标 token 缺失或 `confirmed_at` 超过该年龄时由 orderbook 服务同步 CLOB `/books` 刷新后再返回 | 无 |
 | `GET /orderbook/stats` | 返回 cache 条目数、registry 来源数、registry 去重 token 数 | 无 |
 | `GET /orderbook/stream` | 内部 WebSocket；推送规范化 `OrderbookStreamEvent`（sequence、reason、book）；可选 `?source=...` 只接收该 registry source 当前 token 的更新 | 无 |
 | `POST /orderbook/register` | 原子替换一个 source 的有序 token 集合 | `x-polyedge-orderbook-token` |
@@ -63,7 +63,7 @@
 - Rewards candles 不再由每条 orderbook cache 更新派生，避免高频 WS `price_change` 把本地 candle 队列打满。`candle_history.rs` 独立按低频节拍读取 active reward markets，按 `total_daily_rate` 排序后去重 token 并受 `POLYEDGE_ORDERBOOK_STREAM__REWARD_CANDLE_HISTORY_MAX_TOKENS_PER_CYCLE` 限制；每个 token 调用 CLOB `/prices-history` 获取 5 分钟 fidelity 数据并写入 `reward_market_candles`。该数据源不是 bid/ask 盘口，持久化时 `best_bid_close` / `best_ask_close` 等于 provider price、`spread_cents_close=0`，`sample_count` 表示同 bucket 内持久化的 provider history 点数量，不表示成交量。
 - Candle history sync 默认启用；关键限流配置为 `POLYEDGE_ORDERBOOK_STREAM__REWARD_CANDLE_HISTORY_SYNC_INTERVAL_SECS=300`、`POLYEDGE_ORDERBOOK_STREAM__REWARD_CANDLE_HISTORY_REQUEST_DELAY_MS=500`、`POLYEDGE_ORDERBOOK_STREAM__REWARD_CANDLE_HISTORY_MAX_TOKENS_PER_CYCLE=600`、`POLYEDGE_ORDERBOOK_STREAM__REWARD_CANDLE_HISTORY_BACKFILL_SECS=7200`、`POLYEDGE_ORDERBOOK_STREAM__REWARD_CANDLE_HISTORY_INCREMENTAL_SECS=900`。interval 会 clamp 到 60-3600 秒，请求间隔 clamp 到 250-10000ms，lookback clamp 到 5 分钟-24 小时；max tokens 设为 0 可跳过本轮 token 请求。
 - poll reconciler 默认每 10 秒刷新当前注册 token，优先处理缺失、TTL 过期或超过 stale threshold 的 token，再覆盖其余 token，以修复未被检测到的 WS 增量丢失，并满足 rewards live placement 默认约 35 秒盘口新鲜度窗口；poll 写入保留 CLOB 盘口 timestamp 作为 `observed_at`，用本地 poll 成功时间写 `confirmed_at`；`stale_threshold_ms <= 0` 只关闭年龄 stale 优先级。
-- `OrderbookHttpClient` 把单盘口 404 映射为 `None`，其他非成功 HTTP 状态映射为 dependency error。
+- `OrderbookHttpClient` 把单盘口 404 映射为 `None`，其他非成功 HTTP 状态映射为 dependency error。普通 `get_books()` 只读 orderbook 服务缓存；`get_books_with_max_age()` 会在 batch 请求中传入 `refresh_if_stale_ms`，orderbook 服务只对缺失或超过该确认年龄的 token 做同步 `/books` 刷新，刷新失败会记录 warn 并返回现有缓存，调用方仍按 `confirmed_at` fail closed。
 
 ## 数据流
 
@@ -96,7 +96,7 @@ Active reward tokens
 - 市场同步、registry、分片 WS `book` + `price_change`、全注册 token 周期 poll reconcile、HTTP 读取、内部 WS 推送和内部写认证已实现；poll 可修复 fresh cache 中未被察觉的 WS 增量丢失，并通过内部 WS 广播给 worker 本地 cache；内部 WS client 建连最多等待 5 秒，避免不可达地址阻塞调用方。
 - Orderbook crate 已从 `packages/backend/apps/orderbook` 拆到顶层 `packages/orderbook`，仍作为 `packages/Cargo.toml` Rust workspace member 构建。
 - orderbook stream 的 token refresh 已接入 registry 变更通知，首次注册和后续成员变化可立即触发检查；仍避免仅因 registry 聚合顺序变化触发 WS 重订/重连，只有订阅 token 成员真实增删并经过短暂 debounce 后仍变化时，默认增量模式才对 diff 做 subscribe/unsubscribe（保持连接存活），`WS_INCREMENTAL_RECONCILE=false` 时才整体重建 Polymarket WS 订阅。
-- orderbook 缓存把盘口内容版本时间和最近确认时间拆开：`observed_at` 保留 WS/CLOB 响应 timestamp，`confirmed_at` 使用服务本地接收/写入时间表示刚确认过完整盘口；安静市场可能长期没有内容版本变化，但只要 poll 成功推进 `confirmed_at`，rewards live placement 就不会因内容版本不变被误判 stale。batch HTTP 读取通过一次 cache 批量读锁返回。
+- orderbook 缓存把盘口内容版本时间和最近确认时间拆开：`observed_at` 保留 WS/CLOB 响应 timestamp，`confirmed_at` 使用服务本地接收/写入时间表示刚确认过完整盘口；安静市场可能长期没有内容版本变化，但只要 poll 或按需 batch refresh 成功推进 `confirmed_at`，rewards live placement 就不会因内容版本不变被误判 stale。batch HTTP 普通读取通过一次 cache 批量读锁返回；带 `refresh_if_stale_ms` 的读取会先刷新缺失/超龄 token，再读缓存返回。
 - Gamma full sync、Gamma priority sync 与 rewards 目录同步在 orderbook 服务中使用三个独立后台循环；rewards 分页和详情补全可能持续很多分钟，但不会阻塞 Gamma `markets.synced_at` 刷新。Gamma full/priority 写入 `markets` 时在 orderbook 进程内串行化，并由 Postgres `lock_timeout` / `statement_timeout` 快速失败，避免一次慢锁等待拖垮后续周期。priority sync 会在全量目录之间强制刷新重点 condition，避免已挂单/已订阅/rewards 筛选市场仅因目录新鲜度过低被策略撤单。rewards 详情补全后仍缺 token 或空目录异常时保留上一版 rewards catalog，不执行破坏性全量替换。
 - Gamma market upsert 保存 `liquidity_usd`、`end_at` 和本地 `synced_at`；full sync 跳过同版本同内容行，并按 rewards 新鲜度窗口对安静市场做限频 `synced_at` refresh，priority sync 对重点市场强制 refresh。Postgres upsert 使用单条 `INSERT .. ON CONFLICT DO UPDATE WHERE` 表达新增、内容变化和 freshness-only 刷新。rewards 候选使用该本地同步时间判断目录新鲜度，不依赖市场是否刚好发生上游业务更新。
 - Priority sync 使用本地 `markets` 表把 registry token 映射到 Gamma condition id；无 Postgres 时跳过该映射，仍可使用 rewards service 提供的重点 condition。active rewards catalog fallback 会在 priority 集合未满时按奖励排序继续补充 condition id，避免候选 freshness 全部过期后只能等待 full sync 恢复。

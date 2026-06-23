@@ -1,6 +1,6 @@
 # connectors（外部连接器层）
 
-最后更新：2026-06-21
+最后更新：2026-06-23
 
 ## 概述
 
@@ -113,7 +113,7 @@
 
 - **`OrderbookHttpClient`**：API/Worker 读取独立 orderbook 服务缓存；Worker 通过 `register_tokens()` 原子替换来源 token 集合
 - **`OrderbookStreamClient`**：Worker 连接 orderbook 服务内部 `GET /orderbook/stream`，接收 `OrderbookStreamEvent`（sequence、reason、book）用于更新本地盘口 cache 和唤醒 rewards fast reconcile；`new_for_source()` 可连接 `GET /orderbook/stream?source=...`，只接收该 registry source 当前 token 的更新
-- `get_books()` 使用 `POST /orderbook/batch` 一次读取多个 token；rewards full/reconcile 不再逐 token 发 HTTP 请求
+- `get_books()` 使用 `POST /orderbook/batch` 一次读取多个 token；rewards full/reconcile 不再逐 token 发 HTTP 请求。`get_books_with_max_age()` 会在请求体携带 `refresh_if_stale_ms`，仅由 orderbook 服务在自身缓存缺失或超过该确认年龄时同步调用 CLOB `/books` 刷新，再返回缓存结果；普通 batch 读仍只读缓存。
 - Orderbook HTTP 响应和内部 WS book 携带 `observed_at` 与 `confirmed_at`：前者是盘口内容版本时间，后者是服务最近确认该 token 盘口仍可用的时间；旧 orderbook 服务未返回 `confirmed_at` 时客户端回退使用 `observed_at`
 - register/ingest/delete 写请求携带 `x-polyedge-orderbook-token`，值来自 `POLYEDGE_ORDERBOOK__WRITE_TOKEN`
 - HTTP 注册和注销失败会返回 `Result` 错误，不再静默吞掉非成功响应
@@ -164,7 +164,7 @@
 - Rewards markets 分页和 enrichment 已具备完整性保护，不再把部分补全结果作为完整目录写入；详情补全只针对缺唯一 YES/NO token 或缺有效 question 的市场，降低 CLOB 429 风险
 - Rewards 盘口连接器优先走 CLOB 批量 `/books`，并对失败或遗漏项使用单 token `/book` 回退；同一 connector 还提供 `/prices-history` 读取，实际请求节流由 orderbook 服务的 candle history sync loop 控制，避免 worker 或 API 直接打外部历史价格接口
 - Rewards AI advisory 和信息风险 connector 已支持 OpenAI Responses、OpenAI Chat Completions 和 Anthropic Messages 三种格式；OpenAI-compatible base URL 可配置为根地址或 `/v1` 地址，connector 会统一请求 `/v1/...` 并兼容 Bearer / `api-key` 认证头；MiMo provider 已验证 root gateway + `openai_chat_completions` + JSON schema 可用，`openai_responses` 会返回 provider 未实现错误；Chat Completions 请求使用 `max_completion_tokens` 而不是旧 `max_tokens`，AI advisory / info-risk 分别给 4096 / 6144 completion token 预算，降低 reasoning 模型返回空 `content` 的概率；模型密钥来自 worker 环境变量，provider 请求温度固定为 0，解析层会从 provider 文本中提取并校验候选 JSON 对象，provider confidence 输出会在解析时钳制到 `0..=1`。AI advisory provider 失败不终止 live tick，但在 AI 开启时会让对应 eligible 计划保持不可挂；信息风险 provider 失败只保留上一版缓存/确定性路径。信息风险 connector 的 OpenAI web search 工具默认关闭，仅在显式环境变量开启时使用。
-- Orderbook 服务客户端已支持 HTTP batch/bootstrap 与内部 WS 推送；worker 长期 rewards loop 可用 WS 更新本地 cache，缺失或重连时回退 HTTP batch
+- Orderbook 服务客户端已支持 HTTP batch/bootstrap、按最大确认年龄的 batch refresh 与内部 WS 推送；worker 长期 rewards loop 可用 WS 更新本地 cache，缺失、本地 stale 或接近新挂单 freshness headroom 时回退 HTTP batch，并要求 orderbook 服务在自身缓存也超过请求年龄时先刷新。
 - Data API positions 已按完整快照分页读取；不完整或失败的响应不会被 rewards worker 用于替换持仓
 - Paper Trading 执行器已完整实现
 - Live connector 已具备 CLOB V2 认证、显式 heartbeat、余额查询、开放订单全量分页、用户 WS、订单提交、按 token_id 的 rewards buy/sell 提交和单笔撤单能力；heartbeat 在 SDK 链式请求失败时可 raw authenticated 续链或用 `heartbeat_id:null` 重建，rewards earnings 在 SDK 解码失败时可 raw authenticated 宽容解析；post-only 使用 GTC，immediate flatten 使用 FAK，订单价格当前统一收敛到 0.01 精度，更粗的 per-market tick-size 尚未接入；订单/关联成交优先通过单订单接口对账，关联 trade 单查失败和 missing-order 都会按 token/time 扫描账户 trades 精确回退，轮询路径仅在 trade `CONFIRMED` 后返回成交，任一订单回退失败可被 worker 单订单隔离；签名类型已覆盖 EOA、Proxy、Gnosis Safe 和 Deposit Wallet (`poly_1271`)，其 balance allowance refresh 失败会传播给调用方；Polygon pUSD 余额 connector 已作为 rewards snapshot 的链上余额回退；订单 acceptance 返回实际提交 quantity，trade/WS 成交归一化按订单自身成交量入账；仍需要真实凭证和小额账户验证
