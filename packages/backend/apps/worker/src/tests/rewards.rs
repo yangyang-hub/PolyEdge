@@ -1818,6 +1818,10 @@ fn reward_orderbook_remote_refresh_uses_live_placement_headroom() {
     };
     let max_placement_age_ms = live_orderbook_max_placement_age_ms(&config);
     assert_eq!(max_placement_age_ms, 15_000);
+    assert_eq!(
+        reward_orderbook_remote_refresh_age_ms(max_placement_age_ms),
+        7_500
+    );
 
     let book = CachedOrderBook {
         token_id: "token_near_stale".to_string(),
@@ -1836,7 +1840,13 @@ fn reward_orderbook_remote_refresh_uses_live_placement_headroom() {
     ));
     assert!(!reward_orderbook_book_needs_remote_refresh(
         &book,
-        15_000,
+        8_000,
+        config.stale_book_ms,
+        max_placement_age_ms,
+    ));
+    assert!(reward_orderbook_book_needs_remote_refresh(
+        &book,
+        10_000,
         config.stale_book_ms,
         max_placement_age_ms,
     ));

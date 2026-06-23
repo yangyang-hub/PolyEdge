@@ -47,6 +47,68 @@ fn live_placement_headroom_scales_for_short_stale_window() {
 }
 
 #[test]
+fn refresh_live_quote_plan_readiness_materializes_placeholder_plan() {
+    let config = RewardBotConfig {
+        account_id: "reward_live".to_string(),
+        stale_book_ms: 45_000,
+        max_markets: 1,
+        max_open_orders: 2,
+        ..RewardBotConfig::default()
+    };
+    let now = OffsetDateTime::now_utc();
+    let mut plan = live_test_plan(now);
+    plan.reason = "eligible pending live orderbook validation for double quotes".to_string();
+    for leg in &mut plan.legs {
+        leg.price = Decimal::ZERO;
+        leg.size = Decimal::ZERO;
+        leg.notional_usd = Decimal::ZERO;
+    }
+    let books = HashMap::from([
+        ("yes_live".to_string(), live_test_book("yes_live", now)),
+        ("no_live".to_string(), live_test_book("no_live", now)),
+    ]);
+
+    let mut plans = vec![plan];
+    assert!(refresh_live_quote_plan_readiness(
+        &config,
+        &mut plans,
+        &books
+    ));
+
+    assert!(plans[0].eligible);
+    assert!(plans[0].reason.contains("eligible for live post-only"));
+    assert!(plans[0].legs.iter().all(|leg| leg.price > Decimal::ZERO));
+    assert!(plans[0].legs.iter().all(|leg| leg.size > Decimal::ZERO));
+}
+
+#[test]
+fn refresh_live_quote_plan_readiness_waits_when_books_exceed_placement_headroom() {
+    let config = RewardBotConfig {
+        account_id: "reward_live".to_string(),
+        stale_book_ms: 45_000,
+        max_markets: 1,
+        max_open_orders: 2,
+        ..RewardBotConfig::default()
+    };
+    let now = OffsetDateTime::now_utc();
+    let old = now - TimeDuration::seconds(20);
+    let books = HashMap::from([
+        ("yes_live".to_string(), live_test_book("yes_live", old)),
+        ("no_live".to_string(), live_test_book("no_live", old)),
+    ]);
+
+    let mut plans = vec![live_test_plan(now)];
+    assert!(refresh_live_quote_plan_readiness(
+        &config,
+        &mut plans,
+        &books
+    ));
+
+    assert!(plans[0].eligible);
+    assert!(plans[0].reason.contains("orderbook too close to stale"));
+}
+
+#[test]
 fn live_cancel_candidates_grace_recent_live_buy_with_stale_orderbook() {
     let config = RewardBotConfig {
         account_id: "reward_live".to_string(),

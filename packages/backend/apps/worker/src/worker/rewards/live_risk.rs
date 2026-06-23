@@ -223,28 +223,12 @@ fn live_placement_orders(
                     continue;
                 }
             };
-        {
-            let plan = &mut plans[plan_index];
-            if plan.quote_mode != materialized.quote_mode
-                || plan.recommended_quote_mode != materialized.recommended_quote_mode
-                || plan.book_metrics != materialized.book_metrics
-                || plan.midpoint != Some(materialized.midpoint)
-                || plan.legs != materialized.legs
-            {
-                plans_changed = true;
-            }
-            plan.quote_mode = materialized.quote_mode;
-            plan.recommended_quote_mode = materialized.recommended_quote_mode;
-            plan.book_metrics = materialized.book_metrics;
-            plan.midpoint = Some(materialized.midpoint);
-            plan.legs = materialized.legs;
-            plan.reason = format!(
-                "eligible for live post-only {} quotes",
-                plan.quote_mode.as_str()
-            );
-            plan.live_skip_until = None;
-            plan.live_skip_reason = None;
-            plan.updated_at = OffsetDateTime::now_utc();
+        if apply_live_quote_plan_materialization(
+            &mut plans[plan_index],
+            materialized,
+            OffsetDateTime::now_utc(),
+        ) {
+            plans_changed = true;
         }
         let now = OffsetDateTime::now_utc();
         if let Some(wait_reason) =
@@ -520,6 +504,83 @@ fn mark_live_orderbook_validation_skip(
     plan.live_skip_until = Some(skip_until);
     plan.live_skip_reason = Some(reason);
     plan.updated_at = now;
+}
+
+fn refresh_live_quote_plan_readiness(
+    config: &RewardBotConfig,
+    plans: &mut [RewardQuotePlan],
+    books: &HashMap<String, RewardOrderBook>,
+) -> bool {
+    let mut changed = false;
+    for plan in plans.iter_mut().filter(|plan| plan.eligible) {
+        let plan_config = config.config_for_strategy_bucket(plan.strategy_bucket);
+        let now = OffsetDateTime::now_utc();
+        match materialize_reward_quote_plan_for_live_orderbook(plan, books, &plan_config) {
+            Ok(materialized) => {
+                if apply_live_quote_plan_materialization(plan, materialized, now) {
+                    changed = true;
+                }
+                if let Some(wait_reason) =
+                    live_orderbook_placement_wait_reason(&plan_config, &plan.legs, books, now)
+                {
+                    if mark_live_orderbook_waiting(plan, wait_reason, now) {
+                        changed = true;
+                    }
+                }
+            }
+            Err(reason) => {
+                if let Some(wait_reason) =
+                    live_orderbook_wait_reason(&plan_config, plan, books, now)
+                {
+                    if mark_live_orderbook_waiting(plan, wait_reason, now) {
+                        changed = true;
+                    }
+                } else {
+                    mark_live_orderbook_validation_skip(plan, reason, now);
+                    changed = true;
+                }
+            }
+        }
+    }
+    changed
+}
+
+fn apply_live_quote_plan_materialization(
+    plan: &mut RewardQuotePlan,
+    materialized: RewardLiveQuoteMaterialization,
+    now: OffsetDateTime,
+) -> bool {
+    let changed = plan.quote_mode != materialized.quote_mode
+        || plan.recommended_quote_mode != materialized.recommended_quote_mode
+        || plan.book_metrics != materialized.book_metrics
+        || plan.midpoint != Some(materialized.midpoint)
+        || plan.legs != materialized.legs
+        || !plan.eligible
+        || plan.reason
+            != format!(
+                "eligible for live post-only {} quotes",
+                materialized.quote_mode.as_str()
+            )
+        || plan.live_skip_until.is_some()
+        || plan.live_skip_reason.is_some();
+
+    if changed {
+        plan.quote_mode = materialized.quote_mode;
+        plan.recommended_quote_mode = materialized.recommended_quote_mode;
+        plan.book_metrics = materialized.book_metrics;
+        plan.midpoint = Some(materialized.midpoint);
+        plan.legs = materialized.legs;
+        plan.eligible = true;
+        plan.reason = format!(
+            "eligible for live post-only {} quotes",
+            plan.quote_mode.as_str()
+        );
+        plan.live_skip_until = None;
+        plan.live_skip_reason = None;
+        plan.updated_at = now;
+    }
+
+    changed
 }
 
 fn mark_live_orderbook_waiting(

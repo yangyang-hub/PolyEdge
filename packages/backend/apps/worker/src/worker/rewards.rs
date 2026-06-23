@@ -451,7 +451,6 @@ async fn run_reward_bot_live_tick(
             "recorded low-competition sleeve observations",
         );
     }
-    state.reward_bot_service.save_quote_plans(&cycle.plans).await?;
     let kill_switch = state.risk_service.read_state().await?.kill_switch;
     if kill_switch {
         cycle.should_execute = false;
@@ -511,6 +510,16 @@ async fn run_reward_bot_live_tick(
     if refreshed_action_books > 0 {
         record_reward_book_history(book_history, &books);
         report.books_fetched = report.books_fetched.max(books.len());
+    }
+
+    let readiness_changed =
+        refresh_live_quote_plan_readiness(&cycle.config, &mut cycle.plans, &books);
+    state.reward_bot_service.save_quote_plans(&cycle.plans).await?;
+    if readiness_changed {
+        debug!(
+            trace_id = %trace_id,
+            "refreshed reward quote plan readiness before saving snapshot"
+        );
     }
 
     if !cycle.should_execute && cycle.open_orders.is_empty() {

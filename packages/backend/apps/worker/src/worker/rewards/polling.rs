@@ -550,6 +550,7 @@ async fn refresh_reward_managed_orderbook_cache(
 }
 
 const REWARD_ORDERBOOK_PREWARM_INTERVAL: Duration = Duration::from_secs(5);
+const REWARD_ORDERBOOK_REMOTE_REFRESH_PLACEMENT_HEADROOM_MS: i128 = 10_000;
 
 /// Background task that keeps the worker-local orderbook cache fresh for every
 /// token the bot may place orders on next (active + eligible + candidate), so
@@ -672,7 +673,13 @@ fn reward_orderbook_book_needs_remote_refresh(
         return false;
     }
     let age_ms = i128::from(now_ms.saturating_sub(book.observed_at));
-    age_ms > max_placement_age_ms
+    age_ms > reward_orderbook_remote_refresh_age_ms(max_placement_age_ms)
+}
+
+fn reward_orderbook_remote_refresh_age_ms(max_placement_age_ms: i128) -> i128 {
+    let headroom = REWARD_ORDERBOOK_REMOTE_REFRESH_PLACEMENT_HEADROOM_MS
+        .min(max_placement_age_ms.saturating_div(2));
+    max_placement_age_ms.saturating_sub(headroom)
 }
 
 fn record_reward_book_history(
