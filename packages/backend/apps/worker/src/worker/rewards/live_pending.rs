@@ -10,19 +10,67 @@ struct LiveBuySubmitRiskContext<'a> {
 
 const LIVE_BUY_SUBMISSION_LAST_LOOK_MAX_AGE_MS: i64 = 1_000;
 
-async fn fetch_live_buy_submission_last_look_book(
-    state: &AppState,
+fn remember_live_buy_submission_last_look_token(
+    token_ids: &mut Vec<String>,
+    seen: &mut HashSet<String>,
     token_id: &str,
-) -> Result<Option<RewardOrderBook>> {
-    let token_ids = vec![token_id.to_string()];
+) {
+    let token_id = token_id.trim();
+    if token_id.is_empty() || !seen.insert(token_id.to_string()) {
+        return;
+    }
+    token_ids.push(token_id.to_string());
+}
+
+fn live_buy_submission_last_look_token_ids(
+    order: &ManagedRewardOrder,
+    plans: &HashMap<&str, &RewardQuotePlan>,
+) -> Vec<String> {
+    let mut token_ids = Vec::new();
+    let mut seen = HashSet::new();
+    remember_live_buy_submission_last_look_token(&mut token_ids, &mut seen, &order.token_id);
+
+    let Some(plan) = plans.get(order.condition_id.as_str()) else {
+        return token_ids;
+    };
+    if order.strategy_bucket != RewardStrategyBucket::LowCompetition
+        && plan.strategy_bucket != RewardStrategyBucket::LowCompetition
+    {
+        return token_ids;
+    }
+
+    for token_id in &plan.orderbook_token_ids {
+        remember_live_buy_submission_last_look_token(&mut token_ids, &mut seen, token_id);
+    }
+    for leg in &plan.legs {
+        remember_live_buy_submission_last_look_token(&mut token_ids, &mut seen, &leg.token_id);
+    }
+
+    token_ids
+}
+
+async fn fetch_live_buy_submission_last_look_books(
+    state: &AppState,
+    token_ids: &[String],
+) -> Result<HashMap<String, RewardOrderBook>> {
     let books = state
         .orderbook_cache
-        .get_books_with_max_age(&token_ids, LIVE_BUY_SUBMISSION_LAST_LOOK_MAX_AGE_MS)
+        .get_books_with_max_age(token_ids, LIVE_BUY_SUBMISSION_LAST_LOOK_MAX_AGE_MS)
         .await?;
     Ok(books
         .into_iter()
-        .find(|book| book.token_id == token_id)
-        .map(|book| cached_order_book_to_reward(&book)))
+        .map(|book| (book.token_id.clone(), cached_order_book_to_reward(&book)))
+        .collect())
+}
+
+fn missing_live_buy_submission_last_look_token<'a>(
+    token_ids: &'a [String],
+    books: &HashMap<String, RewardOrderBook>,
+) -> Option<&'a str> {
+    token_ids
+        .iter()
+        .find(|token_id| !books.contains_key(token_id.as_str()))
+        .map(String::as_str)
 }
 
 fn live_submission_unknown_has_possible_position_fill(
@@ -258,13 +306,57 @@ async fn submit_pending_live_reward_orders(
         if order.side == RewardOrderSide::Buy
             && let Some(context) = risk_context
         {
-            let last_look_book =
-                fetch_live_buy_submission_last_look_book(state, &order.token_id).await;
+            let last_look_token_ids =
+                live_buy_submission_last_look_token_ids(order, context.plans);
+            let fetched_last_look_books =
+                fetch_live_buy_submission_last_look_books(state, &last_look_token_ids).await;
             let mut last_look_books = books.clone();
-            match last_look_book {
-                Ok(Some(book)) => {
-                    report.books_fetched += 1;
-                    last_look_books.insert(order.token_id.clone(), book);
+            match fetched_last_look_books {
+                Ok(fetched_books) => {
+                    report.books_fetched += fetched_books.len();
+                    if let Some(missing_token_id) = missing_live_buy_submission_last_look_token(
+                        &last_look_token_ids,
+                        &fetched_books,
+                    ) {
+                        let missing_token_id = missing_token_id.to_string();
+                        allow_buy_submit = false;
+                        order.scoring = false;
+                        order.reason = if last_look_token_ids.len() > 1 {
+                            format!(
+                                "live buy submission deferred by low-competition last-look: orderbook unavailable for {missing_token_id}"
+                            )
+                        } else {
+                            "live buy submission deferred by last-look: orderbook unavailable"
+                                .to_string()
+                        };
+                        order.updated_at = OffsetDateTime::now_utc();
+                        let event = reward_live_event(
+                            order,
+                            "reward_live_order_pre_submit_last_look_deferred",
+                            RewardRiskSeverity::Warning,
+                            order.reason.clone(),
+                            json!({
+                                "token_id": order.token_id,
+                                "token_ids": last_look_token_ids.clone(),
+                                "missing_token_id": missing_token_id,
+                            }),
+                        );
+                        persist_live_reward_updates(
+                            state,
+                            account,
+                            Vec::new(),
+                            vec![order.clone()],
+                            Vec::new(),
+                            vec![event],
+                            report,
+                            trace_id,
+                        )
+                        .await?;
+                        continue;
+                    }
+                    for (token_id, book) in fetched_books {
+                        last_look_books.insert(token_id, book);
+                    }
                     if let Some(reason) = live_cancel_reason(
                         context.config,
                         context.plans,
@@ -305,31 +397,6 @@ async fn submit_pending_live_reward_orders(
                         continue;
                     }
                 }
-                Ok(None) => {
-                    allow_buy_submit = false;
-                    order.scoring = false;
-                    order.reason = "live buy submission deferred by last-look: orderbook unavailable".to_string();
-                    order.updated_at = OffsetDateTime::now_utc();
-                    let event = reward_live_event(
-                        order,
-                        "reward_live_order_pre_submit_last_look_deferred",
-                        RewardRiskSeverity::Warning,
-                        order.reason.clone(),
-                        json!({ "token_id": order.token_id }),
-                    );
-                    persist_live_reward_updates(
-                        state,
-                        account,
-                        Vec::new(),
-                        vec![order.clone()],
-                        Vec::new(),
-                        vec![event],
-                        report,
-                        trace_id,
-                    )
-                    .await?;
-                    continue;
-                }
                 Err(error) => {
                     allow_buy_submit = false;
                     order.scoring = false;
@@ -344,6 +411,7 @@ async fn submit_pending_live_reward_orders(
                         order.reason.clone(),
                         json!({
                             "token_id": order.token_id,
+                            "token_ids": last_look_token_ids,
                             "code": error.code(),
                         }),
                     );

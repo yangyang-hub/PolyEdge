@@ -100,6 +100,59 @@ fn reward_live_action_orderbook_tokens_cover_orders_and_eligible_plans() {
     );
 }
 
+#[test]
+fn live_buy_submission_last_look_tokens_cover_low_competition_plan() {
+    let now = OffsetDateTime::now_utc();
+    let mut plan = live_test_plan(now);
+    plan.strategy_bucket = RewardStrategyBucket::LowCompetition;
+    plan.orderbook_token_ids = vec![
+        "yes_live".to_string(),
+        "no_live".to_string(),
+        "extra_live".to_string(),
+    ];
+    let mut order = live_test_open_order("yes_live");
+    order.strategy_bucket = RewardStrategyBucket::LowCompetition;
+    let plans = HashMap::from([(plan.condition_id.as_str(), &plan)]);
+
+    let token_ids = live_buy_submission_last_look_token_ids(&order, &plans);
+
+    assert_eq!(
+        token_ids,
+        vec![
+            "yes_live".to_string(),
+            "no_live".to_string(),
+            "extra_live".to_string(),
+        ]
+    );
+}
+
+#[test]
+fn live_buy_submission_last_look_tokens_keep_standard_single_token() {
+    let now = OffsetDateTime::now_utc();
+    let plan = live_test_plan(now);
+    let order = live_test_open_order("yes_live");
+    let plans = HashMap::from([(plan.condition_id.as_str(), &plan)]);
+
+    let token_ids = live_buy_submission_last_look_token_ids(&order, &plans);
+
+    assert_eq!(token_ids, vec!["yes_live".to_string()]);
+}
+
+#[test]
+fn live_buy_submission_last_look_missing_token_is_fail_closed() {
+    let now = OffsetDateTime::now_utc();
+    let token_ids = vec!["yes_live".to_string(), "no_live".to_string()];
+    let books = HashMap::from([(
+        "yes_live".to_string(),
+        live_test_book("yes_live", now),
+    )]);
+
+    assert_eq!(
+        missing_live_buy_submission_last_look_token(&token_ids, &books),
+        Some("no_live")
+    );
+}
+
 fn live_test_plan(now: OffsetDateTime) -> RewardQuotePlan {
     RewardQuotePlan {
         condition_id: "cond_live".to_string(),

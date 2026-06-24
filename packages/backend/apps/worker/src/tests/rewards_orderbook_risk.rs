@@ -424,8 +424,7 @@ fn live_cancel_candidates_recheck_low_competition_gate() {
     let now = OffsetDateTime::now_utc();
     let mut plan = live_test_plan(now);
     plan.strategy_bucket = RewardStrategyBucket::LowCompetition;
-    let mut yes_order = live_test_open_order("yes_live");
-    yes_order.strategy_bucket = RewardStrategyBucket::LowCompetition;
+    let yes_order = live_test_open_order("yes_live");
     let books = HashMap::from([
         ("yes_live".to_string(), live_test_book("yes_live", now)),
         ("no_live".to_string(), live_test_book("no_live", now)),
@@ -457,8 +456,7 @@ fn event_cancel_fast_path_rechecks_low_competition_gate_with_companion_books() {
     let now = OffsetDateTime::now_utc();
     let mut plan = live_test_plan(now);
     plan.strategy_bucket = RewardStrategyBucket::LowCompetition;
-    let mut yes_order = live_test_open_order("yes_live");
-    yes_order.strategy_bucket = RewardStrategyBucket::LowCompetition;
+    let yes_order = live_test_open_order("yes_live");
     let books = HashMap::from([
         ("yes_live".to_string(), live_test_book("yes_live", now)),
         ("no_live".to_string(), live_test_book("no_live", now)),
@@ -491,8 +489,7 @@ fn event_cancel_fast_path_rechecks_low_competition_gate_on_companion_token_updat
     let now = OffsetDateTime::now_utc();
     let mut plan = live_test_plan(now);
     plan.strategy_bucket = RewardStrategyBucket::LowCompetition;
-    let mut yes_order = live_test_open_order("yes_live");
-    yes_order.strategy_bucket = RewardStrategyBucket::LowCompetition;
+    let yes_order = live_test_open_order("yes_live");
     let books = HashMap::from([
         ("yes_live".to_string(), live_test_book("yes_live", now)),
         ("no_live".to_string(), live_test_book("no_live", now)),
@@ -517,6 +514,23 @@ fn event_cancel_fast_path_rechecks_low_competition_gate_on_companion_token_updat
     assert_eq!(candidates.len(), 1);
     assert_eq!(candidates[0].0, yes_order.id);
     assert!(candidates[0].1.contains("low-competition cancel gate rejected"));
+}
+
+#[test]
+fn event_cancel_active_tokens_include_low_competition_companion_update() {
+    let now = OffsetDateTime::now_utc();
+    let mut plan = live_test_plan(now);
+    plan.strategy_bucket = RewardStrategyBucket::LowCompetition;
+    let yes_order = live_test_open_order("yes_live");
+    let updated_tokens = HashSet::from(["no_live".to_string()]);
+
+    let token_ids =
+        reward_event_cancel_active_order_tokens(&[plan], &[yes_order], &updated_tokens);
+
+    assert_eq!(
+        token_ids,
+        vec!["yes_live".to_string(), "no_live".to_string()]
+    );
 }
 
 #[test]

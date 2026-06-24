@@ -114,6 +114,33 @@ fn remember_reward_event_cancel_plan_token(
     active_order_tokens.push(token_id.to_string());
 }
 
+fn reward_event_cancel_active_order_tokens(
+    plans: &[RewardQuotePlan],
+    open_orders: &[ManagedRewardOrder],
+    token_ids: &HashSet<String>,
+) -> Vec<String> {
+    let plan_index: HashMap<&str, &RewardQuotePlan> = plans
+        .iter()
+        .map(|plan| (plan.condition_id.as_str(), plan))
+        .collect();
+    let mut active_order_tokens = Vec::new();
+    let mut seen = HashSet::new();
+
+    for order in open_orders.iter().filter(|order| {
+        order.status.is_open_like()
+            && live_event_cancel_order_matches_updated_tokens(order, &plan_index, token_ids)
+    }) {
+        remember_reward_event_cancel_plan_token(&order.token_id, &mut seen, &mut active_order_tokens);
+        if let Some(plan) = plan_index.get(order.condition_id.as_str())
+            && plan.strategy_bucket == RewardStrategyBucket::LowCompetition
+        {
+            remember_reward_event_cancel_plan_tokens(plan, &mut seen, &mut active_order_tokens);
+        }
+    }
+
+    active_order_tokens
+}
+
 async fn run_reward_orderbook_event_cancel_fast_path(
     state: &AppState,
     connector: &LivePolymarketConnector,
@@ -127,27 +154,8 @@ async fn run_reward_orderbook_event_cancel_fast_path(
     }
 
     let cycle = state.reward_bot_service.current_live_cycle_state().await?;
-    let mut active_order_tokens = Vec::new();
-    let mut seen = HashSet::new();
-    let plan_index: HashMap<&str, &RewardQuotePlan> = cycle
-        .plans
-        .iter()
-        .map(|plan| (plan.condition_id.as_str(), plan))
-        .collect();
-    for order in cycle
-        .open_orders
-        .iter()
-        .filter(|order| order.status.is_open_like() && token_ids.contains(&order.token_id))
-    {
-        if seen.insert(order.token_id.clone()) {
-            active_order_tokens.push(order.token_id.clone());
-        }
-        if order.strategy_bucket == RewardStrategyBucket::LowCompetition
-            && let Some(plan) = plan_index.get(order.condition_id.as_str())
-        {
-            remember_reward_event_cancel_plan_tokens(plan, &mut seen, &mut active_order_tokens);
-        }
-    }
+    let active_order_tokens =
+        reward_event_cancel_active_order_tokens(&cycle.plans, &cycle.open_orders, &token_ids);
     if active_order_tokens.is_empty() {
         return Ok(RewardBotRunReport::default());
     }
@@ -299,9 +307,6 @@ fn live_event_cancel_order_matches_updated_tokens(
 ) -> bool {
     if token_ids.contains(&order.token_id) {
         return true;
-    }
-    if order.strategy_bucket != RewardStrategyBucket::LowCompetition {
-        return false;
     }
     let Some(plan) = plans.get(order.condition_id.as_str()) else {
         return false;

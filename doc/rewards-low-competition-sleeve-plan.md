@@ -2,7 +2,7 @@
 
 最后更新：2026-06-24
 
-状态：v2 已实现并默认关闭。当前已支持独立 `off/observe/enforce` profile、低竞争竞争份额与资金占比指标、前端配置/展示、独立市场数/开放订单/库存 gate、managed order bucket 持久化、跨周期 observation 表、snapshot shadow report、provider 前硬过滤和挂单后低竞争专用撤单 gate；自动切换/自动启用 `enforce` 仍未实现。
+状态：v2 已实现并默认关闭。当前已支持独立 `off/observe/enforce` profile、低竞争竞争份额与资金占比指标、前端配置/展示、独立市场数/开放订单/库存 gate、managed order bucket 持久化、跨周期 observation 表、snapshot shadow report、provider 前硬过滤、低竞争 BUY 提交前全计划 token last-look 和挂单后低竞争专用撤单 gate；自动切换/自动启用 `enforce` 仍未实现。
 
 ## 目标
 
@@ -23,7 +23,7 @@
 
 1. **observe**：已实现。只计算低竞争指标并写入 quote plan，不改变挂单行为。
 2. **shadow report**：已实现。full tick 会保存低竞争 observation，snapshot 汇总最近 24 小时 competition share、挂单资金占比、预估奖励、可退出性、盘口稳定性、provider 拦截和保守退出滑点，并只给出“可考虑小额 enforce”的建议，不自动改配置。
-3. **enforce**：已实现。只有 competition share / competition multiple、账户与单 condition 挂单资金占比、退出/稳定性指标达标，且 AI advisory 开启、info-risk enforce 开启时，小资金 sleeve 才能进入后续 AI/info-risk cache gate；同一 condition 的低竞争候选会替换 standard 候选，pre-LLM gate 会把低竞争候选和 standard 候选分桶，低竞争未通过 gate 不会降级成普通市场继续请求 provider；缺缓存或 provider 拒绝仍 fail closed。低竞争订单挂出后，常规撤单、待提交 intent、last-look 和事件驱动 hard-risk 撤单路径会先跑通用硬风控，再进入低竞争专用撤单 gate，不再执行普通市场的 requote drift、min depth、bid rank、depth drop、fill velocity、mass cancel 或 requote age；竞争恶化需要历史确认，资金占比超限立即撤，单纯 fresh book/history 数据不足不会只因该复核误撤。
+3. **enforce**：已实现。只有 competition share / competition multiple、账户与单 condition 挂单资金占比、退出/稳定性指标达标，且 AI advisory 开启、info-risk enforce 开启时，小资金 sleeve 才能进入后续 AI/info-risk cache gate；同一 condition 的低竞争候选会替换 standard 候选，pre-LLM gate 会把低竞争候选和 standard 候选分桶，低竞争未通过 gate 不会降级成普通市场继续请求 provider；缺缓存或 provider 拒绝仍 fail closed。低竞争 BUY 在真正 POST 前会对同计划 `orderbook_token_ids` 和报价腿 token 做 1 秒 max-age last-look，缺任意必要盘口则 defer。低竞争订单挂出后，常规撤单、待提交 intent、last-look 和事件驱动 hard-risk 撤单路径会先跑通用硬风控，再进入低竞争专用撤单 gate，不再执行普通市场的 requote drift、min depth、bid rank、depth drop、fill velocity、mass cancel 或 requote age；竞争恶化需要历史确认，资金占比超限立即撤，单纯 fresh book/history 数据不足不会只因该复核误撤。
 
 不建议直接把 `min_market_liquidity_usd` / `min_market_volume_24h_usd` 全局调低，因为这会让主策略也暴露在低退出深度、逆向选择和可操纵盘口里。
 
@@ -261,7 +261,7 @@ v2 使用当前 orderbook top levels、账户状态、开放订单和 worker 本
 - 新单仍要通过现有 live materializer、post-only、scoring、撤单风控、kill switch、AI advisory、info-risk 和账户外部 BUY notional 扣减。
 - 缺少盘口历史、样本不足、info-risk 缓存缺失、AI 缓存缺失或 provider 低置信度时 fail closed。
 - 实际计划腿仍由 rewards 最小份额、Polymarket 1 美元最小名义金额和 live placement 资金准入决定；低竞争 gate 用 probe notional 评估竞争程度，并用 after-plan 挂单占比限制资金暴露。
-- 挂单后撤单使用低竞争专用策略：通用硬风控后不再跑普通市场的 depth/rank/history/requote 规则；competition share 低于入场阈值 80% 或 competition multiple 高于入场阈值 1.5 倍时，需要 30 秒历史盘口同向确认才撤；账户/单 condition 挂单资金占比超限立即撤；退出深度阈值为 `max(20U, 当前 condition BUY 剩余 notional * 1.5)`，退出滑点超过 3c 才撤，无法估算滑点或缺少历史样本不会单独撤单。
+- 挂单后撤单使用低竞争专用策略：通用硬风控后不再跑普通市场的 depth/rank/history/requote 规则；competition share 低于入场阈值 80% 或 competition multiple 高于入场阈值 1.5 倍时，需要 30 秒历史盘口同向确认才撤；账户/单 condition 挂单资金占比超限立即撤；退出深度阈值为 `max(20U, 当前 condition BUY 剩余 notional * 1.5)`，退出滑点超过 3c 才撤，无法估算滑点或缺少历史样本不会单独撤单。事件驱动撤单会在 companion token 更新时拉取订单自身 token 与当前低竞争计划的全部报价 token 后复核；低竞争待提交 BUY 的 last-look 同样要求全计划 token 都由 orderbook 服务以 1 秒 max-age 返回，否则本轮不提交。
 
 ## 前端实现状态
 
