@@ -24,8 +24,8 @@ use polyedge_application::{
     build_reward_info_risk_assessment_request, market_book_snapshot_id,
     materialize_reward_quote_plan_for_live_orderbook, new_risk_event,
     reward_ai_advisory_blocks_quote, reward_market_books_available,
-    reward_provider_cache_refresh_due, scale_double_legs_for_budget, scale_single_leg_for_budget,
-    select_reward_book_token_ids,
+    reward_order_counts_as_external_open, reward_provider_cache_refresh_due,
+    scale_double_legs_for_budget, scale_single_leg_for_budget, select_reward_book_token_ids,
 };
 use polyedge_connectors::{
     ConnectorNewsItem, ConnectorOrderStatusUpdate, ConnectorTradeFillUpdate,
@@ -61,14 +61,14 @@ use std::{
     collections::{HashMap, HashSet, VecDeque},
     future::Future,
     sync::{
-        Arc,
+        Arc, Mutex, OnceLock,
         atomic::{AtomicBool, Ordering},
     },
     time::{Duration, Instant},
 };
 use time::{Duration as TimeDuration, OffsetDateTime};
 use tokio::{
-    sync::{RwLock, watch},
+    sync::{RwLock, mpsc, watch},
     task::JoinHandle,
 };
 use tracing::{debug, info, warn};

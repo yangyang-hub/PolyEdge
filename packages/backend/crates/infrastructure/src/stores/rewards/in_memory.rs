@@ -722,9 +722,7 @@ impl RewardBotStore for InMemoryRewardBotStore {
             .await
             .iter()
             .filter(|order| {
-                order.account_id == account_id
-                    && order.status.is_open_like()
-                    && order.external_order_id.is_some()
+                order.account_id == account_id && reward_order_counts_as_external_open(order)
             })
             .count())
     }

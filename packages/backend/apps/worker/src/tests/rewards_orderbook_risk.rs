@@ -318,6 +318,99 @@ fn live_requote_drift_limit_does_not_throttle_hard_cancels() {
     );
 }
 
+#[test]
+fn live_cancel_in_flight_guard_dedupes_concurrent_cancel_requests() {
+    let external_order_id = format!("test_cancel_{}", new_trace_id());
+    let first = RewardCancelInFlightGuard::try_acquire(&external_order_id);
+    assert!(first.is_some());
+    assert!(RewardCancelInFlightGuard::try_acquire(&external_order_id).is_none());
+    drop(first);
+    assert!(RewardCancelInFlightGuard::try_acquire(&external_order_id).is_some());
+}
+
+#[test]
+fn event_cancel_fast_path_filters_to_updated_token_and_hard_risk() {
+    let config = RewardBotConfig {
+        account_id: "reward_live".to_string(),
+        min_depth_usd: reward_decimal("100"),
+        ..RewardBotConfig::default()
+    };
+    let now = OffsetDateTime::now_utc();
+    let plan = live_test_plan(now);
+    let yes_order = live_test_open_order("yes_live");
+    let no_order = live_test_open_order("no_live");
+    let mut yes_book = live_test_book("yes_live", now);
+    yes_book.bids = vec![RewardBookLevel {
+        price: yes_order.price,
+        size: reward_decimal("20"),
+    }];
+    let books = HashMap::from([
+        ("yes_live".to_string(), yes_book),
+        ("no_live".to_string(), live_test_book("no_live", now)),
+    ]);
+    let updated_tokens = HashSet::from(["yes_live".to_string()]);
+
+    let candidates = live_event_hard_cancel_candidates(
+        &config,
+        &[plan],
+        &[yes_order.clone(), no_order],
+        &books,
+        &HashMap::new(),
+        &updated_tokens,
+        false,
+    );
+
+    assert_eq!(candidates.len(), 1);
+    assert_eq!(candidates[0].0, yes_order.id);
+    assert!(candidates[0].1.contains("external bid depth"));
+}
+
+#[test]
+fn event_cancel_fast_path_ignores_requote_only_reasons() {
+    let config = RewardBotConfig {
+        account_id: "reward_live".to_string(),
+        requote_drift_cents: reward_decimal("2"),
+        requote_drift_confirm_sec: 0,
+        requote_drift_cooldown_sec: 0,
+        requote_drift_max_cancels_per_cycle: 1,
+        requote_interval_sec: 1,
+        ..RewardBotConfig::default()
+    };
+    let now = OffsetDateTime::now_utc();
+    let mut plan = live_test_plan(now);
+    plan.legs[0].price = reward_decimal("0.40");
+    let mut order = live_test_open_order("yes_live");
+    order.created_at = now - TimeDuration::seconds(10);
+    order.updated_at = order.created_at;
+    let books = HashMap::from([(
+        "yes_live".to_string(),
+        live_test_book("yes_live", now),
+    )]);
+    let updated_tokens = HashSet::from(["yes_live".to_string()]);
+
+    let regular = live_cancel_candidates(
+        &config,
+        &[plan.clone()],
+        &[order.clone()],
+        &books,
+        &HashMap::new(),
+        false,
+    );
+    let event_only = live_event_hard_cancel_candidates(
+        &config,
+        &[plan],
+        &[order],
+        &books,
+        &HashMap::new(),
+        &updated_tokens,
+        false,
+    );
+
+    assert_eq!(regular.len(), 1);
+    assert!(regular[0].1.contains("quote target moved"));
+    assert!(event_only.is_empty());
+}
+
 fn live_test_book_snapshot(price: Decimal, observed_at: OffsetDateTime) -> BookSnapshot {
     BookSnapshot {
         bids: vec![RewardBookLevel {

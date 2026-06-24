@@ -1,6 +1,6 @@
 # API App（HTTP API 服务）
 
-最后更新：2026-06-23
+最后更新：2026-06-24
 
 ## 概述
 
@@ -65,7 +65,8 @@
 
 Rewards Bot 的 `run` / `cancel-all` / `reset` handler 不直接执行策略、不读取 orderbook cache，也不直接修改托管订单。Handler 委托 `RewardBotService` 写入 `reward_control_commands`；同账户同动作已有 pending/running 命令时会合并重复请求，真正入队后通过共享 `RewardBotService` revision 立即唤醒同进程 rewards loop；后台 runtime 领取命令并执行 live 逻辑。
 
-所有 Rewards snapshot 响应只读取 `RewardBotService` / store；handler 不直接请求 CLOB/Data API。配置、账户、positions 和 heartbeat 在同进程 service 内有热缓存，分页 orders/plans、fills、events 等历史查询仍从 store 读取。`orders_status=filled` 过滤会返回 `status=filled` 或 `filled_size > 0` 的本系统 managed orders，便于排查部分成交后已关闭的被吃订单。`status.open_orders` 只统计已有 `external_order_id` 的 open-like managed orders，不把尚未提交到 Polymarket 的本地 planned/exit intent 显示为开放挂单；`status.error` 只报告当前开放订单上的活跃对账锁，不会因为历史 critical event 一直保持错误。外部 balance、positions、订单 scoring 和 UTC 当日账户级 maker rewards（聚合端点优先、明细端点 fallback）由内嵌后台 runtime 同步。
+所有 Rewards snapshot 响应只读取 `RewardBotService` / store；handler 不直接请求 CLOB/Data API。配置、账户、positions 和 heartbeat 在同进程 service 内有热缓存，分页 orders/plans、fills、events 等历史查询仍从 store 读取。`orders_status=filled` 过滤会返回 `status=filled` 或 `filled_size > 0` 的本系统 managed orders，便于排查部分成交后已关闭的被吃订单。`status.open_orders` 只统计已有非内部 `external_order_id`、仍是 open-like 且未处于提交未知、取消未知、404 人工对账或 `awaiting final reconciliation` 锁定的 managed orders；本地 planned/exit intent 和已接受取消但仍等待最终对账的订单不会显示为当前 Polymarket 开放挂单。`status.error` 只报告当前开放订单上的活跃对账锁，不会因为历史 critical event 一直保持错误。外部 balance、positions、订单 scoring 和 UTC 当日账户级 maker rewards（聚合端点优先、明细端点 fallback）由内嵌后台 runtime 同步。
+同进程 worker 成功读取 CLOB open-order snapshot 后，`status.open_orders` 优先使用该 snapshot 中仍存在的本系统 managed 外部订单数量；冷启动或尚未成功同步时才回退到本地 store 计数。
 
 Copy Trading 的 `run` / `analyze` / `cancel-all` / `reset` 端点同样不抓取 Polymarket Data API / CLOB，也不直接执行跟单循环；API 只写入 `copytrade_control_commands`，worker 负责领取。当前产品只暴露 Analyze，`run` / `cancel-all` / `reset` 是历史兼容入口，worker 中不再触发模拟交易。
 

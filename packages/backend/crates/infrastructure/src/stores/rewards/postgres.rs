@@ -666,6 +666,12 @@ impl RewardBotStore for PostgresRewardBotStore {
             WHERE account_id = $1
               AND status IN ('planned', 'open', 'exit_pending')
               AND external_order_id IS NOT NULL
+              AND btrim(external_order_id) <> ''
+              AND external_order_id !~ '^(rew_|rewx_|rewfill_|rewevt_|rewlive_|rewexit_|sim_rew_)'
+              AND reason NOT LIKE '%manual reconciliation required%'
+              AND reason NOT LIKE '%live submission result unknown%'
+              AND reason NOT LIKE '%cancel result unknown%'
+              AND reason NOT LIKE '%awaiting final reconciliation%'
             "#,
         )
         .bind(account_id)

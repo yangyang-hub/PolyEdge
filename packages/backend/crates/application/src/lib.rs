@@ -98,9 +98,10 @@ pub use rewards::{
     build_reward_ai_advisory_request, build_reward_info_risk_assessment_request,
     build_reward_quote_plans, materialize_reward_quote_plan_for_live_orderbook, new_risk_event,
     refresh_reward_quote_plan_readiness, reward_ai_advisory_blocks_quote,
-    reward_market_books_available, reward_provider_cache_refresh_due, reward_quote_plan_readiness,
-    scale_double_legs_for_budget, scale_single_leg_for_budget, select_reward_book_token_ids,
-    validate_reward_list_limit,
+    reward_external_order_id_counts_as_external, reward_market_books_available,
+    reward_order_counts_as_external_open, reward_provider_cache_refresh_due,
+    reward_quote_plan_readiness, scale_double_legs_for_budget, scale_single_leg_for_budget,
+    select_reward_book_token_ids, validate_reward_list_limit,
 };
 pub use risk::{
     ApproveSignalCommand, ApproveSignalReceipt, KillSwitchReceipt, RejectSignalCommand,

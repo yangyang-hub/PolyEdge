@@ -27,6 +27,48 @@ pub fn new_risk_event(
     }
 }
 
+const REWARD_INTERNAL_ORDER_ID_PREFIXES: &[&str] = &[
+    "rew_",
+    "rewx_",
+    "rewfill_",
+    "rewevt_",
+    "rewlive_",
+    "rewexit_",
+    "sim_rew_",
+];
+
+const REWARD_EXTERNAL_OPEN_COUNT_BLOCKER_MARKERS: &[&str] = &[
+    "manual reconciliation required",
+    "live submission result unknown",
+    "cancel result unknown",
+    "awaiting final reconciliation",
+];
+
+#[must_use]
+pub fn reward_order_counts_as_external_open(order: &ManagedRewardOrder) -> bool {
+    order.status.is_open_like()
+        && order
+            .external_order_id
+            .as_deref()
+            .is_some_and(reward_external_order_id_counts_as_external)
+        && !reward_order_has_external_open_count_blocker(order)
+}
+
+#[must_use]
+pub fn reward_external_order_id_counts_as_external(external_order_id: &str) -> bool {
+    let external_order_id = external_order_id.trim();
+    !external_order_id.is_empty()
+        && !REWARD_INTERNAL_ORDER_ID_PREFIXES
+            .iter()
+            .any(|prefix| external_order_id.starts_with(prefix))
+}
+
+fn reward_order_has_external_open_count_blocker(order: &ManagedRewardOrder) -> bool {
+    REWARD_EXTERNAL_OPEN_COUNT_BLOCKER_MARKERS
+        .iter()
+        .any(|marker| order.reason.contains(marker))
+}
+
 fn normalize_reward_spread_cents(raw: Decimal) -> Decimal {
     raw.max(Decimal::ZERO)
 }
@@ -96,7 +138,7 @@ fn decimal(value: &str) -> Decimal {
 }
 
 fn reward_order_has_active_reconciliation_error(order: &ManagedRewardOrder) -> bool {
-        order.status.is_open_like()
+    order.status.is_open_like()
         && [
             "manual reconciliation required",
             "live submission result unknown",

@@ -723,6 +723,10 @@ impl RewardBotService {
         Ok(())
     }
 
+    pub async fn record_external_open_order_count(&self, count: usize) {
+        self.memory.write().await.external_open_order_count = Some(count);
+    }
+
     pub async fn reset_state(&self, trace_id: &str) -> Result<()> {
         let config = self.read_config().await?;
         self.store.reset_state(&config, trace_id).await?;

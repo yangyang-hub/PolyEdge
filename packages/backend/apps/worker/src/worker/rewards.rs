@@ -779,6 +779,7 @@ include!("rewards/live_helpers.rs");
 include!("rewards/live_orderbook_risk.rs");
 include!("rewards/live_requote.rs");
 include!("rewards/live_risk.rs");
+include!("rewards/event_cancel.rs");
 include!("rewards/orderbook_events.rs");
 include!("rewards/low_competition_probe.rs");
 include!("rewards/polling.rs");

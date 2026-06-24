@@ -293,6 +293,28 @@ fn external_open_order_snapshot_preserves_stuck_or_sell_orders() {
 }
 
 #[test]
+fn observed_external_open_order_count_uses_snapshot_membership() {
+    let buy = live_test_open_order("yes_live");
+    let mut live_exit = live_test_open_order("exit_live");
+    live_exit.side = RewardOrderSide::Sell;
+    live_exit.status = ManagedRewardOrderStatus::ExitPending;
+    let mut stale_exit = live_test_open_order("stale_exit");
+    stale_exit.side = RewardOrderSide::Sell;
+    stale_exit.status = ManagedRewardOrderStatus::ExitPending;
+    let mut pending_cancel = live_test_open_order("pending_cancel");
+    pending_cancel.reason = "risk cancel; cancel accepted; awaiting final reconciliation".to_string();
+    let open_order_ids = HashSet::from(["pm_yes_live", "pm_exit_live", "pm_pending_cancel"]);
+
+    assert_eq!(
+        observed_managed_external_open_order_count(
+            &[buy, live_exit, stale_exit, pending_cancel],
+            &open_order_ids,
+        ),
+        2,
+    );
+}
+
+#[test]
 fn external_reward_buy_open_order_can_be_adopted_from_snapshot() {
     let created_at = OffsetDateTime::now_utc() - TimeDuration::minutes(10);
     let mut snapshot = open_snapshot_order("pm_orphan_yes", "yes_live");

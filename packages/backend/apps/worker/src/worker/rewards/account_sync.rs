@@ -354,6 +354,10 @@ async fn sync_external_open_order_state(
             return;
         }
     };
+    let open_order_ids = open_orders
+        .iter()
+        .map(|order| order.id.as_str())
+        .collect::<HashSet<_>>();
 
     let previous_external_buy_notional = account.external_buy_notional;
     account.external_buy_notional = external_open_buy_notional(&open_orders);
@@ -403,6 +407,13 @@ async fn sync_external_open_order_state(
                 );
             }
         }
+        state
+            .reward_bot_service
+            .record_external_open_order_count(observed_managed_external_open_order_count(
+                cycle_orders,
+                &open_order_ids,
+            ))
+            .await;
         return;
     }
 
@@ -425,6 +436,13 @@ async fn sync_external_open_order_state(
     {
         warn!(error = %error, "failed to persist managed open-order snapshot sync");
     }
+    state
+        .reward_bot_service
+        .record_external_open_order_count(observed_managed_external_open_order_count(
+            cycle_orders,
+            &open_order_ids,
+        ))
+        .await;
 }
 
 #[derive(Debug, Clone)]
@@ -727,6 +745,22 @@ fn close_managed_orders_absent_from_open_snapshot(
             Some((closed, event))
         })
         .collect()
+}
+
+fn observed_managed_external_open_order_count(
+    orders: &[ManagedRewardOrder],
+    open_order_ids: &HashSet<&str>,
+) -> usize {
+    orders
+        .iter()
+        .filter(|order| {
+            reward_order_counts_as_external_open(order)
+                && order
+                    .external_order_id
+                    .as_deref()
+                    .is_some_and(|external_order_id| open_order_ids.contains(external_order_id))
+        })
+        .count()
 }
 
 fn managed_reward_order_can_close_from_open_snapshot(

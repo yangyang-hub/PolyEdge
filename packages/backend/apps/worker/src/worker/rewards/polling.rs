@@ -31,8 +31,15 @@ async fn poll_reward_bot_loop(
     // A separate guarded task sends the CLOB heartbeat every five seconds.
     let connector = build_live_polymarket_connector(state).await?;
     let _heartbeat_guard = RewardHeartbeatGuard::spawn(connector.clone());
-    let orderbook_runtime = RewardOrderbookRuntime::spawn(state);
+    let mut orderbook_runtime = RewardOrderbookRuntime::spawn(state);
     let mut orderbook_wake_rx = orderbook_runtime.subscribe();
+    let orderbook_cancel_rx = orderbook_runtime.take_active_update_rx();
+    let _event_cancel_guard = RewardEventCancelGuard::spawn(
+        state.clone(),
+        connector.clone(),
+        orderbook_runtime.cache_arc(),
+        orderbook_cancel_rx,
+    );
     let mut total = RewardBotRunReport {
         markets_scanned: 0,
         books_fetched: 0,

@@ -18,7 +18,7 @@ use polyedge_application::{
     RewardQuotePlanPage, RewardQuotePlanSortField, RewardRiskEvent, RewardRiskSeverity,
     RewardSelectionMode, RewardStrategyBucket, RewardTickOutcome, RewardToken, RiskStateSnapshot,
     RiskStateStore, SortOrder, SourceTrade, TrackedWallet, TrackedWalletStatus,
-    WalletAnalysisStats, refresh_reward_quote_plan_readiness,
+    WalletAnalysisStats, refresh_reward_quote_plan_readiness, reward_order_counts_as_external_open,
 };
 use polyedge_domain::{
     AppError, ExposureRatio, IdempotencyStatus, Result, SignedUsdAmount, SystemMode,

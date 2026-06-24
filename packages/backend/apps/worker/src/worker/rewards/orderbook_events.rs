@@ -1,16 +1,18 @@
-const REWARD_ORDERBOOK_ACTIVE_TOKEN_REFRESH: Duration = Duration::from_secs(5);
+const REWARD_ORDERBOOK_ACTIVE_TOKEN_REFRESH: Duration = Duration::from_secs(1);
 const REWARD_ORDERBOOK_MIN_IDLE_TIMEOUT: Duration = Duration::from_secs(5);
+const REWARD_ORDERBOOK_ACTIVE_UPDATE_CHANNEL_CAPACITY: usize = 1024;
 
 struct RewardOrderbookRuntime {
     cache: Arc<RewardOrderbookLocalCache>,
     handle: JoinHandle<()>,
     batch_handle: JoinHandle<()>,
     prewarm_handle: JoinHandle<()>,
+    active_update_rx: Option<mpsc::Receiver<String>>,
 }
 
 impl RewardOrderbookRuntime {
     fn spawn(state: &AppState) -> Self {
-        let (cache, ready_rx) = RewardOrderbookLocalCache::new(
+        let (cache, ready_rx, active_update_rx) = RewardOrderbookLocalCache::new(
             state.settings.orderbook_stream.max_levels_per_side,
             state.settings.orderbook_stream.book_ttl_ms,
         );
@@ -35,6 +37,7 @@ impl RewardOrderbookRuntime {
             handle,
             batch_handle,
             prewarm_handle,
+            active_update_rx: Some(active_update_rx),
         }
     }
 
@@ -42,8 +45,20 @@ impl RewardOrderbookRuntime {
         self.cache.as_ref()
     }
 
+    fn cache_arc(&self) -> Arc<RewardOrderbookLocalCache> {
+        Arc::clone(&self.cache)
+    }
+
     fn subscribe(&self) -> watch::Receiver<u64> {
         self.cache.subscribe()
+    }
+
+    fn take_active_update_rx(&mut self) -> mpsc::Receiver<String> {
+        if let Some(rx) = self.active_update_rx.take() {
+            return rx;
+        }
+        let (_tx, rx) = mpsc::channel(1);
+        rx
     }
 }
 
@@ -58,6 +73,7 @@ impl Drop for RewardOrderbookRuntime {
 struct RewardOrderbookLocalCache {
     books: RwLock<HashMap<String, RewardOrderbookLocalEntry>>,
     wake_tx: watch::Sender<u64>,
+    active_update_tx: mpsc::Sender<String>,
     max_levels_per_side: usize,
     ttl_ms: i64,
     condition_tokens: RwLock<HashMap<String, Vec<String>>>,
@@ -78,13 +94,16 @@ impl RewardOrderbookLocalCache {
     fn new(
         max_levels_per_side: usize,
         ttl_ms: u64,
-    ) -> (Self, tokio::sync::mpsc::Receiver<String>) {
+    ) -> (Self, mpsc::Receiver<String>, mpsc::Receiver<String>) {
         let (wake_tx, _) = watch::channel(0);
         let (ready_tx, ready_rx) =
-            tokio::sync::mpsc::channel(REWARD_ORDERBOOK_READY_CHANNEL_CAPACITY);
+            mpsc::channel(REWARD_ORDERBOOK_READY_CHANNEL_CAPACITY);
+        let (active_update_tx, active_update_rx) =
+            mpsc::channel(REWARD_ORDERBOOK_ACTIVE_UPDATE_CHANNEL_CAPACITY);
         let cache = Self {
             books: RwLock::new(HashMap::new()),
             wake_tx,
+            active_update_tx,
             max_levels_per_side: max_levels_per_side.max(1),
             ttl_ms: ttl_ms.max(1_000) as i64,
             condition_tokens: RwLock::new(HashMap::new()),
@@ -92,7 +111,7 @@ impl RewardOrderbookLocalCache {
             notified_ready: RwLock::new(HashSet::new()),
             ready_tx,
         };
-        (cache, ready_rx)
+        (cache, ready_rx, active_update_rx)
     }
 
     fn subscribe(&self) -> watch::Receiver<u64> {
@@ -149,9 +168,10 @@ impl RewardOrderbookLocalCache {
         accepted
     }
 
-    fn notify_active_book_update(&self) {
+    fn notify_active_book_update(&self, token_id: &str) {
         let next = self.wake_tx.borrow().wrapping_add(1);
         let _ = self.wake_tx.send(next);
+        let _ = self.active_update_tx.try_send(token_id.to_string());
     }
 
     fn bounded_book(&self, mut book: CachedOrderBook) -> CachedOrderBook {
@@ -313,7 +333,7 @@ async fn consume_reward_orderbook_stream(
                     let accepted = cache.apply_book(event.book).await;
                     if accepted {
                         if active_tokens.contains(&token_id) {
-                            cache.notify_active_book_update();
+                            cache.notify_active_book_update(&token_id);
                         }
                         if let Some(condition_id) =
                             cache.check_condition_readiness(&token_id).await
@@ -547,7 +567,7 @@ mod reward_orderbook_local_cache_tests {
 
     #[tokio::test]
     async fn local_cache_ttl_uses_receive_time_not_future_observed_at() {
-        let (cache, _ready_rx) = RewardOrderbookLocalCache::new(10, 1_000);
+        let (cache, _ready_rx, _active_rx) = RewardOrderbookLocalCache::new(10, 1_000);
         let token_id = "123".to_string();
         let future_observed_at = reward_orderbook_now_millis() + 60_000;
 
@@ -591,7 +611,7 @@ mod reward_orderbook_local_cache_tests {
 
     #[tokio::test]
     async fn check_condition_readiness_fires_once_when_all_tokens_ready() {
-        let (cache, _ready_rx) = RewardOrderbookLocalCache::new(10, 60_000);
+        let (cache, _ready_rx, _active_rx) = RewardOrderbookLocalCache::new(10, 60_000);
         let condition_id = "cond_a".to_string();
         let token_yes = "yes_token".to_string();
         let token_no = "no_token".to_string();
@@ -633,7 +653,7 @@ mod reward_orderbook_local_cache_tests {
 
     #[tokio::test]
     async fn replace_condition_tokens_drops_notified_markers_for_exited_conditions() {
-        let (cache, _ready_rx) = RewardOrderbookLocalCache::new(10, 60_000);
+        let (cache, _ready_rx, _active_rx) = RewardOrderbookLocalCache::new(10, 60_000);
         let condition_id = "cond_b".to_string();
         let token_id = "token_b".to_string();
         let mut condition_tokens = HashMap::new();

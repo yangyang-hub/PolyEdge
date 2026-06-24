@@ -244,9 +244,15 @@ mod rewards_tests {
     #[tokio::test]
     async fn external_open_order_count_excludes_local_intents() {
         let store = InMemoryRewardBotStore::new();
+        let mut awaiting_reconciliation = open_order("awaiting_reconciliation", Some("pm_cancelled"));
+        awaiting_reconciliation.reason =
+            "cancel accepted; awaiting final reconciliation".to_string();
+        let internal_id = open_order("internal_id", Some("rewlive_local"));
         store.orders.write().await.extend([
             open_order("submitted", Some("pm_order")),
             open_order("local_intent", None),
+            awaiting_reconciliation,
+            internal_id,
         ]);
 
         assert_eq!(
@@ -254,13 +260,13 @@ mod rewards_tests {
                 .count_open_orders("reward_live")
                 .await
                 .expect("count all open-like orders"),
-            2
+            4
         );
         assert_eq!(
             store
                 .count_external_open_orders("reward_live")
                 .await
-                .expect("count submitted open orders"),
+                .expect("count externally live open orders"),
             1
         );
     }
