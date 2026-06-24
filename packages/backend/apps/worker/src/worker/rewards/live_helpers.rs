@@ -19,6 +19,12 @@ fn reward_best_bid_tick(book: Option<&RewardOrderBook>) -> Option<Decimal> {
         .filter(|price| *price > Decimal::ZERO)
 }
 
+fn reward_best_ask_tick(book: Option<&RewardOrderBook>) -> Option<Decimal> {
+    book.and_then(|book| book.asks.first())
+        .map(|level| ceil_reward_price_to_tick(level.price))
+        .filter(|price| *price > Decimal::ZERO)
+}
+
 fn reward_sell_exit_floor(
     order: &ManagedRewardOrder,
     positions: &[RewardPosition],
@@ -51,6 +57,34 @@ fn reward_post_only_exit_crossing_bid(
         return None;
     }
     reward_best_bid_tick(books.get(&order.token_id)).filter(|best_bid| *best_bid >= order.price)
+}
+
+fn reward_buy_touching_ask(
+    order: &ManagedRewardOrder,
+    books: &HashMap<String, RewardOrderBook>,
+) -> Option<Decimal> {
+    if order.side != RewardOrderSide::Buy {
+        return None;
+    }
+    reward_best_ask_tick(books.get(&order.token_id)).filter(|best_ask| order.price >= *best_ask)
+}
+
+fn reward_flatten_submission_price(
+    order: &ManagedRewardOrder,
+    books: &HashMap<String, RewardOrderBook>,
+) -> std::result::Result<Decimal, String> {
+    let Some(best_bid) = reward_best_bid_tick(books.get(&order.token_id)) else {
+        return Err(format!(
+            "{LIVE_EXIT_FLATTEN_DEFERRED_MARKER}: no fresh bid liquidity for non-post-only exit"
+        ));
+    };
+    if best_bid < order.price {
+        return Err(format!(
+            "{LIVE_EXIT_FLATTEN_DEFERRED_MARKER}: best bid {best_bid} is below non-loss floor {}",
+            order.price
+        ));
+    }
+    Ok(best_bid)
 }
 
 fn reward_live_fill_id(update: &ConnectorTradeFillUpdate) -> String {

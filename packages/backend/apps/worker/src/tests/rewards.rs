@@ -1444,6 +1444,74 @@ fn post_fill_post_only_exit_keeps_floor_when_best_bid_crosses() {
 }
 
 #[test]
+fn flatten_immediately_plans_non_post_only_exit_at_non_loss_bid() {
+    let now = OffsetDateTime::now_utc();
+    let mut entry = live_test_open_order("yes_live");
+    entry.price = reward_decimal("0.49");
+    let config = RewardBotConfig {
+        post_fill_strategy: PostFillStrategy::FlattenImmediately,
+        ..RewardBotConfig::default()
+    };
+    let mut book = live_test_book("yes_live", now);
+    book.bids[0].price = reward_decimal("0.53");
+    let positions = HashMap::from([(
+        "yes_live".to_string(),
+        RewardPosition {
+            account_id: entry.account_id.clone(),
+            condition_id: entry.condition_id.clone(),
+            token_id: entry.token_id.clone(),
+            outcome: entry.outcome.clone(),
+            size: Decimal::from(5_u64),
+            avg_price: reward_decimal("0.52"),
+            realized_pnl: Decimal::ZERO,
+            updated_at: now,
+        },
+    )]);
+    let books = HashMap::from([("yes_live".to_string(), book)]);
+
+    let updates = plan_live_post_fill_orders(
+        &config,
+        &[],
+        &entry,
+        Decimal::from(5_u64),
+        &positions,
+        &books,
+        Decimal::ZERO,
+        "trc_flatten",
+    );
+
+    let LiveRewardOrderUpdate::Changed(exit, event) = &updates[0] else {
+        panic!("flatten must create a sell intent");
+    };
+    assert_eq!(exit.status, ManagedRewardOrderStatus::ExitPending);
+    assert_eq!(exit.price, reward_decimal("0.52"));
+    assert!(!deferred_live_exit_is_post_only(exit));
+    assert_eq!(event.event_type, "reward_live_flatten_planned");
+    assert_eq!(
+        reward_flatten_submission_price(exit, &books).expect("best bid meets floor"),
+        reward_decimal("0.53")
+    );
+}
+
+#[test]
+fn flatten_immediately_defers_when_best_bid_is_below_floor() {
+    let now = OffsetDateTime::now_utc();
+    let mut book = live_test_book("yes_live", now);
+    book.bids[0].price = reward_decimal("0.51");
+    let mut order = live_test_open_order("yes_live");
+    order.side = RewardOrderSide::Sell;
+    order.status = ManagedRewardOrderStatus::ExitPending;
+    order.price = reward_decimal("0.52");
+    order.reason = "flatten immediately at non-loss floor".to_string();
+    let books = HashMap::from([("yes_live".to_string(), book)]);
+
+    let reason = reward_flatten_submission_price(&order, &books)
+        .expect_err("flatten should wait below non-loss floor");
+
+    assert!(reason.contains(LIVE_EXIT_FLATTEN_DEFERRED_MARKER));
+}
+
+#[test]
 fn reward_live_fill_id_includes_order_id_and_keeps_legacy_id() {
     let update = live_test_trade_update("pm_yes_live", "pm_trade_1", Decimal::ONE);
 
@@ -1601,6 +1669,16 @@ fn external_inventory_original_price_exit_is_post_only() {
     order.reason = "external inventory original-price exit".to_string();
 
     assert!(deferred_live_exit_is_post_only(&order));
+}
+
+#[test]
+fn post_only_false_marker_keeps_flatten_exit_non_post_only() {
+    let mut order = live_test_open_order("yes_live");
+    order.side = RewardOrderSide::Sell;
+    order.status = ManagedRewardOrderStatus::ExitPending;
+    order.reason = "retryable live exit rejected [1/10] (post_only=false)".to_string();
+
+    assert!(!deferred_live_exit_is_post_only(&order));
 }
 
 #[test]

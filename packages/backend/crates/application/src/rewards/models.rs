@@ -68,7 +68,7 @@ pub enum PostFillStrategy {
     ExitAtMarkup,
     /// Rest a post-only sell at the filled buy order price, then keep quoting normally.
     HoldAndRequote,
-    /// Immediately cross the opposite book at market to flatten the position.
+    /// Submit a non-post-only sell against the best bid when it can meet the non-loss floor.
     FlattenImmediately,
 }
 

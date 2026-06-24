@@ -4,6 +4,8 @@ const LIVE_SUBMISSION_UNKNOWN_MARKER: &str =
 const LIVE_EXIT_DUST_DEFERRED_MARKER: &str = "dust live exit deferred below minimum notional";
 const LIVE_EXIT_POST_ONLY_CROSSING_DEFERRED_MARKER: &str =
     "post-only original-price exit deferred because it would cross";
+const LIVE_EXIT_FLATTEN_DEFERRED_MARKER: &str =
+    "flatten deferred until non-loss bid is available";
 const MAX_EXIT_REJECTION_COUNT: usize = 10;
 const MIN_POLYMARKET_ORDER_NOTIONAL_USD: Decimal = Decimal::ONE;
 
@@ -36,11 +38,15 @@ fn live_submission_result_is_unknown(order: &ManagedRewardOrder) -> bool {
 fn close_stale_submission_unknown_order(
     mut order: ManagedRewardOrder,
     now: OffsetDateTime,
+    positions: &[RewardPosition],
 ) -> Option<(ManagedRewardOrder, RewardRiskEvent)> {
     if !order.status.is_open_like() || !live_submission_result_is_unknown(&order) {
         return None;
     }
     if now < order.updated_at + TimeDuration::seconds(LIVE_SUBMISSION_UNKNOWN_CLOSE_AFTER_SECS) {
+        return None;
+    }
+    if live_submission_unknown_has_possible_position_fill(&order, positions) {
         return None;
     }
     order.status = ManagedRewardOrderStatus::Cancelled;
@@ -365,6 +371,9 @@ fn live_exit_retry_due(order: &ManagedRewardOrder, now: OffsetDateTime) -> bool 
         .reason
         .contains(LIVE_EXIT_POST_ONLY_CROSSING_DEFERRED_MARKER)
     {
+        return now >= order.updated_at + TimeDuration::seconds(30);
+    }
+    if order.reason.contains(LIVE_EXIT_FLATTEN_DEFERRED_MARKER) {
         return now >= order.updated_at + TimeDuration::seconds(30);
     }
     let rejection_count = parse_exit_rejection_count(&order.reason);

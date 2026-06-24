@@ -206,6 +206,28 @@ fn live_cancel_candidates_cancel_old_live_buy_with_stale_orderbook() {
 }
 
 #[test]
+fn live_cancel_candidates_cancel_buy_that_would_touch_best_ask() {
+    let config = RewardBotConfig {
+        account_id: "reward_live".to_string(),
+        stale_book_ms: 45_000,
+        ..RewardBotConfig::default()
+    };
+    let now = OffsetDateTime::now_utc();
+    let plan = live_test_plan(now);
+    let mut order = live_test_open_order("yes_live");
+    order.price = reward_decimal("0.49");
+    let mut book = live_test_book("yes_live", now);
+    book.asks[0].price = reward_decimal("0.49");
+    let books = HashMap::from([("yes_live".to_string(), book)]);
+
+    let candidates =
+        live_cancel_candidates(&config, &[plan], &[order], &books, &HashMap::new(), false);
+
+    assert_eq!(candidates.len(), 1);
+    assert!(candidates[0].1.contains("post-only buy would touch best ask"));
+}
+
+#[test]
 fn live_requote_drift_waits_for_order_cooldown() {
     let config = RewardBotConfig {
         account_id: "reward_live".to_string(),

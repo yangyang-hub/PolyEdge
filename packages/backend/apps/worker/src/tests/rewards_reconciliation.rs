@@ -47,7 +47,7 @@ fn stale_submission_unknown_order_closes_after_timeout() {
         - TimeDuration::seconds(LIVE_SUBMISSION_UNKNOWN_CLOSE_AFTER_SECS + 1);
 
     let (closed, event) =
-        close_stale_submission_unknown_order(order, OffsetDateTime::now_utc())
+        close_stale_submission_unknown_order(order, OffsetDateTime::now_utc(), &[])
             .expect("stale submission-unknown order must be closed locally");
 
     assert_eq!(closed.status, ManagedRewardOrderStatus::Cancelled);
@@ -69,7 +69,7 @@ fn fresh_submission_unknown_order_waits_within_grace() {
     order.updated_at = OffsetDateTime::now_utc();
 
     assert!(
-        close_stale_submission_unknown_order(order, OffsetDateTime::now_utc()).is_none()
+        close_stale_submission_unknown_order(order, OffsetDateTime::now_utc(), &[]).is_none()
     );
 }
 
@@ -85,7 +85,33 @@ fn submission_unknown_close_requires_unknown_marker() {
         - TimeDuration::seconds(LIVE_SUBMISSION_UNKNOWN_CLOSE_AFTER_SECS + 1);
 
     assert!(
-        close_stale_submission_unknown_order(order, OffsetDateTime::now_utc()).is_none()
+        close_stale_submission_unknown_order(order, OffsetDateTime::now_utc(), &[]).is_none()
+    );
+}
+
+#[test]
+fn stale_submission_unknown_order_with_possible_position_fill_stays_locked() {
+    let now = OffsetDateTime::now_utc();
+    let mut order = live_test_open_order("yes_unknown_position");
+    order.external_order_id = None;
+    order.status = ManagedRewardOrderStatus::Planned;
+    order.reason = LIVE_SUBMISSION_UNKNOWN_MARKER.to_string();
+    order.created_at = now - TimeDuration::minutes(15);
+    order.updated_at = now - TimeDuration::seconds(LIVE_SUBMISSION_UNKNOWN_CLOSE_AFTER_SECS + 1);
+    let position = RewardPosition {
+        account_id: order.account_id.clone(),
+        condition_id: order.condition_id.clone(),
+        token_id: order.token_id.clone(),
+        outcome: order.outcome.clone(),
+        size: Decimal::from(3_u64),
+        avg_price: order.price,
+        realized_pnl: Decimal::ZERO,
+        updated_at: now,
+    };
+
+    assert!(
+        close_stale_submission_unknown_order(order, now, &[position]).is_none(),
+        "possible post-submit inventory must keep the reconciliation lock"
     );
 }
 

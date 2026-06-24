@@ -431,7 +431,7 @@ fn plan_live_post_fill_orders(
                 .map(|avg_price| Decimal::max(entry.price, avg_price))
                 .unwrap_or(entry.price);
             let exit_price = ceil_reward_price_to_tick(exit_floor);
-            let reason = "post-only flatten original-price exit";
+            let reason = "flatten immediately at non-loss floor";
             let mut exit = live_exit_order(
                 entry,
                 fill_size,
@@ -444,12 +444,12 @@ fn plan_live_post_fill_orders(
                 &exit,
                 "reward_live_flatten_planned",
                 RewardRiskSeverity::Info,
-                "persisted post-fill rewards flatten maker intent before live submission",
+                "persisted post-fill rewards flatten intent before live submission",
                 json!({
                     "token_id": entry.token_id,
                     "size": fill_size,
                     "price": exit.price,
-                    "post_only": true,
+                    "post_only": false,
                     "trace_id": trace_id,
                 }),
             );
@@ -595,8 +595,11 @@ fn mark_sibling_cancel_for_retry(mut sibling: ManagedRewardOrder) -> ManagedRewa
 }
 
 fn deferred_live_exit_is_post_only(order: &ManagedRewardOrder) -> bool {
-    order.reason.contains("post-only")
+    if order.reason.contains("post_only=false") || order.reason.contains("flatten") {
+        return false;
+    }
+    order.reason.contains("post_only=true")
+        || order.reason.contains("post-only")
         || order.reason.contains("original-price exit")
         || order.reason.contains("exit at markup")
-        || order.reason.contains("post_only=true")
 }
