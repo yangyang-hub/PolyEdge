@@ -38,8 +38,8 @@ export function ModeStatusPanel({
   snapshot: RewardBotSnapshotDto;
   eventCounts: RewardEventCounts;
 }) {
-  const eligibleMarkets = eligibleMarketCount(snapshot);
-  const eligibleRatio = ratio(eligibleMarkets, snapshot.status.plans_total);
+  const readyQuoteMarkets = readyQuoteMarketCount(snapshot);
+  const readyQuoteRatio = ratio(readyQuoteMarkets, snapshot.status.plans_total);
   const availableRatio = ratio(
     snapshot.account.available_usd,
     snapshot.config.account_capital_usd,
@@ -67,10 +67,10 @@ export function ModeStatusPanel({
       <CardContent className="grid gap-5 lg:grid-cols-[1fr_1fr]">
         <div className="space-y-4">
           <ProgressLine
-            label={dictionary.rewards.marketReadiness}
-            value={formatRatio(eligibleRatio)}
-            meter={eligibleRatio}
-            tone={eligibleRatio > 0 ? "success" : "neutral"}
+            label={dictionary.rewards.liveQuoteReadiness}
+            value={formatRatio(readyQuoteRatio)}
+            meter={readyQuoteRatio}
+            tone={readyQuoteRatio > 0 ? "success" : "neutral"}
           />
           <ProgressLine
             label={dictionary.rewards.availableCapital}
@@ -179,20 +179,43 @@ export function SummaryStrip({
   const readyQuoteMarkets = readyQuoteMarketCount(snapshot);
   const waitingOrderbookMarkets = snapshot.status.waiting_orderbook_markets ?? 0;
   const providerPendingMarkets = snapshot.status.provider_pending_markets ?? 0;
-  const blockerSummary = formatBlockerSummary(snapshot);
+  const blockedPlans = blockedPlanCount(snapshot);
+  const fundingBlocked = blockerCount(snapshot, "funding");
+  const liveValidationBlocked = blockerCount(snapshot, "live_validation");
+  const providerBlocked = providerRiskBlockerCount(snapshot);
 
   return (
     <Card size="sm">
       <CardContent className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 2xl:grid-cols-10">
         <SummaryMetric
-          label={dictionary.rewards.eligible}
-          value={String(eligibleMarkets)}
-          hint={`${readyQuoteMarkets} ${dictionary.rewards.readyToQuote} / ${waitingOrderbookMarkets} ${dictionary.rewards.waitingOrderbook} / ${providerPendingMarkets} ${dictionary.rewards.providerPending}`}
+          label={dictionary.rewards.liveReadyMarkets}
+          value={String(readyQuoteMarkets)}
+          hint={`${eligibleMarkets} ${dictionary.rewards.finalEligibleMarkets} / ${snapshot.status.plans_total} ${dictionary.rewards.candidatePlans}`}
         />
         <SummaryMetric
-          label={dictionary.rewards.blockerBreakdown}
-          value={blockerSummary.value}
-          hint={blockerSummary.hint}
+          label={dictionary.rewards.finalEligibleMarkets}
+          value={String(eligibleMarkets)}
+          hint={`${waitingOrderbookMarkets} ${dictionary.rewards.waitingOrderbook} / ${providerPendingMarkets} ${dictionary.rewards.providerPending}`}
+        />
+        <SummaryMetric
+          label={dictionary.rewards.blocked}
+          value={String(blockedPlans)}
+          hint={`${providerBlocked} ${dictionary.rewards.providerRiskBlocked} / ${providerPendingMarkets} ${dictionary.rewards.providerPending}`}
+        />
+        <SummaryMetric
+          label={dictionary.rewards.blockerFunding}
+          value={String(fundingBlocked)}
+          hint={dictionary.rewards.fundingBlockerHint}
+        />
+        <SummaryMetric
+          label={dictionary.rewards.blockerLiveValidation}
+          value={String(liveValidationBlocked)}
+          hint={dictionary.rewards.liveValidationBlockerHint}
+        />
+        <SummaryMetric
+          label={dictionary.rewards.providerRiskBlocked}
+          value={String(providerBlocked)}
+          hint={dictionary.rewards.providerRiskBlockerHint}
         />
         <SummaryMetric
           label={dictionary.rewards.openOrders}
@@ -210,29 +233,9 @@ export function SummaryStrip({
           hint={dictionary.rewards.walletBalanceHint}
         />
         <SummaryMetric
-          label={dictionary.rewards.realizedPnl}
-          value={formatUsdFixed(snapshot.account.realized_pnl)}
-          hint={formatOptionalClock(snapshot.account.updated_at)}
-        />
-        <SummaryMetric
-          label={dictionary.rewards.eventsPlacements}
-          value={String(eventCounts.placements)}
-          hint={dictionary.rewards.eventsTriggered}
-        />
-        <SummaryMetric
-          label={dictionary.rewards.eventsFills}
-          value={String(eventCounts.fills)}
-          hint={dictionary.rewards.eventsTriggered}
-        />
-        <SummaryMetric
-          label={dictionary.rewards.eventsCancels}
-          value={String(eventCounts.cancels)}
-          hint={dictionary.rewards.eventsTriggered}
-        />
-        <SummaryMetric
-          label={dictionary.rewards.eventsRewards}
-          value={String(eventCounts.rewards)}
-          hint={`${dictionary.rewards.rewardEarned}: ${formatUsdFixed(snapshot.account.reward_earned_usd)}`}
+          label={dictionary.rewards.eventFlow}
+          value={`${eventCounts.placements}/${eventCounts.fills}/${eventCounts.cancels}`}
+          hint={`${dictionary.rewards.eventsPlacements} / ${dictionary.rewards.eventsFills} / ${dictionary.rewards.eventsCancels}`}
         />
       </CardContent>
     </Card>
@@ -310,40 +313,30 @@ function readyQuoteMarketCount(snapshot: RewardBotSnapshotDto) {
   return snapshot.status.ready_quote_markets ?? snapshot.status.eligible_markets;
 }
 
-function formatBlockerSummary(snapshot: RewardBotSnapshotDto) {
-  const blockers = snapshot.status.blocker_counts;
-  const items = [
-    {
-      label: dictionary.rewards.waitingOrderbook,
-      count: blockers?.waiting_orderbook ?? snapshot.status.waiting_orderbook_markets ?? 0,
-    },
-    { label: dictionary.rewards.blockerAiPending, count: blockers?.ai_pending ?? 0 },
-    { label: dictionary.rewards.blockerInfoRiskPending, count: blockers?.info_risk_pending ?? 0 },
-    { label: dictionary.rewards.blockerAiConfidenceLow, count: blockers?.ai_confidence_low ?? 0 },
-    { label: dictionary.rewards.blockerAiWatch, count: blockers?.ai_watch ?? 0 },
-    { label: dictionary.rewards.blockerAiAvoid, count: blockers?.ai_avoid ?? 0 },
-    { label: dictionary.rewards.blockerInfoRisk, count: blockers?.info_risk ?? 0 },
-    { label: dictionary.rewards.blockerLowCompetition, count: blockers?.low_competition ?? 0 },
-    { label: dictionary.rewards.blockerFunding, count: blockers?.funding ?? 0 },
-    { label: dictionary.rewards.blockerLiveValidation, count: blockers?.live_validation ?? 0 },
-    { label: dictionary.rewards.blockerOther, count: blockers?.other ?? 0 },
-  ]
-    .filter((item) => item.count > 0)
-    .sort((left, right) => right.count - left.count);
-
-  if (items.length === 0) {
-    return { value: "0", hint: dictionary.rewards.none };
-  }
-
-  const [first, ...rest] = items;
-  return {
-    value: `${first.label} ${first.count}`,
-    hint: rest.slice(0, 2).map((item) => `${item.label} ${item.count}`).join(" / ") || dictionary.rewards.none,
-  };
-}
-
 function eligibleMarketCount(snapshot: RewardBotSnapshotDto) {
   return snapshot.status.eligible_markets;
+}
+
+function blockedPlanCount(snapshot: RewardBotSnapshotDto) {
+  return Math.max(0, snapshot.status.plans_total - eligibleMarketCount(snapshot));
+}
+
+function blockerCount(
+  snapshot: RewardBotSnapshotDto,
+  key: "funding" | "live_validation",
+) {
+  return snapshot.status.blocker_counts?.[key] ?? 0;
+}
+
+function providerRiskBlockerCount(snapshot: RewardBotSnapshotDto) {
+  const blockers = snapshot.status.blocker_counts;
+  if (!blockers) return 0;
+  return (
+    (blockers.ai_confidence_low ?? 0) +
+    (blockers.ai_watch ?? 0) +
+    (blockers.ai_avoid ?? 0) +
+    (blockers.info_risk ?? 0)
+  );
 }
 
 function clamp01(value: number) {

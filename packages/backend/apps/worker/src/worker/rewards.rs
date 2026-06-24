@@ -417,12 +417,21 @@ async fn run_reward_bot_live_tick(
         &cycle.open_orders,
         &cycle.config,
     );
+    let funding_precheck_blocked = apply_live_funding_precheck(
+        &cycle.config,
+        &cycle.account,
+        &mut cycle.plans,
+        &books,
+        &cycle.open_orders,
+        &cycle.positions,
+    );
     mark_pre_ai_eligible_quote_plans(&mut cycle.plans, &mut cycle.pre_ai_eligible_condition_ids);
     info!(
         trace_id = %trace_id,
         markets = cycle.markets.len(),
         books = books_fetched,
         plans = cycle.plans.len(),
+        funding_precheck_blocked,
         pre_ai_eligible_plans = cycle.pre_ai_eligible_condition_ids.len(),
         eligible_plans = cycle.plans.iter().filter(|plan| plan.eligible).count(),
         open_orders = cycle.open_orders.len(),

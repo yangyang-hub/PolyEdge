@@ -694,6 +694,82 @@ fn live_placement_requires_the_whole_market_to_fit_available_cash() {
 }
 
 #[test]
+fn live_funding_precheck_blocks_underfunded_new_condition_before_provider() {
+    let config = RewardBotConfig {
+        account_id: "reward_live".to_string(),
+        stale_book_ms: 0,
+        max_markets: 1,
+        max_open_orders: 2,
+        max_global_position_usd: Decimal::ZERO,
+        ..RewardBotConfig::default()
+    };
+    let now = OffsetDateTime::now_utc();
+    let mut plan = live_test_plan(now);
+    plan.rewards_min_size = reward_decimal("50");
+    let books = HashMap::from([
+        ("yes_live".to_string(), live_test_book("yes_live", now)),
+        ("no_live".to_string(), live_test_book("no_live", now)),
+    ]);
+
+    let mut plans = vec![plan];
+    let blocked = apply_live_funding_precheck(
+        &config,
+        &live_test_account(reward_decimal("47.99")),
+        &mut plans,
+        &books,
+        &[],
+        &[],
+    );
+    let mut pre_ai_eligible = Vec::new();
+    mark_pre_ai_eligible_quote_plans(&mut plans, &mut pre_ai_eligible);
+
+    assert_eq!(blocked, 1);
+    assert!(!plans[0].eligible);
+    assert!(!plans[0].pre_ai_eligible);
+    assert!(pre_ai_eligible.is_empty());
+    assert!(plans[0]
+        .reason
+        .contains("live funding below rewards minimum"));
+}
+
+#[test]
+fn live_funding_precheck_keeps_active_exposure_in_provider_queue() {
+    let config = RewardBotConfig {
+        account_id: "reward_live".to_string(),
+        stale_book_ms: 0,
+        max_markets: 1,
+        max_open_orders: 2,
+        max_global_position_usd: Decimal::ZERO,
+        ..RewardBotConfig::default()
+    };
+    let now = OffsetDateTime::now_utc();
+    let mut plan = live_test_plan(now);
+    plan.rewards_min_size = reward_decimal("50");
+    let books = HashMap::from([
+        ("yes_live".to_string(), live_test_book("yes_live", now)),
+        ("no_live".to_string(), live_test_book("no_live", now)),
+    ]);
+    let open_order = live_test_open_order("yes_live");
+
+    let mut plans = vec![plan];
+    let blocked = apply_live_funding_precheck(
+        &config,
+        &live_test_account(reward_decimal("47.99")),
+        &mut plans,
+        &books,
+        std::slice::from_ref(&open_order),
+        &[],
+    );
+    let mut pre_ai_eligible = Vec::new();
+    mark_pre_ai_eligible_quote_plans(&mut plans, &mut pre_ai_eligible);
+
+    assert_eq!(blocked, 0);
+    assert!(plans[0].eligible);
+    assert!(plans[0].pre_ai_eligible);
+    assert_eq!(pre_ai_eligible, vec!["cond_live".to_string()]);
+}
+
+#[test]
 fn live_placement_uses_wallet_balance_instead_of_config_quote_budgets() {
     let config = RewardBotConfig {
         account_id: "reward_live".to_string(),

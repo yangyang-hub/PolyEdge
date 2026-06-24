@@ -2,6 +2,8 @@ const LIVE_CANCEL_RETRY_MIN_INTERVAL: TimeDuration = TimeDuration::seconds(15);
 const LIVE_CANCEL_FINAL_RECONCILIATION_RETRY_AFTER: TimeDuration = TimeDuration::seconds(30);
 const LOW_COMPETITION_GLOBAL_OPEN_ORDER_SHARE_BPS: usize = 3_000;
 
+include!("live_placement_limits.rs");
+
 fn live_cancel_candidates(
     config: &RewardBotConfig,
     plans: &[RewardQuotePlan],
@@ -262,71 +264,9 @@ fn live_placement_orders(
         // Rescale legs to use available balance: single-side uses all,
         // double-side splits 50/50. Plan legs stay at minimum size for
         // snapshot and price-drift detection.
-        let rescaled_legs = match plan.quote_mode {
-            RewardPlanQuoteMode::SingleYes | RewardPlanQuoteMode::SingleNo => {
-                if let Some(leg) = plan.legs.first() {
-                    let token = RewardToken {
-                        token_id: leg.token_id.clone(),
-                        outcome: leg.outcome.clone(),
-                        price: None,
-                    };
-                    vec![scale_single_leg_for_budget(
-                        &token,
-                        leg.price,
-                        plan.rewards_min_size,
-                        condition_budget,
-                    )]
-                } else {
-                    plan.legs.clone()
-                }
-            }
-            _ => {
-                let yes = plan.legs.iter().find(|l| {
-                    l.outcome.trim().eq_ignore_ascii_case("yes")
-                });
-                let no = plan.legs.iter().find(|l| {
-                    l.outcome.trim().eq_ignore_ascii_case("no")
-                });
-                if let (Some(y), Some(n)) = (yes, no) {
-                    let yt = RewardToken {
-                        token_id: y.token_id.clone(),
-                        outcome: y.outcome.clone(),
-                        price: None,
-                    };
-                    let nt = RewardToken {
-                        token_id: n.token_id.clone(),
-                        outcome: n.outcome.clone(),
-                        price: None,
-                    };
-                    scale_double_legs_for_budget(
-                        &yt,
-                        y.price,
-                        &nt,
-                        n.price,
-                        plan.rewards_min_size,
-                        condition_budget,
-                    )
-                } else {
-                    plan.legs.clone()
-                }
-            }
-        };
-        let missing_plan_buy_notional: Decimal = rescaled_legs
-            .iter()
-            .filter(|leg| {
-                !orders.iter().any(|order| {
-                    order.condition_id == plan.condition_id
-                        && order.token_id == leg.token_id
-                        && order.side == RewardOrderSide::Buy
-                        && order.status.is_open_like()
-                }) && !orders.iter().any(|order| {
-                    order.token_id == leg.token_id
-                        && order.side == RewardOrderSide::Sell
-                        && order.status.is_open_like()
-                })
-            })
-            .map(|leg| (leg.price * leg.size).round_dp(4))
-            .sum();
+        let rescaled_legs = live_rescaled_quote_legs_for_budget(plan, condition_budget);
+        let missing_plan_buy_notional =
+            live_missing_plan_buy_notional(&rescaled_legs, &orders, &plan.condition_id);
         // Polymarket applies its collateral validity check to the sum of all
         // open BUY orders in the same condition. Different conditions may reuse
         // the same collateral, but both YES/NO legs in one condition must fit.
@@ -449,55 +389,6 @@ fn live_placement_orders(
     (placements, plans_changed)
 }
 
-fn live_condition_budget_capped_by_positions(
-    config: &RewardBotConfig,
-    plan_legs: &[RewardQuoteLeg],
-    positions: &[RewardPosition],
-    raw_budget: Decimal,
-) -> Decimal {
-    let mut budget = raw_budget;
-    if config.max_position_usd > Decimal::ZERO {
-        let min_headroom = plan_legs
-            .iter()
-            .map(|leg| {
-                let current = positions
-                    .iter()
-                    .find(|p| p.token_id == leg.token_id && p.size > Decimal::ZERO)
-                    .map(|p| (p.size * leg.price).round_dp(4))
-                    .unwrap_or_default();
-                (config.max_position_usd - current).max(Decimal::ZERO)
-            })
-            .min()
-            .unwrap_or(raw_budget);
-        // Both legs share one condition collateral; cap total so each leg
-        // stays within its position limit.
-        budget = Decimal::min(budget, min_headroom * Decimal::from(plan_legs.len().max(1) as u64));
-    }
-    if config.max_global_position_usd > Decimal::ZERO {
-        let current = live_global_inventory_notional(positions);
-        let headroom = (config.max_global_position_usd - current).max(Decimal::ZERO);
-        budget = Decimal::min(budget, headroom);
-    }
-    budget
-}
-
-fn live_low_competition_global_open_order_cap(max_open_orders: usize) -> usize {
-    if max_open_orders == 0 {
-        return 0;
-    }
-    ((max_open_orders * LOW_COMPETITION_GLOBAL_OPEN_ORDER_SHARE_BPS) / 10_000).max(1)
-}
-
-fn live_low_competition_open_order_count(orders: &[ManagedRewardOrder]) -> usize {
-    orders
-        .iter()
-        .filter(|order| {
-            order.status.is_open_like()
-                && order.strategy_bucket == RewardStrategyBucket::LowCompetition
-        })
-        .count()
-}
-
 fn mark_live_orderbook_validation_skip(
     plan: &mut RewardQuotePlan,
     reason: String,
@@ -608,32 +499,6 @@ fn mark_live_orderbook_waiting(
     changed
 }
 
-fn mark_live_funding_skip(
-    plan: &mut RewardQuotePlan,
-    existing_market_buy_notional: Decimal,
-    missing_plan_buy_notional: Decimal,
-    available_for_new_condition: Decimal,
-    now: OffsetDateTime,
-) -> bool {
-    let reason = format!(
-        "live funding below rewards minimum: existing condition BUY notional {existing_market_buy_notional}, missing minimum quote notional {missing_plan_buy_notional}, available {available_for_new_condition}"
-    );
-    let changed = plan.eligible
-        || plan.quote_mode != RewardPlanQuoteMode::None
-        || plan.reason != reason
-        || plan.live_skip_until.is_some()
-        || plan.live_skip_reason.is_some();
-    if changed {
-        plan.eligible = false;
-        plan.quote_mode = RewardPlanQuoteMode::None;
-        plan.reason = reason;
-        plan.live_skip_until = None;
-        plan.live_skip_reason = None;
-        plan.updated_at = now;
-    }
-    changed
-}
-
 fn live_min_depth_cancel_reason(
     config: &RewardBotConfig,
     books: &HashMap<String, RewardOrderBook>,
@@ -663,20 +528,6 @@ fn live_min_depth_cancel_reason(
     } else {
         None
     }
-}
-
-fn live_market_buy_notional(orders: &[ManagedRewardOrder], condition_id: &str) -> Decimal {
-    orders
-        .iter()
-        .filter(|order| {
-            order.condition_id == condition_id
-                && order.side == RewardOrderSide::Buy
-                && order.status.is_open_like()
-        })
-        .map(|order| {
-            (order.price * (order.size - order.filled_size).max(Decimal::ZERO)).round_dp(4)
-        })
-        .sum()
 }
 
 fn live_bid_rank_cancel_reason(
