@@ -3,7 +3,7 @@
 // into a single provider call, and falls back to per-condition single requests
 // for any market the model omitted or mislabeled. Coexists with the full-tick
 // provider refresh (`provider_refresh.rs`); both rely on advisory cache-miss
-// dedup + the shared provider request semaphore, so overlap only ever wastes at
+// dedup + the AI advisory provider request semaphore, so overlap only ever wastes at
 // most one duplicate call. The watch/avoid markets are unsubscribed
 // automatically through plan `eligible=false` persistence + the periodic
 // orderbook token registration task, so this path never issues unsubscribes.
@@ -238,9 +238,15 @@ async fn run_reward_ai_advisory_batch_flush(
             .reward_bot_service
             .latest_market_advisory(&request)
             .await?
-            .is_some()
+            .is_some_and(|advisory| {
+                report.cache_hits += 1;
+                !reward_provider_cache_refresh_due(
+                    advisory.expires_at,
+                    cycle.config.ai_advisory_ttl_sec,
+                    OffsetDateTime::now_utc(),
+                )
+            })
         {
-            report.cache_hits += 1;
             continue;
         }
         // Re-check book readiness at flush time: the local cache entry may have
@@ -257,7 +263,7 @@ async fn run_reward_ai_advisory_batch_flush(
     if !requests.is_empty() {
         report.batch_calls += 1;
         let batch_outcome = {
-            let _permit = acquire_reward_ai_provider_request_permit().await?;
+            let _permit = acquire_reward_ai_advisory_provider_request_permit().await?;
             connector.advise_batch(&requests).await
         };
         match batch_outcome {
@@ -413,7 +419,7 @@ async fn single_reward_ai_advise_and_save(
     trace_id: &str,
 ) -> SingleAdviseOutcome {
     let result = {
-        let Ok(_permit) = acquire_reward_ai_provider_request_permit().await else {
+        let Ok(_permit) = acquire_reward_ai_advisory_provider_request_permit().await else {
             return SingleAdviseOutcome::Failed;
         };
         connector.advise(request).await

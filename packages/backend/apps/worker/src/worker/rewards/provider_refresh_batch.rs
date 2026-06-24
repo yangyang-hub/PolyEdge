@@ -52,7 +52,7 @@ async fn refresh_reward_ai_advisory_provider_batch(
             "requesting reward AI advisory provider batch",
         );
         let result = {
-            let _provider_permit = acquire_reward_ai_provider_request_permit().await?;
+            let _provider_permit = acquire_reward_ai_advisory_provider_request_permit().await?;
             connector.advise_batch(&requests).await
         };
         let items = match result {
@@ -201,6 +201,11 @@ async fn build_reward_ai_advisory_batch_requests(
             .await?
         {
             report.cache_hits += 1;
+            let refresh_due = reward_provider_cache_refresh_due(
+                cached.expires_at,
+                cycle.config.ai_advisory_ttl_sec,
+                OffsetDateTime::now_utc(),
+            );
             apply_reward_ai_advisory_to_refresh_cycle(
                 state,
                 cycle,
@@ -211,7 +216,9 @@ async fn build_reward_ai_advisory_batch_requests(
                 promoted_tokens,
             )
             .await;
-            continue;
+            if !refresh_due {
+                continue;
+            }
         }
         if !reward_market_books_available(market, books) {
             report.skipped_missing_book += 1;
@@ -342,7 +349,7 @@ async fn refresh_reward_info_risk_provider_batch(
             "requesting reward info risk provider batch",
         );
         let result = {
-            let _provider_permit = acquire_reward_ai_provider_request_permit().await?;
+            let _provider_permit = acquire_reward_info_risk_provider_request_permit().await?;
             connector.assess_batch(&requests).await
         };
         let items = match result {
@@ -456,9 +463,15 @@ async fn build_reward_info_risk_batch_requests(
             .reward_bot_service
             .latest_market_info_risk(&request)
             .await?
-            .is_some()
+            .is_some_and(|risk| {
+                report.cache_hits += 1;
+                !reward_provider_cache_refresh_due(
+                    risk.expires_at,
+                    cycle.config.info_risk_ttl_sec,
+                    OffsetDateTime::now_utc(),
+                )
+            })
         {
-            report.cache_hits += 1;
             continue;
         }
         requests.push(request);

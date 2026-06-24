@@ -292,10 +292,13 @@ fn reward_ai_plan_needs_advisory(
     model: &str,
     now: OffsetDateTime,
 ) -> bool {
-    !plan
-        .ai_advisory
-        .as_ref()
-        .is_some_and(|advisory| reward_ai_advisory_matches_config(advisory, config, model, now))
+    let Some(advisory) = plan.ai_advisory.as_ref() else {
+        return true;
+    };
+    if !reward_ai_advisory_matches_config(advisory, config, model, now) {
+        return true;
+    }
+    reward_provider_cache_refresh_due(advisory.expires_at, config.ai_advisory_ttl_sec, now)
 }
 
 fn reward_ai_advisory_matches_config(
@@ -340,15 +343,28 @@ fn reward_ai_min_confidence(bps: u16) -> Decimal {
     Decimal::from(bps.min(10_000)) / Decimal::from(10_000_u64)
 }
 
-async fn acquire_reward_ai_provider_request_permit()
+async fn acquire_reward_ai_advisory_provider_request_permit()
 -> Result<tokio::sync::SemaphorePermit<'static>> {
-    REWARD_AI_PROVIDER_REQUEST_SEMAPHORE
+    REWARD_AI_ADVISORY_PROVIDER_REQUEST_SEMAPHORE
         .acquire()
         .await
         .map_err(|error| {
             AppError::internal(
-                "REWARD_AI_PROVIDER_SEMAPHORE_CLOSED",
-                format!("reward AI provider request semaphore closed: {error}"),
+                "REWARD_AI_ADVISORY_PROVIDER_SEMAPHORE_CLOSED",
+                format!("reward AI advisory provider request semaphore closed: {error}"),
+            )
+        })
+}
+
+async fn acquire_reward_info_risk_provider_request_permit()
+-> Result<tokio::sync::SemaphorePermit<'static>> {
+    REWARD_INFO_RISK_PROVIDER_REQUEST_SEMAPHORE
+        .acquire()
+        .await
+        .map_err(|error| {
+            AppError::internal(
+                "REWARD_INFO_RISK_PROVIDER_SEMAPHORE_CLOSED",
+                format!("reward info risk provider request semaphore closed: {error}"),
             )
         })
 }
@@ -420,24 +436,43 @@ mod reward_ai_provider_error_tests {
     }
 
     #[tokio::test]
-    async fn reward_ai_provider_request_permit_is_single_flight() {
-        let first = acquire_reward_ai_provider_request_permit()
+    async fn reward_provider_request_permits_are_isolated_single_flight() {
+        let first_ai = acquire_reward_ai_advisory_provider_request_permit()
             .await
-            .expect("acquire first permit");
-        let second = tokio::time::timeout(
+            .expect("acquire first AI permit");
+        let second_ai = tokio::time::timeout(
             Duration::from_millis(10),
-            acquire_reward_ai_provider_request_permit(),
+            acquire_reward_ai_advisory_provider_request_permit(),
         )
         .await;
-        assert!(second.is_err());
+        assert!(second_ai.is_err());
 
-        drop(first);
-        let _second = tokio::time::timeout(
+        let first_info_risk = acquire_reward_info_risk_provider_request_permit()
+            .await
+            .expect("info-risk permit should be independent while AI permit is held");
+        let second_info_risk = tokio::time::timeout(
+            Duration::from_millis(10),
+            acquire_reward_info_risk_provider_request_permit(),
+        )
+        .await;
+        assert!(second_info_risk.is_err());
+
+        drop(first_info_risk);
+        let _second_info_risk = tokio::time::timeout(
             Duration::from_millis(100),
-            acquire_reward_ai_provider_request_permit(),
+            acquire_reward_info_risk_provider_request_permit(),
         )
         .await
-        .expect("second permit should acquire after release")
-        .expect("acquire second permit");
+        .expect("second info-risk permit should acquire after release")
+        .expect("acquire second info-risk permit");
+
+        drop(first_ai);
+        let _second_ai = tokio::time::timeout(
+            Duration::from_millis(100),
+            acquire_reward_ai_advisory_provider_request_permit(),
+        )
+        .await
+        .expect("second AI permit should acquire after release")
+        .expect("acquire second AI permit");
     }
 }

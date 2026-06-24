@@ -229,7 +229,19 @@ impl RewardInfoRiskAssessmentDecision {
             sources: self.sources,
             metrics: self.metrics,
             created_at: now,
-            expires_at: now + TimeDuration::seconds(ttl_sec as i64),
+            expires_at: reward_provider_cache_expires_at(
+                now,
+                ttl_sec,
+                "info_risk",
+                &[
+                    request.condition_id.as_str(),
+                    request.provider.as_str(),
+                    request.request_format.as_str(),
+                    request.model.as_str(),
+                    request.query_hash.as_str(),
+                    request.input_hash.as_str(),
+                ],
+            ),
         }
     }
 }

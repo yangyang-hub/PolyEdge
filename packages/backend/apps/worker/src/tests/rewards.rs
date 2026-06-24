@@ -256,25 +256,33 @@ fn reward_ai_advisory_candidates_only_include_pre_ai_eligible_missing_admission(
 }
 
 #[test]
-fn reward_provider_refresh_candidates_use_info_risk_order_and_dedupe_ai() {
-    let info_risk_condition_ids = vec![
-        "cond_open".to_string(),
-        "cond_position".to_string(),
+fn reward_provider_refresh_candidates_prioritize_active_exposure_and_dedupe() {
+    let now = OffsetDateTime::now_utc();
+    let mut open_order = live_test_open_order("yes_live");
+    open_order.condition_id = "cond_open".to_string();
+    let position = RewardPosition {
+        account_id: "reward_live".to_string(),
+        condition_id: "cond_position".to_string(),
+        token_id: "yes_position".to_string(),
+        outcome: "YES".to_string(),
+        size: reward_decimal("5"),
+        avg_price: reward_decimal("0.50"),
+        realized_pnl: Decimal::ZERO,
+        updated_at: now,
+    };
+    let condition_ids = vec![
         "cond_eligible".to_string(),
+        "cond_position".to_string(),
         "cond_candidate".to_string(),
-    ];
-    let ai_condition_ids = vec![
+        "cond_open".to_string(),
         "cond_eligible".to_string(),
-        "cond_position".to_string(),
-        "cond_ai_only".to_string(),
     ];
 
     let ordered = reward_provider_refresh_candidate_condition_ids(
-        &info_risk_condition_ids,
-        &ai_condition_ids,
+        &condition_ids,
         &[],
-        &[],
-        &[],
+        &[open_order],
+        &[position],
     );
 
     assert_eq!(
@@ -284,7 +292,6 @@ fn reward_provider_refresh_candidates_use_info_risk_order_and_dedupe_ai() {
             "cond_position",
             "cond_eligible",
             "cond_candidate",
-            "cond_ai_only",
         ],
     );
 }
@@ -320,22 +327,17 @@ fn reward_provider_refresh_candidates_mix_low_competition_after_active_exposure(
         updated_at: now,
     };
 
-    let info_risk_condition_ids = vec![
-        "cond_open".to_string(),
-        "cond_position".to_string(),
+    let condition_ids = vec![
         "cond_standard".to_string(),
         "cond_candidate".to_string(),
         "cond_low".to_string(),
         "cond_low_rejected".to_string(),
-    ];
-    let ai_condition_ids = vec![
-        "cond_standard".to_string(),
-        "cond_low".to_string(),
         "cond_ai_only_low".to_string(),
+        "cond_open".to_string(),
+        "cond_position".to_string(),
     ];
     let ordered = reward_provider_refresh_candidate_condition_ids(
-        &info_risk_condition_ids,
-        &ai_condition_ids,
+        &condition_ids,
         &[standard, low, ai_only_low, low_rejected],
         &[open_order],
         &[position],
@@ -374,7 +376,7 @@ fn reward_provider_refresh_candidates_interleave_low_competition_with_standard_q
     let low_b = low_competition_provider_test_plan(now, "cond_low_b");
     let low_c = low_competition_provider_test_plan(now, "cond_low_c");
 
-    let info_risk_condition_ids = vec![
+    let condition_ids = vec![
         "cond_standard_a".to_string(),
         "cond_low_a".to_string(),
         "cond_standard_b".to_string(),
@@ -384,8 +386,7 @@ fn reward_provider_refresh_candidates_interleave_low_competition_with_standard_q
         "cond_low_c".to_string(),
     ];
     let ordered = reward_provider_refresh_candidate_condition_ids(
-        &info_risk_condition_ids,
-        &[],
+        &condition_ids,
         &[
             standard_a, standard_b, standard_c, standard_d, low_a, low_b, low_c,
         ],

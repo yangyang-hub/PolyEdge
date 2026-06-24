@@ -119,6 +119,59 @@ fn decimal_to_f64(value: Decimal) -> f64 {
     value.to_string().parse::<f64>().unwrap_or(0.0)
 }
 
+const REWARD_PROVIDER_CACHE_TTL_JITTER_DIVISOR: u64 = 5;
+const REWARD_PROVIDER_CACHE_MAX_JITTER_SEC: u64 = 15 * 60;
+
+#[must_use]
+pub fn reward_provider_cache_jitter_window_sec(ttl_sec: u64) -> u64 {
+    (ttl_sec / REWARD_PROVIDER_CACHE_TTL_JITTER_DIVISOR)
+        .min(REWARD_PROVIDER_CACHE_MAX_JITTER_SEC)
+}
+
+#[must_use]
+pub fn reward_provider_cache_refresh_due(
+    expires_at: OffsetDateTime,
+    ttl_sec: u64,
+    now: OffsetDateTime,
+) -> bool {
+    let refresh_window_sec = reward_provider_cache_jitter_window_sec(ttl_sec);
+    expires_at <= now + TimeDuration::seconds(refresh_window_sec.min(i64::MAX as u64) as i64)
+}
+
+fn reward_provider_cache_expires_at(
+    now: OffsetDateTime,
+    ttl_sec: u64,
+    cache_scope: &str,
+    stable_parts: &[&str],
+) -> OffsetDateTime {
+    let jitter_sec = reward_provider_cache_jitter_sec(ttl_sec, cache_scope, stable_parts);
+    let total_sec = ttl_sec.saturating_add(jitter_sec).min(i64::MAX as u64);
+    now + TimeDuration::seconds(total_sec as i64)
+}
+
+fn reward_provider_cache_jitter_sec(
+    ttl_sec: u64,
+    cache_scope: &str,
+    stable_parts: &[&str],
+) -> u64 {
+    let window_sec = reward_provider_cache_jitter_window_sec(ttl_sec);
+    if window_sec == 0 {
+        return 0;
+    }
+
+    let mut hasher = Sha256::new();
+    hasher.update(cache_scope.as_bytes());
+    hasher.update([0]);
+    for part in stable_parts {
+        hasher.update(part.as_bytes());
+        hasher.update([0]);
+    }
+    let digest = hasher.finalize();
+    let mut bytes = [0_u8; 8];
+    bytes.copy_from_slice(&digest[..8]);
+    u64::from_be_bytes(bytes) % (window_sec + 1)
+}
+
 fn reward_market_candle_sample_from_cached_book(
     book: &CachedOrderBook,
     interval_sec: i32,

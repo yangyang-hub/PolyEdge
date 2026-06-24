@@ -4,19 +4,30 @@ fn spawn_reward_market_provider_refresh(
     books: &HashMap<String, RewardOrderBook>,
     trace_id: &str,
 ) {
-    if !cycle.config.ai_advisory_enabled && !cycle.config.info_risk_enabled {
+    if cycle.config.ai_advisory_enabled {
+        spawn_reward_ai_advisory_provider_refresh(state, cycle, books, trace_id);
+    }
+    if cycle.config.info_risk_enabled {
+        spawn_reward_info_risk_provider_refresh(state, cycle, trace_id);
+    }
+}
+
+fn spawn_reward_ai_advisory_provider_refresh(
+    state: &AppState,
+    cycle: &RewardLiveCycle,
+    books: &HashMap<String, RewardOrderBook>,
+    trace_id: &str,
+) {
+    if cycle.plans.is_empty() {
         return;
     }
-    if cycle.plans.is_empty() && cycle.markets.is_empty() {
-        return;
-    }
-    if REWARD_MARKET_PROVIDER_REFRESH_RUNNING
+    if REWARD_AI_PROVIDER_REFRESH_RUNNING
         .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
         .is_err()
     {
         debug!(
             trace_id = %trace_id,
-            "skipping reward market provider refresh because another refresh is running",
+            "skipping reward AI advisory provider refresh because another AI refresh is running",
         );
         return;
     }
@@ -26,13 +37,49 @@ fn spawn_reward_market_provider_refresh(
     let books = books.clone();
     let trace_id = trace_id.to_string();
     tokio::spawn(async move {
-        let result = refresh_reward_market_provider_cache(&state, cycle, books, &trace_id).await;
-        REWARD_MARKET_PROVIDER_REFRESH_RUNNING.store(false, Ordering::Release);
+        let result =
+            refresh_reward_ai_advisory_provider_cache(&state, cycle, books, &trace_id).await;
+        REWARD_AI_PROVIDER_REFRESH_RUNNING.store(false, Ordering::Release);
         if let Err(error) = result {
             warn!(
                 trace_id = %trace_id,
                 error = %error,
-                "reward market provider refresh failed",
+                "reward AI advisory provider refresh failed",
+            );
+        }
+    });
+}
+
+fn spawn_reward_info_risk_provider_refresh(
+    state: &AppState,
+    cycle: &RewardLiveCycle,
+    trace_id: &str,
+) {
+    if cycle.plans.is_empty() && cycle.markets.is_empty() {
+        return;
+    }
+    if REWARD_INFO_RISK_PROVIDER_REFRESH_RUNNING
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .is_err()
+    {
+        debug!(
+            trace_id = %trace_id,
+            "skipping reward info risk provider refresh because another info-risk refresh is running",
+        );
+        return;
+    }
+
+    let state = state.clone();
+    let cycle = cycle.clone();
+    let trace_id = trace_id.to_string();
+    tokio::spawn(async move {
+        let result = refresh_reward_info_risk_provider_cache(&state, cycle, &trace_id).await;
+        REWARD_INFO_RISK_PROVIDER_REFRESH_RUNNING.store(false, Ordering::Release);
+        if let Err(error) = result {
+            warn!(
+                trace_id = %trace_id,
+                error = %error,
+                "reward info risk provider refresh failed",
             );
         }
     });
@@ -44,111 +91,47 @@ const REWARD_AI_PROVIDER_ORDERBOOK_WAIT_ATTEMPTS: usize = 8;
 const REWARD_AI_PROVIDER_ORDERBOOK_WAIT_DELAY: Duration = Duration::from_secs(2);
 const REWARD_PROVIDER_STANDARD_CONDITIONS_PER_LOW_COMPETITION: usize = 2;
 
-async fn refresh_reward_market_provider_cache(
+async fn refresh_reward_ai_advisory_provider_cache(
     state: &AppState,
     mut cycle: RewardLiveCycle,
     books: HashMap<String, RewardOrderBook>,
     trace_id: &str,
-) -> Result<RewardProviderRefreshReport> {
-    let ai_refresh_enabled = cycle.config.ai_advisory_enabled && !cycle.plans.is_empty();
-    let info_risk_refresh_enabled = cycle.config.info_risk_enabled;
-    if !ai_refresh_enabled && !info_risk_refresh_enabled {
-        return Ok(RewardProviderRefreshReport::default());
+) -> Result<RewardAiAdvisoryRefreshReport> {
+    let mut report = RewardAiAdvisoryRefreshReport::default();
+    if !cycle.config.ai_advisory_enabled || cycle.plans.is_empty() {
+        return Ok(report);
     }
 
     let model = state.settings.rewards.ai_model.trim();
     if model.is_empty() {
         warn!(
             trace_id = %trace_id,
-            "reward provider model is empty; skipping market provider refresh"
+            "reward AI advisory model is empty; skipping AI provider refresh"
         );
-        return Ok(RewardProviderRefreshReport::default());
+        return Ok(report);
     }
 
-    let ai_connector = if ai_refresh_enabled {
-        match build_reward_ai_advisory_connector(state, &cycle.config)? {
-            Some(connector) => Some(connector),
-            None => {
-                warn!(
-                    trace_id = %trace_id,
-                    provider = cycle.config.ai_provider.as_str(),
-                    "reward AI advisory is enabled but provider configuration is incomplete; skipping AI provider refresh",
-                );
-                None
-            }
-        }
-    } else {
-        None
+    let Some(connector) = build_reward_ai_advisory_connector(state, &cycle.config)? else {
+        warn!(
+            trace_id = %trace_id,
+            provider = cycle.config.ai_provider.as_str(),
+            "reward AI advisory is enabled but provider configuration is incomplete; skipping AI provider refresh",
+        );
+        return Ok(report);
     };
-    let info_risk_connector = if info_risk_refresh_enabled {
-        match build_reward_info_risk_connector(state, &cycle.config)? {
-            Some(connector) => Some(connector),
-            None => {
-                warn!(
-                    trace_id = %trace_id,
-                    provider = cycle.config.ai_provider.as_str(),
-                    "reward info risk is enabled but provider configuration is incomplete; skipping info-risk provider refresh",
-                );
-                None
-            }
-        }
-    } else {
-        None
-    };
-
-    if ai_connector.is_none() && info_risk_connector.is_none() {
-        return Ok(RewardProviderRefreshReport::default());
-    }
-
-    let mut markets_by_condition = if info_risk_connector.is_some() {
-        state
-            .reward_bot_service
-            .list_active_reward_markets()
-            .await?
-            .into_iter()
-            .map(|market| (market.condition_id.clone(), market))
-            .collect::<HashMap<_, _>>()
-    } else {
-        HashMap::new()
-    };
-    for market in &cycle.markets {
-        markets_by_condition.insert(market.condition_id.clone(), market.clone());
-    }
+    let markets_by_condition = reward_provider_markets_by_condition(state, &cycle).await?;
 
     let now = OffsetDateTime::now_utc();
-    let ai_candidate_condition_ids = if ai_connector.is_some() {
-        reward_ai_advisory_candidate_condition_ids(
-            &cycle.plans,
-            &cycle.open_orders,
-            &cycle.positions,
-            &cycle.pre_ai_eligible_condition_ids,
-            &cycle.config,
-            model,
-            now,
-        )
-    } else {
-        Vec::new()
-    };
-    let info_risk_candidate_condition_ids = if info_risk_connector.is_some() {
-        reward_info_risk_candidate_conditions(
-            &cycle.markets,
-            &cycle.plans,
-            &cycle.open_orders,
-            &cycle.positions,
-        )
-    } else {
-        Vec::new()
-    };
-    let ai_candidate_conditions = ai_candidate_condition_ids
-        .iter()
-        .cloned()
-        .collect::<HashSet<_>>();
-    let info_risk_candidate_conditions = info_risk_candidate_condition_ids
-        .iter()
-        .cloned()
-        .collect::<HashSet<_>>();
+    let ai_candidate_condition_ids = reward_ai_advisory_candidate_condition_ids(
+        &cycle.plans,
+        &cycle.open_orders,
+        &cycle.positions,
+        &cycle.pre_ai_eligible_condition_ids,
+        &cycle.config,
+        model,
+        now,
+    );
     let mut ordered_conditions = reward_provider_refresh_candidate_condition_ids(
-        &info_risk_candidate_condition_ids,
         &ai_candidate_condition_ids,
         &cycle.plans,
         &cycle.open_orders,
@@ -160,9 +143,7 @@ async fn refresh_reward_market_provider_cache(
         ordered_conditions.truncate(max_conditions);
     }
 
-    let mut report = RewardProviderRefreshReport::default();
-    report.ai.candidates = ai_candidate_condition_ids.len();
-    report.info_risk.candidates = info_risk_candidate_condition_ids.len();
+    report.candidates = ai_candidate_condition_ids.len();
     info!(
         trace_id = %trace_id,
         provider = cycle.config.ai_provider.as_str(),
@@ -170,84 +151,37 @@ async fn refresh_reward_market_provider_cache(
         conditions = original_ordered_conditions,
         selected_conditions = ordered_conditions.len(),
         max_conditions,
-        ai_candidates = report.ai.candidates,
-        info_risk_candidates = report.info_risk.candidates,
-        "starting reward market provider refresh",
+        ai_candidates = report.candidates,
+        "starting reward AI advisory provider refresh",
     );
 
     let refresh_result: Result<()> = async {
-        let mut stop_cycle = false;
         let mut ai_promoted_tokens = Vec::new();
-        for condition_batch in ordered_conditions.chunks(REWARD_AI_PROVIDER_ORDERBOOK_MARKETS_PER_BATCH)
-        {
-            if stop_cycle {
-                break;
-            }
-            let batch_books = if ai_connector.is_some() {
-                let ai_condition_batch = condition_batch
-                    .iter()
-                    .filter(|condition_id| ai_candidate_conditions.contains(*condition_id))
-                    .cloned()
-                    .collect::<Vec<_>>();
-                prepare_reward_ai_provider_orderbook_batch(
-                    state,
-                    &books,
-                    &markets_by_condition,
-                    &ai_condition_batch,
-                    trace_id,
-                )
-                .await?
-            } else {
-                books.clone()
-            };
+        for condition_batch in ordered_conditions.chunks(REWARD_AI_PROVIDER_ORDERBOOK_MARKETS_PER_BATCH) {
+            let batch_books = prepare_reward_ai_provider_orderbook_batch(
+                state,
+                &books,
+                &markets_by_condition,
+                condition_batch,
+                trace_id,
+            )
+            .await?;
 
-            if let Some(connector) = ai_connector.as_ref() {
-                let ai_condition_batch = condition_batch
-                    .iter()
-                    .filter(|condition_id| ai_candidate_conditions.contains(*condition_id))
-                    .cloned()
-                    .collect::<Vec<_>>();
-                if refresh_reward_ai_advisory_provider_batch(
-                    state,
-                    connector,
-                    &mut cycle,
-                    &batch_books,
-                    &markets_by_condition,
-                    &ai_condition_batch,
-                    model,
-                    trace_id,
-                    &mut report.ai,
-                    &mut ai_promoted_tokens,
-                )
-                .await?
-                {
-                    stop_cycle = true;
-                }
-            }
-            if stop_cycle {
+            if refresh_reward_ai_advisory_provider_batch(
+                state,
+                &connector,
+                &mut cycle,
+                &batch_books,
+                &markets_by_condition,
+                condition_batch,
+                model,
+                trace_id,
+                &mut report,
+                &mut ai_promoted_tokens,
+            )
+            .await?
+            {
                 break;
-            }
-
-            if let Some(connector) = info_risk_connector.as_ref() {
-                let info_risk_condition_batch = condition_batch
-                    .iter()
-                    .filter(|condition_id| info_risk_candidate_conditions.contains(*condition_id))
-                    .cloned()
-                    .collect::<Vec<_>>();
-                if refresh_reward_info_risk_provider_batch(
-                    state,
-                    connector,
-                    &cycle,
-                    &markets_by_condition,
-                    &info_risk_condition_batch,
-                    model,
-                    trace_id,
-                    &mut report.info_risk,
-                )
-                .await?
-                {
-                    stop_cycle = true;
-                }
             }
         }
         Ok(())
@@ -268,30 +202,127 @@ async fn refresh_reward_market_provider_cache(
     }
     refresh_result?;
 
-    if cycle.config.info_risk_enabled {
-        report.info_risk.applied_plans = apply_cached_reward_info_risks(state, trace_id).await?;
-    }
-
     info!(
         trace_id = %trace_id,
-        ai_candidates = report.ai.candidates,
-        ai_cache_hits = report.ai.cache_hits,
-        ai_requested = report.ai.requested,
-        ai_saved = report.ai.saved,
-        ai_failures = report.ai.failures,
-        ai_skipped_missing_market = report.ai.skipped_missing_market,
-        ai_skipped_missing_plan = report.ai.skipped_missing_plan,
-        ai_skipped_missing_book = report.ai.skipped_missing_book,
-        info_risk_candidates = report.info_risk.candidates,
-        info_risk_cache_hits = report.info_risk.cache_hits,
-        info_risk_requested = report.info_risk.requested,
-        info_risk_saved = report.info_risk.saved,
-        info_risk_failures = report.info_risk.failures,
-        info_risk_skipped_missing_market = report.info_risk.skipped_missing_market,
-        info_risk_applied_plans = report.info_risk.applied_plans,
-        "completed reward market provider refresh",
+        ai_candidates = report.candidates,
+        ai_cache_hits = report.cache_hits,
+        ai_requested = report.requested,
+        ai_saved = report.saved,
+        ai_failures = report.failures,
+        ai_skipped_missing_market = report.skipped_missing_market,
+        ai_skipped_missing_plan = report.skipped_missing_plan,
+        ai_skipped_missing_book = report.skipped_missing_book,
+        "completed reward AI advisory provider refresh",
     );
     Ok(report)
+}
+
+async fn refresh_reward_info_risk_provider_cache(
+    state: &AppState,
+    cycle: RewardLiveCycle,
+    trace_id: &str,
+) -> Result<RewardInfoRiskScanReport> {
+    let mut report = RewardInfoRiskScanReport::default();
+    if !cycle.config.info_risk_enabled {
+        return Ok(report);
+    }
+
+    let model = state.settings.rewards.ai_model.trim();
+    if model.is_empty() {
+        warn!(trace_id = %trace_id, "reward info risk model is empty");
+        return Ok(report);
+    }
+
+    let Some(connector) = build_reward_info_risk_connector(state, &cycle.config)? else {
+        warn!(
+            trace_id = %trace_id,
+            provider = cycle.config.ai_provider.as_str(),
+            "reward info risk is enabled but provider configuration is incomplete; skipping info-risk provider refresh",
+        );
+        return Ok(report);
+    };
+
+    let markets_by_condition = reward_provider_markets_by_condition(state, &cycle).await?;
+    let info_risk_candidate_condition_ids = reward_info_risk_candidate_conditions(
+        &cycle.markets,
+        &cycle.plans,
+        &cycle.open_orders,
+        &cycle.positions,
+    );
+    let mut ordered_conditions = reward_provider_refresh_candidate_condition_ids(
+        &info_risk_candidate_condition_ids,
+        &cycle.plans,
+        &cycle.open_orders,
+        &cycle.positions,
+    );
+    let original_ordered_conditions = ordered_conditions.len();
+    let max_conditions = reward_provider_max_conditions_per_cycle(state);
+    if ordered_conditions.len() > max_conditions {
+        ordered_conditions.truncate(max_conditions);
+    }
+
+    report.candidates = info_risk_candidate_condition_ids.len();
+    info!(
+        trace_id = %trace_id,
+        provider = cycle.config.ai_provider.as_str(),
+        request_format = cycle.config.ai_request_format.as_str(),
+        conditions = original_ordered_conditions,
+        selected_conditions = ordered_conditions.len(),
+        max_conditions,
+        info_risk_candidates = report.candidates,
+        "starting reward info risk provider refresh",
+    );
+
+    if refresh_reward_info_risk_provider_batch(
+        state,
+        &connector,
+        &cycle,
+        &markets_by_condition,
+        &ordered_conditions,
+        model,
+        trace_id,
+        &mut report,
+    )
+    .await?
+    {
+        debug!(
+            trace_id = %trace_id,
+            requested = report.requested,
+            failures = report.failures,
+            "stopped reward info risk provider refresh early",
+        );
+    }
+
+    report.applied_plans = apply_cached_reward_info_risks(state, trace_id).await?;
+    info!(
+        trace_id = %trace_id,
+        info_risk_candidates = report.candidates,
+        info_risk_cache_hits = report.cache_hits,
+        info_risk_requested = report.requested,
+        info_risk_saved = report.saved,
+        info_risk_failures = report.failures,
+        info_risk_skipped_missing_market = report.skipped_missing_market,
+        info_risk_applied_plans = report.applied_plans,
+        "completed reward info risk provider refresh",
+    );
+    Ok(report)
+}
+
+async fn reward_provider_markets_by_condition(
+    state: &AppState,
+    cycle: &RewardLiveCycle,
+) -> Result<HashMap<String, RewardMarket>> {
+    let mut markets_by_condition = state
+        .reward_bot_service
+        .list_active_reward_markets()
+        .await?
+        .into_iter()
+        .map(|market| (market.condition_id.clone(), market))
+        .collect::<HashMap<_, _>>();
+    for market in &cycle.markets {
+        markets_by_condition.insert(market.condition_id.clone(), market.clone());
+    }
+    Ok(markets_by_condition)
 }
 
 struct RewardAiAdvisoryRefreshStep {
@@ -350,16 +381,24 @@ async fn refresh_reward_ai_advisory_for_condition(
         cycle.config.ai_request_format,
         model,
     )?;
+    let mut cached_advisory = None;
     if let Some(cached) = state
         .reward_bot_service
         .latest_market_advisory(&request)
         .await?
     {
         report.cache_hits += 1;
-        return Ok(RewardAiAdvisoryRefreshStep {
-            stop_cycle: false,
-            advisory: Some(cached),
-        });
+        if !reward_provider_cache_refresh_due(
+            cached.expires_at,
+            cycle.config.ai_advisory_ttl_sec,
+            OffsetDateTime::now_utc(),
+        ) {
+            return Ok(RewardAiAdvisoryRefreshStep {
+                stop_cycle: false,
+                advisory: Some(cached),
+            });
+        }
+        cached_advisory = Some(cached);
     }
 
     // Defer the advisory until the orderbook service has published real books
@@ -373,7 +412,7 @@ async fn refresh_reward_ai_advisory_for_condition(
         report.skipped_missing_book += 1;
         return Ok(RewardAiAdvisoryRefreshStep {
             stop_cycle: false,
-            advisory: None,
+            advisory: cached_advisory,
         });
     }
 
@@ -385,7 +424,7 @@ async fn refresh_reward_ai_advisory_for_condition(
         "requesting reward AI advisory provider",
     );
     let result = {
-        let _provider_permit = acquire_reward_ai_provider_request_permit().await?;
+        let _provider_permit = acquire_reward_ai_advisory_provider_request_permit().await?;
         connector.advise(&request).await
     };
     match result {
@@ -428,12 +467,12 @@ async fn refresh_reward_ai_advisory_for_condition(
                 );
                 return Ok(RewardAiAdvisoryRefreshStep {
                     stop_cycle: true,
-                    advisory: None,
+                    advisory: cached_advisory,
                 });
             }
             Ok(RewardAiAdvisoryRefreshStep {
                 stop_cycle: false,
-                advisory: None,
+                advisory: cached_advisory,
             })
         }
     }
@@ -473,9 +512,15 @@ async fn refresh_reward_info_risk_for_condition(
         .reward_bot_service
         .latest_market_info_risk(&request)
         .await?
-        .is_some()
+        .is_some_and(|risk| {
+            report.cache_hits += 1;
+            !reward_provider_cache_refresh_due(
+                risk.expires_at,
+                cycle.config.info_risk_ttl_sec,
+                OffsetDateTime::now_utc(),
+            )
+        })
     {
-        report.cache_hits += 1;
         return Ok(false);
     }
 
@@ -487,7 +532,7 @@ async fn refresh_reward_info_risk_for_condition(
         "requesting reward info risk provider",
     );
     let result = {
-        let _provider_permit = acquire_reward_ai_provider_request_permit().await?;
+        let _provider_permit = acquire_reward_info_risk_provider_request_permit().await?;
         connector.assess(&request).await
     };
     match result {
@@ -530,19 +575,17 @@ async fn refresh_reward_info_risk_for_condition(
 }
 
 fn reward_provider_refresh_candidate_condition_ids(
-    info_risk_condition_ids: &[String],
-    ai_condition_ids: &[String],
+    condition_ids: &[String],
     plans: &[RewardQuotePlan],
     open_orders: &[ManagedRewardOrder],
     positions: &[RewardPosition],
 ) -> Vec<String> {
-    let available_conditions = info_risk_condition_ids
+    let available_conditions = condition_ids
         .iter()
-        .chain(ai_condition_ids)
         .filter_map(|condition_id| reward_provider_normalized_condition_id(condition_id))
         .collect::<HashSet<_>>();
     let mut seen = HashSet::new();
-    let mut ordered = Vec::with_capacity(info_risk_condition_ids.len() + ai_condition_ids.len());
+    let mut ordered = Vec::with_capacity(condition_ids.len());
     let low_competition_priority_conditions = plans
         .iter()
         .filter(|plan| reward_provider_low_competition_plan_has_priority(plan))
@@ -569,7 +612,7 @@ fn reward_provider_refresh_candidate_condition_ids(
     let mut queued = seen.clone();
     let mut standard_conditions = Vec::new();
     let mut low_competition_conditions = Vec::new();
-    for condition_id in info_risk_condition_ids.iter().chain(ai_condition_ids) {
+    for condition_id in condition_ids {
         let Some(condition_id) = reward_provider_normalized_condition_id(condition_id) else {
             continue;
         };

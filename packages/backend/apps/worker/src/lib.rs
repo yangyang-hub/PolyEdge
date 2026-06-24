@@ -23,8 +23,9 @@ use polyedge_application::{
     build_low_competition_observations, build_reward_ai_advisory_request,
     build_reward_info_risk_assessment_request, market_book_snapshot_id,
     materialize_reward_quote_plan_for_live_orderbook, new_risk_event,
-    reward_ai_advisory_blocks_quote, reward_market_books_available, scale_double_legs_for_budget,
-    scale_single_leg_for_budget, select_reward_book_token_ids,
+    reward_ai_advisory_blocks_quote, reward_market_books_available,
+    reward_provider_cache_refresh_due, scale_double_legs_for_budget, scale_single_leg_for_budget,
+    select_reward_book_token_ids,
 };
 use polyedge_connectors::{
     ConnectorNewsItem, ConnectorOrderStatusUpdate, ConnectorTradeFillUpdate,
@@ -153,12 +154,6 @@ struct RewardInfoRiskScanReport {
     failures: usize,
     skipped_missing_market: usize,
     applied_plans: usize,
-}
-
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-struct RewardProviderRefreshReport {
-    ai: RewardAiAdvisoryRefreshReport,
-    info_risk: RewardInfoRiskScanReport,
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]

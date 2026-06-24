@@ -9,9 +9,12 @@ const LIVE_EXTERNAL_ORDER_NOT_FOUND_CLOSE_AFTER_SECS: i64 = 300;
 const LIVE_SUBMISSION_UNKNOWN_CLOSE_AFTER_SECS: i64 = 600;
 const REWARD_HISTORY_PRUNE_INTERVAL_SECS: u64 = 5 * 24 * 60 * 60;
 const REWARD_HISTORY_RETENTION_SECS: i64 = 5 * 24 * 60 * 60;
-static REWARD_AI_PROVIDER_REQUEST_SEMAPHORE: tokio::sync::Semaphore =
+static REWARD_AI_ADVISORY_PROVIDER_REQUEST_SEMAPHORE: tokio::sync::Semaphore =
     tokio::sync::Semaphore::const_new(1);
-static REWARD_MARKET_PROVIDER_REFRESH_RUNNING: AtomicBool = AtomicBool::new(false);
+static REWARD_INFO_RISK_PROVIDER_REQUEST_SEMAPHORE: tokio::sync::Semaphore =
+    tokio::sync::Semaphore::const_new(1);
+static REWARD_AI_PROVIDER_REFRESH_RUNNING: AtomicBool = AtomicBool::new(false);
+static REWARD_INFO_RISK_PROVIDER_REFRESH_RUNNING: AtomicBool = AtomicBool::new(false);
 
 async fn run_reward_bot_once(state: &AppState, trace_id: &str) -> Result<RewardBotRunReport> {
     let connector = build_live_polymarket_connector(state).await?;

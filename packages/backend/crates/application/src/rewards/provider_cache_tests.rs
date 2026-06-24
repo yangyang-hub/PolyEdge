@@ -156,6 +156,115 @@ fn cache_test_candle(token_id: &str, outcome: &str, bucket_offset: i64, close: &
     }
 }
 
+fn cache_test_ai_decision() -> RewardAiAdvisoryDecision {
+    RewardAiAdvisoryDecision {
+        suitability: RewardAiSuitability::Allow,
+        quote_mode: RewardPlanQuoteMode::Double,
+        exit_policy: PostFillStrategy::ExitAtMarkup,
+        confidence: decimal("0.91"),
+        reasons: vec!["stable enough for cache expiry test".to_string()],
+        metrics: json!({"fixture": "ai"}),
+    }
+}
+
+fn cache_test_info_risk_decision() -> RewardInfoRiskAssessmentDecision {
+    RewardInfoRiskAssessmentDecision {
+        risk_level: RewardInfoRiskLevel::Low,
+        risk_type: RewardInfoRiskType::None,
+        directional_risk: RewardInfoDirectionalRisk::Unclear,
+        resolution_imminent: false,
+        expected_event_at: None,
+        confidence: decimal("0.93"),
+        summary: "No current information-risk catalyst in fixture.".to_string(),
+        sources: Vec::new(),
+        metrics: json!({"fixture": "info_risk"}),
+    }
+}
+
+fn assert_provider_cache_expiry_window(
+    now: OffsetDateTime,
+    ttl_sec: u64,
+    expires_at: OffsetDateTime,
+) {
+    let base_expiry = now + TimeDuration::seconds(ttl_sec as i64);
+    let max_expiry = base_expiry
+        + TimeDuration::seconds(reward_provider_cache_jitter_window_sec(ttl_sec) as i64);
+    assert!(expires_at >= base_expiry);
+    assert!(expires_at <= max_expiry);
+}
+
+#[test]
+fn reward_ai_advisory_expiry_uses_deterministic_jitter() {
+    let now = OffsetDateTime::from_unix_timestamp(1_785_000_000).expect("valid timestamp");
+    let ttl_sec = 3600;
+    let request = RewardAiAdvisoryRequest {
+        condition_id: "cond_cache".to_string(),
+        provider: RewardAiProvider::OpenAi,
+        request_format: RewardAiRequestFormat::OpenAiChatCompletions,
+        model: "mimo-v2.5".to_string(),
+        input_hash: "input-hash-cache".to_string(),
+        payload: json!({}),
+    };
+
+    let first = cache_test_ai_decision()
+        .into_advisory(&request, ttl_sec, now)
+        .expires_at;
+    let second = cache_test_ai_decision()
+        .into_advisory(&request, ttl_sec, now)
+        .expires_at;
+
+    assert_eq!(first, second);
+    assert_provider_cache_expiry_window(now, ttl_sec, first);
+
+    let mut spread = None;
+    for index in 0..32 {
+        let mut other = request.clone();
+        other.condition_id = format!("cond_cache_{index}");
+        other.input_hash = format!("input-hash-cache-{index}");
+        let other_expires_at = cache_test_ai_decision()
+            .into_advisory(&other, ttl_sec, now)
+            .expires_at;
+        if other_expires_at != first {
+            spread = Some(other_expires_at);
+            break;
+        }
+    }
+    assert!(spread.is_some());
+}
+
+#[test]
+fn reward_info_risk_expiry_jitter_drives_refresh_window() {
+    let now = OffsetDateTime::from_unix_timestamp(1_785_000_000).expect("valid timestamp");
+    let ttl_sec = 3600;
+    let request = RewardInfoRiskAssessmentRequest {
+        condition_id: "cond_cache".to_string(),
+        provider: RewardAiProvider::OpenAi,
+        request_format: RewardAiRequestFormat::OpenAiChatCompletions,
+        model: "mimo-v2.5".to_string(),
+        query: "cache expiry risk fixture".to_string(),
+        query_hash: "query-hash-cache".to_string(),
+        input_hash: "input-hash-cache".to_string(),
+        payload: json!({}),
+    };
+
+    let expires_at = cache_test_info_risk_decision()
+        .into_info_risk(&request, ttl_sec, now)
+        .expires_at;
+    assert_provider_cache_expiry_window(now, ttl_sec, expires_at);
+
+    let refresh_window = reward_provider_cache_jitter_window_sec(ttl_sec);
+    assert!(!reward_provider_cache_refresh_due(
+        expires_at,
+        ttl_sec,
+        expires_at - TimeDuration::seconds(refresh_window as i64 + 1),
+    ));
+    assert!(reward_provider_cache_refresh_due(
+        expires_at,
+        ttl_sec,
+        expires_at - TimeDuration::seconds(refresh_window as i64),
+    ));
+}
+
 #[test]
 fn reward_ai_advisory_cache_key_ignores_runtime_context() {
     let market = cache_test_market();

@@ -61,7 +61,7 @@ async fn scan_reward_info_risks_unlocked(
     if config.ai_advisory_enabled {
         info!(
             trace_id = %trace_id,
-            "skipping standalone reward info risk provider scan because market provider refresh handles AI advisory and info risk per condition",
+            "skipping standalone reward info risk provider scan because the rewards full tick starts a dedicated info-risk provider refresh task",
         );
         return Ok(RewardInfoRiskScanReport::default());
     }
@@ -145,9 +145,15 @@ async fn scan_reward_info_risks_unlocked(
             .reward_bot_service
             .latest_market_info_risk(&request)
             .await?
-            .is_some()
+            .is_some_and(|risk| {
+                report.cache_hits += 1;
+                !reward_provider_cache_refresh_due(
+                    risk.expires_at,
+                    config.info_risk_ttl_sec,
+                    OffsetDateTime::now_utc(),
+                )
+            })
         {
-            report.cache_hits += 1;
             continue;
         }
 
@@ -158,7 +164,7 @@ async fn scan_reward_info_risks_unlocked(
             requested = report.requested,
             "requesting reward info risk provider",
         );
-        let _provider_permit = acquire_reward_ai_provider_request_permit().await?;
+        let _provider_permit = acquire_reward_info_risk_provider_request_permit().await?;
         match connector.assess(&request).await {
             Ok(decision) => {
                 let risk = decision.into_info_risk(
