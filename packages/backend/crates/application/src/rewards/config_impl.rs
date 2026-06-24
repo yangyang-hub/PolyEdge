@@ -36,9 +36,16 @@ impl Default for RewardBotConfig {
             low_competition_max_open_orders: 0,
             low_competition_per_market_usd: decimal("5"),
             low_competition_max_position_usd: decimal("10"),
-            low_competition_min_market_liquidity_usd: decimal("250"),
-            low_competition_min_market_volume_24h_usd: decimal("100"),
-            low_competition_max_competition_usd: decimal("250"),
+            low_competition_probe_notional_usd: decimal("10"),
+            low_competition_min_competition_share_bps: 5_000,
+            low_competition_max_competition_multiple: decimal("1"),
+            low_competition_max_account_allocation_bps: 1_500,
+            low_competition_max_market_allocation_bps: 500,
+            low_competition_candidate_liquidity_filter_enabled: false,
+            low_competition_candidate_volume_filter_enabled: false,
+            low_competition_min_market_liquidity_usd: Decimal::ZERO,
+            low_competition_min_market_volume_24h_usd: Decimal::ZERO,
+            low_competition_max_competition_usd: Decimal::ZERO,
             low_competition_min_reward_per_100_usd_day: decimal("0.25"),
             low_competition_min_exit_depth_usd: decimal("50"),
             low_competition_min_exit_depth_multiple: decimal("3"),
@@ -162,16 +169,26 @@ impl RewardBotConfig {
             Decimal::ZERO,
             decimal("1000000"),
         );
-        self.low_competition_min_market_liquidity_usd = clamp_decimal(
-            self.low_competition_min_market_liquidity_usd,
-            Decimal::ONE,
-            decimal("1000000000"),
+        self.low_competition_probe_notional_usd = clamp_decimal(
+            self.low_competition_probe_notional_usd,
+            Decimal::ZERO,
+            decimal("1000000"),
         );
-        self.low_competition_min_market_volume_24h_usd = clamp_decimal(
-            self.low_competition_min_market_volume_24h_usd,
-            Decimal::ONE,
-            decimal("1000000000"),
+        self.low_competition_min_competition_share_bps =
+            self.low_competition_min_competition_share_bps.clamp(0, 10_000);
+        self.low_competition_max_competition_multiple = clamp_decimal(
+            self.low_competition_max_competition_multiple,
+            Decimal::ZERO,
+            decimal("1000000"),
         );
+        self.low_competition_max_account_allocation_bps =
+            self.low_competition_max_account_allocation_bps.clamp(0, 10_000);
+        self.low_competition_max_market_allocation_bps =
+            self.low_competition_max_market_allocation_bps.clamp(0, 10_000);
+        self.low_competition_candidate_liquidity_filter_enabled = false;
+        self.low_competition_candidate_volume_filter_enabled = false;
+        self.low_competition_min_market_liquidity_usd = Decimal::ZERO;
+        self.low_competition_min_market_volume_24h_usd = Decimal::ZERO;
         self.low_competition_max_competition_usd = clamp_decimal(
             self.low_competition_max_competition_usd,
             Decimal::ZERO,
@@ -276,6 +293,7 @@ impl RewardBotConfig {
                 && self.dominant_single_side_enabled,
             dominant_min_probability: self.dominant_min_probability,
             dominant_max_probability: self.dominant_max_probability,
+            prefer_low_competition_ordering: false,
         }
     }
 
@@ -289,8 +307,9 @@ impl RewardBotConfig {
         }
 
         let mut filter = self.candidate_filter();
-        filter.min_market_liquidity_usd = self.low_competition_min_market_liquidity_usd;
-        filter.min_market_volume_24h_usd = self.low_competition_min_market_volume_24h_usd;
+        filter.min_market_liquidity_usd = Decimal::ZERO;
+        filter.min_market_volume_24h_usd = Decimal::ZERO;
+        filter.prefer_low_competition_ordering = true;
         Some(filter)
     }
 
@@ -304,8 +323,8 @@ impl RewardBotConfig {
         next.max_markets = self.low_competition_max_markets;
         next.max_open_orders = self.low_competition_max_open_orders;
         next.max_position_usd = self.low_competition_max_position_usd;
-        next.min_market_liquidity_usd = self.low_competition_min_market_liquidity_usd;
-        next.min_market_volume_24h_usd = self.low_competition_min_market_volume_24h_usd;
+        next.min_market_liquidity_usd = Decimal::ZERO;
+        next.min_market_volume_24h_usd = Decimal::ZERO;
         next
     }
 
@@ -404,6 +423,27 @@ impl RewardBotConfig {
         }
         if let Some(value) = patch.low_competition_max_position_usd {
             next.low_competition_max_position_usd = value;
+        }
+        if let Some(value) = patch.low_competition_probe_notional_usd {
+            next.low_competition_probe_notional_usd = value;
+        }
+        if let Some(value) = patch.low_competition_min_competition_share_bps {
+            next.low_competition_min_competition_share_bps = value;
+        }
+        if let Some(value) = patch.low_competition_max_competition_multiple {
+            next.low_competition_max_competition_multiple = value;
+        }
+        if let Some(value) = patch.low_competition_max_account_allocation_bps {
+            next.low_competition_max_account_allocation_bps = value;
+        }
+        if let Some(value) = patch.low_competition_max_market_allocation_bps {
+            next.low_competition_max_market_allocation_bps = value;
+        }
+        if let Some(value) = patch.low_competition_candidate_liquidity_filter_enabled {
+            next.low_competition_candidate_liquidity_filter_enabled = value;
+        }
+        if let Some(value) = patch.low_competition_candidate_volume_filter_enabled {
+            next.low_competition_candidate_volume_filter_enabled = value;
         }
         if let Some(value) = patch.low_competition_min_market_liquidity_usd {
             next.low_competition_min_market_liquidity_usd = value;
@@ -591,6 +631,13 @@ mod reward_config_tests {
             "low_competition_max_open_orders": 4,
             "low_competition_per_market_usd": 5,
             "low_competition_max_position_usd": 10,
+            "low_competition_probe_notional_usd": 10,
+            "low_competition_min_competition_share_bps": 5000,
+            "low_competition_max_competition_multiple": 1,
+            "low_competition_max_account_allocation_bps": 1500,
+            "low_competition_max_market_allocation_bps": 500,
+            "low_competition_candidate_liquidity_filter_enabled": false,
+            "low_competition_candidate_volume_filter_enabled": false,
             "low_competition_min_market_liquidity_usd": 250,
             "low_competition_min_market_volume_24h_usd": 100,
             "low_competition_max_competition_usd": 250,
@@ -656,9 +703,27 @@ mod reward_config_tests {
         assert_eq!(config.requote_drift_max_cancels_per_cycle, 2);
         assert_eq!(config.low_competition_mode, RewardLowCompetitionMode::Observe);
         assert_eq!(config.low_competition_max_markets, 8);
+        assert_eq!(config.low_competition_probe_notional_usd, decimal("10"));
+        assert_eq!(config.low_competition_min_competition_share_bps, 5_000);
+        assert_eq!(config.low_competition_max_account_allocation_bps, 1_500);
+        assert!(!config.low_competition_candidate_liquidity_filter_enabled);
+        assert!(!config.low_competition_candidate_volume_filter_enabled);
+        assert_eq!(config.low_competition_min_market_liquidity_usd, Decimal::ZERO);
+        assert_eq!(config.low_competition_min_market_volume_24h_usd, Decimal::ZERO);
 
         let serialized = serde_json::to_value(config).expect("config serializes");
         assert_eq!(serialized["low_competition_mode"], "observe");
+        assert_eq!(serialized["low_competition_min_competition_share_bps"], 5000);
+        assert_eq!(
+            serialized["low_competition_candidate_liquidity_filter_enabled"],
+            false
+        );
+        assert_eq!(
+            serialized["low_competition_candidate_volume_filter_enabled"],
+            false
+        );
+        assert_eq!(serialized["low_competition_min_market_liquidity_usd"], "0");
+        assert_eq!(serialized["low_competition_min_market_volume_24h_usd"], "0");
         assert_eq!(serialized["ai_provider"], "openai");
         assert_eq!(
             serialized["ai_request_format"],
@@ -677,5 +742,46 @@ mod reward_config_tests {
 
         assert_eq!(config.stale_book_ms, 5_000);
         assert_eq!(config.min_scoring_check_sec, 15);
+    }
+
+    #[test]
+    fn low_competition_candidate_filter_defaults_to_competition_not_liquidity() {
+        let config = RewardBotConfig {
+            low_competition_mode: RewardLowCompetitionMode::Observe,
+            low_competition_max_markets: 5,
+            min_market_liquidity_usd: decimal("1000"),
+            min_market_volume_24h_usd: decimal("1000"),
+            low_competition_min_market_liquidity_usd: decimal("250"),
+            low_competition_min_market_volume_24h_usd: decimal("100"),
+            ..RewardBotConfig::default()
+        }
+        .normalized();
+
+        let filter = config
+            .low_competition_candidate_filter()
+            .expect("low competition filter");
+        assert_eq!(filter.min_market_liquidity_usd, Decimal::ZERO);
+        assert_eq!(filter.min_market_volume_24h_usd, Decimal::ZERO);
+
+        let config = RewardBotConfig {
+            low_competition_candidate_liquidity_filter_enabled: true,
+            low_competition_candidate_volume_filter_enabled: true,
+            low_competition_min_market_liquidity_usd: decimal("250"),
+            low_competition_min_market_volume_24h_usd: decimal("100"),
+            ..config
+        }
+        .normalized();
+
+        assert!(!config.low_competition_candidate_liquidity_filter_enabled);
+        assert!(!config.low_competition_candidate_volume_filter_enabled);
+        assert_eq!(config.low_competition_min_market_liquidity_usd, Decimal::ZERO);
+        assert_eq!(config.low_competition_min_market_volume_24h_usd, Decimal::ZERO);
+
+        let filter = config
+            .low_competition_candidate_filter()
+            .expect("low competition filter");
+        assert_eq!(filter.min_market_liquidity_usd, Decimal::ZERO);
+        assert_eq!(filter.min_market_volume_24h_usd, Decimal::ZERO);
+        assert!(filter.prefer_low_competition_ordering);
     }
 }

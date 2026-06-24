@@ -368,10 +368,6 @@ impl RewardBotService {
             config,
             RewardStrategyBucket::Standard,
         );
-        let mut seen = candidates
-            .iter()
-            .map(|candidate| candidate.market.condition_id.clone())
-            .collect::<HashSet<_>>();
 
         if let Some(low_filter) = config.low_competition_candidate_filter() {
             let low_config = config.config_for_strategy_bucket(RewardStrategyBucket::LowCompetition);
@@ -385,9 +381,7 @@ impl RewardBotService {
                 config,
                 RewardStrategyBucket::LowCompetition,
             ) {
-                if seen.insert(candidate.market.condition_id.clone()) {
-                    candidates.push(candidate);
-                }
+                push_low_competition_candidate_profile(&mut candidates, candidate, config);
             }
         }
 
@@ -818,6 +812,30 @@ fn reward_candidate_safety_limit(config: &RewardBotConfig) -> u16 {
         config.max_markets.saturating_mul(50).max(1000)
     };
     cap.min(5000)
+}
+
+fn push_low_competition_candidate_profile(
+    candidates: &mut Vec<RewardCandidateMarket>,
+    candidate: RewardCandidateMarket,
+    config: &RewardBotConfig,
+) {
+    if config.low_competition_mode == RewardLowCompetitionMode::Enforce {
+        if let Some(index) = candidates
+            .iter()
+            .position(|existing| existing.market.condition_id == candidate.market.condition_id)
+        {
+            candidates.remove(index);
+        }
+        candidates.push(candidate);
+        return;
+    }
+
+    if !candidates
+        .iter()
+        .any(|existing| existing.market.condition_id == candidate.market.condition_id)
+    {
+        candidates.push(candidate);
+    }
 }
 
 fn push_unique_condition_id(

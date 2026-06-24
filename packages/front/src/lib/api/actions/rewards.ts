@@ -6,7 +6,11 @@ import {
   runRewardBotOnce,
   updateRewardBotConfig,
 } from "@/lib/api/rewards";
-import type { RewardBotConfigDto, RewardBotSnapshotDto } from "@/lib/contracts/dto";
+import type {
+  RewardBotConfigDto,
+  RewardBotConfigPatchDto,
+  RewardBotSnapshotDto,
+} from "@/lib/contracts/dto";
 
 import {
   actionOperationId,
@@ -20,6 +24,18 @@ import {
 export type RewardBotActionResult = OperationActionResult & {
   snapshot?: RewardBotSnapshotDto;
 };
+
+function normalizeRewardConfigPatchForSubmit(
+  config: z.infer<typeof rewardConfigSchema>,
+): RewardBotConfigPatchDto {
+  return {
+    ...config,
+    low_competition_candidate_liquidity_filter_enabled: false,
+    low_competition_candidate_volume_filter_enabled: false,
+    low_competition_min_market_liquidity_usd: 0,
+    low_competition_min_market_volume_24h_usd: 0,
+  };
+}
 
 const rewardConfigSchema = z.object({
   enabled: z.boolean(),
@@ -50,8 +66,15 @@ const rewardConfigSchema = z.object({
   low_competition_max_markets: z.coerce.number().int().min(0).max(65_535),
   low_competition_max_open_orders: z.coerce.number().int().min(0).max(65_535),
   low_competition_max_position_usd: decimalNumber.min(0).max(1_000_000),
-  low_competition_min_market_liquidity_usd: decimalNumber.min(1).max(1_000_000_000),
-  low_competition_min_market_volume_24h_usd: decimalNumber.min(1).max(1_000_000_000),
+  low_competition_probe_notional_usd: decimalNumber.min(0).max(1_000_000),
+  low_competition_min_competition_share_bps: z.coerce.number().int().min(0).max(10_000),
+  low_competition_max_competition_multiple: decimalNumber.min(0).max(1_000_000),
+  low_competition_max_account_allocation_bps: z.coerce.number().int().min(0).max(10_000),
+  low_competition_max_market_allocation_bps: z.coerce.number().int().min(0).max(10_000),
+  low_competition_candidate_liquidity_filter_enabled: z.boolean(),
+  low_competition_candidate_volume_filter_enabled: z.boolean(),
+  low_competition_min_market_liquidity_usd: decimalNumber.min(0).max(1_000_000_000),
+  low_competition_min_market_volume_24h_usd: decimalNumber.min(0).max(1_000_000_000),
   low_competition_max_competition_usd: decimalNumber.min(0).max(1_000_000_000),
   low_competition_min_reward_per_100_usd_day: decimalNumber.min(0).max(100_000),
   low_competition_min_exit_depth_usd: decimalNumber.min(0).max(1_000_000),
@@ -149,7 +172,9 @@ export async function updateRewardBotConfigAction(
       return createActionFailureResult(`Reward bot config is invalid: ${issues}`);
     }
 
-    const response = await updateRewardBotConfig(parsed.data);
+    const response = await updateRewardBotConfig(
+      normalizeRewardConfigPatchForSubmit(parsed.data),
+    );
 
     return {
       ...createActionSuccessResult("Reward bot configuration saved.", {

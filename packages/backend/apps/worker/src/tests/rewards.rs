@@ -155,17 +155,21 @@ fn reward_ai_advisory_candidates_include_open_orders_positions_and_eligible_plan
     };
     let mut eligible = live_test_plan(now);
     eligible.condition_id = "cond_eligible".to_string();
+    eligible.strategy_bucket = RewardStrategyBucket::Standard;
 
     let mut open_order_plan = live_test_plan(now);
     open_order_plan.condition_id = "cond_open".to_string();
+    open_order_plan.strategy_bucket = RewardStrategyBucket::Standard;
     open_order_plan.eligible = false;
 
     let mut position_plan = live_test_plan(now);
     position_plan.condition_id = "cond_position".to_string();
+    position_plan.strategy_bucket = RewardStrategyBucket::Standard;
     position_plan.eligible = false;
 
     let mut rejected = live_test_plan(now);
     rejected.condition_id = "cond_rejected".to_string();
+    rejected.strategy_bucket = RewardStrategyBucket::Standard;
     rejected.eligible = false;
     rejected.reason = "below initial score".to_string();
 
@@ -202,7 +206,7 @@ fn reward_ai_advisory_candidates_include_open_orders_positions_and_eligible_plan
 }
 
 #[test]
-fn reward_ai_advisory_candidates_only_include_pre_ai_eligible_missing_admission() {
+fn reward_ai_advisory_candidates_include_active_exposure_outside_pre_ai_set() {
     let now = OffsetDateTime::now_utc();
     let config = RewardBotConfig {
         ai_advisory_enabled: true,
@@ -212,9 +216,11 @@ fn reward_ai_advisory_candidates_only_include_pre_ai_eligible_missing_admission(
 
     let mut missing = live_test_plan(now);
     missing.condition_id = "cond_missing".to_string();
+    missing.strategy_bucket = RewardStrategyBucket::Standard;
 
     let mut already_admitted = live_test_plan(now);
     already_admitted.condition_id = "cond_admitted".to_string();
+    already_admitted.strategy_bucket = RewardStrategyBucket::Standard;
     already_admitted.ai_advisory = Some(RewardMarketAdvisory {
         condition_id: already_admitted.condition_id.clone(),
         provider: polyedge_application::RewardAiProvider::OpenAi,
@@ -233,6 +239,7 @@ fn reward_ai_advisory_candidates_only_include_pre_ai_eligible_missing_admission(
 
     let mut hard_rejected = live_test_plan(now);
     hard_rejected.condition_id = "cond_hard_rejected".to_string();
+    hard_rejected.strategy_bucket = RewardStrategyBucket::Standard;
     hard_rejected.eligible = false;
     hard_rejected.reason = "market failed non-transient live validation".to_string();
 
@@ -252,7 +259,55 @@ fn reward_ai_advisory_candidates_only_include_pre_ai_eligible_missing_admission(
         now,
     );
 
-    assert_eq!(condition_ids, vec!["cond_missing"]);
+    assert_eq!(condition_ids, vec!["cond_hard_rejected", "cond_missing"]);
+}
+
+#[test]
+fn reward_ai_advisory_candidates_skip_low_competition_observe_without_exposure() {
+    let now = OffsetDateTime::now_utc();
+    let config = RewardBotConfig {
+        ai_advisory_enabled: true,
+        low_competition_mode: polyedge_application::RewardLowCompetitionMode::Observe,
+        ..RewardBotConfig::default()
+    };
+    let plan = low_competition_provider_test_plan(now, "cond_low_observe");
+
+    let condition_ids = reward_ai_advisory_candidate_condition_ids(
+        &[plan],
+        &[],
+        &[],
+        &["cond_low_observe".to_string()],
+        &config,
+        "mimo-v2.5-pro",
+        now,
+    );
+
+    assert!(condition_ids.is_empty());
+}
+
+#[test]
+fn reward_ai_advisory_candidates_keep_low_competition_observe_with_exposure() {
+    let now = OffsetDateTime::now_utc();
+    let config = RewardBotConfig {
+        ai_advisory_enabled: true,
+        low_competition_mode: polyedge_application::RewardLowCompetitionMode::Observe,
+        ..RewardBotConfig::default()
+    };
+    let plan = low_competition_provider_test_plan(now, "cond_low_observe");
+    let mut open_order = live_test_open_order("yes_live");
+    open_order.condition_id = "cond_low_observe".to_string();
+
+    let condition_ids = reward_ai_advisory_candidate_condition_ids(
+        &[plan],
+        &[open_order],
+        &[],
+        &[],
+        &config,
+        "mimo-v2.5-pro",
+        now,
+    );
+
+    assert_eq!(condition_ids, vec!["cond_low_observe"]);
 }
 
 #[test]
@@ -277,12 +332,19 @@ fn reward_provider_refresh_candidates_prioritize_active_exposure_and_dedupe() {
         "cond_open".to_string(),
         "cond_eligible".to_string(),
     ];
+    let mut eligible = live_test_plan(now);
+    eligible.condition_id = "cond_eligible".to_string();
+    eligible.strategy_bucket = RewardStrategyBucket::Standard;
+    let mut candidate = live_test_plan(now);
+    candidate.condition_id = "cond_candidate".to_string();
+    candidate.strategy_bucket = RewardStrategyBucket::Standard;
 
     let ordered = reward_provider_refresh_candidate_condition_ids(
         &condition_ids,
-        &[],
+        &[eligible, candidate],
         &[open_order],
         &[position],
+        &RewardBotConfig::default(),
     );
 
     assert_eq!(
@@ -302,6 +364,9 @@ fn reward_provider_refresh_candidates_mix_low_competition_after_active_exposure(
     let mut standard = live_test_plan(now);
     standard.condition_id = "cond_standard".to_string();
     standard.strategy_bucket = RewardStrategyBucket::Standard;
+    let mut candidate = live_test_plan(now);
+    candidate.condition_id = "cond_candidate".to_string();
+    candidate.strategy_bucket = RewardStrategyBucket::Standard;
 
     let low = low_competition_provider_test_plan(now, "cond_low");
     let ai_only_low = low_competition_provider_test_plan(now, "cond_ai_only_low");
@@ -338,9 +403,13 @@ fn reward_provider_refresh_candidates_mix_low_competition_after_active_exposure(
     ];
     let ordered = reward_provider_refresh_candidate_condition_ids(
         &condition_ids,
-        &[standard, low, ai_only_low, low_rejected],
+        &[standard, candidate, low, ai_only_low, low_rejected],
         &[open_order],
         &[position],
+        &RewardBotConfig {
+            low_competition_mode: polyedge_application::RewardLowCompetitionMode::Enforce,
+            ..RewardBotConfig::default()
+        },
     );
 
     assert_eq!(
@@ -351,7 +420,6 @@ fn reward_provider_refresh_candidates_mix_low_competition_after_active_exposure(
             "cond_standard",
             "cond_candidate",
             "cond_low",
-            "cond_low_rejected",
             "cond_ai_only_low",
         ],
     );
@@ -392,6 +460,10 @@ fn reward_provider_refresh_candidates_interleave_low_competition_with_standard_q
         ],
         &[],
         &[],
+        &RewardBotConfig {
+            low_competition_mode: polyedge_application::RewardLowCompetitionMode::Enforce,
+            ..RewardBotConfig::default()
+        },
     );
 
     assert_eq!(
@@ -408,6 +480,58 @@ fn reward_provider_refresh_candidates_interleave_low_competition_with_standard_q
     );
 }
 
+#[test]
+fn reward_info_risk_candidates_apply_pre_llm_gate_before_market_candidates() {
+    let now = OffsetDateTime::now_utc();
+    let config = RewardBotConfig {
+        low_competition_mode: polyedge_application::RewardLowCompetitionMode::Observe,
+        ..RewardBotConfig::default()
+    };
+    let mut standard = live_test_plan(now);
+    standard.condition_id = "cond_standard".to_string();
+    standard.strategy_bucket = RewardStrategyBucket::Standard;
+
+    let low_observe = low_competition_provider_test_plan(now, "cond_low_observe");
+    let market_without_plan = reward_test_market(now, "cond_market_only");
+    let markets = vec![
+        reward_test_market(now, "cond_standard"),
+        reward_test_market(now, "cond_low_observe"),
+        market_without_plan,
+    ];
+
+    let condition_ids = reward_info_risk_candidate_conditions(
+        &markets,
+        &[standard, low_observe],
+        &[],
+        &[],
+        &config,
+    );
+
+    assert_eq!(condition_ids, vec!["cond_standard"]);
+}
+
+#[test]
+fn reward_info_risk_candidates_keep_active_exposure_despite_pre_llm_gate() {
+    let now = OffsetDateTime::now_utc();
+    let config = RewardBotConfig {
+        low_competition_mode: polyedge_application::RewardLowCompetitionMode::Observe,
+        ..RewardBotConfig::default()
+    };
+    let low_observe = low_competition_provider_test_plan(now, "cond_low_observe");
+    let mut open_order = live_test_open_order("yes_live");
+    open_order.condition_id = "cond_low_observe".to_string();
+
+    let condition_ids = reward_info_risk_candidate_conditions(
+        &[reward_test_market(now, "cond_low_observe")],
+        &[low_observe],
+        &[open_order],
+        &[],
+        &config,
+    );
+
+    assert_eq!(condition_ids, vec!["cond_low_observe"]);
+}
+
 fn low_competition_provider_test_plan(
     now: OffsetDateTime,
     condition_id: &str,
@@ -419,9 +543,18 @@ fn low_competition_provider_test_plan(
     plan.pre_ai_eligible = true;
     plan.low_competition_metrics = Some(polyedge_application::RewardLowCompetitionMetrics {
         planned_notional_usd: reward_decimal("20"),
+        competition_probe_notional_usd: reward_decimal("10"),
         qualified_competition_usd: reward_decimal("50"),
+        competition_share_bps: reward_decimal("1666.67"),
+        competition_multiple: reward_decimal("5"),
         estimated_reward_per_100_usd_day: reward_decimal("1.25"),
         competition_density: reward_decimal("2"),
+        account_effective_available_usd: reward_decimal("1000"),
+        low_competition_open_buy_notional_usd: Decimal::ZERO,
+        low_competition_open_buy_notional_usd_after_plan: reward_decimal("20"),
+        condition_buy_notional_usd_after_plan: reward_decimal("20"),
+        account_allocation_bps: reward_decimal("200"),
+        market_allocation_bps: reward_decimal("200"),
         exit_depth_usd: reward_decimal("100"),
         exit_slippage_cents: Some(reward_decimal("1")),
         midpoint_range_cents: Some(reward_decimal("1")),
@@ -431,6 +564,29 @@ fn low_competition_provider_test_plan(
         rejection_reasons: Vec::new(),
     });
     plan
+}
+
+fn reward_test_market(now: OffsetDateTime, condition_id: &str) -> RewardMarket {
+    RewardMarket {
+        condition_id: condition_id.to_string(),
+        question: "Test market?".to_string(),
+        market_slug: condition_id.to_string(),
+        event_slug: "event".to_string(),
+        category: "test".to_string(),
+        image: String::new(),
+        rewards_max_spread: reward_decimal("3"),
+        rewards_min_size: reward_decimal("5"),
+        total_daily_rate: reward_decimal("10"),
+        liquidity_usd: reward_decimal("1000"),
+        volume_24h_usd: reward_decimal("500"),
+        market_spread_cents: reward_decimal("1"),
+        end_at: None,
+        ambiguity_level: String::new(),
+        market_synced_at: Some(now),
+        tokens: Vec::new(),
+        active: true,
+        updated_at: now,
+    }
 }
 
 #[test]

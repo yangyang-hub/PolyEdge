@@ -68,6 +68,21 @@ export function LowCompetitionShadowReport({ snapshot }: { snapshot: RewardBotSn
             tone="success"
           />
           <ReportMetric
+            label={dictionary.rewards.lowCompetitionCompetitionShareMedian}
+            value={formatOptionalBps(report.competition_share_bps_median)}
+            hint={dictionary.rewards.competitionShare}
+          />
+          <ReportMetric
+            label={dictionary.rewards.lowCompetitionAccountAllocationP90}
+            value={formatOptionalBps(report.account_allocation_bps_p90)}
+            hint={dictionary.rewards.accountAllocation}
+          />
+          <ReportMetric
+            label={dictionary.rewards.lowCompetitionMarketAllocationP90}
+            value={formatOptionalBps(report.market_allocation_bps_p90)}
+            hint={dictionary.rewards.marketAllocation}
+          />
+          <ReportMetric
             label={dictionary.rewards.lowCompetitionRewardMedian}
             value={formatOptionalUsd(report.estimated_reward_per_100_usd_day_median)}
             hint={`${dictionary.rewards.lowCompetitionRewardP90}: ${formatOptionalUsd(report.estimated_reward_per_100_usd_day_p90)}`}
@@ -183,6 +198,10 @@ function formatOptionalUsd(value: string | number | null | undefined) {
 
 function formatOptionalCents(value: string | number | null | undefined) {
   return value == null ? "n/a" : `${formatFixed(value, 2)}c`;
+}
+
+function formatOptionalBps(value: string | number | null | undefined) {
+  return value == null ? "n/a" : `${formatFixed(toFiniteNumber(value) / 100, 2)}%`;
 }
 
 function formatOptionalMultiple(value: string | number | null | undefined) {

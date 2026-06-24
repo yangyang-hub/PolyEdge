@@ -2,7 +2,7 @@
 
 import { StatusPill } from "@/components/shared/status-pill";
 import type { RewardQuotePlanDto } from "@/lib/contracts/dto";
-import { formatFixed, formatUsdFixed } from "@/lib/formatters";
+import { formatFixed, formatUsdFixed, toFiniteNumber } from "@/lib/formatters";
 import { dictionary } from "@/lib/i18n/dictionaries";
 
 export function LowCompetitionSummary({ plan }: { plan: RewardQuotePlanDto }) {
@@ -22,6 +22,15 @@ export function LowCompetitionSummary({ plan }: { plan: RewardQuotePlanDto }) {
             {dictionary.rewards.competition}: {formatUsdFixed(metrics.qualified_competition_usd)}
           </span>
           <span>
+            {dictionary.rewards.competitionShare}: {formatBps(metrics.competition_share_bps)}
+          </span>
+          <span>
+            {dictionary.rewards.accountAllocation}: {formatBps(metrics.account_allocation_bps)}
+          </span>
+          <span>
+            {dictionary.rewards.marketAllocation}: {formatBps(metrics.market_allocation_bps)}
+          </span>
+          <span>
             {dictionary.rewards.rewardPer100}: {formatUsdFixed(metrics.estimated_reward_per_100_usd_day)}
           </span>
           <span>
@@ -39,4 +48,8 @@ export function LowCompetitionSummary({ plan }: { plan: RewardQuotePlanDto }) {
       ) : null}
     </div>
   );
+}
+
+function formatBps(value: string | number) {
+  return `${formatFixed(toFiniteNumber(value) / 100, 2)}%`;
 }

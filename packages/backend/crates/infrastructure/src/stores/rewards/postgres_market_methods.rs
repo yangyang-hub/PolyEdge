@@ -116,7 +116,17 @@ async fn postgres_list_reward_candidate_markets(
               AND (m.best_ask - m.best_bid) * 100 <= $7
               AND m.synced_at >= now() - ($8::BIGINT * interval '1 minute')
               AND m.synced_at <= now() + interval '5 minutes'
-            ORDER BY (
+            ORDER BY
+                     CASE WHEN $13 THEN
+                         rm.total_daily_rate::DOUBLE PRECISION
+                         / GREATEST(
+                             1.0,
+                             (m.liquidity_usd + m.volume_24h)::DOUBLE PRECISION
+                           )
+                     END DESC NULLS LAST,
+                     CASE WHEN $13 THEN m.liquidity_usd END ASC NULLS LAST,
+                     CASE WHEN $13 THEN m.volume_24h END ASC NULLS LAST,
+                     CASE WHEN NOT $13 THEN (
                        LEAST(35.0, SQRT(rm.total_daily_rate::DOUBLE PRECISION) * 10.0)
                        + LEAST(20.0, LN(1.0 + m.liquidity_usd::DOUBLE PRECISION) / LN(10.0) * 4.0)
                        + LEAST(15.0, LN(1.0 + m.volume_24h::DOUBLE PRECISION) / LN(10.0) * 3.0)
@@ -131,13 +141,13 @@ async fn postgres_list_reward_candidate_markets(
                                $9
                            )::DOUBLE PRECISION * 1.25
                          )
-                     ) DESC,
+                     ) END DESC NULLS LAST,
                      rm.total_daily_rate DESC,
                      m.liquidity_usd DESC,
                      m.volume_24h DESC,
                      m.end_at DESC,
                      rm.updated_at DESC
-            LIMIT $13
+            LIMIT $14
             "#,
     )
     .bind(filter.min_daily_reward)
@@ -152,6 +162,7 @@ async fn postgres_list_reward_candidate_markets(
     .bind(filter.allow_dominant_single_side)
     .bind(filter.dominant_min_probability)
     .bind(filter.dominant_max_probability)
+    .bind(filter.prefer_low_competition_ordering)
     .bind(i64::from(safety_limit))
     .fetch_all(&store.pool)
     .await

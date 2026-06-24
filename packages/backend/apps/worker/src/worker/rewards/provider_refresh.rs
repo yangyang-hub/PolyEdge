@@ -136,6 +136,7 @@ async fn refresh_reward_ai_advisory_provider_cache(
         &cycle.plans,
         &cycle.open_orders,
         &cycle.positions,
+        &cycle.config,
     );
     let original_ordered_conditions = ordered_conditions.len();
     let max_conditions = reward_provider_max_conditions_per_cycle(state);
@@ -248,12 +249,14 @@ async fn refresh_reward_info_risk_provider_cache(
         &cycle.plans,
         &cycle.open_orders,
         &cycle.positions,
+        &cycle.config,
     );
     let mut ordered_conditions = reward_provider_refresh_candidate_condition_ids(
         &info_risk_candidate_condition_ids,
         &cycle.plans,
         &cycle.open_orders,
         &cycle.positions,
+        &cycle.config,
     );
     let original_ordered_conditions = ordered_conditions.len();
     let max_conditions = reward_provider_max_conditions_per_cycle(state);
@@ -579,6 +582,7 @@ fn reward_provider_refresh_candidate_condition_ids(
     plans: &[RewardQuotePlan],
     open_orders: &[ManagedRewardOrder],
     positions: &[RewardPosition],
+    config: &RewardBotConfig,
 ) -> Vec<String> {
     let available_conditions = condition_ids
         .iter()
@@ -586,11 +590,13 @@ fn reward_provider_refresh_candidate_condition_ids(
         .collect::<HashSet<_>>();
     let mut seen = HashSet::new();
     let mut ordered = Vec::with_capacity(condition_ids.len());
-    let low_competition_priority_conditions = plans
+    let plans_by_condition = plans
         .iter()
-        .filter(|plan| reward_provider_low_competition_plan_has_priority(plan))
-        .filter_map(|plan| reward_provider_normalized_condition_id(&plan.condition_id))
-        .collect::<HashSet<_>>();
+        .filter_map(|plan| {
+            reward_provider_normalized_condition_id(&plan.condition_id)
+                .map(|condition_id| (condition_id, plan))
+        })
+        .collect::<HashMap<_, _>>();
 
     for order in open_orders {
         push_reward_provider_available_condition(
@@ -616,13 +622,23 @@ fn reward_provider_refresh_candidate_condition_ids(
         let Some(condition_id) = reward_provider_normalized_condition_id(condition_id) else {
             continue;
         };
+        if !available_conditions.contains(&condition_id) {
+            continue;
+        }
         if !queued.insert(condition_id.clone()) {
             continue;
         }
-        if low_competition_priority_conditions.contains(&condition_id) {
-            low_competition_conditions.push(condition_id);
-        } else {
-            standard_conditions.push(condition_id);
+        let Some(plan) = plans_by_condition.get(&condition_id) else {
+            continue;
+        };
+        match reward_provider_pre_llm_candidate_kind(plan, config, false) {
+            Some(RewardProviderPreLlmCandidateKind::Standard) => {
+                standard_conditions.push(condition_id);
+            }
+            Some(RewardProviderPreLlmCandidateKind::LowCompetition) => {
+                low_competition_conditions.push(condition_id);
+            }
+            Some(RewardProviderPreLlmCandidateKind::ActiveExposure) | None => {}
         }
     }
     append_reward_provider_condition_mix(
@@ -631,15 +647,6 @@ fn reward_provider_refresh_candidate_condition_ids(
         low_competition_conditions,
     );
     ordered
-}
-
-fn reward_provider_low_competition_plan_has_priority(plan: &RewardQuotePlan) -> bool {
-    plan.strategy_bucket == RewardStrategyBucket::LowCompetition
-        && (plan.eligible || plan.pre_ai_eligible)
-        && plan
-            .low_competition_metrics
-            .as_ref()
-            .is_some_and(|metrics| metrics.eligible_for_low_competition)
 }
 
 fn push_reward_provider_available_condition(

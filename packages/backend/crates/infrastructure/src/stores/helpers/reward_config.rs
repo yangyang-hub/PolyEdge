@@ -69,6 +69,28 @@ fn apply_reward_config_value(config: &mut RewardBotConfig, key: &str, value: &st
         "low_competition_max_position_usd" => {
             config.low_competition_max_position_usd = parse_decimal_config(key, value)?;
         }
+        "low_competition_probe_notional_usd" => {
+            config.low_competition_probe_notional_usd = parse_decimal_config(key, value)?;
+        }
+        "low_competition_min_competition_share_bps" => {
+            config.low_competition_min_competition_share_bps = parse_u16_config(key, value)?;
+        }
+        "low_competition_max_competition_multiple" => {
+            config.low_competition_max_competition_multiple = parse_decimal_config(key, value)?;
+        }
+        "low_competition_max_account_allocation_bps" => {
+            config.low_competition_max_account_allocation_bps = parse_u16_config(key, value)?;
+        }
+        "low_competition_max_market_allocation_bps" => {
+            config.low_competition_max_market_allocation_bps = parse_u16_config(key, value)?;
+        }
+        "low_competition_candidate_liquidity_filter_enabled" => {
+            config.low_competition_candidate_liquidity_filter_enabled =
+                parse_bool_config(key, value)?;
+        }
+        "low_competition_candidate_volume_filter_enabled" => {
+            config.low_competition_candidate_volume_filter_enabled = parse_bool_config(key, value)?;
+        }
         "low_competition_min_market_liquidity_usd" => {
             config.low_competition_min_market_liquidity_usd = parse_decimal_config(key, value)?;
         }
@@ -250,6 +272,38 @@ fn reward_config_entries(config: &RewardBotConfig) -> Vec<(&'static str, String)
         (
             "low_competition_max_position_usd",
             config.low_competition_max_position_usd.to_string(),
+        ),
+        (
+            "low_competition_probe_notional_usd",
+            config.low_competition_probe_notional_usd.to_string(),
+        ),
+        (
+            "low_competition_min_competition_share_bps",
+            config.low_competition_min_competition_share_bps.to_string(),
+        ),
+        (
+            "low_competition_max_competition_multiple",
+            config.low_competition_max_competition_multiple.to_string(),
+        ),
+        (
+            "low_competition_max_account_allocation_bps",
+            config.low_competition_max_account_allocation_bps.to_string(),
+        ),
+        (
+            "low_competition_max_market_allocation_bps",
+            config.low_competition_max_market_allocation_bps.to_string(),
+        ),
+        (
+            "low_competition_candidate_liquidity_filter_enabled",
+            config
+                .low_competition_candidate_liquidity_filter_enabled
+                .to_string(),
+        ),
+        (
+            "low_competition_candidate_volume_filter_enabled",
+            config
+                .low_competition_candidate_volume_filter_enabled
+                .to_string(),
         ),
         (
             "low_competition_min_market_liquidity_usd",

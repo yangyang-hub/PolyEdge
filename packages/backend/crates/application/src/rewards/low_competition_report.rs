@@ -38,9 +38,20 @@ pub fn build_low_competition_observations(
                 observed_at,
                 mode: config.low_competition_mode,
                 planned_notional_usd: metrics.planned_notional_usd,
+                competition_probe_notional_usd: metrics.competition_probe_notional_usd,
                 qualified_competition_usd: metrics.qualified_competition_usd,
+                competition_share_bps: metrics.competition_share_bps,
+                competition_multiple: metrics.competition_multiple,
                 estimated_reward_per_100_usd_day: metrics.estimated_reward_per_100_usd_day,
                 competition_density: metrics.competition_density,
+                account_effective_available_usd: metrics.account_effective_available_usd,
+                low_competition_open_buy_notional_usd: metrics
+                    .low_competition_open_buy_notional_usd,
+                low_competition_open_buy_notional_usd_after_plan: metrics
+                    .low_competition_open_buy_notional_usd_after_plan,
+                condition_buy_notional_usd_after_plan: metrics.condition_buy_notional_usd_after_plan,
+                account_allocation_bps: metrics.account_allocation_bps,
+                market_allocation_bps: metrics.market_allocation_bps,
                 exit_depth_usd: metrics.exit_depth_usd,
                 exit_slippage_cents: metrics.exit_slippage_cents,
                 midpoint_range_cents: metrics.midpoint_range_cents,
@@ -104,6 +115,18 @@ pub fn build_low_competition_shadow_report(
         .iter()
         .map(|observation| observation.estimated_reward_per_100_usd_day)
         .collect::<Vec<_>>();
+    let competition_shares = observations
+        .iter()
+        .map(|observation| observation.competition_share_bps)
+        .collect::<Vec<_>>();
+    let account_allocations = observations
+        .iter()
+        .map(|observation| observation.account_allocation_bps)
+        .collect::<Vec<_>>();
+    let market_allocations = observations
+        .iter()
+        .map(|observation| observation.market_allocation_bps)
+        .collect::<Vec<_>>();
     let exit_depth_multiples = observations
         .iter()
         .filter_map(|observation| {
@@ -130,6 +153,9 @@ pub fn build_low_competition_shadow_report(
         percentile_nearest_decimal(estimated_rewards.clone(), 5_000);
     let estimated_reward_per_100_usd_day_p90 =
         percentile_nearest_decimal(estimated_rewards, 9_000);
+    let competition_share_bps_median = percentile_nearest_decimal(competition_shares, 5_000);
+    let account_allocation_bps_p90 = percentile_nearest_decimal(account_allocations, 9_000);
+    let market_allocation_bps_p90 = percentile_nearest_decimal(market_allocations, 9_000);
     let exit_depth_multiple_median =
         percentile_nearest_decimal(exit_depth_multiples, 5_000);
     let midpoint_range_cents_p95 = percentile_nearest_decimal(midpoint_ranges, 9_500);
@@ -146,6 +172,9 @@ pub fn build_low_competition_shadow_report(
         sample_insufficient_ratio,
         ai_blocked_ratio,
         info_risk_blocked_ratio,
+        competition_share_bps_median,
+        account_allocation_bps_p90,
+        market_allocation_bps_p90,
         estimated_reward_per_100_usd_day_median,
         exit_depth_multiple_median,
         midpoint_range_cents_p95,
@@ -175,6 +204,9 @@ pub fn build_low_competition_shadow_report(
         ai_blocked_ratio,
         info_risk_blocked_ratio,
         standard_overlap_ratio: decimal_count_ratio(standard_overlap_count, total),
+        competition_share_bps_median,
+        account_allocation_bps_p90,
+        market_allocation_bps_p90,
         estimated_reward_per_100_usd_day_median,
         estimated_reward_per_100_usd_day_p90,
         exit_depth_multiple_median,
@@ -213,6 +245,9 @@ fn low_competition_recommendation_reasons(
     sample_insufficient_ratio: Decimal,
     ai_blocked_ratio: Decimal,
     info_risk_blocked_ratio: Decimal,
+    competition_share_bps_median: Option<Decimal>,
+    account_allocation_bps_p90: Option<Decimal>,
+    market_allocation_bps_p90: Option<Decimal>,
     reward_median: Option<Decimal>,
     exit_depth_multiple_median: Option<Decimal>,
     midpoint_range_cents_p95: Option<Decimal>,
@@ -244,6 +279,36 @@ fn low_competition_recommendation_reasons(
         reasons.push(format!(
             "info-risk block ratio {info_risk_blocked_ratio} above 0.20"
         ));
+    }
+    if config.low_competition_min_competition_share_bps > 0 {
+        let required = Decimal::from(config.low_competition_min_competition_share_bps);
+        match competition_share_bps_median {
+            Some(value) if value >= required => {}
+            Some(value) => reasons.push(format!(
+                "median competition share {value}bps below {required}bps"
+            )),
+            None => reasons.push("median competition share unavailable".to_string()),
+        }
+    }
+    if config.low_competition_max_account_allocation_bps > 0 {
+        let cap = Decimal::from(config.low_competition_max_account_allocation_bps);
+        match account_allocation_bps_p90 {
+            Some(value) if value <= cap => {}
+            Some(value) => reasons.push(format!(
+                "account allocation p90 {value}bps above {cap}bps"
+            )),
+            None => reasons.push("account allocation p90 unavailable".to_string()),
+        }
+    }
+    if config.low_competition_max_market_allocation_bps > 0 {
+        let cap = Decimal::from(config.low_competition_max_market_allocation_bps);
+        match market_allocation_bps_p90 {
+            Some(value) if value <= cap => {}
+            Some(value) => reasons.push(format!(
+                "market allocation p90 {value}bps above {cap}bps"
+            )),
+            None => reasons.push("market allocation p90 unavailable".to_string()),
+        }
     }
     match reward_median {
         Some(value) if value >= config.low_competition_min_reward_per_100_usd_day => {}

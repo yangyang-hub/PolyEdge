@@ -71,18 +71,38 @@ export function LowCompetitionConfig({
         onChange={(value) => updateNumber("low_competition_max_position_usd", value)}
       />
       <NumberInput
-        label={dictionary.rewards.lowCompetitionMinLiquidityUsd}
-        value={draft.low_competition_min_market_liquidity_usd}
+        label={dictionary.rewards.lowCompetitionProbeNotionalUsd}
+        value={draft.low_competition_probe_notional_usd}
         suffix="$"
-        hint={h.lowCompetitionMinLiquidityUsd}
-        onChange={(value) => updateNumber("low_competition_min_market_liquidity_usd", value)}
+        hint={h.lowCompetitionProbeNotionalUsd}
+        onChange={(value) => updateNumber("low_competition_probe_notional_usd", value)}
       />
       <NumberInput
-        label={dictionary.rewards.lowCompetitionMinVolume24hUsd}
-        value={draft.low_competition_min_market_volume_24h_usd}
-        suffix="$"
-        hint={h.lowCompetitionMinVolume24hUsd}
-        onChange={(value) => updateNumber("low_competition_min_market_volume_24h_usd", value)}
+        label={dictionary.rewards.lowCompetitionMinCompetitionShareBps}
+        value={draft.low_competition_min_competition_share_bps}
+        suffix="bps"
+        hint={h.lowCompetitionMinCompetitionShareBps}
+        onChange={(value) => updateNumber("low_competition_min_competition_share_bps", value)}
+      />
+      <NumberInput
+        label={dictionary.rewards.lowCompetitionMaxCompetitionMultiple}
+        value={draft.low_competition_max_competition_multiple}
+        hint={h.lowCompetitionMaxCompetitionMultiple}
+        onChange={(value) => updateNumber("low_competition_max_competition_multiple", value)}
+      />
+      <NumberInput
+        label={dictionary.rewards.lowCompetitionMaxAccountAllocationBps}
+        value={draft.low_competition_max_account_allocation_bps}
+        suffix="bps"
+        hint={h.lowCompetitionMaxAccountAllocationBps}
+        onChange={(value) => updateNumber("low_competition_max_account_allocation_bps", value)}
+      />
+      <NumberInput
+        label={dictionary.rewards.lowCompetitionMaxMarketAllocationBps}
+        value={draft.low_competition_max_market_allocation_bps}
+        suffix="bps"
+        hint={h.lowCompetitionMaxMarketAllocationBps}
+        onChange={(value) => updateNumber("low_competition_max_market_allocation_bps", value)}
       />
       <NumberInput
         label={dictionary.rewards.lowCompetitionMaxCompetitionUsd}

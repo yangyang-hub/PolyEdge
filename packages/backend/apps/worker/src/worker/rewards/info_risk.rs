@@ -111,6 +111,7 @@ async fn scan_reward_info_risks_unlocked(
         &cycle.plans,
         &cycle.open_orders,
         &cycle.positions,
+        &config,
     );
     report.candidates = ordered_conditions.len();
     let max_conditions = reward_provider_max_conditions_per_cycle(state);
@@ -289,9 +290,15 @@ fn reward_info_risk_candidate_conditions(
     plans: &[RewardQuotePlan],
     open_orders: &[ManagedRewardOrder],
     positions: &[RewardPosition],
+    config: &RewardBotConfig,
 ) -> Vec<String> {
     let mut seen = HashSet::new();
     let mut condition_ids = Vec::new();
+    let plans_by_condition = plans
+        .iter()
+        .map(|plan| (plan.condition_id.as_str(), plan))
+        .collect::<HashMap<_, _>>();
+
     for order in open_orders {
         push_info_risk_condition(
             &mut condition_ids,
@@ -306,7 +313,11 @@ fn reward_info_risk_candidate_conditions(
             &position.condition_id,
         );
     }
-    for plan in plans.iter().filter(|plan| plan.eligible) {
+    for plan in plans.iter().filter(|plan| {
+        let has_active_exposure =
+            reward_condition_has_active_exposure(&plan.condition_id, open_orders, positions);
+        reward_provider_plan_passes_pre_llm_gate(plan, config, has_active_exposure)
+    }) {
         push_info_risk_condition(
             &mut condition_ids,
             &mut seen,
@@ -314,10 +325,23 @@ fn reward_info_risk_candidate_conditions(
         );
     }
     for market in markets {
+        let condition_id = market.condition_id.trim();
+        if condition_id.is_empty() || seen.contains(condition_id) {
+            continue;
+        }
+        let has_active_exposure =
+            reward_condition_has_active_exposure(condition_id, open_orders, positions);
+        let passes_pre_llm_gate = has_active_exposure
+            || plans_by_condition.get(condition_id).is_some_and(|plan| {
+                reward_provider_plan_passes_pre_llm_gate(plan, config, false)
+            });
+        if !passes_pre_llm_gate {
+            continue;
+        }
         push_info_risk_condition(
             &mut condition_ids,
             &mut seen,
-            &market.condition_id,
+            condition_id,
         );
     }
     condition_ids

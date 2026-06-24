@@ -478,15 +478,26 @@ impl RewardBotStore for InMemoryRewardBotStore {
             })
             .cloned()
             .collect();
-        markets.sort_by(|left, right| {
-            right
-                .liquidity_usd
-                .cmp(&left.liquidity_usd)
-                .then_with(|| right.volume_24h_usd.cmp(&left.volume_24h_usd))
-                .then_with(|| right.end_at.cmp(&left.end_at))
-                .then_with(|| right.total_daily_rate.cmp(&left.total_daily_rate))
-                .then_with(|| right.updated_at.cmp(&left.updated_at))
-        });
+        if filter.prefer_low_competition_ordering {
+            markets.sort_by(|left, right| {
+                in_memory_reward_low_competition_density(right)
+                    .cmp(&in_memory_reward_low_competition_density(left))
+                    .then_with(|| left.liquidity_usd.cmp(&right.liquidity_usd))
+                    .then_with(|| left.volume_24h_usd.cmp(&right.volume_24h_usd))
+                    .then_with(|| right.total_daily_rate.cmp(&left.total_daily_rate))
+                    .then_with(|| right.updated_at.cmp(&left.updated_at))
+            });
+        } else {
+            markets.sort_by(|left, right| {
+                right
+                    .liquidity_usd
+                    .cmp(&left.liquidity_usd)
+                    .then_with(|| right.volume_24h_usd.cmp(&left.volume_24h_usd))
+                    .then_with(|| right.end_at.cmp(&left.end_at))
+                    .then_with(|| right.total_daily_rate.cmp(&left.total_daily_rate))
+                    .then_with(|| right.updated_at.cmp(&left.updated_at))
+            });
+        }
         markets.truncate(usize::from(safety_limit));
         Ok(markets)
     }
@@ -909,4 +920,9 @@ fn in_memory_reward_midpoint_allowed(midpoint: Decimal, filter: &RewardCandidate
         && midpoint <= filter.dominant_max_probability)
         || (midpoint >= Decimal::ONE - filter.dominant_max_probability
             && midpoint <= Decimal::ONE - filter.dominant_min_probability)
+}
+
+fn in_memory_reward_low_competition_density(market: &RewardMarket) -> Decimal {
+    let denominator = (market.liquidity_usd + market.volume_24h_usd).max(Decimal::ONE);
+    market.total_daily_rate / denominator
 }

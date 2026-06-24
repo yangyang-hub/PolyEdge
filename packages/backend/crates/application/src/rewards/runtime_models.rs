@@ -129,9 +129,27 @@ pub struct RewardMarketBookMetrics {
 pub struct RewardLowCompetitionMetrics {
     #[serde(default)]
     pub planned_notional_usd: Decimal,
+    #[serde(default)]
+    pub competition_probe_notional_usd: Decimal,
     pub qualified_competition_usd: Decimal,
+    #[serde(default)]
+    pub competition_share_bps: Decimal,
+    #[serde(default)]
+    pub competition_multiple: Decimal,
     pub estimated_reward_per_100_usd_day: Decimal,
     pub competition_density: Decimal,
+    #[serde(default)]
+    pub account_effective_available_usd: Decimal,
+    #[serde(default)]
+    pub low_competition_open_buy_notional_usd: Decimal,
+    #[serde(default)]
+    pub low_competition_open_buy_notional_usd_after_plan: Decimal,
+    #[serde(default)]
+    pub condition_buy_notional_usd_after_plan: Decimal,
+    #[serde(default)]
+    pub account_allocation_bps: Decimal,
+    #[serde(default)]
+    pub market_allocation_bps: Decimal,
     pub exit_depth_usd: Decimal,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub exit_slippage_cents: Option<Decimal>,
@@ -156,9 +174,18 @@ pub struct RewardLowCompetitionObservation {
     pub observed_at: OffsetDateTime,
     pub mode: RewardLowCompetitionMode,
     pub planned_notional_usd: Decimal,
+    pub competition_probe_notional_usd: Decimal,
     pub qualified_competition_usd: Decimal,
+    pub competition_share_bps: Decimal,
+    pub competition_multiple: Decimal,
     pub estimated_reward_per_100_usd_day: Decimal,
     pub competition_density: Decimal,
+    pub account_effective_available_usd: Decimal,
+    pub low_competition_open_buy_notional_usd: Decimal,
+    pub low_competition_open_buy_notional_usd_after_plan: Decimal,
+    pub condition_buy_notional_usd_after_plan: Decimal,
+    pub account_allocation_bps: Decimal,
+    pub market_allocation_bps: Decimal,
     pub exit_depth_usd: Decimal,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub exit_slippage_cents: Option<Decimal>,
@@ -201,6 +228,12 @@ pub struct RewardLowCompetitionShadowReport {
     pub ai_blocked_ratio: Decimal,
     pub info_risk_blocked_ratio: Decimal,
     pub standard_overlap_ratio: Decimal,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub competition_share_bps_median: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account_allocation_bps_p90: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub market_allocation_bps_p90: Option<Decimal>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub estimated_reward_per_100_usd_day_median: Option<Decimal>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

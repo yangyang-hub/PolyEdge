@@ -86,6 +86,34 @@ fn drain_reward_orderbook_cancel_tokens(
     }
 }
 
+fn remember_reward_event_cancel_plan_tokens(
+    plan: &RewardQuotePlan,
+    seen: &mut HashSet<String>,
+    active_order_tokens: &mut Vec<String>,
+) {
+    if plan.orderbook_token_ids.is_empty() {
+        for leg in &plan.legs {
+            remember_reward_event_cancel_plan_token(&leg.token_id, seen, active_order_tokens);
+        }
+    } else {
+        for token_id in &plan.orderbook_token_ids {
+            remember_reward_event_cancel_plan_token(token_id, seen, active_order_tokens);
+        }
+    }
+}
+
+fn remember_reward_event_cancel_plan_token(
+    token_id: &str,
+    seen: &mut HashSet<String>,
+    active_order_tokens: &mut Vec<String>,
+) {
+    let token_id = token_id.trim();
+    if token_id.is_empty() || !seen.insert(token_id.to_string()) {
+        return;
+    }
+    active_order_tokens.push(token_id.to_string());
+}
+
 async fn run_reward_orderbook_event_cancel_fast_path(
     state: &AppState,
     connector: &LivePolymarketConnector,
@@ -101,6 +129,11 @@ async fn run_reward_orderbook_event_cancel_fast_path(
     let cycle = state.reward_bot_service.current_live_cycle_state().await?;
     let mut active_order_tokens = Vec::new();
     let mut seen = HashSet::new();
+    let plan_index: HashMap<&str, &RewardQuotePlan> = cycle
+        .plans
+        .iter()
+        .map(|plan| (plan.condition_id.as_str(), plan))
+        .collect();
     for order in cycle
         .open_orders
         .iter()
@@ -108,6 +141,11 @@ async fn run_reward_orderbook_event_cancel_fast_path(
     {
         if seen.insert(order.token_id.clone()) {
             active_order_tokens.push(order.token_id.clone());
+        }
+        if order.strategy_bucket == RewardStrategyBucket::LowCompetition
+            && let Some(plan) = plan_index.get(order.condition_id.as_str())
+        {
+            remember_reward_event_cancel_plan_tokens(plan, &mut seen, &mut active_order_tokens);
         }
     }
     if active_order_tokens.is_empty() {
@@ -117,12 +155,13 @@ async fn run_reward_orderbook_event_cancel_fast_path(
     let books = fetch_cached_reward_books(state, Some(orderbook_cache), &active_order_tokens).await?;
     record_reward_book_history(book_history, &books);
     let kill_switch = state.risk_service.read_state().await?.kill_switch;
-    let cancel_candidates = live_event_hard_cancel_candidates(
+    let cancel_candidates = live_event_hard_cancel_candidates_with_account(
         &cycle.config,
         &cycle.plans,
         &cycle.open_orders,
         &books,
         book_history,
+        &cycle.account,
         &token_ids,
         kill_switch,
     );
@@ -188,12 +227,40 @@ async fn run_reward_orderbook_event_cancel_fast_path(
     Ok(report)
 }
 
+#[cfg(test)]
 fn live_event_hard_cancel_candidates(
     config: &RewardBotConfig,
     plans: &[RewardQuotePlan],
     open_orders: &[ManagedRewardOrder],
     books: &HashMap<String, RewardOrderBook>,
     book_history: &HashMap<String, VecDeque<BookSnapshot>>,
+    token_ids: &HashSet<String>,
+    kill_switch: bool,
+) -> Vec<(String, String)> {
+    let account = RewardAccountState::fresh(
+        &config.account_id,
+        config.account_capital_usd,
+        OffsetDateTime::now_utc(),
+    );
+    live_event_hard_cancel_candidates_with_account(
+        config,
+        plans,
+        open_orders,
+        books,
+        book_history,
+        &account,
+        token_ids,
+        kill_switch,
+    )
+}
+
+fn live_event_hard_cancel_candidates_with_account(
+    config: &RewardBotConfig,
+    plans: &[RewardQuotePlan],
+    open_orders: &[ManagedRewardOrder],
+    books: &HashMap<String, RewardOrderBook>,
+    book_history: &HashMap<String, VecDeque<BookSnapshot>>,
+    account: &RewardAccountState,
     token_ids: &HashSet<String>,
     kill_switch: bool,
 ) -> Vec<(String, String)> {
@@ -204,13 +271,18 @@ fn live_event_hard_cancel_candidates(
     let now = OffsetDateTime::now_utc();
     open_orders
         .iter()
-        .filter(|order| order.status.is_open_like() && token_ids.contains(&order.token_id))
+        .filter(|order| {
+            order.status.is_open_like()
+                && live_event_cancel_order_matches_updated_tokens(order, &plan_index, token_ids)
+        })
         .filter_map(|order| {
             live_event_hard_cancel_reason(
                 config,
                 &plan_index,
                 books,
                 book_history,
+                open_orders,
+                account,
                 order,
                 now,
                 kill_switch,
@@ -220,11 +292,36 @@ fn live_event_hard_cancel_candidates(
         .collect()
 }
 
+fn live_event_cancel_order_matches_updated_tokens(
+    order: &ManagedRewardOrder,
+    plans: &HashMap<&str, &RewardQuotePlan>,
+    token_ids: &HashSet<String>,
+) -> bool {
+    if token_ids.contains(&order.token_id) {
+        return true;
+    }
+    if order.strategy_bucket != RewardStrategyBucket::LowCompetition {
+        return false;
+    }
+    let Some(plan) = plans.get(order.condition_id.as_str()) else {
+        return false;
+    };
+    if plan.strategy_bucket != RewardStrategyBucket::LowCompetition {
+        return false;
+    }
+    plan.orderbook_token_ids
+        .iter()
+        .chain(plan.legs.iter().map(|leg| &leg.token_id))
+        .any(|token_id| token_ids.contains(token_id))
+}
+
 fn live_event_hard_cancel_reason(
     config: &RewardBotConfig,
     plans: &HashMap<&str, &RewardQuotePlan>,
     books: &HashMap<String, RewardOrderBook>,
     book_history: &HashMap<String, VecDeque<BookSnapshot>>,
+    open_orders: &[ManagedRewardOrder],
+    account: &RewardAccountState,
     order: &ManagedRewardOrder,
     now: OffsetDateTime,
     kill_switch: bool,
@@ -285,6 +382,21 @@ fn live_event_hard_cancel_reason(
             "post-only buy would touch best ask {best_ask} at order price {}",
             order.price
         ));
+    }
+    if order.strategy_bucket == RewardStrategyBucket::LowCompetition
+        || plan.strategy_bucket == RewardStrategyBucket::LowCompetition
+    {
+        if plan.strategy_bucket != RewardStrategyBucket::LowCompetition {
+            return Some("low-competition order no longer has low-competition quote plan".to_string());
+        }
+        return low_competition_live_cancel_reason(
+            config,
+            plan,
+            books,
+            book_history,
+            open_orders,
+            account,
+        );
     }
     if let Some(reason) = live_min_depth_cancel_reason(config, books, order) {
         return Some(reason);

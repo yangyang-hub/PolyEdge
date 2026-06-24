@@ -1650,9 +1650,18 @@ CREATE TABLE reward_low_competition_observations (
     observed_at TIMESTAMPTZ NOT NULL,
     mode TEXT NOT NULL CHECK (mode IN ('observe', 'enforce')),
     planned_notional_usd NUMERIC(20,8) NOT NULL DEFAULT 0,
+    competition_probe_notional_usd NUMERIC(20,8) NOT NULL DEFAULT 0,
     qualified_competition_usd NUMERIC(20,8) NOT NULL DEFAULT 0,
+    competition_share_bps NUMERIC(20,8) NOT NULL DEFAULT 0,
+    competition_multiple NUMERIC(20,8) NOT NULL DEFAULT 0,
     estimated_reward_per_100_usd_day NUMERIC(20,8) NOT NULL DEFAULT 0,
     competition_density NUMERIC(20,8) NOT NULL DEFAULT 0,
+    account_effective_available_usd NUMERIC(20,8) NOT NULL DEFAULT 0,
+    low_competition_open_buy_notional_usd NUMERIC(20,8) NOT NULL DEFAULT 0,
+    low_competition_open_buy_notional_usd_after_plan NUMERIC(20,8) NOT NULL DEFAULT 0,
+    condition_buy_notional_usd_after_plan NUMERIC(20,8) NOT NULL DEFAULT 0,
+    account_allocation_bps NUMERIC(20,8) NOT NULL DEFAULT 0,
+    market_allocation_bps NUMERIC(20,8) NOT NULL DEFAULT 0,
     exit_depth_usd NUMERIC(20,8) NOT NULL DEFAULT 0,
     exit_slippage_cents NUMERIC(20,8),
     midpoint_range_cents NUMERIC(20,8),
@@ -1742,3 +1751,12 @@ CREATE UNIQUE INDEX IF NOT EXISTS reward_control_commands_active_global_dedupe_i
     ON reward_control_commands (action)
     WHERE status IN ('pending', 'running')
       AND account_id IS NULL;
+
+
+-------------------------------------------------------------------------------
+-- Source: packages/backend/migrations/0046_reward_low_competition_competition_share.sql
+-------------------------------------------------------------------------------
+
+-- Folded into reward_low_competition_observations above for empty-database
+-- initialization. Existing databases receive these columns through migration
+-- 0046.

@@ -191,6 +191,8 @@ fn reward_ai_advisory_candidate_condition_ids(
             &mut seen,
             &plans_by_condition,
             &ai_required_condition_ids,
+            open_orders,
+            positions,
             &order.condition_id,
             config,
             model,
@@ -203,6 +205,8 @@ fn reward_ai_advisory_candidate_condition_ids(
             &mut seen,
             &plans_by_condition,
             &ai_required_condition_ids,
+            open_orders,
+            positions,
             &position.condition_id,
             config,
             model,
@@ -215,6 +219,8 @@ fn reward_ai_advisory_candidate_condition_ids(
             &mut seen,
             &plans_by_condition,
             &ai_required_condition_ids,
+            open_orders,
+            positions,
             condition_id,
             config,
             model,
@@ -263,6 +269,8 @@ fn push_reward_ai_advisory_plan(
     seen: &mut HashSet<String>,
     plans_by_condition: &HashMap<&str, &RewardQuotePlan>,
     ai_required_condition_ids: &HashSet<String>,
+    open_orders: &[ManagedRewardOrder],
+    positions: &[RewardPosition],
     condition_id: &str,
     config: &RewardBotConfig,
     model: &str,
@@ -272,12 +280,17 @@ fn push_reward_ai_advisory_plan(
     if condition_id.is_empty() {
         return;
     }
-    if !ai_required_condition_ids.contains(condition_id) {
+    let has_active_exposure =
+        reward_condition_has_active_exposure(condition_id, open_orders, positions);
+    if !has_active_exposure && !ai_required_condition_ids.contains(condition_id) {
         return;
     }
     let Some(plan) = plans_by_condition.get(condition_id) else {
         return;
     };
+    if !reward_provider_plan_passes_pre_llm_gate(plan, config, has_active_exposure) {
+        return;
+    }
     if !reward_ai_plan_needs_advisory(plan, config, model, now) {
         return;
     }

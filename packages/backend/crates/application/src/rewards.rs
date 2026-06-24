@@ -34,7 +34,9 @@ include!("rewards/planner.rs");
 include!("rewards/planner_selection.rs");
 include!("rewards/planner_live.rs");
 include!("rewards/low_competition.rs");
+include!("rewards/low_competition_cancel.rs");
 include!("rewards/low_competition_report.rs");
+include!("rewards/provider_prefilter.rs");
 include!("rewards/engine.rs");
 include!("rewards/helpers.rs");
 
@@ -53,4 +55,9 @@ mod low_competition_tests {
     use super::*;
 
     include!("rewards/low_competition_tests.rs");
+}
+
+#[cfg(test)]
+mod provider_prefilter_tests {
+    include!("rewards/provider_prefilter_tests.rs");
 }

@@ -51,6 +51,13 @@ export type RewardBotConfigDto = {
   low_competition_max_open_orders: number;
   low_competition_per_market_usd: DecimalValue;
   low_competition_max_position_usd: DecimalValue;
+  low_competition_probe_notional_usd: DecimalValue;
+  low_competition_min_competition_share_bps: number;
+  low_competition_max_competition_multiple: DecimalValue;
+  low_competition_max_account_allocation_bps: number;
+  low_competition_max_market_allocation_bps: number;
+  low_competition_candidate_liquidity_filter_enabled: boolean;
+  low_competition_candidate_volume_filter_enabled: boolean;
   low_competition_min_market_liquidity_usd: DecimalValue;
   low_competition_min_market_volume_24h_usd: DecimalValue;
   low_competition_max_competition_usd: DecimalValue;
@@ -156,9 +163,18 @@ export type RewardMarketBookMetricsDto = {
 
 export type RewardLowCompetitionMetricsDto = {
   planned_notional_usd: DecimalValue;
+  competition_probe_notional_usd: DecimalValue;
   qualified_competition_usd: DecimalValue;
+  competition_share_bps: DecimalValue;
+  competition_multiple: DecimalValue;
   estimated_reward_per_100_usd_day: DecimalValue;
   competition_density: DecimalValue;
+  account_effective_available_usd: DecimalValue;
+  low_competition_open_buy_notional_usd: DecimalValue;
+  low_competition_open_buy_notional_usd_after_plan: DecimalValue;
+  condition_buy_notional_usd_after_plan: DecimalValue;
+  account_allocation_bps: DecimalValue;
+  market_allocation_bps: DecimalValue;
   exit_depth_usd: DecimalValue;
   exit_slippage_cents?: DecimalValue | null;
   midpoint_range_cents?: DecimalValue | null;
@@ -186,6 +202,9 @@ export type RewardLowCompetitionShadowReportDto = {
   ai_blocked_ratio: DecimalValue;
   info_risk_blocked_ratio: DecimalValue;
   standard_overlap_ratio: DecimalValue;
+  competition_share_bps_median?: DecimalValue | null;
+  account_allocation_bps_p90?: DecimalValue | null;
+  market_allocation_bps_p90?: DecimalValue | null;
   estimated_reward_per_100_usd_day_median?: DecimalValue | null;
   estimated_reward_per_100_usd_day_p90?: DecimalValue | null;
   exit_depth_multiple_median?: DecimalValue | null;

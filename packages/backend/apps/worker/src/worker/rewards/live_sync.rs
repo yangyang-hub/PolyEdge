@@ -570,12 +570,13 @@ async fn run_reward_bot_live_reconcile_unlocked(
 
     let kill_switch = state.risk_service.read_state().await?.kill_switch;
 
-    let cancel_candidates = live_cancel_candidates(
+    let cancel_candidates = live_cancel_candidates_with_account(
         &cycle.config,
         &cycle.plans,
         &open_orders,
         &books,
         book_history,
+        &account,
         kill_switch,
     );
 

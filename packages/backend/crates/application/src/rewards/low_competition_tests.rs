@@ -33,14 +33,29 @@ fn test_market(rewards_min_size: Decimal) -> RewardMarket {
 }
 
 fn test_books() -> HashMap<String, RewardOrderBook> {
+    test_books_with_competition(decimal("4"), decimal("4"))
+}
+
+fn test_books_with_competition(
+    yes_competition_usd: Decimal,
+    no_competition_usd: Decimal,
+) -> HashMap<String, RewardOrderBook> {
     let now = OffsetDateTime::now_utc();
+    let yes_price = decimal("0.77");
+    let no_price = decimal("0.22");
     [
         RewardOrderBook {
             token_id: "yes_low_comp".to_string(),
-            bids: vec![RewardBookLevel {
-                price: decimal("0.77"),
-                size: decimal("1000"),
-            }],
+            bids: vec![
+                RewardBookLevel {
+                    price: yes_price,
+                    size: (yes_competition_usd / yes_price).round_dp(4),
+                },
+                RewardBookLevel {
+                    price: decimal("0.50"),
+                    size: decimal("200"),
+                },
+            ],
             asks: vec![RewardBookLevel {
                 price: decimal("0.78"),
                 size: decimal("1000"),
@@ -50,10 +65,16 @@ fn test_books() -> HashMap<String, RewardOrderBook> {
         },
         RewardOrderBook {
             token_id: "no_low_comp".to_string(),
-            bids: vec![RewardBookLevel {
-                price: decimal("0.22"),
-                size: decimal("1000"),
-            }],
+            bids: vec![
+                RewardBookLevel {
+                    price: no_price,
+                    size: (no_competition_usd / no_price).round_dp(4),
+                },
+                RewardBookLevel {
+                    price: decimal("0.05"),
+                    size: decimal("1000"),
+                },
+            ],
             asks: vec![RewardBookLevel {
                 price: decimal("0.23"),
                 size: decimal("1000"),
@@ -65,6 +86,10 @@ fn test_books() -> HashMap<String, RewardOrderBook> {
     .into_iter()
     .map(|book| (book.token_id.clone(), book))
     .collect()
+}
+
+fn test_account(available_usd: Decimal) -> RewardAccountState {
+    RewardAccountState::fresh("acct", available_usd, OffsetDateTime::now_utc())
 }
 
 fn stable_book_history(
@@ -116,7 +141,14 @@ fn observe_records_metrics_without_live_eligibility() {
     let history = stable_book_history(&books, config.low_competition_min_book_samples);
     let mut plans = low_competition_plans(&config);
 
-    apply_low_competition_metrics_to_quote_plans(&mut plans, &books, &history, &[], &config);
+    apply_low_competition_metrics_to_quote_plans(
+        &mut plans,
+        &books,
+        &history,
+        &[],
+        &test_account(decimal("1000")),
+        &config,
+    );
 
     assert_eq!(plans[0].strategy_bucket, RewardStrategyBucket::LowCompetition);
     assert!(!plans[0].eligible);
@@ -138,7 +170,14 @@ fn enforce_requires_ai_and_info_risk_gates() {
     let history = stable_book_history(&books, config.low_competition_min_book_samples);
     let mut plans = low_competition_plans(&config);
 
-    apply_low_competition_metrics_to_quote_plans(&mut plans, &books, &history, &[], &config);
+    apply_low_competition_metrics_to_quote_plans(
+        &mut plans,
+        &books,
+        &history,
+        &[],
+        &test_account(decimal("1000")),
+        &config,
+    );
 
     assert!(!plans[0].eligible);
     assert_eq!(plans[0].quote_mode, RewardPlanQuoteMode::None);
@@ -169,6 +208,7 @@ fn enforce_preserves_quote_metadata_when_orderbook_data_is_unavailable() {
         &HashMap::new(),
         &HashMap::new(),
         &[],
+        &test_account(decimal("1000")),
         &config,
     );
 
@@ -199,7 +239,14 @@ fn enforce_can_pass_pre_provider_metrics() {
     let history = stable_book_history(&books, config.low_competition_min_book_samples);
     let mut plans = low_competition_plans(&config);
 
-    apply_low_competition_metrics_to_quote_plans(&mut plans, &books, &history, &[], &config);
+    apply_low_competition_metrics_to_quote_plans(
+        &mut plans,
+        &books,
+        &history,
+        &[],
+        &test_account(decimal("1000")),
+        &config,
+    );
 
     assert!(plans[0].eligible, "{}", plans[0].reason);
     assert!(plans[0].reason.contains("pending AI and info-risk gates"));
@@ -208,6 +255,282 @@ fn enforce_can_pass_pre_provider_metrics() {
         .as_ref()
         .expect("low competition metrics");
     assert!(metrics.eligible_for_low_competition);
+}
+
+#[test]
+fn live_cancel_keeps_low_competition_order_when_metrics_still_pass() {
+    let config = RewardBotConfig {
+        ai_advisory_enabled: true,
+        info_risk_enabled: true,
+        info_risk_mode: RewardSelectionMode::Enforce,
+        low_competition_probe_notional_usd: decimal("10"),
+        low_competition_min_competition_share_bps: 5_000,
+        low_competition_max_competition_multiple: decimal("1"),
+        ..low_competition_plan_config(RewardLowCompetitionMode::Enforce)
+    };
+    let books = test_books_with_competition(decimal("4"), decimal("4"));
+    let history = stable_book_history(&books, config.low_competition_min_book_samples);
+    let plans = low_competition_plans(&config);
+
+    let reason = low_competition_live_cancel_reason(
+        &config,
+        &plans[0],
+        &books,
+        &history,
+        &[],
+        &test_account(decimal("1000")),
+    );
+
+    assert!(reason.is_none());
+}
+
+#[test]
+fn live_cancel_rejects_low_competition_order_when_competition_worsens() {
+    let config = RewardBotConfig {
+        ai_advisory_enabled: true,
+        info_risk_enabled: true,
+        info_risk_mode: RewardSelectionMode::Enforce,
+        low_competition_probe_notional_usd: decimal("10"),
+        low_competition_min_competition_share_bps: 5_000,
+        low_competition_max_competition_multiple: decimal("1"),
+        ..low_competition_plan_config(RewardLowCompetitionMode::Enforce)
+    };
+    let books = test_books_with_competition(decimal("12.5"), decimal("12.5"));
+    let history = stable_book_history(&books, config.low_competition_min_book_samples);
+    let plans = low_competition_plans(&config);
+
+    let reason = low_competition_live_cancel_reason(
+        &config,
+        &plans[0],
+        &books,
+        &history,
+        &[],
+        &test_account(decimal("1000")),
+    )
+    .expect("competition worsening should cancel");
+
+    assert!(reason.contains("low-competition cancel gate rejected"));
+    assert!(reason.contains("competition share"));
+}
+
+#[test]
+fn live_cancel_waits_for_competition_confirmation_before_rejecting() {
+    let config = RewardBotConfig {
+        ai_advisory_enabled: true,
+        info_risk_enabled: true,
+        info_risk_mode: RewardSelectionMode::Enforce,
+        low_competition_probe_notional_usd: decimal("10"),
+        low_competition_min_competition_share_bps: 5_000,
+        low_competition_max_competition_multiple: decimal("1"),
+        ..low_competition_plan_config(RewardLowCompetitionMode::Enforce)
+    };
+    let books = test_books_with_competition(decimal("12.5"), decimal("12.5"));
+    let plans = low_competition_plans(&config);
+
+    let reason = low_competition_live_cancel_reason(
+        &config,
+        &plans[0],
+        &books,
+        &HashMap::new(),
+        &[],
+        &test_account(decimal("1000")),
+    );
+
+    assert!(reason.is_none());
+}
+
+#[test]
+fn live_cancel_does_not_reject_only_for_unavailable_low_competition_history() {
+    let config = RewardBotConfig {
+        ai_advisory_enabled: true,
+        info_risk_enabled: true,
+        info_risk_mode: RewardSelectionMode::Enforce,
+        low_competition_probe_notional_usd: decimal("10"),
+        low_competition_min_competition_share_bps: 5_000,
+        low_competition_max_competition_multiple: decimal("1"),
+        ..low_competition_plan_config(RewardLowCompetitionMode::Enforce)
+    };
+    let books = test_books_with_competition(decimal("4"), decimal("4"));
+    let plans = low_competition_plans(&config);
+
+    let reason = low_competition_live_cancel_reason(
+        &config,
+        &plans[0],
+        &books,
+        &HashMap::new(),
+        &[],
+        &test_account(decimal("1000")),
+    );
+
+    assert!(reason.is_none());
+}
+
+#[test]
+fn live_cancel_rejects_low_competition_order_when_allocation_cap_is_exceeded() {
+    let config = RewardBotConfig {
+        ai_advisory_enabled: true,
+        info_risk_enabled: true,
+        info_risk_mode: RewardSelectionMode::Enforce,
+        low_competition_probe_notional_usd: decimal("10"),
+        low_competition_max_account_allocation_bps: 50,
+        low_competition_max_market_allocation_bps: 10_000,
+        ..low_competition_plan_config(RewardLowCompetitionMode::Enforce)
+    };
+    let books = test_books_with_competition(decimal("4"), decimal("4"));
+    let plans = low_competition_plans(&config);
+
+    let reason = low_competition_live_cancel_reason(
+        &config,
+        &plans[0],
+        &books,
+        &HashMap::new(),
+        &[],
+        &test_account(decimal("100")),
+    )
+    .expect("allocation cap should cancel immediately");
+
+    assert!(reason.contains("low-competition cancel gate rejected"));
+    assert!(reason.contains("account allocation"));
+}
+
+#[test]
+fn ten_usd_probe_passes_when_it_is_most_of_competition_pool() {
+    let config = RewardBotConfig {
+        ai_advisory_enabled: true,
+        info_risk_enabled: true,
+        info_risk_mode: RewardSelectionMode::Enforce,
+        low_competition_probe_notional_usd: decimal("10"),
+        low_competition_min_competition_share_bps: 5_000,
+        low_competition_max_competition_multiple: decimal("1"),
+        ..low_competition_plan_config(RewardLowCompetitionMode::Enforce)
+    };
+    let books = test_books_with_competition(decimal("4"), decimal("4"));
+    let history = stable_book_history(&books, config.low_competition_min_book_samples);
+    let mut plans = low_competition_plans(&config);
+
+    apply_low_competition_metrics_to_quote_plans(
+        &mut plans,
+        &books,
+        &history,
+        &[],
+        &test_account(decimal("1000")),
+        &config,
+    );
+
+    let metrics = plans[0]
+        .low_competition_metrics
+        .as_ref()
+        .expect("low competition metrics");
+    assert!(metrics.eligible_for_low_competition, "{metrics:?}");
+    assert_eq!(metrics.competition_probe_notional_usd, decimal("10"));
+    assert!(metrics.competition_share_bps >= decimal("5000"));
+    assert!(metrics.competition_multiple <= decimal("1"));
+}
+
+#[test]
+fn ten_usd_probe_fails_when_competition_pool_is_too_large() {
+    let config = RewardBotConfig {
+        ai_advisory_enabled: true,
+        info_risk_enabled: true,
+        info_risk_mode: RewardSelectionMode::Enforce,
+        low_competition_probe_notional_usd: decimal("10"),
+        low_competition_min_competition_share_bps: 5_000,
+        low_competition_max_competition_multiple: decimal("1"),
+        ..low_competition_plan_config(RewardLowCompetitionMode::Enforce)
+    };
+    let books = test_books_with_competition(decimal("12.5"), decimal("12.5"));
+    let history = stable_book_history(&books, config.low_competition_min_book_samples);
+    let mut plans = low_competition_plans(&config);
+
+    apply_low_competition_metrics_to_quote_plans(
+        &mut plans,
+        &books,
+        &history,
+        &[],
+        &test_account(decimal("1000")),
+        &config,
+    );
+
+    let metrics = plans[0]
+        .low_competition_metrics
+        .as_ref()
+        .expect("low competition metrics");
+    assert!(!metrics.eligible_for_low_competition);
+    assert!(metrics.competition_share_bps < decimal("5000"));
+    assert!(metrics
+        .rejection_reasons
+        .iter()
+        .any(|reason| reason.contains("competition share")));
+}
+
+#[test]
+fn account_allocation_cap_blocks_low_competition_plan() {
+    let config = RewardBotConfig {
+        ai_advisory_enabled: true,
+        info_risk_enabled: true,
+        info_risk_mode: RewardSelectionMode::Enforce,
+        low_competition_max_account_allocation_bps: 500,
+        low_competition_max_market_allocation_bps: 10_000,
+        ..low_competition_plan_config(RewardLowCompetitionMode::Enforce)
+    };
+    let books = test_books();
+    let history = stable_book_history(&books, config.low_competition_min_book_samples);
+    let mut plans = low_competition_plans(&config);
+
+    apply_low_competition_metrics_to_quote_plans(
+        &mut plans,
+        &books,
+        &history,
+        &[],
+        &test_account(decimal("50")),
+        &config,
+    );
+
+    let metrics = plans[0]
+        .low_competition_metrics
+        .as_ref()
+        .expect("low competition metrics");
+    assert!(!metrics.eligible_for_low_competition);
+    assert!(metrics.account_allocation_bps > decimal("500"));
+    assert!(metrics
+        .rejection_reasons
+        .iter()
+        .any(|reason| reason.contains("account allocation")));
+}
+
+#[test]
+fn market_allocation_cap_blocks_low_competition_plan() {
+    let config = RewardBotConfig {
+        ai_advisory_enabled: true,
+        info_risk_enabled: true,
+        info_risk_mode: RewardSelectionMode::Enforce,
+        low_competition_max_account_allocation_bps: 10_000,
+        low_competition_max_market_allocation_bps: 500,
+        ..low_competition_plan_config(RewardLowCompetitionMode::Enforce)
+    };
+    let books = test_books();
+    let history = stable_book_history(&books, config.low_competition_min_book_samples);
+    let mut plans = low_competition_plans(&config);
+
+    apply_low_competition_metrics_to_quote_plans(
+        &mut plans,
+        &books,
+        &history,
+        &[],
+        &test_account(decimal("50")),
+        &config,
+    );
+
+    let metrics = plans[0]
+        .low_competition_metrics
+        .as_ref()
+        .expect("low competition metrics");
+    assert!(!metrics.eligible_for_low_competition);
+    assert!(metrics.market_allocation_bps > decimal("500"));
+    assert!(metrics
+        .rejection_reasons
+        .iter()
+        .any(|reason| reason.contains("condition allocation")));
 }
 
 #[test]
@@ -222,7 +545,14 @@ fn observations_keep_planned_notional_after_provider_gate_clears_legs() {
     let history = stable_book_history(&books, config.low_competition_min_book_samples);
     let mut plans = low_competition_plans(&config);
 
-    apply_low_competition_metrics_to_quote_plans(&mut plans, &books, &history, &[], &config);
+    apply_low_competition_metrics_to_quote_plans(
+        &mut plans,
+        &books,
+        &history,
+        &[],
+        &test_account(decimal("1000")),
+        &config,
+    );
 
     let expected_notional = plans[0]
         .low_competition_metrics
@@ -300,13 +630,22 @@ fn low_competition_test_observation(
         observed_at,
         mode: RewardLowCompetitionMode::Observe,
         planned_notional_usd: decimal("10"),
-        qualified_competition_usd: decimal("100"),
+        competition_probe_notional_usd: decimal("10"),
+        qualified_competition_usd: decimal("8"),
+        competition_share_bps: decimal("5555.56"),
+        competition_multiple: decimal("0.8"),
         estimated_reward_per_100_usd_day: if healthy {
             decimal("0.50")
         } else {
             decimal("0.10")
         },
-        competition_density: decimal("2"),
+        competition_density: decimal("0.16"),
+        account_effective_available_usd: decimal("1000"),
+        low_competition_open_buy_notional_usd: Decimal::ZERO,
+        low_competition_open_buy_notional_usd_after_plan: decimal("10"),
+        condition_buy_notional_usd_after_plan: decimal("10"),
+        account_allocation_bps: decimal("100"),
+        market_allocation_bps: decimal("100"),
         exit_depth_usd: if healthy { decimal("50") } else { decimal("5") },
         exit_slippage_cents: Some(decimal("0.25")),
         midpoint_range_cents: Some(if healthy { decimal("1") } else { decimal("3") }),

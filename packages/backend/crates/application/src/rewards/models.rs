@@ -235,6 +235,9 @@ pub struct RewardCandidateFilter {
     pub allow_dominant_single_side: bool,
     pub dominant_min_probability: Decimal,
     pub dominant_max_probability: Decimal,
+    /// Low-competition discovery uses the same hard filters but a different
+    /// ordering so low-liquidity candidates are not starved by standard ranking.
+    pub prefer_low_competition_ordering: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -277,6 +280,13 @@ pub struct RewardBotConfig {
     pub low_competition_max_open_orders: u16,
     pub low_competition_per_market_usd: Decimal,
     pub low_competition_max_position_usd: Decimal,
+    pub low_competition_probe_notional_usd: Decimal,
+    pub low_competition_min_competition_share_bps: u16,
+    pub low_competition_max_competition_multiple: Decimal,
+    pub low_competition_max_account_allocation_bps: u16,
+    pub low_competition_max_market_allocation_bps: u16,
+    pub low_competition_candidate_liquidity_filter_enabled: bool,
+    pub low_competition_candidate_volume_filter_enabled: bool,
     pub low_competition_min_market_liquidity_usd: Decimal,
     pub low_competition_min_market_volume_24h_usd: Decimal,
     pub low_competition_max_competition_usd: Decimal,
@@ -426,6 +436,20 @@ pub struct RewardBotConfigPatch {
     pub low_competition_per_market_usd: Option<Decimal>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub low_competition_max_position_usd: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub low_competition_probe_notional_usd: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub low_competition_min_competition_share_bps: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub low_competition_max_competition_multiple: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub low_competition_max_account_allocation_bps: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub low_competition_max_market_allocation_bps: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub low_competition_candidate_liquidity_filter_enabled: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub low_competition_candidate_volume_filter_enabled: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub low_competition_min_market_liquidity_usd: Option<Decimal>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -3,6 +3,8 @@ struct LiveBuySubmitRiskContext<'a> {
     config: &'a RewardBotConfig,
     plans: &'a HashMap<&'a str, &'a RewardQuotePlan>,
     book_history: &'a HashMap<String, VecDeque<BookSnapshot>>,
+    open_orders: &'a [ManagedRewardOrder],
+    account: &'a RewardAccountState,
     kill_switch: bool,
 }
 
@@ -222,6 +224,8 @@ async fn submit_pending_live_reward_orders(
                 context.plans,
                 books,
                 context.book_history,
+                context.open_orders,
+                context.account,
                 order,
                 OffsetDateTime::now_utc(),
                 context.kill_switch,
@@ -266,6 +270,8 @@ async fn submit_pending_live_reward_orders(
                         context.plans,
                         &last_look_books,
                         context.book_history,
+                        context.open_orders,
+                        context.account,
                         order,
                         OffsetDateTime::now_utc(),
                         context.kill_switch,

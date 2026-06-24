@@ -415,6 +415,7 @@ async fn run_reward_bot_live_tick(
         &books,
         book_history,
         &cycle.open_orders,
+        &cycle.account,
         &cycle.config,
     );
     let funding_precheck_blocked = apply_live_funding_precheck(
@@ -555,12 +556,13 @@ async fn run_reward_bot_live_tick(
     let mut cancel_rejected = false;
 
     for (order_id, reason) in
-        live_cancel_candidates(
+        live_cancel_candidates_with_account(
             &cycle.config,
             &cycle.plans,
             &open_orders,
             &books,
             book_history,
+            &account,
             kill_switch,
         )
     {
@@ -615,10 +617,14 @@ async fn run_reward_bot_live_tick(
         .iter()
         .map(|plan| (plan.condition_id.as_str(), plan))
         .collect();
+    let pending_open_orders_snapshot = open_orders.clone();
+    let pending_account_snapshot = account.clone();
     let pending_buy_submit_risk = LiveBuySubmitRiskContext {
         config: &cycle.config,
         plans: &pending_plan_index,
         book_history,
+        open_orders: &pending_open_orders_snapshot,
+        account: &pending_account_snapshot,
         kill_switch,
     };
     submit_pending_live_reward_orders(
@@ -694,10 +700,14 @@ async fn run_reward_bot_live_tick(
             .iter()
             .map(|plan| (plan.condition_id.as_str(), plan))
             .collect();
+        let placement_open_orders_snapshot = open_orders.clone();
+        let placement_account_snapshot = account.clone();
         let placement_buy_submit_risk = LiveBuySubmitRiskContext {
             config: &cycle.config,
             plans: &placement_plan_index,
             book_history,
+            open_orders: &placement_open_orders_snapshot,
+            account: &placement_account_snapshot,
             kill_switch,
         };
         submit_pending_live_reward_orders(

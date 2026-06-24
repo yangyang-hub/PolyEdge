@@ -25,9 +25,18 @@ async fn postgres_record_low_competition_observations(
               observed_at,
               mode,
               planned_notional_usd,
+              competition_probe_notional_usd,
               qualified_competition_usd,
+              competition_share_bps,
+              competition_multiple,
               estimated_reward_per_100_usd_day,
               competition_density,
+              account_effective_available_usd,
+              low_competition_open_buy_notional_usd,
+              low_competition_open_buy_notional_usd_after_plan,
+              condition_buy_notional_usd_after_plan,
+              account_allocation_bps,
+              market_allocation_bps,
               exit_depth_usd,
               exit_slippage_cents,
               midpoint_range_cents,
@@ -45,7 +54,8 @@ async fn postgres_record_low_competition_observations(
             VALUES (
               $1, $2, $3, $4, $5, $6, $7, $8,
               $9, $10, $11, $12, $13, $14, $15, $16,
-              $17, $18, $19, $20, $21, $22, $23, $24
+              $17, $18, $19, $20, $21, $22, $23, $24,
+              $25, $26, $27, $28, $29, $30, $31, $32, $33
             )
             ON CONFLICT (id) DO NOTHING
             "#,
@@ -58,9 +68,18 @@ async fn postgres_record_low_competition_observations(
         .bind(observation.observed_at)
         .bind(observation.mode.as_str())
         .bind(observation.planned_notional_usd)
+        .bind(observation.competition_probe_notional_usd)
         .bind(observation.qualified_competition_usd)
+        .bind(observation.competition_share_bps)
+        .bind(observation.competition_multiple)
         .bind(observation.estimated_reward_per_100_usd_day)
         .bind(observation.competition_density)
+        .bind(observation.account_effective_available_usd)
+        .bind(observation.low_competition_open_buy_notional_usd)
+        .bind(observation.low_competition_open_buy_notional_usd_after_plan)
+        .bind(observation.condition_buy_notional_usd_after_plan)
+        .bind(observation.account_allocation_bps)
+        .bind(observation.market_allocation_bps)
         .bind(observation.exit_depth_usd)
         .bind(observation.exit_slippage_cents)
         .bind(observation.midpoint_range_cents)
@@ -109,9 +128,18 @@ async fn postgres_list_low_competition_observations(
                observed_at,
                mode,
                planned_notional_usd,
+               competition_probe_notional_usd,
                qualified_competition_usd,
+               competition_share_bps,
+               competition_multiple,
                estimated_reward_per_100_usd_day,
                competition_density,
+               account_effective_available_usd,
+               low_competition_open_buy_notional_usd,
+               low_competition_open_buy_notional_usd_after_plan,
+               condition_buy_notional_usd_after_plan,
+               account_allocation_bps,
+               market_allocation_bps,
                exit_depth_usd,
                exit_slippage_cents,
                midpoint_range_cents,
@@ -170,14 +198,41 @@ fn low_competition_observation_from_row(
         planned_notional_usd: row
             .try_get("planned_notional_usd")
             .map_err(postgres_decode_error)?,
+        competition_probe_notional_usd: row
+            .try_get("competition_probe_notional_usd")
+            .map_err(postgres_decode_error)?,
         qualified_competition_usd: row
             .try_get("qualified_competition_usd")
+            .map_err(postgres_decode_error)?,
+        competition_share_bps: row
+            .try_get("competition_share_bps")
+            .map_err(postgres_decode_error)?,
+        competition_multiple: row
+            .try_get("competition_multiple")
             .map_err(postgres_decode_error)?,
         estimated_reward_per_100_usd_day: row
             .try_get("estimated_reward_per_100_usd_day")
             .map_err(postgres_decode_error)?,
         competition_density: row
             .try_get("competition_density")
+            .map_err(postgres_decode_error)?,
+        account_effective_available_usd: row
+            .try_get("account_effective_available_usd")
+            .map_err(postgres_decode_error)?,
+        low_competition_open_buy_notional_usd: row
+            .try_get("low_competition_open_buy_notional_usd")
+            .map_err(postgres_decode_error)?,
+        low_competition_open_buy_notional_usd_after_plan: row
+            .try_get("low_competition_open_buy_notional_usd_after_plan")
+            .map_err(postgres_decode_error)?,
+        condition_buy_notional_usd_after_plan: row
+            .try_get("condition_buy_notional_usd_after_plan")
+            .map_err(postgres_decode_error)?,
+        account_allocation_bps: row
+            .try_get("account_allocation_bps")
+            .map_err(postgres_decode_error)?,
+        market_allocation_bps: row
+            .try_get("market_allocation_bps")
             .map_err(postgres_decode_error)?,
         exit_depth_usd: row
             .try_get("exit_depth_usd")

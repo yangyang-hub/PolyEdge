@@ -3,6 +3,7 @@ pub fn apply_low_competition_metrics_to_quote_plans(
     books: &HashMap<String, RewardOrderBook>,
     book_history: &HashMap<String, VecDeque<BookSnapshot>>,
     open_orders: &[ManagedRewardOrder],
+    account: &RewardAccountState,
     config: &RewardBotConfig,
 ) {
     if !config.low_competition_mode.is_enabled() {
@@ -20,6 +21,7 @@ pub fn apply_low_competition_metrics_to_quote_plans(
             books,
             book_history,
             open_orders,
+            account,
             config,
             &low_config,
             now,
@@ -32,6 +34,7 @@ fn apply_low_competition_metrics_to_plan(
     books: &HashMap<String, RewardOrderBook>,
     book_history: &HashMap<String, VecDeque<BookSnapshot>>,
     open_orders: &[ManagedRewardOrder],
+    account: &RewardAccountState,
     config: &RewardBotConfig,
     low_config: &RewardBotConfig,
     now: OffsetDateTime,
@@ -50,19 +53,7 @@ fn apply_low_competition_metrics_to_plan(
                 low_competition_rejection_reasons_include_data_unavailable(&rejection_reasons);
             reject_low_competition_plan(
                 plan,
-                RewardLowCompetitionMetrics {
-                    planned_notional_usd: Decimal::ZERO,
-                    qualified_competition_usd: Decimal::ZERO,
-                    estimated_reward_per_100_usd_day: Decimal::ZERO,
-                    competition_density: Decimal::ZERO,
-                    exit_depth_usd: Decimal::ZERO,
-                    exit_slippage_cents: None,
-                    midpoint_range_cents: None,
-                    top_of_book_flip_count: None,
-                    sample_count: 0,
-                    eligible_for_low_competition: false,
-                    rejection_reasons,
-                },
+                empty_low_competition_metrics(rejection_reasons),
                 config,
                 now,
                 data_unavailable,
@@ -81,6 +72,7 @@ fn apply_low_competition_metrics_to_plan(
         books,
         book_history,
         open_orders,
+        account,
         config,
         materialized.midpoint,
         now,
@@ -126,6 +118,7 @@ fn build_low_competition_metrics(
     books: &HashMap<String, RewardOrderBook>,
     book_history: &HashMap<String, VecDeque<BookSnapshot>>,
     open_orders: &[ManagedRewardOrder],
+    account: &RewardAccountState,
     config: &RewardBotConfig,
     yes_midpoint: Decimal,
     now: OffsetDateTime,
@@ -143,6 +136,12 @@ fn build_low_competition_metrics(
         .map(|leg| (leg.price * leg.size).round_dp(4))
         .sum::<Decimal>()
         .round_dp(4);
+    let competition_probe_notional = if config.low_competition_probe_notional_usd > Decimal::ZERO {
+        config.low_competition_probe_notional_usd
+    } else {
+        planned_notional
+    }
+    .round_dp(4);
     let qualified_competition_usd = plan
         .legs
         .iter()
@@ -153,9 +152,16 @@ fn build_low_competition_metrics(
         .sum::<Decimal>()
         .round_dp(4);
     let denominator = Decimal::max(
-        qualified_competition_usd + planned_notional,
-        planned_notional,
+        qualified_competition_usd + competition_probe_notional,
+        competition_probe_notional,
     );
+    let competition_share_bps =
+        decimal_ratio_bps(competition_probe_notional, denominator).round_dp(2);
+    let competition_multiple = if competition_probe_notional > Decimal::ZERO {
+        (qualified_competition_usd / competition_probe_notional).round_dp(4)
+    } else {
+        Decimal::ZERO
+    };
     let estimated_reward_per_100_usd_day = if denominator > Decimal::ZERO {
         (plan.total_daily_rate * decimal("100") / denominator).round_dp(4)
     } else {
@@ -171,6 +177,7 @@ fn build_low_competition_metrics(
     let exit_slippage_cents = low_competition_exit_slippage_cents(plan, books);
     let (sample_count, midpoint_range_cents, top_of_book_flip_count) =
         low_competition_history_metrics(plan, book_history, config, now);
+    let allocation = low_competition_allocation_metrics(plan, open_orders, account);
 
     if config.low_competition_max_competition_usd > Decimal::ZERO
         && qualified_competition_usd > config.low_competition_max_competition_usd
@@ -178,6 +185,43 @@ fn build_low_competition_metrics(
         rejection_reasons.push(format!(
             "qualified competition ${qualified_competition_usd} exceeds ${}",
             config.low_competition_max_competition_usd
+        ));
+    }
+    if config.low_competition_min_competition_share_bps > 0
+        && competition_share_bps
+            < Decimal::from(config.low_competition_min_competition_share_bps)
+    {
+        rejection_reasons.push(format!(
+            "competition share {competition_share_bps}bps below {}bps",
+            config.low_competition_min_competition_share_bps
+        ));
+    }
+    if config.low_competition_max_competition_multiple > Decimal::ZERO
+        && competition_multiple > config.low_competition_max_competition_multiple
+    {
+        rejection_reasons.push(format!(
+            "competition multiple {competition_multiple} exceeds {}",
+            config.low_competition_max_competition_multiple
+        ));
+    }
+    if config.low_competition_max_account_allocation_bps > 0
+        && allocation.account_allocation_bps
+            > Decimal::from(config.low_competition_max_account_allocation_bps)
+    {
+        rejection_reasons.push(format!(
+            "low-competition account allocation {}bps exceeds {}bps",
+            allocation.account_allocation_bps,
+            config.low_competition_max_account_allocation_bps
+        ));
+    }
+    if config.low_competition_max_market_allocation_bps > 0
+        && allocation.market_allocation_bps
+            > Decimal::from(config.low_competition_max_market_allocation_bps)
+    {
+        rejection_reasons.push(format!(
+            "condition allocation {}bps exceeds {}bps",
+            allocation.market_allocation_bps,
+            config.low_competition_max_market_allocation_bps
         ));
     }
     if estimated_reward_per_100_usd_day < config.low_competition_min_reward_per_100_usd_day {
@@ -217,9 +261,20 @@ fn build_low_competition_metrics(
 
     RewardLowCompetitionMetrics {
         planned_notional_usd: planned_notional,
+        competition_probe_notional_usd: competition_probe_notional,
         qualified_competition_usd,
+        competition_share_bps,
+        competition_multiple,
         estimated_reward_per_100_usd_day,
         competition_density,
+        account_effective_available_usd: allocation.account_effective_available_usd,
+        low_competition_open_buy_notional_usd: allocation
+            .low_competition_open_buy_notional_usd,
+        low_competition_open_buy_notional_usd_after_plan: allocation
+            .low_competition_open_buy_notional_usd_after_plan,
+        condition_buy_notional_usd_after_plan: allocation.condition_buy_notional_usd_after_plan,
+        account_allocation_bps: allocation.account_allocation_bps,
+        market_allocation_bps: allocation.market_allocation_bps,
         exit_depth_usd,
         exit_slippage_cents,
         midpoint_range_cents,
@@ -228,6 +283,161 @@ fn build_low_competition_metrics(
         eligible_for_low_competition: rejection_reasons.is_empty(),
         rejection_reasons,
     }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct LowCompetitionAllocationMetrics {
+    account_effective_available_usd: Decimal,
+    low_competition_open_buy_notional_usd: Decimal,
+    low_competition_open_buy_notional_usd_after_plan: Decimal,
+    condition_buy_notional_usd_after_plan: Decimal,
+    account_allocation_bps: Decimal,
+    market_allocation_bps: Decimal,
+}
+
+fn empty_low_competition_metrics(
+    rejection_reasons: Vec<String>,
+) -> RewardLowCompetitionMetrics {
+    RewardLowCompetitionMetrics {
+        planned_notional_usd: Decimal::ZERO,
+        competition_probe_notional_usd: Decimal::ZERO,
+        qualified_competition_usd: Decimal::ZERO,
+        competition_share_bps: Decimal::ZERO,
+        competition_multiple: Decimal::ZERO,
+        estimated_reward_per_100_usd_day: Decimal::ZERO,
+        competition_density: Decimal::ZERO,
+        account_effective_available_usd: Decimal::ZERO,
+        low_competition_open_buy_notional_usd: Decimal::ZERO,
+        low_competition_open_buy_notional_usd_after_plan: Decimal::ZERO,
+        condition_buy_notional_usd_after_plan: Decimal::ZERO,
+        account_allocation_bps: Decimal::ZERO,
+        market_allocation_bps: Decimal::ZERO,
+        exit_depth_usd: Decimal::ZERO,
+        exit_slippage_cents: None,
+        midpoint_range_cents: None,
+        top_of_book_flip_count: None,
+        sample_count: 0,
+        eligible_for_low_competition: false,
+        rejection_reasons,
+    }
+}
+
+fn low_competition_allocation_metrics(
+    plan: &RewardQuotePlan,
+    open_orders: &[ManagedRewardOrder],
+    account: &RewardAccountState,
+) -> LowCompetitionAllocationMetrics {
+    let low_competition_open_buy_notional_usd =
+        low_competition_open_buy_notional(open_orders).round_dp(4);
+    let existing_condition_buy_notional =
+        condition_open_buy_notional(open_orders, &plan.condition_id).round_dp(4);
+    let missing_plan_buy_notional =
+        missing_plan_buy_notional(plan, open_orders).round_dp(4);
+    let low_competition_open_buy_notional_usd_after_plan =
+        (low_competition_open_buy_notional_usd + missing_plan_buy_notional).round_dp(4);
+    let condition_buy_notional_usd_after_plan =
+        (existing_condition_buy_notional + missing_plan_buy_notional).round_dp(4);
+    let account_effective_available_usd =
+        account_effective_available_after_unmanaged_external_buys(account, open_orders);
+    let account_allocation_bps = decimal_ratio_bps(
+        low_competition_open_buy_notional_usd_after_plan,
+        account_effective_available_usd,
+    )
+    .round_dp(2);
+    let market_allocation_bps = decimal_ratio_bps(
+        condition_buy_notional_usd_after_plan,
+        account_effective_available_usd,
+    )
+    .round_dp(2);
+
+    LowCompetitionAllocationMetrics {
+        account_effective_available_usd,
+        low_competition_open_buy_notional_usd,
+        low_competition_open_buy_notional_usd_after_plan,
+        condition_buy_notional_usd_after_plan,
+        account_allocation_bps,
+        market_allocation_bps,
+    }
+}
+
+fn account_effective_available_after_unmanaged_external_buys(
+    account: &RewardAccountState,
+    open_orders: &[ManagedRewardOrder],
+) -> Decimal {
+    let managed_open_buy_notional = open_orders
+        .iter()
+        .filter(|order| order.side == RewardOrderSide::Buy && order.status.is_open_like())
+        .map(order_remaining_notional)
+        .sum::<Decimal>()
+        .round_dp(4);
+    let unmanaged_external_buy_notional =
+        (account.external_buy_notional - managed_open_buy_notional).max(Decimal::ZERO);
+    (account.available_usd - unmanaged_external_buy_notional)
+        .max(Decimal::ZERO)
+        .round_dp(4)
+}
+
+fn low_competition_open_buy_notional(open_orders: &[ManagedRewardOrder]) -> Decimal {
+    open_orders
+        .iter()
+        .filter(|order| {
+            order.side == RewardOrderSide::Buy
+                && order.status.is_open_like()
+                && order.strategy_bucket == RewardStrategyBucket::LowCompetition
+        })
+        .map(order_remaining_notional)
+        .sum()
+}
+
+fn condition_open_buy_notional(
+    open_orders: &[ManagedRewardOrder],
+    condition_id: &str,
+) -> Decimal {
+    open_orders
+        .iter()
+        .filter(|order| {
+            order.condition_id == condition_id
+                && order.side == RewardOrderSide::Buy
+                && order.status.is_open_like()
+        })
+        .map(order_remaining_notional)
+        .sum()
+}
+
+fn missing_plan_buy_notional(
+    plan: &RewardQuotePlan,
+    open_orders: &[ManagedRewardOrder],
+) -> Decimal {
+    plan.legs
+        .iter()
+        .filter(|leg| {
+            !open_orders.iter().any(|order| {
+                order.condition_id == plan.condition_id
+                    && order.token_id == leg.token_id
+                    && order.side == RewardOrderSide::Buy
+                    && order.status.is_open_like()
+            }) && !open_orders.iter().any(|order| {
+                order.token_id == leg.token_id
+                    && order.side == RewardOrderSide::Sell
+                    && order.status.is_open_like()
+            })
+        })
+        .map(|leg| leg.notional_usd.max(leg.price * leg.size).round_dp(4))
+        .sum()
+}
+
+fn order_remaining_notional(order: &ManagedRewardOrder) -> Decimal {
+    (order.price * (order.size - order.filled_size).max(Decimal::ZERO)).round_dp(4)
+}
+
+fn decimal_ratio_bps(numerator: Decimal, denominator: Decimal) -> Decimal {
+    if denominator <= Decimal::ZERO {
+        if numerator <= Decimal::ZERO {
+            return Decimal::ZERO;
+        }
+        return decimal("10000");
+    }
+    numerator * decimal("10000") / denominator
 }
 
 fn reject_low_competition_plan(
@@ -270,13 +480,17 @@ fn low_competition_rejection_reason(
 fn low_competition_rejection_reasons_include_data_unavailable(
     rejection_reasons: &[String],
 ) -> bool {
-    rejection_reasons.iter().any(|reason| {
-        reason.contains("missing fresh orderbook midpoint")
-            || reason.contains("book metrics unavailable")
-            || reason.contains("book history")
-            || reason.contains("samples")
-            || reason.contains("insufficient bid depth to estimate exit slippage")
-    })
+    rejection_reasons
+        .iter()
+        .any(|reason| low_competition_rejection_reason_is_data_unavailable(reason))
+}
+
+fn low_competition_rejection_reason_is_data_unavailable(reason: &str) -> bool {
+    reason.contains("missing fresh orderbook midpoint")
+        || reason.contains("book metrics unavailable")
+        || reason.contains("book history")
+        || reason.contains("samples")
+        || reason.contains("insufficient bid depth to estimate exit slippage")
 }
 
 fn push_low_competition_mode_rejections(rejection_reasons: &mut Vec<String>, config: &RewardBotConfig) {
