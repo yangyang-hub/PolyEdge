@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/table";
 import type {
   ManagedRewardOrderDto,
+  RewardBotConfigDto,
   RewardFillDto,
   RewardListPageDto,
   RewardPositionDto,
@@ -247,6 +248,7 @@ export function PositionsTable({ positions }: { positions: RewardPositionDto[] }
 interface QuotePlansTableProps {
   plans: RewardQuotePlanDto[];
   plansPage: RewardListPageDto;
+  config: RewardBotConfigDto;
   plansTotal: number;
   eligibleTotal: number;
   search: string;
@@ -261,7 +263,7 @@ interface QuotePlansTableProps {
 }
 
 export function QuotePlansTable({
-  plans, plansPage, plansTotal, eligibleTotal, search, onSearchChange, eligibility, onEligibilityChange,
+  plans, plansPage, config, plansTotal, eligibleTotal, search, onSearchChange, eligibility, onEligibilityChange,
   sortBy, sortOrder, onSortChange, onPageChange, filtering,
 }: QuotePlansTableProps) {
   // Server-side pagination: plans are already filtered/sorted/paged by the API.
@@ -303,11 +305,11 @@ export function QuotePlansTable({
         onTabChange={(key) => onEligibilityChange(key as typeof eligibility)}
       />
       {filtering && <p className="text-xs text-muted-foreground">…</p>}
-      <Table className="min-w-[1180px] table-fixed">
+      <Table className="min-w-[1360px] table-fixed">
         <TableHeader>
           <TableRow>
-            <TableHead className="w-[34%]">{dictionary.rewards.market}</TableHead>
-            <TableHead>{dictionary.rewards.state}</TableHead>
+            <TableHead className="w-[30%]">{dictionary.rewards.market}</TableHead>
+            <TableHead className="w-[280px]">{dictionary.rewards.state}</TableHead>
             <TableHead
               aria-sort={sortBy === "score" ? (sortOrder === "asc" ? "ascending" : "descending") : "none"}
             >
@@ -369,7 +371,7 @@ export function QuotePlansTable({
                   <StatusPill tone={quoteReadinessTone(plan)}>
                     {quoteReadinessLabel(plan)}
                   </StatusPill>
-                  <LowCompetitionSummary plan={plan} />
+                  <LowCompetitionSummary plan={plan} config={config} />
                 </TableCell>
                 <TableCell className="align-top">
                   <StatusPill tone={plan.eligible ? "success" : "neutral"}>
