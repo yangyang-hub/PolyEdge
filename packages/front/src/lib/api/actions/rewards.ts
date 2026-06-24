@@ -73,6 +73,8 @@ const rewardConfigSchema = z.object({
   info_risk_avoid_level: z.enum(["low", "medium", "high", "critical", "unknown"]),
   info_risk_ttl_sec: z.coerce.number().int().min(60).max(86_400),
   info_risk_batch_size: z.coerce.number().int().min(1).max(12),
+  require_info_risk_before_first_quote: z.boolean(),
+  first_quote_quarantine_sec: z.coerce.number().int().min(0).max(86_400),
   safety_margin_cents: decimalNumber.min(0).max(20),
   min_midpoint: decimalNumber.min(0).max(0.49),
   max_midpoint: decimalNumber.min(0.51).max(0.99),

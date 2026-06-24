@@ -115,6 +115,12 @@ fn apply_reward_config_value(config: &mut RewardBotConfig, key: &str, value: &st
         "info_risk_batch_size" => {
             config.info_risk_batch_size = parse_u16_config(key, value)?;
         }
+        "require_info_risk_before_first_quote" => {
+            config.require_info_risk_before_first_quote = parse_bool_config(key, value)?;
+        }
+        "first_quote_quarantine_sec" => {
+            config.first_quote_quarantine_sec = parse_u64_config(key, value)?;
+        }
         "safety_margin_cents" => config.safety_margin_cents = parse_decimal_config(key, value)?,
         "min_midpoint" => config.min_midpoint = parse_decimal_config(key, value)?,
         "max_midpoint" => config.max_midpoint = parse_decimal_config(key, value)?,
@@ -321,6 +327,14 @@ fn reward_config_entries(config: &RewardBotConfig) -> Vec<(&'static str, String)
         (
             "info_risk_batch_size",
             config.info_risk_batch_size.to_string(),
+        ),
+        (
+            "require_info_risk_before_first_quote",
+            config.require_info_risk_before_first_quote.to_string(),
+        ),
+        (
+            "first_quote_quarantine_sec",
+            config.first_quote_quarantine_sec.to_string(),
         ),
         (
             "safety_margin_cents",

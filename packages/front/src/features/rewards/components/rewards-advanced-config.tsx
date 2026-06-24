@@ -289,6 +289,24 @@ export function AiAdvisoryConfig({
         hint={h.infoRiskBatchSize}
         onChange={(value) => updateNumber("info_risk_batch_size", value)}
       />
+      <ToggleField
+        label={dictionary.rewards.requireInfoRiskBeforeFirstQuote}
+        hint={h.requireInfoRiskBeforeFirstQuote}
+        checked={draft.require_info_risk_before_first_quote}
+        onChange={(checked) =>
+          setDraft((current) => ({
+            ...current,
+            require_info_risk_before_first_quote: checked,
+          }))
+        }
+      />
+      <NumberInput
+        label={dictionary.rewards.firstQuoteQuarantineSec}
+        value={draft.first_quote_quarantine_sec}
+        suffix="s"
+        hint={h.firstQuoteQuarantineSec}
+        onChange={(value) => updateNumber("first_quote_quarantine_sec", value)}
+      />
     </ConfigSection>
   );
 }

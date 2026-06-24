@@ -131,10 +131,134 @@ fn reward_market_event_risk_reason(market: &RewardMarket) -> Option<&'static str
     if has_any(&["launch a token", "token launch", "launch token", "airdrop"]) {
         return Some("token launch market has high announcement risk");
     }
-    if has_any(&["official result", "announced by", "will be listed", "listing by"]) {
+    if has_any(&[
+        "official result",
+        "announced by",
+        "will be announced",
+        "will be listed",
+        "listing by",
+        "appointed by",
+        "confirmed by",
+        "certified by",
+    ]) {
         return Some("official-result market has high announcement risk");
     }
+    if has_any(&[
+        "drop out before",
+        "dropout before",
+        "withdraw before",
+        "suspend campaign",
+        "resign before",
+        "step down before",
+        "removed before",
+    ]) {
+        return Some("personnel-change market has high event risk");
+    }
+    if has_any(&[
+        "scheduled event",
+        "before the deadline",
+        "by the deadline",
+        "before market close",
+        "by market close",
+    ]) {
+        return Some("scheduled-event market has high jump risk");
+    }
     None
+}
+
+pub fn apply_first_quote_entry_gates(
+    plans: &mut [RewardQuotePlan],
+    previous_plans: &[RewardQuotePlan],
+    open_orders: &[ManagedRewardOrder],
+    positions: &[RewardPosition],
+    config: &RewardBotConfig,
+    now: OffsetDateTime,
+) -> bool {
+    if !first_quote_entry_gate_enabled(config) || plans.is_empty() {
+        return false;
+    }
+
+    let previous_by_condition = previous_plans
+        .iter()
+        .map(|plan| (plan.condition_id.as_str(), plan))
+        .collect::<HashMap<_, _>>();
+    let active_conditions = first_quote_active_conditions(open_orders, positions);
+    let mut changed = false;
+
+    for plan in plans.iter_mut().filter(|plan| plan.eligible) {
+        if active_conditions.contains(plan.condition_id.as_str()) {
+            continue;
+        }
+        if config.require_info_risk_before_first_quote && plan.info_risk.is_none() {
+            changed |= block_first_quote_plan(
+                plan,
+                "info risk pending: first quote requires provider risk filter",
+                previous_by_condition
+                    .get(plan.condition_id.as_str())
+                    .map(|previous| previous.updated_at)
+                    .unwrap_or(now),
+            );
+            continue;
+        }
+
+        if config.first_quote_quarantine_sec == 0 {
+            continue;
+        }
+        let first_seen_at = previous_by_condition
+            .get(plan.condition_id.as_str())
+            .map(|previous| previous.updated_at)
+            .unwrap_or(now);
+        let ready_at = first_seen_at + TimeDuration::seconds(config.first_quote_quarantine_sec as i64);
+        if now < ready_at {
+            let observed_sec = (now - first_seen_at).whole_seconds().max(0);
+            changed |= block_first_quote_plan(
+                plan,
+                format!(
+                    "first quote quarantine: market observed for {observed_sec}s; requires {}s before initial live quote",
+                    config.first_quote_quarantine_sec
+                ),
+                first_seen_at,
+            );
+        }
+    }
+
+    changed
+}
+
+fn first_quote_entry_gate_enabled(config: &RewardBotConfig) -> bool {
+    config.info_risk_enabled
+        && config.info_risk_mode == RewardSelectionMode::Enforce
+        && (config.require_info_risk_before_first_quote || config.first_quote_quarantine_sec > 0)
+}
+
+fn first_quote_active_conditions<'a>(
+    open_orders: &'a [ManagedRewardOrder],
+    positions: &'a [RewardPosition],
+) -> HashSet<&'a str> {
+    let mut active = HashSet::new();
+    for order in open_orders.iter().filter(|order| order.status.is_open_like()) {
+        active.insert(order.condition_id.as_str());
+    }
+    for position in positions.iter().filter(|position| position.size > Decimal::ZERO) {
+        active.insert(position.condition_id.as_str());
+    }
+    active
+}
+
+fn block_first_quote_plan(
+    plan: &mut RewardQuotePlan,
+    reason: impl Into<String>,
+    first_seen_at: OffsetDateTime,
+) -> bool {
+    let reason = reason.into();
+    let changed =
+        plan.eligible || plan.quote_mode != RewardPlanQuoteMode::None || plan.reason != reason;
+    plan.eligible = false;
+    plan.quote_mode = RewardPlanQuoteMode::None;
+    plan.legs.clear();
+    plan.reason = reason;
+    plan.updated_at = first_seen_at;
+    changed
 }
 
 pub fn build_reward_quote_plans(

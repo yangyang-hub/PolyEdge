@@ -298,6 +298,13 @@ pub struct RewardBotConfig {
     pub info_risk_ttl_sec: u64,
     /// Number of info-risk markets to send in one provider request. 1 = single-market calls.
     pub info_risk_batch_size: u16,
+    /// When info-risk enforce mode is active, require a cached provider risk
+    /// result before the first live BUY quote for a condition.
+    pub require_info_risk_before_first_quote: bool,
+    /// Minimum observation time before first live BUY quote for a condition.
+    /// Existing open orders/positions bypass this so risk updates can still
+    /// manage active inventory.
+    pub first_quote_quarantine_sec: u64,
     pub safety_margin_cents: Decimal,
     pub min_midpoint: Decimal,
     pub max_midpoint: Decimal,
@@ -457,6 +464,10 @@ pub struct RewardBotConfigPatch {
     pub info_risk_ttl_sec: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub info_risk_batch_size: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub require_info_risk_before_first_quote: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_quote_quarantine_sec: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub safety_margin_cents: Option<Decimal>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

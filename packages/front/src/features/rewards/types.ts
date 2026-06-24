@@ -32,6 +32,7 @@ export type NumberConfigKey =
   | "ai_advisory_batch_size"
   | "info_risk_ttl_sec"
   | "info_risk_batch_size"
+  | "first_quote_quarantine_sec"
   | "safety_margin_cents"
   | "min_midpoint"
   | "max_midpoint"

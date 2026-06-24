@@ -70,6 +70,8 @@ export type RewardBotConfigDto = {
   info_risk_avoid_level: RewardInfoRiskLevel;
   info_risk_ttl_sec: number;
   info_risk_batch_size: number;
+  require_info_risk_before_first_quote: boolean;
+  first_quote_quarantine_sec: number;
   safety_margin_cents: DecimalValue;
   min_midpoint: DecimalValue;
   max_midpoint: DecimalValue;

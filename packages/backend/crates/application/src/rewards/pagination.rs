@@ -143,7 +143,7 @@ impl RewardOrderListQuery {
     #[must_use]
     pub fn matches_order(&self, order: &ManagedRewardOrder) -> bool {
         if let Some(status) = self.status
-            && !status.matches(order.status)
+            && !status.matches_order(order)
         {
             return false;
         }
@@ -178,6 +178,19 @@ impl RewardOrderListQuery {
         };
 
         field_order.then_with(|| right.updated_at.cmp(&left.updated_at))
+    }
+}
+
+impl RewardOrderStatusFilter {
+    #[must_use]
+    fn matches_order(self, order: &ManagedRewardOrder) -> bool {
+        match self {
+            Self::Filled => {
+                order.status == ManagedRewardOrderStatus::Filled
+                    || order.filled_size > Decimal::ZERO
+            }
+            _ => self.matches(order.status),
+        }
     }
 }
 
@@ -294,4 +307,55 @@ fn parse_sort_order(sort_order: Option<String>) -> SortOrder {
 
 fn order_open_group(order: &ManagedRewardOrder) -> u8 {
     if order.status.is_open_like() { 0 } else { 1 }
+}
+
+#[cfg(test)]
+mod pagination_tests {
+    use super::*;
+
+    fn test_order(status: ManagedRewardOrderStatus, filled_size: Decimal) -> ManagedRewardOrder {
+        let now = OffsetDateTime::now_utc();
+        ManagedRewardOrder {
+            id: "order".to_string(),
+            account_id: "reward_bot".to_string(),
+            condition_id: "condition".to_string(),
+            token_id: "token".to_string(),
+            outcome: "Yes".to_string(),
+            side: RewardOrderSide::Buy,
+            price: decimal("0.50"),
+            size: decimal("20"),
+            strategy_bucket: RewardStrategyBucket::Standard,
+            external_order_id: None,
+            status,
+            scoring: false,
+            reason: "test".to_string(),
+            filled_size,
+            reward_earned: Decimal::ZERO,
+            last_scored_at: None,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    #[test]
+    fn filled_filter_matches_partial_filled_closed_orders() {
+        let query = RewardOrderListQuery::new(
+            "reward_bot".to_string(),
+            None,
+            Some("filled".to_string()),
+            None,
+            None,
+            None,
+            None,
+        );
+
+        assert!(query.matches_order(&test_order(
+            ManagedRewardOrderStatus::Cancelled,
+            decimal("1.25"),
+        )));
+        assert!(!query.matches_order(&test_order(
+            ManagedRewardOrderStatus::Cancelled,
+            Decimal::ZERO,
+        )));
+    }
 }

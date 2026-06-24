@@ -434,6 +434,19 @@ async fn run_reward_bot_live_tick(
     spawn_reward_market_provider_refresh(state, &cycle, &books, trace_id);
     apply_cached_reward_ai_advisories_to_cycle(state, &mut cycle, &books, trace_id).await?;
     apply_cached_reward_info_risks_to_cycle(state, &mut cycle, trace_id).await?;
+    if apply_first_quote_entry_gates(
+        &mut cycle.plans,
+        &cycle.previous_plans,
+        &cycle.open_orders,
+        &cycle.positions,
+        &cycle.config,
+        OffsetDateTime::now_utc(),
+    ) {
+        debug!(
+            trace_id = %trace_id,
+            "applied first-quote entry gates to reward quote plans"
+        );
+    }
     register_reward_eligible_orderbook_tokens_from_plans(state, &cycle.plans, trace_id).await;
     let low_competition_observations = build_low_competition_observations(
         &cycle.account.account_id,

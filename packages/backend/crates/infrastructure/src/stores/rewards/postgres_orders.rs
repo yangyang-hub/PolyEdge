@@ -37,7 +37,7 @@ async fn postgres_list_reward_orders_page(
                OR token_id ILIKE '%' || $2 || '%')
           AND ($3::text IS NULL
                OR ($3 = 'open' AND status IN ('planned', 'open'))
-               OR ($3 = 'filled' AND status = 'filled')
+               OR ($3 = 'filled' AND (status = 'filled' OR filled_size > 0))
                OR ($3 = 'cancelled' AND status = 'cancelled')
                OR ($3 = 'exit_pending' AND status = 'exit_pending'))
         ORDER BY {}
@@ -87,7 +87,7 @@ async fn postgres_count_reward_orders(
                OR token_id ILIKE '%' || $2 || '%')
           AND ($3::text IS NULL
                OR ($3 = 'open' AND status IN ('planned', 'open'))
-               OR ($3 = 'filled' AND status = 'filled')
+               OR ($3 = 'filled' AND (status = 'filled' OR filled_size > 0))
                OR ($3 = 'cancelled' AND status = 'cancelled')
                OR ($3 = 'exit_pending' AND status = 'exit_pending'))
         "#,

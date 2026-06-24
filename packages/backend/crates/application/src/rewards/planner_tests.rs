@@ -651,6 +651,75 @@ fn ai_advisory_carry_forward_reuses_unexpired_matching_snapshot_decision() {
 }
 
 #[test]
+fn static_event_risk_filter_blocks_personnel_deadline_markets() {
+    let mut market = test_market(decimal("20"));
+    market.question = "Will the next UK Prime Minister be appointed by July 19?".to_string();
+    market.market_slug =
+        "will-the-next-uk-prime-minister-be-appointed-by-july-19".to_string();
+    let config = RewardBotConfig {
+        min_market_score: Decimal::ZERO,
+        ..RewardBotConfig::default()
+    };
+
+    let candidates = select_reward_quote_candidate_markets(&[market], &config);
+
+    assert!(candidates.is_empty());
+}
+
+#[test]
+fn first_quote_quarantine_blocks_new_market_until_observation_window_passes() {
+    let now = OffsetDateTime::now_utc();
+    let config = RewardBotConfig {
+        info_risk_enabled: true,
+        info_risk_mode: RewardSelectionMode::Enforce,
+        require_info_risk_before_first_quote: true,
+        first_quote_quarantine_sec: 300,
+        min_market_score: Decimal::ZERO,
+        ..RewardBotConfig::default()
+    };
+    let mut previous_plan = build_reward_quote_plan(&test_market(decimal("20")), &test_books(), &config);
+    previous_plan.updated_at = now - TimeDuration::seconds(120);
+    let mut plan = build_reward_quote_plan(&test_market(decimal("20")), &test_books(), &config);
+    plan.info_risk = Some(test_info_risk(
+        RewardInfoRiskLevel::Low,
+        RewardInfoRiskType::Unknown,
+        false,
+    ));
+
+    let changed = apply_first_quote_entry_gates(
+        std::slice::from_mut(&mut plan),
+        std::slice::from_ref(&previous_plan),
+        &[],
+        &[],
+        &config,
+        now,
+    );
+
+    assert!(changed);
+    assert!(!plan.eligible);
+    assert!(plan.reason.starts_with("first quote quarantine:"));
+    assert_eq!(plan.updated_at, previous_plan.updated_at);
+
+    plan = build_reward_quote_plan(&test_market(decimal("20")), &test_books(), &config);
+    plan.info_risk = Some(test_info_risk(
+        RewardInfoRiskLevel::Low,
+        RewardInfoRiskType::Unknown,
+        false,
+    ));
+    let changed = apply_first_quote_entry_gates(
+        std::slice::from_mut(&mut plan),
+        std::slice::from_ref(&previous_plan),
+        &[],
+        &[],
+        &config,
+        now + TimeDuration::seconds(301),
+    );
+
+    assert!(!changed);
+    assert!(plan.eligible, "{}", plan.reason);
+}
+
+#[test]
 fn quote_materialization_allows_minimum_sizes_above_config_market_budget() {
     let config = RewardBotConfig {
         per_market_usd: decimal("20"),

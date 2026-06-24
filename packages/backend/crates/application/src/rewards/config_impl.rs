@@ -55,6 +55,8 @@ impl Default for RewardBotConfig {
             info_risk_avoid_level: RewardInfoRiskLevel::High,
             info_risk_ttl_sec: 3600,
             info_risk_batch_size: 1,
+            require_info_risk_before_first_quote: true,
+            first_quote_quarantine_sec: 300,
             safety_margin_cents: decimal("1"),
             min_midpoint: decimal("0.1"),
             max_midpoint: decimal("0.9"),
@@ -203,6 +205,7 @@ impl RewardBotConfig {
         self.ai_advisory_batch_size = self.ai_advisory_batch_size.clamp(1, 12);
         self.info_risk_ttl_sec = self.info_risk_ttl_sec.clamp(60, 86_400);
         self.info_risk_batch_size = self.info_risk_batch_size.clamp(1, 12);
+        self.first_quote_quarantine_sec = self.first_quote_quarantine_sec.clamp(0, 86_400);
         if matches!(self.ai_provider, RewardAiProvider::Anthropic) {
             self.ai_request_format = RewardAiRequestFormat::AnthropicMessages;
         } else if matches!(
@@ -459,6 +462,12 @@ impl RewardBotConfig {
         if let Some(value) = patch.info_risk_batch_size {
             next.info_risk_batch_size = value;
         }
+        if let Some(value) = patch.require_info_risk_before_first_quote {
+            next.require_info_risk_before_first_quote = value;
+        }
+        if let Some(value) = patch.first_quote_quarantine_sec {
+            next.first_quote_quarantine_sec = value;
+        }
         if let Some(safety_margin_cents) = patch.safety_margin_cents {
             next.safety_margin_cents = safety_margin_cents;
         }
@@ -601,6 +610,8 @@ mod reward_config_tests {
             "info_risk_avoid_level": "high",
             "info_risk_ttl_sec": 36000,
             "info_risk_batch_size": 3,
+            "require_info_risk_before_first_quote": true,
+            "first_quote_quarantine_sec": 300,
             "safety_margin_cents": 2,
             "min_midpoint": 0.4,
             "max_midpoint": 0.6,
@@ -636,6 +647,8 @@ mod reward_config_tests {
         assert_eq!(config.quote_bid_rank, 3);
         assert_eq!(config.ai_advisory_batch_size, 6);
         assert_eq!(config.info_risk_batch_size, 3);
+        assert!(config.require_info_risk_before_first_quote);
+        assert_eq!(config.first_quote_quarantine_sec, 300);
         assert_eq!(config.cancel_bid_rank, 2);
         assert_eq!(config.requote_jitter_sec, 305);
         assert_eq!(config.requote_drift_confirm_sec, 90);
