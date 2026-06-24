@@ -39,11 +39,11 @@ async fn submit_pending_live_reward_orders(
                         order.status,
                         ManagedRewardOrderStatus::Planned | ManagedRewardOrderStatus::ExitPending
                     )
-                    && live_exit_retry_due_or_crossable(order, now, books, positions)))
+                    && live_exit_retry_due(order, now)))
     }) {
-        let mut post_only =
-            order.side == RewardOrderSide::Buy || deferred_live_exit_is_post_only(order);
+        let post_only = true;
         let mut submission_price = order.price;
+        let mut pre_submit_events = Vec::new();
         if live_submission_was_attempted(order) {
             let request = LivePolymarketTokenOrderRequest {
                 client_order_id: order.id.clone(),
@@ -64,17 +64,13 @@ async fn submit_pending_live_reward_orders(
                         ManagedRewardOrderStatus::ExitPending
                     };
                     order.scoring = false;
-                    order.reason = match (order.side, post_only) {
-                        (RewardOrderSide::Buy, _) => {
+                    order.reason = match order.side {
+                        RewardOrderSide::Buy => {
                             "recovered live post-only rewards quote after interrupted submission"
                                 .to_string()
                         }
-                        (RewardOrderSide::Sell, true) => {
+                        RewardOrderSide::Sell => {
                             "recovered live post-only rewards exit after interrupted submission"
-                                .to_string()
-                        }
-                        (RewardOrderSide::Sell, false) => {
-                            "recovered live rewards flatten after interrupted submission"
                                 .to_string()
                         }
                     };
@@ -227,35 +223,33 @@ async fn submit_pending_live_reward_orders(
                 order.updated_at = OffsetDateTime::now_utc();
             }
 
-            if let Some(best_bid) = reward_non_loss_exit_bid(order, books, positions) {
-                post_only = false;
-                submission_price = best_bid;
-                order.reason = format!(
-                    "non-loss taker exit crossing current best bid {best_bid} with floor {}",
-                    order.price
-                );
-                order.updated_at = OffsetDateTime::now_utc();
-            } else if !post_only {
-                let best_bid = reward_best_bid_tick(books.get(&order.token_id));
-                order.reason = match best_bid {
-                    Some(best_bid) => format!(
-                        "flatten deferred until non-loss bid is observed; best bid {best_bid} below exit floor {}",
-                        order.price
-                    ),
-                    None => {
-                        "flatten deferred until non-loss bid liquidity is observed".to_string()
-                    }
+            let position_size = reward_sell_position_size(order, positions)
+                .round_dp_with_strategy(2, RoundingStrategy::ToZero);
+            let target_size = (order.size - order.filled_size)
+                .max(Decimal::ZERO)
+                .min(position_size)
+                .round_dp_with_strategy(2, RoundingStrategy::ToZero);
+            if target_size <= Decimal::ZERO {
+                order.status = ManagedRewardOrderStatus::Cancelled;
+                order.scoring = false;
+                order.reason = if position_size <= Decimal::ZERO {
+                    "sell exit closed because no matching token position remains".to_string()
+                } else {
+                    "sell exit closed because no remaining size is available".to_string()
                 };
                 order.updated_at = OffsetDateTime::now_utc();
+                report.cancelled_orders += 1;
+                report.risk_cancelled_orders += 1;
                 let event = reward_live_event(
                     order,
-                    "reward_live_exit_non_loss_deferred",
+                    "reward_live_exit_no_position_closed",
                     RewardRiskSeverity::Warning,
                     order.reason.clone(),
                     json!({
                         "token_id": order.token_id,
-                        "price": order.price,
-                        "best_bid": best_bid,
+                        "position_size": position_size,
+                        "order_size": order.size,
+                        "filled_size": order.filled_size,
                     }),
                 );
                 persist_live_reward_updates(
@@ -272,18 +266,76 @@ async fn submit_pending_live_reward_orders(
                 continue;
             }
 
-            if let Some((reason, event)) =
-                live_exit_dust_deferred_at_price(order, submission_price)
-            {
-                order.reason = reason;
+            if order.size != target_size || order.filled_size != Decimal::ZERO {
+                let previous_size = order.size;
+                let previous_filled_size = order.filled_size;
+                order.size = target_size;
+                order.filled_size = Decimal::ZERO;
+                order.reason = format!(
+                    "sell exit size adjusted to current token position {target_size}"
+                );
                 order.updated_at = OffsetDateTime::now_utc();
+                pre_submit_events.push(reward_live_event(
+                    order,
+                    "reward_live_exit_size_adjusted_to_position",
+                    RewardRiskSeverity::Info,
+                    order.reason.clone(),
+                    json!({
+                        "token_id": order.token_id,
+                        "previous_size": previous_size,
+                        "previous_filled_size": previous_filled_size,
+                        "position_size": position_size,
+                        "target_size": target_size,
+                    }),
+                ));
+            }
+
+            submission_price = order.price;
+            if let Some(best_bid) = reward_post_only_exit_crossing_bid(order, books) {
+                order.reason = format!(
+                    "{LIVE_EXIT_POST_ONLY_CROSSING_DEFERRED_MARKER}: best bid {best_bid} >= maker price {}; waiting for original-price sell to rest as maker",
+                    order.price
+                );
+                order.updated_at = OffsetDateTime::now_utc();
+                pre_submit_events.push(reward_live_event(
+                    order,
+                    "reward_live_exit_post_only_crossing_deferred",
+                    RewardRiskSeverity::Info,
+                    order.reason.clone(),
+                    json!({
+                        "token_id": order.token_id,
+                        "price": order.price,
+                        "best_bid": best_bid,
+                        "post_only": true,
+                    }),
+                ));
                 persist_live_reward_updates(
                     state,
                     account,
                     Vec::new(),
                     vec![order.clone()],
                     Vec::new(),
-                    vec![event],
+                    pre_submit_events,
+                    report,
+                    trace_id,
+                )
+                .await?;
+                continue;
+            }
+
+            if let Some((reason, event)) =
+                live_exit_dust_deferred_at_price(order, submission_price)
+            {
+                order.reason = reason;
+                order.updated_at = OffsetDateTime::now_utc();
+                pre_submit_events.push(event);
+                persist_live_reward_updates(
+                    state,
+                    account,
+                    Vec::new(),
+                    vec![order.clone()],
+                    Vec::new(),
+                    pre_submit_events,
                     report,
                     trace_id,
                 )
@@ -301,7 +353,7 @@ async fn submit_pending_live_reward_orders(
             Vec::new(), // positions unchanged during submission
             vec![order.clone()],
             Vec::new(),
-            Vec::new(),
+            pre_submit_events,
             report,
             trace_id,
         )

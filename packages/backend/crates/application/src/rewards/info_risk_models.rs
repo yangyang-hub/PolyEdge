@@ -254,9 +254,15 @@ pub fn build_reward_info_risk_assessment_request(
         .filter(|order| order.condition_id == market.condition_id)
         .collect::<Vec<_>>();
     let query = reward_info_risk_query(market);
+    let evaluation_time = OffsetDateTime::now_utc();
     let payload = json!({
-        "schema_version": 1,
+        "schema_version": 2,
         "task": "Assess recent external information risk for this Polymarket rewards market before maker quoting.",
+        "evaluation_time_utc": evaluation_time,
+        "imminent_resolution_policy": {
+            "current_time_source": "evaluation_time_utc",
+            "definition": "Set resolution_imminent=true only when an official result/resolution has been announced or a confirmed resolution-driving event is expected within 7 days of evaluation_time_utc. Distant scheduled events, stale dates, or unsupported current-news claims are not imminent by themselves.",
+        },
         "search_query": query,
         "market": {
             "condition_id": market.condition_id,
@@ -328,8 +334,9 @@ fn reward_info_risk_cache_key_payload(
     query: &str,
 ) -> Value {
     json!({
-        "schema_version": 2,
+        "schema_version": 3,
         "cache_domain": "reward_info_risk",
+        "evaluation_policy_version": 1,
         "search_query": query,
         "market": {
             "condition_id": market.condition_id,

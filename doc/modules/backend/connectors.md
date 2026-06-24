@@ -1,6 +1,6 @@
 # connectors（外部连接器层）
 
-最后更新：2026-06-23
+最后更新：2026-06-24
 
 ## 概述
 
@@ -131,7 +131,7 @@
 ### Rewards Info Risk
 
 - **`RewardInfoRiskConnector`**：`base_url` + API key + reqwest client，供 rewards worker 异步判断候选市场的信息流风险。
-- 支持三种请求格式：`openai_responses`、`openai_chat_completions`、`anthropic_messages`。OpenAI-compatible 路径同样会规范化 root base URL 到 `/v1` 并携带 Bearer + `api-key` 认证头；OpenAI Responses 可通过 `POLYEDGE_REWARDS__INFO_RISK_WEB_SEARCH_ENABLED=true` 附加 `web_search_preview` 工具；默认关闭。Chat Completions 路径使用 `max_completion_tokens=6144`，给 MiMo reasoning 输出和最终 JSON 留足预算。provider 请求温度固定为 0，prompt 要求单个 JSON 对象、双引号 key、无 markdown/prose。
+- 支持三种请求格式：`openai_responses`、`openai_chat_completions`、`anthropic_messages`。OpenAI-compatible 路径同样会规范化 root base URL 到 `/v1` 并携带 Bearer + `api-key` 认证头；OpenAI Responses 可通过 `POLYEDGE_REWARDS__INFO_RISK_WEB_SEARCH_ENABLED=true` 附加 `web_search_preview` 工具；默认关闭。Chat Completions 路径使用 `max_completion_tokens=6144`，给 MiMo reasoning 输出和最终 JSON 留足预算。provider 请求温度固定为 0，prompt 要求单个 JSON 对象、双引号 key、无 markdown/prose，并要求按 application payload 中的 `evaluation_time_utc` 作为当前 UTC 时间判断 `resolution_imminent`，避免 provider 用模型训练日期或过期上下文误判远期/历史事件。
 - 输出统一解析为 `RewardInfoRiskAssessmentDecision`：`risk_level`、`risk_type`、`directional_risk`、`resolution_imminent`、`expected_event_at`、`confidence`、`summary`、`sources` 和 `metrics`；解析时会扫描 provider 文本里的候选 JSON 对象，兼容 markdown fence、嵌入解释文字、JSON 字符串或数组包装；只有通过现有必填字段和枚举校验的对象才会保存，confidence 钳制到 `0..=1`，无法提取时错误带短 preview。
 - `assess_batch()` 是批量变体：单次请求评估多个市场（payload 拼成 `{"markets":[{condition_id,search_query,market}]}`，schema 要求返回 `{"risks":[{condition_id,...}]}` 数组），三种格式各有批量变体并把 `max_completion_tokens` / `max_tokens` 按 batch size 放大、封顶到 16384；OpenAI Responses 批量路径仍可附加 `web_search_preview`。解析按 `condition_id` 白名单匹配，丢弃拼错/多余/重复项，模型漏掉的 condition 由 worker 回退到单市场 `assess()`；batch size=1 时兼容单 object 返回。返回 `RewardInfoRiskAssessmentBatchItem { condition_id, decision }`，决策字段与单市场 `RewardInfoRiskAssessmentDecision` 一致。
 - 该 connector 不直接访问 Polymarket；它只接收 application 层基于数据库、quote plan 和账户状态构建的 payload。provider 失败由 worker 记录 warning，不阻断 live tick。
@@ -163,7 +163,7 @@
 - Gamma 市场同步已提供 rewards 质量筛选所需的 CLOB liquidity、end time 和分级 ambiguity 数据，并支持 priority condition 刷新降低全量目录延迟对 live rewards 的影响。
 - Rewards markets 分页和 enrichment 已具备完整性保护，不再把部分补全结果作为完整目录写入；详情补全只针对缺唯一 YES/NO token 或缺有效 question 的市场，降低 CLOB 429 风险
 - Rewards 盘口连接器优先走 CLOB 批量 `/books`，并对失败或遗漏项使用单 token `/book` 回退；同一 connector 还提供 `/prices-history` 读取，实际请求节流由 orderbook 服务的 candle history sync loop 控制，避免 worker 或 API 直接打外部历史价格接口
-- Rewards AI advisory 和信息风险 connector 已支持 OpenAI Responses、OpenAI Chat Completions 和 Anthropic Messages 三种格式；OpenAI-compatible base URL 可配置为根地址或 `/v1` 地址，connector 会统一请求 `/v1/...` 并兼容 Bearer / `api-key` 认证头；MiMo provider 已验证 root gateway + `openai_chat_completions` + JSON schema 可用，`openai_responses` 会返回 provider 未实现错误；Chat Completions 请求使用 `max_completion_tokens` 而不是旧 `max_tokens`，AI advisory / info-risk 分别给 4096 / 6144 completion token 预算，降低 reasoning 模型返回空 `content` 的概率；模型密钥来自 worker 环境变量，provider 请求温度固定为 0，解析层会从 provider 文本中提取并校验候选 JSON 对象，provider confidence 输出会在解析时钳制到 `0..=1`。AI advisory provider 失败不终止 live tick，但在 AI 开启时会让对应 eligible 计划保持不可挂；信息风险 provider 失败只保留上一版缓存/确定性路径。信息风险 connector 的 OpenAI web search 工具默认关闭，仅在显式环境变量开启时使用。
+- Rewards AI advisory 和信息风险 connector 已支持 OpenAI Responses、OpenAI Chat Completions 和 Anthropic Messages 三种格式；OpenAI-compatible base URL 可配置为根地址或 `/v1` 地址，connector 会统一请求 `/v1/...` 并兼容 Bearer / `api-key` 认证头；MiMo provider 已验证 root gateway + `openai_chat_completions` + JSON schema 可用，`openai_responses` 会返回 provider 未实现错误；Chat Completions 请求使用 `max_completion_tokens` 而不是旧 `max_tokens`，AI advisory / info-risk 分别给 4096 / 6144 completion token 预算，降低 reasoning 模型返回空 `content` 的概率；模型密钥来自 worker 环境变量，provider 请求温度固定为 0，info-risk prompt 会把 payload 的 `evaluation_time_utc` 作为当前 UTC 时间用于 imminent 判定，解析层会从 provider 文本中提取并校验候选 JSON 对象，provider confidence 输出会在解析时钳制到 `0..=1`。AI advisory provider 失败不终止 live tick，但在 AI 开启时会让对应 eligible 计划保持不可挂；信息风险 provider 失败只保留上一版缓存/确定性路径。信息风险 connector 的 OpenAI web search 工具默认关闭，仅在显式环境变量开启时使用。
 - Orderbook 服务客户端已支持 HTTP batch/bootstrap、按最大确认年龄的 batch refresh 与内部 WS 推送；worker 长期 rewards loop 可用 WS 更新本地 cache，缺失、本地 stale 或接近新挂单 freshness headroom 时回退 HTTP batch，并要求 orderbook 服务在自身缓存也超过请求年龄时先刷新。
 - Data API positions 已按完整快照分页读取；不完整或失败的响应不会被 rewards worker 用于替换持仓
 - Paper Trading 执行器已完整实现

@@ -1419,7 +1419,6 @@ fn post_fill_post_only_exit_keeps_floor_when_best_bid_crosses() {
         },
     )]);
     let books = HashMap::from([("yes_live".to_string(), book)]);
-    let position_list = positions.values().cloned().collect::<Vec<_>>();
 
     let updates = plan_live_post_fill_orders(
         &config,
@@ -1438,7 +1437,7 @@ fn post_fill_post_only_exit_keeps_floor_when_best_bid_crosses() {
     assert_eq!(exit.price, reward_decimal("0.64"));
     assert!(deferred_live_exit_is_post_only(exit));
     assert_eq!(
-        reward_non_loss_exit_bid(exit, &books, &position_list),
+        reward_post_only_exit_crossing_bid(exit, &books),
         Some(reward_decimal("0.65"))
     );
 }
@@ -1511,7 +1510,7 @@ fn exit_markup_price_rounds_up_to_the_exchange_tick() {
 }
 
 #[test]
-fn non_loss_exit_uses_best_bid_not_midpoint() {
+fn post_only_exit_crossing_uses_best_bid_not_midpoint() {
     let now = OffsetDateTime::now_utc();
     let mut book = live_test_book("yes_live", now);
     book.bids[0].price = reward_decimal("0.818");
@@ -1523,17 +1522,16 @@ fn non_loss_exit_uses_best_bid_not_midpoint() {
     order.reason = "post-only hold-and-requote original-price exit".to_string();
 
     assert_eq!(
-        reward_non_loss_exit_bid(
+        reward_post_only_exit_crossing_bid(
             &order,
             &HashMap::from([("yes_live".to_string(), book)]),
-            &[],
         ),
         None
     );
 }
 
 #[test]
-fn non_loss_crossing_can_retry_after_post_only_rejection_cap() {
+fn crossing_bid_does_not_bypass_post_only_rejection_cap() {
     let now = OffsetDateTime::now_utc();
     let mut book = live_test_book("yes_live", now);
     book.bids[0].price = reward_decimal("0.65");
@@ -1551,15 +1549,10 @@ fn non_loss_crossing_can_retry_after_post_only_rejection_cap() {
         OffsetDateTime::now_utc() + TimeDuration::hours(1)
     ));
     assert_eq!(
-        reward_non_loss_exit_bid(&order, &books, &[]),
+        reward_post_only_exit_crossing_bid(&order, &books),
         Some(reward_decimal("0.65"))
     );
-    assert!(live_exit_retry_due_or_crossable(
-        &order,
-        now + TimeDuration::hours(1),
-        &books,
-        &[],
-    ));
+    assert!(!live_exit_retry_due(&order, now + TimeDuration::hours(1)));
 }
 
 #[test]
@@ -1600,6 +1593,31 @@ fn rejected_exit_retries_use_bounded_backoff() {
 }
 
 #[test]
+fn external_inventory_original_price_exit_is_post_only() {
+    let mut order = live_test_open_order("yes_live");
+    order.side = RewardOrderSide::Sell;
+    order.status = ManagedRewardOrderStatus::ExitPending;
+    order.reason = "external inventory original-price exit".to_string();
+
+    assert!(deferred_live_exit_is_post_only(&order));
+}
+
+#[test]
+fn post_only_crossing_deferred_uses_short_backoff() {
+    let now = OffsetDateTime::now_utc();
+    let mut order = live_test_open_order("yes_live");
+    order.side = RewardOrderSide::Sell;
+    order.status = ManagedRewardOrderStatus::ExitPending;
+    order.reason = format!(
+        "{LIVE_EXIT_POST_ONLY_CROSSING_DEFERRED_MARKER}: best bid 0.65 >= maker price 0.64"
+    );
+    order.updated_at = now;
+
+    assert!(!live_exit_retry_due(&order, now + TimeDuration::seconds(29)));
+    assert!(live_exit_retry_due(&order, now + TimeDuration::seconds(30)));
+}
+
+#[test]
 fn exit_min_notional_pre_submit_failure_uses_retry_backoff_marker() {
     let mut order = live_test_open_order("yes_live");
     order.side = RewardOrderSide::Sell;
@@ -1611,7 +1629,7 @@ fn exit_min_notional_pre_submit_failure_uses_retry_backoff_marker() {
     );
 
     let (reason, severity) =
-        live_exit_pre_submit_failure(&order, &error, false, "post-fill flatten immediately")
+        live_exit_pre_submit_failure(&order, &error, true, "post-fill flatten immediately")
             .expect("exit notional failure should use bounded retry state");
 
     assert_eq!(severity, RewardRiskSeverity::Warning);
@@ -1630,14 +1648,14 @@ fn exit_min_notional_pre_submit_failure_increments_existing_retry_marker() {
     order.side = RewardOrderSide::Sell;
     order.status = ManagedRewardOrderStatus::ExitPending;
     order.reason =
-        "retryable live exit rejected [1/10] (post_only=false): prior rejection".to_string();
+        "retryable live exit rejected [1/10] (post_only=true): prior rejection".to_string();
     let error = AppError::invalid_input(
         "POLYMARKET_NOTIONAL_INVALID",
         "polymarket live connector requires notional >= 1.00 USD",
     );
 
     let (reason, severity) =
-        live_exit_pre_submit_failure(&order, &error, false, &order.reason)
+        live_exit_pre_submit_failure(&order, &error, true, &order.reason)
             .expect("exit notional failure should increment retry state");
 
     assert_eq!(severity, RewardRiskSeverity::Warning);
@@ -1842,7 +1860,7 @@ fn max_exit_rejections_stop_retrying() {
     order.side = RewardOrderSide::Sell;
     order.status = ManagedRewardOrderStatus::ExitPending;
     order.reason =
-        "retryable live exit rejected [10/10] (post_only=false): prior rejection".to_string();
+        "retryable live exit rejected [10/10] (post_only=true): prior rejection".to_string();
 
     assert!(!live_exit_retry_due(
         &order,

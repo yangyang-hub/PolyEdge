@@ -2,6 +2,8 @@ const LIVE_SUBMISSION_ATTEMPTED_MARKER: &str = "live submission attempted";
 const LIVE_SUBMISSION_UNKNOWN_MARKER: &str =
     "live submission result unknown; manual reconciliation required";
 const LIVE_EXIT_DUST_DEFERRED_MARKER: &str = "dust live exit deferred below minimum notional";
+const LIVE_EXIT_POST_ONLY_CROSSING_DEFERRED_MARKER: &str =
+    "post-only original-price exit deferred because it would cross";
 const MAX_EXIT_REJECTION_COUNT: usize = 10;
 const MIN_POLYMARKET_ORDER_NOTIONAL_USD: Decimal = Decimal::ONE;
 
@@ -177,7 +179,7 @@ async fn submit_one_live_exit_order(
                 "live post-only rewards exit accepted".to_string()
             } else {
                 format!(
-                    "live non-loss taker rewards exit accepted with Polymarket status {}",
+                    "live non-post-only rewards exit accepted with Polymarket status {}",
                     acceptance.status.as_str()
                 )
             };
@@ -358,6 +360,12 @@ fn parse_exit_rejection_count(reason: &str) -> usize {
 fn live_exit_retry_due(order: &ManagedRewardOrder, now: OffsetDateTime) -> bool {
     if order.reason.contains(LIVE_EXIT_DUST_DEFERRED_MARKER) {
         return now >= order.updated_at + TimeDuration::seconds(300);
+    }
+    if order
+        .reason
+        .contains(LIVE_EXIT_POST_ONLY_CROSSING_DEFERRED_MARKER)
+    {
+        return now >= order.updated_at + TimeDuration::seconds(30);
     }
     let rejection_count = parse_exit_rejection_count(&order.reason);
     if rejection_count == 0 {

@@ -340,6 +340,11 @@ fn reward_info_risk_cache_key_ignores_runtime_context() {
 
     assert_eq!(first.input_hash, second.input_hash);
     assert_ne!(first.payload, second.payload);
+    assert!(first.payload.get("evaluation_time_utc").is_some());
+    assert!(first
+        .payload
+        .pointer("/imminent_resolution_policy/current_time_source")
+        .is_some());
 }
 
 #[test]

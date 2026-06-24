@@ -318,7 +318,7 @@ fn apply_live_reward_fill_update(
 
 fn reward_fill_role_for_live_order(order: &ManagedRewardOrder) -> RewardFillRole {
     if order.side == RewardOrderSide::Sell
-        && (order.reason.contains("flatten") || order.reason.contains("taker"))
+        && (order.reason.contains("taker") || order.reason.contains("non-post-only"))
     {
         RewardFillRole::Taker
     } else {
@@ -333,7 +333,7 @@ fn plan_live_post_fill_orders(
     entry: &ManagedRewardOrder,
     fill_size: Decimal,
     positions: &HashMap<String, RewardPosition>,
-    books: &HashMap<String, RewardOrderBook>,
+    _books: &HashMap<String, RewardOrderBook>,
     ai_min_confidence: Decimal,
     trace_id: &str,
 ) -> Vec<LiveRewardOrderUpdate> {
@@ -388,28 +388,7 @@ fn plan_live_post_fill_orders(
                 .map(|avg_price| Decimal::max(entry.price, avg_price))
                 .unwrap_or(entry.price);
             let exit_price = ceil_reward_price_to_tick(exit_floor);
-            let best_bid = reward_best_bid_tick(books.get(&entry.token_id));
-            let can_cross_without_loss = best_bid.is_some_and(|price| price >= exit_price);
-            let reason = if can_cross_without_loss {
-                "post-fill flatten immediately"
-            } else {
-                "flatten deferred until non-loss bid liquidity is observed"
-            };
-            let event_type = if can_cross_without_loss {
-                "reward_live_flatten_planned"
-            } else {
-                "reward_live_flatten_deferred"
-            };
-            let severity = if can_cross_without_loss {
-                RewardRiskSeverity::Info
-            } else {
-                RewardRiskSeverity::Warning
-            };
-            let message = if can_cross_without_loss {
-                "persisted post-fill rewards flatten intent before live submission"
-            } else {
-                "deferred rewards flatten because current best bid is below the exit floor"
-            };
+            let reason = "post-only flatten original-price exit";
             let mut exit = live_exit_order(
                 entry,
                 fill_size,
@@ -420,15 +399,14 @@ fn plan_live_post_fill_orders(
             exit.status = ManagedRewardOrderStatus::ExitPending;
             let event = reward_live_event(
                 &exit,
-                event_type,
-                severity,
-                message,
+                "reward_live_flatten_planned",
+                RewardRiskSeverity::Info,
+                "persisted post-fill rewards flatten maker intent before live submission",
                 json!({
                     "token_id": entry.token_id,
                     "size": fill_size,
                     "price": exit.price,
-                    "best_bid": best_bid,
-                    "post_only": false,
+                    "post_only": true,
                     "trace_id": trace_id,
                 }),
             );
@@ -575,6 +553,7 @@ fn mark_sibling_cancel_for_retry(mut sibling: ManagedRewardOrder) -> ManagedRewa
 
 fn deferred_live_exit_is_post_only(order: &ManagedRewardOrder) -> bool {
     order.reason.contains("post-only")
+        || order.reason.contains("original-price exit")
         || order.reason.contains("exit at markup")
         || order.reason.contains("post_only=true")
 }

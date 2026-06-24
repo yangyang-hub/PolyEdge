@@ -32,25 +32,25 @@ fn reward_sell_exit_floor(
     ceil_reward_price_to_tick(Decimal::max(order.price, position_floor))
 }
 
-fn reward_non_loss_exit_bid(
+fn reward_sell_position_size(
+    order: &ManagedRewardOrder,
+    positions: &[RewardPosition],
+) -> Decimal {
+    positions
+        .iter()
+        .find(|position| position.token_id == order.token_id)
+        .map(|position| position.size.max(Decimal::ZERO))
+        .unwrap_or_default()
+}
+
+fn reward_post_only_exit_crossing_bid(
     order: &ManagedRewardOrder,
     books: &HashMap<String, RewardOrderBook>,
-    positions: &[RewardPosition],
 ) -> Option<Decimal> {
     if order.side != RewardOrderSide::Sell {
         return None;
     }
-    let exit_floor = reward_sell_exit_floor(order, positions);
-    reward_best_bid_tick(books.get(&order.token_id)).filter(|best_bid| *best_bid >= exit_floor)
-}
-
-fn live_exit_retry_due_or_crossable(
-    order: &ManagedRewardOrder,
-    now: OffsetDateTime,
-    books: &HashMap<String, RewardOrderBook>,
-    positions: &[RewardPosition],
-) -> bool {
-    live_exit_retry_due(order, now) || reward_non_loss_exit_bid(order, books, positions).is_some()
+    reward_best_bid_tick(books.get(&order.token_id)).filter(|best_bid| *best_bid >= order.price)
 }
 
 fn reward_live_fill_id(update: &ConnectorTradeFillUpdate) -> String {
