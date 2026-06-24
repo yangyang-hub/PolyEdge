@@ -388,6 +388,37 @@ fn event_cancel_fast_path_filters_to_updated_token_and_hard_risk() {
 }
 
 #[test]
+fn event_cancel_fast_path_cancels_buy_that_would_touch_best_ask() {
+    let config = RewardBotConfig {
+        account_id: "reward_live".to_string(),
+        stale_book_ms: 45_000,
+        ..RewardBotConfig::default()
+    };
+    let now = OffsetDateTime::now_utc();
+    let plan = live_test_plan(now);
+    let mut order = live_test_open_order("yes_live");
+    order.price = reward_decimal("0.49");
+    let mut book = live_test_book("yes_live", now);
+    book.asks[0].price = reward_decimal("0.49");
+    let books = HashMap::from([("yes_live".to_string(), book)]);
+    let updated_tokens = HashSet::from(["yes_live".to_string()]);
+
+    let candidates = live_event_hard_cancel_candidates(
+        &config,
+        &[plan],
+        &[order.clone()],
+        &books,
+        &HashMap::new(),
+        &updated_tokens,
+        false,
+    );
+
+    assert_eq!(candidates.len(), 1);
+    assert_eq!(candidates[0].0, order.id);
+    assert!(candidates[0].1.contains("post-only buy would touch best ask"));
+}
+
+#[test]
 fn event_cancel_fast_path_ignores_requote_only_reasons() {
     let config = RewardBotConfig {
         account_id: "reward_live".to_string(),

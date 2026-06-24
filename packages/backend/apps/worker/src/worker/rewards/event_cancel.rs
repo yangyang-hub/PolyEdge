@@ -280,6 +280,12 @@ fn live_event_hard_cancel_reason(
         }
         return Some(live_orderbook_stale_reason(age_ms, config.stale_book_ms));
     }
+    if let Some(best_ask) = reward_buy_touching_ask(order, books) {
+        return Some(format!(
+            "post-only buy would touch best ask {best_ask} at order price {}",
+            order.price
+        ));
+    }
     if let Some(reason) = live_min_depth_cancel_reason(config, books, order) {
         return Some(reason);
     }
