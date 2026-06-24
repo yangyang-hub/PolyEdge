@@ -77,6 +77,10 @@ fn status_error_ignores_short_lived_final_reconciliation_pending() {
     assert!(reward_order_has_active_reconciliation_error(&order));
     assert!(reward_order_counts_as_external_open(&order));
 
+    order.filled_size = order.size;
+    assert!(!reward_order_counts_as_external_open(&order));
+    order.filled_size = Decimal::ZERO;
+
     order.external_order_id = Some("rewlive_internal_id".to_string());
     assert!(!reward_order_counts_as_external_open(&order));
 }

@@ -47,6 +47,7 @@ const REWARD_EXTERNAL_OPEN_COUNT_BLOCKER_MARKERS: &[&str] = &[
 #[must_use]
 pub fn reward_order_counts_as_external_open(order: &ManagedRewardOrder) -> bool {
     order.status.is_open_like()
+        && order.size > order.filled_size
         && order
             .external_order_id
             .as_deref()

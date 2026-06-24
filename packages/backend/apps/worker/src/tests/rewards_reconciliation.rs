@@ -298,20 +298,54 @@ fn observed_external_open_order_count_uses_snapshot_membership() {
     let mut live_exit = live_test_open_order("exit_live");
     live_exit.side = RewardOrderSide::Sell;
     live_exit.status = ManagedRewardOrderStatus::ExitPending;
+    let mut sold_exit = live_test_open_order("sold_exit");
+    sold_exit.side = RewardOrderSide::Sell;
+    sold_exit.status = ManagedRewardOrderStatus::ExitPending;
     let mut stale_exit = live_test_open_order("stale_exit");
     stale_exit.side = RewardOrderSide::Sell;
     stale_exit.status = ManagedRewardOrderStatus::ExitPending;
     let mut pending_cancel = live_test_open_order("pending_cancel");
     pending_cancel.reason = "risk cancel; cancel accepted; awaiting final reconciliation".to_string();
-    let open_order_ids = HashSet::from(["pm_yes_live", "pm_exit_live", "pm_pending_cancel"]);
+    let mut sold_exit_snapshot = open_snapshot_order("pm_sold_exit", "sold_exit");
+    sold_exit_snapshot.side = PolymarketTokenOrderSide::Sell;
+    sold_exit_snapshot.size_matched = sold_exit_snapshot.original_size;
+    sold_exit_snapshot.status = "Matched".to_string();
+    let snapshot = vec![
+        open_snapshot_order("pm_yes_live", "yes_live"),
+        open_snapshot_order("pm_exit_live", "exit_live"),
+        sold_exit_snapshot,
+        open_snapshot_order("pm_pending_cancel", "pending_cancel"),
+    ];
+    let open_order_ids = snapshot
+        .iter()
+        .filter(|order| external_open_order_counts_as_active(order))
+        .map(|order| order.id.as_str())
+        .collect::<HashSet<_>>();
 
     assert_eq!(
         observed_managed_external_open_order_count(
-            &[buy, live_exit, stale_exit, pending_cancel],
+            &[buy, live_exit, sold_exit, stale_exit, pending_cancel],
             &open_order_ids,
         ),
         2,
     );
+}
+
+#[test]
+fn external_open_order_active_requires_remaining_size_and_non_terminal_status() {
+    let mut active = open_snapshot_order("pm_active", "yes_live");
+    active.size_matched = reward_decimal("5");
+    active.status = "PartiallyFilled".to_string();
+    assert!(external_open_order_counts_as_active(&active));
+
+    let mut fully_matched = open_snapshot_order("pm_matched", "yes_live");
+    fully_matched.size_matched = fully_matched.original_size;
+    fully_matched.status = "Live".to_string();
+    assert!(!external_open_order_counts_as_active(&fully_matched));
+
+    let mut terminal = open_snapshot_order("pm_terminal", "yes_live");
+    terminal.status = "Matched".to_string();
+    assert!(!external_open_order_counts_as_active(&terminal));
 }
 
 #[test]

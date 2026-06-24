@@ -356,6 +356,7 @@ async fn sync_external_open_order_state(
     };
     let open_order_ids = open_orders
         .iter()
+        .filter(|order| external_open_order_counts_as_active(order))
         .map(|order| order.id.as_str())
         .collect::<HashSet<_>>();
 
@@ -455,12 +456,33 @@ struct RewardOpenOrderTokenMatch {
 fn external_open_buy_notional(open_orders: &[PolymarketOpenOrder]) -> Decimal {
     open_orders
         .iter()
-        .filter(|order| order.side == PolymarketTokenOrderSide::Buy)
+        .filter(|order| {
+            order.side == PolymarketTokenOrderSide::Buy
+                && external_open_order_counts_as_active(order)
+        })
         .map(|order| {
             (order.price * (order.original_size - order.size_matched).max(Decimal::ZERO))
                 .round_dp(4)
         })
         .sum()
+}
+
+fn external_open_order_counts_as_active(open_order: &PolymarketOpenOrder) -> bool {
+    external_open_order_remaining_size(open_order) > Decimal::ZERO
+        && polymarket_open_order_status_counts_as_active(&open_order.status)
+}
+
+fn polymarket_open_order_status_counts_as_active(status: &str) -> bool {
+    let normalized = status
+        .trim()
+        .chars()
+        .filter(|ch| !matches!(ch, ' ' | '_' | '-'))
+        .collect::<String>()
+        .to_ascii_lowercase();
+    !matches!(
+        normalized.as_str(),
+        "filled" | "matched" | "canceled" | "cancelled" | "expired"
+    )
 }
 
 async fn adopt_external_open_reward_buy_orders(
@@ -712,6 +734,7 @@ fn close_managed_orders_absent_from_open_snapshot(
 ) -> Vec<(ManagedRewardOrder, RewardRiskEvent)> {
     let open_order_ids = open_orders
         .iter()
+        .filter(|order| external_open_order_counts_as_active(order))
         .map(|order| order.id.as_str())
         .collect::<HashSet<_>>();
 
