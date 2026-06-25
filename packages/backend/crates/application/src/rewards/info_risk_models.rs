@@ -312,6 +312,7 @@ pub fn build_reward_info_risk_assessment_request(
         "strategy_config": {
             "info_risk_mode": config.info_risk_mode,
             "info_risk_avoid_level": config.info_risk_avoid_level,
+            "low_competition_info_risk_avoid_level": config.low_competition_info_risk_avoid_level,
             "selection_mode": config.selection_mode,
             "quote_mode": config.quote_mode,
             "dominant_min_probability": config.dominant_min_probability,
@@ -367,6 +368,7 @@ fn reward_info_risk_cache_key_payload(
         "strategy_config": {
             "info_risk_mode": config.info_risk_mode,
             "info_risk_avoid_level": config.info_risk_avoid_level,
+            "low_competition_info_risk_avoid_level": config.low_competition_info_risk_avoid_level,
             "selection_mode": config.selection_mode,
             "quote_mode": config.quote_mode,
             "dominant_min_probability": config.dominant_min_probability,
@@ -399,9 +401,16 @@ pub fn apply_reward_info_risks(
             continue;
         };
         plan.info_risk = Some(risk.clone());
+        let avoid_level = if config.low_competition_mode == RewardLowCompetitionMode::Enforce
+            && plan.strategy_bucket == RewardStrategyBucket::LowCompetition
+        {
+            config.low_competition_info_risk_avoid_level
+        } else {
+            config.info_risk_avoid_level
+        };
         if config.info_risk_mode != RewardSelectionMode::Enforce
             || risk.confidence < min_confidence
-            || !reward_info_risk_blocks_quote(&risk, config.info_risk_avoid_level)
+            || !reward_info_risk_blocks_quote(&risk, avoid_level)
         {
             continue;
         }

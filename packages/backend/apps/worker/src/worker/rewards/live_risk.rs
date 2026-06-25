@@ -1,7 +1,5 @@
 const LIVE_CANCEL_RETRY_MIN_INTERVAL: TimeDuration = TimeDuration::seconds(15);
 const LIVE_CANCEL_FINAL_RECONCILIATION_RETRY_AFTER: TimeDuration = TimeDuration::seconds(30);
-const LOW_COMPETITION_GLOBAL_OPEN_ORDER_SHARE_BPS: usize = 3_000;
-
 include!("live_placement_limits.rs");
 include!("live_cancel.rs");
 
@@ -23,7 +21,7 @@ fn live_placement_orders(
         return (Vec::new(), false);
     }
     let low_competition_global_open_order_cap =
-        live_low_competition_global_open_order_cap(max_open_orders);
+        live_low_competition_global_open_order_cap(config, max_open_orders);
 
     let mut active_markets: HashSet<String> = open_orders
         .iter()

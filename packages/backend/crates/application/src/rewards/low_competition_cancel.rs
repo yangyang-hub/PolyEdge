@@ -1,7 +1,3 @@
-const LOW_COMPETITION_CANCEL_CONFIRM_SEC: i64 = 30;
-const LOW_COMPETITION_CANCEL_SHARE_BPS_NUMERATOR: u64 = 4;
-const LOW_COMPETITION_CANCEL_SHARE_BPS_DENOMINATOR: u64 = 5;
-
 pub fn low_competition_live_cancel_reason(
     config: &RewardBotConfig,
     plan: &RewardQuotePlan,
@@ -43,7 +39,7 @@ pub fn low_competition_live_cancel_reason(
         historical_metrics.as_ref(),
     );
     push_low_competition_cancel_allocation_reasons(&mut reasons, config, &metrics);
-    push_low_competition_cancel_exit_reasons(&mut reasons, plan, open_orders, &metrics);
+    push_low_competition_cancel_exit_reasons(&mut reasons, config, plan, open_orders, &metrics);
     push_low_competition_cancel_stability_reasons(&mut reasons, config, &metrics);
 
     if reasons.is_empty() {
@@ -88,7 +84,7 @@ fn low_competition_cancel_historical_metrics(
     account: &RewardAccountState,
     now: OffsetDateTime,
 ) -> Option<RewardLowCompetitionMetrics> {
-    let books = low_competition_historical_books(plan, book_history, now)?;
+    let books = low_competition_historical_books(config, plan, book_history, now)?;
     let mut low_config = config.config_for_strategy_bucket(RewardStrategyBucket::LowCompetition);
     low_config.stale_book_ms = 0;
     let materialized =
@@ -135,11 +131,12 @@ fn low_competition_metrics_for_materialized_plan(
 }
 
 fn low_competition_historical_books(
+    config: &RewardBotConfig,
     plan: &RewardQuotePlan,
     book_history: &HashMap<String, VecDeque<BookSnapshot>>,
     now: OffsetDateTime,
 ) -> Option<HashMap<String, RewardOrderBook>> {
-    let target = now - TimeDuration::seconds(LOW_COMPETITION_CANCEL_CONFIRM_SEC);
+    let target = now - TimeDuration::seconds(config.low_competition_cancel_confirm_sec as i64);
     let mut books = HashMap::new();
     for leg in &plan.legs {
         if books.contains_key(&leg.token_id) {
@@ -224,11 +221,13 @@ fn push_low_competition_cancel_allocation_reasons(
 
 fn push_low_competition_cancel_exit_reasons(
     reasons: &mut Vec<String>,
+    config: &RewardBotConfig,
     plan: &RewardQuotePlan,
     open_orders: &[ManagedRewardOrder],
     metrics: &RewardLowCompetitionMetrics,
 ) {
-    let required_depth = low_competition_cancel_required_exit_depth(plan, open_orders, metrics);
+    let required_depth =
+        low_competition_cancel_required_exit_depth(config, plan, open_orders, metrics);
     if metrics.exit_depth_usd < required_depth {
         reasons.push(format!(
             "exit depth ${} below cancel threshold ${required_depth}",
@@ -237,11 +236,12 @@ fn push_low_competition_cancel_exit_reasons(
     }
 
     if let Some(slippage) = metrics.exit_slippage_cents
-        && slippage > low_competition_cancel_max_exit_slippage_cents()
+        && config.low_competition_cancel_max_exit_slippage_cents > Decimal::ZERO
+        && slippage > config.low_competition_cancel_max_exit_slippage_cents
     {
         reasons.push(format!(
             "exit slippage {slippage}c exceeds cancel threshold {}c",
-            low_competition_cancel_max_exit_slippage_cents()
+            config.low_competition_cancel_max_exit_slippage_cents
         ));
     }
 }
@@ -263,17 +263,19 @@ fn push_low_competition_cancel_stability_reasons(
 
 fn low_competition_cancel_share_threshold_bps(config: &RewardBotConfig) -> Decimal {
     Decimal::from(config.low_competition_min_competition_share_bps)
-        * Decimal::from(LOW_COMPETITION_CANCEL_SHARE_BPS_NUMERATOR)
-        / Decimal::from(LOW_COMPETITION_CANCEL_SHARE_BPS_DENOMINATOR)
+        * Decimal::from(config.low_competition_cancel_share_threshold_ratio_bps)
+        / decimal("10000")
 }
 
 fn low_competition_cancel_competition_multiple_threshold(
     config: &RewardBotConfig,
 ) -> Decimal {
-    config.low_competition_max_competition_multiple * decimal("1.5")
+    config.low_competition_max_competition_multiple
+        * config.low_competition_cancel_competition_multiple_factor
 }
 
 fn low_competition_cancel_required_exit_depth(
+    config: &RewardBotConfig,
     plan: &RewardQuotePlan,
     open_orders: &[ManagedRewardOrder],
     metrics: &RewardLowCompetitionMetrics,
@@ -285,13 +287,16 @@ fn low_competition_cancel_required_exit_depth(
     } else {
         metrics.planned_notional_usd
     };
-    Decimal::max(decimal("20"), reference_notional * decimal("1.5")).round_dp(4)
-}
-
-fn low_competition_cancel_max_exit_slippage_cents() -> Decimal {
-    decimal("3")
+    Decimal::max(
+        config.low_competition_cancel_min_exit_depth_usd,
+        reference_notional * config.low_competition_cancel_exit_depth_multiple,
+    )
+    .round_dp(4)
 }
 
 fn low_competition_cancel_midpoint_range_threshold(config: &RewardBotConfig) -> Decimal {
-    Decimal::max(config.low_competition_max_midpoint_range_cents, decimal("3"))
+    Decimal::max(
+        config.low_competition_max_midpoint_range_cents,
+        config.low_competition_cancel_midpoint_range_floor_cents,
+    )
 }

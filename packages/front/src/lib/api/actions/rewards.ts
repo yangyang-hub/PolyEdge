@@ -69,6 +69,7 @@ const rewardConfigSchema = z.object({
   low_competition_probe_notional_usd: decimalNumber.min(0).max(1_000_000),
   low_competition_min_competition_share_bps: z.coerce.number().int().min(0).max(10_000),
   low_competition_max_competition_multiple: decimalNumber.min(0).max(1_000_000),
+  low_competition_candidate_max_competition_multiple: decimalNumber.min(1).max(100_000),
   low_competition_max_account_allocation_bps: z.coerce.number().int().min(0).max(10_000),
   low_competition_max_market_allocation_bps: z.coerce.number().int().min(0).max(10_000),
   low_competition_candidate_liquidity_filter_enabled: z.boolean(),
@@ -79,9 +80,27 @@ const rewardConfigSchema = z.object({
   low_competition_min_reward_per_100_usd_day: decimalNumber.min(0).max(100_000),
   low_competition_min_exit_depth_usd: decimalNumber.min(0).max(1_000_000),
   low_competition_min_exit_depth_multiple: decimalNumber.min(0).max(100),
+  low_competition_max_entry_exit_slippage_cents: decimalNumber.min(0).max(99),
+  low_competition_max_bad_fill_recovery_days: decimalNumber.min(0).max(365),
   low_competition_max_midpoint_range_cents: decimalNumber.min(0).max(100),
+  low_competition_max_top_of_book_flip_count: z.coerce.number().int().min(0).max(10_000),
   low_competition_observation_window_sec: z.coerce.number().int().min(60).max(86_400),
   low_competition_min_book_samples: z.coerce.number().int().min(1).max(10_000),
+  low_competition_quote_bid_rank: z.coerce.number().int().min(1).max(3),
+  low_competition_safety_margin_cents: decimalNumber.min(0).max(20),
+  low_competition_max_spread_cents: decimalNumber.min(0.1).max(99),
+  low_competition_max_market_spread_cents: decimalNumber.min(0.1).max(100),
+  low_competition_min_market_score: decimalNumber.min(0).max(100),
+  low_competition_require_ai_allow: z.boolean(),
+  low_competition_info_risk_avoid_level: z.enum(["low", "medium", "high", "critical", "unknown"]),
+  low_competition_cancel_confirm_sec: z.coerce.number().int().min(0).max(3600),
+  low_competition_cancel_share_threshold_ratio_bps: z.coerce.number().int().min(0).max(10_000),
+  low_competition_cancel_competition_multiple_factor: decimalNumber.min(0).max(100),
+  low_competition_cancel_max_exit_slippage_cents: decimalNumber.min(0).max(99),
+  low_competition_cancel_min_exit_depth_usd: decimalNumber.min(0).max(1_000_000),
+  low_competition_cancel_exit_depth_multiple: decimalNumber.min(0).max(100),
+  low_competition_cancel_midpoint_range_floor_cents: decimalNumber.min(0).max(100),
+  low_competition_global_open_order_share_bps: z.coerce.number().int().min(0).max(10_000),
   ai_advisory_enabled: z.boolean(),
   ai_provider: z.enum(["openai", "anthropic"]),
   ai_request_format: z.enum([
@@ -141,6 +160,15 @@ const rewardConfigSchema = z.object({
     message: "Top-3 depth share cap must be at least the top-1 cap.",
     path: ["max_top3_depth_share"],
   })
+  .refine(
+    (value) =>
+      value.low_competition_candidate_max_competition_multiple
+      >= value.low_competition_max_competition_multiple,
+    {
+      message: "Low-competition candidate multiple cap must be at least the hard gate cap.",
+      path: ["low_competition_candidate_max_competition_multiple"],
+    },
+  )
   .refine(
     (value) =>
       value.ai_provider === "anthropic"

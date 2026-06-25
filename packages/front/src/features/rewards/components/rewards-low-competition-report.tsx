@@ -122,6 +122,16 @@ export function LowCompetitionShadowReport({ snapshot }: { snapshot: RewardBotSn
             target={`${t.thresholdAtLeast} ${formatOptionalMultiple(config.low_competition_min_exit_depth_multiple)}`}
           />
           <ReportMetric
+            label={t.lowCompetitionRecoveryDaysP95}
+            value={
+              report.bad_fill_recovery_days_p95 == null
+                ? t.notAvailable
+                : `${formatFixed(toFiniteNumber(report.bad_fill_recovery_days_p95), 2)}d`
+            }
+            hint={t.lowCompetitionMaxBadFillRecoveryDays}
+            target={`${t.thresholdAtMost} ${formatFixed(toFiniteNumber(config.low_competition_max_bad_fill_recovery_days), 2)}d`}
+          />
+          <ReportMetric
             label={t.lowCompetitionMidpointP95}
             value={formatOptionalCents(report.midpoint_range_cents_p95)}
             hint={t.lowCompetitionMidpointP95Hint}

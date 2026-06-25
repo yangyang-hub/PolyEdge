@@ -175,6 +175,11 @@ fn build_low_competition_metrics(
     };
     let exit_depth_usd = low_competition_exit_depth_usd(plan, books).round_dp(4);
     let exit_slippage_cents = low_competition_exit_slippage_cents(plan, books);
+    let bad_fill_recovery_days = low_competition_bad_fill_recovery_days(
+        plan,
+        exit_slippage_cents,
+        estimated_reward_per_100_usd_day,
+    );
     let (sample_count, midpoint_range_cents, top_of_book_flip_count) =
         low_competition_history_metrics(plan, book_history, config, now);
     let allocation = low_competition_allocation_metrics(plan, open_orders, account);
@@ -242,6 +247,24 @@ fn build_low_competition_metrics(
     if exit_slippage_cents.is_none() {
         rejection_reasons.push("insufficient bid depth to estimate exit slippage".to_string());
     }
+    if let Some(slippage) = exit_slippage_cents
+        && config.low_competition_max_entry_exit_slippage_cents > Decimal::ZERO
+        && slippage > config.low_competition_max_entry_exit_slippage_cents
+    {
+        rejection_reasons.push(format!(
+            "entry exit slippage {slippage}c exceeds {}c",
+            config.low_competition_max_entry_exit_slippage_cents
+        ));
+    }
+    if let Some(days) = bad_fill_recovery_days
+        && config.low_competition_max_bad_fill_recovery_days > Decimal::ZERO
+        && days > config.low_competition_max_bad_fill_recovery_days
+    {
+        rejection_reasons.push(format!(
+            "bad-fill recovery {days} days exceeds {} days",
+            config.low_competition_max_bad_fill_recovery_days
+        ));
+    }
     if sample_count < config.low_competition_min_book_samples {
         rejection_reasons.push(format!(
             "book history samples {sample_count} below required {}",
@@ -257,6 +280,15 @@ fn build_low_competition_metrics(
         }
     } else {
         rejection_reasons.push("book history midpoint range unavailable".to_string());
+    }
+    if let Some(flips) = top_of_book_flip_count
+        && config.low_competition_max_top_of_book_flip_count > 0
+        && flips > config.low_competition_max_top_of_book_flip_count
+    {
+        rejection_reasons.push(format!(
+            "top-of-book flips {flips} exceed {}",
+            config.low_competition_max_top_of_book_flip_count
+        ));
     }
 
     // 早期剔除分类：competition_multiple 超过候选阈值说明该市场盘口竞争极其激烈，
@@ -292,6 +324,7 @@ fn build_low_competition_metrics(
         market_allocation_bps: allocation.market_allocation_bps,
         exit_depth_usd,
         exit_slippage_cents,
+        bad_fill_recovery_days,
         midpoint_range_cents,
         top_of_book_flip_count,
         sample_count,
@@ -331,6 +364,7 @@ fn empty_low_competition_metrics(
         market_allocation_bps: Decimal::ZERO,
         exit_depth_usd: Decimal::ZERO,
         exit_slippage_cents: None,
+        bad_fill_recovery_days: None,
         midpoint_range_cents: None,
         top_of_book_flip_count: None,
         sample_count: 0,
@@ -612,6 +646,30 @@ fn low_competition_exit_slippage_cents(
         worst = Decimal::max(worst, slippage);
     }
     Some(worst)
+}
+
+fn low_competition_bad_fill_recovery_days(
+    plan: &RewardQuotePlan,
+    exit_slippage_cents: Option<Decimal>,
+    estimated_reward_per_100_usd_day: Decimal,
+) -> Option<Decimal> {
+    let slippage_cents = exit_slippage_cents?;
+    if slippage_cents <= Decimal::ZERO {
+        return Some(Decimal::ZERO);
+    }
+    let planned_notional = plan
+        .legs
+        .iter()
+        .map(|leg| (leg.price * leg.size).round_dp(4))
+        .sum::<Decimal>();
+    let estimated_daily_reward =
+        (estimated_reward_per_100_usd_day * planned_notional / decimal("100")).round_dp(8);
+    if estimated_daily_reward <= Decimal::ZERO {
+        return None;
+    }
+    let total_size = plan.legs.iter().map(|leg| leg.size).sum::<Decimal>();
+    let estimated_slippage_cost = (total_size * slippage_cents / decimal("100")).round_dp(8);
+    Some((estimated_slippage_cost / estimated_daily_reward).round_dp(4))
 }
 
 fn low_competition_history_metrics(

@@ -295,6 +295,32 @@ fn ai_enforce_avoid_rejects_plan_without_relaxing_checks() {
 }
 
 #[test]
+fn low_competition_requires_high_confidence_ai_allow() {
+    let config = RewardBotConfig {
+        ai_advisory_enabled: true,
+        low_competition_mode: RewardLowCompetitionMode::Enforce,
+        low_competition_require_ai_allow: true,
+        min_market_score: Decimal::ZERO,
+        ..RewardBotConfig::default()
+    };
+    let mut plan = build_reward_quote_plan(&test_market(decimal("5")), &test_books(), &config);
+    plan.strategy_bucket = RewardStrategyBucket::LowCompetition;
+    let advisory = test_advisory(
+        RewardAiSuitability::Watch,
+        RewardPlanQuoteMode::Double,
+        decimal("0.90"),
+    );
+    let advisories = HashMap::from([(advisory.condition_id.clone(), advisory)]);
+    let mut plans = vec![plan];
+
+    apply_reward_ai_advisories(&mut plans, &advisories, &config, decimal("0.65"));
+
+    assert!(!plans[0].eligible);
+    assert_eq!(plans[0].quote_mode, RewardPlanQuoteMode::None);
+    assert!(plans[0].reason.contains("requires high-confidence allow"));
+}
+
+#[test]
 fn ai_enabled_rejects_eligible_plan_without_provider_decision() {
     let config = RewardBotConfig {
         ai_advisory_enabled: true,
@@ -385,6 +411,34 @@ fn info_risk_enforce_keeps_non_imminent_high_risk_as_advisory() {
     assert_eq!(plans[0].quote_mode, RewardPlanQuoteMode::Double);
     assert_eq!(plans[0].legs.len(), 2);
     assert!(plans[0].info_risk.is_some());
+}
+
+#[test]
+fn low_competition_uses_stricter_info_risk_avoid_level() {
+    let config = RewardBotConfig {
+        info_risk_enabled: true,
+        info_risk_mode: RewardSelectionMode::Enforce,
+        info_risk_avoid_level: RewardInfoRiskLevel::High,
+        low_competition_mode: RewardLowCompetitionMode::Enforce,
+        low_competition_info_risk_avoid_level: RewardInfoRiskLevel::Medium,
+        min_market_score: Decimal::ZERO,
+        ..RewardBotConfig::default()
+    };
+    let mut plan = build_reward_quote_plan(&test_market(decimal("5")), &test_books(), &config);
+    plan.strategy_bucket = RewardStrategyBucket::LowCompetition;
+    let risk = test_info_risk(
+        RewardInfoRiskLevel::Medium,
+        RewardInfoRiskType::ScheduledEvent,
+        false,
+    );
+    let risks = HashMap::from([(risk.condition_id.clone(), risk)]);
+    let mut plans = vec![plan];
+
+    apply_reward_info_risks(&mut plans, &risks, &config, decimal("0.65"));
+
+    assert!(!plans[0].eligible);
+    assert_eq!(plans[0].quote_mode, RewardPlanQuoteMode::None);
+    assert!(plans[0].reason.contains("info risk medium"));
 }
 
 #[test]

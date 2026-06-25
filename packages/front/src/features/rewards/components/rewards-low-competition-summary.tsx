@@ -99,6 +99,10 @@ function buildLowCompetitionChecks(
   const requiredExitDepth = requiredLowCompetitionExitDepth(metrics, config);
   const midpointRange = metrics.midpoint_range_cents;
   const midpointRangeLimit = toFiniteNumber(config.low_competition_max_midpoint_range_cents);
+  const maxExitSlippage = toFiniteNumber(
+    config.low_competition_max_entry_exit_slippage_cents,
+  );
+  const maxRecoveryDays = toFiniteNumber(config.low_competition_max_bad_fill_recovery_days);
   const sampleTarget = config.low_competition_min_book_samples;
 
   return [
@@ -161,11 +165,28 @@ function buildLowCompetitionChecks(
       target: `${t.thresholdAtLeast} ${formatUsdFixed(requiredExitDepth)}`,
       pass:
         toFiniteNumber(metrics.exit_depth_usd) >= requiredExitDepth
-        && metrics.exit_slippage_cents != null,
+        && metrics.exit_slippage_cents != null
+        && (maxExitSlippage <= 0 || toFiniteNumber(metrics.exit_slippage_cents) <= maxExitSlippage),
       detail:
         metrics.exit_slippage_cents == null
           ? t.lowCompetitionExitSlippageUnavailable
-          : `${t.lowCompetitionExitSlippage}: ${formatFixed(metrics.exit_slippage_cents, 2)}c`,
+          : `${t.lowCompetitionExitSlippage}: ${formatFixed(metrics.exit_slippage_cents, 2)}c / ${formatFixed(maxExitSlippage, 2)}c`,
+    },
+    {
+      label: t.lowCompetitionBadFillRecovery,
+      value:
+        metrics.bad_fill_recovery_days == null
+          ? t.notAvailable
+          : `${formatFixed(metrics.bad_fill_recovery_days, 2)}d`,
+      target:
+        maxRecoveryDays > 0
+          ? `${t.thresholdAtMost} ${formatFixed(maxRecoveryDays, 2)}d`
+          : t.thresholdNoLimit,
+      pass:
+        metrics.bad_fill_recovery_days != null
+        && (maxRecoveryDays <= 0
+          || toFiniteNumber(metrics.bad_fill_recovery_days) <= maxRecoveryDays),
+      detail: `${t.lowCompetitionEstimatedReward}: ${formatUsdFixed(metrics.estimated_reward_per_100_usd_day)}`,
     },
     {
       label: t.lowCompetitionBookStability,
@@ -174,11 +195,14 @@ function buildLowCompetitionChecks(
       pass:
         metrics.sample_count >= sampleTarget
         && midpointRange != null
-        && toFiniteNumber(midpointRange) <= midpointRangeLimit,
+        && toFiniteNumber(midpointRange) <= midpointRangeLimit
+        && (config.low_competition_max_top_of_book_flip_count <= 0
+          || (metrics.top_of_book_flip_count ?? Number.POSITIVE_INFINITY)
+            <= config.low_competition_max_top_of_book_flip_count),
       detail:
         midpointRange == null
           ? t.lowCompetitionMidpointUnavailable
-          : `${t.midpointRange}: ${formatFixed(midpointRange, 2)}c`,
+          : `${t.midpointRange}: ${formatFixed(midpointRange, 2)}c · ${t.lowCompetitionMaxTopOfBookFlipCount}: ${metrics.top_of_book_flip_count ?? t.notAvailable}/${config.low_competition_max_top_of_book_flip_count}`,
     },
   ];
 }

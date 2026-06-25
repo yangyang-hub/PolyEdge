@@ -39,7 +39,7 @@ impl Default for RewardBotConfig {
             low_competition_probe_notional_usd: decimal("10"),
             low_competition_min_competition_share_bps: 5_000,
             low_competition_max_competition_multiple: decimal("1"),
-            low_competition_candidate_max_competition_multiple: decimal("20"),
+            low_competition_candidate_max_competition_multiple: decimal("5"),
             low_competition_max_account_allocation_bps: 1_500,
             low_competition_max_market_allocation_bps: 500,
             low_competition_candidate_liquidity_filter_enabled: false,
@@ -47,12 +47,30 @@ impl Default for RewardBotConfig {
             low_competition_min_market_liquidity_usd: Decimal::ZERO,
             low_competition_min_market_volume_24h_usd: Decimal::ZERO,
             low_competition_max_competition_usd: Decimal::ZERO,
-            low_competition_min_reward_per_100_usd_day: decimal("0.25"),
+            low_competition_min_reward_per_100_usd_day: decimal("0.50"),
             low_competition_min_exit_depth_usd: decimal("50"),
             low_competition_min_exit_depth_multiple: decimal("3"),
+            low_competition_max_entry_exit_slippage_cents: decimal("1"),
+            low_competition_max_bad_fill_recovery_days: decimal("2"),
             low_competition_max_midpoint_range_cents: decimal("2"),
+            low_competition_max_top_of_book_flip_count: 6,
             low_competition_observation_window_sec: 1800,
-            low_competition_min_book_samples: 20,
+            low_competition_min_book_samples: 30,
+            low_competition_quote_bid_rank: 2,
+            low_competition_safety_margin_cents: decimal("2"),
+            low_competition_max_spread_cents: decimal("6"),
+            low_competition_max_market_spread_cents: decimal("8"),
+            low_competition_min_market_score: decimal("8"),
+            low_competition_require_ai_allow: true,
+            low_competition_info_risk_avoid_level: RewardInfoRiskLevel::Medium,
+            low_competition_cancel_confirm_sec: 30,
+            low_competition_cancel_share_threshold_ratio_bps: 8_000,
+            low_competition_cancel_competition_multiple_factor: decimal("1.5"),
+            low_competition_cancel_max_exit_slippage_cents: decimal("2"),
+            low_competition_cancel_min_exit_depth_usd: decimal("20"),
+            low_competition_cancel_exit_depth_multiple: decimal("2"),
+            low_competition_cancel_midpoint_range_floor_cents: decimal("3"),
+            low_competition_global_open_order_share_bps: 3_000,
             ai_advisory_enabled: false,
             ai_provider: RewardAiProvider::OpenAi,
             ai_request_format: RewardAiRequestFormat::OpenAiResponses,
@@ -64,7 +82,7 @@ impl Default for RewardBotConfig {
             info_risk_ttl_sec: 3600,
             info_risk_batch_size: 1,
             require_info_risk_before_first_quote: true,
-            first_quote_quarantine_sec: 300,
+            first_quote_quarantine_sec: 600,
             safety_margin_cents: decimal("1"),
             min_midpoint: decimal("0.1"),
             max_midpoint: decimal("0.9"),
@@ -223,15 +241,79 @@ impl RewardBotConfig {
             Decimal::ZERO,
             decimal("100"),
         );
+        self.low_competition_max_entry_exit_slippage_cents = clamp_decimal(
+            self.low_competition_max_entry_exit_slippage_cents,
+            Decimal::ZERO,
+            decimal("99"),
+        );
+        self.low_competition_max_bad_fill_recovery_days = clamp_decimal(
+            self.low_competition_max_bad_fill_recovery_days,
+            Decimal::ZERO,
+            decimal("365"),
+        );
         self.low_competition_max_midpoint_range_cents = clamp_decimal(
             self.low_competition_max_midpoint_range_cents,
             Decimal::ZERO,
             decimal("100"),
         );
+        self.low_competition_max_top_of_book_flip_count =
+            self.low_competition_max_top_of_book_flip_count.clamp(0, 10_000);
         self.low_competition_observation_window_sec =
             self.low_competition_observation_window_sec.clamp(60, 86_400);
         self.low_competition_min_book_samples =
             self.low_competition_min_book_samples.clamp(1, 10_000);
+        self.low_competition_quote_bid_rank = self.low_competition_quote_bid_rank.clamp(1, 3);
+        self.low_competition_safety_margin_cents = clamp_decimal(
+            self.low_competition_safety_margin_cents,
+            Decimal::ZERO,
+            decimal("20"),
+        );
+        self.low_competition_max_spread_cents = clamp_decimal(
+            self.low_competition_max_spread_cents,
+            decimal("0.1"),
+            decimal("99"),
+        );
+        self.low_competition_max_market_spread_cents = clamp_decimal(
+            self.low_competition_max_market_spread_cents,
+            decimal("0.1"),
+            decimal("100"),
+        );
+        self.low_competition_min_market_score = clamp_decimal(
+            self.low_competition_min_market_score,
+            Decimal::ZERO,
+            decimal("100"),
+        );
+        self.low_competition_cancel_confirm_sec =
+            self.low_competition_cancel_confirm_sec.clamp(0, 3600);
+        self.low_competition_cancel_share_threshold_ratio_bps =
+            self.low_competition_cancel_share_threshold_ratio_bps.clamp(0, 10_000);
+        self.low_competition_cancel_competition_multiple_factor = clamp_decimal(
+            self.low_competition_cancel_competition_multiple_factor,
+            Decimal::ZERO,
+            decimal("100"),
+        );
+        self.low_competition_cancel_max_exit_slippage_cents = clamp_decimal(
+            self.low_competition_cancel_max_exit_slippage_cents,
+            Decimal::ZERO,
+            decimal("99"),
+        );
+        self.low_competition_cancel_min_exit_depth_usd = clamp_decimal(
+            self.low_competition_cancel_min_exit_depth_usd,
+            Decimal::ZERO,
+            decimal("1000000"),
+        );
+        self.low_competition_cancel_exit_depth_multiple = clamp_decimal(
+            self.low_competition_cancel_exit_depth_multiple,
+            Decimal::ZERO,
+            decimal("100"),
+        );
+        self.low_competition_cancel_midpoint_range_floor_cents = clamp_decimal(
+            self.low_competition_cancel_midpoint_range_floor_cents,
+            Decimal::ZERO,
+            decimal("100"),
+        );
+        self.low_competition_global_open_order_share_bps =
+            self.low_competition_global_open_order_share_bps.clamp(0, 10_000);
         self.ai_advisory_ttl_sec = self.ai_advisory_ttl_sec.clamp(60, 86_400);
         self.ai_advisory_batch_size = self.ai_advisory_batch_size.clamp(1, 12);
         self.info_risk_ttl_sec = self.info_risk_ttl_sec.clamp(60, 86_400);
@@ -323,6 +405,8 @@ impl RewardBotConfig {
         let mut filter = self.candidate_filter();
         filter.min_market_liquidity_usd = Decimal::ZERO;
         filter.min_market_volume_24h_usd = Decimal::ZERO;
+        filter.max_market_spread_cents = self.low_competition_max_market_spread_cents;
+        filter.max_rewards_spread_cents = self.low_competition_max_spread_cents;
         filter.prefer_low_competition_ordering = true;
         Some(filter)
     }
@@ -339,6 +423,11 @@ impl RewardBotConfig {
         next.max_position_usd = self.low_competition_max_position_usd;
         next.min_market_liquidity_usd = Decimal::ZERO;
         next.min_market_volume_24h_usd = Decimal::ZERO;
+        next.min_market_score = self.low_competition_min_market_score;
+        next.max_market_spread_cents = self.low_competition_max_market_spread_cents;
+        next.max_spread_cents = self.low_competition_max_spread_cents;
+        next.quote_bid_rank = self.low_competition_quote_bid_rank;
+        next.safety_margin_cents = self.low_competition_safety_margin_cents;
         next
     }
 
@@ -480,14 +569,68 @@ impl RewardBotConfig {
         if let Some(value) = patch.low_competition_min_exit_depth_multiple {
             next.low_competition_min_exit_depth_multiple = value;
         }
+        if let Some(value) = patch.low_competition_max_entry_exit_slippage_cents {
+            next.low_competition_max_entry_exit_slippage_cents = value;
+        }
+        if let Some(value) = patch.low_competition_max_bad_fill_recovery_days {
+            next.low_competition_max_bad_fill_recovery_days = value;
+        }
         if let Some(value) = patch.low_competition_max_midpoint_range_cents {
             next.low_competition_max_midpoint_range_cents = value;
+        }
+        if let Some(value) = patch.low_competition_max_top_of_book_flip_count {
+            next.low_competition_max_top_of_book_flip_count = value;
         }
         if let Some(value) = patch.low_competition_observation_window_sec {
             next.low_competition_observation_window_sec = value;
         }
         if let Some(value) = patch.low_competition_min_book_samples {
             next.low_competition_min_book_samples = value;
+        }
+        if let Some(value) = patch.low_competition_quote_bid_rank {
+            next.low_competition_quote_bid_rank = value;
+        }
+        if let Some(value) = patch.low_competition_safety_margin_cents {
+            next.low_competition_safety_margin_cents = value;
+        }
+        if let Some(value) = patch.low_competition_max_spread_cents {
+            next.low_competition_max_spread_cents = value;
+        }
+        if let Some(value) = patch.low_competition_max_market_spread_cents {
+            next.low_competition_max_market_spread_cents = value;
+        }
+        if let Some(value) = patch.low_competition_min_market_score {
+            next.low_competition_min_market_score = value;
+        }
+        if let Some(value) = patch.low_competition_require_ai_allow {
+            next.low_competition_require_ai_allow = value;
+        }
+        if let Some(value) = patch.low_competition_info_risk_avoid_level {
+            next.low_competition_info_risk_avoid_level = value;
+        }
+        if let Some(value) = patch.low_competition_cancel_confirm_sec {
+            next.low_competition_cancel_confirm_sec = value;
+        }
+        if let Some(value) = patch.low_competition_cancel_share_threshold_ratio_bps {
+            next.low_competition_cancel_share_threshold_ratio_bps = value;
+        }
+        if let Some(value) = patch.low_competition_cancel_competition_multiple_factor {
+            next.low_competition_cancel_competition_multiple_factor = value;
+        }
+        if let Some(value) = patch.low_competition_cancel_max_exit_slippage_cents {
+            next.low_competition_cancel_max_exit_slippage_cents = value;
+        }
+        if let Some(value) = patch.low_competition_cancel_min_exit_depth_usd {
+            next.low_competition_cancel_min_exit_depth_usd = value;
+        }
+        if let Some(value) = patch.low_competition_cancel_exit_depth_multiple {
+            next.low_competition_cancel_exit_depth_multiple = value;
+        }
+        if let Some(value) = patch.low_competition_cancel_midpoint_range_floor_cents {
+            next.low_competition_cancel_midpoint_range_floor_cents = value;
+        }
+        if let Some(value) = patch.low_competition_global_open_order_share_bps {
+            next.low_competition_global_open_order_share_bps = value;
         }
         if let Some(value) = patch.ai_advisory_enabled {
             next.ai_advisory_enabled = value;
@@ -805,10 +948,10 @@ mod reward_config_tests {
     #[test]
     fn low_competition_candidate_threshold_defaults_above_gate_and_clamps() {
         let config = RewardBotConfig::default().normalized();
-        // 默认候选早期剔除阈值(20)应高于正式 gate 阈值(1)
+        // 默认候选早期剔除阈值(5)应高于正式 gate 阈值(1)
         assert_eq!(
             config.low_competition_candidate_max_competition_multiple,
-            decimal("20")
+            decimal("5")
         );
         assert!(config.low_competition_candidate_max_competition_multiple
             >= config.low_competition_max_competition_multiple);

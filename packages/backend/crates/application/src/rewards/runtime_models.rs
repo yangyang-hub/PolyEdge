@@ -154,6 +154,8 @@ pub struct RewardLowCompetitionMetrics {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub exit_slippage_cents: Option<Decimal>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bad_fill_recovery_days: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub midpoint_range_cents: Option<Decimal>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub top_of_book_flip_count: Option<u64>,
@@ -252,6 +254,8 @@ pub struct RewardLowCompetitionShadowReport {
     pub midpoint_range_cents_p95: Option<Decimal>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub exit_slippage_cents_p95: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bad_fill_recovery_days_p95: Option<Decimal>,
     pub should_consider_enforce: bool,
     #[serde(default)]
     pub recommendation_reasons: Vec<String>,

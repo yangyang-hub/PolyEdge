@@ -299,6 +299,12 @@ fn reward_ai_advisory_cache_key_payload(
             "dominant_single_side_enabled": config.dominant_single_side_enabled,
             "dominant_min_probability": config.dominant_min_probability,
             "dominant_max_probability": config.dominant_max_probability,
+            "low_competition_quote_bid_rank": config.low_competition_quote_bid_rank,
+            "low_competition_safety_margin_cents": config.low_competition_safety_margin_cents,
+            "low_competition_max_spread_cents": config.low_competition_max_spread_cents,
+            "low_competition_require_ai_allow": config.low_competition_require_ai_allow,
+            "low_competition_max_entry_exit_slippage_cents": config.low_competition_max_entry_exit_slippage_cents,
+            "low_competition_max_bad_fill_recovery_days": config.low_competition_max_bad_fill_recovery_days,
         },
         "candle_summary": candle_summary,
     })
@@ -510,6 +516,29 @@ fn enforce_reward_ai_advisory(
         return;
     }
 
+    if low_competition_requires_high_confidence_allow(plan, config) {
+        if advisory.suitability != RewardAiSuitability::Allow {
+            reject_ai_gated_plan(
+                plan,
+                &format!(
+                    "AI advisory {}: low-competition sleeve requires high-confidence allow",
+                    advisory.suitability.as_str()
+                ),
+            );
+            return;
+        }
+        if advisory.confidence < min_confidence {
+            reject_ai_gated_plan(
+                plan,
+                &format!(
+                    "AI advisory confidence {} below low-competition threshold {min_confidence}",
+                    advisory.confidence
+                ),
+            );
+            return;
+        }
+    }
+
     if !plan.eligible
         || config.selection_mode != RewardSelectionMode::Enforce
         || config.quote_mode != RewardQuoteMode::Auto
@@ -523,6 +552,15 @@ fn enforce_reward_ai_advisory(
         RewardPlanQuoteMode::SingleNo => keep_single_ai_leg(plan, "no"),
         RewardPlanQuoteMode::Double | RewardPlanQuoteMode::None => {}
     }
+}
+
+fn low_competition_requires_high_confidence_allow(
+    plan: &RewardQuotePlan,
+    config: &RewardBotConfig,
+) -> bool {
+    config.low_competition_require_ai_allow
+        && config.low_competition_mode == RewardLowCompetitionMode::Enforce
+        && plan.strategy_bucket == RewardStrategyBucket::LowCompetition
 }
 
 fn keep_single_ai_leg(plan: &mut RewardQuotePlan, outcome: &str) {

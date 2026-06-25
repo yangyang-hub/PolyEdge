@@ -78,6 +78,10 @@ fn apply_reward_config_value(config: &mut RewardBotConfig, key: &str, value: &st
         "low_competition_max_competition_multiple" => {
             config.low_competition_max_competition_multiple = parse_decimal_config(key, value)?;
         }
+        "low_competition_candidate_max_competition_multiple" => {
+            config.low_competition_candidate_max_competition_multiple =
+                parse_decimal_config(key, value)?;
+        }
         "low_competition_max_account_allocation_bps" => {
             config.low_competition_max_account_allocation_bps = parse_u16_config(key, value)?;
         }
@@ -110,14 +114,71 @@ fn apply_reward_config_value(config: &mut RewardBotConfig, key: &str, value: &st
         "low_competition_min_exit_depth_multiple" => {
             config.low_competition_min_exit_depth_multiple = parse_decimal_config(key, value)?;
         }
+        "low_competition_max_entry_exit_slippage_cents" => {
+            config.low_competition_max_entry_exit_slippage_cents = parse_decimal_config(key, value)?;
+        }
+        "low_competition_max_bad_fill_recovery_days" => {
+            config.low_competition_max_bad_fill_recovery_days = parse_decimal_config(key, value)?;
+        }
         "low_competition_max_midpoint_range_cents" => {
             config.low_competition_max_midpoint_range_cents = parse_decimal_config(key, value)?;
+        }
+        "low_competition_max_top_of_book_flip_count" => {
+            config.low_competition_max_top_of_book_flip_count = parse_u64_config(key, value)?;
         }
         "low_competition_observation_window_sec" => {
             config.low_competition_observation_window_sec = parse_u64_config(key, value)?;
         }
         "low_competition_min_book_samples" => {
             config.low_competition_min_book_samples = parse_u64_config(key, value)?;
+        }
+        "low_competition_quote_bid_rank" => {
+            config.low_competition_quote_bid_rank = parse_u16_config(key, value)?;
+        }
+        "low_competition_safety_margin_cents" => {
+            config.low_competition_safety_margin_cents = parse_decimal_config(key, value)?;
+        }
+        "low_competition_max_spread_cents" => {
+            config.low_competition_max_spread_cents = parse_decimal_config(key, value)?;
+        }
+        "low_competition_max_market_spread_cents" => {
+            config.low_competition_max_market_spread_cents = parse_decimal_config(key, value)?;
+        }
+        "low_competition_min_market_score" => {
+            config.low_competition_min_market_score = parse_decimal_config(key, value)?;
+        }
+        "low_competition_require_ai_allow" => {
+            config.low_competition_require_ai_allow = parse_bool_config(key, value)?;
+        }
+        "low_competition_info_risk_avoid_level" => {
+            config.low_competition_info_risk_avoid_level = RewardInfoRiskLevel::from_str(value)?;
+        }
+        "low_competition_cancel_confirm_sec" => {
+            config.low_competition_cancel_confirm_sec = parse_u64_config(key, value)?;
+        }
+        "low_competition_cancel_share_threshold_ratio_bps" => {
+            config.low_competition_cancel_share_threshold_ratio_bps = parse_u16_config(key, value)?;
+        }
+        "low_competition_cancel_competition_multiple_factor" => {
+            config.low_competition_cancel_competition_multiple_factor =
+                parse_decimal_config(key, value)?;
+        }
+        "low_competition_cancel_max_exit_slippage_cents" => {
+            config.low_competition_cancel_max_exit_slippage_cents =
+                parse_decimal_config(key, value)?;
+        }
+        "low_competition_cancel_min_exit_depth_usd" => {
+            config.low_competition_cancel_min_exit_depth_usd = parse_decimal_config(key, value)?;
+        }
+        "low_competition_cancel_exit_depth_multiple" => {
+            config.low_competition_cancel_exit_depth_multiple = parse_decimal_config(key, value)?;
+        }
+        "low_competition_cancel_midpoint_range_floor_cents" => {
+            config.low_competition_cancel_midpoint_range_floor_cents =
+                parse_decimal_config(key, value)?;
+        }
+        "low_competition_global_open_order_share_bps" => {
+            config.low_competition_global_open_order_share_bps = parse_u16_config(key, value)?;
         }
         "ai_advisory_enabled" => config.ai_advisory_enabled = parse_bool_config(key, value)?,
         "ai_provider" => config.ai_provider = RewardAiProvider::from_str(value)?,
@@ -286,6 +347,12 @@ fn reward_config_entries(config: &RewardBotConfig) -> Vec<(&'static str, String)
             config.low_competition_max_competition_multiple.to_string(),
         ),
         (
+            "low_competition_candidate_max_competition_multiple",
+            config
+                .low_competition_candidate_max_competition_multiple
+                .to_string(),
+        ),
+        (
             "low_competition_max_account_allocation_bps",
             config.low_competition_max_account_allocation_bps.to_string(),
         ),
@@ -334,8 +401,22 @@ fn reward_config_entries(config: &RewardBotConfig) -> Vec<(&'static str, String)
             config.low_competition_min_exit_depth_multiple.to_string(),
         ),
         (
+            "low_competition_max_entry_exit_slippage_cents",
+            config.low_competition_max_entry_exit_slippage_cents
+                .to_string(),
+        ),
+        (
+            "low_competition_max_bad_fill_recovery_days",
+            config.low_competition_max_bad_fill_recovery_days
+                .to_string(),
+        ),
+        (
             "low_competition_max_midpoint_range_cents",
             config.low_competition_max_midpoint_range_cents.to_string(),
+        ),
+        (
+            "low_competition_max_top_of_book_flip_count",
+            config.low_competition_max_top_of_book_flip_count.to_string(),
         ),
         (
             "low_competition_observation_window_sec",
@@ -344,6 +425,77 @@ fn reward_config_entries(config: &RewardBotConfig) -> Vec<(&'static str, String)
         (
             "low_competition_min_book_samples",
             config.low_competition_min_book_samples.to_string(),
+        ),
+        (
+            "low_competition_quote_bid_rank",
+            config.low_competition_quote_bid_rank.to_string(),
+        ),
+        (
+            "low_competition_safety_margin_cents",
+            config.low_competition_safety_margin_cents.to_string(),
+        ),
+        (
+            "low_competition_max_spread_cents",
+            config.low_competition_max_spread_cents.to_string(),
+        ),
+        (
+            "low_competition_max_market_spread_cents",
+            config.low_competition_max_market_spread_cents.to_string(),
+        ),
+        (
+            "low_competition_min_market_score",
+            config.low_competition_min_market_score.to_string(),
+        ),
+        (
+            "low_competition_require_ai_allow",
+            config.low_competition_require_ai_allow.to_string(),
+        ),
+        (
+            "low_competition_info_risk_avoid_level",
+            config.low_competition_info_risk_avoid_level
+                .as_str()
+                .to_string(),
+        ),
+        (
+            "low_competition_cancel_confirm_sec",
+            config.low_competition_cancel_confirm_sec.to_string(),
+        ),
+        (
+            "low_competition_cancel_share_threshold_ratio_bps",
+            config
+                .low_competition_cancel_share_threshold_ratio_bps
+                .to_string(),
+        ),
+        (
+            "low_competition_cancel_competition_multiple_factor",
+            config
+                .low_competition_cancel_competition_multiple_factor
+                .to_string(),
+        ),
+        (
+            "low_competition_cancel_max_exit_slippage_cents",
+            config
+                .low_competition_cancel_max_exit_slippage_cents
+                .to_string(),
+        ),
+        (
+            "low_competition_cancel_min_exit_depth_usd",
+            config.low_competition_cancel_min_exit_depth_usd.to_string(),
+        ),
+        (
+            "low_competition_cancel_exit_depth_multiple",
+            config.low_competition_cancel_exit_depth_multiple.to_string(),
+        ),
+        (
+            "low_competition_cancel_midpoint_range_floor_cents",
+            config
+                .low_competition_cancel_midpoint_range_floor_cents
+                .to_string(),
+        ),
+        (
+            "low_competition_global_open_order_share_bps",
+            config.low_competition_global_open_order_share_bps
+                .to_string(),
         ),
         (
             "ai_advisory_enabled",

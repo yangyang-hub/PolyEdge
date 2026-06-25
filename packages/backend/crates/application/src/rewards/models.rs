@@ -296,9 +296,27 @@ pub struct RewardBotConfig {
     pub low_competition_min_reward_per_100_usd_day: Decimal,
     pub low_competition_min_exit_depth_usd: Decimal,
     pub low_competition_min_exit_depth_multiple: Decimal,
+    pub low_competition_max_entry_exit_slippage_cents: Decimal,
+    pub low_competition_max_bad_fill_recovery_days: Decimal,
     pub low_competition_max_midpoint_range_cents: Decimal,
+    pub low_competition_max_top_of_book_flip_count: u64,
     pub low_competition_observation_window_sec: u64,
     pub low_competition_min_book_samples: u64,
+    pub low_competition_quote_bid_rank: u16,
+    pub low_competition_safety_margin_cents: Decimal,
+    pub low_competition_max_spread_cents: Decimal,
+    pub low_competition_max_market_spread_cents: Decimal,
+    pub low_competition_min_market_score: Decimal,
+    pub low_competition_require_ai_allow: bool,
+    pub low_competition_info_risk_avoid_level: RewardInfoRiskLevel,
+    pub low_competition_cancel_confirm_sec: u64,
+    pub low_competition_cancel_share_threshold_ratio_bps: u16,
+    pub low_competition_cancel_competition_multiple_factor: Decimal,
+    pub low_competition_cancel_max_exit_slippage_cents: Decimal,
+    pub low_competition_cancel_min_exit_depth_usd: Decimal,
+    pub low_competition_cancel_exit_depth_multiple: Decimal,
+    pub low_competition_cancel_midpoint_range_floor_cents: Decimal,
+    pub low_competition_global_open_order_share_bps: u16,
     pub ai_advisory_enabled: bool,
     pub ai_provider: RewardAiProvider,
     pub ai_request_format: RewardAiRequestFormat,
@@ -468,11 +486,47 @@ pub struct RewardBotConfigPatch {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub low_competition_min_exit_depth_multiple: Option<Decimal>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub low_competition_max_entry_exit_slippage_cents: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub low_competition_max_bad_fill_recovery_days: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub low_competition_max_midpoint_range_cents: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub low_competition_max_top_of_book_flip_count: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub low_competition_observation_window_sec: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub low_competition_min_book_samples: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub low_competition_quote_bid_rank: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub low_competition_safety_margin_cents: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub low_competition_max_spread_cents: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub low_competition_max_market_spread_cents: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub low_competition_min_market_score: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub low_competition_require_ai_allow: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub low_competition_info_risk_avoid_level: Option<RewardInfoRiskLevel>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub low_competition_cancel_confirm_sec: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub low_competition_cancel_share_threshold_ratio_bps: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub low_competition_cancel_competition_multiple_factor: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub low_competition_cancel_max_exit_slippage_cents: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub low_competition_cancel_min_exit_depth_usd: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub low_competition_cancel_exit_depth_multiple: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub low_competition_cancel_midpoint_range_floor_cents: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub low_competition_global_open_order_share_bps: Option<u16>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ai_advisory_enabled: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

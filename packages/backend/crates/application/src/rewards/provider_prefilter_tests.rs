@@ -47,6 +47,7 @@ fn prefilter_test_metrics(eligible: bool) -> RewardLowCompetitionMetrics {
         market_allocation_bps: decimal("100"),
         exit_depth_usd: decimal("200"),
         exit_slippage_cents: Some(Decimal::ZERO),
+        bad_fill_recovery_days: Some(Decimal::ZERO),
         midpoint_range_cents: Some(decimal("1")),
         top_of_book_flip_count: Some(0),
         sample_count: 20,

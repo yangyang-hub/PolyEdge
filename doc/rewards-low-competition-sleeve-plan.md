@@ -1,8 +1,8 @@
 # Rewards 低竞争市场 Sleeve 实现方案
 
-最后更新：2026-06-24
+最后更新：2026-06-25
 
-状态：v2 已实现并默认关闭。当前已支持独立 `off/observe/enforce` profile、低竞争竞争份额与资金占比指标、前端配置/展示、独立市场数/开放订单/库存 gate、managed order bucket 持久化、跨周期 observation 表、snapshot shadow report、provider 前硬过滤、低竞争 BUY 提交前全计划 token last-look 和挂单后低竞争专用撤单 gate；自动切换/自动启用 `enforce` 仍未实现。
+状态：v2 已实现并默认关闭。当前已支持独立 `off/observe/enforce` profile、低竞争竞争份额与资金占比指标、入场退出滑点/坏成交恢复天数/top-of-book 跳变硬 gate、低竞争专属买二/安全边际/spread/市场 spread/评分配置、前端配置/展示、独立市场数/开放订单/库存 gate、managed order bucket 持久化、跨周期 observation 表、snapshot shadow report、provider 前硬过滤、低竞争 BUY 提交前全计划 token last-look 和挂单后低竞争专用可配置撤单 gate；自动切换/自动启用 `enforce` 仍未实现。
 
 ## 目标
 
@@ -95,13 +95,15 @@ exit_depth_usd >= max(
 )
 ```
 
-`exit_slippage_cents`：按计划 size 吃掉当前 bid 深度时，相对买入价或目标退出价的最坏滑点。observe 阶段可以先计算但不 gate；enforce 阶段应作为硬过滤。
+`exit_slippage_cents`：按计划 size 吃掉当前 bid 深度时，相对买入价或目标退出价的最坏滑点。当前 enforce 使用 `low_competition_max_entry_exit_slippage_cents` 作为入场硬过滤。
+
+`bad_fill_recovery_days`：用估算退出滑点损耗除以该计划预估日奖励，默认要求不超过 `low_competition_max_bad_fill_recovery_days=2`。它把“奖励是否值得做”和“被吃后能否靠奖励补回退出损耗”放到同一尺度。
 
 ### 稳定性指标
 
 `midpoint_range_cents`：worker 本地盘口历史窗口内 YES/NO midpoint 的最大波动范围。初始窗口建议 10-30 分钟，样本不足时 fail closed。
 
-`top_of_book_flip_count`：窗口内买一/卖一或目标 bid rank 的价格跳变次数。低成交市场不应只看成交量，必须看盘口是否被小资金频繁重排。
+`top_of_book_flip_count`：窗口内买一/卖一或目标 bid rank 的价格跳变次数。低成交市场不应只看成交量，必须看盘口是否被小资金频繁重排。当前 enforce 使用 `low_competition_max_top_of_book_flip_count` 作为硬过滤，0 表示关闭。
 
 ### 风险指标
 
@@ -135,14 +137,33 @@ exit_depth_usd >= max(
 | `low_competition_min_market_liquidity_usd` | `0` | 历史兼容字段；后端归一化强制为 0 |
 | `low_competition_min_market_volume_24h_usd` | `0` | 历史兼容字段；后端归一化强制为 0 |
 | `low_competition_max_competition_usd` | `0` | 可选旧式绝对竞争资金上限；0 表示关闭 |
-| `low_competition_min_reward_per_100_usd_day` | `0.25` | 每 100 美元 probe 资金的最低预估日奖励 |
+| `low_competition_candidate_max_competition_multiple` | `5` | gate 前候选伪低竞争剔除阈值，不低于正式 competition multiple gate |
+| `low_competition_min_reward_per_100_usd_day` | `0.50` | 每 100 美元 probe 资金的最低预估日奖励 |
 | `low_competition_min_exit_depth_usd` | `50` | 最低退出深度 |
 | `low_competition_min_exit_depth_multiple` | `3` | 退出深度至少覆盖计划 notional 的倍数 |
+| `low_competition_max_entry_exit_slippage_cents` | `1` | 入场时按计划 size 卖回盘口的最大允许退出滑点 |
+| `low_competition_max_bad_fill_recovery_days` | `2` | 坏成交退出损耗最多由多少天预估奖励补回 |
 | `low_competition_max_midpoint_range_cents` | `2` | 历史窗口最大 midpoint 波动 |
+| `low_competition_max_top_of_book_flip_count` | `6` | 历史窗口最大 top-of-book 跳变次数；0 关闭 |
 | `low_competition_observation_window_sec` | `1800` | 盘口稳定性观察窗口 |
-| `low_competition_min_book_samples` | `20` | 样本不足时不可 enforce |
+| `low_competition_min_book_samples` | `30` | 样本不足时不可 enforce |
+| `low_competition_quote_bid_rank` | `2` | 低竞争专属挂单档位，默认买二 |
+| `low_competition_safety_margin_cents` | `2` | 低竞争双边报价安全边际 |
+| `low_competition_max_spread_cents` | `6` | 低竞争 rewards spread 上限 |
+| `low_competition_max_market_spread_cents` | `8` | 低竞争 Gamma 市场价差上限 |
+| `low_competition_min_market_score` | `8` | 低竞争最低综合评分 |
+| `low_competition_require_ai_allow` | `true` | 低竞争 enforce 只接受高置信度 AI allow |
+| `low_competition_info_risk_avoid_level` | `medium` | 低竞争专属信息风险过滤等级 |
+| `low_competition_cancel_confirm_sec` | `30` | 竞争恶化撤单确认窗口 |
+| `low_competition_cancel_share_threshold_ratio_bps` | `8000` | 撤单占池阈值 = 入场占池阈值 × 0.8 |
+| `low_competition_cancel_competition_multiple_factor` | `1.5` | 撤单 competition multiple 阈值放宽倍数 |
+| `low_competition_cancel_max_exit_slippage_cents` | `2` | 挂单后退出滑点撤单阈值 |
+| `low_competition_cancel_min_exit_depth_usd` | `20` | 挂单后最低退出深度 |
+| `low_competition_cancel_exit_depth_multiple` | `2` | 挂单后退出深度相对当前 condition BUY 剩余 notional 的倍数 |
+| `low_competition_cancel_midpoint_range_floor_cents` | `3` | 撤单稳定性阈值下限 |
+| `low_competition_global_open_order_share_bps` | `3000` | 低竞争开放订单最多占全局开放订单上限的比例 |
 
-前端可以先只暴露 `mode`、资金上限和核心阈值，其余参数后续放入高级配置。不要在 UI 文案中暗示该策略比主策略更安全；它只是更小额度、更严格 gate 的实验分层。
+前端已暴露低竞争核心阈值、专属报价、provider 加严和撤单阈值。不要在 UI 文案中暗示该策略比主策略更安全；它只是更小额度、更严格 gate 的实验分层。
 
 ## 后端实现状态
 
@@ -182,6 +203,7 @@ RewardLowCompetitionMetrics {
   market_allocation_bps,
   exit_depth_usd,
   exit_slippage_cents,
+  bad_fill_recovery_days,
   midpoint_range_cents,
   top_of_book_flip_count,
   sample_count,
@@ -261,7 +283,7 @@ v2 使用当前 orderbook top levels、账户状态、开放订单和 worker 本
 - 新单仍要通过现有 live materializer、post-only、scoring、撤单风控、kill switch、AI advisory、info-risk 和账户外部 BUY notional 扣减。
 - 缺少盘口历史、样本不足、info-risk 缓存缺失、AI 缓存缺失或 provider 低置信度时 fail closed。
 - 实际计划腿仍由 rewards 最小份额、Polymarket 1 美元最小名义金额和 live placement 资金准入决定；低竞争 gate 用 probe notional 评估竞争程度，并用 after-plan 挂单占比限制资金暴露。
-- 挂单后撤单使用低竞争专用策略：通用硬风控后不再跑普通市场的 depth/rank/history/requote 规则；competition share 低于入场阈值 80% 或 competition multiple 高于入场阈值 1.5 倍时，需要 30 秒历史盘口同向确认才撤；账户/单 condition 挂单资金占比超限立即撤；退出深度阈值为 `max(20U, 当前 condition BUY 剩余 notional * 1.5)`，退出滑点超过 3c 才撤，无法估算滑点或缺少历史样本不会单独撤单。事件驱动撤单会在 companion token 更新时拉取订单自身 token 与当前低竞争计划的全部报价 token 后复核；低竞争待提交 BUY 的 last-look 同样要求全计划 token 都由 orderbook 服务以 1 秒 max-age 返回，否则本轮不提交。
+- 挂单后撤单使用低竞争专用策略：通用硬风控后不再跑普通市场的 depth/rank/history/requote 规则；competition share、competition multiple、确认窗口、退出深度、退出滑点和 midpoint range floor 均由 `low_competition_cancel_*` 配置控制，默认 share 低于入场阈值 80% 或 competition multiple 高于入场阈值 1.5 倍时需要 30 秒历史盘口同向确认，退出深度阈值为 `max(20U, 当前 condition BUY 剩余 notional * 2)`，退出滑点超过 2c 才撤；无法估算滑点或缺少历史样本不会单独撤单。事件驱动撤单会在 companion token 更新时拉取订单自身 token 与当前低竞争计划的全部报价 token 后复核；低竞争待提交 BUY 的 last-look 同样要求全计划 token 都由 orderbook 服务以 1 秒 max-age 返回，否则本轮不提交。
 
 ## 前端实现状态
 
@@ -281,7 +303,7 @@ v2 使用当前 orderbook top levels、账户状态、开放订单和 worker 本
 2. `observe` 模式只展示指标和标签，不改变执行按钮语义。
 3. `enforce` 模式显示独立资金上限、开放订单上限、competition share/competition multiple、账户/单市场挂单占比、退出深度和最小预估奖励阈值。
 4. Quote plans 表增加低竞争 badge 和摘要：competition share、账户/单市场挂单占比、预估 reward/100/day、竞争 notional、退出深度、样本数和 midpoint range。
-5. 活动页增加低竞争观察报告，展示最近 24 小时 observation 数、通过率、competition share 中位数、账户/单市场占比 P90、reward 中位/P90、退出深度倍数、中点波动 P95、退出滑点 P95、样本不足、AI/信息风险拦截和主策略重叠。
+5. 活动页增加低竞争观察报告，展示最近 24 小时 observation 数、通过率、competition share 中位数、账户/单市场占比 P90、reward 中位/P90、退出深度倍数、中点波动 P95、退出滑点 P95、坏成交恢复天数 P95、样本不足、AI/信息风险拦截和主策略重叠。
 6. 不新增前端外部 API 调用；所有数据来自 `/api/v1/rewards-bot` snapshot。
 
 ## Shadow Report

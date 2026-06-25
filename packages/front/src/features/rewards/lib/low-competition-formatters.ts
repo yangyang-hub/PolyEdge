@@ -34,10 +34,13 @@ export function formatLowCompetitionReason(reason: string) {
   if (normalized.includes("condition allocation")) return labels.marketAllocation;
   if (normalized.includes("estimated reward/100/day")) return labels.reward;
   if (normalized.includes("exit depth")) return labels.exitDepth;
+  if (normalized.includes("entry exit slippage")) return labels.entryExitSlippage;
   if (normalized.includes("exit slippage")) return labels.exitSlippage;
+  if (normalized.includes("bad-fill recovery")) return labels.recoveryDays;
   if (normalized.includes("book history samples")) return labels.samples;
   if (normalized.includes("book history midpoint range unavailable")) return labels.midpointUnavailable;
   if (normalized.includes("midpoint range")) return labels.midpointRange;
+  if (normalized.includes("top-of-book flips")) return labels.topOfBookFlips;
   if (normalized.includes("live orderbook validation failed")) return labels.liveValidation;
   if (normalized.includes("recent live orderbook validation failed")) return labels.liveValidation;
   return reason;
@@ -58,6 +61,7 @@ export function formatLowCompetitionReportReason(reason: string) {
   if (normalized.includes("market allocation p90")) return labels.marketAllocation;
   if (normalized.includes("median estimated reward")) return labels.reward;
   if (normalized.includes("median exit depth multiple")) return labels.exitDepth;
+  if (normalized.includes("bad-fill recovery days p95")) return labels.recoveryDays;
   if (normalized.includes("midpoint range p95")) return labels.midpointRange;
   if (normalized.includes("unavailable")) return labels.unavailable;
   return reason;

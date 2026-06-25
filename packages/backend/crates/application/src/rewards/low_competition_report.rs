@@ -153,6 +153,10 @@ pub fn build_low_competition_shadow_report(
         .iter()
         .filter_map(|observation| observation.exit_slippage_cents)
         .collect::<Vec<_>>();
+    let bad_fill_recovery_days = observations
+        .iter()
+        .filter_map(low_competition_observation_bad_fill_recovery_days)
+        .collect::<Vec<_>>();
 
     let estimated_reward_per_100_usd_day_median =
         percentile_nearest_decimal(estimated_rewards.clone(), 5_000);
@@ -165,6 +169,7 @@ pub fn build_low_competition_shadow_report(
         percentile_nearest_decimal(exit_depth_multiples, 5_000);
     let midpoint_range_cents_p95 = percentile_nearest_decimal(midpoint_ranges, 9_500);
     let exit_slippage_cents_p95 = percentile_nearest_decimal(exit_slippages, 9_500);
+    let bad_fill_recovery_days_p95 = percentile_nearest_decimal(bad_fill_recovery_days, 9_500);
 
     let gate_pass_ratio = decimal_count_ratio(gate_pass_count, total);
     let sample_insufficient_ratio = decimal_count_ratio(sample_insufficient_count, total);
@@ -182,6 +187,7 @@ pub fn build_low_competition_shadow_report(
         market_allocation_bps_p90,
         estimated_reward_per_100_usd_day_median,
         exit_depth_multiple_median,
+        bad_fill_recovery_days_p95,
         midpoint_range_cents_p95,
         config,
     );
@@ -219,6 +225,7 @@ pub fn build_low_competition_shadow_report(
         exit_depth_multiple_median,
         midpoint_range_cents_p95,
         exit_slippage_cents_p95,
+        bad_fill_recovery_days_p95,
         should_consider_enforce,
         recommendation_reasons,
     }
@@ -245,6 +252,29 @@ fn low_competition_sample_insufficient(metrics: &RewardLowCompetitionMetrics) ->
     })
 }
 
+fn low_competition_observation_bad_fill_recovery_days(
+    observation: &RewardLowCompetitionObservation,
+) -> Option<Decimal> {
+    let slippage_cents = observation.exit_slippage_cents?;
+    if slippage_cents <= Decimal::ZERO {
+        return Some(Decimal::ZERO);
+    }
+    if observation.estimated_reward_per_100_usd_day <= Decimal::ZERO
+        || observation.planned_notional_usd <= Decimal::ZERO
+    {
+        return None;
+    }
+    let estimated_daily_reward = observation.estimated_reward_per_100_usd_day
+        * observation.planned_notional_usd
+        / decimal("100");
+    if estimated_daily_reward <= Decimal::ZERO {
+        return None;
+    }
+    let estimated_slippage_cost =
+        observation.planned_notional_usd * slippage_cents / decimal("100");
+    Some((estimated_slippage_cost / estimated_daily_reward).round_dp(4))
+}
+
 fn low_competition_recommendation_reasons(
     observations: usize,
     unique_markets: usize,
@@ -257,6 +287,7 @@ fn low_competition_recommendation_reasons(
     market_allocation_bps_p90: Option<Decimal>,
     reward_median: Option<Decimal>,
     exit_depth_multiple_median: Option<Decimal>,
+    bad_fill_recovery_days_p95: Option<Decimal>,
     midpoint_range_cents_p95: Option<Decimal>,
     config: &RewardBotConfig,
 ) -> Vec<String> {
@@ -332,6 +363,16 @@ fn low_competition_recommendation_reasons(
             config.low_competition_min_exit_depth_multiple
         )),
         None => reasons.push("median exit depth multiple unavailable".to_string()),
+    }
+    if config.low_competition_max_bad_fill_recovery_days > Decimal::ZERO {
+        match bad_fill_recovery_days_p95 {
+            Some(value) if value <= config.low_competition_max_bad_fill_recovery_days => {}
+            Some(value) => reasons.push(format!(
+                "bad-fill recovery days p95 {value} above {}",
+                config.low_competition_max_bad_fill_recovery_days
+            )),
+            None => reasons.push("bad-fill recovery days unavailable".to_string()),
+        }
     }
     match midpoint_range_cents_p95 {
         Some(value) if value <= config.low_competition_max_midpoint_range_cents => {}

@@ -30,11 +30,15 @@ fn live_condition_budget_capped_by_positions(
     budget
 }
 
-fn live_low_competition_global_open_order_cap(max_open_orders: usize) -> usize {
-    if max_open_orders == 0 {
+fn live_low_competition_global_open_order_cap(
+    config: &RewardBotConfig,
+    max_open_orders: usize,
+) -> usize {
+    if max_open_orders == 0 || config.low_competition_global_open_order_share_bps == 0 {
         return 0;
     }
-    ((max_open_orders * LOW_COMPETITION_GLOBAL_OPEN_ORDER_SHARE_BPS) / 10_000).max(1)
+    ((max_open_orders * usize::from(config.low_competition_global_open_order_share_bps)) / 10_000)
+        .max(1)
 }
 
 fn live_low_competition_open_order_count(orders: &[ManagedRewardOrder]) -> usize {
