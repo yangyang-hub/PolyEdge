@@ -161,6 +161,10 @@ pub struct RewardLowCompetitionMetrics {
     pub eligible_for_low_competition: bool,
     #[serde(default)]
     pub rejection_reasons: Vec<String>,
+    #[serde(default)]
+    pub not_low_competition: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub not_low_competition_reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -201,6 +205,8 @@ pub struct RewardLowCompetitionObservation {
     pub info_risk_blocked: bool,
     pub standard_plan_overlap: bool,
     #[serde(default)]
+    pub not_low_competition: bool,
+    #[serde(default)]
     pub rejection_reasons: Vec<String>,
     #[serde(with = "time::serde::rfc3339")]
     pub created_at: OffsetDateTime,
@@ -222,12 +228,14 @@ pub struct RewardLowCompetitionShadowReport {
     pub ai_blocked_count: usize,
     pub info_risk_blocked_count: usize,
     pub standard_overlap_count: usize,
+    pub not_low_competition_count: usize,
     pub gate_pass_ratio: Decimal,
     pub final_pass_ratio: Decimal,
     pub sample_insufficient_ratio: Decimal,
     pub ai_blocked_ratio: Decimal,
     pub info_risk_blocked_ratio: Decimal,
     pub standard_overlap_ratio: Decimal,
+    pub not_low_competition_ratio: Decimal,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub competition_share_bps_median: Option<Decimal>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -283,6 +283,9 @@ pub struct RewardBotConfig {
     pub low_competition_probe_notional_usd: Decimal,
     pub low_competition_min_competition_share_bps: u16,
     pub low_competition_max_competition_multiple: Decimal,
+    /// 早期剔除阈值：候选 competition_multiple 超过该值时判定为"伪低竞争"
+    /// （高竞争市场混入），仅用于下游 prewarm/observation 降级，不进入正式 gate。
+    pub low_competition_candidate_max_competition_multiple: Decimal,
     pub low_competition_max_account_allocation_bps: u16,
     pub low_competition_max_market_allocation_bps: u16,
     pub low_competition_candidate_liquidity_filter_enabled: bool,
@@ -442,6 +445,8 @@ pub struct RewardBotConfigPatch {
     pub low_competition_min_competition_share_bps: Option<u16>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub low_competition_max_competition_multiple: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub low_competition_candidate_max_competition_multiple: Option<Decimal>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub low_competition_max_account_allocation_bps: Option<u16>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

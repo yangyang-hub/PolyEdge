@@ -1673,6 +1673,7 @@ CREATE TABLE reward_low_competition_observations (
     ai_blocked BOOLEAN NOT NULL DEFAULT false,
     info_risk_blocked BOOLEAN NOT NULL DEFAULT false,
     standard_plan_overlap BOOLEAN NOT NULL DEFAULT false,
+    not_low_competition BOOLEAN NOT NULL DEFAULT false,
     rejection_reasons JSONB NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof(rejection_reasons) = 'array'),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );

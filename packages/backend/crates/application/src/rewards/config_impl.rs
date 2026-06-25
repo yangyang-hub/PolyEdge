@@ -39,6 +39,7 @@ impl Default for RewardBotConfig {
             low_competition_probe_notional_usd: decimal("10"),
             low_competition_min_competition_share_bps: 5_000,
             low_competition_max_competition_multiple: decimal("1"),
+            low_competition_candidate_max_competition_multiple: decimal("20"),
             low_competition_max_account_allocation_bps: 1_500,
             low_competition_max_market_allocation_bps: 500,
             low_competition_candidate_liquidity_filter_enabled: false,
@@ -181,6 +182,19 @@ impl RewardBotConfig {
             Decimal::ZERO,
             decimal("1000000"),
         );
+        // 候选早期剔除阈值必须 >= 正式 gate 阈值，只用于剔除极端高竞争混入，
+        // 不抢正式 gate 的活；clamp 后再强制不低于正式 multiple 阈值。
+        self.low_competition_candidate_max_competition_multiple = clamp_decimal(
+            self.low_competition_candidate_max_competition_multiple,
+            decimal("1"),
+            decimal("100000"),
+        );
+        if self.low_competition_candidate_max_competition_multiple
+            < self.low_competition_max_competition_multiple
+        {
+            self.low_competition_candidate_max_competition_multiple =
+                self.low_competition_max_competition_multiple;
+        }
         self.low_competition_max_account_allocation_bps =
             self.low_competition_max_account_allocation_bps.clamp(0, 10_000);
         self.low_competition_max_market_allocation_bps =
@@ -432,6 +446,9 @@ impl RewardBotConfig {
         }
         if let Some(value) = patch.low_competition_max_competition_multiple {
             next.low_competition_max_competition_multiple = value;
+        }
+        if let Some(value) = patch.low_competition_candidate_max_competition_multiple {
+            next.low_competition_candidate_max_competition_multiple = value;
         }
         if let Some(value) = patch.low_competition_max_account_allocation_bps {
             next.low_competition_max_account_allocation_bps = value;
@@ -783,5 +800,29 @@ mod reward_config_tests {
         assert_eq!(filter.min_market_liquidity_usd, Decimal::ZERO);
         assert_eq!(filter.min_market_volume_24h_usd, Decimal::ZERO);
         assert!(filter.prefer_low_competition_ordering);
+    }
+
+    #[test]
+    fn low_competition_candidate_threshold_defaults_above_gate_and_clamps() {
+        let config = RewardBotConfig::default().normalized();
+        // 默认候选早期剔除阈值(20)应高于正式 gate 阈值(1)
+        assert_eq!(
+            config.low_competition_candidate_max_competition_multiple,
+            decimal("20")
+        );
+        assert!(config.low_competition_candidate_max_competition_multiple
+            >= config.low_competition_max_competition_multiple);
+
+        // 低于正式 gate 阈值会被抬升到 gate 阈值，避免候选阈值抢正式 gate 的活
+        let lifted = RewardBotConfig {
+            low_competition_candidate_max_competition_multiple: decimal("0.5"),
+            low_competition_max_competition_multiple: decimal("3"),
+            ..RewardBotConfig::default()
+        }
+        .normalized();
+        assert_eq!(
+            lifted.low_competition_candidate_max_competition_multiple,
+            decimal("3")
+        );
     }
 }

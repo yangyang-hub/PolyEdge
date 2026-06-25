@@ -1,6 +1,6 @@
 # Rewards（奖励机器人）
 
-最后更新：2026-06-24
+最后更新：2026-06-25
 
 ## 概述
 
@@ -73,7 +73,7 @@
 - 操作中心集中 Run / Save / Cancel / Reset，文案提醒当前命令可能提交或取消 Polymarket 实盘订单。
 - 配置编辑按执行、市场筛选、低竞争 sleeve、报价构造、盘口选择、AI 建议、库存与控制分组，包含仍生效的数值参数、布尔开关、受限下拉框和成交后策略；退出加价提示明确 0 表示原价卖。
 - 市场筛选面板公开质量硬门槛；通过门槛的市场由后端继续按奖励、流动性、成交量、剩余时长和奖励 spread 综合排序。
-- 低竞争市场 sleeve v2 已接入前端：DTO、Server Action Zod 校验、配置面板、低竞争策略观察面板和 quote plan 表格包含 `low_competition_mode`、独立市场/订单/库存上限与阈值、`strategy_bucket`、探测金额占池、外部同价资金、外部/探测倍数、账户/单市场挂单资金占比、预估 100U 日奖、退出深度/滑点、盘口稳定性窗口指标、最近 24 小时硬性通过率、AI/信息风险后可挂率、样本不足率、AI/信息风险拦截率和小额 enforce 建议；quote plan 行内指标按“当前值 / 门槛 / 通过状态”展示，并把常见后端 rejection reason 映射成中文主要卡点。页面不再把流动性或成交量作为低竞争准入，也不暗示低流动性本身是安全收益来源。后端兼容的低竞争 liquidity/volume 旧过滤字段仍保留在 DTO 中，但前端不展示这些控件，保存配置时会强制关闭并清零。
+- 低竞争市场 sleeve v2 已接入前端：DTO、Server Action Zod 校验、配置面板、低竞争策略观察面板和 quote plan 表格包含 `low_competition_mode`、独立市场/订单/库存上限与阈值、`strategy_bucket`、探测金额占池、外部同价资金、外部/探测倍数、账户/单市场挂单资金占比、预估 100U 日奖、退出深度/滑点、盘口稳定性窗口指标、最近 24 小时硬性通过率、AI/信息风险后可挂率、样本不足率、AI/信息风险拦截率、高竞争混入占比和小额 enforce 建议；quote plan 行内指标按“当前值 / 门槛 / 通过状态”展示，并把常见后端 rejection reason 映射成中文主要卡点。页面不再把流动性或成交量作为低竞争准入，也不暗示低流动性本身是安全收益来源。后端兼容的低竞争 liquidity/volume 旧过滤字段仍保留在 DTO 中，但前端不展示这些控件，保存配置时会强制关闭并清零。
 - 报价构造使用“挂单档位”下拉框选择买一/买二/买三，不再提供中间价“报价偏移”、`per_market_usd`“单市场额度”或 `quote_size_usd`“单腿金额”；默认买一。
 - 盘口选择公开 quote/selection mode、dominant 单边概率区间、退出深度、top1/top3 买盘集中度、HHI 和偏好分类评分加成；默认 `double + observe` 不改变既有双边挂单。
 - AI 建议面板保存 OpenAI/Anthropic provider、请求格式、advisory TTL、AI 批量市场数、信息风险启用、observe/enforce、过滤等级、信息风险 TTL、信息风险批量市场数、首单信息风险要求和首单观察窗口；API key、base URL、模型名、请求超时和 web search 开关只来自 worker 环境变量，不会出现在前端配置或 snapshot。AI advisory 与信息风险扫描由 worker 全量覆盖当前候选，优先开放订单、持仓和可挂 quote plan；批量市场数为 1 时保持逐市场 provider 请求，>1 时后端按 condition 拆分保存并对漏项回退单市场。报价计划表展示 AI suitability、推荐 quote mode、confidence 和首条 reason，也展示信息风险等级、类型、confidence 和摘要；信息风险 enforce 且缓存缺失时，后端会把对应计划显示为不可挂；首单 gate 只影响没有开放订单/库存的新 condition。

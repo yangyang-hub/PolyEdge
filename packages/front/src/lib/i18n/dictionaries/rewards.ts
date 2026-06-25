@@ -165,6 +165,8 @@ export const rewards = {
     lowCompetitionInfoRiskBlocked: "信息风险拦截比例",
     lowCompetitionStandardOverlap: "与普通策略重叠",
     lowCompetitionStandardOverlapHint: "重叠越高，低竞争 sleeve 越不像独立机会。",
+    lowCompetitionNotLowCompetition: "高竞争混入占比",
+    lowCompetitionNotLowCompetitionHint: "候选盘口竞争过激烈（流动性低 ≠ 低竞争），越高说明候选池越需净化。",
     lowCompetitionCompetitionShareMedian: "探测占池中位",
     lowCompetitionAccountAllocationP90: "账户占用高位",
     lowCompetitionAccountAllocationP90Hint: "90% 样本不超过此账户占用。",

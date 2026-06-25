@@ -259,6 +259,21 @@ fn build_low_competition_metrics(
         rejection_reasons.push("book history midpoint range unavailable".to_string());
     }
 
+    // 早期剔除分类：competition_multiple 超过候选阈值说明该市场盘口竞争极其激烈，
+    // 只是流动性/成交量低才被归为低竞争候选。该标签仅用于下游 prewarm/observation
+    // 降级，绝不进入 rejection_reasons，不影响 eligible_for_low_competition 或 enforce 流程。
+    let not_low_competition = config.low_competition_candidate_max_competition_multiple
+        > Decimal::ZERO
+        && competition_multiple > config.low_competition_candidate_max_competition_multiple;
+    let not_low_competition_reason = if not_low_competition {
+        Some(format!(
+            "competition multiple {competition_multiple} above early-exclusion {}",
+            config.low_competition_candidate_max_competition_multiple
+        ))
+    } else {
+        None
+    };
+
     RewardLowCompetitionMetrics {
         planned_notional_usd: planned_notional,
         competition_probe_notional_usd: competition_probe_notional,
@@ -282,6 +297,8 @@ fn build_low_competition_metrics(
         sample_count,
         eligible_for_low_competition: rejection_reasons.is_empty(),
         rejection_reasons,
+        not_low_competition,
+        not_low_competition_reason,
     }
 }
 
@@ -319,6 +336,8 @@ fn empty_low_competition_metrics(
         sample_count: 0,
         eligible_for_low_competition: false,
         rejection_reasons,
+        not_low_competition: false,
+        not_low_competition_reason: None,
     }
 }
 

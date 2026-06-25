@@ -615,6 +615,8 @@ fn low_competition_provider_test_plan(
         sample_count: 20,
         eligible_for_low_competition: true,
         rejection_reasons: Vec::new(),
+        not_low_competition: false,
+        not_low_competition_reason: None,
     });
     plan
 }

@@ -136,6 +136,7 @@ mod rewards_tests {
             ai_blocked: false,
             info_risk_blocked: false,
             standard_plan_overlap: false,
+            not_low_competition: false,
             rejection_reasons: Vec::new(),
             created_at: observed_at,
         }

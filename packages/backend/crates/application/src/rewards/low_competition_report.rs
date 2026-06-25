@@ -63,6 +63,7 @@ pub fn build_low_competition_observations(
                 ai_blocked,
                 info_risk_blocked,
                 standard_plan_overlap: standard_eligible_conditions.contains(&plan.condition_id),
+                not_low_competition: metrics.not_low_competition,
                 rejection_reasons: metrics.rejection_reasons.clone(),
                 created_at: observed_at,
             })
@@ -100,6 +101,10 @@ pub fn build_low_competition_shadow_report(
     let standard_overlap_count = observations
         .iter()
         .filter(|observation| observation.standard_plan_overlap)
+        .count();
+    let not_low_competition_count = observations
+        .iter()
+        .filter(|observation| observation.not_low_competition)
         .count();
     let unique_markets = observations
         .iter()
@@ -198,12 +203,14 @@ pub fn build_low_competition_shadow_report(
         ai_blocked_count,
         info_risk_blocked_count,
         standard_overlap_count,
+        not_low_competition_count,
         gate_pass_ratio,
         final_pass_ratio: decimal_count_ratio(final_pass_count, total),
         sample_insufficient_ratio,
         ai_blocked_ratio,
         info_risk_blocked_ratio,
         standard_overlap_ratio: decimal_count_ratio(standard_overlap_count, total),
+        not_low_competition_ratio: decimal_count_ratio(not_low_competition_count, total),
         competition_share_bps_median,
         account_allocation_bps_p90,
         market_allocation_bps_p90,

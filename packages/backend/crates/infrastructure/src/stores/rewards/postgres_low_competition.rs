@@ -48,6 +48,7 @@ async fn postgres_record_low_competition_observations(
               ai_blocked,
               info_risk_blocked,
               standard_plan_overlap,
+              not_low_competition,
               rejection_reasons,
               created_at
             )
@@ -55,7 +56,7 @@ async fn postgres_record_low_competition_observations(
               $1, $2, $3, $4, $5, $6, $7, $8,
               $9, $10, $11, $12, $13, $14, $15, $16,
               $17, $18, $19, $20, $21, $22, $23, $24,
-              $25, $26, $27, $28, $29, $30, $31, $32, $33
+              $25, $26, $27, $28, $29, $30, $31, $32, $33, $34
             )
             ON CONFLICT (id) DO NOTHING
             "#,
@@ -91,6 +92,7 @@ async fn postgres_record_low_competition_observations(
         .bind(observation.ai_blocked)
         .bind(observation.info_risk_blocked)
         .bind(observation.standard_plan_overlap)
+        .bind(observation.not_low_competition)
         .bind(Json(observation.rejection_reasons.clone()))
         .bind(observation.created_at)
         .execute(&mut *transaction)
@@ -151,6 +153,7 @@ async fn postgres_list_low_competition_observations(
                ai_blocked,
                info_risk_blocked,
                standard_plan_overlap,
+               not_low_competition,
                rejection_reasons,
                created_at
         FROM reward_low_competition_observations
@@ -260,6 +263,9 @@ fn low_competition_observation_from_row(
             .map_err(postgres_decode_error)?,
         standard_plan_overlap: row
             .try_get("standard_plan_overlap")
+            .map_err(postgres_decode_error)?,
+        not_low_competition: row
+            .try_get("not_low_competition")
             .map_err(postgres_decode_error)?,
         rejection_reasons: rejection_reasons.0,
         created_at: row.try_get("created_at").map_err(postgres_decode_error)?,

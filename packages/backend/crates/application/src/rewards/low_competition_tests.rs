@@ -657,6 +657,7 @@ fn low_competition_test_observation(
         ai_blocked: false,
         info_risk_blocked: false,
         standard_plan_overlap: false,
+        not_low_competition: false,
         rejection_reasons: if healthy {
             Vec::new()
         } else {
@@ -664,4 +665,129 @@ fn low_competition_test_observation(
         },
         created_at: observed_at,
     }
+}
+
+#[test]
+fn not_low_competition_flags_high_competition_candidates() {
+    // 生产诊断：候选 competition_multiple 中位 174×，盘口竞争极激烈但流动性低被归为低竞争。
+    // 候选早期剔除阈值默认 20；构造盘口竞争深度让 multiple 远超 20，验证标签生效。
+    let config = low_competition_plan_config(RewardLowCompetitionMode::Observe);
+    let books = test_books_with_competition(decimal("250"), decimal("250"));
+    let history = stable_book_history(&books, config.low_competition_min_book_samples);
+    let mut plans = build_reward_quote_plans_for_candidates(
+        &[RewardCandidateMarket {
+            market: test_market(decimal("5")),
+            strategy_bucket: RewardStrategyBucket::LowCompetition,
+        }],
+        &books,
+        &config,
+    );
+
+    apply_low_competition_metrics_to_quote_plans(
+        &mut plans,
+        &books,
+        &history,
+        &[],
+        &test_account(decimal("1000")),
+        &config,
+    );
+
+    let metrics = plans[0]
+        .low_competition_metrics
+        .as_ref()
+        .expect("low competition metrics");
+    assert!(
+        metrics.competition_multiple > decimal("20"),
+        "competition multiple should exceed candidate threshold: {:?}",
+        metrics.competition_multiple
+    );
+    assert!(
+        metrics.not_low_competition,
+        "high-competition candidate should be flagged as not_low_competition"
+    );
+    assert!(
+        metrics
+            .not_low_competition_reason
+            .as_deref()
+            .is_some_and(|reason| reason.contains("early-exclusion")),
+        "flag reason should mention early-exclusion: {:?}",
+        metrics.not_low_competition_reason
+    );
+    // 关键约束：分类标签绝不污染正式 gate 的 rejection_reasons
+    assert!(
+        !metrics
+            .rejection_reasons
+            .iter()
+            .any(|reason| reason.contains("early-exclusion")
+                || reason.contains("not_low_competition")),
+        "early-exclusion label must not leak into rejection_reasons: {:?}",
+        metrics.rejection_reasons
+    );
+    // eligible_for_low_competition 仍由正式 gate 独立决定（multiple > 正式阈值 1 → 不通过）
+    assert!(
+        !metrics.eligible_for_low_competition,
+        "formal gate must still reject high-competition candidate independently"
+    );
+}
+
+#[test]
+fn not_low_competition_respects_configured_candidate_threshold() {
+    // 把候选早期剔除阈值调到 1000，同样的高竞争盘口不再被打标签
+    // （但正式 gate 仍独立拦截），证明阈值可配且标签与正式 gate 解耦。
+    let config = RewardBotConfig {
+        low_competition_candidate_max_competition_multiple: decimal("1000"),
+        ..low_competition_plan_config(RewardLowCompetitionMode::Observe)
+    };
+    let books = test_books_with_competition(decimal("250"), decimal("250"));
+    let history = stable_book_history(&books, config.low_competition_min_book_samples);
+    let mut plans = build_reward_quote_plans_for_candidates(
+        &[RewardCandidateMarket {
+            market: test_market(decimal("5")),
+            strategy_bucket: RewardStrategyBucket::LowCompetition,
+        }],
+        &books,
+        &config,
+    );
+
+    apply_low_competition_metrics_to_quote_plans(
+        &mut plans,
+        &books,
+        &history,
+        &[],
+        &test_account(decimal("1000")),
+        &config,
+    );
+
+    let metrics = plans[0]
+        .low_competition_metrics
+        .as_ref()
+        .expect("low competition metrics");
+    assert!(
+        !metrics.not_low_competition,
+        "multiple below configured 1000 threshold should not be flagged"
+    );
+    assert!(metrics.not_low_competition_reason.is_none());
+    assert!(
+        !metrics.eligible_for_low_competition,
+        "formal gate still rejects via competition_multiple > 1"
+    );
+}
+
+#[test]
+fn shadow_report_counts_not_low_competition_observations() {
+    let config = low_competition_plan_config(RewardLowCompetitionMode::Observe);
+    let now = OffsetDateTime::now_utc();
+    let observations = (0..10)
+        .map(|index| {
+            let mut observation = low_competition_test_observation(index, now, true);
+            // 标记前 7 个为“高竞争混入”
+            observation.not_low_competition = index < 7;
+            observation
+        })
+        .collect::<Vec<_>>();
+
+    let report = build_low_competition_shadow_report(&observations, 24, &config, now);
+
+    assert_eq!(report.not_low_competition_count, 7);
+    assert_eq!(report.not_low_competition_ratio, decimal("0.7"));
 }

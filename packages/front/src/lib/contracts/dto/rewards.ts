@@ -182,6 +182,8 @@ export type RewardLowCompetitionMetricsDto = {
   sample_count: number;
   eligible_for_low_competition: boolean;
   rejection_reasons: string[];
+  not_low_competition?: boolean;
+  not_low_competition_reason?: string | null;
 };
 
 export type RewardLowCompetitionShadowReportDto = {
@@ -196,12 +198,14 @@ export type RewardLowCompetitionShadowReportDto = {
   ai_blocked_count: number;
   info_risk_blocked_count: number;
   standard_overlap_count: number;
+  not_low_competition_count: number;
   gate_pass_ratio: DecimalValue;
   final_pass_ratio: DecimalValue;
   sample_insufficient_ratio: DecimalValue;
   ai_blocked_ratio: DecimalValue;
   info_risk_blocked_ratio: DecimalValue;
   standard_overlap_ratio: DecimalValue;
+  not_low_competition_ratio: DecimalValue;
   competition_share_bps_median?: DecimalValue | null;
   account_allocation_bps_p90?: DecimalValue | null;
   market_allocation_bps_p90?: DecimalValue | null;

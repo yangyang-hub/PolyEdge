@@ -56,6 +56,8 @@ fn prefilter_test_metrics(eligible: bool) -> RewardLowCompetitionMetrics {
         } else {
             vec!["exit depth too low".to_string()]
         },
+        not_low_competition: false,
+        not_low_competition_reason: None,
     }
 }
 

@@ -159,6 +159,14 @@ export function LowCompetitionShadowReport({ snapshot }: { snapshot: RewardBotSn
             tone="neutral"
             target={t.lowCompetitionStandardOverlapHint}
           />
+          <RatioMetric
+            label={t.lowCompetitionNotLowCompetition}
+            value={report.not_low_competition_ratio}
+            count={report.not_low_competition_count}
+            total={report.observations}
+            tone={report.not_low_competition_count > 0 ? "warning" : "neutral"}
+            target={t.lowCompetitionNotLowCompetitionHint}
+          />
         </div>
       </CardContent>
     </Card>
