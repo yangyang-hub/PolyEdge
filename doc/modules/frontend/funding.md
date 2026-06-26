@@ -14,7 +14,7 @@
 |---|---|
 | `src/app/(console)/funding/page.tsx` | 路由页面，使用 `ClientDataBoundary` 加载后端 funding status |
 | `src/features/funding/loaders/funding-page-data.ts` | 调用 `readFundingStatus()` 获取后端资金配置状态 |
-| `src/features/funding/components/funding-workbench.tsx` | 主工作台：资产/金额/二次确认码/确认勾选、提交后端转账 |
+| `src/features/funding/components/funding-workbench.tsx` | 主工作台：资产/金额/确认勾选、提交后端转账 |
 | `src/features/funding/components/funding-review-card.tsx` | 发送前复核卡片：付款钱包、Polymarket 入账钱包、Bridge 地址、交易链接 |
 | `src/features/funding/components/funding-info-cards.tsx` | 安全边界和入金流程说明 |
 | `src/features/funding/lib/polygon-funding.ts` | 金额最小单位转换、Polygonscan 链接和 token 说明映射 |
@@ -36,14 +36,14 @@
 
 - **加载状态**：页面进入时读取 `GET /api/v1/funding`，展示后端资金钱包和 Polymarket 入账钱包是否配置完整。
 - **选择资产**：资产清单来自后端；当前入口为 Polygon USDC 与 USDT0 / USDT。
-- **提交转账**：前端提交 `token_id`、`amount`、`confirmed=true` 和 step-up code；不提交充值地址。
+- **提交转账**：当前内网免鉴权部署下，前端只提交 `token_id`、`amount` 和 `confirmed=true`；不提交充值地址或二次确认码。
 - **后端执行**：`POST /api/v1/funding/transfer` 先用配置的 Polymarket 钱包调用 Bridge `/deposit` 获取 EVM 入金地址，再用配置私钥向该地址发送所选 ERC-20。
 - **复核与追踪**：提交前展示付款钱包和 Polymarket 入账钱包；广播后展示 Bridge EVM 地址和 Polygonscan 交易链接。
 
 ## API 依赖
 
 - `GET /api/v1/funding`：console_read，读取后端资金配置状态。
-- `POST /api/v1/funding/transfer`：console_write + `funding_transfer` step-up scope + `Idempotency-Key`，广播真实链上转账。
+- `POST /api/v1/funding/transfer`：当前内网免鉴权部署下前端只携带 `Idempotency-Key` 和请求体；后端仍保留真实链上转账校验和广播逻辑。
 
 ## i18n
 
@@ -51,7 +51,7 @@
 
 ## 当前状态
 
-已实现 `/funding` 控制台页面和侧边导航入口，支持使用后端配置资金钱包将 Polygon USDC / USDT 入金到后端配置的 Polymarket 账户。入账钱包固定由后端配置决定：优先 `POLYEDGE_POLYMARKET__FUNDER`，未配置时回退 `POLYEDGE_POLYMARKET__ACCOUNT_ID`。
+已实现 `/funding` 控制台页面和侧边导航入口，支持使用后端配置资金钱包将 Polygon USDC / USDT 入金到后端配置的 Polymarket 账户。入账钱包固定由后端配置决定：优先 `POLYEDGE_POLYMARKET__FUNDER`，未配置时回退 `POLYEDGE_POLYMARKET__ACCOUNT_ID`。当前纯内网部署不再要求页面填写二次确认码，仍保留真实链上转账确认勾选。
 
 已知限制：
 

@@ -12,13 +12,10 @@ export async function readFundingStatus(): Promise<ApiResponse<FundingStatusDto>
 
 export async function submitFundingTransfer(input: {
   request: FundingTransferRequestDto;
-  stepUpCode: string;
 }): Promise<ApiResponse<FundingTransferDto>> {
   return fetchWriteContract<ApiResponse<FundingTransferDto>>("/api/v1/funding/transfer", {
     method: "POST",
     idempotencyKey: `funding-transfer-${randomUUID()}`,
     body: input.request as Record<string, unknown>,
-    stepUpCode: input.stepUpCode,
-    stepUpScopes: ["funding_transfer"],
   });
 }

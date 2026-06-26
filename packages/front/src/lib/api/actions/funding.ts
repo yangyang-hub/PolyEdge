@@ -23,14 +23,12 @@ const fundingTransferSchema = z.object({
     message: "Funding amount cannot exceed 10000.",
   }),
   confirmed: z.boolean().refine((value) => value, "Confirmation is required before transfer."),
-  stepUpCode: z.string().trim().min(6, "Step-up code is required for funding transfer."),
 });
 
 export async function submitFundingTransferAction(input: {
   tokenId: string;
   amount: string;
   confirmed: boolean;
-  stepUpCode: string;
 }): Promise<FundingTransferActionResult> {
   try {
     const parsed = fundingTransferSchema.safeParse(input);
@@ -41,7 +39,6 @@ export async function submitFundingTransferAction(input: {
           tokenId: flattened.tokenId?.[0],
           amount: flattened.amount?.[0],
           confirmed: flattened.confirmed?.[0],
-          stepUpCode: flattened.stepUpCode?.[0],
         },
       });
     }
@@ -52,7 +49,6 @@ export async function submitFundingTransferAction(input: {
         amount: parsed.data.amount,
         confirmed: parsed.data.confirmed,
       },
-      stepUpCode: parsed.data.stepUpCode,
     });
 
     return {

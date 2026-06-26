@@ -14,8 +14,6 @@ export const funding = {
     bridgeAddress: "Bridge EVM 入金地址",
     amount: "金额",
     amountPlaceholder: "例如 100",
-    stepUpCode: "二次确认码",
-    stepUpCodePlaceholder: "输入二次确认码",
     sendTransfer: "使用后端资金钱包转账",
     sending: "提交中",
     notConfigured: "未配置",

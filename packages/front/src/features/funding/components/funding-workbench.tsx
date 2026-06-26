@@ -42,7 +42,6 @@ const officialDepositUrl = "https://polymarket.com/profile";
 export function FundingWorkbench({ initialStatus }: FundingWorkbenchProps) {
   const [selectedTokenId, setSelectedTokenId] = useState(initialStatus.tokens[0]?.id ?? "");
   const [amount, setAmount] = useState("");
-  const [stepUpCode, setStepUpCode] = useState("");
   const [confirmed, setConfirmed] = useState(false);
   const [copyMessage, setCopyMessage] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<OperationActionResult["fieldErrors"]>({});
@@ -67,7 +66,6 @@ export function FundingWorkbench({ initialStatus }: FundingWorkbenchProps) {
     selectedToken !== null &&
     amountUnits !== null &&
     confirmed &&
-    stepUpCode.trim().length >= 6 &&
     !isPending;
 
   function copyToClipboard(value: string, message: string) {
@@ -100,7 +98,6 @@ export function FundingWorkbench({ initialStatus }: FundingWorkbenchProps) {
         tokenId: selectedToken.id,
         amount,
         confirmed,
-        stepUpCode,
       });
 
       setFieldErrors(result.fieldErrors ?? {});
@@ -186,39 +183,20 @@ export function FundingWorkbench({ initialStatus }: FundingWorkbenchProps) {
               {fieldErrors?.tokenId ? <p className="text-xs text-destructive">{fieldErrors.tokenId}</p> : null}
             </div>
 
-            <div className="grid gap-4 md:grid-cols-2">
-              <div className="space-y-2">
-                <label className="text-xs font-medium text-muted-foreground" htmlFor="funding-amount">
-                  {dictionary.funding.amount}
-                </label>
-                <Input
-                  id="funding-amount"
-                  inputMode="decimal"
-                  value={amount}
-                  placeholder={dictionary.funding.amountPlaceholder}
-                  aria-invalid={!amountValid || Boolean(fieldErrors?.amount)}
-                  onChange={(event) => setAmount(event.target.value)}
-                />
-                {!amountValid ? <p className="text-xs text-destructive">{dictionary.funding.invalidAmount}</p> : null}
-                {fieldErrors?.amount ? <p className="text-xs text-destructive">{fieldErrors.amount}</p> : null}
-              </div>
-
-              <div className="space-y-2">
-                <label className="text-xs font-medium text-muted-foreground" htmlFor="funding-step-up-code">
-                  {dictionary.funding.stepUpCode}
-                </label>
-                <Input
-                  id="funding-step-up-code"
-                  value={stepUpCode}
-                  placeholder={dictionary.funding.stepUpCodePlaceholder}
-                  type="password"
-                  aria-invalid={Boolean(fieldErrors?.stepUpCode)}
-                  onChange={(event) => setStepUpCode(event.target.value)}
-                />
-                {fieldErrors?.stepUpCode ? (
-                  <p className="text-xs text-destructive">{fieldErrors.stepUpCode}</p>
-                ) : null}
-              </div>
+            <div className="space-y-2">
+              <label className="text-xs font-medium text-muted-foreground" htmlFor="funding-amount">
+                {dictionary.funding.amount}
+              </label>
+              <Input
+                id="funding-amount"
+                inputMode="decimal"
+                value={amount}
+                placeholder={dictionary.funding.amountPlaceholder}
+                aria-invalid={!amountValid || Boolean(fieldErrors?.amount)}
+                onChange={(event) => setAmount(event.target.value)}
+              />
+              {!amountValid ? <p className="text-xs text-destructive">{dictionary.funding.invalidAmount}</p> : null}
+              {fieldErrors?.amount ? <p className="text-xs text-destructive">{fieldErrors.amount}</p> : null}
             </div>
 
             <label className="flex items-start gap-3 rounded-lg border border-border/70 bg-background/35 p-3 text-sm text-muted-foreground">
