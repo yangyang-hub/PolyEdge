@@ -793,7 +793,14 @@ fn managed_reward_order_can_close_from_open_snapshot(
     order.status.is_open_like()
         && order.side == RewardOrderSide::Buy
         && !is_internal_reward_order_id(external_order_id)
-        && !is_stuck_reconciliation_order(order)
+        && (!is_stuck_reconciliation_order(order)
+            || live_cancel_accepted_awaiting_final_reconciliation(order))
+}
+
+fn live_cancel_accepted_awaiting_final_reconciliation(order: &ManagedRewardOrder) -> bool {
+    order
+        .reason
+        .contains("cancel accepted; awaiting final reconciliation")
 }
 
 /// Query Polymarket for today's account-level reward total and persist it.

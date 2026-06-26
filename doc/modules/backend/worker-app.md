@@ -198,6 +198,8 @@ live 模式会用 `LivePolymarketConnector::submit_token_order()` 提交 post-on
 
 worker 每轮还会读取 CLOB 账户开放订单 snapshot：未归属但 token 可唯一映射到 active reward market 的开放 BUY 会被收养为 managed order，已有同 external id 的非 open 本地 BUY 会在 CLOB 仍 open 时重开；已提交、open-like、普通 BUY managed order 若不在 snapshot 中且不处于提交未知、404、pending cancel、post-only violation 或其他对账锁状态，会本地标记为 `cancelled`，释放开放挂单计数；sell exit 仍走单订单/成交对账和 retry 逻辑。worker 仅在 trade 达到 `CONFIRMED` 后按 external trade id + external order id 幂等写入 fills、现金、库存和 PnL；买入 fill 与对应 exit intent 同事务落库，之后只撤同 condition 对侧仍开放的 buy sibling。
 
+撤单已被 CLOB 接受并处于 `cancel accepted; awaiting final reconciliation` 的 BUY 不再无限保留全局新买单锁：如果后续 CLOB open-order snapshot 已确认该 external order 不存在，worker 会把本地剩余量关闭为 `cancelled` 并释放新增 BUY；提交结果未知、外部 404 人工对账、cancel result unknown 和 post-only violation 等更高风险锁仍按各自严格对账路径处理。
+
 `ExitAtMarkup` 价格以被吃买单原价加 `exit_markup_cents` 为基准并向上取整到 0.01 tick，默认加价为 0；`HoldAndRequote` 按被吃买单原价持久化 post-only SELL intent，之后继续正常报价；外部 positions 快照检测到尚无 open-like SELL 的非零库存时，也会按该持仓 `avg_price` 向上对齐 tick 后创建原价 post-only SELL intent，避免已有库存无人接管退出；退出 floor 始终用 intent price 与当前持仓 `avg_price` 的较高值，不会用 midpoint 或低于 floor 的买一价覆盖；提交前会把 SELL size 裁剪到当前同 token 持仓，若没有对应持仓或剩余 size 为 0，会关闭本地 stale exit 并记录 warning，避免余额不足拒单反复刷屏；提交前低于 1 美元最小名义金额的退出单会进入短 reason 的 dust deferred 状态，每 300 秒重新评估但不重复拼接历史原因。同 token 有未完成 sell exit 时暂停新增 buy。
 
 `ExitAtMarkup`、`HoldAndRequote` 和外部库存补退出按 post-only maker SELL 提交 floor；如果当前买一已大于等于 maker 价格，原价 post-only 会穿盘口无法 resting，worker 会保留 `exit_pending` 并按 30 秒退避等待可作为 maker 挂出。`FlattenImmediately` 会持久化非 post-only flatten intent，提交前读取当前 best bid；best bid 不低于 floor 时按 best bid 用 FAK/taker SELL 尝试非亏损平仓，best bid 缺失或低于 floor 时按 30 秒退避保留 deferred exit。post-only 明确退出拒单使用有界退避，达到最大拒绝次数后停止盲目重试。

@@ -299,7 +299,7 @@ fn external_open_order_snapshot_closes_missing_managed_buy() {
 }
 
 #[test]
-fn external_open_order_snapshot_preserves_stuck_or_sell_orders() {
+fn external_open_order_snapshot_closes_accepted_cancel_but_preserves_hard_locks_or_sell_orders() {
     let mut pending_cancel = live_test_open_order("pending_cancel");
     pending_cancel.reason = "risk cancel; cancel accepted; awaiting final reconciliation".to_string();
     let mut missing_lock = live_test_open_order("missing_lock");
@@ -315,7 +315,16 @@ fn external_open_order_snapshot_preserves_stuck_or_sell_orders() {
         "trc_open_snapshot",
     );
 
-    assert!(updates.is_empty());
+    assert_eq!(updates.len(), 1);
+    let (closed, event) = &updates[0];
+    assert_eq!(closed.id, "rewlive_seed_pending_cancel");
+    assert_eq!(closed.status, ManagedRewardOrderStatus::Cancelled);
+    assert!(!closed.reason.contains("awaiting final reconciliation"));
+    assert_eq!(
+        event.event_type,
+        "reward_live_order_missing_from_open_orders_closed"
+    );
+    assert!(!has_unresolved_live_reconciliation(std::slice::from_ref(closed)));
 }
 
 #[test]
