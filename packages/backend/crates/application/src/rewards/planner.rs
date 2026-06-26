@@ -84,11 +84,13 @@ fn reward_market_prefilter_reason(
     if market.total_daily_rate < config.min_daily_reward {
         return Some("daily reward is below threshold");
     }
-    if market.liquidity_usd < config.min_market_liquidity_usd {
-        return Some("market liquidity is below threshold");
-    }
-    if market.volume_24h_usd < config.min_market_volume_24h_usd {
-        return Some("market 24h volume is below threshold");
+    if !reward_market_activity_meets_thresholds(
+        market.liquidity_usd,
+        market.volume_24h_usd,
+        config.min_market_liquidity_usd,
+        config.min_market_volume_24h_usd,
+    ) {
+        return Some("market liquidity and 24h volume are below thresholds");
     }
     if market.market_spread_cents > config.max_market_spread_cents {
         return Some("market top-of-book spread is too wide");
@@ -115,6 +117,23 @@ fn reward_market_prefilter_reason(
         return Some("invalid rewards spread setting");
     }
     None
+}
+
+fn reward_market_activity_meets_thresholds(
+    liquidity_usd: Decimal,
+    volume_24h_usd: Decimal,
+    min_liquidity_usd: Decimal,
+    min_volume_24h_usd: Decimal,
+) -> bool {
+    match (
+        min_liquidity_usd > Decimal::ZERO,
+        min_volume_24h_usd > Decimal::ZERO,
+    ) {
+        (true, true) => liquidity_usd >= min_liquidity_usd || volume_24h_usd >= min_volume_24h_usd,
+        (true, false) => liquidity_usd >= min_liquidity_usd,
+        (false, true) => volume_24h_usd >= min_volume_24h_usd,
+        (false, false) => true,
+    }
 }
 
 fn reward_market_event_risk_reason(market: &RewardMarket) -> Option<&'static str> {

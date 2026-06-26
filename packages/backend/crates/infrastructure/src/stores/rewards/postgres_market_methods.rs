@@ -109,8 +109,12 @@ async fn postgres_list_reward_candidate_markets(
                       )
                   )
               )
-              AND m.liquidity_usd >= $4
-              AND m.volume_24h >= $5
+              AND (
+                  ($4 <= 0 AND $5 <= 0)
+                  OR ($4 > 0 AND $5 > 0 AND (m.liquidity_usd >= $4 OR m.volume_24h >= $5))
+                  OR ($4 > 0 AND $5 <= 0 AND m.liquidity_usd >= $4)
+                  OR ($4 <= 0 AND $5 > 0 AND m.volume_24h >= $5)
+              )
               AND m.end_at IS NOT NULL
               AND m.end_at >= now() + ($6::BIGINT * interval '1 hour')
               AND (m.best_ask - m.best_bid) * 100 <= $7

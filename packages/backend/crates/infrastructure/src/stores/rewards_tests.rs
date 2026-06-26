@@ -476,6 +476,46 @@ mod rewards_tests {
     }
 
     #[tokio::test]
+    async fn in_memory_candidate_filter_accepts_either_market_activity_signal() {
+        let store = InMemoryRewardBotStore::new();
+        let filter = RewardBotConfig::default().candidate_filter();
+
+        let mut liquidity_only = candidate_market();
+        liquidity_only.condition_id = "liquidity_only".to_string();
+        liquidity_only.volume_24h_usd = filter.min_market_volume_24h_usd - Decimal::ONE;
+
+        let mut volume_only = candidate_market();
+        volume_only.condition_id = "volume_only".to_string();
+        volume_only.liquidity_usd = filter.min_market_liquidity_usd - Decimal::ONE;
+
+        let mut inactive_market = candidate_market();
+        inactive_market.condition_id = "inactive_market".to_string();
+        inactive_market.liquidity_usd = filter.min_market_liquidity_usd - Decimal::ONE;
+        inactive_market.volume_24h_usd = filter.min_market_volume_24h_usd - Decimal::ONE;
+
+        store
+            .upsert_markets(&[liquidity_only, volume_only, inactive_market])
+            .await
+            .expect("seed candidate markets");
+
+        let candidates = store
+            .list_candidate_markets(&filter, 100)
+            .await
+            .expect("list candidates");
+
+        assert_eq!(candidates.len(), 2);
+        assert!(candidates
+            .iter()
+            .any(|candidate| candidate.condition_id == "liquidity_only"));
+        assert!(candidates
+            .iter()
+            .any(|candidate| candidate.condition_id == "volume_only"));
+        assert!(!candidates
+            .iter()
+            .any(|candidate| candidate.condition_id == "inactive_market"));
+    }
+
+    #[tokio::test]
     async fn in_memory_candidate_filter_keeps_high_min_size_markets_for_live_balance_check() {
         let store = InMemoryRewardBotStore::new();
         let filter = RewardBotConfig {

@@ -460,8 +460,7 @@ impl RewardBotStore for InMemoryRewardBotStore {
                     && market.rewards_max_spread > rust_decimal::Decimal::ZERO
                     && in_memory_reward_midpoint(market)
                         .is_some_and(|midpoint| in_memory_reward_midpoint_allowed(midpoint, filter))
-                    && market.liquidity_usd >= filter.min_market_liquidity_usd
-                    && market.volume_24h_usd >= filter.min_market_volume_24h_usd
+                    && in_memory_reward_market_activity_allowed(market, filter)
                     && market.market_spread_cents <= filter.max_market_spread_cents
                     && market.ambiguity_level != "high"
                     && market.end_at.is_some_and(|end_at| {
@@ -920,6 +919,24 @@ fn in_memory_reward_midpoint_allowed(midpoint: Decimal, filter: &RewardCandidate
         && midpoint <= filter.dominant_max_probability)
         || (midpoint >= Decimal::ONE - filter.dominant_max_probability
             && midpoint <= Decimal::ONE - filter.dominant_min_probability)
+}
+
+fn in_memory_reward_market_activity_allowed(
+    market: &RewardMarket,
+    filter: &RewardCandidateFilter,
+) -> bool {
+    match (
+        filter.min_market_liquidity_usd > Decimal::ZERO,
+        filter.min_market_volume_24h_usd > Decimal::ZERO,
+    ) {
+        (true, true) => {
+            market.liquidity_usd >= filter.min_market_liquidity_usd
+                || market.volume_24h_usd >= filter.min_market_volume_24h_usd
+        }
+        (true, false) => market.liquidity_usd >= filter.min_market_liquidity_usd,
+        (false, true) => market.volume_24h_usd >= filter.min_market_volume_24h_usd,
+        (false, false) => true,
+    }
 }
 
 fn in_memory_reward_low_competition_density(market: &RewardMarket) -> Decimal {

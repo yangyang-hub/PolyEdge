@@ -1140,13 +1140,22 @@ fn candidate_prefilter_rejects_low_quality_or_near_expiry_markets() {
     let mut market = test_market(decimal("5"));
 
     market.liquidity_usd = config.min_market_liquidity_usd - Decimal::ONE;
-    assert!(select_reward_quote_candidate_markets(&[market.clone()], &config).is_empty());
-
-    market.liquidity_usd = config.min_market_liquidity_usd;
     market.volume_24h_usd = config.min_market_volume_24h_usd - Decimal::ONE;
     assert!(select_reward_quote_candidate_markets(&[market.clone()], &config).is_empty());
 
+    market.liquidity_usd = config.min_market_liquidity_usd;
+    assert_eq!(
+        select_reward_quote_candidate_markets(&[market.clone()], &config).len(),
+        1
+    );
+
+    market.liquidity_usd = config.min_market_liquidity_usd - Decimal::ONE;
     market.volume_24h_usd = config.min_market_volume_24h_usd;
+    assert_eq!(
+        select_reward_quote_candidate_markets(&[market.clone()], &config).len(),
+        1
+    );
+
     market.end_at = Some(
         OffsetDateTime::now_utc()
             + TimeDuration::hours(config.min_hours_to_end.saturating_sub(1) as i64),

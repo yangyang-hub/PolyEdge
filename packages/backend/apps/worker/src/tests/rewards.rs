@@ -610,6 +610,7 @@ fn low_competition_provider_test_plan(
         market_allocation_bps: reward_decimal("200"),
         exit_depth_usd: reward_decimal("100"),
         exit_slippage_cents: Some(reward_decimal("1")),
+        bad_fill_recovery_days: Some(Decimal::ZERO),
         midpoint_range_cents: Some(reward_decimal("1")),
         top_of_book_flip_count: Some(0),
         sample_count: 20,
