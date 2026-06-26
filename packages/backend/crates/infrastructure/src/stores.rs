@@ -10,15 +10,16 @@ use polyedge_application::{
     RewardCandidateFilter, RewardControlAction, RewardControlCommand, RewardControlCommandStatus,
     RewardFill, RewardFillRole, RewardHistoryPruneReport, RewardInfoDirectionalRisk,
     RewardInfoRiskAssessmentRequest, RewardInfoRiskLevel, RewardInfoRiskSource, RewardInfoRiskType,
-    RewardLowCompetitionMode, RewardLowCompetitionObservation, RewardMarket, RewardMarketAdvisory,
-    RewardMarketCandle, RewardMarketCandleSample, RewardMarketInfoRisk, RewardOrderListQuery,
-    RewardOrderPage, RewardOrderSide, RewardOrderSortField, RewardOrderStatusFilter,
-    RewardPlanQuoteMode, RewardPosition, RewardQuoteMode, RewardQuotePlan,
-    RewardQuotePlanBlockerCounts, RewardQuotePlanCounts, RewardQuotePlanListQuery,
-    RewardQuotePlanPage, RewardQuotePlanSortField, RewardRiskEvent, RewardRiskSeverity,
-    RewardSelectionMode, RewardStrategyBucket, RewardTickOutcome, RewardToken, RiskStateSnapshot,
-    RiskStateStore, SortOrder, SourceTrade, TrackedWallet, TrackedWalletStatus,
-    WalletAnalysisStats, refresh_reward_quote_plan_readiness, reward_order_counts_as_external_open,
+    RewardLlmCallDailyStats, RewardLlmCallRecord, RewardLowCompetitionMode,
+    RewardLowCompetitionObservation, RewardMarket, RewardMarketAdvisory, RewardMarketCandle,
+    RewardMarketCandleSample, RewardMarketInfoRisk, RewardOrderListQuery, RewardOrderPage,
+    RewardOrderSide, RewardOrderSortField, RewardOrderStatusFilter, RewardPlanQuoteMode,
+    RewardPosition, RewardQuoteMode, RewardQuotePlan, RewardQuotePlanBlockerCounts,
+    RewardQuotePlanCounts, RewardQuotePlanListQuery, RewardQuotePlanPage, RewardQuotePlanSortField,
+    RewardRiskEvent, RewardRiskSeverity, RewardSelectionMode, RewardStrategyBucket,
+    RewardTickOutcome, RewardToken, RiskStateSnapshot, RiskStateStore, SortOrder, SourceTrade,
+    TrackedWallet, TrackedWalletStatus, WalletAnalysisStats, refresh_reward_quote_plan_readiness,
+    reward_order_counts_as_external_open,
 };
 use polyedge_domain::{
     AppError, ExposureRatio, IdempotencyStatus, Result, SignedUsdAmount, SystemMode,
@@ -40,6 +41,10 @@ const RISK_STATE_ID: &str = "global";
 
 fn db_error(code: &'static str, context: impl Into<String>) -> AppError {
     AppError::dependency_unavailable(code, context.into())
+}
+
+fn i64_count_to_u64(value: i64) -> u64 {
+    u64::try_from(value.max(0)).unwrap_or(0)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

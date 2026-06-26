@@ -37,6 +37,7 @@ impl RewardBotService {
             last_run_at,
             worker_heartbeat,
             low_competition_observations,
+            llm_usage,
         ) = tokio::try_join!(
             self.store.active_market_summary(),
             self.store.count_quote_plans(),
@@ -54,6 +55,7 @@ impl RewardBotService {
                 low_competition_since,
                 LOW_COMPETITION_OBSERVATION_READ_LIMIT,
             ),
+            self.list_recent_llm_call_daily_stats(now),
         )?;
         let error = active_orders
             .iter()
@@ -87,6 +89,7 @@ impl RewardBotService {
             config,
             account,
             low_competition_report,
+            llm_usage,
             markets: Vec::new(),
             quote_plans: plans_page_data.items,
             plans_page: plans_page_data.page,

@@ -13,12 +13,12 @@ use polyedge_application::{
     ReconcileExecutionListFilters, ReconcileExternalTradeCommand, RewardAccountState,
     RewardAiAdvisoryRequest, RewardBookLevel, RewardBotConfig, RewardBotRunReport,
     RewardCandidateMarket, RewardControlAction, RewardControlCommand, RewardFill, RewardFillRole,
-    RewardInfoRiskAssessmentRequest, RewardLiveCycle, RewardLiveQuoteMaterialization, RewardMarket,
-    RewardMarketAdvisory, RewardMarketInfoRisk, RewardOrderBook, RewardOrderSide,
-    RewardPlanQuoteMode, RewardPosition, RewardProviderPreLlmCandidateKind, RewardQuoteLeg,
-    RewardQuotePlan, RewardRiskEvent, RewardRiskSeverity, RewardStrategyBucket, RewardTickOutcome,
-    RewardToken, SignalListFilters, SyncExternalOrderStatusCommand, WalletActivityInput,
-    WalletFeedInput, WalletPositionInput, apply_first_quote_entry_gates,
+    RewardInfoRiskAssessmentRequest, RewardLiveCycle, RewardLiveQuoteMaterialization,
+    RewardLlmCallRecord, RewardMarket, RewardMarketAdvisory, RewardMarketInfoRisk, RewardOrderBook,
+    RewardOrderSide, RewardPlanQuoteMode, RewardPosition, RewardProviderPreLlmCandidateKind,
+    RewardQuoteLeg, RewardQuotePlan, RewardRiskEvent, RewardRiskSeverity, RewardStrategyBucket,
+    RewardTickOutcome, RewardToken, SignalListFilters, SyncExternalOrderStatusCommand,
+    WalletActivityInput, WalletFeedInput, WalletPositionInput, apply_first_quote_entry_gates,
     apply_low_competition_metrics_to_quote_plans, apply_reward_ai_advisories,
     apply_reward_info_risks, build_arbitrage_analysis, build_low_competition_observations,
     build_reward_ai_advisory_request, build_reward_info_risk_assessment_request,
@@ -59,7 +59,7 @@ use polyedge_infrastructure::{
 use polymarket_client_sdk::clob::ws::WsMessage;
 use polymarket_client_sdk::types::B256;
 use rust_decimal::{Decimal, RoundingStrategy};
-use serde_json::json;
+use serde_json::{Value, json};
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     future::Future,
@@ -75,6 +75,7 @@ use tokio::{
     task::JoinHandle,
 };
 use tracing::{debug, info, warn};
+use uuid::Uuid;
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 struct MarketSyncReport {

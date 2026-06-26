@@ -1,6 +1,6 @@
 # API App（HTTP API 服务）
 
-最后更新：2026-06-24
+最后更新：2026-06-26
 
 ## 概述
 
@@ -65,7 +65,7 @@
 
 Rewards Bot 的 `run` / `cancel-all` / `reset` handler 不直接执行策略、不读取 orderbook cache，也不直接修改托管订单。Handler 委托 `RewardBotService` 写入 `reward_control_commands`；同账户同动作已有 pending/running 命令时会合并重复请求，真正入队后通过共享 `RewardBotService` revision 立即唤醒同进程 rewards loop；后台 runtime 领取命令并执行 live 逻辑。
 
-所有 Rewards snapshot 响应只读取 `RewardBotService` / store；handler 不直接请求 CLOB/Data API。配置、账户、positions 和 heartbeat 在同进程 service 内有热缓存，分页 orders/plans、fills、events 等历史查询仍从 store 读取。`orders_status=filled` 过滤会返回 `status=filled` 或 `filled_size > 0` 的本系统 managed orders，便于排查部分成交后已关闭的被吃订单。`status.open_orders` 只统计已有非内部 `external_order_id`、仍是 open-like 且未处于提交未知、取消未知、404 人工对账或 `awaiting final reconciliation` 锁定的 managed orders；本地 planned/exit intent 和已接受取消但仍等待最终对账的订单不会显示为当前 Polymarket 开放挂单。`status.error` 只报告当前开放订单上的活跃对账锁，不会因为历史 critical event 一直保持错误。外部 balance、positions、订单 scoring 和 UTC 当日账户级 maker rewards（聚合端点优先、明细端点 fallback）由内嵌后台 runtime 同步。
+所有 Rewards snapshot 响应只读取 `RewardBotService` / store；handler 不直接请求 CLOB/Data API。配置、账户、positions 和 heartbeat 在同进程 service 内有热缓存，分页 orders/plans、fills、events、`llm_usage` 每日调用统计等历史查询仍从 store 读取。`orders_status=filled` 过滤会返回 `status=filled` 或 `filled_size > 0` 的本系统 managed orders，便于排查部分成交后已关闭的被吃订单。`status.open_orders` 只统计已有非内部 `external_order_id`、仍是 open-like 且未处于提交未知、取消未知、404 人工对账或 `awaiting final reconciliation` 锁定的 managed orders；本地 planned/exit intent 和已接受取消但仍等待最终对账的订单不会显示为当前 Polymarket 开放挂单。`status.error` 只报告当前开放订单上的活跃对账锁，不会因为历史 critical event 一直保持错误。外部 balance、positions、订单 scoring 和 UTC 当日账户级 maker rewards（聚合端点优先、明细端点 fallback）由内嵌后台 runtime 同步。
 同进程 worker 成功读取 CLOB open-order snapshot 后，`status.open_orders` 优先使用该 snapshot 中仍存在的本系统 managed 外部订单数量；冷启动或尚未成功同步时才回退到本地 store 计数。
 
 Copy Trading 的 `run` / `analyze` / `cancel-all` / `reset` 端点同样不抓取 Polymarket Data API / CLOB，也不直接执行跟单循环；API 只写入 `copytrade_control_commands`，worker 负责领取。当前产品只暴露 Analyze，`run` / `cancel-all` / `reset` 是历史兼容入口，worker 中不再触发模拟交易。
@@ -103,7 +103,7 @@ HTTP Response
 - SSE 流式端点已移除，前端通过 REST API 加载数据
 - API 进程内嵌 worker runtime；`polyedge-worker` 二进制仅保留 CLI/运维兼容入口，不再单独部署常驻容器
 - Rewards Bot 控制端点只作为前端接口和命令入口，具体 live 策略、撤单和重置由同进程后台 runtime 处理；Copy Trading 当前只保留钱包跟踪和 Analyze，旧 run/cancel/reset 入口不执行模拟交易
-- Rewards Bot snapshot 不承载全量 reward markets；配置、账户、positions、heartbeat 优先从共享内存读取
+- Rewards Bot snapshot 不承载全量 reward markets；配置、账户、positions、heartbeat 优先从共享内存读取；`llm_usage` 统计来自 `llm_calls` 日聚合，不触发外部 provider 请求
 - Markets DTO 返回 Gamma 同步的 `liquidity_usd` 与 `end_at`，供控制台和其他数据库消费者使用
 - Console risk snapshot 先读取当前 positions，再通过 `MarketEventService.get_markets_by_ids()` 批量读取相关 markets 用于分类聚合，不再调用 markets 列表接口全量扫描市场表。
 - 当前内网部署使用 `POLYEDGE_AUTH__DISABLED=true`，前端请求不需要权限头或 step-up code

@@ -165,8 +165,27 @@ async fn scan_reward_info_risks_unlocked(
             requested = report.requested,
             "requesting reward info risk provider",
         );
-        let _provider_permit = acquire_reward_info_risk_provider_request_permit().await?;
-        match connector.assess(&request).await {
+        let condition_ids_for_record = vec![condition_id.to_string()];
+        let started = Instant::now();
+        let result = {
+            let _provider_permit = acquire_reward_info_risk_provider_request_permit().await?;
+            connector.assess(&request).await
+        };
+        record_reward_provider_llm_call(
+            state,
+            REWARD_INFO_RISK_LLM_TASK_TYPE,
+            REWARD_INFO_RISK_PROMPT_VERSION,
+            model,
+            &request.input_hash,
+            &condition_ids_for_record,
+            started.elapsed(),
+            result.is_ok(),
+            result.as_ref().ok().map(|decision| json!(decision)),
+            result.as_ref().err().map(ToString::to_string),
+            trace_id,
+        )
+        .await;
+        match result {
             Ok(decision) => {
                 let risk = decision.into_info_risk(
                     &request,

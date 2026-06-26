@@ -13,6 +13,7 @@ pub struct InMemoryRewardBotStore {
     worker_heartbeats: RwLock<HashMap<String, OffsetDateTime>>,
     advisories: RwLock<Vec<RewardMarketAdvisory>>,
     info_risks: RwLock<Vec<RewardMarketInfoRisk>>,
+    llm_calls: RwLock<Vec<RewardLlmCallRecord>>,
     low_competition_observations: RwLock<Vec<RewardLowCompetitionObservation>>,
     candles: RwLock<HashMap<(String, i32, OffsetDateTime), RewardMarketCandle>>,
 }
@@ -33,6 +34,7 @@ impl InMemoryRewardBotStore {
             worker_heartbeats: RwLock::new(HashMap::new()),
             advisories: RwLock::new(Vec::new()),
             info_risks: RwLock::new(Vec::new()),
+            llm_calls: RwLock::new(Vec::new()),
             low_competition_observations: RwLock::new(Vec::new()),
             candles: RwLock::new(HashMap::new()),
         }
@@ -421,6 +423,54 @@ impl RewardBotStore for InMemoryRewardBotStore {
     async fn save_market_info_risk(&self, risk: &RewardMarketInfoRisk) -> Result<()> {
         self.info_risks.write().await.push(risk.clone());
         Ok(())
+    }
+
+    async fn record_llm_call(&self, call: &RewardLlmCallRecord) -> Result<()> {
+        let mut calls = self.llm_calls.write().await;
+        if !calls.iter().any(|existing| existing.id == call.id) {
+            calls.push(call.clone());
+        }
+        Ok(())
+    }
+
+    async fn list_llm_call_daily_stats(
+        &self,
+        since: OffsetDateTime,
+        limit: u16,
+    ) -> Result<Vec<RewardLlmCallDailyStats>> {
+        let mut by_day = BTreeMap::<String, RewardLlmCallDailyStats>::new();
+        for call in self.llm_calls.read().await.iter() {
+            if call.created_at < since || !reward_llm_call_is_tracked(&call.task_type) {
+                continue;
+            }
+            let day = call.created_at.date().to_string();
+            let stats = by_day.entry(day.clone()).or_insert_with(|| {
+                RewardLlmCallDailyStats {
+                    day,
+                    ..RewardLlmCallDailyStats::default()
+                }
+            });
+            stats.total_calls += 1;
+            if call.task_type == "reward_ai_advisory" {
+                stats.ai_advisory_calls += 1;
+            } else if call.task_type == "reward_info_risk" {
+                stats.info_risk_calls += 1;
+            }
+            if call
+                .validation_result
+                .get("success")
+                .and_then(Value::as_bool)
+                == Some(false)
+            {
+                stats.failed_calls += 1;
+            }
+        }
+
+        Ok(by_day
+            .into_values()
+            .rev()
+            .take(usize::from(limit.max(1)))
+            .collect())
     }
 
     async fn list_markets(&self, limit: u16) -> Result<Vec<RewardMarket>> {
@@ -942,4 +992,8 @@ fn in_memory_reward_market_activity_allowed(
 fn in_memory_reward_low_competition_density(market: &RewardMarket) -> Decimal {
     let denominator = (market.liquidity_usd + market.volume_24h_usd).max(Decimal::ONE);
     market.total_daily_rate / denominator
+}
+
+fn reward_llm_call_is_tracked(task_type: &str) -> bool {
+    matches!(task_type, "reward_ai_advisory" | "reward_info_risk")
 }

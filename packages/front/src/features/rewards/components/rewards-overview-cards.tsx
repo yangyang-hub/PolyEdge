@@ -81,6 +81,7 @@ export function ModeStatusPanel({
           <div className="rounded-lg border border-border/70 bg-muted/20 p-3 text-xs leading-5 text-muted-foreground">
             {dictionary.rewards.liveExecutorNotice}
           </div>
+          <ProviderUsageBlock usage={snapshot.llm_usage ?? []} />
         </div>
 
         <dl className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
@@ -270,6 +271,63 @@ function SummaryMetric({ label, value, hint }: { label: string; value: string; h
   );
 }
 
+function ProviderUsageBlock({
+  usage,
+}: {
+  usage: NonNullable<RewardBotSnapshotDto["llm_usage"]>;
+}) {
+  const rows = usage.slice(0, 7);
+  const today = usage.find((item) => item.day === utcToday());
+
+  return (
+    <div className="rounded-lg border border-border/70 bg-background/30 p-3">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-xs font-semibold text-foreground">{dictionary.rewards.llmUsage}</p>
+          <p className="mt-1 text-xs leading-4 text-muted-foreground">
+            {dictionary.rewards.llmUsageToday}: {today?.total_calls ?? 0}
+          </p>
+        </div>
+        <span className="shrink-0 rounded-md border border-border/70 px-2 py-1 font-mono text-xs text-muted-foreground">
+          {dictionary.rewards.llmUsageCalls}
+        </span>
+      </div>
+      {rows.length > 0 ? (
+        <div className="mt-3 grid grid-cols-[1.2fr_repeat(4,minmax(0,1fr))] gap-x-2 gap-y-1 text-xs">
+          <span className="text-muted-foreground">{dictionary.rewards.llmUsageDay}</span>
+          <span className="text-right text-muted-foreground">{dictionary.rewards.llmUsageTotal}</span>
+          <span className="text-right text-muted-foreground">{dictionary.rewards.llmUsageAi}</span>
+          <span className="text-right text-muted-foreground">{dictionary.rewards.llmUsageInfoRisk}</span>
+          <span className="text-right text-muted-foreground">{dictionary.rewards.llmUsageFailed}</span>
+          {rows.map((item) => (
+            <ProviderUsageRow key={item.day} item={item} />
+          ))}
+        </div>
+      ) : (
+        <p className="mt-3 text-xs leading-4 text-muted-foreground">
+          {dictionary.rewards.llmUsageEmpty}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function ProviderUsageRow({
+  item,
+}: {
+  item: NonNullable<RewardBotSnapshotDto["llm_usage"]>[number];
+}) {
+  return (
+    <>
+      <span className="font-mono text-muted-foreground">{shortDay(item.day)}</span>
+      <span className="text-right font-mono text-foreground">{item.total_calls}</span>
+      <span className="text-right font-mono text-foreground">{item.ai_advisory_calls}</span>
+      <span className="text-right font-mono text-foreground">{item.info_risk_calls}</span>
+      <span className="text-right font-mono text-foreground">{item.failed_calls}</span>
+    </>
+  );
+}
+
 function ProgressLine({
   label,
   value,
@@ -345,4 +403,16 @@ function clamp01(value: number) {
 
 function formatRatio(value: number) {
   return `${formatFixed(clamp01(value) * 100, 0)}%`;
+}
+
+function utcToday() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function shortDay(day: string) {
+  const parts = day.split("-");
+  if (parts.length === 3) {
+    return `${parts[1]}-${parts[2]}`;
+  }
+  return day;
 }

@@ -1,6 +1,6 @@
 # Rewards（奖励机器人）
 
-最后更新：2026-06-25
+最后更新：2026-06-26
 
 ## 概述
 
@@ -12,7 +12,7 @@
 |---|---|
 | `src/app/(console)/rewards/page.tsx` | 路由页面 |
 | `src/features/rewards/components/rewards-workbench.tsx` | 主工作台编排：状态/操作区、指标条、活动/配置/风控 tabs |
-| `src/features/rewards/components/rewards-overview-cards.tsx` | 顶部执行概览、操作中心和关键指标条 |
+| `src/features/rewards/components/rewards-overview-cards.tsx` | 顶部执行概览、每日大模型调用统计、操作中心和关键指标条 |
 | `src/features/rewards/components/rewards-config-panel.tsx` | 分组策略配置面板（执行、市场筛选、低竞争 sleeve、报价构造、盘口选择、AI 建议/信息风险、库存与控制） |
 | `src/features/rewards/components/rewards-low-competition-config.tsx` | 低竞争 sleeve mode、额度、10U probe 竞争份额、资金占比、退出深度和盘口稳定性阈值配置 |
 | `src/features/rewards/components/rewards-low-competition-report.tsx` | 低竞争策略观察面板：最近 24 小时 observation、策略状态、硬性通过率、AI/信息风险后可挂率、资金占用、reward/退出/稳定性和 provider 拦截摘要 |
@@ -36,7 +36,7 @@
 
 - `src/lib/api/rewards.ts` — `readRewardBotSnapshot`、`updateRewardBotConfig`、`runRewardBotOnce`、`cancelRewardBotOrders`、`resetRewardBot`
 - `readRewardBotSnapshot()` 会传递计划/订单分页、搜索、状态和排序 query；首屏明确请求 `plans_eligible=true`，与默认选中的“可挂”页签一致。后端分页结果和 `orders_page` 都描述本地 managed orders，不再用 Polymarket live open orders 覆盖
-- 后端 snapshot 不返回全量 reward markets；页面使用 `status.markets_tracked`、`status.eligible_markets`、`status.ready_quote_markets`、`status.waiting_orderbook_markets`、`status.provider_pending_markets`、`status.blocker_counts`、`quote_plans` 和 `low_competition_report` 展示市场覆盖、最终可挂市场、真实可立即报价数量、等待 provider、资金不足、live 盘口验证、AI/信息风控拦截与低竞争 shadow report
+- 后端 snapshot 不返回全量 reward markets；页面使用 `status.markets_tracked`、`status.eligible_markets`、`status.ready_quote_markets`、`status.waiting_orderbook_markets`、`status.provider_pending_markets`、`status.blocker_counts`、`quote_plans`、`low_competition_report` 和 `llm_usage` 展示市场覆盖、最终可挂市场、真实可立即报价数量、等待 provider、资金不足、live 盘口验证、AI/信息风控拦截、低竞争 shadow report 以及 AI advisory / info-risk provider 每日调用次数
 - snapshot 的 `available_usd` / `positions` 来自 worker 写入数据库的账户快照；API 不持有 Polymarket 私钥，也不直接请求外部账户数据。`available_usd` 优先使用 CLOB `balance-allowance`，当 CLOB 返回 0 或失败但资金钱包链上 pUSD 余额大于 0 时，worker 使用链上 pUSD 回填
 
 ## 关键交互
@@ -50,6 +50,7 @@
 - **盘口选择** → `quote_mode=double|auto` + `selection_mode=observe|enforce` → 默认只保留双边报价；auto/enforce 的初步计划只用概率区间决定单边/双边，退出深度、盘口集中度、双边点差/档位/安全边际和单腿回退在 live placement 阶段用当前 orderbook 验证
 - **AI 建议配置** → 保存 provider、request format、TTL 和主 provider refresh 批量市场数；worker 启用且环境变量配置 provider key 后，会在 full tick 中低频调用模型并缓存 advisory
 - **信息风险配置** → 保存启用开关、observe/enforce、过滤等级、TTL、主 provider refresh 批量市场数、首单信息风险要求和首单观察窗口；异步 worker 启用且环境变量配置 provider key 后，会扫描候选市场最新信息风险并缓存，页面展示风险等级/类型/摘要；enforce 模式下缺少未过期风险缓存的计划会被后端置为不可挂，新 condition 首次 BUY 还可要求先命中信息风险缓存并观察一段时间
+- **大模型调用统计** → 顶部执行概览读取 `snapshot.llm_usage`，展示 UTC 今日总调用和最近 7 天 AI advisory / info-risk / 失败调用数；该统计来自 worker 写入的实际外部 provider 调用，不包含缓存命中
 - **成交后策略** → 页面可选择 `exit_at_markup` / `hold_and_requote` / `flatten_immediately`；`exit_at_markup` 的退出加价相对被吃买单原价计算，`hold_and_requote`（持有并续挂）按被吃买单原价生成 SELL 退出 floor 并继续正常报价；后端提交 SELL 前只看当前 orderbook best bid，best bid 不低于 floor 时用非 post-only FAK/taker SELL 按 best bid 退出，best bid 低于 floor 时保留 intent 等待非亏损退出
 - **市场质量** → 可配置最低流动性、最低 24h 成交量、最短剩余结算时间、最大 Gamma spread 和最大目录同步年龄；后端还固定拒绝高歧义、非唯一 YES/NO、FDV/launch/token/official-result 等高跳变事件风险市场
 - **低竞争市场 sleeve** → 页面提供 `off/observe/enforce`、独立市场/订单/库存上限、探测下单金额、探测金额最低占池、外部资金/探测金额上限、账户/单市场挂单资金占比上限、预估 reward/100/day、退出深度和盘口稳定性阈值配置；quote plan 表格展示低竞争硬性通过/未过状态，并逐项显示探测金额占池、外部同价资金、低竞争总占用、本市场占用、预估 100U 日奖、退出保护和盘口稳定性的当前值、门槛与通过状态；活动页展示最近 24 小时低竞争策略观察。`observe` 只展示指标和 observation，不改变执行按钮语义；`enforce` 仍由后端要求 AI advisory 与 info-risk enforce 双 gate，report 不会自动改配置。
@@ -69,7 +70,7 @@
 ## 当前状态
 
 - 完整的 Run / Cancel / Reset 入队交互
-- 顶部执行概览展示实盘模式、启停/运行状态、实时可报价比例、钱包余额/策略上限比例、最近扫描/运行时间和事件触发计数；关键指标条把 `status.ready_quote_markets` 显示为“实时可报价”，把 `status.eligible_markets` 显示为“最终可挂”，并单独展示候选计划总量、已拦截计划、等待 AI/信息风险、资金不足、live 盘口验证和 AI/信息风控拦截数量，避免把资金或 provider gate 抖动误读成 reward 市场池大幅变化。策略上限直接读取当前 `snapshot.config.account_capital_usd`，不再使用可能保留历史初始值的账户账本字段，也不代表链上钱包余额。
+- 顶部执行概览展示实盘模式、启停/运行状态、实时可报价比例、钱包余额/策略上限比例、最近扫描/运行时间、事件触发计数和每日大模型调用统计；关键指标条把 `status.ready_quote_markets` 显示为“实时可报价”，把 `status.eligible_markets` 显示为“最终可挂”，并单独展示候选计划总量、已拦截计划、等待 AI/信息风险、资金不足、live 盘口验证和 AI/信息风控拦截数量，避免把资金或 provider gate 抖动误读成 reward 市场池大幅变化。策略上限直接读取当前 `snapshot.config.account_capital_usd`，不再使用可能保留历史初始值的账户账本字段，也不代表链上钱包余额。
 - 操作中心集中 Run / Save / Cancel / Reset，文案提醒当前命令可能提交或取消 Polymarket 实盘订单。
 - 配置编辑按执行、市场筛选、低竞争 sleeve、报价构造、盘口选择、AI 建议、库存与控制分组，包含仍生效的数值参数、布尔开关、受限下拉框和成交后策略；退出加价提示明确 0 表示原价卖。
 - 市场筛选面板公开质量硬门槛；通过门槛的市场由后端继续按奖励、流动性、成交量、剩余时长和奖励 spread 综合排序。

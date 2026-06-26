@@ -385,6 +385,106 @@ impl RewardBotStore for PostgresRewardBotStore {
         postgres_save_market_info_risk(&self.pool, risk).await
     }
 
+    async fn record_llm_call(&self, call: &RewardLlmCallRecord) -> Result<()> {
+        sqlx::query(
+            r#"
+            INSERT INTO llm_calls (
+              id,
+              task_type,
+              model_version,
+              prompt_version,
+              input_hash,
+              raw_output,
+              parsed_output,
+              validation_result,
+              fallback_used,
+              latency_ms,
+              cost_estimate,
+              trace_id,
+              created_at
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+            ON CONFLICT (id) DO NOTHING
+            "#,
+        )
+        .bind(&call.id)
+        .bind(&call.task_type)
+        .bind(&call.model_version)
+        .bind(&call.prompt_version)
+        .bind(&call.input_hash)
+        .bind(call.raw_output.clone().map(Json))
+        .bind(call.parsed_output.clone().map(Json))
+        .bind(Json(call.validation_result.clone()))
+        .bind(call.fallback_used)
+        .bind(call.latency_ms)
+        .bind(call.cost_estimate)
+        .bind(&call.trace_id)
+        .bind(call.created_at)
+        .execute(&self.pool)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_INSERT_FAILED",
+                format!("failed to insert LLM call record: {error}"),
+            )
+        })?;
+        Ok(())
+    }
+
+    async fn list_llm_call_daily_stats(
+        &self,
+        since: OffsetDateTime,
+        limit: u16,
+    ) -> Result<Vec<RewardLlmCallDailyStats>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT (created_at AT TIME ZONE 'UTC')::date::text AS day,
+                   (COUNT(*) FILTER (WHERE task_type = 'reward_ai_advisory'))::bigint AS ai_advisory_calls,
+                   (COUNT(*) FILTER (WHERE task_type = 'reward_info_risk'))::bigint AS info_risk_calls,
+                   COUNT(*)::bigint AS total_calls,
+                   (COUNT(*) FILTER (WHERE validation_result->>'success' = 'false'))::bigint AS failed_calls
+            FROM llm_calls
+            WHERE task_type IN ('reward_ai_advisory', 'reward_info_risk')
+              AND created_at >= $1
+            GROUP BY (created_at AT TIME ZONE 'UTC')::date
+            ORDER BY (created_at AT TIME ZONE 'UTC')::date DESC
+            LIMIT $2
+            "#,
+        )
+        .bind(since)
+        .bind(i64::from(limit.max(1)))
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_QUERY_FAILED",
+                format!("failed to query LLM call daily stats: {error}"),
+            )
+        })?;
+
+        rows.iter()
+            .map(|row| {
+                Ok(RewardLlmCallDailyStats {
+                    day: row.try_get("day").map_err(postgres_decode_error)?,
+                    ai_advisory_calls: i64_count_to_u64(
+                        row.try_get("ai_advisory_calls")
+                            .map_err(postgres_decode_error)?,
+                    ),
+                    info_risk_calls: i64_count_to_u64(
+                        row.try_get("info_risk_calls")
+                            .map_err(postgres_decode_error)?,
+                    ),
+                    total_calls: i64_count_to_u64(
+                        row.try_get("total_calls").map_err(postgres_decode_error)?,
+                    ),
+                    failed_calls: i64_count_to_u64(
+                        row.try_get("failed_calls").map_err(postgres_decode_error)?,
+                    ),
+                })
+            })
+            .collect()
+    }
+
     async fn list_markets(&self, limit: u16) -> Result<Vec<RewardMarket>> {
         postgres_list_reward_markets(self, limit).await
     }

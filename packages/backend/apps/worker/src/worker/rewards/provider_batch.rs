@@ -262,10 +262,27 @@ async fn run_reward_ai_advisory_batch_flush(
 
     if !requests.is_empty() {
         report.batch_calls += 1;
+        let condition_ids_for_record = reward_ai_llm_condition_ids(&requests);
+        let input_hash_for_record = reward_ai_llm_batch_input_hash(&requests);
+        let started = Instant::now();
         let batch_outcome = {
             let _permit = acquire_reward_ai_advisory_provider_request_permit().await?;
             connector.advise_batch(&requests).await
         };
+        record_reward_provider_llm_call(
+            state,
+            REWARD_AI_ADVISORY_LLM_TASK_TYPE,
+            REWARD_AI_ADVISORY_PROMPT_VERSION,
+            model,
+            &input_hash_for_record,
+            &condition_ids_for_record,
+            started.elapsed(),
+            batch_outcome.is_ok(),
+            batch_outcome.as_ref().ok().map(|items| json!(items)),
+            batch_outcome.as_ref().err().map(ToString::to_string),
+            trace_id,
+        )
+        .await;
         match batch_outcome {
             Ok(items) => {
                 let mut saved_set: HashSet<String> = HashSet::new();
@@ -418,12 +435,27 @@ async fn single_reward_ai_advise_and_save(
     config: &RewardBotConfig,
     trace_id: &str,
 ) -> SingleAdviseOutcome {
+    let started = Instant::now();
     let result = {
         let Ok(_permit) = acquire_reward_ai_advisory_provider_request_permit().await else {
             return SingleAdviseOutcome::Failed;
         };
         connector.advise(request).await
     };
+    record_reward_provider_llm_call(
+        state,
+        REWARD_AI_ADVISORY_LLM_TASK_TYPE,
+        REWARD_AI_ADVISORY_PROMPT_VERSION,
+        &request.model,
+        &request.input_hash,
+        std::slice::from_ref(&request.condition_id),
+        started.elapsed(),
+        result.is_ok(),
+        result.as_ref().ok().map(|decision| json!(decision)),
+        result.as_ref().err().map(ToString::to_string),
+        trace_id,
+    )
+    .await;
     match result {
         Ok(decision) => {
             let advisory = decision.into_advisory(

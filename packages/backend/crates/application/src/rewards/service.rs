@@ -4,6 +4,7 @@ const MEMORY_EVENT_LIMIT: usize = 200;
 const MEMORY_FILL_LIMIT: usize = 200;
 const LOW_COMPETITION_SHADOW_REPORT_WINDOW_HOURS: u64 = 24;
 const LOW_COMPETITION_OBSERVATION_READ_LIMIT: u16 = 5_000;
+const REWARD_LLM_USAGE_DAYS: u16 = 14;
 
 #[derive(Clone)]
 pub struct RewardBotService {
@@ -320,6 +321,22 @@ impl RewardBotService {
 
     pub async fn save_market_info_risk(&self, risk: &RewardMarketInfoRisk) -> Result<()> {
         self.store.save_market_info_risk(risk).await
+    }
+
+    pub async fn record_llm_call(&self, call: &RewardLlmCallRecord) -> Result<()> {
+        self.store.record_llm_call(call).await
+    }
+
+    pub async fn list_recent_llm_call_daily_stats(
+        &self,
+        now: OffsetDateTime,
+    ) -> Result<Vec<RewardLlmCallDailyStats>> {
+        self.store
+            .list_llm_call_daily_stats(
+                now - TimeDuration::days(i64::from(REWARD_LLM_USAGE_DAYS)),
+                REWARD_LLM_USAGE_DAYS,
+            )
+            .await
     }
 
     pub async fn save_quote_plans(&self, plans: &[RewardQuotePlan]) -> Result<()> {

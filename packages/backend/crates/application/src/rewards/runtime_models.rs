@@ -491,6 +491,38 @@ pub struct RewardBotStatus {
     pub error: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RewardLlmCallRecord {
+    pub id: String,
+    pub task_type: String,
+    pub model_version: String,
+    pub prompt_version: String,
+    pub input_hash: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub raw_output: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parsed_output: Option<Value>,
+    pub validation_result: Value,
+    #[serde(default)]
+    pub fallback_used: bool,
+    pub latency_ms: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cost_estimate: Option<Decimal>,
+    pub trace_id: String,
+    #[serde(with = "time::serde::rfc3339")]
+    pub created_at: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RewardLlmCallDailyStats {
+    /// UTC calendar day in `YYYY-MM-DD` format.
+    pub day: String,
+    pub ai_advisory_calls: u64,
+    pub info_risk_calls: u64,
+    pub total_calls: u64,
+    pub failed_calls: u64,
+}
+
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RewardQuotePlanBlockerCounts {
     pub waiting_orderbook: usize,
@@ -616,6 +648,8 @@ pub struct RewardBotSnapshot {
     pub status: RewardBotStatus,
     pub account: RewardAccountState,
     pub low_competition_report: RewardLowCompetitionShadowReport,
+    #[serde(default)]
+    pub llm_usage: Vec<RewardLlmCallDailyStats>,
     pub markets: Vec<RewardMarket>,
     pub quote_plans: Vec<RewardQuotePlan>,
     pub plans_page: RewardListPage,

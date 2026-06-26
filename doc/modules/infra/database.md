@@ -1,14 +1,14 @@
 # 数据库（Migrations + Schema）
 
-最后更新：2026-06-25
+最后更新：2026-06-26
 
 ## 概述
 
-数据库使用 PostgreSQL，通过 46 个 SQL 迁移文件管理 schema。覆盖审计、市场数据、事件/信号、执行管道、风控、套利、奖励、跟单等领域。为了空库一次性初始化，`packages/backend/init.sql` 机械合并了当前全部迁移内容；运行时仍通过 `sqlx` 使用 `packages/backend/migrations/` 做迁移校验和增量升级。
+数据库使用 PostgreSQL，通过 47 个 SQL 迁移文件管理 schema。覆盖审计、市场数据、事件/信号、执行管道、风控、套利、奖励、跟单等领域。为了空库一次性初始化，`packages/backend/init.sql` 机械合并了当前全部迁移内容；运行时仍通过 `sqlx` 使用 `packages/backend/migrations/` 做迁移校验和增量升级。
 
 ## 初始化入口
 
-- `packages/backend/init.sql`：完整空库初始化脚本，按 `0001` 到 `0046` 顺序展开所有迁移，适合新环境人工执行一次，例如 `psql "$POLYEDGE_POSTGRES__URL" -v ON_ERROR_STOP=1 -f packages/backend/init.sql`。
+- `packages/backend/init.sql`：完整空库初始化脚本，按 `0001` 到 `0047` 顺序展开所有迁移，适合新环境人工执行一次，例如 `psql "$POLYEDGE_POSTGRES__URL" -v ON_ERROR_STOP=1 -f packages/backend/init.sql`。
 - `packages/backend/migrations/*.sql`：保留给 Rust runtime 的 `sqlx::migrate!` 使用。不要删除或重命名已应用的迁移文件，否则现有数据库的 `_sqlx_migrations` 历史可能与二进制内嵌迁移不一致。
 - `init.sql` 只面向空数据库；已存在 schema 的数据库继续使用 runtime 自动迁移或按需执行新增迁移。
 
@@ -16,7 +16,7 @@
 
 | 迁移 | 主题 | 核心表 |
 |---|---|---|
-| `0001_support_tables.sql` | 支撑表 | `audit_logs`、`idempotency_keys` |
+| `0001_support_tables.sql` | 支撑表 | `audit_logs`、`idempotency_keys`、`llm_calls` |
 | `0002_market_event_core.sql` | 市场/事件核心 | `markets`、`market_resolution_rules`、`raw_events` |
 | `0003_evidence_signal_core.sql` | 证据/信号 | `evidences`、`signals` |
 | `0004_pricing_and_signal_transitions.sql` | 概率估计/信号转换 | `probability_estimates`、`signal_transitions` |
@@ -66,10 +66,11 @@
 
 ## Schema 领域分组
 
-### 1. 审计/幂等
+### 1. 审计/幂等/LLM 调用
 
 - **`audit_logs`**：完整审计追踪 — actor（user/session/roles）、action、resource、result（accepted/succeeded/rejected/failed）、IP、user agent、payload JSON、version snapshot
 - **`idempotency_keys`**：scope + key + request_hash，跟踪 started/completed/failed 状态，有 TTL
+- **`llm_calls`**：外部大模型调用审计/统计表，记录 task_type、model/prompt version、input_hash、raw/parsed output、validation_result、fallback_used、latency、cost_estimate、trace_id 和 created_at；Rewards AI advisory / info-risk provider 调用会复用该表，snapshot 按 UTC 日聚合调用次数
 
 ### 2. 市场数据
 
@@ -155,7 +156,7 @@
 - 迁移使用 `sqlx` 管理
 - 套利扫描历史已接入 retention：worker 每轮扫描完成后按 `arbitrage.event_retention_hours` 分批删除旧 `arbitrage_scans`，并通过 FK cascade 清理 `market_book_snapshots`、`arbitrage_opportunities` 和 validations，避免盘口快照表无限膨胀；`arbitrage_events` 继续按同一窗口单独清理。
 - 通用数据库维护已接入 API 内嵌 worker runtime，生产模板默认开启 `POLYEDGE_WORKER__DATABASE_MAINTENANCE=true`，用于防止缓存、日志、队列和低频 price-history 表持续增长；它不删除 rewards fills/positions/account state 等核心账本表。
-- Rewards 低竞争市场 sleeve v2 已落地，schema 包括 managed order 的 `strategy_bucket` 和 `reward_low_competition_observations` 观测表；observation 已记录 competition-share、挂单资金占比字段和 not_low_competition 高竞争混入标签，shadow report 是 snapshot 派生结果，不单独落表。Rewards AI advisory 已接入 `reward_market_candles`，K 线由 orderbook 服务统一低频限速调用 CLOB `/prices-history` 写入，不由 worker/API 直接请求外部接口。
+- Rewards 低竞争市场 sleeve v2 已落地，schema 包括 managed order 的 `strategy_bucket` 和 `reward_low_competition_observations` 观测表；observation 已记录 competition-share、挂单资金占比字段和 not_low_competition 高竞争混入标签，shadow report 是 snapshot 派生结果，不单独落表。Rewards AI advisory 已接入 `reward_market_candles`，K 线由 orderbook 服务统一低频限速调用 CLOB `/prices-history` 写入，不由 worker/API 直接请求外部接口。Rewards AI advisory / info-risk 的实际 provider 调用复用 `llm_calls` 做每日调用统计，通用数据库维护保留 180 天。
 
 ## 修改检查清单
 

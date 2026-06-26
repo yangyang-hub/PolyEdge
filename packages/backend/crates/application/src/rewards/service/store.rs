@@ -75,6 +75,12 @@ pub trait RewardBotStore: Send + Sync {
         now: OffsetDateTime,
     ) -> Result<Vec<RewardMarketInfoRisk>>;
     async fn save_market_info_risk(&self, risk: &RewardMarketInfoRisk) -> Result<()>;
+    async fn record_llm_call(&self, call: &RewardLlmCallRecord) -> Result<()>;
+    async fn list_llm_call_daily_stats(
+        &self,
+        since: OffsetDateTime,
+        limit: u16,
+    ) -> Result<Vec<RewardLlmCallDailyStats>>;
     async fn list_markets(&self, limit: u16) -> Result<Vec<RewardMarket>>;
     /// List candidate markets with SQL-level filtering by config parameters.
     /// The SQL WHERE clause pushes down midpoint, daily-rate, spread, token-count,

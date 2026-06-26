@@ -1,6 +1,6 @@
 # infrastructure（基础设施层）
 
-最后更新：2026-06-25
+最后更新：2026-06-26
 
 ## 概述
 
@@ -66,14 +66,14 @@ Orderbook candle history 默认由 orderbook 服务独立启用：`POLYEDGE_ORDE
 | `catalog/postgres/` | `MarketEventStore`、`ArbitrageStore`、`NewsIngestionStore` | PostgreSQL |
 | `catalog/postgres/market_event/market_queries.rs` | `MarketEventStore` 市场查询 helper | 市场列表/计数/分类/详情/按 id 批量读取 SQL；从通用 `queries.rs` 拆分 |
 | `catalog/in_memory.rs` | 同上 | 内存（RwLock） |
-| `stores/rewards/postgres.rs` | `RewardBotStore` | PostgreSQL（key-value config + 完整表） |
+| `stores/rewards/postgres.rs` | `RewardBotStore` | PostgreSQL（key-value config + 完整表 + `llm_calls` 记录/每日统计） |
 | `stores/rewards/postgres_market_methods.rs` | Rewards Postgres 市场查询 helper | 质量硬过滤、综合排序、row mapping |
 | `stores/rewards/postgres_plans.rs` | Rewards Postgres quote plan helper | quote plan 统计、分页、搜索和排序 SQL |
 | `stores/rewards/postgres_control_commands.rs` / `postgres_heartbeat.rs` / `postgres_orders.rs` / `postgres_writes.rs` | `RewardBotStore` 辅助 | 控制命令、worker heartbeat、订单分页 SQL、旧 reserved 释放辅助 |
 | `stores/rewards/postgres_info_risk.rs` | `RewardBotStore` 辅助 | 信息风险缓存查询和写入 SQL |
 | `stores/rewards/postgres_low_competition.rs` | `RewardBotStore` 辅助 | 低竞争 sleeve observation 写入和最近窗口查询 SQL |
 | `stores/rewards/postgres_candles.rs` | `RewardBotStore` 辅助 | rewards price-history candle upsert 和最近 K 线查询 SQL |
-| `stores/rewards/in_memory.rs` | 同上 | 内存 |
+| `stores/rewards/in_memory.rs` | 同上 | 内存（含 LLM 调用记录测试路径） |
 | `stores/copytrade/postgres.rs` | `CopyTradeStore` | PostgreSQL（key-value config、tracked wallets、source trades、events、控制命令；旧模拟表兼容） |
 | `stores/copytrade/postgres_control_commands.rs` / `postgres_rows.rs` / `postgres_writes.rs` | `CopyTradeStore` 辅助 | 控制命令 SQL、行映射、写入辅助 |
 | `stores/copytrade/in_memory.rs` | 同上 | 内存 |
@@ -101,6 +101,7 @@ Orderbook candle history 默认由 orderbook 服务独立启用：`POLYEDGE_ORDE
 - `RewardBotStore` 的 Postgres key-value 配置读写覆盖全部 rewards 报价/风控配置字段（市场质量门槛、`quote_bid_rank`、quote/selection mode、dominant probability/depth/concentration、preferred categories、低竞争 sleeve mode/额度/10U 探测竞争份额/竞争倍数/账户与单市场资金占比/退出/稳定性阈值、入场退出滑点、坏成交恢复天数、top-of-book 跳变、低竞争专属报价/spread/评分、低竞争 AI allow 与 info-risk avoid level、低竞争撤单阈值、AI advisory 开关/provider/request format/TTL/批量大小、信息风险开关/mode/过滤等级/TTL/批量大小、首单信息风险要求/观察窗口、depth/rank/velocity/requote/reconcile，以及 `requote_drift_confirm_sec` / `requote_drift_cooldown_sec` / `requote_drift_max_cancels_per_cycle` 换价 guard）；低竞争旧 liquidity/volume 过滤键仍可兼容读取旧库/旧 API payload，但 `RewardBotConfig::normalized()` 会强制开关为 false、阈值为 0，保存后不再重新启用。`execution_mode`、`quote_edge_cents`、`reward_competition_factor`、`single_sided_divisor_c`、`fill_rate_per_tick`、`max_fill_ratio` 和 `auto_cancel_stale_minutes` 旧键保留用于向后兼容但被忽略。`quote_bid_rank` 保存为 1–3，默认 1；低竞争 `quote_bid_rank` 默认 2；`exit_markup_cents` 默认 0，表示 `exit_at_markup` 成交后按被吃买单原价挂卖；`ai_advisory_batch_size` / `info_risk_batch_size` 保存为 1–12，默认 1 表示逐市场 provider 请求；`first_quote_quarantine_sec` 保存为 0–86400，默认 600。
 - `RewardBotStore.latest_market_advisory()` 和 `save_market_advisory()` 在 Postgres 与内存实现中读写 `reward_market_advisories`；缓存 key 为 condition/provider/request_format/model/input_hash，且只返回 `expires_at > now` 的记录。Postgres 行映射 helper 解析 suitability、quote mode、exit policy、reasons JSON 和 metrics JSON。
 - `RewardBotStore.latest_market_info_risk(s)` 和 `save_market_info_risk()` 在 Postgres 与内存实现中读写 `reward_market_info_risks`；请求缓存 key 为 condition/provider/request_format/model/input_hash，批量读取按 condition 返回最新未过期记录。Postgres 行映射 helper 解析 risk level/type/direction、sources JSON 和 metrics JSON。
+- `RewardBotStore.record_llm_call()` 和 `list_llm_call_daily_stats()` 在 Postgres 与内存实现中读写已有 `llm_calls` 表；worker 只在实际外部 AI advisory / info-risk provider HTTP 调用后写入，批量 provider 请求按一条外部调用计数，snapshot 查询按 UTC 日聚合 AI、info-risk、总调用和失败调用。
 - `RewardBotStore.record_low_competition_observations()` 和 `list_low_competition_observations()` 在 Postgres 与内存实现中读写 `reward_low_competition_observations`；observation 保存计划 notional、探测 notional、竞争份额/倍数、账户有效可用资金、低竞争开放 BUY notional、加上当前计划后的低竞争/condition 挂单 notional 与 bps 占比、退出/稳定性/provider 拦截结果。Postgres 通过 `(account_id, observed_at DESC)` 索引读取最近窗口，用于 API snapshot 生成低竞争 shadow report，不会自动修改配置。
 - `RewardBotStore.prune_history(cutoff)` 在 Postgres 中使用单事务清理 cutoff 之前的终态 managed orders（`cancelled`/`filled`/`error`）、`reward_risk_events` 和 `reward_low_competition_observations`；内存实现保持相同语义。该清理不会删除 `planned`/`open`/`exit_pending` 订单、`reward_fills`、`reward_positions` 或 `reward_account_state`，避免破坏 live 对账和账本。
 - `RewardBotStore.record_market_candle_sample()` 和 `list_recent_market_candles()` 在 Postgres 与内存实现中读写 `reward_market_candles`；Postgres 根据 `reward_markets.tokens_json` 把 token 映射到 active reward market，按 `(token_id, interval_sec, bucket_start)` upsert price-history OHLC，同一 close timestamp 的重复写入不增加 `sample_count`，AI advisory 按 condition/interval/window 读取最近 K 线。
@@ -172,7 +173,7 @@ Arbitrage store 的 Postgres 和 in-memory 实现均支持 `prune_arbitrage_scan
 - Orderbook 进程内缓存会先保留最优价格顺序，再按 `POLYEDGE_ORDERBOOK_STREAM__MAX_LEVELS_PER_SIDE` 裁剪每侧 bids/asks 深度，默认 100 档；HTTP register/batch/ingest 入口使用 `max_tokens` 做请求规模上限，Polymarket WS 订阅使用 `POLYEDGE_ORDERBOOK_STREAM__WS_CHUNK_SIZE` 控制每条连接承载的 token 数（默认 100），poll reconcile 默认 10 秒，register 会原子替换对应 source 当前有序 token 集合，worker 对周期注册空集合做 active/exec 2 轮、eligible/candidates 3 轮防抖后才发送空集合清源，ingest 会先校验整批数据再批量写入并传播缓存错误，registry source 固定上限为 32 个
 - Orderbook 缓存拒绝旧 `observed_at` 覆盖未过期条目，但会合并更新的 `confirmed_at` 作为最近确认时间；已过期条目可被后续写入恢复；rewards 控制命令具备 5 分钟 running lease，并会合并 pending/running 重复命令；Postgres rewards live worker 通过 advisory lease 避免多实例并发执行
 - Rewards managed order upsert 会更新后续实际提交的 `price` / `size` / `strategy_bucket`，保证 flatten 改价、CLOB 数量调整、未知提交恢复和低竞争 bucket 统计使用持久化后的真实参数
-- Rewards store 已持久化 quote/selection mode、dominant 单边阈值、盘口集中度阈值、偏好分类、低竞争 sleeve 竞争份额/资金占比配置、AI advisory 配置、信息风险配置和首单入场 gate 配置；`reward_market_advisories`、`reward_market_info_risks`、`reward_low_competition_observations` 与 `reward_market_candles` 表已由迁移创建，并已接入 Postgres/内存读写，供 worker 跳过重复模型判断、生成低竞争 shadow report，并向 AI advisory 提供 price-history K 线。
+- Rewards store 已持久化 quote/selection mode、dominant 单边阈值、盘口集中度阈值、偏好分类、低竞争 sleeve 竞争份额/资金占比配置、AI advisory 配置、信息风险配置和首单入场 gate 配置；`reward_market_advisories`、`reward_market_info_risks`、`reward_low_competition_observations` 与 `reward_market_candles` 表已由迁移创建，并已接入 Postgres/内存读写，供 worker 跳过重复模型判断、生成低竞争 shadow report，并向 AI advisory 提供 price-history K 线；AI advisory / info-risk 的实际 provider 调用会写入 `llm_calls` 并在 Rewards snapshot 中按日聚合展示。
 - Rewards quote plan snapshot 统计在 Postgres 中直接用 SQL 聚合 readiness 与 blocker counts，不再为顶部概览读取并反序列化全表 `quote_plan_json`；blocker 分类包含等待盘口、AI/info-risk pending、信息风险、低竞争、资金不足、live 盘口验证和其它原因。
 - 数据库维护 store 已接入 runtime：Postgres 环境定期清理 raw events、AI/info-risk cache、reward candles、控制命令、copytrade 历史、outbox/external dedup、LLM call、audit 和 mode transition 历史；in-memory/test runtime 使用 no-op，避免测试状态被后台任务改变。
 - Rewards store 已支持外部账户余额和完整持仓快照同步；成功空持仓快照会清空目标账户持仓，失败响应不会破坏上一版，最近 confirmed fill 时间用于 worker 的 120 秒账户快照保护；worker 写入的资金钱包地址优先使用 `FUNDER`，CLOB 余额为 0/失败时可用 Polygon pUSD 链上余额回填 snapshot

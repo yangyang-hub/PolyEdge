@@ -51,10 +51,27 @@ async fn refresh_reward_ai_advisory_provider_batch(
             batch_size,
             "requesting reward AI advisory provider batch",
         );
+        let condition_ids_for_record = reward_ai_llm_condition_ids(&requests);
+        let input_hash_for_record = reward_ai_llm_batch_input_hash(&requests);
+        let started = Instant::now();
         let result = {
             let _provider_permit = acquire_reward_ai_advisory_provider_request_permit().await?;
             connector.advise_batch(&requests).await
         };
+        record_reward_provider_llm_call(
+            state,
+            REWARD_AI_ADVISORY_LLM_TASK_TYPE,
+            REWARD_AI_ADVISORY_PROMPT_VERSION,
+            model,
+            &input_hash_for_record,
+            &condition_ids_for_record,
+            started.elapsed(),
+            result.is_ok(),
+            result.as_ref().ok().map(|items| json!(items)),
+            result.as_ref().err().map(ToString::to_string),
+            trace_id,
+        )
+        .await;
         let items = match result {
             Ok(items) => items,
             Err(error) => {
@@ -348,10 +365,27 @@ async fn refresh_reward_info_risk_provider_batch(
             batch_size,
             "requesting reward info risk provider batch",
         );
+        let condition_ids_for_record = reward_info_risk_llm_condition_ids(&requests);
+        let input_hash_for_record = reward_info_risk_llm_batch_input_hash(&requests);
+        let started = Instant::now();
         let result = {
             let _provider_permit = acquire_reward_info_risk_provider_request_permit().await?;
             connector.assess_batch(&requests).await
         };
+        record_reward_provider_llm_call(
+            state,
+            REWARD_INFO_RISK_LLM_TASK_TYPE,
+            REWARD_INFO_RISK_PROMPT_VERSION,
+            model,
+            &input_hash_for_record,
+            &condition_ids_for_record,
+            started.elapsed(),
+            result.is_ok(),
+            result.as_ref().ok().map(|items| json!(items)),
+            result.as_ref().err().map(ToString::to_string),
+            trace_id,
+        )
+        .await;
         let items = match result {
             Ok(items) => items,
             Err(error) => {

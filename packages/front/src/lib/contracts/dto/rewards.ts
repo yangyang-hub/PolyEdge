@@ -424,11 +424,20 @@ export type RewardListPageDto = {
   total_pages: number;
 };
 
+export type RewardLlmCallDailyStatsDto = {
+  day: string;
+  ai_advisory_calls: number;
+  info_risk_calls: number;
+  total_calls: number;
+  failed_calls: number;
+};
+
 export type RewardBotSnapshotDto = {
   config: RewardBotConfigDto;
   status: RewardBotStatusDto;
   account: RewardAccountStateDto;
   low_competition_report?: RewardLowCompetitionShadowReportDto | null;
+  llm_usage?: RewardLlmCallDailyStatsDto[];
   markets: RewardMarketDto[];
   quote_plans: RewardQuotePlanDto[];
   plans_page: RewardListPageDto;

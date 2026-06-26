@@ -352,6 +352,102 @@ fn build_reward_ai_advisory_connector(
     .map(Some)
 }
 
+const REWARD_AI_ADVISORY_LLM_TASK_TYPE: &str = "reward_ai_advisory";
+const REWARD_INFO_RISK_LLM_TASK_TYPE: &str = "reward_info_risk";
+const REWARD_AI_ADVISORY_PROMPT_VERSION: &str = "reward_ai_advisory_schema_v5";
+const REWARD_INFO_RISK_PROMPT_VERSION: &str = "reward_info_risk_schema_v3";
+
+#[allow(clippy::too_many_arguments)]
+async fn record_reward_provider_llm_call(
+    state: &AppState,
+    task_type: &'static str,
+    prompt_version: &'static str,
+    model: &str,
+    input_hash: &str,
+    condition_ids: &[String],
+    latency: Duration,
+    success: bool,
+    parsed_output: Option<Value>,
+    error: Option<String>,
+    trace_id: &str,
+) {
+    let latency_ms = i64::try_from(latency.as_millis()).unwrap_or(i64::MAX);
+    let call = RewardLlmCallRecord {
+        id: format!("llm_{}", Uuid::now_v7()),
+        task_type: task_type.to_string(),
+        model_version: model.to_string(),
+        prompt_version: prompt_version.to_string(),
+        input_hash: input_hash.to_string(),
+        raw_output: None,
+        parsed_output,
+        validation_result: json!({
+            "success": success,
+            "condition_ids": condition_ids,
+            "condition_count": condition_ids.len(),
+            "error": error,
+        }),
+        fallback_used: false,
+        latency_ms,
+        cost_estimate: None,
+        trace_id: trace_id.to_string(),
+        created_at: OffsetDateTime::now_utc(),
+    };
+    if let Err(error) = state.reward_bot_service.record_llm_call(&call).await {
+        warn!(
+            trace_id = %trace_id,
+            task_type,
+            error = %error,
+            "failed to record reward provider LLM call",
+        );
+    }
+}
+
+fn reward_ai_llm_condition_ids(requests: &[RewardAiAdvisoryRequest]) -> Vec<String> {
+    requests
+        .iter()
+        .map(|request| request.condition_id.clone())
+        .collect()
+}
+
+fn reward_ai_llm_batch_input_hash(requests: &[RewardAiAdvisoryRequest]) -> String {
+    if let [request] = requests {
+        return request.input_hash.clone();
+    }
+    format!(
+        "batch:{}",
+        requests
+            .iter()
+            .map(|request| request.input_hash.as_str())
+            .collect::<Vec<_>>()
+            .join(",")
+    )
+}
+
+fn reward_info_risk_llm_condition_ids(
+    requests: &[RewardInfoRiskAssessmentRequest],
+) -> Vec<String> {
+    requests
+        .iter()
+        .map(|request| request.condition_id.clone())
+        .collect()
+}
+
+fn reward_info_risk_llm_batch_input_hash(
+    requests: &[RewardInfoRiskAssessmentRequest],
+) -> String {
+    if let [request] = requests {
+        return request.input_hash.clone();
+    }
+    format!(
+        "batch:{}",
+        requests
+            .iter()
+            .map(|request| request.input_hash.as_str())
+            .collect::<Vec<_>>()
+            .join(",")
+    )
+}
+
 fn reward_ai_min_confidence(bps: u16) -> Decimal {
     Decimal::from(bps.min(10_000)) / Decimal::from(10_000_u64)
 }
