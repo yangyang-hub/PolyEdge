@@ -388,6 +388,9 @@ fn reward_account_state_from_row(row: &sqlx::postgres::PgRow) -> Result<RewardAc
         external_buy_notional: row
             .try_get("external_buy_notional")
             .map_err(postgres_decode_error)?,
+        unmanaged_external_buy_notional: row
+            .try_get("unmanaged_external_buy_notional")
+            .map_err(postgres_decode_error)?,
         reserved_usd: row.try_get("reserved_usd").map_err(postgres_decode_error)?,
         realized_pnl: row.try_get("realized_pnl").map_err(postgres_decode_error)?,
         reward_earned_usd: row
@@ -402,15 +405,16 @@ fn reward_account_state_from_row(row: &sqlx::postgres::PgRow) -> Result<RewardAc
 const REWARD_ACCOUNT_STATE_UPSERT: &str = r#"
     INSERT INTO reward_account_state (
       account_id, wallet_address, capital_usd, available_usd, external_buy_notional,
-      reserved_usd, realized_pnl,
+      unmanaged_external_buy_notional, reserved_usd, realized_pnl,
       reward_earned_usd, fees_paid, tick_index, updated_at
     )
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
     ON CONFLICT (account_id) DO UPDATE
     SET wallet_address = EXCLUDED.wallet_address,
         capital_usd = EXCLUDED.capital_usd,
         available_usd = EXCLUDED.available_usd,
         external_buy_notional = EXCLUDED.external_buy_notional,
+        unmanaged_external_buy_notional = EXCLUDED.unmanaged_external_buy_notional,
         reserved_usd = EXCLUDED.reserved_usd,
         realized_pnl = EXCLUDED.realized_pnl,
         reward_earned_usd = EXCLUDED.reward_earned_usd,
@@ -429,6 +433,7 @@ fn bind_reward_account_state<'q>(
         .bind(state.capital_usd)
         .bind(state.available_usd)
         .bind(state.external_buy_notional)
+        .bind(state.unmanaged_external_buy_notional)
         .bind(state.reserved_usd)
         .bind(state.realized_pnl)
         .bind(state.reward_earned_usd)

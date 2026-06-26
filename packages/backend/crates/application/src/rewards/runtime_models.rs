@@ -393,6 +393,15 @@ pub struct RewardAccountState {
     /// external), synced from `list_open_orders()` for account observability.
     /// Resting maker orders do not reserve this amount in placement checks.
     pub external_buy_notional: Decimal,
+    /// Snapshot-frozen notional of active Polymarket buy orders that are NOT
+    /// tracked as bot-managed (true external/unknown occupancy). Computed once
+    /// per CLOB open-order snapshot as `external_buy_notional - managed`, using
+    /// both sides from the same snapshot so it stays stable between snapshots.
+    /// Funding precheck reads this directly instead of recomputing
+    /// `external_buy_notional(stale) - managed(now)`, which used to spike
+    /// whenever managed buys were cancelled between snapshots and made
+    /// `eligible_markets` oscillate to 0.
+    pub unmanaged_external_buy_notional: Decimal,
     /// Legacy hard-reserve field. New rewards ticks release it and keep resting
     /// buy reservations soft across markets.
     pub reserved_usd: Decimal,
@@ -414,6 +423,7 @@ impl RewardAccountState {
             capital_usd,
             available_usd: capital_usd,
             external_buy_notional: Decimal::ZERO,
+            unmanaged_external_buy_notional: Decimal::ZERO,
             reserved_usd: Decimal::ZERO,
             realized_pnl: Decimal::ZERO,
             reward_earned_usd: Decimal::ZERO,

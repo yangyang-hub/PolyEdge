@@ -683,7 +683,7 @@ impl RewardBotStore for PostgresRewardBotStore {
         let existing = sqlx::query(
             r#"
             SELECT account_id, wallet_address, capital_usd, available_usd, external_buy_notional,
-                   reserved_usd, realized_pnl,
+                   unmanaged_external_buy_notional, reserved_usd, realized_pnl,
                    reward_earned_usd, fees_paid, tick_index, updated_at
             FROM reward_account_state
             WHERE account_id = $1

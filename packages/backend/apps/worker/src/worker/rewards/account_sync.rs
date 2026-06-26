@@ -361,6 +361,7 @@ async fn sync_external_open_order_state(
         .collect::<HashSet<_>>();
 
     let previous_external_buy_notional = account.external_buy_notional;
+    let previous_unmanaged_external_buy_notional = account.unmanaged_external_buy_notional;
     account.external_buy_notional = external_open_buy_notional(&open_orders);
 
     let adopted = match adopt_external_open_reward_buy_orders(
@@ -394,8 +395,22 @@ async fn sync_external_open_order_state(
     }
     cycle_orders.retain(|order| order.status.is_open_like());
 
+    // Freeze the snapshot-time external (non-managed) buy occupancy. Both
+    // `external_buy_notional` (above) and `managed_external_open_buy_notional`
+    // derive from this same CLOB snapshot, so their difference is the true
+    // external occupancy and stays stable between snapshots. Funding precheck
+    // reads this frozen value instead of recomputing external(stale) -
+    // managed(now), which used to spike whenever managed buys were cancelled
+    // between snapshots and made eligible_markets oscillate to 0.
+    account.unmanaged_external_buy_notional =
+        (account.external_buy_notional - managed_external_open_buy_notional(&cycle_orders))
+            .max(Decimal::ZERO);
+
     if adopted.is_empty() && closed.is_empty() {
-        if account.external_buy_notional != previous_external_buy_notional {
+        if account.external_buy_notional != previous_external_buy_notional
+            || account.unmanaged_external_buy_notional
+                != previous_unmanaged_external_buy_notional
+        {
             account.updated_at = OffsetDateTime::now_utc();
             if let Err(error) = state
                 .reward_bot_service

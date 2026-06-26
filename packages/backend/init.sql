@@ -1761,3 +1761,18 @@ CREATE UNIQUE INDEX IF NOT EXISTS reward_control_commands_active_global_dedupe_i
 -- Folded into reward_low_competition_observations above for empty-database
 -- initialization. Existing databases receive these columns through migration
 -- 0046.
+
+
+-------------------------------------------------------------------------------
+-- Source: packages/backend/migrations/0048_reward_account_unmanaged_buy_notional.sql
+-------------------------------------------------------------------------------
+
+-- 0048_reward_account_unmanaged_buy_notional.sql
+-- Snapshot-frozen notional of active buy orders on Polymarket that are NOT
+-- tracked as bot-managed (true external/unknown buy occupancy). See migration
+-- 0048 for the full rationale; funding precheck reads this directly so the
+-- bot cancelling its own managed buys between CLOB snapshots no longer spikes
+-- the external occupancy estimate.
+
+ALTER TABLE reward_account_state
+    ADD COLUMN IF NOT EXISTS unmanaged_external_buy_notional NUMERIC(18, 4) NOT NULL DEFAULT 0;

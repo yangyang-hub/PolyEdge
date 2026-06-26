@@ -89,6 +89,7 @@ fn cache_test_account(available_usd: &str, tick_index: i64) -> RewardAccountStat
         capital_usd: decimal("1000"),
         available_usd: decimal(available_usd),
         external_buy_notional: decimal("0"),
+        unmanaged_external_buy_notional: decimal("0"),
         reserved_usd: Decimal::ZERO,
         realized_pnl: Decimal::ZERO,
         reward_earned_usd: Decimal::ZERO,

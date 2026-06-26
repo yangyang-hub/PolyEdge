@@ -391,7 +391,7 @@ fn low_competition_allocation_metrics(
     let condition_buy_notional_usd_after_plan =
         (existing_condition_buy_notional + missing_plan_buy_notional).round_dp(4);
     let account_effective_available_usd =
-        account_effective_available_after_unmanaged_external_buys(account, open_orders);
+        account_effective_available_after_unmanaged_external_buys(account);
     let account_allocation_bps = decimal_ratio_bps(
         low_competition_open_buy_notional_usd_after_plan,
         account_effective_available_usd,
@@ -415,17 +415,13 @@ fn low_competition_allocation_metrics(
 
 fn account_effective_available_after_unmanaged_external_buys(
     account: &RewardAccountState,
-    open_orders: &[ManagedRewardOrder],
 ) -> Decimal {
-    let managed_open_buy_notional = open_orders
-        .iter()
-        .filter(|order| order.side == RewardOrderSide::Buy && order.status.is_open_like())
-        .map(order_remaining_notional)
-        .sum::<Decimal>()
-        .round_dp(4);
-    let unmanaged_external_buy_notional =
-        (account.external_buy_notional - managed_open_buy_notional).max(Decimal::ZERO);
-    (account.available_usd - unmanaged_external_buy_notional)
+    // Reads the snapshot-frozen external occupancy; see
+    // `sync_external_open_order_state`. This also unifies the low-competition
+    // sleeve with the standard funding gate calibration — the old local
+    // recompute did not filter internal order ids and could over-discount
+    // managed occupancy, biasing the low-competition gate optimistic.
+    (account.available_usd - account.unmanaged_external_buy_notional)
         .max(Decimal::ZERO)
         .round_dp(4)
 }
@@ -738,5 +734,57 @@ fn decimal_abs(value: Decimal) -> Decimal {
         -value
     } else {
         value
+    }
+}
+
+#[cfg(test)]
+mod low_competition_unmanaged_tests {
+    //! Guards the snapshot-frozen external-occupancy fix: funding must read
+    //! `account.unmanaged_external_buy_notional` (frozen at the last CLOB
+    //! open-order snapshot) directly, so the bot cancelling its own managed
+    //! buys between snapshots no longer spikes the external-occupancy estimate
+    //! and oscillates eligible_markets to 0.
+    use super::*;
+
+    fn account(available_usd: Decimal, unmanaged: Decimal) -> RewardAccountState {
+        let mut state = RewardAccountState::fresh(
+            "acct",
+            available_usd,
+            OffsetDateTime::from_unix_timestamp(0).expect("valid timestamp"),
+        );
+        state.unmanaged_external_buy_notional = unmanaged;
+        state
+    }
+
+    #[test]
+    fn effective_available_subtracts_only_frozen_unmanaged() {
+        // Fresh account: no frozen external occupancy → full available pool.
+        assert_eq!(
+            account_effective_available_after_unmanaged_external_buys(&account(
+                Decimal::from(100),
+                Decimal::ZERO
+            )),
+            Decimal::from(100)
+        );
+        // Frozen external occupancy is subtracted from the pool.
+        assert_eq!(
+            account_effective_available_after_unmanaged_external_buys(&account(
+                Decimal::from(100),
+                Decimal::from(30)
+            )),
+            Decimal::from(70)
+        );
+    }
+
+    #[test]
+    fn effective_available_clamps_to_zero() {
+        // Frozen unmanaged larger than available never yields a negative budget.
+        assert_eq!(
+            account_effective_available_after_unmanaged_external_buys(&account(
+                Decimal::from(10),
+                Decimal::from(30)
+            )),
+            Decimal::ZERO
+        );
     }
 }

@@ -63,8 +63,7 @@ fn apply_live_funding_precheck(
         return 0;
     }
 
-    let available_for_new_condition =
-        live_available_usd_after_unmanaged_external_buys(account, open_orders);
+    let available_for_new_condition = live_available_usd_after_unmanaged_external_buys(account);
     let mut blocked = 0usize;
 
     for plan in plans.iter_mut().filter(|plan| plan.eligible) {

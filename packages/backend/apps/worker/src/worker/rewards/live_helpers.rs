@@ -122,11 +122,11 @@ fn sanitize_reward_id_fragment(raw: &str) -> String {
         .collect()
 }
 
-fn live_available_usd_after_unmanaged_external_buys(
-    account: &RewardAccountState,
-    open_orders: &[ManagedRewardOrder],
-) -> Decimal {
-    let managed_external_buy_notional: Decimal = open_orders
+/// Total remaining notional of bot-managed open buy orders that carry a real
+/// Polymarket external order id (local-only internal ids are excluded). Used at
+/// CLOB open-order snapshot time to freeze `unmanaged_external_buy_notional`.
+fn managed_external_open_buy_notional(open_orders: &[ManagedRewardOrder]) -> Decimal {
+    open_orders
         .iter()
         .filter(|order| {
             order.side == RewardOrderSide::Buy
@@ -139,10 +139,17 @@ fn live_available_usd_after_unmanaged_external_buys(
         .map(|order| {
             (order.price * (order.size - order.filled_size).max(Decimal::ZERO)).round_dp(4)
         })
-        .sum();
-    let unmanaged_external_buy_notional =
-        (account.external_buy_notional - managed_external_buy_notional).max(Decimal::ZERO);
-    (account.available_usd - unmanaged_external_buy_notional).max(Decimal::ZERO)
+        .sum()
+}
+
+fn live_available_usd_after_unmanaged_external_buys(account: &RewardAccountState) -> Decimal {
+    // `unmanaged_external_buy_notional` is frozen at the last CLOB open-order
+    // snapshot as (external - managed) with both sides from that same snapshot.
+    // Reading it directly here — instead of recomputing external(stale) -
+    // managed(now) — keeps the external-occupancy estimate stable while the
+    // bot cancels its own managed buys between snapshots, so funding precheck
+    // no longer oscillates eligible_markets to 0.
+    (account.available_usd - account.unmanaged_external_buy_notional).max(Decimal::ZERO)
 }
 
 fn deferred_live_exit_after_cancellation(

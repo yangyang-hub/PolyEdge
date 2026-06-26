@@ -40,8 +40,7 @@ fn live_placement_orders(
     let mut placements = Vec::new();
     let mut plans_changed = false;
     let mut seq = 0usize;
-    let available_for_new_condition =
-        live_available_usd_after_unmanaged_external_buys(account, open_orders);
+    let available_for_new_condition = live_available_usd_after_unmanaged_external_buys(account);
     let mut remaining_available = available_for_new_condition;
 
     for plan_index in 0..plans.len() {

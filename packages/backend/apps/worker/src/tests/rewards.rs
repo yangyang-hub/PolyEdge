@@ -1280,6 +1280,10 @@ fn live_placement_reserves_unmanaged_external_buy_notional() {
     ]);
     let mut account = live_test_account(Decimal::from(25_u64));
     account.external_buy_notional = Decimal::from(21_u64);
+    // Funding reads the snapshot-frozen `unmanaged_external_buy_notional`
+    // directly (see account_sync.rs). Simulate a snapshot that observed 21 of
+    // external (non-managed) buy occupancy so funding reserves against it.
+    account.unmanaged_external_buy_notional = Decimal::from(21_u64);
 
     let mut plans = vec![plan];
     let (orders, _) = live_placement_orders(
