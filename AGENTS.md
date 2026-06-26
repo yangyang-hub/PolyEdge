@@ -109,6 +109,9 @@ The designated sync producer is now the standalone `polyedge-orderbook` service.
 | `packages/front/src/features/rewards/components/rewards-low-competition-report.tsx` | Rewards low-competition strategy observation panel — strategy status、硬性通过率、AI/信息风险后可挂率、资金占用、退出/稳定性和 provider 拦截摘要 |
 | `packages/front/src/features/rewards/components/rewards-low-competition-summary.tsx` | Rewards low-competition quote plan summary — 硬性通过状态和逐项门槛检查 |
 | `packages/front/src/features/rewards/lib/low-competition-formatters.ts` | Rewards low-competition frontend formatters — bps/optional metrics and rejection/recommendation reason mapping |
+| `packages/front/src/app/(console)/funding/page.tsx` | Funding route — Polymarket 入金页面入口 |
+| `packages/front/src/features/funding/components/funding-workbench.tsx` | Funding workbench — 浏览器钱包连接、Polygon 切链、USDC/USDT ERC-20 转账提交 |
+| `packages/front/src/features/funding/lib/polygon-funding.ts` | Funding Polygon helpers — 支持资产静态清单、EVM 地址校验、金额最小单位转换和 ERC-20 transfer calldata 构造 |
 | `packages/backend/apps/worker/src/worker/rewards/live_sync.rs` | Rewards live managed-order trade/status sync |
 | `packages/backend/apps/worker/src/worker/rewards/account_sync.rs` | Rewards external balance, CLOB open-order snapshot/adoption, complete position snapshot sync, and detected-inventory original-price sell intents |
 | `packages/backend/apps/worker/src/worker/rewards/live_orders.rs` | Rewards live cancel/fill, external-order cancel in-flight dedupe, and post-fill exit/flatten intents |
@@ -175,7 +178,7 @@ The designated sync producer is now the standalone `polyedge-orderbook` service.
 ## 当前状态
 
 - 仓库已经不是纯文档仓库：前端控制台、Rust API、worker、迁移、配置和 Docker 部署入口都已具备。
-- 前端控制台已有 `dashboard / markets / events / radar / rewards / copy-trading / wallet-analysis / signals / positions / risk / settings` 页面；`/replay` 和未落地的 approvals 页面不再作为前端入口暴露。
+- 前端控制台已有 `dashboard / markets / events / radar / rewards / funding / copy-trading / wallet-analysis / signals / positions / risk / settings` 页面；`/replay` 和未落地的 approvals 页面不再作为前端入口暴露。
 - 前端控制台导航在桌面端使用左侧折叠 sidebar，在移动端通过顶栏菜单按钮打开左侧抽屉；两者共享同一份导航项配置，并使用原生链接跳转以适配静态导出部署。
 - 前端数据层统一走 `src/lib/api/*`（读取按领域文件 `markets.ts` / `signals.ts` / `risk.ts`… 基于 `base.ts`，写操作通过 `actions.ts` barrel 暴露、实现按领域拆在 `actions/`），页面装配在 `src/features/*/loaders` 和 `src/features/*/components`。`src/server/` 目前是空目录（历史遗留）。
 - 前端仅支持中文，文案走 `@/lib/i18n/dictionaries` 字典导入。
@@ -221,6 +224,7 @@ The designated sync producer is now the standalone `polyedge-orderbook` service.
 
 - 生产级真实会话体系未完成；当前前端只保留 `off` 模式。
 - 内部 JWT 签名 helper 已有代码路径，但当前不会从 `off` 签发可信令牌。
+- `/funding` Polymarket 入金页仅在浏览器中构造 Polygon ERC-20 USDC/USDT 转账并交由用户钱包签名；不会生成 Polymarket Bridge 存款地址、不查询余额/确认数、不验证入账，用户必须从 Polymarket 官方入金页复制 EVM 存款地址。
 - 前端已移除 SSE 实时流机制，页面数据通过 REST API 加载；Rewards 工作台会额外每 10 秒静默刷新当前 snapshot，以反映 worker 写入的 AI advisory、信息风险、订单和账户状态；静默自动刷新遇到短暂网络失败时保留现有页面状态且不弹出“操作失败”，用户主动操作/筛选触发的失败仍会反馈。
 - 新闻源可以抓取、去重、提升为 events/evidences，但尚未自动生成 signals。
 - Rewards live maker 已接入真实 post-only 买单提交、撤单、本系统托管订单成交与计分同步、CLOB open-order 反查、可映射 active rewards BUY 收养/重开、成交后现金/库存/PnL 更新、sibling leg 撤单和 exit/flatten sell 下单；worker 在 managed order 同步后刷新账户开放买单总 notional 观测，并在新增买单准入时把未归属到本系统 managed order 的外部 BUY notional 从可用资金中保守扣除；confirmed fill 保护期外会刷新 CLOB 余额、资金钱包链上 pUSD 回退和 Data API 完整持仓快照，API 只从数据库读取且不再需要 Polymarket 凭证。仍未完成 SELL、非 rewards 市场、无法唯一映射 token 的账户范围外开放订单明细同步或奖励结算对账。实盘策略仍应沿用“本系统未成交 maker 买单不硬锁全局 pUSD、成交后才更新现金/库存并撤超额挂单；未知外部 BUY 保守占用可用资金”的资金模型。
@@ -368,6 +372,7 @@ cp deploy/.env.front.example deploy/.env.front
 - `packages/front/src/proxy.ts`
 - `packages/front/src/lib/i18n/*`
 - `packages/front/src/features/radar/*`
+- `packages/front/src/features/funding/*`
 - `packages/front/src/features/copytrade/*`
 
 后端：

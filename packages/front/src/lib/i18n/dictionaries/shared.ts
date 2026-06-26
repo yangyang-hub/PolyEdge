@@ -52,6 +52,7 @@ export const shared = {
     events: "事件",
     radar: "雷达",
     rewards: "奖励做市",
+    funding: "Polymarket 入金",
     copytrade: "聪明钱跟单",
     walletAnalysis: "钱包分析",
     signals: "信号",

@@ -31,6 +31,7 @@
 | [positions.md](frontend/positions.md) | `features/positions` | 持仓 |
 | [radar.md](frontend/radar.md) | `features/radar` | 套利雷达（前端范例模块） |
 | [rewards.md](frontend/rewards.md) | `features/rewards` | 奖励机器人 |
+| [funding.md](frontend/funding.md) | `features/funding` | Polymarket 入金 |
 | [risk.md](frontend/risk.md) | `features/risk` | 风控中心 |
 | [copytrade.md](frontend/copytrade.md) | `features/copytrade` | 跟单 |
 | [settings.md](frontend/settings.md) | `features/settings` | 设置 |

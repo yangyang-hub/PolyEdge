@@ -10,6 +10,7 @@ import { rewards } from "./dictionaries/rewards";
 import { copytrade } from "./dictionaries/copytrade";
 import { ops } from "./dictionaries/ops";
 import { walletAnalysis } from "./dictionaries/wallet-analysis";
+import { funding } from "./dictionaries/funding";
 
 const _dictionary = {
   ...shared,
@@ -24,6 +25,7 @@ const _dictionary = {
   ...copytrade,
   ...ops,
   ...walletAnalysis,
+  ...funding,
 } as const;
 
 type DeepStringRecord<T> = {
