@@ -1,6 +1,6 @@
 # 部署（Docker + Nginx + Scripts）
 
-最后更新：2026-06-23
+最后更新：2026-06-26
 
 ## 概述
 
@@ -71,7 +71,7 @@
 - 数据库维护循环由 `POLYEDGE_WORKER__DATABASE_MAINTENANCE` 控制；生产模板默认开启并每 3600 秒清理一次历史/缓存/队列表，本地模板默认关闭
 - `.env.api.example` 显式写入当前默认 RSS/Atom 新闻源 `POLYEDGE_NEWS__SOURCES_JSON`，并默认开启 `POLYEDGE_NEWS__ENABLED=true` 和 `POLYEDGE_WORKER__POLL_NEWS=true`
 - `.env.api` 中的 `POLYEDGE_ORDERBOOK__WRITE_TOKEN` 必须与 orderbook 服务一致；front 不需要该密钥
-- Polymarket live / Deposit Wallet / AI provider 可选配置已合并到 `deploy/.env.api.example`；建议私钥和 AI provider key 只放 `.env.api`，避免进入 Front/Orderbook 容器环境。Rewards 账户余额由 worker 同步到数据库，资金钱包地址优先使用 `FUNDER`，CLOB balance 为 0/失败时会用链上 pUSD 余额回填 snapshot
+- Polymarket live / Deposit Wallet / Funding API / AI provider 可选配置已合并到 `deploy/.env.api.example`；建议私钥和 AI provider key 只放 `.env.api`，避免进入 Front/Orderbook 容器环境。Rewards 账户余额由 worker 同步到数据库，资金钱包地址优先使用 `FUNDER`，CLOB balance 为 0/失败时会用链上 pUSD 余额回填 snapshot；Funding API 也会优先使用 `FUNDER` 作为 Polymarket 入账钱包，并使用同一私钥和 Polygon RPC 广播真实 USDC/USDT 入金转账
 
 ### polyedge-orderbook
 
@@ -157,7 +157,7 @@ API 请求不再经过前端 nginx 反向代理；跨域由 Rust API 的 `CorsLa
 | `POLYEDGE_WORKER__POLL_*` / `POLYEDGE_WORKER__ANALYZE_*` / `POLYEDGE_WORKER__RECOMPUTE_SIGNALS` | `.env.api` | API 内嵌 worker 后台循环开关；新闻 poll 默认 `true`，其他循环默认 `false` |
 | `POLYEDGE_WORKER__DATABASE_MAINTENANCE` / `POLYEDGE_WORKER__DATABASE_MAINTENANCE_INTERVAL_SECS` | `.env.api` | 数据库历史/缓存/队列表自动清理；生产模板默认 `true` / `3600`，本地模板默认关闭 |
 | `POLYEDGE_REWARDS__AI_*` / `POLYEDGE_REWARDS__INFO_RISK_*` | `.env.api` | AI advisory / 信息风险 provider 的 key、模型、置信度等可选配置；AI provider 单次请求默认超时 180 秒；AI advisory 每轮最大市场数环境变量已移除，信息风险旧 max markets 变量只兼容读取且不再限制每轮扫描数量 |
-| `POLYEDGE_POLYMARKET__ACCOUNT_ID` / `SIGNATURE_TYPE` / `FUNDER` / `PRIVATE_KEY` / `API_*` / `POLYGON_RPC_URL` | `.env.api` | Polymarket live 账户和凭证 |
+| `POLYEDGE_POLYMARKET__ACCOUNT_ID` / `SIGNATURE_TYPE` / `FUNDER` / `PRIVATE_KEY` / `API_*` / `POLYGON_RPC_URL` | `.env.api` | Polymarket live 账户、Funding API 入金和凭证 |
 | `POLYEDGE_API_IMAGE` / `POLYEDGE_ORDERBOOK_IMAGE` / `POLYEDGE_FRONT_IMAGE` | 对应服务 env | 可选镜像 tag 覆盖；deploy.sh 会导出给 Compose interpolation |
 | `POLYEDGE_ALLOW_IN_MEMORY_DEPLOY` | `.env.api` / `.env.orderbook` | 仅演示环境允许无数据库启动 |
 
@@ -165,7 +165,7 @@ API 请求不再经过前端 nginx 反向代理；跨域由 Rust API 的 `CorsLa
 
 ## Polymarket live 配置示例
 
-Polymarket live、Deposit Wallet（`poly_1271`）和 rewards live 最小开关示例已合并到 `deploy/.env.api.example`。真实凭证默认全部注释，按账户类型在 `.env.api` 中启用。Front/Orderbook 不持有 Polymarket 私钥或 AI provider key；余额、positions、托管订单、AI advisory 和信息风险结果都由 API 内嵌 worker/数据库链路提供。`POLYEDGE_POLYMARKET__POLYGON_RPC_URL` 可替换为自有或有 SLA 的 Polygon RPC，用于链上 pUSD 余额回填。
+Polymarket live、Deposit Wallet（`poly_1271`）、Funding API 和 rewards live 最小开关示例已合并到 `deploy/.env.api.example`。真实凭证默认全部注释，按账户类型在 `.env.api` 中启用。Front/Orderbook 不持有 Polymarket 私钥或 AI provider key；余额、positions、托管订单、AI advisory 和信息风险结果都由 API 内嵌 worker/数据库链路提供。`POLYEDGE_POLYMARKET__PRIVATE_KEY` 对应后端资金钱包，Funding API 会用它签名真实 Polygon USDC/USDT 转账；`POLYEDGE_POLYMARKET__FUNDER` 优先作为 Polymarket 入账钱包，未配置时回退 `ACCOUNT_ID`。`POLYEDGE_POLYMARKET__POLYGON_RPC_URL` 可替换为自有或有 SLA 的 Polygon RPC，用于链上 pUSD 余额回填和 Funding API 广播 Polygon 转账。
 
 Deposit Wallet 路径要求钱包已经部署、已入金 pUSD 并完成必要 approval。当前系统不会执行 relayer wallet-create、pUSD 包装或 approval 批处理；connector 在下单前会调用 CLOB `balance-allowance/update`。
 

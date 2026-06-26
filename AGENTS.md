@@ -62,7 +62,7 @@ The designated sync producer is now the standalone `polyedge-orderbook` service.
 | `packages/orderbook/src/updates.rs` | Orderbook update broadcaster — 为 WS/poll/ingest 缓存更新分配 sequence、推送内部 WS |
 | `packages/backend/crates/common/src/lib.rs` | 后端二进制共享进程外壳 helper — bind address、TCP listener、Ctrl-C/SIGTERM shutdown |
 | `packages/backend/crates/connectors/src/polymarket/gamma.rs` | Gamma markets connector — `/markets` offset 分页、condition_ids 批量查询、market id 去重 |
-| `packages/backend/crates/connectors/src/polymarket/chain.rs` | Polygon chain connector — 读取资金钱包链上 pUSD ERC20 余额 |
+| `packages/backend/crates/connectors/src/polymarket/chain.rs` | Polygon chain connector — 读取资金钱包链上 pUSD ERC20 余额；通过 Polymarket Bridge 生成入金地址并广播后端资金钱包 USDC/USDT 转账 |
 | `packages/backend/crates/connectors/src/polymarket/live.rs` + `live/raw.rs` | Polymarket live connector — CLOB V2 认证、heartbeat、收益查询 raw fallback、余额/订单/下单/撤单 |
 | `packages/backend/crates/connectors/src/polymarket/live/trade_reconciliation.rs` | Polymarket live order-specific fill 与订单终态对账 helper |
 | `packages/backend/crates/connectors/src/news.rs` | RSS/Atom 新闻 connector — 抓取 feed、解析 item/entry、标准化 raw news item |
@@ -110,8 +110,11 @@ The designated sync producer is now the standalone `polyedge-orderbook` service.
 | `packages/front/src/features/rewards/components/rewards-low-competition-summary.tsx` | Rewards low-competition quote plan summary — 硬性通过状态和逐项门槛检查 |
 | `packages/front/src/features/rewards/lib/low-competition-formatters.ts` | Rewards low-competition frontend formatters — bps/optional metrics and rejection/recommendation reason mapping |
 | `packages/front/src/app/(console)/funding/page.tsx` | Funding route — Polymarket 入金页面入口 |
-| `packages/front/src/features/funding/components/funding-workbench.tsx` | Funding workbench — 浏览器钱包连接、Polygon 切链、USDC/USDT ERC-20 转账提交 |
-| `packages/front/src/features/funding/lib/polygon-funding.ts` | Funding Polygon helpers — 支持资产静态清单、EVM 地址校验、金额最小单位转换和 ERC-20 transfer calldata 构造 |
+| `packages/api/src/handlers/funding.rs` | Funding API — 读取后端资金配置、幂等校验、step-up 校验并委托 connector 执行 Polymarket Bridge 入金转账 |
+| `packages/backend/crates/contracts/src/dto/funding.rs` | Funding DTO — status、token、transfer request/receipt 合约 |
+| `packages/front/src/lib/api/funding.ts` + `packages/front/src/lib/api/actions/funding.ts` | Funding frontend data layer — 读取 funding status、提交后端签名转账 |
+| `packages/front/src/features/funding/components/funding-workbench.tsx` | Funding workbench — 选择后端资金钱包 USDC/USDT 入金资产与金额，提交后端 Bridge 入金转账 |
+| `packages/front/src/features/funding/lib/polygon-funding.ts` | Funding Polygon helpers — 金额最小单位转换、Polygonscan 链接和 token 说明映射 |
 | `packages/backend/apps/worker/src/worker/rewards/live_sync.rs` | Rewards live managed-order trade/status sync |
 | `packages/backend/apps/worker/src/worker/rewards/account_sync.rs` | Rewards external balance, CLOB open-order snapshot/adoption, complete position snapshot sync, and detected-inventory original-price sell intents |
 | `packages/backend/apps/worker/src/worker/rewards/live_orders.rs` | Rewards live cancel/fill, external-order cancel in-flight dedupe, and post-fill exit/flatten intents |
@@ -185,7 +188,7 @@ The designated sync producer is now the standalone `polyedge-orderbook` service.
 - 前端不再提供 mock 数据模式；`NEXT_PUBLIC_POLYEDGE_API_BASE_URL` 必须指向 Rust 后端，读写都走真实 `/api/v1/...`。
 - 当前控制台会话只保留 `off`，不是生产级真实会话。
 - 默认生产排查环境：Frontend Rewards 工作台 `http://192.168.31.5:33002/rewards`，API 服务 `http://100.87.45.72:38001`，Orderbook 服务 `http://100.87.45.72:38002`；除非用户明确指定其他环境，后续线上问题排查默认使用这组地址。前端静态构建的 `NEXT_PUBLIC_POLYEDGE_API_BASE_URL` 应指向该 API 地址。
-- 后端 API 已覆盖 markets、events、news、evidences、signals、orders、trades、positions、pricing、arbitrage、rewards bot、risk、system、connector callback 和 orderbook（`GET /api/v1/orderbook/{token_id}`）等主路径；risk 控制台快照只按当前 positions 涉及的 market id 批量读取市场分类信息，不再通过 markets 列表接口全量扫描市场表。
+- 后端 API 已覆盖 markets、events、news、evidences、signals、orders、trades、positions、pricing、arbitrage、rewards bot、funding、risk、system、connector callback 和 orderbook（`GET /api/v1/orderbook/{token_id}`）等主路径；risk 控制台快照只按当前 positions 涉及的 market id 批量读取市场分类信息，不再通过 markets 列表接口全量扫描市场表。
 - Rewards snapshot 包含 `llm_usage`，按 UTC 日展示 AI advisory 与 info-risk 的实际外部 provider 调用次数、总次数和失败次数；前端 `/rewards` 顶部执行概览展示今日总调用和最近 7 天明细，统计不包含 provider 缓存命中。
 - 后端默认 tracing filter 在未设置 `RUST_LOG` 时包含 `polyedge_worker=info`，因此 `polyedge-api` 内嵌 worker runtime 的 info/warn 日志会出现在 API 服务日志中；显式设置 `RUST_LOG` 会覆盖默认 filter。
 - 新闻采集当前支持 RSS/Atom XML feed；未配置 `POLYEDGE_NEWS__SOURCES_JSON` 时，代码默认新闻源为 `fed_press`、`sec_press`、`nasa_news`、`bbc_world`、`npr_news`、`coindesk`、`cointelegraph`、`decrypt`；部署模板 `deploy/.env.api.example` 也显式写入同一默认源列表，环境变量或 runtime config 可覆盖整个 sources 列表。
@@ -224,7 +227,7 @@ The designated sync producer is now the standalone `polyedge-orderbook` service.
 
 - 生产级真实会话体系未完成；当前前端只保留 `off` 模式。
 - 内部 JWT 签名 helper 已有代码路径，但当前不会从 `off` 签发可信令牌。
-- `/funding` Polymarket 入金页仅在浏览器中构造 Polygon ERC-20 USDC/USDT 转账并交由用户钱包签名；不会生成 Polymarket Bridge 存款地址、不查询余额/确认数、不验证入账，用户必须从 Polymarket 官方入金页复制 EVM 存款地址。
+- `/funding` Polymarket 入金页使用后端配置的资金钱包和私钥发起真实 Polygon ERC-20 USDC/USDT 转账：后端以 `FUNDER` 优先、`ACCOUNT_ID` 回退作为 Polymarket 入账钱包，通过 Polymarket Bridge 生成 EVM 入金地址后广播交易；前端不输入充值地址、不接触私钥。当前不查询 USDC/USDT 余额、POL gas 余额、确认数或 Polymarket pUSD 入账状态。
 - 前端已移除 SSE 实时流机制，页面数据通过 REST API 加载；Rewards 工作台会额外每 10 秒静默刷新当前 snapshot，以反映 worker 写入的 AI advisory、信息风险、订单和账户状态；静默自动刷新遇到短暂网络失败时保留现有页面状态且不弹出“操作失败”，用户主动操作/筛选触发的失败仍会反馈。
 - 新闻源可以抓取、去重、提升为 events/evidences，但尚未自动生成 signals。
 - Rewards live maker 已接入真实 post-only 买单提交、撤单、本系统托管订单成交与计分同步、CLOB open-order 反查、可映射 active rewards BUY 收养/重开、成交后现金/库存/PnL 更新、sibling leg 撤单和 exit/flatten sell 下单；worker 在 managed order 同步后刷新账户开放买单总 notional 观测，并在新增买单准入时把未归属到本系统 managed order 的外部 BUY notional 从可用资金中保守扣除；confirmed fill 保护期外会刷新 CLOB 余额、资金钱包链上 pUSD 回退和 Data API 完整持仓快照，API 只从数据库读取且不再需要 Polymarket 凭证。仍未完成 SELL、非 rewards 市场、无法唯一映射 token 的账户范围外开放订单明细同步或奖励结算对账。实盘策略仍应沿用“本系统未成交 maker 买单不硬锁全局 pUSD、成交后才更新现金/库存并撤超额挂单；未知外部 BUY 保守占用可用资金”的资金模型。
@@ -288,7 +291,7 @@ cargo run -p polyedge-worker -- analyze-wallets-once
 - 默认 runtime mode 是 `live_auto`。
 - Polymarket connector 没有 mock mode；未配置真实账户/私钥时，不要开启 Polymarket 私有订单、成交或用户 websocket worker 任务。
 - `POLYEDGE_POLYMARKET__SIGNATURE_TYPE` 可选 `eoa`、`proxy`、`gnosis_safe`、`poly_1271`；新 Deposit Wallet 使用 `poly_1271`，并将 `POLYEDGE_POLYMARKET__FUNDER` 设置为 deposit wallet 地址。
-- `POLYEDGE_POLYMARKET__POLYGON_RPC_URL` 默认 `https://polygon-bor-rpc.publicnode.com`；Rewards worker 用它读取资金钱包链上 pUSD 余额，生产环境可替换为自有或有 SLA 的 Polygon RPC。
+- `POLYEDGE_POLYMARKET__POLYGON_RPC_URL` 默认 `https://polygon-bor-rpc.publicnode.com`；Rewards worker 用它读取资金钱包链上 pUSD 余额，Funding API 用它广播后端资金钱包 USDC/USDT 入金转账，生产环境可替换为自有或有 SLA 的 Polygon RPC。
 - `POLYEDGE_WORKER__DATABASE_MAINTENANCE` 控制 API 内嵌 worker 的数据库维护循环；部署模板默认 `true` 且 `POLYEDGE_WORKER__DATABASE_MAINTENANCE_INTERVAL_SECS=3600`，本地 `packages/backend/.env.example` 默认关闭。
 - 部署模板默认开启 news ingestion 的子系统/worker 开关，默认关闭 arbitrage radar 及新闻提升为 events/evidences。
 - `POLYEDGE_NEWS__SOURCES_JSON` 未配置时使用代码默认 RSS/Atom 源列表；`deploy/.env.api.example` 已显式写入当前默认源列表，设置该变量会覆盖整个列表。新闻采集在部署模板中默认启用（`POLYEDGE_NEWS__ENABLED=true`、`POLYEDGE_WORKER__POLL_NEWS=true`），新闻提升为 events 仍需 `POLYEDGE_WORKER__PROMOTE_NEWS_EVENTS=true`。
@@ -378,6 +381,7 @@ cp deploy/.env.front.example deploy/.env.front
 后端：
 
 - `packages/api/src/lib.rs`
+- `packages/api/src/handlers/funding.rs`
 - `packages/api/src/handlers/rewards.rs`
 - `packages/api/src/handlers/copytrade.rs`
 - `packages/orderbook/src/main.rs`

@@ -49,7 +49,7 @@
 | `AuthSettings` / `AuthKeySettings` | 认证配置和密钥；`disabled` 可开启内网免鉴权模式 |
 | `CopytradeSettings` | 跟单配置 |
 
-所有字段使用 `#[serde(default)]`，通过 `POLYEDGE_` 前缀环境变量加载（如 `POLYEDGE_SERVER__PORT`）。`packages/backend/.env.example` 只保留本地运行常用项和安全关闭 worker 循环的必要覆盖；完整默认值以 `settings/defaults.rs` 为准，业务阈值优先通过 runtime_config/Settings 调整。未配置 `POLYEDGE_NEWS__SOURCES_JSON` 时，`NewsSettings.sources` 默认包含 8 个已验证可访问的 RSS/Atom 源：`fed_press`、`sec_press`、`nasa_news`、`bbc_world`、`npr_news`、`coindesk`、`cointelegraph`、`decrypt`；设置该变量或 runtime config `news.sources_json` 会覆盖整个列表。`POLYEDGE_POLYMARKET__SIGNATURE_TYPE` 支持 `eoa`、`proxy`、`gnosis_safe`、`poly_1271`；Deposit Wallet 使用 `poly_1271` 并通过 `POLYEDGE_POLYMARKET__FUNDER` 配置 deposit wallet 地址。`POLYEDGE_POLYMARKET__POLYGON_RPC_URL` 用于 worker 读取资金钱包链上 pUSD 余额，默认 `https://polygon-bor-rpc.publicnode.com`。
+所有字段使用 `#[serde(default)]`，通过 `POLYEDGE_` 前缀环境变量加载（如 `POLYEDGE_SERVER__PORT`）。`packages/backend/.env.example` 只保留本地运行常用项和安全关闭 worker 循环的必要覆盖；完整默认值以 `settings/defaults.rs` 为准，业务阈值优先通过 runtime_config/Settings 调整。未配置 `POLYEDGE_NEWS__SOURCES_JSON` 时，`NewsSettings.sources` 默认包含 8 个已验证可访问的 RSS/Atom 源：`fed_press`、`sec_press`、`nasa_news`、`bbc_world`、`npr_news`、`coindesk`、`cointelegraph`、`decrypt`；设置该变量或 runtime config `news.sources_json` 会覆盖整个列表。`POLYEDGE_POLYMARKET__SIGNATURE_TYPE` 支持 `eoa`、`proxy`、`gnosis_safe`、`poly_1271`；Deposit Wallet 使用 `poly_1271` 并通过 `POLYEDGE_POLYMARKET__FUNDER` 配置 deposit wallet 地址。`POLYEDGE_POLYMARKET__PRIVATE_KEY` 只允许配置在后端/API 环境，除了 CLOB live 签名外，也被 Funding API 用于从后端资金钱包广播 Polygon ERC-20 入金交易；`POLYEDGE_POLYMARKET__FUNDER` 优先作为 Polymarket 入账钱包，未配置时 Funding API 回退 `ACCOUNT_ID`。`POLYEDGE_POLYMARKET__POLYGON_RPC_URL` 用于 worker 读取资金钱包链上 pUSD 余额，也用于 Funding API 广播 Polygon 转账，默认 `https://polygon-bor-rpc.publicnode.com`。
 
 进程级 rewards 默认关闭：`RewardsSettings.enabled=false`、`WorkerSettings.poll_reward_bot=false`、`WorkerSettings.poll_reward_info_risks=false`。其他历史 worker 循环在代码默认值中仍可能为 true，因此本地模板和部署侧 `deploy/.env.api.example` 会显式写入 `false` 防止 `polyedge-api` 内嵌 runtime 意外启动任务。只有部署环境显式同时开启对应 worker 开关时才启动 live poll loop 或异步信息风险扫描。AI provider 密钥只在 `RewardsSettings` 中读取（`POLYEDGE_REWARDS__AI_OPENAI_API_KEY` / `POLYEDGE_REWARDS__AI_ANTHROPIC_API_KEY`），不会进入 `RewardBotConfig`、API snapshot 或前端 public env；默认模型 `gpt-4.1-mini`、AI advisory 最低置信度 `5500` bps、信息风险最低置信度 `7000` bps、单次超时 180 秒。`ai_advisory_enabled=true` 时，缺少可用 provider 配置或未达到最低置信度的 advisory 会阻断新增 rewards 挂单。AI advisory 每轮最大市场数环境变量已移除；`POLYEDGE_REWARDS__INFO_RISK_MAX_MARKETS_PER_CYCLE` 现在作为 AI advisory 与 info-risk 各自 provider refresh，以及独立 info-risk worker 的每轮 condition cap，默认 50，0 表示本轮不发 provider 请求。信息风险 OpenAI web search 默认关闭。
 
@@ -135,6 +135,7 @@ Arbitrage store 的 Postgres 和 in-memory 实现均支持 `prune_arbitrage_scan
 - **`InternalTokenVerifier`**：内部 JWT 令牌验证
 - **`RequestKind`**：请求类型枚举
 - **`AuthSettings.disabled`**：`POLYEDGE_AUTH__DISABLED=true` 时跳过 console/connector/mode token 和 step-up 校验，直接注入 admin `AuthContext`；仅用于纯内网部署
+- **Step-up scopes**：包含信号执行、系统模式/熔断、风险阈值和 `funding_transfer`；内网免鉴权模式会注入全部 scope，真实鉴权模式下 Funding API 转账必须携带该 scope
 - **中间件函数：**
   - `require_connector_write_auth` — 连接器写入认证
   - `require_console_read_auth` — 控制台读取认证
@@ -168,6 +169,7 @@ Arbitrage store 的 Postgres 和 in-memory 实现均支持 `prune_arbitrage_scan
 - 未设置 `RUST_LOG` 时，默认 tracing filter 为 `{service_name}=debug,polyedge_worker=info,tower_http=info,sqlx=info`，因此 `polyedge-api` 内嵌 worker runtime 的 info/warn 日志会出现在 API 服务日志中；显式设置 `RUST_LOG` 会覆盖该默认值
 - 新闻源默认值已内置在 `settings/defaults.rs`；部署模板默认开启 news 子系统和 worker poll loop，会抓取模板中显式配置的默认 RSS/Atom 源，新闻提升为 events/evidences 仍默认关闭
 - 认证中间件支持 JWT/dev-auth 和内网免鉴权模式；当前部署模板默认 `POLYEDGE_AUTH__DISABLED=true`
+- Funding API 复用 Polymarket settings 中的私钥、funder/account_id 和 Polygon RPC，不新增单独资金私钥配置；API 状态响应只返回派生付款地址和入账钱包地址，不暴露私钥
 - Orderbook cache 当前 runtime 使用进程内 `InMemoryOrderbookCache`；Redis 实现保留但未接入默认 runtime
 - Orderbook 服务的 `/orderbook/stats` 现在区分真实 cache 条目数、registry 来源数和 registry 去重 token 总数，避免把订阅 token 数误报为缓存条目数；worker 注册 rewards 候选预热 token 受 `POLYEDGE_ORDERBOOK_STREAM__REWARD_CANDIDATE_TOKEN_CAP` 限制，默认 50，设为 0 后周期注册任务会按空结果防抖清空候选预热 source
 - Orderbook 进程内缓存会先保留最优价格顺序，再按 `POLYEDGE_ORDERBOOK_STREAM__MAX_LEVELS_PER_SIDE` 裁剪每侧 bids/asks 深度，默认 100 档；HTTP register/batch/ingest 入口使用 `max_tokens` 做请求规模上限，Polymarket WS 订阅使用 `POLYEDGE_ORDERBOOK_STREAM__WS_CHUNK_SIZE` 控制每条连接承载的 token 数（默认 100），poll reconcile 默认 10 秒，register 会原子替换对应 source 当前有序 token 集合，worker 对周期注册空集合做 active/exec 2 轮、eligible/candidates 3 轮防抖后才发送空集合清源，ingest 会先校验整批数据再批量写入并传播缓存错误，registry source 固定上限为 32 个

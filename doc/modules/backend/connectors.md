@@ -1,6 +1,6 @@
 # connectors（外部连接器层）
 
-最后更新：2026-06-24
+最后更新：2026-06-26
 
 ## 概述
 
@@ -24,7 +24,7 @@
 | `polymarket/live/trade_sync.rs` | CLOB 托管订单成交同步、关联 trade 单查和账户 trade 历史回退 |
 | `polymarket/gamma.rs` | 公共市场元数据：`PolymarketGammaConnector`；Gamma `/markets` offset 分页和 condition_ids 批量查询 |
 | `polymarket/data_api.rs` | 钱包活动与账户持仓 API：`PolymarketDataApiConnector` |
-| `polymarket/chain.rs` | Polygon JSON-RPC ERC20 余额读取：`PolymarketChainConnector` |
+| `polymarket/chain.rs` | Polygon JSON-RPC ERC20 余额读取与 Polymarket Bridge 入金转账：`PolymarketChainConnector` |
 | `polymarket/book.rs` | 盘口快照：`PolymarketBookConnector` |
 | `rewards.rs` + `rewards/orderbooks.rs` + `rewards/price_history.rs` | 奖励市场目录、CLOB 批量盘口与 `/prices-history`：`PolymarketRewardsConnector` |
 | `orderbook.rs` | 独立 orderbook 服务客户端：HTTP 读盘口/原子注册 token/内部写 token，内部 WS stream 消费 |
@@ -59,11 +59,14 @@
 - `fetch_wallet_positions()` 使用 `sizeThreshold=0`、limit/offset 分页和 asset 去重读取完整账户持仓；超过最大页数返回错误，不把不完整快照交给下游替换。
 - 用途：`copytrade.rs` worker 检测跟踪钱包的新成交，以及 rewards worker 同步外部账户持仓
 
-### Polymarket Chain（资金钱包余额）
+### Polymarket Chain（资金钱包余额与入金）
 
 - **`PolymarketChainConnector`**：`polygon_rpc_url` + `reqwest::Client`
 - `fetch_pusd_balance(wallet_address)`：通过 Polygon JSON-RPC `eth_call` 读取 Polymarket pUSD ERC20 `balanceOf`，按 6 位小数转换为美元 Decimal
-- 用途：rewards worker 同步账户状态时，若 CLOB `balance-allowance` 返回 0 或失败，但资金钱包链上 pUSD 余额大于 0，则用链上余额回填 snapshot，避免 Deposit Wallet / `POLY_1271` 缓存或签名路径导致前端余额显示为 0
+- `polygon_funding_tokens()`：返回后端 funding allowlist；当前只暴露 Polygon 原生 USDC 与 Polygon USDT0 / USDT 两个 Bridge 入金入口，均按 6 位小数处理。
+- `funding_source_address(private_key, chain_id)`：从后端配置私钥派生付款钱包地址，只返回地址不泄露私钥。
+- `submit_funding_transfer(private_key, chain_id, request)`：校验 Polygon chain id、token allowlist、金额精度和 Polymarket Bridge 当前 supported-assets 后，调用 Bridge `/deposit` 为配置的 Polymarket 钱包生成 EVM 入金地址，并通过 alloy provider 使用配置私钥广播 ERC-20 `transfer(bridgeAddress, amount)`。
+- 用途：rewards worker 同步账户状态时，若 CLOB `balance-allowance` 返回 0 或失败，但资金钱包链上 pUSD 余额大于 0，则用链上余额回填 snapshot，避免 Deposit Wallet / `POLY_1271` 缓存或签名路径导致前端余额显示为 0；API `/funding/transfer` 使用同一 connector 执行后端资金钱包到 Polymarket Bridge 的真实链上入金。
 
 ### Polymarket Book（盘口）
 
@@ -158,7 +161,7 @@
 
 ## 当前状态
 
-- 已实现当前系统使用的 Polymarket 公共市场、盘口、Data API、Rewards API、Rewards AI advisory、Rewards 信息风险评估、订单 scoring、带明细和 raw authenticated fallback 的当日 maker earnings，以及 CLOB V2 交易 connector；Deposit Wallet relayer 生命周期接口尚未接入
+- 已实现当前系统使用的 Polymarket 公共市场、盘口、Data API、Rewards API、Rewards AI advisory、Rewards 信息风险评估、订单 scoring、带明细和 raw authenticated fallback 的当日 maker earnings、CLOB V2 交易 connector，以及后端资金钱包通过 Polymarket Bridge 入金的 Polygon ERC-20 转账 connector；Deposit Wallet relayer 生命周期接口尚未接入
 - Gamma `/markets` offset 分页已具备 422 边界 / 最大页数保护，并按 market id 去重；condition_ids 定向查询用于重点市场新鲜度刷新；Gamma、CLOB rewards、order book 和 price-history 解码失败会返回最多 300 字节的转义响应体 preview，便于排查 HTML、截断响应或上游结构漂移。
 - Gamma 市场同步已提供 rewards 质量筛选所需的 CLOB liquidity、end time 和分级 ambiguity 数据，并支持 priority condition 刷新降低全量目录延迟对 live rewards 的影响。
 - Rewards markets 分页和 enrichment 已具备完整性保护，不再把部分补全结果作为完整目录写入；详情补全只针对缺唯一 YES/NO token 或缺有效 question 的市场，降低 CLOB 429 风险
@@ -167,7 +170,7 @@
 - Orderbook 服务客户端已支持 HTTP batch/bootstrap、按最大确认年龄的 batch refresh 与内部 WS 推送；worker 长期 rewards loop 可用 WS 更新本地 cache，缺失、本地 stale 或接近新挂单 freshness headroom 时回退 HTTP batch，并要求 orderbook 服务在自身缓存也超过请求年龄时先刷新。
 - Data API positions 已按完整快照分页读取；不完整或失败的响应不会被 rewards worker 用于替换持仓
 - Paper Trading 执行器已完整实现
-- Live connector 已具备 CLOB V2 认证、显式 heartbeat、余额查询、开放订单全量分页、用户 WS、订单提交、按 token_id 的 rewards buy/sell 提交和单笔撤单能力；heartbeat 在 SDK 链式请求失败时可 raw authenticated 续链或用 `heartbeat_id:null` 重建，rewards earnings 在 SDK 解码失败时可 raw authenticated 宽容解析；post-only 使用 GTC，immediate flatten 使用 FAK，订单价格当前统一收敛到 0.01 精度，更粗的 per-market tick-size 尚未接入；订单/关联成交优先通过单订单接口对账，关联 trade 单查失败和 missing-order 都会按 token/time 扫描账户 trades 精确回退，轮询路径仅在 trade `CONFIRMED` 后返回成交，任一订单回退失败可被 worker 单订单隔离；签名类型已覆盖 EOA、Proxy、Gnosis Safe 和 Deposit Wallet (`poly_1271`)，其 balance allowance refresh 失败会传播给调用方；Polygon pUSD 余额 connector 已作为 rewards snapshot 的链上余额回退；订单 acceptance 返回实际提交 quantity，trade/WS 成交归一化按订单自身成交量入账；仍需要真实凭证和小额账户验证
+- Live connector 已具备 CLOB V2 认证、显式 heartbeat、余额查询、开放订单全量分页、用户 WS、订单提交、按 token_id 的 rewards buy/sell 提交和单笔撤单能力；heartbeat 在 SDK 链式请求失败时可 raw authenticated 续链或用 `heartbeat_id:null` 重建，rewards earnings 在 SDK 解码失败时可 raw authenticated 宽容解析；post-only 使用 GTC，immediate flatten 使用 FAK，订单价格当前统一收敛到 0.01 精度，更粗的 per-market tick-size 尚未接入；订单/关联成交优先通过单订单接口对账，关联 trade 单查失败和 missing-order 都会按 token/time 扫描账户 trades 精确回退，轮询路径仅在 trade `CONFIRMED` 后返回成交，任一订单回退失败可被 worker 单订单隔离；签名类型已覆盖 EOA、Proxy、Gnosis Safe 和 Deposit Wallet (`poly_1271`)，其 balance allowance refresh 失败会传播给调用方；Polygon pUSD 余额 connector 已作为 rewards snapshot 的链上余额回退；Funding API 通过 Chain connector 可把后端资金钱包 USDC/USDT 转入 Polymarket Bridge 并最终入账为 pUSD；订单 acceptance 返回实际提交 quantity，trade/WS 成交归一化按订单自身成交量入账；仍需要真实凭证和小额账户验证
 - RSS connector 支持 Atom/RSS 两种格式
 
 ## 修改检查清单

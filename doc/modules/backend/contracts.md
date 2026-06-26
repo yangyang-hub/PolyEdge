@@ -1,6 +1,6 @@
 # contracts（HTTP API DTO 层）
 
-最后更新：2026-06-19
+最后更新：2026-06-26
 
 ## 概述
 
@@ -10,13 +10,13 @@
 
 - 单一契约源：API handler 不内联定义请求/响应结构
 - DTO 通过 `include!()` 按领域拆分到子文件，统一在 crate 根命名空间
-- 依赖 `domain` crate 的核心类型，保持类型一致性
+- 依赖 `domain` crate 的核心类型和 `rust_decimal`，保持类型一致性
 
 ## 架构与关键文件
 
 | 文件 | 职责 |
 |---|---|
-| `lib.rs` | 模块入口（~30 行），通过 `include!()` 内联 11 个 DTO 文件 |
+| `lib.rs` | 模块入口（~30 行），通过 `include!()` 内联 12 个 DTO 文件 |
 | `dto/common.rs` | `ApiMeta`、`ApiResponse<T>`、共享信封类型 |
 | `dto/system.rs` | 系统级：`HealthData`、`ReadinessData`、`SystemModeData`、`RuntimeConfigEntryData`、`KillSwitchData` 等 |
 | `dto/market.rs` | 市场：`MarketData`、`MarketListQuery`、`MarketListResponse`、`MarketCategoryData`、`BucketStatus` |
@@ -28,6 +28,7 @@
 | `dto/callback.rs` | 连接器回调请求/响应类型 |
 | `dto/query.rs` | 共享查询参数类型 |
 | `dto/wallet_analysis.rs` | 钱包分析：`WalletAnalysisData`、`WalletProfileData`、`WalletPnlData`、`WalletStyleData`、`WalletRiskData` 等 |
+| `dto/funding.rs` | Polymarket 入金：`FundingStatusData`、`FundingTokenData`、`FundingTransferRequest`、`FundingTransferData` |
 
 ## 核心设计模式
 
@@ -46,8 +47,9 @@
 
 ## 当前状态
 
-- 11 个领域 DTO 模块全部实现
-- 覆盖 markets、events、signals、orders、trades、positions、risk、arbitrage、rewards、copytrade、wallet-analysis、news、system
+- 12 个领域 DTO 模块全部实现
+- 覆盖 markets、events、signals、orders、trades、positions、risk、arbitrage、rewards、copytrade、wallet-analysis、funding、news、system
+- Funding DTO 覆盖后端资金钱包入金状态、支持资产和转账回执；请求只包含 `token_id`、`amount`、`confirmed`，不包含充值地址或私钥字段。
 - Rewards snapshot 查询契约包含订单后端分页字段，响应分页元数据由 application 的 `RewardBotSnapshot.orders_page` 序列化输出
 - Rewards snapshot 的 `orders` 与 `orders_page` 都描述本地 managed-order 查询；外部账户全量开放订单不属于当前响应契约
 - Rewards config DTO 公开市场质量门槛、`quote_bid_rank`、AI provider/request format 和信息风险配置；`RewardAiProvider::OpenAi` 的 wire value 固定为 `openai`，OpenAI request format 固定为 `openai_responses` / `openai_chat_completions`，并兼容读取旧的 `open_ai*` 拼写。不再公开旧报价偏移、模拟填单或 stale force-cancel 配置

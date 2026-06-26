@@ -18,6 +18,7 @@ pub enum StepUpScope {
     SystemKillSwitchTrigger,
     SystemKillSwitchRelease,
     RiskThresholdUpdate,
+    FundingTransfer,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

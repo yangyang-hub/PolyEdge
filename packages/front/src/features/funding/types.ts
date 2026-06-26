@@ -1,8 +1,9 @@
-export type WalletActionState = "idle" | "connecting" | "switching" | "submitting" | "submitted" | "error";
+import type { FundingTransferDto } from "@/lib/contracts/dto";
 
-export type WalletSnapshot = {
-  account: string | null;
-  txHash: string | null;
-  status: WalletActionState;
+export type FundingActionState = "idle" | "submitting" | "submitted" | "error";
+
+export type FundingSubmissionSnapshot = {
+  status: FundingActionState;
   message: string | null;
+  transfer: FundingTransferDto | null;
 };

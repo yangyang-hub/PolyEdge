@@ -203,6 +203,7 @@ fn auth_disabled_context(request: &Request) -> AuthContext {
             StepUpScope::SystemKillSwitchTrigger,
             StepUpScope::SystemKillSwitchRelease,
             StepUpScope::RiskThresholdUpdate,
+            StepUpScope::FundingTransfer,
         ],
         step_up_until: Some(OffsetDateTime::now_utc() + time::Duration::days(3650)),
         ip: client_ip,

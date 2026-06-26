@@ -25,7 +25,9 @@ use polyedge_application::{
     TriggerKillSwitchCommand, WalletActionInput,
 };
 use polyedge_connectors::{
-    ConnectorOrderStatusUpdate, ConnectorTradeFillUpdate, PolymarketDataApiConnector,
+    ConnectorOrderStatusUpdate, ConnectorTradeFillUpdate, PolymarketChainConnector,
+    PolymarketDataApiConnector,
+    PolymarketFundingTransferRequest as ConnectorFundingTransferRequest,
     normalize_polymarket_order_status_update, normalize_polymarket_trade_fill_update,
 };
 use polyedge_contracts::{
@@ -35,7 +37,8 @@ use polyedge_contracts::{
     ConnectorOrderStatusCallbackData, ConnectorOrderStatusCallbackRequest,
     ConnectorTradeFillCallbackData, ConnectorTradeFillCallbackRequest, DependencyStatus, EventData,
     EventListQuery, EvidenceData, EvidenceListQuery, ExecutionRequestData,
-    ExecutionRequestListQuery, HealthData, KillSwitchData, MarketCategoryData, MarketData,
+    ExecutionRequestListQuery, FundingStatusData, FundingTokenData, FundingTransferData,
+    FundingTransferRequest, HealthData, KillSwitchData, MarketCategoryData, MarketData,
     MarketListQuery, MarketListResponse, NewsRawEventData, NewsRawEventListQuery,
     NewsSourceHealthData, NewsSourceHealthListQuery, OrderData, OrderDraftData,
     OrderDraftListQuery, OrderListQuery, OrderbookData, OrderbookLevelData,
@@ -132,6 +135,19 @@ pub fn build_app(state: AppState) -> Router {
                 state.clone(),
                 require_console_read_auth,
             )),
+        )
+        .route(
+            "/api/v1/funding",
+            get(read_funding_status).route_layer(middleware::from_fn_with_state(
+                state.clone(),
+                require_console_read_auth,
+            )),
+        )
+        .route(
+            "/api/v1/funding/transfer",
+            axum::routing::post(submit_funding_transfer).route_layer(
+                middleware::from_fn_with_state(state.clone(), require_console_write_auth),
+            ),
         )
         .route(
             "/api/v1/events",
@@ -429,6 +445,7 @@ include!("handlers/console_risk.rs");
 include!("handlers/list_helpers.rs");
 include!("handlers/system.rs");
 include!("handlers/market_handlers.rs");
+include!("handlers/funding.rs");
 include!("handlers/rewards.rs");
 include!("handlers/copytrade.rs");
 include!("handlers/runtime_config.rs");

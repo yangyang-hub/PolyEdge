@@ -4,116 +4,71 @@ import {
   CheckCircle2,
   ExternalLink,
   Loader2,
-  RadioTower,
   ShieldCheck,
-  Wallet,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useMemo, useState, useTransition } from "react";
 
 import { PageHeader } from "@/components/shared/page-header";
 import { StatusPill } from "@/components/shared/status-pill";
 import { Button } from "@/components/ui/button";
-import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Card,
+  CardAction,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { FundingSafetyCard, FundingStepsCard } from "@/features/funding/components/funding-info-cards";
 import { FundingReviewCard } from "@/features/funding/components/funding-review-card";
 import {
-  buildErc20TransferData,
+  getFundingTokenNoteKey,
   getPolygonFundingToken,
-  isEvmAddress,
   parseTokenAmountToUnits,
-  polygonChain,
-  polygonFundingTokens,
-  type PolygonFundingTokenId,
 } from "@/features/funding/lib/polygon-funding";
-import type { WalletSnapshot } from "@/features/funding/types";
+import type { FundingSubmissionSnapshot } from "@/features/funding/types";
+import { submitFundingTransferAction, type OperationActionResult } from "@/lib/api/actions";
+import type { FundingStatusDto } from "@/lib/contracts/dto";
 import { dictionary } from "@/lib/i18n/dictionaries";
 import { cn } from "@/lib/utils";
 
-type EthereumProvider = {
-  request<TResponse = unknown>(args: { method: string; params?: unknown[] }): Promise<TResponse>;
-};
-
-type EthereumError = {
-  code?: number;
-  message?: string;
+type FundingWorkbenchProps = {
+  initialStatus: FundingStatusDto;
 };
 
 const officialDepositUrl = "https://polymarket.com/profile";
 
-function getEthereumProvider(): EthereumProvider | null {
-  if (typeof window === "undefined") {
-    return null;
-  }
-
-  return (window as Window & { ethereum?: EthereumProvider }).ethereum ?? null;
-}
-
-function getWalletErrorMessage(error: unknown): string {
-  const walletError = error as EthereumError;
-
-  if (walletError?.code === 4001) {
-    return dictionary.funding.walletMessages.rejected;
-  }
-
-  return walletError?.message ?? dictionary.funding.walletMessages.failed;
-}
-
-async function ensurePolygonNetwork(provider: EthereumProvider): Promise<void> {
-  try {
-    await provider.request({
-      method: "wallet_switchEthereumChain",
-      params: [{ chainId: polygonChain.chainIdHex }],
-    });
-  } catch (error) {
-    const walletError = error as EthereumError;
-
-    if (walletError?.code !== 4902) {
-      throw error;
-    }
-
-    await provider.request({
-      method: "wallet_addEthereumChain",
-      params: [
-        {
-          chainId: polygonChain.chainIdHex,
-          chainName: polygonChain.chainName,
-          nativeCurrency: polygonChain.nativeCurrency,
-          rpcUrls: polygonChain.rpcUrls,
-          blockExplorerUrls: polygonChain.blockExplorerUrls,
-        },
-      ],
-    });
-  }
-}
-
-export function FundingWorkbench() {
-  const [selectedTokenId, setSelectedTokenId] = useState<PolygonFundingTokenId>(polygonFundingTokens[0].id);
-  const [recipient, setRecipient] = useState("");
+export function FundingWorkbench({ initialStatus }: FundingWorkbenchProps) {
+  const [selectedTokenId, setSelectedTokenId] = useState(initialStatus.tokens[0]?.id ?? "");
   const [amount, setAmount] = useState("");
+  const [stepUpCode, setStepUpCode] = useState("");
   const [confirmed, setConfirmed] = useState(false);
   const [copyMessage, setCopyMessage] = useState<string | null>(null);
-  const [wallet, setWallet] = useState<WalletSnapshot>({
-    account: null,
-    txHash: null,
+  const [fieldErrors, setFieldErrors] = useState<OperationActionResult["fieldErrors"]>({});
+  const [submission, setSubmission] = useState<FundingSubmissionSnapshot>({
     status: "idle",
-    message: null,
+    message: initialStatus.configuration_error ?? null,
+    transfer: null,
   });
+  const [isPending, startTransition] = useTransition();
 
-  const selectedToken = getPolygonFundingToken(selectedTokenId);
-  const recipientValid = recipient.length === 0 || isEvmAddress(recipient);
+  const selectedToken = useMemo(
+    () => getPolygonFundingToken(initialStatus.tokens, selectedTokenId),
+    [initialStatus.tokens, selectedTokenId],
+  );
   const amountUnits = useMemo(
-    () => parseTokenAmountToUnits(amount, selectedToken.decimals),
-    [amount, selectedToken.decimals],
+    () => (selectedToken ? parseTokenAmountToUnits(amount, selectedToken.decimals) : null),
+    [amount, selectedToken],
   );
   const amountValid = amount.length === 0 || amountUnits !== null;
   const canSubmit =
-    isEvmAddress(recipient) &&
+    initialStatus.enabled &&
+    selectedToken !== null &&
     amountUnits !== null &&
     confirmed &&
-    wallet.status !== "connecting" &&
-    wallet.status !== "switching" &&
-    wallet.status !== "submitting";
+    stepUpCode.trim().length >= 6 &&
+    !isPending;
 
   function copyToClipboard(value: string, message: string) {
     if (!navigator.clipboard) {
@@ -127,117 +82,38 @@ export function FundingWorkbench() {
       .catch(() => setCopyMessage(dictionary.funding.walletMessages.failed));
   }
 
-  async function connectWallet() {
-    const provider = getEthereumProvider();
-
-    if (!provider) {
-      setWallet((current) => ({
+  function submitTransfer() {
+    if (!selectedToken || !canSubmit) {
+      setSubmission((current) => ({
         ...current,
         status: "error",
-        message: dictionary.funding.walletMessages.missingProvider,
+        message: initialStatus.enabled ? dictionary.funding.confirmRequired : dictionary.funding.configUnavailable,
       }));
       return;
     }
 
-    setWallet((current) => ({ ...current, status: "connecting", message: null }));
+    setSubmission({ status: "submitting", message: null, transfer: null });
+    setFieldErrors({});
 
-    try {
-      const accounts = await provider.request<string[]>({ method: "eth_requestAccounts" });
-      setWallet((current) => ({
-        ...current,
-        account: accounts[0] ?? null,
-        status: "idle",
-        message: dictionary.funding.walletMessages.connected,
-      }));
-    } catch (error) {
-      setWallet((current) => ({ ...current, status: "error", message: getWalletErrorMessage(error) }));
-    }
-  }
-
-  async function switchNetwork() {
-    const provider = getEthereumProvider();
-
-    if (!provider) {
-      setWallet((current) => ({
-        ...current,
-        status: "error",
-        message: dictionary.funding.walletMessages.missingProvider,
-      }));
-      return;
-    }
-
-    setWallet((current) => ({ ...current, status: "switching", message: null }));
-
-    try {
-      await ensurePolygonNetwork(provider);
-      setWallet((current) => ({
-        ...current,
-        status: "idle",
-        message: dictionary.funding.walletMessages.switched,
-      }));
-    } catch (error) {
-      setWallet((current) => ({ ...current, status: "error", message: getWalletErrorMessage(error) }));
-    }
-  }
-
-  async function submitTransfer() {
-    const provider = getEthereumProvider();
-
-    if (!provider) {
-      setWallet((current) => ({
-        ...current,
-        status: "error",
-        message: dictionary.funding.walletMessages.missingProvider,
-      }));
-      return;
-    }
-
-    const units = parseTokenAmountToUnits(amount, selectedToken.decimals);
-
-    if (!isEvmAddress(recipient) || units === null || !confirmed) {
-      setWallet((current) => ({ ...current, status: "error", message: dictionary.funding.confirmRequired }));
-      return;
-    }
-
-    setWallet((current) => ({ ...current, status: "submitting", message: null, txHash: null }));
-
-    try {
-      await ensurePolygonNetwork(provider);
-
-      const accounts = wallet.account
-        ? [wallet.account]
-        : await provider.request<string[]>({ method: "eth_requestAccounts" });
-      const account = accounts[0];
-
-      if (!account) {
-        throw new Error(dictionary.funding.walletMessages.missingProvider);
-      }
-
-      const txHash = await provider.request<string>({
-        method: "eth_sendTransaction",
-        params: [
-          {
-            from: account,
-            to: selectedToken.address,
-            value: "0x0",
-            data: buildErc20TransferData(recipient, units),
-          },
-        ],
+    startTransition(async () => {
+      const result = await submitFundingTransferAction({
+        tokenId: selectedToken.id,
+        amount,
+        confirmed,
+        stepUpCode,
       });
 
-      setWallet({
-        account,
-        txHash,
-        status: "submitted",
-        message: dictionary.funding.walletMessages.submitted,
+      setFieldErrors(result.fieldErrors ?? {});
+      setSubmission({
+        status: result.ok ? "submitted" : "error",
+        message: result.message,
+        transfer: result.transfer ?? null,
       });
-    } catch (error) {
-      setWallet((current) => ({ ...current, status: "error", message: getWalletErrorMessage(error) }));
-    }
+    });
   }
 
-  const submitting = wallet.status === "submitting";
-  const tokenNote = dictionary.funding.tokenNotes[selectedToken.noteKey];
+  const submitting = isPending || submission.status === "submitting";
+  const tokenNote = selectedToken ? dictionary.funding.tokenNotes[getFundingTokenNoteKey(selectedToken)] : "";
 
   return (
     <div className="space-y-6">
@@ -248,7 +124,9 @@ export function FundingWorkbench() {
         actions={
           <>
             <StatusPill tone="primary">{dictionary.funding.polygonOnly}</StatusPill>
-            <StatusPill tone="success">{dictionary.funding.selfCustody}</StatusPill>
+            <StatusPill tone={initialStatus.enabled ? "success" : "warning"}>
+              {initialStatus.enabled ? dictionary.funding.selfCustody : dictionary.funding.configUnavailable}
+            </StatusPill>
           </>
         }
       />
@@ -268,52 +146,47 @@ export function FundingWorkbench() {
             </CardAction>
           </CardHeader>
           <CardContent className="space-y-5">
+            {!initialStatus.enabled ? (
+              <div className="rounded-lg border border-destructive/35 bg-destructive/10 p-3 text-sm text-destructive">
+                {initialStatus.configuration_error ?? dictionary.funding.walletMessages.notConfigured}
+              </div>
+            ) : null}
+
             <div className="space-y-2">
               <label className="text-xs font-medium text-muted-foreground" htmlFor="funding-token">
                 {dictionary.funding.token}
               </label>
               <div id="funding-token" className="grid gap-2 sm:grid-cols-2" role="radiogroup">
-                {polygonFundingTokens.map((token) => (
-                  <button
-                    key={token.id}
-                    type="button"
-                    role="radio"
-                    aria-checked={selectedToken.id === token.id}
-                    className={cn(
-                      "flex min-h-20 flex-col items-start justify-between rounded-lg border p-3 text-left transition-colors",
-                      selectedToken.id === token.id
-                        ? "border-primary/45 bg-primary/12 text-foreground"
-                        : "border-border/80 bg-background/35 text-muted-foreground hover:border-primary/30 hover:text-foreground",
-                    )}
-                    onClick={() => setSelectedTokenId(token.id)}
-                  >
-                    <span className="flex w-full items-center justify-between gap-3">
-                      <span className="font-heading text-base font-semibold text-foreground">{token.symbol}</span>
-                      {selectedToken.id === token.id ? <CheckCircle2 className="size-4 text-secondary" /> : null}
-                    </span>
-                    <span className="mt-2 text-xs leading-5">{dictionary.funding.tokenNotes[token.noteKey]}</span>
-                  </button>
-                ))}
+                {initialStatus.tokens.map((token) => {
+                  const note = dictionary.funding.tokenNotes[getFundingTokenNoteKey(token)];
+
+                  return (
+                    <button
+                      key={token.id}
+                      type="button"
+                      role="radio"
+                      aria-checked={selectedToken?.id === token.id}
+                      className={cn(
+                        "flex min-h-20 flex-col items-start justify-between rounded-lg border p-3 text-left transition-colors",
+                        selectedToken?.id === token.id
+                          ? "border-primary/45 bg-primary/12 text-foreground"
+                          : "border-border/80 bg-background/35 text-muted-foreground hover:border-primary/30 hover:text-foreground",
+                      )}
+                      onClick={() => setSelectedTokenId(token.id)}
+                    >
+                      <span className="flex w-full items-center justify-between gap-3">
+                        <span className="font-heading text-base font-semibold text-foreground">{token.symbol}</span>
+                        {selectedToken?.id === token.id ? <CheckCircle2 className="size-4 text-secondary" /> : null}
+                      </span>
+                      <span className="mt-2 text-xs leading-5">{note}</span>
+                    </button>
+                  );
+                })}
               </div>
+              {fieldErrors?.tokenId ? <p className="text-xs text-destructive">{fieldErrors.tokenId}</p> : null}
             </div>
 
-            <div className="grid gap-4 md:grid-cols-[1.4fr_0.6fr]">
-              <div className="space-y-2">
-                <label className="text-xs font-medium text-muted-foreground" htmlFor="funding-recipient">
-                  {dictionary.funding.recipient}
-                </label>
-                <Input
-                  id="funding-recipient"
-                  value={recipient}
-                  placeholder={dictionary.funding.recipientPlaceholder}
-                  aria-invalid={!recipientValid}
-                  onChange={(event) => setRecipient(event.target.value)}
-                />
-                {!recipientValid ? (
-                  <p className="text-xs text-destructive">{dictionary.funding.invalidRecipient}</p>
-                ) : null}
-              </div>
-
+            <div className="grid gap-4 md:grid-cols-2">
               <div className="space-y-2">
                 <label className="text-xs font-medium text-muted-foreground" htmlFor="funding-amount">
                   {dictionary.funding.amount}
@@ -323,10 +196,28 @@ export function FundingWorkbench() {
                   inputMode="decimal"
                   value={amount}
                   placeholder={dictionary.funding.amountPlaceholder}
-                  aria-invalid={!amountValid}
+                  aria-invalid={!amountValid || Boolean(fieldErrors?.amount)}
                   onChange={(event) => setAmount(event.target.value)}
                 />
                 {!amountValid ? <p className="text-xs text-destructive">{dictionary.funding.invalidAmount}</p> : null}
+                {fieldErrors?.amount ? <p className="text-xs text-destructive">{fieldErrors.amount}</p> : null}
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-xs font-medium text-muted-foreground" htmlFor="funding-step-up-code">
+                  {dictionary.funding.stepUpCode}
+                </label>
+                <Input
+                  id="funding-step-up-code"
+                  value={stepUpCode}
+                  placeholder={dictionary.funding.stepUpCodePlaceholder}
+                  type="password"
+                  aria-invalid={Boolean(fieldErrors?.stepUpCode)}
+                  onChange={(event) => setStepUpCode(event.target.value)}
+                />
+                {fieldErrors?.stepUpCode ? (
+                  <p className="text-xs text-destructive">{fieldErrors.stepUpCode}</p>
+                ) : null}
               </div>
             </div>
 
@@ -339,40 +230,33 @@ export function FundingWorkbench() {
               />
               <span>{dictionary.funding.confirmLabel}</span>
             </label>
+            {fieldErrors?.confirmed ? <p className="text-xs text-destructive">{fieldErrors.confirmed}</p> : null}
 
-            <div className="flex flex-wrap items-center gap-2">
-              <Button onClick={connectWallet} type="button" variant="outline">
-                <Wallet className="size-4" />
-                {dictionary.funding.connectWallet}
-              </Button>
-              <Button onClick={switchNetwork} type="button" variant="outline">
-                <RadioTower className="size-4" />
-                {dictionary.funding.switchNetwork}
-              </Button>
-              <Button disabled={!canSubmit} onClick={submitTransfer} type="button">
-                {submitting ? <Loader2 className="size-4 animate-spin" /> : <ShieldCheck className="size-4" />}
-                {submitting ? dictionary.funding.sending : dictionary.funding.sendTransfer}
-              </Button>
-            </div>
+            <Button disabled={!canSubmit} onClick={submitTransfer} type="button">
+              {submitting ? <Loader2 className="size-4 animate-spin" /> : <ShieldCheck className="size-4" />}
+              {submitting ? dictionary.funding.sending : dictionary.funding.sendTransfer}
+            </Button>
 
-            {wallet.message || copyMessage ? (
+            {submission.message || copyMessage ? (
               <div className="rounded-lg border border-border/70 bg-muted/35 p-3 text-sm text-muted-foreground">
-                {wallet.message ?? copyMessage}
+                {submission.message ?? copyMessage}
               </div>
             ) : null}
           </CardContent>
         </Card>
 
         <div className="space-y-4">
-          <FundingReviewCard
-            amount={amount}
-            amountUnits={amountUnits}
-            onCopy={copyToClipboard}
-            recipient={recipient}
-            selectedToken={selectedToken}
-            tokenNote={tokenNote}
-            wallet={wallet}
-          />
+          {selectedToken ? (
+            <FundingReviewCard
+              amount={amount}
+              amountUnits={amountUnits}
+              onCopy={copyToClipboard}
+              selectedToken={selectedToken}
+              status={initialStatus}
+              submission={submission}
+              tokenNote={tokenNote}
+            />
+          ) : null}
           <FundingSafetyCard />
         </div>
       </section>

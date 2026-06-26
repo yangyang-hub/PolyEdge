@@ -10,7 +10,19 @@ export type OperationActionResult = {
   operationId?: string;
   status?: "queued" | "completed" | "rejected";
   fieldErrors?: Partial<
-    Record<"note" | "stepUpCode" | "targetMode" | "limitPrice" | "quantity" | "connectorName" | "address", string>
+    Record<
+      | "note"
+      | "stepUpCode"
+      | "targetMode"
+      | "limitPrice"
+      | "quantity"
+      | "connectorName"
+      | "address"
+      | "tokenId"
+      | "amount"
+      | "confirmed",
+      string
+    >
   >;
 };
 

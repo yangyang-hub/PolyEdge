@@ -5,33 +5,37 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import {
   buildPolygonscanTokenUrl,
   buildPolygonscanTxUrl,
-  isEvmAddress,
   polygonChain,
   type PolygonFundingToken,
 } from "@/features/funding/lib/polygon-funding";
-import type { WalletSnapshot } from "@/features/funding/types";
+import type { FundingSubmissionSnapshot } from "@/features/funding/types";
 import { formatShortAddress } from "@/lib/format-address";
+import type { FundingStatusDto } from "@/lib/contracts/dto";
 import { dictionary } from "@/lib/i18n/dictionaries";
 
 type FundingReviewCardProps = {
   amount: string;
   amountUnits: bigint | null;
   onCopy: (value: string, message: string) => void;
-  recipient: string;
   selectedToken: PolygonFundingToken;
+  status: FundingStatusDto;
+  submission: FundingSubmissionSnapshot;
   tokenNote: string;
-  wallet: WalletSnapshot;
 };
 
 export function FundingReviewCard({
   amount,
   amountUnits,
   onCopy,
-  recipient,
   selectedToken,
+  status,
+  submission,
   tokenNote,
-  wallet,
 }: FundingReviewCardProps) {
+  const sourceAddress = status.source_address;
+  const polymarketWalletAddress = status.polymarket_wallet_address;
+  const bridgeDepositAddress = submission.transfer?.bridge_deposit_address ?? null;
+
   return (
     <Card>
       <CardHeader>
@@ -66,16 +70,40 @@ export function FundingReviewCard({
         />
         <ReviewRow
           label={dictionary.funding.sourceWallet}
-          value={wallet.account ? formatShortAddress(wallet.account) : dictionary.funding.notConnected}
-        />
-        <ReviewRow
-          label={dictionary.funding.destination}
-          value={isEvmAddress(recipient) ? formatShortAddress(recipient) : dictionary.common.pending}
+          value={sourceAddress ? formatShortAddress(sourceAddress) : dictionary.funding.notConfigured}
           action={
-            isEvmAddress(recipient) ? (
+            sourceAddress ? (
               <IconButton
                 label={dictionary.funding.copy}
-                onClick={() => onCopy(recipient, dictionary.funding.copiedRecipient)}
+                onClick={() => onCopy(sourceAddress, dictionary.funding.copiedSource)}
+              >
+                <Clipboard className="size-3.5" />
+              </IconButton>
+            ) : null
+          }
+        />
+        <ReviewRow
+          label={dictionary.funding.polymarketWallet}
+          value={polymarketWalletAddress ? formatShortAddress(polymarketWalletAddress) : dictionary.funding.notConfigured}
+          action={
+            polymarketWalletAddress ? (
+              <IconButton
+                label={dictionary.funding.copy}
+                onClick={() => onCopy(polymarketWalletAddress, dictionary.funding.copiedPolymarketWallet)}
+              >
+                <Clipboard className="size-3.5" />
+              </IconButton>
+            ) : null
+          }
+        />
+        <ReviewRow
+          label={dictionary.funding.bridgeAddress}
+          value={bridgeDepositAddress ? formatShortAddress(bridgeDepositAddress) : dictionary.common.pending}
+          action={
+            bridgeDepositAddress ? (
+              <IconButton
+                label={dictionary.funding.copy}
+                onClick={() => onCopy(bridgeDepositAddress, dictionary.funding.copiedBridgeAddress)}
               >
                 <Clipboard className="size-3.5" />
               </IconButton>
@@ -84,10 +112,10 @@ export function FundingReviewCard({
         />
         <ReviewRow
           label={dictionary.funding.status}
-          value={wallet.message ?? dictionary.funding.ready}
+          value={submission.message ?? dictionary.funding.ready}
           action={
-            wallet.txHash ? (
-              <IconLink href={buildPolygonscanTxUrl(wallet.txHash)} label={dictionary.funding.openTransaction} />
+            submission.transfer?.tx_hash ? (
+              <IconLink href={buildPolygonscanTxUrl(submission.transfer.tx_hash)} label={dictionary.funding.openTransaction} />
             ) : null
           }
         />

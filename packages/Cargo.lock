@@ -3154,6 +3154,12 @@ dependencies = [
 name = "polyedge-connectors"
 version = "0.1.0"
 dependencies = [
+ "alloy-network",
+ "alloy-primitives",
+ "alloy-provider",
+ "alloy-rpc-types-eth",
+ "alloy-signer",
+ "alloy-signer-local",
  "async-trait",
  "base64",
  "chrono",
@@ -3178,6 +3184,7 @@ name = "polyedge-contracts"
 version = "0.1.0"
 dependencies = [
  "polyedge-domain",
+ "rust_decimal",
  "serde",
  "serde_json",
  "time",

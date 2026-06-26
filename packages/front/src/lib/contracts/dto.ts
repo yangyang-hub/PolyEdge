@@ -11,3 +11,4 @@ export * from "./dto/arbitrage";
 export * from "./dto/rewards";
 export * from "./dto/copytrade";
 export * from "./dto/wallet-analysis";
+export * from "./dto/funding";

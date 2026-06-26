@@ -26,6 +26,7 @@ fn parse_dev_step_up_scopes(value: &str) -> Result<Vec<StepUpScope>> {
             "system_kill_switch_trigger" => Ok(StepUpScope::SystemKillSwitchTrigger),
             "system_kill_switch_release" => Ok(StepUpScope::SystemKillSwitchRelease),
             "risk_threshold_update" => Ok(StepUpScope::RiskThresholdUpdate),
+            "funding_transfer" => Ok(StepUpScope::FundingTransfer),
             other => Err(AppError::unauthorized(
                 "AUTH_DEV_STEP_UP_SCOPE_INVALID",
                 format!("invalid local dev step-up scope: {other}"),

@@ -11,6 +11,7 @@ use polyedge_domain::{
     SignalAction, SignalLifecycleState, SignalSide, SignedUsdAmount, SystemMode, TimeHorizon,
     TradabilityStatus, UsdAmount,
 };
+use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -28,3 +29,4 @@ include!("dto/callback.rs");
 include!("dto/query.rs");
 include!("dto/orderbook.rs");
 include!("dto/wallet_analysis.rs");
+include!("dto/funding.rs");
