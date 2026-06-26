@@ -30,7 +30,7 @@
 | `dto/news.ts` | 新闻相关 DTO |
 | `dto/probability.ts` | 概率相关 DTO |
 | `dto/wallet-analysis.ts` | WalletAnalysisReportDto |
-| `dto/funding.ts` | FundingStatusDto、FundingTokenDto、FundingTransferDto |
+| `dto/funding.ts` | FundingStatusDto、带余额的 FundingTokenDto、FundingTransferDto |
 | `api.ts` | API 响应信封类型 |
 
 ### HTTP 客户端层 — `src/lib/api/base.ts`（~263 行）
@@ -122,7 +122,7 @@ OperationActionResult → 更新 UI 状态
 - 12 个领域 API 模块覆盖当前前端页面使用的后端端点，`base.ts` 和 `actions.ts`/`actions/` 提供共享请求与写操作封装
 - `actions.ts` 只做兼容 re-export；具体 Server Actions 已按 risk、signals、rewards、copytrade、settings 拆到 `actions/`，共享结果构造和数字校验在 `actions/shared.ts`
 - DTO 类型镜像当前前端消费的后端响应；`CopyTradeSnapshotDto` 已与只读跟踪后端对齐，只包含 config、status、wallets、source_trades、events，不再声明模拟账户、订单或持仓字段
-- Funding DTO/API/action 已接入 `/api/v1/funding` 与 `/api/v1/funding/transfer`；当前内网免鉴权部署下，前端只提交 token、amount 和 confirmed，不提交二次确认码、Polymarket 充值地址或任何私钥材料。
+- Funding DTO/API/action 已接入 `/api/v1/funding` 与 `/api/v1/funding/transfer`；状态响应会携带后端资金钱包 USDC/USDT Polygon 链上余额和可选余额查询错误。当前内网免鉴权部署下，前端只提交 token、amount 和 confirmed，不提交二次确认码、Polymarket 充值地址或任何私钥材料。
 - Rewards snapshot DTO 包含 `orders_page`、`low_competition_report` 和 `llm_usage`，但 `RewardBotConfigDto.execution_mode`、旧 `quote_edge_cents`、模拟填单参数和 stale force-cancel 参数已移除；报价配置改为 `quote_bid_rank: 1|2|3`（TypeScript 以 number 表达，Server Action 用 Zod 限制范围），并新增 liquidity/volume/end-time/spread/data-age 市场质量门槛。DTO 仍保留后端兼容字段 `per_market_usd`、`quote_size_usd`、`low_competition_per_market_usd`，但前端 Server Action 校验会剥离这些字段，不再把它们作为可编辑配置提交。DTO 已镜像 rewards quote/selection mode、dominant 单边阈值、盘口集中度阈值、偏好分类、低竞争 sleeve 配置字段（含 probe notional、competition share/multiple、候选 competition multiple、账户/单市场资金占比、入场退出滑点、坏成交恢复天数、top-of-book 跳变、低竞争专属报价/spread/评分、低竞争 provider 加严、可配置撤单阈值和后端兼容的旧 liquidity/volume 字段）、AI advisory 配置字段（含 `ai_advisory_batch_size`）、信息风险配置字段（含 `info_risk_batch_size`、`require_info_risk_before_first_quote`、`first_quote_quarantine_sec`）、drift 换价 guard（`requote_drift_confirm_sec` / `requote_drift_cooldown_sec` / `requote_drift_max_cancels_per_cycle`），以及 quote plan 的 `pre_ai_eligible` / `quote_readiness` / `orderbook_token_ids` / `strategy_bucket` / `quote_mode` / `recommended_quote_mode` / `book_metrics` / `low_competition_metrics` / `ai_advisory` / `info_risk` / `live_skip_until` / `live_skip_reason`；低竞争 metrics DTO 镜像竞争份额、挂单资金占比和坏成交恢复天数字段。status DTO 也镜像 `ready_quote_markets`、`waiting_orderbook_markets` 和 `provider_pending_markets`，用于区分真实可立即报价、等待盘口和等待 provider 风控的计划数量；`RewardLlmCallDailyStatsDto` 镜像 UTC 日期、AI advisory 调用数、info-risk 调用数、总调用数和失败数；低竞争 report DTO 镜像最近窗口 observation 数、通过/拦截比例、竞争占比中位数、账户/单市场占比 P90、reward 分位数、退出深度倍数、midpoint P95、退出滑点 P95、坏成交恢复天数 P95 和小额 enforce 建议；managed order DTO 也携带 `strategy_bucket`。`actions/rewards.ts` 校验低竞争 mode、竞争份额/资金占比/退出/稳定性阈值、低竞争专属报价/评分/provider/撤单阈值、OpenAI 与 Anthropic 请求格式匹配、AI/info-risk batch size 范围、drift 换价 guard 范围，并校验信息风险 observe/enforce、过滤等级、TTL 和首单观察窗口；保存 rewards 配置时会强制关闭并清零低竞争 liquidity/volume 旧过滤字段，前端不再把它们作为可编辑配置提交。AI API key、base URL 和模型名不进入 DTO，只从 worker 环境读取。`readRewardBotSnapshot()` 支持计划/订单分页、搜索、状态和排序 query；首屏 loader 显式请求 `plans_eligible=true`，与默认可挂页签一致。当前后端 handler 和 `orders_page` 都描述本地 managed-order 查询，`orders_status=filled` 会包含部分成交订单；账户余额和 positions 由 worker 同步到数据库后返回
 - `/replay` 前端派生数据层已移除；当前没有面向控制台的 replay API 页面
 - `MarketDto` 新增 `liquidity_usd` 与 `end_at`，镜像后端 `MarketData`

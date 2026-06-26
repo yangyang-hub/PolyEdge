@@ -23,6 +23,7 @@ import { Input } from "@/components/ui/input";
 import { FundingSafetyCard, FundingStepsCard } from "@/features/funding/components/funding-info-cards";
 import { FundingReviewCard } from "@/features/funding/components/funding-review-card";
 import {
+  formatFundingTokenBalance,
   getFundingTokenNoteKey,
   getPolygonFundingToken,
   parseTokenAmountToUnits,
@@ -148,6 +149,11 @@ export function FundingWorkbench({ initialStatus }: FundingWorkbenchProps) {
                 {initialStatus.configuration_error ?? dictionary.funding.walletMessages.notConfigured}
               </div>
             ) : null}
+            {initialStatus.balance_error ? (
+              <div className="rounded-lg border border-amber-300/30 bg-amber-400/10 p-3 text-sm text-amber-200">
+                {dictionary.funding.balanceUnavailable}: {initialStatus.balance_error}
+              </div>
+            ) : null}
 
             <div className="space-y-2">
               <label className="text-xs font-medium text-muted-foreground" htmlFor="funding-token">
@@ -156,6 +162,7 @@ export function FundingWorkbench({ initialStatus }: FundingWorkbenchProps) {
               <div id="funding-token" className="grid gap-2 sm:grid-cols-2" role="radiogroup">
                 {initialStatus.tokens.map((token) => {
                   const note = dictionary.funding.tokenNotes[getFundingTokenNoteKey(token)];
+                  const balance = formatFundingTokenBalance(token.balance, token.symbol);
 
                   return (
                     <button
@@ -176,6 +183,9 @@ export function FundingWorkbench({ initialStatus }: FundingWorkbenchProps) {
                         {selectedToken?.id === token.id ? <CheckCircle2 className="size-4 text-secondary" /> : null}
                       </span>
                       <span className="mt-2 text-xs leading-5">{note}</span>
+                      <span className="mt-2 text-xs font-medium text-foreground">
+                        {dictionary.funding.chainBalance}: {balance || dictionary.funding.balanceUnavailable}
+                      </span>
                     </button>
                   );
                 })}

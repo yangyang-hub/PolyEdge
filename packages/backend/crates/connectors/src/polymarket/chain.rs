@@ -123,7 +123,17 @@ impl PolymarketChainConnector {
     }
 
     pub async fn fetch_pusd_balance(&self, wallet_address: &str) -> Result<Decimal> {
-        self.fetch_erc20_balance(POLYMARKET_PUSD_CONTRACT_ADDRESS, wallet_address)
+        self.fetch_erc20_balance(POLYMARKET_PUSD_CONTRACT_ADDRESS, wallet_address, ERC20_DECIMALS)
+            .await
+    }
+
+    pub async fn fetch_funding_token_balance(
+        &self,
+        token_id: &str,
+        wallet_address: &str,
+    ) -> Result<Decimal> {
+        let token = funding_token_by_id(token_id)?;
+        self.fetch_erc20_balance(token.address, wallet_address, u32::from(token.decimals))
             .await
     }
 
@@ -316,7 +326,12 @@ impl PolymarketChainConnector {
         })
     }
 
-    async fn fetch_erc20_balance(&self, token_address: &str, wallet_address: &str) -> Result<Decimal> {
+    async fn fetch_erc20_balance(
+        &self,
+        token_address: &str,
+        wallet_address: &str,
+        decimals: u32,
+    ) -> Result<Decimal> {
         let token_address = normalize_evm_address(
             "token_address",
             token_address,
@@ -382,7 +397,7 @@ impl PolymarketChainConnector {
             )
         })?;
 
-        erc20_hex_units_to_decimal(&raw_hex, ERC20_DECIMALS)
+        erc20_hex_units_to_decimal(&raw_hex, decimals)
     }
 }
 

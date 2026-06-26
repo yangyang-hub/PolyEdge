@@ -6,6 +6,8 @@ pub struct FundingTokenData {
     pub address: String,
     pub decimals: u8,
     pub min_transfer_amount: Decimal,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub balance: Option<Decimal>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -18,6 +20,8 @@ pub struct FundingStatusData {
     pub tokens: Vec<FundingTokenData>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub configuration_error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub balance_error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

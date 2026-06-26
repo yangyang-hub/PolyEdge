@@ -14,6 +14,8 @@ export const funding = {
     bridgeAddress: "Bridge EVM 入金地址",
     amount: "金额",
     amountPlaceholder: "例如 100",
+    chainBalance: "Polygon 链上余额",
+    balanceUnavailable: "余额暂不可用",
     sendTransfer: "使用后端资金钱包转账",
     sending: "提交中",
     notConfigured: "未配置",

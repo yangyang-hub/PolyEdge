@@ -7,6 +7,7 @@ export type FundingTokenDto = {
   address: string;
   decimals: number;
   min_transfer_amount: DecimalValue;
+  balance?: DecimalValue | null;
 };
 
 export type FundingStatusDto = {
@@ -17,6 +18,7 @@ export type FundingStatusDto = {
   max_transfer_amount: DecimalValue;
   tokens: FundingTokenDto[];
   configuration_error?: string;
+  balance_error?: string;
 };
 
 export type FundingTransferRequestDto = {

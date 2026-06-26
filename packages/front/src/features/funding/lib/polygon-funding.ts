@@ -1,4 +1,4 @@
-import type { FundingTokenDto } from "@/lib/contracts/dto";
+import type { DecimalValue, FundingTokenDto } from "@/lib/contracts/dto";
 
 export type PolygonFundingToken = FundingTokenDto;
 export type FundingTokenNoteKey = "nativeUsdc" | "polygonUsdt";
@@ -48,6 +48,22 @@ export function parseTokenAmountToUnits(value: string, decimals: number): bigint
   const units = wholeUnits + fractionalUnits;
 
   return units > 0n ? units : null;
+}
+
+export function formatFundingTokenBalance(balance: DecimalValue | null | undefined, symbol: string): string {
+  if (balance === null || balance === undefined || String(balance).trim() === "") {
+    return "";
+  }
+
+  const numericBalance = Number(balance);
+  const formattedBalance = Number.isFinite(numericBalance)
+    ? numericBalance.toLocaleString("zh-CN", {
+        maximumFractionDigits: 4,
+        minimumFractionDigits: 0,
+      })
+    : String(balance);
+
+  return `${formattedBalance} ${symbol}`;
 }
 
 export function buildPolygonscanTxUrl(txHash: string): string {

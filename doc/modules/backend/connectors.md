@@ -63,10 +63,11 @@
 
 - **`PolymarketChainConnector`**：`polygon_rpc_url` + `reqwest::Client`
 - `fetch_pusd_balance(wallet_address)`：通过 Polygon JSON-RPC `eth_call` 读取 Polymarket pUSD ERC20 `balanceOf`，按 6 位小数转换为美元 Decimal
+- `fetch_funding_token_balance(token_id, wallet_address)`：读取 funding allowlist 中 USDC/USDT 的 Polygon ERC20 `balanceOf`，供 `/funding` 页面展示后端资金钱包链上余额。
 - `polygon_funding_tokens()`：返回后端 funding allowlist；当前只暴露 Polygon 原生 USDC 与 Polygon USDT0 / USDT 两个 Bridge 入金入口，均按 6 位小数处理。
 - `funding_source_address(private_key, chain_id)`：从后端配置私钥派生付款钱包地址，只返回地址不泄露私钥。
 - `submit_funding_transfer(private_key, chain_id, request)`：校验 Polygon chain id、token allowlist、金额精度和 Polymarket Bridge 当前 supported-assets 后，调用 Bridge `/deposit` 为配置的 Polymarket 钱包生成 EVM 入金地址，并通过 alloy provider 使用配置私钥广播 ERC-20 `transfer(bridgeAddress, amount)`。
-- 用途：rewards worker 同步账户状态时，若 CLOB `balance-allowance` 返回 0 或失败，但资金钱包链上 pUSD 余额大于 0，则用链上余额回填 snapshot，避免 Deposit Wallet / `POLY_1271` 缓存或签名路径导致前端余额显示为 0；API `/funding/transfer` 使用同一 connector 执行后端资金钱包到 Polymarket Bridge 的真实链上入金。
+- 用途：rewards worker 同步账户状态时，若 CLOB `balance-allowance` 返回 0 或失败，但资金钱包链上 pUSD 余额大于 0，则用链上余额回填 snapshot，避免 Deposit Wallet / `POLY_1271` 缓存或签名路径导致前端余额显示为 0；API `/funding` 使用同一 connector 展示后端资金钱包 USDC/USDT 余额，`/funding/transfer` 使用同一 connector 执行后端资金钱包到 Polymarket Bridge 的真实链上入金。
 
 ### Polymarket Book（盘口）
 
@@ -161,7 +162,7 @@
 
 ## 当前状态
 
-- 已实现当前系统使用的 Polymarket 公共市场、盘口、Data API、Rewards API、Rewards AI advisory、Rewards 信息风险评估、订单 scoring、带明细和 raw authenticated fallback 的当日 maker earnings、CLOB V2 交易 connector，以及后端资金钱包通过 Polymarket Bridge 入金的 Polygon ERC-20 转账 connector；Deposit Wallet relayer 生命周期接口尚未接入
+- 已实现当前系统使用的 Polymarket 公共市场、盘口、Data API、Rewards API、Rewards AI advisory、Rewards 信息风险评估、订单 scoring、带明细和 raw authenticated fallback 的当日 maker earnings、CLOB V2 交易 connector，以及后端资金钱包 USDC/USDT 链上余额查询和通过 Polymarket Bridge 入金的 Polygon ERC-20 转账 connector；Deposit Wallet relayer 生命周期接口尚未接入
 - Gamma `/markets` offset 分页已具备 422 边界 / 最大页数保护，并按 market id 去重；condition_ids 定向查询用于重点市场新鲜度刷新；Gamma、CLOB rewards、order book 和 price-history 解码失败会返回最多 300 字节的转义响应体 preview，便于排查 HTML、截断响应或上游结构漂移。
 - Gamma 市场同步已提供 rewards 质量筛选所需的 CLOB liquidity、end time 和分级 ambiguity 数据，并支持 priority condition 刷新降低全量目录延迟对 live rewards 的影响。
 - Rewards markets 分页和 enrichment 已具备完整性保护，不再把部分补全结果作为完整目录写入；详情补全只针对缺唯一 YES/NO token 或缺有效 question 的市场，降低 CLOB 429 风险

@@ -8,6 +8,7 @@ async fn read_funding_status(
     let trace_id = new_trace_id();
     let (source_address, polymarket_wallet_address, configuration_error) =
         funding_configuration(&state);
+    let (tokens, balance_error) = funding_tokens_to_contract(&state, source_address.as_deref()).await;
 
     let enabled = configuration_error.is_none()
         && source_address.is_some()
@@ -21,8 +22,9 @@ async fn read_funding_status(
             polymarket_wallet_address,
             chain_id: state.settings.polymarket.chain_id,
             max_transfer_amount: funding_max_transfer_amount(),
-            tokens: funding_tokens_to_contract(),
+            tokens,
             configuration_error,
+            balance_error,
         },
         auth.request_id,
         trace_id,
@@ -180,8 +182,11 @@ fn funding_max_transfer_amount() -> Decimal {
     Decimal::from(FUNDING_MAX_TRANSFER_AMOUNT_UNITS)
 }
 
-fn funding_tokens_to_contract() -> Vec<FundingTokenData> {
-    PolymarketChainConnector::polygon_funding_tokens()
+async fn funding_tokens_to_contract(
+    state: &AppState,
+    source_address: Option<&str>,
+) -> (Vec<FundingTokenData>, Option<String>) {
+    let mut tokens: Vec<FundingTokenData> = PolymarketChainConnector::polygon_funding_tokens()
         .iter()
         .map(|token| FundingTokenData {
             id: token.id.to_string(),
@@ -190,8 +195,39 @@ fn funding_tokens_to_contract() -> Vec<FundingTokenData> {
             address: token.address.to_string(),
             decimals: token.decimals,
             min_transfer_amount: token.min_checkout_usd,
+            balance: None,
         })
-        .collect()
+        .collect();
+
+    let Some(source_address) = source_address else {
+        return (tokens, None);
+    };
+    if state.settings.polymarket.chain_id != 137
+        || state.settings.polymarket.polygon_rpc_url.trim().is_empty()
+    {
+        return (tokens, None);
+    }
+
+    let connector = match PolymarketChainConnector::new(&state.settings.polymarket.polygon_rpc_url)
+    {
+        Ok(connector) => connector,
+        Err(error) => return (tokens, Some(error.message().to_string())),
+    };
+    let mut balance_error = None;
+    for token in &mut tokens {
+        match connector
+            .fetch_funding_token_balance(&token.id, source_address)
+            .await
+        {
+            Ok(balance) => token.balance = Some(balance),
+            Err(error) => {
+                balance_error = Some(error.message().to_string());
+                break;
+            }
+        }
+    }
+
+    (tokens, balance_error)
 }
 
 fn funding_transfer_to_contract(

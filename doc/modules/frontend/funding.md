@@ -27,14 +27,14 @@
 
 ## 核心数据结构
 
-- **`FundingStatusDto`**：后端 funding 状态，包含 `enabled`、付款钱包地址、Polymarket 入账钱包地址、chain id、最大单笔金额和支持资产。
-- **`FundingTokenDto`**：后端支持资产配置，包含 token id、symbol、Polygon 合约地址、decimals 和最小入金金额。
+- **`FundingStatusDto`**：后端 funding 状态，包含 `enabled`、付款钱包地址、Polymarket 入账钱包地址、chain id、最大单笔金额、支持资产和可选余额错误。
+- **`FundingTokenDto`**：后端支持资产配置，包含 token id、symbol、Polygon 合约地址、decimals、最小入金金额和后端资金钱包链上余额。
 - **`FundingTransferDto`**：后端广播结果，包含 Polygon tx hash、付款钱包、Polymarket 入账钱包、Bridge EVM 入金地址、资产和最小单位金额。
 - **`FundingSubmissionSnapshot`**：前端本地提交状态，包含状态、消息和最近一次转账回执。
 
 ## 关键交互
 
-- **加载状态**：页面进入时读取 `GET /api/v1/funding`，展示后端资金钱包和 Polymarket 入账钱包是否配置完整。
+- **加载状态**：页面进入时读取 `GET /api/v1/funding`，展示后端资金钱包、Polymarket 入账钱包、USDC/USDT 链上余额和配置是否完整。
 - **选择资产**：资产清单来自后端；当前入口为 Polygon USDC 与 USDT0 / USDT。
 - **提交转账**：当前内网免鉴权部署下，前端只提交 `token_id`、`amount` 和 `confirmed=true`；不提交充值地址或二次确认码。
 - **后端执行**：`POST /api/v1/funding/transfer` 先用配置的 Polymarket 钱包调用 Bridge `/deposit` 获取 EVM 入金地址，再用配置私钥向该地址发送所选 ERC-20。
@@ -51,11 +51,11 @@
 
 ## 当前状态
 
-已实现 `/funding` 控制台页面和侧边导航入口，支持使用后端配置资金钱包将 Polygon USDC / USDT 入金到后端配置的 Polymarket 账户。入账钱包固定由后端配置决定：优先 `POLYEDGE_POLYMARKET__FUNDER`，未配置时回退 `POLYEDGE_POLYMARKET__ACCOUNT_ID`。当前纯内网部署不再要求页面填写二次确认码，仍保留真实链上转账确认勾选。
+已实现 `/funding` 控制台页面和侧边导航入口，支持使用后端配置资金钱包将 Polygon USDC / USDT 入金到后端配置的 Polymarket 账户。页面会在资产卡片展示后端资金钱包的 USDC/USDT Polygon 链上余额；余额查询失败时展示“余额暂不可用”提示但不阻断配置状态展示。入账钱包固定由后端配置决定：优先 `POLYEDGE_POLYMARKET__FUNDER`，未配置时回退 `POLYEDGE_POLYMARKET__ACCOUNT_ID`。当前纯内网部署不再要求页面填写二次确认码，仍保留真实链上转账确认勾选。
 
 已知限制：
 
-- 不查询后端资金钱包 USDC/USDT 余额、allowance、POL gas 余额或链上确认数。
+- 不查询后端资金钱包 allowance、POL gas 余额或链上确认数。
 - 不验证 Polymarket 是否已经完成 pUSD 入账；广播后只提供 Polygonscan 链接。
 - 支持资产由后端 allowlist 控制；后端提交时会再次校验 Polymarket Bridge 当前支持状态和最小入金金额。
 
