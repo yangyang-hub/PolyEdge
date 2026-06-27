@@ -531,6 +531,9 @@ fn reward_info_risk_candidates_apply_pre_llm_gate_before_market_candidates() {
         &[],
         &[],
         &config,
+        "test-model",
+        None,
+        now,
     );
 
     assert_eq!(condition_ids, vec!["cond_standard", "cond_legacy"]);
@@ -552,6 +555,9 @@ fn reward_info_risk_candidates_keep_active_exposure_despite_unified_gate() {
         &[open_order],
         &[],
         &config,
+        "test-model",
+        None,
+        now,
     );
 
     assert_eq!(condition_ids, vec!["cond_legacy"]);

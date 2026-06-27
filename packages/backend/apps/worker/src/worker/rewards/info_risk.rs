@@ -131,6 +131,9 @@ async fn scan_reward_info_risks_unlocked(
         &cycle.open_orders,
         &cycle.positions,
         &config,
+        model,
+        fallback_descriptor.as_ref(),
+        OffsetDateTime::now_utc(),
     );
     report.candidates = ordered_conditions.len();
     let max_conditions = reward_provider_max_conditions_per_cycle(state);
@@ -335,24 +338,48 @@ fn reward_info_risk_candidate_conditions(
     open_orders: &[ManagedRewardOrder],
     positions: &[RewardPosition],
     config: &RewardBotConfig,
+    model: &str,
+    fallback: Option<&RewardProviderFallback>,
+    now: OffsetDateTime,
 ) -> Vec<String> {
     let mut seen = HashSet::new();
     let mut condition_ids = Vec::new();
     let plans_by_condition = plans
         .iter()
-        .map(|plan| (plan.condition_id.as_str(), plan))
+        .map(|plan| (plan.condition_id.trim(), plan))
         .collect::<HashMap<_, _>>();
 
     for order in open_orders {
+        if !reward_info_risk_condition_needs_provider_refresh(
+            &plans_by_condition,
+            &order.condition_id,
+            config,
+            model,
+            fallback,
+            now,
+        ) {
+            continue;
+        }
         push_info_risk_condition(&mut condition_ids, &mut seen, &order.condition_id);
     }
     for position in positions {
+        if !reward_info_risk_condition_needs_provider_refresh(
+            &plans_by_condition,
+            &position.condition_id,
+            config,
+            model,
+            fallback,
+            now,
+        ) {
+            continue;
+        }
         push_info_risk_condition(&mut condition_ids, &mut seen, &position.condition_id);
     }
     for plan in plans.iter().filter(|plan| {
         let has_active_exposure =
             reward_condition_has_active_exposure(&plan.condition_id, open_orders, positions);
         reward_provider_plan_passes_pre_llm_gate(plan, config, has_active_exposure)
+            && reward_info_risk_plan_needs_provider_refresh(plan, config, model, fallback, now)
     }) {
         push_info_risk_condition(&mut condition_ids, &mut seen, &plan.condition_id);
     }
@@ -367,12 +394,76 @@ fn reward_info_risk_candidate_conditions(
             || plans_by_condition
                 .get(condition_id)
                 .is_some_and(|plan| reward_provider_plan_passes_pre_llm_gate(plan, config, false));
-        if !passes_pre_llm_gate {
+        let needs_provider_refresh = reward_info_risk_condition_needs_provider_refresh(
+            &plans_by_condition,
+            condition_id,
+            config,
+            model,
+            fallback,
+            now,
+        );
+        if !passes_pre_llm_gate || !needs_provider_refresh {
             continue;
         }
         push_info_risk_condition(&mut condition_ids, &mut seen, condition_id);
     }
     condition_ids
+}
+
+fn reward_info_risk_condition_needs_provider_refresh(
+    plans_by_condition: &HashMap<&str, &RewardQuotePlan>,
+    condition_id: &str,
+    config: &RewardBotConfig,
+    model: &str,
+    fallback: Option<&RewardProviderFallback>,
+    now: OffsetDateTime,
+) -> bool {
+    plans_by_condition
+        .get(condition_id.trim())
+        .is_none_or(|plan| {
+            reward_info_risk_plan_needs_provider_refresh(plan, config, model, fallback, now)
+        })
+}
+
+fn reward_info_risk_plan_needs_provider_refresh(
+    plan: &RewardQuotePlan,
+    config: &RewardBotConfig,
+    model: &str,
+    fallback: Option<&RewardProviderFallback>,
+    now: OffsetDateTime,
+) -> bool {
+    let Some(risk) = plan.info_risk.as_ref() else {
+        return true;
+    };
+    if !reward_info_risk_matches_config(risk, config, model, fallback, now) {
+        return true;
+    }
+    reward_provider_cache_refresh_due(risk.expires_at, config.info_risk_ttl_sec, now)
+}
+
+fn reward_info_risk_matches_config(
+    risk: &RewardMarketInfoRisk,
+    config: &RewardBotConfig,
+    model: &str,
+    fallback: Option<&RewardProviderFallback>,
+    now: OffsetDateTime,
+) -> bool {
+    if risk.expires_at <= now {
+        return false;
+    }
+    let model = model.trim();
+    let request_format = reward_ai_effective_request_format_for_model(config, model);
+    if risk.provider == config.ai_provider
+        && risk.request_format == request_format
+        && risk.model.as_str() == model
+    {
+        return true;
+    }
+    fallback.is_some_and(|fb| {
+        risk.provider == fb.provider
+            && risk.request_format == fb.request_format
+            && risk.model.as_str() == fb.model.as_str()
+    })
 }
 
 fn push_info_risk_condition(
@@ -385,6 +476,162 @@ fn push_info_risk_condition(
         return;
     }
     condition_ids.push(condition_id.to_string());
+}
+
+#[cfg(test)]
+mod reward_info_risk_candidate_tests {
+    use super::*;
+
+    fn test_plan(
+        condition_id: &str,
+        info_risk: Option<RewardMarketInfoRisk>,
+    ) -> RewardQuotePlan {
+        RewardQuotePlan {
+            condition_id: condition_id.to_string(),
+            market_slug: "market".to_string(),
+            question: "Question?".to_string(),
+            score: Decimal::ONE,
+            eligible: true,
+            pre_ai_eligible: true,
+            quote_readiness: RewardQuoteReadiness::Blocked,
+            reason: String::new(),
+            strategy_bucket: RewardStrategyBucket::Standard,
+            quote_mode: RewardPlanQuoteMode::Double,
+            recommended_quote_mode: None,
+            book_metrics: None,
+            low_competition_metrics: None,
+            opportunity_metrics: None,
+            ai_advisory: None,
+            info_risk,
+            event_window: None,
+            midpoint: Some(Decimal::new(50, 2)),
+            live_skip_until: None,
+            live_skip_reason: None,
+            total_daily_rate: Decimal::ONE,
+            rewards_max_spread: Decimal::ONE,
+            rewards_min_size: Decimal::ONE,
+            orderbook_token_ids: vec!["yes".to_string(), "no".to_string()],
+            legs: Vec::new(),
+            updated_at: OffsetDateTime::now_utc(),
+        }
+    }
+
+    fn test_risk(
+        condition_id: &str,
+        model: &str,
+        expires_at: OffsetDateTime,
+    ) -> RewardMarketInfoRisk {
+        let now = OffsetDateTime::now_utc();
+        RewardMarketInfoRisk {
+            condition_id: condition_id.to_string(),
+            provider: polyedge_application::RewardAiProvider::OpenAi,
+            request_format: polyedge_application::RewardAiRequestFormat::OpenAiChatCompletions,
+            model: model.to_string(),
+            query_hash: "query-hash".to_string(),
+            input_hash: "input-hash".to_string(),
+            risk_level: polyedge_application::RewardInfoRiskLevel::Low,
+            risk_type: polyedge_application::RewardInfoRiskType::None,
+            directional_risk: polyedge_application::RewardInfoDirectionalRisk::Unclear,
+            resolution_imminent: false,
+            expected_event_at: None,
+            confidence: Decimal::ONE,
+            summary: "low risk".to_string(),
+            sources: Vec::new(),
+            metrics: json!({}),
+            created_at: now,
+            expires_at,
+        }
+    }
+
+    fn test_config() -> RewardBotConfig {
+        RewardBotConfig {
+            ai_provider: polyedge_application::RewardAiProvider::OpenAi,
+            ai_request_format: polyedge_application::RewardAiRequestFormat::OpenAiChatCompletions,
+            info_risk_ttl_sec: 3600,
+            ..RewardBotConfig::default()
+        }
+    }
+
+    #[test]
+    fn info_risk_candidates_skip_fresh_matching_cache() {
+        let now = OffsetDateTime::from_unix_timestamp(1_785_000_000).expect("valid timestamp");
+        let config = test_config();
+        let plan = test_plan(
+            "cond_cached",
+            Some(test_risk(
+                "cond_cached",
+                "glm-5.2",
+                now + TimeDuration::minutes(30),
+            )),
+        );
+
+        let candidates = reward_info_risk_candidate_conditions(
+            &[],
+            &[plan],
+            &[],
+            &[],
+            &config,
+            "glm-5.2",
+            None,
+            now,
+        );
+
+        assert!(candidates.is_empty());
+    }
+
+    #[test]
+    fn info_risk_candidates_include_cache_in_refresh_window() {
+        let now = OffsetDateTime::from_unix_timestamp(1_785_000_000).expect("valid timestamp");
+        let config = test_config();
+        let plan = test_plan(
+            "cond_due",
+            Some(test_risk(
+                "cond_due",
+                "glm-5.2",
+                now + TimeDuration::seconds(30),
+            )),
+        );
+
+        let candidates = reward_info_risk_candidate_conditions(
+            &[],
+            &[plan],
+            &[],
+            &[],
+            &config,
+            "glm-5.2",
+            None,
+            now,
+        );
+
+        assert_eq!(candidates, vec!["cond_due".to_string()]);
+    }
+
+    #[test]
+    fn info_risk_candidates_include_mismatched_model_cache() {
+        let now = OffsetDateTime::from_unix_timestamp(1_785_000_000).expect("valid timestamp");
+        let config = test_config();
+        let plan = test_plan(
+            "cond_model_changed",
+            Some(test_risk(
+                "cond_model_changed",
+                "old-model",
+                now + TimeDuration::minutes(30),
+            )),
+        );
+
+        let candidates = reward_info_risk_candidate_conditions(
+            &[],
+            &[plan],
+            &[],
+            &[],
+            &config,
+            "glm-5.2",
+            None,
+            now,
+        );
+
+        assert_eq!(candidates, vec!["cond_model_changed".to_string()]);
+    }
 }
 
 fn build_reward_info_risk_connector(

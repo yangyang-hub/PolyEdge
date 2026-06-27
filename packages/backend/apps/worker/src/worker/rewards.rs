@@ -431,9 +431,9 @@ async fn run_reward_bot_live_tick(
         info_risk_mode = cycle.config.info_risk_mode.as_str(),
         "prepared rewards live cycle",
     );
-    spawn_reward_market_provider_refresh(state, &cycle, &books, trace_id);
     apply_cached_reward_ai_advisories_to_cycle(state, &mut cycle, &books, trace_id).await?;
     apply_cached_reward_info_risks_to_cycle(state, &mut cycle, trace_id).await?;
+    spawn_reward_market_provider_refresh(state, &cycle, &books, trace_id);
     if apply_first_quote_entry_gates(
         &mut cycle.plans,
         &cycle.previous_plans,

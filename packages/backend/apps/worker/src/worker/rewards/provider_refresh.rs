@@ -296,6 +296,9 @@ async fn refresh_reward_info_risk_provider_cache(
         &cycle.open_orders,
         &cycle.positions,
         &cycle.config,
+        model,
+        info_risk_fallback_descriptor.as_ref(),
+        OffsetDateTime::now_utc(),
     );
     let mut ordered_conditions = reward_provider_refresh_candidate_condition_ids(
         &info_risk_candidate_condition_ids,
