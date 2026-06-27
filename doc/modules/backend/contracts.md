@@ -43,7 +43,7 @@
 ## 依赖关系
 
 - **上游**：`domain`（核心枚举和数值类型）
-- **下游**：`packages/api`（handler 中使用 DTO 作为请求/响应类型）、前端 `src/lib/contracts/dto/`（TypeScript 类型镜像）
+- **下游**：`packages/backend/api`（handler 中使用 DTO 作为请求/响应类型）、前端 `src/lib/contracts/dto/`（TypeScript 类型镜像）
 
 ## 当前状态
 

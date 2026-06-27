@@ -25,7 +25,7 @@
 ## 依赖关系
 
 - **上游**：`domain`（统一错误类型）、`tokio`
-- **下游**：`packages/api`、`packages/orderbook`
+- **下游**：`packages/backend/api`、`packages/backend/order`
 
 ## 当前状态
 

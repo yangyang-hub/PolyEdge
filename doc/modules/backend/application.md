@@ -248,7 +248,7 @@ orderbook_cache ← (共享基础设施 trait)
 ## 修改检查清单
 
 - [ ] 新增 Store trait 方法后，同步更新 `infrastructure` 中的 Postgres 和 in-memory 实现
-- [ ] 修改 Service 方法后，同步更新 `packages/api` 中的 handler 和 `packages/backend/apps/worker` 中的 worker
+- [ ] 修改 Service 方法后，同步更新 `packages/backend/api` 中的 handler 和 `packages/backend/apps/worker` 中的 worker
 - [ ] 修改视图/命令类型后，同步更新 `contracts` crate 中的 DTO
 - [ ] 新增模块后在 `lib.rs` 中添加 `mod` 声明和 `pub use` 导出
 - [ ] 使用 `include!` 拆分时，被 include 文件不写自己的 `use`

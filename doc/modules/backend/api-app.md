@@ -4,7 +4,7 @@
 
 ## 概述
 
-`polyedge-api` 是基于 Axum 的统一后端进程，crate 位于 `packages/api`。它组装 HTTP 路由、认证中间件和原 `polyedge-worker` 后台 runtime，HTTP handler 与后台任务共享同一个 `AppState` / application service 实例。当前内网部署可通过 `POLYEDGE_AUTH__DISABLED=true` 关闭权限校验。
+`polyedge-api` 是基于 Axum 的统一后端进程，crate 位于 `packages/backend/api`。它组装 HTTP 路由、认证中间件和原 `polyedge-worker` 后台 runtime，HTTP handler 与后台任务共享同一个 `AppState` / application service 实例。当前内网部署可通过 `POLYEDGE_AUTH__DISABLED=true` 关闭权限校验。
 
 ## 设计目标
 
@@ -16,20 +16,20 @@
 
 | 文件 | 职责 |
 |---|---|
-| `packages/api/src/main.rs` | 加载 Runtime、连接 orderbook 服务、启动 `WorkerRuntime` 和 Axum server；监听地址和 signal shutdown 复用 `polyedge-common` |
-| `packages/api/src/lib.rs` | 路由组装入口：`build_app(state: AppState) -> Router`（~353 行） |
-| `packages/api/src/handlers/system.rs` | 健康检查、就绪检查、系统模式 |
-| `packages/api/src/handlers/market_handlers.rs` | 市场列表和详情 |
-| `packages/api/src/handlers/funding.rs` | Polymarket 入金：读取后端资金配置、通过 Bridge 广播资金钱包 ERC-20 转账 |
-| `packages/api/src/handlers/execution_lists.rs` | 列表：orders、drafts、trades、execution requests |
-| `packages/api/src/handlers/callbacks.rs` + `callback_helpers.rs` | 连接器回调（订单状态、成交回填） |
-| `packages/api/src/handlers/mode_control.rs` | 系统模式转换 |
-| `packages/api/src/handlers/rewards.rs` | 奖励机器人管理；run/cancel/reset 只入队 worker 控制命令 |
-| `packages/api/src/handlers/copytrade.rs` | 跟单管理；run/analyze/cancel/reset 只入队 worker 控制命令 |
-| `packages/api/src/handlers/wallet_analysis.rs` | 钱包分析 |
-| `packages/api/src/handlers/health.rs` | 健康检查 |
-| `packages/api/src/handlers/runtime_config.rs` + `runtime_config_helpers.rs` | 运行时配置管理 |
-| `packages/api/src/handlers/mappers.rs` | DTO 映射辅助；保留 connector callback 需要的执行/持仓/风险映射 |
+| `packages/backend/api/src/main.rs` | 加载 Runtime、连接 orderbook 服务、启动 `WorkerRuntime` 和 Axum server；监听地址和 signal shutdown 复用 `polyedge-common` |
+| `packages/backend/api/src/lib.rs` | 路由组装入口：`build_app(state: AppState) -> Router`（~353 行） |
+| `packages/backend/api/src/handlers/system.rs` | 健康检查、就绪检查、系统模式 |
+| `packages/backend/api/src/handlers/market_handlers.rs` | 市场列表和详情 |
+| `packages/backend/api/src/handlers/funding.rs` | Polymarket 入金：读取后端资金配置、通过 Bridge 广播资金钱包 ERC-20 转账 |
+| `packages/backend/api/src/handlers/execution_lists.rs` | 列表：orders、drafts、trades、execution requests |
+| `packages/backend/api/src/handlers/callbacks.rs` + `callback_helpers.rs` | 连接器回调（订单状态、成交回填） |
+| `packages/backend/api/src/handlers/mode_control.rs` | 系统模式转换 |
+| `packages/backend/api/src/handlers/rewards.rs` | 奖励机器人管理；run/cancel/reset 只入队 worker 控制命令 |
+| `packages/backend/api/src/handlers/copytrade.rs` | 跟单管理；run/analyze/cancel/reset 只入队 worker 控制命令 |
+| `packages/backend/api/src/handlers/wallet_analysis.rs` | 钱包分析 |
+| `packages/backend/api/src/handlers/health.rs` | 健康检查 |
+| `packages/backend/api/src/handlers/runtime_config.rs` + `runtime_config_helpers.rs` | 运行时配置管理 |
+| `packages/backend/api/src/handlers/mappers.rs` | DTO 映射辅助；保留 connector callback 需要的执行/持仓/风险映射 |
 
 ## 路由结构
 
@@ -95,7 +95,7 @@ HTTP Response
 ## 当前状态
 
 - 当前 REST 端点覆盖市场、事件/证据、新闻、订单/成交、pricing、rewards、funding、copytrade、wallet analysis、runtime config、system mode、connector callback 和 orderbook 代理
-- API crate 已从 `packages/backend/apps/api` 拆到顶层 `packages/api`，仍作为 `packages/Cargo.toml` Rust workspace member 构建
+- API crate 已收敛到 `packages/backend/api`，仍作为 `packages/backend/Cargo.toml` Rust workspace member 构建
 - SSE 流式端点已移除，前端通过 REST API 加载数据
 - API 进程内嵌 worker runtime；`polyedge-worker` 二进制仅保留 CLI/运维兼容入口，不再单独部署常驻容器
 - Rewards Bot 控制端点只作为前端接口和命令入口，具体 live 策略、撤单和重置由同进程后台 runtime 处理；Copy Trading 当前只保留钱包跟踪和 Analyze，旧 run/cancel/reset 入口不执行模拟交易

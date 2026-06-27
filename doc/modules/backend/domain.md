@@ -76,7 +76,7 @@
 ## 依赖关系
 
 - **上游**：无（纯基础层）
-- **下游被依赖**：`application`、`connectors`、`infrastructure`、`contracts`、`common`、`packages/api`、`packages/orderbook`、`packages/backend/apps/worker` — 所有上层 crate 都依赖 `domain`
+- **下游被依赖**：`application`、`connectors`、`infrastructure`、`contracts`、`common`、`packages/backend/api`、`packages/backend/order`、`packages/backend/apps/worker` — 所有上层 crate 都依赖 `domain`
 
 ## 当前状态
 

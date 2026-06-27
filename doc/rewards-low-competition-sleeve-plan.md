@@ -352,7 +352,7 @@ v2 使用当前 orderbook top levels、账户状态、开放订单和 worker 本
 运行验证：
 
 ```bash
-cd packages
+cd packages/backend
 cargo check --workspace --tests
 cargo test --workspace rewards
 ```

@@ -55,11 +55,11 @@ The designated sync producer is now the standalone `polyedge-orderbook` service.
 |------|------|
 | `packages/backend/apps/worker/src/worker/market_sync.rs` | 市场同步 CLI 兼容入口；daemon 同步已迁移到 orderbook 服务 |
 | `packages/backend/apps/worker/src/worker/orderbook_stream.rs` | Orderbook stream — 仅保留 CLI 子命令兼容，核心逻辑已迁移到 polyedge-orderbook 服务 |
-| `packages/orderbook/src/main.rs` | 独立 orderbook 服务入口 — HTTP server、Gamma full/priority sync、rewards catalog sync、WS stream + token 注册 |
-| `packages/orderbook/src/market_sync.rs` | Orderbook market sync — Gamma full sync、priority condition sync、rewards catalog sync |
-| `packages/orderbook/src/candle_history.rs` | Rewards candle history sync — 限速调用 CLOB `/prices-history` 写入 5m price-history source candles |
-| `packages/orderbook/src/http_api.rs` | Orderbook HTTP/API — read/batch/stats/register/ingest、内部 WS stream、写 token 校验、最优档排序 |
-| `packages/orderbook/src/updates.rs` | Orderbook update broadcaster — 为 WS/poll/ingest 缓存更新分配 sequence、推送内部 WS |
+| `packages/backend/order/src/main.rs` | 独立 orderbook 服务入口 — HTTP server、Gamma full/priority sync、rewards catalog sync、WS stream + token 注册 |
+| `packages/backend/order/src/market_sync.rs` | Orderbook market sync — Gamma full sync、priority condition sync、rewards catalog sync |
+| `packages/backend/order/src/candle_history.rs` | Rewards candle history sync — 限速调用 CLOB `/prices-history` 写入 5m price-history source candles |
+| `packages/backend/order/src/http_api.rs` | Orderbook HTTP/API — read/batch/stats/register/ingest、内部 WS stream、写 token 校验、最优档排序 |
+| `packages/backend/order/src/updates.rs` | Orderbook update broadcaster — 为 WS/poll/ingest 缓存更新分配 sequence、推送内部 WS |
 | `packages/backend/crates/common/src/lib.rs` | 后端二进制共享进程外壳 helper — bind address、TCP listener、Ctrl-C/SIGTERM shutdown |
 | `packages/backend/crates/connectors/src/polymarket/gamma.rs` | Gamma markets connector — `/markets` offset 分页、condition_ids 批量查询、market id 去重 |
 | `packages/backend/crates/connectors/src/polymarket/chain.rs` | Polygon chain connector — 读取资金钱包链上 pUSD ERC20 余额；通过 Polymarket Bridge 生成入金地址并广播后端资金钱包 USDC/USDT 转账 |
@@ -84,7 +84,7 @@ The designated sync producer is now the standalone `polyedge-orderbook` service.
 | `packages/backend/apps/worker/src/worker/rewards/provider_refresh.rs` | Rewards AI advisory / info-risk provider refresh — full tick 后分别启动 AI advisory 与 info-risk 后台 task，各自开放订单/持仓优先、各自应用 pre-LLM gate 后按约 2:1 混排普通与低竞争 pre-AI 市场；AI task 使用 `rewards_ai_provider` 临时盘口批次，info-risk task 独立补缓存；实际 provider 调用写入 `llm_calls` |
 | `packages/backend/apps/worker/src/worker/rewards/provider_refresh_candidates.rs` | Rewards provider refresh candidate ordering — 开放订单/持仓优先、普通与低竞争 pre-AI 市场混排 |
 | `packages/backend/apps/worker/src/worker/rewards/info_risk.rs` | Rewards info-risk async scan loop, provider cache lookup/write, pre-LLM candidate hard filter, quote-plan risk application, provider call recording |
-| `packages/api/src/handlers/rewards.rs` | Rewards API — reads snapshots/config and enqueues worker control commands |
+| `packages/backend/api/src/handlers/rewards.rs` | Rewards API — reads snapshots/config and enqueues worker control commands |
 | `packages/backend/crates/application/src/rewards/service.rs` | RewardBotService — reward markets, snapshots, live order lifecycle, control command queue, in-process command wake channel |
 | `packages/backend/crates/application/src/rewards/service_cache.rs` | RewardBotService cached reads — events, fills, external_open_order_count, positions, heartbeat, event log helper |
 | `packages/backend/crates/application/src/rewards/service_snapshot.rs` | RewardBotService snapshot aggregation — orders/plans pagination、low-competition report and daily LLM usage stats |
@@ -114,7 +114,7 @@ The designated sync producer is now the standalone `polyedge-orderbook` service.
 | `packages/front/src/features/rewards/components/rewards-table-controls.tsx` | Rewards table controls — 搜索、筛选 tabs 和排序指示共享控件 |
 | `packages/front/src/features/rewards/lib/low-competition-formatters.ts` | Rewards low-competition frontend formatters — bps/optional metrics and rejection/recommendation reason mapping |
 | `packages/front/src/app/(console)/funding/page.tsx` | Funding route — Polymarket 入金页面入口 |
-| `packages/api/src/handlers/funding.rs` | Funding API — 读取后端资金配置与资金钱包 USDC/USDT 链上余额、幂等校验、step-up 校验并委托 connector 执行 Polymarket Bridge 入金转账 |
+| `packages/backend/api/src/handlers/funding.rs` | Funding API — 读取后端资金配置与资金钱包 USDC/USDT 链上余额、幂等校验、step-up 校验并委托 connector 执行 Polymarket Bridge 入金转账 |
 | `packages/backend/crates/contracts/src/dto/funding.rs` | Funding DTO — status、token、transfer request/receipt 合约 |
 | `packages/front/src/lib/api/funding.ts` + `packages/front/src/lib/api/actions/funding.ts` | Funding frontend data layer — 读取 funding status、提交后端签名转账 |
 | `packages/front/src/features/funding/components/funding-workbench.tsx` | Funding workbench — 选择后端资金钱包 USDC/USDT 入金资产与金额，提交后端 Bridge 入金转账 |
@@ -134,7 +134,7 @@ The designated sync producer is now the standalone `polyedge-orderbook` service.
 | `packages/backend/apps/worker/src/worker/rewards/polling.rs` | Rewards live poll loop, book fetch, independent event-cancel worker wiring, fast reconcile, external sync throttling, 5-day history pruning, in-process book history, command wake subscription, background managed-orderbook-cache pre-warm task (`run_reward_managed_orderbook_cache_prewarm`) |
 | `packages/backend/apps/worker/src/worker/database_maintenance.rs` | Worker database maintenance task — 定期执行数据库 retention 清理并输出逐表统计 |
 | `packages/backend/apps/worker/src/worker/copytrade.rs` | Copytrade worker — wallet tracking, source trade detection, and queued analyze commands |
-| `packages/api/src/handlers/copytrade.rs` | Copytrade API — reads snapshots/config and enqueues worker control commands |
+| `packages/backend/api/src/handlers/copytrade.rs` | Copytrade API — reads snapshots/config and enqueues worker control commands |
 | `packages/backend/crates/application/src/copytrade/service.rs` | CopyTradeService — copytrade config, wallet tracking, source trade detection, and control command queue |
 | `packages/backend/crates/application/src/orderbook_cache.rs` | OrderbookCache trait and stream event models — `CachedOrderBook`、`OrderbookStreamEvent` |
 | `packages/backend/crates/application/src/orderbook_registry.rs` | OrderbookSubscriptionRegistry trait — 多来源 token 订阅注册与来源统计 |
@@ -175,10 +175,7 @@ The designated sync producer is now the standalone `polyedge-orderbook` service.
 
 - `doc/`：系统设计、API 契约、鉴权、存储、前后端计划等文档。
 - `packages/front/`：`Next.js 16 + React 19 + Tailwind v4 + shadcn/ui` 控制台前端。前端代码规范（目录结构、数据层、文件行数上限、公共代码提取）见 [packages/front/AGENTS.md](./packages/front/AGENTS.md)，写或改前端代码前必须遵守。
-- `packages/Cargo.toml`：Rust workspace 根。
-- `packages/api/`：`polyedge-api` 服务 crate（HTTP API + 内嵌 worker runtime）。
-- `packages/orderbook/`：`polyedge-orderbook` 服务 crate（市场同步、盘口 WS/poll、盘口 HTTP API）。
-- `packages/backend/`：后端共享 crates、`worker / replay` apps、迁移和初始化 SQL；包含 `application / common / connectors / contracts / domain / infrastructure` crates。后端代码规范（分层架构、`include!` 模块化、文件行数上限、公共代码提取、测试组织）见 [packages/backend/AGENTS.md](./packages/backend/AGENTS.md)，写或改后端 Rust 代码前必须遵守。
+- `packages/backend/`：Rust 后端根目录；包含 `Cargo.toml`、`Cargo.lock`、`rust-toolchain.toml`、`api`、`order`、`worker / replay` apps、共享 crates、迁移和初始化 SQL。`api` 是 `polyedge-api` 服务 crate，`order` 是 `polyedge-orderbook` 服务 crate，共享 crates 包含 `application / common / connectors / contracts / domain / infrastructure`。后端代码规范（分层架构、`include!` 模块化、文件行数上限、公共代码提取、测试组织）见 [packages/backend/AGENTS.md](./packages/backend/AGENTS.md)，写或改后端 Rust 代码前必须遵守。
 - `deploy/`：Docker Compose 部署模板和环境变量示例；当前 Compose 服务为 `polyedge-api`（内嵌 worker runtime）、`polyedge-orderbook` 和 `polyedge-front`。
 - `scripts/`：构建、部署、冒烟脚本。
 - `bin/`：部署镜像复制的预构建后端二进制。
@@ -220,7 +217,7 @@ The designated sync producer is now the standalone `polyedge-orderbook` service.
 - Worker 每次成功读取 CLOB 账户开放订单 snapshot 后，会把仍出现在该 snapshot 中且外部剩余量为正、状态非 filled/matched/cancelled/expired 的本系统 managed 外部订单数量写入 `RewardBotService` 热缓存；Rewards snapshot 的 `status.open_orders` 优先展示该观测值，冷启动或尚未成功同步时才回退到本地 store 计数，避免本地 stale open-like 或已完全成交订单短时间抬高顶部开放挂单数。
 - Rewards worker 通过认证 CLOB raw HTTP `GET /rewards/user/total?sponsored=true` 同步 UTC 当日账户级 maker rewards 聚合值到 `account.reward_earned_usd`，以对齐 Polymarket `/rewards` 页面顶部 Daily Rewards 的 native+sponsored 口径；当聚合端点为空、为 0 或不可用时，会回退分页读取 `GET /rewards/user` native 明细并合并 `sponsored=true` sponsored-only 明细，按 `earnings * asset_rate` 求和；SDK 解码失败时会使用同一 L2 签名的 raw HTTP fallback，宽容解析带 trailing input 的 JSON 响应。前端只读取数据库/API snapshot，不直连 Polymarket。
 - Rewards live 会在提交旧 intent 前先执行当前盘口/资格撤单检查；BUY intent 在真正 POST 前还会用 orderbook 服务做 1 秒 max-age last-look，若盘口缺失、刷新失败或出现 best ask touch 等硬风险则不提交；普通 BUY 只要求提交 token，低竞争 BUY 要求同计划 `orderbook_token_ids` 和报价腿 token 全部返回 1 秒 max-age 盘口，缺任意 token 即 defer。任一提交结果未知、待最终对账或外部订单 404 会暂停全部新增买单，但继续同步、撤单和卖出退出；外部订单 404 锁超过 5 分钟且仍无成交证据时会自动本地关闭。提交结果未知时，开放订单严格匹配失败会先保持对账锁；当恢复查询确认 CLOB 无对应 open 订单并经过 `LIVE_SUBMISSION_UNKNOWN_CLOSE_AFTER_SECS`（默认 600 秒）宽限后，worker 会把该订单本地标记为 cancelled 以释放锁（与 404 锁一致），但若 positions 快照显示该 BUY token 在提交后出现库存则继续保留对账锁。CLOB `post_order` 只要返回订单 ID 就保留为 accepted 供后续成交/状态对账，包含 `unmatched` / `canceled` / 未知状态；HTTP 4xx 明确拒单会标记当前 intent 为 error，只有网络中断、5xx 或成功响应缺少订单 ID 才进入提交结果未知锁。managed order 的后续 upsert 会同步更新实际提交数量；SELL intent price 保留非亏损退出 floor；post-only exit 被取消后的重试保留退出 floor 并按 maker 规则重试，flatten replacement 保留退出 floor 并在后续按 best bid 非亏损 FAK 或继续等待。订单 scoring 观测只推进 `last_scored_at`，不修改业务状态 `updated_at`；reconciliation 锁订单跳过 scoring 查询，避免周期性观测掩盖真实业务状态年龄。
-- Polymarket connector 已迁移到 CLOB V2 Rust crate：`packages/Cargo.toml` 保留 dependency key `polymarket-client-sdk`，实际指向 `polymarket_client_sdk_v2`；live CLOB 签名类型支持 `eoa`、`proxy`、`gnosis_safe`、`poly_1271`，其中 `poly_1271` 用于已有 Deposit Wallet（`FUNDER` 填 deposit wallet 地址），下单前会调用 CLOB balance allowance update；已支持 collateral balance 查询、Polygon pUSD ERC20 余额读取、Funding 页面后端资金钱包 USDC/USDT ERC20 余额读取、开放订单全量分页、heartbeat raw 续链/`heartbeat_id:null` 重建 fallback 和 rewards earnings raw JSON fallback。Rewards 账户同步优先把 `FUNDER` 作为资金钱包地址，CLOB balance 为 0 或失败但链上 pUSD 大于 0 时用链上余额回填 snapshot；下单价格当前收敛到最多 2 位小数，同一 trade 内重复 maker entry 会聚合后入账。
+- Polymarket connector 已迁移到 CLOB V2 Rust crate：`packages/backend/Cargo.toml` 保留 dependency key `polymarket-client-sdk`，实际指向 `polymarket_client_sdk_v2`；live CLOB 签名类型支持 `eoa`、`proxy`、`gnosis_safe`、`poly_1271`，其中 `poly_1271` 用于已有 Deposit Wallet（`FUNDER` 填 deposit wallet 地址），下单前会调用 CLOB balance allowance update；已支持 collateral balance 查询、Polygon pUSD ERC20 余额读取、Funding 页面后端资金钱包 USDC/USDT ERC20 余额读取、开放订单全量分页、heartbeat raw 续链/`heartbeat_id:null` 重建 fallback 和 rewards earnings raw JSON fallback。Rewards 账户同步优先把 `FUNDER` 作为资金钱包地址，CLOB balance 为 0 或失败但链上 pUSD 大于 0 时用链上余额回填 snapshot；下单价格当前收敛到最多 2 位小数，同一 trade 内重复 maker entry 会聚合后入账。
 - Rewards CLOB heartbeat 失败或超时后会清空本地 heartbeat id，并按 5-60 秒退避重建链；连续失败首条和每 6 次记录 warn，其余降为 debug，恢复时记录 info。
 - 聪明钱跟单（copy-trading）已精简为只读跟踪+分析子系统：跟踪多个 Polymarket 钱包地址（`TrackedWallet`）、通过 Polymarket Data API（`data-api.polymarket.com`，通过 `PolymarketDataApiConnector`）检测钱包新成交、钱包分析统计（胜率/ROI/成交量）、`Analyze` 与钱包管理前端 UI。模拟引擎（模拟资金账本、仓位、订单、PnL）已移除，跟单不会下单。前端不再展示模拟账户、订单、持仓、Run、Cancel 或 Reset，只保留启停跟踪、钱包管理、Analyze、源成交和事件日志。未处理 source trades 按时间排序并记录。API 服务不执行 copytrade 跟单循环或钱包分析，前端 Analyze 只会写入数据库控制命令，由 worker 领取执行；`POLYEDGE_COPYTRADE__ENABLED=true` 启用 worker 轮询。
 - Polymarket 运行时不再提供 mock mode；市场列表走 Gamma 实时数据，私有订单/成交任务需要真实凭证、真实账户、小额演练和运维 runbook。
@@ -252,7 +249,7 @@ yarn build
 后端：
 
 ```bash
-cd packages
+cd packages/backend
 cargo check --workspace
 cargo test --workspace
 cargo run -p polyedge-api
@@ -356,7 +353,7 @@ cp deploy/.env.front.example deploy/.env.front
 - 支持组合，例如 `api front` 或 `api,orderbook`。
 - `POLYEDGE_SKIP_SERVICES=orderbook` 排除特定服务，适合同一服务器只部署部分服务的场景。
 
-部署脚本默认使用 `/tmp/polyedge-deploy.lock` 防止 cron/CI 重叠执行，默认 `COMPOSE_PARALLEL_LIMIT=1` 串行构建镜像。Auto 模式 per-service 独立检测：api、orderbook、front 各自独立镜像；`worker` 只是 api 目标兼容别名，因为 worker runtime 内嵌在 `polyedge-api` 中。容器未运行但 hash 未变时直接启动已有镜像。前端 `yarn build` 前会读取 `deploy/.env.front` 并把 `NEXT_PUBLIC_*` 写入静态 bundle，build 前会清理旧 `.next/` 和 `out/`，build 后会给 HTML 中的 `/_next/static/*.js/css` 引用追加 front hash query；前端 Nginx 对 HTML 与 `/_next/static/` 使用 `Cache-Control: no-cache, must-revalidate`，避免静态导出 chunk 文件名复用导致浏览器长期运行旧工作台代码。Compose 构建上下文已收窄：后端只上传 `bin/`，前端只上传 `packages/front/`，避免扫描本地 `packages/target`、`node_modules`、`.next` 等大目录。跨服务器部署时每台服务器只需本地存在的二进制，脚本只检查目标服务所需的文件。
+部署脚本默认使用 `/tmp/polyedge-deploy.lock` 防止 cron/CI 重叠执行，默认 `COMPOSE_PARALLEL_LIMIT=1` 串行构建镜像。Auto 模式 per-service 独立检测：api、orderbook、front 各自独立镜像；`worker` 只是 api 目标兼容别名，因为 worker runtime 内嵌在 `polyedge-api` 中。容器未运行但 hash 未变时直接启动已有镜像。前端 `yarn build` 前会读取 `deploy/.env.front` 并把 `NEXT_PUBLIC_*` 写入静态 bundle，build 前会清理旧 `.next/` 和 `out/`，build 后会给 HTML 中的 `/_next/static/*.js/css` 引用追加 front hash query；前端 Nginx 对 HTML 与 `/_next/static/` 使用 `Cache-Control: no-cache, must-revalidate`，避免静态导出 chunk 文件名复用导致浏览器长期运行旧工作台代码。Compose 构建上下文已收窄：后端只上传 `bin/`，前端只上传 `packages/front/`，避免扫描本地 `packages/backend/target`、`node_modules`、`.next` 等大目录。跨服务器部署时每台服务器只需本地存在的二进制，脚本只检查目标服务所需的文件。
 旧的 `packages/backend/Dockerfile` 仅作为仓库根 context 兼容模板保留，当前只复制默认构建脚本产出的 `bin/polyedge-api` 与 `bin/polyedge-orderbook`；Compose 部署不使用它，仍使用 `deploy/api.Dockerfile` 和 `deploy/orderbook.Dockerfile`。
 
 ## 关键入口
@@ -373,11 +370,11 @@ cp deploy/.env.front.example deploy/.env.front
 
 后端：
 
-- `packages/api/src/lib.rs`
-- `packages/api/src/handlers/funding.rs`
-- `packages/api/src/handlers/rewards.rs`
-- `packages/api/src/handlers/copytrade.rs`
-- `packages/orderbook/src/main.rs`
+- `packages/backend/api/src/lib.rs`
+- `packages/backend/api/src/handlers/funding.rs`
+- `packages/backend/api/src/handlers/rewards.rs`
+- `packages/backend/api/src/handlers/copytrade.rs`
+- `packages/backend/order/src/main.rs`
 - `packages/backend/apps/worker/src/worker/rewards.rs`
 - `packages/backend/apps/worker/src/worker/rewards/account_sync.rs`
 - `packages/backend/apps/worker/src/worker/copytrade.rs`

@@ -8,7 +8,7 @@ PolyEdge 是面向 Polymarket 的事件、市场数据、rewards 做市和钱包
 
 - 前端控制台页面：`dashboard / markets / events / rewards / funding / copy-trading / wallet-analysis / settings`。未落地的 approvals 页面和 `/replay` 不再作为前端入口暴露。
 - 前端只走真实 Rust API，不再提供 mock 数据模式；所有文案走 `@/lib/i18n/dictionaries` 中文字典。
-- 后端 Rust workspace 根为 `packages/Cargo.toml`：顶层服务 crate 是 `packages/api` 和 `packages/orderbook`，worker/replay 兼容 app 与共享 crates 位于 `packages/backend/`。
+- 后端 Rust workspace 根为 `packages/backend/Cargo.toml`：服务 crate、worker/replay 兼容 app、共享 crates、迁移和初始化 SQL 均位于 `packages/backend/`，其中 API 在 `packages/backend/api`，orderbook 服务在 `packages/backend/order`。
 - 数据库迁移目前到 `0048_reward_account_unmanaged_buy_notional.sql`；空库可用 `packages/backend/init.sql` 一次性初始化，运行时仍使用 `packages/backend/migrations/` 做 `sqlx` 迁移校验。
 - 市场同步、rewards catalog 同步和 orderbook WS/poll 缓存由独立 `polyedge-orderbook` 服务负责。
 - API 只读数据库或 orderbook 服务，不在 handler 中直接请求 Polymarket。Rewards 和 copytrade 控制操作通过数据库命令队列交给 worker/runtime 执行。
@@ -29,10 +29,12 @@ PolyEdge/
 ├── scripts/                   # 构建、部署、冒烟脚本
 ├── bin/                       # 部署镜像复制的预构建后端二进制
 └── packages/
-    ├── Cargo.toml             # Rust workspace 根
-    ├── api/                   # polyedge-api 服务 crate
-    ├── orderbook/             # polyedge-orderbook 服务 crate
-    ├── backend/               # worker/replay app、共享 crates、迁移和 init.sql
+    ├── backend/               # Rust 后端：api、order、worker/replay、共享 crates、迁移和 init.sql
+    │   ├── Cargo.toml         # Rust workspace 根
+    │   ├── Cargo.lock         # Rust workspace lockfile
+    │   ├── rust-toolchain.toml
+    │   ├── api/               # polyedge-api 服务 crate
+    │   └── order/             # polyedge-orderbook 服务 crate
     └── front/                 # Next.js 16 + React 19 控制台
 ```
 
@@ -59,7 +61,7 @@ yarn build
 后端：
 
 ```bash
-cd packages
+cd packages/backend
 cargo check --workspace
 cargo test --workspace
 cargo run -p polyedge-api

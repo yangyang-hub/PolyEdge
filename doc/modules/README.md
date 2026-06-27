@@ -12,9 +12,9 @@
 | [infrastructure.md](backend/infrastructure.md) | `packages/backend/crates/infrastructure` | 基础设施层：持久化、认证、配置、运行时 |
 | [contracts.md](backend/contracts.md) | `packages/backend/crates/contracts` | HTTP API DTO 定义 |
 | [common.md](backend/common.md) | `packages/backend/crates/common` | 后端二进制共享进程外壳 helper |
-| [api-app.md](backend/api-app.md) | `packages/api` | Axum HTTP API 服务 |
+| [api-app.md](backend/api-app.md) | `packages/backend/api` | Axum HTTP API 服务 |
 | [worker-app.md](backend/worker-app.md) | `packages/backend/apps/worker` | Tokio 后台任务服务 |
-| [orderbook-app.md](backend/orderbook-app.md) | `packages/orderbook` | 独立市场同步、盘口流和盘口 HTTP 服务 |
+| [orderbook-app.md](backend/orderbook-app.md) | `packages/backend/order` | 独立市场同步、盘口流和盘口 HTTP 服务 |
 | [replay-app.md](backend/replay-app.md) | `packages/backend/apps/replay` | 历史回放工具 |
 
 ## 前端（Next.js + React）
