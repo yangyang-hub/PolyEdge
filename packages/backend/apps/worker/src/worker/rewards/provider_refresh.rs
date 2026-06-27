@@ -89,7 +89,6 @@ const REWARD_AI_PROVIDER_ORDERBOOK_SOURCE: &str = "rewards_ai_provider";
 const REWARD_AI_PROVIDER_ORDERBOOK_MARKETS_PER_BATCH: usize = 10;
 const REWARD_AI_PROVIDER_ORDERBOOK_WAIT_ATTEMPTS: usize = 8;
 const REWARD_AI_PROVIDER_ORDERBOOK_WAIT_DELAY: Duration = Duration::from_secs(2);
-const REWARD_PROVIDER_STANDARD_CONDITIONS_PER_LOW_COMPETITION: usize = 2;
 
 async fn refresh_reward_ai_advisory_provider_cache(
     state: &AppState,
@@ -119,6 +118,26 @@ async fn refresh_reward_ai_advisory_provider_cache(
         );
         return Ok(report);
     };
+    let fallback_descriptor = resolve_reward_ai_fallback(&state.settings.rewards);
+    let fallback_connector = match &fallback_descriptor {
+        Some(descriptor) => Some(build_reward_ai_advisory_fallback_connector(state, descriptor)?),
+        None => None,
+    };
+    let fallback_channel = match (&fallback_descriptor, fallback_connector.as_ref()) {
+        (Some(descriptor), Some(connector)) => Some(RewardAiAdvisoryChannel {
+            connector,
+            provider: descriptor.provider,
+            request_format: descriptor.request_format,
+            model: descriptor.model.clone(),
+        }),
+        _ => None,
+    };
+    if fallback_channel.is_some() {
+        info!(
+            trace_id = %trace_id,
+            "reward AI advisory fallback endpoint is configured",
+        );
+    }
     let markets_by_condition = reward_provider_markets_by_condition(state, &cycle).await?;
 
     let now = OffsetDateTime::now_utc();
@@ -129,6 +148,7 @@ async fn refresh_reward_ai_advisory_provider_cache(
         &cycle.pre_ai_eligible_condition_ids,
         &cycle.config,
         model,
+        fallback_descriptor.as_ref(),
         now,
     );
     let mut ordered_conditions = reward_provider_refresh_candidate_condition_ids(
@@ -171,6 +191,7 @@ async fn refresh_reward_ai_advisory_provider_cache(
             if refresh_reward_ai_advisory_provider_batch(
                 state,
                 &connector,
+                fallback_channel.as_ref(),
                 &mut cycle,
                 &batch_books,
                 &markets_by_condition,
@@ -242,6 +263,23 @@ async fn refresh_reward_info_risk_provider_cache(
         );
         return Ok(report);
     };
+    let info_risk_fallback_descriptor = resolve_reward_ai_fallback(&state.settings.rewards);
+    let info_risk_fallback_connector = match &info_risk_fallback_descriptor {
+        Some(descriptor) => Some(build_reward_info_risk_fallback_connector(state, descriptor)?),
+        None => None,
+    };
+    let info_risk_fallback_channel = match (
+        &info_risk_fallback_descriptor,
+        info_risk_fallback_connector.as_ref(),
+    ) {
+        (Some(descriptor), Some(connector)) => Some(RewardInfoRiskChannel {
+            connector,
+            provider: descriptor.provider,
+            request_format: descriptor.request_format,
+            model: descriptor.model.clone(),
+        }),
+        _ => None,
+    };
 
     let markets_by_condition = reward_provider_markets_by_condition(state, &cycle).await?;
     let info_risk_candidate_condition_ids = reward_info_risk_candidate_conditions(
@@ -279,6 +317,7 @@ async fn refresh_reward_info_risk_provider_cache(
     if refresh_reward_info_risk_provider_batch(
         state,
         &connector,
+        info_risk_fallback_channel.as_ref(),
         &cycle,
         &markets_by_condition,
         &ordered_conditions,
@@ -337,6 +376,7 @@ struct RewardAiAdvisoryRefreshStep {
 async fn refresh_reward_ai_advisory_for_condition(
     state: &AppState,
     connector: &RewardAiAdvisoryConnector,
+    fallback_channel: Option<&RewardAiAdvisoryChannel<'_>>,
     cycle: &RewardLiveCycle,
     books: &HashMap<String, RewardOrderBook>,
     markets_by_condition: &HashMap<String, RewardMarket>,
@@ -367,8 +407,8 @@ async fn refresh_reward_ai_advisory_for_condition(
         .reward_bot_service
         .list_recent_market_candles(
             condition_id,
-            REWARD_AI_CANDLE_INTERVAL_SEC,
-            REWARD_AI_CANDLE_LIMIT_PER_TOKEN,
+            REWARD_AI_CANDLE_SOURCE_INTERVAL_SEC,
+            REWARD_AI_CANDLE_SOURCE_LIMIT_PER_TOKEN,
         )
         .await?;
     let request = build_reward_ai_advisory_request(
@@ -380,6 +420,7 @@ async fn refresh_reward_ai_advisory_for_condition(
         books,
         &candles,
         &cycle.config,
+        cycle.config.ai_advisory_ttl_sec,
         cycle.config.ai_provider,
         cycle.config.ai_request_format,
         model,
@@ -426,30 +467,28 @@ async fn refresh_reward_ai_advisory_for_condition(
         requested = report.requested,
         "requesting reward AI advisory provider",
     );
-    let condition_ids_for_record = vec![condition_id.to_string()];
-    let started = Instant::now();
-    let result = {
-        let _provider_permit = acquire_reward_ai_advisory_provider_request_permit().await?;
-        connector.advise(&request).await
+    let primary_channel = RewardAiAdvisoryChannel {
+        connector,
+        provider: cycle.config.ai_provider,
+        request_format: cycle.config.ai_request_format,
+        model: model.to_string(),
     };
-    record_reward_provider_llm_call(
+    let attempt = advise_with_fallback(
         state,
-        REWARD_AI_ADVISORY_LLM_TASK_TYPE,
-        REWARD_AI_ADVISORY_PROMPT_VERSION,
-        model,
-        &request.input_hash,
-        &condition_ids_for_record,
-        started.elapsed(),
-        result.is_ok(),
-        result.as_ref().ok().map(|decision| json!(decision)),
-        result.as_ref().err().map(ToString::to_string),
+        &primary_channel,
+        fallback_channel,
+        &request,
         trace_id,
     )
-    .await;
-    match result {
-        Ok(decision) => {
+    .await?;
+    match attempt {
+        RewardProviderAttempt::Success {
+            decision,
+            endpoint,
+            request: winning_request,
+        } => {
             let advisory = decision.into_advisory(
-                &request,
+                &winning_request,
                 cycle.config.ai_advisory_ttl_sec,
                 OffsetDateTime::now_utc(),
             );
@@ -461,6 +500,7 @@ async fn refresh_reward_ai_advisory_for_condition(
             info!(
                 trace_id = %trace_id,
                 condition_id = %condition_id,
+                endpoint = ?endpoint,
                 saved = report.saved,
                 "saved reward AI advisory",
             );
@@ -469,15 +509,26 @@ async fn refresh_reward_ai_advisory_for_condition(
                 advisory: Some(advisory),
             })
         }
-        Err(error) => {
+        RewardProviderAttempt::Failed {
+            primary_error,
+            fallback_error,
+        } => {
             report.failures += 1;
             warn!(
                 trace_id = %trace_id,
                 condition_id = %condition_id,
-                error = %error,
+                error = %primary_error,
                 "reward AI advisory request failed; keeping existing cached state",
             );
-            if reward_ai_provider_is_overloaded(&error) {
+            if let Some(fb_error) = &fallback_error {
+                warn!(
+                    trace_id = %trace_id,
+                    condition_id = %condition_id,
+                    error = %fb_error,
+                    "reward AI advisory fallback request also failed",
+                );
+            }
+            if reward_combined_provider_overloaded(&primary_error, fallback_error.as_ref()) {
                 warn!(
                     trace_id = %trace_id,
                     requested = report.requested,
@@ -501,6 +552,7 @@ async fn refresh_reward_ai_advisory_for_condition(
 async fn refresh_reward_info_risk_for_condition(
     state: &AppState,
     connector: &RewardInfoRiskConnector,
+    fallback_channel: Option<&RewardInfoRiskChannel<'_>>,
     cycle: &RewardLiveCycle,
     markets_by_condition: &HashMap<String, RewardMarket>,
     condition_id: &str,
@@ -527,20 +579,35 @@ async fn refresh_reward_info_risk_for_condition(
         cycle.config.ai_request_format,
         model,
     )?;
-    if state
+    let primary_cached = state
         .reward_bot_service
         .latest_market_info_risk(&request)
-        .await?
-        .is_some_and(|risk| {
-            report.cache_hits += 1;
-            !reward_provider_cache_refresh_due(
-                risk.expires_at,
-                cycle.config.info_risk_ttl_sec,
-                OffsetDateTime::now_utc(),
-            )
-        })
-    {
-        return Ok(false);
+        .await?;
+    let cached = match fallback_channel {
+        Some(fb) => {
+            let fb_request = reward_info_risk_request_for_endpoint(
+                &request,
+                fb.provider,
+                fb.request_format,
+                &fb.model,
+            );
+            let fb_cached = state
+                .reward_bot_service
+                .latest_market_info_risk(&fb_request)
+                .await?;
+            freshest_reward_cache_row(primary_cached, fb_cached)
+        }
+        None => primary_cached,
+    };
+    if let Some(risk) = cached {
+        report.cache_hits += 1;
+        if !reward_provider_cache_refresh_due(
+            risk.expires_at,
+            cycle.config.info_risk_ttl_sec,
+            OffsetDateTime::now_utc(),
+        ) {
+            return Ok(false);
+        }
     }
 
     report.requested += 1;
@@ -550,30 +617,28 @@ async fn refresh_reward_info_risk_for_condition(
         requested = report.requested,
         "requesting reward info risk provider",
     );
-    let condition_ids_for_record = vec![condition_id.to_string()];
-    let started = Instant::now();
-    let result = {
-        let _provider_permit = acquire_reward_info_risk_provider_request_permit().await?;
-        connector.assess(&request).await
+    let primary_channel = RewardInfoRiskChannel {
+        connector,
+        provider: cycle.config.ai_provider,
+        request_format: cycle.config.ai_request_format,
+        model: model.to_string(),
     };
-    record_reward_provider_llm_call(
+    let attempt = assess_with_fallback(
         state,
-        REWARD_INFO_RISK_LLM_TASK_TYPE,
-        REWARD_INFO_RISK_PROMPT_VERSION,
-        model,
-        &request.input_hash,
-        &condition_ids_for_record,
-        started.elapsed(),
-        result.is_ok(),
-        result.as_ref().ok().map(|decision| json!(decision)),
-        result.as_ref().err().map(ToString::to_string),
+        &primary_channel,
+        fallback_channel,
+        &request,
         trace_id,
     )
-    .await;
-    match result {
-        Ok(decision) => {
+    .await?;
+    match attempt {
+        RewardProviderAttempt::Success {
+            decision,
+            endpoint,
+            request: winning_request,
+        } => {
             let risk = decision.into_info_risk(
-                &request,
+                &winning_request,
                 cycle.config.info_risk_ttl_sec,
                 OffsetDateTime::now_utc(),
             );
@@ -582,20 +647,32 @@ async fn refresh_reward_info_risk_for_condition(
             info!(
                 trace_id = %trace_id,
                 condition_id = %condition_id,
+                endpoint = ?endpoint,
                 saved = report.saved,
                 "saved reward info risk",
             );
             Ok(false)
         }
-        Err(error) => {
+        RewardProviderAttempt::Failed {
+            primary_error,
+            fallback_error,
+        } => {
             report.failures += 1;
             warn!(
                 trace_id = %trace_id,
                 condition_id = %condition_id,
-                error = %error,
+                error = %primary_error,
                 "reward info risk request failed; keeping existing cached state",
             );
-            if reward_ai_provider_is_overloaded(&error) {
+            if let Some(fb_error) = &fallback_error {
+                warn!(
+                    trace_id = %trace_id,
+                    condition_id = %condition_id,
+                    error = %fb_error,
+                    "reward info risk fallback request also failed",
+                );
+            }
+            if reward_combined_provider_overloaded(&primary_error, fallback_error.as_ref()) {
                 warn!(
                     trace_id = %trace_id,
                     requested = report.requested,
@@ -607,136 +684,4 @@ async fn refresh_reward_info_risk_for_condition(
             Ok(false)
         }
     }
-}
-
-fn reward_provider_refresh_candidate_condition_ids(
-    condition_ids: &[String],
-    plans: &[RewardQuotePlan],
-    open_orders: &[ManagedRewardOrder],
-    positions: &[RewardPosition],
-    config: &RewardBotConfig,
-) -> Vec<String> {
-    let available_conditions = condition_ids
-        .iter()
-        .filter_map(|condition_id| reward_provider_normalized_condition_id(condition_id))
-        .collect::<HashSet<_>>();
-    let mut seen = HashSet::new();
-    let mut ordered = Vec::with_capacity(condition_ids.len());
-    let plans_by_condition = plans
-        .iter()
-        .filter_map(|plan| {
-            reward_provider_normalized_condition_id(&plan.condition_id)
-                .map(|condition_id| (condition_id, plan))
-        })
-        .collect::<HashMap<_, _>>();
-
-    for order in open_orders {
-        push_reward_provider_available_condition(
-            &mut ordered,
-            &mut seen,
-            &available_conditions,
-            &order.condition_id,
-        );
-    }
-    for position in positions {
-        push_reward_provider_available_condition(
-            &mut ordered,
-            &mut seen,
-            &available_conditions,
-            &position.condition_id,
-        );
-    }
-
-    let mut queued = seen.clone();
-    let mut standard_conditions = Vec::new();
-    let mut low_competition_conditions = Vec::new();
-    for condition_id in condition_ids {
-        let Some(condition_id) = reward_provider_normalized_condition_id(condition_id) else {
-            continue;
-        };
-        if !available_conditions.contains(&condition_id) {
-            continue;
-        }
-        if !queued.insert(condition_id.clone()) {
-            continue;
-        }
-        let Some(plan) = plans_by_condition.get(&condition_id) else {
-            continue;
-        };
-        match reward_provider_pre_llm_candidate_kind(plan, config, false) {
-            Some(RewardProviderPreLlmCandidateKind::Standard) => {
-                standard_conditions.push(condition_id);
-            }
-            Some(RewardProviderPreLlmCandidateKind::LowCompetition) => {
-                low_competition_conditions.push(condition_id);
-            }
-            Some(RewardProviderPreLlmCandidateKind::ActiveExposure) | None => {}
-        }
-    }
-    append_reward_provider_condition_mix(
-        &mut ordered,
-        standard_conditions,
-        low_competition_conditions,
-    );
-    ordered
-}
-
-fn push_reward_provider_available_condition(
-    ordered: &mut Vec<String>,
-    seen: &mut HashSet<String>,
-    available_conditions: &HashSet<String>,
-    condition_id: &str,
-) {
-    let Some(condition_id) = reward_provider_normalized_condition_id(condition_id) else {
-        return;
-    };
-    if !available_conditions.contains(&condition_id) {
-        return;
-    }
-    if seen.insert(condition_id.clone()) {
-        ordered.push(condition_id);
-    }
-}
-
-fn append_reward_provider_condition_mix(
-    ordered: &mut Vec<String>,
-    standard_conditions: Vec<String>,
-    low_competition_conditions: Vec<String>,
-) {
-    let mut standard_conditions = standard_conditions.into_iter();
-    let mut low_competition_conditions = low_competition_conditions.into_iter();
-    loop {
-        let mut pushed = false;
-        for _ in 0..REWARD_PROVIDER_STANDARD_CONDITIONS_PER_LOW_COMPETITION {
-            if let Some(condition_id) = standard_conditions.next() {
-                ordered.push(condition_id);
-                pushed = true;
-            } else {
-                break;
-            }
-        }
-        if let Some(condition_id) = low_competition_conditions.next() {
-            ordered.push(condition_id);
-            pushed = true;
-        }
-        if !pushed {
-            break;
-        }
-    }
-}
-
-fn reward_provider_normalized_condition_id(condition_id: &str) -> Option<String> {
-    let condition_id = condition_id.trim();
-    if condition_id.is_empty() {
-        return None;
-    }
-    Some(condition_id.to_string())
-}
-
-fn reward_provider_max_conditions_per_cycle(state: &AppState) -> usize {
-    usize::from(state.settings.rewards.info_risk_max_markets_per_cycle)
-}
-
-fn reward_provider_configured_batch_size(value: u16) -> usize {
-    usize::from(value.clamp(1, 12))
 }

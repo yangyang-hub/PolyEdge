@@ -181,6 +181,20 @@ pub fn reward_provider_cache_refresh_due(
     expires_at <= now + TimeDuration::seconds(refresh_window_sec.min(i64::MAX as u64) as i64)
 }
 
+fn reward_provider_cache_policy_payload(ttl_sec: u64, now: OffsetDateTime) -> Value {
+    let refresh_window_sec = reward_provider_cache_jitter_window_sec(ttl_sec);
+    let max_valid_for_sec = ttl_sec.saturating_add(refresh_window_sec);
+    json!({
+        "ttl_sec": ttl_sec,
+        "positive_jitter_window_sec": refresh_window_sec,
+        "refresh_due_window_sec": refresh_window_sec,
+        "requested_at_utc": now,
+        "base_expires_at_utc": now + TimeDuration::seconds(ttl_sec.min(i64::MAX as u64) as i64),
+        "max_expires_at_utc": now + TimeDuration::seconds(max_valid_for_sec.min(i64::MAX as u64) as i64),
+        "decision_reuse_policy": "Provider decisions are cached until expires_at; make allow_quote conservative enough for this full TTL horizon.",
+    })
+}
+
 fn reward_provider_cache_expires_at(
     now: OffsetDateTime,
     ttl_sec: u64,

@@ -31,12 +31,14 @@ async fn apply_cached_reward_ai_advisories_to_cycle(
     );
     let min_confidence = reward_ai_min_confidence(state.settings.rewards.ai_min_confidence_bps);
     let model = state.settings.rewards.ai_model.trim();
+    let fallback = resolve_reward_ai_fallback(&state.settings.rewards);
     let now = OffsetDateTime::now_utc();
     let mut advisories = current_reward_ai_advisories(
         &cycle.plans,
         &cycle.pre_ai_eligible_condition_ids,
         &cycle.config,
         model,
+        fallback.as_ref(),
         now,
     );
     if model.is_empty() {
@@ -66,6 +68,7 @@ async fn apply_cached_reward_ai_advisories_to_cycle(
         &cycle.pre_ai_eligible_condition_ids,
         &cycle.config,
         model,
+        fallback.as_ref(),
         now,
     );
     let candidates = candidate_condition_ids.len();
@@ -89,8 +92,8 @@ async fn apply_cached_reward_ai_advisories_to_cycle(
             .reward_bot_service
             .list_recent_market_candles(
                 &condition_id,
-                REWARD_AI_CANDLE_INTERVAL_SEC,
-                REWARD_AI_CANDLE_LIMIT_PER_TOKEN,
+                REWARD_AI_CANDLE_SOURCE_INTERVAL_SEC,
+                REWARD_AI_CANDLE_SOURCE_LIMIT_PER_TOKEN,
             )
             .await?;
         let request = build_reward_ai_advisory_request(
@@ -102,14 +105,13 @@ async fn apply_cached_reward_ai_advisories_to_cycle(
             books,
             &candles,
             &cycle.config,
+            cycle.config.ai_advisory_ttl_sec,
             cycle.config.ai_provider,
             cycle.config.ai_request_format,
             model,
         )?;
-        if let Some(cached) = state
-            .reward_bot_service
-            .latest_market_advisory(&request)
-            .await?
+        if let Some(cached) =
+            latest_market_advisory_for_endpoints(state, &request, fallback.as_ref()).await?
         {
             cache_hits += 1;
             advisories.insert(condition_id.clone(), cached.clone());
@@ -164,6 +166,7 @@ fn apply_reward_ai_advisory_to_quote_plan(
     true
 }
 
+#[allow(clippy::too_many_arguments)]
 fn reward_ai_advisory_candidate_condition_ids(
     plans: &[RewardQuotePlan],
     open_orders: &[ManagedRewardOrder],
@@ -171,6 +174,7 @@ fn reward_ai_advisory_candidate_condition_ids(
     pre_ai_eligible_condition_ids: &[String],
     config: &RewardBotConfig,
     model: &str,
+    fallback: Option<&RewardProviderFallback>,
     now: OffsetDateTime,
 ) -> Vec<String> {
     let plans_by_condition = plans
@@ -196,6 +200,7 @@ fn reward_ai_advisory_candidate_condition_ids(
             &order.condition_id,
             config,
             model,
+            fallback,
             now,
         );
     }
@@ -210,6 +215,7 @@ fn reward_ai_advisory_candidate_condition_ids(
             &position.condition_id,
             config,
             model,
+            fallback,
             now,
         );
     }
@@ -224,6 +230,7 @@ fn reward_ai_advisory_candidate_condition_ids(
             condition_id,
             config,
             model,
+            fallback,
             now,
         );
     }
@@ -236,6 +243,7 @@ fn current_reward_ai_advisories(
     pre_ai_eligible_condition_ids: &[String],
     config: &RewardBotConfig,
     model: &str,
+    fallback: Option<&RewardProviderFallback>,
     now: OffsetDateTime,
 ) -> HashMap<String, RewardMarketAdvisory> {
     let ai_required_condition_ids = pre_ai_eligible_condition_ids
@@ -248,7 +256,7 @@ fn current_reward_ai_advisories(
         .iter()
         .filter(|plan| ai_required_condition_ids.contains(plan.condition_id.trim()))
         .filter_map(|plan| plan.ai_advisory.as_ref())
-        .filter(|advisory| reward_ai_advisory_matches_config(advisory, config, model, now))
+        .filter(|advisory| reward_ai_advisory_matches_config(advisory, config, model, fallback, now))
         .map(|advisory| (advisory.condition_id.clone(), advisory.clone()))
         .collect()
 }
@@ -274,6 +282,7 @@ fn push_reward_ai_advisory_plan(
     condition_id: &str,
     config: &RewardBotConfig,
     model: &str,
+    fallback: Option<&RewardProviderFallback>,
     now: OffsetDateTime,
 ) {
     let condition_id = condition_id.trim();
@@ -291,7 +300,7 @@ fn push_reward_ai_advisory_plan(
     if !reward_provider_plan_passes_pre_llm_gate(plan, config, has_active_exposure) {
         return;
     }
-    if !reward_ai_plan_needs_advisory(plan, config, model, now) {
+    if !reward_ai_plan_needs_advisory(plan, config, model, fallback, now) {
         return;
     }
     if seen.insert(condition_id.to_string()) {
@@ -303,12 +312,13 @@ fn reward_ai_plan_needs_advisory(
     plan: &RewardQuotePlan,
     config: &RewardBotConfig,
     model: &str,
+    fallback: Option<&RewardProviderFallback>,
     now: OffsetDateTime,
 ) -> bool {
     let Some(advisory) = plan.ai_advisory.as_ref() else {
         return true;
     };
-    if !reward_ai_advisory_matches_config(advisory, config, model, now) {
+    if !reward_ai_advisory_matches_config(advisory, config, model, fallback, now) {
         return true;
     }
     reward_provider_cache_refresh_due(advisory.expires_at, config.ai_advisory_ttl_sec, now)
@@ -318,12 +328,28 @@ fn reward_ai_advisory_matches_config(
     advisory: &RewardMarketAdvisory,
     config: &RewardBotConfig,
     model: &str,
+    fallback: Option<&RewardProviderFallback>,
     now: OffsetDateTime,
 ) -> bool {
-    advisory.expires_at > now
-        && advisory.provider == config.ai_provider
+    if advisory.expires_at <= now {
+        return false;
+    }
+    let model = model.trim();
+    if advisory.provider == config.ai_provider
         && advisory.request_format == config.ai_request_format
-        && advisory.model == model.trim()
+        && advisory.model == model
+    {
+        return true;
+    }
+    // An advisory previously produced by the fallback endpoint (different
+    // provider/model/format) must still satisfy the live-tick gate, otherwise a
+    // fallback-saved advisory would be invisible and the condition would stay
+    // "provider pending".
+    fallback.is_some_and(|fb| {
+        advisory.provider == fb.provider
+            && advisory.request_format == fb.request_format
+            && advisory.model == fb.model
+    })
 }
 
 fn build_reward_ai_advisory_connector(
@@ -352,10 +378,24 @@ fn build_reward_ai_advisory_connector(
     .map(Some)
 }
 
+/// Build the fallback AI advisory connector from the resolved fallback
+/// endpoint descriptor. Only called when a fallback is configured, so the
+/// descriptor's base_url/api_key are guaranteed non-empty.
+fn build_reward_ai_advisory_fallback_connector(
+    state: &AppState,
+    fallback: &RewardProviderFallback,
+) -> Result<RewardAiAdvisoryConnector> {
+    RewardAiAdvisoryConnector::new(
+        fallback.base_url.as_str(),
+        fallback.api_key.as_str(),
+        state.settings.rewards.ai_request_timeout_secs.max(1),
+    )
+}
+
 const REWARD_AI_ADVISORY_LLM_TASK_TYPE: &str = "reward_ai_advisory";
 const REWARD_INFO_RISK_LLM_TASK_TYPE: &str = "reward_info_risk";
-const REWARD_AI_ADVISORY_PROMPT_VERSION: &str = "reward_ai_advisory_schema_v5";
-const REWARD_INFO_RISK_PROMPT_VERSION: &str = "reward_info_risk_schema_v3";
+const REWARD_AI_ADVISORY_PROMPT_VERSION: &str = "reward_ai_advisory_schema_v6";
+const REWARD_INFO_RISK_PROMPT_VERSION: &str = "reward_info_risk_schema_v4";
 
 #[allow(clippy::too_many_arguments)]
 async fn record_reward_provider_llm_call(
@@ -369,6 +409,7 @@ async fn record_reward_provider_llm_call(
     success: bool,
     parsed_output: Option<Value>,
     error: Option<String>,
+    fallback_used: bool,
     trace_id: &str,
 ) {
     let latency_ms = i64::try_from(latency.as_millis()).unwrap_or(i64::MAX);
@@ -386,7 +427,7 @@ async fn record_reward_provider_llm_call(
             "condition_count": condition_ids.len(),
             "error": error,
         }),
-        fallback_used: false,
+        fallback_used,
         latency_ms,
         cost_estimate: None,
         trace_id: trace_id.to_string(),

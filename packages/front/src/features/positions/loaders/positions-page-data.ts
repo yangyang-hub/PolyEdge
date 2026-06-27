@@ -13,6 +13,7 @@ import {
   formatCurrency,
   formatInteger,
   formatPercentFromRatio,
+  formatSignedPercent,
   metricToneForPnl,
   signalStateTone,
   marketTradabilityTone,
@@ -67,6 +68,12 @@ export async function getPositionsPageData() {
     const totalPnlValue = (
       Number.parseFloat(position.realized_pnl) + Number.parseFloat(position.unrealized_pnl)
     ).toFixed(2);
+    // Best bid/ask come from the joined market; fall back to the mark price when
+    // the market has no quoted book. PnL % is total PnL over the cost basis.
+    const costBasis =
+      Number.parseFloat(position.quantity) * Number.parseFloat(position.average_cost);
+    const pnlPercentRatio =
+      costBasis > 0 ? Number.parseFloat(totalPnlValue) / costBasis : null;
 
     return {
       id: position.id,
@@ -78,11 +85,16 @@ export async function getPositionsPageData() {
       quantity: formatInteger(position.quantity),
       averageCost: position.average_cost,
       markPrice: position.mark_price,
+      bestBid: market?.best_bid ?? position.mark_price,
+      bestAsk: market?.best_ask ?? position.mark_price,
       realizedPnl: formatCurrency(position.realized_pnl),
       unrealizedPnl: formatCurrency(position.unrealized_pnl),
       pnl: formatCurrency(totalPnlValue),
       pnlValue: Number.parseFloat(totalPnlValue),
       pnlTone: metricToneForPnl(totalPnlValue),
+      pnlAmount: formatCurrency(totalPnlValue),
+      pnlPercent: pnlPercentRatio != null ? formatSignedPercent(pnlPercentRatio, 1) : "—",
+      pnlPercentTone: metricToneForPnl(totalPnlValue),
       posterior: signal?.fair_price ?? position.mark_price,
       signalEdge: signal ? formatPercentFromRatio(signal.edge) : "0%",
       confidence: signal ? formatPercentFromRatio(signal.confidence) : "n/a",

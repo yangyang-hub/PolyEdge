@@ -268,13 +268,17 @@ pub fn build_reward_info_risk_assessment_request(
     let query = reward_info_risk_query(market);
     let evaluation_time = OffsetDateTime::now_utc();
     let payload = json!({
-        "schema_version": 2,
-        "task": "Assess recent external information risk for this Polymarket rewards market before maker quoting.",
+        "schema_version": 3,
+        "task": "Return a binary allow_quote decision for this Polymarket rewards market before maker quoting.",
         "evaluation_time_utc": evaluation_time,
         "imminent_resolution_policy": {
             "current_time_source": "evaluation_time_utc",
             "definition": "Set resolution_imminent=true only when an official result/resolution has been announced or a confirmed resolution-driving event is expected within 7 days of evaluation_time_utc. Distant scheduled events, stale dates, or unsupported current-news claims are not imminent by themselves.",
         },
+        "provider_cache_policy": reward_provider_cache_policy_payload(
+            config.info_risk_ttl_sec,
+            evaluation_time,
+        ),
         "search_query": query,
         "market": {
             "condition_id": market.condition_id,
@@ -347,8 +351,11 @@ fn reward_info_risk_cache_key_payload(
     query: &str,
 ) -> Value {
     json!({
-        "schema_version": 3,
+        // schema_version 4: provider output contract is binary allow_quote.
+        // Keep detailed risk taxonomy as internal compatibility fields only.
+        "schema_version": 4,
         "cache_domain": "reward_info_risk",
+        "provider_decision_schema": "binary_allow_quote_v1",
         "evaluation_policy_version": 1,
         "search_query": query,
         "market": {
@@ -409,9 +416,11 @@ pub fn apply_reward_info_risks(
             config.info_risk_avoid_level
         };
         if config.info_risk_mode != RewardSelectionMode::Enforce
-            || risk.confidence < min_confidence
             || !reward_info_risk_blocks_quote(&risk, avoid_level)
         {
+            continue;
+        }
+        if risk.confidence < min_confidence && risk.risk_level != RewardInfoRiskLevel::Critical {
             continue;
         }
         plan.eligible = false;

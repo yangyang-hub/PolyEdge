@@ -409,16 +409,16 @@ fn reward_info_risk_batch_max_tokens(batch_size: usize) -> u32 {
 }
 
 fn reward_info_risk_system_prompt() -> &'static str {
-    "You are a cautious event-risk researcher for Polymarket rewards maker orders. Return exactly one JSON object and nothing else. Do not use markdown, comments, prose, or unquoted keys. Identify whether recent or imminent information could make the market probability move one-sided, settle soon, or become unsafe for passive maker orders. Use input.evaluation_time_utc as the current UTC time; do not infer today's date from model training or stale context. Mark resolution_imminent=true only for an announced official result/resolution or a confirmed resolution-driving event expected within 7 days of evaluation_time_utc. Distant scheduled events, stale/past dates, or unsupported current-news claims are not imminent by themselves. Use web search when a search tool is available; otherwise use the supplied context and clearly mark uncertainty."
+    "You are a cautious event-risk researcher for Polymarket rewards maker orders. Return exactly one JSON object and nothing else. Do not use markdown, comments, prose, or unquoted keys. The only decision field is allow_quote: true means maker quoting is allowed, false means maker quoting is not allowed. Do not return risk levels, watch states, or other status categories. Use input.evaluation_time_utc as the current UTC time; do not infer today's date from model training or stale context. Use web search when a search tool is available; otherwise use the supplied context and clearly mark uncertainty in summary/metrics."
 }
 
 fn reward_info_risk_batch_system_prompt() -> &'static str {
-    "You are a cautious event-risk researcher for Polymarket rewards maker orders. You will receive a JSON object containing a \"markets\" array; assess EACH market independently of the others. Return exactly one JSON object of shape {\"risks\":[...]} and nothing else. Do not use markdown, comments, prose, or unquoted keys. Each risk object must include the market's condition_id copied verbatim from the input. Use each input item's market.evaluation_time_utc as the current UTC time for that market; do not infer today's date from model training or stale context. Mark resolution_imminent=true only for an announced official result/resolution or a confirmed resolution-driving event expected within 7 days of that evaluation_time_utc. Distant scheduled events, stale/past dates, or unsupported current-news claims are not imminent by themselves."
+    "You are a cautious event-risk researcher for Polymarket rewards maker orders. You will receive a JSON object containing a \"markets\" array; assess EACH market independently of the others. Return exactly one JSON object of shape {\"risks\":[...]} and nothing else. Do not use markdown, comments, prose, or unquoted keys. Each risk object must include the market's condition_id copied verbatim from the input. The only decision field is allow_quote boolean; do not return risk levels, watch states, or other status categories. Use each input item's market.evaluation_time_utc as the current UTC time for that market."
 }
 
 fn reward_info_risk_user_prompt(request: &RewardInfoRiskAssessmentRequest) -> String {
     format!(
-        "Assess information risk for this market. Use Input.evaluation_time_utc as the current UTC time. Return one valid JSON object with double-quoted keys and these fields: risk_level low|medium|high|critical|unknown, risk_type imminent_resolution|breaking_news|scheduled_event|official_result|rumor|stale|none|unknown, directional_risk yes|no|unclear, resolution_imminent boolean, expected_event_at RFC3339 string or null, confidence 0..1, summary string, sources array of objects with url,title,published_at,snippet, metrics object. Use [] for sources and {{}} for metrics when unsure.\nSearch query: {}\nInput:\n{}",
+        "Assess information risk for this market over the full provider_cache_policy TTL horizon. Use Input.evaluation_time_utc as the current UTC time. Return one valid JSON object with double-quoted keys and only these decision fields: allow_quote boolean, confidence 0..1, summary string, sources array of objects with url,title,published_at,snippet, metrics object. Set allow_quote=false if recent/imminent information could make passive maker quoting unsafe before cache expiry, including official result/resolution, a confirmed near-term resolution-driving event, breaking news, stale facts, or unresolved uncertainty. Use [] for sources and {{}} for metrics when unsure.\nSearch query: {}\nInput:\n{}",
         request.query, request.payload
     )
 }
@@ -435,7 +435,7 @@ fn reward_info_risk_batch_user_prompt(requests: &[RewardInfoRiskAssessmentReques
         })
         .collect();
     format!(
-        "Assess information risk for each market. Use each input item's market.evaluation_time_utc as the current UTC time. Return one valid JSON object with double-quoted keys and a field \"risks\": an array with exactly one object per input market. Each object must contain condition_id (must match one input market verbatim), risk_level low|medium|high|critical|unknown, risk_type imminent_resolution|breaking_news|scheduled_event|official_result|rumor|stale|none|unknown, directional_risk yes|no|unclear, resolution_imminent boolean, expected_event_at RFC3339 string or null, confidence 0..1, summary string, sources array of objects with url,title,published_at,snippet, metrics object. Use [] for sources and {{}} for metrics when unsure.\nInput:\n{{\"markets\":{}}}",
+        "Assess information risk for each market over its full provider_cache_policy TTL horizon. Use each input item's market.evaluation_time_utc as the current UTC time. Return one valid JSON object with double-quoted keys and a field \"risks\": an array with exactly one object per input market. Each object must contain condition_id (must match one input market verbatim), allow_quote boolean, confidence 0..1, summary string, sources array of objects with url,title,published_at,snippet, metrics object. Set allow_quote=false if recent/imminent information could make passive maker quoting unsafe before cache expiry. Use [] for sources and {{}} for metrics when unsure.\nInput:\n{{\"markets\":{}}}",
         serde_json::to_string(&markets).unwrap_or_else(|_| "[]".to_string())
     )
 }
@@ -445,22 +445,14 @@ fn reward_info_risk_json_schema() -> Value {
         "type": "object",
         "additionalProperties": false,
         "required": [
-            "risk_level",
-            "risk_type",
-            "directional_risk",
-            "resolution_imminent",
-            "expected_event_at",
+            "allow_quote",
             "confidence",
             "summary",
             "sources",
             "metrics"
         ],
         "properties": {
-            "risk_level": {"type": "string", "enum": ["low", "medium", "high", "critical", "unknown"]},
-            "risk_type": {"type": "string", "enum": ["imminent_resolution", "breaking_news", "scheduled_event", "official_result", "rumor", "stale", "none", "unknown"]},
-            "directional_risk": {"type": "string", "enum": ["yes", "no", "unclear"]},
-            "resolution_imminent": {"type": "boolean"},
-            "expected_event_at": {"type": ["string", "null"]},
+            "allow_quote": {"type": "boolean"},
             "confidence": {"type": "number", "minimum": 0, "maximum": 1},
             "summary": {"type": "string"},
             "sources": {
@@ -497,11 +489,7 @@ fn reward_info_risk_batch_json_schema() -> Value {
                     "additionalProperties": false,
                     "required": [
                         "condition_id",
-                        "risk_level",
-                        "risk_type",
-                        "directional_risk",
-                        "resolution_imminent",
-                        "expected_event_at",
+                        "allow_quote",
                         "confidence",
                         "summary",
                         "sources",
@@ -509,11 +497,7 @@ fn reward_info_risk_batch_json_schema() -> Value {
                     ],
                     "properties": {
                         "condition_id": {"type": "string"},
-                        "risk_level": item_schema["properties"]["risk_level"].clone(),
-                        "risk_type": item_schema["properties"]["risk_type"].clone(),
-                        "directional_risk": item_schema["properties"]["directional_risk"].clone(),
-                        "resolution_imminent": item_schema["properties"]["resolution_imminent"].clone(),
-                        "expected_event_at": item_schema["properties"]["expected_event_at"].clone(),
+                        "allow_quote": item_schema["properties"]["allow_quote"].clone(),
                         "confidence": item_schema["properties"]["confidence"].clone(),
                         "summary": item_schema["properties"]["summary"].clone(),
                         "sources": item_schema["properties"]["sources"].clone(),
@@ -609,6 +593,10 @@ fn parse_reward_info_risk_value(text: &str) -> Result<Value> {
 fn parse_reward_info_risk_decision_value(
     value: &Value,
 ) -> Result<RewardInfoRiskAssessmentDecision> {
+    if value.get("allow_quote").is_some() {
+        return parse_reward_info_risk_binary_decision_value(value);
+    }
+
     let risk_level = value
         .get("risk_level")
         .and_then(Value::as_str)
@@ -655,8 +643,51 @@ fn parse_reward_info_risk_decision_value(
     })
 }
 
+fn parse_reward_info_risk_binary_decision_value(
+    value: &Value,
+) -> Result<RewardInfoRiskAssessmentDecision> {
+    let allow_quote = value
+        .get("allow_quote")
+        .and_then(Value::as_bool)
+        .ok_or_else(|| reward_info_risk_missing_field("allow_quote"))?;
+    let confidence = parse_confidence(value.get("confidence"))
+        .ok_or_else(|| reward_info_risk_missing_field("confidence"))?;
+    let summary = value
+        .get("summary")
+        .and_then(Value::as_str)
+        .unwrap_or("no summary returned")
+        .to_string();
+    let sources = parse_info_risk_sources(value.get("sources"));
+    let metrics = value
+        .get("metrics")
+        .cloned()
+        .filter(Value::is_object)
+        .unwrap_or_else(|| json!({}));
+
+    Ok(RewardInfoRiskAssessmentDecision {
+        risk_level: if allow_quote {
+            RewardInfoRiskLevel::Low
+        } else {
+            RewardInfoRiskLevel::Critical
+        },
+        risk_type: if allow_quote {
+            RewardInfoRiskType::None
+        } else {
+            RewardInfoRiskType::Unknown
+        },
+        directional_risk: RewardInfoDirectionalRisk::Unclear,
+        resolution_imminent: false,
+        expected_event_at: None,
+        confidence,
+        summary,
+        sources,
+        metrics,
+    })
+}
+
 fn reward_info_risk_candidate_has_known_field(value: &Value) -> bool {
-    value.get("risk_level").is_some()
+    value.get("allow_quote").is_some()
+        || value.get("risk_level").is_some()
         || value.get("risk_type").is_some()
         || value.get("directional_risk").is_some()
         || value.get("resolution_imminent").is_some()

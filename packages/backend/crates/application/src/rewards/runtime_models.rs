@@ -652,6 +652,22 @@ fn reward_quote_plan_provider_pending(plan: &RewardQuotePlan) -> bool {
         || plan.reason.starts_with("info risk pending:")
 }
 
+/// Best-effort live quote for a token, injected into the API snapshot so the
+/// frontend can show 买一/卖一 and derive position PnL. Populated at read time
+/// from the orderbook cache; absent (or the whole map `None`) when the
+/// orderbook service is unavailable or the token has no book yet.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RewardTokenQuote {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub best_bid: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub best_ask: Option<Decimal>,
+    /// Mid price `(best_bid + best_ask) / 2`, degrading to the available side
+    /// when only one is present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mark_price: Option<Decimal>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RewardBotSnapshot {
     pub config: RewardBotConfig,
@@ -668,6 +684,10 @@ pub struct RewardBotSnapshot {
     pub positions: Vec<RewardPosition>,
     pub fills: Vec<RewardFill>,
     pub events: Vec<RewardRiskEvent>,
+    /// Token-id keyed live quotes for the snapshot's positions and orders,
+    /// populated best-effort by the API layer. `None` when not enriched.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token_quotes: Option<HashMap<String, RewardTokenQuote>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

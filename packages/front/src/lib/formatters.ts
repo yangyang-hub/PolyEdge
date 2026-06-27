@@ -54,6 +54,11 @@ export function formatPercentFromRatio(value: NumericValue, digits = 0): string 
   return `${(toFiniteNumber(value) * 100).toFixed(digits)}%`;
 }
 
+export function formatSignedPercent(value: NumericValue, digits = 1): string {
+  const numericValue = toFiniteNumber(value);
+  return `${numericValue > 0 ? "+" : ""}${(numericValue * 100).toFixed(digits)}%`;
+}
+
 export function formatSignedFixed(value: NumericValue, digits = 2): string {
   const numericValue = toFiniteNumber(value);
   return `${numericValue > 0 ? "+" : ""}${numericValue.toFixed(digits)}`;

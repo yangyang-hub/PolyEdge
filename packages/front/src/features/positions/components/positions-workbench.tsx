@@ -226,6 +226,25 @@ export function PositionsWorkbench({ data }: { data: PositionsPageData }) {
               </div>
             </div>
 
+            <div className="grid grid-cols-2 gap-3">
+              <div className="rounded-md bg-accent/45 p-3">
+                <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">{dictionary.positions.bestBid}</p>
+                <p className="mt-2 font-mono text-lg text-foreground">{selectedPosition.bestBid}</p>
+              </div>
+              <div className="rounded-md bg-accent/45 p-3">
+                <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">{dictionary.positions.bestAsk}</p>
+                <p className="mt-2 font-mono text-lg text-foreground">{selectedPosition.bestAsk}</p>
+              </div>
+              <div className="rounded-md bg-accent/45 p-3">
+                <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">{dictionary.positions.pnlAmount}</p>
+                <p className="mt-2 font-mono text-lg text-foreground">{selectedPosition.pnlAmount}</p>
+              </div>
+              <div className="rounded-md bg-accent/45 p-3">
+                <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">{dictionary.positions.pnlPercent}</p>
+                <p className="mt-2 font-mono text-lg text-foreground">{selectedPosition.pnlPercent}</p>
+              </div>
+            </div>
+
             <div className="space-y-3 rounded-md bg-popover/70 p-4">
               <div className="flex items-center justify-between gap-3">
                 <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">

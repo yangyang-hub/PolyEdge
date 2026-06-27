@@ -149,6 +149,15 @@ pub struct RewardsSettings {
     pub info_risk_max_markets_per_cycle: u16,
     pub info_risk_min_confidence_bps: u16,
     pub info_risk_web_search_enabled: bool,
+    /// Optional independent fallback LLM endpoint. When the primary provider
+    /// call fails for any reason, the same request is retried against this
+    /// second endpoint (its own provider/format/key/base_url/model). All five
+    /// fields must be set together to enable the fallback. Secrets stay env-only.
+    pub ai_fallback_provider: Option<String>,
+    pub ai_fallback_request_format: Option<String>,
+    pub ai_fallback_api_key: Option<String>,
+    pub ai_fallback_base_url: String,
+    pub ai_fallback_model: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

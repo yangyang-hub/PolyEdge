@@ -373,6 +373,14 @@ export type RewardPositionDto = {
   updated_at: string;
 };
 
+// Best-effort live quote keyed by token_id, populated by the API snapshot.
+// Absent (or the whole map null) when the orderbook service is unavailable.
+export type RewardTokenQuoteDto = {
+  best_bid?: DecimalValue | null;
+  best_ask?: DecimalValue | null;
+  mark_price?: DecimalValue | null;
+};
+
 export type RewardRiskEventDto = {
   id: string;
   account_id?: string | null;
@@ -446,4 +454,5 @@ export type RewardBotSnapshotDto = {
   positions: RewardPositionDto[];
   fills: RewardFillDto[];
   events: RewardRiskEventDto[];
+  token_quotes?: Record<string, RewardTokenQuoteDto> | null;
 };

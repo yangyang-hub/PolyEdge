@@ -81,6 +81,20 @@ async fn scan_reward_info_risks_unlocked(
         );
         return Ok(RewardInfoRiskScanReport::default());
     };
+    let fallback_descriptor = resolve_reward_ai_fallback(&state.settings.rewards);
+    let fallback_connector = match &fallback_descriptor {
+        Some(descriptor) => Some(build_reward_info_risk_fallback_connector(state, descriptor)?),
+        None => None,
+    };
+    let fallback_channel = match (&fallback_descriptor, fallback_connector.as_ref()) {
+        (Some(descriptor), Some(connector)) => Some(RewardInfoRiskChannel {
+            connector,
+            provider: descriptor.provider,
+            request_format: descriptor.request_format,
+            model: descriptor.model.clone(),
+        }),
+        _ => None,
+    };
     let model = state.settings.rewards.ai_model.trim();
     if model.is_empty() {
         warn!(trace_id = %trace_id, "reward info risk model is empty");
@@ -142,20 +156,21 @@ async fn scan_reward_info_risks_unlocked(
             config.ai_request_format,
             model,
         )?;
-        if state
-            .reward_bot_service
-            .latest_market_info_risk(&request)
-            .await?
-            .is_some_and(|risk| {
-                report.cache_hits += 1;
-                !reward_provider_cache_refresh_due(
-                    risk.expires_at,
-                    config.info_risk_ttl_sec,
-                    OffsetDateTime::now_utc(),
-                )
-            })
+        if let Some(cached) = latest_market_info_risk_for_endpoints(
+            state,
+            &request,
+            fallback_descriptor.as_ref(),
+        )
+        .await?
         {
-            continue;
+            report.cache_hits += 1;
+            if !reward_provider_cache_refresh_due(
+                cached.expires_at,
+                config.info_risk_ttl_sec,
+                OffsetDateTime::now_utc(),
+            ) {
+                continue;
+            }
         }
 
         report.requested += 1;
@@ -165,30 +180,28 @@ async fn scan_reward_info_risks_unlocked(
             requested = report.requested,
             "requesting reward info risk provider",
         );
-        let condition_ids_for_record = vec![condition_id.to_string()];
-        let started = Instant::now();
-        let result = {
-            let _provider_permit = acquire_reward_info_risk_provider_request_permit().await?;
-            connector.assess(&request).await
+        let primary_channel = RewardInfoRiskChannel {
+            connector: &connector,
+            provider: config.ai_provider,
+            request_format: config.ai_request_format,
+            model: model.to_string(),
         };
-        record_reward_provider_llm_call(
+        let attempt = assess_with_fallback(
             state,
-            REWARD_INFO_RISK_LLM_TASK_TYPE,
-            REWARD_INFO_RISK_PROMPT_VERSION,
-            model,
-            &request.input_hash,
-            &condition_ids_for_record,
-            started.elapsed(),
-            result.is_ok(),
-            result.as_ref().ok().map(|decision| json!(decision)),
-            result.as_ref().err().map(ToString::to_string),
+            &primary_channel,
+            fallback_channel.as_ref(),
+            &request,
             trace_id,
         )
-        .await;
-        match result {
-            Ok(decision) => {
+        .await?;
+        match attempt {
+            RewardProviderAttempt::Success {
+                decision,
+                endpoint,
+                request: winning_request,
+            } => {
                 let risk = decision.into_info_risk(
-                    &request,
+                    &winning_request,
                     config.info_risk_ttl_sec,
                     OffsetDateTime::now_utc(),
                 );
@@ -197,19 +210,31 @@ async fn scan_reward_info_risks_unlocked(
                 info!(
                     trace_id = %trace_id,
                     condition_id = %condition_id,
+                    endpoint = ?endpoint,
                     saved = report.saved,
                     "saved reward info risk",
                 );
             }
-            Err(error) => {
+            RewardProviderAttempt::Failed {
+                primary_error,
+                fallback_error,
+            } => {
                 report.failures += 1;
                 warn!(
                     trace_id = %trace_id,
                     condition_id = %condition_id,
-                    error = %error,
+                    error = %primary_error,
                     "reward info risk request failed; keeping existing cached state",
                 );
-                if reward_ai_provider_is_overloaded(&error) {
+                if let Some(fb_error) = &fallback_error {
+                    warn!(
+                        trace_id = %trace_id,
+                        condition_id = %condition_id,
+                        error = %fb_error,
+                        "reward info risk fallback request also failed",
+                    );
+                }
+                if reward_combined_provider_overloaded(&primary_error, fallback_error.as_ref()) {
                     warn!(
                         trace_id = %trace_id,
                         requested = report.requested,
@@ -405,6 +430,22 @@ fn build_reward_info_risk_connector(
             && config.ai_request_format == polyedge_application::RewardAiRequestFormat::OpenAiResponses,
     )
     .map(Some)
+}
+
+/// Build the fallback info-risk connector from the resolved fallback endpoint
+/// descriptor. `web_search_enabled` is pre-gated by the resolver to OpenAI +
+/// Responses, so Anthropic/chat-completions fallbacks never send the tools
+/// block. Only called when a fallback is configured.
+fn build_reward_info_risk_fallback_connector(
+    state: &AppState,
+    fallback: &RewardProviderFallback,
+) -> Result<RewardInfoRiskConnector> {
+    RewardInfoRiskConnector::new(
+        fallback.base_url.as_str(),
+        fallback.api_key.as_str(),
+        state.settings.rewards.ai_request_timeout_secs.max(1),
+        fallback.web_search_enabled,
+    )
 }
 
 fn accumulate_info_risk_report(

@@ -2,6 +2,7 @@
 async fn refresh_reward_ai_advisory_provider_batch(
     state: &AppState,
     connector: &RewardAiAdvisoryConnector,
+    fallback_channel: Option<&RewardAiAdvisoryChannel<'_>>,
     cycle: &mut RewardLiveCycle,
     books: &HashMap<String, RewardOrderBook>,
     markets_by_condition: &HashMap<String, RewardMarket>,
@@ -16,6 +17,7 @@ async fn refresh_reward_ai_advisory_provider_batch(
         return refresh_reward_ai_advisory_provider_singles(
             state,
             connector,
+            fallback_channel,
             cycle,
             books,
             markets_by_condition,
@@ -69,6 +71,7 @@ async fn refresh_reward_ai_advisory_provider_batch(
             result.is_ok(),
             result.as_ref().ok().map(|items| json!(items)),
             result.as_ref().err().map(ToString::to_string),
+            false,
             trace_id,
         )
         .await;
@@ -92,6 +95,7 @@ async fn refresh_reward_ai_advisory_provider_batch(
                 if refresh_reward_ai_advisory_provider_singles(
                     state,
                     connector,
+                    fallback_channel,
                     cycle,
                     books,
                     markets_by_condition,
@@ -147,6 +151,7 @@ async fn refresh_reward_ai_advisory_provider_batch(
             && refresh_reward_ai_advisory_provider_singles(
                 state,
                 connector,
+                fallback_channel,
                 cycle,
                 books,
                 markets_by_condition,
@@ -177,6 +182,7 @@ async fn build_reward_ai_advisory_batch_requests(
     promoted_tokens: &mut Vec<String>,
 ) -> Result<Vec<RewardAiAdvisoryRequest>> {
     let mut requests = Vec::new();
+    let fallback = resolve_reward_ai_fallback(&state.settings.rewards);
     for condition_id in condition_ids {
         let Some(plan_for_request) = cycle
             .plans
@@ -195,8 +201,8 @@ async fn build_reward_ai_advisory_batch_requests(
             .reward_bot_service
             .list_recent_market_candles(
                 condition_id,
-                REWARD_AI_CANDLE_INTERVAL_SEC,
-                REWARD_AI_CANDLE_LIMIT_PER_TOKEN,
+                REWARD_AI_CANDLE_SOURCE_INTERVAL_SEC,
+                REWARD_AI_CANDLE_SOURCE_LIMIT_PER_TOKEN,
             )
             .await?;
         let request = build_reward_ai_advisory_request(
@@ -208,14 +214,13 @@ async fn build_reward_ai_advisory_batch_requests(
             books,
             &candles,
             &cycle.config,
+            cycle.config.ai_advisory_ttl_sec,
             cycle.config.ai_provider,
             cycle.config.ai_request_format,
             model,
         )?;
-        if let Some(cached) = state
-            .reward_bot_service
-            .latest_market_advisory(&request)
-            .await?
+        if let Some(cached) =
+            latest_market_advisory_for_endpoints(state, &request, fallback.as_ref()).await?
         {
             report.cache_hits += 1;
             let refresh_due = reward_provider_cache_refresh_due(
@@ -250,6 +255,7 @@ async fn build_reward_ai_advisory_batch_requests(
 async fn refresh_reward_ai_advisory_provider_singles(
     state: &AppState,
     connector: &RewardAiAdvisoryConnector,
+    fallback_channel: Option<&RewardAiAdvisoryChannel<'_>>,
     cycle: &mut RewardLiveCycle,
     books: &HashMap<String, RewardOrderBook>,
     markets_by_condition: &HashMap<String, RewardMarket>,
@@ -263,6 +269,7 @@ async fn refresh_reward_ai_advisory_provider_singles(
         let ai_step = refresh_reward_ai_advisory_for_condition(
             state,
             connector,
+            fallback_channel,
             cycle,
             books,
             markets_by_condition,
@@ -323,6 +330,7 @@ async fn apply_reward_ai_advisory_to_refresh_cycle(
 async fn refresh_reward_info_risk_provider_batch(
     state: &AppState,
     connector: &RewardInfoRiskConnector,
+    fallback_channel: Option<&RewardInfoRiskChannel<'_>>,
     cycle: &RewardLiveCycle,
     markets_by_condition: &HashMap<String, RewardMarket>,
     condition_ids: &[String],
@@ -335,6 +343,7 @@ async fn refresh_reward_info_risk_provider_batch(
         return refresh_reward_info_risk_provider_singles(
             state,
             connector,
+            fallback_channel,
             cycle,
             markets_by_condition,
             condition_ids,
@@ -383,6 +392,7 @@ async fn refresh_reward_info_risk_provider_batch(
             result.is_ok(),
             result.as_ref().ok().map(|items| json!(items)),
             result.as_ref().err().map(ToString::to_string),
+            false,
             trace_id,
         )
         .await;
@@ -406,6 +416,7 @@ async fn refresh_reward_info_risk_provider_batch(
                 if refresh_reward_info_risk_provider_singles(
                     state,
                     connector,
+                    fallback_channel,
                     cycle,
                     markets_by_condition,
                     &fallback_conditions,
@@ -449,6 +460,7 @@ async fn refresh_reward_info_risk_provider_batch(
             && refresh_reward_info_risk_provider_singles(
                 state,
                 connector,
+                fallback_channel,
                 cycle,
                 markets_by_condition,
                 &missing,
@@ -473,6 +485,7 @@ async fn build_reward_info_risk_batch_requests(
     report: &mut RewardInfoRiskScanReport,
 ) -> Result<Vec<RewardInfoRiskAssessmentRequest>> {
     let mut requests = Vec::new();
+    let fallback = resolve_reward_ai_fallback(&state.settings.rewards);
     for condition_id in condition_ids {
         let Some(market) = markets_by_condition.get(condition_id) else {
             report.skipped_missing_market += 1;
@@ -493,20 +506,17 @@ async fn build_reward_info_risk_batch_requests(
             cycle.config.ai_request_format,
             model,
         )?;
-        if state
-            .reward_bot_service
-            .latest_market_info_risk(&request)
-            .await?
-            .is_some_and(|risk| {
-                report.cache_hits += 1;
-                !reward_provider_cache_refresh_due(
-                    risk.expires_at,
-                    cycle.config.info_risk_ttl_sec,
-                    OffsetDateTime::now_utc(),
-                )
-            })
+        if let Some(cached) =
+            latest_market_info_risk_for_endpoints(state, &request, fallback.as_ref()).await?
         {
-            continue;
+            report.cache_hits += 1;
+            if !reward_provider_cache_refresh_due(
+                cached.expires_at,
+                cycle.config.info_risk_ttl_sec,
+                OffsetDateTime::now_utc(),
+            ) {
+                continue;
+            }
         }
         requests.push(request);
     }
@@ -517,6 +527,7 @@ async fn build_reward_info_risk_batch_requests(
 async fn refresh_reward_info_risk_provider_singles(
     state: &AppState,
     connector: &RewardInfoRiskConnector,
+    fallback_channel: Option<&RewardInfoRiskChannel<'_>>,
     cycle: &RewardLiveCycle,
     markets_by_condition: &HashMap<String, RewardMarket>,
     condition_ids: &[String],
@@ -528,6 +539,7 @@ async fn refresh_reward_info_risk_provider_singles(
         if refresh_reward_info_risk_for_condition(
             state,
             connector,
+            fallback_channel,
             cycle,
             markets_by_condition,
             condition_id,

@@ -119,8 +119,8 @@ impl RewardAiAdvisoryDecision {
 /// one bid and one ask). The AI advisory provider refresh uses this to defer
 /// requests for markets whose books the orderbook service has not yet
 /// subscribed/published, so it never caches a meaningless "no orderbook"
-/// watch/avoid that would block the market for the full advisory TTL even after
-/// the book arrives in a later tick.
+/// disallow decision that would block the market for the full advisory TTL even
+/// after the book arrives in a later tick.
 pub fn reward_market_books_available(
     market: &RewardMarket,
     books: &HashMap<String, RewardOrderBook>,
@@ -144,10 +144,12 @@ pub fn build_reward_ai_advisory_request(
     books: &HashMap<String, RewardOrderBook>,
     candles: &[RewardMarketCandle],
     config: &RewardBotConfig,
+    ttl_sec: u64,
     provider: RewardAiProvider,
     request_format: RewardAiRequestFormat,
     model: &str,
 ) -> Result<RewardAiAdvisoryRequest> {
+    let now = OffsetDateTime::now_utc();
     let market_positions = positions
         .iter()
         .filter(|position| position.condition_id == market.condition_id)
@@ -170,10 +172,14 @@ pub fn build_reward_ai_advisory_request(
             })
         })
         .collect::<Vec<_>>();
-    let candle_payload = reward_ai_candle_payload(market, candles);
-    let candle_summary = reward_ai_candle_summary(market, candles);
+    let ai_candles = reward_ai_coarse_candles(candles)?;
+    let candle_payload = reward_ai_candle_payload(market, &ai_candles);
+    let candle_summary = reward_ai_candle_summary(market, &ai_candles);
+    let cache_candle_summary = reward_ai_candle_cache_summary(market, &ai_candles);
+    let pricing_context = reward_ai_pricing_context(market, plan, books, config, now);
     let payload = json!({
-        "schema_version": 1,
+        "schema_version": 2,
+        "task": "Return a binary maker-quote decision for the configured cache TTL horizon.",
         "market": {
             "condition_id": market.condition_id,
             "question": market.question,
@@ -215,8 +221,10 @@ pub fn build_reward_ai_advisory_request(
             "max_global_position_usd": config.max_global_position_usd,
         },
         "books": book_payload,
+        "pricing_context": pricing_context,
         "candles": candle_payload,
         "candle_summary": candle_summary,
+        "provider_cache_policy": reward_provider_cache_policy_payload(ttl_sec, now),
     });
     Ok(RewardAiAdvisoryRequest {
         condition_id: market.condition_id.clone(),
@@ -227,7 +235,7 @@ pub fn build_reward_ai_advisory_request(
             market,
             plan,
             config,
-            &candle_summary,
+            &cache_candle_summary,
         ))?,
         payload,
     })
@@ -258,6 +266,15 @@ fn reward_ai_advisory_cache_key_payload(
     });
 
     json!({
+        // schema_version 7: provider output contract is binary allow_quote,
+        // and the payload now includes current pricing_context plus cache TTL
+        // policy. Exact book levels remain outside the cache key so high-
+        // frequency orderbook updates do not churn provider calls.
+        //
+        // schema_version 6: AI advisory receives 1h candles aggregated from
+        // the 5m price-history source, and the cache key uses completed hourly
+        // buckets only so in-progress 5m updates do not churn input_hash.
+        //
         // schema_version 5: reward candles are sourced from Polymarket
         // prices-history rather than high-frequency local orderbook updates.
         // Invalidate advisories cached against the older candle semantics.
@@ -268,10 +285,11 @@ fn reward_ai_advisory_cache_key_payload(
         //
         // schema_version 3: provider refresh now defers requests until the
         // orderbook service has published real books, so advisories cached
-        // before that change (null bids/asks "no orderbook" watch/avoid) are
+        // before that change (null bids/asks "no orderbook" disallow) are
         // invalidated and re-evaluated against live books.
-        "schema_version": 5,
+        "schema_version": 7,
         "cache_domain": "reward_ai_advisory",
+        "provider_decision_schema": "binary_allow_quote_v1",
         "market": {
             "condition_id": market.condition_id,
             "question": market.question,
@@ -307,112 +325,6 @@ fn reward_ai_advisory_cache_key_payload(
             "low_competition_max_bad_fill_recovery_days": config.low_competition_max_bad_fill_recovery_days,
         },
         "candle_summary": candle_summary,
-    })
-}
-
-fn reward_ai_candle_payload(market: &RewardMarket, candles: &[RewardMarketCandle]) -> Value {
-    let mut groups = Vec::new();
-    for token in &market.tokens {
-        let mut items = candles
-            .iter()
-            .filter(|candle| candle.token_id == token.token_id)
-            .cloned()
-            .collect::<Vec<_>>();
-        items.sort_by_key(|candle| candle.bucket_start);
-        groups.push(json!({
-            "token_id": token.token_id,
-            "outcome": token.outcome,
-            "interval_sec": REWARD_AI_CANDLE_INTERVAL_SEC,
-            "items": items.into_iter().map(|candle| {
-                json!({
-                    "bucket_start": candle.bucket_start,
-                    "open": candle.open,
-                    "high": candle.high,
-                    "low": candle.low,
-                    "close": candle.close,
-                    "best_bid_close": candle.best_bid_close,
-                    "best_ask_close": candle.best_ask_close,
-                    "spread_cents_close": candle.spread_cents_close,
-                    "sample_count": candle.sample_count,
-                })
-            }).collect::<Vec<_>>(),
-        }));
-    }
-    Value::Array(groups)
-}
-
-fn reward_ai_candle_summary(market: &RewardMarket, candles: &[RewardMarketCandle]) -> Value {
-    let mut token_summaries = Vec::new();
-    let mut latest_bucket: Option<OffsetDateTime> = None;
-    let mut total_samples = 0i64;
-    let mut missing_tokens = 0usize;
-
-    for token in &market.tokens {
-        let mut items = candles
-            .iter()
-            .filter(|candle| candle.token_id == token.token_id)
-            .collect::<Vec<_>>();
-        items.sort_by_key(|candle| candle.bucket_start);
-        let Some(first) = items.first().copied() else {
-            missing_tokens += 1;
-            token_summaries.push(json!({
-                "token_id": token.token_id,
-                "outcome": token.outcome,
-                "sample_count": 0,
-                "missing": true,
-            }));
-            continue;
-        };
-        let last = items[items.len() - 1];
-        latest_bucket = Some(latest_bucket.map_or(last.bucket_start, |current| {
-            current.max(last.bucket_start)
-        }));
-        let min_low = items
-            .iter()
-            .map(|candle| candle.low)
-            .min()
-            .unwrap_or(first.low);
-        let max_high = items
-            .iter()
-            .map(|candle| candle.high)
-            .max()
-            .unwrap_or(first.high);
-        let max_spread = items
-            .iter()
-            .map(|candle| candle.spread_cents_close)
-            .max()
-            .unwrap_or(Decimal::ZERO);
-        let sample_count = items
-            .iter()
-            .map(|candle| i64::from(candle.sample_count.max(0)))
-            .sum::<i64>();
-        total_samples += sample_count;
-        token_summaries.push(json!({
-            "token_id": token.token_id,
-            "outcome": token.outcome,
-            "interval_sec": REWARD_AI_CANDLE_INTERVAL_SEC,
-            "first_bucket_start": first.bucket_start,
-            "last_bucket_start": last.bucket_start,
-            "open": first.open,
-            "close": last.close,
-            "return_cents": ((last.close - first.open) * decimal("100")).round_dp(8),
-            "range_cents": ((max_high - min_low) * decimal("100")).round_dp(8),
-            "max_spread_cents": max_spread,
-            "sample_count": sample_count,
-            "missing": false,
-        }));
-    }
-
-    json!({
-        "schema_version": 1,
-        "interval_sec": REWARD_AI_CANDLE_INTERVAL_SEC,
-        "limit_per_token": REWARD_AI_CANDLE_LIMIT_PER_TOKEN,
-        "latest_bucket_start": latest_bucket,
-        "token_count": market.tokens.len(),
-        "missing_token_count": missing_tokens,
-        "sample_count": total_samples,
-        "stale": missing_tokens > 0,
-        "tokens": token_summaries,
     })
 }
 

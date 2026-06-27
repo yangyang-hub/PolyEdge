@@ -21,6 +21,7 @@
 | `src/features/rewards/components/rewards-advanced-config.tsx` | 盘口选择、AI advisory 和信息风险配置子面板 |
 | `src/features/rewards/components/rewards-config-fields.tsx` | 配置面板共享字段、区块和提示组件 |
 | `src/features/rewards/components/rewards-tables.tsx` | 表格组件（订单/持仓等） |
+| `src/features/rewards/components/rewards-table-controls.tsx` | 表格排序指示、搜索输入和分页筛选 tabs 共享控件 |
 | `src/features/rewards/components/rewards-events-panel.tsx` | 事件面板 |
 | `src/features/rewards/components/number-input.tsx` | 数值输入组件 |
 | `src/features/rewards/loaders/rewards-page-data.ts` | 服务端数据装配 |
@@ -49,7 +50,7 @@
 - **漂移换价** → `requote_drift_cents` 只决定是否进入换价候选；后端还会应用历史同向确认、订单冷却和单轮最大 drift 撤单数，避免盘口档位抖动导致全量撤空后再重挂
 - **盘口选择** → `quote_mode=double|auto` + `selection_mode=observe|enforce` → 默认只保留双边报价；auto/enforce 的初步计划只用概率区间决定单边/双边，退出深度、盘口集中度、双边点差/档位/安全边际和单腿回退在 live placement 阶段用当前 orderbook 验证
 - **AI 建议配置** → 保存 provider、request format、TTL 和主 provider refresh 批量市场数；worker 启用且环境变量配置 provider key 后，会在 full tick 中低频调用模型并缓存 advisory
-- **信息风险配置** → 保存启用开关、observe/enforce、过滤等级、TTL、主 provider refresh 批量市场数、首单信息风险要求和首单观察窗口；异步 worker 启用且环境变量配置 provider key 后，会扫描候选市场最新信息风险并缓存，页面展示风险等级/类型/摘要；enforce 模式下缺少未过期风险缓存的计划会被后端置为不可挂，新 condition 首次 BUY 还可要求先命中信息风险缓存并观察一段时间
+- **信息风险配置** → 保存启用开关、observe/enforce、过滤等级、TTL、主 provider refresh 批量市场数、首单信息风险要求和首单观察窗口；异步 worker 启用且环境变量配置 provider key 后，会扫描候选市场最新信息风险并缓存，页面只展示二值“允许挂单/不允许挂单”、置信度和摘要；enforce 模式下缺少未过期风险缓存的计划会被后端置为不可挂，新 condition 首次 BUY 还可要求先命中信息风险缓存并观察一段时间
 - **大模型调用统计** → 顶部执行概览读取 `snapshot.llm_usage`，展示 UTC 今日总调用和最近 7 天 AI advisory / info-risk / 失败调用数；该统计来自 worker 写入的实际外部 provider 调用，不包含缓存命中
 - **成交后策略** → 页面可选择 `exit_at_markup` / `hold_and_requote` / `flatten_immediately`；`exit_at_markup` 的退出加价相对被吃买单原价计算，`hold_and_requote`（持有并续挂）按被吃买单原价生成 SELL 退出 floor 并继续正常报价；后端提交 SELL 前只看当前 orderbook best bid，best bid 不低于 floor 时用非 post-only FAK/taker SELL 按 best bid 退出，best bid 低于 floor 时保留 intent 等待非亏损退出
 - **市场质量** → 可配置最低流动性、最低 24h 成交量、最短剩余结算时间、最大 Gamma spread 和最大目录同步年龄；后端还固定拒绝高歧义、非唯一 YES/NO、FDV/launch/token/official-result 等高跳变事件风险市场
@@ -77,7 +78,7 @@
 - 低竞争市场 sleeve v2 已接入前端：DTO、Server Action Zod 校验、配置面板、低竞争策略观察面板和 quote plan 表格包含 `low_competition_mode`、独立市场/订单/库存上限与阈值、`strategy_bucket`、探测金额占池、外部同价资金、外部/探测倍数、账户/单市场挂单资金占比、预估 100U 日奖、退出深度/入场退出滑点、坏成交恢复天数、盘口稳定性窗口指标、低竞争专属买二/安全边际/spread/市场 spread/评分、低竞争 AI allow 与 info-risk avoid level、可配置撤单阈值、最近 24 小时硬性通过率、AI/信息风险后可挂率、样本不足率、AI/信息风险拦截率、高竞争混入占比和小额 enforce 建议；quote plan 行内指标按“竞争是否足够小、奖励是否值得做、定价/事件风险是否可控、被吃后能否退出、盘口是否稳定、仓位是否够小”重组，并用“当前值 / 门槛 / 通过状态”展示，把常见后端 rejection reason 映射成中文主要卡点。页面不再把流动性或成交量作为低竞争准入，也不暗示低流动性本身是安全收益来源。后端兼容的低竞争 liquidity/volume 旧过滤字段仍保留在 DTO 中，但前端不展示这些控件，保存配置时会强制关闭并清零。
 - 报价构造使用“挂单档位”下拉框选择买一/买二/买三，不再提供中间价“报价偏移”、`per_market_usd`“单市场额度”或 `quote_size_usd`“单腿金额”；默认买一。
 - 盘口选择公开 quote/selection mode、dominant 单边概率区间、退出深度、top1/top3 买盘集中度、HHI 和偏好分类评分加成；默认 `double + observe` 不改变既有双边挂单。
-- AI 建议面板保存 OpenAI/Anthropic provider、请求格式、advisory TTL、AI 批量市场数、信息风险启用、observe/enforce、过滤等级、信息风险 TTL、信息风险批量市场数、首单信息风险要求和首单观察窗口；API key、base URL、模型名、请求超时和 web search 开关只来自 worker 环境变量，不会出现在前端配置或 snapshot。AI advisory 与信息风险扫描由 worker 全量覆盖当前候选，优先开放订单、持仓和可挂 quote plan；批量市场数为 1 时保持逐市场 provider 请求，>1 时后端按 condition 拆分保存并对漏项回退单市场。报价计划表展示 AI suitability、推荐 quote mode、confidence 和首条 reason，也展示信息风险等级、类型、confidence 和摘要；信息风险 enforce 且缓存缺失时，后端会把对应计划显示为不可挂；首单 gate 只影响没有开放订单/库存的新 condition。
+- AI 建议面板保存 OpenAI/Anthropic provider、请求格式、advisory TTL、AI 批量市场数、信息风险启用、observe/enforce、过滤等级、信息风险 TTL、信息风险批量市场数、首单信息风险要求和首单观察窗口；API key、base URL、模型名、请求超时和 web search 开关只来自 worker 环境变量，不会出现在前端配置或 snapshot。AI advisory 与信息风险扫描由 worker 全量覆盖当前候选，优先开放订单、持仓和可挂 quote plan；批量市场数为 1 时保持逐市场 provider 请求，>1 时后端按 condition 拆分保存并对漏项回退单市场。报价计划表对 AI advisory 和信息风险都只展示“允许挂单/不允许挂单”、confidence 和首条 reason/summary，不再展示 provider 内部兼容字段的多档状态、推荐 quote mode、风险等级或风险类型；信息风险 enforce 且缓存缺失时，后端会把对应计划显示为不可挂；首单 gate 只影响没有开放订单/库存的新 condition。
 - 后端不再用 `per_market_usd`、`quote_size_usd` 或 `low_competition_per_market_usd` 限制报价腿构造；live materializer 只保障按 CLOB 成本精度对齐后的 `rewards_min_size` 和 Polymarket 1 美元最小名义金额。新增报价是否可挂由后端按实际钱包余额、未归属外部 BUY notional 和同一 condition 已有 managed BUY notional 判断；待补最低 rewards size 腿放不下时，quote plan 会显示 funding 不可挂原因，等后续余额/开放订单同步后重新评估。
 - 配置不包含 `execution_mode` 选择器（始终为 live）。前端不再展示或提交 `per_market_usd`、`quote_size_usd`、`low_competition_per_market_usd`；这些字段只保留在 DTO/后端配置中兼容历史快照与旧请求。提示说明 `max_markets=0` 或 `max_open_orders=0` 会停止新挂单。
 - 报价计划默认展示当前通过非盘口依赖过滤且等待 live 盘口验证的可挂市场；每条计划携带 `quote_readiness=ready_to_quote|waiting_orderbook|provider_pending|blocked`，表格状态列优先展示“可报价 / 等待盘口 / 等待 AI/信息风险 / 已拦截”。若准备挂单时 `quote_bid_rank`、rewards spread、盘口集中度、退出深度或安全边际导致双边不可行，auto/enforce/dominant 会先尝试单腿回退；没有可行单腿时后端才会把计划标记为不可挂并返回原因和 12 小时 `live_skip_until`，到期后自动重新评估。
@@ -86,6 +87,7 @@
 - Rewards 工作台在保留当前搜索、筛选、排序和分页条件的前提下，每 10 秒通过 REST 重新读取 snapshot；自动刷新不显示过滤 loading 状态，短暂网络失败不覆盖页面反馈，手动筛选仍显示轻量刷新状态并反馈失败。
 - 首屏不加载全量 reward markets，避免奖励市场数量过大时长时间停留在 loading skeleton。
 - Wallet balance、Positions 和 Orders 表格展示 worker 同步到数据库的 rewards 账户视图；余额显示资金钱包 pUSD，资金钱包地址优先使用 `POLYEDGE_POLYMARKET__FUNDER`，未配置时使用 `ACCOUNT_ID`。
+- 库存（持仓）表展示买一、卖一、盈亏金额（realized+unrealized）和盈亏百分比，托管订单表展示买一、卖一（用于和挂单价对比；开放订单未成交不展示盈亏）。这些值来自 snapshot 的 `token_quotes`（按 `token_id` 索引的 best_bid/best_ask/mark_price），由 API handler 在返回前 best-effort 从 orderbook 服务批量注入；orderbook 服务不可用或缺盘口时对应单元格显示 `—`，不阻断 snapshot。盈亏在前端按 `(mark-avg)*size + realized` 推导，百分比按总盈亏 / 成本基准计算。
 - 今日已赚奖励展示 worker 同步到 `account.reward_earned_usd` 的 UTC 当日 maker rewards 值；worker 优先读取认证 CLOB `GET /rewards/user/total?sponsored=true` 聚合端点，以对齐 Polymarket `/rewards` 页面顶部 Daily Rewards 的 native+sponsored 口径。聚合端点为空、为 0 或不可用时回退分页读取 `GET /rewards/user` native 明细并合并 `sponsored=true` sponsored-only 明细，按 `earnings * asset_rate` 求和。前端不直接访问 Polymarket，账户快照停更或认证配置缺失时不会自行回退官网数据。
 - 事件分类视图（挂单/撤单/吃单/奖励）
 - live worker 已接入 post-only 买单、撤单、drift 换价 guard（历史同向确认、订单冷却、单轮限速）、confirmed 成交同步、成交后卖出/平仓、本地账本更新、managed order 计分状态、账户开放买单总 notional 观测、可映射 active rewards BUY 的 CLOB open-order 收养/重开和 UTC 当日账户级 maker rewards 同步（聚合端点优先、明细端点 fallback）；SELL、非 rewards 市场和无法唯一映射 token 的外部开放订单明细与奖励结算对账仍是后端缺口

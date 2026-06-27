@@ -295,6 +295,7 @@ export function RewardsWorkbench({ initialSnapshot }: { initialSnapshot: RewardB
               <CardContent>
                 <OrdersTable
                   orders={snapshot.orders}
+                  tokenQuotes={snapshot.token_quotes ?? {}}
                   search={ordersSearch}
                   onSearchChange={(v) => {
                     setOrdersSearch(v);
@@ -331,7 +332,7 @@ export function RewardsWorkbench({ initialSnapshot }: { initialSnapshot: RewardB
                 <CardDescription>{dictionary.rewards.positionsDescription}</CardDescription>
               </CardHeader>
               <CardContent>
-                <PositionsTable positions={snapshot.positions} />
+                <PositionsTable positions={snapshot.positions} tokenQuotes={snapshot.token_quotes ?? {}} />
               </CardContent>
             </Card>
           </div>

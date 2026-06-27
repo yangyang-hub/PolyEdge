@@ -116,6 +116,11 @@ impl Default for RewardsSettings {
             info_risk_max_markets_per_cycle: 50,
             info_risk_min_confidence_bps: 7000,
             info_risk_web_search_enabled: false,
+            ai_fallback_provider: None,
+            ai_fallback_request_format: None,
+            ai_fallback_api_key: None,
+            ai_fallback_base_url: "https://api.openai.com/v1".to_string(),
+            ai_fallback_model: None,
         }
     }
 }

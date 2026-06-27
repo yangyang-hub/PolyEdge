@@ -252,6 +252,7 @@ fn reward_ai_advisory_candidates_include_open_orders_positions_and_eligible_plan
         &pre_ai_eligible_condition_ids,
         &config,
         "mimo-v2.5-pro",
+        None,
         now,
     );
 
@@ -309,6 +310,7 @@ fn reward_ai_advisory_candidates_include_active_exposure_outside_pre_ai_set() {
         &pre_ai_eligible_condition_ids,
         &config,
         "mimo-v2.5-pro",
+        None,
         now,
     );
 
@@ -332,6 +334,7 @@ fn reward_ai_advisory_candidates_skip_low_competition_observe_without_exposure()
         &["cond_low_observe".to_string()],
         &config,
         "mimo-v2.5-pro",
+        None,
         now,
     );
 
@@ -357,6 +360,7 @@ fn reward_ai_advisory_candidates_keep_low_competition_observe_with_exposure() {
         &[],
         &config,
         "mimo-v2.5-pro",
+        None,
         now,
     );
 

@@ -1,5 +1,6 @@
 use polyedge_application::{
-    REWARD_AI_CANDLE_INTERVAL_SEC, RewardBotService, RewardMarket, RewardMarketCandleSample,
+    REWARD_PRICE_HISTORY_CANDLE_INTERVAL_SEC, RewardBotService, RewardMarket,
+    RewardMarketCandleSample,
 };
 use polyedge_connectors::{PolymarketPriceHistoryPoint, PolymarketRewardsConnector};
 use polyedge_domain::{AppError, Result};
@@ -15,7 +16,7 @@ const MIN_HISTORY_SYNC_INTERVAL_SECS: u64 = 60;
 const MAX_HISTORY_SYNC_INTERVAL_SECS: u64 = 3_600;
 const MIN_HISTORY_REQUEST_DELAY_MS: u64 = 250;
 const MAX_HISTORY_REQUEST_DELAY_MS: u64 = 10_000;
-const MIN_HISTORY_LOOKBACK_SECS: u64 = REWARD_AI_CANDLE_INTERVAL_SEC as u64;
+const MIN_HISTORY_LOOKBACK_SECS: u64 = REWARD_PRICE_HISTORY_CANDLE_INTERVAL_SEC as u64;
 const MAX_HISTORY_LOOKBACK_SECS: u64 = 24 * 60 * 60;
 
 #[derive(Debug, Default)]
@@ -120,7 +121,7 @@ async fn sync_reward_candle_history_once(
 
     let end = OffsetDateTime::now_utc();
     let start = end - time::Duration::seconds(lookback_secs as i64);
-    let fidelity_minutes = (REWARD_AI_CANDLE_INTERVAL_SEC / 60).max(1) as u16;
+    let fidelity_minutes = (REWARD_PRICE_HISTORY_CANDLE_INTERVAL_SEC / 60).max(1) as u16;
 
     for (index, token_id) in tokens.iter().enumerate() {
         if index > 0 {
@@ -183,7 +184,7 @@ fn reward_candle_sample_from_price_history(
     token_id: &str,
     point: &PolymarketPriceHistoryPoint,
 ) -> Result<RewardMarketCandleSample> {
-    let interval_sec = REWARD_AI_CANDLE_INTERVAL_SEC;
+    let interval_sec = REWARD_PRICE_HISTORY_CANDLE_INTERVAL_SEC;
     let bucket_start = reward_candle_bucket_start(point.observed_at, interval_sec)?;
     Ok(RewardMarketCandleSample {
         token_id: token_id.to_string(),

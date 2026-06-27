@@ -98,6 +98,8 @@ impl RewardBotService {
             positions: stored_positions,
             fills,
             events,
+            // Populated best-effort by the API layer via enrich_reward_bot_snapshot.
+            token_quotes: None,
         })
     }
 }

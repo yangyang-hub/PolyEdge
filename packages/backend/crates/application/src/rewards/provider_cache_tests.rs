@@ -142,7 +142,7 @@ fn cache_test_candle(token_id: &str, outcome: &str, bucket_offset: i64, close: &
         token_id: token_id.to_string(),
         condition_id: "cond_cache".to_string(),
         outcome: outcome.to_string(),
-        interval_sec: REWARD_AI_CANDLE_INTERVAL_SEC,
+        interval_sec: REWARD_AI_CANDLE_SOURCE_INTERVAL_SEC,
         bucket_start,
         open: decimal("0.50"),
         high: decimal(close).max(decimal("0.50")),
@@ -283,6 +283,7 @@ fn reward_ai_advisory_cache_key_ignores_runtime_context() {
         &books,
         &[],
         &config,
+        config.ai_advisory_ttl_sec,
         RewardAiProvider::OpenAi,
         RewardAiRequestFormat::OpenAiChatCompletions,
         "mimo-v2.5",
@@ -299,6 +300,7 @@ fn reward_ai_advisory_cache_key_ignores_runtime_context() {
         &cache_test_books(later_time, "0.53"),
         &[],
         &config,
+        config.ai_advisory_ttl_sec,
         RewardAiProvider::OpenAi,
         RewardAiRequestFormat::OpenAiChatCompletions,
         "mimo-v2.5",
@@ -307,10 +309,18 @@ fn reward_ai_advisory_cache_key_ignores_runtime_context() {
 
     assert_eq!(first.input_hash, second.input_hash);
     assert_ne!(first.payload, second.payload);
+    assert!(first.payload.get("pricing_context").is_some());
+    assert_eq!(
+        first
+            .payload
+            .pointer("/provider_cache_policy/ttl_sec")
+            .and_then(Value::as_u64),
+        Some(config.ai_advisory_ttl_sec)
+    );
 }
 
 #[test]
-fn reward_ai_advisory_cache_key_tracks_candle_summary_changes() {
+fn reward_ai_advisory_cache_key_ignores_in_progress_source_candle_changes() {
     let market = cache_test_market();
     let books = cache_test_books(
         OffsetDateTime::from_unix_timestamp(1_785_000_000).expect("valid timestamp"),
@@ -324,8 +334,10 @@ fn reward_ai_advisory_cache_key_tracks_candle_summary_changes() {
         cache_test_candle("token_no_cache", "No", 0, "0.49"),
     ];
     let second_candles = vec![
-        cache_test_candle("token_yes_cache", "Yes", 0, "0.56"),
-        cache_test_candle("token_no_cache", "No", 0, "0.44"),
+        cache_test_candle("token_yes_cache", "Yes", 0, "0.51"),
+        cache_test_candle("token_yes_cache", "Yes", 300, "0.56"),
+        cache_test_candle("token_no_cache", "No", 0, "0.49"),
+        cache_test_candle("token_no_cache", "No", 300, "0.44"),
     ];
 
     let first = build_reward_ai_advisory_request(
@@ -337,6 +349,7 @@ fn reward_ai_advisory_cache_key_tracks_candle_summary_changes() {
         &books,
         &first_candles,
         &config,
+        config.ai_advisory_ttl_sec,
         RewardAiProvider::OpenAi,
         RewardAiRequestFormat::OpenAiChatCompletions,
         "mimo-v2.5",
@@ -351,6 +364,73 @@ fn reward_ai_advisory_cache_key_tracks_candle_summary_changes() {
         &books,
         &second_candles,
         &config,
+        config.ai_advisory_ttl_sec,
+        RewardAiProvider::OpenAi,
+        RewardAiRequestFormat::OpenAiChatCompletions,
+        "mimo-v2.5",
+    )
+    .expect("second request");
+
+    assert_eq!(first.input_hash, second.input_hash);
+    assert_ne!(first.payload, second.payload);
+    assert!(first.payload.get("candles").is_some());
+    assert!(first.payload.get("candle_summary").is_some());
+    let interval_sec = first
+        .payload
+        .get("candle_summary")
+        .and_then(|summary| summary.get("interval_sec"))
+        .and_then(Value::as_i64);
+    assert_eq!(interval_sec, Some(i64::from(REWARD_AI_CANDLE_INTERVAL_SEC)));
+}
+
+#[test]
+fn reward_ai_advisory_cache_key_tracks_completed_hourly_candle_changes() {
+    let market = cache_test_market();
+    let books = cache_test_books(
+        OffsetDateTime::from_unix_timestamp(1_785_000_000).expect("valid timestamp"),
+        "0.54",
+    );
+    let plan = cache_test_plan(&market, &books);
+    let account = cache_test_account("100", 1);
+    let config = RewardBotConfig::default();
+    let first_candles = vec![
+        cache_test_candle("token_yes_cache", "Yes", 0, "0.51"),
+        cache_test_candle("token_yes_cache", "Yes", 3_600, "0.52"),
+        cache_test_candle("token_no_cache", "No", 0, "0.49"),
+        cache_test_candle("token_no_cache", "No", 3_600, "0.48"),
+    ];
+    let second_candles = vec![
+        cache_test_candle("token_yes_cache", "Yes", 0, "0.56"),
+        cache_test_candle("token_yes_cache", "Yes", 3_600, "0.52"),
+        cache_test_candle("token_no_cache", "No", 0, "0.44"),
+        cache_test_candle("token_no_cache", "No", 3_600, "0.48"),
+    ];
+
+    let first = build_reward_ai_advisory_request(
+        &market,
+        &plan,
+        &account,
+        &[],
+        &[],
+        &books,
+        &first_candles,
+        &config,
+        config.ai_advisory_ttl_sec,
+        RewardAiProvider::OpenAi,
+        RewardAiRequestFormat::OpenAiChatCompletions,
+        "mimo-v2.5",
+    )
+    .expect("first request");
+    let second = build_reward_ai_advisory_request(
+        &market,
+        &plan,
+        &account,
+        &[],
+        &[],
+        &books,
+        &second_candles,
+        &config,
+        config.ai_advisory_ttl_sec,
         RewardAiProvider::OpenAi,
         RewardAiRequestFormat::OpenAiChatCompletions,
         "mimo-v2.5",
@@ -358,8 +438,6 @@ fn reward_ai_advisory_cache_key_tracks_candle_summary_changes() {
     .expect("second request");
 
     assert_ne!(first.input_hash, second.input_hash);
-    assert!(first.payload.get("candles").is_some());
-    assert!(first.payload.get("candle_summary").is_some());
 }
 
 #[test]
@@ -386,6 +464,7 @@ fn reward_ai_advisory_cache_key_tracks_strategy_changes() {
         &books,
         &[],
         &base_config,
+        base_config.ai_advisory_ttl_sec,
         RewardAiProvider::OpenAi,
         RewardAiRequestFormat::OpenAiChatCompletions,
         "mimo-v2.5",
@@ -400,6 +479,7 @@ fn reward_ai_advisory_cache_key_tracks_strategy_changes() {
         &books,
         &[],
         &changed_config,
+        changed_config.ai_advisory_ttl_sec,
         RewardAiProvider::OpenAi,
         RewardAiRequestFormat::OpenAiChatCompletions,
         "mimo-v2.5",

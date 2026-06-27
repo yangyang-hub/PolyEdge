@@ -17,12 +17,17 @@ const DEFAULT_LIST_LIMIT: u16 = 100;
 const MAX_LIST_LIMIT: u16 = 500;
 const DEFAULT_TICK: Decimal = Decimal::from_parts(1, 0, 0, false, 2);
 const MIN_POLYMARKET_ORDER_NOTIONAL_USD: Decimal = Decimal::ONE;
-pub const REWARD_AI_CANDLE_INTERVAL_SEC: i32 = 300;
+pub const REWARD_PRICE_HISTORY_CANDLE_INTERVAL_SEC: i32 = 300;
+pub const REWARD_AI_CANDLE_SOURCE_INTERVAL_SEC: i32 = REWARD_PRICE_HISTORY_CANDLE_INTERVAL_SEC;
+// 24 hourly AI candles backed by 12 source 5m candles each.
+pub const REWARD_AI_CANDLE_SOURCE_LIMIT_PER_TOKEN: u16 = 288;
+pub const REWARD_AI_CANDLE_INTERVAL_SEC: i32 = 60 * 60;
 pub const REWARD_AI_CANDLE_LIMIT_PER_TOKEN: u16 = 24;
 
 include!("rewards/models.rs");
 include!("rewards/quote_selection_models.rs");
 include!("rewards/ai_advisory_models.rs");
+include!("rewards/ai_advisory_payload.rs");
 include!("rewards/info_risk_models.rs");
 include!("rewards/config_impl.rs");
 include!("rewards/runtime_models.rs");

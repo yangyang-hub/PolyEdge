@@ -140,6 +140,35 @@ async fn run_reward_ai_advisory_batch_flush(
         None => return Ok(()),
     };
     let info_risk_connector = build_reward_info_risk_connector(state, &cycle.config)?;
+    let fallback_descriptor = resolve_reward_ai_fallback(&state.settings.rewards);
+    let advisory_fallback_connector = match &fallback_descriptor {
+        Some(descriptor) => Some(build_reward_ai_advisory_fallback_connector(state, descriptor)?),
+        None => None,
+    };
+    let advisory_fallback_channel =
+        match (&fallback_descriptor, advisory_fallback_connector.as_ref()) {
+            (Some(descriptor), Some(connector)) => Some(RewardAiAdvisoryChannel {
+                connector,
+                provider: descriptor.provider,
+                request_format: descriptor.request_format,
+                model: descriptor.model.clone(),
+            }),
+            _ => None,
+        };
+    let info_risk_fallback_connector = match &fallback_descriptor {
+        Some(descriptor) => Some(build_reward_info_risk_fallback_connector(state, descriptor)?),
+        None => None,
+    };
+    let info_risk_fallback_channel =
+        match (&fallback_descriptor, info_risk_fallback_connector.as_ref()) {
+            (Some(descriptor), Some(connector)) => Some(RewardInfoRiskChannel {
+                connector,
+                provider: descriptor.provider,
+                request_format: descriptor.request_format,
+                model: descriptor.model.clone(),
+            }),
+            _ => None,
+        };
 
     // markets_by_condition: active reward markets + candidate markets. The
     // lightweight `current_live_cycle_state` cycle has an empty `markets`, so we
@@ -205,8 +234,8 @@ async fn run_reward_ai_advisory_batch_flush(
             .reward_bot_service
             .list_recent_market_candles(
                 condition_id,
-                REWARD_AI_CANDLE_INTERVAL_SEC,
-                REWARD_AI_CANDLE_LIMIT_PER_TOKEN,
+                REWARD_AI_CANDLE_SOURCE_INTERVAL_SEC,
+                REWARD_AI_CANDLE_SOURCE_LIMIT_PER_TOKEN,
             )
             .await?;
         let request = match build_reward_ai_advisory_request(
@@ -218,6 +247,7 @@ async fn run_reward_ai_advisory_batch_flush(
             &books,
             &candles,
             &cycle.config,
+            cycle.config.ai_advisory_ttl_sec,
             cycle.config.ai_provider,
             cycle.config.ai_request_format,
             model,
@@ -234,20 +264,21 @@ async fn run_reward_ai_advisory_batch_flush(
                 continue;
             }
         };
-        if state
-            .reward_bot_service
-            .latest_market_advisory(&request)
-            .await?
-            .is_some_and(|advisory| {
-                report.cache_hits += 1;
-                !reward_provider_cache_refresh_due(
-                    advisory.expires_at,
-                    cycle.config.ai_advisory_ttl_sec,
-                    OffsetDateTime::now_utc(),
-                )
-            })
+        if let Some(cached) = latest_market_advisory_for_endpoints(
+            state,
+            &request,
+            fallback_descriptor.as_ref(),
+        )
+        .await?
         {
-            continue;
+            report.cache_hits += 1;
+            if !reward_provider_cache_refresh_due(
+                cached.expires_at,
+                cycle.config.ai_advisory_ttl_sec,
+                OffsetDateTime::now_utc(),
+            ) {
+                continue;
+            }
         }
         // Re-check book readiness at flush time: the local cache entry may have
         // expired since the orderbook event enqueued this condition.
@@ -280,6 +311,7 @@ async fn run_reward_ai_advisory_batch_flush(
             batch_outcome.is_ok(),
             batch_outcome.as_ref().ok().map(|items| json!(items)),
             batch_outcome.as_ref().err().map(ToString::to_string),
+            false,
             trace_id,
         )
         .await;
@@ -322,6 +354,7 @@ async fn run_reward_ai_advisory_batch_flush(
                     match single_reward_ai_advise_and_save(
                         state,
                         &connector,
+                        advisory_fallback_channel.as_ref(),
                         request,
                         &cycle.config,
                         trace_id,
@@ -359,6 +392,7 @@ async fn run_reward_ai_advisory_batch_flush(
                         match single_reward_ai_advise_and_save(
                             state,
                             &connector,
+                            advisory_fallback_channel.as_ref(),
                             request,
                             &cycle.config,
                             trace_id,
@@ -385,6 +419,7 @@ async fn run_reward_ai_advisory_batch_flush(
             if refresh_reward_info_risk_for_condition(
                 state,
                 info_connector,
+                info_risk_fallback_channel.as_ref(),
                 &cycle,
                 &markets_by_condition,
                 condition_id,
@@ -431,35 +466,45 @@ enum SingleAdviseOutcome {
 async fn single_reward_ai_advise_and_save(
     state: &AppState,
     connector: &RewardAiAdvisoryConnector,
+    fallback_channel: Option<&RewardAiAdvisoryChannel<'_>>,
     request: &RewardAiAdvisoryRequest,
     config: &RewardBotConfig,
     trace_id: &str,
 ) -> SingleAdviseOutcome {
-    let started = Instant::now();
-    let result = {
-        let Ok(_permit) = acquire_reward_ai_advisory_provider_request_permit().await else {
-            return SingleAdviseOutcome::Failed;
-        };
-        connector.advise(request).await
+    let primary_channel = RewardAiAdvisoryChannel {
+        connector,
+        provider: request.provider,
+        request_format: request.request_format,
+        model: request.model.clone(),
     };
-    record_reward_provider_llm_call(
+    let attempt = match advise_with_fallback(
         state,
-        REWARD_AI_ADVISORY_LLM_TASK_TYPE,
-        REWARD_AI_ADVISORY_PROMPT_VERSION,
-        &request.model,
-        &request.input_hash,
-        std::slice::from_ref(&request.condition_id),
-        started.elapsed(),
-        result.is_ok(),
-        result.as_ref().ok().map(|decision| json!(decision)),
-        result.as_ref().err().map(ToString::to_string),
+        &primary_channel,
+        fallback_channel,
+        request,
         trace_id,
     )
-    .await;
-    match result {
-        Ok(decision) => {
+    .await
+    {
+        Ok(attempt) => attempt,
+        Err(error) => {
+            warn!(
+                trace_id = %trace_id,
+                condition_id = %request.condition_id,
+                error = %error,
+                "reward AI advisory single fallback provider request permit failed",
+            );
+            return SingleAdviseOutcome::Failed;
+        }
+    };
+    match attempt {
+        RewardProviderAttempt::Success {
+            decision,
+            request: winning_request,
+            ..
+        } => {
             let advisory = decision.into_advisory(
-                request,
+                &winning_request,
                 config.ai_advisory_ttl_sec,
                 OffsetDateTime::now_utc(),
             );
@@ -480,14 +525,25 @@ async fn single_reward_ai_advise_and_save(
                 }
             }
         }
-        Err(error) => {
+        RewardProviderAttempt::Failed {
+            primary_error,
+            fallback_error,
+        } => {
             warn!(
                 trace_id = %trace_id,
                 condition_id = %request.condition_id,
-                error = %error,
+                error = %primary_error,
                 "reward AI advisory single fallback request failed",
             );
-            if reward_ai_provider_is_overloaded(&error) {
+            if let Some(fb_error) = &fallback_error {
+                warn!(
+                    trace_id = %trace_id,
+                    condition_id = %request.condition_id,
+                    error = %fb_error,
+                    "reward AI advisory single fallback also failed on fallback endpoint",
+                );
+            }
+            if reward_combined_provider_overloaded(&primary_error, fallback_error.as_ref()) {
                 SingleAdviseOutcome::Overloaded
             } else {
                 SingleAdviseOutcome::Failed

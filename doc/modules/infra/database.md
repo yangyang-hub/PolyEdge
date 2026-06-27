@@ -156,7 +156,7 @@
 - 迁移使用 `sqlx` 管理
 - 套利扫描历史已接入 retention：worker 每轮扫描完成后按 `arbitrage.event_retention_hours` 分批删除旧 `arbitrage_scans`，并通过 FK cascade 清理 `market_book_snapshots`、`arbitrage_opportunities` 和 validations，避免盘口快照表无限膨胀；`arbitrage_events` 继续按同一窗口单独清理。
 - 通用数据库维护已接入 API 内嵌 worker runtime，生产模板默认开启 `POLYEDGE_WORKER__DATABASE_MAINTENANCE=true`，用于防止缓存、日志、队列和低频 price-history 表持续增长；它不删除 rewards fills/positions/account state 等核心账本表。
-- Rewards 低竞争市场 sleeve v2 已落地，schema 包括 managed order 的 `strategy_bucket` 和 `reward_low_competition_observations` 观测表；observation 已记录 competition-share、挂单资金占比字段和 not_low_competition 高竞争混入标签，shadow report 是 snapshot 派生结果，不单独落表。Rewards AI advisory 已接入 `reward_market_candles`，K 线由 orderbook 服务统一低频限速调用 CLOB `/prices-history` 写入，不由 worker/API 直接请求外部接口。Rewards AI advisory / info-risk 的实际 provider 调用复用 `llm_calls` 做每日调用统计，通用数据库维护保留 180 天。
+- Rewards 低竞争市场 sleeve v2 已落地，schema 包括 managed order 的 `strategy_bucket` 和 `reward_low_competition_observations` 观测表；observation 已记录 competition-share、挂单资金占比字段和 not_low_competition 高竞争混入标签，shadow report 是 snapshot 派生结果，不单独落表。Rewards AI advisory 已接入 `reward_market_candles`，5m source K 线由 orderbook 服务统一低频限速调用 CLOB `/prices-history` 写入，不由 worker/API 直接请求外部接口；AI advisory 在 application 层把这些 source candles 聚合为 1h 输入。Rewards AI advisory / info-risk 的实际 provider 调用复用 `llm_calls` 做每日调用统计，通用数据库维护保留 180 天。
 
 ## 修改检查清单
 

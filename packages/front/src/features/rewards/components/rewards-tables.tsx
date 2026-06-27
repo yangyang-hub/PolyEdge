@@ -1,12 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowDown, ArrowUp, Search } from "lucide-react";
-
 import { StatusPill } from "@/components/shared/status-pill";
 import { TruncateText } from "@/components/shared/truncate-text";
 import { PaginationBar } from "@/components/pagination-bar";
-import { Input } from "@/components/ui/input";
 import {
   Table,
   TableBody,
@@ -23,12 +19,14 @@ import type {
   RewardPositionDto,
   RewardQuotePlanDto,
   RewardRiskEventDto,
+  RewardTokenQuoteDto,
 } from "@/lib/contracts/dto";
 import {
   approvalSeverityTone,
   formatFixed,
   formatOptionalClock,
   formatSignedFixed,
+  formatSignedPercent,
   formatUsdFixed,
 } from "@/lib/formatters";
 import { usePagination } from "@/hooks/use-pagination";
@@ -36,127 +34,24 @@ import type { PaginationState } from "@/hooks/use-pagination";
 import { dictionary } from "@/lib/i18n/dictionaries";
 
 import { quoteReadinessLabel, quoteReadinessTone, rewardTone } from "../lib/rewards-helpers";
+import { computePositionPnl, getPositionQuote } from "../lib/position-metrics";
 import { LowCompetitionSummary } from "./rewards-low-competition-summary";
+import { DebouncedFilterBar, SortIndicator } from "./rewards-table-controls";
 
-function SortIndicator({ active, order }: { active: boolean; order: "asc" | "desc" }) {
-  if (!active) return null;
-  return order === "asc" ? <ArrowUp className="ml-1 inline size-3" /> : <ArrowDown className="ml-1 inline size-3" />;
+function providerDecisionTone(allowed: boolean) {
+  return allowed ? "success" : "danger";
 }
 
-function aiSuitabilityTone(suitability?: string | null) {
-  if (suitability === "allow") return "success";
-  if (suitability === "avoid") return "danger";
-  if (suitability === "watch") return "warning";
-  return "neutral";
+function providerDecisionLabel(allowed: boolean) {
+  return allowed ? dictionary.rewards.allowQuote : dictionary.rewards.disallowQuote;
 }
 
-function infoRiskTone(level?: string | null) {
-  if (level === "critical" || level === "high") return "danger";
-  if (level === "medium" || level === "unknown") return "warning";
-  if (level === "low") return "success";
-  return "neutral";
+function infoRiskAllowsQuote(level?: string | null) {
+  return level === "low";
 }
 
-function FilterBar({
-  search,
-  onSearchChange,
-  onSearchCommit,
-  placeholder,
-  tabs,
-  activeTab,
-  onTabChange,
-}: {
-  search: string;
-  onSearchChange: (v: string) => void;
-  onSearchCommit: () => void;
-  placeholder: string;
-  tabs: { key: string; label: string; count?: number }[];
-  activeTab: string;
-  onTabChange: (key: string) => void;
-}) {
-  return (
-    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-      <div className="relative w-full sm:max-w-xs">
-        <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-        <Input
-          className="h-8 pl-8 text-sm"
-          placeholder={placeholder}
-          value={search}
-          onChange={(e) => onSearchChange(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter") onSearchCommit(); }}
-          onBlur={onSearchCommit}
-        />
-      </div>
-      <div className="flex flex-wrap gap-1">
-        {tabs.map((tab) => (
-          <button
-            key={tab.key}
-            type="button"
-            className={
-              "rounded-md px-2.5 py-1 text-xs font-medium transition-colors " +
-              (activeTab === tab.key
-                ? "bg-primary text-primary-foreground"
-                : "bg-muted text-muted-foreground hover:bg-muted/80")
-            }
-            onClick={() => onTabChange(tab.key)}
-          >
-            {tab.label}
-            {typeof tab.count === "number" ? <span className="ml-1 opacity-70">{tab.count}</span> : null}
-          </button>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function DebouncedFilterBar({
-  initialSearch,
-  onSearchChange,
-  placeholder,
-  tabs,
-  activeTab,
-  onTabChange,
-}: {
-  initialSearch: string;
-  onSearchChange: (value: string) => void;
-  placeholder: string;
-  tabs: { key: string; label: string; count?: number }[];
-  activeTab: string;
-  onTabChange: (key: string) => void;
-}) {
-  const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
-  const [search, setSearch] = useState(initialSearch);
-  const [lastInitialSearch, setLastInitialSearch] = useState(initialSearch);
-
-  // 外部搜索词变化时同步到内部状态（render 期调整，避免 effect setState 与 key remount 失焦）。
-  if (initialSearch !== lastInitialSearch) {
-    setLastInitialSearch(initialSearch);
-    setSearch(initialSearch);
-  }
-
-  useEffect(() => () => clearTimeout(debounceRef.current), []);
-
-  const handleSearchChange = useCallback((value: string) => {
-    setSearch(value);
-    clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => onSearchChange(value), 300);
-  }, [onSearchChange]);
-  const handleSearchCommit = useCallback(() => {
-    clearTimeout(debounceRef.current);
-    onSearchChange(search);
-  }, [onSearchChange, search]);
-
-  return (
-    <FilterBar
-      search={search}
-      onSearchChange={handleSearchChange}
-      onSearchCommit={handleSearchCommit}
-      placeholder={placeholder}
-      tabs={tabs}
-      activeTab={activeTab}
-      onTabChange={onTabChange}
-    />
-  );
+function aiAdvisoryAllowsQuote(suitability?: string | null) {
+  return suitability === "allow";
 }
 
 export function FillsTable({ fills }: { fills: RewardFillDto[] }) {
@@ -203,7 +98,13 @@ export function FillsTable({ fills }: { fills: RewardFillDto[] }) {
   );
 }
 
-export function PositionsTable({ positions }: { positions: RewardPositionDto[] }) {
+export function PositionsTable({
+  positions,
+  tokenQuotes,
+}: {
+  positions: RewardPositionDto[];
+  tokenQuotes: Record<string, RewardTokenQuoteDto> | null | undefined;
+}) {
   const pagination = usePagination(positions.length, 8);
 
   if (positions.length === 0) {
@@ -212,32 +113,53 @@ export function PositionsTable({ positions }: { positions: RewardPositionDto[] }
 
   return (
     <div>
-      <Table className="min-w-[720px]">
+      <Table className="min-w-[1120px]">
         <TableHeader>
           <TableRow>
             <TableHead>{dictionary.rewards.market}</TableHead>
             <TableHead>{dictionary.rewards.outcome}</TableHead>
             <TableHead>{dictionary.rewards.size}</TableHead>
             <TableHead>{dictionary.rewards.avgPrice}</TableHead>
-            <TableHead>{dictionary.rewards.pnl}</TableHead>
+            <TableHead>{dictionary.rewards.bestBid}</TableHead>
+            <TableHead>{dictionary.rewards.bestAsk}</TableHead>
+            <TableHead>{dictionary.rewards.pnlAmount}</TableHead>
+            <TableHead>{dictionary.rewards.pnlPercent}</TableHead>
             <TableHead>{dictionary.rewards.time}</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
-          {positions.slice(pagination.start, pagination.end).map((position) => (
-            <TableRow key={`${position.condition_id}:${position.token_id}`}>
-              <TableCell className="max-w-[220px] whitespace-normal break-all font-mono text-xs leading-5 text-muted-foreground">
-                {position.condition_id}
-              </TableCell>
-              <TableCell>{position.outcome}</TableCell>
-              <TableCell className="font-mono">{formatFixed(position.size, 2)}</TableCell>
-              <TableCell className="font-mono">{formatFixed(position.avg_price, 3)}</TableCell>
-              <TableCell className="font-mono">{formatSignedFixed(position.realized_pnl, 2)}</TableCell>
-              <TableCell className="font-mono text-xs text-muted-foreground">
-                {formatOptionalClock(position.updated_at)}
-              </TableCell>
-            </TableRow>
-          ))}
+          {positions.slice(pagination.start, pagination.end).map((position) => {
+            const quote = getPositionQuote(tokenQuotes, position.token_id);
+            const bestBid = quote?.best_bid ?? null;
+            const bestAsk = quote?.best_ask ?? null;
+            const pnl = computePositionPnl({
+              size: position.size,
+              avg_price: position.avg_price,
+              realized_pnl: position.realized_pnl,
+              mark_price: quote?.mark_price ?? null,
+            });
+            return (
+              <TableRow key={`${position.condition_id}:${position.token_id}`}>
+                <TableCell className="max-w-[220px] whitespace-normal break-all font-mono text-xs leading-5 text-muted-foreground">
+                  {position.condition_id}
+                </TableCell>
+                <TableCell>{position.outcome}</TableCell>
+                <TableCell className="font-mono">{formatFixed(position.size, 2)}</TableCell>
+                <TableCell className="font-mono">{formatFixed(position.avg_price, 3)}</TableCell>
+                <TableCell className="font-mono">{bestBid != null ? formatFixed(bestBid, 3) : "—"}</TableCell>
+                <TableCell className="font-mono">{bestAsk != null ? formatFixed(bestAsk, 3) : "—"}</TableCell>
+                <TableCell className="font-mono">
+                  {pnl.amount != null ? formatSignedFixed(pnl.amount, 2) : "—"}
+                </TableCell>
+                <TableCell className="font-mono">
+                  {pnl.percent != null ? formatSignedPercent(pnl.percent, 1) : "—"}
+                </TableCell>
+                <TableCell className="font-mono text-xs text-muted-foreground">
+                  {formatOptionalClock(position.updated_at)}
+                </TableCell>
+              </TableRow>
+            );
+          })}
         </TableBody>
       </Table>
       <PaginationBar pagination={pagination} totalItems={positions.length} />
@@ -388,40 +310,46 @@ export function QuotePlansTable({
                 <TableCell className="whitespace-normal align-top text-xs">
                   {plan.info_risk == null ? (
                     <span className="text-muted-foreground">{dictionary.rewards.none}</span>
-                  ) : (
-                    <div className="space-y-1">
-                      <div className="flex flex-wrap items-center gap-1">
-                        <StatusPill tone={infoRiskTone(plan.info_risk.risk_level)}>
-                          {plan.info_risk.risk_level}
-                        </StatusPill>
-                        <span className="font-mono text-muted-foreground">
-                          {plan.info_risk.risk_type} · {formatFixed(plan.info_risk.confidence, 2)}
-                        </span>
+                  ) : (() => {
+                    const allowed = infoRiskAllowsQuote(plan.info_risk.risk_level);
+                    return (
+                      <div className="space-y-1">
+                        <div className="flex flex-wrap items-center gap-1">
+                          <StatusPill tone={providerDecisionTone(allowed)}>
+                            {providerDecisionLabel(allowed)}
+                          </StatusPill>
+                          <span className="font-mono text-muted-foreground">
+                            {dictionary.common.confidence} {formatFixed(plan.info_risk.confidence, 2)}
+                          </span>
+                        </div>
+                        <TruncateText text={plan.info_risk.summary} lines={2} className="leading-5 text-muted-foreground" />
                       </div>
-                      <TruncateText text={plan.info_risk.summary} lines={2} className="leading-5 text-muted-foreground" />
-                    </div>
-                  )}
+                    );
+                  })()}
                 </TableCell>
                 <TableCell className="whitespace-normal align-top text-xs">
                   {plan.ai_advisory == null ? (
                     <span className="text-muted-foreground">{dictionary.rewards.none}</span>
-                  ) : (
-                    <div className="space-y-1">
-                      <div className="flex flex-wrap items-center gap-1">
-                        <StatusPill tone={aiSuitabilityTone(plan.ai_advisory.suitability)}>
-                          {plan.ai_advisory.suitability}
-                        </StatusPill>
-                        <span className="font-mono text-muted-foreground">
-                          {plan.ai_advisory.quote_mode} · {formatFixed(plan.ai_advisory.confidence, 2)}
-                        </span>
+                  ) : (() => {
+                    const allowed = aiAdvisoryAllowsQuote(plan.ai_advisory.suitability);
+                    return (
+                      <div className="space-y-1">
+                        <div className="flex flex-wrap items-center gap-1">
+                          <StatusPill tone={providerDecisionTone(allowed)}>
+                            {providerDecisionLabel(allowed)}
+                          </StatusPill>
+                          <span className="font-mono text-muted-foreground">
+                            {dictionary.common.confidence} {formatFixed(plan.ai_advisory.confidence, 2)}
+                          </span>
+                        </div>
+                        <TruncateText
+                          text={plan.ai_advisory.reasons[0] ?? dictionary.rewards.none}
+                          lines={2}
+                          className="leading-5 text-muted-foreground"
+                        />
                       </div>
-                      <TruncateText
-                        text={plan.ai_advisory.reasons[0] ?? dictionary.rewards.none}
-                        lines={2}
-                        className="leading-5 text-muted-foreground"
-                      />
-                    </div>
-                  )}
+                    );
+                  })()}
                 </TableCell>
               </TableRow>
             ))
@@ -435,6 +363,7 @@ export function QuotePlansTable({
 
 interface OrdersTableProps {
   orders: ManagedRewardOrderDto[];
+  tokenQuotes: Record<string, RewardTokenQuoteDto> | null | undefined;
   search: string;
   onSearchChange: (v: string) => void;
   status: "all" | "open" | "filled" | "cancelled" | "exit_pending";
@@ -448,7 +377,7 @@ interface OrdersTableProps {
 }
 
 export function OrdersTable({
-  orders, search, onSearchChange, status, onStatusChange,
+  orders, tokenQuotes, search, onSearchChange, status, onStatusChange,
   sortBy, sortOrder, onSortChange, page, onPageChange, filtering,
 }: OrdersTableProps) {
   const tabs = [
@@ -491,7 +420,7 @@ export function OrdersTable({
         onTabChange={(key) => onStatusChange(key as typeof status)}
       />
       {filtering && <p className="text-xs text-muted-foreground">…</p>}
-      <Table className="min-w-[780px] table-fixed">
+      <Table className="min-w-[980px] table-fixed">
         <TableHeader>
           <TableRow>
             <TableHead className="w-[120px]">{dictionary.rewards.state}</TableHead>
@@ -508,6 +437,8 @@ export function OrdersTable({
                 <SortIndicator active={sortBy === "price"} order={sortOrder} />
               </button>
             </TableHead>
+            <TableHead>{dictionary.rewards.bestBid}</TableHead>
+            <TableHead>{dictionary.rewards.bestAsk}</TableHead>
             <TableHead
               aria-sort={sortBy === "size" ? (sortOrder === "asc" ? "ascending" : "descending") : "none"}
             >
@@ -527,28 +458,39 @@ export function OrdersTable({
         <TableBody>
           {orders.length === 0 ? (
             <TableRow>
-              <TableCell colSpan={6} className="py-6 text-center text-sm text-muted-foreground">
+              <TableCell colSpan={8} className="py-6 text-center text-sm text-muted-foreground">
                 {dictionary.rewards.none}
               </TableCell>
             </TableRow>
           ) : (
-            orders.map((order) => (
-              <TableRow key={order.id}>
-                <TableCell className="align-top">
-                  <StatusPill tone={rewardTone(order.status)}>{order.status}</StatusPill>
-                  {order.strategy_bucket === "low_competition" ? (
-                    <div className="mt-1 text-[11px] text-muted-foreground">{dictionary.rewards.lowCompetition}</div>
-                  ) : null}
-                </TableCell>
-                <TableCell className="align-top">{order.outcome}</TableCell>
-                <TableCell className="align-top font-mono">{formatFixed(order.price, 2)}</TableCell>
-                <TableCell className="align-top font-mono">{formatFixed(order.size, 2)}</TableCell>
-                <TableCell className="align-top">{order.scoring ? dictionary.common.active : dictionary.common.idle}</TableCell>
-                <TableCell className="align-top text-xs leading-5 text-muted-foreground">
-                  <TruncateText text={order.reason} lines={2} />
-                </TableCell>
-              </TableRow>
-            ))
+            orders.map((order) => {
+              const orderQuote = getPositionQuote(tokenQuotes, order.token_id);
+              const orderBestBid = orderQuote?.best_bid ?? null;
+              const orderBestAsk = orderQuote?.best_ask ?? null;
+              return (
+                <TableRow key={order.id}>
+                  <TableCell className="align-top">
+                    <StatusPill tone={rewardTone(order.status)}>{order.status}</StatusPill>
+                    {order.strategy_bucket === "low_competition" ? (
+                      <div className="mt-1 text-[11px] text-muted-foreground">{dictionary.rewards.lowCompetition}</div>
+                    ) : null}
+                  </TableCell>
+                  <TableCell className="align-top">{order.outcome}</TableCell>
+                  <TableCell className="align-top font-mono">{formatFixed(order.price, 2)}</TableCell>
+                  <TableCell className="align-top font-mono">
+                    {orderBestBid != null ? formatFixed(orderBestBid, 3) : "—"}
+                  </TableCell>
+                  <TableCell className="align-top font-mono">
+                    {orderBestAsk != null ? formatFixed(orderBestAsk, 3) : "—"}
+                  </TableCell>
+                  <TableCell className="align-top font-mono">{formatFixed(order.size, 2)}</TableCell>
+                  <TableCell className="align-top">{order.scoring ? dictionary.common.active : dictionary.common.idle}</TableCell>
+                  <TableCell className="align-top text-xs leading-5 text-muted-foreground">
+                    <TruncateText text={order.reason} lines={2} />
+                  </TableCell>
+                </TableRow>
+              );
+            })
           )}
         </TableBody>
       </Table>

@@ -259,7 +259,7 @@ impl RewardBotService {
     ) -> Result<()> {
         let Some(sample) = reward_market_candle_sample_from_cached_book(
             book,
-            REWARD_AI_CANDLE_INTERVAL_SEC,
+            REWARD_PRICE_HISTORY_CANDLE_INTERVAL_SEC,
         )?
         else {
             return Ok(());

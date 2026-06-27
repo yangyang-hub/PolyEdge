@@ -344,12 +344,12 @@ fn ensure_provider(request: &RewardAiAdvisoryRequest, expected: RewardAiProvider
 }
 
 fn reward_ai_system_prompt() -> &'static str {
-    "You are a risk reviewer for Polymarket rewards maker orders. Return exactly one JSON object and nothing else. Do not use markdown, comments, prose, or unquoted keys. Do not suggest bypassing deterministic risk checks. Favor watch/avoid when data is thin, concentrated, stale, or reversal risk is unclear."
+    "You are a risk reviewer for Polymarket rewards maker orders. Return exactly one JSON object and nothing else. Do not use markdown, comments, prose, or unquoted keys. Your decision field is only allow_quote: true means maker quoting is allowed, false means maker quoting is not allowed. Do not return watch, avoid, risk levels, or other status categories. Do not suggest bypassing deterministic risk checks."
 }
 
 fn reward_ai_user_prompt(request: &RewardAiAdvisoryRequest) -> String {
     format!(
-        "Assess whether this rewards market is suitable for maker quoting. Return one valid JSON object with double-quoted keys and these fields: suitability allow|watch|avoid, quote_mode double|single_yes|single_no|none, exit_policy exit_at_markup|hold_and_requote|flatten_immediately, confidence 0..1, reasons string array, metrics object. Use {{}} for metrics when unsure.\nInput:\n{}",
+        "Assess whether this rewards market is suitable for maker quoting over the full provider_cache_policy TTL horizon. Use current pricing_context to judge whether the live orderbook prices, spreads, binary midpoint sum, quote edge, and stale-book age make the deterministic quote prices reasonable. Return one valid JSON object with double-quoted keys and only these decision fields: allow_quote boolean, confidence 0..1, reasons string array, metrics object. Set allow_quote=false when pricing is unreasonable, data is too thin/stale for the TTL horizon, or reversal risk is unclear. Use {{}} for metrics when unsure.\nInput:\n{}",
         request.payload
     )
 }
@@ -358,11 +358,9 @@ fn reward_ai_json_schema() -> Value {
     json!({
         "type": "object",
         "additionalProperties": false,
-        "required": ["suitability", "quote_mode", "exit_policy", "confidence", "reasons", "metrics"],
+        "required": ["allow_quote", "confidence", "reasons", "metrics"],
         "properties": {
-            "suitability": {"type": "string", "enum": ["allow", "watch", "avoid"]},
-            "quote_mode": {"type": "string", "enum": ["double", "single_yes", "single_no", "none"]},
-            "exit_policy": {"type": "string", "enum": ["exit_at_markup", "hold_and_requote", "flatten_immediately"]},
+            "allow_quote": {"type": "boolean"},
             "confidence": {"type": "number", "minimum": 0, "maximum": 1},
             "reasons": {"type": "array", "items": {"type": "string"}, "maxItems": 6},
             "metrics": {"type": "object"}
@@ -401,7 +399,7 @@ fn reward_ai_batch_max_tokens(batch_size: usize) -> u32 {
 }
 
 fn reward_ai_batch_system_prompt() -> &'static str {
-    "You are a risk reviewer for Polymarket rewards maker orders. You will receive a JSON object containing a \"markets\" array; assess EACH market independently of the others. Return exactly one JSON object of shape {\"advisories\":[...]} and nothing else. Do not use markdown, comments, prose, or unquoted keys. Do not suggest bypassing deterministic risk checks. Favor watch/avoid when data is thin, concentrated, stale, or reversal risk is unclear. Each advisory object must include the market's condition_id copied verbatim from the input."
+    "You are a risk reviewer for Polymarket rewards maker orders. You will receive a JSON object containing a \"markets\" array; assess EACH market independently of the others. Return exactly one JSON object of shape {\"advisories\":[...]} and nothing else. Do not use markdown, comments, prose, or unquoted keys. Each advisory object must include the market's condition_id copied verbatim from the input. The only decision field is allow_quote boolean; do not return watch, avoid, risk levels, or other status categories."
 }
 
 fn reward_ai_batch_user_prompt(requests: &[RewardAiAdvisoryRequest]) -> String {
@@ -410,7 +408,7 @@ fn reward_ai_batch_user_prompt(requests: &[RewardAiAdvisoryRequest]) -> String {
         .map(|request| json!({"condition_id": request.condition_id, "market": request.payload}))
         .collect();
     format!(
-        "Assess whether each of these rewards markets is suitable for maker quoting. Return one valid JSON object with double-quoted keys and a field \"advisories\": an array with exactly one object per input market, each containing condition_id (must match one of the input markets verbatim) plus suitability allow|watch|avoid, quote_mode double|single_yes|single_no|none, exit_policy exit_at_markup|hold_and_requote|flatten_immediately, confidence 0..1, reasons string array, metrics object. Use {{}} for metrics when unsure.\nInput:\n{{\"markets\":{}}}",
+        "Assess whether each rewards market is suitable for maker quoting over its full provider_cache_policy TTL horizon. Use each market's current pricing_context to judge whether live orderbook prices, spreads, binary midpoint sum, quote edge, and stale-book age make deterministic quote prices reasonable. Return one valid JSON object with double-quoted keys and a field \"advisories\": an array with exactly one object per input market, each containing condition_id (must match one input market verbatim), allow_quote boolean, confidence 0..1, reasons string array, metrics object. Set allow_quote=false when pricing is unreasonable, data is too thin/stale for the TTL horizon, or reversal risk is unclear. Use {{}} for metrics when unsure.\nInput:\n{{\"markets\":{}}}",
         serde_json::to_string(&markets).unwrap_or_else(|_| "[]".to_string())
     )
 }
@@ -426,12 +424,10 @@ fn reward_ai_batch_json_schema() -> Value {
                 "items": {
                     "type": "object",
                     "additionalProperties": false,
-                    "required": ["condition_id", "suitability", "quote_mode", "exit_policy", "confidence", "reasons", "metrics"],
+                    "required": ["condition_id", "allow_quote", "confidence", "reasons", "metrics"],
                     "properties": {
                         "condition_id": {"type": "string"},
-                        "suitability": {"type": "string", "enum": ["allow", "watch", "avoid"]},
-                        "quote_mode": {"type": "string", "enum": ["double", "single_yes", "single_no", "none"]},
-                        "exit_policy": {"type": "string", "enum": ["exit_at_markup", "hold_and_requote", "flatten_immediately"]},
+                        "allow_quote": {"type": "boolean"},
                         "confidence": {"type": "number", "minimum": 0, "maximum": 1},
                         "reasons": {"type": "array", "items": {"type": "string"}, "maxItems": 6},
                         "metrics": {"type": "object"}
@@ -558,6 +554,10 @@ fn parse_reward_ai_value(text: &str) -> Result<Value> {
 }
 
 fn parse_reward_ai_decision_value(value: &Value) -> Result<RewardAiAdvisoryDecision> {
+    if value.get("allow_quote").is_some() {
+        return parse_reward_ai_binary_decision_value(value);
+    }
+
     let suitability = value
         .get("suitability")
         .and_then(Value::as_str)
@@ -600,8 +600,53 @@ fn parse_reward_ai_decision_value(value: &Value) -> Result<RewardAiAdvisoryDecis
     })
 }
 
+fn parse_reward_ai_binary_decision_value(value: &Value) -> Result<RewardAiAdvisoryDecision> {
+    let allow_quote = value
+        .get("allow_quote")
+        .and_then(Value::as_bool)
+        .ok_or_else(|| reward_ai_missing_field("allow_quote"))?;
+    let confidence = parse_confidence(value.get("confidence"))
+        .ok_or_else(|| reward_ai_missing_field("confidence"))?;
+    let reasons = value
+        .get("reasons")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.as_str().map(ToString::to_string))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let metrics = value
+        .get("metrics")
+        .cloned()
+        .filter(Value::is_object)
+        .unwrap_or_else(|| json!({}));
+    Ok(RewardAiAdvisoryDecision {
+        suitability: if allow_quote {
+            RewardAiSuitability::Allow
+        } else {
+            RewardAiSuitability::Avoid
+        },
+        quote_mode: if allow_quote {
+            RewardPlanQuoteMode::Double
+        } else {
+            RewardPlanQuoteMode::None
+        },
+        exit_policy: if allow_quote {
+            polyedge_application::PostFillStrategy::ExitAtMarkup
+        } else {
+            polyedge_application::PostFillStrategy::FlattenImmediately
+        },
+        confidence,
+        reasons,
+        metrics,
+    })
+}
+
 fn reward_ai_candidate_has_known_field(value: &Value) -> bool {
-    value.get("suitability").is_some()
+    value.get("allow_quote").is_some()
+        || value.get("suitability").is_some()
         || value.get("quote_mode").is_some()
         || value.get("exit_policy").is_some()
         || value.get("confidence").is_some()
@@ -649,147 +694,5 @@ fn reward_ai_status_error(status: u16, body: Value) -> AppError {
 mod tests {
     use super::*;
 
-    #[test]
-    fn reward_ai_confidence_is_clamped_to_unit_interval() {
-        let high = parse_reward_ai_decision(
-            r#"{
-                "suitability": "allow",
-                "quote_mode": "double",
-                "exit_policy": "exit_at_markup",
-                "confidence": 1.5,
-                "reasons": [],
-                "metrics": {}
-            }"#,
-        )
-        .expect("parse high confidence");
-        assert_eq!(high.confidence, Decimal::ONE);
-
-        let low = parse_reward_ai_decision(
-            r#"{
-                "suitability": "watch",
-                "quote_mode": "none",
-                "exit_policy": "flatten_immediately",
-                "confidence": "-0.2",
-                "reasons": [],
-                "metrics": {}
-            }"#,
-        )
-        .expect("parse low confidence");
-        assert_eq!(low.confidence, Decimal::ZERO);
-    }
-
-    #[test]
-    fn reward_ai_parse_skips_embedded_example_object() {
-        let parsed = parse_reward_ai_decision(
-            r#"Example shape: {"example": true}
-Final:
-{"suitability":"allow","quote_mode":"double","exit_policy":"exit_at_markup","confidence":0.8,"reasons":[],"metrics":{}}
-"#,
-        )
-        .expect("parse embedded response");
-
-        assert_eq!(parsed.suitability, RewardAiSuitability::Allow);
-        assert_eq!(parsed.quote_mode, RewardPlanQuoteMode::Double);
-    }
-
-    #[test]
-    fn reward_ai_parse_accepts_json_string_payload() {
-        let parsed = parse_reward_ai_decision(
-            r#""{\"suitability\":\"watch\",\"quote_mode\":\"none\",\"exit_policy\":\"flatten_immediately\",\"confidence\":0.4,\"reasons\":[],\"metrics\":{}}""#,
-        )
-        .expect("parse json string payload");
-
-        assert_eq!(parsed.suitability, RewardAiSuitability::Watch);
-        assert_eq!(parsed.confidence, Decimal::from_str("0.4").unwrap());
-    }
-
-    #[test]
-    fn reward_ai_batch_parse_full_array() {
-        let items = parse_reward_ai_batch_decision(
-            r#"{"advisories":[
-                {"condition_id":"c1","suitability":"allow","quote_mode":"double","exit_policy":"exit_at_markup","confidence":0.8,"reasons":[],"metrics":{}},
-                {"condition_id":"c2","suitability":"watch","quote_mode":"none","exit_policy":"flatten_immediately","confidence":0.4,"reasons":[],"metrics":{}}
-            ]}"#,
-            &["c1".to_string(), "c2".to_string()],
-        )
-        .expect("parse full batch array");
-        assert_eq!(items.len(), 2);
-        assert_eq!(items[0].condition_id, "c1");
-        assert_eq!(items[0].decision.suitability, RewardAiSuitability::Allow);
-        assert_eq!(items[1].condition_id, "c2");
-        assert_eq!(items[1].decision.suitability, RewardAiSuitability::Watch);
-    }
-
-    #[test]
-    fn reward_ai_batch_parse_matches_by_condition_id_regardless_of_order() {
-        let items = parse_reward_ai_batch_decision(
-            r#"{"advisories":[
-                {"condition_id":"c2","suitability":"avoid","quote_mode":"none","exit_policy":"flatten_immediately","confidence":0.2,"reasons":[],"metrics":{}},
-                {"condition_id":"c1","suitability":"allow","quote_mode":"double","exit_policy":"exit_at_markup","confidence":0.9,"reasons":[],"metrics":{}}
-            ]}"#,
-            &["c1".to_string(), "c2".to_string()],
-        )
-        .expect("parse reordered batch");
-        assert_eq!(items.len(), 2);
-        let by_id: std::collections::HashMap<&str, &RewardAiAdvisoryDecision> = items
-            .iter()
-            .map(|item| (item.condition_id.as_str(), &item.decision))
-            .collect();
-        assert_eq!(by_id["c1"].suitability, RewardAiSuitability::Allow);
-        assert_eq!(by_id["c2"].suitability, RewardAiSuitability::Avoid);
-    }
-
-    #[test]
-    fn reward_ai_batch_parse_drops_unknown_and_duplicate_condition_ids() {
-        let items = parse_reward_ai_batch_decision(
-            r#"{"advisories":[
-                {"condition_id":"c1","suitability":"allow","quote_mode":"double","exit_policy":"exit_at_markup","confidence":0.7,"reasons":[],"metrics":{}},
-                {"condition_id":"typo","suitability":"allow","quote_mode":"double","exit_policy":"exit_at_markup","confidence":0.7,"reasons":[],"metrics":{}},
-                {"condition_id":"c1","suitability":"watch","quote_mode":"none","exit_policy":"flatten_immediately","confidence":0.3,"reasons":[],"metrics":{}}
-            ]}"#,
-            &["c1".to_string()],
-        )
-        .expect("parse batch with unknown and duplicate condition ids");
-        assert_eq!(items.len(), 1);
-        assert_eq!(items[0].condition_id, "c1");
-        assert_eq!(items[0].decision.suitability, RewardAiSuitability::Allow);
-    }
-
-    #[test]
-    fn reward_ai_batch_parse_returns_partial_when_one_market_omitted() {
-        // The omitted market is simply absent; the caller retries it via the single-request fallback.
-        let result = parse_reward_ai_batch_decision(
-            r#"{"advisories":[
-                {"condition_id":"c1","suitability":"allow","quote_mode":"double","exit_policy":"exit_at_markup","confidence":0.7,"reasons":[],"metrics":{}}
-            ]}"#,
-            &["c1".to_string(), "c2".to_string()],
-        )
-        .expect("parse partial batch");
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].condition_id, "c1");
-    }
-
-    #[test]
-    fn reward_ai_batch_parse_single_object_fallback_for_one_market() {
-        let items = parse_reward_ai_batch_decision(
-            r#"{"suitability":"allow","quote_mode":"double","exit_policy":"exit_at_markup","confidence":0.8,"reasons":[],"metrics":{}}"#,
-            &["only".to_string()],
-        )
-        .expect("parse single object fallback");
-        assert_eq!(items.len(), 1);
-        assert_eq!(items[0].condition_id, "only");
-        assert_eq!(
-            items[0].decision.confidence,
-            Decimal::from_str("0.8").unwrap()
-        );
-    }
-
-    #[test]
-    fn reward_ai_batch_parse_rejects_single_object_when_multiple_markets_expected() {
-        let result = parse_reward_ai_batch_decision(
-            r#"{"suitability":"allow","quote_mode":"double","exit_policy":"exit_at_markup","confidence":0.8,"reasons":[],"metrics":{}}"#,
-            &["c1".to_string(), "c2".to_string()],
-        );
-        assert!(result.is_err());
-    }
+    include!("reward_ai_tests.rs");
 }
