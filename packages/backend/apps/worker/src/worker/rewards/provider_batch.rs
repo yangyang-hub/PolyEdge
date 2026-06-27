@@ -386,7 +386,13 @@ async fn run_reward_ai_advisory_batch_flush(
                     error = %error,
                     "reward AI advisory batch request failed; falling back to per-condition requests",
                 );
-                if !reward_ai_provider_is_overloaded(&error) {
+                // When a fallback endpoint is configured, still fan out to
+                // per-condition requests (each retries primary then fallback)
+                // so the fallback is actually tried. Only skip the fan-out when
+                // there is no fallback and the primary batch was overloaded.
+                let skip_singles = advisory_fallback_channel.is_none()
+                    && reward_ai_provider_is_overloaded(&error);
+                if !skip_singles {
                     for request in &requests {
                         report.fallback_singles += 1;
                         match single_reward_ai_advise_and_save(

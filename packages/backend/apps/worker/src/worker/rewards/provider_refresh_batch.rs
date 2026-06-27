@@ -85,7 +85,11 @@ async fn refresh_reward_ai_advisory_provider_batch(
                     error = %error,
                     "reward AI advisory batch request failed; falling back to single requests",
                 );
-                if reward_ai_provider_is_overloaded(&error) {
+                // When a fallback endpoint is configured, still fan out to
+                // per-condition requests (each retries primary then fallback)
+                // so the fallback is actually tried. Only short-circuit the
+                // round when there is no fallback and the primary is overloaded.
+                if fallback_channel.is_none() && reward_ai_provider_is_overloaded(&error) {
                     return Ok(true);
                 }
                 let fallback_conditions = requests
@@ -406,7 +410,11 @@ async fn refresh_reward_info_risk_provider_batch(
                     error = %error,
                     "reward info risk batch request failed; falling back to single requests",
                 );
-                if reward_ai_provider_is_overloaded(&error) {
+                // When a fallback endpoint is configured, still fan out to
+                // per-condition requests (each retries primary then fallback)
+                // so the fallback is actually tried. Only short-circuit the
+                // round when there is no fallback and the primary is overloaded.
+                if fallback_channel.is_none() && reward_ai_provider_is_overloaded(&error) {
                     return Ok(true);
                 }
                 let fallback_conditions = requests
