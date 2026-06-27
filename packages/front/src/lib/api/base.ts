@@ -58,6 +58,48 @@ function createCursorPage(limit: number) {
   };
 }
 
+type OffsetPageEnvelope = {
+  page?: number;
+  page_size?: number;
+  total_items?: number;
+  total_pages?: number;
+};
+
+type PaginatedListEnvelope<T> = {
+  data: T[];
+  page?: OffsetPageEnvelope;
+};
+
+function isPaginatedListEnvelope<T>(value: unknown): value is PaginatedListEnvelope<T> {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "data" in value &&
+    Array.isArray((value as { data?: unknown }).data)
+  );
+}
+
+function createPageFromOffsetEnvelope(
+  page: OffsetPageEnvelope | undefined,
+  fallbackLimit: number,
+): ApiListResponse<unknown>["page"] {
+  if (!page) {
+    return createCursorPage(fallbackLimit);
+  }
+
+  const currentPage = Number(page.page);
+  const totalPages = Number(page.total_pages);
+  const pageSize = Number(page.page_size);
+
+  return {
+    limit: Number.isFinite(pageSize) ? pageSize : fallbackLimit,
+    next_cursor: null,
+    has_more: Number.isFinite(currentPage) && Number.isFinite(totalPages)
+      ? currentPage < totalPages
+      : false,
+  };
+}
+
 export function getBackendMode(): BackendMode {
   return "live";
 }
@@ -210,7 +252,7 @@ export async function fetchListContract<TLive, TFront = TLive>(
     mapItem?: (item: TLive) => TFront;
   },
 ): Promise<ApiListResponse<TFront>> {
-  const payload = await fetchJson<ApiResponse<TLive[]>>(
+  const payload = await fetchJson<ApiResponse<TLive[] | PaginatedListEnvelope<TLive>>>(
     path,
     {
       headers: {
@@ -220,11 +262,29 @@ export async function fetchListContract<TLive, TFront = TLive>(
     {
     },
   );
-  const items = options?.mapItem ? payload.data.map(options.mapItem) : (payload.data as unknown as TFront[]);
+  const listPayload = payload.data;
+  const liveItems = Array.isArray(listPayload)
+    ? listPayload
+    : isPaginatedListEnvelope<TLive>(listPayload)
+      ? listPayload.data
+      : null;
+
+  if (!liveItems) {
+    throw new PolyEdgeApiError("PolyEdge API returned an invalid list response shape", {
+      requestId: payload.meta.request_id,
+      traceId: payload.meta.trace_id,
+      retryable: false,
+    });
+  }
+
+  const page = Array.isArray(listPayload)
+    ? createCursorPage(liveItems.length)
+    : createPageFromOffsetEnvelope(listPayload.page, liveItems.length);
+  const items = options?.mapItem ? liveItems.map(options.mapItem) : (liveItems as unknown as TFront[]);
 
   return {
     data: items,
-    page: createCursorPage(items.length),
+    page,
     meta: payload.meta,
   };
 }

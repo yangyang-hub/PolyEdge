@@ -30,12 +30,12 @@
 | `dto/settings.ts` | RuntimeConfigEntryDto、RuntimeConfigUpdateDto |
 | `api.ts` | API 响应信封类型 |
 
-### HTTP 客户端层 — `src/lib/api/base.ts`（~263 行）
+### HTTP 客户端层 — `src/lib/api/base.ts`（~323 行）
 
 **核心导出：**
 - `PolyEdgeApiError`：自定义错误类（code、requestId、traceId、retryable）
 - `fetchContract<T>(path)` — GET 请求，返回单个类型化负载
-- `fetchListContract<TLive, TFront>(path, options?)` — GET 列表请求，支持 `mapItem` 转换
+- `fetchListContract<TLive, TFront>(path, options?)` — GET 列表请求，支持旧版直接数组响应和后端分页信封 `{ data: { data, page }, meta }`，并支持 `mapItem` 转换
 - `fetchWriteContract<TLive, TFront>(path, init, options?)` — POST/PATCH 写操作，含 Idempotency-Key 和 step-up auth
 - `buildQueryString(query)` — 构建 URL 查询参数
 - `InternalApiStepUpScope` — 9 个提权操作范围（含 `funding_transfer`）
@@ -86,7 +86,7 @@
 ## 数据流
 
 ```
-Server Component（页面）
+Page / ClientDataBoundary（静态导出下浏览器执行首屏 loader）
     ↓ props
 Loader（features/*/loaders/*-page-data.ts）
     ↓ 调用
@@ -111,6 +111,7 @@ OperationActionResult → 更新 UI 状态
 ## 当前状态
 
 - 8 个领域 API 模块覆盖当前前端页面使用的后端端点，`base.ts` 和 `actions.ts`/`actions/` 提供共享请求与写操作封装
+- `fetchListContract()` 已兼容 events/evidences/news 等后端分页信封，同时保留旧版直接数组列表响应兼容；调用方继续读取统一的 `ApiListResponse<T>`
 - `actions.ts` 只做兼容 re-export；具体 Server Actions 已按 rewards、copytrade、settings、funding 拆到 `actions/`，共享结果构造和数字校验在 `actions/shared.ts`
 - 旧 `/radar`、`/signals`、`/positions`、`/risk` 页面对应的 API 模块、Server Actions 和 DTO 类型镜像已移除；Rewards 和 wallet-analysis 内部仍可在自身 DTO 中表达持仓/风险字段
 - DTO 类型镜像当前前端消费的后端响应；`CopyTradeSnapshotDto` 已与只读跟踪后端对齐，只包含 config、status、wallets、source_trades、events，不再声明模拟账户、订单或持仓字段
