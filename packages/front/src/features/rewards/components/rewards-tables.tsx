@@ -14,29 +14,22 @@ import {
 import type {
   ManagedRewardOrderDto,
   RewardBotConfigDto,
-  RewardFillDto,
   RewardListPageDto,
-  RewardPositionDto,
   RewardQuotePlanDto,
-  RewardRiskEventDto,
   RewardTokenQuoteDto,
 } from "@/lib/contracts/dto";
-import {
-  approvalSeverityTone,
-  formatFixed,
-  formatOptionalClock,
-  formatSignedFixed,
-  formatSignedPercent,
-  formatUsdFixed,
-} from "@/lib/formatters";
-import { usePagination } from "@/hooks/use-pagination";
+import { formatFixed, formatUsdFixed } from "@/lib/formatters";
 import type { PaginationState } from "@/hooks/use-pagination";
 import { dictionary } from "@/lib/i18n/dictionaries";
 
 import { quoteReadinessLabel, quoteReadinessTone, rewardTone } from "../lib/rewards-helpers";
-import { computePositionPnl, getPositionQuote } from "../lib/position-metrics";
+import { getPositionQuote } from "../lib/position-metrics";
 import { LowCompetitionSummary } from "./rewards-low-competition-summary";
 import { DebouncedFilterBar, SortIndicator } from "./rewards-table-controls";
+
+export { FillsTable } from "./rewards-fills-table";
+export { EventsTable } from "./rewards-events-table";
+export { PositionsTable } from "./rewards-positions-table";
 
 function providerDecisionTone(allowed: boolean) {
   return allowed ? "success" : "danger";
@@ -54,118 +47,25 @@ function aiAdvisoryAllowsQuote(suitability?: string | null) {
   return suitability === "allow";
 }
 
-export function FillsTable({ fills }: { fills: RewardFillDto[] }) {
-  const pagination = usePagination(fills.length, 15);
-
-  if (fills.length === 0) {
-    return <p className="py-6 text-center text-sm text-muted-foreground">{dictionary.rewards.none}</p>;
-  }
-
-  return (
-    <div>
-    <Table className="min-w-[700px]">
-      <TableHeader>
-        <TableRow>
-          <TableHead>{dictionary.rewards.outcome}</TableHead>
-          <TableHead>{dictionary.rewards.side}</TableHead>
-          <TableHead>{dictionary.rewards.role}</TableHead>
-          <TableHead>{dictionary.rewards.price}</TableHead>
-          <TableHead>{dictionary.rewards.size}</TableHead>
-          <TableHead>{dictionary.rewards.pnl}</TableHead>
-          <TableHead>{dictionary.rewards.time}</TableHead>
-        </TableRow>
-      </TableHeader>
-      <TableBody>
-        {fills.slice(pagination.start, pagination.end).map((fill) => (
-          <TableRow key={fill.id}>
-            <TableCell>{fill.outcome}</TableCell>
-            <TableCell>
-              <StatusPill tone={fill.side === "buy" ? "success" : "warning"}>{fill.side}</StatusPill>
-            </TableCell>
-            <TableCell className="font-mono text-xs">{fill.role}</TableCell>
-            <TableCell className="font-mono">{formatFixed(fill.price, 2)}</TableCell>
-            <TableCell className="font-mono">{formatFixed(fill.size, 2)}</TableCell>
-            <TableCell className="font-mono">{formatSignedFixed(fill.realized_pnl, 2)}</TableCell>
-            <TableCell className="font-mono text-xs text-muted-foreground">
-              {formatOptionalClock(fill.created_at)}
-            </TableCell>
-          </TableRow>
-        ))}
-      </TableBody>
-    </Table>
-    <PaginationBar pagination={pagination} totalItems={fills.length} />
-    </div>
-  );
+function paginationFromPage(
+  page: RewardListPageDto,
+  itemCount: number,
+  onPageChange: (page: number) => void,
+): PaginationState {
+  return {
+    page: page.page,
+    totalPages: page.total_pages,
+    start: 0,
+    end: itemCount,
+    setPage: onPageChange,
+    goPrevious: () => onPageChange(Math.max(1, page.page - 1)),
+    goNext: () => onPageChange(Math.min(page.total_pages, page.page + 1)),
+    reset: () => onPageChange(1),
+    hasPrevious: page.page > 1,
+    hasNext: page.page < page.total_pages,
+  };
 }
 
-export function PositionsTable({
-  positions,
-  tokenQuotes,
-}: {
-  positions: RewardPositionDto[];
-  tokenQuotes: Record<string, RewardTokenQuoteDto> | null | undefined;
-}) {
-  const pagination = usePagination(positions.length, 8);
-
-  if (positions.length === 0) {
-    return <p className="py-6 text-center text-sm text-muted-foreground">{dictionary.rewards.none}</p>;
-  }
-
-  return (
-    <div>
-      <Table className="min-w-[1120px]">
-        <TableHeader>
-          <TableRow>
-            <TableHead>{dictionary.rewards.market}</TableHead>
-            <TableHead>{dictionary.rewards.outcome}</TableHead>
-            <TableHead>{dictionary.rewards.size}</TableHead>
-            <TableHead>{dictionary.rewards.avgPrice}</TableHead>
-            <TableHead>{dictionary.rewards.bestBid}</TableHead>
-            <TableHead>{dictionary.rewards.bestAsk}</TableHead>
-            <TableHead>{dictionary.rewards.pnlAmount}</TableHead>
-            <TableHead>{dictionary.rewards.pnlPercent}</TableHead>
-            <TableHead>{dictionary.rewards.time}</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {positions.slice(pagination.start, pagination.end).map((position) => {
-            const quote = getPositionQuote(tokenQuotes, position.token_id);
-            const bestBid = quote?.best_bid ?? null;
-            const bestAsk = quote?.best_ask ?? null;
-            const pnl = computePositionPnl({
-              size: position.size,
-              avg_price: position.avg_price,
-              realized_pnl: position.realized_pnl,
-              mark_price: quote?.mark_price ?? null,
-            });
-            return (
-              <TableRow key={`${position.condition_id}:${position.token_id}`}>
-                <TableCell className="max-w-[220px] whitespace-normal break-all font-mono text-xs leading-5 text-muted-foreground">
-                  {position.condition_id}
-                </TableCell>
-                <TableCell>{position.outcome}</TableCell>
-                <TableCell className="font-mono">{formatFixed(position.size, 2)}</TableCell>
-                <TableCell className="font-mono">{formatFixed(position.avg_price, 3)}</TableCell>
-                <TableCell className="font-mono">{bestBid != null ? formatFixed(bestBid, 3) : "—"}</TableCell>
-                <TableCell className="font-mono">{bestAsk != null ? formatFixed(bestAsk, 3) : "—"}</TableCell>
-                <TableCell className="font-mono">
-                  {pnl.amount != null ? formatSignedFixed(pnl.amount, 2) : "—"}
-                </TableCell>
-                <TableCell className="font-mono">
-                  {pnl.percent != null ? formatSignedPercent(pnl.percent, 1) : "—"}
-                </TableCell>
-                <TableCell className="font-mono text-xs text-muted-foreground">
-                  {formatOptionalClock(position.updated_at)}
-                </TableCell>
-              </TableRow>
-            );
-          })}
-        </TableBody>
-      </Table>
-      <PaginationBar pagination={pagination} totalItems={positions.length} />
-    </div>
-  );
-}
 
 interface QuotePlansTableProps {
   plans: RewardQuotePlanDto[];
@@ -203,18 +103,7 @@ export function QuotePlansTable({
     }
   }
 
-  const pagination: PaginationState = {
-    page: plansPage.page,
-    totalPages: plansPage.total_pages,
-    start: 0,
-    end: plans.length,
-    setPage: onPageChange,
-    goPrevious: () => onPageChange(Math.max(1, plansPage.page - 1)),
-    goNext: () => onPageChange(Math.min(plansPage.total_pages, plansPage.page + 1)),
-    reset: () => onPageChange(1),
-    hasPrevious: plansPage.page > 1,
-    hasNext: plansPage.page < plansPage.total_pages,
-  };
+  const pagination = paginationFromPage(plansPage, plans.length, onPageChange);
 
   return (
     <div className="space-y-3">
@@ -396,18 +285,7 @@ export function OrdersTable({
     }
   }
 
-  const pagination: PaginationState = {
-    page: page.page,
-    totalPages: page.total_pages,
-    start: 0,
-    end: orders.length,
-    setPage: onPageChange,
-    goPrevious: () => onPageChange(Math.max(1, page.page - 1)),
-    goNext: () => onPageChange(Math.min(page.total_pages, page.page + 1)),
-    reset: () => onPageChange(1),
-    hasPrevious: page.page > 1,
-    hasNext: page.page < page.total_pages,
-  };
+  const pagination = paginationFromPage(page, orders.length, onPageChange);
 
   return (
     <div className="space-y-3">
@@ -495,40 +373,6 @@ export function OrdersTable({
         </TableBody>
       </Table>
       <PaginationBar pagination={pagination} totalItems={page.total_items} />
-    </div>
-  );
-}
-
-export function EventsTable({ events }: { events: RewardRiskEventDto[] }) {
-  const pagination = usePagination(events.length, 15);
-
-  return (
-    <div>
-    <Table className="min-w-[760px] table-fixed">
-      <TableHeader>
-        <TableRow>
-          <TableHead>{dictionary.rewards.severity}</TableHead>
-          <TableHead>{dictionary.rewards.type}</TableHead>
-          <TableHead className="w-[50%]">{dictionary.rewards.message}</TableHead>
-          <TableHead>{dictionary.common.published}</TableHead>
-        </TableRow>
-      </TableHeader>
-      <TableBody>
-        {events.slice(pagination.start, pagination.end).map((event) => (
-          <TableRow key={event.id}>
-            <TableCell>
-              <StatusPill tone={approvalSeverityTone(event.severity)}>{event.severity}</StatusPill>
-            </TableCell>
-            <TableCell className="font-mono text-xs">{event.event_type}</TableCell>
-            <TableCell className="leading-5">
-              <TruncateText text={event.message} lines={2} />
-            </TableCell>
-            <TableCell className="font-mono text-xs text-muted-foreground">{formatOptionalClock(event.created_at)}</TableCell>
-          </TableRow>
-        ))}
-      </TableBody>
-    </Table>
-    <PaginationBar pagination={pagination} totalItems={events.length} />
     </div>
   );
 }

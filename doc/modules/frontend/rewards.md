@@ -1,6 +1,6 @@
 # Rewards（奖励机器人）
 
-最后更新：2026-06-26
+最后更新：2026-06-27
 
 ## 概述
 
@@ -20,7 +20,10 @@
 | `src/features/rewards/lib/low-competition-formatters.ts` | 低竞争 bps/可选指标格式化与后端 rejection/recommendation reason 中文映射 |
 | `src/features/rewards/components/rewards-advanced-config.tsx` | 盘口选择、AI advisory 和信息风险配置子面板 |
 | `src/features/rewards/components/rewards-config-fields.tsx` | 配置面板共享字段、区块和提示组件 |
-| `src/features/rewards/components/rewards-tables.tsx` | 表格组件（订单/持仓等） |
+| `src/features/rewards/components/rewards-tables.tsx` | 报价计划和托管订单表格入口；重导出成交、持仓、事件表，合并服务端分页状态构造 |
+| `src/features/rewards/components/rewards-fills-table.tsx` | 成交记录表格 |
+| `src/features/rewards/components/rewards-positions-table.tsx` | 持仓表格与 PnL 展示 |
+| `src/features/rewards/components/rewards-events-table.tsx` | 风险/操作事件表格 |
 | `src/features/rewards/components/rewards-table-controls.tsx` | 表格排序指示、搜索输入和分页筛选 tabs 共享控件 |
 | `src/features/rewards/components/rewards-events-panel.tsx` | 事件面板 |
 | `src/features/rewards/components/number-input.tsx` | 数值输入组件 |
@@ -83,6 +86,7 @@
 - 配置不包含 `execution_mode` 选择器（始终为 live）。`per_market_usd`、`quote_size_usd`、`low_competition_per_market_usd` 已从前端 `RewardBotConfigDto` 完全移除（不再展示、提交或出现在类型里），仅后端配置兼容历史快照与旧请求。提示说明 `max_markets=0` 或 `max_open_orders=0` 会停止新挂单。
 - 报价计划默认展示当前通过非盘口依赖过滤且等待 live 盘口验证的可挂市场；每条计划携带 `quote_readiness=ready_to_quote|waiting_orderbook|provider_pending|blocked`，表格状态列优先展示“可报价 / 等待盘口 / 等待 AI/信息风险 / 已拦截”。若准备挂单时 `quote_bid_rank`、rewards spread、盘口集中度、退出深度或安全边际导致双边不可行，auto/enforce/dominant 会先尝试单腿回退；没有可行单腿时后端才会把计划标记为不可挂并返回原因和 12 小时 `live_skip_until`，到期后自动重新评估。
 - Managed orders 表格发送后端分页/搜索/状态过滤/排序 query（默认每页 15 条），表格数据与 `orders_page` 均来自本地 managed-order 查询；“已成交”状态筛选包含 `filled_size > 0` 的部分成交订单。
+- 报价计划和托管订单共享同一段服务端分页状态构造；成交、持仓和事件表已拆为独立文件，`rewards-tables.tsx` 保留原重导出入口，避免调用方重复 import 调整。
 - 报价计划和订单搜索框使用独立防抖输入组件；外部 query 重置通过组件 key 同步，不在 React effect 中同步 setState。
 - Rewards 工作台在保留当前搜索、筛选、排序和分页条件的前提下，每 10 秒通过 REST 重新读取 snapshot；自动刷新不显示过滤 loading 状态，短暂网络失败不覆盖页面反馈，手动筛选仍显示轻量刷新状态并反馈失败。
 - 首屏不加载全量 reward markets，避免奖励市场数量过大时长时间停留在 loading skeleton。

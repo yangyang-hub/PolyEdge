@@ -15,6 +15,8 @@
 | `packages/orderbook/src/candle_history.rs` | Rewards candle history sync：按奖励优先级选择 active reward token，限速调用 CLOB `/prices-history`，写入 `reward_market_candles` |
 | `packages/orderbook/src/stream.rs` | 聚合 registry token，按 token 分片消费 CLOB `book` + `price_change` WS，并周期性全量 poll 注册 token 做 reconcile |
 | `packages/orderbook/src/http_api.rs` | 盘口读取、批量读取、stats、内部 WS stream、token 注册/注销和内部 ingest HTTP API |
+| `packages/orderbook/src/http_api/helpers.rs` | HTTP API 私有 helper：写认证、source/token/level 校验、错误/消息响应构造和 DTO 映射 |
+| `packages/orderbook/src/http_api/tests.rs` | HTTP API helper 单元测试 |
 | `packages/orderbook/src/updates.rs` | Orderbook cache 更新广播器：为 WS/poll/ingest 写入分配 sequence、fan-out 给内部 WS 客户端 |
 | `packages/backend/crates/connectors/src/orderbook.rs` | Orderbook service client：HTTP 读写/注册和内部 WS stream 连接 |
 | `packages/backend/crates/infrastructure/src/stores/rewards/postgres_candles.rs` | Rewards candle persistence：按 token/5m bucket upsert price-history source OHLC，并读取 AI advisory 所需源 K 线 |
@@ -94,6 +96,7 @@ Active reward tokens
 ## 当前状态与缺口
 
 - 市场同步、registry、分片 WS `book` + `price_change`、全注册 token 周期 poll reconcile、HTTP 读取、内部 WS 推送和内部写认证已实现；poll 可修复 fresh cache 中未被察觉的 WS 增量丢失，并通过内部 WS 广播给 worker 本地 cache；内部 WS client 建连最多等待 5 秒，避免不可达地址阻塞调用方。
+- HTTP API 主文件保留 handler 和 streaming 主流程；私有校验、响应构造、DTO 映射和写认证测试已按 `include!` 模式拆到 `http_api/` 子文件，路由和响应语义不变。
 - Orderbook crate 已从 `packages/backend/apps/orderbook` 拆到顶层 `packages/orderbook`，仍作为 `packages/Cargo.toml` Rust workspace member 构建。
 - orderbook stream 的 token refresh 已接入 registry 变更通知，首次注册和后续成员变化可立即触发检查；仍避免仅因 registry 聚合顺序变化触发 WS 重订/重连，只有订阅 token 成员真实增删并经过短暂 debounce 后仍变化时，默认增量模式才对 diff 做 subscribe/unsubscribe（保持连接存活），`WS_INCREMENTAL_RECONCILE=false` 时才整体重建 Polymarket WS 订阅。
 - orderbook 缓存把盘口内容版本时间和最近确认时间拆开：`observed_at` 保留 WS/CLOB 响应 timestamp，`confirmed_at` 使用服务本地接收/写入时间表示刚确认过完整盘口；安静市场可能长期没有内容版本变化，但只要 poll 或按需 batch refresh 成功推进 `confirmed_at`，rewards live placement 就不会因内容版本不变被误判 stale。batch HTTP 普通读取通过一次 cache 批量读锁返回；带 `refresh_if_stale_ms` 的读取会先刷新缺失/超龄 token，再读缓存返回。

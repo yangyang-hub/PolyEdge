@@ -27,7 +27,8 @@ use tracing::{debug, warn};
 const MAX_REGISTRY_SOURCES: usize = 32;
 const MAX_SOURCE_LEN: usize = 64;
 
-type ApiResult<T> = Result<Json<T>, (StatusCode, Json<MessageResponse>)>;
+type ApiError = (StatusCode, Json<MessageResponse>);
+type ApiResult<T> = Result<Json<T>, ApiError>;
 
 #[derive(Clone)]
 pub struct OrderbookApiState {
@@ -245,13 +246,11 @@ pub async fn register_tokens(
         .register_tokens(&source, &token_ids)
         .await
         .map_err(registry_error_response)?;
-    Ok(Json(MessageResponse {
-        message: format!(
-            "registered {} tokens for source '{}'",
-            token_ids.len(),
-            source
-        ),
-    }))
+    Ok(message_response(format!(
+        "registered {} tokens for source '{}'",
+        token_ids.len(),
+        source
+    )))
 }
 
 pub async fn unregister_source(
@@ -267,9 +266,7 @@ pub async fn unregister_source(
         .unregister_source(&source)
         .await
         .map_err(registry_error_response)?;
-    Ok(Json(MessageResponse {
-        message: format!("unregistered source '{source}'"),
-    }))
+    Ok(message_response(format!("unregistered source '{source}'")))
 }
 
 pub async fn ingest_books(
@@ -309,9 +306,7 @@ pub async fn ingest_books(
         .await
         .map_err(cache_error_response)?;
     publish_ingested_books(&state, &cached_books).await;
-    Ok(Json(MessageResponse {
-        message: format!("ingested {count} books"),
-    }))
+    Ok(message_response(format!("ingested {count} books")))
 }
 
 async fn publish_ingested_books(state: &OrderbookApiState, books: &[CachedOrderBook]) {
@@ -342,7 +337,7 @@ pub async fn stream_orderbooks(
     State(state): State<OrderbookApiState>,
     Query(query): Query<StreamQuery>,
     ws: WebSocketUpgrade,
-) -> Result<impl IntoResponse, (StatusCode, Json<MessageResponse>)> {
+) -> Result<impl IntoResponse, ApiError> {
     let source = query.source.map(validate_source).transpose()?;
     Ok(ws.on_upgrade(move |socket| stream_orderbooks_socket(socket, state, source)))
 }
@@ -423,233 +418,7 @@ async fn wait_for_registry_change(
     rx.changed().await.is_ok()
 }
 
-fn validate_source(source: String) -> Result<String, (StatusCode, Json<MessageResponse>)> {
-    let source = source.trim();
-    if source.is_empty() {
-        return Err(error_response(
-            StatusCode::BAD_REQUEST,
-            "orderbook source must not be empty",
-        ));
-    }
-    if source.len() > MAX_SOURCE_LEN {
-        return Err(error_response(
-            StatusCode::BAD_REQUEST,
-            format!("orderbook source must be at most {MAX_SOURCE_LEN} bytes"),
-        ));
-    }
-    if !source
-        .bytes()
-        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.' | b':'))
-    {
-        return Err(error_response(
-            StatusCode::BAD_REQUEST,
-            "orderbook source contains unsupported characters",
-        ));
-    }
-    Ok(source.to_string())
-}
-
-fn authorize_write(
-    state: &AppState,
-    headers: &HeaderMap,
-) -> Result<(), (StatusCode, Json<MessageResponse>)> {
-    let Some(expected) = state
-        .settings
-        .orderbook
-        .write_token
-        .as_deref()
-        .map(str::trim)
-        .filter(|token| !token.is_empty())
-    else {
-        return Err(error_response(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "orderbook write endpoints are disabled until POLYEDGE_ORDERBOOK__WRITE_TOKEN is configured",
-        ));
-    };
-    let actual = headers
-        .get("x-polyedge-orderbook-token")
-        .and_then(|value| value.to_str().ok());
-    if actual != Some(expected) {
-        return Err(error_response(
-            StatusCode::UNAUTHORIZED,
-            "invalid orderbook write token",
-        ));
-    }
-    Ok(())
-}
-
-fn validate_token_ids(
-    token_ids: Vec<String>,
-    max_tokens: usize,
-) -> Result<Vec<String>, (StatusCode, Json<MessageResponse>)> {
-    if token_ids.len() > max_tokens {
-        return Err(error_response(
-            StatusCode::BAD_REQUEST,
-            format!("orderbook request supports at most {max_tokens} token ids"),
-        ));
-    }
-
-    let mut seen = HashSet::new();
-    let mut normalized = Vec::with_capacity(token_ids.len());
-    for token_id in token_ids {
-        let token_id = validate_token_id(token_id)?;
-        if seen.insert(token_id.clone()) {
-            normalized.push(token_id);
-        }
-    }
-    Ok(normalized)
-}
-
-fn validate_token_id(token_id: String) -> Result<String, (StatusCode, Json<MessageResponse>)> {
-    let token_id = token_id.trim();
-    if token_id.is_empty() {
-        return Err(error_response(
-            StatusCode::BAD_REQUEST,
-            "orderbook token id must not be empty",
-        ));
-    }
-    if U256::from_str(token_id).is_err() {
-        return Err(error_response(
-            StatusCode::BAD_REQUEST,
-            format!("invalid orderbook token id '{token_id}'"),
-        ));
-    }
-    Ok(token_id.to_string())
-}
-
-fn parse_levels(
-    levels: Vec<LevelResponse>,
-    max_levels: usize,
-    descending: bool,
-) -> Result<Vec<CachedBookLevel>, (StatusCode, Json<MessageResponse>)> {
-    let mut parsed = levels
-        .into_iter()
-        .map(|level| {
-            Ok(CachedBookLevel {
-                price: Decimal::from_str(&level.price).map_err(|error| {
-                    error_response(
-                        StatusCode::BAD_REQUEST,
-                        format!("invalid orderbook level price '{}': {error}", level.price),
-                    )
-                })?,
-                size: Decimal::from_str(&level.size).map_err(|error| {
-                    error_response(
-                        StatusCode::BAD_REQUEST,
-                        format!("invalid orderbook level size '{}': {error}", level.size),
-                    )
-                })?,
-            })
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    // Keep the BEST levels (bids descending, asks ascending) before trimming, so
-    // an unsorted ingest payload never drops top-of-book.
-    if descending {
-        parsed.sort_by(|a, b| b.price.cmp(&a.price));
-    } else {
-        parsed.sort_by(|a, b| a.price.cmp(&b.price));
-    }
-    parsed.truncate(max_levels.max(1));
-    Ok(parsed)
-}
-
-fn error_response(
-    status: StatusCode,
-    message: impl Into<String>,
-) -> (StatusCode, Json<MessageResponse>) {
-    (
-        status,
-        Json(MessageResponse {
-            message: message.into(),
-        }),
-    )
-}
-
-fn registry_error_response(
-    error: polyedge_domain::AppError,
-) -> (StatusCode, Json<MessageResponse>) {
-    error_response(
-        StatusCode::INTERNAL_SERVER_ERROR,
-        format!("orderbook registry update failed: {error}"),
-    )
-}
-
-fn cache_error_response(error: polyedge_domain::AppError) -> (StatusCode, Json<MessageResponse>) {
-    error_response(
-        StatusCode::INTERNAL_SERVER_ERROR,
-        format!("orderbook cache update failed: {error}"),
-    )
-}
-
-fn to_response(book: polyedge_application::CachedOrderBook) -> OrderbookResponse {
-    let confirmed_at = book.confirmation_time_ms();
-    OrderbookResponse {
-        token_id: book.token_id,
-        bids: book
-            .bids
-            .into_iter()
-            .map(|l| LevelResponse {
-                price: l.price.to_string(),
-                size: l.size.to_string(),
-            })
-            .collect(),
-        asks: book
-            .asks
-            .into_iter()
-            .map(|l| LevelResponse {
-                price: l.price.to_string(),
-                size: l.size.to_string(),
-            })
-            .collect(),
-        observed_at: book.observed_at,
-        confirmed_at,
-        source: book.source.to_string(),
-    }
-}
+include!("http_api/helpers.rs");
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use polyedge_domain::SystemMode;
-    use polyedge_infrastructure::{Runtime, Settings};
-
-    fn test_state(write_token: Option<&str>) -> AppState {
-        let mut settings = Settings::for_test(SystemMode::LiveAuto, "test", Vec::new());
-        settings.orderbook.write_token = write_token.map(ToString::to_string);
-        Runtime::test_app_state(settings).expect("test app state")
-    }
-
-    #[tokio::test]
-    async fn orderbook_write_auth_is_disabled_without_configured_token() {
-        let error = authorize_write(&test_state(None), &HeaderMap::new())
-            .expect_err("write auth must reject missing configuration");
-
-        assert_eq!(error.0, StatusCode::SERVICE_UNAVAILABLE);
-    }
-
-    #[tokio::test]
-    async fn orderbook_write_auth_rejects_wrong_token() {
-        let state = test_state(Some("secret"));
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            "x-polyedge-orderbook-token",
-            "wrong".parse().expect("header"),
-        );
-
-        let error =
-            authorize_write(&state, &headers).expect_err("write auth must reject wrong token");
-
-        assert_eq!(error.0, StatusCode::UNAUTHORIZED);
-    }
-
-    #[tokio::test]
-    async fn orderbook_write_auth_accepts_matching_token() {
-        let state = test_state(Some("secret"));
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            "x-polyedge-orderbook-token",
-            "secret".parse().expect("header"),
-        );
-
-        assert!(authorize_write(&state, &headers).is_ok());
-    }
-}
+include!("http_api/tests.rs");

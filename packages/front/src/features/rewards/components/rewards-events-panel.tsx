@@ -25,10 +25,6 @@ export function EventsPanel({
       // already shown as dedicated fill records in the "成交" tab.
       return events.filter((event) => eventCategory(event.event_type) !== "fills");
     }
-    if (category === "fills") {
-      // "成交" tab renders FillsTable instead, so this branch is unused.
-      return events;
-    }
     return events.filter((event) => eventCategory(event.event_type) === category);
   }, [events, category]);
 
