@@ -558,21 +558,19 @@ fn parse_reward_ai_decision_value(value: &Value) -> Result<RewardAiAdvisoryDecis
         return parse_reward_ai_binary_decision_value(value);
     }
 
+    // Legacy 3-way fallback: some compatible models (e.g. MiMo over chat
+    // completions) ignore the binary `allow_quote` contract and still return a
+    // `suitability` object. Apply fail-closed binary semantics here — only an
+    // explicit `allow` is honoured; `watch` and any other non-allow verdict
+    // collapse to `avoid` so the advisory gate blocks the market instead of
+    // silently letting an unendorsed market through. `quote_mode`/`exit_policy`
+    // are only required for the explicit-allow shape; a blocked verdict uses
+    // the canonical avoid defaults. Mirrored by advisory `schema_version` 8.
     let suitability = value
         .get("suitability")
         .and_then(Value::as_str)
         .ok_or_else(|| reward_ai_missing_field("suitability"))
         .and_then(RewardAiSuitability::from_str)?;
-    let quote_mode = value
-        .get("quote_mode")
-        .and_then(Value::as_str)
-        .ok_or_else(|| reward_ai_missing_field("quote_mode"))
-        .and_then(RewardPlanQuoteMode::from_str)?;
-    let exit_policy = value
-        .get("exit_policy")
-        .and_then(Value::as_str)
-        .ok_or_else(|| reward_ai_missing_field("exit_policy"))
-        .and_then(polyedge_application::PostFillStrategy::from_str)?;
     let confidence = parse_confidence(value.get("confidence"))
         .ok_or_else(|| reward_ai_missing_field("confidence"))?;
     let reasons = value
@@ -590,8 +588,28 @@ fn parse_reward_ai_decision_value(value: &Value) -> Result<RewardAiAdvisoryDecis
         .cloned()
         .filter(Value::is_object)
         .unwrap_or_else(|| json!({}));
+    if suitability != RewardAiSuitability::Allow {
+        return Ok(RewardAiAdvisoryDecision {
+            suitability: RewardAiSuitability::Avoid,
+            quote_mode: RewardPlanQuoteMode::None,
+            exit_policy: polyedge_application::PostFillStrategy::FlattenImmediately,
+            confidence,
+            reasons,
+            metrics,
+        });
+    }
+    let quote_mode = value
+        .get("quote_mode")
+        .and_then(Value::as_str)
+        .ok_or_else(|| reward_ai_missing_field("quote_mode"))
+        .and_then(RewardPlanQuoteMode::from_str)?;
+    let exit_policy = value
+        .get("exit_policy")
+        .and_then(Value::as_str)
+        .ok_or_else(|| reward_ai_missing_field("exit_policy"))
+        .and_then(polyedge_application::PostFillStrategy::from_str)?;
     Ok(RewardAiAdvisoryDecision {
-        suitability,
+        suitability: RewardAiSuitability::Allow,
         quote_mode,
         exit_policy,
         confidence,

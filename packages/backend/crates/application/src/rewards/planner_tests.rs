@@ -305,10 +305,14 @@ fn low_competition_requires_high_confidence_ai_allow() {
     };
     let mut plan = build_reward_quote_plan(&test_market(decimal("5")), &test_books(), &config);
     plan.strategy_bucket = RewardStrategyBucket::LowCompetition;
+    // Low-competition enforce + require_ai_allow demands a HIGH-CONFIDENCE
+    // allow: a low-confidence allow is rejected at the low-competition gate.
+    // (Any non-allow verdict is already blocked by the general advisory gate,
+    // so it cannot reach this branch.)
     let advisory = test_advisory(
-        RewardAiSuitability::Watch,
+        RewardAiSuitability::Allow,
         RewardPlanQuoteMode::Double,
-        decimal("0.90"),
+        decimal("0.50"),
     );
     let advisories = HashMap::from([(advisory.condition_id.clone(), advisory)]);
     let mut plans = vec![plan];
@@ -317,7 +321,7 @@ fn low_competition_requires_high_confidence_ai_allow() {
 
     assert!(!plans[0].eligible);
     assert_eq!(plans[0].quote_mode, RewardPlanQuoteMode::None);
-    assert!(plans[0].reason.contains("requires high-confidence allow"));
+    assert!(plans[0].reason.contains("below low-competition threshold"));
 }
 
 #[test]
@@ -608,7 +612,7 @@ fn ai_enabled_keeps_low_confidence_allow_decision_as_deterministic_plan() {
 }
 
 #[test]
-fn ai_enabled_keeps_watch_decision_as_deterministic_plan() {
+fn ai_enabled_blocks_watch_decision() {
     let config = RewardBotConfig {
         ai_advisory_enabled: true,
         selection_mode: RewardSelectionMode::Enforce,
@@ -631,9 +635,11 @@ fn ai_enabled_keeps_watch_decision_as_deterministic_plan() {
 
     apply_reward_ai_advisories(&mut plans, &advisories, &config, decimal("0.65"));
 
-    assert!(plans[0].eligible);
-    assert_ne!(plans[0].quote_mode, RewardPlanQuoteMode::None);
-    assert!(!plans[0].legs.is_empty());
+    // Fail-closed: a non-allow (watch) verdict blocks the plan regardless of
+    // selection mode, so an unendorsed market cannot stay quotable.
+    assert!(!plans[0].eligible);
+    assert_eq!(plans[0].quote_mode, RewardPlanQuoteMode::None);
+    assert!(plans[0].legs.is_empty());
     assert!(plans[0].ai_advisory.is_some());
 }
 

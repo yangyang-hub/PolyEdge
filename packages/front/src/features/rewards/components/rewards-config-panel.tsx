@@ -242,6 +242,26 @@ export function RewardsConfigPanel({
             hint={h.requoteDriftCents}
             onChange={(value) => updateNumber("requote_drift_cents", value)}
           />
+          <NumberInput
+            label={dictionary.rewards.requoteDriftConfirmSec}
+            value={draft.requote_drift_confirm_sec}
+            suffix="s"
+            hint={h.requoteDriftConfirmSec}
+            onChange={(value) => updateNumber("requote_drift_confirm_sec", value)}
+          />
+          <NumberInput
+            label={dictionary.rewards.requoteDriftCooldownSec}
+            value={draft.requote_drift_cooldown_sec}
+            suffix="s"
+            hint={h.requoteDriftCooldownSec}
+            onChange={(value) => updateNumber("requote_drift_cooldown_sec", value)}
+          />
+          <NumberInput
+            label={dictionary.rewards.requoteDriftMaxCancelsPerCycle}
+            value={draft.requote_drift_max_cancels_per_cycle}
+            hint={h.requoteDriftMaxCancelsPerCycle}
+            onChange={(value) => updateNumber("requote_drift_max_cancels_per_cycle", value)}
+          />
         </ConfigSection>
 
         <Separator />

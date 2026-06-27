@@ -54,13 +54,44 @@ Final:
 
 #[test]
 fn reward_ai_parse_accepts_json_string_payload() {
+    // A legacy `suitability` payload wrapped in a JSON string is still
+    // extracted, but a non-allow verdict is fail-closed: `watch` collapses to
+    // `avoid` so the advisory gate blocks the market instead of letting an
+    // unendorsed market through.
     let parsed = parse_reward_ai_decision(
         r#""{\"suitability\":\"watch\",\"quote_mode\":\"none\",\"exit_policy\":\"flatten_immediately\",\"confidence\":0.4,\"reasons\":[],\"metrics\":{}}""#,
     )
     .expect("parse json string payload");
 
-    assert_eq!(parsed.suitability, RewardAiSuitability::Watch);
+    assert_eq!(parsed.suitability, RewardAiSuitability::Avoid);
+    assert_eq!(parsed.quote_mode, RewardPlanQuoteMode::None);
     assert_eq!(parsed.confidence, Decimal::from_str("0.4").unwrap());
+}
+
+#[test]
+fn reward_ai_parse_legacy_suitability_is_fail_closed() {
+    // Legacy 3-way `suitability` responses honour binary fail-closed semantics:
+    // only an explicit `allow` is treated as allowed; `watch`, `avoid` and any
+    // other non-allow verdict collapse to `avoid` with the canonical block shape.
+    let watch = parse_reward_ai_decision(
+        r#"{"suitability":"watch","quote_mode":"double","exit_policy":"hold_and_requote","confidence":0.68,"reasons":["uncertain"],"metrics":{}}"#,
+    )
+    .expect("parse legacy watch");
+    assert_eq!(watch.suitability, RewardAiSuitability::Avoid);
+    assert_eq!(watch.quote_mode, RewardPlanQuoteMode::None);
+
+    let avoid = parse_reward_ai_decision(
+        r#"{"suitability":"avoid","quote_mode":"none","exit_policy":"flatten_immediately","confidence":0.3,"reasons":[],"metrics":{}}"#,
+    )
+    .expect("parse legacy avoid");
+    assert_eq!(avoid.suitability, RewardAiSuitability::Avoid);
+
+    let allow = parse_reward_ai_decision(
+        r#"{"suitability":"allow","quote_mode":"double","exit_policy":"exit_at_markup","confidence":0.9,"reasons":[],"metrics":{}}"#,
+    )
+    .expect("parse legacy allow");
+    assert_eq!(allow.suitability, RewardAiSuitability::Allow);
+    assert_eq!(allow.quote_mode, RewardPlanQuoteMode::Double);
 }
 
 #[test]

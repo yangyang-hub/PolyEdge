@@ -266,6 +266,11 @@ fn reward_ai_advisory_cache_key_payload(
     });
 
     json!({
+        // schema_version 8: legacy `suitability` provider responses are now
+        // parsed fail-closed (only `allow` honoured; `watch`/non-allow collapse
+        // to `avoid`), so advisories cached under the earlier watch-tolerant
+        // parsing are invalidated and re-evaluated under the hardened contract.
+        //
         // schema_version 7: provider output contract is binary allow_quote,
         // and the payload now includes current pricing_context plus cache TTL
         // policy. Exact book levels remain outside the cache key so high-
@@ -287,7 +292,7 @@ fn reward_ai_advisory_cache_key_payload(
         // orderbook service has published real books, so advisories cached
         // before that change (null bids/asks "no orderbook" disallow) are
         // invalidated and re-evaluated against live books.
-        "schema_version": 7,
+        "schema_version": 8,
         "cache_domain": "reward_ai_advisory",
         "provider_decision_schema": "binary_allow_quote_v1",
         "market": {
@@ -403,7 +408,12 @@ fn reject_ai_gated_plan(plan: &mut RewardQuotePlan, reason: &str) {
 
 #[must_use]
 pub fn reward_ai_advisory_blocks_quote(advisory: &RewardMarketAdvisory) -> bool {
-    advisory.suitability == RewardAiSuitability::Avoid
+    // Fail-closed binary semantics: only an explicit `allow` keeps a market
+    // quotable. A `watch` (or any non-allow verdict) blocks it too, so an
+    // advisory inherited from a prior snapshot or produced by a legacy 3-way
+    // provider response cannot keep a market eligible. Mirrors the connector's
+    // legacy-response coercion and the binary `allow_quote` provider contract.
+    advisory.suitability != RewardAiSuitability::Allow
 }
 
 fn enforce_reward_ai_advisory(

@@ -24,8 +24,6 @@ export type RewardBotConfigDto = {
   account_id: string;
   max_markets: number;
   max_open_orders: number;
-  per_market_usd: DecimalValue;
-  quote_size_usd: DecimalValue;
   min_daily_reward: DecimalValue;
   min_market_liquidity_usd: DecimalValue;
   min_market_volume_24h_usd: DecimalValue;
@@ -49,7 +47,6 @@ export type RewardBotConfigDto = {
   low_competition_mode: RewardLowCompetitionMode;
   low_competition_max_markets: number;
   low_competition_max_open_orders: number;
-  low_competition_per_market_usd: DecimalValue;
   low_competition_max_position_usd: DecimalValue;
   low_competition_probe_notional_usd: DecimalValue;
   low_competition_min_competition_share_bps: number;
