@@ -2,8 +2,6 @@ include!("service/store.rs");
 
 const MEMORY_EVENT_LIMIT: usize = 200;
 const MEMORY_FILL_LIMIT: usize = 200;
-const LOW_COMPETITION_SHADOW_REPORT_WINDOW_HOURS: u64 = 24;
-const LOW_COMPETITION_OBSERVATION_READ_LIMIT: u16 = 5_000;
 const REWARD_LLM_USAGE_DAYS: u16 = 14;
 
 #[derive(Clone)]
@@ -380,27 +378,11 @@ impl RewardBotService {
             .store
             .list_candidate_markets(&filter, safety_limit)
             .await?;
-        let mut candidates = select_reward_quote_candidate_market_profiles(
+        let candidates = select_reward_quote_candidate_market_profiles(
             &markets,
             config,
             RewardStrategyBucket::Standard,
         );
-
-        if let Some(low_filter) = config.low_competition_candidate_filter() {
-            let low_config = config.config_for_strategy_bucket(RewardStrategyBucket::LowCompetition);
-            let low_safety_limit = reward_candidate_safety_limit(&low_config);
-            let low_markets = self
-                .store
-                .list_candidate_markets(&low_filter, low_safety_limit)
-                .await?;
-            for candidate in select_reward_quote_candidate_market_profiles(
-                &low_markets,
-                config,
-                RewardStrategyBucket::LowCompetition,
-            ) {
-                push_low_competition_candidate_profile(&mut candidates, candidate, config);
-            }
-        }
 
         Ok(candidates)
     }
@@ -829,30 +811,6 @@ fn reward_candidate_safety_limit(config: &RewardBotConfig) -> u16 {
         config.max_markets.saturating_mul(50).max(1000)
     };
     cap.min(5000)
-}
-
-fn push_low_competition_candidate_profile(
-    candidates: &mut Vec<RewardCandidateMarket>,
-    candidate: RewardCandidateMarket,
-    config: &RewardBotConfig,
-) {
-    if config.low_competition_mode == RewardLowCompetitionMode::Enforce {
-        if let Some(index) = candidates
-            .iter()
-            .position(|existing| existing.market.condition_id == candidate.market.condition_id)
-        {
-            candidates.remove(index);
-        }
-        candidates.push(candidate);
-        return;
-    }
-
-    if !candidates
-        .iter()
-        .any(|existing| existing.market.condition_id == candidate.market.condition_id)
-    {
-        candidates.push(candidate);
-    }
 }
 
 fn push_unique_condition_id(

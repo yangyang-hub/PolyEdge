@@ -33,7 +33,8 @@ async fn run_reward_ai_advisory_batch_worker(
         return;
     }
     let batch_size = reward_ai_advisory_batch_size(state.settings.rewards.ai_advisory_batch_size);
-    let batch_timeout = Duration::from_secs(state.settings.rewards.ai_advisory_batch_timeout_secs.max(1));
+    let batch_timeout =
+        Duration::from_secs(state.settings.rewards.ai_advisory_batch_timeout_secs.max(1));
     let mut buffer: Vec<String> = Vec::with_capacity(batch_size);
     info!(
         batch_size,
@@ -88,8 +89,9 @@ async fn flush_reward_ai_advisory_batch(
 ) {
     let trace_id = new_trace_id();
     let mut report = RewardAiAdvisoryBatchReport::default();
-    let result = run_reward_ai_advisory_batch_flush(state, cache, condition_ids, &trace_id, &mut report)
-        .await;
+    let result =
+        run_reward_ai_advisory_batch_flush(state, cache, condition_ids, &trace_id, &mut report)
+            .await;
     info!(
         trace_id = %trace_id,
         flushed = condition_ids.len(),
@@ -124,14 +126,12 @@ async fn run_reward_ai_advisory_batch_flush(
     trace_id: &str,
     report: &mut RewardAiAdvisoryBatchReport,
 ) -> Result<()> {
-    let cycle = state
-        .reward_bot_service
-        .current_live_cycle_state()
-        .await?;
+    let cycle = state.reward_bot_service.current_live_cycle_state().await?;
     if !cycle.config.ai_advisory_enabled {
         return Ok(());
     }
-    let model = state.settings.rewards.ai_model.trim();
+    let model = reward_ai_model_for_provider(&state.settings.rewards, cycle.config.ai_provider);
+    let request_format = reward_ai_effective_request_format_for_model(&cycle.config, model);
     if model.is_empty() {
         return Ok(());
     }
@@ -142,7 +142,9 @@ async fn run_reward_ai_advisory_batch_flush(
     let info_risk_connector = build_reward_info_risk_connector(state, &cycle.config)?;
     let fallback_descriptor = resolve_reward_ai_fallback(&state.settings.rewards);
     let advisory_fallback_connector = match &fallback_descriptor {
-        Some(descriptor) => Some(build_reward_ai_advisory_fallback_connector(state, descriptor)?),
+        Some(descriptor) => Some(build_reward_ai_advisory_fallback_connector(
+            state, descriptor,
+        )?),
         None => None,
     };
     let advisory_fallback_channel =
@@ -156,7 +158,9 @@ async fn run_reward_ai_advisory_batch_flush(
             _ => None,
         };
     let info_risk_fallback_connector = match &fallback_descriptor {
-        Some(descriptor) => Some(build_reward_info_risk_fallback_connector(state, descriptor)?),
+        Some(descriptor) => Some(build_reward_info_risk_fallback_connector(
+            state, descriptor,
+        )?),
         None => None,
     };
     let info_risk_fallback_channel =
@@ -249,7 +253,7 @@ async fn run_reward_ai_advisory_batch_flush(
             &cycle.config,
             cycle.config.ai_advisory_ttl_sec,
             cycle.config.ai_provider,
-            cycle.config.ai_request_format,
+            request_format,
             model,
         ) {
             Ok(request) => request,
@@ -264,12 +268,9 @@ async fn run_reward_ai_advisory_batch_flush(
                 continue;
             }
         };
-        if let Some(cached) = latest_market_advisory_for_endpoints(
-            state,
-            &request,
-            fallback_descriptor.as_ref(),
-        )
-        .await?
+        if let Some(cached) =
+            latest_market_advisory_for_endpoints(state, &request, fallback_descriptor.as_ref())
+                .await?
         {
             report.cache_hits += 1;
             if !reward_provider_cache_refresh_due(
@@ -390,8 +391,8 @@ async fn run_reward_ai_advisory_batch_flush(
                 // per-condition requests (each retries primary then fallback)
                 // so the fallback is actually tried. Only skip the fan-out when
                 // there is no fallback and the primary batch was overloaded.
-                let skip_singles = advisory_fallback_channel.is_none()
-                    && reward_ai_provider_is_overloaded(&error);
+                let skip_singles =
+                    advisory_fallback_channel.is_none() && reward_ai_provider_is_overloaded(&error);
                 if !skip_singles {
                     for request in &requests {
                         report.fallback_singles += 1;
@@ -483,26 +484,21 @@ async fn single_reward_ai_advise_and_save(
         request_format: request.request_format,
         model: request.model.clone(),
     };
-    let attempt = match advise_with_fallback(
-        state,
-        &primary_channel,
-        fallback_channel,
-        request,
-        trace_id,
-    )
-    .await
-    {
-        Ok(attempt) => attempt,
-        Err(error) => {
-            warn!(
-                trace_id = %trace_id,
-                condition_id = %request.condition_id,
-                error = %error,
-                "reward AI advisory single fallback provider request permit failed",
-            );
-            return SingleAdviseOutcome::Failed;
-        }
-    };
+    let attempt =
+        match advise_with_fallback(state, &primary_channel, fallback_channel, request, trace_id)
+            .await
+        {
+            Ok(attempt) => attempt,
+            Err(error) => {
+                warn!(
+                    trace_id = %trace_id,
+                    condition_id = %request.condition_id,
+                    error = %error,
+                    "reward AI advisory single fallback provider request permit failed",
+                );
+                return SingleAdviseOutcome::Failed;
+            }
+        };
     match attempt {
         RewardProviderAttempt::Success {
             decision,

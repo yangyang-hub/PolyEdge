@@ -3,22 +3,33 @@ use polyedge_application::{
     AuditLogEntry, AuditLogSink, CopyControlAction, CopyControlCommand, CopyControlCommandStatus,
     CopyEvent, CopyEventSeverity, CopyOrderSide, CopySizingMode, CopyTradeConfig, CopyTradeMode,
     CopyTradeStore, DatabaseMaintenanceCutoffs, DatabaseMaintenanceReport,
-    DatabaseMaintenanceStore, IdempotencyBegin, IdempotencyRequest, IdempotencyStore,
-    ManagedRewardOrder, ManagedRewardOrderStatus, ModeSnapshot, ModeStateStore,
-    ModeTransitionCommand, PostFillStrategy, RewardAccountState, RewardAiAdvisoryRequest,
-    RewardAiProvider, RewardAiRequestFormat, RewardAiSuitability, RewardBotConfig, RewardBotStore,
-    RewardCandidateFilter, RewardControlAction, RewardControlCommand, RewardControlCommandStatus,
-    RewardFill, RewardFillRole, RewardHistoryPruneReport, RewardInfoDirectionalRisk,
-    RewardInfoRiskAssessmentRequest, RewardInfoRiskLevel, RewardInfoRiskSource, RewardInfoRiskType,
-    RewardLlmCallDailyStats, RewardLlmCallRecord, RewardLowCompetitionMode,
-    RewardLowCompetitionObservation, RewardMarket, RewardMarketAdvisory, RewardMarketCandle,
-    RewardMarketCandleSample, RewardMarketInfoRisk, RewardOrderListQuery, RewardOrderPage,
-    RewardOrderSide, RewardOrderSortField, RewardOrderStatusFilter, RewardPlanQuoteMode,
-    RewardPosition, RewardQuoteMode, RewardQuotePlan, RewardQuotePlanBlockerCounts,
-    RewardQuotePlanCounts, RewardQuotePlanListQuery, RewardQuotePlanPage, RewardQuotePlanSortField,
-    RewardRiskEvent, RewardRiskSeverity, RewardSelectionMode, RewardStrategyBucket,
-    RewardTickOutcome, RewardToken, RiskStateSnapshot, RiskStateStore, SortOrder, SourceTrade,
-    TrackedWallet, TrackedWalletStatus, WalletAnalysisStats, refresh_reward_quote_plan_readiness,
+    DatabaseMaintenanceStore, HighProbabilityBacktestExitRuleReport,
+    HighProbabilityBacktestPersistReport, HighProbabilityBacktestReport,
+    HighProbabilityBacktestResult, HighProbabilityBacktestRun, HighProbabilityBacktestTrade,
+    HighProbabilityBucketStats, HighProbabilityConfig, HighProbabilityDecision,
+    HighProbabilityMarketOutcome, HighProbabilityMarketOutcomeStatus, HighProbabilityMode,
+    HighProbabilityObservation, HighProbabilityObserveCandidate,
+    HighProbabilityRewardCandleSampleInput, HighProbabilitySample, HighProbabilitySampleOutcome,
+    HighProbabilitySampleQuery, HighProbabilityStore, HighProbabilityTriggerKind, IdempotencyBegin,
+    IdempotencyRequest, IdempotencyStore, ManagedRewardOrder, ManagedRewardOrderStatus,
+    ModeSnapshot, ModeStateStore, ModeTransitionCommand, PostFillStrategy, RewardAccountState,
+    RewardAiAdvisoryRequest, RewardAiProvider, RewardAiRequestFormat, RewardAiSuitability,
+    RewardBotConfig, RewardBotStore, RewardCandidateFilter, RewardControlAction,
+    RewardControlCommand, RewardControlCommandStatus, RewardFill, RewardFillRole,
+    RewardHistoryPruneReport, RewardInfoDirectionalRisk, RewardInfoRiskAssessmentRequest,
+    RewardInfoRiskLevel, RewardInfoRiskSource, RewardInfoRiskType, RewardLlmCallDailyStats,
+    RewardLlmCallRecord, RewardLowCompetitionMode, RewardLowCompetitionObservation, RewardMarket,
+    RewardMarketAdvisory, RewardMarketCandle, RewardMarketCandleSample, RewardMarketInfoRisk,
+    RewardOrderListQuery, RewardOrderPage, RewardOrderSide, RewardOrderSortField,
+    RewardOrderStatusFilter, RewardPlanQuoteMode, RewardPosition, RewardQuoteMode, RewardQuotePlan,
+    RewardQuotePlanBlockerCounts, RewardQuotePlanCounts, RewardQuotePlanListQuery,
+    RewardQuotePlanPage, RewardQuotePlanSortField, RewardRiskEvent, RewardRiskSeverity,
+    RewardSelectionMode, RewardStrategyBucket, RewardTickOutcome, RewardToken, RiskStateSnapshot,
+    RiskStateStore, SmartMoneyConfig, SmartMoneyMode, SmartMoneySide, SmartMoneyStore, SmartSignal,
+    SmartSignalAdvisory, SmartSignalAdvisoryLookup, SmartSignalDecision, SmartSignalDecisionValue,
+    SmartSignalStatus, SmartWalletCandidate, SmartWalletCandidateStatus, SmartWalletProfile,
+    SmartWalletScore, SmartWalletTier, SmartWalletTrade, SortOrder, SourceTrade, TrackedWallet,
+    TrackedWalletStatus, WalletAnalysisStats, refresh_reward_quote_plan_readiness,
     reward_order_counts_as_external_open,
 };
 use polyedge_domain::{
@@ -60,10 +71,12 @@ include!("stores/idempotency.rs");
 include!("stores/external_event.rs");
 include!("stores/audit.rs");
 include!("stores/maintenance.rs");
+include!("stores/high_probability.rs");
 include!("stores/rewards/postgres_market_methods.rs");
 include!("stores/rewards/postgres_candles.rs");
 include!("stores/rewards.rs");
 include!("stores/copytrade.rs");
+include!("stores/smart_money.rs");
 include!("stores/orderbook_cache.rs");
 include!("stores/orderbook_registry.rs");
 include!("stores/helpers.rs");

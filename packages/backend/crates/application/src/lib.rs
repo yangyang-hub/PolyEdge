@@ -2,6 +2,7 @@
 
 mod copytrade;
 mod execution;
+mod high_probability;
 mod list_filters;
 mod maintenance;
 mod market_event;
@@ -11,6 +12,7 @@ mod orderbook_registry;
 pub mod pagination;
 mod rewards;
 mod risk;
+mod smart_money;
 mod system_mode;
 pub mod wallet_analysis;
 
@@ -32,6 +34,20 @@ pub use execution::{
     OrderListFilters, OrderView, PositionListFilters, PositionView, ReconcileExecutionFillCommand,
     ReconcileExecutionListFilters, ReconcileExternalTradeCommand, SubmitExecutionCommand,
     SubmitExecutionStoreCommand, SyncExternalOrderStatusCommand, TradeListFilters, TradeView,
+};
+pub use high_probability::{
+    HighProbabilityBacktestExitRuleReport, HighProbabilityBacktestPersistReport,
+    HighProbabilityBacktestReport, HighProbabilityBacktestResult, HighProbabilityBacktestRun,
+    HighProbabilityBacktestTrade, HighProbabilityBucketRefreshReport, HighProbabilityBucketStats,
+    HighProbabilityConfig, HighProbabilityDecision, HighProbabilityMarketOutcome,
+    HighProbabilityMarketOutcomeStatus, HighProbabilityMode, HighProbabilityObservation,
+    HighProbabilityObserveCandidate, HighProbabilityObserveReport, HighProbabilityOrderbookQuote,
+    HighProbabilityResearchReport, HighProbabilityRewardCandleSampleInput, HighProbabilitySample,
+    HighProbabilitySampleBuildReport, HighProbabilitySampleOutcome, HighProbabilitySampleQuery,
+    HighProbabilityService, HighProbabilitySnapshot, HighProbabilityStore,
+    HighProbabilityTriggerKind, build_high_probability_bucket_stats,
+    build_high_probability_samples_from_reward_candles, validate_high_probability_list_limit,
+    validate_high_probability_sample_input_limit,
 };
 pub use maintenance::{
     DatabaseMaintenanceCutoffs, DatabaseMaintenanceReport, DatabaseMaintenanceService,
@@ -79,29 +95,41 @@ pub use rewards::{
     RewardLlmCallRecord, RewardLowCompetitionMetrics, RewardLowCompetitionMode,
     RewardLowCompetitionObservation, RewardLowCompetitionShadowReport, RewardMarket,
     RewardMarketAdvisory, RewardMarketBookMetrics, RewardMarketCandle, RewardMarketCandleSample,
-    RewardMarketInfoRisk, RewardOrderBook, RewardOrderListQuery, RewardOrderPage, RewardOrderSide,
-    RewardOrderSortField, RewardOrderStatusFilter, RewardPlanQuoteMode, RewardPosition,
-    RewardProviderPreLlmCandidateKind, RewardQuoteLeg, RewardQuoteMode, RewardQuotePlan,
-    RewardQuotePlanBlockerCounts, RewardQuotePlanCounts, RewardQuotePlanListQuery,
-    RewardQuotePlanPage, RewardQuotePlanSortField, RewardQuoteReadiness, RewardRiskEvent,
-    RewardRiskSeverity, RewardSelectionMode, RewardStrategyBucket, RewardTickOutcome, RewardToken,
-    RewardTokenQuote, apply_first_quote_entry_gates, apply_low_competition_metrics_to_quote_plans,
-    apply_reward_ai_advisories, apply_reward_info_risks, build_low_competition_observations,
-    build_reward_ai_advisory_request, build_reward_info_risk_assessment_request,
-    build_reward_quote_plans, low_competition_live_cancel_reason,
+    RewardMarketInfoRisk, RewardOpportunityMetrics, RewardOrderBook, RewardOrderListQuery,
+    RewardOrderPage, RewardOrderSide, RewardOrderSortField, RewardOrderStatusFilter,
+    RewardPlanQuoteMode, RewardPosition, RewardProviderPreLlmCandidateKind, RewardQuoteLeg,
+    RewardQuoteMode, RewardQuotePlan, RewardQuotePlanBlockerCounts, RewardQuotePlanCounts,
+    RewardQuotePlanListQuery, RewardQuotePlanPage, RewardQuotePlanSortField, RewardQuoteReadiness,
+    RewardRiskEvent, RewardRiskSeverity, RewardSelectionMode, RewardStrategyBucket,
+    RewardTickOutcome, RewardToken, RewardTokenQuote, apply_first_quote_entry_gates,
+    apply_reward_ai_advisories, apply_reward_info_risks,
+    apply_reward_opportunity_metrics_to_quote_plans, build_reward_ai_advisory_request,
+    build_reward_info_risk_assessment_request, build_reward_quote_plans,
     materialize_reward_quote_plan_for_live_orderbook, new_risk_event,
-    refresh_reward_quote_plan_readiness, reward_ai_advisory_blocks_quote,
-    reward_condition_has_active_exposure, reward_external_order_id_counts_as_external,
-    reward_market_books_available, reward_order_counts_as_external_open,
-    reward_provider_cache_refresh_due, reward_provider_plan_passes_pre_llm_gate,
-    reward_provider_pre_llm_candidate_kind, reward_quote_plan_readiness,
-    scale_double_legs_for_budget, scale_single_leg_for_budget, select_reward_book_token_ids,
-    validate_reward_list_limit,
+    refresh_reward_opportunity_metrics_for_quote_plans, refresh_reward_quote_plan_readiness,
+    reward_ai_advisory_blocks_quote, reward_ai_effective_request_format,
+    reward_ai_model_requires_openai_chat_completions,
+    reward_ai_strategy_hint_max_condition_notional_usd, reward_condition_has_active_exposure,
+    reward_external_order_id_counts_as_external, reward_market_books_available,
+    reward_order_counts_as_external_open, reward_provider_cache_refresh_due,
+    reward_provider_plan_passes_pre_llm_gate, reward_provider_pre_llm_candidate_kind,
+    reward_quote_plan_readiness, scale_double_legs_for_budget, scale_single_leg_for_budget,
+    select_reward_book_token_ids, validate_reward_list_limit,
 };
 pub use risk::{
     ApproveSignalCommand, ApproveSignalReceipt, KillSwitchReceipt, RejectSignalCommand,
     RejectSignalReceipt, ReleaseKillSwitchCommand, RiskPolicy, RiskService, RiskStateSnapshot,
     RiskStateStore, RiskStateView, TriggerKillSwitchCommand,
+};
+pub use smart_money::{
+    SmartMoneyConfig, SmartMoneyConfigPatch, SmartMoneyMode, SmartMoneyService, SmartMoneySide,
+    SmartMoneySnapshot, SmartMoneyStatus, SmartMoneyStore, SmartSignal, SmartSignalAdvisory,
+    SmartSignalAdvisoryContext, SmartSignalAdvisoryDecision, SmartSignalAdvisoryLookup,
+    SmartSignalAdvisoryRequest, SmartSignalBookQuote, SmartSignalDecision,
+    SmartSignalDecisionValue, SmartSignalGenerationReport, SmartSignalStatus, SmartWalletCandidate,
+    SmartWalletCandidateStatus, SmartWalletCandidateStatusUpdate, SmartWalletProfile,
+    SmartWalletScore, SmartWalletTier, SmartWalletTrade, build_smart_wallet_score,
+    normalize_smart_wallet_address, validate_smart_money_list_limit,
 };
 pub use system_mode::{
     AuditLogEntry, AuditLogSink, AuthenticatedActor, IdempotencyBegin, IdempotencyRequest,

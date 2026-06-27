@@ -7,8 +7,7 @@ pub trait RewardBotStore: Send + Sync {
         account_id: &str,
         observed_at: OffsetDateTime,
     ) -> Result<()>;
-    async fn latest_worker_heartbeat(&self, account_id: &str)
-    -> Result<Option<OffsetDateTime>>;
+    async fn latest_worker_heartbeat(&self, account_id: &str) -> Result<Option<OffsetDateTime>>;
     /// Prune unbounded rewards history older than `cutoff`.
     ///
     /// Implementations must preserve open-like orders, fills, positions, and
@@ -36,22 +35,19 @@ pub trait RewardBotStore: Send + Sync {
     async fn upsert_markets(&self, markets: &[RewardMarket]) -> Result<()>;
     /// Replace the current rewards quote plan snapshot.
     async fn save_quote_plans(&self, plans: &[RewardQuotePlan]) -> Result<()>;
-    /// Append low-competition sleeve observations for shadow reporting.
+    /// Append legacy low-competition observations when reading historical data.
     async fn record_low_competition_observations(
         &self,
         observations: &[RewardLowCompetitionObservation],
     ) -> Result<()>;
-    /// Read recent low-competition observations for one account.
+    /// Read legacy low-competition observations for one account.
     async fn list_low_competition_observations(
         &self,
         account_id: &str,
         since: OffsetDateTime,
         limit: u16,
     ) -> Result<Vec<RewardLowCompetitionObservation>>;
-    async fn record_market_candle_sample(
-        &self,
-        sample: &RewardMarketCandleSample,
-    ) -> Result<()>;
+    async fn record_market_candle_sample(&self, sample: &RewardMarketCandleSample) -> Result<()>;
     async fn list_recent_market_candles(
         &self,
         condition_id: &str,
@@ -136,11 +132,7 @@ pub trait RewardBotStore: Send + Sync {
     ///
     /// Reward market catalogs and quote-plan snapshots have separate full-replacement
     /// methods and must not be changed by incremental live-state persistence.
-    async fn apply_tick_outcome(
-        &self,
-        outcome: &RewardTickOutcome,
-        trace_id: &str,
-    ) -> Result<()>;
+    async fn apply_tick_outcome(&self, outcome: &RewardTickOutcome, trace_id: &str) -> Result<()>;
     /// Persist account state from external sync and optionally replace all positions
     /// for the account. `None` preserves the stored positions when the external
     /// position request failed; `Some` is a complete authoritative snapshot.

@@ -102,6 +102,7 @@ fn waiting_orderbook_readiness_overrides_preserved_live_legs() {
         recommended_quote_mode: Some(RewardPlanQuoteMode::Double),
         book_metrics: None,
         low_competition_metrics: None,
+        opportunity_metrics: None,
         ai_advisory: None,
         info_risk: None,
         midpoint: Some(Decimal::new(5, 1)),
@@ -145,6 +146,7 @@ fn quote_plan_book_token_registration_uses_persisted_orderbook_tokens() {
         recommended_quote_mode: Some(RewardPlanQuoteMode::Double),
         book_metrics: None,
         low_competition_metrics: None,
+        opportunity_metrics: None,
         ai_advisory: None,
         info_risk: None,
         midpoint: Some(Decimal::new(5, 1)),
@@ -166,79 +168,4 @@ fn quote_plan_book_token_registration_uses_persisted_orderbook_tokens() {
         token_ids,
         vec!["yes_token".to_string(), "no_token".to_string()]
     );
-}
-
-#[test]
-fn low_competition_enforce_replaces_standard_candidate_for_same_condition() {
-    let config = RewardBotConfig {
-        low_competition_mode: RewardLowCompetitionMode::Enforce,
-        ..RewardBotConfig::default()
-    };
-    let mut candidates = vec![reward_service_candidate(
-        "cond_overlap",
-        RewardStrategyBucket::Standard,
-    )];
-
-    push_low_competition_candidate_profile(
-        &mut candidates,
-        reward_service_candidate("cond_overlap", RewardStrategyBucket::LowCompetition),
-        &config,
-    );
-
-    assert_eq!(candidates.len(), 1);
-    assert_eq!(
-        candidates[0].strategy_bucket,
-        RewardStrategyBucket::LowCompetition
-    );
-}
-
-#[test]
-fn low_competition_observe_keeps_standard_candidate_for_same_condition() {
-    let config = RewardBotConfig {
-        low_competition_mode: RewardLowCompetitionMode::Observe,
-        ..RewardBotConfig::default()
-    };
-    let mut candidates = vec![reward_service_candidate(
-        "cond_overlap",
-        RewardStrategyBucket::Standard,
-    )];
-
-    push_low_competition_candidate_profile(
-        &mut candidates,
-        reward_service_candidate("cond_overlap", RewardStrategyBucket::LowCompetition),
-        &config,
-    );
-
-    assert_eq!(candidates.len(), 1);
-    assert_eq!(candidates[0].strategy_bucket, RewardStrategyBucket::Standard);
-}
-
-fn reward_service_candidate(
-    condition_id: &str,
-    strategy_bucket: RewardStrategyBucket,
-) -> RewardCandidateMarket {
-    let now = OffsetDateTime::now_utc();
-    RewardCandidateMarket {
-        market: RewardMarket {
-            condition_id: condition_id.to_string(),
-            question: "Service candidate test".to_string(),
-            market_slug: condition_id.to_string(),
-            event_slug: "service-candidate".to_string(),
-            category: "test".to_string(),
-            image: String::new(),
-            rewards_max_spread: Decimal::ONE,
-            rewards_min_size: Decimal::ONE,
-            total_daily_rate: Decimal::ONE,
-            liquidity_usd: Decimal::ZERO,
-            volume_24h_usd: Decimal::ZERO,
-            market_spread_cents: Decimal::ZERO,
-            end_at: Some(now + TimeDuration::days(1)),
-            ambiguity_level: "low".to_string(),
-            market_synced_at: Some(now),
-            tokens: Vec::new(),
-            active: true,
-            updated_at: now,
-        },
-        strategy_bucket,
-    }
 }

@@ -101,7 +101,8 @@ async fn refresh_reward_ai_advisory_provider_cache(
         return Ok(report);
     }
 
-    let model = state.settings.rewards.ai_model.trim();
+    let model = reward_ai_model_for_provider(&state.settings.rewards, cycle.config.ai_provider);
+    let request_format = reward_ai_effective_request_format_for_model(&cycle.config, model);
     if model.is_empty() {
         warn!(
             trace_id = %trace_id,
@@ -120,7 +121,9 @@ async fn refresh_reward_ai_advisory_provider_cache(
     };
     let fallback_descriptor = resolve_reward_ai_fallback(&state.settings.rewards);
     let fallback_connector = match &fallback_descriptor {
-        Some(descriptor) => Some(build_reward_ai_advisory_fallback_connector(state, descriptor)?),
+        Some(descriptor) => Some(build_reward_ai_advisory_fallback_connector(
+            state, descriptor,
+        )?),
         None => None,
     };
     let fallback_channel = match (&fallback_descriptor, fallback_connector.as_ref()) {
@@ -168,7 +171,7 @@ async fn refresh_reward_ai_advisory_provider_cache(
     info!(
         trace_id = %trace_id,
         provider = cycle.config.ai_provider.as_str(),
-        request_format = cycle.config.ai_request_format.as_str(),
+        request_format = request_format.as_str(),
         conditions = original_ordered_conditions,
         selected_conditions = ordered_conditions.len(),
         max_conditions,
@@ -178,7 +181,9 @@ async fn refresh_reward_ai_advisory_provider_cache(
 
     let refresh_result: Result<()> = async {
         let mut ai_promoted_tokens = Vec::new();
-        for condition_batch in ordered_conditions.chunks(REWARD_AI_PROVIDER_ORDERBOOK_MARKETS_PER_BATCH) {
+        for condition_batch in
+            ordered_conditions.chunks(REWARD_AI_PROVIDER_ORDERBOOK_MARKETS_PER_BATCH)
+        {
             let batch_books = prepare_reward_ai_provider_orderbook_batch(
                 state,
                 &books,
@@ -249,7 +254,8 @@ async fn refresh_reward_info_risk_provider_cache(
         return Ok(report);
     }
 
-    let model = state.settings.rewards.ai_model.trim();
+    let model = reward_ai_model_for_provider(&state.settings.rewards, cycle.config.ai_provider);
+    let request_format = reward_ai_effective_request_format_for_model(&cycle.config, model);
     if model.is_empty() {
         warn!(trace_id = %trace_id, "reward info risk model is empty");
         return Ok(report);
@@ -265,7 +271,9 @@ async fn refresh_reward_info_risk_provider_cache(
     };
     let info_risk_fallback_descriptor = resolve_reward_ai_fallback(&state.settings.rewards);
     let info_risk_fallback_connector = match &info_risk_fallback_descriptor {
-        Some(descriptor) => Some(build_reward_info_risk_fallback_connector(state, descriptor)?),
+        Some(descriptor) => Some(build_reward_info_risk_fallback_connector(
+            state, descriptor,
+        )?),
         None => None,
     };
     let info_risk_fallback_channel = match (
@@ -306,7 +314,7 @@ async fn refresh_reward_info_risk_provider_cache(
     info!(
         trace_id = %trace_id,
         provider = cycle.config.ai_provider.as_str(),
-        request_format = cycle.config.ai_request_format.as_str(),
+        request_format = request_format.as_str(),
         conditions = original_ordered_conditions,
         selected_conditions = ordered_conditions.len(),
         max_conditions,
@@ -411,6 +419,7 @@ async fn refresh_reward_ai_advisory_for_condition(
             REWARD_AI_CANDLE_SOURCE_LIMIT_PER_TOKEN,
         )
         .await?;
+    let request_format = reward_ai_effective_request_format_for_model(&cycle.config, model);
     let request = build_reward_ai_advisory_request(
         market,
         plan_for_request,
@@ -422,7 +431,7 @@ async fn refresh_reward_ai_advisory_for_condition(
         &cycle.config,
         cycle.config.ai_advisory_ttl_sec,
         cycle.config.ai_provider,
-        cycle.config.ai_request_format,
+        request_format,
         model,
     )?;
     let mut cached_advisory = None;
@@ -470,7 +479,7 @@ async fn refresh_reward_ai_advisory_for_condition(
     let primary_channel = RewardAiAdvisoryChannel {
         connector,
         provider: cycle.config.ai_provider,
-        request_format: cycle.config.ai_request_format,
+        request_format,
         model: model.to_string(),
     };
     let attempt = advise_with_fallback(
@@ -568,6 +577,7 @@ async fn refresh_reward_info_risk_for_condition(
         .plans
         .iter()
         .find(|plan| plan.condition_id == condition_id);
+    let request_format = reward_ai_effective_request_format_for_model(&cycle.config, model);
     let request = build_reward_info_risk_assessment_request(
         market,
         plan_for_request,
@@ -576,7 +586,7 @@ async fn refresh_reward_info_risk_for_condition(
         &cycle.open_orders,
         &cycle.config,
         cycle.config.ai_provider,
-        cycle.config.ai_request_format,
+        request_format,
         model,
     )?;
     let primary_cached = state
@@ -620,7 +630,7 @@ async fn refresh_reward_info_risk_for_condition(
     let primary_channel = RewardInfoRiskChannel {
         connector,
         provider: cycle.config.ai_provider,
-        request_format: cycle.config.ai_request_format,
+        request_format,
         model: model.to_string(),
     };
     let attempt = assess_with_fallback(
@@ -642,7 +652,10 @@ async fn refresh_reward_info_risk_for_condition(
                 cycle.config.info_risk_ttl_sec,
                 OffsetDateTime::now_utc(),
             );
-            state.reward_bot_service.save_market_info_risk(&risk).await?;
+            state
+                .reward_bot_service
+                .save_market_info_risk(&risk)
+                .await?;
             report.saved += 1;
             info!(
                 trace_id = %trace_id,

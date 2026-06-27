@@ -4,21 +4,23 @@ use crate::{
     settings::Settings,
     stores::{
         ExternalEventStore, InMemoryAuditLogSink, InMemoryCopyTradeStore,
-        InMemoryExternalEventStore, InMemoryIdempotencyStore, InMemoryModeStateStore,
-        InMemoryOrderbookCache, InMemoryOrderbookSubscriptionRegistry, InMemoryRewardBotStore,
-        InMemoryRiskStateStore, InMemoryRuntimeConfigStore, NoopDatabaseMaintenanceStore,
-        PostgresAuditLogSink, PostgresCopyTradeStore, PostgresDatabaseMaintenanceStore,
-        PostgresExternalEventStore, PostgresIdempotencyStore, PostgresModeStateStore,
+        InMemoryExternalEventStore, InMemoryHighProbabilityStore, InMemoryIdempotencyStore,
+        InMemoryModeStateStore, InMemoryOrderbookCache, InMemoryOrderbookSubscriptionRegistry,
+        InMemoryRewardBotStore, InMemoryRiskStateStore, InMemoryRuntimeConfigStore,
+        InMemorySmartMoneyStore, NoopDatabaseMaintenanceStore, PostgresAuditLogSink,
+        PostgresCopyTradeStore, PostgresDatabaseMaintenanceStore, PostgresExternalEventStore,
+        PostgresHighProbabilityStore, PostgresIdempotencyStore, PostgresModeStateStore,
         PostgresRewardBotStore, PostgresRiskStateStore, PostgresRuntimeConfigStore,
-        RuntimeConfigStore,
+        PostgresSmartMoneyStore, RuntimeConfigStore,
     },
 };
 use polyedge_application::{
     AuditLogSink, CopyTradeService, CopyTradeStore, DatabaseMaintenanceService,
-    DatabaseMaintenanceStore, ExecutionService, IdempotencyStore, MarketEventService,
-    MarketEventStore, ModeStateStore, NewsIngestionService, NewsIngestionStore, OrderbookCache,
-    OrderbookSubscriptionRegistry, RewardBotService, RewardBotStore, RiskPolicy, RiskService,
-    RiskStateStore, SystemModeService,
+    DatabaseMaintenanceStore, ExecutionService, HighProbabilityService, HighProbabilityStore,
+    IdempotencyStore, MarketEventService, MarketEventStore, ModeStateStore, NewsIngestionService,
+    NewsIngestionStore, OrderbookCache, OrderbookSubscriptionRegistry, RewardBotService,
+    RewardBotStore, RiskPolicy, RiskService, RiskStateStore, SmartMoneyService, SmartMoneyStore,
+    SystemModeService,
 };
 use polyedge_domain::{AppError, Result, SystemMode};
 use sqlx::{PgPool, Postgres, pool::PoolConnection, postgres::PgPoolOptions};
@@ -44,6 +46,8 @@ pub struct AppState {
     pub risk_service: Arc<RiskService>,
     pub execution_service: Arc<ExecutionService>,
     pub copytrade_service: Arc<CopyTradeService>,
+    pub smart_money_service: Arc<SmartMoneyService>,
+    pub high_probability_service: Arc<HighProbabilityService>,
     pub orderbook_cache: Arc<dyn OrderbookCache>,
     pub orderbook_registry: Arc<dyn OrderbookSubscriptionRegistry>,
 }
@@ -266,6 +270,17 @@ impl Runtime {
         } else {
             Arc::new(InMemoryCopyTradeStore::new())
         };
+        let smart_money_store: Arc<dyn SmartMoneyStore> = if let Some(pool) = postgres.clone() {
+            Arc::new(PostgresSmartMoneyStore::new(pool))
+        } else {
+            Arc::new(InMemorySmartMoneyStore::new())
+        };
+        let high_probability_store: Arc<dyn HighProbabilityStore> =
+            if let Some(pool) = postgres.clone() {
+                Arc::new(PostgresHighProbabilityStore::new(pool))
+            } else {
+                Arc::new(InMemoryHighProbabilityStore::new())
+            };
         let system_mode_service = Arc::new(SystemModeService::new(
             mode_store.clone(),
             idempotency_store.clone(),
@@ -277,6 +292,9 @@ impl Runtime {
             Arc::new(DatabaseMaintenanceService::new(database_maintenance_store));
         let reward_bot_service = Arc::new(RewardBotService::new(reward_bot_store));
         let copytrade_service = Arc::new(CopyTradeService::new(copytrade_store));
+        let smart_money_service = Arc::new(SmartMoneyService::new(smart_money_store));
+        let high_probability_service =
+            Arc::new(HighProbabilityService::new(high_probability_store));
         let execution_audit_log_sink = audit_log_sink.clone();
         let risk_service = Arc::new(RiskService::new(
             risk_policy(&settings),
@@ -317,6 +335,8 @@ impl Runtime {
                 database_maintenance_service,
                 reward_bot_service,
                 copytrade_service,
+                smart_money_service,
+                high_probability_service,
                 risk_service,
                 execution_service,
                 orderbook_cache,
@@ -350,6 +370,9 @@ impl Runtime {
         let market_event_store = Arc::new(InMemoryMarketEventStore::new());
         let reward_bot_store = Arc::new(InMemoryRewardBotStore::new());
         let copytrade_store: Arc<dyn CopyTradeStore> = Arc::new(InMemoryCopyTradeStore::new());
+        let smart_money_store: Arc<dyn SmartMoneyStore> = Arc::new(InMemorySmartMoneyStore::new());
+        let high_probability_store: Arc<dyn HighProbabilityStore> =
+            Arc::new(InMemoryHighProbabilityStore::new());
         let system_mode_service = Arc::new(SystemModeService::new(
             mode_store.clone(),
             idempotency_store.clone(),
@@ -363,6 +386,9 @@ impl Runtime {
         )));
         let reward_bot_service = Arc::new(RewardBotService::new(reward_bot_store));
         let copytrade_service = Arc::new(CopyTradeService::new(copytrade_store));
+        let smart_money_service = Arc::new(SmartMoneyService::new(smart_money_store));
+        let high_probability_service =
+            Arc::new(HighProbabilityService::new(high_probability_store));
         let execution_audit_log_sink = audit_log_sink.clone();
         let risk_service = Arc::new(RiskService::new(
             risk_policy(&settings),
@@ -405,6 +431,8 @@ impl Runtime {
             database_maintenance_service,
             reward_bot_service,
             copytrade_service,
+            smart_money_service,
+            high_probability_service,
             risk_service,
             execution_service,
             orderbook_cache,

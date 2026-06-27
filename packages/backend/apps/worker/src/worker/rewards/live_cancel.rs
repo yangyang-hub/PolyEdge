@@ -76,8 +76,8 @@ fn live_cancel_reason(
     plans: &HashMap<&str, &RewardQuotePlan>,
     books: &HashMap<String, RewardOrderBook>,
     book_history: &HashMap<String, VecDeque<BookSnapshot>>,
-    open_orders: &[ManagedRewardOrder],
-    account: &RewardAccountState,
+    _open_orders: &[ManagedRewardOrder],
+    _account: &RewardAccountState,
     order: &ManagedRewardOrder,
     now: OffsetDateTime,
     kill_switch: bool,
@@ -137,21 +137,6 @@ fn live_cancel_reason(
             "post-only buy would touch best ask {best_ask} at order price {}",
             order.price
         ));
-    }
-    if order.strategy_bucket == RewardStrategyBucket::LowCompetition
-        || plan.strategy_bucket == RewardStrategyBucket::LowCompetition
-    {
-        if plan.strategy_bucket != RewardStrategyBucket::LowCompetition {
-            return Some("low-competition order no longer has low-competition quote plan".to_string());
-        }
-        return low_competition_live_cancel_reason(
-            config,
-            plan,
-            books,
-            book_history,
-            open_orders,
-            account,
-        );
     }
     if let Some(reason) =
         live_requote_drift_cancel_reason(config, book_history, order, leg.price, now)

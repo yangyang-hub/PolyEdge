@@ -170,6 +170,57 @@ pub struct RewardLowCompetitionMetrics {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RewardOpportunityMetrics {
+    #[serde(default)]
+    pub planned_notional_usd: Decimal,
+    #[serde(default)]
+    pub probe_notional_usd: Decimal,
+    pub qualified_competition_usd: Decimal,
+    #[serde(default)]
+    pub competition_share_bps: Decimal,
+    #[serde(default)]
+    pub competition_multiple: Decimal,
+    pub estimated_reward_per_100_usd_day: Decimal,
+    pub competition_density: Decimal,
+    #[serde(default)]
+    pub account_effective_available_usd: Decimal,
+    #[serde(default)]
+    pub open_buy_notional_usd: Decimal,
+    #[serde(default)]
+    pub open_buy_notional_usd_after_plan: Decimal,
+    #[serde(default)]
+    pub condition_buy_notional_usd_after_plan: Decimal,
+    #[serde(default)]
+    pub account_allocation_bps: Decimal,
+    #[serde(default)]
+    pub market_allocation_bps: Decimal,
+    pub exit_depth_usd: Decimal,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exit_slippage_cents: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bad_fill_recovery_days: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub midpoint_range_cents: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub top_of_book_flip_count: Option<u64>,
+    pub sample_count: u64,
+    #[serde(default)]
+    pub reward_score: Decimal,
+    #[serde(default)]
+    pub competition_score: Decimal,
+    #[serde(default)]
+    pub exit_score: Decimal,
+    #[serde(default)]
+    pub stability_score: Decimal,
+    #[serde(default)]
+    pub opportunity_score: Decimal,
+    #[serde(default)]
+    pub score_adjustment: Decimal,
+    #[serde(default)]
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RewardLowCompetitionObservation {
     pub id: String,
     pub account_id: String,
@@ -288,6 +339,8 @@ pub struct RewardQuotePlan {
     pub recommended_quote_mode: Option<RewardPlanQuoteMode>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub book_metrics: Option<RewardMarketBookMetrics>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub opportunity_metrics: Option<RewardOpportunityMetrics>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub low_competition_metrics: Option<RewardLowCompetitionMetrics>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -599,8 +652,6 @@ impl RewardQuotePlanBlockerCounts {
             self.ai_avoid += 1;
         } else if reason.starts_with("info risk ") {
             self.info_risk += 1;
-        } else if reason.starts_with("low-competition observe only:") {
-            self.low_competition += 1;
         } else if reason.starts_with("live funding below rewards minimum:") {
             self.funding += 1;
         } else if reason.starts_with("live orderbook validation skipped until ") {
@@ -638,18 +689,18 @@ pub fn refresh_reward_quote_plan_readiness(plan: &mut RewardQuotePlan) {
 fn reward_quote_plan_has_live_legs(plan: &RewardQuotePlan) -> bool {
     !plan.legs.is_empty()
         && plan.legs.iter().all(|leg| {
-            leg.price > Decimal::ZERO && leg.size > Decimal::ZERO && leg.notional_usd > Decimal::ZERO
+            leg.price > Decimal::ZERO
+                && leg.size > Decimal::ZERO
+                && leg.notional_usd > Decimal::ZERO
         })
 }
 
 fn reward_quote_plan_waiting_orderbook(plan: &RewardQuotePlan) -> bool {
-    plan.reason
-        .starts_with("waiting for fresh orderbook data")
+    plan.reason.starts_with("waiting for fresh orderbook data")
 }
 
 fn reward_quote_plan_provider_pending(plan: &RewardQuotePlan) -> bool {
-    plan.reason.starts_with("AI advisory pending:")
-        || plan.reason.starts_with("info risk pending:")
+    plan.reason.starts_with("AI advisory pending:") || plan.reason.starts_with("info risk pending:")
 }
 
 /// Best-effort live quote for a token, injected into the API snapshot so the
@@ -673,7 +724,8 @@ pub struct RewardBotSnapshot {
     pub config: RewardBotConfig,
     pub status: RewardBotStatus,
     pub account: RewardAccountState,
-    pub low_competition_report: RewardLowCompetitionShadowReport,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub low_competition_report: Option<RewardLowCompetitionShadowReport>,
     #[serde(default)]
     pub llm_usage: Vec<RewardLlmCallDailyStats>,
     pub markets: Vec<RewardMarket>,

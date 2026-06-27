@@ -283,6 +283,78 @@ fn spawn_worker_tasks(state: &AppState, shutdown_rx: watch::Receiver<bool>) -> V
         }
     }
 
+    if settings.poll_smart_money {
+        let job_state = state.clone();
+        handles.push(spawn_interval_job(
+            "poll-smart-money",
+            settings.smart_money_interval_secs.max(60),
+            shutdown_rx.clone(),
+            move || {
+                let state = job_state.clone();
+                async move {
+                    let trace_id = new_trace_id();
+                    match run_smart_money_if_enabled(&state, &trace_id).await {
+                        Ok(Some(report)) => info!(
+                            trace_id = %trace_id,
+                            wallets_scanned = report.wallets_scanned,
+                            candidates_seeded = report.candidates_seeded,
+                            leaderboard_candidates_seeded = report.leaderboard_candidates_seeded,
+                            smart_candidates_scanned = report.smart_candidates_scanned,
+                            profiles_updated = report.profiles_updated,
+                            scores_updated = report.scores_updated,
+                            trades_recorded = report.trades_recorded,
+                            candidates = report.candidates,
+                            profiles = report.profiles,
+                            scored_wallets = report.scored_wallets,
+                            recent_trades = report.recent_trades,
+                            recent_signals = report.recent_signals,
+                            "completed worker smart money cycle",
+                        ),
+                        Ok(None) => debug!(
+                            trace_id = %trace_id,
+                            "worker smart money cycle skipped because Smart Money config is disabled",
+                        ),
+                        Err(error) => {
+                            warn!(trace_id = %trace_id, error = %error, "worker smart money cycle failed");
+                        }
+                    }
+                }
+            },
+        ));
+    }
+
+    if settings.poll_high_probability_observe {
+        let job_state = state.clone();
+        handles.push(spawn_interval_job(
+            "poll-high-probability-observe",
+            settings.high_probability_observe_interval_secs.max(60),
+            shutdown_rx.clone(),
+            move || {
+                let state = job_state.clone();
+                async move {
+                    let trace_id = new_trace_id();
+                    match observe_high_probability_once(&state, task_limit(&state), &trace_id).await
+                    {
+                        Ok(report) => info!(
+                            trace_id = %trace_id,
+                            candidates_scanned = report.candidates_scanned,
+                            observations_recorded = report.observations_recorded,
+                            allow_count = report.allow_count,
+                            reject_count = report.reject_count,
+                            skip_count = report.skip_count,
+                            missing_quote_count = report.missing_quote_count,
+                            missing_bucket_count = report.missing_bucket_count,
+                            "completed worker high probability observe cycle",
+                        ),
+                        Err(error) => {
+                            warn!(trace_id = %trace_id, error = %error, "worker high probability observe cycle failed");
+                        }
+                    }
+                }
+            },
+        ));
+    }
+
     if settings.drain_execution_queue {
         let job_state = state.clone();
         handles.push(spawn_interval_job(

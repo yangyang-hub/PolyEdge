@@ -38,9 +38,7 @@ include!("rewards/service_snapshot.rs");
 include!("rewards/planner.rs");
 include!("rewards/planner_selection.rs");
 include!("rewards/planner_live.rs");
-include!("rewards/low_competition.rs");
-include!("rewards/low_competition_cancel.rs");
-include!("rewards/low_competition_report.rs");
+include!("rewards/opportunity_metrics.rs");
 include!("rewards/provider_prefilter.rs");
 include!("rewards/engine.rs");
 include!("rewards/helpers.rs");
@@ -56,10 +54,10 @@ mod ai_advisory_tests {
 }
 
 #[cfg(test)]
-mod low_competition_tests {
+mod opportunity_metrics_tests {
     use super::*;
 
-    include!("rewards/low_competition_tests.rs");
+    include!("rewards/opportunity_metrics_tests.rs");
 }
 
 #[cfg(test)]

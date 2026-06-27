@@ -1,11 +1,13 @@
 use crate::openai_compat::{
-    openai_compatible_endpoint, provider_json_candidates, provider_response_preview,
-    with_openai_compatible_auth,
+    is_openai_compatible_chat_provider, openai_compatible_chat_response_format,
+    openai_compatible_chat_token_limit_field, openai_compatible_endpoint, provider_json_candidates,
+    provider_response_preview, with_openai_compatible_auth,
 };
 use polyedge_application::{
     RewardAiProvider, RewardAiRequestFormat, RewardInfoDirectionalRisk,
     RewardInfoRiskAssessmentBatchItem, RewardInfoRiskAssessmentDecision,
     RewardInfoRiskAssessmentRequest, RewardInfoRiskLevel, RewardInfoRiskSource, RewardInfoRiskType,
+    reward_ai_effective_request_format,
 };
 use polyedge_domain::{AppError, Result};
 use reqwest::Client;
@@ -53,7 +55,12 @@ impl RewardInfoRiskConnector {
         &self,
         request: &RewardInfoRiskAssessmentRequest,
     ) -> Result<RewardInfoRiskAssessmentDecision> {
-        let text = match request.request_format {
+        let request_format = reward_ai_effective_request_format(
+            request.provider,
+            request.request_format,
+            &request.model,
+        );
+        let text = match request_format {
             RewardAiRequestFormat::OpenAiResponses => self.call_openai_responses(request).await?,
             RewardAiRequestFormat::OpenAiChatCompletions => {
                 self.call_openai_chat_completions(request).await?
@@ -72,7 +79,12 @@ impl RewardInfoRiskConnector {
         if requests.is_empty() {
             return Ok(Vec::new());
         }
-        let text = match requests[0].request_format {
+        let request_format = reward_ai_effective_request_format(
+            requests[0].provider,
+            requests[0].request_format,
+            &requests[0].model,
+        );
+        let text = match request_format {
             RewardAiRequestFormat::OpenAiResponses => {
                 self.call_openai_responses_batch(requests).await?
             }
@@ -138,7 +150,22 @@ impl RewardInfoRiskConnector {
         &self,
         request: &RewardInfoRiskAssessmentRequest,
     ) -> Result<String> {
-        ensure_info_risk_provider(request, RewardAiProvider::OpenAi)?;
+        ensure_info_risk_openai_compatible_chat_provider(request)?;
+        let mut body = json!({
+            "model": request.model,
+            "messages": [
+                {"role": "system", "content": reward_info_risk_system_prompt()},
+                {"role": "user", "content": reward_info_risk_user_prompt(request)}
+            ],
+            "response_format": openai_compatible_chat_response_format(
+                &request.model,
+                "reward_market_info_risk",
+                reward_info_risk_json_schema(),
+            ),
+            "temperature": 0
+        });
+        body[openai_compatible_chat_token_limit_field(&request.model)] =
+            json!(REWARD_INFO_RISK_CHAT_COMPLETION_MAX_TOKENS);
         let response = with_openai_compatible_auth(
             self.client.post(openai_compatible_endpoint(
                 &self.base_url,
@@ -146,23 +173,7 @@ impl RewardInfoRiskConnector {
             )),
             &self.api_key,
         )
-        .json(&json!({
-            "model": request.model,
-            "messages": [
-                {"role": "system", "content": reward_info_risk_system_prompt()},
-                {"role": "user", "content": reward_info_risk_user_prompt(request)}
-            ],
-            "response_format": {
-                "type": "json_schema",
-                "json_schema": {
-                    "name": "reward_market_info_risk",
-                    "schema": reward_info_risk_json_schema(),
-                    "strict": true
-                }
-            },
-            "temperature": 0,
-            "max_completion_tokens": REWARD_INFO_RISK_CHAT_COMPLETION_MAX_TOKENS
-        }))
+        .json(&body)
         .send()
         .await
         .map_err(reward_info_risk_http_error)?;
@@ -274,8 +285,22 @@ impl RewardInfoRiskConnector {
         &self,
         requests: &[RewardInfoRiskAssessmentRequest],
     ) -> Result<String> {
-        ensure_info_risk_batch_provider(requests, RewardAiProvider::OpenAi)?;
+        ensure_info_risk_batch_openai_compatible_chat_provider(requests)?;
         let max_tokens = reward_info_risk_batch_max_tokens(requests.len());
+        let mut body = json!({
+            "model": requests[0].model,
+            "messages": [
+                {"role": "system", "content": reward_info_risk_batch_system_prompt()},
+                {"role": "user", "content": reward_info_risk_batch_user_prompt(requests)}
+            ],
+            "response_format": openai_compatible_chat_response_format(
+                &requests[0].model,
+                "reward_market_info_risks",
+                reward_info_risk_batch_json_schema(),
+            ),
+            "temperature": 0
+        });
+        body[openai_compatible_chat_token_limit_field(&requests[0].model)] = json!(max_tokens);
         let response = with_openai_compatible_auth(
             self.client.post(openai_compatible_endpoint(
                 &self.base_url,
@@ -283,23 +308,7 @@ impl RewardInfoRiskConnector {
             )),
             &self.api_key,
         )
-        .json(&json!({
-            "model": requests[0].model,
-            "messages": [
-                {"role": "system", "content": reward_info_risk_batch_system_prompt()},
-                {"role": "user", "content": reward_info_risk_batch_user_prompt(requests)}
-            ],
-            "response_format": {
-                "type": "json_schema",
-                "json_schema": {
-                    "name": "reward_market_info_risks",
-                    "schema": reward_info_risk_batch_json_schema(),
-                    "strict": true
-                }
-            },
-            "temperature": 0,
-            "max_completion_tokens": max_tokens
-        }))
+        .json(&body)
         .send()
         .await
         .map_err(reward_info_risk_http_error)?;
@@ -378,6 +387,18 @@ fn ensure_info_risk_provider(
     ))
 }
 
+fn ensure_info_risk_openai_compatible_chat_provider(
+    request: &RewardInfoRiskAssessmentRequest,
+) -> Result<()> {
+    if is_openai_compatible_chat_provider(request.provider) {
+        return Ok(());
+    }
+    Err(AppError::invalid_input(
+        "REWARD_INFO_RISK_PROVIDER_FORMAT_MISMATCH",
+        "reward info risk chat completion request format requires an OpenAI-compatible provider",
+    ))
+}
+
 fn ensure_info_risk_batch_provider(
     requests: &[RewardInfoRiskAssessmentRequest],
     expected: RewardAiProvider,
@@ -396,6 +417,32 @@ fn ensure_info_risk_batch_provider(
             return Err(AppError::invalid_input(
                 "REWARD_INFO_RISK_BATCH_MISMATCH",
                 "reward info risk batch requests must share request format and model",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn ensure_info_risk_batch_openai_compatible_chat_provider(
+    requests: &[RewardInfoRiskAssessmentRequest],
+) -> Result<()> {
+    if requests.is_empty() {
+        return Err(AppError::invalid_input(
+            "REWARD_INFO_RISK_BATCH_EMPTY",
+            "reward info risk batch must not be empty",
+        ));
+    }
+    ensure_info_risk_openai_compatible_chat_provider(&requests[0])?;
+    let first = &requests[0];
+    for request in &requests[1..] {
+        ensure_info_risk_openai_compatible_chat_provider(request)?;
+        if request.provider != first.provider
+            || request.request_format != first.request_format
+            || request.model != first.model
+        {
+            return Err(AppError::invalid_input(
+                "REWARD_INFO_RISK_BATCH_MISMATCH",
+                "reward info risk batch requests must share provider, request format and model",
             ));
         }
     }

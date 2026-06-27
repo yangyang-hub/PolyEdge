@@ -6,6 +6,8 @@ export * from "./dto/news";
 export * from "./dto/probability";
 export * from "./dto/rewards";
 export * from "./dto/copytrade";
+export * from "./dto/smart-money";
+export * from "./dto/high-probability";
 export * from "./dto/wallet-analysis";
 export * from "./dto/funding";
 export * from "./dto/settings";

@@ -7,7 +7,12 @@ import { getCopyTradePageData } from "@/features/copytrade/loaders/copytrade-pag
 export default function CopyTradingPage() {
   return (
     <ClientDataBoundary load={getCopyTradePageData}>
-      {(data) => <CopyTradeWorkbench initialSnapshot={data.snapshot} />}
+      {(data) => (
+        <CopyTradeWorkbench
+          initialSnapshot={data.snapshot}
+          initialSmartMoneySnapshot={data.smartMoneySnapshot}
+        />
+      )}
     </ClientDataBoundary>
   );
 }

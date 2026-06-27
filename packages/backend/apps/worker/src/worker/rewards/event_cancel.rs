@@ -86,22 +86,6 @@ fn drain_reward_orderbook_cancel_tokens(
     }
 }
 
-fn remember_reward_event_cancel_plan_tokens(
-    plan: &RewardQuotePlan,
-    seen: &mut HashSet<String>,
-    active_order_tokens: &mut Vec<String>,
-) {
-    if plan.orderbook_token_ids.is_empty() {
-        for leg in &plan.legs {
-            remember_reward_event_cancel_plan_token(&leg.token_id, seen, active_order_tokens);
-        }
-    } else {
-        for token_id in &plan.orderbook_token_ids {
-            remember_reward_event_cancel_plan_token(token_id, seen, active_order_tokens);
-        }
-    }
-}
-
 fn remember_reward_event_cancel_plan_token(
     token_id: &str,
     seen: &mut HashSet<String>,
@@ -131,11 +115,6 @@ fn reward_event_cancel_active_order_tokens(
             && live_event_cancel_order_matches_updated_tokens(order, &plan_index, token_ids)
     }) {
         remember_reward_event_cancel_plan_token(&order.token_id, &mut seen, &mut active_order_tokens);
-        if let Some(plan) = plan_index.get(order.condition_id.as_str())
-            && plan.strategy_bucket == RewardStrategyBucket::LowCompetition
-        {
-            remember_reward_event_cancel_plan_tokens(plan, &mut seen, &mut active_order_tokens);
-        }
     }
 
     active_order_tokens
@@ -268,7 +247,7 @@ fn live_event_hard_cancel_candidates_with_account(
     open_orders: &[ManagedRewardOrder],
     books: &HashMap<String, RewardOrderBook>,
     book_history: &HashMap<String, VecDeque<BookSnapshot>>,
-    account: &RewardAccountState,
+    _account: &RewardAccountState,
     token_ids: &HashSet<String>,
     kill_switch: bool,
 ) -> Vec<(String, String)> {
@@ -289,8 +268,6 @@ fn live_event_hard_cancel_candidates_with_account(
                 &plan_index,
                 books,
                 book_history,
-                open_orders,
-                account,
                 order,
                 now,
                 kill_switch,
@@ -302,22 +279,10 @@ fn live_event_hard_cancel_candidates_with_account(
 
 fn live_event_cancel_order_matches_updated_tokens(
     order: &ManagedRewardOrder,
-    plans: &HashMap<&str, &RewardQuotePlan>,
+    _plans: &HashMap<&str, &RewardQuotePlan>,
     token_ids: &HashSet<String>,
 ) -> bool {
-    if token_ids.contains(&order.token_id) {
-        return true;
-    }
-    let Some(plan) = plans.get(order.condition_id.as_str()) else {
-        return false;
-    };
-    if plan.strategy_bucket != RewardStrategyBucket::LowCompetition {
-        return false;
-    }
-    plan.orderbook_token_ids
-        .iter()
-        .chain(plan.legs.iter().map(|leg| &leg.token_id))
-        .any(|token_id| token_ids.contains(token_id))
+    token_ids.contains(&order.token_id)
 }
 
 fn live_event_hard_cancel_reason(
@@ -325,8 +290,6 @@ fn live_event_hard_cancel_reason(
     plans: &HashMap<&str, &RewardQuotePlan>,
     books: &HashMap<String, RewardOrderBook>,
     book_history: &HashMap<String, VecDeque<BookSnapshot>>,
-    open_orders: &[ManagedRewardOrder],
-    account: &RewardAccountState,
     order: &ManagedRewardOrder,
     now: OffsetDateTime,
     kill_switch: bool,
@@ -387,21 +350,6 @@ fn live_event_hard_cancel_reason(
             "post-only buy would touch best ask {best_ask} at order price {}",
             order.price
         ));
-    }
-    if order.strategy_bucket == RewardStrategyBucket::LowCompetition
-        || plan.strategy_bucket == RewardStrategyBucket::LowCompetition
-    {
-        if plan.strategy_bucket != RewardStrategyBucket::LowCompetition {
-            return Some("low-competition order no longer has low-competition quote plan".to_string());
-        }
-        return low_competition_live_cancel_reason(
-            config,
-            plan,
-            books,
-            book_history,
-            open_orders,
-            account,
-        );
     }
     if let Some(reason) = live_min_depth_cancel_reason(config, books, order) {
         return Some(reason);

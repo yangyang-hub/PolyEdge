@@ -1,6 +1,6 @@
 # PolyEdge 文档索引
 
-最后更新：2026-06-19
+最后更新：2026-06-27
 
 ## 当前事实来源
 
@@ -46,3 +46,5 @@
 | 文档 | 状态 |
 |---|---|
 | [rewards-low-competition-sleeve-plan.md](rewards-low-competition-sleeve-plan.md) | Rewards 低竞争市场 sleeve v2 实现状态、shadow report 和剩余自动启用缺口 |
+| [smart-money-intelligence-implementation-plan.md](smart-money-intelligence-implementation-plan.md) | Smart Money Intelligence / 聪明钱跟单重构实施计划；描述待实现能力，不代表当前 copytrade 已具备自动发现、信号或实盘执行 |
+| [high-probability-pricing-strategy-plan.md](high-probability-pricing-strategy-plan.md) | 动态高概率市场定价策略研究与实施方案；描述待实现的历史统计、动态阈值、回测、observe/paper/live guarded 路径 |

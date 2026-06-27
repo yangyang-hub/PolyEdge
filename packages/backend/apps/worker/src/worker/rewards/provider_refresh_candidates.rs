@@ -1,5 +1,3 @@
-const REWARD_PROVIDER_STANDARD_CONDITIONS_PER_LOW_COMPETITION: usize = 2;
-
 fn reward_provider_refresh_candidate_condition_ids(
     condition_ids: &[String],
     plans: &[RewardQuotePlan],
@@ -39,8 +37,6 @@ fn reward_provider_refresh_candidate_condition_ids(
     }
 
     let mut queued = seen.clone();
-    let mut standard_conditions = Vec::new();
-    let mut low_competition_conditions = Vec::new();
     for condition_id in condition_ids {
         let Some(condition_id) = reward_provider_normalized_condition_id(condition_id) else {
             continue;
@@ -54,21 +50,13 @@ fn reward_provider_refresh_candidate_condition_ids(
         let Some(plan) = plans_by_condition.get(&condition_id) else {
             continue;
         };
-        match reward_provider_pre_llm_candidate_kind(plan, config, false) {
-            Some(RewardProviderPreLlmCandidateKind::Standard) => {
-                standard_conditions.push(condition_id);
-            }
-            Some(RewardProviderPreLlmCandidateKind::LowCompetition) => {
-                low_competition_conditions.push(condition_id);
-            }
-            Some(RewardProviderPreLlmCandidateKind::ActiveExposure) | None => {}
+        if matches!(
+            reward_provider_pre_llm_candidate_kind(plan, config, false),
+            Some(RewardProviderPreLlmCandidateKind::Standard)
+        ) {
+            ordered.push(condition_id);
         }
     }
-    append_reward_provider_condition_mix(
-        &mut ordered,
-        standard_conditions,
-        low_competition_conditions,
-    );
     ordered
 }
 
@@ -86,33 +74,6 @@ fn push_reward_provider_available_condition(
     }
     if seen.insert(condition_id.clone()) {
         ordered.push(condition_id);
-    }
-}
-
-fn append_reward_provider_condition_mix(
-    ordered: &mut Vec<String>,
-    standard_conditions: Vec<String>,
-    low_competition_conditions: Vec<String>,
-) {
-    let mut standard_conditions = standard_conditions.into_iter();
-    let mut low_competition_conditions = low_competition_conditions.into_iter();
-    loop {
-        let mut pushed = false;
-        for _ in 0..REWARD_PROVIDER_STANDARD_CONDITIONS_PER_LOW_COMPETITION {
-            if let Some(condition_id) = standard_conditions.next() {
-                ordered.push(condition_id);
-                pushed = true;
-            } else {
-                break;
-            }
-        }
-        if let Some(condition_id) = low_competition_conditions.next() {
-            ordered.push(condition_id);
-            pushed = true;
-        }
-        if !pushed {
-            break;
-        }
     }
 }
 

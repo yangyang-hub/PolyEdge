@@ -24,27 +24,10 @@ fn remember_live_buy_submission_last_look_token(
 
 fn live_buy_submission_last_look_token_ids(
     order: &ManagedRewardOrder,
-    plans: &HashMap<&str, &RewardQuotePlan>,
 ) -> Vec<String> {
     let mut token_ids = Vec::new();
     let mut seen = HashSet::new();
     remember_live_buy_submission_last_look_token(&mut token_ids, &mut seen, &order.token_id);
-
-    let Some(plan) = plans.get(order.condition_id.as_str()) else {
-        return token_ids;
-    };
-    if order.strategy_bucket != RewardStrategyBucket::LowCompetition
-        && plan.strategy_bucket != RewardStrategyBucket::LowCompetition
-    {
-        return token_ids;
-    }
-
-    for token_id in &plan.orderbook_token_ids {
-        remember_live_buy_submission_last_look_token(&mut token_ids, &mut seen, token_id);
-    }
-    for leg in &plan.legs {
-        remember_live_buy_submission_last_look_token(&mut token_ids, &mut seen, &leg.token_id);
-    }
 
     token_ids
 }
@@ -306,8 +289,7 @@ async fn submit_pending_live_reward_orders(
         if order.side == RewardOrderSide::Buy
             && let Some(context) = risk_context
         {
-            let last_look_token_ids =
-                live_buy_submission_last_look_token_ids(order, context.plans);
+            let last_look_token_ids = live_buy_submission_last_look_token_ids(order);
             let fetched_last_look_books =
                 fetch_live_buy_submission_last_look_books(state, &last_look_token_ids).await;
             let mut last_look_books = books.clone();
@@ -321,14 +303,9 @@ async fn submit_pending_live_reward_orders(
                         let missing_token_id = missing_token_id.to_string();
                         allow_buy_submit = false;
                         order.scoring = false;
-                        order.reason = if last_look_token_ids.len() > 1 {
-                            format!(
-                                "live buy submission deferred by low-competition last-look: orderbook unavailable for {missing_token_id}"
-                            )
-                        } else {
+                        order.reason =
                             "live buy submission deferred by last-look: orderbook unavailable"
-                                .to_string()
-                        };
+                                .to_string();
                         order.updated_at = OffsetDateTime::now_utc();
                         let event = reward_live_event(
                             order,

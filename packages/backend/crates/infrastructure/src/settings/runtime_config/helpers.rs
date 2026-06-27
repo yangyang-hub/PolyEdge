@@ -93,6 +93,44 @@ fn push_worker_runtime_config_entries(
             RuntimeConfigValueType::Boolean,
         ),
         (
+            "poll_smart_money",
+            "Worker poll smart money",
+            "POLYEDGE_WORKER__POLL_SMART_MONEY",
+            settings.worker.poll_smart_money.to_string(),
+            defaults.worker.poll_smart_money.to_string(),
+            RuntimeConfigValueType::Boolean,
+        ),
+        (
+            "smart_money_interval_secs",
+            "Smart money scan interval seconds",
+            "POLYEDGE_WORKER__SMART_MONEY_INTERVAL_SECS",
+            settings.worker.smart_money_interval_secs.to_string(),
+            defaults.worker.smart_money_interval_secs.to_string(),
+            RuntimeConfigValueType::Integer,
+        ),
+        (
+            "poll_high_probability_observe",
+            "Worker poll high probability observe",
+            "POLYEDGE_WORKER__POLL_HIGH_PROBABILITY_OBSERVE",
+            settings.worker.poll_high_probability_observe.to_string(),
+            defaults.worker.poll_high_probability_observe.to_string(),
+            RuntimeConfigValueType::Boolean,
+        ),
+        (
+            "high_probability_observe_interval_secs",
+            "High probability observe interval seconds",
+            "POLYEDGE_WORKER__HIGH_PROBABILITY_OBSERVE_INTERVAL_SECS",
+            settings
+                .worker
+                .high_probability_observe_interval_secs
+                .to_string(),
+            defaults
+                .worker
+                .high_probability_observe_interval_secs
+                .to_string(),
+            RuntimeConfigValueType::Integer,
+        ),
+        (
             "news_promotion_interval_secs",
             "News promotion interval seconds",
             "POLYEDGE_WORKER__NEWS_PROMOTION_INTERVAL_SECS",

@@ -22,7 +22,6 @@ async fn apply_cached_reward_ai_advisories_to_cycle(
     info!(
         trace_id = %trace_id,
         provider = cycle.config.ai_provider.as_str(),
-        request_format = cycle.config.ai_request_format.as_str(),
         plans = cycle.plans.len(),
         pre_ai_eligible_plans = cycle.pre_ai_eligible_condition_ids.len(),
         open_orders = cycle.open_orders.len(),
@@ -30,7 +29,14 @@ async fn apply_cached_reward_ai_advisories_to_cycle(
         "applying cached reward AI advisories",
     );
     let min_confidence = reward_ai_min_confidence(state.settings.rewards.ai_min_confidence_bps);
-    let model = state.settings.rewards.ai_model.trim();
+    let model = reward_ai_model_for_provider(&state.settings.rewards, cycle.config.ai_provider);
+    let request_format = reward_ai_effective_request_format_for_model(&cycle.config, model);
+    info!(
+        trace_id = %trace_id,
+        request_format = request_format.as_str(),
+        model,
+        "resolved reward AI advisory endpoint format",
+    );
     let fallback = resolve_reward_ai_fallback(&state.settings.rewards);
     let now = OffsetDateTime::now_utc();
     let mut advisories = current_reward_ai_advisories(
@@ -46,12 +52,7 @@ async fn apply_cached_reward_ai_advisories_to_cycle(
             trace_id = %trace_id,
             "reward AI advisory model is empty; blocking new eligible plans until provider filter passes"
         );
-        apply_reward_ai_advisories(
-            &mut cycle.plans,
-            &advisories,
-            &cycle.config,
-            min_confidence,
-        );
+        apply_reward_ai_advisories(&mut cycle.plans, &advisories, &cycle.config, min_confidence);
         return Ok(());
     }
 
@@ -107,7 +108,7 @@ async fn apply_cached_reward_ai_advisories_to_cycle(
             &cycle.config,
             cycle.config.ai_advisory_ttl_sec,
             cycle.config.ai_provider,
-            cycle.config.ai_request_format,
+            request_format,
             model,
         )?;
         if let Some(cached) =
@@ -133,12 +134,7 @@ async fn apply_cached_reward_ai_advisories_to_cycle(
         "completed cached reward AI advisory application",
     );
 
-    apply_reward_ai_advisories(
-        &mut cycle.plans,
-        &advisories,
-        &cycle.config,
-        min_confidence,
-    );
+    apply_reward_ai_advisories(&mut cycle.plans, &advisories, &cycle.config, min_confidence);
     Ok(())
 }
 
@@ -256,7 +252,9 @@ fn current_reward_ai_advisories(
         .iter()
         .filter(|plan| ai_required_condition_ids.contains(plan.condition_id.trim()))
         .filter_map(|plan| plan.ai_advisory.as_ref())
-        .filter(|advisory| reward_ai_advisory_matches_config(advisory, config, model, fallback, now))
+        .filter(|advisory| {
+            reward_ai_advisory_matches_config(advisory, config, model, fallback, now)
+        })
         .map(|advisory| (advisory.condition_id.clone(), advisory.clone()))
         .collect()
 }
@@ -335,8 +333,9 @@ fn reward_ai_advisory_matches_config(
         return false;
     }
     let model = model.trim();
+    let request_format = reward_ai_effective_request_format_for_model(config, model);
     if advisory.provider == config.ai_provider
-        && advisory.request_format == config.ai_request_format
+        && advisory.request_format == request_format
         && advisory.model == model
     {
         return true;
@@ -357,7 +356,19 @@ fn build_reward_ai_advisory_connector(
     config: &RewardBotConfig,
 ) -> Result<Option<RewardAiAdvisoryConnector>> {
     let rewards = &state.settings.rewards;
-    let (api_key, base_url) = match config.ai_provider {
+    let (api_key, base_url) = reward_ai_provider_endpoint_settings(rewards, config.ai_provider);
+    let Some(api_key) = api_key.filter(|value| !value.trim().is_empty()) else {
+        return Ok(None);
+    };
+    RewardAiAdvisoryConnector::new(base_url, api_key, rewards.ai_request_timeout_secs.max(1))
+        .map(Some)
+}
+
+fn reward_ai_provider_endpoint_settings<'a>(
+    rewards: &'a polyedge_infrastructure::settings::RewardsSettings,
+    provider: polyedge_application::RewardAiProvider,
+) -> (Option<&'a str>, &'a str) {
+    match provider {
         polyedge_application::RewardAiProvider::OpenAi => (
             rewards.ai_openai_api_key.as_deref(),
             rewards.ai_openai_base_url.as_str(),
@@ -366,16 +377,25 @@ fn build_reward_ai_advisory_connector(
             rewards.ai_anthropic_api_key.as_deref(),
             rewards.ai_anthropic_base_url.as_str(),
         ),
-    };
-    let Some(api_key) = api_key.filter(|value| !value.trim().is_empty()) else {
-        return Ok(None);
-    };
-    RewardAiAdvisoryConnector::new(
-        base_url,
-        api_key,
-        rewards.ai_request_timeout_secs.max(1),
+    }
+}
+
+fn reward_ai_model_for_provider<'a>(
+    rewards: &'a polyedge_infrastructure::settings::RewardsSettings,
+    _provider: polyedge_application::RewardAiProvider,
+) -> &'a str {
+    rewards.ai_model.trim()
+}
+
+fn reward_ai_effective_request_format_for_model(
+    config: &RewardBotConfig,
+    model: &str,
+) -> polyedge_application::RewardAiRequestFormat {
+    polyedge_application::reward_ai_effective_request_format(
+        config.ai_provider,
+        config.ai_request_format,
+        model,
     )
-    .map(Some)
 }
 
 /// Build the fallback AI advisory connector from the resolved fallback
@@ -464,18 +484,14 @@ fn reward_ai_llm_batch_input_hash(requests: &[RewardAiAdvisoryRequest]) -> Strin
     )
 }
 
-fn reward_info_risk_llm_condition_ids(
-    requests: &[RewardInfoRiskAssessmentRequest],
-) -> Vec<String> {
+fn reward_info_risk_llm_condition_ids(requests: &[RewardInfoRiskAssessmentRequest]) -> Vec<String> {
     requests
         .iter()
         .map(|request| request.condition_id.clone())
         .collect()
 }
 
-fn reward_info_risk_llm_batch_input_hash(
-    requests: &[RewardInfoRiskAssessmentRequest],
-) -> String {
+fn reward_info_risk_llm_batch_input_hash(requests: &[RewardInfoRiskAssessmentRequest]) -> String {
     if let [request] = requests {
         return request.input_hash.clone();
     }

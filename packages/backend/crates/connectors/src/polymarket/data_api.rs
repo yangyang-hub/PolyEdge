@@ -588,6 +588,36 @@ impl PolymarketDataApiConnector {
         Ok(raws.into_iter().next().and_then(map_leaderboard_entry))
     }
 
+    /// Fetch top leaderboard wallets for discovery.
+    pub async fn fetch_leaderboard(
+        &self,
+        limit: u16,
+        offset: u32,
+    ) -> Result<Vec<PolymarketLeaderboardEntry>> {
+        let mut url = reqwest::Url::parse(&format!(
+            "{}/v1/leaderboard",
+            self.data_api_host
+        ))
+        .map_err(|error| {
+            AppError::invalid_input(
+                "POLYMARKET_DATA_API_URL_INVALID",
+                format!("failed to construct Polymarket leaderboard URL: {error}"),
+            )
+        })?;
+        {
+            let mut query = url.query_pairs_mut();
+            query.append_pair("category", "OVERALL");
+            query.append_pair("timePeriod", "ALL");
+            query.append_pair("limit", &limit.clamp(1, MAX_DATA_API_LIMIT).to_string());
+            query.append_pair("offset", &offset.to_string());
+        }
+
+        let raws = self
+            .fetch_json::<Vec<RawLeaderboardEntry>>(url, "leaderboard", "global")
+            .await?;
+        Ok(raws.into_iter().filter_map(map_leaderboard_entry).collect())
+    }
+
     /// Fetch a user's public profile from the Gamma API.
     pub async fn fetch_public_profile(
         &self,
@@ -714,10 +744,7 @@ fn map_trade(raw: RawTrade) -> Option<PolymarketTrade> {
 }
 
 fn map_leaderboard_entry(raw: RawLeaderboardEntry) -> Option<PolymarketLeaderboardEntry> {
-    let proxy_wallet = normalize_optional_text(raw.proxy_wallet)?;
-    if proxy_wallet.is_empty() {
-        return None;
-    }
+    let proxy_wallet = normalize_data_api_address(&normalize_optional_text(raw.proxy_wallet)?).ok()?;
     Some(PolymarketLeaderboardEntry {
         rank: parse_data_api_i64(raw.rank.as_ref()),
         proxy_wallet,

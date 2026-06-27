@@ -14,9 +14,7 @@
 // only provider/request_format/model — yielding the correct distinct cache row
 // without rebuilding the request from market inputs.
 
-use polyedge_application::{
-    RewardAiAdvisoryDecision, RewardInfoRiskAssessmentDecision,
-};
+use polyedge_application::{RewardAiAdvisoryDecision, RewardInfoRiskAssessmentDecision};
 
 /// Resolved fallback endpoint descriptor. Built once from `RewardsSettings` and
 /// reused for both AI advisory and info-risk. A single shared endpoint matches
@@ -82,15 +80,13 @@ fn resolve_reward_ai_fallback(
     let format_raw = rewards.ai_fallback_request_format.as_deref()?.trim();
     let model = rewards.ai_fallback_model.as_deref()?.trim();
     let api_key = rewards.ai_fallback_api_key.as_deref()?.trim();
-    if provider_raw.is_empty()
-        || format_raw.is_empty()
-        || model.is_empty()
-        || api_key.is_empty()
-    {
+    if provider_raw.is_empty() || format_raw.is_empty() || model.is_empty() || api_key.is_empty() {
         return None;
     }
     let provider = match provider_raw {
-        "openai" | "open_ai" => polyedge_application::RewardAiProvider::OpenAi,
+        "openai" | "open_ai" | "glm" | "bigmodel" | "zhipu" | "deepseek" | "deep_seek" => {
+            polyedge_application::RewardAiProvider::OpenAi
+        }
         "anthropic" => polyedge_application::RewardAiProvider::Anthropic,
         other => {
             warn!(
@@ -116,7 +112,7 @@ fn resolve_reward_ai_fallback(
             return None;
         }
     };
-    let request_format = normalize_reward_provider_format(provider, request_format);
+    let request_format = normalize_reward_provider_format(provider, request_format, model);
     let web_search_enabled = rewards.info_risk_web_search_enabled
         && provider == polyedge_application::RewardAiProvider::OpenAi
         && request_format == polyedge_application::RewardAiRequestFormat::OpenAiResponses;
@@ -135,20 +131,17 @@ fn resolve_reward_ai_fallback(
     })
 }
 
-/// Apply the same provider+format coupling normalization as the primary config
-/// (`config_impl.rs`): Anthropic forces `AnthropicMessages`; an OpenAI provider
-/// cannot use `AnthropicMessages` and falls back to `OpenAiResponses`. Without
-/// this the connector's `ensure_provider` guard rejects every fallback call.
+/// Apply the same provider+format coupling normalization as the primary config:
+/// Anthropic forces `AnthropicMessages`; OpenAI-compatible GLM/DeepSeek models
+/// force Chat Completions based on their model names; an OpenAI provider cannot
+/// use `AnthropicMessages` and falls back to `OpenAiResponses`. Without this the
+/// connector's `ensure_provider` guard rejects every fallback call.
 fn normalize_reward_provider_format(
     provider: polyedge_application::RewardAiProvider,
     request_format: polyedge_application::RewardAiRequestFormat,
+    model: &str,
 ) -> polyedge_application::RewardAiRequestFormat {
-    use polyedge_application::{RewardAiProvider, RewardAiRequestFormat};
-    match (provider, request_format) {
-        (RewardAiProvider::Anthropic, _) => RewardAiRequestFormat::AnthropicMessages,
-        (_, RewardAiRequestFormat::AnthropicMessages) => RewardAiRequestFormat::OpenAiResponses,
-        _ => request_format,
-    }
+    polyedge_application::reward_ai_effective_request_format(provider, request_format, model)
 }
 
 /// Build the fallback request for an endpoint by cloning the primary request
@@ -368,7 +361,10 @@ async fn advise_with_fallback(
         &condition_ids,
         started.elapsed(),
         fallback_result.is_ok(),
-        fallback_result.as_ref().ok().map(|decision| json!(decision)),
+        fallback_result
+            .as_ref()
+            .ok()
+            .map(|decision| json!(decision)),
         fallback_result.as_ref().err().map(ToString::to_string),
         true,
         trace_id,
@@ -459,7 +455,10 @@ async fn assess_with_fallback(
         &condition_ids,
         started.elapsed(),
         fallback_result.is_ok(),
-        fallback_result.as_ref().ok().map(|decision| json!(decision)),
+        fallback_result
+            .as_ref()
+            .ok()
+            .map(|decision| json!(decision)),
         fallback_result.as_ref().err().map(ToString::to_string),
         true,
         trace_id,
@@ -561,6 +560,34 @@ mod reward_provider_fallback_tests {
     }
 
     #[test]
+    fn fallback_uses_model_name_to_normalize_glm_and_deepseek_to_chat_completions() {
+        let mut settings = settings_with_fallback();
+        settings.ai_fallback_provider = Some("openai".to_string());
+        settings.ai_fallback_request_format = Some("openai_responses".to_string());
+        settings.ai_fallback_model = Some("glm-4.7".to_string());
+        let fallback = resolve_reward_ai_fallback(&settings).expect("fallback configured");
+        assert_eq!(
+            fallback.provider,
+            polyedge_application::RewardAiProvider::OpenAi
+        );
+        assert_eq!(
+            fallback.request_format,
+            polyedge_application::RewardAiRequestFormat::OpenAiChatCompletions
+        );
+
+        settings.ai_fallback_model = Some("deepseek-v4-flash".to_string());
+        let fallback = resolve_reward_ai_fallback(&settings).expect("fallback configured");
+        assert_eq!(
+            fallback.provider,
+            polyedge_application::RewardAiProvider::OpenAi
+        );
+        assert_eq!(
+            fallback.request_format,
+            polyedge_application::RewardAiRequestFormat::OpenAiChatCompletions
+        );
+    }
+
+    #[test]
     fn combined_overload_is_conservative_or() {
         let transport = AppError::dependency_unavailable(
             "REWARD_AI_HTTP_FAILED",
@@ -573,9 +600,15 @@ mod reward_provider_fallback_tests {
         // primary overloaded, no fallback -> stop.
         assert!(reward_combined_provider_overloaded(&transport, None));
         // both parse-only -> do not stop.
-        assert!(!reward_combined_provider_overloaded(&parse_err, Some(&parse_err)));
+        assert!(!reward_combined_provider_overloaded(
+            &parse_err,
+            Some(&parse_err)
+        ));
         // primary parse, fallback overloaded -> stop (either side strained).
-        assert!(reward_combined_provider_overloaded(&parse_err, Some(&transport)));
+        assert!(reward_combined_provider_overloaded(
+            &parse_err,
+            Some(&transport)
+        ));
     }
 
     #[test]

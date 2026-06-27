@@ -20,7 +20,10 @@ fn live_condition_budget_capped_by_positions(
             .unwrap_or(raw_budget);
         // Both legs share one condition collateral; cap total so each leg
         // stays within its position limit.
-        budget = Decimal::min(budget, min_headroom * Decimal::from(plan_legs.len().max(1) as u64));
+        budget = Decimal::min(
+            budget,
+            min_headroom * Decimal::from(plan_legs.len().max(1) as u64),
+        );
     }
     if config.max_global_position_usd > Decimal::ZERO {
         let current = live_global_inventory_notional(positions);
@@ -30,25 +33,22 @@ fn live_condition_budget_capped_by_positions(
     budget
 }
 
-fn live_low_competition_global_open_order_cap(
+fn live_condition_budget_capped_by_ai_hint(
     config: &RewardBotConfig,
-    max_open_orders: usize,
-) -> usize {
-    if max_open_orders == 0 || config.low_competition_global_open_order_share_bps == 0 {
-        return 0;
-    }
-    ((max_open_orders * usize::from(config.low_competition_global_open_order_share_bps)) / 10_000)
-        .max(1)
-}
-
-fn live_low_competition_open_order_count(orders: &[ManagedRewardOrder]) -> usize {
-    orders
-        .iter()
-        .filter(|order| {
-            order.status.is_open_like()
-                && order.strategy_bucket == RewardStrategyBucket::LowCompetition
-        })
-        .count()
+    plan: &RewardQuotePlan,
+    existing_market_buy_notional: Decimal,
+    raw_budget: Decimal,
+) -> Decimal {
+    let Some(advisory) = plan.ai_advisory.as_ref() else {
+        return raw_budget;
+    };
+    let Some(max_condition_notional) =
+        reward_ai_strategy_hint_max_condition_notional_usd(advisory, config)
+    else {
+        return raw_budget;
+    };
+    let remaining = (max_condition_notional - existing_market_buy_notional).max(Decimal::ZERO);
+    Decimal::min(raw_budget, remaining)
 }
 
 fn apply_live_funding_precheck(
@@ -83,8 +83,14 @@ fn apply_live_funding_precheck(
             live_market_buy_notional(open_orders, &plan.condition_id);
         let raw_budget =
             (available_for_new_condition - existing_market_buy_notional).max(Decimal::ZERO);
-        let condition_budget =
+        let position_budget =
             live_condition_budget_capped_by_positions(config, &plan.legs, positions, raw_budget);
+        let condition_budget = live_condition_budget_capped_by_ai_hint(
+            config,
+            plan,
+            existing_market_buy_notional,
+            position_budget,
+        );
         let rescaled_legs = live_rescaled_quote_legs_for_budget(plan, condition_budget);
         let missing_plan_buy_notional =
             live_missing_plan_buy_notional(&rescaled_legs, open_orders, &plan.condition_id);

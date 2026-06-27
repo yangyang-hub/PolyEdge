@@ -1776,3 +1776,378 @@ CREATE UNIQUE INDEX IF NOT EXISTS reward_control_commands_active_global_dedupe_i
 
 ALTER TABLE reward_account_state
     ADD COLUMN IF NOT EXISTS unmanaged_external_buy_notional NUMERIC(18, 4) NOT NULL DEFAULT 0;
+
+
+-------------------------------------------------------------------------------
+-- Source: packages/backend/migrations/0049_smart_money_intelligence.sql
+-------------------------------------------------------------------------------
+
+CREATE TABLE smart_money_config (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE smart_wallet_candidates (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    wallet_address TEXT NOT NULL,
+    source TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'candidate'
+        CHECK (status IN ('candidate', 'watch', 'tracked', 'blocked', 'rejected')),
+    first_seen_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    last_seen_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    last_analyzed_at TIMESTAMPTZ,
+    promoted_at TIMESTAMPTZ,
+    rejected_at TIMESTAMPTZ,
+    reason TEXT,
+    raw JSONB NOT NULL DEFAULT '{}',
+    UNIQUE (wallet_address, source)
+);
+
+CREATE INDEX smart_wallet_candidates_status_seen_idx
+    ON smart_wallet_candidates (status, last_seen_at DESC);
+CREATE INDEX smart_wallet_candidates_wallet_idx
+    ON smart_wallet_candidates (wallet_address);
+
+CREATE TABLE smart_wallet_profiles (
+    wallet_address TEXT PRIMARY KEY,
+    trade_count BIGINT NOT NULL DEFAULT 0,
+    settled_trade_count BIGINT NOT NULL DEFAULT 0,
+    total_volume_usd NUMERIC NOT NULL DEFAULT 0,
+    realized_pnl_usd NUMERIC NOT NULL DEFAULT 0,
+    roi NUMERIC NOT NULL DEFAULT 0,
+    win_rate NUMERIC NOT NULL DEFAULT 0,
+    max_drawdown_usd NUMERIC NOT NULL DEFAULT 0,
+    avg_trade_usd NUMERIC NOT NULL DEFAULT 0,
+    median_trade_usd NUMERIC NOT NULL DEFAULT 0,
+    avg_hold_secs BIGINT,
+    active_days BIGINT NOT NULL DEFAULT 0,
+    markets_traded BIGINT NOT NULL DEFAULT 0,
+    category_concentration_score NUMERIC NOT NULL DEFAULT 0,
+    market_concentration_score NUMERIC NOT NULL DEFAULT 0,
+    low_liquidity_trade_ratio NUMERIC NOT NULL DEFAULT 0,
+    stale_copy_window_ratio NUMERIC NOT NULL DEFAULT 0,
+    last_trade_at TIMESTAMPTZ,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX smart_wallet_profiles_updated_idx
+    ON smart_wallet_profiles (updated_at DESC);
+
+CREATE TABLE smart_wallet_scores (
+    wallet_address TEXT PRIMARY KEY REFERENCES smart_wallet_profiles(wallet_address) ON DELETE CASCADE,
+    total_score NUMERIC NOT NULL,
+    profit_score NUMERIC NOT NULL,
+    consistency_score NUMERIC NOT NULL,
+    risk_score NUMERIC NOT NULL,
+    liquidity_score NUMERIC NOT NULL,
+    recency_score NUMERIC NOT NULL,
+    copyability_score NUMERIC NOT NULL,
+    tier TEXT NOT NULL CHECK (tier IN ('blocked', 'candidate', 'watch', 'approved')),
+    explanation JSONB NOT NULL DEFAULT '{}',
+    scoring_version TEXT NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX smart_wallet_scores_tier_score_idx
+    ON smart_wallet_scores (tier, total_score DESC);
+
+CREATE TABLE smart_wallet_trades (
+    id TEXT PRIMARY KEY,
+    wallet_address TEXT NOT NULL,
+    source TEXT NOT NULL,
+    condition_id TEXT NOT NULL,
+    token_id TEXT,
+    side TEXT NOT NULL CHECK (side IN ('buy', 'sell')),
+    outcome TEXT,
+    price NUMERIC NOT NULL CHECK (price >= 0 AND price <= 1),
+    size NUMERIC NOT NULL CHECK (size >= 0),
+    notional_usd NUMERIC NOT NULL CHECK (notional_usd >= 0),
+    tx_hash TEXT,
+    source_timestamp TIMESTAMPTZ NOT NULL,
+    discovered_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    raw JSONB NOT NULL DEFAULT '{}'
+);
+
+CREATE INDEX smart_wallet_trades_wallet_time_idx
+    ON smart_wallet_trades (wallet_address, source_timestamp DESC);
+CREATE INDEX smart_wallet_trades_condition_time_idx
+    ON smart_wallet_trades (condition_id, source_timestamp DESC);
+CREATE INDEX smart_wallet_trades_discovered_idx
+    ON smart_wallet_trades (discovered_at DESC);
+
+CREATE TABLE smart_signals (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    source_trade_id TEXT NOT NULL REFERENCES smart_wallet_trades(id),
+    wallet_address TEXT NOT NULL,
+    condition_id TEXT NOT NULL,
+    token_id TEXT,
+    side TEXT NOT NULL CHECK (side IN ('buy', 'sell')),
+    source_price NUMERIC NOT NULL CHECK (source_price >= 0 AND source_price <= 1),
+    current_price NUMERIC CHECK (current_price >= 0 AND current_price <= 1),
+    price_slippage_cents NUMERIC,
+    latency_ms BIGINT,
+    source_notional_usd NUMERIC NOT NULL DEFAULT 0,
+    consensus_wallet_count BIGINT NOT NULL DEFAULT 1,
+    score NUMERIC NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'new'
+        CHECK (status IN ('new', 'rejected', 'observe', 'paper', 'approval_required', 'live_ready', 'executed', 'expired')),
+    reason TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX smart_signals_status_created_idx
+    ON smart_signals (status, created_at DESC);
+CREATE INDEX smart_signals_condition_created_idx
+    ON smart_signals (condition_id, created_at DESC);
+CREATE INDEX smart_signals_wallet_created_idx
+    ON smart_signals (wallet_address, created_at DESC);
+CREATE INDEX smart_signals_source_trade_idx
+    ON smart_signals (source_trade_id);
+
+CREATE TABLE smart_signal_decisions (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    signal_id BIGINT NOT NULL REFERENCES smart_signals(id) ON DELETE CASCADE,
+    decision TEXT NOT NULL CHECK (decision IN ('allow', 'observe', 'reject')),
+    stage TEXT NOT NULL,
+    mode TEXT NOT NULL CHECK (mode IN ('observe', 'paper', 'approval', 'live_guarded')),
+    rejection_reason TEXT,
+    risk_checks JSONB NOT NULL DEFAULT '{}',
+    decided_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX smart_signal_decisions_signal_idx
+    ON smart_signal_decisions (signal_id, decided_at DESC);
+CREATE INDEX smart_signal_decisions_decision_idx
+    ON smart_signal_decisions (decision, decided_at DESC);
+
+CREATE TABLE smart_wallet_advisories (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    wallet_address TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    request_format TEXT NOT NULL,
+    model TEXT NOT NULL,
+    input_hash TEXT NOT NULL,
+    recommendation TEXT NOT NULL CHECK (recommendation IN ('allow', 'observe', 'reject')),
+    confidence NUMERIC NOT NULL CHECK (confidence >= 0 AND confidence <= 1),
+    risk_tags JSONB NOT NULL DEFAULT '[]',
+    summary TEXT NOT NULL DEFAULT '',
+    reasons JSONB NOT NULL DEFAULT '[]',
+    raw_output JSONB NOT NULL DEFAULT '{}',
+    expires_at TIMESTAMPTZ NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (wallet_address, provider, request_format, model, input_hash)
+);
+
+CREATE INDEX smart_wallet_advisories_lookup_idx
+    ON smart_wallet_advisories (wallet_address, expires_at DESC);
+
+CREATE TABLE smart_signal_advisories (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    signal_id BIGINT NOT NULL REFERENCES smart_signals(id) ON DELETE CASCADE,
+    provider TEXT NOT NULL,
+    request_format TEXT NOT NULL,
+    model TEXT NOT NULL,
+    input_hash TEXT NOT NULL,
+    recommendation TEXT NOT NULL CHECK (recommendation IN ('allow', 'observe', 'reject')),
+    confidence NUMERIC NOT NULL CHECK (confidence >= 0 AND confidence <= 1),
+    risk_tags JSONB NOT NULL DEFAULT '[]',
+    summary TEXT NOT NULL DEFAULT '',
+    reasons JSONB NOT NULL DEFAULT '[]',
+    raw_output JSONB NOT NULL DEFAULT '{}',
+    expires_at TIMESTAMPTZ NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (signal_id, provider, request_format, model, input_hash)
+);
+
+CREATE INDEX smart_signal_advisories_signal_idx
+    ON smart_signal_advisories (signal_id, expires_at DESC);
+
+CREATE TABLE smart_paper_executions (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    signal_id BIGINT NOT NULL REFERENCES smart_signals(id),
+    account_id TEXT NOT NULL,
+    side TEXT NOT NULL CHECK (side IN ('buy', 'sell')),
+    token_id TEXT,
+    planned_price NUMERIC NOT NULL,
+    filled_price NUMERIC,
+    size NUMERIC NOT NULL,
+    notional_usd NUMERIC NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('planned', 'filled', 'expired', 'closed')),
+    realized_pnl_usd NUMERIC NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX smart_paper_executions_signal_idx
+    ON smart_paper_executions (signal_id);
+CREATE INDEX smart_paper_executions_account_created_idx
+    ON smart_paper_executions (account_id, created_at DESC);
+
+CREATE TABLE high_probability_config (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE high_probability_samples (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    condition_id TEXT NOT NULL,
+    token_id TEXT NOT NULL,
+    side TEXT NOT NULL CHECK (side IN ('yes', 'no')),
+    sampled_at TIMESTAMPTZ NOT NULL,
+    trigger_kind TEXT NOT NULL
+        CHECK (trigger_kind IN ('first_touch', 'sustained', 're_entry')),
+    executable_price NUMERIC NOT NULL CHECK (executable_price >= 0 AND executable_price <= 1),
+    price_bucket TEXT NOT NULL,
+    market_type TEXT NOT NULL,
+    time_to_resolution_bucket TEXT,
+    liquidity_bucket TEXT,
+    spread_bucket TEXT,
+    path_features JSONB NOT NULL DEFAULT '{}',
+    risk_tags JSONB NOT NULL DEFAULT '[]',
+    outcome TEXT NOT NULL DEFAULT 'unknown'
+        CHECK (outcome IN ('win', 'loss', 'voided', 'unknown')),
+    settlement_pnl NUMERIC,
+    max_drawdown_cents NUMERIC,
+    hold_seconds BIGINT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (condition_id, token_id, sampled_at, trigger_kind, price_bucket)
+);
+
+CREATE INDEX high_probability_samples_bucket_idx
+    ON high_probability_samples (market_type, price_bucket, sampled_at DESC);
+CREATE INDEX high_probability_samples_condition_idx
+    ON high_probability_samples (condition_id);
+CREATE INDEX high_probability_samples_outcome_idx
+    ON high_probability_samples (outcome, sampled_at DESC);
+
+CREATE TABLE high_probability_bucket_stats (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    model_version TEXT NOT NULL,
+    bucket_key TEXT NOT NULL,
+    bucket_dimensions JSONB NOT NULL,
+    sample_count BIGINT NOT NULL CHECK (sample_count >= 0),
+    win_count BIGINT NOT NULL CHECK (win_count >= 0),
+    win_rate NUMERIC NOT NULL CHECK (win_rate >= 0 AND win_rate <= 1),
+    fair_probability NUMERIC NOT NULL CHECK (fair_probability >= 0 AND fair_probability <= 1),
+    confidence_low NUMERIC CHECK (confidence_low >= 0 AND confidence_low <= 1),
+    confidence_high NUMERIC CHECK (confidence_high >= 0 AND confidence_high <= 1),
+    expected_pnl NUMERIC,
+    avg_max_drawdown_cents NUMERIC,
+    break_70_rate NUMERIC CHECK (break_70_rate >= 0 AND break_70_rate <= 1),
+    break_60_rate NUMERIC CHECK (break_60_rate >= 0 AND break_60_rate <= 1),
+    break_50_rate NUMERIC CHECK (break_50_rate >= 0 AND break_50_rate <= 1),
+    avg_hold_seconds BIGINT,
+    recommended_max_entry_price NUMERIC
+        CHECK (recommended_max_entry_price >= 0 AND recommended_max_entry_price <= 1),
+    computed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (model_version, bucket_key)
+);
+
+CREATE INDEX high_probability_bucket_stats_model_idx
+    ON high_probability_bucket_stats (model_version, sample_count DESC);
+
+CREATE TABLE high_probability_observations (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    observed_at TIMESTAMPTZ NOT NULL,
+    condition_id TEXT NOT NULL,
+    token_id TEXT NOT NULL,
+    mode TEXT NOT NULL CHECK (mode IN ('observe', 'paper', 'live_guarded')),
+    executable_price NUMERIC NOT NULL CHECK (executable_price >= 0 AND executable_price <= 1),
+    fair_probability NUMERIC CHECK (fair_probability >= 0 AND fair_probability <= 1),
+    net_edge NUMERIC,
+    recommended_size_usd NUMERIC,
+    decision TEXT NOT NULL CHECK (decision IN ('allow', 'reject', 'skip')),
+    reasons JSONB NOT NULL DEFAULT '[]',
+    model_version TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX high_probability_observations_recent_idx
+    ON high_probability_observations (observed_at DESC);
+CREATE INDEX high_probability_observations_condition_idx
+    ON high_probability_observations (condition_id, observed_at DESC);
+
+CREATE TABLE high_probability_market_outcomes (
+    condition_id TEXT PRIMARY KEY,
+    status TEXT NOT NULL
+        CHECK (status IN ('unresolved', 'resolved', 'voided', 'ambiguous')),
+    winning_token_id TEXT,
+    resolved_at TIMESTAMPTZ,
+    market_type TEXT NOT NULL DEFAULT 'unknown',
+    risk_tags JSONB NOT NULL DEFAULT '[]',
+    label_source TEXT NOT NULL DEFAULT 'manual',
+    raw JSONB NOT NULL DEFAULT '{}',
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CHECK (
+        status <> 'resolved'
+        OR (winning_token_id IS NOT NULL AND winning_token_id <> '' AND resolved_at IS NOT NULL)
+    )
+);
+
+CREATE INDEX high_probability_market_outcomes_status_idx
+    ON high_probability_market_outcomes (status, resolved_at DESC);
+
+CREATE TABLE high_probability_backtest_runs (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    run_at TIMESTAMPTZ NOT NULL,
+    model_version TEXT NOT NULL,
+    market_scope TEXT NOT NULL,
+    sample_limit BIGINT NOT NULL CHECK (sample_limit > 0),
+    train_sample_count BIGINT NOT NULL CHECK (train_sample_count >= 0),
+    test_sample_count BIGINT NOT NULL CHECK (test_sample_count >= 0),
+    candidate_count BIGINT NOT NULL CHECK (candidate_count >= 0),
+    trade_count BIGINT NOT NULL CHECK (trade_count >= 0),
+    skipped_no_bucket_count BIGINT NOT NULL CHECK (skipped_no_bucket_count >= 0),
+    skipped_no_edge_count BIGINT NOT NULL CHECK (skipped_no_edge_count >= 0),
+    win_trades BIGINT NOT NULL CHECK (win_trades >= 0),
+    loss_trades BIGINT NOT NULL CHECK (loss_trades >= 0),
+    win_rate NUMERIC CHECK (win_rate >= 0 AND win_rate <= 1),
+    total_pnl NUMERIC NOT NULL,
+    average_pnl NUMERIC,
+    total_entry_cost NUMERIC NOT NULL CHECK (total_entry_cost >= 0),
+    roi NUMERIC,
+    max_drawdown NUMERIC NOT NULL CHECK (max_drawdown >= 0),
+    average_entry_price NUMERIC CHECK (average_entry_price >= 0 AND average_entry_price <= 1),
+    train_start_at TIMESTAMPTZ,
+    train_end_at TIMESTAMPTZ,
+    test_start_at TIMESTAMPTZ,
+    test_end_at TIMESTAMPTZ,
+    exit_rule_reports JSONB NOT NULL DEFAULT '[]',
+    notes JSONB NOT NULL DEFAULT '[]',
+    config_json JSONB NOT NULL DEFAULT '{}',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX high_probability_backtest_runs_recent_idx
+    ON high_probability_backtest_runs (run_at DESC);
+CREATE INDEX high_probability_backtest_runs_model_idx
+    ON high_probability_backtest_runs (model_version, run_at DESC);
+
+CREATE TABLE high_probability_backtest_trades (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    run_id BIGINT NOT NULL REFERENCES high_probability_backtest_runs(id) ON DELETE CASCADE,
+    sample_id BIGINT NOT NULL REFERENCES high_probability_samples(id),
+    condition_id TEXT NOT NULL,
+    token_id TEXT NOT NULL,
+    sampled_at TIMESTAMPTZ NOT NULL,
+    bucket_key TEXT NOT NULL,
+    executable_price NUMERIC NOT NULL CHECK (executable_price >= 0 AND executable_price <= 1),
+    fair_probability NUMERIC NOT NULL CHECK (fair_probability >= 0 AND fair_probability <= 1),
+    net_edge NUMERIC NOT NULL,
+    recommended_max_entry_price NUMERIC
+        CHECK (recommended_max_entry_price >= 0 AND recommended_max_entry_price <= 1),
+    outcome TEXT NOT NULL CHECK (outcome IN ('win', 'loss')),
+    settlement_pnl NUMERIC NOT NULL,
+    cumulative_pnl NUMERIC NOT NULL,
+    drawdown NUMERIC NOT NULL CHECK (drawdown >= 0),
+    reasons JSONB NOT NULL DEFAULT '[]',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX high_probability_backtest_trades_run_idx
+    ON high_probability_backtest_trades (run_id, sampled_at, id);
+CREATE INDEX high_probability_backtest_trades_condition_idx
+    ON high_probability_backtest_trades (condition_id, sampled_at DESC);

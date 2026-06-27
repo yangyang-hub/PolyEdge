@@ -69,6 +69,16 @@ pub struct RewardAiAdvisoryBatchItem {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RewardAiStrategyHint {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quote_mode: Option<RewardPlanQuoteMode>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bid_rank: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_condition_notional_usd: Option<Decimal>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RewardAiAdvisoryRequest {
     pub condition_id: String,
     pub provider: RewardAiProvider,
@@ -178,8 +188,8 @@ pub fn build_reward_ai_advisory_request(
     let cache_candle_summary = reward_ai_candle_cache_summary(market, &ai_candles);
     let pricing_context = reward_ai_pricing_context(market, plan, books, config, now);
     let payload = json!({
-        "schema_version": 2,
-        "task": "Return a binary maker-quote decision for the configured cache TTL horizon.",
+        "schema_version": 3,
+        "task": "Return a binary maker-quote decision and conservative live strategy hint for the configured cache TTL horizon.",
         "market": {
             "condition_id": market.condition_id,
             "question": market.question,
@@ -214,6 +224,8 @@ pub fn build_reward_ai_advisory_request(
             "quote_bid_rank": config.quote_bid_rank,
             "quote_mode": config.quote_mode,
             "selection_mode": config.selection_mode,
+            "ai_strategy_hint_enabled": config.ai_strategy_hint_enabled,
+            "ai_strategy_hint_min_confidence": config.ai_strategy_hint_min_confidence,
             "post_fill_strategy": config.post_fill_strategy,
             "max_spread_cents": config.max_spread_cents,
             "min_market_score": config.min_market_score,
@@ -266,6 +278,16 @@ fn reward_ai_advisory_cache_key_payload(
     });
 
     json!({
+        // schema_version 10: legacy low-competition sleeve settings are no
+        // longer part of strategy context; opportunity metrics now capture
+        // reward, competition, exit and stability tradeoffs in the unified
+        // quote plan.
+        //
+        // schema_version 9: provider decisions may include a live strategy
+        // hint that directly constrains quote direction, bid rank and
+        // condition notional. Include the related config so live hint changes
+        // refresh cached advisory decisions.
+        //
         // schema_version 8: legacy `suitability` provider responses are now
         // parsed fail-closed (only `allow` honoured; `watch`/non-allow collapse
         // to `avoid`), so advisories cached under the earlier watch-tolerant
@@ -292,9 +314,9 @@ fn reward_ai_advisory_cache_key_payload(
         // orderbook service has published real books, so advisories cached
         // before that change (null bids/asks "no orderbook" disallow) are
         // invalidated and re-evaluated against live books.
-        "schema_version": 8,
+        "schema_version": 10,
         "cache_domain": "reward_ai_advisory",
-        "provider_decision_schema": "binary_allow_quote_v1",
+        "provider_decision_schema": "binary_allow_quote_strategy_hint_v1",
         "market": {
             "condition_id": market.condition_id,
             "question": market.question,
@@ -314,6 +336,8 @@ fn reward_ai_advisory_cache_key_payload(
             "quote_bid_rank": config.quote_bid_rank,
             "quote_mode": config.quote_mode,
             "selection_mode": config.selection_mode,
+            "ai_strategy_hint_enabled": config.ai_strategy_hint_enabled,
+            "ai_strategy_hint_min_confidence": config.ai_strategy_hint_min_confidence,
             "post_fill_strategy": config.post_fill_strategy,
             "max_spread_cents": config.max_spread_cents,
             "min_market_score": config.min_market_score,
@@ -322,12 +346,6 @@ fn reward_ai_advisory_cache_key_payload(
             "dominant_single_side_enabled": config.dominant_single_side_enabled,
             "dominant_min_probability": config.dominant_min_probability,
             "dominant_max_probability": config.dominant_max_probability,
-            "low_competition_quote_bid_rank": config.low_competition_quote_bid_rank,
-            "low_competition_safety_margin_cents": config.low_competition_safety_margin_cents,
-            "low_competition_max_spread_cents": config.low_competition_max_spread_cents,
-            "low_competition_require_ai_allow": config.low_competition_require_ai_allow,
-            "low_competition_max_entry_exit_slippage_cents": config.low_competition_max_entry_exit_slippage_cents,
-            "low_competition_max_bad_fill_recovery_days": config.low_competition_max_bad_fill_recovery_days,
         },
         "candle_summary": candle_summary,
     })
@@ -383,13 +401,15 @@ pub fn reward_ai_advisories_from_quote_plans(
     now: OffsetDateTime,
 ) -> HashMap<String, RewardMarketAdvisory> {
     let model = model.trim();
+    let request_format =
+        reward_ai_effective_request_format(config.ai_provider, config.ai_request_format, model);
     plans
         .iter()
         .filter_map(|plan| plan.ai_advisory.as_ref())
         .filter(|advisory| {
             advisory.expires_at > now
                 && advisory.provider == config.ai_provider
-                && advisory.request_format == config.ai_request_format
+                && advisory.request_format == request_format
                 && advisory.model == model
         })
         .map(|advisory| (advisory.condition_id.clone(), advisory.clone()))
@@ -438,28 +458,7 @@ fn enforce_reward_ai_advisory(
         return;
     }
 
-    if low_competition_requires_high_confidence_allow(plan, config) {
-        if advisory.suitability != RewardAiSuitability::Allow {
-            reject_ai_gated_plan(
-                plan,
-                &format!(
-                    "AI advisory {}: low-competition sleeve requires high-confidence allow",
-                    advisory.suitability.as_str()
-                ),
-            );
-            return;
-        }
-        if advisory.confidence < min_confidence {
-            reject_ai_gated_plan(
-                plan,
-                &format!(
-                    "AI advisory confidence {} below low-competition threshold {min_confidence}",
-                    advisory.confidence
-                ),
-            );
-            return;
-        }
-    }
+    enforce_reward_ai_strategy_hint(plan, advisory, config);
 
     if !plan.eligible
         || config.selection_mode != RewardSelectionMode::Enforce
@@ -476,15 +475,6 @@ fn enforce_reward_ai_advisory(
     }
 }
 
-fn low_competition_requires_high_confidence_allow(
-    plan: &RewardQuotePlan,
-    config: &RewardBotConfig,
-) -> bool {
-    config.low_competition_require_ai_allow
-        && config.low_competition_mode == RewardLowCompetitionMode::Enforce
-        && plan.strategy_bucket == RewardStrategyBucket::LowCompetition
-}
-
 fn keep_single_ai_leg(plan: &mut RewardQuotePlan, outcome: &str) {
     plan.quote_mode = if outcome == "yes" {
         RewardPlanQuoteMode::SingleYes
@@ -492,6 +482,112 @@ fn keep_single_ai_leg(plan: &mut RewardQuotePlan, outcome: &str) {
         RewardPlanQuoteMode::SingleNo
     };
     plan.reason = format!("eligible with AI-assisted {} single-side quote", outcome);
+}
+
+fn enforce_reward_ai_strategy_hint(
+    plan: &mut RewardQuotePlan,
+    advisory: &RewardMarketAdvisory,
+    config: &RewardBotConfig,
+) {
+    let Some(hint) = reward_ai_strategy_hint(advisory, config) else {
+        return;
+    };
+    let Some(quote_mode) = hint.quote_mode else {
+        return;
+    };
+
+    match quote_mode {
+        RewardPlanQuoteMode::None => reject_ai_gated_plan(
+            plan,
+            "AI strategy hint skipped this market for live quoting",
+        ),
+        RewardPlanQuoteMode::Double => {}
+        RewardPlanQuoteMode::SingleYes => apply_ai_strategy_single_side_hint(plan, "yes"),
+        RewardPlanQuoteMode::SingleNo => apply_ai_strategy_single_side_hint(plan, "no"),
+    }
+}
+
+fn apply_ai_strategy_single_side_hint(plan: &mut RewardQuotePlan, outcome: &str) {
+    match plan.quote_mode {
+        RewardPlanQuoteMode::Double => keep_single_ai_leg(plan, outcome),
+        RewardPlanQuoteMode::SingleYes if outcome == "yes" => keep_single_ai_leg(plan, outcome),
+        RewardPlanQuoteMode::SingleNo if outcome == "no" => keep_single_ai_leg(plan, outcome),
+        RewardPlanQuoteMode::SingleYes | RewardPlanQuoteMode::SingleNo => reject_ai_gated_plan(
+            plan,
+            "AI strategy hint conflicts with deterministic single-side quote",
+        ),
+        RewardPlanQuoteMode::None => {}
+    }
+}
+
+#[must_use]
+pub fn reward_ai_strategy_hint(
+    advisory: &RewardMarketAdvisory,
+    config: &RewardBotConfig,
+) -> Option<RewardAiStrategyHint> {
+    if !config.ai_strategy_hint_enabled
+        || reward_ai_advisory_blocks_quote(advisory)
+        || advisory.confidence < config.ai_strategy_hint_min_confidence
+    {
+        return None;
+    }
+    reward_ai_strategy_hint_from_metrics(&advisory.metrics)
+}
+
+#[must_use]
+pub fn reward_ai_strategy_hint_bid_rank(
+    advisory: &RewardMarketAdvisory,
+    config: &RewardBotConfig,
+) -> Option<u16> {
+    reward_ai_strategy_hint(advisory, config).and_then(|hint| hint.bid_rank)
+}
+
+#[must_use]
+pub fn reward_ai_strategy_hint_max_condition_notional_usd(
+    advisory: &RewardMarketAdvisory,
+    config: &RewardBotConfig,
+) -> Option<Decimal> {
+    reward_ai_strategy_hint(advisory, config).and_then(|hint| hint.max_condition_notional_usd)
+}
+
+fn reward_ai_strategy_hint_from_metrics(metrics: &Value) -> Option<RewardAiStrategyHint> {
+    let hint = metrics.get("strategy_hint")?;
+    if hint.is_null() {
+        return None;
+    }
+    let quote_mode = hint
+        .get("quote_mode")
+        .and_then(Value::as_str)
+        .and_then(|value| RewardPlanQuoteMode::from_str(value).ok());
+    let bid_rank = hint
+        .get("bid_rank")
+        .and_then(Value::as_u64)
+        .and_then(|value| u16::try_from(value).ok())
+        .filter(|value| (1..=3).contains(value));
+    let max_condition_notional_usd = hint
+        .get("max_condition_notional_usd")
+        .and_then(reward_ai_strategy_hint_decimal)
+        .filter(|value| *value >= Decimal::ZERO);
+
+    if quote_mode.is_none() && bid_rank.is_none() && max_condition_notional_usd.is_none() {
+        return None;
+    }
+
+    Some(RewardAiStrategyHint {
+        quote_mode,
+        bid_rank,
+        max_condition_notional_usd,
+    })
+}
+
+fn reward_ai_strategy_hint_decimal(value: &Value) -> Option<Decimal> {
+    if let Some(number) = value.as_f64() {
+        Decimal::from_str(&number.to_string()).ok()
+    } else {
+        value
+            .as_str()
+            .and_then(|value| Decimal::from_str(value).ok())
+    }
 }
 
 fn top_reward_book_levels(levels: &[RewardBookLevel]) -> Vec<RewardBookLevel> {

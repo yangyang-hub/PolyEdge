@@ -15,8 +15,6 @@ impl RewardBotService {
         let config = self.read_config().await?;
         let account = self.load_account_state_cached(&config).await?;
         let now = OffsetDateTime::now_utc();
-        let low_competition_since =
-            now - TimeDuration::hours(LOW_COMPETITION_SHADOW_REPORT_WINDOW_HOURS as i64);
 
         // Inject the real account_id from config so SQL uses the account/status indexes.
         let order_query = RewardOrderListQuery {
@@ -36,7 +34,6 @@ impl RewardBotService {
             events,
             last_run_at,
             worker_heartbeat,
-            low_competition_observations,
             llm_usage,
         ) = tokio::try_join!(
             self.store.active_market_summary(),
@@ -50,23 +47,12 @@ impl RewardBotService {
             self.list_events_cached(&account.account_id, 100),
             self.store.latest_quote_plan_updated_at(),
             self.latest_worker_heartbeat_cached(&account.account_id),
-            self.store.list_low_competition_observations(
-                &account.account_id,
-                low_competition_since,
-                LOW_COMPETITION_OBSERVATION_READ_LIMIT,
-            ),
             self.list_recent_llm_call_daily_stats(now),
         )?;
         let error = active_orders
             .iter()
             .find(|order| reward_order_has_active_reconciliation_error(order))
             .map(|order| order.reason.clone());
-        let low_competition_report = build_low_competition_shadow_report(
-            &low_competition_observations,
-            LOW_COMPETITION_SHADOW_REPORT_WINDOW_HOURS,
-            &config,
-            now,
-        );
 
         Ok(RewardBotSnapshot {
             status: RewardBotStatus {
@@ -88,7 +74,7 @@ impl RewardBotService {
             },
             config,
             account,
-            low_competition_report,
+            low_competition_report: None,
             llm_usage,
             markets: Vec::new(),
             quote_plans: plans_page_data.items,

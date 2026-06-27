@@ -8,7 +8,8 @@ const MAX_REGISTRY_SOURCES: usize = 32;
 /// 基于内存的订阅注册中心实现。
 ///
 /// 每个 `source` 维护独立的有序 token 集合。注册会原子替换来源集合，
-/// `list_all_tokens` 按 live rewards、execution、candidate、copytrade 优先级返回并集。
+/// `list_all_tokens` 按 live rewards、execution、eligible、AI provider、
+/// candidate、copytrade 优先级返回并集。
 pub struct InMemoryOrderbookSubscriptionRegistry {
     /// source -> ordered token_ids
     tokens: RwLock<HashMap<String, Vec<String>>>,
@@ -162,9 +163,8 @@ fn registry_source_priority(source: &str) -> u8 {
         "exec_orders" => 1,
         "rewards_eligible" => 2,
         "rewards_ai_provider" => 3,
-        "rewards_low_competition_probe" => 4,
-        "rewards" | "rewards_candidates" => 5,
-        "copytrade" => 6,
-        _ => 7,
+        "rewards" | "rewards_candidates" => 4,
+        "copytrade" => 5,
+        _ => 6,
     }
 }

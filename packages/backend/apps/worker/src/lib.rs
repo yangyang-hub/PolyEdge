@@ -3,7 +3,10 @@ use polyedge_application::{
     AuthenticatedActor, BookSnapshot, BookSource, CachedOrderBook, CopyControlAction,
     CopyControlCommand, CopyTradeRunReport, DatabaseMaintenanceReport,
     DispatchExecutionListFilters, ExecutionDispatchCandidate, ExecutionReconciliationCandidate,
-    FixtureBundle, FixtureEventRecord, FixtureEvidenceRecord, ManagedRewardOrder,
+    FixtureBundle, FixtureEventRecord, FixtureEvidenceRecord, HighProbabilityBacktestPersistReport,
+    HighProbabilityBucketRefreshReport, HighProbabilityMarketOutcome,
+    HighProbabilityMarketOutcomeStatus, HighProbabilityObserveReport,
+    HighProbabilityOrderbookQuote, HighProbabilitySampleBuildReport, ManagedRewardOrder,
     ManagedRewardOrderStatus, MarkExecutionFailedCommand, MarkExecutionSubmittedCommand,
     MarketListFilters, MarketView, NewsIngestSourceCommand, NewsIngestionItem,
     NewsRawEventListFilters, NewsRawEventView, NewsSourceFailureUpdate,
@@ -17,17 +20,19 @@ use polyedge_application::{
     RewardMarketAdvisory, RewardMarketInfoRisk, RewardOrderBook, RewardOrderSide,
     RewardPlanQuoteMode, RewardPosition, RewardProviderPreLlmCandidateKind, RewardQuoteLeg,
     RewardQuotePlan, RewardRiskEvent, RewardRiskSeverity, RewardStrategyBucket, RewardTickOutcome,
-    RewardToken, SyncExternalOrderStatusCommand, WalletActivityInput, WalletFeedInput,
-    WalletPositionInput, apply_first_quote_entry_gates,
-    apply_low_competition_metrics_to_quote_plans, apply_reward_ai_advisories,
-    apply_reward_info_risks, build_low_competition_observations, build_reward_ai_advisory_request,
-    build_reward_info_risk_assessment_request, low_competition_live_cancel_reason,
-    materialize_reward_quote_plan_for_live_orderbook, new_risk_event,
-    reward_ai_advisory_blocks_quote, reward_condition_has_active_exposure,
-    reward_market_books_available, reward_order_counts_as_external_open,
-    reward_provider_cache_refresh_due, reward_provider_plan_passes_pre_llm_gate,
-    reward_provider_pre_llm_candidate_kind, scale_double_legs_for_budget,
-    scale_single_leg_for_budget, select_reward_book_token_ids,
+    RewardToken, SmartMoneyConfig, SmartMoneySide, SmartSignalAdvisory, SmartSignalAdvisoryContext,
+    SmartSignalAdvisoryLookup, SmartSignalBookQuote, SmartSignalStatus, SmartWalletCandidateStatus,
+    SmartWalletProfile, SmartWalletTrade, SyncExternalOrderStatusCommand, TrackedWalletStatus,
+    WalletActivityInput, WalletFeedInput, WalletPositionInput, apply_first_quote_entry_gates,
+    apply_reward_ai_advisories, apply_reward_info_risks,
+    apply_reward_opportunity_metrics_to_quote_plans, build_reward_ai_advisory_request,
+    build_reward_info_risk_assessment_request, materialize_reward_quote_plan_for_live_orderbook,
+    new_risk_event, refresh_reward_opportunity_metrics_for_quote_plans,
+    reward_ai_advisory_blocks_quote, reward_ai_strategy_hint_max_condition_notional_usd,
+    reward_condition_has_active_exposure, reward_market_books_available,
+    reward_order_counts_as_external_open, reward_provider_cache_refresh_due,
+    reward_provider_plan_passes_pre_llm_gate, reward_provider_pre_llm_candidate_kind,
+    scale_double_legs_for_budget, scale_single_leg_for_budget, select_reward_book_token_ids,
 };
 use polyedge_connectors::{
     ConnectorNewsItem, ConnectorOrderStatusUpdate, ConnectorTradeFillUpdate,
@@ -38,12 +43,13 @@ use polyedge_connectors::{
     OrderbookStreamClient, PAPER_ACCOUNT_ID, PAPER_EXECUTOR_NAME, POLYMARKET_CONNECTOR_NAME,
     PaperExecutionOutcome, PaperExecutor, PaperFillRequest, PaperOrderRequest,
     PaperOrderStatusRequest, PolymarketAcceptedOrderStatus, PolymarketChainConnector,
-    PolymarketDataApiConnector, PolymarketGammaConnector, PolymarketGammaMarket,
-    PolymarketMarketRefs, PolymarketOpenOrder, PolymarketOrderRejection, PolymarketRewardMarket,
-    PolymarketRewardsConnector, PolymarketSignatureScheme, PolymarketTokenOrderSide,
-    PolymarketWalletActivity, PolymarketWalletPosition, RewardAiAdvisoryConnector,
-    RewardInfoRiskConnector, RssNewsConnector, RssNewsSourceConfig,
-    normalize_polymarket_ws_order_message, normalize_polymarket_ws_trade_message,
+    PolymarketClosedPosition, PolymarketDataApiConnector, PolymarketGammaConnector,
+    PolymarketGammaMarket, PolymarketLeaderboardEntry, PolymarketMarketRefs, PolymarketOpenOrder,
+    PolymarketOrderRejection, PolymarketRewardMarket, PolymarketRewardsConnector,
+    PolymarketSignatureScheme, PolymarketTokenOrderSide, PolymarketTrade, PolymarketWalletActivity,
+    PolymarketWalletPosition, RewardAiAdvisoryConnector, RewardInfoRiskConnector, RssNewsConnector,
+    RssNewsSourceConfig, SmartSignalAdvisoryConnector, normalize_polymarket_ws_order_message,
+    normalize_polymarket_ws_trade_message,
 };
 use polyedge_domain::{
     AppError, EventStatus, EvidenceDirection, EvidenceStatus, OrderStatus, Probability, Quantity,
@@ -57,6 +63,7 @@ use polyedge_infrastructure::{
 use polymarket_client_sdk::clob::ws::WsMessage;
 use polymarket_client_sdk::types::B256;
 use rust_decimal::{Decimal, RoundingStrategy};
+use serde::Deserialize;
 use serde_json::{Value, json};
 use std::{
     collections::{HashMap, HashSet, VecDeque},
@@ -67,7 +74,7 @@ use std::{
     },
     time::{Duration, Instant},
 };
-use time::{Duration as TimeDuration, OffsetDateTime};
+use time::{Duration as TimeDuration, OffsetDateTime, format_description::well_known::Rfc3339};
 use tokio::{
     sync::{RwLock, mpsc, watch},
     task::JoinHandle,
@@ -156,6 +163,33 @@ struct RewardInfoRiskScanReport {
     failures: usize,
     skipped_missing_market: usize,
     applied_plans: usize,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+struct SmartMoneyRunReport {
+    wallets_scanned: usize,
+    candidates_seeded: usize,
+    leaderboard_candidates_seeded: usize,
+    smart_candidates_scanned: usize,
+    profiles_updated: usize,
+    scores_updated: usize,
+    trades_recorded: usize,
+    signal_trades_scanned: usize,
+    signals_generated: usize,
+    signal_decisions_recorded: usize,
+    observe_signals: usize,
+    rejected_signals: usize,
+    signal_advisory_candidates: usize,
+    signal_advisory_cache_hits: usize,
+    signal_advisory_requests_built: usize,
+    signal_advisory_provider_requests: usize,
+    signal_advisory_provider_saved: usize,
+    signal_advisory_provider_failures: usize,
+    candidates: usize,
+    profiles: usize,
+    scored_wallets: usize,
+    recent_trades: usize,
+    recent_signals: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -352,6 +386,131 @@ pub async fn run_cli() -> Result<()> {
             );
             Ok(())
         }
+        Some("scan-smart-money-once") => {
+            let trace_id = new_trace_id();
+            let report = run_smart_money_once(&state, &trace_id).await?;
+            info!(
+                trace_id = %trace_id,
+                wallets_scanned = report.wallets_scanned,
+                candidates_seeded = report.candidates_seeded,
+                leaderboard_candidates_seeded = report.leaderboard_candidates_seeded,
+                smart_candidates_scanned = report.smart_candidates_scanned,
+                profiles_updated = report.profiles_updated,
+                scores_updated = report.scores_updated,
+                trades_recorded = report.trades_recorded,
+                signal_advisory_candidates = report.signal_advisory_candidates,
+                signal_advisory_cache_hits = report.signal_advisory_cache_hits,
+                signal_advisory_requests_built = report.signal_advisory_requests_built,
+                signal_advisory_provider_requests = report.signal_advisory_provider_requests,
+                signal_advisory_provider_saved = report.signal_advisory_provider_saved,
+                signal_advisory_provider_failures = report.signal_advisory_provider_failures,
+                candidates = report.candidates,
+                profiles = report.profiles,
+                scored_wallets = report.scored_wallets,
+                recent_trades = report.recent_trades,
+                recent_signals = report.recent_signals,
+                "ran smart money foundation scan once",
+            );
+            Ok(())
+        }
+        Some("refresh-high-probability-buckets-once") => {
+            let trace_id = new_trace_id();
+            let report = refresh_high_probability_buckets_once(&state).await?;
+            info!(
+                trace_id = %trace_id,
+                samples_scanned = report.samples_scanned,
+                settled_samples = report.settled_samples,
+                buckets_computed = report.buckets_computed,
+                buckets_saved = report.buckets_saved,
+                "refreshed high probability bucket stats once",
+            );
+            Ok(())
+        }
+        Some("run-high-probability-backtest-once") => {
+            let trace_id = new_trace_id();
+            let report = run_high_probability_backtest_once(&state).await?;
+            info!(
+                trace_id = %trace_id,
+                run_id = report.run_id,
+                trades_saved = report.trades_saved,
+                "ran and persisted high probability backtest once",
+            );
+            Ok(())
+        }
+        Some("observe-high-probability-once") => {
+            let trace_id = new_trace_id();
+            let limit = parse_limit_arg(args.next())?;
+            let report = observe_high_probability_once(&state, limit, &trace_id).await?;
+            info!(
+                trace_id = %trace_id,
+                candidates_scanned = report.candidates_scanned,
+                observations_recorded = report.observations_recorded,
+                allow_count = report.allow_count,
+                reject_count = report.reject_count,
+                skip_count = report.skip_count,
+                missing_quote_count = report.missing_quote_count,
+                missing_bucket_count = report.missing_bucket_count,
+                "observed high probability candidates once",
+            );
+            Ok(())
+        }
+        Some("build-high-probability-samples-once") => {
+            let trace_id = new_trace_id();
+            let limit = parse_u32_arg(args.next())?;
+            let report = build_high_probability_samples_once(&state, limit).await?;
+            info!(
+                trace_id = %trace_id,
+                candle_inputs_scanned = report.candle_inputs_scanned,
+                samples_built = report.samples_built,
+                samples_inserted = report.samples_inserted,
+                "built high probability samples from reward candles once",
+            );
+            Ok(())
+        }
+        Some("import-high-probability-outcomes") => {
+            let trace_id = new_trace_id();
+            let path = args.next().ok_or_else(|| {
+                AppError::invalid_input(
+                    "HIGH_PROBABILITY_OUTCOME_IMPORT_PATH_MISSING",
+                    "import-high-probability-outcomes requires a JSON file path",
+                )
+            })?;
+            let report = import_high_probability_outcomes_once(&state, &path).await?;
+            info!(
+                trace_id = %trace_id,
+                path = %path,
+                rows_read = report.rows_read,
+                outcomes_upserted = report.outcomes_upserted,
+                "imported high probability market outcomes",
+            );
+            Ok(())
+        }
+        Some("poll-smart-money") => {
+            let max_cycles = parse_limit_arg(args.next())?.map(usize::from);
+            let report = poll_smart_money(&state, max_cycles).await?;
+            info!(
+                wallets_scanned = report.wallets_scanned,
+                candidates_seeded = report.candidates_seeded,
+                leaderboard_candidates_seeded = report.leaderboard_candidates_seeded,
+                smart_candidates_scanned = report.smart_candidates_scanned,
+                profiles_updated = report.profiles_updated,
+                scores_updated = report.scores_updated,
+                trades_recorded = report.trades_recorded,
+                signal_advisory_candidates = report.signal_advisory_candidates,
+                signal_advisory_cache_hits = report.signal_advisory_cache_hits,
+                signal_advisory_requests_built = report.signal_advisory_requests_built,
+                signal_advisory_provider_requests = report.signal_advisory_provider_requests,
+                signal_advisory_provider_saved = report.signal_advisory_provider_saved,
+                signal_advisory_provider_failures = report.signal_advisory_provider_failures,
+                candidates = report.candidates,
+                profiles = report.profiles,
+                scored_wallets = report.scored_wallets,
+                recent_trades = report.recent_trades,
+                recent_signals = report.recent_signals,
+                "smart money polling stopped",
+            );
+            Ok(())
+        }
         Some("sync-markets-once") => {
             let trace_id = new_trace_id();
             let report = sync_markets_once(&state, &trace_id).await?;
@@ -458,6 +617,8 @@ include!("worker/news.rs");
 include!("worker/market_sync.rs");
 include!("worker/rewards.rs");
 include!("worker/copytrade.rs");
+include!("worker/smart_money.rs");
+include!("worker/high_probability.rs");
 include!("worker/news_helpers.rs");
 include!("worker/execution_reconcile.rs");
 include!("worker/polymarket_events.rs");

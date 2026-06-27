@@ -61,4 +61,25 @@ export type CopySizingMode = "fixed_usd" | "proportional_to_source" | "capital_r
 export type CopyOrderSide = "buy" | "sell";
 export type TrackedWalletStatus = "active" | "paused";
 export type CopyEventSeverity = "info" | "warning" | "critical";
+export type SmartMoneyMode = "observe" | "paper" | "approval" | "live_guarded";
+export type SmartWalletCandidateStatus =
+  | "candidate"
+  | "watch"
+  | "tracked"
+  | "blocked"
+  | "rejected";
+export type SmartWalletTier = "blocked" | "candidate" | "watch" | "approved";
+export type SmartMoneySide = "buy" | "sell";
+export type SmartSignalStatus =
+  | "new"
+  | "rejected"
+  | "observe"
+  | "paper"
+  | "approval_required"
+  | "live_ready"
+  | "executed"
+  | "expired";
+export type SmartSignalDecisionValue = "allow" | "observe" | "reject";
+export type HighProbabilityMode = "observe" | "paper" | "live_guarded";
+export type HighProbabilityDecision = "allow" | "reject" | "skip";
 export type DecimalValue = string | number;

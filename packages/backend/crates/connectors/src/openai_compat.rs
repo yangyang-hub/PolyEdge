@@ -1,12 +1,14 @@
+use polyedge_application::{RewardAiProvider, reward_ai_model_requires_openai_chat_completions};
 use reqwest::RequestBuilder;
 use serde::Deserialize;
 use serde_json::Value;
+use serde_json::json;
 
 const PROVIDER_RESPONSE_PREVIEW_CHARS: usize = 240;
 
 pub(crate) fn normalize_openai_base_url(base_url: impl Into<String>) -> String {
     let trimmed = base_url.into().trim_end_matches('/').to_string();
-    if has_v1_suffix(&trimmed) {
+    if has_version_suffix(&trimmed) {
         trimmed
     } else {
         format!("{trimmed}/v1")
@@ -26,6 +28,39 @@ pub(crate) fn with_openai_compatible_auth(
     api_key: &str,
 ) -> RequestBuilder {
     builder.bearer_auth(api_key).header("api-key", api_key)
+}
+
+pub(crate) fn is_openai_compatible_chat_provider(provider: RewardAiProvider) -> bool {
+    matches!(provider, RewardAiProvider::OpenAi)
+}
+
+pub(crate) fn openai_compatible_chat_response_format(
+    model: &str,
+    name: &str,
+    schema: Value,
+) -> Value {
+    if reward_ai_model_requires_openai_chat_completions(model) {
+        json!({
+            "type": "json_object"
+        })
+    } else {
+        json!({
+            "type": "json_schema",
+            "json_schema": {
+                "name": name,
+                "schema": schema,
+                "strict": true
+            }
+        })
+    }
+}
+
+pub(crate) fn openai_compatible_chat_token_limit_field(model: &str) -> &'static str {
+    if reward_ai_model_requires_openai_chat_completions(model) {
+        "max_tokens"
+    } else {
+        "max_completion_tokens"
+    }
 }
 
 pub(crate) fn provider_json_candidates(text: &str) -> Vec<Value> {
@@ -54,11 +89,16 @@ pub(crate) fn provider_response_preview(text: &str) -> String {
     preview
 }
 
-fn has_v1_suffix(value: &str) -> bool {
+fn has_version_suffix(value: &str) -> bool {
     value
         .rsplit('/')
         .find(|segment| !segment.is_empty())
-        .is_some_and(|segment| segment == "v1")
+        .is_some_and(|segment| {
+            let Some(rest) = segment.strip_prefix('v') else {
+                return false;
+            };
+            !rest.is_empty() && rest.chars().all(|ch| ch.is_ascii_digit())
+        })
 }
 
 fn push_json_candidate(text: &str, candidates: &mut Vec<Value>) {
@@ -117,6 +157,14 @@ mod tests {
     }
 
     #[test]
+    fn normalize_openai_base_url_preserves_versioned_provider_base() {
+        assert_eq!(
+            normalize_openai_base_url("https://open.bigmodel.cn/api/coding/paas/v4"),
+            "https://open.bigmodel.cn/api/coding/paas/v4"
+        );
+    }
+
+    #[test]
     fn normalize_openai_base_url_adds_v1_for_root_gateway() {
         assert_eq!(
             normalize_openai_base_url("http://100.87.45.72:33001"),
@@ -129,6 +177,47 @@ mod tests {
         assert_eq!(
             openai_compatible_endpoint("http://100.87.45.72:33001", "chat/completions"),
             "http://100.87.45.72:33001/v1/chat/completions"
+        );
+    }
+
+    #[test]
+    fn chat_response_format_uses_model_specific_json_mode() {
+        assert_eq!(
+            openai_compatible_chat_response_format(
+                "gpt-4.1-mini",
+                "shape",
+                json!({"type": "object"})
+            )
+            .pointer("/type"),
+            Some(&json!("json_schema"))
+        );
+        assert_eq!(
+            openai_compatible_chat_response_format(
+                "deepseek-v4-flash",
+                "shape",
+                json!({"type": "object"})
+            ),
+            json!({"type": "json_object"})
+        );
+        assert_eq!(
+            openai_compatible_chat_response_format("glm-4.7", "shape", json!({"type": "object"})),
+            json!({"type": "json_object"})
+        );
+    }
+
+    #[test]
+    fn chat_token_limit_field_is_model_specific() {
+        assert_eq!(
+            openai_compatible_chat_token_limit_field("gpt-4.1-mini"),
+            "max_completion_tokens"
+        );
+        assert_eq!(
+            openai_compatible_chat_token_limit_field("glm-4.7"),
+            "max_tokens"
+        );
+        assert_eq!(
+            openai_compatible_chat_token_limit_field("deepseek-v4-flash"),
+            "max_tokens"
         );
     }
 

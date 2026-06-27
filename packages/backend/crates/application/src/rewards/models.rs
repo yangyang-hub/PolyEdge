@@ -275,6 +275,27 @@ pub struct RewardBotConfig {
     pub max_book_hhi: Decimal,
     pub preferred_categories: Vec<String>,
     pub preferred_category_score_bonus: Decimal,
+    /// Unified opportunity scoring is applied to every reward market plan. It
+    /// uses competition, reward density, exit depth and book stability as score
+    /// adjustments, without creating a separate execution sleeve.
+    pub opportunity_metrics_enabled: bool,
+    pub opportunity_probe_notional_usd: Decimal,
+    pub opportunity_min_reward_per_100_usd_day: Decimal,
+    pub opportunity_max_competition_multiple: Decimal,
+    pub opportunity_max_account_allocation_bps: u16,
+    pub opportunity_max_market_allocation_bps: u16,
+    pub opportunity_min_exit_depth_usd: Decimal,
+    pub opportunity_min_exit_depth_multiple: Decimal,
+    pub opportunity_max_entry_exit_slippage_cents: Decimal,
+    pub opportunity_max_bad_fill_recovery_days: Decimal,
+    pub opportunity_observation_window_sec: u64,
+    pub opportunity_min_book_samples: u64,
+    pub opportunity_max_midpoint_range_cents: Decimal,
+    pub opportunity_max_top_of_book_flip_count: u64,
+    pub opportunity_reward_weight: Decimal,
+    pub opportunity_competition_weight: Decimal,
+    pub opportunity_exit_weight: Decimal,
+    pub opportunity_stability_weight: Decimal,
     pub low_competition_mode: RewardLowCompetitionMode,
     pub low_competition_max_markets: u16,
     pub low_competition_max_open_orders: u16,
@@ -323,6 +344,12 @@ pub struct RewardBotConfig {
     pub ai_advisory_ttl_sec: u64,
     /// Number of advisory markets to send in one provider request. 1 = single-market calls.
     pub ai_advisory_batch_size: u16,
+    /// Apply provider strategy hints directly to live quote mode, bid rank and
+    /// condition notional caps. Hints never bypass deterministic hard risk.
+    pub ai_strategy_hint_enabled: bool,
+    /// Minimum provider confidence required before live quote strategy hints
+    /// affect quoting. The binary allow/avoid gate still applies independently.
+    pub ai_strategy_hint_min_confidence: Decimal,
     pub info_risk_enabled: bool,
     pub info_risk_mode: RewardSelectionMode,
     pub info_risk_avoid_level: RewardInfoRiskLevel,
@@ -448,6 +475,42 @@ pub struct RewardBotConfigPatch {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub preferred_category_score_bonus: Option<Decimal>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub opportunity_metrics_enabled: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub opportunity_probe_notional_usd: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub opportunity_min_reward_per_100_usd_day: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub opportunity_max_competition_multiple: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub opportunity_max_account_allocation_bps: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub opportunity_max_market_allocation_bps: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub opportunity_min_exit_depth_usd: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub opportunity_min_exit_depth_multiple: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub opportunity_max_entry_exit_slippage_cents: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub opportunity_max_bad_fill_recovery_days: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub opportunity_observation_window_sec: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub opportunity_min_book_samples: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub opportunity_max_midpoint_range_cents: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub opportunity_max_top_of_book_flip_count: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub opportunity_reward_weight: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub opportunity_competition_weight: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub opportunity_exit_weight: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub opportunity_stability_weight: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub low_competition_mode: Option<RewardLowCompetitionMode>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub low_competition_max_markets: Option<u16>,
@@ -537,6 +600,10 @@ pub struct RewardBotConfigPatch {
     pub ai_advisory_ttl_sec: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ai_advisory_batch_size: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ai_strategy_hint_enabled: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ai_strategy_hint_min_confidence: Option<Decimal>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub info_risk_enabled: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

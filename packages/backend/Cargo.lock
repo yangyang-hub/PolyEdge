@@ -3274,6 +3274,7 @@ dependencies = [
  "polyedge-infrastructure",
  "polymarket_client_sdk_v2",
  "rust_decimal",
+ "serde",
  "serde_json",
  "time",
  "tokio",

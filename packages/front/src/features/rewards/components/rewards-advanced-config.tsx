@@ -230,6 +230,20 @@ export function AiAdvisoryConfig({
         onChange={(value) => updateNumber("ai_advisory_batch_size", value)}
       />
       <ToggleField
+        label={dictionary.rewards.aiStrategyHintEnabled}
+        hint={h.aiStrategyHintEnabled}
+        checked={draft.ai_strategy_hint_enabled}
+        onChange={(checked) =>
+          setDraft((current) => ({ ...current, ai_strategy_hint_enabled: checked }))
+        }
+      />
+      <NumberInput
+        label={dictionary.rewards.aiStrategyHintMinConfidence}
+        value={draft.ai_strategy_hint_min_confidence}
+        hint={h.aiStrategyHintMinConfidence}
+        onChange={(value) => updateNumber("ai_strategy_hint_min_confidence", value)}
+      />
+      <ToggleField
         label={dictionary.rewards.infoRiskEnabled}
         hint={h.infoRiskEnabled}
         checked={draft.info_risk_enabled}

@@ -54,6 +54,60 @@ fn apply_reward_config_value(config: &mut RewardBotConfig, key: &str, value: &st
         "preferred_category_score_bonus" => {
             config.preferred_category_score_bonus = parse_decimal_config(key, value)?;
         }
+        "opportunity_metrics_enabled" => {
+            config.opportunity_metrics_enabled = parse_bool_config(key, value)?;
+        }
+        "opportunity_probe_notional_usd" => {
+            config.opportunity_probe_notional_usd = parse_decimal_config(key, value)?;
+        }
+        "opportunity_min_reward_per_100_usd_day" => {
+            config.opportunity_min_reward_per_100_usd_day = parse_decimal_config(key, value)?;
+        }
+        "opportunity_max_competition_multiple" => {
+            config.opportunity_max_competition_multiple = parse_decimal_config(key, value)?;
+        }
+        "opportunity_max_account_allocation_bps" => {
+            config.opportunity_max_account_allocation_bps = parse_u16_config(key, value)?;
+        }
+        "opportunity_max_market_allocation_bps" => {
+            config.opportunity_max_market_allocation_bps = parse_u16_config(key, value)?;
+        }
+        "opportunity_min_exit_depth_usd" => {
+            config.opportunity_min_exit_depth_usd = parse_decimal_config(key, value)?;
+        }
+        "opportunity_min_exit_depth_multiple" => {
+            config.opportunity_min_exit_depth_multiple = parse_decimal_config(key, value)?;
+        }
+        "opportunity_max_entry_exit_slippage_cents" => {
+            config.opportunity_max_entry_exit_slippage_cents = parse_decimal_config(key, value)?;
+        }
+        "opportunity_max_bad_fill_recovery_days" => {
+            config.opportunity_max_bad_fill_recovery_days = parse_decimal_config(key, value)?;
+        }
+        "opportunity_observation_window_sec" => {
+            config.opportunity_observation_window_sec = parse_u64_config(key, value)?;
+        }
+        "opportunity_min_book_samples" => {
+            config.opportunity_min_book_samples = parse_u64_config(key, value)?;
+        }
+        "opportunity_max_midpoint_range_cents" => {
+            config.opportunity_max_midpoint_range_cents = parse_decimal_config(key, value)?;
+        }
+        "opportunity_max_top_of_book_flip_count" => {
+            config.opportunity_max_top_of_book_flip_count = parse_u64_config(key, value)?;
+        }
+        "opportunity_reward_weight" => {
+            config.opportunity_reward_weight = parse_decimal_config(key, value)?;
+        }
+        "opportunity_competition_weight" => {
+            config.opportunity_competition_weight = parse_decimal_config(key, value)?;
+        }
+        "opportunity_exit_weight" => {
+            config.opportunity_exit_weight = parse_decimal_config(key, value)?;
+        }
+        "opportunity_stability_weight" => {
+            config.opportunity_stability_weight = parse_decimal_config(key, value)?;
+        }
         "low_competition_mode" => {
             config.low_competition_mode = RewardLowCompetitionMode::from_str(value)?;
         }
@@ -105,8 +159,7 @@ fn apply_reward_config_value(config: &mut RewardBotConfig, key: &str, value: &st
             config.low_competition_max_competition_usd = parse_decimal_config(key, value)?;
         }
         "low_competition_min_reward_per_100_usd_day" => {
-            config.low_competition_min_reward_per_100_usd_day =
-                parse_decimal_config(key, value)?;
+            config.low_competition_min_reward_per_100_usd_day = parse_decimal_config(key, value)?;
         }
         "low_competition_min_exit_depth_usd" => {
             config.low_competition_min_exit_depth_usd = parse_decimal_config(key, value)?;
@@ -115,7 +168,8 @@ fn apply_reward_config_value(config: &mut RewardBotConfig, key: &str, value: &st
             config.low_competition_min_exit_depth_multiple = parse_decimal_config(key, value)?;
         }
         "low_competition_max_entry_exit_slippage_cents" => {
-            config.low_competition_max_entry_exit_slippage_cents = parse_decimal_config(key, value)?;
+            config.low_competition_max_entry_exit_slippage_cents =
+                parse_decimal_config(key, value)?;
         }
         "low_competition_max_bad_fill_recovery_days" => {
             config.low_competition_max_bad_fill_recovery_days = parse_decimal_config(key, value)?;
@@ -189,6 +243,12 @@ fn apply_reward_config_value(config: &mut RewardBotConfig, key: &str, value: &st
         "ai_advisory_batch_size" => {
             config.ai_advisory_batch_size = parse_u16_config(key, value)?;
         }
+        "ai_strategy_hint_enabled" => {
+            config.ai_strategy_hint_enabled = parse_bool_config(key, value)?;
+        }
+        "ai_strategy_hint_min_confidence" => {
+            config.ai_strategy_hint_min_confidence = parse_decimal_config(key, value)?;
+        }
         "info_risk_enabled" => config.info_risk_enabled = parse_bool_config(key, value)?,
         "info_risk_mode" => config.info_risk_mode = RewardSelectionMode::from_str(value)?,
         "info_risk_avoid_level" => {
@@ -216,7 +276,9 @@ fn apply_reward_config_value(config: &mut RewardBotConfig, key: &str, value: &st
         "exit_markup_cents" => config.exit_markup_cents = parse_decimal_config(key, value)?,
         "cancel_on_fill" => config.cancel_on_fill = parse_bool_config(key, value)?,
         "account_capital_usd" => config.account_capital_usd = parse_decimal_config(key, value)?,
-        "reward_competition_factor" | "single_sided_divisor_c" | "fill_rate_per_tick"
+        "reward_competition_factor"
+        | "single_sided_divisor_c"
+        | "fill_rate_per_tick"
         | "max_fill_ratio" => {
             // Legacy validation/simulation settings; rewards execution is live-only.
         }
@@ -309,10 +371,87 @@ fn reward_config_entries(config: &RewardBotConfig) -> Vec<(&'static str, String)
             config.max_top3_depth_share.to_string(),
         ),
         ("max_book_hhi", config.max_book_hhi.to_string()),
-        ("preferred_categories", config.preferred_categories.join(",")),
+        (
+            "preferred_categories",
+            config.preferred_categories.join(","),
+        ),
         (
             "preferred_category_score_bonus",
             config.preferred_category_score_bonus.to_string(),
+        ),
+        (
+            "opportunity_metrics_enabled",
+            config.opportunity_metrics_enabled.to_string(),
+        ),
+        (
+            "opportunity_probe_notional_usd",
+            config.opportunity_probe_notional_usd.to_string(),
+        ),
+        (
+            "opportunity_min_reward_per_100_usd_day",
+            config.opportunity_min_reward_per_100_usd_day.to_string(),
+        ),
+        (
+            "opportunity_max_competition_multiple",
+            config.opportunity_max_competition_multiple.to_string(),
+        ),
+        (
+            "opportunity_max_account_allocation_bps",
+            config.opportunity_max_account_allocation_bps.to_string(),
+        ),
+        (
+            "opportunity_max_market_allocation_bps",
+            config.opportunity_max_market_allocation_bps.to_string(),
+        ),
+        (
+            "opportunity_min_exit_depth_usd",
+            config.opportunity_min_exit_depth_usd.to_string(),
+        ),
+        (
+            "opportunity_min_exit_depth_multiple",
+            config.opportunity_min_exit_depth_multiple.to_string(),
+        ),
+        (
+            "opportunity_max_entry_exit_slippage_cents",
+            config
+                .opportunity_max_entry_exit_slippage_cents
+                .to_string(),
+        ),
+        (
+            "opportunity_max_bad_fill_recovery_days",
+            config.opportunity_max_bad_fill_recovery_days.to_string(),
+        ),
+        (
+            "opportunity_observation_window_sec",
+            config.opportunity_observation_window_sec.to_string(),
+        ),
+        (
+            "opportunity_min_book_samples",
+            config.opportunity_min_book_samples.to_string(),
+        ),
+        (
+            "opportunity_max_midpoint_range_cents",
+            config.opportunity_max_midpoint_range_cents.to_string(),
+        ),
+        (
+            "opportunity_max_top_of_book_flip_count",
+            config.opportunity_max_top_of_book_flip_count.to_string(),
+        ),
+        (
+            "opportunity_reward_weight",
+            config.opportunity_reward_weight.to_string(),
+        ),
+        (
+            "opportunity_competition_weight",
+            config.opportunity_competition_weight.to_string(),
+        ),
+        (
+            "opportunity_exit_weight",
+            config.opportunity_exit_weight.to_string(),
+        ),
+        (
+            "opportunity_stability_weight",
+            config.opportunity_stability_weight.to_string(),
         ),
         (
             "low_competition_mode",
@@ -354,7 +493,9 @@ fn reward_config_entries(config: &RewardBotConfig) -> Vec<(&'static str, String)
         ),
         (
             "low_competition_max_account_allocation_bps",
-            config.low_competition_max_account_allocation_bps.to_string(),
+            config
+                .low_competition_max_account_allocation_bps
+                .to_string(),
         ),
         (
             "low_competition_max_market_allocation_bps",
@@ -374,9 +515,7 @@ fn reward_config_entries(config: &RewardBotConfig) -> Vec<(&'static str, String)
         ),
         (
             "low_competition_min_market_liquidity_usd",
-            config
-                .low_competition_min_market_liquidity_usd
-                .to_string(),
+            config.low_competition_min_market_liquidity_usd.to_string(),
         ),
         (
             "low_competition_min_market_volume_24h_usd",
@@ -402,12 +541,14 @@ fn reward_config_entries(config: &RewardBotConfig) -> Vec<(&'static str, String)
         ),
         (
             "low_competition_max_entry_exit_slippage_cents",
-            config.low_competition_max_entry_exit_slippage_cents
+            config
+                .low_competition_max_entry_exit_slippage_cents
                 .to_string(),
         ),
         (
             "low_competition_max_bad_fill_recovery_days",
-            config.low_competition_max_bad_fill_recovery_days
+            config
+                .low_competition_max_bad_fill_recovery_days
                 .to_string(),
         ),
         (
@@ -416,7 +557,9 @@ fn reward_config_entries(config: &RewardBotConfig) -> Vec<(&'static str, String)
         ),
         (
             "low_competition_max_top_of_book_flip_count",
-            config.low_competition_max_top_of_book_flip_count.to_string(),
+            config
+                .low_competition_max_top_of_book_flip_count
+                .to_string(),
         ),
         (
             "low_competition_observation_window_sec",
@@ -452,7 +595,8 @@ fn reward_config_entries(config: &RewardBotConfig) -> Vec<(&'static str, String)
         ),
         (
             "low_competition_info_risk_avoid_level",
-            config.low_competition_info_risk_avoid_level
+            config
+                .low_competition_info_risk_avoid_level
                 .as_str()
                 .to_string(),
         ),
@@ -484,7 +628,9 @@ fn reward_config_entries(config: &RewardBotConfig) -> Vec<(&'static str, String)
         ),
         (
             "low_competition_cancel_exit_depth_multiple",
-            config.low_competition_cancel_exit_depth_multiple.to_string(),
+            config
+                .low_competition_cancel_exit_depth_multiple
+                .to_string(),
         ),
         (
             "low_competition_cancel_midpoint_range_floor_cents",
@@ -494,7 +640,8 @@ fn reward_config_entries(config: &RewardBotConfig) -> Vec<(&'static str, String)
         ),
         (
             "low_competition_global_open_order_share_bps",
-            config.low_competition_global_open_order_share_bps
+            config
+                .low_competition_global_open_order_share_bps
                 .to_string(),
         ),
         (
@@ -515,21 +662,20 @@ fn reward_config_entries(config: &RewardBotConfig) -> Vec<(&'static str, String)
             config.ai_advisory_batch_size.to_string(),
         ),
         (
-            "info_risk_enabled",
-            config.info_risk_enabled.to_string(),
+            "ai_strategy_hint_enabled",
+            config.ai_strategy_hint_enabled.to_string(),
         ),
         (
-            "info_risk_mode",
-            config.info_risk_mode.as_str().to_string(),
+            "ai_strategy_hint_min_confidence",
+            config.ai_strategy_hint_min_confidence.to_string(),
         ),
+        ("info_risk_enabled", config.info_risk_enabled.to_string()),
+        ("info_risk_mode", config.info_risk_mode.as_str().to_string()),
         (
             "info_risk_avoid_level",
             config.info_risk_avoid_level.as_str().to_string(),
         ),
-        (
-            "info_risk_ttl_sec",
-            config.info_risk_ttl_sec.to_string(),
-        ),
+        ("info_risk_ttl_sec", config.info_risk_ttl_sec.to_string()),
         (
             "info_risk_batch_size",
             config.info_risk_batch_size.to_string(),

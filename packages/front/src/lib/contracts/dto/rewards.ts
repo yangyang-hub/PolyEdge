@@ -44,6 +44,24 @@ export type RewardBotConfigDto = {
   max_book_hhi: DecimalValue;
   preferred_categories: string[];
   preferred_category_score_bonus: DecimalValue;
+  opportunity_metrics_enabled: boolean;
+  opportunity_probe_notional_usd: DecimalValue;
+  opportunity_min_reward_per_100_usd_day: DecimalValue;
+  opportunity_max_competition_multiple: DecimalValue;
+  opportunity_max_account_allocation_bps: number;
+  opportunity_max_market_allocation_bps: number;
+  opportunity_min_exit_depth_usd: DecimalValue;
+  opportunity_min_exit_depth_multiple: DecimalValue;
+  opportunity_max_entry_exit_slippage_cents: DecimalValue;
+  opportunity_max_bad_fill_recovery_days: DecimalValue;
+  opportunity_observation_window_sec: number;
+  opportunity_min_book_samples: number;
+  opportunity_max_midpoint_range_cents: DecimalValue;
+  opportunity_max_top_of_book_flip_count: number;
+  opportunity_reward_weight: DecimalValue;
+  opportunity_competition_weight: DecimalValue;
+  opportunity_exit_weight: DecimalValue;
+  opportunity_stability_weight: DecimalValue;
   low_competition_mode: RewardLowCompetitionMode;
   low_competition_max_markets: number;
   low_competition_max_open_orders: number;
@@ -88,6 +106,8 @@ export type RewardBotConfigDto = {
   ai_request_format: RewardAiRequestFormat;
   ai_advisory_ttl_sec: number;
   ai_advisory_batch_size: number;
+  ai_strategy_hint_enabled: boolean;
+  ai_strategy_hint_min_confidence: DecimalValue;
   info_risk_enabled: boolean;
   info_risk_mode: RewardSelectionMode;
   info_risk_avoid_level: RewardInfoRiskLevel;
@@ -203,6 +223,35 @@ export type RewardLowCompetitionMetricsDto = {
   not_low_competition_reason?: string | null;
 };
 
+export type RewardOpportunityMetricsDto = {
+  planned_notional_usd: DecimalValue;
+  probe_notional_usd: DecimalValue;
+  qualified_competition_usd: DecimalValue;
+  competition_share_bps: DecimalValue;
+  competition_multiple: DecimalValue;
+  estimated_reward_per_100_usd_day: DecimalValue;
+  competition_density: DecimalValue;
+  account_effective_available_usd: DecimalValue;
+  open_buy_notional_usd: DecimalValue;
+  open_buy_notional_usd_after_plan: DecimalValue;
+  condition_buy_notional_usd_after_plan: DecimalValue;
+  account_allocation_bps: DecimalValue;
+  market_allocation_bps: DecimalValue;
+  exit_depth_usd: DecimalValue;
+  exit_slippage_cents?: DecimalValue | null;
+  bad_fill_recovery_days?: DecimalValue | null;
+  midpoint_range_cents?: DecimalValue | null;
+  top_of_book_flip_count?: number | null;
+  sample_count: number;
+  reward_score: DecimalValue;
+  competition_score: DecimalValue;
+  exit_score: DecimalValue;
+  stability_score: DecimalValue;
+  opportunity_score: DecimalValue;
+  score_adjustment: DecimalValue;
+  warnings: string[];
+};
+
 export type RewardLowCompetitionShadowReportDto = {
   window_hours: number;
   generated_at: string;
@@ -292,6 +341,7 @@ export type RewardQuotePlanDto = {
   quote_mode: RewardPlanQuoteMode;
   recommended_quote_mode?: RewardPlanQuoteMode | null;
   book_metrics?: RewardMarketBookMetricsDto | null;
+  opportunity_metrics?: RewardOpportunityMetricsDto | null;
   low_competition_metrics?: RewardLowCompetitionMetricsDto | null;
   ai_advisory?: RewardMarketAdvisoryDto | null;
   info_risk?: RewardMarketInfoRiskDto | null;

@@ -1,10 +1,12 @@
 use crate::openai_compat::{
-    openai_compatible_endpoint, provider_json_candidates, provider_response_preview,
-    with_openai_compatible_auth,
+    is_openai_compatible_chat_provider, openai_compatible_chat_response_format,
+    openai_compatible_chat_token_limit_field, openai_compatible_endpoint, provider_json_candidates,
+    provider_response_preview, with_openai_compatible_auth,
 };
 use polyedge_application::{
     RewardAiAdvisoryBatchItem, RewardAiAdvisoryDecision, RewardAiAdvisoryRequest, RewardAiProvider,
     RewardAiRequestFormat, RewardAiSuitability, RewardPlanQuoteMode,
+    reward_ai_effective_request_format,
 };
 use polyedge_domain::{AppError, Result};
 use reqwest::Client;
@@ -48,7 +50,12 @@ impl RewardAiAdvisoryConnector {
         &self,
         request: &RewardAiAdvisoryRequest,
     ) -> Result<RewardAiAdvisoryDecision> {
-        let text = match request.request_format {
+        let request_format = reward_ai_effective_request_format(
+            request.provider,
+            request.request_format,
+            &request.model,
+        );
+        let text = match request_format {
             RewardAiRequestFormat::OpenAiResponses => self.call_openai_responses(request).await?,
             RewardAiRequestFormat::OpenAiChatCompletions => {
                 self.call_openai_chat_completions(request).await?
@@ -72,7 +79,12 @@ impl RewardAiAdvisoryConnector {
         if requests.is_empty() {
             return Ok(Vec::new());
         }
-        let text = match requests[0].request_format {
+        let request_format = reward_ai_effective_request_format(
+            requests[0].provider,
+            requests[0].request_format,
+            &requests[0].model,
+        );
+        let text = match request_format {
             RewardAiRequestFormat::OpenAiResponses => {
                 self.call_openai_responses_batch(requests).await?
             }
@@ -128,7 +140,22 @@ impl RewardAiAdvisoryConnector {
         &self,
         request: &RewardAiAdvisoryRequest,
     ) -> Result<String> {
-        ensure_provider(request, RewardAiProvider::OpenAi)?;
+        ensure_openai_compatible_chat_provider(request)?;
+        let mut body = json!({
+            "model": request.model,
+            "messages": [
+                {"role": "system", "content": reward_ai_system_prompt()},
+                {"role": "user", "content": reward_ai_user_prompt(request)}
+            ],
+            "response_format": openai_compatible_chat_response_format(
+                &request.model,
+                "reward_market_advisory",
+                reward_ai_json_schema(),
+            ),
+            "temperature": 0
+        });
+        body[openai_compatible_chat_token_limit_field(&request.model)] =
+            json!(REWARD_AI_CHAT_COMPLETION_MAX_TOKENS);
         let response = with_openai_compatible_auth(
             self.client.post(openai_compatible_endpoint(
                 &self.base_url,
@@ -136,23 +163,7 @@ impl RewardAiAdvisoryConnector {
             )),
             &self.api_key,
         )
-        .json(&json!({
-            "model": request.model,
-            "messages": [
-                {"role": "system", "content": reward_ai_system_prompt()},
-                {"role": "user", "content": reward_ai_user_prompt(request)}
-            ],
-            "response_format": {
-                "type": "json_schema",
-                "json_schema": {
-                    "name": "reward_market_advisory",
-                    "schema": reward_ai_json_schema(),
-                    "strict": true
-                }
-            },
-            "temperature": 0,
-            "max_completion_tokens": REWARD_AI_CHAT_COMPLETION_MAX_TOKENS
-        }))
+        .json(&body)
         .send()
         .await
         .map_err(reward_ai_http_error)?;
@@ -248,8 +259,22 @@ impl RewardAiAdvisoryConnector {
         &self,
         requests: &[RewardAiAdvisoryRequest],
     ) -> Result<String> {
-        ensure_batch_provider(requests, RewardAiProvider::OpenAi)?;
+        ensure_batch_openai_compatible_chat_provider(requests)?;
         let max_tokens = reward_ai_batch_max_tokens(requests.len());
+        let mut body = json!({
+            "model": requests[0].model,
+            "messages": [
+                {"role": "system", "content": reward_ai_batch_system_prompt()},
+                {"role": "user", "content": reward_ai_batch_user_prompt(requests)}
+            ],
+            "response_format": openai_compatible_chat_response_format(
+                &requests[0].model,
+                "reward_market_advisories",
+                reward_ai_batch_json_schema(),
+            ),
+            "temperature": 0
+        });
+        body[openai_compatible_chat_token_limit_field(&requests[0].model)] = json!(max_tokens);
         let response = with_openai_compatible_auth(
             self.client.post(openai_compatible_endpoint(
                 &self.base_url,
@@ -257,23 +282,7 @@ impl RewardAiAdvisoryConnector {
             )),
             &self.api_key,
         )
-        .json(&json!({
-            "model": requests[0].model,
-            "messages": [
-                {"role": "system", "content": reward_ai_batch_system_prompt()},
-                {"role": "user", "content": reward_ai_batch_user_prompt(requests)}
-            ],
-            "response_format": {
-                "type": "json_schema",
-                "json_schema": {
-                    "name": "reward_market_advisories",
-                    "schema": reward_ai_batch_json_schema(),
-                    "strict": true
-                }
-            },
-            "temperature": 0,
-            "max_completion_tokens": max_tokens
-        }))
+        .json(&body)
         .send()
         .await
         .map_err(reward_ai_http_error)?;
@@ -343,13 +352,23 @@ fn ensure_provider(request: &RewardAiAdvisoryRequest, expected: RewardAiProvider
     ))
 }
 
+fn ensure_openai_compatible_chat_provider(request: &RewardAiAdvisoryRequest) -> Result<()> {
+    if is_openai_compatible_chat_provider(request.provider) {
+        return Ok(());
+    }
+    Err(AppError::invalid_input(
+        "REWARD_AI_PROVIDER_FORMAT_MISMATCH",
+        "reward AI chat completion request format requires an OpenAI-compatible provider",
+    ))
+}
+
 fn reward_ai_system_prompt() -> &'static str {
-    "You are a risk reviewer for Polymarket rewards maker orders. Return exactly one JSON object and nothing else. Do not use markdown, comments, prose, or unquoted keys. Your decision field is only allow_quote: true means maker quoting is allowed, false means maker quoting is not allowed. Do not return watch, avoid, risk levels, or other status categories. Do not suggest bypassing deterministic risk checks."
+    "You are a risk reviewer for Polymarket rewards maker orders. Return exactly one JSON object and nothing else. Do not use markdown, comments, prose, or unquoted keys. Your decision field is only allow_quote: true means maker quoting is allowed, false means maker quoting is not allowed. Also return a conservative strategy_hint for live execution. Do not return watch, avoid, risk levels, or other status categories. Do not suggest bypassing deterministic risk checks."
 }
 
 fn reward_ai_user_prompt(request: &RewardAiAdvisoryRequest) -> String {
     format!(
-        "Assess whether this rewards market is suitable for maker quoting over the full provider_cache_policy TTL horizon. Use current pricing_context to judge whether the live orderbook prices, spreads, binary midpoint sum, quote edge, and stale-book age make the deterministic quote prices reasonable. Return one valid JSON object with double-quoted keys and only these decision fields: allow_quote boolean, confidence 0..1, reasons string array, metrics object. Set allow_quote=false when pricing is unreasonable, data is too thin/stale for the TTL horizon, or reversal risk is unclear. Use {{}} for metrics when unsure.\nInput:\n{}",
+        "Assess whether this rewards market is suitable for maker quoting over the full provider_cache_policy TTL horizon. Use current pricing_context to judge whether the live orderbook prices, spreads, binary midpoint sum, quote edge, and stale-book age make deterministic quote prices reasonable. Return one valid JSON object with double-quoted keys and these decision fields: allow_quote boolean, confidence 0..1, strategy_hint object, reasons string array, metrics object. strategy_hint.quote_mode must be one of double, single_yes, single_no, none; choose none when allow_quote=false or the market should be skipped. strategy_hint.bid_rank must be an integer 1..3 where larger means more conservative. strategy_hint.max_condition_notional_usd must be a non-negative number for the whole condition; use 0 when allow_quote=false. Prefer conservative smaller notional caps when uncertainty, exit depth, stale pricing, or reversal risk is material. Use {{}} for metrics when unsure.\nInput:\n{}",
         request.payload
     )
 }
@@ -358,12 +377,29 @@ fn reward_ai_json_schema() -> Value {
     json!({
         "type": "object",
         "additionalProperties": false,
-        "required": ["allow_quote", "confidence", "reasons", "metrics"],
+        "required": ["allow_quote", "confidence", "strategy_hint", "reasons", "metrics"],
         "properties": {
             "allow_quote": {"type": "boolean"},
             "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+            "strategy_hint": reward_ai_strategy_hint_json_schema(),
             "reasons": {"type": "array", "items": {"type": "string"}, "maxItems": 6},
             "metrics": {"type": "object"}
+        }
+    })
+}
+
+fn reward_ai_strategy_hint_json_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["quote_mode", "bid_rank", "max_condition_notional_usd"],
+        "properties": {
+            "quote_mode": {
+                "type": "string",
+                "enum": ["double", "single_yes", "single_no", "none"]
+            },
+            "bid_rank": {"type": "integer", "minimum": 1, "maximum": 3},
+            "max_condition_notional_usd": {"type": "number", "minimum": 0}
         }
     })
 }
@@ -392,6 +428,32 @@ fn ensure_batch_provider(
     Ok(())
 }
 
+fn ensure_batch_openai_compatible_chat_provider(
+    requests: &[RewardAiAdvisoryRequest],
+) -> Result<()> {
+    if requests.is_empty() {
+        return Err(AppError::invalid_input(
+            "REWARD_AI_BATCH_EMPTY",
+            "reward AI advisory batch must not be empty",
+        ));
+    }
+    ensure_openai_compatible_chat_provider(&requests[0])?;
+    let first = &requests[0];
+    for request in &requests[1..] {
+        ensure_openai_compatible_chat_provider(request)?;
+        if request.provider != first.provider
+            || request.request_format != first.request_format
+            || request.model != first.model
+        {
+            return Err(AppError::invalid_input(
+                "REWARD_AI_BATCH_MISMATCH",
+                "reward AI advisory batch requests must share provider, request format and model",
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn reward_ai_batch_max_tokens(batch_size: usize) -> u32 {
     REWARD_AI_CHAT_COMPLETION_MAX_TOKENS
         .saturating_mul(batch_size.max(1) as u32)
@@ -399,7 +461,7 @@ fn reward_ai_batch_max_tokens(batch_size: usize) -> u32 {
 }
 
 fn reward_ai_batch_system_prompt() -> &'static str {
-    "You are a risk reviewer for Polymarket rewards maker orders. You will receive a JSON object containing a \"markets\" array; assess EACH market independently of the others. Return exactly one JSON object of shape {\"advisories\":[...]} and nothing else. Do not use markdown, comments, prose, or unquoted keys. Each advisory object must include the market's condition_id copied verbatim from the input. The only decision field is allow_quote boolean; do not return watch, avoid, risk levels, or other status categories."
+    "You are a risk reviewer for Polymarket rewards maker orders. You will receive a JSON object containing a \"markets\" array; assess EACH market independently of the others. Return exactly one JSON object of shape {\"advisories\":[...]} and nothing else. Do not use markdown, comments, prose, or unquoted keys. Each advisory object must include the market's condition_id copied verbatim from the input, allow_quote, and a conservative strategy_hint. Do not return watch, avoid, risk levels, or other status categories."
 }
 
 fn reward_ai_batch_user_prompt(requests: &[RewardAiAdvisoryRequest]) -> String {
@@ -408,7 +470,7 @@ fn reward_ai_batch_user_prompt(requests: &[RewardAiAdvisoryRequest]) -> String {
         .map(|request| json!({"condition_id": request.condition_id, "market": request.payload}))
         .collect();
     format!(
-        "Assess whether each rewards market is suitable for maker quoting over its full provider_cache_policy TTL horizon. Use each market's current pricing_context to judge whether live orderbook prices, spreads, binary midpoint sum, quote edge, and stale-book age make deterministic quote prices reasonable. Return one valid JSON object with double-quoted keys and a field \"advisories\": an array with exactly one object per input market, each containing condition_id (must match one input market verbatim), allow_quote boolean, confidence 0..1, reasons string array, metrics object. Set allow_quote=false when pricing is unreasonable, data is too thin/stale for the TTL horizon, or reversal risk is unclear. Use {{}} for metrics when unsure.\nInput:\n{{\"markets\":{}}}",
+        "Assess whether each rewards market is suitable for maker quoting over its full provider_cache_policy TTL horizon. Use each market's current pricing_context to judge whether live orderbook prices, spreads, binary midpoint sum, quote edge, and stale-book age make deterministic quote prices reasonable. Return one valid JSON object with double-quoted keys and a field \"advisories\": an array with exactly one object per input market, each containing condition_id (must match one input market verbatim), allow_quote boolean, confidence 0..1, strategy_hint object, reasons string array, metrics object. strategy_hint.quote_mode must be one of double, single_yes, single_no, none; choose none when allow_quote=false. strategy_hint.bid_rank must be 1..3 where larger is more conservative. strategy_hint.max_condition_notional_usd must be a non-negative number for the whole condition; use 0 when allow_quote=false. Use {{}} for metrics when unsure.\nInput:\n{{\"markets\":{}}}",
         serde_json::to_string(&markets).unwrap_or_else(|_| "[]".to_string())
     )
 }
@@ -424,11 +486,12 @@ fn reward_ai_batch_json_schema() -> Value {
                 "items": {
                     "type": "object",
                     "additionalProperties": false,
-                    "required": ["condition_id", "allow_quote", "confidence", "reasons", "metrics"],
+                    "required": ["condition_id", "allow_quote", "confidence", "strategy_hint", "reasons", "metrics"],
                     "properties": {
                         "condition_id": {"type": "string"},
                         "allow_quote": {"type": "boolean"},
                         "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+                        "strategy_hint": reward_ai_strategy_hint_json_schema(),
                         "reasons": {"type": "array", "items": {"type": "string"}, "maxItems": 6},
                         "metrics": {"type": "object"}
                     }
@@ -640,6 +703,7 @@ fn parse_reward_ai_binary_decision_value(value: &Value) -> Result<RewardAiAdviso
         .cloned()
         .filter(Value::is_object)
         .unwrap_or_else(|| json!({}));
+    let strategy_hint = parse_reward_ai_strategy_hint_value(value.get("strategy_hint"))?;
     Ok(RewardAiAdvisoryDecision {
         suitability: if allow_quote {
             RewardAiSuitability::Allow
@@ -658,8 +722,57 @@ fn parse_reward_ai_binary_decision_value(value: &Value) -> Result<RewardAiAdviso
         },
         confidence,
         reasons,
-        metrics,
+        metrics: reward_ai_metrics_with_strategy_hint(metrics, strategy_hint),
     })
+}
+
+fn parse_reward_ai_strategy_hint_value(value: Option<&Value>) -> Result<Option<Value>> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    if value.is_null() {
+        return Ok(None);
+    }
+    let quote_mode = value
+        .get("quote_mode")
+        .and_then(Value::as_str)
+        .ok_or_else(|| reward_ai_missing_field("strategy_hint.quote_mode"))
+        .and_then(RewardPlanQuoteMode::from_str)?;
+    let bid_rank = value
+        .get("bid_rank")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| reward_ai_missing_field("strategy_hint.bid_rank"))?;
+    if !(1..=3).contains(&bid_rank) {
+        return Err(AppError::dependency_unavailable(
+            "REWARD_AI_RESPONSE_INVALID_STRATEGY_HINT",
+            "reward AI strategy_hint.bid_rank must be between 1 and 3",
+        ));
+    }
+    let max_condition_notional_usd = value
+        .get("max_condition_notional_usd")
+        .and_then(parse_decimal_value)
+        .ok_or_else(|| reward_ai_missing_field("strategy_hint.max_condition_notional_usd"))?;
+    if max_condition_notional_usd < Decimal::ZERO {
+        return Err(AppError::dependency_unavailable(
+            "REWARD_AI_RESPONSE_INVALID_STRATEGY_HINT",
+            "reward AI strategy_hint.max_condition_notional_usd must be non-negative",
+        ));
+    }
+
+    Ok(Some(json!({
+        "quote_mode": quote_mode.as_str(),
+        "bid_rank": bid_rank,
+        "max_condition_notional_usd": max_condition_notional_usd,
+    })))
+}
+
+fn reward_ai_metrics_with_strategy_hint(metrics: Value, strategy_hint: Option<Value>) -> Value {
+    let Some(strategy_hint) = strategy_hint else {
+        return metrics;
+    };
+    let mut object = metrics.as_object().cloned().unwrap_or_default();
+    object.insert("strategy_hint".to_string(), strategy_hint);
+    Value::Object(object)
 }
 
 fn reward_ai_candidate_has_known_field(value: &Value) -> bool {
@@ -667,17 +780,20 @@ fn reward_ai_candidate_has_known_field(value: &Value) -> bool {
         || value.get("suitability").is_some()
         || value.get("quote_mode").is_some()
         || value.get("exit_policy").is_some()
+        || value.get("strategy_hint").is_some()
         || value.get("confidence").is_some()
 }
 
 fn parse_confidence(value: Option<&Value>) -> Option<Decimal> {
-    let raw = value?;
-    let parsed = if let Some(number) = raw.as_f64() {
+    parse_decimal_value(value?).map(|parsed| parsed.max(Decimal::ZERO).min(Decimal::ONE))
+}
+
+fn parse_decimal_value(raw: &Value) -> Option<Decimal> {
+    if let Some(number) = raw.as_f64() {
         Decimal::from_str(&number.to_string()).ok()
     } else {
         raw.as_str().and_then(|value| Decimal::from_str(value).ok())
-    }?;
-    Some(parsed.max(Decimal::ZERO).min(Decimal::ONE))
+    }
 }
 
 fn reward_ai_missing_field(field: &'static str) -> AppError {

@@ -164,6 +164,8 @@ fn decimal_to_f64(value: Decimal) -> f64 {
 
 const REWARD_PROVIDER_CACHE_TTL_JITTER_DIVISOR: u64 = 5;
 const REWARD_PROVIDER_CACHE_MAX_JITTER_SEC: u64 = 15 * 60;
+const REWARD_PROVIDER_CACHE_REFRESH_DIVISOR: u64 = 20;
+const REWARD_PROVIDER_CACHE_MAX_REFRESH_SEC: u64 = 60;
 
 #[must_use]
 pub fn reward_provider_cache_jitter_window_sec(ttl_sec: u64) -> u64 {
@@ -172,21 +174,28 @@ pub fn reward_provider_cache_jitter_window_sec(ttl_sec: u64) -> u64 {
 }
 
 #[must_use]
+pub fn reward_provider_cache_refresh_window_sec(ttl_sec: u64) -> u64 {
+    (ttl_sec / REWARD_PROVIDER_CACHE_REFRESH_DIVISOR)
+        .min(REWARD_PROVIDER_CACHE_MAX_REFRESH_SEC)
+}
+
+#[must_use]
 pub fn reward_provider_cache_refresh_due(
     expires_at: OffsetDateTime,
     ttl_sec: u64,
     now: OffsetDateTime,
 ) -> bool {
-    let refresh_window_sec = reward_provider_cache_jitter_window_sec(ttl_sec);
+    let refresh_window_sec = reward_provider_cache_refresh_window_sec(ttl_sec);
     expires_at <= now + TimeDuration::seconds(refresh_window_sec.min(i64::MAX as u64) as i64)
 }
 
 fn reward_provider_cache_policy_payload(ttl_sec: u64, now: OffsetDateTime) -> Value {
-    let refresh_window_sec = reward_provider_cache_jitter_window_sec(ttl_sec);
-    let max_valid_for_sec = ttl_sec.saturating_add(refresh_window_sec);
+    let positive_jitter_window_sec = reward_provider_cache_jitter_window_sec(ttl_sec);
+    let refresh_window_sec = reward_provider_cache_refresh_window_sec(ttl_sec);
+    let max_valid_for_sec = ttl_sec.saturating_add(positive_jitter_window_sec);
     json!({
         "ttl_sec": ttl_sec,
-        "positive_jitter_window_sec": refresh_window_sec,
+        "positive_jitter_window_sec": positive_jitter_window_sec,
         "refresh_due_window_sec": refresh_window_sec,
         "requested_at_utc": now,
         "base_expires_at_utc": now + TimeDuration::seconds(ttl_sec.min(i64::MAX as u64) as i64),

@@ -21,6 +21,18 @@ fn parse_limit_arg(raw: Option<String>) -> Result<Option<u16>> {
     .transpose()
 }
 
+fn parse_u32_arg(raw: Option<String>) -> Result<Option<u32>> {
+    raw.map(|value| {
+        value.parse::<u32>().map_err(|error| {
+            AppError::invalid_input(
+                "WORKER_LIMIT_INVALID",
+                format!("worker limit must be a valid u32: {error}"),
+            )
+        })
+    })
+    .transpose()
+}
+
 fn polymarket_account_id(state: &AppState) -> &str {
     state.settings.polymarket.account_id.trim()
 }

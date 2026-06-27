@@ -4,11 +4,11 @@
 
 ## 概述
 
-数据库使用 PostgreSQL，通过 48 个 SQL 迁移文件管理 schema。覆盖审计、市场数据、事件/证据、执行历史、内部风险状态、奖励、跟单等领域。为了空库一次性初始化，`packages/backend/init.sql` 机械合并了当前全部迁移内容；运行时仍通过 `sqlx` 使用 `packages/backend/migrations/` 做迁移校验和增量升级。旧 signals、risk_state、positions 和 arbitrage 表随已应用迁移保留，用于历史/内部兼容，不再对应前端页面或公开控制台 API。
+数据库使用 PostgreSQL，通过 53 个 SQL 迁移文件管理 schema。覆盖审计、市场数据、事件/证据、执行历史、内部风险状态、奖励、跟单、Smart Money Intelligence、动态高概率市场定价研究等领域。为了空库一次性初始化，`packages/backend/init.sql` 机械合并了当前全部迁移内容；运行时仍通过 `sqlx` 使用 `packages/backend/migrations/` 做迁移校验和增量升级。旧 signals、risk_state、positions 和 arbitrage 表随已应用迁移保留，用于历史/内部兼容，不再对应前端页面或公开控制台 API。
 
 ## 初始化入口
 
-- `packages/backend/init.sql`：完整空库初始化脚本，按 `0001` 到 `0048` 顺序展开所有迁移，适合新环境人工执行一次，例如 `psql "$POLYEDGE_POSTGRES__URL" -v ON_ERROR_STOP=1 -f packages/backend/init.sql`。
+- `packages/backend/init.sql`：完整空库初始化脚本，按 `0001` 到 `0053` 顺序展开所有迁移，适合新环境人工执行一次，例如 `psql "$POLYEDGE_POSTGRES__URL" -v ON_ERROR_STOP=1 -f packages/backend/init.sql`。
 - `packages/backend/migrations/*.sql`：保留给 Rust runtime 的 `sqlx::migrate!` 使用。不要删除或重命名已应用的迁移文件，否则现有数据库的 `_sqlx_migrations` 历史可能与二进制内嵌迁移不一致。
 - `init.sql` 只面向空数据库；已存在 schema 的数据库继续使用 runtime 自动迁移或按需执行新增迁移。
 
@@ -64,6 +64,11 @@
 | `0046_reward_low_competition_competition_share.sql` | Rewards 低竞争竞争份额和资金占比观测 | 修改 `reward_low_competition_observations` |
 | `0047_reward_low_competition_not_low_competition.sql` | Rewards 低竞争高竞争混入标签 | 修改 `reward_low_competition_observations` 增加 `not_low_competition` |
 | `0048_reward_account_unmanaged_buy_notional.sql` | Rewards 非本系统外部买单占用冻结值 | 修改 `reward_account_state` 增加 unmanaged external buy notional |
+| `0049_smart_money_intelligence.sql` | Smart Money Intelligence 基础 schema | `smart_money_config`、`smart_wallet_candidates`、`smart_wallet_profiles`、`smart_wallet_scores`、`smart_wallet_trades`、`smart_signals`、`smart_signal_decisions`、`smart_wallet_advisories`、`smart_signal_advisories`、`smart_paper_executions` |
+| `0050_high_probability_pricing_strategy.sql` | 动态高概率市场定价研究基础 schema | `high_probability_config`、`high_probability_samples`、`high_probability_bucket_stats`、`high_probability_observations` |
+| `0051_high_probability_market_outcomes.sql` | 动态高概率市场 outcome 标签 | `high_probability_market_outcomes` |
+| `0052_high_probability_backtests.sql` | 动态高概率 baseline 回测持久化 | `high_probability_backtest_runs`、`high_probability_backtest_trades` |
+| `0053_high_probability_backtest_exit_rules.sql` | 动态高概率 baseline 回测退出规则摘要 | 修改 `high_probability_backtest_runs.exit_rule_reports` |
 
 ## Schema 领域分组
 
@@ -108,19 +113,19 @@
 
 ### 8. 奖励机器人
 
-- **`reward_bot_config`**：key-value 配置，包含报价/风控、市场质量、quote/selection mode、dominant 单边阈值、盘口集中度阈值、偏好分类、低竞争 sleeve mode/额度/默认 10U 探测竞争份额/竞争倍数/账户和单市场资金占比/可选旧 liquidity/volume 过滤/退出/稳定性阈值、AI advisory 开关/provider/request format/TTL 和信息风险开关/mode/过滤等级/TTL
+- **`reward_bot_config`**：key-value 配置，包含报价/风控、市场质量、quote/selection mode、dominant 单边阈值、盘口集中度阈值、偏好分类、统一机会评分 `opportunity_*` 竞争/奖励/退出/稳定性/资金占比阈值与权重、AI advisory 开关/provider/request format/TTL 和信息风险开关/mode/过滤等级/TTL；`low_competition_*` 旧键仅兼容历史配置，运行时归一化为独立低竞争 sleeve 关闭
 - **`reward_markets`**：condition_id、question、market_slug、rewards_max_spread/min_size、total_daily_rate、tokens JSON
 - **`reward_quote_plans`**：market FK、scoring、quote plan
-- **`reward_managed_orders`**：account_id、condition_id、token_id、strategy_bucket（standard/low_competition/none）、filled_size、reward_earned、last_scored_at
+- **`reward_managed_orders`**：account_id、condition_id、token_id、strategy_bucket（standard/low_competition/none，当前运行时新订单统一写 standard，low_competition 仅历史兼容）、filled_size、reward_earned、last_scored_at
 - **`reward_fills`**：order_id、account_id、condition_id、token_id、outcome、side、price、size、notional_usd、role、realized_pnl
 - **`reward_positions`**：按 account_id + token_id 保存外部完整持仓；可包含当前 rewards catalog 之外的市场，不再依赖 `reward_markets` 外键
 - **`reward_account_state`**：capital_usd、available_usd、reserved_usd（旧硬占用兼容字段，下一次 rewards tick 自动释放）、realized_pnl、reward_earned_usd、fees_paid、tick_index
 - **`reward_control_commands`**：API 入队给 worker 的 rewards 控制命令（run_once/cancel_all/reset）及 pending/running/completed/failed 状态；running 超过 5 分钟可重新领取
 - **`reward_market_advisories`**：AI advisory 缓存表，按 condition/provider/request_format/model/input_hash 保存 suitability、推荐 quote mode、exit policy、confidence、reasons/metrics JSON 和 expires_at；`input_hash` 使用稳定 cache-key payload（市场身份/问题、奖励参数、计划 quote mode 和相关策略配置），不包含每轮变化的账户、开放订单、持仓或盘口实时字段；worker 只读取未过期记录，缓存未命中时调用 provider 后写入
 - **`reward_market_info_risks`**：信息风险缓存表，按 condition/provider/request_format/model/input_hash 保存 query_hash、risk_level、risk_type、directional_risk、resolution_imminent、expected_event_at、confidence、summary、sources/metrics JSON 和 expires_at；`input_hash` 使用稳定 cache-key payload（搜索 query、市场身份/问题/事件、计划 quote mode 和风险策略配置），不包含账户、开放订单、持仓、quote plan reason/score 或 market_synced_at 等动态字段；异步 worker 写入，live rewards tick 只读取未过期缓存
-- **`reward_low_competition_observations`**：低竞争 sleeve 跨周期 observation，按 account/condition/observed_at 记录模式、计划 notional、探测 notional、竞争资金、竞争份额 bps、竞争倍数、账户有效可用资金、低竞争开放 BUY notional、加上当前计划后的低竞争/condition 挂单 notional 与 bps 占比、预估 reward/100/day、退出深度/滑点、midpoint 波动、样本不足、低竞争 gate、最终可挂、AI/信息风险拦截、主策略重叠、not_low_competition（高竞争混入标签）和拒绝原因 JSON；snapshot shadow report 读取最近窗口聚合，不会自动改配置。
+- **`reward_low_competition_observations`**：历史低竞争 sleeve observation 表，按 account/condition/observed_at 记录旧模式、计划 notional、探测 notional、竞争资金、竞争份额 bps、竞争倍数、账户有效可用资金、低竞争开放 BUY notional、加上当前计划后的低竞争/condition 挂单 notional 与 bps 占比、预估 reward/100/day、退出深度/滑点、midpoint 波动、样本不足、低竞争 gate、最终可挂、AI/信息风险拦截、主策略重叠、not_low_competition（高竞争混入标签）和拒绝原因 JSON；当前统一机会评分运行路径不再写入新 observation，snapshot 不再生成低竞争 shadow report。
 - **`reward_market_candles`**：orderbook 服务从 CLOB `/prices-history` 低频同步的 rewards token K 线，按 token/interval/bucket 保存 price OHLC、close observed_at 和兼容字段；当前 price-history 行的 `best_bid_close` / `best_ask_close` 等于 provider price，`spread_cents_close=0`，`sample_count` 表示同 bucket 持久化的 provider history 点数量，不包含真实成交量。
-- **低竞争 rewards sleeve**：v2 已实现，配置复用 `reward_bot_config` key-value，quote plan 指标复用 `reward_quote_plans` JSON，managed order bucket 使用 `reward_managed_orders.strategy_bucket`，跨周期观察使用 `reward_low_competition_observations`。
+- **统一机会评分**：当前 rewards bot 已把普通市场和原低竞争市场合并到同一 quote plan 流，竞争资金、奖励密度、退出深度/滑点、盘口稳定性和资金占比作为 `opportunity_metrics` 写入 `reward_quote_plans` JSON 并参与评分/可挂资格；旧低竞争 schema（`strategy_bucket=low_competition`、`reward_low_competition_observations`、`low_competition_*` 配置键）仅保留历史/API/DB 兼容。
 
 ### 9. Copytrade 钱包跟踪与分析
 
@@ -135,6 +140,27 @@
 
 - **`runtime_config`**：key TEXT PK、value TEXT、updated_at
 
+### 11. Smart Money Intelligence
+
+- **`smart_money_config`**：key-value 配置，当前用于 observe/paper/approval/live_guarded 模式、发现/LLM advisory 开关、样本量、滑点、盘口深度和敞口阈值。
+- **`smart_wallet_candidates`**：自动发现或后续导入的钱包候选池，记录 wallet address、source、candidate/watch/tracked/blocked/rejected 状态、最近发现时间、分析时间、晋级/拒绝时间、reason 和 raw payload。
+- **`smart_wallet_profiles`**：钱包滚动画像，包含交易数、已结算样本、成交额、realized PnL、ROI、胜率、回撤、平均/中位交易额、活跃天数、市场数、集中度、低流动性交易占比、可跟窗口 stale 占比和最近交易时间。
+- **`smart_wallet_scores`**：确定性评分结果，按钱包保存 total/profit/consistency/risk/liquidity/recency/copyability score、tier、解释 JSON 和 scoring version。
+- **`smart_wallet_trades`**：标准化源钱包交易，按 deterministic id 去重；第一阶段由 worker 后续接入 Data API 写入，第二阶段可补链上 source 校验。
+- **`smart_signals`** / **`smart_signal_decisions`**：源交易转化出的跟随信号和确定性/LLM gate 决策记录；当前 schema 已建立，后续 worker 才会生成信号。
+- **`smart_wallet_advisories`** / **`smart_signal_advisories`**：LLM advisory 缓存；只保存模型对结构化 payload 的 allow/observe/reject 建议、confidence、risk tags、reasons 和 raw output，不作为唯一执行依据。
+- **`smart_paper_executions`**：纸面跟随执行记录，用于验证信号在延迟和滑点后的真实可跟性；实盘执行不复用该表。
+
+### 12. 动态高概率市场定价研究
+
+- **`high_probability_config`**：key-value 配置，当前用于 observe/paper/live_guarded 模式、市场范围、模型版本、最小 edge、手续费 buffer、风险 margin、最小样本数、spread/depth 和仓位上限。
+- **`high_probability_market_outcomes`**：本地 outcome 标签表，记录 condition 的 resolved/voided/ambiguous 状态、winning token、resolved_at、market type、risk tags 和标签来源；当前由人工/脚本/后续 producer 写入，样本构建不会从 `markets.status` 猜 winning token。
+- **`high_probability_samples`**：已构建的 token 时点样本，记录 condition/token、side、sampled_at、trigger kind、可执行价格、价格 bucket、市场类型、剩余时间/liquidity/spread bucket、路径特征、风险标签、最终 outcome、settlement PnL、最大回撤和持仓时间。当前由 `build-high-probability-samples-once` 从本地 outcome 标签和 rewards candles 构建。
+- **`high_probability_bucket_stats`**：按 model_version + bucket_key 保存分桶统计，包含样本数、胜场数、胜率、保守 fair probability、期望 PnL、最大回撤、跌破阈值比例、平均持仓时间和推荐最高入场价。
+- **`high_probability_backtest_runs`**：一次 baseline walk-forward 回测的可复现运行记录，保存模型版本、市场范围、训练/测试样本数、候选/交易/跳过计数、胜率、PnL、ROI、最大回撤、窗口时间、`exit_rule_reports`、notes 和配置 snapshot。
+- **`high_probability_backtest_trades`**：baseline 回测中实际通过 edge gate 的模拟入场明细，关联 run 和 sample，保存 bucket、可执行价格、fair probability、net edge、推荐最高入场价、最终 outcome、单笔/累计 PnL 和 drawdown。
+- **`high_probability_observations`**：observe/paper/live guarded 决策记录；当前 `observe-high-probability-once` 和默认关闭的 `POLYEDGE_WORKER__POLL_HIGH_PROBABILITY_OBSERVE` runtime loop 会写入基于本地 rewards candle 候选和 orderbook 服务缓存计算出的只读 `allow/reject/skip` observation，paper/live 仍未实现。
+
 ## 数据保留与自动清理
 
 数据库当前主要依赖通用自动清理链路：
@@ -145,13 +171,15 @@
 
 ## 当前状态
 
-- 48 个迁移文件，最新为 `0048_reward_account_unmanaged_buy_notional.sql`
-- `packages/backend/init.sql` 已合并 `0001`–`0048`，作为完整空库初始化脚本
+- 53 个迁移文件，最新为 `0053_high_probability_backtest_exit_rules.sql`
+- `packages/backend/init.sql` 已合并 `0001`–`0053`，作为完整空库初始化脚本
 - 所有表使用 PostgreSQL 特性（JSONB、NUMERIC 约束、BIGSERIAL、部分索引等）
 - 迁移使用 `sqlx` 管理
 - 旧套利表仍随迁移存在，但 arbitrage application/store/worker/API/frontend 已移除，当前不会继续写入新 scan/opportunity 数据。
 - 通用数据库维护已接入 API 内嵌 worker runtime，生产模板默认开启 `POLYEDGE_WORKER__DATABASE_MAINTENANCE=true`，用于防止缓存、日志、队列和低频 price-history 表持续增长；它不删除 rewards fills/positions/account state 等核心账本表。
-- Rewards 低竞争市场 sleeve v2 已落地，schema 包括 managed order 的 `strategy_bucket` 和 `reward_low_competition_observations` 观测表；observation 已记录 competition-share、挂单资金占比字段和 not_low_competition 高竞争混入标签，shadow report 是 snapshot 派生结果，不单独落表。Rewards AI advisory 已接入 `reward_market_candles`，5m source K 线由 orderbook 服务统一低频限速调用 CLOB `/prices-history` 写入，不由 worker/API 直接请求外部接口；AI advisory 在 application 层把这些 source candles 聚合为 1h 输入。Rewards AI advisory / info-risk 的实际 provider 调用复用 `llm_calls` 做每日调用统计，通用数据库维护保留 180 天。
+- Rewards 低竞争市场 sleeve 已合并到统一机会评分，现有低竞争 schema 仅作为历史兼容保留；当前 active 指标为 `reward_quote_plans.quote_plan_json.opportunity_metrics`，包含 competition-share/multiple、100U 日奖、资金占比、退出深度/滑点、坏成交恢复天数、盘口样本/波动/跳变和机会分。Rewards AI advisory 已接入 `reward_market_candles`，5m source K 线由 orderbook 服务统一低频限速调用 CLOB `/prices-history` 写入，不由 worker/API 直接请求外部接口；AI advisory 在 application 层把这些 source candles 聚合为 1h 输入。Rewards AI advisory / info-risk 的实际 provider 调用复用 `llm_calls` 做每日调用统计，通用数据库维护保留 180 天。
+- Smart Money Intelligence 当前已落地基础 schema 和后端 service/store/API；`scan-smart-money-once` 会从 active copytrade tracked wallets 写入候选、近端样本画像、确定性评分和 Data API activity 源交易。自动全网发现、信号生成、LLM advisory refresh、纸面模拟和实盘 guarded execution 仍是待实现阶段。
+- 动态高概率市场定价研究当前已落地基础 schema 和后端 service/store；`build-high-probability-samples-once` 会从本地 outcome 标签 + rewards candles 构建 first-touch 样本，`refresh-high-probability-buckets-once` 会从已入库 `high_probability_samples` 计算并替换当前模型版本的 bucket stats，`run-high-probability-backtest-once` 会持久化 baseline walk-forward backtest runs/trades 和基础退出规则摘要，`observe-high-probability-once` 和默认关闭的自动 observe runtime loop 会把只读扫描结果写入 `high_probability_observations`。全市场 price-history/outcome producer、完整执行成本/多阶段退出回测、paper/live guarded execution 仍未实现。
 
 ## 修改检查清单
 

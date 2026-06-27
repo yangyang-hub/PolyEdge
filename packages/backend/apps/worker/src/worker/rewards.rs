@@ -37,19 +37,14 @@ async fn run_reward_bot_once_with_history(
         return Ok(RewardBotRunReport::default());
     };
     let result = async {
-        let command_report = process_pending_reward_control_commands_unlocked(
-            state,
-            connector,
-            book_history,
-            None,
-            None,
-        )
-        .await?;
+        let command_report =
+            process_pending_reward_control_commands_unlocked(state, connector, book_history, None)
+                .await?;
         if command_report.processed > 0 {
             return Ok(command_report.report);
         }
 
-        run_reward_bot_tick(state, connector, trace_id, false, book_history, None, None).await
+        run_reward_bot_tick(state, connector, trace_id, false, book_history, None).await
     }
     .await;
     finish_reward_worker_lease(lease, result).await
@@ -62,16 +57,9 @@ async fn run_reward_bot_tick(
     force_orders: bool,
     book_history: &mut HashMap<String, VecDeque<BookSnapshot>>,
     orderbook_cache: Option<&RewardOrderbookLocalCache>,
-    low_competition_probe: Option<&mut LowCompetitionProbeState>,
 ) -> Result<RewardBotRunReport> {
-    let (markets, books) = fetch_reward_bot_inputs(
-        state,
-        orderbook_cache,
-        book_history,
-        low_competition_probe,
-        trace_id,
-    )
-    .await?;
+    let (markets, books) =
+        fetch_reward_bot_inputs(state, orderbook_cache, book_history, trace_id).await?;
     record_reward_book_history(book_history, &books);
     run_reward_bot_live_tick(
         state,
@@ -133,7 +121,10 @@ fn reward_live_action_orderbook_tokens(
     let mut token_ids = Vec::new();
     let mut seen = HashSet::new();
 
-    for order in open_orders.iter().filter(|order| order.status.is_open_like()) {
+    for order in open_orders
+        .iter()
+        .filter(|order| order.status.is_open_like())
+    {
         push_reward_live_action_token(&mut token_ids, &mut seen, &order.token_id);
     }
 
@@ -241,7 +232,6 @@ async fn process_pending_reward_control_commands_unlocked(
     connector: &LivePolymarketConnector,
     book_history: &mut HashMap<String, VecDeque<BookSnapshot>>,
     orderbook_cache: Option<&RewardOrderbookLocalCache>,
-    mut low_competition_probe: Option<&mut LowCompetitionProbeState>,
 ) -> Result<RewardCommandProcessReport> {
     let mut total = RewardCommandProcessReport::default();
     let max_commands = usize::from(task_limit(state).unwrap_or(10).max(1));
@@ -263,7 +253,6 @@ async fn process_pending_reward_control_commands_unlocked(
             &trace_id,
             book_history,
             orderbook_cache,
-            low_competition_probe.as_mut().map(|probe| &mut **probe),
         )
         .await;
         match result {
@@ -324,7 +313,6 @@ async fn execute_reward_control_command(
     trace_id: &str,
     book_history: &mut HashMap<String, VecDeque<BookSnapshot>>,
     orderbook_cache: Option<&RewardOrderbookLocalCache>,
-    low_competition_probe: Option<&mut LowCompetitionProbeState>,
 ) -> Result<RewardBotRunReport> {
     match command.action {
         RewardControlAction::RunOnce => {
@@ -335,7 +323,6 @@ async fn execute_reward_control_command(
                 true,
                 book_history,
                 orderbook_cache,
-                low_competition_probe,
             )
             .await
         }
@@ -410,7 +397,7 @@ async fn run_reward_bot_live_tick(
             &ai_model,
         )
         .await?;
-    apply_low_competition_metrics_to_quote_plans(
+    apply_reward_opportunity_metrics_to_quote_plans(
         &mut cycle.plans,
         &books,
         book_history,
@@ -461,23 +448,6 @@ async fn run_reward_bot_live_tick(
         );
     }
     register_reward_eligible_orderbook_tokens_from_plans(state, &cycle.plans, trace_id).await;
-    let low_competition_observations = build_low_competition_observations(
-        &cycle.account.account_id,
-        &cycle.plans,
-        &cycle.config,
-        OffsetDateTime::now_utc(),
-    );
-    if !low_competition_observations.is_empty() {
-        state
-            .reward_bot_service
-            .record_low_competition_observations(&low_competition_observations)
-            .await?;
-        info!(
-            trace_id = %trace_id,
-            observations = low_competition_observations.len(),
-            "recorded low-competition sleeve observations",
-        );
-    }
     let kill_switch = state.risk_service.read_state().await?.kill_switch;
     if kill_switch {
         cycle.should_execute = false;
@@ -541,7 +511,18 @@ async fn run_reward_bot_live_tick(
 
     let readiness_changed =
         refresh_live_quote_plan_readiness(&cycle.config, &mut cycle.plans, &books);
-    state.reward_bot_service.save_quote_plans(&cycle.plans).await?;
+    refresh_reward_opportunity_metrics_for_quote_plans(
+        &mut cycle.plans,
+        &books,
+        book_history,
+        &open_orders,
+        &account,
+        &cycle.config,
+    );
+    state
+        .reward_bot_service
+        .save_quote_plans(&cycle.plans)
+        .await?;
     if readiness_changed {
         debug!(
             trace_id = %trace_id,
@@ -555,17 +536,15 @@ async fn run_reward_bot_live_tick(
 
     let mut cancel_rejected = false;
 
-    for (order_id, reason) in
-        live_cancel_candidates_with_account(
-            &cycle.config,
-            &cycle.plans,
-            &open_orders,
-            &books,
-            book_history,
-            &account,
-            kill_switch,
-        )
-    {
+    for (order_id, reason) in live_cancel_candidates_with_account(
+        &cycle.config,
+        &cycle.plans,
+        &open_orders,
+        &books,
+        book_history,
+        &account,
+        kill_switch,
+    ) {
         let Some(index) = open_orders.iter().position(|order| order.id == order_id) else {
             continue;
         };
@@ -590,8 +569,7 @@ async fn run_reward_bot_live_tick(
                 )
                 .await?;
             }
-            LiveRewardOrderUpdate::Unchanged(event)
-            | LiveRewardOrderUpdate::Retryable(event) => {
+            LiveRewardOrderUpdate::Unchanged(event) | LiveRewardOrderUpdate::Retryable(event) => {
                 cancel_rejected = true;
                 persist_live_reward_updates(
                     state,
@@ -661,7 +639,10 @@ async fn run_reward_bot_live_tick(
         trace_id,
     );
     if plans_changed {
-        state.reward_bot_service.save_quote_plans(&cycle.plans).await?;
+        state
+            .reward_bot_service
+            .save_quote_plans(&cycle.plans)
+            .await?;
     }
 
     if !placement_orders.is_empty() {
@@ -769,8 +750,7 @@ async fn cancel_live_reward_orders(
                 )
                 .await?;
             }
-            LiveRewardOrderUpdate::Unchanged(event)
-            | LiveRewardOrderUpdate::Retryable(event) => {
+            LiveRewardOrderUpdate::Unchanged(event) | LiveRewardOrderUpdate::Retryable(event) => {
                 report.rejected += 1;
                 persist_live_reward_updates(
                     state,
@@ -800,7 +780,6 @@ include!("rewards/live_requote.rs");
 include!("rewards/live_risk.rs");
 include!("rewards/event_cancel.rs");
 include!("rewards/orderbook_events.rs");
-include!("rewards/low_competition_probe.rs");
 include!("rewards/polling.rs");
 include!("rewards/provider_advisory.rs");
 include!("rewards/provider_fallback.rs");

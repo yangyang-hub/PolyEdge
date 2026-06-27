@@ -29,6 +29,7 @@
 | [events.md](frontend/events.md) | `features/events` | 事件/证据 |
 | [rewards.md](frontend/rewards.md) | `features/rewards` | 奖励机器人 |
 | [funding.md](frontend/funding.md) | `features/funding` | Polymarket 入金 |
+| [high-probability.md](frontend/high-probability.md) | `features/high-probability` | 高概率定价研究 |
 | [copytrade.md](frontend/copytrade.md) | `features/copytrade` | 跟单 |
 | [settings.md](frontend/settings.md) | `features/settings` | 设置 |
 | [wallet-analysis.md](frontend/wallet-analysis.md) | `features/wallet-analysis` | 钱包分析 |

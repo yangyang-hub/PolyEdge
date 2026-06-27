@@ -65,10 +65,16 @@ async fn scan_reward_info_risks_unlocked(
         );
         return Ok(RewardInfoRiskScanReport::default());
     }
+    let model = reward_ai_model_for_provider(&state.settings.rewards, config.ai_provider);
+    let request_format = reward_ai_effective_request_format_for_model(&config, model);
+    if model.is_empty() {
+        warn!(trace_id = %trace_id, "reward info risk model is empty");
+        return Ok(RewardInfoRiskScanReport::default());
+    }
     info!(
         trace_id = %trace_id,
         provider = config.ai_provider.as_str(),
-        request_format = config.ai_request_format.as_str(),
+        request_format = request_format.as_str(),
         mode = config.info_risk_mode.as_str(),
         web_search_enabled = state.settings.rewards.info_risk_web_search_enabled,
         "starting reward info risk scan",
@@ -83,7 +89,9 @@ async fn scan_reward_info_risks_unlocked(
     };
     let fallback_descriptor = resolve_reward_ai_fallback(&state.settings.rewards);
     let fallback_connector = match &fallback_descriptor {
-        Some(descriptor) => Some(build_reward_info_risk_fallback_connector(state, descriptor)?),
+        Some(descriptor) => Some(build_reward_info_risk_fallback_connector(
+            state, descriptor,
+        )?),
         None => None,
     };
     let fallback_channel = match (&fallback_descriptor, fallback_connector.as_ref()) {
@@ -95,19 +103,16 @@ async fn scan_reward_info_risks_unlocked(
         }),
         _ => None,
     };
-    let model = state.settings.rewards.ai_model.trim();
-    if model.is_empty() {
-        warn!(trace_id = %trace_id, "reward info risk model is empty");
-        return Ok(RewardInfoRiskScanReport::default());
-    }
-
     let mut report = RewardInfoRiskScanReport::default();
     let cycle = state.reward_bot_service.current_live_cycle_state().await?;
     let candidate_markets = state
         .reward_bot_service
         .list_reward_run_candidate_markets()
         .await?;
-    let active_markets = state.reward_bot_service.list_active_reward_markets().await?;
+    let active_markets = state
+        .reward_bot_service
+        .list_active_reward_markets()
+        .await?;
     let mut markets_by_condition = active_markets
         .iter()
         .map(|market| (market.condition_id.clone(), market))
@@ -153,15 +158,12 @@ async fn scan_reward_info_risks_unlocked(
             &cycle.open_orders,
             &config,
             config.ai_provider,
-            config.ai_request_format,
+            request_format,
             model,
         )?;
-        if let Some(cached) = latest_market_info_risk_for_endpoints(
-            state,
-            &request,
-            fallback_descriptor.as_ref(),
-        )
-        .await?
+        if let Some(cached) =
+            latest_market_info_risk_for_endpoints(state, &request, fallback_descriptor.as_ref())
+                .await?
         {
             report.cache_hits += 1;
             if !reward_provider_cache_refresh_due(
@@ -183,7 +185,7 @@ async fn scan_reward_info_risks_unlocked(
         let primary_channel = RewardInfoRiskChannel {
             connector: &connector,
             provider: config.ai_provider,
-            request_format: config.ai_request_format,
+            request_format,
             model: model.to_string(),
         };
         let attempt = assess_with_fallback(
@@ -205,7 +207,10 @@ async fn scan_reward_info_risks_unlocked(
                     config.info_risk_ttl_sec,
                     OffsetDateTime::now_utc(),
                 );
-                state.reward_bot_service.save_market_info_risk(&risk).await?;
+                state
+                    .reward_bot_service
+                    .save_market_info_risk(&risk)
+                    .await?;
                 report.saved += 1;
                 info!(
                     trace_id = %trace_id,
@@ -272,7 +277,8 @@ async fn apply_cached_reward_info_risks(state: &AppState, trace_id: &str) -> Res
         .current_live_cycle_state()
         .await?
         .plans;
-    let applied = apply_cached_reward_info_risks_to_plans(state, &config, &mut plans, trace_id).await?;
+    let applied =
+        apply_cached_reward_info_risks_to_plans(state, &config, &mut plans, trace_id).await?;
     state.reward_bot_service.save_quote_plans(&plans).await?;
     Ok(applied)
 }
@@ -308,18 +314,12 @@ async fn apply_cached_reward_info_risks_to_plans(
         .into_iter()
         .map(|risk| (risk.condition_id.clone(), risk))
         .collect::<HashMap<String, RewardMarketInfoRisk>>();
-    let before = plans
-        .iter()
-        .filter(|plan| plan.info_risk.is_some())
-        .count();
+    let before = plans.iter().filter(|plan| plan.info_risk.is_some()).count();
     let risk_count = risks.len();
     let min_confidence =
         reward_ai_min_confidence(state.settings.rewards.info_risk_min_confidence_bps);
     apply_reward_info_risks(plans, &risks, config, min_confidence);
-    let after = plans
-        .iter()
-        .filter(|plan| plan.info_risk.is_some())
-        .count();
+    let after = plans.iter().filter(|plan| plan.info_risk.is_some()).count();
     debug!(
         trace_id = %trace_id,
         risks = risk_count,
@@ -344,29 +344,17 @@ fn reward_info_risk_candidate_conditions(
         .collect::<HashMap<_, _>>();
 
     for order in open_orders {
-        push_info_risk_condition(
-            &mut condition_ids,
-            &mut seen,
-            &order.condition_id,
-        );
+        push_info_risk_condition(&mut condition_ids, &mut seen, &order.condition_id);
     }
     for position in positions {
-        push_info_risk_condition(
-            &mut condition_ids,
-            &mut seen,
-            &position.condition_id,
-        );
+        push_info_risk_condition(&mut condition_ids, &mut seen, &position.condition_id);
     }
     for plan in plans.iter().filter(|plan| {
         let has_active_exposure =
             reward_condition_has_active_exposure(&plan.condition_id, open_orders, positions);
         reward_provider_plan_passes_pre_llm_gate(plan, config, has_active_exposure)
     }) {
-        push_info_risk_condition(
-            &mut condition_ids,
-            &mut seen,
-            &plan.condition_id,
-        );
+        push_info_risk_condition(&mut condition_ids, &mut seen, &plan.condition_id);
     }
     for market in markets {
         let condition_id = market.condition_id.trim();
@@ -376,17 +364,13 @@ fn reward_info_risk_candidate_conditions(
         let has_active_exposure =
             reward_condition_has_active_exposure(condition_id, open_orders, positions);
         let passes_pre_llm_gate = has_active_exposure
-            || plans_by_condition.get(condition_id).is_some_and(|plan| {
-                reward_provider_plan_passes_pre_llm_gate(plan, config, false)
-            });
+            || plans_by_condition
+                .get(condition_id)
+                .is_some_and(|plan| reward_provider_plan_passes_pre_llm_gate(plan, config, false));
         if !passes_pre_llm_gate {
             continue;
         }
-        push_info_risk_condition(
-            &mut condition_ids,
-            &mut seen,
-            condition_id,
-        );
+        push_info_risk_condition(&mut condition_ids, &mut seen, condition_id);
     }
     condition_ids
 }
@@ -408,26 +392,19 @@ fn build_reward_info_risk_connector(
     config: &RewardBotConfig,
 ) -> Result<Option<RewardInfoRiskConnector>> {
     let rewards = &state.settings.rewards;
-    let (api_key, base_url) = match config.ai_provider {
-        polyedge_application::RewardAiProvider::OpenAi => (
-            rewards.ai_openai_api_key.as_deref(),
-            rewards.ai_openai_base_url.as_str(),
-        ),
-        polyedge_application::RewardAiProvider::Anthropic => (
-            rewards.ai_anthropic_api_key.as_deref(),
-            rewards.ai_anthropic_base_url.as_str(),
-        ),
-    };
+    let (api_key, base_url) = reward_ai_provider_endpoint_settings(rewards, config.ai_provider);
     let Some(api_key) = api_key.filter(|value| !value.trim().is_empty()) else {
         return Ok(None);
     };
+    let model = reward_ai_model_for_provider(rewards, config.ai_provider);
+    let request_format = reward_ai_effective_request_format_for_model(config, model);
     RewardInfoRiskConnector::new(
         base_url,
         api_key,
         rewards.ai_request_timeout_secs.max(1),
         rewards.info_risk_web_search_enabled
             && config.ai_provider == polyedge_application::RewardAiProvider::OpenAi
-            && config.ai_request_format == polyedge_application::RewardAiRequestFormat::OpenAiResponses,
+            && request_format == polyedge_application::RewardAiRequestFormat::OpenAiResponses,
     )
     .map(Some)
 }

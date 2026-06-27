@@ -80,6 +80,11 @@ mod tests {
         }
         assert!(!settings.rewards.enabled);
         assert_eq!(settings.rewards.poll_interval_secs, 60);
+        assert_eq!(
+            settings.rewards.ai_openai_base_url,
+            "https://api.openai.com/v1"
+        );
+        assert_eq!(settings.rewards.ai_model, "gpt-4.1-mini");
         assert_eq!(settings.rewards.info_risk_max_markets_per_cycle, 50);
         assert!(settings.worker.poll_news);
         assert!(settings.worker.promote_news_events);
@@ -91,6 +96,10 @@ mod tests {
         assert!(settings.worker.reconcile_polymarket_fills);
         assert!(settings.worker.consume_polymarket_user_events);
         assert!(settings.worker.consume_orderbook_stream);
+        assert!(!settings.worker.poll_smart_money);
+        assert_eq!(settings.worker.smart_money_interval_secs, 900);
+        assert!(!settings.worker.poll_high_probability_observe);
+        assert_eq!(settings.worker.high_probability_observe_interval_secs, 300);
         assert!(settings.worker.database_maintenance);
         assert_eq!(settings.worker.database_maintenance_interval_secs, 3_600);
         assert_eq!(settings.worker.news_promotion_interval_secs, 60);
@@ -115,7 +124,12 @@ mod tests {
         assert_eq!(settings.orderbook_stream.token_refresh_interval_secs, 60);
         assert_eq!(settings.orderbook_stream.restart_interval_secs, 5);
         assert!(settings.orderbook_stream.orderbook_ws_incremental_reconcile);
-        assert_eq!(settings.orderbook_stream.orderbook_full_resync_interval_secs, 0);
+        assert_eq!(
+            settings
+                .orderbook_stream
+                .orderbook_full_resync_interval_secs,
+            0
+        );
         assert!(settings.orderbook_stream.reward_candle_history_enabled);
         assert_eq!(
             settings
@@ -136,7 +150,9 @@ mod tests {
             600
         );
         assert_eq!(
-            settings.orderbook_stream.reward_candle_history_backfill_secs,
+            settings
+                .orderbook_stream
+                .reward_candle_history_backfill_secs,
             7_200
         );
         assert_eq!(
@@ -194,6 +210,18 @@ mod tests {
                 "POLYEDGE_REWARDS__POLL_INTERVAL_SECS".to_string(),
                 "45".to_string(),
             ),
+            (
+                "POLYEDGE_REWARDS__AI_OPENAI_API_KEY".to_string(),
+                "openai-compatible-test-key".to_string(),
+            ),
+            (
+                "POLYEDGE_REWARDS__AI_OPENAI_BASE_URL".to_string(),
+                "https://glm.example/api/paas/v4".to_string(),
+            ),
+            (
+                "POLYEDGE_REWARDS__AI_MODEL".to_string(),
+                "glm-test-model".to_string(),
+            ),
             ("POLYEDGE_WORKER__POLL_NEWS".to_string(), "true".to_string()),
             (
                 "POLYEDGE_WORKER__PROMOTE_NEWS_EVENTS".to_string(),
@@ -230,6 +258,22 @@ mod tests {
             (
                 "POLYEDGE_WORKER__CONSUME_ORDERBOOK_STREAM".to_string(),
                 "true".to_string(),
+            ),
+            (
+                "POLYEDGE_WORKER__POLL_SMART_MONEY".to_string(),
+                "true".to_string(),
+            ),
+            (
+                "POLYEDGE_WORKER__SMART_MONEY_INTERVAL_SECS".to_string(),
+                "120".to_string(),
+            ),
+            (
+                "POLYEDGE_WORKER__POLL_HIGH_PROBABILITY_OBSERVE".to_string(),
+                "true".to_string(),
+            ),
+            (
+                "POLYEDGE_WORKER__HIGH_PROBABILITY_OBSERVE_INTERVAL_SECS".to_string(),
+                "240".to_string(),
             ),
             (
                 "POLYEDGE_WORKER__NEWS_PROMOTION_INTERVAL_SECS".to_string(),
@@ -285,8 +329,7 @@ mod tests {
                 "750".to_string(),
             ),
             (
-                "POLYEDGE_ORDERBOOK_STREAM__REWARD_CANDLE_HISTORY_MAX_TOKENS_PER_CYCLE"
-                    .to_string(),
+                "POLYEDGE_ORDERBOOK_STREAM__REWARD_CANDLE_HISTORY_MAX_TOKENS_PER_CYCLE".to_string(),
                 "55".to_string(),
             ),
             (
@@ -350,6 +393,15 @@ mod tests {
         assert!(settings.polymarket.private_key.is_none());
         assert!(settings.rewards.enabled);
         assert_eq!(settings.rewards.poll_interval_secs, 45);
+        assert_eq!(
+            settings.rewards.ai_openai_api_key.as_deref(),
+            Some("openai-compatible-test-key")
+        );
+        assert_eq!(
+            settings.rewards.ai_openai_base_url,
+            "https://glm.example/api/paas/v4"
+        );
+        assert_eq!(settings.rewards.ai_model, "glm-test-model");
         assert!(settings.worker.poll_news);
         assert!(settings.worker.promote_news_events);
         assert!(settings.worker.poll_reward_bot);
@@ -360,6 +412,10 @@ mod tests {
         assert!(settings.worker.reconcile_polymarket_fills);
         assert!(settings.worker.consume_polymarket_user_events);
         assert!(settings.worker.consume_orderbook_stream);
+        assert!(settings.worker.poll_smart_money);
+        assert_eq!(settings.worker.smart_money_interval_secs, 120);
+        assert!(settings.worker.poll_high_probability_observe);
+        assert_eq!(settings.worker.high_probability_observe_interval_secs, 240);
         assert_eq!(settings.worker.news_promotion_interval_secs, 30);
         assert_eq!(settings.worker.execution_drain_interval_secs, 6);
         assert_eq!(settings.worker.order_status_poll_interval_secs, 20);
@@ -394,7 +450,9 @@ mod tests {
             55
         );
         assert_eq!(
-            settings.orderbook_stream.reward_candle_history_backfill_secs,
+            settings
+                .orderbook_stream
+                .reward_candle_history_backfill_secs,
             3600
         );
         assert_eq!(
@@ -435,6 +493,19 @@ mod tests {
                     "deposit_wallet".to_string(),
                 ),
                 ("worker.poll_news".to_string(), "true".to_string()),
+                ("worker.poll_smart_money".to_string(), "true".to_string()),
+                (
+                    "worker.smart_money_interval_secs".to_string(),
+                    "180".to_string(),
+                ),
+                (
+                    "worker.poll_high_probability_observe".to_string(),
+                    "true".to_string(),
+                ),
+                (
+                    "worker.high_probability_observe_interval_secs".to_string(),
+                    "360".to_string(),
+                ),
                 (
                     "news.sources_json".to_string(),
                     r#"[{"id":"sec","source_type":"official","url":"https://example.com/rss","reliability":"0.9","enabled":true}]"#
@@ -449,6 +520,10 @@ mod tests {
             PolymarketSignatureType::Poly1271
         );
         assert!(settings.worker.poll_news);
+        assert!(settings.worker.poll_smart_money);
+        assert_eq!(settings.worker.smart_money_interval_secs, 180);
+        assert!(settings.worker.poll_high_probability_observe);
+        assert_eq!(settings.worker.high_probability_observe_interval_secs, 360);
         assert_eq!(settings.news.sources.len(), 1);
         assert_eq!(settings.news.sources[0].id, "sec");
     }

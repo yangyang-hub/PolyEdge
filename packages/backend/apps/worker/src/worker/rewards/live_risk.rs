@@ -20,20 +20,10 @@ fn live_placement_orders(
     if max_markets == 0 || max_open_orders == 0 {
         return (Vec::new(), false);
     }
-    let low_competition_global_open_order_cap =
-        live_low_competition_global_open_order_cap(config, max_open_orders);
 
     let mut active_markets: HashSet<String> = open_orders
         .iter()
         .filter(|order| order.status.is_open_like())
-        .map(|order| order.condition_id.clone())
-        .collect();
-    let mut active_low_competition_markets: HashSet<String> = open_orders
-        .iter()
-        .filter(|order| {
-            order.status.is_open_like()
-                && order.strategy_bucket == RewardStrategyBucket::LowCompetition
-        })
         .map(|order| order.condition_id.clone())
         .collect();
     let mut orders = open_orders.to_vec();
@@ -47,41 +37,29 @@ fn live_placement_orders(
         if !plans[plan_index].eligible {
             continue;
         }
-        let strategy_bucket = plans[plan_index].strategy_bucket;
-        let plan_config = config.config_for_strategy_bucket(strategy_bucket);
-        if strategy_bucket == RewardStrategyBucket::LowCompetition {
-            if plan_config.max_markets == 0 || plan_config.max_open_orders == 0 {
-                continue;
-            }
-            if active_low_competition_markets.len() >= usize::from(plan_config.max_markets)
-                && !active_low_competition_markets.contains(&plans[plan_index].condition_id)
-            {
-                continue;
-            }
-        }
-        let materialized =
-            match materialize_reward_quote_plan_for_live_orderbook(&plans[plan_index], books, &plan_config)
-            {
-                Ok(materialized) => materialized,
-                Err(reason) => {
-                    let now = OffsetDateTime::now_utc();
-                    if let Some(wait_reason) =
-                        live_orderbook_wait_reason(&plan_config, &plans[plan_index], books, now)
-                    {
-                        if mark_live_orderbook_waiting(
-                            &mut plans[plan_index],
-                            wait_reason,
-                            now,
-                        ) {
-                            plans_changed = true;
-                        }
-                    } else {
-                        mark_live_orderbook_validation_skip(&mut plans[plan_index], reason, now);
+        plans[plan_index].strategy_bucket = RewardStrategyBucket::Standard;
+        let plan_config = config.config_for_strategy_bucket(plans[plan_index].strategy_bucket);
+        let materialized = match materialize_reward_quote_plan_for_live_orderbook(
+            &plans[plan_index],
+            books,
+            &plan_config,
+        ) {
+            Ok(materialized) => materialized,
+            Err(reason) => {
+                let now = OffsetDateTime::now_utc();
+                if let Some(wait_reason) =
+                    live_orderbook_wait_reason(&plan_config, &plans[plan_index], books, now)
+                {
+                    if mark_live_orderbook_waiting(&mut plans[plan_index], wait_reason, now) {
                         plans_changed = true;
                     }
-                    continue;
+                } else {
+                    mark_live_orderbook_validation_skip(&mut plans[plan_index], reason, now);
+                    plans_changed = true;
                 }
-            };
+                continue;
+            }
+        };
         if apply_live_quote_plan_materialization(
             &mut plans[plan_index],
             materialized,
@@ -106,11 +84,13 @@ fn live_placement_orders(
         let raw_budget = (remaining_available - existing_market_buy_notional).max(Decimal::ZERO);
         // Cap the condition budget by per-leg position limits so rescaled legs
         // do not exceed max_position_usd when both are open simultaneously.
-        let condition_budget = live_condition_budget_capped_by_positions(
+        let position_budget =
+            live_condition_budget_capped_by_positions(config, &plan.legs, positions, raw_budget);
+        let condition_budget = live_condition_budget_capped_by_ai_hint(
             config,
-            &plan.legs,
-            positions,
-            raw_budget,
+            plan,
+            existing_market_buy_notional,
+            position_budget,
         );
         // Rescale legs to use available balance: single-side uses all,
         // double-side splits 50/50. Plan legs stay at minimum size for
@@ -123,9 +103,7 @@ fn live_placement_orders(
         // the same collateral, but both YES/NO legs in one condition must fit.
         // Open BUY orders outside this system are only available as an account
         // aggregate, so reserve the unassigned portion conservatively.
-        if existing_market_buy_notional + missing_plan_buy_notional
-            > available_for_new_condition
-        {
+        if existing_market_buy_notional + missing_plan_buy_notional > available_for_new_condition {
             if missing_plan_buy_notional > Decimal::ZERO
                 && mark_live_funding_skip(
                     &mut plans[plan_index],
@@ -140,19 +118,13 @@ fn live_placement_orders(
             continue;
         }
         for leg in &rescaled_legs {
-            if orders.iter().filter(|order| order.status.is_open_like()).count()
+            if orders
+                .iter()
+                .filter(|order| order.status.is_open_like())
+                .count()
                 >= max_open_orders
             {
                 return (placements, plans_changed);
-            }
-            if strategy_bucket == RewardStrategyBucket::LowCompetition {
-                let low_competition_open_orders =
-                    live_low_competition_open_order_count(&orders);
-                if low_competition_open_orders >= usize::from(plan_config.max_open_orders)
-                    || low_competition_open_orders >= low_competition_global_open_order_cap
-                {
-                    continue;
-                }
             }
             if orders.iter().any(|order| {
                 order.condition_id == plan.condition_id
@@ -230,9 +202,6 @@ fn live_placement_orders(
                 continue;
             }
             active_markets.insert(plan.condition_id.clone());
-            if strategy_bucket == RewardStrategyBucket::LowCompetition {
-                active_low_competition_markets.insert(plan.condition_id.clone());
-            }
             orders.push(order.clone());
             remaining_available = (remaining_available - notional).max(Decimal::ZERO);
             placements.push(order);
@@ -413,7 +382,13 @@ fn live_bid_rank(price: Decimal, book: &RewardOrderBook) -> Option<usize> {
     if seen_prices.is_empty() {
         return None;
     }
-    Some(seen_prices.iter().filter(|level_price| **level_price > price).count() + 1)
+    Some(
+        seen_prices
+            .iter()
+            .filter(|level_price| **level_price > price)
+            .count()
+            + 1,
+    )
 }
 
 fn live_depth_drop_cancel_reason(
@@ -427,14 +402,18 @@ fn live_depth_drop_cancel_reason(
         return None;
     }
     let current = books.get(&order.token_id)?;
-    let old = live_snapshot_ago(book_history.get(&order.token_id)?, config.depth_drop_window_sec, now)?;
+    let old = live_snapshot_ago(
+        book_history.get(&order.token_id)?,
+        config.depth_drop_window_sec,
+        now,
+    )?;
     let old_notional = live_top_bid_notional_snapshot(old, 2);
     if old_notional <= Decimal::ZERO {
         return None;
     }
     let current_notional = live_top_bid_notional(current, 2);
-    let drop_pct = ((old_notional - current_notional) / old_notional * Decimal::from(100_u64))
-        .round_dp(2);
+    let drop_pct =
+        ((old_notional - current_notional) / old_notional * Decimal::from(100_u64)).round_dp(2);
     if drop_pct >= config.depth_drop_pct {
         Some(format!(
             "top-2 bid depth dropped {drop_pct}% in {}s (threshold {}%)",
@@ -456,8 +435,11 @@ fn live_fill_velocity_cancel_reason(
         return None;
     }
     let current = books.get(&order.token_id)?;
-    let old =
-        live_snapshot_ago(book_history.get(&order.token_id)?, config.fill_velocity_window_sec, now)?;
+    let old = live_snapshot_ago(
+        book_history.get(&order.token_id)?,
+        config.fill_velocity_window_sec,
+        now,
+    )?;
     let old_ask = live_top_ask_notional_snapshot(old, 2);
     let current_ask = live_top_ask_notional(current, 2);
     if old_ask <= current_ask {
@@ -485,8 +467,16 @@ fn live_mass_cancel_reason(
         return None;
     }
     let current = books.get(&order.token_id)?;
-    let old = live_snapshot_ago(book_history.get(&order.token_id)?, config.mass_cancel_window_sec, now)?;
-    let old_total: Decimal = old.bids.iter().map(|level| (level.price * level.size).round_dp(4)).sum();
+    let old = live_snapshot_ago(
+        book_history.get(&order.token_id)?,
+        config.mass_cancel_window_sec,
+        now,
+    )?;
+    let old_total: Decimal = old
+        .bids
+        .iter()
+        .map(|level| (level.price * level.size).round_dp(4))
+        .sum();
     if old_total <= Decimal::ZERO {
         return None;
     }
@@ -495,8 +485,7 @@ fn live_mass_cancel_reason(
         .iter()
         .map(|level| (level.price * level.size).round_dp(4))
         .sum();
-    let drop_pct =
-        ((old_total - current_total) / old_total * Decimal::from(100_u64)).round_dp(2);
+    let drop_pct = ((old_total - current_total) / old_total * Decimal::from(100_u64)).round_dp(2);
     if drop_pct >= config.mass_cancel_pct {
         Some(format!(
             "total bid depth dropped {drop_pct}% in {}s (threshold {}%)",
@@ -516,8 +505,8 @@ fn live_requote_age_cancel_reason(
         return None;
     }
     let age_sec = (now - order.created_at).whole_seconds().max(0) as u64;
-    let threshold =
-        config.requote_interval_sec + deterministic_reward_jitter(&order.id, config.requote_jitter_sec);
+    let threshold = config.requote_interval_sec
+        + deterministic_reward_jitter(&order.id, config.requote_jitter_sec);
     if age_sec >= threshold {
         Some(format!(
             "order age {age_sec}s exceeds requote interval {threshold}s"
@@ -536,7 +525,10 @@ fn live_snapshot_ago(
         return None;
     }
     let target = now - TimeDuration::seconds(window_sec as i64);
-    history.iter().rev().find(|snapshot| snapshot.observed_at <= target)
+    history
+        .iter()
+        .rev()
+        .find(|snapshot| snapshot.observed_at <= target)
 }
 
 fn live_top_bid_notional(book: &RewardOrderBook, depth: usize) -> Decimal {

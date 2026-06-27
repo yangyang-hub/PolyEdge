@@ -7,6 +7,7 @@ import { copytrade } from "./dictionaries/copytrade";
 import { ops } from "./dictionaries/ops";
 import { walletAnalysis } from "./dictionaries/wallet-analysis";
 import { funding } from "./dictionaries/funding";
+import { highProbability } from "./dictionaries/high-probability";
 
 const _dictionary = {
   ...shared,
@@ -18,6 +19,7 @@ const _dictionary = {
   ...ops,
   ...walletAnalysis,
   ...funding,
+  ...highProbability,
 } as const;
 
 type DeepStringRecord<T> = {

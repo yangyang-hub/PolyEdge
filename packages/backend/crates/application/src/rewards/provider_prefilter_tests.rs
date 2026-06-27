@@ -16,6 +16,7 @@ fn prefilter_test_plan(condition_id: &str, bucket: RewardStrategyBucket) -> Rewa
         recommended_quote_mode: None,
         book_metrics: None,
         low_competition_metrics: None,
+        opportunity_metrics: None,
         ai_advisory: None,
         info_risk: None,
         midpoint: Some(decimal("0.5")),
@@ -30,52 +31,23 @@ fn prefilter_test_plan(condition_id: &str, bucket: RewardStrategyBucket) -> Rewa
     }
 }
 
-fn prefilter_test_metrics(eligible: bool) -> RewardLowCompetitionMetrics {
-    RewardLowCompetitionMetrics {
-        planned_notional_usd: decimal("10"),
-        competition_probe_notional_usd: decimal("10"),
-        qualified_competition_usd: decimal("100"),
-        competition_share_bps: decimal("909.09"),
-        competition_multiple: decimal("10"),
-        estimated_reward_per_100_usd_day: decimal("1"),
-        competition_density: decimal("20"),
-        account_effective_available_usd: decimal("1000"),
-        low_competition_open_buy_notional_usd: Decimal::ZERO,
-        low_competition_open_buy_notional_usd_after_plan: decimal("10"),
-        condition_buy_notional_usd_after_plan: decimal("10"),
-        account_allocation_bps: decimal("100"),
-        market_allocation_bps: decimal("100"),
-        exit_depth_usd: decimal("200"),
-        exit_slippage_cents: Some(Decimal::ZERO),
-        bad_fill_recovery_days: Some(Decimal::ZERO),
-        midpoint_range_cents: Some(decimal("1")),
-        top_of_book_flip_count: Some(0),
-        sample_count: 20,
-        eligible_for_low_competition: eligible,
-        rejection_reasons: if eligible {
-            Vec::new()
-        } else {
-            vec!["exit depth too low".to_string()]
-        },
-        not_low_competition: false,
-        not_low_competition_reason: None,
-    }
-}
-
 #[test]
-fn provider_prefilter_skips_low_competition_observe_without_exposure() {
+fn provider_prefilter_treats_legacy_low_competition_bucket_as_standard() {
     let config = RewardBotConfig {
         low_competition_mode: RewardLowCompetitionMode::Observe,
         ..RewardBotConfig::default()
     };
-    let mut plan = prefilter_test_plan("cond_observe", RewardStrategyBucket::LowCompetition);
-    plan.low_competition_metrics = Some(prefilter_test_metrics(true));
+    let plan = prefilter_test_plan("cond_legacy", RewardStrategyBucket::LowCompetition);
 
-    assert!(!reward_provider_plan_passes_pre_llm_gate(&plan, &config, false));
+    assert!(reward_provider_plan_passes_pre_llm_gate(&plan, &config, false));
+    assert_eq!(
+        reward_provider_pre_llm_candidate_kind(&plan, &config, false),
+        Some(RewardProviderPreLlmCandidateKind::Standard)
+    );
 }
 
 #[test]
-fn provider_prefilter_allows_low_competition_enforce_when_gate_passes() {
+fn provider_prefilter_ignores_legacy_low_competition_enforce_gate() {
     let config = RewardBotConfig {
         low_competition_mode: RewardLowCompetitionMode::Enforce,
         ai_advisory_enabled: true,
@@ -83,24 +55,21 @@ fn provider_prefilter_allows_low_competition_enforce_when_gate_passes() {
         info_risk_mode: RewardSelectionMode::Enforce,
         ..RewardBotConfig::default()
     };
-    let mut plan = prefilter_test_plan("cond_enforce", RewardStrategyBucket::LowCompetition);
-    plan.low_competition_metrics = Some(prefilter_test_metrics(true));
+    let plan = prefilter_test_plan("cond_enforce", RewardStrategyBucket::LowCompetition);
 
     assert!(reward_provider_plan_passes_pre_llm_gate(&plan, &config, false));
     assert_eq!(
         reward_provider_pre_llm_candidate_kind(&plan, &config, false),
-        Some(RewardProviderPreLlmCandidateKind::LowCompetition)
+        Some(RewardProviderPreLlmCandidateKind::Standard)
     );
 }
 
 #[test]
-fn provider_prefilter_blocks_low_competition_enforce_when_gate_fails() {
-    let config = RewardBotConfig {
-        low_competition_mode: RewardLowCompetitionMode::Enforce,
-        ..RewardBotConfig::default()
-    };
+fn provider_prefilter_blocks_ineligible_legacy_low_competition_bucket() {
+    let config = RewardBotConfig::default();
     let mut plan = prefilter_test_plan("cond_reject", RewardStrategyBucket::LowCompetition);
-    plan.low_competition_metrics = Some(prefilter_test_metrics(false));
+    plan.eligible = false;
+    plan.pre_ai_eligible = false;
 
     assert!(!reward_provider_plan_passes_pre_llm_gate(&plan, &config, false));
 }

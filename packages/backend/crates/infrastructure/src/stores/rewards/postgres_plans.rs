@@ -51,8 +51,7 @@ async fn postgres_count_quote_plans(pool: &PgPool) -> Result<RewardQuotePlanCoun
                COUNT(*) FILTER (WHERE readiness <> 'waiting_orderbook'
                                 AND reason LIKE 'info risk %'
                                 AND reason NOT LIKE 'info risk pending:%') AS blocker_info_risk,
-               COUNT(*) FILTER (WHERE readiness <> 'waiting_orderbook'
-                                AND reason LIKE 'low-competition observe only:%') AS blocker_low_competition,
+               0::BIGINT AS blocker_low_competition,
                COUNT(*) FILTER (WHERE readiness <> 'waiting_orderbook'
                                 AND reason LIKE 'live funding below rewards minimum:%') AS blocker_funding,
                COUNT(*) FILTER (WHERE readiness <> 'waiting_orderbook'
@@ -65,7 +64,6 @@ async fn postgres_count_quote_plans(pool: &PgPool) -> Result<RewardQuotePlanCoun
                      AND reason NOT LIKE 'AI advisory watch:%'
                      AND reason NOT LIKE 'AI advisory avoid:%'
                      AND reason NOT LIKE 'info risk %'
-                     AND reason NOT LIKE 'low-competition observe only:%'
                      AND reason NOT LIKE 'live funding below rewards minimum:%'
                      AND reason NOT LIKE 'live orderbook validation skipped until %'
                ) AS blocker_other
@@ -104,24 +102,23 @@ async fn postgres_count_quote_plans(pool: &PgPool) -> Result<RewardQuotePlanCoun
 }
 
 fn postgres_count_to_usize(row: &sqlx::postgres::PgRow, column: &str) -> Result<usize> {
-    let count = row.try_get::<i64, _>(column).map_err(postgres_decode_error)?;
+    let count = row
+        .try_get::<i64, _>(column)
+        .map_err(postgres_decode_error)?;
     Ok(count.max(0) as usize)
 }
 
-async fn postgres_latest_quote_plan_updated_at(
-    pool: &PgPool,
-) -> Result<Option<OffsetDateTime>> {
-    let row: Option<OffsetDateTime> = sqlx::query_scalar(
-        "SELECT MAX(updated_at) FROM reward_quote_plans",
-    )
-    .fetch_one(pool)
-    .await
-    .map_err(|error| {
-        db_error(
-            "POSTGRES_QUERY_FAILED",
-            format!("failed to query latest quote plan updated_at: {error}"),
-        )
-    })?;
+async fn postgres_latest_quote_plan_updated_at(pool: &PgPool) -> Result<Option<OffsetDateTime>> {
+    let row: Option<OffsetDateTime> =
+        sqlx::query_scalar("SELECT MAX(updated_at) FROM reward_quote_plans")
+            .fetch_one(pool)
+            .await
+            .map_err(|error| {
+                db_error(
+                    "POSTGRES_QUERY_FAILED",
+                    format!("failed to query latest quote plan updated_at: {error}"),
+                )
+            })?;
     Ok(row)
 }
 

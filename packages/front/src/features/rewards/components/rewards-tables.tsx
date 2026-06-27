@@ -13,8 +13,8 @@ import {
 } from "@/components/ui/table";
 import type {
   ManagedRewardOrderDto,
-  RewardBotConfigDto,
   RewardListPageDto,
+  RewardPlanQuoteMode,
   RewardQuotePlanDto,
   RewardTokenQuoteDto,
 } from "@/lib/contracts/dto";
@@ -22,9 +22,14 @@ import { formatFixed, formatUsdFixed } from "@/lib/formatters";
 import type { PaginationState } from "@/hooks/use-pagination";
 import { dictionary } from "@/lib/i18n/dictionaries";
 
-import { quoteReadinessLabel, quoteReadinessTone, rewardTone } from "../lib/rewards-helpers";
+import {
+  quoteReadinessLabel,
+  quoteReadinessTone,
+  rewardAiStrategyHint,
+  rewardTone,
+} from "../lib/rewards-helpers";
 import { getPositionQuote } from "../lib/position-metrics";
-import { LowCompetitionSummary } from "./rewards-low-competition-summary";
+import { OpportunitySummary } from "./rewards-opportunity-summary";
 import { DebouncedFilterBar, SortIndicator } from "./rewards-table-controls";
 
 export { FillsTable } from "./rewards-fills-table";
@@ -45,6 +50,14 @@ function infoRiskAllowsQuote(level?: string | null) {
 
 function aiAdvisoryAllowsQuote(suitability?: string | null) {
   return suitability === "allow";
+}
+
+function quoteModeLabel(mode?: RewardPlanQuoteMode) {
+  if (mode === "double") return dictionary.rewards.quoteModeDouble;
+  if (mode === "single_yes") return dictionary.rewards.quoteModeSingleYes;
+  if (mode === "single_no") return dictionary.rewards.quoteModeSingleNo;
+  if (mode === "none") return dictionary.rewards.quoteModeNone;
+  return dictionary.rewards.notAvailable;
 }
 
 function paginationFromPage(
@@ -70,7 +83,6 @@ function paginationFromPage(
 interface QuotePlansTableProps {
   plans: RewardQuotePlanDto[];
   plansPage: RewardListPageDto;
-  config: RewardBotConfigDto;
   plansTotal: number;
   eligibleTotal: number;
   search: string;
@@ -85,7 +97,7 @@ interface QuotePlansTableProps {
 }
 
 export function QuotePlansTable({
-  plans, plansPage, config, plansTotal, eligibleTotal, search, onSearchChange, eligibility, onEligibilityChange,
+  plans, plansPage, plansTotal, eligibleTotal, search, onSearchChange, eligibility, onEligibilityChange,
   sortBy, sortOrder, onSortChange, onPageChange, filtering,
 }: QuotePlansTableProps) {
   // Server-side pagination: plans are already filtered/sorted/paged by the API.
@@ -182,7 +194,7 @@ export function QuotePlansTable({
                   <StatusPill tone={quoteReadinessTone(plan)}>
                     {quoteReadinessLabel(plan)}
                   </StatusPill>
-                  <LowCompetitionSummary plan={plan} config={config} />
+                  <OpportunitySummary plan={plan} />
                 </TableCell>
                 <TableCell className="align-top">
                   <StatusPill tone={plan.eligible ? "success" : "neutral"}>
@@ -221,6 +233,7 @@ export function QuotePlansTable({
                     <span className="text-muted-foreground">{dictionary.rewards.none}</span>
                   ) : (() => {
                     const allowed = aiAdvisoryAllowsQuote(plan.ai_advisory.suitability);
+                    const hint = rewardAiStrategyHint(plan.ai_advisory);
                     return (
                       <div className="space-y-1">
                         <div className="flex flex-wrap items-center gap-1">
@@ -236,6 +249,20 @@ export function QuotePlansTable({
                           lines={2}
                           className="leading-5 text-muted-foreground"
                         />
+                        {hint != null && (
+                          <div className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5 font-mono text-[11px] leading-4 text-muted-foreground">
+                            <span>{dictionary.rewards.aiStrategyHintQuoteMode}</span>
+                            <span>{quoteModeLabel(hint.quoteMode)}</span>
+                            <span>{dictionary.rewards.aiStrategyHintBidRank}</span>
+                            <span>{hint.bidRank ?? dictionary.rewards.notAvailable}</span>
+                            <span>{dictionary.rewards.aiStrategyHintMaxNotional}</span>
+                            <span>
+                              {hint.maxConditionNotionalUsd == null
+                                ? dictionary.rewards.notAvailable
+                                : formatUsdFixed(hint.maxConditionNotionalUsd)}
+                            </span>
+                          </div>
+                        )}
                       </div>
                     );
                   })()}
@@ -349,9 +376,6 @@ export function OrdersTable({
                 <TableRow key={order.id}>
                   <TableCell className="align-top">
                     <StatusPill tone={rewardTone(order.status)}>{order.status}</StatusPill>
-                    {order.strategy_bucket === "low_competition" ? (
-                      <div className="mt-1 text-[11px] text-muted-foreground">{dictionary.rewards.lowCompetition}</div>
-                    ) : null}
                   </TableCell>
                   <TableCell className="align-top">{order.outcome}</TableCell>
                   <TableCell className="align-top font-mono">{formatFixed(order.price, 2)}</TableCell>

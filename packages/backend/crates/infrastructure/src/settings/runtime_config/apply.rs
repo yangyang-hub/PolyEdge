@@ -108,6 +108,19 @@ fn apply_runtime_config_value(
         "worker.consume_orderbook_stream" => {
             self.worker.consume_orderbook_stream = parse_bool_runtime_config(key, value)?;
         }
+        "worker.poll_smart_money" => {
+            self.worker.poll_smart_money = parse_bool_runtime_config(key, value)?;
+        }
+        "worker.smart_money_interval_secs" => {
+            self.worker.smart_money_interval_secs = parse_u64_runtime_config(key, value)?;
+        }
+        "worker.poll_high_probability_observe" => {
+            self.worker.poll_high_probability_observe = parse_bool_runtime_config(key, value)?;
+        }
+        "worker.high_probability_observe_interval_secs" => {
+            self.worker.high_probability_observe_interval_secs =
+                parse_u64_runtime_config(key, value)?;
+        }
         "worker.news_promotion_interval_secs" => {
             self.worker.news_promotion_interval_secs = parse_u64_runtime_config(key, value)?;
         }

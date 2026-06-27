@@ -55,7 +55,6 @@ async fn poll_reward_bot_loop(
     let mut reconcile_cycles = 0usize;
     let mut external_sync_throttle = RewardExternalSyncThrottle::default();
     let mut book_history: HashMap<String, VecDeque<BookSnapshot>> = HashMap::new();
-    let mut low_competition_probe = LowCompetitionProbeState::default();
     let full_interval = Duration::from_secs(state.settings.rewards.poll_interval_secs.max(1));
     let history_prune_interval = Duration::from_secs(REWARD_HISTORY_PRUNE_INTERVAL_SECS);
     // Start with a full cycle immediately.
@@ -99,7 +98,6 @@ async fn poll_reward_bot_loop(
             &connector,
             &mut book_history,
             Some(orderbook_runtime.cache()),
-            Some(&mut low_competition_probe),
         )
         .await?;
         if command_report.processed > 0 {
@@ -127,7 +125,6 @@ async fn poll_reward_bot_loop(
                 false,
                 &mut book_history,
                 Some(orderbook_runtime.cache()),
-                Some(&mut low_competition_probe),
             )
             .await?;
             accumulate_report(&mut total, &report);
@@ -200,7 +197,6 @@ async fn poll_reward_bot_loop(
                 let next_config_revision = runtime_revision_rx.borrow_and_update().1;
                 if next_config_revision != config_revision {
                     config_revision = next_config_revision;
-                    low_competition_probe.reset();
                     last_full_at = Instant::now() - full_interval;
                 }
             }
@@ -479,9 +475,8 @@ fn accumulate_report(total: &mut RewardBotRunReport, report: &RewardBotRunReport
 async fn fetch_reward_bot_inputs(
     state: &AppState,
     orderbook_cache: Option<&RewardOrderbookLocalCache>,
-    book_history: &HashMap<String, VecDeque<BookSnapshot>>,
-    low_competition_probe: Option<&mut LowCompetitionProbeState>,
-    trace_id: &str,
+    _book_history: &HashMap<String, VecDeque<BookSnapshot>>,
+    _trace_id: &str,
 ) -> Result<(Vec<RewardCandidateMarket>, HashMap<String, RewardOrderBook>)> {
     // Read a bounded candidate pool from database (synced by the sync-markets worker).
     let candidates = state
@@ -492,12 +487,6 @@ async fn fetch_reward_bot_inputs(
         .iter()
         .map(|candidate| candidate.market.clone())
         .collect::<Vec<_>>();
-    if let Some(probe) = low_competition_probe {
-        probe
-            .refresh_registration(state, &candidates, book_history, trace_id)
-            .await?;
-    }
-
     // Read order books from the worker-local cache maintained by orderbook-stream.
     let active_token_ids = state
         .reward_bot_service

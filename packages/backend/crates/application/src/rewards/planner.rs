@@ -53,7 +53,7 @@ pub fn select_reward_quote_candidate_market_profiles(
 }
 
 fn reward_candidate_profile_is_disabled(
-    base_config: &RewardBotConfig,
+    _base_config: &RewardBotConfig,
     effective_config: &RewardBotConfig,
     strategy_bucket: RewardStrategyBucket,
 ) -> bool {
@@ -62,11 +62,7 @@ fn reward_candidate_profile_is_disabled(
     }
     match strategy_bucket {
         RewardStrategyBucket::Standard => effective_config.max_open_orders == 0,
-        RewardStrategyBucket::LowCompetition => {
-            base_config.low_competition_mode == RewardLowCompetitionMode::Enforce
-                && effective_config.max_open_orders == 0
-        }
-        RewardStrategyBucket::None => true,
+        RewardStrategyBucket::LowCompetition | RewardStrategyBucket::None => true,
     }
 }
 
@@ -468,6 +464,7 @@ fn build_ready_quote_plan(
             .as_ref()
             .map(|metrics| metrics.recommended_quote_mode),
         book_metrics: metrics,
+        opportunity_metrics: None,
         low_competition_metrics: None,
         ai_advisory: None,
         info_risk: None,
@@ -570,6 +567,7 @@ fn empty_plan(
         quote_mode: RewardPlanQuoteMode::None,
         recommended_quote_mode: None,
         book_metrics: None,
+        opportunity_metrics: None,
         low_competition_metrics: None,
         ai_advisory: None,
         info_risk: None,

@@ -220,7 +220,15 @@ impl FromStr for RewardStrategyBucket {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RewardAiProvider {
-    #[serde(rename = "openai", alias = "open_ai")]
+    #[serde(
+        rename = "openai",
+        alias = "open_ai",
+        alias = "glm",
+        alias = "bigmodel",
+        alias = "zhipu",
+        alias = "deepseek",
+        alias = "deep_seek"
+    )]
     OpenAi,
     Anthropic,
 }
@@ -240,7 +248,9 @@ impl FromStr for RewardAiProvider {
 
     fn from_str(value: &str) -> Result<Self> {
         match value {
-            "openai" => Ok(Self::OpenAi),
+            "openai" | "open_ai" | "glm" | "bigmodel" | "zhipu" | "deepseek" | "deep_seek" => {
+                Ok(Self::OpenAi)
+            }
             "anthropic" => Ok(Self::Anthropic),
             other => Err(AppError::invalid_input(
                 "REWARD_AI_PROVIDER_INVALID",
@@ -250,15 +260,38 @@ impl FromStr for RewardAiProvider {
     }
 }
 
+#[must_use]
+pub fn reward_ai_model_requires_openai_chat_completions(model: &str) -> bool {
+    let normalized = model.to_ascii_lowercase();
+    normalized.contains("glm") || normalized.contains("deepseek")
+}
+
+#[must_use]
+pub fn reward_ai_effective_request_format(
+    provider: RewardAiProvider,
+    configured: RewardAiRequestFormat,
+    model: &str,
+) -> RewardAiRequestFormat {
+    match provider {
+        RewardAiProvider::Anthropic => RewardAiRequestFormat::AnthropicMessages,
+        RewardAiProvider::OpenAi if reward_ai_model_requires_openai_chat_completions(model) => {
+            RewardAiRequestFormat::OpenAiChatCompletions
+        }
+        RewardAiProvider::OpenAi
+            if matches!(configured, RewardAiRequestFormat::AnthropicMessages) =>
+        {
+            RewardAiRequestFormat::OpenAiResponses
+        }
+        RewardAiProvider::OpenAi => configured,
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RewardAiRequestFormat {
     #[serde(rename = "openai_responses", alias = "open_ai_responses")]
     OpenAiResponses,
-    #[serde(
-        rename = "openai_chat_completions",
-        alias = "open_ai_chat_completions"
-    )]
+    #[serde(rename = "openai_chat_completions", alias = "open_ai_chat_completions")]
     OpenAiChatCompletions,
     AnthropicMessages,
 }

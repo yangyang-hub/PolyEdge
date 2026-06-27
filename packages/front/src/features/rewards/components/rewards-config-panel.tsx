@@ -18,7 +18,7 @@ import type { NumberConfigKey } from "../types";
 import { NumberInput } from "./number-input";
 import { AiAdvisoryConfig, BookSelectionConfig } from "./rewards-advanced-config";
 import { ConfigSection, Hint, ToggleField, selectClassName } from "./rewards-config-fields";
-import { LowCompetitionConfig } from "./rewards-low-competition-config";
+import { OpportunityConfig } from "./rewards-opportunity-config";
 
 type RewardsConfigPanelProps = {
   draft: RewardBotConfigDto;
@@ -183,7 +183,7 @@ export function RewardsConfigPanel({
 
         <Separator />
 
-        <LowCompetitionConfig
+        <OpportunityConfig
           draft={draft}
           setDraft={setDraft}
           updateNumber={updateNumber}

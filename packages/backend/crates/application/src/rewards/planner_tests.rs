@@ -131,13 +131,18 @@ fn quote_materialization_ignores_config_market_and_leg_budgets() {
     assert!(plan.eligible, "{}", plan.reason);
     assert_eq!(plan.legs.len(), 2);
     assert_eq!(plan.quote_mode, RewardPlanQuoteMode::Double);
-    assert!(materialized.legs.iter().all(|leg| leg.size >= decimal("20")));
+    assert!(
+        materialized
+            .legs
+            .iter()
+            .all(|leg| leg.size >= decimal("20"))
+    );
     assert!(
         materialized
             .legs
             .iter()
             .fold(Decimal::ZERO, |sum, leg| sum + leg.price * leg.size)
-        > config.per_market_usd
+            > config.per_market_usd
     );
 }
 
@@ -198,7 +203,10 @@ fn auto_enforce_quotes_only_dominant_yes_side() {
 
     assert!(plan.eligible, "{}", plan.reason);
     assert_eq!(plan.quote_mode, RewardPlanQuoteMode::SingleYes);
-    assert_eq!(plan.recommended_quote_mode, Some(RewardPlanQuoteMode::SingleYes));
+    assert_eq!(
+        plan.recommended_quote_mode,
+        Some(RewardPlanQuoteMode::SingleYes)
+    );
     assert_eq!(plan.legs.len(), 2);
     assert_eq!(materialized.legs.len(), 1);
     assert_eq!(materialized.legs[0].outcome, "Yes");
@@ -255,12 +263,9 @@ fn ai_enforce_can_filter_double_plan_to_single_side() {
     assert!(plans[0].eligible);
     assert_eq!(plans[0].quote_mode, RewardPlanQuoteMode::SingleNo);
     assert_eq!(plans[0].legs.len(), 2);
-    let materialized = materialize_reward_quote_plan_for_live_orderbook(
-        &plans[0],
-        &test_books(),
-        &config,
-    )
-    .expect("live materialization");
+    let materialized =
+        materialize_reward_quote_plan_for_live_orderbook(&plans[0], &test_books(), &config)
+            .expect("live materialization");
     assert_eq!(materialized.legs.len(), 1);
     assert_eq!(materialized.legs[0].outcome, "No");
     assert!(plans[0].ai_advisory.is_some());
@@ -295,7 +300,7 @@ fn ai_enforce_avoid_rejects_plan_without_relaxing_checks() {
 }
 
 #[test]
-fn low_competition_requires_high_confidence_ai_allow() {
+fn legacy_low_competition_bucket_uses_standard_ai_allow_rule() {
     let config = RewardBotConfig {
         ai_advisory_enabled: true,
         low_competition_mode: RewardLowCompetitionMode::Enforce,
@@ -305,10 +310,6 @@ fn low_competition_requires_high_confidence_ai_allow() {
     };
     let mut plan = build_reward_quote_plan(&test_market(decimal("5")), &test_books(), &config);
     plan.strategy_bucket = RewardStrategyBucket::LowCompetition;
-    // Low-competition enforce + require_ai_allow demands a HIGH-CONFIDENCE
-    // allow: a low-confidence allow is rejected at the low-competition gate.
-    // (Any non-allow verdict is already blocked by the general advisory gate,
-    // so it cannot reach this branch.)
     let advisory = test_advisory(
         RewardAiSuitability::Allow,
         RewardPlanQuoteMode::Double,
@@ -319,9 +320,9 @@ fn low_competition_requires_high_confidence_ai_allow() {
 
     apply_reward_ai_advisories(&mut plans, &advisories, &config, decimal("0.65"));
 
-    assert!(!plans[0].eligible);
-    assert_eq!(plans[0].quote_mode, RewardPlanQuoteMode::None);
-    assert!(plans[0].reason.contains("below low-competition threshold"));
+    assert!(plans[0].eligible);
+    assert_eq!(plans[0].quote_mode, RewardPlanQuoteMode::Double);
+    assert_eq!(plans[0].legs.len(), 2);
 }
 
 #[test]
@@ -418,7 +419,7 @@ fn info_risk_enforce_keeps_non_imminent_high_risk_as_advisory() {
 }
 
 #[test]
-fn low_competition_uses_stricter_info_risk_avoid_level() {
+fn legacy_low_competition_bucket_uses_standard_info_risk_avoid_level() {
     let config = RewardBotConfig {
         info_risk_enabled: true,
         info_risk_mode: RewardSelectionMode::Enforce,
@@ -440,9 +441,10 @@ fn low_competition_uses_stricter_info_risk_avoid_level() {
 
     apply_reward_info_risks(&mut plans, &risks, &config, decimal("0.65"));
 
-    assert!(!plans[0].eligible);
-    assert_eq!(plans[0].quote_mode, RewardPlanQuoteMode::None);
-    assert!(plans[0].reason.contains("info risk medium"));
+    assert!(plans[0].eligible);
+    assert_eq!(plans[0].quote_mode, RewardPlanQuoteMode::Double);
+    assert_eq!(plans[0].legs.len(), 2);
+    assert!(plans[0].info_risk.is_some());
 }
 
 #[test]
@@ -563,8 +565,7 @@ fn quote_plan_counts_classify_provider_and_blocker_reasons() {
     live_validation.quote_mode = RewardPlanQuoteMode::None;
     live_validation.legs.clear();
     live_validation.reason =
-        "live orderbook validation skipped until 2026-06-23T00:00:00Z: no viable leg"
-            .to_string();
+        "live orderbook validation skipped until 2026-06-23T00:00:00Z: no viable leg".to_string();
 
     let counts = RewardQuotePlanCounts::from_plans([
         &base,
@@ -680,7 +681,8 @@ fn ai_advisory_carry_forward_reuses_unexpired_matching_snapshot_decision() {
         ..RewardBotConfig::default()
     };
     let now = OffsetDateTime::now_utc();
-    let mut previous_plan = build_reward_quote_plan(&test_market(decimal("5")), &test_books(), &config);
+    let mut previous_plan =
+        build_reward_quote_plan(&test_market(decimal("5")), &test_books(), &config);
     previous_plan.ai_advisory = Some(test_advisory(
         RewardAiSuitability::Allow,
         RewardPlanQuoteMode::Double,
@@ -690,13 +692,10 @@ fn ai_advisory_carry_forward_reuses_unexpired_matching_snapshot_decision() {
     let carried =
         reward_ai_advisories_from_quote_plans(&[previous_plan.clone()], &config, "test-model", now);
     assert_eq!(carried.len(), 1);
-    assert!(reward_ai_advisories_from_quote_plans(
-        &[previous_plan],
-        &config,
-        "other-model",
-        now,
-    )
-    .is_empty());
+    assert!(
+        reward_ai_advisories_from_quote_plans(&[previous_plan], &config, "other-model", now,)
+            .is_empty()
+    );
 
     let mut next_plans = vec![build_reward_quote_plan(
         &test_market(decimal("5")),
@@ -714,8 +713,7 @@ fn ai_advisory_carry_forward_reuses_unexpired_matching_snapshot_decision() {
 fn static_event_risk_filter_blocks_personnel_deadline_markets() {
     let mut market = test_market(decimal("20"));
     market.question = "Will the next UK Prime Minister be appointed by July 19?".to_string();
-    market.market_slug =
-        "will-the-next-uk-prime-minister-be-appointed-by-july-19".to_string();
+    market.market_slug = "will-the-next-uk-prime-minister-be-appointed-by-july-19".to_string();
     let config = RewardBotConfig {
         min_market_score: Decimal::ZERO,
         ..RewardBotConfig::default()
@@ -737,7 +735,8 @@ fn first_quote_quarantine_blocks_new_market_until_observation_window_passes() {
         min_market_score: Decimal::ZERO,
         ..RewardBotConfig::default()
     };
-    let mut previous_plan = build_reward_quote_plan(&test_market(decimal("20")), &test_books(), &config);
+    let mut previous_plan =
+        build_reward_quote_plan(&test_market(decimal("20")), &test_books(), &config);
     previous_plan.updated_at = now - TimeDuration::seconds(120);
     let mut plan = build_reward_quote_plan(&test_market(decimal("20")), &test_books(), &config);
     plan.info_risk = Some(test_info_risk(
@@ -796,7 +795,12 @@ fn quote_materialization_allows_minimum_sizes_above_config_market_budget() {
     assert!(plan.eligible, "{}", plan.reason);
     assert_eq!(materialized.quote_mode, RewardPlanQuoteMode::Double);
     assert_eq!(materialized.legs.len(), 2);
-    assert!(materialized.legs.iter().all(|leg| leg.size >= decimal("50")));
+    assert!(
+        materialized
+            .legs
+            .iter()
+            .all(|leg| leg.size >= decimal("50"))
+    );
     assert!(
         materialized
             .legs
@@ -827,7 +831,12 @@ fn auto_enforce_keeps_double_when_only_config_market_budget_would_fail() {
     assert_eq!(plan.quote_mode, RewardPlanQuoteMode::Double);
     assert_eq!(materialized.quote_mode, RewardPlanQuoteMode::Double);
     assert_eq!(materialized.legs.len(), 2);
-    assert!(materialized.legs.iter().all(|leg| leg.size >= decimal("50")));
+    assert!(
+        materialized
+            .legs
+            .iter()
+            .all(|leg| leg.size >= decimal("50"))
+    );
 }
 
 fn test_advisory(
@@ -923,10 +932,12 @@ fn quote_plan_sizes_already_match_clob_cost_precision() {
     assert!(plan.eligible, "{}", plan.reason);
     assert_eq!(materialized.legs[0].size, decimal("21"));
     assert_eq!(materialized.legs[1].size, decimal("20.5"));
-    assert!(materialized
-        .legs
-        .iter()
-        .all(|leg| leg.size >= decimal("20.30")));
+    assert!(
+        materialized
+            .legs
+            .iter()
+            .all(|leg| leg.size >= decimal("20.30"))
+    );
 }
 
 #[test]
@@ -1042,6 +1053,117 @@ fn quote_bid_rank_depth_is_checked_during_live_materialization() {
 }
 
 #[test]
+fn ai_strategy_hint_can_move_live_quote_to_more_conservative_bid_rank() {
+    let config = RewardBotConfig {
+        quote_bid_rank: 1,
+        min_market_score: Decimal::ZERO,
+        ai_strategy_hint_enabled: true,
+        ai_strategy_hint_min_confidence: decimal("0.75"),
+        ..RewardBotConfig::default()
+    };
+    let mut books = test_books();
+    books
+        .get_mut("yes_budget")
+        .expect("YES book")
+        .bids
+        .push(RewardBookLevel {
+            price: decimal("0.76"),
+            size: decimal("100"),
+        });
+    books
+        .get_mut("no_budget")
+        .expect("NO book")
+        .bids
+        .push(RewardBookLevel {
+            price: decimal("0.21"),
+            size: decimal("100"),
+        });
+
+    let mut plan = build_reward_quote_plan(&test_market(decimal("5")), &books, &config);
+    let mut advisory = test_advisory(
+        RewardAiSuitability::Allow,
+        RewardPlanQuoteMode::Double,
+        decimal("0.90"),
+    );
+    advisory.metrics = json!({
+        "strategy_hint": {
+            "quote_mode": "double",
+            "bid_rank": 2,
+            "max_condition_notional_usd": "20"
+        }
+    });
+    plan.ai_advisory = Some(advisory);
+
+    let materialized = materialize_reward_quote_plan_for_live_orderbook(&plan, &books, &config)
+        .expect("live materialization");
+
+    assert_eq!(materialized.legs[0].price, decimal("0.76"));
+    assert_eq!(materialized.legs[1].price, decimal("0.21"));
+}
+
+#[test]
+fn ai_strategy_hint_enforces_single_side_quote_direction() {
+    let config = RewardBotConfig {
+        ai_advisory_enabled: true,
+        ai_strategy_hint_enabled: true,
+        ai_strategy_hint_min_confidence: decimal("0.75"),
+        min_market_score: Decimal::ZERO,
+        ..RewardBotConfig::default()
+    };
+    let mut plan = build_reward_quote_plan(&test_market(decimal("5")), &test_books(), &config);
+    let mut advisory = test_advisory(
+        RewardAiSuitability::Allow,
+        RewardPlanQuoteMode::Double,
+        decimal("0.90"),
+    );
+    advisory.metrics = json!({
+        "strategy_hint": {
+            "quote_mode": "single_yes",
+            "bid_rank": 1,
+            "max_condition_notional_usd": "12"
+        }
+    });
+    let advisories = HashMap::from([(plan.condition_id.clone(), advisory)]);
+
+    apply_reward_ai_advisories(
+        std::slice::from_mut(&mut plan),
+        &advisories,
+        &config,
+        decimal("0.75"),
+    );
+
+    assert!(plan.eligible, "{}", plan.reason);
+    assert_eq!(plan.quote_mode, RewardPlanQuoteMode::SingleYes);
+    assert!(plan.reason.contains("AI-assisted yes single-side quote"));
+}
+
+#[test]
+fn ai_strategy_hint_zero_notional_cap_is_enforced() {
+    let config = RewardBotConfig {
+        ai_strategy_hint_enabled: true,
+        ai_strategy_hint_min_confidence: decimal("0.75"),
+        ..RewardBotConfig::default()
+    };
+    let mut advisory = test_advisory(
+        RewardAiSuitability::Allow,
+        RewardPlanQuoteMode::Double,
+        decimal("0.90"),
+    );
+    advisory.metrics = json!({
+        "strategy_hint": {
+            "quote_mode": "double",
+            "bid_rank": 1,
+            "max_condition_notional_usd": "0"
+        }
+    });
+
+    assert_eq!(
+        reward_ai_strategy_hint_max_condition_notional_usd(&advisory, &config),
+        Some(Decimal::ZERO)
+    );
+}
+
+#[test]
 fn quote_bid_rank_spread_is_checked_during_live_materialization() {
     let config = RewardBotConfig {
         quote_bid_rank: 2,
@@ -1050,14 +1172,22 @@ fn quote_bid_rank_spread_is_checked_during_live_materialization() {
         ..RewardBotConfig::default()
     };
     let mut books = test_books();
-    books.get_mut("yes_budget").expect("YES book").bids.push(RewardBookLevel {
-        price: decimal("0.70"),
-        size: decimal("100"),
-    });
-    books.get_mut("no_budget").expect("NO book").bids.push(RewardBookLevel {
-        price: decimal("0.15"),
-        size: decimal("100"),
-    });
+    books
+        .get_mut("yes_budget")
+        .expect("YES book")
+        .bids
+        .push(RewardBookLevel {
+            price: decimal("0.70"),
+            size: decimal("100"),
+        });
+    books
+        .get_mut("no_budget")
+        .expect("NO book")
+        .bids
+        .push(RewardBookLevel {
+            price: decimal("0.15"),
+            size: decimal("100"),
+        });
 
     let plan = build_reward_quote_plan(&test_market(decimal("5")), &books, &config);
     let error = materialize_reward_quote_plan_for_live_orderbook(&plan, &books, &config)
@@ -1079,14 +1209,22 @@ fn auto_enforce_falls_back_to_single_side_when_double_spread_fails() {
         ..RewardBotConfig::default()
     };
     let mut books = test_books();
-    books.get_mut("yes_budget").expect("YES book").bids.push(RewardBookLevel {
-        price: decimal("0.70"),
-        size: decimal("100"),
-    });
-    books.get_mut("no_budget").expect("NO book").bids.push(RewardBookLevel {
-        price: decimal("0.21"),
-        size: decimal("100"),
-    });
+    books
+        .get_mut("yes_budget")
+        .expect("YES book")
+        .bids
+        .push(RewardBookLevel {
+            price: decimal("0.70"),
+            size: decimal("100"),
+        });
+    books
+        .get_mut("no_budget")
+        .expect("NO book")
+        .bids
+        .push(RewardBookLevel {
+            price: decimal("0.21"),
+            size: decimal("100"),
+        });
 
     let plan = build_reward_quote_plan(&test_market(decimal("5")), &books, &config);
     let materialized = materialize_reward_quote_plan_for_live_orderbook(&plan, &books, &config)
@@ -1168,9 +1306,8 @@ fn candidate_prefilter_rejects_low_quality_or_near_expiry_markets() {
     );
     assert!(select_reward_quote_candidate_markets(&[market.clone()], &config).is_empty());
 
-    market.end_at = Some(
-        OffsetDateTime::now_utc() + TimeDuration::hours(config.min_hours_to_end as i64 + 1),
-    );
+    market.end_at =
+        Some(OffsetDateTime::now_utc() + TimeDuration::hours(config.min_hours_to_end as i64 + 1));
     market.ambiguity_level = "high".to_string();
     assert!(select_reward_quote_candidate_markets(&[market], &config).is_empty());
 }

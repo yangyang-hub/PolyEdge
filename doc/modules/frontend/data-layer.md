@@ -18,11 +18,13 @@
 
 | 文件 | 职责 |
 |---|---|
-| `dto.ts` | Barrel re-export，聚合 9 个 DTO 文件 |
+| `dto.ts` | Barrel re-export，聚合 11 个 DTO 文件 |
 | `dto/primitives.ts` | 基础类型（ApiMeta、ApiResponse 等） |
 | `dto/market.ts` | MarketDto 及相关类型 |
 | `dto/rewards.ts` | RewardBotSnapshotDto、RewardBotConfigDto、RewardListPageDto 等 |
 | `dto/copytrade.ts` | CopyTradeSnapshotDto、CopyTradeConfigDto 等 |
+| `dto/smart-money.ts` | SmartMoneySnapshotDto、SmartMoneyConfigDto、候选钱包/画像/评分/源交易/信号/decision/advisory 类型 |
+| `dto/high-probability.ts` | HighProbabilitySnapshotDto、HighProbabilityConfigDto、HighProbabilityResearchReportDto、HighProbabilityBacktestReportDto、HighProbabilityBacktestExitRuleReportDto、HighProbabilityBacktestRunDto、HighProbabilityBacktestTradeDto、bucket stats 和 observation 类型 |
 | `dto/news.ts` | 新闻相关 DTO |
 | `dto/probability.ts` | 概率相关 DTO |
 | `dto/wallet-analysis.ts` | WalletAnalysisReportDto |
@@ -54,6 +56,8 @@
 | `markets.ts` | 54 | `listMarkets`、`listMarketCategories` | GET |
 | `rewards.ts` | 63 | `readRewardBotSnapshot`、`updateRewardBotConfig`、`runRewardBotOnce`、`cancelRewardBotOrders`、`resetRewardBot` | GET + POST |
 | `copytrade.ts` | 61 | `readCopyTradeSnapshot`、`updateCopyTradeConfig`、`addTrackedWallet`、`removeTrackedWallet`、`setWalletStatus`、`analyzeWallets` | GET + POST |
+| `smart-money.ts` | 31 | `readSmartMoneySnapshot`、`updateSmartMoneyConfig`、`updateSmartMoneyCandidateStatus` | GET + POST |
+| `high-probability.ts` | 50 | `readHighProbabilitySnapshot`、`readHighProbabilityConfig`、`readHighProbabilityBuckets`、`readHighProbabilityReport`、`readHighProbabilityBacktests`、`readHighProbabilityBacktestRuns`、`readHighProbabilityBacktestTrades` | GET |
 | `events.ts` | 24 | `listEvents`、`listEvidences` | GET |
 | `wallet-analysis.ts` | 13 | `analyzeWallet` | POST |
 | `settings.ts` | 20 | `readRuntimeConfig`、`updateRuntimeConfig` | GET + POST |
@@ -68,6 +72,7 @@
 | `actions/shared.ts` | `OperationActionResult`、成功/失败结果构造、API 错误标准化、operation id 和 decimal 校验 helper |
 | `actions/rewards.ts` | Rewards bot 配置、run/cancel/reset actions |
 | `actions/copytrade.ts` | 跟单配置、钱包管理和分析 actions |
+| `actions/smart-money.ts` | Smart Money 配置保存和候选钱包状态更新 actions |
 | `actions/settings.ts` | Runtime config 更新 action |
 | `actions/funding.ts` | 后端资金钱包 Polymarket 入金 action |
 
@@ -110,13 +115,15 @@ OperationActionResult → 更新 UI 状态
 
 ## 当前状态
 
-- 8 个领域 API 模块覆盖当前前端页面使用的后端端点，`base.ts` 和 `actions.ts`/`actions/` 提供共享请求与写操作封装
+- 10 个领域 API 模块覆盖当前前端页面使用的后端端点、Smart Money foundation 端点和 High Probability Pricing 只读研究端点，`base.ts` 和 `actions.ts`/`actions/` 提供共享请求与写操作封装
 - `fetchListContract()` 已兼容 events/evidences/news 等后端分页信封，同时保留旧版直接数组列表响应兼容；调用方继续读取统一的 `ApiListResponse<T>`
 - `actions.ts` 只做兼容 re-export；具体 Server Actions 已按 rewards、copytrade、settings、funding 拆到 `actions/`，共享结果构造和数字校验在 `actions/shared.ts`
 - 旧 `/radar`、`/signals`、`/positions`、`/risk` 页面对应的 API 模块、Server Actions 和 DTO 类型镜像已移除；Rewards 和 wallet-analysis 内部仍可在自身 DTO 中表达持仓/风险字段
 - DTO 类型镜像当前前端消费的后端响应；`CopyTradeSnapshotDto` 已与只读跟踪后端对齐，只包含 config、status、wallets、source_trades、events，不再声明模拟账户、订单或持仓字段
+- Smart Money DTO/API/action 已镜像 `/api/v1/smart-money` foundation snapshot、配置保存和候选钱包状态更新；snapshot DTO 已包含 recent_trades、recent_signals、recent_decisions 和 recent_signal_advisories，`/copy-trading` 页面已消费 snapshot，并提供 Smart Money 配置保存、候选池查看、候选状态更新和 recent_signals 信号流展示入口，但 deterministic decision 详情 UI、钱包详情、纸面表现、LLM advisory 展示和完整 Smart Money 工作台仍未实现。
+- High Probability DTO/API 已镜像 `/api/v1/high-probability`、`/config`、`/buckets`、`/report`、`/backtests`、`/backtest-runs` 和 `/backtest-runs/{run_id}/trades` 只读研究端点，供 `/high-probability` 页面展示配置、bucket stats、observations、样本覆盖、加权基础研究指标、即时 walk-forward baseline 回测指标、退出规则对比、持久化历史回测 run 和最新 run 交易明细；当前没有写操作或交易动作。
 - Funding DTO/API/action 已接入 `/api/v1/funding` 与 `/api/v1/funding/transfer`；状态响应会携带后端资金钱包 USDC/USDT Polygon 链上余额和可选余额查询错误。当前内网免鉴权部署下，前端只提交 token、amount 和 confirmed，不提交二次确认码、Polymarket 充值地址或任何私钥材料。
-- Rewards snapshot DTO 包含 `orders_page`、`low_competition_report` 和 `llm_usage`，但 `RewardBotConfigDto.execution_mode`、旧 `quote_edge_cents`、模拟填单参数和 stale force-cancel 参数已移除；报价配置改为 `quote_bid_rank: 1|2|3`（TypeScript 以 number 表达，Server Action 用 Zod 限制范围），并新增 liquidity/volume/end-time/spread/data-age 市场质量门槛。DTO 仍保留后端兼容字段 `per_market_usd`、`quote_size_usd`、`low_competition_per_market_usd`，但前端 Server Action 校验会剥离这些字段，不再把它们作为可编辑配置提交。DTO 已镜像 rewards quote/selection mode、dominant 单边阈值、盘口集中度阈值、偏好分类、低竞争 sleeve 配置字段（含 probe notional、competition share/multiple、候选 competition multiple、账户/单市场资金占比、入场退出滑点、坏成交恢复天数、top-of-book 跳变、低竞争专属报价/spread/评分、低竞争 provider 加严、可配置撤单阈值和后端兼容的旧 liquidity/volume 字段）、AI advisory 配置字段（含 `ai_advisory_batch_size`）、信息风险配置字段（含 `info_risk_batch_size`、`require_info_risk_before_first_quote`、`first_quote_quarantine_sec`）、drift 换价 guard（`requote_drift_confirm_sec` / `requote_drift_cooldown_sec` / `requote_drift_max_cancels_per_cycle`），以及 quote plan 的 `pre_ai_eligible` / `quote_readiness` / `orderbook_token_ids` / `strategy_bucket` / `quote_mode` / `recommended_quote_mode` / `book_metrics` / `low_competition_metrics` / `ai_advisory` / `info_risk` / `live_skip_until` / `live_skip_reason`；低竞争 metrics DTO 镜像竞争份额、挂单资金占比和坏成交恢复天数字段。status DTO 也镜像 `ready_quote_markets`、`waiting_orderbook_markets` 和 `provider_pending_markets`，用于区分真实可立即报价、等待盘口和等待 provider 风控的计划数量；`RewardLlmCallDailyStatsDto` 镜像 UTC 日期、AI advisory 调用数、info-risk 调用数、总调用数和失败数；低竞争 report DTO 镜像最近窗口 observation 数、通过/拦截比例、竞争占比中位数、账户/单市场占比 P90、reward 分位数、退出深度倍数、midpoint P95、退出滑点 P95、坏成交恢复天数 P95 和小额 enforce 建议；managed order DTO 也携带 `strategy_bucket`。`actions/rewards.ts` 校验低竞争 mode、竞争份额/资金占比/退出/稳定性阈值、低竞争专属报价/评分/provider/撤单阈值、OpenAI 与 Anthropic 请求格式匹配、AI/info-risk batch size 范围、drift 换价 guard 范围，并校验信息风险 observe/enforce、过滤等级、TTL 和首单观察窗口；保存 rewards 配置时会强制关闭并清零低竞争 liquidity/volume 旧过滤字段，前端不再把它们作为可编辑配置提交。AI API key、base URL 和模型名不进入 DTO，只从 worker 环境读取。`readRewardBotSnapshot()` 支持计划/订单分页、搜索、状态和排序 query；首屏 loader 显式请求 `plans_eligible=true`，与默认可挂页签一致。当前后端 handler 和 `orders_page` 都描述本地 managed-order 查询，`orders_status=filled` 会包含部分成交订单；账户余额和 positions 由 worker 同步到数据库后返回
+- Rewards snapshot DTO 包含 `orders_page`、`llm_usage`、quote plan 的 `opportunity_metrics` 和历史兼容的 `low_competition_report`；当前后端返回的 `low_competition_report` 为 `null`。`RewardBotConfigDto.execution_mode`、旧 `quote_edge_cents`、模拟填单参数和 stale force-cancel 参数已移除；报价配置改为 `quote_bid_rank: 1|2|3`（TypeScript 以 number 表达，Server Action 用 Zod 限制范围），并新增 liquidity/volume/end-time/spread/data-age 市场质量门槛。DTO 仍保留后端兼容字段 `per_market_usd`、`quote_size_usd`、`low_competition_per_market_usd`，但前端 Server Action 校验会剥离这些字段，不再把它们作为可编辑配置提交。DTO 已镜像 rewards quote/selection mode、dominant 单边阈值、盘口集中度阈值、偏好分类、统一机会评分 `opportunity_*` 配置字段（竞争倍数、100U 日奖、资金占比、退出深度/滑点、坏成交恢复天数、盘口样本/波动/跳变和权重）、AI advisory 配置字段（含 `ai_advisory_batch_size`、`ai_strategy_hint_enabled`、`ai_strategy_hint_min_confidence`）、信息风险配置字段（含 `info_risk_batch_size`、`require_info_risk_before_first_quote`、`first_quote_quarantine_sec`）、drift 换价 guard（`requote_drift_confirm_sec` / `requote_drift_cooldown_sec` / `requote_drift_max_cancels_per_cycle`），以及 quote plan 的 `pre_ai_eligible` / `quote_readiness` / `orderbook_token_ids` / `strategy_bucket` / `quote_mode` / `recommended_quote_mode` / `book_metrics` / `opportunity_metrics` / `ai_advisory` / `info_risk` / `live_skip_until` / `live_skip_reason`。AI strategy hint 不新增 DTO 字段，而是从 `ai_advisory.metrics.strategy_hint` 解析。`low_competition_*` 配置字段、`strategy_bucket=low_competition`、`low_competition_metrics` 和低竞争 report DTO 仅用于历史响应/旧 API payload 兼容；`actions/rewards.ts` 保存配置时强制 `low_competition_mode=off`、独立低竞争市场/订单/全局占比为 0，并关闭/清零旧低竞争 liquidity/volume 过滤字段，前端不再展示或提交独立低竞争配置。status DTO 镜像 `ready_quote_markets`、`waiting_orderbook_markets` 和 `provider_pending_markets`，用于区分真实可立即报价、等待盘口和等待 provider 风控的计划数量；`RewardLlmCallDailyStatsDto` 镜像 UTC 日期、AI advisory 调用数、info-risk 调用数、总调用数和失败数。`RewardAiProvider` 前端 union 只包含 `openai | anthropic`；`actions/rewards.ts` 校验 OpenAI-compatible/Anthropic 请求格式匹配（Anthropic 只允许 Messages，OpenAI-compatible 不允许 Anthropic Messages）、AI/info-risk batch size 范围、AI strategy hint 开关/置信度范围、opportunity 数值范围、drift 换价 guard 范围，并校验信息风险 observe/enforce、过滤等级、TTL 和首单观察窗口。GLM/DeepSeek 不作为前端 provider，运行时通过 worker 环境中的 OpenAI-compatible base URL 和模型名识别。AI API key、base URL 和模型名不进入 DTO，只从 worker 环境读取。`readRewardBotSnapshot()` 支持计划/订单分页、搜索、状态和排序 query；首屏 loader 显式请求 `plans_eligible=true`，与默认可挂页签一致。当前后端 handler 和 `orders_page` 都描述本地 managed-order 查询，`orders_status=filled` 会包含部分成交订单；账户余额和 positions 由 worker 同步到数据库后返回
 - `/replay` 前端派生数据层已移除；当前没有面向控制台的 replay API 页面
 - `MarketDto` 新增 `liquidity_usd` 与 `end_at`，镜像后端 `MarketData`
 - 当前静态部署使用 `NEXT_PUBLIC_POLYEDGE_API_BASE_URL` 浏览器直连 Rust API，不再通过前端 Nginx 反代 `/api/v1`

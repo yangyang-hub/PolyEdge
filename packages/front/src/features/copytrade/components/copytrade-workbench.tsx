@@ -10,6 +10,9 @@ import { PageHeader } from "@/components/shared/page-header";
 import { PaginationBar } from "@/components/pagination-bar";
 import { StatusPill } from "@/components/shared/status-pill";
 import { TruncateText } from "@/components/shared/truncate-text";
+import { SmartMoneyCandidatesPanel } from "@/features/copytrade/components/smart-money-candidates-panel";
+import { SmartMoneyConfigPanel } from "@/features/copytrade/components/smart-money-config-panel";
+import { SmartMoneySignalsPanel } from "@/features/copytrade/components/smart-money-signals-panel";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -17,6 +20,7 @@ import type {
   CopyEventSeverity,
   CopyTradeConfigDto,
   CopyTradeSnapshotDto,
+  SmartMoneySnapshotDto,
   TrackedWalletStatus,
 } from "@/lib/contracts/dto";
 import {
@@ -56,11 +60,14 @@ function eventSeverityTone(severity: CopyEventSeverity): Tone {
 
 export function CopyTradeWorkbench({
   initialSnapshot,
+  initialSmartMoneySnapshot,
 }: {
   initialSnapshot: CopyTradeSnapshotDto;
+  initialSmartMoneySnapshot: SmartMoneySnapshotDto;
 }) {
   const t = dictionary.copytrade;
   const [snapshot, setSnapshot] = useState(initialSnapshot);
+  const [smartMoneySnapshot, setSmartMoneySnapshot] = useState(initialSmartMoneySnapshot);
   const [draft, setDraft] = useState<CopyTradeConfigDto>(initialSnapshot.config);
   const [feedback, setFeedback] = useState<CopyTradeActionResult | null>(null);
   const [pending, setPending] = useState(false);
@@ -132,6 +139,18 @@ export function CopyTradeWorkbench({
           accent={snapshot.status.error ? "danger" : "primary"}
         />
       </div>
+
+      <SmartMoneyConfigPanel
+        snapshot={smartMoneySnapshot}
+        onSnapshotChange={setSmartMoneySnapshot}
+      />
+
+      <SmartMoneyCandidatesPanel
+        snapshot={smartMoneySnapshot}
+        onSnapshotChange={setSmartMoneySnapshot}
+      />
+
+      <SmartMoneySignalsPanel snapshot={smartMoneySnapshot} />
 
       <Card>
         <CardHeader className="flex flex-col gap-4 border-b border-border/70 xl:flex-row xl:items-center xl:justify-between">

@@ -46,12 +46,9 @@ mod orderbook_registry_tests {
             .await
             .expect("register candidates");
         registry
-            .register_tokens(
-                "rewards_low_competition_probe",
-                &["4".to_string(), "6".to_string()],
-            )
+            .register_tokens("legacy_source", &["4".to_string(), "6".to_string()])
             .await
-            .expect("register low-competition probe");
+            .expect("register legacy source");
         registry
             .register_tokens("rewards_ai_provider", &["3".to_string(), "7".to_string()])
             .await
@@ -77,8 +74,8 @@ mod orderbook_registry_tests {
                 "3".to_string(),
                 "4".to_string(),
                 "7".to_string(),
-                "6".to_string(),
-                "5".to_string()
+                "5".to_string(),
+                "6".to_string()
             ]
         );
     }
@@ -100,6 +97,11 @@ mod orderbook_registry_tests {
             registry.list_source_tokens("rewards_ai_provider").await,
             vec!["7".to_string(), "8".to_string()]
         );
-        assert!(registry.list_source_tokens("rewards_eligible").await.is_empty());
+        assert!(
+            registry
+                .list_source_tokens("rewards_eligible")
+                .await
+                .is_empty()
+        );
     }
 }

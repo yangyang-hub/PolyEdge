@@ -234,7 +234,7 @@ fn reward_ai_advisory_expiry_uses_deterministic_jitter() {
 }
 
 #[test]
-fn reward_info_risk_expiry_jitter_drives_refresh_window() {
+fn reward_info_risk_expiry_jitter_and_refresh_windows_are_separate() {
     let now = OffsetDateTime::from_unix_timestamp(1_785_000_000).expect("valid timestamp");
     let ttl_sec = 3600;
     let request = RewardInfoRiskAssessmentRequest {
@@ -253,7 +253,10 @@ fn reward_info_risk_expiry_jitter_drives_refresh_window() {
         .expires_at;
     assert_provider_cache_expiry_window(now, ttl_sec, expires_at);
 
-    let refresh_window = reward_provider_cache_jitter_window_sec(ttl_sec);
+    let jitter_window = reward_provider_cache_jitter_window_sec(ttl_sec);
+    let refresh_window = reward_provider_cache_refresh_window_sec(ttl_sec);
+    assert_eq!(jitter_window, 720);
+    assert_eq!(refresh_window, 60);
     assert!(!reward_provider_cache_refresh_due(
         expires_at,
         ttl_sec,

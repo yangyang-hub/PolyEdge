@@ -20,7 +20,10 @@ export type OperationActionResult = {
       | "address"
       | "tokenId"
       | "amount"
-      | "confirmed",
+      | "confirmed"
+      | "source"
+      | "status"
+      | "reason",
       string
     >
   >;

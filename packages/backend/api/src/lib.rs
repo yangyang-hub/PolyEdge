@@ -8,15 +8,19 @@ use axum::{
 use polyedge_application::{
     AddTrackedWalletInput, AuthenticatedActor, CopyControlAction, CopyTradeConfigPatch,
     CopyTradeSnapshot, EventListFilters, EventView, EvidenceListFilters, EvidenceView,
-    ExecutionFillResult, ExecutionRequestListFilters, ExecutionRequestView, IdempotencyBegin,
-    IdempotencyRequest, MarketListFilters, MarketSortField, MarketView, ModeTransitionCommand,
-    NewsRawEventListFilters, NewsRawEventView, NewsSourceHealthListFilters, NewsSourceHealthView,
-    OrderDraftListFilters, OrderDraftView, OrderListFilters, OrderView, OrderbookCache, PageQuery,
-    Paginated, PositionListFilters, PositionView, ProbabilityEstimateListFilters,
-    ProbabilityEstimateView, ReconcileExternalTradeCommand, RewardBotConfigPatch,
-    RewardBotSnapshot, RewardControlAction, RewardOrderListQuery, RewardQuotePlanListQuery,
-    RewardTokenQuote, RiskPolicy, RiskStateView, SortOrder, SyncExternalOrderStatusCommand,
-    TrackedWalletStatus, TradeListFilters, TradeView, WalletActionInput,
+    ExecutionFillResult, ExecutionRequestListFilters, ExecutionRequestView,
+    HighProbabilityBacktestReport, HighProbabilityBacktestRun, HighProbabilityBacktestTrade,
+    HighProbabilityBucketStats, HighProbabilityConfig, HighProbabilityResearchReport,
+    HighProbabilitySnapshot, IdempotencyBegin, IdempotencyRequest, MarketListFilters,
+    MarketSortField, MarketView, ModeTransitionCommand, NewsRawEventListFilters, NewsRawEventView,
+    NewsSourceHealthListFilters, NewsSourceHealthView, OrderDraftListFilters, OrderDraftView,
+    OrderListFilters, OrderView, OrderbookCache, PageQuery, Paginated, PositionListFilters,
+    PositionView, ProbabilityEstimateListFilters, ProbabilityEstimateView,
+    ReconcileExternalTradeCommand, RewardBotConfigPatch, RewardBotSnapshot, RewardControlAction,
+    RewardOrderListQuery, RewardQuotePlanListQuery, RewardTokenQuote, RiskPolicy, RiskStateView,
+    SmartMoneyConfigPatch, SmartMoneySnapshot, SmartWalletCandidateStatusUpdate, SortOrder,
+    SyncExternalOrderStatusCommand, TrackedWalletStatus, TradeListFilters, TradeView,
+    WalletActionInput,
 };
 use polyedge_connectors::{
     ConnectorOrderStatusUpdate, ConnectorTradeFillUpdate, PolymarketChainConnector,
@@ -296,6 +300,76 @@ pub fn build_app(state: AppState) -> Router {
                 require_console_write_auth,
             )),
         )
+        // ── Smart Money ─────────────────────────────────────────────
+        .route(
+            "/api/v1/smart-money",
+            get(read_smart_money_snapshot).route_layer(middleware::from_fn_with_state(
+                state.clone(),
+                require_console_read_auth,
+            )),
+        )
+        .route(
+            "/api/v1/smart-money/config",
+            axum::routing::post(update_smart_money_config).route_layer(
+                middleware::from_fn_with_state(state.clone(), require_console_write_auth),
+            ),
+        )
+        .route(
+            "/api/v1/smart-money/candidates/status",
+            axum::routing::post(update_smart_money_candidate_status).route_layer(
+                middleware::from_fn_with_state(state.clone(), require_console_write_auth),
+            ),
+        )
+        // ── High Probability Pricing ───────────────────────────────
+        .route(
+            "/api/v1/high-probability",
+            get(read_high_probability_snapshot).route_layer(middleware::from_fn_with_state(
+                state.clone(),
+                require_console_read_auth,
+            )),
+        )
+        .route(
+            "/api/v1/high-probability/config",
+            get(read_high_probability_config).route_layer(middleware::from_fn_with_state(
+                state.clone(),
+                require_console_read_auth,
+            )),
+        )
+        .route(
+            "/api/v1/high-probability/buckets",
+            get(read_high_probability_buckets).route_layer(middleware::from_fn_with_state(
+                state.clone(),
+                require_console_read_auth,
+            )),
+        )
+        .route(
+            "/api/v1/high-probability/report",
+            get(read_high_probability_report).route_layer(middleware::from_fn_with_state(
+                state.clone(),
+                require_console_read_auth,
+            )),
+        )
+        .route(
+            "/api/v1/high-probability/backtests",
+            get(read_high_probability_backtests).route_layer(middleware::from_fn_with_state(
+                state.clone(),
+                require_console_read_auth,
+            )),
+        )
+        .route(
+            "/api/v1/high-probability/backtest-runs",
+            get(read_high_probability_backtest_runs).route_layer(middleware::from_fn_with_state(
+                state.clone(),
+                require_console_read_auth,
+            )),
+        )
+        .route(
+            "/api/v1/high-probability/backtest-runs/{run_id}/trades",
+            get(read_high_probability_backtest_trades).route_layer(middleware::from_fn_with_state(
+                state.clone(),
+                require_console_read_auth,
+            )),
+        )
         // ── Wallet Analysis ─────────────────────────────────────────
         .route(
             "/api/v1/wallet-analysis",
@@ -338,6 +412,8 @@ include!("handlers/market_handlers.rs");
 include!("handlers/funding.rs");
 include!("handlers/rewards.rs");
 include!("handlers/copytrade.rs");
+include!("handlers/smart_money.rs");
+include!("handlers/high_probability.rs");
 include!("handlers/runtime_config.rs");
 include!("handlers/runtime_config_helpers.rs");
 include!("handlers/execution_lists.rs");

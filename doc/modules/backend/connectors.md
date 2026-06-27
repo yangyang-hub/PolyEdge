@@ -4,7 +4,7 @@
 
 ## 概述
 
-`polyedge_connectors` crate 实现所有外部系统的适配器：Polymarket CLOB（交易）、Gamma API（市场数据）、Data API（钱包活动）、Order Book（盘口）、Rewards API（奖励市场）、Rewards AI advisory、Rewards 信息风险评估、RSS 新闻源，以及内置的 Paper Trading 执行器。
+`polyedge_connectors` crate 实现所有外部系统的适配器：Polymarket CLOB（交易）、Gamma API（市场数据）、Data API（钱包活动）、Order Book（盘口）、Rewards API（奖励市场）、Rewards AI advisory、Rewards 信息风险评估、Smart Money signal advisory、RSS 新闻源，以及内置的 Paper Trading 执行器。
 
 ## 设计目标
 
@@ -28,10 +28,13 @@
 | `polymarket/book.rs` | 盘口快照：`PolymarketBookConnector` |
 | `rewards.rs` + `rewards/orderbooks.rs` + `rewards/price_history.rs` | 奖励市场目录、CLOB 批量盘口与 `/prices-history`：`PolymarketRewardsConnector` |
 | `orderbook.rs` | 独立 orderbook 服务客户端：HTTP 读盘口/原子注册 token/内部写 token，内部 WS stream 消费 |
-| `openai_compat.rs` | OpenAI-compatible provider helper：root base URL 自动补 `/v1`，请求同时携带 Bearer 与 `api-key` 认证头，provider 文本响应候选 JSON 提取与错误 preview |
-| `reward_ai.rs` | Rewards AI advisory 连接器：OpenAI Responses、OpenAI Chat Completions、Anthropic Messages |
-| `reward_ai_tests.rs` | Rewards AI advisory provider 响应解析、二值 `allow_quote` 和旧响应兼容测试 |
-| `reward_info_risk.rs` | Rewards 信息风险连接器：OpenAI Responses / Chat Completions、Anthropic Messages；OpenAI Responses 可选 web search tool |
+| `openai_compat.rs` | OpenAI-compatible provider helper：root base URL 自动补 `/v1`、已带 `/vN` 的 provider base 保持原样，请求同时携带 Bearer 与 `api-key` 认证头，模型名包含 GLM/DeepSeek 时的 Chat Completions JSON mode 差异、provider 文本响应候选 JSON 提取与错误 preview |
+| `reward_ai.rs` | Rewards AI advisory 连接器：OpenAI Responses、OpenAI-compatible Chat Completions（含 GLM/DeepSeek 模型名特例）、Anthropic Messages，解析 `allow_quote` 与 conservative `strategy_hint` |
+| `reward_ai_tests.rs` | Rewards AI advisory provider 响应解析、二值 `allow_quote`、`strategy_hint`、旧响应兼容和 GLM/DeepSeek Chat Completions 请求 mock 测试 |
+| `reward_info_risk.rs` | Rewards 信息风险连接器：OpenAI Responses、OpenAI-compatible Chat Completions（含 GLM/DeepSeek 模型名特例）、Anthropic Messages；OpenAI Responses 可选 web search tool |
+| `reward_info_risk_tests.rs` | Rewards 信息风险 provider 响应解析、旧响应兼容和 DeepSeek Chat Completions 请求 mock 测试 |
+| `smart_signal_advisory.rs` | Smart Money signal advisory 连接器：OpenAI Responses、OpenAI-compatible Chat Completions（含 GLM/DeepSeek 模型名特例）、Anthropic Messages，解析 `allow|observe|reject` 三态建议 |
+| `test_http.rs` | connector 单元测试用本地 HTTP 捕获 helper，验证 provider endpoint、header 和请求体差异 |
 | `polymarket/models.rs` | 共享数据模型 |
 | `polymarket/normalizers.rs` | WebSocket 消息规范化函数 |
 | `polymarket/helpers.rs` | 共享辅助函数 |
@@ -56,9 +59,11 @@
 - **`PolymarketWalletPosition`**：当前持仓
 - **`PolymarketClosedPosition`**：已结算持仓
 - **`PolymarketTrade`**：单笔交易记录
+- **`PolymarketLeaderboardEntry`**：leaderboard rank、proxy wallet、volume、P&L、用户展示字段
 - 常量：`MAX_DATA_API_LIMIT = 500`、`MAX_DATA_API_POSITION_PAGES = 100`、`DATA_API_TIMEOUT = 15s`
 - `fetch_wallet_positions()` 使用 `sizeThreshold=0`、limit/offset 分页和 asset 去重读取完整账户持仓；超过最大页数返回错误，不把不完整快照交给下游替换。
-- 用途：`copytrade.rs` worker 检测跟踪钱包的新成交，以及 rewards worker 同步外部账户持仓
+- `fetch_leaderboard()` 读取 Data API `/v1/leaderboard?category=OVERALL&timePeriod=ALL`，标准化 proxy wallet 后返回候选条目；`fetch_leaderboard_entry()` 仍保留按单钱包查询。
+- 用途：`copytrade.rs` worker 检测跟踪钱包的新成交，rewards worker 同步外部账户持仓，以及 Smart Money worker 低频发现 leaderboard 种子候选
 
 ### Polymarket Chain（资金钱包余额与入金）
 
@@ -128,18 +133,25 @@
 ### Rewards AI Advisory
 
 - **`RewardAiAdvisoryConnector`**：`base_url` + API key + reqwest client，供 rewards worker 低频请求盘口适合度判断。
-- 支持三种请求格式：`openai_responses` 调用 OpenAI-compatible `{base}/responses` 并使用 JSON schema structured output；`openai_chat_completions` 调用 OpenAI-compatible `{base}/chat/completions` 并使用 `response_format=json_schema`；`anthropic_messages` 调用 `{base}/v1/messages`，通过 system/user prompt 要求仅返回单个 JSON 对象。OpenAI-compatible 路径会在 base URL 未以 `/v1` 结尾时自动补 `/v1`，并同时发送 `Authorization: Bearer` 与 `api-key`，兼容 OpenAI 原生和 MiMo 等网关；MiMo 当前应配置为 `openai_chat_completions`。Chat Completions 路径使用 MiMo/OpenAI 兼容的 `max_completion_tokens`，AI advisory 预算为 4096，避免 reasoning 模型耗尽 token 后返回空 `content`。provider 请求温度固定为 0，降低格式漂移。
-- 输出 provider schema 只要求 `allow_quote` 二值决策、`confidence`、`reasons` 和 `metrics`；connector 会把 `allow_quote=true` 映射为内部 `suitability=allow`、`allow_quote=false` 映射为内部 `suitability=avoid`，并用默认 quote/exit 字段兼容既有 `RewardAiAdvisoryDecision`、数据库和 DTO。解析层对旧 `suitability/quote_mode/exit_policy` 响应按二值 fail-closed 兼容：仅 `allow` 映射为内部 `suitability=allow`，`watch`/`avoid`/其它非 allow 值一律映射为内部 `suitability=avoid` 硬拦（不再放行 watch，旧缓存由 advisory `schema_version` 8 失效）；新 prompt 仍不要求 provider 输出 watch、avoid、多档状态、quote mode 或 exit policy；confidence 会钳制到 `0..=1`。provider HTTP、状态码、解码或 JSON 结构错误会返回 dependency error；无法提取候选 JSON 时错误信息会携带短 preview，供 worker warning 排查。AI advisory 启用时按 gating 规则阻断对应 eligible 计划，直到 provider 二值允许通过。
-- `advise_batch()` 是 orderbook 事件驱动批量通道使用的批量变体：单次请求评估多个市场（payload 拼成 `{"markets":[{condition_id,...}]}`，schema 要求返回 `{"advisories":[{condition_id,allow_quote,...}]}` 数组），三种格式各有批量变体并把 `max_completion_tokens` / `max_tokens` 按 batch size 放大、封顶到 16384。解析按 `condition_id` 匹配，丢弃拼错/多余项，模型漏掉的 condition 由 worker 回退到单市场 `advise()`；batch size=1 时兼容单 object 返回。返回 `RewardAiAdvisoryBatchItem { condition_id, decision }`，决策字段与单市场 `RewardAiAdvisoryDecision` 一致。
+- 支持三种请求格式：`openai_responses` 调用 OpenAI-compatible `{base}/responses` 并使用 JSON schema structured output；`openai_chat_completions` 调用 OpenAI-compatible `{base}/chat/completions`；`anthropic_messages` 调用 `{base}/v1/messages`，通过 system/user prompt 要求仅返回单个 JSON 对象。OpenAI-compatible 路径会在 root base URL 自动补 `/v1`，但已带 `/vN` 的 provider base（如 GLM `/api/coding/paas/v4`）保持原样，并同时发送 `Authorization: Bearer` 与 `api-key`。OpenAI-compatible Chat Completions 默认使用 `response_format=json_schema` + `max_completion_tokens`；模型名包含 `glm` 或 `deepseek` 时会强制走 Chat Completions，并使用更通用的 `response_format=json_object` + `max_tokens`，避免 provider 不支持 OpenAI JSON schema 或 `max_completion_tokens` 时直接 400；MiMo 当前应配置为 `openai_chat_completions`。AI advisory 预算为 4096，provider 请求温度固定为 0，降低格式漂移。
+- 输出 provider schema 要求 `allow_quote` 二值决策、`confidence`、`strategy_hint`、`reasons` 和 `metrics`；`strategy_hint` 包含 `quote_mode=double|single_yes|single_no|none`、`bid_rank=1..3` 和非负 `max_condition_notional_usd`。connector 会把 `allow_quote=true` 映射为内部 `suitability=allow`、`allow_quote=false` 映射为内部 `suitability=avoid`，并把 `strategy_hint` 写入 `metrics.strategy_hint`，以兼容既有 `RewardAiAdvisoryDecision`、数据库和 DTO。解析层对旧 `suitability/quote_mode/exit_policy` 响应按二值 fail-closed 兼容：仅 `allow` 映射为内部 `suitability=allow`，`watch`/`avoid`/其它非 allow 值一律映射为内部 `suitability=avoid` 硬拦（不再放行 watch，旧缓存由 advisory `schema_version` 8 失效）；缺少 `strategy_hint` 的旧二值响应仍能解析但不会产生 hint，新的 advisory cache key `schema_version=9` 会让旧缓存重新评估。新 prompt 不要求 provider 输出 watch、avoid、多档状态、顶层 quote mode 或 exit policy；confidence 会钳制到 `0..=1`。provider HTTP、状态码、解码或 JSON 结构错误会返回 dependency error；无法提取候选 JSON 时错误信息会携带短 preview，供 worker warning 排查。AI advisory 启用时按 gating 规则阻断对应 eligible 计划，直到 provider 二值允许通过。
+- `advise_batch()` 是 orderbook 事件驱动批量通道使用的批量变体：单次请求评估多个市场（payload 拼成 `{"markets":[{condition_id,...}]}`，schema 要求返回 `{"advisories":[{condition_id,allow_quote,strategy_hint,...}]}` 数组），三种格式各有批量变体并把 `max_completion_tokens` / `max_tokens` 按 batch size 放大、封顶到 16384。解析按 `condition_id` 匹配，丢弃拼错/多余项，模型漏掉的 condition 由 worker 回退到单市场 `advise()`；batch size=1 时兼容单 object 返回。返回 `RewardAiAdvisoryBatchItem { condition_id, decision }`，决策字段与单市场 `RewardAiAdvisoryDecision` 一致。
 - 该 connector 只接收 application 层已构建的 DB/orderbook/planner/account payload，不直接访问 Polymarket 或其他市场数据源。
 
 ### Rewards Info Risk
 
 - **`RewardInfoRiskConnector`**：`base_url` + API key + reqwest client，供 rewards worker 异步判断候选市场的信息流风险。
-- 支持三种请求格式：`openai_responses`、`openai_chat_completions`、`anthropic_messages`。OpenAI-compatible 路径同样会规范化 root base URL 到 `/v1` 并携带 Bearer + `api-key` 认证头；OpenAI Responses 可通过 `POLYEDGE_REWARDS__INFO_RISK_WEB_SEARCH_ENABLED=true` 附加 `web_search_preview` 工具；默认关闭。Chat Completions 路径使用 `max_completion_tokens=6144`，给 MiMo reasoning 输出和最终 JSON 留足预算。provider 请求温度固定为 0，prompt 要求单个 JSON 对象、双引号 key、无 markdown/prose，并要求按 application payload 中的 `evaluation_time_utc` 和 `provider_cache_policy` 作为当前 UTC 时间与 TTL horizon 判断是否允许挂单，避免 provider 用模型训练日期或过期上下文误判远期/历史事件。
+- 支持三种请求格式：`openai_responses`、`openai_chat_completions`、`anthropic_messages`。OpenAI-compatible 路径同样会规范化 root base URL 到 `/v1`、保留已带 `/vN` 的 provider base，并携带 Bearer + `api-key` 认证头；OpenAI Responses 可通过 `POLYEDGE_REWARDS__INFO_RISK_WEB_SEARCH_ENABLED=true` 附加 `web_search_preview` 工具；默认关闭。OpenAI-compatible Chat Completions 默认使用 `max_completion_tokens=6144`；模型名包含 `glm` 或 `deepseek` 时使用 `max_tokens=6144`，均要求 JSON object 输出。provider 请求温度固定为 0，prompt 要求单个 JSON 对象、双引号 key、无 markdown/prose，并要求按 application payload 中的 `evaluation_time_utc` 和 `provider_cache_policy` 作为当前 UTC 时间与 TTL horizon 判断是否允许挂单，避免 provider 用模型训练日期或过期上下文误判远期/历史事件。
 - 输出 provider schema 只要求 `allow_quote` 二值决策、`confidence`、`summary`、`sources` 和 `metrics`；connector 会把 `allow_quote=true` 映射为内部 `risk_level=low/risk_type=none`，把 `allow_quote=false` 映射为内部 `risk_level=critical/risk_type=unknown`，以兼容既有 `RewardInfoRiskAssessmentDecision`、数据库和 DTO。解析层仍兼容旧 `risk_level/risk_type/directional_risk/resolution_imminent` 响应，但新 prompt 不再要求 provider 输出多档风险状态；confidence 钳制到 `0..=1`，无法提取时错误带短 preview。
 - `assess_batch()` 是批量变体：单次请求评估多个市场（payload 拼成 `{"markets":[{condition_id,search_query,market}]}`，schema 要求返回 `{"risks":[{condition_id,allow_quote,...}]}` 数组），三种格式各有批量变体并把 `max_completion_tokens` / `max_tokens` 按 batch size 放大、封顶到 16384；OpenAI Responses 批量路径仍可附加 `web_search_preview`。解析按 `condition_id` 白名单匹配，丢弃拼错/多余/重复项，模型漏掉的 condition 由 worker 回退到单市场 `assess()`；batch size=1 时兼容单 object 返回。返回 `RewardInfoRiskAssessmentBatchItem { condition_id, decision }`，决策字段与单市场 `RewardInfoRiskAssessmentDecision` 一致。
 - 该 connector 不直接访问 Polymarket；它只接收 application 层基于数据库、quote plan 和账户状态构建的 payload。provider 失败由 worker 记录 warning，不阻断 live tick。
+
+### Smart Money Signal Advisory
+
+- **`SmartSignalAdvisoryConnector`**：`base_url` + API key + reqwest client，供 Smart Money worker 对 deterministic observe 信号做低频 provider 风险复核。
+- 支持三种请求格式：`openai_responses`、`openai_chat_completions`、`anthropic_messages`。OpenAI-compatible 路径复用 `openai_compat.rs` 的 base URL 归一化、Bearer + `api-key` 双认证头、GLM/DeepSeek Chat Completions JSON mode 和 token 字段差异；provider 请求温度固定为 0。
+- 输出 provider schema 要求 `recommendation=allow|observe|reject`、`confidence`、`risk_tags`、`summary` 和 `reasons`。connector 会解析为 `SmartSignalAdvisoryDecision`，confidence 钳制到 `0..=1`，并从 markdown fence、JSON 字符串或嵌入文本中提取候选 JSON；HTTP、状态码、解码或 JSON 结构错误返回 dependency error，并带短 preview。
+- 该 connector 只接收 application 层已构建的 signal/source_trade/profile/score/config payload，不直接访问 Polymarket、orderbook 或数据库。worker 负责读取缓存、决定是否调用 provider、保存 `smart_signal_advisories` 和记录 `llm_calls`。
 
 ### News（RSS/Atom 新闻）
 
@@ -168,9 +180,9 @@
 - Gamma 市场同步已提供 rewards 质量筛选所需的 CLOB liquidity、end time 和分级 ambiguity 数据，并支持 priority condition 刷新降低全量目录延迟对 live rewards 的影响。
 - Rewards markets 分页和 enrichment 已具备完整性保护，不再把部分补全结果作为完整目录写入；详情补全只针对缺唯一 YES/NO token 或缺有效 question 的市场，降低 CLOB 429 风险
 - Rewards 盘口连接器优先走 CLOB 批量 `/books`，并对失败或遗漏项使用单 token `/book` 回退；同一 connector 还提供 `/prices-history` 读取，实际请求节流由 orderbook 服务的 candle history sync loop 控制，避免 worker 或 API 直接打外部历史价格接口
-- Rewards AI advisory 和信息风险 connector 已支持 OpenAI Responses、OpenAI Chat Completions 和 Anthropic Messages 三种格式；OpenAI-compatible base URL 可配置为根地址或 `/v1` 地址，connector 会统一请求 `/v1/...` 并兼容 Bearer / `api-key` 认证头；MiMo provider 已验证 root gateway + `openai_chat_completions` + JSON schema 可用，`openai_responses` 会返回 provider 未实现错误；Chat Completions 请求使用 `max_completion_tokens` 而不是旧 `max_tokens`，AI advisory / info-risk 分别给 4096 / 6144 completion token 预算，降低 reasoning 模型返回空 `content` 的概率；模型密钥来自 worker 环境变量，provider 请求温度固定为 0。AI advisory 与 info-risk 新 provider schema 都只输出 `allow_quote` 二值决策，connector 解析后映射到既有内部模型字段并兼容旧多状态响应；AI prompt 要求结合 payload 中的当前盘口定价上下文和 TTL horizon 判断，info-risk prompt 会把 payload 的 `evaluation_time_utc` 与 TTL policy 作为当前时间/缓存复用范围。解析层会从 provider 文本中提取并校验候选 JSON 对象，provider confidence 输出会在解析时钳制到 `0..=1`。AI advisory provider 失败不终止 live tick，但在 AI 开启时会让对应 eligible 计划保持不可挂；信息风险 provider 失败只保留上一版缓存/确定性路径。信息风险 connector 的 OpenAI web search 工具默认关闭，仅在显式环境变量开启时使用。
+- Rewards AI advisory、信息风险 connector 和 Smart Money signal advisory connector 已支持 OpenAI Responses、OpenAI-compatible Chat Completions（含 GLM/DeepSeek 模型名特例）和 Anthropic Messages 三类路径；OpenAI-compatible base URL 可配置为根地址、`/v1` 地址或 GLM 这类 `/v4` versioned base，connector 会对 root 自动补 `/v1`、保留 `/vN`，并兼容 Bearer / `api-key` 认证头；MiMo provider 已验证 root gateway + `openai_chat_completions` + JSON schema 可用，`openai_responses` 会返回 provider 未实现错误；模型名包含 `glm` 或 `deepseek` 时强制归一到 `openai_chat_completions`，Chat 请求使用 `response_format=json_object` 与 `max_tokens`，其它 OpenAI-compatible Chat 请求仍使用 JSON schema 与 `max_completion_tokens`。GLM 可用 `POLYEDGE_REWARDS__AI_OPENAI_BASE_URL=https://open.bigmodel.cn/api/coding/paas/v4` + `POLYEDGE_REWARDS__AI_MODEL=glm-4.7`，DeepSeek 可用 `POLYEDGE_REWARDS__AI_OPENAI_BASE_URL=https://api.deepseek.com` + `POLYEDGE_REWARDS__AI_MODEL=deepseek-v4-flash`；两者已用测试 key 对当前请求形态做过鉴权 smoke test（均 HTTP 200，返回可解析 JSON object 字符串）。正式运行密钥仍只通过 worker 环境变量注入。AI advisory / info-risk 分别给 4096 / 6144 completion token 预算，Smart Money signal advisory 给 2048 completion token 预算；模型密钥来自 worker 环境变量，provider 请求温度固定为 0。Rewards AI advisory provider schema 输出 `allow_quote` 二值决策加 conservative `strategy_hint`，connector 解析后把 hint 存入 `metrics.strategy_hint`；info-risk provider schema 输出 `allow_quote` 二值决策；Smart Money signal advisory provider schema 输出 `allow|observe|reject` 三态建议。三者都会映射到各自内部模型字段；解析层会从 provider 文本中提取并校验候选 JSON 对象，provider confidence 输出会在解析时钳制到 `0..=1`。AI advisory provider 失败不终止 live tick，但在 AI 开启时会让对应 eligible 计划保持不可挂；信息风险 provider 失败只保留上一版缓存/确定性路径；Smart Money signal advisory provider 失败只记录 warning/失败调用，不影响 deterministic 信号生成或已有缓存。信息风险 connector 的 OpenAI web search 工具默认关闭，仅在显式环境变量开启时使用。
 - Orderbook 服务客户端已支持 HTTP batch/bootstrap、按最大确认年龄的 batch refresh 与内部 WS 推送；worker 长期 rewards loop 可用 WS 更新本地 cache，缺失、本地 stale 或接近新挂单 freshness headroom 时回退 HTTP batch，并要求 orderbook 服务在自身缓存也超过请求年龄时先刷新。
-- Data API positions 已按完整快照分页读取；不完整或失败的响应不会被 rewards worker 用于替换持仓
+- Data API positions 已按完整快照分页读取；不完整或失败的响应不会被 rewards worker 用于替换持仓；Data API leaderboard 已接入 Smart Money worker 做候选钱包种子发现，API handler 不直接访问该 connector
 - Paper Trading 执行器已完整实现
 - Live connector 已具备 CLOB V2 认证、显式 heartbeat、余额查询、开放订单全量分页、用户 WS、订单提交、按 token_id 的 rewards buy/sell 提交和单笔撤单能力；heartbeat 在 SDK 链式请求失败时可 raw authenticated 续链或用 `heartbeat_id:null` 重建，rewards earnings 在 SDK 解码失败时可 raw authenticated 宽容解析；post-only 使用 GTC，immediate flatten 使用 FAK，订单价格当前统一收敛到 0.01 精度，更粗的 per-market tick-size 尚未接入；订单/关联成交优先通过单订单接口对账，关联 trade 单查失败和 missing-order 都会按 token/time 扫描账户 trades 精确回退，轮询路径仅在 trade `CONFIRMED` 后返回成交，任一订单回退失败可被 worker 单订单隔离；签名类型已覆盖 EOA、Proxy、Gnosis Safe 和 Deposit Wallet (`poly_1271`)，其 balance allowance refresh 失败会传播给调用方；Polygon pUSD 余额 connector 已作为 rewards snapshot 的链上余额回退；Funding API 通过 Chain connector 可把后端资金钱包 USDC/USDT 转入 Polymarket Bridge 并最终入账为 pUSD；订单 acceptance 返回实际提交 quantity，trade/WS 成交归一化按订单自身成交量入账；仍需要真实凭证和小额账户验证
 - RSS connector 支持 Atom/RSS 两种格式

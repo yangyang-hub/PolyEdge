@@ -30,6 +30,10 @@ function normalizeRewardConfigPatchForSubmit(
 ): RewardBotConfigPatchDto {
   return {
     ...config,
+    low_competition_mode: "off",
+    low_competition_max_markets: 0,
+    low_competition_max_open_orders: 0,
+    low_competition_global_open_order_share_bps: 0,
     low_competition_candidate_liquidity_filter_enabled: false,
     low_competition_candidate_volume_filter_enabled: false,
     low_competition_min_market_liquidity_usd: 0,
@@ -62,6 +66,24 @@ const rewardConfigSchema = z.object({
   max_book_hhi: decimalNumber.min(0).max(1),
   preferred_categories: z.array(z.string().trim().min(1)).max(32),
   preferred_category_score_bonus: decimalNumber.min(0).max(20),
+  opportunity_metrics_enabled: z.boolean(),
+  opportunity_probe_notional_usd: decimalNumber.min(0).max(1_000_000),
+  opportunity_min_reward_per_100_usd_day: decimalNumber.min(0).max(100_000),
+  opportunity_max_competition_multiple: decimalNumber.min(0).max(1_000_000),
+  opportunity_max_account_allocation_bps: z.coerce.number().int().min(0).max(10_000),
+  opportunity_max_market_allocation_bps: z.coerce.number().int().min(0).max(10_000),
+  opportunity_min_exit_depth_usd: decimalNumber.min(0).max(1_000_000),
+  opportunity_min_exit_depth_multiple: decimalNumber.min(0).max(100),
+  opportunity_max_entry_exit_slippage_cents: decimalNumber.min(0).max(99),
+  opportunity_max_bad_fill_recovery_days: decimalNumber.min(0).max(365),
+  opportunity_observation_window_sec: z.coerce.number().int().min(60).max(86_400),
+  opportunity_min_book_samples: z.coerce.number().int().min(1).max(10_000),
+  opportunity_max_midpoint_range_cents: decimalNumber.min(0).max(100),
+  opportunity_max_top_of_book_flip_count: z.coerce.number().int().min(0).max(10_000),
+  opportunity_reward_weight: decimalNumber.min(0).max(100),
+  opportunity_competition_weight: decimalNumber.min(0).max(100),
+  opportunity_exit_weight: decimalNumber.min(0).max(100),
+  opportunity_stability_weight: decimalNumber.min(0).max(100),
   low_competition_mode: z.enum(["off", "observe", "enforce"]),
   low_competition_max_markets: z.coerce.number().int().min(0).max(65_535),
   low_competition_max_open_orders: z.coerce.number().int().min(0).max(65_535),
@@ -110,6 +132,8 @@ const rewardConfigSchema = z.object({
   ]),
   ai_advisory_ttl_sec: z.coerce.number().int().min(60).max(86_400),
   ai_advisory_batch_size: z.coerce.number().int().min(1).max(12),
+  ai_strategy_hint_enabled: z.boolean(),
+  ai_strategy_hint_min_confidence: decimalNumber.min(0).max(1),
   info_risk_enabled: z.boolean(),
   info_risk_mode: z.enum(["observe", "enforce"]),
   info_risk_avoid_level: z.enum(["low", "medium", "high", "critical", "unknown"]),
@@ -162,11 +186,14 @@ const rewardConfigSchema = z.object({
   })
   .refine(
     (value) =>
-      value.low_competition_candidate_max_competition_multiple
-      >= value.low_competition_max_competition_multiple,
+      value.opportunity_reward_weight
+        + value.opportunity_competition_weight
+        + value.opportunity_exit_weight
+        + value.opportunity_stability_weight
+      > 0,
     {
-      message: "Low-competition candidate multiple cap must be at least the hard gate cap.",
-      path: ["low_competition_candidate_max_competition_multiple"],
+      message: "Opportunity metric weights must sum above zero.",
+      path: ["opportunity_reward_weight"],
     },
   )
   .refine(

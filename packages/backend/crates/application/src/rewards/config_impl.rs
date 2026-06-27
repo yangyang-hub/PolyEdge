@@ -31,6 +31,24 @@ impl Default for RewardBotConfig {
                 "geopolitics".to_string(),
             ],
             preferred_category_score_bonus: decimal("0"),
+            opportunity_metrics_enabled: true,
+            opportunity_probe_notional_usd: decimal("10"),
+            opportunity_min_reward_per_100_usd_day: decimal("0.50"),
+            opportunity_max_competition_multiple: decimal("5"),
+            opportunity_max_account_allocation_bps: 2_000,
+            opportunity_max_market_allocation_bps: 500,
+            opportunity_min_exit_depth_usd: decimal("50"),
+            opportunity_min_exit_depth_multiple: decimal("2"),
+            opportunity_max_entry_exit_slippage_cents: decimal("2"),
+            opportunity_max_bad_fill_recovery_days: decimal("3"),
+            opportunity_observation_window_sec: 1800,
+            opportunity_min_book_samples: 20,
+            opportunity_max_midpoint_range_cents: decimal("3"),
+            opportunity_max_top_of_book_flip_count: 10,
+            opportunity_reward_weight: decimal("40"),
+            opportunity_competition_weight: decimal("30"),
+            opportunity_exit_weight: decimal("20"),
+            opportunity_stability_weight: decimal("10"),
             low_competition_mode: RewardLowCompetitionMode::Off,
             low_competition_max_markets: 0,
             low_competition_max_open_orders: 0,
@@ -76,6 +94,8 @@ impl Default for RewardBotConfig {
             ai_request_format: RewardAiRequestFormat::OpenAiResponses,
             ai_advisory_ttl_sec: 3600,
             ai_advisory_batch_size: 1,
+            ai_strategy_hint_enabled: true,
+            ai_strategy_hint_min_confidence: decimal("0.75"),
             info_risk_enabled: false,
             info_risk_mode: RewardSelectionMode::Observe,
             info_risk_avoid_level: RewardInfoRiskLevel::High,
@@ -135,15 +155,11 @@ impl RewardBotConfig {
             decimal("1000000000"),
         );
         self.min_hours_to_end = self.min_hours_to_end.clamp(0, 24 * 365 * 10);
-        self.max_market_spread_cents = clamp_decimal(
-            self.max_market_spread_cents,
-            decimal("0.1"),
-            decimal("100"),
-        );
+        self.max_market_spread_cents =
+            clamp_decimal(self.max_market_spread_cents, decimal("0.1"), decimal("100"));
         self.max_market_data_age_minutes = self.max_market_data_age_minutes.clamp(1, 1440);
         self.min_market_score = clamp_decimal(self.min_market_score, Decimal::ZERO, decimal("100"));
-        self.max_spread_cents =
-            clamp_decimal(self.max_spread_cents, decimal("0.1"), decimal("99"));
+        self.max_spread_cents = clamp_decimal(self.max_spread_cents, decimal("0.1"), decimal("99"));
         self.quote_bid_rank = self.quote_bid_rank.clamp(1, 3);
         self.dominant_min_probability = clamp_decimal(
             self.dominant_min_probability,
@@ -174,8 +190,73 @@ impl RewardBotConfig {
             Decimal::ZERO,
             decimal("20"),
         );
-        self.low_competition_max_markets =
-            clamp_u16(self.low_competition_max_markets, 0, u16::MAX);
+        self.opportunity_probe_notional_usd = clamp_decimal(
+            self.opportunity_probe_notional_usd,
+            Decimal::ZERO,
+            decimal("1000000"),
+        );
+        self.opportunity_min_reward_per_100_usd_day = clamp_decimal(
+            self.opportunity_min_reward_per_100_usd_day,
+            Decimal::ZERO,
+            decimal("100000"),
+        );
+        self.opportunity_max_competition_multiple = clamp_decimal(
+            self.opportunity_max_competition_multiple,
+            Decimal::ZERO,
+            decimal("1000000"),
+        );
+        self.opportunity_max_account_allocation_bps =
+            self.opportunity_max_account_allocation_bps.clamp(0, 10_000);
+        self.opportunity_max_market_allocation_bps =
+            self.opportunity_max_market_allocation_bps.clamp(0, 10_000);
+        self.opportunity_min_exit_depth_usd = clamp_decimal(
+            self.opportunity_min_exit_depth_usd,
+            Decimal::ZERO,
+            decimal("1000000"),
+        );
+        self.opportunity_min_exit_depth_multiple = clamp_decimal(
+            self.opportunity_min_exit_depth_multiple,
+            Decimal::ZERO,
+            decimal("100"),
+        );
+        self.opportunity_max_entry_exit_slippage_cents = clamp_decimal(
+            self.opportunity_max_entry_exit_slippage_cents,
+            Decimal::ZERO,
+            decimal("99"),
+        );
+        self.opportunity_max_bad_fill_recovery_days = clamp_decimal(
+            self.opportunity_max_bad_fill_recovery_days,
+            Decimal::ZERO,
+            decimal("365"),
+        );
+        self.opportunity_observation_window_sec =
+            self.opportunity_observation_window_sec.clamp(60, 86_400);
+        self.opportunity_min_book_samples = self.opportunity_min_book_samples.clamp(1, 10_000);
+        self.opportunity_max_midpoint_range_cents = clamp_decimal(
+            self.opportunity_max_midpoint_range_cents,
+            Decimal::ZERO,
+            decimal("100"),
+        );
+        self.opportunity_max_top_of_book_flip_count =
+            self.opportunity_max_top_of_book_flip_count.clamp(0, 10_000);
+        self.opportunity_reward_weight = clamp_decimal(
+            self.opportunity_reward_weight,
+            Decimal::ZERO,
+            decimal("1000"),
+        );
+        self.opportunity_competition_weight = clamp_decimal(
+            self.opportunity_competition_weight,
+            Decimal::ZERO,
+            decimal("1000"),
+        );
+        self.opportunity_exit_weight =
+            clamp_decimal(self.opportunity_exit_weight, Decimal::ZERO, decimal("1000"));
+        self.opportunity_stability_weight = clamp_decimal(
+            self.opportunity_stability_weight,
+            Decimal::ZERO,
+            decimal("1000"),
+        );
+        self.low_competition_max_markets = clamp_u16(self.low_competition_max_markets, 0, u16::MAX);
         self.low_competition_max_open_orders =
             clamp_u16(self.low_competition_max_open_orders, 0, u16::MAX);
         self.low_competition_per_market_usd = clamp_decimal(
@@ -193,8 +274,9 @@ impl RewardBotConfig {
             Decimal::ZERO,
             decimal("1000000"),
         );
-        self.low_competition_min_competition_share_bps =
-            self.low_competition_min_competition_share_bps.clamp(0, 10_000);
+        self.low_competition_min_competition_share_bps = self
+            .low_competition_min_competition_share_bps
+            .clamp(0, 10_000);
         self.low_competition_max_competition_multiple = clamp_decimal(
             self.low_competition_max_competition_multiple,
             Decimal::ZERO,
@@ -213,10 +295,12 @@ impl RewardBotConfig {
             self.low_competition_candidate_max_competition_multiple =
                 self.low_competition_max_competition_multiple;
         }
-        self.low_competition_max_account_allocation_bps =
-            self.low_competition_max_account_allocation_bps.clamp(0, 10_000);
-        self.low_competition_max_market_allocation_bps =
-            self.low_competition_max_market_allocation_bps.clamp(0, 10_000);
+        self.low_competition_max_account_allocation_bps = self
+            .low_competition_max_account_allocation_bps
+            .clamp(0, 10_000);
+        self.low_competition_max_market_allocation_bps = self
+            .low_competition_max_market_allocation_bps
+            .clamp(0, 10_000);
         self.low_competition_candidate_liquidity_filter_enabled = false;
         self.low_competition_candidate_volume_filter_enabled = false;
         self.low_competition_min_market_liquidity_usd = Decimal::ZERO;
@@ -256,10 +340,12 @@ impl RewardBotConfig {
             Decimal::ZERO,
             decimal("100"),
         );
-        self.low_competition_max_top_of_book_flip_count =
-            self.low_competition_max_top_of_book_flip_count.clamp(0, 10_000);
-        self.low_competition_observation_window_sec =
-            self.low_competition_observation_window_sec.clamp(60, 86_400);
+        self.low_competition_max_top_of_book_flip_count = self
+            .low_competition_max_top_of_book_flip_count
+            .clamp(0, 10_000);
+        self.low_competition_observation_window_sec = self
+            .low_competition_observation_window_sec
+            .clamp(60, 86_400);
         self.low_competition_min_book_samples =
             self.low_competition_min_book_samples.clamp(1, 10_000);
         self.low_competition_quote_bid_rank = self.low_competition_quote_bid_rank.clamp(1, 3);
@@ -285,8 +371,9 @@ impl RewardBotConfig {
         );
         self.low_competition_cancel_confirm_sec =
             self.low_competition_cancel_confirm_sec.clamp(0, 3600);
-        self.low_competition_cancel_share_threshold_ratio_bps =
-            self.low_competition_cancel_share_threshold_ratio_bps.clamp(0, 10_000);
+        self.low_competition_cancel_share_threshold_ratio_bps = self
+            .low_competition_cancel_share_threshold_ratio_bps
+            .clamp(0, 10_000);
         self.low_competition_cancel_competition_multiple_factor = clamp_decimal(
             self.low_competition_cancel_competition_multiple_factor,
             Decimal::ZERO,
@@ -312,20 +399,38 @@ impl RewardBotConfig {
             Decimal::ZERO,
             decimal("100"),
         );
-        self.low_competition_global_open_order_share_bps =
-            self.low_competition_global_open_order_share_bps.clamp(0, 10_000);
+        self.low_competition_global_open_order_share_bps = self
+            .low_competition_global_open_order_share_bps
+            .clamp(0, 10_000);
+        // Legacy low-competition fields remain in the DTO/store for
+        // compatibility, but the separate sleeve is no longer executable.
+        self.low_competition_mode = RewardLowCompetitionMode::Off;
+        self.low_competition_max_markets = 0;
+        self.low_competition_max_open_orders = 0;
+        self.low_competition_global_open_order_share_bps = 0;
         self.ai_advisory_ttl_sec = self.ai_advisory_ttl_sec.clamp(60, 86_400);
         self.ai_advisory_batch_size = self.ai_advisory_batch_size.clamp(1, 12);
+        self.ai_strategy_hint_min_confidence = clamp_decimal(
+            self.ai_strategy_hint_min_confidence,
+            Decimal::ZERO,
+            Decimal::ONE,
+        );
         self.info_risk_ttl_sec = self.info_risk_ttl_sec.clamp(60, 86_400);
         self.info_risk_batch_size = self.info_risk_batch_size.clamp(1, 12);
         self.first_quote_quarantine_sec = self.first_quote_quarantine_sec.clamp(0, 86_400);
-        if matches!(self.ai_provider, RewardAiProvider::Anthropic) {
-            self.ai_request_format = RewardAiRequestFormat::AnthropicMessages;
-        } else if matches!(
-            self.ai_request_format,
-            RewardAiRequestFormat::AnthropicMessages
-        ) {
-            self.ai_request_format = RewardAiRequestFormat::OpenAiResponses;
+        match self.ai_provider {
+            RewardAiProvider::Anthropic => {
+                self.ai_request_format = RewardAiRequestFormat::AnthropicMessages;
+            }
+            RewardAiProvider::OpenAi
+                if matches!(
+                    self.ai_request_format,
+                    RewardAiRequestFormat::AnthropicMessages
+                ) =>
+            {
+                self.ai_request_format = RewardAiRequestFormat::OpenAiResponses;
+            }
+            RewardAiProvider::OpenAi => {}
         }
         self.safety_margin_cents =
             clamp_decimal(self.safety_margin_cents, Decimal::ZERO, decimal("20"));
@@ -354,8 +459,7 @@ impl RewardBotConfig {
         self.requote_drift_max_cancels_per_cycle =
             self.requote_drift_max_cancels_per_cycle.clamp(0, 100);
         // Risk control clamps
-        self.min_depth_usd =
-            clamp_decimal(self.min_depth_usd, Decimal::ZERO, decimal("1000000"));
+        self.min_depth_usd = clamp_decimal(self.min_depth_usd, Decimal::ZERO, decimal("1000000"));
         self.cancel_bid_rank = self
             .cancel_bid_rank
             .clamp(0, self.quote_bid_rank.saturating_sub(1));
@@ -412,23 +516,8 @@ impl RewardBotConfig {
     }
 
     #[must_use]
-    pub fn config_for_strategy_bucket(&self, bucket: RewardStrategyBucket) -> Self {
-        if bucket != RewardStrategyBucket::LowCompetition {
-            return self.clone();
-        }
-
-        let mut next = self.clone();
-        next.max_markets = self.low_competition_max_markets;
-        next.max_open_orders = self.low_competition_max_open_orders;
-        next.max_position_usd = self.low_competition_max_position_usd;
-        next.min_market_liquidity_usd = Decimal::ZERO;
-        next.min_market_volume_24h_usd = Decimal::ZERO;
-        next.min_market_score = self.low_competition_min_market_score;
-        next.max_market_spread_cents = self.low_competition_max_market_spread_cents;
-        next.max_spread_cents = self.low_competition_max_spread_cents;
-        next.quote_bid_rank = self.low_competition_quote_bid_rank;
-        next.safety_margin_cents = self.low_competition_safety_margin_cents;
-        next
+    pub fn config_for_strategy_bucket(&self, _bucket: RewardStrategyBucket) -> Self {
+        self.clone()
     }
 
     #[must_use]
@@ -511,6 +600,60 @@ impl RewardBotConfig {
         }
         if let Some(value) = patch.preferred_category_score_bonus {
             next.preferred_category_score_bonus = value;
+        }
+        if let Some(value) = patch.opportunity_metrics_enabled {
+            next.opportunity_metrics_enabled = value;
+        }
+        if let Some(value) = patch.opportunity_probe_notional_usd {
+            next.opportunity_probe_notional_usd = value;
+        }
+        if let Some(value) = patch.opportunity_min_reward_per_100_usd_day {
+            next.opportunity_min_reward_per_100_usd_day = value;
+        }
+        if let Some(value) = patch.opportunity_max_competition_multiple {
+            next.opportunity_max_competition_multiple = value;
+        }
+        if let Some(value) = patch.opportunity_max_account_allocation_bps {
+            next.opportunity_max_account_allocation_bps = value;
+        }
+        if let Some(value) = patch.opportunity_max_market_allocation_bps {
+            next.opportunity_max_market_allocation_bps = value;
+        }
+        if let Some(value) = patch.opportunity_min_exit_depth_usd {
+            next.opportunity_min_exit_depth_usd = value;
+        }
+        if let Some(value) = patch.opportunity_min_exit_depth_multiple {
+            next.opportunity_min_exit_depth_multiple = value;
+        }
+        if let Some(value) = patch.opportunity_max_entry_exit_slippage_cents {
+            next.opportunity_max_entry_exit_slippage_cents = value;
+        }
+        if let Some(value) = patch.opportunity_max_bad_fill_recovery_days {
+            next.opportunity_max_bad_fill_recovery_days = value;
+        }
+        if let Some(value) = patch.opportunity_observation_window_sec {
+            next.opportunity_observation_window_sec = value;
+        }
+        if let Some(value) = patch.opportunity_min_book_samples {
+            next.opportunity_min_book_samples = value;
+        }
+        if let Some(value) = patch.opportunity_max_midpoint_range_cents {
+            next.opportunity_max_midpoint_range_cents = value;
+        }
+        if let Some(value) = patch.opportunity_max_top_of_book_flip_count {
+            next.opportunity_max_top_of_book_flip_count = value;
+        }
+        if let Some(value) = patch.opportunity_reward_weight {
+            next.opportunity_reward_weight = value;
+        }
+        if let Some(value) = patch.opportunity_competition_weight {
+            next.opportunity_competition_weight = value;
+        }
+        if let Some(value) = patch.opportunity_exit_weight {
+            next.opportunity_exit_weight = value;
+        }
+        if let Some(value) = patch.opportunity_stability_weight {
+            next.opportunity_stability_weight = value;
         }
         if let Some(value) = patch.low_competition_mode {
             next.low_competition_mode = value;
@@ -647,6 +790,12 @@ impl RewardBotConfig {
         if let Some(value) = patch.ai_advisory_batch_size {
             next.ai_advisory_batch_size = value;
         }
+        if let Some(value) = patch.ai_strategy_hint_enabled {
+            next.ai_strategy_hint_enabled = value;
+        }
+        if let Some(value) = patch.ai_strategy_hint_min_confidence {
+            next.ai_strategy_hint_min_confidence = value;
+        }
         if let Some(value) = patch.info_risk_enabled {
             next.info_risk_enabled = value;
         }
@@ -707,8 +856,7 @@ impl RewardBotConfig {
         if let Some(requote_drift_cooldown_sec) = patch.requote_drift_cooldown_sec {
             next.requote_drift_cooldown_sec = requote_drift_cooldown_sec;
         }
-        if let Some(requote_drift_max_cancels_per_cycle) =
-            patch.requote_drift_max_cancels_per_cycle
+        if let Some(requote_drift_max_cancels_per_cycle) = patch.requote_drift_max_cancels_per_cycle
         {
             next.requote_drift_max_cancels_per_cycle = requote_drift_max_cancels_per_cycle;
         }
@@ -812,6 +960,8 @@ mod reward_config_tests {
             "ai_request_format": "openai_chat_completions",
             "ai_advisory_ttl_sec": 36000,
             "ai_advisory_batch_size": 6,
+            "ai_strategy_hint_enabled": true,
+            "ai_strategy_hint_min_confidence": 0.8,
             "info_risk_enabled": true,
             "info_risk_mode": "enforce",
             "info_risk_avoid_level": "high",
@@ -853,6 +1003,7 @@ mod reward_config_tests {
 
         assert_eq!(config.quote_bid_rank, 3);
         assert_eq!(config.ai_advisory_batch_size, 6);
+        assert_eq!(config.ai_strategy_hint_min_confidence, decimal("0.8"));
         assert_eq!(config.info_risk_batch_size, 3);
         assert!(config.require_info_risk_before_first_quote);
         assert_eq!(config.first_quote_quarantine_sec, 300);
@@ -861,19 +1012,33 @@ mod reward_config_tests {
         assert_eq!(config.requote_drift_confirm_sec, 90);
         assert_eq!(config.requote_drift_cooldown_sec, 240);
         assert_eq!(config.requote_drift_max_cancels_per_cycle, 2);
-        assert_eq!(config.low_competition_mode, RewardLowCompetitionMode::Observe);
-        assert_eq!(config.low_competition_max_markets, 8);
+        assert_eq!(config.low_competition_mode, RewardLowCompetitionMode::Off);
+        assert_eq!(config.low_competition_max_markets, 0);
+        assert_eq!(config.low_competition_max_open_orders, 0);
+        assert_eq!(config.low_competition_global_open_order_share_bps, 0);
         assert_eq!(config.low_competition_probe_notional_usd, decimal("10"));
         assert_eq!(config.low_competition_min_competition_share_bps, 5_000);
         assert_eq!(config.low_competition_max_account_allocation_bps, 1_500);
         assert!(!config.low_competition_candidate_liquidity_filter_enabled);
         assert!(!config.low_competition_candidate_volume_filter_enabled);
-        assert_eq!(config.low_competition_min_market_liquidity_usd, Decimal::ZERO);
-        assert_eq!(config.low_competition_min_market_volume_24h_usd, Decimal::ZERO);
+        assert_eq!(
+            config.low_competition_min_market_liquidity_usd,
+            Decimal::ZERO
+        );
+        assert_eq!(
+            config.low_competition_min_market_volume_24h_usd,
+            Decimal::ZERO
+        );
 
         let serialized = serde_json::to_value(config).expect("config serializes");
-        assert_eq!(serialized["low_competition_mode"], "observe");
-        assert_eq!(serialized["low_competition_min_competition_share_bps"], 5000);
+        assert_eq!(serialized["low_competition_mode"], "off");
+        assert_eq!(serialized["low_competition_max_markets"], 0);
+        assert_eq!(serialized["low_competition_max_open_orders"], 0);
+        assert_eq!(serialized["low_competition_global_open_order_share_bps"], 0);
+        assert_eq!(
+            serialized["low_competition_min_competition_share_bps"],
+            5000
+        );
         assert_eq!(
             serialized["low_competition_candidate_liquidity_filter_enabled"],
             false
@@ -885,10 +1050,7 @@ mod reward_config_tests {
         assert_eq!(serialized["low_competition_min_market_liquidity_usd"], "0");
         assert_eq!(serialized["low_competition_min_market_volume_24h_usd"], "0");
         assert_eq!(serialized["ai_provider"], "openai");
-        assert_eq!(
-            serialized["ai_request_format"],
-            "openai_chat_completions"
-        );
+        assert_eq!(serialized["ai_request_format"], "openai_chat_completions");
     }
 
     #[test]
@@ -905,7 +1067,35 @@ mod reward_config_tests {
     }
 
     #[test]
-    fn low_competition_candidate_filter_defaults_to_competition_not_liquidity() {
+    fn reward_ai_provider_aliases_glm_and_deepseek_to_openai() {
+        assert_eq!(
+            RewardAiProvider::from_str("glm").expect("parse glm alias"),
+            RewardAiProvider::OpenAi
+        );
+        assert_eq!(
+            RewardAiProvider::from_str("deepseek").expect("parse deepseek alias"),
+            RewardAiProvider::OpenAi
+        );
+        assert_eq!(
+            reward_ai_effective_request_format(
+                RewardAiProvider::OpenAi,
+                RewardAiRequestFormat::OpenAiResponses,
+                "glm-4.7",
+            ),
+            RewardAiRequestFormat::OpenAiChatCompletions
+        );
+        assert_eq!(
+            reward_ai_effective_request_format(
+                RewardAiProvider::OpenAi,
+                RewardAiRequestFormat::OpenAiResponses,
+                "deepseek-v4-flash",
+            ),
+            RewardAiRequestFormat::OpenAiChatCompletions
+        );
+    }
+
+    #[test]
+    fn legacy_low_competition_candidate_filter_is_disabled() {
         let config = RewardBotConfig {
             low_competition_mode: RewardLowCompetitionMode::Observe,
             low_competition_max_markets: 5,
@@ -917,11 +1107,9 @@ mod reward_config_tests {
         }
         .normalized();
 
-        let filter = config
-            .low_competition_candidate_filter()
-            .expect("low competition filter");
-        assert_eq!(filter.min_market_liquidity_usd, Decimal::ZERO);
-        assert_eq!(filter.min_market_volume_24h_usd, Decimal::ZERO);
+        assert_eq!(config.low_competition_mode, RewardLowCompetitionMode::Off);
+        assert_eq!(config.low_competition_max_markets, 0);
+        assert!(config.low_competition_candidate_filter().is_none());
 
         let config = RewardBotConfig {
             low_competition_candidate_liquidity_filter_enabled: true,
@@ -934,15 +1122,15 @@ mod reward_config_tests {
 
         assert!(!config.low_competition_candidate_liquidity_filter_enabled);
         assert!(!config.low_competition_candidate_volume_filter_enabled);
-        assert_eq!(config.low_competition_min_market_liquidity_usd, Decimal::ZERO);
-        assert_eq!(config.low_competition_min_market_volume_24h_usd, Decimal::ZERO);
-
-        let filter = config
-            .low_competition_candidate_filter()
-            .expect("low competition filter");
-        assert_eq!(filter.min_market_liquidity_usd, Decimal::ZERO);
-        assert_eq!(filter.min_market_volume_24h_usd, Decimal::ZERO);
-        assert!(filter.prefer_low_competition_ordering);
+        assert_eq!(
+            config.low_competition_min_market_liquidity_usd,
+            Decimal::ZERO
+        );
+        assert_eq!(
+            config.low_competition_min_market_volume_24h_usd,
+            Decimal::ZERO
+        );
+        assert!(config.low_competition_candidate_filter().is_none());
     }
 
     #[test]
@@ -953,8 +1141,10 @@ mod reward_config_tests {
             config.low_competition_candidate_max_competition_multiple,
             decimal("5")
         );
-        assert!(config.low_competition_candidate_max_competition_multiple
-            >= config.low_competition_max_competition_multiple);
+        assert!(
+            config.low_competition_candidate_max_competition_multiple
+                >= config.low_competition_max_competition_multiple
+        );
 
         // 低于正式 gate 阈值会被抬升到 gate 阈值，避免候选阈值抢正式 gate 的活
         let lifted = RewardBotConfig {

@@ -1,3 +1,84 @@
+#[tokio::test]
+async fn reward_ai_glm_chat_completion_uses_v4_json_object_request() {
+    let (base_url, captured) = crate::test_http::spawn_json_response_server(
+        r#"{"choices":[{"message":{"content":"{\"allow_quote\":true,\"confidence\":0.8,\"strategy_hint\":{\"quote_mode\":\"double\",\"bid_rank\":2,\"max_condition_notional_usd\":10},\"reasons\":[],\"metrics\":{}}"}}]}"#,
+    )
+    .await;
+    let connector =
+        RewardAiAdvisoryConnector::new(format!("{base_url}/api/coding/paas/v4"), "test-key", 5)
+            .expect("build connector");
+    let request = RewardAiAdvisoryRequest {
+        condition_id: "condition-1".to_string(),
+        provider: RewardAiProvider::OpenAi,
+        request_format: RewardAiRequestFormat::OpenAiChatCompletions,
+        model: "glm-4.7".to_string(),
+        input_hash: "hash".to_string(),
+        payload: serde_json::json!({"question": "Will this market resolve yes?"}),
+    };
+
+    let decision = connector.advise(&request).await.expect("glm mock advise");
+    let captured = captured.await.expect("captured request");
+    let headers = captured.headers.to_ascii_lowercase();
+
+    assert_eq!(
+        captured.request_line,
+        "POST /api/coding/paas/v4/chat/completions HTTP/1.1"
+    );
+    assert!(headers.contains("authorization: bearer test-key"));
+    assert!(headers.contains("api-key: test-key"));
+    assert_eq!(captured.body["model"], serde_json::json!("glm-4.7"));
+    assert_eq!(
+        captured.body.pointer("/response_format/type"),
+        Some(&serde_json::json!("json_object"))
+    );
+    assert_eq!(
+        captured.body["max_tokens"],
+        serde_json::json!(REWARD_AI_CHAT_COMPLETION_MAX_TOKENS)
+    );
+    assert!(captured.body.get("max_completion_tokens").is_none());
+    assert_eq!(decision.suitability, RewardAiSuitability::Allow);
+}
+
+#[tokio::test]
+async fn reward_ai_deepseek_chat_completion_adds_v1_for_root_gateway() {
+    let (base_url, captured) = crate::test_http::spawn_json_response_server(
+        r#"{"choices":[{"message":{"content":"{\"allow_quote\":false,\"confidence\":0.4,\"strategy_hint\":{\"quote_mode\":\"none\",\"bid_rank\":3,\"max_condition_notional_usd\":0},\"reasons\":[\"risk\"],\"metrics\":{}}"}}]}"#,
+    )
+    .await;
+    let connector =
+        RewardAiAdvisoryConnector::new(base_url, "test-key", 5).expect("build connector");
+    let request = RewardAiAdvisoryRequest {
+        condition_id: "condition-2".to_string(),
+        provider: RewardAiProvider::OpenAi,
+        request_format: RewardAiRequestFormat::OpenAiChatCompletions,
+        model: "deepseek-v4-flash".to_string(),
+        input_hash: "hash".to_string(),
+        payload: serde_json::json!({"question": "Will this market resolve yes?"}),
+    };
+
+    let decision = connector
+        .advise(&request)
+        .await
+        .expect("deepseek mock advise");
+    let captured = captured.await.expect("captured request");
+
+    assert_eq!(captured.request_line, "POST /v1/chat/completions HTTP/1.1");
+    assert_eq!(
+        captured.body["model"],
+        serde_json::json!("deepseek-v4-flash")
+    );
+    assert_eq!(
+        captured.body.pointer("/response_format/type"),
+        Some(&serde_json::json!("json_object"))
+    );
+    assert_eq!(
+        captured.body["max_tokens"],
+        serde_json::json!(REWARD_AI_CHAT_COMPLETION_MAX_TOKENS)
+    );
+    assert!(captured.body.get("max_completion_tokens").is_none());
+    assert_eq!(decision.suitability, RewardAiSuitability::Avoid);
+}
+
 #[test]
 fn reward_ai_confidence_is_clamped_to_unit_interval() {
     let high = parse_reward_ai_decision(
@@ -28,7 +109,7 @@ fn reward_ai_confidence_is_clamped_to_unit_interval() {
 #[test]
 fn reward_ai_parse_binary_allow_quote_decision() {
     let parsed = parse_reward_ai_decision(
-        r#"{"allow_quote":true,"confidence":0.82,"reasons":["pricing acceptable for ttl"],"metrics":{"edge":"ok"}}"#,
+        r#"{"allow_quote":true,"confidence":0.82,"strategy_hint":{"quote_mode":"single_yes","bid_rank":2,"max_condition_notional_usd":12.5},"reasons":["pricing acceptable for ttl"],"metrics":{"edge":"ok"}}"#,
     )
     .expect("parse binary response");
 
@@ -36,6 +117,14 @@ fn reward_ai_parse_binary_allow_quote_decision() {
     assert_eq!(parsed.quote_mode, RewardPlanQuoteMode::Double);
     assert_eq!(parsed.confidence, Decimal::from_str("0.82").unwrap());
     assert_eq!(parsed.reasons, vec!["pricing acceptable for ttl"]);
+    assert_eq!(
+        parsed.metrics.pointer("/strategy_hint/quote_mode"),
+        Some(&serde_json::json!("single_yes"))
+    );
+    assert_eq!(
+        parsed.metrics.pointer("/strategy_hint/bid_rank"),
+        Some(&serde_json::json!(2))
+    );
 }
 
 #[test]

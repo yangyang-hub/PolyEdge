@@ -131,7 +131,10 @@ async fn refresh_reward_ai_advisory_provider_batch(
                 cycle.config.ai_advisory_ttl_sec,
                 OffsetDateTime::now_utc(),
             );
-            state.reward_bot_service.save_market_advisory(&advisory).await?;
+            state
+                .reward_bot_service
+                .save_market_advisory(&advisory)
+                .await?;
             report.saved += 1;
             saved.insert(item.condition_id.clone());
             apply_reward_ai_advisory_to_refresh_cycle(
@@ -209,6 +212,7 @@ async fn build_reward_ai_advisory_batch_requests(
                 REWARD_AI_CANDLE_SOURCE_LIMIT_PER_TOKEN,
             )
             .await?;
+        let request_format = reward_ai_effective_request_format_for_model(&cycle.config, model);
         let request = build_reward_ai_advisory_request(
             market,
             &plan_for_request,
@@ -220,7 +224,7 @@ async fn build_reward_ai_advisory_batch_requests(
             &cycle.config,
             cycle.config.ai_advisory_ttl_sec,
             cycle.config.ai_provider,
-            cycle.config.ai_request_format,
+            request_format,
             model,
         )?;
         if let Some(cached) =
@@ -454,7 +458,10 @@ async fn refresh_reward_info_risk_provider_batch(
                 cycle.config.info_risk_ttl_sec,
                 OffsetDateTime::now_utc(),
             );
-            state.reward_bot_service.save_market_info_risk(&risk).await?;
+            state
+                .reward_bot_service
+                .save_market_info_risk(&risk)
+                .await?;
             report.saved += 1;
             saved.insert(item.condition_id.clone());
         }
@@ -503,6 +510,7 @@ async fn build_reward_info_risk_batch_requests(
             .plans
             .iter()
             .find(|plan| plan.condition_id == condition_id.as_str());
+        let request_format = reward_ai_effective_request_format_for_model(&cycle.config, model);
         let request = build_reward_info_risk_assessment_request(
             market,
             plan_for_request,
@@ -511,7 +519,7 @@ async fn build_reward_info_risk_batch_requests(
             &cycle.open_orders,
             &cycle.config,
             cycle.config.ai_provider,
-            cycle.config.ai_request_format,
+            request_format,
             model,
         )?;
         if let Some(cached) =

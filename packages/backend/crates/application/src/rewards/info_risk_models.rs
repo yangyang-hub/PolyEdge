@@ -316,7 +316,6 @@ pub fn build_reward_info_risk_assessment_request(
         "strategy_config": {
             "info_risk_mode": config.info_risk_mode,
             "info_risk_avoid_level": config.info_risk_avoid_level,
-            "low_competition_info_risk_avoid_level": config.low_competition_info_risk_avoid_level,
             "selection_mode": config.selection_mode,
             "quote_mode": config.quote_mode,
             "dominant_min_probability": config.dominant_min_probability,
@@ -351,9 +350,13 @@ fn reward_info_risk_cache_key_payload(
     query: &str,
 ) -> Value {
     json!({
+        // schema_version 5: legacy low-competition sleeve settings are no
+        // longer part of strategy context; all candidates use the unified
+        // info-risk policy.
+        //
         // schema_version 4: provider output contract is binary allow_quote.
         // Keep detailed risk taxonomy as internal compatibility fields only.
-        "schema_version": 4,
+        "schema_version": 5,
         "cache_domain": "reward_info_risk",
         "provider_decision_schema": "binary_allow_quote_v1",
         "evaluation_policy_version": 1,
@@ -375,7 +378,6 @@ fn reward_info_risk_cache_key_payload(
         "strategy_config": {
             "info_risk_mode": config.info_risk_mode,
             "info_risk_avoid_level": config.info_risk_avoid_level,
-            "low_competition_info_risk_avoid_level": config.low_competition_info_risk_avoid_level,
             "selection_mode": config.selection_mode,
             "quote_mode": config.quote_mode,
             "dominant_min_probability": config.dominant_min_probability,
@@ -408,13 +410,7 @@ pub fn apply_reward_info_risks(
             continue;
         };
         plan.info_risk = Some(risk.clone());
-        let avoid_level = if config.low_competition_mode == RewardLowCompetitionMode::Enforce
-            && plan.strategy_bucket == RewardStrategyBucket::LowCompetition
-        {
-            config.low_competition_info_risk_avoid_level
-        } else {
-            config.info_risk_avoid_level
-        };
+        let avoid_level = config.info_risk_avoid_level;
         if config.info_risk_mode != RewardSelectionMode::Enforce
             || !reward_info_risk_blocks_quote(&risk, avoid_level)
         {
@@ -426,11 +422,7 @@ pub fn apply_reward_info_risks(
         plan.eligible = false;
         plan.quote_mode = RewardPlanQuoteMode::None;
         plan.legs.clear();
-        plan.reason = format!(
-            "info risk {}: {}",
-            risk.risk_level.as_str(),
-            risk.summary
-        );
+        plan.reason = format!("info risk {}: {}", risk.risk_level.as_str(), risk.summary);
     }
 }
 
@@ -439,10 +431,7 @@ fn reward_info_risk_blocks_quote(
     avoid_level: RewardInfoRiskLevel,
 ) -> bool {
     risk.resolution_imminent
-        || matches!(
-            risk.risk_type,
-            RewardInfoRiskType::OfficialResult
-        )
+        || matches!(risk.risk_type, RewardInfoRiskType::OfficialResult)
         || match avoid_level {
             RewardInfoRiskLevel::Low | RewardInfoRiskLevel::Medium => {
                 risk.risk_level.rank() >= avoid_level.rank()

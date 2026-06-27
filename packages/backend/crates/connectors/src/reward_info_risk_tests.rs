@@ -1,5 +1,50 @@
 use super::*;
 
+#[tokio::test]
+async fn reward_info_risk_deepseek_chat_completion_uses_json_object_request() {
+    let (base_url, captured) = crate::test_http::spawn_json_response_server(
+        r#"{"choices":[{"message":{"content":"{\"allow_quote\":true,\"confidence\":0.76,\"summary\":\"quiet\",\"sources\":[],\"metrics\":{}}"}}]}"#,
+    )
+    .await;
+    let connector =
+        RewardInfoRiskConnector::new(base_url, "test-key", 5, false).expect("build connector");
+    let request = RewardInfoRiskAssessmentRequest {
+        condition_id: "condition-1".to_string(),
+        provider: RewardAiProvider::OpenAi,
+        request_format: RewardAiRequestFormat::OpenAiChatCompletions,
+        model: "deepseek-v4-flash".to_string(),
+        query: "market news".to_string(),
+        query_hash: "query-hash".to_string(),
+        input_hash: "input-hash".to_string(),
+        payload: serde_json::json!({"question": "Will this resolve yes?"}),
+    };
+
+    let decision = connector
+        .assess(&request)
+        .await
+        .expect("deepseek mock assess");
+    let captured = captured.await.expect("captured request");
+    let headers = captured.headers.to_ascii_lowercase();
+
+    assert_eq!(captured.request_line, "POST /v1/chat/completions HTTP/1.1");
+    assert!(headers.contains("authorization: bearer test-key"));
+    assert!(headers.contains("api-key: test-key"));
+    assert_eq!(
+        captured.body["model"],
+        serde_json::json!("deepseek-v4-flash")
+    );
+    assert_eq!(
+        captured.body.pointer("/response_format/type"),
+        Some(&serde_json::json!("json_object"))
+    );
+    assert_eq!(
+        captured.body["max_tokens"],
+        serde_json::json!(REWARD_INFO_RISK_CHAT_COMPLETION_MAX_TOKENS)
+    );
+    assert!(captured.body.get("max_completion_tokens").is_none());
+    assert_eq!(decision.risk_level, RewardInfoRiskLevel::Low);
+}
+
 #[test]
 fn reward_info_risk_confidence_is_clamped_to_unit_interval() {
     let high = parse_reward_info_risk_decision(
