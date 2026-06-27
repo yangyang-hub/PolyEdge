@@ -120,6 +120,25 @@ fn live_cancel_reason(
     let Some(plan) = plans.get(order.condition_id.as_str()) else {
         return Some("market no longer offers rewards".to_string());
     };
+    if reward_quote_plan_event_window_blocks_new_buy(plan)
+        && order.status == ManagedRewardOrderStatus::Planned
+        && order.external_order_id.is_none()
+    {
+        let reason = plan
+            .event_window
+            .as_ref()
+            .map(|assessment| assessment.reason.as_str())
+            .unwrap_or("event window blocks new BUY quotes");
+        return Some(format!("event window blocks new BUY submission: {reason}"));
+    }
+    if reward_quote_plan_event_window_cancels_open_buy(plan) {
+        let reason = plan
+            .event_window
+            .as_ref()
+            .map(|assessment| assessment.reason.as_str())
+            .unwrap_or("event window requires BUY cancellation");
+        return Some(format!("event window requires BUY cancellation: {reason}"));
+    }
     if !plan.eligible {
         return Some("market dropped below eligibility threshold".to_string());
     }

@@ -96,6 +96,57 @@ pub struct RewardMarketCandleSample {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RewardMarketEventWindow {
+    pub condition_id: String,
+    pub source: String,
+    pub event_type: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(with = "time::serde::rfc3339::option")]
+    pub event_start_at: Option<OffsetDateTime>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(with = "time::serde::rfc3339::option")]
+    pub event_end_at: Option<OffsetDateTime>,
+    pub confidence: RewardEventTimeConfidence,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_url: Option<String>,
+    #[serde(default)]
+    pub source_payload: Value,
+    #[serde(default)]
+    pub notes: String,
+    #[serde(default = "default_true")]
+    pub active: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reviewed_by: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(with = "time::serde::rfc3339::option")]
+    pub reviewed_at: Option<OffsetDateTime>,
+    #[serde(with = "time::serde::rfc3339")]
+    pub updated_at: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RewardEventWindowAssessment {
+    pub status: RewardEventWindowStatus,
+    pub reason: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(with = "time::serde::rfc3339::option")]
+    pub event_start_at: Option<OffsetDateTime>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(with = "time::serde::rfc3339::option")]
+    pub event_end_at: Option<OffsetDateTime>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confidence: Option<RewardEventTimeConfidence>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub event_type: Option<String>,
+}
+
+const fn default_true() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RewardQuoteLeg {
     pub token_id: String,
     pub outcome: String,
@@ -347,6 +398,8 @@ pub struct RewardQuotePlan {
     pub ai_advisory: Option<RewardMarketAdvisory>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub info_risk: Option<RewardMarketInfoRisk>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub event_window: Option<RewardEventWindowAssessment>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub midpoint: Option<Decimal>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -356,6 +356,14 @@ pub struct RewardBotConfig {
     pub info_risk_ttl_sec: u64,
     /// Number of info-risk markets to send in one provider request. 1 = single-market calls.
     pub info_risk_batch_size: u16,
+    /// Event-window hard gate based on trusted structured event times.
+    pub event_window_enabled: bool,
+    pub event_window_min_confidence: RewardEventTimeConfidence,
+    pub event_window_stop_new_quote_before_start_sec: u64,
+    pub event_window_cancel_open_buy_before_start_sec: u64,
+    pub event_window_resume_after_event_end_sec: u64,
+    pub event_window_unknown_event_time_mode: RewardUnknownEventTimeMode,
+    pub event_window_gamma_unreviewed_dates_mode: RewardGammaEventDateMode,
     /// When info-risk enforce mode is active, require a cached provider risk
     /// result before the first live BUY quote for a condition.
     pub require_info_risk_before_first_quote: bool,
@@ -614,6 +622,20 @@ pub struct RewardBotConfigPatch {
     pub info_risk_ttl_sec: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub info_risk_batch_size: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub event_window_enabled: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub event_window_min_confidence: Option<RewardEventTimeConfidence>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub event_window_stop_new_quote_before_start_sec: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub event_window_cancel_open_buy_before_start_sec: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub event_window_resume_after_event_end_sec: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub event_window_unknown_event_time_mode: Option<RewardUnknownEventTimeMode>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub event_window_gamma_unreviewed_dates_mode: Option<RewardGammaEventDateMode>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub require_info_risk_before_first_quote: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

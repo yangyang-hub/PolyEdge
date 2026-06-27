@@ -33,6 +33,12 @@ pub trait RewardBotStore: Send + Sync {
         now: OffsetDateTime,
     ) -> Result<()>;
     async fn upsert_markets(&self, markets: &[RewardMarket]) -> Result<()>;
+    async fn upsert_market_event_windows(&self, windows: &[RewardMarketEventWindow])
+    -> Result<()>;
+    async fn list_effective_market_event_windows(
+        &self,
+        condition_ids: &[String],
+    ) -> Result<Vec<RewardMarketEventWindow>>;
     /// Replace the current rewards quote plan snapshot.
     async fn save_quote_plans(&self, plans: &[RewardQuotePlan]) -> Result<()>;
     /// Append legacy low-competition observations when reading historical data.

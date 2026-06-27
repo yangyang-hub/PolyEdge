@@ -13,6 +13,15 @@ fn apply_smart_money_config_value(
         "signal_advisory_enabled" => {
             config.signal_advisory_enabled = parse_smart_bool_config(key, value)?;
         }
+        "signal_advisory_provider" => {
+            config.signal_advisory_provider = RewardAiProvider::from_str(value)?;
+        }
+        "signal_advisory_request_format" => {
+            config.signal_advisory_request_format = RewardAiRequestFormat::from_str(value)?;
+        }
+        "signal_advisory_model" => {
+            config.signal_advisory_model = value.trim().to_string();
+        }
         "min_trade_count" => config.min_trade_count = parse_smart_i64_config(key, value)?,
         "min_settled_trade_count" => {
             config.min_settled_trade_count = parse_smart_i64_config(key, value)?;
@@ -59,6 +68,18 @@ fn smart_money_config_entries(config: &SmartMoneyConfig) -> Vec<(String, String)
         (
             "signal_advisory_enabled".to_string(),
             config.signal_advisory_enabled.to_string(),
+        ),
+        (
+            "signal_advisory_provider".to_string(),
+            config.signal_advisory_provider.as_str().to_string(),
+        ),
+        (
+            "signal_advisory_request_format".to_string(),
+            config.signal_advisory_request_format.as_str().to_string(),
+        ),
+        (
+            "signal_advisory_model".to_string(),
+            config.signal_advisory_model.clone(),
         ),
         (
             "min_trade_count".to_string(),

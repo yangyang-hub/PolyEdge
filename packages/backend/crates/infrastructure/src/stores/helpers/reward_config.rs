@@ -258,6 +258,29 @@ fn apply_reward_config_value(config: &mut RewardBotConfig, key: &str, value: &st
         "info_risk_batch_size" => {
             config.info_risk_batch_size = parse_u16_config(key, value)?;
         }
+        "event_window_enabled" => {
+            config.event_window_enabled = parse_bool_config(key, value)?;
+        }
+        "event_window_min_confidence" => {
+            config.event_window_min_confidence = RewardEventTimeConfidence::from_str(value)?;
+        }
+        "event_window_stop_new_quote_before_start_sec" => {
+            config.event_window_stop_new_quote_before_start_sec = parse_u64_config(key, value)?;
+        }
+        "event_window_cancel_open_buy_before_start_sec" => {
+            config.event_window_cancel_open_buy_before_start_sec = parse_u64_config(key, value)?;
+        }
+        "event_window_resume_after_event_end_sec" => {
+            config.event_window_resume_after_event_end_sec = parse_u64_config(key, value)?;
+        }
+        "event_window_unknown_event_time_mode" => {
+            config.event_window_unknown_event_time_mode =
+                RewardUnknownEventTimeMode::from_str(value)?;
+        }
+        "event_window_gamma_unreviewed_dates_mode" => {
+            config.event_window_gamma_unreviewed_dates_mode =
+                RewardGammaEventDateMode::from_str(value)?;
+        }
         "require_info_risk_before_first_quote" => {
             config.require_info_risk_before_first_quote = parse_bool_config(key, value)?;
         }
@@ -679,6 +702,41 @@ fn reward_config_entries(config: &RewardBotConfig) -> Vec<(&'static str, String)
         (
             "info_risk_batch_size",
             config.info_risk_batch_size.to_string(),
+        ),
+        (
+            "event_window_enabled",
+            config.event_window_enabled.to_string(),
+        ),
+        (
+            "event_window_min_confidence",
+            config.event_window_min_confidence.as_str().to_string(),
+        ),
+        (
+            "event_window_stop_new_quote_before_start_sec",
+            config
+                .event_window_stop_new_quote_before_start_sec
+                .to_string(),
+        ),
+        (
+            "event_window_cancel_open_buy_before_start_sec",
+            config
+                .event_window_cancel_open_buy_before_start_sec
+                .to_string(),
+        ),
+        (
+            "event_window_resume_after_event_end_sec",
+            config.event_window_resume_after_event_end_sec.to_string(),
+        ),
+        (
+            "event_window_unknown_event_time_mode",
+            config.event_window_unknown_event_time_mode.as_str().to_string(),
+        ),
+        (
+            "event_window_gamma_unreviewed_dates_mode",
+            config
+                .event_window_gamma_unreviewed_dates_mode
+                .as_str()
+                .to_string(),
         ),
         (
             "require_info_risk_before_first_quote",

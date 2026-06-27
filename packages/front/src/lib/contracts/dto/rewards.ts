@@ -5,7 +5,10 @@ import type {
   RewardAiProvider,
   RewardAiRequestFormat,
   RewardAiSuitability,
+  RewardEventTimeConfidence,
+  RewardEventWindowStatus,
   RewardFillRole,
+  RewardGammaEventDateMode,
   RewardInfoDirectionalRisk,
   RewardInfoRiskLevel,
   RewardInfoRiskType,
@@ -17,6 +20,7 @@ import type {
   RewardRiskSeverity,
   RewardSelectionMode,
   RewardStrategyBucket,
+  RewardUnknownEventTimeMode,
 } from "./primitives";
 
 export type RewardBotConfigDto = {
@@ -113,6 +117,13 @@ export type RewardBotConfigDto = {
   info_risk_avoid_level: RewardInfoRiskLevel;
   info_risk_ttl_sec: number;
   info_risk_batch_size: number;
+  event_window_enabled: boolean;
+  event_window_min_confidence: RewardEventTimeConfidence;
+  event_window_stop_new_quote_before_start_sec: number;
+  event_window_cancel_open_buy_before_start_sec: number;
+  event_window_resume_after_event_end_sec: number;
+  event_window_unknown_event_time_mode: RewardUnknownEventTimeMode;
+  event_window_gamma_unreviewed_dates_mode: RewardGammaEventDateMode;
   require_info_risk_before_first_quote: boolean;
   first_quote_quarantine_sec: number;
   safety_margin_cents: DecimalValue;
@@ -328,6 +339,16 @@ export type RewardMarketInfoRiskDto = {
   expires_at: string;
 };
 
+export type RewardEventWindowAssessmentDto = {
+  status: RewardEventWindowStatus;
+  reason: string;
+  event_start_at?: string | null;
+  event_end_at?: string | null;
+  source?: string | null;
+  confidence?: RewardEventTimeConfidence | null;
+  event_type?: string | null;
+};
+
 export type RewardQuotePlanDto = {
   condition_id: string;
   market_slug: string;
@@ -345,6 +366,7 @@ export type RewardQuotePlanDto = {
   low_competition_metrics?: RewardLowCompetitionMetricsDto | null;
   ai_advisory?: RewardMarketAdvisoryDto | null;
   info_risk?: RewardMarketInfoRiskDto | null;
+  event_window?: RewardEventWindowAssessmentDto | null;
   midpoint?: DecimalValue | null;
   live_skip_until?: string | null;
   live_skip_reason?: string | null;

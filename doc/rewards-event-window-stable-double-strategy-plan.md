@@ -2,7 +2,7 @@
 
 最后更新：2026-06-27
 
-状态：方案设计。当前仓库已具备 rewards 双边挂单、盘口稳定性机会评分、AI advisory、info-risk 缓存 gate、orderbook 服务缓存和 live 撤单风控，但尚未具备结构化 `event_start_at` 数据、事件窗口硬 gate、外部赛程/日历同步、互补 YES/NO 持仓合并或 redeem 执行链路。本文描述待实现能力，不代表当前实盘已启用。
+状态：核心事件窗口已实现。当前仓库已具备 `reward_market_event_windows` 数据层、Gamma 日期候选同步、事件窗口配置、planner/live placement/live cancel/provider prefilter 硬 gate、前端配置字段和单元测试。外部官方赛程/日历 producer、manual override 管理 UI、稳定双边独立展示、互补 YES/NO 持仓合并或 redeem 执行链路仍未实现，不能描述为当前可用能力。
 
 ## 背景
 
@@ -75,7 +75,7 @@ Rewards 做市策略在安静市场上可以依靠买一/买二挂单获取 make
 
 ## 数据模型
 
-新增表建议：
+已实现表：
 
 ```sql
 CREATE TABLE reward_market_event_windows (
@@ -97,7 +97,7 @@ CREATE TABLE reward_market_event_windows (
 );
 ```
 
-可选派生快照：
+可选派生快照（当前未建 DB view，effective selection 由 application/store 查询实现）：
 
 ```sql
 CREATE VIEW reward_market_effective_event_windows AS
@@ -205,7 +205,7 @@ if event_start_at <= now <= event_end_at + resume_after_event_end_sec:
 ### 插入位置
 
 1. Candidate/list query：可选预过滤，降低后续计算量，但不作为唯一保护。
-2. Planner：给 quote plan 写入 `event_window_status`、`event_window_reason`，在硬 gate 命中时 `eligible=false`。
+2. Planner/live cycle：给 quote plan 写入 `event_window` assessment；`StopNewQuotes` 和 unknown block 模式只阻断新增 BUY，`CancelOpenBuys`、`InEventWindow`、`PostEventCooldown` 才把计划 hard-block 并触发已有 BUY 撤单。
 3. Provider prefilter：进入窗口的无敞口计划不请求 AI，避免浪费 provider 调用；已有订单/持仓仍可优先刷新风险缓存用于解释。
 4. Live placement：提交前重新检查事件窗口，防止 plan 与实际 POST 之间跨入风险窗口。
 5. Event-driven hard-risk cancel：活跃 token 收到 orderbook 更新时，对已进入 `CancelOpenBuys` / `InEventWindow` 的 BUY 立即撤单。
@@ -368,10 +368,10 @@ stable_double_metrics
 
 ### Phase 1：事件窗口数据层
 
-- 新增 `reward_market_event_windows` migration。
-- Application 增加模型、Store trait 方法和 effective window 查询。
-- Infrastructure 增加 Postgres/in-memory 实现。
-- Orderbook/Gamma sync 解析 Gamma 日期作为低/中置信候选，不直接硬 gate。
+- 已完成：新增 `0054_reward_market_event_windows.sql`。
+- 已完成：Application 增加模型、Store trait 方法和 effective window 查询。
+- 已完成：Infrastructure 增加 Postgres/in-memory 实现。
+- 已完成：Orderbook/Gamma sync 解析 Gamma 日期作为低/中置信候选；默认 `gamma_unreviewed_dates_mode=ignore`，不直接硬 gate。
 - 增加 worker CLI 或 admin path 支持 manual override 导入。
 
 验收：
@@ -382,11 +382,11 @@ stable_double_metrics
 
 ### Phase 2：事件窗口硬 Gate
 
-- `RewardBotConfig` 增加事件窗口配置。
-- Planner 写入事件窗口状态，并按 hard gate 修改 eligibility。
-- Live placement 提交前 last-look 增加事件窗口检查。
-- Event cancel worker / fast reconcile 增加 BUY 撤单 reason。
-- Provider refresh prefilter 跳过已被事件窗口硬拦截的无敞口计划。
+- 已完成：`RewardBotConfig` 增加事件窗口配置，并接入 Postgres key-value、API patch、前端 DTO/schema/config panel。
+- 已完成：live cycle 写入事件窗口状态；`CancelOpenBuys` / `InEventWindow` / `PostEventCooldown` 会使计划 hard-block，`StopNewQuotes` 只阻断新增 BUY。
+- 已完成：Live placement 和 BUY 提交前 last-look 会阻断进入事件窗口的新 BUY intent；已有 live BUY 只在撤单窗口撤。
+- 已完成：Fast reconcile / event cancel 共用 `live_cancel_reason`，事件窗口撤 BUY 会产生专用 reason；SELL exit 不因事件窗口阻断。
+- 已完成：Provider refresh prefilter 跳过被事件窗口阻断新增的无敞口计划；已有订单/持仓仍优先保留用于风险解释。
 
 验收：
 
@@ -408,8 +408,8 @@ stable_double_metrics
 
 ### Phase 4：稳定双边 Observe
 
-- 复用 `opportunity_metrics` 和 book history 生成 `stable_double_metrics`。
-- 在 quote plan 中展示 observe 结果，不改变实盘行为。
+- 已部分完成：当前统一 `opportunity_metrics` 已复用 book history 计算 midpoint range、top-of-book flip、退出深度、坏成交恢复天数、竞争倍数和 100U 日奖，并在 quote plan/front 表格展示。
+- 未完成：独立 `stable_double_metrics` 命名结构和专用“稳定双边通过/样本不足”状态列。
 - 增加配置和前端展示。
 
 验收：
@@ -419,9 +419,9 @@ stable_double_metrics
 
 ### Phase 5：稳定双边 Enforce
 
-- 将 stable double gate 接入 planner/live materializer。
-- 默认小额度、买一、严格安全边际、严格事件窗口。
-- BUY 成交后沿用当前 sibling cancel + SELL exit。
+- 已部分完成：统一 `opportunity_metrics` 已参与 score/eligibility，事件窗口已作为新增 BUY/撤 BUY 前置硬 gate，默认买一和安全边际沿用现有 live materializer。
+- 未完成：独立 stable-double enforce mode；当前仍通过 `quote_mode=double|auto`、`selection_mode`、机会评分和 live materializer 组合实现，不提供单独稳定双边策略 profile。
+- 当前 BUY 成交后仍沿用 sibling cancel + SELL exit。
 
 验收：
 
@@ -443,11 +443,12 @@ stable_double_metrics
 
 ## 测试计划
 
-- Unit tests：事件窗口状态机、confidence 优先级、unknown policy、stable double gate。
-- Store tests：event window upsert/effective query/manual override 优先级。
-- Planner tests：事件窗口拦截 eligibility，stable double observe/enforce。
-- Worker tests：live placement 事件窗口 last-look、event cancel BUY 撤单、SELL exit 不阻断。
-- Connector tests：Gamma 日期解析不误升 high confidence。
+- 已完成：Application unit tests 覆盖事件窗口 stop-new、cancel-open、in-event、cooldown、unknown policy 和 confidence gate。
+- 已完成：Backend compile check 覆盖 Postgres/in-memory store wiring、Gamma parser/orderbook producer、worker live cancel/placement wiring。
+- 待补：Store integration tests 覆盖 Postgres upsert/effective query/manual override 优先级。
+- 待补：Worker integration tests 覆盖 live placement 事件窗口 last-look、event cancel BUY 撤单、SELL exit 不阻断。
+- 待补：Connector fixture tests 覆盖 Gamma 日期解析不误升 high confidence。
+- 待补：独立 stable-double observe/enforce 测试；当前稳定性逻辑由统一 `opportunity_metrics` 覆盖，没有独立 stable-double profile。
 - Integration/smoke：本地 Postgres + orderbook cache + worker run-once，验证 quote plan reason 和撤单事件。
 
 ## 风险与缓解

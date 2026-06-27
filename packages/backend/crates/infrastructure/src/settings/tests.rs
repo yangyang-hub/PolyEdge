@@ -222,6 +222,18 @@ mod tests {
                 "POLYEDGE_REWARDS__AI_MODEL".to_string(),
                 "glm-test-model".to_string(),
             ),
+            (
+                "POLYEDGE_SMART_MONEY__SIGNAL_ADVISORY_OPENAI_API_KEY".to_string(),
+                "smart-openai-compatible-test-key".to_string(),
+            ),
+            (
+                "POLYEDGE_SMART_MONEY__SIGNAL_ADVISORY_OPENAI_BASE_URL".to_string(),
+                "https://smart-glm.example/api/paas/v4".to_string(),
+            ),
+            (
+                "POLYEDGE_SMART_MONEY__SIGNAL_ADVISORY_REQUEST_TIMEOUT_SECS".to_string(),
+                "120".to_string(),
+            ),
             ("POLYEDGE_WORKER__POLL_NEWS".to_string(), "true".to_string()),
             (
                 "POLYEDGE_WORKER__PROMOTE_NEWS_EVENTS".to_string(),
@@ -402,6 +414,23 @@ mod tests {
             "https://glm.example/api/paas/v4"
         );
         assert_eq!(settings.rewards.ai_model, "glm-test-model");
+        assert_eq!(
+            settings
+                .smart_money
+                .signal_advisory_openai_api_key
+                .as_deref(),
+            Some("smart-openai-compatible-test-key")
+        );
+        assert_eq!(
+            settings.smart_money.signal_advisory_openai_base_url,
+            "https://smart-glm.example/api/paas/v4"
+        );
+        assert_eq!(
+            settings
+                .smart_money
+                .signal_advisory_request_timeout_secs,
+            120
+        );
         assert!(settings.worker.poll_news);
         assert!(settings.worker.promote_news_events);
         assert!(settings.worker.poll_reward_bot);

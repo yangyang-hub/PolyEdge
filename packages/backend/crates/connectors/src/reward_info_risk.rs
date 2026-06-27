@@ -55,6 +55,7 @@ impl RewardInfoRiskConnector {
         &self,
         request: &RewardInfoRiskAssessmentRequest,
     ) -> Result<RewardInfoRiskAssessmentDecision> {
+        let _provider_permit = crate::llm_provider::acquire_llm_provider_request_permit().await?;
         let request_format = reward_ai_effective_request_format(
             request.provider,
             request.request_format,
@@ -79,6 +80,7 @@ impl RewardInfoRiskConnector {
         if requests.is_empty() {
             return Ok(Vec::new());
         }
+        let _provider_permit = crate::llm_provider::acquire_llm_provider_request_permit().await?;
         let request_format = reward_ai_effective_request_format(
             requests[0].provider,
             requests[0].request_format,

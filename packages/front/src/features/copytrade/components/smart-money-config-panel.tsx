@@ -13,7 +13,13 @@ import {
   updateSmartMoneyConfigAction,
   type SmartMoneyActionResult,
 } from "@/lib/api/actions";
-import type { SmartMoneyConfigDto, SmartMoneyMode, SmartMoneySnapshotDto } from "@/lib/contracts/dto";
+import type {
+  RewardAiProvider,
+  RewardAiRequestFormat,
+  SmartMoneyConfigDto,
+  SmartMoneyMode,
+  SmartMoneySnapshotDto,
+} from "@/lib/contracts/dto";
 import { dictionary } from "@/lib/i18n/dictionaries";
 
 type SmartMoneyNumericConfigKey =
@@ -209,6 +215,80 @@ export function SmartMoneyConfigPanel({
             <option value="live_guarded">{t.modeLabels.live_guarded}</option>
           </select>
         </label>
+
+        <div className="grid gap-3 md:grid-cols-3">
+          <label className="block space-y-1.5">
+            <span className="text-xs font-medium text-muted-foreground">
+              {t.signalAdvisoryProvider}
+            </span>
+            <select
+              className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground"
+              value={draft.signal_advisory_provider}
+              onChange={(event) =>
+                setDraft((current) => ({
+                  ...current,
+                  signal_advisory_provider: event.target.value as RewardAiProvider,
+                  signal_advisory_request_format:
+                    event.target.value === "anthropic"
+                      ? "anthropic_messages"
+                      : current.signal_advisory_request_format === "anthropic_messages"
+                        ? "openai_responses"
+                        : current.signal_advisory_request_format,
+                }))
+              }
+            >
+              <option value="openai">{t.providerLabels.openai}</option>
+              <option value="anthropic">{t.providerLabels.anthropic}</option>
+            </select>
+          </label>
+
+          <label className="block space-y-1.5">
+            <span className="text-xs font-medium text-muted-foreground">
+              {t.signalAdvisoryRequestFormat}
+            </span>
+            <select
+              className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground"
+              value={draft.signal_advisory_request_format}
+              onChange={(event) =>
+                setDraft((current) => ({
+                  ...current,
+                  signal_advisory_request_format: event.target.value as RewardAiRequestFormat,
+                }))
+              }
+            >
+              {draft.signal_advisory_provider === "anthropic" ? (
+                <option value="anthropic_messages">
+                  {t.requestFormatLabels.anthropic_messages}
+                </option>
+              ) : (
+                <>
+                  <option value="openai_responses">
+                    {t.requestFormatLabels.openai_responses}
+                  </option>
+                  <option value="openai_chat_completions">
+                    {t.requestFormatLabels.openai_chat_completions}
+                  </option>
+                </>
+              )}
+            </select>
+          </label>
+
+          <label className="block space-y-1.5">
+            <span className="text-xs font-medium text-muted-foreground">
+              {t.signalAdvisoryModel}
+            </span>
+            <Input
+              value={draft.signal_advisory_model}
+              onChange={(event) =>
+                setDraft((current) => ({
+                  ...current,
+                  signal_advisory_model: event.target.value,
+                }))
+              }
+              className="h-9 text-xs"
+            />
+          </label>
+        </div>
 
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
           <ConfigNumberInput

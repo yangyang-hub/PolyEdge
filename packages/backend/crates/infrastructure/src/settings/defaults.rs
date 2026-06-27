@@ -105,6 +105,18 @@ impl Default for RewardsSettings {
     }
 }
 
+impl Default for SmartMoneySettings {
+    fn default() -> Self {
+        Self {
+            signal_advisory_openai_api_key: None,
+            signal_advisory_anthropic_api_key: None,
+            signal_advisory_openai_base_url: "https://api.openai.com/v1".to_string(),
+            signal_advisory_anthropic_base_url: "https://api.anthropic.com".to_string(),
+            signal_advisory_request_timeout_secs: 180,
+        }
+    }
+}
+
 impl Default for NewsSettings {
     fn default() -> Self {
         Self {

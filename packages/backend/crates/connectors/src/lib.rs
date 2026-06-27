@@ -1,5 +1,6 @@
 #![allow(clippy::missing_const_for_fn)]
 
+mod llm_provider;
 mod news;
 mod openai_compat;
 mod orderbook;

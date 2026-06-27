@@ -1,5 +1,7 @@
 import type {
   DecimalValue,
+  RewardAiProvider,
+  RewardAiRequestFormat,
   SmartMoneyMode,
   SmartMoneySide,
   SmartSignalDecisionValue,
@@ -14,6 +16,9 @@ export type SmartMoneyConfigDto = {
   discovery_enabled: boolean;
   wallet_advisory_enabled: boolean;
   signal_advisory_enabled: boolean;
+  signal_advisory_provider: RewardAiProvider;
+  signal_advisory_request_format: RewardAiRequestFormat;
+  signal_advisory_model: string;
   min_trade_count: number;
   min_settled_trade_count: number;
   min_total_volume_usd: DecimalValue;

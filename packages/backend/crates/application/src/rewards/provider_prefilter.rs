@@ -45,6 +45,10 @@ pub fn reward_provider_pre_llm_candidate_kind(
         return Some(RewardProviderPreLlmCandidateKind::ActiveExposure);
     }
 
+    if reward_quote_plan_event_window_blocks_new_buy(plan) {
+        return None;
+    }
+
     match plan.strategy_bucket {
         RewardStrategyBucket::None => None,
         RewardStrategyBucket::Standard | RewardStrategyBucket::LowCompetition => {

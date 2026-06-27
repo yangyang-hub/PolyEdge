@@ -139,6 +139,29 @@ const rewardConfigSchema = z.object({
   info_risk_avoid_level: z.enum(["low", "medium", "high", "critical", "unknown"]),
   info_risk_ttl_sec: z.coerce.number().int().min(60).max(86_400),
   info_risk_batch_size: z.coerce.number().int().min(1).max(12),
+  event_window_enabled: z.boolean(),
+  event_window_min_confidence: z.enum(["low", "medium", "high"]),
+  event_window_stop_new_quote_before_start_sec: z.coerce
+    .number()
+    .int()
+    .min(0)
+    .max(86_400 * 30),
+  event_window_cancel_open_buy_before_start_sec: z.coerce
+    .number()
+    .int()
+    .min(0)
+    .max(86_400 * 30),
+  event_window_resume_after_event_end_sec: z.coerce
+    .number()
+    .int()
+    .min(0)
+    .max(86_400 * 30),
+  event_window_unknown_event_time_mode: z.enum(["allow", "observe", "block"]),
+  event_window_gamma_unreviewed_dates_mode: z.enum([
+    "ignore",
+    "observe",
+    "medium_confidence",
+  ]),
   require_info_risk_before_first_quote: z.boolean(),
   first_quote_quarantine_sec: z.coerce.number().int().min(0).max(86_400),
   safety_margin_cents: decimalNumber.min(0).max(20),
@@ -184,6 +207,15 @@ const rewardConfigSchema = z.object({
     message: "Top-3 depth share cap must be at least the top-1 cap.",
     path: ["max_top3_depth_share"],
   })
+  .refine(
+    (value) =>
+      value.event_window_cancel_open_buy_before_start_sec <=
+      value.event_window_stop_new_quote_before_start_sec,
+    {
+      message: "Cancel window must not be earlier than the stop-new-quote window.",
+      path: ["event_window_cancel_open_buy_before_start_sec"],
+    },
+  )
   .refine(
     (value) =>
       value.opportunity_reward_weight

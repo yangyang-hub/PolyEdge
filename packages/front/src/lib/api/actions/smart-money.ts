@@ -25,23 +25,53 @@ export type SmartMoneyActionResult = OperationActionResult & {
 
 const HEX_ADDRESS_PATTERN = /^0x[0-9a-fA-F]{40}$/;
 
-const smartMoneyConfigSchema = z.object({
-  enabled: z.boolean(),
-  mode: z.enum(["observe", "paper", "approval", "live_guarded"]),
-  discovery_enabled: z.boolean(),
-  wallet_advisory_enabled: z.boolean(),
-  signal_advisory_enabled: z.boolean(),
-  min_trade_count: z.coerce.number().int().min(0),
-  min_settled_trade_count: z.coerce.number().int().min(0),
-  min_total_volume_usd: decimalNumber.min(0),
-  min_copyability_score: decimalNumber.min(0).max(1),
-  max_signal_age_ms: z.coerce.number().int().min(1000),
-  max_price_slippage_cents: decimalNumber.min(0),
-  min_orderbook_depth_usd: decimalNumber.min(0),
-  max_wallet_exposure_usd: decimalNumber.min(0),
-  max_market_exposure_usd: decimalNumber.min(0),
-  max_daily_notional_usd: decimalNumber.min(0),
-});
+const smartMoneyConfigSchema = z
+  .object({
+    enabled: z.boolean(),
+    mode: z.enum(["observe", "paper", "approval", "live_guarded"]),
+    discovery_enabled: z.boolean(),
+    wallet_advisory_enabled: z.boolean(),
+    signal_advisory_enabled: z.boolean(),
+    signal_advisory_provider: z.enum(["openai", "anthropic"]),
+    signal_advisory_request_format: z.enum([
+      "openai_responses",
+      "openai_chat_completions",
+      "anthropic_messages",
+    ]),
+    signal_advisory_model: z.string().trim().min(1).max(120),
+    min_trade_count: z.coerce.number().int().min(0),
+    min_settled_trade_count: z.coerce.number().int().min(0),
+    min_total_volume_usd: decimalNumber.min(0),
+    min_copyability_score: decimalNumber.min(0).max(1),
+    max_signal_age_ms: z.coerce.number().int().min(1000),
+    max_price_slippage_cents: decimalNumber.min(0),
+    min_orderbook_depth_usd: decimalNumber.min(0),
+    max_wallet_exposure_usd: decimalNumber.min(0),
+    max_market_exposure_usd: decimalNumber.min(0),
+    max_daily_notional_usd: decimalNumber.min(0),
+  })
+  .superRefine((config, context) => {
+    if (
+      config.signal_advisory_provider === "anthropic"
+      && config.signal_advisory_request_format !== "anthropic_messages"
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["signal_advisory_request_format"],
+        message: "Anthropic 只能使用 Messages 请求格式。",
+      });
+    }
+    if (
+      config.signal_advisory_provider === "openai"
+      && config.signal_advisory_request_format === "anthropic_messages"
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["signal_advisory_request_format"],
+        message: "OpenAI-compatible provider 不能使用 Anthropic Messages。",
+      });
+    }
+  });
 
 const candidateStatusSchema = z.object({
   wallet_address: z

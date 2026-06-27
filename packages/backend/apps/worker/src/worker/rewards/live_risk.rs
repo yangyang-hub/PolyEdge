@@ -67,6 +67,15 @@ fn live_placement_orders(
         ) {
             plans_changed = true;
         }
+        if reward_quote_plan_event_window_blocks_new_buy(&plans[plan_index]) {
+            if mark_live_event_window_new_buy_blocked(
+                &mut plans[plan_index],
+                OffsetDateTime::now_utc(),
+            ) {
+                plans_changed = true;
+            }
+            continue;
+        }
         let now = OffsetDateTime::now_utc();
         if let Some(wait_reason) =
             live_orderbook_placement_wait_reason(&plan_config, &plans[plan_index].legs, books, now)
@@ -239,6 +248,12 @@ fn refresh_live_quote_plan_readiness(
                 if apply_live_quote_plan_materialization(plan, materialized, now) {
                     changed = true;
                 }
+                if reward_quote_plan_event_window_blocks_new_buy(plan) {
+                    if mark_live_event_window_new_buy_blocked(plan, now) {
+                        changed = true;
+                    }
+                    continue;
+                }
                 if let Some(wait_reason) =
                     live_orderbook_placement_wait_reason(&plan_config, &plan.legs, books, now)
                 {
@@ -299,6 +314,29 @@ fn apply_live_quote_plan_materialization(
         plan.updated_at = now;
     }
 
+    changed
+}
+
+fn mark_live_event_window_new_buy_blocked(
+    plan: &mut RewardQuotePlan,
+    now: OffsetDateTime,
+) -> bool {
+    let reason = plan
+        .event_window
+        .as_ref()
+        .map(|assessment| {
+            format!(
+                "event window blocks new BUY quotes: {}",
+                assessment.reason
+            )
+        })
+        .unwrap_or_else(|| "event window blocks new BUY quotes".to_string());
+    let changed = plan.reason != reason || plan.quote_readiness != RewardQuoteReadiness::Blocked;
+    if changed {
+        plan.reason = reason;
+        plan.quote_readiness = RewardQuoteReadiness::Blocked;
+        plan.updated_at = now;
+    }
     changed
 }
 

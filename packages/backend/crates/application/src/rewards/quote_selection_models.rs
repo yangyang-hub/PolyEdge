@@ -108,6 +108,190 @@ impl FromStr for RewardLowCompetitionMode {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+pub enum RewardEventTimeConfidence {
+    Low,
+    Medium,
+    High,
+}
+
+impl RewardEventTimeConfidence {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Low => "low",
+            Self::Medium => "medium",
+            Self::High => "high",
+        }
+    }
+
+    #[must_use]
+    pub const fn rank(self) -> u8 {
+        match self {
+            Self::Low => 1,
+            Self::Medium => 2,
+            Self::High => 3,
+        }
+    }
+}
+
+impl FromStr for RewardEventTimeConfidence {
+    type Err = AppError;
+
+    fn from_str(value: &str) -> Result<Self> {
+        match value {
+            "low" => Ok(Self::Low),
+            "medium" => Ok(Self::Medium),
+            "high" => Ok(Self::High),
+            other => Err(AppError::invalid_input(
+                "REWARD_EVENT_TIME_CONFIDENCE_INVALID",
+                format!("unknown reward event time confidence: {other}"),
+            )),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RewardUnknownEventTimeMode {
+    Allow,
+    Observe,
+    Block,
+}
+
+impl RewardUnknownEventTimeMode {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Allow => "allow",
+            Self::Observe => "observe",
+            Self::Block => "block",
+        }
+    }
+}
+
+impl FromStr for RewardUnknownEventTimeMode {
+    type Err = AppError;
+
+    fn from_str(value: &str) -> Result<Self> {
+        match value {
+            "allow" => Ok(Self::Allow),
+            "observe" => Ok(Self::Observe),
+            "block" => Ok(Self::Block),
+            other => Err(AppError::invalid_input(
+                "REWARD_UNKNOWN_EVENT_TIME_MODE_INVALID",
+                format!("unknown reward unknown-event-time mode: {other}"),
+            )),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RewardGammaEventDateMode {
+    Ignore,
+    Observe,
+    MediumConfidence,
+}
+
+impl RewardGammaEventDateMode {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Ignore => "ignore",
+            Self::Observe => "observe",
+            Self::MediumConfidence => "medium_confidence",
+        }
+    }
+}
+
+impl FromStr for RewardGammaEventDateMode {
+    type Err = AppError;
+
+    fn from_str(value: &str) -> Result<Self> {
+        match value {
+            "ignore" => Ok(Self::Ignore),
+            "observe" => Ok(Self::Observe),
+            "medium_confidence" => Ok(Self::MediumConfidence),
+            other => Err(AppError::invalid_input(
+                "REWARD_GAMMA_EVENT_DATE_MODE_INVALID",
+                format!("unknown reward Gamma event date mode: {other}"),
+            )),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RewardEventWindowStatus {
+    NoEventWindow,
+    SafeBeforeWindow,
+    StopNewQuotes,
+    CancelOpenBuys,
+    InEventWindow,
+    PostEventCooldown,
+    ExpiredOrResolved,
+    UntrustedEventTime,
+}
+
+impl RewardEventWindowStatus {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::NoEventWindow => "no_event_window",
+            Self::SafeBeforeWindow => "safe_before_window",
+            Self::StopNewQuotes => "stop_new_quotes",
+            Self::CancelOpenBuys => "cancel_open_buys",
+            Self::InEventWindow => "in_event_window",
+            Self::PostEventCooldown => "post_event_cooldown",
+            Self::ExpiredOrResolved => "expired_or_resolved",
+            Self::UntrustedEventTime => "untrusted_event_time",
+        }
+    }
+
+    #[must_use]
+    pub const fn blocks_new_buy(self) -> bool {
+        matches!(
+            self,
+            Self::StopNewQuotes
+                | Self::CancelOpenBuys
+                | Self::InEventWindow
+                | Self::PostEventCooldown
+                | Self::UntrustedEventTime
+        )
+    }
+
+    #[must_use]
+    pub const fn cancels_open_buy(self) -> bool {
+        matches!(
+            self,
+            Self::CancelOpenBuys | Self::InEventWindow | Self::PostEventCooldown
+        )
+    }
+}
+
+impl FromStr for RewardEventWindowStatus {
+    type Err = AppError;
+
+    fn from_str(value: &str) -> Result<Self> {
+        match value {
+            "no_event_window" => Ok(Self::NoEventWindow),
+            "safe_before_window" => Ok(Self::SafeBeforeWindow),
+            "stop_new_quotes" => Ok(Self::StopNewQuotes),
+            "cancel_open_buys" => Ok(Self::CancelOpenBuys),
+            "in_event_window" => Ok(Self::InEventWindow),
+            "post_event_cooldown" => Ok(Self::PostEventCooldown),
+            "expired_or_resolved" => Ok(Self::ExpiredOrResolved),
+            "untrusted_event_time" => Ok(Self::UntrustedEventTime),
+            other => Err(AppError::invalid_input(
+                "REWARD_EVENT_WINDOW_STATUS_INVALID",
+                format!("unknown reward event window status: {other}"),
+            )),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum RewardPlanQuoteMode {
     Double,
     SingleYes,

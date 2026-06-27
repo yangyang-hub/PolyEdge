@@ -7,9 +7,12 @@ import type {
   RewardAiProvider,
   RewardAiRequestFormat,
   RewardBotConfigDto,
+  RewardEventTimeConfidence,
+  RewardGammaEventDateMode,
   RewardInfoRiskLevel,
   RewardQuoteMode,
   RewardSelectionMode,
+  RewardUnknownEventTimeMode,
 } from "@/lib/contracts/dto";
 import { dictionary } from "@/lib/i18n/dictionaries";
 
@@ -321,6 +324,101 @@ export function AiAdvisoryConfig({
         hint={h.firstQuoteQuarantineSec}
         onChange={(value) => updateNumber("first_quote_quarantine_sec", value)}
       />
+      <ToggleField
+        label={dictionary.rewards.eventWindowEnabled}
+        hint={h.eventWindowEnabled}
+        checked={draft.event_window_enabled}
+        onChange={(checked) =>
+          setDraft((current) => ({ ...current, event_window_enabled: checked }))
+        }
+      />
+      <label className="space-y-1.5">
+        <span className="flex items-center gap-1 text-xs font-medium text-muted-foreground">
+          {dictionary.rewards.eventWindowMinConfidence}
+          <Hint content={h.eventWindowMinConfidence} />
+        </span>
+        <select
+          className={selectClassName}
+          value={draft.event_window_min_confidence}
+          onChange={(event) =>
+            setDraft((current) => ({
+              ...current,
+              event_window_min_confidence: event.target.value as RewardEventTimeConfidence,
+            }))
+          }
+        >
+          <option value="high">{dictionary.rewards.eventConfidenceHigh}</option>
+          <option value="medium">{dictionary.rewards.eventConfidenceMedium}</option>
+          <option value="low">{dictionary.rewards.eventConfidenceLow}</option>
+        </select>
+      </label>
+      <NumberInput
+        label={dictionary.rewards.eventWindowStopNewQuoteBeforeStartSec}
+        value={draft.event_window_stop_new_quote_before_start_sec}
+        suffix="s"
+        hint={h.eventWindowStopNewQuoteBeforeStartSec}
+        onChange={(value) =>
+          updateNumber("event_window_stop_new_quote_before_start_sec", value)
+        }
+      />
+      <NumberInput
+        label={dictionary.rewards.eventWindowCancelOpenBuyBeforeStartSec}
+        value={draft.event_window_cancel_open_buy_before_start_sec}
+        suffix="s"
+        hint={h.eventWindowCancelOpenBuyBeforeStartSec}
+        onChange={(value) =>
+          updateNumber("event_window_cancel_open_buy_before_start_sec", value)
+        }
+      />
+      <NumberInput
+        label={dictionary.rewards.eventWindowResumeAfterEventEndSec}
+        value={draft.event_window_resume_after_event_end_sec}
+        suffix="s"
+        hint={h.eventWindowResumeAfterEventEndSec}
+        onChange={(value) => updateNumber("event_window_resume_after_event_end_sec", value)}
+      />
+      <label className="space-y-1.5">
+        <span className="flex items-center gap-1 text-xs font-medium text-muted-foreground">
+          {dictionary.rewards.eventWindowUnknownEventTimeMode}
+          <Hint content={h.eventWindowUnknownEventTimeMode} />
+        </span>
+        <select
+          className={selectClassName}
+          value={draft.event_window_unknown_event_time_mode}
+          onChange={(event) =>
+            setDraft((current) => ({
+              ...current,
+              event_window_unknown_event_time_mode:
+                event.target.value as RewardUnknownEventTimeMode,
+            }))
+          }
+        >
+          <option value="observe">{dictionary.rewards.eventUnknownObserve}</option>
+          <option value="allow">{dictionary.rewards.eventUnknownAllow}</option>
+          <option value="block">{dictionary.rewards.eventUnknownBlock}</option>
+        </select>
+      </label>
+      <label className="space-y-1.5">
+        <span className="flex items-center gap-1 text-xs font-medium text-muted-foreground">
+          {dictionary.rewards.eventWindowGammaUnreviewedDatesMode}
+          <Hint content={h.eventWindowGammaUnreviewedDatesMode} />
+        </span>
+        <select
+          className={selectClassName}
+          value={draft.event_window_gamma_unreviewed_dates_mode}
+          onChange={(event) =>
+            setDraft((current) => ({
+              ...current,
+              event_window_gamma_unreviewed_dates_mode:
+                event.target.value as RewardGammaEventDateMode,
+            }))
+          }
+        >
+          <option value="ignore">{dictionary.rewards.eventGammaIgnore}</option>
+          <option value="observe">{dictionary.rewards.eventGammaObserve}</option>
+          <option value="medium_confidence">{dictionary.rewards.eventGammaMedium}</option>
+        </select>
+      </label>
     </ConfigSection>
   );
 }

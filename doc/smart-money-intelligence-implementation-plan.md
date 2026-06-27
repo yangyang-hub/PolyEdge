@@ -4,7 +4,7 @@
 
 ## 状态
 
-本文是聪明钱跟单重构方案和实施计划，描述目标能力和分阶段落地路径。当前仓库的 `copytrade` 仍是只读钱包跟踪与分析：手工维护 tracked wallets，worker 读取这些钱包的 Polymarket Data API activity/positions，记录 source trades 并更新钱包分析统计；不会下单或撤单。Smart Money Intelligence 已落地 Phase 1 foundation，并继续落地 Phase 2 的确定性信号流和 advisory 缓存/provider 基础：`scan-smart-money-once` 和可选定时扫描可从 Polymarket Data API leaderboard 与 active copytrade tracked wallets 派生候选，再按 tracked/watch/candidate 状态扫描候选钱包，读取 Data API activity/positions/closed positions/trades，写入近端样本画像、确定性评分和源交易；worker 会对未处理 source trades 读取 orderbook 服务缓存，按年龄、盘口、方向价格、滑点和最优档深度生成 `observe` 或 `rejected` 信号，并写入 `stage=deterministic_gate` 的 signal decision 审计记录；application/store 已能读写 `smart_signal_advisories` 缓存并在 snapshot DTO 中返回最近 signal advisory，application 已能构造结构化 signal advisory provider payload 和稳定 input_hash，worker 在 `signal_advisory_enabled=true` 时会为近期 observe 信号补齐源交易/profile/score 上下文、构造 advisory request/input_hash、检查缓存，并在 provider key 存在时调用 `SmartSignalAdvisoryConnector` 保存 `allow|observe|reject` 三态 advisory；API 已支持配置保存和候选钱包状态更新，可把候选晋级为 watch/tracked 或标记 blocked/rejected；`/copy-trading` 前端已接入 Smart Money snapshot，并提供配置保存、候选池查看、状态操作和基础信号流展示；定时扫描默认关闭，需同时开启 `POLYEDGE_WORKER__POLL_SMART_MONEY=true` 和 Smart Money config `enabled=true`；已实现的是 leaderboard 种子发现、基础配置、候选管理、非执行信号/decision 流、signal advisory 缓存层、request builder 和 provider refresh，不是完整全网 discovery，仍不会生成可执行跟随订单，也不会执行纸面或实盘交易。
+本文是聪明钱跟单重构方案和实施计划，描述目标能力和分阶段落地路径。当前仓库的 `copytrade` 仍是只读钱包跟踪与分析：手工维护 tracked wallets，worker 读取这些钱包的 Polymarket Data API activity/positions，记录 source trades 并更新钱包分析统计；不会下单或撤单。Smart Money Intelligence 已落地 Phase 1 foundation，并继续落地 Phase 2 的确定性信号流和 advisory 缓存/provider 基础：`scan-smart-money-once` 和可选定时扫描可从 Polymarket Data API leaderboard 与 active copytrade tracked wallets 派生候选，再按 tracked/watch/candidate 状态扫描候选钱包，读取 Data API activity/positions/closed positions/trades，写入近端样本画像、确定性评分和源交易；worker 会对未处理 source trades 读取 orderbook 服务缓存，按年龄、盘口、方向价格、滑点和最优档深度生成 `observe` 或 `rejected` 信号，并写入 `stage=deterministic_gate` 的 signal decision 审计记录；application/store 已能读写 `smart_signal_advisories` 缓存并在 snapshot DTO 中返回最近 signal advisory，application 已能构造结构化 signal advisory provider payload 和稳定 input_hash，worker 在 `signal_advisory_enabled=true` 时会按 Smart Money 配置中的 provider/request-format/model 和 `POLYEDGE_SMART_MONEY__SIGNAL_ADVISORY_*` env-only key/base URL 为近期 observe 信号补齐源交易/profile/score 上下文、构造 advisory request/input_hash、检查缓存，并在 provider key 存在时调用 `SmartSignalAdvisoryConnector` 保存 `allow|observe|reject` 三态 advisory；API 已支持配置保存和候选钱包状态更新，可把候选晋级为 watch/tracked 或标记 blocked/rejected；`/copy-trading` 前端已接入 Smart Money snapshot，并提供配置保存（含 signal advisory provider/request format/model）、候选池查看、状态操作、基础信号流和最近 signal advisory 展示；定时扫描默认关闭，需同时开启 `POLYEDGE_WORKER__POLL_SMART_MONEY=true` 和 Smart Money config `enabled=true`；已实现的是 leaderboard 种子发现、基础配置、候选管理、非执行信号/decision 流、signal advisory 缓存层、request builder、独立 provider 配置和 provider refresh，不是完整全网 discovery，仍不会生成可执行跟随订单，也不会执行纸面或实盘交易。
 
 ## 目标
 
@@ -110,6 +110,9 @@ CREATE TABLE smart_money_config (
 - `discovery_enabled`
 - `wallet_advisory_enabled`
 - `signal_advisory_enabled`
+- `signal_advisory_provider`
+- `signal_advisory_request_format`
+- `signal_advisory_model`
 - `min_trade_count`
 - `min_settled_trade_count`
 - `min_total_volume_usd`
@@ -655,11 +658,11 @@ UI 文案必须明确：
 
 ### Phase 2：信号流和 LLM advisory
 
-- 新增 signals、decisions、wallet advisories、signal advisories。当前 signals 表、deterministic signal 写入、`deterministic_gate` decision 写入、signal advisory cache 读写、signal advisory request payload/input_hash builder 和 worker provider refresh 已接入；wallet advisory、独立 Smart Money provider 配置仍待补齐。
+- 新增 signals、decisions、wallet advisories、signal advisories。当前 signals 表、deterministic signal 写入、`deterministic_gate` decision 写入、signal advisory cache 读写、signal advisory request payload/input_hash builder、独立 Smart Money provider 配置和 worker provider refresh 已接入；wallet advisory 仍待补齐。
 - 新增 signal detector worker。当前已接入 source trades + orderbook cache 的 deterministic signal detector、decision 审计和 observe 信号 advisory provider refresh。
 - 新增 wallet/signal advisory connector 或复用 reward AI connector 模式。当前已新增 signal advisory connector，支持 OpenAI Responses、OpenAI-compatible Chat Completions 和 Anthropic Messages；wallet advisory connector 待实现。
 - LLM 调用写入 `llm_calls`。当前 signal advisory provider 调用写入 `task_type=smart_signal_advisory`。
-- 前端展示信号流、拒绝原因和 advisory。当前已展示信号流和拒绝原因，advisory 待实现。
+- 前端展示信号流、拒绝原因和 advisory。当前已展示信号流、拒绝原因和最近 signal advisory；wallet advisory 与纸面表现待实现。
 
 验收：
 
@@ -703,6 +706,9 @@ mode = observe
 discovery_enabled = true
 wallet_advisory_enabled = false
 signal_advisory_enabled = false
+signal_advisory_provider = openai
+signal_advisory_request_format = openai_responses
+signal_advisory_model = gpt-4.1-mini
 min_trade_count = 50
 min_settled_trade_count = 20
 min_total_volume_usd = 10000
@@ -730,7 +736,7 @@ LLM 默认关闭，等 deterministic pipeline 和 paper 结果稳定后再开启
 
 - 候选榜分页/筛选。
 - 钱包详情空状态和错误态。
-- 信号流拒绝原因展示。
+- 信号流拒绝原因和 signal advisory 展示。
 - 纸面表现无数据/有数据状态。
 
 运维：
@@ -763,7 +769,8 @@ LLM 默认关闭，等 deterministic pipeline 和 paper 结果稳定后再开启
 - [x] 新增 signal advisory cache 基础（application/store/Postgres/in-memory/snapshot DTO；不调用 LLM、不影响执行决策）。
 - [x] 新增 signal advisory request payload/input_hash builder（结构化 signal/source/profile/score/config payload；不调用 LLM）。
 - [x] 新增 Smart Money signal advisory connector（三态 `allow|observe|reject`，OpenAI Responses/OpenAI-compatible Chat/Anthropic，含 GLM Chat Completions 请求测试）。
-- [x] 新增 worker signal advisory provider refresh（近期 observe 信号 + 已入库上下文 → advisory request/input_hash/cache lookup；provider key 存在时调用 provider、保存 advisory、记录 `llm_calls`；无 key 时只统计待请求）。
-- [x] 新增 frontend smart money foundation 入口（`/copy-trading` 内配置保存、基础候选表、状态操作和基础信号流；完整钱包详情、LLM advisory 和纸面表现未实现）。
+- [x] 新增 worker signal advisory provider refresh（近期 observe 信号 + 已入库上下文 → advisory request/input_hash/cache lookup；使用 Smart Money 独立 provider 配置和 env-only key/base URL，provider key 存在时调用 provider、保存 advisory、记录 `llm_calls`；无 key 时只统计待请求）。
+- [x] 新增 Smart Money signal advisory 独立 provider 配置（`signal_advisory_provider` / `signal_advisory_request_format` / `signal_advisory_model` 保存到 smart_money_config，key/base URL/timeout 只从 `POLYEDGE_SMART_MONEY__SIGNAL_ADVISORY_*` 读取）。
+- [x] 新增 frontend smart money foundation 入口（`/copy-trading` 内配置保存、基础候选表、状态操作、基础信号流和 signal advisory 展示；完整钱包详情、wallet advisory 和纸面表现未实现）。
 - [x] 更新根 `AGENTS.md` 当前状态、关键文件、worker 子命令和数据架构说明。
-- [x] 运行后端 `cargo check --workspace --tests` 和 `cargo test -p polyedge-application smart_money_tests`；本次未改前端，未运行前端 lint/build。
+- [x] 运行后端 `cargo check --workspace --tests`、Smart Money/connector/settings 相关测试，以及前端 `tsc --noEmit`。

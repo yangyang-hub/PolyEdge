@@ -152,6 +152,7 @@ fn live_test_plan(now: OffsetDateTime) -> RewardQuotePlan {
         opportunity_metrics: None,
         ai_advisory: None,
         info_risk: None,
+        event_window: None,
         midpoint: Some(reward_decimal("0.50")),
         live_skip_until: None,
         live_skip_reason: None,

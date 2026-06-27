@@ -239,6 +239,9 @@ pub struct SmartMoneyConfig {
     pub discovery_enabled: bool,
     pub wallet_advisory_enabled: bool,
     pub signal_advisory_enabled: bool,
+    pub signal_advisory_provider: RewardAiProvider,
+    pub signal_advisory_request_format: RewardAiRequestFormat,
+    pub signal_advisory_model: String,
     pub min_trade_count: i64,
     pub min_settled_trade_count: i64,
     pub min_total_volume_usd: Decimal,
@@ -259,6 +262,9 @@ impl Default for SmartMoneyConfig {
             discovery_enabled: true,
             wallet_advisory_enabled: false,
             signal_advisory_enabled: false,
+            signal_advisory_provider: RewardAiProvider::OpenAi,
+            signal_advisory_request_format: RewardAiRequestFormat::OpenAiResponses,
+            signal_advisory_model: "gpt-4.1-mini".to_string(),
             min_trade_count: 50,
             min_settled_trade_count: 20,
             min_total_volume_usd: Decimal::from(10_000),
@@ -286,6 +292,15 @@ impl SmartMoneyConfig {
         self.max_wallet_exposure_usd = self.max_wallet_exposure_usd.max(Decimal::ZERO);
         self.max_market_exposure_usd = self.max_market_exposure_usd.max(Decimal::ZERO);
         self.max_daily_notional_usd = self.max_daily_notional_usd.max(Decimal::ZERO);
+        self.signal_advisory_model = self.signal_advisory_model.trim().to_string();
+        if self.signal_advisory_model.is_empty() {
+            self.signal_advisory_model = SmartMoneyConfig::default().signal_advisory_model;
+        }
+        self.signal_advisory_request_format = reward_ai_effective_request_format(
+            self.signal_advisory_provider,
+            self.signal_advisory_request_format,
+            &self.signal_advisory_model,
+        );
         self
     }
 
@@ -305,6 +320,15 @@ impl SmartMoneyConfig {
         }
         if let Some(value) = patch.signal_advisory_enabled {
             self.signal_advisory_enabled = value;
+        }
+        if let Some(value) = patch.signal_advisory_provider {
+            self.signal_advisory_provider = value;
+        }
+        if let Some(value) = patch.signal_advisory_request_format {
+            self.signal_advisory_request_format = value;
+        }
+        if let Some(value) = patch.signal_advisory_model {
+            self.signal_advisory_model = value;
         }
         if let Some(value) = patch.min_trade_count {
             self.min_trade_count = value;
@@ -352,6 +376,12 @@ pub struct SmartMoneyConfigPatch {
     pub wallet_advisory_enabled: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub signal_advisory_enabled: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signal_advisory_provider: Option<RewardAiProvider>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signal_advisory_request_format: Option<RewardAiRequestFormat>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signal_advisory_model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub min_trade_count: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

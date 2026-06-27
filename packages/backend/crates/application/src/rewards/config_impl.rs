@@ -101,6 +101,13 @@ impl Default for RewardBotConfig {
             info_risk_avoid_level: RewardInfoRiskLevel::High,
             info_risk_ttl_sec: 3600,
             info_risk_batch_size: 1,
+            event_window_enabled: true,
+            event_window_min_confidence: RewardEventTimeConfidence::High,
+            event_window_stop_new_quote_before_start_sec: 10_800,
+            event_window_cancel_open_buy_before_start_sec: 3_600,
+            event_window_resume_after_event_end_sec: 3_600,
+            event_window_unknown_event_time_mode: RewardUnknownEventTimeMode::Observe,
+            event_window_gamma_unreviewed_dates_mode: RewardGammaEventDateMode::Ignore,
             require_info_risk_before_first_quote: true,
             first_quote_quarantine_sec: 600,
             safety_margin_cents: decimal("1"),
@@ -417,6 +424,21 @@ impl RewardBotConfig {
         );
         self.info_risk_ttl_sec = self.info_risk_ttl_sec.clamp(60, 86_400);
         self.info_risk_batch_size = self.info_risk_batch_size.clamp(1, 12);
+        self.event_window_stop_new_quote_before_start_sec = self
+            .event_window_stop_new_quote_before_start_sec
+            .clamp(0, 86_400 * 30);
+        self.event_window_cancel_open_buy_before_start_sec = self
+            .event_window_cancel_open_buy_before_start_sec
+            .clamp(0, 86_400 * 30);
+        self.event_window_resume_after_event_end_sec = self
+            .event_window_resume_after_event_end_sec
+            .clamp(0, 86_400 * 30);
+        if self.event_window_cancel_open_buy_before_start_sec
+            > self.event_window_stop_new_quote_before_start_sec
+        {
+            self.event_window_cancel_open_buy_before_start_sec =
+                self.event_window_stop_new_quote_before_start_sec;
+        }
         self.first_quote_quarantine_sec = self.first_quote_quarantine_sec.clamp(0, 86_400);
         match self.ai_provider {
             RewardAiProvider::Anthropic => {
@@ -811,6 +833,27 @@ impl RewardBotConfig {
         if let Some(value) = patch.info_risk_batch_size {
             next.info_risk_batch_size = value;
         }
+        if let Some(value) = patch.event_window_enabled {
+            next.event_window_enabled = value;
+        }
+        if let Some(value) = patch.event_window_min_confidence {
+            next.event_window_min_confidence = value;
+        }
+        if let Some(value) = patch.event_window_stop_new_quote_before_start_sec {
+            next.event_window_stop_new_quote_before_start_sec = value;
+        }
+        if let Some(value) = patch.event_window_cancel_open_buy_before_start_sec {
+            next.event_window_cancel_open_buy_before_start_sec = value;
+        }
+        if let Some(value) = patch.event_window_resume_after_event_end_sec {
+            next.event_window_resume_after_event_end_sec = value;
+        }
+        if let Some(value) = patch.event_window_unknown_event_time_mode {
+            next.event_window_unknown_event_time_mode = value;
+        }
+        if let Some(value) = patch.event_window_gamma_unreviewed_dates_mode {
+            next.event_window_gamma_unreviewed_dates_mode = value;
+        }
         if let Some(value) = patch.require_info_risk_before_first_quote {
             next.require_info_risk_before_first_quote = value;
         }
@@ -967,6 +1010,13 @@ mod reward_config_tests {
             "info_risk_avoid_level": "high",
             "info_risk_ttl_sec": 36000,
             "info_risk_batch_size": 3,
+            "event_window_enabled": true,
+            "event_window_min_confidence": "medium",
+            "event_window_stop_new_quote_before_start_sec": 7200,
+            "event_window_cancel_open_buy_before_start_sec": 1800,
+            "event_window_resume_after_event_end_sec": 900,
+            "event_window_unknown_event_time_mode": "block",
+            "event_window_gamma_unreviewed_dates_mode": "observe",
             "require_info_risk_before_first_quote": true,
             "first_quote_quarantine_sec": 300,
             "safety_margin_cents": 2,
@@ -1005,6 +1055,22 @@ mod reward_config_tests {
         assert_eq!(config.ai_advisory_batch_size, 6);
         assert_eq!(config.ai_strategy_hint_min_confidence, decimal("0.8"));
         assert_eq!(config.info_risk_batch_size, 3);
+        assert!(config.event_window_enabled);
+        assert_eq!(
+            config.event_window_min_confidence,
+            RewardEventTimeConfidence::Medium
+        );
+        assert_eq!(config.event_window_stop_new_quote_before_start_sec, 7200);
+        assert_eq!(config.event_window_cancel_open_buy_before_start_sec, 1800);
+        assert_eq!(config.event_window_resume_after_event_end_sec, 900);
+        assert_eq!(
+            config.event_window_unknown_event_time_mode,
+            RewardUnknownEventTimeMode::Block
+        );
+        assert_eq!(
+            config.event_window_gamma_unreviewed_dates_mode,
+            RewardGammaEventDateMode::Observe
+        );
         assert!(config.require_info_risk_before_first_quote);
         assert_eq!(config.first_quote_quarantine_sec, 300);
         assert_eq!(config.cancel_bid_rank, 2);
@@ -1051,6 +1117,12 @@ mod reward_config_tests {
         assert_eq!(serialized["low_competition_min_market_volume_24h_usd"], "0");
         assert_eq!(serialized["ai_provider"], "openai");
         assert_eq!(serialized["ai_request_format"], "openai_chat_completions");
+        assert_eq!(serialized["event_window_min_confidence"], "medium");
+        assert_eq!(serialized["event_window_unknown_event_time_mode"], "block");
+        assert_eq!(
+            serialized["event_window_gamma_unreviewed_dates_mode"],
+            "observe"
+        );
     }
 
     #[test]

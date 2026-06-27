@@ -31,6 +31,18 @@ export type PostFillStrategy =
 export type RewardQuoteMode = "double" | "auto";
 export type RewardSelectionMode = "observe" | "enforce";
 export type RewardLowCompetitionMode = "off" | "observe" | "enforce";
+export type RewardEventTimeConfidence = "low" | "medium" | "high";
+export type RewardUnknownEventTimeMode = "allow" | "observe" | "block";
+export type RewardGammaEventDateMode = "ignore" | "observe" | "medium_confidence";
+export type RewardEventWindowStatus =
+  | "no_event_window"
+  | "safe_before_window"
+  | "stop_new_quotes"
+  | "cancel_open_buys"
+  | "in_event_window"
+  | "post_event_cooldown"
+  | "expired_or_resolved"
+  | "untrusted_event_time";
 export type RewardPlanQuoteMode = "double" | "single_yes" | "single_no" | "none";
 export type RewardQuoteReadiness =
   | "ready_to_quote"

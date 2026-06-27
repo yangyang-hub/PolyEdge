@@ -23,7 +23,11 @@ pub struct PolymarketGammaMarket {
     pub mid_price: Probability,
     pub volume_24h: UsdAmount,
     pub liquidity_usd: UsdAmount,
+    pub start_at: Option<OffsetDateTime>,
     pub end_at: Option<OffsetDateTime>,
+    pub event_start_at: Option<OffsetDateTime>,
+    pub event_end_at: Option<OffsetDateTime>,
+    pub has_reviewed_dates: bool,
     pub ambiguity_level: AmbiguityLevel,
     pub tradability_status: TradabilityStatus,
     pub resolution_source: String,
@@ -31,6 +35,9 @@ pub struct PolymarketGammaMarket {
     pub condition_id: String,
     pub yes_asset_id: String,
     pub no_asset_id: String,
+    pub outcome_token_ids: Vec<String>,
+    pub outcomes: Vec<String>,
+    pub outcome_prices: Vec<Decimal>,
     pub updated_at: OffsetDateTime,
     pub version: i64,
 }
@@ -87,8 +94,16 @@ struct RawGammaMarket {
     liquidity: Option<JsonValue>,
     #[serde(rename = "updatedAt")]
     updated_at: Option<String>,
+    #[serde(rename = "startDate")]
+    start_date: Option<String>,
+    #[serde(rename = "startDateIso")]
+    start_date_iso: Option<String>,
     #[serde(rename = "endDate")]
     end_date: Option<String>,
+    #[serde(rename = "endDateIso")]
+    end_date_iso: Option<String>,
+    #[serde(rename = "hasReviewedDates", default)]
+    has_reviewed_dates: bool,
     #[serde(default)]
     events: Vec<RawGammaEvent>,
 }
@@ -96,6 +111,10 @@ struct RawGammaMarket {
 #[derive(Debug, Deserialize)]
 struct RawGammaEvent {
     title: Option<String>,
+    #[serde(rename = "startDate")]
+    start_date: Option<String>,
+    #[serde(rename = "endDate")]
+    end_date: Option<String>,
     #[serde(rename = "resolutionSource")]
     resolution_source: Option<String>,
 }
@@ -494,7 +513,22 @@ fn map_gamma_market(raw: RawGammaMarket) -> Result<Option<PolymarketGammaMarket>
             .unwrap_or(Decimal::ZERO)
             .max(Decimal::ZERO),
     )?;
-    let end_at = parse_rfc3339(raw.end_date.as_deref());
+    let start_at = parse_rfc3339(raw.start_date_iso.as_deref())
+        .or_else(|| parse_rfc3339(raw.start_date.as_deref()));
+    let end_at = parse_rfc3339(raw.end_date_iso.as_deref())
+        .or_else(|| parse_rfc3339(raw.end_date.as_deref()));
+    let event_start_at = raw
+        .events
+        .iter()
+        .filter_map(|event| parse_rfc3339(event.start_date.as_deref()))
+        .min()
+        .or(start_at);
+    let event_end_at = raw
+        .events
+        .iter()
+        .filter_map(|event| parse_rfc3339(event.end_date.as_deref()))
+        .max()
+        .or(end_at);
     let updated_at =
         parse_rfc3339(raw.updated_at.as_deref()).unwrap_or_else(OffsetDateTime::now_utc);
     let status = if raw.closed {
@@ -530,7 +564,11 @@ fn map_gamma_market(raw: RawGammaMarket) -> Result<Option<PolymarketGammaMarket>
         mid_price,
         volume_24h,
         liquidity_usd,
+        start_at,
         end_at,
+        event_start_at,
+        event_end_at,
+        has_reviewed_dates: raw.has_reviewed_dates,
         ambiguity_level,
         tradability_status,
         resolution_source,
@@ -538,6 +576,9 @@ fn map_gamma_market(raw: RawGammaMarket) -> Result<Option<PolymarketGammaMarket>
         condition_id,
         yes_asset_id: token_ids[0].clone(),
         no_asset_id: token_ids[1].clone(),
+        outcome_token_ids: token_ids,
+        outcomes,
+        outcome_prices,
         updated_at,
         version,
     }))

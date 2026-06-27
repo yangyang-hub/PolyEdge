@@ -31,6 +31,7 @@ include!("rewards/ai_advisory_payload.rs");
 include!("rewards/info_risk_models.rs");
 include!("rewards/config_impl.rs");
 include!("rewards/runtime_models.rs");
+include!("rewards/event_window.rs");
 include!("rewards/pagination.rs");
 include!("rewards/control.rs");
 include!("rewards/service.rs");

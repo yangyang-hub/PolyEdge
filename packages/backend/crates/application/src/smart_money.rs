@@ -9,6 +9,8 @@ use sha2::{Digest, Sha256};
 use std::{collections::HashMap, str::FromStr, sync::Arc};
 use time::OffsetDateTime;
 
+use crate::{RewardAiProvider, RewardAiRequestFormat, reward_ai_effective_request_format};
+
 const DEFAULT_SMART_MONEY_LIST_LIMIT: u16 = 100;
 const MAX_SMART_MONEY_LIST_LIMIT: u16 = 500;
 const SMART_MONEY_SCORING_VERSION: &str = "smart_money_v1";

@@ -216,6 +216,20 @@ impl RewardBotStore for PostgresRewardBotStore {
         Ok(())
     }
 
+    async fn upsert_market_event_windows(
+        &self,
+        windows: &[RewardMarketEventWindow],
+    ) -> Result<()> {
+        postgres_upsert_reward_market_event_windows(&self.pool, windows).await
+    }
+
+    async fn list_effective_market_event_windows(
+        &self,
+        condition_ids: &[String],
+    ) -> Result<Vec<RewardMarketEventWindow>> {
+        postgres_list_effective_reward_market_event_windows(&self.pool, condition_ids).await
+    }
+
     async fn save_quote_plans(&self, plans: &[RewardQuotePlan]) -> Result<()> {
         let mut transaction = self.pool.begin().await.map_err(|error| {
             db_error(

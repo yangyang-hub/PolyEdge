@@ -26,6 +26,7 @@ pub struct Settings {
     pub risk: RiskSettings,
     pub polymarket: PolymarketSettings,
     pub rewards: RewardsSettings,
+    pub smart_money: SmartMoneySettings,
     pub news: NewsSettings,
     pub worker: WorkerSettings,
     pub orderbook_stream: OrderbookStreamSettings,
@@ -139,6 +140,16 @@ pub struct RewardsSettings {
     pub ai_fallback_api_key: Option<String>,
     pub ai_fallback_base_url: String,
     pub ai_fallback_model: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct SmartMoneySettings {
+    pub signal_advisory_openai_api_key: Option<String>,
+    pub signal_advisory_anthropic_api_key: Option<String>,
+    pub signal_advisory_openai_base_url: String,
+    pub signal_advisory_anthropic_base_url: String,
+    pub signal_advisory_request_timeout_secs: u64,
 }
 
 #[derive(Debug, Clone, Deserialize)]

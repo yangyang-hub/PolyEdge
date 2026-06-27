@@ -1,4 +1,7 @@
-use polyedge_application::{MarketUpsertOptions, MarketView, RewardMarket, RewardToken};
+use polyedge_application::{
+    MarketUpsertOptions, MarketView, RewardEventTimeConfidence, RewardGammaEventDateMode,
+    RewardMarket, RewardMarketEventWindow, RewardToken,
+};
 use polyedge_connectors::{
     PolymarketGammaConnector, PolymarketGammaMarket, PolymarketRewardMarket,
     PolymarketRewardsConnector,
@@ -6,7 +9,9 @@ use polyedge_connectors::{
 use polyedge_domain::{AppError, Result};
 use polyedge_infrastructure::AppState;
 use rust_decimal::Decimal;
+use serde_json::json;
 use sqlx::Row;
+use time::OffsetDateTime;
 
 pub struct PriorityMarketSyncReport {
     pub condition_ids: usize,
@@ -26,15 +31,34 @@ pub async fn sync_general_markets_once(
     let gamma_markets = connector
         .fetch_markets(GENERAL_MARKET_SYNC_PAGE_SIZE)
         .await?;
+    let reward_config = state.reward_bot_service.read_config().await?;
+    let event_windows = gamma_markets
+        .iter()
+        .filter_map(|market| {
+            gamma_market_to_event_window(
+                market,
+                reward_config.event_window_gamma_unreviewed_dates_mode,
+            )
+        })
+        .collect::<Vec<_>>();
     let views: Vec<MarketView> = gamma_markets
-        .into_iter()
+        .iter()
+        .cloned()
         .map(gamma_market_to_view)
         .collect();
     let _guard = MARKET_UPSERT_GATE.lock().await;
-    state
+    let upserted = state
         .market_event_service
         .upsert_markets_with_options(&views, trace_id, upsert_options)
+        .await?;
+    if let Err(error) = state
+        .reward_bot_service
+        .upsert_market_event_windows(&event_windows)
         .await
+    {
+        tracing::warn!(error = %error, "failed to upsert Gamma reward event-window candidates");
+    }
+    Ok(upserted)
 }
 
 pub async fn sync_reward_markets_once(state: &AppState) -> Result<usize> {
@@ -79,9 +103,20 @@ pub async fn sync_priority_markets_once(
     let gamma_markets = connector
         .fetch_markets_by_condition_ids(&condition_ids)
         .await?;
+    let reward_config = state.reward_bot_service.read_config().await?;
     let fetched = gamma_markets.len();
+    let event_windows = gamma_markets
+        .iter()
+        .filter_map(|market| {
+            gamma_market_to_event_window(
+                market,
+                reward_config.event_window_gamma_unreviewed_dates_mode,
+            )
+        })
+        .collect::<Vec<_>>();
     let views: Vec<MarketView> = gamma_markets
-        .into_iter()
+        .iter()
+        .cloned()
         .map(gamma_market_to_view)
         .collect();
     let _guard = MARKET_UPSERT_GATE.lock().await;
@@ -89,6 +124,13 @@ pub async fn sync_priority_markets_once(
         .market_event_service
         .upsert_markets(&views, trace_id)
         .await?;
+    if let Err(error) = state
+        .reward_bot_service
+        .upsert_market_event_windows(&event_windows)
+        .await
+    {
+        tracing::warn!(error = %error, "failed to upsert priority Gamma reward event-window candidates");
+    }
 
     Ok(PriorityMarketSyncReport {
         condition_ids: condition_ids.len(),
@@ -322,6 +364,54 @@ fn gamma_market_to_view(market: PolymarketGammaMarket) -> MarketView {
         updated_at: market.updated_at,
         version: market.version,
     }
+}
+
+fn gamma_market_to_event_window(
+    market: &PolymarketGammaMarket,
+    gamma_unreviewed_dates_mode: RewardGammaEventDateMode,
+) -> Option<RewardMarketEventWindow> {
+    let event_start_at = market.event_start_at.or(market.start_at)?;
+    let source = if market.has_reviewed_dates {
+        "gamma_reviewed"
+    } else {
+        "gamma"
+    };
+    let confidence = if market.has_reviewed_dates {
+        RewardEventTimeConfidence::Medium
+    } else {
+        match gamma_unreviewed_dates_mode {
+            RewardGammaEventDateMode::Ignore => return None,
+            RewardGammaEventDateMode::Observe => RewardEventTimeConfidence::Low,
+            RewardGammaEventDateMode::MediumConfidence => RewardEventTimeConfidence::Medium,
+        }
+    };
+
+    Some(RewardMarketEventWindow {
+        condition_id: market.condition_id.clone(),
+        source: source.to_string(),
+        event_type: "gamma_date".to_string(),
+        event_start_at: Some(event_start_at),
+        event_end_at: market.event_end_at.or(market.end_at),
+        confidence,
+        source_url: market
+            .slug
+            .as_ref()
+            .map(|slug| format!("https://polymarket.com/market/{slug}")),
+        source_payload: json!({
+            "market_id": market.id,
+            "slug": market.slug,
+            "start_at": market.start_at,
+            "end_at": market.end_at,
+            "event_start_at": market.event_start_at,
+            "event_end_at": market.event_end_at,
+            "has_reviewed_dates": market.has_reviewed_dates,
+        }),
+        notes: "Polymarket Gamma date candidate; verify semantics before using as a high-confidence event time.".to_string(),
+        active: true,
+        reviewed_by: None,
+        reviewed_at: None,
+        updated_at: OffsetDateTime::now_utc(),
+    })
 }
 
 fn reward_market_from_connector(market: PolymarketRewardMarket) -> RewardMarket {

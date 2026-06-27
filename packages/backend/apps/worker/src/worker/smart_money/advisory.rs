@@ -57,7 +57,7 @@ async fn prepare_smart_money_signal_advisory_requests(
         .map(|score| (score.wallet_address.to_lowercase(), score))
         .collect::<HashMap<_, _>>();
 
-    let provider = smart_money_signal_advisory_provider(state).await?;
+    let provider = smart_money_signal_advisory_provider(state, config)?;
     let now = OffsetDateTime::now_utc();
     let mut report = SmartMoneySignalAdvisoryPrepReport {
         candidates: signals.len(),
@@ -182,36 +182,56 @@ async fn prepare_smart_money_signal_advisory_requests(
     Ok(report)
 }
 
-async fn smart_money_signal_advisory_provider(
+fn smart_money_signal_advisory_provider(
     state: &AppState,
+    config: &SmartMoneyConfig,
 ) -> Result<SmartMoneySignalAdvisoryProvider> {
-    let reward_config = state.reward_bot_service.read_config().await?;
-    let model = reward_ai_model_for_provider(&state.settings.rewards, reward_config.ai_provider)
-        .trim()
-        .to_string();
+    let model = config.signal_advisory_model.trim().to_string();
     let request_format = polyedge_application::reward_ai_effective_request_format(
-        reward_config.ai_provider,
-        reward_config.ai_request_format,
+        config.signal_advisory_provider,
+        config.signal_advisory_request_format,
         &model,
     );
-    let (api_key, base_url) =
-        reward_ai_provider_endpoint_settings(&state.settings.rewards, reward_config.ai_provider);
+    let (api_key, base_url) = smart_money_signal_advisory_endpoint_settings(
+        &state.settings.smart_money,
+        config.signal_advisory_provider,
+    );
     let connector = api_key
         .filter(|value| !value.trim().is_empty())
         .map(|api_key| {
             SmartSignalAdvisoryConnector::new(
                 base_url,
                 api_key,
-                state.settings.rewards.ai_request_timeout_secs.max(1),
+                state
+                    .settings
+                    .smart_money
+                    .signal_advisory_request_timeout_secs
+                    .max(1),
             )
         })
         .transpose()?;
     Ok(SmartMoneySignalAdvisoryProvider {
-        provider: reward_config.ai_provider,
+        provider: config.signal_advisory_provider,
         request_format,
         model,
         connector,
     })
+}
+
+fn smart_money_signal_advisory_endpoint_settings<'a>(
+    settings: &'a polyedge_infrastructure::settings::SmartMoneySettings,
+    provider: polyedge_application::RewardAiProvider,
+) -> (Option<&'a str>, &'a str) {
+    match provider {
+        polyedge_application::RewardAiProvider::OpenAi => (
+            settings.signal_advisory_openai_api_key.as_deref(),
+            settings.signal_advisory_openai_base_url.as_str(),
+        ),
+        polyedge_application::RewardAiProvider::Anthropic => (
+            settings.signal_advisory_anthropic_api_key.as_deref(),
+            settings.signal_advisory_anthropic_base_url.as_str(),
+        ),
+    }
 }
 
 async fn record_smart_signal_advisory_llm_call(

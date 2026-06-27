@@ -84,6 +84,18 @@ export const copytrade = {
       discoveryEnabled: "启用候选发现",
       walletAdvisoryEnabled: "钱包 advisory",
       signalAdvisoryEnabled: "信号 advisory",
+      signalAdvisoryProvider: "信号 provider",
+      signalAdvisoryRequestFormat: "请求格式",
+      signalAdvisoryModel: "信号模型",
+      providerLabels: {
+        openai: "OpenAI-compatible",
+        anthropic: "Anthropic",
+      },
+      requestFormatLabels: {
+        openai_responses: "Responses",
+        openai_chat_completions: "Chat Completions",
+        anthropic_messages: "Messages",
+      },
       mode: "运行模式",
       modeLabels: {
         observe: "观察",
@@ -109,6 +121,7 @@ export const copytrade = {
       description: "展示 worker 从源交易生成的确定性观察信号；当前只做 observe/rejected，不执行交易。",
       total: "信号",
       trades: "源交易",
+      advisories: "模型建议",
       noSignals: "尚未生成 Smart Money 信号。",
       wallet: "钱包",
       market: "市场",
@@ -118,6 +131,7 @@ export const copytrade = {
       current: "当前",
       slippage: "滑点",
       status: "状态",
+      advisory: "模型建议",
       reason: "原因",
       created: "生成时间",
       statusLabels: {
@@ -129,6 +143,11 @@ export const copytrade = {
         live_ready: "实盘就绪",
         executed: "已执行",
         expired: "过期",
+      },
+      advisoryLabels: {
+        allow: "允许",
+        observe: "观察",
+        reject: "拒绝",
       },
     },
   },

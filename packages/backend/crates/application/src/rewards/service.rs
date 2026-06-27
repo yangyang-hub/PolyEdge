@@ -246,6 +246,22 @@ impl RewardBotService {
         self.store.upsert_markets(markets).await
     }
 
+    pub async fn upsert_market_event_windows(
+        &self,
+        windows: &[RewardMarketEventWindow],
+    ) -> Result<()> {
+        self.store.upsert_market_event_windows(windows).await
+    }
+
+    pub async fn list_effective_market_event_windows(
+        &self,
+        condition_ids: &[String],
+    ) -> Result<Vec<RewardMarketEventWindow>> {
+        self.store
+            .list_effective_market_event_windows(condition_ids)
+            .await
+    }
+
     /// List all active reward markets from the database.
     pub async fn list_active_reward_markets(&self) -> Result<Vec<RewardMarket>> {
         self.store.list_all_active_markets().await
@@ -566,6 +582,16 @@ impl RewardBotService {
             &previous_plans,
             OffsetDateTime::now_utc(),
         );
+        let now = OffsetDateTime::now_utc();
+        let condition_ids = plans
+            .iter()
+            .map(|plan| plan.condition_id.clone())
+            .collect::<Vec<_>>();
+        let event_windows = self
+            .store
+            .list_effective_market_event_windows(&condition_ids)
+            .await?;
+        apply_reward_event_windows_to_quote_plans(&mut plans, &event_windows, &config, now);
         let pre_ai_eligible_condition_ids = plans
             .iter()
             .filter(|plan| plan.eligible || plan.pre_ai_eligible)
@@ -611,7 +637,21 @@ impl RewardBotService {
         let account = self.load_account_state_cached(&config).await?;
         let open_orders = self.store.list_open_orders(&account.account_id).await?;
         let positions = self.list_account_positions_cached(&account.account_id).await?;
-        let plans = self.store.list_all_quote_plans().await?;
+        let mut plans = self.store.list_all_quote_plans().await?;
+        let condition_ids = plans
+            .iter()
+            .map(|plan| plan.condition_id.clone())
+            .collect::<Vec<_>>();
+        let event_windows = self
+            .store
+            .list_effective_market_event_windows(&condition_ids)
+            .await?;
+        apply_reward_event_windows_to_quote_plans(
+            &mut plans,
+            &event_windows,
+            &config,
+            OffsetDateTime::now_utc(),
+        );
         let pre_ai_eligible_condition_ids = plans
             .iter()
             .filter(|plan| plan.eligible || plan.pre_ai_eligible)

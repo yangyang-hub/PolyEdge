@@ -3,6 +3,7 @@
 pub struct InMemoryRewardBotStore {
     config: RwLock<RewardBotConfig>,
     markets: RwLock<HashMap<String, RewardMarket>>,
+    event_windows: RwLock<HashMap<(String, String), RewardMarketEventWindow>>,
     quote_plans: RwLock<HashMap<String, RewardQuotePlan>>,
     orders: RwLock<Vec<ManagedRewardOrder>>,
     positions: RwLock<HashMap<(String, String), RewardPosition>>,
@@ -24,6 +25,7 @@ impl InMemoryRewardBotStore {
         Self {
             config: RwLock::new(RewardBotConfig::default()),
             markets: RwLock::new(HashMap::new()),
+            event_windows: RwLock::new(HashMap::new()),
             quote_plans: RwLock::new(HashMap::new()),
             orders: RwLock::new(Vec::new()),
             positions: RwLock::new(HashMap::new()),
@@ -39,6 +41,36 @@ impl InMemoryRewardBotStore {
             candles: RwLock::new(HashMap::new()),
         }
     }
+}
+
+fn reward_event_window_source_priority(source: &str) -> u8 {
+    match source {
+        "manual" => 6,
+        "official" | "sports_api" | "economic_calendar" | "earnings_calendar"
+        | "governance_calendar" => 5,
+        "gamma_reviewed" => 4,
+        "gamma" => 3,
+        "news" | "rss" => 2,
+        "ai_extracted" => 1,
+        _ => 0,
+    }
+}
+
+fn reward_event_window_precedes(
+    candidate: &RewardMarketEventWindow,
+    existing: &RewardMarketEventWindow,
+) -> bool {
+    candidate
+        .confidence
+        .rank()
+        .cmp(&existing.confidence.rank())
+        .then_with(|| {
+            reward_event_window_source_priority(&candidate.source)
+                .cmp(&reward_event_window_source_priority(&existing.source))
+        })
+        .then_with(|| candidate.updated_at.cmp(&existing.updated_at))
+        .then_with(|| candidate.source.cmp(&existing.source).reverse())
+        .is_gt()
 }
 
 #[async_trait]
@@ -193,6 +225,49 @@ impl RewardBotStore for InMemoryRewardBotStore {
             store.insert(market.condition_id.clone(), market.clone());
         }
         Ok(())
+    }
+
+    async fn upsert_market_event_windows(
+        &self,
+        windows: &[RewardMarketEventWindow],
+    ) -> Result<()> {
+        if windows.is_empty() {
+            return Ok(());
+        }
+        let mut store = self.event_windows.write().await;
+        for window in windows {
+            store.insert(
+                (window.condition_id.clone(), window.source.clone()),
+                window.clone(),
+            );
+        }
+        Ok(())
+    }
+
+    async fn list_effective_market_event_windows(
+        &self,
+        condition_ids: &[String],
+    ) -> Result<Vec<RewardMarketEventWindow>> {
+        if condition_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let condition_ids: HashSet<&str> = condition_ids.iter().map(String::as_str).collect();
+        let mut best_by_condition: HashMap<String, RewardMarketEventWindow> = HashMap::new();
+        for window in self.event_windows.read().await.values() {
+            if !window.active || !condition_ids.contains(window.condition_id.as_str()) {
+                continue;
+            }
+            let replace = match best_by_condition.get(&window.condition_id) {
+                Some(existing) => reward_event_window_precedes(window, existing),
+                None => true,
+            };
+            if replace {
+                best_by_condition.insert(window.condition_id.clone(), window.clone());
+            }
+        }
+        let mut windows: Vec<_> = best_by_condition.into_values().collect();
+        windows.sort_by(|left, right| left.condition_id.cmp(&right.condition_id));
+        Ok(windows)
     }
 
     async fn save_quote_plans(&self, plans: &[RewardQuotePlan]) -> Result<()> {

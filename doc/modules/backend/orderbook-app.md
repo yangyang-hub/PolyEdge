@@ -11,7 +11,7 @@
 | 文件 | 职责 |
 |---|---|
 | `packages/backend/order/src/main.rs` | 服务入口：先 bind HTTP，再启动独立 Gamma full/priority sync、rewards catalog sync 和可重启盘口流后台任务；监听地址和 signal shutdown 复用 `polyedge-common` |
-| `packages/backend/order/src/market_sync.rs` | Gamma full sync、priority condition sync（已注册 token/rewards 重点市场）与 CLOB reward markets 单次同步实现 → Postgres |
+| `packages/backend/order/src/market_sync.rs` | Gamma full sync、priority condition sync（已注册 token/rewards 重点市场）、Gamma 日期候选写入 reward event windows 与 CLOB reward markets 单次同步实现 → Postgres |
 | `packages/backend/order/src/candle_history.rs` | Rewards candle history sync：按奖励优先级选择 active reward token，限速调用 CLOB `/prices-history`，写入 `reward_market_candles` |
 | `packages/backend/order/src/stream.rs` | 聚合 registry token，按 token 分片消费 CLOB `book` + `price_change` WS，并周期性全量 poll 注册 token 做 reconcile |
 | `packages/backend/order/src/http_api.rs` | 盘口读取、批量读取、stats、内部 WS stream、token 注册/注销和内部 ingest HTTP API |
@@ -72,12 +72,13 @@
 ```text
 Gamma API / CLOB rewards API
     → market_sync.rs
-    → markets / reward_markets (Postgres)
+    → markets / reward_markets / reward_market_event_windows (Postgres)
 
 Orderbook registry + rewards active/planned/candidate/fallback condition ids
     → market_sync.rs priority sync
     → Gamma `/markets?condition_ids=...`
     → markets.synced_at refresh for priority markets
+    → reward_market_event_windows Gamma candidate refresh for rewards markets
 
 Worker register sources
     → POST /orderbook/register
@@ -102,6 +103,7 @@ Active reward tokens
 - orderbook 缓存把盘口内容版本时间和最近确认时间拆开：`observed_at` 保留 WS/CLOB 响应 timestamp，`confirmed_at` 使用服务本地接收/写入时间表示刚确认过完整盘口；安静市场可能长期没有内容版本变化，但只要 poll 或按需 batch refresh 成功推进 `confirmed_at`，rewards live placement 就不会因内容版本不变被误判 stale。batch HTTP 普通读取通过一次 cache 批量读锁返回；带 `refresh_if_stale_ms` 的读取会先刷新缺失/超龄 token，再读缓存返回。
 - Gamma full sync、Gamma priority sync 与 rewards 目录同步在 orderbook 服务中使用三个独立后台循环；rewards 分页和详情补全可能持续很多分钟，但不会阻塞 Gamma `markets.synced_at` 刷新。Gamma full/priority 写入 `markets` 时在 orderbook 进程内串行化，并由 Postgres `lock_timeout` / `statement_timeout` 快速失败，避免一次慢锁等待拖垮后续周期。priority sync 会在全量目录之间强制刷新重点 condition，避免已挂单/已订阅/rewards 筛选市场仅因目录新鲜度过低被策略撤单。rewards 详情补全后仍缺 token 或空目录异常时保留上一版 rewards catalog，不执行破坏性全量替换。
 - Gamma market upsert 保存 `liquidity_usd`、`end_at` 和本地 `synced_at`；full sync 跳过同版本同内容行，并按 rewards 新鲜度窗口对安静市场做限频 `synced_at` refresh，priority sync 对重点市场强制 refresh。Postgres upsert 使用单条 `INSERT .. ON CONFLICT DO UPDATE WHERE` 表达新增、内容变化和 freshness-only 刷新。rewards 候选使用该本地同步时间判断目录新鲜度，不依赖市场是否刚好发生上游业务更新。
+- Gamma full/priority sync 会从 `startDateIso`/`startDate`、`events[].startDate/endDate` 和 `hasReviewedDates` 派生 rewards 事件窗口候选，通过 `RewardBotService.upsert_market_event_windows()` 写入 `reward_market_event_windows`。默认 `event_window_gamma_unreviewed_dates_mode=ignore` 不保存未审核 Gamma 日期；`observe` 保存 low confidence，`medium_confidence` 保存 medium confidence；`hasReviewedDates=true` 保存为 `gamma_reviewed` medium confidence。默认 hard gate 最低置信度为 high，因此 Gamma 候选不会直接触发事件窗口硬拦截。
 - Priority sync 使用本地 `markets` 表把 registry token 映射到 Gamma condition id；无 Postgres 时跳过该映射，仍可使用 rewards service 提供的重点 condition。active rewards catalog fallback 会在 priority 集合未满时按奖励排序继续补充 condition id，避免候选 freshness 全部过期后只能等待 full sync 恢复。
 - 盘口只保存在单个 orderbook 进程内；服务重启会丢失缓存，横向多实例之间也不会共享缓存或 registry。
 - Rewards token 的 5 分钟 source K 线已持久化到 Postgres，作为 AI advisory 小时级聚合输入；该 K 线由 orderbook 服务低频限速调用 CLOB `/prices-history` 写入，不再消费本地 WS/poll/ingest 高频更新，也不包含真实成交量。

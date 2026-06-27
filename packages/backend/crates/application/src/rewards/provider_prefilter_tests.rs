@@ -19,6 +19,7 @@ fn prefilter_test_plan(condition_id: &str, bucket: RewardStrategyBucket) -> Rewa
         opportunity_metrics: None,
         ai_advisory: None,
         info_risk: None,
+        event_window: None,
         midpoint: Some(decimal("0.5")),
         live_skip_until: None,
         live_skip_reason: None,
