@@ -1,10 +1,9 @@
 use super::*;
 use polyedge_application::{
-    ApproveSignalCommand, ArbitrageAnalysisRunListFilters, ArbitrageScanListFilters,
-    EventListFilters, EvidenceListFilters, ExecutionRequestListFilters, OrderDraftListFilters,
-    OrderListFilters, PageQuery, PositionListFilters, RewardBotConfigPatch, SignalListFilters,
-    SubmitExecutionStoreCommand, SyncExternalOrderStatusCommand, TradeListFilters,
-    demo_fixture_bundle,
+    ApproveSignalCommand, EventListFilters, EvidenceListFilters, ExecutionRequestListFilters,
+    OrderDraftListFilters, OrderListFilters, PageQuery, PositionListFilters, RewardBotConfigPatch,
+    SignalListFilters, SubmitExecutionStoreCommand, SyncExternalOrderStatusCommand,
+    TradeListFilters, demo_fixture_bundle,
 };
 use polyedge_domain::{
     ExecutionRequestStatus, OrderDraftStatus, OrderStatus, Quantity, SignalLifecycleState,
@@ -134,88 +133,6 @@ async fn promote_news_events_creates_market_linked_event_and_evidence() {
         .await
         .expect("list signals");
     assert!(promoted_signals.data.is_empty());
-}
-
-#[tokio::test]
-async fn scan_arbitrage_once_records_market_snapshots_without_trade_side_effects() {
-    let state = test_state(SystemMode::LiveAuto);
-    state
-        .market_event_service
-        .ingest_fixture_bundle(demo_fixture_bundle(), "trace_seed")
-        .await
-        .expect("seed markets");
-
-    let report = scan_arbitrage_once(&state, "trc_arbitrage_scan")
-        .await
-        .expect("scan arbitrage");
-
-    assert_eq!(
-        report,
-        ArbitrageScanRunReport {
-            markets_scanned: 4,
-            snapshots_recorded: 4,
-            opportunities_recorded: 0,
-            validations_recorded: 0,
-            validation_books_refetched: 0,
-            validation_book_failures: 0,
-            opportunities_expired: 0,
-            events_pruned: 0,
-            scans_pruned: 0,
-            snapshots_pruned: 0,
-            scan_opportunities_pruned: 0,
-            failed_books: 0,
-        }
-    );
-
-    let page = PageQuery::default();
-    let scans = state
-        .arbitrage_service
-        .list_scans(
-            ArbitrageScanListFilters::new().expect("scan filters"),
-            &page,
-        )
-        .await
-        .expect("list scans");
-    assert_eq!(scans.data.len(), 1);
-    assert_eq!(scans.data[0].id, "scan_arbitrage_scan");
-    assert_eq!(scans.data[0].market_count, 4);
-    assert_eq!(scans.data[0].snapshot_count, 4);
-    assert_eq!(scans.data[0].opportunity_count, 0);
-    assert!(scans.data[0].finished_at.is_some());
-}
-
-#[tokio::test]
-async fn analyze_arbitrage_opportunities_records_summary_run() {
-    let state = test_state(SystemMode::LiveAuto);
-    state
-        .market_event_service
-        .ingest_fixture_bundle(demo_fixture_bundle(), "trace_seed")
-        .await
-        .expect("seed markets");
-    scan_arbitrage_once(&state, "trc_arbitrage_scan")
-        .await
-        .expect("scan arbitrage");
-
-    let analysis = analyze_arbitrage_opportunities(&state, 24, "trc_arbitrage_analysis")
-        .await
-        .expect("analyze arbitrage");
-
-    assert_eq!(analysis.id, "arb_analysis_arbitrage_analysis");
-    assert_eq!(analysis.lookback_hours, 24);
-    assert_eq!(analysis.opportunity_count, 0);
-    assert_eq!(analysis.market_count, 0);
-
-    let page = PageQuery::default();
-    let runs = state
-        .arbitrage_service
-        .list_analysis_runs(
-            ArbitrageAnalysisRunListFilters::new().expect("analysis filters"),
-            &page,
-        )
-        .await
-        .expect("list analysis runs");
-    assert_eq!(runs.data.len(), 1);
-    assert_eq!(runs.data[0].id, analysis.id);
 }
 
 struct TestExecutionReceipt {

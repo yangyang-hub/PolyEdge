@@ -6,15 +6,12 @@ use axum::{
 use base64::{Engine, engine::general_purpose};
 use ed25519_dalek::{Signer, SigningKey};
 use polyedge_application::{
-    ArbitrageAnalysisRunView, ArbitrageScanView, ArbitrageValidationConfig, AuthenticatedActor,
-    MarkExecutionSubmittedCommand, MarketBookSnapshotView, NewsIngestSourceCommand,
-    NewsIngestionItem, Paginated, SubmitExecutionStoreCommand, build_arbitrage_analysis,
-    demo_fixture_bundle,
+    AuthenticatedActor, MarkExecutionSubmittedCommand, NewsIngestSourceCommand, NewsIngestionItem,
+    Paginated, SubmitExecutionStoreCommand, demo_fixture_bundle,
 };
-use polyedge_domain::{Edge, Probability, Quantity, StepUpScope, SystemMode, UserRole};
+use polyedge_domain::{Probability, Quantity, StepUpScope, SystemMode, UserRole};
 use polyedge_infrastructure::{AppState, AuthKeySettings, Runtime, Settings};
 use serde::Serialize;
-use serde_json::json;
 use tower::util::ServiceExt;
 use uuid::Uuid;
 
@@ -161,8 +158,5 @@ async fn dispatch_execution(
 }
 
 include!("tests/basic_routes.rs");
-include!("tests/arbitrage.rs");
 include!("tests/event_news.rs");
-include!("tests/risk_execution.rs");
 include!("tests/callbacks.rs");
-include!("tests/mode_signal.rs");

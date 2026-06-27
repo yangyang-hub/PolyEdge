@@ -81,6 +81,5 @@ cargo clippy --workspace --tests  # lint
 - `application/copytrade/models.rs`（~787）
 - `stores/rewards/postgres.rs`（~701，受单 trait impl 约束，优先级低）
 - `stores/copytrade/postgres.rs`（~713，受单 trait impl 约束，优先级低）
-- `catalog/postgres/arbitrage.rs`（~704）
 - `catalog/postgres/market_event/execution_updates/fills.rs`（~688）
 - `application/risk.rs`（~687）

@@ -1,7 +1,7 @@
 "use client";
 
 import { usePathname } from "next/navigation";
-import { Menu, Power } from "lucide-react";
+import { Menu } from "lucide-react";
 import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -13,30 +13,12 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet";
 import { consoleNavItems, isConsoleNavItemActive } from "@/components/shared/console-nav-items";
-import { StatusPill } from "@/components/shared/status-pill";
-import type { RuntimeMode } from "@/lib/contracts/dto";
-import { dictionary, translateEnum } from "@/lib/i18n/dictionaries";
+import { dictionary } from "@/lib/i18n/dictionaries";
 import { cn } from "@/lib/utils";
 
-export function ConsoleTopbar({
-  initialEnvironment,
-  initialKillSwitch,
-  initialMode,
-}: {
-  initialEnvironment: string | null;
-  initialKillSwitch: boolean | null;
-  initialMode: RuntimeMode | null;
-}) {
+export function ConsoleTopbar() {
   const pathname = usePathname();
-  const [runtimeMode] = useState<RuntimeMode | null>(initialMode);
-  const [environment] = useState<string | null>(initialEnvironment);
-  const [killSwitch] = useState(initialKillSwitch ?? false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const modeLabel = runtimeMode ? translateEnum(runtimeMode) : dictionary.topbar.runtimeSync;
-  const environmentLabel = environment ?? dictionary.topbar.streamSync;
-  const killSwitchActive = killSwitch;
-  const killSwitchAvailable =
-    runtimeMode === "live_auto" || runtimeMode === "kill_switch_locked" || killSwitchActive;
 
   return (
     <header className="fixed inset-x-0 top-0 z-30 bg-background/95 backdrop-blur md:left-16">
@@ -90,29 +72,6 @@ export function ConsoleTopbar({
           <p className="hidden font-heading text-lg font-black tracking-tight text-primary md:block">
             {dictionary.topbar.title}
           </p>
-        </div>
-
-        <div className="flex items-center gap-2 md:gap-3">
-          <div className="hidden items-center gap-2 xl:flex">
-            <StatusPill tone={killSwitchActive ? "danger" : "warning"}>{modeLabel}</StatusPill>
-            <StatusPill tone="primary">{environmentLabel}</StatusPill>
-          </div>
-          {killSwitchAvailable ? (
-            <Button
-              asChild
-              size="sm"
-              className={
-                killSwitchActive
-                  ? "rounded-sm bg-destructive text-destructive-foreground shadow-[0_0_18px_rgba(255,180,171,0.24)] hover:bg-destructive/90"
-                  : "rounded-sm bg-destructive/85 text-destructive-foreground shadow-[0_0_18px_rgba(255,180,171,0.12)] hover:bg-destructive hover:shadow-[0_0_18px_rgba(255,180,171,0.32)]"
-              }
-            >
-              <a href="/risk">
-                <Power className="size-4" />
-                {killSwitchActive ? dictionary.topbar.killSwitchActive : dictionary.topbar.killSwitch}
-              </a>
-            </Button>
-          ) : null}
         </div>
       </div>
     </header>

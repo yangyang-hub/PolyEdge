@@ -1,22 +1,18 @@
 use async_trait::async_trait;
 use polyedge_application::{
-    ArbitrageAnalysisRunListFilters, ArbitrageAnalysisRunView, ArbitrageEventListFilters,
-    ArbitrageEventType, ArbitrageEventView, ArbitrageHistoryPruneReport,
-    ArbitrageOpportunityListFilters, ArbitrageOpportunityStatus, ArbitrageOpportunityType,
-    ArbitrageOpportunityValidationView, ArbitrageOpportunityView, ArbitrageScanListFilters,
-    ArbitrageScanView, ArbitrageStore, ArbitrageValidationStatus, DispatchExecutionListFilters,
-    EventListFilters, EventView, EvidenceListFilters, EvidenceView, ExecutionDispatchCandidate,
-    ExecutionDispatchResult, ExecutionFillResult, ExecutionReconciliationCandidate,
-    ExecutionRequestListFilters, ExecutionRequestView, ExecutionSubmissionResult, FixtureBundle,
-    FixtureIngestionReport, MarketBookSnapshotView, MarketCategoryView, MarketEventStore,
-    MarketListFilters, MarketSortField, MarketUpsertOptions, MarketView, NewsIngestionStore,
-    NewsRawEventInsert, NewsRawEventListFilters, NewsRawEventView, NewsSourceFailureUpdate,
-    NewsSourceHealthListFilters, NewsSourceHealthView, NewsSourceSuccessUpdate,
-    OrderDraftListFilters, OrderDraftView, OrderListFilters, OrderView, PageQuery, Paginated,
-    PositionListFilters, PositionView, ProbabilityEstimateListFilters, ProbabilityEstimateView,
-    RecomputeSignalCommand, RecomputeSignalResult, ReconcileExecutionListFilters,
-    SignalListFilters, SignalTransitionListFilters, SignalTransitionView, SignalView, SortOrder,
-    SourceHealthAdjustment, SubmitExecutionStoreCommand, TradeListFilters, TradeView,
+    DispatchExecutionListFilters, EventListFilters, EventView, EvidenceListFilters, EvidenceView,
+    ExecutionDispatchCandidate, ExecutionDispatchResult, ExecutionFillResult,
+    ExecutionReconciliationCandidate, ExecutionRequestListFilters, ExecutionRequestView,
+    ExecutionSubmissionResult, FixtureBundle, FixtureIngestionReport, MarketCategoryView,
+    MarketEventStore, MarketListFilters, MarketSortField, MarketUpsertOptions, MarketView,
+    NewsIngestionStore, NewsRawEventInsert, NewsRawEventListFilters, NewsRawEventView,
+    NewsSourceFailureUpdate, NewsSourceHealthListFilters, NewsSourceHealthView,
+    NewsSourceSuccessUpdate, OrderDraftListFilters, OrderDraftView, OrderListFilters, OrderView,
+    PageQuery, Paginated, PositionListFilters, PositionView, ProbabilityEstimateListFilters,
+    ProbabilityEstimateView, RecomputeSignalCommand, RecomputeSignalResult,
+    ReconcileExecutionListFilters, SignalListFilters, SignalTransitionListFilters,
+    SignalTransitionView, SignalView, SortOrder, SourceHealthAdjustment,
+    SubmitExecutionStoreCommand, TradeListFilters, TradeView,
     build_recompute_signal_draft_with_source_health, degraded_health_score,
 };
 use polyedge_domain::{
@@ -52,7 +48,6 @@ mod tests;
 include!("helpers/fetch.rs");
 include!("helpers/market_rows.rs");
 include!("helpers/news_rows.rs");
-include!("helpers/arbitrage_rows.rs");
 include!("helpers/event_rows.rs");
 include!("helpers/execution_rows.rs");
 include!("helpers/calculations.rs");

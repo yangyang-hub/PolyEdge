@@ -20,7 +20,6 @@ pub use auth::{
 pub use http::{HttpError, hash_json, new_trace_id, request_id_from_headers};
 pub use runtime::{AppState, PostgresAdvisoryLease, Runtime, RuntimeDependencies};
 pub use settings::{
-    ArbitrageSettings, AuthKeySettings, AuthSettings, NewsSettings, NewsSourceSettings,
-    PolymarketSignatureType, RewardsSettings, RuntimeSettings, ServerSettings, Settings,
-    WorkerSettings,
+    AuthKeySettings, AuthSettings, NewsSettings, NewsSourceSettings, PolymarketSignatureType,
+    RewardsSettings, RuntimeSettings, ServerSettings, Settings, WorkerSettings,
 };

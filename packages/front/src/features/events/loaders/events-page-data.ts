@@ -1,20 +1,16 @@
 import { listEvidences, listEvents } from "@/lib/api/events";
 import { listMarkets } from "@/lib/api/markets";
-import { listSignals } from "@/lib/api/signals";
 import { dictionary, translateEnum } from "@/lib/i18n/dictionaries";
 import { indexMarkets, selectFirstMatchingItem } from "@/lib/loaders/console-loader-utils";
 import {
   eventStatusTone,
   formatPercentFromRatio,
-  formatSignedFixed,
-  signalStateTone,
 } from "@/lib/formatters";
 
 export async function getEventsPageData() {
-  const [{ data: events }, { data: evidences }, { data: signals }, { data: markets }] = await Promise.all([
+  const [{ data: events }, { data: evidences }, { data: markets }] = await Promise.all([
     listEvents(),
     listEvidences(),
-    listSignals(),
     listMarkets(),
   ]);
   const marketIndex = indexMarkets(markets);
@@ -27,10 +23,6 @@ export async function getEventsPageData() {
     selectedEventId: selectedEvent.id,
     events: events.map((event) => {
       const selectedEvidence = evidences.find((evidence) => evidence.event_id === event.id) ?? null;
-      const linkedSignals = signals.filter(
-        (signal) =>
-          signal.event_id === event.id || event.related_market_ids.includes(signal.market_id),
-      );
 
       return {
         id: event.id,
@@ -51,13 +43,9 @@ export async function getEventsPageData() {
               sourceReliability: selectedEvidence.source_reliability,
             }
           : null,
-        linkedSignals: linkedSignals.map((signal) => ({
-          id: signal.id,
-          marketId: signal.market_id,
-          marketQuestion: marketIndex.get(signal.market_id)?.question ?? signal.market_id,
-          edge: formatSignedFixed(signal.edge),
-          stateLabel: translateEnum(signal.lifecycle_state),
-          stateTone: signalStateTone(signal.lifecycle_state),
+        relatedMarkets: event.related_market_ids.slice(0, 6).map((marketId) => ({
+          id: marketId,
+          question: marketIndex.get(marketId)?.question ?? marketId,
         })),
         isSelected: event.id === selectedEvent.id,
       };

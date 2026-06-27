@@ -1,15 +1,15 @@
 # PolyEdge
 
-PolyEdge 是面向 Polymarket 的事件、市场数据、套利雷达、rewards 做市和钱包跟踪控制台。当前仓库已经包含前端、Rust 后端、数据库迁移、orderbook 服务和 Docker 部署入口。
+PolyEdge 是面向 Polymarket 的事件、市场数据、rewards 做市和钱包跟踪控制台。当前仓库已经包含前端、Rust 后端、数据库迁移、orderbook 服务和 Docker 部署入口。
 
 如果要判断“代码现在真实实现到哪里”，优先看 [AGENTS.md](./AGENTS.md) 和 [doc/modules/](./doc/modules/README.md)。`doc/polyedge-*.md` 中的设计/计划文档保留为历史背景，不作为当前能力清单。
 
 ## 当前状态
 
-- 前端控制台页面：`dashboard / markets / events / radar / rewards / copy-trading / wallet-analysis / signals / positions / risk / settings`。未落地的 approvals 页面和 `/replay` 不再作为前端入口暴露。
+- 前端控制台页面：`dashboard / markets / events / rewards / funding / copy-trading / wallet-analysis / settings`。未落地的 approvals 页面和 `/replay` 不再作为前端入口暴露。
 - 前端只走真实 Rust API，不再提供 mock 数据模式；所有文案走 `@/lib/i18n/dictionaries` 中文字典。
 - 后端 Rust workspace 根为 `packages/Cargo.toml`：顶层服务 crate 是 `packages/api` 和 `packages/orderbook`，worker/replay 兼容 app 与共享 crates 位于 `packages/backend/`。
-- 数据库迁移目前到 `0043_reward_low_competition_observations.sql`；空库可用 `packages/backend/init.sql` 一次性初始化，运行时仍使用 `packages/backend/migrations/` 做 `sqlx` 迁移校验。
+- 数据库迁移目前到 `0048_reward_account_unmanaged_buy_notional.sql`；空库可用 `packages/backend/init.sql` 一次性初始化，运行时仍使用 `packages/backend/migrations/` 做 `sqlx` 迁移校验。
 - 市场同步、rewards catalog 同步和 orderbook WS/poll 缓存由独立 `polyedge-orderbook` 服务负责。
 - API 只读数据库或 orderbook 服务，不在 handler 中直接请求 Polymarket。Rewards 和 copytrade 控制操作通过数据库命令队列交给 worker/runtime 执行。
 - Rewards bot 仅支持 live 实盘路径：post-only 买单、撤单、confirmed fill 对账、成交后 sibling cancel、exit/flatten sell、账户余额/持仓快照同步、AI advisory 和异步信息风险缓存。
@@ -73,9 +73,6 @@ cargo run -p polyedge-worker
 cargo run -p polyedge-worker -- ingest-news-once
 cargo run -p polyedge-worker -- poll-news
 cargo run -p polyedge-worker -- promote-news-events
-cargo run -p polyedge-worker -- scan-arbitrage-once
-cargo run -p polyedge-worker -- poll-arbitrage-radar
-cargo run -p polyedge-worker -- analyze-arbitrage-opportunities
 cargo run -p polyedge-worker -- scan-rewards-once
 cargo run -p polyedge-worker -- poll-reward-bot
 cargo run -p polyedge-worker -- scan-reward-info-risks-once

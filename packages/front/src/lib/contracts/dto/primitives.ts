@@ -9,38 +9,12 @@ export type TradabilityStatus = "tradable" | "manual_review" | "observe_only" | 
 export type EventStatus = "active" | "expired" | "invalidated" | "superseded";
 export type EvidenceDirection = "supports_yes" | "supports_no" | "background";
 export type EvidenceStatus = "active" | "expired" | "invalidated";
-export type SignalAction = "buy" | "sell";
-export type SignalSide = "yes" | "no";
-export type SignalLifecycleState =
-  | "new"
-  | "active"
-  | "weakened"
-  | "executed"
-  | "invalidated"
-  | "reversed"
-  | "expired";
 export type RuntimeMode =
   | "live_auto"
   | "kill_switch_locked";
 export type RuntimeEnvironment = "local" | "paper" | "staging" | "production";
 export type RuntimeConfigValueType = "boolean" | "integer" | "decimal" | "text" | "url" | "json" | "enum";
-export type AlertSeverity = "warning" | "critical";
-export type AlertStatus = "unresolved" | "watching" | "contained";
-export type PositionSide = "yes" | "no";
-export type BucketStatus = "healthy" | "watch" | "breach";
 export type NewsSourceType = "news" | "social" | "official" | "calendar" | "market";
-export type ArbitrageOpportunityType = "binary_buy_both" | "binary_sell_both";
-export type ArbitrageOpportunityStatus = "observed" | "expired" | "repeated";
-export type ArbitrageValidationStatus =
-  | "unvalidated"
-  | "valid"
-  | "stale_book"
-  | "insufficient_depth"
-  | "price_moved"
-  | "fees_exceed_edge"
-  | "below_threshold"
-  | "invalid_market"
-  | "error";
 export type RewardOrderSide = "buy" | "sell";
 export type ManagedRewardOrderStatus =
   | "planned"

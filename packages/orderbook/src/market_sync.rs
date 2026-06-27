@@ -15,6 +15,7 @@ pub struct PriorityMarketSyncReport {
 }
 
 static MARKET_UPSERT_GATE: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+const GENERAL_MARKET_SYNC_PAGE_SIZE: u16 = 100;
 
 pub async fn sync_general_markets_once(
     state: &AppState,
@@ -22,8 +23,9 @@ pub async fn sync_general_markets_once(
     upsert_options: MarketUpsertOptions,
 ) -> Result<usize> {
     let connector = PolymarketGammaConnector::new(&state.settings.polymarket.gamma_host)?;
-    let page_size = state.settings.arbitrage.scan_limit;
-    let gamma_markets = connector.fetch_markets(page_size).await?;
+    let gamma_markets = connector
+        .fetch_markets(GENERAL_MARKET_SYNC_PAGE_SIZE)
+        .await?;
     let views: Vec<MarketView> = gamma_markets
         .into_iter()
         .map(gamma_market_to_view)

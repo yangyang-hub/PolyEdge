@@ -1,6 +1,5 @@
 use super::*;
 
-mod arbitrage;
 mod market_event;
 mod news;
 

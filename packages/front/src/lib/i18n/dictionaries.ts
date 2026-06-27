@@ -2,10 +2,6 @@ import { shared } from "./dictionaries/shared";
 import { enums } from "./dictionaries/enums";
 import { dashboard } from "./dictionaries/dashboard";
 import { markets } from "./dictionaries/markets";
-import { signals } from "./dictionaries/signals";
-import { positions } from "./dictionaries/positions";
-import { risk } from "./dictionaries/risk";
-import { radar } from "./dictionaries/radar";
 import { rewards } from "./dictionaries/rewards";
 import { copytrade } from "./dictionaries/copytrade";
 import { ops } from "./dictionaries/ops";
@@ -17,10 +13,6 @@ const _dictionary = {
   ...enums,
   ...dashboard,
   ...markets,
-  ...signals,
-  ...positions,
-  ...risk,
-  ...radar,
   ...rewards,
   ...copytrade,
   ...ops,

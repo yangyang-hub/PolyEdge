@@ -1,6 +1,6 @@
 # 共享组件（Shared Components + UI Primitives）
 
-最后更新：2026-06-26
+最后更新：2026-06-27
 
 ## 概述
 
@@ -34,7 +34,7 @@ shadcn 生成的 Radix UI 基础组件（style: radix-nova）：
 | `textarea.tsx` | 多行输入 |
 | `tooltip.tsx` | 提示气泡 |
 
-### Shared Business Components — `src/components/shared/`（17 个文件）
+### Shared Business Components — `src/components/shared/`（18 个文件）
 
 | 组件 | 用途 |
 |---|---|
@@ -55,6 +55,7 @@ shadcn 生成的 Radix UI 基础组件（style: radix-nova）：
 | `meter-bar.tsx` | 进度条/计量条 |
 | `status-pill.tsx` | 状态指示标签 |
 | `route-state-card.tsx` | 路由状态卡片 |
+| `truncate-text.tsx` | 文本截断/展开 |
 
 ### 根级组件
 
@@ -72,9 +73,9 @@ shadcn 生成的 Radix UI 基础组件（style: radix-nova）：
 
 - UI 组件基于 shadcn/ui v4（radix-nova 风格）
 - 共享组件覆盖所有跨页面复用场景
-- 控制台侧边栏不再提供 `/replay` 入口；已提供 `/funding` Polymarket 入金入口；桌面侧栏和移动端抽屉菜单共享同一份导航配置
+- 控制台侧边栏不再提供 `/replay`、`/radar`、`/signals`、`/positions`、`/risk` 入口；已提供 `/funding` Polymarket 入金入口；桌面侧栏和移动端抽屉菜单共享同一份导航配置
 - 控制台布局导航使用原生 `<a href>` 跳转，避免静态导出部署下客户端 router 拦截失败导致菜单点击无响应
-- 顶栏不再显示横向导航快捷入口；移动端顶栏显示菜单按钮并从左侧打开导航抽屉
+- 顶栏不再显示横向导航快捷入口，也不再读取旧风控状态或展示 kill-switch 控制；移动端顶栏显示菜单按钮并从左侧打开导航抽屉
 - 暗色主题（`globals.css` 中仅定义暗色变量）
 
 ## 修改检查清单

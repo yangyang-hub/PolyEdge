@@ -662,6 +662,7 @@ fn low_competition_live_cancel_test_config() -> RewardBotConfig {
         low_competition_min_competition_share_bps: 5_000,
         low_competition_max_competition_multiple: reward_decimal("1"),
         low_competition_max_competition_usd: reward_decimal("2000"),
+        low_competition_quote_bid_rank: 1,
         low_competition_min_book_samples: 2,
         ai_advisory_enabled: true,
         info_risk_enabled: true,

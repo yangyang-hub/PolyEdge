@@ -176,49 +176,8 @@ fn i64_to_u64(column: &str, value: i64) -> Result<u64> {
     })
 }
 
-fn nonnegative_i32_to_u32(column: &str, value: i32) -> Result<u32> {
-    u32::try_from(value).map_err(|error| {
-        db_error(
-            "POSTGRES_DECODE_FAILED",
-            format!("failed to decode column {column} as nonnegative count: {error}"),
-        )
-    })
-}
-
-fn latest_validation_for_opportunity(
-    validations: &HashMap<String, ArbitrageOpportunityValidationView>,
-    opportunity_id: &str,
-) -> Option<ArbitrageOpportunityValidationView> {
-    validations
-        .values()
-        .filter(|validation| validation.opportunity_id == opportunity_id)
-        .max_by(|left, right| {
-            left.validated_at
-                .cmp(&right.validated_at)
-                .then_with(|| left.id.cmp(&right.id))
-        })
-        .cloned()
-}
-
 fn clamped_error_message(value: &str) -> String {
     value.chars().take(1_000).collect()
-}
-
-fn required_optional_column<T>(
-    row: &sqlx::postgres::PgRow,
-    column: &str,
-    context: &str,
-) -> Result<T>
-where
-    T: for<'r> sqlx::Decode<'r, sqlx::Postgres> + sqlx::Type<sqlx::Postgres>,
-{
-    let value: Option<T> = decode_column(row, column)?;
-    value.ok_or_else(|| {
-        db_error(
-            "POSTGRES_DECODE_FAILED",
-            format!("missing column {column} while decoding {context}"),
-        )
-    })
 }
 
 fn decode_column<T>(row: &sqlx::postgres::PgRow, column: &str) -> Result<T>

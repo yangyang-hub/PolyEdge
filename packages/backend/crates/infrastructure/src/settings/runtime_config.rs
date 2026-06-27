@@ -1,5 +1,5 @@
 use super::{NewsSourceSettings, PolymarketSignatureType, Settings};
-use polyedge_domain::{AppError, Edge, ExposureRatio, Probability, Quantity, UsdAmount};
+use polyedge_domain::AppError;
 use serde::Serialize;
 use std::{collections::BTreeMap, str::FromStr};
 

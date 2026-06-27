@@ -18,7 +18,7 @@ This version has breaking changes — APIs, conventions, and file structure may 
 |---|---|
 | `src/app/*` | App Router 路由、`page` / `layout` / route handler |
 | `src/features/<name>/` | 按页面/领域组织的功能模块，内部分 `components` / `loaders` / `lib` / `types.ts`（见下） |
-| `src/lib/api/*` | **统一数据层**：读取按领域拆文件（`markets.ts` / `signals.ts` / `risk.ts`…，基于 `base.ts`），写操作（server actions）通过 `actions.ts` barrel 暴露，具体实现按领域放在 `actions/` |
+| `src/lib/api/*` | **统一数据层**：读取按领域拆文件（`markets.ts` / `rewards.ts` / `funding.ts`…，基于 `base.ts`），写操作（server actions）通过 `actions.ts` barrel 暴露，具体实现按领域放在 `actions/` |
 | `src/lib/{contracts,i18n,…}` | 跨 feature 共享库：`contracts/dto` 是后端 DTO 的类型镜像，`i18n` 是中文字典 |
 | `src/components/ui/*` | shadcn 生成的基础组件，不手改风格 |
 | `src/components/shared/*` | 跨页面复用的业务组件 |
@@ -30,7 +30,7 @@ This version has breaking changes — APIs, conventions, and file structure may 
 - `lib/`：纯函数——流式 patch、状态推导、格式化、比较器；可带 `*.test.ts`。
 - `types.ts`：本 feature 的类型定义。
 
-范例形态见 `src/features/radar/`：`lib/radar-state.ts`（类型 + 纯函数）、`lib/radar-formatters.ts`、`types.ts`、`lib/radar-state.test.ts`。新建/重构 feature 复刻此结构。
+范例形态见 `src/features/rewards/`：`components/`、`loaders/`、`lib/` 和紧邻领域类型/格式化 helper 分层。新建/重构 feature 复刻这种页面/领域内聚结构。
 
 **注意：`src/server/` 当前是空目录（历史遗留），新代码不要往里放；数据层一律用 `src/lib/api/*`。**
 
@@ -75,7 +75,6 @@ cd packages/front
 npx tsc --noEmit        # 快速类型检查（拆分/搬移后必跑）
 yarn lint               # eslint
 yarn build              # 生产构建（含完整类型检查）
-yarn test:radar-state   # Node --test（改 radar lib 必跑）
 ```
 
 前端无端到端运行时测试，重构交互组件后**必须人工 smoke** 对应页面（实时更新、过滤、对话框、表格渲染等）。

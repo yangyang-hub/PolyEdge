@@ -6,23 +6,17 @@ use axum::{
     routing::get,
 };
 use polyedge_application::{
-    AddTrackedWalletInput, ArbitrageAnalysisRunListFilters, ArbitrageAnalysisRunView,
-    ArbitrageOpportunityListFilters, ArbitrageOpportunityStatus, ArbitrageOpportunityType,
-    ArbitrageOpportunityValidationView, ArbitrageOpportunityView, ArbitrageScanListFilters,
-    ArbitrageScanView, ArbitrageValidationStatus, AuthenticatedActor, CopyControlAction,
-    CopyTradeConfigPatch, CopyTradeSnapshot, EventListFilters, EventView, EvidenceListFilters,
-    EvidenceView, ExecutionFillResult, ExecutionRequestListFilters, ExecutionRequestView,
-    ExecutionSubmissionReceipt, IdempotencyBegin, IdempotencyRequest, KillSwitchReceipt,
-    MarketListFilters, MarketSortField, MarketView, ModeTransitionCommand, NewsRawEventListFilters,
-    NewsRawEventView, NewsSourceHealthListFilters, NewsSourceHealthView, OrderDraftListFilters,
-    OrderDraftView, OrderListFilters, OrderView, OrderbookCache, PageQuery, Paginated,
-    PositionListFilters, PositionView, ProbabilityEstimateListFilters, ProbabilityEstimateView,
-    ReconcileExternalTradeCommand, ReleaseKillSwitchCommand, RewardBotConfigPatch,
+    AddTrackedWalletInput, AuthenticatedActor, CopyControlAction, CopyTradeConfigPatch,
+    CopyTradeSnapshot, EventListFilters, EventView, EvidenceListFilters, EvidenceView,
+    ExecutionFillResult, ExecutionRequestListFilters, ExecutionRequestView, IdempotencyBegin,
+    IdempotencyRequest, MarketListFilters, MarketSortField, MarketView, ModeTransitionCommand,
+    NewsRawEventListFilters, NewsRawEventView, NewsSourceHealthListFilters, NewsSourceHealthView,
+    OrderDraftListFilters, OrderDraftView, OrderListFilters, OrderView, OrderbookCache, PageQuery,
+    Paginated, PositionListFilters, PositionView, ProbabilityEstimateListFilters,
+    ProbabilityEstimateView, ReconcileExternalTradeCommand, RewardBotConfigPatch,
     RewardBotSnapshot, RewardControlAction, RewardOrderListQuery, RewardQuotePlanListQuery,
-    RewardTokenQuote, RiskPolicy, RiskStateView, SignalListFilters, SignalTransitionListFilters,
-    SignalTransitionView, SignalView, SortOrder, SubmitExecutionCommand,
-    SyncExternalOrderStatusCommand, TrackedWalletStatus, TradeListFilters, TradeView,
-    TriggerKillSwitchCommand, WalletActionInput,
+    RewardTokenQuote, RiskPolicy, RiskStateView, SortOrder, SyncExternalOrderStatusCommand,
+    TrackedWalletStatus, TradeListFilters, TradeView, WalletActionInput,
 };
 use polyedge_connectors::{
     ConnectorOrderStatusUpdate, ConnectorTradeFillUpdate, PolymarketChainConnector,
@@ -31,31 +25,22 @@ use polyedge_connectors::{
     normalize_polymarket_order_status_update, normalize_polymarket_trade_fill_update,
 };
 use polyedge_contracts::{
-    AlertSeverity, AlertStatus, ApiMeta, ApiResponse, ArbitrageAnalysisRunData,
-    ArbitrageAnalysisRunListQuery, ArbitrageOpportunityData, ArbitrageOpportunityListQuery,
-    ArbitrageOpportunityValidationData, ArbitrageScanData, ArbitrageScanListQuery, BucketStatus,
-    ConnectorOrderStatusCallbackData, ConnectorOrderStatusCallbackRequest,
+    ApiMeta, ApiResponse, ConnectorOrderStatusCallbackData, ConnectorOrderStatusCallbackRequest,
     ConnectorTradeFillCallbackData, ConnectorTradeFillCallbackRequest, DependencyStatus, EventData,
     EventListQuery, EvidenceData, EvidenceListQuery, ExecutionRequestData,
     ExecutionRequestListQuery, FundingStatusData, FundingTokenData, FundingTransferData,
-    FundingTransferRequest, HealthData, KillSwitchData, MarketCategoryData, MarketData,
-    MarketListQuery, MarketListResponse, NewsRawEventData, NewsRawEventListQuery,
-    NewsSourceHealthData, NewsSourceHealthListQuery, OrderData, OrderDraftData,
-    OrderDraftListQuery, OrderListQuery, OrderbookData, OrderbookLevelData,
-    PolymarketOrderStatusCallbackRequest, PolymarketTradeFillCallbackRequest, PositionData,
-    PositionListQuery, ProbabilityEstimateData, ProbabilityEstimateListQuery, ReadinessData,
-    RecomputeSignalData, RecomputeSignalRequest, ReleaseKillSwitchRequest, RewardBotSnapshotQuery,
-    RiskAlertData, RiskAlertListQuery, RiskBucketData, RiskBucketListQuery, RiskStateData,
-    RuntimeConfigEntryData, SignalData, SignalListQuery, SignalTransitionData,
-    SignalTransitionListQuery, SubmitExecutionData, SubmitExecutionRequest, SystemModeData,
-    TradeData, TradeListQuery, TransitionSystemModeRequest, TriggerKillSwitchRequest,
+    FundingTransferRequest, HealthData, MarketCategoryData, MarketData, MarketListQuery,
+    MarketListResponse, NewsRawEventData, NewsRawEventListQuery, NewsSourceHealthData,
+    NewsSourceHealthListQuery, OrderData, OrderDraftData, OrderDraftListQuery, OrderListQuery,
+    OrderbookData, OrderbookLevelData, PolymarketOrderStatusCallbackRequest,
+    PolymarketTradeFillCallbackRequest, PositionData, ProbabilityEstimateData,
+    ProbabilityEstimateListQuery, ReadinessData, RewardBotSnapshotQuery, RiskStateData,
+    RuntimeConfigEntryData, SystemModeData, TradeData, TradeListQuery, TransitionSystemModeRequest,
     UpdateRuntimeConfigRequest, WalletActivityData, WalletAnalysisData, WalletAnalysisRequest,
     WalletCategoryData, WalletClosedPositionData, WalletPnlData, WalletProfileData,
     WalletRecentTradeData, WalletRiskData, WalletStyleData, WalletTopMarketData,
 };
-use polyedge_domain::{
-    AppError, Edge, ExposureRatio, OrderStatus, Probability, Quantity, StepUpScope, UsdAmount,
-};
+use polyedge_domain::{AppError, OrderStatus, Probability, Quantity, StepUpScope, UsdAmount};
 use polyedge_infrastructure::stores::ExternalEventBegin;
 use polyedge_infrastructure::{
     AppState, AuthContext, HttpError, IdempotencyKey, hash_json, new_trace_id,
@@ -64,7 +49,6 @@ use polyedge_infrastructure::{
 };
 use rust_decimal::Decimal;
 use std::{collections::HashMap, str::FromStr};
-use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use tower::ServiceBuilder;
 use tower_http::{
     cors::CorsLayer, limit::RequestBodyLimitLayer, timeout::TimeoutLayer, trace::TraceLayer,
@@ -72,38 +56,22 @@ use tower_http::{
 
 const CONNECTOR_ORDER_STATUS_SOURCE: &str = "connector.orders.status";
 const CONNECTOR_TRADE_FILL_SOURCE: &str = "connector.trades.fill";
-const DEFAULT_CONSOLE_LIST_LIMIT: u16 = 100;
-const MAX_CONSOLE_LIST_LIMIT: u16 = 200;
-
 pub fn build_app(state: AppState) -> Router {
-    let system_routes =
-        Router::new()
-            .route(
-                "/mode",
-                get(read_system_mode).route_layer(middleware::from_fn_with_state(
-                    state.clone(),
-                    require_console_read_auth,
-                )),
-            )
-            .route(
-                "/mode",
-                axum::routing::post(transition_system_mode).route_layer(
-                    middleware::from_fn_with_state(state.clone(), require_mode_write_auth),
-                ),
-            )
-            .route(
-                "/kill-switch/trigger",
-                axum::routing::post(trigger_kill_switch).route_layer(
-                    middleware::from_fn_with_state(state.clone(), require_console_write_auth),
-                ),
-            )
-            .route(
-                "/kill-switch/release",
-                axum::routing::post(release_kill_switch).route_layer(
-                    middleware::from_fn_with_state(state.clone(), require_console_write_auth),
-                ),
-            )
-            .with_state(state.clone());
+    let system_routes = Router::new()
+        .route(
+            "/mode",
+            get(read_system_mode).route_layer(middleware::from_fn_with_state(
+                state.clone(),
+                require_console_read_auth,
+            )),
+        )
+        .route(
+            "/mode",
+            axum::routing::post(transition_system_mode).route_layer(
+                middleware::from_fn_with_state(state.clone(), require_mode_write_auth),
+            ),
+        )
+        .with_state(state.clone());
 
     Router::new()
         .route("/healthz", get(healthz))
@@ -178,33 +146,6 @@ pub fn build_app(state: AppState) -> Router {
             )),
         )
         .route(
-            "/api/v1/signals",
-            get(list_signals).route_layer(middleware::from_fn_with_state(
-                state.clone(),
-                require_console_read_auth,
-            )),
-        )
-        .route(
-            "/api/v1/signals/{signal_id}/transitions",
-            get(list_signal_transitions).route_layer(middleware::from_fn_with_state(
-                state.clone(),
-                require_console_read_auth,
-            )),
-        )
-        .route(
-            "/api/v1/signals/{signal_id}/recompute",
-            axum::routing::post(recompute_signal).route_layer(middleware::from_fn_with_state(
-                state.clone(),
-                require_console_write_auth,
-            )),
-        )
-        .route(
-            "/api/v1/signals/{signal_id}/execution-requests",
-            axum::routing::post(submit_execution_request).route_layer(
-                middleware::from_fn_with_state(state.clone(), require_console_write_auth),
-            ),
-        )
-        .route(
             "/api/v1/orders/drafts",
             get(list_order_drafts).route_layer(middleware::from_fn_with_state(
                 state.clone(),
@@ -228,13 +169,6 @@ pub fn build_app(state: AppState) -> Router {
         .route(
             "/api/v1/execution/requests",
             get(list_execution_requests).route_layer(middleware::from_fn_with_state(
-                state.clone(),
-                require_console_read_auth,
-            )),
-        )
-        .route(
-            "/api/v1/positions",
-            get(list_positions).route_layer(middleware::from_fn_with_state(
                 state.clone(),
                 require_console_read_auth,
             )),
@@ -266,27 +200,6 @@ pub fn build_app(state: AppState) -> Router {
         .route(
             "/api/v1/pricing/estimates",
             get(list_probability_estimates).route_layer(middleware::from_fn_with_state(
-                state.clone(),
-                require_console_read_auth,
-            )),
-        )
-        .route(
-            "/api/v1/arbitrage/scans",
-            get(list_arbitrage_scans).route_layer(middleware::from_fn_with_state(
-                state.clone(),
-                require_console_read_auth,
-            )),
-        )
-        .route(
-            "/api/v1/arbitrage/opportunities",
-            get(list_arbitrage_opportunities).route_layer(middleware::from_fn_with_state(
-                state.clone(),
-                require_console_read_auth,
-            )),
-        )
-        .route(
-            "/api/v1/arbitrage/analysis",
-            get(list_arbitrage_analysis_runs).route_layer(middleware::from_fn_with_state(
                 state.clone(),
                 require_console_read_auth,
             )),
@@ -405,27 +318,6 @@ pub fn build_app(state: AppState) -> Router {
                 require_console_write_auth,
             )),
         )
-        .route(
-            "/api/v1/risk/state",
-            get(read_risk_state).route_layer(middleware::from_fn_with_state(
-                state.clone(),
-                require_console_read_auth,
-            )),
-        )
-        .route(
-            "/api/v1/risk/alerts",
-            get(list_risk_alerts).route_layer(middleware::from_fn_with_state(
-                state.clone(),
-                require_console_read_auth,
-            )),
-        )
-        .route(
-            "/api/v1/risk/buckets",
-            get(list_risk_buckets).route_layer(middleware::from_fn_with_state(
-                state.clone(),
-                require_console_read_auth,
-            )),
-        )
         .nest("/api/v1/system", system_routes)
         .with_state(state)
         .layer(
@@ -441,8 +333,6 @@ pub fn build_app(state: AppState) -> Router {
 }
 
 include!("handlers/health.rs");
-include!("handlers/console_risk.rs");
-include!("handlers/list_helpers.rs");
 include!("handlers/system.rs");
 include!("handlers/market_handlers.rs");
 include!("handlers/funding.rs");
@@ -452,9 +342,6 @@ include!("handlers/runtime_config.rs");
 include!("handlers/runtime_config_helpers.rs");
 include!("handlers/execution_lists.rs");
 include!("handlers/callbacks.rs");
-include!("handlers/signal_actions.rs");
-include!("handlers/risk_handlers.rs");
-include!("handlers/execution_submit.rs");
 include!("handlers/mode_control.rs");
 include!("handlers/mappers.rs");
 include!("handlers/callback_helpers.rs");

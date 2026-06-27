@@ -133,34 +133,6 @@ fn spawn_worker_tasks(state: &AppState, shutdown_rx: watch::Receiver<bool>) -> V
         ));
     }
 
-    if settings.recompute_signals {
-        let job_state = state.clone();
-        handles.push(spawn_interval_job(
-            "recompute-all-signals",
-            settings.signal_recompute_interval_secs,
-            shutdown_rx.clone(),
-            move || {
-                let state = job_state.clone();
-                async move {
-                    let trace_id = new_trace_id();
-                    match recompute_all_signals(&state, task_limit(&state), &trace_id).await {
-                        Ok(report) => info!(
-                            trace_id = %trace_id,
-                            scanned = report.scanned,
-                            recomputed = report.recomputed,
-                            skipped = report.skipped,
-                            failed = report.failed,
-                            "completed worker signal recompute cycle",
-                        ),
-                        Err(error) => {
-                            warn!(trace_id = %trace_id, error = %error, "worker signal recompute cycle failed");
-                        }
-                    }
-                }
-            },
-        ));
-    }
-
     // Market sync is now handled by the standalone polyedge-orderbook service.
     // Worker registers its token interests (exec orders + reward markets) with
     // the orderbook service so it subscribes to the right markets.
@@ -182,88 +154,6 @@ fn spawn_worker_tasks(state: &AppState, shutdown_rx: watch::Receiver<bool>) -> V
                 }
             },
         ));
-    }
-
-    if settings.poll_arbitrage_radar {
-        if state.settings.arbitrage.enabled {
-            let job_state = state.clone();
-            handles.push(spawn_interval_job(
-                "poll-arbitrage-radar",
-                state.settings.arbitrage.poll_interval_secs,
-                shutdown_rx.clone(),
-                move || {
-                    let state = job_state.clone();
-                    async move {
-                        let trace_id = new_trace_id();
-                        match scan_arbitrage_once(&state, &trace_id).await {
-                            Ok(report) => info!(
-                                trace_id = %trace_id,
-                                markets_scanned = report.markets_scanned,
-                                snapshots_recorded = report.snapshots_recorded,
-                                opportunities_recorded = report.opportunities_recorded,
-                                validations_recorded = report.validations_recorded,
-                                validation_books_refetched = report.validation_books_refetched,
-                                validation_book_failures = report.validation_book_failures,
-                                opportunities_expired = report.opportunities_expired,
-                                events_pruned = report.events_pruned,
-                                scans_pruned = report.scans_pruned,
-                                snapshots_pruned = report.snapshots_pruned,
-                                scan_opportunities_pruned = report.scan_opportunities_pruned,
-                                failed_books = report.failed_books,
-                                "completed worker arbitrage radar cycle",
-                            ),
-                            Err(error) => {
-                                warn!(trace_id = %trace_id, error = %error, "worker arbitrage radar cycle failed");
-                            }
-                        }
-                    }
-                },
-            ));
-        } else {
-            warn!(
-                "worker poll-arbitrage-radar is enabled but arbitrage is disabled; set POLYEDGE_ARBITRAGE__ENABLED=true"
-            );
-        }
-    }
-
-    if settings.analyze_arbitrage_opportunities {
-        if state.settings.arbitrage.enabled {
-            let job_state = state.clone();
-            handles.push(spawn_interval_job(
-                "analyze-arbitrage-opportunities",
-                settings.arbitrage_analysis_interval_secs,
-                shutdown_rx.clone(),
-                move || {
-                    let state = job_state.clone();
-                    async move {
-                        let trace_id = new_trace_id();
-                        match analyze_arbitrage_opportunities(
-                            &state,
-                            state.settings.arbitrage.analysis_lookback_hours,
-                            &trace_id,
-                        )
-                        .await
-                        {
-                            Ok(analysis) => info!(
-                                trace_id = %trace_id,
-                                analysis_id = %analysis.id,
-                                lookback_hours = analysis.lookback_hours,
-                                opportunity_count = analysis.opportunity_count,
-                                market_count = analysis.market_count,
-                                "completed worker arbitrage analysis cycle",
-                            ),
-                            Err(error) => {
-                                warn!(trace_id = %trace_id, error = %error, "worker arbitrage analysis cycle failed");
-                            }
-                        }
-                    }
-                },
-            ));
-        } else {
-            warn!(
-                "worker arbitrage analysis is enabled but arbitrage is disabled; set POLYEDGE_ARBITRAGE__ENABLED=true"
-            );
-        }
     }
 
     if settings.poll_reward_bot {

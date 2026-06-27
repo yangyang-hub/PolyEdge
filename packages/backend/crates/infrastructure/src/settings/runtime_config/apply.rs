@@ -28,27 +28,6 @@ fn apply_runtime_config_value(
     value: &str,
 ) -> polyedge_domain::Result<()> {
     match key {
-        "risk.exposure_reference_nav" => {
-            self.risk.exposure_reference_nav = parse_usd_amount_runtime_config(key, value)?;
-        }
-        "risk.min_signal_confidence" => {
-            self.risk.min_signal_confidence = parse_probability_runtime_config(key, value)?;
-        }
-        "risk.min_edge_to_execute" => {
-            self.risk.min_edge_to_execute = parse_probability_runtime_config(key, value)?;
-        }
-        "risk.max_open_alerts" => {
-            self.risk.max_open_alerts = parse_u32_runtime_config(key, value)?;
-        }
-        "risk.max_daily_loss" => {
-            self.risk.max_daily_loss = parse_usd_amount_runtime_config(key, value)?;
-        }
-        "risk.max_gross_exposure" => {
-            self.risk.max_gross_exposure = parse_exposure_ratio_runtime_config(key, value)?;
-        }
-        "risk.max_net_exposure" => {
-            self.risk.max_net_exposure = parse_exposure_ratio_runtime_config(key, value)?;
-        }
         "polymarket.account_id" => self.polymarket.account_id = value.to_string(),
         "polymarket.chain_id" => {
             self.polymarket.chain_id = parse_u64_runtime_config(key, value)?;
@@ -76,54 +55,6 @@ fn apply_runtime_config_value(
         "polymarket.ws_stale_after_secs" => {
             self.polymarket.ws_stale_after_secs = parse_u64_runtime_config(key, value)?;
         }
-        "arbitrage.enabled" => {
-            self.arbitrage.enabled = parse_bool_runtime_config(key, value)?;
-        }
-        "arbitrage.poll_interval_secs" => {
-            self.arbitrage.poll_interval_secs = parse_u64_runtime_config(key, value)?;
-        }
-        "arbitrage.scan_limit" => {
-            self.arbitrage.scan_limit = parse_u16_runtime_config(key, value)?;
-        }
-        "arbitrage.scanner_version" => self.arbitrage.scanner_version = value.to_string(),
-        "arbitrage.book_source" => {
-            self.arbitrage.book_source = match value {
-                "" | "market_snapshot" => "market_snapshot".to_string(),
-                "polymarket" => "polymarket".to_string(),
-                other => {
-                    return Err(AppError::invalid_input(
-                        "CONFIG_RUNTIME_BOOK_SOURCE_INVALID",
-                        format!(
-                            "runtime config key {key} does not support book_source={other}"
-                        ),
-                    ));
-                }
-            };
-        }
-        "arbitrage.analysis_lookback_hours" => {
-            self.arbitrage.analysis_lookback_hours = parse_u16_runtime_config(key, value)?;
-        }
-        "arbitrage.max_book_age_ms" => {
-            self.arbitrage.max_book_age_ms = parse_u64_runtime_config(key, value)?;
-        }
-        "arbitrage.opportunity_ttl_secs" => {
-            self.arbitrage.opportunity_ttl_secs = parse_u64_runtime_config(key, value)?;
-        }
-        "arbitrage.event_retention_hours" => {
-            self.arbitrage.event_retention_hours = parse_u64_runtime_config(key, value)?;
-        }
-        "arbitrage.min_gross_edge" => {
-            self.arbitrage.min_gross_edge = parse_edge_runtime_config(key, value)?;
-        }
-        "arbitrage.min_capacity" => {
-            self.arbitrage.min_capacity = parse_quantity_runtime_config(key, value)?;
-        }
-        "arbitrage.fee_buffer" => {
-            self.arbitrage.fee_buffer = parse_edge_runtime_config(key, value)?;
-        }
-        "arbitrage.slippage_buffer" => {
-            self.arbitrage.slippage_buffer = parse_edge_runtime_config(key, value)?;
-        }
         "rewards.enabled" => self.rewards.enabled = parse_bool_runtime_config(key, value)?,
         "rewards.poll_interval_secs" => {
             self.rewards.poll_interval_secs = parse_u64_runtime_config(key, value)?;
@@ -149,13 +80,6 @@ fn apply_runtime_config_value(
         "worker.poll_news" => self.worker.poll_news = parse_bool_runtime_config(key, value)?,
         "worker.promote_news_events" => {
             self.worker.promote_news_events = parse_bool_runtime_config(key, value)?;
-        }
-        "worker.poll_arbitrage_radar" => {
-            self.worker.poll_arbitrage_radar = parse_bool_runtime_config(key, value)?;
-        }
-        "worker.analyze_arbitrage_opportunities" => {
-            self.worker.analyze_arbitrage_opportunities =
-                parse_bool_runtime_config(key, value)?;
         }
         "worker.poll_reward_bot" => {
             self.worker.poll_reward_bot = parse_bool_runtime_config(key, value)?;
@@ -184,19 +108,8 @@ fn apply_runtime_config_value(
         "worker.consume_orderbook_stream" => {
             self.worker.consume_orderbook_stream = parse_bool_runtime_config(key, value)?;
         }
-        "worker.recompute_signals" => {
-            self.worker.recompute_signals = parse_bool_runtime_config(key, value)?;
-        }
         "worker.news_promotion_interval_secs" => {
             self.worker.news_promotion_interval_secs = parse_u64_runtime_config(key, value)?;
-        }
-        "worker.signal_recompute_interval_secs" => {
-            self.worker.signal_recompute_interval_secs =
-                parse_u64_runtime_config(key, value)?;
-        }
-        "worker.arbitrage_analysis_interval_secs" => {
-            self.worker.arbitrage_analysis_interval_secs =
-                parse_u64_runtime_config(key, value)?;
         }
         "worker.execution_drain_interval_secs" => {
             self.worker.execution_drain_interval_secs = parse_u64_runtime_config(key, value)?;

@@ -1,6 +1,6 @@
 # infrastructure（基础设施层）
 
-最后更新：2026-06-26
+最后更新：2026-06-27
 
 ## 概述
 
@@ -20,7 +20,7 @@
 | `lib.rs` | 模块声明（7 个 pub mod） |
 | `settings.rs` + `settings/` | 配置管理：`Settings`、所有子配置、默认值和 runtime config 条目 |
 | `stores.rs` + `stores/` | Store trait 的持久化实现 |
-| `catalog/` | 核心市场/事件/信号/执行存储（最大子模块） |
+| `catalog/` | 核心市场/事件/执行历史存储（最大子模块，保留 legacy signal/position 表访问） |
 | `auth.rs` + `auth/` | 认证中间件和令牌验证 |
 | `runtime.rs` | `AppState`、`Runtime`、`RuntimeDependencies` |
 | `http.rs` | `HttpError`、hash/trace 辅助函数 |
@@ -38,9 +38,8 @@
 | `DatabaseSettings` | url（Option）、max_connections |
 | `RedisSettings` | url（Option） |
 | `RuntimeSettings` | environment、initial_mode |
-| `RiskSettings` | exposure_reference_nav、daily_pnl limits、gross/net exposure limits、kill_switch、min_signal_confidence 等 12 个字段 |
+| `RiskSettings` | exposure_reference_nav、daily_pnl limits、gross/net exposure limits、kill_switch、min_signal_confidence 等 legacy 执行风险字段；旧前端风控配置面板/API 已移除 |
 | `PolymarketSettings` | account_id、chain_id、signature_type、funder、private_key、API credentials、CLOB/WS/Gamma/Data API/Polygon RPC host、poll limits |
-| `ArbitrageSettings` | book_source、scan_limit、scanner_version |
 | `RewardsSettings` | enabled、poll_interval、AI provider API key/base URL/model/timeout/min confidence、可选备用 provider（第二个独立 provider/model/key/URL）、信息风险扫描间隔/每轮 condition cap/置信度/web search 开关等 |
 | `NewsSettings` | enabled、poll_interval_secs、request_timeout_secs、max_items_per_source、sources（RSS/Atom 源列表） |
 | `WorkerSettings` | 各 worker 的启用标志和轮询间隔，包含数据库维护开关 `database_maintenance` 与 `database_maintenance_interval_secs` |
@@ -51,7 +50,7 @@
 
 所有字段使用 `#[serde(default)]`，通过 `POLYEDGE_` 前缀环境变量加载（如 `POLYEDGE_SERVER__PORT`）。`packages/backend/.env.example` 只保留本地运行常用项和安全关闭 worker 循环的必要覆盖；完整默认值以 `settings/defaults.rs` 为准，业务阈值优先通过 runtime_config/Settings 调整。未配置 `POLYEDGE_NEWS__SOURCES_JSON` 时，`NewsSettings.sources` 默认包含 8 个已验证可访问的 RSS/Atom 源：`fed_press`、`sec_press`、`nasa_news`、`bbc_world`、`npr_news`、`coindesk`、`cointelegraph`、`decrypt`；设置该变量或 runtime config `news.sources_json` 会覆盖整个列表。`POLYEDGE_POLYMARKET__SIGNATURE_TYPE` 支持 `eoa`、`proxy`、`gnosis_safe`、`poly_1271`；Deposit Wallet 使用 `poly_1271` 并通过 `POLYEDGE_POLYMARKET__FUNDER` 配置 deposit wallet 地址。`POLYEDGE_POLYMARKET__PRIVATE_KEY` 只允许配置在后端/API 环境，除了 CLOB live 签名外，也被 Funding API 用于从后端资金钱包广播 Polygon ERC-20 入金交易；`POLYEDGE_POLYMARKET__FUNDER` 优先作为 Polymarket 入账钱包，未配置时 Funding API 回退 `ACCOUNT_ID`。`POLYEDGE_POLYMARKET__POLYGON_RPC_URL` 用于 worker 读取资金钱包链上 pUSD 余额，也用于 Funding API 广播 Polygon 转账，默认 `https://polygon-bor-rpc.publicnode.com`。
 
-进程级 rewards 默认关闭：`RewardsSettings.enabled=false`、`WorkerSettings.poll_reward_bot=false`、`WorkerSettings.poll_reward_info_risks=false`。其他历史 worker 循环在代码默认值中仍可能为 true，因此本地模板和部署侧 `deploy/.env.api.example` 会显式写入 `false` 防止 `polyedge-api` 内嵌 runtime 意外启动任务。只有部署环境显式同时开启对应 worker 开关时才启动 live poll loop 或异步信息风险扫描。AI provider 密钥只在 `RewardsSettings` 中读取（`POLYEDGE_REWARDS__AI_OPENAI_API_KEY` / `POLYEDGE_REWARDS__AI_ANTHROPIC_API_KEY`），不会进入 `RewardBotConfig`、API snapshot 或前端 public env；默认模型 `gpt-4.1-mini`、AI advisory 最低置信度 `5500` bps、信息风险最低置信度 `7000` bps、单次超时 180 秒。`ai_advisory_enabled=true` 时，缺少可用 provider 配置或未达到最低置信度的 advisory 会阻断新增 rewards 挂单。AI advisory 每轮最大市场数环境变量已移除；`POLYEDGE_REWARDS__INFO_RISK_MAX_MARKETS_PER_CYCLE` 现在作为 AI advisory 与 info-risk 各自 provider refresh，以及独立 info-risk worker 的每轮 condition cap，默认 50，0 表示本轮不发 provider 请求。信息风险 OpenAI web search 默认关闭。可选第二个完全独立的 LLM 备用接口通过 `POLYEDGE_REWARDS__AI_FALLBACK_PROVIDER` / `_REQUEST_FORMAT` / `_API_KEY` / `_BASE_URL` / `_MODEL` 五项同时配置启用，备用密钥同样只在 `RewardsSettings` 读取、不进入 `RewardBotConfig`、API snapshot 或前端；主接口（`ai_provider` 选定）调用任意失败（网络/超时、HTTP 4xx/5xx、或返回无法解析的响应）时用同一请求重试备用接口（可不同 provider/模型），主备两次调用都写入 `llm_calls`（`fallback_used` 区分），advisory/info-risk 缓存按 `(provider,request_format,model,input_hash)` 各自独立存储，备用 provider+format 同样强制耦合归一（Anthropic ⇒ `anthropic_messages`）。
+进程级 rewards 默认关闭：`RewardsSettings.enabled=false`、`WorkerSettings.poll_reward_bot=false`、`WorkerSettings.poll_reward_info_risks=false`。本地模板和部署侧 `deploy/.env.api.example` 显式关闭除新闻采集和数据库维护之外的后台循环，防止 `polyedge-api` 内嵌 runtime 意外启动交易/分析任务。旧 signal recompute 与 arbitrage worker 配置字段已移除。只有部署环境显式同时开启对应 worker 开关时才启动 live poll loop 或异步信息风险扫描。AI provider 密钥只在 `RewardsSettings` 中读取（`POLYEDGE_REWARDS__AI_OPENAI_API_KEY` / `POLYEDGE_REWARDS__AI_ANTHROPIC_API_KEY`），不会进入 `RewardBotConfig`、API snapshot 或前端 public env；默认模型 `gpt-4.1-mini`、AI advisory 最低置信度 `5500` bps、信息风险最低置信度 `7000` bps、单次超时 180 秒。`ai_advisory_enabled=true` 时，缺少可用 provider 配置或未达到最低置信度的 advisory 会阻断新增 rewards 挂单。AI advisory 每轮最大市场数环境变量已移除；`POLYEDGE_REWARDS__INFO_RISK_MAX_MARKETS_PER_CYCLE` 现在作为 AI advisory 与 info-risk 各自 provider refresh，以及独立 info-risk worker 的每轮 condition cap，默认 50，0 表示本轮不发 provider 请求。信息风险 OpenAI web search 默认关闭。可选第二个完全独立的 LLM 备用接口通过 `POLYEDGE_REWARDS__AI_FALLBACK_PROVIDER` / `_REQUEST_FORMAT` / `_API_KEY` / `_BASE_URL` / `_MODEL` 五项同时配置启用，备用密钥同样只在 `RewardsSettings` 读取、不进入 `RewardBotConfig`、API snapshot 或前端；主接口（`ai_provider` 选定）调用任意失败（网络/超时、HTTP 4xx/5xx、或返回无法解析的响应）时用同一请求重试备用接口（可不同 provider/模型），主备两次调用都写入 `llm_calls`（`fallback_used` 区分），advisory/info-risk 缓存按 `(provider,request_format,model,input_hash)` 各自独立存储，备用 provider+format 同样强制耦合归一（Anthropic ⇒ `anthropic_messages`）。
 
 Orderbook candle history 默认由 orderbook 服务独立启用：`POLYEDGE_ORDERBOOK_STREAM__REWARD_CANDLE_HISTORY_ENABLED=true`、`SYNC_INTERVAL_SECS=300`、`REQUEST_DELAY_MS=500`、`MAX_TOKENS_PER_CYCLE=600`、`BACKFILL_SECS=7200`、`INCREMENTAL_SECS=900`。这些字段控制 CLOB `/prices-history` 请求节奏，用于替代原先从本地高频 orderbook 更新派生 candles 的路径；max tokens 设为 0 会跳过本轮外部请求。
 
@@ -63,7 +62,7 @@ Orderbook candle history 默认由 orderbook 服务独立启用：`POLYEDGE_ORDE
 
 | 实现文件 | 对应 trait | 存储 |
 |---|---|---|
-| `catalog/postgres/` | `MarketEventStore`、`ArbitrageStore`、`NewsIngestionStore` | PostgreSQL |
+| `catalog/postgres/` | `MarketEventStore`、`NewsIngestionStore` | PostgreSQL |
 | `catalog/postgres/market_event/market_queries.rs` | `MarketEventStore` 市场查询 helper | 市场列表/计数/分类/详情/按 id 批量读取 SQL；从通用 `queries.rs` 拆分 |
 | `catalog/in_memory.rs` | 同上 | 内存（RwLock） |
 | `stores/rewards/postgres.rs` | `RewardBotStore` | PostgreSQL（key-value config + 完整表 + `llm_calls` 记录/每日统计） |
@@ -121,12 +120,12 @@ Orderbook candle history 默认由 orderbook 服务独立启用：`POLYEDGE_ORDE
 
 **Postgres 实现**（`catalog/postgres/`）：通过 `include!` 拆分为多个子文件
 - `market_event/` — 最大的存储模块，包含 queries、execution_updates 等
-- `arbitrage.rs` — 套利数据存储；扫描历史按 retention 分批删除旧 `arbitrage_scans`，通过 FK cascade 清理 `market_book_snapshots` / opportunities
-- `helpers/` — 共享辅助文件：`fetch.rs`、`market_rows.rs`、`news_rows.rs`、`arbitrage_rows.rs`、`event_rows.rs`、`execution_rows.rs`、`calculations.rs`
+- `news.rs` — 新闻源健康和 raw news event 存储
+- `helpers/` — 共享辅助文件：`fetch.rs`、`market_rows.rs`、`news_rows.rs`、`event_rows.rs`、`execution_rows.rs`、`calculations.rs`
 
 **In-memory 实现**（`catalog/in_memory.rs`，~24KB）：用于测试和无数据库环境
 
-Arbitrage store 的 Postgres 和 in-memory 实现均支持 `prune_arbitrage_scan_history()`；Postgres 每次最多执行 20 批、每批 250 个旧 scan 的删除，先统计将被级联删除的 snapshots/opportunities，再删除 scan，避免单次超大事务；in-memory 实现同步移除对应 snapshots、opportunities 和 validations。
+旧 arbitrage store 和 helper 已删除；迁移创建的历史套利表仍保留给既有数据库兼容，不再有 application/infrastructure 读写实现。
 
 ### Auth — 认证中间件
 
@@ -135,7 +134,7 @@ Arbitrage store 的 Postgres 和 in-memory 实现均支持 `prune_arbitrage_scan
 - **`InternalTokenVerifier`**：内部 JWT 令牌验证
 - **`RequestKind`**：请求类型枚举
 - **`AuthSettings.disabled`**：`POLYEDGE_AUTH__DISABLED=true` 时跳过 console/connector/mode token 和 step-up 校验，直接注入 admin `AuthContext`；仅用于纯内网部署
-- **Step-up scopes**：包含信号执行、系统模式/熔断、风险阈值和 `funding_transfer`；内网免鉴权模式会注入全部 scope，真实鉴权模式下 Funding API 转账必须携带该 scope
+- **Step-up scopes**：当前公开写路径主要使用系统模式切换和 `funding_transfer`；内网免鉴权模式会注入全部 scope，真实鉴权模式下 Funding API 转账必须携带该 scope。旧信号执行、熔断和风险阈值 scope 仍可被解析用于兼容旧 token，但对应公开 API 已移除
 - **中间件函数：**
   - `require_connector_write_auth` — 连接器写入认证
   - `require_console_read_auth` — 控制台读取认证
@@ -145,7 +144,7 @@ Arbitrage store 的 Postgres 和 in-memory 实现均支持 `prune_arbitrage_scan
 ### Runtime — 依赖注入
 
 - **`AppState`**：所有服务实例的容器，被 API handler 和 worker 共享
-  - 包含：`market_event_service`、`execution_service`、`risk_service`、`reward_bot_service`、`copytrade_service`、`arbitrage_service`、`news_ingestion_service`、`orderbook_cache` 等
+  - 包含：`market_event_service`、`execution_service`、`risk_service`、`reward_bot_service`、`copytrade_service`、`news_ingestion_service`、`orderbook_cache`、`orderbook_registry` 等
 - **`Runtime`**：应用运行时封装
 - **`RuntimeDependencies`**：依赖项构建器
 - **`PostgresAdvisoryLease`**：持有专用 Postgres session advisory lock；正常结束显式 unlock，异常 drop 时关闭连接释放锁。rewards poll loop 在整个生命周期持有同一 live lease，保证多实例中只有一个执行者和一条 CLOB heartbeat 链；一次性命令使用同一 lease，使用时要求 `postgres.max_connections >= 2`
@@ -180,7 +179,7 @@ Arbitrage store 的 Postgres 和 in-memory 实现均支持 `prune_arbitrage_scan
 - 数据库维护 store 已接入 runtime：Postgres 环境定期清理 raw events、AI/info-risk cache、reward candles、控制命令、copytrade 历史、outbox/external dedup、LLM call、audit 和 mode transition 历史；in-memory/test runtime 使用 no-op，避免测试状态被后台任务改变。
 - Rewards store 已支持外部账户余额和完整持仓快照同步；成功空持仓快照会清空目标账户持仓，失败响应不会破坏上一版，最近 confirmed fill 时间用于 worker 的 120 秒账户快照保护；worker 写入的资金钱包地址优先使用 `FUNDER`，CLOB 余额为 0/失败时可用 Polygon pUSD 链上余额回填 snapshot
 - `markets` 保存 Gamma `liquidity_usd`、`end_at` 和本地 `synced_at`；Postgres market upsert 使用单条 `INSERT .. ON CONFLICT DO UPDATE WHERE` 表达新增、真实数据变化更新和 freshness-only 刷新，返回实际写入行数，并在每批事务内设置短 `lock_timeout` / `statement_timeout`。默认调用仍刷新 `synced_at`，orderbook full sync 通过 `MarketUpsertOptions` 只刷新超过新鲜度阈值的安静市场，priority sync 继续强制刷新重点市场，避免 rewards 关键市场因目录新鲜度过低被误判。
-- MarketEventStore 的 Postgres 实现支持 `get_markets_by_ids()` 通过 `m.id = ANY($1)` 批量读取少量相关市场，API 风险快照用它替代全量 markets 列表，避免控制台风险页在大市场表上触发 `LIMIT 65535` 的慢查询。
+- MarketEventStore 的 Postgres 实现支持 `get_markets_by_ids()` 通过 `m.id = ANY($1)` 批量读取少量相关市场，供少量关联市场信息查询避免全量 markets 列表扫描。
 - `idx_markets_reward_quality` 不包含高频变化的 `synced_at`，降低 freshness-only 刷新对索引和 WAL 的写放大；`idx_markets_polymarket_yes_asset_id` / `idx_markets_polymarket_no_asset_id` 支撑 orderbook priority sync 的注册 token 到 condition id 反查；rewards 候选查询仍在关联 Gamma `markets` 后按 `synced_at` 做新鲜度过滤。
 - Orderbook register/ingest/delete 写接口要求 `x-polyedge-orderbook-token` 与 `POLYEDGE_ORDERBOOK__WRITE_TOKEN` 匹配；该密钥仅配置在 `deploy/.env.orderbook` 和 `deploy/.env.api`，未配置 token 时写接口关闭，读接口和健康检查仍可用
 

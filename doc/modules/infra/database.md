@@ -1,14 +1,14 @@
 # 数据库（Migrations + Schema）
 
-最后更新：2026-06-26
+最后更新：2026-06-27
 
 ## 概述
 
-数据库使用 PostgreSQL，通过 47 个 SQL 迁移文件管理 schema。覆盖审计、市场数据、事件/信号、执行管道、风控、套利、奖励、跟单等领域。为了空库一次性初始化，`packages/backend/init.sql` 机械合并了当前全部迁移内容；运行时仍通过 `sqlx` 使用 `packages/backend/migrations/` 做迁移校验和增量升级。
+数据库使用 PostgreSQL，通过 48 个 SQL 迁移文件管理 schema。覆盖审计、市场数据、事件/证据、执行历史、内部风险状态、奖励、跟单等领域。为了空库一次性初始化，`packages/backend/init.sql` 机械合并了当前全部迁移内容；运行时仍通过 `sqlx` 使用 `packages/backend/migrations/` 做迁移校验和增量升级。旧 signals、risk_state、positions 和 arbitrage 表随已应用迁移保留，用于历史/内部兼容，不再对应前端页面或公开控制台 API。
 
 ## 初始化入口
 
-- `packages/backend/init.sql`：完整空库初始化脚本，按 `0001` 到 `0047` 顺序展开所有迁移，适合新环境人工执行一次，例如 `psql "$POLYEDGE_POSTGRES__URL" -v ON_ERROR_STOP=1 -f packages/backend/init.sql`。
+- `packages/backend/init.sql`：完整空库初始化脚本，按 `0001` 到 `0048` 顺序展开所有迁移，适合新环境人工执行一次，例如 `psql "$POLYEDGE_POSTGRES__URL" -v ON_ERROR_STOP=1 -f packages/backend/init.sql`。
 - `packages/backend/migrations/*.sql`：保留给 Rust runtime 的 `sqlx::migrate!` 使用。不要删除或重命名已应用的迁移文件，否则现有数据库的 `_sqlx_migrations` 历史可能与二进制内嵌迁移不一致。
 - `init.sql` 只面向空数据库；已存在 schema 的数据库继续使用 runtime 自动迁移或按需执行新增迁移。
 
@@ -63,6 +63,7 @@
 | `0045_reward_control_command_dedupe.sql` | Rewards 控制命令去重 | `reward_control_commands` pending/running partial unique indexes |
 | `0046_reward_low_competition_competition_share.sql` | Rewards 低竞争竞争份额和资金占比观测 | 修改 `reward_low_competition_observations` |
 | `0047_reward_low_competition_not_low_competition.sql` | Rewards 低竞争高竞争混入标签 | 修改 `reward_low_competition_observations` 增加 `not_low_competition` |
+| `0048_reward_account_unmanaged_buy_notional.sql` | Rewards 非本系统外部买单占用冻结值 | 修改 `reward_account_state` 增加 unmanaged external buy notional |
 
 ## Schema 领域分组
 
@@ -83,32 +84,27 @@
 - **`raw_events`**：source、hash（SHA-256 去重）、source_type（news/social/official/calendar/market）、external_id、title、url、author、published_at、event_time、payload JSON
 - **`news_source_health`**：enabled、reliability、last_success/error、consecutive_failures、circuit_breaker_until
 
-### 4. 证据/信号
+### 4. 证据/legacy 信号
 
 - **`evidences`**：market FK、event FK、direction（supports_yes/supports_no/background）、strength、source_reliability、novelty、resolution_relevance（均 0-1）、status、expiry
-- **`signals`**：action（buy/sell）、side（yes/no）、market_price、fair_price、edge、confidence、lifecycle_state（7 状态）、estimate_id FK、rejected_by_user_id、rejected_at
-- **`signal_transitions`**：from_state、to_state、reason、actor
-- **`probability_estimates`**：prior/posterior/fair/market price、edge、confidence、time_horizon、model_version、reason_codes（JSONB）
+- **`signals`** / **`signal_transitions`**：随历史迁移保留的 legacy 表；公开 `/signals` 页面/API 和 signal recompute worker 已移除
+- **`probability_estimates`**：prior/posterior/fair/market price、edge、confidence、time_horizon、model_version、reason_codes（JSONB）；当前通过 pricing API 读取，不再挂载 signals 页面
 
-### 5. 风控
+### 5. 内部风险状态
 
-- **`risk_state`**：kill_switch、daily_pnl、gross_exposure（0-10）、net_exposure（0-10）、open_alerts、notes 数组
+- **`risk_state`**：kill_switch、daily_pnl、gross_exposure（0-10）、net_exposure（0-10）、open_alerts、notes 数组；当前仅作为执行链路和 connector callback 兼容状态，不再有前端风控页面或 `/api/v1/risk/*` API
 
-### 6. 执行管道
+### 6. 执行历史
 
 - **`order_drafts`**：connector_name、side、limit_price、quantity、notional、status、external_order_id、submitted_at、failure_code/message
 - **`execution_requests`**：mode、risk_state_version、requested_by_user_id、status、external_order_id、submitted_at、failure_code/message
 - **`orders`**：external_order_id、side、limit_price、quantity、filled_quantity、avg_fill_price、status（8 状态）
 - **`trades`**：order_id FK、price、quantity、fee、side、role（maker/taker）
-- **`positions`**：market/account/connector 聚合 — net_quantity、avg_entry_price、unrealized_pnl、realized_pnl
+- **`positions`**：market/account/connector 聚合 — net_quantity、avg_entry_price、unrealized_pnl、realized_pnl；公开 `/positions` 页面/API 已移除，表保留给执行链路/历史兼容
 
-### 7. 套利
+### 7. 历史套利表
 
-- **`arbitrage_scans`**：market_count、snapshot_count、opportunity_count、scanner_version；worker 按 `arbitrage.event_retention_hours` 删除旧 scan
-- **`market_book_snapshots`**：scan FK、market FK、yes/no bid/ask price + size；旧 scan 删除时通过 `ON DELETE CASCADE` 自动清理
-- **`arbitrage_opportunities`**：buy/sell 引用、gross_edge、net_edge、capacity、status（5 状态）；旧 scan 删除时级联清理
-- **`arbitrage_opportunity_validations`**：validation_status（9 状态）、gross/net edge、fee_estimate、slippage_buffer、validated_capacity、book_age；opportunity 删除时级联清理
-- **`arbitrage_events`**：BIGSERIAL PK、event_type
+- **`arbitrage_scans`**、**`market_book_snapshots`**、**`arbitrage_opportunities`**、**`arbitrage_opportunity_validations`**、**`arbitrage_events`**：历史 schema 保留，当前 arbitrage application/store/worker/API/frontend 已移除，不再写入新 scan/opportunity 数据
 
 ### 8. 奖励机器人
 
@@ -141,20 +137,19 @@
 
 ## 数据保留与自动清理
 
-数据库存在两条自动清理链路：
+数据库当前主要依赖通用自动清理链路：
 
-- **套利扫描历史**：worker 每轮套利扫描后按 `arbitrage.event_retention_hours` 删除旧 `arbitrage_scans`；`market_book_snapshots`、`arbitrage_opportunities` 和 validations 通过外键 cascade 一并删除，避免盘口快照无限膨胀。
 - **通用数据库维护**：内嵌 worker runtime 的 `database-maintenance` 周期任务调用 `DatabaseMaintenanceService`，Postgres 实现按表分批删除历史/缓存/队列数据。默认窗口为 raw events 未关联 30 天、已关联 90 天；过期 AI advisory / info-risk cache 额外保留 7 天；`reward_market_candles` 30 天；completed control commands 30 天、failed control commands 90 天；`copytrade_events` 90 天、`copytrade_source_trades` 180 天；published outbox 30 天、failed/dead_letter outbox 90 天；processed external dedup 90 天、stale unprocessed dedup 7 天；`llm_calls` 180 天；`audit_logs` / `mode_transitions` 365 天。
 
 维护任务每个表每轮最多删除 20 批、每批 10,000 行，避免单次大事务；删除后 PostgreSQL 物理文件不会立即缩小，需要依赖 autovacuum 回收可复用空间，若要把 9GB 这类已膨胀文件还给操作系统，需要计划 `VACUUM FULL` / `pg_repack` 等维护窗口。
 
 ## 当前状态
 
-- 47 个迁移文件，最新为 `0047_reward_low_competition_not_low_competition.sql`
-- `packages/backend/init.sql` 已合并 `0001`–`0047`，作为完整空库初始化脚本
+- 48 个迁移文件，最新为 `0048_reward_account_unmanaged_buy_notional.sql`
+- `packages/backend/init.sql` 已合并 `0001`–`0048`，作为完整空库初始化脚本
 - 所有表使用 PostgreSQL 特性（JSONB、NUMERIC 约束、BIGSERIAL、部分索引等）
 - 迁移使用 `sqlx` 管理
-- 套利扫描历史已接入 retention：worker 每轮扫描完成后按 `arbitrage.event_retention_hours` 分批删除旧 `arbitrage_scans`，并通过 FK cascade 清理 `market_book_snapshots`、`arbitrage_opportunities` 和 validations，避免盘口快照表无限膨胀；`arbitrage_events` 继续按同一窗口单独清理。
+- 旧套利表仍随迁移存在，但 arbitrage application/store/worker/API/frontend 已移除，当前不会继续写入新 scan/opportunity 数据。
 - 通用数据库维护已接入 API 内嵌 worker runtime，生产模板默认开启 `POLYEDGE_WORKER__DATABASE_MAINTENANCE=true`，用于防止缓存、日志、队列和低频 price-history 表持续增长；它不删除 rewards fills/positions/account state 等核心账本表。
 - Rewards 低竞争市场 sleeve v2 已落地，schema 包括 managed order 的 `strategy_bucket` 和 `reward_low_competition_observations` 观测表；observation 已记录 competition-share、挂单资金占比字段和 not_low_competition 高竞争混入标签，shadow report 是 snapshot 派生结果，不单独落表。Rewards AI advisory 已接入 `reward_market_candles`，5m source K 线由 orderbook 服务统一低频限速调用 CLOB `/prices-history` 写入，不由 worker/API 直接请求外部接口；AI advisory 在 application 层把这些 source candles 聚合为 1h 输入。Rewards AI advisory / info-risk 的实际 provider 调用复用 `llm_calls` 做每日调用统计，通用数据库维护保留 180 天。
 

@@ -1,6 +1,6 @@
 # Orderbook App（市场同步与盘口服务）
 
-最后更新：2026-06-26
+最后更新：2026-06-27
 
 ## 概述
 
@@ -25,7 +25,7 @@
 
 1. 加载 `Runtime` 并绑定 `0.0.0.0:${POLYEDGE_ORDERBOOK__PORT}`。
 2. 立即暴露 `/healthz` 和 orderbook HTTP API，避免 Polymarket 延迟阻塞容器健康检查。
-3. 后台启动 Gamma full sync 独立循环：initial 立即执行，之后按 `market_sync_interval_secs` 固定节拍同步；单次超时为 interval 的 80%，并限制在 60-240 秒。full sync upsert 会跳过同版本同内容的行，并只在 `synced_at` 超过 rewards 新鲜度窗口约三分之二时刷新安静市场。
+3. 后台启动 Gamma full sync 独立循环：initial 立即执行，之后按 `market_sync_interval_secs` 固定节拍同步；单次超时为 interval 的 80%，并限制在 60-240 秒。Gamma `/markets` offset 分页使用固定 page size 100，不再依赖旧 arbitrage scan_limit 配置。full sync upsert 会跳过同版本同内容的行，并只在 `synced_at` 超过 rewards 新鲜度窗口约三分之二时刷新安静市场。
 4. 后台启动 Gamma priority sync 独立循环：优先刷新已注册 token 映射的 condition、活跃 rewards 订单/持仓、最终 eligible 或 pre-AI deterministic eligible quote plans 和放宽新鲜度后的 rewards 候选 condition；还有剩余额度时，用 active rewards catalog 中高奖励市场补足作为恢复种子；最多 500 个 condition，单次超时最多 120 秒。priority sync 继续强制刷新 `synced_at`，确保重点市场满足 rewards 新鲜度过滤。
 5. priority sync 间隔由 rewards `max_market_data_age_minutes` 动态推导，约为新鲜度窗口三分之一，并限制在 30-300 秒；配置窗口越小，重点市场刷新越频繁。
 6. 后台启动 rewards catalog 独立循环：initial 立即执行，之后每次完成后等待 `market_sync_interval_secs`；单次超时 45 分钟，超时或失败时保留上一版 rewards catalog。

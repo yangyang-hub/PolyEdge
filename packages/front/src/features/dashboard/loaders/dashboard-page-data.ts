@@ -1,80 +1,59 @@
 import { listEvents } from "@/lib/api/events";
 import { listMarkets } from "@/lib/api/markets";
-import { readRiskState, listRiskAlerts } from "@/lib/api/risk";
-import { listSignals } from "@/lib/api/signals";
-import { localizeGeneratedCopy } from "@/lib/i18n/generated-copy";
+import { listNewsSourceHealth } from "@/lib/api/news";
 import { dictionary, translateEnum } from "@/lib/i18n/dictionaries";
-import { indexMarkets } from "@/lib/loaders/console-loader-utils";
-import { normalizeRuntimeMode } from "@/lib/runtime-mode";
 import {
-  alertSeverityTone,
   formatClock,
-  formatCurrency,
+  formatInteger,
   formatPercentFromRatio,
-  formatSignedFixed,
   marketTradabilityTone,
-  metricToneForPnl,
-  signalStateTone,
-  uppercaseEnum,
 } from "@/lib/formatters";
 
 export async function getDashboardPageData() {
-  const [{ data: markets }, { data: events }, { data: signals }, { data: alerts }, { data: riskState }] =
+  const [{ data: markets }, { data: events }, { data: sourceHealth }] =
     await Promise.all([
       listMarkets(),
       listEvents(),
-      listSignals(),
-      listRiskAlerts(),
-      readRiskState(),
+      listNewsSourceHealth({ limit: 10 }),
     ]);
 
-  const marketIndex = indexMarkets(markets);
-  const runtimeMode = normalizeRuntimeMode(riskState.mode);
+  const tradableMarkets = markets.filter((market) => market.tradability_status === "tradable").length;
+  const activeEvents = events.filter((event) => event.status === "active").length;
+  const degradedSources = sourceHealth.filter((source) => source.consecutive_failures > 0).length;
 
   return {
-    modeLabel: translateEnum(runtimeMode),
-    environmentLabel: riskState.environment,
     metrics: [
       {
-        key: "daily_pnl",
-        title: dictionary.metrics.dailyPnl,
-        value: formatCurrency(riskState.daily_pnl),
-        hint: formatClock(riskState.updated_at),
-        tone: metricToneForPnl(riskState.daily_pnl),
-      },
-      {
-        key: "gross_exposure",
-        title: dictionary.metrics.grossExposure,
-        value: formatPercentFromRatio(riskState.gross_exposure),
-        hint: dictionary.metricHints.deskGross,
+        key: "markets",
+        title: dictionary.metrics.coveredMarkets,
+        value: formatInteger(markets.length),
+        hint: dictionary.metricHints.trackedMarkets,
         tone: "primary" as const,
       },
       {
-        key: "open_alerts",
-        title: dictionary.metrics.openAlerts,
-        value: String(riskState.open_alerts),
-        hint: dictionary.metricHints.riskState,
-        tone: alerts.some((alert) => alert.severity === "critical") ? ("danger" as const) : ("primary" as const),
+        key: "tradable_markets",
+        title: dictionary.metrics.tradableMarkets,
+        value: formatInteger(tradableMarkets),
+        hint: dictionary.metricHints.tradableMarkets,
+        tone: "success" as const,
+      },
+      {
+        key: "active_events",
+        title: dictionary.metrics.activeEvents,
+        value: formatInteger(activeEvents),
+        hint: dictionary.metricHints.newsEvents,
+        tone: "violet" as const,
+      },
+      {
+        key: "news_sources",
+        title: dictionary.metrics.newsSources,
+        value: formatInteger(sourceHealth.length),
+        hint: degradedSources > 0
+          ? `${formatInteger(degradedSources)} ${dictionary.dashboard.degradedSources}`
+          : dictionary.common.healthy,
+        tone: degradedSources > 0 ? ("danger" as const) : ("success" as const),
       },
     ],
-    signals: signals.map((signal) => ({
-      id: signal.id,
-      marketQuestion: marketIndex.get(signal.market_id)?.question ?? signal.market_id,
-      side: uppercaseEnum(signal.side),
-      edge: formatSignedFixed(signal.edge),
-      confidence: formatPercentFromRatio(signal.confidence),
-      confidenceWidth: formatPercentFromRatio(signal.confidence),
-      stateLabel: translateEnum(signal.lifecycle_state),
-      stateTone: signalStateTone(signal.lifecycle_state),
-    })),
-    alerts: alerts.slice(0, 3).map((alert) => ({
-      id: alert.id,
-      severity: alert.severity,
-      severityTone: alertSeverityTone(alert.severity),
-      createdAt: formatClock(alert.created_at),
-      reason: localizeGeneratedCopy(dictionary, alert.reason),
-      target: localizeGeneratedCopy(dictionary, alert.target),
-    })),
     markets: markets.map((market) => ({
       id: market.id,
       question: market.question,
@@ -88,6 +67,13 @@ export async function getDashboardPageData() {
       source: event.source,
       confidence: formatPercentFromRatio(event.confidence),
       summary: event.summary,
+    })),
+    sourceHealth: sourceHealth.map((source) => ({
+      source: source.source,
+      typeLabel: translateEnum(source.source_type),
+      updatedAtLabel: formatClock(source.updated_at),
+      healthScore: formatPercentFromRatio(source.health_score),
+      tone: source.consecutive_failures > 0 ? ("warning" as const) : ("success" as const),
     })),
   };
 }

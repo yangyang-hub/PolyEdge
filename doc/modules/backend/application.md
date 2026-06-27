@@ -1,6 +1,6 @@
 # application（应用/服务层）
 
-最后更新：2026-06-26
+最后更新：2026-06-27
 
 ## 概述
 
@@ -16,14 +16,13 @@
 
 | 文件/目录 | 职责 |
 |---|---|
-| `lib.rs` | 模块声明 + `pub use` 收敛对外 API（~86 行） |
+| `lib.rs` | 模块声明 + `pub use` 收敛对外 API（~110 行） |
 | `system_mode.rs` | 系统模式管理：`SystemModeService`、`ModeStateStore`、`IdempotencyStore`、`AuditLogSink`、`AuthenticatedActor` |
-| `market_event/` | 核心市场/事件/信号：`MarketEventService`、`MarketEventStore`（最大 Store trait） |
-| `execution/` | 执行管道：`ExecutionService`（组合 MarketEventService + RiskService） |
-| `risk.rs` | 风控：`RiskService`、`RiskStateStore`、`RiskPolicy`、kill-switch 命令 |
+| `market_event/` | 核心市场/事件/执行历史：`MarketEventService`、`MarketEventStore`（最大 Store trait）；保留 legacy signal/position 方法供执行链路和历史 schema 兼容，不再暴露前端信号/持仓页面 |
+| `execution/` | 执行管道：`ExecutionService`（组合 MarketEventService + RiskService）；当前无公开提交执行请求页面 |
+| `risk.rs` | 执行链路风险状态：`RiskService`、`RiskStateStore`、`RiskPolicy`、kill-switch 状态；旧前端风控页面和 `/api/v1/risk/*` 已移除 |
 | `rewards/` | 做市奖励：`RewardBotService`、`RewardBotStore`、质量过滤/排序、静态事件风险过滤、首单 info-risk/quarantine gate、盘口指标/单边报价推荐、price-history candles、低竞争 sleeve profile/竞争份额与资金占比指标 gate/shadow report、AI advisory 输入/决策/执行约束、provider pre-LLM 硬过滤、异步信息风险缓存、provider LLM 调用记录与每日统计、priority condition 列表、live-only 状态与订单分页查询、历史清理、events/fills/open_order_count 内存缓存、in-process command wake channel；`RewardBotStore` trait 拆在 `service/store.rs`，service 单元测试拆在 `service/tests.rs`，配置默认值/归一化/patch 逻辑拆在 `config_impl.rs`，运行时模型拆在 `runtime_models.rs`，quote/selection/AI 枚举拆在 `quote_selection_models.rs`，AI 模型拆在 `ai_advisory_models.rs`，AI payload/定价上下文/1h candle 聚合 helper 拆在 `ai_advisory_payload.rs`，信息风险模型拆在 `info_risk_models.rs`，provider 请求前硬过滤拆在 `provider_prefilter.rs`，deterministic 盘口选择 helper 拆在 `planner_selection.rs`，live 盘口 materializer 拆在 `planner_live.rs`，低竞争入场指标拆在 `low_competition.rs`，低竞争 live 撤单策略拆在 `low_competition_cancel.rs`，低竞争 observation/report 聚合拆在 `low_competition_report.rs`，snapshot 聚合拆在 `service_snapshot.rs` |
 | `copytrade/` | 钱包跟踪与分析：`CopyTradeService`、`CopyTradeStore`、tracked wallets、source trades、钱包分析和控制命令队列；旧模拟引擎已移除 |
-| `arbitrage/` | 套利：`ArbitrageService`、`ArbitrageStore`、机会检测/验证、扫描历史清理 |
 | `news_ingestion.rs` | 新闻采集：`NewsIngestionService`、`NewsIngestionStore` |
 | `maintenance.rs` | 数据库维护：`DatabaseMaintenanceService`、`DatabaseMaintenanceStore`、集中 retention cutoffs 与清理统计 |
 | `orderbook_cache.rs` | 盘口缓存：`OrderbookCache` trait、`CachedOrderBook` 和内部推送事件 `OrderbookStreamEvent` |
@@ -52,7 +51,7 @@
 
 **Store Trait：** `MarketEventStore` — 系统最大的 Store trait
 - Markets：`list_markets`、`count_markets`、`get_market`、`get_markets_by_ids`、`upsert_markets`、`upsert_markets_with_options`、`list_market_categories`
-- Signals：`get_signal`、`list_signals`、`recompute_signal`、`approve_signal`、`reject_signal`
+- Signals（legacy）：`get_signal`、`list_signals`、`recompute_signal`、`approve_signal`、`reject_signal`，供历史 schema/执行链路兼容；公开 signals API 与前端页面已移除
 - Events/Evidence：`list_events`、`list_evidences`、`list_probability_estimates`
 - Execution：`list_order_drafts`、`list_execution_requests`、`submit_execution_request`
 - Orders/Trades/Positions：`list_orders`、`list_trades`、`get_order_by_external_ref`、`list_positions`
@@ -67,14 +66,14 @@
 - 不定义自己的 Store trait，复用 `MarketEventStore`
 - 关键方法：`submit_execution_request`（校验信号 ID 和原因，委托到 MarketEventStore）
 
-### risk — 风控
+### risk — 执行链路风险状态
 
 **关键类型：**
 - `RiskStateSnapshot`：kill_switch、daily_pnl、gross/net_exposure、open_alerts、version
 - `RiskPolicy`：可配置阈值（exposure_reference_nav、min_signal_confidence、max_daily_loss 等）
 - `ApproveSignalCommand`/`RejectSignalCommand`：乐观并发控制（expected_version）
 
-**服务：** `RiskService` — 信号审批/拒绝、kill-switch 触发/释放
+**服务：** `RiskService` — 保留风险状态读取、legacy 信号审批/拒绝和 kill-switch 状态能力，供执行链路/connector callback 兼容；旧 console 风控页面、risk API 和 system kill-switch API 已移除。
 
 ### rewards — 做市奖励
 
@@ -164,15 +163,6 @@ worker 成功读取 CLOB open-order snapshot 后，会把仍出现在该 snapsho
 - `RunOnce`、`CancelAll`、`Reset` 仍作为数据库控制命令兼容值存在；当前 worker 中这些动作是 no-op，不应在产品文案里描述成真实跟单或模拟交易。
 - 旧 `copytrade_copy_orders`、`copytrade_positions`、`copytrade_account_state` 表仍存在用于迁移兼容和历史数据，但当前前端/API snapshot 不再展示模拟账户、订单或持仓。
 
-### arbitrage — 套利
-
-**Store Trait：** `ArbitrageStore`
-- Scan lifecycle、market book snapshots、opportunities、validations、analysis runs、events、history prune
-
-**核心函数：** `detect_arbitrage_opportunities`、`validate_arbitrage_opportunity`、`build_arbitrage_analysis`
-
-**历史清理：** `ArbitrageService.prune_scan_history(started_before)` 返回 `ArbitrageHistoryPruneReport`，删除 cutoff 前的 `arbitrage_scans`，依赖数据库 FK cascade 清理 `market_book_snapshots`、`arbitrage_opportunities` 和 validations；`prune_events()` 继续单独清理 `arbitrage_events`。
-
 ### news_ingestion — 新闻采集
 
 **Store Trait：** `NewsIngestionStore`
@@ -236,15 +226,14 @@ risk ← (依赖 market_event + system_mode)
     ↑
 rewards ← (独立；仅支持 live 实盘模式)
 copytrade ← (独立，集成 wallet_analysis)
-arbitrage ← (可能使用 orderbook_cache)
-news_ingestion ← (独立，输出供 signal pipeline 使用)
+news_ingestion ← (独立，输出 events/evidences)
 maintenance ← (独立，集中数据库 retention 策略)
 orderbook_cache ← (共享基础设施 trait)
 ```
 
 ## 当前状态
 
-- 所有模块已实现完整的 Store trait 和 Service struct
+- 当前保留的模块已实现完整的 Store trait 和 Service struct；旧 application `arbitrage/` 模块和 `ArbitrageService` 已移除，历史套利表仍只作为数据库迁移兼容保留。
 - Rewards 已移除旧 validation/simulation tick 引擎，仅保留 live-only 配置、quote planner、live orderbook materializer、确定性盘口指标/单边 quote mode、AI advisory 输入/决策/缓存端口、信息风险输入/决策/缓存端口、实际 provider 调用记录/每日统计端口、首单入场 gate、状态类型和增量持久化端口。
 - Rewards AI advisory 已读取 orderbook 服务持久化的 5m price-history source candles，并在 application 层聚合为最多 24 根 1h candles；payload 包含小时级 candle 序列、摘要、当前盘口定价合理性上下文和 provider TTL/cache policy，provider 新输出契约仅为 `allow_quote` 二值；cache key 只包含已完成小时级摘要，不包含完整 K 线数组、即时盘口档位或当前小时内 5m source 更新；AI advisory 与 info-risk 新缓存保存时会加入确定性 TTL jitter 并在同一窗口内提前续期，降低大批缓存同步过期导致的 provider pending。
 - Rewards live 模式已接入质量硬过滤与综合排序、post-only token 买单、撤单、本系统托管订单成交同步、成交后现金/库存/PnL 更新、可持续重试的 exit/flatten sell、CLOB open-order 反查、可映射 active rewards BUY 的收养/重开、外部余额/完整持仓快照、managed order scoring 和 UTC 当日账户级 maker rewards 同步（聚合端点优先、明细端点 fallback）；新增买单会把未归属到本系统 managed order 的外部 BUY notional 从可用资金中保守扣除，并要求 orderbook 盘口距离 stale 边界仍有余量，近期 BUY 的 stale-only 撤单有短暂 grace 以吸收 registry/poll 抖动。SELL、非 rewards 市场和无法唯一映射 token 的外部开放订单明细与奖励结算对账仍待完成。
@@ -254,7 +243,6 @@ orderbook_cache ← (共享基础设施 trait)
 - Rewards 保留数据库控制命令队列用于持久恢复；API 入队时会合并同账户同动作的 pending/running 重复命令，真正入队后通过共享 runtime revision 立即唤醒后台执行。
 - Copytrade 已精简为只读钱包跟踪和分析：API 负责钱包配置和控制命令入队，worker 负责检测 source trades 与执行 Analyze；Run/Cancel/Reset 兼容命令当前不执行交易逻辑。
 - Wallet analysis 是纯计算，已完全实现
-- Arbitrage 是只读链路（发现/记录/校验/分析/展示），不会创建执行请求
 - Database maintenance 已集中覆盖非核心长期账本的高增长历史/缓存/队列表；live 账本类表（如 rewards fills/positions/account state）不在通用维护任务中删除，避免破坏对账。
 
 ## 修改检查清单

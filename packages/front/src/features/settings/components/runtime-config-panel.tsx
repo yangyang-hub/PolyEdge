@@ -20,13 +20,11 @@ type RuntimeConfigPanelProps = {
   entries: RuntimeConfigEntryDto[];
 };
 
-const sectionOrder = ["risk", "polymarket", "arbitrage", "rewards", "news", "worker"];
+const sectionOrder = ["polymarket", "rewards", "news", "worker", "orderbook_stream"];
 
 function sectionLabel(section: string): string {
   const labels: Record<string, string> = {
-    risk: "Risk",
     polymarket: "Polymarket",
-    arbitrage: "Arbitrage",
     rewards: "Rewards",
     news: "News",
     worker: "Worker",
@@ -43,14 +41,19 @@ export function RuntimeConfigPanel({ entries }: RuntimeConfigPanelProps) {
 
   const groupedEntries = useMemo(() => {
     const groups = new Map<string, RuntimeConfigEntryDto[]>();
-    for (const entry of configEntries) {
+    for (const entry of configEntries.filter((item) => item.section !== "risk" && item.section !== "arbitrage")) {
       const group = groups.get(entry.section) ?? [];
       group.push(entry);
       groups.set(entry.section, group);
     }
 
     return Array.from(groups.entries()).sort(
-      ([left], [right]) => sectionOrder.indexOf(left) - sectionOrder.indexOf(right),
+      ([left], [right]) => {
+        const leftIndex = sectionOrder.indexOf(left);
+        const rightIndex = sectionOrder.indexOf(right);
+        return (leftIndex === -1 ? Number.MAX_SAFE_INTEGER : leftIndex)
+          - (rightIndex === -1 ? Number.MAX_SAFE_INTEGER : rightIndex);
+      },
     );
   }, [configEntries]);
 

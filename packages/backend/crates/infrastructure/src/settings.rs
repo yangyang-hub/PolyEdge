@@ -6,7 +6,7 @@
 
 use config::{Config, Environment};
 use polyedge_domain::{
-    AppError, Edge, ExposureRatio, Probability, Quantity, SignedUsdAmount, SystemMode, UsdAmount,
+    AppError, ExposureRatio, Probability, SignedUsdAmount, SystemMode, UsdAmount,
 };
 use serde::{Deserialize, Serialize};
 
@@ -25,7 +25,6 @@ pub struct Settings {
     pub runtime: RuntimeSettings,
     pub risk: RiskSettings,
     pub polymarket: PolymarketSettings,
-    pub arbitrage: ArbitrageSettings,
     pub rewards: RewardsSettings,
     pub news: NewsSettings,
     pub worker: WorkerSettings,
@@ -114,24 +113,6 @@ pub struct PolymarketSettings {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
-pub struct ArbitrageSettings {
-    pub enabled: bool,
-    pub poll_interval_secs: u64,
-    pub scan_limit: u16,
-    pub scanner_version: String,
-    pub book_source: String,
-    pub analysis_lookback_hours: u16,
-    pub max_book_age_ms: u64,
-    pub opportunity_ttl_secs: u64,
-    pub event_retention_hours: u64,
-    pub min_gross_edge: Edge,
-    pub min_capacity: Quantity,
-    pub fee_buffer: Edge,
-    pub slippage_buffer: Edge,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(default)]
 pub struct RewardsSettings {
     pub enabled: bool,
     pub poll_interval_secs: u64,
@@ -186,8 +167,6 @@ pub struct NewsSourceSettings {
 pub struct WorkerSettings {
     pub poll_news: bool,
     pub promote_news_events: bool,
-    pub poll_arbitrage_radar: bool,
-    pub analyze_arbitrage_opportunities: bool,
     pub poll_reward_bot: bool,
     pub poll_reward_info_risks: bool,
     pub drain_execution_queue: bool,
@@ -200,12 +179,9 @@ pub struct WorkerSettings {
     pub consume_orderbook_stream: bool,
     pub poll_copytrade: bool,
     pub analyze_wallets: bool,
-    pub recompute_signals: bool,
     pub database_maintenance: bool,
     pub database_maintenance_interval_secs: u64,
     pub news_promotion_interval_secs: u64,
-    pub signal_recompute_interval_secs: u64,
-    pub arbitrage_analysis_interval_secs: u64,
     pub execution_drain_interval_secs: u64,
     pub order_status_poll_interval_secs: u64,
     pub fill_reconciliation_interval_secs: u64,

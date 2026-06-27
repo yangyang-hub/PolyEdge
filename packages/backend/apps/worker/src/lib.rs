@@ -1,15 +1,14 @@
 use futures::StreamExt as _;
 use polyedge_application::{
-    ArbitrageAnalysisRunView, ArbitrageOpportunityListFilters, ArbitrageOpportunityView,
-    ArbitrageScanView, ArbitrageValidationConfig, AuthenticatedActor, BookSnapshot, BookSource,
-    CachedOrderBook, CopyControlAction, CopyControlCommand, CopyTradeRunReport,
-    DatabaseMaintenanceReport, DispatchExecutionListFilters, ExecutionDispatchCandidate,
-    ExecutionReconciliationCandidate, FixtureBundle, FixtureEventRecord, FixtureEvidenceRecord,
-    ManagedRewardOrder, ManagedRewardOrderStatus, MarkExecutionFailedCommand,
-    MarkExecutionSubmittedCommand, MarketBookSnapshotView, MarketListFilters, MarketView,
-    NewsIngestSourceCommand, NewsIngestionItem, NewsRawEventListFilters, NewsRawEventView,
-    NewsSourceFailureUpdate, NewsSourceHealthListFilters, NewsSourceHealthView, OrderListFilters,
-    PageQuery, PostFillStrategy, REWARD_AI_CANDLE_SOURCE_INTERVAL_SEC,
+    AuthenticatedActor, BookSnapshot, BookSource, CachedOrderBook, CopyControlAction,
+    CopyControlCommand, CopyTradeRunReport, DatabaseMaintenanceReport,
+    DispatchExecutionListFilters, ExecutionDispatchCandidate, ExecutionReconciliationCandidate,
+    FixtureBundle, FixtureEventRecord, FixtureEvidenceRecord, ManagedRewardOrder,
+    ManagedRewardOrderStatus, MarkExecutionFailedCommand, MarkExecutionSubmittedCommand,
+    MarketListFilters, MarketView, NewsIngestSourceCommand, NewsIngestionItem,
+    NewsRawEventListFilters, NewsRawEventView, NewsSourceFailureUpdate,
+    NewsSourceHealthListFilters, NewsSourceHealthView, OrderListFilters, PageQuery,
+    PostFillStrategy, REWARD_AI_CANDLE_SOURCE_INTERVAL_SEC,
     REWARD_AI_CANDLE_SOURCE_LIMIT_PER_TOKEN, ReconcileExecutionListFilters,
     ReconcileExternalTradeCommand, RewardAccountState, RewardAiAdvisoryRequest, RewardBookLevel,
     RewardBotConfig, RewardBotRunReport, RewardCandidateMarket, RewardControlAction,
@@ -18,12 +17,11 @@ use polyedge_application::{
     RewardMarketAdvisory, RewardMarketInfoRisk, RewardOrderBook, RewardOrderSide,
     RewardPlanQuoteMode, RewardPosition, RewardProviderPreLlmCandidateKind, RewardQuoteLeg,
     RewardQuotePlan, RewardRiskEvent, RewardRiskSeverity, RewardStrategyBucket, RewardTickOutcome,
-    RewardToken, SignalListFilters, SyncExternalOrderStatusCommand, WalletActivityInput,
-    WalletFeedInput, WalletPositionInput, apply_first_quote_entry_gates,
+    RewardToken, SyncExternalOrderStatusCommand, WalletActivityInput, WalletFeedInput,
+    WalletPositionInput, apply_first_quote_entry_gates,
     apply_low_competition_metrics_to_quote_plans, apply_reward_ai_advisories,
-    apply_reward_info_risks, build_arbitrage_analysis, build_low_competition_observations,
-    build_reward_ai_advisory_request, build_reward_info_risk_assessment_request,
-    low_competition_live_cancel_reason, market_book_snapshot_id,
+    apply_reward_info_risks, build_low_competition_observations, build_reward_ai_advisory_request,
+    build_reward_info_risk_assessment_request, low_competition_live_cancel_reason,
     materialize_reward_quote_plan_for_live_orderbook, new_risk_event,
     reward_ai_advisory_blocks_quote, reward_condition_has_active_exposure,
     reward_market_books_available, reward_order_counts_as_external_open,
@@ -39,8 +37,7 @@ use polyedge_connectors::{
     LivePolymarketTradeSyncOutcome, LivePolymarketTradeSyncRequest, NewsSource,
     OrderbookStreamClient, PAPER_ACCOUNT_ID, PAPER_EXECUTOR_NAME, POLYMARKET_CONNECTOR_NAME,
     PaperExecutionOutcome, PaperExecutor, PaperFillRequest, PaperOrderRequest,
-    PaperOrderStatusRequest, PolymarketAcceptedOrderStatus, PolymarketBinaryBookSnapshot,
-    PolymarketBookConnector, PolymarketBookLevel, PolymarketChainConnector,
+    PaperOrderStatusRequest, PolymarketAcceptedOrderStatus, PolymarketChainConnector,
     PolymarketDataApiConnector, PolymarketGammaConnector, PolymarketGammaMarket,
     PolymarketMarketRefs, PolymarketOpenOrder, PolymarketOrderRejection, PolymarketRewardMarket,
     PolymarketRewardsConnector, PolymarketSignatureScheme, PolymarketTokenOrderSide,
@@ -49,8 +46,8 @@ use polyedge_connectors::{
     normalize_polymarket_ws_order_message, normalize_polymarket_ws_trade_message,
 };
 use polyedge_domain::{
-    AppError, EventStatus, EvidenceDirection, EvidenceStatus, MarketStatus, OrderStatus,
-    Probability, Quantity, Result, UsdAmount, UserRole,
+    AppError, EventStatus, EvidenceDirection, EvidenceStatus, OrderStatus, Probability, Quantity,
+    Result, UsdAmount, UserRole,
 };
 use polyedge_infrastructure::{
     AppState, Runtime, new_trace_id,
@@ -161,22 +158,6 @@ struct RewardInfoRiskScanReport {
     applied_plans: usize,
 }
 
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-struct ArbitrageScanRunReport {
-    markets_scanned: usize,
-    snapshots_recorded: usize,
-    opportunities_recorded: usize,
-    validations_recorded: usize,
-    validation_books_refetched: usize,
-    validation_book_failures: usize,
-    opportunities_expired: usize,
-    events_pruned: u64,
-    scans_pruned: u64,
-    snapshots_pruned: u64,
-    scan_opportunities_pruned: u64,
-    failed_books: usize,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PolymarketOrderEventOutcome {
     Applied,
@@ -276,64 +257,6 @@ pub async fn run_cli() -> Result<()> {
         Some("run-database-maintenance-once") => {
             let report = run_database_maintenance_once(&state).await?;
             log_database_maintenance_report(report, "completed database maintenance once");
-            Ok(())
-        }
-        Some("scan-arbitrage-once") => {
-            let trace_id = new_trace_id();
-            let report = scan_arbitrage_once(&state, &trace_id).await?;
-            info!(
-                trace_id = %trace_id,
-                markets_scanned = report.markets_scanned,
-                snapshots_recorded = report.snapshots_recorded,
-                opportunities_recorded = report.opportunities_recorded,
-                validations_recorded = report.validations_recorded,
-                validation_books_refetched = report.validation_books_refetched,
-                validation_book_failures = report.validation_book_failures,
-                opportunities_expired = report.opportunities_expired,
-                events_pruned = report.events_pruned,
-                scans_pruned = report.scans_pruned,
-                snapshots_pruned = report.snapshots_pruned,
-                scan_opportunities_pruned = report.scan_opportunities_pruned,
-                failed_books = report.failed_books,
-                "scanned arbitrage radar once",
-            );
-            Ok(())
-        }
-        Some("poll-arbitrage-radar") => {
-            let max_cycles = parse_limit_arg(args.next())?.map(usize::from);
-            let report = poll_arbitrage_radar(&state, max_cycles).await?;
-            info!(
-                markets_scanned = report.markets_scanned,
-                snapshots_recorded = report.snapshots_recorded,
-                opportunities_recorded = report.opportunities_recorded,
-                validations_recorded = report.validations_recorded,
-                validation_books_refetched = report.validation_books_refetched,
-                validation_book_failures = report.validation_book_failures,
-                opportunities_expired = report.opportunities_expired,
-                events_pruned = report.events_pruned,
-                scans_pruned = report.scans_pruned,
-                snapshots_pruned = report.snapshots_pruned,
-                scan_opportunities_pruned = report.scan_opportunities_pruned,
-                failed_books = report.failed_books,
-                "arbitrage radar polling stopped",
-            );
-            Ok(())
-        }
-        Some("analyze-arbitrage-opportunities") => {
-            let trace_id = new_trace_id();
-            let lookback_hours = parse_limit_arg(args.next())?
-                .unwrap_or(state.settings.arbitrage.analysis_lookback_hours);
-            let analysis =
-                analyze_arbitrage_opportunities(&state, lookback_hours, &trace_id).await?;
-            info!(
-                trace_id = %trace_id,
-                analysis_id = %analysis.id,
-                lookback_hours = analysis.lookback_hours,
-                opportunity_count = analysis.opportunity_count,
-                market_count = analysis.market_count,
-                summary = %analysis.summary_payload,
-                "analyzed arbitrage opportunity history",
-            );
             Ok(())
         }
         Some("scan-rewards-once") => {
@@ -532,18 +455,15 @@ include!("worker/orderbook_registration.rs");
 include!("worker/service_info_risk.rs");
 include!("worker/execution_queue.rs");
 include!("worker/news.rs");
-include!("worker/arbitrage.rs");
 include!("worker/market_sync.rs");
 include!("worker/rewards.rs");
 include!("worker/copytrade.rs");
-include!("worker/arbitrage_books.rs");
 include!("worker/news_helpers.rs");
 include!("worker/execution_reconcile.rs");
 include!("worker/polymarket_events.rs");
 include!("worker/polymarket_config.rs");
 include!("worker/execution_dispatch.rs");
 include!("worker/news_promotion.rs");
-include!("worker/signal_recompute.rs");
 include!("worker/shared.rs");
 
 #[cfg(test)]

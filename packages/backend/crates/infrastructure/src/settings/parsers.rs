@@ -19,14 +19,6 @@ fn probability(value: &str) -> Probability {
     Probability::new(decimal(value)).expect("static backend configuration default must be valid")
 }
 
-fn edge(value: &str) -> Edge {
-    Edge::new(decimal(value)).expect("static backend configuration default must be valid")
-}
-
-fn quantity(value: &str) -> Quantity {
-    Quantity::new(decimal(value)).expect("static backend configuration default must be valid")
-}
-
 fn exposure_ratio(value: &str) -> ExposureRatio {
     ExposureRatio::new(decimal(value)).expect("static backend configuration default must be valid")
 }

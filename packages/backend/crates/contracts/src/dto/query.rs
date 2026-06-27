@@ -65,20 +65,6 @@ pub struct EvidenceListQuery {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct SignalListQuery {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub market_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub event_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none", alias = "status")]
-    pub lifecycle_state: Option<SignalLifecycleState>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub page: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub page_size: Option<u16>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ProbabilityEstimateListQuery {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub market_id: Option<String>,
@@ -86,52 +72,6 @@ pub struct ProbabilityEstimateListQuery {
     pub event_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub signal_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub page: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub page_size: Option<u16>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct ArbitrageScanListQuery {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub page: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub page_size: Option<u16>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct ArbitrageOpportunityListQuery {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub market_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub opportunity_type: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub status: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub validation_status: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub min_net_edge: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub observed_after: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub active_only: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub page: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub page_size: Option<u16>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct ArbitrageAnalysisRunListQuery {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub page: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub page_size: Option<u16>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct SignalTransitionListQuery {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub page: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -202,56 +142,6 @@ pub struct TradeListQuery {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub page: Option<u32>,
     /// Items per page (default 20, max 200).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub page_size: Option<u16>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct PositionListQuery {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub market_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub connector_name: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub side: Option<SignalSide>,
-    /// 1-based page number (default 1).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub page: Option<u32>,
-    /// Items per page (default 20, max 200).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub page_size: Option<u16>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct ApprovalListQuery {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub status: Option<ApprovalStatus>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub limit: Option<u16>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct RiskAlertListQuery {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub status: Option<AlertStatus>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub limit: Option<u16>,
-    /// 1-based page number for pagination (default: 1).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub page: Option<u32>,
-    /// Number of items per page (default: 20, max: 200).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub page_size: Option<u16>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct RiskBucketListQuery {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub limit: Option<u16>,
-    /// 1-based page number for pagination (default: 1).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub page: Option<u32>,
-    /// Number of items per page (default: 20, max: 200).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub page_size: Option<u16>,
 }

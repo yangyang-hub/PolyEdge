@@ -1,8 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use super::{
-        PolymarketSignatureType, Settings, edge, environment_source, probability, quantity,
-    };
+    use super::{PolymarketSignatureType, Settings, environment_source, probability};
     use std::collections::HashMap;
 
     #[test]
@@ -85,8 +83,6 @@ mod tests {
         assert_eq!(settings.rewards.info_risk_max_markets_per_cycle, 50);
         assert!(settings.worker.poll_news);
         assert!(settings.worker.promote_news_events);
-        assert!(settings.worker.poll_arbitrage_radar);
-        assert!(settings.worker.analyze_arbitrage_opportunities);
         assert!(!settings.worker.poll_reward_bot);
         assert!(settings.worker.drain_execution_queue);
         assert!(settings.worker.poll_paper_order_statuses);
@@ -95,12 +91,9 @@ mod tests {
         assert!(settings.worker.reconcile_polymarket_fills);
         assert!(settings.worker.consume_polymarket_user_events);
         assert!(settings.worker.consume_orderbook_stream);
-        assert!(settings.worker.recompute_signals);
         assert!(settings.worker.database_maintenance);
         assert_eq!(settings.worker.database_maintenance_interval_secs, 3_600);
         assert_eq!(settings.worker.news_promotion_interval_secs, 60);
-        assert_eq!(settings.worker.signal_recompute_interval_secs, 120);
-        assert_eq!(settings.worker.arbitrage_analysis_interval_secs, 300);
         assert_eq!(settings.worker.execution_drain_interval_secs, 5);
         assert_eq!(settings.worker.order_status_poll_interval_secs, 15);
         assert_eq!(settings.worker.fill_reconciliation_interval_secs, 15);
@@ -109,19 +102,6 @@ mod tests {
             5
         );
         assert_eq!(settings.worker.task_limit, 100);
-        assert!(settings.arbitrage.enabled);
-        assert_eq!(settings.arbitrage.poll_interval_secs, 5);
-        assert_eq!(settings.arbitrage.scan_limit, 100);
-        assert_eq!(settings.arbitrage.scanner_version, "v1");
-        assert_eq!(settings.arbitrage.book_source, "market_snapshot");
-        assert_eq!(settings.arbitrage.analysis_lookback_hours, 24);
-        assert_eq!(settings.arbitrage.max_book_age_ms, 10_000);
-        assert_eq!(settings.arbitrage.opportunity_ttl_secs, 60);
-        assert_eq!(settings.arbitrage.event_retention_hours, 24);
-        assert_eq!(settings.arbitrage.min_gross_edge, edge("0.005"));
-        assert_eq!(settings.arbitrage.min_capacity, quantity("1"));
-        assert_eq!(settings.arbitrage.fee_buffer, edge("0.005"));
-        assert_eq!(settings.arbitrage.slippage_buffer, edge("0.005"));
         assert!(settings.postgres.url.is_none());
         assert_eq!(settings.postgres.max_connections, 20);
         assert!(settings.redis.url.is_none());
@@ -209,58 +189,6 @@ mod tests {
                 "POLYEDGE_POLYMARKET__POLYGON_RPC_URL".to_string(),
                 "https://polygon.example/rpc".to_string(),
             ),
-            (
-                "POLYEDGE_ARBITRAGE__ENABLED".to_string(),
-                "true".to_string(),
-            ),
-            (
-                "POLYEDGE_ARBITRAGE__POLL_INTERVAL_SECS".to_string(),
-                "7".to_string(),
-            ),
-            (
-                "POLYEDGE_ARBITRAGE__SCAN_LIMIT".to_string(),
-                "42".to_string(),
-            ),
-            (
-                "POLYEDGE_ARBITRAGE__SCANNER_VERSION".to_string(),
-                "v_test".to_string(),
-            ),
-            (
-                "POLYEDGE_ARBITRAGE__BOOK_SOURCE".to_string(),
-                "polymarket".to_string(),
-            ),
-            (
-                "POLYEDGE_ARBITRAGE__ANALYSIS_LOOKBACK_HOURS".to_string(),
-                "12".to_string(),
-            ),
-            (
-                "POLYEDGE_ARBITRAGE__MAX_BOOK_AGE_MS".to_string(),
-                "2500".to_string(),
-            ),
-            (
-                "POLYEDGE_ARBITRAGE__OPPORTUNITY_TTL_SECS".to_string(),
-                "15".to_string(),
-            ),
-            (
-                "POLYEDGE_ARBITRAGE__EVENT_RETENTION_HOURS".to_string(),
-                "6".to_string(),
-            ),
-            (
-                "POLYEDGE_ARBITRAGE__MIN_GROSS_EDGE".to_string(),
-                "0.02".to_string(),
-            ),
-            (
-                "POLYEDGE_ARBITRAGE__MIN_CAPACITY".to_string(),
-                "50".to_string(),
-            ),
-            (
-                "POLYEDGE_ARBITRAGE__FEE_BUFFER".to_string(),
-                "0.003".to_string(),
-            ),
-            (
-                "POLYEDGE_ARBITRAGE__SLIPPAGE_BUFFER".to_string(),
-                "0.004".to_string(),
-            ),
             ("POLYEDGE_REWARDS__ENABLED".to_string(), "true".to_string()),
             (
                 "POLYEDGE_REWARDS__POLL_INTERVAL_SECS".to_string(),
@@ -269,14 +197,6 @@ mod tests {
             ("POLYEDGE_WORKER__POLL_NEWS".to_string(), "true".to_string()),
             (
                 "POLYEDGE_WORKER__PROMOTE_NEWS_EVENTS".to_string(),
-                "true".to_string(),
-            ),
-            (
-                "POLYEDGE_WORKER__POLL_ARBITRAGE_RADAR".to_string(),
-                "true".to_string(),
-            ),
-            (
-                "POLYEDGE_WORKER__ANALYZE_ARBITRAGE_OPPORTUNITIES".to_string(),
                 "true".to_string(),
             ),
             (
@@ -314,10 +234,6 @@ mod tests {
             (
                 "POLYEDGE_WORKER__NEWS_PROMOTION_INTERVAL_SECS".to_string(),
                 "30".to_string(),
-            ),
-            (
-                "POLYEDGE_WORKER__ARBITRAGE_ANALYSIS_INTERVAL_SECS".to_string(),
-                "120".to_string(),
             ),
             (
                 "POLYEDGE_WORKER__EXECUTION_DRAIN_INTERVAL_SECS".to_string(),
@@ -432,25 +348,10 @@ mod tests {
             "https://polygon.example/rpc"
         );
         assert!(settings.polymarket.private_key.is_none());
-        assert!(settings.arbitrage.enabled);
-        assert_eq!(settings.arbitrage.poll_interval_secs, 7);
-        assert_eq!(settings.arbitrage.scan_limit, 42);
-        assert_eq!(settings.arbitrage.scanner_version, "v_test");
-        assert_eq!(settings.arbitrage.book_source, "polymarket");
-        assert_eq!(settings.arbitrage.analysis_lookback_hours, 12);
-        assert_eq!(settings.arbitrage.max_book_age_ms, 2500);
-        assert_eq!(settings.arbitrage.opportunity_ttl_secs, 15);
-        assert_eq!(settings.arbitrage.event_retention_hours, 6);
-        assert_eq!(settings.arbitrage.min_gross_edge, edge("0.02"));
-        assert_eq!(settings.arbitrage.min_capacity, quantity("50"));
-        assert_eq!(settings.arbitrage.fee_buffer, edge("0.003"));
-        assert_eq!(settings.arbitrage.slippage_buffer, edge("0.004"));
         assert!(settings.rewards.enabled);
         assert_eq!(settings.rewards.poll_interval_secs, 45);
         assert!(settings.worker.poll_news);
         assert!(settings.worker.promote_news_events);
-        assert!(settings.worker.poll_arbitrage_radar);
-        assert!(settings.worker.analyze_arbitrage_opportunities);
         assert!(settings.worker.poll_reward_bot);
         assert!(settings.worker.drain_execution_queue);
         assert!(settings.worker.poll_paper_order_statuses);
@@ -460,7 +361,6 @@ mod tests {
         assert!(settings.worker.consume_polymarket_user_events);
         assert!(settings.worker.consume_orderbook_stream);
         assert_eq!(settings.worker.news_promotion_interval_secs, 30);
-        assert_eq!(settings.worker.arbitrage_analysis_interval_secs, 120);
         assert_eq!(settings.worker.execution_drain_interval_secs, 6);
         assert_eq!(settings.worker.order_status_poll_interval_secs, 20);
         assert_eq!(settings.worker.fill_reconciliation_interval_secs, 25);
@@ -526,8 +426,6 @@ mod tests {
         let mut settings = Settings::default();
         settings
             .apply_runtime_config_values(std::collections::BTreeMap::from([
-                ("arbitrage.enabled".to_string(), "true".to_string()),
-                ("arbitrage.scan_limit".to_string(), "25".to_string()),
                 (
                     "polymarket.account_id".to_string(),
                     "acct_runtime".to_string(),
@@ -545,8 +443,6 @@ mod tests {
             ]))
             .expect("runtime config values");
 
-        assert!(settings.arbitrage.enabled);
-        assert_eq!(settings.arbitrage.scan_limit, 25);
         assert_eq!(settings.polymarket.account_id, "acct_runtime");
         assert_eq!(
             settings.polymarket.signature_type,

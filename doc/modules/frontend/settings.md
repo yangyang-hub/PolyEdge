@@ -1,10 +1,10 @@
 # Settings（设置）
 
-最后更新：2026-06-03
+最后更新：2026-06-27
 
 ## 概述
 
-`/settings` 页面管理运行时配置（runtime config），允许管理员查看和修改键值对配置项。
+`/settings` 页面管理运行时配置（runtime config），允许管理员查看和修改当前仍受支持的键值对配置项。
 
 ## 架构与关键文件
 
@@ -29,7 +29,7 @@
 
 ## 当前状态
 
-已实现，支持运行时配置的查看和修改。设置页文案显示当前 API 直连地址、前端 auth mode，并说明内网免鉴权模式下不需要 dev-auth 或 step-up code。
+已实现，支持运行时配置的查看和修改。设置页文案显示当前 API 直连地址、前端 auth mode，并说明内网免鉴权模式下不需要 dev-auth 或 step-up code。旧 risk/arbitrage runtime config 分组已从前端和后端 runtime config 暴露中移除。
 
 ## 修改检查清单
 

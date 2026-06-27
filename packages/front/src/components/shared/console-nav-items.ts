@@ -1,17 +1,13 @@
 import type { LucideIcon } from "lucide-react";
 import {
-  Activity,
   CircleDollarSign,
   HandCoins,
   LayoutDashboard,
   Newspaper,
-  Radar,
   Search,
   Settings,
-  ShieldAlert,
   SquareChartGantt,
   Users,
-  WalletCards,
 } from "lucide-react";
 
 import type { Dictionary } from "@/lib/i18n/dictionaries";
@@ -26,14 +22,10 @@ export const consoleNavItems: ConsoleNavItem[] = [
   { href: "/dashboard", labelKey: "dashboard", icon: LayoutDashboard },
   { href: "/markets", labelKey: "markets", icon: SquareChartGantt },
   { href: "/events", labelKey: "events", icon: Newspaper },
-  { href: "/radar", labelKey: "radar", icon: Radar },
   { href: "/rewards", labelKey: "rewards", icon: HandCoins },
   { href: "/funding", labelKey: "funding", icon: CircleDollarSign },
   { href: "/copy-trading", labelKey: "copytrade", icon: Users },
   { href: "/wallet-analysis", labelKey: "walletAnalysis", icon: Search },
-  { href: "/signals", labelKey: "signals", icon: Activity },
-  { href: "/positions", labelKey: "positions", icon: WalletCards },
-  { href: "/risk", labelKey: "risk", icon: ShieldAlert },
   { href: "/settings", labelKey: "settings", icon: Settings },
 ];
 

@@ -1,6 +1,5 @@
 #![allow(clippy::too_many_arguments)]
 
-mod arbitrage;
 mod copytrade;
 mod execution;
 mod list_filters;
@@ -15,16 +14,6 @@ mod risk;
 mod system_mode;
 pub mod wallet_analysis;
 
-pub use arbitrage::{
-    ArbitrageAnalysisRunListFilters, ArbitrageAnalysisRunView, ArbitrageAnalysisSummary,
-    ArbitrageEventListFilters, ArbitrageEventType, ArbitrageEventView, ArbitrageHistoryPruneReport,
-    ArbitrageMarketSummary, ArbitrageOpportunityDraft, ArbitrageOpportunityListFilters,
-    ArbitrageOpportunityStatus, ArbitrageOpportunityType, ArbitrageOpportunityValidationView,
-    ArbitrageOpportunityView, ArbitrageScanListFilters, ArbitrageScanView, ArbitrageService,
-    ArbitrageStore, ArbitrageTypeCount, ArbitrageValidationConfig, ArbitrageValidationStatus,
-    MarketBookSnapshotView, build_arbitrage_analysis, detect_arbitrage_opportunities,
-    market_book_snapshot_id, validate_arbitrage_opportunity,
-};
 pub use copytrade::{
     AddTrackedWalletInput, CopyControlAction, CopyControlCommand, CopyControlCommandStatus,
     CopyEvent, CopyEventSeverity, CopyOrderSide, CopySizingMode, CopyTradeConfig,

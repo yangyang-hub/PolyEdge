@@ -1,6 +1,6 @@
 # connectors（外部连接器层）
 
-最后更新：2026-06-26
+最后更新：2026-06-27
 
 ## 概述
 
@@ -47,7 +47,7 @@
 - `fetch_markets()` 使用 Gamma `/markets` offset 分页，按 active/open/non-archived、24h volume 降序拉取，并在 422 offset 边界、空页或短页时停止；结果按 market id 去重；解码失败时错误会携带最多 300 字节的转义响应体 preview。
 - `fetch_markets_by_condition_ids()` 使用 Gamma `/markets` 的重复 `condition_ids` query 参数做小批量定向查询，每批最多 50 个 condition，用于 orderbook priority sync 刷新已订阅/rewards 重点市场；解码失败时错误会携带最多 300 字节的转义响应体 preview。
 - 流动性优先解析 Gamma `liquidityClob`，缺失时回退 `liquidity`；结算时间解析 `endDate`。歧义等级只在 market/event 提供显式 `resolutionSource` 时为 Low，仅 description 可用时为 Medium，两者都缺失时为 High，避免把描述文本误当成明确结算来源。
-- 用途：`market_sync.rs` worker 的主要数据源，`arbitrage.rs` 的回退数据源
+- 用途：`polyedge-orderbook` market sync 的主要数据源；worker 中的 `market_sync.rs` 仅保留 CLI 兼容入口
 
 ### Polymarket Data API（钱包活动）
 
@@ -76,7 +76,7 @@
 - `fetch_binary_book(market_refs)`：获取 YES+NO 双侧盘口
 - `fetch_token_book(asset_id)`：获取单 token 盘口
 - **`PolymarketBinaryBookSnapshot`**：condition_id + yes/no book + observed_at
-- 用途：arbitrage scanner 和独立 orderbook 服务；rewards bot 通过 orderbook 服务读取缓存盘口，不直接调用该 connector 获取盘口
+- 用途：独立 orderbook 服务的 WS/poll reconcile 和按需刷新；rewards bot 通过 orderbook 服务读取缓存盘口，不直接调用该 connector 获取盘口
 
 ### Polymarket Live（认证交易）
 
@@ -159,7 +159,7 @@
 ## 依赖关系
 
 - **上游**：`domain`（AppError、枚举、数值类型）、`application`（部分 trait）
-- **下游**：`packages/orderbook`（market sync、WS/poll）、`packages/backend/apps/worker`（arbitrage、copytrade、rewards、news）
+- **下游**：`packages/orderbook`（market sync、WS/poll）、`packages/backend/apps/worker`（copytrade、rewards、news、Polymarket 私有对账）
 
 ## 当前状态
 

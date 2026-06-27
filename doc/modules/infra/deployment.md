@@ -1,6 +1,6 @@
 # 部署（Docker + Nginx + Scripts）
 
-最后更新：2026-06-26
+最后更新：2026-06-27
 
 ## 概述
 
@@ -30,7 +30,6 @@
 | `deploy/.env.front.example` | Frontend 服务环境变量模板：前端端口和 build-time public API URL |
 | `scripts/deploy.sh` | 部署脚本（auto + manual 模式） |
 | `scripts/build-backend-bin.sh` | 后端二进制构建脚本；从 `packages/Cargo.toml` workspace 构建并复制 `packages/target/...` 下的二进制到 `bin/` |
-| `scripts/smoke-arbitrage-radar.sh` | 套利雷达冒烟脚本；检查 API REST 端点，提供 front URL 时只检查 `/healthz` 和 `/radar` 页面 |
 | `packages/Cargo.toml` | Rust workspace 根；包含 `packages/api`、`packages/orderbook` 和 `packages/backend/...` members |
 | `packages/api/` | `polyedge-api` 服务 crate |
 | `packages/orderbook/` | `polyedge-orderbook` 服务 crate |
@@ -67,7 +66,7 @@
 - 环境变量：`.env.api`
 - `extra_hosts: host.docker.internal:host-gateway`（访问宿主机数据库）
 - API 服务启动时内嵌启动 `WorkerRuntime`，共享同一进程；worker 后台任务通过 `deploy/.env.api` 配置
-- 后端代码默认仍包含若干历史 worker 循环；Docker 模板默认开启新闻采集，其他 worker 循环在 `deploy/.env.api` 中显式设为 `false`，需要运行新闻提升、套利、rewards、copytrade 或私有对账任务时再改为 `true`
+- Docker 模板默认开启新闻采集和数据库维护，其他 worker 循环在 `deploy/.env.api` 中显式设为 `false`，需要运行新闻提升、rewards、copytrade 或私有对账任务时再改为 `true`；旧 signal recompute 和 arbitrage radar worker 已移除
 - 数据库维护循环由 `POLYEDGE_WORKER__DATABASE_MAINTENANCE` 控制；生产模板默认开启并每 3600 秒清理一次历史/缓存/队列表，本地模板默认关闭
 - `.env.api.example` 显式写入当前默认 RSS/Atom 新闻源 `POLYEDGE_NEWS__SOURCES_JSON`，并默认开启 `POLYEDGE_NEWS__ENABLED=true` 和 `POLYEDGE_WORKER__POLL_NEWS=true`
 - `.env.api` 中的 `POLYEDGE_ORDERBOOK__WRITE_TOKEN` 必须与 orderbook 服务一致；front 不需要该密钥
@@ -153,8 +152,8 @@ API 请求不再经过前端 nginx 反向代理；跨域由 Rust API 的 `CorsLa
 | `POLYEDGE_FRONT_BIND` / `POLYEDGE_FRONT_PORT` / `NEXT_PUBLIC_POLYEDGE_API_BASE_URL` | `.env.front` | 前端宿主机端口和 build-time API 地址 |
 | `POLYEDGE_ORDERBOOK__SERVICE_URL` | `.env.api` | API/内嵌 worker 访问 orderbook 服务的 HTTP 地址 |
 | `POLYEDGE_ORDERBOOK_STREAM__MAX_TOKENS` / `MAX_LEVELS_PER_SIDE` / `STALE_THRESHOLD_MS` | `.env.orderbook` | orderbook 订阅容量、盘口深度和 stale reconcile 常用调参 |
-| `POLYEDGE_NEWS__ENABLED` / `POLYEDGE_NEWS__SOURCES_JSON` / `POLYEDGE_ARBITRAGE__ENABLED` / `POLYEDGE_REWARDS__ENABLED` / `POLYEDGE_COPYTRADE__ENABLED` | `.env.api` | 业务子系统总开关；新闻采集默认 `true`，其余业务子系统默认 `false`；新闻源列表在模板中显式写入当前默认 RSS/Atom 源 |
-| `POLYEDGE_WORKER__POLL_*` / `POLYEDGE_WORKER__ANALYZE_*` / `POLYEDGE_WORKER__RECOMPUTE_SIGNALS` | `.env.api` | API 内嵌 worker 后台循环开关；新闻 poll 默认 `true`，其他循环默认 `false` |
+| `POLYEDGE_NEWS__ENABLED` / `POLYEDGE_NEWS__SOURCES_JSON` / `POLYEDGE_REWARDS__ENABLED` / `POLYEDGE_COPYTRADE__ENABLED` | `.env.api` | 业务子系统总开关；新闻采集默认 `true`，rewards/copytrade 默认 `false`；新闻源列表在模板中显式写入当前默认 RSS/Atom 源 |
+| `POLYEDGE_WORKER__POLL_*` / `POLYEDGE_WORKER__ANALYZE_*` | `.env.api` | API 内嵌 worker 后台循环开关；新闻 poll 默认 `true`，其他循环默认 `false`；不再包含旧 signal recompute 或 arbitrage radar 开关 |
 | `POLYEDGE_WORKER__DATABASE_MAINTENANCE` / `POLYEDGE_WORKER__DATABASE_MAINTENANCE_INTERVAL_SECS` | `.env.api` | 数据库历史/缓存/队列表自动清理；生产模板默认 `true` / `3600`，本地模板默认关闭 |
 | `POLYEDGE_REWARDS__AI_*` / `POLYEDGE_REWARDS__INFO_RISK_*` | `.env.api` | AI advisory / 信息风险 provider 的 key、模型、置信度等可选配置；AI provider 单次请求默认超时 180 秒；AI advisory 每轮最大市场数环境变量已移除，信息风险旧 max markets 变量只兼容读取且不再限制每轮扫描数量 |
 | `POLYEDGE_POLYMARKET__ACCOUNT_ID` / `SIGNATURE_TYPE` / `FUNDER` / `PRIVATE_KEY` / `API_*` / `POLYGON_RPC_URL` | `.env.api` | Polymarket live 账户、Funding API 入金和凭证 |
@@ -193,7 +192,7 @@ POLYEDGE_BACKEND_BINARY=polyedge-orderbook ./scripts/build-backend-bin.sh
 - 兼容用 `packages/backend/Dockerfile` 不再要求 `bin/polyedge-worker`，只复制默认构建脚本产出的 `polyedge-api` 和 `polyedge-orderbook`；Compose 仍使用 `deploy/api.Dockerfile` 与 `deploy/orderbook.Dockerfile`
 - `polyedge-front` 不再依赖 API 健康后才启动；前端静态 Nginx 可独立运行，浏览器按 `NEXT_PUBLIC_POLYEDGE_API_BASE_URL` 访问 API
 - `scripts/deploy.sh` 已防止重叠执行；前端变更 hash 包含 `packages/front/` 和 `deploy/.env.front`，会 prune `node_modules`、`.next`、`out` 等大目录，实际 build 前也会清理 `.next/` 和 `out/`，并用同一 front hash 版本化 HTML 中的静态资源引用；服务按目标独立部署，容器 down 且 hash 未变化时直接启动已有镜像，不会因其他服务健康失败而重复 rebuild
-- `scripts/smoke-arbitrage-radar.sh` 与当前 REST-only 前端一致：后端检查 `/api/v1/arbitrage/*` REST 端点，前端只检查静态 `/healthz` 和 `/radar` 页面，不再探测已移除的 SSE stream
+- 旧 `scripts/smoke-arbitrage-radar.sh` 已删除；`/radar` 页面和 `/api/v1/arbitrage/*` 端点不再作为部署冒烟目标
 - 当前 `.env.api` 模板默认 `POLYEDGE_RUNTIME__ENVIRONMENT=production` 且 `POLYEDGE_AUTH__DISABLED=true`，API/front 内网交互不做权限校验；API CORS 为 permissive
 - `deploy/.env.api.example` 默认启用 `POLYEDGE_WORKER__DATABASE_MAINTENANCE=true`，清理 raw events、AI/info-risk cache、reward candles、控制命令、copytrade 历史、outbox/dedup、LLM/audit 等可增长表；`packages/backend/.env.example` 为本地开发默认关闭该循环。
 - Orderbook 服务 HTTP register/batch/ingest 入口按 `max_tokens` 和 `max_levels_per_side` 控制请求规模与缓存深度，写入时先排序再裁剪最优档位，registry source 固定上限为 32 个并在写锁内原子校验；register/ingest/delete 写接口还要求仅配置在 `.env.orderbook` / `.env.api` 的共享写 token，register 使用原子 source 替换。`/orderbook/stream` 是内部 WS 推送接口，worker rewards loop 用它更新本地盘口 cache，缺失或重连时仍通过 HTTP batch bootstrap

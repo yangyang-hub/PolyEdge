@@ -14,11 +14,11 @@ use crate::{
     },
 };
 use polyedge_application::{
-    ArbitrageService, ArbitrageStore, AuditLogSink, CopyTradeService, CopyTradeStore,
-    DatabaseMaintenanceService, DatabaseMaintenanceStore, ExecutionService, IdempotencyStore,
-    MarketEventService, MarketEventStore, ModeStateStore, NewsIngestionService, NewsIngestionStore,
-    OrderbookCache, OrderbookSubscriptionRegistry, RewardBotService, RewardBotStore, RiskPolicy,
-    RiskService, RiskStateStore, SystemModeService,
+    AuditLogSink, CopyTradeService, CopyTradeStore, DatabaseMaintenanceService,
+    DatabaseMaintenanceStore, ExecutionService, IdempotencyStore, MarketEventService,
+    MarketEventStore, ModeStateStore, NewsIngestionService, NewsIngestionStore, OrderbookCache,
+    OrderbookSubscriptionRegistry, RewardBotService, RewardBotStore, RiskPolicy, RiskService,
+    RiskStateStore, SystemModeService,
 };
 use polyedge_domain::{AppError, Result, SystemMode};
 use sqlx::{PgPool, Postgres, pool::PoolConnection, postgres::PgPoolOptions};
@@ -40,7 +40,6 @@ pub struct AppState {
     pub market_event_service: Arc<MarketEventService>,
     pub news_ingestion_service: Arc<NewsIngestionService>,
     pub database_maintenance_service: Arc<DatabaseMaintenanceService>,
-    pub arbitrage_service: Arc<ArbitrageService>,
     pub reward_bot_service: Arc<RewardBotService>,
     pub risk_service: Arc<RiskService>,
     pub execution_service: Arc<ExecutionService>,
@@ -238,13 +237,11 @@ impl Runtime {
         let (
             market_event_store,
             news_ingestion_store,
-            arbitrage_store,
             reward_bot_store,
             database_maintenance_store,
         ): (
             Arc<dyn MarketEventStore>,
             Arc<dyn NewsIngestionStore>,
-            Arc<dyn ArbitrageStore>,
             Arc<dyn RewardBotStore>,
             Arc<dyn DatabaseMaintenanceStore>,
         ) = if let Some(pool) = postgres.clone() {
@@ -252,7 +249,6 @@ impl Runtime {
             (
                 store.clone(),
                 store.clone(),
-                store,
                 Arc::new(PostgresRewardBotStore::new(pool.clone())),
                 Arc::new(PostgresDatabaseMaintenanceStore::new(pool)),
             )
@@ -261,7 +257,6 @@ impl Runtime {
             (
                 store.clone(),
                 store.clone(),
-                store,
                 Arc::new(InMemoryRewardBotStore::new()),
                 Arc::new(NoopDatabaseMaintenanceStore::new()),
             )
@@ -280,7 +275,6 @@ impl Runtime {
         let news_ingestion_service = Arc::new(NewsIngestionService::new(news_ingestion_store));
         let database_maintenance_service =
             Arc::new(DatabaseMaintenanceService::new(database_maintenance_store));
-        let arbitrage_service = Arc::new(ArbitrageService::new(arbitrage_store));
         let reward_bot_service = Arc::new(RewardBotService::new(reward_bot_store));
         let copytrade_service = Arc::new(CopyTradeService::new(copytrade_store));
         let execution_audit_log_sink = audit_log_sink.clone();
@@ -321,7 +315,6 @@ impl Runtime {
                 market_event_service,
                 news_ingestion_service,
                 database_maintenance_service,
-                arbitrage_service,
                 reward_bot_service,
                 copytrade_service,
                 risk_service,
@@ -368,7 +361,6 @@ impl Runtime {
         let database_maintenance_service = Arc::new(DatabaseMaintenanceService::new(Arc::new(
             NoopDatabaseMaintenanceStore::new(),
         )));
-        let arbitrage_service = Arc::new(ArbitrageService::new(market_event_store));
         let reward_bot_service = Arc::new(RewardBotService::new(reward_bot_store));
         let copytrade_service = Arc::new(CopyTradeService::new(copytrade_store));
         let execution_audit_log_sink = audit_log_sink.clone();
@@ -411,7 +403,6 @@ impl Runtime {
             market_event_service,
             news_ingestion_service,
             database_maintenance_service,
-            arbitrage_service,
             reward_bot_service,
             copytrade_service,
             risk_service,

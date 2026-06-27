@@ -77,26 +77,6 @@ impl Default for PolymarketSettings {
     }
 }
 
-impl Default for ArbitrageSettings {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            poll_interval_secs: 5,
-            scan_limit: 100,
-            scanner_version: "v1".to_string(),
-            book_source: "market_snapshot".to_string(),
-            analysis_lookback_hours: 24,
-            max_book_age_ms: 10_000,
-            opportunity_ttl_secs: 60,
-            event_retention_hours: 24,
-            min_gross_edge: edge("0.005"),
-            min_capacity: quantity("1"),
-            fee_buffer: edge("0.005"),
-            slippage_buffer: edge("0.005"),
-        }
-    }
-}
-
 impl Default for RewardsSettings {
     fn default() -> Self {
         Self {
@@ -212,8 +192,6 @@ impl Default for WorkerSettings {
         Self {
             poll_news: true,
             promote_news_events: true,
-            poll_arbitrage_radar: true,
-            analyze_arbitrage_opportunities: true,
             poll_reward_bot: false,
             poll_reward_info_risks: false,
             drain_execution_queue: true,
@@ -226,12 +204,9 @@ impl Default for WorkerSettings {
             consume_orderbook_stream: true,
             poll_copytrade: true,
             analyze_wallets: true,
-            recompute_signals: true,
             database_maintenance: true,
             database_maintenance_interval_secs: 3_600,
             news_promotion_interval_secs: 60,
-            signal_recompute_interval_secs: 120,
-            arbitrage_analysis_interval_secs: 300,
             execution_drain_interval_secs: 5,
             order_status_poll_interval_secs: 15,
             fill_reconciliation_interval_secs: 15,

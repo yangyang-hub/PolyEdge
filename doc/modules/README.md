@@ -27,12 +27,8 @@
 | [dashboard.md](frontend/dashboard.md) | `features/dashboard` | 仪表盘 |
 | [markets.md](frontend/markets.md) | `features/markets` | 市场列表 |
 | [events.md](frontend/events.md) | `features/events` | 事件/证据 |
-| [signals.md](frontend/signals.md) | `features/signals` | 交易信号 |
-| [positions.md](frontend/positions.md) | `features/positions` | 持仓 |
-| [radar.md](frontend/radar.md) | `features/radar` | 套利雷达（前端范例模块） |
 | [rewards.md](frontend/rewards.md) | `features/rewards` | 奖励机器人 |
 | [funding.md](frontend/funding.md) | `features/funding` | Polymarket 入金 |
-| [risk.md](frontend/risk.md) | `features/risk` | 风控中心 |
 | [copytrade.md](frontend/copytrade.md) | `features/copytrade` | 跟单 |
 | [settings.md](frontend/settings.md) | `features/settings` | 设置 |
 | [wallet-analysis.md](frontend/wallet-analysis.md) | `features/wallet-analysis` | 钱包分析 |

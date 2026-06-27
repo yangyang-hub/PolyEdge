@@ -7,9 +7,8 @@
 
 use polyedge_domain::{
     AmbiguityLevel, Edge, EventStatus, EvidenceDirection, EvidenceStatus, ExecutionRequestStatus,
-    ExposureRatio, MarketStatus, OrderDraftStatus, OrderStatus, Probability, Quantity,
-    SignalAction, SignalLifecycleState, SignalSide, SignedUsdAmount, SystemMode, TimeHorizon,
-    TradabilityStatus, UsdAmount,
+    ExposureRatio, MarketStatus, OrderDraftStatus, OrderStatus, Probability, Quantity, SignalSide,
+    SignedUsdAmount, SystemMode, TimeHorizon, TradabilityStatus, UsdAmount,
 };
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
@@ -21,10 +20,9 @@ include!("dto/common.rs");
 include!("dto/system.rs");
 include!("dto/market.rs");
 include!("dto/news.rs");
-include!("dto/signal.rs");
 include!("dto/risk.rs");
 include!("dto/execution.rs");
-include!("dto/arbitrage.rs");
+include!("dto/pricing.rs");
 include!("dto/callback.rs");
 include!("dto/query.rs");
 include!("dto/orderbook.rs");

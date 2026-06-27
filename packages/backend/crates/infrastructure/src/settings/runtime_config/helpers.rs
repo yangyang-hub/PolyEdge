@@ -21,22 +21,6 @@ fn push_worker_runtime_config_entries(
             RuntimeConfigValueType::Boolean,
         ),
         (
-            "poll_arbitrage_radar",
-            "Worker poll arbitrage radar",
-            "POLYEDGE_WORKER__POLL_ARBITRAGE_RADAR",
-            settings.worker.poll_arbitrage_radar.to_string(),
-            defaults.worker.poll_arbitrage_radar.to_string(),
-            RuntimeConfigValueType::Boolean,
-        ),
-        (
-            "analyze_arbitrage_opportunities",
-            "Worker analyze arbitrage",
-            "POLYEDGE_WORKER__ANALYZE_ARBITRAGE_OPPORTUNITIES",
-            settings.worker.analyze_arbitrage_opportunities.to_string(),
-            defaults.worker.analyze_arbitrage_opportunities.to_string(),
-            RuntimeConfigValueType::Boolean,
-        ),
-        (
             "poll_reward_bot",
             "Worker poll reward bot",
             "POLYEDGE_WORKER__POLL_REWARD_BOT",
@@ -109,35 +93,11 @@ fn push_worker_runtime_config_entries(
             RuntimeConfigValueType::Boolean,
         ),
         (
-            "recompute_signals",
-            "Worker recompute signals",
-            "POLYEDGE_WORKER__RECOMPUTE_SIGNALS",
-            settings.worker.recompute_signals.to_string(),
-            defaults.worker.recompute_signals.to_string(),
-            RuntimeConfigValueType::Boolean,
-        ),
-        (
             "news_promotion_interval_secs",
             "News promotion interval seconds",
             "POLYEDGE_WORKER__NEWS_PROMOTION_INTERVAL_SECS",
             settings.worker.news_promotion_interval_secs.to_string(),
             defaults.worker.news_promotion_interval_secs.to_string(),
-            RuntimeConfigValueType::Integer,
-        ),
-        (
-            "signal_recompute_interval_secs",
-            "Signal recompute interval seconds",
-            "POLYEDGE_WORKER__SIGNAL_RECOMPUTE_INTERVAL_SECS",
-            settings.worker.signal_recompute_interval_secs.to_string(),
-            defaults.worker.signal_recompute_interval_secs.to_string(),
-            RuntimeConfigValueType::Integer,
-        ),
-        (
-            "arbitrage_analysis_interval_secs",
-            "Arbitrage analysis interval seconds",
-            "POLYEDGE_WORKER__ARBITRAGE_ANALYSIS_INTERVAL_SECS",
-            settings.worker.arbitrage_analysis_interval_secs.to_string(),
-            defaults.worker.arbitrage_analysis_interval_secs.to_string(),
             RuntimeConfigValueType::Integer,
         ),
         (
@@ -278,15 +238,6 @@ fn parse_u16_runtime_config(key: &str, value: &str) -> polyedge_domain::Result<u
     })
 }
 
-fn parse_u32_runtime_config(key: &str, value: &str) -> polyedge_domain::Result<u32> {
-    value.parse::<u32>().map_err(|error| {
-        AppError::invalid_input(
-            "CONFIG_RUNTIME_U32_INVALID",
-            format!("runtime config key {key} must be a u32: {error}"),
-        )
-    })
-}
-
 fn parse_u64_runtime_config(key: &str, value: &str) -> polyedge_domain::Result<u64> {
     value.parse::<u64>().map_err(|error| {
         AppError::invalid_input(
@@ -303,42 +254,4 @@ fn parse_usize_runtime_config(key: &str, value: &str) -> polyedge_domain::Result
             format!("runtime config key {key} must be a usize: {error}"),
         )
     })
-}
-
-fn parse_decimal_runtime_config(
-    key: &str,
-    value: &str,
-) -> polyedge_domain::Result<rust_decimal::Decimal> {
-    rust_decimal::Decimal::from_str_exact(value).map_err(|error| {
-        AppError::invalid_input(
-            "CONFIG_RUNTIME_DECIMAL_INVALID",
-            format!("runtime config key {key} must be a decimal: {error}"),
-        )
-    })
-}
-
-fn parse_probability_runtime_config(
-    key: &str,
-    value: &str,
-) -> polyedge_domain::Result<Probability> {
-    Probability::new(parse_decimal_runtime_config(key, value)?)
-}
-
-fn parse_edge_runtime_config(key: &str, value: &str) -> polyedge_domain::Result<Edge> {
-    Edge::new(parse_decimal_runtime_config(key, value)?)
-}
-
-fn parse_quantity_runtime_config(key: &str, value: &str) -> polyedge_domain::Result<Quantity> {
-    Quantity::new(parse_decimal_runtime_config(key, value)?)
-}
-
-fn parse_exposure_ratio_runtime_config(
-    key: &str,
-    value: &str,
-) -> polyedge_domain::Result<ExposureRatio> {
-    ExposureRatio::new(parse_decimal_runtime_config(key, value)?)
-}
-
-fn parse_usd_amount_runtime_config(key: &str, value: &str) -> polyedge_domain::Result<UsdAmount> {
-    UsdAmount::new(parse_decimal_runtime_config(key, value)?)
 }

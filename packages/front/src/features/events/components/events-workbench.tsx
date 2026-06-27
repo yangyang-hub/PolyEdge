@@ -126,21 +126,18 @@ export function EventsWorkbench({ data }: { data: EventsPageData }) {
 
             <div className="space-y-3">
               <p className="font-mono text-xs uppercase tracking-[0.24em] text-muted-foreground">
-                {dictionary.events.linkedSignals}
+                {dictionary.events.relatedMarkets}
               </p>
-              {selectedEvent && selectedEvent.linkedSignals.length > 0 ? (
-                selectedEvent.linkedSignals.map((signal) => (
-                  <div key={signal.id} className="flex items-center justify-between rounded-sm bg-accent/50 p-3">
-                    <div>
-                      <p className="text-sm font-medium text-foreground">{signal.marketQuestion}</p>
-                      <p className="font-mono text-xs text-muted-foreground">{dictionary.signals.edge} {signal.edge}</p>
-                    </div>
-                    <StatusPill tone={signal.stateTone}>{signal.stateLabel}</StatusPill>
+              {selectedEvent && selectedEvent.relatedMarkets.length > 0 ? (
+                selectedEvent.relatedMarkets.map((market) => (
+                  <div key={market.id} className="rounded-sm bg-accent/50 p-3">
+                    <p className="text-sm font-medium text-foreground">{market.question}</p>
+                    <p className="font-mono text-xs text-muted-foreground">{market.id}</p>
                   </div>
                 ))
               ) : (
                 <p className="text-sm text-muted-foreground">
-                  {dictionary.events.noLinkedSignals}
+                  {dictionary.events.noRelatedMarkets}
                 </p>
               )}
             </div>

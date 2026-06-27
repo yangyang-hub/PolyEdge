@@ -93,30 +93,6 @@ fn evidence_to_contract(evidence: EvidenceView) -> EvidenceData {
     }
 }
 
-fn signal_to_contract(signal: SignalView) -> SignalData {
-    SignalData {
-        id: signal.id,
-        market_id: signal.market_id,
-        event_id: signal.event_id,
-        action: signal.action,
-        side: signal.side,
-        market_price: signal.market_price,
-        fair_price: signal.fair_price,
-        edge: signal.edge,
-        confidence: signal.confidence,
-        lifecycle_state: signal.lifecycle_state,
-        reason: signal.reason,
-        risk_decision: signal.risk_decision,
-        evidence_ids: signal.evidence_ids,
-        approved_by_user_id: signal.approved_by_user_id,
-        approved_at: signal.approved_at,
-        rejected_by_user_id: signal.rejected_by_user_id,
-        rejected_at: signal.rejected_at,
-        updated_at: signal.updated_at,
-        version: signal.version,
-    }
-}
-
 fn order_draft_to_contract(order_draft: OrderDraftView) -> OrderDraftData {
     OrderDraftData {
         id: order_draft.id,
@@ -238,6 +214,14 @@ fn risk_state_to_contract(
     })
 }
 
+fn daily_loss_used(risk_state: &RiskStateView) -> polyedge_domain::Result<UsdAmount> {
+    let daily_pnl = risk_state.daily_pnl.value();
+    if daily_pnl < Decimal::ZERO {
+        return UsdAmount::new(-daily_pnl);
+    }
+    UsdAmount::new(Decimal::ZERO)
+}
+
 fn probability_estimate_to_contract(estimate: ProbabilityEstimateView) -> ProbabilityEstimateData {
     ProbabilityEstimateData {
         id: estimate.id,
@@ -258,102 +242,6 @@ fn probability_estimate_to_contract(estimate: ProbabilityEstimateView) -> Probab
     }
 }
 
-fn arbitrage_scan_to_contract(scan: ArbitrageScanView) -> ArbitrageScanData {
-    ArbitrageScanData {
-        id: scan.id,
-        started_at: scan.started_at,
-        finished_at: scan.finished_at,
-        market_count: scan.market_count,
-        snapshot_count: scan.snapshot_count,
-        opportunity_count: scan.opportunity_count,
-        scanner_version: scan.scanner_version,
-        metadata: scan.metadata,
-        trace_id: scan.trace_id,
-    }
-}
-
-fn arbitrage_opportunity_to_contract(
-    opportunity: ArbitrageOpportunityView,
-) -> ArbitrageOpportunityData {
-    ArbitrageOpportunityData {
-        id: opportunity.id,
-        scan_id: opportunity.scan_id,
-        market_id: opportunity.market_id,
-        opportunity_type: opportunity.opportunity_type.as_str().to_string(),
-        status: opportunity.status.as_str().to_string(),
-        gross_edge: opportunity.gross_edge,
-        price_sum: opportunity.price_sum.to_string(),
-        capacity: opportunity.capacity,
-        yes_price: opportunity.yes_price,
-        no_price: opportunity.no_price,
-        yes_size: opportunity.yes_size,
-        no_size: opportunity.no_size,
-        observed_at: opportunity.observed_at,
-        reason_codes: opportunity.reason_codes,
-        analysis_payload: opportunity.analysis_payload,
-        trace_id: opportunity.trace_id,
-        validation: opportunity.validation.map(arbitrage_validation_to_contract),
-    }
-}
-
-fn arbitrage_validation_to_contract(
-    validation: ArbitrageOpportunityValidationView,
-) -> ArbitrageOpportunityValidationData {
-    ArbitrageOpportunityValidationData {
-        id: validation.id,
-        opportunity_id: validation.opportunity_id,
-        status: validation.status.as_str().to_string(),
-        gross_edge: validation.gross_edge,
-        net_edge: validation.net_edge,
-        fee_estimate: validation.fee_estimate,
-        slippage_buffer: validation.slippage_buffer,
-        validated_capacity: validation.validated_capacity,
-        book_age_ms: validation.book_age_ms,
-        reason_codes: validation.reason_codes,
-        validation_payload: validation.validation_payload,
-        validated_at: validation.validated_at,
-        trace_id: validation.trace_id,
-    }
-}
-
-fn arbitrage_analysis_run_to_contract(
-    analysis: ArbitrageAnalysisRunView,
-) -> ArbitrageAnalysisRunData {
-    ArbitrageAnalysisRunData {
-        id: analysis.id,
-        generated_at: analysis.generated_at,
-        lookback_hours: analysis.lookback_hours,
-        opportunity_count: analysis.opportunity_count,
-        market_count: analysis.market_count,
-        summary_payload: analysis.summary_payload,
-        trace_id: analysis.trace_id,
-    }
-}
-
-fn signal_transition_to_contract(transition: SignalTransitionView) -> SignalTransitionData {
-    SignalTransitionData {
-        id: transition.id,
-        signal_id: transition.signal_id,
-        from_state: transition.from_state,
-        to_state: transition.to_state,
-        trigger_type: transition.trigger_type,
-        trigger_payload: transition.trigger_payload,
-        created_at: transition.created_at,
-    }
-}
-
-fn recompute_signal_to_contract(
-    result: polyedge_application::RecomputeSignalResult,
-    replayed: bool,
-) -> RecomputeSignalData {
-    RecomputeSignalData {
-        signal: signal_to_contract(result.signal),
-        estimate: probability_estimate_to_contract(result.estimate),
-        transition: result.transition.map(signal_transition_to_contract),
-        replayed,
-    }
-}
-
 fn risk_state_to_contract_for_state(
     state: &AppState,
     risk_state: RiskStateView,
@@ -364,30 +252,6 @@ fn risk_state_to_contract_for_state(
         state.risk_service.policy(),
         None,
     )
-}
-
-fn execution_submission_to_contract(
-    receipt: ExecutionSubmissionReceipt,
-    replayed: bool,
-    state: &AppState,
-) -> polyedge_domain::Result<SubmitExecutionData> {
-    Ok(SubmitExecutionData {
-        order_draft: order_draft_to_contract(receipt.order_draft),
-        execution_request: execution_request_to_contract(receipt.execution_request),
-        risk_state: risk_state_to_contract_for_state(state, receipt.risk_state)?,
-        replayed,
-    })
-}
-
-fn kill_switch_to_contract(
-    receipt: KillSwitchReceipt,
-    replayed: bool,
-    state: &AppState,
-) -> polyedge_domain::Result<KillSwitchData> {
-    Ok(KillSwitchData {
-        risk_state: risk_state_to_contract_for_state(state, receipt.risk_state)?,
-        replayed,
-    })
 }
 
 fn connector_order_status_to_contract(

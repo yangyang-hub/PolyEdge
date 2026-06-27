@@ -1,30 +1,3 @@
-async fn list_signal_transitions(
-    Extension(auth): Extension<AuthContext>,
-    State(state): State<AppState>,
-    Path(signal_id): Path<String>,
-    Query(query): Query<SignalTransitionListQuery>,
-) -> std::result::Result<Json<ApiResponse<Paginated<SignalTransitionData>>>, HttpError> {
-    let trace_id = new_trace_id();
-    let page_query = PageQuery {
-        page: query.page.unwrap_or(1),
-        page_size: query.page_size.unwrap_or(20),
-        sort_order: None,
-    };
-    let filters = SignalTransitionListFilters::new(signal_id, None)
-        .map_err(|error| HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone()))?;
-    let result = state
-        .market_event_service
-        .list_signal_transitions(filters, &page_query)
-        .await
-        .map_err(|error| HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone()))?;
-
-    Ok(Json(ApiResponse::new(
-        result.map(signal_transition_to_contract),
-        auth.request_id,
-        trace_id,
-    )))
-}
-
 async fn list_order_drafts(
     Extension(auth): Extension<AuthContext>,
     State(state): State<AppState>,
@@ -141,37 +114,6 @@ async fn list_trades(
 
     Ok(Json(ApiResponse::new(
         result.map(trade_to_contract),
-        auth.request_id,
-        trace_id,
-    )))
-}
-
-async fn list_positions(
-    Extension(auth): Extension<AuthContext>,
-    State(state): State<AppState>,
-    Query(query): Query<PositionListQuery>,
-) -> std::result::Result<Json<ApiResponse<Paginated<PositionData>>>, HttpError> {
-    let trace_id = new_trace_id();
-    let page = PageQuery {
-        page: query.page.unwrap_or(1),
-        page_size: query.page_size.unwrap_or(20),
-        sort_order: None,
-    };
-    let filters = PositionListFilters::new(
-        query.market_id,
-        query.connector_name,
-        query.side,
-        None,
-    )
-    .map_err(|error| HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone()))?;
-    let result = state
-        .execution_service
-        .list_positions_paginated(&filters, &page)
-        .await
-        .map_err(|error| HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone()))?;
-
-    Ok(Json(ApiResponse::new(
-        result.map(position_to_contract),
         auth.request_id,
         trace_id,
     )))
