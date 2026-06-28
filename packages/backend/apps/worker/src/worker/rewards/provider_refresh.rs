@@ -219,6 +219,7 @@ async fn refresh_reward_ai_advisory_provider_cache(
     );
     let original_ordered_conditions = ordered_conditions.len();
     let max_conditions = reward_provider_max_conditions_per_cycle(state);
+    let selected_conditions = original_ordered_conditions.min(max_conditions);
 
     report.candidates = ai_candidate_condition_ids.len();
     info!(
@@ -226,7 +227,7 @@ async fn refresh_reward_ai_advisory_provider_cache(
         provider = cycle.config.ai_provider.as_str(),
         request_format = request_format.as_str(),
         conditions = original_ordered_conditions,
-        selected_conditions = ordered_conditions.len(),
+        selected_conditions,
         max_conditions,
         ai_candidates = report.candidates,
         "starting reward AI advisory provider refresh",
@@ -591,7 +592,7 @@ async fn refresh_reward_ai_advisory_for_condition(
                 trace_id = %trace_id,
                 condition_id = %condition_id,
                 error = %primary_error,
-                "reward AI advisory request failed; keeping existing cached state",
+                "reward AI advisory request failed",
             );
             if let Some(fb_error) = &fallback_error {
                 warn!(
@@ -600,6 +601,23 @@ async fn refresh_reward_ai_advisory_for_condition(
                     error = %fb_error,
                     "reward AI advisory fallback request also failed",
                 );
+            }
+            if let Some(advisory) = cache_reward_ai_content_filter_if_rejected(
+                state,
+                &request,
+                cycle.config.ai_advisory_ttl_sec,
+                cycle.config.post_fill_strategy,
+                &primary_error,
+                fallback_error.as_ref(),
+                trace_id,
+            )
+            .await?
+            {
+                report.saved += 1;
+                return Ok(RewardAiAdvisoryRefreshStep {
+                    stop_cycle: false,
+                    advisory: Some(advisory),
+                });
             }
             if reward_combined_provider_overloaded(&primary_error, fallback_error.as_ref()) {
                 warn!(
@@ -739,7 +757,7 @@ async fn refresh_reward_info_risk_for_condition(
                 trace_id = %trace_id,
                 condition_id = %condition_id,
                 error = %primary_error,
-                "reward info risk request failed; keeping existing cached state",
+                "reward info risk request failed",
             );
             if let Some(fb_error) = &fallback_error {
                 warn!(
@@ -748,6 +766,20 @@ async fn refresh_reward_info_risk_for_condition(
                     error = %fb_error,
                     "reward info risk fallback request also failed",
                 );
+            }
+            if cache_reward_info_risk_content_filter_if_rejected(
+                state,
+                &request,
+                cycle.config.info_risk_ttl_sec,
+                &primary_error,
+                fallback_error.as_ref(),
+                trace_id,
+            )
+            .await?
+            .is_some()
+            {
+                report.saved += 1;
+                return Ok(false);
             }
             if reward_combined_provider_overloaded(&primary_error, fallback_error.as_ref()) {
                 warn!(

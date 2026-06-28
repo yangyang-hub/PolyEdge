@@ -545,6 +545,29 @@ async fn single_reward_ai_advise_and_save(
                     "reward AI advisory single fallback also failed on fallback endpoint",
                 );
             }
+            match cache_reward_ai_content_filter_if_rejected(
+                state,
+                request,
+                config.ai_advisory_ttl_sec,
+                config.post_fill_strategy,
+                &primary_error,
+                fallback_error.as_ref(),
+                trace_id,
+            )
+            .await
+            {
+                Ok(Some(_)) => return SingleAdviseOutcome::Saved,
+                Ok(None) => {}
+                Err(error) => {
+                    warn!(
+                        trace_id = %trace_id,
+                        condition_id = %request.condition_id,
+                        error = %error,
+                        "failed to save reward AI advisory content-filter rejection",
+                    );
+                    return SingleAdviseOutcome::Failed;
+                }
+            }
             if reward_combined_provider_overloaded(&primary_error, fallback_error.as_ref()) {
                 SingleAdviseOutcome::Overloaded
             } else {

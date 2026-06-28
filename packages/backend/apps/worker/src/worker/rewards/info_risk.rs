@@ -232,7 +232,7 @@ async fn scan_reward_info_risks_unlocked(
                     trace_id = %trace_id,
                     condition_id = %condition_id,
                     error = %primary_error,
-                    "reward info risk request failed; keeping existing cached state",
+                    "reward info risk request failed",
                 );
                 if let Some(fb_error) = &fallback_error {
                     warn!(
@@ -241,6 +241,20 @@ async fn scan_reward_info_risks_unlocked(
                         error = %fb_error,
                         "reward info risk fallback request also failed",
                     );
+                }
+                if cache_reward_info_risk_content_filter_if_rejected(
+                    state,
+                    &request,
+                    config.info_risk_ttl_sec,
+                    &primary_error,
+                    fallback_error.as_ref(),
+                    trace_id,
+                )
+                .await?
+                .is_some()
+                {
+                    report.saved += 1;
+                    continue;
                 }
                 if reward_combined_provider_overloaded(&primary_error, fallback_error.as_ref()) {
                     warn!(

@@ -784,6 +784,7 @@ include!("rewards/orderbook_events.rs");
 include!("rewards/polling.rs");
 include!("rewards/provider_advisory.rs");
 include!("rewards/provider_fallback.rs");
+include!("rewards/provider_content_filter.rs");
 include!("rewards/provider_refresh_batch.rs");
 include!("rewards/provider_refresh_orderbook.rs");
 include!("rewards/provider_refresh.rs");
