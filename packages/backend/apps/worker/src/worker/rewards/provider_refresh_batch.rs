@@ -11,6 +11,7 @@ async fn refresh_reward_ai_advisory_provider_batch(
     trace_id: &str,
     report: &mut RewardAiAdvisoryRefreshReport,
     promoted_tokens: &mut Vec<String>,
+    max_provider_requests: Option<usize>,
 ) -> Result<bool> {
     let batch_size = reward_provider_configured_batch_size(cycle.config.ai_advisory_batch_size);
     if batch_size <= 1 || condition_ids.len() <= 1 {
@@ -26,11 +27,17 @@ async fn refresh_reward_ai_advisory_provider_batch(
             trace_id,
             report,
             promoted_tokens,
+            max_provider_requests,
         )
         .await;
     }
 
     for condition_batch in condition_ids.chunks(batch_size) {
+        let remaining_requests =
+            reward_ai_provider_remaining_request_slots(report, max_provider_requests);
+        if remaining_requests == 0 {
+            return Ok(true);
+        }
         let requests = build_reward_ai_advisory_batch_requests(
             state,
             cycle,
@@ -41,6 +48,7 @@ async fn refresh_reward_ai_advisory_provider_batch(
             trace_id,
             report,
             promoted_tokens,
+            Some(remaining_requests),
         )
         .await?;
         if requests.is_empty() {
@@ -108,6 +116,7 @@ async fn refresh_reward_ai_advisory_provider_batch(
                     trace_id,
                     report,
                     promoted_tokens,
+                    None,
                 )
                 .await?
                 {
@@ -167,9 +176,13 @@ async fn refresh_reward_ai_advisory_provider_batch(
                 trace_id,
                 report,
                 promoted_tokens,
+                None,
             )
             .await?
         {
+            return Ok(true);
+        }
+        if reward_ai_provider_remaining_request_slots(report, max_provider_requests) == 0 {
             return Ok(true);
         }
     }
@@ -187,10 +200,15 @@ async fn build_reward_ai_advisory_batch_requests(
     trace_id: &str,
     report: &mut RewardAiAdvisoryRefreshReport,
     promoted_tokens: &mut Vec<String>,
+    max_requests: Option<usize>,
 ) -> Result<Vec<RewardAiAdvisoryRequest>> {
     let mut requests = Vec::new();
     let fallback = resolve_reward_ai_fallback(&state.settings.rewards);
+    let max_requests = max_requests.unwrap_or(usize::MAX);
     for condition_id in condition_ids {
+        if requests.len() >= max_requests {
+            break;
+        }
         let Some(plan_for_request) = cycle
             .plans
             .iter()
@@ -272,8 +290,12 @@ async fn refresh_reward_ai_advisory_provider_singles(
     trace_id: &str,
     report: &mut RewardAiAdvisoryRefreshReport,
     promoted_tokens: &mut Vec<String>,
+    max_provider_requests: Option<usize>,
 ) -> Result<bool> {
     for condition_id in condition_ids {
+        if reward_ai_provider_remaining_request_slots(report, max_provider_requests) == 0 {
+            return Ok(true);
+        }
         let ai_step = refresh_reward_ai_advisory_for_condition(
             state,
             connector,
@@ -304,6 +326,15 @@ async fn refresh_reward_ai_advisory_provider_singles(
         }
     }
     Ok(false)
+}
+
+fn reward_ai_provider_remaining_request_slots(
+    report: &RewardAiAdvisoryRefreshReport,
+    max_provider_requests: Option<usize>,
+) -> usize {
+    max_provider_requests
+        .map(|max| max.saturating_sub(report.requested))
+        .unwrap_or(usize::MAX)
 }
 
 async fn apply_reward_ai_advisory_to_refresh_cycle(

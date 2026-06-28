@@ -154,7 +154,7 @@ async fn refresh_reward_ai_advisory_provider_cache(
         fallback_descriptor.as_ref(),
         now,
     );
-    let mut ordered_conditions = reward_provider_refresh_candidate_condition_ids(
+    let ordered_conditions = reward_provider_refresh_candidate_condition_ids(
         &ai_candidate_condition_ids,
         &cycle.plans,
         &cycle.open_orders,
@@ -163,9 +163,6 @@ async fn refresh_reward_ai_advisory_provider_cache(
     );
     let original_ordered_conditions = ordered_conditions.len();
     let max_conditions = reward_provider_max_conditions_per_cycle(state);
-    if ordered_conditions.len() > max_conditions {
-        ordered_conditions.truncate(max_conditions);
-    }
 
     report.candidates = ai_candidate_condition_ids.len();
     info!(
@@ -205,6 +202,7 @@ async fn refresh_reward_ai_advisory_provider_cache(
                 trace_id,
                 &mut report,
                 &mut ai_promoted_tokens,
+                Some(max_conditions),
             )
             .await?
             {
