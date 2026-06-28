@@ -116,7 +116,7 @@ async fn refresh_reward_ai_advisory_provider_batch(
                     trace_id,
                     report,
                     promoted_tokens,
-                    None,
+                    max_provider_requests,
                 )
                 .await?
                 {
@@ -176,7 +176,7 @@ async fn refresh_reward_ai_advisory_provider_batch(
                 trace_id,
                 report,
                 promoted_tokens,
-                None,
+                max_provider_requests,
             )
             .await?
         {

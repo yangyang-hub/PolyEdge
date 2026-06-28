@@ -37,15 +37,41 @@ fn spawn_reward_ai_advisory_provider_refresh(
     let books = books.clone();
     let trace_id = trace_id.to_string();
     tokio::spawn(async move {
-        let result =
-            refresh_reward_ai_advisory_provider_cache(&state, cycle, books, &trace_id).await;
+        let refresh_timeout = reward_provider_refresh_timeout(&state);
+        let result = tokio::time::timeout(
+            refresh_timeout,
+            refresh_reward_ai_advisory_provider_cache(&state, cycle, books, &trace_id),
+        )
+        .await;
         REWARD_AI_PROVIDER_REFRESH_RUNNING.store(false, Ordering::Release);
-        if let Err(error) = result {
-            warn!(
-                trace_id = %trace_id,
-                error = %error,
-                "reward AI advisory provider refresh failed",
-            );
+        match result {
+            Ok(Ok(_)) => {}
+            Ok(Err(error)) => {
+                warn!(
+                    trace_id = %trace_id,
+                    error = %error,
+                    "reward AI advisory provider refresh failed",
+                );
+            }
+            Err(_) => {
+                warn!(
+                    trace_id = %trace_id,
+                    timeout_ms = refresh_timeout.as_millis(),
+                    "reward AI advisory provider refresh timed out; stopping this refresh cycle",
+                );
+                if let Err(error) = state
+                    .orderbook_registry
+                    .register_tokens(REWARD_AI_PROVIDER_ORDERBOOK_SOURCE, &[])
+                    .await
+                {
+                    warn!(
+                        trace_id = %trace_id,
+                        source = REWARD_AI_PROVIDER_ORDERBOOK_SOURCE,
+                        error = %error,
+                        "failed to clear temporary reward AI provider orderbook source after timeout",
+                    );
+                }
+            }
         }
     });
 }
@@ -73,14 +99,29 @@ fn spawn_reward_info_risk_provider_refresh(
     let cycle = cycle.clone();
     let trace_id = trace_id.to_string();
     tokio::spawn(async move {
-        let result = refresh_reward_info_risk_provider_cache(&state, cycle, &trace_id).await;
+        let refresh_timeout = reward_provider_refresh_timeout(&state);
+        let result = tokio::time::timeout(
+            refresh_timeout,
+            refresh_reward_info_risk_provider_cache(&state, cycle, &trace_id),
+        )
+        .await;
         REWARD_INFO_RISK_PROVIDER_REFRESH_RUNNING.store(false, Ordering::Release);
-        if let Err(error) = result {
-            warn!(
-                trace_id = %trace_id,
-                error = %error,
-                "reward info risk provider refresh failed",
-            );
+        match result {
+            Ok(Ok(_)) => {}
+            Ok(Err(error)) => {
+                warn!(
+                    trace_id = %trace_id,
+                    error = %error,
+                    "reward info risk provider refresh failed",
+                );
+            }
+            Err(_) => {
+                warn!(
+                    trace_id = %trace_id,
+                    timeout_ms = refresh_timeout.as_millis(),
+                    "reward info risk provider refresh timed out; stopping this refresh cycle",
+                );
+            }
         }
     });
 }
@@ -89,6 +130,21 @@ const REWARD_AI_PROVIDER_ORDERBOOK_SOURCE: &str = "rewards_ai_provider";
 const REWARD_AI_PROVIDER_ORDERBOOK_MARKETS_PER_BATCH: usize = 10;
 const REWARD_AI_PROVIDER_ORDERBOOK_WAIT_ATTEMPTS: usize = 8;
 const REWARD_AI_PROVIDER_ORDERBOOK_WAIT_DELAY: Duration = Duration::from_secs(2);
+const REWARD_PROVIDER_REFRESH_MIN_TIMEOUT_SECS: u64 = 30;
+const REWARD_PROVIDER_REFRESH_MAX_TIMEOUT_SECS: u64 = 120;
+
+fn reward_provider_refresh_timeout(state: &AppState) -> Duration {
+    let timeout_secs = state
+        .settings
+        .rewards
+        .poll_interval_secs
+        .saturating_mul(2)
+        .clamp(
+            REWARD_PROVIDER_REFRESH_MIN_TIMEOUT_SECS,
+            REWARD_PROVIDER_REFRESH_MAX_TIMEOUT_SECS,
+        );
+    Duration::from_secs(timeout_secs)
+}
 
 async fn refresh_reward_ai_advisory_provider_cache(
     state: &AppState,
@@ -178,35 +234,42 @@ async fn refresh_reward_ai_advisory_provider_cache(
 
     let refresh_result: Result<()> = async {
         let mut ai_promoted_tokens = Vec::new();
-        for condition_batch in
-            ordered_conditions.chunks(REWARD_AI_PROVIDER_ORDERBOOK_MARKETS_PER_BATCH)
-        {
-            let batch_books = prepare_reward_ai_provider_orderbook_batch(
-                state,
-                &books,
-                &markets_by_condition,
-                condition_batch,
-                trace_id,
-            )
-            .await?;
-
-            if refresh_reward_ai_advisory_provider_batch(
-                state,
-                &connector,
-                fallback_channel.as_ref(),
-                &mut cycle,
-                &batch_books,
-                &markets_by_condition,
-                condition_batch,
-                model,
-                trace_id,
-                &mut report,
-                &mut ai_promoted_tokens,
-                Some(max_conditions),
-            )
-            .await?
+        if max_conditions == 0 {
+            debug!(
+                trace_id = %trace_id,
+                "reward AI advisory provider refresh request cap is zero; skipping provider requests",
+            );
+        } else {
+            for condition_batch in
+                ordered_conditions.chunks(REWARD_AI_PROVIDER_ORDERBOOK_MARKETS_PER_BATCH)
             {
-                break;
+                let batch_books = prepare_reward_ai_provider_orderbook_batch(
+                    state,
+                    &books,
+                    &markets_by_condition,
+                    condition_batch,
+                    trace_id,
+                )
+                .await?;
+
+                if refresh_reward_ai_advisory_provider_batch(
+                    state,
+                    &connector,
+                    fallback_channel.as_ref(),
+                    &mut cycle,
+                    &batch_books,
+                    &markets_by_condition,
+                    condition_batch,
+                    model,
+                    trace_id,
+                    &mut report,
+                    &mut ai_promoted_tokens,
+                    Some(max_conditions),
+                )
+                .await?
+                {
+                    break;
+                }
             }
         }
         Ok(())
