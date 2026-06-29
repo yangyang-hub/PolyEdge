@@ -7,6 +7,7 @@ mod orderbook;
 mod polymarket;
 mod reward_ai;
 mod reward_info_risk;
+mod reward_provider;
 mod rewards;
 mod smart_signal_advisory;
 #[cfg(test)]
@@ -37,8 +38,7 @@ pub use polymarket::{
     normalize_polymarket_order_status_update, normalize_polymarket_trade_fill_update,
     normalize_polymarket_ws_order_message, normalize_polymarket_ws_trade_message,
 };
-pub use reward_ai::RewardAiAdvisoryConnector;
-pub use reward_info_risk::RewardInfoRiskConnector;
+pub use reward_provider::RewardProviderConnector;
 pub use rewards::{
     PolymarketPriceHistoryPoint, PolymarketRewardBookLevel, PolymarketRewardMarket,
     PolymarketRewardOrderBook, PolymarketRewardToken, PolymarketRewardsConnector,

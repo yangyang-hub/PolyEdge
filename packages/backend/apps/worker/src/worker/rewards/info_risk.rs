@@ -79,7 +79,7 @@ async fn scan_reward_info_risks_unlocked(
         web_search_enabled = state.settings.rewards.info_risk_web_search_enabled,
         "starting reward info risk scan",
     );
-    let Some(connector) = build_reward_info_risk_connector(state, &config)? else {
+    let Some(connector) = build_reward_provider_connector(state, &config)? else {
         warn!(
             trace_id = %trace_id,
             provider = config.ai_provider.as_str(),
@@ -89,13 +89,11 @@ async fn scan_reward_info_risks_unlocked(
     };
     let fallback_descriptor = resolve_reward_ai_fallback(&state.settings.rewards);
     let fallback_connector = match &fallback_descriptor {
-        Some(descriptor) => Some(build_reward_info_risk_fallback_connector(
-            state, descriptor,
-        )?),
+        Some(descriptor) => Some(build_reward_provider_fallback_connector(state, descriptor)?),
         None => None,
     };
     let fallback_channel = match (&fallback_descriptor, fallback_connector.as_ref()) {
-        (Some(descriptor), Some(connector)) => Some(RewardInfoRiskChannel {
+        (Some(descriptor), Some(connector)) => Some(RewardProviderChannel {
             connector,
             provider: descriptor.provider,
             request_format: descriptor.request_format,
@@ -185,17 +183,25 @@ async fn scan_reward_info_risks_unlocked(
             requested = report.requested,
             "requesting reward info risk provider",
         );
-        let primary_channel = RewardInfoRiskChannel {
+        let combined = polyedge_application::RewardProviderRequest {
+            condition_id: condition_id.clone(),
+            provider: config.ai_provider,
+            request_format,
+            model: model.to_string(),
+            advisory: None,
+            info_risk: Some(request.clone()),
+        };
+        let primary_channel = RewardProviderChannel {
             connector: &connector,
             provider: config.ai_provider,
             request_format,
             model: model.to_string(),
         };
-        let attempt = assess_with_fallback(
+        let attempt = evaluate_with_fallback(
             state,
             &primary_channel,
             fallback_channel.as_ref(),
-            &request,
+            &combined,
             trace_id,
         )
         .await?;
@@ -203,10 +209,28 @@ async fn scan_reward_info_risks_unlocked(
             RewardProviderAttempt::Success {
                 decision,
                 endpoint,
-                request: winning_request,
+                request: winning,
             } => {
-                let risk = decision.into_info_risk(
-                    &winning_request,
+                let Some(info_risk_decision) = decision.info_risk else {
+                    report.failures += 1;
+                    warn!(
+                        trace_id = %trace_id,
+                        condition_id = %condition_id,
+                        "reward info risk provider response missing info_risk section",
+                    );
+                    continue;
+                };
+                let Some(winning_request) = winning.info_risk.as_ref() else {
+                    report.failures += 1;
+                    warn!(
+                        trace_id = %trace_id,
+                        condition_id = %condition_id,
+                        "reward info risk provider winning request missing info_risk section",
+                    );
+                    continue;
+                };
+                let risk = info_risk_decision.into_info_risk(
+                    winning_request,
                     config.info_risk_ttl_sec,
                     OffsetDateTime::now_utc(),
                 );
@@ -285,18 +309,23 @@ async fn scan_reward_info_risks_unlocked(
 }
 
 async fn apply_cached_reward_info_risks(state: &AppState, trace_id: &str) -> Result<usize> {
-    let config = state.reward_bot_service.read_config().await?;
-    if !config.info_risk_enabled {
+    let mut cycle = state.reward_bot_service.current_live_cycle_state().await?;
+    if !cycle.config.info_risk_enabled {
         return Ok(0);
     }
-    let mut plans = state
-        .reward_bot_service
-        .current_live_cycle_state()
-        .await?
-        .plans;
-    let applied =
-        apply_cached_reward_info_risks_to_plans(state, &config, &mut plans, trace_id).await?;
-    state.reward_bot_service.save_quote_plans(&plans).await?;
+    let markets = state.reward_bot_service.list_active_reward_markets().await?;
+    let applied = apply_cached_reward_info_risks_to_plans(
+        state,
+        &cycle.config,
+        &cycle.account,
+        &cycle.open_orders,
+        &cycle.positions,
+        &markets,
+        &mut cycle.plans,
+        trace_id,
+    )
+    .await?;
+    state.reward_bot_service.save_quote_plans(&cycle.plans).await?;
     Ok(applied)
 }
 
@@ -308,39 +337,84 @@ async fn apply_cached_reward_info_risks_to_cycle(
     if !cycle.config.info_risk_enabled {
         return Ok(0);
     }
-    apply_cached_reward_info_risks_to_plans(state, &cycle.config, &mut cycle.plans, trace_id).await
+    apply_cached_reward_info_risks_to_plans(
+        state,
+        &cycle.config,
+        &cycle.account,
+        &cycle.open_orders,
+        &cycle.positions,
+        &cycle.markets,
+        &mut cycle.plans,
+        trace_id,
+    )
+    .await
 }
 
 async fn apply_cached_reward_info_risks_to_plans(
     state: &AppState,
     config: &RewardBotConfig,
+    account: &RewardAccountState,
+    open_orders: &[ManagedRewardOrder],
+    positions: &[RewardPosition],
+    markets: &[RewardMarket],
     plans: &mut [RewardQuotePlan],
     trace_id: &str,
 ) -> Result<usize> {
     if plans.is_empty() {
         return Ok(0);
     }
-    let condition_ids = plans
+    let model = reward_ai_model_for_provider(&state.settings.rewards, config.ai_provider);
+    if model.is_empty() {
+        warn!(
+            trace_id = %trace_id,
+            "reward info risk model is empty; cached info-risk application skipped",
+        );
+        return Ok(0);
+    }
+    let request_format = reward_ai_effective_request_format_for_model(config, model);
+    let fallback = resolve_reward_ai_fallback(&state.settings.rewards);
+    let markets_by_condition = markets
         .iter()
-        .map(|plan| plan.condition_id.clone())
-        .collect::<Vec<_>>();
-    let risks = state
-        .reward_bot_service
-        .latest_market_info_risks(&condition_ids)
-        .await?
-        .into_iter()
-        .map(|risk| (risk.condition_id.clone(), risk))
-        .collect::<HashMap<String, RewardMarketInfoRisk>>();
+        .map(|market| (market.condition_id.as_str(), market))
+        .collect::<HashMap<_, _>>();
+    let mut risks = HashMap::new();
+    let mut skipped_missing_market = 0usize;
+    for plan in plans.iter() {
+        let Some(market) = markets_by_condition.get(plan.condition_id.as_str()) else {
+            skipped_missing_market += 1;
+            continue;
+        };
+        let request = build_reward_info_risk_assessment_request(
+            market,
+            Some(plan),
+            account,
+            positions,
+            open_orders,
+            config,
+            config.ai_provider,
+            request_format,
+            model,
+        )?;
+        if let Some(risk) =
+            latest_market_info_risk_for_endpoints(state, &request, fallback.as_ref()).await?
+        {
+            risks.insert(plan.condition_id.clone(), risk);
+        }
+    }
     let before = plans.iter().filter(|plan| plan.info_risk.is_some()).count();
     let risk_count = risks.len();
     let min_confidence =
         reward_ai_min_confidence(state.settings.rewards.info_risk_min_confidence_bps);
+    for plan in plans.iter_mut() {
+        plan.info_risk = None;
+    }
     apply_reward_info_risks(plans, &risks, config, min_confidence);
     let after = plans.iter().filter(|plan| plan.info_risk.is_some()).count();
     debug!(
         trace_id = %trace_id,
         risks = risk_count,
         applied = after.saturating_sub(before),
+        skipped_missing_market,
         "applied cached reward info risks to quote plans",
     );
     Ok(risk_count)
@@ -646,44 +720,6 @@ mod reward_info_risk_candidate_tests {
 
         assert_eq!(candidates, vec!["cond_model_changed".to_string()]);
     }
-}
-
-fn build_reward_info_risk_connector(
-    state: &AppState,
-    config: &RewardBotConfig,
-) -> Result<Option<RewardInfoRiskConnector>> {
-    let rewards = &state.settings.rewards;
-    let (api_key, base_url) = reward_ai_provider_endpoint_settings(rewards, config.ai_provider);
-    let Some(api_key) = api_key.filter(|value| !value.trim().is_empty()) else {
-        return Ok(None);
-    };
-    let model = reward_ai_model_for_provider(rewards, config.ai_provider);
-    let request_format = reward_ai_effective_request_format_for_model(config, model);
-    RewardInfoRiskConnector::new(
-        base_url,
-        api_key,
-        rewards.ai_request_timeout_secs.max(1),
-        rewards.info_risk_web_search_enabled
-            && config.ai_provider == polyedge_application::RewardAiProvider::OpenAi
-            && request_format == polyedge_application::RewardAiRequestFormat::OpenAiResponses,
-    )
-    .map(Some)
-}
-
-/// Build the fallback info-risk connector from the resolved fallback endpoint
-/// descriptor. `web_search_enabled` is pre-gated by the resolver to OpenAI +
-/// Responses, so Anthropic/chat-completions fallbacks never send the tools
-/// block. Only called when a fallback is configured.
-fn build_reward_info_risk_fallback_connector(
-    state: &AppState,
-    fallback: &RewardProviderFallback,
-) -> Result<RewardInfoRiskConnector> {
-    RewardInfoRiskConnector::new(
-        fallback.base_url.as_str(),
-        fallback.api_key.as_str(),
-        state.settings.rewards.ai_request_timeout_secs.max(1),
-        fallback.web_search_enabled,
-    )
 }
 
 fn accumulate_info_risk_report(

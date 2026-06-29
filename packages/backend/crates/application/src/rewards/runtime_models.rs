@@ -633,8 +633,8 @@ pub struct RewardLlmCallRecord {
 pub struct RewardLlmCallDailyStats {
     /// UTC calendar day in `YYYY-MM-DD` format.
     pub day: String,
-    pub ai_advisory_calls: u64,
-    pub info_risk_calls: u64,
+    /// Total reward provider (AI advisory + info-risk) HTTP calls for the day.
+    pub provider_calls: u64,
     pub total_calls: u64,
     pub failed_calls: u64,
 }

@@ -29,6 +29,7 @@ include!("rewards/quote_selection_models.rs");
 include!("rewards/ai_advisory_models.rs");
 include!("rewards/ai_advisory_payload.rs");
 include!("rewards/info_risk_models.rs");
+include!("rewards/provider_models.rs");
 include!("rewards/config_impl.rs");
 include!("rewards/runtime_models.rs");
 include!("rewards/event_window.rs");

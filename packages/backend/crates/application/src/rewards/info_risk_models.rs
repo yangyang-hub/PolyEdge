@@ -187,12 +187,6 @@ pub struct RewardInfoRiskAssessmentDecision {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct RewardInfoRiskAssessmentBatchItem {
-    pub condition_id: String,
-    pub decision: RewardInfoRiskAssessmentDecision,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RewardInfoRiskAssessmentRequest {
     pub condition_id: String,
     pub provider: RewardAiProvider,

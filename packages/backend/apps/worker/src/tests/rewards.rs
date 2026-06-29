@@ -105,18 +105,20 @@ fn live_buy_submission_last_look_tokens_keep_single_order_token() {
     let mut order = live_test_open_order("yes_live");
     order.strategy_bucket = RewardStrategyBucket::LowCompetition;
 
-    let token_ids = live_buy_submission_last_look_token_ids(&order);
+    let token_ids = live_buy_submission_last_look_token_ids(&order, None);
 
     assert_eq!(token_ids, vec!["yes_live".to_string()]);
 }
 
 #[test]
-fn live_buy_submission_last_look_tokens_keep_standard_single_token() {
+fn live_buy_submission_last_look_tokens_include_current_plan_tokens() {
+    let now = OffsetDateTime::now_utc();
     let order = live_test_open_order("yes_live");
+    let plan = live_test_plan(now);
 
-    let token_ids = live_buy_submission_last_look_token_ids(&order);
+    let token_ids = live_buy_submission_last_look_token_ids(&order, Some(&plan));
 
-    assert_eq!(token_ids, vec!["yes_live".to_string()]);
+    assert_eq!(token_ids, vec!["yes_live".to_string(), "no_live".to_string()]);
 }
 
 #[test]
@@ -132,6 +134,70 @@ fn live_buy_submission_last_look_missing_token_is_fail_closed() {
         missing_live_buy_submission_last_look_token(&token_ids, &books),
         Some("no_live")
     );
+}
+
+#[test]
+fn live_buy_submission_last_look_reprices_to_current_target() {
+    let config = RewardBotConfig {
+        account_id: "reward_live".to_string(),
+        stale_book_ms: 0,
+        max_global_position_usd: Decimal::ZERO,
+        ..RewardBotConfig::default()
+    };
+    let now = OffsetDateTime::now_utc();
+    let plan = live_test_plan(now);
+    let mut order = live_test_open_order("yes_live");
+    order.external_order_id = None;
+    order.status = ManagedRewardOrderStatus::Planned;
+    order.price = reward_decimal("0.49");
+    let open_orders = vec![order.clone()];
+    let plans = HashMap::from([(plan.condition_id.as_str(), &plan)]);
+    let book_history = HashMap::new();
+    let account = live_test_account(Decimal::from(100_u64));
+    let context = LiveBuySubmitRiskContext {
+        config: &config,
+        plans: &plans,
+        book_history: &book_history,
+        open_orders: &open_orders,
+        positions: &[],
+        account: &account,
+        kill_switch: false,
+    };
+    let books = HashMap::from([
+        ("yes_live".to_string(), live_test_book("yes_live", now)),
+        ("no_live".to_string(), live_test_book("no_live", now)),
+    ]);
+
+    let last_look_plan =
+        live_buy_submission_last_look_plan(&order, context, &books).expect("last-look plan");
+    let event = live_buy_submission_last_look_reprice(&mut order, &last_look_plan, context)
+        .expect("last-look reprice")
+        .expect("reprice event");
+
+    assert_eq!(order.price, reward_decimal("0.48"));
+    assert_eq!(
+        event.event_type,
+        "reward_live_order_pre_submit_last_look_repriced"
+    );
+}
+
+#[test]
+fn reward_provider_refresh_batch_needs_orderbooks_only_for_advisory_conditions() {
+    let advisory_conditions = HashSet::from(["ai_condition".to_string()]);
+    let info_only_batch = vec!["info_condition".to_string()];
+    let mixed_batch = vec![
+        "info_condition".to_string(),
+        "ai_condition".to_string(),
+    ];
+
+    assert!(!reward_provider_refresh_batch_needs_orderbooks(
+        &info_only_batch,
+        &advisory_conditions,
+    ));
+    assert!(reward_provider_refresh_batch_needs_orderbooks(
+        &mixed_batch,
+        &advisory_conditions,
+    ));
 }
 
 fn live_test_plan(now: OffsetDateTime) -> RewardQuotePlan {
@@ -792,7 +858,7 @@ fn live_placement_reuses_cash_across_markets() {
     let mut plans = vec![first_plan, second_plan];
     let (orders, _) = live_placement_orders(
         &config,
-        &live_test_account(Decimal::from(20_u64)),
+        &live_test_account(Decimal::from(5_u64)),
         &mut plans,
         &books,
         &HashMap::new(),

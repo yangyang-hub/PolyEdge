@@ -526,11 +526,7 @@ impl RewardBotStore for InMemoryRewardBotStore {
                 }
             });
             stats.total_calls += 1;
-            if call.task_type == "reward_ai_advisory" {
-                stats.ai_advisory_calls += 1;
-            } else if call.task_type == "reward_info_risk" {
-                stats.info_risk_calls += 1;
-            }
+            stats.provider_calls += 1;
             if call
                 .validation_result
                 .get("success")
@@ -1070,5 +1066,8 @@ fn in_memory_reward_low_competition_density(market: &RewardMarket) -> Decimal {
 }
 
 fn reward_llm_call_is_tracked(task_type: &str) -> bool {
-    matches!(task_type, "reward_ai_advisory" | "reward_info_risk")
+    matches!(
+        task_type,
+        "reward_provider" | "reward_ai_advisory" | "reward_info_risk"
+    )
 }

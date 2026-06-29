@@ -31,7 +31,6 @@ fn live_placement_orders(
     let mut plans_changed = false;
     let mut seq = 0usize;
     let available_for_new_condition = live_available_usd_after_unmanaged_external_buys(account);
-    let mut remaining_available = available_for_new_condition;
 
     for plan_index in 0..plans.len() {
         if !plans[plan_index].eligible {
@@ -90,7 +89,8 @@ fn live_placement_orders(
             continue;
         }
         let existing_market_buy_notional = live_market_buy_notional(&orders, &plan.condition_id);
-        let raw_budget = (remaining_available - existing_market_buy_notional).max(Decimal::ZERO);
+        let raw_budget = (available_for_new_condition - existing_market_buy_notional)
+            .max(Decimal::ZERO);
         // Cap the condition budget by per-leg position limits so rescaled legs
         // do not exceed max_position_usd when both are open simultaneously.
         let position_budget =
@@ -212,7 +212,6 @@ fn live_placement_orders(
             }
             active_markets.insert(plan.condition_id.clone());
             orders.push(order.clone());
-            remaining_available = (remaining_available - notional).max(Decimal::ZERO);
             placements.push(order);
         }
     }

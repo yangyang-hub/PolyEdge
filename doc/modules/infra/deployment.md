@@ -1,6 +1,6 @@
 # 部署（Docker + Nginx + Scripts）
 
-最后更新：2026-06-27
+最后更新：2026-06-29
 
 ## 概述
 
@@ -156,7 +156,7 @@ API 请求不再经过前端 nginx 反向代理；跨域由 Rust API 的 `CorsLa
 | `POLYEDGE_NEWS__ENABLED` / `POLYEDGE_NEWS__SOURCES_JSON` / `POLYEDGE_REWARDS__ENABLED` / `POLYEDGE_COPYTRADE__ENABLED` | `.env.api` | 业务子系统总开关；新闻采集默认 `true`，rewards/copytrade 默认 `false`；新闻源列表在模板中显式写入当前默认 RSS/Atom 源 |
 | `POLYEDGE_WORKER__POLL_*` / `POLYEDGE_WORKER__ANALYZE_*` | `.env.api` | API 内嵌 worker 后台循环开关；新闻 poll 默认 `true`，High Probability observe/Smart Money/rewards/copytrade 等策略循环默认 `false`；不再包含旧 signal recompute 或 arbitrage radar 开关 |
 | `POLYEDGE_WORKER__DATABASE_MAINTENANCE` / `POLYEDGE_WORKER__DATABASE_MAINTENANCE_INTERVAL_SECS` | `.env.api` | 数据库历史/缓存/队列表自动清理；生产模板默认 `true` / `3600`，本地模板默认关闭 |
-| `POLYEDGE_REWARDS__AI_*` / `POLYEDGE_REWARDS__INFO_RISK_*` | `.env.api` | Rewards AI advisory / 信息风险 provider 的 key、base URL、模型、置信度等可选配置；主 provider 仍只配置 OpenAI-compatible 或 Anthropic，GLM/DeepSeek 通过 OpenAI-compatible base URL 与模型名识别，fallback 同理；AI provider 单次请求默认超时 180 秒；AI advisory 每轮最大市场数环境变量已移除，信息风险旧 max markets 变量只兼容读取且不再限制每轮扫描数量 |
+| `POLYEDGE_REWARDS__AI_*` / `POLYEDGE_REWARDS__INFO_RISK_*` | `.env.api` | Rewards combined provider（AI advisory + 信息风险）的 key、base URL、模型、置信度、web search 和每轮 condition cap 等可选配置；主 provider 仍只配置 OpenAI-compatible 或 Anthropic，GLM/DeepSeek 通过 OpenAI-compatible base URL 与模型名识别，fallback 同理；AI provider 单次请求默认超时 180 秒；AI advisory 事件驱动 batch 与 AI/info-risk batch-size 环境变量已移除 |
 | `POLYEDGE_SMART_MONEY__SIGNAL_ADVISORY_*` | `.env.api` | Smart Money signal advisory provider 的独立 key、base URL 和请求超时；provider/request format/model 由 Smart Money 配置保存，密钥不进入数据库或前端 DTO |
 | `POLYEDGE_POLYMARKET__ACCOUNT_ID` / `SIGNATURE_TYPE` / `FUNDER` / `PRIVATE_KEY` / `API_*` / `POLYGON_RPC_URL` | `.env.api` | Polymarket live 账户、Funding API 入金和凭证 |
 | `POLYEDGE_API_IMAGE` / `POLYEDGE_ORDERBOOK_IMAGE` / `POLYEDGE_FRONT_IMAGE` | 对应服务 env | 可选镜像 tag 覆盖；deploy.sh 会导出给 Compose interpolation |

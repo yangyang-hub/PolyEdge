@@ -226,12 +226,6 @@ export function AiAdvisoryConfig({
         hint={h.aiAdvisoryTtlSec}
         onChange={(value) => updateNumber("ai_advisory_ttl_sec", value)}
       />
-      <NumberInput
-        label={dictionary.rewards.aiAdvisoryBatchSize}
-        value={draft.ai_advisory_batch_size}
-        hint={h.aiAdvisoryBatchSize}
-        onChange={(value) => updateNumber("ai_advisory_batch_size", value)}
-      />
       <ToggleField
         label={dictionary.rewards.aiStrategyHintEnabled}
         hint={h.aiStrategyHintEnabled}
@@ -299,12 +293,6 @@ export function AiAdvisoryConfig({
         suffix="s"
         hint={h.infoRiskTtlSec}
         onChange={(value) => updateNumber("info_risk_ttl_sec", value)}
-      />
-      <NumberInput
-        label={dictionary.rewards.infoRiskBatchSize}
-        value={draft.info_risk_batch_size}
-        hint={h.infoRiskBatchSize}
-        onChange={(value) => updateNumber("info_risk_batch_size", value)}
       />
       <ToggleField
         label={dictionary.rewards.requireInfoRiskBeforeFirstQuote}

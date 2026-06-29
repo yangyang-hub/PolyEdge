@@ -88,7 +88,3 @@ fn reward_provider_normalized_condition_id(condition_id: &str) -> Option<String>
 fn reward_provider_max_conditions_per_cycle(state: &AppState) -> usize {
     usize::from(state.settings.rewards.info_risk_max_markets_per_cycle)
 }
-
-fn reward_provider_configured_batch_size(value: u16) -> usize {
-    usize::from(value.clamp(1, 12))
-}

@@ -9,12 +9,9 @@ const LIVE_EXTERNAL_ORDER_NOT_FOUND_CLOSE_AFTER_SECS: i64 = 300;
 const LIVE_SUBMISSION_UNKNOWN_CLOSE_AFTER_SECS: i64 = 600;
 const REWARD_HISTORY_PRUNE_INTERVAL_SECS: u64 = 5 * 24 * 60 * 60;
 const REWARD_HISTORY_RETENTION_SECS: i64 = 5 * 24 * 60 * 60;
-static REWARD_AI_ADVISORY_PROVIDER_REQUEST_SEMAPHORE: tokio::sync::Semaphore =
+static REWARD_PROVIDER_REQUEST_SEMAPHORE: tokio::sync::Semaphore =
     tokio::sync::Semaphore::const_new(1);
-static REWARD_INFO_RISK_PROVIDER_REQUEST_SEMAPHORE: tokio::sync::Semaphore =
-    tokio::sync::Semaphore::const_new(1);
-static REWARD_AI_PROVIDER_REFRESH_RUNNING: AtomicBool = AtomicBool::new(false);
-static REWARD_INFO_RISK_PROVIDER_REFRESH_RUNNING: AtomicBool = AtomicBool::new(false);
+static REWARD_PROVIDER_REFRESH_RUNNING: AtomicBool = AtomicBool::new(false);
 
 async fn run_reward_bot_once(state: &AppState, trace_id: &str) -> Result<RewardBotRunReport> {
     let connector = build_live_polymarket_connector(state).await?;
@@ -384,8 +381,6 @@ async fn run_reward_bot_live_tick(
     orderbook_cache: Option<&RewardOrderbookLocalCache>,
 ) -> Result<RewardBotRunReport> {
     let books_fetched = books.len();
-    let ai_min_confidence = reward_ai_min_confidence(state.settings.rewards.ai_min_confidence_bps);
-    let ai_model = state.settings.rewards.ai_model.trim().to_string();
     let mut cycle = state
         .reward_bot_service
         .prepare_live_cycle(
@@ -393,8 +388,6 @@ async fn run_reward_bot_live_tick(
             books.clone(),
             trace_id,
             force_orders,
-            ai_min_confidence,
-            &ai_model,
         )
         .await?;
     apply_reward_opportunity_metrics_to_quote_plans(
@@ -603,6 +596,7 @@ async fn run_reward_bot_live_tick(
         plans: &pending_plan_index,
         book_history,
         open_orders: &pending_open_orders_snapshot,
+        positions: &cycle.positions,
         account: &pending_account_snapshot,
         kill_switch,
     };
@@ -689,6 +683,7 @@ async fn run_reward_bot_live_tick(
             plans: &placement_plan_index,
             book_history,
             open_orders: &placement_open_orders_snapshot,
+            positions: &cycle.positions,
             account: &placement_account_snapshot,
             kill_switch,
         };
@@ -785,9 +780,7 @@ include!("rewards/polling.rs");
 include!("rewards/provider_advisory.rs");
 include!("rewards/provider_fallback.rs");
 include!("rewards/provider_content_filter.rs");
-include!("rewards/provider_refresh_batch.rs");
 include!("rewards/provider_refresh_orderbook.rs");
 include!("rewards/provider_refresh.rs");
 include!("rewards/provider_refresh_candidates.rs");
 include!("rewards/info_risk.rs");
-include!("rewards/provider_batch.rs");

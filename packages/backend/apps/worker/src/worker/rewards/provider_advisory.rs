@@ -351,19 +351,6 @@ fn reward_ai_advisory_matches_config(
     })
 }
 
-fn build_reward_ai_advisory_connector(
-    state: &AppState,
-    config: &RewardBotConfig,
-) -> Result<Option<RewardAiAdvisoryConnector>> {
-    let rewards = &state.settings.rewards;
-    let (api_key, base_url) = reward_ai_provider_endpoint_settings(rewards, config.ai_provider);
-    let Some(api_key) = api_key.filter(|value| !value.trim().is_empty()) else {
-        return Ok(None);
-    };
-    RewardAiAdvisoryConnector::new(base_url, api_key, rewards.ai_request_timeout_secs.max(1))
-        .map(Some)
-}
-
 fn reward_ai_provider_endpoint_settings<'a>(
     rewards: &'a polyedge_infrastructure::settings::RewardsSettings,
     provider: polyedge_application::RewardAiProvider,
@@ -398,24 +385,46 @@ fn reward_ai_effective_request_format_for_model(
     )
 }
 
-/// Build the fallback AI advisory connector from the resolved fallback
-/// endpoint descriptor. Only called when a fallback is configured, so the
-/// descriptor's base_url/api_key are guaranteed non-empty.
-fn build_reward_ai_advisory_fallback_connector(
+/// Build the combined reward provider connector from the primary AI advisory
+/// endpoint settings. Returns `Ok(None)` when the primary api_key is empty (the
+/// refresh task then logs and skips, exactly like the legacy per-section
+/// builders). web_search is attached only when info-risk is requested, the
+/// provider is OpenAI and the effective request format is OpenAI Responses.
+fn build_reward_provider_connector(
+    state: &AppState,
+    config: &RewardBotConfig,
+) -> Result<Option<RewardProviderConnector>> {
+    let rewards = &state.settings.rewards;
+    let (api_key, base_url) = reward_ai_provider_endpoint_settings(rewards, config.ai_provider);
+    let Some(api_key) = api_key.filter(|value| !value.trim().is_empty()) else {
+        return Ok(None);
+    };
+    let model = reward_ai_model_for_provider(rewards, config.ai_provider);
+    let request_format = reward_ai_effective_request_format_for_model(config, model);
+    let web_search_enabled = rewards.info_risk_web_search_enabled
+        && config.ai_provider == polyedge_application::RewardAiProvider::OpenAi
+        && request_format == polyedge_application::RewardAiRequestFormat::OpenAiResponses;
+    RewardProviderConnector::new(base_url, api_key, rewards.ai_request_timeout_secs.max(1), web_search_enabled)
+        .map(Some)
+}
+
+/// Build the combined reward provider connector for a resolved fallback
+/// endpoint. Only called when a fallback is configured, so the descriptor's
+/// base_url/api_key are guaranteed non-empty.
+fn build_reward_provider_fallback_connector(
     state: &AppState,
     fallback: &RewardProviderFallback,
-) -> Result<RewardAiAdvisoryConnector> {
-    RewardAiAdvisoryConnector::new(
+) -> Result<RewardProviderConnector> {
+    RewardProviderConnector::new(
         fallback.base_url.as_str(),
         fallback.api_key.as_str(),
         state.settings.rewards.ai_request_timeout_secs.max(1),
+        fallback.web_search_enabled,
     )
 }
 
-const REWARD_AI_ADVISORY_LLM_TASK_TYPE: &str = "reward_ai_advisory";
-const REWARD_INFO_RISK_LLM_TASK_TYPE: &str = "reward_info_risk";
-const REWARD_AI_ADVISORY_PROMPT_VERSION: &str = "reward_ai_advisory_schema_v6";
-const REWARD_INFO_RISK_PROMPT_VERSION: &str = "reward_info_risk_schema_v4";
+const REWARD_PROVIDER_LLM_TASK_TYPE: &str = "reward_provider";
+const REWARD_PROVIDER_PROMPT_VERSION: &str = "reward_provider_combined_v1";
 
 #[allow(clippy::too_many_arguments)]
 async fn record_reward_provider_llm_call(
@@ -463,111 +472,75 @@ async fn record_reward_provider_llm_call(
     }
 }
 
-fn reward_ai_llm_condition_ids(requests: &[RewardAiAdvisoryRequest]) -> Vec<String> {
-    requests
-        .iter()
-        .map(|request| request.condition_id.clone())
-        .collect()
-}
-
-fn reward_ai_llm_batch_input_hash(requests: &[RewardAiAdvisoryRequest]) -> String {
-    if let [request] = requests {
-        return request.input_hash.clone();
-    }
-    format!(
-        "batch:{}",
-        requests
-            .iter()
-            .map(|request| request.input_hash.as_str())
-            .collect::<Vec<_>>()
-            .join(",")
-    )
-}
-
-fn reward_info_risk_llm_condition_ids(requests: &[RewardInfoRiskAssessmentRequest]) -> Vec<String> {
-    requests
-        .iter()
-        .map(|request| request.condition_id.clone())
-        .collect()
-}
-
-fn reward_info_risk_llm_batch_input_hash(requests: &[RewardInfoRiskAssessmentRequest]) -> String {
-    if let [request] = requests {
-        return request.input_hash.clone();
-    }
-    format!(
-        "batch:{}",
-        requests
-            .iter()
-            .map(|request| request.input_hash.as_str())
-            .collect::<Vec<_>>()
-            .join(",")
-    )
-}
-
 fn reward_ai_min_confidence(bps: u16) -> Decimal {
     Decimal::from(bps.min(10_000)) / Decimal::from(10_000_u64)
 }
 
-async fn acquire_reward_ai_advisory_provider_request_permit()
+async fn acquire_reward_provider_request_permit()
 -> Result<tokio::sync::SemaphorePermit<'static>> {
-    REWARD_AI_ADVISORY_PROVIDER_REQUEST_SEMAPHORE
+    REWARD_PROVIDER_REQUEST_SEMAPHORE
         .acquire()
         .await
         .map_err(|error| {
             AppError::internal(
-                "REWARD_AI_ADVISORY_PROVIDER_SEMAPHORE_CLOSED",
-                format!("reward AI advisory provider request semaphore closed: {error}"),
-            )
-        })
-}
-
-async fn acquire_reward_info_risk_provider_request_permit()
--> Result<tokio::sync::SemaphorePermit<'static>> {
-    REWARD_INFO_RISK_PROVIDER_REQUEST_SEMAPHORE
-        .acquire()
-        .await
-        .map_err(|error| {
-            AppError::internal(
-                "REWARD_INFO_RISK_PROVIDER_SEMAPHORE_CLOSED",
-                format!("reward info risk provider request semaphore closed: {error}"),
+                "REWARD_PROVIDER_SEMAPHORE_CLOSED",
+                format!("reward provider request semaphore closed: {error}"),
             )
         })
 }
 
 fn reward_ai_provider_is_overloaded(error: &AppError) -> bool {
+    // Status-class failures carry an HTTP status from the provider. Treat the
+    // capacity / auth / rate-limit family as overload so a refresh stops instead
+    // of hammering a strained endpoint (429 / 5xx / auth / explicit overload /
+    // timeout markers).
     if matches!(
         error.code(),
-        "REWARD_AI_HTTP_FAILED" | "REWARD_INFO_RISK_HTTP_FAILED"
+        "REWARD_AI_STATUS_FAILED"
+            | "REWARD_INFO_RISK_STATUS_FAILED"
+            | "REWARD_PROVIDER_STATUS_FAILED"
     ) {
-        return true;
+        let message = error.message().to_ascii_lowercase();
+        return message.contains("http 401")
+            || message.contains("http 403")
+            || message.contains("http 408")
+            || message.contains("http 409")
+            || message.contains("http 429")
+            || message.contains("http 500")
+            || message.contains("http 502")
+            || message.contains("http 503")
+            || message.contains("http 504")
+            || message.contains("rate limit")
+            || message.contains("too many requests")
+            || message.contains("unauthorized")
+            || message.contains("forbidden")
+            || message.contains("invalid api key")
+            || message.contains("authentication")
+            || message.contains("timeout")
+            || message.contains("timed out")
+            || message.contains("system_cpu_overloaded")
+            || message.contains("overloaded");
     }
-    if !matches!(
+    // Transport failures (reqwest could not complete the request) are transient by
+    // nature — connection reset, DNS, TLS, or a stream dropped mid-response — and a
+    // SINGLE one must not abort the whole refresh cycle, because the next condition
+    // may still succeed. reqwest surfaces these (including the client-side timeout)
+    // as an opaque `error sending request for url ...` with no HTTP status, so we
+    // only treat the request as overload when the message explicitly mentions a
+    // timeout; otherwise the cycle continues and the per-task wall-clock refresh
+    // timeout bounds sustained failures. Previously every transport failure
+    // hard-stopped the cycle, so one dropped provider connection skipped the
+    // remaining candidates for the entire cycle.
+    if matches!(
         error.code(),
-        "REWARD_AI_STATUS_FAILED" | "REWARD_INFO_RISK_STATUS_FAILED"
+        "REWARD_AI_HTTP_FAILED"
+            | "REWARD_INFO_RISK_HTTP_FAILED"
+            | "REWARD_PROVIDER_HTTP_FAILED"
     ) {
-        return false;
+        let message = error.message().to_ascii_lowercase();
+        return message.contains("timeout") || message.contains("timed out");
     }
-    let message = error.message().to_ascii_lowercase();
-    message.contains("http 401")
-        || message.contains("http 403")
-        || message.contains("http 408")
-        || message.contains("http 409")
-        || message.contains("http 429")
-        || message.contains("http 500")
-        || message.contains("http 502")
-        || message.contains("http 503")
-        || message.contains("http 504")
-        || message.contains("rate limit")
-        || message.contains("too many requests")
-        || message.contains("unauthorized")
-        || message.contains("forbidden")
-        || message.contains("invalid api key")
-        || message.contains("authentication")
-        || message.contains("timeout")
-        || message.contains("timed out")
-        || message.contains("system_cpu_overloaded")
-        || message.contains("overloaded")
+    false
 }
 
 #[cfg(test)]
@@ -601,44 +574,40 @@ mod reward_ai_provider_error_tests {
         assert!(reward_ai_provider_is_overloaded(&error));
     }
 
+    #[test]
+    fn reward_ai_provider_transient_transport_error_is_not_overloaded() {
+        // reqwest surfaces a dropped/reset connection as an opaque
+        // "error sending request for url ..." with no HTTP status and no timeout
+        // marker. Such a transient transport error must NOT be treated as provider
+        // overload, otherwise a single dropped connection aborts the whole refresh
+        // cycle and skips the remaining candidates (the observed glm-5.2 failure at
+        // ~84s produced exactly this message).
+        let error = AppError::dependency_unavailable(
+            "REWARD_INFO_RISK_HTTP_FAILED",
+            "reward info risk HTTP request failed: error sending request for url (https://open.bigmodel.cn/api/coding/paas/v4/chat/completions)",
+        );
+        assert!(!reward_ai_provider_is_overloaded(&error));
+    }
+
     #[tokio::test]
-    async fn reward_provider_request_permits_are_isolated_single_flight() {
-        let first_ai = acquire_reward_ai_advisory_provider_request_permit()
+    async fn reward_provider_request_permit_is_single_flight() {
+        let first = acquire_reward_provider_request_permit()
             .await
-            .expect("acquire first AI permit");
-        let second_ai = tokio::time::timeout(
+            .expect("acquire first permit");
+        let second = tokio::time::timeout(
             Duration::from_millis(10),
-            acquire_reward_ai_advisory_provider_request_permit(),
+            acquire_reward_provider_request_permit(),
         )
         .await;
-        assert!(second_ai.is_err());
+        assert!(second.is_err());
 
-        let first_info_risk = acquire_reward_info_risk_provider_request_permit()
-            .await
-            .expect("info-risk permit should be independent while AI permit is held");
-        let second_info_risk = tokio::time::timeout(
-            Duration::from_millis(10),
-            acquire_reward_info_risk_provider_request_permit(),
-        )
-        .await;
-        assert!(second_info_risk.is_err());
-
-        drop(first_info_risk);
-        let _second_info_risk = tokio::time::timeout(
+        drop(first);
+        let _next = tokio::time::timeout(
             Duration::from_millis(100),
-            acquire_reward_info_risk_provider_request_permit(),
+            acquire_reward_provider_request_permit(),
         )
         .await
-        .expect("second info-risk permit should acquire after release")
-        .expect("acquire second info-risk permit");
-
-        drop(first_ai);
-        let _second_ai = tokio::time::timeout(
-            Duration::from_millis(100),
-            acquire_reward_ai_advisory_provider_request_permit(),
-        )
-        .await
-        .expect("second AI permit should acquire after release")
-        .expect("acquire second AI permit");
+        .expect("permit should acquire after release")
+        .expect("acquire next permit");
     }
 }

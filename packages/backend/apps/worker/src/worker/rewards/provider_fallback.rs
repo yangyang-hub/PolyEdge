@@ -14,7 +14,7 @@
 // only provider/request_format/model — yielding the correct distinct cache row
 // without rebuilding the request from market inputs.
 
-use polyedge_application::{RewardAiAdvisoryDecision, RewardInfoRiskAssessmentDecision};
+use polyedge_connectors::RewardProviderConnector;
 
 /// Resolved fallback endpoint descriptor. Built once from `RewardsSettings` and
 /// reused for both AI advisory and info-risk. A single shared endpoint matches
@@ -30,18 +30,12 @@ struct RewardProviderFallback {
     web_search_enabled: bool,
 }
 
-/// A bundled view of one configured endpoint: the connector plus the
-/// provider/model/format carried per-request. Lets call sites pass one
-/// reference per endpoint to the retry wrapper.
-struct RewardAiAdvisoryChannel<'a> {
-    connector: &'a RewardAiAdvisoryConnector,
-    provider: polyedge_application::RewardAiProvider,
-    request_format: polyedge_application::RewardAiRequestFormat,
-    model: String,
-}
-
-struct RewardInfoRiskChannel<'a> {
-    connector: &'a RewardInfoRiskConnector,
+/// Bundled view of one combined-provider endpoint: the connector plus the
+/// provider/model/format carried per-request. Mirrors the per-section channels
+/// but drives a single merged advisory+info-risk HTTP call via
+/// [`RewardProviderConnector::evaluate`].
+struct RewardProviderChannel<'a> {
+    connector: &'a RewardProviderConnector,
     provider: polyedge_application::RewardAiProvider,
     request_format: polyedge_application::RewardAiRequestFormat,
     model: String,
@@ -277,8 +271,11 @@ impl CacheExpiresAt for RewardMarketInfoRisk {
 
 /// After both endpoints have been tried and failed, decide whether to stop the
 /// round. Conservative OR: if either endpoint shows capacity/auth/rate-limit
-/// strain, treat the round as overloaded. Parse-only failures on both sides do
-/// not stop the round (matches today's behavior for parse errors).
+/// strain (status 429/5xx/auth/overload, or an explicit timeout marker), treat
+/// the round as overloaded. Parse-only failures and transient transport errors
+/// (connection reset / dropped stream without a timeout marker) on both sides do
+/// NOT stop the round — a single dropped connection must not skip the remaining
+/// candidates; the per-task wall-clock refresh timeout bounds sustained failures.
 fn reward_combined_provider_overloaded(
     primary_error: &AppError,
     fallback_error: Option<&AppError>,
@@ -287,131 +284,104 @@ fn reward_combined_provider_overloaded(
         || fallback_error.is_some_and(reward_ai_provider_is_overloaded)
 }
 
-/// Try the primary AI advisory endpoint; on any failure retry against the
-/// fallback (if configured). Records an `llm_calls` row for each attempt.
-/// Permits are acquired per attempt (single-flight is still preserved — the
-/// semaphore has concurrency 1) so recording stays outside the critical section
-/// exactly like the existing single-call sites.
-#[allow(clippy::too_many_arguments)]
-async fn advise_with_fallback(
-    state: &AppState,
-    primary: &RewardAiAdvisoryChannel<'_>,
-    fallback: Option<&RewardAiAdvisoryChannel<'_>>,
-    primary_request: &RewardAiAdvisoryRequest,
-    trace_id: &str,
-) -> Result<RewardProviderAttempt<RewardAiAdvisoryDecision, RewardAiAdvisoryRequest>> {
-    let condition_ids = vec![primary_request.condition_id.clone()];
-    let input_hash = primary_request.input_hash.as_str();
-
-    let started = Instant::now();
-    let primary_result = {
-        let _permit = acquire_reward_ai_advisory_provider_request_permit().await?;
-        primary.connector.advise(primary_request).await
-    };
-    record_reward_provider_llm_call(
-        state,
-        REWARD_AI_ADVISORY_LLM_TASK_TYPE,
-        REWARD_AI_ADVISORY_PROMPT_VERSION,
-        primary.model.as_str(),
-        input_hash,
-        &condition_ids,
-        started.elapsed(),
-        primary_result.is_ok(),
-        primary_result.as_ref().ok().map(|decision| json!(decision)),
-        primary_result.as_ref().err().map(ToString::to_string),
-        false,
-        trace_id,
-    )
-    .await;
-    let primary_error = match primary_result {
-        Ok(decision) => {
-            return Ok(RewardProviderAttempt::Success {
-                decision,
-                endpoint: RewardProviderEndpoint::Primary,
-                request: primary_request.clone(),
-            });
-        }
-        Err(error) => error,
-    };
-
-    let Some(fb) = fallback else {
-        return Ok(RewardProviderAttempt::Failed {
-            primary_error,
-            fallback_error: None,
-        });
-    };
-
-    let fallback_request = reward_ai_advisory_request_for_endpoint(
-        primary_request,
-        fb.provider,
-        fb.request_format,
-        &fb.model,
-    );
-    let started = Instant::now();
-    let fallback_result = match acquire_reward_ai_advisory_provider_request_permit().await {
-        Ok(_permit) => fb.connector.advise(&fallback_request).await,
-        Err(error) => Err(error),
-    };
-    record_reward_provider_llm_call(
-        state,
-        REWARD_AI_ADVISORY_LLM_TASK_TYPE,
-        REWARD_AI_ADVISORY_PROMPT_VERSION,
-        fb.model.as_str(),
-        input_hash,
-        &condition_ids,
-        started.elapsed(),
-        fallback_result.is_ok(),
-        fallback_result
-            .as_ref()
-            .ok()
-            .map(|decision| json!(decision)),
-        fallback_result.as_ref().err().map(ToString::to_string),
-        true,
-        trace_id,
-    )
-    .await;
-    match fallback_result {
-        Ok(decision) => Ok(RewardProviderAttempt::Success {
-            decision,
-            endpoint: RewardProviderEndpoint::Fallback,
-            request: fallback_request,
+/// Build the combined request for an endpoint by cloning the primary request
+/// and overriding only the provider-specific fields. The two sub-requests (when
+/// present) are remapped via the per-section endpoint helpers so each keeps its
+/// own `input_hash`/`query_hash` while the top-level provider/model/format
+/// matches the endpoint actually serving the call.
+fn reward_provider_request_for_endpoint(
+    source: &polyedge_application::RewardProviderRequest,
+    provider: polyedge_application::RewardAiProvider,
+    request_format: polyedge_application::RewardAiRequestFormat,
+    model: &str,
+) -> polyedge_application::RewardProviderRequest {
+    polyedge_application::RewardProviderRequest {
+        condition_id: source.condition_id.clone(),
+        provider,
+        request_format,
+        model: model.trim().to_string(),
+        advisory: source.advisory.as_ref().map(|advisory| {
+            reward_ai_advisory_request_for_endpoint(advisory, provider, request_format, model)
         }),
-        Err(fallback_error) => Ok(RewardProviderAttempt::Failed {
-            primary_error,
-            fallback_error: Some(fallback_error),
+        info_risk: source.info_risk.as_ref().map(|info_risk| {
+            reward_info_risk_request_for_endpoint(info_risk, provider, request_format, model)
         }),
     }
 }
 
-/// Try the primary info-risk endpoint; on any failure retry against the
-/// fallback (if configured). Mirrors `advise_with_fallback`.
+/// Serialize a combined provider decision into the `llm_calls.parsed_output`
+/// JSON. `RewardProviderDecision` itself does not derive Serialize (it is a
+/// pure application model), but its two inner decisions do, so mirror the legacy
+/// per-section recording by emitting whichever sections were returned.
+fn provider_decision_json(decision: &polyedge_application::RewardProviderDecision) -> Value {
+    json!({
+        "advisory": decision.advisory,
+        "info_risk": decision.info_risk,
+    })
+}
+
+fn reward_provider_llm_input_hash(
+    request: &polyedge_application::RewardProviderRequest,
+) -> String {
+    let advisory_hash = request
+        .advisory
+        .as_ref()
+        .map(|request| request.input_hash.as_str())
+        .unwrap_or("");
+    let info_risk_hash = request
+        .info_risk
+        .as_ref()
+        .map(|request| request.input_hash.as_str())
+        .unwrap_or("");
+    polyedge_infrastructure::hash_json(&json!({
+        "schema_version": 1,
+        "condition_id": request.condition_id,
+        "advisory_input_hash": advisory_hash,
+        "info_risk_input_hash": info_risk_hash,
+    }))
+    .unwrap_or_else(|_| {
+        format!(
+            "condition={};advisory={};info_risk={}",
+            request.condition_id, advisory_hash, info_risk_hash
+        )
+    })
+}
+
+/// Try the primary combined-provider endpoint; on any failure retry against the
+/// fallback (if configured). Records a single `llm_calls` row per attempt
+/// (under `REWARD_PROVIDER_LLM_TASK_TYPE`). Permits are acquired per attempt
+/// (single-flight is preserved — the semaphore has concurrency 1).
 #[allow(clippy::too_many_arguments)]
-async fn assess_with_fallback(
+async fn evaluate_with_fallback(
     state: &AppState,
-    primary: &RewardInfoRiskChannel<'_>,
-    fallback: Option<&RewardInfoRiskChannel<'_>>,
-    primary_request: &RewardInfoRiskAssessmentRequest,
+    primary: &RewardProviderChannel<'_>,
+    fallback: Option<&RewardProviderChannel<'_>>,
+    primary_request: &polyedge_application::RewardProviderRequest,
     trace_id: &str,
-) -> Result<RewardProviderAttempt<RewardInfoRiskAssessmentDecision, RewardInfoRiskAssessmentRequest>>
-{
+) -> Result<
+    RewardProviderAttempt<
+        polyedge_application::RewardProviderDecision,
+        polyedge_application::RewardProviderRequest,
+    >,
+> {
     let condition_ids = vec![primary_request.condition_id.clone()];
-    let input_hash = primary_request.input_hash.as_str();
+    let input_hash = reward_provider_llm_input_hash(primary_request);
 
     let started = Instant::now();
     let primary_result = {
-        let _permit = acquire_reward_info_risk_provider_request_permit().await?;
-        primary.connector.assess(primary_request).await
+        let _permit = acquire_reward_provider_request_permit().await?;
+        primary.connector.evaluate(primary_request).await
     };
     record_reward_provider_llm_call(
         state,
-        REWARD_INFO_RISK_LLM_TASK_TYPE,
-        REWARD_INFO_RISK_PROMPT_VERSION,
+        REWARD_PROVIDER_LLM_TASK_TYPE,
+        REWARD_PROVIDER_PROMPT_VERSION,
         primary.model.as_str(),
-        input_hash,
+        input_hash.as_str(),
         &condition_ids,
         started.elapsed(),
         primary_result.is_ok(),
-        primary_result.as_ref().ok().map(|decision| json!(decision)),
+        primary_result.as_ref().ok().map(provider_decision_json),
         primary_result.as_ref().err().map(ToString::to_string),
         false,
         trace_id,
@@ -435,30 +405,30 @@ async fn assess_with_fallback(
         });
     };
 
-    let fallback_request = reward_info_risk_request_for_endpoint(
+    let fallback_request = reward_provider_request_for_endpoint(
         primary_request,
         fb.provider,
         fb.request_format,
         &fb.model,
     );
     let started = Instant::now();
-    let fallback_result = match acquire_reward_info_risk_provider_request_permit().await {
-        Ok(_permit) => fb.connector.assess(&fallback_request).await,
+    let fallback_result = match acquire_reward_provider_request_permit().await {
+        Ok(_permit) => fb.connector.evaluate(&fallback_request).await,
         Err(error) => Err(error),
     };
     record_reward_provider_llm_call(
         state,
-        REWARD_INFO_RISK_LLM_TASK_TYPE,
-        REWARD_INFO_RISK_PROMPT_VERSION,
+        REWARD_PROVIDER_LLM_TASK_TYPE,
+        REWARD_PROVIDER_PROMPT_VERSION,
         fb.model.as_str(),
-        input_hash,
+        input_hash.as_str(),
         &condition_ids,
         started.elapsed(),
         fallback_result.is_ok(),
         fallback_result
             .as_ref()
             .ok()
-            .map(|decision| json!(decision)),
+            .map(provider_decision_json),
         fallback_result.as_ref().err().map(ToString::to_string),
         true,
         trace_id,
@@ -492,6 +462,36 @@ mod reward_provider_fallback_tests {
         settings
     }
 
+    fn test_combined_request(
+        advisory_hash: Option<&str>,
+        info_risk_hash: Option<&str>,
+    ) -> polyedge_application::RewardProviderRequest {
+        polyedge_application::RewardProviderRequest {
+            condition_id: "0xcond".to_string(),
+            provider: polyedge_application::RewardAiProvider::OpenAi,
+            request_format: polyedge_application::RewardAiRequestFormat::OpenAiResponses,
+            model: "gpt-4.1-mini".to_string(),
+            advisory: advisory_hash.map(|input_hash| RewardAiAdvisoryRequest {
+                condition_id: "0xcond".to_string(),
+                provider: polyedge_application::RewardAiProvider::OpenAi,
+                request_format: polyedge_application::RewardAiRequestFormat::OpenAiResponses,
+                model: "gpt-4.1-mini".to_string(),
+                input_hash: input_hash.to_string(),
+                payload: json!({"advisory": true}),
+            }),
+            info_risk: info_risk_hash.map(|input_hash| RewardInfoRiskAssessmentRequest {
+                condition_id: "0xcond".to_string(),
+                provider: polyedge_application::RewardAiProvider::OpenAi,
+                request_format: polyedge_application::RewardAiRequestFormat::OpenAiResponses,
+                model: "gpt-4.1-mini".to_string(),
+                query: "query".to_string(),
+                query_hash: "query_hash".to_string(),
+                input_hash: input_hash.to_string(),
+                payload: json!({"info_risk": true}),
+            }),
+        }
+    }
+
     #[test]
     fn fallback_disabled_when_any_required_field_missing() {
         let mut settings = settings_with_fallback();
@@ -507,6 +507,29 @@ mod reward_provider_fallback_tests {
         assert!(resolve_reward_ai_fallback(&settings).is_none());
 
         assert!(resolve_reward_ai_fallback(&RewardsSettings::default()).is_none());
+    }
+
+    #[test]
+    fn combined_llm_input_hash_includes_requested_sections() {
+        let advisory_only =
+            reward_provider_llm_input_hash(&test_combined_request(Some("advisory_hash"), None));
+        let info_risk_only =
+            reward_provider_llm_input_hash(&test_combined_request(None, Some("risk_hash")));
+        let combined = reward_provider_llm_input_hash(&test_combined_request(
+            Some("advisory_hash"),
+            Some("risk_hash"),
+        ));
+
+        assert_ne!(advisory_only, info_risk_only);
+        assert_ne!(advisory_only, combined);
+        assert_ne!(info_risk_only, combined);
+        assert_eq!(
+            combined,
+            reward_provider_llm_input_hash(&test_combined_request(
+                Some("advisory_hash"),
+                Some("risk_hash"),
+            ))
+        );
     }
 
     #[test]

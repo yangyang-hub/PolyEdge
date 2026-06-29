@@ -567,8 +567,6 @@ impl RewardBotService {
         books: HashMap<String, RewardOrderBook>,
         _trace_id: &str,
         force_orders: bool,
-        ai_min_confidence: Decimal,
-        ai_model: &str,
     ) -> Result<RewardLiveCycle> {
         let config = self.read_config().await?;
         let markets = candidate_markets
@@ -597,20 +595,6 @@ impl RewardBotService {
             .filter(|plan| plan.eligible || plan.pre_ai_eligible)
             .map(|plan| plan.condition_id.clone())
             .collect::<Vec<_>>();
-        if config.ai_advisory_enabled {
-            let carried_advisories = reward_ai_advisories_from_quote_plans(
-                &previous_plans,
-                &config,
-                ai_model,
-                OffsetDateTime::now_utc(),
-            );
-            apply_existing_reward_ai_advisories(
-                &mut plans,
-                &carried_advisories,
-                &config,
-                ai_min_confidence,
-            );
-        }
         let account = self.load_account_state_cached(&config).await?;
         let open_orders = self.store.list_open_orders(&account.account_id).await?;
         let positions = self.list_account_positions_cached(&account.account_id).await?;

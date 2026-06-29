@@ -4,6 +4,7 @@ struct LiveBuySubmitRiskContext<'a> {
     plans: &'a HashMap<&'a str, &'a RewardQuotePlan>,
     book_history: &'a HashMap<String, VecDeque<BookSnapshot>>,
     open_orders: &'a [ManagedRewardOrder],
+    positions: &'a [RewardPosition],
     account: &'a RewardAccountState,
     kill_switch: bool,
 }
@@ -24,10 +25,19 @@ fn remember_live_buy_submission_last_look_token(
 
 fn live_buy_submission_last_look_token_ids(
     order: &ManagedRewardOrder,
+    plan: Option<&RewardQuotePlan>,
 ) -> Vec<String> {
     let mut token_ids = Vec::new();
     let mut seen = HashSet::new();
     remember_live_buy_submission_last_look_token(&mut token_ids, &mut seen, &order.token_id);
+    if let Some(plan) = plan {
+        for token_id in &plan.orderbook_token_ids {
+            remember_live_buy_submission_last_look_token(&mut token_ids, &mut seen, token_id);
+        }
+        for leg in &plan.legs {
+            remember_live_buy_submission_last_look_token(&mut token_ids, &mut seen, &leg.token_id);
+        }
+    }
 
     token_ids
 }
@@ -54,6 +64,96 @@ fn missing_live_buy_submission_last_look_token<'a>(
         .iter()
         .find(|token_id| !books.contains_key(token_id.as_str()))
         .map(String::as_str)
+}
+
+fn live_buy_submission_last_look_plan(
+    order: &ManagedRewardOrder,
+    context: LiveBuySubmitRiskContext<'_>,
+    books: &HashMap<String, RewardOrderBook>,
+) -> std::result::Result<RewardQuotePlan, String> {
+    let plan = context
+        .plans
+        .get(order.condition_id.as_str())
+        .ok_or_else(|| "market no longer offers rewards".to_string())?;
+    let mut plan = (**plan).clone();
+    let plan_config = context.config.config_for_strategy_bucket(plan.strategy_bucket);
+    let materialized =
+        materialize_reward_quote_plan_for_live_orderbook(&plan, books, &plan_config)?;
+    apply_live_quote_plan_materialization(&mut plan, materialized, OffsetDateTime::now_utc());
+    Ok(plan)
+}
+
+fn live_buy_submission_last_look_reprice_allowed(
+    order: &ManagedRewardOrder,
+    target_price: Decimal,
+    context: LiveBuySubmitRiskContext<'_>,
+) -> bool {
+    if target_price <= order.price {
+        return true;
+    }
+    let remaining_size = (order.size - order.filled_size).max(Decimal::ZERO);
+    let old_notional = (order.price * remaining_size).round_dp(4);
+    let target_notional = (target_price * remaining_size).round_dp(4);
+    let condition_notional = live_market_buy_notional(context.open_orders, &order.condition_id);
+    let adjusted_condition_notional =
+        (condition_notional - old_notional).max(Decimal::ZERO) + target_notional;
+    let available_for_condition = live_available_usd_after_unmanaged_external_buys(context.account);
+    if adjusted_condition_notional > available_for_condition {
+        return false;
+    }
+    let plan_config = context
+        .plans
+        .get(order.condition_id.as_str())
+        .map(|plan| context.config.config_for_strategy_bucket(plan.strategy_bucket))
+        .unwrap_or_else(|| context.config.clone());
+    !live_position_over_cap(
+        &plan_config,
+        context.positions,
+        &order.token_id,
+        target_price,
+        target_notional,
+    )
+}
+
+fn live_buy_submission_last_look_reprice(
+    order: &mut ManagedRewardOrder,
+    plan: &RewardQuotePlan,
+    context: LiveBuySubmitRiskContext<'_>,
+) -> std::result::Result<Option<RewardRiskEvent>, String> {
+    let Some(target_leg) = plan.legs.iter().find(|leg| leg.token_id == order.token_id) else {
+        return Err("token no longer appears in live quote plan".to_string());
+    };
+    if target_leg.price <= Decimal::ZERO {
+        return Err("live quote target price is not positive".to_string());
+    }
+    if target_leg.price == order.price {
+        return Ok(None);
+    }
+    if !live_buy_submission_last_look_reprice_allowed(order, target_leg.price, context) {
+        return Err(format!(
+            "last-look target price {} would exceed condition budget or position cap",
+            target_leg.price
+        ));
+    }
+
+    let previous_price = order.price;
+    order.price = target_leg.price;
+    order.reason = format!(
+        "live buy submission repriced by last-look from {previous_price} to {}",
+        order.price
+    );
+    order.updated_at = OffsetDateTime::now_utc();
+    Ok(Some(reward_live_event(
+        order,
+        "reward_live_order_pre_submit_last_look_repriced",
+        RewardRiskSeverity::Info,
+        order.reason.clone(),
+        json!({
+            "token_id": order.token_id,
+            "previous_price": previous_price,
+            "price": order.price,
+        }),
+    )))
 }
 
 fn live_submission_unknown_has_possible_position_fill(
@@ -289,7 +389,9 @@ async fn submit_pending_live_reward_orders(
         if order.side == RewardOrderSide::Buy
             && let Some(context) = risk_context
         {
-            let last_look_token_ids = live_buy_submission_last_look_token_ids(order);
+            let last_look_plan = context.plans.get(order.condition_id.as_str()).copied();
+            let last_look_token_ids =
+                live_buy_submission_last_look_token_ids(order, last_look_plan);
             let fetched_last_look_books =
                 fetch_live_buy_submission_last_look_books(state, &last_look_token_ids).await;
             let mut last_look_books = books.clone();
@@ -334,9 +436,82 @@ async fn submit_pending_live_reward_orders(
                     for (token_id, book) in fetched_books {
                         last_look_books.insert(token_id, book);
                     }
+                    let last_look_plan =
+                        match live_buy_submission_last_look_plan(order, context, &last_look_books) {
+                            Ok(plan) => plan,
+                            Err(reason) => {
+                                order.status = ManagedRewardOrderStatus::Cancelled;
+                                order.scoring = false;
+                                order.reason = format!(
+                                    "local-only order cancelled by live submission last-look: {reason}"
+                                );
+                                order.updated_at = OffsetDateTime::now_utc();
+                                let event = reward_live_event(
+                                    order,
+                                    "reward_live_order_pre_submit_last_look_cancelled",
+                                    RewardRiskSeverity::Warning,
+                                    order.reason.clone(),
+                                    json!({ "reason": reason }),
+                                );
+                                report.cancelled_orders += 1;
+                                report.risk_cancelled_orders += 1;
+                                persist_live_reward_updates(
+                                    state,
+                                    account,
+                                    Vec::new(),
+                                    vec![order.clone()],
+                                    Vec::new(),
+                                    vec![event],
+                                    report,
+                                    trace_id,
+                                )
+                                .await?;
+                                continue;
+                            }
+                        };
+                    match live_buy_submission_last_look_reprice(
+                        order,
+                        &last_look_plan,
+                        context,
+                    ) {
+                        Ok(Some(event)) => pre_submit_events.push(event),
+                        Ok(None) => {}
+                        Err(reason) => {
+                            order.status = ManagedRewardOrderStatus::Cancelled;
+                            order.scoring = false;
+                            order.reason = format!(
+                                "local-only order cancelled by live submission last-look: {reason}"
+                            );
+                            order.updated_at = OffsetDateTime::now_utc();
+                            let event = reward_live_event(
+                                order,
+                                "reward_live_order_pre_submit_last_look_cancelled",
+                                RewardRiskSeverity::Warning,
+                                order.reason.clone(),
+                                json!({ "reason": reason }),
+                            );
+                            report.cancelled_orders += 1;
+                            report.risk_cancelled_orders += 1;
+                            persist_live_reward_updates(
+                                state,
+                                account,
+                                Vec::new(),
+                                vec![order.clone()],
+                                Vec::new(),
+                                vec![event],
+                                report,
+                                trace_id,
+                            )
+                            .await?;
+                            continue;
+                        }
+                    }
+                    let mut last_look_plan_index = HashMap::new();
+                    last_look_plan_index
+                        .insert(last_look_plan.condition_id.as_str(), &last_look_plan);
                     if let Some(reason) = live_cancel_reason(
                         context.config,
-                        context.plans,
+                        &last_look_plan_index,
                         &last_look_books,
                         context.book_history,
                         context.open_orders,

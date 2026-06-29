@@ -63,12 +63,6 @@ pub struct RewardAiAdvisoryDecision {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct RewardAiAdvisoryBatchItem {
-    pub condition_id: String,
-    pub decision: RewardAiAdvisoryDecision,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RewardAiStrategyHint {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub quote_mode: Option<RewardPlanQuoteMode>,
@@ -374,6 +368,7 @@ pub fn apply_reward_ai_advisories(
     }
 }
 
+#[cfg(test)]
 pub fn apply_existing_reward_ai_advisories(
     plans: &mut [RewardQuotePlan],
     advisories: &HashMap<String, RewardMarketAdvisory>,
@@ -391,29 +386,6 @@ pub fn apply_existing_reward_ai_advisories(
         plan.ai_advisory = Some(advisory.clone());
         enforce_reward_ai_advisory(plan, &advisory, config, min_confidence);
     }
-}
-
-#[must_use]
-pub fn reward_ai_advisories_from_quote_plans(
-    plans: &[RewardQuotePlan],
-    config: &RewardBotConfig,
-    model: &str,
-    now: OffsetDateTime,
-) -> HashMap<String, RewardMarketAdvisory> {
-    let model = model.trim();
-    let request_format =
-        reward_ai_effective_request_format(config.ai_provider, config.ai_request_format, model);
-    plans
-        .iter()
-        .filter_map(|plan| plan.ai_advisory.as_ref())
-        .filter(|advisory| {
-            advisory.expires_at > now
-                && advisory.provider == config.ai_provider
-                && advisory.request_format == request_format
-                && advisory.model == model
-        })
-        .map(|advisory| (advisory.condition_id.clone(), advisory.clone()))
-        .collect()
 }
 
 fn reject_ai_gated_plan(plan: &mut RewardQuotePlan, reason: &str) {

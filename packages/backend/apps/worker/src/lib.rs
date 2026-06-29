@@ -49,9 +49,8 @@ use polyedge_connectors::{
     PolymarketGammaMarket, PolymarketLeaderboardEntry, PolymarketMarketRefs, PolymarketOpenOrder,
     PolymarketOrderRejection, PolymarketRewardMarket, PolymarketRewardsConnector,
     PolymarketSignatureScheme, PolymarketTokenOrderSide, PolymarketTrade, PolymarketWalletActivity,
-    PolymarketWalletPosition, RewardAiAdvisoryConnector, RewardInfoRiskConnector, RssNewsConnector,
-    RssNewsSourceConfig, SmartSignalAdvisoryConnector, normalize_polymarket_ws_order_message,
-    normalize_polymarket_ws_trade_message,
+    PolymarketWalletPosition, RssNewsConnector, RssNewsSourceConfig, SmartSignalAdvisoryConnector,
+    normalize_polymarket_ws_order_message, normalize_polymarket_ws_trade_message,
 };
 use polyedge_domain::{
     AppError, EventStatus, EvidenceDirection, EvidenceStatus, OrderStatus, Probability, Quantity,
@@ -142,18 +141,6 @@ struct NewsPromotionReport {
     promoted: usize,
     evidences_promoted: usize,
     skipped_unmatched: usize,
-}
-
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-struct RewardAiAdvisoryRefreshReport {
-    candidates: usize,
-    cache_hits: usize,
-    requested: usize,
-    saved: usize,
-    failures: usize,
-    skipped_missing_market: usize,
-    skipped_missing_plan: usize,
-    skipped_missing_book: usize,
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]

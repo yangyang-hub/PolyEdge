@@ -1,382 +1,25 @@
-use crate::openai_compat::{
-    is_openai_compatible_chat_provider, openai_compatible_chat_response_format,
-    openai_compatible_chat_token_limit_field, openai_compatible_endpoint, provider_json_candidates,
-    provider_response_preview, with_openai_compatible_auth,
-};
 use polyedge_application::{
-    RewardAiProvider, RewardAiRequestFormat, RewardInfoDirectionalRisk,
-    RewardInfoRiskAssessmentBatchItem, RewardInfoRiskAssessmentDecision,
+    RewardAiProvider, RewardInfoDirectionalRisk, RewardInfoRiskAssessmentDecision,
     RewardInfoRiskAssessmentRequest, RewardInfoRiskLevel, RewardInfoRiskSource, RewardInfoRiskType,
-    reward_ai_effective_request_format,
 };
 use polyedge_domain::{AppError, Result};
-use reqwest::Client;
 use rust_decimal::Decimal;
 use serde_json::{Value, json};
-use std::{collections::HashSet, str::FromStr, time::Duration};
+use std::str::FromStr;
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
-const REWARD_INFO_RISK_CHAT_COMPLETION_MAX_TOKENS: u32 = 6144;
-const REWARD_INFO_RISK_BATCH_MAX_TOKENS_CAP: u32 = 16_384;
+use crate::openai_compat::{
+    is_openai_compatible_chat_provider, provider_json_candidates, provider_response_preview,
+};
 
-#[derive(Debug, Clone)]
-pub struct RewardInfoRiskConnector {
-    client: Client,
-    base_url: String,
-    api_key: String,
-    web_search_enabled: bool,
-}
+// Single-market info-risk output is a small JSON object (allow_quote, confidence,
+// summary, sources, metrics). Kept `pub(crate)` because the reward_info_risk
+// DeepSeek chat-completion test asserts against this token budget.
+#[allow(dead_code)]
+pub(crate) const REWARD_INFO_RISK_CHAT_COMPLETION_MAX_TOKENS: u32 = 1536;
 
-impl RewardInfoRiskConnector {
-    pub fn new(
-        base_url: impl Into<String>,
-        api_key: impl Into<String>,
-        timeout_secs: u64,
-        web_search_enabled: bool,
-    ) -> Result<Self> {
-        let client = Client::builder()
-            .timeout(Duration::from_secs(timeout_secs.max(1)))
-            .build()
-            .map_err(|error| {
-                AppError::dependency_unavailable(
-                    "REWARD_INFO_RISK_CLIENT_BUILD_FAILED",
-                    format!("failed to build reward info risk HTTP client: {error}"),
-                )
-            })?;
-        Ok(Self {
-            client,
-            base_url: base_url.into().trim_end_matches('/').to_string(),
-            api_key: api_key.into(),
-            web_search_enabled,
-        })
-    }
-
-    pub async fn assess(
-        &self,
-        request: &RewardInfoRiskAssessmentRequest,
-    ) -> Result<RewardInfoRiskAssessmentDecision> {
-        let _provider_permit = crate::llm_provider::acquire_llm_provider_request_permit().await?;
-        let request_format = reward_ai_effective_request_format(
-            request.provider,
-            request.request_format,
-            &request.model,
-        );
-        let text = match request_format {
-            RewardAiRequestFormat::OpenAiResponses => self.call_openai_responses(request).await?,
-            RewardAiRequestFormat::OpenAiChatCompletions => {
-                self.call_openai_chat_completions(request).await?
-            }
-            RewardAiRequestFormat::AnthropicMessages => {
-                self.call_anthropic_messages(request).await?
-            }
-        };
-        parse_reward_info_risk_decision(&text)
-    }
-
-    pub async fn assess_batch(
-        &self,
-        requests: &[RewardInfoRiskAssessmentRequest],
-    ) -> Result<Vec<RewardInfoRiskAssessmentBatchItem>> {
-        if requests.is_empty() {
-            return Ok(Vec::new());
-        }
-        let _provider_permit = crate::llm_provider::acquire_llm_provider_request_permit().await?;
-        let request_format = reward_ai_effective_request_format(
-            requests[0].provider,
-            requests[0].request_format,
-            &requests[0].model,
-        );
-        let text = match request_format {
-            RewardAiRequestFormat::OpenAiResponses => {
-                self.call_openai_responses_batch(requests).await?
-            }
-            RewardAiRequestFormat::OpenAiChatCompletions => {
-                self.call_openai_chat_completions_batch(requests).await?
-            }
-            RewardAiRequestFormat::AnthropicMessages => {
-                self.call_anthropic_messages_batch(requests).await?
-            }
-        };
-        let condition_ids: Vec<String> = requests
-            .iter()
-            .map(|request| request.condition_id.clone())
-            .collect();
-        parse_reward_info_risk_batch_decision(&text, &condition_ids)
-    }
-
-    async fn call_openai_responses(
-        &self,
-        request: &RewardInfoRiskAssessmentRequest,
-    ) -> Result<String> {
-        ensure_info_risk_provider(request, RewardAiProvider::OpenAi)?;
-        let mut body = json!({
-            "model": request.model,
-            "input": [
-                {"role": "system", "content": [{"type": "input_text", "text": reward_info_risk_system_prompt()}]},
-                {"role": "user", "content": [{"type": "input_text", "text": reward_info_risk_user_prompt(request)}]}
-            ],
-            "text": {
-                "format": {
-                    "type": "json_schema",
-                    "name": "reward_market_info_risk",
-                    "schema": reward_info_risk_json_schema(),
-                    "strict": true
-                }
-            },
-            "temperature": 0
-        });
-        if self.web_search_enabled {
-            body["tools"] = json!([{ "type": "web_search_preview" }]);
-        }
-        let response = with_openai_compatible_auth(
-            self.client
-                .post(openai_compatible_endpoint(&self.base_url, "responses")),
-            &self.api_key,
-        )
-        .json(&body)
-        .send()
-        .await
-        .map_err(reward_info_risk_http_error)?;
-        let status = response.status();
-        let body: Value = response
-            .json()
-            .await
-            .map_err(reward_info_risk_decode_error)?;
-        if !status.is_success() {
-            return Err(reward_info_risk_status_error(status.as_u16(), body));
-        }
-        extract_openai_responses_text(&body)
-    }
-
-    async fn call_openai_chat_completions(
-        &self,
-        request: &RewardInfoRiskAssessmentRequest,
-    ) -> Result<String> {
-        ensure_info_risk_openai_compatible_chat_provider(request)?;
-        let mut body = json!({
-            "model": request.model,
-            "messages": [
-                {"role": "system", "content": reward_info_risk_system_prompt()},
-                {"role": "user", "content": reward_info_risk_user_prompt(request)}
-            ],
-            "response_format": openai_compatible_chat_response_format(
-                &request.model,
-                "reward_market_info_risk",
-                reward_info_risk_json_schema(),
-            ),
-            "temperature": 0
-        });
-        body[openai_compatible_chat_token_limit_field(&request.model)] =
-            json!(REWARD_INFO_RISK_CHAT_COMPLETION_MAX_TOKENS);
-        let response = with_openai_compatible_auth(
-            self.client.post(openai_compatible_endpoint(
-                &self.base_url,
-                "chat/completions",
-            )),
-            &self.api_key,
-        )
-        .json(&body)
-        .send()
-        .await
-        .map_err(reward_info_risk_http_error)?;
-        let status = response.status();
-        let body: Value = response
-            .json()
-            .await
-            .map_err(reward_info_risk_decode_error)?;
-        if !status.is_success() {
-            return Err(reward_info_risk_status_error(status.as_u16(), body));
-        }
-        body.pointer("/choices/0/message/content")
-            .and_then(Value::as_str)
-            .map(ToString::to_string)
-            .ok_or_else(|| {
-                AppError::dependency_unavailable(
-                    "REWARD_INFO_RISK_RESPONSE_INVALID",
-                    "OpenAI chat completion response did not include message content",
-                )
-            })
-    }
-
-    async fn call_anthropic_messages(
-        &self,
-        request: &RewardInfoRiskAssessmentRequest,
-    ) -> Result<String> {
-        ensure_info_risk_provider(request, RewardAiProvider::Anthropic)?;
-        let response = self
-            .client
-            .post(format!("{}/v1/messages", self.base_url))
-            .header("x-api-key", &self.api_key)
-            .header("anthropic-version", "2023-06-01")
-            .json(&json!({
-                "model": request.model,
-                "max_tokens": 1400,
-                "temperature": 0,
-                "system": reward_info_risk_system_prompt(),
-                "messages": [
-                    {"role": "user", "content": reward_info_risk_user_prompt(request)}
-                ]
-            }))
-            .send()
-            .await
-            .map_err(reward_info_risk_http_error)?;
-        let status = response.status();
-        let body: Value = response
-            .json()
-            .await
-            .map_err(reward_info_risk_decode_error)?;
-        if !status.is_success() {
-            return Err(reward_info_risk_status_error(status.as_u16(), body));
-        }
-        body.pointer("/content/0/text")
-            .and_then(Value::as_str)
-            .map(ToString::to_string)
-            .ok_or_else(|| {
-                AppError::dependency_unavailable(
-                    "REWARD_INFO_RISK_RESPONSE_INVALID",
-                    "Anthropic messages response did not include text content",
-                )
-            })
-    }
-
-    async fn call_openai_responses_batch(
-        &self,
-        requests: &[RewardInfoRiskAssessmentRequest],
-    ) -> Result<String> {
-        ensure_info_risk_batch_provider(requests, RewardAiProvider::OpenAi)?;
-        let mut body = json!({
-            "model": requests[0].model,
-            "input": [
-                {"role": "system", "content": [{"type": "input_text", "text": reward_info_risk_batch_system_prompt()}]},
-                {"role": "user", "content": [{"type": "input_text", "text": reward_info_risk_batch_user_prompt(requests)}]}
-            ],
-            "text": {
-                "format": {
-                    "type": "json_schema",
-                    "name": "reward_market_info_risks",
-                    "schema": reward_info_risk_batch_json_schema(),
-                    "strict": true
-                }
-            },
-            "temperature": 0
-        });
-        if self.web_search_enabled {
-            body["tools"] = json!([{ "type": "web_search_preview" }]);
-        }
-        let response = with_openai_compatible_auth(
-            self.client
-                .post(openai_compatible_endpoint(&self.base_url, "responses")),
-            &self.api_key,
-        )
-        .json(&body)
-        .send()
-        .await
-        .map_err(reward_info_risk_http_error)?;
-        let status = response.status();
-        let body: Value = response
-            .json()
-            .await
-            .map_err(reward_info_risk_decode_error)?;
-        if !status.is_success() {
-            return Err(reward_info_risk_status_error(status.as_u16(), body));
-        }
-        extract_openai_responses_text(&body)
-    }
-
-    async fn call_openai_chat_completions_batch(
-        &self,
-        requests: &[RewardInfoRiskAssessmentRequest],
-    ) -> Result<String> {
-        ensure_info_risk_batch_openai_compatible_chat_provider(requests)?;
-        let max_tokens = reward_info_risk_batch_max_tokens(requests.len());
-        let mut body = json!({
-            "model": requests[0].model,
-            "messages": [
-                {"role": "system", "content": reward_info_risk_batch_system_prompt()},
-                {"role": "user", "content": reward_info_risk_batch_user_prompt(requests)}
-            ],
-            "response_format": openai_compatible_chat_response_format(
-                &requests[0].model,
-                "reward_market_info_risks",
-                reward_info_risk_batch_json_schema(),
-            ),
-            "temperature": 0
-        });
-        body[openai_compatible_chat_token_limit_field(&requests[0].model)] = json!(max_tokens);
-        let response = with_openai_compatible_auth(
-            self.client.post(openai_compatible_endpoint(
-                &self.base_url,
-                "chat/completions",
-            )),
-            &self.api_key,
-        )
-        .json(&body)
-        .send()
-        .await
-        .map_err(reward_info_risk_http_error)?;
-        let status = response.status();
-        let body: Value = response
-            .json()
-            .await
-            .map_err(reward_info_risk_decode_error)?;
-        if !status.is_success() {
-            return Err(reward_info_risk_status_error(status.as_u16(), body));
-        }
-        body.pointer("/choices/0/message/content")
-            .and_then(Value::as_str)
-            .map(ToString::to_string)
-            .ok_or_else(|| {
-                AppError::dependency_unavailable(
-                    "REWARD_INFO_RISK_RESPONSE_INVALID",
-                    "OpenAI chat completion response did not include message content",
-                )
-            })
-    }
-
-    async fn call_anthropic_messages_batch(
-        &self,
-        requests: &[RewardInfoRiskAssessmentRequest],
-    ) -> Result<String> {
-        ensure_info_risk_batch_provider(requests, RewardAiProvider::Anthropic)?;
-        let max_tokens = reward_info_risk_batch_max_tokens(requests.len());
-        let response = self
-            .client
-            .post(format!("{}/v1/messages", self.base_url))
-            .header("x-api-key", &self.api_key)
-            .header("anthropic-version", "2023-06-01")
-            .json(&json!({
-                "model": requests[0].model,
-                "max_tokens": max_tokens,
-                "temperature": 0,
-                "system": reward_info_risk_batch_system_prompt(),
-                "messages": [
-                    {"role": "user", "content": reward_info_risk_batch_user_prompt(requests)}
-                ]
-            }))
-            .send()
-            .await
-            .map_err(reward_info_risk_http_error)?;
-        let status = response.status();
-        let body: Value = response
-            .json()
-            .await
-            .map_err(reward_info_risk_decode_error)?;
-        if !status.is_success() {
-            return Err(reward_info_risk_status_error(status.as_u16(), body));
-        }
-        body.pointer("/content/0/text")
-            .and_then(Value::as_str)
-            .map(ToString::to_string)
-            .ok_or_else(|| {
-                AppError::dependency_unavailable(
-                    "REWARD_INFO_RISK_RESPONSE_INVALID",
-                    "Anthropic messages response did not include text content",
-                )
-            })
-    }
-}
-
-fn ensure_info_risk_provider(
+#[allow(dead_code)]
+pub(crate) fn ensure_info_risk_provider(
     request: &RewardInfoRiskAssessmentRequest,
     expected: RewardAiProvider,
 ) -> Result<()> {
@@ -389,7 +32,8 @@ fn ensure_info_risk_provider(
     ))
 }
 
-fn ensure_info_risk_openai_compatible_chat_provider(
+#[allow(dead_code)]
+pub(crate) fn ensure_info_risk_openai_compatible_chat_provider(
     request: &RewardInfoRiskAssessmentRequest,
 ) -> Result<()> {
     if is_openai_compatible_chat_provider(request.provider) {
@@ -401,95 +45,7 @@ fn ensure_info_risk_openai_compatible_chat_provider(
     ))
 }
 
-fn ensure_info_risk_batch_provider(
-    requests: &[RewardInfoRiskAssessmentRequest],
-    expected: RewardAiProvider,
-) -> Result<()> {
-    if requests.is_empty() {
-        return Err(AppError::invalid_input(
-            "REWARD_INFO_RISK_BATCH_EMPTY",
-            "reward info risk batch must not be empty",
-        ));
-    }
-    ensure_info_risk_provider(&requests[0], expected)?;
-    let first = &requests[0];
-    for request in &requests[1..] {
-        ensure_info_risk_provider(request, expected)?;
-        if request.request_format != first.request_format || request.model != first.model {
-            return Err(AppError::invalid_input(
-                "REWARD_INFO_RISK_BATCH_MISMATCH",
-                "reward info risk batch requests must share request format and model",
-            ));
-        }
-    }
-    Ok(())
-}
-
-fn ensure_info_risk_batch_openai_compatible_chat_provider(
-    requests: &[RewardInfoRiskAssessmentRequest],
-) -> Result<()> {
-    if requests.is_empty() {
-        return Err(AppError::invalid_input(
-            "REWARD_INFO_RISK_BATCH_EMPTY",
-            "reward info risk batch must not be empty",
-        ));
-    }
-    ensure_info_risk_openai_compatible_chat_provider(&requests[0])?;
-    let first = &requests[0];
-    for request in &requests[1..] {
-        ensure_info_risk_openai_compatible_chat_provider(request)?;
-        if request.provider != first.provider
-            || request.request_format != first.request_format
-            || request.model != first.model
-        {
-            return Err(AppError::invalid_input(
-                "REWARD_INFO_RISK_BATCH_MISMATCH",
-                "reward info risk batch requests must share provider, request format and model",
-            ));
-        }
-    }
-    Ok(())
-}
-
-fn reward_info_risk_batch_max_tokens(batch_size: usize) -> u32 {
-    REWARD_INFO_RISK_CHAT_COMPLETION_MAX_TOKENS
-        .saturating_mul(batch_size.max(1) as u32)
-        .min(REWARD_INFO_RISK_BATCH_MAX_TOKENS_CAP)
-}
-
-fn reward_info_risk_system_prompt() -> &'static str {
-    "You are a cautious event-risk researcher for Polymarket rewards maker orders. Return exactly one JSON object and nothing else. Do not use markdown, comments, prose, or unquoted keys. The only decision field is allow_quote: true means maker quoting is allowed, false means maker quoting is not allowed. Do not return risk levels, watch states, or other status categories. Use input.evaluation_time_utc as the current UTC time; do not infer today's date from model training or stale context. Use web search when a search tool is available; otherwise use the supplied context and clearly mark uncertainty in summary/metrics."
-}
-
-fn reward_info_risk_batch_system_prompt() -> &'static str {
-    "You are a cautious event-risk researcher for Polymarket rewards maker orders. You will receive a JSON object containing a \"markets\" array; assess EACH market independently of the others. Return exactly one JSON object of shape {\"risks\":[...]} and nothing else. Do not use markdown, comments, prose, or unquoted keys. Each risk object must include the market's condition_id copied verbatim from the input. The only decision field is allow_quote boolean; do not return risk levels, watch states, or other status categories. Use each input item's market.evaluation_time_utc as the current UTC time for that market."
-}
-
-fn reward_info_risk_user_prompt(request: &RewardInfoRiskAssessmentRequest) -> String {
-    format!(
-        "Assess information risk for this market over the full provider_cache_policy TTL horizon. Use Input.evaluation_time_utc as the current UTC time. Return one valid JSON object with double-quoted keys and only these decision fields: allow_quote boolean, confidence 0..1, summary string, sources array of objects with url,title,published_at,snippet, metrics object. Set allow_quote=false if recent/imminent information could make passive maker quoting unsafe before cache expiry, including official result/resolution, a confirmed near-term resolution-driving event, breaking news, stale facts, or unresolved uncertainty. Use [] for sources and {{}} for metrics when unsure.\nSearch query: {}\nInput:\n{}",
-        request.query, request.payload
-    )
-}
-
-fn reward_info_risk_batch_user_prompt(requests: &[RewardInfoRiskAssessmentRequest]) -> String {
-    let markets: Vec<Value> = requests
-        .iter()
-        .map(|request| {
-            json!({
-                "condition_id": request.condition_id,
-                "search_query": request.query,
-                "market": request.payload
-            })
-        })
-        .collect();
-    format!(
-        "Assess information risk for each market over its full provider_cache_policy TTL horizon. Use each input item's market.evaluation_time_utc as the current UTC time. Return one valid JSON object with double-quoted keys and a field \"risks\": an array with exactly one object per input market. Each object must contain condition_id (must match one input market verbatim), allow_quote boolean, confidence 0..1, summary string, sources array of objects with url,title,published_at,snippet, metrics object. Set allow_quote=false if recent/imminent information could make passive maker quoting unsafe before cache expiry. Use [] for sources and {{}} for metrics when unsure.\nInput:\n{{\"markets\":{}}}",
-        serde_json::to_string(&markets).unwrap_or_else(|_| "[]".to_string())
-    )
-}
-
-fn reward_info_risk_json_schema() -> Value {
+pub(crate) fn reward_info_risk_json_schema() -> Value {
     json!({
         "type": "object",
         "additionalProperties": false,
@@ -524,99 +80,16 @@ fn reward_info_risk_json_schema() -> Value {
     })
 }
 
-fn reward_info_risk_batch_json_schema() -> Value {
-    let item_schema = reward_info_risk_json_schema();
-    json!({
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["risks"],
-        "properties": {
-            "risks": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "required": [
-                        "condition_id",
-                        "allow_quote",
-                        "confidence",
-                        "summary",
-                        "sources",
-                        "metrics"
-                    ],
-                    "properties": {
-                        "condition_id": {"type": "string"},
-                        "allow_quote": item_schema["properties"]["allow_quote"].clone(),
-                        "confidence": item_schema["properties"]["confidence"].clone(),
-                        "summary": item_schema["properties"]["summary"].clone(),
-                        "sources": item_schema["properties"]["sources"].clone(),
-                        "metrics": item_schema["properties"]["metrics"].clone()
-                    }
-                }
-            }
-        }
-    })
-}
-
-fn parse_reward_info_risk_batch_decision(
+#[allow(dead_code)]
+pub(crate) fn parse_reward_info_risk_decision(
     text: &str,
-    expected_condition_ids: &[String],
-) -> Result<Vec<RewardInfoRiskAssessmentBatchItem>> {
-    let expected: HashSet<&str> = expected_condition_ids.iter().map(String::as_str).collect();
-    let single_market_batch = expected_condition_ids.len() == 1;
-    let single_condition = expected_condition_ids.first().map(String::as_str);
-    let mut last_error: Option<AppError> = None;
-    for value in provider_json_candidates(text) {
-        if let Some(risks) = value.get("risks").and_then(Value::as_array) {
-            let mut items = Vec::new();
-            let mut seen: HashSet<String> = HashSet::new();
-            for entry in risks {
-                let Some(condition_id) = entry.get("condition_id").and_then(Value::as_str) else {
-                    continue;
-                };
-                if !expected.contains(condition_id) || !seen.insert(condition_id.to_string()) {
-                    continue;
-                }
-                match parse_reward_info_risk_decision_value(entry) {
-                    Ok(decision) => items.push(RewardInfoRiskAssessmentBatchItem {
-                        condition_id: condition_id.to_string(),
-                        decision,
-                    }),
-                    Err(error) => last_error = Some(error),
-                }
-            }
-            if !items.is_empty() {
-                return Ok(items);
-            }
-        }
-        if single_market_batch
-            && reward_info_risk_candidate_has_known_field(&value)
-            && let Some(condition_id) = single_condition
-            && let Ok(decision) = parse_reward_info_risk_decision_value(&value)
-        {
-            return Ok(vec![RewardInfoRiskAssessmentBatchItem {
-                condition_id: condition_id.to_string(),
-                decision,
-            }]);
-        }
-    }
-    Err(last_error.unwrap_or_else(|| {
-        AppError::dependency_unavailable(
-            "REWARD_INFO_RISK_BATCH_RESPONSE_INVALID_JSON",
-            format!(
-                "reward info risk batch response had no usable risks; preview={}",
-                provider_response_preview(text)
-            ),
-        )
-    }))
-}
-
-fn parse_reward_info_risk_decision(text: &str) -> Result<RewardInfoRiskAssessmentDecision> {
+) -> Result<RewardInfoRiskAssessmentDecision> {
     let value = parse_reward_info_risk_value(text)?;
     parse_reward_info_risk_decision_value(&value)
 }
 
-fn parse_reward_info_risk_value(text: &str) -> Result<Value> {
+#[allow(dead_code)]
+pub(crate) fn parse_reward_info_risk_value(text: &str) -> Result<Value> {
     let mut last_error = None;
     for value in provider_json_candidates(text) {
         if !reward_info_risk_candidate_has_known_field(&value) {
@@ -639,7 +112,7 @@ fn parse_reward_info_risk_value(text: &str) -> Result<Value> {
     ))
 }
 
-fn parse_reward_info_risk_decision_value(
+pub(crate) fn parse_reward_info_risk_decision_value(
     value: &Value,
 ) -> Result<RewardInfoRiskAssessmentDecision> {
     if value.get("allow_quote").is_some() {
@@ -692,7 +165,7 @@ fn parse_reward_info_risk_decision_value(
     })
 }
 
-fn parse_reward_info_risk_binary_decision_value(
+pub(crate) fn parse_reward_info_risk_binary_decision_value(
     value: &Value,
 ) -> Result<RewardInfoRiskAssessmentDecision> {
     let allow_quote = value
@@ -734,7 +207,7 @@ fn parse_reward_info_risk_binary_decision_value(
     })
 }
 
-fn reward_info_risk_candidate_has_known_field(value: &Value) -> bool {
+pub(crate) fn reward_info_risk_candidate_has_known_field(value: &Value) -> bool {
     value.get("allow_quote").is_some()
         || value.get("risk_level").is_some()
         || value.get("risk_type").is_some()
@@ -743,7 +216,7 @@ fn reward_info_risk_candidate_has_known_field(value: &Value) -> bool {
         || value.get("confidence").is_some()
 }
 
-fn parse_info_risk_sources(value: Option<&Value>) -> Vec<RewardInfoRiskSource> {
+pub(crate) fn parse_info_risk_sources(value: Option<&Value>) -> Vec<RewardInfoRiskSource> {
     value
         .and_then(Value::as_array)
         .map(|items| {
@@ -770,13 +243,14 @@ fn parse_info_risk_sources(value: Option<&Value>) -> Vec<RewardInfoRiskSource> {
         .unwrap_or_default()
 }
 
-fn parse_optional_rfc3339(value: Option<&Value>) -> Option<OffsetDateTime> {
+pub(crate) fn parse_optional_rfc3339(value: Option<&Value>) -> Option<OffsetDateTime> {
     value
         .and_then(Value::as_str)
         .and_then(|value| OffsetDateTime::parse(value, &Rfc3339).ok())
 }
 
-fn extract_openai_responses_text(body: &Value) -> Result<String> {
+#[allow(dead_code)]
+pub(crate) fn extract_openai_responses_text(body: &Value) -> Result<String> {
     if let Some(text) = body.get("output_text").and_then(Value::as_str) {
         return Ok(text.to_string());
     }
@@ -804,7 +278,7 @@ fn extract_openai_responses_text(body: &Value) -> Result<String> {
         })
 }
 
-fn parse_confidence(value: Option<&Value>) -> Option<Decimal> {
+pub(crate) fn parse_confidence(value: Option<&Value>) -> Option<Decimal> {
     let raw = value?;
     let parsed = if let Some(number) = raw.as_f64() {
         Decimal::from_str(&number.to_string()).ok()
@@ -814,28 +288,31 @@ fn parse_confidence(value: Option<&Value>) -> Option<Decimal> {
     Some(parsed.max(Decimal::ZERO).min(Decimal::ONE))
 }
 
-fn reward_info_risk_missing_field(field: &'static str) -> AppError {
+pub(crate) fn reward_info_risk_missing_field(field: &'static str) -> AppError {
     AppError::dependency_unavailable(
         "REWARD_INFO_RISK_RESPONSE_MISSING_FIELD",
         format!("reward info risk response missing {field}"),
     )
 }
 
-fn reward_info_risk_http_error(error: reqwest::Error) -> AppError {
+#[allow(dead_code)]
+pub(crate) fn reward_info_risk_http_error(error: reqwest::Error) -> AppError {
     AppError::dependency_unavailable(
         "REWARD_INFO_RISK_HTTP_FAILED",
         format!("reward info risk HTTP request failed: {error}"),
     )
 }
 
-fn reward_info_risk_decode_error(error: reqwest::Error) -> AppError {
+#[allow(dead_code)]
+pub(crate) fn reward_info_risk_decode_error(error: reqwest::Error) -> AppError {
     AppError::dependency_unavailable(
         "REWARD_INFO_RISK_RESPONSE_DECODE_FAILED",
         format!("failed to decode reward info risk response: {error}"),
     )
 }
 
-fn reward_info_risk_status_error(status: u16, body: Value) -> AppError {
+#[allow(dead_code)]
+pub(crate) fn reward_info_risk_status_error(status: u16, body: Value) -> AppError {
     AppError::dependency_unavailable(
         "REWARD_INFO_RISK_STATUS_FAILED",
         format!("reward info risk provider returned HTTP {status}: {body}"),

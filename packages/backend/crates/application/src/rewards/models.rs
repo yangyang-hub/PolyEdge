@@ -342,8 +342,6 @@ pub struct RewardBotConfig {
     pub ai_provider: RewardAiProvider,
     pub ai_request_format: RewardAiRequestFormat,
     pub ai_advisory_ttl_sec: u64,
-    /// Number of advisory markets to send in one provider request. 1 = single-market calls.
-    pub ai_advisory_batch_size: u16,
     /// Apply provider strategy hints directly to live quote mode, bid rank and
     /// condition notional caps. Hints never bypass deterministic hard risk.
     pub ai_strategy_hint_enabled: bool,
@@ -354,8 +352,6 @@ pub struct RewardBotConfig {
     pub info_risk_mode: RewardSelectionMode,
     pub info_risk_avoid_level: RewardInfoRiskLevel,
     pub info_risk_ttl_sec: u64,
-    /// Number of info-risk markets to send in one provider request. 1 = single-market calls.
-    pub info_risk_batch_size: u16,
     /// Event-window hard gate based on trusted structured event times.
     pub event_window_enabled: bool,
     pub event_window_min_confidence: RewardEventTimeConfidence,
@@ -607,8 +603,6 @@ pub struct RewardBotConfigPatch {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ai_advisory_ttl_sec: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub ai_advisory_batch_size: Option<u16>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ai_strategy_hint_enabled: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ai_strategy_hint_min_confidence: Option<Decimal>,
@@ -620,8 +614,6 @@ pub struct RewardBotConfigPatch {
     pub info_risk_avoid_level: Option<RewardInfoRiskLevel>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub info_risk_ttl_sec: Option<u64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub info_risk_batch_size: Option<u16>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub event_window_enabled: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -240,9 +240,6 @@ fn apply_reward_config_value(config: &mut RewardBotConfig, key: &str, value: &st
             config.ai_request_format = RewardAiRequestFormat::from_str(value)?;
         }
         "ai_advisory_ttl_sec" => config.ai_advisory_ttl_sec = parse_u64_config(key, value)?,
-        "ai_advisory_batch_size" => {
-            config.ai_advisory_batch_size = parse_u16_config(key, value)?;
-        }
         "ai_strategy_hint_enabled" => {
             config.ai_strategy_hint_enabled = parse_bool_config(key, value)?;
         }
@@ -255,9 +252,6 @@ fn apply_reward_config_value(config: &mut RewardBotConfig, key: &str, value: &st
             config.info_risk_avoid_level = RewardInfoRiskLevel::from_str(value)?;
         }
         "info_risk_ttl_sec" => config.info_risk_ttl_sec = parse_u64_config(key, value)?,
-        "info_risk_batch_size" => {
-            config.info_risk_batch_size = parse_u16_config(key, value)?;
-        }
         "event_window_enabled" => {
             config.event_window_enabled = parse_bool_config(key, value)?;
         }
@@ -681,10 +675,6 @@ fn reward_config_entries(config: &RewardBotConfig) -> Vec<(&'static str, String)
             config.ai_advisory_ttl_sec.to_string(),
         ),
         (
-            "ai_advisory_batch_size",
-            config.ai_advisory_batch_size.to_string(),
-        ),
-        (
             "ai_strategy_hint_enabled",
             config.ai_strategy_hint_enabled.to_string(),
         ),
@@ -699,10 +689,6 @@ fn reward_config_entries(config: &RewardBotConfig) -> Vec<(&'static str, String)
             config.info_risk_avoid_level.as_str().to_string(),
         ),
         ("info_risk_ttl_sec", config.info_risk_ttl_sec.to_string()),
-        (
-            "info_risk_batch_size",
-            config.info_risk_batch_size.to_string(),
-        ),
         (
             "event_window_enabled",
             config.event_window_enabled.to_string(),

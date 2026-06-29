@@ -453,12 +453,11 @@ impl RewardBotStore for PostgresRewardBotStore {
         let rows = sqlx::query(
             r#"
             SELECT (created_at AT TIME ZONE 'UTC')::date::text AS day,
-                   (COUNT(*) FILTER (WHERE task_type = 'reward_ai_advisory'))::bigint AS ai_advisory_calls,
-                   (COUNT(*) FILTER (WHERE task_type = 'reward_info_risk'))::bigint AS info_risk_calls,
+                   (COUNT(*) FILTER (WHERE task_type IN ('reward_provider', 'reward_ai_advisory', 'reward_info_risk')))::bigint AS provider_calls,
                    COUNT(*)::bigint AS total_calls,
                    (COUNT(*) FILTER (WHERE validation_result->>'success' = 'false'))::bigint AS failed_calls
             FROM llm_calls
-            WHERE task_type IN ('reward_ai_advisory', 'reward_info_risk')
+            WHERE task_type IN ('reward_provider', 'reward_ai_advisory', 'reward_info_risk')
               AND created_at >= $1
             GROUP BY (created_at AT TIME ZONE 'UTC')::date
             ORDER BY (created_at AT TIME ZONE 'UTC')::date DESC
@@ -480,12 +479,8 @@ impl RewardBotStore for PostgresRewardBotStore {
             .map(|row| {
                 Ok(RewardLlmCallDailyStats {
                     day: row.try_get("day").map_err(postgres_decode_error)?,
-                    ai_advisory_calls: i64_count_to_u64(
-                        row.try_get("ai_advisory_calls")
-                            .map_err(postgres_decode_error)?,
-                    ),
-                    info_risk_calls: i64_count_to_u64(
-                        row.try_get("info_risk_calls")
+                    provider_calls: i64_count_to_u64(
+                        row.try_get("provider_calls")
                             .map_err(postgres_decode_error)?,
                     ),
                     total_calls: i64_count_to_u64(
