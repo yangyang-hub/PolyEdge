@@ -43,6 +43,7 @@ async fn run_worker_service(state: AppState) -> Result<()> {
 fn spawn_worker_tasks(state: &AppState, shutdown_rx: watch::Receiver<bool>) -> Vec<JoinHandle<()>> {
     let mut handles = Vec::new();
     let settings = &state.settings.worker;
+    let live_polymarket_status = live_polymarket_config_status(state);
 
     if settings.database_maintenance {
         let job_state = state.clone();
@@ -158,53 +159,57 @@ fn spawn_worker_tasks(state: &AppState, shutdown_rx: watch::Receiver<bool>) -> V
 
     if settings.poll_reward_bot {
         if state.settings.rewards.enabled {
-            info!(
-                poll_interval_secs = state.settings.rewards.poll_interval_secs,
-                ai_openai_key_configured = state
-                    .settings
-                    .rewards
-                    .ai_openai_api_key
-                    .as_ref()
-                    .is_some_and(|value| !value.trim().is_empty()),
-                ai_anthropic_key_configured = state
-                    .settings
-                    .rewards
-                    .ai_anthropic_api_key
-                    .as_ref()
-                    .is_some_and(|value| !value.trim().is_empty()),
-                ai_model = %state.settings.rewards.ai_model,
-                "spawning worker reward bot poll loop",
-            );
-            let job_state = state.clone();
-            let job_shutdown_rx = shutdown_rx.clone();
-            handles.push(spawn_restarting_job(
-                "poll-reward-bot",
-                1,
-                shutdown_rx.clone(),
-                move || {
-                    let state = job_state.clone();
-                    let shutdown_rx = job_shutdown_rx.clone();
-                    async move {
-                        match poll_reward_bot_until_shutdown(&state, shutdown_rx).await {
-                            Ok(report) => info!(
-                                markets_scanned = report.markets_scanned,
-                                books_fetched = report.books_fetched,
-                                plans_built = report.plans_built,
-                                eligible_plans = report.eligible_plans,
-                                placed_orders = report.placed_orders,
-                                cancelled_orders = report.cancelled_orders,
-                                filled_orders = report.filled_orders,
-                                risk_cancelled_orders = report.risk_cancelled_orders,
-                                reward_accrued = %report.reward_accrued,
-                                "completed worker reward bot cycle",
-                            ),
-                            Err(error) => {
-                                warn!(error = %error, "worker reward bot polling failed");
+            if live_polymarket_status.is_ready() {
+                info!(
+                    poll_interval_secs = state.settings.rewards.poll_interval_secs,
+                    ai_openai_key_configured = state
+                        .settings
+                        .rewards
+                        .ai_openai_api_key
+                        .as_ref()
+                        .is_some_and(|value| !value.trim().is_empty()),
+                    ai_anthropic_key_configured = state
+                        .settings
+                        .rewards
+                        .ai_anthropic_api_key
+                        .as_ref()
+                        .is_some_and(|value| !value.trim().is_empty()),
+                    ai_model = %state.settings.rewards.ai_model,
+                    "spawning worker reward bot poll loop",
+                );
+                let job_state = state.clone();
+                let job_shutdown_rx = shutdown_rx.clone();
+                handles.push(spawn_restarting_job(
+                    "poll-reward-bot",
+                    1,
+                    shutdown_rx.clone(),
+                    move || {
+                        let state = job_state.clone();
+                        let shutdown_rx = job_shutdown_rx.clone();
+                        async move {
+                            match poll_reward_bot_until_shutdown(&state, shutdown_rx).await {
+                                Ok(report) => info!(
+                                    markets_scanned = report.markets_scanned,
+                                    books_fetched = report.books_fetched,
+                                    plans_built = report.plans_built,
+                                    eligible_plans = report.eligible_plans,
+                                    placed_orders = report.placed_orders,
+                                    cancelled_orders = report.cancelled_orders,
+                                    filled_orders = report.filled_orders,
+                                    risk_cancelled_orders = report.risk_cancelled_orders,
+                                    reward_accrued = %report.reward_accrued,
+                                    "completed worker reward bot cycle",
+                                ),
+                                Err(error) => {
+                                    warn!(error = %error, "worker reward bot polling failed");
+                                }
                             }
                         }
-                    }
-                },
-            ));
+                    },
+                ));
+            } else {
+                warn_live_polymarket_config_incomplete("poll-reward-bot", live_polymarket_status);
+            }
         } else {
             warn!(
                 "worker poll-reward-bot is enabled but rewards bot is disabled; set POLYEDGE_REWARDS__ENABLED=true"
@@ -356,6 +361,13 @@ fn spawn_worker_tasks(state: &AppState, shutdown_rx: watch::Receiver<bool>) -> V
     }
 
     if settings.drain_execution_queue {
+        let drain_polymarket = live_polymarket_status.is_ready();
+        if !drain_polymarket {
+            warn_live_polymarket_config_incomplete(
+                "drain-execution-queue:polymarket",
+                live_polymarket_status,
+            );
+        }
         let job_state = state.clone();
         handles.push(spawn_interval_job(
             "drain-execution-queue",
@@ -365,7 +377,10 @@ fn spawn_worker_tasks(state: &AppState, shutdown_rx: watch::Receiver<bool>) -> V
                 let state = job_state.clone();
                 async move {
                     drain_execution_queue_for_connector(&state, PAPER_EXECUTOR_NAME).await;
-                    drain_execution_queue_for_connector(&state, POLYMARKET_CONNECTOR_NAME).await;
+                    if drain_polymarket {
+                        drain_execution_queue_for_connector(&state, POLYMARKET_CONNECTOR_NAME)
+                            .await;
+                    }
                 }
             },
         ));
@@ -432,105 +447,185 @@ fn spawn_worker_tasks(state: &AppState, shutdown_rx: watch::Receiver<bool>) -> V
     }
 
     if settings.poll_polymarket_order_statuses {
-        let job_state = state.clone();
-        handles.push(spawn_interval_job(
-            "poll-polymarket-order-statuses",
-            settings.order_status_poll_interval_secs,
-            shutdown_rx.clone(),
-            move || {
-                let state = job_state.clone();
-                async move {
-                    let limit = polymarket_order_status_limit(&state, task_limit(&state));
-                    match poll_polymarket_order_statuses(
-                        &state,
-                        Some(POLYMARKET_CONNECTOR_NAME.to_string()),
-                        limit,
-                    )
-                    .await
-                    {
-                        Ok(report) => info!(
-                            scanned = report.scanned,
-                            opened = report.opened,
-                            "completed worker polymarket order status poll",
-                        ),
-                        Err(error) => {
-                            warn!(error = %error, "worker polymarket order status poll failed");
+        if live_polymarket_status.is_ready() {
+            let job_state = state.clone();
+            handles.push(spawn_interval_job(
+                "poll-polymarket-order-statuses",
+                settings.order_status_poll_interval_secs,
+                shutdown_rx.clone(),
+                move || {
+                    let state = job_state.clone();
+                    async move {
+                        let limit = polymarket_order_status_limit(&state, task_limit(&state));
+                        match poll_polymarket_order_statuses(
+                            &state,
+                            Some(POLYMARKET_CONNECTOR_NAME.to_string()),
+                            limit,
+                        )
+                        .await
+                        {
+                            Ok(report) => info!(
+                                scanned = report.scanned,
+                                opened = report.opened,
+                                "completed worker polymarket order status poll",
+                            ),
+                            Err(error) => {
+                                warn!(error = %error, "worker polymarket order status poll failed");
+                            }
                         }
                     }
-                }
-            },
-        ));
+                },
+            ));
+        } else {
+            warn_live_polymarket_config_incomplete(
+                "poll-polymarket-order-statuses",
+                live_polymarket_status,
+            );
+        }
     }
 
     if settings.reconcile_polymarket_fills {
-        let job_state = state.clone();
-        handles.push(spawn_interval_job(
-            "reconcile-polymarket-fills",
-            settings.fill_reconciliation_interval_secs,
-            shutdown_rx.clone(),
-            move || {
-                let state = job_state.clone();
-                async move {
-                    let limit = polymarket_fill_limit(&state, task_limit(&state));
-                    match reconcile_polymarket_fills(
-                        &state,
-                        Some(POLYMARKET_CONNECTOR_NAME.to_string()),
-                        limit,
-                    )
-                    .await
-                    {
-                        Ok(report) => info!(
-                            scanned = report.scanned,
-                            reconciled = report.reconciled,
-                            "completed worker polymarket fill reconciliation",
-                        ),
-                        Err(error) => {
-                            warn!(error = %error, "worker polymarket fill reconciliation failed");
+        if live_polymarket_status.is_ready() {
+            let job_state = state.clone();
+            handles.push(spawn_interval_job(
+                "reconcile-polymarket-fills",
+                settings.fill_reconciliation_interval_secs,
+                shutdown_rx.clone(),
+                move || {
+                    let state = job_state.clone();
+                    async move {
+                        let limit = polymarket_fill_limit(&state, task_limit(&state));
+                        match reconcile_polymarket_fills(
+                            &state,
+                            Some(POLYMARKET_CONNECTOR_NAME.to_string()),
+                            limit,
+                        )
+                        .await
+                        {
+                            Ok(report) => info!(
+                                scanned = report.scanned,
+                                reconciled = report.reconciled,
+                                "completed worker polymarket fill reconciliation",
+                            ),
+                            Err(error) => {
+                                warn!(error = %error, "worker polymarket fill reconciliation failed");
+                            }
                         }
                     }
-                }
-            },
-        ));
+                },
+            ));
+        } else {
+            warn_live_polymarket_config_incomplete(
+                "reconcile-polymarket-fills",
+                live_polymarket_status,
+            );
+        }
     }
 
     if settings.consume_polymarket_user_events {
-        let job_state = state.clone();
-        handles.push(spawn_restarting_job(
-            "consume-polymarket-user-events",
-            settings.polymarket_user_event_restart_interval_secs,
-            shutdown_rx.clone(),
-            move || {
-                let state = job_state.clone();
-                async move {
-                    match consume_polymarket_user_events(
-                        &state,
-                        Some(POLYMARKET_CONNECTOR_NAME.to_string()),
-                        None,
-                    )
-                    .await
-                    {
-                        Ok(report) => info!(
-                            subscribed_markets = report.subscribed_markets,
-                            consumed = report.consumed,
-                            order_updates_applied = report.order_updates_applied,
-                            trade_updates_applied = report.trade_updates_applied,
-                            skipped_unknown_orders = report.skipped_unknown_orders,
-                            skipped_duplicate_trades = report.skipped_duplicate_trades,
-                            "polymarket user event consumer stopped",
-                        ),
-                        Err(error) => {
-                            warn!(error = %error, "polymarket user event consumer failed");
+        if live_polymarket_status.is_ready() {
+            let job_state = state.clone();
+            handles.push(spawn_restarting_job(
+                "consume-polymarket-user-events",
+                settings.polymarket_user_event_restart_interval_secs,
+                shutdown_rx.clone(),
+                move || {
+                    let state = job_state.clone();
+                    async move {
+                        match consume_polymarket_user_events(
+                            &state,
+                            Some(POLYMARKET_CONNECTOR_NAME.to_string()),
+                            None,
+                        )
+                        .await
+                        {
+                            Ok(report) => info!(
+                                subscribed_markets = report.subscribed_markets,
+                                consumed = report.consumed,
+                                order_updates_applied = report.order_updates_applied,
+                                trade_updates_applied = report.trade_updates_applied,
+                                skipped_unknown_orders = report.skipped_unknown_orders,
+                                skipped_duplicate_trades = report.skipped_duplicate_trades,
+                                "polymarket user event consumer stopped",
+                            ),
+                            Err(error) => {
+                                warn!(error = %error, "polymarket user event consumer failed");
+                            }
                         }
                     }
-                }
-            },
-        ));
+                },
+            ));
+        } else {
+            warn_live_polymarket_config_incomplete(
+                "consume-polymarket-user-events",
+                live_polymarket_status,
+            );
+        }
     }
 
     // Orderbook stream is now handled by the standalone polyedge-orderbook service.
     // Workers connect to it via HTTP (configured by POLYEDGE_ORDERBOOK__SERVICE_URL).
 
     handles
+}
+
+#[derive(Debug, Clone, Copy)]
+struct LivePolymarketConfigStatus {
+    account_id_configured: bool,
+    private_key_configured: bool,
+    api_credentials_complete: bool,
+}
+
+impl LivePolymarketConfigStatus {
+    fn is_ready(self) -> bool {
+        self.account_id_configured
+            && self.private_key_configured
+            && self.api_credentials_complete
+    }
+}
+
+fn live_polymarket_config_status(state: &AppState) -> LivePolymarketConfigStatus {
+    let settings = &state.settings.polymarket;
+    let api_key_configured = settings
+        .api_key
+        .as_deref()
+        .is_some_and(|value| !value.trim().is_empty());
+    let api_secret_configured = settings
+        .api_secret
+        .as_deref()
+        .is_some_and(|value| !value.trim().is_empty());
+    let api_passphrase_configured = settings
+        .api_passphrase
+        .as_deref()
+        .is_some_and(|value| !value.trim().is_empty());
+    let configured_api_credentials = [
+        api_key_configured,
+        api_secret_configured,
+        api_passphrase_configured,
+    ]
+    .into_iter()
+    .filter(|configured| *configured)
+    .count();
+
+    LivePolymarketConfigStatus {
+        account_id_configured: !polymarket_account_id(state).is_empty(),
+        private_key_configured: settings
+            .private_key
+            .as_deref()
+            .is_some_and(|value| !value.trim().is_empty()),
+        api_credentials_complete: configured_api_credentials == 0
+            || configured_api_credentials == 3,
+    }
+}
+
+fn warn_live_polymarket_config_incomplete(job: &'static str, status: LivePolymarketConfigStatus) {
+    warn!(
+        job,
+        account_id_configured = status.account_id_configured,
+        private_key_configured = status.private_key_configured,
+        api_credentials_complete = status.api_credentials_complete,
+        "skipping live Polymarket worker job because configuration is incomplete; set POLYEDGE_POLYMARKET__ACCOUNT_ID and POLYEDGE_POLYMARKET__PRIVATE_KEY, and set all API credential fields or none"
+    );
 }
 
 fn spawn_interval_job<F, Fut>(

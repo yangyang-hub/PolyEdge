@@ -4,7 +4,7 @@
 
 ## 概述
 
-Worker 代码现在同时提供共享库和兼容 CLI。`polyedge-api` 在同一进程内启动 `WorkerRuntime`，运行数据库维护、新闻采集/提升、执行分发、订单对账、奖励机器人、copytrade 钱包跟踪/分析、Smart Money 定时画像扫描和 orderbook token 注册；Smart Money runtime 默认关闭，启用后从 Polymarket Data API leaderboard 和 active copytrade tracked wallets 生成候选，再扫描候选钱包画像、评分和源交易，并基于 orderbook 服务缓存为未处理源交易生成 deterministic observe/rejected 信号与 deterministic gate decision 审计；当 `signal_advisory_enabled=true` 时，worker 还会为近期 observe 信号构造 signal advisory payload/input_hash、检查未过期缓存，并在 provider 环境密钥存在时调用 LLM provider 保存三态 advisory；动态高概率市场定价目前提供本地 outcome JSON 导入、一次性样本构建、bucket stats 刷新、带基础退出规则摘要的 baseline 回测持久化和一次性只读 observe 扫描 CLI，不在 runtime 中自动调度；旧信号重算和套利雷达 worker 已移除。`polyedge-worker` 二进制继续提供维护/调试子命令，但 Docker 不再部署独立常驻 worker 容器。
+Worker 代码现在同时提供共享库和兼容 CLI。`polyedge-api` 在同一进程内启动 `WorkerRuntime`，按 `WorkerSettings` 开关运行数据库维护、新闻采集/提升、执行分发、订单对账、奖励机器人、copytrade 钱包跟踪/分析、Smart Money 定时画像扫描和 orderbook token 注册；Smart Money runtime 默认关闭，启用后从 Polymarket Data API leaderboard 和 active copytrade tracked wallets 生成候选，再扫描候选钱包画像、评分和源交易，并基于 orderbook 服务缓存为未处理源交易生成 deterministic observe/rejected 信号与 deterministic gate decision 审计；当 `signal_advisory_enabled=true` 时，worker 还会为近期 observe 信号构造 signal advisory payload/input_hash、检查未过期缓存，并在 provider 环境密钥存在时调用 LLM provider 保存三态 advisory；动态高概率市场定价目前提供本地 outcome JSON 导入、一次性样本构建、bucket stats 刷新、带基础退出规则摘要的 baseline 回测持久化和一次性只读 observe 扫描 CLI，不在 runtime 中自动调度；旧信号重算和套利雷达 worker 已移除。`polyedge-worker` 二进制继续提供维护/调试子命令，但 Docker 不再部署独立常驻 worker 容器。
 
 ## 设计目标
 
@@ -19,7 +19,7 @@ Worker 代码现在同时提供共享库和兼容 CLI。`polyedge-api` 在同一
 |---|---|
 | `lib.rs` | 共享 runtime：CLI 参数解析、任务实现聚合，对 API 暴露 `WorkerRuntime` |
 | `main.rs` | 薄 CLI 入口，调用 `polyedge_worker::run_cli()` |
-| `worker/service.rs` | `WorkerRuntime` 生命周期与后台任务编排 |
+| `worker/service.rs` | `WorkerRuntime` 生命周期与后台任务编排；启动 live Polymarket job 前检查 account_id/private_key/API credential 完整性 |
 | `worker/service_info_risk.rs` | WorkerRuntime 中 rewards 信息风险扫描任务接线 |
 | `worker/database_maintenance.rs` | 数据库维护任务：定期调用 `DatabaseMaintenanceService` 并记录逐表清理统计 |
 | `worker/orderbook_registration.rs` | Worker orderbook token 注册：周期注册 rewards/执行订单 token，并在 rewards 新买单持久化后即时刷新 `rewards_active` source |
@@ -59,7 +59,7 @@ Worker 代码现在同时提供共享库和兼容 CLI。`polyedge-api` 在同一
 | `worker/smart_money/advisory.rs` | Smart Money signal advisory refresh：选择近期 observe 信号，补齐源交易/profile/score 上下文，按 Smart Money 独立 provider/request-format/model 配置构造 provider payload/input_hash，统计缓存命中与待请求数；有独立 provider key 时调用 `SmartSignalAdvisoryConnector`（与 rewards provider 共享 connectors 全局 LLM 单并发闸门）保存 advisory 并记录 `llm_calls` |
 | `worker/smart_money/profile.rs` | Smart Money wallet profile 和 source trade 构造 helper：从 Data API activity/positions/closed positions/trades 近端样本生成画像和去重源交易 |
 | `worker/high_probability.rs` | 动态高概率市场定价研究：导入本地 outcome JSON 标签，从本地 outcome 标签 + rewards candles 构建 first-touch 样本，从已入库历史样本刷新 bucket stats，持久化 baseline 回测 run/trade/退出规则摘要，并用 orderbook 服务缓存执行一次性只读 observe 扫描；不抓外部 API、不执行交易 |
-| `worker/polymarket_config.rs` | Polymarket 配置刷新 |
+| `worker/polymarket_config.rs` | Polymarket live connector 配置构造 |
 | `worker/polymarket_events.rs` | Polymarket 用户事件 WebSocket |
 | `worker/shared.rs` | 共享辅助函数 |
 
@@ -291,7 +291,7 @@ Report: `NewsIngestionRunReport { sources_scanned/succeeded/failed, fetched, ins
 ## 当前状态
 
 - 常用维护/调试子命令已实现，`polyedge-worker` 仍作为 CLI 兼容入口保留
-- `run` 主循环包含 database-maintenance、register-orderbook-tokens、rewards、copytrade、Smart Money、news 和 execution/对账等任务；Smart Money runtime 默认关闭，需同时开启 worker 开关和 Smart Money config；旧 arbitrage radar 与 signal recompute 循环已移除
+- `run` 主循环按配置开关包含 database-maintenance、register-orderbook-tokens、rewards、copytrade、Smart Money、news 和 execution/对账等任务；execution drain、paper 对账、Polymarket 私有订单/成交/用户 WS 任务代码默认关闭，部署时需显式打开；Smart Money runtime 默认关闭，需同时开启 worker 开关和 Smart Money config；旧 arbitrage radar 与 signal recompute 循环已移除
 - database-maintenance 默认生产模板开启、本地模板关闭；它集中清理可增长历史/缓存/队列表，避免 `reward_market_candles`、AI/info-risk cache、raw events、copytrade/source trade、控制命令、outbox/dedup、LLM/audit 等表无限膨胀。
 - news worker 当前只抓取 RSS/Atom XML feed；未配置 `POLYEDGE_NEWS__SOURCES_JSON` 时会读取内置默认源列表，部署模板显式写入默认源并默认设置 `POLYEDGE_NEWS__ENABLED=true`、`POLYEDGE_WORKER__POLL_NEWS=true`
 - rewards worker 会通过数据库命令队列接收前端 Run / Cancel / Reset 请求，API 进程不再执行 rewards 策略；仅支持 live 实盘模式，策略配置不依赖全局 system mode，但新买单和现有买单撤单遵守全局 kill switch
@@ -307,8 +307,8 @@ Report: `NewsIngestionRunReport { sources_scanned/succeeded/failed, fetched, ins
 - rewards full tick 已读取 Gamma `markets.category` 作为候选评分输入；命中 `preferred_categories` 时只增加候选排序分，不绕过市场质量、盘口和风控硬过滤。AI advisory / info-risk 已接入 full tick：live tick 先应用已有缓存 gate，再启动后台 combined provider refresh task 异步填充 `reward_market_advisories` 和 `reward_market_info_risks`。refresh 对同一 condition 使用一次 provider 调用同时返回到期的 advisory/info-risk section，不再支持多市场 batch；候选开放订单/持仓优先，其余按统一 standard 顺序处理，并跳过未到提前刷新窗口的缓存命中 condition。新写入的 AI/info-risk cache 使用确定性 TTL jitter 打散过期时间；每次实际外部 provider 调用会记录到 `llm_calls(task_type=reward_provider)`，失败的 HTTP/解析结果也计入失败调用。AI 开启后 provider 未配置、失败或缺缓存仍 fail closed，`avoid` 硬拦截；`allow` 且 confidence 达到 `ai_strategy_hint_min_confidence` 时，worker 会直接应用 `strategy_hint`：方向只能收窄或跳过，bid rank 只能更保守，同 condition 新增 BUY 预算会被 `max_condition_notional_usd` 硬限制，若最低 rewards size 或 venue 最小名义金额放大后的待补 notional 超过 cap，则 precheck/placement/last-look 都不会提交。信息风险 live tick 只读缓存，enforce 模式下缺缓存仍 fail closed；新 condition 首次 BUY 报价还会按配置等待信息风险缓存和首单观察窗口，已有订单/持仓 condition 不受该首单 gate 限制。
 - rewards full tick 现在在标记 `pre_ai_eligible` 和启动 AI/info-risk provider refresh 前执行 live funding precheck；无开放订单/持仓的新 condition 若当前可用资金放不下最低 rewards size 待补腿，会先写入 funding reason 并退出普通 provider 队列，从而减少大模型请求，已有订单/持仓 condition 仍保留 provider 优先级。
 - rewards full tick 和 fast reconcile 在 managed order 同步后总会读取 CLOB open-order snapshot，收养/重开可映射到 active reward market 的开放 BUY，并刷新账户开放 buy notional；只有同轮 managed order 状态/成交对账可靠时，才会关闭缺失或 snapshot 中已非 active 的普通 managed BUY，避免单订单查询瞬时失败时被 snapshot 误关；资金钱包地址优先使用 `POLYEDGE_POLYMARKET__FUNDER`，未配置时使用 `ACCOUNT_ID`；CLOB balance 为 0 或失败但链上 pUSD 余额大于 0 时，账户 snapshot 用 Polygon pUSD 余额回填；新确认成交所在周期及其后 120 秒只延后外部 balance/positions 替换，避免 CLOB/Data API 最终一致性回滚本地账本；外部库存补 SELL intent 可覆盖当前 rewards catalog 之外的 condition
-- 默认大部分 worker 通过配置开关控制启用/禁用
-- Polymarket live 任务需要真实凭证；Deposit Wallet 使用 `POLYEDGE_POLYMARKET__SIGNATURE_TYPE=poly_1271` + `POLYEDGE_POLYMARKET__FUNDER=<deposit_wallet>`，worker 会通过 connector 走 CLOB V2 `POLY_1271` 下单/撤单路径。
+- 默认大部分 worker 通过配置开关控制启用/禁用；交易/对账类 worker 不依赖代码默认自动启动。
+- Polymarket live 任务需要真实凭证；API 内嵌 `WorkerRuntime` 在启动 rewards live、Polymarket execution drain、订单状态轮询、成交对账或用户 WS 前会检查 `POLYEDGE_POLYMARKET__ACCOUNT_ID`、`POLYEDGE_POLYMARKET__PRIVATE_KEY`，以及可选 API credential 是否三项同时配置。配置不完整时只记录一次启动告警并跳过对应常驻 job，CLI 子命令和 connector 直接调用仍会返回精确错误。Deposit Wallet 使用 `POLYEDGE_POLYMARKET__SIGNATURE_TYPE=poly_1271` + `POLYEDGE_POLYMARKET__FUNDER=<deposit_wallet>`，worker 会通过 connector 走 CLOB V2 `POLY_1271` 下单/撤单路径。
 - Rewards 生产与测试入口均已移除 `RewardSimulationOutcome` / `simulated_orders` 旧命名，统一使用 `RewardTickOutcome` / `placed_orders`。
 
 ## 修改检查清单

@@ -89,12 +89,12 @@ mod tests {
         assert!(settings.worker.poll_news);
         assert!(settings.worker.promote_news_events);
         assert!(!settings.worker.poll_reward_bot);
-        assert!(settings.worker.drain_execution_queue);
-        assert!(settings.worker.poll_paper_order_statuses);
-        assert!(settings.worker.reconcile_paper_fills);
-        assert!(settings.worker.poll_polymarket_order_statuses);
-        assert!(settings.worker.reconcile_polymarket_fills);
-        assert!(settings.worker.consume_polymarket_user_events);
+        assert!(!settings.worker.drain_execution_queue);
+        assert!(!settings.worker.poll_paper_order_statuses);
+        assert!(!settings.worker.reconcile_paper_fills);
+        assert!(!settings.worker.poll_polymarket_order_statuses);
+        assert!(!settings.worker.reconcile_polymarket_fills);
+        assert!(!settings.worker.consume_polymarket_user_events);
         assert!(settings.worker.consume_orderbook_stream);
         assert!(!settings.worker.poll_smart_money);
         assert_eq!(settings.worker.smart_money_interval_secs, 900);
