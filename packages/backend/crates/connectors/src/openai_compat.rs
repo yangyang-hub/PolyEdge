@@ -1,4 +1,6 @@
-use polyedge_application::{RewardAiProvider, reward_ai_model_requires_openai_chat_completions};
+use polyedge_application::{
+    RewardAiProvider, reward_ai_model_is_glm_reasoning, reward_ai_model_requires_openai_chat_completions,
+};
 use reqwest::RequestBuilder;
 use serde::Deserialize;
 use serde_json::Value;
@@ -61,6 +63,17 @@ pub(crate) fn openai_compatible_chat_token_limit_field(model: &str) -> &'static 
     } else {
         "max_completion_tokens"
     }
+}
+
+/// For GLM reasoning models that emit chain-of-thought by default (the glm-4.7
+/// family), returns a `{"type": "disabled"}` value to assign to the
+/// `thinking` field of a chat-completions body. Disabling thinking keeps the
+/// output budget in `content` instead of burning it on `reasoning_content`
+/// (which truncates `content` to empty under a tight `max_tokens`). Returns
+/// `None` for non-reasoning models so the field is never sent to providers that
+/// would reject it.
+pub(crate) fn openai_compatible_chat_thinking_disabled(model: &str) -> Option<Value> {
+    reward_ai_model_is_glm_reasoning(model).then(|| json!({"type": "disabled"}))
 }
 
 pub(crate) fn provider_json_candidates(text: &str) -> Vec<Value> {
@@ -219,6 +232,24 @@ mod tests {
             openai_compatible_chat_token_limit_field("deepseek-v4-flash"),
             "max_tokens"
         );
+    }
+
+    #[test]
+    fn chat_thinking_disabled_only_for_glm_reasoning_models() {
+        assert_eq!(
+            openai_compatible_chat_thinking_disabled("glm-4.7-flashx"),
+            Some(json!({"type": "disabled"}))
+        );
+        assert_eq!(
+            openai_compatible_chat_thinking_disabled("GLM-4.7"),
+            Some(json!({"type": "disabled"}))
+        );
+        assert_eq!(openai_compatible_chat_thinking_disabled("glm-4.5-flash"), None);
+        assert_eq!(
+            openai_compatible_chat_thinking_disabled("deepseek-v4-flash"),
+            None
+        );
+        assert_eq!(openai_compatible_chat_thinking_disabled("gpt-4.1-mini"), None);
     }
 
     #[test]

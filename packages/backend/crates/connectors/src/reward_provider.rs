@@ -8,8 +8,9 @@
 
 use crate::openai_compat::{
     is_openai_compatible_chat_provider, openai_compatible_chat_response_format,
-    openai_compatible_chat_token_limit_field, openai_compatible_endpoint, provider_json_candidates,
-    provider_response_preview, with_openai_compatible_auth,
+    openai_compatible_chat_thinking_disabled, openai_compatible_chat_token_limit_field,
+    openai_compatible_endpoint, provider_json_candidates, provider_response_preview,
+    with_openai_compatible_auth,
 };
 use crate::reward_ai::{
     extract_openai_responses_text, parse_reward_ai_decision_value,
@@ -30,10 +31,12 @@ use std::time::Duration;
 
 // Combined output is the union of the advisory object (~allow_quote, confidence,
 // conservative strategy_hint, reasons, metrics) and the info-risk object
-// (~allow_quote, confidence, summary, sources, metrics). Keep the budget tight so
-// heavy/reasoning provider models finish well under the provider's ~80-85s
-// connection-drop ceiling.
-const REWARD_PROVIDER_CHAT_COMPLETION_MAX_TOKENS: u32 = 2048;
+// (~allow_quote, confidence, summary, sources, metrics). GLM reasoning models
+// (glm-4.7 family) have thinking disabled in `call_openai_chat_completions`, so
+// this budget lands in `content` instead of being consumed by
+// `reasoning_content`; keep headroom for the rare case thinking cannot be turned
+// off so the message is not truncated to empty (`finish_reason: length`).
+const REWARD_PROVIDER_CHAT_COMPLETION_MAX_TOKENS: u32 = 8192;
 const REWARD_PROVIDER_ANTHROPIC_MAX_TOKENS: u32 = 2048;
 
 #[derive(Debug, Clone)]
@@ -166,6 +169,9 @@ impl RewardProviderConnector {
         });
         body[openai_compatible_chat_token_limit_field(&request.model)] =
             json!(REWARD_PROVIDER_CHAT_COMPLETION_MAX_TOKENS);
+        if let Some(thinking) = openai_compatible_chat_thinking_disabled(&request.model) {
+            body["thinking"] = thinking;
+        }
         let response = with_openai_compatible_auth(
             self.client.post(openai_compatible_endpoint(
                 &self.base_url,

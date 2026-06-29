@@ -450,6 +450,17 @@ pub fn reward_ai_model_requires_openai_chat_completions(model: &str) -> bool {
     normalized.contains("glm") || normalized.contains("deepseek")
 }
 
+/// Returns true for GLM reasoning models that enable chain-of-thought by
+/// default (the glm-4.7 family, including `glm-4.7-flashx`). For these models
+/// the worker disables thinking on chat-completions calls so the output budget
+/// lands in `content` instead of being consumed by `reasoning_content`, which
+/// otherwise truncates the message to an empty string under a tight `max_tokens`
+/// (observed as `finish_reason: length`, `content: ""`).
+#[must_use]
+pub fn reward_ai_model_is_glm_reasoning(model: &str) -> bool {
+    model.to_ascii_lowercase().contains("glm-4.7")
+}
+
 #[must_use]
 pub fn reward_ai_effective_request_format(
     provider: RewardAiProvider,
