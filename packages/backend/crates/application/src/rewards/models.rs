@@ -99,6 +99,87 @@ impl FromStr for PostFillStrategy {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RewardStrategyProfile {
+    Standard,
+    BalancedMerge,
+}
+
+impl RewardStrategyProfile {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Standard => "standard",
+            Self::BalancedMerge => "balanced_merge",
+        }
+    }
+}
+
+impl FromStr for RewardStrategyProfile {
+    type Err = AppError;
+
+    fn from_str(value: &str) -> Result<Self> {
+        match value {
+            "standard" => Ok(Self::Standard),
+            "balanced_merge" | "balanced_yes_no_merge" => Ok(Self::BalancedMerge),
+            other => Err(AppError::invalid_input(
+                "REWARD_STRATEGY_PROFILE_INVALID",
+                format!("unknown reward strategy profile: {other}"),
+            )),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RewardMergeIntentStatus {
+    Pending,
+    Unsupported,
+    Submitted,
+    Completed,
+    Failed,
+}
+
+impl RewardMergeIntentStatus {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Unsupported => "unsupported",
+            Self::Submitted => "submitted",
+            Self::Completed => "completed",
+            Self::Failed => "failed",
+        }
+    }
+
+    #[must_use]
+    pub const fn counts_as_active_pair(self) -> bool {
+        matches!(
+            self,
+            Self::Pending | Self::Unsupported | Self::Submitted | Self::Completed
+        )
+    }
+}
+
+impl FromStr for RewardMergeIntentStatus {
+    type Err = AppError;
+
+    fn from_str(value: &str) -> Result<Self> {
+        match value {
+            "pending" => Ok(Self::Pending),
+            "unsupported" => Ok(Self::Unsupported),
+            "submitted" => Ok(Self::Submitted),
+            "completed" => Ok(Self::Completed),
+            "failed" => Ok(Self::Failed),
+            other => Err(AppError::invalid_input(
+                "REWARD_MERGE_INTENT_STATUS_INVALID",
+                format!("unknown reward merge intent status: {other}"),
+            )),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RewardFillRole {
@@ -392,6 +473,21 @@ pub struct RewardBotConfig {
     pub requote_drift_max_cancels_per_cycle: u16,
     /// What to do with inventory once a quote leg is filled.
     pub post_fill_strategy: PostFillStrategy,
+    /// Enable a separate low-activity YES/NO buy-one sleeve that keeps the
+    /// opposite BUY resting after a fill and creates a merge intent once both
+    /// sides are paired.
+    pub balanced_merge_enabled: bool,
+    pub balanced_merge_max_markets: u16,
+    pub balanced_merge_max_open_orders: u16,
+    /// Required edge for paired YES/NO buys: YES bid + NO bid must be at most
+    /// `1 - min_edge`.
+    pub balanced_merge_min_edge_cents: Decimal,
+    pub balanced_merge_min_market_score: Decimal,
+    pub balanced_merge_min_market_liquidity_usd: Decimal,
+    pub balanced_merge_min_market_volume_24h_usd: Decimal,
+    pub balanced_merge_max_market_spread_cents: Decimal,
+    pub balanced_merge_quote_bid_rank: u16,
+    pub balanced_merge_max_unpaired_position_usd: Decimal,
     // -- Risk control fields (0 = disabled) --
     /// Minimum external bid depth (USD) at or above our order price to keep resting.
     /// The managed order's own remaining notional is excluded.
@@ -662,6 +758,26 @@ pub struct RewardBotConfigPatch {
     pub requote_drift_max_cancels_per_cycle: Option<u16>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub post_fill_strategy: Option<PostFillStrategy>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub balanced_merge_enabled: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub balanced_merge_max_markets: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub balanced_merge_max_open_orders: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub balanced_merge_min_edge_cents: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub balanced_merge_min_market_score: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub balanced_merge_min_market_liquidity_usd: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub balanced_merge_min_market_volume_24h_usd: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub balanced_merge_max_market_spread_cents: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub balanced_merge_quote_bid_rank: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub balanced_merge_max_unpaired_position_usd: Option<Decimal>,
     // -- Risk control fields --
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub min_depth_usd: Option<Decimal>,

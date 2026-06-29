@@ -263,8 +263,15 @@ fn live_event_hard_cancel_candidates_with_account(
                 && live_event_cancel_order_matches_updated_tokens(order, &plan_index, token_ids)
         })
         .filter_map(|order| {
+            let order_config = reward_live_plan_for_order(&plan_index, order)
+                .map(|plan| {
+                    config
+                        .config_for_strategy_bucket(plan.strategy_bucket)
+                        .config_for_strategy_profile(plan.strategy_profile)
+                })
+                .unwrap_or_else(|| config.config_for_strategy_profile(order.strategy_profile));
             live_event_hard_cancel_reason(
-                config,
+                &order_config,
                 &plan_index,
                 books,
                 book_history,
@@ -330,8 +337,8 @@ fn live_event_hard_cancel_reason(
             .map(|age_ms| live_orderbook_stale_reason(age_ms, config.stale_book_ms));
     }
 
-    let Some(plan) = plans.get(order.condition_id.as_str()) else {
-        return Some("market no longer offers rewards".to_string());
+    let Some(plan) = reward_live_plan_for_order(plans, order) else {
+        return Some(reward_live_missing_order_plan_reason(plans, order));
     };
     if !plan.eligible {
         return Some("market dropped below eligibility threshold".to_string());

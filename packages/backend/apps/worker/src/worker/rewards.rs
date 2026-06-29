@@ -200,7 +200,33 @@ async fn persist_live_reward_updates(
     report: &RewardBotRunReport,
     trace_id: &str,
 ) -> Result<()> {
-    if orders.is_empty() && fills.is_empty() && events.is_empty() {
+    persist_live_reward_updates_with_merge_intents(
+        state,
+        account,
+        positions,
+        orders,
+        fills,
+        Vec::new(),
+        events,
+        report,
+        trace_id,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn persist_live_reward_updates_with_merge_intents(
+    state: &AppState,
+    account: &mut RewardAccountState,
+    positions: Vec<RewardPosition>,
+    orders: Vec<ManagedRewardOrder>,
+    fills: Vec<RewardFill>,
+    merge_intents: Vec<RewardMergeIntent>,
+    events: Vec<RewardRiskEvent>,
+    report: &RewardBotRunReport,
+    trace_id: &str,
+) -> Result<()> {
+    if orders.is_empty() && fills.is_empty() && merge_intents.is_empty() && events.is_empty() {
         return Ok(());
     }
 
@@ -216,6 +242,7 @@ async fn persist_live_reward_updates(
                 orders,
                 positions,
                 fills,
+                merge_intents,
                 events,
                 report: report.clone(),
             },
@@ -458,10 +485,12 @@ async fn run_reward_bot_live_tick(
         reward_accrued: Decimal::ZERO,
     };
 
+    let mut live_order_sync_reliable = true;
     if !cycle.open_orders.is_empty() {
         let sync_report =
             sync_live_reward_orders(state, connector, &cycle.open_orders, &books, trace_id).await?;
-        accumulate_report(&mut report, &sync_report);
+        live_order_sync_reliable = sync_report.reconciliation_reliable;
+        accumulate_report(&mut report, &sync_report.report);
         let latest = state.reward_bot_service.current_live_cycle_state().await?;
         cycle.account = latest.account;
         cycle.open_orders = latest.open_orders;
@@ -483,6 +512,7 @@ async fn run_reward_bot_live_tick(
         &mut cycle.open_orders,
         trace_id,
         can_refresh_external_account_after_order_sync(&report),
+        live_order_sync_reliable,
     )
     .await;
 

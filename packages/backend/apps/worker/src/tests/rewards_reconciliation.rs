@@ -299,6 +299,20 @@ fn external_open_order_snapshot_closes_missing_managed_buy() {
 }
 
 #[test]
+fn external_open_order_snapshot_does_not_close_when_order_reconciliation_unreliable() {
+    let missing = live_test_open_order("no_live");
+
+    let updates = close_managed_orders_absent_from_open_snapshot_if_reliable(
+        &[missing],
+        &[],
+        "trc_open_snapshot",
+        false,
+    );
+
+    assert!(updates.is_empty());
+}
+
+#[test]
 fn external_open_order_snapshot_closes_accepted_cancel_but_preserves_hard_locks_or_sell_orders() {
     let mut pending_cancel = live_test_open_order("pending_cancel");
     pending_cancel.reason = "risk cancel; cancel accepted; awaiting final reconciliation".to_string();
@@ -599,6 +613,7 @@ async fn live_tick_persistence_keeps_market_catalog_and_blocks_active_account_ch
                 orders: vec![live_test_open_order("yes_live")],
                 positions: Vec::new(),
                 fills: Vec::new(),
+                merge_intents: Vec::new(),
                 events: Vec::new(),
                 report: RewardBotRunReport::default(),
             },

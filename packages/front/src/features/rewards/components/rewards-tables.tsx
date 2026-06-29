@@ -16,6 +16,7 @@ import type {
   RewardListPageDto,
   RewardPlanQuoteMode,
   RewardQuotePlanDto,
+  RewardStrategyProfile,
   RewardTokenQuoteDto,
 } from "@/lib/contracts/dto";
 import { formatFixed, formatUsdFixed } from "@/lib/formatters";
@@ -58,6 +59,11 @@ function quoteModeLabel(mode?: RewardPlanQuoteMode) {
   if (mode === "single_no") return dictionary.rewards.quoteModeSingleNo;
   if (mode === "none") return dictionary.rewards.quoteModeNone;
   return dictionary.rewards.notAvailable;
+}
+
+function strategyProfileLabel(profile?: RewardStrategyProfile | null) {
+  if (profile === "balanced_merge") return dictionary.rewards.strategyProfileBalancedMerge;
+  return dictionary.rewards.strategyProfileStandard;
 }
 
 function paginationFromPage(
@@ -183,9 +189,14 @@ export function QuotePlansTable({
             </TableRow>
           ) : (
             plans.map((plan) => (
-              <TableRow key={plan.condition_id}>
+              <TableRow key={`${plan.condition_id}:${plan.strategy_profile ?? "standard"}`}>
                 <TableCell className="whitespace-normal align-top">
                   <div className="space-y-1">
+                    <div className="flex flex-wrap items-center gap-1">
+                      <StatusPill tone={plan.strategy_profile === "balanced_merge" ? "warning" : "neutral"}>
+                        {strategyProfileLabel(plan.strategy_profile)}
+                      </StatusPill>
+                    </div>
                     <TruncateText text={plan.question} lines={2} className="font-medium leading-snug" />
                     <TruncateText text={plan.reason} lines={1} className="text-xs leading-5 text-muted-foreground" />
                   </div>
@@ -375,7 +386,12 @@ export function OrdersTable({
               return (
                 <TableRow key={order.id}>
                   <TableCell className="align-top">
-                    <StatusPill tone={rewardTone(order.status)}>{order.status}</StatusPill>
+                    <div className="flex flex-col items-start gap-1">
+                      <StatusPill tone={rewardTone(order.status)}>{order.status}</StatusPill>
+                      <StatusPill tone={order.strategy_profile === "balanced_merge" ? "warning" : "neutral"}>
+                        {strategyProfileLabel(order.strategy_profile)}
+                      </StatusPill>
+                    </div>
                   </TableCell>
                   <TableCell className="align-top">{order.outcome}</TableCell>
                   <TableCell className="align-top font-mono">{formatFixed(order.price, 2)}</TableCell>

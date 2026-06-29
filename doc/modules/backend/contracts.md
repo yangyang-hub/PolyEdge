@@ -1,6 +1,6 @@
 # contracts（HTTP API DTO 层）
 
-最后更新：2026-06-27
+最后更新：2026-06-29
 
 ## 概述
 
@@ -52,7 +52,7 @@
 - Funding DTO 覆盖后端资金钱包入金状态、支持资产、USDC/USDT 链上余额和转账回执；请求只包含 `token_id`、`amount`、`confirmed`，不包含充值地址或私钥字段。
 - Rewards snapshot 查询契约包含订单后端分页字段，响应分页元数据由 application 的 `RewardBotSnapshot.orders_page` 序列化输出
 - Rewards snapshot 的 `orders` 与 `orders_page` 都描述本地 managed-order 查询；外部账户全量开放订单不属于当前响应契约
-- Rewards config DTO 公开市场质量门槛、`quote_bid_rank`、AI provider/request format 和信息风险配置；`RewardAiProvider::OpenAi` 的 wire value 固定为 `openai`，OpenAI request format 固定为 `openai_responses` / `openai_chat_completions`，并兼容读取旧的 `open_ai*` 拼写。不再公开旧报价偏移、模拟填单或 stale force-cancel 配置
+- contracts crate 目前只定义 Rewards snapshot 查询参数（计划/订单分页、搜索、状态和排序）；Rewards snapshot/config/order/plan 响应体直接使用 application 层模型序列化。前端 `src/lib/contracts/dto/rewards.ts` 需要跟随 application 模型镜像，如 `strategy_profile` 和 `balanced_merge_*` 配置字段；本 crate 未新增对应 DTO 文件
 
 ## 修改检查清单
 

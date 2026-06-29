@@ -134,6 +134,12 @@ pub trait RewardBotStore: Send + Sync {
     async fn reward_fill_exists(&self, fill_id: &str) -> Result<bool>;
     /// Timestamp of the latest confirmed managed fill for an account.
     async fn latest_fill_at(&self, account_id: &str) -> Result<Option<OffsetDateTime>>;
+    /// Total paired YES/NO size already represented by non-failed merge intents.
+    async fn active_merge_intent_size(
+        &self,
+        account_id: &str,
+        condition_id: &str,
+    ) -> Result<Decimal>;
     /// Persist account, order, fill, position, and event changes atomically.
     ///
     /// Reward market catalogs and quote-plan snapshots have separate full-replacement

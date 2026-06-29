@@ -123,6 +123,16 @@ impl Default for RewardBotConfig {
             requote_drift_cooldown_sec: 300,
             requote_drift_max_cancels_per_cycle: 1,
             post_fill_strategy: PostFillStrategy::ExitAtMarkup,
+            balanced_merge_enabled: false,
+            balanced_merge_max_markets: 2,
+            balanced_merge_max_open_orders: 4,
+            balanced_merge_min_edge_cents: decimal("1"),
+            balanced_merge_min_market_score: decimal("8"),
+            balanced_merge_min_market_liquidity_usd: Decimal::ZERO,
+            balanced_merge_min_market_volume_24h_usd: Decimal::ZERO,
+            balanced_merge_max_market_spread_cents: decimal("20"),
+            balanced_merge_quote_bid_rank: 1,
+            balanced_merge_max_unpaired_position_usd: decimal("20"),
             // Risk control defaults: all disabled (0 = off)
             min_depth_usd: Decimal::ZERO,
             cancel_bid_rank: 0,
@@ -476,6 +486,40 @@ impl RewardBotConfig {
         self.requote_drift_cooldown_sec = self.requote_drift_cooldown_sec.clamp(0, 86_400);
         self.requote_drift_max_cancels_per_cycle =
             self.requote_drift_max_cancels_per_cycle.clamp(0, 100);
+        self.balanced_merge_max_markets = self.balanced_merge_max_markets.clamp(0, u16::MAX);
+        self.balanced_merge_max_open_orders =
+            self.balanced_merge_max_open_orders.clamp(0, u16::MAX);
+        self.balanced_merge_min_edge_cents = clamp_decimal(
+            self.balanced_merge_min_edge_cents,
+            Decimal::ZERO,
+            decimal("20"),
+        );
+        self.balanced_merge_min_market_score = clamp_decimal(
+            self.balanced_merge_min_market_score,
+            Decimal::ZERO,
+            decimal("100"),
+        );
+        self.balanced_merge_min_market_liquidity_usd = clamp_decimal(
+            self.balanced_merge_min_market_liquidity_usd,
+            Decimal::ZERO,
+            decimal("1000000000"),
+        );
+        self.balanced_merge_min_market_volume_24h_usd = clamp_decimal(
+            self.balanced_merge_min_market_volume_24h_usd,
+            Decimal::ZERO,
+            decimal("1000000000"),
+        );
+        self.balanced_merge_max_market_spread_cents = clamp_decimal(
+            self.balanced_merge_max_market_spread_cents,
+            decimal("0.1"),
+            decimal("100"),
+        );
+        self.balanced_merge_quote_bid_rank = self.balanced_merge_quote_bid_rank.clamp(1, 3);
+        self.balanced_merge_max_unpaired_position_usd = clamp_decimal(
+            self.balanced_merge_max_unpaired_position_usd,
+            Decimal::ZERO,
+            decimal("1000000"),
+        );
         // Risk control clamps
         self.min_depth_usd = clamp_decimal(self.min_depth_usd, Decimal::ZERO, decimal("1000000"));
         self.cancel_bid_rank = self
@@ -534,8 +578,54 @@ impl RewardBotConfig {
     }
 
     #[must_use]
+    pub fn balanced_merge_candidate_filter(&self) -> Option<RewardCandidateFilter> {
+        if !self.balanced_merge_enabled
+            || self.balanced_merge_max_markets == 0
+            || self.balanced_merge_max_open_orders == 0
+        {
+            return None;
+        }
+
+        let mut filter = self.candidate_filter();
+        filter.min_market_liquidity_usd = self.balanced_merge_min_market_liquidity_usd;
+        filter.min_market_volume_24h_usd = self.balanced_merge_min_market_volume_24h_usd;
+        filter.max_market_spread_cents = self.balanced_merge_max_market_spread_cents;
+        filter.allow_dominant_single_side = false;
+        filter.prefer_low_competition_ordering = true;
+        Some(filter)
+    }
+
+    #[must_use]
     pub fn config_for_strategy_bucket(&self, _bucket: RewardStrategyBucket) -> Self {
         self.clone()
+    }
+
+    #[must_use]
+    pub fn config_for_strategy_profile(&self, profile: RewardStrategyProfile) -> Self {
+        let mut config = self.clone();
+        if profile != RewardStrategyProfile::BalancedMerge {
+            return config;
+        }
+
+        if !self.balanced_merge_enabled {
+            config.max_markets = 0;
+            config.max_open_orders = 0;
+            return config.normalized();
+        }
+
+        config.max_markets = self.balanced_merge_max_markets;
+        config.max_open_orders = self.balanced_merge_max_open_orders;
+        config.min_market_score = self.balanced_merge_min_market_score;
+        config.min_market_liquidity_usd = self.balanced_merge_min_market_liquidity_usd;
+        config.min_market_volume_24h_usd = self.balanced_merge_min_market_volume_24h_usd;
+        config.max_market_spread_cents = self.balanced_merge_max_market_spread_cents;
+        config.quote_mode = RewardQuoteMode::Double;
+        config.selection_mode = RewardSelectionMode::Observe;
+        config.dominant_single_side_enabled = false;
+        config.quote_bid_rank = self.balanced_merge_quote_bid_rank;
+        config.safety_margin_cents = self.balanced_merge_min_edge_cents;
+        config.max_position_usd = self.balanced_merge_max_unpaired_position_usd;
+        config.normalized()
     }
 
     #[must_use]
@@ -895,6 +985,36 @@ impl RewardBotConfig {
         }
         if let Some(post_fill_strategy) = patch.post_fill_strategy {
             next.post_fill_strategy = post_fill_strategy;
+        }
+        if let Some(value) = patch.balanced_merge_enabled {
+            next.balanced_merge_enabled = value;
+        }
+        if let Some(value) = patch.balanced_merge_max_markets {
+            next.balanced_merge_max_markets = value;
+        }
+        if let Some(value) = patch.balanced_merge_max_open_orders {
+            next.balanced_merge_max_open_orders = value;
+        }
+        if let Some(value) = patch.balanced_merge_min_edge_cents {
+            next.balanced_merge_min_edge_cents = value;
+        }
+        if let Some(value) = patch.balanced_merge_min_market_score {
+            next.balanced_merge_min_market_score = value;
+        }
+        if let Some(value) = patch.balanced_merge_min_market_liquidity_usd {
+            next.balanced_merge_min_market_liquidity_usd = value;
+        }
+        if let Some(value) = patch.balanced_merge_min_market_volume_24h_usd {
+            next.balanced_merge_min_market_volume_24h_usd = value;
+        }
+        if let Some(value) = patch.balanced_merge_max_market_spread_cents {
+            next.balanced_merge_max_market_spread_cents = value;
+        }
+        if let Some(value) = patch.balanced_merge_quote_bid_rank {
+            next.balanced_merge_quote_bid_rank = value;
+        }
+        if let Some(value) = patch.balanced_merge_max_unpaired_position_usd {
+            next.balanced_merge_max_unpaired_position_usd = value;
         }
         // Risk control patches
         if let Some(v) = patch.min_depth_usd {

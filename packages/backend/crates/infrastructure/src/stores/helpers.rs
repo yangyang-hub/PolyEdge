@@ -158,6 +158,7 @@ async fn insert_reward_order(
           price,
           size,
           strategy_bucket,
+          strategy_profile,
           external_order_id,
           status,
           scoring,
@@ -169,11 +170,12 @@ async fn insert_reward_order(
           updated_at,
           trace_id
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
         ON CONFLICT (id) DO UPDATE
         SET price = EXCLUDED.price,
             size = EXCLUDED.size,
             strategy_bucket = EXCLUDED.strategy_bucket,
+            strategy_profile = EXCLUDED.strategy_profile,
             external_order_id = EXCLUDED.external_order_id,
             status = EXCLUDED.status,
             scoring = EXCLUDED.scoring,
@@ -194,6 +196,7 @@ async fn insert_reward_order(
     .bind(order.price)
     .bind(order.size)
     .bind(order.strategy_bucket.as_str())
+    .bind(order.strategy_profile.as_str())
     .bind(&order.external_order_id)
     .bind(order.status.as_str())
     .bind(order.scoring)
@@ -250,6 +253,70 @@ async fn insert_reward_fill(
         db_error(
             "POSTGRES_INSERT_FAILED",
             format!("failed to insert reward fill: {error}"),
+        )
+    })?;
+    Ok(())
+}
+
+async fn upsert_reward_merge_intent_tx(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    intent: &RewardMergeIntent,
+) -> Result<()> {
+    sqlx::query(
+        r#"
+        INSERT INTO reward_merge_intents (
+          id,
+          account_id,
+          condition_id,
+          yes_token_id,
+          no_token_id,
+          merge_size,
+          yes_position_size,
+          no_position_size,
+          yes_avg_price,
+          no_avg_price,
+          status,
+          reason,
+          source_fill_id,
+          trace_id,
+          created_at,
+          updated_at
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+        ON CONFLICT (id) DO UPDATE
+        SET merge_size = EXCLUDED.merge_size,
+            yes_position_size = EXCLUDED.yes_position_size,
+            no_position_size = EXCLUDED.no_position_size,
+            yes_avg_price = EXCLUDED.yes_avg_price,
+            no_avg_price = EXCLUDED.no_avg_price,
+            status = EXCLUDED.status,
+            reason = EXCLUDED.reason,
+            trace_id = EXCLUDED.trace_id,
+            updated_at = EXCLUDED.updated_at
+        "#,
+    )
+    .bind(&intent.id)
+    .bind(&intent.account_id)
+    .bind(&intent.condition_id)
+    .bind(&intent.yes_token_id)
+    .bind(&intent.no_token_id)
+    .bind(intent.merge_size)
+    .bind(intent.yes_position_size)
+    .bind(intent.no_position_size)
+    .bind(intent.yes_avg_price)
+    .bind(intent.no_avg_price)
+    .bind(intent.status.as_str())
+    .bind(&intent.reason)
+    .bind(&intent.source_fill_id)
+    .bind(&intent.trace_id)
+    .bind(intent.created_at)
+    .bind(intent.updated_at)
+    .execute(&mut **transaction)
+    .await
+    .map_err(|error| {
+        db_error(
+            "POSTGRES_UPSERT_FAILED",
+            format!("failed to upsert reward merge intent: {error}"),
         )
     })?;
     Ok(())
@@ -333,6 +400,9 @@ fn reward_order_from_row(row: &sqlx::postgres::PgRow) -> Result<ManagedRewardOrd
     let strategy_bucket_raw: String = row
         .try_get("strategy_bucket")
         .map_err(postgres_decode_error)?;
+    let strategy_profile_raw: String = row
+        .try_get("strategy_profile")
+        .map_err(postgres_decode_error)?;
     Ok(ManagedRewardOrder {
         id: row.try_get("id").map_err(postgres_decode_error)?,
         account_id: row.try_get("account_id").map_err(postgres_decode_error)?,
@@ -343,6 +413,7 @@ fn reward_order_from_row(row: &sqlx::postgres::PgRow) -> Result<ManagedRewardOrd
         price: row.try_get("price").map_err(postgres_decode_error)?,
         size: row.try_get("size").map_err(postgres_decode_error)?,
         strategy_bucket: RewardStrategyBucket::from_str(&strategy_bucket_raw)?,
+        strategy_profile: RewardStrategyProfile::from_str(&strategy_profile_raw)?,
         external_order_id: row
             .try_get("external_order_id")
             .map_err(postgres_decode_error)?,

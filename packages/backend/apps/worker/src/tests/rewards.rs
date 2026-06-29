@@ -182,6 +182,56 @@ fn live_buy_submission_last_look_reprices_to_current_target() {
 }
 
 #[test]
+fn live_buy_submission_last_look_checks_ai_cap_without_price_change() {
+    let config = RewardBotConfig {
+        account_id: "reward_live".to_string(),
+        stale_book_ms: 0,
+        max_global_position_usd: Decimal::ZERO,
+        ai_strategy_hint_enabled: true,
+        ai_strategy_hint_min_confidence: reward_decimal("0.75"),
+        ..RewardBotConfig::default()
+    };
+    let now = OffsetDateTime::now_utc();
+    let mut plan = live_test_plan(now);
+    plan.ai_advisory = Some(live_test_allow_advisory_with_metrics(
+        &plan.condition_id,
+        json!({
+            "strategy_hint": {
+                "quote_mode": "double",
+                "bid_rank": 1,
+                "max_condition_notional_usd": "1"
+            }
+        }),
+        now,
+    ));
+    let mut order = live_test_open_order("yes_live");
+    order.external_order_id = None;
+    order.status = ManagedRewardOrderStatus::Planned;
+    order.price = reward_decimal("0.49");
+    order.size = reward_decimal("5");
+    let open_orders = vec![order.clone()];
+    let plans = HashMap::from([(plan.condition_id.as_str(), &plan)]);
+    let book_history = HashMap::new();
+    let account = live_test_account(Decimal::from(100_u64));
+    let context = LiveBuySubmitRiskContext {
+        config: &config,
+        plans: &plans,
+        book_history: &book_history,
+        open_orders: &open_orders,
+        positions: &[],
+        account: &account,
+        kill_switch: false,
+    };
+
+    assert!(!live_buy_submission_last_look_reprice_allowed(
+        &order,
+        &plan,
+        order.price,
+        context
+    ));
+}
+
+#[test]
 fn reward_provider_refresh_batch_needs_orderbooks_only_for_advisory_conditions() {
     let advisory_conditions = HashSet::from(["ai_condition".to_string()]);
     let info_only_batch = vec!["info_condition".to_string()];
@@ -211,6 +261,7 @@ fn live_test_plan(now: OffsetDateTime) -> RewardQuotePlan {
         quote_readiness: polyedge_application::RewardQuoteReadiness::ReadyToQuote,
         reason: "eligible".to_string(),
         strategy_bucket: polyedge_application::RewardStrategyBucket::None,
+        strategy_profile: polyedge_application::RewardStrategyProfile::Standard,
         quote_mode: polyedge_application::RewardPlanQuoteMode::Double,
         recommended_quote_mode: Some(polyedge_application::RewardPlanQuoteMode::Double),
         book_metrics: None,
@@ -245,6 +296,28 @@ fn live_test_plan(now: OffsetDateTime) -> RewardQuotePlan {
             },
         ],
         updated_at: now,
+    }
+}
+
+fn live_test_allow_advisory_with_metrics(
+    condition_id: &str,
+    metrics: Value,
+    now: OffsetDateTime,
+) -> RewardMarketAdvisory {
+    RewardMarketAdvisory {
+        condition_id: condition_id.to_string(),
+        provider: polyedge_application::RewardAiProvider::OpenAi,
+        request_format: polyedge_application::RewardAiRequestFormat::OpenAiChatCompletions,
+        model: "test-model".to_string(),
+        input_hash: "hash".to_string(),
+        suitability: polyedge_application::RewardAiSuitability::Allow,
+        quote_mode: RewardPlanQuoteMode::Double,
+        exit_policy: PostFillStrategy::ExitAtMarkup,
+        confidence: Decimal::ONE,
+        reasons: Vec::new(),
+        metrics,
+        created_at: now,
+        expires_at: now + TimeDuration::hours(1),
     }
 }
 
@@ -736,6 +809,7 @@ fn live_test_open_order(token_id: &str) -> ManagedRewardOrder {
         price: reward_decimal("0.49"),
         size: reward_decimal("20"),
         strategy_bucket: RewardStrategyBucket::Standard,
+        strategy_profile: RewardStrategyProfile::Standard,
         external_order_id: Some(format!("pm_{token_id}")),
         status: ManagedRewardOrderStatus::Open,
         scoring: true,
@@ -1036,6 +1110,131 @@ fn live_placement_uses_wallet_balance_instead_of_config_quote_budgets() {
 
     assert_eq!(orders.len(), 2);
     assert!(orders.iter().all(|order| order.size >= reward_decimal("50")));
+}
+
+#[test]
+fn live_placement_hard_blocks_ai_notional_cap_below_minimum_quote() {
+    let config = RewardBotConfig {
+        account_id: "reward_live".to_string(),
+        stale_book_ms: 0,
+        max_markets: 1,
+        max_open_orders: 2,
+        max_global_position_usd: Decimal::ZERO,
+        ai_strategy_hint_enabled: true,
+        ai_strategy_hint_min_confidence: reward_decimal("0.75"),
+        ..RewardBotConfig::default()
+    };
+    let now = OffsetDateTime::now_utc();
+    let mut plan = live_test_plan(now);
+    plan.ai_advisory = Some(live_test_allow_advisory_with_metrics(
+        &plan.condition_id,
+        json!({
+            "strategy_hint": {
+                "quote_mode": "double",
+                "bid_rank": 1,
+                "max_condition_notional_usd": "1"
+            }
+        }),
+        now,
+    ));
+    let books = HashMap::from([
+        ("yes_live".to_string(), live_test_book("yes_live", now)),
+        ("no_live".to_string(), live_test_book("no_live", now)),
+    ]);
+
+    let mut plans = vec![plan];
+    let (orders, plans_changed) = live_placement_orders(
+        &config,
+        &live_test_account(reward_decimal("100")),
+        &mut plans,
+        &books,
+        &HashMap::new(),
+        &[],
+        &[],
+        false,
+        "trc_ai_cap",
+    );
+
+    assert!(orders.is_empty());
+    assert!(plans_changed);
+    assert!(!plans[0].eligible);
+    assert!(plans[0].reason.contains("AI notional cap below required rewards quote"));
+}
+
+#[test]
+fn live_placement_profile_order_cap_only_skips_that_profile() {
+    let config = RewardBotConfig {
+        account_id: "reward_live".to_string(),
+        stale_book_ms: 0,
+        max_markets: 4,
+        max_open_orders: 1,
+        max_global_position_usd: Decimal::ZERO,
+        balanced_merge_enabled: true,
+        balanced_merge_max_markets: 1,
+        balanced_merge_max_open_orders: 2,
+        balanced_merge_min_edge_cents: Decimal::ZERO,
+        balanced_merge_max_unpaired_position_usd: Decimal::ZERO,
+        ..RewardBotConfig::default()
+    };
+    let now = OffsetDateTime::now_utc();
+    let mut standard_plan = live_test_plan(now);
+    standard_plan.condition_id = "cond_standard_cap".to_string();
+    standard_plan.market_slug = "standard-cap".to_string();
+    standard_plan.legs[0].token_id = "yes_standard_cap".to_string();
+    standard_plan.legs[1].token_id = "no_standard_cap".to_string();
+    standard_plan.orderbook_token_ids = vec![
+        "yes_standard_cap".to_string(),
+        "no_standard_cap".to_string(),
+    ];
+    let mut balanced_plan = live_test_plan(now);
+    balanced_plan.condition_id = "cond_balanced_cap".to_string();
+    balanced_plan.market_slug = "balanced-cap".to_string();
+    balanced_plan.strategy_profile = RewardStrategyProfile::BalancedMerge;
+    balanced_plan.legs[0].token_id = "yes_balanced_cap".to_string();
+    balanced_plan.legs[1].token_id = "no_balanced_cap".to_string();
+    balanced_plan.orderbook_token_ids = vec![
+        "yes_balanced_cap".to_string(),
+        "no_balanced_cap".to_string(),
+    ];
+    let books = HashMap::from([
+        (
+            "yes_standard_cap".to_string(),
+            live_test_book("yes_standard_cap", now),
+        ),
+        (
+            "no_standard_cap".to_string(),
+            live_test_book("no_standard_cap", now),
+        ),
+        (
+            "yes_balanced_cap".to_string(),
+            live_test_book("yes_balanced_cap", now),
+        ),
+        (
+            "no_balanced_cap".to_string(),
+            live_test_book("no_balanced_cap", now),
+        ),
+    ]);
+    let mut existing_standard = live_test_open_order("yes_existing_standard_cap");
+    existing_standard.condition_id = "cond_existing_standard_cap".to_string();
+    existing_standard.strategy_profile = RewardStrategyProfile::Standard;
+
+    let mut plans = vec![standard_plan, balanced_plan];
+    let (orders, _) = live_placement_orders(
+        &config,
+        &live_test_account(reward_decimal("100")),
+        &mut plans,
+        &books,
+        &HashMap::new(),
+        &[existing_standard],
+        &[],
+        false,
+        "trc_profile_cap",
+    );
+
+    assert_eq!(orders.len(), 2);
+    assert!(orders
+        .iter()
+        .all(|order| order.strategy_profile == RewardStrategyProfile::BalancedMerge));
 }
 
 #[test]
@@ -1597,6 +1796,110 @@ fn post_fill_exit_is_planned_before_live_submission() {
     assert!(exit.external_order_id.is_none());
     assert!(deferred_live_exit_is_post_only(exit));
     assert_eq!(event.event_type, "reward_live_exit_planned");
+}
+
+#[test]
+fn balanced_merge_post_fill_does_not_plan_sell_exit() {
+    let mut entry = live_test_open_order("yes_live");
+    entry.strategy_profile = RewardStrategyProfile::BalancedMerge;
+    let positions = HashMap::from([(
+        "yes_live".to_string(),
+        RewardPosition {
+            account_id: entry.account_id.clone(),
+            condition_id: entry.condition_id.clone(),
+            token_id: entry.token_id.clone(),
+            outcome: entry.outcome.clone(),
+            size: Decimal::from(5_u64),
+            avg_price: entry.price,
+            realized_pnl: Decimal::ZERO,
+            updated_at: OffsetDateTime::now_utc(),
+        },
+    )]);
+
+    let updates = plan_live_post_fill_orders(
+        &RewardBotConfig::default(),
+        &[],
+        &entry,
+        Decimal::from(5_u64),
+        &positions,
+        &HashMap::new(),
+        Decimal::ZERO,
+        "trc_balanced_merge",
+    );
+
+    assert!(updates.is_empty());
+}
+
+#[tokio::test]
+async fn balanced_merge_fill_creates_merge_intent_for_paired_positions() {
+    let state = test_state(SystemMode::LiveAuto);
+    let now = OffsetDateTime::now_utc();
+    let mut entry = live_test_open_order("yes_live");
+    entry.strategy_profile = RewardStrategyProfile::BalancedMerge;
+    entry.outcome = "Yes".to_string();
+    let fill = RewardFill {
+        id: "rewfill_pm_trade_pair_pm_yes_live".to_string(),
+        order_id: entry.id.clone(),
+        account_id: entry.account_id.clone(),
+        condition_id: entry.condition_id.clone(),
+        token_id: entry.token_id.clone(),
+        outcome: entry.outcome.clone(),
+        side: RewardOrderSide::Buy,
+        price: entry.price,
+        size: Decimal::from(5_u64),
+        notional_usd: reward_decimal("2.45"),
+        role: RewardFillRole::Maker,
+        realized_pnl: Decimal::ZERO,
+        reason: "test fill".to_string(),
+        trace_id: "trc_balanced_merge".to_string(),
+        created_at: now,
+    };
+    let positions = HashMap::from([
+        (
+            "yes_live".to_string(),
+            RewardPosition {
+                account_id: entry.account_id.clone(),
+                condition_id: entry.condition_id.clone(),
+                token_id: "yes_live".to_string(),
+                outcome: "Yes".to_string(),
+                size: Decimal::from(5_u64),
+                avg_price: reward_decimal("0.49"),
+                realized_pnl: Decimal::ZERO,
+                updated_at: now,
+            },
+        ),
+        (
+            "no_live".to_string(),
+            RewardPosition {
+                account_id: entry.account_id.clone(),
+                condition_id: entry.condition_id.clone(),
+                token_id: "no_live".to_string(),
+                outcome: "No".to_string(),
+                size: Decimal::from(7_u64),
+                avg_price: reward_decimal("0.48"),
+                realized_pnl: Decimal::ZERO,
+                updated_at: now,
+            },
+        ),
+    ]);
+
+    let (intents, events) = plan_live_balanced_merge_intent(
+        &state,
+        &entry,
+        &fill,
+        &positions,
+        "trc_balanced_merge",
+    )
+    .await
+    .expect("balanced merge intent");
+
+    assert_eq!(intents.len(), 1);
+    assert_eq!(intents[0].id, "rewmerge_rewfill_pm_trade_pair_pm_yes_live");
+    assert_eq!(intents[0].status, RewardMergeIntentStatus::Unsupported);
+    assert_eq!(intents[0].merge_size, Decimal::from(5_u64));
+    assert_eq!(intents[0].yes_token_id, "yes_live");
+    assert_eq!(intents[0].no_token_id, "no_live");
+    assert_eq!(events[0].event_type, "reward_live_balanced_merge_intent_created");
 }
 
 #[test]
@@ -2187,6 +2490,29 @@ fn live_placement_applies_min_depth_before_submission() {
 
     assert_eq!(placements.len(), 1);
     assert_eq!(placements[0].token_id, "no_live");
+}
+
+#[test]
+fn live_cancel_uses_strategy_profile_when_matching_quote_plan() {
+    let config = RewardBotConfig {
+        account_id: "reward_live".to_string(),
+        balanced_merge_enabled: false,
+        max_markets: 1,
+        max_open_orders: 2,
+        ..RewardBotConfig::default()
+    };
+    let now = OffsetDateTime::now_utc();
+    let plan = live_test_plan(now);
+    let mut order = live_test_open_order("yes_live");
+    order.strategy_profile = RewardStrategyProfile::BalancedMerge;
+    let books = HashMap::from([("yes_live".to_string(), live_test_book("yes_live", now))]);
+
+    let candidates =
+        live_cancel_candidates(&config, &[plan], &[order], &books, &HashMap::new(), false);
+
+    assert_eq!(candidates.len(), 1);
+    assert!(candidates[0].1.contains("balanced_merge"));
+    assert!(candidates[0].1.contains("no longer appears"));
 }
 
 #[test]

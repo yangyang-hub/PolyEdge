@@ -20,6 +20,7 @@ import type {
   RewardRiskSeverity,
   RewardSelectionMode,
   RewardStrategyBucket,
+  RewardStrategyProfile,
   RewardUnknownEventTimeMode,
 } from "./primitives";
 
@@ -139,6 +140,16 @@ export type RewardBotConfigDto = {
   requote_drift_cooldown_sec: number;
   requote_drift_max_cancels_per_cycle: number;
   post_fill_strategy: PostFillStrategy;
+  balanced_merge_enabled: boolean;
+  balanced_merge_max_markets: number;
+  balanced_merge_max_open_orders: number;
+  balanced_merge_min_edge_cents: DecimalValue;
+  balanced_merge_min_market_score: DecimalValue;
+  balanced_merge_min_market_liquidity_usd: DecimalValue;
+  balanced_merge_min_market_volume_24h_usd: DecimalValue;
+  balanced_merge_max_market_spread_cents: DecimalValue;
+  balanced_merge_quote_bid_rank: number;
+  balanced_merge_max_unpaired_position_usd: DecimalValue;
   // Risk control fields
   min_depth_usd: DecimalValue;
   cancel_bid_rank: number;
@@ -357,6 +368,7 @@ export type RewardQuotePlanDto = {
   quote_readiness?: RewardQuoteReadiness;
   reason: string;
   strategy_bucket: RewardStrategyBucket;
+  strategy_profile?: RewardStrategyProfile;
   quote_mode: RewardPlanQuoteMode;
   recommended_quote_mode?: RewardPlanQuoteMode | null;
   book_metrics?: RewardMarketBookMetricsDto | null;
@@ -386,6 +398,7 @@ export type ManagedRewardOrderDto = {
   price: DecimalValue;
   size: DecimalValue;
   strategy_bucket: RewardStrategyBucket;
+  strategy_profile?: RewardStrategyProfile;
   external_order_id?: string | null;
   status: ManagedRewardOrderStatus;
   scoring: boolean;

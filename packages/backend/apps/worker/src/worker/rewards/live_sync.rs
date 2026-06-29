@@ -1,11 +1,17 @@
+struct RewardLiveOrderSyncReport {
+    report: RewardBotRunReport,
+    reconciliation_reliable: bool,
+}
+
 async fn sync_live_reward_orders(
     state: &AppState,
     connector: &LivePolymarketConnector,
     open_orders: &[ManagedRewardOrder],
     books: &HashMap<String, RewardOrderBook>,
     trace_id: &str,
-) -> Result<RewardBotRunReport> {
+) -> Result<RewardLiveOrderSyncReport> {
     let mut report = RewardBotRunReport::default();
+    let mut reconciliation_reliable = true;
     let cycle = state.reward_bot_service.current_live_cycle_state().await?;
     let mut account = cycle.account.clone();
     let mut positions: HashMap<String, RewardPosition> = cycle
@@ -152,13 +158,17 @@ async fn sync_live_reward_orders(
                         fallback.outcome,
                         fallback.external_snapshot_includes_fill,
                     ),
-                    Ok(None) => continue,
+                    Ok(None) => {
+                        reconciliation_reliable = false;
+                        continue;
+                    }
                     Err(fallback_error) => {
                         warn!(
                             external_order_id,
                             error = %fallback_error,
                             "Data API trade fallback failed; continuing with remaining orders"
                         );
+                        reconciliation_reliable = false;
                         continue;
                     }
                 }
@@ -215,6 +225,7 @@ async fn sync_live_reward_orders(
             } = fill_update;
             working_orders.insert(filled_order.id.clone(), filled_order.clone());
             let mut changed_orders = vec![filled_order.clone()];
+            let mut merge_intents = Vec::new();
             let mut events = vec![event];
             if let Some(warning) = overdraft_warning {
                 events.push(warning);
@@ -240,20 +251,34 @@ async fn sync_live_reward_orders(
                         | LiveRewardOrderUpdate::Retryable(event) => events.push(event),
                     }
                 }
+                let (planned_merge_intents, merge_events) = plan_live_balanced_merge_intent(
+                    state,
+                    &filled_order,
+                    &fill,
+                    &positions,
+                    trace_id,
+                )
+                .await?;
+                merge_intents.extend(planned_merge_intents);
+                events.extend(merge_events);
             }
-            persist_live_reward_updates(
+            persist_live_reward_updates_with_merge_intents(
                 state,
                 &mut account,
                 positions.values().cloned().collect(),
                 changed_orders,
                 vec![fill],
+                merge_intents,
                 events,
                 &report,
                 trace_id,
             )
             .await?;
 
-            if filled_order.side == RewardOrderSide::Buy && cycle.config.cancel_on_fill {
+            if filled_order.side == RewardOrderSide::Buy
+                && cycle.config.cancel_on_fill
+                && filled_order.strategy_profile != RewardStrategyProfile::BalancedMerge
+            {
                 cancel_sibling_live_reward_orders(
                     connector,
                     &mut working_orders,
@@ -347,7 +372,10 @@ async fn sync_live_reward_orders(
             }
         }
     }
-    Ok(report)
+    Ok(RewardLiveOrderSyncReport {
+        report,
+        reconciliation_reliable,
+    })
 }
 
 struct DataApiRewardTradeFallback {
@@ -533,11 +561,13 @@ async fn run_reward_bot_live_reconcile_unlocked(
         ..RewardBotRunReport::default()
     };
 
+    let mut live_order_sync_reliable = true;
     if sync_policy.order_statuses && !cycle.open_orders.is_empty() {
         let sync_report =
             sync_live_reward_orders(state, connector, &cycle.open_orders, &books, trace_id)
                 .await?;
-        accumulate_report(&mut report, &sync_report);
+        live_order_sync_reliable = sync_report.reconciliation_reliable;
+        accumulate_report(&mut report, &sync_report.report);
         cycle = state.reward_bot_service.current_live_cycle_state().await?;
     }
 
@@ -550,6 +580,7 @@ async fn run_reward_bot_live_reconcile_unlocked(
         open_orders: sync_policy.open_orders,
         account_snapshot: sync_policy.account_snapshot
             && (sync_policy.order_statuses || cycle.open_orders.is_empty()),
+        close_absent_buy_orders: live_order_sync_reliable,
     };
     if account_sync_policy.any() {
         sync_external_account_state_with_policy(

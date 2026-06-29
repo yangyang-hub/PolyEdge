@@ -10,6 +10,7 @@ pub struct InMemoryRewardBotStore {
     events: RwLock<Vec<RewardRiskEvent>>,
     account_state: RwLock<Option<RewardAccountState>>,
     fills: RwLock<Vec<RewardFill>>,
+    merge_intents: RwLock<Vec<RewardMergeIntent>>,
     control_commands: RwLock<Vec<RewardControlCommand>>,
     worker_heartbeats: RwLock<HashMap<String, OffsetDateTime>>,
     advisories: RwLock<Vec<RewardMarketAdvisory>>,
@@ -32,6 +33,7 @@ impl InMemoryRewardBotStore {
             events: RwLock::new(Vec::new()),
             account_state: RwLock::new(None),
             fills: RwLock::new(Vec::new()),
+            merge_intents: RwLock::new(Vec::new()),
             control_commands: RwLock::new(Vec::new()),
             worker_heartbeats: RwLock::new(HashMap::new()),
             advisories: RwLock::new(Vec::new()),
@@ -921,6 +923,25 @@ impl RewardBotStore for InMemoryRewardBotStore {
             .max())
     }
 
+    async fn active_merge_intent_size(
+        &self,
+        account_id: &str,
+        condition_id: &str,
+    ) -> Result<Decimal> {
+        Ok(self
+            .merge_intents
+            .read()
+            .await
+            .iter()
+            .filter(|intent| {
+                intent.account_id == account_id
+                    && intent.condition_id == condition_id
+                    && intent.status.counts_as_active_pair()
+            })
+            .map(|intent| intent.merge_size)
+            .sum())
+    }
+
     async fn apply_tick_outcome(
         &self,
         outcome: &RewardTickOutcome,
@@ -951,6 +972,20 @@ impl RewardBotStore for InMemoryRewardBotStore {
             fills.extend(outcome.fills.iter().cloned());
             fills.sort_by(|left, right| right.created_at.cmp(&left.created_at));
             fills.truncate(5_000);
+        }
+        {
+            let mut merge_intents = self.merge_intents.write().await;
+            for intent in &outcome.merge_intents {
+                if let Some(existing) = merge_intents
+                    .iter_mut()
+                    .find(|stored| stored.id == intent.id)
+                {
+                    *existing = intent.clone();
+                } else {
+                    merge_intents.push(intent.clone());
+                }
+            }
+            merge_intents.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
         }
         {
             *self.account_state.write().await = Some(outcome.account.clone());
@@ -989,6 +1024,10 @@ impl RewardBotStore for InMemoryRewardBotStore {
         self.orders.write().await.retain(|order| order.account_id != *account_id);
         self.positions.write().await.retain(|_, position| position.account_id != *account_id);
         self.fills.write().await.retain(|fill| fill.account_id != *account_id);
+        self.merge_intents
+            .write()
+            .await
+            .retain(|intent| intent.account_id != *account_id);
         self.events.write().await.retain(|event| event.account_id.as_deref() != Some(account_id));
         *self.account_state.write().await = Some(RewardAccountState::fresh(
             &config.account_id,

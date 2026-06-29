@@ -310,6 +310,36 @@ fn apply_reward_config_value(config: &mut RewardBotConfig, key: &str, value: &st
             config.requote_drift_max_cancels_per_cycle = parse_u16_config(key, value)?;
         }
         "post_fill_strategy" => config.post_fill_strategy = PostFillStrategy::from_str(value)?,
+        "balanced_merge_enabled" => {
+            config.balanced_merge_enabled = parse_bool_config(key, value)?;
+        }
+        "balanced_merge_max_markets" => {
+            config.balanced_merge_max_markets = parse_u16_config(key, value)?;
+        }
+        "balanced_merge_max_open_orders" => {
+            config.balanced_merge_max_open_orders = parse_u16_config(key, value)?;
+        }
+        "balanced_merge_min_edge_cents" => {
+            config.balanced_merge_min_edge_cents = parse_decimal_config(key, value)?;
+        }
+        "balanced_merge_min_market_score" => {
+            config.balanced_merge_min_market_score = parse_decimal_config(key, value)?;
+        }
+        "balanced_merge_min_market_liquidity_usd" => {
+            config.balanced_merge_min_market_liquidity_usd = parse_decimal_config(key, value)?;
+        }
+        "balanced_merge_min_market_volume_24h_usd" => {
+            config.balanced_merge_min_market_volume_24h_usd = parse_decimal_config(key, value)?;
+        }
+        "balanced_merge_max_market_spread_cents" => {
+            config.balanced_merge_max_market_spread_cents = parse_decimal_config(key, value)?;
+        }
+        "balanced_merge_quote_bid_rank" => {
+            config.balanced_merge_quote_bid_rank = parse_u16_config(key, value)?;
+        }
+        "balanced_merge_max_unpaired_position_usd" => {
+            config.balanced_merge_max_unpaired_position_usd = parse_decimal_config(key, value)?;
+        }
         "min_depth_usd" => config.min_depth_usd = parse_decimal_config(key, value)?,
         "cancel_bid_rank" => config.cancel_bid_rank = parse_u16_config(key, value)?,
         "depth_drop_pct" => config.depth_drop_pct = parse_decimal_config(key, value)?,
@@ -773,6 +803,46 @@ fn reward_config_entries(config: &RewardBotConfig) -> Vec<(&'static str, String)
         (
             "post_fill_strategy",
             config.post_fill_strategy.as_str().to_string(),
+        ),
+        (
+            "balanced_merge_enabled",
+            config.balanced_merge_enabled.to_string(),
+        ),
+        (
+            "balanced_merge_max_markets",
+            config.balanced_merge_max_markets.to_string(),
+        ),
+        (
+            "balanced_merge_max_open_orders",
+            config.balanced_merge_max_open_orders.to_string(),
+        ),
+        (
+            "balanced_merge_min_edge_cents",
+            config.balanced_merge_min_edge_cents.to_string(),
+        ),
+        (
+            "balanced_merge_min_market_score",
+            config.balanced_merge_min_market_score.to_string(),
+        ),
+        (
+            "balanced_merge_min_market_liquidity_usd",
+            config.balanced_merge_min_market_liquidity_usd.to_string(),
+        ),
+        (
+            "balanced_merge_min_market_volume_24h_usd",
+            config.balanced_merge_min_market_volume_24h_usd.to_string(),
+        ),
+        (
+            "balanced_merge_max_market_spread_cents",
+            config.balanced_merge_max_market_spread_cents.to_string(),
+        ),
+        (
+            "balanced_merge_quote_bid_rank",
+            config.balanced_merge_quote_bid_rank.to_string(),
+        ),
+        (
+            "balanced_merge_max_unpaired_position_usd",
+            config.balanced_merge_max_unpaired_position_usd.to_string(),
         ),
         ("min_depth_usd", config.min_depth_usd.to_string()),
         ("cancel_bid_rank", config.cancel_bid_rank.to_string()),

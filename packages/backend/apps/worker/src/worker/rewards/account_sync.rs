@@ -11,6 +11,7 @@ struct RewardAccountSyncPolicy {
     managed_scoring: bool,
     open_orders: bool,
     account_snapshot: bool,
+    close_absent_buy_orders: bool,
 }
 
 impl RewardAccountSyncPolicy {
@@ -19,6 +20,7 @@ impl RewardAccountSyncPolicy {
             managed_scoring: true,
             open_orders: true,
             account_snapshot: true,
+            close_absent_buy_orders: true,
         }
     }
 
@@ -35,7 +37,10 @@ async fn sync_external_account_state(
     cycle_orders: &mut Vec<ManagedRewardOrder>,
     trace_id: &str,
     refresh_account_snapshot: bool,
+    close_absent_buy_orders: bool,
 ) {
+    let mut policy = RewardAccountSyncPolicy::full();
+    policy.close_absent_buy_orders = close_absent_buy_orders;
     sync_external_account_state_with_policy(
         state,
         connector,
@@ -44,7 +49,7 @@ async fn sync_external_account_state(
         cycle_orders,
         trace_id,
         refresh_account_snapshot,
-        RewardAccountSyncPolicy::full(),
+        policy,
     )
     .await;
 }
@@ -71,8 +76,15 @@ async fn sync_external_account_state_with_policy(
     }
 
     if policy.open_orders {
-        sync_external_open_order_state(state, connector, cycle_account, cycle_orders, trace_id)
-            .await;
+        sync_external_open_order_state(
+            state,
+            connector,
+            cycle_account,
+            cycle_orders,
+            trace_id,
+            policy.close_absent_buy_orders,
+        )
+        .await;
     }
 
     if !policy.account_snapshot
@@ -311,6 +323,7 @@ fn external_inventory_original_price_exit_updates(
             price,
             size,
             strategy_bucket: RewardStrategyBucket::None,
+            strategy_profile: RewardStrategyProfile::Standard,
             external_order_id: None,
             status: ManagedRewardOrderStatus::ExitPending,
             scoring: false,
@@ -346,6 +359,7 @@ async fn sync_external_open_order_state(
     account: &mut RewardAccountState,
     cycle_orders: &mut Vec<ManagedRewardOrder>,
     trace_id: &str,
+    close_absent_buy_orders: bool,
 ) {
     let open_orders = match connector.list_open_orders().await {
         Ok(open_orders) => open_orders,
@@ -383,10 +397,11 @@ async fn sync_external_open_order_state(
         }
     };
 
-    let closed = close_managed_orders_absent_from_open_snapshot(
+    let closed = close_managed_orders_absent_from_open_snapshot_if_reliable(
         cycle_orders,
         &open_orders,
         trace_id,
+        close_absent_buy_orders,
     );
     for (order, _) in &closed {
         if let Some(current) = cycle_orders.iter_mut().find(|current| current.id == order.id) {
@@ -685,6 +700,7 @@ fn new_adopted_external_reward_buy_order(
         price: open_order.price,
         size: open_order.original_size,
         strategy_bucket: RewardStrategyBucket::Standard,
+        strategy_profile: RewardStrategyProfile::Standard,
         external_order_id: Some(open_order.id.clone()),
         status: ManagedRewardOrderStatus::Open,
         scoring: false,
@@ -783,6 +799,18 @@ fn close_managed_orders_absent_from_open_snapshot(
             Some((closed, event))
         })
         .collect()
+}
+
+fn close_managed_orders_absent_from_open_snapshot_if_reliable(
+    orders: &[ManagedRewardOrder],
+    open_orders: &[PolymarketOpenOrder],
+    trace_id: &str,
+    reconciliation_reliable: bool,
+) -> Vec<(ManagedRewardOrder, RewardRiskEvent)> {
+    if !reconciliation_reliable {
+        return Vec::new();
+    }
+    close_managed_orders_absent_from_open_snapshot(orders, open_orders, trace_id)
 }
 
 fn observed_managed_external_open_order_count(

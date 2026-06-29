@@ -49,6 +49,9 @@ fn apply_reward_opportunity_metrics_to_quote_plans_inner(
     for plan in plans {
         plan.strategy_bucket = RewardStrategyBucket::Standard;
         plan.low_competition_metrics = None;
+        let plan_config = config
+            .config_for_strategy_bucket(plan.strategy_bucket)
+            .config_for_strategy_profile(plan.strategy_profile);
         if !config.opportunity_metrics_enabled {
             plan.opportunity_metrics = None;
             plan.updated_at = now;
@@ -60,7 +63,7 @@ fn apply_reward_opportunity_metrics_to_quote_plans_inner(
             book_history,
             open_orders,
             account,
-            config,
+            &plan_config,
             now,
             allow_score_promotion,
         );

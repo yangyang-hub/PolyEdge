@@ -20,6 +20,7 @@ async fn postgres_list_reward_orders_page(
                price,
                size,
                strategy_bucket,
+               strategy_profile,
                external_order_id,
                status,
                scoring,

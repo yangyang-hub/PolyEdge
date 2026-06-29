@@ -266,6 +266,95 @@ export function RewardsConfigPanel({
 
         <Separator />
 
+        <ConfigSection
+          title={dictionary.rewards.configBalancedMerge}
+          description={dictionary.rewards.configBalancedMergeDescription}
+        >
+          <ToggleField
+            label={dictionary.rewards.balancedMergeEnabled}
+            hint={h.balancedMergeEnabled}
+            checked={draft.balanced_merge_enabled}
+            onChange={(checked) =>
+              setDraft((current) => ({ ...current, balanced_merge_enabled: checked }))
+            }
+          />
+          <NumberInput
+            label={dictionary.rewards.balancedMergeMaxMarkets}
+            value={draft.balanced_merge_max_markets}
+            hint={h.balancedMergeMaxMarkets}
+            onChange={(value) => updateNumber("balanced_merge_max_markets", value)}
+          />
+          <NumberInput
+            label={dictionary.rewards.balancedMergeMaxOpenOrders}
+            value={draft.balanced_merge_max_open_orders}
+            hint={h.balancedMergeMaxOpenOrders}
+            onChange={(value) => updateNumber("balanced_merge_max_open_orders", value)}
+          />
+          <NumberInput
+            label={dictionary.rewards.balancedMergeMinEdgeCents}
+            value={draft.balanced_merge_min_edge_cents}
+            suffix="c"
+            hint={h.balancedMergeMinEdgeCents}
+            onChange={(value) => updateNumber("balanced_merge_min_edge_cents", value)}
+          />
+          <NumberInput
+            label={dictionary.rewards.balancedMergeMinMarketScore}
+            value={draft.balanced_merge_min_market_score}
+            hint={h.balancedMergeMinMarketScore}
+            onChange={(value) => updateNumber("balanced_merge_min_market_score", value)}
+          />
+          <NumberInput
+            label={dictionary.rewards.balancedMergeMinLiquidity}
+            value={draft.balanced_merge_min_market_liquidity_usd}
+            suffix="$"
+            hint={h.balancedMergeMinLiquidity}
+            onChange={(value) => updateNumber("balanced_merge_min_market_liquidity_usd", value)}
+          />
+          <NumberInput
+            label={dictionary.rewards.balancedMergeMinVolume24h}
+            value={draft.balanced_merge_min_market_volume_24h_usd}
+            suffix="$"
+            hint={h.balancedMergeMinVolume24h}
+            onChange={(value) => updateNumber("balanced_merge_min_market_volume_24h_usd", value)}
+          />
+          <NumberInput
+            label={dictionary.rewards.balancedMergeMaxMarketSpread}
+            value={draft.balanced_merge_max_market_spread_cents}
+            suffix="c"
+            hint={h.balancedMergeMaxMarketSpread}
+            onChange={(value) => updateNumber("balanced_merge_max_market_spread_cents", value)}
+          />
+          <label className="space-y-1.5">
+            <span className="flex items-center gap-1 text-xs font-medium text-muted-foreground">
+              {dictionary.rewards.balancedMergeQuoteBidRank}
+              <Hint content={h.balancedMergeQuoteBidRank} />
+            </span>
+            <select
+              className={selectClassName}
+              value={draft.balanced_merge_quote_bid_rank}
+              onChange={(event) =>
+                setDraft((current) => ({
+                  ...current,
+                  balanced_merge_quote_bid_rank: Number(event.target.value),
+                }))
+              }
+            >
+              <option value={1}>{dictionary.rewards.bidRank1}</option>
+              <option value={2}>{dictionary.rewards.bidRank2}</option>
+              <option value={3}>{dictionary.rewards.bidRank3}</option>
+            </select>
+          </label>
+          <NumberInput
+            label={dictionary.rewards.balancedMergeMaxUnpairedPosition}
+            value={draft.balanced_merge_max_unpaired_position_usd}
+            suffix="$"
+            hint={h.balancedMergeMaxUnpairedPosition}
+            onChange={(value) => updateNumber("balanced_merge_max_unpaired_position_usd", value)}
+          />
+        </ConfigSection>
+
+        <Separator />
+
         <BookSelectionConfig draft={draft} setDraft={setDraft} updateNumber={updateNumber} />
 
         <Separator />

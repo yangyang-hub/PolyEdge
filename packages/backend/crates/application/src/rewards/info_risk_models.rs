@@ -368,6 +368,7 @@ fn reward_info_risk_cache_key_payload(
             "quote_mode": plan.quote_mode,
             "recommended_quote_mode": plan.recommended_quote_mode,
             "strategy_bucket": plan.strategy_bucket,
+            "strategy_profile": plan.strategy_profile,
         })),
         "strategy_config": {
             "info_risk_mode": config.info_risk_mode,

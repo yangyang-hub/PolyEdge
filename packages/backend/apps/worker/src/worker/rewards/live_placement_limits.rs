@@ -39,16 +39,29 @@ fn live_condition_budget_capped_by_ai_hint(
     existing_market_buy_notional: Decimal,
     raw_budget: Decimal,
 ) -> Decimal {
-    let Some(advisory) = plan.ai_advisory.as_ref() else {
-        return raw_budget;
-    };
-    let Some(max_condition_notional) =
-        reward_ai_strategy_hint_max_condition_notional_usd(advisory, config)
-    else {
+    let Some(max_condition_notional) = live_ai_hint_max_condition_notional_usd(config, plan) else {
         return raw_budget;
     };
     let remaining = (max_condition_notional - existing_market_buy_notional).max(Decimal::ZERO);
     Decimal::min(raw_budget, remaining)
+}
+
+fn live_ai_hint_max_condition_notional_usd(
+    config: &RewardBotConfig,
+    plan: &RewardQuotePlan,
+) -> Option<Decimal> {
+    plan.ai_advisory
+        .as_ref()
+        .and_then(|advisory| reward_ai_strategy_hint_max_condition_notional_usd(advisory, config))
+}
+
+fn live_ai_hint_condition_notional_cap_exceeded(
+    config: &RewardBotConfig,
+    plan: &RewardQuotePlan,
+    projected_condition_buy_notional: Decimal,
+) -> Option<Decimal> {
+    live_ai_hint_max_condition_notional_usd(config, plan)
+        .filter(|max_condition_notional| projected_condition_buy_notional > *max_condition_notional)
 }
 
 fn apply_live_funding_precheck(
@@ -59,7 +72,11 @@ fn apply_live_funding_precheck(
     open_orders: &[ManagedRewardOrder],
     positions: &[RewardPosition],
 ) -> usize {
-    if config.max_markets == 0 || config.max_open_orders == 0 {
+    if (config.max_markets == 0 || config.max_open_orders == 0)
+        && (!config.balanced_merge_enabled
+            || config.balanced_merge_max_markets == 0
+            || config.balanced_merge_max_open_orders == 0)
+    {
         return 0;
     }
 
@@ -71,7 +88,9 @@ fn apply_live_funding_precheck(
             continue;
         }
 
-        let plan_config = config.config_for_strategy_bucket(plan.strategy_bucket);
+        let plan_config = config
+            .config_for_strategy_bucket(plan.strategy_bucket)
+            .config_for_strategy_profile(plan.strategy_profile);
         let Ok(materialized) =
             materialize_reward_quote_plan_for_live_orderbook(plan, books, &plan_config)
         else {
@@ -84,7 +103,7 @@ fn apply_live_funding_precheck(
         let raw_budget =
             (available_for_new_condition - existing_market_buy_notional).max(Decimal::ZERO);
         let position_budget =
-            live_condition_budget_capped_by_positions(config, &plan.legs, positions, raw_budget);
+            live_condition_budget_capped_by_positions(&plan_config, &plan.legs, positions, raw_budget);
         let condition_budget = live_condition_budget_capped_by_ai_hint(
             config,
             plan,
@@ -94,10 +113,30 @@ fn apply_live_funding_precheck(
         let rescaled_legs = live_rescaled_quote_legs_for_budget(plan, condition_budget);
         let missing_plan_buy_notional =
             live_missing_plan_buy_notional(&rescaled_legs, open_orders, &plan.condition_id);
+        let projected_condition_buy_notional =
+            existing_market_buy_notional + missing_plan_buy_notional;
+
+        if let Some(max_condition_notional) = live_ai_hint_condition_notional_cap_exceeded(
+            config,
+            plan,
+            projected_condition_buy_notional,
+        ) {
+            if missing_plan_buy_notional > Decimal::ZERO
+                && mark_live_ai_notional_cap_skip(
+                    plan,
+                    existing_market_buy_notional,
+                    missing_plan_buy_notional,
+                    max_condition_notional,
+                    OffsetDateTime::now_utc(),
+                )
+            {
+                blocked += 1;
+            }
+            continue;
+        }
 
         if missing_plan_buy_notional > Decimal::ZERO
-            && existing_market_buy_notional + missing_plan_buy_notional
-                > available_for_new_condition
+            && projected_condition_buy_notional > available_for_new_condition
             && mark_live_funding_skip(
                 plan,
                 existing_market_buy_notional,
@@ -214,6 +253,32 @@ fn mark_live_funding_skip(
 ) -> bool {
     let reason = format!(
         "live funding below rewards minimum: existing condition BUY notional {existing_market_buy_notional}, missing minimum quote notional {missing_plan_buy_notional}, available {available_for_new_condition}"
+    );
+    let changed = plan.eligible
+        || plan.quote_mode != RewardPlanQuoteMode::None
+        || plan.reason != reason
+        || plan.live_skip_until.is_some()
+        || plan.live_skip_reason.is_some();
+    if changed {
+        plan.eligible = false;
+        plan.quote_mode = RewardPlanQuoteMode::None;
+        plan.reason = reason;
+        plan.live_skip_until = None;
+        plan.live_skip_reason = None;
+        plan.updated_at = now;
+    }
+    changed
+}
+
+fn mark_live_ai_notional_cap_skip(
+    plan: &mut RewardQuotePlan,
+    existing_market_buy_notional: Decimal,
+    missing_plan_buy_notional: Decimal,
+    max_condition_notional: Decimal,
+    now: OffsetDateTime,
+) -> bool {
+    let reason = format!(
+        "AI notional cap below required rewards quote: existing condition BUY notional {existing_market_buy_notional}, missing minimum quote notional {missing_plan_buy_notional}, max condition notional {max_condition_notional}"
     );
     let changed = plan.eligible
         || plan.quote_mode != RewardPlanQuoteMode::None

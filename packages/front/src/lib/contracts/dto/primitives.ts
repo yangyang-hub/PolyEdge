@@ -50,6 +50,7 @@ export type RewardQuoteReadiness =
   | "provider_pending"
   | "blocked";
 export type RewardStrategyBucket = "standard" | "low_competition" | "none";
+export type RewardStrategyProfile = "standard" | "balanced_merge";
 export type RewardAiProvider = "openai" | "anthropic";
 export type RewardAiRequestFormat =
   | "openai_responses"

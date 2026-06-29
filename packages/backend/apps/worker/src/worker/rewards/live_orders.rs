@@ -383,6 +383,9 @@ fn plan_live_post_fill_orders(
     if fill_size <= Decimal::ZERO {
         return Vec::new();
     }
+    if entry.strategy_profile == RewardStrategyProfile::BalancedMerge {
+        return Vec::new();
+    }
 
     let post_fill_strategy = reward_post_fill_strategy(config, plans, entry, ai_min_confidence);
     match post_fill_strategy {
@@ -458,6 +461,106 @@ fn plan_live_post_fill_orders(
     }
 }
 
+async fn plan_live_balanced_merge_intent(
+    state: &AppState,
+    entry: &ManagedRewardOrder,
+    fill: &RewardFill,
+    positions: &HashMap<String, RewardPosition>,
+    trace_id: &str,
+) -> Result<(Vec<RewardMergeIntent>, Vec<RewardRiskEvent>)> {
+    if entry.strategy_profile != RewardStrategyProfile::BalancedMerge
+        || entry.side != RewardOrderSide::Buy
+    {
+        return Ok((Vec::new(), Vec::new()));
+    }
+
+    let yes_position = positions.values().find(|position| {
+        position.account_id == entry.account_id
+            && position.condition_id == entry.condition_id
+            && position.size > Decimal::ZERO
+            && position.outcome.trim().eq_ignore_ascii_case("yes")
+    });
+    let no_position = positions.values().find(|position| {
+        position.account_id == entry.account_id
+            && position.condition_id == entry.condition_id
+            && position.size > Decimal::ZERO
+            && position.outcome.trim().eq_ignore_ascii_case("no")
+    });
+
+    let (Some(yes_position), Some(no_position)) = (yes_position, no_position) else {
+        return Ok((
+            Vec::new(),
+            vec![reward_live_event(
+                entry,
+                "reward_live_balanced_merge_waiting_for_pair",
+                RewardRiskSeverity::Info,
+                "balanced merge fill recorded; waiting for the opposite outcome inventory before merge",
+                json!({
+                    "source_fill_id": fill.id,
+                    "filled_token_id": entry.token_id,
+                    "filled_outcome": entry.outcome,
+                }),
+            )],
+        ));
+    };
+
+    let mergeable_size = Decimal::min(yes_position.size, no_position.size)
+        .round_dp_with_strategy(2, RoundingStrategy::ToZero);
+    if mergeable_size <= Decimal::ZERO {
+        return Ok((Vec::new(), Vec::new()));
+    }
+    let already_planned_size = state
+        .reward_bot_service
+        .active_reward_merge_intent_size(&entry.account_id, &entry.condition_id)
+        .await?
+        .round_dp_with_strategy(2, RoundingStrategy::ToZero);
+    let merge_size = (mergeable_size - already_planned_size)
+        .max(Decimal::ZERO)
+        .round_dp_with_strategy(2, RoundingStrategy::ToZero);
+    if merge_size <= Decimal::ZERO {
+        return Ok((Vec::new(), Vec::new()));
+    }
+
+    let now = OffsetDateTime::now_utc();
+    let intent = RewardMergeIntent {
+        id: format!("rewmerge_{}", sanitize_reward_id_fragment(&fill.id)),
+        account_id: entry.account_id.clone(),
+        condition_id: entry.condition_id.clone(),
+        yes_token_id: yes_position.token_id.clone(),
+        no_token_id: no_position.token_id.clone(),
+        merge_size,
+        yes_position_size: yes_position.size,
+        no_position_size: no_position.size,
+        yes_avg_price: yes_position.avg_price,
+        no_avg_price: no_position.avg_price,
+        status: RewardMergeIntentStatus::Unsupported,
+        reason: "balanced merge pair is ready, but on-chain merge execution is not available in this build".to_string(),
+        source_fill_id: fill.id.clone(),
+        trace_id: trace_id.to_string(),
+        created_at: now,
+        updated_at: now,
+    };
+    let event = reward_live_event(
+        entry,
+        "reward_live_balanced_merge_intent_created",
+        RewardRiskSeverity::Warning,
+        "created a balanced merge intent for paired YES/NO inventory; execution is pending connector support",
+        json!({
+            "merge_intent_id": intent.id,
+            "source_fill_id": fill.id,
+            "yes_token_id": intent.yes_token_id,
+            "no_token_id": intent.no_token_id,
+            "merge_size": intent.merge_size,
+            "yes_position_size": intent.yes_position_size,
+            "no_position_size": intent.no_position_size,
+            "already_planned_size": already_planned_size,
+            "status": intent.status.as_str(),
+        }),
+    );
+
+    Ok((vec![intent], vec![event]))
+}
+
 fn reward_post_fill_strategy(
     config: &RewardBotConfig,
     _plans: &[RewardQuotePlan],
@@ -489,6 +592,7 @@ fn live_exit_order(
         price,
         size,
         strategy_bucket: entry.strategy_bucket,
+        strategy_profile: entry.strategy_profile,
         external_order_id: None,
         status: ManagedRewardOrderStatus::Planned,
         scoring: false,

@@ -152,7 +152,7 @@ async fn replace_reward_quote_plans_tx(
         })?;
 
     for chunk in plans.chunks(REWARD_UPSERT_BATCH_SIZE) {
-        let cols = 6usize;
+        let cols = 7usize;
         let placeholders: String = chunk
             .iter()
             .enumerate()
@@ -172,6 +172,7 @@ async fn replace_reward_quote_plans_tx(
               score,
               eligible,
               reason,
+              strategy_profile,
               quote_plan_json,
               updated_at
             )
@@ -180,6 +181,7 @@ async fn replace_reward_quote_plans_tx(
             SET score = EXCLUDED.score,
                 eligible = EXCLUDED.eligible,
                 reason = EXCLUDED.reason,
+                strategy_profile = EXCLUDED.strategy_profile,
                 quote_plan_json = EXCLUDED.quote_plan_json,
                 updated_at = EXCLUDED.updated_at"#,
         );
@@ -196,6 +198,7 @@ async fn replace_reward_quote_plans_tx(
                 .bind(plan.score)
                 .bind(plan.eligible)
                 .bind(reason)
+                .bind(plan.strategy_profile.as_str())
                 .bind(Json(plan))
                 .bind(updated_at);
         }

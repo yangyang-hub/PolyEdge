@@ -71,12 +71,13 @@ fn live_buy_submission_last_look_plan(
     context: LiveBuySubmitRiskContext<'_>,
     books: &HashMap<String, RewardOrderBook>,
 ) -> std::result::Result<RewardQuotePlan, String> {
-    let plan = context
-        .plans
-        .get(order.condition_id.as_str())
-        .ok_or_else(|| "market no longer offers rewards".to_string())?;
-    let mut plan = (**plan).clone();
-    let plan_config = context.config.config_for_strategy_bucket(plan.strategy_bucket);
+    let plan = reward_live_plan_for_order(context.plans, order)
+        .ok_or_else(|| reward_live_missing_order_plan_reason(context.plans, order))?;
+    let mut plan = plan.clone();
+    let plan_config = context
+        .config
+        .config_for_strategy_bucket(plan.strategy_bucket)
+        .config_for_strategy_profile(plan.strategy_profile);
     let materialized =
         materialize_reward_quote_plan_for_live_orderbook(&plan, books, &plan_config)?;
     apply_live_quote_plan_materialization(&mut plan, materialized, OffsetDateTime::now_utc());
@@ -85,12 +86,10 @@ fn live_buy_submission_last_look_plan(
 
 fn live_buy_submission_last_look_reprice_allowed(
     order: &ManagedRewardOrder,
+    plan: &RewardQuotePlan,
     target_price: Decimal,
     context: LiveBuySubmitRiskContext<'_>,
 ) -> bool {
-    if target_price <= order.price {
-        return true;
-    }
     let remaining_size = (order.size - order.filled_size).max(Decimal::ZERO);
     let old_notional = (order.price * remaining_size).round_dp(4);
     let target_notional = (target_price * remaining_size).round_dp(4);
@@ -101,11 +100,16 @@ fn live_buy_submission_last_look_reprice_allowed(
     if adjusted_condition_notional > available_for_condition {
         return false;
     }
+    if let Some(max_condition_notional) =
+        live_ai_hint_max_condition_notional_usd(context.config, plan)
+        && adjusted_condition_notional > max_condition_notional
+    {
+        return false;
+    }
     let plan_config = context
-        .plans
-        .get(order.condition_id.as_str())
-        .map(|plan| context.config.config_for_strategy_bucket(plan.strategy_bucket))
-        .unwrap_or_else(|| context.config.clone());
+        .config
+        .config_for_strategy_bucket(plan.strategy_bucket)
+        .config_for_strategy_profile(plan.strategy_profile);
     !live_position_over_cap(
         &plan_config,
         context.positions,
@@ -126,14 +130,14 @@ fn live_buy_submission_last_look_reprice(
     if target_leg.price <= Decimal::ZERO {
         return Err("live quote target price is not positive".to_string());
     }
-    if target_leg.price == order.price {
-        return Ok(None);
-    }
-    if !live_buy_submission_last_look_reprice_allowed(order, target_leg.price, context) {
+    if !live_buy_submission_last_look_reprice_allowed(order, plan, target_leg.price, context) {
         return Err(format!(
-            "last-look target price {} would exceed condition budget or position cap",
+            "last-look target price {} would exceed condition budget, AI notional cap or position cap",
             target_leg.price
         ));
+    }
+    if target_leg.price == order.price {
+        return Ok(None);
     }
 
     let previous_price = order.price;
@@ -389,7 +393,7 @@ async fn submit_pending_live_reward_orders(
         if order.side == RewardOrderSide::Buy
             && let Some(context) = risk_context
         {
-            let last_look_plan = context.plans.get(order.condition_id.as_str()).copied();
+            let last_look_plan = reward_live_plan_for_order(context.plans, order);
             let last_look_token_ids =
                 live_buy_submission_last_look_token_ids(order, last_look_plan);
             let fetched_last_look_books =

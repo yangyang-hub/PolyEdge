@@ -15,17 +15,22 @@ fn live_placement_orders(
     kill_switch: bool,
     trace_id: &str,
 ) -> (Vec<ManagedRewardOrder>, bool) {
-    let max_markets = usize::from(config.max_markets);
-    let max_open_orders = usize::from(config.max_open_orders);
-    if max_markets == 0 || max_open_orders == 0 {
+    if (config.max_markets == 0 || config.max_open_orders == 0)
+        && (!config.balanced_merge_enabled
+            || config.balanced_merge_max_markets == 0
+            || config.balanced_merge_max_open_orders == 0)
+    {
         return (Vec::new(), false);
     }
 
-    let mut active_markets: HashSet<String> = open_orders
-        .iter()
-        .filter(|order| order.status.is_open_like())
-        .map(|order| order.condition_id.clone())
-        .collect();
+    let mut active_markets_by_profile: HashMap<RewardStrategyProfile, HashSet<String>> =
+        HashMap::new();
+    for order in open_orders.iter().filter(|order| order.status.is_open_like()) {
+        active_markets_by_profile
+            .entry(order.strategy_profile)
+            .or_default()
+            .insert(order.condition_id.clone());
+    }
     let mut orders = open_orders.to_vec();
     let mut placements = Vec::new();
     let mut plans_changed = false;
@@ -36,8 +41,18 @@ fn live_placement_orders(
         if !plans[plan_index].eligible {
             continue;
         }
-        plans[plan_index].strategy_bucket = RewardStrategyBucket::Standard;
-        let plan_config = config.config_for_strategy_bucket(plans[plan_index].strategy_bucket);
+        if plans[plan_index].strategy_bucket != RewardStrategyBucket::Standard {
+            plans[plan_index].strategy_bucket = RewardStrategyBucket::Standard;
+            plans_changed = true;
+        }
+        let plan_config = config
+            .config_for_strategy_bucket(plans[plan_index].strategy_bucket)
+            .config_for_strategy_profile(plans[plan_index].strategy_profile);
+        let max_markets = usize::from(plan_config.max_markets);
+        let max_open_orders = usize::from(plan_config.max_open_orders);
+        if max_markets == 0 || max_open_orders == 0 {
+            continue;
+        }
         let materialized = match materialize_reward_quote_plan_for_live_orderbook(
             &plans[plan_index],
             books,
@@ -85,7 +100,12 @@ fn live_placement_orders(
             continue;
         }
         let plan = &plans[plan_index];
-        if active_markets.len() >= max_markets && !active_markets.contains(&plan.condition_id) {
+        let active_profile_markets = active_markets_by_profile
+            .entry(plan.strategy_profile)
+            .or_default();
+        if active_profile_markets.len() >= max_markets
+            && !active_profile_markets.contains(&plan.condition_id)
+        {
             continue;
         }
         let existing_market_buy_notional = live_market_buy_notional(&orders, &plan.condition_id);
@@ -93,8 +113,12 @@ fn live_placement_orders(
             .max(Decimal::ZERO);
         // Cap the condition budget by per-leg position limits so rescaled legs
         // do not exceed max_position_usd when both are open simultaneously.
-        let position_budget =
-            live_condition_budget_capped_by_positions(config, &plan.legs, positions, raw_budget);
+        let position_budget = live_condition_budget_capped_by_positions(
+            &plan_config,
+            &plan.legs,
+            positions,
+            raw_budget,
+        );
         let condition_budget = live_condition_budget_capped_by_ai_hint(
             config,
             plan,
@@ -107,12 +131,33 @@ fn live_placement_orders(
         let rescaled_legs = live_rescaled_quote_legs_for_budget(plan, condition_budget);
         let missing_plan_buy_notional =
             live_missing_plan_buy_notional(&rescaled_legs, &orders, &plan.condition_id);
+        let projected_condition_buy_notional =
+            existing_market_buy_notional + missing_plan_buy_notional;
+        if let Some(max_condition_notional) = live_ai_hint_condition_notional_cap_exceeded(
+            config,
+            plan,
+            projected_condition_buy_notional,
+        ) {
+            if missing_plan_buy_notional > Decimal::ZERO
+                && !live_condition_has_active_exposure(&plan.condition_id, open_orders, positions)
+                && mark_live_ai_notional_cap_skip(
+                    &mut plans[plan_index],
+                    existing_market_buy_notional,
+                    missing_plan_buy_notional,
+                    max_condition_notional,
+                    OffsetDateTime::now_utc(),
+                )
+            {
+                plans_changed = true;
+            }
+            continue;
+        }
         // Polymarket applies its collateral validity check to the sum of all
         // open BUY orders in the same condition. Different conditions may reuse
         // the same collateral, but both YES/NO legs in one condition must fit.
         // Open BUY orders outside this system are only available as an account
         // aggregate, so reserve the unassigned portion conservatively.
-        if existing_market_buy_notional + missing_plan_buy_notional > available_for_new_condition {
+        if projected_condition_buy_notional > available_for_new_condition {
             if missing_plan_buy_notional > Decimal::ZERO
                 && mark_live_funding_skip(
                     &mut plans[plan_index],
@@ -129,11 +174,14 @@ fn live_placement_orders(
         for leg in &rescaled_legs {
             if orders
                 .iter()
-                .filter(|order| order.status.is_open_like())
+                .filter(|order| {
+                    order.status.is_open_like()
+                        && order.strategy_profile == plan.strategy_profile
+                })
                 .count()
                 >= max_open_orders
             {
-                return (placements, plans_changed);
+                continue;
             }
             if orders.iter().any(|order| {
                 order.condition_id == plan.condition_id
@@ -183,6 +231,7 @@ fn live_placement_orders(
                 price: leg.price,
                 size: leg.size,
                 strategy_bucket: plan.strategy_bucket,
+                strategy_profile: plan.strategy_profile,
                 external_order_id: None,
                 status: ManagedRewardOrderStatus::Planned,
                 scoring: false,
@@ -210,7 +259,10 @@ fn live_placement_orders(
             {
                 continue;
             }
-            active_markets.insert(plan.condition_id.clone());
+            active_markets_by_profile
+                .entry(plan.strategy_profile)
+                .or_default()
+                .insert(plan.condition_id.clone());
             orders.push(order.clone());
             placements.push(order);
         }
@@ -240,7 +292,9 @@ fn refresh_live_quote_plan_readiness(
 ) -> bool {
     let mut changed = false;
     for plan in plans.iter_mut().filter(|plan| plan.eligible) {
-        let plan_config = config.config_for_strategy_bucket(plan.strategy_bucket);
+        let plan_config = config
+            .config_for_strategy_bucket(plan.strategy_bucket)
+            .config_for_strategy_profile(plan.strategy_profile);
         let now = OffsetDateTime::now_utc();
         match materialize_reward_quote_plan_for_live_orderbook(plan, books, &plan_config) {
             Ok(materialized) => {

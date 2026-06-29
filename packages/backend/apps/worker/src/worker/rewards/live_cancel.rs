@@ -43,8 +43,15 @@ fn live_cancel_candidates_with_account(
         .iter()
         .filter(|order| order.status.is_open_like())
         .filter_map(|order| {
+            let order_config = reward_live_plan_for_order(&plan_index, order)
+                .map(|plan| {
+                    config
+                        .config_for_strategy_bucket(plan.strategy_bucket)
+                        .config_for_strategy_profile(plan.strategy_profile)
+                })
+                .unwrap_or_else(|| config.config_for_strategy_profile(order.strategy_profile));
             live_cancel_reason(
-                config,
+                &order_config,
                 &plan_index,
                 books,
                 book_history,
@@ -117,8 +124,8 @@ fn live_cancel_reason(
         return stale_age_ms
             .map(|age_ms| live_orderbook_stale_reason(age_ms, config.stale_book_ms));
     }
-    let Some(plan) = plans.get(order.condition_id.as_str()) else {
-        return Some("market no longer offers rewards".to_string());
+    let Some(plan) = reward_live_plan_for_order(plans, order) else {
+        return Some(reward_live_missing_order_plan_reason(plans, order));
     };
     if reward_quote_plan_event_window_blocks_new_buy(plan)
         && order.status == ManagedRewardOrderStatus::Planned
@@ -181,6 +188,30 @@ fn live_cancel_reason(
         return Some(reason);
     }
     None
+}
+
+fn reward_live_plan_for_order<'a>(
+    plans: &'a HashMap<&str, &RewardQuotePlan>,
+    order: &ManagedRewardOrder,
+) -> Option<&'a RewardQuotePlan> {
+    plans
+        .get(order.condition_id.as_str())
+        .copied()
+        .filter(|plan| plan.strategy_profile == order.strategy_profile)
+}
+
+fn reward_live_missing_order_plan_reason(
+    plans: &HashMap<&str, &RewardQuotePlan>,
+    order: &ManagedRewardOrder,
+) -> String {
+    if plans.contains_key(order.condition_id.as_str()) {
+        format!(
+            "strategy profile {} no longer appears in live quote plan",
+            order.strategy_profile.as_str()
+        )
+    } else {
+        "market no longer offers rewards".to_string()
+    }
 }
 
 fn live_cancel_retry_due(order: &ManagedRewardOrder, now: OffsetDateTime) -> bool {

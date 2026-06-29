@@ -726,6 +726,7 @@ impl RewardBotStore for PostgresRewardBotStore {
             r#"
             SELECT id, account_id, condition_id, token_id, outcome, side, price, size,
                    strategy_bucket,
+                   strategy_profile,
                    external_order_id, status, scoring, reason, filled_size, reward_earned,
                    last_scored_at, created_at, updated_at
             FROM reward_managed_orders
@@ -804,6 +805,7 @@ impl RewardBotStore for PostgresRewardBotStore {
             r#"
             SELECT id, account_id, condition_id, token_id, outcome, side, price, size,
                    strategy_bucket,
+                   strategy_profile,
                    external_order_id, status, scoring, reason, filled_size, reward_earned,
                    last_scored_at, created_at, updated_at
             FROM reward_managed_orders
@@ -926,7 +928,34 @@ impl RewardBotStore for PostgresRewardBotStore {
                 "POSTGRES_QUERY_FAILED",
                 format!("failed to query latest reward fill timestamp: {error}"),
             )
-        })
+            })
+    }
+
+    async fn active_merge_intent_size(
+        &self,
+        account_id: &str,
+        condition_id: &str,
+    ) -> Result<Decimal> {
+        let size: Option<Decimal> = sqlx::query_scalar(
+            r#"
+            SELECT COALESCE(SUM(merge_size), 0)
+            FROM reward_merge_intents
+            WHERE account_id = $1
+              AND condition_id = $2
+              AND status IN ('pending', 'unsupported', 'submitted', 'completed')
+            "#,
+        )
+        .bind(account_id)
+        .bind(condition_id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_QUERY_FAILED",
+                format!("failed to query active reward merge intent size: {error}"),
+            )
+        })?;
+        Ok(size.unwrap_or(Decimal::ZERO))
     }
 
     async fn apply_tick_outcome(
@@ -946,6 +975,9 @@ impl RewardBotStore for PostgresRewardBotStore {
         }
         for fill in &outcome.fills {
             insert_reward_fill(&mut transaction, fill).await?;
+        }
+        for intent in &outcome.merge_intents {
+            upsert_reward_merge_intent_tx(&mut transaction, intent).await?;
         }
         for position in &outcome.positions {
             upsert_reward_position_tx(&mut transaction, position).await?;
@@ -1015,6 +1047,7 @@ impl RewardBotStore for PostgresRewardBotStore {
             "DELETE FROM reward_managed_orders WHERE account_id = $1",
             "DELETE FROM reward_positions WHERE account_id = $1",
             "DELETE FROM reward_fills WHERE account_id = $1",
+            "DELETE FROM reward_merge_intents WHERE account_id = $1",
             "DELETE FROM reward_risk_events WHERE account_id = $1",
         ] {
             sqlx::query(statement)

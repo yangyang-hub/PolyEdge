@@ -394,11 +394,37 @@ impl RewardBotService {
             .store
             .list_candidate_markets(&filter, safety_limit)
             .await?;
-        let candidates = select_reward_quote_candidate_market_profiles(
+        let mut candidates = select_reward_quote_candidate_market_profiles(
             &markets,
             config,
             RewardStrategyBucket::Standard,
+            RewardStrategyProfile::Standard,
         );
+        let mut seen_conditions = candidates
+            .iter()
+            .map(|candidate| candidate.market.condition_id.clone())
+            .collect::<HashSet<_>>();
+
+        if let Some(filter) = config.balanced_merge_candidate_filter() {
+            let balanced_safety_limit =
+                reward_candidate_safety_limit(&config.config_for_strategy_profile(
+                    RewardStrategyProfile::BalancedMerge,
+                ));
+            let balanced_markets = self
+                .store
+                .list_candidate_markets(&filter, balanced_safety_limit)
+                .await?;
+            for candidate in select_reward_quote_candidate_market_profiles(
+                &balanced_markets,
+                config,
+                RewardStrategyBucket::Standard,
+                RewardStrategyProfile::BalancedMerge,
+            ) {
+                if seen_conditions.insert(candidate.market.condition_id.clone()) {
+                    candidates.push(candidate);
+                }
+            }
+        }
 
         Ok(candidates)
     }
@@ -672,6 +698,16 @@ impl RewardBotService {
         account_id: &str,
     ) -> Result<Option<OffsetDateTime>> {
         self.store.latest_fill_at(account_id).await
+    }
+
+    pub async fn active_reward_merge_intent_size(
+        &self,
+        account_id: &str,
+        condition_id: &str,
+    ) -> Result<Decimal> {
+        self.store
+            .active_merge_intent_size(account_id, condition_id)
+            .await
     }
 
     pub async fn record_live_reset_cancel_all(&self, trace_id: &str) -> Result<()> {

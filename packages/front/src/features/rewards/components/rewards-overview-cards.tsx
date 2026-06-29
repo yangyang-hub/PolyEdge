@@ -292,6 +292,9 @@ function ProviderUsageBlock({
           {dictionary.rewards.llmUsageCalls}
         </span>
       </div>
+      <p className="mt-2 text-xs leading-4 text-muted-foreground">
+        {dictionary.rewards.llmUsageDescription}
+      </p>
       {rows.length > 0 ? (
         <div className="mt-3 grid grid-cols-[1.2fr_repeat(4,minmax(0,1fr))] gap-x-2 gap-y-1 text-xs">
           <span className="text-muted-foreground">{dictionary.rewards.llmUsageDay}</span>

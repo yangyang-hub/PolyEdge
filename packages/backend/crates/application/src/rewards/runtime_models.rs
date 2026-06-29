@@ -42,6 +42,7 @@ pub struct RewardMarket {
 pub struct RewardCandidateMarket {
     pub market: RewardMarket,
     pub strategy_bucket: RewardStrategyBucket,
+    pub strategy_profile: RewardStrategyProfile,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -384,6 +385,8 @@ pub struct RewardQuotePlan {
     pub reason: String,
     #[serde(default = "default_reward_strategy_bucket")]
     pub strategy_bucket: RewardStrategyBucket,
+    #[serde(default = "default_reward_strategy_profile")]
+    pub strategy_profile: RewardStrategyProfile,
     #[serde(default = "default_reward_plan_quote_mode")]
     pub quote_mode: RewardPlanQuoteMode,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -433,6 +436,10 @@ const fn default_reward_order_strategy_bucket() -> RewardStrategyBucket {
     RewardStrategyBucket::Standard
 }
 
+const fn default_reward_strategy_profile() -> RewardStrategyProfile {
+    RewardStrategyProfile::Standard
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct RewardLiveQuoteMaterialization {
     pub quote_mode: RewardPlanQuoteMode,
@@ -454,6 +461,8 @@ pub struct ManagedRewardOrder {
     pub size: Decimal,
     #[serde(default = "default_reward_order_strategy_bucket")]
     pub strategy_bucket: RewardStrategyBucket,
+    #[serde(default = "default_reward_strategy_profile")]
+    pub strategy_profile: RewardStrategyProfile,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub external_order_id: Option<String>,
     pub status: ManagedRewardOrderStatus,
@@ -481,6 +490,28 @@ pub struct RewardPosition {
     pub size: Decimal,
     pub avg_price: Decimal,
     pub realized_pnl: Decimal,
+    #[serde(with = "time::serde::rfc3339")]
+    pub updated_at: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RewardMergeIntent {
+    pub id: String,
+    pub account_id: String,
+    pub condition_id: String,
+    pub yes_token_id: String,
+    pub no_token_id: String,
+    pub merge_size: Decimal,
+    pub yes_position_size: Decimal,
+    pub no_position_size: Decimal,
+    pub yes_avg_price: Decimal,
+    pub no_avg_price: Decimal,
+    pub status: RewardMergeIntentStatus,
+    pub reason: String,
+    pub source_fill_id: String,
+    pub trace_id: String,
+    #[serde(with = "time::serde::rfc3339")]
+    pub created_at: OffsetDateTime,
     #[serde(with = "time::serde::rfc3339")]
     pub updated_at: OffsetDateTime,
 }

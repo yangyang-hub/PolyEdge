@@ -325,6 +325,7 @@ mod pagination_tests {
             price: decimal("0.50"),
             size: decimal("20"),
             strategy_bucket: RewardStrategyBucket::Standard,
+            strategy_profile: RewardStrategyProfile::Standard,
             external_order_id: None,
             status,
             scoring: false,

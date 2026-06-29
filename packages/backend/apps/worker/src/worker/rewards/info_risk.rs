@@ -584,6 +584,7 @@ mod reward_info_risk_candidate_tests {
             quote_readiness: RewardQuoteReadiness::Blocked,
             reason: String::new(),
             strategy_bucket: RewardStrategyBucket::Standard,
+            strategy_profile: RewardStrategyProfile::Standard,
             quote_mode: RewardPlanQuoteMode::Double,
             recommended_quote_mode: None,
             book_metrics: None,

@@ -10,6 +10,7 @@ pub struct RewardTickOutcome {
     /// Positions to upsert, keyed by `(account_id, token_id)`.
     pub positions: Vec<RewardPosition>,
     pub fills: Vec<RewardFill>,
+    pub merge_intents: Vec<RewardMergeIntent>,
     pub events: Vec<RewardRiskEvent>,
     pub report: RewardBotRunReport,
 }

@@ -42,6 +42,7 @@ mod rewards_tests {
             price: Decimal::new(49, 2),
             size: Decimal::from(20),
             strategy_bucket: RewardStrategyBucket::Standard,
+            strategy_profile: RewardStrategyProfile::Standard,
             external_order_id: external_order_id.map(str::to_string),
             status: ManagedRewardOrderStatus::Open,
             scoring: false,
