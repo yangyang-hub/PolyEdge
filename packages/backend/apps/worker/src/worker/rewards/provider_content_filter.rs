@@ -2,6 +2,7 @@ fn reward_provider_content_filter_rejected(error: &AppError) -> bool {
     if !matches!(
         error.code(),
         "REWARD_AI_STATUS_FAILED" | "REWARD_INFO_RISK_STATUS_FAILED"
+            | "REWARD_PROVIDER_STATUS_FAILED"
     ) {
         return false;
     }
@@ -183,6 +184,18 @@ mod reward_provider_content_filter_tests {
         let error = AppError::dependency_unavailable(
             "REWARD_AI_STATUS_FAILED",
             r#"reward AI provider returned HTTP 400: {"contentFilter":[{"level":1,"role":"user"}],"error":{"code":"1301"}}"#,
+        );
+        assert!(reward_provider_content_filter_rejected(&error));
+    }
+
+    #[test]
+    fn content_filter_detects_combined_provider_status_error() {
+        // The combined provider emits `REWARD_PROVIDER_STATUS_FAILED`; this code
+        // must stay in the allowlist or content-filter rejections are not cached
+        // and the same condition is re-requested every refresh cycle.
+        let error = AppError::dependency_unavailable(
+            "REWARD_PROVIDER_STATUS_FAILED",
+            r#"reward provider returned HTTP 400: {"contentFilter":[{"level":1,"role":"user"}],"error":{"code":"1301","message":"系统检测到输入或生成内容可能包含不安全或敏感内容"}}"#,
         );
         assert!(reward_provider_content_filter_rejected(&error));
     }
