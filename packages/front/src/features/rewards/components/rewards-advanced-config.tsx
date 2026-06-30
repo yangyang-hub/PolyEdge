@@ -227,6 +227,26 @@ export function AiAdvisoryConfig({
         onChange={(value) => updateNumber("ai_advisory_ttl_sec", value)}
       />
       <ToggleField
+        label={dictionary.rewards.aiProviderConcurrencyEnabled}
+        hint={h.aiProviderConcurrencyEnabled}
+        checked={draft.ai_provider_concurrency_enabled}
+        onChange={(checked) =>
+          setDraft((current) => ({ ...current, ai_provider_concurrency_enabled: checked }))
+        }
+      />
+      <NumberInput
+        label={dictionary.rewards.aiProviderPrimaryMaxConcurrency}
+        value={draft.ai_provider_primary_max_concurrency}
+        hint={h.aiProviderPrimaryMaxConcurrency}
+        onChange={(value) => updateNumber("ai_provider_primary_max_concurrency", value)}
+      />
+      <NumberInput
+        label={dictionary.rewards.aiProviderFallbackMaxConcurrency}
+        value={draft.ai_provider_fallback_max_concurrency}
+        hint={h.aiProviderFallbackMaxConcurrency}
+        onChange={(value) => updateNumber("ai_provider_fallback_max_concurrency", value)}
+      />
+      <ToggleField
         label={dictionary.rewards.aiStrategyHintEnabled}
         hint={h.aiStrategyHintEnabled}
         checked={draft.ai_strategy_hint_enabled}

@@ -87,6 +87,8 @@ export const copytrade = {
       signalAdvisoryProvider: "信号 provider",
       signalAdvisoryRequestFormat: "请求格式",
       signalAdvisoryModel: "信号模型",
+      signalAdvisoryConcurrencyEnabled: "启用信号并发",
+      signalAdvisoryMaxConcurrency: "信号最大并发",
       providerLabels: {
         openai: "OpenAI-compatible",
         anthropic: "Anthropic",

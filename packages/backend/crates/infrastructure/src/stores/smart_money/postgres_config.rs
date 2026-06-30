@@ -22,6 +22,12 @@ fn apply_smart_money_config_value(
         "signal_advisory_model" => {
             config.signal_advisory_model = value.trim().to_string();
         }
+        "signal_advisory_concurrency_enabled" => {
+            config.signal_advisory_concurrency_enabled = parse_smart_bool_config(key, value)?;
+        }
+        "signal_advisory_max_concurrency" => {
+            config.signal_advisory_max_concurrency = parse_smart_u16_config(key, value)?;
+        }
         "min_trade_count" => config.min_trade_count = parse_smart_i64_config(key, value)?,
         "min_settled_trade_count" => {
             config.min_settled_trade_count = parse_smart_i64_config(key, value)?;
@@ -82,6 +88,14 @@ fn smart_money_config_entries(config: &SmartMoneyConfig) -> Vec<(String, String)
             config.signal_advisory_model.clone(),
         ),
         (
+            "signal_advisory_concurrency_enabled".to_string(),
+            config.signal_advisory_concurrency_enabled.to_string(),
+        ),
+        (
+            "signal_advisory_max_concurrency".to_string(),
+            config.signal_advisory_max_concurrency.to_string(),
+        ),
+        (
             "min_trade_count".to_string(),
             config.min_trade_count.to_string(),
         ),
@@ -138,6 +152,15 @@ fn parse_smart_i64_config(key: &str, value: &str) -> Result<i64> {
         AppError::invalid_input(
             "SMART_MONEY_CONFIG_INVALID",
             format!("invalid integer smart money config {key}: {error}"),
+        )
+    })
+}
+
+fn parse_smart_u16_config(key: &str, value: &str) -> Result<u16> {
+    value.parse::<u16>().map_err(|error| {
+        AppError::invalid_input(
+            "SMART_MONEY_CONFIG_INVALID",
+            format!("invalid unsigned integer smart money config {key}: {error}"),
         )
     })
 }

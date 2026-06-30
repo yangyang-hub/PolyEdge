@@ -48,7 +48,6 @@ impl SmartSignalAdvisoryConnector {
         &self,
         request: &SmartSignalAdvisoryRequest,
     ) -> Result<SmartSignalAdvisoryDecision> {
-        let _provider_permit = crate::llm_provider::acquire_llm_provider_request_permit().await?;
         let provider = RewardAiProvider::from_str(&request.provider)?;
         let configured_format = RewardAiRequestFormat::from_str(&request.request_format)?;
         let request_format =

@@ -476,17 +476,62 @@ fn reward_ai_min_confidence(bps: u16) -> Decimal {
     Decimal::from(bps.min(10_000)) / Decimal::from(10_000_u64)
 }
 
-async fn acquire_reward_provider_request_permit()
--> Result<tokio::sync::SemaphorePermit<'static>> {
-    REWARD_PROVIDER_REQUEST_SEMAPHORE
-        .acquire()
-        .await
-        .map_err(|error| {
-            AppError::internal(
-                "REWARD_PROVIDER_SEMAPHORE_CLOSED",
-                format!("reward provider request semaphore closed: {error}"),
-            )
-        })
+const REWARD_PROVIDER_MAX_ENDPOINT_CONCURRENCY: u16 = 10;
+
+#[derive(Clone)]
+struct RewardProviderConcurrency {
+    primary: Arc<tokio::sync::Semaphore>,
+    fallback: Arc<tokio::sync::Semaphore>,
+    primary_limit: usize,
+    fallback_limit: usize,
+}
+
+fn reward_provider_concurrency(config: &RewardBotConfig) -> RewardProviderConcurrency {
+    let primary_limit = reward_provider_endpoint_concurrency(
+        config.ai_provider_concurrency_enabled,
+        config.ai_provider_primary_max_concurrency,
+    );
+    let fallback_limit = reward_provider_endpoint_concurrency(
+        config.ai_provider_concurrency_enabled,
+        config.ai_provider_fallback_max_concurrency,
+    );
+    RewardProviderConcurrency {
+        primary: Arc::new(tokio::sync::Semaphore::new(primary_limit)),
+        fallback: Arc::new(tokio::sync::Semaphore::new(fallback_limit)),
+        primary_limit,
+        fallback_limit,
+    }
+}
+
+fn reward_provider_endpoint_concurrency(enabled: bool, configured: u16) -> usize {
+    if !enabled {
+        return 1;
+    }
+    usize::from(configured.clamp(1, REWARD_PROVIDER_MAX_ENDPOINT_CONCURRENCY))
+}
+
+fn reward_provider_condition_parallelism(
+    concurrency: &RewardProviderConcurrency,
+    fallback_configured: bool,
+) -> usize {
+    if fallback_configured {
+        concurrency.primary_limit + concurrency.fallback_limit
+    } else {
+        concurrency.primary_limit
+    }
+    .max(1)
+}
+
+async fn acquire_reward_provider_request_permit(
+    semaphore: Arc<tokio::sync::Semaphore>,
+    endpoint: &'static str,
+) -> Result<tokio::sync::OwnedSemaphorePermit> {
+    semaphore.acquire_owned().await.map_err(|error| {
+        AppError::internal(
+            "REWARD_PROVIDER_SEMAPHORE_CLOSED",
+            format!("reward provider {endpoint} request semaphore closed: {error}"),
+        )
+    })
 }
 
 fn reward_ai_provider_is_overloaded(error: &AppError) -> bool {
@@ -589,25 +634,20 @@ mod reward_ai_provider_error_tests {
         assert!(!reward_ai_provider_is_overloaded(&error));
     }
 
-    #[tokio::test]
-    async fn reward_provider_request_permit_is_single_flight() {
-        let first = acquire_reward_provider_request_permit()
-            .await
-            .expect("acquire first permit");
-        let second = tokio::time::timeout(
-            Duration::from_millis(10),
-            acquire_reward_provider_request_permit(),
-        )
-        .await;
-        assert!(second.is_err());
+    #[test]
+    fn reward_provider_concurrency_defaults_to_serial_until_enabled() {
+        let mut config = RewardBotConfig {
+            ai_provider_primary_max_concurrency: 4,
+            ai_provider_fallback_max_concurrency: 3,
+            ..RewardBotConfig::default()
+        };
+        let concurrency = reward_provider_concurrency(&config);
+        assert_eq!(concurrency.primary_limit, 1);
+        assert_eq!(concurrency.fallback_limit, 1);
 
-        drop(first);
-        let _next = tokio::time::timeout(
-            Duration::from_millis(100),
-            acquire_reward_provider_request_permit(),
-        )
-        .await
-        .expect("permit should acquire after release")
-        .expect("acquire next permit");
+        config.ai_provider_concurrency_enabled = true;
+        let concurrency = reward_provider_concurrency(&config);
+        assert_eq!(concurrency.primary_limit, 4);
+        assert_eq!(concurrency.fallback_limit, 3);
     }
 }

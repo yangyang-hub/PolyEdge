@@ -1,6 +1,6 @@
 # Copy Trading（钱包跟踪）
 
-最后更新：2026-06-27
+最后更新：2026-06-29
 
 ## 概述
 
@@ -12,7 +12,7 @@
 |---|---|
 | `src/app/(console)/copy-trading/page.tsx` | 路由页面 |
 | `src/features/copytrade/components/copytrade-workbench.tsx` | 主工作台组件：状态指标、Smart Money 配置/候选面板挂载、跟踪控制、钱包管理、源成交与事件列表 |
-| `src/features/copytrade/components/smart-money-config-panel.tsx` | Smart Money 配置面板：启用/发现/advisory 开关、模式、signal advisory provider/request format/model 和基础阈值保存 |
+| `src/features/copytrade/components/smart-money-config-panel.tsx` | Smart Money 配置面板：启用/发现/advisory 开关、模式、signal advisory provider/request format/model、signal advisory 并发设置和基础阈值保存 |
 | `src/features/copytrade/components/smart-money-candidates-panel.tsx` | Smart Money 候选池面板：候选、profile/score 摘要、watch/tracked/blocked/rejected 状态更新 |
 | `src/features/copytrade/components/smart-money-signals-panel.tsx` | Smart Money 信号流面板：展示 recent_signals 的源价格、当前价格、滑点、状态、拒绝原因和最近 signal advisory 建议 |
 | `src/features/copytrade/loaders/copytrade-page-data.ts` | 服务端数据装配：并行读取 copytrade snapshot 与 Smart Money snapshot |
@@ -38,7 +38,7 @@
 - `setCopytradeWalletStatusAction` — 设置钱包状态（active/paused）
 - `updateCopyTradeConfigAction` — 保存跟踪配置
 - `analyzeCopytradeWalletsAction` — 入队钱包分析命令
-- `updateSmartMoneyConfigAction` — 保存 Smart Money 配置（enabled、mode、discovery/advisory 开关、signal advisory provider/request format/model 和基础阈值）
+- `updateSmartMoneyConfigAction` — 保存 Smart Money 配置（enabled、mode、discovery/advisory 开关、signal advisory provider/request format/model、signal advisory 并发开关/最大并发和基础阈值）
 - `updateSmartWalletCandidateStatusAction` — 设置 Smart Money 候选状态（candidate/watch/tracked/blocked/rejected）
 
 ## 数据流
@@ -64,7 +64,7 @@ Client Component（copytrade-workbench.tsx）
 - 钱包管理（添加/移除/暂停/激活）
 - 启停跟踪配置保存
 - Analyze 钱包分析命令入队
-- Smart Money 配置保存：enabled、mode、候选发现/advisory 开关、signal advisory provider/request format/model、样本/成交量/可跟分/滑点/深度/敞口阈值；provider key/base URL/timeout 只在后端 `.env.api` 配置，不进入前端
+- Smart Money 配置保存：enabled、mode、候选发现/advisory 开关、signal advisory provider/request format/model、signal advisory 并发开关/最大并发、样本/成交量/可跟分/滑点/深度/敞口阈值；provider key/base URL/timeout 只在后端 `.env.api` 配置，不进入前端
 - Smart Money 候选池展示：候选来源、候选状态、profile/score 摘要、发现/分析时间
 - Smart Money 候选状态操作：设置 watch/tracked/blocked/rejected；该前端操作只更新候选池状态，不直接触发信号生成或订单执行
 - Smart Money 信号流展示：展示 recent_signals 的钱包、condition/token、方向、源成交价、当前价格、滑点、observe/rejected 状态、拒绝原因、最近 signal advisory 的 allow/observe/reject 建议、置信度、provider/model、摘要和生成时间；当前信号只用于观察和诊断，不代表可执行跟随订单

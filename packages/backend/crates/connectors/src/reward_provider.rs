@@ -84,7 +84,6 @@ impl RewardProviderConnector {
                 "reward provider request must include advisory or info_risk",
             ));
         }
-        let _provider_permit = crate::llm_provider::acquire_llm_provider_request_permit().await?;
         let request_format = reward_ai_effective_request_format(
             request.provider,
             request.request_format,

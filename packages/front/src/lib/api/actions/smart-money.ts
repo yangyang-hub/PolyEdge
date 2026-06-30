@@ -32,6 +32,7 @@ const smartMoneyConfigSchema = z
     discovery_enabled: z.boolean(),
     wallet_advisory_enabled: z.boolean(),
     signal_advisory_enabled: z.boolean(),
+    signal_advisory_concurrency_enabled: z.boolean(),
     signal_advisory_provider: z.enum(["openai", "anthropic"]),
     signal_advisory_request_format: z.enum([
       "openai_responses",
@@ -39,6 +40,7 @@ const smartMoneyConfigSchema = z
       "anthropic_messages",
     ]),
     signal_advisory_model: z.string().trim().min(1).max(120),
+    signal_advisory_max_concurrency: z.coerce.number().int().min(1).max(10),
     min_trade_count: z.coerce.number().int().min(0),
     min_settled_trade_count: z.coerce.number().int().min(0),
     min_total_volume_usd: decimalNumber.min(0),

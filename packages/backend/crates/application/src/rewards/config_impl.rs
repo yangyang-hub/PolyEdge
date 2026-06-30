@@ -93,6 +93,9 @@ impl Default for RewardBotConfig {
             ai_provider: RewardAiProvider::OpenAi,
             ai_request_format: RewardAiRequestFormat::OpenAiResponses,
             ai_advisory_ttl_sec: 3600,
+            ai_provider_concurrency_enabled: false,
+            ai_provider_primary_max_concurrency: 1,
+            ai_provider_fallback_max_concurrency: 1,
             ai_strategy_hint_enabled: true,
             ai_strategy_hint_min_confidence: decimal("0.75"),
             info_risk_enabled: false,
@@ -424,6 +427,10 @@ impl RewardBotConfig {
         self.low_competition_max_open_orders = 0;
         self.low_competition_global_open_order_share_bps = 0;
         self.ai_advisory_ttl_sec = self.ai_advisory_ttl_sec.clamp(60, 86_400);
+        self.ai_provider_primary_max_concurrency =
+            self.ai_provider_primary_max_concurrency.clamp(1, 10);
+        self.ai_provider_fallback_max_concurrency =
+            self.ai_provider_fallback_max_concurrency.clamp(1, 10);
         self.ai_strategy_hint_min_confidence = clamp_decimal(
             self.ai_strategy_hint_min_confidence,
             Decimal::ZERO,
@@ -895,6 +902,15 @@ impl RewardBotConfig {
         if let Some(value) = patch.ai_advisory_ttl_sec {
             next.ai_advisory_ttl_sec = value;
         }
+        if let Some(value) = patch.ai_provider_concurrency_enabled {
+            next.ai_provider_concurrency_enabled = value;
+        }
+        if let Some(value) = patch.ai_provider_primary_max_concurrency {
+            next.ai_provider_primary_max_concurrency = value;
+        }
+        if let Some(value) = patch.ai_provider_fallback_max_concurrency {
+            next.ai_provider_fallback_max_concurrency = value;
+        }
         if let Some(value) = patch.ai_strategy_hint_enabled {
             next.ai_strategy_hint_enabled = value;
         }
@@ -1112,6 +1128,9 @@ mod reward_config_tests {
             "ai_provider": "openai",
             "ai_request_format": "openai_chat_completions",
             "ai_advisory_ttl_sec": 36000,
+            "ai_provider_concurrency_enabled": true,
+            "ai_provider_primary_max_concurrency": 4,
+            "ai_provider_fallback_max_concurrency": 2,
             "ai_strategy_hint_enabled": true,
             "ai_strategy_hint_min_confidence": 0.8,
             "info_risk_enabled": true,
@@ -1160,6 +1179,9 @@ mod reward_config_tests {
         let config = RewardBotConfig::default().apply_patch(patch);
 
         assert_eq!(config.quote_bid_rank, 3);
+        assert!(config.ai_provider_concurrency_enabled);
+        assert_eq!(config.ai_provider_primary_max_concurrency, 4);
+        assert_eq!(config.ai_provider_fallback_max_concurrency, 2);
         assert_eq!(config.ai_strategy_hint_min_confidence, decimal("0.8"));
         assert!(config.event_window_enabled);
         assert_eq!(

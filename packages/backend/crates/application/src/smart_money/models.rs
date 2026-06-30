@@ -242,6 +242,8 @@ pub struct SmartMoneyConfig {
     pub signal_advisory_provider: RewardAiProvider,
     pub signal_advisory_request_format: RewardAiRequestFormat,
     pub signal_advisory_model: String,
+    pub signal_advisory_concurrency_enabled: bool,
+    pub signal_advisory_max_concurrency: u16,
     pub min_trade_count: i64,
     pub min_settled_trade_count: i64,
     pub min_total_volume_usd: Decimal,
@@ -265,6 +267,8 @@ impl Default for SmartMoneyConfig {
             signal_advisory_provider: RewardAiProvider::OpenAi,
             signal_advisory_request_format: RewardAiRequestFormat::OpenAiResponses,
             signal_advisory_model: "gpt-4.1-mini".to_string(),
+            signal_advisory_concurrency_enabled: false,
+            signal_advisory_max_concurrency: 1,
             min_trade_count: 50,
             min_settled_trade_count: 20,
             min_total_volume_usd: Decimal::from(10_000),
@@ -296,6 +300,7 @@ impl SmartMoneyConfig {
         if self.signal_advisory_model.is_empty() {
             self.signal_advisory_model = SmartMoneyConfig::default().signal_advisory_model;
         }
+        self.signal_advisory_max_concurrency = self.signal_advisory_max_concurrency.clamp(1, 10);
         self.signal_advisory_request_format = reward_ai_effective_request_format(
             self.signal_advisory_provider,
             self.signal_advisory_request_format,
@@ -329,6 +334,12 @@ impl SmartMoneyConfig {
         }
         if let Some(value) = patch.signal_advisory_model {
             self.signal_advisory_model = value;
+        }
+        if let Some(value) = patch.signal_advisory_concurrency_enabled {
+            self.signal_advisory_concurrency_enabled = value;
+        }
+        if let Some(value) = patch.signal_advisory_max_concurrency {
+            self.signal_advisory_max_concurrency = value;
         }
         if let Some(value) = patch.min_trade_count {
             self.min_trade_count = value;
@@ -382,6 +393,10 @@ pub struct SmartMoneyConfigPatch {
     pub signal_advisory_request_format: Option<RewardAiRequestFormat>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub signal_advisory_model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signal_advisory_concurrency_enabled: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signal_advisory_max_concurrency: Option<u16>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub min_trade_count: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

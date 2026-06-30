@@ -350,12 +350,13 @@ fn reward_provider_llm_input_hash(
 /// Try the primary combined-provider endpoint; on any failure retry against the
 /// fallback (if configured). Records a single `llm_calls` row per attempt
 /// (under `REWARD_PROVIDER_LLM_TASK_TYPE`). Permits are acquired per attempt
-/// (single-flight is preserved — the semaphore has concurrency 1).
+/// against the configured primary or fallback endpoint pool.
 #[allow(clippy::too_many_arguments)]
 async fn evaluate_with_fallback(
     state: &AppState,
     primary: &RewardProviderChannel<'_>,
     fallback: Option<&RewardProviderChannel<'_>>,
+    concurrency: &RewardProviderConcurrency,
     primary_request: &polyedge_application::RewardProviderRequest,
     trace_id: &str,
 ) -> Result<
@@ -369,7 +370,8 @@ async fn evaluate_with_fallback(
 
     let started = Instant::now();
     let primary_result = {
-        let _permit = acquire_reward_provider_request_permit().await?;
+        let _permit =
+            acquire_reward_provider_request_permit(concurrency.primary.clone(), "primary").await?;
         primary.connector.evaluate(primary_request).await
     };
     record_reward_provider_llm_call(
@@ -412,7 +414,12 @@ async fn evaluate_with_fallback(
         &fb.model,
     );
     let started = Instant::now();
-    let fallback_result = match acquire_reward_provider_request_permit().await {
+    let fallback_result = match acquire_reward_provider_request_permit(
+        concurrency.fallback.clone(),
+        "fallback",
+    )
+    .await
+    {
         Ok(_permit) => fb.connector.evaluate(&fallback_request).await,
         Err(error) => Err(error),
     };

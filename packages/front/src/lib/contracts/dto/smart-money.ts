@@ -19,6 +19,8 @@ export type SmartMoneyConfigDto = {
   signal_advisory_provider: RewardAiProvider;
   signal_advisory_request_format: RewardAiRequestFormat;
   signal_advisory_model: string;
+  signal_advisory_concurrency_enabled: boolean;
+  signal_advisory_max_concurrency: number;
   min_trade_count: number;
   min_settled_trade_count: number;
   min_total_volume_usd: DecimalValue;

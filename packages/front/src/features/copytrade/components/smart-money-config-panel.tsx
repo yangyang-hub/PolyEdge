@@ -25,6 +25,7 @@ import { dictionary } from "@/lib/i18n/dictionaries";
 type SmartMoneyNumericConfigKey =
   | "min_trade_count"
   | "min_settled_trade_count"
+  | "signal_advisory_max_concurrency"
   | "min_total_volume_usd"
   | "min_copyability_score"
   | "max_signal_age_ms"
@@ -37,6 +38,7 @@ type SmartMoneyNumericConfigKey =
 const integerConfigKeys = new Set<SmartMoneyNumericConfigKey>([
   "min_trade_count",
   "min_settled_trade_count",
+  "signal_advisory_max_concurrency",
   "max_signal_age_ms",
 ]);
 
@@ -196,6 +198,16 @@ export function SmartMoneyConfigPanel({
               setDraft((current) => ({ ...current, signal_advisory_enabled: checked }))
             }
           />
+          <ConfigToggle
+            label={t.signalAdvisoryConcurrencyEnabled}
+            checked={draft.signal_advisory_concurrency_enabled}
+            onChange={(checked) =>
+              setDraft((current) => ({
+                ...current,
+                signal_advisory_concurrency_enabled: checked,
+              }))
+            }
+          />
         </div>
 
         <label className="block space-y-1.5">
@@ -288,6 +300,15 @@ export function SmartMoneyConfigPanel({
               className="h-9 text-xs"
             />
           </label>
+
+          <ConfigNumberInput
+            label={t.signalAdvisoryMaxConcurrency}
+            value={draft.signal_advisory_max_concurrency}
+            min={1}
+            max={10}
+            step="1"
+            onChange={(value) => setNumber("signal_advisory_max_concurrency", value)}
+          />
         </div>
 
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">

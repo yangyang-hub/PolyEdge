@@ -1,5 +1,6 @@
 use polyedge_application::{
-    RewardAiProvider, reward_ai_model_is_glm_reasoning, reward_ai_model_requires_openai_chat_completions,
+    RewardAiProvider, reward_ai_model_is_glm_reasoning,
+    reward_ai_model_requires_openai_chat_completions,
 };
 use reqwest::RequestBuilder;
 use serde::Deserialize;
@@ -244,12 +245,18 @@ mod tests {
             openai_compatible_chat_thinking_disabled("GLM-4.7"),
             Some(json!({"type": "disabled"}))
         );
-        assert_eq!(openai_compatible_chat_thinking_disabled("glm-4.5-flash"), None);
+        assert_eq!(
+            openai_compatible_chat_thinking_disabled("glm-4.5-flash"),
+            None
+        );
         assert_eq!(
             openai_compatible_chat_thinking_disabled("deepseek-v4-flash"),
             None
         );
-        assert_eq!(openai_compatible_chat_thinking_disabled("gpt-4.1-mini"), None);
+        assert_eq!(
+            openai_compatible_chat_thinking_disabled("gpt-4.1-mini"),
+            None
+        );
     }
 
     #[test]

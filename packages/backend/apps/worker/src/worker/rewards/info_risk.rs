@@ -1,5 +1,11 @@
 const REWARD_INFO_RISK_ADVISORY_LOCK_KEY: i64 = 0x504f_4c59_494e_464f;
 
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+struct RewardInfoRiskConditionOutcome {
+    report: RewardInfoRiskScanReport,
+    stop_refresh: bool,
+}
+
 async fn scan_reward_info_risks_once(
     state: &AppState,
     trace_id: &str,
@@ -67,6 +73,7 @@ async fn scan_reward_info_risks_unlocked(
     }
     let model = reward_ai_model_for_provider(&state.settings.rewards, config.ai_provider);
     let request_format = reward_ai_effective_request_format_for_model(&config, model);
+    let provider_concurrency = reward_provider_concurrency(&config);
     if model.is_empty() {
         warn!(trace_id = %trace_id, "reward info risk model is empty");
         return Ok(RewardInfoRiskScanReport::default());
@@ -92,15 +99,9 @@ async fn scan_reward_info_risks_unlocked(
         Some(descriptor) => Some(build_reward_provider_fallback_connector(state, descriptor)?),
         None => None,
     };
-    let fallback_channel = match (&fallback_descriptor, fallback_connector.as_ref()) {
-        (Some(descriptor), Some(connector)) => Some(RewardProviderChannel {
-            connector,
-            provider: descriptor.provider,
-            request_format: descriptor.request_format,
-            model: descriptor.model.clone(),
-        }),
-        _ => None,
-    };
+    let fallback_configured = fallback_descriptor.is_some() && fallback_connector.is_some();
+    let condition_parallelism =
+        reward_provider_condition_parallelism(&provider_concurrency, fallback_configured);
     let mut report = RewardInfoRiskScanReport::default();
     let cycle = state.reward_bot_service.current_live_cycle_state().await?;
     let candidate_markets = state
@@ -112,17 +113,12 @@ async fn scan_reward_info_risks_unlocked(
         .list_active_reward_markets()
         .await?;
     let mut markets_by_condition = active_markets
-        .iter()
+        .into_iter()
         .map(|market| (market.condition_id.clone(), market))
         .collect::<HashMap<_, _>>();
     for market in &candidate_markets {
-        markets_by_condition.insert(market.condition_id.clone(), market);
+        markets_by_condition.insert(market.condition_id.clone(), market.clone());
     }
-    let plans_by_condition = cycle
-        .plans
-        .iter()
-        .map(|plan| (plan.condition_id.as_str(), plan))
-        .collect::<HashMap<_, _>>();
     let mut ordered_conditions = reward_info_risk_candidate_conditions(
         &candidate_markets,
         &cycle.plans,
@@ -143,153 +139,61 @@ async fn scan_reward_info_risks_unlocked(
         candidates = report.candidates,
         selected_conditions = ordered_conditions.len(),
         max_conditions,
+        primary_concurrency = provider_concurrency.primary_limit,
+        fallback_concurrency = provider_concurrency.fallback_limit,
+        condition_parallelism,
         "prepared reward info risk provider candidates",
     );
 
-    for condition_id in ordered_conditions {
-        let Some(market) = markets_by_condition.get(&condition_id) else {
-            report.skipped_missing_market += 1;
-            continue;
-        };
-        let request = build_reward_info_risk_assessment_request(
-            market,
-            plans_by_condition.get(condition_id.as_str()).copied(),
-            &cycle.account,
-            &cycle.positions,
-            &cycle.open_orders,
-            &config,
-            config.ai_provider,
-            request_format,
-            model,
-        )?;
-        if let Some(cached) =
-            latest_market_info_risk_for_endpoints(state, &request, fallback_descriptor.as_ref())
-                .await?
-        {
-            report.cache_hits += 1;
-            if !reward_provider_cache_refresh_due(
-                cached.expires_at,
-                config.info_risk_ttl_sec,
-                OffsetDateTime::now_utc(),
-            ) {
-                continue;
+    let cycle_snapshot = Arc::new(cycle);
+    let config_snapshot = Arc::new(config.clone());
+    let markets_snapshot = Arc::new(markets_by_condition);
+    let mut stop_refresh = false;
+    for condition_batch in ordered_conditions.chunks(condition_parallelism) {
+        let outcomes = futures::stream::iter(condition_batch.iter().cloned())
+            .map(|condition_id| {
+                let state = state.clone();
+                let connector = connector.clone();
+                let fallback_descriptor = fallback_descriptor.clone();
+                let fallback_connector = fallback_connector.clone();
+                let provider_concurrency = provider_concurrency.clone();
+                let cycle = cycle_snapshot.clone();
+                let config = config_snapshot.clone();
+                let markets_by_condition = markets_snapshot.clone();
+                let model = model.to_string();
+                let trace_id = trace_id.to_string();
+                async move {
+                    scan_reward_info_risk_condition(
+                        state,
+                        connector,
+                        fallback_descriptor,
+                        fallback_connector,
+                        provider_concurrency,
+                        cycle,
+                        config,
+                        markets_by_condition,
+                        condition_id,
+                        request_format,
+                        model,
+                        trace_id,
+                    )
+                    .await
+                }
+            })
+            .buffer_unordered(condition_parallelism)
+            .collect::<Vec<_>>()
+            .await;
+
+        for outcome in outcomes {
+            let outcome = outcome?;
+            accumulate_info_risk_report(&mut report, &outcome.report);
+            if outcome.stop_refresh {
+                stop_refresh = true;
+                break;
             }
         }
-
-        report.requested += 1;
-        info!(
-            trace_id = %trace_id,
-            condition_id = %condition_id,
-            requested = report.requested,
-            "requesting reward info risk provider",
-        );
-        let combined = polyedge_application::RewardProviderRequest {
-            condition_id: condition_id.clone(),
-            provider: config.ai_provider,
-            request_format,
-            model: model.to_string(),
-            advisory: None,
-            info_risk: Some(request.clone()),
-        };
-        let primary_channel = RewardProviderChannel {
-            connector: &connector,
-            provider: config.ai_provider,
-            request_format,
-            model: model.to_string(),
-        };
-        let attempt = evaluate_with_fallback(
-            state,
-            &primary_channel,
-            fallback_channel.as_ref(),
-            &combined,
-            trace_id,
-        )
-        .await?;
-        match attempt {
-            RewardProviderAttempt::Success {
-                decision,
-                endpoint,
-                request: winning,
-            } => {
-                let Some(info_risk_decision) = decision.info_risk else {
-                    report.failures += 1;
-                    warn!(
-                        trace_id = %trace_id,
-                        condition_id = %condition_id,
-                        "reward info risk provider response missing info_risk section",
-                    );
-                    continue;
-                };
-                let Some(winning_request) = winning.info_risk.as_ref() else {
-                    report.failures += 1;
-                    warn!(
-                        trace_id = %trace_id,
-                        condition_id = %condition_id,
-                        "reward info risk provider winning request missing info_risk section",
-                    );
-                    continue;
-                };
-                let risk = info_risk_decision.into_info_risk(
-                    winning_request,
-                    config.info_risk_ttl_sec,
-                    OffsetDateTime::now_utc(),
-                );
-                state
-                    .reward_bot_service
-                    .save_market_info_risk(&risk)
-                    .await?;
-                report.saved += 1;
-                info!(
-                    trace_id = %trace_id,
-                    condition_id = %condition_id,
-                    endpoint = ?endpoint,
-                    saved = report.saved,
-                    "saved reward info risk",
-                );
-            }
-            RewardProviderAttempt::Failed {
-                primary_error,
-                fallback_error,
-            } => {
-                report.failures += 1;
-                warn!(
-                    trace_id = %trace_id,
-                    condition_id = %condition_id,
-                    error = %primary_error,
-                    "reward info risk request failed",
-                );
-                if let Some(fb_error) = &fallback_error {
-                    warn!(
-                        trace_id = %trace_id,
-                        condition_id = %condition_id,
-                        error = %fb_error,
-                        "reward info risk fallback request also failed",
-                    );
-                }
-                if cache_reward_info_risk_content_filter_if_rejected(
-                    state,
-                    &request,
-                    config.info_risk_ttl_sec,
-                    &primary_error,
-                    fallback_error.as_ref(),
-                    trace_id,
-                )
-                .await?
-                .is_some()
-                {
-                    report.saved += 1;
-                    continue;
-                }
-                if reward_combined_provider_overloaded(&primary_error, fallback_error.as_ref()) {
-                    warn!(
-                        trace_id = %trace_id,
-                        requested = report.requested,
-                        failures = report.failures,
-                        "reward info risk provider is overloaded; stopping provider requests for this cycle",
-                    );
-                    break;
-                }
-            }
+        if stop_refresh {
+            break;
         }
     }
 
@@ -306,6 +210,176 @@ async fn scan_reward_info_risks_unlocked(
         "completed reward info risk scan",
     );
     Ok(report)
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn scan_reward_info_risk_condition(
+    state: AppState,
+    connector: RewardProviderConnector,
+    fallback_descriptor: Option<RewardProviderFallback>,
+    fallback_connector: Option<RewardProviderConnector>,
+    provider_concurrency: RewardProviderConcurrency,
+    cycle: Arc<RewardLiveCycle>,
+    config: Arc<RewardBotConfig>,
+    markets_by_condition: Arc<HashMap<String, RewardMarket>>,
+    condition_id: String,
+    request_format: polyedge_application::RewardAiRequestFormat,
+    model: String,
+    trace_id: String,
+) -> Result<RewardInfoRiskConditionOutcome> {
+    let mut outcome = RewardInfoRiskConditionOutcome::default();
+    let Some(market) = markets_by_condition.get(&condition_id) else {
+        outcome.report.skipped_missing_market += 1;
+        return Ok(outcome);
+    };
+    let plan = cycle
+        .plans
+        .iter()
+        .find(|plan| plan.condition_id == condition_id);
+    let request = build_reward_info_risk_assessment_request(
+        market,
+        plan,
+        &cycle.account,
+        &cycle.positions,
+        &cycle.open_orders,
+        &config,
+        config.ai_provider,
+        request_format,
+        &model,
+    )?;
+    if let Some(cached) =
+        latest_market_info_risk_for_endpoints(&state, &request, fallback_descriptor.as_ref())
+            .await?
+    {
+        outcome.report.cache_hits += 1;
+        if !reward_provider_cache_refresh_due(
+            cached.expires_at,
+            config.info_risk_ttl_sec,
+            OffsetDateTime::now_utc(),
+        ) {
+            return Ok(outcome);
+        }
+    }
+
+    outcome.report.requested += 1;
+    info!(
+        trace_id = %trace_id,
+        condition_id = %condition_id,
+        "requesting reward info risk provider",
+    );
+    let combined = polyedge_application::RewardProviderRequest {
+        condition_id: condition_id.clone(),
+        provider: config.ai_provider,
+        request_format,
+        model: model.clone(),
+        advisory: None,
+        info_risk: Some(request.clone()),
+    };
+    let primary_channel = RewardProviderChannel {
+        connector: &connector,
+        provider: config.ai_provider,
+        request_format,
+        model: model.clone(),
+    };
+    let fallback_channel = match (&fallback_descriptor, fallback_connector.as_ref()) {
+        (Some(descriptor), Some(connector)) => Some(RewardProviderChannel {
+            connector,
+            provider: descriptor.provider,
+            request_format: descriptor.request_format,
+            model: descriptor.model.clone(),
+        }),
+        _ => None,
+    };
+    let attempt = evaluate_with_fallback(
+        &state,
+        &primary_channel,
+        fallback_channel.as_ref(),
+        &provider_concurrency,
+        &combined,
+        &trace_id,
+    )
+    .await?;
+    match attempt {
+        RewardProviderAttempt::Success {
+            decision,
+            endpoint,
+            request: winning,
+        } => {
+            let Some(info_risk_decision) = decision.info_risk else {
+                outcome.report.failures += 1;
+                warn!(
+                    trace_id = %trace_id,
+                    condition_id = %condition_id,
+                    "reward info risk provider response missing info_risk section",
+                );
+                return Ok(outcome);
+            };
+            let Some(winning_request) = winning.info_risk.as_ref() else {
+                outcome.report.failures += 1;
+                warn!(
+                    trace_id = %trace_id,
+                    condition_id = %condition_id,
+                    "reward info risk provider winning request missing info_risk section",
+                );
+                return Ok(outcome);
+            };
+            let risk = info_risk_decision.into_info_risk(
+                winning_request,
+                config.info_risk_ttl_sec,
+                OffsetDateTime::now_utc(),
+            );
+            state.reward_bot_service.save_market_info_risk(&risk).await?;
+            outcome.report.saved += 1;
+            info!(
+                trace_id = %trace_id,
+                condition_id = %condition_id,
+                endpoint = ?endpoint,
+                "saved reward info risk",
+            );
+        }
+        RewardProviderAttempt::Failed {
+            primary_error,
+            fallback_error,
+        } => {
+            outcome.report.failures += 1;
+            warn!(
+                trace_id = %trace_id,
+                condition_id = %condition_id,
+                error = %primary_error,
+                "reward info risk request failed",
+            );
+            if let Some(fb_error) = &fallback_error {
+                warn!(
+                    trace_id = %trace_id,
+                    condition_id = %condition_id,
+                    error = %fb_error,
+                    "reward info risk fallback request also failed",
+                );
+            }
+            if cache_reward_info_risk_content_filter_if_rejected(
+                &state,
+                &request,
+                config.info_risk_ttl_sec,
+                &primary_error,
+                fallback_error.as_ref(),
+                &trace_id,
+            )
+            .await?
+            .is_some()
+            {
+                outcome.report.saved += 1;
+                return Ok(outcome);
+            }
+            if reward_combined_provider_overloaded(&primary_error, fallback_error.as_ref()) {
+                outcome.stop_refresh = true;
+                warn!(
+                    trace_id = %trace_id,
+                    "reward info risk provider is overloaded; stopping provider requests for this cycle",
+                );
+            }
+        }
+    }
+    Ok(outcome)
 }
 
 async fn apply_cached_reward_info_risks(state: &AppState, trace_id: &str) -> Result<usize> {

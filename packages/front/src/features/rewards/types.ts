@@ -34,6 +34,8 @@ export type NumberConfigKey =
   | "opportunity_exit_weight"
   | "opportunity_stability_weight"
   | "ai_advisory_ttl_sec"
+  | "ai_provider_primary_max_concurrency"
+  | "ai_provider_fallback_max_concurrency"
   | "ai_strategy_hint_min_confidence"
   | "info_risk_ttl_sec"
   | "event_window_stop_new_quote_before_start_sec"

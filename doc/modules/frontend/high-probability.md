@@ -1,6 +1,6 @@
 # 高概率定价研究页
 
-最后更新：2026-06-27
+最后更新：2026-06-29
 
 ## 概述
 
@@ -49,6 +49,7 @@ HighProbabilityPage
 ```
 
 页面不直接 fetch，也不调用 Polymarket 外部 API。所有市场、样本和 observation 数据必须由后端 worker/orderbook producer 写入数据库或本地服务缓存后，再通过 Rust API 读取。
+当前 High Probability 研究页没有 LLM/provider 调用，也没有大模型并发配置；若后续引入 provider advisory，需要先在后端落地对应配置和 worker 调用路径后再暴露前端控制项。
 
 ## 当前状态
 

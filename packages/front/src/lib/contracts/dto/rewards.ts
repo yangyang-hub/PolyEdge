@@ -110,6 +110,9 @@ export type RewardBotConfigDto = {
   ai_provider: RewardAiProvider;
   ai_request_format: RewardAiRequestFormat;
   ai_advisory_ttl_sec: number;
+  ai_provider_concurrency_enabled: boolean;
+  ai_provider_primary_max_concurrency: number;
+  ai_provider_fallback_max_concurrency: number;
   ai_strategy_hint_enabled: boolean;
   ai_strategy_hint_min_confidence: DecimalValue;
   info_risk_enabled: boolean;

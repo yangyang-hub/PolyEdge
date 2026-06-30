@@ -423,6 +423,14 @@ pub struct RewardBotConfig {
     pub ai_provider: RewardAiProvider,
     pub ai_request_format: RewardAiRequestFormat,
     pub ai_advisory_ttl_sec: u64,
+    /// Allow the background rewards provider refresh to issue multiple
+    /// condition-level LLM requests concurrently. Disabled keeps legacy serial
+    /// behavior even when the max values are greater than one.
+    pub ai_provider_concurrency_enabled: bool,
+    /// Maximum simultaneous primary provider HTTP requests for Rewards.
+    pub ai_provider_primary_max_concurrency: u16,
+    /// Maximum simultaneous fallback provider HTTP requests for Rewards.
+    pub ai_provider_fallback_max_concurrency: u16,
     /// Apply provider strategy hints directly to live quote mode, bid rank and
     /// condition notional caps. Hints never bypass deterministic hard risk.
     pub ai_strategy_hint_enabled: bool,
@@ -698,6 +706,12 @@ pub struct RewardBotConfigPatch {
     pub ai_request_format: Option<RewardAiRequestFormat>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ai_advisory_ttl_sec: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ai_provider_concurrency_enabled: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ai_provider_primary_max_concurrency: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ai_provider_fallback_max_concurrency: Option<u16>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ai_strategy_hint_enabled: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

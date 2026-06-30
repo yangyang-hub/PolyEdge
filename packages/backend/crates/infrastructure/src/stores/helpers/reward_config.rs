@@ -240,6 +240,15 @@ fn apply_reward_config_value(config: &mut RewardBotConfig, key: &str, value: &st
             config.ai_request_format = RewardAiRequestFormat::from_str(value)?;
         }
         "ai_advisory_ttl_sec" => config.ai_advisory_ttl_sec = parse_u64_config(key, value)?,
+        "ai_provider_concurrency_enabled" => {
+            config.ai_provider_concurrency_enabled = parse_bool_config(key, value)?;
+        }
+        "ai_provider_primary_max_concurrency" => {
+            config.ai_provider_primary_max_concurrency = parse_u16_config(key, value)?;
+        }
+        "ai_provider_fallback_max_concurrency" => {
+            config.ai_provider_fallback_max_concurrency = parse_u16_config(key, value)?;
+        }
         "ai_strategy_hint_enabled" => {
             config.ai_strategy_hint_enabled = parse_bool_config(key, value)?;
         }
@@ -703,6 +712,18 @@ fn reward_config_entries(config: &RewardBotConfig) -> Vec<(&'static str, String)
         (
             "ai_advisory_ttl_sec",
             config.ai_advisory_ttl_sec.to_string(),
+        ),
+        (
+            "ai_provider_concurrency_enabled",
+            config.ai_provider_concurrency_enabled.to_string(),
+        ),
+        (
+            "ai_provider_primary_max_concurrency",
+            config.ai_provider_primary_max_concurrency.to_string(),
+        ),
+        (
+            "ai_provider_fallback_max_concurrency",
+            config.ai_provider_fallback_max_concurrency.to_string(),
         ),
         (
             "ai_strategy_hint_enabled",
