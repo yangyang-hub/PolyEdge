@@ -679,3 +679,50 @@ fn reward_ai_advisory_cache_key_ignores_quote_mode_changes() {
 
     assert_eq!(first.input_hash, second.input_hash);
 }
+
+#[test]
+fn reward_info_risk_cache_key_ignores_sync_driven_market_metadata() {
+    let mut market = cache_test_market();
+    let books = cache_test_books(
+        OffsetDateTime::from_unix_timestamp(1_785_000_000).expect("valid timestamp"),
+        "0.54",
+    );
+    let plan = cache_test_plan(&market, &books);
+    let account = cache_test_account("100", 1);
+    let config = RewardBotConfig::default();
+
+    let first = build_reward_info_risk_assessment_request(
+        &market,
+        Some(&plan),
+        &account,
+        &[],
+        &[],
+        &config,
+        RewardAiProvider::OpenAi,
+        RewardAiRequestFormat::OpenAiChatCompletions,
+        "mimo-v2.5",
+    )
+    .expect("first request");
+
+    // `event_slug` (rewards-catalog sync) and `ambiguity_level` (Gamma sync)
+    // are written by two independent sync loops that drift across cycles. The
+    // info-risk cache key must not be invalidated by that drift, otherwise a
+    // still-valid risk row is missed on alternate ticks and eligible drops to 0.
+    market.event_slug = "different-event-slug".to_string();
+    market.ambiguity_level = "high".to_string();
+
+    let second = build_reward_info_risk_assessment_request(
+        &market,
+        Some(&plan),
+        &account,
+        &[],
+        &[],
+        &config,
+        RewardAiProvider::OpenAi,
+        RewardAiRequestFormat::OpenAiChatCompletions,
+        "mimo-v2.5",
+    )
+    .expect("second request");
+
+    assert_eq!(first.input_hash, second.input_hash);
+}

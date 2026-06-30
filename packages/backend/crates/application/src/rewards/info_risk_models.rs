@@ -344,6 +344,19 @@ fn reward_info_risk_cache_key_payload(
     query: &str,
 ) -> Value {
     json!({
+        // schema_version 7: drop `event_slug` and `ambiguity_level` from the
+        // cache key. These are the only info-risk key fields NOT also present
+        // in the (stable) AI advisory key, and they drift: `event_slug` comes
+        // from the rewards-catalog sync (CLOB) while `ambiguity_level` comes
+        // from the Gamma markets table, and the two independent sync loops
+        // (rewards catalog ~5min + Gamma priority/full) write marginally
+        // differing values for the same condition across cycles. That drift
+        // made the info-risk lookup key oscillate away from the cached row's
+        // key and back, so a still-valid risk row was missed on alternate
+        // ticks → `info risk pending` → eligible dropped to 0 intermittently.
+        // The market is now identified by the same stable fields the advisory
+        // key uses (condition_id / question / market_slug / category / end_at).
+        //
         // schema_version 6: drop `quote_mode` / `recommended_quote_mode` from
         // the cache key. The materialized quote mode flips between double and
         // single_no every tick for markets sitting on the funding boundary, and
@@ -360,7 +373,7 @@ fn reward_info_risk_cache_key_payload(
         //
         // schema_version 4: provider output contract is binary allow_quote.
         // Keep detailed risk taxonomy as internal compatibility fields only.
-        "schema_version": 6,
+        "schema_version": 7,
         "cache_domain": "reward_info_risk",
         "provider_decision_schema": "binary_allow_quote_v1",
         "evaluation_policy_version": 1,
@@ -369,10 +382,8 @@ fn reward_info_risk_cache_key_payload(
             "condition_id": market.condition_id,
             "question": market.question,
             "market_slug": market.market_slug,
-            "event_slug": market.event_slug,
             "category": market.category,
             "end_at": market.end_at,
-            "ambiguity_level": market.ambiguity_level,
         },
         "current_quote_plan": plan.map(|plan| json!({
             "strategy_bucket": plan.strategy_bucket,
