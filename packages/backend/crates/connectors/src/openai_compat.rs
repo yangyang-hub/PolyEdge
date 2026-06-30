@@ -217,6 +217,15 @@ mod tests {
             openai_compatible_chat_response_format("glm-4.7", "shape", json!({"type": "object"})),
             json!({"type": "json_object"})
         );
+        assert_eq!(
+            openai_compatible_chat_response_format(
+                "agnes-2.0-flash",
+                "shape",
+                json!({"type": "object"})
+            )
+            .pointer("/type"),
+            Some(&json!("json_schema"))
+        );
     }
 
     #[test]
@@ -232,6 +241,10 @@ mod tests {
         assert_eq!(
             openai_compatible_chat_token_limit_field("deepseek-v4-flash"),
             "max_tokens"
+        );
+        assert_eq!(
+            openai_compatible_chat_token_limit_field("agnes-2.0-flash"),
+            "max_completion_tokens"
         );
     }
 

@@ -112,6 +112,7 @@ pub use rewards::{
     refresh_reward_opportunity_metrics_for_quote_plans, refresh_reward_quote_plan_readiness,
     reward_ai_advisory_blocks_quote, reward_ai_effective_request_format,
     reward_ai_model_is_glm_reasoning, reward_ai_model_requires_openai_chat_completions,
+    reward_ai_model_uses_openai_chat_completions_endpoint,
     reward_ai_strategy_hint_max_condition_notional_usd, reward_condition_has_active_exposure,
     reward_external_order_id_counts_as_external, reward_market_books_available,
     reward_order_counts_as_external_open, reward_provider_cache_refresh_due,

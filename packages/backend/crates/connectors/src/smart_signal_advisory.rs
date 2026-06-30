@@ -421,6 +421,37 @@ mod smart_signal_advisory_tests {
         assert_eq!(decision.risk_tags, vec!["copyable"]);
     }
 
+    #[tokio::test]
+    async fn smart_signal_advisory_uses_chat_completions_with_strict_schema_for_agnes() {
+        let (base_url, captured) = crate::test_http::spawn_json_response_server(
+            r#"{"choices":[{"message":{"content":"{\"recommendation\":\"observe\",\"confidence\":0.66,\"risk_tags\":[\"uncertain\"],\"summary\":\"wait for confirmation\",\"reasons\":[\"thin context\"]}"}}]}"#,
+        )
+        .await;
+        let connector =
+            SmartSignalAdvisoryConnector::new(base_url, "test-key", 5).expect("build connector");
+        let mut request = smart_signal_advisory_test_request("agnes-2.0-flash");
+        request.request_format = RewardAiRequestFormat::OpenAiResponses.as_str().to_string();
+
+        let decision = connector
+            .advise(&request)
+            .await
+            .expect("mock agnes smart signal advisory");
+        let captured = captured.await.expect("captured request");
+
+        assert_eq!(captured.request_line, "POST /v1/chat/completions HTTP/1.1");
+        assert_eq!(captured.body["model"], json!("agnes-2.0-flash"));
+        assert_eq!(
+            captured.body.pointer("/response_format/type"),
+            Some(&json!("json_schema"))
+        );
+        assert_eq!(
+            captured.body["max_completion_tokens"],
+            json!(SMART_SIGNAL_ADVISORY_CHAT_COMPLETION_MAX_TOKENS)
+        );
+        assert!(captured.body.get("max_tokens").is_none());
+        assert_eq!(decision.recommendation, SmartSignalDecisionValue::Observe);
+    }
+
     #[test]
     fn smart_signal_advisory_parse_clamps_confidence_and_extracts_arrays() {
         let decision = parse_smart_signal_advisory_decision(

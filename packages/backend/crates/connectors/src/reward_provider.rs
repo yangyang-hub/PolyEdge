@@ -456,6 +456,39 @@ mod reward_provider_tests {
         }
     }
 
+    #[tokio::test]
+    async fn reward_provider_uses_chat_completions_with_strict_schema_for_agnes() {
+        let (base_url, captured) = crate::test_http::spawn_json_response_server(
+            r#"{"choices":[{"message":{"content":"{\"advisory\":{\"allow_quote\":true,\"confidence\":0.82,\"strategy_hint\":{\"quote_mode\":\"double\",\"bid_rank\":2,\"max_condition_notional_usd\":15},\"reasons\":[\"pricing ok\"],\"metrics\":{}},\"info_risk\":{\"allow_quote\":true,\"confidence\":0.76,\"summary\":\"no imminent result found\",\"sources\":[],\"metrics\":{}}}"}}]}"#,
+        )
+        .await;
+        let connector =
+            RewardProviderConnector::new(base_url, "test-key", 5, false).expect("build connector");
+        let mut request = provider_request(true, true);
+        request.request_format = RewardAiRequestFormat::OpenAiResponses;
+        request.model = "agnes-2.0-flash".to_string();
+
+        let decision = connector
+            .evaluate(&request)
+            .await
+            .expect("mock agnes reward provider");
+        let captured = captured.await.expect("captured request");
+
+        assert_eq!(captured.request_line, "POST /v1/chat/completions HTTP/1.1");
+        assert_eq!(captured.body["model"], json!("agnes-2.0-flash"));
+        assert_eq!(
+            captured.body.pointer("/response_format/type"),
+            Some(&json!("json_schema"))
+        );
+        assert_eq!(
+            captured.body["max_completion_tokens"],
+            json!(REWARD_PROVIDER_CHAT_COMPLETION_MAX_TOKENS)
+        );
+        assert!(captured.body.get("max_tokens").is_none());
+        assert!(decision.advisory.is_some());
+        assert!(decision.info_risk.is_some());
+    }
+
     #[test]
     fn parses_combined_advisory_and_info_risk_response() {
         let decision = parse_reward_provider_decision(

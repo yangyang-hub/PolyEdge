@@ -1267,13 +1267,17 @@ mod reward_config_tests {
     }
 
     #[test]
-    fn reward_ai_provider_aliases_glm_and_deepseek_to_openai() {
+    fn reward_ai_provider_aliases_openai_compatible_models_to_openai() {
         assert_eq!(
             RewardAiProvider::from_str("glm").expect("parse glm alias"),
             RewardAiProvider::OpenAi
         );
         assert_eq!(
             RewardAiProvider::from_str("deepseek").expect("parse deepseek alias"),
+            RewardAiProvider::OpenAi
+        );
+        assert_eq!(
+            RewardAiProvider::from_str("agnes").expect("parse agnes alias"),
             RewardAiProvider::OpenAi
         );
         assert_eq!(
@@ -1289,6 +1293,14 @@ mod reward_config_tests {
                 RewardAiProvider::OpenAi,
                 RewardAiRequestFormat::OpenAiResponses,
                 "deepseek-v4-flash",
+            ),
+            RewardAiRequestFormat::OpenAiChatCompletions
+        );
+        assert_eq!(
+            reward_ai_effective_request_format(
+                RewardAiProvider::OpenAi,
+                RewardAiRequestFormat::OpenAiResponses,
+                "agnes-2.0-flash",
             ),
             RewardAiRequestFormat::OpenAiChatCompletions
         );

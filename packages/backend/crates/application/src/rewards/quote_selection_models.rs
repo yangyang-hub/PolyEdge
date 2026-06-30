@@ -411,7 +411,8 @@ pub enum RewardAiProvider {
         alias = "bigmodel",
         alias = "zhipu",
         alias = "deepseek",
-        alias = "deep_seek"
+        alias = "deep_seek",
+        alias = "agnes"
     )]
     OpenAi,
     Anthropic,
@@ -432,9 +433,8 @@ impl FromStr for RewardAiProvider {
 
     fn from_str(value: &str) -> Result<Self> {
         match value {
-            "openai" | "open_ai" | "glm" | "bigmodel" | "zhipu" | "deepseek" | "deep_seek" => {
-                Ok(Self::OpenAi)
-            }
+            "openai" | "open_ai" | "glm" | "bigmodel" | "zhipu" | "deepseek"
+            | "deep_seek" | "agnes" => Ok(Self::OpenAi),
             "anthropic" => Ok(Self::Anthropic),
             other => Err(AppError::invalid_input(
                 "REWARD_AI_PROVIDER_INVALID",
@@ -448,6 +448,17 @@ impl FromStr for RewardAiProvider {
 pub fn reward_ai_model_requires_openai_chat_completions(model: &str) -> bool {
     let normalized = model.to_ascii_lowercase();
     normalized.contains("glm") || normalized.contains("deepseek")
+}
+
+/// Returns true when a model should use the OpenAI-compatible Chat Completions
+/// endpoint even if the saved config requests OpenAI Responses. Some providers
+/// (Agnes) document only `/chat/completions` but still support strict JSON schema
+/// within that endpoint, so this is intentionally separate from request-body
+/// compatibility quirks handled by `reward_ai_model_requires_openai_chat_completions`.
+#[must_use]
+pub fn reward_ai_model_uses_openai_chat_completions_endpoint(model: &str) -> bool {
+    let normalized = model.to_ascii_lowercase();
+    reward_ai_model_requires_openai_chat_completions(model) || normalized.contains("agnes")
 }
 
 /// Returns true for GLM reasoning models that enable chain-of-thought by
@@ -469,7 +480,9 @@ pub fn reward_ai_effective_request_format(
 ) -> RewardAiRequestFormat {
     match provider {
         RewardAiProvider::Anthropic => RewardAiRequestFormat::AnthropicMessages,
-        RewardAiProvider::OpenAi if reward_ai_model_requires_openai_chat_completions(model) => {
+        RewardAiProvider::OpenAi
+            if reward_ai_model_uses_openai_chat_completions_endpoint(model) =>
+        {
             RewardAiRequestFormat::OpenAiChatCompletions
         }
         RewardAiProvider::OpenAi
