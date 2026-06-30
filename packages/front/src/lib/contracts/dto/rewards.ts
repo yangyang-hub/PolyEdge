@@ -119,6 +119,8 @@ export type RewardBotConfigDto = {
   info_risk_mode: RewardSelectionMode;
   info_risk_avoid_level: RewardInfoRiskLevel;
   info_risk_ttl_sec: number;
+  ai_advisory_provider_pending_grace_sec: number;
+  info_risk_provider_pending_grace_sec: number;
   event_window_enabled: boolean;
   event_window_min_confidence: RewardEventTimeConfidence;
   event_window_stop_new_quote_before_start_sec: number;

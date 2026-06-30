@@ -361,14 +361,55 @@ pub fn apply_reward_ai_advisories(
         return;
     }
 
+    let now = OffsetDateTime::now_utc();
+    let grace = TimeDuration::seconds(config.ai_advisory_provider_pending_grace_sec as i64);
+
     for plan in plans {
         let Some(advisory) = advisories.get(&plan.condition_id).cloned() else {
-            reject_ai_gated_plan(
-                plan,
-                "AI advisory pending: market has not passed provider filter",
-            );
+            if plan.pre_ai_eligible {
+                // Pre-AI-eligible plans get a grace period before being dropped.
+                // This prevents the eligible count from oscillating to 0 while
+                // the background provider refresh populates the cache.
+                match plan.ai_advisory_pending_since {
+                    None if grace.is_zero() => {
+                        // Grace disabled — immediate drop (prior behaviour).
+                        reject_ai_gated_plan(
+                            plan,
+                            "AI advisory pending: market has not passed provider filter",
+                        );
+                    }
+                    None => {
+                        plan.ai_advisory_pending_since = Some(now);
+                        // Keep eligible; reason reflects pending state.
+                        plan.reason =
+                            "AI advisory pending: market has not passed provider filter"
+                                .to_string();
+                    }
+                    Some(since) if now - since >= grace => {
+                        reject_ai_gated_plan(
+                            plan,
+                            "AI advisory pending: market has not passed provider filter",
+                        );
+                    }
+                    Some(_) => {
+                        // Within grace period — keep eligible.
+                        plan.reason =
+                            "AI advisory pending: market has not passed provider filter"
+                                .to_string();
+                    }
+                }
+            } else {
+                // Non-pre-ai-eligible plans (e.g., active exposure) drop
+                // immediately — fail-closed for safety.
+                reject_ai_gated_plan(
+                    plan,
+                    "AI advisory pending: market has not passed provider filter",
+                );
+            }
             continue;
         };
+        // Cached advisory available — clear any pending grace state.
+        plan.ai_advisory_pending_since = None;
         plan.ai_advisory = Some(advisory.clone());
         enforce_reward_ai_advisory(plan, &advisory, config, min_confidence);
     }

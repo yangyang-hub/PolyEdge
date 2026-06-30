@@ -329,6 +329,7 @@ fn legacy_low_competition_bucket_uses_standard_ai_allow_rule() {
 fn ai_enabled_rejects_eligible_plan_without_provider_decision() {
     let config = RewardBotConfig {
         ai_advisory_enabled: true,
+        ai_advisory_provider_pending_grace_sec: 0, // immediate drop
         min_market_score: Decimal::ZERO,
         ..RewardBotConfig::default()
     };
@@ -343,6 +344,28 @@ fn ai_enabled_rejects_eligible_plan_without_provider_decision() {
     assert!(!plans[0].eligible);
     assert!(plans[0].legs.is_empty());
     assert_eq!(plans[0].quote_mode, RewardPlanQuoteMode::None);
+    assert!(plans[0].reason.contains("AI advisory pending"));
+}
+
+#[test]
+fn ai_grace_period_preserves_eligible_for_pre_ai_plan_without_advisory() {
+    let config = RewardBotConfig {
+        ai_advisory_enabled: true,
+        ai_advisory_provider_pending_grace_sec: 120,
+        min_market_score: Decimal::ZERO,
+        ..RewardBotConfig::default()
+    };
+    let mut plans = vec![build_reward_quote_plan(
+        &test_market(decimal("5")),
+        &test_books(),
+        &config,
+    )];
+
+    apply_reward_ai_advisories(&mut plans, &HashMap::new(), &config, decimal("0.65"));
+
+    // Within grace period — plan stays eligible.
+    assert!(plans[0].eligible);
+    assert!(plans[0].ai_advisory_pending_since.is_some());
     assert!(plans[0].reason.contains("AI advisory pending"));
 }
 
@@ -372,6 +395,7 @@ fn info_risk_enforce_rejects_eligible_plan_without_provider_decision() {
     let config = RewardBotConfig {
         info_risk_enabled: true,
         info_risk_mode: RewardSelectionMode::Enforce,
+        info_risk_provider_pending_grace_sec: 0, // immediate drop
         min_market_score: Decimal::ZERO,
         ..RewardBotConfig::default()
     };
@@ -387,6 +411,28 @@ fn info_risk_enforce_rejects_eligible_plan_without_provider_decision() {
     assert!(plans[0].legs.is_empty());
     assert_eq!(plans[0].quote_mode, RewardPlanQuoteMode::None);
     assert!(plans[0].reason.contains("info risk pending"));
+}
+
+#[test]
+fn info_risk_grace_period_preserves_eligible_under_enforce() {
+    let config = RewardBotConfig {
+        info_risk_enabled: true,
+        info_risk_mode: RewardSelectionMode::Enforce,
+        info_risk_provider_pending_grace_sec: 120,
+        min_market_score: Decimal::ZERO,
+        ..RewardBotConfig::default()
+    };
+    let mut plans = vec![build_reward_quote_plan(
+        &test_market(decimal("5")),
+        &test_books(),
+        &config,
+    )];
+
+    apply_reward_info_risks(&mut plans, &HashMap::new(), &config, decimal("0.65"));
+
+    // Within grace period — plan stays eligible.
+    assert!(plans[0].eligible);
+    assert!(plans[0].info_risk_pending_since.is_some());
 }
 
 #[test]

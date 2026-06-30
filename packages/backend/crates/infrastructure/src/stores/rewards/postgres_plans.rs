@@ -11,6 +11,13 @@ async fn postgres_count_quote_plans(pool: &PgPool) -> Result<RewardQuotePlanCoun
                        WHEN eligible
                             AND quote_mode <> 'none'
                             AND has_live_legs THEN 'ready_to_quote'
+                       WHEN eligible
+                            AND pre_ai_eligible
+                            AND (reason LIKE 'AI advisory pending:%'
+                                 OR reason LIKE 'info risk pending:%'
+                                 OR (quote_plan_json->>'ai_advisory_pending_since') IS NOT NULL
+                                 OR (quote_plan_json->>'info_risk_pending_since') IS NOT NULL)
+                           THEN 'provider_pending'
                        WHEN eligible THEN 'waiting_orderbook'
                        WHEN pre_ai_eligible
                             AND (reason LIKE 'AI advisory pending:%'
@@ -22,6 +29,7 @@ async fn postgres_count_quote_plans(pool: &PgPool) -> Result<RewardQuotePlanCoun
                        reason,
                        COALESCE(quote_plan_json->>'quote_mode', 'none') AS quote_mode,
                        COALESCE((quote_plan_json->>'pre_ai_eligible')::boolean, false) AS pre_ai_eligible,
+                       quote_plan_json,
                        jsonb_array_length(COALESCE(quote_plan_json->'legs', '[]'::jsonb)) > 0
                        AND NOT EXISTS (
                            SELECT 1
@@ -38,26 +46,26 @@ async fn postgres_count_quote_plans(pool: &PgPool) -> Result<RewardQuotePlanCoun
                COUNT(*) FILTER (WHERE readiness = 'ready_to_quote') AS ready_to_quote,
                COUNT(*) FILTER (WHERE readiness = 'waiting_orderbook') AS waiting_orderbook,
                COUNT(*) FILTER (WHERE readiness = 'provider_pending') AS provider_pending,
-               COUNT(*) FILTER (WHERE readiness <> 'waiting_orderbook'
+               COUNT(*) FILTER (WHERE NOT eligible
                                 AND reason LIKE 'AI advisory pending:%') AS blocker_ai_pending,
-               COUNT(*) FILTER (WHERE readiness <> 'waiting_orderbook'
+               COUNT(*) FILTER (WHERE NOT eligible
                                 AND reason LIKE 'info risk pending:%') AS blocker_info_risk_pending,
-               COUNT(*) FILTER (WHERE readiness <> 'waiting_orderbook'
+               COUNT(*) FILTER (WHERE NOT eligible
                                 AND reason LIKE 'AI advisory confidence%') AS blocker_ai_confidence_low,
-               COUNT(*) FILTER (WHERE readiness <> 'waiting_orderbook'
+               COUNT(*) FILTER (WHERE NOT eligible
                                 AND reason LIKE 'AI advisory watch:%') AS blocker_ai_watch,
-               COUNT(*) FILTER (WHERE readiness <> 'waiting_orderbook'
+               COUNT(*) FILTER (WHERE NOT eligible
                                 AND reason LIKE 'AI advisory avoid:%') AS blocker_ai_avoid,
-               COUNT(*) FILTER (WHERE readiness <> 'waiting_orderbook'
+               COUNT(*) FILTER (WHERE NOT eligible
                                 AND reason LIKE 'info risk %'
                                 AND reason NOT LIKE 'info risk pending:%') AS blocker_info_risk,
                0::BIGINT AS blocker_low_competition,
-               COUNT(*) FILTER (WHERE readiness <> 'waiting_orderbook'
+               COUNT(*) FILTER (WHERE NOT eligible
                                 AND reason LIKE 'live funding below rewards minimum:%') AS blocker_funding,
-               COUNT(*) FILTER (WHERE readiness <> 'waiting_orderbook'
+               COUNT(*) FILTER (WHERE NOT eligible
                                 AND reason LIKE 'live orderbook validation skipped until %') AS blocker_live_validation,
                COUNT(*) FILTER (
-                   WHERE readiness = 'blocked'
+                   WHERE NOT eligible
                      AND reason NOT LIKE 'AI advisory pending:%'
                      AND reason NOT LIKE 'info risk pending:%'
                      AND reason NOT LIKE 'AI advisory confidence%'

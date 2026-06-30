@@ -441,6 +441,14 @@ pub struct RewardBotConfig {
     pub info_risk_mode: RewardSelectionMode,
     pub info_risk_avoid_level: RewardInfoRiskLevel,
     pub info_risk_ttl_sec: u64,
+    /// Grace period (seconds) for pre_ai_eligible plans that lack a cached AI
+    /// advisory. The plan stays eligible for this duration before being dropped
+    /// to ineligible. 0 = immediate drop (prior behaviour). Default: 120.
+    pub ai_advisory_provider_pending_grace_sec: u64,
+    /// Grace period (seconds) for pre_ai_eligible plans that lack a cached
+    /// info-risk assessment under enforce mode. 0 = immediate drop (prior
+    /// behaviour). Default: 120.
+    pub info_risk_provider_pending_grace_sec: u64,
     /// Event-window hard gate based on trusted structured event times.
     pub event_window_enabled: bool,
     pub event_window_min_confidence: RewardEventTimeConfidence,
@@ -724,6 +732,10 @@ pub struct RewardBotConfigPatch {
     pub info_risk_avoid_level: Option<RewardInfoRiskLevel>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub info_risk_ttl_sec: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ai_advisory_provider_pending_grace_sec: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub info_risk_provider_pending_grace_sec: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub event_window_enabled: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

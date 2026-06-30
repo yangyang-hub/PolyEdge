@@ -413,6 +413,19 @@ pub struct RewardQuotePlan {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[serde(with = "time::serde::rfc3339::option")]
     pub first_quote_observed_at: Option<OffsetDateTime>,
+    /// Timestamp when this pre_ai_eligible plan first lacked a cached AI
+    /// advisory. Used to implement a grace period before dropping
+    /// `eligible`. Cleared when a cached advisory becomes available.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(with = "time::serde::rfc3339::option")]
+    pub ai_advisory_pending_since: Option<OffsetDateTime>,
+    /// Timestamp when this pre_ai_eligible plan first lacked a cached
+    /// info-risk assessment (only relevant under enforce mode). Used to
+    /// implement a grace period before dropping `eligible`. Cleared when
+    /// a cached risk becomes available.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(with = "time::serde::rfc3339::option")]
+    pub info_risk_pending_since: Option<OffsetDateTime>,
     pub total_daily_rate: Decimal,
     pub rewards_max_spread: Decimal,
     pub rewards_min_size: Decimal,
@@ -708,7 +721,12 @@ impl RewardQuotePlanCounts {
                 counts.eligible += 1;
             }
             let readiness = reward_quote_plan_readiness(plan);
-            counts.blockers.record(plan, readiness);
+            // Only count ineligible plans in blocker breakdowns.
+            // Eligible plans that are provider_pending (grace period) are
+            // tracked via `provider_pending` readiness count, not as blockers.
+            if !plan.eligible {
+                counts.blockers.record(plan, readiness);
+            }
             match readiness {
                 RewardQuoteReadiness::ReadyToQuote => counts.ready_to_quote += 1,
                 RewardQuoteReadiness::WaitingOrderbook => counts.waiting_orderbook += 1,
@@ -759,6 +777,12 @@ pub fn reward_quote_plan_readiness(plan: &RewardQuotePlan) -> RewardQuoteReadine
         if plan.quote_mode != RewardPlanQuoteMode::None && reward_quote_plan_has_live_legs(plan) {
             return RewardQuoteReadiness::ReadyToQuote;
         }
+        // Eligible plans within provider grace period are ProviderPending,
+        // not WaitingOrderbook — they have passed deterministic gates but
+        // are awaiting AI/info-risk cache population.
+        if plan.pre_ai_eligible && reward_quote_plan_provider_pending(plan) {
+            return RewardQuoteReadiness::ProviderPending;
+        }
         return RewardQuoteReadiness::WaitingOrderbook;
     }
 
@@ -787,7 +811,17 @@ fn reward_quote_plan_waiting_orderbook(plan: &RewardQuotePlan) -> bool {
 }
 
 fn reward_quote_plan_provider_pending(plan: &RewardQuotePlan) -> bool {
-    plan.reason.starts_with("AI advisory pending:") || plan.reason.starts_with("info risk pending:")
+    // Traditional: plan was already dropped to ineligible due to missing cache.
+    if !plan.eligible
+        && plan.pre_ai_eligible
+        && (plan.reason.starts_with("AI advisory pending:")
+            || plan.reason.starts_with("info risk pending:"))
+    {
+        return true;
+    }
+    // Grace period: plan is still eligible but within the provider pending
+    // window (ai_advisory_pending_since or info_risk_pending_since is set).
+    plan.ai_advisory_pending_since.is_some() || plan.info_risk_pending_since.is_some()
 }
 
 /// Best-effort live quote for a token, injected into the API snapshot so the

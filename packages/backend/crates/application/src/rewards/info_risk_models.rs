@@ -412,22 +412,62 @@ pub fn apply_reward_info_risks(
         return;
     }
 
+    let enforce = config.info_risk_mode == RewardSelectionMode::Enforce;
+    let now = OffsetDateTime::now_utc();
+    let grace = TimeDuration::seconds(config.info_risk_provider_pending_grace_sec as i64);
+
     for plan in plans {
         let Some(risk) = risks.get(&plan.condition_id).cloned() else {
-            if config.info_risk_mode == RewardSelectionMode::Enforce && plan.eligible {
-                plan.eligible = false;
-                plan.quote_mode = RewardPlanQuoteMode::None;
-                plan.legs.clear();
-                plan.reason =
-                    "info risk pending: market has not passed provider risk filter".to_string();
+            if enforce && plan.eligible {
+                if plan.pre_ai_eligible {
+                    // Pre-AI-eligible plans get a grace period before being
+                    // dropped. This prevents the eligible count from
+                    // oscillating to 0 while the background provider refresh
+                    // populates the cache.
+                    match plan.info_risk_pending_since {
+                        None if grace.is_zero() => {
+                            // Grace disabled — immediate drop (prior behaviour).
+                            plan.eligible = false;
+                            plan.quote_mode = RewardPlanQuoteMode::None;
+                            plan.legs.clear();
+                            plan.reason =
+                                "info risk pending: market has not passed provider risk filter"
+                                    .to_string();
+                        }
+                        None => {
+                            plan.info_risk_pending_since = Some(now);
+                            // Keep eligible; preserve reason for display.
+                        }
+                        Some(since) if now - since >= grace => {
+                            plan.eligible = false;
+                            plan.quote_mode = RewardPlanQuoteMode::None;
+                            plan.legs.clear();
+                            plan.reason =
+                                "info risk pending: market has not passed provider risk filter"
+                                    .to_string();
+                        }
+                        Some(_) => {
+                            // Within grace period — keep eligible.
+                        }
+                    }
+                } else {
+                    // Non-pre-ai-eligible plans drop immediately
+                    // (fail-closed for active-exposure plans).
+                    plan.eligible = false;
+                    plan.quote_mode = RewardPlanQuoteMode::None;
+                    plan.legs.clear();
+                    plan.reason =
+                        "info risk pending: market has not passed provider risk filter"
+                            .to_string();
+                }
             }
             continue;
         };
+        // Cached risk available — clear any pending grace state.
+        plan.info_risk_pending_since = None;
         plan.info_risk = Some(risk.clone());
         let avoid_level = config.info_risk_avoid_level;
-        if config.info_risk_mode != RewardSelectionMode::Enforce
-            || !reward_info_risk_blocks_quote(&risk, avoid_level)
-        {
+        if !enforce || !reward_info_risk_blocks_quote(&risk, avoid_level) {
             continue;
         }
         if risk.confidence < min_confidence && risk.risk_level != RewardInfoRiskLevel::Critical {

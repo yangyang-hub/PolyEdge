@@ -102,6 +102,8 @@ impl Default for RewardBotConfig {
             info_risk_mode: RewardSelectionMode::Observe,
             info_risk_avoid_level: RewardInfoRiskLevel::High,
             info_risk_ttl_sec: 3600,
+            ai_advisory_provider_pending_grace_sec: 120,
+            info_risk_provider_pending_grace_sec: 120,
             event_window_enabled: true,
             event_window_min_confidence: RewardEventTimeConfidence::High,
             event_window_stop_new_quote_before_start_sec: 10_800,
@@ -437,6 +439,12 @@ impl RewardBotConfig {
             Decimal::ONE,
         );
         self.info_risk_ttl_sec = self.info_risk_ttl_sec.clamp(60, 86_400);
+        self.ai_advisory_provider_pending_grace_sec = self
+            .ai_advisory_provider_pending_grace_sec
+            .clamp(0, 86_400);
+        self.info_risk_provider_pending_grace_sec = self
+            .info_risk_provider_pending_grace_sec
+            .clamp(0, 86_400);
         self.event_window_stop_new_quote_before_start_sec = self
             .event_window_stop_new_quote_before_start_sec
             .clamp(0, 86_400 * 30);
@@ -928,6 +936,12 @@ impl RewardBotConfig {
         }
         if let Some(value) = patch.info_risk_ttl_sec {
             next.info_risk_ttl_sec = value;
+        }
+        if let Some(value) = patch.ai_advisory_provider_pending_grace_sec {
+            next.ai_advisory_provider_pending_grace_sec = value;
+        }
+        if let Some(value) = patch.info_risk_provider_pending_grace_sec {
+            next.info_risk_provider_pending_grace_sec = value;
         }
         if let Some(value) = patch.event_window_enabled {
             next.event_window_enabled = value;
