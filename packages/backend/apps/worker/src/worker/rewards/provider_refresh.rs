@@ -97,6 +97,7 @@ fn reward_provider_refresh_timeout(state: &AppState) -> Duration {
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 struct RewardProviderRefreshReport {
     candidates: usize,
+    checked: usize,
     cache_hits: usize,
     requested: usize,
     saved: usize,
@@ -106,6 +107,7 @@ struct RewardProviderRefreshReport {
     advisory_saved: usize,
     info_risk_saved: usize,
     applied_plans: usize,
+    request_cap_exhausted: bool,
 }
 
 #[derive(Debug, Default)]
@@ -117,6 +119,7 @@ struct RewardProviderConditionOutcome {
 
 impl RewardProviderRefreshReport {
     fn merge_condition(&mut self, outcome: &RewardProviderConditionOutcome) {
+        self.checked += outcome.report.checked;
         self.cache_hits += outcome.report.cache_hits;
         self.requested += outcome.report.requested;
         self.saved += outcome.report.saved;
@@ -125,6 +128,25 @@ impl RewardProviderRefreshReport {
         self.skipped_missing_book += outcome.report.skipped_missing_book;
         self.advisory_saved += outcome.report.advisory_saved;
         self.info_risk_saved += outcome.report.info_risk_saved;
+        self.request_cap_exhausted |= outcome.report.request_cap_exhausted;
+    }
+}
+
+fn try_consume_reward_provider_request_budget(remaining: &AtomicUsize) -> bool {
+    let mut current = remaining.load(Ordering::Acquire);
+    loop {
+        if current == 0 {
+            return false;
+        }
+        match remaining.compare_exchange_weak(
+            current,
+            current - 1,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        ) {
+            Ok(_) => return true,
+            Err(next) => current = next,
+        }
     }
 }
 
@@ -243,7 +265,7 @@ async fn refresh_reward_provider_cache(
     }
     report.candidates = union.len();
 
-    let mut ordered = reward_provider_refresh_candidate_condition_ids(
+    let ordered = reward_provider_refresh_candidate_condition_ids(
         &union,
         &cycle.plans,
         &cycle.open_orders,
@@ -252,17 +274,14 @@ async fn refresh_reward_provider_cache(
     );
     let original_ordered_conditions = ordered.len();
     let max_conditions = reward_provider_max_conditions_per_cycle(state);
-    if ordered.len() > max_conditions {
-        ordered.truncate(max_conditions);
-    }
+    let request_budget = Arc::new(AtomicUsize::new(max_conditions));
 
     info!(
         trace_id = %trace_id,
         provider = cycle.config.ai_provider.as_str(),
         request_format = request_format.as_str(),
-        conditions = original_ordered_conditions,
-        selected_conditions = ordered.len(),
-        max_conditions,
+        ordered_conditions = original_ordered_conditions,
+        max_provider_requests = max_conditions,
         primary_concurrency = provider_concurrency.primary_limit,
         fallback_concurrency = provider_concurrency.fallback_limit,
         condition_parallelism,
@@ -309,6 +328,7 @@ async fn refresh_reward_provider_cache(
                         let markets_by_condition = markets_snapshot.clone();
                         let model = model.to_string();
                         let trace_id = trace_id.to_string();
+                        let request_budget = request_budget.clone();
                         async move {
                             let fallback_channel =
                                 match (&fallback_descriptor, fallback_connector.as_ref()) {
@@ -332,6 +352,7 @@ async fn refresh_reward_provider_cache(
                                 &markets_by_condition,
                                 &condition_id,
                                 &model,
+                                &request_budget,
                                 &trace_id,
                             )
                             .await
@@ -388,8 +409,10 @@ async fn refresh_reward_provider_cache(
     info!(
         trace_id = %trace_id,
         provider_candidates = report.candidates,
+        provider_checked = report.checked,
         provider_cache_hits = report.cache_hits,
         provider_requested = report.requested,
+        provider_request_cap_exhausted = report.request_cap_exhausted,
         provider_saved = report.saved,
         provider_failures = report.failures,
         provider_skipped_missing_market = report.skipped_missing_market,
@@ -418,9 +441,11 @@ async fn refresh_reward_provider_for_condition(
     markets_by_condition: &HashMap<String, RewardMarket>,
     condition_id: &str,
     model: &str,
+    request_budget: &AtomicUsize,
     trace_id: &str,
 ) -> Result<RewardProviderConditionOutcome> {
     let mut outcome = RewardProviderConditionOutcome::default();
+    outcome.report.checked += 1;
     let Some(market) = markets_by_condition.get(condition_id) else {
         outcome.report.skipped_missing_market += 1;
         return Ok(outcome);
@@ -545,6 +570,16 @@ async fn refresh_reward_provider_for_condition(
         info_risk,
     };
 
+    if !try_consume_reward_provider_request_budget(request_budget) {
+        outcome.report.request_cap_exhausted = true;
+        outcome.stop_refresh = true;
+        debug!(
+            trace_id = %trace_id,
+            condition_id = %condition_id,
+            "reward provider request cap exhausted; stopping refresh before provider call",
+        );
+        return Ok(outcome);
+    }
     outcome.report.requested += 1;
     info!(
         trace_id = %trace_id,
