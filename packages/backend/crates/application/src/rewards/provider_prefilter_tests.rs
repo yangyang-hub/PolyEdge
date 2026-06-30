@@ -24,6 +24,7 @@ fn prefilter_test_plan(condition_id: &str, bucket: RewardStrategyBucket) -> Rewa
         midpoint: Some(decimal("0.5")),
         live_skip_until: None,
         live_skip_reason: None,
+        first_quote_observed_at: None,
         total_daily_rate: decimal("5"),
         rewards_max_spread: decimal("3"),
         rewards_min_size: decimal("20"),

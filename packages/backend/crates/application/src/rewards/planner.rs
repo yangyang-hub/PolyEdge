@@ -220,10 +220,7 @@ pub fn apply_first_quote_entry_gates(
             changed |= block_first_quote_plan(
                 plan,
                 "info risk pending: first quote requires provider risk filter",
-                previous_by_condition
-                    .get(plan.condition_id.as_str())
-                    .map(|previous| previous.updated_at)
-                    .unwrap_or(now),
+                now,
             );
             continue;
         }
@@ -231,24 +228,67 @@ pub fn apply_first_quote_entry_gates(
         if config.first_quote_quarantine_sec == 0 {
             continue;
         }
-        let first_seen_at = previous_by_condition
-            .get(plan.condition_id.as_str())
-            .map(|previous| previous.updated_at)
+        let observed_at = plan
+            .first_quote_observed_at
+            .or_else(|| {
+                previous_by_condition
+                    .get(plan.condition_id.as_str())
+                    .and_then(|previous| previous.first_quote_observed_at)
+            })
+            .or_else(|| {
+                previous_by_condition
+                    .get(plan.condition_id.as_str())
+                    .filter(|previous| previous.reason.starts_with("first quote quarantine:"))
+                    .map(|previous| previous.updated_at)
+            })
             .unwrap_or(now);
-        let ready_at = first_seen_at + TimeDuration::seconds(config.first_quote_quarantine_sec as i64);
+        if plan.first_quote_observed_at != Some(observed_at) {
+            plan.first_quote_observed_at = Some(observed_at);
+            changed = true;
+        }
+        let ready_at =
+            observed_at + TimeDuration::seconds(config.first_quote_quarantine_sec as i64);
         if now < ready_at {
-            let observed_sec = (now - first_seen_at).whole_seconds().max(0);
+            let observed_sec = (now - observed_at).whole_seconds().max(0);
             changed |= block_first_quote_plan(
                 plan,
                 format!(
                     "first quote quarantine: market observed for {observed_sec}s; requires {}s before initial live quote",
                     config.first_quote_quarantine_sec
                 ),
-                first_seen_at,
+                now,
             );
         }
     }
 
+    changed
+}
+
+pub fn carry_forward_first_quote_observations(
+    plans: &mut [RewardQuotePlan],
+    previous_plans: &[RewardQuotePlan],
+) -> bool {
+    if plans.is_empty() || previous_plans.is_empty() {
+        return false;
+    }
+
+    let previous_by_condition = previous_plans
+        .iter()
+        .filter_map(|plan| plan.first_quote_observed_at.map(|observed_at| (plan.condition_id.as_str(), observed_at)))
+        .collect::<HashMap<_, _>>();
+    if previous_by_condition.is_empty() {
+        return false;
+    }
+
+    let mut changed = false;
+    for plan in plans {
+        if plan.first_quote_observed_at.is_none() {
+            if let Some(observed_at) = previous_by_condition.get(plan.condition_id.as_str()) {
+                plan.first_quote_observed_at = Some(*observed_at);
+                changed = true;
+            }
+        }
+    }
     changed
 }
 
@@ -275,7 +315,7 @@ fn first_quote_active_conditions<'a>(
 fn block_first_quote_plan(
     plan: &mut RewardQuotePlan,
     reason: impl Into<String>,
-    first_seen_at: OffsetDateTime,
+    now: OffsetDateTime,
 ) -> bool {
     let reason = reason.into();
     let changed =
@@ -284,7 +324,7 @@ fn block_first_quote_plan(
     plan.quote_mode = RewardPlanQuoteMode::None;
     plan.legs.clear();
     plan.reason = reason;
-    plan.updated_at = first_seen_at;
+    plan.updated_at = now;
     changed
 }
 
@@ -517,6 +557,7 @@ fn build_ready_quote_plan(
         midpoint: Some(midpoint),
         live_skip_until: None,
         live_skip_reason: None,
+        first_quote_observed_at: None,
         total_daily_rate: market.total_daily_rate,
         rewards_max_spread: market.rewards_max_spread,
         rewards_min_size: market.rewards_min_size,
@@ -623,6 +664,7 @@ fn empty_plan(
         midpoint,
         live_skip_until: None,
         live_skip_reason: None,
+        first_quote_observed_at: None,
         total_daily_rate: market.total_daily_rate,
         rewards_max_spread: market.rewards_max_spread,
         rewards_min_size: market.rewards_min_size,

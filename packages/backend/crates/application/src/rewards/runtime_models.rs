@@ -410,6 +410,9 @@ pub struct RewardQuotePlan {
     pub live_skip_until: Option<OffsetDateTime>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub live_skip_reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(with = "time::serde::rfc3339::option")]
+    pub first_quote_observed_at: Option<OffsetDateTime>,
     pub total_daily_rate: Decimal,
     pub rewards_max_spread: Decimal,
     pub rewards_min_size: Decimal,

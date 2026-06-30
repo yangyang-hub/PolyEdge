@@ -701,7 +701,9 @@ fn first_quote_quarantine_blocks_new_market_until_observation_window_passes() {
     };
     let mut previous_plan =
         build_reward_quote_plan(&test_market(decimal("20")), &test_books(), &config);
-    previous_plan.updated_at = now - TimeDuration::seconds(120);
+    let observed_at = now - TimeDuration::seconds(120);
+    previous_plan.first_quote_observed_at = Some(observed_at);
+    previous_plan.updated_at = now - TimeDuration::seconds(60);
     let mut plan = build_reward_quote_plan(&test_market(decimal("20")), &test_books(), &config);
     plan.info_risk = Some(test_info_risk(
         RewardInfoRiskLevel::Low,
@@ -721,7 +723,8 @@ fn first_quote_quarantine_blocks_new_market_until_observation_window_passes() {
     assert!(changed);
     assert!(!plan.eligible);
     assert!(plan.reason.starts_with("first quote quarantine:"));
-    assert_eq!(plan.updated_at, previous_plan.updated_at);
+    assert_eq!(plan.first_quote_observed_at, Some(observed_at));
+    assert_eq!(plan.updated_at, now);
 
     plan = build_reward_quote_plan(&test_market(decimal("20")), &test_books(), &config);
     plan.info_risk = Some(test_info_risk(
@@ -735,11 +738,41 @@ fn first_quote_quarantine_blocks_new_market_until_observation_window_passes() {
         &[],
         &[],
         &config,
-        now + TimeDuration::seconds(301),
+        now + TimeDuration::seconds(181),
     );
 
-    assert!(!changed);
+    assert!(changed);
     assert!(plan.eligible, "{}", plan.reason);
+    assert_eq!(plan.first_quote_observed_at, Some(observed_at));
+}
+
+#[test]
+fn first_quote_observation_survives_rebuilt_blocked_plan() {
+    let now = OffsetDateTime::now_utc();
+    let observed_at = now - TimeDuration::seconds(240);
+    let config = RewardBotConfig {
+        min_market_score: Decimal::ZERO,
+        ..RewardBotConfig::default()
+    };
+    let mut previous_plan =
+        build_reward_quote_plan(&test_market(decimal("20")), &test_books(), &config);
+    previous_plan.first_quote_observed_at = Some(observed_at);
+    previous_plan.updated_at = now - TimeDuration::seconds(30);
+
+    let mut plan = build_reward_quote_plan(&test_market(decimal("20")), &test_books(), &config);
+    plan.eligible = false;
+    plan.quote_mode = RewardPlanQuoteMode::None;
+    plan.reason = "live funding below rewards minimum".to_string();
+    plan.updated_at = now;
+
+    let changed = carry_forward_first_quote_observations(
+        std::slice::from_mut(&mut plan),
+        std::slice::from_ref(&previous_plan),
+    );
+
+    assert!(changed);
+    assert_eq!(plan.first_quote_observed_at, Some(observed_at));
+    assert_eq!(plan.updated_at, now);
 }
 
 #[test]

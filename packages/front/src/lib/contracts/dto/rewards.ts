@@ -383,6 +383,7 @@ export type RewardQuotePlanDto = {
   midpoint?: DecimalValue | null;
   live_skip_until?: string | null;
   live_skip_reason?: string | null;
+  first_quote_observed_at?: string | null;
   total_daily_rate: DecimalValue;
   rewards_max_spread: DecimalValue;
   rewards_min_size: DecimalValue;

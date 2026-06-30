@@ -601,6 +601,7 @@ impl RewardBotService {
             .collect::<Vec<_>>();
         let mut plans = build_reward_quote_plans_for_candidates(&candidate_markets, &books, &config);
         let previous_plans = self.store.list_all_quote_plans().await?;
+        carry_forward_first_quote_observations(&mut plans, &previous_plans);
         apply_unexpired_live_orderbook_skips(
             &mut plans,
             &previous_plans,
