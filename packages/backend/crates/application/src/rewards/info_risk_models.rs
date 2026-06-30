@@ -344,13 +344,23 @@ fn reward_info_risk_cache_key_payload(
     query: &str,
 ) -> Value {
     json!({
+        // schema_version 6: drop `quote_mode` / `recommended_quote_mode` from
+        // the cache key. The materialized quote mode flips between double and
+        // single_no every tick for markets sitting on the funding boundary, and
+        // because it was part of the key those flips invalidated the info-risk
+        // cache lookup — marking markets `info risk pending` and (under enforce
+        // mode + require_info_risk_before_first_quote) dropping eligible to 0
+        // even though the cached risk assessment was still valid. Info-risk
+        // evaluates market/event resolution risk, which is independent of how we
+        // happen to size the quote, so the per-tick mode must not churn the key.
+        //
         // schema_version 5: legacy low-competition sleeve settings are no
         // longer part of strategy context; all candidates use the unified
         // info-risk policy.
         //
         // schema_version 4: provider output contract is binary allow_quote.
         // Keep detailed risk taxonomy as internal compatibility fields only.
-        "schema_version": 5,
+        "schema_version": 6,
         "cache_domain": "reward_info_risk",
         "provider_decision_schema": "binary_allow_quote_v1",
         "evaluation_policy_version": 1,
@@ -365,8 +375,6 @@ fn reward_info_risk_cache_key_payload(
             "ambiguity_level": market.ambiguity_level,
         },
         "current_quote_plan": plan.map(|plan| json!({
-            "quote_mode": plan.quote_mode,
-            "recommended_quote_mode": plan.recommended_quote_mode,
             "strategy_bucket": plan.strategy_bucket,
             "strategy_profile": plan.strategy_profile,
         })),

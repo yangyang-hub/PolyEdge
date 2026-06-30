@@ -272,6 +272,13 @@ fn reward_ai_advisory_cache_key_payload(
     });
 
     json!({
+        // schema_version 11: drop `quote_mode` / `recommended_quote_mode` from
+        // the cache key (same fix as info-risk schema 6). The materialized quote
+        // mode oscillates tick-to-tick for funding-boundary markets and was
+        // invalidating the advisory cache lookup the same way. Strategy config
+        // fields below still refresh the cache when the operator changes policy;
+        // only the per-tick materialized mode is excluded.
+        //
         // schema_version 10: legacy low-competition sleeve settings are no
         // longer part of strategy context; opportunity metrics now capture
         // reward, competition, exit and stability tradeoffs in the unified
@@ -308,7 +315,7 @@ fn reward_ai_advisory_cache_key_payload(
         // orderbook service has published real books, so advisories cached
         // before that change (null bids/asks "no orderbook" disallow) are
         // invalidated and re-evaluated against live books.
-        "schema_version": 10,
+        "schema_version": 11,
         "cache_domain": "reward_ai_advisory",
         "provider_decision_schema": "binary_allow_quote_strategy_hint_v1",
         "market": {
@@ -322,8 +329,6 @@ fn reward_ai_advisory_cache_key_payload(
             "tokens": tokens,
         },
         "deterministic_plan": {
-            "quote_mode": plan.quote_mode,
-            "recommended_quote_mode": plan.recommended_quote_mode,
             "strategy_bucket": plan.strategy_bucket,
             "strategy_profile": plan.strategy_profile,
         },

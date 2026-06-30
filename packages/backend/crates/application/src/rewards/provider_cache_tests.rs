@@ -583,3 +583,99 @@ fn reward_info_risk_cache_key_tracks_risk_policy_changes() {
 
     assert_ne!(first.input_hash, second.input_hash);
 }
+
+#[test]
+fn reward_info_risk_cache_key_ignores_quote_mode_changes() {
+    let market = cache_test_market();
+    let books = cache_test_books(
+        OffsetDateTime::from_unix_timestamp(1_785_000_000).expect("valid timestamp"),
+        "0.54",
+    );
+    let mut plan = cache_test_plan(&market, &books);
+    let account = cache_test_account("100", 1);
+    let config = RewardBotConfig::default();
+
+    let first = build_reward_info_risk_assessment_request(
+        &market,
+        Some(&plan),
+        &account,
+        &[],
+        &[],
+        &config,
+        RewardAiProvider::OpenAi,
+        RewardAiRequestFormat::OpenAiChatCompletions,
+        "mimo-v2.5",
+    )
+    .expect("first request");
+
+    // The materialized quote mode flips between double and single_no every tick
+    // for markets on the funding boundary; the info-risk assessment must not be
+    // invalidated by that oscillation (it caused eligible_markets to drop to 0
+    // intermittently under enforce + require_info_risk_before_first_quote).
+    plan.quote_mode = RewardPlanQuoteMode::SingleNo;
+    plan.recommended_quote_mode = Some(RewardPlanQuoteMode::SingleNo);
+
+    let second = build_reward_info_risk_assessment_request(
+        &market,
+        Some(&plan),
+        &account,
+        &[],
+        &[],
+        &config,
+        RewardAiProvider::OpenAi,
+        RewardAiRequestFormat::OpenAiChatCompletions,
+        "mimo-v2.5",
+    )
+    .expect("second request");
+
+    assert_eq!(first.input_hash, second.input_hash);
+}
+
+#[test]
+fn reward_ai_advisory_cache_key_ignores_quote_mode_changes() {
+    let market = cache_test_market();
+    let books = cache_test_books(
+        OffsetDateTime::from_unix_timestamp(1_785_000_000).expect("valid timestamp"),
+        "0.54",
+    );
+    let mut plan = cache_test_plan(&market, &books);
+    let account = cache_test_account("100", 1);
+    let config = RewardBotConfig::default();
+
+    let first = build_reward_ai_advisory_request(
+        &market,
+        &plan,
+        &account,
+        &[],
+        &[],
+        &books,
+        &[],
+        &config,
+        config.ai_advisory_ttl_sec,
+        RewardAiProvider::OpenAi,
+        RewardAiRequestFormat::OpenAiChatCompletions,
+        "mimo-v2.5",
+    )
+    .expect("first request");
+
+    plan.quote_mode = RewardPlanQuoteMode::SingleNo;
+    plan.recommended_quote_mode = Some(RewardPlanQuoteMode::SingleNo);
+
+    let second = build_reward_ai_advisory_request(
+        &market,
+        &plan,
+        &account,
+        &[],
+        &[],
+        &books,
+        &[],
+        &config,
+        config.ai_advisory_ttl_sec,
+        RewardAiProvider::OpenAi,
+        RewardAiRequestFormat::OpenAiChatCompletions,
+        "mimo-v2.5",
+    )
+    .expect("second request");
+
+    assert_eq!(first.input_hash, second.input_hash);
+}
