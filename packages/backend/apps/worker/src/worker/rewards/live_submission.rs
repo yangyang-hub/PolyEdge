@@ -20,6 +20,27 @@ fn is_transient_order_rejection(rejection: &PolymarketOrderRejection) -> bool {
         || message.contains("please retry")
 }
 
+fn polymarket_cancel_rejection_confirms_order_not_open(
+    rejection: &PolymarketOrderRejection,
+) -> bool {
+    let message = rejection.message.to_ascii_lowercase();
+    message.contains("already canceled or matched")
+        || message.contains("already cancelled or matched")
+        || (message.contains("can't be found") && message.contains("order"))
+        || (message.contains("cannot be found") && message.contains("order"))
+        || (message.contains("not found") && message.contains("order"))
+}
+
+fn polymarket_rejection_reports_balance_reserved_by_active_orders(
+    rejection: &PolymarketOrderRejection,
+) -> bool {
+    let message = rejection.message.to_ascii_lowercase();
+    message.contains("not enough balance")
+        && message.contains("sum of active orders:")
+        && !message.contains("sum of active orders: 0,")
+        && !message.contains("sum of active orders: 0 ")
+}
+
 fn live_submission_was_attempted(order: &ManagedRewardOrder) -> bool {
     order.reason.contains(LIVE_SUBMISSION_ATTEMPTED_MARKER)
 }
@@ -213,6 +234,32 @@ async fn submit_one_live_exit_order(
             ))
         }
         LivePolymarketExecutionOutcome::Rejected(rejection) => {
+            if order.side == RewardOrderSide::Sell
+                && polymarket_rejection_reports_balance_reserved_by_active_orders(&rejection)
+            {
+                order.status = ManagedRewardOrderStatus::Cancelled;
+                order.scoring = false;
+                order.reason = format!(
+                    "Polymarket reports this token balance is already reserved by active orders; local exit intent closed in favor of remote state: {}",
+                    rejection.message
+                );
+                order.updated_at = OffsetDateTime::now_utc();
+                return Ok(LiveRewardOrderUpdate::Changed(
+                    order.clone(),
+                    reward_live_event(
+                        order,
+                        "reward_live_exit_remote_active_order_superseded",
+                        RewardRiskSeverity::Warning,
+                        order.reason.clone(),
+                        json!({
+                            "code": rejection.code,
+                            "post_only": post_only,
+                            "submission_price": submission_price,
+                        }),
+                    ),
+                ));
+            }
+
             let current_rejections = parse_exit_rejection_count(&order.reason);
             let next_rejections = (current_rejections + 1).min(MAX_EXIT_REJECTION_COUNT);
             order.status = ManagedRewardOrderStatus::ExitPending;

@@ -846,6 +846,7 @@ fn external_inventory_sync_plans_original_price_sell_exit() {
         "reward_live",
         std::slice::from_ref(&position),
         &[],
+        &[],
         "trc_inventory_exit",
     );
 
@@ -874,6 +875,7 @@ fn external_inventory_sync_does_not_duplicate_existing_sell_exit() {
         "reward_live",
         &[position],
         &[sell],
+        &[],
         "trc_inventory_exit",
     );
 
@@ -2213,6 +2215,38 @@ fn transient_order_rejection_checks_status_code_and_message() {
 }
 
 #[test]
+fn authoritative_cancel_rejection_closes_local_order() {
+    assert!(polymarket_cancel_rejection_confirms_order_not_open(
+        &PolymarketOrderRejection {
+            code: "POLYMARKET_ORDER_CANCEL_REJECTED".to_string(),
+            message: "order can't be found - already canceled or matched".to_string(),
+        }
+    ));
+    assert!(!polymarket_cancel_rejection_confirms_order_not_open(
+        &PolymarketOrderRejection {
+            code: "POLYMARKET_ORDER_CANCEL_REJECTED".to_string(),
+            message: "temporary cancel service error".to_string(),
+        }
+    ));
+}
+
+#[test]
+fn active_remote_sell_balance_rejection_supersedes_local_exit() {
+    assert!(polymarket_rejection_reports_balance_reserved_by_active_orders(
+        &PolymarketOrderRejection {
+            code: "POLYMARKET_ORDER_REJECTED".to_string(),
+            message: "CLOB rejected order with HTTP 400 Bad Request: {\"error\":\"not enough balance / allowance: the balance is not enough -> balance: 5000000, sum of active orders: 5000000, sum of matched orders: 0, order amount (inc. fees): 5000000\"}".to_string(),
+        }
+    ));
+    assert!(!polymarket_rejection_reports_balance_reserved_by_active_orders(
+        &PolymarketOrderRejection {
+            code: "POLYMARKET_ORDER_REJECTED".to_string(),
+            message: "not enough balance / allowance: balance: 0, sum of active orders: 0, order amount (inc. fees): 5000000".to_string(),
+        }
+    ));
+}
+
+#[test]
 fn exit_markup_price_rounds_up_to_the_exchange_tick() {
     assert_eq!(
         ceil_reward_price_to_tick(reward_decimal("0.515")),
@@ -2580,6 +2614,42 @@ fn live_placement_does_not_add_inventory_while_exit_is_pending() {
     );
 
     assert!(placements.iter().all(|order| order.token_id != "yes_live"));
+}
+
+#[test]
+fn external_inventory_exit_skips_token_with_remote_active_sell() {
+    let position = RewardPosition {
+        account_id: "reward_live".to_string(),
+        condition_id: "condition_live".to_string(),
+        token_id: "yes_live".to_string(),
+        outcome: "Yes".to_string(),
+        size: reward_decimal("20"),
+        avg_price: reward_decimal("0.50"),
+        realized_pnl: Decimal::ZERO,
+        updated_at: OffsetDateTime::now_utc(),
+    };
+    let external_sell = PolymarketOpenOrder {
+        id: "pm_sell".to_string(),
+        market: "condition_live".to_string(),
+        asset_id: "yes_live".to_string(),
+        side: PolymarketTokenOrderSide::Sell,
+        original_size: reward_decimal("20"),
+        size_matched: Decimal::ZERO,
+        price: reward_decimal("0.51"),
+        outcome: "Yes".to_string(),
+        status: "open".to_string(),
+        created_at: OffsetDateTime::now_utc(),
+    };
+
+    let updates = external_inventory_original_price_exit_updates(
+        "reward_live",
+        &[position],
+        &[],
+        &[external_sell],
+        "trc_remote_sell",
+    );
+
+    assert!(updates.is_empty());
 }
 
 #[test]

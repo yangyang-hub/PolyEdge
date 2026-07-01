@@ -75,7 +75,7 @@ async fn sync_external_account_state_with_policy(
         .await;
     }
 
-    if policy.open_orders {
+    let external_open_orders = if policy.open_orders {
         sync_external_open_order_state(
             state,
             connector,
@@ -84,8 +84,10 @@ async fn sync_external_account_state_with_policy(
             trace_id,
             policy.close_absent_buy_orders,
         )
-        .await;
-    }
+        .await
+    } else {
+        Vec::new()
+    };
 
     if !policy.account_snapshot
         || !refresh_account_snapshot
@@ -218,6 +220,7 @@ async fn sync_external_account_state_with_policy(
                 cycle_account,
                 cycle_positions,
                 cycle_orders,
+                &external_open_orders,
                 trace_id,
             )
             .await;
@@ -233,12 +236,14 @@ async fn plan_external_inventory_original_price_exits(
     account: &mut RewardAccountState,
     positions: &[RewardPosition],
     cycle_orders: &mut Vec<ManagedRewardOrder>,
+    external_open_orders: &[PolymarketOpenOrder],
     trace_id: &str,
 ) {
     let planned = external_inventory_original_price_exit_updates(
         &account.account_id,
         positions,
         cycle_orders,
+        external_open_orders,
         trace_id,
     );
     if planned.is_empty() {
@@ -272,6 +277,7 @@ fn external_inventory_original_price_exit_updates(
     account_id: &str,
     positions: &[RewardPosition],
     open_orders: &[ManagedRewardOrder],
+    external_open_orders: &[PolymarketOpenOrder],
     trace_id: &str,
 ) -> Vec<(ManagedRewardOrder, RewardRiskEvent)> {
     let mut covered_sell_tokens = open_orders
@@ -281,15 +287,18 @@ fn external_inventory_original_price_exit_updates(
                 && order.side == RewardOrderSide::Sell
                 && order.status.is_open_like()
         })
-        .map(|order| order.token_id.clone())
+        .map(|order| normalize_reward_open_order_lookup_key(&order.token_id))
+        .filter(|token_id| !token_id.is_empty())
         .collect::<HashSet<_>>();
+    covered_sell_tokens.extend(external_active_sell_token_ids(external_open_orders));
     let mut updates = Vec::new();
     for position in positions {
+        let position_token_key = normalize_reward_open_order_lookup_key(&position.token_id);
         if position.account_id != account_id
-            || position.token_id.trim().is_empty()
+            || position_token_key.is_empty()
             || position.size <= Decimal::ZERO
             || position.avg_price <= Decimal::ZERO
-            || !covered_sell_tokens.insert(position.token_id.clone())
+            || !covered_sell_tokens.insert(position_token_key)
         {
             continue;
         }
@@ -360,12 +369,12 @@ async fn sync_external_open_order_state(
     cycle_orders: &mut Vec<ManagedRewardOrder>,
     trace_id: &str,
     close_absent_buy_orders: bool,
-) {
+) -> Vec<PolymarketOpenOrder> {
     let open_orders = match connector.list_open_orders().await {
         Ok(open_orders) => open_orders,
         Err(error) => {
             warn!(error = %error, "failed to list Polymarket open orders for managed order sync");
-            return;
+            return Vec::new();
         }
     };
     let open_order_ids = open_orders
@@ -445,7 +454,7 @@ async fn sync_external_open_order_state(
                 &open_order_ids,
             ))
             .await;
-        return;
+        return open_orders;
     }
 
     let closed_count = closed.len();
@@ -474,6 +483,7 @@ async fn sync_external_open_order_state(
             &open_order_ids,
         ))
         .await;
+    open_orders
 }
 
 #[derive(Debug, Clone)]
@@ -495,6 +505,18 @@ fn external_open_buy_notional(open_orders: &[PolymarketOpenOrder]) -> Decimal {
                 .round_dp(4)
         })
         .sum()
+}
+
+fn external_active_sell_token_ids(open_orders: &[PolymarketOpenOrder]) -> HashSet<String> {
+    open_orders
+        .iter()
+        .filter(|order| {
+            order.side == PolymarketTokenOrderSide::Sell
+                && external_open_order_counts_as_active(order)
+        })
+        .map(|order| normalize_reward_open_order_lookup_key(&order.asset_id))
+        .filter(|token_id| !token_id.is_empty())
+        .collect()
 }
 
 fn external_open_order_counts_as_active(open_order: &PolymarketOpenOrder) -> bool {

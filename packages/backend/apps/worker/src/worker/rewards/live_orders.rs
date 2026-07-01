@@ -161,6 +161,30 @@ async fn cancel_one_live_reward_order(
             ))
         }
         Ok(LivePolymarketCancelOutcome::Rejected(rejection)) => {
+            if polymarket_cancel_rejection_confirms_order_not_open(&rejection) {
+                order.status = ManagedRewardOrderStatus::Cancelled;
+                order.scoring = false;
+                order.reason = format!(
+                    "Polymarket reports order is no longer open; local remainder closed after cancel rejection: {}",
+                    rejection.message
+                );
+                order.updated_at = OffsetDateTime::now_utc();
+                return Ok(LiveRewardOrderUpdate::Changed(
+                    order.clone(),
+                    reward_live_event(
+                        &order,
+                        "reward_live_order_remote_not_open_closed",
+                        RewardRiskSeverity::Info,
+                        order.reason.clone(),
+                        json!({
+                            "code": rejection.code,
+                            "external_order_id": external_order_id,
+                            "cancel_reason": reason,
+                        }),
+                    ),
+                ));
+            }
+
             Ok(LiveRewardOrderUpdate::Unchanged(reward_live_event(
                 &order,
                 "reward_live_order_cancel_rejected",
