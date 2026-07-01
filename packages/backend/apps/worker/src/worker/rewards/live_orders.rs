@@ -585,6 +585,109 @@ async fn plan_live_balanced_merge_intent(
     Ok((vec![intent], vec![event]))
 }
 
+async fn plan_live_balanced_merge_intents_for_positions(
+    state: &AppState,
+    config: &RewardBotConfig,
+    positions: &[RewardPosition],
+    trace_id: &str,
+) -> Result<(Vec<RewardMergeIntent>, Vec<RewardRiskEvent>)> {
+    if !config.balanced_merge_enabled {
+        return Ok((Vec::new(), Vec::new()));
+    }
+
+    let mut pairs: HashMap<(&str, &str), (Option<&RewardPosition>, Option<&RewardPosition>)> =
+        HashMap::new();
+    for position in positions
+        .iter()
+        .filter(|position| position.size > Decimal::ZERO)
+    {
+        let entry = pairs
+            .entry((position.account_id.as_str(), position.condition_id.as_str()))
+            .or_default();
+        if position.outcome.trim().eq_ignore_ascii_case("yes") {
+            entry.0 = Some(position);
+        } else if position.outcome.trim().eq_ignore_ascii_case("no") {
+            entry.1 = Some(position);
+        }
+    }
+
+    let mut intents = Vec::new();
+    let mut events = Vec::new();
+    let mut sequence = 0usize;
+    for ((account_id, condition_id), (yes_position, no_position)) in pairs {
+        let (Some(yes_position), Some(no_position)) = (yes_position, no_position) else {
+            continue;
+        };
+        let mergeable_size = Decimal::min(yes_position.size, no_position.size)
+            .round_dp_with_strategy(2, RoundingStrategy::ToZero);
+        if mergeable_size <= Decimal::ZERO {
+            continue;
+        }
+        let already_planned_size = state
+            .reward_bot_service
+            .active_reward_merge_intent_size(account_id, condition_id)
+            .await?
+            .round_dp_with_strategy(2, RoundingStrategy::ToZero);
+        let merge_size = (mergeable_size - already_planned_size)
+            .max(Decimal::ZERO)
+            .round_dp_with_strategy(2, RoundingStrategy::ToZero);
+        if merge_size <= Decimal::ZERO {
+            continue;
+        }
+
+        sequence += 1;
+        let now = OffsetDateTime::now_utc();
+        let id = format!(
+            "rewmerge_auto_{}_{}_{}",
+            now.unix_timestamp_nanos(),
+            sequence,
+            sanitize_reward_id_fragment(trace_id)
+        );
+        let source_fill_id = format!("auto_{id}");
+        let intent = RewardMergeIntent {
+            id,
+            account_id: account_id.to_string(),
+            condition_id: condition_id.to_string(),
+            yes_token_id: yes_position.token_id.clone(),
+            no_token_id: no_position.token_id.clone(),
+            merge_size,
+            yes_position_size: yes_position.size,
+            no_position_size: no_position.size,
+            yes_avg_price: yes_position.avg_price,
+            no_avg_price: no_position.avg_price,
+            status: RewardMergeIntentStatus::Unsupported,
+            reason: "balanced merge pair is ready, but on-chain merge execution is not available in this build".to_string(),
+            source_fill_id,
+            trace_id: trace_id.to_string(),
+            created_at: now,
+            updated_at: now,
+        };
+        events.push(new_risk_event(
+            Some(intent.account_id.clone()),
+            Some(intent.condition_id.clone()),
+            None,
+            "reward_live_balanced_merge_intent_created",
+            RewardRiskSeverity::Warning,
+            "auto-created a balanced merge intent for existing paired YES/NO inventory; execution is pending connector support",
+            json!({
+                "merge_intent_id": intent.id,
+                "source_fill_id": intent.source_fill_id,
+                "yes_token_id": intent.yes_token_id,
+                "no_token_id": intent.no_token_id,
+                "merge_size": intent.merge_size,
+                "yes_position_size": intent.yes_position_size,
+                "no_position_size": intent.no_position_size,
+                "already_planned_size": already_planned_size,
+                "status": intent.status.as_str(),
+                "auto_discovered": true,
+            }),
+        ));
+        intents.push(intent);
+    }
+
+    Ok((intents, events))
+}
+
 fn reward_post_fill_strategy(
     config: &RewardBotConfig,
     _plans: &[RewardQuotePlan],

@@ -451,6 +451,9 @@ fn live_bid_rank_cancel_reason(
     if config.cancel_bid_rank == 0 || order.side != RewardOrderSide::Buy {
         return None;
     }
+    if order.strategy_profile == RewardStrategyProfile::BalancedMerge {
+        return None;
+    }
     let book = books.get(&order.token_id)?;
     let rank = live_bid_rank(order.price, book)?;
     if rank <= usize::from(config.cancel_bid_rank) {

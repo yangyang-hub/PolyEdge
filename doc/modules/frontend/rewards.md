@@ -1,6 +1,6 @@
 # Rewards（奖励机器人）
 
-最后更新：2026-06-30
+最后更新：2026-07-01
 
 ## 概述
 
@@ -50,7 +50,7 @@
 - **挂单档位** → `quote_bid_rank=1|2|3` → 分别选择买一/买二/买三；后端只在 live placement 准备挂单时用当前盘口验证目标档位，不在 quote plan 构建阶段提前淘汰市场
 - **漂移换价** → `requote_drift_cents` 决定是否进入换价候选；`requote_drift_confirm_sec`（同向确认窗口）、`requote_drift_cooldown_sec`（订单冷却）和 `requote_drift_max_cancels_per_cycle`（单轮最大 drift 撤单数）现在都在报价构造配置区与 `requote_drift_cents` 一起可编辑，避免盘口档位抖动导致全量撤空后再重挂
 - **盘口选择** → `quote_mode=double|auto` + `selection_mode=observe|enforce` → 默认只保留双边报价；auto/enforce 的初步计划只用概率区间决定单边/双边，退出深度、盘口集中度、双边点差/档位/安全边际和单腿回退在 live placement 阶段用当前 orderbook 验证
-- **成交后合并策略** → `balanced_merge_enabled` 默认关闭；开启后后端用独立 `balanced_merge_*` 市场/订单/edge/库存阈值追加 `balanced_merge` profile 候选，同一 condition 与标准策略冲突时标准策略优先。该 profile 固定 YES/NO 双边买单，要求两侧买价合计满足 edge；一侧成交后不生成 SELL、不撤对侧 BUY，两侧库存可配对后只写入 `unsupported` merge intent，当前不自动链上 CTF merge。
+- **成交后合并策略** → `balanced_merge_enabled` 默认关闭；开启后后端用独立 `balanced_merge_*` 市场/订单/edge/库存阈值追加 `balanced_merge` profile 候选，同一 condition 与标准策略冲突时标准策略优先。该 profile 固定 YES/NO 双边买单，要求两侧买价合计满足 edge；一侧成交后不生成 SELL、不撤对侧 BUY，full tick/fast reconcile 会自动发现两侧可配对库存并写入 `unsupported` merge intent，当前不自动链上 CTF merge。
 - **AI/事件窗口配置** → 保存 provider（OpenAI-compatible/Anthropic）、request format、TTL、AI provider 并发开关、主/备模型最大并发、AI strategy hint 开关和最低置信度；GLM/DeepSeek/Agnes 通过 OpenAI-compatible base URL 与模型名配置，后端按模型名归一为 Chat Completions；worker 启用且环境变量配置 provider key 后，会在 full tick 中按单 market 刷新 combined provider 缓存，同一 condition 的 AI advisory 与 info-risk 都到期时合并为一次外部请求，并按该配置限制主/备 endpoint 并发。strategy hint 达标时会直接约束实盘方向、挂单挡位和 condition 金额上限，但仍不能突破后端硬风控。该面板也保存事件窗口开关、最低置信度、赛前停止新增、赛前撤 BUY、赛后恢复冷却、未知事件时间处理和 Gamma 未审核日期处理
 - **信息风险配置** → 保存启用开关、observe/enforce、过滤等级、TTL、首单信息风险要求和首单观察窗口；AI advisory 开启时由 full tick 的 combined provider refresh 一并刷新，AI advisory 关闭时才由独立 info-risk worker 异步刷新。页面只展示二值“允许挂单/不允许挂单”、置信度和摘要；enforce 模式下缺少未过期风险缓存的计划会被后端置为不可挂，新 condition 首次 BUY 还可要求先命中信息风险缓存并观察一段时间，观察起点由后端 quote plan 的 `first_quote_observed_at` 稳定记录，不受后续 funding/provider/live gate 更新 `updated_at` 影响
 - **大模型调用统计** → 顶部执行概览读取 `snapshot.llm_usage`，展示 UTC 今日真实外部 provider 请求总数，以及最近 7 天 AI advisory section、info-risk section 和失败请求计数；该统计来自 worker 写入的实际外部 provider 调用，不包含缓存命中，combined 请求同时携带两个 section 时总数只加 1、两个 section 列各加 1
@@ -75,7 +75,7 @@
 - 完整的 Run / Cancel / Reset 入队交互
 - 顶部执行概览展示实盘模式、启停/运行状态、实时可报价比例、钱包余额/策略上限比例、最近扫描/运行时间、事件触发计数和每日大模型调用统计；关键指标条把 `status.ready_quote_markets` 显示为“实时可报价”，把 `status.eligible_markets` 显示为“最终可挂”，并单独展示候选计划总量、已拦截计划、等待 AI/信息风险、资金不足、live 盘口验证和 AI/信息风控拦截数量，避免把资金或 provider gate 抖动误读成 reward 市场池大幅变化。策略上限直接读取当前 `snapshot.config.account_capital_usd`，不再使用可能保留历史初始值的账户账本字段，也不代表链上钱包余额。
 - 操作中心集中 Run / Save / Cancel / Reset，文案提醒当前命令可能提交或取消 Polymarket 实盘订单。
-- 配置编辑按执行、市场筛选、机会评分、报价构造、成交后合并、盘口选择、AI 建议、库存与控制分组，包含仍生效的数值参数、布尔开关、受限下拉框和成交后策略；退出加价提示明确 0 表示原价卖，合并策略文案明确当前只生成 intent、不自动链上执行。
+- 配置编辑按执行、市场筛选、机会评分、报价构造、成交后合并、盘口选择、AI 建议、库存与控制分组，包含仍生效的数值参数、布尔开关、受限下拉框和成交后策略；退出加价提示明确 0 表示原价卖，合并策略文案明确当前会自动生成 intent、但不自动链上执行。
 - 市场筛选面板公开质量硬门槛；通过门槛的市场由后端继续按奖励、流动性、成交量、剩余时长和奖励 spread 综合排序。
 - 低竞争市场 sleeve UI 已移除并合并为统一机会评分：前端新增 `RewardOpportunityMetricsDto`、`opportunity_*` 配置校验、机会评分配置面板和 quote plan 行内摘要；默认机会评分基线为 10U 探针、100U 日奖最低 0.75、竞争倍数上限 4、账户/单市场占用警告 1500/500 bps、退出深度至少 60U 或计划名义额 2.5 倍、入场退出滑点 2c、坏成交恢复 3 天、30 分钟观察窗口至少 30 个盘口样本、中点波动 3c、top-of-book 跳变 8 次，评分权重为 reward/competition/exit/stability = 35/30/25/10。保存配置时会把旧 `low_competition_mode` 强制为 `off`，独立市场/订单/全局占比置 0，并关闭/清零旧低竞争 liquidity/volume 过滤字段。DTO 中仍保留 `low_competition_*`、`strategy_bucket=low_competition`、`low_competition_metrics` 和 `low_competition_report` 以兼容历史后端响应，但页面不再提供低竞争配置、观察面板或专用表格摘要。
 - 报价构造使用“挂单档位”下拉框选择买一/买二/买三，不再提供中间价“报价偏移”、`per_market_usd`“单市场额度”或 `quote_size_usd`“单腿金额”；默认买一。

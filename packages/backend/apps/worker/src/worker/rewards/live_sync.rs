@@ -598,6 +598,27 @@ async fn run_reward_bot_live_reconcile_unlocked(
 
     let mut account = cycle.account.clone();
     let mut open_orders = cycle.open_orders.clone();
+    let (merge_intents, merge_events) = plan_live_balanced_merge_intents_for_positions(
+        state,
+        &cycle.config,
+        &cycle.positions,
+        trace_id,
+    )
+    .await?;
+    if !merge_intents.is_empty() || !merge_events.is_empty() {
+        persist_live_reward_updates_with_merge_intents(
+            state,
+            &mut account,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            merge_intents,
+            merge_events,
+            &report,
+            trace_id,
+        )
+        .await?;
+    }
 
     let kill_switch = state.risk_service.read_state().await?.kill_switch;
 

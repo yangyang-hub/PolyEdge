@@ -1907,6 +1907,56 @@ async fn balanced_merge_fill_creates_merge_intent_for_paired_positions() {
     assert_eq!(events[0].event_type, "reward_live_balanced_merge_intent_created");
 }
 
+#[tokio::test]
+async fn balanced_merge_auto_discovers_existing_paired_positions() {
+    let state = test_state(SystemMode::LiveAuto);
+    let now = OffsetDateTime::now_utc();
+    let config = RewardBotConfig {
+        balanced_merge_enabled: true,
+        ..RewardBotConfig::default()
+    };
+    let positions = vec![
+        RewardPosition {
+            account_id: "reward_live".to_string(),
+            condition_id: "cond_live".to_string(),
+            token_id: "yes_live".to_string(),
+            outcome: "Yes".to_string(),
+            size: Decimal::from(4_u64),
+            avg_price: reward_decimal("0.49"),
+            realized_pnl: Decimal::ZERO,
+            updated_at: now,
+        },
+        RewardPosition {
+            account_id: "reward_live".to_string(),
+            condition_id: "cond_live".to_string(),
+            token_id: "no_live".to_string(),
+            outcome: "No".to_string(),
+            size: Decimal::from(6_u64),
+            avg_price: reward_decimal("0.48"),
+            realized_pnl: Decimal::ZERO,
+            updated_at: now,
+        },
+    ];
+
+    let (intents, events) = plan_live_balanced_merge_intents_for_positions(
+        &state,
+        &config,
+        &positions,
+        "trc_balanced_merge_auto",
+    )
+    .await
+    .expect("auto balanced merge intent");
+
+    assert_eq!(intents.len(), 1);
+    assert!(intents[0].id.starts_with("rewmerge_auto_"));
+    assert_eq!(intents[0].status, RewardMergeIntentStatus::Unsupported);
+    assert_eq!(intents[0].merge_size, Decimal::from(4_u64));
+    assert_eq!(intents[0].yes_token_id, "yes_live");
+    assert_eq!(intents[0].no_token_id, "no_live");
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].event_type, "reward_live_balanced_merge_intent_created");
+}
+
 #[test]
 fn configured_post_fill_exit_ignores_ai_hold_policy_and_uses_entry_price() {
     let now = OffsetDateTime::now_utc();
@@ -2580,6 +2630,33 @@ fn live_cancel_uses_strategy_profile_when_matching_quote_plan() {
     assert_eq!(candidates.len(), 1);
     assert!(candidates[0].1.contains("balanced_merge"));
     assert!(candidates[0].1.contains("no longer appears"));
+}
+
+#[test]
+fn balanced_merge_buy_ignores_global_cancel_bid_rank() {
+    let config = RewardBotConfig {
+        account_id: "reward_live".to_string(),
+        quote_bid_rank: 2,
+        cancel_bid_rank: 1,
+        balanced_merge_enabled: true,
+        balanced_merge_max_markets: 1,
+        balanced_merge_max_open_orders: 2,
+        ..RewardBotConfig::default()
+    }
+    .normalized();
+    let now = OffsetDateTime::now_utc();
+    let mut plan = live_test_plan(now);
+    plan.strategy_profile = RewardStrategyProfile::BalancedMerge;
+    let mut order = live_test_open_order("yes_live");
+    order.strategy_profile = RewardStrategyProfile::BalancedMerge;
+    order.price = reward_decimal("0.48");
+    plan.legs[0].price = order.price;
+    let books = HashMap::from([("yes_live".to_string(), live_test_book("yes_live", now))]);
+
+    let candidates =
+        live_cancel_candidates(&config, &[plan], &[order], &books, &HashMap::new(), false);
+
+    assert!(candidates.is_empty());
 }
 
 #[test]
