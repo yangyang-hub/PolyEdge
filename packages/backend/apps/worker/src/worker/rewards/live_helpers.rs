@@ -59,6 +59,44 @@ fn reward_post_only_exit_crossing_bid(
     reward_best_bid_tick(books.get(&order.token_id)).filter(|best_bid| *best_bid >= order.price)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct RewardPostOnlyExitSubmissionPrice {
+    price: Decimal,
+    crossing_best_bid: Option<Decimal>,
+    best_ask: Option<Decimal>,
+}
+
+fn reward_post_only_exit_submission_price(
+    order: &ManagedRewardOrder,
+    books: &HashMap<String, RewardOrderBook>,
+) -> std::result::Result<RewardPostOnlyExitSubmissionPrice, String> {
+    let Some(best_bid) = reward_post_only_exit_crossing_bid(order, books) else {
+        return Ok(RewardPostOnlyExitSubmissionPrice {
+            price: order.price,
+            crossing_best_bid: None,
+            best_ask: reward_best_ask_tick(books.get(&order.token_id)),
+        });
+    };
+    let Some(best_ask) = reward_best_ask_tick(books.get(&order.token_id)) else {
+        return Err(format!(
+            "{LIVE_EXIT_POST_ONLY_CROSSING_DEFERRED_MARKER}: best bid {best_bid} >= maker floor {}; no fresh ask is available for a resting sell",
+            order.price
+        ));
+    };
+    if best_ask <= best_bid {
+        return Err(format!(
+            "{LIVE_EXIT_POST_ONLY_CROSSING_DEFERRED_MARKER}: best bid {best_bid} >= maker floor {} and best ask {best_ask} would not rest above the bid",
+            order.price
+        ));
+    }
+
+    Ok(RewardPostOnlyExitSubmissionPrice {
+        price: best_ask,
+        crossing_best_bid: Some(best_bid),
+        best_ask: Some(best_ask),
+    })
+}
+
 fn reward_buy_touching_ask(
     order: &ManagedRewardOrder,
     books: &HashMap<String, RewardOrderBook>,

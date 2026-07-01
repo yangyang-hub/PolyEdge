@@ -198,7 +198,7 @@ async fn submit_one_live_exit_order(
                     RewardRiskSeverity::Info,
                     format!(
                         "{} live exit placed: {} @ {}",
-                        order.outcome, order.size, order.price
+                        order.outcome, order.size, submission_price
                     ),
                     json!({
                         "token_id": order.token_id,

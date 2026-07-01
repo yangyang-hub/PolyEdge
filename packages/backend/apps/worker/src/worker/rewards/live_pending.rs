@@ -675,38 +675,61 @@ async fn submit_pending_live_reward_orders(
                 ));
             }
 
-            submission_price = order.price;
             if post_only {
-                if let Some(best_bid) = reward_post_only_exit_crossing_bid(order, books) {
-                    order.reason = format!(
-                        "{LIVE_EXIT_POST_ONLY_CROSSING_DEFERRED_MARKER}: best bid {best_bid} >= maker price {}; waiting for original-price sell to rest as maker",
-                        order.price
-                    );
-                    order.updated_at = OffsetDateTime::now_utc();
-                    pre_submit_events.push(reward_live_event(
-                        order,
-                        "reward_live_exit_post_only_crossing_deferred",
-                        RewardRiskSeverity::Info,
-                        order.reason.clone(),
-                        json!({
-                            "token_id": order.token_id,
-                            "price": order.price,
-                            "best_bid": best_bid,
-                            "post_only": true,
-                        }),
-                    ));
-                    persist_live_reward_updates(
-                        state,
-                        account,
-                        Vec::new(),
-                        vec![order.clone()],
-                        Vec::new(),
-                        pre_submit_events,
-                        report,
-                        trace_id,
-                    )
-                    .await?;
-                    continue;
+                match reward_post_only_exit_submission_price(order, books) {
+                    Ok(exit_price) => {
+                        submission_price = exit_price.price;
+                        if let Some(best_bid) = exit_price.crossing_best_bid {
+                            let best_ask = exit_price.best_ask.unwrap_or(submission_price);
+                            order.reason = format!(
+                                "post-only original-price exit repriced to best ask {best_ask} because best bid {best_bid} >= non-loss floor {}; {post_only_marker}",
+                                order.price
+                            );
+                            order.updated_at = OffsetDateTime::now_utc();
+                            pre_submit_events.push(reward_live_event(
+                                order,
+                                "reward_live_exit_repriced_to_best_ask",
+                                RewardRiskSeverity::Info,
+                                order.reason.clone(),
+                                json!({
+                                    "token_id": order.token_id,
+                                    "floor_price": order.price,
+                                    "submission_price": submission_price,
+                                    "best_bid": best_bid,
+                                    "best_ask": best_ask,
+                                    "post_only": true,
+                                }),
+                            ));
+                        }
+                    }
+                    Err(reason) => {
+                        order.reason =
+                            format!("{reason}; waiting for an ask-one maker price");
+                        order.updated_at = OffsetDateTime::now_utc();
+                        pre_submit_events.push(reward_live_event(
+                            order,
+                            "reward_live_exit_post_only_crossing_deferred",
+                            RewardRiskSeverity::Info,
+                            order.reason.clone(),
+                            json!({
+                                "token_id": order.token_id,
+                                "price": order.price,
+                                "post_only": true,
+                            }),
+                        ));
+                        persist_live_reward_updates(
+                            state,
+                            account,
+                            Vec::new(),
+                            vec![order.clone()],
+                            Vec::new(),
+                            pre_submit_events,
+                            report,
+                            trace_id,
+                        )
+                        .await?;
+                        continue;
+                    }
                 }
             } else {
                 match reward_flatten_submission_price(order, books) {

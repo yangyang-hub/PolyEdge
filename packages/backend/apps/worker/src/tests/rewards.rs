@@ -2012,7 +2012,7 @@ fn hold_and_requote_plans_original_price_post_only_exit() {
 }
 
 #[test]
-fn post_fill_post_only_exit_keeps_floor_when_best_bid_crosses() {
+fn post_fill_post_only_exit_uses_best_ask_submission_when_best_bid_crosses_floor() {
     let now = OffsetDateTime::now_utc();
     let mut entry = live_test_open_order("yes_live");
     entry.price = reward_decimal("0.64");
@@ -2022,6 +2022,7 @@ fn post_fill_post_only_exit_keeps_floor_when_best_bid_crosses() {
     };
     let mut book = live_test_book("yes_live", now);
     book.bids[0].price = reward_decimal("0.65");
+    book.asks[0].price = reward_decimal("0.66");
     let positions = HashMap::from([(
         "yes_live".to_string(),
         RewardPosition {
@@ -2054,8 +2055,37 @@ fn post_fill_post_only_exit_keeps_floor_when_best_bid_crosses() {
     assert_eq!(exit.price, reward_decimal("0.64"));
     assert!(deferred_live_exit_is_post_only(exit));
     assert_eq!(
-        reward_post_only_exit_crossing_bid(exit, &books),
-        Some(reward_decimal("0.65"))
+        reward_post_only_exit_submission_price(exit, &books)
+            .expect("best ask provides a resting maker price"),
+        RewardPostOnlyExitSubmissionPrice {
+            price: reward_decimal("0.66"),
+            crossing_best_bid: Some(reward_decimal("0.65")),
+            best_ask: Some(reward_decimal("0.66")),
+        }
+    );
+}
+
+#[test]
+fn post_only_exit_keeps_floor_submission_when_floor_does_not_cross_bid() {
+    let now = OffsetDateTime::now_utc();
+    let mut book = live_test_book("yes_live", now);
+    book.bids[0].price = reward_decimal("0.63");
+    book.asks[0].price = reward_decimal("0.66");
+    let mut order = live_test_open_order("yes_live");
+    order.side = RewardOrderSide::Sell;
+    order.status = ManagedRewardOrderStatus::ExitPending;
+    order.price = reward_decimal("0.64");
+    order.reason = "post-only hold-and-requote original-price exit".to_string();
+    let books = HashMap::from([("yes_live".to_string(), book)]);
+
+    assert_eq!(
+        reward_post_only_exit_submission_price(&order, &books)
+            .expect("floor should be a resting maker price"),
+        RewardPostOnlyExitSubmissionPrice {
+            price: reward_decimal("0.64"),
+            crossing_best_bid: None,
+            best_ask: Some(reward_decimal("0.66")),
+        }
     );
 }
 
