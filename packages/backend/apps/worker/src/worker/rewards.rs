@@ -162,6 +162,182 @@ async fn refresh_reward_live_action_books(
     Ok(refreshed_count)
 }
 
+async fn execute_pending_balanced_merge_intents(
+    state: &AppState,
+    config: &RewardBotConfig,
+    account: &mut RewardAccountState,
+    positions: &[RewardPosition],
+    open_orders: &[ManagedRewardOrder],
+    report: &RewardBotRunReport,
+    trace_id: &str,
+) -> Result<usize> {
+    if !config.balanced_merge_enabled || !config.balanced_merge_auto_execute_enabled {
+        return Ok(0);
+    }
+    let private_key = normalize_optional_config_string(state.settings.polymarket.private_key.as_deref());
+    let Some(private_key) = private_key else {
+        warn!(
+            trace_id = %trace_id,
+            "balanced merge auto execution enabled but polymarket private key is not configured"
+        );
+        return Ok(0);
+    };
+    let proxy_wallet_address = account
+        .wallet_address
+        .as_deref()
+        .and_then(|value| normalize_optional_config_string(Some(value)))
+        .or_else(|| normalize_optional_config_string(state.settings.polymarket.funder.as_deref()))
+        .unwrap_or_else(|| config.account_id.clone());
+    let chain = PolymarketChainConnector::new(&state.settings.polymarket.polygon_rpc_url)?;
+    let intents = state
+        .reward_bot_service
+        .list_executable_reward_merge_intents(&config.account_id, 10)
+        .await?;
+    if intents.is_empty() {
+        return Ok(0);
+    }
+
+    let mut executed = 0usize;
+    for intent in intents {
+        let mut event_account = account.clone();
+        let maybe_error = balanced_merge_intent_preflight_error(&intent, positions, open_orders);
+        if let Some(reason) = maybe_error {
+            debug!(
+                trace_id = %trace_id,
+                merge_intent_id = %intent.id,
+                condition_id = %intent.condition_id,
+                reason = %reason,
+                "skipped balanced merge intent execution for this cycle"
+            );
+            continue;
+        }
+
+        match chain
+            .submit_merge_positions(
+                &private_key,
+                state.settings.polymarket.chain_id,
+                PolymarketMergePositionsRequest {
+                    proxy_wallet_address: proxy_wallet_address.clone(),
+                    condition_id: intent.condition_id.clone(),
+                    amount: intent.merge_size,
+                },
+            )
+            .await
+        {
+            Ok(receipt) => {
+                executed += 1;
+                let now = OffsetDateTime::now_utc();
+                let reason = format!(
+                    "submitted balanced merge transaction {} for {} shares",
+                    receipt.tx_hash, receipt.amount
+                );
+                state
+                    .reward_bot_service
+                    .mark_reward_merge_intent_submitted(
+                        &intent.id,
+                        &receipt.tx_hash,
+                        now,
+                        &reason,
+                    )
+                    .await?;
+                persist_live_reward_updates(
+                    state,
+                    &mut event_account,
+                    Vec::new(),
+                    Vec::new(),
+                    Vec::new(),
+                    vec![new_risk_event(
+                        Some(intent.account_id.clone()),
+                        Some(intent.condition_id.clone()),
+                        None,
+                        "reward_live_balanced_merge_submitted",
+                        RewardRiskSeverity::Info,
+                        reason,
+                        json!({
+                            "merge_intent_id": intent.id,
+                            "tx_hash": receipt.tx_hash,
+                            "owner_address": receipt.owner_address,
+                            "proxy_wallet_address": receipt.proxy_wallet_address,
+                            "merge_size": receipt.amount,
+                            "amount_units": receipt.amount_units,
+                            "safe_nonce": receipt.safe_nonce,
+                        }),
+                    )],
+                    report,
+                    trace_id,
+                )
+                .await?;
+            }
+            Err(error) => {
+                let now = OffsetDateTime::now_utc();
+                let reason = format!("balanced merge transaction failed before broadcast: {error}");
+                state
+                    .reward_bot_service
+                    .mark_reward_merge_intent_failed(&intent.id, &reason, now)
+                    .await?;
+                persist_live_reward_updates(
+                    state,
+                    &mut event_account,
+                    Vec::new(),
+                    Vec::new(),
+                    Vec::new(),
+                    vec![new_risk_event(
+                        Some(intent.account_id.clone()),
+                        Some(intent.condition_id.clone()),
+                        None,
+                        "reward_live_balanced_merge_failed",
+                        RewardRiskSeverity::Critical,
+                        reason,
+                        json!({
+                            "merge_intent_id": intent.id,
+                            "yes_token_id": intent.yes_token_id,
+                            "no_token_id": intent.no_token_id,
+                            "merge_size": intent.merge_size,
+                        }),
+                    )],
+                    report,
+                    trace_id,
+                )
+                .await?;
+            }
+        }
+    }
+    Ok(executed)
+}
+
+fn balanced_merge_intent_preflight_error(
+    intent: &RewardMergeIntent,
+    positions: &[RewardPosition],
+    open_orders: &[ManagedRewardOrder],
+) -> Option<String> {
+    if open_orders.iter().any(|order| {
+        order.status.is_open_like()
+            && order.side == RewardOrderSide::Sell
+            && (order.token_id == intent.yes_token_id || order.token_id == intent.no_token_id)
+    }) {
+        return Some("balanced merge skipped because a SELL order is open for one of the paired tokens".to_string());
+    }
+    let yes_size = positions
+        .iter()
+        .find(|position| {
+            position.account_id == intent.account_id && position.token_id == intent.yes_token_id
+        })
+        .map_or(Decimal::ZERO, |position| position.size);
+    let no_size = positions
+        .iter()
+        .find(|position| {
+            position.account_id == intent.account_id && position.token_id == intent.no_token_id
+        })
+        .map_or(Decimal::ZERO, |position| position.size);
+    if yes_size < intent.merge_size || no_size < intent.merge_size {
+        return Some(format!(
+            "balanced merge skipped because current paired inventory is insufficient: yes={yes_size}, no={no_size}, required={}",
+            intent.merge_size
+        ));
+    }
+    None
+}
+
 #[derive(Debug, Default)]
 struct RewardCommandProcessReport {
     processed: usize,
@@ -536,6 +712,23 @@ async fn run_reward_bot_live_tick(
             trace_id,
         )
         .await?;
+    }
+    let executed_merge_intents = execute_pending_balanced_merge_intents(
+        state,
+        &cycle.config,
+        &mut account,
+        &cycle.positions,
+        &open_orders,
+        &report,
+        trace_id,
+    )
+    .await?;
+    if executed_merge_intents > 0 {
+        debug!(
+            trace_id = %trace_id,
+            executed_merge_intents,
+            "submitted balanced merge transactions"
+        );
     }
 
     let refreshed_action_books = refresh_reward_live_action_books(

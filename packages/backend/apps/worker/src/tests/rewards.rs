@@ -1890,6 +1890,7 @@ async fn balanced_merge_fill_creates_merge_intent_for_paired_positions() {
 
     let (intents, events) = plan_live_balanced_merge_intent(
         &state,
+        &RewardBotConfig::default(),
         &entry,
         &fill,
         &positions,

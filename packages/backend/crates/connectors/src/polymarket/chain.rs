@@ -2,9 +2,17 @@ const POLYGON_RPC_TIMEOUT: Duration = Duration::from_secs(15);
 const POLYGON_CHAIN_ID: u64 = 137;
 const POLYMARKET_BRIDGE_BASE_URL: &str = "https://bridge.polymarket.com";
 const POLYMARKET_PUSD_CONTRACT_ADDRESS: &str = "0xC011a7E12a19f7B1f670d46F03B03f3342E82DFB";
+const POLYMARKET_CONDITIONAL_TOKENS_ADDRESS: &str =
+    "0x4D97DCd97eC945f40cF65F87097ACe5EA0476045";
 const ERC20_BALANCE_OF_SELECTOR: &str = "70a08231";
 const ERC20_TRANSFER_SELECTOR: [u8; 4] = [0xa9, 0x05, 0x9c, 0xbb];
 const ERC20_DECIMALS: u32 = 6;
+const CTF_SHARE_DECIMALS: u8 = 6;
+const SAFE_GET_OWNERS_SELECTOR: [u8; 4] = [0xa0, 0xe6, 0x7e, 0x2b];
+const SAFE_GET_THRESHOLD_SELECTOR: [u8; 4] = [0xe7, 0x52, 0x35, 0xb8];
+const SAFE_NONCE_SELECTOR: [u8; 4] = [0xaf, 0xfe, 0xd0, 0xe0];
+const SAFE_GET_TRANSACTION_HASH_SELECTOR: [u8; 4] = [0xd8, 0xd1, 0x1f, 0x78];
+const SAFE_EXEC_TRANSACTION_SELECTOR: [u8; 4] = [0x6a, 0x76, 0x12, 0x02];
 
 #[derive(Debug, Clone, Copy)]
 pub struct PolymarketFundingToken {
@@ -32,6 +40,24 @@ pub struct PolymarketFundingTransferReceipt {
     pub token: PolymarketFundingToken,
     pub amount: Decimal,
     pub amount_units: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct PolymarketMergePositionsRequest {
+    pub proxy_wallet_address: String,
+    pub condition_id: String,
+    pub amount: Decimal,
+}
+
+#[derive(Debug, Clone)]
+pub struct PolymarketMergePositionsReceipt {
+    pub tx_hash: String,
+    pub owner_address: String,
+    pub proxy_wallet_address: String,
+    pub condition_id: String,
+    pub amount: Decimal,
+    pub amount_units: String,
+    pub safe_nonce: String,
 }
 
 const POLYGON_FUNDING_TOKENS: &[PolymarketFundingToken] = &[
@@ -239,6 +265,119 @@ impl PolymarketChainConnector {
         })
     }
 
+    pub async fn submit_merge_positions(
+        &self,
+        private_key: &str,
+        chain_id: u64,
+        request: PolymarketMergePositionsRequest,
+    ) -> Result<PolymarketMergePositionsReceipt> {
+        if chain_id != POLYGON_CHAIN_ID {
+            return Err(AppError::invalid_input(
+                "POLYMARKET_MERGE_CHAIN_UNSUPPORTED",
+                format!("CTF merge requires Polygon chain_id={POLYGON_CHAIN_ID}, got {chain_id}"),
+            ));
+        }
+
+        let proxy_wallet_address = normalize_evm_address(
+            "proxy_wallet_address",
+            &request.proxy_wallet_address,
+            "POLYMARKET_PROXY_WALLET_ADDRESS_INVALID",
+        )?;
+        let safe_address = parse_alloy_address(
+            "proxy_wallet_address",
+            &proxy_wallet_address,
+            "POLYMARKET_PROXY_WALLET_ADDRESS_INVALID",
+        )?;
+        let conditional_tokens_address = parse_alloy_address(
+            "conditional_tokens_address",
+            POLYMARKET_CONDITIONAL_TOKENS_ADDRESS,
+            "POLYMARKET_CONDITIONAL_TOKENS_ADDRESS_INVALID",
+        )?;
+        let collateral_address = parse_alloy_address(
+            "collateral_address",
+            POLYMARKET_PUSD_CONTRACT_ADDRESS,
+            "POLYMARKET_COLLATERAL_ADDRESS_INVALID",
+        )?;
+        let condition_id = parse_bytes32(
+            "condition_id",
+            &request.condition_id,
+            "POLYMARKET_MERGE_CONDITION_ID_INVALID",
+        )?;
+        let amount_units = decimal_amount_to_units(request.amount, CTF_SHARE_DECIMALS)?;
+        let signer = funding_private_key_signer(private_key, chain_id)?;
+        let owner_address = signer.address();
+        self.ensure_safe_owner_threshold_one(&proxy_wallet_address, owner_address)
+            .await?;
+        let safe_nonce = self.safe_nonce(&proxy_wallet_address).await?;
+
+        let merge_data = build_ctf_merge_positions_calldata(
+            collateral_address,
+            condition_id,
+            amount_units,
+        );
+        let safe_tx_hash_call = build_safe_get_transaction_hash_calldata(
+            conditional_tokens_address,
+            AlloyU256::ZERO,
+            &merge_data,
+            0,
+            AlloyU256::ZERO,
+            AlloyU256::ZERO,
+            AlloyU256::ZERO,
+            AlloyAddress::ZERO,
+            AlloyAddress::ZERO,
+            safe_nonce,
+        );
+        let safe_tx_hash = self
+            .eth_call(&proxy_wallet_address, &safe_tx_hash_call)
+            .await
+            .and_then(|bytes| decode_bytes32_result(&bytes, "POLYMARKET_SAFE_HASH_INVALID"))?;
+        let signature = signer.sign_hash(&AlloyB256::from(safe_tx_hash)).await.map_err(|error| {
+            AppError::dependency_unavailable(
+                "POLYMARKET_SAFE_SIGN_FAILED",
+                format!("failed to sign Safe transaction hash: {error}"),
+            )
+        })?;
+        let exec_data = build_safe_exec_transaction_calldata(
+            conditional_tokens_address,
+            AlloyU256::ZERO,
+            &merge_data,
+            0,
+            AlloyU256::ZERO,
+            AlloyU256::ZERO,
+            AlloyU256::ZERO,
+            AlloyAddress::ZERO,
+            AlloyAddress::ZERO,
+            &signature.as_bytes(),
+        );
+        let provider = ProviderBuilder::new()
+            .with_chain_id(chain_id)
+            .wallet(signer)
+            .connect_http(self.rpc_url.parse().map_err(|error| {
+                AppError::invalid_input(
+                    "POLYGON_RPC_URL_INVALID",
+                    format!("invalid Polygon RPC URL: {error}"),
+                )
+            })?);
+        let tx = AlloyTransactionRequest::default()
+            .with_to(safe_address)
+            .with_input(AlloyBytes::from(exec_data));
+        let pending = provider.send_transaction(tx).await.map_err(|error| {
+            AppError::dependency_unavailable(
+                "POLYMARKET_MERGE_SEND_FAILED",
+                format!("failed to broadcast Safe merge transaction: {error}"),
+            )
+        })?;
+        Ok(PolymarketMergePositionsReceipt {
+            tx_hash: format!("{:#x}", pending.tx_hash()),
+            owner_address: format!("{:#x}", owner_address),
+            proxy_wallet_address,
+            condition_id: request.condition_id,
+            amount: request.amount,
+            amount_units: amount_units.to_string(),
+            safe_nonce: safe_nonce.to_string(),
+        })
+    }
+
     async fn bridge_supported_asset_for_token(
         &self,
         token: PolymarketFundingToken,
@@ -399,6 +538,106 @@ impl PolymarketChainConnector {
 
         erc20_hex_units_to_decimal(&raw_hex, decimals)
     }
+
+    async fn ensure_safe_owner_threshold_one(
+        &self,
+        safe_address: &str,
+        expected_owner: AlloyAddress,
+    ) -> Result<()> {
+        let owners = self.safe_owners(safe_address).await?;
+        if !owners.iter().any(|owner| *owner == expected_owner) {
+            return Err(AppError::invalid_input(
+                "POLYMARKET_SAFE_OWNER_MISMATCH",
+                format!(
+                    "configured private key address {expected_owner:#x} is not an owner of proxy wallet {safe_address}"
+                ),
+            ));
+        }
+        let threshold = self.safe_threshold(safe_address).await?;
+        if threshold != AlloyU256::from(1_u8) {
+            return Err(AppError::invalid_input(
+                "POLYMARKET_SAFE_THRESHOLD_UNSUPPORTED",
+                format!("automatic merge currently supports Safe threshold=1 only, got {threshold}"),
+            ));
+        }
+        Ok(())
+    }
+
+    async fn safe_owners(&self, safe_address: &str) -> Result<Vec<AlloyAddress>> {
+        let bytes = self.eth_call(safe_address, &SAFE_GET_OWNERS_SELECTOR).await?;
+        decode_address_array_result(&bytes, "POLYMARKET_SAFE_OWNERS_INVALID")
+    }
+
+    async fn safe_threshold(&self, safe_address: &str) -> Result<AlloyU256> {
+        let bytes = self
+            .eth_call(safe_address, &SAFE_GET_THRESHOLD_SELECTOR)
+            .await?;
+        decode_u256_result(&bytes, "POLYMARKET_SAFE_THRESHOLD_INVALID")
+    }
+
+    async fn safe_nonce(&self, safe_address: &str) -> Result<AlloyU256> {
+        let bytes = self.eth_call(safe_address, &SAFE_NONCE_SELECTOR).await?;
+        decode_u256_result(&bytes, "POLYMARKET_SAFE_NONCE_INVALID")
+    }
+
+    async fn eth_call(&self, to_address: &str, data: &[u8]) -> Result<Vec<u8>> {
+        let to_address = normalize_evm_address(
+            "to_address",
+            to_address,
+            "POLYGON_ETH_CALL_TO_ADDRESS_INVALID",
+        )?;
+        let request = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "eth_call",
+            "params": [
+                {
+                    "to": to_address,
+                    "data": format!("0x{}", bytes_to_lower_hex(data))
+                },
+                "latest"
+            ]
+        });
+
+        let response = self
+            .client
+            .post(&self.rpc_url)
+            .json(&request)
+            .send()
+            .await
+            .map_err(|error| {
+                AppError::dependency_unavailable(
+                    "POLYGON_RPC_REQUEST_FAILED",
+                    format!("failed to query Polygon RPC: {error}"),
+                )
+            })?
+            .error_for_status()
+            .map_err(|error| {
+                AppError::dependency_unavailable(
+                    "POLYGON_RPC_STATUS_FAILED",
+                    format!("Polygon RPC returned error status: {error}"),
+                )
+            })?;
+        let payload = response.json::<JsonRpcResponse>().await.map_err(|error| {
+            AppError::dependency_unavailable(
+                "POLYGON_RPC_DECODE_FAILED",
+                format!("failed to decode Polygon RPC response: {error}"),
+            )
+        })?;
+        if let Some(error) = payload.error {
+            return Err(AppError::dependency_unavailable(
+                "POLYGON_RPC_ERROR",
+                format!("Polygon RPC error {}: {}", error.code, error.message),
+            ));
+        }
+        let raw_hex = payload.result.ok_or_else(|| {
+            AppError::dependency_unavailable(
+                "POLYGON_RPC_MISSING_RESULT",
+                "Polygon RPC response did not include a result",
+            )
+        })?;
+        hex_to_bytes(&raw_hex)
+    }
 }
 
 fn funding_token_by_id(token_id: &str) -> Result<PolymarketFundingToken> {
@@ -501,6 +740,247 @@ fn build_erc20_transfer_calldata(recipient: AlloyAddress, amount_units: AlloyU25
     data.extend_from_slice(recipient.as_slice());
     data.extend_from_slice(&amount_units.to_be_bytes::<32>());
     data
+}
+
+fn build_ctf_merge_positions_calldata(
+    collateral_token: AlloyAddress,
+    condition_id: [u8; 32],
+    amount_units: AlloyU256,
+) -> Vec<u8> {
+    let mut data = selector("mergePositions(address,bytes32,bytes32,uint256[],uint256)");
+    push_abi_address(&mut data, collateral_token);
+    push_abi_word(&mut data, [0_u8; 32]);
+    push_abi_word(&mut data, condition_id);
+    push_abi_u256(&mut data, AlloyU256::from(160_u16));
+    push_abi_u256(&mut data, amount_units);
+    push_abi_u256(&mut data, AlloyU256::from(2_u8));
+    push_abi_u256(&mut data, AlloyU256::from(1_u8));
+    push_abi_u256(&mut data, AlloyU256::from(2_u8));
+    data
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_safe_get_transaction_hash_calldata(
+    to: AlloyAddress,
+    value: AlloyU256,
+    inner_data: &[u8],
+    operation: u8,
+    safe_tx_gas: AlloyU256,
+    base_gas: AlloyU256,
+    gas_price: AlloyU256,
+    gas_token: AlloyAddress,
+    refund_receiver: AlloyAddress,
+    nonce: AlloyU256,
+) -> Vec<u8> {
+    let mut data = Vec::new();
+    data.extend_from_slice(&SAFE_GET_TRANSACTION_HASH_SELECTOR);
+    push_safe_tx_args(
+        &mut data,
+        to,
+        value,
+        inner_data,
+        operation,
+        safe_tx_gas,
+        base_gas,
+        gas_price,
+        gas_token,
+        refund_receiver,
+        nonce,
+    );
+    data
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_safe_exec_transaction_calldata(
+    to: AlloyAddress,
+    value: AlloyU256,
+    inner_data: &[u8],
+    operation: u8,
+    safe_tx_gas: AlloyU256,
+    base_gas: AlloyU256,
+    gas_price: AlloyU256,
+    gas_token: AlloyAddress,
+    refund_receiver: AlloyAddress,
+    signatures: &[u8],
+) -> Vec<u8> {
+    let mut data = Vec::new();
+    data.extend_from_slice(&SAFE_EXEC_TRANSACTION_SELECTOR);
+    push_abi_address(&mut data, to);
+    push_abi_u256(&mut data, value);
+    push_abi_u256(&mut data, AlloyU256::from(320_u16));
+    push_abi_u256(&mut data, AlloyU256::from(operation));
+    push_abi_u256(&mut data, safe_tx_gas);
+    push_abi_u256(&mut data, base_gas);
+    push_abi_u256(&mut data, gas_price);
+    push_abi_address(&mut data, gas_token);
+    push_abi_address(&mut data, refund_receiver);
+    push_abi_u256(&mut data, AlloyU256::from(320_u16 + padded_len(inner_data)));
+    push_abi_bytes(&mut data, inner_data);
+    push_abi_bytes(&mut data, signatures);
+    data
+}
+
+#[allow(clippy::too_many_arguments)]
+fn push_safe_tx_args(
+    data: &mut Vec<u8>,
+    to: AlloyAddress,
+    value: AlloyU256,
+    inner_data: &[u8],
+    operation: u8,
+    safe_tx_gas: AlloyU256,
+    base_gas: AlloyU256,
+    gas_price: AlloyU256,
+    gas_token: AlloyAddress,
+    refund_receiver: AlloyAddress,
+    nonce: AlloyU256,
+) {
+    push_abi_address(data, to);
+    push_abi_u256(data, value);
+    push_abi_u256(data, AlloyU256::from(320_u16));
+    push_abi_u256(data, AlloyU256::from(operation));
+    push_abi_u256(data, safe_tx_gas);
+    push_abi_u256(data, base_gas);
+    push_abi_u256(data, gas_price);
+    push_abi_address(data, gas_token);
+    push_abi_address(data, refund_receiver);
+    push_abi_u256(data, nonce);
+    push_abi_bytes(data, inner_data);
+}
+
+fn selector(signature: &str) -> Vec<u8> {
+    keccak256(signature.as_bytes())[..4].to_vec()
+}
+
+fn push_abi_address(data: &mut Vec<u8>, address: AlloyAddress) {
+    data.extend_from_slice(&[0_u8; 12]);
+    data.extend_from_slice(address.as_slice());
+}
+
+fn push_abi_u256(data: &mut Vec<u8>, value: AlloyU256) {
+    data.extend_from_slice(&value.to_be_bytes::<32>());
+}
+
+fn push_abi_word(data: &mut Vec<u8>, word: [u8; 32]) {
+    data.extend_from_slice(&word);
+}
+
+fn push_abi_bytes(data: &mut Vec<u8>, bytes: &[u8]) {
+    push_abi_u256(data, AlloyU256::from(bytes.len()));
+    data.extend_from_slice(bytes);
+    let padding = (32 - (bytes.len() % 32)) % 32;
+    data.extend(std::iter::repeat_n(0_u8, padding));
+}
+
+fn padded_len(bytes: &[u8]) -> u16 {
+    let len = bytes.len() + ((32 - (bytes.len() % 32)) % 32);
+    u16::try_from(32 + len).unwrap_or(u16::MAX)
+}
+
+fn decode_u256_result(bytes: &[u8], code: &'static str) -> Result<AlloyU256> {
+    if bytes.len() < 32 {
+        return Err(AppError::dependency_unavailable(
+            code,
+            "Polygon RPC returned fewer than 32 bytes",
+        ));
+    }
+    Ok(AlloyU256::from_be_slice(&bytes[..32]))
+}
+
+fn decode_bytes32_result(bytes: &[u8], code: &'static str) -> Result<[u8; 32]> {
+    if bytes.len() < 32 {
+        return Err(AppError::dependency_unavailable(
+            code,
+            "Polygon RPC returned fewer than 32 bytes",
+        ));
+    }
+    let mut out = [0_u8; 32];
+    out.copy_from_slice(&bytes[..32]);
+    Ok(out)
+}
+
+fn decode_address_array_result(bytes: &[u8], code: &'static str) -> Result<Vec<AlloyAddress>> {
+    if bytes.len() < 64 {
+        return Err(AppError::dependency_unavailable(
+            code,
+            "Polygon RPC returned an invalid dynamic address array",
+        ));
+    }
+    let offset = usize::try_from(AlloyU256::from_be_slice(&bytes[..32])).map_err(|error| {
+        AppError::dependency_unavailable(code, format!("invalid owner array offset: {error}"))
+    })?;
+    if bytes.len() < offset + 32 {
+        return Err(AppError::dependency_unavailable(
+            code,
+            "Polygon RPC returned a truncated owner array",
+        ));
+    }
+    let len =
+        usize::try_from(AlloyU256::from_be_slice(&bytes[offset..offset + 32])).map_err(|error| {
+            AppError::dependency_unavailable(code, format!("invalid owner array length: {error}"))
+        })?;
+    let start = offset + 32;
+    let end = start + len.saturating_mul(32);
+    if bytes.len() < end {
+        return Err(AppError::dependency_unavailable(
+            code,
+            "Polygon RPC returned a truncated owner array body",
+        ));
+    }
+    Ok((0..len)
+        .map(|index| {
+            let word = &bytes[start + index * 32..start + (index + 1) * 32];
+            AlloyAddress::from_slice(&word[12..32])
+        })
+        .collect())
+}
+
+fn parse_bytes32(name: &str, value: &str, code: &'static str) -> Result<[u8; 32]> {
+    let bytes = hex_to_bytes(value).map_err(|error| {
+        AppError::invalid_input(code, format!("{name} must be a 0x-prefixed bytes32: {error}"))
+    })?;
+    if bytes.len() != 32 {
+        return Err(AppError::invalid_input(
+            code,
+            format!("{name} must contain exactly 32 bytes"),
+        ));
+    }
+    let mut out = [0_u8; 32];
+    out.copy_from_slice(&bytes);
+    Ok(out)
+}
+
+fn hex_to_bytes(value: &str) -> Result<Vec<u8>> {
+    let raw = value
+        .trim()
+        .strip_prefix("0x")
+        .or_else(|| value.trim().strip_prefix("0X"))
+        .ok_or_else(|| {
+            AppError::invalid_input("HEX_VALUE_INVALID", "hex value must be 0x-prefixed")
+        })?;
+    if raw.len() % 2 != 0 || !raw.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(AppError::invalid_input(
+            "HEX_VALUE_INVALID",
+            "hex value must contain an even number of hex characters",
+        ));
+    }
+    let mut bytes = Vec::with_capacity(raw.len() / 2);
+    for index in (0..raw.len()).step_by(2) {
+        let byte = u8::from_str_radix(&raw[index..index + 2], 16).map_err(|error| {
+            AppError::invalid_input("HEX_VALUE_INVALID", format!("invalid hex byte: {error}"))
+        })?;
+        bytes.push(byte);
+    }
+    Ok(bytes)
+}
+
+fn bytes_to_lower_hex(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        out.push(HEX[(byte >> 4) as usize] as char);
+        out.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    out
 }
 
 fn normalize_evm_address(name: &str, value: &str, code: &'static str) -> Result<String> {

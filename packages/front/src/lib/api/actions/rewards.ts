@@ -194,6 +194,7 @@ const rewardConfigSchema = z.object({
   balanced_merge_max_market_spread_cents: decimalNumber.min(0.1).max(100),
   balanced_merge_quote_bid_rank: z.coerce.number().int().min(1).max(3),
   balanced_merge_max_unpaired_position_usd: decimalNumber.min(0).max(1_000_000),
+  balanced_merge_auto_execute_enabled: z.boolean(),
   min_depth_usd: decimalNumber.min(0).max(1_000_000),
   cancel_bid_rank: z.coerce.number().int().min(0).max(20),
   depth_drop_pct: decimalNumber.min(0).max(100),

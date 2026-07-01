@@ -441,4 +441,76 @@ mod tests {
         assert_eq!(updates[0].filled_quantity.value(), Decimal::new(10, 0));
         assert_eq!(updates[1].filled_quantity.value(), Decimal::new(4, 0));
     }
+
+    #[test]
+    fn ctf_merge_positions_calldata_encodes_binary_partition() {
+        let collateral = parse_alloy_address(
+            "collateral",
+            POLYMARKET_PUSD_CONTRACT_ADDRESS,
+            "TEST_COLLATERAL_INVALID",
+        )
+        .expect("address");
+        let condition_id = [0x11_u8; 32];
+        let calldata =
+            build_ctf_merge_positions_calldata(collateral, condition_id, AlloyU256::from(123_u64));
+
+        assert_eq!(&calldata[..4], &[0x9e, 0x72, 0x12, 0xad]);
+        assert_eq!(calldata.len(), 4 + 8 * 32);
+        assert_eq!(
+            AlloyU256::from_be_slice(&calldata[4 + 3 * 32..4 + 4 * 32]),
+            AlloyU256::from(160_u16)
+        );
+        assert_eq!(
+            AlloyU256::from_be_slice(&calldata[4 + 5 * 32..4 + 6 * 32]),
+            AlloyU256::from(2_u8)
+        );
+        assert_eq!(
+            AlloyU256::from_be_slice(&calldata[4 + 6 * 32..4 + 7 * 32]),
+            AlloyU256::from(1_u8)
+        );
+        assert_eq!(
+            AlloyU256::from_be_slice(&calldata[4 + 7 * 32..4 + 8 * 32]),
+            AlloyU256::from(2_u8)
+        );
+    }
+
+    #[test]
+    fn safe_exec_transaction_calldata_encodes_dynamic_offsets() {
+        let to = parse_alloy_address(
+            "to",
+            POLYMARKET_CONDITIONAL_TOKENS_ADDRESS,
+            "TEST_TO_INVALID",
+        )
+        .expect("address");
+        let calldata = build_safe_exec_transaction_calldata(
+            to,
+            AlloyU256::ZERO,
+            &[1, 2, 3, 4],
+            0,
+            AlloyU256::ZERO,
+            AlloyU256::ZERO,
+            AlloyU256::ZERO,
+            AlloyAddress::ZERO,
+            AlloyAddress::ZERO,
+            &[0xaa; 65],
+        );
+
+        assert_eq!(&calldata[..4], &SAFE_EXEC_TRANSACTION_SELECTOR);
+        assert_eq!(
+            AlloyU256::from_be_slice(&calldata[4 + 2 * 32..4 + 3 * 32]),
+            AlloyU256::from(320_u16)
+        );
+        assert_eq!(
+            AlloyU256::from_be_slice(&calldata[4 + 9 * 32..4 + 10 * 32]),
+            AlloyU256::from(384_u16)
+        );
+        assert_eq!(
+            AlloyU256::from_be_slice(&calldata[4 + 10 * 32..4 + 11 * 32]),
+            AlloyU256::from(4_u8)
+        );
+        assert_eq!(
+            AlloyU256::from_be_slice(&calldata[4 + 12 * 32..4 + 13 * 32]),
+            AlloyU256::from(65_u8)
+        );
+    }
 }

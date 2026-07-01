@@ -2232,3 +2232,18 @@ CREATE INDEX reward_merge_intents_account_condition_status_idx
 -- rewards catalog, just like reward_positions.
 ALTER TABLE reward_managed_orders
     DROP CONSTRAINT IF EXISTS reward_managed_orders_condition_id_fkey;
+
+-------------------------------------------------------------------------------
+-- Source: packages/backend/migrations/0057_reward_merge_intent_execution.sql
+-------------------------------------------------------------------------------
+
+ALTER TABLE reward_merge_intents
+    ADD COLUMN tx_hash TEXT,
+    ADD COLUMN submitted_at TIMESTAMPTZ,
+    ADD COLUMN confirmed_at TIMESTAMPTZ,
+    ADD COLUMN failed_reason TEXT,
+    ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0;
+
+CREATE INDEX reward_merge_intents_executable_idx
+    ON reward_merge_intents (account_id, status, updated_at ASC)
+    WHERE status IN ('pending', 'unsupported');

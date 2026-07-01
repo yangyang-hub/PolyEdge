@@ -942,6 +942,91 @@ impl RewardBotStore for InMemoryRewardBotStore {
             .sum())
     }
 
+    async fn list_executable_merge_intents(
+        &self,
+        account_id: &str,
+        limit: u16,
+    ) -> Result<Vec<RewardMergeIntent>> {
+        let mut intents = self
+            .merge_intents
+            .read()
+            .await
+            .iter()
+            .filter(|intent| {
+                intent.account_id == account_id
+                    && matches!(
+                        intent.status,
+                        RewardMergeIntentStatus::Pending | RewardMergeIntentStatus::Unsupported
+                    )
+                    && intent.tx_hash.is_none()
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        intents.sort_by(|left, right| left.updated_at.cmp(&right.updated_at));
+        intents.truncate(usize::from(limit.max(1)));
+        Ok(intents)
+    }
+
+    async fn mark_merge_intent_submitted(
+        &self,
+        intent_id: &str,
+        tx_hash: &str,
+        submitted_at: OffsetDateTime,
+        reason: &str,
+    ) -> Result<()> {
+        if let Some(intent) = self
+            .merge_intents
+            .write()
+            .await
+            .iter_mut()
+            .find(|intent| {
+                intent.id == intent_id
+                    && matches!(
+                        intent.status,
+                        RewardMergeIntentStatus::Pending | RewardMergeIntentStatus::Unsupported
+                    )
+                    && intent.tx_hash.is_none()
+            })
+        {
+            intent.status = RewardMergeIntentStatus::Submitted;
+            intent.tx_hash = Some(tx_hash.to_string());
+            intent.submitted_at = Some(submitted_at);
+            intent.failed_reason = None;
+            intent.reason = reason.to_string();
+            intent.updated_at = submitted_at;
+        }
+        Ok(())
+    }
+
+    async fn mark_merge_intent_failed(
+        &self,
+        intent_id: &str,
+        failed_reason: &str,
+        failed_at: OffsetDateTime,
+    ) -> Result<()> {
+        if let Some(intent) = self
+            .merge_intents
+            .write()
+            .await
+            .iter_mut()
+            .find(|intent| {
+                intent.id == intent_id
+                    && matches!(
+                        intent.status,
+                        RewardMergeIntentStatus::Pending | RewardMergeIntentStatus::Unsupported
+                    )
+                    && intent.tx_hash.is_none()
+            })
+        {
+            intent.status = RewardMergeIntentStatus::Failed;
+            intent.failed_reason = Some(failed_reason.to_string());
+            intent.retry_count += 1;
+            intent.reason = failed_reason.to_string();
+            intent.updated_at = failed_at;
+        }
+        Ok(())
+    }
+
     async fn apply_tick_outcome(
         &self,
         outcome: &RewardTickOutcome,

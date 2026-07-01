@@ -140,6 +140,26 @@ pub trait RewardBotStore: Send + Sync {
         account_id: &str,
         condition_id: &str,
     ) -> Result<Decimal>;
+    /// Merge intents ready for chain execution. Includes legacy `unsupported`
+    /// intents so enabling execution can drain already-discovered paired stock.
+    async fn list_executable_merge_intents(
+        &self,
+        account_id: &str,
+        limit: u16,
+    ) -> Result<Vec<RewardMergeIntent>>;
+    async fn mark_merge_intent_submitted(
+        &self,
+        intent_id: &str,
+        tx_hash: &str,
+        submitted_at: OffsetDateTime,
+        reason: &str,
+    ) -> Result<()>;
+    async fn mark_merge_intent_failed(
+        &self,
+        intent_id: &str,
+        failed_reason: &str,
+        failed_at: OffsetDateTime,
+    ) -> Result<()>;
     /// Persist account, order, fill, position, and event changes atomically.
     ///
     /// Reward market catalogs and quote-plan snapshots have separate full-replacement

@@ -504,6 +504,8 @@ pub struct RewardBotConfig {
     pub balanced_merge_max_market_spread_cents: Decimal,
     pub balanced_merge_quote_bid_rank: u16,
     pub balanced_merge_max_unpaired_position_usd: Decimal,
+    /// Submit on-chain CTF merge transactions for paired BalancedMerge inventory.
+    pub balanced_merge_auto_execute_enabled: bool,
     // -- Risk control fields (0 = disabled) --
     /// Minimum external bid depth (USD) at or above our order price to keep resting.
     /// The managed order's own remaining notional is excluded.
@@ -804,6 +806,8 @@ pub struct RewardBotConfigPatch {
     pub balanced_merge_quote_bid_rank: Option<u16>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub balanced_merge_max_unpaired_position_usd: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub balanced_merge_auto_execute_enabled: Option<bool>,
     // -- Risk control fields --
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub min_depth_usd: Option<Decimal>,

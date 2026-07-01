@@ -155,6 +155,7 @@ export type RewardBotConfigDto = {
   balanced_merge_max_market_spread_cents: DecimalValue;
   balanced_merge_quote_bid_rank: number;
   balanced_merge_max_unpaired_position_usd: DecimalValue;
+  balanced_merge_auto_execute_enabled: boolean;
   // Risk control fields
   min_depth_usd: DecimalValue;
   cancel_bid_rank: number;

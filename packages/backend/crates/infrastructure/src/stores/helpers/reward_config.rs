@@ -349,6 +349,9 @@ fn apply_reward_config_value(config: &mut RewardBotConfig, key: &str, value: &st
         "balanced_merge_max_unpaired_position_usd" => {
             config.balanced_merge_max_unpaired_position_usd = parse_decimal_config(key, value)?;
         }
+        "balanced_merge_auto_execute_enabled" => {
+            config.balanced_merge_auto_execute_enabled = parse_bool_config(key, value)?;
+        }
         "min_depth_usd" => config.min_depth_usd = parse_decimal_config(key, value)?,
         "cancel_bid_rank" => config.cancel_bid_rank = parse_u16_config(key, value)?,
         "depth_drop_pct" => config.depth_drop_pct = parse_decimal_config(key, value)?,
@@ -864,6 +867,10 @@ fn reward_config_entries(config: &RewardBotConfig) -> Vec<(&'static str, String)
         (
             "balanced_merge_max_unpaired_position_usd",
             config.balanced_merge_max_unpaired_position_usd.to_string(),
+        ),
+        (
+            "balanced_merge_auto_execute_enabled",
+            config.balanced_merge_auto_execute_enabled.to_string(),
         ),
         ("min_depth_usd", config.min_depth_usd.to_string()),
         ("cancel_bid_rank", config.cancel_bid_rank.to_string()),

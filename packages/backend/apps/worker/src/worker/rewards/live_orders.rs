@@ -487,6 +487,7 @@ fn plan_live_post_fill_orders(
 
 async fn plan_live_balanced_merge_intent(
     state: &AppState,
+    config: &RewardBotConfig,
     entry: &ManagedRewardOrder,
     fill: &RewardFill,
     positions: &HashMap<String, RewardPosition>,
@@ -546,6 +547,7 @@ async fn plan_live_balanced_merge_intent(
     }
 
     let now = OffsetDateTime::now_utc();
+    let (status, reason) = new_balanced_merge_intent_status_and_reason(config);
     let intent = RewardMergeIntent {
         id: format!("rewmerge_{}", sanitize_reward_id_fragment(&fill.id)),
         account_id: entry.account_id.clone(),
@@ -557,9 +559,14 @@ async fn plan_live_balanced_merge_intent(
         no_position_size: no_position.size,
         yes_avg_price: yes_position.avg_price,
         no_avg_price: no_position.avg_price,
-        status: RewardMergeIntentStatus::Unsupported,
-        reason: "balanced merge pair is ready, but on-chain merge execution is not available in this build".to_string(),
+        status,
+        reason,
         source_fill_id: fill.id.clone(),
+        tx_hash: None,
+        submitted_at: None,
+        confirmed_at: None,
+        failed_reason: None,
+        retry_count: 0,
         trace_id: trace_id.to_string(),
         created_at: now,
         updated_at: now,
@@ -568,7 +575,7 @@ async fn plan_live_balanced_merge_intent(
         entry,
         "reward_live_balanced_merge_intent_created",
         RewardRiskSeverity::Warning,
-        "created a balanced merge intent for paired YES/NO inventory; execution is pending connector support",
+        "created a balanced merge intent for paired YES/NO inventory",
         json!({
             "merge_intent_id": intent.id,
             "source_fill_id": fill.id,
@@ -637,6 +644,7 @@ async fn plan_live_balanced_merge_intents_for_positions(
 
         sequence += 1;
         let now = OffsetDateTime::now_utc();
+        let (status, reason) = new_balanced_merge_intent_status_and_reason(config);
         let id = format!(
             "rewmerge_auto_{}_{}_{}",
             now.unix_timestamp_nanos(),
@@ -655,9 +663,14 @@ async fn plan_live_balanced_merge_intents_for_positions(
             no_position_size: no_position.size,
             yes_avg_price: yes_position.avg_price,
             no_avg_price: no_position.avg_price,
-            status: RewardMergeIntentStatus::Unsupported,
-            reason: "balanced merge pair is ready, but on-chain merge execution is not available in this build".to_string(),
+            status,
+            reason,
             source_fill_id,
+            tx_hash: None,
+            submitted_at: None,
+            confirmed_at: None,
+            failed_reason: None,
+            retry_count: 0,
             trace_id: trace_id.to_string(),
             created_at: now,
             updated_at: now,
@@ -668,7 +681,7 @@ async fn plan_live_balanced_merge_intents_for_positions(
             None,
             "reward_live_balanced_merge_intent_created",
             RewardRiskSeverity::Warning,
-            "auto-created a balanced merge intent for existing paired YES/NO inventory; execution is pending connector support",
+            "auto-created a balanced merge intent for existing paired YES/NO inventory",
             json!({
                 "merge_intent_id": intent.id,
                 "source_fill_id": intent.source_fill_id,
@@ -686,6 +699,23 @@ async fn plan_live_balanced_merge_intents_for_positions(
     }
 
     Ok((intents, events))
+}
+
+fn new_balanced_merge_intent_status_and_reason(
+    config: &RewardBotConfig,
+) -> (RewardMergeIntentStatus, String) {
+    if config.balanced_merge_auto_execute_enabled {
+        (
+            RewardMergeIntentStatus::Pending,
+            "balanced merge pair is ready for on-chain execution".to_string(),
+        )
+    } else {
+        (
+            RewardMergeIntentStatus::Unsupported,
+            "balanced merge pair is ready, but automatic on-chain merge execution is disabled"
+                .to_string(),
+        )
+    }
 }
 
 fn reward_post_fill_strategy(

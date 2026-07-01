@@ -1,6 +1,6 @@
 # connectors（外部连接器层）
 
-最后更新：2026-06-30
+最后更新：2026-07-01
 
 ## 概述
 
@@ -24,7 +24,7 @@
 | `polymarket/live/trade_sync.rs` | CLOB 托管订单成交同步、关联 trade 单查和账户 trade 历史回退 |
 | `polymarket/gamma.rs` | 公共市场元数据：`PolymarketGammaConnector`；Gamma `/markets` offset 分页、condition_ids 批量查询和日期候选字段解析 |
 | `polymarket/data_api.rs` | 钱包活动与账户持仓 API：`PolymarketDataApiConnector` |
-| `polymarket/chain.rs` | Polygon JSON-RPC ERC20 余额读取与 Polymarket Bridge 入金转账：`PolymarketChainConnector` |
+| `polymarket/chain.rs` | Polygon JSON-RPC ERC20 余额、Polymarket Bridge 入金转账与 Safe proxy CTF merge：`PolymarketChainConnector` |
 | `polymarket/book.rs` | 盘口快照：`PolymarketBookConnector` |
 | `rewards.rs` + `rewards/orderbooks.rs` + `rewards/price_history.rs` | 奖励市场目录、CLOB 批量盘口与 `/prices-history`：`PolymarketRewardsConnector` |
 | `orderbook.rs` | 独立 orderbook 服务客户端：HTTP 读盘口/原子注册 token/内部写 token，内部 WS stream 消费 |
@@ -66,7 +66,7 @@
 - `fetch_leaderboard()` 读取 Data API `/v1/leaderboard?category=OVERALL&timePeriod=ALL`，标准化 proxy wallet 后返回候选条目；`fetch_leaderboard_entry()` 仍保留按单钱包查询。
 - 用途：`copytrade.rs` worker 检测跟踪钱包的新成交，rewards worker 同步外部账户持仓，以及 Smart Money worker 低频发现 leaderboard 种子候选
 
-### Polymarket Chain（资金钱包余额与入金）
+### Polymarket Chain（资金钱包余额、入金与合并）
 
 - **`PolymarketChainConnector`**：`polygon_rpc_url` + `reqwest::Client`
 - `fetch_pusd_balance(wallet_address)`：通过 Polygon JSON-RPC `eth_call` 读取 Polymarket pUSD ERC20 `balanceOf`，按 6 位小数转换为美元 Decimal
@@ -74,7 +74,8 @@
 - `polygon_funding_tokens()`：返回后端 funding allowlist；当前只暴露 Polygon 原生 USDC 与 Polygon USDT0 / USDT 两个 Bridge 入金入口，均按 6 位小数处理。
 - `funding_source_address(private_key, chain_id)`：从后端配置私钥派生付款钱包地址，只返回地址不泄露私钥。
 - `submit_funding_transfer(private_key, chain_id, request)`：校验 Polygon chain id、token allowlist、金额精度和 Polymarket Bridge 当前 supported-assets 后，调用 Bridge `/deposit` 为配置的 Polymarket 钱包生成 EVM 入金地址，并通过 alloy provider 使用配置私钥广播 ERC-20 `transfer(bridgeAddress, amount)`。
-- 用途：rewards worker 同步账户状态时，若 CLOB `balance-allowance` 返回 0 或失败，但资金钱包链上 pUSD 余额大于 0，则用链上余额回填 snapshot，避免 Deposit Wallet / `POLY_1271` 缓存或签名路径导致前端余额显示为 0；API `/funding` 使用同一 connector 展示后端资金钱包 USDC/USDT 余额，`/funding/transfer` 使用同一 connector 执行后端资金钱包到 Polymarket Bridge 的真实链上入金。
+- `submit_merge_positions(private_key, chain_id, request)`：校验 Polygon chain id、Safe proxy owner/threshold（当前仅支持 threshold=1 且配置私钥地址为 owner）、构造 ConditionalTokens `mergePositions(pUSD, 0x0, conditionId, [1,2], amount)` calldata，调用 Safe `getTransactionHash()` 签名后通过 proxy wallet `execTransaction()` 广播链上合并交易。amount 按 6 位 CTF 份额精度转整数，EOA owner 支付 Polygon gas。
+- 用途：rewards worker 同步账户状态时，若 CLOB `balance-allowance` 返回 0 或失败，但资金钱包链上 pUSD 余额大于 0，则用链上余额回填 snapshot，避免 Deposit Wallet / `POLY_1271` 缓存或签名路径导致前端余额显示为 0；API `/funding` 使用同一 connector 展示后端资金钱包 USDC/USDT 余额，`/funding/transfer` 使用同一 connector 执行后端资金钱包到 Polymarket Bridge 的真实链上入金；BalancedMerge 自动执行开启时，worker 使用同一 connector 通过 proxy wallet 提交 CTF merge。
 
 ### Polymarket Book（盘口）
 
@@ -168,7 +169,7 @@
 
 ## 当前状态
 
-- 已实现当前系统使用的 Polymarket 公共市场、盘口、Data API、Rewards API、Rewards AI advisory、Rewards 信息风险评估、订单 scoring、带明细和 raw authenticated fallback 的当日 maker earnings、CLOB V2 交易 connector，以及后端资金钱包 USDC/USDT 链上余额查询和通过 Polymarket Bridge 入金的 Polygon ERC-20 转账 connector；Deposit Wallet relayer 生命周期接口尚未接入
+- 已实现当前系统使用的 Polymarket 公共市场、盘口、Data API、Rewards API、Rewards AI advisory、Rewards 信息风险评估、订单 scoring、带明细和 raw authenticated fallback 的当日 maker earnings、CLOB V2 交易 connector，以及后端资金钱包 USDC/USDT 链上余额查询、通过 Polymarket Bridge 入金的 Polygon ERC-20 转账 connector 和 Safe proxy CTF merge 广播；Deposit Wallet relayer 生命周期接口尚未接入
 - Gamma `/markets` offset 分页已具备 422 边界 / 最大页数保护，并按 market id 去重；condition_ids 定向查询用于重点市场新鲜度刷新；Gamma、CLOB rewards、order book 和 price-history 解码失败会返回最多 300 字节的转义响应体 preview，便于排查 HTML、截断响应或上游结构漂移。
 - Gamma 市场同步已提供 rewards 质量筛选所需的 CLOB liquidity、end time 和分级 ambiguity 数据，并支持 priority condition 刷新降低全量目录延迟对 live rewards 的影响。
 - Rewards markets 分页和 enrichment 已具备完整性保护，不再把部分补全结果作为完整目录写入；详情补全只针对缺唯一 YES/NO token 或缺有效 question 的市场，降低 CLOB 429 风险

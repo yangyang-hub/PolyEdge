@@ -525,6 +525,16 @@ pub struct RewardMergeIntent {
     pub status: RewardMergeIntentStatus,
     pub reason: String,
     pub source_fill_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tx_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub submitted_at: Option<OffsetDateTime>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confirmed_at: Option<OffsetDateTime>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failed_reason: Option<String>,
+    #[serde(default)]
+    pub retry_count: i32,
     pub trace_id: String,
     #[serde(with = "time::serde::rfc3339")]
     pub created_at: OffsetDateTime,

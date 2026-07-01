@@ -278,6 +278,17 @@ export function RewardsConfigPanel({
               setDraft((current) => ({ ...current, balanced_merge_enabled: checked }))
             }
           />
+          <ToggleField
+            label={dictionary.rewards.balancedMergeAutoExecute}
+            hint={h.balancedMergeAutoExecute}
+            checked={draft.balanced_merge_auto_execute_enabled}
+            onChange={(checked) =>
+              setDraft((current) => ({
+                ...current,
+                balanced_merge_auto_execute_enabled: checked,
+              }))
+            }
+          />
           <NumberInput
             label={dictionary.rewards.balancedMergeMaxMarkets}
             value={draft.balanced_merge_max_markets}

@@ -138,6 +138,7 @@ impl Default for RewardBotConfig {
             balanced_merge_max_market_spread_cents: decimal("20"),
             balanced_merge_quote_bid_rank: 1,
             balanced_merge_max_unpaired_position_usd: decimal("20"),
+            balanced_merge_auto_execute_enabled: false,
             // Risk control defaults: all disabled (0 = off)
             min_depth_usd: Decimal::ZERO,
             cancel_bid_rank: 0,
@@ -535,6 +536,9 @@ impl RewardBotConfig {
             Decimal::ZERO,
             decimal("1000000"),
         );
+        if !self.balanced_merge_enabled {
+            self.balanced_merge_auto_execute_enabled = false;
+        }
         // Risk control clamps
         self.min_depth_usd = clamp_decimal(self.min_depth_usd, Decimal::ZERO, decimal("1000000"));
         self.cancel_bid_rank = self
@@ -1045,6 +1049,9 @@ impl RewardBotConfig {
         }
         if let Some(value) = patch.balanced_merge_max_unpaired_position_usd {
             next.balanced_merge_max_unpaired_position_usd = value;
+        }
+        if let Some(value) = patch.balanced_merge_auto_execute_enabled {
+            next.balanced_merge_auto_execute_enabled = value;
         }
         // Risk control patches
         if let Some(v) = patch.min_depth_usd {

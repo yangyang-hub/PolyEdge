@@ -31,11 +31,12 @@ pub use polymarket::{
     PolymarketDataApiConnector, PolymarketFundingToken, PolymarketFundingTransferReceipt,
     PolymarketFundingTransferRequest, PolymarketGammaConnector, PolymarketGammaMarket,
     PolymarketLeaderboardEntry, PolymarketMarketRefs, PolymarketMatchedOrderHint,
-    PolymarketOpenOrder, PolymarketOrderRejection, PolymarketPublicProfile,
-    PolymarketSignatureScheme, PolymarketSingleTokenBook, PolymarketTokenOrderSide,
-    PolymarketTrade, PolymarketWalletActivity, PolymarketWalletPosition,
-    normalize_polymarket_order_status_update, normalize_polymarket_trade_fill_update,
-    normalize_polymarket_ws_order_message, normalize_polymarket_ws_trade_message,
+    PolymarketMergePositionsReceipt, PolymarketMergePositionsRequest, PolymarketOpenOrder,
+    PolymarketOrderRejection, PolymarketPublicProfile, PolymarketSignatureScheme,
+    PolymarketSingleTokenBook, PolymarketTokenOrderSide, PolymarketTrade, PolymarketWalletActivity,
+    PolymarketWalletPosition, normalize_polymarket_order_status_update,
+    normalize_polymarket_trade_fill_update, normalize_polymarket_ws_order_message,
+    normalize_polymarket_ws_trade_message,
 };
 pub use reward_provider::RewardProviderConnector;
 pub use rewards::{

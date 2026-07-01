@@ -958,6 +958,126 @@ impl RewardBotStore for PostgresRewardBotStore {
         Ok(size.unwrap_or(Decimal::ZERO))
     }
 
+    async fn list_executable_merge_intents(
+        &self,
+        account_id: &str,
+        limit: u16,
+    ) -> Result<Vec<RewardMergeIntent>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT
+              id,
+              account_id,
+              condition_id,
+              yes_token_id,
+              no_token_id,
+              merge_size,
+              yes_position_size,
+              no_position_size,
+              yes_avg_price,
+              no_avg_price,
+              status,
+              reason,
+              source_fill_id,
+              tx_hash,
+              submitted_at,
+              confirmed_at,
+              failed_reason,
+              retry_count,
+              trace_id,
+              created_at,
+              updated_at
+            FROM reward_merge_intents
+            WHERE account_id = $1
+              AND status IN ('pending', 'unsupported')
+              AND tx_hash IS NULL
+            ORDER BY updated_at ASC
+            LIMIT $2
+            "#,
+        )
+        .bind(account_id)
+        .bind(i64::from(limit.max(1)))
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_QUERY_FAILED",
+                format!("failed to query executable reward merge intents: {error}"),
+            )
+        })?;
+
+        rows.iter().map(reward_merge_intent_from_row).collect()
+    }
+
+    async fn mark_merge_intent_submitted(
+        &self,
+        intent_id: &str,
+        tx_hash: &str,
+        submitted_at: OffsetDateTime,
+        reason: &str,
+    ) -> Result<()> {
+        sqlx::query(
+            r#"
+            UPDATE reward_merge_intents
+            SET status = 'submitted',
+                tx_hash = $2,
+                submitted_at = $3,
+                failed_reason = NULL,
+                reason = $4,
+                updated_at = $3
+            WHERE id = $1
+              AND status IN ('pending', 'unsupported')
+              AND tx_hash IS NULL
+            "#,
+        )
+        .bind(intent_id)
+        .bind(tx_hash)
+        .bind(submitted_at)
+        .bind(reason)
+        .execute(&self.pool)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_UPDATE_FAILED",
+                format!("failed to mark reward merge intent submitted: {error}"),
+            )
+        })?;
+        Ok(())
+    }
+
+    async fn mark_merge_intent_failed(
+        &self,
+        intent_id: &str,
+        failed_reason: &str,
+        failed_at: OffsetDateTime,
+    ) -> Result<()> {
+        sqlx::query(
+            r#"
+            UPDATE reward_merge_intents
+            SET status = 'failed',
+                failed_reason = $2,
+                retry_count = retry_count + 1,
+                reason = $2,
+                updated_at = $3
+            WHERE id = $1
+              AND status IN ('pending', 'unsupported')
+              AND tx_hash IS NULL
+            "#,
+        )
+        .bind(intent_id)
+        .bind(failed_reason)
+        .bind(failed_at)
+        .execute(&self.pool)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_UPDATE_FAILED",
+                format!("failed to mark reward merge intent failed: {error}"),
+            )
+        })?;
+        Ok(())
+    }
+
     async fn apply_tick_outcome(
         &self,
         outcome: &RewardTickOutcome,

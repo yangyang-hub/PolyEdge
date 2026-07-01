@@ -711,6 +711,39 @@ impl RewardBotService {
             .await
     }
 
+    pub async fn list_executable_reward_merge_intents(
+        &self,
+        account_id: &str,
+        limit: u16,
+    ) -> Result<Vec<RewardMergeIntent>> {
+        self.store
+            .list_executable_merge_intents(account_id, limit)
+            .await
+    }
+
+    pub async fn mark_reward_merge_intent_submitted(
+        &self,
+        intent_id: &str,
+        tx_hash: &str,
+        submitted_at: OffsetDateTime,
+        reason: &str,
+    ) -> Result<()> {
+        self.store
+            .mark_merge_intent_submitted(intent_id, tx_hash, submitted_at, reason)
+            .await
+    }
+
+    pub async fn mark_reward_merge_intent_failed(
+        &self,
+        intent_id: &str,
+        failed_reason: &str,
+        failed_at: OffsetDateTime,
+    ) -> Result<()> {
+        self.store
+            .mark_merge_intent_failed(intent_id, failed_reason, failed_at)
+            .await
+    }
+
     pub async fn record_live_reset_cancel_all(&self, trace_id: &str) -> Result<()> {
         let config = self.read_config().await?;
         self.log_event_to_store_and_memory(new_risk_event(

@@ -1,14 +1,14 @@
 # 数据库（Migrations + Schema）
 
-最后更新：2026-06-29
+最后更新：2026-07-01
 
 ## 概述
 
-数据库使用 PostgreSQL，通过 56 个 SQL 迁移文件管理 schema。覆盖审计、市场数据、事件/证据、执行历史、内部风险状态、奖励、跟单、Smart Money Intelligence、动态高概率市场定价研究等领域。为了空库一次性初始化，`packages/backend/init.sql` 机械合并了当前全部迁移内容；运行时仍通过 `sqlx` 使用 `packages/backend/migrations/` 做迁移校验和增量升级。旧 signals、risk_state、positions 和 arbitrage 表随已应用迁移保留，用于历史/内部兼容，不再对应前端页面或公开控制台 API。
+数据库使用 PostgreSQL，通过 57 个 SQL 迁移文件管理 schema。覆盖审计、市场数据、事件/证据、执行历史、内部风险状态、奖励、跟单、Smart Money Intelligence、动态高概率市场定价研究等领域。为了空库一次性初始化，`packages/backend/init.sql` 机械合并了当前全部迁移内容；运行时仍通过 `sqlx` 使用 `packages/backend/migrations/` 做迁移校验和增量升级。旧 signals、risk_state、positions 和 arbitrage 表随已应用迁移保留，用于历史/内部兼容，不再对应前端页面或公开控制台 API。
 
 ## 初始化入口
 
-- `packages/backend/init.sql`：完整空库初始化脚本，当前按 `0001` 到 `0056` 顺序展开。
+- `packages/backend/init.sql`：完整空库初始化脚本，当前按 `0001` 到 `0057` 顺序展开。
 - `packages/backend/migrations/*.sql`：保留给 Rust runtime 的 `sqlx::migrate!` 使用。不要删除或重命名已应用的迁移文件，否则现有数据库的 `_sqlx_migrations` 历史可能与二进制内嵌迁移不一致。
 - `init.sql` 只面向空数据库；已存在 schema 的数据库继续使用 runtime 自动迁移或按需执行新增迁移。
 
@@ -72,6 +72,7 @@
 | `0054_reward_market_event_windows.sql` | Rewards 事件窗口候选 | `reward_market_event_windows` |
 | `0055_reward_balanced_merge_strategy.sql` | Rewards 成交后合并策略 | `reward_managed_orders.strategy_profile`、`reward_quote_plans.strategy_profile`、`reward_merge_intents` |
 | `0056_reward_managed_orders_external_inventory.sql` | Rewards 外部库存退出 intent | 移除 `reward_managed_orders.condition_id` 到奖励目录的外键 |
+| `0057_reward_merge_intent_execution.sql` | Rewards 合并 intent 执行状态 | 修改 `reward_merge_intents` 增加 tx hash、提交/确认/失败时间、失败原因和 retry_count |
 
 ## Schema 领域分组
 
@@ -129,7 +130,7 @@
 - **`reward_low_competition_observations`**：历史低竞争 sleeve observation 表，按 account/condition/observed_at 记录旧模式、计划 notional、探测 notional、竞争资金、竞争份额 bps、竞争倍数、账户有效可用资金、低竞争开放 BUY notional、加上当前计划后的低竞争/condition 挂单 notional 与 bps 占比、预估 reward/100/day、退出深度/滑点、midpoint 波动、样本不足、低竞争 gate、最终可挂、AI/信息风险拦截、主策略重叠、not_low_competition（高竞争混入标签）和拒绝原因 JSON；当前统一机会评分运行路径不再写入新 observation，snapshot 不再生成低竞争 shadow report。
 - **`reward_market_candles`**：orderbook 服务从 CLOB `/prices-history` 低频同步的 rewards token K 线，按 token/interval/bucket 保存 price OHLC、close observed_at 和兼容字段；当前 price-history 行的 `best_bid_close` / `best_ask_close` 等于 provider price，`spread_cents_close=0`，`sample_count` 表示同 bucket 持久化的 provider history 点数量，不包含真实成交量。
 - **`reward_market_event_windows`**：按 condition/source 保存 rewards 市场真实事件时间候选，包含 event type、start/end、confidence、source URL/payload、active、review metadata 和 updated_at；有效窗口查询按 active、confidence、source 优先级和更新时间为每个 condition 选一条。Gamma 日期候选默认低/中置信，不会在默认 high hard-gate 阈值下直接触发停挂。
-- **`reward_merge_intents`**：BalancedMerge profile 在 YES/NO 库存可配对后写入的合并意图，包含 account/condition、YES/NO token、merge size、两侧持仓 size/均价、source fill、trace 和 status（pending/unsupported/submitted/completed/failed）；当前 worker 只创建 `unsupported` intent，不自动链上执行 CTF merge，active size 查询会把 non-failed intent 计入防重。
+- **`reward_merge_intents`**：BalancedMerge profile 在 YES/NO 库存可配对后写入的合并意图，包含 account/condition、YES/NO token、merge size、两侧持仓 size/均价、source fill、trace、status（pending/unsupported/submitted/completed/failed）、tx hash、submitted/confirmed 时间、failed_reason 和 retry_count；自动执行开关关闭时 worker 创建 `unsupported` intent，开启时创建/读取 `pending` 或 legacy `unsupported` intent 并提交链上 CTF merge，active size 查询会把 non-failed intent 计入防重。
 - **统一机会评分**：当前 rewards bot 已把普通市场和原低竞争市场合并到同一 quote plan 流，竞争资金、奖励密度、退出深度/滑点、盘口稳定性和资金占比作为 `opportunity_metrics` 写入 `reward_quote_plans` JSON 并参与评分/可挂资格；旧低竞争 schema（`strategy_bucket=low_competition`、`reward_low_competition_observations`、`low_competition_*` 配置键）仅保留历史/API/DB 兼容。
 
 ### 9. Copytrade 钱包跟踪与分析
@@ -176,13 +177,13 @@
 
 ## 当前状态
 
-- 56 个迁移文件，最新为 `0056_reward_managed_orders_external_inventory.sql`
-- `packages/backend/init.sql` 已合并 `0001`–`0056`
+- 57 个迁移文件，最新为 `0057_reward_merge_intent_execution.sql`
+- `packages/backend/init.sql` 已合并 `0001`–`0057`
 - 所有表使用 PostgreSQL 特性（JSONB、NUMERIC 约束、BIGSERIAL、部分索引等）
 - 迁移使用 `sqlx` 管理
 - 旧套利表仍随迁移存在，但 arbitrage application/store/worker/API/frontend 已移除，当前不会继续写入新 scan/opportunity 数据。
 - 通用数据库维护已接入 API 内嵌 worker runtime，生产模板默认开启 `POLYEDGE_WORKER__DATABASE_MAINTENANCE=true`，用于防止缓存、日志、队列和低频 price-history 表持续增长；它不删除 rewards fills/positions/account state 等核心账本表。
-- Rewards 低竞争市场 sleeve 已合并到统一机会评分，现有低竞争 schema 仅作为历史兼容保留；当前 active 指标为 `reward_quote_plans.quote_plan_json.opportunity_metrics`，包含 competition-share/multiple、100U 日奖、资金占比、退出深度/滑点、坏成交恢复天数、盘口样本/波动/跳变和机会分。Rewards 事件窗口已落地 `reward_market_event_windows`，live tick 会把 effective window 写入 `reward_quote_plans.quote_plan_json.event_window` 并用于阻断新增 BUY 或撤已有 BUY。BalancedMerge 成交后合并 profile 已落地 `strategy_profile` 列、`balanced_merge_*` 配置和 `reward_merge_intents` 表；当前只持久化 `unsupported` merge intent，不执行链上合并。Rewards AI advisory 已接入 `reward_market_candles`，5m source K 线由 orderbook 服务统一低频限速调用 CLOB `/prices-history` 写入，不由 worker/API 直接请求外部接口；AI advisory 在 application 层把这些 source candles 聚合为 1h 输入。Rewards AI advisory / info-risk 的实际 provider 调用复用 `llm_calls` 做每日调用统计，通用数据库维护保留 180 天。
+- Rewards 低竞争市场 sleeve 已合并到统一机会评分，现有低竞争 schema 仅作为历史兼容保留；当前 active 指标为 `reward_quote_plans.quote_plan_json.opportunity_metrics`，包含 competition-share/multiple、100U 日奖、资金占比、退出深度/滑点、坏成交恢复天数、盘口样本/波动/跳变和机会分。Rewards 事件窗口已落地 `reward_market_event_windows`，live tick 会把 effective window 写入 `reward_quote_plans.quote_plan_json.event_window` 并用于阻断新增 BUY 或撤已有 BUY。BalancedMerge 成交后合并 profile 已落地 `strategy_profile` 列、`balanced_merge_*` 配置和 `reward_merge_intents` 表；自动执行默认关闭，开启 `balanced_merge_auto_execute_enabled` 后 worker 会读取 `pending/unsupported` intent 并通过 Safe proxy wallet 广播 CTF merge，提交结果写回 tx hash/submitted/failed 字段。Rewards AI advisory 已接入 `reward_market_candles`，5m source K 线由 orderbook 服务统一低频限速调用 CLOB `/prices-history` 写入，不由 worker/API 直接请求外部接口；AI advisory 在 application 层把这些 source candles 聚合为 1h 输入。Rewards AI advisory / info-risk 的实际 provider 调用复用 `llm_calls` 做每日调用统计，通用数据库维护保留 180 天。
 - Smart Money Intelligence 当前已落地基础 schema 和后端 service/store/API；`scan-smart-money-once` 会从 active copytrade tracked wallets 写入候选、近端样本画像、确定性评分和 Data API activity 源交易。自动全网发现、信号生成、LLM advisory refresh、纸面模拟和实盘 guarded execution 仍是待实现阶段。
 - 动态高概率市场定价研究当前已落地基础 schema 和后端 service/store；`build-high-probability-samples-once` 会从本地 outcome 标签 + rewards candles 构建 first-touch 样本，`refresh-high-probability-buckets-once` 会从已入库 `high_probability_samples` 计算并替换当前模型版本的 bucket stats，`run-high-probability-backtest-once` 会持久化 baseline walk-forward backtest runs/trades 和基础退出规则摘要，`observe-high-probability-once` 和默认关闭的自动 observe runtime loop 会把只读扫描结果写入 `high_probability_observations`。全市场 price-history/outcome producer、完整执行成本/多阶段退出回测、paper/live guarded execution 仍未实现。
 

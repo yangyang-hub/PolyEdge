@@ -253,6 +253,7 @@ async fn sync_live_reward_orders(
                 }
                 let (planned_merge_intents, merge_events) = plan_live_balanced_merge_intent(
                     state,
+                    &cycle.config,
                     &filled_order,
                     &fill,
                     &positions,
@@ -618,6 +619,23 @@ async fn run_reward_bot_live_reconcile_unlocked(
             trace_id,
         )
         .await?;
+    }
+    let executed_merge_intents = execute_pending_balanced_merge_intents(
+        state,
+        &cycle.config,
+        &mut account,
+        &cycle.positions,
+        &open_orders,
+        &report,
+        trace_id,
+    )
+    .await?;
+    if executed_merge_intents > 0 {
+        debug!(
+            trace_id = %trace_id,
+            executed_merge_intents,
+            "submitted balanced merge transactions during fast reconcile"
+        );
     }
 
     let kill_switch = state.risk_service.read_state().await?.kill_switch;

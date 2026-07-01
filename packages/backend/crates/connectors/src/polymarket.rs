@@ -1,5 +1,7 @@
 use alloy_network::TransactionBuilder;
-use alloy_primitives::{Address as AlloyAddress, Bytes as AlloyBytes, U256 as AlloyU256};
+use alloy_primitives::{
+    Address as AlloyAddress, B256 as AlloyB256, Bytes as AlloyBytes, U256 as AlloyU256, keccak256,
+};
 use alloy_provider::{Provider, ProviderBuilder};
 use alloy_rpc_types_eth::TransactionRequest as AlloyTransactionRequest;
 use alloy_signer::Signer as AlloySigner;

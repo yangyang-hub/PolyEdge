@@ -47,10 +47,11 @@ use polyedge_connectors::{
     PaperExecutionOutcome, PaperExecutor, PaperFillRequest, PaperOrderRequest,
     PaperOrderStatusRequest, PolymarketAcceptedOrderStatus, PolymarketChainConnector,
     PolymarketClosedPosition, PolymarketDataApiConnector, PolymarketGammaConnector,
-    PolymarketGammaMarket, PolymarketLeaderboardEntry, PolymarketMarketRefs, PolymarketOpenOrder,
-    PolymarketOrderRejection, PolymarketRewardMarket, PolymarketRewardsConnector,
-    PolymarketSignatureScheme, PolymarketTokenOrderSide, PolymarketTrade, PolymarketWalletActivity,
-    PolymarketWalletPosition, RssNewsConnector, RssNewsSourceConfig, SmartSignalAdvisoryConnector,
+    PolymarketGammaMarket, PolymarketLeaderboardEntry, PolymarketMarketRefs,
+    PolymarketMergePositionsRequest, PolymarketOpenOrder, PolymarketOrderRejection,
+    PolymarketRewardMarket, PolymarketRewardsConnector, PolymarketSignatureScheme,
+    PolymarketTokenOrderSide, PolymarketTrade, PolymarketWalletActivity, PolymarketWalletPosition,
+    RssNewsConnector, RssNewsSourceConfig, SmartSignalAdvisoryConnector,
     normalize_polymarket_ws_order_message, normalize_polymarket_ws_trade_message,
 };
 use polyedge_domain::{

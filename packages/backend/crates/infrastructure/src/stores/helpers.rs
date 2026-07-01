@@ -49,6 +49,39 @@ fn parse_reward_advisory_reasons(value: Value) -> Result<Vec<String>> {
         .collect())
 }
 
+fn reward_merge_intent_from_row(row: &sqlx::postgres::PgRow) -> Result<RewardMergeIntent> {
+    let status: String = row.try_get("status").map_err(postgres_decode_error)?;
+    Ok(RewardMergeIntent {
+        id: row.try_get("id").map_err(postgres_decode_error)?,
+        account_id: row.try_get("account_id").map_err(postgres_decode_error)?,
+        condition_id: row.try_get("condition_id").map_err(postgres_decode_error)?,
+        yes_token_id: row.try_get("yes_token_id").map_err(postgres_decode_error)?,
+        no_token_id: row.try_get("no_token_id").map_err(postgres_decode_error)?,
+        merge_size: row.try_get("merge_size").map_err(postgres_decode_error)?,
+        yes_position_size: row
+            .try_get("yes_position_size")
+            .map_err(postgres_decode_error)?,
+        no_position_size: row
+            .try_get("no_position_size")
+            .map_err(postgres_decode_error)?,
+        yes_avg_price: row.try_get("yes_avg_price").map_err(postgres_decode_error)?,
+        no_avg_price: row.try_get("no_avg_price").map_err(postgres_decode_error)?,
+        status: RewardMergeIntentStatus::from_str(&status)?,
+        reason: row.try_get("reason").map_err(postgres_decode_error)?,
+        source_fill_id: row
+            .try_get("source_fill_id")
+            .map_err(postgres_decode_error)?,
+        tx_hash: row.try_get("tx_hash").map_err(postgres_decode_error)?,
+        submitted_at: row.try_get("submitted_at").map_err(postgres_decode_error)?,
+        confirmed_at: row.try_get("confirmed_at").map_err(postgres_decode_error)?,
+        failed_reason: row.try_get("failed_reason").map_err(postgres_decode_error)?,
+        retry_count: row.try_get("retry_count").map_err(postgres_decode_error)?,
+        trace_id: row.try_get("trace_id").map_err(postgres_decode_error)?,
+        created_at: row.try_get("created_at").map_err(postgres_decode_error)?,
+        updated_at: row.try_get("updated_at").map_err(postgres_decode_error)?,
+    })
+}
+
 fn reward_market_info_risk_from_row(row: &sqlx::postgres::PgRow) -> Result<RewardMarketInfoRisk> {
     let provider: String = row.try_get("provider").map_err(postgres_decode_error)?;
     let request_format: String = row
@@ -278,11 +311,16 @@ async fn upsert_reward_merge_intent_tx(
           status,
           reason,
           source_fill_id,
+          tx_hash,
+          submitted_at,
+          confirmed_at,
+          failed_reason,
+          retry_count,
           trace_id,
           created_at,
           updated_at
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
         ON CONFLICT (id) DO UPDATE
         SET merge_size = EXCLUDED.merge_size,
             yes_position_size = EXCLUDED.yes_position_size,
@@ -291,6 +329,11 @@ async fn upsert_reward_merge_intent_tx(
             no_avg_price = EXCLUDED.no_avg_price,
             status = EXCLUDED.status,
             reason = EXCLUDED.reason,
+            tx_hash = EXCLUDED.tx_hash,
+            submitted_at = EXCLUDED.submitted_at,
+            confirmed_at = EXCLUDED.confirmed_at,
+            failed_reason = EXCLUDED.failed_reason,
+            retry_count = EXCLUDED.retry_count,
             trace_id = EXCLUDED.trace_id,
             updated_at = EXCLUDED.updated_at
         "#,
@@ -308,6 +351,11 @@ async fn upsert_reward_merge_intent_tx(
     .bind(intent.status.as_str())
     .bind(&intent.reason)
     .bind(&intent.source_fill_id)
+    .bind(&intent.tx_hash)
+    .bind(intent.submitted_at)
+    .bind(intent.confirmed_at)
+    .bind(&intent.failed_reason)
+    .bind(intent.retry_count)
     .bind(&intent.trace_id)
     .bind(intent.created_at)
     .bind(intent.updated_at)
