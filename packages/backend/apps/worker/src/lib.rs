@@ -29,7 +29,7 @@ use polyedge_application::{
     apply_reward_info_risks, apply_reward_opportunity_metrics_to_quote_plans,
     build_reward_ai_advisory_request, build_reward_info_risk_assessment_request,
     materialize_reward_quote_plan_for_live_orderbook, new_risk_event,
-    refresh_reward_opportunity_metrics_for_quote_plans, reward_ai_advisory_blocks_quote,
+    refresh_reward_opportunity_metrics_for_quote_plans,
     reward_ai_strategy_hint_max_condition_notional_usd, reward_condition_has_active_exposure,
     reward_market_books_available, reward_order_counts_as_external_open,
     reward_provider_cache_refresh_due, reward_provider_plan_passes_pre_llm_gate,

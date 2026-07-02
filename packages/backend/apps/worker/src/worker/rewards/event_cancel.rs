@@ -62,10 +62,7 @@ impl Drop for RewardEventCancelGuard {
     }
 }
 
-fn remember_reward_orderbook_cancel_token(
-    pending_tokens: &mut HashSet<String>,
-    token_id: &str,
-) {
+fn remember_reward_orderbook_cancel_token(pending_tokens: &mut HashSet<String>, token_id: &str) {
     let token_id = token_id.trim();
     if !token_id.is_empty() {
         pending_tokens.insert(token_id.to_string());
@@ -114,7 +111,11 @@ fn reward_event_cancel_active_order_tokens(
         order.status.is_open_like()
             && live_event_cancel_order_matches_updated_tokens(order, &plan_index, token_ids)
     }) {
-        remember_reward_event_cancel_plan_token(&order.token_id, &mut seen, &mut active_order_tokens);
+        remember_reward_event_cancel_plan_token(
+            &order.token_id,
+            &mut seen,
+            &mut active_order_tokens,
+        );
     }
 
     active_order_tokens
@@ -139,7 +140,8 @@ async fn run_reward_orderbook_event_cancel_fast_path(
         return Ok(RewardBotRunReport::default());
     }
 
-    let books = fetch_cached_reward_books(state, Some(orderbook_cache), &active_order_tokens).await?;
+    let books =
+        fetch_cached_reward_books(state, Some(orderbook_cache), &active_order_tokens).await?;
     record_reward_book_history(book_history, &books);
     let kill_switch = state.risk_service.read_state().await?.kill_switch;
     let cancel_candidates = live_event_hard_cancel_candidates_with_account(
@@ -302,7 +304,9 @@ fn live_event_hard_cancel_reason(
     kill_switch: bool,
 ) -> Option<String> {
     if live_order_has_post_only_violation(order) {
-        if order.reason.contains("cancel accepted; awaiting final reconciliation")
+        if order
+            .reason
+            .contains("cancel accepted; awaiting final reconciliation")
             && !live_cancel_final_reconciliation_retry_due(order, now)
         {
             return None;
@@ -352,6 +356,9 @@ fn live_event_hard_cancel_reason(
         }
         return Some(live_orderbook_stale_reason(age_ms, config.stale_book_ms));
     }
+    if let Some(reason) = live_token_spread_cancel_reason(config, books, order) {
+        return Some(reason);
+    }
     if let Some(best_ask) = reward_buy_touching_ask(order, books) {
         return Some(format!(
             "post-only buy would touch best ask {best_ask} at order price {}",
@@ -367,7 +374,8 @@ fn live_event_hard_cancel_reason(
     if let Some(reason) = live_depth_drop_cancel_reason(config, books, book_history, order, now) {
         return Some(reason);
     }
-    if let Some(reason) = live_fill_velocity_cancel_reason(config, books, book_history, order, now) {
+    if let Some(reason) = live_fill_velocity_cancel_reason(config, books, book_history, order, now)
+    {
         return Some(reason);
     }
     if let Some(reason) = live_mass_cancel_reason(config, books, book_history, order, now) {

@@ -103,6 +103,7 @@ pub fn materialize_reward_quote_plan_for_live_orderbook(
                 yes_quote_midpoint,
                 &yes_state,
                 max_spread,
+                config.max_market_spread_cents,
                 quote_bid_rank,
             )?;
             let leg = make_single_quote_leg(&yes_token, yes_bid, plan.rewards_min_size)
@@ -118,6 +119,7 @@ pub fn materialize_reward_quote_plan_for_live_orderbook(
                 no_quote_midpoint,
                 &no_state,
                 max_spread,
+                config.max_market_spread_cents,
                 quote_bid_rank,
             )?;
             let leg = make_single_quote_leg(&no_token, no_bid, plan.rewards_min_size)
@@ -160,6 +162,7 @@ fn make_double_live_quote_legs(
         yes_midpoint,
         yes_state,
         max_spread,
+        config.max_market_spread_cents,
         quote_bid_rank,
     )?;
     validate_live_quote_bid(
@@ -168,6 +171,7 @@ fn make_double_live_quote_legs(
         no_midpoint,
         no_state,
         max_spread,
+        config.max_market_spread_cents,
         quote_bid_rank,
     )?;
     let safety = config.safety_margin_cents / decimal("100");
@@ -209,6 +213,7 @@ fn make_single_side_live_fallback_legs(
         max_spread,
         rewards_min_size,
         quote_bid_rank,
+        config.max_market_spread_cents,
     );
     let no = make_single_side_live_fallback_leg(
         RewardPlanQuoteMode::SingleNo,
@@ -220,6 +225,7 @@ fn make_single_side_live_fallback_legs(
         max_spread,
         rewards_min_size,
         quote_bid_rank,
+        config.max_market_spread_cents,
     );
 
     let selected = match (yes, no) {
@@ -246,9 +252,19 @@ fn make_single_side_live_fallback_leg(
     max_spread: Decimal,
     rewards_min_size: Decimal,
     quote_bid_rank: u16,
+    max_market_spread_cents: Decimal,
 ) -> Option<(RewardPlanQuoteMode, RewardQuoteLeg)> {
     let bid = bid?;
-    validate_live_quote_bid(label, bid, midpoint, state, max_spread, quote_bid_rank).ok()?;
+    validate_live_quote_bid(
+        label,
+        bid,
+        midpoint,
+        state,
+        max_spread,
+        max_market_spread_cents,
+        quote_bid_rank,
+    )
+    .ok()?;
     make_single_quote_leg(token, bid, rewards_min_size).map(|leg| (quote_mode, leg))
 }
 
@@ -297,8 +313,10 @@ fn validate_live_quote_bid(
     midpoint: Decimal,
     state: &Option<TokenBookState>,
     max_spread: Decimal,
+    max_market_spread_cents: Decimal,
     quote_bid_rank: u16,
 ) -> std::result::Result<(), String> {
+    validate_live_token_spread(label, state, max_market_spread_cents)?;
     if midpoint - bid > max_spread {
         return Err(format!(
             "{label} bid-{quote_bid_rank} is outside the rewards spread limit"
@@ -306,6 +324,32 @@ fn validate_live_quote_bid(
     }
     if bid_touches_ask(state, bid) {
         return Err(format!("{label} bid would touch best ask"));
+    }
+    Ok(())
+}
+
+fn validate_live_token_spread(
+    label: &str,
+    state: &Option<TokenBookState>,
+    max_market_spread_cents: Decimal,
+) -> std::result::Result<(), String> {
+    if max_market_spread_cents <= Decimal::ZERO {
+        return Ok(());
+    }
+    let Some(state) = state else {
+        return Ok(());
+    };
+    let (Some(best_bid), Some(best_ask)) = (state.best_bid, state.best_ask) else {
+        return Ok(());
+    };
+    if best_bid <= Decimal::ZERO || best_ask <= best_bid {
+        return Ok(());
+    }
+    let spread_cents = ((best_ask - best_bid) * decimal("100")).round_dp(4);
+    if spread_cents > max_market_spread_cents {
+        return Err(format!(
+            "{label} live token spread {spread_cents}c exceeds max market spread {max_market_spread_cents}c"
+        ));
     }
     Ok(())
 }

@@ -25,7 +25,10 @@ fn live_placement_orders(
 
     let mut active_markets_by_profile: HashMap<RewardStrategyProfile, HashSet<String>> =
         HashMap::new();
-    for order in open_orders.iter().filter(|order| order.status.is_open_like()) {
+    for order in open_orders
+        .iter()
+        .filter(|order| order.status.is_open_like())
+    {
         active_markets_by_profile
             .entry(order.strategy_profile)
             .or_default()
@@ -109,8 +112,8 @@ fn live_placement_orders(
             continue;
         }
         let existing_market_buy_notional = live_market_buy_notional(&orders, &plan.condition_id);
-        let raw_budget = (available_for_new_condition - existing_market_buy_notional)
-            .max(Decimal::ZERO);
+        let raw_budget =
+            (available_for_new_condition - existing_market_buy_notional).max(Decimal::ZERO);
         // Cap the condition budget by per-leg position limits so rescaled legs
         // do not exceed max_position_usd when both are open simultaneously.
         let position_budget = live_condition_budget_capped_by_positions(
@@ -175,8 +178,7 @@ fn live_placement_orders(
             if orders
                 .iter()
                 .filter(|order| {
-                    order.status.is_open_like()
-                        && order.strategy_profile == plan.strategy_profile
+                    order.status.is_open_like() && order.strategy_profile == plan.strategy_profile
                 })
                 .count()
                 >= max_open_orders
@@ -370,19 +372,11 @@ fn apply_live_quote_plan_materialization(
     changed
 }
 
-fn mark_live_event_window_new_buy_blocked(
-    plan: &mut RewardQuotePlan,
-    now: OffsetDateTime,
-) -> bool {
+fn mark_live_event_window_new_buy_blocked(plan: &mut RewardQuotePlan, now: OffsetDateTime) -> bool {
     let reason = plan
         .event_window
         .as_ref()
-        .map(|assessment| {
-            format!(
-                "event window blocks new BUY quotes: {}",
-                assessment.reason
-            )
-        })
+        .map(|assessment| format!("event window blocks new BUY quotes: {}", assessment.reason))
         .unwrap_or_else(|| "event window blocks new BUY quotes".to_string());
     let changed = plan.reason != reason || plan.quote_readiness != RewardQuoteReadiness::Blocked;
     if changed {
@@ -437,6 +431,31 @@ fn live_min_depth_cancel_reason(
         Some(format!(
             "external bid depth {depth_usd} at or above order price {} is below minimum {}",
             order.price, config.min_depth_usd
+        ))
+    } else {
+        None
+    }
+}
+
+fn live_token_spread_cancel_reason(
+    config: &RewardBotConfig,
+    books: &HashMap<String, RewardOrderBook>,
+    order: &ManagedRewardOrder,
+) -> Option<String> {
+    if config.max_market_spread_cents <= Decimal::ZERO || order.side != RewardOrderSide::Buy {
+        return None;
+    }
+    let book = books.get(&order.token_id)?;
+    let best_bid = book.bids.first()?.price;
+    let best_ask = book.asks.first()?.price;
+    if best_bid <= Decimal::ZERO || best_ask <= best_bid {
+        return None;
+    }
+    let spread_cents = ((best_ask - best_bid) * Decimal::from(100_u64)).round_dp(4);
+    if spread_cents > config.max_market_spread_cents {
+        Some(format!(
+            "live token spread {spread_cents}c exceeds max market spread {}c",
+            config.max_market_spread_cents
         ))
     } else {
         None

@@ -912,6 +912,7 @@ pub struct BookSnapshot {
 #[derive(Debug, Clone)]
 struct TokenBookState {
     midpoint: Decimal,
+    best_bid: Option<Decimal>,
     best_ask: Option<Decimal>,
     bid_prices: Vec<Decimal>,
 }

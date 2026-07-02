@@ -1241,6 +1241,25 @@ fn quote_bid_rank_spread_is_checked_during_live_materialization() {
 }
 
 #[test]
+fn live_materialization_rejects_wide_token_spread() {
+    let config = RewardBotConfig {
+        min_market_score: Decimal::ZERO,
+        max_market_spread_cents: decimal("10"),
+        ..RewardBotConfig::default()
+    };
+    let mut books = test_books();
+    books.get_mut("yes_budget").expect("YES book").asks[0].price = decimal("0.95");
+
+    let plan = build_reward_quote_plan(&test_market(decimal("5")), &books, &config);
+    let error = materialize_reward_quote_plan_for_live_orderbook(&plan, &books, &config)
+        .expect_err("live materialization should reject wide token spread");
+
+    assert!(plan.eligible, "{}", plan.reason);
+    assert!(error.contains("YES live token spread"));
+    assert!(error.contains("exceeds max market spread 10c"));
+}
+
+#[test]
 fn auto_enforce_falls_back_to_single_side_when_double_spread_fails() {
     let config = RewardBotConfig {
         quote_mode: RewardQuoteMode::Auto,

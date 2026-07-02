@@ -642,7 +642,6 @@ async fn run_reward_bot_live_tick(
             "applied first-quote entry gates to reward quote plans"
         );
     }
-    register_reward_eligible_orderbook_tokens_from_plans(state, &cycle.plans, trace_id).await;
     let kill_switch = state.risk_service.read_state().await?.kill_switch;
     if kill_switch {
         cycle.should_execute = false;
@@ -759,6 +758,7 @@ async fn run_reward_bot_live_tick(
         .reward_bot_service
         .save_quote_plans(&cycle.plans)
         .await?;
+    register_reward_eligible_orderbook_tokens_from_plans(state, &cycle.plans, trace_id).await;
     if readiness_changed {
         debug!(
             trace_id = %trace_id,

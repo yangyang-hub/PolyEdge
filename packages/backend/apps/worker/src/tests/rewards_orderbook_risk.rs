@@ -95,9 +95,7 @@ fn refresh_live_quote_plan_readiness_materializes_placeholder_plan() {
 
     let mut plans = vec![plan];
     assert!(refresh_live_quote_plan_readiness(
-        &config,
-        &mut plans,
-        &books
+        &config, &mut plans, &books
     ));
 
     assert!(plans[0].eligible);
@@ -124,9 +122,7 @@ fn refresh_live_quote_plan_readiness_waits_when_books_exceed_placement_headroom(
 
     let mut plans = vec![live_test_plan(now)];
     assert!(refresh_live_quote_plan_readiness(
-        &config,
-        &mut plans,
-        &books
+        &config, &mut plans, &books
     ));
 
     assert!(plans[0].eligible);
@@ -178,7 +174,10 @@ fn live_cancel_candidates_do_not_grace_stale_book_when_plan_is_ineligible() {
         live_cancel_candidates(&config, &[plan], &[order], &books, &HashMap::new(), false);
 
     assert_eq!(candidates.len(), 1);
-    assert_eq!(candidates[0].1, "market dropped below eligibility threshold");
+    assert_eq!(
+        candidates[0].1,
+        "market dropped below eligibility threshold"
+    );
 }
 
 #[test]
@@ -224,7 +223,34 @@ fn live_cancel_candidates_cancel_buy_that_would_touch_best_ask() {
         live_cancel_candidates(&config, &[plan], &[order], &books, &HashMap::new(), false);
 
     assert_eq!(candidates.len(), 1);
-    assert!(candidates[0].1.contains("post-only buy would touch best ask"));
+    assert!(
+        candidates[0]
+            .1
+            .contains("post-only buy would touch best ask")
+    );
+}
+
+#[test]
+fn live_cancel_candidates_cancel_buy_when_live_token_spread_is_wide() {
+    let config = RewardBotConfig {
+        account_id: "reward_live".to_string(),
+        stale_book_ms: 45_000,
+        max_market_spread_cents: reward_decimal("10"),
+        ..RewardBotConfig::default()
+    };
+    let now = OffsetDateTime::now_utc();
+    let plan = live_test_plan(now);
+    let order = live_test_open_order("yes_live");
+    let mut book = live_test_book("yes_live", now);
+    book.asks[0].price = reward_decimal("0.70");
+    let books = HashMap::from([("yes_live".to_string(), book)]);
+
+    let candidates =
+        live_cancel_candidates(&config, &[plan], &[order], &books, &HashMap::new(), false);
+
+    assert_eq!(candidates.len(), 1);
+    assert!(candidates[0].1.contains("live token spread"));
+    assert!(candidates[0].1.contains("exceeds max market spread 10c"));
 }
 
 #[test]
@@ -243,10 +269,7 @@ fn live_requote_drift_waits_for_order_cooldown() {
     let mut order = live_test_open_order("yes_live");
     order.created_at = now - TimeDuration::seconds(299);
     order.updated_at = order.created_at;
-    let books = HashMap::from([(
-        "yes_live".to_string(),
-        live_test_book("yes_live", now),
-    )]);
+    let books = HashMap::from([("yes_live".to_string(), live_test_book("yes_live", now))]);
     let history = HashMap::from([(
         "yes_live".to_string(),
         VecDeque::from([live_test_book_snapshot(
@@ -301,8 +324,14 @@ fn live_requote_drift_is_stable_and_limited_per_cycle() {
         ),
     ]);
 
-    let candidates =
-        live_cancel_candidates(&config, &[plan], &[yes_order, no_order], &books, &history, false);
+    let candidates = live_cancel_candidates(
+        &config,
+        &[plan],
+        &[yes_order, no_order],
+        &books,
+        &history,
+        false,
+    );
 
     assert_eq!(candidates.len(), 1);
     assert!(candidates[0].1.contains("quote target moved"));
@@ -326,7 +355,10 @@ fn live_requote_drift_limit_does_not_throttle_hard_cancels() {
     let candidates = live_cancel_candidates(
         &config,
         &[plan],
-        &[live_test_open_order("yes_live"), live_test_open_order("no_live")],
+        &[
+            live_test_open_order("yes_live"),
+            live_test_open_order("no_live"),
+        ],
         &books,
         &HashMap::new(),
         false,
@@ -415,7 +447,42 @@ fn event_cancel_fast_path_cancels_buy_that_would_touch_best_ask() {
 
     assert_eq!(candidates.len(), 1);
     assert_eq!(candidates[0].0, order.id);
-    assert!(candidates[0].1.contains("post-only buy would touch best ask"));
+    assert!(
+        candidates[0]
+            .1
+            .contains("post-only buy would touch best ask")
+    );
+}
+
+#[test]
+fn event_cancel_fast_path_cancels_buy_when_live_token_spread_is_wide() {
+    let config = RewardBotConfig {
+        account_id: "reward_live".to_string(),
+        stale_book_ms: 45_000,
+        max_market_spread_cents: reward_decimal("10"),
+        ..RewardBotConfig::default()
+    };
+    let now = OffsetDateTime::now_utc();
+    let plan = live_test_plan(now);
+    let order = live_test_open_order("yes_live");
+    let mut book = live_test_book("yes_live", now);
+    book.asks[0].price = reward_decimal("0.70");
+    let books = HashMap::from([("yes_live".to_string(), book)]);
+    let updated_tokens = HashSet::from(["yes_live".to_string()]);
+
+    let candidates = live_event_hard_cancel_candidates(
+        &config,
+        &[plan],
+        &[order.clone()],
+        &books,
+        &HashMap::new(),
+        &updated_tokens,
+        false,
+    );
+
+    assert_eq!(candidates.len(), 1);
+    assert_eq!(candidates[0].0, order.id);
+    assert!(candidates[0].1.contains("live token spread"));
 }
 
 #[test]
@@ -426,9 +493,13 @@ fn event_cancel_active_tokens_only_include_updated_order_token() {
     let unrelated_updated_tokens = HashSet::from(["no_live".to_string()]);
     let matching_updated_tokens = HashSet::from(["yes_live".to_string()]);
 
-    let unrelated =
-        reward_event_cancel_active_order_tokens(&[plan.clone()], &[yes_order.clone()], &unrelated_updated_tokens);
-    let matching = reward_event_cancel_active_order_tokens(&[plan], &[yes_order], &matching_updated_tokens);
+    let unrelated = reward_event_cancel_active_order_tokens(
+        &[plan.clone()],
+        &[yes_order.clone()],
+        &unrelated_updated_tokens,
+    );
+    let matching =
+        reward_event_cancel_active_order_tokens(&[plan], &[yes_order], &matching_updated_tokens);
 
     assert!(unrelated.is_empty());
     assert_eq!(matching, vec!["yes_live".to_string()]);
@@ -482,10 +553,7 @@ fn event_cancel_fast_path_ignores_requote_only_reasons() {
     let mut order = live_test_open_order("yes_live");
     order.created_at = now - TimeDuration::seconds(10);
     order.updated_at = order.created_at;
-    let books = HashMap::from([(
-        "yes_live".to_string(),
-        live_test_book("yes_live", now),
-    )]);
+    let books = HashMap::from([("yes_live".to_string(), live_test_book("yes_live", now))]);
     let updated_tokens = HashSet::from(["yes_live".to_string()]);
 
     let regular = live_cancel_candidates(

@@ -72,13 +72,15 @@ const REWARD_AI_PROVIDER_ORDERBOOK_WAIT_DELAY: Duration = Duration::from_secs(2)
 const REWARD_PROVIDER_REFRESH_MIN_TIMEOUT_SECS: u64 = 30;
 const REWARD_PROVIDER_REFRESH_MAX_TIMEOUT_SECS: u64 = 120;
 
-fn reward_provider_refresh_batch_needs_orderbooks(
+fn reward_provider_refresh_batch_orderbook_conditions(
     condition_batch: &[String],
     advisory_conditions: &HashSet<String>,
-) -> bool {
+) -> Vec<String> {
     condition_batch
         .iter()
-        .any(|condition_id| advisory_conditions.contains(condition_id.as_str()))
+        .filter(|condition_id| advisory_conditions.contains(condition_id.as_str()))
+        .cloned()
+        .collect()
 }
 
 fn reward_provider_refresh_timeout(state: &AppState) -> Duration {
@@ -290,7 +292,6 @@ async fn refresh_reward_provider_cache(
     );
 
     let refresh_result: Result<()> = async {
-        let mut promoted_tokens = Vec::new();
         if max_conditions == 0 {
             debug!(
                 trace_id = %trace_id,
@@ -300,15 +301,16 @@ async fn refresh_reward_provider_cache(
             let mut provider_books = books.clone();
             let mut stop_refresh = false;
             for condition_batch in ordered.chunks(REWARD_AI_PROVIDER_ORDERBOOK_BATCH_CONDITIONS) {
-                if reward_provider_refresh_batch_needs_orderbooks(
+                let orderbook_condition_batch = reward_provider_refresh_batch_orderbook_conditions(
                     condition_batch,
                     &advisory_conditions,
-                ) {
+                );
+                if !orderbook_condition_batch.is_empty() {
                     provider_books = prepare_reward_ai_provider_orderbook_batch(
                         state,
                         &provider_books,
                         &markets_by_condition,
-                        condition_batch,
+                        &orderbook_condition_batch,
                         trace_id,
                     )
                     .await?;
@@ -367,15 +369,11 @@ async fn refresh_reward_provider_cache(
                     report.merge_condition(&outcome);
                     if let Some((condition_id, advisory)) = outcome.saved_advisory {
                         apply_reward_ai_advisory_to_refresh_cycle(
-                            state,
                             &mut cycle,
-                            &markets_by_condition,
                             &condition_id,
                             advisory,
                             trace_id,
-                            &mut promoted_tokens,
-                        )
-                        .await;
+                        );
                     }
                     if outcome.stop_refresh {
                         stop_refresh = true;
@@ -741,33 +739,25 @@ async fn refresh_reward_provider_for_condition(
     }
 }
 
-/// Promote an allow advisory to the eligible orderbook source and apply it to
-/// the in-memory cycle plan. Moved here from the deleted batch helper; the body
-/// is unchanged.
-async fn apply_reward_ai_advisory_to_refresh_cycle(
-    state: &AppState,
+/// Apply a freshly saved advisory to the refresh task's in-memory cycle. The
+/// live tick owns `rewards_eligible` registration after saving final quote
+/// plans, so provider refresh does not mutate that orderbook source directly.
+fn apply_reward_ai_advisory_to_refresh_cycle(
     cycle: &mut RewardLiveCycle,
-    markets_by_condition: &HashMap<String, RewardMarket>,
     condition_id: &str,
     advisory: RewardMarketAdvisory,
     trace_id: &str,
-    promoted_tokens: &mut Vec<String>,
 ) {
-    if let Some(market) = markets_by_condition.get(condition_id) {
-        promote_reward_ai_provider_passed_market_to_eligible_source(
-            state,
-            market,
-            &advisory,
-            trace_id,
-            promoted_tokens,
-        )
-        .await;
-    }
     if let Some(plan) = cycle
         .plans
         .iter_mut()
         .find(|plan| plan.condition_id == condition_id)
     {
         plan.ai_advisory = Some(advisory);
+        debug!(
+            trace_id = %trace_id,
+            condition_id = %condition_id,
+            "applied saved reward provider advisory to refresh cycle",
+        );
     }
 }

@@ -26,6 +26,8 @@ use tracing::{debug, info, warn};
 const ORDERBOOK_WS_HEARTBEAT_INTERVAL_SECS: u64 = 15;
 const ORDERBOOK_WS_HEARTBEAT_TIMEOUT_SECS: u64 = 60;
 const ORDERBOOK_WS_RECONNECT_DEBOUNCE_SECS: u64 = 5;
+const ORDERBOOK_WS_STARTUP_BACKOFF_BASE_MS: u64 = 2_000;
+const ORDERBOOK_WS_STARTUP_BACKOFF_MAX_MS: u64 = 60_000;
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct OrderbookStreamReport {
@@ -194,6 +196,7 @@ pub async fn run_orderbook_stream(
         };
         let mut session_tasks: JoinSet<ChunkExit> = JoinSet::new();
         let mut session_cmds: Vec<mpsc::Sender<ChunkCommand>> = Vec::new();
+        let mut session_startup_failures: Vec<usize> = Vec::new();
         for (index, chunk_tokens) in partition_tokens_into_chunks(&token_ids, ws_chunk_size)
             .into_iter()
             .enumerate()
@@ -208,8 +211,10 @@ pub async fn run_orderbook_stream(
                 context_template.clone(),
                 tokens_u256,
                 command_rx,
+                Duration::ZERO,
             ));
             session_cmds.push(command_tx);
+            session_startup_failures.push(0);
         }
         info!(
             subscribed_tokens = u256_ids.len(),
@@ -235,6 +240,10 @@ pub async fn run_orderbook_stream(
                                 debug!(ws_chunk = exit.chunk_index, "orderbook WS chunk session shut down");
                             }
                             ChunkExitReason::ReaderEnded => {
+                                reset_chunk_startup_failures(
+                                    &mut session_startup_failures,
+                                    exit.chunk_index,
+                                );
                                 // Connection died: rebuild this single chunk in
                                 // place using the current partition; other chunks
                                 // are unaffected.
@@ -251,15 +260,57 @@ pub async fn run_orderbook_stream(
                                         context_template.clone(),
                                         tokens_u256,
                                         command_rx,
+                                        Duration::ZERO,
                                     ));
                                     if exit.chunk_index < session_cmds.len() {
                                         session_cmds[exit.chunk_index] = command_tx;
                                     } else {
                                         session_cmds.push(command_tx);
+                                        session_startup_failures.resize(session_cmds.len(), 0);
                                     }
                                     info!(ws_chunk = exit.chunk_index, "orderbook WS chunk session rebuilt after reader end");
                                 } else {
                                     debug!(ws_chunk = exit.chunk_index, "orderbook WS chunk session ended; chunk no longer in partition");
+                                }
+                            }
+                            ChunkExitReason::StartupFailed => {
+                                let full: Vec<String> = ws_token_set.read().await.clone();
+                                let chunks = partition_tokens_into_chunks(&full, ws_chunk_size);
+                                if let Some(chunk_tokens) = chunks.get(exit.chunk_index) {
+                                    let tokens_u256: Vec<U256> = chunk_tokens
+                                        .iter()
+                                        .filter_map(|token| U256::from_str(token).ok())
+                                        .collect();
+                                    let failures = increment_chunk_startup_failures(
+                                        &mut session_startup_failures,
+                                        exit.chunk_index,
+                                    );
+                                    let backoff = orderbook_ws_startup_backoff(
+                                        exit.chunk_index,
+                                        failures,
+                                    );
+                                    let (command_tx, command_rx) = mpsc::channel::<ChunkCommand>(8);
+                                    session_tasks.spawn(run_orderbook_chunk_session(
+                                        exit.chunk_index,
+                                        context_template.clone(),
+                                        tokens_u256,
+                                        command_rx,
+                                        backoff,
+                                    ));
+                                    if exit.chunk_index < session_cmds.len() {
+                                        session_cmds[exit.chunk_index] = command_tx;
+                                    } else {
+                                        session_cmds.push(command_tx);
+                                        session_startup_failures.resize(session_cmds.len(), 0);
+                                    }
+                                    warn!(
+                                        ws_chunk = exit.chunk_index,
+                                        failures,
+                                        retry_in_ms = backoff.as_millis(),
+                                        "orderbook WS chunk startup failed; retrying after backoff"
+                                    );
+                                } else {
+                                    debug!(ws_chunk = exit.chunk_index, "orderbook WS chunk startup failed; chunk no longer in partition");
                                 }
                             }
                         },
@@ -289,6 +340,7 @@ pub async fn run_orderbook_stream(
                             &context_template,
                             new_tokens,
                             ws_chunk_size,
+                            &mut session_startup_failures,
                         )
                         .await;
                     }
@@ -309,6 +361,7 @@ pub async fn run_orderbook_stream(
                             &context_template,
                             new_tokens,
                             ws_chunk_size,
+                            &mut session_startup_failures,
                         )
                         .await;
                     }
@@ -330,6 +383,7 @@ pub async fn run_orderbook_stream(
                     }
                     while session_tasks.join_next().await.is_some() {}
                     session_cmds.clear();
+                    session_startup_failures.clear();
                     let full: Vec<String> = ws_token_set.read().await.clone();
                     for (index, chunk_tokens) in
                         partition_tokens_into_chunks(&full, ws_chunk_size).into_iter().enumerate()
@@ -344,8 +398,10 @@ pub async fn run_orderbook_stream(
                             context_template.clone(),
                             tokens_u256,
                             command_rx,
+                            Duration::ZERO,
                         ));
                         session_cmds.push(command_tx);
+                        session_startup_failures.push(0);
                     }
                     info!(ws_connections = session_cmds.len(), "orderbook WS sessions rebuilt after full resync");
                 }
@@ -914,6 +970,8 @@ enum ChunkCommand {
 
 #[derive(Debug, Clone, Copy)]
 enum ChunkExitReason {
+    /// The client or initial subscribe failed before readers were established.
+    StartupFailed,
     /// A reader ended naturally — the underlying WS connection died; caller rebuilds.
     ReaderEnded,
     /// The session was asked to shut down via `ChunkCommand::Shutdown`.
@@ -926,6 +984,66 @@ struct ChunkExit {
     reason: ChunkExitReason,
 }
 
+async fn wait_orderbook_chunk_startup_delay(
+    chunk_index: usize,
+    mut tokens: Vec<U256>,
+    command_rx: &mut mpsc::Receiver<ChunkCommand>,
+    startup_delay: Duration,
+) -> Option<Vec<U256>> {
+    if startup_delay.is_zero() {
+        return Some(tokens);
+    }
+
+    debug!(
+        ws_chunk = chunk_index,
+        delay_ms = startup_delay.as_millis(),
+        "orderbook WS chunk session delaying startup retry"
+    );
+    let delay = tokio::time::sleep(startup_delay);
+    tokio::pin!(delay);
+    loop {
+        tokio::select! {
+            _ = &mut delay => return Some(tokens),
+            command = command_rx.recv() => match command {
+                Some(ChunkCommand::Reconcile(new_tokens)) => {
+                    tokens = new_tokens;
+                }
+                Some(ChunkCommand::Shutdown) | None => {
+                    return None;
+                }
+            }
+        }
+    }
+}
+
+fn orderbook_ws_startup_backoff(chunk_index: usize, failures: usize) -> Duration {
+    let attempts = failures.max(1).min(6);
+    let multiplier = 1_u64 << (attempts - 1);
+    let backoff_ms = ORDERBOOK_WS_STARTUP_BACKOFF_BASE_MS
+        .saturating_mul(multiplier)
+        .min(ORDERBOOK_WS_STARTUP_BACKOFF_MAX_MS);
+    let jitter_ms = ((chunk_index as u64).saturating_mul(137) + failures as u64 * 29) % 1_000;
+    Duration::from_millis(
+        backoff_ms
+            .saturating_add(jitter_ms)
+            .min(ORDERBOOK_WS_STARTUP_BACKOFF_MAX_MS),
+    )
+}
+
+fn increment_chunk_startup_failures(failures: &mut Vec<usize>, chunk_index: usize) -> usize {
+    if chunk_index >= failures.len() {
+        failures.resize(chunk_index + 1, 0);
+    }
+    failures[chunk_index] = failures[chunk_index].saturating_add(1);
+    failures[chunk_index]
+}
+
+fn reset_chunk_startup_failures(failures: &mut [usize], chunk_index: usize) {
+    if let Some(slot) = failures.get_mut(chunk_index) {
+        *slot = 0;
+    }
+}
+
 /// A long-lived chunk session: owns a persistent `ClobWsClient`, applies
 /// incremental reconcile commands without dropping the connection, and exits
 /// (returning `ChunkExit`) only when a reader ends (connection death) or it is
@@ -933,9 +1051,26 @@ struct ChunkExit {
 async fn run_orderbook_chunk_session(
     chunk_index: usize,
     context: OrderbookWsChunkContext,
-    initial_tokens: Vec<U256>,
+    mut initial_tokens: Vec<U256>,
     mut command_rx: mpsc::Receiver<ChunkCommand>,
+    startup_delay: Duration,
 ) -> ChunkExit {
+    if let Some(updated_tokens) = wait_orderbook_chunk_startup_delay(
+        chunk_index,
+        initial_tokens,
+        &mut command_rx,
+        startup_delay,
+    )
+    .await
+    {
+        initial_tokens = updated_tokens;
+    } else {
+        return ChunkExit {
+            chunk_index,
+            reason: ChunkExitReason::Shutdown,
+        };
+    }
+
     let client = match make_orderbook_ws_client(&context.ws_host) {
         Ok(client) => client,
         Err(error) => {
@@ -946,7 +1081,7 @@ async fn run_orderbook_chunk_session(
             );
             return ChunkExit {
                 chunk_index,
-                reason: ChunkExitReason::ReaderEnded,
+                reason: ChunkExitReason::StartupFailed,
             };
         }
     };
@@ -980,7 +1115,7 @@ async fn run_orderbook_chunk_session(
             );
             return ChunkExit {
                 chunk_index,
-                reason: ChunkExitReason::ReaderEnded,
+                reason: ChunkExitReason::StartupFailed,
             };
         }
     };
@@ -1069,6 +1204,7 @@ async fn apply_membership_diff(
     context_template: &OrderbookWsChunkContext,
     new_tokens: Vec<String>,
     ws_chunk_size: usize,
+    session_startup_failures: &mut Vec<usize>,
 ) {
     let new_chunks = partition_tokens_into_chunks(&new_tokens, ws_chunk_size);
     for (index, chunk_tokens) in new_chunks.iter().enumerate() {
@@ -1087,14 +1223,17 @@ async fn apply_membership_diff(
                 context_template.clone(),
                 target_u256,
                 command_rx,
+                Duration::ZERO,
             ));
             session_cmds.push(command_tx);
+            session_startup_failures.push(0);
         }
     }
     while session_cmds.len() > new_chunks.len() {
         if let Some(command_tx) = session_cmds.pop() {
             let _ = command_tx.send(ChunkCommand::Shutdown).await;
         }
+        let _ = session_startup_failures.pop();
     }
     *ws_token_set.write().await = new_tokens;
 }
@@ -1455,6 +1594,17 @@ mod tests {
             Vec::<Vec<String>>::new()
         );
         assert_eq!(partition_tokens_into_chunks(&tokens, 0).len(), 5);
+    }
+
+    #[test]
+    fn orderbook_ws_startup_backoff_grows_and_caps() {
+        let first = orderbook_ws_startup_backoff(0, 1);
+        let second = orderbook_ws_startup_backoff(0, 2);
+        let capped = orderbook_ws_startup_backoff(9, 99);
+
+        assert!(first >= Duration::from_millis(ORDERBOOK_WS_STARTUP_BACKOFF_BASE_MS));
+        assert!(second > first);
+        assert!(capped <= Duration::from_millis(ORDERBOOK_WS_STARTUP_BACKOFF_MAX_MS));
     }
 
     #[test]

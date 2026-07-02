@@ -232,7 +232,7 @@ fn live_buy_submission_last_look_checks_ai_cap_without_price_change() {
 }
 
 #[test]
-fn reward_provider_refresh_batch_needs_orderbooks_only_for_advisory_conditions() {
+fn reward_provider_refresh_batch_orderbooks_include_only_advisory_conditions() {
     let advisory_conditions = HashSet::from(["ai_condition".to_string()]);
     let info_only_batch = vec!["info_condition".to_string()];
     let mixed_batch = vec![
@@ -240,14 +240,15 @@ fn reward_provider_refresh_batch_needs_orderbooks_only_for_advisory_conditions()
         "ai_condition".to_string(),
     ];
 
-    assert!(!reward_provider_refresh_batch_needs_orderbooks(
+    assert!(reward_provider_refresh_batch_orderbook_conditions(
         &info_only_batch,
         &advisory_conditions,
-    ));
-    assert!(reward_provider_refresh_batch_needs_orderbooks(
-        &mixed_batch,
-        &advisory_conditions,
-    ));
+    )
+    .is_empty());
+    assert_eq!(
+        reward_provider_refresh_batch_orderbook_conditions(&mixed_batch, &advisory_conditions),
+        vec!["ai_condition".to_string()]
+    );
 }
 
 fn live_test_plan(now: OffsetDateTime) -> RewardQuotePlan {

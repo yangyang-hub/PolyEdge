@@ -42,11 +42,7 @@ pub fn select_reward_quote_candidate_market_profiles(
     let effective_config = config
         .config_for_strategy_bucket(strategy_bucket)
         .config_for_strategy_profile(strategy_profile);
-    if reward_candidate_profile_is_disabled(
-        &effective_config,
-        strategy_bucket,
-        strategy_profile,
-    ) {
+    if reward_candidate_profile_is_disabled(&effective_config, strategy_bucket, strategy_profile) {
         return Vec::new();
     }
 
@@ -152,7 +148,11 @@ fn reward_market_event_risk_reason(market: &RewardMarket) -> Option<&'static str
     .to_ascii_lowercase();
     let has_any = |needles: &[&str]| needles.iter().any(|needle| text.contains(needle));
 
-    if has_any(&["one day after launch", "fdv above", "fully diluted valuation"]) {
+    if has_any(&[
+        "one day after launch",
+        "fdv above",
+        "fully diluted valuation",
+    ]) {
         return Some("launch valuation market has high jump risk");
     }
     if has_any(&["launch a token", "token launch", "launch token", "airdrop"]) {
@@ -274,7 +274,10 @@ pub fn carry_forward_first_quote_observations(
 
     let previous_by_condition = previous_plans
         .iter()
-        .filter_map(|plan| plan.first_quote_observed_at.map(|observed_at| (plan.condition_id.as_str(), observed_at)))
+        .filter_map(|plan| {
+            plan.first_quote_observed_at
+                .map(|observed_at| (plan.condition_id.as_str(), observed_at))
+        })
         .collect::<HashMap<_, _>>();
     if previous_by_condition.is_empty() {
         return false;
@@ -303,10 +306,16 @@ fn first_quote_active_conditions<'a>(
     positions: &'a [RewardPosition],
 ) -> HashSet<&'a str> {
     let mut active = HashSet::new();
-    for order in open_orders.iter().filter(|order| order.status.is_open_like()) {
+    for order in open_orders
+        .iter()
+        .filter(|order| order.status.is_open_like())
+    {
         active.insert(order.condition_id.as_str());
     }
-    for position in positions.iter().filter(|position| position.size > Decimal::ZERO) {
+    for position in positions
+        .iter()
+        .filter(|position| position.size > Decimal::ZERO)
+    {
         active.insert(position.condition_id.as_str());
     }
     active
@@ -695,7 +704,9 @@ fn empty_plan_with_metrics(
         strategy_bucket,
         strategy_profile,
     );
-    plan.recommended_quote_mode = metrics.as_ref().map(|metrics| metrics.recommended_quote_mode);
+    plan.recommended_quote_mode = metrics
+        .as_ref()
+        .map(|metrics| metrics.recommended_quote_mode);
     plan.book_metrics = metrics;
     plan
 }
@@ -736,6 +747,7 @@ fn get_token_book_state(
     {
         return Some(TokenBookState {
             midpoint: (best_bid + best_ask) / decimal("2"),
+            best_bid: Some(best_bid),
             best_ask: Some(best_ask),
             bid_prices,
         });
@@ -747,6 +759,7 @@ fn get_token_book_state(
     {
         return Some(TokenBookState {
             midpoint: price,
+            best_bid: None,
             best_ask: None,
             bid_prices,
         });
@@ -775,16 +788,16 @@ fn quote_bid_price(state: &TokenBookState, rank: u16) -> Option<Decimal> {
             .get(usize::from(rank.saturating_sub(1)))
             .copied()?
     };
-    Some(floor_to_tick(price, inferred_bid_price_tick(&state.bid_prices)))
+    Some(floor_to_tick(
+        price,
+        inferred_bid_price_tick(&state.bid_prices),
+    ))
 }
 
 fn quote_fine_tick_bid_price(bid_prices: &[Decimal], rank: u16) -> Option<Decimal> {
     let best_bid = bid_prices.first().copied()?;
     let target = best_bid - DEFAULT_TICK * Decimal::from(rank.saturating_sub(1));
-    bid_prices
-        .iter()
-        .copied()
-        .find(|price| *price <= target)
+    bid_prices.iter().copied().find(|price| *price <= target)
 }
 
 fn bid_prices_use_fine_tick(bid_prices: &[Decimal]) -> bool {
@@ -812,10 +825,7 @@ fn make_quote_legs(
 ) -> Option<Vec<RewardQuoteLeg>> {
     let prices = [yes_price, no_price];
     let minimum_sizes = prices.map(|price| minimum_live_quote_size(price, rewards_min_size));
-    let minimum_notionals = [
-        prices[0] * minimum_sizes[0],
-        prices[1] * minimum_sizes[1],
-    ];
+    let minimum_notionals = [prices[0] * minimum_sizes[0], prices[1] * minimum_sizes[1]];
 
     let legs = [
         (yes_token, yes_price, minimum_notionals[0]),
@@ -825,9 +835,7 @@ fn make_quote_legs(
     .map(|(token, price, notional)| make_leg(token, price, notional))
     .collect::<Vec<_>>();
 
-    if rewards_min_size > Decimal::ZERO
-        && legs.iter().any(|leg| leg.size < rewards_min_size)
-    {
+    if rewards_min_size > Decimal::ZERO && legs.iter().any(|leg| leg.size < rewards_min_size) {
         return None;
     }
 

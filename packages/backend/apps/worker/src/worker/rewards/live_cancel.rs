@@ -90,7 +90,9 @@ fn live_cancel_reason(
     kill_switch: bool,
 ) -> Option<String> {
     if live_order_has_post_only_violation(order) {
-        if order.reason.contains("cancel accepted; awaiting final reconciliation")
+        if order
+            .reason
+            .contains("cancel accepted; awaiting final reconciliation")
             && !live_cancel_final_reconciliation_retry_due(order, now)
         {
             return None;
@@ -158,6 +160,9 @@ fn live_cancel_reason(
         }
         return Some(live_orderbook_stale_reason(age_ms, config.stale_book_ms));
     }
+    if let Some(reason) = live_token_spread_cancel_reason(config, books, order) {
+        return Some(reason);
+    }
     if let Some(best_ask) = reward_buy_touching_ask(order, books) {
         return Some(format!(
             "post-only buy would touch best ask {best_ask} at order price {}",
@@ -178,7 +183,8 @@ fn live_cancel_reason(
     if let Some(reason) = live_depth_drop_cancel_reason(config, books, book_history, order, now) {
         return Some(reason);
     }
-    if let Some(reason) = live_fill_velocity_cancel_reason(config, books, book_history, order, now) {
+    if let Some(reason) = live_fill_velocity_cancel_reason(config, books, book_history, order, now)
+    {
         return Some(reason);
     }
     if let Some(reason) = live_mass_cancel_reason(config, books, book_history, order, now) {
