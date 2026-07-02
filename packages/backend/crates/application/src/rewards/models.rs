@@ -363,6 +363,12 @@ pub struct RewardBotConfig {
     pub opportunity_probe_notional_usd: Decimal,
     pub opportunity_min_reward_per_100_usd_day: Decimal,
     pub opportunity_max_competition_multiple: Decimal,
+    /// 竞争倍数硬门槛开关：开启后 competition_multiple 超过
+    /// `opportunity_competition_hard_gate_multiple` 的计划会被直接置为不可挂
+    /// （区别于 `opportunity_max_competition_multiple` 仅产生 warning）。
+    pub opportunity_competition_hard_gate_enabled: bool,
+    /// 竞争倍数硬门槛阈值（独立于 warning 阈值）；0 表示关闭硬门槛。
+    pub opportunity_competition_hard_gate_multiple: Decimal,
     pub opportunity_max_account_allocation_bps: u16,
     pub opportunity_max_market_allocation_bps: u16,
     pub opportunity_min_exit_depth_usd: Decimal,
@@ -600,6 +606,10 @@ pub struct RewardBotConfigPatch {
     pub opportunity_min_reward_per_100_usd_day: Option<Decimal>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub opportunity_max_competition_multiple: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub opportunity_competition_hard_gate_enabled: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub opportunity_competition_hard_gate_multiple: Option<Decimal>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub opportunity_max_account_allocation_bps: Option<u16>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

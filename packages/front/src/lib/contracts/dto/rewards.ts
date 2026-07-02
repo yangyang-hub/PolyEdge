@@ -53,6 +53,8 @@ export type RewardBotConfigDto = {
   opportunity_probe_notional_usd: DecimalValue;
   opportunity_min_reward_per_100_usd_day: DecimalValue;
   opportunity_max_competition_multiple: DecimalValue;
+  opportunity_competition_hard_gate_enabled: boolean;
+  opportunity_competition_hard_gate_multiple: DecimalValue;
   opportunity_max_account_allocation_bps: number;
   opportunity_max_market_allocation_bps: number;
   opportunity_min_exit_depth_usd: DecimalValue;

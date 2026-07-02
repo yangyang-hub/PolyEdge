@@ -19,6 +19,7 @@ export type NumberConfigKey =
   | "opportunity_probe_notional_usd"
   | "opportunity_min_reward_per_100_usd_day"
   | "opportunity_max_competition_multiple"
+  | "opportunity_competition_hard_gate_multiple"
   | "opportunity_max_account_allocation_bps"
   | "opportunity_max_market_allocation_bps"
   | "opportunity_min_exit_depth_usd"

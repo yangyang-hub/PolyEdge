@@ -35,6 +35,8 @@ impl Default for RewardBotConfig {
             opportunity_probe_notional_usd: decimal("10"),
             opportunity_min_reward_per_100_usd_day: decimal("0.75"),
             opportunity_max_competition_multiple: decimal("4"),
+            opportunity_competition_hard_gate_enabled: true,
+            opportunity_competition_hard_gate_multiple: decimal("1000"),
             opportunity_max_account_allocation_bps: 1_500,
             opportunity_max_market_allocation_bps: 500,
             opportunity_min_exit_depth_usd: decimal("60"),
@@ -125,13 +127,13 @@ impl Default for RewardBotConfig {
             account_capital_usd: decimal("1000"),
             requote_drift_cents: decimal("2"),
             requote_drift_confirm_sec: 60,
-            requote_drift_cooldown_sec: 300,
-            requote_drift_max_cancels_per_cycle: 1,
+            requote_drift_cooldown_sec: 120,
+            requote_drift_max_cancels_per_cycle: 2,
             post_fill_strategy: PostFillStrategy::ExitAtMarkup,
             balanced_merge_enabled: false,
             balanced_merge_max_markets: 2,
             balanced_merge_max_open_orders: 4,
-            balanced_merge_min_edge_cents: decimal("1"),
+            balanced_merge_min_edge_cents: decimal("3"),
             balanced_merge_min_market_score: decimal("8"),
             balanced_merge_min_market_liquidity_usd: Decimal::ZERO,
             balanced_merge_min_market_volume_24h_usd: Decimal::ZERO,
@@ -223,6 +225,11 @@ impl RewardBotConfig {
         );
         self.opportunity_max_competition_multiple = clamp_decimal(
             self.opportunity_max_competition_multiple,
+            Decimal::ZERO,
+            decimal("1000000"),
+        );
+        self.opportunity_competition_hard_gate_multiple = clamp_decimal(
+            self.opportunity_competition_hard_gate_multiple,
             Decimal::ZERO,
             decimal("1000000"),
         );
@@ -739,6 +746,12 @@ impl RewardBotConfig {
         }
         if let Some(value) = patch.opportunity_max_competition_multiple {
             next.opportunity_max_competition_multiple = value;
+        }
+        if let Some(value) = patch.opportunity_competition_hard_gate_enabled {
+            next.opportunity_competition_hard_gate_enabled = value;
+        }
+        if let Some(value) = patch.opportunity_competition_hard_gate_multiple {
+            next.opportunity_competition_hard_gate_multiple = value;
         }
         if let Some(value) = patch.opportunity_max_account_allocation_bps {
             next.opportunity_max_account_allocation_bps = value;

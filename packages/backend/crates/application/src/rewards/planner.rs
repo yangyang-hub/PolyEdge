@@ -190,6 +190,24 @@ fn reward_market_event_risk_reason(market: &RewardMarket) -> Option<&'static str
     ]) {
         return Some("scheduled-event market has high jump risk");
     }
+    // Geopolitical / military event markets: resolution is driven by discrete
+    // news (ceasefire, sanctions, strikes, airspace closures), so maker quotes
+    // are highly exposed to adverse selection from informed flow. The Gamma
+    // category is not propagated to reward candidates (all read as "Polymarket"),
+    // so this keyword group is the only static filter for these markets.
+    if has_any(&[
+        "airspace closure",
+        "airspace closed",
+        "no-fly zone",
+        "no fly zone",
+        "ceasefire",
+        "military strike",
+        "nuclear test",
+        "martial law",
+        "state of emergency",
+    ]) {
+        return Some("geopolitical/military event market has high adverse-selection risk");
+    }
     None
 }
 

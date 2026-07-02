@@ -66,6 +66,12 @@ fn apply_reward_config_value(config: &mut RewardBotConfig, key: &str, value: &st
         "opportunity_max_competition_multiple" => {
             config.opportunity_max_competition_multiple = parse_decimal_config(key, value)?;
         }
+        "opportunity_competition_hard_gate_enabled" => {
+            config.opportunity_competition_hard_gate_enabled = parse_bool_config(key, value)?;
+        }
+        "opportunity_competition_hard_gate_multiple" => {
+            config.opportunity_competition_hard_gate_multiple = parse_decimal_config(key, value)?;
+        }
         "opportunity_max_account_allocation_bps" => {
             config.opportunity_max_account_allocation_bps = parse_u16_config(key, value)?;
         }
@@ -453,6 +459,14 @@ fn reward_config_entries(config: &RewardBotConfig) -> Vec<(&'static str, String)
         (
             "opportunity_max_competition_multiple",
             config.opportunity_max_competition_multiple.to_string(),
+        ),
+        (
+            "opportunity_competition_hard_gate_enabled",
+            config.opportunity_competition_hard_gate_enabled.to_string(),
+        ),
+        (
+            "opportunity_competition_hard_gate_multiple",
+            config.opportunity_competition_hard_gate_multiple.to_string(),
         ),
         (
             "opportunity_max_account_allocation_bps",

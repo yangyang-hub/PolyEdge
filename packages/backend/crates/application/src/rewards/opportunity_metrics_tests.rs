@@ -220,6 +220,76 @@ fn opportunity_metrics_penalize_crowded_reward_markets() {
 }
 
 #[test]
+fn opportunity_metrics_competition_hard_gate_blocks_overcrowded_market() {
+    // Hard gate threshold set to the same value as the warning threshold so the
+    // test books (competition multiple ~20x) clearly exceed it.
+    let config = RewardBotConfig {
+        opportunity_competition_hard_gate_enabled: true,
+        opportunity_competition_hard_gate_multiple: decimal("1"),
+        min_market_score: Decimal::ZERO,
+        ..opportunity_config()
+    };
+    let books = opportunity_test_books(decimal("100"), decimal("100"));
+    let history = opportunity_book_history(&books, 3);
+    let plan = build_reward_quote_plan(&opportunity_test_market(decimal("20")), &books, &config);
+    let mut plans = vec![plan];
+
+    apply_reward_opportunity_metrics_to_quote_plans(
+        &mut plans,
+        &books,
+        &history,
+        &[],
+        &opportunity_test_account(decimal("1000")),
+        &config,
+    );
+
+    let metrics = plans[0]
+        .opportunity_metrics
+        .as_ref()
+        .expect("opportunity metrics");
+    assert!(
+        metrics.competition_multiple > config.opportunity_competition_hard_gate_multiple
+    );
+    assert!(!plans[0].eligible);
+    assert!(!plans[0].pre_ai_eligible);
+    assert!(plans[0].reason.contains("hard gate"));
+}
+
+#[test]
+fn opportunity_metrics_competition_hard_gate_disabled_does_not_block() {
+    // Same crowded books and threshold as the blocking test, but the gate is off.
+    let config = RewardBotConfig {
+        opportunity_competition_hard_gate_enabled: false,
+        opportunity_competition_hard_gate_multiple: decimal("1"),
+        min_market_score: Decimal::ZERO,
+        ..opportunity_config()
+    };
+    let books = opportunity_test_books(decimal("100"), decimal("100"));
+    let history = opportunity_book_history(&books, 3);
+    let plan = build_reward_quote_plan(&opportunity_test_market(decimal("20")), &books, &config);
+    let mut plans = vec![plan];
+
+    apply_reward_opportunity_metrics_to_quote_plans(
+        &mut plans,
+        &books,
+        &history,
+        &[],
+        &opportunity_test_account(decimal("1000")),
+        &config,
+    );
+
+    let metrics = plans[0]
+        .opportunity_metrics
+        .as_ref()
+        .expect("opportunity metrics");
+    assert!(
+        metrics.competition_multiple > config.opportunity_competition_hard_gate_multiple
+    );
+    assert!(plans[0].eligible);
+    assert!(!plans[0].reason.contains("hard gate"));
+}
+
+#[test]
 fn opportunity_metrics_refresh_is_idempotent_and_does_not_promote_blocked_plan() {
     let config = RewardBotConfig {
         min_market_score: decimal("60"),

@@ -58,6 +58,23 @@ export function OpportunityConfig({
         hint={h.opportunityMaxCompetitionMultiple}
         onChange={(value) => updateNumber("opportunity_max_competition_multiple", value)}
       />
+      <ToggleField
+        label={dictionary.rewards.opportunityCompetitionHardGateEnabled}
+        hint={h.opportunityCompetitionHardGateEnabled}
+        checked={draft.opportunity_competition_hard_gate_enabled}
+        onChange={(checked) =>
+          setDraft((current) => ({
+            ...current,
+            opportunity_competition_hard_gate_enabled: checked,
+          }))
+        }
+      />
+      <NumberInput
+        label={dictionary.rewards.opportunityCompetitionHardGateMultiple}
+        value={draft.opportunity_competition_hard_gate_multiple}
+        hint={h.opportunityCompetitionHardGateMultiple}
+        onChange={(value) => updateNumber("opportunity_competition_hard_gate_multiple", value)}
+      />
       <NumberInput
         label={dictionary.rewards.opportunityMaxAccountAllocationBps}
         value={draft.opportunity_max_account_allocation_bps}

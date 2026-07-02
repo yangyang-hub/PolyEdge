@@ -131,6 +131,24 @@ fn apply_reward_opportunity_metrics_to_plan(
         plan.pre_ai_eligible = false;
         plan.reason = "score is below threshold after opportunity adjustment".to_string();
     }
+    // Competition hard gate: a separate, higher threshold that hard-blocks
+    // overcrowded markets. Unlike `opportunity_max_competition_multiple` (which
+    // only emits a warning), exceeding this flips the plan ineligible. Runs in
+    // both the initial and refresh paths (this function is shared), and because
+    // `refresh_live_quote_plan_readiness` only touches already-eligible plans,
+    // a hard-blocked plan cannot be re-enabled downstream.
+    if config.opportunity_competition_hard_gate_enabled
+        && config.opportunity_competition_hard_gate_multiple > Decimal::ZERO
+        && plan.quote_mode != RewardPlanQuoteMode::None
+        && metrics.competition_multiple > config.opportunity_competition_hard_gate_multiple
+    {
+        plan.eligible = false;
+        plan.pre_ai_eligible = false;
+        plan.reason = format!(
+            "competition multiple {} exceeds hard gate {}",
+            metrics.competition_multiple, config.opportunity_competition_hard_gate_multiple
+        );
+    }
     plan.opportunity_metrics = Some(metrics);
     plan.updated_at = now;
 }

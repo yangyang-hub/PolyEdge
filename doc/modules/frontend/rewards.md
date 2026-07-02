@@ -1,6 +1,6 @@
 # Rewards（奖励机器人）
 
-最后更新：2026-07-01
+最后更新：2026-07-02
 
 ## 概述
 
@@ -14,7 +14,7 @@
 | `src/features/rewards/components/rewards-workbench.tsx` | 主工作台编排：状态/操作区、指标条、活动/配置/风控 tabs |
 | `src/features/rewards/components/rewards-overview-cards.tsx` | 顶部执行概览、每日大模型调用统计（总数为真实外部请求，AI/风控为 section 计数）、操作中心和关键指标条 |
 | `src/features/rewards/components/rewards-config-panel.tsx` | 分组策略配置面板（执行、市场筛选、机会评分、报价构造、成交后合并、盘口选择、AI 建议/信息风险、库存与控制） |
-| `src/features/rewards/components/rewards-opportunity-config.tsx` | 统一机会评分配置：竞争倍数、100U 日奖、资金占比、退出深度/滑点、盘口稳定性和评分权重 |
+| `src/features/rewards/components/rewards-opportunity-config.tsx` | 统一机会评分配置：竞争倍数软上限与硬门槛（开关+阈值）、100U 日奖、资金占比、退出深度/滑点、盘口稳定性和评分权重 |
 | `src/features/rewards/components/rewards-opportunity-summary.tsx` | Quote plan 表格中的机会评分、score adjustment、竞争倍数、100U 日奖、退出深度和样本数摘要 |
 | `src/features/rewards/components/rewards-advanced-config.tsx` | 盘口选择、AI advisory strategy hint 和信息风险配置子面板 |
 | `src/features/rewards/components/rewards-config-fields.tsx` | 配置面板共享字段、区块和提示组件 |
@@ -77,7 +77,7 @@
 - 操作中心集中 Run / Save / Cancel / Reset，文案提醒当前命令可能提交或取消 Polymarket 实盘订单。
 - 配置编辑按执行、市场筛选、机会评分、报价构造、成交后合并、盘口选择、AI 建议、库存与控制分组，包含仍生效的数值参数、布尔开关、受限下拉框和成交后策略；退出加价提示明确 0 表示原价卖，合并策略文案区分“生成 intent”和“自动链上执行”两个开关。
 - 市场筛选面板公开质量硬门槛；通过门槛的市场由后端继续按奖励、流动性、成交量、剩余时长和奖励 spread 综合排序。
-- 低竞争市场 sleeve UI 已移除并合并为统一机会评分：前端新增 `RewardOpportunityMetricsDto`、`opportunity_*` 配置校验、机会评分配置面板和 quote plan 行内摘要；默认机会评分基线为 10U 探针、100U 日奖最低 0.75、竞争倍数上限 4、账户/单市场占用警告 1500/500 bps、退出深度至少 60U 或计划名义额 2.5 倍、入场退出滑点 2c、坏成交恢复 3 天、30 分钟观察窗口至少 30 个盘口样本、中点波动 3c、top-of-book 跳变 8 次，评分权重为 reward/competition/exit/stability = 35/30/25/10。保存配置时会把旧 `low_competition_mode` 强制为 `off`，独立市场/订单/全局占比置 0，并关闭/清零旧低竞争 liquidity/volume 过滤字段。DTO 中仍保留 `low_competition_*`、`strategy_bucket=low_competition`、`low_competition_metrics` 和 `low_competition_report` 以兼容历史后端响应，但页面不再提供低竞争配置、观察面板或专用表格摘要。
+- 低竞争市场 sleeve UI 已移除并合并为统一机会评分：前端新增 `RewardOpportunityMetricsDto`、`opportunity_*` 配置校验、机会评分配置面板和 quote plan 行内摘要；默认机会评分基线为 10U 探针、100U 日奖最低 0.75、竞争倍数软上限 4、竞争倍数硬门槛默认开且阈值 1000x（超过即不可挂，区别于软上限仅 warning）、账户/单市场占用警告 1500/500 bps、退出深度至少 60U 或计划名义额 2.5 倍、入场退出滑点 2c、坏成交恢复 3 天、30 分钟观察窗口至少 30 个盘口样本、中点波动 3c、top-of-book 跳变 8 次，评分权重为 reward/competition/exit/stability = 35/30/25/10。保存配置时会把旧 `low_competition_mode` 强制为 `off`，独立市场/订单/全局占比置 0，并关闭/清零旧低竞争 liquidity/volume 过滤字段。DTO 中仍保留 `low_competition_*`、`strategy_bucket=low_competition`、`low_competition_metrics` 和 `low_competition_report` 以兼容历史后端响应，但页面不再提供低竞争配置、观察面板或专用表格摘要。
 - 报价构造使用“挂单档位”下拉框选择买一/买二/买三，不再提供中间价“报价偏移”、`per_market_usd`“单市场额度”或 `quote_size_usd`“单腿金额”；默认买一。
 - 成交后合并配置公开 `balanced_merge_enabled`、`balanced_merge_auto_execute_enabled`、独立最大市场/订单数、最小 edge、最低评分、低成交量/流动性门槛、最大市场价差、独立挂单档位和单侧未配对库存上限；报价计划和托管订单表格用策略标签区分“标准”和“合并” profile，避免把两套撤单/成交语义混在一起。
 - 盘口选择公开 quote/selection mode、dominant 单边概率区间、退出深度、top1/top3 买盘集中度、HHI 和偏好分类评分加成；默认 `double + observe` 不改变既有双边挂单。
