@@ -360,6 +360,37 @@ fn spawn_worker_tasks(state: &AppState, shutdown_rx: watch::Receiver<bool>) -> V
         ));
     }
 
+    if settings.poll_high_probability_fair_values {
+        let job_state = state.clone();
+        handles.push(spawn_interval_job(
+            "poll-high-probability-fair-values",
+            settings.high_probability_fair_value_interval_secs.max(60),
+            shutdown_rx.clone(),
+            move || {
+                let state = job_state.clone();
+                async move {
+                    let trace_id = new_trace_id();
+                    match refresh_high_probability_fair_values_once(&state, task_limit(&state), &trace_id).await
+                    {
+                        Ok(report) => info!(
+                            trace_id = %trace_id,
+                            conditions_scanned = report.conditions_scanned,
+                            estimates_computed = report.estimates_computed,
+                            live_eligible_count = report.live_eligible_count,
+                            unavailable_count = report.unavailable_count,
+                            missing_bucket_count = report.missing_bucket_count,
+                            missing_quote_count = report.missing_quote_count,
+                            "completed worker high probability fair value refresh cycle",
+                        ),
+                        Err(error) => {
+                            warn!(trace_id = %trace_id, error = %error, "worker high probability fair value refresh cycle failed");
+                        }
+                    }
+                }
+            },
+        ));
+    }
+
     if settings.drain_execution_queue {
         let drain_polymarket = live_polymarket_status.is_ready();
         if !drain_polymarket {

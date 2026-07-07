@@ -2,6 +2,7 @@ import type {
   HighProbabilityBacktestReportDto,
   HighProbabilityBacktestRunDto,
   HighProbabilityBacktestTradeDto,
+  HighProbabilityFairValueDto,
   HighProbabilityResearchReportDto,
   HighProbabilitySnapshotDto,
 } from "@/lib/contracts/dto";
@@ -9,6 +10,7 @@ import {
   readHighProbabilityBacktestRuns,
   readHighProbabilityBacktestTrades,
   readHighProbabilityBacktests,
+  readHighProbabilityFairValues,
   readHighProbabilityReport,
   readHighProbabilitySnapshot,
 } from "@/lib/api/high-probability";
@@ -19,16 +21,24 @@ export type HighProbabilityPageData = {
   backtest: HighProbabilityBacktestReportDto;
   backtestRuns: HighProbabilityBacktestRunDto[];
   backtestTrades: HighProbabilityBacktestTradeDto[];
+  fairValues: HighProbabilityFairValueDto[];
   requestId: string;
   traceId: string;
 };
 
 export async function getHighProbabilityPageData(): Promise<HighProbabilityPageData> {
-  const [snapshotResponse, reportResponse, backtestResponse, backtestRunsResponse] = await Promise.all([
+  const [
+    snapshotResponse,
+    reportResponse,
+    backtestResponse,
+    backtestRunsResponse,
+    fairValuesResponse,
+  ] = await Promise.all([
     readHighProbabilitySnapshot(),
     readHighProbabilityReport(),
     readHighProbabilityBacktests(),
     readHighProbabilityBacktestRuns(),
+    readHighProbabilityFairValues(),
   ]);
   const latestRunId = backtestRunsResponse.data.at(0)?.id;
   const backtestTradesResponse = latestRunId
@@ -41,6 +51,7 @@ export async function getHighProbabilityPageData(): Promise<HighProbabilityPageD
     backtest: backtestResponse.data,
     backtestRuns: backtestRunsResponse.data,
     backtestTrades: backtestTradesResponse?.data ?? [],
+    fairValues: fairValuesResponse.data,
     requestId: snapshotResponse.meta.request_id,
     traceId: snapshotResponse.meta.trace_id,
   };

@@ -5,6 +5,7 @@ import type {
   HighProbabilityBacktestReportDto,
   HighProbabilityBacktestRunDto,
   HighProbabilityBacktestTradeDto,
+  HighProbabilityFairValueDto,
   HighProbabilityResearchReportDto,
   HighProbabilitySnapshotDto,
 } from "@/lib/contracts/dto";
@@ -14,6 +15,7 @@ import { StatusPill } from "@/components/shared/status-pill";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { HighProbabilityBacktestHistory } from "@/features/high-probability/components/high-probability-backtest-history";
+import { HighProbabilityFairValuesTable } from "@/features/high-probability/components/high-probability-fair-values";
 import {
   bucketComputedAt,
   bucketDimensionLabel,
@@ -42,12 +44,14 @@ export function HighProbabilityWorkbench({
   initialBacktest,
   initialBacktestRuns,
   initialBacktestTrades,
+  initialFairValues,
 }: {
   initialSnapshot: HighProbabilitySnapshotDto;
   initialReport: HighProbabilityResearchReportDto;
   initialBacktest: HighProbabilityBacktestReportDto;
   initialBacktestRuns: HighProbabilityBacktestRunDto[];
   initialBacktestTrades: HighProbabilityBacktestTradeDto[];
+  initialFairValues: HighProbabilityFairValueDto[];
 }) {
   const t = dictionary.highProbability;
   const { config, bucket_stats: bucketStats, observations } = initialSnapshot;
@@ -334,6 +338,8 @@ export function HighProbabilityWorkbench({
           </CardContent>
         </Card>
       </section>
+
+      <HighProbabilityFairValuesTable fairValues={initialFairValues} />
 
       <Card>
         <CardHeader>

@@ -7,6 +7,7 @@ pub struct InMemoryHighProbabilityStore {
     backtest_runs: RwLock<Vec<HighProbabilityBacktestRun>>,
     backtest_trades: RwLock<Vec<HighProbabilityBacktestTrade>>,
     observations: RwLock<Vec<HighProbabilityObservation>>,
+    fair_values: RwLock<Vec<FairValueEstimate>>,
 }
 
 impl InMemoryHighProbabilityStore {
@@ -21,6 +22,7 @@ impl InMemoryHighProbabilityStore {
             backtest_runs: RwLock::new(Vec::new()),
             backtest_trades: RwLock::new(Vec::new()),
             observations: RwLock::new(Vec::new()),
+            fair_values: RwLock::new(Vec::new()),
         }
     }
 }
@@ -247,5 +249,59 @@ impl HighProbabilityStore for InMemoryHighProbabilityStore {
         observations.sort_by(|left, right| right.observed_at.cmp(&left.observed_at));
         observations.truncate(usize::from(limit));
         Ok(observations)
+    }
+
+    async fn record_fair_value(&self, estimate: &FairValueEstimate) -> Result<()> {
+        let mut store = self.fair_values.write().await;
+        let estimate = estimate.clone().normalized();
+        if let Some(existing) = store
+            .iter_mut()
+            .find(|existing| {
+                existing.condition_id == estimate.condition_id
+                    && existing.model_version == estimate.model_version
+            })
+        {
+            let id = existing.id;
+            *existing = estimate;
+            existing.id = id;
+        } else {
+            let mut estimate = estimate;
+            estimate.id = i64::try_from(store.len() + 1).unwrap_or(i64::MAX);
+            store.push(estimate);
+        }
+        store.sort_by(|left, right| {
+            right
+                .live_eligible
+                .cmp(&left.live_eligible)
+                .then(right.confidence.cmp(&left.confidence))
+                .then(right.computed_at.cmp(&left.computed_at))
+        });
+        store.truncate(10_000);
+        Ok(())
+    }
+
+    async fn list_fair_values(
+        &self,
+        model_version: Option<&str>,
+        include_expired: bool,
+        limit: u16,
+    ) -> Result<Vec<FairValueEstimate>> {
+        let mut estimates = self.fair_values.read().await.clone();
+        if let Some(model_version) = model_version {
+            estimates.retain(|estimate| estimate.model_version == model_version);
+        }
+        if !include_expired {
+            let now = OffsetDateTime::now_utc();
+            estimates.retain(|estimate| estimate.expires_at > now);
+        }
+        estimates.sort_by(|left, right| {
+            right
+                .live_eligible
+                .cmp(&left.live_eligible)
+                .then(right.confidence.cmp(&left.confidence))
+                .then(right.computed_at.cmp(&left.computed_at))
+        });
+        estimates.truncate(usize::from(limit));
+        Ok(estimates)
     }
 }

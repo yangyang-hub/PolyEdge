@@ -242,6 +242,42 @@ fn high_probability_backtest_trade_from_row(
     })
 }
 
+fn high_probability_fair_value_from_row(
+    row: &sqlx::postgres::PgRow,
+) -> Result<FairValueEstimate> {
+    let side_raw: String = row.try_get("side_used").map_err(postgres_decode_error)?;
+    let reason_codes: Json<Vec<String>> = row.try_get("reason_codes").map_err(postgres_decode_error)?;
+    let fallback_level_raw: i16 = row
+        .try_get("fallback_level")
+        .map_err(postgres_decode_error)?;
+    Ok(FairValueEstimate {
+        id: row.try_get("id").map_err(postgres_decode_error)?,
+        condition_id: row.try_get("condition_id").map_err(postgres_decode_error)?,
+        token_id: row.try_get("token_id").map_err(postgres_decode_error)?,
+        side_used: FairValueSide::from_str(&side_raw)?,
+        price_used: row.try_get("price_used").map_err(postgres_decode_error)?,
+        fair_yes_low: row.try_get("fair_yes_low").map_err(postgres_decode_error)?,
+        fair_yes_mid: row.try_get("fair_yes_mid").map_err(postgres_decode_error)?,
+        fair_yes_high: row.try_get("fair_yes_high").map_err(postgres_decode_error)?,
+        market_implied: row.try_get("market_implied").map_err(postgres_decode_error)?,
+        base_rate: row.try_get("base_rate").map_err(postgres_decode_error)?,
+        confidence: row.try_get("confidence").map_err(postgres_decode_error)?,
+        uncertainty_cents: row
+            .try_get("uncertainty_cents")
+            .map_err(postgres_decode_error)?,
+        sample_count: i64_count_to_u64(row.try_get("sample_count").map_err(postgres_decode_error)?),
+        bucket_key: row.try_get("bucket_key").map_err(postgres_decode_error)?,
+        fallback_level: u8::try_from(fallback_level_raw).unwrap_or(0),
+        model_version: row.try_get("model_version").map_err(postgres_decode_error)?,
+        input_hash: row.try_get("input_hash").map_err(postgres_decode_error)?,
+        reason_codes: reason_codes.0,
+        live_eligible: row.try_get("live_eligible").map_err(postgres_decode_error)?,
+        computed_at: row.try_get("computed_at").map_err(postgres_decode_error)?,
+        expires_at: row.try_get("expires_at").map_err(postgres_decode_error)?,
+        created_at: row.try_get("created_at").map_err(postgres_decode_error)?,
+    })
+}
+
 fn apply_high_probability_config_value(
     config: &mut HighProbabilityConfig,
     key: &str,
@@ -287,6 +323,29 @@ fn apply_high_probability_config_value(
         "excluded_risk_tags" => {
             config.excluded_risk_tags = serde_json::from_str(value).unwrap_or_default();
         }
+        "fair_value_enabled" => config.fair_value_enabled = value.parse::<bool>().unwrap_or(false),
+        "fair_value_ttl_sec" => {
+            config.fair_value_ttl_sec = value.parse::<i64>().unwrap_or(config.fair_value_ttl_sec);
+        }
+        "fair_value_market_weight" => {
+            config.fair_value_market_weight = parse_high_probability_decimal_config(key, value)?;
+        }
+        "fair_value_base_rate_weight" => {
+            config.fair_value_base_rate_weight =
+                parse_high_probability_decimal_config(key, value)?;
+        }
+        "fair_value_target_sample_count" => {
+            config.fair_value_target_sample_count =
+                value.parse::<u64>().unwrap_or(config.fair_value_target_sample_count);
+        }
+        "fair_value_max_uncertainty_cents" => {
+            config.fair_value_max_uncertainty_cents =
+                parse_high_probability_decimal_config(key, value)?;
+        }
+        "fair_value_stale_book_ms" => {
+            config.fair_value_stale_book_ms =
+                value.parse::<i64>().unwrap_or(config.fair_value_stale_book_ms);
+        }
         _ => {}
     }
     Ok(())
@@ -322,6 +381,28 @@ fn high_probability_config_entries(config: &HighProbabilityConfig) -> Vec<(&'sta
         (
             "excluded_risk_tags",
             serde_json::to_string(&config.excluded_risk_tags).unwrap_or_else(|_| "[]".to_string()),
+        ),
+        ("fair_value_enabled", config.fair_value_enabled.to_string()),
+        ("fair_value_ttl_sec", config.fair_value_ttl_sec.to_string()),
+        (
+            "fair_value_market_weight",
+            config.fair_value_market_weight.to_string(),
+        ),
+        (
+            "fair_value_base_rate_weight",
+            config.fair_value_base_rate_weight.to_string(),
+        ),
+        (
+            "fair_value_target_sample_count",
+            config.fair_value_target_sample_count.to_string(),
+        ),
+        (
+            "fair_value_max_uncertainty_cents",
+            config.fair_value_max_uncertainty_cents.to_string(),
+        ),
+        (
+            "fair_value_stale_book_ms",
+            config.fair_value_stale_book_ms.to_string(),
         ),
     ]
 }

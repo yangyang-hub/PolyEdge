@@ -5,6 +5,7 @@ import type {
   HighProbabilityBacktestTradeDto,
   HighProbabilityBucketStatsDto,
   HighProbabilityConfigDto,
+  HighProbabilityFairValueDto,
   HighProbabilityResearchReportDto,
   HighProbabilitySnapshotDto,
 } from "@/lib/contracts/dto";
@@ -46,5 +47,14 @@ export async function readHighProbabilityBacktestTrades(
   const query = buildQueryString({ limit });
   return fetchContract<ApiResponse<HighProbabilityBacktestTradeDto[]>>(
     `/api/v1/high-probability/backtest-runs/${runId}/trades${query}`,
+  );
+}
+
+export async function readHighProbabilityFairValues(
+  limit = 100,
+): Promise<ApiResponse<HighProbabilityFairValueDto[]>> {
+  const query = buildQueryString({ limit });
+  return fetchContract<ApiResponse<HighProbabilityFairValueDto[]>>(
+    `/api/v1/high-probability/fair-values${query}`,
   );
 }

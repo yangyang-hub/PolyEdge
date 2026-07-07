@@ -131,6 +131,34 @@ fn push_worker_runtime_config_entries(
             RuntimeConfigValueType::Integer,
         ),
         (
+            "poll_high_probability_fair_values",
+            "Worker poll high probability fair value refresh",
+            "POLYEDGE_WORKER__POLL_HIGH_PROBABILITY_FAIR_VALUES",
+            settings
+                .worker
+                .poll_high_probability_fair_values
+                .to_string(),
+            defaults
+                .worker
+                .poll_high_probability_fair_values
+                .to_string(),
+            RuntimeConfigValueType::Boolean,
+        ),
+        (
+            "high_probability_fair_value_interval_secs",
+            "High probability fair value refresh interval seconds",
+            "POLYEDGE_WORKER__HIGH_PROBABILITY_FAIR_VALUE_INTERVAL_SECS",
+            settings
+                .worker
+                .high_probability_fair_value_interval_secs
+                .to_string(),
+            defaults
+                .worker
+                .high_probability_fair_value_interval_secs
+                .to_string(),
+            RuntimeConfigValueType::Integer,
+        ),
+        (
             "news_promotion_interval_secs",
             "News promotion interval seconds",
             "POLYEDGE_WORKER__NEWS_PROMOTION_INTERVAL_SECS",

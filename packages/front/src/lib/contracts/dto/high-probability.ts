@@ -21,6 +21,13 @@ export type HighProbabilityConfigDto = {
   max_daily_new_notional_usd: DecimalValue;
   conservative_kelly_multiplier: DecimalValue;
   excluded_risk_tags: string[];
+  fair_value_enabled: boolean;
+  fair_value_ttl_sec: number;
+  fair_value_market_weight: DecimalValue;
+  fair_value_base_rate_weight: DecimalValue;
+  fair_value_target_sample_count: number;
+  fair_value_max_uncertainty_cents: DecimalValue;
+  fair_value_stale_book_ms: number;
 };
 
 export type HighProbabilityBucketStatsDto = {
@@ -149,5 +156,42 @@ export type HighProbabilityBacktestTradeDto = {
   cumulative_pnl: DecimalValue;
   drawdown: DecimalValue;
   reasons: string[];
+  created_at: string;
+};
+
+/**
+ * Which side of a binary market was used to derive the YES-scale fair value.
+ * Mirrors the backend `FairValueSide` enum.
+ */
+export type FairValueSide = "yes" | "no_complement";
+
+/**
+ * Conservative fair value snapshot for one condition, produced by the
+ * high-probability pricing model provider. Consumed read-only by the Rewards
+ * market maker; the page only displays these as diagnostics.
+ */
+export type HighProbabilityFairValueDto = {
+  id: number;
+  condition_id: string;
+  token_id: string;
+  side_used: FairValueSide;
+  price_used: DecimalValue;
+  fair_yes_low: DecimalValue;
+  fair_yes_mid: DecimalValue;
+  fair_yes_high: DecimalValue;
+  market_implied: DecimalValue;
+  base_rate: DecimalValue;
+  confidence: DecimalValue;
+  uncertainty_cents: DecimalValue;
+  sample_count: number;
+  bucket_key: string;
+  /** 0 = exact bucket, increasing as the resolution falls back to coarser buckets, up to 5 = global prior. */
+  fallback_level: number;
+  model_version: string;
+  input_hash: string;
+  reason_codes: string[];
+  live_eligible: boolean;
+  computed_at: string;
+  expires_at: string;
   created_at: string;
 };

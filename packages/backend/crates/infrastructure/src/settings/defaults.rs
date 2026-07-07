@@ -217,6 +217,8 @@ impl Default for WorkerSettings {
             smart_money_interval_secs: 900,
             poll_high_probability_observe: false,
             high_probability_observe_interval_secs: 300,
+            poll_high_probability_fair_values: false,
+            high_probability_fair_value_interval_secs: 300,
             database_maintenance: true,
             database_maintenance_interval_secs: 3_600,
             news_promotion_interval_secs: 60,

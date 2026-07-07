@@ -1,4 +1,4 @@
-import type { HighProbabilityBucketStatsDto } from "@/lib/contracts/dto";
+import type { HighProbabilityBucketStatsDto, HighProbabilityFairValueDto } from "@/lib/contracts/dto";
 import {
   formatFixed,
   formatInteger,
@@ -90,6 +90,24 @@ export function reportNoteLabel(note: string): string {
 export function exitRuleLabel(ruleKey: string): string {
   const labels = dictionary.highProbability.exitRuleLabels as Record<string, string>;
   return labels[ruleKey] ?? ruleKey.replaceAll("_", " ");
+}
+
+export function fairValueSideLabel(side: HighProbabilityFairValueDto["side_used"]): string {
+  const labels = dictionary.highProbability.fairValueSideLabels as Record<string, string>;
+  return labels[side] ?? side;
+}
+
+export function fairValueFallbackLabel(level: number): string {
+  const labels = dictionary.highProbability.fairValueFallbackLabels as Record<string, string>;
+  return labels[String(level)] ?? `L${level}`;
+}
+
+export function fairValueEligibleTone(eligible: boolean): Tone {
+  return eligible ? "success" : "neutral";
+}
+
+export function fairValueBand(fairValue: HighProbabilityFairValueDto): string {
+  return `${formatProbability(fairValue.fair_yes_low)} – ${formatProbability(fairValue.fair_yes_high)}`;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

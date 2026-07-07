@@ -39,6 +39,20 @@ pub fn build_high_probability_samples_from_reward_candles(
                 .unwrap_or(candle.close);
             let max_drawdown_cents =
                 ((candle.close - min_future_close).max(Decimal::ZERO)) * Decimal::from(100u64);
+            // Past-window research features (at-sample-time information only).
+            // The forward labels above remain top-level for exit-rule backtesting.
+            let feature_vector = compute_high_probability_feature_vector(
+                &candles[..=index],
+                300,
+                candle.spread_cents_close,
+                None,
+                candle.liquidity_usd,
+                candle.bucket_start,
+                candle.resolved_at,
+                None,
+                &candle.risk_tags,
+                candle.bucket_start.unix_timestamp().saturating_mul(1000),
+            );
             samples.push(HighProbabilitySample {
                 id: 0,
                 condition_id: candle.condition_id.clone(),
@@ -61,6 +75,7 @@ pub fn build_high_probability_samples_from_reward_candles(
                     "min_future_close": min_future_close,
                     "max_future_close": max_future_close,
                     "future_candle_count": candles.len() - index,
+                    "features": feature_vector_to_json(&feature_vector),
                 }),
                 risk_tags: candle.risk_tags.clone(),
                 outcome: high_probability_sample_outcome(candle),

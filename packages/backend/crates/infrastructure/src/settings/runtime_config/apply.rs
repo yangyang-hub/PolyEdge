@@ -121,6 +121,14 @@ fn apply_runtime_config_value(
             self.worker.high_probability_observe_interval_secs =
                 parse_u64_runtime_config(key, value)?;
         }
+        "worker.poll_high_probability_fair_values" => {
+            self.worker.poll_high_probability_fair_values =
+                parse_bool_runtime_config(key, value)?;
+        }
+        "worker.high_probability_fair_value_interval_secs" => {
+            self.worker.high_probability_fair_value_interval_secs =
+                parse_u64_runtime_config(key, value)?;
+        }
         "worker.news_promotion_interval_secs" => {
             self.worker.news_promotion_interval_secs = parse_u64_runtime_config(key, value)?;
         }

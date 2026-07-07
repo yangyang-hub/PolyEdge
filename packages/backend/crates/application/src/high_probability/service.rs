@@ -38,6 +38,13 @@ pub trait HighProbabilityStore: Send + Sync {
     ) -> Result<Vec<HighProbabilityBacktestTrade>>;
     async fn record_observation(&self, observation: &HighProbabilityObservation) -> Result<()>;
     async fn list_observations(&self, limit: u16) -> Result<Vec<HighProbabilityObservation>>;
+    async fn record_fair_value(&self, estimate: &FairValueEstimate) -> Result<()>;
+    async fn list_fair_values(
+        &self,
+        model_version: Option<&str>,
+        include_expired: bool,
+        limit: u16,
+    ) -> Result<Vec<FairValueEstimate>>;
 }
 
 #[derive(Clone)]
@@ -278,6 +285,118 @@ impl HighProbabilityService {
         }
         Ok(report)
     }
+
+    /// Refresh fair value snapshots for the supplied candidates. Reads the
+    /// persisted bucket stats once, blends them with the current orderbook, and
+    /// upserts one estimate per condition. Returns a zero report when the
+    /// provider is disabled. Never places orders or calls the live connector.
+    pub async fn refresh_fair_values(
+        &self,
+        candidates: &[HighProbabilityObserveCandidate],
+        quotes: &[HighProbabilityOrderbookQuote],
+    ) -> Result<FairValueRefreshReport> {
+        let config = self.read_config().await?;
+        if !config.fair_value_enabled {
+            return Ok(FairValueRefreshReport::default());
+        }
+        let bucket_stats = self
+            .store
+            .list_bucket_stats(Some(&config.model_version), MAX_HIGH_PROBABILITY_LIST_LIMIT)
+            .await?;
+        let quote_by_token = quotes
+            .iter()
+            .cloned()
+            .map(HighProbabilityOrderbookQuote::normalized)
+            .map(|quote| (quote.token_id.clone(), quote))
+            .collect::<HashMap<_, _>>();
+        let mut inputs_by_condition: BTreeMap<String, Vec<FairValuePricingInput>> = BTreeMap::new();
+        let mut missing_quote_count = 0usize;
+        let mut out_of_range_count = 0usize;
+        for candidate in candidates
+            .iter()
+            .cloned()
+            .map(HighProbabilityObserveCandidate::normalized)
+        {
+            let Some(quote) = quote_by_token.get(&candidate.token_id) else {
+                missing_quote_count += 1;
+                continue;
+            };
+            let input = fair_value_pricing_input_from_candidate(&candidate, quote);
+            inputs_by_condition
+                .entry(candidate.condition_id.clone())
+                .or_default()
+                .push(input);
+        }
+        for inputs in inputs_by_condition.values() {
+            let has_in_range = inputs
+                .iter()
+                .any(|input| high_probability_price_bucket(input.executable_price()).is_some());
+            if !has_in_range {
+                out_of_range_count += 1;
+            }
+        }
+
+        let conditions_scanned = inputs_by_condition.len();
+        let now = OffsetDateTime::now_utc();
+        let estimates = build_fair_value_estimates(&config, &inputs_by_condition, &bucket_stats, now);
+        let mut live_eligible_count = 0usize;
+        for estimate in &estimates {
+            if estimate.live_eligible {
+                live_eligible_count += 1;
+            }
+            self.store
+                .record_fair_value(&estimate.clone().normalized())
+                .await?;
+        }
+        let unavailable_count = conditions_scanned.saturating_sub(estimates.len());
+        let missing_bucket_count = unavailable_count.saturating_sub(out_of_range_count);
+
+        Ok(FairValueRefreshReport {
+            conditions_scanned,
+            estimates_computed: estimates.len(),
+            live_eligible_count,
+            unavailable_count,
+            missing_bucket_count,
+            missing_quote_count,
+        })
+    }
+
+    pub async fn list_fair_values(
+        &self,
+        limit: Option<u16>,
+    ) -> Result<Vec<FairValueEstimate>> {
+        let config = self.read_config().await?;
+        self.store
+            .list_fair_values(
+                Some(&config.model_version),
+                false,
+                validate_high_probability_list_limit(limit),
+            )
+            .await
+    }
+}
+
+fn fair_value_pricing_input_from_candidate(
+    candidate: &HighProbabilityObserveCandidate,
+    quote: &HighProbabilityOrderbookQuote,
+) -> FairValuePricingInput {
+    FairValuePricingInput {
+        condition_id: candidate.condition_id.clone(),
+        token_id: candidate.token_id.clone(),
+        outcome: candidate.outcome.clone(),
+        reference_price: candidate.reference_price,
+        reference_spread_cents: candidate.reference_spread_cents,
+        best_bid: quote.best_bid,
+        best_ask: quote.best_ask,
+        ask_depth_usd: quote.ask_depth_usd,
+        market_type: candidate.market_type.clone(),
+        liquidity_usd: candidate.liquidity_usd,
+        end_at: candidate.end_at,
+        observed_at: candidate.observed_at,
+        risk_tags: candidate.risk_tags.clone(),
+        confirmed_at_ms: quote.confirmed_at_ms,
+    }
+    .normalized()
 }
 
 fn build_high_probability_observations(
@@ -352,84 +471,33 @@ fn build_high_probability_observation(
             now,
         );
     };
-    let Some(best_ask) = quote.best_ask else {
-        reasons.push("best_ask_missing".to_string());
-        return high_probability_observation_from_parts(
-            config,
-            candidate,
-            executable_price,
-            fair_probability,
-            net_edge,
-            recommended_size_usd,
-            HighProbabilityDecision::Skip,
-            reasons,
-            now,
-        );
+    let (sample, spread_cents) = match high_probability_sample_from_observe_candidate(candidate, quote, now)
+    {
+        Some(value) => value,
+        None => {
+            // The helper only fails on a missing book or an out-of-range price;
+            // keep the distinct diagnostic reasons the page relies on.
+            if quote.best_ask.is_none() {
+                reasons.push("best_ask_missing".to_string());
+            } else if quote.best_bid.is_none() {
+                reasons.push("best_bid_missing".to_string());
+            } else {
+                reasons.push("price_out_of_research_range".to_string());
+            }
+            return high_probability_observation_from_parts(
+                config,
+                candidate,
+                executable_price,
+                fair_probability,
+                net_edge,
+                recommended_size_usd,
+                HighProbabilityDecision::Skip,
+                reasons,
+                now,
+            );
+        }
     };
-    let Some(best_bid) = quote.best_bid else {
-        reasons.push("best_bid_missing".to_string());
-        return high_probability_observation_from_parts(
-            config,
-            candidate,
-            best_ask,
-            fair_probability,
-            net_edge,
-            recommended_size_usd,
-            HighProbabilityDecision::Skip,
-            reasons,
-            now,
-        );
-    };
-
-    let Some(price_bucket) = high_probability_price_bucket(best_ask) else {
-        reasons.push("price_out_of_research_range".to_string());
-        return high_probability_observation_from_parts(
-            config,
-            candidate,
-            best_ask,
-            fair_probability,
-            net_edge,
-            recommended_size_usd,
-            HighProbabilityDecision::Skip,
-            reasons,
-            now,
-        );
-    };
-
-    let spread_cents = ((best_ask - best_bid).max(Decimal::ZERO)) * Decimal::from(100u64);
-    let sample = HighProbabilitySample {
-        id: 0,
-        condition_id: candidate.condition_id.clone(),
-        token_id: candidate.token_id.clone(),
-        side: high_probability_side_from_outcome(&candidate.outcome),
-        sampled_at: candidate.observed_at,
-        trigger_kind: HighProbabilityTriggerKind::FirstTouch,
-        executable_price: best_ask,
-        price_bucket: price_bucket.to_string(),
-        market_type: candidate.market_type.clone(),
-        time_to_resolution_bucket: high_probability_time_to_resolution_bucket(
-            candidate.observed_at,
-            candidate.end_at,
-        ),
-        liquidity_bucket: high_probability_liquidity_bucket(candidate.liquidity_usd),
-        spread_bucket: Some(high_probability_spread_bucket(spread_cents)),
-        path_features: json!({
-            "source": "observe_reward_market_candles",
-            "reference_price": candidate.reference_price,
-            "reference_spread_cents": candidate.reference_spread_cents,
-            "best_bid": best_bid,
-            "best_ask": best_ask,
-            "ask_depth_usd": quote.ask_depth_usd,
-            "confirmed_at_ms": quote.confirmed_at_ms,
-        }),
-        risk_tags: candidate.risk_tags.clone(),
-        outcome: HighProbabilitySampleOutcome::Unknown,
-        settlement_pnl: None,
-        max_drawdown_cents: None,
-        hold_seconds: None,
-        created_at: now,
-    }
-    .normalized();
+    let best_ask = quote.best_ask.unwrap_or(executable_price);
     let (bucket_key, _) = high_probability_bucket_key(&sample);
     let Some(bucket) = bucket_by_key.get(&bucket_key).copied() else {
         reasons.push("trained_bucket_missing".to_string());

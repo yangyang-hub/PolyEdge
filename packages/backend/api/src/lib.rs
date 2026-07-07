@@ -8,7 +8,7 @@ use axum::{
 use polyedge_application::{
     AddTrackedWalletInput, AuthenticatedActor, CopyControlAction, CopyTradeConfigPatch,
     CopyTradeSnapshot, EventListFilters, EventView, EvidenceListFilters, EvidenceView,
-    ExecutionFillResult, ExecutionRequestListFilters, ExecutionRequestView,
+    ExecutionFillResult, ExecutionRequestListFilters, ExecutionRequestView, FairValueEstimate,
     HighProbabilityBacktestReport, HighProbabilityBacktestRun, HighProbabilityBacktestTrade,
     HighProbabilityBucketStats, HighProbabilityConfig, HighProbabilityResearchReport,
     HighProbabilitySnapshot, IdempotencyBegin, IdempotencyRequest, MarketListFilters,
@@ -366,6 +366,13 @@ pub fn build_app(state: AppState) -> Router {
         .route(
             "/api/v1/high-probability/backtest-runs/{run_id}/trades",
             get(read_high_probability_backtest_trades).route_layer(middleware::from_fn_with_state(
+                state.clone(),
+                require_console_read_auth,
+            )),
+        )
+        .route(
+            "/api/v1/high-probability/fair-values",
+            get(read_high_probability_fair_values).route_layer(middleware::from_fn_with_state(
                 state.clone(),
                 require_console_read_auth,
             )),

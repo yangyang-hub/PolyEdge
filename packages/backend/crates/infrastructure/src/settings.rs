@@ -191,6 +191,8 @@ pub struct WorkerSettings {
     pub smart_money_interval_secs: u64,
     pub poll_high_probability_observe: bool,
     pub high_probability_observe_interval_secs: u64,
+    pub poll_high_probability_fair_values: bool,
+    pub high_probability_fair_value_interval_secs: u64,
     pub database_maintenance: bool,
     pub database_maintenance_interval_secs: u64,
     pub news_promotion_interval_secs: u64,

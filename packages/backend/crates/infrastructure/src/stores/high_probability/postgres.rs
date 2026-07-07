@@ -639,4 +639,108 @@ impl HighProbabilityStore for PostgresHighProbabilityStore {
             .map(high_probability_observation_from_row)
             .collect()
     }
+
+    async fn record_fair_value(&self, estimate: &FairValueEstimate) -> Result<()> {
+        let estimate = estimate.clone().normalized();
+        sqlx::query(
+            r#"
+            INSERT INTO reward_market_fair_values (
+                condition_id, token_id, side_used, price_used, fair_yes_low, fair_yes_mid,
+                fair_yes_high, market_implied, base_rate, confidence, uncertainty_cents,
+                sample_count, bucket_key, fallback_level, model_version, input_hash,
+                reason_codes, live_eligible, computed_at, expires_at, created_at
+            )
+            VALUES (
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
+                $17, $18, $19, $20, now()
+            )
+            ON CONFLICT (condition_id, model_version) DO UPDATE
+            SET token_id = EXCLUDED.token_id,
+                side_used = EXCLUDED.side_used,
+                price_used = EXCLUDED.price_used,
+                fair_yes_low = EXCLUDED.fair_yes_low,
+                fair_yes_mid = EXCLUDED.fair_yes_mid,
+                fair_yes_high = EXCLUDED.fair_yes_high,
+                market_implied = EXCLUDED.market_implied,
+                base_rate = EXCLUDED.base_rate,
+                confidence = EXCLUDED.confidence,
+                uncertainty_cents = EXCLUDED.uncertainty_cents,
+                sample_count = EXCLUDED.sample_count,
+                bucket_key = EXCLUDED.bucket_key,
+                fallback_level = EXCLUDED.fallback_level,
+                input_hash = EXCLUDED.input_hash,
+                reason_codes = EXCLUDED.reason_codes,
+                live_eligible = EXCLUDED.live_eligible,
+                computed_at = EXCLUDED.computed_at,
+                expires_at = EXCLUDED.expires_at,
+                created_at = now()
+            "#,
+        )
+        .bind(&estimate.condition_id)
+        .bind(&estimate.token_id)
+        .bind(estimate.side_used.as_str())
+        .bind(estimate.price_used)
+        .bind(estimate.fair_yes_low)
+        .bind(estimate.fair_yes_mid)
+        .bind(estimate.fair_yes_high)
+        .bind(estimate.market_implied)
+        .bind(estimate.base_rate)
+        .bind(estimate.confidence)
+        .bind(estimate.uncertainty_cents)
+        .bind(i64::try_from(estimate.sample_count).unwrap_or(i64::MAX))
+        .bind(&estimate.bucket_key)
+        .bind(i16::from(estimate.fallback_level))
+        .bind(&estimate.model_version)
+        .bind(&estimate.input_hash)
+        .bind(Json(estimate.reason_codes.clone()))
+        .bind(estimate.live_eligible)
+        .bind(estimate.computed_at)
+        .bind(estimate.expires_at)
+        .execute(&self.pool)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_UPSERT_FAILED",
+                format!("failed to upsert high probability fair value: {error}"),
+            )
+        })?;
+        Ok(())
+    }
+
+    async fn list_fair_values(
+        &self,
+        model_version: Option<&str>,
+        include_expired: bool,
+        limit: u16,
+    ) -> Result<Vec<FairValueEstimate>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT id, condition_id, token_id, side_used, price_used, fair_yes_low,
+                   fair_yes_mid, fair_yes_high, market_implied, base_rate, confidence,
+                   uncertainty_cents, sample_count, bucket_key, fallback_level,
+                   model_version, input_hash, reason_codes, live_eligible, computed_at,
+                   expires_at, created_at
+            FROM reward_market_fair_values
+            WHERE ($1::text IS NULL OR model_version = $1)
+              AND ($2::boolean OR expires_at > now())
+            ORDER BY live_eligible DESC, confidence DESC, computed_at DESC
+            LIMIT $3
+            "#,
+        )
+        .bind(model_version)
+        .bind(include_expired)
+        .bind(i64::from(limit))
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_QUERY_FAILED",
+                format!("failed to query high probability fair values: {error}"),
+            )
+        })?;
+
+        rows.iter()
+            .map(high_probability_fair_value_from_row)
+            .collect()
+    }
 }

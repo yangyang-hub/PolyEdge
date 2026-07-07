@@ -36,6 +36,7 @@ pub use execution::{
     SubmitExecutionStoreCommand, SyncExternalOrderStatusCommand, TradeListFilters, TradeView,
 };
 pub use high_probability::{
+    FairValueEstimate, FairValuePricingInput, FairValueRefreshReport, FairValueSide,
     HighProbabilityBacktestExitRuleReport, HighProbabilityBacktestPersistReport,
     HighProbabilityBacktestReport, HighProbabilityBacktestResult, HighProbabilityBacktestRun,
     HighProbabilityBacktestTrade, HighProbabilityBucketRefreshReport, HighProbabilityBucketStats,
@@ -45,7 +46,7 @@ pub use high_probability::{
     HighProbabilityResearchReport, HighProbabilityRewardCandleSampleInput, HighProbabilitySample,
     HighProbabilitySampleBuildReport, HighProbabilitySampleOutcome, HighProbabilitySampleQuery,
     HighProbabilityService, HighProbabilitySnapshot, HighProbabilityStore,
-    HighProbabilityTriggerKind, build_high_probability_bucket_stats,
+    HighProbabilityTriggerKind, build_fair_value_estimates, build_high_probability_bucket_stats,
     build_high_probability_samples_from_reward_candles, validate_high_probability_list_limit,
     validate_high_probability_sample_input_limit,
 };

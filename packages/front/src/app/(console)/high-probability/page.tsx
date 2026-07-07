@@ -14,6 +14,7 @@ export default function HighProbabilityPage() {
           initialBacktest={data.backtest}
           initialBacktestRuns={data.backtestRuns}
           initialBacktestTrades={data.backtestTrades}
+          initialFairValues={data.fairValues}
         />
       )}
     </ClientDataBoundary>

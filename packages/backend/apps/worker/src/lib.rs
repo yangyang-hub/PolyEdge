@@ -3,9 +3,9 @@ use polyedge_application::{
     AuthenticatedActor, BookSnapshot, BookSource, CachedOrderBook, CopyControlAction,
     CopyControlCommand, CopyTradeRunReport, DatabaseMaintenanceReport,
     DispatchExecutionListFilters, ExecutionDispatchCandidate, ExecutionReconciliationCandidate,
-    FixtureBundle, FixtureEventRecord, FixtureEvidenceRecord, HighProbabilityBacktestPersistReport,
-    HighProbabilityBucketRefreshReport, HighProbabilityMarketOutcome,
-    HighProbabilityMarketOutcomeStatus, HighProbabilityObserveReport,
+    FairValueRefreshReport, FixtureBundle, FixtureEventRecord, FixtureEvidenceRecord,
+    HighProbabilityBacktestPersistReport, HighProbabilityBucketRefreshReport,
+    HighProbabilityMarketOutcome, HighProbabilityMarketOutcomeStatus, HighProbabilityObserveReport,
     HighProbabilityOrderbookQuote, HighProbabilitySampleBuildReport, ManagedRewardOrder,
     ManagedRewardOrderStatus, MarkExecutionFailedCommand, MarkExecutionSubmittedCommand,
     MarketListFilters, MarketView, NewsIngestSourceCommand, NewsIngestionItem,
@@ -442,6 +442,23 @@ pub async fn run_cli() -> Result<()> {
                 missing_quote_count = report.missing_quote_count,
                 missing_bucket_count = report.missing_bucket_count,
                 "observed high probability candidates once",
+            );
+            Ok(())
+        }
+        Some("refresh-high-probability-fair-values-once") => {
+            let trace_id = new_trace_id();
+            let limit = parse_limit_arg(args.next())?;
+            let report =
+                refresh_high_probability_fair_values_once(&state, limit, &trace_id).await?;
+            info!(
+                trace_id = %trace_id,
+                conditions_scanned = report.conditions_scanned,
+                estimates_computed = report.estimates_computed,
+                live_eligible_count = report.live_eligible_count,
+                unavailable_count = report.unavailable_count,
+                missing_bucket_count = report.missing_bucket_count,
+                missing_quote_count = report.missing_quote_count,
+                "refreshed high probability fair values once",
             );
             Ok(())
         }

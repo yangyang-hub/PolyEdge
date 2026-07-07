@@ -1,10 +1,10 @@
 # Worker App（后台任务服务）
 
-最后更新：2026-07-02
+最后更新：2026-07-07
 
 ## 概述
 
-Worker 代码现在同时提供共享库和兼容 CLI。`polyedge-api` 在同一进程内启动 `WorkerRuntime`，按 `WorkerSettings` 开关运行数据库维护、新闻采集/提升、执行分发、订单对账、奖励机器人、copytrade 钱包跟踪/分析、Smart Money 定时画像扫描和 orderbook token 注册；Smart Money runtime 默认关闭，启用后从 Polymarket Data API leaderboard 和 active copytrade tracked wallets 生成候选，再扫描候选钱包画像、评分和源交易，并基于 orderbook 服务缓存为未处理源交易生成 deterministic observe/rejected 信号与 deterministic gate decision 审计；当 `signal_advisory_enabled=true` 时，worker 还会为近期 observe 信号构造 signal advisory payload/input_hash、检查未过期缓存，并在 provider 环境密钥存在时调用 LLM provider 保存三态 advisory；动态高概率市场定价目前提供本地 outcome JSON 导入、一次性样本构建、bucket stats 刷新、带基础退出规则摘要的 baseline 回测持久化和一次性只读 observe 扫描 CLI，不在 runtime 中自动调度；旧信号重算和套利雷达 worker 已移除。`polyedge-worker` 二进制继续提供维护/调试子命令，但 Docker 不再部署独立常驻 worker 容器。
+Worker 代码现在同时提供共享库和兼容 CLI。`polyedge-api` 在同一进程内启动 `WorkerRuntime`，按 `WorkerSettings` 开关运行数据库维护、新闻采集/提升、执行分发、订单对账、奖励机器人、copytrade 钱包跟踪/分析、Smart Money 定时画像扫描、High Probability 只读 observe/fair value refresh 和 orderbook token 注册；Smart Money runtime 默认关闭，启用后从 Polymarket Data API leaderboard 和 active copytrade tracked wallets 生成候选，再扫描候选钱包画像、评分和源交易，并基于 orderbook 服务缓存为未处理源交易生成 deterministic observe/rejected 信号与 deterministic gate decision 审计；当 `signal_advisory_enabled=true` 时，worker 还会为近期 observe 信号构造 signal advisory payload/input_hash、检查未过期缓存，并在 provider 环境密钥存在时调用 LLM provider 保存三态 advisory；动态高概率市场定价提供本地 outcome JSON 导入、一次性样本构建、bucket stats 刷新、带基础退出规则摘要的 baseline 回测持久化、一次性只读 observe 扫描和 fair value 快照刷新 CLI，observe/fair value runtime loop 默认关闭且只读取数据库与 orderbook 服务缓存；旧信号重算和套利雷达 worker 已移除。`polyedge-worker` 二进制继续提供维护/调试子命令，但 Docker 不再部署独立常驻 worker 容器。
 
 ## 设计目标
 
@@ -87,6 +87,7 @@ Worker 代码现在同时提供共享库和兼容 CLI。`polyedge-api` 在同一
 | `refresh-high-probability-buckets-once` | `refresh_high_probability_buckets_once` | 一次性读取已入库 `high_probability_samples`，按当前配置刷新 `high_probability_bucket_stats` |
 | `run-high-probability-backtest-once` | `run_high_probability_backtest_once` | 一次性按当前配置运行 70/30 baseline walk-forward 回测，并持久化 run、退出规则摘要与交易明细 |
 | `observe-high-probability-once [limit]` | `observe_high_probability_once` | 一次性读取活跃 rewards 最新 candle 候选和 orderbook 服务缓存，按当前 bucket/edge gate 写入只读 observations；同一流程也可由默认关闭的 runtime poll loop 周期触发；不抓外部 API、不下单 |
+| `refresh-high-probability-fair-values-once [limit]` | `refresh_high_probability_fair_values_once` | 一次性读取活跃 rewards 最新 candle 候选和 orderbook 服务缓存，按 bucket stats + 当前盘口 + 风险标签刷新 `reward_market_fair_values`；受 `HighProbabilityConfig.fair_value_enabled` 控制，默认关闭，不抓外部 API、不下单 |
 | `drain-execution-queue` | `drain_execution_queue` | 处理排队的执行请求 |
 | `reconcile-paper-fills` | `reconcile_paper_fills` | Paper 交易对账 |
 | `poll-paper-order-statuses` | `poll_paper_order_statuses` | Paper 订单状态轮询 |
@@ -189,7 +190,7 @@ refresh_high_probability_buckets_once()
     → 输出 samples_scanned / settled_samples / buckets_computed / buckets_saved
 ```
 
-`import_high_probability_outcomes_once()` 会读取本地 JSON 文件并通过 `HighProbabilityService.upsert_market_outcome()` 写入 outcome 标签；每行要求 `condition_id` 和 `status`，`status=resolved` 时必须提供 `winning_token_id` 与 RFC3339 `resolved_at`。`build_high_probability_samples_once()` 会读取本地 `reward_market_candles`、`high_probability_market_outcomes` 和 `markets`，只对已有 outcome 标签的 condition 构建 first-touch 样本；resolved 标签会转成 win/loss，voided/ambiguous 不参与 bucket 胜率统计。`run_high_probability_backtest_once()` 会使用当前配置、较早 70% 已结算样本训练 bucket、较晚 30% 样本测试 edge gate，并写入 `high_probability_backtest_runs.exit_rule_reports` 与 `high_probability_backtest_trades`。`observe_high_probability_once()` 会读取活跃 reward token 的最新本地 candle 候选，排除已有 resolved/voided/ambiguous outcome 标签的 condition，再通过 `OrderbookCache.get_books_with_max_age()` 从 orderbook 服务缓存读取当前盘口；service 按当前模型版本 bucket stats、net edge、最低置信度、推荐最高入场价、spread、ask depth 和排除风险标签写入 `allow/reject/skip` observation。该模块不调用 Polymarket/Gamma/CLOB/Data API，不直接订阅 orderbook，也不产生订单。内嵌 runtime 可通过 `POLYEDGE_WORKER__POLL_HIGH_PROBABILITY_OBSERVE=true` 启动自动 observe poll loop，间隔由 `POLYEDGE_WORKER__HIGH_PROBABILITY_OBSERVE_INTERVAL_SECS` 控制（默认 300 秒，runtime 下限 60 秒），单轮候选上限复用 `POLYEDGE_WORKER__TASK_LIMIT`；默认关闭。后续全市场 candle/outcome producer、完整执行成本/多阶段退出回测、paper/live guarded worker 应在该模块内逐步补齐。
+`import_high_probability_outcomes_once()` 会读取本地 JSON 文件并通过 `HighProbabilityService.upsert_market_outcome()` 写入 outcome 标签；每行要求 `condition_id` 和 `status`，`status=resolved` 时必须提供 `winning_token_id` 与 RFC3339 `resolved_at`。`build_high_probability_samples_once()` 会读取本地 `reward_market_candles`、`high_probability_market_outcomes` 和 `markets`，只对已有 outcome 标签的 condition 构建 first-touch 样本；resolved 标签会转成 win/loss，voided/ambiguous 不参与 bucket 胜率统计。`run_high_probability_backtest_once()` 会使用当前配置、较早 70% 已结算样本训练 bucket、较晚 30% 样本测试 edge gate，并写入 `high_probability_backtest_runs.exit_rule_reports` 与 `high_probability_backtest_trades`。`observe_high_probability_once()` 会读取活跃 reward token 的最新本地 candle 候选，排除已有 resolved/voided/ambiguous outcome 标签的 condition，再通过 `OrderbookCache.get_books_with_max_age()` 从 orderbook 服务缓存读取当前盘口；service 按当前模型版本 bucket stats、net edge、最低置信度、推荐最高入场价、spread、ask depth 和排除风险标签写入 `allow/reject/skip` observation。`refresh_high_probability_fair_values_once()` 读取同类候选与 orderbook 服务缓存，在 `fair_value_enabled=true` 时把当前盘口、bucket stats 和风险标签融合为保守 `fair_yes_low/mid/high`、confidence、uncertainty、reason_codes 与 input_hash，并 upsert 到 `reward_market_fair_values`；关闭时返回零报告且不写入。该模块不调用 Polymarket/Gamma/CLOB/Data API，不直接订阅 orderbook，也不产生订单。内嵌 runtime 可通过 `POLYEDGE_WORKER__POLL_HIGH_PROBABILITY_OBSERVE=true` 启动自动 observe poll loop，或通过 `POLYEDGE_WORKER__POLL_HIGH_PROBABILITY_FAIR_VALUES=true` 启动 fair value refresh loop；间隔分别由 `POLYEDGE_WORKER__HIGH_PROBABILITY_OBSERVE_INTERVAL_SECS` / `POLYEDGE_WORKER__HIGH_PROBABILITY_FAIR_VALUE_INTERVAL_SECS` 控制（默认 300 秒，runtime 下限 60 秒），单轮候选上限复用 `POLYEDGE_WORKER__TASK_LIMIT`；默认关闭。后续全市场 candle/outcome producer、完整执行成本/多阶段退出回测、Phase 4 校准与漂移监控和 Rewards 做市商引用关系仍待补齐；该模块不再作为独立 paper/live worker 推进。
 
 ### rewards — 奖励策略与控制命令
 

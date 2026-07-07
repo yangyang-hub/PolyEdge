@@ -38,6 +38,8 @@ export const shared = {
     submitting: "提交中...",
     sync: "同步",
     unknown: "未知",
+    yes: "是",
+    no: "否",
     pagination: {
       pageOf: "第 {current} / {total} 页",
       totalItems: "共 {count} 条",

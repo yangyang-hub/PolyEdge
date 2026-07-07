@@ -202,6 +202,16 @@ pub struct HighProbabilityConfig {
     pub max_daily_new_notional_usd: Decimal,
     pub conservative_kelly_multiplier: Decimal,
     pub excluded_risk_tags: Vec<String>,
+    // Fair value provider configuration. The provider turns bucket stats + the
+    // current orderbook into a conservative `fair_yes_low/mid/high` snapshot for
+    // the (future) Rewards market maker. It never quotes, sizes or trades.
+    pub fair_value_enabled: bool,
+    pub fair_value_ttl_sec: i64,
+    pub fair_value_market_weight: Decimal,
+    pub fair_value_base_rate_weight: Decimal,
+    pub fair_value_target_sample_count: u64,
+    pub fair_value_max_uncertainty_cents: Decimal,
+    pub fair_value_stale_book_ms: i64,
 }
 
 impl Default for HighProbabilityConfig {
@@ -226,6 +236,13 @@ impl Default for HighProbabilityConfig {
                 "ambiguous_rules".to_string(),
                 "subjective_resolution".to_string(),
             ],
+            fair_value_enabled: false,
+            fair_value_ttl_sec: 300,
+            fair_value_market_weight: Decimal::new(25, 2),
+            fair_value_base_rate_weight: Decimal::new(75, 2),
+            fair_value_target_sample_count: 200,
+            fair_value_max_uncertainty_cents: Decimal::new(8, 0),
+            fair_value_stale_book_ms: 60_000,
         }
     }
 }
@@ -254,6 +271,17 @@ impl HighProbabilityConfig {
             Decimal::ONE,
         );
         self.excluded_risk_tags = normalize_string_list(self.excluded_risk_tags);
+        self.fair_value_ttl_sec = self.fair_value_ttl_sec.max(0);
+        self.fair_value_market_weight =
+            clamp_decimal(self.fair_value_market_weight, Decimal::ZERO, Decimal::ONE);
+        self.fair_value_base_rate_weight =
+            clamp_decimal(self.fair_value_base_rate_weight, Decimal::ZERO, Decimal::ONE);
+        self.fair_value_target_sample_count = self.fair_value_target_sample_count.max(1);
+        self.fair_value_max_uncertainty_cents = self
+            .fair_value_max_uncertainty_cents
+            .max(Decimal::ZERO)
+            .min(Decimal::new(100, 0));
+        self.fair_value_stale_book_ms = self.fair_value_stale_book_ms.max(0);
         self
     }
 }
@@ -604,4 +632,226 @@ pub struct HighProbabilityObserveReport {
     pub skip_count: usize,
     pub missing_quote_count: usize,
     pub missing_bucket_count: usize,
+}
+
+/// Which side of a binary market was used to derive the YES-scale fair value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FairValueSide {
+    /// Estimated directly from the YES token price bucket.
+    Yes,
+    /// Estimated from the NO token price bucket and complemented to YES scale.
+    NoComplement,
+}
+
+impl FairValueSide {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Yes => "yes",
+            Self::NoComplement => "no_complement",
+        }
+    }
+}
+
+impl FromStr for FairValueSide {
+    type Err = AppError;
+
+    fn from_str(value: &str) -> Result<Self> {
+        match value {
+            "yes" => Ok(Self::Yes),
+            "no_complement" => Ok(Self::NoComplement),
+            other => Err(AppError::invalid_input(
+                "HIGH_PROBABILITY_FAIR_VALUE_SIDE_INVALID",
+                format!("unknown high probability fair value side: {other}"),
+            )),
+        }
+    }
+}
+
+/// Per-token pricing input used to build a fair value estimate. The worker
+/// assembles this from an observe candidate plus its current orderbook quote.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FairValuePricingInput {
+    pub condition_id: String,
+    pub token_id: String,
+    /// "yes" or "no" — which outcome this token represents.
+    pub outcome: String,
+    pub reference_price: Decimal,
+    pub reference_spread_cents: Decimal,
+    pub best_bid: Option<Decimal>,
+    pub best_ask: Option<Decimal>,
+    pub ask_depth_usd: Option<Decimal>,
+    pub market_type: String,
+    pub liquidity_usd: Option<Decimal>,
+    pub end_at: Option<OffsetDateTime>,
+    pub observed_at: OffsetDateTime,
+    pub risk_tags: Vec<String>,
+    pub confirmed_at_ms: Option<i64>,
+}
+
+impl FairValuePricingInput {
+    #[must_use]
+    pub fn normalized(mut self) -> Self {
+        self.condition_id = self.condition_id.trim().to_string();
+        self.token_id = self.token_id.trim().to_string();
+        self.outcome = self.outcome.trim().to_ascii_lowercase();
+        self.reference_price = clamp_decimal(self.reference_price, Decimal::ZERO, Decimal::ONE);
+        self.reference_spread_cents = self.reference_spread_cents.max(Decimal::ZERO);
+        self.best_bid = self
+            .best_bid
+            .map(|value| clamp_decimal(value, Decimal::ZERO, Decimal::ONE));
+        self.best_ask = self
+            .best_ask
+            .map(|value| clamp_decimal(value, Decimal::ZERO, Decimal::ONE));
+        self.ask_depth_usd = self.ask_depth_usd.map(|value| value.max(Decimal::ZERO));
+        self.market_type = non_empty_or(self.market_type, "unknown");
+        self.risk_tags = normalize_string_list(self.risk_tags);
+        self
+    }
+
+    /// The executable price used as the reference for fair value (best ask,
+    /// clamped, falling back to the candle reference price when the book is
+    /// missing — mirroring the observe path's `executable_price`).
+    #[must_use]
+    pub fn executable_price(&self) -> Decimal {
+        self.best_ask
+            .filter(|price| *price > Decimal::ZERO)
+            .unwrap_or(self.reference_price)
+    }
+}
+
+/// A conservative, auditable fair value snapshot for one condition. This is the
+/// provider output consumed (read-only) by the Rewards market maker.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FairValueEstimate {
+    pub id: i64,
+    pub condition_id: String,
+    pub token_id: String,
+    pub side_used: FairValueSide,
+    pub price_used: Decimal,
+    pub fair_yes_low: Decimal,
+    pub fair_yes_mid: Decimal,
+    pub fair_yes_high: Decimal,
+    pub market_implied: Decimal,
+    pub base_rate: Decimal,
+    pub confidence: Decimal,
+    pub uncertainty_cents: Decimal,
+    pub sample_count: u64,
+    pub bucket_key: String,
+    /// 0 = exact bucket, increasing as the resolution falls back to coarser
+    /// buckets, up to 5 for the global prior.
+    pub fallback_level: u8,
+    pub model_version: String,
+    pub input_hash: String,
+    pub reason_codes: Vec<String>,
+    pub live_eligible: bool,
+    pub computed_at: OffsetDateTime,
+    pub expires_at: OffsetDateTime,
+    pub created_at: OffsetDateTime,
+}
+
+impl FairValueEstimate {
+    #[must_use]
+    pub fn normalized(mut self) -> Self {
+        self.condition_id = self.condition_id.trim().to_string();
+        self.token_id = self.token_id.trim().to_string();
+        self.price_used = clamp_decimal(self.price_used, Decimal::ZERO, Decimal::ONE);
+        self.fair_yes_low = clamp_decimal(self.fair_yes_low, Decimal::ZERO, Decimal::ONE);
+        self.fair_yes_mid = clamp_decimal(self.fair_yes_mid, Decimal::ZERO, Decimal::ONE);
+        self.fair_yes_high = clamp_decimal(self.fair_yes_high, Decimal::ZERO, Decimal::ONE);
+        self.market_implied = clamp_decimal(self.market_implied, Decimal::ZERO, Decimal::ONE);
+        self.base_rate = clamp_decimal(self.base_rate, Decimal::ZERO, Decimal::ONE);
+        self.confidence = clamp_decimal(self.confidence, Decimal::ZERO, Decimal::ONE);
+        self.uncertainty_cents = self.uncertainty_cents.max(Decimal::ZERO);
+        self.reason_codes = normalize_string_list(self.reason_codes);
+        self
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FairValueRefreshReport {
+    pub conditions_scanned: usize,
+    pub estimates_computed: usize,
+    pub live_eligible_count: usize,
+    pub unavailable_count: usize,
+    pub missing_bucket_count: usize,
+    pub missing_quote_count: usize,
+}
+
+// ── Research feature vector (Phase 2 ML preparation) ───────────────────────
+
+/// Price-path features computed from the candle window *before* the sample
+/// point (at-sample-time information only). Forward-looking labels such as
+/// `min_future_close` / `max_future_close` are kept separately by the sample
+/// builder for exit-rule backtesting.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct PricePathFeatures {
+    pub return_5m: Option<Decimal>,
+    pub return_1h: Option<Decimal>,
+    pub return_6h: Option<Decimal>,
+    pub return_24h: Option<Decimal>,
+    pub realized_volatility: Option<Decimal>,
+    pub max_run_up_cents: Option<Decimal>,
+    pub largest_prior_drawdown_cents: Option<Decimal>,
+    pub prior_bucket_crossings: Option<i64>,
+    pub time_above_70_sec: Option<i64>,
+    pub time_above_80_sec: Option<i64>,
+    pub time_above_90_sec: Option<i64>,
+    pub monotonic_trend_score: Option<Decimal>,
+}
+
+/// Point-in-time liquidity / book features.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct LiquidityFeatures {
+    pub spread_cents: Option<Decimal>,
+    pub top_ask_depth_usd: Option<Decimal>,
+    pub top_bid_depth_usd: Option<Decimal>,
+    pub book_fresh_ms: Option<i64>,
+    pub liquidity_bucket: Option<String>,
+}
+
+/// Time-to-resolution and market-age features.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct TimeFeatures {
+    pub time_to_resolution_bucket: Option<String>,
+    pub market_age_bucket: Option<String>,
+}
+
+/// Risk-tag presence flags over the documented taxonomy.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct RiskFeatures {
+    pub ambiguous_rules: bool,
+    pub subjective_resolution: bool,
+    pub regulatory_or_court_dependency: bool,
+    pub official_confirmation_pending: bool,
+    pub single_source_news: bool,
+    pub high_news_velocity: bool,
+    pub source_conflict: bool,
+    pub long_horizon: bool,
+}
+
+impl RiskFeatures {
+    #[must_use]
+    pub fn active_count(&self) -> u8 {
+        u8::from(self.ambiguous_rules)
+            + u8::from(self.subjective_resolution)
+            + u8::from(self.regulatory_or_court_dependency)
+            + u8::from(self.official_confirmation_pending)
+            + u8::from(self.single_source_news)
+            + u8::from(self.high_news_velocity)
+            + u8::from(self.source_conflict)
+            + u8::from(self.long_horizon)
+    }
+}
+
+/// Aggregated research feature vector. Serialized into the sample
+/// `path_features` JSONB so future ML models and diagnostics can consume it.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct HighProbabilityFeatureVector {
+    pub version: String,
+    pub path: PricePathFeatures,
+    pub liquidity: LiquidityFeatures,
+    pub time: TimeFeatures,
+    pub risk: RiskFeatures,
 }

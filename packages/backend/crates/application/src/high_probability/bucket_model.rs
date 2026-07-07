@@ -137,6 +137,62 @@ fn conservative_fair_probability(wins: u64, samples: u64) -> Decimal {
     Decimal::from(wins + 1) / Decimal::from(samples + 2)
 }
 
+/// Build a synthetic high-probability sample (used only to derive bucket
+/// dimensions) from an observe candidate and its orderbook quote. Shared by the
+/// observe path and the fair value provider so both resolve the same bucket for
+/// the same candidate.
+///
+/// Returns `None` when the book is incomplete (no best bid/ask) or the
+/// executable price is outside the research range. Callers map the `None` case
+/// to their own diagnostic reason codes.
+#[must_use]
+pub fn high_probability_sample_from_observe_candidate(
+    candidate: &HighProbabilityObserveCandidate,
+    quote: &HighProbabilityOrderbookQuote,
+    now: OffsetDateTime,
+) -> Option<(HighProbabilitySample, Decimal)> {
+    let candidate = candidate.clone().normalized();
+    let quote = quote.clone().normalized();
+    let best_bid = quote.best_bid?;
+    let best_ask = quote.best_ask?;
+    let price_bucket = high_probability_price_bucket(best_ask)?.to_string();
+    let spread_cents = ((best_ask - best_bid).max(Decimal::ZERO)) * Decimal::from(100u64);
+    let sample = HighProbabilitySample {
+        id: 0,
+        condition_id: candidate.condition_id,
+        token_id: candidate.token_id,
+        side: high_probability_side_from_outcome(&candidate.outcome),
+        sampled_at: candidate.observed_at,
+        trigger_kind: HighProbabilityTriggerKind::FirstTouch,
+        executable_price: best_ask,
+        price_bucket,
+        market_type: candidate.market_type,
+        time_to_resolution_bucket: high_probability_time_to_resolution_bucket(
+            candidate.observed_at,
+            candidate.end_at,
+        ),
+        liquidity_bucket: high_probability_liquidity_bucket(candidate.liquidity_usd),
+        spread_bucket: Some(high_probability_spread_bucket(spread_cents)),
+        path_features: json!({
+            "source": "observe_reward_market_candles",
+            "reference_price": candidate.reference_price,
+            "reference_spread_cents": candidate.reference_spread_cents,
+            "best_bid": best_bid,
+            "best_ask": best_ask,
+            "ask_depth_usd": quote.ask_depth_usd,
+            "confirmed_at_ms": quote.confirmed_at_ms,
+        }),
+        risk_tags: candidate.risk_tags,
+        outcome: HighProbabilitySampleOutcome::Unknown,
+        settlement_pnl: None,
+        max_drawdown_cents: None,
+        hold_seconds: None,
+        created_at: now,
+    }
+    .normalized();
+    Some((sample, spread_cents))
+}
+
 fn average_decimal(sum: Decimal, count: u64) -> Option<Decimal> {
     (count > 0).then(|| sum / Decimal::from(count))
 }

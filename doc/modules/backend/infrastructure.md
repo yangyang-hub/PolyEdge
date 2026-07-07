@@ -1,6 +1,6 @@
 # infrastructure（基础设施层）
 
-最后更新：2026-07-01
+最后更新：2026-07-07
 
 ## 概述
 
@@ -43,7 +43,7 @@
 | `RewardsSettings` | enabled、poll_interval、OpenAI-compatible/Anthropic API key 与 base URL、AI model/timeout/min confidence、可选备用 provider（第二个独立 provider/model/key/URL；GLM/DeepSeek/Agnes 通过模型名识别）、信息风险扫描间隔、每轮 provider 上限、置信度和 web search 开关等 |
 | `SmartMoneySettings` | Smart Money signal advisory 独立 OpenAI-compatible/Anthropic API key、base URL 和请求超时；provider/request format/model 保存在 Smart Money config |
 | `NewsSettings` | enabled、poll_interval_secs、request_timeout_secs、max_items_per_source、sources（RSS/Atom 源列表） |
-| `WorkerSettings` | 各 worker 的启用标志和轮询间隔，包含数据库维护开关、Smart Money scan 开关与间隔 |
+| `WorkerSettings` | 各 worker 的启用标志和轮询间隔，包含数据库维护、Smart Money scan、High Probability observe/fair value refresh 开关与间隔 |
 | `OrderbookStreamSettings` | WS 连接、轮询和 rewards candle history 配置（默认 `max_tokens=3000`、`reward_candidate_token_cap=50`、`ws_chunk_size=100`、`poll_reconcile_interval_secs=10`、`max_levels_per_side=100`、candle history enabled、interval=300s、request_delay=500ms、max_tokens_per_cycle=600） |
 | `OrderbookServiceSettings` | orderbook HTTP port/service_url；`write_token` 控制 register/ingest/delete 内部写认证 |
 | `AuthSettings` / `AuthKeySettings` | 认证配置和密钥；`disabled` 可开启内网免鉴权模式 |
@@ -80,8 +80,8 @@ Orderbook candle history 默认由 orderbook 服务独立启用：`POLYEDGE_ORDE
 | `stores/copytrade/in_memory.rs` | 同上 | 内存 |
 | `stores/smart_money/postgres.rs` | `SmartMoneyStore` | PostgreSQL（key-value config、候选钱包、画像、评分、源交易、未处理信号候选查询、信号写入/列表、signal decision 写入/列表和 signal advisory 缓存读写） |
 | `stores/smart_money/postgres_rows.rs` / `postgres_config.rs` / `in_memory.rs` | `SmartMoneyStore` 辅助 | 行映射、配置解析 helper 和内存实现；内存实现同样按 `source_trade_id` 防重生成信号，按 `(signal_id, stage)` 防重写 decision，并按 `(signal_id, provider, request_format, model, input_hash)` upsert advisory |
-| `stores/high_probability/postgres.rs` | `HighProbabilityStore` | PostgreSQL（key-value config、market outcome 标签、rewards candle sample input/observe candidate 查询、历史样本、分桶统计、baseline 回测 run/trade、退出规则摘要、观察记录） |
-| `stores/high_probability/postgres_rows.rs` / `in_memory.rs` | `HighProbabilityStore` 辅助 | 行映射、配置解析和内存实现 |
+| `stores/high_probability/postgres.rs` | `HighProbabilityStore` | PostgreSQL（key-value config、market outcome 标签、rewards candle sample input/observe candidate 查询、历史样本、分桶统计、baseline 回测 run/trade、退出规则摘要、观察记录、`reward_market_fair_values` 快照） |
+| `stores/high_probability/postgres_rows.rs` / `in_memory.rs` | `HighProbabilityStore` 辅助 | 行映射、配置解析（含 fair value provider 配置键）和内存实现 |
 | `stores/mode_state.rs` | `ModeStateStore` | PostgreSQL/内存 |
 | `stores/risk_state.rs` | `RiskStateStore` | PostgreSQL/内存 |
 | `stores/idempotency.rs` | `IdempotencyStore` | PostgreSQL/内存 |
@@ -121,7 +121,7 @@ Orderbook candle history 默认由 orderbook 服务独立启用：`POLYEDGE_ORDE
 - `RewardBotStore` 在 Postgres/内存实现中按 account 维护 rewards worker heartbeat；API snapshot 只把配置已启用且最近 2 分钟有 heartbeat 的 worker 标记为 running。Postgres 表由迁移 `0032_reward_worker_heartbeats.sql` 创建。
 - `CopyTradeStore` 在 Postgres/内存实现中维护 `copytrade_control_commands` 队列；API 写入 pending 命令，worker 使用 claim/complete/fail 方法领取并更新执行状态。当前 copytrade worker 只执行 source trade 检测和 Analyze 钱包分析；run/cancel/reset 兼容命令不再触发模拟交易。
 - `SmartMoneyStore` 在 Postgres/内存实现中维护 Smart Money foundation 数据：配置（含 signal advisory provider/request-format/model 和并发限制）、候选钱包、候选状态、画像、评分、源交易、信号列表、signal decision 审计列表和 `smart_signal_advisories` 缓存；advisory cache key 为 signal/provider/request_format/model/input_hash，读取只返回 `expires_at > now` 的记录。当前不包含控制命令队列。`scan-smart-money-once` CLI 和可选 `POLYEDGE_WORKER__POLL_SMART_MONEY` 定时任务会从 Data API leaderboard 与 active copytrade tracked wallets 写入候选，并扫描候选钱包生成画像、评分和 Data API activity 源交易；随后通过 `list_unprocessed_signal_trades()` 读取尚未有 `smart_signals.source_trade_id` 的源交易，通过 `record_signals()` 按 source trade 防重插入 deterministic observe/rejected 信号，再通过 `record_signal_decisions()` 按 `(signal_id, stage)` 防重写入 `deterministic_gate` decision；开启 `signal_advisory_enabled` 后，worker 会使用 Smart Money 独立 provider 配置、独立 signal advisory 并发限制和 `SmartMoneySettings` 中的 env-only key/base URL 刷新 `smart_signal_advisories`。API 可把候选更新为 `candidate/watch/tracked/blocked/rejected`，未入库钱包会创建 `manual` 来源记录。recent trades/链上完整 discovery、wallet advisory、paper/live 写路径尚未接入。
-- `HighProbabilityStore` 在 Postgres/内存实现中维护动态高概率市场定价研究 foundation 数据：配置、market outcome 标签、已构建样本、分桶统计、baseline backtest run/trade、退出规则摘要和 observation。Postgres 实现会从 `reward_market_candles` + `high_probability_market_outcomes` + `markets` 读取 rewards candle sample inputs；observe candidate 查询会读取活跃 rewards 最新 5m candle，并排除已有 resolved/voided/ambiguous outcome 标签的 condition。当前支持 `build-high-probability-samples-once` 构建 rewards first-touch 样本，`refresh-high-probability-buckets-once` 从已有已结算样本刷新 bucket stats，`run-high-probability-backtest-once` 持久化 70/30 baseline walk-forward 回测结果、`exit_rule_reports` 和入场交易明细，以及 `observe-high-probability-once` 或默认关闭的 `POLYEDGE_WORKER__POLL_HIGH_PROBABILITY_OBSERVE` runtime loop 写入只读 observations。全市场 candles/outcomes、paper/live 写路径尚未接入。
+- `HighProbabilityStore` 在 Postgres/内存实现中维护动态高概率市场定价研究 foundation 数据：配置、market outcome 标签、已构建样本、分桶统计、baseline backtest run/trade、退出规则摘要、observation 和 `reward_market_fair_values` fair value 快照。Postgres 实现会从 `reward_market_candles` + `high_probability_market_outcomes` + `markets` 读取 rewards candle sample inputs；observe candidate 查询会读取活跃 rewards 最新 5m candle，并排除已有 resolved/voided/ambiguous outcome 标签的 condition。当前支持 `build-high-probability-samples-once` 构建 rewards first-touch 样本，`refresh-high-probability-buckets-once` 从已有已结算样本刷新 bucket stats，`run-high-probability-backtest-once` 持久化 70/30 baseline walk-forward 回测结果、`exit_rule_reports` 和入场交易明细，`observe-high-probability-once` 或默认关闭的 `POLYEDGE_WORKER__POLL_HIGH_PROBABILITY_OBSERVE` runtime loop 写入只读 observations，以及 `refresh-high-probability-fair-values-once` 或默认关闭的 `POLYEDGE_WORKER__POLL_HIGH_PROBABILITY_FAIR_VALUES` runtime loop 在 `fair_value_enabled=true` 时 upsert 当前 model_version 的未过期 fair value 快照。全市场 candles/outcomes、完整执行成本/多阶段退出回测、Phase 4 校准与漂移监控、Rewards 做市商引用关系尚未接入；该模块不再作为独立 paper/live 写路径推进。
 - `InMemoryOrderbookCache` 在所有写入入口统一按 bids 降序、asks 升序排序后裁剪，确保无序 WS/poll/ingest 数据也保留 top-of-book；写入 `observed_at` 早于当前未过期条目的盘口内容会被忽略，相同内容时间戳下 WS 优先于 poll，但若被拒绝的 poll/ingest 携带更新的 `confirmed_at`，缓存会合并确认时间并刷新 TTL，避免安静市场因盘口版本不变而过期；已过期条目不会阻挡后续较旧 `observed_at` 的 poll/ingest 快照恢复；`get_books()` 在一次读锁内返回多个未过期盘口；`get_stale_tokens(..., max_age_ms <= 0)` 只检查 TTL，不执行年龄 stale 检查，年龄 stale 检查使用 `confirmed_at`。
 - `InMemoryOrderbookSubscriptionRegistry.register_tokens()` 在持有写锁时原子执行 32-source 上限检查，关闭并发新 source 绕过 HTTP 预检查的竞态；空 token 集合会删除 source，聚合优先级为 `rewards_active`、`exec_orders`、`rewards_eligible`、`rewards_ai_provider`、`rewards_candidates`、`copytrade`。
 

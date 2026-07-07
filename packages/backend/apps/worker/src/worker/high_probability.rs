@@ -90,6 +90,49 @@ async fn observe_high_probability_once(
         .await
 }
 
+async fn refresh_high_probability_fair_values_once(
+    state: &AppState,
+    limit: Option<u16>,
+    trace_id: &str,
+) -> Result<FairValueRefreshReport> {
+    let candidates = state
+        .high_probability_service
+        .list_observe_candidates(limit)
+        .await?;
+    let token_ids = candidates
+        .iter()
+        .map(|candidate| candidate.token_id.clone())
+        .filter(|token_id| !token_id.trim().is_empty())
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    let quotes = if token_ids.is_empty() {
+        Vec::new()
+    } else {
+        match state
+            .orderbook_cache
+            .get_books_with_max_age(&token_ids, HIGH_PROBABILITY_OBSERVE_ORDERBOOK_MAX_AGE_MS)
+            .await
+        {
+            Ok(books) => high_probability_quotes_from_books(&books),
+            Err(error) => {
+                warn!(
+                    trace_id = %trace_id,
+                    error = %error,
+                    token_count = token_ids.len(),
+                    "high probability fair value refresh skipped orderbook quotes because cache read failed"
+                );
+                Vec::new()
+            }
+        }
+    };
+
+    state
+        .high_probability_service
+        .refresh_fair_values(&candidates, &quotes)
+        .await
+}
+
 fn high_probability_quotes_from_books(books: &[CachedOrderBook]) -> Vec<HighProbabilityOrderbookQuote> {
     books
         .iter()

@@ -88,6 +88,22 @@ async fn read_high_probability_backtest_runs(
     Ok(Json(ApiResponse::new(runs, auth.request_id, trace_id)))
 }
 
+async fn read_high_probability_fair_values(
+    Extension(auth): Extension<AuthContext>,
+    State(state): State<AppState>,
+    Query(query): Query<HashMap<String, String>>,
+) -> std::result::Result<Json<ApiResponse<Vec<FairValueEstimate>>>, HttpError> {
+    let trace_id = new_trace_id();
+    let limit = parse_high_probability_limit_query(&query, &auth, &trace_id)?;
+    let fair_values = state
+        .high_probability_service
+        .list_fair_values(limit)
+        .await
+        .map_err(|error| HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone()))?;
+
+    Ok(Json(ApiResponse::new(fair_values, auth.request_id, trace_id)))
+}
+
 async fn read_high_probability_backtest_trades(
     Extension(auth): Extension<AuthContext>,
     State(state): State<AppState>,
