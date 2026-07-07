@@ -278,13 +278,6 @@ export function MarketMakerConfig({
         hint={h.marketMakerFairValueTtlSec}
         onChange={(value) => updateNumber("market_maker_fair_value_ttl_sec", value)}
       />
-      <NumberInput
-        label={dictionary.rewards.marketMakerEvCancelConfirmSec}
-        value={draft.market_maker_ev_cancel_confirm_sec}
-        suffix="s"
-        hint={h.marketMakerEvCancelConfirmSec}
-        onChange={(value) => updateNumber("market_maker_ev_cancel_confirm_sec", value)}
-      />
       <label className="space-y-1.5">
         <span className="flex items-center gap-1 text-xs font-medium text-muted-foreground">
           {dictionary.rewards.marketMakerFairValueModelVersion}
