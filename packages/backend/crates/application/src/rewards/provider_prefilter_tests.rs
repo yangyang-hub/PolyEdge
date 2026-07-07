@@ -18,6 +18,7 @@ fn prefilter_test_plan(condition_id: &str, bucket: RewardStrategyBucket) -> Rewa
         book_metrics: None,
         low_competition_metrics: None,
         opportunity_metrics: None,
+        market_maker: None,
         ai_advisory: None,
         info_risk: None,
         event_window: None,

@@ -1,6 +1,6 @@
 # Rewards（奖励机器人）
 
-最后更新：2026-07-02
+最后更新：2026-07-07
 
 ## 概述
 
@@ -13,12 +13,13 @@
 | `src/app/(console)/rewards/page.tsx` | 路由页面 |
 | `src/features/rewards/components/rewards-workbench.tsx` | 主工作台编排：状态/操作区、指标条、活动/配置/风控 tabs |
 | `src/features/rewards/components/rewards-overview-cards.tsx` | 顶部执行概览、每日大模型调用统计（总数为真实外部请求，AI/风控为 section 计数）、操作中心和关键指标条 |
-| `src/features/rewards/components/rewards-config-panel.tsx` | 分组策略配置面板（执行、市场筛选、机会评分、报价构造、成交后合并、盘口选择、AI 建议/信息风险、库存与控制） |
+| `src/features/rewards/components/rewards-config-panel.tsx` | 分组策略配置面板（执行、市场筛选、机会评分、做市商 EV、报价构造、成交后合并、盘口选择、AI 建议/信息风险、库存与控制） |
 | `src/features/rewards/components/rewards-opportunity-config.tsx` | 统一机会评分配置：竞争倍数软上限与硬门槛（开关+阈值）、100U 日奖、资金占比、退出深度/滑点、盘口稳定性和评分权重 |
 | `src/features/rewards/components/rewards-opportunity-summary.tsx` | Quote plan 表格中的机会评分、score adjustment、竞争倍数、100U 日奖、退出深度和样本数摘要 |
-| `src/features/rewards/components/rewards-advanced-config.tsx` | 盘口选择、AI advisory strategy hint 和信息风险配置子面板 |
+| `src/features/rewards/components/rewards-advanced-config.tsx` | 盘口选择、Rewards 做市商 EV、AI advisory strategy hint 和信息风险配置子面板 |
 | `src/features/rewards/components/rewards-config-fields.tsx` | 配置面板共享字段、区块和提示组件 |
-| `src/features/rewards/components/rewards-tables.tsx` | 报价计划和托管订单表格入口；展示 strategy profile、AI/info-risk 二值结果与 AI direction/rank/notional hint；重导出成交、持仓、事件表，合并服务端分页状态构造 |
+| `src/features/rewards/components/rewards-market-maker-summary.tsx` | Quote plan 表格中的做市商 EV 诊断摘要：shadow/guarded 状态、总 EV、pricing edge、reward EV、fair value 区间和阻断原因 |
+| `src/features/rewards/components/rewards-tables.tsx` | 报价计划和托管订单表格入口；展示 strategy profile、做市商 EV 诊断、AI/info-risk 二值结果与 AI direction/rank/notional hint；重导出成交、持仓、事件表，合并服务端分页状态构造 |
 | `src/features/rewards/components/rewards-fills-table.tsx` | 成交记录表格 |
 | `src/features/rewards/components/rewards-positions-table.tsx` | 持仓表格与 PnL 展示 |
 | `src/features/rewards/components/rewards-events-table.tsx` | 风险/操作事件表格 |
@@ -31,14 +32,14 @@
 
 ## 核心类型（types.ts）
 
-- **`NumberConfigKey`**：数值输入参数的字符串联合类型 — `max_markets`、`max_open_orders`、`min_daily_reward`、`min_market_liquidity_usd`、`min_market_volume_24h_usd`、`min_hours_to_end`、`max_market_spread_cents`、`max_market_data_age_minutes`、统一机会评分 `opportunity_*` 数值阈值和权重、dominant 单边阈值、盘口集中度阈值、AI advisory TTL、AI provider 主/备最大并发、AI strategy hint 最低置信度、信息风险 TTL、事件窗口 stop/cancel/resume 秒数、首单观察窗口、`account_capital_usd`、`requote_drift_cents` 及 drift 换价 guard 秒数/限速字段（`requote_drift_confirm_sec`/`cooldown_sec`/`max_cancels_per_cycle`，均在报价构造配置区可编辑）、BalancedMerge 的 `balanced_merge_*` 数值阈值等；`per_market_usd`、`quote_size_usd` 和 `low_competition_per_market_usd` 已从前端 `RewardBotConfigDto` 移除，仅后端兼容字段；`quote_bid_rank`、`balanced_merge_quote_bid_rank`、quote/selection mode、AI provider/request format、AI provider 并发开关、BalancedMerge 自动执行开关、事件窗口置信度/模式和信息风险 mode/等级使用受限控件，不进入该联合类型
+- **`NumberConfigKey`**：数值输入参数的字符串联合类型 — `max_markets`、`max_open_orders`、`min_daily_reward`、`min_market_liquidity_usd`、`min_market_volume_24h_usd`、`min_hours_to_end`、`max_market_spread_cents`、`max_market_data_age_minutes`、统一机会评分 `opportunity_*` 数值阈值和权重、Rewards 做市商 `market_maker_*` EV/fair-value/库存/TTL 数值阈值、dominant 单边阈值、盘口集中度阈值、AI advisory TTL、AI provider 主/备最大并发、AI strategy hint 最低置信度、信息风险 TTL、事件窗口 stop/cancel/resume 秒数、首单观察窗口、`account_capital_usd`、`requote_drift_cents` 及 drift 换价 guard 秒数/限速字段（`requote_drift_confirm_sec`/`cooldown_sec`/`max_cancels_per_cycle`，均在报价构造配置区可编辑）、BalancedMerge 的 `balanced_merge_*` 数值阈值等；`per_market_usd`、`quote_size_usd` 和 `low_competition_per_market_usd` 已从前端 `RewardBotConfigDto` 移除，仅后端兼容字段；`strategy_mode`、`quote_bid_rank`、`balanced_merge_quote_bid_rank`、quote/selection mode、AI provider/request format、AI provider 并发开关、BalancedMerge 自动执行开关、事件窗口置信度/模式和信息风险 mode/等级使用受限控件，不进入该联合类型
 - **`EventCategory`**：`"all" | "placements" | "cancels" | "fills" | "rewards"`
 
 ## API 依赖
 
 - `src/lib/api/rewards.ts` — `readRewardBotSnapshot`、`updateRewardBotConfig`、`runRewardBotOnce`、`cancelRewardBotOrders`、`resetRewardBot`
 - `readRewardBotSnapshot()` 会传递计划/订单分页、搜索、状态和排序 query；首屏明确请求 `plans_eligible=true`，与默认选中的“可挂”页签一致。后端分页结果和 `orders_page` 都描述本地 managed orders，不再用 Polymarket live open orders 覆盖
-- 后端 snapshot 不返回全量 reward markets；页面使用 `status.markets_tracked`、`status.eligible_markets`、`status.ready_quote_markets`、`status.waiting_orderbook_markets`、`status.provider_pending_markets`、`status.blocker_counts`、`quote_plans[].opportunity_metrics` 和 `llm_usage` 展示市场覆盖、最终可挂市场、真实可立即报价数量、等待 provider、资金不足、live 盘口验证、AI/信息风控拦截、竞争/奖励/退出/稳定性机会评分以及 combined provider 每日真实外部请求数与 AI/info-risk section 计数。`low_competition_report` 仍在 DTO 中兼容历史响应，但当前后端返回 `null`，页面不再渲染低竞争报告
+- 后端 snapshot 不返回全量 reward markets；页面使用 `status.markets_tracked`、`status.eligible_markets`、`status.ready_quote_markets`、`status.waiting_orderbook_markets`、`status.provider_pending_markets`、`status.blocker_counts`、`quote_plans[].opportunity_metrics`、`quote_plans[].market_maker` 和 `llm_usage` 展示市场覆盖、最终可挂市场、真实可立即报价数量、等待 provider、资金不足、live 盘口验证、AI/信息风控拦截、竞争/奖励/退出/稳定性机会评分、做市商 EV 诊断以及 combined provider 每日真实外部请求数与 AI/info-risk section 计数。`low_competition_report` 仍在 DTO 中兼容历史响应，但当前后端返回 `null`，页面不再渲染低竞争报告
 - snapshot 的 `available_usd` / `positions` 来自 worker 写入数据库的账户快照；API 不持有 Polymarket 私钥，也不直接请求外部账户数据。`available_usd` 优先使用 CLOB `balance-allowance`，当 CLOB 返回 0 或失败但资金钱包链上 pUSD 余额大于 0 时，worker 使用链上 pUSD 回填
 
 ## 关键交互
@@ -57,6 +58,7 @@
 - **成交后策略** → 页面可选择 `exit_at_markup` / `hold_and_requote` / `flatten_immediately`；`exit_at_markup` 的退出加价相对被吃买单原价计算，`hold_and_requote`（持有并续挂）按被吃买单原价生成 SELL 退出 floor 并继续正常报价；后端提交 SELL 前只看当前 orderbook best bid，best bid 不低于 floor 时用非 post-only FAK/taker SELL 按 best bid 退出，best bid 低于 floor 时保留 intent 等待非亏损退出
 - **市场质量** → 可配置最低流动性、最低 24h 成交量、最短剩余结算时间、最大 Gamma spread 和最大目录同步年龄；后端还固定拒绝高歧义、非唯一 YES/NO、FDV/launch/token/official-result 等高跳变事件风险市场
 - **机会评分** → 页面提供统一 `opportunity_*` 配置，把竞争倍数、预估 100U 日奖、账户/单市场资金占比、退出深度、入场退出滑点、坏成交恢复天数、盘口样本、中点波动、top-of-book 跳变和评分权重交给同一套指标；quote plan 表格展示机会分、score adjustment、竞争倍数、100U 日奖、退出深度、样本数和警告数量。该配置适用于所有奖励市场，不再区分低竞争/普通市场，也不再提供 observe/enforce 低竞争报告。
+- **做市商 EV** → 页面提供 `market_maker_enabled`、`strategy_mode=rewards_only|market_maker_shadow|market_maker_guarded`、最低总 EV、pricing edge、奖励补贴负 edge shadow 上限、fair value 置信/不确定性、奖励 EV、库存 cap、库存 skew、fair value TTL 和模型版本配置；选择 rewards_only 会关闭做市商，选择 shadow/guarded 会自动打开总开关。Quote plan 表格展示后端返回的 shadow/guarded 状态、总 EV、pricing edge、reward EV、fair value 区间/置信度和首个阻断原因。默认仍是 rewards_only，不改变 live。
 - 事件面板支持按 `EventCategory` 过滤
 - 页面默认展示活动视图：报价计划全宽优先，订单/库存下方分栏，事件/成交流使用独立卡片；策略配置和风控配置通过 tabs 切换，减少实盘盯盘时的配置噪音。
 - 报价计划、订单原因、信息风险摘要、AI reason、事件消息和长账户/钱包字段允许换行，表格在窄屏使用横向滚动，避免关键长文本被一行省略和短卡片被高表格行强制拉伸。
@@ -75,9 +77,10 @@
 - 完整的 Run / Cancel / Reset 入队交互
 - 顶部执行概览展示实盘模式、启停/运行状态、实时可报价比例、钱包余额/策略上限比例、最近扫描/运行时间、事件触发计数和每日大模型调用统计；关键指标条把 `status.ready_quote_markets` 显示为“实时可报价”，把 `status.eligible_markets` 显示为“最终可挂”，并单独展示候选计划总量、已拦截计划、等待 AI/信息风险、资金不足、live 盘口验证和 AI/信息风控拦截数量，避免把资金或 provider gate 抖动误读成 reward 市场池大幅变化。策略上限直接读取当前 `snapshot.config.account_capital_usd`，不再使用可能保留历史初始值的账户账本字段，也不代表链上钱包余额。
 - 操作中心集中 Run / Save / Cancel / Reset，文案提醒当前命令可能提交或取消 Polymarket 实盘订单。
-- 配置编辑按执行、市场筛选、机会评分、报价构造、成交后合并、盘口选择、AI 建议、库存与控制分组，包含仍生效的数值参数、布尔开关、受限下拉框和成交后策略；退出加价提示明确 0 表示原价卖，合并策略文案区分“生成 intent”和“自动链上执行”两个开关。
+- 配置编辑按执行、市场筛选、机会评分、做市商 EV、报价构造、成交后合并、盘口选择、AI 建议、库存与控制分组，包含仍生效的数值参数、布尔开关、受限下拉框和成交后策略；退出加价提示明确 0 表示原价卖，合并策略文案区分“生成 intent”和“自动链上执行”两个开关。
 - 市场筛选面板公开质量硬门槛；通过门槛的市场由后端继续按奖励、流动性、成交量、剩余时长和奖励 spread 综合排序。
 - 低竞争市场 sleeve UI 已移除并合并为统一机会评分：前端新增 `RewardOpportunityMetricsDto`、`opportunity_*` 配置校验、机会评分配置面板和 quote plan 行内摘要；默认机会评分基线为 10U 探针、100U 日奖最低 0.75、竞争倍数软上限 4、竞争倍数硬门槛默认开且阈值 1000x（超过即不可挂，区别于软上限仅 warning）、账户/单市场占用警告 1500/500 bps、退出深度至少 60U 或计划名义额 2.5 倍、入场退出滑点 2c、坏成交恢复 3 天、30 分钟观察窗口至少 30 个盘口样本、中点波动 3c、top-of-book 跳变 8 次，评分权重为 reward/competition/exit/stability = 35/30/25/10。保存配置时会把旧 `low_competition_mode` 强制为 `off`，独立市场/订单/全局占比置 0，并关闭/清零旧低竞争 liquidity/volume 过滤字段。DTO 中仍保留 `low_competition_*`、`strategy_bucket=low_competition`、`low_competition_metrics` 和 `low_competition_report` 以兼容历史后端响应，但页面不再提供低竞争配置、观察面板或专用表格摘要。
+- Rewards 做市商初版配置和诊断已接入：前端 DTO 包含 `RewardStrategyMode`、`RewardMarketMakerFairValueDto`、`RewardMarketMakerDecisionDto` 和 `RewardMarketMakerPlanMetricsDto`；配置面板可保存 `market_maker_*` 核心阈值和 fair value model version；报价计划行内展示做市商 EV 诊断。默认 `rewards_only` + `market_maker_enabled=false`，shadow 只展示/审计，guarded 才可能由后端重定价或拦截计划；页面不展示未实现的 SELL fair-value manager、EV 撤单确认或 PnL attribution。
 - 报价构造使用“挂单档位”下拉框选择买一/买二/买三，不再提供中间价“报价偏移”、`per_market_usd`“单市场额度”或 `quote_size_usd`“单腿金额”；默认买一。
 - 成交后合并配置公开 `balanced_merge_enabled`、`balanced_merge_auto_execute_enabled`、独立最大市场/订单数、最小 edge、最低评分、低成交量/流动性门槛、最大市场价差、独立挂单档位和单侧未配对库存上限；报价计划和托管订单表格用策略标签区分“标准”和“合并” profile，避免把两套撤单/成交语义混在一起。
 - 盘口选择公开 quote/selection mode、dominant 单边概率区间、退出深度、top1/top3 买盘集中度、HHI 和偏好分类评分加成；默认 `double + observe` 不改变既有双边挂单。

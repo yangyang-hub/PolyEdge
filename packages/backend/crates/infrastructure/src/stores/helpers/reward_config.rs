@@ -27,10 +27,65 @@ fn apply_reward_config_value(config: &mut RewardBotConfig, key: &str, value: &st
         "max_spread_cents" => config.max_spread_cents = parse_decimal_config(key, value)?,
         "quote_mode" => config.quote_mode = RewardQuoteMode::from_str(value)?,
         "selection_mode" => config.selection_mode = RewardSelectionMode::from_str(value)?,
+        "strategy_mode" => config.strategy_mode = RewardStrategyMode::from_str(value)?,
         "quote_edge_cents" => {
             // Legacy key: midpoint-offset quoting was replaced by bid-rank quoting.
         }
         "quote_bid_rank" => config.quote_bid_rank = parse_u16_config(key, value)?,
+        "market_maker_enabled" => {
+            config.market_maker_enabled = parse_bool_config(key, value)?;
+        }
+        "market_maker_min_total_ev_cents" => {
+            config.market_maker_min_total_ev_cents = parse_decimal_config(key, value)?;
+        }
+        "market_maker_min_pricing_edge_cents" => {
+            config.market_maker_min_pricing_edge_cents = parse_decimal_config(key, value)?;
+        }
+        "market_maker_max_reward_subsidized_negative_edge_cents" => {
+            config.market_maker_max_reward_subsidized_negative_edge_cents =
+                parse_decimal_config(key, value)?;
+        }
+        "market_maker_min_fair_value_confidence" => {
+            config.market_maker_min_fair_value_confidence = parse_decimal_config(key, value)?;
+        }
+        "market_maker_max_uncertainty_cents" => {
+            config.market_maker_max_uncertainty_cents = parse_decimal_config(key, value)?;
+        }
+        "market_maker_low_competition_priority_enabled" => {
+            config.market_maker_low_competition_priority_enabled =
+                parse_bool_config(key, value)?;
+        }
+        "market_maker_min_reward_ev_cents" => {
+            config.market_maker_min_reward_ev_cents = parse_decimal_config(key, value)?;
+        }
+        "market_maker_max_condition_inventory_usd" => {
+            config.market_maker_max_condition_inventory_usd = parse_decimal_config(key, value)?;
+        }
+        "market_maker_max_category_inventory_usd" => {
+            config.market_maker_max_category_inventory_usd = parse_decimal_config(key, value)?;
+        }
+        "market_maker_max_global_inventory_usd" => {
+            config.market_maker_max_global_inventory_usd = parse_decimal_config(key, value)?;
+        }
+        "market_maker_inventory_skew_cents_per_10_usd" => {
+            config.market_maker_inventory_skew_cents_per_10_usd =
+                parse_decimal_config(key, value)?;
+        }
+        "market_maker_fair_value_ttl_sec" => {
+            config.market_maker_fair_value_ttl_sec = parse_u64_config(key, value)?;
+        }
+        "market_maker_reward_ev_ttl_sec" => {
+            config.market_maker_reward_ev_ttl_sec = parse_u64_config(key, value)?;
+        }
+        "market_maker_ev_cancel_confirm_sec" => {
+            config.market_maker_ev_cancel_confirm_sec = parse_u64_config(key, value)?;
+        }
+        "market_maker_shadow_min_observation_days" => {
+            config.market_maker_shadow_min_observation_days = parse_u16_config(key, value)?;
+        }
+        "market_maker_fair_value_model_version" => {
+            config.market_maker_fair_value_model_version = value.to_string();
+        }
         "dominant_single_side_enabled" => {
             config.dominant_single_side_enabled = parse_bool_config(key, value)?;
         }
@@ -410,7 +465,82 @@ fn reward_config_entries(config: &RewardBotConfig) -> Vec<(&'static str, String)
         ("max_spread_cents", config.max_spread_cents.to_string()),
         ("quote_mode", config.quote_mode.as_str().to_string()),
         ("selection_mode", config.selection_mode.as_str().to_string()),
+        ("strategy_mode", config.strategy_mode.as_str().to_string()),
         ("quote_bid_rank", config.quote_bid_rank.to_string()),
+        (
+            "market_maker_enabled",
+            config.market_maker_enabled.to_string(),
+        ),
+        (
+            "market_maker_min_total_ev_cents",
+            config.market_maker_min_total_ev_cents.to_string(),
+        ),
+        (
+            "market_maker_min_pricing_edge_cents",
+            config.market_maker_min_pricing_edge_cents.to_string(),
+        ),
+        (
+            "market_maker_max_reward_subsidized_negative_edge_cents",
+            config
+                .market_maker_max_reward_subsidized_negative_edge_cents
+                .to_string(),
+        ),
+        (
+            "market_maker_min_fair_value_confidence",
+            config.market_maker_min_fair_value_confidence.to_string(),
+        ),
+        (
+            "market_maker_max_uncertainty_cents",
+            config.market_maker_max_uncertainty_cents.to_string(),
+        ),
+        (
+            "market_maker_low_competition_priority_enabled",
+            config
+                .market_maker_low_competition_priority_enabled
+                .to_string(),
+        ),
+        (
+            "market_maker_min_reward_ev_cents",
+            config.market_maker_min_reward_ev_cents.to_string(),
+        ),
+        (
+            "market_maker_max_condition_inventory_usd",
+            config.market_maker_max_condition_inventory_usd.to_string(),
+        ),
+        (
+            "market_maker_max_category_inventory_usd",
+            config.market_maker_max_category_inventory_usd.to_string(),
+        ),
+        (
+            "market_maker_max_global_inventory_usd",
+            config.market_maker_max_global_inventory_usd.to_string(),
+        ),
+        (
+            "market_maker_inventory_skew_cents_per_10_usd",
+            config
+                .market_maker_inventory_skew_cents_per_10_usd
+                .to_string(),
+        ),
+        (
+            "market_maker_fair_value_ttl_sec",
+            config.market_maker_fair_value_ttl_sec.to_string(),
+        ),
+        (
+            "market_maker_reward_ev_ttl_sec",
+            config.market_maker_reward_ev_ttl_sec.to_string(),
+        ),
+        (
+            "market_maker_ev_cancel_confirm_sec",
+            config.market_maker_ev_cancel_confirm_sec.to_string(),
+        ),
+        (
+            "market_maker_shadow_min_observation_days",
+            config.market_maker_shadow_min_observation_days.to_string(),
+        ),
+        (
+            "market_maker_fair_value_model_version",
+            config.market_maker_fair_value_model_version.clone(),
+        ),
         (
             "dominant_single_side_enabled",
             config.dominant_single_side_enabled.to_string(),

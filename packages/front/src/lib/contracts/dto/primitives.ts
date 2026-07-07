@@ -30,6 +30,10 @@ export type PostFillStrategy =
   | "flatten_immediately";
 export type RewardQuoteMode = "double" | "auto";
 export type RewardSelectionMode = "observe" | "enforce";
+export type RewardStrategyMode =
+  | "rewards_only"
+  | "market_maker_shadow"
+  | "market_maker_guarded";
 export type RewardLowCompetitionMode = "off" | "observe" | "enforce";
 export type RewardEventTimeConfidence = "low" | "medium" | "high";
 export type RewardUnknownEventTimeMode = "allow" | "observe" | "block";
@@ -49,6 +53,18 @@ export type RewardQuoteReadiness =
   | "waiting_orderbook"
   | "provider_pending"
   | "blocked";
+export type RewardMarketMakerDecisionType =
+  | "quote"
+  | "skip"
+  | "cancel"
+  | "hold"
+  | "exit"
+  | "merge";
+export type RewardMarketMakerDecisionStatus =
+  | "allowed"
+  | "blocked"
+  | "shadow_allowed"
+  | "shadow_blocked";
 export type RewardStrategyBucket = "standard" | "low_competition" | "none";
 export type RewardStrategyProfile = "standard" | "balanced_merge";
 export type RewardAiProvider = "openai" | "anthropic";

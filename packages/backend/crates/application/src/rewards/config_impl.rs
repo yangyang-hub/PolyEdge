@@ -17,7 +17,25 @@ impl Default for RewardBotConfig {
             max_spread_cents: decimal("8"),
             quote_mode: RewardQuoteMode::Double,
             selection_mode: RewardSelectionMode::Observe,
+            strategy_mode: RewardStrategyMode::RewardsOnly,
             quote_bid_rank: 1,
+            market_maker_enabled: false,
+            market_maker_min_total_ev_cents: decimal("1"),
+            market_maker_min_pricing_edge_cents: decimal("0.5"),
+            market_maker_max_reward_subsidized_negative_edge_cents: decimal("0.5"),
+            market_maker_min_fair_value_confidence: decimal("0.60"),
+            market_maker_max_uncertainty_cents: decimal("8"),
+            market_maker_low_competition_priority_enabled: true,
+            market_maker_min_reward_ev_cents: Decimal::ZERO,
+            market_maker_max_condition_inventory_usd: decimal("20"),
+            market_maker_max_category_inventory_usd: decimal("50"),
+            market_maker_max_global_inventory_usd: decimal("100"),
+            market_maker_inventory_skew_cents_per_10_usd: decimal("0.5"),
+            market_maker_fair_value_ttl_sec: 300,
+            market_maker_reward_ev_ttl_sec: 60,
+            market_maker_ev_cancel_confirm_sec: 30,
+            market_maker_shadow_min_observation_days: 7,
+            market_maker_fair_value_model_version: "high_probability_bucket_v1".to_string(),
             dominant_single_side_enabled: false,
             dominant_min_probability: decimal("0.90"),
             dominant_max_probability: decimal("0.97"),
@@ -184,6 +202,73 @@ impl RewardBotConfig {
         self.min_market_score = clamp_decimal(self.min_market_score, Decimal::ZERO, decimal("100"));
         self.max_spread_cents = clamp_decimal(self.max_spread_cents, decimal("0.1"), decimal("99"));
         self.quote_bid_rank = self.quote_bid_rank.clamp(1, 3);
+        if self.strategy_mode.market_maker_enabled() {
+            self.market_maker_enabled = true;
+        } else if !self.market_maker_enabled {
+            self.strategy_mode = RewardStrategyMode::RewardsOnly;
+        } else {
+            self.strategy_mode = RewardStrategyMode::MarketMakerShadow;
+        }
+        self.market_maker_min_total_ev_cents = clamp_decimal(
+            self.market_maker_min_total_ev_cents,
+            Decimal::ZERO,
+            decimal("100"),
+        );
+        self.market_maker_min_pricing_edge_cents = clamp_decimal(
+            self.market_maker_min_pricing_edge_cents,
+            decimal("-100"),
+            decimal("100"),
+        );
+        self.market_maker_max_reward_subsidized_negative_edge_cents = clamp_decimal(
+            self.market_maker_max_reward_subsidized_negative_edge_cents,
+            Decimal::ZERO,
+            decimal("100"),
+        );
+        self.market_maker_min_fair_value_confidence = clamp_decimal(
+            self.market_maker_min_fair_value_confidence,
+            Decimal::ZERO,
+            Decimal::ONE,
+        );
+        self.market_maker_max_uncertainty_cents = clamp_decimal(
+            self.market_maker_max_uncertainty_cents,
+            Decimal::ZERO,
+            decimal("100"),
+        );
+        self.market_maker_min_reward_ev_cents = clamp_decimal(
+            self.market_maker_min_reward_ev_cents,
+            Decimal::ZERO,
+            decimal("100"),
+        );
+        self.market_maker_max_condition_inventory_usd = clamp_decimal(
+            self.market_maker_max_condition_inventory_usd,
+            Decimal::ZERO,
+            decimal("1000000"),
+        );
+        self.market_maker_max_category_inventory_usd = clamp_decimal(
+            self.market_maker_max_category_inventory_usd,
+            Decimal::ZERO,
+            decimal("1000000"),
+        );
+        self.market_maker_max_global_inventory_usd = clamp_decimal(
+            self.market_maker_max_global_inventory_usd,
+            Decimal::ZERO,
+            decimal("10000000"),
+        );
+        self.market_maker_inventory_skew_cents_per_10_usd = clamp_decimal(
+            self.market_maker_inventory_skew_cents_per_10_usd,
+            Decimal::ZERO,
+            decimal("100"),
+        );
+        self.market_maker_fair_value_ttl_sec =
+            self.market_maker_fair_value_ttl_sec.clamp(30, 86_400);
+        self.market_maker_reward_ev_ttl_sec =
+            self.market_maker_reward_ev_ttl_sec.clamp(5, 86_400);
+        self.market_maker_ev_cancel_confirm_sec =
+            self.market_maker_ev_cancel_confirm_sec.clamp(0, 86_400);
+        self.market_maker_shadow_min_observation_days =
+            self.market_maker_shadow_min_observation_days.clamp(0, 365);
+        self.market_maker_fair_value_model_version =
+            non_empty_or(self.market_maker_fair_value_model_version, "high_probability_bucket_v1");
         self.dominant_min_probability = clamp_decimal(
             self.dominant_min_probability,
             decimal("0.51"),
@@ -705,8 +790,62 @@ impl RewardBotConfig {
         if let Some(selection_mode) = patch.selection_mode {
             next.selection_mode = selection_mode;
         }
+        if let Some(strategy_mode) = patch.strategy_mode {
+            next.strategy_mode = strategy_mode;
+        }
         if let Some(quote_bid_rank) = patch.quote_bid_rank {
             next.quote_bid_rank = quote_bid_rank;
+        }
+        if let Some(value) = patch.market_maker_enabled {
+            next.market_maker_enabled = value;
+        }
+        if let Some(value) = patch.market_maker_min_total_ev_cents {
+            next.market_maker_min_total_ev_cents = value;
+        }
+        if let Some(value) = patch.market_maker_min_pricing_edge_cents {
+            next.market_maker_min_pricing_edge_cents = value;
+        }
+        if let Some(value) = patch.market_maker_max_reward_subsidized_negative_edge_cents {
+            next.market_maker_max_reward_subsidized_negative_edge_cents = value;
+        }
+        if let Some(value) = patch.market_maker_min_fair_value_confidence {
+            next.market_maker_min_fair_value_confidence = value;
+        }
+        if let Some(value) = patch.market_maker_max_uncertainty_cents {
+            next.market_maker_max_uncertainty_cents = value;
+        }
+        if let Some(value) = patch.market_maker_low_competition_priority_enabled {
+            next.market_maker_low_competition_priority_enabled = value;
+        }
+        if let Some(value) = patch.market_maker_min_reward_ev_cents {
+            next.market_maker_min_reward_ev_cents = value;
+        }
+        if let Some(value) = patch.market_maker_max_condition_inventory_usd {
+            next.market_maker_max_condition_inventory_usd = value;
+        }
+        if let Some(value) = patch.market_maker_max_category_inventory_usd {
+            next.market_maker_max_category_inventory_usd = value;
+        }
+        if let Some(value) = patch.market_maker_max_global_inventory_usd {
+            next.market_maker_max_global_inventory_usd = value;
+        }
+        if let Some(value) = patch.market_maker_inventory_skew_cents_per_10_usd {
+            next.market_maker_inventory_skew_cents_per_10_usd = value;
+        }
+        if let Some(value) = patch.market_maker_fair_value_ttl_sec {
+            next.market_maker_fair_value_ttl_sec = value;
+        }
+        if let Some(value) = patch.market_maker_reward_ev_ttl_sec {
+            next.market_maker_reward_ev_ttl_sec = value;
+        }
+        if let Some(value) = patch.market_maker_ev_cancel_confirm_sec {
+            next.market_maker_ev_cancel_confirm_sec = value;
+        }
+        if let Some(value) = patch.market_maker_shadow_min_observation_days {
+            next.market_maker_shadow_min_observation_days = value;
+        }
+        if let Some(value) = patch.market_maker_fair_value_model_version {
+            next.market_maker_fair_value_model_version = value;
         }
         if let Some(value) = patch.dominant_single_side_enabled {
             next.dominant_single_side_enabled = value;
@@ -1298,6 +1437,42 @@ mod reward_config_tests {
 
         assert_eq!(config.stale_book_ms, 5_000);
         assert_eq!(config.min_scoring_check_sec, 15);
+    }
+
+    #[test]
+    fn reward_config_defaults_to_rewards_only_market_maker_disabled() {
+        let config = RewardBotConfig::default().normalized();
+
+        assert_eq!(config.strategy_mode, RewardStrategyMode::RewardsOnly);
+        assert!(!config.market_maker_enabled);
+    }
+
+    #[test]
+    fn reward_config_normalizes_market_maker_strategy_switch() {
+        let config = RewardBotConfig {
+            strategy_mode: RewardStrategyMode::MarketMakerGuarded,
+            market_maker_enabled: false,
+            market_maker_fair_value_model_version: "  ".to_string(),
+            ..RewardBotConfig::default()
+        }
+        .normalized();
+
+        assert_eq!(config.strategy_mode, RewardStrategyMode::MarketMakerGuarded);
+        assert!(config.market_maker_enabled);
+        assert_eq!(
+            config.market_maker_fair_value_model_version,
+            "high_probability_bucket_v1"
+        );
+
+        let config = RewardBotConfig {
+            strategy_mode: RewardStrategyMode::RewardsOnly,
+            market_maker_enabled: true,
+            ..RewardBotConfig::default()
+        }
+        .normalized();
+
+        assert_eq!(config.strategy_mode, RewardStrategyMode::MarketMakerShadow);
+        assert!(config.market_maker_enabled);
     }
 
     #[test]

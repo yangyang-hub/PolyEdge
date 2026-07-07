@@ -344,8 +344,27 @@ pub struct RewardBotConfig {
     pub max_spread_cents: Decimal,
     pub quote_mode: RewardQuoteMode,
     pub selection_mode: RewardSelectionMode,
+    pub strategy_mode: RewardStrategyMode,
     /// Bid price level used for new YES/NO quotes (1=best bid, 3=third bid).
     pub quote_bid_rank: u16,
+    /// Total switch for the fair-value/reward-EV market-maker decision layer.
+    pub market_maker_enabled: bool,
+    pub market_maker_min_total_ev_cents: Decimal,
+    pub market_maker_min_pricing_edge_cents: Decimal,
+    pub market_maker_max_reward_subsidized_negative_edge_cents: Decimal,
+    pub market_maker_min_fair_value_confidence: Decimal,
+    pub market_maker_max_uncertainty_cents: Decimal,
+    pub market_maker_low_competition_priority_enabled: bool,
+    pub market_maker_min_reward_ev_cents: Decimal,
+    pub market_maker_max_condition_inventory_usd: Decimal,
+    pub market_maker_max_category_inventory_usd: Decimal,
+    pub market_maker_max_global_inventory_usd: Decimal,
+    pub market_maker_inventory_skew_cents_per_10_usd: Decimal,
+    pub market_maker_fair_value_ttl_sec: u64,
+    pub market_maker_reward_ev_ttl_sec: u64,
+    pub market_maker_ev_cancel_confirm_sec: u64,
+    pub market_maker_shadow_min_observation_days: u16,
+    pub market_maker_fair_value_model_version: String,
     /// Allow auto mode to quote only the dominant outcome in one-sided markets.
     pub dominant_single_side_enabled: bool,
     pub dominant_min_probability: Decimal,
@@ -579,7 +598,43 @@ pub struct RewardBotConfigPatch {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub selection_mode: Option<RewardSelectionMode>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub strategy_mode: Option<RewardStrategyMode>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub quote_bid_rank: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub market_maker_enabled: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub market_maker_min_total_ev_cents: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub market_maker_min_pricing_edge_cents: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub market_maker_max_reward_subsidized_negative_edge_cents: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub market_maker_min_fair_value_confidence: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub market_maker_max_uncertainty_cents: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub market_maker_low_competition_priority_enabled: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub market_maker_min_reward_ev_cents: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub market_maker_max_condition_inventory_usd: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub market_maker_max_category_inventory_usd: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub market_maker_max_global_inventory_usd: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub market_maker_inventory_skew_cents_per_10_usd: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub market_maker_fair_value_ttl_sec: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub market_maker_reward_ev_ttl_sec: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub market_maker_ev_cancel_confirm_sec: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub market_maker_shadow_min_observation_days: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub market_maker_fair_value_model_version: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dominant_single_side_enabled: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

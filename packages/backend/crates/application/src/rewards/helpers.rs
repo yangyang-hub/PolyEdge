@@ -126,6 +126,15 @@ fn normalize_account_id(value: &str) -> String {
     }
 }
 
+fn non_empty_or(value: String, fallback: &str) -> String {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        fallback.to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
 fn clamp_u16(value: u16, min: u16, max: u16) -> u16 {
     value.clamp(min, max)
 }

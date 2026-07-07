@@ -2,7 +2,7 @@
 
 最后更新：2026-07-07
 
-状态：设计提案，尚未实现。本文描述把当前 rewards bot 从“奖励资格优先的安全挂单策略”重构为“利润优先、奖励增强的事件市场做市商策略”的目标架构、数据模型、决策公式和落地路线。当前仓库事实仍以 `AGENTS.md`、`doc/modules/*` 和代码为准。
+状态：部分落地。本文描述把当前 rewards bot 从“奖励资格优先的安全挂单策略”重构为“利润优先、奖励增强的事件市场做市商策略”的目标架构、数据模型、决策公式和落地路线。当前已落地 Phase 0-2 的初版安全路径：fair value 快照读取、做市商 EV/shadow/guarded 决策、quote plan 诊断和决策审计表；默认仍是 `rewards_only` 且 `market_maker_enabled=false`，不会改变 live 下单。当前仓库事实仍以 `AGENTS.md`、`doc/modules/*` 和代码为准。
 
 ## 目标
 
@@ -20,7 +20,7 @@
 - 不做 taker 套利主策略；除受控平仓外，新增流动性以 post-only maker 为主。
 - 不用“低竞争”替代“正 EV”。低竞争只说明奖励分母小，不代表市场价格合理。
 - 不追求覆盖所有市场；高歧义、官方突发、内幕信息强、事件时间未知且不可控的市场应主动放弃。
-- 不在第一阶段改动当前 live 下单路径。
+- 默认不改动当前 live 下单路径；只有显式启用 `market_maker_guarded` 才允许后端按 EV 重定价或过滤 BUY quote leg。
 
 ## 当前状态判断
 
@@ -29,13 +29,14 @@
 - `polyedge-orderbook` 负责市场目录、reward catalog、orderbook stream/cache、price-history candles。
 - rewards worker 已有 post-only BUY、SELL exit intent、confirmed fill 对账、事件窗口 gate、AI/info-risk gate、机会评分、低竞争指标、BalancedMerge 和 hard-risk cancel。
 - `high_probability` 模块已能从本地 outcome 标签和 rewards candles 构建历史样本、bucket stats 和只读 observations；新设计中它应作为 fair value / base-rate pricing provider 服务 Rewards 做市商，不再作为独立策略、paper 或 live 执行路线推进。
+- Rewards 已新增 `strategy_mode=rewards_only|market_maker_shadow|market_maker_guarded`、`market_maker_*` 配置、初版做市商 EV 决策引擎、`reward_market_maker_decisions` 审计表和前端配置/诊断；shadow 只审计，guarded 默认关闭。
 
 关键缺口：
 
-- 没有面向 rewards live 下单的统一 `fair_value` / `edge` / `EV` 决策层。
-- 当前 BUY 报价主要来自盘口档位 `quote_bid_rank`，而不是从可盈利价格上限反推目标价。
+- 做市商 EV 决策层已初版接入，但还没有充分 shadow 校准、按 decision id 的 PnL attribution 和类别级上线门槛。
+- 默认 BUY 报价仍来自现有盘口档位 `quote_bid_rank`；只有显式 `market_maker_guarded` 才会按可盈利价格上限重定价或过滤 quote leg。
 - SELL 退出仍以非亏损 floor 为核心，没有完整的 fair-value-aware inventory manager。
-- rewards 预估还未和价格 edge、退出成本、逆向选择成本合并成统一目标函数。
+- rewards 预估已在初版引擎中复用 `opportunity_metrics.estimated_reward_per_100_usd_day` 进入统一目标函数，但仍缺独立 reward EV 校准表、实际 earning 误差反馈和 EV 变负撤单确认。
 
 ## 总体原则
 
@@ -191,7 +192,7 @@ Rewards 做市商只把这些字段当作 pricing component。最终 quote/skip/
 
 ### Fair value 输出结构
 
-建议新增 `reward_market_fair_values`：
+已新增 `reward_market_fair_values`（0058），作为 High Probability fair value provider 输出：
 
 ```text
 id
@@ -462,11 +463,11 @@ strategy_mode = rewards_only | market_maker_shadow | market_maker_guarded
 
 ### Fair value
 
-`reward_market_fair_values` 如上。用于定价快照、缓存命中和审计。
+`reward_market_fair_values` 如上。用于定价快照、缓存命中和审计；Rewards 做市商启用 shadow/guarded 时读取当前模型版本、未过期且未超过 Rewards 配置 TTL 的快照。
 
 ### Decision audit
 
-新增 `reward_market_maker_decisions`：
+已新增 `reward_market_maker_decisions`（0059）：
 
 ```text
 id
@@ -493,7 +494,7 @@ inputs_hash
 created_at
 ```
 
-所有 live order 应引用最近一次 decision id，便于 PnL 和策略归因。
+后续 live order 应引用最近一次 decision id，便于 PnL 和策略归因；当前已先保存独立决策审计。
 
 ### Quote plan 扩展
 
@@ -592,17 +593,23 @@ UI 必须明确区分：
 - Quote plan DTO 增加 JSON metrics。
 - 不改变任何下单逻辑。
 
+当前状态：部分完成。已落地 fair value 表、decision audit 表、quote plan `market_maker` JSON metrics 和前端 DTO；尚未新增独立 reward EV 表。
+
 ### Phase 1：Fair value shadow
 
 - 复用 `high_probability` bucket stats 生成 rewards 子集 fair value snapshots。
 - 只覆盖有足够历史样本和 candles 的市场。
 - 所有其他市场标记 `fair_value_unavailable`，不能 live。
 
+当前状态：完成初版。High Probability 已能刷新 `reward_market_fair_values`；Rewards 做市商 shadow 会读取 fair value 并对缺失/过期/低置信度/高不确定性快照 fail closed。
+
 ### Phase 2：Reward EV 与微结构 shadow
 
 - 基于 orderbook top levels 和 active scoring 状态估算 reward EV。
 - 记录 scoring success 和实际 reward earning，用于校准。
 - 输出 `would_quote`，但仍不下单。
+
+当前状态：部分完成。初版引擎复用统一 `opportunity_metrics` 的奖励密度、退出滑点、中点波动、top-of-book 跳变和库存状态，输出 shadow allowed/blocked 与 EV 分解并记录审计；尚未记录 scoring success/实际 reward earning 的校准反馈。
 
 ### Phase 3：Guarded live，小额单侧
 
@@ -614,6 +621,8 @@ UI 必须明确区分：
   - 单 condition/全局小额上限。
   - 低竞争高奖励优先。
 - 禁止因为双边奖励补贴明显负 edge 的腿。
+
+当前状态：代码路径已存在但默认关闭。`market_maker_guarded` 会按 fair value、总 EV、pricing edge floor、库存 cap 和最低 rewards size 重定价或过滤 BUY quote leg；shadow 中允许奖励补贴不超过配置上限的小额负 edge 用于观察，guarded 会重定价到非负/达标 edge。尚未建立 7-14 天 shadow 上线门槛、EV 变负撤单确认和完整 PnL attribution。
 
 ### Phase 4：双边与库存优化
 

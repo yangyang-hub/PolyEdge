@@ -396,6 +396,8 @@ pub struct RewardQuotePlan {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub opportunity_metrics: Option<RewardOpportunityMetrics>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub market_maker: Option<RewardMarketMakerPlanMetrics>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub low_competition_metrics: Option<RewardLowCompetitionMetrics>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ai_advisory: Option<RewardMarketAdvisory>,

@@ -754,6 +754,17 @@ async fn run_reward_bot_live_tick(
         &account,
         &cycle.config,
     );
+    let market_maker_decisions =
+        apply_and_record_reward_market_maker_decisions(state, &mut cycle, trace_id).await?;
+    if market_maker_decisions > 0 {
+        report.eligible_plans = cycle.plans.iter().filter(|plan| plan.eligible).count();
+        debug!(
+            trace_id = %trace_id,
+            decisions = market_maker_decisions,
+            strategy_mode = cycle.config.strategy_mode.as_str(),
+            "recorded reward market maker decisions",
+        );
+    }
     state
         .reward_bot_service
         .save_quote_plans(&cycle.plans)
@@ -945,6 +956,55 @@ async fn run_reward_bot_live_tick(
     }
 
     Ok(report)
+}
+
+async fn apply_and_record_reward_market_maker_decisions(
+    state: &AppState,
+    cycle: &mut RewardLiveCycle,
+    trace_id: &str,
+) -> Result<usize> {
+    if !cycle.config.strategy_mode.market_maker_enabled() || !cycle.config.market_maker_enabled {
+        for plan in &mut cycle.plans {
+            plan.market_maker = None;
+        }
+        return Ok(0);
+    }
+
+    let condition_ids = cycle
+        .plans
+        .iter()
+        .map(|plan| plan.condition_id.clone())
+        .collect::<Vec<_>>();
+    let now = OffsetDateTime::now_utc();
+    let fair_values = state
+        .reward_bot_service
+        .latest_market_maker_fair_values(
+            &condition_ids,
+            &cycle.config.market_maker_fair_value_model_version,
+            now,
+        )
+        .await?
+        .into_iter()
+        .filter(|value| {
+            let ttl = cycle.config.market_maker_fair_value_ttl_sec.min(i64::MAX as u64) as i64;
+            value.computed_at >= now - TimeDuration::seconds(ttl)
+        })
+        .collect::<Vec<_>>();
+    let decisions = apply_reward_market_maker_decisions_to_quote_plans(
+        &mut cycle.plans,
+        &cycle.markets,
+        &fair_values,
+        &cycle.open_orders,
+        &cycle.positions,
+        &cycle.config,
+        trace_id,
+        now,
+    );
+    state
+        .reward_bot_service
+        .record_market_maker_decisions(&decisions)
+        .await?;
+    Ok(decisions.len())
 }
 
 async fn cancel_live_reward_orders(

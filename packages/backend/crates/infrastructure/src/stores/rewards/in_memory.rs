@@ -15,6 +15,7 @@ pub struct InMemoryRewardBotStore {
     worker_heartbeats: RwLock<HashMap<String, OffsetDateTime>>,
     advisories: RwLock<Vec<RewardMarketAdvisory>>,
     info_risks: RwLock<Vec<RewardMarketInfoRisk>>,
+    market_maker_decisions: RwLock<Vec<RewardMarketMakerDecision>>,
     llm_calls: RwLock<Vec<RewardLlmCallRecord>>,
     low_competition_observations: RwLock<Vec<RewardLowCompetitionObservation>>,
     candles: RwLock<HashMap<(String, i32, OffsetDateTime), RewardMarketCandle>>,
@@ -38,6 +39,7 @@ impl InMemoryRewardBotStore {
             worker_heartbeats: RwLock::new(HashMap::new()),
             advisories: RwLock::new(Vec::new()),
             info_risks: RwLock::new(Vec::new()),
+            market_maker_decisions: RwLock::new(Vec::new()),
             llm_calls: RwLock::new(Vec::new()),
             low_competition_observations: RwLock::new(Vec::new()),
             candles: RwLock::new(HashMap::new()),
@@ -499,6 +501,33 @@ impl RewardBotStore for InMemoryRewardBotStore {
 
     async fn save_market_info_risk(&self, risk: &RewardMarketInfoRisk) -> Result<()> {
         self.info_risks.write().await.push(risk.clone());
+        Ok(())
+    }
+
+    async fn latest_market_maker_fair_values(
+        &self,
+        _condition_ids: &[String],
+        _model_version: &str,
+        _now: OffsetDateTime,
+    ) -> Result<Vec<RewardMarketMakerFairValue>> {
+        Ok(Vec::new())
+    }
+
+    async fn record_market_maker_decisions(
+        &self,
+        decisions: &[RewardMarketMakerDecision],
+    ) -> Result<()> {
+        let mut stored = self.market_maker_decisions.write().await;
+        for decision in decisions {
+            if let Some(existing) = stored
+                .iter_mut()
+                .find(|existing| existing.id == decision.id)
+            {
+                *existing = decision.clone();
+            } else {
+                stored.push(decision.clone());
+            }
+        }
         Ok(())
     }
 

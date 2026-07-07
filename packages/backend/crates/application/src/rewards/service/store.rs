@@ -77,6 +77,16 @@ pub trait RewardBotStore: Send + Sync {
         now: OffsetDateTime,
     ) -> Result<Vec<RewardMarketInfoRisk>>;
     async fn save_market_info_risk(&self, risk: &RewardMarketInfoRisk) -> Result<()>;
+    async fn latest_market_maker_fair_values(
+        &self,
+        condition_ids: &[String],
+        model_version: &str,
+        now: OffsetDateTime,
+    ) -> Result<Vec<RewardMarketMakerFairValue>>;
+    async fn record_market_maker_decisions(
+        &self,
+        decisions: &[RewardMarketMakerDecision],
+    ) -> Result<()>;
     async fn record_llm_call(&self, call: &RewardLlmCallRecord) -> Result<()>;
     async fn list_llm_call_daily_stats(
         &self,

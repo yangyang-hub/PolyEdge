@@ -4,11 +4,11 @@
 
 ## 概述
 
-数据库使用 PostgreSQL，通过 58 个 SQL 迁移文件管理 schema。覆盖审计、市场数据、事件/证据、执行历史、内部风险状态、奖励、跟单、Smart Money Intelligence、动态高概率市场定价研究等领域。为了空库一次性初始化，`packages/backend/init.sql` 机械合并了当前全部迁移内容；运行时仍通过 `sqlx` 使用 `packages/backend/migrations/` 做迁移校验和增量升级。旧 signals、risk_state、positions 和 arbitrage 表随已应用迁移保留，用于历史/内部兼容，不再对应前端页面或公开控制台 API。
+数据库使用 PostgreSQL，通过 59 个 SQL 迁移文件管理 schema。覆盖审计、市场数据、事件/证据、执行历史、内部风险状态、奖励、跟单、Smart Money Intelligence、动态高概率市场定价研究等领域。为了空库一次性初始化，`packages/backend/init.sql` 机械合并了当前全部迁移内容；运行时仍通过 `sqlx` 使用 `packages/backend/migrations/` 做迁移校验和增量升级。旧 signals、risk_state、positions 和 arbitrage 表随已应用迁移保留，用于历史/内部兼容，不再对应前端页面或公开控制台 API。
 
 ## 初始化入口
 
-- `packages/backend/init.sql`：完整空库初始化脚本，当前按 `0001` 到 `0058` 顺序展开。
+- `packages/backend/init.sql`：完整空库初始化脚本，当前按 `0001` 到 `0059` 顺序展开。
 - `packages/backend/migrations/*.sql`：保留给 Rust runtime 的 `sqlx::migrate!` 使用。不要删除或重命名已应用的迁移文件，否则现有数据库的 `_sqlx_migrations` 历史可能与二进制内嵌迁移不一致。
 - `init.sql` 只面向空数据库；已存在 schema 的数据库继续使用 runtime 自动迁移或按需执行新增迁移。
 
@@ -74,6 +74,7 @@
 | `0056_reward_managed_orders_external_inventory.sql` | Rewards 外部库存退出 intent | 移除 `reward_managed_orders.condition_id` 到奖励目录的外键 |
 | `0057_reward_merge_intent_execution.sql` | Rewards 合并 intent 执行状态 | 修改 `reward_merge_intents` 增加 tx hash、提交/确认/失败时间、失败原因和 retry_count |
 | `0058_reward_market_fair_values.sql` | High Probability fair value 快照 | `reward_market_fair_values`，保存保守 fair_yes 区间、置信度、不确定性、reason_codes 和 live_eligible |
+| `0059_reward_market_maker_decisions.sql` | Rewards 做市商决策审计 | `reward_market_maker_decisions`，保存 shadow/guarded quote leg EV 分解、fair value 引用、目标价格/数量、状态和原因 |
 
 ## Schema 领域分组
 
@@ -118,9 +119,9 @@
 
 ### 8. 奖励机器人
 
-- **`reward_bot_config`**：key-value 配置，包含报价/风控、市场质量、quote/selection mode、dominant 单边阈值、盘口集中度阈值、偏好分类、统一机会评分 `opportunity_*` 竞争/奖励/退出/稳定性/资金占比阈值与权重、BalancedMerge `balanced_merge_*` 独立策略阈值、AI advisory 开关/provider/request format/TTL 和信息风险开关/mode/过滤等级/TTL；`low_competition_*` 旧键仅兼容历史配置，运行时归一化为独立低竞争 sleeve 关闭
+- **`reward_bot_config`**：key-value 配置，包含报价/风控、市场质量、quote/selection mode、Rewards 做市商 `strategy_mode` 与 `market_maker_*` EV/fair-value/库存阈值、dominant 单边阈值、盘口集中度阈值、偏好分类、统一机会评分 `opportunity_*` 竞争/奖励/退出/稳定性/资金占比阈值与权重、BalancedMerge `balanced_merge_*` 独立策略阈值、AI advisory 开关/provider/request format/TTL 和信息风险开关/mode/过滤等级/TTL；`low_competition_*` 旧键仅兼容历史配置，运行时归一化为独立低竞争 sleeve 关闭
 - **`reward_markets`**：condition_id、question、market_slug、rewards_max_spread/min_size、total_daily_rate、tokens JSON
-- **`reward_quote_plans`**：market FK、scoring、`strategy_profile`（standard/balanced_merge）和 quote plan JSON；当前仍按 condition 替换快照，同一 condition 只保留一个 active profile，standard 优先避免同市场双 profile 自我竞争
+- **`reward_quote_plans`**：market FK、scoring、`strategy_profile`（standard/balanced_merge）和 quote plan JSON；quote plan JSON 可携带 `opportunity_metrics`、`event_window`、AI/info-risk 结果和 `market_maker` 做市商 EV 诊断；当前仍按 condition 替换快照，同一 condition 只保留一个 active profile，standard 优先避免同市场双 profile 自我竞争
 - **`reward_managed_orders`**：account_id、condition_id、token_id、strategy_bucket（standard/low_competition/none，当前运行时新订单统一写 standard，low_competition 仅历史兼容）、strategy_profile（standard/balanced_merge）、filled_size、reward_earned、last_scored_at；外部库存补 SELL 退出可能来自当前 rewards catalog 之外的市场，因此 `condition_id` 不再依赖 `reward_markets` 外键
 - **`reward_fills`**：order_id、account_id、condition_id、token_id、outcome、side、price、size、notional_usd、role、realized_pnl
 - **`reward_positions`**：按 account_id + token_id 保存外部完整持仓；可包含当前 rewards catalog 之外的市场，不再依赖 `reward_markets` 外键
@@ -132,6 +133,7 @@
 - **`reward_market_candles`**：orderbook 服务从 CLOB `/prices-history` 低频同步的 rewards token K 线，按 token/interval/bucket 保存 price OHLC、close observed_at 和兼容字段；当前 price-history 行的 `best_bid_close` / `best_ask_close` 等于 provider price，`spread_cents_close=0`，`sample_count` 表示同 bucket 持久化的 provider history 点数量，不包含真实成交量。
 - **`reward_market_event_windows`**：按 condition/source 保存 rewards 市场真实事件时间候选，包含 event type、start/end、confidence、source URL/payload、active、review metadata 和 updated_at；有效窗口查询按 active、confidence、source 优先级和更新时间为每个 condition 选一条。Gamma 日期候选默认低/中置信，不会在默认 high hard-gate 阈值下直接触发停挂。
 - **`reward_merge_intents`**：BalancedMerge profile 在 YES/NO 库存可配对后写入的合并意图，包含 account/condition、YES/NO token、merge size、两侧持仓 size/均价、source fill、trace、status（pending/unsupported/submitted/completed/failed）、tx hash、submitted/confirmed 时间、failed_reason 和 retry_count；自动执行开关关闭时 worker 创建 `unsupported` intent，开启时创建/读取 `pending` 或 legacy `unsupported` intent 并提交链上 CTF merge，active size 查询会把 non-failed intent 计入防重。
+- **`reward_market_maker_decisions`**：Rewards 做市商 shadow/guarded 决策审计表，一行对应一个被评估的 BUY quote leg，保存 run/account/condition/token/outcome、strategy mode、decision type/status、target price/size/notional、`fair_value_id`、pricing edge、reward EV、退出成本、逆向选择、库存惩罚、不确定性 buffer、total EV、max profitable bid、reason_codes、inputs_hash 和 created_at。当前用于 shadow/guarded 诊断和后续 PnL attribution 基础，不代表已实现完整 SELL fair-value manager。
 - **统一机会评分**：当前 rewards bot 已把普通市场和原低竞争市场合并到同一 quote plan 流，竞争资金、奖励密度、退出深度/滑点、盘口稳定性和资金占比作为 `opportunity_metrics` 写入 `reward_quote_plans` JSON 并参与评分/可挂资格；旧低竞争 schema（`strategy_bucket=low_competition`、`reward_low_competition_observations`、`low_competition_*` 配置键）仅保留历史/API/DB 兼容。
 
 ### 9. Copytrade 钱包跟踪与分析
@@ -167,7 +169,7 @@
 - **`high_probability_backtest_runs`**：一次 baseline walk-forward 回测的可复现运行记录，保存模型版本、市场范围、训练/测试样本数、候选/交易/跳过计数、胜率、PnL、ROI、最大回撤、窗口时间、`exit_rule_reports`、notes 和配置 snapshot。
 - **`high_probability_backtest_trades`**：baseline 回测中实际通过 edge gate 的模拟入场明细，关联 run 和 sample，保存 bucket、可执行价格、fair probability、net edge、推荐最高入场价、最终 outcome、单笔/累计 PnL 和 drawdown。
 - **`high_probability_observations`**：observe/paper/live guarded 决策记录；当前 `observe-high-probability-once` 和默认关闭的 `POLYEDGE_WORKER__POLL_HIGH_PROBABILITY_OBSERVE` runtime loop 会写入基于本地 rewards candle 候选和 orderbook 服务缓存计算出的只读 `allow/reject/skip` observation，paper/live 仍未实现。
-- **`reward_market_fair_values`**：High Probability fair value provider 输出表，按 `(condition_id, model_version)` upsert 当前快照，保存 token、YES/NO 补数来源、可成交价、`fair_yes_low/mid/high`、market implied、历史 base rate、confidence、uncertainty_cents、sample_count、bucket_key、fallback_level、input_hash、reason_codes、live_eligible、computed/expires 时间。API 只读未过期当前 model_version 快照；Rewards 做市商尚未接入该输出。
+- **`reward_market_fair_values`**：High Probability fair value provider 输出表，按 `(condition_id, model_version)` upsert 当前快照，保存 token、YES/NO 补数来源、可成交价、`fair_yes_low/mid/high`、market implied、历史 base rate、confidence、uncertainty_cents、sample_count、bucket_key、fallback_level、input_hash、reason_codes、live_eligible、computed/expires 时间。API 只读未过期当前 model_version 快照；Rewards 做市商在启用 shadow/guarded 时读取当前 model_version 且未过期、未超过配置 TTL 的快照作为 pricing component。
 
 ## 数据保留与自动清理
 
@@ -179,15 +181,15 @@
 
 ## 当前状态
 
-- 58 个迁移文件，最新为 `0058_reward_market_fair_values.sql`
-- `packages/backend/init.sql` 已合并 `0001`–`0058`
+- 59 个迁移文件，最新为 `0059_reward_market_maker_decisions.sql`
+- `packages/backend/init.sql` 已合并 `0001`–`0059`
 - 所有表使用 PostgreSQL 特性（JSONB、NUMERIC 约束、BIGSERIAL、部分索引等）
 - 迁移使用 `sqlx` 管理
 - 旧套利表仍随迁移存在，但 arbitrage application/store/worker/API/frontend 已移除，当前不会继续写入新 scan/opportunity 数据。
 - 通用数据库维护已接入 API 内嵌 worker runtime，生产模板默认开启 `POLYEDGE_WORKER__DATABASE_MAINTENANCE=true`，用于防止缓存、日志、队列和低频 price-history 表持续增长；它不删除 rewards fills/positions/account state 等核心账本表。
 - Rewards 低竞争市场 sleeve 已合并到统一机会评分，现有低竞争 schema 仅作为历史兼容保留；当前 active 指标为 `reward_quote_plans.quote_plan_json.opportunity_metrics`，包含 competition-share/multiple、100U 日奖、资金占比、退出深度/滑点、坏成交恢复天数、盘口样本/波动/跳变和机会分。Rewards 事件窗口已落地 `reward_market_event_windows`，live tick 会把 effective window 写入 `reward_quote_plans.quote_plan_json.event_window` 并用于阻断新增 BUY 或撤已有 BUY。BalancedMerge 成交后合并 profile 已落地 `strategy_profile` 列、`balanced_merge_*` 配置和 `reward_merge_intents` 表；自动执行默认关闭，开启 `balanced_merge_auto_execute_enabled` 后 worker 会读取 `pending/unsupported` intent 并通过 Safe proxy wallet 广播 CTF merge，提交结果写回 tx hash/submitted/failed 字段。Rewards AI advisory 已接入 `reward_market_candles`，5m source K 线由 orderbook 服务统一低频限速调用 CLOB `/prices-history` 写入，不由 worker/API 直接请求外部接口；AI advisory 在 application 层把这些 source candles 聚合为 1h 输入。Rewards AI advisory / info-risk 的实际 provider 调用复用 `llm_calls` 做每日调用统计，通用数据库维护保留 180 天。
 - Smart Money Intelligence 当前已落地基础 schema 和后端 service/store/API；`scan-smart-money-once` 会从 active copytrade tracked wallets 写入候选、近端样本画像、确定性评分和 Data API activity 源交易。自动全网发现、信号生成、LLM advisory refresh、纸面模拟和实盘 guarded execution 仍是待实现阶段。
-- 动态高概率市场定价研究当前已落地基础 schema 和后端 service/store；`build-high-probability-samples-once` 会从本地 outcome 标签 + rewards candles 构建 first-touch 样本，`refresh-high-probability-buckets-once` 会从已入库 `high_probability_samples` 计算并替换当前模型版本的 bucket stats，`run-high-probability-backtest-once` 会持久化 baseline walk-forward backtest runs/trades 和基础退出规则摘要，`observe-high-probability-once` 和默认关闭的自动 observe runtime loop 会把只读扫描结果写入 `high_probability_observations`，`refresh-high-probability-fair-values-once` 和默认关闭的自动 fair value loop 会在 `fair_value_enabled=true` 时 upsert `reward_market_fair_values`。全市场 price-history/outcome producer、完整执行成本/多阶段退出回测、Phase 4 校准与漂移监控、Rewards 做市商引用关系仍未实现；High Probability 不再作为独立 paper/live guarded execution 推进。
+- 动态高概率市场定价研究当前已落地基础 schema 和后端 service/store；`build-high-probability-samples-once` 会从本地 outcome 标签 + rewards candles 构建 first-touch 样本，`refresh-high-probability-buckets-once` 会从已入库 `high_probability_samples` 计算并替换当前模型版本的 bucket stats，`run-high-probability-backtest-once` 会持久化 baseline walk-forward backtest runs/trades 和基础退出规则摘要，`observe-high-probability-once` 和默认关闭的自动 observe runtime loop 会把只读扫描结果写入 `high_probability_observations`，`refresh-high-probability-fair-values-once` 和默认关闭的自动 fair value loop 会在 `fair_value_enabled=true` 时 upsert `reward_market_fair_values`。Rewards 做市商初版已可引用该 fair value 快照生成 shadow/guarded EV 决策并写入 `reward_market_maker_decisions`，但默认关闭 guarded live，且 fair-value-aware SELL、EV 撤单确认、完整 PnL attribution、全市场 price-history/outcome producer、完整执行成本/多阶段退出回测、Phase 4 校准与漂移监控仍未实现；High Probability 不再作为独立 paper/live guarded execution 推进。
 
 ## 修改检查清单
 

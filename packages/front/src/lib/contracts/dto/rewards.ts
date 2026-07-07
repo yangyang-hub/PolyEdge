@@ -13,6 +13,8 @@ import type {
   RewardInfoRiskLevel,
   RewardInfoRiskType,
   RewardLowCompetitionMode,
+  RewardMarketMakerDecisionStatus,
+  RewardMarketMakerDecisionType,
   RewardOrderSide,
   RewardPlanQuoteMode,
   RewardQuoteReadiness,
@@ -20,6 +22,7 @@ import type {
   RewardRiskSeverity,
   RewardSelectionMode,
   RewardStrategyBucket,
+  RewardStrategyMode,
   RewardStrategyProfile,
   RewardUnknownEventTimeMode,
 } from "./primitives";
@@ -39,7 +42,25 @@ export type RewardBotConfigDto = {
   max_spread_cents: DecimalValue;
   quote_mode: RewardQuoteMode;
   selection_mode: RewardSelectionMode;
+  strategy_mode: RewardStrategyMode;
   quote_bid_rank: number;
+  market_maker_enabled: boolean;
+  market_maker_min_total_ev_cents: DecimalValue;
+  market_maker_min_pricing_edge_cents: DecimalValue;
+  market_maker_max_reward_subsidized_negative_edge_cents: DecimalValue;
+  market_maker_min_fair_value_confidence: DecimalValue;
+  market_maker_max_uncertainty_cents: DecimalValue;
+  market_maker_low_competition_priority_enabled: boolean;
+  market_maker_min_reward_ev_cents: DecimalValue;
+  market_maker_max_condition_inventory_usd: DecimalValue;
+  market_maker_max_category_inventory_usd: DecimalValue;
+  market_maker_max_global_inventory_usd: DecimalValue;
+  market_maker_inventory_skew_cents_per_10_usd: DecimalValue;
+  market_maker_fair_value_ttl_sec: number;
+  market_maker_reward_ev_ttl_sec: number;
+  market_maker_ev_cancel_confirm_sec: number;
+  market_maker_shadow_min_observation_days: number;
+  market_maker_fair_value_model_version: string;
   dominant_single_side_enabled: boolean;
   dominant_min_probability: DecimalValue;
   dominant_max_probability: DecimalValue;
@@ -280,6 +301,70 @@ export type RewardOpportunityMetricsDto = {
   warnings: string[];
 };
 
+export type RewardMarketMakerFairValueDto = {
+  id: number;
+  condition_id: string;
+  token_id: string;
+  fair_yes_low: DecimalValue;
+  fair_yes_mid: DecimalValue;
+  fair_yes_high: DecimalValue;
+  market_implied: DecimalValue;
+  base_rate: DecimalValue;
+  confidence: DecimalValue;
+  uncertainty_cents: DecimalValue;
+  sample_count: number;
+  bucket_key: string;
+  fallback_level: number;
+  model_version: string;
+  input_hash: string;
+  reason_codes: string[];
+  live_eligible: boolean;
+  computed_at: string;
+  expires_at: string;
+};
+
+export type RewardMarketMakerDecisionDto = {
+  id: string;
+  run_id: string;
+  account_id: string;
+  condition_id: string;
+  token_id: string;
+  outcome: string;
+  side: RewardOrderSide;
+  strategy_mode: RewardStrategyMode;
+  decision_type: RewardMarketMakerDecisionType;
+  decision_status: RewardMarketMakerDecisionStatus;
+  target_price?: DecimalValue | null;
+  target_size?: DecimalValue | null;
+  target_notional_usd?: DecimalValue | null;
+  fair_value_id?: number | null;
+  reward_ev_id?: number | null;
+  pricing_edge_cents: DecimalValue;
+  reward_ev_cents: DecimalValue;
+  exit_cost_cents: DecimalValue;
+  adverse_selection_cost_cents: DecimalValue;
+  inventory_penalty_cents: DecimalValue;
+  uncertainty_buffer_cents: DecimalValue;
+  total_ev_cents: DecimalValue;
+  max_profitable_bid?: DecimalValue | null;
+  fair_value?: RewardMarketMakerFairValueDto | null;
+  reason_codes: string[];
+  inputs_hash: string;
+  created_at: string;
+};
+
+export type RewardMarketMakerPlanMetricsDto = {
+  strategy_mode: RewardStrategyMode;
+  decision_status: RewardMarketMakerDecisionStatus;
+  best_total_ev_cents?: DecimalValue | null;
+  best_pricing_edge_cents?: DecimalValue | null;
+  best_reward_ev_cents?: DecimalValue | null;
+  fair_value?: RewardMarketMakerFairValueDto | null;
+  decisions: RewardMarketMakerDecisionDto[];
+  reason_codes: string[];
+  created_at: string;
+};
+
 export type RewardLowCompetitionShadowReportDto = {
   window_hours: number;
   generated_at: string;
@@ -381,6 +466,7 @@ export type RewardQuotePlanDto = {
   recommended_quote_mode?: RewardPlanQuoteMode | null;
   book_metrics?: RewardMarketBookMetricsDto | null;
   opportunity_metrics?: RewardOpportunityMetricsDto | null;
+  market_maker?: RewardMarketMakerPlanMetricsDto | null;
   low_competition_metrics?: RewardLowCompetitionMetricsDto | null;
   ai_advisory?: RewardMarketAdvisoryDto | null;
   info_risk?: RewardMarketInfoRiskDto | null;

@@ -664,6 +664,7 @@ mod reward_info_risk_candidate_tests {
             book_metrics: None,
             low_competition_metrics: None,
             opportunity_metrics: None,
+            market_maker: None,
             ai_advisory: None,
             info_risk,
             event_window: None,
