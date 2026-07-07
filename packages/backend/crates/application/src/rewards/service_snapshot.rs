@@ -74,7 +74,6 @@ impl RewardBotService {
             },
             config,
             account,
-            low_competition_report: None,
             llm_usage,
             markets: Vec::new(),
             quote_plans: plans_page_data.items,

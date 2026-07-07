@@ -316,9 +316,9 @@ pub struct RewardCandidateFilter {
     pub allow_dominant_single_side: bool,
     pub dominant_min_probability: Decimal,
     pub dominant_max_probability: Decimal,
-    /// Low-competition discovery uses the same hard filters but a different
-    /// ordering so low-liquidity candidates are not starved by standard ranking.
-    pub prefer_low_competition_ordering: bool,
+    /// Sparse-market strategy profiles can use the same hard filters but a
+    /// different ordering so thin candidates are not starved by standard ranking.
+    pub prefer_sparse_market_ordering: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -344,27 +344,8 @@ pub struct RewardBotConfig {
     pub max_spread_cents: Decimal,
     pub quote_mode: RewardQuoteMode,
     pub selection_mode: RewardSelectionMode,
-    pub strategy_mode: RewardStrategyMode,
     /// Bid price level used for new YES/NO quotes (1=best bid, 3=third bid).
     pub quote_bid_rank: u16,
-    /// Total switch for the fair-value/reward-EV market-maker decision layer.
-    pub market_maker_enabled: bool,
-    pub market_maker_min_total_ev_cents: Decimal,
-    pub market_maker_min_pricing_edge_cents: Decimal,
-    pub market_maker_max_reward_subsidized_negative_edge_cents: Decimal,
-    pub market_maker_min_fair_value_confidence: Decimal,
-    pub market_maker_max_uncertainty_cents: Decimal,
-    pub market_maker_low_competition_priority_enabled: bool,
-    pub market_maker_min_reward_ev_cents: Decimal,
-    pub market_maker_max_condition_inventory_usd: Decimal,
-    pub market_maker_max_category_inventory_usd: Decimal,
-    pub market_maker_max_global_inventory_usd: Decimal,
-    pub market_maker_inventory_skew_cents_per_10_usd: Decimal,
-    pub market_maker_fair_value_ttl_sec: u64,
-    pub market_maker_reward_ev_ttl_sec: u64,
-    pub market_maker_ev_cancel_confirm_sec: u64,
-    pub market_maker_shadow_min_observation_days: u16,
-    pub market_maker_fair_value_model_version: String,
     /// Allow auto mode to quote only the dominant outcome in one-sided markets.
     pub dominant_single_side_enabled: bool,
     pub dominant_min_probability: Decimal,
@@ -402,48 +383,6 @@ pub struct RewardBotConfig {
     pub opportunity_competition_weight: Decimal,
     pub opportunity_exit_weight: Decimal,
     pub opportunity_stability_weight: Decimal,
-    pub low_competition_mode: RewardLowCompetitionMode,
-    pub low_competition_max_markets: u16,
-    pub low_competition_max_open_orders: u16,
-    pub low_competition_per_market_usd: Decimal,
-    pub low_competition_max_position_usd: Decimal,
-    pub low_competition_probe_notional_usd: Decimal,
-    pub low_competition_min_competition_share_bps: u16,
-    pub low_competition_max_competition_multiple: Decimal,
-    /// 早期剔除阈值：候选 competition_multiple 超过该值时判定为"伪低竞争"
-    /// （高竞争市场混入），仅用于下游 prewarm/observation 降级，不进入正式 gate。
-    pub low_competition_candidate_max_competition_multiple: Decimal,
-    pub low_competition_max_account_allocation_bps: u16,
-    pub low_competition_max_market_allocation_bps: u16,
-    pub low_competition_candidate_liquidity_filter_enabled: bool,
-    pub low_competition_candidate_volume_filter_enabled: bool,
-    pub low_competition_min_market_liquidity_usd: Decimal,
-    pub low_competition_min_market_volume_24h_usd: Decimal,
-    pub low_competition_max_competition_usd: Decimal,
-    pub low_competition_min_reward_per_100_usd_day: Decimal,
-    pub low_competition_min_exit_depth_usd: Decimal,
-    pub low_competition_min_exit_depth_multiple: Decimal,
-    pub low_competition_max_entry_exit_slippage_cents: Decimal,
-    pub low_competition_max_bad_fill_recovery_days: Decimal,
-    pub low_competition_max_midpoint_range_cents: Decimal,
-    pub low_competition_max_top_of_book_flip_count: u64,
-    pub low_competition_observation_window_sec: u64,
-    pub low_competition_min_book_samples: u64,
-    pub low_competition_quote_bid_rank: u16,
-    pub low_competition_safety_margin_cents: Decimal,
-    pub low_competition_max_spread_cents: Decimal,
-    pub low_competition_max_market_spread_cents: Decimal,
-    pub low_competition_min_market_score: Decimal,
-    pub low_competition_require_ai_allow: bool,
-    pub low_competition_info_risk_avoid_level: RewardInfoRiskLevel,
-    pub low_competition_cancel_confirm_sec: u64,
-    pub low_competition_cancel_share_threshold_ratio_bps: u16,
-    pub low_competition_cancel_competition_multiple_factor: Decimal,
-    pub low_competition_cancel_max_exit_slippage_cents: Decimal,
-    pub low_competition_cancel_min_exit_depth_usd: Decimal,
-    pub low_competition_cancel_exit_depth_multiple: Decimal,
-    pub low_competition_cancel_midpoint_range_floor_cents: Decimal,
-    pub low_competition_global_open_order_share_bps: u16,
     pub ai_advisory_enabled: bool,
     pub ai_provider: RewardAiProvider,
     pub ai_request_format: RewardAiRequestFormat,
@@ -514,9 +453,8 @@ pub struct RewardBotConfig {
     pub requote_drift_max_cancels_per_cycle: u16,
     /// What to do with inventory once a quote leg is filled.
     pub post_fill_strategy: PostFillStrategy,
-    /// Enable a separate low-activity YES/NO buy-one sleeve that keeps the
-    /// opposite BUY resting after a fill and creates a merge intent once both
-    /// sides are paired.
+    /// Enable a YES/NO buy-one strategy profile that keeps the opposite BUY
+    /// resting after a fill and creates a merge intent once both sides are paired.
     pub balanced_merge_enabled: bool,
     pub balanced_merge_max_markets: u16,
     pub balanced_merge_max_open_orders: u16,
@@ -598,43 +536,7 @@ pub struct RewardBotConfigPatch {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub selection_mode: Option<RewardSelectionMode>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub strategy_mode: Option<RewardStrategyMode>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub quote_bid_rank: Option<u16>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub market_maker_enabled: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub market_maker_min_total_ev_cents: Option<Decimal>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub market_maker_min_pricing_edge_cents: Option<Decimal>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub market_maker_max_reward_subsidized_negative_edge_cents: Option<Decimal>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub market_maker_min_fair_value_confidence: Option<Decimal>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub market_maker_max_uncertainty_cents: Option<Decimal>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub market_maker_low_competition_priority_enabled: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub market_maker_min_reward_ev_cents: Option<Decimal>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub market_maker_max_condition_inventory_usd: Option<Decimal>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub market_maker_max_category_inventory_usd: Option<Decimal>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub market_maker_max_global_inventory_usd: Option<Decimal>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub market_maker_inventory_skew_cents_per_10_usd: Option<Decimal>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub market_maker_fair_value_ttl_sec: Option<u64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub market_maker_reward_ev_ttl_sec: Option<u64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub market_maker_ev_cancel_confirm_sec: Option<u64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub market_maker_shadow_min_observation_days: Option<u16>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub market_maker_fair_value_model_version: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dominant_single_side_enabled: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -693,86 +595,6 @@ pub struct RewardBotConfigPatch {
     pub opportunity_exit_weight: Option<Decimal>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub opportunity_stability_weight: Option<Decimal>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub low_competition_mode: Option<RewardLowCompetitionMode>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub low_competition_max_markets: Option<u16>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub low_competition_max_open_orders: Option<u16>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub low_competition_per_market_usd: Option<Decimal>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub low_competition_max_position_usd: Option<Decimal>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub low_competition_probe_notional_usd: Option<Decimal>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub low_competition_min_competition_share_bps: Option<u16>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub low_competition_max_competition_multiple: Option<Decimal>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub low_competition_candidate_max_competition_multiple: Option<Decimal>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub low_competition_max_account_allocation_bps: Option<u16>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub low_competition_max_market_allocation_bps: Option<u16>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub low_competition_candidate_liquidity_filter_enabled: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub low_competition_candidate_volume_filter_enabled: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub low_competition_min_market_liquidity_usd: Option<Decimal>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub low_competition_min_market_volume_24h_usd: Option<Decimal>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub low_competition_max_competition_usd: Option<Decimal>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub low_competition_min_reward_per_100_usd_day: Option<Decimal>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub low_competition_min_exit_depth_usd: Option<Decimal>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub low_competition_min_exit_depth_multiple: Option<Decimal>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub low_competition_max_entry_exit_slippage_cents: Option<Decimal>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub low_competition_max_bad_fill_recovery_days: Option<Decimal>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub low_competition_max_midpoint_range_cents: Option<Decimal>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub low_competition_max_top_of_book_flip_count: Option<u64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub low_competition_observation_window_sec: Option<u64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub low_competition_min_book_samples: Option<u64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub low_competition_quote_bid_rank: Option<u16>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub low_competition_safety_margin_cents: Option<Decimal>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub low_competition_max_spread_cents: Option<Decimal>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub low_competition_max_market_spread_cents: Option<Decimal>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub low_competition_min_market_score: Option<Decimal>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub low_competition_require_ai_allow: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub low_competition_info_risk_avoid_level: Option<RewardInfoRiskLevel>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub low_competition_cancel_confirm_sec: Option<u64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub low_competition_cancel_share_threshold_ratio_bps: Option<u16>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub low_competition_cancel_competition_multiple_factor: Option<Decimal>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub low_competition_cancel_max_exit_slippage_cents: Option<Decimal>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub low_competition_cancel_min_exit_depth_usd: Option<Decimal>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub low_competition_cancel_exit_depth_multiple: Option<Decimal>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub low_competition_cancel_midpoint_range_floor_cents: Option<Decimal>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub low_competition_global_open_order_share_bps: Option<u16>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ai_advisory_enabled: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

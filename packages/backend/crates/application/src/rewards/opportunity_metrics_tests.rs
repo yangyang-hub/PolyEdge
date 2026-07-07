@@ -128,59 +128,6 @@ fn opportunity_config() -> RewardBotConfig {
 }
 
 #[test]
-fn opportunity_metrics_force_unified_standard_bucket_and_clear_legacy_metrics() {
-    let config = opportunity_config();
-    let books = opportunity_test_books(decimal("4"), decimal("4"));
-    let history = opportunity_book_history(&books, 3);
-    let mut plan =
-        build_reward_quote_plan(&opportunity_test_market(decimal("20")), &books, &config);
-    plan.strategy_bucket = RewardStrategyBucket::LowCompetition;
-    plan.low_competition_metrics = Some(empty_legacy_low_competition_metrics());
-    let mut plans = vec![plan];
-
-    apply_reward_opportunity_metrics_to_quote_plans(
-        &mut plans,
-        &books,
-        &history,
-        &[],
-        &opportunity_test_account(decimal("1000")),
-        &config,
-    );
-
-    assert_eq!(plans[0].strategy_bucket, RewardStrategyBucket::Standard);
-    assert!(plans[0].low_competition_metrics.is_none());
-    assert!(plans[0].opportunity_metrics.is_some());
-}
-
-#[test]
-fn disabled_opportunity_metrics_still_clear_legacy_low_competition_bucket() {
-    let config = RewardBotConfig {
-        opportunity_metrics_enabled: false,
-        ..opportunity_config()
-    };
-    let books = opportunity_test_books(decimal("4"), decimal("4"));
-    let history = opportunity_book_history(&books, 3);
-    let mut plan =
-        build_reward_quote_plan(&opportunity_test_market(decimal("20")), &books, &config);
-    plan.strategy_bucket = RewardStrategyBucket::LowCompetition;
-    plan.low_competition_metrics = Some(empty_legacy_low_competition_metrics());
-    let mut plans = vec![plan];
-
-    apply_reward_opportunity_metrics_to_quote_plans(
-        &mut plans,
-        &books,
-        &history,
-        &[],
-        &opportunity_test_account(decimal("1000")),
-        &config,
-    );
-
-    assert_eq!(plans[0].strategy_bucket, RewardStrategyBucket::Standard);
-    assert!(plans[0].low_competition_metrics.is_none());
-    assert!(plans[0].opportunity_metrics.is_none());
-}
-
-#[test]
 fn opportunity_metrics_penalize_crowded_reward_markets() {
     let config = RewardBotConfig {
         opportunity_reward_weight: Decimal::ZERO,
@@ -365,32 +312,4 @@ fn opportunity_metrics_use_snapshot_frozen_unmanaged_external_occupancy() {
         account_effective_available_after_unmanaged_external_buys(&account),
         Decimal::ZERO
     );
-}
-
-fn empty_legacy_low_competition_metrics() -> RewardLowCompetitionMetrics {
-    RewardLowCompetitionMetrics {
-        planned_notional_usd: Decimal::ZERO,
-        competition_probe_notional_usd: Decimal::ZERO,
-        qualified_competition_usd: Decimal::ZERO,
-        competition_share_bps: Decimal::ZERO,
-        competition_multiple: Decimal::ZERO,
-        estimated_reward_per_100_usd_day: Decimal::ZERO,
-        competition_density: Decimal::ZERO,
-        account_effective_available_usd: Decimal::ZERO,
-        low_competition_open_buy_notional_usd: Decimal::ZERO,
-        low_competition_open_buy_notional_usd_after_plan: Decimal::ZERO,
-        condition_buy_notional_usd_after_plan: Decimal::ZERO,
-        account_allocation_bps: Decimal::ZERO,
-        market_allocation_bps: Decimal::ZERO,
-        exit_depth_usd: Decimal::ZERO,
-        exit_slippage_cents: None,
-        bad_fill_recovery_days: None,
-        midpoint_range_cents: None,
-        top_of_book_flip_count: None,
-        sample_count: 0,
-        eligible_for_low_competition: false,
-        rejection_reasons: Vec::new(),
-        not_low_competition: false,
-        not_low_competition_reason: None,
-    }
 }

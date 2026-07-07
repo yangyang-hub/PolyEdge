@@ -1,19 +1,19 @@
 # PolyEdge
 
-PolyEdge 是面向 Polymarket 的事件、市场数据、rewards 做市和钱包跟踪控制台。当前仓库已经包含前端、Rust 后端、数据库迁移、orderbook 服务和 Docker 部署入口。
+PolyEdge 是面向 Polymarket 的事件、市场数据、市场策略研究和 LP rewards 自动化控制台。当前仓库已经包含前端、Rust 后端、数据库迁移、orderbook 服务和 Docker 部署入口。
 
 如果要判断“代码现在真实实现到哪里”，优先看 [AGENTS.md](./AGENTS.md) 和 [doc/modules/](./doc/modules/README.md)。`doc/polyedge-*.md` 中的设计/计划文档保留为历史背景，不作为当前能力清单。
 
 ## 当前状态
 
-- 前端控制台页面：`dashboard / markets / events / rewards / funding / copy-trading / wallet-analysis / settings`。未落地的 approvals 页面和 `/replay` 不再作为前端入口暴露。
+- 前端控制台页面：`dashboard / markets / events / rewards / funding / settings`。未落地的 approvals 页面和 `/replay` 不再作为前端入口暴露。
 - 前端只走真实 Rust API，不再提供 mock 数据模式；所有文案走 `@/lib/i18n/dictionaries` 中文字典。
 - 后端 Rust workspace 根为 `packages/backend/Cargo.toml`：服务 crate、worker/replay 兼容 app、共享 crates、迁移和初始化 SQL 均位于 `packages/backend/`，其中 API 在 `packages/backend/api`，orderbook 服务在 `packages/backend/order`。
-- 数据库迁移目前到 `0048_reward_account_unmanaged_buy_notional.sql`；空库可用 `packages/backend/init.sql` 一次性初始化，运行时仍使用 `packages/backend/migrations/` 做 `sqlx` 迁移校验。
+- 数据库迁移目前到 `0057_reward_merge_intent_execution.sql`；空库可用 `packages/backend/init.sql` 一次性初始化，运行时仍使用 `packages/backend/migrations/` 做 `sqlx` 迁移校验。
 - 市场同步、rewards catalog 同步和 orderbook WS/poll 缓存由独立 `polyedge-orderbook` 服务负责。
-- API 只读数据库或 orderbook 服务，不在 handler 中直接请求 Polymarket。Rewards 和 copytrade 控制操作通过数据库命令队列交给 worker/runtime 执行。
+- API 只读数据库或 orderbook 服务，不在 handler 中直接请求 Polymarket。Rewards 控制操作通过数据库命令队列交给 worker/runtime 执行。
 - Rewards bot 仅支持 live 实盘路径：post-only 买单、撤单、confirmed fill 对账、成交后 sibling cancel、exit/flatten sell、账户余额/持仓快照同步、AI advisory 和异步信息风险缓存。
-- Copy-trading 已精简为只读钱包跟踪和分析：管理钱包、扫描 source trades、统计钱包表现。旧模拟资金账本、模拟订单、模拟持仓和 PnL 面板已移除，不会下单。
+- 历史钱包类和独立研究模块已从前后端、worker、数据库和模块文档中移除；项目当前聚焦市场数据/事件基础设施和 LP rewards 策略。
 - 当前控制台会话只保留 `off`，默认内网部署不是生产级真实会话/权限体系。
 
 ## 仓库结构
@@ -83,9 +83,6 @@ cargo run -p polyedge-worker -- drain-execution-queue
 cargo run -p polyedge-worker -- poll-polymarket-order-statuses
 cargo run -p polyedge-worker -- reconcile-polymarket-fills
 cargo run -p polyedge-worker -- consume-polymarket-user-events
-cargo run -p polyedge-worker -- scan-copytrade-once
-cargo run -p polyedge-worker -- poll-copytrade
-cargo run -p polyedge-worker -- analyze-wallets-once
 ```
 
 默认端口：
@@ -112,7 +109,6 @@ cargo run -p polyedge-worker -- analyze-wallets-once
 | Rewards markets | `polyedge-orderbook` rewards catalog sync | CLOB `/rewards/markets/current` | Postgres `reward_markets` |
 | Order books | `polyedge-orderbook` WS + poll | CLOB WS + `/books` batch，回退 `/book` | orderbook 服务进程内 `InMemoryOrderbookCache` |
 | Rewards 账户状态 | worker rewards loop | 认证 CLOB / Data API / Polygon RPC | Postgres rewards tables |
-| Copytrade source trades | worker copytrade loop | Polymarket Data API | Postgres copytrade tables |
 
 关键约束：
 

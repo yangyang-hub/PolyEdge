@@ -23,8 +23,6 @@ const CONSOLE_ROUTE_REQUIREMENTS: Array<{ prefix: string; minRole: ConsoleRole }
   { prefix: "/events", minRole: "viewer" },
   { prefix: "/rewards", minRole: "operator" },
   { prefix: "/funding", minRole: "operator" },
-  { prefix: "/copy-trading", minRole: "operator" },
-  { prefix: "/wallet-analysis", minRole: "viewer" },
   { prefix: "/settings", minRole: "admin" },
 ];
 

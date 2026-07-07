@@ -1,7 +1,6 @@
 // Polymarket public Data API connector (data-api.polymarket.com): per-wallet
-// trade activity and current positions. Used by the copy-trading subsystem to
-// analyze tracked wallets and detect their new trades. No authentication: these
-// endpoints are public. This file is `include!`d by `polymarket.rs`; it relies
+// trade activity and current positions. Used by rewards account reconciliation.
+// No authentication: these endpoints are public. This file is `include!`d by `polymarket.rs`; it relies
 // on that module's shared imports plus the `Deserialize`/`JsonValue`/
 // `parse_decimal_value`/`normalize_optional_text` items brought in by `gamma.rs`.
 

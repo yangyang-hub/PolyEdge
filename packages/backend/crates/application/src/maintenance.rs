@@ -9,8 +9,6 @@ const EXPIRED_CACHE_GRACE_DAYS: i64 = 7;
 const REWARD_CANDLE_RETENTION_DAYS: i64 = 30;
 const CONTROL_COMMAND_COMPLETED_RETENTION_DAYS: i64 = 30;
 const CONTROL_COMMAND_FAILED_RETENTION_DAYS: i64 = 90;
-const COPYTRADE_EVENT_RETENTION_DAYS: i64 = 90;
-const COPYTRADE_SOURCE_TRADE_RETENTION_DAYS: i64 = 180;
 const OUTBOX_PUBLISHED_RETENTION_DAYS: i64 = 30;
 const OUTBOX_FAILED_RETENTION_DAYS: i64 = 90;
 const EXTERNAL_EVENT_PROCESSED_RETENTION_DAYS: i64 = 90;
@@ -27,8 +25,6 @@ pub struct DatabaseMaintenanceCutoffs {
     pub reward_candles_before: OffsetDateTime,
     pub control_commands_completed_before: OffsetDateTime,
     pub control_commands_failed_before: OffsetDateTime,
-    pub copytrade_events_before: OffsetDateTime,
-    pub copytrade_source_trades_before: OffsetDateTime,
     pub outbox_published_before: OffsetDateTime,
     pub outbox_failed_before: OffsetDateTime,
     pub external_event_processed_before: OffsetDateTime,
@@ -50,9 +46,6 @@ impl DatabaseMaintenanceCutoffs {
                 - Duration::days(CONTROL_COMMAND_COMPLETED_RETENTION_DAYS),
             control_commands_failed_before: now
                 - Duration::days(CONTROL_COMMAND_FAILED_RETENTION_DAYS),
-            copytrade_events_before: now - Duration::days(COPYTRADE_EVENT_RETENTION_DAYS),
-            copytrade_source_trades_before: now
-                - Duration::days(COPYTRADE_SOURCE_TRADE_RETENTION_DAYS),
             outbox_published_before: now - Duration::days(OUTBOX_PUBLISHED_RETENTION_DAYS),
             outbox_failed_before: now - Duration::days(OUTBOX_FAILED_RETENTION_DAYS),
             external_event_processed_before: now
@@ -76,9 +69,6 @@ pub struct DatabaseMaintenanceReport {
     pub reward_market_info_risks_deleted: u64,
     pub reward_market_candles_deleted: u64,
     pub reward_control_commands_deleted: u64,
-    pub copytrade_control_commands_deleted: u64,
-    pub copytrade_events_deleted: u64,
-    pub copytrade_source_trades_deleted: u64,
     pub audit_logs_deleted: u64,
     pub mode_transitions_deleted: u64,
 }
@@ -95,9 +85,6 @@ impl DatabaseMaintenanceReport {
             .saturating_add(self.reward_market_info_risks_deleted)
             .saturating_add(self.reward_market_candles_deleted)
             .saturating_add(self.reward_control_commands_deleted)
-            .saturating_add(self.copytrade_control_commands_deleted)
-            .saturating_add(self.copytrade_events_deleted)
-            .saturating_add(self.copytrade_source_trades_deleted)
             .saturating_add(self.audit_logs_deleted)
             .saturating_add(self.mode_transitions_deleted)
     }

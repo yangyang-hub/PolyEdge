@@ -38,10 +38,6 @@ mod orderbook_registry_tests {
     async fn list_all_tokens_preserves_live_priority_and_deduplicates() {
         let registry = InMemoryOrderbookSubscriptionRegistry::new();
         registry
-            .register_tokens("copytrade", &["5".to_string()])
-            .await
-            .expect("register copytrade");
-        registry
             .register_tokens("rewards_candidates", &["4".to_string(), "5".to_string()])
             .await
             .expect("register candidates");

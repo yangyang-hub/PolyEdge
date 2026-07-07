@@ -12,9 +12,6 @@ import type {
   RewardInfoDirectionalRisk,
   RewardInfoRiskLevel,
   RewardInfoRiskType,
-  RewardLowCompetitionMode,
-  RewardMarketMakerDecisionStatus,
-  RewardMarketMakerDecisionType,
   RewardOrderSide,
   RewardPlanQuoteMode,
   RewardQuoteReadiness,
@@ -22,7 +19,6 @@ import type {
   RewardRiskSeverity,
   RewardSelectionMode,
   RewardStrategyBucket,
-  RewardStrategyMode,
   RewardStrategyProfile,
   RewardUnknownEventTimeMode,
 } from "./primitives";
@@ -42,25 +38,7 @@ export type RewardBotConfigDto = {
   max_spread_cents: DecimalValue;
   quote_mode: RewardQuoteMode;
   selection_mode: RewardSelectionMode;
-  strategy_mode: RewardStrategyMode;
   quote_bid_rank: number;
-  market_maker_enabled: boolean;
-  market_maker_min_total_ev_cents: DecimalValue;
-  market_maker_min_pricing_edge_cents: DecimalValue;
-  market_maker_max_reward_subsidized_negative_edge_cents: DecimalValue;
-  market_maker_min_fair_value_confidence: DecimalValue;
-  market_maker_max_uncertainty_cents: DecimalValue;
-  market_maker_low_competition_priority_enabled: boolean;
-  market_maker_min_reward_ev_cents: DecimalValue;
-  market_maker_max_condition_inventory_usd: DecimalValue;
-  market_maker_max_category_inventory_usd: DecimalValue;
-  market_maker_max_global_inventory_usd: DecimalValue;
-  market_maker_inventory_skew_cents_per_10_usd: DecimalValue;
-  market_maker_fair_value_ttl_sec: number;
-  market_maker_reward_ev_ttl_sec: number;
-  market_maker_ev_cancel_confirm_sec: number;
-  market_maker_shadow_min_observation_days: number;
-  market_maker_fair_value_model_version: string;
   dominant_single_side_enabled: boolean;
   dominant_min_probability: DecimalValue;
   dominant_max_probability: DecimalValue;
@@ -90,45 +68,6 @@ export type RewardBotConfigDto = {
   opportunity_competition_weight: DecimalValue;
   opportunity_exit_weight: DecimalValue;
   opportunity_stability_weight: DecimalValue;
-  low_competition_mode: RewardLowCompetitionMode;
-  low_competition_max_markets: number;
-  low_competition_max_open_orders: number;
-  low_competition_max_position_usd: DecimalValue;
-  low_competition_probe_notional_usd: DecimalValue;
-  low_competition_min_competition_share_bps: number;
-  low_competition_max_competition_multiple: DecimalValue;
-  low_competition_candidate_max_competition_multiple: DecimalValue;
-  low_competition_max_account_allocation_bps: number;
-  low_competition_max_market_allocation_bps: number;
-  low_competition_candidate_liquidity_filter_enabled: boolean;
-  low_competition_candidate_volume_filter_enabled: boolean;
-  low_competition_min_market_liquidity_usd: DecimalValue;
-  low_competition_min_market_volume_24h_usd: DecimalValue;
-  low_competition_max_competition_usd: DecimalValue;
-  low_competition_min_reward_per_100_usd_day: DecimalValue;
-  low_competition_min_exit_depth_usd: DecimalValue;
-  low_competition_min_exit_depth_multiple: DecimalValue;
-  low_competition_max_entry_exit_slippage_cents: DecimalValue;
-  low_competition_max_bad_fill_recovery_days: DecimalValue;
-  low_competition_max_midpoint_range_cents: DecimalValue;
-  low_competition_max_top_of_book_flip_count: number;
-  low_competition_observation_window_sec: number;
-  low_competition_min_book_samples: number;
-  low_competition_quote_bid_rank: number;
-  low_competition_safety_margin_cents: DecimalValue;
-  low_competition_max_spread_cents: DecimalValue;
-  low_competition_max_market_spread_cents: DecimalValue;
-  low_competition_min_market_score: DecimalValue;
-  low_competition_require_ai_allow: boolean;
-  low_competition_info_risk_avoid_level: RewardInfoRiskLevel;
-  low_competition_cancel_confirm_sec: number;
-  low_competition_cancel_share_threshold_ratio_bps: number;
-  low_competition_cancel_competition_multiple_factor: DecimalValue;
-  low_competition_cancel_max_exit_slippage_cents: DecimalValue;
-  low_competition_cancel_min_exit_depth_usd: DecimalValue;
-  low_competition_cancel_exit_depth_multiple: DecimalValue;
-  low_competition_cancel_midpoint_range_floor_cents: DecimalValue;
-  low_competition_global_open_order_share_bps: number;
   ai_advisory_enabled: boolean;
   ai_provider: RewardAiProvider;
   ai_request_format: RewardAiRequestFormat;
@@ -246,32 +185,6 @@ export type RewardMarketBookMetricsDto = {
   no?: RewardBookSideMetricsDto | null;
 };
 
-export type RewardLowCompetitionMetricsDto = {
-  planned_notional_usd: DecimalValue;
-  competition_probe_notional_usd: DecimalValue;
-  qualified_competition_usd: DecimalValue;
-  competition_share_bps: DecimalValue;
-  competition_multiple: DecimalValue;
-  estimated_reward_per_100_usd_day: DecimalValue;
-  competition_density: DecimalValue;
-  account_effective_available_usd: DecimalValue;
-  low_competition_open_buy_notional_usd: DecimalValue;
-  low_competition_open_buy_notional_usd_after_plan: DecimalValue;
-  condition_buy_notional_usd_after_plan: DecimalValue;
-  account_allocation_bps: DecimalValue;
-  market_allocation_bps: DecimalValue;
-  exit_depth_usd: DecimalValue;
-  exit_slippage_cents?: DecimalValue | null;
-  bad_fill_recovery_days?: DecimalValue | null;
-  midpoint_range_cents?: DecimalValue | null;
-  top_of_book_flip_count?: number | null;
-  sample_count: number;
-  eligible_for_low_competition: boolean;
-  rejection_reasons: string[];
-  not_low_competition?: boolean;
-  not_low_competition_reason?: string | null;
-};
-
 export type RewardOpportunityMetricsDto = {
   planned_notional_usd: DecimalValue;
   probe_notional_usd: DecimalValue;
@@ -299,103 +212,6 @@ export type RewardOpportunityMetricsDto = {
   opportunity_score: DecimalValue;
   score_adjustment: DecimalValue;
   warnings: string[];
-};
-
-export type RewardMarketMakerFairValueDto = {
-  id: number;
-  condition_id: string;
-  token_id: string;
-  fair_yes_low: DecimalValue;
-  fair_yes_mid: DecimalValue;
-  fair_yes_high: DecimalValue;
-  market_implied: DecimalValue;
-  base_rate: DecimalValue;
-  confidence: DecimalValue;
-  uncertainty_cents: DecimalValue;
-  sample_count: number;
-  bucket_key: string;
-  fallback_level: number;
-  model_version: string;
-  input_hash: string;
-  reason_codes: string[];
-  live_eligible: boolean;
-  computed_at: string;
-  expires_at: string;
-};
-
-export type RewardMarketMakerDecisionDto = {
-  id: string;
-  run_id: string;
-  account_id: string;
-  condition_id: string;
-  token_id: string;
-  outcome: string;
-  side: RewardOrderSide;
-  strategy_mode: RewardStrategyMode;
-  decision_type: RewardMarketMakerDecisionType;
-  decision_status: RewardMarketMakerDecisionStatus;
-  target_price?: DecimalValue | null;
-  target_size?: DecimalValue | null;
-  target_notional_usd?: DecimalValue | null;
-  fair_value_id?: number | null;
-  reward_ev_id?: number | null;
-  pricing_edge_cents: DecimalValue;
-  reward_ev_cents: DecimalValue;
-  exit_cost_cents: DecimalValue;
-  adverse_selection_cost_cents: DecimalValue;
-  inventory_penalty_cents: DecimalValue;
-  uncertainty_buffer_cents: DecimalValue;
-  total_ev_cents: DecimalValue;
-  max_profitable_bid?: DecimalValue | null;
-  fair_value?: RewardMarketMakerFairValueDto | null;
-  reason_codes: string[];
-  inputs_hash: string;
-  created_at: string;
-};
-
-export type RewardMarketMakerPlanMetricsDto = {
-  strategy_mode: RewardStrategyMode;
-  decision_status: RewardMarketMakerDecisionStatus;
-  best_total_ev_cents?: DecimalValue | null;
-  best_pricing_edge_cents?: DecimalValue | null;
-  best_reward_ev_cents?: DecimalValue | null;
-  fair_value?: RewardMarketMakerFairValueDto | null;
-  decisions: RewardMarketMakerDecisionDto[];
-  reason_codes: string[];
-  created_at: string;
-};
-
-export type RewardLowCompetitionShadowReportDto = {
-  window_hours: number;
-  generated_at: string;
-  latest_observed_at?: string | null;
-  observations: number;
-  unique_markets: number;
-  gate_pass_count: number;
-  final_pass_count: number;
-  sample_insufficient_count: number;
-  ai_blocked_count: number;
-  info_risk_blocked_count: number;
-  standard_overlap_count: number;
-  not_low_competition_count: number;
-  gate_pass_ratio: DecimalValue;
-  final_pass_ratio: DecimalValue;
-  sample_insufficient_ratio: DecimalValue;
-  ai_blocked_ratio: DecimalValue;
-  info_risk_blocked_ratio: DecimalValue;
-  standard_overlap_ratio: DecimalValue;
-  not_low_competition_ratio: DecimalValue;
-  competition_share_bps_median?: DecimalValue | null;
-  account_allocation_bps_p90?: DecimalValue | null;
-  market_allocation_bps_p90?: DecimalValue | null;
-  estimated_reward_per_100_usd_day_median?: DecimalValue | null;
-  estimated_reward_per_100_usd_day_p90?: DecimalValue | null;
-  exit_depth_multiple_median?: DecimalValue | null;
-  midpoint_range_cents_p95?: DecimalValue | null;
-  exit_slippage_cents_p95?: DecimalValue | null;
-  bad_fill_recovery_days_p95?: DecimalValue | null;
-  should_consider_enforce: boolean;
-  recommendation_reasons: string[];
 };
 
 export type RewardMarketAdvisoryDto = {
@@ -466,8 +282,6 @@ export type RewardQuotePlanDto = {
   recommended_quote_mode?: RewardPlanQuoteMode | null;
   book_metrics?: RewardMarketBookMetricsDto | null;
   opportunity_metrics?: RewardOpportunityMetricsDto | null;
-  market_maker?: RewardMarketMakerPlanMetricsDto | null;
-  low_competition_metrics?: RewardLowCompetitionMetricsDto | null;
   ai_advisory?: RewardMarketAdvisoryDto | null;
   info_risk?: RewardMarketInfoRiskDto | null;
   event_window?: RewardEventWindowAssessmentDto | null;
@@ -576,7 +390,6 @@ export type RewardQuotePlanBlockerCountsDto = {
   ai_watch?: number;
   ai_avoid?: number;
   info_risk?: number;
-  low_competition?: number;
   funding?: number;
   live_validation?: number;
   other?: number;
@@ -619,7 +432,6 @@ export type RewardBotSnapshotDto = {
   config: RewardBotConfigDto;
   status: RewardBotStatusDto;
   account: RewardAccountStateDto;
-  low_competition_report?: RewardLowCompetitionShadowReportDto | null;
   llm_usage?: RewardLlmCallDailyStatsDto[];
   markets: RewardMarketDto[];
   quote_plans: RewardQuotePlanDto[];

@@ -35,7 +35,7 @@ crate 依赖**单向**，不可逆向：
    - 路径相对**根文件物理目录**解析，可多层嵌套（范例：`catalog/postgres/market_event/execution_updates/`）；
    - 子文件按**职责**命名（`fills.rs`/`quoting.rs`/`verifier.rs`/`parsers.rs`），不要按类型机械堆叠。
 
-   范例：`copytrade.rs`（根：共享导入 + `include!` 聚合）→ `copytrade/{models,control,inputs,service,analysis,helpers,tests}.rs`。
+   范例：`rewards.rs`（根：共享导入 + `include!` 聚合）→ `rewards/{models,service,planner,helpers}.rs`。
 
 3. **`mod` vs `include!`**：要对外暴露子命名空间（独立可见性边界）用真正的 `mod`（如 `settings::runtime_config`、`infrastructure` 的 `pub mod`）；同一逻辑单元的纯物理拆分用 `include!`。
 
@@ -59,7 +59,7 @@ crate 依赖**单向**，不可逆向：
 
 ## 测试组织
 
-- 库 crate：模块内 `#[cfg(test)] mod tests { use super::*; … }`，可作为 `tests.rs` 被 `include!`（范例：`copytrade/tests.rs`、`auth/tests.rs`、`settings/tests.rs`）。
+- 库 crate：模块内 `#[cfg(test)] mod tests { use super::*; … }`，可作为 `tests.rs` 被 `include!`（范例：`auth/tests.rs`、`settings/tests.rs`）。
 - 二进制 crate：`src/tests/` 目录 + `src/tests.rs` 聚合（范例：`packages/backend/api/src/tests/`）。
 - 测试与被测代码同 crate，通过 `super::` 访问私有项。
 
@@ -78,8 +78,6 @@ cargo clippy --workspace --tests  # lint
 下列文件超过软上限但未达硬上限，建议后续按本文件的 `include!` 模式继续拆分；新增改动不应让它们继续膨胀：
 
 - `catalog/postgres/market_event/queries.rs`（~782；市场查询已拆到 `market_queries.rs`）
-- `application/copytrade/models.rs`（~787）
 - `stores/rewards/postgres.rs`（~701，受单 trait impl 约束，优先级低）
-- `stores/copytrade/postgres.rs`（~713，受单 trait impl 约束，优先级低）
 - `catalog/postgres/market_event/execution_updates/fills.rs`（~688）
 - `application/risk.rs`（~687）

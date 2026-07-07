@@ -166,7 +166,7 @@ async fn postgres_list_reward_candidate_markets(
     .bind(filter.allow_dominant_single_side)
     .bind(filter.dominant_min_probability)
     .bind(filter.dominant_max_probability)
-    .bind(filter.prefer_low_competition_ordering)
+    .bind(filter.prefer_sparse_market_ordering)
     .bind(i64::from(safety_limit))
     .fetch_all(&store.pool)
     .await

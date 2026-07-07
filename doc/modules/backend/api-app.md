@@ -4,128 +4,98 @@
 
 ## 概述
 
-`polyedge-api` 是基于 Axum 的统一后端进程，crate 位于 `packages/backend/api`。它组装 HTTP 路由、认证中间件和原 `polyedge-worker` 后台 runtime，HTTP handler 与后台任务共享同一个 `AppState` / application service 实例。当前内网部署可通过 `POLYEDGE_AUTH__DISABLED=true` 关闭权限校验。
+`polyedge-api` 是基于 Axum 的统一后端进程，crate 位于 `packages/backend/api`。它组装 HTTP 路由、认证中间件、runtime 依赖和内嵌 `WorkerRuntime`。API handler 保持薄层，只做认证、请求解析、DTO 映射、命令入队和 store/service 读取；市场数据和策略执行由 orderbook 服务与 worker 负责。
+
+当前 API 聚焦市场/事件/新闻基础设施、订单/执行查询、pricing 估计、LP rewards、Funding、runtime config 和系统模式。旧钱包类与独立研究路由已删除。
 
 ## 设计目标
 
-- Handler 层尽量薄：只做请求解析、DTO 映射和响应构建
-- 业务逻辑全部委托给 application 层的 Service
-- 通过中间件栈统一处理认证/内网旁路、请求体限制、超时和追踪
+- Handler 不直接抓 Polymarket/Gamma/CLOB 外部数据。
+- 业务逻辑委托 application service；持久化通过 infrastructure store。
+- 写操作使用明确的认证层级和幂等/step-up 校验（当 auth 未关闭时）。
+- Rewards 控制端点只入队命令，由后台 runtime 执行 live 策略。
 
 ## 架构与关键文件
 
 | 文件 | 职责 |
 |---|---|
-| `packages/backend/api/src/main.rs` | 加载 Runtime、连接 orderbook 服务、启动 `WorkerRuntime` 和 Axum server；监听地址和 signal shutdown 复用 `polyedge-common` |
-| `packages/backend/api/src/lib.rs` | 路由组装入口：`build_app(state: AppState) -> Router`（~420 行） |
-| `packages/backend/api/src/handlers/system.rs` | 健康检查、就绪检查、系统模式 |
-| `packages/backend/api/src/handlers/market_handlers.rs` | 市场列表和详情 |
-| `packages/backend/api/src/handlers/funding.rs` | Polymarket 入金：读取后端资金配置、通过 Bridge 广播资金钱包 ERC-20 转账 |
-| `packages/backend/api/src/handlers/execution_lists.rs` | 列表：orders、drafts、trades、execution requests |
-| `packages/backend/api/src/handlers/callbacks.rs` + `callback_helpers.rs` | 连接器回调（订单状态、成交回填） |
-| `packages/backend/api/src/handlers/mode_control.rs` | 系统模式转换 |
-| `packages/backend/api/src/handlers/rewards.rs` | 奖励机器人管理；run/cancel/reset 只入队 worker 控制命令 |
-| `packages/backend/api/src/handlers/copytrade.rs` | 跟单管理；run/analyze/cancel/reset 只入队 worker 控制命令 |
-| `packages/backend/api/src/handlers/smart_money.rs` | Smart Money Intelligence foundation：读取 snapshot、保存配置；不抓外部数据、不执行交易 |
-| `packages/backend/api/src/handlers/high_probability.rs` | High Probability Pricing research foundation：读取 snapshot/config/bucket stats/report/backtests/backtest runs/trades/退出规则摘要和 fair value 快照；不抓外部数据、不执行交易 |
-| `packages/backend/api/src/handlers/wallet_analysis.rs` | 钱包分析 |
-| `packages/backend/api/src/handlers/health.rs` | 健康检查 |
-| `packages/backend/api/src/handlers/runtime_config.rs` + `runtime_config_helpers.rs` | 运行时配置管理 |
-| `packages/backend/api/src/handlers/mappers.rs` | DTO 映射辅助；保留 connector callback 需要的执行/持仓/风险映射 |
+| `packages/backend/api/src/main.rs` | 加载 Runtime、连接 orderbook 服务、启动内嵌 worker runtime 和 Axum server |
+| `packages/backend/api/src/lib.rs` | 路由组装入口、handler include 和共享常量 |
+| `handlers/system.rs` | 健康、就绪和系统状态 |
+| `handlers/market_handlers.rs` | 市场列表、详情和分类 |
+| `handlers/funding.rs` | 后端资金钱包状态和 Polygon Bridge 入金转账 |
+| `handlers/execution_lists.rs` | orders、drafts、trades、execution requests 查询 |
+| `handlers/callbacks.rs` + `callback_helpers.rs` | connector 订单状态/成交回调 |
+| `handlers/mode_control.rs` | 系统模式转换 |
+| `handlers/rewards.rs` | Rewards snapshot、配置保存和 run/cancel/reset 命令入队 |
+| `handlers/health.rs` | 健康检查 helper |
+| `handlers/runtime_config.rs` + `runtime_config_helpers.rs` | 运行时配置读写 |
+| `handlers/mappers.rs` | DTO 映射辅助 |
 
 ## 路由结构
 
-| 路由组 | 路径前缀 | 认证 |
+| 路由组 | 路径 | 认证 |
 |---|---|---|
-| Health | `/healthz`、`/readyz` | 无 |
-| Markets | `/api/v1/markets`、`/api/v1/market-categories` | console_read |
-| Funding | `/api/v1/funding`、`/api/v1/funding/transfer` | console_read/write |
-| Events/Evidence | `/api/v1/events`、`/api/v1/evidences` | console_read |
-| News | `/api/v1/news/source-health`、`/api/v1/news/raw-events` | console_read |
-| Orders/Trades | `/api/v1/orders/drafts`、`/api/v1/orders`、`/api/v1/trades` | console_read |
-| Execution | `/api/v1/execution/requests` | console_read |
-| Callbacks | `/api/v1/connectors/callbacks/orders/status`、`trades/fill`、polymarket 变体 | connector_write |
-| Pricing | `/api/v1/pricing/estimates` | console_read |
-| Rewards Bot | `/api/v1/rewards-bot`（snapshot/config/run/cancel-all/reset） | console_read/write |
-| Copy Trading | `/api/v1/copy-trading`（snapshot/config/wallets/run/analyze/cancel-all/reset） | console_read/write |
-| Smart Money | `/api/v1/smart-money`（snapshot/config/candidates/status） | console_read/write |
-| High Probability Pricing | `/api/v1/high-probability`、`/api/v1/high-probability/config`、`/api/v1/high-probability/buckets`、`/api/v1/high-probability/report`、`/api/v1/high-probability/backtests`、`/api/v1/high-probability/backtest-runs`、`/api/v1/high-probability/backtest-runs/{run_id}/trades`、`/api/v1/high-probability/fair-values` | console_read |
-| Wallet Analysis | `/api/v1/wallet-analysis` | console_read |
-| Runtime Config | `/api/v1/runtime-config` | console_read/write |
-| System | `/api/v1/system/mode` | console_read/mode_write |
+| Health | `GET /healthz`、`GET /readyz` | 无 |
+| Markets | `GET /api/v1/markets`、`GET /api/v1/markets/{market_id}`、`GET /api/v1/market-categories` | `console_read` |
+| Orderbook | `GET /api/v1/orderbook/{token_id}` | `console_read` |
+| Funding | `GET /api/v1/funding`、`POST /api/v1/funding/transfer` | `console_read` / `console_write` |
+| Events/Evidences | `GET /api/v1/events`、`GET /api/v1/evidences` | `console_read` |
+| News | `GET /api/v1/news/source-health`、`GET /api/v1/news/raw-events` | `console_read` |
+| Orders/Trades | `GET /api/v1/orders/drafts`、`GET /api/v1/orders`、`GET /api/v1/trades` | `console_read` |
+| Execution | `GET /api/v1/execution/requests` | `console_read` |
+| Callbacks | `POST /api/v1/connectors/callbacks/orders/status`、`POST /api/v1/connectors/callbacks/trades/fill`、Polymarket 同名变体 | `connector_write` |
+| Pricing | `GET /api/v1/pricing/estimates` | `console_read` |
+| Rewards Bot | `GET /api/v1/rewards-bot`、`POST /api/v1/rewards-bot/config`、`POST /api/v1/rewards-bot/run`、`POST /api/v1/rewards-bot/cancel-all`、`POST /api/v1/rewards-bot/reset` | `console_read` / `console_write` |
+| Runtime Config | `GET /api/v1/runtime-config`、`POST /api/v1/runtime-config` | `console_read` / `console_write` |
+| System | `GET /api/v1/system/mode`、`POST /api/v1/system/mode` | `console_read` / `mode_write` |
 
 ## 中间件栈
 
-- `RequestBodyLimitLayer`（1MB）— 防止过大请求体
-- `TraceLayer` — 请求追踪日志
-- `TimeoutLayer`（30s）— 请求超时保护
-- `CorsLayer::permissive()` — 允许前端和 API 分别部署在不同内网主机/端口
-- 认证中间件：按路由组使用不同的认证级别；`POLYEDGE_AUTH__DISABLED=true` 时不校验 token、dev-auth 头或 step-up code，直接注入内部 admin `AuthContext`
+- `RequestBodyLimitLayer`：1MB 请求体限制。
+- `TraceLayer`：HTTP 请求追踪。
+- `TimeoutLayer`：30 秒超时。
+- `CorsLayer::permissive()`：支持前端和 API 分别部署在内网不同主机/端口。
+- 认证中间件：按路由组使用 `console_read`、`console_write`、`connector_write` 或 `mode_write`；`POLYEDGE_AUTH__DISABLED=true` 时直接注入内部 admin `AuthContext`。
 
-Rewards Bot 的 `run` / `cancel-all` / `reset` handler 不直接执行策略、不读取 orderbook cache，也不直接修改托管订单。Handler 委托 `RewardBotService` 写入 `reward_control_commands`；同账户同动作已有 pending/running 命令时会合并重复请求，真正入队后通过共享 `RewardBotService` revision 立即唤醒同进程 rewards loop；后台 runtime 领取命令并执行 live 逻辑。
+## 关键行为
 
-所有 Rewards snapshot 响应只读取 `RewardBotService` / store；handler 不直接请求 CLOB/Data API。配置、账户、positions 和 heartbeat 在同进程 service 内有热缓存，分页 orders/plans、fills、events、`llm_usage` 每日调用统计等历史查询仍从 store 读取。`orders_status=filled` 过滤会返回 `status=filled` 或 `filled_size > 0` 的本系统 managed orders，便于排查部分成交后已关闭的被吃订单。`status.open_orders` 只统计已有非内部 `external_order_id`、仍是 open-like 且未处于提交未知、取消未知、404 人工对账或 `awaiting final reconciliation` 锁定的 managed orders；本地 planned/exit intent 和已接受取消但仍等待最终对账的订单不会显示为当前 Polymarket 开放挂单。`status.error` 只报告当前开放订单上的活跃对账锁，不会因为历史 critical event 一直保持错误。外部 balance、positions、订单 scoring 和 UTC 当日账户级 maker rewards（聚合端点优先、明细端点 fallback）由内嵌后台 runtime 同步。返回前每个 rewards snapshot handler 还会 best-effort 用 `state.orderbook_cache`（`OrderbookHttpClient`，HTTP 调用 orderbook 服务 `POST /orderbook/batch`）批量读取当前页 positions/orders 的 token 盘口，注入 `token_quotes`（按 `token_id` 索引的 best_bid/best_ask/mark_price）供前端展示买一/卖一和持仓盈亏；orderbook 服务不可用、请求失败或某 token 无盘口时不阻断 snapshot，对应 token 缺失或字段为空，前端显示 `—`。
-同进程 worker 成功读取 CLOB open-order snapshot 后，`status.open_orders` 优先使用该 snapshot 中仍存在的本系统 managed 外部订单数量；冷启动或尚未成功同步时才回退到本地 store 计数。
+Rewards Bot 的 `run`、`cancel-all` 和 `reset` handler 不直接执行策略、不读取外部盘口、不修改 live 订单。handler 委托 `RewardBotService` 写入 `reward_control_commands`，同账户同动作 pending/running 命令会合并；成功入队后通过 service revision 唤醒同进程 rewards loop。
 
-Copy Trading 的 `run` / `analyze` / `cancel-all` / `reset` 端点同样不抓取 Polymarket Data API / CLOB，也不直接执行跟单循环；API 只写入 `copytrade_control_commands`，worker 负责领取。当前产品只暴露 Analyze，`run` / `cancel-all` / `reset` 是历史兼容入口，worker 中不再触发模拟交易。
+Rewards snapshot 只读取 `RewardBotService` / store。配置、账户、positions 和 heartbeat 有同进程热缓存；分页 orders/plans、fills、events、`llm_usage` 每日调用统计从 store 读取。snapshot handler 会 best-effort 通过 `OrderbookHttpClient` 批量读取当前页 orders/positions 的 token 盘口并注入 `token_quotes`；orderbook 服务不可用时不阻断响应。
 
-Smart Money 的当前 API 提供 foundation snapshot、配置保存和候选钱包状态管理：`GET /api/v1/smart-money`、`POST /api/v1/smart-money/config`、`POST /api/v1/smart-money/candidates/status`。候选状态更新可按 wallet + 可选 source 把候选设为 `candidate/watch/tracked/blocked/rejected`；未入库的钱包会创建 `manual` 来源记录，便于提前拉黑。handler 只读写 `SmartMoneyService` / store，不抓取 Polymarket Data API、链上 RPC、orderbook 外部源或 LLM provider，也不会生成信号或执行交易。
+Funding 状态接口只返回派生付款地址、Polymarket 入账钱包、支持资产、单笔上限和 USDC/USDT 链上余额，不返回私钥。转账接口是真实链上操作：验证幂等键和确认字段后，委托 `PolymarketChainConnector` 调用 Bridge 生成入金地址并广播 Polygon ERC-20 转账。
 
-High Probability Pricing 的当前 API 只提供 research foundation 只读接口：`GET /api/v1/high-probability` 返回 config、bucket stats 和 observations snapshot，`GET /api/v1/high-probability/config` 返回当前配置，`GET /api/v1/high-probability/buckets` 返回当前模型版本的 bucket stats，`GET /api/v1/high-probability/report` 返回由现有样本和 bucket stats 计算的样本覆盖、胜负分布、合格分桶数、加权胜率/期望和数据提示，`GET /api/v1/high-probability/backtests` 返回即时 70/30 walk-forward baseline 报告和基础退出规则对比，`GET /api/v1/high-probability/backtest-runs` 和 `/backtest-runs/{run_id}/trades` 读取已持久化 baseline 回测 run、退出规则摘要与交易明细，`GET /api/v1/high-probability/fair-values` 返回当前 model_version 未过期的 `reward_market_fair_values` 诊断快照。handler 只读取 `HighProbabilityService` / store，不导入 outcome、不构建样本、不刷新分桶或 fair value、不抓外部数据，也不会生成交易决策或下单。
-
-Funding 的 `GET /api/v1/funding` 只读取后端配置并返回派生出的付款钱包地址、Polymarket 入账钱包地址、支持资产、单笔上限和后端资金钱包 USDC/USDT 链上余额；不会返回私钥。余额查询失败不会让状态接口整体失败，会通过 `balance_error` 暴露给前端。`POST /api/v1/funding/transfer` 是真实链上资金操作，当前内网免鉴权部署只要求 `Idempotency-Key` 和请求体确认；关闭 `POLYEDGE_AUTH__DISABLED` 后仍会走 console_write 与 `funding_transfer` step-up scope 校验。handler 不接收前端充值地址，入账钱包固定由 `POLYEDGE_POLYMARKET__FUNDER` 优先、`ACCOUNT_ID` 回退决定，随后委托 `PolymarketChainConnector` 调用 Polymarket Bridge `/deposit` 生成 EVM 入金地址并广播 Polygon ERC-20 转账。
-
-## 常量
-
-- `CONNECTOR_ORDER_STATUS_SOURCE` — 连接器订单状态回调来源标识
-- `CONNECTOR_TRADE_FILL_SOURCE` — 连接器成交回填回调来源标识
-
-旧控制台列表 helper 和流式 SSE 常量已随对应路由删除；当前常量主要保留 connector callback 来源标识。
+Connector callback 路由用于订单状态和成交回填。回调通过 external-event/idempotency 存储防重，并委托 execution service 做状态更新和审计。
 
 ## 数据流
 
-```
+```text
 HTTP Request
-    ↓
-Auth Middleware（认证 + 鉴权；内网 disabled 模式下注入 admin 上下文）
-    ↓
-Handler（解析请求、构建 Command/Query）
-    ↓
-Application Service（业务逻辑）
-    ↓
-Store（持久化）
-    ↓
-Handler（DTO 映射、构建响应）
-    ↓
-HTTP Response
+    -> Auth Middleware
+    -> Handler
+    -> Application Service
+    -> Store / connector callback helper
+    -> DTO response
 ```
 
 ## 当前状态
 
-- 当前 REST 端点覆盖市场、事件/证据、新闻、订单/成交、pricing、rewards、funding、copytrade、smart money foundation、high probability pricing research foundation、wallet analysis、runtime config、system mode、connector callback 和 orderbook 代理
-- API crate 已收敛到 `packages/backend/api`，仍作为 `packages/backend/Cargo.toml` Rust workspace member 构建
-- SSE 流式端点已移除，前端通过 REST API 加载数据
-- API 进程内嵌 worker runtime；`polyedge-worker` 二进制仅保留 CLI/运维兼容入口，不再单独部署常驻容器
-- Rewards Bot 控制端点只作为前端接口和命令入口，具体 live 策略、撤单和重置由同进程后台 runtime 处理；Copy Trading 当前只保留钱包跟踪和 Analyze，旧 run/cancel/reset 入口不执行模拟交易
-- Rewards Bot snapshot 不承载全量 reward markets；配置、账户、positions、heartbeat 优先从共享内存读取；`llm_usage` 统计来自 `llm_calls` 日聚合，不触发外部 provider 请求
-- Markets DTO 返回 Gamma 同步的 `liquidity_usd` 与 `end_at`，供控制台和其他数据库消费者使用
-- 旧 `/api/v1/signals`、`/api/v1/positions`、`/api/v1/risk/*`、`/api/v1/arbitrage/*` 和 system kill-switch 端点已移除；内部 connector callback 仍会返回订单/成交/持仓及 `RiskStateData` 用于执行链路兼容。
-- 当前内网部署使用 `POLYEDGE_AUTH__DISABLED=true`，前端请求不需要权限头或 step-up code
-- CORS 当前为 permissive，支持纯内网中 front/API 分别部署在不同服务器
-- Step-up 认证代码路径仍保留；当 `POLYEDGE_AUTH__DISABLED=false` 时用于敏感操作（模式切换、Funding 入金等）
-- Funding 入金端点已接入，支持后端配置资金钱包向配置的 Polymarket 钱包进行 Polygon USDC/USDT Bridge 入金；状态 API 会展示付款地址、入账钱包地址和后端资金钱包 USDC/USDT 链上余额，转账 API 只暴露 Bridge 地址和交易 hash 等回执，不暴露私钥。
+- 当前 REST 端点覆盖市场、事件/证据、新闻、订单/成交、执行请求、pricing、rewards、funding、runtime config、system mode、connector callback 和单 token orderbook 代理。
+- SSE 流式端点已移除；前端通过 REST API 加载数据。
+- API 进程内嵌 worker runtime；`polyedge-worker` 只作为 CLI/运维兼容入口保留。
+- 当前内网部署常用 `POLYEDGE_AUTH__DISABLED=true`；关闭该开关后，写路径仍使用 console/mode 权限和 Funding step-up scope。
+- CORS 当前为 permissive，适配内网前后端分开部署。
 
 ## 已知缺口
 
-- Rewards snapshot 的外部 balance/positions/earnings 新鲜度取决于 rewards poll 周期和外部 API 成功率；失败时保留上一版状态。
+- Rewards 外部 balance、positions 和 earnings 新鲜度取决于 rewards poll 周期和外部 API 成功率。
 - `orders` / `orders_page` 只覆盖本系统 managed orders，尚未提供账户范围全部外部开放订单视图。
 
 ## 修改检查清单
 
-- [ ] 新增端点时在 `lib.rs` 的 `build_app()` 中注册路由
-- [ ] 新增 handler 文件后在 `lib.rs` 中添加 `include!()`
-- [ ] 选择正确的认证级别（console_read/console_write/connector_write/mode_write）
-- [ ] 修改认证或 CORS 行为时同步更新 `AuthSettings`、部署模板和 `doc/modules/infra/deployment.md`
-- [ ] DTO 类型从 `contracts` crate 引用，不在 handler 中内联定义
-- [ ] 修改路由路径后同步更新前端 `src/lib/api/` 中的对应调用
-- [ ] 运行 `cargo check --workspace --tests`
+- [ ] 新增端点时在 `build_app()` 中注册路由并选择正确认证层级。
+- [ ] 新增 handler 文件后在 `lib.rs` 中添加 `include!()`。
+- [ ] DTO 从 `contracts` crate 引用，不在 handler 中内联定义。
+- [ ] 修改路由后同步更新前端 `src/lib/api/`、模块文档和 API 合约文档。
+- [ ] 运行 `cargo check --workspace --tests`。

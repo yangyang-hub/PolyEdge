@@ -102,8 +102,7 @@ fn reward_live_action_orderbook_tokens_cover_orders_and_eligible_plans() {
 
 #[test]
 fn live_buy_submission_last_look_tokens_keep_single_order_token() {
-    let mut order = live_test_open_order("yes_live");
-    order.strategy_bucket = RewardStrategyBucket::LowCompetition;
+    let order = live_test_open_order("yes_live");
 
     let token_ids = live_buy_submission_last_look_token_ids(&order, None);
 
@@ -266,9 +265,7 @@ fn live_test_plan(now: OffsetDateTime) -> RewardQuotePlan {
         quote_mode: polyedge_application::RewardPlanQuoteMode::Double,
         recommended_quote_mode: Some(polyedge_application::RewardPlanQuoteMode::Double),
         book_metrics: None,
-        low_competition_metrics: None,
         opportunity_metrics: None,
-        market_maker: None,
         ai_advisory: None,
         info_risk: None,
         event_window: None,
@@ -1242,70 +1239,6 @@ fn live_placement_profile_order_cap_only_skips_that_profile() {
     assert!(orders
         .iter()
         .all(|order| order.strategy_profile == RewardStrategyProfile::BalancedMerge));
-}
-
-#[test]
-fn live_placement_treats_legacy_bucket_as_standard() {
-    let config = RewardBotConfig {
-        account_id: "reward_live".to_string(),
-        stale_book_ms: 0,
-        max_markets: 4,
-        max_open_orders: 3,
-        max_global_position_usd: Decimal::ZERO,
-        ..RewardBotConfig::default()
-    };
-    let now = OffsetDateTime::now_utc();
-    let mut legacy_plan = live_test_plan(now);
-    legacy_plan.condition_id = "cond_legacy_new".to_string();
-    legacy_plan.market_slug = "legacy-market-new".to_string();
-    legacy_plan.strategy_bucket = RewardStrategyBucket::LowCompetition;
-    legacy_plan.legs[0].token_id = "yes_legacy_new".to_string();
-    legacy_plan.legs[1].token_id = "no_legacy_new".to_string();
-    let mut standard_plan = live_test_plan(now);
-    standard_plan.condition_id = "cond_standard_new".to_string();
-    standard_plan.market_slug = "standard-market-new".to_string();
-    standard_plan.strategy_bucket = RewardStrategyBucket::Standard;
-    standard_plan.legs[0].token_id = "yes_standard_new".to_string();
-    standard_plan.legs[1].token_id = "no_standard_new".to_string();
-    let books = HashMap::from([
-        (
-            "yes_legacy_new".to_string(),
-            live_test_book("yes_legacy_new", now),
-        ),
-        (
-            "no_legacy_new".to_string(),
-            live_test_book("no_legacy_new", now),
-        ),
-        (
-            "yes_standard_new".to_string(),
-            live_test_book("yes_standard_new", now),
-        ),
-        (
-            "no_standard_new".to_string(),
-            live_test_book("no_standard_new", now),
-        ),
-    ]);
-    let mut existing_legacy = live_test_open_order("yes_existing_legacy");
-    existing_legacy.condition_id = "cond_existing_legacy".to_string();
-    existing_legacy.strategy_bucket = RewardStrategyBucket::LowCompetition;
-
-    let mut plans = vec![legacy_plan, standard_plan];
-    let (orders, _) = live_placement_orders(
-        &config,
-        &live_test_account(Decimal::from(100_u64)),
-        &mut plans,
-        &books,
-        &HashMap::new(),
-        &[existing_legacy],
-        &[],
-        false,
-        "trc_live_test",
-    );
-
-    assert_eq!(orders.len(), 2);
-    assert!(orders
-        .iter()
-        .all(|order| order.strategy_bucket == RewardStrategyBucket::Standard));
 }
 
 #[test]

@@ -30,11 +30,6 @@ export type PostFillStrategy =
   | "flatten_immediately";
 export type RewardQuoteMode = "double" | "auto";
 export type RewardSelectionMode = "observe" | "enforce";
-export type RewardStrategyMode =
-  | "rewards_only"
-  | "market_maker_shadow"
-  | "market_maker_guarded";
-export type RewardLowCompetitionMode = "off" | "observe" | "enforce";
 export type RewardEventTimeConfidence = "low" | "medium" | "high";
 export type RewardUnknownEventTimeMode = "allow" | "observe" | "block";
 export type RewardGammaEventDateMode = "ignore" | "observe" | "medium_confidence";
@@ -53,19 +48,7 @@ export type RewardQuoteReadiness =
   | "waiting_orderbook"
   | "provider_pending"
   | "blocked";
-export type RewardMarketMakerDecisionType =
-  | "quote"
-  | "skip"
-  | "cancel"
-  | "hold"
-  | "exit"
-  | "merge";
-export type RewardMarketMakerDecisionStatus =
-  | "allowed"
-  | "blocked"
-  | "shadow_allowed"
-  | "shadow_blocked";
-export type RewardStrategyBucket = "standard" | "low_competition" | "none";
+export type RewardStrategyBucket = "standard" | "none";
 export type RewardStrategyProfile = "standard" | "balanced_merge";
 export type RewardAiProvider = "openai" | "anthropic";
 export type RewardAiRequestFormat =
@@ -85,30 +68,4 @@ export type RewardInfoRiskType =
   | "unknown";
 export type RewardInfoDirectionalRisk = "yes" | "no" | "unclear";
 export type RewardFillRole = "maker" | "taker";
-export type CopyTradeMode = "paper" | "live";
-export type CopySizingMode = "fixed_usd" | "proportional_to_source" | "capital_ratio" | "mirror_portfolio_weight";
-export type CopyOrderSide = "buy" | "sell";
-export type TrackedWalletStatus = "active" | "paused";
-export type CopyEventSeverity = "info" | "warning" | "critical";
-export type SmartMoneyMode = "observe" | "paper" | "approval" | "live_guarded";
-export type SmartWalletCandidateStatus =
-  | "candidate"
-  | "watch"
-  | "tracked"
-  | "blocked"
-  | "rejected";
-export type SmartWalletTier = "blocked" | "candidate" | "watch" | "approved";
-export type SmartMoneySide = "buy" | "sell";
-export type SmartSignalStatus =
-  | "new"
-  | "rejected"
-  | "observe"
-  | "paper"
-  | "approval_required"
-  | "live_ready"
-  | "executed"
-  | "expired";
-export type SmartSignalDecisionValue = "allow" | "observe" | "reject";
-export type HighProbabilityMode = "observe" | "paper" | "live_guarded";
-export type HighProbabilityDecision = "allow" | "reject" | "skip";
 export type DecimalValue = string | number;

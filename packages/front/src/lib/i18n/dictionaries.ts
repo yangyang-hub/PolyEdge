@@ -3,11 +3,8 @@ import { enums } from "./dictionaries/enums";
 import { dashboard } from "./dictionaries/dashboard";
 import { markets } from "./dictionaries/markets";
 import { rewards } from "./dictionaries/rewards";
-import { copytrade } from "./dictionaries/copytrade";
 import { ops } from "./dictionaries/ops";
-import { walletAnalysis } from "./dictionaries/wallet-analysis";
 import { funding } from "./dictionaries/funding";
-import { highProbability } from "./dictionaries/high-probability";
 
 const _dictionary = {
   ...shared,
@@ -15,11 +12,8 @@ const _dictionary = {
   ...dashboard,
   ...markets,
   ...rewards,
-  ...copytrade,
   ...ops,
-  ...walletAnalysis,
   ...funding,
-  ...highProbability,
 } as const;
 
 type DeepStringRecord<T> = {

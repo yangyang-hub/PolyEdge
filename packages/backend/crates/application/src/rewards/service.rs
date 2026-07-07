@@ -337,30 +337,6 @@ impl RewardBotService {
         self.store.save_market_info_risk(risk).await
     }
 
-    pub async fn latest_market_maker_fair_values(
-        &self,
-        condition_ids: &[String],
-        model_version: &str,
-        now: OffsetDateTime,
-    ) -> Result<Vec<RewardMarketMakerFairValue>> {
-        if condition_ids.is_empty() {
-            return Ok(Vec::new());
-        }
-        self.store
-            .latest_market_maker_fair_values(condition_ids, model_version, now)
-            .await
-    }
-
-    pub async fn record_market_maker_decisions(
-        &self,
-        decisions: &[RewardMarketMakerDecision],
-    ) -> Result<()> {
-        if decisions.is_empty() {
-            return Ok(());
-        }
-        self.store.record_market_maker_decisions(decisions).await
-    }
-
     pub async fn record_llm_call(&self, call: &RewardLlmCallRecord) -> Result<()> {
         self.store.record_llm_call(call).await
     }
@@ -379,18 +355,6 @@ impl RewardBotService {
 
     pub async fn save_quote_plans(&self, plans: &[RewardQuotePlan]) -> Result<()> {
         self.store.save_quote_plans(plans).await
-    }
-
-    pub async fn record_low_competition_observations(
-        &self,
-        observations: &[RewardLowCompetitionObservation],
-    ) -> Result<()> {
-        if observations.is_empty() {
-            return Ok(());
-        }
-        self.store
-            .record_low_competition_observations(observations)
-            .await
     }
 
     /// List a bounded candidate pool for one rewards strategy tick.

@@ -68,94 +68,6 @@ impl FromStr for RewardSelectionMode {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum RewardStrategyMode {
-    /// Existing rewards-first maker behavior.
-    RewardsOnly,
-    /// Compute and persist market-maker decisions, but do not affect live orders.
-    MarketMakerShadow,
-    /// Apply market-maker EV gates before live BUY placement.
-    MarketMakerGuarded,
-}
-
-impl RewardStrategyMode {
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::RewardsOnly => "rewards_only",
-            Self::MarketMakerShadow => "market_maker_shadow",
-            Self::MarketMakerGuarded => "market_maker_guarded",
-        }
-    }
-
-    #[must_use]
-    pub const fn market_maker_enabled(self) -> bool {
-        matches!(self, Self::MarketMakerShadow | Self::MarketMakerGuarded)
-    }
-
-    #[must_use]
-    pub const fn market_maker_guarded(self) -> bool {
-        matches!(self, Self::MarketMakerGuarded)
-    }
-}
-
-impl FromStr for RewardStrategyMode {
-    type Err = AppError;
-
-    fn from_str(value: &str) -> Result<Self> {
-        match value {
-            "rewards_only" => Ok(Self::RewardsOnly),
-            "market_maker_shadow" => Ok(Self::MarketMakerShadow),
-            "market_maker_guarded" => Ok(Self::MarketMakerGuarded),
-            other => Err(AppError::invalid_input(
-                "REWARD_STRATEGY_MODE_INVALID",
-                format!("unknown reward strategy mode: {other}"),
-            )),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum RewardLowCompetitionMode {
-    Off,
-    Observe,
-    Enforce,
-}
-
-impl RewardLowCompetitionMode {
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Off => "off",
-            Self::Observe => "observe",
-            Self::Enforce => "enforce",
-        }
-    }
-
-    #[must_use]
-    pub const fn is_enabled(self) -> bool {
-        !matches!(self, Self::Off)
-    }
-}
-
-impl FromStr for RewardLowCompetitionMode {
-    type Err = AppError;
-
-    fn from_str(value: &str) -> Result<Self> {
-        match value {
-            "off" => Ok(Self::Off),
-            "observe" => Ok(Self::Observe),
-            "enforce" => Ok(Self::Enforce),
-            other => Err(AppError::invalid_input(
-                "REWARD_LOW_COMPETITION_MODE_INVALID",
-                format!("unknown reward low competition mode: {other}"),
-            )),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
 pub enum RewardEventTimeConfidence {
     Low,
     Medium,
@@ -418,7 +330,6 @@ impl FromStr for RewardQuoteReadiness {
 #[serde(rename_all = "snake_case")]
 pub enum RewardStrategyBucket {
     Standard,
-    LowCompetition,
     None,
 }
 
@@ -427,7 +338,6 @@ impl RewardStrategyBucket {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Standard => "standard",
-            Self::LowCompetition => "low_competition",
             Self::None => "none",
         }
     }
@@ -439,7 +349,6 @@ impl FromStr for RewardStrategyBucket {
     fn from_str(value: &str) -> Result<Self> {
         match value {
             "standard" => Ok(Self::Standard),
-            "low_competition" => Ok(Self::LowCompetition),
             "none" => Ok(Self::None),
             other => Err(AppError::invalid_input(
                 "REWARD_STRATEGY_BUCKET_INVALID",

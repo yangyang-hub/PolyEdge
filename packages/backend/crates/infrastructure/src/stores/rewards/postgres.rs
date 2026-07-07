@@ -137,23 +137,6 @@ impl RewardBotStore for PostgresRewardBotStore {
         })?
         .rows_affected();
 
-        let low_competition_observations_deleted = sqlx::query(
-            r#"
-            DELETE FROM reward_low_competition_observations
-            WHERE observed_at < $1
-            "#,
-        )
-        .bind(cutoff)
-        .execute(&mut *transaction)
-        .await
-        .map_err(|error| {
-            db_error(
-                "POSTGRES_DELETE_FAILED",
-                format!("failed to prune reward low-competition observations: {error}"),
-            )
-        })?
-        .rows_affected();
-
         transaction.commit().await.map_err(|error| {
             db_error(
                 "POSTGRES_TRANSACTION_COMMIT_FAILED",
@@ -164,7 +147,6 @@ impl RewardBotStore for PostgresRewardBotStore {
         Ok(RewardHistoryPruneReport {
             terminal_orders_deleted,
             risk_events_deleted,
-            low_competition_observations_deleted,
         })
     }
 
@@ -245,22 +227,6 @@ impl RewardBotStore for PostgresRewardBotStore {
             )
         })?;
         Ok(())
-    }
-
-    async fn record_low_competition_observations(
-        &self,
-        observations: &[RewardLowCompetitionObservation],
-    ) -> Result<()> {
-        postgres_record_low_competition_observations(&self.pool, observations).await
-    }
-
-    async fn list_low_competition_observations(
-        &self,
-        account_id: &str,
-        since: OffsetDateTime,
-        limit: u16,
-    ) -> Result<Vec<RewardLowCompetitionObservation>> {
-        postgres_list_low_competition_observations(&self.pool, account_id, since, limit).await
     }
 
     async fn record_market_candle_sample(
@@ -397,23 +363,6 @@ impl RewardBotStore for PostgresRewardBotStore {
 
     async fn save_market_info_risk(&self, risk: &RewardMarketInfoRisk) -> Result<()> {
         postgres_save_market_info_risk(&self.pool, risk).await
-    }
-
-    async fn latest_market_maker_fair_values(
-        &self,
-        condition_ids: &[String],
-        model_version: &str,
-        now: OffsetDateTime,
-    ) -> Result<Vec<RewardMarketMakerFairValue>> {
-        postgres_latest_market_maker_fair_values(&self.pool, condition_ids, model_version, now)
-            .await
-    }
-
-    async fn record_market_maker_decisions(
-        &self,
-        decisions: &[RewardMarketMakerDecision],
-    ) -> Result<()> {
-        postgres_record_market_maker_decisions(&self.pool, decisions).await
     }
 
     async fn record_llm_call(&self, call: &RewardLlmCallRecord) -> Result<()> {

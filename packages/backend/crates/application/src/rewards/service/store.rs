@@ -41,18 +41,6 @@ pub trait RewardBotStore: Send + Sync {
     ) -> Result<Vec<RewardMarketEventWindow>>;
     /// Replace the current rewards quote plan snapshot.
     async fn save_quote_plans(&self, plans: &[RewardQuotePlan]) -> Result<()>;
-    /// Append legacy low-competition observations when reading historical data.
-    async fn record_low_competition_observations(
-        &self,
-        observations: &[RewardLowCompetitionObservation],
-    ) -> Result<()>;
-    /// Read legacy low-competition observations for one account.
-    async fn list_low_competition_observations(
-        &self,
-        account_id: &str,
-        since: OffsetDateTime,
-        limit: u16,
-    ) -> Result<Vec<RewardLowCompetitionObservation>>;
     async fn record_market_candle_sample(&self, sample: &RewardMarketCandleSample) -> Result<()>;
     async fn list_recent_market_candles(
         &self,
@@ -77,16 +65,6 @@ pub trait RewardBotStore: Send + Sync {
         now: OffsetDateTime,
     ) -> Result<Vec<RewardMarketInfoRisk>>;
     async fn save_market_info_risk(&self, risk: &RewardMarketInfoRisk) -> Result<()>;
-    async fn latest_market_maker_fair_values(
-        &self,
-        condition_ids: &[String],
-        model_version: &str,
-        now: OffsetDateTime,
-    ) -> Result<Vec<RewardMarketMakerFairValue>>;
-    async fn record_market_maker_decisions(
-        &self,
-        decisions: &[RewardMarketMakerDecision],
-    ) -> Result<()>;
     async fn record_llm_call(&self, call: &RewardLlmCallRecord) -> Result<()>;
     async fn list_llm_call_daily_stats(
         &self,

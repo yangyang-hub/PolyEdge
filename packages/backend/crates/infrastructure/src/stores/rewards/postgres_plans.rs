@@ -59,7 +59,6 @@ async fn postgres_count_quote_plans(pool: &PgPool) -> Result<RewardQuotePlanCoun
                COUNT(*) FILTER (WHERE NOT eligible
                                 AND reason LIKE 'info risk %'
                                 AND reason NOT LIKE 'info risk pending:%') AS blocker_info_risk,
-               0::BIGINT AS blocker_low_competition,
                COUNT(*) FILTER (WHERE NOT eligible
                                 AND reason LIKE 'live funding below rewards minimum:%') AS blocker_funding,
                COUNT(*) FILTER (WHERE NOT eligible
@@ -101,7 +100,6 @@ async fn postgres_count_quote_plans(pool: &PgPool) -> Result<RewardQuotePlanCoun
             ai_watch: postgres_count_to_usize(&row, "blocker_ai_watch")?,
             ai_avoid: postgres_count_to_usize(&row, "blocker_ai_avoid")?,
             info_risk: postgres_count_to_usize(&row, "blocker_info_risk")?,
-            low_competition: postgres_count_to_usize(&row, "blocker_low_competition")?,
             funding: postgres_count_to_usize(&row, "blocker_funding")?,
             live_validation: postgres_count_to_usize(&row, "blocker_live_validation")?,
             other: postgres_count_to_usize(&row, "blocker_other")?,

@@ -240,14 +240,11 @@ async fn maybe_prune_reward_history(
     match state.reward_bot_service.prune_history(cutoff).await {
         Ok(report)
             if report.terminal_orders_deleted > 0
-                || report.risk_events_deleted > 0
-                || report.low_competition_observations_deleted > 0 =>
+                || report.risk_events_deleted > 0 =>
         {
             info!(
                 terminal_orders_deleted = report.terminal_orders_deleted,
                 risk_events_deleted = report.risk_events_deleted,
-                low_competition_observations_deleted =
-                    report.low_competition_observations_deleted,
                 cutoff = %cutoff,
                 "pruned reward history",
             );

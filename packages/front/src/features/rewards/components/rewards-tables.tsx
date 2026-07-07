@@ -30,7 +30,6 @@ import {
   rewardTone,
 } from "../lib/rewards-helpers";
 import { getPositionQuote } from "../lib/position-metrics";
-import { MarketMakerSummary } from "./rewards-market-maker-summary";
 import { OpportunitySummary } from "./rewards-opportunity-summary";
 import { DebouncedFilterBar, SortIndicator } from "./rewards-table-controls";
 
@@ -207,7 +206,6 @@ export function QuotePlansTable({
                     {quoteReadinessLabel(plan)}
                   </StatusPill>
                   <OpportunitySummary plan={plan} />
-                  <MarketMakerSummary plan={plan} />
                 </TableCell>
                 <TableCell className="align-top">
                   <StatusPill tone={plan.eligible ? "success" : "neutral"}>

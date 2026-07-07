@@ -47,8 +47,6 @@ fn apply_reward_opportunity_metrics_to_quote_plans_inner(
 ) {
     let now = OffsetDateTime::now_utc();
     for plan in plans {
-        plan.strategy_bucket = RewardStrategyBucket::Standard;
-        plan.low_competition_metrics = None;
         let plan_config = config
             .config_for_strategy_bucket(plan.strategy_bucket)
             .config_for_strategy_profile(plan.strategy_profile);

@@ -26,13 +26,11 @@ pub struct Settings {
     pub risk: RiskSettings,
     pub polymarket: PolymarketSettings,
     pub rewards: RewardsSettings,
-    pub smart_money: SmartMoneySettings,
     pub news: NewsSettings,
     pub worker: WorkerSettings,
     pub orderbook_stream: OrderbookStreamSettings,
     pub orderbook: OrderbookServiceSettings,
     pub auth: AuthSettings,
-    pub copytrade: CopyTradeSettings,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -141,16 +139,6 @@ pub struct RewardsSettings {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
-pub struct SmartMoneySettings {
-    pub signal_advisory_openai_api_key: Option<String>,
-    pub signal_advisory_anthropic_api_key: Option<String>,
-    pub signal_advisory_openai_base_url: String,
-    pub signal_advisory_anthropic_base_url: String,
-    pub signal_advisory_request_timeout_secs: u64,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(default)]
 pub struct NewsSettings {
     pub enabled: bool,
     pub poll_interval_secs: u64,
@@ -185,14 +173,6 @@ pub struct WorkerSettings {
     pub consume_polymarket_user_events: bool,
     pub poll_market_sync: bool,
     pub consume_orderbook_stream: bool,
-    pub poll_copytrade: bool,
-    pub analyze_wallets: bool,
-    pub poll_smart_money: bool,
-    pub smart_money_interval_secs: u64,
-    pub poll_high_probability_observe: bool,
-    pub high_probability_observe_interval_secs: u64,
-    pub poll_high_probability_fair_values: bool,
-    pub high_probability_fair_value_interval_secs: u64,
     pub database_maintenance: bool,
     pub database_maintenance_interval_secs: u64,
     pub news_promotion_interval_secs: u64,
@@ -242,15 +222,6 @@ pub struct OrderbookServiceSettings {
     pub service_url: String,
     /// Shared secret required by orderbook write/register endpoints.
     pub write_token: Option<String>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(default)]
-pub struct CopyTradeSettings {
-    pub enabled: bool,
-    pub poll_interval_secs: u64,
-    pub analysis_interval_secs: u64,
-    pub wallet_activity_limit: u16,
 }
 
 #[derive(Debug, Clone, Deserialize)]

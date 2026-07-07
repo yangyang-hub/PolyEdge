@@ -1,6 +1,6 @@
 # PolyEdge API 契约文档
 
-> **状态（2026-06-14）**：本文是历史 API 契约草案，部分路由和实时流设计已经过时。当前 API 状态以 [../AGENTS.md](../AGENTS.md)、[../README.md](../README.md)、[modules/backend/api-app.md](modules/backend/api-app.md) 和代码为准。
+> **状态（2026-07-07）**：本文是历史 API 契约草案，实时流设计已经过时。当前 API 状态以 [../AGENTS.md](../AGENTS.md)、[../README.md](../README.md)、[modules/backend/api-app.md](modules/backend/api-app.md) 和代码为准。
 
 ## 1. 文档目标
 
@@ -35,22 +35,28 @@
 当前实现统一挂在 `/api/v1` 前缀下，主要资源使用复数名词；完整路由以代码和 [modules/backend/api-app.md](modules/backend/api-app.md) 为准：
 
 1. `/api/v1/markets`
-2. `/api/v1/events`
-3. `/api/v1/evidences`
-4. `/api/v1/signals`
-5. `/api/v1/orders`
-6. `/api/v1/positions`
-7. `/api/v1/pricing/estimates`
-8. `/api/v1/arbitrage/*`
-9. `/api/v1/rewards-bot`
-10. `/api/v1/copy-trading`
-11. `/api/v1/wallet-analysis`
-12. `/api/v1/risk/state`
-13. `/api/v1/system`
-14. `/api/v1/news/source-health`
-15. `/api/v1/orderbook/{token_id}`
+2. `/api/v1/market-categories`
+3. `/api/v1/events`
+4. `/api/v1/evidences`
+5. `/api/v1/news/source-health`
+6. `/api/v1/news/raw-events`
+7. `/api/v1/orders/drafts`
+8. `/api/v1/orders`
+9. `/api/v1/trades`
+10. `/api/v1/execution/requests`
+11. `/api/v1/pricing/estimates`
+12. `/api/v1/rewards-bot`
+13. `/api/v1/funding`
+14. `/api/v1/funding/transfer`
+15. `/api/v1/runtime-config`
+16. `/api/v1/system/mode`
+17. `/api/v1/orderbook/{token_id}`
+18. `/api/v1/connectors/callbacks/orders/status`
+19. `/api/v1/connectors/callbacks/trades/fill`
+20. `/api/v1/connectors/polymarket/callbacks/orders/status`
+21. `/api/v1/connectors/polymarket/callbacks/trades/fill`
 
-历史草案里的 `/api/v1/approvals` 和 `/api/v1/stream/{channel}` 当前不是控制台入口；前端已移除 SSE 实时流。
+历史草案里的 approvals、SSE 实时流和已删除控制台模块路由当前不是 API 能力；前端通过 REST 加载数据。
 
 ### 3.2 字段命名
 

@@ -6,25 +6,19 @@ use axum::{
     routing::get,
 };
 use polyedge_application::{
-    AddTrackedWalletInput, AuthenticatedActor, CopyControlAction, CopyTradeConfigPatch,
-    CopyTradeSnapshot, EventListFilters, EventView, EvidenceListFilters, EvidenceView,
-    ExecutionFillResult, ExecutionRequestListFilters, ExecutionRequestView, FairValueEstimate,
-    HighProbabilityBacktestReport, HighProbabilityBacktestRun, HighProbabilityBacktestTrade,
-    HighProbabilityBucketStats, HighProbabilityConfig, HighProbabilityResearchReport,
-    HighProbabilitySnapshot, IdempotencyBegin, IdempotencyRequest, MarketListFilters,
-    MarketSortField, MarketView, ModeTransitionCommand, NewsRawEventListFilters, NewsRawEventView,
-    NewsSourceHealthListFilters, NewsSourceHealthView, OrderDraftListFilters, OrderDraftView,
-    OrderListFilters, OrderView, OrderbookCache, PageQuery, Paginated, PositionListFilters,
-    PositionView, ProbabilityEstimateListFilters, ProbabilityEstimateView,
-    ReconcileExternalTradeCommand, RewardBotConfigPatch, RewardBotSnapshot, RewardControlAction,
-    RewardOrderListQuery, RewardQuotePlanListQuery, RewardTokenQuote, RiskPolicy, RiskStateView,
-    SmartMoneyConfigPatch, SmartMoneySnapshot, SmartWalletCandidateStatusUpdate, SortOrder,
-    SyncExternalOrderStatusCommand, TrackedWalletStatus, TradeListFilters, TradeView,
-    WalletActionInput,
+    AuthenticatedActor, EventListFilters, EventView, EvidenceListFilters, EvidenceView,
+    ExecutionFillResult, ExecutionRequestListFilters, ExecutionRequestView, IdempotencyBegin,
+    IdempotencyRequest, MarketListFilters, MarketSortField, MarketView, ModeTransitionCommand,
+    NewsRawEventListFilters, NewsRawEventView, NewsSourceHealthListFilters, NewsSourceHealthView,
+    OrderDraftListFilters, OrderDraftView, OrderListFilters, OrderView, OrderbookCache, PageQuery,
+    Paginated, PositionListFilters, PositionView, ProbabilityEstimateListFilters,
+    ProbabilityEstimateView, ReconcileExternalTradeCommand, RewardBotConfigPatch,
+    RewardBotSnapshot, RewardControlAction, RewardOrderListQuery, RewardQuotePlanListQuery,
+    RewardTokenQuote, RiskPolicy, RiskStateView, SortOrder, SyncExternalOrderStatusCommand,
+    TradeListFilters, TradeView,
 };
 use polyedge_connectors::{
     ConnectorOrderStatusUpdate, ConnectorTradeFillUpdate, PolymarketChainConnector,
-    PolymarketDataApiConnector,
     PolymarketFundingTransferRequest as ConnectorFundingTransferRequest,
     normalize_polymarket_order_status_update, normalize_polymarket_trade_fill_update,
 };
@@ -40,9 +34,7 @@ use polyedge_contracts::{
     PolymarketTradeFillCallbackRequest, PositionData, ProbabilityEstimateData,
     ProbabilityEstimateListQuery, ReadinessData, RewardBotSnapshotQuery, RiskStateData,
     RuntimeConfigEntryData, SystemModeData, TradeData, TradeListQuery, TransitionSystemModeRequest,
-    UpdateRuntimeConfigRequest, WalletActivityData, WalletAnalysisData, WalletAnalysisRequest,
-    WalletCategoryData, WalletClosedPositionData, WalletPnlData, WalletProfileData,
-    WalletRecentTradeData, WalletRiskData, WalletStyleData, WalletTopMarketData,
+    UpdateRuntimeConfigRequest,
 };
 use polyedge_domain::{AppError, OrderStatus, Probability, Quantity, StepUpScope, UsdAmount};
 use polyedge_infrastructure::stores::ExternalEventBegin;
@@ -241,150 +233,6 @@ pub fn build_app(state: AppState) -> Router {
                 require_console_write_auth,
             )),
         )
-        // ── Copy Trading ─────────────────────────────────────────────
-        .route(
-            "/api/v1/copy-trading",
-            get(read_copytrade_snapshot).route_layer(middleware::from_fn_with_state(
-                state.clone(),
-                require_console_read_auth,
-            )),
-        )
-        .route(
-            "/api/v1/copy-trading/config",
-            axum::routing::post(update_copytrade_config).route_layer(
-                middleware::from_fn_with_state(state.clone(), require_console_write_auth),
-            ),
-        )
-        .route(
-            "/api/v1/copy-trading/wallets",
-            axum::routing::post(add_copytrade_wallet).route_layer(middleware::from_fn_with_state(
-                state.clone(),
-                require_console_write_auth,
-            )),
-        )
-        .route(
-            "/api/v1/copy-trading/wallets/remove",
-            axum::routing::post(remove_copytrade_wallet).route_layer(
-                middleware::from_fn_with_state(state.clone(), require_console_write_auth),
-            ),
-        )
-        .route(
-            "/api/v1/copy-trading/wallets/status",
-            axum::routing::post(set_copytrade_wallet_status).route_layer(
-                middleware::from_fn_with_state(state.clone(), require_console_write_auth),
-            ),
-        )
-        .route(
-            "/api/v1/copy-trading/run",
-            axum::routing::post(run_copytrade_once).route_layer(middleware::from_fn_with_state(
-                state.clone(),
-                require_console_write_auth,
-            )),
-        )
-        .route(
-            "/api/v1/copy-trading/analyze",
-            axum::routing::post(analyze_copytrade_wallets).route_layer(
-                middleware::from_fn_with_state(state.clone(), require_console_write_auth),
-            ),
-        )
-        .route(
-            "/api/v1/copy-trading/cancel-all",
-            axum::routing::post(cancel_copytrade_orders).route_layer(
-                middleware::from_fn_with_state(state.clone(), require_console_write_auth),
-            ),
-        )
-        .route(
-            "/api/v1/copy-trading/reset",
-            axum::routing::post(reset_copytrade).route_layer(middleware::from_fn_with_state(
-                state.clone(),
-                require_console_write_auth,
-            )),
-        )
-        // ── Smart Money ─────────────────────────────────────────────
-        .route(
-            "/api/v1/smart-money",
-            get(read_smart_money_snapshot).route_layer(middleware::from_fn_with_state(
-                state.clone(),
-                require_console_read_auth,
-            )),
-        )
-        .route(
-            "/api/v1/smart-money/config",
-            axum::routing::post(update_smart_money_config).route_layer(
-                middleware::from_fn_with_state(state.clone(), require_console_write_auth),
-            ),
-        )
-        .route(
-            "/api/v1/smart-money/candidates/status",
-            axum::routing::post(update_smart_money_candidate_status).route_layer(
-                middleware::from_fn_with_state(state.clone(), require_console_write_auth),
-            ),
-        )
-        // ── High Probability Pricing ───────────────────────────────
-        .route(
-            "/api/v1/high-probability",
-            get(read_high_probability_snapshot).route_layer(middleware::from_fn_with_state(
-                state.clone(),
-                require_console_read_auth,
-            )),
-        )
-        .route(
-            "/api/v1/high-probability/config",
-            get(read_high_probability_config).route_layer(middleware::from_fn_with_state(
-                state.clone(),
-                require_console_read_auth,
-            )),
-        )
-        .route(
-            "/api/v1/high-probability/buckets",
-            get(read_high_probability_buckets).route_layer(middleware::from_fn_with_state(
-                state.clone(),
-                require_console_read_auth,
-            )),
-        )
-        .route(
-            "/api/v1/high-probability/report",
-            get(read_high_probability_report).route_layer(middleware::from_fn_with_state(
-                state.clone(),
-                require_console_read_auth,
-            )),
-        )
-        .route(
-            "/api/v1/high-probability/backtests",
-            get(read_high_probability_backtests).route_layer(middleware::from_fn_with_state(
-                state.clone(),
-                require_console_read_auth,
-            )),
-        )
-        .route(
-            "/api/v1/high-probability/backtest-runs",
-            get(read_high_probability_backtest_runs).route_layer(middleware::from_fn_with_state(
-                state.clone(),
-                require_console_read_auth,
-            )),
-        )
-        .route(
-            "/api/v1/high-probability/backtest-runs/{run_id}/trades",
-            get(read_high_probability_backtest_trades).route_layer(middleware::from_fn_with_state(
-                state.clone(),
-                require_console_read_auth,
-            )),
-        )
-        .route(
-            "/api/v1/high-probability/fair-values",
-            get(read_high_probability_fair_values).route_layer(middleware::from_fn_with_state(
-                state.clone(),
-                require_console_read_auth,
-            )),
-        )
-        // ── Wallet Analysis ─────────────────────────────────────────
-        .route(
-            "/api/v1/wallet-analysis",
-            axum::routing::post(analyze_wallet).route_layer(middleware::from_fn_with_state(
-                state.clone(),
-                require_console_read_auth,
-            )),
-        )
         .route(
             "/api/v1/runtime-config",
             get(read_runtime_config).route_layer(middleware::from_fn_with_state(
@@ -418,9 +266,6 @@ include!("handlers/system.rs");
 include!("handlers/market_handlers.rs");
 include!("handlers/funding.rs");
 include!("handlers/rewards.rs");
-include!("handlers/copytrade.rs");
-include!("handlers/smart_money.rs");
-include!("handlers/high_probability.rs");
 include!("handlers/runtime_config.rs");
 include!("handlers/runtime_config_helpers.rs");
 include!("handlers/execution_lists.rs");
@@ -428,7 +273,6 @@ include!("handlers/callbacks.rs");
 include!("handlers/mode_control.rs");
 include!("handlers/mappers.rs");
 include!("handlers/callback_helpers.rs");
-include!("handlers/wallet_analysis.rs");
 
 #[cfg(test)]
 mod tests;

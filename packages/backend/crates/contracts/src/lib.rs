@@ -26,5 +26,4 @@ include!("dto/pricing.rs");
 include!("dto/callback.rs");
 include!("dto/query.rs");
 include!("dto/orderbook.rs");
-include!("dto/wallet_analysis.rs");
 include!("dto/funding.rs");

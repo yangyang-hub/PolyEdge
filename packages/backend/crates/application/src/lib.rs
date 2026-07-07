@@ -1,8 +1,6 @@
 #![allow(clippy::too_many_arguments)]
 
-mod copytrade;
 mod execution;
-mod high_probability;
 mod list_filters;
 mod maintenance;
 mod market_event;
@@ -12,19 +10,8 @@ mod orderbook_registry;
 pub mod pagination;
 mod rewards;
 mod risk;
-mod smart_money;
 mod system_mode;
-pub mod wallet_analysis;
 
-pub use copytrade::{
-    AddTrackedWalletInput, CopyControlAction, CopyControlCommand, CopyControlCommandStatus,
-    CopyEvent, CopyEventSeverity, CopyOrderSide, CopySizingMode, CopyTradeConfig,
-    CopyTradeConfigPatch, CopyTradeMode, CopyTradeRunReport, CopyTradeService, CopyTradeSnapshot,
-    CopyTradeStatus, CopyTradeStore, SourceTrade, TrackedWallet, TrackedWalletStatus,
-    WalletActionInput, WalletActivityInput, WalletAnalysisStats, WalletFeedInput,
-    WalletPositionInput, build_wallet_analysis, new_copy_event, normalize_address,
-    validate_copytrade_list_limit,
-};
 pub use execution::{
     DEFAULT_EXECUTION_CONNECTOR, DispatchExecutionListFilters, ExecutionDispatchCandidate,
     ExecutionDispatchResult, ExecutionFillResult, ExecutionReconciliationCandidate,
@@ -34,21 +21,6 @@ pub use execution::{
     OrderListFilters, OrderView, PositionListFilters, PositionView, ReconcileExecutionFillCommand,
     ReconcileExecutionListFilters, ReconcileExternalTradeCommand, SubmitExecutionCommand,
     SubmitExecutionStoreCommand, SyncExternalOrderStatusCommand, TradeListFilters, TradeView,
-};
-pub use high_probability::{
-    FairValueEstimate, FairValuePricingInput, FairValueRefreshReport, FairValueSide,
-    HighProbabilityBacktestExitRuleReport, HighProbabilityBacktestPersistReport,
-    HighProbabilityBacktestReport, HighProbabilityBacktestResult, HighProbabilityBacktestRun,
-    HighProbabilityBacktestTrade, HighProbabilityBucketRefreshReport, HighProbabilityBucketStats,
-    HighProbabilityConfig, HighProbabilityDecision, HighProbabilityMarketOutcome,
-    HighProbabilityMarketOutcomeStatus, HighProbabilityMode, HighProbabilityObservation,
-    HighProbabilityObserveCandidate, HighProbabilityObserveReport, HighProbabilityOrderbookQuote,
-    HighProbabilityResearchReport, HighProbabilityRewardCandleSampleInput, HighProbabilitySample,
-    HighProbabilitySampleBuildReport, HighProbabilitySampleOutcome, HighProbabilitySampleQuery,
-    HighProbabilityService, HighProbabilitySnapshot, HighProbabilityStore,
-    HighProbabilityTriggerKind, build_fair_value_estimates, build_high_probability_bucket_stats,
-    build_high_probability_samples_from_reward_candles, validate_high_probability_list_limit,
-    validate_high_probability_sample_input_limit,
 };
 pub use maintenance::{
     DatabaseMaintenanceCutoffs, DatabaseMaintenanceReport, DatabaseMaintenanceService,
@@ -93,23 +65,19 @@ pub use rewards::{
     RewardGammaEventDateMode, RewardHistoryPruneReport, RewardInfoDirectionalRisk,
     RewardInfoRiskAssessmentDecision, RewardInfoRiskAssessmentRequest, RewardInfoRiskLevel,
     RewardInfoRiskSource, RewardInfoRiskType, RewardListPage, RewardLiveCycle,
-    RewardLiveQuoteMaterialization, RewardLlmCallDailyStats, RewardLlmCallRecord,
-    RewardLowCompetitionMetrics, RewardLowCompetitionMode, RewardLowCompetitionObservation,
-    RewardLowCompetitionShadowReport, RewardMarket, RewardMarketAdvisory, RewardMarketBookMetrics,
-    RewardMarketCandle, RewardMarketCandleSample, RewardMarketEventWindow, RewardMarketInfoRisk,
-    RewardMarketMakerDecision, RewardMarketMakerDecisionStatus, RewardMarketMakerDecisionType,
-    RewardMarketMakerFairValue, RewardMarketMakerPlanMetrics, RewardMergeIntent,
-    RewardMergeIntentStatus, RewardOpportunityMetrics, RewardOrderBook, RewardOrderListQuery,
-    RewardOrderPage, RewardOrderSide, RewardOrderSortField, RewardOrderStatusFilter,
-    RewardPlanQuoteMode, RewardPosition, RewardProviderDecision, RewardProviderPreLlmCandidateKind,
+    RewardLiveQuoteMaterialization, RewardLlmCallDailyStats, RewardLlmCallRecord, RewardMarket,
+    RewardMarketAdvisory, RewardMarketBookMetrics, RewardMarketCandle, RewardMarketCandleSample,
+    RewardMarketEventWindow, RewardMarketInfoRisk, RewardMergeIntent, RewardMergeIntentStatus,
+    RewardOpportunityMetrics, RewardOrderBook, RewardOrderListQuery, RewardOrderPage,
+    RewardOrderSide, RewardOrderSortField, RewardOrderStatusFilter, RewardPlanQuoteMode,
+    RewardPosition, RewardProviderDecision, RewardProviderPreLlmCandidateKind,
     RewardProviderRequest, RewardQuoteLeg, RewardQuoteMode, RewardQuotePlan,
     RewardQuotePlanBlockerCounts, RewardQuotePlanCounts, RewardQuotePlanListQuery,
     RewardQuotePlanPage, RewardQuotePlanSortField, RewardQuoteReadiness, RewardRiskEvent,
-    RewardRiskSeverity, RewardSelectionMode, RewardStrategyBucket, RewardStrategyMode,
-    RewardStrategyProfile, RewardTickOutcome, RewardToken, RewardTokenQuote,
-    RewardUnknownEventTimeMode, apply_first_quote_entry_gates, apply_reward_ai_advisories,
+    RewardRiskSeverity, RewardSelectionMode, RewardStrategyBucket, RewardStrategyProfile,
+    RewardTickOutcome, RewardToken, RewardTokenQuote, RewardUnknownEventTimeMode,
+    apply_first_quote_entry_gates, apply_reward_ai_advisories,
     apply_reward_event_windows_to_quote_plans, apply_reward_info_risks,
-    apply_reward_market_maker_decisions_to_quote_plans,
     apply_reward_opportunity_metrics_to_quote_plans, build_reward_ai_advisory_request,
     build_reward_info_risk_assessment_request, build_reward_quote_plans,
     materialize_reward_quote_plan_for_live_orderbook, new_risk_event,
@@ -129,16 +97,6 @@ pub use risk::{
     ApproveSignalCommand, ApproveSignalReceipt, KillSwitchReceipt, RejectSignalCommand,
     RejectSignalReceipt, ReleaseKillSwitchCommand, RiskPolicy, RiskService, RiskStateSnapshot,
     RiskStateStore, RiskStateView, TriggerKillSwitchCommand,
-};
-pub use smart_money::{
-    SmartMoneyConfig, SmartMoneyConfigPatch, SmartMoneyMode, SmartMoneyService, SmartMoneySide,
-    SmartMoneySnapshot, SmartMoneyStatus, SmartMoneyStore, SmartSignal, SmartSignalAdvisory,
-    SmartSignalAdvisoryContext, SmartSignalAdvisoryDecision, SmartSignalAdvisoryLookup,
-    SmartSignalAdvisoryRequest, SmartSignalBookQuote, SmartSignalDecision,
-    SmartSignalDecisionValue, SmartSignalGenerationReport, SmartSignalStatus, SmartWalletCandidate,
-    SmartWalletCandidateStatus, SmartWalletCandidateStatusUpdate, SmartWalletProfile,
-    SmartWalletScore, SmartWalletTier, SmartWalletTrade, build_smart_wallet_score,
-    normalize_smart_wallet_address, validate_smart_money_list_limit,
 };
 pub use system_mode::{
     AuditLogEntry, AuditLogSink, AuthenticatedActor, IdempotencyBegin, IdempotencyRequest,

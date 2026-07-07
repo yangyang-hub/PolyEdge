@@ -101,48 +101,6 @@ mod rewards_tests {
         }
     }
 
-    fn low_competition_observation(
-        id: &str,
-        observed_at: OffsetDateTime,
-    ) -> RewardLowCompetitionObservation {
-        RewardLowCompetitionObservation {
-            id: id.to_string(),
-            account_id: "reward_live".to_string(),
-            condition_id: "cond_live".to_string(),
-            market_slug: "live-market".to_string(),
-            question: "Live market".to_string(),
-            observed_at,
-            mode: RewardLowCompetitionMode::Observe,
-            planned_notional_usd: Decimal::from(10),
-            competition_probe_notional_usd: Decimal::from(10),
-            qualified_competition_usd: Decimal::from(100),
-            competition_share_bps: Decimal::from(909),
-            competition_multiple: Decimal::from(10),
-            estimated_reward_per_100_usd_day: Decimal::from(3),
-            competition_density: Decimal::ONE,
-            account_effective_available_usd: Decimal::from(1000),
-            low_competition_open_buy_notional_usd: Decimal::ZERO,
-            low_competition_open_buy_notional_usd_after_plan: Decimal::from(10),
-            condition_buy_notional_usd_after_plan: Decimal::from(10),
-            account_allocation_bps: Decimal::from(100),
-            market_allocation_bps: Decimal::from(100),
-            exit_depth_usd: Decimal::from(50),
-            exit_slippage_cents: None,
-            midpoint_range_cents: None,
-            top_of_book_flip_count: None,
-            sample_count: 5,
-            sample_insufficient: false,
-            eligible_for_low_competition: true,
-            final_eligible: false,
-            ai_blocked: false,
-            info_risk_blocked: false,
-            standard_plan_overlap: false,
-            not_low_competition: false,
-            rejection_reasons: Vec::new(),
-            created_at: observed_at,
-        }
-    }
-
     fn candidate_market() -> RewardMarket {
         let now = OffsetDateTime::now_utc();
         RewardMarket {
@@ -303,14 +261,6 @@ mod rewards_tests {
             reward_event("old_event", old),
             reward_event("recent_event", recent),
         ]);
-        store
-            .low_competition_observations
-            .write()
-            .await
-            .extend([
-                low_competition_observation("old_observation", old),
-                low_competition_observation("recent_observation", recent),
-            ]);
         store.fills.write().await.push(reward_fill("fill_old", old));
         store
             .positions
@@ -325,7 +275,6 @@ mod rewards_tests {
 
         assert_eq!(report.terminal_orders_deleted, 3);
         assert_eq!(report.risk_events_deleted, 1);
-        assert_eq!(report.low_competition_observations_deleted, 1);
 
         let order_ids = store
             .orders
@@ -344,10 +293,6 @@ mod rewards_tests {
         assert_eq!(store.fills.read().await.len(), 1);
         assert_eq!(store.positions.read().await.len(), 1);
         assert_eq!(store.events.read().await[0].id, "recent_event");
-        assert_eq!(
-            store.low_competition_observations.read().await[0].id,
-            "recent_observation"
-        );
     }
 
     #[tokio::test]

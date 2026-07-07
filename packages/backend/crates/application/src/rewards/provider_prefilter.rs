@@ -51,7 +51,7 @@ pub fn reward_provider_pre_llm_candidate_kind(
 
     match plan.strategy_bucket {
         RewardStrategyBucket::None => None,
-        RewardStrategyBucket::Standard | RewardStrategyBucket::LowCompetition => {
+        RewardStrategyBucket::Standard => {
             if plan.pre_ai_eligible || plan.eligible {
                 Some(RewardProviderPreLlmCandidateKind::Standard)
             } else {

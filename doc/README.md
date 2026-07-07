@@ -14,7 +14,7 @@
 
 ## 历史设计文档
 
-`polyedge-*.md` 文件保留为早期产品、架构、契约和实施计划背景。它们可能包含已经移除或尚未落地的内容，例如 approvals 页面、前端 SSE 实时流、copytrade 模拟交易、旧运行模式和 replay 页面。
+`polyedge-*.md` 文件保留为早期产品、架构、契约和实施计划背景。它们可能包含已经移除或尚未落地的内容，例如 approvals 页面、前端 SSE 实时流、旧运行模式和 replay 页面。
 
 阅读这些文档时按以下规则处理：
 
@@ -45,8 +45,4 @@
 
 | 文档 | 状态 |
 |---|---|
-| [rewards-low-competition-sleeve-plan.md](rewards-low-competition-sleeve-plan.md) | Rewards 低竞争市场 sleeve v2 实现状态、shadow report 和剩余自动启用缺口 |
 | [rewards-event-window-stable-double-strategy-plan.md](rewards-event-window-stable-double-strategy-plan.md) | Rewards 事件窗口硬风控核心实现状态、稳定双边挂单和后续互补持仓合并策略方案 |
-| [rewards-market-maker-strategy-design.md](rewards-market-maker-strategy-design.md) | Rewards 从奖励优先挂单重构为利润优先、奖励增强的做市商策略设计提案；描述待实现能力 |
-| [smart-money-intelligence-implementation-plan.md](smart-money-intelligence-implementation-plan.md) | Smart Money Intelligence / 聪明钱跟单重构实施计划；描述待实现能力，不代表当前 copytrade 已具备自动发现、信号或实盘执行 |
-| [high-probability-pricing-strategy-plan.md](high-probability-pricing-strategy-plan.md) | 高概率定价模型研究与实施方案；作为 Rewards 做市商 fair value/base-rate provider，不再作为独立 observe/paper/live 策略路线推进 |

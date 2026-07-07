@@ -19,7 +19,6 @@ import { NumberInput } from "./number-input";
 import {
   AiAdvisoryConfig,
   BookSelectionConfig,
-  MarketMakerConfig,
 } from "./rewards-advanced-config";
 import { ConfigSection, Hint, ToggleField, selectClassName } from "./rewards-config-fields";
 import { OpportunityConfig } from "./rewards-opportunity-config";
@@ -192,10 +191,6 @@ export function RewardsConfigPanel({
           setDraft={setDraft}
           updateNumber={updateNumber}
         />
-
-        <Separator />
-
-        <MarketMakerConfig draft={draft} setDraft={setDraft} updateNumber={updateNumber} />
 
         <Separator />
 

@@ -8,7 +8,6 @@ mod reward_ai;
 mod reward_info_risk;
 mod reward_provider;
 mod rewards;
-mod smart_signal_advisory;
 #[cfg(test)]
 mod test_http;
 
@@ -43,7 +42,6 @@ pub use rewards::{
     PolymarketPriceHistoryPoint, PolymarketRewardBookLevel, PolymarketRewardMarket,
     PolymarketRewardOrderBook, PolymarketRewardToken, PolymarketRewardsConnector,
 };
-pub use smart_signal_advisory::SmartSignalAdvisoryConnector;
 
 pub const PAPER_EXECUTOR_NAME: &str = "paper_executor";
 pub const PAPER_ACCOUNT_ID: &str = "paper_account";

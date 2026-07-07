@@ -53,10 +53,7 @@ export const shared = {
     markets: "市场",
     events: "事件",
     rewards: "奖励做市",
-    highProbability: "高概率研究",
     funding: "Polymarket 入金",
-    copytrade: "聪明钱跟单",
-    walletAnalysis: "钱包分析",
     settings: "设置",
   },
   topbar: {

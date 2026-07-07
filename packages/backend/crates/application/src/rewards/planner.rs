@@ -70,7 +70,7 @@ fn reward_candidate_profile_is_disabled(
         | (RewardStrategyBucket::Standard, RewardStrategyProfile::BalancedMerge) => {
             effective_config.max_open_orders == 0
         }
-        (RewardStrategyBucket::LowCompetition | RewardStrategyBucket::None, _) => true,
+        (RewardStrategyBucket::None, _) => true,
     }
 }
 
@@ -577,8 +577,6 @@ fn build_ready_quote_plan(
             .map(|metrics| metrics.recommended_quote_mode),
         book_metrics: metrics,
         opportunity_metrics: None,
-        market_maker: None,
-        low_competition_metrics: None,
         ai_advisory: None,
         info_risk: None,
         event_window: None,
@@ -687,8 +685,6 @@ fn empty_plan(
         recommended_quote_mode: None,
         book_metrics: None,
         opportunity_metrics: None,
-        market_maker: None,
-        low_competition_metrics: None,
         ai_advisory: None,
         info_risk: None,
         event_window: None,

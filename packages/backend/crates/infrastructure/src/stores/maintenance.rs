@@ -190,50 +190,6 @@ impl DatabaseMaintenanceStore for PostgresDatabaseMaintenanceStore {
         )
         .await?;
 
-        let copytrade_control_commands_deleted = prune_control_commands(
-            &self.pool,
-            "copytrade_control_commands",
-            cutoffs.control_commands_completed_before,
-            cutoffs.control_commands_failed_before,
-        )
-        .await?;
-
-        let copytrade_events_deleted = execute_maintenance_delete(
-            &self.pool,
-            "copytrade_events",
-            r#"
-            WITH doomed AS (
-                SELECT ctid
-                FROM copytrade_events
-                WHERE created_at < $1
-                LIMIT $2
-            )
-            DELETE FROM copytrade_events rows
-            USING doomed
-            WHERE rows.ctid = doomed.ctid
-            "#,
-            cutoffs.copytrade_events_before,
-        )
-        .await?;
-
-        let copytrade_source_trades_deleted = execute_maintenance_delete(
-            &self.pool,
-            "copytrade_source_trades",
-            r#"
-            WITH doomed AS (
-                SELECT ctid
-                FROM copytrade_source_trades
-                WHERE observed_at < $1
-                LIMIT $2
-            )
-            DELETE FROM copytrade_source_trades rows
-            USING doomed
-            WHERE rows.ctid = doomed.ctid
-            "#,
-            cutoffs.copytrade_source_trades_before,
-        )
-        .await?;
-
         let audit_logs_deleted = execute_maintenance_delete(
             &self.pool,
             "audit_logs",
@@ -280,9 +236,6 @@ impl DatabaseMaintenanceStore for PostgresDatabaseMaintenanceStore {
             reward_market_info_risks_deleted,
             reward_market_candles_deleted,
             reward_control_commands_deleted,
-            copytrade_control_commands_deleted,
-            copytrade_events_deleted,
-            copytrade_source_trades_deleted,
             audit_logs_deleted,
             mode_transitions_deleted,
         })
@@ -365,26 +318,6 @@ async fn prune_control_commands(
                 LIMIT $3
             )
             DELETE FROM reward_control_commands rows
-            USING doomed
-            WHERE rows.ctid = doomed.ctid
-            "#
-        }
-        "copytrade_control_commands" => {
-            r#"
-            WITH doomed AS (
-                SELECT ctid
-                FROM copytrade_control_commands
-                WHERE (
-                    status = 'completed'
-                    AND COALESCE(completed_at, requested_at) < $1
-                )
-                OR (
-                    status = 'failed'
-                    AND COALESCE(completed_at, requested_at) < $2
-                )
-                LIMIT $3
-            )
-            DELETE FROM copytrade_control_commands rows
             USING doomed
             WHERE rows.ctid = doomed.ctid
             "#

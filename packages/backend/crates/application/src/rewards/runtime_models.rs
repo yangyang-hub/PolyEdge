@@ -178,50 +178,6 @@ pub struct RewardMarketBookMetrics {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct RewardLowCompetitionMetrics {
-    #[serde(default)]
-    pub planned_notional_usd: Decimal,
-    #[serde(default)]
-    pub competition_probe_notional_usd: Decimal,
-    pub qualified_competition_usd: Decimal,
-    #[serde(default)]
-    pub competition_share_bps: Decimal,
-    #[serde(default)]
-    pub competition_multiple: Decimal,
-    pub estimated_reward_per_100_usd_day: Decimal,
-    pub competition_density: Decimal,
-    #[serde(default)]
-    pub account_effective_available_usd: Decimal,
-    #[serde(default)]
-    pub low_competition_open_buy_notional_usd: Decimal,
-    #[serde(default)]
-    pub low_competition_open_buy_notional_usd_after_plan: Decimal,
-    #[serde(default)]
-    pub condition_buy_notional_usd_after_plan: Decimal,
-    #[serde(default)]
-    pub account_allocation_bps: Decimal,
-    #[serde(default)]
-    pub market_allocation_bps: Decimal,
-    pub exit_depth_usd: Decimal,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub exit_slippage_cents: Option<Decimal>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub bad_fill_recovery_days: Option<Decimal>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub midpoint_range_cents: Option<Decimal>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub top_of_book_flip_count: Option<u64>,
-    pub sample_count: u64,
-    pub eligible_for_low_competition: bool,
-    #[serde(default)]
-    pub rejection_reasons: Vec<String>,
-    #[serde(default)]
-    pub not_low_competition: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub not_low_competition_reason: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RewardOpportunityMetrics {
     #[serde(default)]
     pub planned_notional_usd: Decimal,
@@ -272,103 +228,10 @@ pub struct RewardOpportunityMetrics {
     pub warnings: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct RewardLowCompetitionObservation {
-    pub id: String,
-    pub account_id: String,
-    pub condition_id: String,
-    pub market_slug: String,
-    pub question: String,
-    #[serde(with = "time::serde::rfc3339")]
-    pub observed_at: OffsetDateTime,
-    pub mode: RewardLowCompetitionMode,
-    pub planned_notional_usd: Decimal,
-    pub competition_probe_notional_usd: Decimal,
-    pub qualified_competition_usd: Decimal,
-    pub competition_share_bps: Decimal,
-    pub competition_multiple: Decimal,
-    pub estimated_reward_per_100_usd_day: Decimal,
-    pub competition_density: Decimal,
-    pub account_effective_available_usd: Decimal,
-    pub low_competition_open_buy_notional_usd: Decimal,
-    pub low_competition_open_buy_notional_usd_after_plan: Decimal,
-    pub condition_buy_notional_usd_after_plan: Decimal,
-    pub account_allocation_bps: Decimal,
-    pub market_allocation_bps: Decimal,
-    pub exit_depth_usd: Decimal,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub exit_slippage_cents: Option<Decimal>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub midpoint_range_cents: Option<Decimal>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub top_of_book_flip_count: Option<u64>,
-    pub sample_count: u64,
-    pub sample_insufficient: bool,
-    pub eligible_for_low_competition: bool,
-    pub final_eligible: bool,
-    pub ai_blocked: bool,
-    pub info_risk_blocked: bool,
-    pub standard_plan_overlap: bool,
-    #[serde(default)]
-    pub not_low_competition: bool,
-    #[serde(default)]
-    pub rejection_reasons: Vec<String>,
-    #[serde(with = "time::serde::rfc3339")]
-    pub created_at: OffsetDateTime,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct RewardLowCompetitionShadowReport {
-    pub window_hours: u64,
-    #[serde(with = "time::serde::rfc3339")]
-    pub generated_at: OffsetDateTime,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[serde(with = "time::serde::rfc3339::option")]
-    pub latest_observed_at: Option<OffsetDateTime>,
-    pub observations: usize,
-    pub unique_markets: usize,
-    pub gate_pass_count: usize,
-    pub final_pass_count: usize,
-    pub sample_insufficient_count: usize,
-    pub ai_blocked_count: usize,
-    pub info_risk_blocked_count: usize,
-    pub standard_overlap_count: usize,
-    pub not_low_competition_count: usize,
-    pub gate_pass_ratio: Decimal,
-    pub final_pass_ratio: Decimal,
-    pub sample_insufficient_ratio: Decimal,
-    pub ai_blocked_ratio: Decimal,
-    pub info_risk_blocked_ratio: Decimal,
-    pub standard_overlap_ratio: Decimal,
-    pub not_low_competition_ratio: Decimal,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub competition_share_bps_median: Option<Decimal>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub account_allocation_bps_p90: Option<Decimal>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub market_allocation_bps_p90: Option<Decimal>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub estimated_reward_per_100_usd_day_median: Option<Decimal>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub estimated_reward_per_100_usd_day_p90: Option<Decimal>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub exit_depth_multiple_median: Option<Decimal>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub midpoint_range_cents_p95: Option<Decimal>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub exit_slippage_cents_p95: Option<Decimal>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub bad_fill_recovery_days_p95: Option<Decimal>,
-    pub should_consider_enforce: bool,
-    #[serde(default)]
-    pub recommendation_reasons: Vec<String>,
-}
-
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RewardHistoryPruneReport {
     pub terminal_orders_deleted: u64,
     pub risk_events_deleted: u64,
-    pub low_competition_observations_deleted: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -395,10 +258,6 @@ pub struct RewardQuotePlan {
     pub book_metrics: Option<RewardMarketBookMetrics>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub opportunity_metrics: Option<RewardOpportunityMetrics>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub market_maker: Option<RewardMarketMakerPlanMetrics>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub low_competition_metrics: Option<RewardLowCompetitionMetrics>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ai_advisory: Option<RewardMarketAdvisory>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -707,7 +566,6 @@ pub struct RewardQuotePlanBlockerCounts {
     pub ai_watch: usize,
     pub ai_avoid: usize,
     pub info_risk: usize,
-    pub low_competition: usize,
     pub funding: usize,
     pub live_validation: usize,
     pub other: usize,
@@ -857,8 +715,6 @@ pub struct RewardBotSnapshot {
     pub config: RewardBotConfig,
     pub status: RewardBotStatus,
     pub account: RewardAccountState,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub low_competition_report: Option<RewardLowCompetitionShadowReport>,
     #[serde(default)]
     pub llm_usage: Vec<RewardLlmCallDailyStats>,
     pub markets: Vec<RewardMarket>,

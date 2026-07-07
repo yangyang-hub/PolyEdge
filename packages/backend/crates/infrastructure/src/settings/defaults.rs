@@ -102,18 +102,6 @@ impl Default for RewardsSettings {
     }
 }
 
-impl Default for SmartMoneySettings {
-    fn default() -> Self {
-        Self {
-            signal_advisory_openai_api_key: None,
-            signal_advisory_anthropic_api_key: None,
-            signal_advisory_openai_base_url: "https://api.openai.com/v1".to_string(),
-            signal_advisory_anthropic_base_url: "https://api.anthropic.com".to_string(),
-            signal_advisory_request_timeout_secs: 180,
-        }
-    }
-}
-
 impl Default for NewsSettings {
     fn default() -> Self {
         Self {
@@ -211,14 +199,6 @@ impl Default for WorkerSettings {
             consume_polymarket_user_events: false,
             poll_market_sync: true,
             consume_orderbook_stream: true,
-            poll_copytrade: true,
-            analyze_wallets: true,
-            poll_smart_money: false,
-            smart_money_interval_secs: 900,
-            poll_high_probability_observe: false,
-            high_probability_observe_interval_secs: 300,
-            poll_high_probability_fair_values: false,
-            high_probability_fair_value_interval_secs: 300,
             database_maintenance: true,
             database_maintenance_interval_secs: 3_600,
             news_promotion_interval_secs: 60,
@@ -262,17 +242,6 @@ impl Default for OrderbookServiceSettings {
             port: 38002,
             service_url: "http://localhost:38002".to_string(),
             write_token: None,
-        }
-    }
-}
-
-impl Default for CopyTradeSettings {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            poll_interval_secs: 60,
-            analysis_interval_secs: 300,
-            wallet_activity_limit: 50,
         }
     }
 }

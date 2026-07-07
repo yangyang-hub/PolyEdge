@@ -15,9 +15,7 @@ pub struct InMemoryRewardBotStore {
     worker_heartbeats: RwLock<HashMap<String, OffsetDateTime>>,
     advisories: RwLock<Vec<RewardMarketAdvisory>>,
     info_risks: RwLock<Vec<RewardMarketInfoRisk>>,
-    market_maker_decisions: RwLock<Vec<RewardMarketMakerDecision>>,
     llm_calls: RwLock<Vec<RewardLlmCallRecord>>,
-    low_competition_observations: RwLock<Vec<RewardLowCompetitionObservation>>,
     candles: RwLock<HashMap<(String, i32, OffsetDateTime), RewardMarketCandle>>,
 }
 
@@ -39,9 +37,7 @@ impl InMemoryRewardBotStore {
             worker_heartbeats: RwLock::new(HashMap::new()),
             advisories: RwLock::new(Vec::new()),
             info_risks: RwLock::new(Vec::new()),
-            market_maker_decisions: RwLock::new(Vec::new()),
             llm_calls: RwLock::new(Vec::new()),
-            low_competition_observations: RwLock::new(Vec::new()),
             candles: RwLock::new(HashMap::new()),
         }
     }
@@ -130,17 +126,9 @@ impl RewardBotStore for InMemoryRewardBotStore {
             (before - events.len()) as u64
         };
 
-        let low_competition_observations_deleted = {
-            let mut observations = self.low_competition_observations.write().await;
-            let before = observations.len();
-            observations.retain(|observation| observation.observed_at >= cutoff);
-            (before - observations.len()) as u64
-        };
-
         Ok(RewardHistoryPruneReport {
             terminal_orders_deleted,
             risk_events_deleted,
-            low_competition_observations_deleted,
         })
     }
 
@@ -283,43 +271,6 @@ impl RewardBotStore for InMemoryRewardBotStore {
             store.insert(plan.condition_id.clone(), plan.clone());
         }
         Ok(())
-    }
-
-    async fn record_low_competition_observations(
-        &self,
-        observations: &[RewardLowCompetitionObservation],
-    ) -> Result<()> {
-        if observations.is_empty() {
-            return Ok(());
-        }
-        let mut stored = self.low_competition_observations.write().await;
-        for observation in observations {
-            if !stored.iter().any(|existing| existing.id == observation.id) {
-                stored.push(observation.clone());
-            }
-        }
-        stored.sort_by(|left, right| right.observed_at.cmp(&left.observed_at));
-        stored.truncate(10_000);
-        Ok(())
-    }
-
-    async fn list_low_competition_observations(
-        &self,
-        account_id: &str,
-        since: OffsetDateTime,
-        limit: u16,
-    ) -> Result<Vec<RewardLowCompetitionObservation>> {
-        Ok(self
-            .low_competition_observations
-            .read()
-            .await
-            .iter()
-            .filter(|observation| {
-                observation.account_id == account_id && observation.observed_at >= since
-            })
-            .take(usize::from(limit))
-            .cloned()
-            .collect())
     }
 
     async fn record_market_candle_sample(
@@ -504,33 +455,6 @@ impl RewardBotStore for InMemoryRewardBotStore {
         Ok(())
     }
 
-    async fn latest_market_maker_fair_values(
-        &self,
-        _condition_ids: &[String],
-        _model_version: &str,
-        _now: OffsetDateTime,
-    ) -> Result<Vec<RewardMarketMakerFairValue>> {
-        Ok(Vec::new())
-    }
-
-    async fn record_market_maker_decisions(
-        &self,
-        decisions: &[RewardMarketMakerDecision],
-    ) -> Result<()> {
-        let mut stored = self.market_maker_decisions.write().await;
-        for decision in decisions {
-            if let Some(existing) = stored
-                .iter_mut()
-                .find(|existing| existing.id == decision.id)
-            {
-                *existing = decision.clone();
-            } else {
-                stored.push(decision.clone());
-            }
-        }
-        Ok(())
-    }
-
     async fn record_llm_call(&self, call: &RewardLlmCallRecord) -> Result<()> {
         let mut calls = self.llm_calls.write().await;
         if !calls.iter().any(|existing| existing.id == call.id) {
@@ -629,10 +553,10 @@ impl RewardBotStore for InMemoryRewardBotStore {
             })
             .cloned()
             .collect();
-        if filter.prefer_low_competition_ordering {
+        if filter.prefer_sparse_market_ordering {
             markets.sort_by(|left, right| {
-                in_memory_reward_low_competition_density(right)
-                    .cmp(&in_memory_reward_low_competition_density(left))
+                in_memory_reward_sparse_market_density(right)
+                    .cmp(&in_memory_reward_sparse_market_density(left))
                     .then_with(|| left.liquidity_usd.cmp(&right.liquidity_usd))
                     .then_with(|| left.volume_24h_usd.cmp(&right.volume_24h_usd))
                     .then_with(|| right.total_daily_rate.cmp(&left.total_daily_rate))
@@ -1213,7 +1137,7 @@ fn in_memory_reward_market_activity_allowed(
     }
 }
 
-fn in_memory_reward_low_competition_density(market: &RewardMarket) -> Decimal {
+fn in_memory_reward_sparse_market_density(market: &RewardMarket) -> Decimal {
     let denominator = (market.liquidity_usd + market.volume_24h_usd).max(Decimal::ONE);
     market.total_daily_rate / denominator
 }

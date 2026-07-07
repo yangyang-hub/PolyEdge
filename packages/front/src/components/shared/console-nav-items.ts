@@ -4,11 +4,8 @@ import {
   HandCoins,
   LayoutDashboard,
   Newspaper,
-  Search,
   Settings,
   SquareChartGantt,
-  TrendingUp,
-  Users,
 } from "lucide-react";
 
 import type { Dictionary } from "@/lib/i18n/dictionaries";
@@ -24,10 +21,7 @@ export const consoleNavItems: ConsoleNavItem[] = [
   { href: "/markets", labelKey: "markets", icon: SquareChartGantt },
   { href: "/events", labelKey: "events", icon: Newspaper },
   { href: "/rewards", labelKey: "rewards", icon: HandCoins },
-  { href: "/high-probability", labelKey: "highProbability", icon: TrendingUp },
   { href: "/funding", labelKey: "funding", icon: CircleDollarSign },
-  { href: "/copy-trading", labelKey: "copytrade", icon: Users },
-  { href: "/wallet-analysis", labelKey: "walletAnalysis", icon: Search },
   { href: "/settings", labelKey: "settings", icon: Settings },
 ];
 

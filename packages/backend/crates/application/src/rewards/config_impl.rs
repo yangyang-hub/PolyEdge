@@ -17,25 +17,7 @@ impl Default for RewardBotConfig {
             max_spread_cents: decimal("8"),
             quote_mode: RewardQuoteMode::Double,
             selection_mode: RewardSelectionMode::Observe,
-            strategy_mode: RewardStrategyMode::RewardsOnly,
             quote_bid_rank: 1,
-            market_maker_enabled: false,
-            market_maker_min_total_ev_cents: decimal("1"),
-            market_maker_min_pricing_edge_cents: decimal("0.5"),
-            market_maker_max_reward_subsidized_negative_edge_cents: decimal("0.5"),
-            market_maker_min_fair_value_confidence: decimal("0.60"),
-            market_maker_max_uncertainty_cents: decimal("8"),
-            market_maker_low_competition_priority_enabled: true,
-            market_maker_min_reward_ev_cents: Decimal::ZERO,
-            market_maker_max_condition_inventory_usd: decimal("20"),
-            market_maker_max_category_inventory_usd: decimal("50"),
-            market_maker_max_global_inventory_usd: decimal("100"),
-            market_maker_inventory_skew_cents_per_10_usd: decimal("0.5"),
-            market_maker_fair_value_ttl_sec: 300,
-            market_maker_reward_ev_ttl_sec: 60,
-            market_maker_ev_cancel_confirm_sec: 30,
-            market_maker_shadow_min_observation_days: 7,
-            market_maker_fair_value_model_version: "high_probability_bucket_v1".to_string(),
             dominant_single_side_enabled: false,
             dominant_min_probability: decimal("0.90"),
             dominant_max_probability: decimal("0.97"),
@@ -69,46 +51,6 @@ impl Default for RewardBotConfig {
             opportunity_competition_weight: decimal("30"),
             opportunity_exit_weight: decimal("25"),
             opportunity_stability_weight: decimal("10"),
-            low_competition_mode: RewardLowCompetitionMode::Off,
-            low_competition_max_markets: 0,
-            low_competition_max_open_orders: 0,
-            low_competition_per_market_usd: decimal("5"),
-            low_competition_max_position_usd: decimal("10"),
-            low_competition_probe_notional_usd: decimal("10"),
-            low_competition_min_competition_share_bps: 5_000,
-            low_competition_max_competition_multiple: decimal("1"),
-            low_competition_candidate_max_competition_multiple: decimal("5"),
-            low_competition_max_account_allocation_bps: 1_500,
-            low_competition_max_market_allocation_bps: 500,
-            low_competition_candidate_liquidity_filter_enabled: false,
-            low_competition_candidate_volume_filter_enabled: false,
-            low_competition_min_market_liquidity_usd: Decimal::ZERO,
-            low_competition_min_market_volume_24h_usd: Decimal::ZERO,
-            low_competition_max_competition_usd: Decimal::ZERO,
-            low_competition_min_reward_per_100_usd_day: decimal("0.50"),
-            low_competition_min_exit_depth_usd: decimal("50"),
-            low_competition_min_exit_depth_multiple: decimal("3"),
-            low_competition_max_entry_exit_slippage_cents: decimal("1"),
-            low_competition_max_bad_fill_recovery_days: decimal("2"),
-            low_competition_max_midpoint_range_cents: decimal("2"),
-            low_competition_max_top_of_book_flip_count: 6,
-            low_competition_observation_window_sec: 1800,
-            low_competition_min_book_samples: 30,
-            low_competition_quote_bid_rank: 2,
-            low_competition_safety_margin_cents: decimal("2"),
-            low_competition_max_spread_cents: decimal("6"),
-            low_competition_max_market_spread_cents: decimal("8"),
-            low_competition_min_market_score: decimal("8"),
-            low_competition_require_ai_allow: true,
-            low_competition_info_risk_avoid_level: RewardInfoRiskLevel::Medium,
-            low_competition_cancel_confirm_sec: 30,
-            low_competition_cancel_share_threshold_ratio_bps: 8_000,
-            low_competition_cancel_competition_multiple_factor: decimal("1.5"),
-            low_competition_cancel_max_exit_slippage_cents: decimal("2"),
-            low_competition_cancel_min_exit_depth_usd: decimal("20"),
-            low_competition_cancel_exit_depth_multiple: decimal("2"),
-            low_competition_cancel_midpoint_range_floor_cents: decimal("3"),
-            low_competition_global_open_order_share_bps: 3_000,
             ai_advisory_enabled: false,
             ai_provider: RewardAiProvider::OpenAi,
             ai_request_format: RewardAiRequestFormat::OpenAiResponses,
@@ -202,73 +144,6 @@ impl RewardBotConfig {
         self.min_market_score = clamp_decimal(self.min_market_score, Decimal::ZERO, decimal("100"));
         self.max_spread_cents = clamp_decimal(self.max_spread_cents, decimal("0.1"), decimal("99"));
         self.quote_bid_rank = self.quote_bid_rank.clamp(1, 3);
-        if self.strategy_mode.market_maker_enabled() {
-            self.market_maker_enabled = true;
-        } else if !self.market_maker_enabled {
-            self.strategy_mode = RewardStrategyMode::RewardsOnly;
-        } else {
-            self.strategy_mode = RewardStrategyMode::MarketMakerShadow;
-        }
-        self.market_maker_min_total_ev_cents = clamp_decimal(
-            self.market_maker_min_total_ev_cents,
-            Decimal::ZERO,
-            decimal("100"),
-        );
-        self.market_maker_min_pricing_edge_cents = clamp_decimal(
-            self.market_maker_min_pricing_edge_cents,
-            decimal("-100"),
-            decimal("100"),
-        );
-        self.market_maker_max_reward_subsidized_negative_edge_cents = clamp_decimal(
-            self.market_maker_max_reward_subsidized_negative_edge_cents,
-            Decimal::ZERO,
-            decimal("100"),
-        );
-        self.market_maker_min_fair_value_confidence = clamp_decimal(
-            self.market_maker_min_fair_value_confidence,
-            Decimal::ZERO,
-            Decimal::ONE,
-        );
-        self.market_maker_max_uncertainty_cents = clamp_decimal(
-            self.market_maker_max_uncertainty_cents,
-            Decimal::ZERO,
-            decimal("100"),
-        );
-        self.market_maker_min_reward_ev_cents = clamp_decimal(
-            self.market_maker_min_reward_ev_cents,
-            Decimal::ZERO,
-            decimal("100"),
-        );
-        self.market_maker_max_condition_inventory_usd = clamp_decimal(
-            self.market_maker_max_condition_inventory_usd,
-            Decimal::ZERO,
-            decimal("1000000"),
-        );
-        self.market_maker_max_category_inventory_usd = clamp_decimal(
-            self.market_maker_max_category_inventory_usd,
-            Decimal::ZERO,
-            decimal("1000000"),
-        );
-        self.market_maker_max_global_inventory_usd = clamp_decimal(
-            self.market_maker_max_global_inventory_usd,
-            Decimal::ZERO,
-            decimal("10000000"),
-        );
-        self.market_maker_inventory_skew_cents_per_10_usd = clamp_decimal(
-            self.market_maker_inventory_skew_cents_per_10_usd,
-            Decimal::ZERO,
-            decimal("100"),
-        );
-        self.market_maker_fair_value_ttl_sec =
-            self.market_maker_fair_value_ttl_sec.clamp(30, 86_400);
-        self.market_maker_reward_ev_ttl_sec =
-            self.market_maker_reward_ev_ttl_sec.clamp(5, 86_400);
-        self.market_maker_ev_cancel_confirm_sec =
-            self.market_maker_ev_cancel_confirm_sec.clamp(0, 86_400);
-        self.market_maker_shadow_min_observation_days =
-            self.market_maker_shadow_min_observation_days.clamp(0, 365);
-        self.market_maker_fair_value_model_version =
-            non_empty_or(self.market_maker_fair_value_model_version, "high_probability_bucket_v1");
         self.dominant_min_probability = clamp_decimal(
             self.dominant_min_probability,
             decimal("0.51"),
@@ -369,158 +244,6 @@ impl RewardBotConfig {
             Decimal::ZERO,
             decimal("1000"),
         );
-        self.low_competition_max_markets = clamp_u16(self.low_competition_max_markets, 0, u16::MAX);
-        self.low_competition_max_open_orders =
-            clamp_u16(self.low_competition_max_open_orders, 0, u16::MAX);
-        self.low_competition_per_market_usd = clamp_decimal(
-            self.low_competition_per_market_usd,
-            Decimal::ZERO,
-            decimal("1000000"),
-        );
-        self.low_competition_max_position_usd = clamp_decimal(
-            self.low_competition_max_position_usd,
-            Decimal::ZERO,
-            decimal("1000000"),
-        );
-        self.low_competition_probe_notional_usd = clamp_decimal(
-            self.low_competition_probe_notional_usd,
-            Decimal::ZERO,
-            decimal("1000000"),
-        );
-        self.low_competition_min_competition_share_bps = self
-            .low_competition_min_competition_share_bps
-            .clamp(0, 10_000);
-        self.low_competition_max_competition_multiple = clamp_decimal(
-            self.low_competition_max_competition_multiple,
-            Decimal::ZERO,
-            decimal("1000000"),
-        );
-        // 候选早期剔除阈值必须 >= 正式 gate 阈值，只用于剔除极端高竞争混入，
-        // 不抢正式 gate 的活；clamp 后再强制不低于正式 multiple 阈值。
-        self.low_competition_candidate_max_competition_multiple = clamp_decimal(
-            self.low_competition_candidate_max_competition_multiple,
-            decimal("1"),
-            decimal("100000"),
-        );
-        if self.low_competition_candidate_max_competition_multiple
-            < self.low_competition_max_competition_multiple
-        {
-            self.low_competition_candidate_max_competition_multiple =
-                self.low_competition_max_competition_multiple;
-        }
-        self.low_competition_max_account_allocation_bps = self
-            .low_competition_max_account_allocation_bps
-            .clamp(0, 10_000);
-        self.low_competition_max_market_allocation_bps = self
-            .low_competition_max_market_allocation_bps
-            .clamp(0, 10_000);
-        self.low_competition_candidate_liquidity_filter_enabled = false;
-        self.low_competition_candidate_volume_filter_enabled = false;
-        self.low_competition_min_market_liquidity_usd = Decimal::ZERO;
-        self.low_competition_min_market_volume_24h_usd = Decimal::ZERO;
-        self.low_competition_max_competition_usd = clamp_decimal(
-            self.low_competition_max_competition_usd,
-            Decimal::ZERO,
-            decimal("1000000000"),
-        );
-        self.low_competition_min_reward_per_100_usd_day = clamp_decimal(
-            self.low_competition_min_reward_per_100_usd_day,
-            Decimal::ZERO,
-            decimal("100000"),
-        );
-        self.low_competition_min_exit_depth_usd = clamp_decimal(
-            self.low_competition_min_exit_depth_usd,
-            Decimal::ZERO,
-            decimal("1000000"),
-        );
-        self.low_competition_min_exit_depth_multiple = clamp_decimal(
-            self.low_competition_min_exit_depth_multiple,
-            Decimal::ZERO,
-            decimal("100"),
-        );
-        self.low_competition_max_entry_exit_slippage_cents = clamp_decimal(
-            self.low_competition_max_entry_exit_slippage_cents,
-            Decimal::ZERO,
-            decimal("99"),
-        );
-        self.low_competition_max_bad_fill_recovery_days = clamp_decimal(
-            self.low_competition_max_bad_fill_recovery_days,
-            Decimal::ZERO,
-            decimal("365"),
-        );
-        self.low_competition_max_midpoint_range_cents = clamp_decimal(
-            self.low_competition_max_midpoint_range_cents,
-            Decimal::ZERO,
-            decimal("100"),
-        );
-        self.low_competition_max_top_of_book_flip_count = self
-            .low_competition_max_top_of_book_flip_count
-            .clamp(0, 10_000);
-        self.low_competition_observation_window_sec = self
-            .low_competition_observation_window_sec
-            .clamp(60, 86_400);
-        self.low_competition_min_book_samples =
-            self.low_competition_min_book_samples.clamp(1, 10_000);
-        self.low_competition_quote_bid_rank = self.low_competition_quote_bid_rank.clamp(1, 3);
-        self.low_competition_safety_margin_cents = clamp_decimal(
-            self.low_competition_safety_margin_cents,
-            Decimal::ZERO,
-            decimal("20"),
-        );
-        self.low_competition_max_spread_cents = clamp_decimal(
-            self.low_competition_max_spread_cents,
-            decimal("0.1"),
-            decimal("99"),
-        );
-        self.low_competition_max_market_spread_cents = clamp_decimal(
-            self.low_competition_max_market_spread_cents,
-            decimal("0.1"),
-            decimal("100"),
-        );
-        self.low_competition_min_market_score = clamp_decimal(
-            self.low_competition_min_market_score,
-            Decimal::ZERO,
-            decimal("100"),
-        );
-        self.low_competition_cancel_confirm_sec =
-            self.low_competition_cancel_confirm_sec.clamp(0, 3600);
-        self.low_competition_cancel_share_threshold_ratio_bps = self
-            .low_competition_cancel_share_threshold_ratio_bps
-            .clamp(0, 10_000);
-        self.low_competition_cancel_competition_multiple_factor = clamp_decimal(
-            self.low_competition_cancel_competition_multiple_factor,
-            Decimal::ZERO,
-            decimal("100"),
-        );
-        self.low_competition_cancel_max_exit_slippage_cents = clamp_decimal(
-            self.low_competition_cancel_max_exit_slippage_cents,
-            Decimal::ZERO,
-            decimal("99"),
-        );
-        self.low_competition_cancel_min_exit_depth_usd = clamp_decimal(
-            self.low_competition_cancel_min_exit_depth_usd,
-            Decimal::ZERO,
-            decimal("1000000"),
-        );
-        self.low_competition_cancel_exit_depth_multiple = clamp_decimal(
-            self.low_competition_cancel_exit_depth_multiple,
-            Decimal::ZERO,
-            decimal("100"),
-        );
-        self.low_competition_cancel_midpoint_range_floor_cents = clamp_decimal(
-            self.low_competition_cancel_midpoint_range_floor_cents,
-            Decimal::ZERO,
-            decimal("100"),
-        );
-        self.low_competition_global_open_order_share_bps = self
-            .low_competition_global_open_order_share_bps
-            .clamp(0, 10_000);
-        // Legacy low-competition fields remain in the DTO/store for
-        // compatibility, but the separate sleeve is no longer executable.
-        self.low_competition_mode = RewardLowCompetitionMode::Off;
-        self.low_competition_max_markets = 0;
-        self.low_competition_max_open_orders = 0;
-        self.low_competition_global_open_order_share_bps = 0;
         self.ai_advisory_ttl_sec = self.ai_advisory_ttl_sec.clamp(60, 86_400);
         self.ai_provider_primary_max_concurrency =
             self.ai_provider_primary_max_concurrency.clamp(1, 10);
@@ -666,26 +389,8 @@ impl RewardBotConfig {
                 && self.dominant_single_side_enabled,
             dominant_min_probability: self.dominant_min_probability,
             dominant_max_probability: self.dominant_max_probability,
-            prefer_low_competition_ordering: false,
+            prefer_sparse_market_ordering: false,
         }
-    }
-
-    /// Build the relaxed SQL-level filter for low-competition observation.
-    /// This only relaxes liquidity and 24h volume; all shared safety filters
-    /// still apply in the store query and Rust planner.
-    #[must_use]
-    pub fn low_competition_candidate_filter(&self) -> Option<RewardCandidateFilter> {
-        if !self.low_competition_mode.is_enabled() || self.low_competition_max_markets == 0 {
-            return None;
-        }
-
-        let mut filter = self.candidate_filter();
-        filter.min_market_liquidity_usd = Decimal::ZERO;
-        filter.min_market_volume_24h_usd = Decimal::ZERO;
-        filter.max_market_spread_cents = self.low_competition_max_market_spread_cents;
-        filter.max_rewards_spread_cents = self.low_competition_max_spread_cents;
-        filter.prefer_low_competition_ordering = true;
-        Some(filter)
     }
 
     #[must_use]
@@ -702,7 +407,7 @@ impl RewardBotConfig {
         filter.min_market_volume_24h_usd = self.balanced_merge_min_market_volume_24h_usd;
         filter.max_market_spread_cents = self.balanced_merge_max_market_spread_cents;
         filter.allow_dominant_single_side = false;
-        filter.prefer_low_competition_ordering = true;
+        filter.prefer_sparse_market_ordering = true;
         Some(filter)
     }
 
@@ -790,62 +495,8 @@ impl RewardBotConfig {
         if let Some(selection_mode) = patch.selection_mode {
             next.selection_mode = selection_mode;
         }
-        if let Some(strategy_mode) = patch.strategy_mode {
-            next.strategy_mode = strategy_mode;
-        }
         if let Some(quote_bid_rank) = patch.quote_bid_rank {
             next.quote_bid_rank = quote_bid_rank;
-        }
-        if let Some(value) = patch.market_maker_enabled {
-            next.market_maker_enabled = value;
-        }
-        if let Some(value) = patch.market_maker_min_total_ev_cents {
-            next.market_maker_min_total_ev_cents = value;
-        }
-        if let Some(value) = patch.market_maker_min_pricing_edge_cents {
-            next.market_maker_min_pricing_edge_cents = value;
-        }
-        if let Some(value) = patch.market_maker_max_reward_subsidized_negative_edge_cents {
-            next.market_maker_max_reward_subsidized_negative_edge_cents = value;
-        }
-        if let Some(value) = patch.market_maker_min_fair_value_confidence {
-            next.market_maker_min_fair_value_confidence = value;
-        }
-        if let Some(value) = patch.market_maker_max_uncertainty_cents {
-            next.market_maker_max_uncertainty_cents = value;
-        }
-        if let Some(value) = patch.market_maker_low_competition_priority_enabled {
-            next.market_maker_low_competition_priority_enabled = value;
-        }
-        if let Some(value) = patch.market_maker_min_reward_ev_cents {
-            next.market_maker_min_reward_ev_cents = value;
-        }
-        if let Some(value) = patch.market_maker_max_condition_inventory_usd {
-            next.market_maker_max_condition_inventory_usd = value;
-        }
-        if let Some(value) = patch.market_maker_max_category_inventory_usd {
-            next.market_maker_max_category_inventory_usd = value;
-        }
-        if let Some(value) = patch.market_maker_max_global_inventory_usd {
-            next.market_maker_max_global_inventory_usd = value;
-        }
-        if let Some(value) = patch.market_maker_inventory_skew_cents_per_10_usd {
-            next.market_maker_inventory_skew_cents_per_10_usd = value;
-        }
-        if let Some(value) = patch.market_maker_fair_value_ttl_sec {
-            next.market_maker_fair_value_ttl_sec = value;
-        }
-        if let Some(value) = patch.market_maker_reward_ev_ttl_sec {
-            next.market_maker_reward_ev_ttl_sec = value;
-        }
-        if let Some(value) = patch.market_maker_ev_cancel_confirm_sec {
-            next.market_maker_ev_cancel_confirm_sec = value;
-        }
-        if let Some(value) = patch.market_maker_shadow_min_observation_days {
-            next.market_maker_shadow_min_observation_days = value;
-        }
-        if let Some(value) = patch.market_maker_fair_value_model_version {
-            next.market_maker_fair_value_model_version = value;
         }
         if let Some(value) = patch.dominant_single_side_enabled {
             next.dominant_single_side_enabled = value;
@@ -933,126 +584,6 @@ impl RewardBotConfig {
         }
         if let Some(value) = patch.opportunity_stability_weight {
             next.opportunity_stability_weight = value;
-        }
-        if let Some(value) = patch.low_competition_mode {
-            next.low_competition_mode = value;
-        }
-        if let Some(value) = patch.low_competition_max_markets {
-            next.low_competition_max_markets = value;
-        }
-        if let Some(value) = patch.low_competition_max_open_orders {
-            next.low_competition_max_open_orders = value;
-        }
-        if let Some(value) = patch.low_competition_per_market_usd {
-            next.low_competition_per_market_usd = value;
-        }
-        if let Some(value) = patch.low_competition_max_position_usd {
-            next.low_competition_max_position_usd = value;
-        }
-        if let Some(value) = patch.low_competition_probe_notional_usd {
-            next.low_competition_probe_notional_usd = value;
-        }
-        if let Some(value) = patch.low_competition_min_competition_share_bps {
-            next.low_competition_min_competition_share_bps = value;
-        }
-        if let Some(value) = patch.low_competition_max_competition_multiple {
-            next.low_competition_max_competition_multiple = value;
-        }
-        if let Some(value) = patch.low_competition_candidate_max_competition_multiple {
-            next.low_competition_candidate_max_competition_multiple = value;
-        }
-        if let Some(value) = patch.low_competition_max_account_allocation_bps {
-            next.low_competition_max_account_allocation_bps = value;
-        }
-        if let Some(value) = patch.low_competition_max_market_allocation_bps {
-            next.low_competition_max_market_allocation_bps = value;
-        }
-        if let Some(value) = patch.low_competition_candidate_liquidity_filter_enabled {
-            next.low_competition_candidate_liquidity_filter_enabled = value;
-        }
-        if let Some(value) = patch.low_competition_candidate_volume_filter_enabled {
-            next.low_competition_candidate_volume_filter_enabled = value;
-        }
-        if let Some(value) = patch.low_competition_min_market_liquidity_usd {
-            next.low_competition_min_market_liquidity_usd = value;
-        }
-        if let Some(value) = patch.low_competition_min_market_volume_24h_usd {
-            next.low_competition_min_market_volume_24h_usd = value;
-        }
-        if let Some(value) = patch.low_competition_max_competition_usd {
-            next.low_competition_max_competition_usd = value;
-        }
-        if let Some(value) = patch.low_competition_min_reward_per_100_usd_day {
-            next.low_competition_min_reward_per_100_usd_day = value;
-        }
-        if let Some(value) = patch.low_competition_min_exit_depth_usd {
-            next.low_competition_min_exit_depth_usd = value;
-        }
-        if let Some(value) = patch.low_competition_min_exit_depth_multiple {
-            next.low_competition_min_exit_depth_multiple = value;
-        }
-        if let Some(value) = patch.low_competition_max_entry_exit_slippage_cents {
-            next.low_competition_max_entry_exit_slippage_cents = value;
-        }
-        if let Some(value) = patch.low_competition_max_bad_fill_recovery_days {
-            next.low_competition_max_bad_fill_recovery_days = value;
-        }
-        if let Some(value) = patch.low_competition_max_midpoint_range_cents {
-            next.low_competition_max_midpoint_range_cents = value;
-        }
-        if let Some(value) = patch.low_competition_max_top_of_book_flip_count {
-            next.low_competition_max_top_of_book_flip_count = value;
-        }
-        if let Some(value) = patch.low_competition_observation_window_sec {
-            next.low_competition_observation_window_sec = value;
-        }
-        if let Some(value) = patch.low_competition_min_book_samples {
-            next.low_competition_min_book_samples = value;
-        }
-        if let Some(value) = patch.low_competition_quote_bid_rank {
-            next.low_competition_quote_bid_rank = value;
-        }
-        if let Some(value) = patch.low_competition_safety_margin_cents {
-            next.low_competition_safety_margin_cents = value;
-        }
-        if let Some(value) = patch.low_competition_max_spread_cents {
-            next.low_competition_max_spread_cents = value;
-        }
-        if let Some(value) = patch.low_competition_max_market_spread_cents {
-            next.low_competition_max_market_spread_cents = value;
-        }
-        if let Some(value) = patch.low_competition_min_market_score {
-            next.low_competition_min_market_score = value;
-        }
-        if let Some(value) = patch.low_competition_require_ai_allow {
-            next.low_competition_require_ai_allow = value;
-        }
-        if let Some(value) = patch.low_competition_info_risk_avoid_level {
-            next.low_competition_info_risk_avoid_level = value;
-        }
-        if let Some(value) = patch.low_competition_cancel_confirm_sec {
-            next.low_competition_cancel_confirm_sec = value;
-        }
-        if let Some(value) = patch.low_competition_cancel_share_threshold_ratio_bps {
-            next.low_competition_cancel_share_threshold_ratio_bps = value;
-        }
-        if let Some(value) = patch.low_competition_cancel_competition_multiple_factor {
-            next.low_competition_cancel_competition_multiple_factor = value;
-        }
-        if let Some(value) = patch.low_competition_cancel_max_exit_slippage_cents {
-            next.low_competition_cancel_max_exit_slippage_cents = value;
-        }
-        if let Some(value) = patch.low_competition_cancel_min_exit_depth_usd {
-            next.low_competition_cancel_min_exit_depth_usd = value;
-        }
-        if let Some(value) = patch.low_competition_cancel_exit_depth_multiple {
-            next.low_competition_cancel_exit_depth_multiple = value;
-        }
-        if let Some(value) = patch.low_competition_cancel_midpoint_range_floor_cents {
-            next.low_competition_cancel_midpoint_range_floor_cents = value;
-        }
-        if let Some(value) = patch.low_competition_global_open_order_share_bps {
-            next.low_competition_global_open_order_share_bps = value;
         }
         if let Some(value) = patch.ai_advisory_enabled {
             next.ai_advisory_enabled = value;
@@ -1276,27 +807,6 @@ mod reward_config_tests {
             "max_book_hhi": 1,
             "preferred_categories": ["politics", "elections", "geopolitics"],
             "preferred_category_score_bonus": 0,
-            "low_competition_mode": "observe",
-            "low_competition_max_markets": 8,
-            "low_competition_max_open_orders": 4,
-            "low_competition_per_market_usd": 5,
-            "low_competition_max_position_usd": 10,
-            "low_competition_probe_notional_usd": 10,
-            "low_competition_min_competition_share_bps": 5000,
-            "low_competition_max_competition_multiple": 1,
-            "low_competition_max_account_allocation_bps": 1500,
-            "low_competition_max_market_allocation_bps": 500,
-            "low_competition_candidate_liquidity_filter_enabled": false,
-            "low_competition_candidate_volume_filter_enabled": false,
-            "low_competition_min_market_liquidity_usd": 250,
-            "low_competition_min_market_volume_24h_usd": 100,
-            "low_competition_max_competition_usd": 250,
-            "low_competition_min_reward_per_100_usd_day": 0.25,
-            "low_competition_min_exit_depth_usd": 50,
-            "low_competition_min_exit_depth_multiple": 3,
-            "low_competition_max_midpoint_range_cents": 2,
-            "low_competition_observation_window_sec": 1800,
-            "low_competition_min_book_samples": 20,
             "ai_advisory_enabled": true,
             "ai_provider": "openai",
             "ai_request_format": "openai_chat_completions",
@@ -1379,43 +889,8 @@ mod reward_config_tests {
         assert_eq!(config.requote_drift_confirm_sec, 90);
         assert_eq!(config.requote_drift_cooldown_sec, 240);
         assert_eq!(config.requote_drift_max_cancels_per_cycle, 2);
-        assert_eq!(config.low_competition_mode, RewardLowCompetitionMode::Off);
-        assert_eq!(config.low_competition_max_markets, 0);
-        assert_eq!(config.low_competition_max_open_orders, 0);
-        assert_eq!(config.low_competition_global_open_order_share_bps, 0);
-        assert_eq!(config.low_competition_probe_notional_usd, decimal("10"));
-        assert_eq!(config.low_competition_min_competition_share_bps, 5_000);
-        assert_eq!(config.low_competition_max_account_allocation_bps, 1_500);
-        assert!(!config.low_competition_candidate_liquidity_filter_enabled);
-        assert!(!config.low_competition_candidate_volume_filter_enabled);
-        assert_eq!(
-            config.low_competition_min_market_liquidity_usd,
-            Decimal::ZERO
-        );
-        assert_eq!(
-            config.low_competition_min_market_volume_24h_usd,
-            Decimal::ZERO
-        );
 
         let serialized = serde_json::to_value(config).expect("config serializes");
-        assert_eq!(serialized["low_competition_mode"], "off");
-        assert_eq!(serialized["low_competition_max_markets"], 0);
-        assert_eq!(serialized["low_competition_max_open_orders"], 0);
-        assert_eq!(serialized["low_competition_global_open_order_share_bps"], 0);
-        assert_eq!(
-            serialized["low_competition_min_competition_share_bps"],
-            5000
-        );
-        assert_eq!(
-            serialized["low_competition_candidate_liquidity_filter_enabled"],
-            false
-        );
-        assert_eq!(
-            serialized["low_competition_candidate_volume_filter_enabled"],
-            false
-        );
-        assert_eq!(serialized["low_competition_min_market_liquidity_usd"], "0");
-        assert_eq!(serialized["low_competition_min_market_volume_24h_usd"], "0");
         assert_eq!(serialized["ai_provider"], "openai");
         assert_eq!(serialized["ai_request_format"], "openai_chat_completions");
         assert_eq!(serialized["event_window_min_confidence"], "medium");
@@ -1437,42 +912,6 @@ mod reward_config_tests {
 
         assert_eq!(config.stale_book_ms, 5_000);
         assert_eq!(config.min_scoring_check_sec, 15);
-    }
-
-    #[test]
-    fn reward_config_defaults_to_rewards_only_market_maker_disabled() {
-        let config = RewardBotConfig::default().normalized();
-
-        assert_eq!(config.strategy_mode, RewardStrategyMode::RewardsOnly);
-        assert!(!config.market_maker_enabled);
-    }
-
-    #[test]
-    fn reward_config_normalizes_market_maker_strategy_switch() {
-        let config = RewardBotConfig {
-            strategy_mode: RewardStrategyMode::MarketMakerGuarded,
-            market_maker_enabled: false,
-            market_maker_fair_value_model_version: "  ".to_string(),
-            ..RewardBotConfig::default()
-        }
-        .normalized();
-
-        assert_eq!(config.strategy_mode, RewardStrategyMode::MarketMakerGuarded);
-        assert!(config.market_maker_enabled);
-        assert_eq!(
-            config.market_maker_fair_value_model_version,
-            "high_probability_bucket_v1"
-        );
-
-        let config = RewardBotConfig {
-            strategy_mode: RewardStrategyMode::RewardsOnly,
-            market_maker_enabled: true,
-            ..RewardBotConfig::default()
-        }
-        .normalized();
-
-        assert_eq!(config.strategy_mode, RewardStrategyMode::MarketMakerShadow);
-        assert!(config.market_maker_enabled);
     }
 
     #[test]
@@ -1515,68 +954,4 @@ mod reward_config_tests {
         );
     }
 
-    #[test]
-    fn legacy_low_competition_candidate_filter_is_disabled() {
-        let config = RewardBotConfig {
-            low_competition_mode: RewardLowCompetitionMode::Observe,
-            low_competition_max_markets: 5,
-            min_market_liquidity_usd: decimal("1000"),
-            min_market_volume_24h_usd: decimal("1000"),
-            low_competition_min_market_liquidity_usd: decimal("250"),
-            low_competition_min_market_volume_24h_usd: decimal("100"),
-            ..RewardBotConfig::default()
-        }
-        .normalized();
-
-        assert_eq!(config.low_competition_mode, RewardLowCompetitionMode::Off);
-        assert_eq!(config.low_competition_max_markets, 0);
-        assert!(config.low_competition_candidate_filter().is_none());
-
-        let config = RewardBotConfig {
-            low_competition_candidate_liquidity_filter_enabled: true,
-            low_competition_candidate_volume_filter_enabled: true,
-            low_competition_min_market_liquidity_usd: decimal("250"),
-            low_competition_min_market_volume_24h_usd: decimal("100"),
-            ..config
-        }
-        .normalized();
-
-        assert!(!config.low_competition_candidate_liquidity_filter_enabled);
-        assert!(!config.low_competition_candidate_volume_filter_enabled);
-        assert_eq!(
-            config.low_competition_min_market_liquidity_usd,
-            Decimal::ZERO
-        );
-        assert_eq!(
-            config.low_competition_min_market_volume_24h_usd,
-            Decimal::ZERO
-        );
-        assert!(config.low_competition_candidate_filter().is_none());
-    }
-
-    #[test]
-    fn low_competition_candidate_threshold_defaults_above_gate_and_clamps() {
-        let config = RewardBotConfig::default().normalized();
-        // 默认候选早期剔除阈值(5)应高于正式 gate 阈值(1)
-        assert_eq!(
-            config.low_competition_candidate_max_competition_multiple,
-            decimal("5")
-        );
-        assert!(
-            config.low_competition_candidate_max_competition_multiple
-                >= config.low_competition_max_competition_multiple
-        );
-
-        // 低于正式 gate 阈值会被抬升到 gate 阈值，避免候选阈值抢正式 gate 的活
-        let lifted = RewardBotConfig {
-            low_competition_candidate_max_competition_multiple: decimal("0.5"),
-            low_competition_max_competition_multiple: decimal("3"),
-            ..RewardBotConfig::default()
-        }
-        .normalized();
-        assert_eq!(
-            lifted.low_competition_candidate_max_competition_multiple,
-            decimal("3")
-        );
-    }
 }

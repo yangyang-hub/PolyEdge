@@ -16,9 +16,7 @@ fn prefilter_test_plan(condition_id: &str, bucket: RewardStrategyBucket) -> Rewa
         quote_mode: RewardPlanQuoteMode::Double,
         recommended_quote_mode: None,
         book_metrics: None,
-        low_competition_metrics: None,
         opportunity_metrics: None,
-        market_maker: None,
         ai_advisory: None,
         info_risk: None,
         event_window: None,
@@ -38,55 +36,9 @@ fn prefilter_test_plan(condition_id: &str, bucket: RewardStrategyBucket) -> Rewa
 }
 
 #[test]
-fn provider_prefilter_treats_legacy_low_competition_bucket_as_standard() {
-    let config = RewardBotConfig {
-        low_competition_mode: RewardLowCompetitionMode::Observe,
-        ..RewardBotConfig::default()
-    };
-    let plan = prefilter_test_plan("cond_legacy", RewardStrategyBucket::LowCompetition);
-
-    assert!(reward_provider_plan_passes_pre_llm_gate(&plan, &config, false));
-    assert_eq!(
-        reward_provider_pre_llm_candidate_kind(&plan, &config, false),
-        Some(RewardProviderPreLlmCandidateKind::Standard)
-    );
-}
-
-#[test]
-fn provider_prefilter_ignores_legacy_low_competition_enforce_gate() {
-    let config = RewardBotConfig {
-        low_competition_mode: RewardLowCompetitionMode::Enforce,
-        ai_advisory_enabled: true,
-        info_risk_enabled: true,
-        info_risk_mode: RewardSelectionMode::Enforce,
-        ..RewardBotConfig::default()
-    };
-    let plan = prefilter_test_plan("cond_enforce", RewardStrategyBucket::LowCompetition);
-
-    assert!(reward_provider_plan_passes_pre_llm_gate(&plan, &config, false));
-    assert_eq!(
-        reward_provider_pre_llm_candidate_kind(&plan, &config, false),
-        Some(RewardProviderPreLlmCandidateKind::Standard)
-    );
-}
-
-#[test]
-fn provider_prefilter_blocks_ineligible_legacy_low_competition_bucket() {
-    let config = RewardBotConfig::default();
-    let mut plan = prefilter_test_plan("cond_reject", RewardStrategyBucket::LowCompetition);
-    plan.eligible = false;
-    plan.pre_ai_eligible = false;
-
-    assert!(!reward_provider_plan_passes_pre_llm_gate(&plan, &config, false));
-}
-
-#[test]
 fn provider_prefilter_bypasses_gate_when_condition_has_exposure() {
-    let config = RewardBotConfig {
-        low_competition_mode: RewardLowCompetitionMode::Observe,
-        ..RewardBotConfig::default()
-    };
-    let plan = prefilter_test_plan("cond_exposure", RewardStrategyBucket::LowCompetition);
+    let config = RewardBotConfig::default();
+    let plan = prefilter_test_plan("cond_exposure", RewardStrategyBucket::None);
 
     assert!(reward_provider_plan_passes_pre_llm_gate(&plan, &config, true));
     assert_eq!(

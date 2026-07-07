@@ -1,6 +1,6 @@
 # 共享组件（Shared Components + UI Primitives）
 
-最后更新：2026-06-27
+最后更新：2026-07-07
 
 ## 概述
 
@@ -73,7 +73,7 @@ shadcn 生成的 Radix UI 基础组件（style: radix-nova）：
 
 - UI 组件基于 shadcn/ui v4（radix-nova 风格）
 - 共享组件覆盖所有跨页面复用场景
-- 控制台侧边栏不再提供 `/replay`、`/radar`、`/signals`、`/positions`、`/risk` 入口；已提供 `/funding` Polymarket 入金入口和 `/high-probability` 高概率研究入口；桌面侧栏和移动端抽屉菜单共享同一份导航配置
+- 控制台侧边栏当前提供 `/dashboard`、`/markets`、`/events`、`/rewards`、`/funding`、`/settings` 入口；桌面侧栏和移动端抽屉菜单共享同一份导航配置
 - 控制台布局导航使用原生 `<a href>` 跳转，避免静态导出部署下客户端 router 拦截失败导致菜单点击无响应
 - 顶栏不再显示横向导航快捷入口，也不再读取旧风控状态或展示 kill-switch 控制；移动端顶栏显示菜单按钮并从左侧打开导航抽屉
 - 暗色主题（`globals.css` 中仅定义暗色变量）

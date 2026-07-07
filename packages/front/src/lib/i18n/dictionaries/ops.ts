@@ -55,7 +55,7 @@ export const ops = {
     switchRole: "切换角色",
     goToDashboard: "前往仪表盘",
     roleCopy: {
-      viewer: "只读访问仪表盘、市场、事件、雷达、信号、持仓和钱包分析。",
+      viewer: "只读访问仪表盘、市场、事件、奖励、入金和设置。",
       operator: "可监控风险队列并执行标准台面干预。",
       risk_admin: "可管理风控控制、模式切换和受保护台面状态。",
       admin: "完整访问权限，包括设置和环境管理。",
