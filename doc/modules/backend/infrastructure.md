@@ -76,7 +76,7 @@ Rewards provider 密钥只从 `RewardsSettings` 读取，不进入 `RewardBotCon
 | `stores/rewards/postgres_info_risk.rs` | 信息风险缓存 |
 | `stores/rewards/postgres_event_windows.rs` | event-window 候选和 effective window 查询 |
 | `stores/rewards/postgres_candles.rs` | rewards price-history candle 写入和查询 |
-| `stores/rewards/postgres_writes.rs` | rewards 写入辅助 |
+| `stores/rewards/postgres_writes.rs` | rewards 写入辅助，包括 quote plan、fair-value latest/history 和账本状态 |
 | `stores/rewards/in_memory.rs` | Rewards 内存实现 |
 | `stores/orderbook_cache.rs` | `InMemoryOrderbookCache`，供 orderbook 服务内部使用 |
 | `stores/orderbook_registry.rs` | `InMemoryOrderbookSubscriptionRegistry`，供 orderbook 服务内部使用 |
@@ -86,11 +86,12 @@ Rewards provider 密钥只从 `RewardsSettings` 读取，不进入 `RewardBotCon
 
 - `runtime_config` 启动时用环境变量值 bootstrap 数据库；环境变量始终优先。
 - Postgres maintenance 使用 `WITH doomed AS (SELECT ctid ... LIMIT $n) DELETE ... USING doomed` 分批删除，避免超大事务。
-- Rewards 配置以 key-value 保存，覆盖市场质量、quote/selection、dominant 单边、盘口集中度、偏好分类、机会评分、AI advisory、信息风险、事件窗口、首单 gate、库存、requote、reconcile 和 BalancedMerge 参数。
+- Rewards 配置以 key-value 保存，覆盖市场质量、quote/selection、dominant 单边、盘口集中度、偏好分类、机会评分、fair-value、AI advisory、信息风险、事件窗口、首单 gate、库存、requote、reconcile 和 BalancedMerge 参数。
 - `RewardBotStore` 维护 `reward_control_commands`，API 入队 pending 命令，worker 使用 claim/complete/fail 处理；running 命令超过 5 分钟可重新领取。
 - `RewardBotStore` 维护 `reward_worker_heartbeats`，API snapshot 只在配置启用且最近 2 分钟有 heartbeat 时标记 worker running。
 - `reward_market_advisories`、`reward_market_info_risks` 和 `llm_calls` 已接入 Postgres/内存实现；外部 provider 调用按 UTC 日聚合展示。
 - `reward_quote_plans` 统计在 Postgres 中直接 SQL 聚合 readiness 与 blocker counts，避免顶部概览反序列化全表 JSON。
+- `reward_fair_values` 保存每个 condition 最新 fair-value 估计；`reward_fair_value_history` 追加保存历史估计用于审计/回测，数据库维护默认保留 90 天。
 - `reward_positions` 可保存当前 rewards catalog 外的外部库存；外部账户持仓同步成功时会原子替换目标账户全部持仓，失败时保留上一版。
 - `reward_merge_intents` 支持 BalancedMerge 配对库存合并、提交 tx hash、失败原因和 retry count。
 - `InMemoryOrderbookCache` 写入时排序 bids/asks、裁剪深度、拒绝旧 `observed_at` 覆盖未过期条目，并合并更新的 `confirmed_at`。
@@ -132,7 +133,7 @@ Postgres 可用时使用 Postgres store；无数据库时使用 in-memory/no-op 
 - Funding API 复用 Polymarket settings 中的私钥、funder/account_id 和 Polygon RPC，不新增独立资金私钥配置。
 - Orderbook cache/registry 默认仍由 `Runtime` 构建；API/worker 启动时会把它们替换为 `OrderbookHttpClient` 指向独立 orderbook 服务。
 - Orderbook 写接口要求 `x-polyedge-orderbook-token` 与 `POLYEDGE_ORDERBOOK__WRITE_TOKEN` 匹配；未配置 token 时写接口关闭，读接口和健康检查仍可用。
-- 数据库维护 runtime 只清理当前 schema 中可增长的历史/缓存/队列表。
+- 数据库维护 runtime 只清理当前 schema 中可增长的历史/缓存/队列表，包括 fair-value history。
 
 ## 修改检查清单
 

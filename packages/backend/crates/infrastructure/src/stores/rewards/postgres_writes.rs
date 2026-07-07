@@ -215,3 +215,164 @@ async fn replace_reward_quote_plans_tx(
 
     Ok(())
 }
+
+async fn postgres_record_reward_fair_value_estimates(
+    pool: &PgPool,
+    estimates: &[RewardFairValueEstimate],
+) -> Result<()> {
+    if estimates.is_empty() {
+        return Ok(());
+    }
+
+    let mut transaction = pool.begin().await.map_err(|error| {
+        db_error(
+            "POSTGRES_TRANSACTION_BEGIN_FAILED",
+            format!("failed to begin reward fair-value transaction: {error}"),
+        )
+    })?;
+
+    for chunk in estimates.chunks(REWARD_UPSERT_BATCH_SIZE) {
+        let cols = 13usize;
+        let placeholders: String = chunk
+            .iter()
+            .enumerate()
+            .map(|(i, _)| {
+                let base = i * cols;
+                let params: Vec<String> = (1..=cols).map(|j| format!("${}", base + j)).collect();
+                format!("({})", params.join(", "))
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        let latest_sql = format!(
+            r#"
+            INSERT INTO reward_fair_values (
+              condition_id,
+              source,
+              fair_yes,
+              fair_no,
+              market_midpoint_yes,
+              confidence,
+              uncertainty_cents,
+              midpoint_deviation_cents,
+              sample_count,
+              components_json,
+              do_not_quote_reason,
+              observed_at,
+              expires_at
+            )
+            VALUES {placeholders}
+            ON CONFLICT (condition_id) DO UPDATE
+            SET source = EXCLUDED.source,
+                fair_yes = EXCLUDED.fair_yes,
+                fair_no = EXCLUDED.fair_no,
+                market_midpoint_yes = EXCLUDED.market_midpoint_yes,
+                confidence = EXCLUDED.confidence,
+                uncertainty_cents = EXCLUDED.uncertainty_cents,
+                midpoint_deviation_cents = EXCLUDED.midpoint_deviation_cents,
+                sample_count = EXCLUDED.sample_count,
+                components_json = EXCLUDED.components_json,
+                do_not_quote_reason = EXCLUDED.do_not_quote_reason,
+                observed_at = EXCLUDED.observed_at,
+                expires_at = EXCLUDED.expires_at,
+                updated_at = now()
+            "#
+        );
+
+        let mut latest_query = sqlx::query(&latest_sql);
+        for estimate in chunk {
+            latest_query = bind_reward_fair_value_estimate(latest_query, estimate);
+        }
+        latest_query
+            .execute(&mut *transaction)
+            .await
+            .map_err(|error| {
+                db_error(
+                    "POSTGRES_BATCH_UPSERT_REWARD_FAIR_VALUES_FAILED",
+                    format!(
+                        "failed to batch upsert reward fair values (chunk size {}): {error}",
+                        chunk.len()
+                    ),
+                )
+            })?;
+
+        let history_cols = cols + 1;
+        let history_placeholders: String = chunk
+            .iter()
+            .enumerate()
+            .map(|(i, _)| {
+                let base = i * history_cols;
+                let params: Vec<String> =
+                    (1..=history_cols).map(|j| format!("${}", base + j)).collect();
+                format!("({})", params.join(", "))
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        let history_sql = format!(
+            r#"
+            INSERT INTO reward_fair_value_history (
+              id,
+              condition_id,
+              source,
+              fair_yes,
+              fair_no,
+              market_midpoint_yes,
+              confidence,
+              uncertainty_cents,
+              midpoint_deviation_cents,
+              sample_count,
+              components_json,
+              do_not_quote_reason,
+              observed_at,
+              expires_at
+            )
+            VALUES {history_placeholders}
+            "#
+        );
+        let mut history_query = sqlx::query(&history_sql);
+        for estimate in chunk {
+            history_query = history_query.bind(Uuid::new_v4());
+            history_query = bind_reward_fair_value_estimate(history_query, estimate);
+        }
+        history_query
+            .execute(&mut *transaction)
+            .await
+            .map_err(|error| {
+                db_error(
+                    "POSTGRES_BATCH_INSERT_REWARD_FAIR_VALUE_HISTORY_FAILED",
+                    format!(
+                        "failed to batch insert reward fair-value history (chunk size {}): {error}",
+                        chunk.len()
+                    ),
+                )
+            })?;
+    }
+
+    transaction.commit().await.map_err(|error| {
+        db_error(
+            "POSTGRES_TRANSACTION_COMMIT_FAILED",
+            format!("failed to commit reward fair-value transaction: {error}"),
+        )
+    })?;
+    Ok(())
+}
+
+fn bind_reward_fair_value_estimate<'q>(
+    query: sqlx::query::Query<'q, sqlx::Postgres, sqlx::postgres::PgArguments>,
+    estimate: &'q RewardFairValueEstimate,
+) -> sqlx::query::Query<'q, sqlx::Postgres, sqlx::postgres::PgArguments> {
+    query
+        .bind(&estimate.condition_id)
+        .bind(&estimate.source)
+        .bind(estimate.fair_yes)
+        .bind(estimate.fair_no)
+        .bind(estimate.market_midpoint_yes)
+        .bind(estimate.confidence)
+        .bind(estimate.uncertainty_cents)
+        .bind(estimate.midpoint_deviation_cents)
+        .bind(i64::try_from(estimate.sample_count).unwrap_or(i64::MAX))
+        .bind(Json(estimate.components.clone()))
+        .bind(&estimate.do_not_quote_reason)
+        .bind(estimate.observed_at)
+        .bind(estimate.expires_at)
+}

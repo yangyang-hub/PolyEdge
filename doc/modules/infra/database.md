@@ -4,7 +4,7 @@
 
 ## 概述
 
-数据库使用 PostgreSQL。当前基线包含 46 个 SQL 迁移文件，最新文件为 `0057_reward_merge_intent_execution.sql`。schema 覆盖审计、幂等、LLM 调用、市场数据、事件/证据、执行历史、内部风险状态、新闻、LP rewards、Funding/Polymarket 账户配套、orderbook price-history candles、runtime config 和 BalancedMerge。
+数据库使用 PostgreSQL。当前基线包含 47 个 SQL 迁移文件，最新文件为 `0058_reward_fair_value.sql`。schema 覆盖审计、幂等、LLM 调用、市场数据、事件/证据、执行历史、内部风险状态、新闻、LP rewards market maker、fair-value estimates、Funding/Polymarket 账户配套、orderbook price-history candles、runtime config 和 BalancedMerge。
 
 本项目现在面向空库重新部署：`packages/backend/init.sql` 已按当前 `migrations/` 目录重新生成，不兼容已删除历史模块的旧表。运行时仍通过 `sqlx::migrate!` 使用 `packages/backend/migrations/` 做迁移校验。
 
@@ -64,6 +64,7 @@
 | `0055_reward_balanced_merge_strategy.sql` | BalancedMerge | `strategy_profile`、`reward_merge_intents` |
 | `0056_reward_managed_orders_external_inventory.sql` | 外部库存退出 | 移除 managed orders 对 rewards 目录 FK |
 | `0057_reward_merge_intent_execution.sql` | merge intent 执行状态 | tx hash、提交/确认/失败时间、失败原因、retry_count |
+| `0058_reward_fair_value.sql` | 做市 fair-value | `reward_fair_values`、`reward_fair_value_history` |
 
 ## Schema 领域分组
 
@@ -92,9 +93,9 @@
 
 ### LP rewards
 
-- `reward_bot_config`：key-value 配置，覆盖市场质量、quote/selection、dominant 单边、盘口集中度、偏好分类、统一机会评分、AI advisory、信息风险、事件窗口、首单 gate、库存、requote、reconcile、BalancedMerge 等参数。
+- `reward_bot_config`：key-value 配置，覆盖市场质量、quote/selection、dominant 单边、盘口集中度、偏好分类、统一机会评分、fair-value、AI advisory、信息风险、事件窗口、首单 gate、库存、requote、reconcile、BalancedMerge 等参数。
 - `reward_markets`：condition、question、market_slug、rewards_max_spread/min_size、total_daily_rate、tokens JSON。
-- `reward_quote_plans`：当前 quote plan snapshot，包含 market FK、score、`strategy_profile` 和 quote plan JSON。JSON 可携带 opportunity metrics、event window、AI advisory、info-risk、readiness 和 blocker reasons。
+- `reward_quote_plans`：当前 quote plan snapshot，包含 market FK、score、`strategy_profile` 和 quote plan JSON。JSON 可携带 opportunity metrics、fair-value decision、event window、AI advisory、info-risk、readiness 和 blocker reasons。
 - `reward_managed_orders`：托管订单，包含 account/condition/token、side、price、size、status、strategy bucket/profile、filled_size、reward_earned、external id 和对账锁等字段。外部库存补 SELL intent 可来自当前 rewards catalog 外的 condition。
 - `reward_fills`：托管订单成交，保存 account/condition/token/outcome/side、price、size、notional、role、realized PnL。
 - `reward_positions`：按 account + token 保存外部完整持仓，可包含当前 rewards catalog 外的市场。
@@ -104,6 +105,8 @@
 - `reward_market_advisories`：AI advisory 缓存，按 condition/provider/request_format/model/input_hash 存储 suitability、推荐模式、confidence、reasons/metrics JSON 和 expires_at。
 - `reward_market_info_risks`：信息风险缓存，按 condition/provider/request_format/model/input_hash 存储 risk level/type/direction、resolution_imminent、expected_event_at、confidence、summary、sources/metrics JSON 和 expires_at。
 - `reward_market_candles`：orderbook 服务从 CLOB `/prices-history` 低频写入的 rewards token 5m source candles。provider price 同时写入 close、best bid close 和 best ask close，`spread_cents_close=0`，`sample_count` 表示同 bucket 内 provider history 点数量。
+- `reward_fair_values`：每个 condition 最新 fair-value 估计，保存 fair_yes/fair_no、market midpoint、confidence、uncertainty、YES/NO 偏离、组件 JSON、拒绝原因和有效期。
+- `reward_fair_value_history`：fair-value 历史追加表，用于审计和回测；数据库维护默认按 `created_at` 保留 90 天。
 - `reward_market_event_windows`：按 condition/source 保存事件时间候选；effective 查询按 active、confidence、source 优先级和更新时间选一条。
 - `reward_merge_intents`：BalancedMerge 配对库存合并意图，包含 YES/NO token、merge size、两侧库存均价、source fill、status、tx hash、submitted/confirmed/failed 时间、失败原因和 retry count。
 
@@ -114,6 +117,7 @@
 - raw events：未关联 30 天，已关联 90 天。
 - 过期 AI advisory / info-risk cache：额外保留 7 天。
 - `reward_market_candles`：30 天。
+- `reward_fair_value_history`：90 天。
 - completed control commands：30 天；failed control commands：90 天。
 - outbox/external dedup：30-90 天窗口。
 - `llm_calls`：180 天。
@@ -123,11 +127,11 @@
 
 ## 当前状态
 
-- 当前迁移文件数为 46，最新为 `0057_reward_merge_intent_execution.sql`。
+- 当前迁移文件数为 47，最新为 `0058_reward_fair_value.sql`。
 - `packages/backend/init.sql` 已由当前迁移重新生成。
 - 已删除历史模块的迁移、表、store、handler 和前端 DTO 不在当前基线中。
 - Rewards 竞争度相关数据只存在于 quote plan 的统一 opportunity metrics 中，不再有独立 observation 表或模块。
-- Rewards 事件窗口、AI advisory、信息风险、price-history candles、worker heartbeat、控制命令去重和 BalancedMerge merge intent 已落地。
+- Rewards 事件窗口、fair-value estimates、AI advisory、信息风险、price-history candles、worker heartbeat、控制命令去重和 BalancedMerge merge intent 已落地。
 - 数据库维护任务生产模板默认开启；它不删除 rewards fills、positions、account state 等核心账本表。
 
 ## 修改检查清单

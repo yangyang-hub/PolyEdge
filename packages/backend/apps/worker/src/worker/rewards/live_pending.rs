@@ -81,6 +81,16 @@ fn live_buy_submission_last_look_plan(
     let materialized =
         materialize_reward_quote_plan_for_live_orderbook(&plan, books, &plan_config)?;
     apply_live_quote_plan_materialization(&mut plan, materialized, OffsetDateTime::now_utc());
+    apply_reward_fair_value_to_quote_plan(
+        &mut plan,
+        books,
+        context.book_history,
+        &plan_config,
+        OffsetDateTime::now_utc(),
+    );
+    if !plan.eligible {
+        return Err(plan.reason.clone());
+    }
     Ok(plan)
 }
 

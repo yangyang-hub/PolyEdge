@@ -357,6 +357,13 @@ impl RewardBotService {
         self.store.save_quote_plans(plans).await
     }
 
+    pub async fn record_fair_value_estimates(
+        &self,
+        estimates: &[RewardFairValueEstimate],
+    ) -> Result<()> {
+        self.store.record_fair_value_estimates(estimates).await
+    }
+
     /// List a bounded candidate pool for one rewards strategy tick.
     pub async fn list_reward_run_candidate_markets(&self) -> Result<Vec<RewardMarket>> {
         Ok(self

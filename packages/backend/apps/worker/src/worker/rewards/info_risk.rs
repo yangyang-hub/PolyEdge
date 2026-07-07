@@ -663,6 +663,7 @@ mod reward_info_risk_candidate_tests {
             recommended_quote_mode: None,
             book_metrics: None,
             opportunity_metrics: None,
+            fair_value: None,
             ai_advisory: None,
             info_risk,
             event_window: None,

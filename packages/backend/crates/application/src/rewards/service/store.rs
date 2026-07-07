@@ -41,6 +41,10 @@ pub trait RewardBotStore: Send + Sync {
     ) -> Result<Vec<RewardMarketEventWindow>>;
     /// Replace the current rewards quote plan snapshot.
     async fn save_quote_plans(&self, plans: &[RewardQuotePlan]) -> Result<()>;
+    async fn record_fair_value_estimates(
+        &self,
+        estimates: &[RewardFairValueEstimate],
+    ) -> Result<()>;
     async fn record_market_candle_sample(&self, sample: &RewardMarketCandleSample) -> Result<()>;
     async fn list_recent_market_candles(
         &self,

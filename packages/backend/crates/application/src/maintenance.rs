@@ -7,6 +7,7 @@ const RAW_EVENTS_UNLINKED_RETENTION_DAYS: i64 = 30;
 const RAW_EVENTS_LINKED_RETENTION_DAYS: i64 = 90;
 const EXPIRED_CACHE_GRACE_DAYS: i64 = 7;
 const REWARD_CANDLE_RETENTION_DAYS: i64 = 30;
+const REWARD_FAIR_VALUE_HISTORY_RETENTION_DAYS: i64 = 90;
 const CONTROL_COMMAND_COMPLETED_RETENTION_DAYS: i64 = 30;
 const CONTROL_COMMAND_FAILED_RETENTION_DAYS: i64 = 90;
 const OUTBOX_PUBLISHED_RETENTION_DAYS: i64 = 30;
@@ -23,6 +24,7 @@ pub struct DatabaseMaintenanceCutoffs {
     pub raw_events_linked_before: OffsetDateTime,
     pub expired_cache_before: OffsetDateTime,
     pub reward_candles_before: OffsetDateTime,
+    pub reward_fair_value_history_before: OffsetDateTime,
     pub control_commands_completed_before: OffsetDateTime,
     pub control_commands_failed_before: OffsetDateTime,
     pub outbox_published_before: OffsetDateTime,
@@ -42,6 +44,8 @@ impl DatabaseMaintenanceCutoffs {
             raw_events_linked_before: now - Duration::days(RAW_EVENTS_LINKED_RETENTION_DAYS),
             expired_cache_before: now - Duration::days(EXPIRED_CACHE_GRACE_DAYS),
             reward_candles_before: now - Duration::days(REWARD_CANDLE_RETENTION_DAYS),
+            reward_fair_value_history_before: now
+                - Duration::days(REWARD_FAIR_VALUE_HISTORY_RETENTION_DAYS),
             control_commands_completed_before: now
                 - Duration::days(CONTROL_COMMAND_COMPLETED_RETENTION_DAYS),
             control_commands_failed_before: now
@@ -68,6 +72,7 @@ pub struct DatabaseMaintenanceReport {
     pub reward_market_advisories_deleted: u64,
     pub reward_market_info_risks_deleted: u64,
     pub reward_market_candles_deleted: u64,
+    pub reward_fair_value_history_deleted: u64,
     pub reward_control_commands_deleted: u64,
     pub audit_logs_deleted: u64,
     pub mode_transitions_deleted: u64,
@@ -84,6 +89,7 @@ impl DatabaseMaintenanceReport {
             .saturating_add(self.reward_market_advisories_deleted)
             .saturating_add(self.reward_market_info_risks_deleted)
             .saturating_add(self.reward_market_candles_deleted)
+            .saturating_add(self.reward_fair_value_history_deleted)
             .saturating_add(self.reward_control_commands_deleted)
             .saturating_add(self.audit_logs_deleted)
             .saturating_add(self.mode_transitions_deleted)

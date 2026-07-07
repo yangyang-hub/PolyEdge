@@ -52,7 +52,7 @@ export const shared = {
     dashboard: "仪表盘",
     markets: "市场",
     events: "事件",
-    rewards: "奖励做市",
+    rewards: "做市",
     funding: "Polymarket 入金",
     settings: "设置",
   },

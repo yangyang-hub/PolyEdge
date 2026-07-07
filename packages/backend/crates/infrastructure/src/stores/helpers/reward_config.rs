@@ -114,6 +114,37 @@ fn apply_reward_config_value(config: &mut RewardBotConfig, key: &str, value: &st
         "opportunity_stability_weight" => {
             config.opportunity_stability_weight = parse_decimal_config(key, value)?;
         }
+        "fair_value_enabled" => config.fair_value_enabled = parse_bool_config(key, value)?,
+        "fair_value_record_history_enabled" => {
+            config.fair_value_record_history_enabled = parse_bool_config(key, value)?;
+        }
+        "fair_value_min_confidence" => {
+            config.fair_value_min_confidence = parse_decimal_config(key, value)?;
+        }
+        "fair_value_min_raw_edge_cents" => {
+            config.fair_value_min_raw_edge_cents = parse_decimal_config(key, value)?;
+        }
+        "fair_value_min_effective_edge_cents" => {
+            config.fair_value_min_effective_edge_cents = parse_decimal_config(key, value)?;
+        }
+        "fair_value_uncertainty_buffer_cents" => {
+            config.fair_value_uncertainty_buffer_cents = parse_decimal_config(key, value)?;
+        }
+        "fair_value_rebate_haircut" => {
+            config.fair_value_rebate_haircut = parse_decimal_config(key, value)?;
+        }
+        "fair_value_max_reward_rebate_cents" => {
+            config.fair_value_max_reward_rebate_cents = parse_decimal_config(key, value)?;
+        }
+        "fair_value_max_midpoint_deviation_cents" => {
+            config.fair_value_max_midpoint_deviation_cents = parse_decimal_config(key, value)?;
+        }
+        "fair_value_history_window_sec" => {
+            config.fair_value_history_window_sec = parse_u64_config(key, value)?;
+        }
+        "fair_value_min_history_samples" => {
+            config.fair_value_min_history_samples = parse_u64_config(key, value)?;
+        }
         "ai_advisory_enabled" => config.ai_advisory_enabled = parse_bool_config(key, value)?,
         "ai_provider" => config.ai_provider = RewardAiProvider::from_str(value)?,
         "ai_request_format" => {
@@ -399,6 +430,50 @@ fn reward_config_entries(config: &RewardBotConfig) -> Vec<(&'static str, String)
         (
             "opportunity_stability_weight",
             config.opportunity_stability_weight.to_string(),
+        ),
+        (
+            "fair_value_enabled",
+            config.fair_value_enabled.to_string(),
+        ),
+        (
+            "fair_value_record_history_enabled",
+            config.fair_value_record_history_enabled.to_string(),
+        ),
+        (
+            "fair_value_min_confidence",
+            config.fair_value_min_confidence.to_string(),
+        ),
+        (
+            "fair_value_min_raw_edge_cents",
+            config.fair_value_min_raw_edge_cents.to_string(),
+        ),
+        (
+            "fair_value_min_effective_edge_cents",
+            config.fair_value_min_effective_edge_cents.to_string(),
+        ),
+        (
+            "fair_value_uncertainty_buffer_cents",
+            config.fair_value_uncertainty_buffer_cents.to_string(),
+        ),
+        (
+            "fair_value_rebate_haircut",
+            config.fair_value_rebate_haircut.to_string(),
+        ),
+        (
+            "fair_value_max_reward_rebate_cents",
+            config.fair_value_max_reward_rebate_cents.to_string(),
+        ),
+        (
+            "fair_value_max_midpoint_deviation_cents",
+            config.fair_value_max_midpoint_deviation_cents.to_string(),
+        ),
+        (
+            "fair_value_history_window_sec",
+            config.fair_value_history_window_sec.to_string(),
+        ),
+        (
+            "fair_value_min_history_samples",
+            config.fair_value_min_history_samples.to_string(),
         ),
         (
             "ai_advisory_enabled",

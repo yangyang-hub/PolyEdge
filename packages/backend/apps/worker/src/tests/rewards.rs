@@ -141,6 +141,7 @@ fn live_buy_submission_last_look_reprices_to_current_target() {
         account_id: "reward_live".to_string(),
         stale_book_ms: 0,
         max_global_position_usd: Decimal::ZERO,
+        fair_value_enabled: false,
         ..RewardBotConfig::default()
     };
     let now = OffsetDateTime::now_utc();
@@ -266,6 +267,7 @@ fn live_test_plan(now: OffsetDateTime) -> RewardQuotePlan {
         recommended_quote_mode: Some(polyedge_application::RewardPlanQuoteMode::Double),
         book_metrics: None,
         opportunity_metrics: None,
+        fair_value: None,
         ai_advisory: None,
         info_risk: None,
         event_window: None,

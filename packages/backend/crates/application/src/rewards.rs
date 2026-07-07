@@ -41,6 +41,7 @@ include!("rewards/planner.rs");
 include!("rewards/planner_selection.rs");
 include!("rewards/planner_live.rs");
 include!("rewards/opportunity_metrics.rs");
+include!("rewards/fair_value.rs");
 include!("rewards/provider_prefilter.rs");
 include!("rewards/engine.rs");
 include!("rewards/helpers.rs");
@@ -60,6 +61,13 @@ mod opportunity_metrics_tests {
     use super::*;
 
     include!("rewards/opportunity_metrics_tests.rs");
+}
+
+#[cfg(test)]
+mod fair_value_tests {
+    use super::*;
+
+    include!("rewards/fair_value_tests.rs");
 }
 
 #[cfg(test)]

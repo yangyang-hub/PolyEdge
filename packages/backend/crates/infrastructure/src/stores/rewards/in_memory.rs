@@ -17,6 +17,7 @@ pub struct InMemoryRewardBotStore {
     info_risks: RwLock<Vec<RewardMarketInfoRisk>>,
     llm_calls: RwLock<Vec<RewardLlmCallRecord>>,
     candles: RwLock<HashMap<(String, i32, OffsetDateTime), RewardMarketCandle>>,
+    fair_values: RwLock<Vec<RewardFairValueEstimate>>,
 }
 
 impl InMemoryRewardBotStore {
@@ -39,6 +40,7 @@ impl InMemoryRewardBotStore {
             info_risks: RwLock::new(Vec::new()),
             llm_calls: RwLock::new(Vec::new()),
             candles: RwLock::new(HashMap::new()),
+            fair_values: RwLock::new(Vec::new()),
         }
     }
 }
@@ -270,6 +272,17 @@ impl RewardBotStore for InMemoryRewardBotStore {
             refresh_reward_quote_plan_readiness(&mut plan);
             store.insert(plan.condition_id.clone(), plan.clone());
         }
+        Ok(())
+    }
+
+    async fn record_fair_value_estimates(
+        &self,
+        estimates: &[RewardFairValueEstimate],
+    ) -> Result<()> {
+        if estimates.is_empty() {
+            return Ok(());
+        }
+        self.fair_values.write().await.extend_from_slice(estimates);
         Ok(())
     }
 

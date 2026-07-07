@@ -228,6 +228,65 @@ pub struct RewardOpportunityMetrics {
     pub warnings: Vec<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RewardFairValueComponent {
+    pub source: String,
+    pub value: Decimal,
+    pub weight: Decimal,
+    pub confidence: Decimal,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RewardFairValueEstimate {
+    pub condition_id: String,
+    pub source: String,
+    pub fair_yes: Decimal,
+    pub fair_no: Decimal,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub market_midpoint_yes: Option<Decimal>,
+    pub confidence: Decimal,
+    pub uncertainty_cents: Decimal,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub midpoint_deviation_cents: Option<Decimal>,
+    pub sample_count: u64,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub components: Vec<RewardFairValueComponent>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub do_not_quote_reason: Option<String>,
+    #[serde(with = "time::serde::rfc3339")]
+    pub observed_at: OffsetDateTime,
+    #[serde(with = "time::serde::rfc3339")]
+    pub expires_at: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RewardQuoteEdge {
+    pub token_id: String,
+    pub outcome: String,
+    pub side: RewardOrderSide,
+    pub quote_price: Decimal,
+    pub fair_price: Decimal,
+    pub raw_edge_cents: Decimal,
+    pub expected_reward_rebate_cents: Decimal,
+    pub uncertainty_cents: Decimal,
+    pub effective_edge_cents: Decimal,
+    pub min_raw_edge_cents: Decimal,
+    pub min_effective_edge_cents: Decimal,
+    pub passed: bool,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RewardFairValueDecision {
+    pub estimate: RewardFairValueEstimate,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub edges: Vec<RewardQuoteEdge>,
+    pub expected_reward_rebate_cents: Decimal,
+    pub passed: bool,
+    pub reason: String,
+}
+
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RewardHistoryPruneReport {
     pub terminal_orders_deleted: u64,
@@ -258,6 +317,8 @@ pub struct RewardQuotePlan {
     pub book_metrics: Option<RewardMarketBookMetrics>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub opportunity_metrics: Option<RewardOpportunityMetrics>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fair_value: Option<RewardFairValueDecision>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ai_advisory: Option<RewardMarketAdvisory>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

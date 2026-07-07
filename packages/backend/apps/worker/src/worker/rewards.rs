@@ -85,6 +85,32 @@ fn mark_pre_ai_eligible_quote_plans(
     }
 }
 
+async fn record_reward_fair_value_estimates(
+    state: &AppState,
+    config: &RewardBotConfig,
+    estimates: &[RewardFairValueEstimate],
+    trace_id: &str,
+) {
+    if !config.fair_value_enabled
+        || !config.fair_value_record_history_enabled
+        || estimates.is_empty()
+    {
+        return;
+    }
+    if let Err(error) = state
+        .reward_bot_service
+        .record_fair_value_estimates(estimates)
+        .await
+    {
+        warn!(
+            trace_id = %trace_id,
+            error = %error,
+            estimates = estimates.len(),
+            "failed to record reward fair-value estimates"
+        );
+    }
+}
+
 fn quote_plan_leg_token_ids(legs: &[RewardQuoteLeg]) -> Vec<String> {
     let mut token_ids = Vec::new();
     let mut seen = HashSet::new();
@@ -599,6 +625,15 @@ async fn run_reward_bot_live_tick(
         &cycle.account,
         &cycle.config,
     );
+    let fair_value_estimates = apply_reward_fair_values_to_quote_plans(
+        &mut cycle.plans,
+        &books,
+        book_history,
+        &cycle.config,
+        OffsetDateTime::now_utc(),
+    );
+    record_reward_fair_value_estimates(state, &cycle.config, &fair_value_estimates, trace_id)
+        .await;
     let funding_precheck_blocked = apply_live_funding_precheck(
         &cycle.config,
         &cycle.account,
@@ -754,6 +789,15 @@ async fn run_reward_bot_live_tick(
         &account,
         &cycle.config,
     );
+    let fair_value_estimates = apply_reward_fair_values_to_quote_plans(
+        &mut cycle.plans,
+        &books,
+        book_history,
+        &cycle.config,
+        OffsetDateTime::now_utc(),
+    );
+    record_reward_fair_value_estimates(state, &cycle.config, &fair_value_estimates, trace_id)
+        .await;
     state
         .reward_bot_service
         .save_quote_plans(&cycle.plans)

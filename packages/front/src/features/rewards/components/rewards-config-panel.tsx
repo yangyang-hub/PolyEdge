@@ -269,6 +269,10 @@ export function RewardsConfigPanel({
 
         <Separator />
 
+        <FairValueConfig draft={draft} setDraft={setDraft} updateNumber={updateNumber} />
+
+        <Separator />
+
         <ConfigSection
           title={dictionary.rewards.configBalancedMerge}
           description={dictionary.rewards.configBalancedMergeDescription}
@@ -412,5 +416,100 @@ export function RewardsConfigPanel({
         <AiAdvisoryConfig draft={draft} setDraft={setDraft} updateNumber={updateNumber} />
       </CardContent>
     </Card>
+  );
+}
+
+function FairValueConfig({
+  draft,
+  setDraft,
+  updateNumber,
+}: RewardsConfigPanelProps) {
+  const h = dictionary.rewards.configHints;
+
+  return (
+    <ConfigSection
+      title={dictionary.rewards.configFairValue}
+      description={dictionary.rewards.configFairValueDescription}
+    >
+      <ToggleField
+        label={dictionary.rewards.fairValueEnabled}
+        hint={h.fairValueEnabled}
+        checked={draft.fair_value_enabled}
+        onChange={(checked) =>
+          setDraft((current) => ({ ...current, fair_value_enabled: checked }))
+        }
+      />
+      <ToggleField
+        label={dictionary.rewards.fairValueRecordHistory}
+        hint={h.fairValueRecordHistory}
+        checked={draft.fair_value_record_history_enabled}
+        onChange={(checked) =>
+          setDraft((current) => ({
+            ...current,
+            fair_value_record_history_enabled: checked,
+          }))
+        }
+      />
+      <NumberInput
+        label={dictionary.rewards.fairValueMinConfidence}
+        value={draft.fair_value_min_confidence}
+        hint={h.fairValueMinConfidence}
+        onChange={(value) => updateNumber("fair_value_min_confidence", value)}
+      />
+      <NumberInput
+        label={dictionary.rewards.fairValueMinRawEdgeCents}
+        value={draft.fair_value_min_raw_edge_cents}
+        suffix="c"
+        hint={h.fairValueMinRawEdgeCents}
+        onChange={(value) => updateNumber("fair_value_min_raw_edge_cents", value)}
+      />
+      <NumberInput
+        label={dictionary.rewards.fairValueMinEffectiveEdgeCents}
+        value={draft.fair_value_min_effective_edge_cents}
+        suffix="c"
+        hint={h.fairValueMinEffectiveEdgeCents}
+        onChange={(value) => updateNumber("fair_value_min_effective_edge_cents", value)}
+      />
+      <NumberInput
+        label={dictionary.rewards.fairValueUncertaintyBufferCents}
+        value={draft.fair_value_uncertainty_buffer_cents}
+        suffix="c"
+        hint={h.fairValueUncertaintyBufferCents}
+        onChange={(value) => updateNumber("fair_value_uncertainty_buffer_cents", value)}
+      />
+      <NumberInput
+        label={dictionary.rewards.fairValueRebateHaircut}
+        value={draft.fair_value_rebate_haircut}
+        hint={h.fairValueRebateHaircut}
+        onChange={(value) => updateNumber("fair_value_rebate_haircut", value)}
+      />
+      <NumberInput
+        label={dictionary.rewards.fairValueMaxRewardRebateCents}
+        value={draft.fair_value_max_reward_rebate_cents}
+        suffix="c"
+        hint={h.fairValueMaxRewardRebateCents}
+        onChange={(value) => updateNumber("fair_value_max_reward_rebate_cents", value)}
+      />
+      <NumberInput
+        label={dictionary.rewards.fairValueMaxMidpointDeviationCents}
+        value={draft.fair_value_max_midpoint_deviation_cents}
+        suffix="c"
+        hint={h.fairValueMaxMidpointDeviationCents}
+        onChange={(value) => updateNumber("fair_value_max_midpoint_deviation_cents", value)}
+      />
+      <NumberInput
+        label={dictionary.rewards.fairValueHistoryWindowSec}
+        value={draft.fair_value_history_window_sec}
+        suffix="s"
+        hint={h.fairValueHistoryWindowSec}
+        onChange={(value) => updateNumber("fair_value_history_window_sec", value)}
+      />
+      <NumberInput
+        label={dictionary.rewards.fairValueMinHistorySamples}
+        value={draft.fair_value_min_history_samples}
+        hint={h.fairValueMinHistorySamples}
+        onChange={(value) => updateNumber("fair_value_min_history_samples", value)}
+      />
+    </ConfigSection>
   );
 }

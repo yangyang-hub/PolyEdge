@@ -11,7 +11,7 @@
 
 ## 当前聚焦
 
-PolyEdge 当前聚焦 Polymarket 市场数据、事件/新闻基础设施、市场策略研究页面和 LP rewards 自动化。历史钱包类和独立研究模块已从前端路由、API、worker、application service、infrastructure store、DTO、数据库 schema 和模块文档中移除；新部署按当前 schema 重新初始化，不兼容旧表。
+PolyEdge 当前产品焦点是 Polymarket 做市商策略，核心路径为 rewards market maker 的 live 报价、fair-value 定价、风控、成交后退出和 BalancedMerge 合并。市场数据、事件/新闻和 Funding 保留为做市策略支撑能力；历史钱包类和独立研究模块已从前端路由、API、worker、application service、infrastructure store、DTO、数据库 schema 和模块文档中移除；新部署按当前 schema 重新初始化，不兼容旧表。
 
 ## 数据获取架构（编码时必须遵守）
 
@@ -29,6 +29,7 @@ or in-memory cache. Strategies, pages, and API handlers MUST read from these sto
 | Order books | `polyedge-orderbook` service | CLOB WebSocket + `/books` batch poll, fallback `/book` | service-local `InMemoryOrderbookCache` | WS real-time + 10s reconcile |
 | Reward price-history candles | `polyedge-orderbook` service | CLOB API `/prices-history` | `reward_market_candles` table | low-frequency rate-limited sync |
 | Rewards account/order state | `polyedge-worker` rewards loop | authenticated CLOB, Data API fallback, Polygon RPC | rewards Postgres tables | live poll loop cadence |
+| Reward fair-value estimates | `polyedge-worker` rewards loop | orderbook service books + local book history | `reward_fair_values` / `reward_fair_value_history` | each rewards live tick |
 
 Orderbook subscriptions are owned by the standalone `polyedge-orderbook` service. It maintains WS + poll streams, in-memory orderbook cache, `OrderbookSubscriptionRegistry`, HTTP read/register/ingest APIs, and the internal `/orderbook/stream` feed. Workers and API handlers use `OrderbookHttpClient` and `OrderbookStreamClient`; they must not fetch CLOB orderbooks directly when orderbook service cache is available.
 
@@ -71,6 +72,7 @@ Registry source priority is fixed as `rewards_active`, `exec_orders`, `rewards_e
 | `packages/backend/crates/application/src/rewards/planner.rs` | Deterministic rewards quote planner |
 | `packages/backend/crates/application/src/rewards/planner_live.rs` | Live orderbook quote materializer |
 | `packages/backend/crates/application/src/rewards/opportunity_metrics.rs` | Unified opportunity scoring |
+| `packages/backend/crates/application/src/rewards/fair_value.rs` | Market-implied fair-value estimate and quote edge gate |
 | `packages/backend/crates/application/src/rewards/event_window.rs` | Event-window risk gate |
 | `packages/backend/crates/application/src/rewards/ai_advisory_payload.rs` | Advisory payload and hourly candle aggregation |
 | `packages/backend/crates/application/src/rewards/provider_prefilter.rs` | Pre-provider hard gate |
@@ -83,7 +85,9 @@ Registry source priority is fixed as `rewards_active`, `exec_orders`, `rewards_e
 | `packages/backend/crates/application/src/maintenance.rs` | Database maintenance cutoffs/report models |
 | `packages/backend/crates/infrastructure/src/stores/maintenance.rs` | Postgres/no-op maintenance store |
 | `packages/front/src/app/(console)/rewards/page.tsx` | Rewards console route |
+| `packages/front/src/app/(console)/rewards/fair-value/page.tsx` | Fair-value workbench route |
 | `packages/front/src/features/rewards/components/rewards-config-panel.tsx` | Rewards config UI |
+| `packages/front/src/features/rewards/components/rewards-fair-value-workbench.tsx` | Fair-value estimate/edge audit UI |
 | `packages/front/src/features/rewards/components/rewards-opportunity-config.tsx` | Opportunity scoring config UI |
 | `packages/front/src/features/rewards/components/rewards-advanced-config.tsx` | Book selection, AI advisory, info-risk and event-window config UI |
 | `packages/front/src/features/rewards/components/rewards-tables.tsx` | Rewards quote plan/order/position/fill/event tables |
@@ -94,17 +98,17 @@ Registry source priority is fixed as `rewards_active`, `exec_orders`, `rewards_e
 
 ## 当前状态
 
-- Frontend routes: `dashboard / markets / events / rewards / funding / settings`.
+- Frontend routes: `dashboard / markets / events / rewards / rewards/fair-value / funding / settings`.
 - Frontend uses the real Rust API only; no mock-data mode.
 - Backend API routes cover markets, events, news, evidences, orders, trades, pricing, rewards bot, funding, system, connector callback and orderbook reads.
-- Database migrations currently end at `0057_reward_merge_intent_execution.sql`; migrations for removed historical modules are gone, and `packages/backend/init.sql` was regenerated from the remaining migrations for clean redeploys.
+- Database migrations currently end at `0058_reward_fair_value.sql`; migrations for removed historical modules are gone, and `packages/backend/init.sql` was regenerated from the remaining migrations for clean redeploys.
 - Runtime mode defaults to `live_auto`; old mock mode is removed.
 - `polyedge-orderbook` owns market sync, rewards catalog sync, price-history candle sync, orderbook WS/poll cache and registry.
 - `polyedge-worker` supports database maintenance, news ingest/promotion, rewards live bot, rewards info-risk scan, execution drain, paper reconciliation, Polymarket order/fill/user-event workers, and orderbook token registration.
-- Rewards bot is live-only. It plans post-only BUY quotes from `reward_markets` + `markets`, uses orderbook service books, applies unified opportunity metrics, optional AI advisory/info-risk caches, event-window gates, wallet-balance placement checks, live risk/cancel/requote logic, fill reconciliation, exit/flatten SELL intents and BalancedMerge merge intents.
-- Rewards quote planning uses deterministic market quality, opportunity scoring, AI/info-risk, event windows, funding and live orderbook risk gates.
+- Rewards bot is live-only. It plans post-only BUY quotes from `reward_markets` + `markets`, uses orderbook service books, applies unified opportunity metrics, fair-value edge gates, optional AI advisory/info-risk caches, event-window gates, wallet-balance placement checks, live risk/cancel/requote logic, fill reconciliation, exit/flatten SELL intents and BalancedMerge merge intents.
+- Rewards quote planning uses deterministic market quality, opportunity scoring, fair-value estimation, AI/info-risk, event windows, funding and live orderbook risk gates.
 - LLM calls for rewards combined provider are recorded in `llm_calls(task_type=reward_provider)`. Provider cache hits do not count as external calls.
-- Database maintenance prunes raw events, expired AI/info-risk caches, reward candles, completed/failed control commands, outbox/external dedup, LLM calls, audit logs and mode transitions. It preserves current rewards orders, fills, positions and account state.
+- Database maintenance prunes raw events, expired AI/info-risk caches, reward candles, fair-value history, completed/failed control commands, outbox/external dedup, LLM calls, audit logs and mode transitions. It preserves current rewards orders, fills, positions and account state.
 
 ## Commands
 

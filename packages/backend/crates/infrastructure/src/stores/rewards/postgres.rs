@@ -229,6 +229,13 @@ impl RewardBotStore for PostgresRewardBotStore {
         Ok(())
     }
 
+    async fn record_fair_value_estimates(
+        &self,
+        estimates: &[RewardFairValueEstimate],
+    ) -> Result<()> {
+        postgres_record_reward_fair_value_estimates(&self.pool, estimates).await
+    }
+
     async fn record_market_candle_sample(
         &self,
         sample: &RewardMarketCandleSample,

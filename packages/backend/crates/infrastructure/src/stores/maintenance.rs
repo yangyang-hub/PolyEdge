@@ -182,6 +182,24 @@ impl DatabaseMaintenanceStore for PostgresDatabaseMaintenanceStore {
         )
         .await?;
 
+        let reward_fair_value_history_deleted = execute_maintenance_delete(
+            &self.pool,
+            "reward_fair_value_history",
+            r#"
+            WITH doomed AS (
+                SELECT ctid
+                FROM reward_fair_value_history
+                WHERE created_at < $1
+                LIMIT $2
+            )
+            DELETE FROM reward_fair_value_history rows
+            USING doomed
+            WHERE rows.ctid = doomed.ctid
+            "#,
+            cutoffs.reward_fair_value_history_before,
+        )
+        .await?;
+
         let reward_control_commands_deleted = prune_control_commands(
             &self.pool,
             "reward_control_commands",
@@ -235,6 +253,7 @@ impl DatabaseMaintenanceStore for PostgresDatabaseMaintenanceStore {
             reward_market_advisories_deleted,
             reward_market_info_risks_deleted,
             reward_market_candles_deleted,
+            reward_fair_value_history_deleted,
             reward_control_commands_deleted,
             audit_logs_deleted,
             mode_transitions_deleted,

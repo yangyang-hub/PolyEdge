@@ -4,16 +4,18 @@
 
 ## 概述
 
-`/rewards` 页面管理 LP rewards live 策略：配置策略参数、向 worker 提交 run/cancel/reset 命令、查看报价计划、托管订单、持仓、成交和事件。页面只支持 live 路径，不提供模拟模式。
+`/rewards` 页面管理 Polymarket 做市 live 策略：配置策略参数、向 worker 提交 run/cancel/reset 命令、查看报价计划、托管订单、持仓、成交和事件。`/rewards/fair-value` 独立展示 fair-value 估值、edge 和 gate 结果。页面只支持 live 路径，不提供模拟模式。
 
 ## 架构与关键文件
 
 | 文件 | 职责 |
 |---|---|
 | `src/app/(console)/rewards/page.tsx` | 路由页面 |
+| `src/app/(console)/rewards/fair-value/page.tsx` | fair-value 工作台路由 |
 | `src/features/rewards/components/rewards-workbench.tsx` | 主工作台编排：概览、活动、配置、风险 tabs |
+| `rewards-fair-value-workbench.tsx` | fair-value 估值、confidence、uncertainty、edge 和决策表格 |
 | `rewards-overview-cards.tsx` | 顶部执行概览、每日 LLM 调用统计、操作中心和关键指标 |
-| `rewards-config-panel.tsx` | 策略配置面板：执行、市场筛选、机会评分、报价构造、成交后合并、盘口选择、AI/信息风险、库存与控制 |
+| `rewards-config-panel.tsx` | 策略配置面板：执行、市场筛选、机会评分、报价构造、fair-value、成交后合并、盘口选择、AI/信息风险、库存与控制 |
 | `rewards-opportunity-config.tsx` | 统一机会评分配置 |
 | `rewards-opportunity-summary.tsx` | quote plan 行内机会评分摘要 |
 | `rewards-advanced-config.tsx` | 盘口选择、AI advisory、信息风险和事件窗口配置 |
@@ -27,12 +29,14 @@
 | `rewards-events-panel.tsx` | 事件面板 |
 | `number-input.tsx` | 数值输入组件 |
 | `loaders/rewards-page-data.ts` | 首屏数据装配 |
+| `loaders/rewards-fair-value-page-data.ts` | fair-value 页面数据装配 |
 | `lib/rewards-helpers.ts` | readiness、事件分类和 AI strategy hint metrics helper |
 | `types.ts` | `NumberConfigKey`、`EventCategory` |
 
 ## 核心类型
 
-- `NumberConfigKey` 覆盖当前可编辑数值配置：市场上限、开放订单上限、最低日奖、市场质量门槛、机会评分 `opportunity_*`、dominant 单边阈值、盘口集中度阈值、AI advisory TTL、provider 并发、信息风险 TTL、事件窗口秒数、首单观察窗口、报价构造、库存、requote、BalancedMerge、深度/velocity/reconcile 等字段。
+- `NumberConfigKey` 覆盖当前可编辑数值配置：市场上限、开放订单上限、最低日奖、市场质量门槛、机会评分 `opportunity_*`、fair-value `fair_value_*`、dominant 单边阈值、盘口集中度阈值、AI advisory TTL、provider 并发、信息风险 TTL、事件窗口秒数、首单观察窗口、报价构造、库存、requote、BalancedMerge、深度/velocity/reconcile 等字段。
+- `RewardFairValueEstimateDto` / `RewardFairValueDecisionDto` / `RewardQuoteEdgeDto` 映射后端 fair-value 估计、组件、edge、rewards rebate 折扣和 gate 结果。
 - `EventCategory = "all" | "placements" | "cancels" | "fills" | "rewards"`。
 
 ## API 依赖
@@ -56,6 +60,7 @@
 - 事件窗口：页面配置启用开关、最低置信度、赛前停止新增、赛前撤 BUY、赛后恢复冷却、未知事件时间处理和 Gamma 未审核日期处理。
 - 成交后退出：`exit_at_markup` / `hold_and_requote` / `flatten_immediately` 都基于非亏损 floor。post-only SELL 会在可能穿盘口时改挂当前卖一；flatten 只有 best bid 不低于 floor 才使用 FAK/taker SELL。
 - 机会评分：统一 `opportunity_*` 配置把竞争倍数、100U 日奖、账户/单市场资金占比、退出深度、入场退出滑点、坏成交恢复天数、盘口样本、中点波动、top-of-book 跳变和权重转为综合分。
+- Fair-value：`fair_value_*` 配置控制估值启用、历史记录、最低 confidence、raw/effective edge、不确定性缓冲、rewards rebate 折扣、YES/NO 中点偏离上限和历史样本窗口；`/rewards/fair-value` 页面展示最近 quote plans 的估值和拦截原因。
 - 表格刷新：页面每 10 秒静默刷新当前 snapshot；手动搜索/分页/操作使用单调请求序号，只接收最新响应。
 
 ## 数据流
@@ -80,8 +85,9 @@ User mutation
 - 顶部概览展示 live 启停/运行状态、实时可报价、最终可挂、候选计划、已拦截、等待 provider、资金不足、live 盘口验证、AI/info-risk 拦截、钱包余额和每日 LLM 统计。
 - 操作中心集中 Run / Save / Cancel / Reset，并明确这些命令可能提交或取消 Polymarket live 订单。
 - 配置面板只暴露当前仍生效的参数；旧模拟资金、固定单腿金额和已删除诊断配置不再出现。
+- 主策略页 header 提供 Fair value 入口；fair-value 页单独显示 tracked/pass/blocked/avg confidence 指标和 quote plan 估值审计表。
 - 市场筛选面板公开最低流动性、24h 成交量、剩余结算时间、Gamma spread 和目录同步年龄门槛。
-- 竞争度只作为统一机会评分的一部分展示；页面不提供独立竞争配置或报告。
+- 竞争度只作为统一机会评分的一部分展示；fair-value 作为独立做市定价 gate 展示，不再作为旧 EV strategy mode。
 - 报价计划默认展示通过非盘口依赖过滤且等待 live 盘口验证的候选；`quote_readiness` 区分可报价、等待盘口、等待 AI/信息风险和已拦截。
 - Managed orders 表格发送后端分页/搜索/状态/排序 query；“已成交”筛选包含部分成交订单。
 - 持仓和订单表格展示 API snapshot 注入的 `token_quotes`（best bid/ask/mark price）；缺盘口时显示 `—`，不阻断页面。

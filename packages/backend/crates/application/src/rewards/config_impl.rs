@@ -51,6 +51,17 @@ impl Default for RewardBotConfig {
             opportunity_competition_weight: decimal("30"),
             opportunity_exit_weight: decimal("25"),
             opportunity_stability_weight: decimal("10"),
+            fair_value_enabled: true,
+            fair_value_record_history_enabled: true,
+            fair_value_min_confidence: decimal("0.55"),
+            fair_value_min_raw_edge_cents: decimal("0.25"),
+            fair_value_min_effective_edge_cents: decimal("0.75"),
+            fair_value_uncertainty_buffer_cents: decimal("0.75"),
+            fair_value_rebate_haircut: decimal("0.25"),
+            fair_value_max_reward_rebate_cents: decimal("2"),
+            fair_value_max_midpoint_deviation_cents: decimal("3"),
+            fair_value_history_window_sec: 300,
+            fair_value_min_history_samples: 3,
             ai_advisory_enabled: false,
             ai_provider: RewardAiProvider::OpenAi,
             ai_request_format: RewardAiRequestFormat::OpenAiResponses,
@@ -244,6 +255,43 @@ impl RewardBotConfig {
             Decimal::ZERO,
             decimal("1000"),
         );
+        self.fair_value_min_confidence = clamp_decimal(
+            self.fair_value_min_confidence,
+            Decimal::ZERO,
+            Decimal::ONE,
+        );
+        self.fair_value_min_raw_edge_cents = clamp_decimal(
+            self.fair_value_min_raw_edge_cents,
+            Decimal::ZERO,
+            decimal("50"),
+        );
+        self.fair_value_min_effective_edge_cents = clamp_decimal(
+            self.fair_value_min_effective_edge_cents,
+            Decimal::ZERO,
+            decimal("50"),
+        );
+        self.fair_value_uncertainty_buffer_cents = clamp_decimal(
+            self.fair_value_uncertainty_buffer_cents,
+            Decimal::ZERO,
+            decimal("50"),
+        );
+        self.fair_value_rebate_haircut = clamp_decimal(
+            self.fair_value_rebate_haircut,
+            Decimal::ZERO,
+            Decimal::ONE,
+        );
+        self.fair_value_max_reward_rebate_cents = clamp_decimal(
+            self.fair_value_max_reward_rebate_cents,
+            Decimal::ZERO,
+            decimal("50"),
+        );
+        self.fair_value_max_midpoint_deviation_cents = clamp_decimal(
+            self.fair_value_max_midpoint_deviation_cents,
+            Decimal::ZERO,
+            decimal("50"),
+        );
+        self.fair_value_history_window_sec = self.fair_value_history_window_sec.clamp(0, 86_400);
+        self.fair_value_min_history_samples = self.fair_value_min_history_samples.clamp(0, 10_000);
         self.ai_advisory_ttl_sec = self.ai_advisory_ttl_sec.clamp(60, 86_400);
         self.ai_provider_primary_max_concurrency =
             self.ai_provider_primary_max_concurrency.clamp(1, 10);
@@ -584,6 +632,39 @@ impl RewardBotConfig {
         }
         if let Some(value) = patch.opportunity_stability_weight {
             next.opportunity_stability_weight = value;
+        }
+        if let Some(value) = patch.fair_value_enabled {
+            next.fair_value_enabled = value;
+        }
+        if let Some(value) = patch.fair_value_record_history_enabled {
+            next.fair_value_record_history_enabled = value;
+        }
+        if let Some(value) = patch.fair_value_min_confidence {
+            next.fair_value_min_confidence = value;
+        }
+        if let Some(value) = patch.fair_value_min_raw_edge_cents {
+            next.fair_value_min_raw_edge_cents = value;
+        }
+        if let Some(value) = patch.fair_value_min_effective_edge_cents {
+            next.fair_value_min_effective_edge_cents = value;
+        }
+        if let Some(value) = patch.fair_value_uncertainty_buffer_cents {
+            next.fair_value_uncertainty_buffer_cents = value;
+        }
+        if let Some(value) = patch.fair_value_rebate_haircut {
+            next.fair_value_rebate_haircut = value;
+        }
+        if let Some(value) = patch.fair_value_max_reward_rebate_cents {
+            next.fair_value_max_reward_rebate_cents = value;
+        }
+        if let Some(value) = patch.fair_value_max_midpoint_deviation_cents {
+            next.fair_value_max_midpoint_deviation_cents = value;
+        }
+        if let Some(value) = patch.fair_value_history_window_sec {
+            next.fair_value_history_window_sec = value;
+        }
+        if let Some(value) = patch.fair_value_min_history_samples {
+            next.fair_value_min_history_samples = value;
         }
         if let Some(value) = patch.ai_advisory_enabled {
             next.ai_advisory_enabled = value;

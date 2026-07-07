@@ -68,6 +68,17 @@ export type RewardBotConfigDto = {
   opportunity_competition_weight: DecimalValue;
   opportunity_exit_weight: DecimalValue;
   opportunity_stability_weight: DecimalValue;
+  fair_value_enabled: boolean;
+  fair_value_record_history_enabled: boolean;
+  fair_value_min_confidence: DecimalValue;
+  fair_value_min_raw_edge_cents: DecimalValue;
+  fair_value_min_effective_edge_cents: DecimalValue;
+  fair_value_uncertainty_buffer_cents: DecimalValue;
+  fair_value_rebate_haircut: DecimalValue;
+  fair_value_max_reward_rebate_cents: DecimalValue;
+  fair_value_max_midpoint_deviation_cents: DecimalValue;
+  fair_value_history_window_sec: number;
+  fair_value_min_history_samples: number;
   ai_advisory_enabled: boolean;
   ai_provider: RewardAiProvider;
   ai_request_format: RewardAiRequestFormat;
@@ -214,6 +225,54 @@ export type RewardOpportunityMetricsDto = {
   warnings: string[];
 };
 
+export type RewardFairValueComponentDto = {
+  source: string;
+  value: DecimalValue;
+  weight: DecimalValue;
+  confidence: DecimalValue;
+  reason: string;
+};
+
+export type RewardFairValueEstimateDto = {
+  condition_id: string;
+  source: string;
+  fair_yes: DecimalValue;
+  fair_no: DecimalValue;
+  market_midpoint_yes?: DecimalValue | null;
+  confidence: DecimalValue;
+  uncertainty_cents: DecimalValue;
+  midpoint_deviation_cents?: DecimalValue | null;
+  sample_count: number;
+  components: RewardFairValueComponentDto[];
+  do_not_quote_reason?: string | null;
+  observed_at: string;
+  expires_at: string;
+};
+
+export type RewardQuoteEdgeDto = {
+  token_id: string;
+  outcome: string;
+  side: RewardOrderSide;
+  quote_price: DecimalValue;
+  fair_price: DecimalValue;
+  raw_edge_cents: DecimalValue;
+  expected_reward_rebate_cents: DecimalValue;
+  uncertainty_cents: DecimalValue;
+  effective_edge_cents: DecimalValue;
+  min_raw_edge_cents: DecimalValue;
+  min_effective_edge_cents: DecimalValue;
+  passed: boolean;
+  reason: string;
+};
+
+export type RewardFairValueDecisionDto = {
+  estimate: RewardFairValueEstimateDto;
+  edges: RewardQuoteEdgeDto[];
+  expected_reward_rebate_cents: DecimalValue;
+  passed: boolean;
+  reason: string;
+};
+
 export type RewardMarketAdvisoryDto = {
   condition_id: string;
   provider: RewardAiProvider;
@@ -282,6 +341,7 @@ export type RewardQuotePlanDto = {
   recommended_quote_mode?: RewardPlanQuoteMode | null;
   book_metrics?: RewardMarketBookMetricsDto | null;
   opportunity_metrics?: RewardOpportunityMetricsDto | null;
+  fair_value?: RewardFairValueDecisionDto | null;
   ai_advisory?: RewardMarketAdvisoryDto | null;
   info_risk?: RewardMarketInfoRiskDto | null;
   event_window?: RewardEventWindowAssessmentDto | null;

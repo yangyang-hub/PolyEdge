@@ -383,6 +383,30 @@ pub struct RewardBotConfig {
     pub opportunity_competition_weight: Decimal,
     pub opportunity_exit_weight: Decimal,
     pub opportunity_stability_weight: Decimal,
+    /// Enable fair-value gating for maker quotes. When enabled, BUY quotes must
+    /// have positive raw and effective edge versus the market-implied fair.
+    pub fair_value_enabled: bool,
+    /// Persist the latest fair-value estimate for each planned market so the
+    /// strategy can be audited and used for later shadow/backtest analysis.
+    pub fair_value_record_history_enabled: bool,
+    /// Minimum confidence required for a fair-value estimate to permit quotes.
+    pub fair_value_min_confidence: Decimal,
+    /// Raw maker edge floor in cents before rewards rebate is considered.
+    pub fair_value_min_raw_edge_cents: Decimal,
+    /// Effective edge floor in cents after uncertainty and rewards rebate.
+    pub fair_value_min_effective_edge_cents: Decimal,
+    /// Minimum uncertainty buffer attached to every market-implied fair value.
+    pub fair_value_uncertainty_buffer_cents: Decimal,
+    /// Fraction of estimated rewards density that may offset edge requirements.
+    pub fair_value_rebate_haircut: Decimal,
+    /// Maximum rewards rebate credit that can be applied to one quote leg.
+    pub fair_value_max_reward_rebate_cents: Decimal,
+    /// Maximum allowed YES midpoint + NO midpoint deviation from 1.00.
+    pub fair_value_max_midpoint_deviation_cents: Decimal,
+    /// Historical orderbook window used to stabilize market-implied fair value.
+    pub fair_value_history_window_sec: u64,
+    /// Minimum history samples before historical midpoints affect confidence.
+    pub fair_value_min_history_samples: u64,
     pub ai_advisory_enabled: bool,
     pub ai_provider: RewardAiProvider,
     pub ai_request_format: RewardAiRequestFormat,
@@ -595,6 +619,28 @@ pub struct RewardBotConfigPatch {
     pub opportunity_exit_weight: Option<Decimal>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub opportunity_stability_weight: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fair_value_enabled: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fair_value_record_history_enabled: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fair_value_min_confidence: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fair_value_min_raw_edge_cents: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fair_value_min_effective_edge_cents: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fair_value_uncertainty_buffer_cents: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fair_value_rebate_haircut: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fair_value_max_reward_rebate_cents: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fair_value_max_midpoint_deviation_cents: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fair_value_history_window_sec: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fair_value_min_history_samples: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ai_advisory_enabled: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

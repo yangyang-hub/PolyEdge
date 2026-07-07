@@ -1,12 +1,13 @@
 "use client";
 
 import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Activity, CircleDollarSign, ShieldCheck } from "lucide-react";
+import { Activity, CircleDollarSign, LineChart, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
 
 import { ActionDialog } from "@/components/shared/action-dialog";
 import { OperationFeedbackBanner } from "@/components/shared/operation-feedback-banner";
 import { PageHeader } from "@/components/shared/page-header";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type { RewardBotConfigDto, RewardBotSnapshotDto } from "@/lib/contracts/dto";
@@ -208,6 +209,14 @@ export function RewardsWorkbench({ initialSnapshot }: { initialSnapshot: RewardB
         eyebrow={dictionary.rewards.eyebrow}
         title={dictionary.rewards.title}
         description={dictionary.rewards.description}
+        actions={
+          <Button asChild variant="outline" size="sm">
+            <a href="/rewards/fair-value">
+              <LineChart className="size-4" />
+              {dictionary.rewards.fairValueWorkbench}
+            </a>
+          </Button>
+        }
       />
 
       {feedback ? <OperationFeedbackBanner feedback={feedback} onDismiss={() => setFeedback(null)} /> : null}

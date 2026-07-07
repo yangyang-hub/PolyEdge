@@ -85,7 +85,7 @@ run_database_maintenance_once()
     -> 输出逐表 deleted 计数和 total_deleted
 ```
 
-生产模板默认开启，本地模板默认关闭。当前清理 raw events、过期 AI/info-risk cache、rewards price-history candles、完成/失败控制命令、outbox/external dedup、LLM calls、audit logs 和 mode transitions。每个表每轮最多 20 批、每批 10,000 行；单表失败只记录 warn。
+生产模板默认开启，本地模板默认关闭。当前清理 raw events、过期 AI/info-risk cache、rewards price-history candles、fair-value history、完成/失败控制命令、outbox/external dedup、LLM calls、audit logs 和 mode transitions。每个表每轮最多 20 批、每批 10,000 行；单表失败只记录 warn。
 
 ### register-orderbook-tokens
 
@@ -108,14 +108,16 @@ poll_reward_bot_until_shutdown()
     -> 读取 RewardBotConfig
     -> 同步托管订单/成交/账户状态
     -> 读取 reward_markets + markets + orderbook 服务盘口
-    -> 构建 quote plans 和 opportunity metrics
+    -> 构建 quote plans、opportunity metrics 和 fair-value estimates
     -> 应用 AI advisory / info-risk / event window / funding / live orderbook gates
     -> 保存 quote plans
     -> 提交、撤单、重挂、退出 SELL、merge intent
     -> 写入 heartbeat / fills / positions / events / llm_calls
 ```
 
-LP rewards 策略只做 live 路径。新增 BUY 必须经过最终 quote plan、当前盘口、资金、事件窗口、AI/info-risk、盘口新鲜度、深度/rank/history/requote 和 kill switch 检查。已有订单由 fast reconcile 和独立事件撤单 worker 兜底；活跃 token 的 orderbook 更新会立即触发 cancel-only 风控，不等待完整 full tick。
+LP rewards 策略只做 live 路径。新增 BUY 必须经过最终 quote plan、fair-value raw/effective edge、当前盘口、资金、事件窗口、AI/info-risk、盘口新鲜度、深度/rank/history/requote 和 kill switch 检查。已有订单由 fast reconcile 和独立事件撤单 worker 兜底；活跃 token 的 orderbook 更新会立即触发 cancel-only 风控，不等待完整 full tick。
+
+Fair-value gate 默认启用。Full tick 会用 orderbook 服务缓存和本地盘口历史计算每个计划的 YES/NO fair value、confidence、uncertainty、raw edge、effective edge 和 rewards rebate 折扣，写入 `reward_fair_values` / `reward_fair_value_history`；BUY submission last-look 会用最新盘口重新应用同一 gate，失败则取消/延后 durable intent。
 
 provider refresh 是后台补缓存任务：同一 condition 的 AI advisory 与信息风险可由一次 combined provider 请求返回；实际外部请求写入 `llm_calls(task_type=reward_provider)`。缺 provider、缓存缺失或 enforce 模式风险拦截时 fail closed。provider 只写缓存，不直接下单或修改最终可挂集合。
 
@@ -140,7 +142,7 @@ settings.news.sources
 
 - `WorkerSettings` 控制常驻任务开关与轮询间隔。
 - `RewardsSettings` 控制 rewards live worker 的进程级启用、poll 间隔和 provider 环境密钥。
-- `RewardBotConfig` 存在 `reward_bot_config` 表，控制市场筛选、机会评分、quote/selection、AI/info-risk、事件窗口、库存、requote 和 BalancedMerge 等业务参数。
+- `RewardBotConfig` 存在 `reward_bot_config` 表，控制市场筛选、机会评分、fair-value、quote/selection、AI/info-risk、事件窗口、库存、requote 和 BalancedMerge 等业务参数。
 - `POLYEDGE_ORDERBOOK__SERVICE_URL` 指向 orderbook 服务；`POLYEDGE_ORDERBOOK__WRITE_TOKEN` 用于 token 注册。
 
 ## 当前状态
@@ -148,7 +150,7 @@ settings.news.sources
 - `polyedge-worker` 仍可单独执行 CLI，但常规部署由 API 内嵌 runtime 启动任务。
 - 常驻 runtime 可启动 database maintenance、news ingest/promotion、orderbook token registration、rewards live loop、rewards info-risk scan、execution drain、paper/live 订单状态与成交对账、Polymarket 用户事件 WS。
 - 市场目录同步、rewards catalog、price-history candles 和常驻 orderbook WS/poll cache 已迁移到 `polyedge-orderbook`。
-- Rewards LP 策略不依赖已删除的研究表或 EV 审计表；quote planning 使用市场质量、机会评分、AI/info-risk、事件窗口、资金和 live 盘口风控。
+- Rewards market maker 策略不依赖已删除的研究表；quote planning 使用市场质量、机会评分、fair-value、AI/info-risk、事件窗口、资金和 live 盘口风控。
 - 数据库维护不再清理旧钱包类表；这些 schema 已从迁移和 `init.sql` 中移除。
 
 ## 修改检查清单
