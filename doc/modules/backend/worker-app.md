@@ -108,6 +108,7 @@ poll_reward_bot_until_shutdown()
     -> 读取 RewardBotConfig
     -> 同步托管订单/成交/账户状态
     -> 读取 reward_markets + markets + orderbook 服务盘口
+    -> RewardBotService.build_strategy_input 装配可序列化 RewardStrategyInput 快照（单一读路径 + 单一注入 now），from_strategy_input 派生 cycle
     -> RewardDecisionEngine 执行 pre-provider opportunity/fair-value/funding/selection gates
     -> 应用 AI advisory / info-risk cache
     -> RewardDecisionEngine 执行 first-quote gate 和最终 readiness/opportunity/fair-value/selection refresh

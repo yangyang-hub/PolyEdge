@@ -38,7 +38,7 @@ pub struct RewardMarket {
     pub updated_at: OffsetDateTime,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RewardCandidateMarket {
     pub market: RewardMarket,
     pub strategy_bucket: RewardStrategyBucket,
@@ -868,10 +868,11 @@ pub struct RewardBotRunReport {
 /// Point-in-time snapshot of a token's order book, stored for historical
 /// comparison in risk-control checks (depth drop, fill velocity, mass cancel).
 #[allow(dead_code)]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct BookSnapshot {
     pub bids: Vec<RewardBookLevel>,
     pub asks: Vec<RewardBookLevel>,
+    #[serde(with = "time::serde::rfc3339")]
     pub observed_at: OffsetDateTime,
 }
 

@@ -47,6 +47,7 @@ include!("rewards/market_selection.rs");
 include!("rewards/provider_prefilter.rs");
 include!("rewards/engine.rs");
 include!("rewards/helpers.rs");
+include!("rewards/strategy_input.rs");
 
 #[cfg(test)]
 mod provider_cache_tests {
@@ -89,4 +90,9 @@ mod engine_tests {
     use super::*;
 
     include!("rewards/engine_tests.rs");
+}
+
+#[cfg(test)]
+mod strategy_input_tests {
+    include!("rewards/strategy_input_tests.rs");
 }

@@ -2,7 +2,7 @@
 
 最后更新：2026-07-08
 
-状态：阶段 1 已落地，阶段 2 的第一层纯决策入口已接入。当前已实现 shadow strategy run ledger、quote plan 常用筛选列、只读 ledger API、`/rewards` Runs tab、ledger retention，以及 application `RewardDecisionEngine` 对 pre-provider、post-provider 和最终 snapshot 计划变换的集中封装；独立 input builder、durable action planner/executor、replay CLI 和完整 decision analytics 仍未实现。当前已实现状态以 `AGENTS.md` 和 `doc/modules/*` 为准。
+状态：阶段 1 已落地，阶段 2 已收尾。当前已实现 shadow strategy run ledger、quote plan 常用筛选列、只读 ledger API、`/rewards` Runs tab、ledger retention、application `RewardDecisionEngine` 对 pre-provider、post-provider 和最终 snapshot 计划变换的集中封装，以及独立 input builder（`RewardBotService::build_strategy_input`，单一读路径 + 单一注入 `now`）与可序列化 `RewardStrategyInput` tick 输入快照（`RewardLiveCycle::from_strategy_input` 桥接，engine 行为不变；provider cache 留待 Phase 4 v2）。durable action planner/executor、replay CLI 和完整 decision analytics 仍未实现。当前已实现状态以 `AGENTS.md` 和 `doc/modules/*` 为准。
 
 ## 背景
 
@@ -431,7 +431,7 @@ RewardLiveExecutor
 2. 已完成：新增 application models/store trait 和 infrastructure Postgres/in-memory 实现。
 3. 已完成：在现有 live tick 中接入影子 run ledger，保持交易行为不变。
 4. 已完成：前端增加 Runs tab，只读展示 run timeline、summary、decisions 和 actions。
-5. 已完成第一层：抽出 `RewardStrategyInput` 和 `RewardDecisionEngine`，让 full tick 的主要计划变换通过新入口，并新增 application engine tests。后续仍需进一步拆 `RewardStrategyInputBuilder` 和 replay-friendly 输入快照。
+5. 已完成：抽出 `RewardDecisionEngine`（pre/post-provider/snapshot 纯决策变换）与可序列化 `RewardStrategyInput` tick 输入快照，新增独立 input builder（`RewardBotService::build_strategy_input`，单一读路径 + 单一注入 `now`）和 `RewardLiveCycle::from_strategy_input` 桥接，engine 行为不变；新增 application engine tests 与 strategy_input tests。注：builder 注入单一 `now` 替代原先 `prepare_live_cycle` 内多次 `now_utc()`，带来 plan `updated_at` 亚毫秒级差异；provider cache 未纳入快照（Phase 4 v2）。
 6. 把 placement/cancel/pending/merge 改为 action planner + executor，逐步删除 worker 巨型流程中的混合职责。
 7. 新增 replay CLI，先做决策一致性回放，再做盘口/退出成本回放。
 8. 小额 live drill：单账户、低额度、只开 standard profile，记录 run/action/order transition 指标。

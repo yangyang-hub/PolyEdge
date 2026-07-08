@@ -4,7 +4,7 @@ const REWARD_ENGINE_ORDERBOOK_WAITING_REASON_PREFIX: &str =
 const REWARD_ENGINE_ORDERBOOK_PLACEMENT_STALE_HEADROOM_MS: i128 = 10_000;
 
 #[derive(Debug)]
-pub struct RewardStrategyInput<'a> {
+pub struct RewardLiveEngineInput<'a> {
     pub cycle: RewardLiveCycle,
     pub books: &'a HashMap<String, RewardOrderBook>,
     pub book_history: &'a HashMap<String, VecDeque<BookSnapshot>>,
@@ -24,8 +24,8 @@ pub struct RewardDecisionEngine;
 
 impl RewardDecisionEngine {
     #[must_use]
-    pub fn evaluate_pre_provider(input: RewardStrategyInput<'_>) -> RewardDecisionSet {
-        let RewardStrategyInput {
+    pub fn evaluate_pre_provider(input: RewardLiveEngineInput<'_>) -> RewardDecisionSet {
+        let RewardLiveEngineInput {
             mut cycle,
             books,
             book_history,
@@ -98,8 +98,8 @@ impl RewardDecisionEngine {
     }
 
     #[must_use]
-    pub fn refresh_snapshot(input: RewardStrategyInput<'_>) -> RewardDecisionSet {
-        let RewardStrategyInput {
+    pub fn refresh_snapshot(input: RewardLiveEngineInput<'_>) -> RewardDecisionSet {
+        let RewardLiveEngineInput {
             mut cycle,
             books,
             book_history,

@@ -676,27 +676,30 @@ impl RewardBotService {
         Ok(condition_ids)
     }
 
-    pub async fn prepare_live_cycle(
+    /// Assemble the canonical, serializable strategy input snapshot for a full
+    /// rewards decision tick. This is the single read path for store/orderbook
+    /// inputs: config, candidate-market planning, previous-plan carry-forward
+    /// and unexpired-orderbook-skip inheritance, effective event windows,
+    /// account state, open orders and positions, plus the orderbook books and
+    /// local book history gathered upstream by the worker. `now` is injected
+    /// once and threaded through planning and event-window application so the
+    /// snapshot is deterministic and replay-faithful (replacing the multiple
+    /// `now_utc()` calls the old inline builder made). Provider cache is applied
+    /// by the worker between engine phases and is intentionally not captured
+    /// here (Phase 4 v2 scope).
+    pub async fn build_strategy_input(
         &self,
         candidate_markets: Vec<RewardCandidateMarket>,
         books: HashMap<String, RewardOrderBook>,
-        _trace_id: &str,
+        book_history: HashMap<String, Vec<BookSnapshot>>,
+        now: OffsetDateTime,
         force_orders: bool,
-    ) -> Result<RewardLiveCycle> {
+    ) -> Result<RewardStrategyInput> {
         let config = self.read_config().await?;
-        let markets = candidate_markets
-            .iter()
-            .map(|candidate| candidate.market.clone())
-            .collect::<Vec<_>>();
         let mut plans = build_reward_quote_plans_for_candidates(&candidate_markets, &books, &config);
         let previous_plans = self.store.list_all_quote_plans().await?;
         carry_forward_first_quote_observations(&mut plans, &previous_plans);
-        apply_unexpired_live_orderbook_skips(
-            &mut plans,
-            &previous_plans,
-            OffsetDateTime::now_utc(),
-        );
-        let now = OffsetDateTime::now_utc();
+        apply_unexpired_live_orderbook_skips(&mut plans, &previous_plans, now);
         let condition_ids = plans
             .iter()
             .map(|plan| plan.condition_id.clone())
@@ -714,19 +717,41 @@ impl RewardBotService {
         let account = self.load_account_state_cached(&config).await?;
         let open_orders = self.store.list_open_orders(&account.account_id).await?;
         let positions = self.list_account_positions_cached(&account.account_id).await?;
-        let should_execute = config.enabled || force_orders;
 
-        Ok(RewardLiveCycle {
+        Ok(RewardStrategyInput {
+            now,
+            force_orders,
             config,
-            account,
-            markets,
+            candidate_markets,
             plans,
             previous_plans,
             pre_ai_eligible_condition_ids,
+            books,
+            book_history,
+            account,
             open_orders,
             positions,
-            should_execute,
+            event_windows,
         })
+    }
+
+    pub async fn prepare_live_cycle(
+        &self,
+        candidate_markets: Vec<RewardCandidateMarket>,
+        books: HashMap<String, RewardOrderBook>,
+        _trace_id: &str,
+        force_orders: bool,
+    ) -> Result<RewardLiveCycle> {
+        let input = self
+            .build_strategy_input(
+                candidate_markets,
+                books,
+                HashMap::new(),
+                OffsetDateTime::now_utc(),
+                force_orders,
+            )
+            .await?;
+        Ok(RewardLiveCycle::from_strategy_input(&input))
     }
 
     /// Load mutable live state for sync/cancel/reconcile paths without scanning

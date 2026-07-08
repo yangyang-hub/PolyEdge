@@ -127,7 +127,7 @@ fn decision_engine_blocks_underfunded_plan_before_provider() {
         engine_test_plan(now),
     );
 
-    let decisions = RewardDecisionEngine::evaluate_pre_provider(RewardStrategyInput {
+    let decisions = RewardDecisionEngine::evaluate_pre_provider(RewardLiveEngineInput {
         cycle,
         books: &books,
         book_history: &history,
@@ -165,7 +165,7 @@ fn decision_engine_refreshes_placeholder_plan_to_ready_quote() {
         engine_test_account(decimal("100"), now),
         plan,
     );
-    let decisions = RewardDecisionEngine::refresh_snapshot(RewardStrategyInput {
+    let decisions = RewardDecisionEngine::refresh_snapshot(RewardLiveEngineInput {
         cycle,
         books: &books,
         book_history: &history,

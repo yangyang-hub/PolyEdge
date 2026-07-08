@@ -70,6 +70,7 @@ Registry source priority is fixed as `rewards_active`, `exec_orders`, `rewards_e
 | `packages/backend/crates/application/src/rewards/service.rs` | RewardBotService and command queue wake channel |
 | `packages/backend/crates/application/src/rewards/config_impl.rs` | Rewards defaults, normalization and config patch application |
 | `packages/backend/crates/application/src/rewards/engine.rs` | RewardDecisionEngine pure decision transforms and tick outcome model |
+| `packages/backend/crates/application/src/rewards/strategy_input.rs` | `RewardStrategyInput` serializable tick input snapshot and `RewardLiveCycle::from_strategy_input` bridge |
 | `packages/backend/crates/application/src/rewards/planner.rs` | Deterministic rewards quote planner |
 | `packages/backend/crates/application/src/rewards/planner_live.rs` | Live orderbook quote materializer |
 | `packages/backend/crates/application/src/rewards/opportunity_metrics.rs` | Unified opportunity scoring |

@@ -571,12 +571,11 @@ async fn execute_reward_control_command(
 
 async fn start_reward_strategy_run_for_cycle(
     state: &AppState,
-    cycle: &RewardLiveCycle,
+    input: &RewardStrategyInput,
     trace_id: &str,
-    force_orders: bool,
     books_fetched: usize,
 ) -> Result<i64> {
-    let config_json = serde_json::to_value(&cycle.config).map_err(|error| {
+    let config_json = serde_json::to_value(&input.config).map_err(|error| {
         AppError::internal(
             "REWARD_STRATEGY_RUN_CONFIG_SERIALIZE_FAILED",
             format!("failed to serialize reward strategy config for run ledger: {error}"),
@@ -585,16 +584,16 @@ async fn start_reward_strategy_run_for_cycle(
     state
         .reward_bot_service
         .start_strategy_run(&RewardStrategyRunStart {
-            account_id: cycle.config.account_id.clone(),
+            account_id: input.config.account_id.clone(),
             trace_id: trace_id.to_string(),
-            trigger_type: if force_orders {
+            trigger_type: if input.force_orders {
                 RewardStrategyRunTrigger::RunOnce
             } else {
                 RewardStrategyRunTrigger::Poll
             },
-            config_hash: reward_config_hash(&cycle.config),
+            config_hash: reward_config_hash(&input.config),
             config_json,
-            input_summary: reward_strategy_run_input_summary(cycle, books_fetched, force_orders),
+            input_summary: reward_strategy_run_input_summary(input, books_fetched),
             started_at: OffsetDateTime::now_utc(),
         })
         .await
@@ -618,25 +617,39 @@ async fn save_reward_quote_plans_for_run(
 }
 
 fn reward_strategy_run_input_summary(
-    cycle: &RewardLiveCycle,
+    input: &RewardStrategyInput,
     books_fetched: usize,
-    force_orders: bool,
 ) -> Value {
+    // Orderbook freshness extent across the books used this tick, as unix
+    // seconds. Provider cache hit/miss/pending is intentionally omitted: the
+    // snapshot is pre-application, so plan-level provider fields are not yet
+    // populated; provider counts belong with provider-cache capture (Phase 4 v2).
+    let mut newest_confirmed_at_unix = None::<i64>;
+    let mut oldest_confirmed_at_unix = None::<i64>;
+    for book in input.books.values() {
+        let secs = book.confirmed_at.unix_timestamp();
+        newest_confirmed_at_unix = Some(newest_confirmed_at_unix.map_or(secs, |n| n.max(secs)));
+        oldest_confirmed_at_unix = Some(oldest_confirmed_at_unix.map_or(secs, |o| o.min(secs)));
+    }
     json!({
-        "force_orders": force_orders,
-        "should_execute": cycle.should_execute,
-        "markets": cycle.markets.len(),
-        "plans": cycle.plans.len(),
-        "pre_ai_eligible_plans": cycle.pre_ai_eligible_condition_ids.len(),
+        "force_orders": input.force_orders,
+        "should_execute": input.config.enabled || input.force_orders,
+        "markets": input.candidate_markets.len(),
+        "plans": input.plans.len(),
+        "pre_ai_eligible_plans": input.pre_ai_eligible_condition_ids.len(),
         "books_fetched": books_fetched,
-        "open_orders": cycle.open_orders.len(),
-        "positions": cycle.positions.len(),
+        "open_orders": input.open_orders.len(),
+        "positions": input.positions.len(),
         "account": {
-            "available_usd": cycle.account.available_usd,
-            "reserved_usd": cycle.account.reserved_usd,
-            "external_buy_notional": cycle.account.external_buy_notional,
-            "unmanaged_external_buy_notional": cycle.account.unmanaged_external_buy_notional,
-            "tick_index": cycle.account.tick_index,
+            "available_usd": input.account.available_usd,
+            "reserved_usd": input.account.reserved_usd,
+            "external_buy_notional": input.account.external_buy_notional,
+            "unmanaged_external_buy_notional": input.account.unmanaged_external_buy_notional,
+            "tick_index": input.account.tick_index,
+        },
+        "orderbook_confirmed_at_unix": {
+            "newest": newest_confirmed_at_unix,
+            "oldest": oldest_confirmed_at_unix,
         },
     })
 }
@@ -666,18 +679,17 @@ async fn run_reward_bot_live_tick(
     orderbook_cache: Option<&RewardOrderbookLocalCache>,
 ) -> Result<RewardBotRunReport> {
     let books_fetched = books.len();
-    let cycle = state
+    let now = OffsetDateTime::now_utc();
+    let book_history_snapshot: HashMap<String, Vec<BookSnapshot>> = book_history
+        .iter()
+        .map(|(token_id, snapshots)| (token_id.clone(), snapshots.iter().cloned().collect()))
+        .collect();
+    let input = state
         .reward_bot_service
-        .prepare_live_cycle(
-            markets,
-            books.clone(),
-            trace_id,
-            force_orders,
-        )
+        .build_strategy_input(markets, books.clone(), book_history_snapshot, now, force_orders)
         .await?;
-    let run_id =
-        start_reward_strategy_run_for_cycle(state, &cycle, trace_id, force_orders, books_fetched)
-            .await?;
+    let cycle = RewardLiveCycle::from_strategy_input(&input);
+    let run_id = start_reward_strategy_run_for_cycle(state, &input, trace_id, books_fetched).await?;
     let result = run_reward_bot_live_tick_prepared(
         state,
         connector,
@@ -740,7 +752,7 @@ async fn run_reward_bot_live_tick_prepared(
     book_history: &mut HashMap<String, VecDeque<BookSnapshot>>,
     orderbook_cache: Option<&RewardOrderbookLocalCache>,
 ) -> Result<RewardBotRunReport> {
-    let pre_provider_decisions = RewardDecisionEngine::evaluate_pre_provider(RewardStrategyInput {
+    let pre_provider_decisions = RewardDecisionEngine::evaluate_pre_provider(RewardLiveEngineInput {
         cycle,
         books: &books,
         book_history,
@@ -890,7 +902,7 @@ async fn run_reward_bot_live_tick_prepared(
 
     cycle.account = account.clone();
     cycle.open_orders = open_orders.clone();
-    let final_decisions = RewardDecisionEngine::refresh_snapshot(RewardStrategyInput {
+    let final_decisions = RewardDecisionEngine::refresh_snapshot(RewardLiveEngineInput {
         cycle,
         books: &books,
         book_history,
