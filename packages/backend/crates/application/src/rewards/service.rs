@@ -262,6 +262,92 @@ impl RewardBotService {
             .await
     }
 
+    pub async fn start_strategy_run(&self, run: &RewardStrategyRunStart) -> Result<i64> {
+        self.store.start_strategy_run(run).await
+    }
+
+    pub async fn complete_strategy_run(
+        &self,
+        run_id: i64,
+        metrics: Value,
+        completed_at: OffsetDateTime,
+    ) -> Result<()> {
+        self.store
+            .complete_strategy_run(run_id, metrics, completed_at)
+            .await
+    }
+
+    pub async fn fail_strategy_run(
+        &self,
+        run_id: i64,
+        error_code: &str,
+        error_message: &str,
+        metrics: Value,
+        completed_at: OffsetDateTime,
+    ) -> Result<()> {
+        self.store
+            .fail_strategy_run(run_id, error_code, error_message, metrics, completed_at)
+            .await
+    }
+
+    pub async fn record_strategy_decisions(
+        &self,
+        decisions: &[RewardStrategyDecision],
+    ) -> Result<()> {
+        self.store.record_strategy_decisions(decisions).await
+    }
+
+    pub async fn record_strategy_actions(
+        &self,
+        actions: &[RewardStrategyAction],
+    ) -> Result<()> {
+        self.store.record_strategy_actions(actions).await
+    }
+
+    pub async fn record_order_transitions(
+        &self,
+        transitions: &[RewardOrderTransition],
+    ) -> Result<()> {
+        self.store.record_order_transitions(transitions).await
+    }
+
+    pub async fn list_strategy_runs(
+        &self,
+        query: &RewardStrategyRunListQuery,
+    ) -> Result<RewardStrategyRunPage> {
+        self.store.list_strategy_runs(query).await
+    }
+
+    pub async fn get_strategy_run(&self, run_id: i64) -> Result<Option<RewardStrategyRun>> {
+        self.store.get_strategy_run(run_id).await
+    }
+
+    pub async fn list_strategy_decisions(
+        &self,
+        run_id: i64,
+        query: &RewardStrategyDecisionListQuery,
+    ) -> Result<RewardStrategyDecisionPage> {
+        self.store.list_strategy_decisions(run_id, query).await
+    }
+
+    pub async fn list_strategy_actions(
+        &self,
+        run_id: i64,
+        query: &RewardStrategyActionListQuery,
+    ) -> Result<RewardStrategyActionPage> {
+        self.store.list_strategy_actions(run_id, query).await
+    }
+
+    pub async fn list_order_transitions(
+        &self,
+        managed_order_id: &str,
+        query: &RewardOrderTransitionListQuery,
+    ) -> Result<RewardOrderTransitionPage> {
+        self.store
+            .list_order_transitions(managed_order_id, query)
+            .await
+    }
+
     /// List all active reward markets from the database.
     pub async fn list_active_reward_markets(&self) -> Result<Vec<RewardMarket>> {
         self.store.list_all_active_markets().await

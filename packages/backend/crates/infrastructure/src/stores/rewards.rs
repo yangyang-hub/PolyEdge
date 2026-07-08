@@ -12,5 +12,6 @@ include!("rewards/postgres_heartbeat.rs");
 include!("rewards/postgres_info_risk.rs");
 include!("rewards/postgres_orders.rs");
 include!("rewards/postgres_plans.rs");
+include!("rewards/postgres_run_ledger.rs");
 include!("rewards/postgres_writes.rs");
 include!("rewards/postgres.rs");

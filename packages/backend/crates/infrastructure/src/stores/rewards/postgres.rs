@@ -212,6 +212,91 @@ impl RewardBotStore for PostgresRewardBotStore {
         postgres_list_effective_reward_market_event_windows(&self.pool, condition_ids).await
     }
 
+    async fn start_strategy_run(&self, run: &RewardStrategyRunStart) -> Result<i64> {
+        postgres_start_reward_strategy_run(&self.pool, run).await
+    }
+
+    async fn complete_strategy_run(
+        &self,
+        run_id: i64,
+        metrics: Value,
+        completed_at: OffsetDateTime,
+    ) -> Result<()> {
+        postgres_complete_reward_strategy_run(&self.pool, run_id, metrics, completed_at).await
+    }
+
+    async fn fail_strategy_run(
+        &self,
+        run_id: i64,
+        error_code: &str,
+        error_message: &str,
+        metrics: Value,
+        completed_at: OffsetDateTime,
+    ) -> Result<()> {
+        postgres_fail_reward_strategy_run(
+            &self.pool,
+            run_id,
+            error_code,
+            error_message,
+            metrics,
+            completed_at,
+        )
+        .await
+    }
+
+    async fn record_strategy_decisions(
+        &self,
+        decisions: &[RewardStrategyDecision],
+    ) -> Result<()> {
+        postgres_record_reward_strategy_decisions(&self.pool, decisions).await
+    }
+
+    async fn record_strategy_actions(&self, actions: &[RewardStrategyAction]) -> Result<()> {
+        postgres_record_reward_strategy_actions(&self.pool, actions).await
+    }
+
+    async fn record_order_transitions(
+        &self,
+        transitions: &[RewardOrderTransition],
+    ) -> Result<()> {
+        postgres_record_reward_order_transitions(&self.pool, transitions).await
+    }
+
+    async fn list_strategy_runs(
+        &self,
+        query: &RewardStrategyRunListQuery,
+    ) -> Result<RewardStrategyRunPage> {
+        postgres_list_reward_strategy_runs(&self.pool, query).await
+    }
+
+    async fn get_strategy_run(&self, run_id: i64) -> Result<Option<RewardStrategyRun>> {
+        postgres_get_reward_strategy_run(&self.pool, run_id).await
+    }
+
+    async fn list_strategy_decisions(
+        &self,
+        run_id: i64,
+        query: &RewardStrategyDecisionListQuery,
+    ) -> Result<RewardStrategyDecisionPage> {
+        postgres_list_reward_strategy_decisions(&self.pool, run_id, query).await
+    }
+
+    async fn list_strategy_actions(
+        &self,
+        run_id: i64,
+        query: &RewardStrategyActionListQuery,
+    ) -> Result<RewardStrategyActionPage> {
+        postgres_list_reward_strategy_actions(&self.pool, run_id, query).await
+    }
+
+    async fn list_order_transitions(
+        &self,
+        managed_order_id: &str,
+        query: &RewardOrderTransitionListQuery,
+    ) -> Result<RewardOrderTransitionPage> {
+        postgres_list_reward_order_transitions(&self.pool, managed_order_id, query).await
+    }
+
     async fn save_quote_plans(&self, plans: &[RewardQuotePlan]) -> Result<()> {
         let mut transaction = self.pool.begin().await.map_err(|error| {
             db_error(
@@ -1073,6 +1158,19 @@ impl RewardBotStore for PostgresRewardBotStore {
             )
         })?;
 
+        let run_id =
+            postgres_latest_reward_strategy_run_id_for_trace_tx(&mut transaction, trace_id).await?;
+        let existing_statuses = if run_id.is_some() && !outcome.orders.is_empty() {
+            let order_ids = outcome
+                .orders
+                .iter()
+                .map(|order| order.id.clone())
+                .collect::<Vec<_>>();
+            postgres_reward_order_statuses_for_transition_tx(&mut transaction, &order_ids).await?
+        } else {
+            HashMap::new()
+        };
+
         for order in &outcome.orders {
             insert_reward_order(&mut transaction, order, trace_id).await?;
         }
@@ -1088,6 +1186,28 @@ impl RewardBotStore for PostgresRewardBotStore {
         upsert_reward_account_state_tx(&mut transaction, &outcome.account).await?;
         for event in &outcome.events {
             insert_reward_event_tx(&mut transaction, event).await?;
+        }
+        if let Some(run_id) = run_id {
+            let now = OffsetDateTime::now_utc();
+            let actions = reward_strategy_actions_from_tick_outcome(run_id, outcome, trace_id, now);
+            postgres_record_reward_strategy_actions_tx(&mut transaction, &actions).await?;
+            let transitions = outcome
+                .orders
+                .iter()
+                .filter_map(|order| {
+                    let from_status = existing_statuses.get(&order.id).copied();
+                    if from_status == Some(order.status) {
+                        return None;
+                    }
+                    Some(reward_order_transition_from_order_change(
+                        Some(run_id),
+                        from_status,
+                        order,
+                        now,
+                    ))
+                })
+                .collect::<Vec<_>>();
+            postgres_record_reward_order_transitions_tx(&mut transaction, &transitions).await?;
         }
 
         transaction.commit().await.map_err(|error| {

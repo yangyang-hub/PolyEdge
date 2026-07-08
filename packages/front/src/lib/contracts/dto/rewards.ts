@@ -19,8 +19,12 @@ import type {
   RewardQuoteMode,
   RewardRiskSeverity,
   RewardSelectionMode,
+  RewardStrategyActionStatus,
+  RewardStrategyActionType,
   RewardStrategyBucket,
   RewardStrategyProfile,
+  RewardStrategyRunStatus,
+  RewardStrategyRunTrigger,
   RewardUnknownEventTimeMode,
 } from "./primitives";
 
@@ -367,6 +371,7 @@ export type RewardQuotePlanDto = {
   reason: string;
   strategy_bucket: RewardStrategyBucket;
   strategy_profile?: RewardStrategyProfile;
+  latest_run_id?: number | null;
   quote_mode: RewardPlanQuoteMode;
   recommended_quote_mode?: RewardPlanQuoteMode | null;
   book_metrics?: RewardMarketBookMetricsDto | null;
@@ -538,4 +543,97 @@ export type RewardBotSnapshotDto = {
   fills: RewardFillDto[];
   events: RewardRiskEventDto[];
   token_quotes?: Record<string, RewardTokenQuoteDto> | null;
+};
+
+export type RewardStrategyRunDto = {
+  run_id: number;
+  account_id: string;
+  trace_id: string;
+  trigger_type: RewardStrategyRunTrigger;
+  status: RewardStrategyRunStatus;
+  config_hash: string;
+  config_json: unknown;
+  input_summary: unknown;
+  metrics: unknown;
+  started_at: string;
+  completed_at?: string | null;
+  error_code?: string | null;
+  error_message?: string | null;
+};
+
+export type RewardStrategyDecisionDto = {
+  run_id: number;
+  condition_id: string;
+  strategy_profile: RewardStrategyProfile;
+  decision_rank: number;
+  eligible: boolean;
+  quote_readiness: RewardQuoteReadiness;
+  quote_mode: RewardPlanQuoteMode;
+  score: DecimalValue;
+  selection_score: DecimalValue;
+  reason_code: string;
+  reason: string;
+  blocker_codes: string[];
+  planned_buy_notional_usd: DecimalValue;
+  fair_value_passed?: boolean | null;
+  fair_value_effective_edge_cents?: DecimalValue | null;
+  opportunity_score?: DecimalValue | null;
+  event_window_status?: string | null;
+  ai_suitability?: string | null;
+  info_risk_level?: string | null;
+  decision_json: unknown;
+  created_at: string;
+};
+
+export type RewardStrategyActionDto = {
+  action_id: number;
+  run_id: number;
+  account_id: string;
+  condition_id?: string | null;
+  token_id?: string | null;
+  managed_order_id?: string | null;
+  external_order_id?: string | null;
+  action_type: RewardStrategyActionType;
+  status: RewardStrategyActionStatus;
+  reason_code: string;
+  reason: string;
+  idempotency_key: string;
+  request_json: unknown;
+  result_json: unknown;
+  created_at: string;
+  updated_at: string;
+};
+
+export type RewardOrderTransitionDto = {
+  transition_id: number;
+  run_id?: number | null;
+  action_id?: number | null;
+  managed_order_id: string;
+  external_order_id?: string | null;
+  from_status?: ManagedRewardOrderStatus | null;
+  to_status: ManagedRewardOrderStatus;
+  reason_code: string;
+  reason: string;
+  metadata: unknown;
+  created_at: string;
+};
+
+export type RewardStrategyRunPageDto = {
+  items: RewardStrategyRunDto[];
+  page: RewardListPageDto;
+};
+
+export type RewardStrategyDecisionPageDto = {
+  items: RewardStrategyDecisionDto[];
+  page: RewardListPageDto;
+};
+
+export type RewardStrategyActionPageDto = {
+  items: RewardStrategyActionDto[];
+  page: RewardListPageDto;
+};
+
+export type RewardOrderTransitionPageDto = {
+  items: RewardOrderTransitionDto[];
+  page: RewardListPageDto;
 };

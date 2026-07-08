@@ -264,6 +264,7 @@ fn live_test_plan(now: OffsetDateTime) -> RewardQuotePlan {
         reason: "eligible".to_string(),
         strategy_bucket: polyedge_application::RewardStrategyBucket::None,
         strategy_profile: polyedge_application::RewardStrategyProfile::Standard,
+        latest_run_id: None,
         quote_mode: polyedge_application::RewardPlanQuoteMode::Double,
         recommended_quote_mode: Some(polyedge_application::RewardPlanQuoteMode::Double),
         book_metrics: None,

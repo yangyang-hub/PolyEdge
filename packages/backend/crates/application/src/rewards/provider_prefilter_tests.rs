@@ -14,6 +14,7 @@ fn prefilter_test_plan(condition_id: &str, bucket: RewardStrategyBucket) -> Rewa
         reason: String::new(),
         strategy_bucket: bucket,
         strategy_profile: RewardStrategyProfile::Standard,
+        latest_run_id: None,
         quote_mode: RewardPlanQuoteMode::Double,
         recommended_quote_mode: None,
         book_metrics: None,

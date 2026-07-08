@@ -18,6 +18,13 @@ pub struct InMemoryRewardBotStore {
     llm_calls: RwLock<Vec<RewardLlmCallRecord>>,
     candles: RwLock<HashMap<(String, i32, OffsetDateTime), RewardMarketCandle>>,
     fair_values: RwLock<Vec<RewardFairValueEstimate>>,
+    strategy_runs: RwLock<Vec<RewardStrategyRun>>,
+    strategy_decisions: RwLock<Vec<RewardStrategyDecision>>,
+    strategy_actions: RwLock<Vec<RewardStrategyAction>>,
+    order_transitions: RwLock<Vec<RewardOrderTransition>>,
+    next_strategy_run_id: RwLock<i64>,
+    next_strategy_action_id: RwLock<i64>,
+    next_order_transition_id: RwLock<i64>,
 }
 
 impl InMemoryRewardBotStore {
@@ -41,6 +48,13 @@ impl InMemoryRewardBotStore {
             llm_calls: RwLock::new(Vec::new()),
             candles: RwLock::new(HashMap::new()),
             fair_values: RwLock::new(Vec::new()),
+            strategy_runs: RwLock::new(Vec::new()),
+            strategy_decisions: RwLock::new(Vec::new()),
+            strategy_actions: RwLock::new(Vec::new()),
+            order_transitions: RwLock::new(Vec::new()),
+            next_strategy_run_id: RwLock::new(1),
+            next_strategy_action_id: RwLock::new(1),
+            next_order_transition_id: RwLock::new(1),
         }
     }
 }
@@ -262,6 +276,264 @@ impl RewardBotStore for InMemoryRewardBotStore {
         let mut windows: Vec<_> = best_by_condition.into_values().collect();
         windows.sort_by(|left, right| left.condition_id.cmp(&right.condition_id));
         Ok(windows)
+    }
+
+    async fn start_strategy_run(&self, run: &RewardStrategyRunStart) -> Result<i64> {
+        let mut next_id = self.next_strategy_run_id.write().await;
+        let run_id = *next_id;
+        *next_id += 1;
+        self.strategy_runs.write().await.push(RewardStrategyRun {
+            run_id,
+            account_id: run.account_id.clone(),
+            trace_id: run.trace_id.clone(),
+            trigger_type: run.trigger_type,
+            status: RewardStrategyRunStatus::Running,
+            config_hash: run.config_hash.clone(),
+            config_json: run.config_json.clone(),
+            input_summary: run.input_summary.clone(),
+            metrics: json!({}),
+            started_at: run.started_at,
+            completed_at: None,
+            error_code: None,
+            error_message: None,
+        });
+        Ok(run_id)
+    }
+
+    async fn complete_strategy_run(
+        &self,
+        run_id: i64,
+        metrics: Value,
+        completed_at: OffsetDateTime,
+    ) -> Result<()> {
+        if let Some(run) = self
+            .strategy_runs
+            .write()
+            .await
+            .iter_mut()
+            .find(|run| run.run_id == run_id)
+        {
+            run.status = RewardStrategyRunStatus::Completed;
+            run.metrics = metrics;
+            run.completed_at = Some(completed_at);
+            run.error_code = None;
+            run.error_message = None;
+        }
+        Ok(())
+    }
+
+    async fn fail_strategy_run(
+        &self,
+        run_id: i64,
+        error_code: &str,
+        error_message: &str,
+        metrics: Value,
+        completed_at: OffsetDateTime,
+    ) -> Result<()> {
+        if let Some(run) = self
+            .strategy_runs
+            .write()
+            .await
+            .iter_mut()
+            .find(|run| run.run_id == run_id)
+        {
+            run.status = RewardStrategyRunStatus::Failed;
+            run.metrics = metrics;
+            run.completed_at = Some(completed_at);
+            run.error_code = Some(error_code.to_string());
+            run.error_message = Some(error_message.to_string());
+        }
+        Ok(())
+    }
+
+    async fn record_strategy_decisions(
+        &self,
+        decisions: &[RewardStrategyDecision],
+    ) -> Result<()> {
+        if decisions.is_empty() {
+            return Ok(());
+        }
+        let mut store = self.strategy_decisions.write().await;
+        for decision in decisions {
+            if let Some(existing) = store.iter_mut().find(|stored| {
+                stored.run_id == decision.run_id
+                    && stored.condition_id == decision.condition_id
+                    && stored.strategy_profile == decision.strategy_profile
+            }) {
+                *existing = decision.clone();
+            } else {
+                store.push(decision.clone());
+            }
+        }
+        Ok(())
+    }
+
+    async fn record_strategy_actions(&self, actions: &[RewardStrategyAction]) -> Result<()> {
+        if actions.is_empty() {
+            return Ok(());
+        }
+        let mut store = self.strategy_actions.write().await;
+        let mut next_id = self.next_strategy_action_id.write().await;
+        for action in actions {
+            if let Some(existing) = store
+                .iter_mut()
+                .find(|stored| stored.idempotency_key == action.idempotency_key)
+            {
+                let action_id = existing.action_id;
+                *existing = action.clone();
+                existing.action_id = action_id;
+            } else {
+                let mut action = action.clone();
+                action.action_id = *next_id;
+                *next_id += 1;
+                store.push(action);
+            }
+        }
+        Ok(())
+    }
+
+    async fn record_order_transitions(
+        &self,
+        transitions: &[RewardOrderTransition],
+    ) -> Result<()> {
+        if transitions.is_empty() {
+            return Ok(());
+        }
+        let mut store = self.order_transitions.write().await;
+        let mut next_id = self.next_order_transition_id.write().await;
+        for transition in transitions {
+            let mut transition = transition.clone();
+            transition.transition_id = *next_id;
+            *next_id += 1;
+            store.push(transition);
+        }
+        Ok(())
+    }
+
+    async fn list_strategy_runs(
+        &self,
+        query: &RewardStrategyRunListQuery,
+    ) -> Result<RewardStrategyRunPage> {
+        let mut runs = self
+            .strategy_runs
+            .read()
+            .await
+            .iter()
+            .filter(|run| {
+                query
+                    .account_id
+                    .as_deref()
+                    .is_none_or(|account_id| run.account_id == account_id)
+                    && query.status.is_none_or(|status| run.status == status)
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        runs.sort_by(|left, right| {
+            right
+                .started_at
+                .cmp(&left.started_at)
+                .then_with(|| right.run_id.cmp(&left.run_id))
+        });
+        let page = query.page_for_total(runs.len());
+        let items = in_memory_page_items(runs, page.page, page.page_size);
+        Ok(RewardStrategyRunPage { items, page })
+    }
+
+    async fn get_strategy_run(&self, run_id: i64) -> Result<Option<RewardStrategyRun>> {
+        Ok(self
+            .strategy_runs
+            .read()
+            .await
+            .iter()
+            .find(|run| run.run_id == run_id)
+            .cloned())
+    }
+
+    async fn list_strategy_decisions(
+        &self,
+        run_id: i64,
+        query: &RewardStrategyDecisionListQuery,
+    ) -> Result<RewardStrategyDecisionPage> {
+        let mut decisions = self
+            .strategy_decisions
+            .read()
+            .await
+            .iter()
+            .filter(|decision| {
+                decision.run_id == run_id
+                    && query
+                        .eligible
+                        .is_none_or(|eligible| decision.eligible == eligible)
+                    && query.search.as_deref().is_none_or(|search| {
+                        decision.condition_id.to_lowercase().contains(search)
+                            || decision.reason.to_lowercase().contains(search)
+                            || decision.decision_json.to_string().to_lowercase().contains(search)
+                    })
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        decisions.sort_by(|left, right| {
+            left.decision_rank
+                .cmp(&right.decision_rank)
+                .then_with(|| right.selection_score.cmp(&left.selection_score))
+        });
+        let page = query.page_for_total(decisions.len());
+        let items = in_memory_page_items(decisions, page.page, page.page_size);
+        Ok(RewardStrategyDecisionPage { items, page })
+    }
+
+    async fn list_strategy_actions(
+        &self,
+        run_id: i64,
+        query: &RewardStrategyActionListQuery,
+    ) -> Result<RewardStrategyActionPage> {
+        let mut actions = self
+            .strategy_actions
+            .read()
+            .await
+            .iter()
+            .filter(|action| {
+                action.run_id == run_id
+                    && query.status.is_none_or(|status| action.status == status)
+                    && query
+                        .action_type
+                        .is_none_or(|action_type| action.action_type == action_type)
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        actions.sort_by(|left, right| {
+            right
+                .created_at
+                .cmp(&left.created_at)
+                .then_with(|| right.action_id.cmp(&left.action_id))
+        });
+        let page = query.page_for_total(actions.len());
+        let items = in_memory_page_items(actions, page.page, page.page_size);
+        Ok(RewardStrategyActionPage { items, page })
+    }
+
+    async fn list_order_transitions(
+        &self,
+        managed_order_id: &str,
+        query: &RewardOrderTransitionListQuery,
+    ) -> Result<RewardOrderTransitionPage> {
+        let mut transitions = self
+            .order_transitions
+            .read()
+            .await
+            .iter()
+            .filter(|transition| transition.managed_order_id == managed_order_id)
+            .cloned()
+            .collect::<Vec<_>>();
+        transitions.sort_by(|left, right| {
+            right
+                .created_at
+                .cmp(&left.created_at)
+                .then_with(|| right.transition_id.cmp(&left.transition_id))
+        });
+        let page = query.page_for_total(transitions.len());
+        let items = in_memory_page_items(transitions, page.page, page.page_size);
+        Ok(RewardOrderTransitionPage { items, page })
     }
 
     async fn save_quote_plans(&self, plans: &[RewardQuotePlan]) -> Result<()> {
@@ -1000,8 +1272,32 @@ impl RewardBotStore for InMemoryRewardBotStore {
     async fn apply_tick_outcome(
         &self,
         outcome: &RewardTickOutcome,
-        _trace_id: &str,
+        trace_id: &str,
     ) -> Result<()> {
+        let run_id = self
+            .strategy_runs
+            .read()
+            .await
+            .iter()
+            .filter(|run| run.trace_id == trace_id)
+            .max_by_key(|run| run.started_at)
+            .map(|run| run.run_id);
+        let existing_statuses = if run_id.is_some() && !outcome.orders.is_empty() {
+            let orders = self.orders.read().await;
+            outcome
+                .orders
+                .iter()
+                .filter_map(|order| {
+                    orders
+                        .iter()
+                        .find(|stored| stored.id == order.id)
+                        .map(|stored| (order.id.clone(), stored.status))
+                })
+                .collect::<HashMap<_, _>>()
+        } else {
+            HashMap::new()
+        };
+
         {
             let mut orders = self.orders.write().await;
             for order in &outcome.orders {
@@ -1050,6 +1346,28 @@ impl RewardBotStore for InMemoryRewardBotStore {
             events.extend(outcome.events.iter().cloned());
             events.sort_by(|left, right| right.created_at.cmp(&left.created_at));
             events.truncate(1_000);
+        }
+        if let Some(run_id) = run_id {
+            let now = OffsetDateTime::now_utc();
+            let actions = reward_strategy_actions_from_tick_outcome(run_id, outcome, trace_id, now);
+            self.record_strategy_actions(&actions).await?;
+            let transitions = outcome
+                .orders
+                .iter()
+                .filter_map(|order| {
+                    let from_status = existing_statuses.get(&order.id).copied();
+                    if from_status == Some(order.status) {
+                        return None;
+                    }
+                    Some(reward_order_transition_from_order_change(
+                        Some(run_id),
+                        from_status,
+                        order,
+                        now,
+                    ))
+                })
+                .collect::<Vec<_>>();
+            self.record_order_transitions(&transitions).await?;
         }
         Ok(())
     }
@@ -1157,6 +1475,11 @@ fn in_memory_reward_market_activity_allowed(
 fn in_memory_reward_sparse_market_density(market: &RewardMarket) -> Decimal {
     let denominator = (market.liquidity_usd + market.volume_24h_usd).max(Decimal::ONE);
     market.total_daily_rate / denominator
+}
+
+fn in_memory_page_items<T: Clone>(items: Vec<T>, page: usize, page_size: usize) -> Vec<T> {
+    let start = (page.saturating_sub(1)) * page_size;
+    items.into_iter().skip(start).take(page_size).collect()
 }
 
 fn reward_llm_call_is_tracked(task_type: &str) -> bool {

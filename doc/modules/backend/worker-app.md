@@ -85,7 +85,7 @@ run_database_maintenance_once()
     -> 输出逐表 deleted 计数和 total_deleted
 ```
 
-生产模板默认开启，本地模板默认关闭。当前清理 raw events、过期 AI/info-risk cache、rewards price-history candles、fair-value history、完成/失败控制命令、outbox/external dedup、LLM calls、audit logs 和 mode transitions。每个表每轮最多 20 批、每批 10,000 行；单表失败只记录 warn。
+生产模板默认开启，本地模板默认关闭。当前清理 raw events、过期 AI/info-risk cache、rewards price-history candles、fair-value history、strategy run ledger、order transitions、完成/失败控制命令、outbox/external dedup、LLM calls、audit logs 和 mode transitions。每个表每轮最多 20 批、每批 10,000 行；单表失败只记录 warn。
 
 ### register-orderbook-tokens
 
@@ -111,14 +111,16 @@ poll_reward_bot_until_shutdown()
     -> 构建 quote plans、opportunity metrics 和 fair-value estimates
     -> 计算 maker selection_score 并按资金优先级排序
     -> 应用 AI advisory / info-risk / event window / funding / live orderbook gates
-    -> 保存 quote plans
+    -> 创建 strategy run ledger，保存 quote plans + decisions
     -> 提交、撤单、重挂、退出 SELL、merge intent
-    -> 写入 heartbeat / fills / positions / events / llm_calls
+    -> 写入 heartbeat / fills / positions / events / llm_calls / actions / order transitions
 ```
 
 LP rewards 策略只做 live 路径。新增 BUY 必须经过最终 quote plan、maker selection priority、fair-value raw/effective edge、当前盘口、资金、事件窗口、AI/info-risk、盘口新鲜度、深度/rank/history/requote 和 kill switch 检查。已有订单由 fast reconcile 和独立事件撤单 worker 兜底；活跃 token 的 orderbook 更新会立即触发 cancel-only 风控，不等待完整 full tick。
 
 Full tick 会在 opportunity/fair-value、provider/首单 gate 和最终保存前重算 `selection_score` 并重排 plans。live placement 依顺序扫描 plans，因此 `max_markets` 和资金占用优先给 reward density、fair-value edge、退出能力和稳定性更好的市场，而不是单纯按基础市场质量分或日奖励排序。
+
+Full tick 现在会创建 shadow strategy run ledger：run 保存 account、trace、trigger、配置 hash、配置 JSON 和输入摘要；每次保存 quote plans 会写入同一 run 的 decision 快照，并把 `RewardQuotePlan.latest_run_id` 指向该 run。live tick outcome 持久化时会基于同一 trace 自动派生 strategy actions 和 order transitions，不改变既有下单、撤单、成交、退出或 BalancedMerge 逻辑。
 
 Fair-value gate 默认启用。Full tick 会用 orderbook 服务缓存和本地盘口历史计算每个计划的 YES/NO fair value、confidence、uncertainty、raw edge、effective edge 和 rewards rebate 折扣，写入 `reward_fair_values` / `reward_fair_value_history`；BUY submission last-look 会用最新盘口重新应用同一 gate，失败则取消/延后 durable intent。
 
@@ -154,7 +156,8 @@ settings.news.sources
 - 常驻 runtime 可启动 database maintenance、news ingest/promotion、orderbook token registration、rewards live loop、rewards info-risk scan、execution drain、paper/live 订单状态与成交对账、Polymarket 用户事件 WS。
 - 市场目录同步、rewards catalog、price-history candles 和常驻 orderbook WS/poll cache 已迁移到 `polyedge-orderbook`。
 - Rewards market maker 策略不依赖已删除的研究表；quote planning 使用市场质量、机会评分、maker selection score、fair-value、AI/info-risk、事件窗口、资金和 live 盘口风控。
-- 数据库维护不再清理旧钱包类表；这些 schema 已从迁移和 `init.sql` 中移除。
+- Rewards full tick 已写 strategy run/decision/action/order transition ledger，用于生产前演练审计；该 ledger 是 shadow 记录层，不作为 live 交易决策输入。
+- 数据库维护不再清理旧钱包类表；这些 schema 已从迁移和 `init.sql` 中移除。Strategy run ledger 的 completed/failed/cancelled runs 默认保留 90 天，order transitions 默认保留 180 天。
 
 ## 修改检查清单
 

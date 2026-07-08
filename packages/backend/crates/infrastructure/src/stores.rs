@@ -12,20 +12,27 @@ use polyedge_application::{
     RewardLlmCallDailyStats, RewardLlmCallRecord, RewardMarket, RewardMarketAdvisory,
     RewardMarketCandle, RewardMarketCandleSample, RewardMarketEventWindow, RewardMarketInfoRisk,
     RewardMergeIntent, RewardMergeIntentStatus, RewardOrderListQuery, RewardOrderPage,
-    RewardOrderSide, RewardOrderSortField, RewardOrderStatusFilter, RewardPlanQuoteMode,
-    RewardPosition, RewardQuoteMode, RewardQuotePlan, RewardQuotePlanBlockerCounts,
-    RewardQuotePlanCounts, RewardQuotePlanListQuery, RewardQuotePlanPage, RewardQuotePlanSortField,
-    RewardRiskEvent, RewardRiskSeverity, RewardSelectionMode, RewardStrategyBucket,
-    RewardStrategyProfile, RewardTickOutcome, RewardToken, RewardUnknownEventTimeMode,
-    RiskStateSnapshot, RiskStateStore, SortOrder, refresh_reward_quote_plan_readiness,
-    reward_order_counts_as_external_open,
+    RewardOrderSide, RewardOrderSortField, RewardOrderStatusFilter, RewardOrderTransition,
+    RewardOrderTransitionListQuery, RewardOrderTransitionPage, RewardPlanQuoteMode, RewardPosition,
+    RewardQuoteMode, RewardQuotePlan, RewardQuotePlanBlockerCounts, RewardQuotePlanCounts,
+    RewardQuotePlanListQuery, RewardQuotePlanPage, RewardQuotePlanSortField, RewardQuoteReadiness,
+    RewardRiskEvent, RewardRiskSeverity, RewardSelectionMode, RewardStrategyAction,
+    RewardStrategyActionListQuery, RewardStrategyActionPage, RewardStrategyActionStatus,
+    RewardStrategyActionType, RewardStrategyBucket, RewardStrategyDecision,
+    RewardStrategyDecisionListQuery, RewardStrategyDecisionPage, RewardStrategyProfile,
+    RewardStrategyRun, RewardStrategyRunListQuery, RewardStrategyRunPage, RewardStrategyRunStart,
+    RewardStrategyRunStatus, RewardStrategyRunTrigger, RewardTickOutcome, RewardToken,
+    RewardUnknownEventTimeMode, RiskStateSnapshot, RiskStateStore, SortOrder,
+    refresh_reward_quote_plan_readiness, reward_order_counts_as_external_open,
+    reward_order_transition_from_order_change, reward_quote_plan_blocker_codes,
+    reward_quote_plan_reason_code, reward_strategy_actions_from_tick_outcome,
 };
 use polyedge_domain::{
     AppError, ExposureRatio, IdempotencyStatus, Result, SignedUsdAmount, SystemMode,
 };
 use rust_decimal::Decimal;
 use serde_json::{Value, json};
-use sqlx::{PgPool, Postgres, Row, types::Json};
+use sqlx::{PgPool, Postgres, QueryBuilder, Row, types::Json};
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
     str::FromStr,

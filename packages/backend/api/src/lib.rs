@@ -13,9 +13,10 @@ use polyedge_application::{
     OrderDraftListFilters, OrderDraftView, OrderListFilters, OrderView, OrderbookCache, PageQuery,
     Paginated, PositionListFilters, PositionView, ProbabilityEstimateListFilters,
     ProbabilityEstimateView, ReconcileExternalTradeCommand, RewardBotConfigPatch,
-    RewardBotSnapshot, RewardControlAction, RewardOrderListQuery, RewardQuotePlanListQuery,
-    RewardTokenQuote, RiskPolicy, RiskStateView, SortOrder, SyncExternalOrderStatusCommand,
-    TradeListFilters, TradeView,
+    RewardBotSnapshot, RewardControlAction, RewardOrderListQuery, RewardOrderTransitionListQuery,
+    RewardQuotePlanListQuery, RewardStrategyActionListQuery, RewardStrategyDecisionListQuery,
+    RewardStrategyRunListQuery, RewardTokenQuote, RiskPolicy, RiskStateView, SortOrder,
+    SyncExternalOrderStatusCommand, TradeListFilters, TradeView,
 };
 use polyedge_connectors::{
     ConnectorOrderStatusUpdate, ConnectorTradeFillUpdate, PolymarketChainConnector,
@@ -32,9 +33,10 @@ use polyedge_contracts::{
     NewsSourceHealthListQuery, OrderData, OrderDraftData, OrderDraftListQuery, OrderListQuery,
     OrderbookData, OrderbookLevelData, PolymarketOrderStatusCallbackRequest,
     PolymarketTradeFillCallbackRequest, PositionData, ProbabilityEstimateData,
-    ProbabilityEstimateListQuery, ReadinessData, RewardBotSnapshotQuery, RiskStateData,
-    RuntimeConfigEntryData, SystemModeData, TradeData, TradeListQuery, TransitionSystemModeRequest,
-    UpdateRuntimeConfigRequest,
+    ProbabilityEstimateListQuery, ReadinessData, RewardBotSnapshotQuery,
+    RewardOrderTransitionsQuery, RewardStrategyActionsQuery, RewardStrategyDecisionsQuery,
+    RewardStrategyRunsQuery, RiskStateData, RuntimeConfigEntryData, SystemModeData, TradeData,
+    TradeListQuery, TransitionSystemModeRequest, UpdateRuntimeConfigRequest,
 };
 use polyedge_domain::{AppError, OrderStatus, Probability, Quantity, StepUpScope, UsdAmount};
 use polyedge_infrastructure::stores::ExternalEventBegin;
@@ -203,6 +205,41 @@ pub fn build_app(state: AppState) -> Router {
         .route(
             "/api/v1/rewards-bot",
             get(read_reward_bot_snapshot).route_layer(middleware::from_fn_with_state(
+                state.clone(),
+                require_console_read_auth,
+            )),
+        )
+        .route(
+            "/api/v1/rewards-bot/runs",
+            get(list_reward_strategy_runs).route_layer(middleware::from_fn_with_state(
+                state.clone(),
+                require_console_read_auth,
+            )),
+        )
+        .route(
+            "/api/v1/rewards-bot/runs/{run_id}",
+            get(read_reward_strategy_run).route_layer(middleware::from_fn_with_state(
+                state.clone(),
+                require_console_read_auth,
+            )),
+        )
+        .route(
+            "/api/v1/rewards-bot/runs/{run_id}/decisions",
+            get(list_reward_strategy_decisions).route_layer(middleware::from_fn_with_state(
+                state.clone(),
+                require_console_read_auth,
+            )),
+        )
+        .route(
+            "/api/v1/rewards-bot/runs/{run_id}/actions",
+            get(list_reward_strategy_actions).route_layer(middleware::from_fn_with_state(
+                state.clone(),
+                require_console_read_auth,
+            )),
+        )
+        .route(
+            "/api/v1/rewards-bot/orders/{managed_order_id}/transitions",
+            get(list_reward_order_transitions).route_layer(middleware::from_fn_with_state(
                 state.clone(),
                 require_console_read_auth,
             )),

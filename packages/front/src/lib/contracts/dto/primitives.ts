@@ -73,4 +73,27 @@ export type RewardInfoRiskType =
   | "unknown";
 export type RewardInfoDirectionalRisk = "yes" | "no" | "unclear";
 export type RewardFillRole = "maker" | "taker";
+export type RewardStrategyRunTrigger =
+  | "poll"
+  | "run_once"
+  | "orderbook_event"
+  | "control_command"
+  | "replay";
+export type RewardStrategyRunStatus = "running" | "completed" | "failed" | "cancelled";
+export type RewardStrategyActionType =
+  | "place_buy"
+  | "submit_exit_sell"
+  | "cancel_order"
+  | "cancel_replace_exit"
+  | "record_fill"
+  | "create_merge_intent"
+  | "execute_merge"
+  | "skip";
+export type RewardStrategyActionStatus =
+  | "planned"
+  | "executing"
+  | "succeeded"
+  | "failed"
+  | "skipped"
+  | "unknown";
 export type DecimalValue = string | number;

@@ -1,6 +1,6 @@
 # PolyEdge 文档索引
 
-最后更新：2026-07-07
+最后更新：2026-07-08
 
 ## 当前事实来源
 
@@ -46,3 +46,4 @@
 | 文档 | 状态 |
 |---|---|
 | [rewards-event-window-stable-double-strategy-plan.md](rewards-event-window-stable-double-strategy-plan.md) | Rewards 事件窗口硬风控核心实现状态、稳定双边挂单和后续互补持仓合并策略方案 |
+| [rewards-market-maker-refactor-design.md](rewards-market-maker-refactor-design.md) | Rewards 做市商生产前数据库、策略引擎、worker 执行流和运维前端重构设计方案 |

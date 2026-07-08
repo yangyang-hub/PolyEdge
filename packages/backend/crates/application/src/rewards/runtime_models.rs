@@ -337,6 +337,8 @@ pub struct RewardQuotePlan {
     pub strategy_bucket: RewardStrategyBucket,
     #[serde(default = "default_reward_strategy_profile")]
     pub strategy_profile: RewardStrategyProfile,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latest_run_id: Option<i64>,
     #[serde(default = "default_reward_plan_quote_mode")]
     pub quote_mode: RewardPlanQuoteMode,
     #[serde(default, skip_serializing_if = "Option::is_none")]

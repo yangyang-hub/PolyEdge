@@ -1,6 +1,6 @@
 # API App（HTTP API 服务）
 
-最后更新：2026-07-07
+最后更新：2026-07-08
 
 ## 概述
 
@@ -27,7 +27,7 @@
 | `handlers/execution_lists.rs` | orders、drafts、trades、execution requests 查询 |
 | `handlers/callbacks.rs` + `callback_helpers.rs` | connector 订单状态/成交回调 |
 | `handlers/mode_control.rs` | 系统模式转换 |
-| `handlers/rewards.rs` | Rewards snapshot、配置保存和 run/cancel/reset 命令入队 |
+| `handlers/rewards.rs` | Rewards snapshot、配置保存、run/cancel/reset 命令入队和 strategy run ledger 查询 |
 | `handlers/health.rs` | 健康检查 helper |
 | `handlers/runtime_config.rs` + `runtime_config_helpers.rs` | 运行时配置读写 |
 | `handlers/mappers.rs` | DTO 映射辅助 |
@@ -46,7 +46,7 @@
 | Execution | `GET /api/v1/execution/requests` | `console_read` |
 | Callbacks | `POST /api/v1/connectors/callbacks/orders/status`、`POST /api/v1/connectors/callbacks/trades/fill`、Polymarket 同名变体 | `connector_write` |
 | Pricing | `GET /api/v1/pricing/estimates` | `console_read` |
-| Rewards Bot | `GET /api/v1/rewards-bot`、`POST /api/v1/rewards-bot/config`、`POST /api/v1/rewards-bot/run`、`POST /api/v1/rewards-bot/cancel-all`、`POST /api/v1/rewards-bot/reset` | `console_read` / `console_write` |
+| Rewards Bot | `GET /api/v1/rewards-bot`、`GET /api/v1/rewards-bot/runs`、`GET /api/v1/rewards-bot/runs/{run_id}`、`GET /api/v1/rewards-bot/runs/{run_id}/decisions`、`GET /api/v1/rewards-bot/runs/{run_id}/actions`、`GET /api/v1/rewards-bot/orders/{managed_order_id}/transitions`、`POST /api/v1/rewards-bot/config`、`POST /api/v1/rewards-bot/run`、`POST /api/v1/rewards-bot/cancel-all`、`POST /api/v1/rewards-bot/reset` | `console_read` / `console_write` |
 | Runtime Config | `GET /api/v1/runtime-config`、`POST /api/v1/runtime-config` | `console_read` / `console_write` |
 | System | `GET /api/v1/system/mode`、`POST /api/v1/system/mode` | `console_read` / `mode_write` |
 
@@ -63,6 +63,8 @@
 Rewards Bot 的 `run`、`cancel-all` 和 `reset` handler 不直接执行策略、不读取外部盘口、不修改 live 订单。handler 委托 `RewardBotService` 写入 `reward_control_commands`，同账户同动作 pending/running 命令会合并；成功入队后通过 service revision 唤醒同进程 rewards loop。
 
 Rewards snapshot 只读取 `RewardBotService` / store。配置、账户、positions 和 heartbeat 有同进程热缓存；分页 orders/plans、fills、events、`llm_usage` 每日调用统计从 store 读取。snapshot handler 会 best-effort 通过 `OrderbookHttpClient` 批量读取当前页 orders/positions 的 token 盘口并注入 `token_quotes`；orderbook 服务不可用时不阻断响应。
+
+Rewards strategy run ledger 端点只读数据库/内存 store，不请求外部 API。`runs` 支持 account/status 分页；run detail、decisions、actions 和 order transitions 直接返回 application 层 ledger 模型。
 
 Funding 状态接口只返回派生付款地址、Polymarket 入账钱包、支持资产、单笔上限和 USDC/USDT 链上余额，不返回私钥。转账接口是真实链上操作：验证幂等键和确认字段后，委托 `PolymarketChainConnector` 调用 Bridge 生成入金地址并广播 Polygon ERC-20 转账。
 
@@ -81,7 +83,7 @@ HTTP Request
 
 ## 当前状态
 
-- 当前 REST 端点覆盖市场、事件/证据、新闻、订单/成交、执行请求、pricing、rewards、funding、runtime config、system mode、connector callback 和单 token orderbook 代理。
+- 当前 REST 端点覆盖市场、事件/证据、新闻、订单/成交、执行请求、pricing、rewards snapshot/control、rewards strategy run ledger、funding、runtime config、system mode、connector callback 和单 token orderbook 代理。
 - SSE 流式端点已移除；前端通过 REST API 加载数据。
 - API 进程内嵌 worker runtime；`polyedge-worker` 只作为 CLI/运维兼容入口保留。
 - 当前内网部署常用 `POLYEDGE_AUTH__DISABLED=true`；关闭该开关后，写路径仍使用 console/mode 权限和 Funding step-up scope。

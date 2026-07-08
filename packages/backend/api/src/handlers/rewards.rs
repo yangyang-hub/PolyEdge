@@ -33,6 +33,118 @@ async fn read_reward_bot_snapshot(
     Ok(Json(ApiResponse::new(snapshot, auth.request_id, trace_id)))
 }
 
+async fn list_reward_strategy_runs(
+    Extension(auth): Extension<AuthContext>,
+    State(state): State<AppState>,
+    Query(query): Query<RewardStrategyRunsQuery>,
+) -> std::result::Result<Json<ApiResponse<polyedge_application::RewardStrategyRunPage>>, HttpError>
+{
+    let trace_id = new_trace_id();
+    let query = RewardStrategyRunListQuery::new(
+        query.account_id,
+        query.status,
+        query.page,
+        query.page_size,
+    );
+    let page = state
+        .reward_bot_service
+        .list_strategy_runs(&query)
+        .await
+        .map_err(|error| HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone()))?;
+    Ok(Json(ApiResponse::new(page, auth.request_id, trace_id)))
+}
+
+async fn read_reward_strategy_run(
+    Extension(auth): Extension<AuthContext>,
+    State(state): State<AppState>,
+    Path(run_id): Path<i64>,
+) -> std::result::Result<Json<ApiResponse<polyedge_application::RewardStrategyRun>>, HttpError> {
+    let trace_id = new_trace_id();
+    let run = state
+        .reward_bot_service
+        .get_strategy_run(run_id)
+        .await
+        .map_err(|error| HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone()))?
+        .ok_or_else(|| {
+            HttpError::with_meta(
+                AppError::not_found(
+                    "REWARD_STRATEGY_RUN_NOT_FOUND",
+                    format!("reward strategy run {run_id} was not found"),
+                ),
+                auth.request_id.clone(),
+                trace_id.clone(),
+            )
+        })?;
+    Ok(Json(ApiResponse::new(run, auth.request_id, trace_id)))
+}
+
+async fn list_reward_strategy_decisions(
+    Extension(auth): Extension<AuthContext>,
+    State(state): State<AppState>,
+    Path(run_id): Path<i64>,
+    Query(query): Query<RewardStrategyDecisionsQuery>,
+) -> std::result::Result<
+    Json<ApiResponse<polyedge_application::RewardStrategyDecisionPage>>,
+    HttpError,
+> {
+    let trace_id = new_trace_id();
+    let query = RewardStrategyDecisionListQuery::new(
+        query.search,
+        query.eligible,
+        query.page,
+        query.page_size,
+    );
+    let page = state
+        .reward_bot_service
+        .list_strategy_decisions(run_id, &query)
+        .await
+        .map_err(|error| HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone()))?;
+    Ok(Json(ApiResponse::new(page, auth.request_id, trace_id)))
+}
+
+async fn list_reward_strategy_actions(
+    Extension(auth): Extension<AuthContext>,
+    State(state): State<AppState>,
+    Path(run_id): Path<i64>,
+    Query(query): Query<RewardStrategyActionsQuery>,
+) -> std::result::Result<
+    Json<ApiResponse<polyedge_application::RewardStrategyActionPage>>,
+    HttpError,
+> {
+    let trace_id = new_trace_id();
+    let query = RewardStrategyActionListQuery::new(
+        query.status,
+        query.action_type,
+        query.page,
+        query.page_size,
+    );
+    let page = state
+        .reward_bot_service
+        .list_strategy_actions(run_id, &query)
+        .await
+        .map_err(|error| HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone()))?;
+    Ok(Json(ApiResponse::new(page, auth.request_id, trace_id)))
+}
+
+async fn list_reward_order_transitions(
+    Extension(auth): Extension<AuthContext>,
+    State(state): State<AppState>,
+    Path(managed_order_id): Path<String>,
+    Query(query): Query<RewardOrderTransitionsQuery>,
+) -> std::result::Result<
+    Json<ApiResponse<polyedge_application::RewardOrderTransitionPage>>,
+    HttpError,
+> {
+    let trace_id = new_trace_id();
+    let query = RewardOrderTransitionListQuery::new(query.page, query.page_size);
+    let page = state
+        .reward_bot_service
+        .list_order_transitions(&managed_order_id, &query)
+        .await
+        .map_err(|error| HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone()))?;
+    Ok(Json(ApiResponse::new(page, auth.request_id, trace_id)))
+}
+
 async fn update_reward_bot_config(
     Extension(auth): Extension<AuthContext>,
     State(state): State<AppState>,

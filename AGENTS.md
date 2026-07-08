@@ -65,7 +65,7 @@ Registry source priority is fixed as `rewards_active`, `exec_orders`, `rewards_e
 | `packages/backend/crates/connectors/src/orderbook.rs` | Orderbook service HTTP/internal WS client |
 | `packages/backend/crates/connectors/src/reward_provider.rs` | Combined rewards provider connector for AI advisory and info-risk |
 | `packages/backend/api/src/lib.rs` | API routes: markets/events/news/evidences/orders/trades/pricing/rewards/funding/system/orderbook |
-| `packages/backend/api/src/handlers/rewards.rs` | Rewards snapshot/config/control API |
+| `packages/backend/api/src/handlers/rewards.rs` | Rewards snapshot/config/control API and strategy run ledger read APIs |
 | `packages/backend/api/src/handlers/funding.rs` | Funding API for backend-signed Polygon bridge deposits |
 | `packages/backend/crates/application/src/rewards/service.rs` | RewardBotService and command queue wake channel |
 | `packages/backend/crates/application/src/rewards/config_impl.rs` | Rewards defaults, normalization and config patch application |
@@ -77,7 +77,9 @@ Registry source priority is fixed as `rewards_active`, `exec_orders`, `rewards_e
 | `packages/backend/crates/application/src/rewards/event_window.rs` | Event-window risk gate |
 | `packages/backend/crates/application/src/rewards/ai_advisory_payload.rs` | Advisory payload and hourly candle aggregation |
 | `packages/backend/crates/application/src/rewards/provider_prefilter.rs` | Pre-provider hard gate |
+| `packages/backend/crates/application/src/rewards/run_ledger_models.rs` | Rewards strategy run, decision, action and order transition ledger models |
 | `packages/backend/crates/infrastructure/src/stores/rewards.rs` + `rewards/*` | Rewards in-memory/Postgres persistence |
+| `packages/backend/crates/infrastructure/src/stores/rewards/postgres_run_ledger.rs` | Rewards strategy run ledger Postgres writes and queries |
 | `packages/backend/apps/worker/src/worker/rewards.rs` | Rewards live tick and command execution |
 | `packages/backend/apps/worker/src/worker/rewards/*` | Live sync, account sync, order submission/cancel/risk, provider refresh and event-cancel worker |
 | `packages/backend/apps/worker/src/worker/orderbook_registration.rs` | Active/eligible/candidate token registration |
@@ -89,6 +91,7 @@ Registry source priority is fixed as `rewards_active`, `exec_orders`, `rewards_e
 | `packages/front/src/app/(console)/rewards/fair-value/page.tsx` | Fair-value workbench route |
 | `packages/front/src/features/rewards/components/rewards-config-panel.tsx` | Rewards config UI |
 | `packages/front/src/features/rewards/components/rewards-fair-value-workbench.tsx` | Fair-value estimate/edge audit UI |
+| `packages/front/src/features/rewards/components/rewards-run-ledger-panel.tsx` | Strategy run ledger audit UI |
 | `packages/front/src/features/rewards/components/rewards-opportunity-config.tsx` | Opportunity scoring config UI |
 | `packages/front/src/features/rewards/components/rewards-advanced-config.tsx` | Book selection, AI advisory, info-risk and event-window config UI |
 | `packages/front/src/features/rewards/components/rewards-tables.tsx` | Rewards quote plan/order/position/fill/event tables |
@@ -101,15 +104,15 @@ Registry source priority is fixed as `rewards_active`, `exec_orders`, `rewards_e
 
 - Frontend routes: `dashboard / markets / events / rewards / rewards/fair-value / funding / settings`.
 - Frontend uses the real Rust API only; no mock-data mode.
-- Backend API routes cover markets, events, news, evidences, orders, trades, pricing, rewards bot, funding, system, connector callback and orderbook reads.
+- Backend API routes cover markets, events, news, evidences, orders, trades, pricing, rewards bot, rewards strategy run ledger reads, funding, system, connector callback and orderbook reads.
 - Database schema is currently a single clean-deploy baseline: `packages/backend/init.sql` and `packages/backend/migrations/0001_initial_schema.sql`. Historical incremental migrations for removed modules are gone; new deployments initialize from the current schema baseline.
 - Runtime mode defaults to `live_auto`; old mock mode is removed.
 - `polyedge-orderbook` owns market sync, rewards catalog sync, price-history candle sync, orderbook WS/poll cache and registry.
 - `polyedge-worker` supports database maintenance, news ingest/promotion, rewards live bot, rewards info-risk scan, execution drain, paper reconciliation, Polymarket order/fill/user-event workers, and orderbook token registration.
-- Rewards bot is live-only. It plans post-only BUY quotes from `reward_markets` + `markets`, uses orderbook service books, applies unified opportunity metrics, maker `selection_score` ordering, fair-value edge gates, optional AI advisory/info-risk caches, event-window gates, wallet-balance placement checks, live risk/cancel/requote logic, fill reconciliation, configured/adaptive post-fill exit SELL intents, holding-period adaptive pending-exit reselection and BalancedMerge merge intents. Adaptive reselection rewrites local `ExitPending` SELL intents before submission, and (when `adaptive_exit_cancel_replace_enabled`) cancels already-submitted adaptive exit SELLs on strategy change or price drift; replacement exits are deferred until reconciliation confirms remaining inventory. Cancel-replace shares the reselect cooldown / per-order budget and a per-tick cap, and never submits a replacement when the cancel result is unknown.
+- Rewards bot is live-only. It plans post-only BUY quotes from `reward_markets` + `markets`, uses orderbook service books, applies unified opportunity metrics, maker `selection_score` ordering, fair-value edge gates, optional AI advisory/info-risk caches, event-window gates, wallet-balance placement checks, live risk/cancel/requote logic, fill reconciliation, configured/adaptive post-fill exit SELL intents, holding-period adaptive pending-exit reselection and BalancedMerge merge intents. Full tick records a shadow strategy run/decision/action/order transition ledger for audit without changing live decision behavior. Adaptive reselection rewrites local `ExitPending` SELL intents before submission, and (when `adaptive_exit_cancel_replace_enabled`) cancels already-submitted adaptive exit SELLs on strategy change or price drift; replacement exits are deferred until reconciliation confirms remaining inventory. Cancel-replace shares the reselect cooldown / per-order budget and a per-tick cap, and never submits a replacement when the cancel result is unknown.
 - Rewards quote planning uses deterministic market quality, opportunity scoring, maker selection scoring, fair-value estimation, AI/info-risk, event windows, funding and live orderbook risk gates. `score` is the base market quality score; `selection_score` is the final maker capital priority and default quote-plan sort key.
 - LLM calls for rewards combined provider are recorded in `llm_calls(task_type=reward_provider)`. Provider cache hits do not count as external calls.
-- Database maintenance prunes raw events, expired AI/info-risk caches, reward candles, fair-value history, completed/failed control commands, outbox/external dedup, LLM calls, audit logs and mode transitions. It preserves current rewards orders, fills, positions and account state.
+- Database maintenance prunes raw events, expired AI/info-risk caches, reward candles, fair-value history, strategy run ledger, order transitions, completed/failed control commands, outbox/external dedup, LLM calls, audit logs and mode transitions. It preserves current rewards orders, fills, positions and account state.
 
 ## Commands
 

@@ -660,6 +660,7 @@ mod reward_info_risk_candidate_tests {
             reason: String::new(),
             strategy_bucket: RewardStrategyBucket::Standard,
             strategy_profile: RewardStrategyProfile::Standard,
+            latest_run_id: None,
             quote_mode: RewardPlanQuoteMode::Double,
             recommended_quote_mode: None,
             book_metrics: None,

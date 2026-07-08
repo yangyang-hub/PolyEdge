@@ -12,7 +12,8 @@
 |---|---|
 | `src/app/(console)/rewards/page.tsx` | 路由页面 |
 | `src/app/(console)/rewards/fair-value/page.tsx` | fair-value 工作台路由 |
-| `src/features/rewards/components/rewards-workbench.tsx` | 主工作台编排：概览、活动、配置、风险 tabs |
+| `src/features/rewards/components/rewards-workbench.tsx` | 主工作台编排：概览、活动、策略运行、配置、风险 tabs |
+| `rewards-run-ledger-panel.tsx` | 策略运行 ledger 面板：最近 runs、run decisions 和 run actions |
 | `rewards-fair-value-workbench.tsx` | fair-value 估值、confidence、uncertainty、edge 和决策表格 |
 | `rewards-overview-cards.tsx` | 顶部执行概览、每日 LLM 调用统计、操作中心和关键指标 |
 | `rewards-config-panel.tsx` | 策略配置面板：执行、市场筛选、机会评分、报价构造、fair-value、成交后合并、盘口选择、AI/信息风险、库存与控制 |
@@ -37,11 +38,12 @@
 
 - `NumberConfigKey` 覆盖当前可编辑数值配置：市场上限、开放订单上限、最低日奖、市场质量门槛、机会评分 `opportunity_*`、fair-value `fair_value_*`、dominant 单边阈值、盘口集中度阈值、AI advisory TTL、provider 并发、信息风险 TTL、事件窗口秒数、首单观察窗口、报价构造、adaptive post-fill、pending-exit 重评、已提交退出撤换、库存、requote、BalancedMerge、深度/velocity/reconcile 等字段。
 - `RewardFairValueEstimateDto` / `RewardFairValueDecisionDto` / `RewardQuoteEdgeDto` 映射后端 fair-value 估计、组件、edge、rewards rebate 折扣和 gate 结果。
+- `RewardStrategyRunDto` / `RewardStrategyDecisionDto` / `RewardStrategyActionDto` / `RewardOrderTransitionDto` 映射策略 run ledger，用于生产前审计每轮 tick 的配置、输入摘要、计划决策、动作和订单状态变迁。
 - `EventCategory = "all" | "placements" | "cancels" | "fills" | "rewards"`。
 
 ## API 依赖
 
-- `src/lib/api/rewards.ts`：`readRewardBotSnapshot`、`updateRewardBotConfig`、`runRewardBotOnce`、`cancelRewardBotOrders`、`resetRewardBot`。
+- `src/lib/api/rewards.ts`：`readRewardBotSnapshot`、`updateRewardBotConfig`、`runRewardBotOnce`、`cancelRewardBotOrders`、`resetRewardBot`、`listRewardStrategyRuns`、`readRewardStrategyRun`、`listRewardStrategyDecisions`、`listRewardStrategyActions`、`listRewardOrderTransitions`。
 - `readRewardBotSnapshot()` 传递计划/订单分页、搜索、状态和排序 query；首屏请求 `plans_eligible=true`，与默认“可挂”页签一致。
 - Snapshot 不返回全量 reward markets。页面使用 `status.markets_tracked`、`eligible_markets`、`ready_quote_markets`、`waiting_orderbook_markets`、`provider_pending_markets`、`blocker_counts`、`quote_plans[].opportunity_metrics`、`quote_plans[].selection_metrics`、AI/info-risk 字段和 `llm_usage` 展示市场覆盖、最终可挂、实时可报价、等待 provider、资金不足、live 盘口验证、风险拦截和每日 LLM 调用。
 - `available_usd`、positions 和当日奖励来自 worker 写入数据库的账户快照；API handler 不持有 Polymarket 私钥，也不直接请求私有账户数据。
@@ -49,6 +51,7 @@
 ## 关键交互
 
 - Run：`runRewardBotOnce()` 写入 `run_once` 控制命令，worker 领取后执行一轮 live 策略。
+- Runs tab：读取只读 strategy ledger，展示最近 full tick 的状态、输入/指标摘要，以及选中 run 的 decision/action 明细；该视图不提交交易命令。
 - Cancel open orders：`cancelRewardBotOrders()` 写入 `cancel_all` 控制命令，worker 撤销本系统托管 live 订单。
 - Reset：`resetRewardBot()` 写入 `reset` 控制命令，worker 按 cancel-all 处理并重置本地策略状态。
 - Config：`updateRewardBotConfig(patch)` 保存配置并返回最新 snapshot。
@@ -87,6 +90,7 @@ User mutation
 - 操作中心集中 Run / Save / Cancel / Reset，并明确这些命令可能提交或取消 Polymarket live 订单。
 - 配置面板只暴露当前仍生效的参数；成交后策略包含固定模式和 adaptive 模式，选择 adaptive 时显示深度、溢价、风险触发、回退策略和 pending-exit 重评节流参数；旧模拟资金、固定单腿金额和已删除诊断配置不再出现。
 - 主策略页 header 提供 Fair value 入口；fair-value 页单独显示 tracked/pass/blocked/avg confidence 指标和 quote plan 估值审计表。
+- 主策略页新增 Runs tab，展示 shadow strategy run ledger；它用于审计和演练排障，不参与 live 下单决策。
 - 市场筛选面板公开最低流动性、24h 成交量、剩余结算时间、Gamma spread 和目录同步年龄门槛。
 - 竞争度只作为统一机会评分的一部分展示；fair-value 作为独立做市定价 gate 展示，不再作为旧 EV strategy mode。
 - 报价计划默认展示通过非盘口依赖过滤且等待 live 盘口验证的候选，并按 maker `selection_score` 从高到低排序；`quote_readiness` 区分可报价、等待盘口、等待 AI/信息风险和已拦截。

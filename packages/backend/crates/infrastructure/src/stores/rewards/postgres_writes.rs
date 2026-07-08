@@ -152,7 +152,7 @@ async fn replace_reward_quote_plans_tx(
         })?;
 
     for chunk in plans.chunks(REWARD_UPSERT_BATCH_SIZE) {
-        let cols = 8usize;
+        let cols = 17usize;
         let placeholders: String = chunk
             .iter()
             .enumerate()
@@ -174,6 +174,15 @@ async fn replace_reward_quote_plans_tx(
               eligible,
               reason,
               strategy_profile,
+              latest_run_id,
+              quote_readiness,
+              quote_mode,
+              reason_code,
+              blocker_codes,
+              fair_value_passed,
+              event_window_status,
+              ai_suitability,
+              info_risk_level,
               quote_plan_json,
               updated_at
             )
@@ -183,6 +192,15 @@ async fn replace_reward_quote_plans_tx(
                 selection_score = EXCLUDED.selection_score,
                 eligible = EXCLUDED.eligible,
                 reason = EXCLUDED.reason,
+                latest_run_id = EXCLUDED.latest_run_id,
+                quote_readiness = EXCLUDED.quote_readiness,
+                quote_mode = EXCLUDED.quote_mode,
+                reason_code = EXCLUDED.reason_code,
+                blocker_codes = EXCLUDED.blocker_codes,
+                fair_value_passed = EXCLUDED.fair_value_passed,
+                event_window_status = EXCLUDED.event_window_status,
+                ai_suitability = EXCLUDED.ai_suitability,
+                info_risk_level = EXCLUDED.info_risk_level,
                 quote_plan_json = EXCLUDED.quote_plan_json,
                 updated_at = EXCLUDED.updated_at"#,
         );
@@ -193,6 +211,21 @@ async fn replace_reward_quote_plans_tx(
             refresh_reward_quote_plan_readiness(&mut plan);
             let condition_id = plan.condition_id.clone();
             let reason = plan.reason.clone();
+            let reason_code = reward_quote_plan_reason_code(&plan);
+            let blocker_codes = reward_quote_plan_blocker_codes(&plan, &reason_code);
+            let event_window_status = plan
+                .event_window
+                .as_ref()
+                .map(|assessment| assessment.status.as_str().to_string());
+            let ai_suitability = plan
+                .ai_advisory
+                .as_ref()
+                .map(|advisory| advisory.suitability.as_str().to_string());
+            let info_risk_level = plan
+                .info_risk
+                .as_ref()
+                .map(|risk| risk.risk_level.as_str().to_string());
+            let fair_value_passed = plan.fair_value.as_ref().map(|decision| decision.passed);
             let updated_at = plan.updated_at;
             query = query
                 .bind(condition_id)
@@ -201,6 +234,15 @@ async fn replace_reward_quote_plans_tx(
                 .bind(plan.eligible)
                 .bind(reason)
                 .bind(plan.strategy_profile.as_str())
+                .bind(plan.latest_run_id)
+                .bind(plan.quote_readiness.as_str())
+                .bind(plan.quote_mode.as_str())
+                .bind(reason_code)
+                .bind(blocker_codes)
+                .bind(fair_value_passed)
+                .bind(event_window_status)
+                .bind(ai_suitability)
+                .bind(info_risk_level)
                 .bind(Json(plan))
                 .bind(updated_at);
         }

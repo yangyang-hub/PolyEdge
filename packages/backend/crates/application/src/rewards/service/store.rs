@@ -39,6 +39,46 @@ pub trait RewardBotStore: Send + Sync {
         &self,
         condition_ids: &[String],
     ) -> Result<Vec<RewardMarketEventWindow>>;
+    async fn start_strategy_run(&self, run: &RewardStrategyRunStart) -> Result<i64>;
+    async fn complete_strategy_run(
+        &self,
+        run_id: i64,
+        metrics: Value,
+        completed_at: OffsetDateTime,
+    ) -> Result<()>;
+    async fn fail_strategy_run(
+        &self,
+        run_id: i64,
+        error_code: &str,
+        error_message: &str,
+        metrics: Value,
+        completed_at: OffsetDateTime,
+    ) -> Result<()>;
+    async fn record_strategy_decisions(&self, decisions: &[RewardStrategyDecision])
+    -> Result<()>;
+    async fn record_strategy_actions(&self, actions: &[RewardStrategyAction]) -> Result<()>;
+    async fn record_order_transitions(&self, transitions: &[RewardOrderTransition])
+    -> Result<()>;
+    async fn list_strategy_runs(
+        &self,
+        query: &RewardStrategyRunListQuery,
+    ) -> Result<RewardStrategyRunPage>;
+    async fn get_strategy_run(&self, run_id: i64) -> Result<Option<RewardStrategyRun>>;
+    async fn list_strategy_decisions(
+        &self,
+        run_id: i64,
+        query: &RewardStrategyDecisionListQuery,
+    ) -> Result<RewardStrategyDecisionPage>;
+    async fn list_strategy_actions(
+        &self,
+        run_id: i64,
+        query: &RewardStrategyActionListQuery,
+    ) -> Result<RewardStrategyActionPage>;
+    async fn list_order_transitions(
+        &self,
+        managed_order_id: &str,
+        query: &RewardOrderTransitionListQuery,
+    ) -> Result<RewardOrderTransitionPage>;
     /// Replace the current rewards quote plan snapshot.
     async fn save_quote_plans(&self, plans: &[RewardQuotePlan]) -> Result<()>;
     async fn record_fair_value_estimates(

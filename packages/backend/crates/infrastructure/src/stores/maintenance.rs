@@ -200,6 +200,43 @@ impl DatabaseMaintenanceStore for PostgresDatabaseMaintenanceStore {
         )
         .await?;
 
+        let reward_strategy_runs_deleted = execute_maintenance_delete(
+            &self.pool,
+            "reward_strategy_runs",
+            r#"
+            WITH doomed AS (
+                SELECT ctid
+                FROM reward_strategy_runs
+                WHERE status IN ('completed', 'failed', 'cancelled')
+                  AND COALESCE(completed_at, started_at) < $1
+                LIMIT $2
+            )
+            DELETE FROM reward_strategy_runs rows
+            USING doomed
+            WHERE rows.ctid = doomed.ctid
+            "#,
+            cutoffs.reward_strategy_runs_before,
+        )
+        .await?;
+
+        let reward_order_transitions_deleted = execute_maintenance_delete(
+            &self.pool,
+            "reward_order_transitions",
+            r#"
+            WITH doomed AS (
+                SELECT ctid
+                FROM reward_order_transitions
+                WHERE created_at < $1
+                LIMIT $2
+            )
+            DELETE FROM reward_order_transitions rows
+            USING doomed
+            WHERE rows.ctid = doomed.ctid
+            "#,
+            cutoffs.reward_order_transitions_before,
+        )
+        .await?;
+
         let reward_control_commands_deleted = prune_control_commands(
             &self.pool,
             "reward_control_commands",
@@ -254,6 +291,8 @@ impl DatabaseMaintenanceStore for PostgresDatabaseMaintenanceStore {
             reward_market_info_risks_deleted,
             reward_market_candles_deleted,
             reward_fair_value_history_deleted,
+            reward_strategy_runs_deleted,
+            reward_order_transitions_deleted,
             reward_control_commands_deleted,
             audit_logs_deleted,
             mode_transitions_deleted,

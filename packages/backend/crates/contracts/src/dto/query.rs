@@ -209,3 +209,47 @@ pub struct RewardBotSnapshotQuery {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub plans_page_size: Option<u16>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct RewardStrategyRunsQuery {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub account_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub page: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub page_size: Option<u16>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct RewardStrategyDecisionsQuery {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub search: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub eligible: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub page: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub page_size: Option<u16>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct RewardStrategyActionsQuery {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub action_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub page: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub page_size: Option<u16>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct RewardOrderTransitionsQuery {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub page: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub page_size: Option<u16>,
+}

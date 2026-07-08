@@ -572,6 +572,7 @@ fn build_ready_quote_plan(
         },
         strategy_bucket,
         strategy_profile,
+        latest_run_id: None,
         quote_mode,
         recommended_quote_mode: metrics
             .as_ref()
@@ -685,6 +686,7 @@ fn empty_plan(
         reason: reason.into(),
         strategy_bucket,
         strategy_profile,
+        latest_run_id: None,
         quote_mode: RewardPlanQuoteMode::None,
         recommended_quote_mode: None,
         book_metrics: None,

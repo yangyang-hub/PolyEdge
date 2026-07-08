@@ -4,7 +4,7 @@
 
 ## 概述
 
-数据库使用 PostgreSQL。当前项目尚未生产部署，数据库基线已压缩为单个初始化迁移 `0001_initial_schema.sql`，不保留历史增量迁移链。schema 覆盖审计、幂等、LLM 调用、市场数据、事件/证据、执行历史、内部风险状态、新闻、LP rewards market maker、fair-value estimates、adaptive exit reselection、Funding/Polymarket 账户配套、orderbook price-history candles、runtime config 和 BalancedMerge。
+数据库使用 PostgreSQL。当前项目尚未生产部署，数据库基线已压缩为单个初始化迁移 `0001_initial_schema.sql`，不保留历史增量迁移链。schema 覆盖审计、幂等、LLM 调用、市场数据、事件/证据、执行历史、内部风险状态、新闻、LP rewards market maker、strategy run ledger、fair-value estimates、adaptive exit reselection、Funding/Polymarket 账户配套、orderbook price-history candles、runtime config 和 BalancedMerge。
 
 本项目现在面向空库重新部署：`packages/backend/init.sql` 与 `packages/backend/migrations/0001_initial_schema.sql` 表达同一份当前 schema，不兼容已删除历史模块的旧表。运行时仍通过 `sqlx::migrate!` 使用单个 baseline 迁移做初始化/校验。
 
@@ -18,7 +18,7 @@
 
 | 迁移 | 主题 | 核心表/改动 |
 |---|---|---|
-| `0001_initial_schema.sql` | 当前完整 schema baseline | 全量创建当前所需表、约束和索引，包括 rewards market maker、fair-value、selection score、BalancedMerge、Funding、orderbook candles、worker/runtime 支撑表 |
+| `0001_initial_schema.sql` | 当前完整 schema baseline | 全量创建当前所需表、约束和索引，包括 rewards market maker、strategy run ledger、fair-value、selection score、BalancedMerge、Funding、orderbook candles、worker/runtime 支撑表 |
 
 ## Schema 领域分组
 
@@ -49,7 +49,11 @@
 
 - `reward_bot_config`：key-value 配置，覆盖市场质量、quote/selection、dominant 单边、盘口集中度、偏好分类、统一机会评分、fair-value、adaptive post-fill 退出与 pending-exit 重评、AI advisory、信息风险、事件窗口、首单 gate、库存、requote、reconcile、BalancedMerge 等参数。
 - `reward_markets`：condition、question、market_slug、rewards_max_spread/min_size、total_daily_rate、tokens JSON。
-- `reward_quote_plans`：当前 quote plan snapshot，主键为 `(condition_id, strategy_profile)`，包含 market FK、基础 `score`、maker `selection_score`、`strategy_profile` 和 quote plan JSON。JSON 可携带 opportunity metrics、selection metrics、fair-value decision、event window、AI advisory、info-risk、readiness 和 blocker reasons。API 默认按 `selection_score` 排序。
+- `reward_quote_plans`：当前 quote plan snapshot，主键为 `(condition_id, strategy_profile)`，包含 market FK、基础 `score`、maker `selection_score`、`strategy_profile`、`latest_run_id`、`quote_readiness`、`quote_mode`、`reason_code`、`blocker_codes`、fair-value/event/provider 摘要列和完整 quote plan JSON。API 默认按 `selection_score` 排序，统计优先读取物化列而不是反序列化整张 JSON。
+- `reward_strategy_runs`：每轮 full tick 的 run header，记录 account、trace、trigger、status、config hash/json、输入摘要、指标、开始/完成时间和错误。
+- `reward_strategy_decisions`：每个 run 下按 condition + strategy profile 记录 quote plan 决策快照、排序、readiness、reason/blocker、planned notional、fair-value/opportunity/event/provider 摘要和 decision JSON。
+- `reward_strategy_actions`：从 tick outcome 派生的动作账本，记录 place/cancel/exit/fill/merge/skip 等动作、状态、幂等键、请求/结果 JSON 和关联订单。
+- `reward_order_transitions`：托管订单状态追加式时间线，记录 managed/external order、from/to status、reason、metadata，并可关联 run/action。
 - `reward_managed_orders`：托管订单，包含 account/condition/token、side、price、size、status、strategy bucket/profile、exit strategy source/selected/floor/reselect state、filled_size、reward_earned、external id 和对账锁等字段。外部库存补 SELL intent 可来自当前 rewards catalog 外的 condition；adaptive 本地 pending SELL 用这些字段在 worker 重启后继续持仓期重评。
 - `reward_fills`：托管订单成交，保存 account/condition/token/outcome/side、price、size、notional、role、realized PnL。
 - `reward_positions`：按 account + token 保存外部完整持仓，可包含当前 rewards catalog 外的市场。
@@ -72,6 +76,8 @@
 - 过期 AI advisory / info-risk cache：额外保留 7 天。
 - `reward_market_candles`：30 天。
 - `reward_fair_value_history`：90 天。
+- `reward_strategy_runs`：90 天，删除 completed/failed/cancelled run 时级联删除对应 decisions/actions。
+- `reward_order_transitions`：180 天。
 - completed control commands：30 天；failed control commands：90 天。
 - outbox/external dedup：30-90 天窗口。
 - `llm_calls`：180 天。
@@ -85,7 +91,8 @@
 - `packages/backend/init.sql` 与 runtime baseline 表达同一当前 schema。
 - 已删除历史模块的迁移、表、store、handler 和前端 DTO 不在当前基线中。
 - Rewards 竞争度相关数据只存在于 quote plan 的统一 opportunity metrics 中，不再有独立 observation 表或模块；最终市场选择优先级存于 quote plan 的 `selection_score` / `selection_metrics`。
-- Rewards 事件窗口、fair-value estimates、AI advisory、信息风险、price-history candles、worker heartbeat、控制命令去重和 BalancedMerge merge intent 已落地。
+- Rewards 事件窗口、strategy run ledger、fair-value estimates、AI advisory、信息风险、price-history candles、worker heartbeat、控制命令去重和 BalancedMerge merge intent 已落地。
+- Strategy run ledger 当前是 shadow 审计层，支持生产前演练追踪 run、decision、action 和 order transition，不作为 live 交易决策输入。
 - 数据库维护任务生产模板默认开启；它不删除 rewards fills、positions、account state 等核心账本表。
 
 ## 修改检查清单

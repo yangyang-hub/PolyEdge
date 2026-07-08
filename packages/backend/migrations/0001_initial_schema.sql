@@ -1525,3 +1525,170 @@ ALTER TABLE reward_managed_orders
 ALTER TABLE reward_quote_plans
     DROP CONSTRAINT reward_quote_plans_pkey,
     ADD PRIMARY KEY (condition_id, strategy_profile);
+
+
+CREATE TABLE reward_strategy_runs (
+    run_id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    account_id TEXT NOT NULL,
+    trace_id TEXT NOT NULL,
+    trigger_type TEXT NOT NULL CHECK (
+        trigger_type IN ('poll', 'run_once', 'orderbook_event', 'control_command', 'replay')
+    ),
+    status TEXT NOT NULL CHECK (
+        status IN ('running', 'completed', 'failed', 'cancelled')
+    ),
+    config_hash TEXT NOT NULL,
+    config_json JSONB NOT NULL CHECK (jsonb_typeof(config_json) = 'object'),
+    input_summary_json JSONB NOT NULL DEFAULT '{}'::jsonb
+        CHECK (jsonb_typeof(input_summary_json) = 'object'),
+    metrics_json JSONB NOT NULL DEFAULT '{}'::jsonb
+        CHECK (jsonb_typeof(metrics_json) = 'object'),
+    started_at TIMESTAMPTZ NOT NULL,
+    completed_at TIMESTAMPTZ,
+    error_code TEXT,
+    error_message TEXT
+);
+
+CREATE INDEX reward_strategy_runs_account_started_idx
+    ON reward_strategy_runs (account_id, started_at DESC, run_id DESC);
+
+CREATE INDEX reward_strategy_runs_trace_idx
+    ON reward_strategy_runs (trace_id, started_at DESC, run_id DESC);
+
+CREATE INDEX reward_strategy_runs_status_started_idx
+    ON reward_strategy_runs (status, started_at DESC, run_id DESC);
+
+
+ALTER TABLE reward_quote_plans
+    ADD COLUMN latest_run_id BIGINT REFERENCES reward_strategy_runs(run_id) ON DELETE SET NULL,
+    ADD COLUMN quote_readiness TEXT NOT NULL DEFAULT 'blocked'
+        CHECK (quote_readiness IN ('ready_to_quote', 'waiting_orderbook', 'provider_pending', 'blocked')),
+    ADD COLUMN quote_mode TEXT NOT NULL DEFAULT 'none'
+        CHECK (quote_mode IN ('double', 'single_yes', 'single_no', 'none')),
+    ADD COLUMN reason_code TEXT NOT NULL DEFAULT 'blocked_other',
+    ADD COLUMN blocker_codes TEXT[] NOT NULL DEFAULT '{}',
+    ADD COLUMN fair_value_passed BOOLEAN,
+    ADD COLUMN event_window_status TEXT,
+    ADD COLUMN ai_suitability TEXT,
+    ADD COLUMN info_risk_level TEXT;
+
+CREATE INDEX reward_quote_plans_latest_run_idx
+    ON reward_quote_plans (latest_run_id);
+
+CREATE INDEX reward_quote_plans_readiness_idx
+    ON reward_quote_plans (quote_readiness, eligible, selection_score DESC);
+
+CREATE INDEX reward_quote_plans_blocker_codes_idx
+    ON reward_quote_plans USING GIN (blocker_codes);
+
+
+CREATE TABLE reward_strategy_decisions (
+    run_id BIGINT NOT NULL REFERENCES reward_strategy_runs(run_id) ON DELETE CASCADE,
+    condition_id TEXT NOT NULL,
+    strategy_profile TEXT NOT NULL CHECK (strategy_profile IN ('standard', 'balanced_merge')),
+    decision_rank INTEGER NOT NULL CHECK (decision_rank >= 0),
+    eligible BOOLEAN NOT NULL,
+    quote_readiness TEXT NOT NULL CHECK (
+        quote_readiness IN ('ready_to_quote', 'waiting_orderbook', 'provider_pending', 'blocked')
+    ),
+    quote_mode TEXT NOT NULL CHECK (quote_mode IN ('double', 'single_yes', 'single_no', 'none')),
+    score NUMERIC(10, 4) NOT NULL CHECK (score >= 0),
+    selection_score NUMERIC(10, 4) NOT NULL DEFAULT 0 CHECK (selection_score >= 0),
+    reason_code TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    blocker_codes TEXT[] NOT NULL DEFAULT '{}',
+    planned_buy_notional_usd NUMERIC(24, 8) NOT NULL DEFAULT 0
+        CHECK (planned_buy_notional_usd >= 0),
+    fair_value_passed BOOLEAN,
+    fair_value_effective_edge_cents NUMERIC(12, 6),
+    opportunity_score NUMERIC(10, 4),
+    event_window_status TEXT,
+    ai_suitability TEXT,
+    info_risk_level TEXT,
+    decision_json JSONB NOT NULL CHECK (jsonb_typeof(decision_json) = 'object'),
+    created_at TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (run_id, condition_id, strategy_profile)
+);
+
+CREATE INDEX reward_strategy_decisions_run_rank_idx
+    ON reward_strategy_decisions (run_id, decision_rank ASC, selection_score DESC);
+
+CREATE INDEX reward_strategy_decisions_run_eligible_idx
+    ON reward_strategy_decisions (run_id, eligible, decision_rank ASC);
+
+CREATE INDEX reward_strategy_decisions_condition_idx
+    ON reward_strategy_decisions (condition_id, created_at DESC);
+
+
+CREATE TABLE reward_strategy_actions (
+    action_id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    run_id BIGINT NOT NULL REFERENCES reward_strategy_runs(run_id) ON DELETE CASCADE,
+    account_id TEXT NOT NULL,
+    condition_id TEXT,
+    token_id TEXT,
+    managed_order_id TEXT,
+    external_order_id TEXT,
+    action_type TEXT NOT NULL CHECK (
+        action_type IN (
+            'place_buy',
+            'submit_exit_sell',
+            'cancel_order',
+            'cancel_replace_exit',
+            'record_fill',
+            'create_merge_intent',
+            'execute_merge',
+            'skip'
+        )
+    ),
+    status TEXT NOT NULL CHECK (
+        status IN ('planned', 'executing', 'succeeded', 'failed', 'skipped', 'unknown')
+    ),
+    reason_code TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    idempotency_key TEXT NOT NULL UNIQUE,
+    request_json JSONB NOT NULL DEFAULT '{}'::jsonb
+        CHECK (jsonb_typeof(request_json) = 'object'),
+    result_json JSONB NOT NULL DEFAULT '{}'::jsonb
+        CHECK (jsonb_typeof(result_json) = 'object'),
+    created_at TIMESTAMPTZ NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL,
+    CHECK (updated_at >= created_at)
+);
+
+CREATE INDEX reward_strategy_actions_run_created_idx
+    ON reward_strategy_actions (run_id, created_at DESC, action_id DESC);
+
+CREATE INDEX reward_strategy_actions_account_created_idx
+    ON reward_strategy_actions (account_id, created_at DESC);
+
+CREATE INDEX reward_strategy_actions_order_idx
+    ON reward_strategy_actions (managed_order_id, created_at DESC)
+    WHERE managed_order_id IS NOT NULL;
+
+
+CREATE TABLE reward_order_transitions (
+    transition_id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    run_id BIGINT REFERENCES reward_strategy_runs(run_id) ON DELETE SET NULL,
+    action_id BIGINT REFERENCES reward_strategy_actions(action_id) ON DELETE SET NULL,
+    managed_order_id TEXT NOT NULL,
+    external_order_id TEXT,
+    from_status TEXT CHECK (
+        from_status IS NULL
+        OR from_status IN ('planned', 'open', 'cancelled', 'filled', 'exit_pending', 'error')
+    ),
+    to_status TEXT NOT NULL CHECK (
+        to_status IN ('planned', 'open', 'cancelled', 'filled', 'exit_pending', 'error')
+    ),
+    reason_code TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    metadata_json JSONB NOT NULL DEFAULT '{}'::jsonb
+        CHECK (jsonb_typeof(metadata_json) = 'object'),
+    created_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX reward_order_transitions_order_created_idx
+    ON reward_order_transitions (managed_order_id, created_at DESC, transition_id DESC);
+
+CREATE INDEX reward_order_transitions_run_created_idx
+    ON reward_order_transitions (run_id, created_at DESC)
+    WHERE run_id IS NOT NULL;

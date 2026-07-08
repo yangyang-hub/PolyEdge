@@ -48,6 +48,7 @@ fn selection_test_plan(
         reason: "eligible".to_string(),
         strategy_bucket: RewardStrategyBucket::Standard,
         strategy_profile: RewardStrategyProfile::Standard,
+        latest_run_id: None,
         quote_mode: RewardPlanQuoteMode::SingleYes,
         recommended_quote_mode: Some(RewardPlanQuoteMode::SingleYes),
         book_metrics: None,

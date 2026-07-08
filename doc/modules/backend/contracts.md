@@ -1,6 +1,6 @@
 # contracts（HTTP API DTO 层）
 
-最后更新：2026-07-07
+最后更新：2026-07-08
 
 ## 概述
 
@@ -36,6 +36,7 @@
 - 列表查询支持分页参数。
 - 响应使用 `ApiResponse<T>` 或 `ApiListResponse<T>` 信封。
 - `RewardBotSnapshotQuery` 支持计划/订单分页、搜索、状态过滤和排序参数。
+- `RewardStrategyRunsQuery`、`RewardStrategyDecisionsQuery`、`RewardStrategyActionsQuery`、`RewardOrderTransitionsQuery` 支持 rewards strategy ledger 查询分页和过滤。
 - `MarketData` 包含 Gamma 同步的 `liquidity_usd` 与 `end_at`。
 
 ## 依赖关系
@@ -45,7 +46,7 @@
 
 ## 当前状态
 
-- 当前 DTO 覆盖 markets、events/evidences、news、orders、trades、pricing、rewards 查询参数、runtime config、system mode、connector callback、orderbook 和 funding。
+- 当前 DTO 覆盖 markets、events/evidences、news、orders、trades、pricing、rewards snapshot/control 查询参数、rewards strategy ledger 查询参数、runtime config、system mode、connector callback、orderbook 和 funding。
 - 已删除旧钱包类与独立研究 DTO；`lib.rs` 不再 include 对应文件。
 - `RiskStateData` 和 execution `PositionData` 仅保留给 connector callback 与内部执行链路兼容，不代表旧控制台风控页面仍存在。
 - Funding DTO 覆盖后端资金钱包状态、USDC/USDT 链上余额和转账回执；请求只包含 `token_id`、`amount`、`confirmed`，不包含充值地址或私钥字段。

@@ -3,78 +3,39 @@
 async fn postgres_count_quote_plans(pool: &PgPool) -> Result<RewardQuotePlanCounts> {
     let row = sqlx::query(
         r#"
-        WITH plan_flags AS (
-            SELECT eligible,
-                   reason,
-                   CASE
-                       WHEN reason LIKE 'waiting for fresh orderbook data%' THEN 'waiting_orderbook'
-                       WHEN eligible
-                            AND quote_mode <> 'none'
-                            AND has_live_legs THEN 'ready_to_quote'
-                       WHEN eligible
-                            AND pre_ai_eligible
-                            AND (reason LIKE 'AI advisory pending:%'
-                                 OR reason LIKE 'info risk pending:%'
-                                 OR (quote_plan_json->>'ai_advisory_pending_since') IS NOT NULL
-                                 OR (quote_plan_json->>'info_risk_pending_since') IS NOT NULL)
-                           THEN 'provider_pending'
-                       WHEN eligible THEN 'waiting_orderbook'
-                       WHEN pre_ai_eligible
-                            AND (reason LIKE 'AI advisory pending:%'
-                                 OR reason LIKE 'info risk pending:%') THEN 'provider_pending'
-                       ELSE 'blocked'
-                   END AS readiness
-            FROM (
-                SELECT eligible,
-                       reason,
-                       COALESCE(quote_plan_json->>'quote_mode', 'none') AS quote_mode,
-                       COALESCE((quote_plan_json->>'pre_ai_eligible')::boolean, false) AS pre_ai_eligible,
-                       quote_plan_json,
-                       jsonb_array_length(COALESCE(quote_plan_json->'legs', '[]'::jsonb)) > 0
-                       AND NOT EXISTS (
-                           SELECT 1
-                           FROM jsonb_array_elements(COALESCE(quote_plan_json->'legs', '[]'::jsonb)) AS leg
-                           WHERE COALESCE(NULLIF(leg->>'price', '')::numeric, 0) <= 0
-                              OR COALESCE(NULLIF(leg->>'size', '')::numeric, 0) <= 0
-                              OR COALESCE(NULLIF(leg->>'notional_usd', '')::numeric, 0) <= 0
-                       ) AS has_live_legs
-                FROM reward_quote_plans
-            ) plans
-        )
         SELECT COUNT(*) AS total,
                COUNT(*) FILTER (WHERE eligible) AS eligible,
-               COUNT(*) FILTER (WHERE readiness = 'ready_to_quote') AS ready_to_quote,
-               COUNT(*) FILTER (WHERE readiness = 'waiting_orderbook') AS waiting_orderbook,
-               COUNT(*) FILTER (WHERE readiness = 'provider_pending') AS provider_pending,
+               COUNT(*) FILTER (WHERE quote_readiness = 'ready_to_quote') AS ready_to_quote,
+               COUNT(*) FILTER (WHERE quote_readiness = 'waiting_orderbook') AS waiting_orderbook,
+               COUNT(*) FILTER (WHERE quote_readiness = 'provider_pending') AS provider_pending,
                COUNT(*) FILTER (WHERE NOT eligible
-                                AND reason LIKE 'AI advisory pending:%') AS blocker_ai_pending,
+                                AND reason_code = 'ai_pending') AS blocker_ai_pending,
                COUNT(*) FILTER (WHERE NOT eligible
-                                AND reason LIKE 'info risk pending:%') AS blocker_info_risk_pending,
+                                AND reason_code = 'info_risk_pending') AS blocker_info_risk_pending,
                COUNT(*) FILTER (WHERE NOT eligible
-                                AND reason LIKE 'AI advisory confidence%') AS blocker_ai_confidence_low,
+                                AND reason_code = 'ai_confidence_low') AS blocker_ai_confidence_low,
                COUNT(*) FILTER (WHERE NOT eligible
-                                AND reason LIKE 'AI advisory watch:%') AS blocker_ai_watch,
+                                AND reason_code = 'ai_watch') AS blocker_ai_watch,
                COUNT(*) FILTER (WHERE NOT eligible
-                                AND reason LIKE 'AI advisory avoid:%') AS blocker_ai_avoid,
+                                AND reason_code = 'ai_avoid') AS blocker_ai_avoid,
                COUNT(*) FILTER (WHERE NOT eligible
-                                AND reason LIKE 'info risk %'
-                                AND reason NOT LIKE 'info risk pending:%') AS blocker_info_risk,
+                                AND reason_code = 'info_risk') AS blocker_info_risk,
                COUNT(*) FILTER (WHERE NOT eligible
-                                AND reason LIKE 'live funding below rewards minimum:%') AS blocker_funding,
+                                AND reason_code = 'funding') AS blocker_funding,
                COUNT(*) FILTER (WHERE NOT eligible
-                                AND reason LIKE 'live orderbook validation skipped until %') AS blocker_live_validation,
-               COUNT(*) FILTER (
-                   WHERE NOT eligible
-                     AND reason NOT LIKE 'AI advisory pending:%'
-                     AND reason NOT LIKE 'info risk pending:%'
-                     AND reason NOT LIKE 'AI advisory confidence%'
-                     AND reason NOT LIKE 'AI advisory watch:%'
-                     AND reason NOT LIKE 'AI advisory avoid:%'
-                     AND reason NOT LIKE 'info risk %'
-                     AND reason NOT LIKE 'live funding below rewards minimum:%'
-                     AND reason NOT LIKE 'live orderbook validation skipped until %'
-               ) AS blocker_other
-        FROM plan_flags
+                                AND reason_code = 'live_validation') AS blocker_live_validation,
+               COUNT(*) FILTER (WHERE NOT eligible
+                                AND reason_code NOT IN (
+                                    'ai_pending',
+                                    'info_risk_pending',
+                                    'ai_confidence_low',
+                                    'ai_watch',
+                                    'ai_avoid',
+                                    'info_risk',
+                                    'funding',
+                                    'live_validation'
+                                )) AS blocker_other
+        FROM reward_quote_plans
         "#,
     )
     .fetch_one(pool)

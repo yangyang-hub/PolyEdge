@@ -1,7 +1,7 @@
 "use client";
 
 import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Activity, CircleDollarSign, LineChart, ShieldCheck } from "lucide-react";
+import { Activity, CircleDollarSign, LineChart, ListChecks, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
 
 import { ActionDialog } from "@/components/shared/action-dialog";
@@ -24,6 +24,7 @@ import { readRewardBotSnapshot, type RewardBotSnapshotQuery } from "@/lib/api/re
 import type { NumberConfigKey } from "../types";
 import { EventsPanel } from "./rewards-events-panel";
 import { RewardsConfigPanel } from "./rewards-config-panel";
+import { RewardsRunLedgerPanel } from "./rewards-run-ledger-panel";
 import {
   CommandPanel,
   ModeStatusPanel,
@@ -249,6 +250,10 @@ export function RewardsWorkbench({ initialSnapshot }: { initialSnapshot: RewardB
             <ShieldCheck className="size-4" />
             {dictionary.rewards.riskTab}
           </TabsTrigger>
+          <TabsTrigger value="runs">
+            <ListChecks className="size-4" />
+            {dictionary.rewards.runsTab}
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="activity" className="space-y-4">
@@ -359,6 +364,10 @@ export function RewardsWorkbench({ initialSnapshot }: { initialSnapshot: RewardB
 
         <TabsContent value="risk">
           <RiskControlConfig draft={draft} updateNumber={updateNumber} />
+        </TabsContent>
+
+        <TabsContent value="runs">
+          <RewardsRunLedgerPanel />
         </TabsContent>
       </Tabs>
 

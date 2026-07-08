@@ -2,6 +2,11 @@ import type { ApiResponse } from "@/lib/contracts/api";
 import type {
   RewardBotConfigPatchDto,
   RewardBotSnapshotDto,
+  RewardOrderTransitionPageDto,
+  RewardStrategyActionPageDto,
+  RewardStrategyDecisionPageDto,
+  RewardStrategyRunDto,
+  RewardStrategyRunPageDto,
 } from "@/lib/contracts/dto";
 import { buildQueryString, fetchContract, fetchWriteContract, randomUUID } from "@/lib/api/base";
 
@@ -18,6 +23,32 @@ export interface RewardBotSnapshotQuery {
   orders_sort_order?: string;
   orders_page?: number;
   orders_page_size?: number;
+}
+
+export interface RewardStrategyRunsQuery {
+  account_id?: string;
+  status?: string;
+  page?: number;
+  page_size?: number;
+}
+
+export interface RewardStrategyDecisionsQuery {
+  search?: string;
+  eligible?: boolean;
+  page?: number;
+  page_size?: number;
+}
+
+export interface RewardStrategyActionsQuery {
+  status?: string;
+  action_type?: string;
+  page?: number;
+  page_size?: number;
+}
+
+export interface RewardOrderTransitionsQuery {
+  page?: number;
+  page_size?: number;
 }
 
 export async function readRewardBotSnapshot(
@@ -60,4 +91,45 @@ export async function resetRewardBot(): Promise<ApiResponse<RewardBotSnapshotDto
     idempotencyKey: `reward-reset-${randomUUID()}`,
     body: {},
   });
+}
+
+export async function listRewardStrategyRuns(
+  query?: RewardStrategyRunsQuery,
+): Promise<ApiResponse<RewardStrategyRunPageDto>> {
+  return fetchContract<ApiResponse<RewardStrategyRunPageDto>>(
+    `/api/v1/rewards-bot/runs${buildQueryString(query as Record<string, string | number | boolean | undefined>)}`,
+  );
+}
+
+export async function readRewardStrategyRun(
+  runId: number,
+): Promise<ApiResponse<RewardStrategyRunDto>> {
+  return fetchContract<ApiResponse<RewardStrategyRunDto>>(`/api/v1/rewards-bot/runs/${runId}`);
+}
+
+export async function listRewardStrategyDecisions(
+  runId: number,
+  query?: RewardStrategyDecisionsQuery,
+): Promise<ApiResponse<RewardStrategyDecisionPageDto>> {
+  return fetchContract<ApiResponse<RewardStrategyDecisionPageDto>>(
+    `/api/v1/rewards-bot/runs/${runId}/decisions${buildQueryString(query as Record<string, string | number | boolean | undefined>)}`,
+  );
+}
+
+export async function listRewardStrategyActions(
+  runId: number,
+  query?: RewardStrategyActionsQuery,
+): Promise<ApiResponse<RewardStrategyActionPageDto>> {
+  return fetchContract<ApiResponse<RewardStrategyActionPageDto>>(
+    `/api/v1/rewards-bot/runs/${runId}/actions${buildQueryString(query as Record<string, string | number | boolean | undefined>)}`,
+  );
+}
+
+export async function listRewardOrderTransitions(
+  managedOrderId: string,
+  query?: RewardOrderTransitionsQuery,
+): Promise<ApiResponse<RewardOrderTransitionPageDto>> {
+  return fetchContract<ApiResponse<RewardOrderTransitionPageDto>>(
+    `/api/v1/rewards-bot/orders/${encodeURIComponent(managedOrderId)}/transitions${buildQueryString(query as Record<string, string | number | boolean | undefined>)}`,
+  );
 }

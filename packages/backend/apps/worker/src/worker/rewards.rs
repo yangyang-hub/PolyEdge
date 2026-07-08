@@ -597,18 +597,104 @@ async fn execute_reward_control_command(
     }
 }
 
+async fn start_reward_strategy_run_for_cycle(
+    state: &AppState,
+    cycle: &RewardLiveCycle,
+    trace_id: &str,
+    force_orders: bool,
+    books_fetched: usize,
+) -> Result<i64> {
+    let config_json = serde_json::to_value(&cycle.config).map_err(|error| {
+        AppError::internal(
+            "REWARD_STRATEGY_RUN_CONFIG_SERIALIZE_FAILED",
+            format!("failed to serialize reward strategy config for run ledger: {error}"),
+        )
+    })?;
+    state
+        .reward_bot_service
+        .start_strategy_run(&RewardStrategyRunStart {
+            account_id: cycle.config.account_id.clone(),
+            trace_id: trace_id.to_string(),
+            trigger_type: if force_orders {
+                RewardStrategyRunTrigger::RunOnce
+            } else {
+                RewardStrategyRunTrigger::Poll
+            },
+            config_hash: reward_config_hash(&cycle.config),
+            config_json,
+            input_summary: reward_strategy_run_input_summary(cycle, books_fetched, force_orders),
+            started_at: OffsetDateTime::now_utc(),
+        })
+        .await
+}
+
+async fn save_reward_quote_plans_for_run(
+    state: &AppState,
+    run_id: i64,
+    plans: &mut [RewardQuotePlan],
+) -> Result<()> {
+    for plan in plans.iter_mut() {
+        plan.latest_run_id = Some(run_id);
+    }
+    let decisions =
+        reward_strategy_decisions_from_plans(run_id, plans, OffsetDateTime::now_utc());
+    state.reward_bot_service.save_quote_plans(plans).await?;
+    state
+        .reward_bot_service
+        .record_strategy_decisions(&decisions)
+        .await
+}
+
+fn reward_strategy_run_input_summary(
+    cycle: &RewardLiveCycle,
+    books_fetched: usize,
+    force_orders: bool,
+) -> Value {
+    json!({
+        "force_orders": force_orders,
+        "should_execute": cycle.should_execute,
+        "markets": cycle.markets.len(),
+        "plans": cycle.plans.len(),
+        "pre_ai_eligible_plans": cycle.pre_ai_eligible_condition_ids.len(),
+        "books_fetched": books_fetched,
+        "open_orders": cycle.open_orders.len(),
+        "positions": cycle.positions.len(),
+        "account": {
+            "available_usd": cycle.account.available_usd,
+            "reserved_usd": cycle.account.reserved_usd,
+            "external_buy_notional": cycle.account.external_buy_notional,
+            "unmanaged_external_buy_notional": cycle.account.unmanaged_external_buy_notional,
+            "tick_index": cycle.account.tick_index,
+        },
+    })
+}
+
+fn reward_strategy_run_metrics_from_report(report: &RewardBotRunReport) -> Value {
+    json!({
+        "markets_scanned": report.markets_scanned,
+        "books_fetched": report.books_fetched,
+        "plans_built": report.plans_built,
+        "eligible_plans": report.eligible_plans,
+        "placed_orders": report.placed_orders,
+        "cancelled_orders": report.cancelled_orders,
+        "filled_orders": report.filled_orders,
+        "risk_cancelled_orders": report.risk_cancelled_orders,
+        "reward_accrued": report.reward_accrued,
+    })
+}
+
 async fn run_reward_bot_live_tick(
     state: &AppState,
     connector: &LivePolymarketConnector,
     markets: Vec<RewardCandidateMarket>,
-    mut books: HashMap<String, RewardOrderBook>,
+    books: HashMap<String, RewardOrderBook>,
     trace_id: &str,
     force_orders: bool,
     book_history: &mut HashMap<String, VecDeque<BookSnapshot>>,
     orderbook_cache: Option<&RewardOrderbookLocalCache>,
 ) -> Result<RewardBotRunReport> {
     let books_fetched = books.len();
-    let mut cycle = state
+    let cycle = state
         .reward_bot_service
         .prepare_live_cycle(
             markets,
@@ -617,6 +703,71 @@ async fn run_reward_bot_live_tick(
             force_orders,
         )
         .await?;
+    let run_id =
+        start_reward_strategy_run_for_cycle(state, &cycle, trace_id, force_orders, books_fetched)
+            .await?;
+    let result = run_reward_bot_live_tick_prepared(
+        state,
+        connector,
+        cycle,
+        books,
+        books_fetched,
+        run_id,
+        trace_id,
+        book_history,
+        orderbook_cache,
+    )
+    .await;
+    let completed_at = OffsetDateTime::now_utc();
+    match result {
+        Ok(report) => {
+            state
+                .reward_bot_service
+                .complete_strategy_run(
+                    run_id,
+                    reward_strategy_run_metrics_from_report(&report),
+                    completed_at,
+                )
+                .await?;
+            Ok(report)
+        }
+        Err(error) => {
+            let error_message = error.to_string();
+            if let Err(fail_error) = state
+                .reward_bot_service
+                .fail_strategy_run(
+                    run_id,
+                    error.code(),
+                    &error_message,
+                    json!({ "failed": true }),
+                    completed_at,
+                )
+                .await
+            {
+                warn!(
+                    trace_id = %trace_id,
+                    run_id,
+                    error = %fail_error,
+                    "failed to mark reward strategy run as failed"
+                );
+            }
+            Err(error)
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn run_reward_bot_live_tick_prepared(
+    state: &AppState,
+    connector: &LivePolymarketConnector,
+    mut cycle: RewardLiveCycle,
+    mut books: HashMap<String, RewardOrderBook>,
+    books_fetched: usize,
+    run_id: i64,
+    trace_id: &str,
+    book_history: &mut HashMap<String, VecDeque<BookSnapshot>>,
+    orderbook_cache: Option<&RewardOrderbookLocalCache>,
+) -> Result<RewardBotRunReport> {
     apply_reward_opportunity_metrics_to_quote_plans(
         &mut cycle.plans,
         &books,
@@ -801,10 +952,7 @@ async fn run_reward_bot_live_tick(
     apply_reward_market_selection_to_quote_plans(&mut cycle.plans);
     record_reward_fair_value_estimates(state, &cycle.config, &fair_value_estimates, trace_id)
         .await;
-    state
-        .reward_bot_service
-        .save_quote_plans(&cycle.plans)
-        .await?;
+    save_reward_quote_plans_for_run(state, run_id, &mut cycle.plans).await?;
     register_reward_eligible_orderbook_tokens_from_plans(state, &cycle.plans, trace_id).await;
     if readiness_changed {
         debug!(
@@ -1007,10 +1155,7 @@ async fn run_reward_bot_live_tick(
         trace_id,
     );
     if plans_changed {
-        state
-            .reward_bot_service
-            .save_quote_plans(&cycle.plans)
-            .await?;
+        save_reward_quote_plans_for_run(state, run_id, &mut cycle.plans).await?;
     }
 
     if !placement_orders.is_empty() {

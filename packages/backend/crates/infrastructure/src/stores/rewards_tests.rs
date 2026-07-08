@@ -158,6 +158,7 @@ mod rewards_tests {
             reason: "eligible".to_string(),
             strategy_bucket: RewardStrategyBucket::Standard,
             strategy_profile: profile,
+            latest_run_id: None,
             quote_mode: RewardPlanQuoteMode::Double,
             recommended_quote_mode: Some(RewardPlanQuoteMode::Double),
             book_metrics: None,

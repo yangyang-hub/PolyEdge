@@ -45,6 +45,7 @@ fn fair_value_test_plan(price: Decimal, now: OffsetDateTime) -> RewardQuotePlan 
         reason: "ready".to_string(),
         strategy_bucket: RewardStrategyBucket::Standard,
         strategy_profile: RewardStrategyProfile::Standard,
+        latest_run_id: None,
         quote_mode: RewardPlanQuoteMode::SingleYes,
         recommended_quote_mode: Some(RewardPlanQuoteMode::SingleYes),
         book_metrics: None,
