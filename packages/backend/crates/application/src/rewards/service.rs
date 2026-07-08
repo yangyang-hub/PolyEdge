@@ -397,7 +397,12 @@ impl RewardBotService {
         );
         let mut seen_conditions = candidates
             .iter()
-            .map(|candidate| candidate.market.condition_id.clone())
+            .map(|candidate| {
+                (
+                    candidate.market.condition_id.clone(),
+                    candidate.strategy_profile,
+                )
+            })
             .collect::<HashSet<_>>();
 
         if let Some(filter) = config.balanced_merge_candidate_filter() {
@@ -415,7 +420,10 @@ impl RewardBotService {
                 RewardStrategyBucket::Standard,
                 RewardStrategyProfile::BalancedMerge,
             ) {
-                if seen_conditions.insert(candidate.market.condition_id.clone()) {
+                if seen_conditions.insert((
+                    candidate.market.condition_id.clone(),
+                    candidate.strategy_profile,
+                )) {
                     candidates.push(candidate);
                 }
             }

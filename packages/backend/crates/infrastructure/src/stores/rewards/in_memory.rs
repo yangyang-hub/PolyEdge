@@ -4,7 +4,7 @@ pub struct InMemoryRewardBotStore {
     config: RwLock<RewardBotConfig>,
     markets: RwLock<HashMap<String, RewardMarket>>,
     event_windows: RwLock<HashMap<(String, String), RewardMarketEventWindow>>,
-    quote_plans: RwLock<HashMap<String, RewardQuotePlan>>,
+    quote_plans: RwLock<HashMap<(String, RewardStrategyProfile), RewardQuotePlan>>,
     orders: RwLock<Vec<ManagedRewardOrder>>,
     positions: RwLock<HashMap<(String, String), RewardPosition>>,
     events: RwLock<Vec<RewardRiskEvent>>,
@@ -270,7 +270,7 @@ impl RewardBotStore for InMemoryRewardBotStore {
         for plan in plans {
             let mut plan = plan.clone();
             refresh_reward_quote_plan_readiness(&mut plan);
-            store.insert(plan.condition_id.clone(), plan.clone());
+            store.insert((plan.condition_id.clone(), plan.strategy_profile), plan.clone());
         }
         Ok(())
     }
@@ -637,6 +637,7 @@ impl RewardBotStore for InMemoryRewardBotStore {
             right
                 .eligible
                 .cmp(&left.eligible)
+                .then_with(|| right.selection_score.cmp(&left.selection_score))
                 .then_with(|| right.score.cmp(&left.score))
                 .then_with(|| right.updated_at.cmp(&left.updated_at))
         });
@@ -688,6 +689,9 @@ impl RewardBotStore for InMemoryRewardBotStore {
 
         plans.sort_by(|a, b| {
             let primary = match query.sort_by {
+                RewardQuotePlanSortField::SelectionScore => {
+                    a.selection_score.cmp(&b.selection_score)
+                }
                 RewardQuotePlanSortField::Score => a.score.cmp(&b.score),
                 RewardQuotePlanSortField::DailyReward => {
                     a.total_daily_rate.cmp(&b.total_daily_rate)

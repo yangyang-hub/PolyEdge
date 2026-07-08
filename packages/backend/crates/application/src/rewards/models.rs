@@ -544,9 +544,17 @@ pub struct RewardBotConfig {
     /// Minimum improvement required before replacing one concrete exit strategy
     /// with another during holding-period re-evaluation.
     pub adaptive_exit_min_strategy_improvement_cents: Decimal,
-    /// Future safety switch for cancel-replace of submitted adaptive exits. The
-    /// current worker only rewrites local-only pending exits.
+    /// Cancel-replace submitted adaptive exit SELLs when a better strategy or
+    /// exit price is warranted. When disabled, only local pending exits are
+    /// rewritten; submitted exits only emit deferred audit events.
     pub adaptive_exit_cancel_replace_enabled: bool,
+    /// Reprice (cancel-replace) an adaptive exit when the optimal exit price
+    /// drifts by at least this many cents, even if the strategy is unchanged.
+    /// Applied to both local and submitted exits.
+    pub adaptive_exit_reprice_drift_cents: Decimal,
+    /// Maximum cancel-replace attempts per live tick across all submitted
+    /// adaptive exits; excess intents are deferred to the next tick.
+    pub adaptive_exit_cancel_replace_max_per_cycle: u16,
     /// Enable a YES/NO buy-one strategy profile that keeps the opposite BUY
     /// resting after a fill and creates a merge intent once both sides are paired.
     pub balanced_merge_enabled: bool,
@@ -813,6 +821,10 @@ pub struct RewardBotConfigPatch {
     pub adaptive_exit_min_strategy_improvement_cents: Option<Decimal>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub adaptive_exit_cancel_replace_enabled: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub adaptive_exit_reprice_drift_cents: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub adaptive_exit_cancel_replace_max_per_cycle: Option<u16>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub balanced_merge_enabled: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

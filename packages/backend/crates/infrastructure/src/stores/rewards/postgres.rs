@@ -517,7 +517,7 @@ impl RewardBotStore for PostgresRewardBotStore {
             r#"
             SELECT quote_plan_json
             FROM reward_quote_plans
-            ORDER BY eligible DESC, score DESC, updated_at DESC
+            ORDER BY eligible DESC, selection_score DESC, score DESC, updated_at DESC
             "#,
         )
         .fetch_all(&self.pool)

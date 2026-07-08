@@ -461,6 +461,23 @@ export function RewardsConfigPanel({
                   updateNumber("adaptive_exit_min_strategy_improvement_cents", value)
                 }
               />
+              <NumberInput
+                label={dictionary.rewards.adaptiveExitRepriceDriftCents}
+                value={draft.adaptive_exit_reprice_drift_cents}
+                suffix="c"
+                hint={h.adaptiveExitRepriceDriftCents}
+                onChange={(value) =>
+                  updateNumber("adaptive_exit_reprice_drift_cents", value)
+                }
+              />
+              <NumberInput
+                label={dictionary.rewards.adaptiveExitCancelReplaceMaxPerCycle}
+                value={draft.adaptive_exit_cancel_replace_max_per_cycle}
+                hint={h.adaptiveExitCancelReplaceMaxPerCycle}
+                onChange={(value) =>
+                  updateNumber("adaptive_exit_cancel_replace_max_per_cycle", value)
+                }
+              />
               <ToggleField
                 label={dictionary.rewards.adaptiveFlattenWhenPlanIneligible}
                 hint={h.adaptiveFlattenWhenPlanIneligible}

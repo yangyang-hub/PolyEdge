@@ -152,7 +152,7 @@ async fn replace_reward_quote_plans_tx(
         })?;
 
     for chunk in plans.chunks(REWARD_UPSERT_BATCH_SIZE) {
-        let cols = 7usize;
+        let cols = 8usize;
         let placeholders: String = chunk
             .iter()
             .enumerate()
@@ -170,6 +170,7 @@ async fn replace_reward_quote_plans_tx(
             r#"INSERT INTO reward_quote_plans (
               condition_id,
               score,
+              selection_score,
               eligible,
               reason,
               strategy_profile,
@@ -177,11 +178,11 @@ async fn replace_reward_quote_plans_tx(
               updated_at
             )
             VALUES {placeholders}
-            ON CONFLICT (condition_id) DO UPDATE
+            ON CONFLICT (condition_id, strategy_profile) DO UPDATE
             SET score = EXCLUDED.score,
+                selection_score = EXCLUDED.selection_score,
                 eligible = EXCLUDED.eligible,
                 reason = EXCLUDED.reason,
-                strategy_profile = EXCLUDED.strategy_profile,
                 quote_plan_json = EXCLUDED.quote_plan_json,
                 updated_at = EXCLUDED.updated_at"#,
         );
@@ -196,6 +197,7 @@ async fn replace_reward_quote_plans_tx(
             query = query
                 .bind(condition_id)
                 .bind(plan.score)
+                .bind(plan.selection_score)
                 .bind(plan.eligible)
                 .bind(reason)
                 .bind(plan.strategy_profile.as_str())

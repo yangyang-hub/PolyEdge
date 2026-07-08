@@ -167,15 +167,15 @@ export function QuotePlansTable({
             <TableHead className="w-[30%]">{dictionary.rewards.market}</TableHead>
             <TableHead className="w-[280px]">{dictionary.rewards.state}</TableHead>
             <TableHead
-              aria-sort={sortBy === "score" ? (sortOrder === "asc" ? "ascending" : "descending") : "none"}
+              aria-sort={sortBy === "selection_score" ? (sortOrder === "asc" ? "ascending" : "descending") : "none"}
             >
               <button
                 type="button"
-                onClick={() => handleSort("score")}
+                onClick={() => handleSort("selection_score")}
                 className="inline-flex cursor-pointer select-none items-center"
               >
-                {dictionary.rewards.score}
-                <SortIndicator active={sortBy === "score"} order={sortOrder} />
+                {dictionary.rewards.selectionScore}
+                <SortIndicator active={sortBy === "selection_score"} order={sortOrder} />
               </button>
             </TableHead>
             <TableHead
@@ -236,8 +236,11 @@ export function QuotePlansTable({
                 </TableCell>
                 <TableCell className="align-top">
                   <StatusPill tone={plan.eligible ? "success" : "neutral"}>
-                    {formatFixed(plan.score, 1)}
+                    {formatFixed(plan.selection_score ?? plan.score, 1)}
                   </StatusPill>
+                  <div className="mt-1 font-mono text-[11px] leading-4 text-muted-foreground">
+                    {dictionary.rewards.baseScore} {formatFixed(plan.score, 1)}
+                  </div>
                 </TableCell>
                 <TableCell className="align-top font-mono">{formatUsdFixed(plan.total_daily_rate)}</TableCell>
                 <TableCell className="align-top font-mono">{plan.midpoint == null ? "n/a" : formatFixed(plan.midpoint, 3)}</TableCell>

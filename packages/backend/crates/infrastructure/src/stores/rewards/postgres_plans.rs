@@ -213,6 +213,7 @@ async fn postgres_count_quote_plans_filtered(
 
 fn quote_plan_order_by(query: &RewardQuotePlanListQuery) -> String {
     let primary = match query.sort_by {
+        RewardQuotePlanSortField::SelectionScore => "selection_score".to_string(),
         RewardQuotePlanSortField::Score => "score".to_string(),
         RewardQuotePlanSortField::DailyReward => {
             "(quote_plan_json->>'total_daily_rate')::numeric".to_string()

@@ -267,6 +267,12 @@ fn apply_reward_config_value(config: &mut RewardBotConfig, key: &str, value: &st
         "adaptive_exit_cancel_replace_enabled" => {
             config.adaptive_exit_cancel_replace_enabled = parse_bool_config(key, value)?;
         }
+        "adaptive_exit_reprice_drift_cents" => {
+            config.adaptive_exit_reprice_drift_cents = parse_decimal_config(key, value)?;
+        }
+        "adaptive_exit_cancel_replace_max_per_cycle" => {
+            config.adaptive_exit_cancel_replace_max_per_cycle = parse_u16_config(key, value)?;
+        }
         "balanced_merge_enabled" => {
             config.balanced_merge_enabled = parse_bool_config(key, value)?;
         }
@@ -686,6 +692,14 @@ fn reward_config_entries(config: &RewardBotConfig) -> Vec<(&'static str, String)
         (
             "adaptive_exit_cancel_replace_enabled",
             config.adaptive_exit_cancel_replace_enabled.to_string(),
+        ),
+        (
+            "adaptive_exit_reprice_drift_cents",
+            config.adaptive_exit_reprice_drift_cents.to_string(),
+        ),
+        (
+            "adaptive_exit_cancel_replace_max_per_cycle",
+            config.adaptive_exit_cancel_replace_max_per_cycle.to_string(),
         ),
         (
             "balanced_merge_enabled",

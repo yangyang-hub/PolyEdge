@@ -1,6 +1,6 @@
 -- PolyEdge complete PostgreSQL initialization script
 -- Baseline schema for initializing an empty database on 2026-07-08.
--- Runtime sqlx migrations use the same baseline in packages/backend/migrations/0001_initial_schema.sql.
+-- This is intentionally a single baseline migration because the project has not been deployed to production.
 
 
 CREATE TABLE IF NOT EXISTS audit_logs (

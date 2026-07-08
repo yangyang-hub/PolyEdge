@@ -90,7 +90,7 @@ Rewards provider 密钥只从 `RewardsSettings` 读取，不进入 `RewardBotCon
 - `RewardBotStore` 维护 `reward_control_commands`，API 入队 pending 命令，worker 使用 claim/complete/fail 处理；running 命令超过 5 分钟可重新领取。
 - `RewardBotStore` 维护 `reward_worker_heartbeats`，API snapshot 只在配置启用且最近 2 分钟有 heartbeat 时标记 worker running。
 - `reward_market_advisories`、`reward_market_info_risks` 和 `llm_calls` 已接入 Postgres/内存实现；外部 provider 调用按 UTC 日聚合展示。
-- `reward_quote_plans` 统计在 Postgres 中直接 SQL 聚合 readiness 与 blocker counts，避免顶部概览反序列化全表 JSON。
+- `reward_quote_plans` 按 `(condition_id, strategy_profile)` 保存当前计划，允许 standard 与 BalancedMerge 同市场并存；统计在 Postgres 中直接 SQL 聚合 readiness 与 blocker counts，避免顶部概览反序列化全表 JSON。
 - `reward_fair_values` 保存每个 condition 最新 fair-value 估计；`reward_fair_value_history` 追加保存历史估计用于审计/回测，数据库维护默认保留 90 天。
 - `reward_positions` 可保存当前 rewards catalog 外的外部库存；外部账户持仓同步成功时会原子替换目标账户全部持仓，失败时保留上一版。
 - `reward_merge_intents` 支持 BalancedMerge 配对库存合并、提交 tx hash、失败原因和 retry count。

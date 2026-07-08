@@ -109,19 +109,22 @@ poll_reward_bot_until_shutdown()
     -> 同步托管订单/成交/账户状态
     -> 读取 reward_markets + markets + orderbook 服务盘口
     -> 构建 quote plans、opportunity metrics 和 fair-value estimates
+    -> 计算 maker selection_score 并按资金优先级排序
     -> 应用 AI advisory / info-risk / event window / funding / live orderbook gates
     -> 保存 quote plans
     -> 提交、撤单、重挂、退出 SELL、merge intent
     -> 写入 heartbeat / fills / positions / events / llm_calls
 ```
 
-LP rewards 策略只做 live 路径。新增 BUY 必须经过最终 quote plan、fair-value raw/effective edge、当前盘口、资金、事件窗口、AI/info-risk、盘口新鲜度、深度/rank/history/requote 和 kill switch 检查。已有订单由 fast reconcile 和独立事件撤单 worker 兜底；活跃 token 的 orderbook 更新会立即触发 cancel-only 风控，不等待完整 full tick。
+LP rewards 策略只做 live 路径。新增 BUY 必须经过最终 quote plan、maker selection priority、fair-value raw/effective edge、当前盘口、资金、事件窗口、AI/info-risk、盘口新鲜度、深度/rank/history/requote 和 kill switch 检查。已有订单由 fast reconcile 和独立事件撤单 worker 兜底；活跃 token 的 orderbook 更新会立即触发 cancel-only 风控，不等待完整 full tick。
+
+Full tick 会在 opportunity/fair-value、provider/首单 gate 和最终保存前重算 `selection_score` 并重排 plans。live placement 依顺序扫描 plans，因此 `max_markets` 和资金占用优先给 reward density、fair-value edge、退出能力和稳定性更好的市场，而不是单纯按基础市场质量分或日奖励排序。
 
 Fair-value gate 默认启用。Full tick 会用 orderbook 服务缓存和本地盘口历史计算每个计划的 YES/NO fair value、confidence、uncertainty、raw edge、effective edge 和 rewards rebate 折扣，写入 `reward_fair_values` / `reward_fair_value_history`；BUY submission last-look 会用最新盘口重新应用同一 gate，失败则取消/延后 durable intent。
 
 provider refresh 是后台补缓存任务：同一 condition 的 AI advisory 与信息风险可由一次 combined provider 请求返回；实际外部请求写入 `llm_calls(task_type=reward_provider)`。缺 provider、缓存缺失或 enforce 模式风险拦截时 fail closed。provider 只写缓存，不直接下单或修改最终可挂集合。
 
-SELL 退出 intent 使用非亏损 floor。`ExitAtMarkup`、`HoldAndRequote` 和外部库存补退出走 post-only maker SELL；`FlattenImmediately` 只有在 best bid 不低于 floor 时才用非 post-only FAK/taker SELL；`Adaptive` 会基于当前 quote plan、event/AI/info-risk/fair-value/live 盘口硬风险和 floor 价上方 bid 深度选择 hold、markup 或 flatten，并写 `reward_live_adaptive_exit_selected` 审计事件。Full tick 在同步订单/成交/账户、刷新 quote plan 和撤单候选之后，提交 pending live orders 之前，会对本地未提交的 adaptive `ExitPending` SELL 继续重评；重评遵守 `adaptive_exit_recheck_sec`、`adaptive_exit_reselect_cooldown_sec`、`adaptive_exit_max_reselects_per_order` 和最小策略改善门槛，写 `reward_live_adaptive_exit_reselected` / `reward_live_adaptive_exit_reselect_deferred` / `reward_live_adaptive_exit_reselect_limit_reached`。已提交到 Polymarket 的 SELL 当前只记录 deferred，不做自动 cancel-replace。BalancedMerge 会发现可配对库存并创建 `reward_merge_intents`，只有显式开启自动执行后才通过 Safe proxy wallet 广播 CTF merge。
+SELL 退出 intent 使用非亏损 floor。`ExitAtMarkup`、`HoldAndRequote` 和外部库存补退出走 post-only maker SELL；`FlattenImmediately` 只有在 best bid 不低于 floor 时才用非 post-only FAK/taker SELL；`Adaptive` 会基于当前 quote plan、event/AI/info-risk/fair-value/live 盘口硬风险和 floor 价上方 bid 深度选择 hold、markup 或 flatten，并写 `reward_live_adaptive_exit_selected` 审计事件。Full tick 在同步订单/成交/账户、刷新 quote plan 和撤单候选之后，提交 pending live orders 之前，会对本地未提交的 adaptive `ExitPending` SELL 继续重评；重评遵守 `adaptive_exit_recheck_sec`、`adaptive_exit_reselect_cooldown_sec`、`adaptive_exit_max_reselects_per_order` 和最小策略改善门槛，写 `reward_live_adaptive_exit_reselected` / `reward_live_adaptive_exit_reselect_deferred` / `reward_live_adaptive_exit_reselect_limit_reached`。已提交到 Polymarket 的 adaptive SELL 在开启 `adaptive_exit_cancel_replace_enabled` 后，于策略切换或价格漂移超 `adaptive_exit_reprice_drift_cents` 时会先撤单；即使撤单 accepted，也不会同 tick 构造 replacement，而是等待 open-order/status/position 对账确认剩余持仓后，通过 durable pending exit 恢复，撤单结果未知时绝不补单。cancel-replace 与本地重选共享 `exit_reselect_count`/冷却/单单上限，并受 `adaptive_exit_cancel_replace_max_per_cycle` 每 tick 上限约束，写 `reward_live_adaptive_exit_cancel_replace*` 审计事件。BalancedMerge 会发现可配对库存并创建 `reward_merge_intents`，只有显式开启自动执行后才通过 Safe proxy wallet 广播 CTF merge；同一 condition 的 standard 与 BalancedMerge quote plan 可同时保存。
 
 ### news
 
@@ -150,7 +153,7 @@ settings.news.sources
 - `polyedge-worker` 仍可单独执行 CLI，但常规部署由 API 内嵌 runtime 启动任务。
 - 常驻 runtime 可启动 database maintenance、news ingest/promotion、orderbook token registration、rewards live loop、rewards info-risk scan、execution drain、paper/live 订单状态与成交对账、Polymarket 用户事件 WS。
 - 市场目录同步、rewards catalog、price-history candles 和常驻 orderbook WS/poll cache 已迁移到 `polyedge-orderbook`。
-- Rewards market maker 策略不依赖已删除的研究表；quote planning 使用市场质量、机会评分、fair-value、AI/info-risk、事件窗口、资金和 live 盘口风控。
+- Rewards market maker 策略不依赖已删除的研究表；quote planning 使用市场质量、机会评分、maker selection score、fair-value、AI/info-risk、事件窗口、资金和 live 盘口风控。
 - 数据库维护不再清理旧钱包类表；这些 schema 已从迁移和 `init.sql` 中移除。
 
 ## 修改检查清单

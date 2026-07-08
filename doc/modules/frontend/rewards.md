@@ -35,7 +35,7 @@
 
 ## 核心类型
 
-- `NumberConfigKey` 覆盖当前可编辑数值配置：市场上限、开放订单上限、最低日奖、市场质量门槛、机会评分 `opportunity_*`、fair-value `fair_value_*`、dominant 单边阈值、盘口集中度阈值、AI advisory TTL、provider 并发、信息风险 TTL、事件窗口秒数、首单观察窗口、报价构造、adaptive post-fill 与 pending-exit 重评、库存、requote、BalancedMerge、深度/velocity/reconcile 等字段。
+- `NumberConfigKey` 覆盖当前可编辑数值配置：市场上限、开放订单上限、最低日奖、市场质量门槛、机会评分 `opportunity_*`、fair-value `fair_value_*`、dominant 单边阈值、盘口集中度阈值、AI advisory TTL、provider 并发、信息风险 TTL、事件窗口秒数、首单观察窗口、报价构造、adaptive post-fill、pending-exit 重评、已提交退出撤换、库存、requote、BalancedMerge、深度/velocity/reconcile 等字段。
 - `RewardFairValueEstimateDto` / `RewardFairValueDecisionDto` / `RewardQuoteEdgeDto` 映射后端 fair-value 估计、组件、edge、rewards rebate 折扣和 gate 结果。
 - `EventCategory = "all" | "placements" | "cancels" | "fills" | "rewards"`。
 
@@ -43,7 +43,7 @@
 
 - `src/lib/api/rewards.ts`：`readRewardBotSnapshot`、`updateRewardBotConfig`、`runRewardBotOnce`、`cancelRewardBotOrders`、`resetRewardBot`。
 - `readRewardBotSnapshot()` 传递计划/订单分页、搜索、状态和排序 query；首屏请求 `plans_eligible=true`，与默认“可挂”页签一致。
-- Snapshot 不返回全量 reward markets。页面使用 `status.markets_tracked`、`eligible_markets`、`ready_quote_markets`、`waiting_orderbook_markets`、`provider_pending_markets`、`blocker_counts`、`quote_plans[].opportunity_metrics`、AI/info-risk 字段和 `llm_usage` 展示市场覆盖、最终可挂、实时可报价、等待 provider、资金不足、live 盘口验证、风险拦截和每日 LLM 调用。
+- Snapshot 不返回全量 reward markets。页面使用 `status.markets_tracked`、`eligible_markets`、`ready_quote_markets`、`waiting_orderbook_markets`、`provider_pending_markets`、`blocker_counts`、`quote_plans[].opportunity_metrics`、`quote_plans[].selection_metrics`、AI/info-risk 字段和 `llm_usage` 展示市场覆盖、最终可挂、实时可报价、等待 provider、资金不足、live 盘口验证、风险拦截和每日 LLM 调用。
 - `available_usd`、positions 和当日奖励来自 worker 写入数据库的账户快照；API handler 不持有 Polymarket 私钥，也不直接请求私有账户数据。
 
 ## 关键交互
@@ -55,11 +55,12 @@
 - 挂单档位：`quote_bid_rank=1|2|3` 对应买一/买二/买三；最终下单前仍用当前 orderbook 做 live 验证。
 - 漂移换价：`requote_drift_cents` 配合确认窗口、订单冷却和单轮最大撤单数，避免盘口抖动导致大规模撤空。
 - 盘口选择：`quote_mode=double|auto` 与 `selection_mode=observe|enforce` 控制双边/单边候选；live placement 阶段用当前 orderbook 验证退出深度、集中度、档位和安全边际。
-- 成交后合并：`balanced_merge_enabled` 默认关闭；开启后后端追加 `balanced_merge` profile 候选，同一 condition 与 standard 冲突时 standard 优先。该 profile 固定 YES/NO 双边 BUY，一侧成交后不生成 SELL、不撤对侧 BUY，full tick/fast reconcile 会发现可配对库存并写入 merge intent。`balanced_merge_auto_execute_enabled` 默认关闭，开启后 worker 通过 Safe proxy wallet 提交 CTF merge。
+- 成交后合并：`balanced_merge_enabled` 默认关闭；开启后后端追加 `balanced_merge` profile 候选，同一 condition 可同时显示 standard 与 balanced_merge 两条 quote plan。该 profile 固定 YES/NO 双边 BUY，一侧成交后不生成 SELL、不撤对侧 BUY，full tick/fast reconcile 会发现可配对库存并写入 merge intent。`balanced_merge_auto_execute_enabled` 默认关闭，开启后 worker 通过 Safe proxy wallet 提交 CTF merge。
 - AI/信息风险：页面保存 provider 类型、request format、TTL、并发上限、AI strategy hint、信息风险模式/等级和首单 gate。API key、base URL、模型名、超时和 web search 开关只来自 worker 环境变量。worker 用 combined provider refresh 补齐缓存，同一 condition 的 advisory/info-risk 都到期时可合并为一次外部请求。
 - 事件窗口：页面配置启用开关、最低置信度、赛前停止新增、赛前撤 BUY、赛后恢复冷却、未知事件时间处理和 Gamma 未审核日期处理。
-- 成交后退出：`exit_at_markup` / `hold_and_requote` / `flatten_immediately` / `adaptive` 都基于非亏损 floor。post-only SELL 会在可能穿盘口时改挂当前卖一；固定 flatten 只有 best bid 不低于 floor 才使用 FAK/taker SELL；`adaptive` 会额外按深度/溢价参数、quote plan 和硬风险选择具体退出策略，并在本地未提交的 `ExitPending` SELL 持仓期间按重评周期、重选冷却、单单上限和最小改善门槛继续选择当前更合适的退出方式。
+- 成交后退出：`exit_at_markup` / `hold_and_requote` / `flatten_immediately` / `adaptive` 都基于非亏损 floor。post-only SELL 会在可能穿盘口时改挂当前卖一；固定 flatten 只有 best bid 不低于 floor 才使用 FAK/taker SELL；`adaptive` 会额外按深度/溢价参数、quote plan 和硬风险选择具体退出策略，并在本地未提交的 `ExitPending` SELL 持仓期间按重评周期、重选冷却、单单上限和最小改善门槛继续选择当前更合适的退出方式。已提交 adaptive SELL 的撤换开关默认关闭；开启后撤单 accepted 也会等待对账确认剩余持仓后再恢复替换退出单。
 - 机会评分：统一 `opportunity_*` 配置把竞争倍数、100U 日奖、账户/单市场资金占比、退出深度、入场退出滑点、坏成交恢复天数、盘口样本、中点波动、top-of-book 跳变和权重转为综合分。
+- 市场选择：quote plan 默认按 `selection_score` 排序；页面“选择分”显示 maker 资金优先级，行内小字保留基础 `score`。`selection_score` 由基础市场质量、opportunity metrics、fair-value edge、退出能力、稳定性、竞争/资金占用和风险 gate 合成。
 - Fair-value：`fair_value_*` 配置控制估值启用、历史记录、最低 confidence、raw/effective edge、不确定性缓冲、rewards rebate 折扣、YES/NO 中点偏离上限和历史样本窗口；`/rewards/fair-value` 页面展示最近 quote plans 的估值和拦截原因。
 - 表格刷新：页面每 10 秒静默刷新当前 snapshot；手动搜索/分页/操作使用单调请求序号，只接收最新响应。
 
@@ -88,7 +89,7 @@ User mutation
 - 主策略页 header 提供 Fair value 入口；fair-value 页单独显示 tracked/pass/blocked/avg confidence 指标和 quote plan 估值审计表。
 - 市场筛选面板公开最低流动性、24h 成交量、剩余结算时间、Gamma spread 和目录同步年龄门槛。
 - 竞争度只作为统一机会评分的一部分展示；fair-value 作为独立做市定价 gate 展示，不再作为旧 EV strategy mode。
-- 报价计划默认展示通过非盘口依赖过滤且等待 live 盘口验证的候选；`quote_readiness` 区分可报价、等待盘口、等待 AI/信息风险和已拦截。
+- 报价计划默认展示通过非盘口依赖过滤且等待 live 盘口验证的候选，并按 maker `selection_score` 从高到低排序；`quote_readiness` 区分可报价、等待盘口、等待 AI/信息风险和已拦截。
 - Managed orders 表格发送后端分页/搜索/状态/排序 query；“已成交”筛选包含部分成交订单；订单行展示退出策略来源、当前具体退出策略和 adaptive 重选次数。
 - 持仓和订单表格展示 API snapshot 注入的 `token_quotes`（best bid/ask/mark price）；缺盘口时显示 `—`，不阻断页面。
 - 当日已赚奖励展示 worker 同步的 UTC 当日 maker rewards，worker 优先读取 CLOB 聚合端点，失败时回退明细端点。

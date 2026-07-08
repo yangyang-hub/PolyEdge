@@ -202,6 +202,9 @@ async fn run_reward_orderbook_event_cancel_fast_path(
                 )
                 .await?;
             }
+            LiveRewardOrderUpdate::CancelReplace(_) => {
+                unreachable!("cancel_one_live_reward_order never returns CancelReplace")
+            }
         }
     }
 

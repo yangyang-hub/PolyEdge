@@ -42,6 +42,7 @@ include!("rewards/planner_selection.rs");
 include!("rewards/planner_live.rs");
 include!("rewards/opportunity_metrics.rs");
 include!("rewards/fair_value.rs");
+include!("rewards/market_selection.rs");
 include!("rewards/provider_prefilter.rs");
 include!("rewards/engine.rs");
 include!("rewards/helpers.rs");
@@ -68,6 +69,13 @@ mod fair_value_tests {
     use super::*;
 
     include!("rewards/fair_value_tests.rs");
+}
+
+#[cfg(test)]
+mod market_selection_tests {
+    use super::*;
+
+    include!("rewards/market_selection_tests.rs");
 }
 
 #[cfg(test)]

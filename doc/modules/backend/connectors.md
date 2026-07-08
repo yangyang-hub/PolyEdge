@@ -1,6 +1,6 @@
 # connectors（外部连接器层）
 
-最后更新：2026-07-07
+最后更新：2026-07-08
 
 ## 概述
 
@@ -35,7 +35,7 @@
 | `reward_provider.rs` | Rewards combined provider：一次请求可同时返回 AI advisory 与 info-risk section |
 | `reward_ai.rs`、`reward_info_risk.rs` | Rewards provider 响应 schema/parser helper |
 | `news.rs` | RSS/Atom 新闻 connector |
-| `test_http.rs` | provider connector 单元测试 HTTP 捕获 helper |
+| `test_http.rs` | provider connector 单元测试 HTTP 捕获 helper，捕获 request line 与 JSON body |
 
 ## Polymarket Gamma
 

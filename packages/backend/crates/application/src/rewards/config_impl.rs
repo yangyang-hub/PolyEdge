@@ -112,7 +112,9 @@ impl Default for RewardBotConfig {
             adaptive_exit_reselect_cooldown_sec: 120,
             adaptive_exit_max_reselects_per_order: 3,
             adaptive_exit_min_strategy_improvement_cents: decimal("1"),
-            adaptive_exit_cancel_replace_enabled: true,
+            adaptive_exit_cancel_replace_enabled: false,
+            adaptive_exit_reprice_drift_cents: decimal("1"),
+            adaptive_exit_cancel_replace_max_per_cycle: 2,
             balanced_merge_enabled: false,
             balanced_merge_max_markets: 2,
             balanced_merge_max_open_orders: 4,
@@ -405,6 +407,10 @@ impl RewardBotConfig {
             Decimal::ZERO,
             decimal("50"),
         );
+        self.adaptive_exit_reprice_drift_cents =
+            clamp_decimal(self.adaptive_exit_reprice_drift_cents, Decimal::ZERO, decimal("50"));
+        self.adaptive_exit_cancel_replace_max_per_cycle =
+            self.adaptive_exit_cancel_replace_max_per_cycle.clamp(0, 100);
         self.balanced_merge_max_markets = self.balanced_merge_max_markets.clamp(0, u16::MAX);
         self.balanced_merge_max_open_orders =
             self.balanced_merge_max_open_orders.clamp(0, u16::MAX);
@@ -860,6 +866,12 @@ impl RewardBotConfig {
         if let Some(value) = patch.adaptive_exit_cancel_replace_enabled {
             next.adaptive_exit_cancel_replace_enabled = value;
         }
+        if let Some(value) = patch.adaptive_exit_reprice_drift_cents {
+            next.adaptive_exit_reprice_drift_cents = value;
+        }
+        if let Some(value) = patch.adaptive_exit_cancel_replace_max_per_cycle {
+            next.adaptive_exit_cancel_replace_max_per_cycle = value;
+        }
         if let Some(value) = patch.balanced_merge_enabled {
             next.balanced_merge_enabled = value;
         }
@@ -1013,6 +1025,8 @@ mod reward_config_tests {
             "adaptive_exit_max_reselects_per_order": 4,
             "adaptive_exit_min_strategy_improvement_cents": 2,
             "adaptive_exit_cancel_replace_enabled": false,
+            "adaptive_exit_reprice_drift_cents": 3,
+            "adaptive_exit_cancel_replace_max_per_cycle": 4,
             "min_depth_usd": 100,
             "cancel_bid_rank": 2,
             "depth_drop_pct": 30,
@@ -1078,6 +1092,8 @@ mod reward_config_tests {
             decimal("2")
         );
         assert!(!config.adaptive_exit_cancel_replace_enabled);
+        assert_eq!(config.adaptive_exit_reprice_drift_cents, decimal("3"));
+        assert_eq!(config.adaptive_exit_cancel_replace_max_per_cycle, 4);
 
         let serialized = serde_json::to_value(config).expect("config serializes");
         assert_eq!(serialized["ai_provider"], "openai");
@@ -1098,6 +1114,24 @@ mod reward_config_tests {
             "2"
         );
         assert_eq!(serialized["adaptive_exit_cancel_replace_enabled"], false);
+        assert_eq!(serialized["adaptive_exit_reprice_drift_cents"], "3");
+        assert_eq!(serialized["adaptive_exit_cancel_replace_max_per_cycle"], 4);
+    }
+
+    #[test]
+    fn reward_config_adaptive_exit_cancel_replace_clamps() {
+        let patch: RewardBotConfigPatch = serde_json::from_str(
+            r#"{
+                "adaptive_exit_reprice_drift_cents": 999,
+                "adaptive_exit_cancel_replace_max_per_cycle": 9999
+            }"#,
+        )
+        .expect("cancel-replace patch deserializes");
+        let config = RewardBotConfig::default()
+            .apply_patch(patch)
+            .normalized();
+        assert_eq!(config.adaptive_exit_reprice_drift_cents, decimal("50"));
+        assert_eq!(config.adaptive_exit_cancel_replace_max_per_cycle, 100);
     }
 
     #[test]

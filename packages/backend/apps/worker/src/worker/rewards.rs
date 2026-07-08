@@ -642,6 +642,7 @@ async fn run_reward_bot_live_tick(
         &cycle.open_orders,
         &cycle.positions,
     );
+    apply_reward_market_selection_to_quote_plans(&mut cycle.plans);
     mark_pre_ai_eligible_quote_plans(&mut cycle.plans, &mut cycle.pre_ai_eligible_condition_ids);
     info!(
         trace_id = %trace_id,
@@ -677,6 +678,7 @@ async fn run_reward_bot_live_tick(
             "applied first-quote entry gates to reward quote plans"
         );
     }
+    apply_reward_market_selection_to_quote_plans(&mut cycle.plans);
     let kill_switch = state.risk_service.read_state().await?.kill_switch;
     if kill_switch {
         cycle.should_execute = false;
@@ -796,6 +798,7 @@ async fn run_reward_bot_live_tick(
         &cycle.config,
         OffsetDateTime::now_utc(),
     );
+    apply_reward_market_selection_to_quote_plans(&mut cycle.plans);
     record_reward_fair_value_estimates(state, &cycle.config, &fair_value_estimates, trace_id)
         .await;
     state
@@ -863,6 +866,9 @@ async fn run_reward_bot_live_tick(
                 )
                 .await?;
             }
+            LiveRewardOrderUpdate::CancelReplace(_) => {
+                unreachable!("cancel_one_live_reward_order never returns CancelReplace")
+            }
         }
     }
 
@@ -898,6 +904,47 @@ async fn run_reward_bot_live_tick(
                     Vec::new(),
                     Vec::new(),
                     vec![event],
+                    &report,
+                    trace_id,
+                )
+                .await?;
+            }
+            LiveRewardOrderUpdate::CancelReplace(intent) => {
+                // The reselect decision used a snapshot; execute against the freshest
+                // in-memory row. The helper owns its re-entry guard, so a state change
+                // since the decision emits a skipped event instead of touching the CLOB.
+                let Some(index) = open_orders.iter().position(|o| o.id == intent.order.id) else {
+                    continue;
+                };
+                let outcome = cancel_replace_live_exit_order(
+                    connector,
+                    &open_orders[index],
+                    intent.floor_price,
+                    intent.new_price,
+                    intent.new_strategy,
+                    intent.decision_meta,
+                    intent.drift_cents,
+                    &cycle.positions,
+                    trace_id,
+                )
+                .await?;
+
+                // outcome.orders[0] is the cancelled/awaiting original (same id as
+                // intent.order); any later row is the fresh replacement (new id).
+                if let Some(cancelled) = outcome.orders.first() {
+                    open_orders[index] = cancelled.clone();
+                }
+                for extra in outcome.orders.iter().skip(1) {
+                    open_orders.push(extra.clone());
+                }
+
+                persist_live_reward_updates(
+                    state,
+                    &mut account,
+                    Vec::new(), // positions unchanged during cancel-replace
+                    outcome.orders,
+                    Vec::new(),
+                    outcome.events,
                     &report,
                     trace_id,
                 )
@@ -1085,6 +1132,9 @@ async fn cancel_live_reward_orders(
                     trace_id,
                 )
                 .await?;
+            }
+            LiveRewardOrderUpdate::CancelReplace(_) => {
+                unreachable!("cancel_one_live_reward_order never returns CancelReplace")
             }
         }
     }

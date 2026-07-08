@@ -152,6 +152,8 @@ const rewardConfigSchema = z.object({
   adaptive_exit_max_reselects_per_order: z.coerce.number().int().min(0).max(100),
   adaptive_exit_min_strategy_improvement_cents: decimalNumber.min(0).max(50),
   adaptive_exit_cancel_replace_enabled: z.boolean(),
+  adaptive_exit_reprice_drift_cents: decimalNumber.min(0).max(50),
+  adaptive_exit_cancel_replace_max_per_cycle: z.number().int().min(0).max(100),
   balanced_merge_enabled: z.boolean(),
   balanced_merge_max_markets: z.coerce.number().int().min(0).max(65_535),
   balanced_merge_max_open_orders: z.coerce.number().int().min(0).max(65_535),

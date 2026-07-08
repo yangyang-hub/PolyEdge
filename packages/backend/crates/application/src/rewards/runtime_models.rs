@@ -287,6 +287,32 @@ pub struct RewardFairValueDecision {
     pub reason: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RewardMarketSelectionMetrics {
+    #[serde(default)]
+    pub base_quality_score: Decimal,
+    #[serde(default)]
+    pub opportunity_score: Decimal,
+    #[serde(default)]
+    pub reward_density_score: Decimal,
+    #[serde(default)]
+    pub fair_value_edge_score: Decimal,
+    #[serde(default)]
+    pub exit_score: Decimal,
+    #[serde(default)]
+    pub stability_score: Decimal,
+    #[serde(default)]
+    pub competition_penalty: Decimal,
+    #[serde(default)]
+    pub allocation_penalty: Decimal,
+    #[serde(default)]
+    pub risk_penalty: Decimal,
+    #[serde(default)]
+    pub selection_score: Decimal,
+    #[serde(default)]
+    pub reasons: Vec<String>,
+}
+
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RewardHistoryPruneReport {
     pub terminal_orders_deleted: u64,
@@ -299,6 +325,8 @@ pub struct RewardQuotePlan {
     pub market_slug: String,
     pub question: String,
     pub score: Decimal,
+    #[serde(default)]
+    pub selection_score: Decimal,
     pub eligible: bool,
     #[serde(default)]
     pub pre_ai_eligible: bool,
@@ -317,6 +345,8 @@ pub struct RewardQuotePlan {
     pub book_metrics: Option<RewardMarketBookMetrics>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub opportunity_metrics: Option<RewardOpportunityMetrics>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selection_metrics: Option<RewardMarketSelectionMetrics>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fair_value: Option<RewardFairValueDecision>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

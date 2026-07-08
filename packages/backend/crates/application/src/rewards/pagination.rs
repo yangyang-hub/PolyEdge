@@ -223,6 +223,7 @@ fn normalize_order_search(search: Option<String>) -> Option<String> {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RewardQuotePlanSortField {
+    SelectionScore,
     Score,
     DailyReward,
     Midpoint,
@@ -233,10 +234,12 @@ impl RewardQuotePlanSortField {
     #[must_use]
     pub fn from_optional_str(value: Option<String>) -> Self {
         match value.as_deref().map(str::trim) {
+            Some("selection_score") => Self::SelectionScore,
+            Some("score") => Self::Score,
             Some("daily_reward") => Self::DailyReward,
             Some("midpoint") => Self::Midpoint,
             Some("eligible") => Self::Eligible,
-            _ => Self::Score,
+            _ => Self::SelectionScore,
         }
     }
 }

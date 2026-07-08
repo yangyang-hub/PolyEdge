@@ -216,6 +216,11 @@ fn deferred_live_exit_after_cancellation(
     };
     let mut retry = live_exit_order(order, remaining, order.price, reason, trace_id);
     retry.status = ManagedRewardOrderStatus::ExitPending;
+    retry.exit_strategy_source = order.exit_strategy_source;
+    retry.exit_strategy_selected = order.exit_strategy_selected;
+    retry.exit_floor_price = order.exit_floor_price;
+    retry.exit_reselect_count = order.exit_reselect_count;
+    retry.exit_last_reselected_at = order.exit_last_reselected_at;
     Some(retry)
 }
 

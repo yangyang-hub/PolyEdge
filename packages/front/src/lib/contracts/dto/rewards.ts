@@ -131,6 +131,8 @@ export type RewardBotConfigDto = {
   adaptive_exit_max_reselects_per_order: number;
   adaptive_exit_min_strategy_improvement_cents: DecimalValue;
   adaptive_exit_cancel_replace_enabled: boolean;
+  adaptive_exit_reprice_drift_cents: DecimalValue;
+  adaptive_exit_cancel_replace_max_per_cycle: number;
   balanced_merge_enabled: boolean;
   balanced_merge_max_markets: number;
   balanced_merge_max_open_orders: number;
@@ -286,6 +288,20 @@ export type RewardFairValueDecisionDto = {
   reason: string;
 };
 
+export type RewardMarketSelectionMetricsDto = {
+  base_quality_score: DecimalValue;
+  opportunity_score: DecimalValue;
+  reward_density_score: DecimalValue;
+  fair_value_edge_score: DecimalValue;
+  exit_score: DecimalValue;
+  stability_score: DecimalValue;
+  competition_penalty: DecimalValue;
+  allocation_penalty: DecimalValue;
+  risk_penalty: DecimalValue;
+  selection_score: DecimalValue;
+  reasons: string[];
+};
+
 export type RewardMarketAdvisoryDto = {
   condition_id: string;
   provider: RewardAiProvider;
@@ -344,6 +360,7 @@ export type RewardQuotePlanDto = {
   market_slug: string;
   question: string;
   score: DecimalValue;
+  selection_score: DecimalValue;
   eligible: boolean;
   pre_ai_eligible: boolean;
   quote_readiness?: RewardQuoteReadiness;
@@ -354,6 +371,7 @@ export type RewardQuotePlanDto = {
   recommended_quote_mode?: RewardPlanQuoteMode | null;
   book_metrics?: RewardMarketBookMetricsDto | null;
   opportunity_metrics?: RewardOpportunityMetricsDto | null;
+  selection_metrics?: RewardMarketSelectionMetricsDto | null;
   fair_value?: RewardFairValueDecisionDto | null;
   ai_advisory?: RewardMarketAdvisoryDto | null;
   info_risk?: RewardMarketInfoRiskDto | null;

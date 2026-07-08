@@ -72,6 +72,8 @@ export type NumberConfigKey =
   | "adaptive_exit_reselect_cooldown_sec"
   | "adaptive_exit_max_reselects_per_order"
   | "adaptive_exit_min_strategy_improvement_cents"
+  | "adaptive_exit_reprice_drift_cents"
+  | "adaptive_exit_cancel_replace_max_per_cycle"
   | "balanced_merge_max_markets"
   | "balanced_merge_max_open_orders"
   | "balanced_merge_min_edge_cents"

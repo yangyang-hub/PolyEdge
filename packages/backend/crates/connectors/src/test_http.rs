@@ -8,7 +8,6 @@ use tokio::{
 #[derive(Debug)]
 pub(crate) struct CapturedHttpRequest {
     pub(crate) request_line: String,
-    pub(crate) headers: String,
     pub(crate) body: Value,
 }
 
@@ -62,11 +61,7 @@ pub(crate) async fn spawn_json_response_server(
         let body_end = body_start + content_length;
         let body = serde_json::from_slice(&buffer[body_start..body_end])
             .expect("parse test http request json body");
-        let _ = tx.send(CapturedHttpRequest {
-            request_line,
-            headers,
-            body,
-        });
+        let _ = tx.send(CapturedHttpRequest { request_line, body });
 
         let response = format!(
             "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",

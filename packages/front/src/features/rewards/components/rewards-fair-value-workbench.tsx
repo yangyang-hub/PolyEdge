@@ -43,7 +43,7 @@ export function RewardsFairValueWorkbench({
       const response = await readRewardBotSnapshot({
         plans_page: 1,
         plans_page_size: 100,
-        plans_sort_by: "score",
+        plans_sort_by: "selection_score",
         plans_sort_order: "desc",
         orders_page: 1,
         orders_page_size: 5,

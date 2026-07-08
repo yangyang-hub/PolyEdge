@@ -3,6 +3,30 @@ enum LiveRewardOrderUpdate {
     Changed(ManagedRewardOrder, RewardRiskEvent),
     Unchanged(RewardRiskEvent),
     Retryable(RewardRiskEvent),
+    /// A submitted adaptive exit should be cancel-replaced. The caller executes the
+    /// cancel and replacement submission against the connector (it owns the connector).
+    CancelReplace(CancelReplaceIntent),
+}
+
+/// Intent emitted by `reselect_adaptive_exit_orders` when a submitted adaptive exit
+/// should be cancel-replaced. Carries everything the caller needs to execute the
+/// cancel and build the replacement without recomputing the decision.
+#[derive(Debug, Clone)]
+struct CancelReplaceIntent {
+    /// Snapshot at decision time (external_order_id still set, fields unmutated).
+    order: ManagedRewardOrder,
+    /// Raw non-loss floor → replacement.exit_floor_price.
+    floor_price: Decimal,
+    /// Decision-derived limit price → replacement.price. For ExitAtMarkup this is
+    /// floor + markup and differs from floor_price.
+    new_price: Decimal,
+    /// Newly selected strategy → replacement.exit_strategy_selected; drives post_only
+    /// via deferred_live_exit_is_post_only.
+    new_strategy: PostFillStrategy,
+    /// Adaptive decision metadata for audit events.
+    decision_meta: serde_json::Value,
+    /// |new_price - order.price| at decision time, for audit.
+    drift_cents: Decimal,
 }
 
 struct LiveRewardFillUpdate {
@@ -240,6 +264,165 @@ async fn cancel_one_live_reward_order(
             ))
         }
     }
+}
+
+/// Persisted rows and events produced by a cancel-replace of one submitted exit.
+#[derive(Debug, Default)]
+struct CancelReplaceOutcome {
+    /// Rows to upsert after the cancel attempt. Replacements are deferred until
+    /// reconciliation confirms the remaining inventory.
+    orders: Vec<ManagedRewardOrder>,
+    events: Vec<RewardRiskEvent>,
+}
+
+/// Execute a cancel-replace of a submitted adaptive exit SELL: cancel the resting
+/// order and defer any replacement until reconciliation confirms the final resting
+/// state and remaining inventory. On an unknown cancel result the replacement is
+/// NEVER created (avoids double-rest); reconciliation is left to resolve the order.
+#[allow(clippy::too_many_arguments)]
+async fn cancel_replace_live_exit_order(
+    connector: &LivePolymarketConnector,
+    order: &ManagedRewardOrder,
+    floor_price: Decimal,
+    new_price: Decimal,
+    new_strategy: PostFillStrategy,
+    decision_meta: serde_json::Value,
+    drift_cents: Decimal,
+    positions: &[RewardPosition],
+    trace_id: &str,
+) -> Result<CancelReplaceOutcome> {
+    let mut outcome = CancelReplaceOutcome::default();
+
+    // Re-entry guard: reselect already filtered, but the caller passes the freshest
+    // in-memory row. If its state changed since the decision (reconciled to Open /
+    // Cancelled, or a cancel already went unknown / awaiting), skip without touching
+    // the CLOB rather than risk a stray cancel or a double-rest.
+    if !adaptive_exit_reselection_candidate(order)
+        || order.external_order_id.is_none()
+        || live_cancel_result_is_unknown(order)
+        || order.reason.contains("awaiting final reconciliation")
+    {
+        outcome.events.push(reward_live_event(
+            order,
+            "reward_live_adaptive_exit_cancel_replace_skipped",
+            RewardRiskSeverity::Info,
+            "adaptive exit cancel-replace skipped: order state changed before execution",
+            json!({
+                "previous_strategy": order.exit_strategy_selected.map(PostFillStrategy::as_str),
+                "proposed_strategy": new_strategy.as_str(),
+                "new_price": new_price,
+                "trace_id": trace_id,
+            }),
+        ));
+        return Ok(outcome);
+    }
+
+    // Re-derive remaining size from the fresh order + position snapshot: a fill may
+    // have landed between the reselect decision and this cancel execution.
+    let remaining = (order.size - order.filled_size)
+        .max(Decimal::ZERO)
+        .min(reward_sell_position_size(order, positions))
+        .round_dp_with_strategy(2, RoundingStrategy::ToZero);
+
+    let cancel_update = cancel_one_live_reward_order(
+        connector,
+        order.clone(),
+        "adaptive exit cancel-replace",
+        trace_id,
+    )
+    .await?;
+
+    match cancel_update {
+        LiveRewardOrderUpdate::Changed(cancelled, cancel_event) => {
+            outcome.events.push(cancel_event);
+
+            if live_cancel_result_is_unknown(&cancelled) {
+                // Cancel result unknown: never create a replacement (double-rest risk).
+                outcome.events.push(reward_live_event(
+                    &cancelled,
+                    "reward_live_adaptive_exit_cancel_replace_cancel_unknown",
+                    RewardRiskSeverity::Critical,
+                    "adaptive exit cancel-replace aborted: cancel result unknown; no replacement submitted to avoid double-rest",
+                    json!({
+                        "previous_strategy": cancelled.exit_strategy_selected.map(PostFillStrategy::as_str),
+                        "proposed_strategy": new_strategy.as_str(),
+                        "previous_price": cancelled.price,
+                        "new_price": new_price,
+                        "drift_cents": drift_cents,
+                        "trace_id": trace_id,
+                        "decision": decision_meta,
+                    }),
+                ));
+                outcome.orders.push(cancelled);
+            } else {
+                // Even when CLOB accepted the cancel, the order may partially fill
+                // before the next open-order/status snapshot. Do not queue the
+                // replacement in the same tick; reconciliation will confirm final
+                // remaining inventory before a new ExitPending order is created.
+                outcome.events.push(reward_live_event(
+                    &cancelled,
+                    "reward_live_adaptive_exit_cancel_replace_reconcile_pending",
+                    RewardRiskSeverity::Info,
+                    "adaptive exit cancel accepted; replacement deferred until reconciliation confirms remaining inventory",
+                    json!({
+                        "previous_strategy": cancelled.exit_strategy_selected.map(PostFillStrategy::as_str),
+                        "proposed_strategy": new_strategy.as_str(),
+                        "previous_price": cancelled.price,
+                        "new_price": new_price,
+                        "floor_price": floor_price,
+                        "pre_cancel_remaining_size": remaining,
+                        "next_reselect_count": cancelled.exit_reselect_count.saturating_add(1),
+                        "trace_id": trace_id,
+                        "decision": decision_meta,
+                    }),
+                ));
+                outcome.orders.push(cancelled);
+            }
+        }
+        LiveRewardOrderUpdate::Unchanged(cancel_event) => {
+            // Cancel did not mutate the row (already in flight, or rejected with the
+            // order still open). No replacement; the next tick retries.
+            let event_type = cancel_event.event_type.clone();
+            outcome.events.push(cancel_event);
+            let (suffix, severity, message) = match event_type.as_str() {
+                "reward_live_order_cancel_already_in_flight" => (
+                    "in_flight",
+                    RewardRiskSeverity::Info,
+                    "adaptive exit cancel-replace deferred: a cancel for this order is already in flight",
+                ),
+                "reward_live_order_cancel_rejected" => (
+                    "cancel_rejected",
+                    RewardRiskSeverity::Warning,
+                    "adaptive exit cancel-replace aborted: cancel rejected and the order is still open",
+                ),
+                _ => (
+                    "aborted",
+                    RewardRiskSeverity::Warning,
+                    "adaptive exit cancel-replace aborted: cancel did not confirm",
+                ),
+            };
+            outcome.events.push(reward_live_event(
+                order,
+                &format!("reward_live_adaptive_exit_cancel_replace_{suffix}"),
+                severity,
+                message,
+                json!({
+                    "previous_strategy": order.exit_strategy_selected.map(PostFillStrategy::as_str),
+                    "proposed_strategy": new_strategy.as_str(),
+                    "previous_price": order.price,
+                    "new_price": new_price,
+                    "drift_cents": drift_cents,
+                    "trace_id": trace_id,
+                    "decision": decision_meta,
+                }),
+            ));
+        }
+        LiveRewardOrderUpdate::Retryable(_) | LiveRewardOrderUpdate::CancelReplace(_) => {
+            // cancel_one_live_reward_order never returns these variants.
+        }
+    }
+
+    Ok(outcome)
 }
 
 fn apply_live_reward_fill_update(
@@ -931,6 +1114,7 @@ fn reselect_adaptive_exit_orders(
     now: OffsetDateTime,
 ) -> Vec<LiveRewardOrderUpdate> {
     let mut updates = Vec::new();
+    let mut cancel_replace_count: u32 = 0;
     for order in open_orders.iter_mut() {
         if !adaptive_exit_reselection_candidate(order) {
             continue;
@@ -957,27 +1141,29 @@ fn reselect_adaptive_exit_orders(
             ai_min_confidence,
         );
         let previous_strategy = order.exit_strategy_selected;
-        if previous_strategy == Some(decision.selected_strategy) {
+        let new_price = reward_adaptive_exit_order_price(config, &decision);
+
+        // Unified trigger: a concrete strategy change, or a same-strategy reprice
+        // once the optimal exit price has drifted past the configured threshold.
+        let strategy_changed = previous_strategy != Some(decision.selected_strategy);
+        let drift_cents = (new_price - order.price).abs() * Decimal::from(100_u64);
+        let price_drifted = drift_cents >= config.adaptive_exit_reprice_drift_cents;
+        if !strategy_changed && !price_drifted {
             continue;
         }
 
-        if order.external_order_id.is_some() {
-            updates.push(LiveRewardOrderUpdate::Unchanged(reward_live_event(
-                order,
-                "reward_live_adaptive_exit_reselect_deferred",
-                RewardRiskSeverity::Info,
-                "adaptive exit reselect deferred because the sell order has already been submitted",
-                json!({
-                    "previous_strategy": previous_strategy.map(PostFillStrategy::as_str),
-                    "proposed_strategy": decision.selected_strategy.as_str(),
-                    "cancel_replace_enabled": config.adaptive_exit_cancel_replace_enabled,
-                    "trace_id": trace_id,
-                    "decision": reward_adaptive_exit_decision_metadata(&decision),
-                }),
-            )));
+        // Strategy switches must clear the score-based materiality gate; a pure
+        // same-strategy reprice is gated by the drift threshold itself.
+        if let Some(current_strategy) = previous_strategy
+            && strategy_changed
+            && !adaptive_exit_reselection_is_material(config, current_strategy, &decision)
+        {
             continue;
         }
 
+        // Shared throttle gates apply to both local and submitted exits. Submitted
+        // exits previously bypassed these via an early external-id continue; they no
+        // longer do, so cancel-replace shares the same cooldown / per-order budget.
         if adaptive_exit_reselect_cooldown_active(order, config, now) {
             let previous_updated_at = order.updated_at;
             order.reason = format!(
@@ -1034,15 +1220,68 @@ fn reselect_adaptive_exit_orders(
             continue;
         }
 
-        if let Some(current_strategy) = previous_strategy
-            && !adaptive_exit_reselection_is_material(config, current_strategy, &decision)
-        {
+        // Submitted adaptive exits require a real cancel-replace against the CLOB.
+        // The caller owns the connector, so we only emit an intent here; the row is
+        // not mutated in place (exit_reselect_count travels to the replacement row).
+        if order.external_order_id.is_some() {
+            if !config.adaptive_exit_cancel_replace_enabled {
+                updates.push(LiveRewardOrderUpdate::Unchanged(reward_live_event(
+                    order,
+                    "reward_live_adaptive_exit_reselect_deferred",
+                    RewardRiskSeverity::Info,
+                    "adaptive exit reselect deferred because the sell order has already been submitted",
+                    json!({
+                        "previous_strategy": previous_strategy.map(PostFillStrategy::as_str),
+                        "proposed_strategy": decision.selected_strategy.as_str(),
+                        "new_price": new_price,
+                        "drift_cents": drift_cents,
+                        "cancel_replace_enabled": false,
+                        "reason": "disabled",
+                        "trace_id": trace_id,
+                        "decision": reward_adaptive_exit_decision_metadata(&decision),
+                    }),
+                )));
+                continue;
+            }
+            if cancel_replace_count
+                >= u32::from(config.adaptive_exit_cancel_replace_max_per_cycle)
+            {
+                updates.push(LiveRewardOrderUpdate::Unchanged(reward_live_event(
+                    order,
+                    "reward_live_adaptive_exit_reselect_deferred",
+                    RewardRiskSeverity::Info,
+                    "adaptive exit reselect deferred because per-cycle cancel-replace cap reached",
+                    json!({
+                        "previous_strategy": previous_strategy.map(PostFillStrategy::as_str),
+                        "proposed_strategy": decision.selected_strategy.as_str(),
+                        "new_price": new_price,
+                        "drift_cents": drift_cents,
+                        "cancel_replace_count": cancel_replace_count,
+                        "max_per_cycle": config.adaptive_exit_cancel_replace_max_per_cycle,
+                        "reason": "per_cycle_cap",
+                        "trace_id": trace_id,
+                        "decision": reward_adaptive_exit_decision_metadata(&decision),
+                    }),
+                )));
+                continue;
+            }
+            cancel_replace_count += 1;
+            updates.push(LiveRewardOrderUpdate::CancelReplace(CancelReplaceIntent {
+                order: order.clone(),
+                floor_price: decision.floor_price,
+                new_price,
+                new_strategy: decision.selected_strategy,
+                decision_meta: reward_adaptive_exit_decision_metadata(&decision),
+                drift_cents,
+            }));
             continue;
         }
 
+        // Local (unsubmitted) adaptive exit: mutate in place. Both strategy changes
+        // and same-strategy price drift reach here now.
         let previous_price = order.price;
         let previous_reselect_count = order.exit_reselect_count;
-        order.price = reward_adaptive_exit_order_price(config, &decision);
+        order.price = new_price;
         order.exit_strategy_selected = Some(decision.selected_strategy);
         order.exit_floor_price = Some(decision.floor_price);
         order.exit_reselect_count = order.exit_reselect_count.saturating_add(1);
@@ -1415,6 +1654,9 @@ async fn cancel_sibling_live_reward_orders(
                     trace_id,
                 )
                 .await?;
+            }
+            LiveRewardOrderUpdate::CancelReplace(_) => {
+                unreachable!("cancel_one_live_reward_order never returns CancelReplace")
             }
         }
     }

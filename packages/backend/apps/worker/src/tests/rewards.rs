@@ -257,6 +257,7 @@ fn live_test_plan(now: OffsetDateTime) -> RewardQuotePlan {
         market_slug: "live-market".to_string(),
         question: "Will the live event happen?".to_string(),
         score: reward_decimal("50"),
+        selection_score: Decimal::ZERO,
         eligible: true,
         pre_ai_eligible: true,
         quote_readiness: polyedge_application::RewardQuoteReadiness::ReadyToQuote,
@@ -267,6 +268,7 @@ fn live_test_plan(now: OffsetDateTime) -> RewardQuotePlan {
         recommended_quote_mode: Some(polyedge_application::RewardPlanQuoteMode::Double),
         book_metrics: None,
         opportunity_metrics: None,
+        selection_metrics: None,
         fair_value: None,
         ai_advisory: None,
         info_risk: None,
@@ -2500,6 +2502,194 @@ fn adaptive_exit_reselect_defers_during_cooldown() {
         updated.exit_strategy_selected,
         Some(PostFillStrategy::HoldAndRequote)
     );
+    assert_eq!(updated.exit_reselect_count, 1);
+}
+
+#[test]
+fn adaptive_exit_reselect_emits_cancel_replace_intent_when_enabled() {
+    let now = OffsetDateTime::now_utc();
+    let mut order = live_test_open_order("yes_live");
+    order.side = RewardOrderSide::Sell;
+    order.status = ManagedRewardOrderStatus::ExitPending;
+    order.external_order_id = Some("pm_yes_live".to_string());
+    order.price = reward_decimal("0.50");
+    order.size = reward_decimal("5");
+    order.scoring = false;
+    order.exit_strategy_source = RewardExitStrategySource::Adaptive;
+    order.exit_strategy_selected = Some(PostFillStrategy::HoldAndRequote);
+    order.exit_floor_price = Some(reward_decimal("0.50"));
+    order.updated_at = now - TimeDuration::seconds(60);
+    let mut open_orders = vec![order];
+    let mut plan = live_test_plan(now);
+    plan.eligible = false;
+    plan.reason = "fair-value edge blocked".to_string();
+    let mut book = live_test_book("yes_live", now);
+    book.bids[0].price = reward_decimal("0.53");
+    book.bids[0].size = reward_decimal("30");
+    let books = HashMap::from([("yes_live".to_string(), book)]);
+    let positions = vec![RewardPosition {
+        account_id: "reward_live".to_string(),
+        condition_id: "cond_live".to_string(),
+        token_id: "yes_live".to_string(),
+        outcome: "YES".to_string(),
+        size: reward_decimal("5"),
+        avg_price: reward_decimal("0.50"),
+        realized_pnl: Decimal::ZERO,
+        updated_at: now,
+    }];
+    let config = RewardBotConfig {
+        post_fill_strategy: PostFillStrategy::Adaptive,
+        adaptive_exit_recheck_sec: 5,
+        adaptive_exit_reselect_cooldown_sec: 0,
+        adaptive_exit_cancel_replace_enabled: true,
+        ..RewardBotConfig::default()
+    };
+
+    let updates = reselect_adaptive_exit_orders(
+        &config,
+        &[plan],
+        &books,
+        &positions,
+        &mut open_orders,
+        Decimal::ZERO,
+        "trc_cr_enabled",
+        now,
+    );
+
+    let [LiveRewardOrderUpdate::CancelReplace(intent)] = updates.as_slice() else {
+        panic!("submitted adaptive exit should emit a cancel-replace intent when enabled");
+    };
+    assert_eq!(intent.new_strategy, PostFillStrategy::FlattenImmediately);
+    // The submitted row is not mutated in place; the caller/helper owns mutation.
+    assert!(intent.order.external_order_id.is_some());
+    assert_eq!(
+        open_orders[0].exit_strategy_selected,
+        Some(PostFillStrategy::HoldAndRequote)
+    );
+}
+
+#[test]
+fn adaptive_exit_reselect_defers_cancel_replace_when_disabled() {
+    let now = OffsetDateTime::now_utc();
+    let mut order = live_test_open_order("yes_live");
+    order.side = RewardOrderSide::Sell;
+    order.status = ManagedRewardOrderStatus::ExitPending;
+    order.external_order_id = Some("pm_yes_live".to_string());
+    order.price = reward_decimal("0.50");
+    order.size = reward_decimal("5");
+    order.scoring = false;
+    order.exit_strategy_source = RewardExitStrategySource::Adaptive;
+    order.exit_strategy_selected = Some(PostFillStrategy::HoldAndRequote);
+    order.exit_floor_price = Some(reward_decimal("0.50"));
+    order.updated_at = now - TimeDuration::seconds(60);
+    let mut open_orders = vec![order];
+    let mut plan = live_test_plan(now);
+    plan.eligible = false;
+    plan.reason = "fair-value edge blocked".to_string();
+    let mut book = live_test_book("yes_live", now);
+    book.bids[0].price = reward_decimal("0.53");
+    book.bids[0].size = reward_decimal("30");
+    let books = HashMap::from([("yes_live".to_string(), book)]);
+    let positions = vec![RewardPosition {
+        account_id: "reward_live".to_string(),
+        condition_id: "cond_live".to_string(),
+        token_id: "yes_live".to_string(),
+        outcome: "YES".to_string(),
+        size: reward_decimal("5"),
+        avg_price: reward_decimal("0.50"),
+        realized_pnl: Decimal::ZERO,
+        updated_at: now,
+    }];
+    let config = RewardBotConfig {
+        post_fill_strategy: PostFillStrategy::Adaptive,
+        adaptive_exit_recheck_sec: 5,
+        adaptive_exit_reselect_cooldown_sec: 0,
+        adaptive_exit_cancel_replace_enabled: false,
+        ..RewardBotConfig::default()
+    };
+
+    let updates = reselect_adaptive_exit_orders(
+        &config,
+        &[plan],
+        &books,
+        &positions,
+        &mut open_orders,
+        Decimal::ZERO,
+        "trc_cr_disabled",
+        now,
+    );
+
+    let [LiveRewardOrderUpdate::Unchanged(event)] = updates.as_slice() else {
+        panic!("submitted adaptive exit should defer when cancel-replace is disabled");
+    };
+    assert_eq!(
+        event.event_type,
+        "reward_live_adaptive_exit_reselect_deferred"
+    );
+    assert!(open_orders[0].external_order_id.is_some());
+    assert_eq!(
+        open_orders[0].exit_strategy_selected,
+        Some(PostFillStrategy::HoldAndRequote)
+    );
+}
+
+#[test]
+fn adaptive_exit_reselect_reprices_local_exit_on_price_drift() {
+    let now = OffsetDateTime::now_utc();
+    let mut order = live_test_open_order("yes_live");
+    order.side = RewardOrderSide::Sell;
+    order.status = ManagedRewardOrderStatus::ExitPending;
+    order.external_order_id = None; // local, unsubmitted
+    order.price = reward_decimal("0.45"); // drifted below the non-loss floor
+    order.size = reward_decimal("5");
+    order.scoring = false;
+    order.exit_strategy_source = RewardExitStrategySource::Adaptive;
+    order.exit_strategy_selected = Some(PostFillStrategy::HoldAndRequote);
+    order.exit_floor_price = Some(reward_decimal("0.50"));
+    order.updated_at = now - TimeDuration::seconds(60);
+    let mut open_orders = vec![order];
+    // plan_healthy (eligible + ready, no hard risk) -> decision HoldAndRequote, so the
+    // strategy is unchanged; the reprice is driven solely by price drift to the floor.
+    let plan = live_test_plan(now);
+    let book = live_test_book("yes_live", now);
+    let books = HashMap::from([("yes_live".to_string(), book)]);
+    let positions = vec![RewardPosition {
+        account_id: "reward_live".to_string(),
+        condition_id: "cond_live".to_string(),
+        token_id: "yes_live".to_string(),
+        outcome: "YES".to_string(),
+        size: reward_decimal("5"),
+        avg_price: reward_decimal("0.50"),
+        realized_pnl: Decimal::ZERO,
+        updated_at: now,
+    }];
+    let config = RewardBotConfig {
+        post_fill_strategy: PostFillStrategy::Adaptive,
+        adaptive_exit_recheck_sec: 5,
+        adaptive_exit_reselect_cooldown_sec: 0,
+        ..RewardBotConfig::default()
+    };
+
+    let updates = reselect_adaptive_exit_orders(
+        &config,
+        &[plan],
+        &books,
+        &positions,
+        &mut open_orders,
+        Decimal::ZERO,
+        "trc_cr_drift",
+        now,
+    );
+
+    let [LiveRewardOrderUpdate::Changed(updated, event)] = updates.as_slice() else {
+        panic!("local adaptive exit should reprice when the price drifts past the threshold");
+    };
+    assert_eq!(event.event_type, "reward_live_adaptive_exit_reselected");
+    assert_eq!(
+        updated.exit_strategy_selected,
+        Some(PostFillStrategy::HoldAndRequote)
+    );
+    assert_eq!(updated.price, reward_decimal("0.50"));
     assert_eq!(updated.exit_reselect_count, 1);
 }
 

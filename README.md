@@ -9,7 +9,7 @@ PolyEdge 是面向 Polymarket 的事件、市场数据、市场策略研究和 L
 - 前端控制台页面：`dashboard / markets / events / rewards / funding / settings`。未落地的 approvals 页面和 `/replay` 不再作为前端入口暴露。
 - 前端只走真实 Rust API，不再提供 mock 数据模式；所有文案走 `@/lib/i18n/dictionaries` 中文字典。
 - 后端 Rust workspace 根为 `packages/backend/Cargo.toml`：服务 crate、worker/replay 兼容 app、共享 crates、迁移和初始化 SQL 均位于 `packages/backend/`，其中 API 在 `packages/backend/api`，orderbook 服务在 `packages/backend/order`。
-- 数据库迁移目前到 `0057_reward_merge_intent_execution.sql`；空库可用 `packages/backend/init.sql` 一次性初始化，运行时仍使用 `packages/backend/migrations/` 做 `sqlx` 迁移校验。
+- 数据库当前只保留空库部署基线；`packages/backend/init.sql` 和 `packages/backend/migrations/0001_initial_schema.sql` 表达同一份当前 schema，运行时通过该 baseline 做 `sqlx` 初始化/校验。
 - 市场同步、rewards catalog 同步和 orderbook WS/poll 缓存由独立 `polyedge-orderbook` 服务负责。
 - API 只读数据库或 orderbook 服务，不在 handler 中直接请求 Polymarket。Rewards 控制操作通过数据库命令队列交给 worker/runtime 执行。
 - Rewards bot 仅支持 live 实盘路径：post-only 买单、撤单、confirmed fill 对账、成交后 sibling cancel、exit/flatten sell、账户余额/持仓快照同步、AI advisory 和异步信息风险缓存。

@@ -249,6 +249,9 @@ async fn sync_live_reward_orders(
                         }
                         LiveRewardOrderUpdate::Unchanged(event)
                         | LiveRewardOrderUpdate::Retryable(event) => events.push(event),
+                        LiveRewardOrderUpdate::CancelReplace(_) => {
+                            unreachable!("plan_live_post_fill_orders never returns CancelReplace")
+                        }
                     }
                 }
                 let (planned_merge_intents, merge_events) = plan_live_balanced_merge_intent(
@@ -688,6 +691,9 @@ async fn run_reward_bot_live_reconcile_unlocked(
                         trace_id,
                     )
                     .await?;
+                }
+                LiveRewardOrderUpdate::CancelReplace(_) => {
+                    unreachable!("cancel_one_live_reward_order never returns CancelReplace")
                 }
             }
         }

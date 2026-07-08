@@ -53,7 +53,7 @@ export function RewardsWorkbench({ initialSnapshot }: { initialSnapshot: RewardB
 
   const [plansSearch, setPlansSearch] = useState("");
   const [plansEligible, setPlansEligible] = useState<PlansEligibilityFilter>("eligible");
-  const [plansSortBy, setPlansSortBy] = useState("score");
+  const [plansSortBy, setPlansSortBy] = useState("selection_score");
   const [plansSortOrder, setPlansSortOrder] = useState<SortOrder>("desc");
   const [plansPage, setPlansPage] = useState(initialSnapshot.plans_page?.page ?? 1);
 

@@ -141,6 +141,54 @@ mod rewards_tests {
         }
     }
 
+    fn quote_plan_for_profile(profile: RewardStrategyProfile) -> RewardQuotePlan {
+        let now = OffsetDateTime::now_utc();
+        RewardQuotePlan {
+            condition_id: "cond_shared".to_string(),
+            market_slug: "shared-market".to_string(),
+            question: "Shared condition".to_string(),
+            score: match profile {
+                RewardStrategyProfile::Standard => Decimal::from(20),
+                RewardStrategyProfile::BalancedMerge => Decimal::from(15),
+            },
+            selection_score: Decimal::ZERO,
+            eligible: true,
+            pre_ai_eligible: true,
+            quote_readiness: polyedge_application::RewardQuoteReadiness::ReadyToQuote,
+            reason: "eligible".to_string(),
+            strategy_bucket: RewardStrategyBucket::Standard,
+            strategy_profile: profile,
+            quote_mode: RewardPlanQuoteMode::Double,
+            recommended_quote_mode: Some(RewardPlanQuoteMode::Double),
+            book_metrics: None,
+            opportunity_metrics: None,
+            selection_metrics: None,
+            fair_value: None,
+            ai_advisory: None,
+            info_risk: None,
+            event_window: None,
+            midpoint: Some(Decimal::new(50, 2)),
+            live_skip_until: None,
+            live_skip_reason: None,
+            first_quote_observed_at: None,
+            ai_advisory_pending_since: None,
+            info_risk_pending_since: None,
+            total_daily_rate: Decimal::from(25),
+            rewards_max_spread: Decimal::from(8),
+            rewards_min_size: Decimal::from(5),
+            orderbook_token_ids: vec!["yes_shared".to_string(), "no_shared".to_string()],
+            legs: vec![polyedge_application::RewardQuoteLeg {
+                token_id: "yes_shared".to_string(),
+                outcome: "YES".to_string(),
+                side: RewardOrderSide::Buy,
+                price: Decimal::new(49, 2),
+                size: Decimal::from(20),
+                notional_usd: Decimal::new(980, 2),
+            }],
+            updated_at: now,
+        }
+    }
+
     #[tokio::test]
     async fn stale_running_reward_command_is_reclaimed() {
         let store = InMemoryRewardBotStore::new();
@@ -213,6 +261,36 @@ mod rewards_tests {
             .expect("first command is claimable");
 
         assert_eq!(claimed.id, "rewcmd_first");
+    }
+
+    #[tokio::test]
+    async fn quote_plans_keep_distinct_strategy_profiles_for_same_condition() {
+        let store = InMemoryRewardBotStore::new();
+        let standard = quote_plan_for_profile(RewardStrategyProfile::Standard);
+        let balanced_merge = quote_plan_for_profile(RewardStrategyProfile::BalancedMerge);
+
+        store
+            .save_quote_plans(&[standard, balanced_merge])
+            .await
+            .expect("save quote plans");
+
+        let plans = store
+            .list_all_quote_plans()
+            .await
+            .expect("list all quote plans");
+        let profiles = plans
+            .iter()
+            .map(|plan| plan.strategy_profile)
+            .collect::<HashSet<_>>();
+        assert_eq!(plans.len(), 2);
+        assert!(profiles.contains(&RewardStrategyProfile::Standard));
+        assert!(profiles.contains(&RewardStrategyProfile::BalancedMerge));
+
+        let page = store
+            .list_quote_plans_page(&RewardQuotePlanListQuery::default())
+            .await
+            .expect("list quote plan page");
+        assert_eq!(page.page.total_items, 2);
     }
 
     #[tokio::test]

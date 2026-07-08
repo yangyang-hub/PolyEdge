@@ -73,6 +73,7 @@ Registry source priority is fixed as `rewards_active`, `exec_orders`, `rewards_e
 | `packages/backend/crates/application/src/rewards/planner_live.rs` | Live orderbook quote materializer |
 | `packages/backend/crates/application/src/rewards/opportunity_metrics.rs` | Unified opportunity scoring |
 | `packages/backend/crates/application/src/rewards/fair_value.rs` | Market-implied fair-value estimate and quote edge gate |
+| `packages/backend/crates/application/src/rewards/market_selection.rs` | Maker market selection priority score and quote plan ordering |
 | `packages/backend/crates/application/src/rewards/event_window.rs` | Event-window risk gate |
 | `packages/backend/crates/application/src/rewards/ai_advisory_payload.rs` | Advisory payload and hourly candle aggregation |
 | `packages/backend/crates/application/src/rewards/provider_prefilter.rs` | Pre-provider hard gate |
@@ -101,12 +102,12 @@ Registry source priority is fixed as `rewards_active`, `exec_orders`, `rewards_e
 - Frontend routes: `dashboard / markets / events / rewards / rewards/fair-value / funding / settings`.
 - Frontend uses the real Rust API only; no mock-data mode.
 - Backend API routes cover markets, events, news, evidences, orders, trades, pricing, rewards bot, funding, system, connector callback and orderbook reads.
-- Database migrations currently end at `0059_reward_adaptive_exit_reselection.sql`; migrations for removed historical modules are gone, and `packages/backend/init.sql` was regenerated from the remaining migrations for clean redeploys.
+- Database schema is currently a single clean-deploy baseline: `packages/backend/init.sql` and `packages/backend/migrations/0001_initial_schema.sql`. Historical incremental migrations for removed modules are gone; new deployments initialize from the current schema baseline.
 - Runtime mode defaults to `live_auto`; old mock mode is removed.
 - `polyedge-orderbook` owns market sync, rewards catalog sync, price-history candle sync, orderbook WS/poll cache and registry.
 - `polyedge-worker` supports database maintenance, news ingest/promotion, rewards live bot, rewards info-risk scan, execution drain, paper reconciliation, Polymarket order/fill/user-event workers, and orderbook token registration.
-- Rewards bot is live-only. It plans post-only BUY quotes from `reward_markets` + `markets`, uses orderbook service books, applies unified opportunity metrics, fair-value edge gates, optional AI advisory/info-risk caches, event-window gates, wallet-balance placement checks, live risk/cancel/requote logic, fill reconciliation, configured/adaptive post-fill exit SELL intents, holding-period adaptive pending-exit reselection and BalancedMerge merge intents. Adaptive reselection currently rewrites only local `ExitPending` SELL intents before submission; already submitted SELLs emit deferred audit events instead of cancel-replace.
-- Rewards quote planning uses deterministic market quality, opportunity scoring, fair-value estimation, AI/info-risk, event windows, funding and live orderbook risk gates.
+- Rewards bot is live-only. It plans post-only BUY quotes from `reward_markets` + `markets`, uses orderbook service books, applies unified opportunity metrics, maker `selection_score` ordering, fair-value edge gates, optional AI advisory/info-risk caches, event-window gates, wallet-balance placement checks, live risk/cancel/requote logic, fill reconciliation, configured/adaptive post-fill exit SELL intents, holding-period adaptive pending-exit reselection and BalancedMerge merge intents. Adaptive reselection rewrites local `ExitPending` SELL intents before submission, and (when `adaptive_exit_cancel_replace_enabled`) cancels already-submitted adaptive exit SELLs on strategy change or price drift; replacement exits are deferred until reconciliation confirms remaining inventory. Cancel-replace shares the reselect cooldown / per-order budget and a per-tick cap, and never submits a replacement when the cancel result is unknown.
+- Rewards quote planning uses deterministic market quality, opportunity scoring, maker selection scoring, fair-value estimation, AI/info-risk, event windows, funding and live orderbook risk gates. `score` is the base market quality score; `selection_score` is the final maker capital priority and default quote-plan sort key.
 - LLM calls for rewards combined provider are recorded in `llm_calls(task_type=reward_provider)`. Provider cache hits do not count as external calls.
 - Database maintenance prunes raw events, expired AI/info-risk caches, reward candles, fair-value history, completed/failed control commands, outbox/external dedup, LLM calls, audit logs and mode transitions. It preserves current rewards orders, fills, positions and account state.
 

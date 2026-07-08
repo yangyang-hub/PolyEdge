@@ -939,6 +939,9 @@ async fn submit_pending_live_reward_orders(
                 )
                 .await?;
             }
+            Ok(LiveRewardOrderUpdate::CancelReplace(_)) => {
+                unreachable!("submit_one_live_* never returns CancelReplace")
+            }
         }
     }
     Ok(())
