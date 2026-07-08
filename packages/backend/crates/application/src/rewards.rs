@@ -83,3 +83,10 @@ mod market_selection_tests {
 mod provider_prefilter_tests {
     include!("rewards/provider_prefilter_tests.rs");
 }
+
+#[cfg(test)]
+mod engine_tests {
+    use super::*;
+
+    include!("rewards/engine_tests.rs");
+}

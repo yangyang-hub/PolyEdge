@@ -1031,16 +1031,20 @@ fn live_funding_precheck_blocks_underfunded_new_condition_before_provider() {
     ]);
 
     let mut plans = vec![plan];
-    let blocked = apply_live_funding_precheck(
+    let blocked = polyedge_application::apply_reward_live_funding_precheck(
         &config,
         &live_test_account(reward_decimal("47.99")),
         &mut plans,
         &books,
         &[],
         &[],
+        now,
     );
     let mut pre_ai_eligible = Vec::new();
-    mark_pre_ai_eligible_quote_plans(&mut plans, &mut pre_ai_eligible);
+    polyedge_application::mark_reward_pre_ai_eligible_quote_plans(
+        &mut plans,
+        &mut pre_ai_eligible,
+    );
 
     assert_eq!(blocked, 1);
     assert!(!plans[0].eligible);
@@ -1071,16 +1075,20 @@ fn live_funding_precheck_keeps_active_exposure_in_provider_queue() {
     let open_order = live_test_open_order("yes_live");
 
     let mut plans = vec![plan];
-    let blocked = apply_live_funding_precheck(
+    let blocked = polyedge_application::apply_reward_live_funding_precheck(
         &config,
         &live_test_account(reward_decimal("47.99")),
         &mut plans,
         &books,
         std::slice::from_ref(&open_order),
         &[],
+        now,
     );
     let mut pre_ai_eligible = Vec::new();
-    mark_pre_ai_eligible_quote_plans(&mut plans, &mut pre_ai_eligible);
+    polyedge_application::mark_reward_pre_ai_eligible_quote_plans(
+        &mut plans,
+        &mut pre_ai_eligible,
+    );
 
     assert_eq!(blocked, 0);
     assert!(plans[0].eligible);
@@ -1320,7 +1328,10 @@ fn pre_ai_eligible_plan_keeps_orderbook_tokens_after_ai_gate_clears_legs() {
     plans[0].orderbook_token_ids.clear();
 
     let mut pre_ai_condition_ids = Vec::new();
-    mark_pre_ai_eligible_quote_plans(&mut plans, &mut pre_ai_condition_ids);
+    polyedge_application::mark_reward_pre_ai_eligible_quote_plans(
+        &mut plans,
+        &mut pre_ai_condition_ids,
+    );
 
     assert_eq!(pre_ai_condition_ids, vec!["cond_live".to_string()]);
     assert!(plans[0].pre_ai_eligible);

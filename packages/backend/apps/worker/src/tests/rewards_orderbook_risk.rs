@@ -94,8 +94,8 @@ fn refresh_live_quote_plan_readiness_materializes_placeholder_plan() {
     ]);
 
     let mut plans = vec![plan];
-    assert!(refresh_live_quote_plan_readiness(
-        &config, &mut plans, &books
+    assert!(polyedge_application::refresh_reward_live_quote_plan_readiness(
+        &config, &mut plans, &books, now
     ));
 
     assert!(plans[0].eligible);
@@ -121,8 +121,8 @@ fn refresh_live_quote_plan_readiness_waits_when_books_exceed_placement_headroom(
     ]);
 
     let mut plans = vec![live_test_plan(now)];
-    assert!(refresh_live_quote_plan_readiness(
-        &config, &mut plans, &books
+    assert!(polyedge_application::refresh_reward_live_quote_plan_readiness(
+        &config, &mut plans, &books, now
     ));
 
     assert!(plans[0].eligible);

@@ -292,53 +292,6 @@ fn mark_live_orderbook_validation_skip(
     plan.updated_at = now;
 }
 
-fn refresh_live_quote_plan_readiness(
-    config: &RewardBotConfig,
-    plans: &mut [RewardQuotePlan],
-    books: &HashMap<String, RewardOrderBook>,
-) -> bool {
-    let mut changed = false;
-    for plan in plans.iter_mut().filter(|plan| plan.eligible) {
-        let plan_config = config
-            .config_for_strategy_bucket(plan.strategy_bucket)
-            .config_for_strategy_profile(plan.strategy_profile);
-        let now = OffsetDateTime::now_utc();
-        match materialize_reward_quote_plan_for_live_orderbook(plan, books, &plan_config) {
-            Ok(materialized) => {
-                if apply_live_quote_plan_materialization(plan, materialized, now) {
-                    changed = true;
-                }
-                if reward_quote_plan_event_window_blocks_new_buy(plan) {
-                    if mark_live_event_window_new_buy_blocked(plan, now) {
-                        changed = true;
-                    }
-                    continue;
-                }
-                if let Some(wait_reason) =
-                    live_orderbook_placement_wait_reason(&plan_config, &plan.legs, books, now)
-                {
-                    if mark_live_orderbook_waiting(plan, wait_reason, now) {
-                        changed = true;
-                    }
-                }
-            }
-            Err(reason) => {
-                if let Some(wait_reason) =
-                    live_orderbook_wait_reason(&plan_config, plan, books, now)
-                {
-                    if mark_live_orderbook_waiting(plan, wait_reason, now) {
-                        changed = true;
-                    }
-                } else {
-                    mark_live_orderbook_validation_skip(plan, reason, now);
-                    changed = true;
-                }
-            }
-        }
-    }
-    changed
-}
-
 fn apply_live_quote_plan_materialization(
     plan: &mut RewardQuotePlan,
     materialized: RewardLiveQuoteMaterialization,

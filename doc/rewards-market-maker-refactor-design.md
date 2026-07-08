@@ -2,7 +2,7 @@
 
 最后更新：2026-07-08
 
-状态：阶段 1 已落地，后续阶段仍为设计方案。当前已实现 shadow strategy run ledger、quote plan 常用筛选列、只读 ledger API、`/rewards` Runs tab 和 ledger retention；纯 `RewardDecisionEngine` 拆分、durable action planner/executor、replay CLI 和完整 decision analytics 仍未实现。当前已实现状态以 `AGENTS.md` 和 `doc/modules/*` 为准。
+状态：阶段 1 已落地，阶段 2 的第一层纯决策入口已接入。当前已实现 shadow strategy run ledger、quote plan 常用筛选列、只读 ledger API、`/rewards` Runs tab、ledger retention，以及 application `RewardDecisionEngine` 对 pre-provider、post-provider 和最终 snapshot 计划变换的集中封装；独立 input builder、durable action planner/executor、replay CLI 和完整 decision analytics 仍未实现。当前已实现状态以 `AGENTS.md` 和 `doc/modules/*` 为准。
 
 ## 背景
 
@@ -11,8 +11,8 @@
 问题不在于缺少单个风控条件，而在于生产前还需要持续建设三类能力：
 
 - 决策可追责：阶段 1 已把 run、decision、action 和订单状态变迁串起来；后续还需要把执行前 action proposal/result 做成 durable action 控制，而不是只从 tick outcome 派生。
-- 回放可校准：selection score、fair-value 和 opportunity 权重是合理启发式；阶段 1 记录了 run 版本和决策快照，后续还需要稳定的 replay 输入模型与回放工具。
-- 结构可维护：live tick 同时承担 snapshot 构建、策略计算、外部同步、撤单、pending 提交、新挂单和持久化，安全但调试成本高；后续需要抽纯策略引擎和副作用执行层。
+- 回放可校准：selection score、fair-value 和 opportunity 权重是合理启发式；阶段 1 记录了 run 版本和决策快照，阶段 2 已集中主要计划变换入口，后续还需要稳定的 replay 输入模型与回放工具。
+- 结构可维护：live tick 同时承担 snapshot 构建、外部同步、撤单、pending 提交、新挂单和持久化，安全但调试成本高；阶段 2 已把确定性 plan transform 收敛到 application `RewardDecisionEngine`，后续还需要副作用执行层。
 
 ## 目标
 
@@ -62,7 +62,7 @@ Market/orderbook/account producers
 | 模块 | 职责 |
 |---|---|
 | `strategy_input.rs` | 定义一次 tick 的只读输入快照：config、candidate markets、books、book history、account、orders、positions、provider cache、event windows |
-| `decision_engine.rs` | 纯函数：输入 `RewardStrategyInput`，输出 `RewardDecisionSet`，不访问 store、connector 或 clock 之外的隐式状态 |
+| `engine.rs` | 已存在：`RewardDecisionEngine` 纯函数入口，输入 `RewardStrategyInput`，输出 `RewardDecisionSet`，不访问 store、connector 或隐式 clock |
 | `decision_models.rs` | run、decision、blocker、action proposal、metrics 等 typed model |
 | `action_planner.rs` | 把 decision set 与当前订单/持仓转为 place/cancel/reprice/exit/merge proposals |
 | `run_ledger.rs` | application store trait：记录 run、decisions、actions、action result |
@@ -330,9 +330,9 @@ run_reward_bot_live_tick()
 - live tick outcome 会产生 action row 和 order transition row；当前 action 是 outcome 派生的 shadow 记录，不是执行前 durable action 控制。
 - 行为测试不需要大改；主要新增 store/API/UI 编译校验。
 
-### 阶段 2：抽纯策略引擎
+### 阶段 2：抽纯策略引擎（第一层已落地）
 
-目标：把现有计算函数组合成 `RewardDecisionEngine`，输入输出可序列化。
+目标：把现有计算函数组合成 `RewardDecisionEngine`，输入输出可序列化。当前已完成 pre-provider、post-provider 和最终 snapshot 三个 plan transform 入口；worker 仍负责装配 `RewardLiveCycle`、读取 provider cache、外部同步和 live 执行。
 
 ```rust
 pub struct RewardStrategyInput {
@@ -431,7 +431,7 @@ RewardLiveExecutor
 2. 已完成：新增 application models/store trait 和 infrastructure Postgres/in-memory 实现。
 3. 已完成：在现有 live tick 中接入影子 run ledger，保持交易行为不变。
 4. 已完成：前端增加 Runs tab，只读展示 run timeline、summary、decisions 和 actions。
-5. 抽出 `RewardStrategyInput` 和 `RewardDecisionEngine`，让现有 tests 覆盖新入口。
+5. 已完成第一层：抽出 `RewardStrategyInput` 和 `RewardDecisionEngine`，让 full tick 的主要计划变换通过新入口，并新增 application engine tests。后续仍需进一步拆 `RewardStrategyInputBuilder` 和 replay-friendly 输入快照。
 6. 把 placement/cancel/pending/merge 改为 action planner + executor，逐步删除 worker 巨型流程中的混合职责。
 7. 新增 replay CLI，先做决策一致性回放，再做盘口/退出成本回放。
 8. 小额 live drill：单账户、低额度、只开 standard profile，记录 run/action/order transition 指标。

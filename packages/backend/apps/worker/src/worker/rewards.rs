@@ -69,22 +69,6 @@ async fn run_reward_bot_tick(
     .await
 }
 
-fn mark_pre_ai_eligible_quote_plans(
-    plans: &mut [RewardQuotePlan],
-    pre_ai_eligible_condition_ids: &mut Vec<String>,
-) {
-    pre_ai_eligible_condition_ids.clear();
-    for plan in plans {
-        plan.pre_ai_eligible = plan.eligible;
-        if plan.pre_ai_eligible {
-            if plan.orderbook_token_ids.is_empty() {
-                plan.orderbook_token_ids = quote_plan_leg_token_ids(&plan.legs);
-            }
-            pre_ai_eligible_condition_ids.push(plan.condition_id.clone());
-        }
-    }
-}
-
 async fn record_reward_fair_value_estimates(
     state: &AppState,
     config: &RewardBotConfig,
@@ -109,18 +93,6 @@ async fn record_reward_fair_value_estimates(
             "failed to record reward fair-value estimates"
         );
     }
-}
-
-fn quote_plan_leg_token_ids(legs: &[RewardQuoteLeg]) -> Vec<String> {
-    let mut token_ids = Vec::new();
-    let mut seen = HashSet::new();
-    for leg in legs {
-        if leg.token_id.trim().is_empty() || !seen.insert(leg.token_id.clone()) {
-            continue;
-        }
-        token_ids.push(leg.token_id.clone());
-    }
-    token_ids
 }
 
 fn push_reward_live_action_token(
@@ -768,33 +740,21 @@ async fn run_reward_bot_live_tick_prepared(
     book_history: &mut HashMap<String, VecDeque<BookSnapshot>>,
     orderbook_cache: Option<&RewardOrderbookLocalCache>,
 ) -> Result<RewardBotRunReport> {
-    apply_reward_opportunity_metrics_to_quote_plans(
-        &mut cycle.plans,
-        &books,
+    let pre_provider_decisions = RewardDecisionEngine::evaluate_pre_provider(RewardStrategyInput {
+        cycle,
+        books: &books,
         book_history,
-        &cycle.open_orders,
-        &cycle.account,
+        now: OffsetDateTime::now_utc(),
+    });
+    let funding_precheck_blocked = pre_provider_decisions.funding_precheck_blocked;
+    cycle = pre_provider_decisions.cycle;
+    record_reward_fair_value_estimates(
+        state,
         &cycle.config,
-    );
-    let fair_value_estimates = apply_reward_fair_values_to_quote_plans(
-        &mut cycle.plans,
-        &books,
-        book_history,
-        &cycle.config,
-        OffsetDateTime::now_utc(),
-    );
-    record_reward_fair_value_estimates(state, &cycle.config, &fair_value_estimates, trace_id)
-        .await;
-    let funding_precheck_blocked = apply_live_funding_precheck(
-        &cycle.config,
-        &cycle.account,
-        &mut cycle.plans,
-        &books,
-        &cycle.open_orders,
-        &cycle.positions,
-    );
-    apply_reward_market_selection_to_quote_plans(&mut cycle.plans);
-    mark_pre_ai_eligible_quote_plans(&mut cycle.plans, &mut cycle.pre_ai_eligible_condition_ids);
+        &pre_provider_decisions.fair_value_estimates,
+        trace_id,
+    )
+    .await;
     info!(
         trace_id = %trace_id,
         markets = cycle.markets.len(),
@@ -816,20 +776,16 @@ async fn run_reward_bot_live_tick_prepared(
     apply_cached_reward_ai_advisories_to_cycle(state, &mut cycle, &books, trace_id).await?;
     apply_cached_reward_info_risks_to_cycle(state, &mut cycle, trace_id).await?;
     spawn_reward_market_provider_refresh(state, &provider_refresh_cycle, &books, trace_id);
-    if apply_first_quote_entry_gates(
-        &mut cycle.plans,
-        &cycle.previous_plans,
-        &cycle.open_orders,
-        &cycle.positions,
-        &cycle.config,
-        OffsetDateTime::now_utc(),
-    ) {
+    let post_provider_decisions =
+        RewardDecisionEngine::evaluate_post_provider(cycle, OffsetDateTime::now_utc());
+    let first_quote_entry_changed = post_provider_decisions.first_quote_entry_changed;
+    cycle = post_provider_decisions.cycle;
+    if first_quote_entry_changed {
         debug!(
             trace_id = %trace_id,
             "applied first-quote entry gates to reward quote plans"
         );
     }
-    apply_reward_market_selection_to_quote_plans(&mut cycle.plans);
     let kill_switch = state.risk_service.read_state().await?.kill_switch;
     if kill_switch {
         cycle.should_execute = false;
@@ -932,26 +888,23 @@ async fn run_reward_bot_live_tick_prepared(
         report.books_fetched = report.books_fetched.max(books.len());
     }
 
-    let readiness_changed =
-        refresh_live_quote_plan_readiness(&cycle.config, &mut cycle.plans, &books);
-    refresh_reward_opportunity_metrics_for_quote_plans(
-        &mut cycle.plans,
-        &books,
+    cycle.account = account.clone();
+    cycle.open_orders = open_orders.clone();
+    let final_decisions = RewardDecisionEngine::refresh_snapshot(RewardStrategyInput {
+        cycle,
+        books: &books,
         book_history,
-        &open_orders,
-        &account,
+        now: OffsetDateTime::now_utc(),
+    });
+    let readiness_changed = final_decisions.readiness_changed;
+    cycle = final_decisions.cycle;
+    record_reward_fair_value_estimates(
+        state,
         &cycle.config,
-    );
-    let fair_value_estimates = apply_reward_fair_values_to_quote_plans(
-        &mut cycle.plans,
-        &books,
-        book_history,
-        &cycle.config,
-        OffsetDateTime::now_utc(),
-    );
-    apply_reward_market_selection_to_quote_plans(&mut cycle.plans);
-    record_reward_fair_value_estimates(state, &cycle.config, &fair_value_estimates, trace_id)
-        .await;
+        &final_decisions.fair_value_estimates,
+        trace_id,
+    )
+    .await;
     save_reward_quote_plans_for_run(state, run_id, &mut cycle.plans).await?;
     register_reward_eligible_orderbook_tokens_from_plans(state, &cycle.plans, trace_id).await;
     if readiness_changed {

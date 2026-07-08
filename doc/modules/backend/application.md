@@ -14,6 +14,7 @@
 | `src/rewards.rs` + `src/rewards/*` | Rewards market maker：配置、规划、机会评分、fair-value、事件窗口、AI advisory、info-risk、live 订单模型和 snapshot |
 | `src/rewards/service.rs` + `src/rewards/service/*` | `RewardBotService` 与 `RewardBotStore` trait，控制命令、snapshot、分页、缓存读取 |
 | `src/rewards/config_impl.rs` | `RewardBotConfig` 默认值、归一化和 patch 应用 |
+| `src/rewards/engine.rs` | `RewardDecisionEngine`：pre-provider、post-provider 和最终 snapshot 的纯决策变换入口 |
 | `src/rewards/planner.rs` | deterministic quote plan 构建 |
 | `src/rewards/planner_selection.rs` | auto/dominant 单边选择和盘口集中度指标 |
 | `src/rewards/planner_live.rs` | live orderbook materialization 与下单前盘口校验 |
@@ -39,6 +40,7 @@
 - `RewardBotConfig`：做市策略配置。当前保留 execution、market filter、opportunity metrics、fair-value、quote construction、adaptive post-fill exit、holding-period adaptive exit reselection、BalancedMerge、AI advisory、info-risk、event-window、inventory 和 live risk 参数。
 - `RewardFairValueEstimate` / `RewardFairValueDecision` / `RewardQuoteEdge`：fair-value 估计、每条 leg 的 raw/effective edge、rewards rebate 折扣、不确定性和最终 gate 结果。
 - `RewardQuotePlan`：quote plan snapshot。包含 strategy profile、quote mode、book metrics、opportunity metrics、market selection metrics、fair-value decision、AI advisory、info-risk、event-window、legs、readiness 和 live skip 状态。`score` 保留基础市场质量分，`selection_score` 是做市资金优先级分。
+- `RewardStrategyInput` / `RewardDecisionEngine` / `RewardDecisionSet`：做市决策纯计算入口。Worker 传入已装配的 `RewardLiveCycle`、orderbook cache 快照、本地 book history 和 `now`，engine 返回更新后的 cycle、fair-value estimates、资金预检/first-quote/readiness 变更统计，不访问 DB、HTTP 或 connector。
 - `RewardStrategyRun` / `RewardStrategyDecision` / `RewardStrategyAction` / `RewardOrderTransition`：做市策略运行审计 ledger。Full tick 会记录 run 配置 hash、输入摘要、计划决策快照、从 tick outcome 派生的动作和托管订单状态变迁；`RewardQuotePlan.latest_run_id` 指向生成当前计划快照的最新 run。
 - `RewardBotStore`：application 层持久化 port。覆盖 config、markets、quote plans、orders、fills、positions、events、account state、merge intents、fair-value estimates、candles、AI/info-risk cache、LLM calls、heartbeat、control commands 和历史清理。
 - `RewardMarketCandle`：orderbook 服务写入的 5m price-history source candle；AI payload 在 application 层聚合成最多 24 根 1h candle。
@@ -48,7 +50,7 @@
 
 - Rewards market maker 是当前核心策略模块，运行路径为 live-only；成交后退出支持固定策略和 `adaptive` 策略选择配置，adaptive 退出会在本地 `ExitPending` SELL 提交前按重查周期、冷却和单单重选上限持续重评并持久化当前具体策略；`adaptive_exit_cancel_replace_enabled` 默认关闭，开启后已提交的 adaptive 退出 SELL 在策略切换或价格漂移超阈值时会先撤单，替换退出单必须等待对账确认剩余持仓后恢复，撤单结果未知时绝不补单，与本地重选共享同一套节流预算（`exit_reselect_count` / 冷却 / 单单上限）和每 tick 撤换上限。
 - BalancedMerge candidate profile 与 standard profile 可在同一 condition 下并存，quote plan 按 `(condition_id, strategy_profile)` 持久化，避免低成交量配对合并计划被 standard 计划覆盖。
-- Quote planning 只依赖数据库中的 reward markets、Gamma markets、orderbook 服务缓存、price-history candles、AI/info-risk cache 和本地配置。
+- Quote planning 只依赖数据库中的 reward markets、Gamma markets、orderbook 服务缓存、price-history candles、AI/info-risk cache 和本地配置。Full tick 的 pre-provider gates、post-provider first-quote gate 和最终 snapshot refresh 已通过 `RewardDecisionEngine` 集中为纯决策变换；provider cache 读取、外部账户同步和 live 下单/撤单仍留在 worker。
 - Unified opportunity metrics 是 LP rewards 的统一评分层；竞争度、奖励密度、退出能力和盘口稳定性均作为做市策略内部指标处理，不再拆出独立观察模块。
 - Market selection 以 `selection_score` 作为最终排序和资金优先级。该分数在 opportunity metrics 与 fair-value 之后计算，综合基础市场质量、奖励密度、fair-value edge、退出能力、盘口稳定性，并惩罚拥挤、资金占用和事件/AI/info-risk/fair-value/readiness 风险；`score` 不再作为 live 市场选择的主排序。
 - Strategy run ledger 已落地为 shadow 记录层：它不改变 live 下单/撤单决策，但让每轮 full tick 的配置、输入、决策、动作和订单状态变迁可通过 store/API 查询，用于生产前演练审计和后续回放基础。
