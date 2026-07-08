@@ -13,6 +13,33 @@ struct LiveRewardFillUpdate {
     overdraft_warning: Option<RewardRiskEvent>,
 }
 
+struct RewardPostFillStrategyDecision {
+    strategy: PostFillStrategy,
+    source: RewardExitStrategySource,
+    floor_price: Decimal,
+    adaptive_event: Option<RewardRiskEvent>,
+}
+
+#[derive(Debug, Clone)]
+struct AdaptiveExitDecision {
+    selected_strategy: PostFillStrategy,
+    fallback_strategy: PostFillStrategy,
+    floor_price: Decimal,
+    best_bid: Option<Decimal>,
+    best_ask: Option<Decimal>,
+    exit_notional_usd: Decimal,
+    bid_depth_at_floor_usd: Decimal,
+    required_depth_usd: Decimal,
+    min_flatten_bid: Decimal,
+    can_flatten_non_loss: bool,
+    plan_eligible: Option<bool>,
+    quote_readiness: Option<&'static str>,
+    plan_ineligible: bool,
+    plan_healthy: bool,
+    hard_risk_reasons: Vec<String>,
+    reason: String,
+}
+
 fn live_cancel_result_is_unknown(order: &ManagedRewardOrder) -> bool {
     order.reason.contains("cancel result unknown")
 }
@@ -411,16 +438,34 @@ fn plan_live_post_fill_orders(
         return Vec::new();
     }
 
-    let post_fill_strategy = reward_post_fill_strategy(config, plans, entry, ai_min_confidence);
+    let strategy_decision = reward_post_fill_strategy(
+        config,
+        plans,
+        entry,
+        fill_size,
+        positions,
+        _books,
+        ai_min_confidence,
+    );
+    let mut updates = strategy_decision
+        .adaptive_event
+        .map(LiveRewardOrderUpdate::Unchanged)
+        .into_iter()
+        .collect::<Vec<_>>();
+    let post_fill_strategy = strategy_decision.strategy;
     match post_fill_strategy {
         PostFillStrategy::HoldAndRequote | PostFillStrategy::ExitAtMarkup => {
             let exit_price = match post_fill_strategy {
-                PostFillStrategy::HoldAndRequote => ceil_reward_price_to_tick(entry.price),
-                PostFillStrategy::ExitAtMarkup => ceil_reward_price_to_tick(Decimal::min(
-                    Decimal::from_parts(99, 0, 0, false, 2),
-                    entry.price + config.exit_markup_cents / Decimal::from(100_u64),
+                PostFillStrategy::HoldAndRequote => strategy_decision.floor_price,
+                PostFillStrategy::ExitAtMarkup => ceil_reward_price_to_tick(Decimal::max(
+                    strategy_decision.floor_price,
+                    Decimal::min(
+                        Decimal::from_parts(99, 0, 0, false, 2),
+                        entry.price + config.exit_markup_cents / Decimal::from(100_u64),
+                    ),
                 )),
                 PostFillStrategy::FlattenImmediately => unreachable!(),
+                PostFillStrategy::Adaptive => unreachable!(),
             };
             let (reason, event_type) = match post_fill_strategy {
                 PostFillStrategy::HoldAndRequote => (
@@ -432,9 +477,13 @@ fn plan_live_post_fill_orders(
                     "reward_live_exit_planned",
                 ),
                 PostFillStrategy::FlattenImmediately => unreachable!(),
+                PostFillStrategy::Adaptive => unreachable!(),
             };
             let mut exit = live_exit_order(entry, fill_size, exit_price, reason, trace_id);
             exit.status = ManagedRewardOrderStatus::ExitPending;
+            exit.exit_strategy_source = strategy_decision.source;
+            exit.exit_strategy_selected = Some(post_fill_strategy);
+            exit.exit_floor_price = Some(strategy_decision.floor_price);
             let event = reward_live_event(
                 &exit,
                 event_type,
@@ -448,16 +497,12 @@ fn plan_live_post_fill_orders(
                     "trace_id": trace_id,
                 }),
             );
-            vec![LiveRewardOrderUpdate::Changed(exit, event)]
+            updates.push(LiveRewardOrderUpdate::Changed(exit, event));
+            updates
         }
         PostFillStrategy::FlattenImmediately => {
-            let exit_floor = positions
-                .get(&entry.token_id)
-                .map(|position| position.avg_price)
-                .filter(|price| *price > Decimal::ZERO)
-                .map(|avg_price| Decimal::max(entry.price, avg_price))
-                .unwrap_or(entry.price);
-            let exit_price = ceil_reward_price_to_tick(exit_floor);
+            let exit_floor = strategy_decision.floor_price;
+            let exit_price = exit_floor;
             let reason = "flatten immediately at non-loss floor";
             let mut exit = live_exit_order(
                 entry,
@@ -467,6 +512,9 @@ fn plan_live_post_fill_orders(
                 trace_id,
             );
             exit.status = ManagedRewardOrderStatus::ExitPending;
+            exit.exit_strategy_source = strategy_decision.source;
+            exit.exit_strategy_selected = Some(PostFillStrategy::FlattenImmediately);
+            exit.exit_floor_price = Some(strategy_decision.floor_price);
             let event = reward_live_event(
                 &exit,
                 "reward_live_flatten_planned",
@@ -480,8 +528,10 @@ fn plan_live_post_fill_orders(
                     "trace_id": trace_id,
                 }),
             );
-            vec![LiveRewardOrderUpdate::Changed(exit, event)]
+            updates.push(LiveRewardOrderUpdate::Changed(exit, event));
+            updates
         }
+        PostFillStrategy::Adaptive => unreachable!(),
     }
 }
 
@@ -718,13 +768,545 @@ fn new_balanced_merge_intent_status_and_reason(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn reward_post_fill_strategy(
     config: &RewardBotConfig,
-    _plans: &[RewardQuotePlan],
-    _entry: &ManagedRewardOrder,
-    _ai_min_confidence: Decimal,
-) -> PostFillStrategy {
-    config.post_fill_strategy
+    plans: &[RewardQuotePlan],
+    entry: &ManagedRewardOrder,
+    fill_size: Decimal,
+    positions: &HashMap<String, RewardPosition>,
+    books: &HashMap<String, RewardOrderBook>,
+    ai_min_confidence: Decimal,
+) -> RewardPostFillStrategyDecision {
+    let floor_price = reward_post_fill_exit_floor(entry, positions);
+    if config.post_fill_strategy != PostFillStrategy::Adaptive {
+        return RewardPostFillStrategyDecision {
+            strategy: config.post_fill_strategy,
+            source: RewardExitStrategySource::Configured,
+            floor_price,
+            adaptive_event: None,
+        };
+    }
+
+    let decision = reward_adaptive_exit_decision(
+        config,
+        plans,
+        entry,
+        fill_size,
+        floor_price,
+        books,
+        ai_min_confidence,
+    );
+
+    RewardPostFillStrategyDecision {
+        strategy: decision.selected_strategy,
+        source: RewardExitStrategySource::Adaptive,
+        floor_price: decision.floor_price,
+        adaptive_event: Some(reward_live_event(
+            entry,
+            "reward_live_adaptive_exit_selected",
+            RewardRiskSeverity::Info,
+            decision.reason.clone(),
+            reward_adaptive_exit_decision_metadata(&decision),
+        )),
+    }
+}
+
+fn reward_adaptive_exit_decision(
+    config: &RewardBotConfig,
+    plans: &[RewardQuotePlan],
+    order: &ManagedRewardOrder,
+    exit_size: Decimal,
+    floor_price: Decimal,
+    books: &HashMap<String, RewardOrderBook>,
+    ai_min_confidence: Decimal,
+) -> AdaptiveExitDecision {
+    let fallback_strategy = reward_adaptive_fallback_strategy(config);
+    let plan = reward_exit_plan_for_order(plans, order);
+    let exit_notional_usd = (floor_price * exit_size.max(Decimal::ZERO)).round_dp(4);
+    let book = books.get(&order.token_id);
+    let best_bid = reward_best_bid_tick(book);
+    let best_ask = reward_best_ask_tick(book);
+    let bid_depth_at_floor_usd = reward_bid_depth_at_or_above_usd(book, floor_price);
+    let required_depth_usd = Decimal::max(
+        config.adaptive_flatten_min_bid_depth_usd,
+        (exit_notional_usd * config.adaptive_flatten_min_depth_multiple).round_dp(4),
+    );
+    let min_flatten_bid =
+        floor_price + config.adaptive_flatten_min_surplus_cents / Decimal::from(100_u64);
+    let can_flatten_non_loss = best_bid.is_some_and(|bid| bid >= min_flatten_bid)
+        && bid_depth_at_floor_usd >= required_depth_usd;
+    let hard_risk_reasons = reward_adaptive_hard_risk_reasons(config, plan, ai_min_confidence);
+    let plan_ineligible = plan.is_some_and(|plan| !plan.eligible);
+    let plan_healthy = plan.is_some_and(|plan| {
+        plan.eligible
+            && plan.quote_readiness == RewardQuoteReadiness::ReadyToQuote
+            && plan.live_skip_reason.is_none()
+            && hard_risk_reasons.is_empty()
+    });
+
+    let (selected_strategy, reason) = if can_flatten_non_loss
+        && config.adaptive_flatten_when_event_risk
+        && !hard_risk_reasons.is_empty()
+    {
+        (
+            PostFillStrategy::FlattenImmediately,
+            "non-loss bid depth covers exit and hard risk is elevated".to_string(),
+        )
+    } else if can_flatten_non_loss
+        && config.adaptive_flatten_when_plan_ineligible
+        && plan_ineligible
+    {
+        (
+            PostFillStrategy::FlattenImmediately,
+            "non-loss bid depth covers exit and quote plan is no longer eligible".to_string(),
+        )
+    } else if config.adaptive_hold_when_plan_eligible && plan_healthy {
+        (
+            PostFillStrategy::HoldAndRequote,
+            "quote plan is still eligible; keeping a maker exit and normal quoting".to_string(),
+        )
+    } else if can_flatten_non_loss {
+        (
+            PostFillStrategy::FlattenImmediately,
+            "non-loss bid depth covers exit and maker hold is not preferred".to_string(),
+        )
+    } else {
+        (
+            fallback_strategy,
+            "adaptive flatten requirements are not met; using configured fallback".to_string(),
+        )
+    };
+
+    AdaptiveExitDecision {
+        selected_strategy,
+        fallback_strategy,
+        floor_price,
+        best_bid,
+        best_ask,
+        exit_notional_usd,
+        bid_depth_at_floor_usd,
+        required_depth_usd,
+        min_flatten_bid,
+        can_flatten_non_loss,
+        plan_eligible: plan.map(|plan| plan.eligible),
+        quote_readiness: plan.map(|plan| plan.quote_readiness.as_str()),
+        plan_ineligible,
+        plan_healthy,
+        hard_risk_reasons,
+        reason,
+    }
+}
+
+fn reward_adaptive_exit_decision_metadata(decision: &AdaptiveExitDecision) -> Value {
+    json!({
+        "selected_strategy": decision.selected_strategy.as_str(),
+        "fallback_strategy": decision.fallback_strategy.as_str(),
+        "floor_price": decision.floor_price,
+        "best_bid": decision.best_bid,
+        "best_ask": decision.best_ask,
+        "exit_notional_usd": decision.exit_notional_usd,
+        "bid_depth_at_floor_usd": decision.bid_depth_at_floor_usd,
+        "required_depth_usd": decision.required_depth_usd,
+        "min_flatten_bid": decision.min_flatten_bid,
+        "can_flatten_non_loss": decision.can_flatten_non_loss,
+        "plan_eligible": decision.plan_eligible,
+        "quote_readiness": decision.quote_readiness,
+        "plan_ineligible": decision.plan_ineligible,
+        "plan_healthy": decision.plan_healthy,
+        "risk_reasons": &decision.hard_risk_reasons,
+        "reason": &decision.reason,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn reselect_adaptive_exit_orders(
+    config: &RewardBotConfig,
+    plans: &[RewardQuotePlan],
+    books: &HashMap<String, RewardOrderBook>,
+    positions: &[RewardPosition],
+    open_orders: &mut [ManagedRewardOrder],
+    ai_min_confidence: Decimal,
+    trace_id: &str,
+    now: OffsetDateTime,
+) -> Vec<LiveRewardOrderUpdate> {
+    let mut updates = Vec::new();
+    for order in open_orders.iter_mut() {
+        if !adaptive_exit_reselection_candidate(order) {
+            continue;
+        }
+        if !adaptive_exit_recheck_due(order, config, now) {
+            continue;
+        }
+
+        let floor_price = reward_adaptive_exit_floor_for_order(order, positions);
+        let exit_size = (order.size - order.filled_size)
+            .max(Decimal::ZERO)
+            .min(reward_sell_position_size(order, positions))
+            .round_dp_with_strategy(2, RoundingStrategy::ToZero);
+        if exit_size <= Decimal::ZERO {
+            continue;
+        }
+        let decision = reward_adaptive_exit_decision(
+            config,
+            plans,
+            order,
+            exit_size,
+            floor_price,
+            books,
+            ai_min_confidence,
+        );
+        let previous_strategy = order.exit_strategy_selected;
+        if previous_strategy == Some(decision.selected_strategy) {
+            continue;
+        }
+
+        if order.external_order_id.is_some() {
+            updates.push(LiveRewardOrderUpdate::Unchanged(reward_live_event(
+                order,
+                "reward_live_adaptive_exit_reselect_deferred",
+                RewardRiskSeverity::Info,
+                "adaptive exit reselect deferred because the sell order has already been submitted",
+                json!({
+                    "previous_strategy": previous_strategy.map(PostFillStrategy::as_str),
+                    "proposed_strategy": decision.selected_strategy.as_str(),
+                    "cancel_replace_enabled": config.adaptive_exit_cancel_replace_enabled,
+                    "trace_id": trace_id,
+                    "decision": reward_adaptive_exit_decision_metadata(&decision),
+                }),
+            )));
+            continue;
+        }
+
+        if adaptive_exit_reselect_cooldown_active(order, config, now) {
+            let previous_updated_at = order.updated_at;
+            order.reason = format!(
+                "adaptive exit reselect deferred by cooldown; proposed {}",
+                decision.selected_strategy.as_str()
+            );
+            order.updated_at = now;
+            updates.push(LiveRewardOrderUpdate::Changed(
+                order.clone(),
+                reward_live_event(
+                    order,
+                    "reward_live_adaptive_exit_reselect_deferred",
+                    RewardRiskSeverity::Info,
+                    order.reason.clone(),
+                    json!({
+                        "previous_strategy": previous_strategy.map(PostFillStrategy::as_str),
+                        "proposed_strategy": decision.selected_strategy.as_str(),
+                        "previous_updated_at": previous_updated_at,
+                        "last_reselected_at": order.exit_last_reselected_at,
+                        "cooldown_sec": config.adaptive_exit_reselect_cooldown_sec,
+                        "trace_id": trace_id,
+                        "decision": reward_adaptive_exit_decision_metadata(&decision),
+                    }),
+                ),
+            ));
+            continue;
+        }
+
+        if order.exit_reselect_count
+            >= i32::from(config.adaptive_exit_max_reselects_per_order)
+        {
+            order.reason = format!(
+                "adaptive exit reselect limit reached; proposed {}",
+                decision.selected_strategy.as_str()
+            );
+            order.updated_at = now;
+            updates.push(LiveRewardOrderUpdate::Changed(
+                order.clone(),
+                reward_live_event(
+                    order,
+                    "reward_live_adaptive_exit_reselect_limit_reached",
+                    RewardRiskSeverity::Warning,
+                    order.reason.clone(),
+                    json!({
+                        "previous_strategy": previous_strategy.map(PostFillStrategy::as_str),
+                        "proposed_strategy": decision.selected_strategy.as_str(),
+                        "reselect_count": order.exit_reselect_count,
+                        "max_reselects": config.adaptive_exit_max_reselects_per_order,
+                        "trace_id": trace_id,
+                        "decision": reward_adaptive_exit_decision_metadata(&decision),
+                    }),
+                ),
+            ));
+            continue;
+        }
+
+        if let Some(current_strategy) = previous_strategy
+            && !adaptive_exit_reselection_is_material(config, current_strategy, &decision)
+        {
+            continue;
+        }
+
+        let previous_price = order.price;
+        let previous_reselect_count = order.exit_reselect_count;
+        order.price = reward_adaptive_exit_order_price(config, &decision);
+        order.exit_strategy_selected = Some(decision.selected_strategy);
+        order.exit_floor_price = Some(decision.floor_price);
+        order.exit_reselect_count = order.exit_reselect_count.saturating_add(1);
+        order.exit_last_reselected_at = Some(now);
+        order.reason = reward_adaptive_exit_order_reason(&decision);
+        order.updated_at = now;
+
+        updates.push(LiveRewardOrderUpdate::Changed(
+            order.clone(),
+            reward_live_event(
+                order,
+                "reward_live_adaptive_exit_reselected",
+                RewardRiskSeverity::Info,
+                order.reason.clone(),
+                json!({
+                    "previous_strategy": previous_strategy.map(PostFillStrategy::as_str),
+                    "selected_strategy": decision.selected_strategy.as_str(),
+                    "previous_price": previous_price,
+                    "price": order.price,
+                    "previous_reselect_count": previous_reselect_count,
+                    "reselect_count": order.exit_reselect_count,
+                    "trace_id": trace_id,
+                    "decision": reward_adaptive_exit_decision_metadata(&decision),
+                }),
+            ),
+        ));
+    }
+    updates
+}
+
+fn adaptive_exit_reselection_candidate(order: &ManagedRewardOrder) -> bool {
+    order.side == RewardOrderSide::Sell
+        && order.status == ManagedRewardOrderStatus::ExitPending
+        && order.exit_strategy_source == RewardExitStrategySource::Adaptive
+}
+
+fn adaptive_exit_recheck_due(
+    order: &ManagedRewardOrder,
+    config: &RewardBotConfig,
+    now: OffsetDateTime,
+) -> bool {
+    let anchor = order
+        .exit_last_reselected_at
+        .filter(|last| *last > order.updated_at)
+        .unwrap_or(order.updated_at);
+    now >= anchor + reward_seconds_duration(config.adaptive_exit_recheck_sec)
+}
+
+fn adaptive_exit_reselect_cooldown_active(
+    order: &ManagedRewardOrder,
+    config: &RewardBotConfig,
+    now: OffsetDateTime,
+) -> bool {
+    let Some(last_reselected_at) = order.exit_last_reselected_at else {
+        return false;
+    };
+    now < last_reselected_at + reward_seconds_duration(config.adaptive_exit_reselect_cooldown_sec)
+}
+
+fn reward_seconds_duration(seconds: u64) -> TimeDuration {
+    TimeDuration::seconds(i64::try_from(seconds).unwrap_or(i64::MAX))
+}
+
+fn reward_adaptive_exit_floor_for_order(
+    order: &ManagedRewardOrder,
+    positions: &[RewardPosition],
+) -> Decimal {
+    let position_floor = positions
+        .iter()
+        .find(|position| position.token_id == order.token_id)
+        .map(|position| position.avg_price)
+        .filter(|price| *price > Decimal::ZERO)
+        .unwrap_or(Decimal::ZERO);
+    if let Some(stored_floor) = order.exit_floor_price {
+        return ceil_reward_price_to_tick(Decimal::max(stored_floor, position_floor));
+    }
+    reward_sell_exit_floor(order, positions)
+}
+
+fn adaptive_exit_reselection_is_material(
+    config: &RewardBotConfig,
+    current_strategy: PostFillStrategy,
+    decision: &AdaptiveExitDecision,
+) -> bool {
+    if adaptive_exit_reselection_safety_override(current_strategy, decision) {
+        return true;
+    }
+    let current_score = adaptive_exit_strategy_score_cents(config, current_strategy, decision);
+    let next_score =
+        adaptive_exit_strategy_score_cents(config, decision.selected_strategy, decision);
+    next_score - current_score >= config.adaptive_exit_min_strategy_improvement_cents
+}
+
+fn adaptive_exit_reselection_safety_override(
+    current_strategy: PostFillStrategy,
+    decision: &AdaptiveExitDecision,
+) -> bool {
+    if decision.selected_strategy == PostFillStrategy::FlattenImmediately
+        && decision.can_flatten_non_loss
+        && (decision.plan_ineligible || !decision.hard_risk_reasons.is_empty())
+    {
+        return true;
+    }
+    if current_strategy == PostFillStrategy::FlattenImmediately
+        && decision.selected_strategy != PostFillStrategy::FlattenImmediately
+        && !decision.can_flatten_non_loss
+    {
+        return true;
+    }
+    decision.selected_strategy == PostFillStrategy::HoldAndRequote && decision.plan_healthy
+}
+
+fn adaptive_exit_strategy_score_cents(
+    config: &RewardBotConfig,
+    strategy: PostFillStrategy,
+    decision: &AdaptiveExitDecision,
+) -> Decimal {
+    match strategy {
+        PostFillStrategy::FlattenImmediately => {
+            if !decision.can_flatten_non_loss {
+                return Decimal::ZERO;
+            }
+            let surplus = decision
+                .best_bid
+                .map(|bid| ((bid - decision.floor_price) * Decimal::from(100_u64)).max(Decimal::ZERO))
+                .unwrap_or_default();
+            if decision.plan_ineligible || !decision.hard_risk_reasons.is_empty() {
+                surplus + config.adaptive_exit_min_strategy_improvement_cents
+            } else {
+                surplus
+            }
+        }
+        PostFillStrategy::HoldAndRequote => {
+            if decision.plan_healthy {
+                config.adaptive_exit_min_strategy_improvement_cents + Decimal::ONE
+            } else {
+                Decimal::ZERO
+            }
+        }
+        PostFillStrategy::ExitAtMarkup => config.exit_markup_cents.max(Decimal::ZERO),
+        PostFillStrategy::Adaptive => Decimal::ZERO,
+    }
+}
+
+fn reward_adaptive_exit_order_price(
+    config: &RewardBotConfig,
+    decision: &AdaptiveExitDecision,
+) -> Decimal {
+    match decision.selected_strategy {
+        PostFillStrategy::HoldAndRequote | PostFillStrategy::FlattenImmediately => {
+            decision.floor_price
+        }
+        PostFillStrategy::ExitAtMarkup => ceil_reward_price_to_tick(Decimal::min(
+            Decimal::from_parts(99, 0, 0, false, 2),
+            decision.floor_price + config.exit_markup_cents / Decimal::from(100_u64),
+        )),
+        PostFillStrategy::Adaptive => decision.floor_price,
+    }
+}
+
+fn reward_adaptive_exit_order_reason(decision: &AdaptiveExitDecision) -> String {
+    match decision.selected_strategy {
+        PostFillStrategy::HoldAndRequote => {
+            "adaptive reselected hold-and-requote maker exit; post_only=true".to_string()
+        }
+        PostFillStrategy::ExitAtMarkup => {
+            "adaptive reselected exit-at-markup maker exit; post_only=true".to_string()
+        }
+        PostFillStrategy::FlattenImmediately => {
+            "adaptive reselected non-post-only flatten exit; post_only=false".to_string()
+        }
+        PostFillStrategy::Adaptive => {
+            "adaptive exit reselect produced no concrete strategy".to_string()
+        }
+    }
+}
+
+fn reward_adaptive_fallback_strategy(config: &RewardBotConfig) -> PostFillStrategy {
+    match config.adaptive_fallback_strategy {
+        PostFillStrategy::Adaptive => PostFillStrategy::ExitAtMarkup,
+        strategy => strategy,
+    }
+}
+
+fn reward_exit_plan_for_order<'a>(
+    plans: &'a [RewardQuotePlan],
+    order: &ManagedRewardOrder,
+) -> Option<&'a RewardQuotePlan> {
+    plans.iter().find(|plan| {
+        plan.condition_id == order.condition_id
+            && plan.strategy_profile == order.strategy_profile
+            && (plan.legs.is_empty() || plan.legs.iter().any(|leg| leg.token_id == order.token_id))
+    })
+}
+
+fn reward_post_fill_exit_floor(
+    entry: &ManagedRewardOrder,
+    positions: &HashMap<String, RewardPosition>,
+) -> Decimal {
+    let position_floor = positions
+        .get(&entry.token_id)
+        .map(|position| position.avg_price)
+        .filter(|price| *price > Decimal::ZERO)
+        .unwrap_or(Decimal::ZERO);
+    ceil_reward_price_to_tick(Decimal::max(entry.price, position_floor))
+}
+
+fn reward_bid_depth_at_or_above_usd(
+    book: Option<&RewardOrderBook>,
+    floor_price: Decimal,
+) -> Decimal {
+    book.map(|book| {
+        book.bids
+            .iter()
+            .filter(|level| floor_reward_price_to_tick(level.price) >= floor_price)
+            .map(|level| (level.price * level.size).round_dp(4))
+            .sum()
+    })
+    .unwrap_or_default()
+}
+
+fn reward_adaptive_hard_risk_reasons(
+    config: &RewardBotConfig,
+    plan: Option<&RewardQuotePlan>,
+    ai_min_confidence: Decimal,
+) -> Vec<String> {
+    let Some(plan) = plan else {
+        return Vec::new();
+    };
+
+    let mut reasons = Vec::new();
+    if let Some(live_skip_reason) = &plan.live_skip_reason {
+        reasons.push(format!("live_orderbook: {live_skip_reason}"));
+    }
+    if let Some(fair_value) = &plan.fair_value
+        && !fair_value.passed
+    {
+        reasons.push(format!("fair_value: {}", fair_value.reason));
+    }
+    if let Some(event_window) = &plan.event_window
+        && matches!(
+            event_window.status,
+            RewardEventWindowStatus::StopNewQuotes
+                | RewardEventWindowStatus::CancelOpenBuys
+                | RewardEventWindowStatus::InEventWindow
+                | RewardEventWindowStatus::PostEventCooldown
+        )
+    {
+        reasons.push(format!("event_window: {}", event_window.status.as_str()));
+    }
+    if config.ai_advisory_enabled
+        && let Some(advisory) = &plan.ai_advisory
+        && advisory.suitability == RewardAiSuitability::Avoid
+        && advisory.confidence >= ai_min_confidence
+    {
+        reasons.push("ai_advisory: avoid".to_string());
+    }
+    if config.info_risk_enabled
+        && config.info_risk_mode == polyedge_application::RewardSelectionMode::Enforce
+        && plan.reason.starts_with("info risk ")
+    {
+        reasons.push(format!("info_risk: {}", plan.reason));
+    }
+    reasons
 }
 
 fn live_exit_order(
@@ -750,6 +1332,11 @@ fn live_exit_order(
         size,
         strategy_bucket: entry.strategy_bucket,
         strategy_profile: entry.strategy_profile,
+        exit_strategy_source: RewardExitStrategySource::Configured,
+        exit_strategy_selected: None,
+        exit_floor_price: None,
+        exit_reselect_count: 0,
+        exit_last_reselected_at: None,
         external_order_id: None,
         status: ManagedRewardOrderStatus::Planned,
         scoring: false,
@@ -856,6 +1443,9 @@ fn mark_sibling_cancel_for_retry(mut sibling: ManagedRewardOrder) -> ManagedRewa
 }
 
 fn deferred_live_exit_is_post_only(order: &ManagedRewardOrder) -> bool {
+    if let Some(strategy) = order.exit_strategy_selected {
+        return strategy != PostFillStrategy::FlattenImmediately;
+    }
     if order.reason.contains("post_only=false") || order.reason.contains("flatten") {
         return false;
     }

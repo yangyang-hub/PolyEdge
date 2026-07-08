@@ -866,6 +866,46 @@ async fn run_reward_bot_live_tick(
         }
     }
 
+    for update in reselect_adaptive_exit_orders(
+        &cycle.config,
+        &cycle.plans,
+        &books,
+        &cycle.positions,
+        &mut open_orders,
+        reward_ai_min_confidence(state.settings.rewards.ai_min_confidence_bps),
+        trace_id,
+        OffsetDateTime::now_utc(),
+    ) {
+        match update {
+            LiveRewardOrderUpdate::Changed(updated, event) => {
+                persist_live_reward_updates(
+                    state,
+                    &mut account,
+                    Vec::new(), // positions unchanged during adaptive exit reselection
+                    vec![updated],
+                    Vec::new(),
+                    vec![event],
+                    &report,
+                    trace_id,
+                )
+                .await?;
+            }
+            LiveRewardOrderUpdate::Unchanged(event) | LiveRewardOrderUpdate::Retryable(event) => {
+                persist_live_reward_updates(
+                    state,
+                    &mut account,
+                    Vec::new(), // positions unchanged during adaptive exit reselection
+                    Vec::new(),
+                    Vec::new(),
+                    vec![event],
+                    &report,
+                    trace_id,
+                )
+                .await?;
+            }
+        }
+    }
+
     // Validate and cancel stale persisted intents before submitting them.
     // Unknown submissions are protected by live_cancel_reason and recovered
     // here without issuing a duplicate order.

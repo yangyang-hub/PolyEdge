@@ -70,6 +70,8 @@ pub enum PostFillStrategy {
     HoldAndRequote,
     /// Submit a non-post-only sell against the best bid when it can meet the non-loss floor.
     FlattenImmediately,
+    /// Select the concrete post-fill strategy from live risk, quote plan and orderbook state.
+    Adaptive,
 }
 
 impl PostFillStrategy {
@@ -79,6 +81,7 @@ impl PostFillStrategy {
             Self::ExitAtMarkup => "exit_at_markup",
             Self::HoldAndRequote => "hold_and_requote",
             Self::FlattenImmediately => "flatten_immediately",
+            Self::Adaptive => "adaptive",
         }
     }
 }
@@ -91,9 +94,45 @@ impl FromStr for PostFillStrategy {
             "exit_at_markup" => Ok(Self::ExitAtMarkup),
             "hold_and_requote" => Ok(Self::HoldAndRequote),
             "flatten_immediately" => Ok(Self::FlattenImmediately),
+            "adaptive" => Ok(Self::Adaptive),
             other => Err(AppError::invalid_input(
                 "REWARD_POST_FILL_STRATEGY_INVALID",
                 format!("unknown reward post-fill strategy: {other}"),
+            )),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RewardExitStrategySource {
+    Configured,
+    Adaptive,
+    ExternalInventory,
+}
+
+impl RewardExitStrategySource {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Configured => "configured",
+            Self::Adaptive => "adaptive",
+            Self::ExternalInventory => "external_inventory",
+        }
+    }
+}
+
+impl FromStr for RewardExitStrategySource {
+    type Err = AppError;
+
+    fn from_str(value: &str) -> Result<Self> {
+        match value {
+            "configured" => Ok(Self::Configured),
+            "adaptive" => Ok(Self::Adaptive),
+            "external_inventory" => Ok(Self::ExternalInventory),
+            other => Err(AppError::invalid_input(
+                "REWARD_EXIT_STRATEGY_SOURCE_INVALID",
+                format!("unknown reward exit strategy source: {other}"),
             )),
         }
     }
@@ -477,6 +516,37 @@ pub struct RewardBotConfig {
     pub requote_drift_max_cancels_per_cycle: u16,
     /// What to do with inventory once a quote leg is filled.
     pub post_fill_strategy: PostFillStrategy,
+    /// Minimum bid-side USD depth at or above the non-loss floor before adaptive
+    /// may choose a non-post-only flatten.
+    pub adaptive_flatten_min_bid_depth_usd: Decimal,
+    /// Required multiple of the exit notional covered by bid depth at or above
+    /// the non-loss floor before adaptive may choose flatten.
+    pub adaptive_flatten_min_depth_multiple: Decimal,
+    /// Required best-bid surplus above the non-loss floor in cents before
+    /// adaptive may choose flatten.
+    pub adaptive_flatten_min_surplus_cents: Decimal,
+    /// Prefer flatten when the original quote plan is no longer eligible and
+    /// non-loss depth is available.
+    pub adaptive_flatten_when_plan_ineligible: bool,
+    /// Prefer flatten when explicit event/AI/info-risk/fair-value hard risk is
+    /// elevated and non-loss depth is available.
+    pub adaptive_flatten_when_event_risk: bool,
+    /// Keep inventory as maker exit when the quote plan remains healthy.
+    pub adaptive_hold_when_plan_eligible: bool,
+    /// Maker fallback used when adaptive cannot safely choose a taker flatten.
+    pub adaptive_fallback_strategy: PostFillStrategy,
+    /// Minimum age before an adaptive exit intent is re-evaluated.
+    pub adaptive_exit_recheck_sec: u64,
+    /// Minimum time between accepted strategy reselections for the same exit.
+    pub adaptive_exit_reselect_cooldown_sec: u64,
+    /// Maximum accepted strategy reselections for a single managed exit order.
+    pub adaptive_exit_max_reselects_per_order: u16,
+    /// Minimum improvement required before replacing one concrete exit strategy
+    /// with another during holding-period re-evaluation.
+    pub adaptive_exit_min_strategy_improvement_cents: Decimal,
+    /// Future safety switch for cancel-replace of submitted adaptive exits. The
+    /// current worker only rewrites local-only pending exits.
+    pub adaptive_exit_cancel_replace_enabled: bool,
     /// Enable a YES/NO buy-one strategy profile that keeps the opposite BUY
     /// resting after a fill and creates a merge intent once both sides are paired.
     pub balanced_merge_enabled: bool,
@@ -719,6 +789,30 @@ pub struct RewardBotConfigPatch {
     pub requote_drift_max_cancels_per_cycle: Option<u16>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub post_fill_strategy: Option<PostFillStrategy>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub adaptive_flatten_min_bid_depth_usd: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub adaptive_flatten_min_depth_multiple: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub adaptive_flatten_min_surplus_cents: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub adaptive_flatten_when_plan_ineligible: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub adaptive_flatten_when_event_risk: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub adaptive_hold_when_plan_eligible: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub adaptive_fallback_strategy: Option<PostFillStrategy>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub adaptive_exit_recheck_sec: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub adaptive_exit_reselect_cooldown_sec: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub adaptive_exit_max_reselects_per_order: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub adaptive_exit_min_strategy_improvement_cents: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub adaptive_exit_cancel_replace_enabled: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub balanced_merge_enabled: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

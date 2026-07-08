@@ -378,6 +378,10 @@ const fn default_reward_strategy_profile() -> RewardStrategyProfile {
     RewardStrategyProfile::Standard
 }
 
+const fn default_reward_exit_strategy_source() -> RewardExitStrategySource {
+    RewardExitStrategySource::Configured
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct RewardLiveQuoteMaterialization {
     pub quote_mode: RewardPlanQuoteMode,
@@ -401,6 +405,17 @@ pub struct ManagedRewardOrder {
     pub strategy_bucket: RewardStrategyBucket,
     #[serde(default = "default_reward_strategy_profile")]
     pub strategy_profile: RewardStrategyProfile,
+    #[serde(default = "default_reward_exit_strategy_source")]
+    pub exit_strategy_source: RewardExitStrategySource,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exit_strategy_selected: Option<PostFillStrategy>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exit_floor_price: Option<Decimal>,
+    #[serde(default)]
+    pub exit_reselect_count: i32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(with = "time::serde::rfc3339::option")]
+    pub exit_last_reselected_at: Option<OffsetDateTime>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub external_order_id: Option<String>,
     pub status: ManagedRewardOrderStatus,

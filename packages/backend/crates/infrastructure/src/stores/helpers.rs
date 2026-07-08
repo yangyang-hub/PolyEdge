@@ -192,6 +192,11 @@ async fn insert_reward_order(
           size,
           strategy_bucket,
           strategy_profile,
+          exit_strategy_source,
+          exit_strategy_selected,
+          exit_floor_price,
+          exit_reselect_count,
+          exit_last_reselected_at,
           external_order_id,
           status,
           scoring,
@@ -203,12 +208,17 @@ async fn insert_reward_order(
           updated_at,
           trace_id
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25)
         ON CONFLICT (id) DO UPDATE
         SET price = EXCLUDED.price,
             size = EXCLUDED.size,
             strategy_bucket = EXCLUDED.strategy_bucket,
             strategy_profile = EXCLUDED.strategy_profile,
+            exit_strategy_source = EXCLUDED.exit_strategy_source,
+            exit_strategy_selected = EXCLUDED.exit_strategy_selected,
+            exit_floor_price = EXCLUDED.exit_floor_price,
+            exit_reselect_count = EXCLUDED.exit_reselect_count,
+            exit_last_reselected_at = EXCLUDED.exit_last_reselected_at,
             external_order_id = EXCLUDED.external_order_id,
             status = EXCLUDED.status,
             scoring = EXCLUDED.scoring,
@@ -230,6 +240,11 @@ async fn insert_reward_order(
     .bind(order.size)
     .bind(order.strategy_bucket.as_str())
     .bind(order.strategy_profile.as_str())
+    .bind(order.exit_strategy_source.as_str())
+    .bind(order.exit_strategy_selected.map(PostFillStrategy::as_str))
+    .bind(order.exit_floor_price)
+    .bind(order.exit_reselect_count)
+    .bind(order.exit_last_reselected_at)
     .bind(&order.external_order_id)
     .bind(order.status.as_str())
     .bind(order.scoring)
@@ -451,6 +466,12 @@ fn reward_order_from_row(row: &sqlx::postgres::PgRow) -> Result<ManagedRewardOrd
     let strategy_profile_raw: String = row
         .try_get("strategy_profile")
         .map_err(postgres_decode_error)?;
+    let exit_strategy_source_raw: String = row
+        .try_get("exit_strategy_source")
+        .map_err(postgres_decode_error)?;
+    let exit_strategy_selected_raw: Option<String> = row
+        .try_get("exit_strategy_selected")
+        .map_err(postgres_decode_error)?;
     Ok(ManagedRewardOrder {
         id: row.try_get("id").map_err(postgres_decode_error)?,
         account_id: row.try_get("account_id").map_err(postgres_decode_error)?,
@@ -462,6 +483,18 @@ fn reward_order_from_row(row: &sqlx::postgres::PgRow) -> Result<ManagedRewardOrd
         size: row.try_get("size").map_err(postgres_decode_error)?,
         strategy_bucket: RewardStrategyBucket::from_str(&strategy_bucket_raw)?,
         strategy_profile: RewardStrategyProfile::from_str(&strategy_profile_raw)?,
+        exit_strategy_source: RewardExitStrategySource::from_str(&exit_strategy_source_raw)?,
+        exit_strategy_selected: exit_strategy_selected_raw
+            .as_deref()
+            .map(PostFillStrategy::from_str)
+            .transpose()?,
+        exit_floor_price: row.try_get("exit_floor_price").map_err(postgres_decode_error)?,
+        exit_reselect_count: row
+            .try_get("exit_reselect_count")
+            .map_err(postgres_decode_error)?,
+        exit_last_reselected_at: row
+            .try_get("exit_last_reselected_at")
+            .map_err(postgres_decode_error)?,
         external_order_id: row
             .try_get("external_order_id")
             .map_err(postgres_decode_error)?,

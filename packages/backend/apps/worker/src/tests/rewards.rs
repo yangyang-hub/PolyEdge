@@ -814,6 +814,11 @@ fn live_test_open_order(token_id: &str) -> ManagedRewardOrder {
         size: reward_decimal("20"),
         strategy_bucket: RewardStrategyBucket::Standard,
         strategy_profile: RewardStrategyProfile::Standard,
+        exit_strategy_source: RewardExitStrategySource::Configured,
+        exit_strategy_selected: None,
+        exit_floor_price: None,
+        exit_reselect_count: 0,
+        exit_last_reselected_at: None,
         external_order_id: Some(format!("pm_{token_id}")),
         status: ManagedRewardOrderStatus::Open,
         scoring: true,
@@ -1896,7 +1901,7 @@ async fn balanced_merge_auto_discovers_existing_paired_positions() {
 }
 
 #[test]
-fn configured_post_fill_exit_ignores_ai_hold_policy_and_uses_entry_price() {
+fn configured_post_fill_exit_ignores_ai_hold_policy_and_uses_non_loss_floor() {
     let now = OffsetDateTime::now_utc();
     let mut entry = live_test_open_order("yes_live");
     entry.price = reward_decimal("0.49");
@@ -1952,12 +1957,17 @@ fn configured_post_fill_exit_ignores_ai_hold_policy_and_uses_entry_price() {
         panic!("configured post-fill exit must create a sell intent");
     };
     assert_eq!(exit.status, ManagedRewardOrderStatus::ExitPending);
-    assert_eq!(exit.price, entry.price);
+    assert_eq!(exit.price, reward_decimal("0.52"));
+    assert_eq!(
+        exit.exit_strategy_selected,
+        Some(PostFillStrategy::ExitAtMarkup)
+    );
+    assert_eq!(exit.exit_floor_price, Some(reward_decimal("0.52")));
     assert_eq!(exit.size, Decimal::from(5_u64));
 }
 
 #[test]
-fn hold_and_requote_plans_original_price_post_only_exit() {
+fn hold_and_requote_plans_non_loss_floor_post_only_exit() {
     let now = OffsetDateTime::now_utc();
     let mut entry = live_test_open_order("yes_live");
     entry.price = reward_decimal("0.49");
@@ -1992,10 +2002,15 @@ fn hold_and_requote_plans_original_price_post_only_exit() {
     );
 
     let LiveRewardOrderUpdate::Changed(exit, event) = &updates[0] else {
-        panic!("hold-and-requote must create an original-price sell intent");
+        panic!("hold-and-requote must create a non-loss floor sell intent");
     };
     assert_eq!(exit.status, ManagedRewardOrderStatus::ExitPending);
-    assert_eq!(exit.price, entry.price);
+    assert_eq!(exit.price, reward_decimal("0.52"));
+    assert_eq!(
+        exit.exit_strategy_selected,
+        Some(PostFillStrategy::HoldAndRequote)
+    );
+    assert_eq!(exit.exit_floor_price, Some(reward_decimal("0.52")));
     assert_eq!(exit.size, Decimal::from(5_u64));
     assert!(deferred_live_exit_is_post_only(exit));
     assert_eq!(event.event_type, "reward_live_hold_requote_exit_planned");
@@ -2127,6 +2142,365 @@ fn flatten_immediately_plans_non_post_only_exit_at_non_loss_bid() {
         reward_flatten_submission_price(exit, &books).expect("best bid meets floor"),
         reward_decimal("0.53")
     );
+}
+
+#[test]
+fn adaptive_post_fill_keeps_maker_exit_when_plan_is_healthy() {
+    let now = OffsetDateTime::now_utc();
+    let mut entry = live_test_open_order("yes_live");
+    entry.price = reward_decimal("0.49");
+    let config = RewardBotConfig {
+        post_fill_strategy: PostFillStrategy::Adaptive,
+        ..RewardBotConfig::default()
+    };
+    let plan = live_test_plan(now);
+    let positions = HashMap::from([(
+        "yes_live".to_string(),
+        RewardPosition {
+            account_id: entry.account_id.clone(),
+            condition_id: entry.condition_id.clone(),
+            token_id: entry.token_id.clone(),
+            outcome: entry.outcome.clone(),
+            size: Decimal::from(5_u64),
+            avg_price: entry.price,
+            realized_pnl: Decimal::ZERO,
+            updated_at: now,
+        },
+    )]);
+
+    let updates = plan_live_post_fill_orders(
+        &config,
+        &[plan],
+        &entry,
+        Decimal::from(5_u64),
+        &positions,
+        &HashMap::new(),
+        Decimal::ZERO,
+        "trc_adaptive_hold",
+    );
+
+    let LiveRewardOrderUpdate::Unchanged(adaptive_event) = &updates[0] else {
+        panic!("adaptive should record a selection event");
+    };
+    let LiveRewardOrderUpdate::Changed(exit, exit_event) = &updates[1] else {
+        panic!("adaptive should create a maker exit");
+    };
+    assert_eq!(
+        adaptive_event.event_type,
+        "reward_live_adaptive_exit_selected"
+    );
+    assert_eq!(adaptive_event.metadata["selected_strategy"], "hold_and_requote");
+    assert_eq!(exit.price, entry.price);
+    assert!(deferred_live_exit_is_post_only(exit));
+    assert_eq!(exit_event.event_type, "reward_live_hold_requote_exit_planned");
+}
+
+#[test]
+fn adaptive_post_fill_flattens_when_plan_ineligible_and_depth_covers_exit() {
+    let now = OffsetDateTime::now_utc();
+    let mut entry = live_test_open_order("yes_live");
+    entry.price = reward_decimal("0.49");
+    let config = RewardBotConfig {
+        post_fill_strategy: PostFillStrategy::Adaptive,
+        ..RewardBotConfig::default()
+    };
+    let mut plan = live_test_plan(now);
+    plan.eligible = false;
+    plan.reason = "fair-value edge blocked".to_string();
+    let mut book = live_test_book("yes_live", now);
+    book.bids[0].price = reward_decimal("0.53");
+    book.bids[0].size = reward_decimal("30");
+    let positions = HashMap::from([(
+        "yes_live".to_string(),
+        RewardPosition {
+            account_id: entry.account_id.clone(),
+            condition_id: entry.condition_id.clone(),
+            token_id: entry.token_id.clone(),
+            outcome: entry.outcome.clone(),
+            size: Decimal::from(5_u64),
+            avg_price: reward_decimal("0.52"),
+            realized_pnl: Decimal::ZERO,
+            updated_at: now,
+        },
+    )]);
+    let books = HashMap::from([("yes_live".to_string(), book)]);
+
+    let updates = plan_live_post_fill_orders(
+        &config,
+        &[plan],
+        &entry,
+        Decimal::from(5_u64),
+        &positions,
+        &books,
+        Decimal::ZERO,
+        "trc_adaptive_flatten_ineligible",
+    );
+
+    let LiveRewardOrderUpdate::Unchanged(adaptive_event) = &updates[0] else {
+        panic!("adaptive should record a selection event");
+    };
+    let LiveRewardOrderUpdate::Changed(exit, exit_event) = &updates[1] else {
+        panic!("adaptive should create a flatten exit");
+    };
+    assert_eq!(
+        adaptive_event.metadata["selected_strategy"],
+        "flatten_immediately"
+    );
+    assert_eq!(exit.price, reward_decimal("0.52"));
+    assert!(!deferred_live_exit_is_post_only(exit));
+    assert_eq!(exit_event.event_type, "reward_live_flatten_planned");
+}
+
+#[test]
+fn adaptive_post_fill_flattens_when_event_window_risk_is_elevated() {
+    let now = OffsetDateTime::now_utc();
+    let mut entry = live_test_open_order("yes_live");
+    entry.price = reward_decimal("0.49");
+    let config = RewardBotConfig {
+        post_fill_strategy: PostFillStrategy::Adaptive,
+        ..RewardBotConfig::default()
+    };
+    let mut plan = live_test_plan(now);
+    plan.event_window = Some(polyedge_application::RewardEventWindowAssessment {
+        status: RewardEventWindowStatus::StopNewQuotes,
+        reason: "event starts soon".to_string(),
+        event_start_at: Some(now + TimeDuration::minutes(30)),
+        event_end_at: None,
+        source: Some("test".to_string()),
+        confidence: Some(polyedge_application::RewardEventTimeConfidence::High),
+        event_type: Some("scheduled_event".to_string()),
+    });
+    let mut book = live_test_book("yes_live", now);
+    book.bids[0].price = reward_decimal("0.53");
+    book.bids[0].size = reward_decimal("30");
+    let positions = HashMap::from([(
+        "yes_live".to_string(),
+        RewardPosition {
+            account_id: entry.account_id.clone(),
+            condition_id: entry.condition_id.clone(),
+            token_id: entry.token_id.clone(),
+            outcome: entry.outcome.clone(),
+            size: Decimal::from(5_u64),
+            avg_price: reward_decimal("0.52"),
+            realized_pnl: Decimal::ZERO,
+            updated_at: now,
+        },
+    )]);
+    let books = HashMap::from([("yes_live".to_string(), book)]);
+
+    let updates = plan_live_post_fill_orders(
+        &config,
+        &[plan],
+        &entry,
+        Decimal::from(5_u64),
+        &positions,
+        &books,
+        Decimal::ZERO,
+        "trc_adaptive_flatten_event",
+    );
+
+    let LiveRewardOrderUpdate::Unchanged(adaptive_event) = &updates[0] else {
+        panic!("adaptive should record a selection event");
+    };
+    let LiveRewardOrderUpdate::Changed(exit, _) = &updates[1] else {
+        panic!("adaptive should create a flatten exit");
+    };
+    assert_eq!(
+        adaptive_event.metadata["selected_strategy"],
+        "flatten_immediately"
+    );
+    assert!(
+        adaptive_event.metadata["risk_reasons"]
+            .as_array()
+            .expect("risk reasons")
+            .iter()
+            .any(|reason| reason.as_str() == Some("event_window: stop_new_quotes"))
+    );
+    assert!(!deferred_live_exit_is_post_only(exit));
+}
+
+#[test]
+fn adaptive_post_fill_uses_fallback_when_depth_is_insufficient() {
+    let now = OffsetDateTime::now_utc();
+    let mut entry = live_test_open_order("yes_live");
+    entry.price = reward_decimal("0.49");
+    let config = RewardBotConfig {
+        post_fill_strategy: PostFillStrategy::Adaptive,
+        adaptive_fallback_strategy: PostFillStrategy::ExitAtMarkup,
+        ..RewardBotConfig::default()
+    };
+    let mut plan = live_test_plan(now);
+    plan.eligible = false;
+    plan.reason = "fair-value edge blocked".to_string();
+    let mut book = live_test_book("yes_live", now);
+    book.bids[0].price = reward_decimal("0.53");
+    book.bids[0].size = Decimal::ONE;
+    let positions = HashMap::from([(
+        "yes_live".to_string(),
+        RewardPosition {
+            account_id: entry.account_id.clone(),
+            condition_id: entry.condition_id.clone(),
+            token_id: entry.token_id.clone(),
+            outcome: entry.outcome.clone(),
+            size: Decimal::from(5_u64),
+            avg_price: reward_decimal("0.52"),
+            realized_pnl: Decimal::ZERO,
+            updated_at: now,
+        },
+    )]);
+    let books = HashMap::from([("yes_live".to_string(), book)]);
+
+    let updates = plan_live_post_fill_orders(
+        &config,
+        &[plan],
+        &entry,
+        Decimal::from(5_u64),
+        &positions,
+        &books,
+        Decimal::ZERO,
+        "trc_adaptive_fallback",
+    );
+
+    let LiveRewardOrderUpdate::Unchanged(adaptive_event) = &updates[0] else {
+        panic!("adaptive should record a selection event");
+    };
+    let LiveRewardOrderUpdate::Changed(exit, exit_event) = &updates[1] else {
+        panic!("adaptive should create the fallback exit");
+    };
+    assert_eq!(adaptive_event.metadata["selected_strategy"], "exit_at_markup");
+    assert_eq!(exit.price, reward_decimal("0.52"));
+    assert!(deferred_live_exit_is_post_only(exit));
+    assert_eq!(exit_event.event_type, "reward_live_exit_planned");
+}
+
+#[test]
+fn adaptive_exit_reselects_local_pending_sell_when_risk_changes() {
+    let now = OffsetDateTime::now_utc();
+    let mut order = live_test_open_order("yes_live");
+    order.side = RewardOrderSide::Sell;
+    order.status = ManagedRewardOrderStatus::ExitPending;
+    order.external_order_id = None;
+    order.price = reward_decimal("0.50");
+    order.size = reward_decimal("5");
+    order.scoring = false;
+    order.exit_strategy_source = RewardExitStrategySource::Adaptive;
+    order.exit_strategy_selected = Some(PostFillStrategy::HoldAndRequote);
+    order.exit_floor_price = Some(reward_decimal("0.50"));
+    order.updated_at = now - TimeDuration::seconds(60);
+    let mut open_orders = vec![order];
+    let mut plan = live_test_plan(now);
+    plan.eligible = false;
+    plan.reason = "fair-value edge blocked".to_string();
+    let mut book = live_test_book("yes_live", now);
+    book.bids[0].price = reward_decimal("0.53");
+    book.bids[0].size = reward_decimal("30");
+    let books = HashMap::from([("yes_live".to_string(), book)]);
+    let positions = vec![RewardPosition {
+        account_id: "reward_live".to_string(),
+        condition_id: "cond_live".to_string(),
+        token_id: "yes_live".to_string(),
+        outcome: "YES".to_string(),
+        size: reward_decimal("5"),
+        avg_price: reward_decimal("0.50"),
+        realized_pnl: Decimal::ZERO,
+        updated_at: now,
+    }];
+    let config = RewardBotConfig {
+        post_fill_strategy: PostFillStrategy::Adaptive,
+        adaptive_exit_recheck_sec: 5,
+        adaptive_exit_reselect_cooldown_sec: 0,
+        ..RewardBotConfig::default()
+    };
+
+    let updates = reselect_adaptive_exit_orders(
+        &config,
+        &[plan],
+        &books,
+        &positions,
+        &mut open_orders,
+        Decimal::ZERO,
+        "trc_adaptive_reselect",
+        now,
+    );
+
+    let [LiveRewardOrderUpdate::Changed(updated, event)] = updates.as_slice() else {
+        panic!("adaptive exit should reselect the local pending sell");
+    };
+    assert_eq!(event.event_type, "reward_live_adaptive_exit_reselected");
+    assert_eq!(
+        updated.exit_strategy_selected,
+        Some(PostFillStrategy::FlattenImmediately)
+    );
+    assert_eq!(updated.exit_reselect_count, 1);
+    assert_eq!(updated.exit_last_reselected_at, Some(now));
+    assert_eq!(updated.price, reward_decimal("0.50"));
+    assert!(!deferred_live_exit_is_post_only(updated));
+}
+
+#[test]
+fn adaptive_exit_reselect_defers_during_cooldown() {
+    let now = OffsetDateTime::now_utc();
+    let mut order = live_test_open_order("yes_live");
+    order.side = RewardOrderSide::Sell;
+    order.status = ManagedRewardOrderStatus::ExitPending;
+    order.external_order_id = None;
+    order.price = reward_decimal("0.50");
+    order.size = reward_decimal("5");
+    order.scoring = false;
+    order.exit_strategy_source = RewardExitStrategySource::Adaptive;
+    order.exit_strategy_selected = Some(PostFillStrategy::HoldAndRequote);
+    order.exit_floor_price = Some(reward_decimal("0.50"));
+    order.exit_reselect_count = 1;
+    order.exit_last_reselected_at = Some(now - TimeDuration::seconds(30));
+    order.updated_at = now - TimeDuration::seconds(60);
+    let mut open_orders = vec![order];
+    let mut plan = live_test_plan(now);
+    plan.eligible = false;
+    plan.reason = "fair-value edge blocked".to_string();
+    let mut book = live_test_book("yes_live", now);
+    book.bids[0].price = reward_decimal("0.53");
+    book.bids[0].size = reward_decimal("30");
+    let books = HashMap::from([("yes_live".to_string(), book)]);
+    let positions = vec![RewardPosition {
+        account_id: "reward_live".to_string(),
+        condition_id: "cond_live".to_string(),
+        token_id: "yes_live".to_string(),
+        outcome: "YES".to_string(),
+        size: reward_decimal("5"),
+        avg_price: reward_decimal("0.50"),
+        realized_pnl: Decimal::ZERO,
+        updated_at: now,
+    }];
+    let config = RewardBotConfig {
+        post_fill_strategy: PostFillStrategy::Adaptive,
+        adaptive_exit_recheck_sec: 5,
+        adaptive_exit_reselect_cooldown_sec: 120,
+        ..RewardBotConfig::default()
+    };
+
+    let updates = reselect_adaptive_exit_orders(
+        &config,
+        &[plan],
+        &books,
+        &positions,
+        &mut open_orders,
+        Decimal::ZERO,
+        "trc_adaptive_reselect_cooldown",
+        now,
+    );
+
+    let [LiveRewardOrderUpdate::Changed(updated, event)] = updates.as_slice() else {
+        panic!("adaptive exit should emit a cooldown deferred update");
+    };
+    assert_eq!(
+        event.event_type,
+        "reward_live_adaptive_exit_reselect_deferred"
+    );
+    assert_eq!(
+        updated.exit_strategy_selected,
+        Some(PostFillStrategy::HoldAndRequote)
+    );
+    assert_eq!(updated.exit_reselect_count, 1);
 }
 
 #[test]

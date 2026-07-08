@@ -1,6 +1,6 @@
 # Backend Application Crate
 
-最后更新：2026-07-07
+最后更新：2026-07-08
 
 ## 模块边界
 
@@ -34,7 +34,7 @@
 
 ## 核心数据结构
 
-- `RewardBotConfig`：做市策略配置。当前保留 execution、market filter、opportunity metrics、fair-value、quote construction、BalancedMerge、AI advisory、info-risk、event-window、inventory 和 live risk 参数。
+- `RewardBotConfig`：做市策略配置。当前保留 execution、market filter、opportunity metrics、fair-value、quote construction、adaptive post-fill exit、holding-period adaptive exit reselection、BalancedMerge、AI advisory、info-risk、event-window、inventory 和 live risk 参数。
 - `RewardFairValueEstimate` / `RewardFairValueDecision` / `RewardQuoteEdge`：fair-value 估计、每条 leg 的 raw/effective edge、rewards rebate 折扣、不确定性和最终 gate 结果。
 - `RewardQuotePlan`：quote plan snapshot。包含 strategy profile、quote mode、book metrics、opportunity metrics、fair-value decision、AI advisory、info-risk、event-window、legs、readiness 和 live skip 状态。
 - `RewardBotStore`：application 层持久化 port。覆盖 config、markets、quote plans、orders、fills、positions、events、account state、merge intents、fair-value estimates、candles、AI/info-risk cache、LLM calls、heartbeat、control commands 和历史清理。
@@ -43,7 +43,7 @@
 
 ## 当前状态
 
-- Rewards market maker 是当前核心策略模块，运行路径为 live-only。
+- Rewards market maker 是当前核心策略模块，运行路径为 live-only；成交后退出支持固定策略和 `adaptive` 策略选择配置，adaptive 退出会在本地 `ExitPending` SELL 提交前按重查周期、冷却和单单重选上限持续重评并持久化当前具体策略。
 - Quote planning 只依赖数据库中的 reward markets、Gamma markets、orderbook 服务缓存、price-history candles、AI/info-risk cache 和本地配置。
 - Unified opportunity metrics 是 LP rewards 的统一评分层；竞争度、奖励密度、退出能力和盘口稳定性均作为做市策略内部指标处理，不再拆出独立观察模块。
 - Fair-value gate 默认启用：worker 用当前 YES 中点、反向 NO 中点和短窗口历史 median 估计 fair value，要求 BUY 报价保留 raw edge 和扣除不确定性后的 effective edge；历史估计写入 latest/history 表用于审计和回测。

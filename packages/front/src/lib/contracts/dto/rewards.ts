@@ -7,6 +7,7 @@ import type {
   RewardAiSuitability,
   RewardEventTimeConfidence,
   RewardEventWindowStatus,
+  RewardExitStrategySource,
   RewardFillRole,
   RewardGammaEventDateMode,
   RewardInfoDirectionalRisk,
@@ -118,6 +119,18 @@ export type RewardBotConfigDto = {
   requote_drift_cooldown_sec: number;
   requote_drift_max_cancels_per_cycle: number;
   post_fill_strategy: PostFillStrategy;
+  adaptive_flatten_min_bid_depth_usd: DecimalValue;
+  adaptive_flatten_min_depth_multiple: DecimalValue;
+  adaptive_flatten_min_surplus_cents: DecimalValue;
+  adaptive_flatten_when_plan_ineligible: boolean;
+  adaptive_flatten_when_event_risk: boolean;
+  adaptive_hold_when_plan_eligible: boolean;
+  adaptive_fallback_strategy: PostFillStrategy;
+  adaptive_exit_recheck_sec: number;
+  adaptive_exit_reselect_cooldown_sec: number;
+  adaptive_exit_max_reselects_per_order: number;
+  adaptive_exit_min_strategy_improvement_cents: DecimalValue;
+  adaptive_exit_cancel_replace_enabled: boolean;
   balanced_merge_enabled: boolean;
   balanced_merge_max_markets: number;
   balanced_merge_max_open_orders: number;
@@ -368,6 +381,11 @@ export type ManagedRewardOrderDto = {
   size: DecimalValue;
   strategy_bucket: RewardStrategyBucket;
   strategy_profile?: RewardStrategyProfile;
+  exit_strategy_source?: RewardExitStrategySource;
+  exit_strategy_selected?: PostFillStrategy | null;
+  exit_floor_price?: DecimalValue | null;
+  exit_reselect_count?: number;
+  exit_last_reselected_at?: string | null;
   external_order_id?: string | null;
   status: ManagedRewardOrderStatus;
   scoring: boolean;

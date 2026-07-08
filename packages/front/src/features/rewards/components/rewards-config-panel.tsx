@@ -92,6 +92,7 @@ export function RewardsConfigPanel({
               <option value="exit_at_markup">{dictionary.rewards.strategyExitMarkup}</option>
               <option value="hold_and_requote">{dictionary.rewards.strategyHold}</option>
               <option value="flatten_immediately">{dictionary.rewards.strategyFlatten}</option>
+              <option value="adaptive">{dictionary.rewards.strategyAdaptive}</option>
             </select>
           </label>
         </ConfigSection>
@@ -402,6 +403,130 @@ export function RewardsConfigPanel({
             hint={h.exitMarkupCents}
             onChange={(value) => updateNumber("exit_markup_cents", value)}
           />
+          {draft.post_fill_strategy === "adaptive" ? (
+            <>
+              <NumberInput
+                label={dictionary.rewards.adaptiveFlattenMinBidDepthUsd}
+                value={draft.adaptive_flatten_min_bid_depth_usd}
+                suffix="$"
+                hint={h.adaptiveFlattenMinBidDepthUsd}
+                onChange={(value) => updateNumber("adaptive_flatten_min_bid_depth_usd", value)}
+              />
+              <NumberInput
+                label={dictionary.rewards.adaptiveFlattenMinDepthMultiple}
+                value={draft.adaptive_flatten_min_depth_multiple}
+                suffix="x"
+                hint={h.adaptiveFlattenMinDepthMultiple}
+                onChange={(value) =>
+                  updateNumber("adaptive_flatten_min_depth_multiple", value)
+                }
+              />
+              <NumberInput
+                label={dictionary.rewards.adaptiveFlattenMinSurplusCents}
+                value={draft.adaptive_flatten_min_surplus_cents}
+                suffix="c"
+                hint={h.adaptiveFlattenMinSurplusCents}
+                onChange={(value) => updateNumber("adaptive_flatten_min_surplus_cents", value)}
+              />
+              <NumberInput
+                label={dictionary.rewards.adaptiveExitRecheckSec}
+                value={draft.adaptive_exit_recheck_sec}
+                suffix="s"
+                hint={h.adaptiveExitRecheckSec}
+                onChange={(value) => updateNumber("adaptive_exit_recheck_sec", value)}
+              />
+              <NumberInput
+                label={dictionary.rewards.adaptiveExitReselectCooldownSec}
+                value={draft.adaptive_exit_reselect_cooldown_sec}
+                suffix="s"
+                hint={h.adaptiveExitReselectCooldownSec}
+                onChange={(value) =>
+                  updateNumber("adaptive_exit_reselect_cooldown_sec", value)
+                }
+              />
+              <NumberInput
+                label={dictionary.rewards.adaptiveExitMaxReselectsPerOrder}
+                value={draft.adaptive_exit_max_reselects_per_order}
+                hint={h.adaptiveExitMaxReselectsPerOrder}
+                onChange={(value) =>
+                  updateNumber("adaptive_exit_max_reselects_per_order", value)
+                }
+              />
+              <NumberInput
+                label={dictionary.rewards.adaptiveExitMinStrategyImprovementCents}
+                value={draft.adaptive_exit_min_strategy_improvement_cents}
+                suffix="c"
+                hint={h.adaptiveExitMinStrategyImprovementCents}
+                onChange={(value) =>
+                  updateNumber("adaptive_exit_min_strategy_improvement_cents", value)
+                }
+              />
+              <ToggleField
+                label={dictionary.rewards.adaptiveFlattenWhenPlanIneligible}
+                hint={h.adaptiveFlattenWhenPlanIneligible}
+                checked={draft.adaptive_flatten_when_plan_ineligible}
+                onChange={(checked) =>
+                  setDraft((current) => ({
+                    ...current,
+                    adaptive_flatten_when_plan_ineligible: checked,
+                  }))
+                }
+              />
+              <ToggleField
+                label={dictionary.rewards.adaptiveFlattenWhenEventRisk}
+                hint={h.adaptiveFlattenWhenEventRisk}
+                checked={draft.adaptive_flatten_when_event_risk}
+                onChange={(checked) =>
+                  setDraft((current) => ({
+                    ...current,
+                    adaptive_flatten_when_event_risk: checked,
+                  }))
+                }
+              />
+              <ToggleField
+                label={dictionary.rewards.adaptiveHoldWhenPlanEligible}
+                hint={h.adaptiveHoldWhenPlanEligible}
+                checked={draft.adaptive_hold_when_plan_eligible}
+                onChange={(checked) =>
+                  setDraft((current) => ({
+                    ...current,
+                    adaptive_hold_when_plan_eligible: checked,
+                  }))
+                }
+              />
+              <ToggleField
+                label={dictionary.rewards.adaptiveExitCancelReplaceEnabled}
+                hint={h.adaptiveExitCancelReplaceEnabled}
+                checked={draft.adaptive_exit_cancel_replace_enabled}
+                onChange={(checked) =>
+                  setDraft((current) => ({
+                    ...current,
+                    adaptive_exit_cancel_replace_enabled: checked,
+                  }))
+                }
+              />
+              <label className="space-y-1.5">
+                <span className="flex items-center gap-1 text-xs font-medium text-muted-foreground">
+                  {dictionary.rewards.adaptiveFallbackStrategy}
+                  <Hint content={h.adaptiveFallbackStrategy} />
+                </span>
+                <select
+                  className={selectClassName}
+                  value={draft.adaptive_fallback_strategy}
+                  onChange={(event) =>
+                    setDraft((current) => ({
+                      ...current,
+                      adaptive_fallback_strategy: event.target.value as PostFillStrategy,
+                    }))
+                  }
+                >
+                  <option value="exit_at_markup">{dictionary.rewards.strategyExitMarkup}</option>
+                  <option value="hold_and_requote">{dictionary.rewards.strategyHold}</option>
+                  <option value="flatten_immediately">{dictionary.rewards.strategyFlatten}</option>
+                </select>
+              </label>
+            </>
+          ) : null}
           <NumberInput
             label={dictionary.rewards.accountCapital}
             value={draft.account_capital_usd}

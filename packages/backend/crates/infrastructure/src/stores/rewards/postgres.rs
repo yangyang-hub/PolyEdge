@@ -700,6 +700,11 @@ impl RewardBotStore for PostgresRewardBotStore {
             SELECT id, account_id, condition_id, token_id, outcome, side, price, size,
                    strategy_bucket,
                    strategy_profile,
+                   exit_strategy_source,
+                   exit_strategy_selected,
+                   exit_floor_price,
+                   exit_reselect_count,
+                   exit_last_reselected_at,
                    external_order_id, status, scoring, reason, filled_size, reward_earned,
                    last_scored_at, created_at, updated_at
             FROM reward_managed_orders
@@ -779,6 +784,11 @@ impl RewardBotStore for PostgresRewardBotStore {
             SELECT id, account_id, condition_id, token_id, outcome, side, price, size,
                    strategy_bucket,
                    strategy_profile,
+                   exit_strategy_source,
+                   exit_strategy_selected,
+                   exit_floor_price,
+                   exit_reselect_count,
+                   exit_last_reselected_at,
                    external_order_id, status, scoring, reason, filled_size, reward_earned,
                    last_scored_at, created_at, updated_at
             FROM reward_managed_orders

@@ -101,6 +101,18 @@ impl Default for RewardBotConfig {
             requote_drift_cooldown_sec: 120,
             requote_drift_max_cancels_per_cycle: 2,
             post_fill_strategy: PostFillStrategy::ExitAtMarkup,
+            adaptive_flatten_min_bid_depth_usd: decimal("5"),
+            adaptive_flatten_min_depth_multiple: decimal("1.25"),
+            adaptive_flatten_min_surplus_cents: Decimal::ZERO,
+            adaptive_flatten_when_plan_ineligible: true,
+            adaptive_flatten_when_event_risk: true,
+            adaptive_hold_when_plan_eligible: true,
+            adaptive_fallback_strategy: PostFillStrategy::ExitAtMarkup,
+            adaptive_exit_recheck_sec: 30,
+            adaptive_exit_reselect_cooldown_sec: 120,
+            adaptive_exit_max_reselects_per_order: 3,
+            adaptive_exit_min_strategy_improvement_cents: decimal("1"),
+            adaptive_exit_cancel_replace_enabled: true,
             balanced_merge_enabled: false,
             balanced_merge_max_markets: 2,
             balanced_merge_max_open_orders: 4,
@@ -365,6 +377,34 @@ impl RewardBotConfig {
         self.requote_drift_cooldown_sec = self.requote_drift_cooldown_sec.clamp(0, 86_400);
         self.requote_drift_max_cancels_per_cycle =
             self.requote_drift_max_cancels_per_cycle.clamp(0, 100);
+        self.adaptive_flatten_min_bid_depth_usd = clamp_decimal(
+            self.adaptive_flatten_min_bid_depth_usd,
+            Decimal::ZERO,
+            decimal("1000000"),
+        );
+        self.adaptive_flatten_min_depth_multiple = clamp_decimal(
+            self.adaptive_flatten_min_depth_multiple,
+            Decimal::ZERO,
+            decimal("100"),
+        );
+        self.adaptive_flatten_min_surplus_cents = clamp_decimal(
+            self.adaptive_flatten_min_surplus_cents,
+            Decimal::ZERO,
+            decimal("50"),
+        );
+        if self.adaptive_fallback_strategy == PostFillStrategy::Adaptive {
+            self.adaptive_fallback_strategy = PostFillStrategy::ExitAtMarkup;
+        }
+        self.adaptive_exit_recheck_sec = self.adaptive_exit_recheck_sec.clamp(5, 86_400);
+        self.adaptive_exit_reselect_cooldown_sec =
+            self.adaptive_exit_reselect_cooldown_sec.clamp(0, 86_400);
+        self.adaptive_exit_max_reselects_per_order =
+            self.adaptive_exit_max_reselects_per_order.clamp(0, 100);
+        self.adaptive_exit_min_strategy_improvement_cents = clamp_decimal(
+            self.adaptive_exit_min_strategy_improvement_cents,
+            Decimal::ZERO,
+            decimal("50"),
+        );
         self.balanced_merge_max_markets = self.balanced_merge_max_markets.clamp(0, u16::MAX);
         self.balanced_merge_max_open_orders =
             self.balanced_merge_max_open_orders.clamp(0, u16::MAX);
@@ -784,6 +824,42 @@ impl RewardBotConfig {
         if let Some(post_fill_strategy) = patch.post_fill_strategy {
             next.post_fill_strategy = post_fill_strategy;
         }
+        if let Some(value) = patch.adaptive_flatten_min_bid_depth_usd {
+            next.adaptive_flatten_min_bid_depth_usd = value;
+        }
+        if let Some(value) = patch.adaptive_flatten_min_depth_multiple {
+            next.adaptive_flatten_min_depth_multiple = value;
+        }
+        if let Some(value) = patch.adaptive_flatten_min_surplus_cents {
+            next.adaptive_flatten_min_surplus_cents = value;
+        }
+        if let Some(value) = patch.adaptive_flatten_when_plan_ineligible {
+            next.adaptive_flatten_when_plan_ineligible = value;
+        }
+        if let Some(value) = patch.adaptive_flatten_when_event_risk {
+            next.adaptive_flatten_when_event_risk = value;
+        }
+        if let Some(value) = patch.adaptive_hold_when_plan_eligible {
+            next.adaptive_hold_when_plan_eligible = value;
+        }
+        if let Some(value) = patch.adaptive_fallback_strategy {
+            next.adaptive_fallback_strategy = value;
+        }
+        if let Some(value) = patch.adaptive_exit_recheck_sec {
+            next.adaptive_exit_recheck_sec = value;
+        }
+        if let Some(value) = patch.adaptive_exit_reselect_cooldown_sec {
+            next.adaptive_exit_reselect_cooldown_sec = value;
+        }
+        if let Some(value) = patch.adaptive_exit_max_reselects_per_order {
+            next.adaptive_exit_max_reselects_per_order = value;
+        }
+        if let Some(value) = patch.adaptive_exit_min_strategy_improvement_cents {
+            next.adaptive_exit_min_strategy_improvement_cents = value;
+        }
+        if let Some(value) = patch.adaptive_exit_cancel_replace_enabled {
+            next.adaptive_exit_cancel_replace_enabled = value;
+        }
         if let Some(value) = patch.balanced_merge_enabled {
             next.balanced_merge_enabled = value;
         }
@@ -924,7 +1000,19 @@ mod reward_config_tests {
             "requote_drift_confirm_sec": 90,
             "requote_drift_cooldown_sec": 240,
             "requote_drift_max_cancels_per_cycle": 2,
-            "post_fill_strategy": "flatten_immediately",
+            "post_fill_strategy": "adaptive",
+            "adaptive_flatten_min_bid_depth_usd": 12,
+            "adaptive_flatten_min_depth_multiple": 1.5,
+            "adaptive_flatten_min_surplus_cents": 1,
+            "adaptive_flatten_when_plan_ineligible": true,
+            "adaptive_flatten_when_event_risk": true,
+            "adaptive_hold_when_plan_eligible": false,
+            "adaptive_fallback_strategy": "hold_and_requote",
+            "adaptive_exit_recheck_sec": 45,
+            "adaptive_exit_reselect_cooldown_sec": 180,
+            "adaptive_exit_max_reselects_per_order": 4,
+            "adaptive_exit_min_strategy_improvement_cents": 2,
+            "adaptive_exit_cancel_replace_enabled": false,
             "min_depth_usd": 100,
             "cancel_bid_rank": 2,
             "depth_drop_pct": 30,
@@ -970,6 +1058,26 @@ mod reward_config_tests {
         assert_eq!(config.requote_drift_confirm_sec, 90);
         assert_eq!(config.requote_drift_cooldown_sec, 240);
         assert_eq!(config.requote_drift_max_cancels_per_cycle, 2);
+        assert_eq!(config.post_fill_strategy, PostFillStrategy::Adaptive);
+        assert_eq!(config.adaptive_flatten_min_bid_depth_usd, decimal("12"));
+        assert_eq!(
+            config.adaptive_flatten_min_depth_multiple,
+            decimal("1.5")
+        );
+        assert_eq!(config.adaptive_flatten_min_surplus_cents, decimal("1"));
+        assert!(!config.adaptive_hold_when_plan_eligible);
+        assert_eq!(
+            config.adaptive_fallback_strategy,
+            PostFillStrategy::HoldAndRequote
+        );
+        assert_eq!(config.adaptive_exit_recheck_sec, 45);
+        assert_eq!(config.adaptive_exit_reselect_cooldown_sec, 180);
+        assert_eq!(config.adaptive_exit_max_reselects_per_order, 4);
+        assert_eq!(
+            config.adaptive_exit_min_strategy_improvement_cents,
+            decimal("2")
+        );
+        assert!(!config.adaptive_exit_cancel_replace_enabled);
 
         let serialized = serde_json::to_value(config).expect("config serializes");
         assert_eq!(serialized["ai_provider"], "openai");
@@ -980,6 +1088,16 @@ mod reward_config_tests {
             serialized["event_window_gamma_unreviewed_dates_mode"],
             "observe"
         );
+        assert_eq!(serialized["post_fill_strategy"], "adaptive");
+        assert_eq!(serialized["adaptive_fallback_strategy"], "hold_and_requote");
+        assert_eq!(serialized["adaptive_exit_recheck_sec"], 45);
+        assert_eq!(serialized["adaptive_exit_reselect_cooldown_sec"], 180);
+        assert_eq!(serialized["adaptive_exit_max_reselects_per_order"], 4);
+        assert_eq!(
+            serialized["adaptive_exit_min_strategy_improvement_cents"],
+            "2"
+        );
+        assert_eq!(serialized["adaptive_exit_cancel_replace_enabled"], false);
     }
 
     #[test]

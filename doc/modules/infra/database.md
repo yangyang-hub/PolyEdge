@@ -1,10 +1,10 @@
 # 数据库（Migrations + Schema）
 
-最后更新：2026-07-07
+最后更新：2026-07-08
 
 ## 概述
 
-数据库使用 PostgreSQL。当前基线包含 47 个 SQL 迁移文件，最新文件为 `0058_reward_fair_value.sql`。schema 覆盖审计、幂等、LLM 调用、市场数据、事件/证据、执行历史、内部风险状态、新闻、LP rewards market maker、fair-value estimates、Funding/Polymarket 账户配套、orderbook price-history candles、runtime config 和 BalancedMerge。
+数据库使用 PostgreSQL。当前基线包含 48 个 SQL 迁移文件，最新文件为 `0059_reward_adaptive_exit_reselection.sql`。schema 覆盖审计、幂等、LLM 调用、市场数据、事件/证据、执行历史、内部风险状态、新闻、LP rewards market maker、fair-value estimates、adaptive exit reselection、Funding/Polymarket 账户配套、orderbook price-history candles、runtime config 和 BalancedMerge。
 
 本项目现在面向空库重新部署：`packages/backend/init.sql` 已按当前 `migrations/` 目录重新生成，不兼容已删除历史模块的旧表。运行时仍通过 `sqlx::migrate!` 使用 `packages/backend/migrations/` 做迁移校验。
 
@@ -65,6 +65,7 @@
 | `0056_reward_managed_orders_external_inventory.sql` | 外部库存退出 | 移除 managed orders 对 rewards 目录 FK |
 | `0057_reward_merge_intent_execution.sql` | merge intent 执行状态 | tx hash、提交/确认/失败时间、失败原因、retry_count |
 | `0058_reward_fair_value.sql` | 做市 fair-value | `reward_fair_values`、`reward_fair_value_history` |
+| `0059_reward_adaptive_exit_reselection.sql` | Adaptive 退出重评 | `reward_managed_orders` 增加退出策略来源、当前具体策略、floor、重选次数和最近重选时间 |
 
 ## Schema 领域分组
 
@@ -93,10 +94,10 @@
 
 ### LP rewards
 
-- `reward_bot_config`：key-value 配置，覆盖市场质量、quote/selection、dominant 单边、盘口集中度、偏好分类、统一机会评分、fair-value、AI advisory、信息风险、事件窗口、首单 gate、库存、requote、reconcile、BalancedMerge 等参数。
+- `reward_bot_config`：key-value 配置，覆盖市场质量、quote/selection、dominant 单边、盘口集中度、偏好分类、统一机会评分、fair-value、adaptive post-fill 退出与 pending-exit 重评、AI advisory、信息风险、事件窗口、首单 gate、库存、requote、reconcile、BalancedMerge 等参数。
 - `reward_markets`：condition、question、market_slug、rewards_max_spread/min_size、total_daily_rate、tokens JSON。
 - `reward_quote_plans`：当前 quote plan snapshot，包含 market FK、score、`strategy_profile` 和 quote plan JSON。JSON 可携带 opportunity metrics、fair-value decision、event window、AI advisory、info-risk、readiness 和 blocker reasons。
-- `reward_managed_orders`：托管订单，包含 account/condition/token、side、price、size、status、strategy bucket/profile、filled_size、reward_earned、external id 和对账锁等字段。外部库存补 SELL intent 可来自当前 rewards catalog 外的 condition。
+- `reward_managed_orders`：托管订单，包含 account/condition/token、side、price、size、status、strategy bucket/profile、exit strategy source/selected/floor/reselect state、filled_size、reward_earned、external id 和对账锁等字段。外部库存补 SELL intent 可来自当前 rewards catalog 外的 condition；adaptive 本地 pending SELL 用这些字段在 worker 重启后继续持仓期重评。
 - `reward_fills`：托管订单成交，保存 account/condition/token/outcome/side、price、size、notional、role、realized PnL。
 - `reward_positions`：按 account + token 保存外部完整持仓，可包含当前 rewards catalog 外的市场。
 - `reward_account_state`：capital、available、reserved 兼容字段、realized PnL、reward earned、fees、tick index、funding address、外部 BUY notional。
@@ -127,7 +128,7 @@
 
 ## 当前状态
 
-- 当前迁移文件数为 47，最新为 `0058_reward_fair_value.sql`。
+- 当前迁移文件数为 48，最新为 `0059_reward_adaptive_exit_reselection.sql`。
 - `packages/backend/init.sql` 已由当前迁移重新生成。
 - 已删除历史模块的迁移、表、store、handler 和前端 DTO 不在当前基线中。
 - Rewards 竞争度相关数据只存在于 quote plan 的统一 opportunity metrics 中，不再有独立 observation 表或模块。

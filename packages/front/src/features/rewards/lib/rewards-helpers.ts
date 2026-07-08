@@ -16,7 +16,12 @@ export function eventCategory(eventType: string): Exclude<EventCategory, "all"> 
     eventType === "reward_live_order_placed" ||
     eventType === "reward_live_exit_order_placed" ||
     eventType === "reward_live_order_planned" ||
+    eventType === "reward_live_adaptive_exit_selected" ||
+    eventType === "reward_live_adaptive_exit_reselected" ||
+    eventType === "reward_live_adaptive_exit_reselect_deferred" ||
+    eventType === "reward_live_adaptive_exit_reselect_limit_reached" ||
     eventType === "reward_live_exit_planned" ||
+    eventType === "reward_live_hold_requote_exit_planned" ||
     eventType === "reward_live_flatten_planned" ||
     eventType === "reward_live_order_rejected" ||
     eventType === "reward_live_exit_order_rejected" ||

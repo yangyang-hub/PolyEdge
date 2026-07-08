@@ -230,6 +230,43 @@ fn apply_reward_config_value(config: &mut RewardBotConfig, key: &str, value: &st
             config.requote_drift_max_cancels_per_cycle = parse_u16_config(key, value)?;
         }
         "post_fill_strategy" => config.post_fill_strategy = PostFillStrategy::from_str(value)?,
+        "adaptive_flatten_min_bid_depth_usd" => {
+            config.adaptive_flatten_min_bid_depth_usd = parse_decimal_config(key, value)?;
+        }
+        "adaptive_flatten_min_depth_multiple" => {
+            config.adaptive_flatten_min_depth_multiple = parse_decimal_config(key, value)?;
+        }
+        "adaptive_flatten_min_surplus_cents" => {
+            config.adaptive_flatten_min_surplus_cents = parse_decimal_config(key, value)?;
+        }
+        "adaptive_flatten_when_plan_ineligible" => {
+            config.adaptive_flatten_when_plan_ineligible = parse_bool_config(key, value)?;
+        }
+        "adaptive_flatten_when_event_risk" => {
+            config.adaptive_flatten_when_event_risk = parse_bool_config(key, value)?;
+        }
+        "adaptive_hold_when_plan_eligible" => {
+            config.adaptive_hold_when_plan_eligible = parse_bool_config(key, value)?;
+        }
+        "adaptive_fallback_strategy" => {
+            config.adaptive_fallback_strategy = PostFillStrategy::from_str(value)?;
+        }
+        "adaptive_exit_recheck_sec" => {
+            config.adaptive_exit_recheck_sec = parse_u64_config(key, value)?;
+        }
+        "adaptive_exit_reselect_cooldown_sec" => {
+            config.adaptive_exit_reselect_cooldown_sec = parse_u64_config(key, value)?;
+        }
+        "adaptive_exit_max_reselects_per_order" => {
+            config.adaptive_exit_max_reselects_per_order = parse_u16_config(key, value)?;
+        }
+        "adaptive_exit_min_strategy_improvement_cents" => {
+            config.adaptive_exit_min_strategy_improvement_cents =
+                parse_decimal_config(key, value)?;
+        }
+        "adaptive_exit_cancel_replace_enabled" => {
+            config.adaptive_exit_cancel_replace_enabled = parse_bool_config(key, value)?;
+        }
         "balanced_merge_enabled" => {
             config.balanced_merge_enabled = parse_bool_config(key, value)?;
         }
@@ -599,6 +636,56 @@ fn reward_config_entries(config: &RewardBotConfig) -> Vec<(&'static str, String)
         (
             "post_fill_strategy",
             config.post_fill_strategy.as_str().to_string(),
+        ),
+        (
+            "adaptive_flatten_min_bid_depth_usd",
+            config.adaptive_flatten_min_bid_depth_usd.to_string(),
+        ),
+        (
+            "adaptive_flatten_min_depth_multiple",
+            config.adaptive_flatten_min_depth_multiple.to_string(),
+        ),
+        (
+            "adaptive_flatten_min_surplus_cents",
+            config.adaptive_flatten_min_surplus_cents.to_string(),
+        ),
+        (
+            "adaptive_flatten_when_plan_ineligible",
+            config.adaptive_flatten_when_plan_ineligible.to_string(),
+        ),
+        (
+            "adaptive_flatten_when_event_risk",
+            config.adaptive_flatten_when_event_risk.to_string(),
+        ),
+        (
+            "adaptive_hold_when_plan_eligible",
+            config.adaptive_hold_when_plan_eligible.to_string(),
+        ),
+        (
+            "adaptive_fallback_strategy",
+            config.adaptive_fallback_strategy.as_str().to_string(),
+        ),
+        (
+            "adaptive_exit_recheck_sec",
+            config.adaptive_exit_recheck_sec.to_string(),
+        ),
+        (
+            "adaptive_exit_reselect_cooldown_sec",
+            config.adaptive_exit_reselect_cooldown_sec.to_string(),
+        ),
+        (
+            "adaptive_exit_max_reselects_per_order",
+            config.adaptive_exit_max_reselects_per_order.to_string(),
+        ),
+        (
+            "adaptive_exit_min_strategy_improvement_cents",
+            config
+                .adaptive_exit_min_strategy_improvement_cents
+                .to_string(),
+        ),
+        (
+            "adaptive_exit_cancel_replace_enabled",
+            config.adaptive_exit_cancel_replace_enabled.to_string(),
         ),
         (
             "balanced_merge_enabled",

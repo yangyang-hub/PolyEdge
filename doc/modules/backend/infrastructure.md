@@ -1,6 +1,6 @@
 # infrastructure（基础设施层）
 
-最后更新：2026-07-07
+最后更新：2026-07-08
 
 ## 概述
 
@@ -86,7 +86,7 @@ Rewards provider 密钥只从 `RewardsSettings` 读取，不进入 `RewardBotCon
 
 - `runtime_config` 启动时用环境变量值 bootstrap 数据库；环境变量始终优先。
 - Postgres maintenance 使用 `WITH doomed AS (SELECT ctid ... LIMIT $n) DELETE ... USING doomed` 分批删除，避免超大事务。
-- Rewards 配置以 key-value 保存，覆盖市场质量、quote/selection、dominant 单边、盘口集中度、偏好分类、机会评分、fair-value、AI advisory、信息风险、事件窗口、首单 gate、库存、requote、reconcile 和 BalancedMerge 参数。
+- Rewards 配置以 key-value 保存，覆盖市场质量、quote/selection、dominant 单边、盘口集中度、偏好分类、机会评分、fair-value、adaptive post-fill 退出与 pending-exit 重评、AI advisory、信息风险、事件窗口、首单 gate、库存、requote、reconcile 和 BalancedMerge 参数。
 - `RewardBotStore` 维护 `reward_control_commands`，API 入队 pending 命令，worker 使用 claim/complete/fail 处理；running 命令超过 5 分钟可重新领取。
 - `RewardBotStore` 维护 `reward_worker_heartbeats`，API snapshot 只在配置启用且最近 2 分钟有 heartbeat 时标记 worker running。
 - `reward_market_advisories`、`reward_market_info_risks` 和 `llm_calls` 已接入 Postgres/内存实现；外部 provider 调用按 UTC 日聚合展示。

@@ -27,7 +27,12 @@ export type RewardRiskSeverity = "info" | "warning" | "critical";
 export type PostFillStrategy =
   | "exit_at_markup"
   | "hold_and_requote"
-  | "flatten_immediately";
+  | "flatten_immediately"
+  | "adaptive";
+export type RewardExitStrategySource =
+  | "configured"
+  | "adaptive"
+  | "external_inventory";
 export type RewardQuoteMode = "double" | "auto";
 export type RewardSelectionMode = "observe" | "enforce";
 export type RewardEventTimeConfidence = "low" | "medium" | "high";

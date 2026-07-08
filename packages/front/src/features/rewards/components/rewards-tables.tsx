@@ -13,6 +13,8 @@ import {
 } from "@/components/ui/table";
 import type {
   ManagedRewardOrderDto,
+  PostFillStrategy,
+  RewardExitStrategySource,
   RewardListPageDto,
   RewardPlanQuoteMode,
   RewardQuotePlanDto,
@@ -64,6 +66,31 @@ function quoteModeLabel(mode?: RewardPlanQuoteMode) {
 function strategyProfileLabel(profile?: RewardStrategyProfile | null) {
   if (profile === "balanced_merge") return dictionary.rewards.strategyProfileBalancedMerge;
   return dictionary.rewards.strategyProfileStandard;
+}
+
+function postFillStrategyLabel(strategy?: PostFillStrategy | null) {
+  if (strategy === "exit_at_markup") return dictionary.rewards.strategyExitMarkup;
+  if (strategy === "hold_and_requote") return dictionary.rewards.strategyHold;
+  if (strategy === "flatten_immediately") return dictionary.rewards.strategyFlatten;
+  if (strategy === "adaptive") return dictionary.rewards.strategyAdaptive;
+  return dictionary.rewards.notAvailable;
+}
+
+function exitStrategySourceLabel(source?: RewardExitStrategySource | null) {
+  if (source === "adaptive") return dictionary.rewards.exitSourceAdaptive;
+  if (source === "external_inventory") return dictionary.rewards.exitSourceExternalInventory;
+  if (source === "configured") return dictionary.rewards.exitSourceConfigured;
+  return dictionary.rewards.notAvailable;
+}
+
+function orderExitStrategySummary(order: ManagedRewardOrderDto) {
+  if (order.side !== "sell" && !order.exit_strategy_selected) {
+    return dictionary.rewards.notAvailable;
+  }
+  const source = exitStrategySourceLabel(order.exit_strategy_source);
+  const strategy = postFillStrategyLabel(order.exit_strategy_selected);
+  const count = order.exit_reselect_count ?? 0;
+  return count > 0 ? `${source} / ${strategy} / ${count}` : `${source} / ${strategy}`;
 }
 
 function paginationFromPage(
@@ -368,13 +395,14 @@ export function OrdersTable({
               </button>
             </TableHead>
             <TableHead>{dictionary.rewards.scoring}</TableHead>
+            <TableHead>{dictionary.rewards.exitStrategy}</TableHead>
             <TableHead className="w-[320px]">{dictionary.rewards.reason}</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
           {orders.length === 0 ? (
             <TableRow>
-              <TableCell colSpan={8} className="py-6 text-center text-sm text-muted-foreground">
+              <TableCell colSpan={9} className="py-6 text-center text-sm text-muted-foreground">
                 {dictionary.rewards.none}
               </TableCell>
             </TableRow>
@@ -403,6 +431,9 @@ export function OrdersTable({
                   </TableCell>
                   <TableCell className="align-top font-mono">{formatFixed(order.size, 2)}</TableCell>
                   <TableCell className="align-top">{order.scoring ? dictionary.common.active : dictionary.common.idle}</TableCell>
+                  <TableCell className="align-top text-xs text-muted-foreground">
+                    {orderExitStrategySummary(order)}
+                  </TableCell>
                   <TableCell className="align-top text-xs leading-5 text-muted-foreground">
                     <TruncateText text={order.reason} lines={2} />
                   </TableCell>

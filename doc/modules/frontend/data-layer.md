@@ -1,6 +1,6 @@
 # 数据层（API Client + Actions + Contracts）
 
-最后更新：2026-07-07
+最后更新：2026-07-08
 
 ## 概述
 
@@ -87,7 +87,8 @@ Client interaction
 
 - `readRewardBotSnapshot()` 支持计划/订单分页、搜索、状态和排序 query；首屏 loader 显式请求 `plans_eligible=true`。
 - Snapshot DTO 包含 `orders_page`、`llm_usage`、`token_quotes`、quote plan `opportunity_metrics`、AI advisory、info-risk、event window、strategy profile 和 BalancedMerge 字段。
-- `RewardBotConfigDto` 镜像当前可编辑配置：市场质量、机会评分、quote/selection、dominant 单边、盘口集中度、AI/info-risk、事件窗口、库存、requote、reconcile、BalancedMerge 等字段。
+- `RewardBotConfigDto` 镜像当前可编辑配置：市场质量、机会评分、quote/selection、dominant 单边、盘口集中度、AI/info-risk、事件窗口、adaptive post-fill 退出与 pending-exit 重评、库存、requote、reconcile、BalancedMerge 等字段。
+- `ManagedRewardOrderDto` 暴露退出策略来源、当前具体退出策略、非亏损 floor、adaptive 重选次数和最近重选时间，用于订单表展示持仓期退出重评状态。
 - API key、provider base URL、模型名和请求超时不进入前端 DTO，只从 worker 环境变量读取。
 - 竞争相关展示只来自 `opportunity_metrics`；前端 DTO 不再包含独立竞争配置、报告或指标对象。
 - Rewards 已移除依赖已删除研究表的诊断字段；quote plan 不再携带对应 EV 诊断对象。
