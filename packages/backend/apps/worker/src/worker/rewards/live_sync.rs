@@ -630,6 +630,7 @@ async fn run_reward_bot_live_reconcile_unlocked(
         &cycle.positions,
         &open_orders,
         &report,
+        None,
         trace_id,
     )
     .await?;

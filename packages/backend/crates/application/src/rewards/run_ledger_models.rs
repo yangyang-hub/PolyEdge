@@ -686,6 +686,12 @@ fn reward_strategy_action_from_merge_intent(
 }
 
 fn reward_strategy_action_type_for_order(order: &ManagedRewardOrder) -> RewardStrategyActionType {
+    if reward_order_action_skipped_before_external_submission(order) {
+        return match order.side {
+            RewardOrderSide::Buy => RewardStrategyActionType::PlaceBuy,
+            RewardOrderSide::Sell => RewardStrategyActionType::SubmitExitSell,
+        };
+    }
     if matches!(order.status, ManagedRewardOrderStatus::Cancelled) {
         return RewardStrategyActionType::CancelOrder;
     }
@@ -703,7 +709,9 @@ fn reward_strategy_action_type_for_order(order: &ManagedRewardOrder) -> RewardSt
 
 fn reward_strategy_action_status_for_order(order: &ManagedRewardOrder) -> RewardStrategyActionStatus {
     let reason = order.reason.to_ascii_lowercase();
-    if matches!(order.status, ManagedRewardOrderStatus::Error) {
+    if reward_order_action_skipped_before_external_submission(order) {
+        RewardStrategyActionStatus::Skipped
+    } else if matches!(order.status, ManagedRewardOrderStatus::Error) {
         RewardStrategyActionStatus::Failed
     } else if reason.contains("unknown") || reason.contains("manual reconciliation required") {
         RewardStrategyActionStatus::Unknown
@@ -711,6 +719,22 @@ fn reward_strategy_action_status_for_order(order: &ManagedRewardOrder) -> Reward
         RewardStrategyActionStatus::Planned
     } else {
         RewardStrategyActionStatus::Succeeded
+    }
+}
+
+fn reward_order_action_skipped_before_external_submission(order: &ManagedRewardOrder) -> bool {
+    if order.external_order_id.is_some()
+        || order.status != ManagedRewardOrderStatus::Cancelled
+    {
+        return false;
+    }
+    let reason = order.reason.to_ascii_lowercase();
+    match order.side {
+        RewardOrderSide::Buy => {
+            reason.contains("cancelled before live submission")
+                || reason.contains("cancelled by live submission last-look")
+        }
+        RewardOrderSide::Sell => reason.starts_with("sell exit closed because"),
     }
 }
 

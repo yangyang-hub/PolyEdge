@@ -33,6 +33,7 @@ include!("rewards/provider_models.rs");
 include!("rewards/run_ledger_models.rs");
 include!("rewards/config_impl.rs");
 include!("rewards/runtime_models.rs");
+include!("rewards/action_planner.rs");
 include!("rewards/event_window.rs");
 include!("rewards/pagination.rs");
 include!("rewards/control.rs");
@@ -95,4 +96,11 @@ mod engine_tests {
 #[cfg(test)]
 mod strategy_input_tests {
     include!("rewards/strategy_input_tests.rs");
+}
+
+#[cfg(test)]
+mod action_planner_tests {
+    use super::*;
+
+    include!("rewards/action_planner_tests.rs");
 }

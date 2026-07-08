@@ -167,6 +167,7 @@ async fn execute_pending_balanced_merge_intents(
     positions: &[RewardPosition],
     open_orders: &[ManagedRewardOrder],
     report: &RewardBotRunReport,
+    run_id: Option<i64>,
     trace_id: &str,
 ) -> Result<usize> {
     if !config.balanced_merge_enabled || !config.balanced_merge_auto_execute_enabled {
@@ -210,6 +211,26 @@ async fn execute_pending_balanced_merge_intents(
             continue;
         }
 
+        if let Some(run_id) = run_id {
+            let action_context = RewardActionPlannerContext {
+                run_id,
+                trace_id,
+                now: OffsetDateTime::now_utc(),
+            };
+            let planned_action = RewardActionPlanner::plan_merge_action(
+                action_context,
+                RewardMergeActionProposal {
+                    intent: &intent,
+                    action_type: RewardStrategyActionType::ExecuteMerge,
+                    reason: intent.reason.as_str(),
+                    idempotency_suffix: "execute",
+                    metadata: json!({ "source": "balanced_merge_auto_execute" }),
+                },
+            );
+            record_planned_reward_actions(state, &[planned_action], trace_id, "merge_execute")
+                .await?;
+        }
+
         match chain
             .submit_merge_positions(
                 &private_key,
@@ -229,6 +250,8 @@ async fn execute_pending_balanced_merge_intents(
                     "submitted balanced merge transaction {} for {} shares",
                     receipt.tx_hash, receipt.amount
                 );
+                let mut executed_intent = intent.clone();
+                executed_intent.tx_hash = Some(receipt.tx_hash.clone());
                 state
                     .reward_bot_service
                     .mark_reward_merge_intent_submitted(
@@ -238,6 +261,28 @@ async fn execute_pending_balanced_merge_intents(
                         &reason,
                     )
                     .await?;
+                if let Some(run_id) = run_id {
+                    let action_context = RewardActionPlannerContext { run_id, trace_id, now };
+                    state
+                        .reward_bot_service
+                        .record_strategy_actions(&[
+                            RewardActionPlanner::merge_execution_result_action(
+                                action_context,
+                                &executed_intent,
+                                RewardStrategyActionStatus::Succeeded,
+                                &reason,
+                                json!({
+                                    "tx_hash": receipt.tx_hash.clone(),
+                                    "owner_address": receipt.owner_address.clone(),
+                                    "proxy_wallet_address": receipt.proxy_wallet_address.clone(),
+                                    "merge_size": receipt.amount,
+                                    "amount_units": receipt.amount_units.clone(),
+                                    "safe_nonce": receipt.safe_nonce,
+                                }),
+                            ),
+                        ])
+                        .await?;
+                }
                 persist_live_reward_updates(
                     state,
                     &mut event_account,
@@ -273,6 +318,24 @@ async fn execute_pending_balanced_merge_intents(
                     .reward_bot_service
                     .mark_reward_merge_intent_failed(&intent.id, &reason, now)
                     .await?;
+                if let Some(run_id) = run_id {
+                    let action_context = RewardActionPlannerContext { run_id, trace_id, now };
+                    state
+                        .reward_bot_service
+                        .record_strategy_actions(&[
+                            RewardActionPlanner::merge_execution_result_action(
+                                action_context,
+                                &intent,
+                                RewardStrategyActionStatus::Failed,
+                                &reason,
+                                json!({
+                                    "error": error.to_string(),
+                                    "code": error.code(),
+                                }),
+                            ),
+                        ])
+                        .await?;
+                }
                 persist_live_reward_updates(
                     state,
                     &mut event_account,
@@ -616,6 +679,28 @@ async fn save_reward_quote_plans_for_run(
         .await
 }
 
+async fn record_planned_reward_actions(
+    state: &AppState,
+    actions: &[RewardStrategyAction],
+    trace_id: &str,
+    phase: &str,
+) -> Result<()> {
+    if actions.is_empty() {
+        return Ok(());
+    }
+    state
+        .reward_bot_service
+        .record_strategy_actions(actions)
+        .await?;
+    debug!(
+        trace_id = %trace_id,
+        phase,
+        actions = actions.len(),
+        "recorded planned reward strategy actions before live side effects"
+    );
+    Ok(())
+}
+
 fn reward_strategy_run_input_summary(
     input: &RewardStrategyInput,
     books_fetched: usize,
@@ -854,6 +939,29 @@ async fn run_reward_bot_live_tick_prepared(
         trace_id,
     )
     .await?;
+    if !merge_intents.is_empty() {
+        let action_context = RewardActionPlannerContext {
+            run_id,
+            trace_id,
+            now: OffsetDateTime::now_utc(),
+        };
+        let actions = merge_intents
+            .iter()
+            .map(|intent| {
+                RewardActionPlanner::plan_merge_action(
+                    action_context,
+                    RewardMergeActionProposal {
+                        intent,
+                        action_type: RewardStrategyActionType::CreateMergeIntent,
+                        reason: intent.reason.as_str(),
+                        idempotency_suffix: "",
+                        metadata: json!({ "source": "balanced_merge_inventory_pairing" }),
+                    },
+                )
+            })
+            .collect::<Vec<_>>();
+        record_planned_reward_actions(state, &actions, trace_id, "merge_create").await?;
+    }
     if !merge_intents.is_empty() || !merge_events.is_empty() {
         persist_live_reward_updates_with_merge_intents(
             state,
@@ -875,6 +983,7 @@ async fn run_reward_bot_live_tick_prepared(
         &cycle.positions,
         &open_orders,
         &report,
+        Some(run_id),
         trace_id,
     )
     .await?;
@@ -931,8 +1040,7 @@ async fn run_reward_bot_live_tick_prepared(
     }
 
     let mut cancel_rejected = false;
-
-    for (order_id, reason) in live_cancel_candidates_with_account(
+    let cancel_candidates = live_cancel_candidates_with_account(
         &cycle.config,
         &cycle.plans,
         &open_orders,
@@ -940,7 +1048,40 @@ async fn run_reward_bot_live_tick_prepared(
         book_history,
         &account,
         kill_switch,
-    ) {
+    );
+    if !cancel_candidates.is_empty() {
+        let action_context = RewardActionPlannerContext {
+            run_id,
+            trace_id,
+            now: OffsetDateTime::now_utc(),
+        };
+        let actions = cancel_candidates
+            .iter()
+            .filter_map(|(order_id, reason)| {
+                open_orders.iter().find(|order| order.id == *order_id).map(|order| {
+                    let intent = if order.side == RewardOrderSide::Sell
+                        && order.reason.to_ascii_lowercase().contains("cancel-replace")
+                    {
+                        RewardOrderActionIntent::CancelReplaceExit
+                    } else {
+                        RewardOrderActionIntent::CancelOrder
+                    };
+                    RewardActionPlanner::plan_order_action(
+                        action_context,
+                        RewardOrderActionProposal {
+                            order,
+                            intent,
+                            reason: reason.as_str(),
+                            metadata: json!({ "source": "live_cancel_candidates" }),
+                        },
+                    )
+                })
+            })
+            .collect::<Vec<_>>();
+        record_planned_reward_actions(state, &actions, trace_id, "cancel").await?;
+    }
+
+    for (order_id, reason) in cancel_candidates {
         let Some(index) = open_orders.iter().position(|order| order.id == order_id) else {
             continue;
         };
@@ -985,7 +1126,7 @@ async fn run_reward_bot_live_tick_prepared(
         }
     }
 
-    for update in reselect_adaptive_exit_orders(
+    let adaptive_exit_updates = reselect_adaptive_exit_orders(
         &cycle.config,
         &cycle.plans,
         &books,
@@ -994,7 +1135,46 @@ async fn run_reward_bot_live_tick_prepared(
         reward_ai_min_confidence(state.settings.rewards.ai_min_confidence_bps),
         trace_id,
         OffsetDateTime::now_utc(),
-    ) {
+    );
+    let cancel_replace_actions = adaptive_exit_updates
+        .iter()
+        .filter_map(|update| match update {
+            LiveRewardOrderUpdate::CancelReplace(intent) => Some(
+                RewardActionPlanner::plan_order_action(
+                    RewardActionPlannerContext {
+                        run_id,
+                        trace_id,
+                        now: OffsetDateTime::now_utc(),
+                    },
+                    RewardOrderActionProposal {
+                        order: &intent.order,
+                        intent: RewardOrderActionIntent::CancelReplaceExit,
+                        reason: "adaptive exit cancel-replace",
+                        metadata: json!({
+                            "source": "adaptive_exit_reselection",
+                            "new_strategy": intent.new_strategy.as_str(),
+                            "floor_price": intent.floor_price,
+                            "new_price": intent.new_price,
+                            "drift_cents": intent.drift_cents,
+                            "decision": intent.decision_meta.clone(),
+                        }),
+                    },
+                ),
+            ),
+            LiveRewardOrderUpdate::Changed(..)
+            | LiveRewardOrderUpdate::Unchanged(_)
+            | LiveRewardOrderUpdate::Retryable(_) => None,
+        })
+        .collect::<Vec<_>>();
+    record_planned_reward_actions(
+        state,
+        &cancel_replace_actions,
+        trace_id,
+        "adaptive_exit_cancel_replace",
+    )
+    .await?;
+
+    for update in adaptive_exit_updates {
         match update {
             LiveRewardOrderUpdate::Changed(updated, event) => {
                 persist_live_reward_updates(
@@ -1086,6 +1266,18 @@ async fn run_reward_bot_live_tick_prepared(
         account: &pending_account_snapshot,
         kill_switch,
     };
+    let allow_pending_buy_submit =
+        cycle.should_execute && !cancel_rejected && !unresolved_before_recovery;
+    let pending_actions = RewardActionPlanner::plan_pending_order_submissions(
+        RewardActionPlannerContext {
+            run_id,
+            trace_id,
+            now: OffsetDateTime::now_utc(),
+        },
+        &open_orders,
+        allow_pending_buy_submit,
+    );
+    record_planned_reward_actions(state, &pending_actions, trace_id, "pending_submit").await?;
     submit_pending_live_reward_orders(
         connector,
         &mut open_orders,
@@ -1096,7 +1288,7 @@ async fn run_reward_bot_live_tick_prepared(
         &cycle.positions,
         &mut report,
         trace_id,
-        cycle.should_execute && !cancel_rejected && !unresolved_before_recovery,
+        allow_pending_buy_submit,
     )
     .await?;
 
@@ -1124,6 +1316,25 @@ async fn run_reward_bot_live_tick_prepared(
     }
 
     if !placement_orders.is_empty() {
+        let placement_actions = placement_orders
+            .iter()
+            .map(|order| {
+                RewardActionPlanner::plan_order_action(
+                    RewardActionPlannerContext {
+                        run_id,
+                        trace_id,
+                        now: OffsetDateTime::now_utc(),
+                    },
+                    RewardOrderActionProposal {
+                        order,
+                        intent: RewardOrderActionIntent::PlaceBuy,
+                        reason: order.reason.as_str(),
+                        metadata: json!({ "source": "live_placement_orders" }),
+                    },
+                )
+            })
+            .collect::<Vec<_>>();
+        record_planned_reward_actions(state, &placement_actions, trace_id, "place_buy").await?;
         let events = placement_orders
             .iter()
             .map(|order| {

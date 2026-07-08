@@ -2,7 +2,7 @@
 
 最后更新：2026-07-08
 
-状态：阶段 1 已落地，阶段 2 已收尾。当前已实现 shadow strategy run ledger、quote plan 常用筛选列、只读 ledger API、`/rewards` Runs tab、ledger retention、application `RewardDecisionEngine` 对 pre-provider、post-provider 和最终 snapshot 计划变换的集中封装，以及独立 input builder（`RewardBotService::build_strategy_input`，单一读路径 + 单一注入 `now`）与可序列化 `RewardStrategyInput` tick 输入快照（`RewardLiveCycle::from_strategy_input` 桥接，engine 行为不变；provider cache 留待 Phase 4 v2）。durable action planner/executor、replay CLI 和完整 decision analytics 仍未实现。当前已实现状态以 `AGENTS.md` 和 `doc/modules/*` 为准。
+状态：阶段 1 已落地，阶段 2 已收尾，阶段 3 第一层已落地。当前已实现 shadow strategy run ledger、quote plan 常用筛选列、只读 ledger API、`/rewards` Runs tab、ledger retention、application `RewardDecisionEngine` 对 pre-provider、post-provider 和最终 snapshot 计划变换的集中封装、独立 input builder（`RewardBotService::build_strategy_input`，单一读路径 + 单一注入 `now`）与可序列化 `RewardStrategyInput` tick 输入快照（`RewardLiveCycle::from_strategy_input` 桥接，engine 行为不变；provider cache 留待 Phase 4 v2），以及 application `RewardActionPlanner` 执行前 planned action proposal 写入。完整 `RewardLiveExecutor` 抽离、replay CLI 和完整 decision analytics 仍未实现。当前已实现状态以 `AGENTS.md` 和 `doc/modules/*` 为准。
 
 ## 背景
 
@@ -10,7 +10,7 @@
 
 问题不在于缺少单个风控条件，而在于生产前还需要持续建设三类能力：
 
-- 决策可追责：阶段 1 已把 run、decision、action 和订单状态变迁串起来；后续还需要把执行前 action proposal/result 做成 durable action 控制，而不是只从 tick outcome 派生。
+- 决策可追责：阶段 1 已把 run、decision、action 和订单状态变迁串起来；阶段 3 第一层已在执行前写 planned action proposal。后续还需要把 worker side effect 执行完全改为 durable action executor 控制，而不是主要依赖现有 tick 流程。
 - 回放可校准：selection score、fair-value 和 opportunity 权重是合理启发式；阶段 1 记录了 run 版本和决策快照，阶段 2 已集中主要计划变换入口，后续还需要稳定的 replay 输入模型与回放工具。
 - 结构可维护：live tick 同时承担 snapshot 构建、外部同步、撤单、pending 提交、新挂单和持久化，安全但调试成本高；阶段 2 已把确定性 plan transform 收敛到 application `RewardDecisionEngine`，后续还需要副作用执行层。
 
@@ -64,7 +64,7 @@ Market/orderbook/account producers
 | `strategy_input.rs` | 定义一次 tick 的只读输入快照：config、candidate markets、books、book history、account、orders、positions、provider cache、event windows |
 | `engine.rs` | 已存在：`RewardDecisionEngine` 纯函数入口，输入 `RewardStrategyInput`，输出 `RewardDecisionSet`，不访问 store、connector 或隐式 clock |
 | `decision_models.rs` | run、decision、blocker、action proposal、metrics 等 typed model |
-| `action_planner.rs` | 把 decision set 与当前订单/持仓转为 place/cancel/reprice/exit/merge proposals |
+| `action_planner.rs` | 已存在第一层：把 worker 已确定的订单/merge intent 副作用候选转为 planned action proposals；后续继续上移 action selection |
 | `run_ledger.rs` | application store trait：记录 run、decisions、actions、action result |
 | `replay.rs` | 离线回放入口，复用 decision engine，不调用 live connector |
 
@@ -361,7 +361,7 @@ pub struct RewardDecisionSet {
 - engine 不创建外部订单 ID。
 - engine 可以使用传入的 `now`，避免隐藏 clock 影响回放。
 
-### 阶段 3：动作规划与执行解耦
+### 阶段 3：动作规划与执行解耦（第一层已落地）
 
 目标：把“想做的动作”和“执行外部副作用”分开。
 
@@ -374,6 +374,8 @@ RewardLiveExecutor
   input: durable actions
   behavior: submit/cancel/merge with idempotency and unknown-result protection
 ```
+
+当前第一层已新增 application `RewardActionPlanner`，并在 full tick 的 merge create/execute、cancel/cancel-replace、pending submit 和 placement submit 前写入 `reward_strategy_actions(status=planned)`。这些 action 使用与 outcome 派生 action 兼容的 idempotency key；后续 `apply_tick_outcome` 会更新同一 action 的状态/结果。fast reconcile 没有 strategy run 上下文，仍保持原路径。完整 executor 尚未抽离，live side effects 仍在 worker 原流程中执行。
 
 需要保留现有保护：
 
@@ -432,7 +434,7 @@ RewardLiveExecutor
 3. 已完成：在现有 live tick 中接入影子 run ledger，保持交易行为不变。
 4. 已完成：前端增加 Runs tab，只读展示 run timeline、summary、decisions 和 actions。
 5. 已完成：抽出 `RewardDecisionEngine`（pre/post-provider/snapshot 纯决策变换）与可序列化 `RewardStrategyInput` tick 输入快照，新增独立 input builder（`RewardBotService::build_strategy_input`，单一读路径 + 单一注入 `now`）和 `RewardLiveCycle::from_strategy_input` 桥接，engine 行为不变；新增 application engine tests 与 strategy_input tests。注：builder 注入单一 `now` 替代原先 `prepare_live_cycle` 内多次 `now_utc()`，带来 plan `updated_at` 亚毫秒级差异；provider cache 未纳入快照（Phase 4 v2）。
-6. 把 placement/cancel/pending/merge 改为 action planner + executor，逐步删除 worker 巨型流程中的混合职责。
+6. 进行中：已新增 `RewardActionPlanner` 并在 full tick 执行前写 planned actions；后续继续把 placement/cancel/pending/merge 改为 durable action executor，逐步删除 worker 巨型流程中的混合职责。
 7. 新增 replay CLI，先做决策一致性回放，再做盘口/退出成本回放。
 8. 小额 live drill：单账户、低额度、只开 standard profile，记录 run/action/order transition 指标。
 
