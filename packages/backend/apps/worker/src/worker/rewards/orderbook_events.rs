@@ -356,10 +356,11 @@ async fn fetch_remote_cached_orderbooks(
     state: &AppState,
     token_ids: &[String],
 ) -> Result<Vec<CachedOrderBook>> {
-    let batch_size = state.settings.orderbook_stream.max_tokens;
-    if batch_size == 0 || token_ids.is_empty() {
+    let max_tokens = state.settings.orderbook_stream.max_tokens;
+    if max_tokens == 0 || token_ids.is_empty() {
         return Ok(Vec::new());
     }
+    let batch_size = reward_orderbook_http_batch_size(max_tokens);
     let refresh_max_age_ms = reward_orderbook_remote_refresh_max_age_ms(state).await;
 
     let mut books = Vec::new();
@@ -372,6 +373,15 @@ async fn fetch_remote_cached_orderbooks(
         );
     }
     Ok(books)
+}
+
+// Keep each worker -> orderbook HTTP refresh comfortably below the client's
+// 30s timeout. The orderbook service further splits this into 100-token CLOB
+// batches and paces them behind a shared upstream request gate.
+const REWARD_ORDERBOOK_HTTP_BATCH_TOKEN_CAP: usize = 500;
+
+fn reward_orderbook_http_batch_size(max_tokens: usize) -> usize {
+    max_tokens.clamp(1, REWARD_ORDERBOOK_HTTP_BATCH_TOKEN_CAP)
 }
 
 async fn reward_orderbook_remote_refresh_max_age_ms(state: &AppState) -> i64 {
@@ -400,6 +410,35 @@ mod reward_orderbook_local_cache_tests {
     use super::*;
     use polyedge_application::CachedBookLevel;
     use rust_decimal::Decimal;
+
+    #[test]
+    fn remote_http_batch_size_is_bounded() {
+        assert_eq!(reward_orderbook_http_batch_size(1), 1);
+        assert_eq!(reward_orderbook_http_batch_size(100), 100);
+        assert_eq!(reward_orderbook_http_batch_size(3_000), 500);
+        assert_eq!(reward_orderbook_http_batch_size(0), 1);
+    }
+
+    #[test]
+    fn full_tick_book_tokens_prioritize_active_and_respect_cap() {
+        assert_eq!(
+            bounded_reward_orderbook_fetch_tokens(
+                vec!["active".to_string(), "shared".to_string()],
+                vec![
+                    "shared".to_string(),
+                    "candidate-1".to_string(),
+                    "candidate-2".to_string(),
+                ],
+                3,
+            ),
+            vec![
+                "active".to_string(),
+                "shared".to_string(),
+                "candidate-1".to_string(),
+            ]
+        );
+        assert!(bounded_reward_orderbook_fetch_tokens(vec!["active".to_string()], vec![], 0).is_empty());
+    }
 
     #[tokio::test]
     async fn local_cache_ttl_uses_receive_time_not_future_observed_at() {

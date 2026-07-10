@@ -1,7 +1,7 @@
 use crate::{
     stream::{
-        current_unix_millis, effective_orderbook_ws_chunk_size, normalized_cached_book,
-        reward_book_to_cached, set_book_and_publish_if_current,
+        ORDERBOOK_UPSTREAM_BATCH_DELAY_MS, current_unix_millis, effective_orderbook_ws_chunk_size,
+        normalized_cached_book, reward_book_to_cached, set_book_and_publish_if_current,
     },
     updates::OrderbookUpdateBroadcaster,
 };
@@ -20,8 +20,8 @@ use polyedge_infrastructure::AppState;
 use polymarket_client_sdk::types::U256;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
-use std::{collections::HashSet, str::FromStr};
-use tokio::sync::broadcast;
+use std::{collections::HashSet, str::FromStr, sync::Arc, time::Duration};
+use tokio::sync::{Mutex, broadcast};
 use tracing::{debug, warn};
 
 const MAX_REGISTRY_SOURCES: usize = 32;
@@ -34,11 +34,20 @@ type ApiResult<T> = Result<Json<T>, ApiError>;
 pub struct OrderbookApiState {
     pub app: AppState,
     pub broadcaster: OrderbookUpdateBroadcaster,
+    upstream_request_gate: Arc<Mutex<()>>,
 }
 
 impl OrderbookApiState {
-    pub fn new(app: AppState, broadcaster: OrderbookUpdateBroadcaster) -> Self {
-        Self { app, broadcaster }
+    pub fn new(
+        app: AppState,
+        broadcaster: OrderbookUpdateBroadcaster,
+        upstream_request_gate: Arc<Mutex<()>>,
+    ) -> Self {
+        Self {
+            app,
+            broadcaster,
+            upstream_request_gate,
+        }
     }
 }
 
@@ -166,20 +175,37 @@ async fn refresh_stale_orderbook_batch(
     token_ids: &[String],
     max_age_ms: i64,
 ) -> polyedge_domain::Result<usize> {
-    let stale = state
+    let initially_stale = state
         .app
         .orderbook_cache
         .get_stale_tokens(token_ids, max_age_ms)
         .await?;
-    if stale.is_empty() {
+    if initially_stale.is_empty() {
         return Ok(0);
     }
 
     let connector = PolymarketRewardsConnector::new(&state.app.settings.polymarket.clob_host)?;
     let max_levels = state.app.settings.orderbook_stream.max_levels_per_side;
     let mut refreshed = 0usize;
-    for chunk in stale.chunks(100) {
-        let books = connector.fetch_order_books(chunk).await?;
+    for (chunk_index, chunk) in initially_stale.chunks(100).enumerate() {
+        if chunk_index > 0 {
+            tokio::time::sleep(Duration::from_millis(ORDERBOOK_UPSTREAM_BATCH_DELAY_MS)).await;
+        }
+        let books = {
+            let _request_guard = state.upstream_request_gate.lock().await;
+            // A background poll or an earlier caller may have refreshed this
+            // chunk while it waited for the shared upstream gate. Recheck
+            // under the gate to avoid sending duplicate CLOB requests.
+            let stale = state
+                .app
+                .orderbook_cache
+                .get_stale_tokens(chunk, max_age_ms)
+                .await?;
+            if stale.is_empty() {
+                continue;
+            }
+            connector.fetch_order_books(&stale).await?
+        };
         let poll_confirmed_at = current_unix_millis();
         for book in books {
             let cached =
@@ -196,7 +222,7 @@ async fn refresh_stale_orderbook_batch(
     }
     debug!(
         requested = token_ids.len(),
-        stale = stale.len(),
+        stale = initially_stale.len(),
         refreshed,
         max_age_ms,
         "refreshed stale orderbook batch on demand"

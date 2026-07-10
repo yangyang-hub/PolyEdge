@@ -2,7 +2,8 @@ use axum::{Router, routing::get};
 use polyedge_application::MarketUpsertOptions;
 use polyedge_common::{bind_service_listener, service_socket_addr};
 use polyedge_infrastructure::{AppState, Runtime};
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
+use tokio::sync::Mutex;
 use tower_http::limit::RequestBodyLimitLayer;
 use tower_http::trace::TraceLayer;
 use tracing::info;
@@ -72,6 +73,10 @@ async fn main() -> polyedge_domain::Result<()> {
     info!(port, "starting polyedge-orderbook service");
 
     let broadcaster = OrderbookUpdateBroadcaster::new(16_384);
+    // Serialize CLOB REST orderbook batches across the background reconciler
+    // and HTTP on-demand refresh path. Without a shared gate, rewards full
+    // ticks and the 10s poll can duplicate thousands of token refreshes.
+    let upstream_request_gate = Arc::new(Mutex::new(()));
 
     // Build and bind HTTP API before any external market sync. Health checks
     // should reflect process readiness, not Polymarket API latency.
@@ -89,7 +94,11 @@ async fn main() -> polyedge_domain::Result<()> {
         .route("/orderbook/{token_id}", get(get_orderbook))
         .layer(TraceLayer::new_for_http())
         .layer(RequestBodyLimitLayer::new(2 * 1024 * 1024)) // 2 MB
-        .with_state(OrderbookApiState::new(state.clone(), broadcaster.clone()));
+        .with_state(OrderbookApiState::new(
+            state.clone(),
+            broadcaster.clone(),
+            Arc::clone(&upstream_request_gate),
+        ));
 
     let listener = bind_service_listener(addr, "orderbook HTTP", "ORDERBOOK_BIND_FAILED").await?;
 
@@ -122,6 +131,7 @@ async fn main() -> polyedge_domain::Result<()> {
     // It subscribes to tokens registered via the HTTP API by other services.
     let stream_state = state.clone();
     let stream_broadcaster = broadcaster.clone();
+    let stream_upstream_request_gate = Arc::clone(&upstream_request_gate);
     let stream_handle = tokio::spawn(async move {
         let restart_interval = Duration::from_secs(
             stream_state
@@ -143,7 +153,13 @@ async fn main() -> polyedge_domain::Result<()> {
                 continue;
             }
 
-            match run_orderbook_stream(&stream_state, &stream_broadcaster).await {
+            match run_orderbook_stream(
+                &stream_state,
+                &stream_broadcaster,
+                Arc::clone(&stream_upstream_request_gate),
+            )
+            .await
+            {
                 Ok(report) => {
                     info!(
                         subscribed = report.subscribed_tokens,

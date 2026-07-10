@@ -1,4 +1,3 @@
-const LIVE_ORDERBOOK_VALIDATION_SKIP_TTL: TimeDuration = TimeDuration::hours(12);
 const LIVE_ORDERBOOK_WAITING_REASON_PREFIX: &str =
     "waiting for fresh orderbook data from subscription";
 const LIVE_ORDERBOOK_PLACEMENT_STALE_HEADROOM_MS: i128 = 10_000;

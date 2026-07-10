@@ -23,6 +23,11 @@ pub const REWARD_AI_CANDLE_SOURCE_INTERVAL_SEC: i32 = REWARD_PRICE_HISTORY_CANDL
 pub const REWARD_AI_CANDLE_SOURCE_LIMIT_PER_TOKEN: u16 = 288;
 pub const REWARD_AI_CANDLE_INTERVAL_SEC: i32 = 60 * 60;
 pub const REWARD_AI_CANDLE_LIMIT_PER_TOKEN: u16 = 24;
+/// Live orderbook validation failures are market-state observations, not
+/// durable market exclusions. Keep the persisted skip short so fast paths do
+/// not immediately retry, while the next full decision tick can revalidate
+/// against the latest books.
+pub const REWARD_LIVE_ORDERBOOK_VALIDATION_SKIP_TTL: TimeDuration = TimeDuration::seconds(60);
 
 include!("rewards/models.rs");
 include!("rewards/quote_selection_models.rs");

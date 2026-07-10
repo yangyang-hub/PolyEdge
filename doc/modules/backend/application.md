@@ -1,6 +1,6 @@
 # Backend Application Crate
 
-最后更新：2026-07-08
+最后更新：2026-07-10
 
 ## 模块边界
 
@@ -59,6 +59,7 @@
 - Strategy run ledger 已落地为 shadow 记录层：它不改变 live 下单/撤单决策，但让每轮 full tick 的配置、输入、决策、动作和订单状态变迁可通过 store/API 查询，用于生产前演练审计和后续回放基础。Phase 3 第一层已加入 `RewardActionPlanner`，worker 会在 merge create/execute、cancel/cancel-replace、pending submit 和 placement submit 前写入 planned actions；现有 outcome 持久化仍负责把同一 idempotency-keyed action 更新为实际结果。
 - Database maintenance cutoffs 已覆盖 strategy run ledger：completed/failed/cancelled runs 默认保留 90 天并级联 decisions/actions，order transitions 默认保留 180 天。
 - Fair-value gate 默认启用：worker 用当前 YES 中点、反向 NO 中点和短窗口历史 median 估计 fair value，要求 BUY 报价保留 raw edge 和扣除不确定性后的 effective edge；历史估计写入 latest/history 表用于审计和回测。
+- Live orderbook validation skip 只保留 60 秒用于 fast-path 抑制和审计；每个 full tick 都基于最新 candidate/books/config 重新构建计划，不继承上一轮 skip。standard 与 BalancedMerge 即使共享 condition，也不会再因只按 condition 继承旧 skip 而互相污染。
 - AI advisory 和 info-risk 只通过 provider cache 影响 live tick；外部 provider refresh 由 worker 后台任务写缓存，不阻塞 API handler。
 - Funding、orderbook cache/registry、maintenance、auth/mode/risk 仍作为 application-level ports/models 保留。
 

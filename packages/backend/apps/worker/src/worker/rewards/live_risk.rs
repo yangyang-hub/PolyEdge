@@ -283,7 +283,7 @@ fn mark_live_orderbook_validation_skip(
     reason: String,
     now: OffsetDateTime,
 ) {
-    let skip_until = now + LIVE_ORDERBOOK_VALIDATION_SKIP_TTL;
+    let skip_until = now + REWARD_LIVE_ORDERBOOK_VALIDATION_SKIP_TTL;
     plan.eligible = false;
     plan.quote_mode = RewardPlanQuoteMode::None;
     plan.reason = format!("live orderbook validation skipped until {skip_until}: {reason}");

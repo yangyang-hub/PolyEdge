@@ -26,26 +26,6 @@ fn worker_running_requires_enabled_config_and_fresh_heartbeat() {
 }
 
 #[test]
-fn transient_live_orderbook_skip_reasons_are_not_carried() {
-    assert!(live_orderbook_skip_reason_is_transient(Some(
-        "missing fresh orderbook midpoint for live quote",
-    )));
-    assert!(live_orderbook_skip_reason_is_transient(Some(
-        "waiting for fresh orderbook data from subscription: YES orderbook unavailable",
-    )));
-    assert!(live_orderbook_skip_reason_is_transient(Some(
-        "YES orderbook stale: age_ms=50000, max_age_ms=45000",
-    )));
-    assert!(live_orderbook_skip_reason_is_transient(Some(
-        "quote plan missing YES token for live validation",
-    )));
-    assert!(!live_orderbook_skip_reason_is_transient(Some(
-        "YES bid-3 is outside the rewards spread limit",
-    )));
-    assert!(!live_orderbook_skip_reason_is_transient(None));
-}
-
-#[test]
 fn status_error_ignores_short_lived_final_reconciliation_pending() {
     let now = OffsetDateTime::now_utc();
     let mut order = ManagedRewardOrder {

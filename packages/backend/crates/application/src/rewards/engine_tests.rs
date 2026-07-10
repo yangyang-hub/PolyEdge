@@ -183,3 +183,24 @@ fn decision_engine_refreshes_placeholder_plan_to_ready_quote() {
         .iter()
         .all(|leg| leg.price > Decimal::ZERO && leg.size > Decimal::ZERO));
 }
+
+#[test]
+fn live_orderbook_validation_skip_is_short_lived() {
+    let now = OffsetDateTime::now_utc();
+    let mut plan = engine_test_plan(now);
+
+    mark_reward_live_orderbook_validation_skip(
+        &mut plan,
+        "YES/NO bids do not leave enough safety margin".to_string(),
+        now,
+    );
+
+    assert_eq!(
+        plan.live_skip_until,
+        Some(now + REWARD_LIVE_ORDERBOOK_VALIDATION_SKIP_TTL)
+    );
+    assert_eq!(
+        plan.live_skip_reason.as_deref(),
+        Some("YES/NO bids do not leave enough safety margin")
+    );
+}

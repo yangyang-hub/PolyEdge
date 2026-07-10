@@ -19,7 +19,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 use time::OffsetDateTime;
-use tokio::sync::{RwLock, mpsc};
+use tokio::sync::{Mutex, RwLock, mpsc};
 use tokio::task::JoinSet;
 use tracing::{debug, info, warn};
 
@@ -32,7 +32,7 @@ const ORDERBOOK_WS_SDK_RECONNECT_INITIAL_SECS: u64 = 30;
 const ORDERBOOK_WS_SDK_RECONNECT_MAX_SECS: u64 = 120;
 const ORDERBOOK_WS_STARTUP_BACKOFF_BASE_MS: u64 = 2_000;
 const ORDERBOOK_WS_STARTUP_BACKOFF_MAX_MS: u64 = 60_000;
-const ORDERBOOK_POLL_BATCH_DELAY_MS: u64 = 100;
+pub(crate) const ORDERBOOK_UPSTREAM_BATCH_DELAY_MS: u64 = 100;
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct OrderbookStreamReport {
@@ -49,6 +49,7 @@ pub struct OrderbookStreamReport {
 pub async fn run_orderbook_stream(
     state: &AppState,
     broadcaster: &OrderbookUpdateBroadcaster,
+    upstream_request_gate: Arc<Mutex<()>>,
 ) -> Result<OrderbookStreamReport> {
     let settings = &state.settings.orderbook_stream;
     let cache = state.orderbook_cache.clone();
@@ -154,9 +155,14 @@ pub async fn run_orderbook_stream(
 
             for (chunk_index, chunk) in targets.chunks(100).enumerate() {
                 if chunk_index > 0 {
-                    tokio::time::sleep(Duration::from_millis(ORDERBOOK_POLL_BATCH_DELAY_MS)).await;
+                    tokio::time::sleep(Duration::from_millis(ORDERBOOK_UPSTREAM_BATCH_DELAY_MS))
+                        .await;
                 }
-                match connector.fetch_order_books(chunk).await {
+                let fetch_result = {
+                    let _request_guard = upstream_request_gate.lock().await;
+                    connector.fetch_order_books(chunk).await
+                };
+                match fetch_result {
                     Ok(books) => {
                         let poll_confirmed_at = current_unix_millis();
                         for book in books {

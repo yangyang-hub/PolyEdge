@@ -678,8 +678,8 @@ impl RewardBotService {
 
     /// Assemble the canonical, serializable strategy input snapshot for a full
     /// rewards decision tick. This is the single read path for store/orderbook
-    /// inputs: config, candidate-market planning, previous-plan carry-forward
-    /// and unexpired-orderbook-skip inheritance, effective event windows,
+    /// inputs: config, candidate-market planning, first-quote observation
+    /// carry-forward, effective event windows,
     /// account state, open orders and positions, plus the orderbook books and
     /// local book history gathered upstream by the worker. `now` is injected
     /// once and threaded through planning and event-window application so the
@@ -699,7 +699,6 @@ impl RewardBotService {
         let mut plans = build_reward_quote_plans_for_candidates(&candidate_markets, &books, &config);
         let previous_plans = self.store.list_all_quote_plans().await?;
         carry_forward_first_quote_observations(&mut plans, &previous_plans);
-        apply_unexpired_live_orderbook_skips(&mut plans, &previous_plans, now);
         let condition_ids = plans
             .iter()
             .map(|plan| plan.condition_id.clone())
@@ -954,57 +953,6 @@ impl RewardBotService {
             ))
             .await
     }
-}
-
-fn apply_unexpired_live_orderbook_skips(
-    plans: &mut [RewardQuotePlan],
-    previous_plans: &[RewardQuotePlan],
-    now: OffsetDateTime,
-) {
-    let previous_by_condition = previous_plans
-        .iter()
-        .filter_map(|plan| {
-            let skip_until = plan.live_skip_until?;
-            if skip_until <= now {
-                return None;
-            }
-            if live_orderbook_skip_reason_is_transient(plan.live_skip_reason.as_deref()) {
-                return None;
-            }
-            Some((plan.condition_id.as_str(), (skip_until, plan.live_skip_reason.clone())))
-        })
-        .collect::<HashMap<_, _>>();
-
-    for plan in plans {
-        let Some((skip_until, skip_reason)) = previous_by_condition.get(plan.condition_id.as_str())
-        else {
-            continue;
-        };
-        plan.eligible = false;
-        plan.quote_mode = RewardPlanQuoteMode::None;
-        plan.reason = format!(
-            "live orderbook validation skipped until {}: {}",
-            skip_until,
-            skip_reason
-                .as_deref()
-                .unwrap_or("recent live orderbook validation failed")
-        );
-        plan.live_skip_until = Some(*skip_until);
-        plan.live_skip_reason = skip_reason.clone();
-    }
-}
-
-fn live_orderbook_skip_reason_is_transient(skip_reason: Option<&str>) -> bool {
-    let Some(reason) = skip_reason else {
-        return false;
-    };
-    let reason = reason.to_ascii_lowercase();
-    reason.contains("missing fresh orderbook midpoint")
-        || reason.contains("waiting for fresh orderbook")
-        || reason.contains("orderbook unavailable")
-        || reason.contains("orderbook is empty")
-        || reason.contains("orderbook stale")
-        || reason.contains("quote plan missing")
 }
 
 include!("service_cache.rs");

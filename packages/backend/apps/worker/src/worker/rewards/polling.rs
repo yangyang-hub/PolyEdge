@@ -489,20 +489,33 @@ async fn fetch_reward_bot_inputs(
         .reward_bot_service
         .list_active_reward_book_token_ids()
         .await?;
-    let mut seen = HashSet::new();
-    let mut token_ids = Vec::new();
-    for token_id in active_token_ids
-        .into_iter()
-        .chain(select_reward_book_token_ids(&markets))
-    {
-        if seen.insert(token_id.clone()) {
-            token_ids.push(token_id);
-        }
-    }
+    let token_ids = bounded_reward_orderbook_fetch_tokens(
+        active_token_ids,
+        select_reward_book_token_ids(&markets),
+        state.settings.orderbook_stream.max_tokens,
+    );
     Ok((
         candidates,
         fetch_cached_reward_books(state, orderbook_cache, &token_ids).await?,
     ))
+}
+
+fn bounded_reward_orderbook_fetch_tokens(
+    active_tokens: Vec<String>,
+    candidate_tokens: Vec<String>,
+    max_tokens: usize,
+) -> Vec<String> {
+    let mut seen = HashSet::new();
+    let mut token_ids = Vec::with_capacity(max_tokens);
+    for token_id in active_tokens.into_iter().chain(candidate_tokens) {
+        if token_ids.len() >= max_tokens {
+            break;
+        }
+        if seen.insert(token_id.clone()) {
+            token_ids.push(token_id);
+        }
+    }
+    token_ids
 }
 
 /// Lightweight book fetch for the fast reconcile loop: only reads books for

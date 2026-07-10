@@ -1,4 +1,3 @@
-const REWARD_ENGINE_ORDERBOOK_VALIDATION_SKIP_TTL: TimeDuration = TimeDuration::hours(12);
 const REWARD_ENGINE_ORDERBOOK_WAITING_REASON_PREFIX: &str =
     "waiting for fresh orderbook data from subscription";
 const REWARD_ENGINE_ORDERBOOK_PLACEMENT_STALE_HEADROOM_MS: i128 = 10_000;
@@ -599,7 +598,7 @@ fn mark_reward_live_orderbook_validation_skip(
     reason: String,
     now: OffsetDateTime,
 ) {
-    let skip_until = now + REWARD_ENGINE_ORDERBOOK_VALIDATION_SKIP_TTL;
+    let skip_until = now + REWARD_LIVE_ORDERBOOK_VALIDATION_SKIP_TTL;
     plan.eligible = false;
     plan.quote_mode = RewardPlanQuoteMode::None;
     plan.reason = format!("live orderbook validation skipped until {skip_until}: {reason}");
