@@ -1,7 +1,7 @@
 use crate::{
     stream::{
-        current_unix_millis, normalized_cached_book, reward_book_to_cached,
-        set_book_and_publish_if_current,
+        current_unix_millis, effective_orderbook_ws_chunk_size, normalized_cached_book,
+        reward_book_to_cached, set_book_and_publish_if_current,
     },
     updates::OrderbookUpdateBroadcaster,
 };
@@ -70,6 +70,10 @@ pub struct OrderbookStatsResponse {
     pub cache_entries: usize,
     pub registry_sources: usize,
     pub registry_total_tokens: usize,
+    pub configured_ws_chunk_size: usize,
+    pub effective_ws_chunk_size: usize,
+    pub ws_max_connections: usize,
+    pub estimated_ws_connections: usize,
 }
 
 #[derive(Deserialize)]
@@ -211,11 +215,30 @@ pub async fn get_orderbook_stats(
         .await
         .unwrap_or_default();
     let registry_sources = state.app.orderbook_registry.source_count().await;
+    let configured_ws_chunk_size = state.app.settings.orderbook_stream.ws_chunk_size.max(1);
+    let ws_max_connections = state
+        .app
+        .settings
+        .orderbook_stream
+        .ws_max_connections
+        .max(1);
+    let effective_ws_chunk_size = effective_orderbook_ws_chunk_size(
+        configured_ws_chunk_size,
+        state.app.settings.orderbook_stream.max_tokens,
+        ws_max_connections,
+    );
+    let estimated_ws_connections = total_tokens
+        .saturating_add(effective_ws_chunk_size.saturating_sub(1))
+        / effective_ws_chunk_size;
 
     Json(OrderbookStatsResponse {
         cache_entries,
         registry_sources,
         registry_total_tokens: total_tokens,
+        configured_ws_chunk_size,
+        effective_ws_chunk_size,
+        ws_max_connections,
+        estimated_ws_connections,
     })
 }
 

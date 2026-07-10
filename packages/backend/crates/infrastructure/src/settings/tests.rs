@@ -112,7 +112,8 @@ mod tests {
         assert!(settings.redis.url.is_none());
         assert_eq!(settings.orderbook_stream.max_tokens, 3_000);
         assert_eq!(settings.orderbook_stream.reward_candidate_token_cap, 50);
-        assert_eq!(settings.orderbook_stream.ws_chunk_size, 100);
+        assert_eq!(settings.orderbook_stream.ws_chunk_size, 500);
+        assert_eq!(settings.orderbook_stream.ws_max_connections, 8);
         assert_eq!(settings.orderbook_stream.max_levels_per_side, 100);
         assert_eq!(settings.orderbook_stream.poll_reconcile_interval_secs, 10);
         assert_eq!(settings.orderbook_stream.stale_threshold_ms, 15_000);
@@ -289,6 +290,10 @@ mod tests {
                 "25".to_string(),
             ),
             (
+                "POLYEDGE_ORDERBOOK_STREAM__WS_MAX_CONNECTIONS".to_string(),
+                "4".to_string(),
+            ),
+            (
                 "POLYEDGE_ORDERBOOK_STREAM__MAX_LEVELS_PER_SIDE".to_string(),
                 "12".to_string(),
             ),
@@ -404,6 +409,7 @@ mod tests {
         assert_eq!(settings.orderbook_stream.max_tokens, 100);
         assert_eq!(settings.orderbook_stream.reward_candidate_token_cap, 7);
         assert_eq!(settings.orderbook_stream.ws_chunk_size, 25);
+        assert_eq!(settings.orderbook_stream.ws_max_connections, 4);
         assert_eq!(settings.orderbook_stream.max_levels_per_side, 12);
         assert_eq!(settings.orderbook_stream.poll_reconcile_interval_secs, 15);
         assert!(!settings.orderbook_stream.reward_candle_history_enabled);

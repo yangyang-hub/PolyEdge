@@ -336,6 +336,22 @@ pub fn runtime_config_entries(&self) -> Vec<RuntimeConfigEntry> {
         &mut entries,
         RuntimeConfigEntryDraft {
             section: "orderbook_stream",
+            field: "ws_max_connections",
+            label: "Orderbook WS max connections",
+            env_name: "POLYEDGE_ORDERBOOK_STREAM__WS_MAX_CONNECTIONS",
+            value: self.orderbook_stream.ws_max_connections.to_string(),
+            default_value: defaults
+                .orderbook_stream
+                .ws_max_connections
+                .to_string(),
+            value_type: RuntimeConfigValueType::Integer,
+            options: Vec::new(),
+        },
+    );
+    push_runtime_config_entry(
+        &mut entries,
+        RuntimeConfigEntryDraft {
+            section: "orderbook_stream",
             field: "poll_reconcile_interval_secs",
             label: "Orderbook stream poll reconcile interval seconds",
             env_name: "POLYEDGE_ORDERBOOK_STREAM__POLL_RECONCILE_INTERVAL_SECS",

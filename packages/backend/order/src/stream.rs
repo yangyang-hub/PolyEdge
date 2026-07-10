@@ -26,8 +26,13 @@ use tracing::{debug, info, warn};
 const ORDERBOOK_WS_HEARTBEAT_INTERVAL_SECS: u64 = 15;
 const ORDERBOOK_WS_HEARTBEAT_TIMEOUT_SECS: u64 = 60;
 const ORDERBOOK_WS_RECONNECT_DEBOUNCE_SECS: u64 = 5;
+const ORDERBOOK_WS_CONNECT_STAGGER_MS: u64 = 500;
+const ORDERBOOK_WS_CONNECT_STAGGER_MAX_MS: u64 = 5_000;
+const ORDERBOOK_WS_SDK_RECONNECT_INITIAL_SECS: u64 = 30;
+const ORDERBOOK_WS_SDK_RECONNECT_MAX_SECS: u64 = 120;
 const ORDERBOOK_WS_STARTUP_BACKOFF_BASE_MS: u64 = 2_000;
 const ORDERBOOK_WS_STARTUP_BACKOFF_MAX_MS: u64 = 60_000;
+const ORDERBOOK_POLL_BATCH_DELAY_MS: u64 = 100;
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct OrderbookStreamReport {
@@ -73,7 +78,22 @@ pub async fn run_orderbook_stream(
     // 3. WS consumers are sharded into chunks of `ws_chunk_size` tokens (one WS
     //    connection per chunk) so high-volume market updates don't lag one shared
     //    receiver. The actual chunk tasks are spawned per-path below.
-    let ws_chunk_size = settings.ws_chunk_size.max(1);
+    let configured_ws_chunk_size = settings.ws_chunk_size.max(1);
+    let ws_max_connections = settings.ws_max_connections.max(1);
+    let ws_chunk_size = effective_orderbook_ws_chunk_size(
+        configured_ws_chunk_size,
+        settings.max_tokens,
+        ws_max_connections,
+    );
+    if ws_chunk_size > configured_ws_chunk_size {
+        warn!(
+            configured_ws_chunk_size,
+            effective_ws_chunk_size = ws_chunk_size,
+            ws_max_connections,
+            max_tokens = settings.max_tokens,
+            "increased orderbook WS chunk size to enforce connection budget"
+        );
+    }
     let ws_snapshots_received = Arc::new(AtomicUsize::new(0));
     let ws_price_changes_received = Arc::new(AtomicUsize::new(0));
 
@@ -132,7 +152,10 @@ pub async fn run_orderbook_stream(
                 "poll reconciler refreshing registered tokens"
             );
 
-            for chunk in targets.chunks(100) {
+            for (chunk_index, chunk) in targets.chunks(100).enumerate() {
+                if chunk_index > 0 {
+                    tokio::time::sleep(Duration::from_millis(ORDERBOOK_POLL_BATCH_DELAY_MS)).await;
+                }
                 match connector.fetch_order_books(chunk).await {
                     Ok(books) => {
                         let poll_confirmed_at = current_unix_millis();
@@ -211,7 +234,7 @@ pub async fn run_orderbook_stream(
                 context_template.clone(),
                 tokens_u256,
                 command_rx,
-                Duration::ZERO,
+                orderbook_ws_connect_stagger(index),
             ));
             session_cmds.push(command_tx);
             session_startup_failures.push(0);
@@ -219,7 +242,12 @@ pub async fn run_orderbook_stream(
         info!(
             subscribed_tokens = u256_ids.len(),
             ws_connections = session_cmds.len(),
-            ws_chunk_size,
+            configured_ws_chunk_size,
+            effective_ws_chunk_size = ws_chunk_size,
+            ws_max_connections,
+            connect_stagger_ms = ORDERBOOK_WS_CONNECT_STAGGER_MS,
+            sdk_reconnect_initial_secs = ORDERBOOK_WS_SDK_RECONNECT_INITIAL_SECS,
+            sdk_reconnect_max_secs = ORDERBOOK_WS_SDK_RECONNECT_MAX_SECS,
             incremental = true,
             "orderbook stream subscribed to market channel"
         );
@@ -260,7 +288,7 @@ pub async fn run_orderbook_stream(
                                         context_template.clone(),
                                         tokens_u256,
                                         command_rx,
-                                        Duration::ZERO,
+                                        orderbook_ws_connect_stagger(exit.chunk_index),
                                     ));
                                     if exit.chunk_index < session_cmds.len() {
                                         session_cmds[exit.chunk_index] = command_tx;
@@ -398,7 +426,7 @@ pub async fn run_orderbook_stream(
                             context_template.clone(),
                             tokens_u256,
                             command_rx,
-                            Duration::ZERO,
+                            orderbook_ws_connect_stagger(index),
                         ));
                         session_cmds.push(command_tx);
                         session_startup_failures.push(0);
@@ -420,6 +448,7 @@ pub async fn run_orderbook_stream(
         for (chunk_index, chunk) in u256_ids.chunks(ws_chunk_size).enumerate() {
             ws_connection_count += 1;
             let chunk_token_ids = chunk.to_vec();
+            let startup_delay = orderbook_ws_connect_stagger(chunk_index);
             let context = OrderbookWsChunkContext {
                 ws_host: ws_host.clone(),
                 cache: cache.clone(),
@@ -429,13 +458,21 @@ pub async fn run_orderbook_stream(
                 price_changes_received: ws_price_changes_received.clone(),
             };
             ws_tasks.spawn(async move {
+                if !startup_delay.is_zero() {
+                    tokio::time::sleep(startup_delay).await;
+                }
                 run_orderbook_ws_chunk(chunk_index, chunk_token_ids, context).await
             });
         }
         info!(
             subscribed_tokens = u256_ids.len(),
             ws_connections = ws_connection_count,
-            ws_chunk_size,
+            configured_ws_chunk_size,
+            effective_ws_chunk_size = ws_chunk_size,
+            ws_max_connections,
+            connect_stagger_ms = ORDERBOOK_WS_CONNECT_STAGGER_MS,
+            sdk_reconnect_initial_secs = ORDERBOOK_WS_SDK_RECONNECT_INITIAL_SECS,
+            sdk_reconnect_max_secs = ORDERBOOK_WS_SDK_RECONNECT_MAX_SECS,
             incremental = false,
             "orderbook stream subscribed to market channel"
         );
@@ -589,17 +626,7 @@ async fn run_orderbook_ws_chunk(
     token_ids: Vec<U256>,
     context: OrderbookWsChunkContext,
 ) -> Result<()> {
-    // Polymarket occasionally delays or drops text PONGs while data still
-    // flows. Keep the SDK heartbeat useful without logging on short stalls.
-    let mut ws_config = WsConfig::default();
-    ws_config.heartbeat_interval = Duration::from_secs(ORDERBOOK_WS_HEARTBEAT_INTERVAL_SECS);
-    ws_config.heartbeat_timeout = Duration::from_secs(ORDERBOOK_WS_HEARTBEAT_TIMEOUT_SECS);
-    let ws_client = ClobWsClient::new(&context.ws_host, ws_config).map_err(|error| {
-        AppError::internal(
-            "ORDERBOOK_WS_INIT_FAILED",
-            format!("failed to create orderbook websocket client: {error}"),
-        )
-    })?;
+    let ws_client = make_orderbook_ws_client(&context.ws_host)?;
     let mut subscription_guard =
         OrderbookWsSubscriptionGuard::new(ws_client.clone(), token_ids.clone());
     let book_stream = ws_client
@@ -846,9 +873,17 @@ async fn handle_orderbook_ws_event(
 }
 
 fn make_orderbook_ws_client(ws_host: &str) -> Result<ClobWsClient> {
+    // Polymarket occasionally delays or drops text PONGs while data still
+    // flows. Keep the SDK heartbeat useful without logging on short stalls.
+    // The SDK establishes the socket lazily in a background task, so its own
+    // reconnect policy (rather than our outer startup backoff) handles HTTP
+    // handshake failures such as Cloudflare 429/1015.
     let mut ws_config = WsConfig::default();
     ws_config.heartbeat_interval = Duration::from_secs(ORDERBOOK_WS_HEARTBEAT_INTERVAL_SECS);
     ws_config.heartbeat_timeout = Duration::from_secs(ORDERBOOK_WS_HEARTBEAT_TIMEOUT_SECS);
+    ws_config.reconnect.initial_backoff =
+        Duration::from_secs(ORDERBOOK_WS_SDK_RECONNECT_INITIAL_SECS);
+    ws_config.reconnect.max_backoff = Duration::from_secs(ORDERBOOK_WS_SDK_RECONNECT_MAX_SECS);
     ClobWsClient::new(ws_host, ws_config).map_err(|error| {
         AppError::internal(
             "ORDERBOOK_WS_INIT_FAILED",
@@ -1223,7 +1258,7 @@ async fn apply_membership_diff(
                 context_template.clone(),
                 target_u256,
                 command_rx,
-                Duration::ZERO,
+                orderbook_ws_connect_stagger(index),
             ));
             session_cmds.push(command_tx);
             session_startup_failures.push(0);
@@ -1258,6 +1293,28 @@ fn token_lists_have_same_members(left: &[String], right: &[String]) -> bool {
 fn partition_tokens_into_chunks(tokens: &[String], chunk_size: usize) -> Vec<Vec<String>> {
     let size = chunk_size.max(1);
     tokens.chunks(size).map(|slice| slice.to_vec()).collect()
+}
+
+/// Treat the configured chunk size as a lower bound and enlarge it when needed
+/// so a full registry cannot create more than the configured connection budget.
+/// This protects the shared egress IP from a burst of concurrent Cloudflare WS
+/// handshakes without reducing token coverage.
+pub(crate) fn effective_orderbook_ws_chunk_size(
+    configured_chunk_size: usize,
+    max_tokens: usize,
+    max_connections: usize,
+) -> usize {
+    let configured = configured_chunk_size.max(1);
+    let connections = max_connections.max(1);
+    let budget_chunk_size = max_tokens.saturating_add(connections.saturating_sub(1)) / connections;
+    configured.max(budget_chunk_size.max(1))
+}
+
+fn orderbook_ws_connect_stagger(chunk_index: usize) -> Duration {
+    let delay_ms = (chunk_index as u64)
+        .saturating_mul(ORDERBOOK_WS_CONNECT_STAGGER_MS)
+        .min(ORDERBOOK_WS_CONNECT_STAGGER_MAX_MS);
+    Duration::from_millis(delay_ms)
 }
 
 /// Membership diff between two token sets, used for logging/observability during
@@ -1594,6 +1651,27 @@ mod tests {
             Vec::<Vec<String>>::new()
         );
         assert_eq!(partition_tokens_into_chunks(&tokens, 0).len(), 5);
+    }
+
+    #[test]
+    fn effective_ws_chunk_size_enforces_connection_budget() {
+        assert_eq!(effective_orderbook_ws_chunk_size(100, 3_000, 8), 375);
+        assert_eq!(effective_orderbook_ws_chunk_size(500, 3_000, 8), 500);
+        assert_eq!(effective_orderbook_ws_chunk_size(25, 100, 4), 25);
+        assert_eq!(effective_orderbook_ws_chunk_size(0, 0, 0), 1);
+    }
+
+    #[test]
+    fn ws_connect_stagger_grows_and_caps() {
+        assert_eq!(orderbook_ws_connect_stagger(0), Duration::ZERO);
+        assert_eq!(
+            orderbook_ws_connect_stagger(1),
+            Duration::from_millis(ORDERBOOK_WS_CONNECT_STAGGER_MS)
+        );
+        assert_eq!(
+            orderbook_ws_connect_stagger(usize::MAX),
+            Duration::from_millis(ORDERBOOK_WS_CONNECT_STAGGER_MAX_MS)
+        );
     }
 
     #[test]

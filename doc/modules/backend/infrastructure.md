@@ -1,6 +1,6 @@
 # infrastructure（基础设施层）
 
-最后更新：2026-07-08
+最后更新：2026-07-10
 
 ## 概述
 
@@ -43,7 +43,7 @@
 | `RewardsSettings` | rewards 进程级启用、poll 间隔、AI provider env-only key/base URL/model/timeout、信息风险扫描配置和可选备用 provider |
 | `NewsSettings` | 新闻系统启用、间隔、超时、单源数量和 RSS/Atom source 列表 |
 | `WorkerSettings` | news、rewards、execution、Polymarket 对账、orderbook 注册、database maintenance 等后台任务开关与间隔 |
-| `OrderbookStreamSettings` | orderbook WS/poll/cache、registry token cap、candle history sync 和增量重订配置 |
+| `OrderbookStreamSettings` | orderbook WS/poll/cache、registry token cap、WS target chunk / 最大连接预算、candle history sync 和增量重订配置 |
 | `OrderbookServiceSettings` | orderbook 服务端口、service URL、写 token |
 | `AuthSettings` | auth disabled、issuer/audience、token TTL、step-up code、密钥和撤销 session |
 
@@ -99,6 +99,7 @@ Rewards provider 密钥只从 `RewardsSettings` 读取，不进入 `RewardBotCon
 - `reward_merge_intents` 支持 BalancedMerge 配对库存合并、提交 tx hash、失败原因和 retry count。
 - `InMemoryOrderbookCache` 写入时排序 bids/asks、裁剪深度、拒绝旧 `observed_at` 覆盖未过期条目，并合并更新的 `confirmed_at`。
 - `InMemoryOrderbookSubscriptionRegistry` 对 source 做原子全量替换，最多 32 个 source，聚合优先级为 `rewards_active`、`exec_orders`、`rewards_eligible`、`rewards_ai_provider`、`rewards_candidates`。
+- `OrderbookStreamSettings.ws_chunk_size` 默认 500，`ws_max_connections` 默认 8；orderbook 服务用两者计算有效 chunk，使旧的小 chunk runtime 值也不会突破 Polymarket market-channel 连接预算。
 
 ## Auth
 
@@ -136,6 +137,7 @@ Postgres 可用时使用 Postgres store；无数据库时使用 in-memory/no-op 
 - Funding API 复用 Polymarket settings 中的私钥、funder/account_id 和 Polygon RPC，不新增独立资金私钥配置。
 - Orderbook cache/registry 默认仍由 `Runtime` 构建；API/worker 启动时会把它们替换为 `OrderbookHttpClient` 指向独立 orderbook 服务。
 - Orderbook 写接口要求 `x-polyedge-orderbook-token` 与 `POLYEDGE_ORDERBOOK__WRITE_TOKEN` 匹配；未配置 token 时写接口关闭，读接口和健康检查仍可用。
+- Orderbook WS 默认通过 8 连接硬预算收敛分片，配合 chunk 启动错峰和 SDK 长退避降低 Cloudflare 429/1015 风暴；`ws_max_connections` 已进入环境变量解析和 runtime config 映射。
 - 数据库维护 runtime 只清理当前 schema 中可增长的历史/缓存/队列表，包括 fair-value history、strategy run ledger 和 order transitions。
 
 ## 修改检查清单

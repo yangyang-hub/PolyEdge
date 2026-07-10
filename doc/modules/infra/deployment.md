@@ -1,6 +1,6 @@
 # 部署（Docker + Nginx + Scripts）
 
-最后更新：2026-07-07
+最后更新：2026-07-10
 
 ## 概述
 
@@ -63,6 +63,7 @@ polyedge-front (nginx static)
 - 职责：Gamma market sync、CLOB rewards catalog sync、price-history candle sync、CLOB WS + `/books` poll cache、HTTP 盘口 API、内部 `/orderbook/stream`、token registry。
 - 启动时先 bind HTTP 暴露健康检查，再后台执行初始同步，避免外部 API 慢响应阻塞容器健康。
 - register/ingest/delete 写接口要求 `POLYEDGE_ORDERBOOK__WRITE_TOKEN`；读盘口、batch、stats、stream 和 health 不鉴权，需依赖内网边界。
+- Polymarket market-channel 默认目标 chunk 为 500 token、最多 8 条连接；有效 chunk 会自动放大以满足连接预算，连接按 500ms 错峰启动，SDK 以 30-120 秒退避重连，降低同一出口 IP 触发 Cloudflare 429/1015 的风险。
 
 ## polyedge-front
 
@@ -124,7 +125,7 @@ Manual 模式：
 | `POLYEDGE_AUTH__DISABLED` / `POLYEDGE_AUTH__STEP_UP_CODE` / `POLYEDGE_AUTH__KEYS_JSON` | `.env.api` | 鉴权配置 |
 | `POLYEDGE_API_BIND` / `POLYEDGE_API_PORT` | `.env.api` | API 宿主机暴露地址和端口 |
 | `POLYEDGE_FRONT_BIND` / `POLYEDGE_FRONT_PORT` | `.env.front` | 前端宿主机端口 |
-| `POLYEDGE_ORDERBOOK_STREAM__MAX_TOKENS` / `MAX_LEVELS_PER_SIDE` / `STALE_THRESHOLD_MS` | `.env.orderbook` | orderbook 容量、盘口深度和 stale reconcile 调参 |
+| `POLYEDGE_ORDERBOOK_STREAM__MAX_TOKENS` / `WS_CHUNK_SIZE` / `WS_MAX_CONNECTIONS` / `MAX_LEVELS_PER_SIDE` / `STALE_THRESHOLD_MS` | `.env.orderbook` | orderbook token 容量、WS 连接预算、盘口深度和 stale reconcile 调参 |
 | `POLYEDGE_NEWS__ENABLED` / `POLYEDGE_NEWS__SOURCES_JSON` | `.env.api` | 新闻采集开关和 source 列表 |
 | `POLYEDGE_WORKER__POLL_NEWS` / `PROMOTE_NEWS_EVENTS` / `DATABASE_MAINTENANCE` / `POLL_REWARD_BOT` / `POLL_REWARD_INFO_RISKS` | `.env.api` | API 内嵌 worker 循环开关 |
 | `POLYEDGE_WORKER__DRAIN_EXECUTION_QUEUE` / `POLL_*ORDER_STATUSES` / `RECONCILE_*FILLS` / `CONSUME_POLYMARKET_USER_EVENTS` | `.env.api` | 执行/对账 worker 开关 |
@@ -158,6 +159,7 @@ POLYEDGE_BACKEND_BINARY=polyedge-orderbook ./scripts/build-backend-bin.sh
 
 - 部署模板适合原型/内网共享环境。
 - 默认生产排查入口为 Frontend Rewards `http://192.168.31.5:33002/rewards`、API `http://100.87.45.72:38001`、Orderbook `http://100.87.45.72:38002`。
+- Orderbook 部署默认使用 `WS_CHUNK_SIZE=500`、`WS_MAX_CONNECTIONS=8`；即使 runtime config 残留旧的 100-token chunk，有效 chunk 仍会按连接预算自动收敛。
 - Compose 使用窄构建上下文：后端只上传 `bin/`，前端只上传 `packages/front/`。
 - `polyedge-front` 可独立运行，浏览器按 build-time API URL 访问后端。
 - `deploy/.env.api.example` 默认启用 database maintenance，清理 raw events、AI/info-risk cache、reward candles、控制命令、outbox/dedup、LLM/audit 等可增长表。

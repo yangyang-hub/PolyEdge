@@ -190,6 +190,10 @@ pub struct OrderbookStreamSettings {
     pub max_tokens: usize,
     pub reward_candidate_token_cap: usize,
     pub ws_chunk_size: usize,
+    /// Hard budget for concurrent Polymarket market-channel connections. When
+    /// the configured chunk size would exceed this budget, the orderbook
+    /// service increases the effective chunk size automatically.
+    pub ws_max_connections: usize,
     pub max_levels_per_side: usize,
     pub poll_reconcile_interval_secs: u64,
     pub stale_threshold_ms: u64,
