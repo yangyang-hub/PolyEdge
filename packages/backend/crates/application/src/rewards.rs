@@ -61,11 +61,6 @@ mod provider_cache_tests {
 }
 
 #[cfg(test)]
-mod ai_advisory_tests {
-    include!("rewards/ai_advisory_tests.rs");
-}
-
-#[cfg(test)]
 mod opportunity_metrics_tests {
     use super::*;
 

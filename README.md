@@ -6,14 +6,14 @@ PolyEdge 是面向 Polymarket 的事件、市场数据、市场策略研究和 L
 
 ## 当前状态
 
-- 前端控制台页面：`dashboard / markets / events / rewards / funding / settings`。未落地的 approvals 页面和 `/replay` 不再作为前端入口暴露。
+- 前端控制台页面：`dashboard / markets / events / rewards / rewards/fair-value / funding / settings`。未落地的 approvals 页面和 `/replay` 不再作为前端入口暴露。
 - 前端只走真实 Rust API，不再提供 mock 数据模式；所有文案走 `@/lib/i18n/dictionaries` 中文字典。
 - 后端 Rust workspace 根为 `packages/backend/Cargo.toml`：服务 crate、worker/replay 兼容 app、共享 crates、迁移和初始化 SQL 均位于 `packages/backend/`，其中 API 在 `packages/backend/api`，orderbook 服务在 `packages/backend/order`。
 - 数据库当前只保留空库部署基线；`packages/backend/init.sql` 和 `packages/backend/migrations/0001_initial_schema.sql` 表达同一份当前 schema，运行时通过该 baseline 做 `sqlx` 初始化/校验。
 - 市场同步、rewards catalog 同步和 orderbook WS/poll 缓存由独立 `polyedge-orderbook` 服务负责。
 - API 只读数据库或 orderbook 服务，不在 handler 中直接请求 Polymarket。Rewards 控制操作通过数据库命令队列交给 worker/runtime 执行。
-- Rewards bot 仅支持 live 实盘路径：post-only 买单、撤单、confirmed fill 对账、成交后 sibling cancel、exit/flatten sell、账户余额/持仓快照同步、AI advisory 和异步信息风险缓存。
-- 历史钱包类和独立研究模块已从前后端、worker、数据库和模块文档中移除；项目当前聚焦市场数据/事件基础设施和 LP rewards 策略。
+- Rewards bot 仅支持 live 实盘路径：确定性动态档位、交易 edge gate、库存偏斜、post-only BUY、风险分类撤单、confirmed fill 对账、成本目标/受控损失 floor 的退出 SELL、BalancedMerge、账户同步和异步 AI/info-risk 风险缓存。LP rewards 只作为通过交易 edge 后的次级排序收益。
+- 历史钱包类和独立研究模块已从前后端、worker、数据库和模块文档中移除；项目当前聚焦 Polymarket 做市商策略，LP rewards 仅作为次级收益信号。
 - 当前控制台会话只保留 `off`，默认内网部署不是生产级真实会话/权限体系。
 
 ## 仓库结构
@@ -118,7 +118,7 @@ cargo run -p polyedge-worker -- consume-polymarket-user-events
 
 ## Rewards Bot
 
-Rewards bot 只从 `reward_markets` 和 `markets` 读取候选，硬过滤非 open/tradable、高歧义、低流动性、低 24h 成交量、临近结算、Gamma spread 过宽、数据过期/异常超前、非唯一 YES/NO token 的市场。通过门槛后按奖励、流动性、成交量、剩余时长和 rewards spread 综合排序。
+Rewards bot 只从 `reward_markets` 和 `markets` 读取候选，硬过滤非 open/tradable、高歧义、低流动性、低 24h 成交量、临近结算、Gamma spread 过宽、数据过期/异常超前、非唯一 YES/NO token 的市场。通过门槛后先按交易 edge、退出能力、盘口稳定性、竞争和风险形成 maker 资金优先级；LP 奖励只保留受限的 reward-density 次级权重。
 
 启用 live worker 至少需要：
 

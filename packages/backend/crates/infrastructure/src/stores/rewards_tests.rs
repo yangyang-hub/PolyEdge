@@ -552,7 +552,7 @@ mod rewards_tests {
             quote_mode: RewardQuoteMode::Auto,
             selection_mode: RewardSelectionMode::Enforce,
             dominant_single_side_enabled: true,
-            per_market_usd: Decimal::from(20),
+            maker_market_budget_usd: Decimal::from(20),
             ..RewardBotConfig::default()
         }
         .candidate_filter();
@@ -571,5 +571,29 @@ mod rewards_tests {
 
         assert_eq!(candidates.len(), 1);
         assert_eq!(candidates[0].condition_id, valid.condition_id);
+    }
+
+    #[test]
+    fn reward_config_key_value_round_trip_preserves_market_maker_v2_fields() {
+        let expected = RewardBotConfig {
+            maker_market_budget_usd: Decimal::from(37),
+            quote_bid_rank: 2,
+            quote_max_bid_rank: 3,
+            inventory_skew_strength: Decimal::new(63, 2),
+            ai_action_min_confidence: Decimal::new(81, 2),
+            info_risk_min_confidence: Decimal::new(77, 2),
+            maker_max_exit_loss_cents: Decimal::new(15, 1),
+            adverse_requote_drift_cents: Decimal::new(4, 1),
+            adverse_requote_confirm_sec: 2,
+            ..RewardBotConfig::default()
+        }
+        .normalized();
+        let mut decoded = RewardBotConfig::default();
+
+        for (key, value) in reward_config_entries(&expected) {
+            apply_reward_config_value(&mut decoded, key, &value).expect("decode config entry");
+        }
+
+        assert_eq!(decoded.normalized(), expected);
     }
 }

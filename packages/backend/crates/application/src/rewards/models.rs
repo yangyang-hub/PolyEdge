@@ -68,7 +68,7 @@ pub enum PostFillStrategy {
     ExitAtMarkup,
     /// Rest a post-only sell at the filled buy order price, then keep quoting normally.
     HoldAndRequote,
-    /// Submit a non-post-only sell against the best bid when it can meet the non-loss floor.
+    /// Submit a non-post-only sell against the best bid when it can meet the configured risk floor.
     FlattenImmediately,
     /// Select the concrete post-fill strategy from live risk, quote plan and orderbook state.
     Adaptive,
@@ -366,8 +366,9 @@ pub struct RewardBotConfig {
     pub account_id: String,
     pub max_markets: u16,
     pub max_open_orders: u16,
-    pub per_market_usd: Decimal,
-    pub quote_size_usd: Decimal,
+    /// Maximum total managed BUY notional resting in one condition before
+    /// provider and inventory adjustments.
+    pub maker_market_budget_usd: Decimal,
     pub min_daily_reward: Decimal,
     /// Minimum Gamma-reported CLOB liquidity required for a new quote.
     pub min_market_liquidity_usd: Decimal,
@@ -383,8 +384,11 @@ pub struct RewardBotConfig {
     pub max_spread_cents: Decimal,
     pub quote_mode: RewardQuoteMode,
     pub selection_mode: RewardSelectionMode,
-    /// Bid price level used for new YES/NO quotes (1=best bid, 3=third bid).
+    /// First bid price level considered for new YES/NO quotes (1=best bid).
     pub quote_bid_rank: u16,
+    /// Deepest bid level the deterministic quote selector may consider when a
+    /// tighter level does not preserve the configured trading edge.
+    pub quote_max_bid_rank: u16,
     /// Allow auto mode to quote only the dominant outcome in one-sided markets.
     pub dominant_single_side_enabled: bool,
     pub dominant_min_probability: Decimal,
@@ -430,15 +434,16 @@ pub struct RewardBotConfig {
     pub fair_value_record_history_enabled: bool,
     /// Minimum confidence required for a fair-value estimate to permit quotes.
     pub fair_value_min_confidence: Decimal,
-    /// Raw maker edge floor in cents before rewards rebate is considered.
+    /// Raw maker edge floor in cents. LP rewards never offset this floor.
     pub fair_value_min_raw_edge_cents: Decimal,
-    /// Effective edge floor in cents after uncertainty and rewards rebate.
+    /// Effective trading-edge floor in cents after uncertainty. LP rewards are
+    /// reported separately and never offset this floor.
     pub fair_value_min_effective_edge_cents: Decimal,
     /// Minimum uncertainty buffer attached to every market-implied fair value.
     pub fair_value_uncertainty_buffer_cents: Decimal,
-    /// Fraction of estimated rewards density that may offset edge requirements.
+    /// Fraction of estimated rewards density reported as secondary reward edge.
     pub fair_value_rebate_haircut: Decimal,
-    /// Maximum rewards rebate credit that can be applied to one quote leg.
+    /// Maximum secondary reward edge reported for one quote leg.
     pub fair_value_max_reward_rebate_cents: Decimal,
     /// Maximum allowed YES midpoint + NO midpoint deviation from 1.00.
     pub fair_value_max_midpoint_deviation_cents: Decimal,
@@ -458,15 +463,18 @@ pub struct RewardBotConfig {
     pub ai_provider_primary_max_concurrency: u16,
     /// Maximum simultaneous fallback provider HTTP requests for Rewards.
     pub ai_provider_fallback_max_concurrency: u16,
-    /// Apply provider strategy hints directly to live quote mode, bid rank and
-    /// condition notional caps. Hints never bypass deterministic hard risk.
-    pub ai_strategy_hint_enabled: bool,
-    /// Minimum provider confidence required before live quote strategy hints
-    /// affect quoting. The binary allow/avoid gate still applies independently.
-    pub ai_strategy_hint_min_confidence: Decimal,
+    /// Apply bounded provider size/edge modifiers. The provider never chooses
+    /// live quote mode, side, rank or price.
+    pub ai_risk_adjustment_enabled: bool,
+    /// Minimum confidence required for AI stop-new; lower-confidence concerns
+    /// are downgraded to a non-zero size reduction.
+    pub ai_action_min_confidence: Decimal,
     pub info_risk_enabled: bool,
     pub info_risk_mode: RewardSelectionMode,
     pub info_risk_avoid_level: RewardInfoRiskLevel,
+    /// Minimum confidence required for info-risk cancellation. Lower-confidence
+    /// cancel actions are downgraded to stop-new.
+    pub info_risk_min_confidence: Decimal,
     pub info_risk_ttl_sec: u64,
     /// Grace period (seconds) for pre_ai_eligible plans that lack a cached AI
     /// advisory. The plan stays eligible for this duration before being dropped
@@ -498,8 +506,14 @@ pub struct RewardBotConfig {
     pub min_scoring_check_sec: u64,
     pub max_position_usd: Decimal,
     pub max_global_position_usd: Decimal,
+    /// Shift actual quote size away from outcomes already held in inventory.
+    pub inventory_skew_enabled: bool,
+    /// Strength of the inventory size skew in the range 0..1.
+    pub inventory_skew_strength: Decimal,
     pub exit_markup_cents: Decimal,
-    pub cancel_on_fill: bool,
+    /// Maximum controlled loss below average entry price accepted by inventory
+    /// exits. Zero requires the average entry-price floor.
+    pub maker_max_exit_loss_cents: Decimal,
     /// Total fund pool shared across every market. Resting buy orders reuse
     /// this pool; cash is consumed only when fills occur.
     pub account_capital_usd: Decimal,
@@ -514,22 +528,27 @@ pub struct RewardBotConfig {
     /// Maximum orders cancelled for drift in one reconcile cycle. Hard risk
     /// cancels are not limited by this setting. 0 = drift reprice disabled.
     pub requote_drift_max_cancels_per_cycle: u16,
+    /// Immediate-risk threshold when the safe target moves below a resting BUY.
+    pub adverse_requote_drift_cents: Decimal,
+    /// Persistence required for adverse downward drift. This is intentionally
+    /// shorter than the competitive upward-requote confirmation.
+    pub adverse_requote_confirm_sec: u64,
     /// What to do with inventory once a quote leg is filled.
     pub post_fill_strategy: PostFillStrategy,
-    /// Minimum bid-side USD depth at or above the non-loss floor before adaptive
+    /// Minimum bid-side USD depth at or above the configured risk floor before adaptive
     /// may choose a non-post-only flatten.
     pub adaptive_flatten_min_bid_depth_usd: Decimal,
     /// Required multiple of the exit notional covered by bid depth at or above
-    /// the non-loss floor before adaptive may choose flatten.
+    /// the configured risk floor before adaptive may choose flatten.
     pub adaptive_flatten_min_depth_multiple: Decimal,
-    /// Required best-bid surplus above the non-loss floor in cents before
+    /// Required best-bid surplus above the configured risk floor in cents before
     /// adaptive may choose flatten.
     pub adaptive_flatten_min_surplus_cents: Decimal,
     /// Prefer flatten when the original quote plan is no longer eligible and
-    /// non-loss depth is available.
+    /// risk-floor depth is available.
     pub adaptive_flatten_when_plan_ineligible: bool,
     /// Prefer flatten when explicit event/AI/info-risk/fair-value hard risk is
-    /// elevated and non-loss depth is available.
+    /// elevated and risk-floor depth is available.
     pub adaptive_flatten_when_event_risk: bool,
     /// Keep inventory as maker exit when the quote plan remains healthy.
     pub adaptive_hold_when_plan_eligible: bool,
@@ -614,9 +633,7 @@ pub struct RewardBotConfigPatch {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_open_orders: Option<u16>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub per_market_usd: Option<Decimal>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub quote_size_usd: Option<Decimal>,
+    pub maker_market_budget_usd: Option<Decimal>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub min_daily_reward: Option<Decimal>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -639,6 +656,8 @@ pub struct RewardBotConfigPatch {
     pub selection_mode: Option<RewardSelectionMode>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub quote_bid_rank: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quote_max_bid_rank: Option<u16>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dominant_single_side_enabled: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -734,15 +753,17 @@ pub struct RewardBotConfigPatch {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ai_provider_fallback_max_concurrency: Option<u16>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub ai_strategy_hint_enabled: Option<bool>,
+    pub ai_risk_adjustment_enabled: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub ai_strategy_hint_min_confidence: Option<Decimal>,
+    pub ai_action_min_confidence: Option<Decimal>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub info_risk_enabled: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub info_risk_mode: Option<RewardSelectionMode>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub info_risk_avoid_level: Option<RewardInfoRiskLevel>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub info_risk_min_confidence: Option<Decimal>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub info_risk_ttl_sec: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -782,9 +803,13 @@ pub struct RewardBotConfigPatch {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_global_position_usd: Option<Decimal>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inventory_skew_enabled: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inventory_skew_strength: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub exit_markup_cents: Option<Decimal>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cancel_on_fill: Option<bool>,
+    pub maker_max_exit_loss_cents: Option<Decimal>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub account_capital_usd: Option<Decimal>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -795,6 +820,10 @@ pub struct RewardBotConfigPatch {
     pub requote_drift_cooldown_sec: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub requote_drift_max_cancels_per_cycle: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub adverse_requote_drift_cents: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub adverse_requote_confirm_sec: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub post_fill_strategy: Option<PostFillStrategy>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

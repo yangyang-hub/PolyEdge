@@ -152,7 +152,7 @@ async fn replace_reward_quote_plans_tx(
         })?;
 
     for chunk in plans.chunks(REWARD_UPSERT_BATCH_SIZE) {
-        let cols = 17usize;
+        let cols = 18usize;
         let placeholders: String = chunk
             .iter()
             .enumerate()
@@ -181,7 +181,8 @@ async fn replace_reward_quote_plans_tx(
               blocker_codes,
               fair_value_passed,
               event_window_status,
-              ai_suitability,
+              ai_action,
+              info_risk_action,
               info_risk_level,
               quote_plan_json,
               updated_at
@@ -199,7 +200,8 @@ async fn replace_reward_quote_plans_tx(
                 blocker_codes = EXCLUDED.blocker_codes,
                 fair_value_passed = EXCLUDED.fair_value_passed,
                 event_window_status = EXCLUDED.event_window_status,
-                ai_suitability = EXCLUDED.ai_suitability,
+                ai_action = EXCLUDED.ai_action,
+                info_risk_action = EXCLUDED.info_risk_action,
                 info_risk_level = EXCLUDED.info_risk_level,
                 quote_plan_json = EXCLUDED.quote_plan_json,
                 updated_at = EXCLUDED.updated_at"#,
@@ -217,10 +219,14 @@ async fn replace_reward_quote_plans_tx(
                 .event_window
                 .as_ref()
                 .map(|assessment| assessment.status.as_str().to_string());
-            let ai_suitability = plan
+            let ai_action = plan
                 .ai_advisory
                 .as_ref()
-                .map(|advisory| advisory.suitability.as_str().to_string());
+                .map(|advisory| advisory.action.as_str().to_string());
+            let info_risk_action = plan
+                .info_risk
+                .as_ref()
+                .map(|risk| risk.action.as_str().to_string());
             let info_risk_level = plan
                 .info_risk
                 .as_ref()
@@ -241,7 +247,8 @@ async fn replace_reward_quote_plans_tx(
                 .bind(blocker_codes)
                 .bind(fair_value_passed)
                 .bind(event_window_status)
-                .bind(ai_suitability)
+                .bind(ai_action)
+                .bind(info_risk_action)
                 .bind(info_risk_level)
                 .bind(Json(plan))
                 .bind(updated_at);

@@ -230,7 +230,9 @@ pub struct RewardStrategyDecision {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub event_window_status: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub ai_suitability: Option<String>,
+    pub ai_action: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub info_risk_action: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub info_risk_level: Option<String>,
     pub decision_json: Value,
@@ -506,10 +508,14 @@ pub fn reward_strategy_decision_from_plan(
             .event_window
             .as_ref()
             .map(|assessment| assessment.status.as_str().to_string()),
-        ai_suitability: plan
+        ai_action: plan
             .ai_advisory
             .as_ref()
-            .map(|advisory| advisory.suitability.as_str().to_string()),
+            .map(|advisory| advisory.action.as_str().to_string()),
+        info_risk_action: plan
+            .info_risk
+            .as_ref()
+            .map(|risk| risk.action.as_str().to_string()),
         info_risk_level: plan
             .info_risk
             .as_ref()
@@ -779,12 +785,10 @@ pub fn reward_quote_plan_reason_code(plan: &RewardQuotePlan) -> String {
         "ai_pending".to_string()
     } else if reason.starts_with("info risk pending:") {
         "info_risk_pending".to_string()
-    } else if reason.starts_with("ai advisory confidence") {
-        "ai_confidence_low".to_string()
-    } else if reason.starts_with("ai advisory watch:") {
-        "ai_watch".to_string()
-    } else if reason.starts_with("ai advisory avoid:") {
-        "ai_avoid".to_string()
+    } else if reason.starts_with("ai advisory stop_new:") {
+        "ai_stop_new".to_string()
+    } else if reason.starts_with("provider size adjustment below required rewards quote:") {
+        "provider_size".to_string()
     } else if reason.starts_with("info risk ") {
         "info_risk".to_string()
     } else if reason.starts_with("event window") {
@@ -793,6 +797,10 @@ pub fn reward_quote_plan_reason_code(plan: &RewardQuotePlan) -> String {
         "fair_value".to_string()
     } else if reason.starts_with("live funding below rewards minimum:") {
         "funding".to_string()
+    } else if reason.starts_with("maker market budget below required rewards quote:") {
+        "maker_budget".to_string()
+    } else if reason.starts_with("inventory headroom below required rewards quote:") {
+        "inventory_headroom".to_string()
     } else if reason.starts_with("live orderbook validation skipped until ") {
         "live_validation".to_string()
     } else if reason.contains("score is below threshold") {
@@ -834,14 +842,14 @@ pub fn reward_quote_plan_blocker_codes(
     if plan
         .ai_advisory
         .as_ref()
-        .is_some_and(|advisory| advisory.suitability != RewardAiSuitability::Allow)
+        .is_some_and(|advisory| advisory.action != RewardProviderAction::Allow)
     {
         push_unique_code(&mut codes, "ai_advisory");
     }
     if plan
         .info_risk
         .as_ref()
-        .is_some_and(|risk| risk.risk_level.rank() >= RewardInfoRiskLevel::High.rank())
+        .is_some_and(|risk| risk.action != RewardProviderAction::Allow)
     {
         push_unique_code(&mut codes, "info_risk");
     }

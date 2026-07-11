@@ -4,7 +4,6 @@ import type {
   PostFillStrategy,
   RewardAiProvider,
   RewardAiRequestFormat,
-  RewardAiSuitability,
   RewardEventTimeConfidence,
   RewardEventWindowStatus,
   RewardExitStrategySource,
@@ -15,6 +14,7 @@ import type {
   RewardInfoRiskType,
   RewardOrderSide,
   RewardPlanQuoteMode,
+  RewardProviderAction,
   RewardQuoteReadiness,
   RewardQuoteMode,
   RewardRiskSeverity,
@@ -33,6 +33,7 @@ export type RewardBotConfigDto = {
   account_id: string;
   max_markets: number;
   max_open_orders: number;
+  maker_market_budget_usd: DecimalValue;
   min_daily_reward: DecimalValue;
   min_market_liquidity_usd: DecimalValue;
   min_market_volume_24h_usd: DecimalValue;
@@ -44,6 +45,7 @@ export type RewardBotConfigDto = {
   quote_mode: RewardQuoteMode;
   selection_mode: RewardSelectionMode;
   quote_bid_rank: number;
+  quote_max_bid_rank: number;
   dominant_single_side_enabled: boolean;
   dominant_min_probability: DecimalValue;
   dominant_max_probability: DecimalValue;
@@ -91,11 +93,12 @@ export type RewardBotConfigDto = {
   ai_provider_concurrency_enabled: boolean;
   ai_provider_primary_max_concurrency: number;
   ai_provider_fallback_max_concurrency: number;
-  ai_strategy_hint_enabled: boolean;
-  ai_strategy_hint_min_confidence: DecimalValue;
+  ai_risk_adjustment_enabled: boolean;
+  ai_action_min_confidence: DecimalValue;
   info_risk_enabled: boolean;
   info_risk_mode: RewardSelectionMode;
   info_risk_avoid_level: RewardInfoRiskLevel;
+  info_risk_min_confidence: DecimalValue;
   info_risk_ttl_sec: number;
   ai_advisory_provider_pending_grace_sec: number;
   info_risk_provider_pending_grace_sec: number;
@@ -115,13 +118,17 @@ export type RewardBotConfigDto = {
   min_scoring_check_sec: number;
   max_position_usd: DecimalValue;
   max_global_position_usd: DecimalValue;
+  inventory_skew_enabled: boolean;
+  inventory_skew_strength: DecimalValue;
   exit_markup_cents: DecimalValue;
-  cancel_on_fill: boolean;
+  maker_max_exit_loss_cents: DecimalValue;
   account_capital_usd: DecimalValue;
   requote_drift_cents: DecimalValue;
   requote_drift_confirm_sec: number;
   requote_drift_cooldown_sec: number;
   requote_drift_max_cancels_per_cycle: number;
+  adverse_requote_drift_cents: DecimalValue;
+  adverse_requote_confirm_sec: number;
   post_fill_strategy: PostFillStrategy;
   adaptive_flatten_min_bid_depth_usd: DecimalValue;
   adaptive_flatten_min_depth_multiple: DecimalValue;
@@ -278,6 +285,7 @@ export type RewardQuoteEdgeDto = {
   expected_reward_rebate_cents: DecimalValue;
   uncertainty_cents: DecimalValue;
   effective_edge_cents: DecimalValue;
+  reward_adjusted_edge_cents: DecimalValue;
   min_raw_edge_cents: DecimalValue;
   min_effective_edge_cents: DecimalValue;
   passed: boolean;
@@ -312,9 +320,9 @@ export type RewardMarketAdvisoryDto = {
   request_format: RewardAiRequestFormat;
   model: string;
   input_hash: string;
-  suitability: RewardAiSuitability;
-  quote_mode: RewardPlanQuoteMode;
-  exit_policy: PostFillStrategy;
+  action: RewardProviderAction;
+  size_multiplier: DecimalValue;
+  edge_buffer_cents: DecimalValue;
   confidence: DecimalValue;
   reasons: string[];
   metrics: unknown;
@@ -336,6 +344,7 @@ export type RewardMarketInfoRiskDto = {
   model: string;
   query_hash: string;
   input_hash: string;
+  action: RewardProviderAction;
   risk_level: RewardInfoRiskLevel;
   risk_type: RewardInfoRiskType;
   directional_risk: RewardInfoDirectionalRisk;
@@ -487,11 +496,12 @@ export type RewardQuotePlanBlockerCountsDto = {
   waiting_orderbook?: number;
   ai_pending?: number;
   info_risk_pending?: number;
-  ai_confidence_low?: number;
-  ai_watch?: number;
-  ai_avoid?: number;
+  ai_stop_new?: number;
+  provider_size?: number;
   info_risk?: number;
   funding?: number;
+  maker_budget?: number;
+  inventory_headroom?: number;
   live_validation?: number;
   other?: number;
 };
@@ -579,7 +589,8 @@ export type RewardStrategyDecisionDto = {
   fair_value_effective_edge_cents?: DecimalValue | null;
   opportunity_score?: DecimalValue | null;
   event_window_status?: string | null;
-  ai_suitability?: string | null;
+  ai_action?: RewardProviderAction | null;
+  info_risk_action?: RewardProviderAction | null;
   info_risk_level?: string | null;
   decision_json: unknown;
   created_at: string;

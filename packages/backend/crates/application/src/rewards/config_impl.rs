@@ -5,8 +5,7 @@ impl Default for RewardBotConfig {
             account_id: "reward_bot".to_string(),
             max_markets: 3,
             max_open_orders: 12,
-            per_market_usd: decimal("20"),
-            quote_size_usd: decimal("10"),
+            maker_market_budget_usd: decimal("20"),
             min_daily_reward: decimal("1"),
             min_market_liquidity_usd: decimal("1000"),
             min_market_volume_24h_usd: decimal("1000"),
@@ -18,6 +17,7 @@ impl Default for RewardBotConfig {
             quote_mode: RewardQuoteMode::Double,
             selection_mode: RewardSelectionMode::Observe,
             quote_bid_rank: 1,
+            quote_max_bid_rank: 3,
             dominant_single_side_enabled: false,
             dominant_min_probability: decimal("0.90"),
             dominant_max_probability: decimal("0.97"),
@@ -47,10 +47,10 @@ impl Default for RewardBotConfig {
             opportunity_min_book_samples: 30,
             opportunity_max_midpoint_range_cents: decimal("3"),
             opportunity_max_top_of_book_flip_count: 8,
-            opportunity_reward_weight: decimal("35"),
-            opportunity_competition_weight: decimal("30"),
-            opportunity_exit_weight: decimal("25"),
-            opportunity_stability_weight: decimal("10"),
+            opportunity_reward_weight: decimal("10"),
+            opportunity_competition_weight: decimal("25"),
+            opportunity_exit_weight: decimal("40"),
+            opportunity_stability_weight: decimal("25"),
             fair_value_enabled: true,
             fair_value_record_history_enabled: true,
             fair_value_min_confidence: decimal("0.55"),
@@ -69,11 +69,12 @@ impl Default for RewardBotConfig {
             ai_provider_concurrency_enabled: false,
             ai_provider_primary_max_concurrency: 1,
             ai_provider_fallback_max_concurrency: 1,
-            ai_strategy_hint_enabled: true,
-            ai_strategy_hint_min_confidence: decimal("0.75"),
+            ai_risk_adjustment_enabled: true,
+            ai_action_min_confidence: decimal("0.75"),
             info_risk_enabled: false,
             info_risk_mode: RewardSelectionMode::Observe,
             info_risk_avoid_level: RewardInfoRiskLevel::High,
+            info_risk_min_confidence: decimal("0.70"),
             info_risk_ttl_sec: 3600,
             ai_advisory_provider_pending_grace_sec: 120,
             info_risk_provider_pending_grace_sec: 120,
@@ -93,13 +94,17 @@ impl Default for RewardBotConfig {
             min_scoring_check_sec: 45,
             max_position_usd: decimal("20"),
             max_global_position_usd: decimal("50"),
+            inventory_skew_enabled: true,
+            inventory_skew_strength: decimal("0.75"),
             exit_markup_cents: Decimal::ZERO,
-            cancel_on_fill: true,
+            maker_max_exit_loss_cents: decimal("2"),
             account_capital_usd: decimal("1000"),
             requote_drift_cents: decimal("2"),
             requote_drift_confirm_sec: 60,
             requote_drift_cooldown_sec: 120,
             requote_drift_max_cancels_per_cycle: 2,
+            adverse_requote_drift_cents: decimal("0.5"),
+            adverse_requote_confirm_sec: 3,
             post_fill_strategy: PostFillStrategy::ExitAtMarkup,
             adaptive_flatten_min_bid_depth_usd: decimal("5"),
             adaptive_flatten_min_depth_multiple: decimal("1.25"),
@@ -148,8 +153,11 @@ impl RewardBotConfig {
         self.account_id = normalize_account_id(&self.account_id);
         self.max_markets = clamp_u16(self.max_markets, 0, u16::MAX);
         self.max_open_orders = clamp_u16(self.max_open_orders, 0, u16::MAX);
-        self.per_market_usd = clamp_decimal(self.per_market_usd, Decimal::ZERO, decimal("1000000"));
-        self.quote_size_usd = clamp_decimal(self.quote_size_usd, Decimal::ZERO, decimal("1000000"));
+        self.maker_market_budget_usd = clamp_decimal(
+            self.maker_market_budget_usd,
+            Decimal::ZERO,
+            decimal("1000000"),
+        );
         self.min_daily_reward =
             clamp_decimal(self.min_daily_reward, Decimal::ZERO, decimal("100000"));
         self.min_market_liquidity_usd = clamp_decimal(
@@ -169,6 +177,7 @@ impl RewardBotConfig {
         self.min_market_score = clamp_decimal(self.min_market_score, Decimal::ZERO, decimal("100"));
         self.max_spread_cents = clamp_decimal(self.max_spread_cents, decimal("0.1"), decimal("99"));
         self.quote_bid_rank = self.quote_bid_rank.clamp(1, 3);
+        self.quote_max_bid_rank = self.quote_max_bid_rank.clamp(self.quote_bid_rank, 3);
         self.dominant_min_probability = clamp_decimal(
             self.dominant_min_probability,
             decimal("0.51"),
@@ -311,8 +320,13 @@ impl RewardBotConfig {
             self.ai_provider_primary_max_concurrency.clamp(1, 10);
         self.ai_provider_fallback_max_concurrency =
             self.ai_provider_fallback_max_concurrency.clamp(1, 10);
-        self.ai_strategy_hint_min_confidence = clamp_decimal(
-            self.ai_strategy_hint_min_confidence,
+        self.ai_action_min_confidence = clamp_decimal(
+            self.ai_action_min_confidence,
+            Decimal::ZERO,
+            Decimal::ONE,
+        );
+        self.info_risk_min_confidence = clamp_decimal(
+            self.info_risk_min_confidence,
             Decimal::ZERO,
             Decimal::ONE,
         );
@@ -369,8 +383,18 @@ impl RewardBotConfig {
             Decimal::ZERO,
             decimal("10000000"),
         );
+        self.inventory_skew_strength = clamp_decimal(
+            self.inventory_skew_strength,
+            Decimal::ZERO,
+            Decimal::ONE,
+        );
         self.exit_markup_cents =
             clamp_decimal(self.exit_markup_cents, Decimal::ZERO, decimal("50"));
+        self.maker_max_exit_loss_cents = clamp_decimal(
+            self.maker_max_exit_loss_cents,
+            Decimal::ZERO,
+            decimal("50"),
+        );
         self.account_capital_usd =
             clamp_decimal(self.account_capital_usd, decimal("1"), decimal("100000000"));
         self.requote_drift_cents =
@@ -379,6 +403,12 @@ impl RewardBotConfig {
         self.requote_drift_cooldown_sec = self.requote_drift_cooldown_sec.clamp(0, 86_400);
         self.requote_drift_max_cancels_per_cycle =
             self.requote_drift_max_cancels_per_cycle.clamp(0, 100);
+        self.adverse_requote_drift_cents = clamp_decimal(
+            self.adverse_requote_drift_cents,
+            Decimal::ZERO,
+            decimal("99"),
+        );
+        self.adverse_requote_confirm_sec = self.adverse_requote_confirm_sec.clamp(0, 300);
         self.adaptive_flatten_min_bid_depth_usd = clamp_decimal(
             self.adaptive_flatten_min_bid_depth_usd,
             Decimal::ZERO,
@@ -533,6 +563,8 @@ impl RewardBotConfig {
         config.selection_mode = RewardSelectionMode::Observe;
         config.dominant_single_side_enabled = false;
         config.quote_bid_rank = self.balanced_merge_quote_bid_rank;
+        config.quote_max_bid_rank = self.balanced_merge_quote_bid_rank;
+        config.inventory_skew_enabled = false;
         config.safety_margin_cents = self.balanced_merge_min_edge_cents;
         config.max_position_usd = self.balanced_merge_max_unpaired_position_usd;
         config.normalized()
@@ -553,11 +585,8 @@ impl RewardBotConfig {
         if let Some(max_open_orders) = patch.max_open_orders {
             next.max_open_orders = max_open_orders;
         }
-        if let Some(per_market_usd) = patch.per_market_usd {
-            next.per_market_usd = per_market_usd;
-        }
-        if let Some(quote_size_usd) = patch.quote_size_usd {
-            next.quote_size_usd = quote_size_usd;
+        if let Some(value) = patch.maker_market_budget_usd {
+            next.maker_market_budget_usd = value;
         }
         if let Some(min_daily_reward) = patch.min_daily_reward {
             next.min_daily_reward = min_daily_reward;
@@ -591,6 +620,9 @@ impl RewardBotConfig {
         }
         if let Some(quote_bid_rank) = patch.quote_bid_rank {
             next.quote_bid_rank = quote_bid_rank;
+        }
+        if let Some(quote_max_bid_rank) = patch.quote_max_bid_rank {
+            next.quote_max_bid_rank = quote_max_bid_rank;
         }
         if let Some(value) = patch.dominant_single_side_enabled {
             next.dominant_single_side_enabled = value;
@@ -733,11 +765,11 @@ impl RewardBotConfig {
         if let Some(value) = patch.ai_provider_fallback_max_concurrency {
             next.ai_provider_fallback_max_concurrency = value;
         }
-        if let Some(value) = patch.ai_strategy_hint_enabled {
-            next.ai_strategy_hint_enabled = value;
+        if let Some(value) = patch.ai_risk_adjustment_enabled {
+            next.ai_risk_adjustment_enabled = value;
         }
-        if let Some(value) = patch.ai_strategy_hint_min_confidence {
-            next.ai_strategy_hint_min_confidence = value;
+        if let Some(value) = patch.ai_action_min_confidence {
+            next.ai_action_min_confidence = value;
         }
         if let Some(value) = patch.info_risk_enabled {
             next.info_risk_enabled = value;
@@ -747,6 +779,9 @@ impl RewardBotConfig {
         }
         if let Some(value) = patch.info_risk_avoid_level {
             next.info_risk_avoid_level = value;
+        }
+        if let Some(value) = patch.info_risk_min_confidence {
+            next.info_risk_min_confidence = value;
         }
         if let Some(value) = patch.info_risk_ttl_sec {
             next.info_risk_ttl_sec = value;
@@ -805,11 +840,17 @@ impl RewardBotConfig {
         if let Some(max_global_position_usd) = patch.max_global_position_usd {
             next.max_global_position_usd = max_global_position_usd;
         }
+        if let Some(value) = patch.inventory_skew_enabled {
+            next.inventory_skew_enabled = value;
+        }
+        if let Some(value) = patch.inventory_skew_strength {
+            next.inventory_skew_strength = value;
+        }
         if let Some(exit_markup_cents) = patch.exit_markup_cents {
             next.exit_markup_cents = exit_markup_cents;
         }
-        if let Some(cancel_on_fill) = patch.cancel_on_fill {
-            next.cancel_on_fill = cancel_on_fill;
+        if let Some(value) = patch.maker_max_exit_loss_cents {
+            next.maker_max_exit_loss_cents = value;
         }
         if let Some(account_capital_usd) = patch.account_capital_usd {
             next.account_capital_usd = account_capital_usd;
@@ -826,6 +867,12 @@ impl RewardBotConfig {
         if let Some(requote_drift_max_cancels_per_cycle) = patch.requote_drift_max_cancels_per_cycle
         {
             next.requote_drift_max_cancels_per_cycle = requote_drift_max_cancels_per_cycle;
+        }
+        if let Some(value) = patch.adverse_requote_drift_cents {
+            next.adverse_requote_drift_cents = value;
+        }
+        if let Some(value) = patch.adverse_requote_confirm_sec {
+            next.adverse_requote_confirm_sec = value;
         }
         if let Some(post_fill_strategy) = patch.post_fill_strategy {
             next.post_fill_strategy = post_fill_strategy;
@@ -954,8 +1001,7 @@ mod reward_config_tests {
             "account_id": "reward_bot",
             "max_markets": 10,
             "max_open_orders": 100,
-            "per_market_usd": 35,
-            "quote_size_usd": 15,
+            "maker_market_budget_usd": 35,
             "min_daily_reward": 10,
             "min_market_liquidity_usd": 1000,
             "min_market_volume_24h_usd": 1000,
@@ -967,6 +1013,9 @@ mod reward_config_tests {
             "quote_mode": "auto",
             "selection_mode": "enforce",
             "quote_bid_rank": 3,
+            "quote_max_bid_rank": 3,
+            "inventory_skew_enabled": true,
+            "inventory_skew_strength": 0.6,
             "dominant_single_side_enabled": true,
             "dominant_min_probability": 0.9,
             "dominant_max_probability": 0.97,
@@ -983,11 +1032,12 @@ mod reward_config_tests {
             "ai_provider_concurrency_enabled": true,
             "ai_provider_primary_max_concurrency": 4,
             "ai_provider_fallback_max_concurrency": 2,
-            "ai_strategy_hint_enabled": true,
-            "ai_strategy_hint_min_confidence": 0.8,
+            "ai_risk_adjustment_enabled": true,
+            "ai_action_min_confidence": 0.8,
             "info_risk_enabled": true,
             "info_risk_mode": "enforce",
             "info_risk_avoid_level": "high",
+            "info_risk_min_confidence": 0.75,
             "info_risk_ttl_sec": 36000,
             "event_window_enabled": true,
             "event_window_min_confidence": "medium",
@@ -1006,9 +1056,11 @@ mod reward_config_tests {
             "max_position_usd": 20,
             "max_global_position_usd": 1000,
             "exit_markup_cents": 0,
-            "cancel_on_fill": true,
+            "maker_max_exit_loss_cents": 1.5,
             "account_capital_usd": 1000,
             "requote_drift_cents": 2,
+            "adverse_requote_drift_cents": 0.4,
+            "adverse_requote_confirm_sec": 2,
             "requote_drift_confirm_sec": 90,
             "requote_drift_cooldown_sec": 240,
             "requote_drift_max_cancels_per_cycle": 2,
@@ -1045,10 +1097,15 @@ mod reward_config_tests {
         let config = RewardBotConfig::default().apply_patch(patch);
 
         assert_eq!(config.quote_bid_rank, 3);
+        assert_eq!(config.maker_market_budget_usd, decimal("35"));
+        assert_eq!(config.quote_max_bid_rank, 3);
+        assert!(config.inventory_skew_enabled);
+        assert_eq!(config.inventory_skew_strength, decimal("0.6"));
         assert!(config.ai_provider_concurrency_enabled);
         assert_eq!(config.ai_provider_primary_max_concurrency, 4);
         assert_eq!(config.ai_provider_fallback_max_concurrency, 2);
-        assert_eq!(config.ai_strategy_hint_min_confidence, decimal("0.8"));
+        assert_eq!(config.ai_action_min_confidence, decimal("0.8"));
+        assert_eq!(config.info_risk_min_confidence, decimal("0.75"));
         assert!(config.event_window_enabled);
         assert_eq!(
             config.event_window_min_confidence,
@@ -1068,6 +1125,9 @@ mod reward_config_tests {
         assert!(config.require_info_risk_before_first_quote);
         assert_eq!(config.first_quote_quarantine_sec, 300);
         assert_eq!(config.cancel_bid_rank, 2);
+        assert_eq!(config.maker_max_exit_loss_cents, decimal("1.5"));
+        assert_eq!(config.adverse_requote_drift_cents, decimal("0.4"));
+        assert_eq!(config.adverse_requote_confirm_sec, 2);
         assert_eq!(config.requote_jitter_sec, 305);
         assert_eq!(config.requote_drift_confirm_sec, 90);
         assert_eq!(config.requote_drift_cooldown_sec, 240);
@@ -1116,6 +1176,20 @@ mod reward_config_tests {
         assert_eq!(serialized["adaptive_exit_cancel_replace_enabled"], false);
         assert_eq!(serialized["adaptive_exit_reprice_drift_cents"], "3");
         assert_eq!(serialized["adaptive_exit_cancel_replace_max_per_cycle"], 4);
+    }
+
+    #[test]
+    fn reward_market_maker_defaults_allow_rank_search_and_inventory_skew() {
+        let config = RewardBotConfig::default();
+
+        assert_eq!(config.quote_bid_rank, 1);
+        assert!(config.quote_max_bid_rank >= config.quote_bid_rank);
+        assert!(config.inventory_skew_enabled);
+        assert!(config.maker_max_exit_loss_cents > Decimal::ZERO);
+        assert!(config.adverse_requote_drift_cents < config.requote_drift_cents);
+        assert_eq!(config.opportunity_reward_weight, decimal("10"));
+        assert!(config.opportunity_exit_weight > config.opportunity_reward_weight);
+        assert!(config.opportunity_stability_weight > config.opportunity_reward_weight);
     }
 
     #[test]

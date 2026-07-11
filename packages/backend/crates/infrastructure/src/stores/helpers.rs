@@ -12,11 +12,7 @@ fn reward_market_advisory_from_row(row: &sqlx::postgres::PgRow) -> Result<Reward
     let request_format: String = row
         .try_get("request_format")
         .map_err(postgres_decode_error)?;
-    let suitability: String = row
-        .try_get("suitability")
-        .map_err(postgres_decode_error)?;
-    let quote_mode: String = row.try_get("quote_mode").map_err(postgres_decode_error)?;
-    let exit_policy: String = row.try_get("exit_policy").map_err(postgres_decode_error)?;
+    let action: String = row.try_get("action").map_err(postgres_decode_error)?;
     let reasons: Json<Value> = row.try_get("reasons_json").map_err(postgres_decode_error)?;
     let metrics: Json<Value> = row.try_get("metrics_json").map_err(postgres_decode_error)?;
     Ok(RewardMarketAdvisory {
@@ -25,9 +21,13 @@ fn reward_market_advisory_from_row(row: &sqlx::postgres::PgRow) -> Result<Reward
         request_format: RewardAiRequestFormat::from_str(&request_format)?,
         model: row.try_get("model").map_err(postgres_decode_error)?,
         input_hash: row.try_get("input_hash").map_err(postgres_decode_error)?,
-        suitability: RewardAiSuitability::from_str(&suitability)?,
-        quote_mode: RewardPlanQuoteMode::from_str(&quote_mode)?,
-        exit_policy: PostFillStrategy::from_str(&exit_policy)?,
+        action: RewardProviderAction::from_str(&action)?,
+        size_multiplier: row
+            .try_get("size_multiplier")
+            .map_err(postgres_decode_error)?,
+        edge_buffer_cents: row
+            .try_get("edge_buffer_cents")
+            .map_err(postgres_decode_error)?,
         confidence: row.try_get("confidence").map_err(postgres_decode_error)?,
         reasons: parse_reward_advisory_reasons(reasons.0)?,
         metrics: metrics.0,
@@ -88,6 +88,7 @@ fn reward_market_info_risk_from_row(row: &sqlx::postgres::PgRow) -> Result<Rewar
         .try_get("request_format")
         .map_err(postgres_decode_error)?;
     let risk_level: String = row.try_get("risk_level").map_err(postgres_decode_error)?;
+    let action: String = row.try_get("action").map_err(postgres_decode_error)?;
     let risk_type: String = row.try_get("risk_type").map_err(postgres_decode_error)?;
     let directional_risk: String = row
         .try_get("directional_risk")
@@ -101,6 +102,7 @@ fn reward_market_info_risk_from_row(row: &sqlx::postgres::PgRow) -> Result<Rewar
         model: row.try_get("model").map_err(postgres_decode_error)?,
         query_hash: row.try_get("query_hash").map_err(postgres_decode_error)?,
         input_hash: row.try_get("input_hash").map_err(postgres_decode_error)?,
+        action: RewardProviderAction::from_str(&action)?,
         risk_level: RewardInfoRiskLevel::from_str(&risk_level)?,
         risk_type: RewardInfoRiskType::from_str(&risk_type)?,
         directional_risk: RewardInfoDirectionalRisk::from_str(&directional_risk)?,

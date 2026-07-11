@@ -11,6 +11,7 @@ async fn postgres_latest_market_info_risk(
                model,
                query_hash,
                input_hash,
+               action,
                risk_level,
                risk_type,
                directional_risk,
@@ -68,6 +69,7 @@ async fn postgres_latest_market_info_risks(
                model,
                query_hash,
                input_hash,
+               action,
                risk_level,
                risk_type,
                directional_risk,
@@ -112,6 +114,7 @@ async fn postgres_save_market_info_risk(
           model,
           query_hash,
           input_hash,
+          action,
           risk_level,
           risk_type,
           directional_risk,
@@ -124,7 +127,7 @@ async fn postgres_save_market_info_risk(
           created_at,
           expires_at
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
         "#,
     )
     .bind(&risk.condition_id)
@@ -133,6 +136,7 @@ async fn postgres_save_market_info_risk(
     .bind(&risk.model)
     .bind(&risk.query_hash)
     .bind(&risk.input_hash)
+    .bind(risk.action.as_str())
     .bind(risk.risk_level.as_str())
     .bind(risk.risk_type.as_str())
     .bind(risk.directional_risk.as_str())

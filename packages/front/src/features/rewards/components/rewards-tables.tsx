@@ -16,7 +16,7 @@ import type {
   PostFillStrategy,
   RewardExitStrategySource,
   RewardListPageDto,
-  RewardPlanQuoteMode,
+  RewardProviderAction,
   RewardQuotePlanDto,
   RewardStrategyProfile,
   RewardTokenQuoteDto,
@@ -28,7 +28,6 @@ import { dictionary } from "@/lib/i18n/dictionaries";
 import {
   quoteReadinessLabel,
   quoteReadinessTone,
-  rewardAiStrategyHint,
   rewardTone,
 } from "../lib/rewards-helpers";
 import { getPositionQuote } from "../lib/position-metrics";
@@ -39,28 +38,19 @@ export { FillsTable } from "./rewards-fills-table";
 export { EventsTable } from "./rewards-events-table";
 export { PositionsTable } from "./rewards-positions-table";
 
-function providerDecisionTone(allowed: boolean) {
-  return allowed ? "success" : "danger";
+function providerActionTone(action: RewardProviderAction) {
+  if (action === "allow") return "success" as const;
+  if (action === "reduce") return "warning" as const;
+  return "danger" as const;
 }
 
-function providerDecisionLabel(allowed: boolean) {
-  return allowed ? dictionary.rewards.allowQuote : dictionary.rewards.disallowQuote;
-}
-
-function infoRiskAllowsQuote(level?: string | null) {
-  return level === "low";
-}
-
-function aiAdvisoryAllowsQuote(suitability?: string | null) {
-  return suitability === "allow";
-}
-
-function quoteModeLabel(mode?: RewardPlanQuoteMode) {
-  if (mode === "double") return dictionary.rewards.quoteModeDouble;
-  if (mode === "single_yes") return dictionary.rewards.quoteModeSingleYes;
-  if (mode === "single_no") return dictionary.rewards.quoteModeSingleNo;
-  if (mode === "none") return dictionary.rewards.quoteModeNone;
-  return dictionary.rewards.notAvailable;
+function providerActionLabel(action: RewardProviderAction) {
+  if (action === "allow") return dictionary.rewards.providerActionAllow;
+  if (action === "reduce") return dictionary.rewards.providerActionReduce;
+  if (action === "stop_new") return dictionary.rewards.providerActionStopNew;
+  if (action === "cancel_yes") return dictionary.rewards.providerActionCancelYes;
+  if (action === "cancel_no") return dictionary.rewards.providerActionCancelNo;
+  return dictionary.rewards.providerActionCancelAll;
 }
 
 function strategyProfileLabel(profile?: RewardStrategyProfile | null) {
@@ -252,34 +242,28 @@ export function QuotePlansTable({
                 <TableCell className="whitespace-normal align-top text-xs">
                   {plan.info_risk == null ? (
                     <span className="text-muted-foreground">{dictionary.rewards.none}</span>
-                  ) : (() => {
-                    const allowed = infoRiskAllowsQuote(plan.info_risk.risk_level);
-                    return (
+                  ) : (
                       <div className="space-y-1">
                         <div className="flex flex-wrap items-center gap-1">
-                          <StatusPill tone={providerDecisionTone(allowed)}>
-                            {providerDecisionLabel(allowed)}
+                          <StatusPill tone={providerActionTone(plan.info_risk.action)}>
+                            {providerActionLabel(plan.info_risk.action)}
                           </StatusPill>
                           <span className="font-mono text-muted-foreground">
-                            {dictionary.common.confidence} {formatFixed(plan.info_risk.confidence, 2)}
+                            {plan.info_risk.risk_level} · {dictionary.common.confidence} {formatFixed(plan.info_risk.confidence, 2)}
                           </span>
                         </div>
                         <TruncateText text={plan.info_risk.summary} lines={2} className="leading-5 text-muted-foreground" />
                       </div>
-                    );
-                  })()}
+                  )}
                 </TableCell>
                 <TableCell className="whitespace-normal align-top text-xs">
                   {plan.ai_advisory == null ? (
                     <span className="text-muted-foreground">{dictionary.rewards.none}</span>
-                  ) : (() => {
-                    const allowed = aiAdvisoryAllowsQuote(plan.ai_advisory.suitability);
-                    const hint = rewardAiStrategyHint(plan.ai_advisory);
-                    return (
+                  ) : (
                       <div className="space-y-1">
                         <div className="flex flex-wrap items-center gap-1">
-                          <StatusPill tone={providerDecisionTone(allowed)}>
-                            {providerDecisionLabel(allowed)}
+                          <StatusPill tone={providerActionTone(plan.ai_advisory.action)}>
+                            {providerActionLabel(plan.ai_advisory.action)}
                           </StatusPill>
                           <span className="font-mono text-muted-foreground">
                             {dictionary.common.confidence} {formatFixed(plan.ai_advisory.confidence, 2)}
@@ -290,23 +274,14 @@ export function QuotePlansTable({
                           lines={2}
                           className="leading-5 text-muted-foreground"
                         />
-                        {hint != null && (
-                          <div className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5 font-mono text-[11px] leading-4 text-muted-foreground">
-                            <span>{dictionary.rewards.aiStrategyHintQuoteMode}</span>
-                            <span>{quoteModeLabel(hint.quoteMode)}</span>
-                            <span>{dictionary.rewards.aiStrategyHintBidRank}</span>
-                            <span>{hint.bidRank ?? dictionary.rewards.notAvailable}</span>
-                            <span>{dictionary.rewards.aiStrategyHintMaxNotional}</span>
-                            <span>
-                              {hint.maxConditionNotionalUsd == null
-                                ? dictionary.rewards.notAvailable
-                                : formatUsdFixed(hint.maxConditionNotionalUsd)}
-                            </span>
-                          </div>
-                        )}
+                        <div className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5 font-mono text-[11px] leading-4 text-muted-foreground">
+                          <span>{dictionary.rewards.providerSizeMultiplier}</span>
+                          <span>{formatFixed(plan.ai_advisory.size_multiplier, 2)}x</span>
+                          <span>{dictionary.rewards.providerEdgeBuffer}</span>
+                          <span>{formatFixed(plan.ai_advisory.edge_buffer_cents, 2)}c</span>
+                        </div>
                       </div>
-                    );
-                  })()}
+                  )}
                 </TableCell>
               </TableRow>
             ))

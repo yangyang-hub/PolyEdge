@@ -1,6 +1,6 @@
 # infrastructure（基础设施层）
 
-最后更新：2026-07-10
+最后更新：2026-07-11
 
 ## 概述
 
@@ -51,7 +51,7 @@
 
 进程级 rewards 默认关闭：`POLYEDGE_REWARDS__ENABLED=false`、`POLYEDGE_WORKER__POLL_REWARD_BOT=false`、`POLYEDGE_WORKER__POLL_REWARD_INFO_RISKS=false`。交易/对账类 worker 也默认关闭；即使开关打开，runtime 仍会在启动 live job 前检查 Polymarket account/private key/API credentials，不完整时只记录 warn 并跳过该 job。
 
-Rewards provider 密钥只从 `RewardsSettings` 读取，不进入 `RewardBotConfig`、API snapshot 或前端 public env。业务层 provider、request format、并发上限、AI strategy hint、信息风险和事件窗口配置保存在 `reward_bot_config`。
+Rewards provider 密钥只从 `RewardsSettings` 读取，不进入 `RewardBotConfig`、API snapshot 或前端 public env。业务层 provider、request format、并发上限、AI 风险动作、信息风险和事件窗口配置保存在 `reward_bot_config`；AI/info-risk 动作置信度只使用业务配置，不再有进程级 bps 阈值。
 
 ## Stores
 
@@ -87,18 +87,19 @@ Rewards provider 密钥只从 `RewardsSettings` 读取，不进入 `RewardBotCon
 
 - `runtime_config` 启动时用环境变量值 bootstrap 数据库；环境变量始终优先。
 - Postgres maintenance 使用 `WITH doomed AS (SELECT ctid ... LIMIT $n) DELETE ... USING doomed` 分批删除，避免超大事务；strategy run ledger 按 run/transition 分开保留，删除旧 completed/failed/cancelled run 时由 FK 级联清理 decisions/actions。
-- Rewards 配置以 key-value 保存，覆盖市场质量、quote/selection、dominant 单边、盘口集中度、偏好分类、机会评分、fair-value、adaptive post-fill 退出与 pending-exit 重评、AI advisory、信息风险、事件窗口、首单 gate、库存、requote、reconcile 和 BalancedMerge 参数。
+- Rewards 配置以 key-value 保存，覆盖 `maker_market_budget_usd`、市场质量、动态 quote rank、机会评分、fair-value、adaptive 退出、AI/info-risk 动作阈值、事件窗口、库存偏斜、非对称 requote 和 BalancedMerge。旧 `per_market_usd`、`quote_size_usd`、`cancel_on_fill` key 不再解析或写入。
 - `RewardBotStore` 维护 `reward_control_commands`，API 入队 pending 命令，worker 使用 claim/complete/fail 处理；running 命令超过 5 分钟可重新领取。
 - `RewardBotStore` 维护 `reward_worker_heartbeats`，API snapshot 只在配置启用且最近 2 分钟有 heartbeat 时标记 worker running。
-- `reward_market_advisories`、`reward_market_info_risks` 和 `llm_calls` 已接入 Postgres/内存实现；外部 provider 调用按 UTC 日聚合展示。
+- `reward_market_advisories` 只持久化 V2 action、size multiplier、edge buffer、confidence、reasons/metrics；`reward_market_info_risks` 额外持久化 evidence action 与 taxonomy。旧 AI suitability/quote mode/exit policy 列已从 clean baseline 删除。Provider 调用继续写 `llm_calls` 并按 UTC 日聚合。
 - `reward_quote_plans` 按 `(condition_id, strategy_profile)` 保存当前计划，允许 standard 与 BalancedMerge 同市场并存；统计在 Postgres 中直接 SQL 聚合 readiness 与 blocker counts，避免顶部概览反序列化全表 JSON。
+- Postgres rewards 候选预排序与 application 基础质量分使用同一 V2 方向：LP 日奖励与 rewards spread 合计最多 10 分，流动性、成交量、剩余时长、实时 spread 和中点质量占主导；最终资金排序仍由 application `selection_score` 完成。
 - `reward_quote_plans` 额外持久化 `latest_run_id`、`quote_readiness`、`quote_mode`、`reason_code`、`blocker_codes` 和 provider/fair-value/event 摘要列，JSON 仍保存完整计划快照。
 - `RewardBotStore` 维护 `reward_strategy_runs`、`reward_strategy_decisions`、`reward_strategy_actions` 和 `reward_order_transitions`。Postgres 与 in-memory 实现都支持创建/完成/失败 run、批量 upsert 决策和动作、记录订单状态变迁，以及按 run/order 分页查询。
 - `reward_fair_values` 保存每个 condition 最新 fair-value 估计；`reward_fair_value_history` 追加保存历史估计用于审计/回测，数据库维护默认保留 90 天。
 - `reward_positions` 可保存当前 rewards catalog 外的外部库存；外部账户持仓同步成功时会原子替换目标账户全部持仓，失败时保留上一版。
 - `reward_merge_intents` 支持 BalancedMerge 配对库存合并、提交 tx hash、失败原因和 retry count。
 - `InMemoryOrderbookCache` 写入时排序 bids/asks、裁剪深度、拒绝旧 `observed_at` 覆盖未过期条目，并合并更新的 `confirmed_at`。
-- `InMemoryOrderbookSubscriptionRegistry` 对 source 做原子全量替换，最多 32 个 source，聚合优先级为 `rewards_active`、`exec_orders`、`rewards_eligible`、`rewards_ai_provider`、`rewards_candidates`。
+- `InMemoryOrderbookSubscriptionRegistry` 对 source 做原子全量替换，最多 32 个 source，聚合优先级为 `rewards_active`、`exec_orders`、`rewards_eligible`、`rewards_candidates`。Provider 不依赖 live orderbook，临时 `rewards_ai_provider` source 已删除。
 - `OrderbookStreamSettings.ws_chunk_size` 默认 500，`ws_max_connections` 默认 8；orderbook 服务用两者计算有效 chunk，使旧的小 chunk runtime 值也不会突破 Polymarket market-channel 连接预算。
 
 ## Auth

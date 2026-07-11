@@ -165,9 +165,9 @@ fn cache_test_candle(token_id: &str, outcome: &str, bucket_offset: i64, close: &
 
 fn cache_test_ai_decision() -> RewardAiAdvisoryDecision {
     RewardAiAdvisoryDecision {
-        suitability: RewardAiSuitability::Allow,
-        quote_mode: RewardPlanQuoteMode::Double,
-        exit_policy: PostFillStrategy::ExitAtMarkup,
+        action: RewardProviderAction::Allow,
+        size_multiplier: Decimal::ONE,
+        edge_buffer_cents: Decimal::ZERO,
         confidence: decimal("0.91"),
         reasons: vec!["stable enough for cache expiry test".to_string()],
         metrics: json!({"fixture": "ai"}),
@@ -176,6 +176,7 @@ fn cache_test_ai_decision() -> RewardAiAdvisoryDecision {
 
 fn cache_test_info_risk_decision() -> RewardInfoRiskAssessmentDecision {
     RewardInfoRiskAssessmentDecision {
+        action: RewardProviderAction::Allow,
         risk_level: RewardInfoRiskLevel::Low,
         risk_type: RewardInfoRiskType::None,
         directional_risk: RewardInfoDirectionalRisk::Unclear,
@@ -289,7 +290,6 @@ fn reward_ai_advisory_cache_key_ignores_runtime_context() {
         &cache_test_account("33.27", 1),
         &[],
         &[],
-        &books,
         &[],
         &config,
         config.ai_advisory_ttl_sec,
@@ -306,7 +306,6 @@ fn reward_ai_advisory_cache_key_ignores_runtime_context() {
         &cache_test_account("250.00", 2),
         &[cache_test_position(later_time)],
         &[cache_test_order(later_time)],
-        &cache_test_books(later_time, "0.53"),
         &[],
         &config,
         config.ai_advisory_ttl_sec,
@@ -318,7 +317,11 @@ fn reward_ai_advisory_cache_key_ignores_runtime_context() {
 
     assert_eq!(first.input_hash, second.input_hash);
     assert_ne!(first.payload, second.payload);
-    assert!(first.payload.get("pricing_context").is_some());
+    assert_eq!(first.payload["candles"], second.payload["candles"]);
+    assert_eq!(first.payload["candle_summary"], second.payload["candle_summary"]);
+    assert!(first.payload.get("pricing_context").is_none());
+    assert!(first.payload.get("deterministic_plan").is_none());
+    assert!(first.payload.get("account").is_none());
     assert_eq!(
         first
             .payload
@@ -355,7 +358,6 @@ fn reward_ai_advisory_cache_key_ignores_in_progress_source_candle_changes() {
         &account,
         &[],
         &[],
-        &books,
         &first_candles,
         &config,
         config.ai_advisory_ttl_sec,
@@ -370,7 +372,6 @@ fn reward_ai_advisory_cache_key_ignores_in_progress_source_candle_changes() {
         &account,
         &[],
         &[],
-        &books,
         &second_candles,
         &config,
         config.ai_advisory_ttl_sec,
@@ -381,7 +382,15 @@ fn reward_ai_advisory_cache_key_ignores_in_progress_source_candle_changes() {
     .expect("second request");
 
     assert_eq!(first.input_hash, second.input_hash);
-    assert_ne!(first.payload, second.payload);
+    assert_eq!(first.payload["candles"], second.payload["candles"]);
+    assert_eq!(first.payload["candle_summary"], second.payload["candle_summary"]);
+    assert!(
+        first
+            .payload
+            .pointer("/candles/0/items")
+            .and_then(Value::as_array)
+            .is_some_and(Vec::is_empty)
+    );
     assert!(first.payload.get("candles").is_some());
     assert!(first.payload.get("candle_summary").is_some());
     let interval_sec = first
@@ -421,7 +430,6 @@ fn reward_ai_advisory_cache_key_tracks_completed_hourly_candle_changes() {
         &account,
         &[],
         &[],
-        &books,
         &first_candles,
         &config,
         config.ai_advisory_ttl_sec,
@@ -436,7 +444,6 @@ fn reward_ai_advisory_cache_key_tracks_completed_hourly_candle_changes() {
         &account,
         &[],
         &[],
-        &books,
         &second_candles,
         &config,
         config.ai_advisory_ttl_sec,
@@ -450,7 +457,7 @@ fn reward_ai_advisory_cache_key_tracks_completed_hourly_candle_changes() {
 }
 
 #[test]
-fn reward_ai_advisory_cache_key_tracks_strategy_changes() {
+fn reward_ai_advisory_cache_key_ignores_live_quote_strategy_changes() {
     let market = cache_test_market();
     let books = cache_test_books(
         OffsetDateTime::from_unix_timestamp(1_785_000_000).expect("valid timestamp"),
@@ -470,7 +477,6 @@ fn reward_ai_advisory_cache_key_tracks_strategy_changes() {
         &account,
         &[],
         &[],
-        &books,
         &[],
         &base_config,
         base_config.ai_advisory_ttl_sec,
@@ -485,7 +491,6 @@ fn reward_ai_advisory_cache_key_tracks_strategy_changes() {
         &account,
         &[],
         &[],
-        &books,
         &[],
         &changed_config,
         changed_config.ai_advisory_ttl_sec,
@@ -495,7 +500,7 @@ fn reward_ai_advisory_cache_key_tracks_strategy_changes() {
     )
     .expect("second request");
 
-    assert_ne!(first.input_hash, second.input_hash);
+    assert_eq!(first.input_hash, second.input_hash);
 }
 
 #[test]
@@ -547,7 +552,7 @@ fn reward_info_risk_cache_key_ignores_runtime_context() {
 }
 
 #[test]
-fn reward_info_risk_cache_key_tracks_risk_policy_changes() {
+fn reward_info_risk_cache_key_ignores_operator_risk_policy_changes() {
     let market = cache_test_market();
     let books = cache_test_books(
         OffsetDateTime::from_unix_timestamp(1_785_000_000).expect("valid timestamp"),
@@ -586,7 +591,7 @@ fn reward_info_risk_cache_key_tracks_risk_policy_changes() {
     )
     .expect("second request");
 
-    assert_ne!(first.input_hash, second.input_hash);
+    assert_eq!(first.input_hash, second.input_hash);
 }
 
 #[test]
@@ -653,7 +658,6 @@ fn reward_ai_advisory_cache_key_ignores_quote_mode_changes() {
         &account,
         &[],
         &[],
-        &books,
         &[],
         &config,
         config.ai_advisory_ttl_sec,
@@ -672,7 +676,6 @@ fn reward_ai_advisory_cache_key_ignores_quote_mode_changes() {
         &account,
         &[],
         &[],
-        &books,
         &[],
         &config,
         config.ai_advisory_ttl_sec,
@@ -730,4 +733,55 @@ fn reward_info_risk_cache_key_ignores_sync_driven_market_metadata() {
     .expect("second request");
 
     assert_eq!(first.input_hash, second.input_hash);
+    assert!(first.payload.pointer("/market/event_slug").is_none());
+    assert!(first.payload.pointer("/market/ambiguity_level").is_none());
+}
+
+#[test]
+fn reward_ai_advisory_ignores_sync_driven_market_metadata() {
+    let mut market = cache_test_market();
+    let books = cache_test_books(
+        OffsetDateTime::from_unix_timestamp(1_785_000_000).expect("valid timestamp"),
+        "0.54",
+    );
+    let plan = cache_test_plan(&market, &books);
+    let account = cache_test_account("100", 1);
+    let config = RewardBotConfig::default();
+
+    let first = build_reward_ai_advisory_request(
+        &market,
+        &plan,
+        &account,
+        &[],
+        &[],
+        &[],
+        &config,
+        config.ai_advisory_ttl_sec,
+        RewardAiProvider::OpenAi,
+        RewardAiRequestFormat::OpenAiChatCompletions,
+        "mimo-v2.5",
+    )
+    .expect("first request");
+
+    market.event_slug = "different-event-slug".to_string();
+    market.ambiguity_level = "high".to_string();
+
+    let second = build_reward_ai_advisory_request(
+        &market,
+        &plan,
+        &account,
+        &[],
+        &[],
+        &[],
+        &config,
+        config.ai_advisory_ttl_sec,
+        RewardAiProvider::OpenAi,
+        RewardAiRequestFormat::OpenAiChatCompletions,
+        "mimo-v2.5",
+    )
+    .expect("second request");
+
+    assert_eq!(first.input_hash, second.input_hash);
+    assert!(first.payload.pointer("/market/event_slug").is_none());
+    assert!(first.payload.pointer("/market/ambiguity_level").is_none());
 }

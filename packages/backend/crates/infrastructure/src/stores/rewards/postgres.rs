@@ -355,9 +355,9 @@ impl RewardBotStore for PostgresRewardBotStore {
                    request_format,
                    model,
                    input_hash,
-                   suitability,
-                   quote_mode,
-                   exit_policy,
+                   action,
+                   size_multiplier,
+                   edge_buffer_cents,
                    confidence,
                    reasons_json,
                    metrics_json,
@@ -401,9 +401,9 @@ impl RewardBotStore for PostgresRewardBotStore {
               request_format,
               model,
               input_hash,
-              suitability,
-              quote_mode,
-              exit_policy,
+              action,
+              size_multiplier,
+              edge_buffer_cents,
               confidence,
               reasons_json,
               metrics_json,
@@ -418,9 +418,9 @@ impl RewardBotStore for PostgresRewardBotStore {
         .bind(advisory.request_format.as_str())
         .bind(&advisory.model)
         .bind(&advisory.input_hash)
-        .bind(advisory.suitability.as_str())
-        .bind(advisory.quote_mode.as_str())
-        .bind(advisory.exit_policy.as_str())
+        .bind(advisory.action.as_str())
+        .bind(advisory.size_multiplier)
+        .bind(advisory.edge_buffer_cents)
         .bind(advisory.confidence)
         .bind(Json(json!(advisory.reasons)))
         .bind(Json(advisory.metrics.clone()))

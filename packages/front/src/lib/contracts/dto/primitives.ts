@@ -60,7 +60,13 @@ export type RewardAiRequestFormat =
   | "openai_responses"
   | "openai_chat_completions"
   | "anthropic_messages";
-export type RewardAiSuitability = "allow" | "watch" | "avoid";
+export type RewardProviderAction =
+  | "allow"
+  | "reduce"
+  | "stop_new"
+  | "cancel_yes"
+  | "cancel_no"
+  | "cancel_all";
 export type RewardInfoRiskLevel = "low" | "medium" | "high" | "critical" | "unknown";
 export type RewardInfoRiskType =
   | "imminent_resolution"

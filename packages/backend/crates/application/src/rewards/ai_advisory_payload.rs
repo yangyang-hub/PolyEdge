@@ -1,135 +1,3 @@
-fn reward_ai_pricing_context(
-    market: &RewardMarket,
-    plan: &RewardQuotePlan,
-    books: &HashMap<String, RewardOrderBook>,
-    config: &RewardBotConfig,
-    now: OffsetDateTime,
-) -> Value {
-    let mut token_items = Vec::new();
-    let mut midpoint_sum = Decimal::ZERO;
-    let mut midpoint_count = 0usize;
-    let mut max_spread_cents: Option<Decimal> = None;
-    let mut quote_crosses_or_touches_ask = false;
-    let mut quote_negative_edge_count = 0usize;
-    let mut stale_token_count = 0usize;
-    let max_stale_book_ms = i64::try_from(config.stale_book_ms).unwrap_or(i64::MAX);
-
-    for token in &market.tokens {
-        let book = books.get(&token.token_id);
-        let best_bid = book.and_then(|book| reward_ai_best_price(&book.bids));
-        let best_ask = book.and_then(|book| reward_ai_best_price(&book.asks));
-        let midpoint = match (best_bid, best_ask, token.price) {
-            (Some(bid), Some(ask), _) => Some((bid + ask) / Decimal::from(2)),
-            (_, _, Some(price)) if price > Decimal::ZERO => Some(price),
-            _ => None,
-        };
-        if let Some(midpoint) = midpoint {
-            midpoint_sum += midpoint;
-            midpoint_count += 1;
-        }
-
-        let spread_cents = best_bid
-            .zip(best_ask)
-            .map(|(bid, ask)| (ask - bid) * decimal("100"));
-        if let Some(spread) = spread_cents {
-            max_spread_cents = Some(max_spread_cents.map_or(spread, |current| current.max(spread)));
-        }
-
-        let quote_leg = plan.legs.iter().find(|leg| leg.token_id == token.token_id);
-        let quote_price = quote_leg.map(|leg| leg.price);
-        let quote_edge_cents = quote_price
-            .zip(midpoint)
-            .map(|(price, midpoint)| (midpoint - price) * decimal("100"));
-        if best_ask
-            .zip(quote_price)
-            .is_some_and(|(ask, price)| price >= ask)
-        {
-            quote_crosses_or_touches_ask = true;
-        }
-        if quote_edge_cents.is_some_and(|edge| edge < Decimal::ZERO) {
-            quote_negative_edge_count += 1;
-        }
-
-        let confirmed_age_ms = book
-            .map(|book| {
-                let age_ms = (now - book.confirmed_at).whole_milliseconds().max(0);
-                i64::try_from(age_ms).unwrap_or(i64::MAX)
-            })
-            .unwrap_or(i64::MAX);
-        let stale_for_placement = confirmed_age_ms > max_stale_book_ms;
-        if stale_for_placement {
-            stale_token_count += 1;
-        }
-
-        token_items.push(json!({
-            "token_id": token.token_id,
-            "outcome": token.outcome,
-            "catalog_price": token.price,
-            "best_bid": best_bid,
-            "best_ask": best_ask,
-            "midpoint": midpoint,
-            "spread_cents": spread_cents,
-            "quote_side": quote_leg.map(|leg| leg.side),
-            "quote_price": quote_price,
-            "quote_size": quote_leg.map(|leg| leg.size),
-            "quote_notional_usd": quote_leg.map(|leg| leg.notional_usd),
-            "quote_edge_to_midpoint_cents": quote_edge_cents,
-            "quote_crosses_or_touches_best_ask": best_ask
-                .zip(quote_price)
-                .is_some_and(|(ask, price)| price >= ask),
-            "confirmed_age_ms": confirmed_age_ms,
-            "stale_for_placement": stale_for_placement,
-        }));
-    }
-
-    let binary_midpoint_sum_deviation_cents = if midpoint_count >= 2 {
-        Some(reward_ai_abs_decimal(midpoint_sum - Decimal::ONE) * decimal("100"))
-    } else {
-        None
-    };
-    let binary_midpoint_sum_reasonable =
-        binary_midpoint_sum_deviation_cents.is_none_or(|deviation| deviation <= decimal("3"));
-    let current_max_spread_cents = max_spread_cents.unwrap_or(Decimal::ZERO);
-
-    json!({
-        "schema_version": 1,
-        "pricing_time_utc": now,
-        "max_stale_book_ms": config.stale_book_ms,
-        "strategy_max_spread_cents": config.max_spread_cents,
-        "market_rewards_max_spread_cents": market.rewards_max_spread,
-        "deterministic_quote_mode": plan.quote_mode,
-        "recommended_quote_mode": plan.recommended_quote_mode,
-        "binary_midpoint_sum": if midpoint_count >= 2 { Some(midpoint_sum) } else { None },
-        "binary_midpoint_sum_deviation_cents": binary_midpoint_sum_deviation_cents,
-        "binary_midpoint_sum_reasonable": binary_midpoint_sum_reasonable,
-        "current_max_spread_cents": current_max_spread_cents,
-        "quote_crosses_or_touches_ask": quote_crosses_or_touches_ask,
-        "quote_negative_edge_count": quote_negative_edge_count,
-        "stale_token_count": stale_token_count,
-        "all_quote_prices_resting_and_reasonable": !quote_crosses_or_touches_ask
-            && quote_negative_edge_count == 0
-            && stale_token_count == 0
-            && binary_midpoint_sum_reasonable
-            && current_max_spread_cents <= config.max_spread_cents,
-        "tokens": token_items,
-    })
-}
-
-fn reward_ai_best_price(levels: &[RewardBookLevel]) -> Option<Decimal> {
-    levels
-        .iter()
-        .find(|level| level.price > Decimal::ZERO && level.size > Decimal::ZERO)
-        .map(|level| level.price)
-}
-
-fn reward_ai_abs_decimal(value: Decimal) -> Decimal {
-    if value < Decimal::ZERO {
-        -value
-    } else {
-        value
-    }
-}
-
 #[derive(Debug, Clone)]
 struct RewardAiCandleBucket {
     token_id: String,
@@ -363,7 +231,21 @@ fn reward_ai_candle_summary(market: &RewardMarket, candles: &[RewardMarketCandle
 }
 
 fn reward_ai_candle_cache_summary(market: &RewardMarket, candles: &[RewardMarketCandle]) -> Value {
-    let mut completed = Vec::new();
+    let mut summary = reward_ai_candle_summary(market, candles);
+    if let Value::Object(map) = &mut summary {
+        map.insert(
+            "cache_bucket_policy".to_string(),
+            json!("completed_hourly_buckets_only"),
+        );
+    }
+    summary
+}
+
+fn reward_ai_completed_candles(
+    market: &RewardMarket,
+    candles: &[RewardMarketCandle],
+) -> Vec<RewardMarketCandle> {
+    let mut completed = Vec::with_capacity(candles.len());
     for token in &market.tokens {
         let mut token_candles = candles
             .iter()
@@ -377,13 +259,5 @@ fn reward_ai_candle_cache_summary(market: &RewardMarket, candles: &[RewardMarket
         let completed_len = token_candles.len() - 1;
         completed.extend(token_candles.into_iter().take(completed_len));
     }
-
-    let mut summary = reward_ai_candle_summary(market, &completed);
-    if let Value::Object(map) = &mut summary {
-        map.insert(
-            "cache_bucket_policy".to_string(),
-            json!("completed_hourly_buckets_only"),
-        );
-    }
-    summary
+    completed
 }

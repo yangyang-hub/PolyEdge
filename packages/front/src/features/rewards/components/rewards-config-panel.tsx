@@ -65,15 +65,6 @@ export function RewardsConfigPanel({
             onChange={(checked) => setDraft((current) => ({ ...current, enabled: checked }))}
           />
 
-          <ToggleField
-            label={dictionary.rewards.cancelOnFill}
-            hint={h.cancelOnFill}
-            checked={draft.cancel_on_fill}
-            onChange={(checked) =>
-              setDraft((current) => ({ ...current, cancel_on_fill: checked }))
-            }
-          />
-
           <label className="space-y-1.5">
             <span className="flex items-center gap-1 text-xs font-medium text-muted-foreground">
               {dictionary.rewards.postFillStrategy}
@@ -221,14 +212,42 @@ export function RewardsConfigPanel({
               className={selectClassName}
               value={draft.quote_bid_rank}
               onChange={(event) =>
-                setDraft((current) => ({
-                  ...current,
-                  quote_bid_rank: Number(event.target.value),
-                }))
+                setDraft((current) => {
+                  const quoteBidRank = Number(event.target.value);
+                  return {
+                    ...current,
+                    quote_bid_rank: quoteBidRank,
+                    quote_max_bid_rank: Math.max(current.quote_max_bid_rank, quoteBidRank),
+                  };
+                })
               }
             >
               <option value={1}>{dictionary.rewards.bidRank1}</option>
               <option value={2}>{dictionary.rewards.bidRank2}</option>
+              <option value={3}>{dictionary.rewards.bidRank3}</option>
+            </select>
+          </label>
+          <label className="space-y-1.5">
+            <span className="flex items-center gap-1 text-xs font-medium text-muted-foreground">
+              {dictionary.rewards.quoteMaxBidRank}
+              <Hint content={h.quoteMaxBidRank} />
+            </span>
+            <select
+              className={selectClassName}
+              value={draft.quote_max_bid_rank}
+              onChange={(event) =>
+                setDraft((current) => ({
+                  ...current,
+                  quote_max_bid_rank: Number(event.target.value),
+                }))
+              }
+            >
+              <option value={1} disabled={draft.quote_bid_rank > 1}>
+                {dictionary.rewards.bidRank1}
+              </option>
+              <option value={2} disabled={draft.quote_bid_rank > 2}>
+                {dictionary.rewards.bidRank2}
+              </option>
               <option value={3}>{dictionary.rewards.bidRank3}</option>
             </select>
           </label>
@@ -265,6 +284,20 @@ export function RewardsConfigPanel({
             value={draft.requote_drift_max_cancels_per_cycle}
             hint={h.requoteDriftMaxCancelsPerCycle}
             onChange={(value) => updateNumber("requote_drift_max_cancels_per_cycle", value)}
+          />
+          <NumberInput
+            label={dictionary.rewards.adverseRequoteDriftCents}
+            value={draft.adverse_requote_drift_cents}
+            suffix="c"
+            hint={h.adverseRequoteDriftCents}
+            onChange={(value) => updateNumber("adverse_requote_drift_cents", value)}
+          />
+          <NumberInput
+            label={dictionary.rewards.adverseRequoteConfirmSec}
+            value={draft.adverse_requote_confirm_sec}
+            suffix="s"
+            hint={h.adverseRequoteConfirmSec}
+            onChange={(value) => updateNumber("adverse_requote_confirm_sec", value)}
           />
         </ConfigSection>
 
@@ -383,6 +416,13 @@ export function RewardsConfigPanel({
           description={dictionary.rewards.configInventoryValidationDescription}
         >
           <NumberInput
+            label={dictionary.rewards.makerMarketBudgetUsd}
+            value={draft.maker_market_budget_usd}
+            suffix="$"
+            hint={h.makerMarketBudgetUsd}
+            onChange={(value) => updateNumber("maker_market_budget_usd", value)}
+          />
+          <NumberInput
             label={dictionary.rewards.maxPositionUsd}
             value={draft.max_position_usd}
             suffix="$"
@@ -396,12 +436,33 @@ export function RewardsConfigPanel({
             hint={h.maxGlobalPositionUsd}
             onChange={(value) => updateNumber("max_global_position_usd", value)}
           />
+          <ToggleField
+            label={dictionary.rewards.inventorySkewEnabled}
+            hint={h.inventorySkewEnabled}
+            checked={draft.inventory_skew_enabled}
+            onChange={(checked) =>
+              setDraft((current) => ({ ...current, inventory_skew_enabled: checked }))
+            }
+          />
+          <NumberInput
+            label={dictionary.rewards.inventorySkewStrength}
+            value={draft.inventory_skew_strength}
+            hint={h.inventorySkewStrength}
+            onChange={(value) => updateNumber("inventory_skew_strength", value)}
+          />
           <NumberInput
             label={dictionary.rewards.exitMarkupCents}
             value={draft.exit_markup_cents}
             suffix="c"
             hint={h.exitMarkupCents}
             onChange={(value) => updateNumber("exit_markup_cents", value)}
+          />
+          <NumberInput
+            label={dictionary.rewards.makerMaxExitLossCents}
+            value={draft.maker_max_exit_loss_cents}
+            suffix="c"
+            hint={h.makerMaxExitLossCents}
+            onChange={(value) => updateNumber("maker_max_exit_loss_cents", value)}
           />
           {draft.post_fill_strategy === "adaptive" ? (
             <>

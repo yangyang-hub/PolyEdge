@@ -7,8 +7,9 @@ fn apply_reward_config_value(config: &mut RewardBotConfig, key: &str, value: &st
         "account_id" => config.account_id = value.to_string(),
         "max_markets" => config.max_markets = parse_u16_config(key, value)?,
         "max_open_orders" => config.max_open_orders = parse_u16_config(key, value)?,
-        "per_market_usd" => config.per_market_usd = parse_decimal_config(key, value)?,
-        "quote_size_usd" => config.quote_size_usd = parse_decimal_config(key, value)?,
+        "maker_market_budget_usd" => {
+            config.maker_market_budget_usd = parse_decimal_config(key, value)?;
+        }
         "min_daily_reward" => config.min_daily_reward = parse_decimal_config(key, value)?,
         "min_market_liquidity_usd" => {
             config.min_market_liquidity_usd = parse_decimal_config(key, value)?;
@@ -31,6 +32,7 @@ fn apply_reward_config_value(config: &mut RewardBotConfig, key: &str, value: &st
             // Legacy key: midpoint-offset quoting was replaced by bid-rank quoting.
         }
         "quote_bid_rank" => config.quote_bid_rank = parse_u16_config(key, value)?,
+        "quote_max_bid_rank" => config.quote_max_bid_rank = parse_u16_config(key, value)?,
         "dominant_single_side_enabled" => {
             config.dominant_single_side_enabled = parse_bool_config(key, value)?;
         }
@@ -160,16 +162,19 @@ fn apply_reward_config_value(config: &mut RewardBotConfig, key: &str, value: &st
         "ai_provider_fallback_max_concurrency" => {
             config.ai_provider_fallback_max_concurrency = parse_u16_config(key, value)?;
         }
-        "ai_strategy_hint_enabled" => {
-            config.ai_strategy_hint_enabled = parse_bool_config(key, value)?;
+        "ai_risk_adjustment_enabled" => {
+            config.ai_risk_adjustment_enabled = parse_bool_config(key, value)?;
         }
-        "ai_strategy_hint_min_confidence" => {
-            config.ai_strategy_hint_min_confidence = parse_decimal_config(key, value)?;
+        "ai_action_min_confidence" => {
+            config.ai_action_min_confidence = parse_decimal_config(key, value)?;
         }
         "info_risk_enabled" => config.info_risk_enabled = parse_bool_config(key, value)?,
         "info_risk_mode" => config.info_risk_mode = RewardSelectionMode::from_str(value)?,
         "info_risk_avoid_level" => {
             config.info_risk_avoid_level = RewardInfoRiskLevel::from_str(value)?;
+        }
+        "info_risk_min_confidence" => {
+            config.info_risk_min_confidence = parse_decimal_config(key, value)?;
         }
         "info_risk_ttl_sec" => config.info_risk_ttl_sec = parse_u64_config(key, value)?,
         "event_window_enabled" => {
@@ -210,8 +215,16 @@ fn apply_reward_config_value(config: &mut RewardBotConfig, key: &str, value: &st
         "max_global_position_usd" => {
             config.max_global_position_usd = parse_decimal_config(key, value)?;
         }
+        "inventory_skew_enabled" => {
+            config.inventory_skew_enabled = parse_bool_config(key, value)?;
+        }
+        "inventory_skew_strength" => {
+            config.inventory_skew_strength = parse_decimal_config(key, value)?;
+        }
         "exit_markup_cents" => config.exit_markup_cents = parse_decimal_config(key, value)?,
-        "cancel_on_fill" => config.cancel_on_fill = parse_bool_config(key, value)?,
+        "maker_max_exit_loss_cents" => {
+            config.maker_max_exit_loss_cents = parse_decimal_config(key, value)?;
+        }
         "account_capital_usd" => config.account_capital_usd = parse_decimal_config(key, value)?,
         "reward_competition_factor"
         | "single_sided_divisor_c"
@@ -228,6 +241,12 @@ fn apply_reward_config_value(config: &mut RewardBotConfig, key: &str, value: &st
         }
         "requote_drift_max_cancels_per_cycle" => {
             config.requote_drift_max_cancels_per_cycle = parse_u16_config(key, value)?;
+        }
+        "adverse_requote_drift_cents" => {
+            config.adverse_requote_drift_cents = parse_decimal_config(key, value)?;
+        }
+        "adverse_requote_confirm_sec" => {
+            config.adverse_requote_confirm_sec = parse_u64_config(key, value)?;
         }
         "post_fill_strategy" => config.post_fill_strategy = PostFillStrategy::from_str(value)?,
         "adaptive_flatten_min_bid_depth_usd" => {
@@ -334,8 +353,10 @@ fn reward_config_entries(config: &RewardBotConfig) -> Vec<(&'static str, String)
         ("account_id", config.account_id.clone()),
         ("max_markets", config.max_markets.to_string()),
         ("max_open_orders", config.max_open_orders.to_string()),
-        ("per_market_usd", config.per_market_usd.to_string()),
-        ("quote_size_usd", config.quote_size_usd.to_string()),
+        (
+            "maker_market_budget_usd",
+            config.maker_market_budget_usd.to_string(),
+        ),
         ("min_daily_reward", config.min_daily_reward.to_string()),
         (
             "min_market_liquidity_usd",
@@ -359,6 +380,7 @@ fn reward_config_entries(config: &RewardBotConfig) -> Vec<(&'static str, String)
         ("quote_mode", config.quote_mode.as_str().to_string()),
         ("selection_mode", config.selection_mode.as_str().to_string()),
         ("quote_bid_rank", config.quote_bid_rank.to_string()),
+        ("quote_max_bid_rank", config.quote_max_bid_rank.to_string()),
         (
             "dominant_single_side_enabled",
             config.dominant_single_side_enabled.to_string(),
@@ -544,18 +566,22 @@ fn reward_config_entries(config: &RewardBotConfig) -> Vec<(&'static str, String)
             config.ai_provider_fallback_max_concurrency.to_string(),
         ),
         (
-            "ai_strategy_hint_enabled",
-            config.ai_strategy_hint_enabled.to_string(),
+            "ai_risk_adjustment_enabled",
+            config.ai_risk_adjustment_enabled.to_string(),
         ),
         (
-            "ai_strategy_hint_min_confidence",
-            config.ai_strategy_hint_min_confidence.to_string(),
+            "ai_action_min_confidence",
+            config.ai_action_min_confidence.to_string(),
         ),
         ("info_risk_enabled", config.info_risk_enabled.to_string()),
         ("info_risk_mode", config.info_risk_mode.as_str().to_string()),
         (
             "info_risk_avoid_level",
             config.info_risk_avoid_level.as_str().to_string(),
+        ),
+        (
+            "info_risk_min_confidence",
+            config.info_risk_min_confidence.to_string(),
         ),
         ("info_risk_ttl_sec", config.info_risk_ttl_sec.to_string()),
         (
@@ -617,8 +643,19 @@ fn reward_config_entries(config: &RewardBotConfig) -> Vec<(&'static str, String)
             "max_global_position_usd",
             config.max_global_position_usd.to_string(),
         ),
+        (
+            "inventory_skew_enabled",
+            config.inventory_skew_enabled.to_string(),
+        ),
+        (
+            "inventory_skew_strength",
+            config.inventory_skew_strength.to_string(),
+        ),
         ("exit_markup_cents", config.exit_markup_cents.to_string()),
-        ("cancel_on_fill", config.cancel_on_fill.to_string()),
+        (
+            "maker_max_exit_loss_cents",
+            config.maker_max_exit_loss_cents.to_string(),
+        ),
         (
             "account_capital_usd",
             config.account_capital_usd.to_string(),
@@ -638,6 +675,14 @@ fn reward_config_entries(config: &RewardBotConfig) -> Vec<(&'static str, String)
         (
             "requote_drift_max_cancels_per_cycle",
             config.requote_drift_max_cancels_per_cycle.to_string(),
+        ),
+        (
+            "adverse_requote_drift_cents",
+            config.adverse_requote_drift_cents.to_string(),
+        ),
+        (
+            "adverse_requote_confirm_sec",
+            config.adverse_requote_confirm_sec.to_string(),
         ),
         (
             "post_fill_strategy",

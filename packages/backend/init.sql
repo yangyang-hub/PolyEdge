@@ -1,6 +1,6 @@
 -- PolyEdge complete PostgreSQL initialization script
--- Baseline schema for initializing an empty database on 2026-07-08.
--- Runtime sqlx migrations use the same baseline in packages/backend/migrations/0001_initial_schema.sql.
+-- Baseline schema for initializing an empty database on 2026-07-11.
+-- Single clean-deploy baseline shared by init.sql and migrations/0001_initial_schema.sql.
 
 
 CREATE TABLE IF NOT EXISTS audit_logs (
@@ -1190,9 +1190,9 @@ CREATE TABLE reward_market_advisories (
     ),
     model TEXT NOT NULL,
     input_hash TEXT NOT NULL,
-    suitability TEXT NOT NULL CHECK (suitability IN ('allow', 'avoid', 'watch')),
-    quote_mode TEXT NOT NULL CHECK (quote_mode IN ('double', 'single_yes', 'single_no', 'none')),
-    exit_policy TEXT NOT NULL,
+    action TEXT NOT NULL CHECK (action IN ('allow', 'reduce', 'stop_new')),
+    size_multiplier NUMERIC(5, 4) NOT NULL CHECK (size_multiplier >= 0 AND size_multiplier <= 1),
+    edge_buffer_cents NUMERIC(8, 4) NOT NULL CHECK (edge_buffer_cents >= 0 AND edge_buffer_cents <= 10),
     confidence NUMERIC(5, 4) NOT NULL CHECK (confidence >= 0 AND confidence <= 1),
     reasons_json JSONB NOT NULL CHECK (jsonb_typeof(reasons_json) = 'array'),
     metrics_json JSONB NOT NULL CHECK (jsonb_typeof(metrics_json) = 'object'),
@@ -1217,6 +1217,9 @@ CREATE TABLE reward_market_info_risks (
   model TEXT NOT NULL,
   query_hash TEXT NOT NULL,
   input_hash TEXT NOT NULL,
+  action TEXT NOT NULL CHECK (
+    action IN ('allow', 'reduce', 'stop_new', 'cancel_yes', 'cancel_no', 'cancel_all')
+  ),
   risk_level TEXT NOT NULL CHECK (
     risk_level IN ('low', 'medium', 'high', 'critical', 'unknown')
   ),
@@ -1569,7 +1572,10 @@ ALTER TABLE reward_quote_plans
     ADD COLUMN blocker_codes TEXT[] NOT NULL DEFAULT '{}',
     ADD COLUMN fair_value_passed BOOLEAN,
     ADD COLUMN event_window_status TEXT,
-    ADD COLUMN ai_suitability TEXT,
+    ADD COLUMN ai_action TEXT CHECK (ai_action IN ('allow', 'reduce', 'stop_new')),
+    ADD COLUMN info_risk_action TEXT CHECK (
+        info_risk_action IN ('allow', 'reduce', 'stop_new', 'cancel_yes', 'cancel_no', 'cancel_all')
+    ),
     ADD COLUMN info_risk_level TEXT;
 
 CREATE INDEX reward_quote_plans_latest_run_idx
@@ -1603,7 +1609,10 @@ CREATE TABLE reward_strategy_decisions (
     fair_value_effective_edge_cents NUMERIC(12, 6),
     opportunity_score NUMERIC(10, 4),
     event_window_status TEXT,
-    ai_suitability TEXT,
+    ai_action TEXT CHECK (ai_action IN ('allow', 'reduce', 'stop_new')),
+    info_risk_action TEXT CHECK (
+        info_risk_action IN ('allow', 'reduce', 'stop_new', 'cancel_yes', 'cancel_no', 'cancel_all')
+    ),
     info_risk_level TEXT,
     decision_json JSONB NOT NULL CHECK (jsonb_typeof(decision_json) = 'object'),
     created_at TIMESTAMPTZ NOT NULL,

@@ -223,10 +223,17 @@ pub fn apply_first_quote_entry_gates(
         return false;
     }
 
-    let previous_by_condition = previous_plans
+    let previous_observations = first_quote_observations_by_condition(previous_plans);
+    let previous_quarantine_updates = previous_plans
         .iter()
-        .map(|plan| (plan.condition_id.as_str(), plan))
-        .collect::<HashMap<_, _>>();
+        .filter(|plan| plan.reason.starts_with("first quote quarantine:"))
+        .fold(HashMap::<&str, OffsetDateTime>::new(), |mut updates, plan| {
+            updates
+                .entry(plan.condition_id.as_str())
+                .and_modify(|current| *current = (*current).min(plan.updated_at))
+                .or_insert(plan.updated_at);
+            updates
+        });
     let active_conditions = first_quote_active_conditions(open_orders, positions);
     let mut changed = false;
 
@@ -248,16 +255,11 @@ pub fn apply_first_quote_entry_gates(
         }
         let observed_at = plan
             .first_quote_observed_at
+            .or_else(|| previous_observations.get(plan.condition_id.as_str()).copied())
             .or_else(|| {
-                previous_by_condition
+                previous_quarantine_updates
                     .get(plan.condition_id.as_str())
-                    .and_then(|previous| previous.first_quote_observed_at)
-            })
-            .or_else(|| {
-                previous_by_condition
-                    .get(plan.condition_id.as_str())
-                    .filter(|previous| previous.reason.starts_with("first quote quarantine:"))
-                    .map(|previous| previous.updated_at)
+                    .copied()
             })
             .unwrap_or(now);
         if plan.first_quote_observed_at != Some(observed_at) {
@@ -290,13 +292,7 @@ pub fn carry_forward_first_quote_observations(
         return false;
     }
 
-    let previous_by_condition = previous_plans
-        .iter()
-        .filter_map(|plan| {
-            plan.first_quote_observed_at
-                .map(|observed_at| (plan.condition_id.as_str(), observed_at))
-        })
-        .collect::<HashMap<_, _>>();
+    let previous_by_condition = first_quote_observations_by_condition(previous_plans);
     if previous_by_condition.is_empty() {
         return false;
     }
@@ -311,6 +307,23 @@ pub fn carry_forward_first_quote_observations(
         }
     }
     changed
+}
+
+fn first_quote_observations_by_condition(
+    plans: &[RewardQuotePlan],
+) -> HashMap<&str, OffsetDateTime> {
+    plans.iter().fold(
+        HashMap::<&str, OffsetDateTime>::new(),
+        |mut observations, plan| {
+            if let Some(observed_at) = plan.first_quote_observed_at {
+                observations
+                    .entry(plan.condition_id.as_str())
+                    .and_modify(|current| *current = (*current).min(observed_at))
+                    .or_insert(observed_at);
+            }
+            observations
+        },
+    )
 }
 
 fn first_quote_entry_gate_enabled(config: &RewardBotConfig) -> bool {
@@ -804,28 +817,14 @@ fn distinct_bid_prices(book: &RewardOrderBook) -> Vec<Decimal> {
 }
 
 fn quote_bid_price(state: &TokenBookState, rank: u16) -> Option<Decimal> {
-    let price = if bid_prices_use_fine_tick(&state.bid_prices) {
-        quote_fine_tick_bid_price(&state.bid_prices, rank)?
-    } else {
-        state
-            .bid_prices
-            .get(usize::from(rank.saturating_sub(1)))
-            .copied()?
-    };
-    Some(floor_to_tick(
-        price,
-        inferred_bid_price_tick(&state.bid_prices),
-    ))
-}
-
-fn quote_fine_tick_bid_price(bid_prices: &[Decimal], rank: u16) -> Option<Decimal> {
-    let best_bid = bid_prices.first().copied()?;
-    let target = best_bid - DEFAULT_TICK * Decimal::from(rank.saturating_sub(1));
-    bid_prices.iter().copied().find(|price| *price <= target)
-}
-
-fn bid_prices_use_fine_tick(bid_prices: &[Decimal]) -> bool {
-    inferred_bid_price_tick(bid_prices) < DEFAULT_TICK
+    let best_bid = state.bid_prices.first().copied()?;
+    // A configured rank is a one-cent competitiveness band, not a requirement
+    // that another participant already exposes an exact depth level. This lets
+    // the maker quote a valid price inside a sparse book, while fine-tick
+    // markets still move far enough between ranks to create meaningful edge.
+    let venue_tick = inferred_bid_price_tick(&state.bid_prices);
+    let price = best_bid - DEFAULT_TICK * Decimal::from(rank.saturating_sub(1));
+    (price > Decimal::ZERO).then(|| floor_to_tick(price, venue_tick))
 }
 
 fn inferred_bid_price_tick(bid_prices: &[Decimal]) -> Decimal {
@@ -922,12 +921,46 @@ pub fn scale_double_legs_for_budget(
     rewards_min_size: Decimal,
     available_usd: Decimal,
 ) -> Vec<RewardQuoteLeg> {
-    let per_leg = (available_usd / decimal("2")).round_dp(4);
+    scale_double_legs_for_weighted_budget(
+        yes_token,
+        yes_price,
+        no_token,
+        no_price,
+        rewards_min_size,
+        available_usd,
+        Decimal::ONE,
+        Decimal::ONE,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn scale_double_legs_for_weighted_budget(
+    yes_token: &RewardToken,
+    yes_price: Decimal,
+    no_token: &RewardToken,
+    no_price: Decimal,
+    rewards_min_size: Decimal,
+    available_usd: Decimal,
+    yes_weight: Decimal,
+    no_weight: Decimal,
+) -> Vec<RewardQuoteLeg> {
+    let yes_weight = yes_weight.max(Decimal::ZERO);
+    let no_weight = no_weight.max(Decimal::ZERO);
+    let total_weight = yes_weight + no_weight;
+    let (yes_budget, no_budget) = if total_weight > Decimal::ZERO {
+        (
+            (available_usd * yes_weight / total_weight).round_dp(4),
+            (available_usd * no_weight / total_weight).round_dp(4),
+        )
+    } else {
+        let per_leg = (available_usd / decimal("2")).round_dp(4);
+        (per_leg, per_leg)
+    };
     let yes_minimum_size = minimum_live_quote_size(yes_price, rewards_min_size);
     let yes_budget_size = if yes_price > Decimal::ZERO {
         floor_reward_size_for_cost_precision(
             yes_price,
-            (per_leg / yes_price).round_dp_with_strategy(2, RoundingStrategy::ToZero),
+            (yes_budget / yes_price).round_dp_with_strategy(2, RoundingStrategy::ToZero),
         )
     } else {
         Decimal::ZERO
@@ -938,7 +971,7 @@ pub fn scale_double_legs_for_budget(
     let no_budget_size = if no_price > Decimal::ZERO {
         floor_reward_size_for_cost_precision(
             no_price,
-            (per_leg / no_price).round_dp_with_strategy(2, RoundingStrategy::ToZero),
+            (no_budget / no_price).round_dp_with_strategy(2, RoundingStrategy::ToZero),
         )
     } else {
         Decimal::ZERO
@@ -959,22 +992,36 @@ fn score_market(
     config: &RewardBotConfig,
 ) -> Decimal {
     let reward_rate = decimal_to_f64(market.total_daily_rate).sqrt();
-    let reward_score = f64::min(35.0, reward_rate * 10.0);
+    // LP economics are deliberately capped at 10% of base market quality:
+    // daily reward contributes at most 7 points and the qualifying reward
+    // spread at most 3. Liquidity, exit horizon and live spread dominate.
+    let reward_score = f64::min(7.0, reward_rate * 2.0);
+    let reward_spread_score = f64::min(3.0, decimal_to_f64(max_spread_cents));
     let liquidity_score = f64::min(
-        20.0,
-        decimal_to_f64(market.liquidity_usd).ln_1p() / 10_f64.ln() * 4.0,
+        25.0,
+        decimal_to_f64(market.liquidity_usd).ln_1p() / 10_f64.ln() * 5.0,
     );
     let volume_score = f64::min(
-        15.0,
-        decimal_to_f64(market.volume_24h_usd).ln_1p() / 10_f64.ln() * 3.0,
+        20.0,
+        decimal_to_f64(market.volume_24h_usd).ln_1p() / 10_f64.ln() * 4.0,
     );
     let hours_to_end = market
         .end_at
         .map(|end_at| (end_at - OffsetDateTime::now_utc()).whole_hours().max(0) as f64)
         .unwrap_or_default();
-    let duration_score = f64::min(10.0, (hours_to_end / 24.0).sqrt() * 2.0);
-    let spread_score = f64::min(10.0, decimal_to_f64(max_spread_cents) * 1.25);
-    let midpoint_score = f64::max(0.0, 5.0 - f64::abs(decimal_to_f64(midpoint) - 0.5) * 10.0);
+    let duration_score = f64::min(15.0, (hours_to_end / 24.0).sqrt() * 3.0);
+    let market_spread_score = if config.max_market_spread_cents > Decimal::ZERO {
+        f64::max(
+            0.0,
+            15.0
+                * (1.0
+                    - decimal_to_f64(market.market_spread_cents)
+                        / decimal_to_f64(config.max_market_spread_cents)),
+        )
+    } else {
+        15.0
+    };
+    let midpoint_score = f64::max(0.0, 10.0 - f64::abs(decimal_to_f64(midpoint) - 0.5) * 20.0);
     let notional = legs
         .iter()
         .fold(Decimal::ZERO, |sum, leg| sum + leg.notional_usd);
@@ -982,10 +1029,11 @@ fn score_market(
 
     let base_score = decimal_from_f64(
         reward_score
+            + reward_spread_score
             + liquidity_score
             + volume_score
             + duration_score
-            + spread_score
+            + market_spread_score
             + midpoint_score
             + size_score,
     )

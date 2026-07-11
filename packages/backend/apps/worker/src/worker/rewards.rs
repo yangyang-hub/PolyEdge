@@ -870,9 +870,9 @@ async fn run_reward_bot_live_tick_prepared(
         "prepared rewards live cycle",
     );
     let provider_refresh_cycle = cycle.clone();
-    apply_cached_reward_ai_advisories_to_cycle(state, &mut cycle, &books, trace_id).await?;
+    apply_cached_reward_ai_advisories_to_cycle(state, &mut cycle, trace_id).await?;
     apply_cached_reward_info_risks_to_cycle(state, &mut cycle, trace_id).await?;
-    spawn_reward_market_provider_refresh(state, &provider_refresh_cycle, &books, trace_id);
+    spawn_reward_market_provider_refresh(state, &provider_refresh_cycle, trace_id);
     let post_provider_decisions =
         RewardDecisionEngine::evaluate_post_provider(cycle, OffsetDateTime::now_utc());
     let first_quote_entry_changed = post_provider_decisions.first_quote_entry_changed;
@@ -1132,7 +1132,7 @@ async fn run_reward_bot_live_tick_prepared(
         &books,
         &cycle.positions,
         &mut open_orders,
-        reward_ai_min_confidence(state.settings.rewards.ai_min_confidence_bps),
+        cycle.config.ai_action_min_confidence,
         trace_id,
         OffsetDateTime::now_utc(),
     );
@@ -1250,11 +1250,7 @@ async fn run_reward_bot_live_tick_prepared(
     // Unknown submissions are protected by live_cancel_reason and recovered
     // here without issuing a duplicate order.
     let unresolved_before_recovery = has_unresolved_live_reconciliation(&open_orders);
-    let pending_plan_index: HashMap<&str, &RewardQuotePlan> = cycle
-        .plans
-        .iter()
-        .map(|plan| (plan.condition_id.as_str(), plan))
-        .collect();
+    let pending_plan_index = reward_live_plan_index(&cycle.plans);
     let pending_open_orders_snapshot = open_orders.clone();
     let pending_account_snapshot = account.clone();
     let pending_buy_submit_risk = LiveBuySubmitRiskContext {
@@ -1365,11 +1361,7 @@ async fn run_reward_bot_live_tick_prepared(
         .await?;
         open_orders.extend(placement_orders);
         register_reward_active_orderbook_tokens(state, trace_id).await;
-        let placement_plan_index: HashMap<&str, &RewardQuotePlan> = cycle
-            .plans
-            .iter()
-            .map(|plan| (plan.condition_id.as_str(), plan))
-            .collect();
+        let placement_plan_index = reward_live_plan_index(&cycle.plans);
         let placement_open_orders_snapshot = open_orders.clone();
         let placement_account_snapshot = account.clone();
         let placement_buy_submit_risk = LiveBuySubmitRiskContext {
@@ -1477,7 +1469,6 @@ include!("rewards/polling.rs");
 include!("rewards/provider_advisory.rs");
 include!("rewards/provider_fallback.rs");
 include!("rewards/provider_content_filter.rs");
-include!("rewards/provider_refresh_orderbook.rs");
 include!("rewards/provider_refresh.rs");
 include!("rewards/provider_refresh_candidates.rs");
 include!("rewards/info_risk.rs");

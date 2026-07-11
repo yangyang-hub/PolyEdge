@@ -1,6 +1,6 @@
 # connectors（外部连接器层）
 
-最后更新：2026-07-08
+最后更新：2026-07-11
 
 ## 概述
 
@@ -99,9 +99,10 @@
 - `RewardProviderConnector` 用于 rewards worker 对单个市场评估 AI advisory 和/或 info-risk。
 - 请求体 `RewardProviderRequest` 中 `advisory` 与 `info_risk` section 可独立为空；connector 只请求本轮需要补齐的 section。
 - 支持 `openai_responses`、`openai_chat_completions` 和 `anthropic_messages`。OpenAI-compatible base URL 可配置根地址、`/v1` 或 versioned path；模型名包含 GLM/DeepSeek/Agnes 时按兼容路径归一。
-- Advisory schema 输出 `allow_quote`、`confidence`、`strategy_hint`、`reasons`、`metrics`；info-risk schema 输出 `allow_quote`、`confidence`、`summary`、`sources`、`metrics`。
+- Advisory V2 schema 输出 `action=allow|reduce|stop_new`、`size_multiplier`、`edge_buffer_cents`、`confidence`、`reasons` 和 `metrics`；禁止输出 live price、side、rank 或绝对 notional。旧 `allow_quote` / `suitability` 响应只在 connector ingress 转换为 V2 action，legacy strategy hint 被忽略且不持久化。
+- Info-risk V2 schema 输出 `action=allow|reduce|stop_new|cancel_yes|cancel_no|cancel_all`、risk taxonomy、direction、event time、confidence、summary、sources 和 metrics。`directional_risk` 明确定义为不安全的 resting-BUY outcome（不是预测赢家）并必须匹配 `cancel_yes/cancel_no`；connector 负责严格 JSON/范围解析，application 再验证 cancel 的方向、证据新鲜度与来源独立性。
 - OpenAI Responses 仅在请求包含 info-risk 且 web search 显式开启时附加 `web_search_preview` tool。
-- connector 不访问 Polymarket 或数据库；payload 由 worker/application 基于数据库、orderbook、quote plan、账户状态和配置构造。
+- connector 不访问 Polymarket 或数据库。Advisory payload 只由稳定市场元数据和完成的粗粒度 candle 构造；info-risk payload 只含稳定市场身份、评估时间与证据搜索边界，不包含 orderbook、quote plan、账户或库存。
 
 ## News
 

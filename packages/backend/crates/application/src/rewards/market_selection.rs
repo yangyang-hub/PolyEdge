@@ -1,6 +1,9 @@
-pub fn apply_reward_market_selection_to_quote_plans(plans: &mut [RewardQuotePlan]) {
+pub fn apply_reward_market_selection_to_quote_plans(
+    plans: &mut [RewardQuotePlan],
+    config: &RewardBotConfig,
+) {
     for plan in plans.iter_mut() {
-        let metrics = build_reward_market_selection_metrics(plan);
+        let metrics = build_reward_market_selection_metrics(plan, config);
         plan.selection_score = metrics.selection_score;
         plan.selection_metrics = Some(metrics);
     }
@@ -19,7 +22,10 @@ pub fn sort_reward_quote_plans_by_selection(plans: &mut [RewardQuotePlan]) {
     });
 }
 
-fn build_reward_market_selection_metrics(plan: &RewardQuotePlan) -> RewardMarketSelectionMetrics {
+fn build_reward_market_selection_metrics(
+    plan: &RewardQuotePlan,
+    config: &RewardBotConfig,
+) -> RewardMarketSelectionMetrics {
     let base_quality_score = clamp_selection_score(plan.score);
     let opportunity_score = plan
         .opportunity_metrics
@@ -48,14 +54,16 @@ fn build_reward_market_selection_metrics(plan: &RewardQuotePlan) -> RewardMarket
     let fair_value_edge_score = reward_selection_fair_value_edge_score(plan);
     let competition_penalty = reward_selection_competition_penalty(plan);
     let allocation_penalty = reward_selection_allocation_penalty(plan);
-    let risk_penalty = reward_selection_risk_penalty(plan);
+    let risk_penalty = reward_selection_risk_penalty(plan, config);
 
-    let positive = base_quality_score * decimal("0.10")
-        + opportunity_score * decimal("0.18")
-        + reward_density_score * decimal("0.17")
-        + fair_value_edge_score * decimal("0.25")
-        + exit_score * decimal("0.18")
-        + stability_score * decimal("0.12");
+    // LP reward density is an explicit secondary signal. The composite
+    // opportunity score is retained for audit/configuration but is not added
+    // here because it already contains reward and would double-count it.
+    let positive = base_quality_score * decimal("0.15")
+        + reward_density_score * decimal("0.10")
+        + fair_value_edge_score * decimal("0.30")
+        + exit_score * decimal("0.25")
+        + stability_score * decimal("0.20");
     let penalty = competition_penalty * decimal("0.18")
         + allocation_penalty * decimal("0.10")
         + risk_penalty * decimal("0.45");
@@ -89,10 +97,7 @@ fn reward_selection_fair_value_edge_score(plan: &RewardQuotePlan) -> Decimal {
         .filter(|edge| edge.passed)
         .collect::<Vec<_>>();
     if passed_edges.is_empty() {
-        return ratio_selection_score(
-            decision.expected_reward_rebate_cents,
-            decimal("2"),
-        );
+        return Decimal::ZERO;
     }
     let total_edge = passed_edges.iter().fold(Decimal::ZERO, |sum, edge| {
         sum + edge.effective_edge_cents.max(Decimal::ZERO)
@@ -120,7 +125,7 @@ fn reward_selection_allocation_penalty(plan: &RewardQuotePlan) -> Decimal {
         .max(Decimal::ZERO)
 }
 
-fn reward_selection_risk_penalty(plan: &RewardQuotePlan) -> Decimal {
+fn reward_selection_risk_penalty(plan: &RewardQuotePlan, config: &RewardBotConfig) -> Decimal {
     if !plan.eligible {
         return decimal("100");
     }
@@ -145,19 +150,32 @@ fn reward_selection_risk_penalty(plan: &RewardQuotePlan) -> Decimal {
     {
         penalty += decimal("60");
     }
-    if plan
-        .ai_advisory
-        .as_ref()
-        .is_some_and(|advisory| advisory.suitability != RewardAiSuitability::Allow)
-    {
-        penalty += decimal("40");
+    if let Some(advisory) = &plan.ai_advisory {
+        penalty += match reward_ai_effective_action(
+            advisory,
+            config.ai_action_min_confidence,
+        ) {
+            RewardProviderAction::Allow => Decimal::ZERO,
+            RewardProviderAction::Reduce => decimal("15"),
+            RewardProviderAction::StopNew => decimal("40"),
+            RewardProviderAction::CancelYes
+            | RewardProviderAction::CancelNo
+            | RewardProviderAction::CancelAll => decimal("70"),
+        };
     }
-    if plan
-        .info_risk
-        .as_ref()
-        .is_some_and(|risk| risk.risk_level.rank() >= RewardInfoRiskLevel::High.rank())
-    {
-        penalty += decimal("40");
+    if let Some(risk) = &plan.info_risk {
+        penalty += match reward_info_risk_effective_action(
+            risk,
+            config.info_risk_avoid_level,
+            config.info_risk_min_confidence,
+        ) {
+            RewardProviderAction::Allow => Decimal::ZERO,
+            RewardProviderAction::Reduce => decimal("15"),
+            RewardProviderAction::StopNew => decimal("40"),
+            RewardProviderAction::CancelYes
+            | RewardProviderAction::CancelNo
+            | RewardProviderAction::CancelAll => decimal("70"),
+        };
     }
     penalty.min(decimal("100"))
 }

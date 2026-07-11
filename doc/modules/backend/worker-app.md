@@ -1,6 +1,6 @@
 # Worker App（后台任务服务）
 
-最后更新：2026-07-10
+最后更新：2026-07-11
 
 ## 概述
 
@@ -45,7 +45,6 @@
 | `worker/rewards/event_cancel.rs` | 盘口事件驱动的 hard-risk cancel-only 快路径 |
 | `worker/rewards/polling.rs` | rewards 常驻 poll loop、fast reconcile、外部同步节流和本地盘口预热 |
 | `worker/rewards/provider_advisory.rs` | AI advisory 缓存 gate、pre-provider 硬过滤和 LLM 调用记录 |
-| `worker/rewards/provider_refresh_orderbook.rs` | provider refresh 前的盘口准备和临时 token 注册 |
 | `worker/rewards/provider_refresh.rs` | 后台 combined provider refresh，仅写 advisory/info-risk 缓存 |
 | `worker/rewards/provider_refresh_candidates.rs` | provider refresh 候选排序 |
 | `worker/rewards/provider_fallback.rs` | 可选备用 LLM provider 重试与缓存读取 |
@@ -93,13 +92,12 @@ run_database_maintenance_once()
 执行订单 active token
     + rewards 活跃订单/持仓 token
     + 最终 eligible quote plan token
-    + provider refresh 临时缺口 token
     + rewards 候选预热 token
     -> POST /orderbook/register
     -> OrderbookSubscriptionRegistry 聚合订阅集合
 ```
 
-worker 不再直接维护常驻盘口流。它通过 `OrderbookHttpClient` 注册 token，并通过 `OrderbookStreamClient` 接收内部 WS 更新。注册 source 使用原子替换语义；空集合会做防抖，避免短暂查询失败清掉远端订阅。聚合优先级为 `rewards_active`、`exec_orders`、`rewards_eligible`、`rewards_ai_provider`、`rewards_candidates`。
+worker 不再直接维护常驻盘口流。它通过 `OrderbookHttpClient` 注册 token，并通过 `OrderbookStreamClient` 接收内部 WS 更新。注册 source 使用原子替换语义；空集合会做防抖，避免短暂查询失败清掉远端订阅。聚合优先级为 `rewards_active`、`exec_orders`、`rewards_eligible`、`rewards_candidates`。Provider refresh 不依赖 live 盘口，因此不再注册临时 provider source。
 
 ### rewards live loop
 
@@ -118,19 +116,23 @@ poll_reward_bot_until_shutdown()
     -> 写入 heartbeat / fills / positions / events / llm_calls / actions / order transitions
 ```
 
-LP rewards 策略只做 live 路径。新增 BUY 必须经过最终 quote plan、maker selection priority、fair-value raw/effective edge、当前盘口、资金、事件窗口、AI/info-risk、盘口新鲜度、深度/rank/history/requote 和 kill switch 检查。已有订单由 fast reconcile 和独立事件撤单 worker 兜底；活跃 token 的 orderbook 更新会立即触发 cancel-only 风控，不等待完整 full tick。
+Rewards market maker 只做 live 路径，LP 奖励是次级收益信号。新增 BUY 必须经过最终 quote plan、maker selection priority、fair-value raw/effective trading edge、当前盘口、`maker_market_budget_usd`、钱包余额、provider modifier、单侧库存、全局潜在成交暴露、事件窗口、盘口新鲜度、深度/rank/history/requote 和 kill switch 检查。全局库存上限同时预留托管及账户快照中的非托管 resting BUY，防止多个订单在下次 reconcile 前并发成交。Rewards minimum 不能覆盖这些风险预算。
 
-Full tick 会通过 application 层 `RewardDecisionEngine` 在 pre-provider、post-provider 和最终 snapshot 三个阶段重算 opportunity/fair-value/readiness/selection 并重排 plans。Worker 仍负责读取 provider cache、触发 provider refresh、外部订单/账户同步和 live 下单/撤单。live placement 依顺序扫描 plans，因此 `max_markets` 和资金占用优先给 reward density、fair-value edge、退出能力和稳定性更好的市场，而不是单纯按基础市场质量分或日奖励排序。
+Full tick 会通过 application 层 `RewardDecisionEngine` 在 pre-provider、post-provider 和最终 snapshot 三个阶段重算 opportunity/fair-value/readiness/selection 并重排 plans。Worker 仍负责读取 provider cache、触发 provider refresh、外部订单/账户同步和 live 下单/撤单。live placement 依顺序扫描 plans，因此 `max_markets` 和资金占用优先给 effective trading edge、退出能力和稳定性更好的市场；reward density 只是独立 10% 次级信号。
 
 Live orderbook validation 失败只在当前计划上记录 60 秒 skip，下一次 full tick 会用最新盘口重新验证，不继承旧计划的安全边际、HHI、深度集中度或 spread 失败。worker 读取大量候选盘口时先保留 active order/position token、再补候选并受 `MAX_TOKENS` 总量限制；单个 orderbook HTTP batch 最多 500 token，避免一个 2,000-3,000 token 请求占满 30 秒 client timeout。
 
 Full tick 现在会创建 shadow strategy run ledger：run 保存 account、trace、trigger、配置 hash、配置 JSON 和输入摘要；每次保存 quote plans 会写入同一 run 的 decision 快照，并把 `RewardQuotePlan.latest_run_id` 指向该 run。执行 merge create/execute、cancel/cancel-replace、pending submit 和 placement submit 前，worker 通过 application `RewardActionPlanner` 写入 `status=planned` 的 strategy actions；live tick outcome 持久化时会基于同一 trace 和 idempotency key 更新对应 actions 并追加 order transitions，不改变既有下单、撤单、成交、退出或 BalancedMerge 逻辑。fast reconcile 没有 strategy run 上下文，仍只走原有执行/持久化路径。
 
-Fair-value gate 默认启用。Full tick 会用 orderbook 服务缓存和本地盘口历史计算每个计划的 YES/NO fair value、confidence、uncertainty、raw edge、effective edge 和 rewards rebate 折扣，写入 `reward_fair_values` / `reward_fair_value_history`；BUY submission last-look 会用最新盘口重新应用同一 gate，失败则取消/延后 durable intent。
+Standard quote materializer 默认从买一开始，最多搜索到 `quote_max_bid_rank`，选择首个同时满足 post-only、reward spread 和 `raw - uncertainty - provider edge buffer` 的价格；不会为了 LP reward 接受负交易 edge。Fair-value latest/history 继续用于审计，maker selection 的 edge 分只使用 `effective_edge_cents`，`reward_adjusted_edge_cents` 只展示。BUY submission last-look 使用相同 edge、单市场预算和全局潜在暴露口径。
 
-provider refresh 是后台补缓存任务：同一 condition 的 AI advisory 与信息风险可由一次 combined provider 请求返回；实际外部请求写入 `llm_calls(task_type=reward_provider)`。缺 provider、缓存缺失或 enforce 模式风险拦截时 fail closed。provider 只写缓存，不直接下单或修改最终可挂集合。
+provider refresh 是后台补缓存任务：同一 condition 的 AI advisory 与信息风险可由一次 combined provider 请求返回；实际外部请求写入 `llm_calls(task_type=reward_provider)`。AI payload 只含结构市场事实和完成的粗粒度 candles，输出 `allow/reduce/stop_new`、size multiplier 与 edge buffer；info-risk payload 只含稳定市场身份和证据搜索边界，可输出定向 cancel。Provider 不读盘口/账户/库存、不选择价格/方向/rank，且只写缓存。Info cancel 必须由代码验证置信度、24 小时内来源和可归因事件；breaking news 需要两个独立来源。
 
-SELL 退出 intent 使用非亏损 floor。`ExitAtMarkup`、`HoldAndRequote` 和外部库存补退出走 post-only maker SELL；`FlattenImmediately` 只有在 best bid 不低于 floor 时才用非 post-only FAK/taker SELL；`Adaptive` 会基于当前 quote plan、event/AI/info-risk/fair-value/live 盘口硬风险和 floor 价上方 bid 深度选择 hold、markup 或 flatten，并写 `reward_live_adaptive_exit_selected` 审计事件。Full tick 在同步订单/成交/账户、刷新 quote plan 和撤单候选之后，提交 pending live orders 之前，会对本地未提交的 adaptive `ExitPending` SELL 继续重评；重评遵守 `adaptive_exit_recheck_sec`、`adaptive_exit_reselect_cooldown_sec`、`adaptive_exit_max_reselects_per_order` 和最小策略改善门槛，写 `reward_live_adaptive_exit_reselected` / `reward_live_adaptive_exit_reselect_deferred` / `reward_live_adaptive_exit_reselect_limit_reached`。已提交到 Polymarket 的 adaptive SELL 在开启 `adaptive_exit_cancel_replace_enabled` 后，于策略切换或价格漂移超 `adaptive_exit_reprice_drift_cents` 时会先撤单；即使撤单 accepted，也不会同 tick 构造 replacement，而是等待 open-order/status/position 对账确认剩余持仓后，通过 durable pending exit 恢复，撤单结果未知时绝不补单。cancel-replace 与本地重选共享 `exit_reselect_count`/冷却/单单上限，并受 `adaptive_exit_cancel_replace_max_per_cycle` 每 tick 上限约束，写 `reward_live_adaptive_exit_cancel_replace*` 审计事件。BalancedMerge 会发现可配对库存并创建 `reward_merge_intents`，只有显式开启自动执行后才通过 Safe proxy wallet 广播 CTF merge；同一 condition 的 standard 与 BalancedMerge quote plan 可同时保存。
+成交后不再执行 sibling blanket cancel；互补 BUY 继续由自身 edge、库存和显式风险动作管理。正常 `ExitAtMarkup` / `HoldAndRequote` maker SELL 以库存成本或加价为目标，`maker_max_exit_loss_cents` 只定义紧急 flatten 的独立风险 floor。`Adaptive` 根据 quote plan、event/provider/fair-value/live 硬风险和 floor 上方深度选择 maker hold/markup 或受控损失 flatten；定向 info cancel 只把命中的 outcome 视为 hard risk，互补库存保持 maker exit。原有 pending 重评、cancel-replace 冷却/次数/对账确认保障继续保留。BalancedMerge 继续发现配对库存并创建 merge intent。
+
+同一 condition 的 standard/BalancedMerge 计划在订单撤单、event fast path 和 BUY last-look 中按 `(condition_id, strategy_profile)` 精确匹配；condition-scoped provider refresh 会聚合同市场全部 profile，只要任一 profile 通过 pre-provider gate 就不会被另一个 blocked profile 覆盖。
+
+撤单按语义分层：缺/旧盘口、穿价、fair-value edge 失效、事件 cancel 与有证据 info cancel 属于 hard/adverse，立即或短确认撤销；安全目标价下调使用 `adverse_requote_*` 且不受竞争性限速；目标价上调才使用 `requote_drift_*` 的确认、冷却和每轮上限。计划因低分、等待 provider、预算不足或 stop-new 变为不可挂时，不会仅凭 `eligible=false` 撤销安全 resting BUY。
 
 ### news
 
@@ -151,7 +153,7 @@ settings.news.sources
 
 - `WorkerSettings` 控制常驻任务开关与轮询间隔。
 - `RewardsSettings` 控制 rewards live worker 的进程级启用、poll 间隔和 provider 环境密钥。
-- `RewardBotConfig` 存在 `reward_bot_config` 表，控制市场筛选、机会评分、fair-value、quote/selection、adaptive post-fill 退出与 pending-exit 重评、AI/info-risk、事件窗口、库存、requote 和 BalancedMerge 等业务参数。
+- `RewardBotConfig` 存在 `reward_bot_config` 表，控制 `maker_market_budget_usd`、动态 rank、交易 edge、机会评分、adaptive 退出、provider 动作阈值、事件窗口、库存偏斜、非对称 requote 和 BalancedMerge。旧 `per_market_usd` / `quote_size_usd` / `cancel_on_fill` 已删除。
 - `POLYEDGE_ORDERBOOK__SERVICE_URL` 指向 orderbook 服务；`POLYEDGE_ORDERBOOK__WRITE_TOKEN` 用于 token 注册。
 
 ## 当前状态

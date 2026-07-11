@@ -1,7 +1,7 @@
 #[derive(Clone, Copy)]
 struct LiveBuySubmitRiskContext<'a> {
     config: &'a RewardBotConfig,
-    plans: &'a HashMap<&'a str, &'a RewardQuotePlan>,
+    plans: &'a RewardPlanIndex<'a>,
     book_history: &'a HashMap<String, VecDeque<BookSnapshot>>,
     open_orders: &'a [ManagedRewardOrder],
     positions: &'a [RewardPosition],
@@ -106,20 +106,34 @@ fn live_buy_submission_last_look_reprice_allowed(
     let condition_notional = live_market_buy_notional(context.open_orders, &order.condition_id);
     let adjusted_condition_notional =
         (condition_notional - old_notional).max(Decimal::ZERO) + target_notional;
-    let available_for_condition = live_available_usd_after_unmanaged_external_buys(context.account);
-    if adjusted_condition_notional > available_for_condition {
-        return false;
-    }
-    if let Some(max_condition_notional) =
-        live_ai_hint_max_condition_notional_usd(context.config, plan)
-        && adjusted_condition_notional > max_condition_notional
-    {
-        return false;
-    }
     let plan_config = context
         .config
         .config_for_strategy_bucket(plan.strategy_bucket)
         .config_for_strategy_profile(plan.strategy_profile);
+    let available_for_condition = live_available_usd_after_unmanaged_external_buys(context.account);
+    if adjusted_condition_notional > available_for_condition {
+        return false;
+    }
+    let provider_budget = live_provider_condition_budget(&plan_config, plan);
+    if adjusted_condition_notional > provider_budget {
+        return false;
+    }
+    if plan_config.max_global_position_usd > Decimal::ZERO {
+        let adjusted_global_open_buy =
+            (live_global_open_buy_notional(context.open_orders) - old_notional)
+                .max(Decimal::ZERO)
+                + target_notional;
+        if live_global_inventory_notional(context.positions)
+            + adjusted_global_open_buy
+            + context
+                .account
+                .unmanaged_external_buy_notional
+                .max(Decimal::ZERO)
+            > plan_config.max_global_position_usd
+        {
+            return false;
+        }
+    }
     !live_position_over_cap(
         &plan_config,
         context.positions,
@@ -142,7 +156,7 @@ fn live_buy_submission_last_look_reprice(
     }
     if !live_buy_submission_last_look_reprice_allowed(order, plan, target_leg.price, context) {
         return Err(format!(
-            "last-look target price {} would exceed condition budget, AI notional cap or position cap",
+            "last-look target price {} would exceed funding, provider size, or position limits",
             target_leg.price
         ));
     }
@@ -521,8 +535,13 @@ async fn submit_pending_live_reward_orders(
                         }
                     }
                     let mut last_look_plan_index = HashMap::new();
-                    last_look_plan_index
-                        .insert(last_look_plan.condition_id.as_str(), &last_look_plan);
+                    last_look_plan_index.insert(
+                        (
+                            last_look_plan.condition_id.as_str(),
+                            last_look_plan.strategy_profile,
+                        ),
+                        &last_look_plan,
+                    );
                     if let Some(reason) = live_cancel_reason(
                         context.config,
                         &last_look_plan_index,
@@ -608,11 +627,11 @@ async fn submit_pending_live_reward_orders(
                 order.price = exit_floor;
                 order.reason = if post_only {
                     format!(
-                        "post-only sell exit floor raised to non-loss price {exit_floor}; {post_only_marker}"
+                        "post-only sell exit aligned to configured risk floor {exit_floor}; {post_only_marker}"
                     )
                 } else {
                     format!(
-                        "flatten sell exit floor raised to non-loss price {exit_floor}; {post_only_marker}"
+                        "flatten sell exit aligned to configured risk floor {exit_floor}; {post_only_marker}"
                     )
                 };
                 order.updated_at = OffsetDateTime::now_utc();
@@ -692,7 +711,7 @@ async fn submit_pending_live_reward_orders(
                         if let Some(best_bid) = exit_price.crossing_best_bid {
                             let best_ask = exit_price.best_ask.unwrap_or(submission_price);
                             order.reason = format!(
-                                "post-only original-price exit repriced to best ask {best_ask} because best bid {best_bid} >= non-loss floor {}; {post_only_marker}",
+                                "post-only maker exit repriced to best ask {best_ask} because best bid {best_bid} >= maker target {}; {post_only_marker}",
                                 order.price
                             );
                             order.updated_at = OffsetDateTime::now_utc();

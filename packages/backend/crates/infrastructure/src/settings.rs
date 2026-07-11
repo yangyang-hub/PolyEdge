@@ -120,11 +120,9 @@ pub struct RewardsSettings {
     pub ai_openai_base_url: String,
     pub ai_anthropic_base_url: String,
     pub ai_model: String,
-    pub ai_min_confidence_bps: u16,
     pub ai_request_timeout_secs: u64,
     pub info_risk_interval_secs: u64,
     pub info_risk_max_markets_per_cycle: u16,
-    pub info_risk_min_confidence_bps: u16,
     pub info_risk_web_search_enabled: bool,
     /// Optional independent fallback LLM endpoint. When the primary provider
     /// call fails for any reason, the same request is retried against this

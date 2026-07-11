@@ -1,8 +1,10 @@
 # Rewards 事件窗口与稳定双边策略设计方案
 
-最后更新：2026-06-27
+最后更新：2026-07-11
 
-状态：核心事件窗口已实现。当前仓库已具备 `reward_market_event_windows` 数据层、Gamma 日期候选同步、事件窗口配置、planner/live placement/live cancel/provider prefilter 硬 gate、前端配置字段和单元测试。外部官方赛程/日历 producer、manual override 管理 UI、稳定双边独立展示、互补 YES/NO 持仓合并或 redeem 执行链路仍未实现，不能描述为当前可用能力。
+> 历史设计记录：事件窗口和 BalancedMerge 已继续演进；AI 盘口 payload、成交后 sibling cancel 等旧描述已被 [Rewards Market Maker V2](designs/rewards-market-maker-v2.md) 取代，不代表当前行为。
+
+历史状态快照：本文撰写阶段已完成核心事件窗口，但当时尚未完成互补持仓合并执行链路。该描述不再代表仓库当前能力；BalancedMerge 与当前缺口请以 `AGENTS.md` 和 V2 设计为准。
 
 ## 背景
 

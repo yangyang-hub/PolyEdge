@@ -242,20 +242,6 @@ fn successful_live_lookup_clears_external_order_not_found_lock() {
     assert!(!has_unresolved_live_reconciliation(&[recovered]));
 }
 
-#[test]
-fn sibling_cancel_targets_only_opposite_buy_quote() {
-    let filled = live_test_open_order("yes_live");
-    let mut opposite_buy = live_test_open_order("no_live");
-    opposite_buy.outcome = "NO".to_string();
-    let mut opposite_exit = opposite_buy.clone();
-    opposite_exit.id = "rewexit_no_live".to_string();
-    opposite_exit.side = RewardOrderSide::Sell;
-    opposite_exit.status = ManagedRewardOrderStatus::ExitPending;
-
-    assert!(is_sibling_live_buy_order(&opposite_buy, &filled));
-    assert!(!is_sibling_live_buy_order(&opposite_exit, &filled));
-}
-
 fn open_snapshot_order(id: &str, token_id: &str) -> PolymarketOpenOrder {
     PolymarketOpenOrder {
         id: id.to_string(),

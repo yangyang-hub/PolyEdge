@@ -15,7 +15,7 @@ enum LiveRewardOrderUpdate {
 struct CancelReplaceIntent {
     /// Snapshot at decision time (external_order_id still set, fields unmutated).
     order: ManagedRewardOrder,
-    /// Raw non-loss floor → replacement.exit_floor_price.
+    /// Configured inventory risk floor → replacement.exit_floor_price.
     floor_price: Decimal,
     /// Decision-derived limit price → replacement.price. For ExitAtMarkup this is
     /// floor + markup and differs from floor_price.
@@ -40,7 +40,10 @@ struct LiveRewardFillUpdate {
 struct RewardPostFillStrategyDecision {
     strategy: PostFillStrategy,
     source: RewardExitStrategySource,
+    /// Lowest price permitted by the configured maker loss budget.
     floor_price: Decimal,
+    /// Normal maker exit target derived from the current inventory cost basis.
+    maker_target_price: Decimal,
     adaptive_event: Option<RewardRiskEvent>,
 }
 
@@ -49,13 +52,14 @@ struct AdaptiveExitDecision {
     selected_strategy: PostFillStrategy,
     fallback_strategy: PostFillStrategy,
     floor_price: Decimal,
+    maker_target_price: Decimal,
     best_bid: Option<Decimal>,
     best_ask: Option<Decimal>,
     exit_notional_usd: Decimal,
     bid_depth_at_floor_usd: Decimal,
     required_depth_usd: Decimal,
     min_flatten_bid: Decimal,
-    can_flatten_non_loss: bool,
+    can_flatten_within_loss_budget: bool,
     plan_eligible: Option<bool>,
     quote_readiness: Option<&'static str>,
     plan_ineligible: bool,
@@ -639,9 +643,9 @@ fn plan_live_post_fill_orders(
     match post_fill_strategy {
         PostFillStrategy::HoldAndRequote | PostFillStrategy::ExitAtMarkup => {
             let exit_price = match post_fill_strategy {
-                PostFillStrategy::HoldAndRequote => strategy_decision.floor_price,
+                PostFillStrategy::HoldAndRequote => strategy_decision.maker_target_price,
                 PostFillStrategy::ExitAtMarkup => ceil_reward_price_to_tick(Decimal::max(
-                    strategy_decision.floor_price,
+                    strategy_decision.maker_target_price,
                     Decimal::min(
                         Decimal::from_parts(99, 0, 0, false, 2),
                         entry.price + config.exit_markup_cents / Decimal::from(100_u64),
@@ -686,7 +690,7 @@ fn plan_live_post_fill_orders(
         PostFillStrategy::FlattenImmediately => {
             let exit_floor = strategy_decision.floor_price;
             let exit_price = exit_floor;
-            let reason = "flatten immediately at non-loss floor";
+            let reason = "flatten immediately at configured risk floor";
             let mut exit = live_exit_order(
                 entry,
                 fill_size,
@@ -961,12 +965,14 @@ fn reward_post_fill_strategy(
     books: &HashMap<String, RewardOrderBook>,
     ai_min_confidence: Decimal,
 ) -> RewardPostFillStrategyDecision {
-    let floor_price = reward_post_fill_exit_floor(entry, positions);
+    let floor_price = reward_post_fill_exit_floor(config, entry, positions);
+    let maker_target_price = reward_post_fill_maker_target(entry, positions);
     if config.post_fill_strategy != PostFillStrategy::Adaptive {
         return RewardPostFillStrategyDecision {
             strategy: config.post_fill_strategy,
             source: RewardExitStrategySource::Configured,
             floor_price,
+            maker_target_price,
             adaptive_event: None,
         };
     }
@@ -977,6 +983,7 @@ fn reward_post_fill_strategy(
         entry,
         fill_size,
         floor_price,
+        maker_target_price,
         books,
         ai_min_confidence,
     );
@@ -985,6 +992,7 @@ fn reward_post_fill_strategy(
         strategy: decision.selected_strategy,
         source: RewardExitStrategySource::Adaptive,
         floor_price: decision.floor_price,
+        maker_target_price: decision.maker_target_price,
         adaptive_event: Some(reward_live_event(
             entry,
             "reward_live_adaptive_exit_selected",
@@ -1001,6 +1009,7 @@ fn reward_adaptive_exit_decision(
     order: &ManagedRewardOrder,
     exit_size: Decimal,
     floor_price: Decimal,
+    maker_target_price: Decimal,
     books: &HashMap<String, RewardOrderBook>,
     ai_min_confidence: Decimal,
 ) -> AdaptiveExitDecision {
@@ -1017,9 +1026,10 @@ fn reward_adaptive_exit_decision(
     );
     let min_flatten_bid =
         floor_price + config.adaptive_flatten_min_surplus_cents / Decimal::from(100_u64);
-    let can_flatten_non_loss = best_bid.is_some_and(|bid| bid >= min_flatten_bid)
+    let can_flatten_within_loss_budget = best_bid.is_some_and(|bid| bid >= min_flatten_bid)
         && bid_depth_at_floor_usd >= required_depth_usd;
-    let hard_risk_reasons = reward_adaptive_hard_risk_reasons(config, plan, ai_min_confidence);
+    let hard_risk_reasons =
+        reward_adaptive_hard_risk_reasons(config, plan, &order.outcome, ai_min_confidence);
     let plan_ineligible = plan.is_some_and(|plan| !plan.eligible);
     let plan_healthy = plan.is_some_and(|plan| {
         plan.eligible
@@ -1028,31 +1038,34 @@ fn reward_adaptive_exit_decision(
             && hard_risk_reasons.is_empty()
     });
 
-    let (selected_strategy, reason) = if can_flatten_non_loss
+    let (selected_strategy, reason) = if can_flatten_within_loss_budget
         && config.adaptive_flatten_when_event_risk
         && !hard_risk_reasons.is_empty()
     {
         (
             PostFillStrategy::FlattenImmediately,
-            "non-loss bid depth covers exit and hard risk is elevated".to_string(),
+            "bid depth covers exit within the configured loss budget and hard risk is elevated"
+                .to_string(),
         )
-    } else if can_flatten_non_loss
+    } else if can_flatten_within_loss_budget
         && config.adaptive_flatten_when_plan_ineligible
         && plan_ineligible
     {
         (
             PostFillStrategy::FlattenImmediately,
-            "non-loss bid depth covers exit and quote plan is no longer eligible".to_string(),
+            "bid depth covers exit within the configured loss budget and quote plan is no longer eligible"
+                .to_string(),
         )
     } else if config.adaptive_hold_when_plan_eligible && plan_healthy {
         (
             PostFillStrategy::HoldAndRequote,
             "quote plan is still eligible; keeping a maker exit and normal quoting".to_string(),
         )
-    } else if can_flatten_non_loss {
+    } else if can_flatten_within_loss_budget {
         (
             PostFillStrategy::FlattenImmediately,
-            "non-loss bid depth covers exit and maker hold is not preferred".to_string(),
+            "bid depth covers exit within the configured loss budget and maker hold is not preferred"
+                .to_string(),
         )
     } else {
         (
@@ -1065,13 +1078,14 @@ fn reward_adaptive_exit_decision(
         selected_strategy,
         fallback_strategy,
         floor_price,
+        maker_target_price,
         best_bid,
         best_ask,
         exit_notional_usd,
         bid_depth_at_floor_usd,
         required_depth_usd,
         min_flatten_bid,
-        can_flatten_non_loss,
+        can_flatten_within_loss_budget,
         plan_eligible: plan.map(|plan| plan.eligible),
         quote_readiness: plan.map(|plan| plan.quote_readiness.as_str()),
         plan_ineligible,
@@ -1086,13 +1100,14 @@ fn reward_adaptive_exit_decision_metadata(decision: &AdaptiveExitDecision) -> Va
         "selected_strategy": decision.selected_strategy.as_str(),
         "fallback_strategy": decision.fallback_strategy.as_str(),
         "floor_price": decision.floor_price,
+        "maker_target_price": decision.maker_target_price,
         "best_bid": decision.best_bid,
         "best_ask": decision.best_ask,
         "exit_notional_usd": decision.exit_notional_usd,
         "bid_depth_at_floor_usd": decision.bid_depth_at_floor_usd,
         "required_depth_usd": decision.required_depth_usd,
         "min_flatten_bid": decision.min_flatten_bid,
-        "can_flatten_non_loss": decision.can_flatten_non_loss,
+        "can_flatten_within_loss_budget": decision.can_flatten_within_loss_budget,
         "plan_eligible": decision.plan_eligible,
         "quote_readiness": decision.quote_readiness,
         "plan_ineligible": decision.plan_ineligible,
@@ -1124,6 +1139,7 @@ fn reselect_adaptive_exit_orders(
         }
 
         let floor_price = reward_adaptive_exit_floor_for_order(order, positions);
+        let maker_target_price = reward_adaptive_exit_target_for_order(order, positions);
         let exit_size = (order.size - order.filled_size)
             .max(Decimal::ZERO)
             .min(reward_sell_position_size(order, positions))
@@ -1137,6 +1153,7 @@ fn reselect_adaptive_exit_orders(
             order,
             exit_size,
             floor_price,
+            maker_target_price,
             books,
             ai_min_confidence,
         );
@@ -1349,14 +1366,8 @@ fn reward_adaptive_exit_floor_for_order(
     order: &ManagedRewardOrder,
     positions: &[RewardPosition],
 ) -> Decimal {
-    let position_floor = positions
-        .iter()
-        .find(|position| position.token_id == order.token_id)
-        .map(|position| position.avg_price)
-        .filter(|price| *price > Decimal::ZERO)
-        .unwrap_or(Decimal::ZERO);
     if let Some(stored_floor) = order.exit_floor_price {
-        return ceil_reward_price_to_tick(Decimal::max(stored_floor, position_floor));
+        return ceil_reward_price_to_tick(stored_floor);
     }
     reward_sell_exit_floor(order, positions)
 }
@@ -1380,14 +1391,14 @@ fn adaptive_exit_reselection_safety_override(
     decision: &AdaptiveExitDecision,
 ) -> bool {
     if decision.selected_strategy == PostFillStrategy::FlattenImmediately
-        && decision.can_flatten_non_loss
+        && decision.can_flatten_within_loss_budget
         && (decision.plan_ineligible || !decision.hard_risk_reasons.is_empty())
     {
         return true;
     }
     if current_strategy == PostFillStrategy::FlattenImmediately
         && decision.selected_strategy != PostFillStrategy::FlattenImmediately
-        && !decision.can_flatten_non_loss
+        && !decision.can_flatten_within_loss_budget
     {
         return true;
     }
@@ -1401,7 +1412,7 @@ fn adaptive_exit_strategy_score_cents(
 ) -> Decimal {
     match strategy {
         PostFillStrategy::FlattenImmediately => {
-            if !decision.can_flatten_non_loss {
+            if !decision.can_flatten_within_loss_budget {
                 return Decimal::ZERO;
             }
             let surplus = decision
@@ -1431,12 +1442,11 @@ fn reward_adaptive_exit_order_price(
     decision: &AdaptiveExitDecision,
 ) -> Decimal {
     match decision.selected_strategy {
-        PostFillStrategy::HoldAndRequote | PostFillStrategy::FlattenImmediately => {
-            decision.floor_price
-        }
+        PostFillStrategy::HoldAndRequote => decision.maker_target_price,
+        PostFillStrategy::FlattenImmediately => decision.floor_price,
         PostFillStrategy::ExitAtMarkup => ceil_reward_price_to_tick(Decimal::min(
             Decimal::from_parts(99, 0, 0, false, 2),
-            decision.floor_price + config.exit_markup_cents / Decimal::from(100_u64),
+            decision.maker_target_price + config.exit_markup_cents / Decimal::from(100_u64),
         )),
         PostFillStrategy::Adaptive => decision.floor_price,
     }
@@ -1478,6 +1488,7 @@ fn reward_exit_plan_for_order<'a>(
 }
 
 fn reward_post_fill_exit_floor(
+    config: &RewardBotConfig,
     entry: &ManagedRewardOrder,
     positions: &HashMap<String, RewardPosition>,
 ) -> Decimal {
@@ -1486,7 +1497,34 @@ fn reward_post_fill_exit_floor(
         .map(|position| position.avg_price)
         .filter(|price| *price > Decimal::ZERO)
         .unwrap_or(Decimal::ZERO);
-    ceil_reward_price_to_tick(Decimal::max(entry.price, position_floor))
+    let cost_basis = Decimal::max(entry.price, position_floor);
+    let loss_budget = config.maker_max_exit_loss_cents / Decimal::from(100_u64);
+    ceil_reward_price_to_tick((cost_basis - loss_budget).max(REWARD_PRICE_TICK))
+}
+
+fn reward_post_fill_maker_target(
+    entry: &ManagedRewardOrder,
+    positions: &HashMap<String, RewardPosition>,
+) -> Decimal {
+    let position_cost = positions
+        .get(&entry.token_id)
+        .map(|position| position.avg_price)
+        .filter(|price| *price > Decimal::ZERO)
+        .unwrap_or(Decimal::ZERO);
+    ceil_reward_price_to_tick(Decimal::max(entry.price, position_cost))
+}
+
+fn reward_adaptive_exit_target_for_order(
+    order: &ManagedRewardOrder,
+    positions: &[RewardPosition],
+) -> Decimal {
+    let position_cost = positions
+        .iter()
+        .find(|position| position.token_id == order.token_id)
+        .map(|position| position.avg_price)
+        .filter(|price| *price > Decimal::ZERO)
+        .unwrap_or(order.price);
+    ceil_reward_price_to_tick(position_cost.max(order.exit_floor_price.unwrap_or_default()))
 }
 
 fn reward_bid_depth_at_or_above_usd(
@@ -1506,6 +1544,7 @@ fn reward_bid_depth_at_or_above_usd(
 fn reward_adaptive_hard_risk_reasons(
     config: &RewardBotConfig,
     plan: Option<&RewardQuotePlan>,
+    outcome: &str,
     ai_min_confidence: Decimal,
 ) -> Vec<String> {
     let Some(plan) = plan else {
@@ -1534,16 +1573,22 @@ fn reward_adaptive_hard_risk_reasons(
     }
     if config.ai_advisory_enabled
         && let Some(advisory) = &plan.ai_advisory
-        && advisory.suitability == RewardAiSuitability::Avoid
-        && advisory.confidence >= ai_min_confidence
+        && reward_ai_effective_action(advisory, ai_min_confidence).blocks_new_quotes()
     {
-        reasons.push("ai_advisory: avoid".to_string());
+        reasons.push(format!("ai_advisory: {}", advisory.action.as_str()));
     }
     if config.info_risk_enabled
         && config.info_risk_mode == polyedge_application::RewardSelectionMode::Enforce
-        && plan.reason.starts_with("info risk ")
+        && let Some(risk) = &plan.info_risk
     {
-        reasons.push(format!("info_risk: {}", plan.reason));
+        let action = reward_info_risk_effective_action(
+            risk,
+            config.info_risk_avoid_level,
+            config.info_risk_min_confidence,
+        );
+        if action.cancels_outcome(outcome) {
+            reasons.push(format!("info_risk: {}", action.as_str()));
+        }
     }
     reasons
 }
@@ -1586,102 +1631,6 @@ fn live_exit_order(
         created_at: now,
         updated_at: now,
     }
-}
-
-#[allow(clippy::too_many_arguments)]
-async fn cancel_sibling_live_reward_orders(
-    connector: &LivePolymarketConnector,
-    working_orders: &mut HashMap<String, ManagedRewardOrder>,
-    filled_order: &ManagedRewardOrder,
-    sibling_cancelled: &mut HashSet<String>,
-    state: &AppState,
-    account: &mut RewardAccountState,
-    _positions: &HashMap<String, RewardPosition>,
-    report: &mut RewardBotRunReport,
-    trace_id: &str,
-) -> Result<()> {
-    let sibling_ids = working_orders
-        .values()
-        .filter(|order| {
-            is_sibling_live_buy_order(order, filled_order)
-                && sibling_cancelled.insert(order.id.clone())
-        })
-        .map(|order| order.id.clone())
-        .collect::<Vec<_>>();
-
-    for sibling_id in sibling_ids {
-        let Some(sibling) = working_orders.get(&sibling_id).cloned() else {
-            continue;
-        };
-        match cancel_one_live_reward_order(
-            connector,
-            sibling.clone(),
-            "sibling rewards quote cancelled after live fill",
-            trace_id,
-        )
-        .await?
-        {
-            LiveRewardOrderUpdate::Changed(order, event) => {
-                working_orders.insert(order.id.clone(), order.clone());
-                if !live_cancel_result_is_unknown(&order) {
-                    report.cancelled_orders += 1;
-                    report.risk_cancelled_orders += 1;
-                }
-                persist_live_reward_updates(
-                    state,
-                    account,
-                    Vec::new(), // positions unchanged during sibling cancel
-                    vec![order],
-                    Vec::new(),
-                    vec![event],
-                    report,
-                    trace_id,
-                )
-                .await?;
-            }
-            LiveRewardOrderUpdate::Unchanged(event)
-            | LiveRewardOrderUpdate::Retryable(event) => {
-                let sibling = mark_sibling_cancel_for_retry(sibling);
-                working_orders.insert(sibling.id.clone(), sibling.clone());
-                persist_live_reward_updates(
-                    state,
-                    account,
-                    Vec::new(), // positions unchanged during sibling cancel
-                    vec![sibling],
-                    Vec::new(),
-                    vec![event],
-                    report,
-                    trace_id,
-                )
-                .await?;
-            }
-            LiveRewardOrderUpdate::CancelReplace(_) => {
-                unreachable!("cancel_one_live_reward_order never returns CancelReplace")
-            }
-        }
-    }
-    Ok(())
-}
-
-fn is_sibling_live_buy_order(
-    candidate: &ManagedRewardOrder,
-    filled_order: &ManagedRewardOrder,
-) -> bool {
-    candidate.id != filled_order.id
-        && candidate.condition_id == filled_order.condition_id
-        && candidate.token_id != filled_order.token_id
-        && candidate.side == RewardOrderSide::Buy
-        && candidate.status.is_open_like()
-}
-
-fn mark_sibling_cancel_for_retry(mut sibling: ManagedRewardOrder) -> ManagedRewardOrder {
-    sibling.scoring = false;
-    sibling.reason = format!(
-        "{}; sibling cancellation must be retried after live fill",
-        sibling.reason
-    );
-    sibling.updated_at = OffsetDateTime::now_utc();
-    sibling
 }
 
 fn deferred_live_exit_is_post_only(order: &ManagedRewardOrder) -> bool {

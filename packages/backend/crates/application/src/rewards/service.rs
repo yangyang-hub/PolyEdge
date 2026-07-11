@@ -562,8 +562,6 @@ impl RewardBotService {
     }
 
     /// Return distinct token IDs from the latest final-eligible quote plans.
-    /// Pre-AI deterministic plans use the rewards_ai_provider temporary
-    /// subscription source while the provider cache is being refreshed.
     pub async fn list_eligible_reward_book_token_ids(&self) -> Result<Vec<String>> {
         let plans = self.store.list_all_quote_plans().await?;
         let mut seen = HashSet::new();

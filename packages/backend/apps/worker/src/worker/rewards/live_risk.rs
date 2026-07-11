@@ -112,49 +112,51 @@ fn live_placement_orders(
             continue;
         }
         let existing_market_buy_notional = live_market_buy_notional(&orders, &plan.condition_id);
-        let raw_budget =
+        let cash_remaining =
             (available_for_new_condition - existing_market_buy_notional).max(Decimal::ZERO);
-        // Cap the condition budget by per-leg position limits so rescaled legs
-        // do not exceed max_position_usd when both are open simultaneously.
-        let position_budget = live_condition_budget_capped_by_positions(
+        let provider_multiplier = live_provider_size_multiplier(&plan_config, plan);
+        let provider_condition_cap = live_provider_condition_budget(&plan_config, plan);
+        let provider_remaining =
+            (provider_condition_cap - existing_market_buy_notional).max(Decimal::ZERO);
+        let pre_inventory_budget = Decimal::min(cash_remaining, provider_remaining);
+        // The global inventory cap constrains the shared budget. Per-outcome
+        // headroom is applied to each rescaled leg independently so a loaded
+        // outcome cannot suppress the complementary inventory-reducing quote.
+        let position_budget = live_condition_budget_capped_by_global_position(
             &plan_config,
-            &plan.legs,
             positions,
-            raw_budget,
+            &orders,
+            account.unmanaged_external_buy_notional,
+            pre_inventory_budget,
         );
-        let condition_budget = live_condition_budget_capped_by_ai_hint(
-            config,
+        // Rescale legs to use available balance and inventory weights. Plan
+        // legs stay at minimum size for snapshot and price-drift detection.
+        let rescaled_legs = live_rescaled_quote_legs_for_budget(
             plan,
-            existing_market_buy_notional,
             position_budget,
+            &plan_config,
+            positions,
         );
-        // Rescale legs to use available balance: single-side uses all,
-        // double-side splits 50/50. Plan legs stay at minimum size for
-        // snapshot and price-drift detection.
-        let rescaled_legs = live_rescaled_quote_legs_for_budget(plan, condition_budget);
-        let missing_plan_buy_notional =
-            live_missing_plan_buy_notional(&rescaled_legs, &orders, &plan.condition_id);
-        let projected_condition_buy_notional =
-            existing_market_buy_notional + missing_plan_buy_notional;
-        if let Some(max_condition_notional) = live_ai_hint_condition_notional_cap_exceeded(
-            config,
-            plan,
-            projected_condition_buy_notional,
-        ) {
-            if missing_plan_buy_notional > Decimal::ZERO
-                && !live_condition_has_active_exposure(&plan.condition_id, open_orders, positions)
-                && mark_live_ai_notional_cap_skip(
-                    &mut plans[plan_index],
-                    existing_market_buy_notional,
-                    missing_plan_buy_notional,
-                    max_condition_notional,
-                    OffsetDateTime::now_utc(),
-                )
-            {
+        if rescaled_legs.is_empty() && !plan.legs.is_empty() {
+            let minimum_plan_notional = plan
+                .legs
+                .iter()
+                .map(|leg| (leg.price * leg.size).round_dp(4))
+                .sum();
+            if mark_live_inventory_headroom_skip(
+                &mut plans[plan_index],
+                minimum_plan_notional,
+                Decimal::ZERO,
+                OffsetDateTime::now_utc(),
+            ) {
                 plans_changed = true;
             }
             continue;
         }
+        let missing_plan_buy_notional =
+            live_missing_plan_buy_notional(&rescaled_legs, &orders, &plan.condition_id);
+        let projected_condition_buy_notional =
+            existing_market_buy_notional + missing_plan_buy_notional;
         // Polymarket applies its collateral validity check to the sum of all
         // open BUY orders in the same condition. Different conditions may reuse
         // the same collateral, but both YES/NO legs in one condition must fit.
@@ -170,6 +172,40 @@ fn live_placement_orders(
                     OffsetDateTime::now_utc(),
                 )
             {
+                plans_changed = true;
+            }
+            continue;
+        }
+        if missing_plan_buy_notional > provider_remaining {
+            let changed = if provider_multiplier < Decimal::ONE {
+                mark_live_provider_size_skip(
+                    &mut plans[plan_index],
+                    existing_market_buy_notional,
+                    missing_plan_buy_notional,
+                    provider_condition_cap,
+                    OffsetDateTime::now_utc(),
+                )
+            } else {
+                mark_live_market_budget_skip(
+                    &mut plans[plan_index],
+                    existing_market_buy_notional,
+                    missing_plan_buy_notional,
+                    plan_config.maker_market_budget_usd,
+                    OffsetDateTime::now_utc(),
+                )
+            };
+            if changed {
+                plans_changed = true;
+            }
+            continue;
+        }
+        if missing_plan_buy_notional > position_budget {
+            if mark_live_inventory_headroom_skip(
+                &mut plans[plan_index],
+                missing_plan_buy_notional,
+                position_budget,
+                OffsetDateTime::now_utc(),
+            ) {
                 plans_changed = true;
             }
             continue;
@@ -207,12 +243,15 @@ fn live_placement_orders(
             if live_position_over_cap(&plan_config, positions, &leg.token_id, leg.price, notional) {
                 continue;
             }
-            // Live maker buys intentionally do not reserve global cash until a
-            // fill is observed. This cap applies to actual inventory only, so
-            // the same funds can be quoted across markets while orders rest.
-            if config.max_global_position_usd > Decimal::ZERO
-                && live_global_inventory_notional(positions) + notional
-                    > config.max_global_position_usd
+            // Cash may be reused across conditions, but the global risk cap
+            // reserves every resting BUY because concurrent fills can turn all
+            // of them into inventory before the next reconciliation tick.
+            if plan_config.max_global_position_usd > Decimal::ZERO
+                && live_global_inventory_notional(positions)
+                    + live_global_open_buy_notional(&orders)
+                    + account.unmanaged_external_buy_notional.max(Decimal::ZERO)
+                    + notional
+                    > plan_config.max_global_position_usd
             {
                 continue;
             }
@@ -250,7 +289,7 @@ fn live_placement_orders(
                 updated_at: now,
             };
             let mut single_plan_index = HashMap::new();
-            single_plan_index.insert(plan.condition_id.as_str(), plan);
+            single_plan_index.insert((plan.condition_id.as_str(), plan.strategy_profile), plan);
             if live_cancel_reason(
                 &plan_config,
                 &single_plan_index,

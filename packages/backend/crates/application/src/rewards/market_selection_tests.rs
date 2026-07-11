@@ -24,11 +24,84 @@ fn selection_score_prefers_maker_quality_over_base_market_quality() {
     maker_quality.fair_value = Some(selection_test_fair_value(decimal("2.5"), true, now));
 
     let mut plans = vec![crowded, maker_quality];
-    apply_reward_market_selection_to_quote_plans(&mut plans);
+    apply_reward_market_selection_to_quote_plans(&mut plans, &RewardBotConfig::default());
 
     assert_eq!(plans[0].condition_id, "maker_quality");
     assert!(plans[0].selection_score > plans[1].selection_score);
     assert!(plans[0].selection_metrics.is_some());
+}
+
+#[test]
+fn reward_adjusted_edge_does_not_override_trading_edge_priority() {
+    let now = OffsetDateTime::now_utc();
+    let metrics = selection_test_opportunity_metrics(
+        decimal("70"),
+        decimal("70"),
+        decimal("70"),
+        decimal("70"),
+        decimal("70"),
+        decimal("100"),
+    );
+    let mut trading_edge = selection_test_plan("trading_edge", decimal("70"), now);
+    trading_edge.opportunity_metrics = Some(metrics.clone());
+    trading_edge.fair_value = Some(selection_test_fair_value(decimal("1.5"), true, now));
+
+    let mut reward_boosted = selection_test_plan("reward_boosted", decimal("70"), now);
+    reward_boosted.opportunity_metrics = Some(metrics);
+    let mut reward_fair_value = selection_test_fair_value(decimal("1.0"), true, now);
+    reward_fair_value.edges[0].expected_reward_rebate_cents = decimal("1.0");
+    reward_fair_value.edges[0].reward_adjusted_edge_cents = decimal("2.0");
+    reward_fair_value.expected_reward_rebate_cents = decimal("1.0");
+    reward_boosted.fair_value = Some(reward_fair_value);
+
+    let mut plans = vec![trading_edge, reward_boosted];
+    apply_reward_market_selection_to_quote_plans(&mut plans, &RewardBotConfig::default());
+
+    assert!(plans.iter().all(|plan| plan.fair_value.as_ref().unwrap().passed));
+    assert_eq!(plans[0].condition_id, "trading_edge");
+    assert!(
+        plans[0]
+            .selection_metrics
+            .as_ref()
+            .unwrap()
+            .fair_value_edge_score
+            > plans[1]
+                .selection_metrics
+                .as_ref()
+                .unwrap()
+                .fair_value_edge_score
+    );
+}
+
+#[test]
+fn reward_density_breaks_ties_as_a_secondary_signal() {
+    let now = OffsetDateTime::now_utc();
+    let mut lower_reward = selection_test_plan("lower_reward", decimal("70"), now);
+    lower_reward.opportunity_metrics = Some(selection_test_opportunity_metrics(
+        decimal("40"),
+        decimal("70"),
+        decimal("70"),
+        decimal("70"),
+        decimal("70"),
+        decimal("100"),
+    ));
+    lower_reward.fair_value = Some(selection_test_fair_value(decimal("1.5"), true, now));
+
+    let mut higher_reward = selection_test_plan("higher_reward", decimal("70"), now);
+    higher_reward.opportunity_metrics = Some(selection_test_opportunity_metrics(
+        decimal("80"),
+        decimal("70"),
+        decimal("70"),
+        decimal("70"),
+        decimal("70"),
+        decimal("100"),
+    ));
+    higher_reward.fair_value = Some(selection_test_fair_value(decimal("1.5"), true, now));
+
+    let mut plans = vec![lower_reward, higher_reward];
+    apply_reward_market_selection_to_quote_plans(&mut plans, &RewardBotConfig::default());
+
+    assert_eq!(plans[0].condition_id, "higher_reward");
 }
 
 fn selection_test_plan(
@@ -149,6 +222,7 @@ fn selection_test_fair_value(
             expected_reward_rebate_cents: Decimal::ZERO,
             uncertainty_cents: Decimal::ZERO,
             effective_edge_cents,
+            reward_adjusted_edge_cents: effective_edge_cents,
             min_raw_edge_cents: Decimal::ZERO,
             min_effective_edge_cents: Decimal::ZERO,
             passed,

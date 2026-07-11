@@ -1,87 +1,58 @@
-fn live_condition_budget_capped_by_positions(
+fn live_condition_budget_capped_by_global_position(
     config: &RewardBotConfig,
-    plan_legs: &[RewardQuoteLeg],
     positions: &[RewardPosition],
+    orders: &[ManagedRewardOrder],
+    unmanaged_external_buy_notional: Decimal,
     raw_budget: Decimal,
 ) -> Decimal {
     let mut budget = raw_budget;
-    if config.max_position_usd > Decimal::ZERO {
-        let min_headroom = plan_legs
-            .iter()
-            .map(|leg| {
-                let current = positions
-                    .iter()
-                    .find(|p| p.token_id == leg.token_id && p.size > Decimal::ZERO)
-                    .map(|p| (p.size * leg.price).round_dp(4))
-                    .unwrap_or_default();
-                (config.max_position_usd - current).max(Decimal::ZERO)
-            })
-            .min()
-            .unwrap_or(raw_budget);
-        // Both legs share one condition collateral; cap total so each leg
-        // stays within its position limit.
-        budget = Decimal::min(
-            budget,
-            min_headroom * Decimal::from(plan_legs.len().max(1) as u64),
-        );
-    }
     if config.max_global_position_usd > Decimal::ZERO {
-        let current = live_global_inventory_notional(positions);
+        let current = live_global_inventory_notional(positions)
+            + live_global_open_buy_notional(orders)
+            + unmanaged_external_buy_notional.max(Decimal::ZERO);
         let headroom = (config.max_global_position_usd - current).max(Decimal::ZERO);
         budget = Decimal::min(budget, headroom);
     }
     budget
 }
 
-fn live_condition_budget_capped_by_ai_hint(
-    config: &RewardBotConfig,
-    plan: &RewardQuotePlan,
-    existing_market_buy_notional: Decimal,
-    raw_budget: Decimal,
-) -> Decimal {
-    let Some(max_condition_notional) = live_ai_hint_max_condition_notional_usd(config, plan) else {
-        return raw_budget;
-    };
-    let remaining = (max_condition_notional - existing_market_buy_notional).max(Decimal::ZERO);
-    Decimal::min(raw_budget, remaining)
-}
-
-fn live_ai_hint_max_condition_notional_usd(
-    config: &RewardBotConfig,
-    plan: &RewardQuotePlan,
-) -> Option<Decimal> {
-    plan.ai_advisory
-        .as_ref()
-        .and_then(|advisory| reward_ai_strategy_hint_max_condition_notional_usd(advisory, config))
-}
-
-fn live_ai_hint_condition_notional_cap_exceeded(
-    config: &RewardBotConfig,
-    plan: &RewardQuotePlan,
-    projected_condition_buy_notional: Decimal,
-) -> Option<Decimal> {
-    live_ai_hint_max_condition_notional_usd(config, plan)
-        .filter(|max_condition_notional| projected_condition_buy_notional > *max_condition_notional)
-}
-
-fn live_condition_has_active_exposure(
-    condition_id: &str,
-    open_orders: &[ManagedRewardOrder],
-    positions: &[RewardPosition],
-) -> bool {
-    open_orders
+fn live_global_open_buy_notional(orders: &[ManagedRewardOrder]) -> Decimal {
+    orders
         .iter()
-        .any(|order| order.condition_id == condition_id && order.status.is_open_like())
-        || positions
-            .iter()
-            .any(|position| position.condition_id == condition_id && position.size > Decimal::ZERO)
+        .filter(|order| order.side == RewardOrderSide::Buy && order.status.is_open_like())
+        .map(|order| {
+            (order.price * (order.size - order.filled_size).max(Decimal::ZERO)).round_dp(4)
+        })
+        .sum()
+}
+
+fn live_provider_size_multiplier(config: &RewardBotConfig, plan: &RewardQuotePlan) -> Decimal {
+    let ai = plan.ai_advisory.as_ref().map_or(Decimal::ONE, |advisory| {
+        reward_ai_size_multiplier(advisory, config)
+    });
+    let info = plan.info_risk.as_ref().map_or(Decimal::ONE, |risk| {
+        reward_info_risk_size_multiplier(risk, config)
+    });
+    (ai * info).max(Decimal::ZERO).min(Decimal::ONE)
+}
+
+fn live_provider_condition_budget(
+    config: &RewardBotConfig,
+    plan: &RewardQuotePlan,
+) -> Decimal {
+    (config.maker_market_budget_usd * live_provider_size_multiplier(config, plan))
+        .max(Decimal::ZERO)
+        .min(config.maker_market_budget_usd.max(Decimal::ZERO))
+        .round_dp(4)
 }
 
 fn live_rescaled_quote_legs_for_budget(
     plan: &RewardQuotePlan,
     condition_budget: Decimal,
+    config: &RewardBotConfig,
+    positions: &[RewardPosition],
 ) -> Vec<RewardQuoteLeg> {
-    match plan.quote_mode {
+    let legs = match plan.quote_mode {
         RewardPlanQuoteMode::SingleYes | RewardPlanQuoteMode::SingleNo => {
             if let Some(leg) = plan.legs.first() {
                 let token = RewardToken {
@@ -119,19 +90,88 @@ fn live_rescaled_quote_legs_for_budget(
                     outcome: no.outcome.clone(),
                     price: None,
                 };
-                scale_double_legs_for_budget(
+                let yes_weight = live_inventory_quote_weight(config, positions, yes);
+                let no_weight = live_inventory_quote_weight(config, positions, no);
+                scale_double_legs_for_weighted_budget(
                     &yes_token,
                     yes.price,
                     &no_token,
                     no.price,
                     plan.rewards_min_size,
                     condition_budget,
+                    yes_weight,
+                    no_weight,
                 )
             } else {
                 plan.legs.clone()
             }
         }
+    };
+    live_cap_quote_legs_by_position_headroom(config, positions, plan.rewards_min_size, legs)
+}
+
+fn live_cap_quote_legs_by_position_headroom(
+    config: &RewardBotConfig,
+    positions: &[RewardPosition],
+    rewards_min_size: Decimal,
+    legs: Vec<RewardQuoteLeg>,
+) -> Vec<RewardQuoteLeg> {
+    if config.max_position_usd <= Decimal::ZERO {
+        return legs;
     }
+    legs.into_iter()
+        .filter_map(|leg| {
+            let current = positions
+                .iter()
+                .find(|position| position.token_id == leg.token_id && position.size > Decimal::ZERO)
+                .map(|position| (position.size * leg.price).round_dp(4))
+                .unwrap_or_default();
+            let headroom = (config.max_position_usd - current).max(Decimal::ZERO);
+            let notional = (leg.price * leg.size).round_dp(4);
+            if notional <= headroom {
+                return Some(leg);
+            }
+            if headroom <= Decimal::ZERO {
+                return None;
+            }
+            let token = RewardToken {
+                token_id: leg.token_id,
+                outcome: leg.outcome,
+                price: None,
+            };
+            let capped = scale_single_leg_for_budget(
+                &token,
+                leg.price,
+                rewards_min_size,
+                headroom,
+            );
+            ((capped.price * capped.size).round_dp(4) <= headroom).then_some(capped)
+        })
+        .collect()
+}
+
+fn live_inventory_quote_weight(
+    config: &RewardBotConfig,
+    positions: &[RewardPosition],
+    leg: &RewardQuoteLeg,
+) -> Decimal {
+    if !config.inventory_skew_enabled
+        || config.inventory_skew_strength <= Decimal::ZERO
+        || config.max_position_usd <= Decimal::ZERO
+    {
+        return Decimal::ONE;
+    }
+    let inventory_notional = positions
+        .iter()
+        .find(|position| position.token_id == leg.token_id && position.size > Decimal::ZERO)
+        .map(|position| (position.size * leg.price).round_dp(4))
+        .unwrap_or_default();
+    let utilization = (inventory_notional / config.max_position_usd)
+        .max(Decimal::ZERO)
+        .min(Decimal::ONE);
+    (Decimal::ONE - config.inventory_skew_strength * utilization)
+        .max(Decimal::new(5, 2))
+        .min(Decimal::ONE)
 }
 
 fn live_missing_plan_buy_notional(
@@ -182,7 +222,7 @@ fn mark_live_funding_skip(
     changed
 }
 
-fn mark_live_ai_notional_cap_skip(
+fn mark_live_provider_size_skip(
     plan: &mut RewardQuotePlan,
     existing_market_buy_notional: Decimal,
     missing_plan_buy_notional: Decimal,
@@ -190,7 +230,58 @@ fn mark_live_ai_notional_cap_skip(
     now: OffsetDateTime,
 ) -> bool {
     let reason = format!(
-        "AI notional cap below required rewards quote: existing condition BUY notional {existing_market_buy_notional}, missing minimum quote notional {missing_plan_buy_notional}, max condition notional {max_condition_notional}"
+        "provider size adjustment below required rewards quote: existing condition BUY notional {existing_market_buy_notional}, missing minimum quote notional {missing_plan_buy_notional}, adjusted condition budget {max_condition_notional}"
+    );
+    let changed = plan.eligible
+        || plan.quote_mode != RewardPlanQuoteMode::None
+        || plan.reason != reason
+        || plan.live_skip_until.is_some()
+        || plan.live_skip_reason.is_some();
+    if changed {
+        plan.eligible = false;
+        plan.quote_mode = RewardPlanQuoteMode::None;
+        plan.reason = reason;
+        plan.live_skip_until = None;
+        plan.live_skip_reason = None;
+        plan.updated_at = now;
+    }
+    changed
+}
+
+fn mark_live_market_budget_skip(
+    plan: &mut RewardQuotePlan,
+    existing_market_buy_notional: Decimal,
+    missing_plan_buy_notional: Decimal,
+    maker_market_budget_usd: Decimal,
+    now: OffsetDateTime,
+) -> bool {
+    let reason = format!(
+        "maker market budget below required rewards quote: existing condition BUY notional {existing_market_buy_notional}, missing minimum quote notional {missing_plan_buy_notional}, configured condition cap {maker_market_budget_usd}"
+    );
+    let changed = plan.eligible
+        || plan.quote_mode != RewardPlanQuoteMode::None
+        || plan.reason != reason
+        || plan.live_skip_until.is_some()
+        || plan.live_skip_reason.is_some();
+    if changed {
+        plan.eligible = false;
+        plan.quote_mode = RewardPlanQuoteMode::None;
+        plan.reason = reason;
+        plan.live_skip_until = None;
+        plan.live_skip_reason = None;
+        plan.updated_at = now;
+    }
+    changed
+}
+
+fn mark_live_inventory_headroom_skip(
+    plan: &mut RewardQuotePlan,
+    missing_plan_buy_notional: Decimal,
+    inventory_headroom: Decimal,
+    now: OffsetDateTime,
+) -> bool {
+    let reason = format!(
+        "inventory headroom below required rewards quote: missing minimum quote notional {missing_plan_buy_notional}, available inventory headroom {inventory_headroom}"
     );
     let changed = plan.eligible
         || plan.quote_mode != RewardPlanQuoteMode::None

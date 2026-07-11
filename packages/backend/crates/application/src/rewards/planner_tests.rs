@@ -117,8 +117,7 @@ fn dominant_yes_books() -> HashMap<String, RewardOrderBook> {
 #[test]
 fn quote_materialization_ignores_config_market_and_leg_budgets() {
     let config = RewardBotConfig {
-        per_market_usd: decimal("10"),
-        quote_size_usd: Decimal::ZERO,
+        maker_market_budget_usd: decimal("10"),
         min_market_score: Decimal::ZERO,
         ..RewardBotConfig::default()
     };
@@ -142,7 +141,7 @@ fn quote_materialization_ignores_config_market_and_leg_budgets() {
             .legs
             .iter()
             .fold(Decimal::ZERO, |sum, leg| sum + leg.price * leg.size)
-            > config.per_market_usd
+            > config.maker_market_budget_usd
     );
 }
 
@@ -210,7 +209,7 @@ fn auto_enforce_quotes_only_dominant_yes_side() {
     assert_eq!(plan.legs.len(), 2);
     assert_eq!(materialized.legs.len(), 1);
     assert_eq!(materialized.legs[0].outcome, "Yes");
-    assert_eq!(materialized.legs[0].price, decimal("0.91"));
+    assert_eq!(materialized.legs[0].price, decimal("0.90"));
 }
 
 #[test]
@@ -236,7 +235,7 @@ fn auto_enforce_concentration_is_checked_during_live_materialization() {
 }
 
 #[test]
-fn ai_enforce_can_filter_double_plan_to_single_side() {
+fn ai_allow_action_cannot_select_quote_direction() {
     let config = RewardBotConfig {
         ai_advisory_enabled: true,
         quote_mode: RewardQuoteMode::Auto,
@@ -251,28 +250,23 @@ fn ai_enforce_can_filter_double_plan_to_single_side() {
     )];
     assert_eq!(plans[0].legs.len(), 2);
 
-    let advisory = test_advisory(
-        RewardAiSuitability::Allow,
-        RewardPlanQuoteMode::SingleNo,
-        decimal("0.80"),
-    );
+    let advisory = test_advisory(RewardProviderAction::Allow, decimal("0.80"));
     let advisories = HashMap::from([(advisory.condition_id.clone(), advisory)]);
 
     apply_reward_ai_advisories(&mut plans, &advisories, &config, decimal("0.65"));
 
     assert!(plans[0].eligible);
-    assert_eq!(plans[0].quote_mode, RewardPlanQuoteMode::SingleNo);
+    assert_eq!(plans[0].quote_mode, RewardPlanQuoteMode::Double);
     assert_eq!(plans[0].legs.len(), 2);
     let materialized =
         materialize_reward_quote_plan_for_live_orderbook(&plans[0], &test_books(), &config)
             .expect("live materialization");
-    assert_eq!(materialized.legs.len(), 1);
-    assert_eq!(materialized.legs[0].outcome, "No");
+    assert_eq!(materialized.legs.len(), 2);
     assert!(plans[0].ai_advisory.is_some());
 }
 
 #[test]
-fn ai_enforce_avoid_rejects_plan_without_relaxing_checks() {
+fn ai_stop_new_rejects_plan_without_relaxing_checks() {
     let config = RewardBotConfig {
         ai_advisory_enabled: true,
         selection_mode: RewardSelectionMode::Enforce,
@@ -284,11 +278,7 @@ fn ai_enforce_avoid_rejects_plan_without_relaxing_checks() {
         &test_books(),
         &config,
     )];
-    let advisory = test_advisory(
-        RewardAiSuitability::Avoid,
-        RewardPlanQuoteMode::Double,
-        decimal("0.90"),
-    );
+    let advisory = test_advisory(RewardProviderAction::StopNew, decimal("0.90"));
     let advisories = HashMap::from([(advisory.condition_id.clone(), advisory)]);
 
     apply_reward_ai_advisories(&mut plans, &advisories, &config, decimal("0.65"));
@@ -296,7 +286,7 @@ fn ai_enforce_avoid_rejects_plan_without_relaxing_checks() {
     assert!(!plans[0].eligible);
     assert!(plans[0].legs.is_empty());
     assert_eq!(plans[0].quote_mode, RewardPlanQuoteMode::None);
-    assert!(plans[0].reason.contains("AI advisory avoid"));
+    assert!(plans[0].reason.contains("AI advisory stop_new"));
 }
 
 #[test]
@@ -493,7 +483,7 @@ fn info_risk_enforce_rejects_critical_risk() {
     assert!(!plans[0].eligible);
     assert!(plans[0].legs.is_empty());
     assert_eq!(plans[0].quote_mode, RewardPlanQuoteMode::None);
-    assert!(plans[0].reason.contains("info risk critical"));
+    assert!(plans[0].reason.contains("info risk stop_new"));
 }
 
 #[test]
@@ -522,7 +512,142 @@ fn info_risk_enforce_rejects_imminent_high_risk() {
     assert!(!plans[0].eligible);
     assert!(plans[0].legs.is_empty());
     assert_eq!(plans[0].quote_mode, RewardPlanQuoteMode::None);
-    assert!(plans[0].reason.contains("info risk high"));
+    assert!(plans[0].reason.contains("info risk stop_new"));
+}
+
+#[test]
+fn info_risk_directional_cancel_keeps_only_the_complementary_quote() {
+    let config = RewardBotConfig {
+        info_risk_enabled: true,
+        info_risk_mode: RewardSelectionMode::Enforce,
+        info_risk_min_confidence: decimal("0.70"),
+        min_market_score: Decimal::ZERO,
+        ..RewardBotConfig::default()
+    };
+    let mut plans = vec![build_reward_quote_plan(
+        &test_market(decimal("5")),
+        &test_books(),
+        &config,
+    )];
+    let mut risk = test_info_risk(
+        RewardInfoRiskLevel::Critical,
+        RewardInfoRiskType::OfficialResult,
+        true,
+    );
+    risk.action = RewardProviderAction::CancelYes;
+    risk.directional_risk = RewardInfoDirectionalRisk::Yes;
+    risk.sources = vec![RewardInfoRiskSource {
+        url: "https://example.com/official-result".to_string(),
+        title: "Official result".to_string(),
+        published_at: Some(risk.created_at),
+        snippet: Some("Result announced".to_string()),
+    }];
+    let risks = HashMap::from([(risk.condition_id.clone(), risk)]);
+
+    apply_reward_info_risks(&mut plans, &risks, &config, config.info_risk_min_confidence);
+
+    assert!(plans[0].eligible);
+    assert_eq!(plans[0].quote_mode, RewardPlanQuoteMode::SingleNo);
+    assert!(plans[0].reason.contains("cancel_yes"));
+    assert_eq!(
+        reward_info_risk_size_multiplier(plans[0].info_risk.as_ref().unwrap(), &config),
+        Decimal::ONE
+    );
+}
+
+#[test]
+fn stale_info_risk_evidence_can_stop_new_but_cannot_cancel() {
+    let mut risk = test_info_risk(
+        RewardInfoRiskLevel::Critical,
+        RewardInfoRiskType::OfficialResult,
+        true,
+    );
+    risk.action = RewardProviderAction::CancelAll;
+    risk.sources = vec![RewardInfoRiskSource {
+        url: "https://example.com/old-result".to_string(),
+        title: "Old result".to_string(),
+        published_at: Some(risk.created_at - TimeDuration::hours(25)),
+        snippet: None,
+    }];
+
+    assert_eq!(
+        reward_info_risk_effective_action(&risk, RewardInfoRiskLevel::High, decimal("0.70")),
+        RewardProviderAction::StopNew
+    );
+}
+
+#[test]
+fn breaking_news_cancel_requires_two_independent_fresh_sources() {
+    let mut risk = test_info_risk(
+        RewardInfoRiskLevel::Critical,
+        RewardInfoRiskType::BreakingNews,
+        true,
+    );
+    risk.action = RewardProviderAction::CancelYes;
+    risk.directional_risk = RewardInfoDirectionalRisk::Yes;
+    risk.sources = vec![RewardInfoRiskSource {
+        url: "https://wire.example/story".to_string(),
+        title: "Breaking".to_string(),
+        published_at: Some(risk.created_at),
+        snippet: None,
+    }];
+    assert_eq!(
+        reward_info_risk_effective_action(&risk, RewardInfoRiskLevel::High, decimal("0.70")),
+        RewardProviderAction::StopNew
+    );
+
+    risk.sources.push(RewardInfoRiskSource {
+        url: "https://official.example/update".to_string(),
+        title: "Official update".to_string(),
+        published_at: Some(risk.created_at),
+        snippet: None,
+    });
+    assert_eq!(
+        reward_info_risk_effective_action(&risk, RewardInfoRiskLevel::High, decimal("0.70")),
+        RewardProviderAction::CancelYes
+    );
+}
+
+#[test]
+fn directional_cancel_mismatch_downgrades_to_stop_new() {
+    let mut risk = test_info_risk(
+        RewardInfoRiskLevel::Critical,
+        RewardInfoRiskType::OfficialResult,
+        true,
+    );
+    risk.action = RewardProviderAction::CancelYes;
+    risk.directional_risk = RewardInfoDirectionalRisk::No;
+    risk.sources = vec![RewardInfoRiskSource {
+        url: "https://official.example/result".to_string(),
+        title: "Official result".to_string(),
+        published_at: Some(risk.created_at),
+        snippet: None,
+    }];
+
+    assert_eq!(
+        reward_info_risk_effective_action(&risk, RewardInfoRiskLevel::High, decimal("0.70")),
+        RewardProviderAction::StopNew
+    );
+}
+
+#[test]
+fn info_risk_reduce_has_a_deterministic_half_size_effect() {
+    let config = RewardBotConfig {
+        info_risk_enabled: true,
+        info_risk_mode: RewardSelectionMode::Enforce,
+        ..RewardBotConfig::default()
+    };
+    let mut risk = test_info_risk(
+        RewardInfoRiskLevel::Medium,
+        RewardInfoRiskType::BreakingNews,
+        false,
+    );
+    risk.action = RewardProviderAction::Reduce;
+
+    assert_eq!(
+        reward_info_risk_size_multiplier(&risk, &config),
+        decimal("0.50")
+    );
 }
 
 #[test]
@@ -538,6 +663,19 @@ fn quote_plan_counts_classify_provider_and_blocker_reasons() {
     ai_pending.quote_mode = RewardPlanQuoteMode::None;
     ai_pending.legs.clear();
     ai_pending.reason = "AI advisory pending: market has not passed provider filter".to_string();
+
+    let mut ai_stop_new = base.clone();
+    ai_stop_new.eligible = false;
+    ai_stop_new.quote_mode = RewardPlanQuoteMode::None;
+    ai_stop_new.legs.clear();
+    ai_stop_new.reason = "AI advisory stop_new: ambiguous resolution rules".to_string();
+
+    let mut provider_size = base.clone();
+    provider_size.eligible = false;
+    provider_size.quote_mode = RewardPlanQuoteMode::None;
+    provider_size.legs.clear();
+    provider_size.reason =
+        "provider size adjustment below required rewards quote: adjusted budget 1".to_string();
 
     let mut info_risk = base.clone();
     info_risk.eligible = false;
@@ -561,15 +699,19 @@ fn quote_plan_counts_classify_provider_and_blocker_reasons() {
     let counts = RewardQuotePlanCounts::from_plans([
         &base,
         &ai_pending,
+        &ai_stop_new,
+        &provider_size,
         &info_risk,
         &funding,
         &live_validation,
     ]);
 
-    assert_eq!(counts.total, 5);
+    assert_eq!(counts.total, 7);
     assert_eq!(counts.eligible, 1);
     assert_eq!(counts.provider_pending, 1);
     assert_eq!(counts.blockers.ai_pending, 1);
+    assert_eq!(counts.blockers.ai_stop_new, 1);
+    assert_eq!(counts.blockers.provider_size, 1);
     assert_eq!(counts.blockers.info_risk, 1);
     assert_eq!(counts.blockers.funding, 1);
     assert_eq!(counts.blockers.live_validation, 1);
@@ -588,11 +730,7 @@ fn ai_enabled_keeps_low_confidence_allow_decision_as_deterministic_plan() {
         &test_books(),
         &config,
     )];
-    let advisory = test_advisory(
-        RewardAiSuitability::Allow,
-        RewardPlanQuoteMode::Double,
-        decimal("0.40"),
-    );
+    let advisory = test_advisory(RewardProviderAction::Allow, decimal("0.40"));
     let advisories = HashMap::from([(advisory.condition_id.clone(), advisory)]);
 
     apply_reward_ai_advisories(&mut plans, &advisories, &config, decimal("0.65"));
@@ -604,7 +742,7 @@ fn ai_enabled_keeps_low_confidence_allow_decision_as_deterministic_plan() {
 }
 
 #[test]
-fn ai_enabled_blocks_watch_decision() {
+fn ai_enabled_blocks_high_confidence_stop_new_action() {
     let config = RewardBotConfig {
         ai_advisory_enabled: true,
         selection_mode: RewardSelectionMode::Enforce,
@@ -618,17 +756,13 @@ fn ai_enabled_blocks_watch_decision() {
         &test_books(),
         &config,
     )];
-    let advisory = test_advisory(
-        RewardAiSuitability::Watch,
-        RewardPlanQuoteMode::None,
-        decimal("0.90"),
-    );
+    let advisory = test_advisory(RewardProviderAction::StopNew, decimal("0.90"));
     let advisories = HashMap::from([(advisory.condition_id.clone(), advisory)]);
 
     apply_reward_ai_advisories(&mut plans, &advisories, &config, decimal("0.65"));
 
-    // Fail-closed: a non-allow (watch) verdict blocks the plan regardless of
-    // selection mode, so an unendorsed market cannot stay quotable.
+    // A high-confidence stop-new action blocks additional exposure regardless
+    // of selection mode.
     assert!(!plans[0].eligible);
     assert_eq!(plans[0].quote_mode, RewardPlanQuoteMode::None);
     assert!(plans[0].legs.is_empty());
@@ -649,11 +783,7 @@ fn ai_enabled_allows_high_confidence_provider_pass_in_observe_mode() {
         &test_books(),
         &config,
     )];
-    let advisory = test_advisory(
-        RewardAiSuitability::Allow,
-        RewardPlanQuoteMode::SingleNo,
-        decimal("0.80"),
-    );
+    let advisory = test_advisory(RewardProviderAction::Allow, decimal("0.80"));
     let advisories = HashMap::from([(advisory.condition_id.clone(), advisory)]);
 
     apply_reward_ai_advisories(&mut plans, &advisories, &config, decimal("0.65"));
@@ -767,10 +897,35 @@ fn first_quote_observation_survives_rebuilt_blocked_plan() {
 }
 
 #[test]
+fn first_quote_observation_survives_shared_condition_profiles() {
+    let now = OffsetDateTime::now_utc();
+    let observed_at = now - TimeDuration::seconds(240);
+    let config = RewardBotConfig {
+        min_market_score: Decimal::ZERO,
+        ..RewardBotConfig::default()
+    };
+    let mut observed_standard =
+        build_reward_quote_plan(&test_market(decimal("20")), &test_books(), &config);
+    observed_standard.first_quote_observed_at = Some(observed_at);
+    let mut unobserved_balanced = observed_standard.clone();
+    unobserved_balanced.strategy_profile = RewardStrategyProfile::BalancedMerge;
+    unobserved_balanced.first_quote_observed_at = None;
+
+    let mut rebuilt = observed_standard.clone();
+    rebuilt.first_quote_observed_at = None;
+    let changed = carry_forward_first_quote_observations(
+        std::slice::from_mut(&mut rebuilt),
+        &[observed_standard, unobserved_balanced],
+    );
+
+    assert!(changed);
+    assert_eq!(rebuilt.first_quote_observed_at, Some(observed_at));
+}
+
+#[test]
 fn quote_materialization_allows_minimum_sizes_above_config_market_budget() {
     let config = RewardBotConfig {
-        per_market_usd: decimal("20"),
-        quote_size_usd: decimal("10"),
+        maker_market_budget_usd: decimal("20"),
         min_market_score: Decimal::ZERO,
         ..RewardBotConfig::default()
     };
@@ -794,7 +949,7 @@ fn quote_materialization_allows_minimum_sizes_above_config_market_budget() {
             .legs
             .iter()
             .fold(Decimal::ZERO, |sum, leg| sum + leg.price * leg.size)
-            > config.per_market_usd
+            > config.maker_market_budget_usd
     );
 }
 
@@ -804,8 +959,7 @@ fn auto_enforce_keeps_double_when_only_config_market_budget_would_fail() {
         quote_mode: RewardQuoteMode::Auto,
         selection_mode: RewardSelectionMode::Enforce,
         dominant_single_side_enabled: true,
-        per_market_usd: decimal("20"),
-        quote_size_usd: decimal("10"),
+        maker_market_budget_usd: decimal("20"),
         min_market_score: Decimal::ZERO,
         ..RewardBotConfig::default()
     };
@@ -827,11 +981,7 @@ fn auto_enforce_keeps_double_when_only_config_market_budget_would_fail() {
     );
 }
 
-fn test_advisory(
-    suitability: RewardAiSuitability,
-    quote_mode: RewardPlanQuoteMode,
-    confidence: Decimal,
-) -> RewardMarketAdvisory {
+fn test_advisory(action: RewardProviderAction, confidence: Decimal) -> RewardMarketAdvisory {
     let now = OffsetDateTime::now_utc();
     RewardMarketAdvisory {
         condition_id: "cond_budget".to_string(),
@@ -839,9 +989,9 @@ fn test_advisory(
         request_format: RewardAiRequestFormat::OpenAiResponses,
         model: "test-model".to_string(),
         input_hash: "hash".to_string(),
-        suitability,
-        quote_mode,
-        exit_policy: PostFillStrategy::ExitAtMarkup,
+        action,
+        size_multiplier: Decimal::ONE,
+        edge_buffer_cents: Decimal::ZERO,
         confidence,
         reasons: vec!["test advisory".to_string()],
         metrics: json!({}),
@@ -863,6 +1013,11 @@ fn test_info_risk(
         model: "test-model".to_string(),
         query_hash: "query-hash".to_string(),
         input_hash: "input-hash".to_string(),
+        action: if resolution_imminent || risk_level == RewardInfoRiskLevel::Critical {
+            RewardProviderAction::CancelAll
+        } else {
+            RewardProviderAction::Allow
+        },
         risk_level,
         risk_type,
         directional_risk: RewardInfoDirectionalRisk::Unclear,
@@ -880,8 +1035,7 @@ fn test_info_risk(
 #[test]
 fn quote_plan_accounts_for_clob_cost_precision_without_config_budget_rejection() {
     let config = RewardBotConfig {
-        per_market_usd: decimal("20.50"),
-        quote_size_usd: decimal("1"),
+        maker_market_budget_usd: decimal("20.50"),
         min_market_score: Decimal::ZERO,
         ..RewardBotConfig::default()
     };
@@ -892,22 +1046,20 @@ fn quote_plan_accounts_for_clob_cost_precision_without_config_budget_rejection()
             .expect("live materialization");
 
     assert!(plan.eligible, "{}", plan.reason);
-    assert_eq!(materialized.legs[0].size, decimal("21"));
-    assert_eq!(materialized.legs[1].size, decimal("20.5"));
-    assert!(
-        materialized
-            .legs
-            .iter()
-            .fold(Decimal::ZERO, |sum, leg| sum + leg.price * leg.size)
-            > config.per_market_usd
-    );
+    let sizes = materialized
+        .legs
+        .iter()
+        .map(|leg| leg.size)
+        .collect::<Vec<_>>();
+    assert!(sizes.contains(&decimal("21")));
+    assert!(sizes.contains(&decimal("20.5")));
+    assert!(materialized.legs.iter().all(|leg| leg.size >= decimal("20.30")));
 }
 
 #[test]
 fn quote_plan_sizes_already_match_clob_cost_precision() {
     let config = RewardBotConfig {
-        per_market_usd: decimal("25"),
-        quote_size_usd: decimal("1"),
+        maker_market_budget_usd: decimal("25"),
         min_market_score: Decimal::ZERO,
         ..RewardBotConfig::default()
     };
@@ -918,8 +1070,13 @@ fn quote_plan_sizes_already_match_clob_cost_precision() {
             .expect("live materialization");
 
     assert!(plan.eligible, "{}", plan.reason);
-    assert_eq!(materialized.legs[0].size, decimal("21"));
-    assert_eq!(materialized.legs[1].size, decimal("20.5"));
+    let sizes = materialized
+        .legs
+        .iter()
+        .map(|leg| leg.size)
+        .collect::<Vec<_>>();
+    assert!(sizes.contains(&decimal("21")));
+    assert!(sizes.contains(&decimal("20.5")));
     assert!(
         materialized
             .legs
@@ -1025,7 +1182,7 @@ fn quote_bid_rank_on_fine_tick_uses_cent_distance_from_best_bid() {
 }
 
 #[test]
-fn quote_bid_rank_depth_is_checked_during_live_materialization() {
+fn quote_bid_rank_can_synthesize_a_valid_price_in_sparse_book() {
     let config = RewardBotConfig {
         quote_bid_rank: 3,
         min_market_score: Decimal::ZERO,
@@ -1033,20 +1190,22 @@ fn quote_bid_rank_depth_is_checked_during_live_materialization() {
     };
 
     let plan = build_reward_quote_plan(&test_market(decimal("5")), &test_books(), &config);
-    let error = materialize_reward_quote_plan_for_live_orderbook(&plan, &test_books(), &config)
-        .expect_err("live materialization should reject missing bid depth");
+    let materialized =
+        materialize_reward_quote_plan_for_live_orderbook(&plan, &test_books(), &config)
+            .expect("live materialization should not require another maker at the target price");
 
     assert!(plan.eligible, "{}", plan.reason);
-    assert_eq!(error, "YES book does not have bid-3");
+    assert_eq!(materialized.legs[0].price, decimal("0.75"));
+    assert_eq!(materialized.legs[1].price, decimal("0.20"));
 }
 
 #[test]
-fn ai_strategy_hint_can_move_live_quote_to_more_conservative_bid_rank() {
+fn ai_risk_buffer_moves_live_quote_to_more_conservative_bid_rank() {
     let config = RewardBotConfig {
         quote_bid_rank: 1,
         min_market_score: Decimal::ZERO,
-        ai_strategy_hint_enabled: true,
-        ai_strategy_hint_min_confidence: decimal("0.75"),
+        ai_risk_adjustment_enabled: true,
+        ai_action_min_confidence: decimal("0.75"),
         ..RewardBotConfig::default()
     };
     let mut books = test_books();
@@ -1068,49 +1227,32 @@ fn ai_strategy_hint_can_move_live_quote_to_more_conservative_bid_rank() {
         });
 
     let mut plan = build_reward_quote_plan(&test_market(decimal("5")), &books, &config);
-    let mut advisory = test_advisory(
-        RewardAiSuitability::Allow,
-        RewardPlanQuoteMode::Double,
-        decimal("0.90"),
-    );
-    advisory.metrics = json!({
-        "strategy_hint": {
-            "quote_mode": "double",
-            "bid_rank": 2,
-            "max_condition_notional_usd": "20"
-        }
-    });
+    let mut advisory = test_advisory(RewardProviderAction::Allow, decimal("0.90"));
+    advisory.action = RewardProviderAction::Reduce;
+    advisory.size_multiplier = decimal("0.5");
+    advisory.edge_buffer_cents = decimal("1");
     plan.ai_advisory = Some(advisory);
 
     let materialized = materialize_reward_quote_plan_for_live_orderbook(&plan, &books, &config)
         .expect("live materialization");
 
-    assert_eq!(materialized.legs[0].price, decimal("0.76"));
-    assert_eq!(materialized.legs[1].price, decimal("0.21"));
+    assert_eq!(materialized.legs[0].price, decimal("0.75"));
+    assert_eq!(materialized.legs[1].price, decimal("0.20"));
 }
 
 #[test]
-fn ai_strategy_hint_enforces_single_side_quote_direction() {
+fn ai_risk_modifier_never_selects_quote_direction() {
     let config = RewardBotConfig {
         ai_advisory_enabled: true,
-        ai_strategy_hint_enabled: true,
-        ai_strategy_hint_min_confidence: decimal("0.75"),
+        ai_risk_adjustment_enabled: true,
+        ai_action_min_confidence: decimal("0.75"),
         min_market_score: Decimal::ZERO,
         ..RewardBotConfig::default()
     };
     let mut plan = build_reward_quote_plan(&test_market(decimal("5")), &test_books(), &config);
-    let mut advisory = test_advisory(
-        RewardAiSuitability::Allow,
-        RewardPlanQuoteMode::Double,
-        decimal("0.90"),
-    );
-    advisory.metrics = json!({
-        "strategy_hint": {
-            "quote_mode": "single_yes",
-            "bid_rank": 1,
-            "max_condition_notional_usd": "12"
-        }
-    });
+    let mut advisory = test_advisory(RewardProviderAction::Allow, decimal("0.90"));
+    advisory.action = RewardProviderAction::Reduce;
+    advisory.size_multiplier = decimal("0.5");
     let advisories = HashMap::from([(plan.condition_id.clone(), advisory)]);
 
     apply_reward_ai_advisories(
@@ -1121,33 +1263,50 @@ fn ai_strategy_hint_enforces_single_side_quote_direction() {
     );
 
     assert!(plan.eligible, "{}", plan.reason);
-    assert_eq!(plan.quote_mode, RewardPlanQuoteMode::SingleYes);
-    assert!(plan.reason.contains("AI-assisted yes single-side quote"));
+    assert_eq!(plan.quote_mode, RewardPlanQuoteMode::Double);
 }
 
 #[test]
-fn ai_strategy_hint_zero_notional_cap_is_enforced() {
+fn ai_risk_size_multiplier_is_bounded_and_applied() {
     let config = RewardBotConfig {
-        ai_strategy_hint_enabled: true,
-        ai_strategy_hint_min_confidence: decimal("0.75"),
+        ai_risk_adjustment_enabled: true,
+        ai_action_min_confidence: decimal("0.75"),
         ..RewardBotConfig::default()
     };
-    let mut advisory = test_advisory(
-        RewardAiSuitability::Allow,
-        RewardPlanQuoteMode::Double,
-        decimal("0.90"),
-    );
-    advisory.metrics = json!({
-        "strategy_hint": {
-            "quote_mode": "double",
-            "bid_rank": 1,
-            "max_condition_notional_usd": "0"
-        }
-    });
+    let mut advisory = test_advisory(RewardProviderAction::Allow, decimal("0.90"));
+    advisory.action = RewardProviderAction::Reduce;
+    advisory.size_multiplier = decimal("0.4");
 
     assert_eq!(
-        reward_ai_strategy_hint_max_condition_notional_usd(&advisory, &config),
-        Some(Decimal::ZERO)
+        reward_ai_size_multiplier(&advisory, &config),
+        decimal("0.4")
+    );
+}
+
+#[test]
+fn low_confidence_ai_stop_new_becomes_half_size_reduce() {
+    let config = RewardBotConfig {
+        ai_risk_adjustment_enabled: true,
+        ai_action_min_confidence: decimal("0.75"),
+        ..RewardBotConfig::default()
+    };
+    let mut advisory = test_advisory(RewardProviderAction::StopNew, decimal("0.40"));
+    advisory.size_multiplier = Decimal::ZERO;
+
+    assert_eq!(
+        reward_ai_effective_action(&advisory, config.ai_action_min_confidence),
+        RewardProviderAction::Reduce
+    );
+    assert_eq!(reward_ai_size_multiplier(&advisory, &config), decimal("0.50"));
+}
+
+#[test]
+fn invalid_ai_cancel_action_is_sanitized_to_stop_new() {
+    let advisory = test_advisory(RewardProviderAction::CancelAll, decimal("0.95"));
+
+    assert_eq!(
+        reward_ai_effective_action(&advisory, decimal("0.75")),
+        RewardProviderAction::StopNew
     );
 }
 
@@ -1156,7 +1315,7 @@ fn quote_bid_rank_spread_is_checked_during_live_materialization() {
     let config = RewardBotConfig {
         quote_bid_rank: 2,
         min_market_score: Decimal::ZERO,
-        max_spread_cents: decimal("2"),
+        max_spread_cents: decimal("1"),
         ..RewardBotConfig::default()
     };
     let mut books = test_books();
@@ -1182,7 +1341,10 @@ fn quote_bid_rank_spread_is_checked_during_live_materialization() {
         .expect_err("live materialization should reject out-of-spread bid");
 
     assert!(plan.eligible, "{}", plan.reason);
-    assert_eq!(error, "YES bid-2 is outside the rewards spread limit");
+    assert_eq!(
+        error,
+        "YES has no safe bid between rank 2 and 3 preserving trading edge"
+    );
 }
 
 #[test]
@@ -1205,7 +1367,7 @@ fn live_materialization_rejects_wide_token_spread() {
 }
 
 #[test]
-fn auto_enforce_falls_back_to_single_side_when_double_spread_fails() {
+fn auto_enforce_keeps_double_quote_with_safe_synthetic_sparse_book_prices() {
     let config = RewardBotConfig {
         quote_mode: RewardQuoteMode::Auto,
         selection_mode: RewardSelectionMode::Enforce,
@@ -1235,14 +1397,14 @@ fn auto_enforce_falls_back_to_single_side_when_double_spread_fails() {
 
     let plan = build_reward_quote_plan(&test_market(decimal("5")), &books, &config);
     let materialized = materialize_reward_quote_plan_for_live_orderbook(&plan, &books, &config)
-        .expect("live materialization should fall back to one valid side");
+        .expect("live materialization should synthesize valid maker prices");
 
     assert!(plan.eligible, "{}", plan.reason);
     assert_eq!(plan.quote_mode, RewardPlanQuoteMode::Double);
-    assert_eq!(materialized.quote_mode, RewardPlanQuoteMode::SingleNo);
-    assert_eq!(materialized.legs.len(), 1);
-    assert_eq!(materialized.legs[0].outcome, "No");
-    assert_eq!(materialized.legs[0].price, decimal("0.21"));
+    assert_eq!(materialized.quote_mode, RewardPlanQuoteMode::Double);
+    assert_eq!(materialized.legs.len(), 2);
+    assert_eq!(materialized.legs[0].price, decimal("0.76"));
+    assert_eq!(materialized.legs[1].price, decimal("0.21"));
 }
 
 #[test]

@@ -96,20 +96,16 @@ fn remember_reward_event_cancel_plan_token(
 }
 
 fn reward_event_cancel_active_order_tokens(
-    plans: &[RewardQuotePlan],
+    _plans: &[RewardQuotePlan],
     open_orders: &[ManagedRewardOrder],
     token_ids: &HashSet<String>,
 ) -> Vec<String> {
-    let plan_index: HashMap<&str, &RewardQuotePlan> = plans
-        .iter()
-        .map(|plan| (plan.condition_id.as_str(), plan))
-        .collect();
     let mut active_order_tokens = Vec::new();
     let mut seen = HashSet::new();
 
     for order in open_orders.iter().filter(|order| {
         order.status.is_open_like()
-            && live_event_cancel_order_matches_updated_tokens(order, &plan_index, token_ids)
+            && live_event_cancel_order_matches_updated_tokens(order, token_ids)
     }) {
         remember_reward_event_cancel_plan_token(
             &order.token_id,
@@ -256,16 +252,13 @@ fn live_event_hard_cancel_candidates_with_account(
     token_ids: &HashSet<String>,
     kill_switch: bool,
 ) -> Vec<(String, String)> {
-    let plan_index: HashMap<&str, &RewardQuotePlan> = plans
-        .iter()
-        .map(|plan| (plan.condition_id.as_str(), plan))
-        .collect();
+    let plan_index = reward_live_plan_index(plans);
     let now = OffsetDateTime::now_utc();
     open_orders
         .iter()
         .filter(|order| {
             order.status.is_open_like()
-                && live_event_cancel_order_matches_updated_tokens(order, &plan_index, token_ids)
+                && live_event_cancel_order_matches_updated_tokens(order, token_ids)
         })
         .filter_map(|order| {
             let order_config = reward_live_plan_for_order(&plan_index, order)
@@ -291,7 +284,6 @@ fn live_event_hard_cancel_candidates_with_account(
 
 fn live_event_cancel_order_matches_updated_tokens(
     order: &ManagedRewardOrder,
-    _plans: &HashMap<&str, &RewardQuotePlan>,
     token_ids: &HashSet<String>,
 ) -> bool {
     token_ids.contains(&order.token_id)
@@ -299,7 +291,7 @@ fn live_event_cancel_order_matches_updated_tokens(
 
 fn live_event_hard_cancel_reason(
     config: &RewardBotConfig,
-    plans: &HashMap<&str, &RewardQuotePlan>,
+    plans: &RewardPlanIndex<'_>,
     books: &HashMap<String, RewardOrderBook>,
     book_history: &HashMap<String, VecDeque<BookSnapshot>>,
     order: &ManagedRewardOrder,
@@ -347,11 +339,16 @@ fn live_event_hard_cancel_reason(
     let Some(plan) = reward_live_plan_for_order(plans, order) else {
         return Some(reward_live_missing_order_plan_reason(plans, order));
     };
-    if !plan.eligible {
-        return Some("market dropped below eligibility threshold".to_string());
+    if reward_quote_plan_event_window_cancels_open_buy(plan) {
+        let reason = plan
+            .event_window
+            .as_ref()
+            .map(|assessment| assessment.reason.as_str())
+            .unwrap_or("event window requires BUY cancellation");
+        return Some(format!("event window requires BUY cancellation: {reason}"));
     }
-    if !plan.legs.iter().any(|leg| leg.token_id == order.token_id) {
-        return Some("token no longer appears in live quote plan".to_string());
+    if let Some(reason) = live_provider_cancel_reason(config, plan, order) {
+        return Some(reason);
     }
     if let Some(age_ms) = stale_age_ms {
         if live_stale_orderbook_cancel_grace_active(config, order, now) {
@@ -367,6 +364,15 @@ fn live_event_hard_cancel_reason(
             "post-only buy would touch best ask {best_ask} at order price {}",
             order.price
         ));
+    }
+    if let Some(reason) = live_order_trading_edge_cancel_reason(config, plan, order) {
+        return Some(reason);
+    }
+    if !plan.eligible {
+        return None;
+    }
+    if !plan.legs.iter().any(|leg| leg.token_id == order.token_id) {
+        return Some("token no longer appears in live quote plan".to_string());
     }
     if let Some(reason) = live_min_depth_cancel_reason(config, books, order) {
         return Some(reason);

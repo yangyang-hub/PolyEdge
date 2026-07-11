@@ -181,7 +181,7 @@ export function SummaryStrip({
   const waitingOrderbookMarkets = snapshot.status.waiting_orderbook_markets ?? 0;
   const providerPendingMarkets = snapshot.status.provider_pending_markets ?? 0;
   const blockedPlans = blockedPlanCount(snapshot);
-  const fundingBlocked = blockerCount(snapshot, "funding");
+  const fundingBlocked = capitalRiskBlockerCount(snapshot);
   const liveValidationBlocked = blockerCount(snapshot, "live_validation");
   const providerBlocked = providerRiskBlockerCount(snapshot);
 
@@ -389,13 +389,22 @@ function blockerCount(
   return snapshot.status.blocker_counts?.[key] ?? 0;
 }
 
+function capitalRiskBlockerCount(snapshot: RewardBotSnapshotDto) {
+  const blockers = snapshot.status.blocker_counts;
+  if (!blockers) return 0;
+  return (
+    (blockers.funding ?? 0) +
+    (blockers.maker_budget ?? 0) +
+    (blockers.inventory_headroom ?? 0)
+  );
+}
+
 function providerRiskBlockerCount(snapshot: RewardBotSnapshotDto) {
   const blockers = snapshot.status.blocker_counts;
   if (!blockers) return 0;
   return (
-    (blockers.ai_confidence_low ?? 0) +
-    (blockers.ai_watch ?? 0) +
-    (blockers.ai_avoid ?? 0) +
+    (blockers.ai_stop_new ?? 0) +
+    (blockers.provider_size ?? 0) +
     (blockers.info_risk ?? 0)
   );
 }

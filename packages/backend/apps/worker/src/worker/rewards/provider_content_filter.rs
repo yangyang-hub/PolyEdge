@@ -53,14 +53,13 @@ fn reward_provider_content_filter_metrics(
 }
 
 fn reward_content_filter_ai_decision(
-    exit_policy: PostFillStrategy,
     primary_error: &AppError,
     fallback_error: Option<&AppError>,
 ) -> polyedge_application::RewardAiAdvisoryDecision {
     polyedge_application::RewardAiAdvisoryDecision {
-        suitability: polyedge_application::RewardAiSuitability::Avoid,
-        quote_mode: RewardPlanQuoteMode::None,
-        exit_policy,
+        action: polyedge_application::RewardProviderAction::StopNew,
+        size_multiplier: Decimal::ZERO,
+        edge_buffer_cents: Decimal::ZERO,
         confidence: Decimal::ONE,
         reasons: vec![
             "provider content filter rejected the advisory payload; blocking quote until cache expires"
@@ -75,6 +74,7 @@ fn reward_content_filter_info_risk_decision(
     fallback_error: Option<&AppError>,
 ) -> polyedge_application::RewardInfoRiskAssessmentDecision {
     polyedge_application::RewardInfoRiskAssessmentDecision {
+        action: polyedge_application::RewardProviderAction::StopNew,
         risk_level: polyedge_application::RewardInfoRiskLevel::Critical,
         risk_type: polyedge_application::RewardInfoRiskType::Unknown,
         directional_risk: polyedge_application::RewardInfoDirectionalRisk::Unclear,
@@ -92,11 +92,10 @@ async fn save_reward_ai_content_filter_advisory(
     state: &AppState,
     request: &RewardAiAdvisoryRequest,
     ttl_sec: u64,
-    exit_policy: PostFillStrategy,
     primary_error: &AppError,
     fallback_error: Option<&AppError>,
 ) -> Result<RewardMarketAdvisory> {
-    let advisory = reward_content_filter_ai_decision(exit_policy, primary_error, fallback_error)
+    let advisory = reward_content_filter_ai_decision(primary_error, fallback_error)
         .into_advisory(request, ttl_sec, OffsetDateTime::now_utc());
     state
         .reward_bot_service
@@ -126,7 +125,6 @@ async fn cache_reward_ai_content_filter_if_rejected(
     state: &AppState,
     request: &RewardAiAdvisoryRequest,
     ttl_sec: u64,
-    exit_policy: PostFillStrategy,
     primary_error: &AppError,
     fallback_error: Option<&AppError>,
     trace_id: &str,
@@ -139,7 +137,6 @@ async fn cache_reward_ai_content_filter_if_rejected(
         state,
         request,
         ttl_sec,
-        exit_policy,
         primary_error,
         fallback_error,
     )

@@ -1,6 +1,6 @@
 # contracts（HTTP API DTO 层）
 
-最后更新：2026-07-08
+最后更新：2026-07-11
 
 ## 概述
 
@@ -50,7 +50,7 @@
 - 已删除旧钱包类与独立研究 DTO；`lib.rs` 不再 include 对应文件。
 - `RiskStateData` 和 execution `PositionData` 仅保留给 connector callback 与内部执行链路兼容，不代表旧控制台风控页面仍存在。
 - Funding DTO 覆盖后端资金钱包状态、USDC/USDT 链上余额和转账回执；请求只包含 `token_id`、`amount`、`confirmed`，不包含充值地址或私钥字段。
-- Rewards snapshot/config/order/plan 响应体主要直接使用 application 层模型序列化；前端 `src/lib/contracts/dto/rewards.ts` 需要跟随 application 模型镜像。
+- Rewards snapshot/config/order/plan 响应体主要直接使用 application 层模型序列化；当前公开配置使用单一 `maker_market_budget_usd`，advisory 使用 V2 action/size/edge 字段，blocker counts 区分 provider、maker budget 与 inventory headroom。前端 DTO 必须同步镜像。
 
 ## 修改检查清单
 

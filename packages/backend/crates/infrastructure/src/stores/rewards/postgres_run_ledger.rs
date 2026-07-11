@@ -150,7 +150,8 @@ async fn postgres_record_reward_strategy_decisions_tx(
               fair_value_effective_edge_cents,
               opportunity_score,
               event_window_status,
-              ai_suitability,
+              ai_action,
+              info_risk_action,
               info_risk_level,
               decision_json,
               created_at
@@ -175,7 +176,8 @@ async fn postgres_record_reward_strategy_decisions_tx(
                 .push_bind(decision.fair_value_effective_edge_cents)
                 .push_bind(decision.opportunity_score)
                 .push_bind(&decision.event_window_status)
-                .push_bind(&decision.ai_suitability)
+                .push_bind(&decision.ai_action)
+                .push_bind(&decision.info_risk_action)
                 .push_bind(&decision.info_risk_level)
                 .push_bind(Json(decision.decision_json.clone()))
                 .push_bind(decision.created_at);
@@ -197,7 +199,8 @@ async fn postgres_record_reward_strategy_decisions_tx(
                 fair_value_effective_edge_cents = EXCLUDED.fair_value_effective_edge_cents,
                 opportunity_score = EXCLUDED.opportunity_score,
                 event_window_status = EXCLUDED.event_window_status,
-                ai_suitability = EXCLUDED.ai_suitability,
+                ai_action = EXCLUDED.ai_action,
+                info_risk_action = EXCLUDED.info_risk_action,
                 info_risk_level = EXCLUDED.info_risk_level,
                 decision_json = EXCLUDED.decision_json,
                 created_at = EXCLUDED.created_at
@@ -575,7 +578,8 @@ async fn postgres_list_reward_strategy_decisions(
                fair_value_effective_edge_cents,
                opportunity_score,
                event_window_status,
-               ai_suitability,
+               ai_action,
+               info_risk_action,
                info_risk_level,
                decision_json,
                created_at
@@ -839,7 +843,10 @@ fn reward_strategy_decision_from_row(
         event_window_status: row
             .try_get("event_window_status")
             .map_err(postgres_decode_error)?,
-        ai_suitability: row.try_get("ai_suitability").map_err(postgres_decode_error)?,
+        ai_action: row.try_get("ai_action").map_err(postgres_decode_error)?,
+        info_risk_action: row
+            .try_get("info_risk_action")
+            .map_err(postgres_decode_error)?,
         info_risk_level: row.try_get("info_risk_level").map_err(postgres_decode_error)?,
         decision_json: decision_json.0,
         created_at: row.try_get("created_at").map_err(postgres_decode_error)?,

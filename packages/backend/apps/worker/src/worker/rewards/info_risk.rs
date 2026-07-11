@@ -477,8 +477,7 @@ async fn apply_cached_reward_info_risks_to_plans(
     }
     let before = plans.iter().filter(|plan| plan.info_risk.is_some()).count();
     let risk_count = risks.len();
-    let min_confidence =
-        reward_ai_min_confidence(state.settings.rewards.info_risk_min_confidence_bps);
+    let min_confidence = config.info_risk_min_confidence;
     for plan in plans.iter_mut() {
         plan.info_risk = None;
     }
@@ -506,10 +505,7 @@ fn reward_info_risk_candidate_conditions(
 ) -> Vec<String> {
     let mut seen = HashSet::new();
     let mut condition_ids = Vec::new();
-    let plans_by_condition = plans
-        .iter()
-        .map(|plan| (plan.condition_id.trim(), plan))
-        .collect::<HashMap<_, _>>();
+    let plans_by_condition = reward_provider_plans_by_condition(plans);
 
     for order in open_orders {
         if !reward_info_risk_condition_needs_provider_refresh(
@@ -555,7 +551,11 @@ fn reward_info_risk_candidate_conditions(
         let passes_pre_llm_gate = has_active_exposure
             || plans_by_condition
                 .get(condition_id)
-                .is_some_and(|plan| reward_provider_plan_passes_pre_llm_gate(plan, config, false));
+                .is_some_and(|plans| {
+                    plans
+                        .iter()
+                        .any(|plan| reward_provider_plan_passes_pre_llm_gate(plan, config, false))
+                });
         let needs_provider_refresh = reward_info_risk_condition_needs_provider_refresh(
             &plans_by_condition,
             condition_id,
@@ -573,7 +573,7 @@ fn reward_info_risk_candidate_conditions(
 }
 
 fn reward_info_risk_condition_needs_provider_refresh(
-    plans_by_condition: &HashMap<&str, &RewardQuotePlan>,
+    plans_by_condition: &HashMap<&str, Vec<&RewardQuotePlan>>,
     condition_id: &str,
     config: &RewardBotConfig,
     model: &str,
@@ -582,8 +582,10 @@ fn reward_info_risk_condition_needs_provider_refresh(
 ) -> bool {
     plans_by_condition
         .get(condition_id.trim())
-        .is_none_or(|plan| {
-            reward_info_risk_plan_needs_provider_refresh(plan, config, model, fallback, now)
+        .is_none_or(|plans| {
+            plans.iter().any(|plan| {
+                reward_info_risk_plan_needs_provider_refresh(plan, config, model, fallback, now)
+            })
         })
 }
 
@@ -698,6 +700,7 @@ mod reward_info_risk_candidate_tests {
             model: model.to_string(),
             query_hash: "query-hash".to_string(),
             input_hash: "input-hash".to_string(),
+            action: polyedge_application::RewardProviderAction::Allow,
             risk_level: polyedge_application::RewardInfoRiskLevel::Low,
             risk_type: polyedge_application::RewardInfoRiskType::None,
             directional_risk: polyedge_application::RewardInfoDirectionalRisk::Unclear,

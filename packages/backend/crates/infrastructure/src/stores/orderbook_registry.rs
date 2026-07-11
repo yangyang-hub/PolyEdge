@@ -162,8 +162,7 @@ fn registry_source_priority(source: &str) -> u8 {
         "rewards_active" => 0,
         "exec_orders" => 1,
         "rewards_eligible" => 2,
-        "rewards_ai_provider" => 3,
-        "rewards" | "rewards_candidates" => 4,
-        _ => 5,
+        "rewards" | "rewards_candidates" => 3,
+        _ => 4,
     }
 }

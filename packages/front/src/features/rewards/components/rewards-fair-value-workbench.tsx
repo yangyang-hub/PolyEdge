@@ -165,7 +165,8 @@ function FairValueTable({ plans }: { plans: RewardQuotePlanDto[] }) {
                               </StatusPill>
                               <span>
                                 raw {formatFixed(edge.raw_edge_cents, 2)}c / eff{" "}
-                                {formatFixed(edge.effective_edge_cents, 2)}c
+                                {formatFixed(edge.effective_edge_cents, 2)}c / reward-adj{" "}
+                                {formatFixed(edge.reward_adjusted_edge_cents, 2)}c
                               </span>
                             </div>
                           ))

@@ -147,8 +147,12 @@ fn build_reward_fair_value_decision(
             RewardOrderSide::Sell => (leg.price - fair_price) * decimal("100"),
         }
         .round_dp(4);
+        // Market Maker V2: LP rewards are secondary income. They are reported
+        // below but never subsidize quote admission. A quote must preserve its
+        // trading edge after uncertainty on its own.
         let effective_edge_cents =
-            (raw_edge_cents + rebate_cents - estimate.uncertainty_cents).round_dp(4);
+            (raw_edge_cents - estimate.uncertainty_cents).round_dp(4);
+        let reward_adjusted_edge_cents = (effective_edge_cents + rebate_cents).round_dp(4);
         let mut reason = "fair-value edge accepted".to_string();
         let mut passed = true;
         if raw_edge_cents < config.fair_value_min_raw_edge_cents {
@@ -160,7 +164,7 @@ fn build_reward_fair_value_decision(
         } else if effective_edge_cents < config.fair_value_min_effective_edge_cents {
             passed = false;
             reason = format!(
-                "effective edge {effective_edge_cents}c below {}c after uncertainty/rebate",
+                "effective trading edge {effective_edge_cents}c below {}c after uncertainty",
                 config.fair_value_min_effective_edge_cents
             );
         }
@@ -174,6 +178,7 @@ fn build_reward_fair_value_decision(
             expected_reward_rebate_cents: rebate_cents,
             uncertainty_cents: estimate.uncertainty_cents,
             effective_edge_cents,
+            reward_adjusted_edge_cents,
             min_raw_edge_cents: config.fair_value_min_raw_edge_cents,
             min_effective_edge_cents: config.fair_value_min_effective_edge_cents,
             passed,

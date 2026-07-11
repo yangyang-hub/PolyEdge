@@ -1,7 +1,6 @@
 /// Collect token IDs from active rewards state, execution orders, final eligible
 /// plans, and reward candidates, then register them with the orderbook service
-/// via HTTP. Pre-AI provider candidates use the temporary rewards_ai_provider
-/// source managed by provider_refresh.rs.
+/// via HTTP. Provider risk refresh is independent of live orderbook subscriptions.
 async fn register_orderbook_tokens(
     state: &AppState,
     registration_state: &mut OrderbookRegistrationState,

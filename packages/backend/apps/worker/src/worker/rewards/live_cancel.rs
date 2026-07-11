@@ -1,3 +1,13 @@
+type RewardPlanIndex<'a> =
+    HashMap<(&'a str, RewardStrategyProfile), &'a RewardQuotePlan>;
+
+fn reward_live_plan_index(plans: &[RewardQuotePlan]) -> RewardPlanIndex<'_> {
+    plans
+        .iter()
+        .map(|plan| ((plan.condition_id.as_str(), plan.strategy_profile), plan))
+        .collect()
+}
+
 #[cfg(test)]
 fn live_cancel_candidates(
     config: &RewardBotConfig,
@@ -32,10 +42,7 @@ fn live_cancel_candidates_with_account(
     account: &RewardAccountState,
     kill_switch: bool,
 ) -> Vec<(String, String)> {
-    let plan_index: HashMap<&str, &RewardQuotePlan> = plans
-        .iter()
-        .map(|plan| (plan.condition_id.as_str(), plan))
-        .collect();
+    let plan_index = reward_live_plan_index(plans);
     let now = OffsetDateTime::now_utc();
     let mut hard_candidates = Vec::new();
     let mut drift_candidates = Vec::new();
@@ -80,7 +87,7 @@ fn live_cancel_candidates_with_account(
 
 fn live_cancel_reason(
     config: &RewardBotConfig,
-    plans: &HashMap<&str, &RewardQuotePlan>,
+    plans: &RewardPlanIndex<'_>,
     books: &HashMap<String, RewardOrderBook>,
     book_history: &HashMap<String, VecDeque<BookSnapshot>>,
     _open_orders: &[ManagedRewardOrder],
@@ -148,12 +155,9 @@ fn live_cancel_reason(
             .unwrap_or("event window requires BUY cancellation");
         return Some(format!("event window requires BUY cancellation: {reason}"));
     }
-    if !plan.eligible {
-        return Some("market dropped below eligibility threshold".to_string());
+    if let Some(reason) = live_provider_cancel_reason(config, plan, order) {
+        return Some(reason);
     }
-    let Some(leg) = plan.legs.iter().find(|leg| leg.token_id == order.token_id) else {
-        return Some("token no longer appears in live quote plan".to_string());
-    };
     if let Some(age_ms) = stale_age_ms {
         if live_stale_orderbook_cancel_grace_active(config, order, now) {
             return None;
@@ -169,6 +173,19 @@ fn live_cancel_reason(
             order.price
         ));
     }
+    if let Some(reason) = live_order_trading_edge_cancel_reason(config, plan, order) {
+        return Some(reason);
+    }
+    let leg = plan.legs.iter().find(|leg| leg.token_id == order.token_id);
+    // Ineligible means stop adding exposure, not automatically canceling an
+    // otherwise safe resting order. Explicit provider/event/fair-value actions
+    // above still cancel. Missing legs are expected for stop-new plans.
+    if !plan.eligible {
+        return None;
+    }
+    let Some(leg) = leg else {
+        return Some("token no longer appears in live quote plan".to_string());
+    };
     if let Some(reason) =
         live_requote_drift_cancel_reason(config, book_history, order, leg.price, now)
     {
@@ -196,21 +213,84 @@ fn live_cancel_reason(
     None
 }
 
+fn live_provider_cancel_reason(
+    config: &RewardBotConfig,
+    plan: &RewardQuotePlan,
+    order: &ManagedRewardOrder,
+) -> Option<String> {
+    // AI advisory is structurally incapable of cancelling a resting order.
+    // Only evidence-backed info-risk actions enter this cancellation path.
+    if config.info_risk_enabled
+        && config.info_risk_mode == polyedge_application::RewardSelectionMode::Enforce
+        && let Some(risk) = &plan.info_risk
+    {
+        let action = reward_info_risk_effective_action(
+            risk,
+            config.info_risk_avoid_level,
+            config.info_risk_min_confidence,
+        );
+        if action.cancels_outcome(&order.outcome) {
+            return Some(format!(
+                "info risk {} requires {} cancellation: {}",
+                risk.risk_type.as_str(),
+                action.as_str(),
+                risk.summary
+            ));
+        }
+    }
+    None
+}
+
+fn live_order_trading_edge_cancel_reason(
+    config: &RewardBotConfig,
+    plan: &RewardQuotePlan,
+    order: &ManagedRewardOrder,
+) -> Option<String> {
+    if !config.fair_value_enabled || order.side != RewardOrderSide::Buy {
+        return None;
+    }
+    let decision = plan.fair_value.as_ref()?;
+    if let Some(reason) = &decision.estimate.do_not_quote_reason {
+        return Some(format!("fair-value estimate unsafe for resting order: {reason}"));
+    }
+    let fair_price = if order.outcome.eq_ignore_ascii_case("no") {
+        decision.estimate.fair_no
+    } else {
+        decision.estimate.fair_yes
+    };
+    let raw_edge_cents = ((fair_price - order.price) * Decimal::from(100_u64)).round_dp(4);
+    let provider_buffer = plan.ai_advisory.as_ref().map_or(Decimal::ZERO, |advisory| {
+        reward_ai_edge_buffer_cents(advisory, config)
+    });
+    let effective_edge_cents =
+        (raw_edge_cents - decision.estimate.uncertainty_cents - provider_buffer).round_dp(4);
+    if raw_edge_cents < config.fair_value_min_raw_edge_cents
+        || effective_edge_cents < config.fair_value_min_effective_edge_cents
+    {
+        return Some(format!(
+            "resting BUY trading edge unsafe: raw={raw_edge_cents}c effective={effective_edge_cents}c"
+        ));
+    }
+    None
+}
+
 fn reward_live_plan_for_order<'a>(
-    plans: &'a HashMap<&str, &RewardQuotePlan>,
+    plans: &'a RewardPlanIndex<'a>,
     order: &ManagedRewardOrder,
 ) -> Option<&'a RewardQuotePlan> {
     plans
-        .get(order.condition_id.as_str())
+        .get(&(order.condition_id.as_str(), order.strategy_profile))
         .copied()
-        .filter(|plan| plan.strategy_profile == order.strategy_profile)
 }
 
 fn reward_live_missing_order_plan_reason(
-    plans: &HashMap<&str, &RewardQuotePlan>,
+    plans: &RewardPlanIndex<'_>,
     order: &ManagedRewardOrder,
 ) -> String {
-    if plans.contains_key(order.condition_id.as_str()) {
+    if plans
+        .keys()
+        .any(|(condition_id, _)| *condition_id == order.condition_id.as_str())
+    {
         format!(
             "strategy profile {} no longer appears in live quote plan",
             order.strategy_profile.as_str()

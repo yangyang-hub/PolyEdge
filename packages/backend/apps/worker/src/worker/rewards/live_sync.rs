@@ -20,7 +20,6 @@ async fn sync_live_reward_orders(
         .cloned()
         .map(|position| (position.token_id.clone(), position))
         .collect();
-    let mut sibling_cancelled = HashSet::new();
     let mut working_orders: HashMap<String, ManagedRewardOrder> = cycle
         .open_orders
         .iter()
@@ -238,7 +237,7 @@ async fn sync_live_reward_orders(
                     fill_size,
                     &positions,
                     books,
-                    reward_ai_min_confidence(state.settings.rewards.ai_min_confidence_bps),
+                    cycle.config.ai_action_min_confidence,
                     trace_id,
                 ) {
                     match update {
@@ -279,23 +278,6 @@ async fn sync_live_reward_orders(
             )
             .await?;
 
-            if filled_order.side == RewardOrderSide::Buy
-                && cycle.config.cancel_on_fill
-                && filled_order.strategy_profile != RewardStrategyProfile::BalancedMerge
-            {
-                cancel_sibling_live_reward_orders(
-                    connector,
-                    &mut working_orders,
-                    &filled_order,
-                    &mut sibling_cancelled,
-                    state,
-                    &mut account,
-                    &positions,
-                    &mut report,
-                    trace_id,
-                )
-                .await?;
-            }
         }
 
         if let Some(status_update) = order_status {

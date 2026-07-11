@@ -46,9 +46,9 @@ mod orderbook_registry_tests {
             .await
             .expect("register legacy source");
         registry
-            .register_tokens("rewards_ai_provider", &["3".to_string(), "7".to_string()])
+            .register_tokens("snapshot_aux", &["3".to_string(), "7".to_string()])
             .await
-            .expect("register AI provider");
+            .expect("register auxiliary snapshot source");
         registry
             .register_tokens("rewards_eligible", &["3".to_string(), "4".to_string()])
             .await
@@ -69,9 +69,9 @@ mod orderbook_registry_tests {
                 "2".to_string(),
                 "3".to_string(),
                 "4".to_string(),
-                "7".to_string(),
                 "5".to_string(),
-                "6".to_string()
+                "6".to_string(),
+                "7".to_string()
             ]
         );
     }
@@ -84,13 +84,13 @@ mod orderbook_registry_tests {
             .expect("local registry exposes changes");
 
         registry
-            .register_tokens("rewards_ai_provider", &["7".to_string(), "8".to_string()])
+            .register_tokens("analysis_aux", &["7".to_string(), "8".to_string()])
             .await
-            .expect("register provider source");
+            .expect("register auxiliary source");
 
         assert!(changes.changed().await.is_ok());
         assert_eq!(
-            registry.list_source_tokens("rewards_ai_provider").await,
+            registry.list_source_tokens("analysis_aux").await,
             vec!["7".to_string(), "8".to_string()]
         );
         assert!(

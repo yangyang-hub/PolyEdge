@@ -11,13 +11,7 @@ fn reward_provider_refresh_candidate_condition_ids(
         .collect::<HashSet<_>>();
     let mut seen = HashSet::new();
     let mut ordered = Vec::with_capacity(condition_ids.len());
-    let plans_by_condition = plans
-        .iter()
-        .filter_map(|plan| {
-            reward_provider_normalized_condition_id(&plan.condition_id)
-                .map(|condition_id| (condition_id, plan))
-        })
-        .collect::<HashMap<_, _>>();
+    let plans_by_condition = reward_provider_plans_by_condition(plans);
 
     for order in open_orders {
         push_reward_provider_available_condition(
@@ -47,13 +41,15 @@ fn reward_provider_refresh_candidate_condition_ids(
         if !queued.insert(condition_id.clone()) {
             continue;
         }
-        let Some(plan) = plans_by_condition.get(&condition_id) else {
+        let Some(condition_plans) = plans_by_condition.get(condition_id.as_str()) else {
             continue;
         };
-        if matches!(
-            reward_provider_pre_llm_candidate_kind(plan, config, false),
-            Some(RewardProviderPreLlmCandidateKind::Standard)
-        ) {
+        if condition_plans.iter().any(|plan| {
+            matches!(
+                reward_provider_pre_llm_candidate_kind(plan, config, false),
+                Some(RewardProviderPreLlmCandidateKind::Standard)
+            )
+        }) {
             ordered.push(condition_id);
         }
     }

@@ -55,7 +55,7 @@ impl RewardDecisionEngine {
             &cycle.positions,
             now,
         );
-        apply_reward_market_selection_to_quote_plans(&mut cycle.plans);
+        apply_reward_market_selection_to_quote_plans(&mut cycle.plans, &cycle.config);
         mark_reward_pre_ai_eligible_quote_plans(
             &mut cycle.plans,
             &mut cycle.pre_ai_eligible_condition_ids,
@@ -84,7 +84,7 @@ impl RewardDecisionEngine {
             &cycle.config,
             now,
         );
-        apply_reward_market_selection_to_quote_plans(&mut cycle.plans);
+        apply_reward_market_selection_to_quote_plans(&mut cycle.plans, &cycle.config);
         refresh_reward_decision_readiness(&mut cycle.plans);
 
         RewardDecisionSet {
@@ -122,7 +122,7 @@ impl RewardDecisionEngine {
             &cycle.config,
             now,
         );
-        apply_reward_market_selection_to_quote_plans(&mut cycle.plans);
+        apply_reward_market_selection_to_quote_plans(&mut cycle.plans, &cycle.config);
         refresh_reward_decision_readiness(&mut cycle.plans);
 
         RewardDecisionSet {
@@ -215,25 +215,19 @@ pub fn apply_reward_live_funding_precheck(
             positions,
             raw_budget,
         );
-        let condition_budget = reward_live_condition_budget_capped_by_ai_hint(
-            config,
-            plan,
-            existing_market_buy_notional,
-            position_budget,
-        );
+        let provider_multiplier = reward_live_provider_size_multiplier(&plan_config, plan);
+        let condition_budget =
+            reward_live_condition_budget_capped_by_provider(&plan_config, plan, position_budget);
         let rescaled_legs = reward_live_rescaled_quote_legs_for_budget(plan, condition_budget);
         let missing_plan_buy_notional =
             reward_live_missing_plan_buy_notional(&rescaled_legs, open_orders, &plan.condition_id);
         let projected_condition_buy_notional =
             existing_market_buy_notional + missing_plan_buy_notional;
 
-        if let Some(max_condition_notional) = reward_live_ai_hint_condition_notional_cap_exceeded(
-            config,
-            plan,
-            projected_condition_buy_notional,
-        ) {
+        if provider_multiplier < Decimal::ONE && missing_plan_buy_notional > condition_budget {
+            let max_condition_notional = existing_market_buy_notional + condition_budget;
             if missing_plan_buy_notional > Decimal::ZERO
-                && mark_reward_live_ai_notional_cap_skip(
+                && mark_reward_live_provider_size_skip(
                     plan,
                     existing_market_buy_notional,
                     missing_plan_buy_notional,
@@ -384,36 +378,29 @@ fn reward_live_condition_budget_capped_by_positions(
     budget
 }
 
-fn reward_live_condition_budget_capped_by_ai_hint(
+fn reward_live_condition_budget_capped_by_provider(
     config: &RewardBotConfig,
     plan: &RewardQuotePlan,
-    existing_market_buy_notional: Decimal,
     raw_budget: Decimal,
 ) -> Decimal {
-    let Some(max_condition_notional) = reward_live_ai_hint_max_condition_notional_usd(config, plan)
-    else {
-        return raw_budget;
-    };
-    let remaining = (max_condition_notional - existing_market_buy_notional).max(Decimal::ZERO);
-    Decimal::min(raw_budget, remaining)
+    let multiplier = reward_live_provider_size_multiplier(config, plan);
+    (raw_budget * multiplier)
+        .max(Decimal::ZERO)
+        .min(raw_budget)
+        .round_dp(4)
 }
 
-fn reward_live_ai_hint_max_condition_notional_usd(
+fn reward_live_provider_size_multiplier(
     config: &RewardBotConfig,
     plan: &RewardQuotePlan,
-) -> Option<Decimal> {
-    plan.ai_advisory
-        .as_ref()
-        .and_then(|advisory| reward_ai_strategy_hint_max_condition_notional_usd(advisory, config))
-}
-
-fn reward_live_ai_hint_condition_notional_cap_exceeded(
-    config: &RewardBotConfig,
-    plan: &RewardQuotePlan,
-    projected_condition_buy_notional: Decimal,
-) -> Option<Decimal> {
-    reward_live_ai_hint_max_condition_notional_usd(config, plan)
-        .filter(|max_condition_notional| projected_condition_buy_notional > *max_condition_notional)
+) -> Decimal {
+    let ai = plan.ai_advisory.as_ref().map_or(Decimal::ONE, |advisory| {
+        reward_ai_size_multiplier(advisory, config)
+    });
+    let info = plan.info_risk.as_ref().map_or(Decimal::ONE, |risk| {
+        reward_info_risk_size_multiplier(risk, config)
+    });
+    (ai * info).max(Decimal::ZERO).min(Decimal::ONE)
 }
 
 fn reward_live_condition_has_active_exposure(
@@ -535,7 +522,7 @@ fn mark_reward_live_funding_skip(
     changed
 }
 
-fn mark_reward_live_ai_notional_cap_skip(
+fn mark_reward_live_provider_size_skip(
     plan: &mut RewardQuotePlan,
     existing_market_buy_notional: Decimal,
     missing_plan_buy_notional: Decimal,
@@ -543,7 +530,7 @@ fn mark_reward_live_ai_notional_cap_skip(
     now: OffsetDateTime,
 ) -> bool {
     let reason = format!(
-        "AI notional cap below required rewards quote: existing condition BUY notional {existing_market_buy_notional}, missing minimum quote notional {missing_plan_buy_notional}, max condition notional {max_condition_notional}"
+        "provider size adjustment below required rewards quote: existing condition BUY notional {existing_market_buy_notional}, missing minimum quote notional {missing_plan_buy_notional}, adjusted condition budget {max_condition_notional}"
     );
     let changed = plan.eligible
         || plan.quote_mode != RewardPlanQuoteMode::None

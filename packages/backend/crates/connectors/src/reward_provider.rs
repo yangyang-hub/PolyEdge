@@ -29,9 +29,8 @@ use reqwest::Client;
 use serde_json::{Map, Value, json};
 use std::time::Duration;
 
-// Combined output is the union of the advisory object (~allow_quote, confidence,
-// conservative strategy_hint, reasons, metrics) and the info-risk object
-// (~allow_quote, confidence, summary, sources, metrics). GLM reasoning models
+// Combined output is the union of a bounded slow-risk advisory and an
+// evidence-backed info-risk action. GLM reasoning models
 // (glm-4.7 family) have thinking disabled in `call_openai_chat_completions`, so
 // this budget lands in `content` instead of being consumed by
 // `reasoning_content`; keep headroom for the rare case thinking cannot be turned
@@ -276,16 +275,16 @@ fn reward_provider_system_prompt(wants_advisory: bool, wants_info_risk: bool) ->
     let mut sections = Vec::new();
     if wants_advisory {
         sections.push(
-            "\"advisory\": maker-quoting suitability plus a conservative strategy_hint (quote_mode in double|single_yes|single_no|none, bid_rank 1..3 where larger is more conservative, max_condition_notional_usd non-negative number)",
+            "\"advisory\": slow structural-risk action (allow|reduce|stop_new), size_multiplier 0..1, and edge_buffer_cents 0..10",
         );
     }
     if wants_info_risk {
         sections.push(
-            "\"info_risk\": event/news risk over the cache TTL (summary, sources[] of {url,title,published_at,snippet})",
+            "\"info_risk\": evidence-backed event/news action (allow|reduce|stop_new|cancel_yes|cancel_no|cancel_all), taxonomy, event time, summary, and sources",
         );
     }
     format!(
-        "You are a risk reviewer for Polymarket rewards maker orders. Return exactly one JSON object and nothing else. Do not use markdown, comments, prose, or unquoted keys. Assess the market and return each requested section: {}. Each section's only decision field is allow_quote boolean (true means maker quoting is allowed, false means not allowed). Do not return watch, avoid, risk levels, or other status categories. Use each section's evaluation_time_utc as the current UTC time; do not infer today's date from model training or stale context. Use web search when a search tool is available; otherwise use the supplied context and mark uncertainty in summary/metrics.",
+        "You are a slow-horizon risk reviewer for a Polymarket market maker. You are not the pricing engine: never choose a quote price, bid rank, quote side, or absolute notional. Deterministic code owns fair value, inventory, orderbook freshness, and live cancellation. Return exactly one JSON object and nothing else. Do not use markdown, comments, prose, or unquoted keys. Assess each requested section: {}. Normal prediction uncertainty is not a reason to stop quoting. Use the supplied evaluation timestamps as current UTC time; never infer today's date from training data. A cancel action requires fresh, attributable evidence and should be directional when possible. For info-risk, directional_risk names the outcome whose resting BUY is unsafe, not the predicted winner, and must match cancel_yes/cancel_no. Evidence raising YES probability normally makes the NO BUY unsafe (cancel_no); evidence lowering YES probability makes the YES BUY unsafe (cancel_yes). Without adequate evidence, use reduce or stop_new, never cancel. Use web search when available for info-risk; otherwise mark uncertainty in summary/metrics.",
         sections.join("; ")
     )
 }
@@ -297,10 +296,10 @@ fn reward_provider_user_prompt(request: &RewardProviderRequest) -> String {
         "Assess this rewards market and return one valid JSON object with double-quoted keys. ",
     );
     if wants_advisory {
-        instruction.push_str("Include an \"advisory\" object: allow_quote boolean, confidence 0..1, strategy_hint {quote_mode, bid_rank, max_condition_notional_usd}, reasons string array, metrics object. Set allow_quote=false when live orderbook pricing/spread/midpoint/quote edge/stale-book age make deterministic quotes unreasonable; choose strategy_hint.quote_mode=none when not allowed. ");
+        instruction.push_str("Include an \"advisory\" object: action allow|reduce|stop_new, size_multiplier 0..1, edge_buffer_cents 0..10, confidence 0..1, reasons string array, metrics object. Review only slow structural issues such as resolution-rule ambiguity, market integrity, and regime stability. Ignore transient book levels and do not duplicate deterministic price checks. Low-confidence concerns must use reduce, not stop_new. ");
     }
     if wants_info_risk {
-        instruction.push_str("Include an \"info_risk\" object: allow_quote boolean, confidence 0..1, summary string, sources array of {url,title,published_at,snippet}, metrics object. Set allow_quote=false if recent/imminent information (official result/resolution, a confirmed near-term resolution-driving event, breaking news, stale facts, unresolved uncertainty) could make passive maker quoting unsafe before cache expiry. ");
+        instruction.push_str("Include an \"info_risk\" object: action allow|reduce|stop_new|cancel_yes|cancel_no|cancel_all, risk_level low|medium|high|critical|unknown, risk_type imminent_resolution|breaking_news|scheduled_event|official_result|rumor|stale|none|unknown, directional_risk yes|no|unclear, resolution_imminent boolean, expected_event_at RFC3339 or null, confidence 0..1, summary string, sources array of {url,title,published_at,snippet}, metrics object. directional_risk is the unsafe resting-BUY outcome and must match a directional cancel action; it is not the expected resolution outcome. Use cancel only for a fresh official result/resolution or well-corroborated imminent price-changing event within the cache horizon. Rumors, missing search, ordinary unresolved outcomes, or stale facts may reduce/stop new risk but must not cancel resting orders. ");
     }
     instruction.push_str("Use [] for sources and {} for metrics when unsure.");
     let mut sections = Vec::new();
@@ -424,7 +423,7 @@ mod reward_provider_tests {
     use super::*;
     use polyedge_application::{
         RewardAiAdvisoryRequest, RewardInfoRiskAssessmentRequest, RewardInfoRiskLevel,
-        RewardPlanQuoteMode,
+        RewardProviderAction,
     };
     use rust_decimal::Decimal;
     use std::str::FromStr;
@@ -494,21 +493,23 @@ mod reward_provider_tests {
         let decision = parse_reward_provider_decision(
             r#"{
                 "advisory": {
-                    "allow_quote": true,
+                    "action": "reduce",
+                    "size_multiplier": 0.5,
+                    "edge_buffer_cents": 1.0,
                     "confidence": 0.82,
-                    "strategy_hint": {
-                        "quote_mode": "single_yes",
-                        "bid_rank": 2,
-                        "max_condition_notional_usd": 15
-                    },
                     "reasons": ["pricing ok"],
                     "metrics": {"edge": "ok"}
                 },
                 "info_risk": {
-                    "allow_quote": false,
+                    "action": "cancel_all",
+                    "risk_level": "critical",
+                    "risk_type": "official_result",
+                    "directional_risk": "unclear",
+                    "resolution_imminent": true,
+                    "expected_event_at": null,
                     "confidence": 0.91,
                     "summary": "official result may be imminent",
-                    "sources": [],
+                    "sources": [{"url":"https://example.com/result","title":"Official result","published_at":"2026-07-10T00:00:00Z","snippet":"Result"}],
                     "metrics": {"risk": "event"}
                 }
             }"#,
@@ -517,14 +518,12 @@ mod reward_provider_tests {
         .expect("parse combined response");
 
         let advisory = decision.advisory.expect("advisory section");
-        assert_eq!(advisory.quote_mode, RewardPlanQuoteMode::Double);
-        assert_eq!(
-            advisory.metrics.pointer("/strategy_hint/quote_mode"),
-            Some(&json!("single_yes"))
-        );
+        assert_eq!(advisory.action, RewardProviderAction::Reduce);
+        assert_eq!(advisory.size_multiplier, Decimal::from_str("0.5").unwrap());
         assert_eq!(advisory.confidence, Decimal::from_str("0.82").unwrap());
 
         let info_risk = decision.info_risk.expect("info-risk section");
+        assert_eq!(info_risk.action, RewardProviderAction::CancelAll);
         assert_eq!(info_risk.risk_level, RewardInfoRiskLevel::Critical);
         assert_eq!(info_risk.confidence, Decimal::from_str("0.91").unwrap());
     }
@@ -558,6 +557,8 @@ mod reward_provider_tests {
         let prompt = reward_provider_user_prompt(&combined);
         assert!(prompt.contains("advisory_context:"));
         assert!(prompt.contains("info_risk_context:"));
+        assert!(prompt.contains("unsafe resting-BUY outcome"));
+        assert!(reward_provider_system_prompt(true, true).contains("not the predicted winner"));
 
         let advisory_only = provider_request(true, false);
         let prompt = reward_provider_user_prompt(&advisory_only);

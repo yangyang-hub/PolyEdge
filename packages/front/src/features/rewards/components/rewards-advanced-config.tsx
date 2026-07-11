@@ -247,18 +247,18 @@ export function AiAdvisoryConfig({
         onChange={(value) => updateNumber("ai_provider_fallback_max_concurrency", value)}
       />
       <ToggleField
-        label={dictionary.rewards.aiStrategyHintEnabled}
-        hint={h.aiStrategyHintEnabled}
-        checked={draft.ai_strategy_hint_enabled}
+        label={dictionary.rewards.aiRiskAdjustmentEnabled}
+        hint={h.aiRiskAdjustmentEnabled}
+        checked={draft.ai_risk_adjustment_enabled}
         onChange={(checked) =>
-          setDraft((current) => ({ ...current, ai_strategy_hint_enabled: checked }))
+          setDraft((current) => ({ ...current, ai_risk_adjustment_enabled: checked }))
         }
       />
       <NumberInput
-        label={dictionary.rewards.aiStrategyHintMinConfidence}
-        value={draft.ai_strategy_hint_min_confidence}
-        hint={h.aiStrategyHintMinConfidence}
-        onChange={(value) => updateNumber("ai_strategy_hint_min_confidence", value)}
+        label={dictionary.rewards.aiActionMinConfidence}
+        value={draft.ai_action_min_confidence}
+        hint={h.aiActionMinConfidence}
+        onChange={(value) => updateNumber("ai_action_min_confidence", value)}
       />
       <ToggleField
         label={dictionary.rewards.infoRiskEnabled}
@@ -307,6 +307,12 @@ export function AiAdvisoryConfig({
           <option value="critical">{dictionary.rewards.infoRiskCritical}</option>
         </select>
       </label>
+      <NumberInput
+        label={dictionary.rewards.infoRiskMinConfidence}
+        value={draft.info_risk_min_confidence}
+        hint={h.infoRiskMinConfidence}
+        onChange={(value) => updateNumber("info_risk_min_confidence", value)}
+      />
       <NumberInput
         label={dictionary.rewards.infoRiskTtlSec}
         value={draft.info_risk_ttl_sec}

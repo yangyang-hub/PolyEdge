@@ -1,8 +1,10 @@
 # Rewards 做市商生产前重构设计
 
-最后更新：2026-07-08
+最后更新：2026-07-11
 
-状态：阶段 1 已落地，阶段 2 已收尾，阶段 3 第一层已落地。当前已实现 shadow strategy run ledger、quote plan 常用筛选列、只读 ledger API、`/rewards` Runs tab、ledger retention、application `RewardDecisionEngine` 对 pre-provider、post-provider 和最终 snapshot 计划变换的集中封装、独立 input builder（`RewardBotService::build_strategy_input`，单一读路径 + 单一注入 `now`）与可序列化 `RewardStrategyInput` tick 输入快照（`RewardLiveCycle::from_strategy_input` 桥接，engine 行为不变；provider cache 留待 Phase 4 v2），以及 application `RewardActionPlanner` 执行前 planned action proposal 写入。完整 `RewardLiveExecutor` 抽离、replay CLI 和完整 decision analytics 仍未实现。当前已实现状态以 `AGENTS.md` 和 `doc/modules/*` 为准。
+> 历史阶段文档：其中旧 provider 字段和策略默认值已被 [Rewards Market Maker V2](designs/rewards-market-maker-v2.md) 取代，不代表当前实现。当前状态以 `AGENTS.md` 与模块文档为准。
+
+历史状态快照：本文记录阶段 1 至阶段 3 第一层的交付边界；其中“已实现/未实现”均指当时状态。此后 provider、做市决策、BalancedMerge 和 replay 基础继续演进，当前能力与缺口只以 `AGENTS.md`、V2 设计和 `doc/modules/*` 为准。
 
 ## 背景
 

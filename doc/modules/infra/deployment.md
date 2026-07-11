@@ -1,6 +1,6 @@
 # 部署（Docker + Nginx + Scripts）
 
-最后更新：2026-07-10
+最后更新：2026-07-11
 
 ## 概述
 
@@ -32,6 +32,7 @@
 | `scripts/build-backend-bin.sh` | Rust backend 二进制构建脚本 |
 | `packages/front/Dockerfile` | 静态前端镜像 |
 | `packages/front/nginx.conf.template` | Nginx 静态文件配置 |
+| `packages/front/src/app/layout.tsx` + `globals.css` | 根布局与系统字体栈；构建时不下载远程字体 |
 
 ## 服务架构
 
@@ -70,6 +71,7 @@ polyedge-front (nginx static)
 - 端口：`0.0.0.0:33002 -> container:80`。
 - 本机先 `yarn build` 生成 `out/`，镜像只复制静态文件到 nginx。
 - `NEXT_PUBLIC_POLYEDGE_API_BASE_URL` 在 build time 写入静态 JS bundle；修改 API 地址后必须重建前端。
+- 字体使用本机/容器系统字体栈，`next build` 不访问 Google Fonts，内网构建不需要公共字体网络。
 - 当前内网免鉴权模式不需要设置 dev-auth header。
 - `scripts/deploy.sh` build 前会清理 `.next/` 和 `out/`，并给 HTML 中的 static 资源引用追加 front hash query，避免浏览器复用旧 bundle。
 
@@ -162,6 +164,7 @@ POLYEDGE_BACKEND_BINARY=polyedge-orderbook ./scripts/build-backend-bin.sh
 - Orderbook 部署默认使用 `WS_CHUNK_SIZE=500`、`WS_MAX_CONNECTIONS=8`；即使 runtime config 残留旧的 100-token chunk，有效 chunk 仍会按连接预算自动收敛。
 - Compose 使用窄构建上下文：后端只上传 `bin/`，前端只上传 `packages/front/`。
 - `polyedge-front` 可独立运行，浏览器按 build-time API URL 访问后端。
+- 前端生产构建不依赖 Google Fonts 或其他远程字体下载。
 - `deploy/.env.api.example` 默认启用 database maintenance，清理 raw events、AI/info-risk cache、reward candles、控制命令、outbox/dedup、LLM/audit 等可增长表。
 - 生产前需要关闭免鉴权、接入真实会话体系、签名 JWT 和 key rotation。
 

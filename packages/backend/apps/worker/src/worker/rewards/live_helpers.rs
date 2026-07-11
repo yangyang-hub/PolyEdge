@@ -29,6 +29,9 @@ fn reward_sell_exit_floor(
     order: &ManagedRewardOrder,
     positions: &[RewardPosition],
 ) -> Decimal {
+    if let Some(stored_floor) = order.exit_floor_price {
+        return ceil_reward_price_to_tick(stored_floor);
+    }
     let position_floor = positions
         .iter()
         .find(|position| position.token_id == order.token_id)
@@ -118,7 +121,7 @@ fn reward_flatten_submission_price(
     };
     if best_bid < order.price {
         return Err(format!(
-            "{LIVE_EXIT_FLATTEN_DEFERRED_MARKER}: best bid {best_bid} is below non-loss floor {}",
+            "{LIVE_EXIT_FLATTEN_DEFERRED_MARKER}: best bid {best_bid} is below configured risk floor {}",
             order.price
         ));
     }

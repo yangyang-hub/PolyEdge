@@ -1,7 +1,6 @@
 fn spawn_reward_market_provider_refresh(
     state: &AppState,
     cycle: &RewardLiveCycle,
-    books: &HashMap<String, RewardOrderBook>,
     trace_id: &str,
 ) {
     if !cycle.config.ai_advisory_enabled && !cycle.config.info_risk_enabled {
@@ -23,13 +22,12 @@ fn spawn_reward_market_provider_refresh(
 
     let state = state.clone();
     let cycle = cycle.clone();
-    let books = books.clone();
     let trace_id = trace_id.to_string();
     tokio::spawn(async move {
         let refresh_timeout = reward_provider_refresh_timeout(&state);
         let result = tokio::time::timeout(
             refresh_timeout,
-            refresh_reward_provider_cache(&state, cycle, books, &trace_id),
+            refresh_reward_provider_cache(&state, cycle, &trace_id),
         )
         .await;
         REWARD_PROVIDER_REFRESH_RUNNING.store(false, Ordering::Release);
@@ -48,40 +46,14 @@ fn spawn_reward_market_provider_refresh(
                     timeout_ms = refresh_timeout.as_millis(),
                     "reward provider refresh timed out; stopping this refresh cycle",
                 );
-                if let Err(error) = state
-                    .orderbook_registry
-                    .register_tokens(REWARD_AI_PROVIDER_ORDERBOOK_SOURCE, &[])
-                    .await
-                {
-                    warn!(
-                        trace_id = %trace_id,
-                        source = REWARD_AI_PROVIDER_ORDERBOOK_SOURCE,
-                        error = %error,
-                        "failed to clear temporary reward AI provider orderbook source after timeout",
-                    );
-                }
             }
         }
     });
 }
 
-const REWARD_AI_PROVIDER_ORDERBOOK_SOURCE: &str = "rewards_ai_provider";
-const REWARD_AI_PROVIDER_ORDERBOOK_BATCH_CONDITIONS: usize = 10;
-const REWARD_AI_PROVIDER_ORDERBOOK_WAIT_ATTEMPTS: usize = 8;
-const REWARD_AI_PROVIDER_ORDERBOOK_WAIT_DELAY: Duration = Duration::from_secs(2);
+const REWARD_PROVIDER_BATCH_CONDITIONS: usize = 10;
 const REWARD_PROVIDER_REFRESH_MIN_TIMEOUT_SECS: u64 = 30;
 const REWARD_PROVIDER_REFRESH_MAX_TIMEOUT_SECS: u64 = 120;
-
-fn reward_provider_refresh_batch_orderbook_conditions(
-    condition_batch: &[String],
-    advisory_conditions: &HashSet<String>,
-) -> Vec<String> {
-    condition_batch
-        .iter()
-        .filter(|condition_id| advisory_conditions.contains(condition_id.as_str()))
-        .cloned()
-        .collect()
-}
 
 fn reward_provider_refresh_timeout(state: &AppState) -> Duration {
     let timeout_secs = state
@@ -105,7 +77,6 @@ struct RewardProviderRefreshReport {
     saved: usize,
     failures: usize,
     skipped_missing_market: usize,
-    skipped_missing_book: usize,
     advisory_saved: usize,
     info_risk_saved: usize,
     applied_plans: usize,
@@ -127,7 +98,6 @@ impl RewardProviderRefreshReport {
         self.saved += outcome.report.saved;
         self.failures += outcome.report.failures;
         self.skipped_missing_market += outcome.report.skipped_missing_market;
-        self.skipped_missing_book += outcome.report.skipped_missing_book;
         self.advisory_saved += outcome.report.advisory_saved;
         self.info_risk_saved += outcome.report.info_risk_saved;
         self.request_cap_exhausted |= outcome.report.request_cap_exhausted;
@@ -177,7 +147,6 @@ async fn reward_provider_markets_by_condition(
 async fn refresh_reward_provider_cache(
     state: &AppState,
     mut cycle: RewardLiveCycle,
-    books: HashMap<String, RewardOrderBook>,
     trace_id: &str,
 ) -> Result<RewardProviderRefreshReport> {
     let mut report = RewardProviderRefreshReport::default();
@@ -231,7 +200,6 @@ async fn refresh_reward_provider_cache(
     let now = OffsetDateTime::now_utc();
     let mut union: Vec<String> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
-    let mut advisory_conditions: HashSet<String> = HashSet::new();
     if cycle.config.ai_advisory_enabled {
         for condition_id in reward_ai_advisory_candidate_condition_ids(
             &cycle.plans,
@@ -243,7 +211,6 @@ async fn refresh_reward_provider_cache(
             fallback_descriptor.as_ref(),
             now,
         ) {
-            advisory_conditions.insert(condition_id.clone());
             if seen.insert(condition_id.clone()) {
                 union.push(condition_id);
             }
@@ -298,25 +265,9 @@ async fn refresh_reward_provider_cache(
                 "reward provider refresh request cap is zero; skipping provider requests",
             );
         } else {
-            let mut provider_books = books.clone();
             let mut stop_refresh = false;
-            for condition_batch in ordered.chunks(REWARD_AI_PROVIDER_ORDERBOOK_BATCH_CONDITIONS) {
-                let orderbook_condition_batch = reward_provider_refresh_batch_orderbook_conditions(
-                    condition_batch,
-                    &advisory_conditions,
-                );
-                if !orderbook_condition_batch.is_empty() {
-                    provider_books = prepare_reward_ai_provider_orderbook_batch(
-                        state,
-                        &provider_books,
-                        &markets_by_condition,
-                        &orderbook_condition_batch,
-                        trace_id,
-                    )
-                    .await?;
-                }
+            for condition_batch in ordered.chunks(REWARD_PROVIDER_BATCH_CONDITIONS) {
                 let cycle_snapshot = Arc::new(cycle.clone());
-                let provider_books_snapshot = Arc::new(provider_books.clone());
                 let markets_snapshot = Arc::new(markets_by_condition.clone());
                 let outcomes = futures::stream::iter(condition_batch.iter().cloned())
                     .map(|condition_id| {
@@ -326,7 +277,6 @@ async fn refresh_reward_provider_cache(
                         let fallback_connector = fallback_connector.clone();
                         let provider_concurrency = provider_concurrency.clone();
                         let cycle = cycle_snapshot.clone();
-                        let provider_books = provider_books_snapshot.clone();
                         let markets_by_condition = markets_snapshot.clone();
                         let model = model.to_string();
                         let trace_id = trace_id.to_string();
@@ -350,7 +300,6 @@ async fn refresh_reward_provider_cache(
                                 fallback_channel.as_ref(),
                                 &provider_concurrency,
                                 &cycle,
-                                &provider_books,
                                 &markets_by_condition,
                                 &condition_id,
                                 &model,
@@ -389,18 +338,6 @@ async fn refresh_reward_provider_cache(
     }
     .await;
 
-    if let Err(error) = state
-        .orderbook_registry
-        .register_tokens(REWARD_AI_PROVIDER_ORDERBOOK_SOURCE, &[])
-        .await
-    {
-        warn!(
-            trace_id = %trace_id,
-            source = REWARD_AI_PROVIDER_ORDERBOOK_SOURCE,
-            error = %error,
-            "failed to clear temporary reward AI provider orderbook source",
-        );
-    }
     refresh_result?;
 
     report.applied_plans = apply_cached_reward_info_risks(state, trace_id).await?;
@@ -414,7 +351,6 @@ async fn refresh_reward_provider_cache(
         provider_saved = report.saved,
         provider_failures = report.failures,
         provider_skipped_missing_market = report.skipped_missing_market,
-        provider_skipped_missing_book = report.skipped_missing_book,
         advisory_saved = report.advisory_saved,
         info_risk_saved = report.info_risk_saved,
         applied_plans = report.applied_plans,
@@ -435,7 +371,6 @@ async fn refresh_reward_provider_for_condition(
     fallback_channel: Option<&RewardProviderChannel<'_>>,
     provider_concurrency: &RewardProviderConcurrency,
     cycle: &RewardLiveCycle,
-    books: &HashMap<String, RewardOrderBook>,
     markets_by_condition: &HashMap<String, RewardMarket>,
     condition_id: &str,
     model: &str,
@@ -471,7 +406,6 @@ async fn refresh_reward_provider_for_condition(
                 &cycle.account,
                 &cycle.positions,
                 &cycle.open_orders,
-                books,
                 &candles,
                 &cycle.config,
                 cycle.config.ai_advisory_ttl_sec,
@@ -542,16 +476,6 @@ async fn refresh_reward_provider_for_condition(
     }
 
     if !advisory_due && !info_risk_due {
-        return Ok(outcome);
-    }
-
-    // The advisory payload carries live orderbook context, so defer the whole
-    // call until the orderbook service has published real books for this market
-    // (mirrors the legacy single-call AI advisory behavior). Info-risk-only
-    // markets do not need books, but if both sections are requested and the
-    // advisory is due we must wait for books.
-    if advisory_due && !reward_market_books_available(market, books) {
-        outcome.report.skipped_missing_book += 1;
         return Ok(outcome);
     }
 
@@ -686,7 +610,6 @@ async fn refresh_reward_provider_for_condition(
                         state,
                         request,
                         cycle.config.ai_advisory_ttl_sec,
-                        cycle.config.post_fill_strategy,
                         &primary_error,
                         fallback_error.as_ref(),
                         trace_id,
@@ -748,15 +671,20 @@ fn apply_reward_ai_advisory_to_refresh_cycle(
     advisory: RewardMarketAdvisory,
     trace_id: &str,
 ) {
-    if let Some(plan) = cycle
+    let mut applied = 0usize;
+    for plan in cycle
         .plans
         .iter_mut()
-        .find(|plan| plan.condition_id == condition_id)
+        .filter(|plan| plan.condition_id == condition_id)
     {
-        plan.ai_advisory = Some(advisory);
+        plan.ai_advisory = Some(advisory.clone());
+        applied += 1;
+    }
+    if applied > 0 {
         debug!(
             trace_id = %trace_id,
             condition_id = %condition_id,
+            profiles = applied,
             "applied saved reward provider advisory to refresh cycle",
         );
     }

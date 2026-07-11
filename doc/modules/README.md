@@ -1,8 +1,10 @@
 # 模块文档索引
 
-最后更新：2026-07-07
+最后更新：2026-07-11
 
 本目录记录项目每个模块的设计与实现细节。**修改任何模块前必须先查阅对应文档；修改后必须同步更新文档。**
+
+当前 Rewards 策略设计基线见 [Rewards Market Maker V2](../designs/rewards-market-maker-v2.md)；历史计划文档不作为实现状态来源。
 
 ## 后端（Rust workspace）
 

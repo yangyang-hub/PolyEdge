@@ -1,6 +1,6 @@
 # Agent Guidelines
 
-最后更新：2026-07-10
+最后更新：2026-07-11
 
 ## 维护规则
 
@@ -33,7 +33,7 @@ or in-memory cache. Strategies, pages, and API handlers MUST read from these sto
 
 Orderbook subscriptions are owned by the standalone `polyedge-orderbook` service. It maintains WS + poll streams, in-memory orderbook cache, `OrderbookSubscriptionRegistry`, HTTP read/register/ingest APIs, and the internal `/orderbook/stream` feed. Workers and API handlers use `OrderbookHttpClient` and `OrderbookStreamClient`; they must not fetch CLOB orderbooks directly when orderbook service cache is available.
 
-Registry source priority is fixed as `rewards_active`, `exec_orders`, `rewards_eligible`, `rewards_ai_provider`, `rewards_candidates`. Total subscribed tokens are capped by `POLYEDGE_ORDERBOOK_STREAM__MAX_TOKENS`; candidate prewarm is additionally capped by `POLYEDGE_ORDERBOOK_STREAM__REWARD_CANDIDATE_TOKEN_CAP`.
+Registry source priority is fixed as `rewards_active`, `exec_orders`, `rewards_eligible`, `rewards_candidates`. Total subscribed tokens are capped by `POLYEDGE_ORDERBOOK_STREAM__MAX_TOKENS`; candidate prewarm is additionally capped by `POLYEDGE_ORDERBOOK_STREAM__REWARD_CANDIDATE_TOKEN_CAP`. AI/info-risk provider refresh no longer reads or temporarily subscribes to live orderbooks.
 
 Polymarket market-channel WS uses a target chunk size plus a hard connection budget: `POLYEDGE_ORDERBOOK_STREAM__WS_CHUNK_SIZE` defaults to 500 and `POLYEDGE_ORDERBOOK_STREAM__WS_MAX_CONNECTIONS` defaults to 8. The service automatically enlarges the effective chunk size when required, staggers chunk startup by 500ms, and configures SDK reconnect backoff to 30-120 seconds to avoid Cloudflare 429/1015 reconnect storms. Poll reconcile `/books` batches are spaced by 100ms.
 
@@ -100,6 +100,7 @@ Polymarket market-channel WS uses a target chunk size plus a hard connection bud
 | `packages/front/src/features/rewards/components/rewards-opportunity-config.tsx` | Opportunity scoring config UI |
 | `packages/front/src/features/rewards/components/rewards-advanced-config.tsx` | Book selection, AI advisory, info-risk and event-window config UI |
 | `packages/front/src/features/rewards/components/rewards-tables.tsx` | Rewards quote plan/order/position/fill/event tables |
+| `packages/front/src/app/layout.tsx` + `app/globals.css` | Frontend root providers and offline-safe system font theme |
 | `packages/front/src/app/(console)/funding/page.tsx` | Funding route |
 | `packages/front/src/lib/api/rewards.ts` + `actions/rewards.ts` | Rewards frontend data/actions |
 | `packages/front/src/lib/contracts/dto/rewards.ts` | Rewards frontend DTOs |
@@ -109,14 +110,20 @@ Polymarket market-channel WS uses a target chunk size plus a hard connection bud
 
 - Frontend routes: `dashboard / markets / events / rewards / rewards/fair-value / funding / settings`.
 - Frontend uses the real Rust API only; no mock-data mode.
+- Frontend uses system font stacks and has no build-time Google Fonts dependency, so production builds do not require public font-network access.
 - Backend API routes cover markets, events, news, evidences, orders, trades, pricing, rewards bot, rewards strategy run ledger reads, funding, system, connector callback and orderbook reads.
 - Database schema is currently a single clean-deploy baseline: `packages/backend/init.sql` and `packages/backend/migrations/0001_initial_schema.sql`. Historical incremental migrations for removed modules are gone; new deployments initialize from the current schema baseline.
 - Runtime mode defaults to `live_auto`; old mock mode is removed.
 - `polyedge-orderbook` owns market sync, rewards catalog sync, price-history candle sync, orderbook WS/poll cache and registry.
 - Orderbook WS fan-out enforces a default maximum of 8 Polymarket market-channel connections even when an older runtime config still requests 100-token chunks; the effective chunk size and reconnect policy are logged at stream startup.
 - `polyedge-worker` supports database maintenance, news ingest/promotion, rewards live bot, rewards info-risk scan, execution drain, paper reconciliation, Polymarket order/fill/user-event workers, and orderbook token registration.
-- Rewards bot is live-only. It plans post-only BUY quotes from `reward_markets` + `markets`, uses orderbook service books, applies unified opportunity metrics, maker `selection_score` ordering, fair-value edge gates, optional AI advisory/info-risk caches, event-window gates, wallet-balance placement checks, live risk/cancel/requote logic, fill reconciliation, configured/adaptive post-fill exit SELL intents, holding-period adaptive pending-exit reselection and BalancedMerge merge intents. Full tick records a strategy run/decision/action/order transition ledger for audit；执行前 `RewardActionPlanner` 会为 merge create/execute、cancel/cancel-replace、pending submit 和 placement submit 写入 planned actions，现有 outcome persistence 会在可用时用相同 idempotency key 更新动作结果。Adaptive reselection rewrites local `ExitPending` SELL intents before submission, and (when `adaptive_exit_cancel_replace_enabled`) cancels already-submitted adaptive exit SELLs on strategy change or price drift; replacement exits are deferred until reconciliation confirms remaining inventory. Cancel-replace shares the reselect cooldown / per-order budget and a per-tick cap, and never submits a replacement when the cancel result is unknown.
-- Rewards quote planning uses deterministic market quality, opportunity scoring, maker selection scoring, fair-value estimation, AI/info-risk, event windows, funding and live orderbook risk gates. Pre-provider, post-provider and final snapshot plan transforms are centralized in application `RewardDecisionEngine`; planned action proposal building is centralized in application `RewardActionPlanner`; provider cache reads and live side effects remain in worker. `score` is the base market quality score; `selection_score` is the final maker capital priority and default quote-plan sort key.
+- Rewards bot is live-only. Standard maker quotes start at `quote_bid_rank` (default buy-one) and search through `quote_max_bid_rank` for the first post-only price preserving trading edge. Admission and capital priority use raw/effective edge after uncertainty and optional AI edge buffer; `reward_adjusted_edge_cents` is display/audit only. LP economics are capped at 10% of base quality and enter `selection_score` only through an explicit 10% reward-density term, after edge/exit/stability safety. `selection_score` remains the final capital priority; base `score` is secondary.
+- Live sizing uses `maker_market_budget_usd`, wallet availability, provider multiplier, per-outcome inventory headroom and global potential exposure. Inventory skew reduces the already-loaded outcome and favors the complementary outcome; resting BUY notional counts against `max_global_position_usd` because concurrent fills are possible. Rewards minimum size never overrides these risk budgets.
+- AI advisory is a slow structural-risk reviewer and returns only `allow/reduce/stop_new` plus bounded size/edge modifiers. Info-risk returns evidence actions including directional cancellation; `directional_risk` means the resting-BUY outcome exposed to adverse selection, not the predicted winner. Cancellation requires confidence plus recent attributable sources, and breaking-news cancel requires two independent sources. Both providers exclude live price, side, rank, account and inventory context. Their confidence thresholds are `RewardBotConfig` fields, not environment variables.
+- Stop-new and cancel are distinct. An ineligible/stop-new plan does not automatically cancel a safe resting order. Emergency book/fair-value/event risks cancel immediately; adverse downward repricing uses a short confirmation and bypasses competitive throttles; competitive upward repricing uses confirmation, cooldown and per-tick limits. Fills never trigger blanket sibling cancellation; the complementary BUY remains subject to its own edge/inventory/risk checks.
+- Post-fill maker exits target cost basis/markup, while `maker_max_exit_loss_cents` defines a separate controlled flatten risk floor. Adaptive reselection and submitted-exit cancel-replace keep their existing durable reconciliation safeguards. BalancedMerge remains an independent fixed-rank profile.
+- Order lifecycle and BUY last-look resolve quote plans by `(condition_id, strategy_profile)`, while condition-scoped provider refresh evaluates every coexisting profile; standard and BalancedMerge plans cannot overwrite each other in live risk paths.
+- Full tick records a strategy run/decision/action/order transition ledger. Pre-provider, post-provider and final snapshot transforms remain centralized in `RewardDecisionEngine`; `RewardActionPlanner` writes planned actions before live side effects.
 - Live orderbook validation failures are re-evaluated on every full rewards tick and persist for only 60 seconds for fast-path suppression/audit; they are never inherited into newly built plans, preventing stale 12-hour exclusions and cross-profile contamination between standard and BalancedMerge plans sharing a condition.
 - Rewards worker prioritizes active order/position tokens, caps each full-tick book fetch at `MAX_TOKENS`, and limits each orderbook HTTP refresh request to 500 tokens. The orderbook service serializes background poll and HTTP on-demand CLOB `/books` batches through one shared gate, rechecks staleness after waiting, and spaces 100-token upstream batches by 100ms.
 - LLM calls for rewards combined provider are recorded in `llm_calls(task_type=reward_provider)`. Provider cache hits do not count as external calls.
@@ -171,6 +178,7 @@ yarn build
 - `POLYEDGE_ORDERBOOK_STREAM__WS_CHUNK_SIZE` / `WS_MAX_CONNECTIONS` default to `500` / `8`; configure them in orderbook env, keeping the connection budget low enough to avoid upstream handshake rate limits.
 - Rewards live worker requires `POLYEDGE_REWARDS__ENABLED=true`, `POLYEDGE_WORKER__POLL_REWARD_BOT=true`, Postgres, orderbook service, and complete Polymarket credentials for real orders.
 - `POLYEDGE_WORKER__POLL_REWARD_INFO_RISKS=true` is only needed for the standalone async info-risk scan path when AI advisory is not driving combined provider refresh.
+- AI/info-risk action confidence thresholds and maker risk budgets are edited through Rewards config (`ai_action_min_confidence`, `info_risk_min_confidence`, `maker_market_budget_usd`); the removed `*_MIN_CONFIDENCE_BPS`, `per_market_usd`, `quote_size_usd` and `cancel_on_fill` settings are not supported.
 - Deployment uses `deploy/.env.api.example`, `deploy/.env.orderbook.example`, and `deploy/.env.front.example`. Private keys and provider keys belong only in API env, not front or orderbook env.
 - Docker Compose runs `polyedge-api` with embedded worker runtime, `polyedge-orderbook`, and `polyedge-front`; there is no separate worker service.
 - Default production debugging endpoints remain: Frontend Rewards `http://192.168.31.5:33002/rewards`, API `http://100.87.45.72:38001`, Orderbook `http://100.87.45.72:38002`.

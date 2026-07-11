@@ -131,20 +131,23 @@ async fn postgres_list_reward_candidate_markets(
                      CASE WHEN $13 THEN m.liquidity_usd END ASC NULLS LAST,
                      CASE WHEN $13 THEN m.volume_24h END ASC NULLS LAST,
                      CASE WHEN NOT $13 THEN (
-                       LEAST(35.0, SQRT(rm.total_daily_rate::DOUBLE PRECISION) * 10.0)
-                       + LEAST(20.0, LN(1.0 + m.liquidity_usd::DOUBLE PRECISION) / LN(10.0) * 4.0)
-                       + LEAST(15.0, LN(1.0 + m.volume_24h::DOUBLE PRECISION) / LN(10.0) * 3.0)
+                       LEAST(7.0, SQRT(rm.total_daily_rate::DOUBLE PRECISION) * 2.0)
+                       + LEAST(3.0, LEAST(rm.rewards_max_spread, $9)::DOUBLE PRECISION)
+                       + LEAST(25.0, LN(1.0 + m.liquidity_usd::DOUBLE PRECISION) / LN(10.0) * 5.0)
+                       + LEAST(20.0, LN(1.0 + m.volume_24h::DOUBLE PRECISION) / LN(10.0) * 4.0)
                        + LEAST(
-                           10.0,
-                           SQRT(EXTRACT(EPOCH FROM (m.end_at - now())) / 86400.0) * 2.0
+                           15.0,
+                           SQRT(EXTRACT(EPOCH FROM (m.end_at - now())) / 86400.0) * 3.0
                          )
-                       + LEAST(
-                           10.0,
-                           LEAST(
-                               rm.rewards_max_spread,
-                               $9
-                           )::DOUBLE PRECISION * 1.25
+                       + CASE WHEN $7 > 0 THEN GREATEST(
+                           0.0,
+                           15.0 * (1.0 - ((m.best_ask - m.best_bid) * 100)::DOUBLE PRECISION / $7::DOUBLE PRECISION)
+                         ) ELSE 15.0 END
+                       + GREATEST(
+                           0.0,
+                           10.0 - ABS(((m.best_bid + m.best_ask) / 2)::DOUBLE PRECISION - 0.5) * 20.0
                          )
+                       + 5.0
                      ) END DESC NULLS LAST,
                      rm.total_daily_rate DESC,
                      m.liquidity_usd DESC,

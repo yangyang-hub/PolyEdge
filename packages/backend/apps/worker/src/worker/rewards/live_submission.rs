@@ -5,7 +5,7 @@ const LIVE_EXIT_DUST_DEFERRED_MARKER: &str = "dust live exit deferred below mini
 const LIVE_EXIT_POST_ONLY_CROSSING_DEFERRED_MARKER: &str =
     "post-only original-price exit deferred because it would cross";
 const LIVE_EXIT_FLATTEN_DEFERRED_MARKER: &str =
-    "flatten deferred until non-loss bid is available";
+    "flatten deferred until a bid meets the configured risk floor";
 const MAX_EXIT_REJECTION_COUNT: usize = 10;
 const MIN_POLYMARKET_ORDER_NOTIONAL_USD: Decimal = Decimal::ONE;
 

@@ -154,6 +154,8 @@ pub struct RewardMarketInfoRisk {
     pub model: String,
     pub query_hash: String,
     pub input_hash: String,
+    #[serde(default)]
+    pub action: RewardProviderAction,
     pub risk_level: RewardInfoRiskLevel,
     pub risk_type: RewardInfoRiskType,
     pub directional_risk: RewardInfoDirectionalRisk,
@@ -173,6 +175,7 @@ pub struct RewardMarketInfoRisk {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RewardInfoRiskAssessmentDecision {
+    pub action: RewardProviderAction,
     pub risk_level: RewardInfoRiskLevel,
     pub risk_type: RewardInfoRiskType,
     pub directional_risk: RewardInfoDirectionalRisk,
@@ -213,6 +216,7 @@ impl RewardInfoRiskAssessmentDecision {
             model: request.model.clone(),
             query_hash: request.query_hash.clone(),
             input_hash: request.input_hash.clone(),
+            action: self.action,
             risk_level: self.risk_level,
             risk_type: self.risk_type,
             directional_risk: self.directional_risk,
@@ -242,28 +246,20 @@ impl RewardInfoRiskAssessmentDecision {
 
 pub fn build_reward_info_risk_assessment_request(
     market: &RewardMarket,
-    plan: Option<&RewardQuotePlan>,
-    account: &RewardAccountState,
-    positions: &[RewardPosition],
-    open_orders: &[ManagedRewardOrder],
+    _plan: Option<&RewardQuotePlan>,
+    _account: &RewardAccountState,
+    _positions: &[RewardPosition],
+    _open_orders: &[ManagedRewardOrder],
     config: &RewardBotConfig,
     provider: RewardAiProvider,
     request_format: RewardAiRequestFormat,
     model: &str,
 ) -> Result<RewardInfoRiskAssessmentRequest> {
-    let market_positions = positions
-        .iter()
-        .filter(|position| position.condition_id == market.condition_id)
-        .collect::<Vec<_>>();
-    let market_open_orders = open_orders
-        .iter()
-        .filter(|order| order.condition_id == market.condition_id)
-        .collect::<Vec<_>>();
     let query = reward_info_risk_query(market);
     let evaluation_time = OffsetDateTime::now_utc();
     let payload = json!({
-        "schema_version": 3,
-        "task": "Return a binary allow_quote decision for this Polymarket rewards market before maker quoting.",
+        "schema_version": 6,
+        "task": "Return an evidence-backed market-maker risk action. Distinguish reduce/stop-new from directional or full cancellation.",
         "evaluation_time_utc": evaluation_time,
         "imminent_resolution_policy": {
             "current_time_source": "evaluation_time_utc",
@@ -278,44 +274,14 @@ pub fn build_reward_info_risk_assessment_request(
             "condition_id": market.condition_id,
             "question": market.question,
             "market_slug": market.market_slug,
-            "event_slug": market.event_slug,
             "category": market.category,
-            "total_daily_rate": market.total_daily_rate,
-            "liquidity_usd": market.liquidity_usd,
-            "volume_24h_usd": market.volume_24h_usd,
-            "market_spread_cents": market.market_spread_cents,
-            "rewards_max_spread": market.rewards_max_spread,
-            "rewards_min_size": market.rewards_min_size,
             "end_at": market.end_at,
-            "ambiguity_level": market.ambiguity_level,
-            "market_synced_at": market.market_synced_at,
         },
-        "current_quote_plan": plan.map(|plan| json!({
-            "eligible": plan.eligible,
-            "reason": plan.reason,
-            "score": plan.score,
-            "quote_mode": plan.quote_mode,
-            "recommended_quote_mode": plan.recommended_quote_mode,
-            "midpoint": plan.midpoint,
-            "book_metrics": plan.book_metrics,
-            "legs": plan.legs,
-            "ai_advisory": plan.ai_advisory,
-        })),
-        "account_exposure": {
-            "account_id": account.account_id,
-            "available_usd": account.available_usd,
-            "positions": market_positions,
-            "open_orders": market_open_orders,
-        },
-        "strategy_config": {
-            "info_risk_mode": config.info_risk_mode,
-            "info_risk_avoid_level": config.info_risk_avoid_level,
-            "selection_mode": config.selection_mode,
-            "quote_mode": config.quote_mode,
-            "dominant_min_probability": config.dominant_min_probability,
-            "dominant_max_probability": config.dominant_max_probability,
-            "min_hours_to_end": config.min_hours_to_end,
-            "preferred_categories": config.preferred_categories,
+        "decision_boundary": {
+            "provider_may_assess": ["fresh_attributable_event", "official_result", "confirmed_resolution_driver"],
+            "provider_must_not_use": ["live_orderbook", "quote_price", "quote_side", "account_balance", "position_size"],
+            "cancel_requires_sources": true,
+            "directional_action_semantics": "directional_risk is the outcome whose resting BUY is unsafe and must match cancel_yes/cancel_no; it is not the predicted winner. Evidence raising YES probability generally makes the NO BUY unsafe (cancel_no), while evidence lowering YES probability makes the YES BUY unsafe (cancel_yes).",
         },
         "suggested_search_queries": [
             &query,
@@ -329,9 +295,7 @@ pub fn build_reward_info_risk_assessment_request(
         request_format,
         model: model.trim().to_string(),
         query_hash: reward_info_hash(json!({ "query": &query }))?,
-        input_hash: reward_info_hash(reward_info_risk_cache_key_payload(
-            market, plan, config, &query,
-        ))?,
+        input_hash: reward_info_hash(reward_info_risk_cache_key_payload(market, &query))?,
         query,
         payload,
     })
@@ -339,44 +303,22 @@ pub fn build_reward_info_risk_assessment_request(
 
 fn reward_info_risk_cache_key_payload(
     market: &RewardMarket,
-    plan: Option<&RewardQuotePlan>,
-    config: &RewardBotConfig,
     query: &str,
 ) -> Value {
     json!({
-        // schema_version 7: drop `event_slug` and `ambiguity_level` from the
-        // cache key. These are the only info-risk key fields NOT also present
-        // in the (stable) AI advisory key, and they drift: `event_slug` comes
-        // from the rewards-catalog sync (CLOB) while `ambiguity_level` comes
-        // from the Gamma markets table, and the two independent sync loops
-        // (rewards catalog ~5min + Gamma priority/full) write marginally
-        // differing values for the same condition across cycles. That drift
-        // made the info-risk lookup key oscillate away from the cached row's
-        // key and back, so a still-valid risk row was missed on alternate
-        // ticks → `info risk pending` → eligible dropped to 0 intermittently.
-        // The market is now identified by the same stable fields the advisory
-        // key uses (condition_id / question / market_slug / category / end_at).
+        // schema_version 11: directional risk means the unsafe resting-BUY
+        // outcome, not the predicted winner; invalidate ambiguous old results.
         //
-        // schema_version 6: drop `quote_mode` / `recommended_quote_mode` from
-        // the cache key. The materialized quote mode flips between double and
-        // single_no every tick for markets sitting on the funding boundary, and
-        // because it was part of the key those flips invalidated the info-risk
-        // cache lookup — marking markets `info risk pending` and (under enforce
-        // mode + require_info_risk_before_first_quote) dropping eligible to 0
-        // even though the cached risk assessment was still valid. Info-risk
-        // evaluates market/event resolution risk, which is independent of how we
-        // happen to size the quote, so the per-tick mode must not churn the key.
+        // schema_version 10: independently synced event/ambiguity metadata is
+        // removed from the request domain so payload and cache semantics agree.
         //
-        // schema_version 5: legacy low-competition sleeve settings are no
-        // longer part of strategy context; all candidates use the unified
-        // info-risk policy.
-        //
-        // schema_version 4: provider output contract is binary allow_quote.
-        // Keep detailed risk taxonomy as internal compatibility fields only.
-        "schema_version": 7,
+        // schema_version 9: evidence risk is independent of current quote,
+        // inventory and operator thresholds; only stable market identity and
+        // the search query participate in cache invalidation.
+        "schema_version": 11,
         "cache_domain": "reward_info_risk",
-        "provider_decision_schema": "binary_allow_quote_v1",
-        "evaluation_policy_version": 1,
+        "provider_decision_schema": "evidence_action_v3_unsafe_buy_direction",
+        "evaluation_policy_version": 2,
         "search_query": query,
         "market": {
             "condition_id": market.condition_id,
@@ -384,20 +326,6 @@ fn reward_info_risk_cache_key_payload(
             "market_slug": market.market_slug,
             "category": market.category,
             "end_at": market.end_at,
-        },
-        "current_quote_plan": plan.map(|plan| json!({
-            "strategy_bucket": plan.strategy_bucket,
-            "strategy_profile": plan.strategy_profile,
-        })),
-        "strategy_config": {
-            "info_risk_mode": config.info_risk_mode,
-            "info_risk_avoid_level": config.info_risk_avoid_level,
-            "selection_mode": config.selection_mode,
-            "quote_mode": config.quote_mode,
-            "dominant_min_probability": config.dominant_min_probability,
-            "dominant_max_probability": config.dominant_max_probability,
-            "min_hours_to_end": config.min_hours_to_end,
-            "preferred_categories": config.preferred_categories,
         },
     })
 }
@@ -466,35 +394,160 @@ pub fn apply_reward_info_risks(
         // Cached risk available — clear any pending grace state.
         plan.info_risk_pending_since = None;
         plan.info_risk = Some(risk.clone());
-        let avoid_level = config.info_risk_avoid_level;
-        if !enforce || !reward_info_risk_blocks_quote(&risk, avoid_level) {
+        if !enforce {
             continue;
         }
-        if risk.confidence < min_confidence && risk.risk_level != RewardInfoRiskLevel::Critical {
-            continue;
+        let action = reward_info_risk_effective_action(
+            &risk,
+            config.info_risk_avoid_level,
+            min_confidence,
+        );
+        match action {
+            RewardProviderAction::Allow | RewardProviderAction::Reduce => continue,
+            RewardProviderAction::CancelYes => {
+                plan.quote_mode = RewardPlanQuoteMode::SingleNo;
+                plan.recommended_quote_mode = Some(RewardPlanQuoteMode::SingleNo);
+                plan.reason = format!(
+                    "info risk cancel_yes: {}; quoting complementary NO only",
+                    risk.summary
+                );
+                continue;
+            }
+            RewardProviderAction::CancelNo => {
+                plan.quote_mode = RewardPlanQuoteMode::SingleYes;
+                plan.recommended_quote_mode = Some(RewardPlanQuoteMode::SingleYes);
+                plan.reason = format!(
+                    "info risk cancel_no: {}; quoting complementary YES only",
+                    risk.summary
+                );
+                continue;
+            }
+            RewardProviderAction::StopNew | RewardProviderAction::CancelAll => {}
         }
         plan.eligible = false;
         plan.quote_mode = RewardPlanQuoteMode::None;
         plan.legs.clear();
-        plan.reason = format!("info risk {}: {}", risk.risk_level.as_str(), risk.summary);
+        plan.reason = format!("info risk {}: {}", action.as_str(), risk.summary);
     }
 }
 
-fn reward_info_risk_blocks_quote(
+#[must_use]
+pub fn reward_info_risk_effective_action(
     risk: &RewardMarketInfoRisk,
     avoid_level: RewardInfoRiskLevel,
-) -> bool {
-    risk.resolution_imminent
-        || matches!(risk.risk_type, RewardInfoRiskType::OfficialResult)
-        || match avoid_level {
-            RewardInfoRiskLevel::Low | RewardInfoRiskLevel::Medium => {
-                risk.risk_level.rank() >= avoid_level.rank()
-            }
-            RewardInfoRiskLevel::High | RewardInfoRiskLevel::Critical => {
-                risk.risk_level == RewardInfoRiskLevel::Critical
-            }
-            RewardInfoRiskLevel::Unknown => false,
+    min_confidence: Decimal,
+) -> RewardProviderAction {
+    let mut action = risk.action;
+    if (action == RewardProviderAction::CancelYes
+        && risk.directional_risk != RewardInfoDirectionalRisk::Yes)
+        || (action == RewardProviderAction::CancelNo
+            && risk.directional_risk != RewardInfoDirectionalRisk::No)
+    {
+        action = RewardProviderAction::StopNew;
+    }
+    if action == RewardProviderAction::Allow {
+        let taxonomy_blocks = risk.resolution_imminent
+            || matches!(risk.risk_type, RewardInfoRiskType::OfficialResult)
+            || match avoid_level {
+                RewardInfoRiskLevel::Low | RewardInfoRiskLevel::Medium => {
+                    risk.risk_level.rank() >= avoid_level.rank()
+                }
+                RewardInfoRiskLevel::High | RewardInfoRiskLevel::Critical => {
+                    risk.risk_level == RewardInfoRiskLevel::Critical
+                }
+                RewardInfoRiskLevel::Unknown => false,
+            };
+        if taxonomy_blocks {
+            action = RewardProviderAction::StopNew;
         }
+    }
+    if matches!(
+        action,
+        RewardProviderAction::CancelYes
+            | RewardProviderAction::CancelNo
+            | RewardProviderAction::CancelAll
+    ) && !reward_info_risk_has_fresh_cancel_evidence(risk)
+    {
+        // Cancellation is irreversible queue loss. A provider assertion without
+        // a recent attributable source may stop risk growth, but cannot remove
+        // otherwise safe resting liquidity.
+        action = RewardProviderAction::StopNew;
+    }
+    if risk.confidence >= min_confidence {
+        return action;
+    }
+    match action {
+        RewardProviderAction::Allow => RewardProviderAction::Allow,
+        RewardProviderAction::Reduce => RewardProviderAction::Reduce,
+        // Low-confidence information can stop risk growth but never cancel a
+        // resting order.
+        _ => RewardProviderAction::StopNew,
+    }
+}
+
+fn reward_info_risk_has_fresh_cancel_evidence(risk: &RewardMarketInfoRisk) -> bool {
+    let required_independent_sources = match risk.risk_type {
+        RewardInfoRiskType::OfficialResult | RewardInfoRiskType::ImminentResolution => 1,
+        RewardInfoRiskType::BreakingNews => 2,
+        RewardInfoRiskType::ScheduledEvent if risk.resolution_imminent => 1,
+        _ => 0,
+    };
+    if required_independent_sources == 0 {
+        return false;
+    }
+    let oldest = risk.created_at - TimeDuration::hours(24);
+    let newest = risk.created_at + TimeDuration::minutes(5);
+    let mut authorities = Vec::new();
+    for source in &risk.sources {
+        let url = source.url.trim();
+        let Some(authority) = reward_info_risk_source_authority(url) else {
+            continue;
+        };
+        if !source
+            .published_at
+            .is_some_and(|published_at| published_at >= oldest && published_at <= newest)
+        {
+            continue;
+        }
+        if !authorities.iter().any(|existing| existing == &authority) {
+            authorities.push(authority);
+        }
+    }
+    authorities.len() >= required_independent_sources
+}
+
+fn reward_info_risk_source_authority(url: &str) -> Option<String> {
+    let (_, remainder) = url.split_once("://")?;
+    if !(url.starts_with("https://") || url.starts_with("http://")) {
+        return None;
+    }
+    let authority = remainder.split('/').next()?.trim().to_ascii_lowercase();
+    (!authority.is_empty()).then_some(authority)
+}
+
+/// Deterministic size effect for the info-risk `reduce` action. The provider
+/// does not choose capital amounts; evidence-backed moderate risk halves new
+/// quote size, while allow and stop/cancel actions remain semantically distinct.
+#[must_use]
+pub fn reward_info_risk_size_multiplier(
+    risk: &RewardMarketInfoRisk,
+    config: &RewardBotConfig,
+) -> Decimal {
+    if !config.info_risk_enabled || config.info_risk_mode != RewardSelectionMode::Enforce {
+        return Decimal::ONE;
+    }
+    match reward_info_risk_effective_action(
+        risk,
+        config.info_risk_avoid_level,
+        config.info_risk_min_confidence,
+    ) {
+        RewardProviderAction::Allow => Decimal::ONE,
+        RewardProviderAction::Reduce => decimal("0.50"),
+        // Directional cancellation removes the risky outcome from the plan;
+        // the complementary quote remains a valid hedge and keeps its budget.
+        RewardProviderAction::CancelYes | RewardProviderAction::CancelNo => Decimal::ONE,
+        RewardProviderAction::StopNew | RewardProviderAction::CancelAll => Decimal::ZERO,
+    }
 }
 
 fn reward_info_risk_query(market: &RewardMarket) -> String {

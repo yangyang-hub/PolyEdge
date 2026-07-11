@@ -1,7 +1,6 @@
 async fn apply_cached_reward_ai_advisories_to_cycle(
     state: &AppState,
     cycle: &mut RewardLiveCycle,
-    books: &HashMap<String, RewardOrderBook>,
     trace_id: &str,
 ) -> Result<()> {
     if !cycle.config.ai_advisory_enabled {
@@ -28,7 +27,7 @@ async fn apply_cached_reward_ai_advisories_to_cycle(
         positions = cycle.positions.len(),
         "applying cached reward AI advisories",
     );
-    let min_confidence = reward_ai_min_confidence(state.settings.rewards.ai_min_confidence_bps);
+    let min_confidence = cycle.config.ai_action_min_confidence;
     let model = reward_ai_model_for_provider(&state.settings.rewards, cycle.config.ai_provider);
     let request_format = reward_ai_effective_request_format_for_model(&cycle.config, model);
     info!(
@@ -103,7 +102,6 @@ async fn apply_cached_reward_ai_advisories_to_cycle(
             &cycle.account,
             &cycle.positions,
             &cycle.open_orders,
-            books,
             &candles,
             &cycle.config,
             cycle.config.ai_advisory_ttl_sec,
@@ -173,10 +171,7 @@ fn reward_ai_advisory_candidate_condition_ids(
     fallback: Option<&RewardProviderFallback>,
     now: OffsetDateTime,
 ) -> Vec<String> {
-    let plans_by_condition = plans
-        .iter()
-        .map(|plan| (plan.condition_id.as_str(), plan))
-        .collect::<HashMap<_, _>>();
+    let plans_by_condition = reward_provider_plans_by_condition(plans);
     let ai_required_condition_ids = pre_ai_eligible_condition_ids
         .iter()
         .map(|condition_id| condition_id.trim().to_string())
@@ -273,7 +268,7 @@ fn count_missing_reward_ai_advisories(
 fn push_reward_ai_advisory_plan(
     ordered: &mut Vec<String>,
     seen: &mut HashSet<String>,
-    plans_by_condition: &HashMap<&str, &RewardQuotePlan>,
+    plans_by_condition: &HashMap<&str, Vec<&RewardQuotePlan>>,
     ai_required_condition_ids: &HashSet<String>,
     open_orders: &[ManagedRewardOrder],
     positions: &[RewardPosition],
@@ -292,18 +287,37 @@ fn push_reward_ai_advisory_plan(
     if !has_active_exposure && !ai_required_condition_ids.contains(condition_id) {
         return;
     }
-    let Some(plan) = plans_by_condition.get(condition_id) else {
+    let Some(condition_plans) = plans_by_condition.get(condition_id) else {
         return;
     };
-    if !reward_provider_plan_passes_pre_llm_gate(plan, config, has_active_exposure) {
+    if !condition_plans
+        .iter()
+        .any(|plan| reward_provider_plan_passes_pre_llm_gate(plan, config, has_active_exposure))
+    {
         return;
     }
-    if !reward_ai_plan_needs_advisory(plan, config, model, fallback, now) {
+    if !condition_plans
+        .iter()
+        .any(|plan| reward_ai_plan_needs_advisory(plan, config, model, fallback, now))
+    {
         return;
     }
     if seen.insert(condition_id.to_string()) {
         ordered.push(condition_id.to_string());
     }
+}
+
+fn reward_provider_plans_by_condition(
+    plans: &[RewardQuotePlan],
+) -> HashMap<&str, Vec<&RewardQuotePlan>> {
+    let mut by_condition = HashMap::<&str, Vec<&RewardQuotePlan>>::new();
+    for plan in plans {
+        let condition_id = plan.condition_id.trim();
+        if !condition_id.is_empty() {
+            by_condition.entry(condition_id).or_default().push(plan);
+        }
+    }
+    by_condition
 }
 
 fn reward_ai_plan_needs_advisory(
@@ -470,10 +484,6 @@ async fn record_reward_provider_llm_call(
             "failed to record reward provider LLM call",
         );
     }
-}
-
-fn reward_ai_min_confidence(bps: u16) -> Decimal {
-    Decimal::from(bps.min(10_000)) / Decimal::from(10_000_u64)
 }
 
 const REWARD_PROVIDER_MAX_ENDPOINT_CONCURRENCY: u16 = 10;

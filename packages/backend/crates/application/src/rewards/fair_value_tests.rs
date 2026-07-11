@@ -137,3 +137,58 @@ fn fair_value_gate_blocks_quote_above_fair_value() {
     assert!(plan.reason.contains("fair value gate"));
     assert!(decision.edges[0].raw_edge_cents < Decimal::ZERO);
 }
+
+#[test]
+fn lp_reward_cannot_rescue_a_quote_that_fails_trading_edge() {
+    let now = OffsetDateTime::now_utc();
+    let books = fair_value_test_books(now);
+    let mut plan = fair_value_test_plan(decimal("0.545"), now);
+    plan.opportunity_metrics = Some(RewardOpportunityMetrics {
+        planned_notional_usd: decimal("10.9"),
+        probe_notional_usd: decimal("10.9"),
+        qualified_competition_usd: Decimal::ZERO,
+        competition_share_bps: Decimal::ZERO,
+        competition_multiple: Decimal::ZERO,
+        estimated_reward_per_100_usd_day: decimal("5"),
+        competition_density: Decimal::ZERO,
+        account_effective_available_usd: decimal("100"),
+        open_buy_notional_usd: Decimal::ZERO,
+        open_buy_notional_usd_after_plan: decimal("10.9"),
+        condition_buy_notional_usd_after_plan: decimal("10.9"),
+        account_allocation_bps: decimal("1090"),
+        market_allocation_bps: decimal("1090"),
+        exit_depth_usd: decimal("100"),
+        exit_slippage_cents: Some(Decimal::ZERO),
+        bad_fill_recovery_days: Some(Decimal::ZERO),
+        midpoint_range_cents: Some(Decimal::ZERO),
+        top_of_book_flip_count: Some(0),
+        sample_count: 10,
+        reward_score: decimal("100"),
+        competition_score: decimal("100"),
+        exit_score: decimal("100"),
+        stability_score: decimal("100"),
+        opportunity_score: decimal("100"),
+        score_adjustment: Decimal::ZERO,
+        warnings: Vec::new(),
+    });
+    let config = RewardBotConfig {
+        fair_value_rebate_haircut: Decimal::ONE,
+        fair_value_max_reward_rebate_cents: decimal("10"),
+        ..fair_value_test_config()
+    };
+
+    apply_reward_fair_value_to_quote_plan(
+        &mut plan,
+        &books,
+        &HashMap::new(),
+        &config,
+        now,
+    )
+    .expect("fair value estimate");
+
+    let edge = &plan.fair_value.as_ref().expect("decision").edges[0];
+    assert!(edge.effective_edge_cents < config.fair_value_min_effective_edge_cents);
+    assert!(edge.reward_adjusted_edge_cents > config.fair_value_min_effective_edge_cents);
+    assert!(!edge.passed);
+    assert!(!plan.eligible);
+}

@@ -1,6 +1,6 @@
 # Backend Application Crate
 
-最后更新：2026-07-10
+最后更新：2026-07-11
 
 ## 模块边界
 
@@ -25,7 +25,7 @@
 | `src/rewards/market_selection.rs` | 做市市场选择优先级：把基础质量、opportunity、fair-value edge、退出能力、稳定性、竞争和风险合成为 `selection_score` |
 | `src/rewards/event_window.rs` | 事件窗口 hard gate |
 | `src/rewards/ai_advisory_models.rs` | AI advisory request/decision/cache 模型 |
-| `src/rewards/ai_advisory_payload.rs` | advisory payload、当前盘口定价上下文和 1h candle 聚合 |
+| `src/rewards/ai_advisory_payload.rs` | AI advisory 使用的 1h candle 聚合、payload 与稳定 cache summary；不包含 live 盘口/账户上下文 |
 | `src/rewards/info_risk_models.rs` | 信息风险 request/decision/cache 模型 |
 | `src/rewards/provider_models.rs` | combined provider request/decision 模型 |
 | `src/rewards/provider_prefilter.rs` | provider 调用前 hard filter |
@@ -39,8 +39,10 @@
 
 ## 核心数据结构
 
-- `RewardBotConfig`：做市策略配置。当前保留 execution、market filter、opportunity metrics、fair-value、quote construction、adaptive post-fill exit、holding-period adaptive exit reselection、BalancedMerge、AI advisory、info-risk、event-window、inventory 和 live risk 参数。
-- `RewardFairValueEstimate` / `RewardFairValueDecision` / `RewardQuoteEdge`：fair-value 估计、每条 leg 的 raw/effective edge、rewards rebate 折扣、不确定性和最终 gate 结果。
+- `RewardBotConfig`：做市策略配置。V2 关键字段包括首选/最深报价档位、`maker_market_budget_usd`、库存偏斜、AI/info-risk 动作阈值、非对称 requote 和独立的最大退出损失 floor；旧 `per_market_usd`、`quote_size_usd`、`cancel_on_fill` 与环境变量置信度阈值已移除。
+- `RewardFairValueEstimate` / `RewardFairValueDecision` / `RewardQuoteEdge`：fair-value 估计与每条 leg 的 raw/effective trading edge。`effective_edge_cents` 只扣不确定性并用于 gate/edge priority，`reward_adjusted_edge_cents` 再加入预期 LP rebate 但只供展示/审计；LP rebate 永远不能补贴失败的交易 edge。
+- `RewardProviderAction` / `RewardMarketAdvisory` / `RewardMarketInfoRisk`：统一 provider 动作。AI 仅使用 `allow/reduce/stop_new` 和有界 size/edge modifier；info-risk 还可产生 `cancel_yes/cancel_no/cancel_all`。旧 suitability、AI quote mode 和 exit policy 不再属于核心模型。
+- Info-risk 定向 cancel 会把计划切为互补单边并保留该侧完整预算；`stop_new` / `cancel_all` 才将新单 multiplier 归零。动作方向与 `directional_risk` 不一致时降级为 stop-new。
 - `RewardQuotePlan`：quote plan snapshot。包含 strategy profile、quote mode、book metrics、opportunity metrics、market selection metrics、fair-value decision、AI advisory、info-risk、event-window、legs、readiness 和 live skip 状态。`score` 保留基础市场质量分，`selection_score` 是做市资金优先级分。
 - `RewardStrategyInput` / `RewardLiveCycle::from_strategy_input` / `RewardDecisionEngine` / `RewardDecisionSet`：`RewardStrategyInput` 是一次 tick 的 owned、可序列化只读输入快照（config、candidate markets、pre-application plans、books、book history、account、open orders、positions、event windows、now、force_orders），由 `RewardBotService::build_strategy_input` 作为单一读路径装配，供回放与审计；`RewardLiveCycle::from_strategy_input` 把快照桥接成 engine 可变 working cycle（markets 从 candidates 投影、should_execute 从 `config.enabled || force_orders` 派生，其余字段拷贝）。engine 借用入参为 `RewardLiveEngineInput<'a>`（cycle + books + book history + now），返回更新后的 cycle、fair-value estimates、资金预检/first-quote/readiness 变更统计，不访问 DB、HTTP 或 connector。Provider cache 在 engine 阶段之间由 worker 应用，未纳入快照（Phase 4 v2）。
 - `RewardStrategyRun` / `RewardStrategyDecision` / `RewardStrategyAction` / `RewardOrderTransition`：做市策略运行审计 ledger。Full tick 会记录 run 配置 hash、输入摘要、计划决策快照、从 tick outcome 派生的动作和托管订单状态变迁；`RewardQuotePlan.latest_run_id` 指向生成当前计划快照的最新 run。
@@ -55,10 +57,13 @@
 - BalancedMerge candidate profile 与 standard profile 可在同一 condition 下并存，quote plan 按 `(condition_id, strategy_profile)` 持久化，避免低成交量配对合并计划被 standard 计划覆盖。
 - Quote planning 只依赖数据库中的 reward markets、Gamma markets、orderbook 服务缓存、price-history candles、AI/info-risk cache 和本地配置。Full tick 的 pre-provider gates、post-provider first-quote gate 和最终 snapshot refresh 已通过 `RewardDecisionEngine` 集中为纯决策变换；provider cache 读取、外部账户同步和 live 下单/撤单仍留在 worker。Full tick 输入由 `RewardBotService::build_strategy_input` 作为单一读路径装配成可序列化 `RewardStrategyInput` 快照（注入单一 `now`），再经 `RewardLiveCycle::from_strategy_input` 派生 engine 可变 cycle，engine 行为不变；`prepare_live_cycle` 退化为该路径的薄委托。
 - Unified opportunity metrics 是 LP rewards 的统一评分层；竞争度、奖励密度、退出能力和盘口稳定性均作为做市策略内部指标处理，不再拆出独立观察模块。
-- Market selection 以 `selection_score` 作为最终排序和资金优先级。该分数在 opportunity metrics 与 fair-value 之后计算，综合基础市场质量、奖励密度、fair-value edge、退出能力、盘口稳定性，并惩罚拥挤、资金占用和事件/AI/info-risk/fair-value/readiness 风险；`score` 不再作为 live 市场选择的主排序。
+- Market selection 以 `selection_score` 作为最终排序和资金优先级。该分数在 opportunity metrics 与 fair-value 之后计算，以 effective fair-value edge、退出能力和盘口稳定性为主，奖励密度只占独立 10% 次级权重，并惩罚拥挤、资金占用和事件/AI/info-risk/fair-value/readiness 风险；`score` 不再作为 live 市场选择的主排序。基础 `score` 中 LP 奖励与 rewards spread 合计也封顶 10%。
 - Strategy run ledger 已落地为 shadow 记录层：它不改变 live 下单/撤单决策，但让每轮 full tick 的配置、输入、决策、动作和订单状态变迁可通过 store/API 查询，用于生产前演练审计和后续回放基础。Phase 3 第一层已加入 `RewardActionPlanner`，worker 会在 merge create/execute、cancel/cancel-replace、pending submit 和 placement submit 前写入 planned actions；现有 outcome 持久化仍负责把同一 idempotency-keyed action 更新为实际结果。
 - Database maintenance cutoffs 已覆盖 strategy run ledger：completed/failed/cancelled runs 默认保留 90 天并级联 decisions/actions，order transitions 默认保留 180 天。
-- Fair-value gate 默认启用：worker 用当前 YES 中点、反向 NO 中点和短窗口历史 median 估计 fair value，要求 BUY 报价保留 raw edge 和扣除不确定性后的 effective edge；历史估计写入 latest/history 表用于审计和回测。
+- Standard live materializer 从 `quote_bid_rank` 到 `quote_max_bid_rank` 逐档搜索第一个满足 post-only、reward spread 和 trading-edge 约束的价格；rank 表示相对 best bid 的 1 cent 竞争带，即使稀疏盘口没有精确对应深度也可构造有效 maker 价。BalancedMerge 继续使用独立固定 rank。
+- Fair-value gate 默认启用：worker 用当前 YES 中点、反向 NO 中点和短窗口历史 median 估计 fair value，要求 BUY 报价保留 raw edge 和扣除不确定性后的 effective trading edge；LP rebate 只进入 reward-adjusted edge。历史估计写入 latest/history 表用于审计和回测。
+- Provider payload 与 cache key 排除 live orderbook、quote price/side/rank、账户余额和库存；AI 只接收稳定市场身份与完成的粗粒度 candle，info-risk 只接收市场身份、评估时间和搜索边界。低置信度 AI 非 allow 动作确定性降级为 0.5 倍 `reduce`；info-risk cancel 还必须满足新鲜、可归因和独立来源规则。
+- `eligible` 现在只表示能否新增报价；已有订单的 cancel 动作独立评估。Stop-new 不会因为计划不可挂而自动撤销安全订单。
 - Live orderbook validation skip 只保留 60 秒用于 fast-path 抑制和审计；每个 full tick 都基于最新 candidate/books/config 重新构建计划，不继承上一轮 skip。standard 与 BalancedMerge 即使共享 condition，也不会再因只按 condition 继承旧 skip 而互相污染。
 - AI advisory 和 info-risk 只通过 provider cache 影响 live tick；外部 provider refresh 由 worker 后台任务写缓存，不阻塞 API handler。
 - Funding、orderbook cache/registry、maintenance、auth/mode/risk 仍作为 application-level ports/models 保留。

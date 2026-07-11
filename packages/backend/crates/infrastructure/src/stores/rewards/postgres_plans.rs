@@ -13,26 +13,29 @@ async fn postgres_count_quote_plans(pool: &PgPool) -> Result<RewardQuotePlanCoun
                COUNT(*) FILTER (WHERE NOT eligible
                                 AND reason_code = 'info_risk_pending') AS blocker_info_risk_pending,
                COUNT(*) FILTER (WHERE NOT eligible
-                                AND reason_code = 'ai_confidence_low') AS blocker_ai_confidence_low,
+                                AND reason_code = 'ai_stop_new') AS blocker_ai_stop_new,
                COUNT(*) FILTER (WHERE NOT eligible
-                                AND reason_code = 'ai_watch') AS blocker_ai_watch,
-               COUNT(*) FILTER (WHERE NOT eligible
-                                AND reason_code = 'ai_avoid') AS blocker_ai_avoid,
+                                AND reason_code = 'provider_size') AS blocker_provider_size,
                COUNT(*) FILTER (WHERE NOT eligible
                                 AND reason_code = 'info_risk') AS blocker_info_risk,
                COUNT(*) FILTER (WHERE NOT eligible
                                 AND reason_code = 'funding') AS blocker_funding,
+               COUNT(*) FILTER (WHERE NOT eligible
+                                AND reason_code = 'maker_budget') AS blocker_maker_budget,
+               COUNT(*) FILTER (WHERE NOT eligible
+                                AND reason_code = 'inventory_headroom') AS blocker_inventory_headroom,
                COUNT(*) FILTER (WHERE NOT eligible
                                 AND reason_code = 'live_validation') AS blocker_live_validation,
                COUNT(*) FILTER (WHERE NOT eligible
                                 AND reason_code NOT IN (
                                     'ai_pending',
                                     'info_risk_pending',
-                                    'ai_confidence_low',
-                                    'ai_watch',
-                                    'ai_avoid',
+                                    'ai_stop_new',
+                                    'provider_size',
                                     'info_risk',
                                     'funding',
+                                    'maker_budget',
+                                    'inventory_headroom',
                                     'live_validation'
                                 )) AS blocker_other
         FROM reward_quote_plans
@@ -57,11 +60,12 @@ async fn postgres_count_quote_plans(pool: &PgPool) -> Result<RewardQuotePlanCoun
             waiting_orderbook: postgres_count_to_usize(&row, "waiting_orderbook")?,
             ai_pending: postgres_count_to_usize(&row, "blocker_ai_pending")?,
             info_risk_pending: postgres_count_to_usize(&row, "blocker_info_risk_pending")?,
-            ai_confidence_low: postgres_count_to_usize(&row, "blocker_ai_confidence_low")?,
-            ai_watch: postgres_count_to_usize(&row, "blocker_ai_watch")?,
-            ai_avoid: postgres_count_to_usize(&row, "blocker_ai_avoid")?,
+            ai_stop_new: postgres_count_to_usize(&row, "blocker_ai_stop_new")?,
+            provider_size: postgres_count_to_usize(&row, "blocker_provider_size")?,
             info_risk: postgres_count_to_usize(&row, "blocker_info_risk")?,
             funding: postgres_count_to_usize(&row, "blocker_funding")?,
+            maker_budget: postgres_count_to_usize(&row, "blocker_maker_budget")?,
+            inventory_headroom: postgres_count_to_usize(&row, "blocker_inventory_headroom")?,
             live_validation: postgres_count_to_usize(&row, "blocker_live_validation")?,
             other: postgres_count_to_usize(&row, "blocker_other")?,
         },

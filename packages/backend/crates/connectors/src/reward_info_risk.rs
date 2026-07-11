@@ -1,6 +1,7 @@
 use polyedge_application::{
     RewardAiProvider, RewardInfoDirectionalRisk, RewardInfoRiskAssessmentDecision,
     RewardInfoRiskAssessmentRequest, RewardInfoRiskLevel, RewardInfoRiskSource, RewardInfoRiskType,
+    RewardProviderAction,
 };
 use polyedge_domain::{AppError, Result};
 use rust_decimal::Decimal;
@@ -12,8 +13,8 @@ use crate::openai_compat::{
     is_openai_compatible_chat_provider, provider_json_candidates, provider_response_preview,
 };
 
-// Single-market info-risk output is a small JSON object (allow_quote, confidence,
-// summary, sources, metrics). Kept `pub(crate)` because the reward_info_risk
+// Single-market info-risk output is an evidence-backed action with taxonomy and
+// sources. Kept `pub(crate)` because the reward_info_risk
 // DeepSeek chat-completion test asserts against this token budget.
 #[allow(dead_code)]
 pub(crate) const REWARD_INFO_RISK_CHAT_COMPLETION_MAX_TOKENS: u32 = 1536;
@@ -50,14 +51,37 @@ pub(crate) fn reward_info_risk_json_schema() -> Value {
         "type": "object",
         "additionalProperties": false,
         "required": [
-            "allow_quote",
+            "action",
+            "risk_level",
+            "risk_type",
+            "directional_risk",
+            "resolution_imminent",
+            "expected_event_at",
             "confidence",
             "summary",
             "sources",
             "metrics"
         ],
         "properties": {
-            "allow_quote": {"type": "boolean"},
+            "action": {
+                "type": "string",
+                "enum": ["allow", "reduce", "stop_new", "cancel_yes", "cancel_no", "cancel_all"]
+            },
+            "risk_level": {
+                "type": "string",
+                "enum": ["low", "medium", "high", "critical", "unknown"]
+            },
+            "risk_type": {
+                "type": "string",
+                "enum": ["imminent_resolution", "breaking_news", "scheduled_event", "official_result", "rumor", "stale", "none", "unknown"]
+            },
+            "directional_risk": {
+                "type": "string",
+                "enum": ["yes", "no", "unclear"],
+                "description": "Outcome whose resting BUY is unsafe; must match cancel_yes/cancel_no. Not the predicted winner."
+            },
+            "resolution_imminent": {"type": "boolean"},
+            "expected_event_at": {"type": ["string", "null"]},
             "confidence": {"type": "number", "minimum": 0, "maximum": 1},
             "summary": {"type": "string"},
             "sources": {
@@ -152,7 +176,23 @@ pub(crate) fn parse_reward_info_risk_decision_value(
         .filter(Value::is_object)
         .unwrap_or_else(|| json!({}));
 
+    let action = value
+        .get("action")
+        .and_then(Value::as_str)
+        .map(RewardProviderAction::from_str)
+        .transpose()?
+        .unwrap_or_else(|| {
+            if resolution_imminent || risk_type == RewardInfoRiskType::OfficialResult {
+                RewardProviderAction::CancelAll
+            } else if risk_level.rank() >= RewardInfoRiskLevel::High.rank() {
+                RewardProviderAction::StopNew
+            } else {
+                RewardProviderAction::Allow
+            }
+        });
+
     Ok(RewardInfoRiskAssessmentDecision {
+        action,
         risk_level,
         risk_type,
         directional_risk,
@@ -187,10 +227,15 @@ pub(crate) fn parse_reward_info_risk_binary_decision_value(
         .unwrap_or_else(|| json!({}));
 
     Ok(RewardInfoRiskAssessmentDecision {
+        action: if allow_quote {
+            RewardProviderAction::Allow
+        } else {
+            RewardProviderAction::StopNew
+        },
         risk_level: if allow_quote {
             RewardInfoRiskLevel::Low
         } else {
-            RewardInfoRiskLevel::Critical
+            RewardInfoRiskLevel::Unknown
         },
         risk_type: if allow_quote {
             RewardInfoRiskType::None
@@ -208,7 +253,8 @@ pub(crate) fn parse_reward_info_risk_binary_decision_value(
 }
 
 pub(crate) fn reward_info_risk_candidate_has_known_field(value: &Value) -> bool {
-    value.get("allow_quote").is_some()
+    value.get("action").is_some()
+        || value.get("allow_quote").is_some()
         || value.get("risk_level").is_some()
         || value.get("risk_type").is_some()
         || value.get("directional_risk").is_some()

@@ -271,6 +271,10 @@ pub struct RewardQuoteEdge {
     pub expected_reward_rebate_cents: Decimal,
     pub uncertainty_cents: Decimal,
     pub effective_edge_cents: Decimal,
+    /// Trading edge plus the separately estimated LP/rebate contribution. This
+    /// is informational and must not be used by the quote admission gate.
+    #[serde(default)]
+    pub reward_adjusted_edge_cents: Decimal,
     pub min_raw_edge_cents: Decimal,
     pub min_effective_edge_cents: Decimal,
     pub passed: bool,
@@ -670,11 +674,12 @@ pub struct RewardQuotePlanBlockerCounts {
     pub waiting_orderbook: usize,
     pub ai_pending: usize,
     pub info_risk_pending: usize,
-    pub ai_confidence_low: usize,
-    pub ai_watch: usize,
-    pub ai_avoid: usize,
+    pub ai_stop_new: usize,
+    pub provider_size: usize,
     pub info_risk: usize,
     pub funding: usize,
+    pub maker_budget: usize,
+    pub inventory_headroom: usize,
     pub live_validation: usize,
     pub other: usize,
 }
@@ -727,16 +732,18 @@ impl RewardQuotePlanBlockerCounts {
             self.ai_pending += 1;
         } else if reason.starts_with("info risk pending:") {
             self.info_risk_pending += 1;
-        } else if reason.starts_with("AI advisory confidence") {
-            self.ai_confidence_low += 1;
-        } else if reason.starts_with("AI advisory watch:") {
-            self.ai_watch += 1;
-        } else if reason.starts_with("AI advisory avoid:") {
-            self.ai_avoid += 1;
+        } else if reason.starts_with("AI advisory stop_new:") {
+            self.ai_stop_new += 1;
+        } else if reason.starts_with("provider size adjustment below required rewards quote:") {
+            self.provider_size += 1;
         } else if reason.starts_with("info risk ") {
             self.info_risk += 1;
         } else if reason.starts_with("live funding below rewards minimum:") {
             self.funding += 1;
+        } else if reason.starts_with("maker market budget below required rewards quote:") {
+            self.maker_budget += 1;
+        } else if reason.starts_with("inventory headroom below required rewards quote:") {
+            self.inventory_headroom += 1;
         } else if reason.starts_with("live orderbook validation skipped until ") {
             self.live_validation += 1;
         } else if readiness == RewardQuoteReadiness::Blocked {

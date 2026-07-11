@@ -1,6 +1,6 @@
 # 共享组件（Shared Components + UI Primitives）
 
-最后更新：2026-07-07
+最后更新：2026-07-11
 
 ## 概述
 
@@ -13,6 +13,13 @@
 - 自定义 hooks 封装可复用的状态/副作用逻辑
 
 ## 架构与关键文件
+
+### App Shell 与全局主题
+
+| 文件 | 用途 |
+|---|---|
+| `src/app/layout.tsx` | 根 HTML、全局 provider、通知容器与页面 metadata；不执行远程字体下载 |
+| `src/app/globals.css` | Tailwind 主题 token、系统字体栈、暗色变量和全局基础样式 |
 
 ### UI Primitives — `src/components/ui/`（13 个文件）
 
@@ -69,6 +76,10 @@ shadcn 生成的 Radix UI 基础组件（style: radix-nova）：
 |---|---|
 | `use-pagination.ts` | 分页状态管理（currentPage、pageSize、分页数据切片） |
 
+## 数据结构
+
+该模块不定义持久化 DTO；共享组件通过各自 props 接收页面数据，主题通过 `globals.css` 的 CSS custom properties 暴露。
+
 ## 当前状态
 
 - UI 组件基于 shadcn/ui v4（radix-nova 风格）
@@ -77,6 +88,7 @@ shadcn 生成的 Radix UI 基础组件（style: radix-nova）：
 - 控制台布局导航使用原生 `<a href>` 跳转，避免静态导出部署下客户端 router 拦截失败导致菜单点击无响应
 - 顶栏不再显示横向导航快捷入口，也不再读取旧风控状态或展示 kill-switch 控制；移动端顶栏显示菜单按钮并从左侧打开导航抽屉
 - 暗色主题（`globals.css` 中仅定义暗色变量）
+- `src/app/layout.tsx` 与 `globals.css` 使用系统字体栈，不在 `next build` 时访问 Google Fonts，保证离线/内网部署可复现构建
 
 ## 修改检查清单
 
