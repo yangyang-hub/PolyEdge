@@ -267,6 +267,9 @@ async fn postgres_record_reward_strategy_actions_tx(
               idempotency_key,
               request_json,
               result_json,
+              lease_owner,
+              lease_expires_at,
+              execution_attempts,
               created_at,
               updated_at
             )
@@ -286,6 +289,9 @@ async fn postgres_record_reward_strategy_actions_tx(
                 .push_bind(&action.idempotency_key)
                 .push_bind(Json(action.request_json.clone()))
                 .push_bind(Json(action.result_json.clone()))
+                .push_bind(&action.lease_owner)
+                .push_bind(action.lease_expires_at)
+                .push_bind(action.execution_attempts)
                 .push_bind(action.created_at)
                 .push_bind(action.updated_at);
         });
@@ -296,6 +302,18 @@ async fn postgres_record_reward_strategy_actions_tx(
                 reason_code = EXCLUDED.reason_code,
                 reason = EXCLUDED.reason,
                 result_json = EXCLUDED.result_json,
+                lease_owner = CASE
+                    WHEN EXCLUDED.status IN ('succeeded', 'failed', 'skipped', 'unknown') THEN NULL
+                    ELSE COALESCE(EXCLUDED.lease_owner, reward_strategy_actions.lease_owner)
+                END,
+                lease_expires_at = CASE
+                    WHEN EXCLUDED.status IN ('succeeded', 'failed', 'skipped', 'unknown') THEN NULL
+                    ELSE COALESCE(EXCLUDED.lease_expires_at, reward_strategy_actions.lease_expires_at)
+                END,
+                execution_attempts = GREATEST(
+                    reward_strategy_actions.execution_attempts,
+                    EXCLUDED.execution_attempts
+                ),
                 updated_at = EXCLUDED.updated_at
             "#,
         );
@@ -314,6 +332,254 @@ async fn postgres_record_reward_strategy_actions_tx(
             })?;
     }
     Ok(())
+}
+
+async fn postgres_claim_reward_strategy_actions(
+    pool: &PgPool,
+    account_id: &str,
+    lease_owner: &str,
+    now: OffsetDateTime,
+    lease_expires_at: OffsetDateTime,
+    limit: u16,
+) -> Result<Vec<RewardStrategyAction>> {
+    let rows = sqlx::query(
+        r#"
+        WITH claimable AS (
+            SELECT action_id, status AS previous_status
+            FROM reward_strategy_actions
+            WHERE account_id = $1
+              AND (
+                    status = 'planned'
+                    OR (
+                        status = 'executing'
+                        AND lease_expires_at IS NOT NULL
+                        AND lease_expires_at <= $3
+                    )
+              )
+            ORDER BY created_at ASC, action_id ASC
+            FOR UPDATE SKIP LOCKED
+            LIMIT $5
+        )
+        UPDATE reward_strategy_actions AS action
+        SET status = 'executing',
+            lease_owner = $2,
+            lease_expires_at = $4,
+            execution_attempts = action.execution_attempts + 1,
+            updated_at = $3,
+            result_json = action.result_json || jsonb_build_object(
+                'status', 'executing',
+                'lease_owner', $2,
+                'lease_expires_at', $4,
+                'execution_attempts', action.execution_attempts + 1,
+                'claim_previous_status', claimable.previous_status
+            )
+        FROM claimable
+        WHERE action.action_id = claimable.action_id
+        RETURNING action.action_id,
+                  action.run_id,
+                  action.account_id,
+                  action.condition_id,
+                  action.token_id,
+                  action.managed_order_id,
+                  action.external_order_id,
+                  action.action_type,
+                  action.status,
+                  action.reason_code,
+                  action.reason,
+                  action.idempotency_key,
+                  action.request_json,
+                  action.result_json,
+                  action.lease_owner,
+                  action.lease_expires_at,
+                  action.execution_attempts,
+                  action.created_at,
+                  action.updated_at
+        "#,
+    )
+    .bind(account_id)
+    .bind(lease_owner)
+    .bind(now)
+    .bind(lease_expires_at)
+    .bind(i64::from(limit))
+    .fetch_all(pool)
+    .await
+    .map_err(|error| {
+        db_error(
+            "POSTGRES_CLAIM_REWARD_STRATEGY_ACTIONS_FAILED",
+            format!("failed to claim reward strategy actions: {error}"),
+        )
+    })?;
+
+    let mut actions = rows
+        .iter()
+        .map(reward_strategy_action_from_row)
+        .collect::<Result<Vec<_>>>()?;
+    actions.sort_by_key(|action| (action.created_at, action.action_id));
+    Ok(actions)
+}
+
+async fn postgres_renew_reward_strategy_action_lease(
+    pool: &PgPool,
+    action_id: i64,
+    lease_owner: &str,
+    now: OffsetDateTime,
+    lease_expires_at: OffsetDateTime,
+) -> Result<bool> {
+    let result = sqlx::query(
+        r#"
+        UPDATE reward_strategy_actions
+        SET lease_expires_at = $4,
+            result_json = result_json || jsonb_build_object('lease_expires_at', $4),
+            updated_at = $3
+        WHERE action_id = $1
+          AND status = 'executing'
+          AND lease_owner = $2
+          AND lease_expires_at > $3
+        "#,
+    )
+    .bind(action_id)
+    .bind(lease_owner)
+    .bind(now)
+    .bind(lease_expires_at)
+    .execute(pool)
+    .await
+    .map_err(|error| {
+        db_error(
+            "POSTGRES_RENEW_REWARD_STRATEGY_ACTION_LEASE_FAILED",
+            format!("failed to renew reward strategy action lease: {error}"),
+        )
+    })?;
+    Ok(result.rows_affected() == 1)
+}
+
+async fn postgres_finalize_reward_strategy_action_lease(
+    pool: &PgPool,
+    action: &RewardStrategyAction,
+    lease_owner: &str,
+) -> Result<bool> {
+    if !action.status.is_terminal() || !action.result_json.is_object() {
+        return Err(AppError::invalid_input(
+            "REWARD_STRATEGY_ACTION_RESOLUTION_INVALID",
+            "strategy action resolution requires a terminal status and object result",
+        ));
+    }
+    let result = sqlx::query(
+        r#"
+        UPDATE reward_strategy_actions
+        SET status = $3,
+            reason_code = $4,
+            reason = $5,
+            external_order_id = $6,
+            result_json = $7,
+            lease_owner = NULL,
+            lease_expires_at = NULL,
+            updated_at = $8
+        WHERE action_id = $1
+          AND status = 'executing'
+          AND lease_owner = $2
+          AND lease_expires_at > CURRENT_TIMESTAMP
+        "#,
+    )
+    .bind(action.action_id)
+    .bind(lease_owner)
+    .bind(action.status.as_str())
+    .bind(&action.reason_code)
+    .bind(&action.reason)
+    .bind(&action.external_order_id)
+    .bind(&action.result_json)
+    .bind(action.updated_at)
+    .execute(pool)
+    .await
+    .map_err(|error| {
+        db_error(
+            "POSTGRES_FINALIZE_REWARD_STRATEGY_ACTION_LEASE_FAILED",
+            format!("failed to finalize reward strategy action lease: {error}"),
+        )
+    })?;
+    Ok(result.rows_affected() == 1)
+}
+
+async fn postgres_get_reward_strategy_action(
+    pool: &PgPool,
+    action_id: i64,
+) -> Result<Option<RewardStrategyAction>> {
+    let row = sqlx::query(
+        r#"
+        SELECT action_id,
+               run_id,
+               account_id,
+               condition_id,
+               token_id,
+               managed_order_id,
+               external_order_id,
+               action_type,
+               status,
+               reason_code,
+               reason,
+               idempotency_key,
+               request_json,
+               result_json,
+               lease_owner,
+               lease_expires_at,
+               execution_attempts,
+               created_at,
+               updated_at
+        FROM reward_strategy_actions
+        WHERE action_id = $1
+        "#,
+    )
+    .bind(action_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|error| {
+        db_error(
+            "POSTGRES_QUERY_REWARD_STRATEGY_ACTION_FAILED",
+            format!("failed to query reward strategy action: {error}"),
+        )
+    })?;
+    row.as_ref().map(reward_strategy_action_from_row).transpose()
+}
+
+async fn postgres_release_reward_strategy_action_lease(
+    pool: &PgPool,
+    action_id: i64,
+    lease_owner: &str,
+    reason_code: &str,
+    reason: &str,
+    result: Value,
+    now: OffsetDateTime,
+) -> Result<bool> {
+    let update = sqlx::query(
+        r#"
+        UPDATE reward_strategy_actions
+        SET status = 'planned',
+            reason_code = $3,
+            reason = $4,
+            result_json = result_json || $5 || jsonb_build_object('status', 'planned'),
+            lease_owner = NULL,
+            lease_expires_at = NULL,
+            updated_at = $6
+        WHERE action_id = $1
+          AND status = 'executing'
+          AND lease_owner = $2
+          AND lease_expires_at > $6
+        "#,
+    )
+    .bind(action_id)
+    .bind(lease_owner)
+    .bind(reason_code)
+    .bind(reason)
+    .bind(Json(result))
+    .bind(now)
+    .execute(pool)
+    .await
+    .map_err(|error| {
+        db_error(
+            "POSTGRES_RELEASE_REWARD_STRATEGY_ACTION_LEASE_FAILED",
+            format!("failed to release reward strategy action lease: {error}"),
+        )
+    })?;
+    Ok(update.rows_affected() == 1)
 }
 
 async fn postgres_record_reward_order_transitions(
@@ -528,6 +794,110 @@ async fn postgres_get_reward_strategy_run(
     row.as_ref().map(reward_strategy_run_from_row).transpose()
 }
 
+async fn postgres_save_reward_strategy_replay_fixture(
+    pool: &PgPool,
+    fixture: &RewardStrategyReplayFixture,
+) -> Result<()> {
+    fixture.validate_integrity()?;
+    let json_bytes = i32::try_from(fixture.json_bytes).map_err(|_| {
+        AppError::invalid_input(
+            "REWARD_REPLAY_FIXTURE_TOO_LARGE",
+            "rewards replay fixture size cannot be stored",
+        )
+    })?;
+    sqlx::query(
+        r#"
+        INSERT INTO reward_strategy_replay_fixtures (
+          run_id,
+          schema_version,
+          fixture_json,
+          json_bytes,
+          sha256,
+          captured_at
+        )
+        VALUES ($1, $2, $3, $4, $5, $6)
+        ON CONFLICT (run_id) DO UPDATE
+        SET schema_version = EXCLUDED.schema_version,
+            fixture_json = EXCLUDED.fixture_json,
+            json_bytes = EXCLUDED.json_bytes,
+            sha256 = EXCLUDED.sha256,
+            captured_at = EXCLUDED.captured_at
+        "#,
+    )
+    .bind(fixture.run_id)
+    .bind(i32::from(fixture.schema_version))
+    .bind(Json(&fixture.fixture))
+    .bind(json_bytes)
+    .bind(&fixture.sha256)
+    .bind(fixture.captured_at)
+    .execute(pool)
+    .await
+    .map_err(|error| {
+        db_error(
+            "POSTGRES_UPSERT_FAILED",
+            format!("failed to persist reward strategy replay fixture: {error}"),
+        )
+    })?;
+    Ok(())
+}
+
+async fn postgres_get_reward_strategy_replay_fixture(
+    pool: &PgPool,
+    run_id: i64,
+) -> Result<Option<RewardStrategyReplayFixture>> {
+    let row = sqlx::query(
+        r#"
+        SELECT run_id,
+               schema_version,
+               fixture_json,
+               json_bytes,
+               sha256,
+               captured_at
+        FROM reward_strategy_replay_fixtures
+        WHERE run_id = $1
+        "#,
+    )
+    .bind(run_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|error| {
+        db_error(
+            "POSTGRES_QUERY_FAILED",
+            format!("failed to query reward strategy replay fixture: {error}"),
+        )
+    })?;
+    let Some(row) = row else {
+        return Ok(None);
+    };
+    let schema_version: i32 = row.try_get("schema_version").map_err(postgres_decode_error)?;
+    let schema_version = u16::try_from(schema_version).map_err(|_| {
+        db_error(
+            "POSTGRES_DECODE_FAILED",
+            "reward strategy replay schema version is out of range",
+        )
+    })?;
+    let Json(fixture) = row
+        .try_get::<Json<RewardDecisionReplayFixture>, _>("fixture_json")
+        .map_err(postgres_decode_error)?;
+    let json_bytes: i32 = row.try_get("json_bytes").map_err(postgres_decode_error)?;
+    let json_bytes = u32::try_from(json_bytes).map_err(|_| {
+        db_error(
+            "POSTGRES_DECODE_FAILED",
+            "reward strategy replay fixture byte size is out of range",
+        )
+    })?;
+    let fixture = RewardStrategyReplayFixture {
+        run_id: row.try_get("run_id").map_err(postgres_decode_error)?,
+        schema_version,
+        fixture,
+        json_bytes,
+        sha256: row.try_get("sha256").map_err(postgres_decode_error)?,
+        captured_at: row.try_get("captured_at").map_err(postgres_decode_error)?,
+    };
+    fixture.validate_integrity()?;
+    Ok(Some(fixture))
+}
+
 async fn postgres_list_reward_strategy_decisions(
     pool: &PgPool,
     run_id: i64,
@@ -662,6 +1032,9 @@ async fn postgres_list_reward_strategy_actions(
                idempotency_key,
                request_json,
                result_json,
+               lease_owner,
+               lease_expires_at,
+               execution_attempts,
                created_at,
                updated_at
         FROM reward_strategy_actions
@@ -873,6 +1246,13 @@ fn reward_strategy_action_from_row(row: &sqlx::postgres::PgRow) -> Result<Reward
         idempotency_key: row.try_get("idempotency_key").map_err(postgres_decode_error)?,
         request_json: request_json.0,
         result_json: result_json.0,
+        lease_owner: row.try_get("lease_owner").map_err(postgres_decode_error)?,
+        lease_expires_at: row
+            .try_get("lease_expires_at")
+            .map_err(postgres_decode_error)?,
+        execution_attempts: row
+            .try_get("execution_attempts")
+            .map_err(postgres_decode_error)?,
         created_at: row.try_get("created_at").map_err(postgres_decode_error)?,
         updated_at: row.try_get("updated_at").map_err(postgres_decode_error)?,
     })

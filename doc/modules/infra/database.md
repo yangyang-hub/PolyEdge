@@ -48,11 +48,14 @@
 ### LP rewards
 
 - `reward_bot_config`：key-value 配置，覆盖 `maker_market_budget_usd`、动态 rank、交易 edge、机会评分、adaptive 退出、AI/info-risk 动作阈值、事件窗口、库存偏斜、非对称 requote 和 BalancedMerge；不再保存旧双预算或成交后整组撤单 key。
+- 空表读取使用 application `production_live_drill_defaults()`；无需在 baseline SQL 中硬编码配置行。用户首次保存后会写入完整当前 snapshot，因此重新部署空库会获得最新保守 profile。
 - `reward_markets`：condition、question、market_slug、rewards_max_spread/min_size、total_daily_rate、tokens JSON。
 - `reward_quote_plans`：当前 quote plan snapshot，主键为 `(condition_id, strategy_profile)`，包含基础/selection score、readiness/mode/reason/blocker、fair-value、`ai_action`、`info_risk_action`/level 摘要和完整 JSON。预算、provider size 与库存 headroom blocker 有独立 reason code。
 - `reward_strategy_runs`：每轮 full tick 的 run header，记录 account、trace、trigger、status、config hash/json、输入摘要、指标、开始/完成时间和错误。
 - `reward_strategy_decisions`：每个 run 下按 condition + strategy profile 记录 quote plan 决策快照、排序、readiness、reason/blocker、planned notional、fair-value/opportunity/event、`ai_action`、`info_risk_action`/level 和 decision JSON。
 - `reward_strategy_actions`：从 tick outcome 派生的动作账本，记录 place/cancel/exit/fill/merge/skip 等动作、状态、幂等键、请求/结果 JSON 和关联订单。
+- `reward_strategy_actions` 还保存 `lease_owner`、`lease_expires_at` 和 `execution_attempts`，支持多实例 executor 原子 claim/续租和超时恢复；partial index 加速 planned/expired-executing 领取。
+- `reward_strategy_replay_fixtures`：与 strategy run 一对一的完整确定性回放 fixture，保存 schema version、SHA-256、JSON 字节数、JSONB payload 和 captured time，随 run 级联删除。
 - `reward_order_transitions`：托管订单状态追加式时间线，记录 managed/external order、from/to status、reason、metadata，并可关联 run/action。
 - `reward_managed_orders`：托管订单，包含 account/condition/token、side、price、size、status、strategy bucket/profile、exit strategy source/selected/floor/reselect state、filled_size、reward_earned、external id 和对账锁等字段。外部库存补 SELL intent 可来自当前 rewards catalog 外的 condition；adaptive 本地 pending SELL 用这些字段在 worker 重启后继续持仓期重评。
 - `reward_fills`：托管订单成交，保存 account/condition/token/outcome/side、price、size、notional、role、realized PnL。
@@ -66,7 +69,7 @@
 - `reward_fair_values`：每个 condition 最新 fair-value 估计，保存 fair_yes/fair_no、market midpoint、confidence、uncertainty、YES/NO 偏离、组件 JSON、拒绝原因和有效期。
 - `reward_fair_value_history`：fair-value 历史追加表，用于审计和回测；数据库维护默认按 `created_at` 保留 90 天。
 - `reward_market_event_windows`：按 condition/source 保存事件时间候选；effective 查询按 active、confidence、source 优先级和更新时间选一条。
-- `reward_merge_intents`：BalancedMerge 配对库存合并意图，包含 YES/NO token、merge size、两侧库存均价、source fill、status、tx hash、submitted/confirmed/failed 时间、失败原因和 retry count。
+- `reward_merge_intents`：BalancedMerge 配对库存合并意图，包含 YES/NO token、merge size、两侧库存均价、source fill、status、tx hash、submitted/confirmed/failed 时间、失败原因和 retry count；链上 receipt 解析以 intent id + tx hash 双重 fencing 更新 completed/failed。
 
 ## 数据保留与自动清理
 

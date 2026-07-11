@@ -159,54 +159,101 @@ async fn run_reward_orderbook_event_cancel_fast_path(
         return Ok(report);
     }
 
+    let run_id = start_reward_action_strategy_run(
+        state,
+        &cycle,
+        &books,
+        trace_id,
+        RewardStrategyRunTrigger::OrderbookEvent,
+        "orderbook_event_cancel",
+        json!({
+            "updated_tokens": token_ids.len(),
+            "cancel_orders": cancel_candidates.len(),
+        }),
+    )
+    .await?;
     let mut account = cycle.account.clone();
     let mut open_orders = cycle.open_orders.clone();
-    for (order_id, reason) in cancel_candidates {
-        let Some(index) = open_orders.iter().position(|order| order.id == order_id) else {
-            continue;
+    let action_result: Result<()> = async {
+        let action_context = RewardActionPlannerContext {
+            run_id,
+            trace_id,
+            now: OffsetDateTime::now_utc(),
         };
-        let order = open_orders[index].clone();
-        match cancel_one_live_reward_order(connector, order, &reason, trace_id).await? {
-            LiveRewardOrderUpdate::Changed(updated, event) => {
-                open_orders[index] = updated.clone();
-                if !live_cancel_result_is_unknown(&updated) {
-                    report.cancelled_orders += 1;
-                    report.risk_cancelled_orders += 1;
+        let actions = cancel_candidates
+            .iter()
+            .filter_map(|(order_id, reason)| {
+                open_orders
+                    .iter()
+                    .find(|order| order.id == *order_id)
+                    .map(|order| {
+                        RewardActionPlanner::plan_order_action(
+                            action_context,
+                            RewardOrderActionProposal {
+                                order,
+                                intent: RewardOrderActionIntent::CancelOrder,
+                                reason: reason.as_str(),
+                                metadata: json!({ "source": "orderbook_event_cancel" }),
+                            },
+                        )
+                    })
+            })
+            .collect::<Vec<_>>();
+        record_planned_reward_actions(state, &actions, trace_id, "event_cancel").await?;
+
+        for (order_id, reason) in cancel_candidates {
+            let Some(index) = open_orders.iter().position(|order| order.id == order_id) else {
+                continue;
+            };
+            let order = open_orders[index].clone();
+            match cancel_one_live_reward_order(connector, order, &reason, trace_id).await? {
+                LiveRewardOrderUpdate::Changed(updated, event) => {
+                    open_orders[index] = updated.clone();
+                    if !live_cancel_result_is_unknown(&updated) {
+                        report.cancelled_orders += 1;
+                        report.risk_cancelled_orders += 1;
+                    }
+                    persist_live_reward_updates(
+                        state,
+                        &mut account,
+                        Vec::new(),
+                        vec![updated],
+                        Vec::new(),
+                        vec![event],
+                        &report,
+                        trace_id,
+                    )
+                    .await?;
                 }
-                persist_live_reward_updates(
-                    state,
-                    &mut account,
-                    Vec::new(),
-                    vec![updated],
-                    Vec::new(),
-                    vec![event],
-                    &report,
-                    trace_id,
-                )
-                .await?;
-            }
-            LiveRewardOrderUpdate::Unchanged(event) | LiveRewardOrderUpdate::Retryable(event) => {
-                persist_live_reward_updates(
-                    state,
-                    &mut account,
-                    Vec::new(),
-                    Vec::new(),
-                    Vec::new(),
-                    vec![event],
-                    &report,
-                    trace_id,
-                )
-                .await?;
-            }
-            LiveRewardOrderUpdate::CancelReplace(_) => {
-                unreachable!("cancel_one_live_reward_order never returns CancelReplace")
+                LiveRewardOrderUpdate::Unchanged(event)
+                | LiveRewardOrderUpdate::Retryable(event) => {
+                    persist_live_reward_updates(
+                        state,
+                        &mut account,
+                        Vec::new(),
+                        Vec::new(),
+                        Vec::new(),
+                        vec![event],
+                        &report,
+                        trace_id,
+                    )
+                    .await?;
+                }
+                LiveRewardOrderUpdate::CancelReplace(_) => {
+                    unreachable!("cancel_one_live_reward_order never returns CancelReplace")
+                }
             }
         }
+        Ok(())
     }
+    .await;
+
+    finish_reward_action_strategy_run(state, run_id, trace_id, &report, action_result).await?;
 
     if report.risk_cancelled_orders > 0 {
         debug!(
             trace_id = %trace_id,
+            run_id,
             tokens = token_ids.len(),
             risk_cancelled = report.risk_cancelled_orders,
             "event-driven reward cancel fast path completed"

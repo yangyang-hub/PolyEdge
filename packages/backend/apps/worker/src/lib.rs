@@ -8,19 +8,22 @@ use polyedge_application::{
     NewsRawEventListFilters, NewsRawEventView, NewsSourceFailureUpdate,
     NewsSourceHealthListFilters, NewsSourceHealthView, OrderListFilters, PageQuery,
     PostFillStrategy, REWARD_AI_CANDLE_SOURCE_INTERVAL_SEC,
-    REWARD_AI_CANDLE_SOURCE_LIMIT_PER_TOKEN, REWARD_LIVE_ORDERBOOK_VALIDATION_SKIP_TTL,
-    ReconcileExecutionListFilters, ReconcileExternalTradeCommand, RewardAccountState,
-    RewardActionPlanner, RewardActionPlannerContext, RewardAiAdvisoryRequest, RewardBookLevel,
-    RewardBotConfig, RewardBotRunReport, RewardCandidateMarket, RewardControlAction,
-    RewardControlCommand, RewardDecisionEngine, RewardEventWindowStatus, RewardExitStrategySource,
+    REWARD_AI_CANDLE_SOURCE_LIMIT_PER_TOKEN, REWARD_DECISION_REPLAY_SCHEMA_VERSION,
+    REWARD_LIVE_ORDERBOOK_VALIDATION_SKIP_TTL, ReconcileExecutionListFilters,
+    ReconcileExternalTradeCommand, RewardAccountState, RewardActionPlanner,
+    RewardActionPlannerContext, RewardAiAdvisoryRequest, RewardBookLevel, RewardBotConfig,
+    RewardBotRunReport, RewardCandidateMarket, RewardControlAction, RewardControlCommand,
+    RewardDecisionEngine, RewardDecisionReplayFixture, RewardDurableActionRecovery,
+    RewardDurableActionRequest, RewardEventWindowStatus, RewardExitStrategySource,
     RewardFairValueEstimate, RewardFill, RewardFillRole, RewardInfoRiskAssessmentRequest,
     RewardLiveCycle, RewardLiveEngineInput, RewardLiveQuoteMaterialization, RewardLlmCallRecord,
     RewardMarket, RewardMarketAdvisory, RewardMarketInfoRisk, RewardMergeActionProposal,
     RewardMergeIntent, RewardMergeIntentStatus, RewardOrderActionIntent, RewardOrderActionProposal,
     RewardOrderBook, RewardOrderSide, RewardPlanQuoteMode, RewardPosition,
     RewardProviderPreLlmCandidateKind, RewardQuoteLeg, RewardQuotePlan, RewardQuoteReadiness,
-    RewardRiskEvent, RewardRiskSeverity, RewardStrategyAction, RewardStrategyActionStatus,
-    RewardStrategyActionType, RewardStrategyBucket, RewardStrategyInput, RewardStrategyProfile,
+    RewardReplayFinalState, RewardReplayProviderSnapshot, RewardRiskEvent, RewardRiskSeverity,
+    RewardStrategyAction, RewardStrategyActionStatus, RewardStrategyActionType,
+    RewardStrategyBucket, RewardStrategyInput, RewardStrategyProfile, RewardStrategyReplayFixture,
     RewardStrategyRunStart, RewardStrategyRunTrigger, RewardTickOutcome, RewardToken,
     SyncExternalOrderStatusCommand, apply_reward_ai_advisories,
     apply_reward_fair_value_to_quote_plan, apply_reward_info_risks,
@@ -46,8 +49,8 @@ use polyedge_connectors::{
     PolymarketDataApiConnector, PolymarketGammaConnector, PolymarketGammaMarket,
     PolymarketMarketRefs, PolymarketMergePositionsRequest, PolymarketOpenOrder,
     PolymarketOrderRejection, PolymarketRewardMarket, PolymarketRewardsConnector,
-    PolymarketSignatureScheme, PolymarketTokenOrderSide, PolymarketWalletActivity,
-    PolymarketWalletPosition, RssNewsConnector, RssNewsSourceConfig,
+    PolymarketSignatureScheme, PolymarketTokenOrderSide, PolymarketTransactionReceiptStatus,
+    PolymarketWalletActivity, PolymarketWalletPosition, RssNewsConnector, RssNewsSourceConfig,
     normalize_polymarket_ws_order_message, normalize_polymarket_ws_trade_message,
 };
 use polyedge_domain::{
@@ -149,6 +152,15 @@ struct RewardInfoRiskScanReport {
     failures: usize,
     skipped_missing_market: usize,
     applied_plans: usize,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+struct RewardActionExecutorReport {
+    claimed: usize,
+    finalized: usize,
+    reconciliation_required: usize,
+    replanned: usize,
+    lost_leases: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -278,6 +290,19 @@ pub async fn run_cli() -> Result<()> {
                 placed_orders = report.placed_orders,
                 cancelled_orders = report.cancelled_orders,
                 "reward bot polling stopped",
+            );
+            Ok(())
+        }
+        Some("poll-reward-action-executor") => {
+            let max_cycles = parse_limit_arg(args.next())?.map(usize::from);
+            let report = poll_reward_action_executor(&state, max_cycles).await?;
+            info!(
+                claimed = report.claimed,
+                finalized = report.finalized,
+                reconciliation_required = report.reconciliation_required,
+                replanned = report.replanned,
+                lost_leases = report.lost_leases,
+                "reward durable action executor polling stopped",
             );
             Ok(())
         }
@@ -413,6 +438,7 @@ include!("worker/execution_queue.rs");
 include!("worker/news.rs");
 include!("worker/market_sync.rs");
 include!("worker/rewards.rs");
+include!("worker/reward_action_executor.rs");
 include!("worker/news_helpers.rs");
 include!("worker/execution_reconcile.rs");
 include!("worker/polymarket_events.rs");

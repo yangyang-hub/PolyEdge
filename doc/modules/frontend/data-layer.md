@@ -51,7 +51,7 @@
 | `markets.ts` | `listMarkets`、`listMarketCategories` | GET |
 | `events.ts` | `listEvents`、`listEvidences` | GET |
 | `news.ts` | 新闻源健康和 raw news 查询 | GET |
-| `rewards.ts` | `readRewardBotSnapshot`、`updateRewardBotConfig`、`runRewardBotOnce`、`cancelRewardBotOrders`、`resetRewardBot`、strategy run ledger 查询函数 | GET + POST |
+| `rewards.ts` | `readRewardBotSnapshot`、配置/控制 mutation、strategy run ledger 单页与全量分页查询函数 | GET + POST |
 | `funding.ts` | `readFundingStatus`、`submitFundingTransfer` | GET + POST |
 | `settings.ts` | `readRuntimeConfig`、`updateRuntimeConfig` | GET + POST |
 
@@ -89,7 +89,7 @@ Client interaction
 - Snapshot DTO 包含 blocker 的 provider/market-budget/inventory-headroom 分类、`reward_adjusted_edge_cents`、V2 provider action、orders page、LLM usage、token quotes、run ledger 与 BalancedMerge 字段。
 - `RewardBotConfigDto` 镜像 `maker_market_budget_usd`、首选/最深 rank、库存偏斜、AI/info-risk 动作阈值、非对称 requote、受控退出损失 floor 和 adaptive/BalancedMerge 字段；旧 `per_market_usd`、`quote_size_usd`、`cancel_on_fill` 与 strategy-hint 字段已删除。
 - `ManagedRewardOrderDto` 暴露退出策略来源、当前具体退出策略、风险 floor、adaptive 重选次数和最近重选时间，用于订单表展示持仓期退出重评状态。
-- `RewardStrategyRunDto`、`RewardStrategyDecisionDto`、`RewardStrategyActionDto` 和 `RewardOrderTransitionDto` 镜像后端 strategy ledger；`src/lib/api/rewards.ts` 提供 runs、decisions、actions 和 order transitions 的只读 GET 函数。
+- `RewardStrategyRunDto`、`RewardStrategyDecisionDto`、`RewardStrategyActionDto` 和 `RewardOrderTransitionDto` 镜像后端 strategy ledger；`src/lib/api/rewards.ts` 提供 runs、decisions、actions 和 order transitions 的只读 GET，并为 Decision Analytics 以 500/page 并行补齐 decisions/actions 剩余分页。
 - API key、provider base URL、模型名和请求超时不进入前端 DTO，只从 worker 环境变量读取。
 - 竞争相关展示只来自 `opportunity_metrics`；前端 DTO 不再包含独立竞争配置、报告或指标对象。
 - Rewards 已移除依赖已删除研究表的诊断字段；quote plan 不再携带对应 EV 诊断对象。

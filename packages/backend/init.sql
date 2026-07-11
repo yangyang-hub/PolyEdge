@@ -1562,6 +1562,17 @@ CREATE INDEX reward_strategy_runs_status_started_idx
     ON reward_strategy_runs (status, started_at DESC, run_id DESC);
 
 
+CREATE TABLE reward_strategy_replay_fixtures (
+    run_id BIGINT PRIMARY KEY REFERENCES reward_strategy_runs(run_id) ON DELETE CASCADE,
+    schema_version INTEGER NOT NULL CHECK (schema_version > 0),
+    fixture_json JSONB NOT NULL CHECK (jsonb_typeof(fixture_json) = 'object'),
+    json_bytes INTEGER NOT NULL CHECK (json_bytes > 0 AND json_bytes <= 8388608),
+    sha256 TEXT NOT NULL CHECK (sha256 ~ '^[0-9a-f]{64}$'),
+    captured_at TIMESTAMPTZ NOT NULL,
+    CHECK (octet_length(fixture_json::text) <= 12582912)
+);
+
+
 ALTER TABLE reward_quote_plans
     ADD COLUMN latest_run_id BIGINT REFERENCES reward_strategy_runs(run_id) ON DELETE SET NULL,
     ADD COLUMN quote_readiness TEXT NOT NULL DEFAULT 'blocked'
@@ -1659,6 +1670,9 @@ CREATE TABLE reward_strategy_actions (
         CHECK (jsonb_typeof(request_json) = 'object'),
     result_json JSONB NOT NULL DEFAULT '{}'::jsonb
         CHECK (jsonb_typeof(result_json) = 'object'),
+    lease_owner TEXT,
+    lease_expires_at TIMESTAMPTZ,
+    execution_attempts INTEGER NOT NULL DEFAULT 0 CHECK (execution_attempts >= 0),
     created_at TIMESTAMPTZ NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL,
     CHECK (updated_at >= created_at)
@@ -1669,6 +1683,10 @@ CREATE INDEX reward_strategy_actions_run_created_idx
 
 CREATE INDEX reward_strategy_actions_account_created_idx
     ON reward_strategy_actions (account_id, created_at DESC);
+
+CREATE INDEX reward_strategy_actions_claim_idx
+    ON reward_strategy_actions (account_id, status, lease_expires_at, created_at, action_id)
+    WHERE status IN ('planned', 'executing');
 
 CREATE INDEX reward_strategy_actions_order_idx
     ON reward_strategy_actions (managed_order_id, created_at DESC)

@@ -88,6 +88,7 @@ Rewards provider 密钥只从 `RewardsSettings` 读取，不进入 `RewardBotCon
 - `runtime_config` 启动时用环境变量值 bootstrap 数据库；环境变量始终优先。
 - Postgres maintenance 使用 `WITH doomed AS (SELECT ctid ... LIMIT $n) DELETE ... USING doomed` 分批删除，避免超大事务；strategy run ledger 按 run/transition 分开保留，删除旧 completed/failed/cancelled run 时由 FK 级联清理 decisions/actions。
 - Rewards 配置以 key-value 保存，覆盖 `maker_market_budget_usd`、市场质量、动态 quote rank、机会评分、fair-value、adaptive 退出、AI/info-risk 动作阈值、事件窗口、库存偏斜、非对称 requote 和 BalancedMerge。旧 `per_market_usd`、`quote_size_usd`、`cancel_on_fill` key 不再解析或写入。
+- Postgres `reward_bot_config` 为空时从 `production_live_drill_defaults()` 装配缺省值；已有 key 逐项覆盖该 profile。首次通过 API 保存配置后仍写入完整 key-value snapshot。In-memory store 保留通用 `Default`，用于测试和无数据库开发。
 - `RewardBotStore` 维护 `reward_control_commands`，API 入队 pending 命令，worker 使用 claim/complete/fail 处理；running 命令超过 5 分钟可重新领取。
 - `RewardBotStore` 维护 `reward_worker_heartbeats`，API snapshot 只在配置启用且最近 2 分钟有 heartbeat 时标记 worker running。
 - `reward_market_advisories` 只持久化 V2 action、size multiplier、edge buffer、confidence、reasons/metrics；`reward_market_info_risks` 额外持久化 evidence action 与 taxonomy。旧 AI suitability/quote mode/exit policy 列已从 clean baseline 删除。Provider 调用继续写 `llm_calls` 并按 UTC 日聚合。
@@ -95,6 +96,9 @@ Rewards provider 密钥只从 `RewardsSettings` 读取，不进入 `RewardBotCon
 - Postgres rewards 候选预排序与 application 基础质量分使用同一 V2 方向：LP 日奖励与 rewards spread 合计最多 10 分，流动性、成交量、剩余时长、实时 spread 和中点质量占主导；最终资金排序仍由 application `selection_score` 完成。
 - `reward_quote_plans` 额外持久化 `latest_run_id`、`quote_readiness`、`quote_mode`、`reason_code`、`blocker_codes` 和 provider/fair-value/event 摘要列，JSON 仍保存完整计划快照。
 - `RewardBotStore` 维护 `reward_strategy_runs`、`reward_strategy_decisions`、`reward_strategy_actions` 和 `reward_order_transitions`。Postgres 与 in-memory 实现都支持创建/完成/失败 run、批量 upsert 决策和动作、记录订单状态变迁，以及按 run/order 分页查询。
+- Strategy action 支持 account-scoped 原子 claim、owner-only lease renew 和 owner-fenced terminal finalize；Postgres 使用 `FOR UPDATE SKIP LOCKED`，仅恢复 planned 或租约明确过期的 executing。`unknown` 与没有租约的历史 executing 不参与自动领取，失去 lease 的 executor 不能覆盖 terminal 结果。
+- `reward_strategy_replay_fixtures` 按 run 一对一保存受 8 MiB 上限和敏感字段检查保护的完整 replay fixture，记录 schema version、SHA-256、JSON 字节数和 captured time；run 删除时级联清理。
+- Merge intent store 支持 `create_merge_intent_if_absent` 和按 id 读取；Postgres 使用 `ON CONFLICT (id) DO NOTHING`，允许 executor 在 lease 恢复后安全重试 create 动作。已提交链上 merge 只能用匹配的 `(intent_id, tx_hash)` receipt 更新为 completed/failed，防止陈旧 receipt 串写其他交易。
 - `reward_fair_values` 保存每个 condition 最新 fair-value 估计；`reward_fair_value_history` 追加保存历史估计用于审计/回测，数据库维护默认保留 90 天。
 - `reward_positions` 可保存当前 rewards catalog 外的外部库存；外部账户持仓同步成功时会原子替换目标账户全部持仓，失败时保留上一版。
 - `reward_merge_intents` 支持 BalancedMerge 配对库存合并、提交 tx hash、失败原因和 retry count。

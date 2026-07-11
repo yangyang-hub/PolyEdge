@@ -150,6 +150,14 @@ impl RewardStrategyActionStatus {
             Self::Unknown => "unknown",
         }
     }
+
+    #[must_use]
+    pub const fn is_terminal(self) -> bool {
+        matches!(
+            self,
+            Self::Succeeded | Self::Failed | Self::Skipped | Self::Unknown
+        )
+    }
 }
 
 impl FromStr for RewardStrategyActionStatus {
@@ -261,6 +269,13 @@ pub struct RewardStrategyAction {
     pub idempotency_key: String,
     pub request_json: Value,
     pub result_json: Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lease_owner: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(with = "time::serde::rfc3339::option")]
+    pub lease_expires_at: Option<OffsetDateTime>,
+    #[serde(default)]
+    pub execution_attempts: i32,
     #[serde(with = "time::serde::rfc3339")]
     pub created_at: OffsetDateTime,
     #[serde(with = "time::serde::rfc3339")]
@@ -607,6 +622,9 @@ fn reward_strategy_action_from_order(
             "filled_size": order.filled_size,
             "reward_earned": order.reward_earned,
         }),
+        lease_owner: None,
+        lease_expires_at: None,
+        execution_attempts: 0,
         created_at: now,
         updated_at: now,
     }
@@ -638,6 +656,9 @@ fn reward_strategy_action_from_fill(
             "notional_usd": fill.notional_usd,
             "realized_pnl": fill.realized_pnl,
         }),
+        lease_owner: None,
+        lease_expires_at: None,
+        execution_attempts: 0,
         created_at: now,
         updated_at: now,
     }
@@ -662,9 +683,10 @@ fn reward_strategy_action_from_merge_intent(
         RewardMergeIntentStatus::Submitted | RewardMergeIntentStatus::Completed => {
             RewardStrategyActionStatus::Succeeded
         }
-        RewardMergeIntentStatus::Pending | RewardMergeIntentStatus::Unsupported => {
-            RewardStrategyActionStatus::Planned
-        }
+        // A pending row means the create-intent side effect completed. Execute
+        // merge is represented by its own `:execute` action.
+        RewardMergeIntentStatus::Pending => RewardStrategyActionStatus::Succeeded,
+        RewardMergeIntentStatus::Unsupported => RewardStrategyActionStatus::Skipped,
     };
     RewardStrategyAction {
         action_id: 0,
@@ -686,6 +708,9 @@ fn reward_strategy_action_from_merge_intent(
             "tx_hash": intent.tx_hash,
             "merge_size": intent.merge_size,
         }),
+        lease_owner: None,
+        lease_expires_at: None,
+        execution_attempts: 0,
         created_at: now,
         updated_at: now,
     }
@@ -722,7 +747,10 @@ fn reward_strategy_action_status_for_order(order: &ManagedRewardOrder) -> Reward
     } else if reason.contains("unknown") || reason.contains("manual reconciliation required") {
         RewardStrategyActionStatus::Unknown
     } else if matches!(order.status, ManagedRewardOrderStatus::Planned | ManagedRewardOrderStatus::ExitPending) {
-        RewardStrategyActionStatus::Planned
+        // The durable local order intent has been persisted and external
+        // submission is in progress. Keep the action in executing until the
+        // submit/last-look outcome supplies a terminal state.
+        RewardStrategyActionStatus::Executing
     } else {
         RewardStrategyActionStatus::Succeeded
     }

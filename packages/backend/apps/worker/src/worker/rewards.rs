@@ -173,7 +173,8 @@ async fn execute_pending_balanced_merge_intents(
     if !config.balanced_merge_enabled || !config.balanced_merge_auto_execute_enabled {
         return Ok(0);
     }
-    let private_key = normalize_optional_config_string(state.settings.polymarket.private_key.as_deref());
+    let private_key =
+        normalize_optional_config_string(state.settings.polymarket.private_key.as_deref());
     let Some(private_key) = private_key else {
         warn!(
             trace_id = %trace_id,
@@ -227,8 +228,12 @@ async fn execute_pending_balanced_merge_intents(
                     metadata: json!({ "source": "balanced_merge_auto_execute" }),
                 },
             );
-            record_planned_reward_actions(state, &[planned_action], trace_id, "merge_execute")
-                .await?;
+            record_planned_reward_merge_execution_action(
+                state,
+                &planned_action,
+                trace_id,
+            )
+            .await?;
         }
 
         match chain
@@ -254,15 +259,14 @@ async fn execute_pending_balanced_merge_intents(
                 executed_intent.tx_hash = Some(receipt.tx_hash.clone());
                 state
                     .reward_bot_service
-                    .mark_reward_merge_intent_submitted(
-                        &intent.id,
-                        &receipt.tx_hash,
-                        now,
-                        &reason,
-                    )
+                    .mark_reward_merge_intent_submitted(&intent.id, &receipt.tx_hash, now, &reason)
                     .await?;
                 if let Some(run_id) = run_id {
-                    let action_context = RewardActionPlannerContext { run_id, trace_id, now };
+                    let action_context = RewardActionPlannerContext {
+                        run_id,
+                        trace_id,
+                        now,
+                    };
                     state
                         .reward_bot_service
                         .record_strategy_actions(&[
@@ -319,7 +323,11 @@ async fn execute_pending_balanced_merge_intents(
                     .mark_reward_merge_intent_failed(&intent.id, &reason, now)
                     .await?;
                 if let Some(run_id) = run_id {
-                    let action_context = RewardActionPlannerContext { run_id, trace_id, now };
+                    let action_context = RewardActionPlannerContext {
+                        run_id,
+                        trace_id,
+                        now,
+                    };
                     state
                         .reward_bot_service
                         .record_strategy_actions(&[
@@ -376,7 +384,10 @@ fn balanced_merge_intent_preflight_error(
             && order.side == RewardOrderSide::Sell
             && (order.token_id == intent.yes_token_id || order.token_id == intent.no_token_id)
     }) {
-        return Some("balanced merge skipped because a SELL order is open for one of the paired tokens".to_string());
+        return Some(
+            "balanced merge skipped because a SELL order is open for one of the paired tokens"
+                .to_string(),
+        );
     }
     let yes_size = positions
         .iter()
@@ -662,6 +673,117 @@ async fn start_reward_strategy_run_for_cycle(
         .await
 }
 
+async fn start_reward_action_strategy_run(
+    state: &AppState,
+    cycle: &RewardLiveCycle,
+    books: &HashMap<String, RewardOrderBook>,
+    trace_id: &str,
+    trigger_type: RewardStrategyRunTrigger,
+    source: &str,
+    action_summary: Value,
+) -> Result<i64> {
+    let now = OffsetDateTime::now_utc();
+    let config_json = serde_json::to_value(&cycle.config).map_err(|error| {
+        AppError::internal(
+            "REWARD_STRATEGY_RUN_CONFIG_SERIALIZE_FAILED",
+            format!("failed to serialize reward strategy config for action run: {error}"),
+        )
+    })?;
+    let run_id = state
+        .reward_bot_service
+        .start_strategy_run(&RewardStrategyRunStart {
+            account_id: cycle.config.account_id.clone(),
+            trace_id: trace_id.to_string(),
+            trigger_type,
+            config_hash: reward_config_hash(&cycle.config),
+            config_json,
+            input_summary: json!({
+                "mode": "action_only",
+                "source": source,
+                "plans": cycle.plans.len(),
+                "open_orders": cycle.open_orders.len(),
+                "positions": cycle.positions.len(),
+                "books_fetched": books.len(),
+                "actions": action_summary,
+            }),
+            started_at: now,
+        })
+        .await?;
+    let decisions = reward_strategy_decisions_from_plans(run_id, &cycle.plans, now);
+    if let Err(error) = state
+        .reward_bot_service
+        .record_strategy_decisions(&decisions)
+        .await
+    {
+        let error_message = error.to_string();
+        if let Err(fail_error) = state
+            .reward_bot_service
+            .fail_strategy_run(
+                run_id,
+                error.code(),
+                &error_message,
+                json!({ "failed_before_side_effect": true }),
+                OffsetDateTime::now_utc(),
+            )
+            .await
+        {
+            warn!(
+                trace_id = %trace_id,
+                run_id,
+                error = %fail_error,
+                "failed to close reward action run after decision persistence failed"
+            );
+        }
+        return Err(error);
+    }
+    Ok(run_id)
+}
+
+async fn finish_reward_action_strategy_run<T>(
+    state: &AppState,
+    run_id: i64,
+    trace_id: &str,
+    report: &RewardBotRunReport,
+    result: Result<T>,
+) -> Result<T> {
+    let completed_at = OffsetDateTime::now_utc();
+    match result {
+        Ok(value) => {
+            state
+                .reward_bot_service
+                .complete_strategy_run(
+                    run_id,
+                    reward_strategy_run_metrics_from_report(report),
+                    completed_at,
+                )
+                .await?;
+            Ok(value)
+        }
+        Err(error) => {
+            let error_message = error.to_string();
+            if let Err(fail_error) = state
+                .reward_bot_service
+                .fail_strategy_run(
+                    run_id,
+                    error.code(),
+                    &error_message,
+                    reward_strategy_run_metrics_from_report(report),
+                    completed_at,
+                )
+                .await
+            {
+                warn!(
+                    trace_id = %trace_id,
+                    run_id,
+                    error = %fail_error,
+                    "failed to mark reward action run as failed"
+                );
+            }
+            Err(error)
+        }
+    }
+}
+
 async fn save_reward_quote_plans_for_run(
     state: &AppState,
     run_id: i64,
@@ -670,13 +792,88 @@ async fn save_reward_quote_plans_for_run(
     for plan in plans.iter_mut() {
         plan.latest_run_id = Some(run_id);
     }
-    let decisions =
-        reward_strategy_decisions_from_plans(run_id, plans, OffsetDateTime::now_utc());
+    let decisions = reward_strategy_decisions_from_plans(run_id, plans, OffsetDateTime::now_utc());
     state.reward_bot_service.save_quote_plans(plans).await?;
     state
         .reward_bot_service
         .record_strategy_decisions(&decisions)
         .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn persist_reward_replay_fixture(
+    state: &AppState,
+    run_id: i64,
+    input: RewardStrategyInput,
+    cycle: &RewardLiveCycle,
+    books: &HashMap<String, RewardOrderBook>,
+    book_history: &HashMap<String, VecDeque<BookSnapshot>>,
+    trace_id: &str,
+) {
+    let providers = RewardReplayProviderSnapshot {
+        advisories: cycle
+            .plans
+            .iter()
+            .filter_map(|plan| {
+                plan.ai_advisory
+                    .clone()
+                    .map(|advisory| (plan.condition_id.clone(), advisory))
+            })
+            .collect(),
+        info_risks: cycle
+            .plans
+            .iter()
+            .filter_map(|plan| {
+                plan.info_risk
+                    .clone()
+                    .map(|risk| (plan.condition_id.clone(), risk))
+            })
+            .collect(),
+    };
+    let final_state = RewardReplayFinalState {
+        account: Some(cycle.account.clone()),
+        open_orders: Some(cycle.open_orders.clone()),
+        positions: Some(cycle.positions.clone()),
+        books: Some(books.clone()),
+        book_history: Some(
+            book_history
+                .iter()
+                .map(|(token_id, snapshots)| {
+                    (token_id.clone(), snapshots.iter().cloned().collect())
+                })
+                .collect(),
+        ),
+    };
+    let fixture = RewardDecisionReplayFixture {
+        schema_version: REWARD_DECISION_REPLAY_SCHEMA_VERSION,
+        input,
+        providers,
+        final_state: Some(final_state),
+        expected_plans: Some(cycle.plans.clone()),
+    };
+    let captured_at = OffsetDateTime::now_utc();
+    match RewardStrategyReplayFixture::capture(run_id, fixture, captured_at) {
+        Ok(record) => {
+            if let Err(error) = state
+                .reward_bot_service
+                .save_strategy_replay_fixture(&record)
+                .await
+            {
+                warn!(
+                    trace_id = %trace_id,
+                    run_id,
+                    error = %error,
+                    "failed to persist rewards replay fixture"
+                );
+            }
+        }
+        Err(error) => warn!(
+            trace_id = %trace_id,
+            run_id,
+            error = %error,
+            "skipped unsafe or oversized rewards replay fixture"
+        ),
+    }
 }
 
 async fn record_planned_reward_actions(
@@ -692,19 +889,62 @@ async fn record_planned_reward_actions(
         .reward_bot_service
         .record_strategy_actions(actions)
         .await?;
+    let executing_actions =
+        RewardActionPlanner::mark_actions_executing(actions, OffsetDateTime::now_utc());
+    state
+        .reward_bot_service
+        .record_strategy_actions(&executing_actions)
+        .await?;
     debug!(
         trace_id = %trace_id,
         phase,
         actions = actions.len(),
-        "recorded planned reward strategy actions before live side effects"
+        "recorded planned and executing reward strategy action states before live side effects"
     );
     Ok(())
 }
 
-fn reward_strategy_run_input_summary(
-    input: &RewardStrategyInput,
-    books_fetched: usize,
-) -> Value {
+async fn record_planned_reward_merge_execution_action(
+    state: &AppState,
+    action: &RewardStrategyAction,
+    trace_id: &str,
+) -> Result<()> {
+    state
+        .reward_bot_service
+        .record_strategy_actions(std::slice::from_ref(action))
+        .await?;
+    let now = OffsetDateTime::now_utc();
+    let mut executing = RewardActionPlanner::transition_action(
+        action,
+        RewardStrategyActionStatus::Executing,
+        now,
+        action.reason.as_str(),
+        json!({
+            "status": "executing",
+            "dispatcher": "synchronous_tick",
+            "automatic_rebroadcast": false,
+        }),
+    );
+    // The synchronous tick still owns first broadcast. A short durable lease
+    // only makes an interrupted row claimable after the account advisory lock
+    // is released. Recovery then reads the merge intent's persisted tx hash
+    // and queries its receipt; it never rebroadcasts an unhashed transaction.
+    executing.lease_owner = Some(format!("reward-live-merge:{trace_id}"));
+    executing.lease_expires_at = Some(now + TimeDuration::seconds(30));
+    executing.execution_attempts = 1;
+    state
+        .reward_bot_service
+        .record_strategy_actions(&[executing])
+        .await?;
+    debug!(
+        trace_id = %trace_id,
+        action_idempotency_key = %action.idempotency_key,
+        "recorded recoverable synchronous merge execution lease"
+    );
+    Ok(())
+}
+
+fn reward_strategy_run_input_summary(input: &RewardStrategyInput, books_fetched: usize) -> Value {
     // Orderbook freshness extent across the books used this tick, as unix
     // seconds. Provider cache hit/miss/pending is intentionally omitted: the
     // snapshot is pre-application, so plan-level provider fields are not yet
@@ -771,13 +1011,21 @@ async fn run_reward_bot_live_tick(
         .collect();
     let input = state
         .reward_bot_service
-        .build_strategy_input(markets, books.clone(), book_history_snapshot, now, force_orders)
+        .build_strategy_input(
+            markets,
+            books.clone(),
+            book_history_snapshot,
+            now,
+            force_orders,
+        )
         .await?;
     let cycle = RewardLiveCycle::from_strategy_input(&input);
-    let run_id = start_reward_strategy_run_for_cycle(state, &input, trace_id, books_fetched).await?;
+    let run_id =
+        start_reward_strategy_run_for_cycle(state, &input, trace_id, books_fetched).await?;
     let result = run_reward_bot_live_tick_prepared(
         state,
         connector,
+        input,
         cycle,
         books,
         books_fetched,
@@ -829,6 +1077,7 @@ async fn run_reward_bot_live_tick(
 async fn run_reward_bot_live_tick_prepared(
     state: &AppState,
     connector: &LivePolymarketConnector,
+    replay_input: RewardStrategyInput,
     mut cycle: RewardLiveCycle,
     mut books: HashMap<String, RewardOrderBook>,
     books_fetched: usize,
@@ -837,12 +1086,13 @@ async fn run_reward_bot_live_tick_prepared(
     book_history: &mut HashMap<String, VecDeque<BookSnapshot>>,
     orderbook_cache: Option<&RewardOrderbookLocalCache>,
 ) -> Result<RewardBotRunReport> {
-    let pre_provider_decisions = RewardDecisionEngine::evaluate_pre_provider(RewardLiveEngineInput {
-        cycle,
-        books: &books,
-        book_history,
-        now: OffsetDateTime::now_utc(),
-    });
+    let pre_provider_decisions =
+        RewardDecisionEngine::evaluate_pre_provider(RewardLiveEngineInput {
+            cycle,
+            books: &books,
+            book_history,
+            now: OffsetDateTime::now_utc(),
+        });
     let funding_precheck_blocked = pre_provider_decisions.funding_precheck_blocked;
     cycle = pre_provider_decisions.cycle;
     record_reward_fair_value_estimates(
@@ -1027,6 +1277,16 @@ async fn run_reward_bot_live_tick_prepared(
     )
     .await;
     save_reward_quote_plans_for_run(state, run_id, &mut cycle.plans).await?;
+    persist_reward_replay_fixture(
+        state,
+        run_id,
+        replay_input,
+        &cycle,
+        &books,
+        book_history,
+        trace_id,
+    )
+    .await;
     register_reward_eligible_orderbook_tokens_from_plans(state, &cycle.plans, trace_id).await;
     if readiness_changed {
         debug!(
@@ -1058,24 +1318,27 @@ async fn run_reward_bot_live_tick_prepared(
         let actions = cancel_candidates
             .iter()
             .filter_map(|(order_id, reason)| {
-                open_orders.iter().find(|order| order.id == *order_id).map(|order| {
-                    let intent = if order.side == RewardOrderSide::Sell
-                        && order.reason.to_ascii_lowercase().contains("cancel-replace")
-                    {
-                        RewardOrderActionIntent::CancelReplaceExit
-                    } else {
-                        RewardOrderActionIntent::CancelOrder
-                    };
-                    RewardActionPlanner::plan_order_action(
-                        action_context,
-                        RewardOrderActionProposal {
-                            order,
-                            intent,
-                            reason: reason.as_str(),
-                            metadata: json!({ "source": "live_cancel_candidates" }),
-                        },
-                    )
-                })
+                open_orders
+                    .iter()
+                    .find(|order| order.id == *order_id)
+                    .map(|order| {
+                        let intent = if order.side == RewardOrderSide::Sell
+                            && order.reason.to_ascii_lowercase().contains("cancel-replace")
+                        {
+                            RewardOrderActionIntent::CancelReplaceExit
+                        } else {
+                            RewardOrderActionIntent::CancelOrder
+                        };
+                        RewardActionPlanner::plan_order_action(
+                            action_context,
+                            RewardOrderActionProposal {
+                                order,
+                                intent,
+                                reason: reason.as_str(),
+                                metadata: json!({ "source": "live_cancel_candidates" }),
+                            },
+                        )
+                    })
             })
             .collect::<Vec<_>>();
         record_planned_reward_actions(state, &actions, trace_id, "cancel").await?;
@@ -1139,8 +1402,8 @@ async fn run_reward_bot_live_tick_prepared(
     let cancel_replace_actions = adaptive_exit_updates
         .iter()
         .filter_map(|update| match update {
-            LiveRewardOrderUpdate::CancelReplace(intent) => Some(
-                RewardActionPlanner::plan_order_action(
+            LiveRewardOrderUpdate::CancelReplace(intent) => {
+                Some(RewardActionPlanner::plan_order_action(
                     RewardActionPlannerContext {
                         run_id,
                         trace_id,
@@ -1159,8 +1422,8 @@ async fn run_reward_bot_live_tick_prepared(
                             "decision": intent.decision_meta.clone(),
                         }),
                     },
-                ),
-            ),
+                ))
+            }
             LiveRewardOrderUpdate::Changed(..)
             | LiveRewardOrderUpdate::Unchanged(_)
             | LiveRewardOrderUpdate::Retryable(_) => None,

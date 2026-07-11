@@ -105,7 +105,10 @@ fn strategy_test_plan(condition_id: &str, now: OffsetDateTime) -> RewardQuotePla
     }
 }
 
-fn strategy_test_snapshot(now: OffsetDateTime, force_orders: bool) -> RewardStrategyInput {
+pub(super) fn strategy_test_snapshot(
+    now: OffsetDateTime,
+    force_orders: bool,
+) -> RewardStrategyInput {
     let market = strategy_test_market("cond_strategy", now);
     let plan = strategy_test_plan("cond_strategy", now);
     RewardStrategyInput {

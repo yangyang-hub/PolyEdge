@@ -3257,8 +3257,11 @@ dependencies = [
 name = "polyedge-replay"
 version = "0.1.0"
 dependencies = [
+ "polyedge-application",
  "polyedge-domain",
  "polyedge-infrastructure",
+ "serde",
+ "serde_json",
  "tokio",
  "tracing",
 ]

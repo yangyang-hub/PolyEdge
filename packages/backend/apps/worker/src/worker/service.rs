@@ -207,6 +207,35 @@ fn spawn_worker_tasks(state: &AppState, shutdown_rx: watch::Receiver<bool>) -> V
                         }
                     },
                 ));
+                let executor_state = state.clone();
+                let executor_shutdown_rx = shutdown_rx.clone();
+                handles.push(spawn_restarting_job(
+                    "poll-reward-action-executor",
+                    1,
+                    shutdown_rx.clone(),
+                    move || {
+                        let state = executor_state.clone();
+                        let shutdown_rx = executor_shutdown_rx.clone();
+                        async move {
+                            match poll_reward_action_executor_until_shutdown(&state, shutdown_rx)
+                                .await
+                            {
+                                Ok(report) => info!(
+                                    claimed = report.claimed,
+                                    finalized = report.finalized,
+                                    reconciliation_required = report.reconciliation_required,
+                                    replanned = report.replanned,
+                                    lost_leases = report.lost_leases,
+                                    "reward durable action executor stopped",
+                                ),
+                                Err(error) => warn!(
+                                    error = %error,
+                                    "reward durable action executor failed"
+                                ),
+                            }
+                        }
+                    },
+                ));
             } else {
                 warn_live_polymarket_config_incomplete("poll-reward-bot", live_polymarket_status);
             }

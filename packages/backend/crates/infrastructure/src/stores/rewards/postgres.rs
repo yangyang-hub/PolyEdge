@@ -30,7 +30,7 @@ impl RewardBotStore for PostgresRewardBotStore {
             )
         })?;
 
-        let mut config = RewardBotConfig::default();
+        let mut config = RewardBotConfig::production_live_drill_defaults();
         for row in rows {
             let key: String = row.try_get("key").map_err(postgres_decode_error)?;
             let value: String = row.try_get("value").map_err(postgres_decode_error)?;
@@ -255,6 +255,78 @@ impl RewardBotStore for PostgresRewardBotStore {
         postgres_record_reward_strategy_actions(&self.pool, actions).await
     }
 
+    async fn claim_strategy_actions(
+        &self,
+        account_id: &str,
+        lease_owner: &str,
+        now: OffsetDateTime,
+        lease_expires_at: OffsetDateTime,
+        limit: u16,
+    ) -> Result<Vec<RewardStrategyAction>> {
+        postgres_claim_reward_strategy_actions(
+            &self.pool,
+            account_id,
+            lease_owner,
+            now,
+            lease_expires_at,
+            limit,
+        )
+        .await
+    }
+
+    async fn renew_strategy_action_lease(
+        &self,
+        action_id: i64,
+        lease_owner: &str,
+        now: OffsetDateTime,
+        lease_expires_at: OffsetDateTime,
+    ) -> Result<bool> {
+        postgres_renew_reward_strategy_action_lease(
+            &self.pool,
+            action_id,
+            lease_owner,
+            now,
+            lease_expires_at,
+        )
+        .await
+    }
+
+    async fn finalize_strategy_action_lease(
+        &self,
+        action: &RewardStrategyAction,
+        lease_owner: &str,
+    ) -> Result<bool> {
+        postgres_finalize_reward_strategy_action_lease(&self.pool, action, lease_owner).await
+    }
+
+    async fn get_strategy_action(
+        &self,
+        action_id: i64,
+    ) -> Result<Option<RewardStrategyAction>> {
+        postgres_get_reward_strategy_action(&self.pool, action_id).await
+    }
+
+    async fn release_strategy_action_lease(
+        &self,
+        action_id: i64,
+        lease_owner: &str,
+        reason_code: &str,
+        reason: &str,
+        result: Value,
+        now: OffsetDateTime,
+    ) -> Result<bool> {
+        postgres_release_reward_strategy_action_lease(
+            &self.pool,
+            action_id,
+            lease_owner,
+            reason_code,
+            reason,
+            result,
+            now,
+        )
+        .await
+    }
+
     async fn record_order_transitions(
         &self,
         transitions: &[RewardOrderTransition],
@@ -271,6 +343,20 @@ impl RewardBotStore for PostgresRewardBotStore {
 
     async fn get_strategy_run(&self, run_id: i64) -> Result<Option<RewardStrategyRun>> {
         postgres_get_reward_strategy_run(&self.pool, run_id).await
+    }
+
+    async fn save_strategy_replay_fixture(
+        &self,
+        fixture: &RewardStrategyReplayFixture,
+    ) -> Result<()> {
+        postgres_save_reward_strategy_replay_fixture(&self.pool, fixture).await
+    }
+
+    async fn get_strategy_replay_fixture(
+        &self,
+        run_id: i64,
+    ) -> Result<Option<RewardStrategyReplayFixture>> {
+        postgres_get_reward_strategy_replay_fixture(&self.pool, run_id).await
     }
 
     async fn list_strategy_decisions(
@@ -1026,6 +1112,111 @@ impl RewardBotStore for PostgresRewardBotStore {
         Ok(size.unwrap_or(Decimal::ZERO))
     }
 
+    async fn create_merge_intent_if_absent(&self, intent: &RewardMergeIntent) -> Result<bool> {
+        let result = sqlx::query(
+            r#"
+            INSERT INTO reward_merge_intents (
+              id,
+              account_id,
+              condition_id,
+              yes_token_id,
+              no_token_id,
+              merge_size,
+              yes_position_size,
+              no_position_size,
+              yes_avg_price,
+              no_avg_price,
+              status,
+              reason,
+              source_fill_id,
+              tx_hash,
+              submitted_at,
+              confirmed_at,
+              failed_reason,
+              retry_count,
+              trace_id,
+              created_at,
+              updated_at
+            )
+            VALUES (
+              $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
+              $12, $13, $14, $15, $16, $17, $18, $19, $20, $21
+            )
+            ON CONFLICT (id) DO NOTHING
+            "#,
+        )
+        .bind(&intent.id)
+        .bind(&intent.account_id)
+        .bind(&intent.condition_id)
+        .bind(&intent.yes_token_id)
+        .bind(&intent.no_token_id)
+        .bind(intent.merge_size)
+        .bind(intent.yes_position_size)
+        .bind(intent.no_position_size)
+        .bind(intent.yes_avg_price)
+        .bind(intent.no_avg_price)
+        .bind(intent.status.as_str())
+        .bind(&intent.reason)
+        .bind(&intent.source_fill_id)
+        .bind(&intent.tx_hash)
+        .bind(intent.submitted_at)
+        .bind(intent.confirmed_at)
+        .bind(&intent.failed_reason)
+        .bind(intent.retry_count)
+        .bind(&intent.trace_id)
+        .bind(intent.created_at)
+        .bind(intent.updated_at)
+        .execute(&self.pool)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_INSERT_FAILED",
+                format!("failed to create reward merge intent: {error}"),
+            )
+        })?;
+        Ok(result.rows_affected() == 1)
+    }
+
+    async fn get_merge_intent(&self, intent_id: &str) -> Result<Option<RewardMergeIntent>> {
+        let row = sqlx::query(
+            r#"
+            SELECT id,
+              account_id,
+              condition_id,
+              yes_token_id,
+              no_token_id,
+              merge_size,
+              yes_position_size,
+              no_position_size,
+              yes_avg_price,
+              no_avg_price,
+              status,
+              reason,
+              source_fill_id,
+              tx_hash,
+              submitted_at,
+              confirmed_at,
+              failed_reason,
+              retry_count,
+              trace_id,
+              created_at,
+              updated_at
+            FROM reward_merge_intents
+            WHERE id = $1
+            "#,
+        )
+        .bind(intent_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_QUERY_FAILED",
+                format!("failed to query reward merge intent: {error}"),
+            )
+        })?;
+        row.as_ref().map(reward_merge_intent_from_row).transpose()
+    }
+
     async fn list_executable_merge_intents(
         &self,
         account_id: &str,
@@ -1144,6 +1335,44 @@ impl RewardBotStore for PostgresRewardBotStore {
             )
         })?;
         Ok(())
+    }
+
+    async fn resolve_merge_intent_transaction(
+        &self,
+        intent_id: &str,
+        tx_hash: &str,
+        succeeded: bool,
+        reason: &str,
+        resolved_at: OffsetDateTime,
+    ) -> Result<bool> {
+        let result = sqlx::query(
+            r#"
+            UPDATE reward_merge_intents
+            SET status = CASE WHEN $3 THEN 'completed' ELSE 'failed' END,
+                confirmed_at = CASE WHEN $3 THEN $5 ELSE confirmed_at END,
+                failed_reason = CASE WHEN $3 THEN NULL ELSE $4 END,
+                retry_count = CASE WHEN $3 THEN retry_count ELSE retry_count + 1 END,
+                reason = $4,
+                updated_at = $5
+            WHERE id = $1
+              AND tx_hash = $2
+              AND status = 'submitted'
+            "#,
+        )
+        .bind(intent_id)
+        .bind(tx_hash)
+        .bind(succeeded)
+        .bind(reason)
+        .bind(resolved_at)
+        .execute(&self.pool)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_UPDATE_FAILED",
+                format!("failed to resolve reward merge transaction: {error}"),
+            )
+        })?;
+        Ok(result.rows_affected() == 1)
     }
 
     async fn apply_tick_outcome(

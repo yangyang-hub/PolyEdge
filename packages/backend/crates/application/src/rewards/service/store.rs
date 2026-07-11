@@ -57,6 +57,37 @@ pub trait RewardBotStore: Send + Sync {
     async fn record_strategy_decisions(&self, decisions: &[RewardStrategyDecision])
     -> Result<()>;
     async fn record_strategy_actions(&self, actions: &[RewardStrategyAction]) -> Result<()>;
+    async fn claim_strategy_actions(
+        &self,
+        account_id: &str,
+        lease_owner: &str,
+        now: OffsetDateTime,
+        lease_expires_at: OffsetDateTime,
+        limit: u16,
+    ) -> Result<Vec<RewardStrategyAction>>;
+    async fn renew_strategy_action_lease(
+        &self,
+        action_id: i64,
+        lease_owner: &str,
+        now: OffsetDateTime,
+        lease_expires_at: OffsetDateTime,
+    ) -> Result<bool>;
+    async fn finalize_strategy_action_lease(
+        &self,
+        action: &RewardStrategyAction,
+        lease_owner: &str,
+    ) -> Result<bool>;
+    async fn get_strategy_action(&self, action_id: i64)
+    -> Result<Option<RewardStrategyAction>>;
+    async fn release_strategy_action_lease(
+        &self,
+        action_id: i64,
+        lease_owner: &str,
+        reason_code: &str,
+        reason: &str,
+        result: Value,
+        now: OffsetDateTime,
+    ) -> Result<bool>;
     async fn record_order_transitions(&self, transitions: &[RewardOrderTransition])
     -> Result<()>;
     async fn list_strategy_runs(
@@ -64,6 +95,14 @@ pub trait RewardBotStore: Send + Sync {
         query: &RewardStrategyRunListQuery,
     ) -> Result<RewardStrategyRunPage>;
     async fn get_strategy_run(&self, run_id: i64) -> Result<Option<RewardStrategyRun>>;
+    async fn save_strategy_replay_fixture(
+        &self,
+        fixture: &RewardStrategyReplayFixture,
+    ) -> Result<()>;
+    async fn get_strategy_replay_fixture(
+        &self,
+        run_id: i64,
+    ) -> Result<Option<RewardStrategyReplayFixture>>;
     async fn list_strategy_decisions(
         &self,
         run_id: i64,
@@ -172,6 +211,11 @@ pub trait RewardBotStore: Send + Sync {
         account_id: &str,
         condition_id: &str,
     ) -> Result<Decimal>;
+    /// Persist a newly discovered merge intent without overwriting an existing
+    /// row with the same durable identity. Returns `true` when inserted and
+    /// `false` when the intent was already present.
+    async fn create_merge_intent_if_absent(&self, intent: &RewardMergeIntent) -> Result<bool>;
+    async fn get_merge_intent(&self, intent_id: &str) -> Result<Option<RewardMergeIntent>>;
     /// Merge intents ready for chain execution. Includes legacy `unsupported`
     /// intents so enabling execution can drain already-discovered paired stock.
     async fn list_executable_merge_intents(
@@ -192,6 +236,17 @@ pub trait RewardBotStore: Send + Sync {
         failed_reason: &str,
         failed_at: OffsetDateTime,
     ) -> Result<()>;
+    /// Resolve a previously submitted merge transaction from an authoritative
+    /// on-chain receipt. Implementations must fence the update by both intent
+    /// id and transaction hash so a stale receipt cannot resolve another send.
+    async fn resolve_merge_intent_transaction(
+        &self,
+        intent_id: &str,
+        tx_hash: &str,
+        succeeded: bool,
+        reason: &str,
+        resolved_at: OffsetDateTime,
+    ) -> Result<bool>;
     /// Persist account, order, fill, position, and event changes atomically.
     ///
     /// Reward market catalogs and quote-plan snapshots have separate full-replacement

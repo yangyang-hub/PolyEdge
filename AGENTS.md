@@ -114,6 +114,7 @@ Polymarket market-channel WS uses a target chunk size plus a hard connection bud
 - Backend API routes cover markets, events, news, evidences, orders, trades, pricing, rewards bot, rewards strategy run ledger reads, funding, system, connector callback and orderbook reads.
 - Database schema is currently a single clean-deploy baseline: `packages/backend/init.sql` and `packages/backend/migrations/0001_initial_schema.sql`. Historical incremental migrations for removed modules are gone; new deployments initialize from the current schema baseline.
 - Runtime mode defaults to `live_auto`; old mock mode is removed.
+- A newly initialized Postgres deployment loads `RewardBotConfig::production_live_drill_defaults()`: trading remains disabled, with 2 markets / 6 open orders, $10 per-market budget, $10 per-position and $25 global exposure caps, 1-cent effective-edge minimum, stricter liquidity/stability/event windows, one competitive cancel per cycle, and enabled structural depth-shock guards. The generic in-memory/test `Default` remains a permissive calculation baseline.
 - `polyedge-orderbook` owns market sync, rewards catalog sync, price-history candle sync, orderbook WS/poll cache and registry.
 - Orderbook WS fan-out enforces a default maximum of 8 Polymarket market-channel connections even when an older runtime config still requests 100-token chunks; the effective chunk size and reconnect policy are logged at stream startup.
 - `polyedge-worker` supports database maintenance, news ingest/promotion, rewards live bot, rewards info-risk scan, execution drain, paper reconciliation, Polymarket order/fill/user-event workers, and orderbook token registration.
@@ -123,7 +124,7 @@ Polymarket market-channel WS uses a target chunk size plus a hard connection bud
 - Stop-new and cancel are distinct. An ineligible/stop-new plan does not automatically cancel a safe resting order. Emergency book/fair-value/event risks cancel immediately; adverse downward repricing uses a short confirmation and bypasses competitive throttles; competitive upward repricing uses confirmation, cooldown and per-tick limits. Fills never trigger blanket sibling cancellation; the complementary BUY remains subject to its own edge/inventory/risk checks.
 - Post-fill maker exits target cost basis/markup, while `maker_max_exit_loss_cents` defines a separate controlled flatten risk floor. Adaptive reselection and submitted-exit cancel-replace keep their existing durable reconciliation safeguards. BalancedMerge remains an independent fixed-rank profile.
 - Order lifecycle and BUY last-look resolve quote plans by `(condition_id, strategy_profile)`, while condition-scoped provider refresh evaluates every coexisting profile; standard and BalancedMerge plans cannot overwrite each other in live risk paths.
-- Full tick records a strategy run/decision/action/order transition ledger. Pre-provider, post-provider and final snapshot transforms remain centralized in `RewardDecisionEngine`; `RewardActionPlanner` writes planned actions before live side effects.
+- Full tick records a strategy run/decision/action/order transition ledger and automatically stores a bounded, sensitive-field-checked replay fixture. Pre-provider, post-provider and final snapshot transforms remain centralized in `RewardDecisionEngine`; `RewardActionPlanner` writes `planned -> executing` with the same idempotency key before live side effects, and a failed executing write prevents the side effect. Fast reconcile/orderbook-event paths lazily create action-only runs only when they perform an external action. A Postgres-only durable action executor starts with the rewards poll loop, shares its account advisory lock, renews account-scoped leases and uses owner-fenced terminal writes. It handles idempotent merge-intent creation, validated cancel/cancel-replace, first-attempt PlaceBuy, match-first exit SELL and read-only reconciliation of execute-merge actions that already have a persisted Polygon tx hash. BUY/SELL always query venue orders first; no-match BUY must pass a fresh full last-look, while no-match SELL rechecks current inventory, notional and maker/flatten book semantics. Ambiguous/failed lookup and unknown submission fail closed; recovered BUY execution is not replayed. Chain merge broadcasting remains in the fresh synchronous tick; the executor only queries receipts, fences intent resolution by intent id + tx hash, and never broadcasts/rebroadcasts a merge without a persisted hash.
 - Live orderbook validation failures are re-evaluated on every full rewards tick and persist for only 60 seconds for fast-path suppression/audit; they are never inherited into newly built plans, preventing stale 12-hour exclusions and cross-profile contamination between standard and BalancedMerge plans sharing a condition.
 - Rewards worker prioritizes active order/position tokens, caps each full-tick book fetch at `MAX_TOKENS`, and limits each orderbook HTTP refresh request to 500 tokens. The orderbook service serializes background poll and HTTP on-demand CLOB `/books` batches through one shared gate, rechecks staleness after waiting, and spaces 100-token upstream batches by 100ms.
 - LLM calls for rewards combined provider are recorded in `llm_calls(task_type=reward_provider)`. Provider cache hits do not count as external calls.
@@ -151,12 +152,17 @@ cargo run -p polyedge-worker -- poll-news
 cargo run -p polyedge-worker -- promote-news-events
 cargo run -p polyedge-worker -- scan-rewards-once
 cargo run -p polyedge-worker -- poll-reward-bot
+cargo run -p polyedge-worker -- poll-reward-action-executor
+cargo run -p polyedge-worker -- poll-reward-action-executor
 cargo run -p polyedge-worker -- scan-reward-info-risks-once
 cargo run -p polyedge-worker -- poll-reward-info-risks
 cargo run -p polyedge-worker -- drain-execution-queue
 cargo run -p polyedge-worker -- poll-polymarket-order-statuses
 cargo run -p polyedge-worker -- reconcile-polymarket-fills
 cargo run -p polyedge-worker -- consume-polymarket-user-events
+cargo run -p polyedge-replay -- --run-id <RUN_ID>
+cargo run -p polyedge-replay -- --fixture <FIXTURE.json>
+cargo run -p polyedge-replay -- --stored-run-id <RUN_ID>
 ```
 
 Frontend:

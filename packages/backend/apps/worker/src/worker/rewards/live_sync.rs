@@ -69,10 +69,9 @@ async fn sync_live_reward_orders(
                 )
                 .await
                 {
-                    Ok(Some(fallback)) => (
-                        fallback.outcome,
-                        fallback.external_snapshot_includes_fill,
-                    ),
+                    Ok(Some(fallback)) => {
+                        (fallback.outcome, fallback.external_snapshot_includes_fill)
+                    }
                     Ok(None) => (outcome, false),
                     Err(error) => {
                         warn!(
@@ -104,10 +103,9 @@ async fn sync_live_reward_orders(
                 )
                 .await
                 {
-                    Ok(Some(fallback)) => (
-                        fallback.outcome,
-                        fallback.external_snapshot_includes_fill,
-                    ),
+                    Ok(Some(fallback)) => {
+                        (fallback.outcome, fallback.external_snapshot_includes_fill)
+                    }
                     Ok(None) | Err(_) => {
                         let Some(missing_order) = working_orders.get(&order.id).cloned() else {
                             continue;
@@ -153,10 +151,9 @@ async fn sync_live_reward_orders(
                 )
                 .await
                 {
-                    Ok(Some(fallback)) => (
-                        fallback.outcome,
-                        fallback.external_snapshot_includes_fill,
-                    ),
+                    Ok(Some(fallback)) => {
+                        (fallback.outcome, fallback.external_snapshot_includes_fill)
+                    }
                     Ok(None) => {
                         reconciliation_reliable = false;
                         continue;
@@ -277,7 +274,6 @@ async fn sync_live_reward_orders(
                 trace_id,
             )
             .await?;
-
         }
 
         if let Some(status_update) = order_status {
@@ -384,10 +380,7 @@ async fn collect_data_api_reward_trade_fallback(
     let Some(external_order_id) = order.external_order_id.as_deref() else {
         return Ok(None);
     };
-    let matched_size = match connector
-        .matched_order_hint(external_order_id)
-        .await
-    {
+    let matched_size = match connector.matched_order_hint(external_order_id).await {
         Ok(Some(hint)) if hint.token_id == order.token_id && hint.price == order.price => {
             hint.size_matched
         }
@@ -429,13 +422,8 @@ async fn collect_data_api_reward_trade_fallback(
         .into_iter()
         .map(|activity| data_api_activity_to_fill_update(activity, order))
         .collect::<Result<Vec<_>>>()?;
-    let external_snapshot_includes_fill = external_snapshot_covers_buy_fill(
-        account,
-        positions,
-        order,
-        remaining,
-        latest_trade_at,
-    );
+    let external_snapshot_includes_fill =
+        external_snapshot_covers_buy_fill(account, positions, order, remaining, latest_trade_at);
     if allow_missing_order && !external_snapshot_includes_fill {
         return Ok(None);
     }
@@ -490,8 +478,7 @@ fn data_api_activity_to_fill_update(
     Ok(ConnectorTradeFillUpdate {
         event_id: format!(
             "evt_pm_data_trade:{}:{}",
-            external_order_id,
-            activity.transaction_hash
+            external_order_id, activity.transaction_hash
         ),
         connector_name: POLYMARKET_CONNECTOR_NAME.to_string(),
         external_order_id,
@@ -525,10 +512,19 @@ fn is_missing_external_order_reconciliation_error(error: &AppError) -> bool {
     )
 }
 
-fn should_try_data_api_fallback_for_clob_outcome(
-    outcome: &LivePolymarketTradeSyncOutcome,
-) -> bool {
+fn should_try_data_api_fallback_for_clob_outcome(outcome: &LivePolymarketTradeSyncOutcome) -> bool {
     outcome.order_not_found && outcome.updates.is_empty()
+}
+
+fn reward_fast_reconcile_has_pending_sell_submission(open_orders: &[ManagedRewardOrder]) -> bool {
+    open_orders.iter().any(|order| {
+        order.external_order_id.is_none()
+            && order.side == RewardOrderSide::Sell
+            && matches!(
+                order.status,
+                ManagedRewardOrderStatus::Planned | ManagedRewardOrderStatus::ExitPending
+            )
+    })
 }
 
 async fn run_reward_bot_live_reconcile_unlocked(
@@ -550,8 +546,7 @@ async fn run_reward_bot_live_reconcile_unlocked(
     let mut live_order_sync_reliable = true;
     if sync_policy.order_statuses && !cycle.open_orders.is_empty() {
         let sync_report =
-            sync_live_reward_orders(state, connector, &cycle.open_orders, &books, trace_id)
-                .await?;
+            sync_live_reward_orders(state, connector, &cycle.open_orders, &books, trace_id).await?;
         live_order_sync_reliable = sync_report.reconciliation_reliable;
         accumulate_report(&mut report, &sync_report.report);
         cycle = state.reward_bot_service.current_live_cycle_state().await?;
@@ -591,39 +586,6 @@ async fn run_reward_bot_live_reconcile_unlocked(
         trace_id,
     )
     .await?;
-    if !merge_intents.is_empty() || !merge_events.is_empty() {
-        persist_live_reward_updates_with_merge_intents(
-            state,
-            &mut account,
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-            merge_intents,
-            merge_events,
-            &report,
-            trace_id,
-        )
-        .await?;
-    }
-    let executed_merge_intents = execute_pending_balanced_merge_intents(
-        state,
-        &cycle.config,
-        &mut account,
-        &cycle.positions,
-        &open_orders,
-        &report,
-        None,
-        trace_id,
-    )
-    .await?;
-    if executed_merge_intents > 0 {
-        debug!(
-            trace_id = %trace_id,
-            executed_merge_intents,
-            "submitted balanced merge transactions during fast reconcile"
-        );
-    }
-
     let kill_switch = state.risk_service.read_state().await?.kill_switch;
 
     let cancel_candidates = live_cancel_candidates_with_account(
@@ -636,7 +598,144 @@ async fn run_reward_bot_live_reconcile_unlocked(
         kill_switch,
     );
 
-    if !cancel_candidates.is_empty() {
+    let has_pending_sell_submission =
+        reward_fast_reconcile_has_pending_sell_submission(&open_orders);
+    let has_executable_merge = if cycle.config.balanced_merge_enabled
+        && cycle.config.balanced_merge_auto_execute_enabled
+    {
+        !state
+            .reward_bot_service
+            .list_executable_reward_merge_intents(&cycle.config.account_id, 1)
+            .await?
+            .is_empty()
+    } else {
+        false
+    };
+    let needs_action_run = !merge_intents.is_empty()
+        || has_executable_merge
+        || !cancel_candidates.is_empty()
+        || has_pending_sell_submission;
+
+    if !needs_action_run {
+        if !merge_events.is_empty() {
+            persist_live_reward_updates_with_merge_intents(
+                state,
+                &mut account,
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                merge_events,
+                &report,
+                trace_id,
+            )
+            .await?;
+        }
+        return Ok(report);
+    }
+
+    let run_id = start_reward_action_strategy_run(
+        state,
+        &cycle,
+        &books,
+        trace_id,
+        RewardStrategyRunTrigger::Poll,
+        "fast_reconcile",
+        json!({
+            "merge_intents": merge_intents.len(),
+            "execute_merge": has_executable_merge,
+            "cancel_orders": cancel_candidates.len(),
+            "submit_exit_sell": has_pending_sell_submission,
+        }),
+    )
+    .await?;
+
+    let action_result: Result<()> = async {
+        if !merge_intents.is_empty() {
+            let action_context = RewardActionPlannerContext {
+                run_id,
+                trace_id,
+                now: OffsetDateTime::now_utc(),
+            };
+            let actions = merge_intents
+                .iter()
+                .map(|intent| {
+                    RewardActionPlanner::plan_merge_action(
+                        action_context,
+                        RewardMergeActionProposal {
+                            intent,
+                            action_type: RewardStrategyActionType::CreateMergeIntent,
+                            reason: intent.reason.as_str(),
+                            idempotency_suffix: "",
+                            metadata: json!({ "source": "fast_reconcile_inventory_pairing" }),
+                        },
+                    )
+                })
+                .collect::<Vec<_>>();
+            record_planned_reward_actions(state, &actions, trace_id, "fast_merge_create").await?;
+        }
+        if !merge_intents.is_empty() || !merge_events.is_empty() {
+            persist_live_reward_updates_with_merge_intents(
+                state,
+                &mut account,
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                merge_intents,
+                merge_events,
+                &report,
+                trace_id,
+            )
+            .await?;
+        }
+        let executed_merge_intents = execute_pending_balanced_merge_intents(
+            state,
+            &cycle.config,
+            &mut account,
+            &cycle.positions,
+            &open_orders,
+            &report,
+            Some(run_id),
+            trace_id,
+        )
+        .await?;
+        if executed_merge_intents > 0 {
+            debug!(
+                trace_id = %trace_id,
+                run_id,
+                executed_merge_intents,
+                "submitted balanced merge transactions during fast reconcile"
+            );
+        }
+
+        if !cancel_candidates.is_empty() {
+            let action_context = RewardActionPlannerContext {
+                run_id,
+                trace_id,
+                now: OffsetDateTime::now_utc(),
+            };
+            let actions = cancel_candidates
+                .iter()
+                .filter_map(|(order_id, reason)| {
+                    open_orders
+                        .iter()
+                        .find(|order| order.id == *order_id)
+                        .map(|order| {
+                            RewardActionPlanner::plan_order_action(
+                                action_context,
+                                RewardOrderActionProposal {
+                                    order,
+                                    intent: RewardOrderActionIntent::CancelOrder,
+                                    reason: reason.as_str(),
+                                    metadata: json!({ "source": "fast_reconcile_cancel" }),
+                                },
+                            )
+                        })
+                })
+                .collect::<Vec<_>>();
+            record_planned_reward_actions(state, &actions, trace_id, "fast_cancel").await?;
+        }
+
         for (order_id, reason) in cancel_candidates {
             let Some(index) = open_orders.iter().position(|order| order.id == order_id) else {
                 continue;
@@ -680,27 +779,96 @@ async fn run_reward_bot_live_reconcile_unlocked(
                 }
             }
         }
-    }
 
-    if open_orders.iter().any(|order| {
-        order.external_order_id.is_none()
-            && (order.status == ManagedRewardOrderStatus::Planned
-                || order.status == ManagedRewardOrderStatus::ExitPending)
-    }) {
-        submit_pending_live_reward_orders(
-            connector,
-            &mut open_orders,
-            &books,
-            None,
-            state,
-            &mut account,
-            &cycle.positions,
-            &mut report,
-            trace_id,
+        let pending_actions = RewardActionPlanner::plan_pending_order_submissions(
+            RewardActionPlannerContext {
+                run_id,
+                trace_id,
+                now: OffsetDateTime::now_utc(),
+            },
+            &open_orders,
             false,
-        )
-        .await?;
+        );
+        record_planned_reward_actions(state, &pending_actions, trace_id, "fast_pending_submit")
+            .await?;
+        if !pending_actions.is_empty() {
+            submit_pending_live_reward_orders(
+                connector,
+                &mut open_orders,
+                &books,
+                None,
+                state,
+                &mut account,
+                &cycle.positions,
+                &mut report,
+                trace_id,
+                false,
+            )
+            .await?;
+        }
+        Ok(())
     }
+    .await;
+
+    finish_reward_action_strategy_run(state, run_id, trace_id, &report, action_result).await?;
 
     Ok(report)
+}
+
+#[cfg(test)]
+mod fast_reconcile_action_tests {
+    use super::*;
+
+    fn pending_order(
+        side: RewardOrderSide,
+        status: ManagedRewardOrderStatus,
+    ) -> ManagedRewardOrder {
+        let now = OffsetDateTime::from_unix_timestamp(1_725_000_000).expect("valid timestamp");
+        ManagedRewardOrder {
+            id: "order-1".to_string(),
+            account_id: "acct".to_string(),
+            condition_id: "cond".to_string(),
+            token_id: "token".to_string(),
+            outcome: "YES".to_string(),
+            side,
+            price: Decimal::new(42, 2),
+            size: Decimal::TEN,
+            strategy_bucket: RewardStrategyBucket::Standard,
+            strategy_profile: RewardStrategyProfile::Standard,
+            exit_strategy_source: RewardExitStrategySource::Configured,
+            exit_strategy_selected: None,
+            exit_floor_price: None,
+            exit_reselect_count: 0,
+            exit_last_reselected_at: None,
+            external_order_id: None,
+            status,
+            scoring: true,
+            reason: "pending".to_string(),
+            filled_size: Decimal::ZERO,
+            reward_earned: Decimal::ZERO,
+            last_scored_at: None,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    #[test]
+    fn fast_reconcile_action_run_is_only_needed_for_local_pending_sells() {
+        let pending_sell =
+            pending_order(RewardOrderSide::Sell, ManagedRewardOrderStatus::ExitPending);
+        assert!(reward_fast_reconcile_has_pending_sell_submission(&[
+            pending_sell.clone()
+        ]));
+
+        let pending_buy = pending_order(RewardOrderSide::Buy, ManagedRewardOrderStatus::Planned);
+        assert!(!reward_fast_reconcile_has_pending_sell_submission(&[
+            pending_buy
+        ]));
+
+        let mut submitted_sell = pending_sell;
+        submitted_sell.external_order_id = Some("external".to_string());
+        assert!(!reward_fast_reconcile_has_pending_sell_submission(&[
+            submitted_sell
+        ]));
+    }
 }

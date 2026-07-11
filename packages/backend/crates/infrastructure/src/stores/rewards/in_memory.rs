@@ -21,6 +21,7 @@ pub struct InMemoryRewardBotStore {
     strategy_runs: RwLock<Vec<RewardStrategyRun>>,
     strategy_decisions: RwLock<Vec<RewardStrategyDecision>>,
     strategy_actions: RwLock<Vec<RewardStrategyAction>>,
+    strategy_replay_fixtures: RwLock<HashMap<i64, RewardStrategyReplayFixture>>,
     order_transitions: RwLock<Vec<RewardOrderTransition>>,
     next_strategy_run_id: RwLock<i64>,
     next_strategy_action_id: RwLock<i64>,
@@ -51,6 +52,7 @@ impl InMemoryRewardBotStore {
             strategy_runs: RwLock::new(Vec::new()),
             strategy_decisions: RwLock::new(Vec::new()),
             strategy_actions: RwLock::new(Vec::new()),
+            strategy_replay_fixtures: RwLock::new(HashMap::new()),
             order_transitions: RwLock::new(Vec::new()),
             next_strategy_run_id: RwLock::new(1),
             next_strategy_action_id: RwLock::new(1),
@@ -380,7 +382,22 @@ impl RewardBotStore for InMemoryRewardBotStore {
                 .find(|stored| stored.idempotency_key == action.idempotency_key)
             {
                 let action_id = existing.action_id;
-                *existing = action.clone();
+                let mut replacement = action.clone();
+                replacement.execution_attempts = replacement
+                    .execution_attempts
+                    .max(existing.execution_attempts);
+                if replacement.status.is_terminal() {
+                    replacement.lease_owner = None;
+                    replacement.lease_expires_at = None;
+                } else {
+                    replacement.lease_owner = replacement
+                        .lease_owner
+                        .or_else(|| existing.lease_owner.clone());
+                    replacement.lease_expires_at = replacement
+                        .lease_expires_at
+                        .or(existing.lease_expires_at);
+                }
+                *existing = replacement;
                 existing.action_id = action_id;
             } else {
                 let mut action = action.clone();
@@ -390,6 +407,171 @@ impl RewardBotStore for InMemoryRewardBotStore {
             }
         }
         Ok(())
+    }
+
+    async fn claim_strategy_actions(
+        &self,
+        account_id: &str,
+        lease_owner: &str,
+        now: OffsetDateTime,
+        lease_expires_at: OffsetDateTime,
+        limit: u16,
+    ) -> Result<Vec<RewardStrategyAction>> {
+        let mut store = self.strategy_actions.write().await;
+        let mut claimable = store
+            .iter()
+            .enumerate()
+            .filter(|(_, action)| {
+                action.account_id == account_id
+                    && (action.status == RewardStrategyActionStatus::Planned
+                        || (action.status == RewardStrategyActionStatus::Executing
+                            && action
+                                .lease_expires_at
+                                .is_some_and(|expires_at| expires_at <= now)))
+            })
+            .map(|(index, action)| (index, action.created_at, action.action_id))
+            .collect::<Vec<_>>();
+        claimable.sort_by_key(|(_, created_at, action_id)| (*created_at, *action_id));
+
+        let mut claimed = Vec::with_capacity(usize::from(limit));
+        for (index, _, _) in claimable.into_iter().take(usize::from(limit)) {
+            let action = &mut store[index];
+            let previous_status = action.status.as_str();
+            action.status = RewardStrategyActionStatus::Executing;
+            action.lease_owner = Some(lease_owner.to_string());
+            action.lease_expires_at = Some(lease_expires_at);
+            action.execution_attempts += 1;
+            action.updated_at = now;
+            if let Value::Object(result) = &mut action.result_json {
+                result.insert("status".to_string(), json!("executing"));
+                result.insert("lease_owner".to_string(), json!(lease_owner));
+                result.insert("lease_expires_at".to_string(), json!(lease_expires_at));
+                result.insert(
+                    "execution_attempts".to_string(),
+                    json!(action.execution_attempts),
+                );
+                result.insert(
+                    "claim_previous_status".to_string(),
+                    json!(previous_status),
+                );
+            }
+            claimed.push(action.clone());
+        }
+        Ok(claimed)
+    }
+
+    async fn renew_strategy_action_lease(
+        &self,
+        action_id: i64,
+        lease_owner: &str,
+        now: OffsetDateTime,
+        lease_expires_at: OffsetDateTime,
+    ) -> Result<bool> {
+        let mut store = self.strategy_actions.write().await;
+        let Some(action) = store.iter_mut().find(|action| {
+            action.action_id == action_id
+                && action.status == RewardStrategyActionStatus::Executing
+                && action.lease_owner.as_deref() == Some(lease_owner)
+                && action
+                    .lease_expires_at
+                    .is_some_and(|expires_at| expires_at > now)
+        }) else {
+            return Ok(false);
+        };
+        action.lease_expires_at = Some(lease_expires_at);
+        action.updated_at = now;
+        if let Value::Object(result) = &mut action.result_json {
+            result.insert("lease_expires_at".to_string(), json!(lease_expires_at));
+        }
+        Ok(true)
+    }
+
+    async fn finalize_strategy_action_lease(
+        &self,
+        action: &RewardStrategyAction,
+        lease_owner: &str,
+    ) -> Result<bool> {
+        if !action.status.is_terminal() || !action.result_json.is_object() {
+            return Err(AppError::invalid_input(
+                "REWARD_STRATEGY_ACTION_RESOLUTION_INVALID",
+                "strategy action resolution requires a terminal status and object result",
+            ));
+        }
+        let mut store = self.strategy_actions.write().await;
+        let now = OffsetDateTime::now_utc();
+        let Some(existing) = store.iter_mut().find(|existing| {
+            existing.action_id == action.action_id
+                && existing.status == RewardStrategyActionStatus::Executing
+                && existing.lease_owner.as_deref() == Some(lease_owner)
+                && existing
+                    .lease_expires_at
+                    .is_some_and(|expires_at| expires_at > now)
+        }) else {
+            return Ok(false);
+        };
+        existing.status = action.status;
+        existing.reason_code = action.reason_code.clone();
+        existing.reason = action.reason.clone();
+        existing.external_order_id = action.external_order_id.clone();
+        existing.result_json = action.result_json.clone();
+        existing.lease_owner = None;
+        existing.lease_expires_at = None;
+        existing.updated_at = action.updated_at;
+        Ok(true)
+    }
+
+    async fn get_strategy_action(
+        &self,
+        action_id: i64,
+    ) -> Result<Option<RewardStrategyAction>> {
+        Ok(self
+            .strategy_actions
+            .read()
+            .await
+            .iter()
+            .find(|action| action.action_id == action_id)
+            .cloned())
+    }
+
+    async fn release_strategy_action_lease(
+        &self,
+        action_id: i64,
+        lease_owner: &str,
+        reason_code: &str,
+        reason: &str,
+        result: Value,
+        now: OffsetDateTime,
+    ) -> Result<bool> {
+        let Value::Object(result_updates) = result else {
+            return Err(AppError::invalid_input(
+                "REWARD_STRATEGY_ACTION_RESULT_INVALID",
+                "strategy action result must be a JSON object",
+            ));
+        };
+        let mut store = self.strategy_actions.write().await;
+        let Some(action) = store.iter_mut().find(|action| {
+            action.action_id == action_id
+                && action.status == RewardStrategyActionStatus::Executing
+                && action.lease_owner.as_deref() == Some(lease_owner)
+                && action
+                    .lease_expires_at
+                    .is_some_and(|expires_at| expires_at > now)
+        }) else {
+            return Ok(false);
+        };
+        action.status = RewardStrategyActionStatus::Planned;
+        action.reason_code = reason_code.to_string();
+        action.reason = reason.to_string();
+        if let Value::Object(existing_result) = &mut action.result_json {
+            existing_result.extend(result_updates);
+            existing_result.insert("status".to_string(), json!("planned"));
+        } else {
+            action.result_json = json!({ "status": "planned" });
+        }
+        action.lease_owner = None;
+        action.lease_expires_at = None;
+        action.updated_at = now;
+        Ok(true)
     }
 
     async fn record_order_transitions(
@@ -447,6 +629,46 @@ impl RewardBotStore for InMemoryRewardBotStore {
             .iter()
             .find(|run| run.run_id == run_id)
             .cloned())
+    }
+
+    async fn save_strategy_replay_fixture(
+        &self,
+        fixture: &RewardStrategyReplayFixture,
+    ) -> Result<()> {
+        fixture.validate_integrity()?;
+        if !self
+            .strategy_runs
+            .read()
+            .await
+            .iter()
+            .any(|run| run.run_id == fixture.run_id)
+        {
+            return Err(AppError::not_found(
+                "REWARD_STRATEGY_RUN_NOT_FOUND",
+                format!("reward strategy run {} does not exist", fixture.run_id),
+            ));
+        }
+        self.strategy_replay_fixtures
+            .write()
+            .await
+            .insert(fixture.run_id, fixture.clone());
+        Ok(())
+    }
+
+    async fn get_strategy_replay_fixture(
+        &self,
+        run_id: i64,
+    ) -> Result<Option<RewardStrategyReplayFixture>> {
+        let fixture = self
+            .strategy_replay_fixtures
+            .read()
+            .await
+            .get(&run_id)
+            .cloned();
+        if let Some(fixture) = &fixture {
+            fixture.validate_integrity()?;
+        }
+        Ok(fixture)
     }
 
     async fn list_strategy_decisions(
@@ -1184,6 +1406,26 @@ impl RewardBotStore for InMemoryRewardBotStore {
             .sum())
     }
 
+    async fn create_merge_intent_if_absent(&self, intent: &RewardMergeIntent) -> Result<bool> {
+        let mut intents = self.merge_intents.write().await;
+        if intents.iter().any(|stored| stored.id == intent.id) {
+            return Ok(false);
+        }
+        intents.push(intent.clone());
+        intents.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
+        Ok(true)
+    }
+
+    async fn get_merge_intent(&self, intent_id: &str) -> Result<Option<RewardMergeIntent>> {
+        Ok(self
+            .merge_intents
+            .read()
+            .await
+            .iter()
+            .find(|intent| intent.id == intent_id)
+            .cloned())
+    }
+
     async fn list_executable_merge_intents(
         &self,
         account_id: &str,
@@ -1267,6 +1509,37 @@ impl RewardBotStore for InMemoryRewardBotStore {
             intent.updated_at = failed_at;
         }
         Ok(())
+    }
+
+    async fn resolve_merge_intent_transaction(
+        &self,
+        intent_id: &str,
+        tx_hash: &str,
+        succeeded: bool,
+        reason: &str,
+        resolved_at: OffsetDateTime,
+    ) -> Result<bool> {
+        let mut intents = self.merge_intents.write().await;
+        let Some(intent) = intents.iter_mut().find(|intent| {
+            intent.id == intent_id
+                && intent.status == RewardMergeIntentStatus::Submitted
+                && intent.tx_hash.as_deref() == Some(tx_hash)
+        }) else {
+            return Ok(false);
+        };
+        intent.status = if succeeded {
+            RewardMergeIntentStatus::Completed
+        } else {
+            RewardMergeIntentStatus::Failed
+        };
+        intent.confirmed_at = succeeded.then_some(resolved_at);
+        intent.failed_reason = (!succeeded).then(|| reason.to_string());
+        if !succeeded {
+            intent.retry_count += 1;
+        }
+        intent.reason = reason.to_string();
+        intent.updated_at = resolved_at;
+        Ok(true)
     }
 
     async fn apply_tick_outcome(

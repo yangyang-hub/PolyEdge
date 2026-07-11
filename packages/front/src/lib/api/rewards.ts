@@ -3,7 +3,9 @@ import type {
   RewardBotConfigPatchDto,
   RewardBotSnapshotDto,
   RewardOrderTransitionPageDto,
+  RewardStrategyActionDto,
   RewardStrategyActionPageDto,
+  RewardStrategyDecisionDto,
   RewardStrategyDecisionPageDto,
   RewardStrategyRunDto,
   RewardStrategyRunPageDto,
@@ -123,6 +125,52 @@ export async function listRewardStrategyActions(
   return fetchContract<ApiResponse<RewardStrategyActionPageDto>>(
     `/api/v1/rewards-bot/runs/${runId}/actions${buildQueryString(query as Record<string, string | number | boolean | undefined>)}`,
   );
+}
+
+const STRATEGY_LEDGER_ANALYTICS_PAGE_SIZE = 500;
+
+export async function listAllRewardStrategyDecisions(
+  runId: number,
+): Promise<RewardStrategyDecisionDto[]> {
+  const first = await listRewardStrategyDecisions(runId, {
+    page: 1,
+    page_size: STRATEGY_LEDGER_ANALYTICS_PAGE_SIZE,
+  });
+  const remainingPages = Array.from(
+    { length: Math.max(0, first.data.page.total_pages - 1) },
+    (_, index) => index + 2,
+  );
+  const remaining = await Promise.all(
+    remainingPages.map((page) =>
+      listRewardStrategyDecisions(runId, {
+        page,
+        page_size: STRATEGY_LEDGER_ANALYTICS_PAGE_SIZE,
+      }),
+    ),
+  );
+  return [first, ...remaining].flatMap((response) => response.data.items);
+}
+
+export async function listAllRewardStrategyActions(
+  runId: number,
+): Promise<RewardStrategyActionDto[]> {
+  const first = await listRewardStrategyActions(runId, {
+    page: 1,
+    page_size: STRATEGY_LEDGER_ANALYTICS_PAGE_SIZE,
+  });
+  const remainingPages = Array.from(
+    { length: Math.max(0, first.data.page.total_pages - 1) },
+    (_, index) => index + 2,
+  );
+  const remaining = await Promise.all(
+    remainingPages.map((page) =>
+      listRewardStrategyActions(runId, {
+        page,
+        page_size: STRATEGY_LEDGER_ANALYTICS_PAGE_SIZE,
+      }),
+    ),
+  );
+  return [first, ...remaining].flatMap((response) => response.data.items);
 }
 
 export async function listRewardOrderTransitions(

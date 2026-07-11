@@ -60,6 +60,20 @@ pub struct PolymarketMergePositionsReceipt {
     pub safe_nonce: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PolymarketTransactionReceiptStatus {
+    Pending,
+    Succeeded,
+    Reverted,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PolymarketTransactionReceipt {
+    pub tx_hash: String,
+    pub status: PolymarketTransactionReceiptStatus,
+    pub block_number: Option<String>,
+}
+
 const POLYGON_FUNDING_TOKENS: &[PolymarketFundingToken] = &[
     PolymarketFundingToken {
         id: "usdc",
@@ -95,6 +109,20 @@ struct JsonRpcResponse {
 struct JsonRpcError {
     code: i64,
     message: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct JsonRpcTransactionReceiptResponse {
+    result: Option<JsonRpcTransactionReceipt>,
+    error: Option<JsonRpcError>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct JsonRpcTransactionReceipt {
+    transaction_hash: String,
+    status: String,
+    block_number: Option<String>,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -375,6 +403,98 @@ impl PolymarketChainConnector {
             amount: request.amount,
             amount_units: amount_units.to_string(),
             safe_nonce: safe_nonce.to_string(),
+        })
+    }
+
+    /// Query a Polygon transaction without ever rebroadcasting it.
+    ///
+    /// `eth_getTransactionReceipt` returns `null` while a transaction is not
+    /// mined (or is not yet visible to the selected RPC). Callers must treat
+    /// that state as unresolved instead of assuming the transaction is absent.
+    pub async fn fetch_transaction_receipt(
+        &self,
+        tx_hash: &str,
+    ) -> Result<PolymarketTransactionReceipt> {
+        let tx_hash = normalize_transaction_hash(tx_hash)?;
+        let request = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "eth_getTransactionReceipt",
+            "params": [tx_hash]
+        });
+        let response = self
+            .client
+            .post(&self.rpc_url)
+            .json(&request)
+            .send()
+            .await
+            .map_err(|error| {
+                AppError::dependency_unavailable(
+                    "POLYGON_RECEIPT_REQUEST_FAILED",
+                    format!("failed to query Polygon transaction receipt: {error}"),
+                )
+            })?
+            .error_for_status()
+            .map_err(|error| {
+                AppError::dependency_unavailable(
+                    "POLYGON_RECEIPT_STATUS_FAILED",
+                    format!("Polygon receipt RPC returned error status: {error}"),
+                )
+            })?;
+        let payload = response
+            .json::<JsonRpcTransactionReceiptResponse>()
+            .await
+            .map_err(|error| {
+                AppError::dependency_unavailable(
+                    "POLYGON_RECEIPT_DECODE_FAILED",
+                    format!("failed to decode Polygon transaction receipt: {error}"),
+                )
+            })?;
+        if let Some(error) = payload.error {
+            return Err(AppError::dependency_unavailable(
+                "POLYGON_RECEIPT_RPC_ERROR",
+                format!("Polygon RPC error {}: {}", error.code, error.message),
+            ));
+        }
+        let Some(receipt) = payload.result else {
+            return Ok(PolymarketTransactionReceipt {
+                tx_hash,
+                status: PolymarketTransactionReceiptStatus::Pending,
+                block_number: None,
+            });
+        };
+        let receipt_hash = normalize_transaction_hash(&receipt.transaction_hash)?;
+        if !receipt_hash.eq_ignore_ascii_case(&tx_hash) {
+            return Err(AppError::dependency_unavailable(
+                "POLYGON_RECEIPT_HASH_MISMATCH",
+                format!(
+                    "Polygon receipt hash {receipt_hash} does not match requested hash {tx_hash}"
+                ),
+            ));
+        }
+        let status = match receipt.status.trim().to_ascii_lowercase().as_str() {
+            "0x1" | "0x01" => PolymarketTransactionReceiptStatus::Succeeded,
+            "0x0" | "0x00" => PolymarketTransactionReceiptStatus::Reverted,
+            other => {
+                return Err(AppError::dependency_unavailable(
+                    "POLYGON_RECEIPT_EXECUTION_STATUS_INVALID",
+                    format!("Polygon receipt returned unsupported status {other}"),
+                ));
+            }
+        };
+        let block_number = receipt
+            .block_number
+            .filter(|value| !value.trim().is_empty());
+        if block_number.is_none() {
+            return Err(AppError::dependency_unavailable(
+                "POLYGON_RECEIPT_BLOCK_NUMBER_MISSING",
+                "mined Polygon transaction receipt did not include blockNumber",
+            ));
+        }
+        Ok(PolymarketTransactionReceipt {
+            tx_hash,
+            status,
+            block_number,
         })
     }
 
@@ -1001,6 +1121,26 @@ fn normalize_evm_address(name: &str, value: &str, code: &'static str) -> Result<
         ));
     }
     Ok(format!("0x{raw}"))
+}
+
+fn normalize_transaction_hash(value: &str) -> Result<String> {
+    let value = value.trim();
+    let Some(raw) = value
+        .strip_prefix("0x")
+        .or_else(|| value.strip_prefix("0X"))
+    else {
+        return Err(AppError::invalid_input(
+            "POLYGON_TRANSACTION_HASH_INVALID",
+            "transaction hash must be 0x-prefixed",
+        ));
+    };
+    if raw.len() != 64 || !raw.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(AppError::invalid_input(
+            "POLYGON_TRANSACTION_HASH_INVALID",
+            "transaction hash must contain exactly 64 hex characters",
+        ));
+    }
+    Ok(format!("0x{}", raw.to_ascii_lowercase()))
 }
 
 fn erc20_hex_units_to_decimal(raw_hex: &str, decimals: u32) -> Result<Decimal> {

@@ -58,7 +58,7 @@
 - `fetch_funding_token_balance()` 读取 Funding allowlist 中 USDC/USDT 余额，供 Funding 页面展示。
 - `funding_source_address()` 从后端私钥派生付款地址，只返回地址。
 - `submit_funding_transfer()` 校验 chain id、token allowlist、金额精度和 Bridge supported-assets 后，生成 Bridge 入金地址并广播 ERC20 transfer。
-- `submit_merge_positions()` 通过 Safe proxy wallet 执行 CTF `mergePositions`，供 BalancedMerge 自动执行使用。
+- `submit_merge_positions()` 通过 Safe proxy wallet 执行 CTF `mergePositions`，供 BalancedMerge 自动执行使用。`fetch_transaction_receipt()` 只读查询 Polygon `eth_getTransactionReceipt`，严格校验交易哈希、执行状态和区块号；RPC `null` 保留为 pending/未知，绝不据此重发链上交易。
 
 ## Polymarket Book
 
@@ -123,6 +123,7 @@
 - Rewards catalog 分页和详情补全具备完整性保护，不会把明显不完整目录破坏性替换到 store。
 - Orderbook 服务客户端支持 HTTP batch/bootstrap、按最大确认年龄刷新和内部 WS 推送。
 - Provider 并发由 worker 按 `RewardBotConfig` 控制；connector 内不维护全局单飞闸门。
+- Rewards combined provider 提示词明确禁止用 LP rewards/rebate 抵消交易、库存或事件风险；定时事件撤单必须有明确可归因时间且落在缓存窗口内，独立来源按发布组织或一手权威主体而不是 URL 数量计算。
 - Live connector 已具备显式 heartbeat、订单/成交对账回退、Deposit Wallet 签名路径、Polygon pUSD 余额回填、Funding 入金和 Safe proxy merge 支持。
 
 ## 修改检查清单

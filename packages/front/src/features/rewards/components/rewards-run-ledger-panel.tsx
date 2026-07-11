@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { RefreshCcw } from "lucide-react";
 
 import { PaginationBar } from "@/components/pagination-bar";
+import { MeterBar } from "@/components/shared/meter-bar";
 import { StatusPill } from "@/components/shared/status-pill";
 import { TruncateText } from "@/components/shared/truncate-text";
 import { Button } from "@/components/ui/button";
@@ -23,16 +24,18 @@ import type {
   RewardStrategyRunDto,
 } from "@/lib/contracts/dto";
 import {
-  listRewardStrategyActions,
-  listRewardStrategyDecisions,
+  listAllRewardStrategyActions,
+  listAllRewardStrategyDecisions,
   listRewardStrategyRuns,
 } from "@/lib/api/rewards";
-import { formatFixed, formatUsdFixed } from "@/lib/formatters";
+import { formatFixed, formatUsdFixed, toFiniteNumber } from "@/lib/formatters";
 import type { PaginationState } from "@/hooks/use-pagination";
-import { dictionary } from "@/lib/i18n/dictionaries";
+import { dictionary, translateEnum } from "@/lib/i18n/dictionaries";
 
 const RUNS_PAGE_SIZE = 20;
 const DETAIL_PAGE_SIZE = 20;
+
+type AnalyticsCount = { key: string; count: number };
 
 type StatusTone = "neutral" | "primary" | "success" | "warning" | "danger" | "violet";
 
@@ -73,6 +76,49 @@ function metricValue(run: RewardStrategyRunDto, key: string) {
   return String(value);
 }
 
+function countBy<T>(items: T[], keyFor: (item: T) => string | null | undefined): AnalyticsCount[] {
+  const counts = new Map<string, number>();
+  for (const item of items) {
+    const key = keyFor(item);
+    if (!key) continue;
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  return [...counts.entries()]
+    .map(([key, count]) => ({ key, count }))
+    .sort((left, right) => right.count - left.count || left.key.localeCompare(right.key));
+}
+
+function DistributionList({
+  items,
+  labelFor = translateEnum,
+}: {
+  items: AnalyticsCount[];
+  labelFor?: (key: string) => string;
+}) {
+  const maximum = Math.max(0, ...items.map((item) => item.count));
+  if (items.length === 0) {
+    return <p className="py-4 text-center text-sm text-muted-foreground">{dictionary.rewards.analyticsNoData}</p>;
+  }
+  return (
+    <div className="space-y-3">
+      {items.map((item) => (
+        <div key={item.key} className="space-y-1.5">
+          <div className="flex items-center justify-between gap-3 text-xs">
+            <span className="min-w-0 truncate text-muted-foreground" title={labelFor(item.key)}>
+              {labelFor(item.key)}
+            </span>
+            <span className="font-mono text-foreground">{item.count}</span>
+          </div>
+          <MeterBar
+            value={`${maximum > 0 ? Math.max(4, (item.count / maximum) * 100) : 0}%`}
+            tone="primary"
+          />
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export function RewardsRunLedgerPanel() {
   const [runs, setRuns] = useState<RewardStrategyRunDto[]>([]);
   const [runsPage, setRunsPage] = useState<RewardListPageDto | null>(null);
@@ -87,6 +133,54 @@ export function RewardsRunLedgerPanel() {
     () => runs.find((run) => run.run_id === selectedRunId) ?? null,
     [runs, selectedRunId],
   );
+  const analytics = useMemo(() => {
+    const eligible = decisions.filter((decision) => decision.eligible).length;
+    const fairValueAssessed = decisions.filter((decision) => decision.fair_value_passed != null);
+    const fairValuePassed = fairValueAssessed.filter((decision) => decision.fair_value_passed).length;
+    const selectionTotal = decisions.reduce(
+      (total, decision) => total + toFiniteNumber(decision.selection_score),
+      0,
+    );
+    const succeededActions = actions.filter((action) => action.status === "succeeded").length;
+    const blockers = countBy(
+      decisions.flatMap((decision) =>
+        decision.eligible
+          ? []
+          : decision.blocker_codes.length > 0
+            ? decision.blocker_codes
+            : [decision.reason_code],
+      ),
+      (code) => code,
+    );
+    const providerActions = [
+      ...countBy(decisions, (decision) => decision.ai_action).map((item) => ({
+        ...item,
+        key: `ai:${item.key}`,
+      })),
+      ...countBy(decisions, (decision) => decision.info_risk_action).map((item) => ({
+        ...item,
+        key: `info:${item.key}`,
+      })),
+    ].sort((left, right) => right.count - left.count || left.key.localeCompare(right.key));
+    return {
+      eligible,
+      fairValueAssessed: fairValueAssessed.length,
+      fairValuePassed,
+      averageSelection: decisions.length > 0 ? selectionTotal / decisions.length : 0,
+      succeededActions,
+      blockers,
+      providerActions,
+      actionTypes: countBy(actions, (action) => action.action_type),
+      actionStatuses: countBy(actions, (action) => action.status),
+    };
+  }, [actions, decisions]);
+
+  const blockerLabels = dictionary.rewards.analyticsBlockerLabels as Readonly<Record<string, string>>;
+  const providerLabel = useCallback((key: string) => {
+    const [provider, action] = key.split(":", 2);
+    const providerName = provider === "ai" ? dictionary.rewards.aiAdvisory : dictionary.rewards.infoRisk;
+    return `${providerName} · ${translateEnum(action ?? key)}`;
+  }, []);
 
   const loadRuns = useCallback(async (page: number) => {
     setLoading(true);
@@ -101,7 +195,11 @@ export function RewardsRunLedgerPanel() {
         setDecisions([]);
         setActions([]);
       } else {
-        setSelectedRunId((current) => current ?? response.data.items[0]?.run_id ?? null);
+        setSelectedRunId((current) =>
+          response.data.items.some((run) => run.run_id === current)
+            ? current
+            : response.data.items[0]?.run_id ?? null,
+        );
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : dictionary.rewards.runLedgerLoadFailed);
@@ -123,14 +221,14 @@ export function RewardsRunLedgerPanel() {
     }
     let active = true;
     void Promise.all([
-      listRewardStrategyDecisions(selectedRunId, { page: 1, page_size: DETAIL_PAGE_SIZE }),
-      listRewardStrategyActions(selectedRunId, { page: 1, page_size: DETAIL_PAGE_SIZE }),
+      listAllRewardStrategyDecisions(selectedRunId),
+      listAllRewardStrategyActions(selectedRunId),
     ])
-      .then(([decisionResponse, actionResponse]) => {
+      .then(([decisionItems, actionItems]) => {
         if (!active) return;
         setError(null);
-        setDecisions(decisionResponse.data.items);
-        setActions(actionResponse.data.items);
+        setDecisions(decisionItems);
+        setActions(actionItems);
       })
       .catch((err) => {
         if (!active) return;
@@ -173,10 +271,10 @@ export function RewardsRunLedgerPanel() {
                 >
                   <div className="flex items-center justify-between gap-2">
                     <span className="font-mono text-xs text-muted-foreground">#{run.run_id}</span>
-                    <StatusPill tone={statusTone(run.status)}>{run.status}</StatusPill>
+                    <StatusPill tone={statusTone(run.status)}>{translateEnum(run.status)}</StatusPill>
                   </div>
                   <div className="flex items-center justify-between gap-2 text-xs">
-                    <span>{run.trigger_type}</span>
+                    <span>{translateEnum(run.trigger_type)}</span>
                     <span className="font-mono text-muted-foreground">{formatTime(run.started_at)}</span>
                   </div>
                 </button>
@@ -204,7 +302,7 @@ export function RewardsRunLedgerPanel() {
               <div className="grid gap-3 text-sm md:grid-cols-4">
                 <div>
                   <div className="text-xs text-muted-foreground">{dictionary.rewards.status}</div>
-                  <StatusPill tone={statusTone(selectedRun.status)}>{selectedRun.status}</StatusPill>
+                  <StatusPill tone={statusTone(selectedRun.status)}>{translateEnum(selectedRun.status)}</StatusPill>
                 </div>
                 <div>
                   <div className="text-xs text-muted-foreground">{dictionary.rewards.candidatePlans}</div>
@@ -220,6 +318,61 @@ export function RewardsRunLedgerPanel() {
                 </div>
               </div>
             )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="border-b border-border/70">
+            <CardTitle>{dictionary.rewards.runAnalytics}</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-5">
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              <div className="rounded-md border border-border/70 p-3">
+                <div className="text-xs text-muted-foreground">{dictionary.rewards.analyticsDecisionCoverage}</div>
+                <div className="mt-1 font-mono text-xl font-semibold">
+                  {analytics.eligible}/{decisions.length}
+                </div>
+                <div className="text-xs text-muted-foreground">{dictionary.rewards.analyticsEligibleHint}</div>
+              </div>
+              <div className="rounded-md border border-border/70 p-3">
+                <div className="text-xs text-muted-foreground">{dictionary.rewards.analyticsAverageSelection}</div>
+                <div className="mt-1 font-mono text-xl font-semibold">{formatFixed(analytics.averageSelection, 2)}</div>
+                <div className="text-xs text-muted-foreground">{dictionary.rewards.analyticsSelectionHint}</div>
+              </div>
+              <div className="rounded-md border border-border/70 p-3">
+                <div className="text-xs text-muted-foreground">{dictionary.rewards.analyticsFairValuePass}</div>
+                <div className="mt-1 font-mono text-xl font-semibold">
+                  {analytics.fairValuePassed}/{analytics.fairValueAssessed}
+                </div>
+                <div className="text-xs text-muted-foreground">{dictionary.rewards.analyticsFairValueHint}</div>
+              </div>
+              <div className="rounded-md border border-border/70 p-3">
+                <div className="text-xs text-muted-foreground">{dictionary.rewards.analyticsActionSuccess}</div>
+                <div className="mt-1 font-mono text-xl font-semibold">
+                  {analytics.succeededActions}/{actions.length}
+                </div>
+                <div className="text-xs text-muted-foreground">{dictionary.rewards.analyticsActionHint}</div>
+              </div>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <div className="rounded-md border border-border/70 p-4">
+                <h3 className="mb-4 text-sm font-medium">{dictionary.rewards.analyticsBlockers}</h3>
+                <DistributionList items={analytics.blockers} labelFor={(key) => blockerLabels[key] ?? translateEnum(key)} />
+              </div>
+              <div className="rounded-md border border-border/70 p-4">
+                <h3 className="mb-4 text-sm font-medium">{dictionary.rewards.analyticsProviderActions}</h3>
+                <DistributionList items={analytics.providerActions} labelFor={providerLabel} />
+              </div>
+              <div className="rounded-md border border-border/70 p-4">
+                <h3 className="mb-4 text-sm font-medium">{dictionary.rewards.analyticsActionTypes}</h3>
+                <DistributionList items={analytics.actionTypes} />
+              </div>
+              <div className="rounded-md border border-border/70 p-4">
+                <h3 className="mb-4 text-sm font-medium">{dictionary.rewards.analyticsActionStatuses}</h3>
+                <DistributionList items={analytics.actionStatuses} />
+              </div>
+            </div>
           </CardContent>
         </Card>
 
@@ -246,12 +399,12 @@ export function RewardsRunLedgerPanel() {
                     </TableCell>
                   </TableRow>
                 ) : (
-                  decisions.map((decision) => (
+                  decisions.slice(0, DETAIL_PAGE_SIZE).map((decision) => (
                     <TableRow key={`${decision.run_id}:${decision.condition_id}:${decision.strategy_profile}`}>
                       <TableCell className="align-top font-mono text-xs">{decision.condition_id}</TableCell>
                       <TableCell className="align-top">
                         <StatusPill tone={decision.eligible ? "success" : "neutral"}>
-                          {decision.quote_readiness}
+                          {translateEnum(decision.quote_readiness)}
                         </StatusPill>
                       </TableCell>
                       <TableCell className="align-top font-mono">
@@ -294,11 +447,11 @@ export function RewardsRunLedgerPanel() {
                     </TableCell>
                   </TableRow>
                 ) : (
-                  actions.map((action) => (
+                  actions.slice(0, DETAIL_PAGE_SIZE).map((action) => (
                     <TableRow key={action.action_id}>
-                      <TableCell className="align-top font-mono text-xs">{action.action_type}</TableCell>
+                      <TableCell className="align-top text-xs">{translateEnum(action.action_type)}</TableCell>
                       <TableCell className="align-top">
-                        <StatusPill tone={statusTone(action.status)}>{action.status}</StatusPill>
+                        <StatusPill tone={statusTone(action.status)}>{translateEnum(action.status)}</StatusPill>
                       </TableCell>
                       <TableCell className="align-top font-mono text-xs">
                         {action.managed_order_id ?? action.external_order_id ?? "—"}

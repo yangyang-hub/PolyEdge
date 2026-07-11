@@ -249,11 +249,30 @@ pub fn apply_reward_ai_advisories(
     config: &RewardBotConfig,
     min_confidence: Decimal,
 ) {
+    apply_reward_ai_advisories_at(
+        plans,
+        advisories,
+        config,
+        min_confidence,
+        OffsetDateTime::now_utc(),
+    );
+}
+
+/// Apply an already-resolved advisory snapshot using an injected clock.
+///
+/// Live callers use [`apply_reward_ai_advisories`]. Replay callers must use
+/// this variant so provider-pending grace decisions are reproducible.
+pub fn apply_reward_ai_advisories_at(
+    plans: &mut [RewardQuotePlan],
+    advisories: &HashMap<String, RewardMarketAdvisory>,
+    config: &RewardBotConfig,
+    min_confidence: Decimal,
+    now: OffsetDateTime,
+) {
     if !config.ai_advisory_enabled {
         return;
     }
 
-    let now = OffsetDateTime::now_utc();
     let grace = TimeDuration::seconds(config.ai_advisory_provider_pending_grace_sec as i64);
 
     for plan in plans {

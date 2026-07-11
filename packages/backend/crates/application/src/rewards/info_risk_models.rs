@@ -258,7 +258,7 @@ pub fn build_reward_info_risk_assessment_request(
     let query = reward_info_risk_query(market);
     let evaluation_time = OffsetDateTime::now_utc();
     let payload = json!({
-        "schema_version": 6,
+        "schema_version": 7,
         "task": "Return an evidence-backed market-maker risk action. Distinguish reduce/stop-new from directional or full cancellation.",
         "evaluation_time_utc": evaluation_time,
         "imminent_resolution_policy": {
@@ -281,6 +281,9 @@ pub fn build_reward_info_risk_assessment_request(
             "provider_may_assess": ["fresh_attributable_event", "official_result", "confirmed_resolution_driver"],
             "provider_must_not_use": ["live_orderbook", "quote_price", "quote_side", "account_balance", "position_size"],
             "cancel_requires_sources": true,
+            "lp_rewards_are_risk_irrelevant": true,
+            "independent_source_definition": "Distinct publishing organizations or primary authorities. Syndicated copies, mirrors, and multiple URLs repeating one originating claim count as one source.",
+            "scheduled_event_cancel_requirement": "An explicit attributable event time inside the provider cache horizon plus a concrete immediate adverse-selection mechanism.",
             "directional_action_semantics": "directional_risk is the outcome whose resting BUY is unsafe and must match cancel_yes/cancel_no; it is not the predicted winner. Evidence raising YES probability generally makes the NO BUY unsafe (cancel_no), while evidence lowering YES probability makes the YES BUY unsafe (cancel_yes).",
         },
         "suggested_search_queries": [
@@ -306,6 +309,10 @@ fn reward_info_risk_cache_key_payload(
     query: &str,
 ) -> Value {
     json!({
+        // schema_version 12: LP rewards are explicitly risk-irrelevant and
+        // source independence/event-time requirements are part of the prompt
+        // contract.
+        //
         // schema_version 11: directional risk means the unsafe resting-BUY
         // outcome, not the predicted winner; invalidate ambiguous old results.
         //
@@ -315,9 +322,9 @@ fn reward_info_risk_cache_key_payload(
         // schema_version 9: evidence risk is independent of current quote,
         // inventory and operator thresholds; only stable market identity and
         // the search query participate in cache invalidation.
-        "schema_version": 11,
+        "schema_version": 12,
         "cache_domain": "reward_info_risk",
-        "provider_decision_schema": "evidence_action_v3_unsafe_buy_direction",
+        "provider_decision_schema": "evidence_action_v4_maker_risk_only",
         "evaluation_policy_version": 2,
         "search_query": query,
         "market": {
@@ -336,12 +343,29 @@ pub fn apply_reward_info_risks(
     config: &RewardBotConfig,
     min_confidence: Decimal,
 ) {
+    apply_reward_info_risks_at(
+        plans,
+        risks,
+        config,
+        min_confidence,
+        OffsetDateTime::now_utc(),
+    );
+}
+
+/// Apply an already-resolved information-risk snapshot using an injected
+/// clock. This is the deterministic counterpart used by decision replay.
+pub fn apply_reward_info_risks_at(
+    plans: &mut [RewardQuotePlan],
+    risks: &HashMap<String, RewardMarketInfoRisk>,
+    config: &RewardBotConfig,
+    min_confidence: Decimal,
+    now: OffsetDateTime,
+) {
     if !config.info_risk_enabled {
         return;
     }
 
     let enforce = config.info_risk_mode == RewardSelectionMode::Enforce;
-    let now = OffsetDateTime::now_utc();
     let grace = TimeDuration::seconds(config.info_risk_provider_pending_grace_sec as i64);
 
     for plan in plans {

@@ -1,6 +1,14 @@
 #[cfg(test)]
 mod rewards_tests {
     use super::*;
+    use sqlx::{Executor, postgres::PgPoolOptions};
+    use std::error::Error;
+
+    static REWARD_TEST_MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("../../migrations");
+
+    fn quote_pg_ident(value: &str) -> String {
+        format!(r#""{}""#, value.replace('"', r#"""""#))
+    }
 
     fn running_command(started_at: OffsetDateTime) -> RewardControlCommand {
         RewardControlCommand {
@@ -14,6 +22,35 @@ mod rewards_tests {
             completed_at: None,
             trace_id: Some("trc_old".to_string()),
             error: None,
+        }
+    }
+
+    fn strategy_action(
+        idempotency_key: &str,
+        account_id: &str,
+        status: RewardStrategyActionStatus,
+        created_at: OffsetDateTime,
+    ) -> RewardStrategyAction {
+        RewardStrategyAction {
+            action_id: 0,
+            run_id: 1,
+            account_id: account_id.to_string(),
+            condition_id: Some("cond_live".to_string()),
+            token_id: Some("token_live".to_string()),
+            managed_order_id: Some(format!("order_{idempotency_key}")),
+            external_order_id: None,
+            action_type: RewardStrategyActionType::PlaceBuy,
+            status,
+            reason_code: "test_action".to_string(),
+            reason: "test action".to_string(),
+            idempotency_key: idempotency_key.to_string(),
+            request_json: json!({}),
+            result_json: json!({}),
+            lease_owner: None,
+            lease_expires_at: None,
+            execution_attempts: 0,
+            created_at,
+            updated_at: created_at,
         }
     }
 
@@ -58,6 +95,69 @@ mod rewards_tests {
             created_at: now,
             updated_at: now,
         }
+    }
+
+    fn replay_fixture(now: OffsetDateTime) -> RewardDecisionReplayFixture {
+        RewardDecisionReplayFixture {
+            schema_version: polyedge_application::REWARD_DECISION_REPLAY_SCHEMA_VERSION,
+            input: polyedge_application::RewardStrategyInput {
+                now,
+                force_orders: false,
+                config: RewardBotConfig::default(),
+                candidate_markets: Vec::new(),
+                plans: Vec::new(),
+                previous_plans: Vec::new(),
+                pre_ai_eligible_condition_ids: Vec::new(),
+                books: HashMap::new(),
+                book_history: HashMap::new(),
+                account: RewardAccountState::fresh("reward_live", Decimal::from(100), now),
+                open_orders: Vec::new(),
+                positions: Vec::new(),
+                event_windows: Vec::new(),
+            },
+            providers: polyedge_application::RewardReplayProviderSnapshot::default(),
+            final_state: None,
+            expected_plans: Some(Vec::new()),
+        }
+    }
+
+    #[tokio::test]
+    async fn in_memory_strategy_replay_fixture_round_trip_requires_existing_run() {
+        let store = InMemoryRewardBotStore::new();
+        let now = OffsetDateTime::from_unix_timestamp(1_750_000_000).expect("fixed timestamp");
+        let missing = RewardStrategyReplayFixture::capture(1, replay_fixture(now), now)
+            .expect("capture missing fixture");
+        let error = store
+            .save_strategy_replay_fixture(&missing)
+            .await
+            .expect_err("fixture cannot precede run");
+        assert_eq!(error.code(), "REWARD_STRATEGY_RUN_NOT_FOUND");
+
+        let run_id = store
+            .start_strategy_run(&RewardStrategyRunStart {
+                account_id: "reward_live".to_string(),
+                trace_id: "trace_replay_fixture".to_string(),
+                trigger_type: RewardStrategyRunTrigger::Poll,
+                config_hash: "config-hash".to_string(),
+                config_json: json!({}),
+                input_summary: json!({}),
+                started_at: now,
+            })
+            .await
+            .expect("start run");
+        let fixture = RewardStrategyReplayFixture::capture(run_id, replay_fixture(now), now)
+            .expect("capture fixture");
+        store
+            .save_strategy_replay_fixture(&fixture)
+            .await
+            .expect("save fixture");
+
+        let stored = store
+            .get_strategy_replay_fixture(run_id)
+            .await
+            .expect("load fixture")
+            .expect("stored fixture");
+        assert_eq!(stored, fixture);
     }
 
     fn order_with_status(
@@ -571,6 +671,401 @@ mod rewards_tests {
 
         assert_eq!(candidates.len(), 1);
         assert_eq!(candidates[0].condition_id, valid.condition_id);
+    }
+
+    #[tokio::test]
+    async fn in_memory_strategy_action_claim_is_account_scoped_and_skips_unsafe_retries() {
+        let store = InMemoryRewardBotStore::new();
+        let now = OffsetDateTime::now_utc();
+        let actions = vec![
+            strategy_action(
+                "planned",
+                "reward_live",
+                RewardStrategyActionStatus::Planned,
+                now,
+            ),
+            strategy_action(
+                "other_account",
+                "other",
+                RewardStrategyActionStatus::Planned,
+                now,
+            ),
+            strategy_action(
+                "unknown",
+                "reward_live",
+                RewardStrategyActionStatus::Unknown,
+                now,
+            ),
+            strategy_action(
+                "unleased_executing",
+                "reward_live",
+                RewardStrategyActionStatus::Executing,
+                now,
+            ),
+        ];
+        store
+            .record_strategy_actions(&actions)
+            .await
+            .expect("seed strategy actions");
+
+        let claimed = store
+            .claim_strategy_actions(
+                "reward_live",
+                "executor-a",
+                now,
+                now + Duration::seconds(30),
+                10,
+            )
+            .await
+            .expect("claim strategy actions");
+
+        assert_eq!(claimed.len(), 1);
+        assert_eq!(claimed[0].idempotency_key, "planned");
+        assert_eq!(claimed[0].status, RewardStrategyActionStatus::Executing);
+        assert_eq!(claimed[0].lease_owner.as_deref(), Some("executor-a"));
+        assert_eq!(claimed[0].execution_attempts, 1);
+    }
+
+    #[tokio::test]
+    async fn in_memory_strategy_action_expired_lease_can_be_recovered_and_renewed_by_owner() {
+        let store = InMemoryRewardBotStore::new();
+        let now = OffsetDateTime::now_utc();
+        let mut action = strategy_action(
+            "recoverable",
+            "reward_live",
+            RewardStrategyActionStatus::Executing,
+            now - Duration::minutes(1),
+        );
+        action.lease_owner = Some("executor-a".to_string());
+        action.lease_expires_at = Some(now - Duration::seconds(1));
+        action.execution_attempts = 1;
+        store
+            .record_strategy_actions(&[action])
+            .await
+            .expect("seed expired strategy action");
+
+        let claimed = store
+            .claim_strategy_actions(
+                "reward_live",
+                "executor-b",
+                now,
+                now + Duration::seconds(30),
+                1,
+            )
+            .await
+            .expect("recover expired action");
+        assert_eq!(claimed.len(), 1);
+        assert_eq!(claimed[0].lease_owner.as_deref(), Some("executor-b"));
+        assert_eq!(claimed[0].execution_attempts, 2);
+
+        assert!(!store
+            .renew_strategy_action_lease(
+                claimed[0].action_id,
+                "executor-a",
+                now,
+                now + Duration::minutes(1),
+            )
+            .await
+            .expect("reject stale owner renewal"));
+        assert!(store
+            .renew_strategy_action_lease(
+                claimed[0].action_id,
+                "executor-b",
+                now,
+                now + Duration::minutes(1),
+            )
+            .await
+            .expect("renew current owner lease"));
+    }
+
+    #[tokio::test]
+    async fn in_memory_strategy_action_resolution_and_release_are_owner_fenced() {
+        let store = InMemoryRewardBotStore::new();
+        let now = OffsetDateTime::now_utc();
+        store
+            .record_strategy_actions(&[strategy_action(
+                "owner_fenced",
+                "reward_live",
+                RewardStrategyActionStatus::Planned,
+                now,
+            )])
+            .await
+            .expect("seed owner-fenced action");
+
+        let claimed = store
+            .claim_strategy_actions(
+                "reward_live",
+                "executor-a",
+                now,
+                now + Duration::minutes(1),
+                1,
+            )
+            .await
+            .expect("claim owner-fenced action");
+        let action_id = claimed[0].action_id;
+        assert_eq!(
+            store
+                .get_strategy_action(action_id)
+                .await
+                .expect("get claimed action")
+                .expect("claimed action exists")
+                .lease_owner
+                .as_deref(),
+            Some("executor-a")
+        );
+
+        assert!(!store
+            .release_strategy_action_lease(
+                action_id,
+                "executor-b",
+                "retry",
+                "wrong owner",
+                json!({ "retry": true }),
+                now + Duration::seconds(1),
+            )
+            .await
+            .expect("reject stale owner release"));
+        assert!(store
+            .release_strategy_action_lease(
+                action_id,
+                "executor-a",
+                "retry",
+                "safe to retry",
+                json!({ "retry": true }),
+                now + Duration::seconds(1),
+            )
+            .await
+            .expect("release current owner lease"));
+
+        let released = store
+            .get_strategy_action(action_id)
+            .await
+            .expect("get released action")
+            .expect("released action exists");
+        assert_eq!(released.status, RewardStrategyActionStatus::Planned);
+        assert_eq!(released.lease_owner, None);
+        assert_eq!(released.result_json["status"], "planned");
+
+        let reclaimed = store
+            .claim_strategy_actions(
+                "reward_live",
+                "executor-b",
+                now + Duration::seconds(2),
+                now + Duration::minutes(1),
+                1,
+            )
+            .await
+            .expect("reclaim released action");
+        assert_eq!(reclaimed[0].execution_attempts, 2);
+
+        let mut terminal = reclaimed[0].clone();
+        terminal.status = RewardStrategyActionStatus::Unknown;
+        terminal.reason_code = "connector_result_unknown".to_string();
+        terminal.reason = "connector result could not be confirmed".to_string();
+        terminal.updated_at = now + Duration::seconds(3);
+        terminal.result_json = json!({ "status": "unknown" });
+        assert!(!store
+            .finalize_strategy_action_lease(&terminal, "executor-a")
+            .await
+            .expect("reject previous owner finalize"));
+        assert!(store
+            .finalize_strategy_action_lease(&terminal, "executor-b")
+            .await
+            .expect("finalize current owner action"));
+
+        let resolved = store
+            .get_strategy_action(action_id)
+            .await
+            .expect("get resolved action")
+            .expect("resolved action exists");
+        assert_eq!(resolved.status, RewardStrategyActionStatus::Unknown);
+        assert_eq!(resolved.lease_owner, None);
+        assert_eq!(resolved.execution_attempts, 2);
+    }
+
+    #[tokio::test]
+    async fn in_memory_strategy_action_expired_owner_cannot_renew_finalize_or_release() {
+        let store = InMemoryRewardBotStore::new();
+        let now = OffsetDateTime::now_utc();
+        let mut action = strategy_action(
+            "expired_fence",
+            "reward_live",
+            RewardStrategyActionStatus::Executing,
+            now - Duration::minutes(1),
+        );
+        action.lease_owner = Some("executor-a".to_string());
+        action.lease_expires_at = Some(now - Duration::seconds(1));
+        store
+            .record_strategy_actions(&[action.clone()])
+            .await
+            .expect("seed expired action");
+        let action_id = store
+            .strategy_actions
+            .read()
+            .await
+            .first()
+            .expect("stored action")
+            .action_id;
+
+        assert!(!store
+            .renew_strategy_action_lease(
+                action_id,
+                "executor-a",
+                now,
+                now + Duration::minutes(1),
+            )
+            .await
+            .expect("reject expired renewal"));
+        action.action_id = action_id;
+        action.status = RewardStrategyActionStatus::Failed;
+        action.updated_at = now;
+        assert!(!store
+            .finalize_strategy_action_lease(&action, "executor-a")
+            .await
+            .expect("reject expired finalize"));
+        assert!(!store
+            .release_strategy_action_lease(
+                action_id,
+                "executor-a",
+                "retry",
+                "expired",
+                json!({}),
+                now,
+            )
+            .await
+            .expect("reject expired release"));
+    }
+
+    #[tokio::test]
+    async fn postgres_strategy_action_release_and_finalize_are_owner_fenced()
+    -> std::result::Result<(), Box<dyn Error>> {
+        let Some(database_url) = std::env::var("POLYEDGE_TEST_DATABASE_URL")
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+        else {
+            return Ok(());
+        };
+
+        let schema = format!("polyedge_reward_test_{}", Uuid::now_v7().simple());
+        let quoted_schema = quote_pg_ident(&schema);
+        let admin_pool = PgPoolOptions::new()
+            .max_connections(1)
+            .connect(&database_url)
+            .await?;
+        admin_pool
+            .execute(format!("CREATE SCHEMA {quoted_schema}").as_str())
+            .await?;
+
+        let test_result: std::result::Result<(), Box<dyn Error>> = async {
+            let search_path_schema = quoted_schema.clone();
+            let pool = PgPoolOptions::new()
+                .max_connections(2)
+                .after_connect(move |connection, _meta| {
+                    let search_path_schema = search_path_schema.clone();
+                    Box::pin(async move {
+                        connection
+                            .execute(format!("SET search_path TO {search_path_schema}").as_str())
+                            .await?;
+                        Ok(())
+                    })
+                })
+                .connect(&database_url)
+                .await?;
+            REWARD_TEST_MIGRATOR.run(&pool).await?;
+
+            let store = PostgresRewardBotStore::new(pool.clone());
+            let now = OffsetDateTime::now_utc();
+            let run_id = store
+                .start_strategy_run(&RewardStrategyRunStart {
+                    account_id: "reward_live".to_string(),
+                    trace_id: "trace_postgres_action_fence".to_string(),
+                    trigger_type: RewardStrategyRunTrigger::Poll,
+                    config_hash: "config-hash".to_string(),
+                    config_json: json!({}),
+                    input_summary: json!({}),
+                    started_at: now,
+                })
+                .await?;
+            let mut action = strategy_action(
+                "postgres_owner_fenced",
+                "reward_live",
+                RewardStrategyActionStatus::Planned,
+                now,
+            );
+            action.run_id = run_id;
+            store.record_strategy_actions(&[action]).await?;
+
+            let claimed = store
+                .claim_strategy_actions(
+                    "reward_live",
+                    "executor-a",
+                    now,
+                    now + Duration::minutes(2),
+                    1,
+                )
+                .await?;
+            let action_id = claimed[0].action_id;
+            assert!(!store
+                .release_strategy_action_lease(
+                    action_id,
+                    "executor-b",
+                    "retry",
+                    "wrong owner",
+                    json!({}),
+                    now + Duration::seconds(1),
+                )
+                .await?);
+            assert!(store
+                .release_strategy_action_lease(
+                    action_id,
+                    "executor-a",
+                    "retry",
+                    "safe retry",
+                    json!({ "retry": true }),
+                    now + Duration::seconds(1),
+                )
+                .await?);
+
+            let reclaimed = store
+                .claim_strategy_actions(
+                    "reward_live",
+                    "executor-b",
+                    now + Duration::seconds(2),
+                    now + Duration::minutes(2),
+                    1,
+                )
+                .await?;
+            let mut terminal = reclaimed[0].clone();
+            terminal.status = RewardStrategyActionStatus::Unknown;
+            terminal.reason_code = "connector_result_unknown".to_string();
+            terminal.reason = "connector result could not be confirmed".to_string();
+            terminal.result_json = json!({ "status": "unknown" });
+            terminal.updated_at = now + Duration::seconds(3);
+            assert!(!store
+                .finalize_strategy_action_lease(&terminal, "executor-a")
+                .await?);
+            assert!(store
+                .finalize_strategy_action_lease(&terminal, "executor-b")
+                .await?);
+
+            let resolved = store
+                .get_strategy_action(action_id)
+                .await?
+                .expect("resolved Postgres action exists");
+            assert_eq!(resolved.status, RewardStrategyActionStatus::Unknown);
+            assert_eq!(resolved.lease_owner, None);
+            assert_eq!(resolved.execution_attempts, 2);
+
+            pool.close().await;
+            Ok(())
+        }
+        .await;
+
+        admin_pool
+            .execute(format!("DROP SCHEMA IF EXISTS {quoted_schema} CASCADE").as_str())
+            .await?;
+        admin_pool.close().await;
+        test_result
     }
 
     #[test]

@@ -148,6 +148,58 @@ impl Default for RewardBotConfig {
 }
 
 impl RewardBotConfig {
+    /// Conservative defaults for a newly initialized Postgres deployment.
+    /// Trading remains disabled until the operator explicitly enables it.
+    #[must_use]
+    pub fn production_live_drill_defaults() -> Self {
+        let mut config = Self::default();
+        config.max_markets = 2;
+        config.max_open_orders = 6;
+        config.maker_market_budget_usd = decimal("10");
+        config.min_market_liquidity_usd = decimal("5000");
+        config.min_market_volume_24h_usd = decimal("2500");
+        config.min_hours_to_end = 72;
+        config.max_market_spread_cents = decimal("6");
+        config.max_market_data_age_minutes = 5;
+        config.min_market_score = decimal("25");
+        config.max_spread_cents = decimal("5");
+        config.quote_max_bid_rank = 2;
+        config.opportunity_competition_hard_gate_multiple = decimal("8");
+        config.opportunity_max_account_allocation_bps = 1_000;
+        config.opportunity_min_exit_depth_usd = decimal("100");
+        config.opportunity_min_exit_depth_multiple = decimal("3");
+        config.opportunity_max_entry_exit_slippage_cents = decimal("1.5");
+        config.opportunity_max_bad_fill_recovery_days = decimal("2");
+        config.opportunity_max_midpoint_range_cents = decimal("2");
+        config.opportunity_max_top_of_book_flip_count = 6;
+        config.fair_value_min_confidence = decimal("0.65");
+        config.fair_value_min_raw_edge_cents = decimal("0.5");
+        config.fair_value_min_effective_edge_cents = Decimal::ONE;
+        config.fair_value_max_midpoint_deviation_cents = decimal("2");
+        config.event_window_stop_new_quote_before_start_sec = 21_600;
+        config.event_window_cancel_open_buy_before_start_sec = 7_200;
+        config.first_quote_quarantine_sec = 900;
+        config.safety_margin_cents = decimal("1.5");
+        config.min_midpoint = decimal("0.15");
+        config.max_midpoint = decimal("0.85");
+        config.stale_book_ms = 30_000;
+        config.max_position_usd = decimal("10");
+        config.max_global_position_usd = decimal("25");
+        config.inventory_skew_strength = Decimal::ONE;
+        config.maker_max_exit_loss_cents = decimal("1.5");
+        config.account_capital_usd = decimal("100");
+        config.requote_drift_cents = decimal("1.5");
+        config.requote_drift_confirm_sec = 45;
+        config.requote_drift_cooldown_sec = 180;
+        config.requote_drift_max_cancels_per_cycle = 1;
+        config.adverse_requote_confirm_sec = 2;
+        config.min_depth_usd = decimal("25");
+        config.depth_drop_pct = decimal("50");
+        config.fill_velocity_usd = decimal("15");
+        config.mass_cancel_pct = decimal("50");
+        config.normalized()
+    }
+
     #[must_use]
     pub fn normalized(mut self) -> Self {
         self.account_id = normalize_account_id(&self.account_id);
@@ -1190,6 +1242,29 @@ mod reward_config_tests {
         assert_eq!(config.opportunity_reward_weight, decimal("10"));
         assert!(config.opportunity_exit_weight > config.opportunity_reward_weight);
         assert!(config.opportunity_stability_weight > config.opportunity_reward_weight);
+    }
+
+    #[test]
+    fn production_live_drill_defaults_are_disabled_and_cap_exposure() {
+        let config = RewardBotConfig::production_live_drill_defaults();
+
+        assert!(!config.enabled);
+        assert_eq!(config.max_markets, 2);
+        assert_eq!(config.max_open_orders, 6);
+        assert_eq!(config.maker_market_budget_usd, decimal("10"));
+        assert_eq!(config.max_position_usd, decimal("10"));
+        assert_eq!(config.max_global_position_usd, decimal("25"));
+        assert_eq!(config.account_capital_usd, decimal("100"));
+        assert_eq!(config.fair_value_min_effective_edge_cents, Decimal::ONE);
+        assert_eq!(config.opportunity_competition_hard_gate_multiple, decimal("8"));
+        assert_eq!(config.requote_drift_max_cancels_per_cycle, 1);
+        assert_eq!(config.min_depth_usd, decimal("25"));
+        assert_eq!(config.depth_drop_pct, decimal("50"));
+        assert_eq!(config.fill_velocity_usd, decimal("15"));
+        assert_eq!(config.mass_cancel_pct, decimal("50"));
+        assert!(!config.balanced_merge_enabled);
+        assert!(!config.balanced_merge_auto_execute_enabled);
+        assert!(!config.adaptive_exit_cancel_replace_enabled);
     }
 
     #[test]

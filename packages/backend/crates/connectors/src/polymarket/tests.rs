@@ -513,4 +513,64 @@ mod tests {
             AlloyU256::from(65_u8)
         );
     }
+
+    #[tokio::test]
+    async fn polygon_receipt_query_maps_confirmed_success_without_broadcasting() {
+        const TX_HASH: &str =
+            "0x1111111111111111111111111111111111111111111111111111111111111111";
+        let (rpc_url, captured) = crate::test_http::spawn_json_response_server(
+            r#"{"jsonrpc":"2.0","id":1,"result":{"transactionHash":"0x1111111111111111111111111111111111111111111111111111111111111111","status":"0x1","blockNumber":"0x123"}}"#,
+        )
+        .await;
+        let connector = PolymarketChainConnector::new(&rpc_url).expect("connector");
+
+        let receipt = connector
+            .fetch_transaction_receipt(TX_HASH)
+            .await
+            .expect("receipt");
+
+        assert_eq!(receipt.tx_hash, TX_HASH);
+        assert_eq!(receipt.status, PolymarketTransactionReceiptStatus::Succeeded);
+        assert_eq!(receipt.block_number.as_deref(), Some("0x123"));
+        let request = captured.await.expect("captured request");
+        assert_eq!(request.body["method"], "eth_getTransactionReceipt");
+        assert_eq!(request.body["params"][0], TX_HASH);
+    }
+
+    #[tokio::test]
+    async fn polygon_receipt_query_preserves_null_as_pending() {
+        const TX_HASH: &str =
+            "0x2222222222222222222222222222222222222222222222222222222222222222";
+        let (rpc_url, _captured) = crate::test_http::spawn_json_response_server(
+            r#"{"jsonrpc":"2.0","id":1,"result":null}"#,
+        )
+        .await;
+        let connector = PolymarketChainConnector::new(&rpc_url).expect("connector");
+
+        let receipt = connector
+            .fetch_transaction_receipt(TX_HASH)
+            .await
+            .expect("pending receipt");
+
+        assert_eq!(receipt.status, PolymarketTransactionReceiptStatus::Pending);
+        assert!(receipt.block_number.is_none());
+    }
+
+    #[tokio::test]
+    async fn polygon_receipt_query_rejects_mismatched_hash() {
+        const TX_HASH: &str =
+            "0x3333333333333333333333333333333333333333333333333333333333333333";
+        let (rpc_url, _captured) = crate::test_http::spawn_json_response_server(
+            r#"{"jsonrpc":"2.0","id":1,"result":{"transactionHash":"0x4444444444444444444444444444444444444444444444444444444444444444","status":"0x1","blockNumber":"0x123"}}"#,
+        )
+        .await;
+        let connector = PolymarketChainConnector::new(&rpc_url).expect("connector");
+
+        let error = connector
+            .fetch_transaction_receipt(TX_HASH)
+            .await
+            .expect_err("hash mismatch must fail closed");
+
+        assert_eq!(error.code(), "POLYGON_RECEIPT_HASH_MISMATCH");
+    }
 }

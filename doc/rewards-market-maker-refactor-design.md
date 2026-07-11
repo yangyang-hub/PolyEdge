@@ -377,7 +377,7 @@ RewardLiveExecutor
   behavior: submit/cancel/merge with idempotency and unknown-result protection
 ```
 
-当前第一层已新增 application `RewardActionPlanner`，并在 full tick 的 merge create/execute、cancel/cancel-replace、pending submit 和 placement submit 前写入 `reward_strategy_actions(status=planned)`。这些 action 使用与 outcome 派生 action 兼容的 idempotency key；后续 `apply_tick_outcome` 会更新同一 action 的状态/结果。fast reconcile 没有 strategy run 上下文，仍保持原路径。完整 executor 尚未抽离，live side effects 仍在 worker 原流程中执行。
+当前已新增 application `RewardActionPlanner`，并在 full tick 的 merge create/execute、cancel/cancel-replace、pending submit 和 placement submit 前使用同一 idempotency key 写入 `planned -> executing`；executing 持久化失败时不会执行对应 live side effect，后续 outcome/对账更新 terminal 状态。fast reconcile 没有 strategy run 上下文，仍保持原路径。完整的可 claim/恢复 durable executor 尚未抽离，live connector 调用仍在 worker 原流程中执行。
 
 需要保留现有保护：
 
@@ -411,7 +411,7 @@ RewardLiveExecutor
 |---|---|
 | Run timeline | 最近 runs、状态、耗时、候选数、eligible 数、下单/撤单/失败数、provider miss、book stale |
 | Run detail | 某次 run 的配置 hash、input summary、decision table、actions、order transitions；当前前端先展示 summary、decisions 和 actions |
-| Decision analytics | blocker codes、fair-value fail reasons、info-risk/event-window/AI 拦截分布、selection score 分布；当前仍未单独实现 |
+| Decision analytics | 已在 Runs tab 聚合 blocker、fair-value、AI/info-risk、selection score 与 action type/status；当前为前端读取现有 ledger 全量分页后本地聚合 |
 
 前端 DTO 不要直接依赖完整 `decision_json`。列表页使用摘要列；详情页再展开 JSON。
 
@@ -436,8 +436,8 @@ RewardLiveExecutor
 3. 已完成：在现有 live tick 中接入影子 run ledger，保持交易行为不变。
 4. 已完成：前端增加 Runs tab，只读展示 run timeline、summary、decisions 和 actions。
 5. 已完成：抽出 `RewardDecisionEngine`（pre/post-provider/snapshot 纯决策变换）与可序列化 `RewardStrategyInput` tick 输入快照，新增独立 input builder（`RewardBotService::build_strategy_input`，单一读路径 + 单一注入 `now`）和 `RewardLiveCycle::from_strategy_input` 桥接，engine 行为不变；新增 application engine tests 与 strategy_input tests。注：builder 注入单一 `now` 替代原先 `prepare_live_cycle` 内多次 `now_utc()`，带来 plan `updated_at` 亚毫秒级差异；provider cache 未纳入快照（Phase 4 v2）。
-6. 进行中：已新增 `RewardActionPlanner` 并在 full tick 执行前写 planned actions；后续继续把 placement/cancel/pending/merge 改为 durable action executor，逐步删除 worker 巨型流程中的混合职责。
-7. 新增 replay CLI，先做决策一致性回放，再做盘口/退出成本回放。
+6. 进行中：`RewardActionPlanner` 已在 full tick 与有动作的 fast reconcile/orderbook-event 路径副作用前写 `planned -> executing`；store 支持 account-scoped claim、owner/expiry fencing、renew/finalize/release。常驻 executor 已迁移 merge-intent create、cancel/cancel-replace、首次 PlaceBuy 和 match-first exit SELL；BUY/SELL 在 venue 查询不唯一或失败时 fail closed，BUY 仅首次 claim 且通过 fresh last-look 才提交，SELL 在恢复后仍会重查持仓和盘口。ExecuteMerge 已支持按 intent id 读取持久化 tx hash，并只读查询 receipt、以 `(intent_id, tx_hash)` fencing 完成/回滚状态；无 tx hash 时 executor 不广播。链上首次广播仍保留在 fresh synchronous tick。
+7. 已完成第一版 replay CLI 与 full tick 自动 fixture 持久化：`--run-id` 做 ledger 审计，`--fixture` 重跑全部纯 engine 阶段并比较 expected plans；fixture 有 8 MiB/敏感字段/integrity 保护。后续为盘口/退出成本回放。
 8. 小额 live drill：单账户、低额度、只开 standard profile，记录 run/action/order transition 指标。
 
 ## 测试要求

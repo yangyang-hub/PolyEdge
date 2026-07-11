@@ -304,6 +304,126 @@ impl RewardBotService {
         self.store.record_strategy_actions(actions).await
     }
 
+    pub async fn claim_strategy_actions(
+        &self,
+        account_id: &str,
+        lease_owner: &str,
+        lease_for: TimeDuration,
+        limit: u16,
+    ) -> Result<Vec<RewardStrategyAction>> {
+        if account_id.trim().is_empty() || lease_owner.trim().is_empty() {
+            return Err(AppError::invalid_input(
+                "REWARD_STRATEGY_ACTION_LEASE_INVALID",
+                "account_id and lease_owner are required",
+            ));
+        }
+        if lease_for <= TimeDuration::ZERO || limit == 0 || limit > 100 {
+            return Err(AppError::invalid_input(
+                "REWARD_STRATEGY_ACTION_LEASE_INVALID",
+                "lease duration must be positive and limit must be between 1 and 100",
+            ));
+        }
+        let now = OffsetDateTime::now_utc();
+        let lease_expires_at = now.checked_add(lease_for).ok_or_else(|| {
+            AppError::invalid_input(
+                "REWARD_STRATEGY_ACTION_LEASE_INVALID",
+                "lease duration exceeds the supported timestamp range",
+            )
+        })?;
+        self.store
+            .claim_strategy_actions(account_id, lease_owner, now, lease_expires_at, limit)
+            .await
+    }
+
+    pub async fn renew_strategy_action_lease(
+        &self,
+        action_id: i64,
+        lease_owner: &str,
+        lease_for: TimeDuration,
+    ) -> Result<bool> {
+        if action_id <= 0 || lease_owner.trim().is_empty() || lease_for <= TimeDuration::ZERO {
+            return Err(AppError::invalid_input(
+                "REWARD_STRATEGY_ACTION_LEASE_INVALID",
+                "positive action_id, lease_owner, and lease duration are required",
+            ));
+        }
+        let now = OffsetDateTime::now_utc();
+        let lease_expires_at = now.checked_add(lease_for).ok_or_else(|| {
+            AppError::invalid_input(
+                "REWARD_STRATEGY_ACTION_LEASE_INVALID",
+                "lease duration exceeds the supported timestamp range",
+            )
+        })?;
+        self.store
+            .renew_strategy_action_lease(action_id, lease_owner, now, lease_expires_at)
+            .await
+    }
+
+    pub async fn finalize_strategy_action_lease(
+        &self,
+        action: &RewardStrategyAction,
+        lease_owner: &str,
+    ) -> Result<bool> {
+        if action.action_id <= 0
+            || lease_owner.trim().is_empty()
+            || !action.status.is_terminal()
+            || !action.result_json.is_object()
+        {
+            return Err(AppError::invalid_input(
+                "REWARD_STRATEGY_ACTION_LEASE_INVALID",
+                "positive action_id, lease_owner, terminal status, and object result are required",
+            ));
+        }
+        self.store
+            .finalize_strategy_action_lease(action, lease_owner)
+            .await
+    }
+
+    pub async fn get_strategy_action(
+        &self,
+        action_id: i64,
+    ) -> Result<Option<RewardStrategyAction>> {
+        if action_id <= 0 {
+            return Err(AppError::invalid_input(
+                "REWARD_STRATEGY_ACTION_ID_INVALID",
+                "positive action_id is required",
+            ));
+        }
+        self.store.get_strategy_action(action_id).await
+    }
+
+    pub async fn release_strategy_action_lease(
+        &self,
+        action_id: i64,
+        lease_owner: &str,
+        reason_code: &str,
+        reason: &str,
+        result: Value,
+    ) -> Result<bool> {
+        if action_id <= 0 || lease_owner.trim().is_empty() {
+            return Err(AppError::invalid_input(
+                "REWARD_STRATEGY_ACTION_LEASE_INVALID",
+                "positive action_id and lease_owner are required",
+            ));
+        }
+        if !result.is_object() {
+            return Err(AppError::invalid_input(
+                "REWARD_STRATEGY_ACTION_RESULT_INVALID",
+                "strategy action result must be a JSON object",
+            ));
+        }
+        self.store
+            .release_strategy_action_lease(
+                action_id,
+                lease_owner,
+                reason_code,
+                reason,
+                result,
+                OffsetDateTime::now_utc(),
+            )
+            .await
+    }
+
     pub async fn record_order_transitions(
         &self,
         transitions: &[RewardOrderTransition],
@@ -320,6 +440,21 @@ impl RewardBotService {
 
     pub async fn get_strategy_run(&self, run_id: i64) -> Result<Option<RewardStrategyRun>> {
         self.store.get_strategy_run(run_id).await
+    }
+
+    pub async fn save_strategy_replay_fixture(
+        &self,
+        fixture: &RewardStrategyReplayFixture,
+    ) -> Result<()> {
+        fixture.validate_integrity()?;
+        self.store.save_strategy_replay_fixture(fixture).await
+    }
+
+    pub async fn get_strategy_replay_fixture(
+        &self,
+        run_id: i64,
+    ) -> Result<Option<RewardStrategyReplayFixture>> {
+        self.store.get_strategy_replay_fixture(run_id).await
     }
 
     pub async fn list_strategy_decisions(
@@ -822,6 +957,20 @@ impl RewardBotService {
             .await
     }
 
+    pub async fn create_reward_merge_intent_if_absent(
+        &self,
+        intent: &RewardMergeIntent,
+    ) -> Result<bool> {
+        self.store.create_merge_intent_if_absent(intent).await
+    }
+
+    pub async fn get_reward_merge_intent(
+        &self,
+        intent_id: &str,
+    ) -> Result<Option<RewardMergeIntent>> {
+        self.store.get_merge_intent(intent_id).await
+    }
+
     pub async fn list_executable_reward_merge_intents(
         &self,
         account_id: &str,
@@ -852,6 +1001,25 @@ impl RewardBotService {
     ) -> Result<()> {
         self.store
             .mark_merge_intent_failed(intent_id, failed_reason, failed_at)
+            .await
+    }
+
+    pub async fn resolve_reward_merge_intent_transaction(
+        &self,
+        intent_id: &str,
+        tx_hash: &str,
+        succeeded: bool,
+        reason: &str,
+        resolved_at: OffsetDateTime,
+    ) -> Result<bool> {
+        self.store
+            .resolve_merge_intent_transaction(
+                intent_id,
+                tx_hash,
+                succeeded,
+                reason,
+                resolved_at,
+            )
             .await
     }
 

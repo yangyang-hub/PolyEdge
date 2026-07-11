@@ -56,12 +56,63 @@ pub struct RewardMergeActionProposal<'a> {
 pub struct RewardActionPlanner;
 
 impl RewardActionPlanner {
+    /// Advance already-persisted planned actions immediately before their live
+    /// side effects begin. The idempotency key is preserved so stores update
+    /// the durable ledger row instead of inserting a second action.
+    #[must_use]
+    pub fn mark_actions_executing(
+        actions: &[RewardStrategyAction],
+        now: OffsetDateTime,
+    ) -> Vec<RewardStrategyAction> {
+        actions
+            .iter()
+            .map(|action| Self::transition_action(
+                action,
+                RewardStrategyActionStatus::Executing,
+                now,
+                action.reason.as_str(),
+                json!({
+                    "status": RewardStrategyActionStatus::Executing.as_str(),
+                    "phase": "executing",
+                }),
+            ))
+            .collect()
+    }
+
+    #[must_use]
+    pub fn transition_action(
+        action: &RewardStrategyAction,
+        status: RewardStrategyActionStatus,
+        now: OffsetDateTime,
+        reason: &str,
+        result_json: Value,
+    ) -> RewardStrategyAction {
+        let mut transitioned = action.clone();
+        transitioned.status = status;
+        transitioned.reason = reason.to_string();
+        transitioned.result_json = result_json;
+        transitioned.updated_at = now;
+        if status.is_terminal() {
+            transitioned.lease_owner = None;
+            transitioned.lease_expires_at = None;
+        }
+        transitioned
+    }
+
     #[must_use]
     pub fn plan_order_action(
         context: RewardActionPlannerContext<'_>,
         proposal: RewardOrderActionProposal<'_>,
     ) -> RewardStrategyAction {
         let action_type = proposal.intent.action_type();
+        let request_json = RewardDurableActionEnvelope::order(
+            proposal.intent,
+            proposal.reason,
+            proposal.order,
+            proposal.metadata,
+        )
+        .to_json()
+        .unwrap_or_else(|_| json!({}));
         RewardStrategyAction {
             action_id: 0,
             run_id: context.run_id,
@@ -75,14 +126,11 @@ impl RewardActionPlanner {
             reason_code: proposal.intent.reason_code().to_string(),
             reason: proposal.reason.to_string(),
             idempotency_key: reward_order_action_idempotency_key(context.trace_id, proposal.order),
-            request_json: json!({
-                "phase": "planned",
-                "intent": action_type.as_str(),
-                "reason": proposal.reason,
-                "order": proposal.order,
-                "metadata": proposal.metadata,
-            }),
+            request_json,
             result_json: json!({ "status": RewardStrategyActionStatus::Planned.as_str() }),
+            lease_owner: None,
+            lease_expires_at: None,
+            execution_attempts: 0,
             created_at: context.now,
             updated_at: context.now,
         }
@@ -147,6 +195,14 @@ impl RewardActionPlanner {
         proposal: RewardMergeActionProposal<'_>,
     ) -> RewardStrategyAction {
         let action_type = proposal.action_type;
+        let request_json = RewardDurableActionEnvelope::merge(
+            action_type,
+            proposal.reason,
+            proposal.intent,
+            proposal.metadata,
+        )
+        .and_then(|envelope| envelope.to_json())
+        .unwrap_or_else(|_| json!({}));
         let idempotency_key = if proposal.idempotency_suffix.is_empty() {
             reward_merge_action_idempotency_key(context.trace_id, proposal.intent)
         } else {
@@ -169,14 +225,11 @@ impl RewardActionPlanner {
             reason_code: action_type.as_str().to_string(),
             reason: proposal.reason.to_string(),
             idempotency_key,
-            request_json: json!({
-                "phase": "planned",
-                "intent": action_type.as_str(),
-                "reason": proposal.reason,
-                "merge_intent": proposal.intent,
-                "metadata": proposal.metadata,
-            }),
+            request_json,
             result_json: json!({ "status": RewardStrategyActionStatus::Planned.as_str() }),
+            lease_owner: None,
+            lease_expires_at: None,
+            execution_attempts: 0,
             created_at: context.now,
             updated_at: context.now,
         }
@@ -208,6 +261,9 @@ impl RewardActionPlanner {
             ),
             request_json: serde_json::to_value(intent).unwrap_or_else(|_| json!({})),
             result_json,
+            lease_owner: None,
+            lease_expires_at: None,
+            execution_attempts: 0,
             created_at: context.now,
             updated_at: context.now,
         }
