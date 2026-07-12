@@ -4,14 +4,15 @@
 
 ## 概述
 
-数据库使用 PostgreSQL。当前项目按尚未生产迁移、可从空库重新初始化的前提维护；数据库基线已压缩为单个初始化迁移 `0001_initial_schema.sql`，不保留历史增量迁移链。schema 覆盖审计、幂等、LLM 调用、市场数据、事件/证据、执行历史、内部风险状态、新闻、LP rewards market maker、strategy run ledger/replay fixtures、durable action executor、fair-value estimates、adaptive exit reselection、Funding/Polymarket 账户配套、orderbook price-history candles、runtime config 和 BalancedMerge。
+数据库使用 PostgreSQL。已发布的 `0001_initial_schema.sql` 现在视为不可变基线，避免 SQLx migration checksum 拒绝现有部署；后续 schema 修正使用新的前向迁移。`init.sql` 仍表达最新完整 schema，供空库直接初始化和审计。
 
-本项目现在面向空库重新部署：`packages/backend/init.sql` 与 `packages/backend/migrations/0001_initial_schema.sql` 表达同一份当前 schema，不兼容已删除历史模块的旧表。运行时仍通过 `sqlx::migrate!` 使用单个 baseline 迁移做初始化/校验。
+运行时通过 `sqlx::migrate!` 依次校验/执行冻结基线和前向迁移。不兼容已删除历史模块的旧表，但必须支持从当前生产 schema 原地升级到新版本。
 
 ## 初始化入口
 
 - `packages/backend/init.sql`：空库初始化脚本，直接表示当前完整 schema。
-- `packages/backend/migrations/0001_initial_schema.sql`：Rust runtime 的单 baseline 内嵌迁移源，内容与初始化基线一致。
+- `packages/backend/migrations/0001_initial_schema.sql`：已冻结的 Rust runtime 初始基线；发布后禁止修改 checksum。
+- `packages/backend/migrations/0002_reward_fair_value_history_identity.sql`：对旧 fair-value history identity 去重并创建唯一索引，支持现有部署原地升级。
 - 当前不维护增量迁移链；已有数据库如需保留历史 `_sqlx_migrations`，需要单独规划迁移，不属于当前重新部署目标。
 
 ## 迁移文件列表
@@ -19,6 +20,7 @@
 | 迁移 | 主题 | 核心表/改动 |
 |---|---|---|
 | `0001_initial_schema.sql` | 当前完整 schema baseline | 全量创建当前所需表、约束和索引，包括 rewards market maker、strategy run ledger、fair-value、selection score、BalancedMerge、Funding、orderbook candles、worker/runtime 支撑表 |
+| `0002_reward_fair_value_history_identity.sql` | Fair-value history 升级 | 去重 `(condition_id, source, observed_at)` 并创建唯一索引，使历史写入重试幂等 |
 
 ## Schema 领域分组
 
@@ -95,18 +97,18 @@
 
 ## 当前状态
 
-- 当前迁移目录只保留单个 baseline：`0001_initial_schema.sql`。
-- `packages/backend/init.sql` 与 runtime baseline 表达同一当前 schema。
+- 当前迁移目录包含不可变基线 `0001_initial_schema.sql` 和前向修复 `0002_reward_fair_value_history_identity.sql`。
+- `packages/backend/init.sql` 表达执行全部迁移后的最新 schema，不再要求与冻结 `0001` 字节相同。
 - 已移除的钱包类和独立研究模块不再有前端路由、API、worker、application store、DTO 或专属 schema；baseline 仍明确保留上述 legacy signal/arbitrage 通用表，不能据此推断旧控制台流程仍可用。
 - Rewards 竞争度相关数据只存在于 quote plan 的统一 opportunity metrics 中，不再有独立 observation 表或模块；最终市场选择优先级存于 quote plan 的 `selection_score` / `selection_metrics`。
 - Rewards 事件窗口、strategy run ledger、Replay V2 fixture、condition 级 fair-value estimates/幂等 history、AI advisory、信息风险、price-history candles、worker heartbeat、控制命令去重和 BalancedMerge merge intent 已落地。
-- 新建数据库直接包含 `reward_fair_value_history_identity_uidx`。保留数据的现场实例在部署新二进制时应先去重同 `(condition_id, source, observed_at)` 历史行，再以独立运维 DDL 创建唯一索引。二进制使用无目标 `ON CONFLICT DO NOTHING`，因此索引未建立时不会中断 live tick，但重试幂等只在索引存在后完整生效。
+- 新建数据库和现有部署都通过 `0002` 获得 `reward_fair_value_history_identity_uidx`；迁移会先按 `(condition_id, source, observed_at)` 去重，再创建唯一索引。写路径使用无目标 `ON CONFLICT DO NOTHING`，与冻结 `0001` 兼容。
 - Strategy run/decision ledger 是审计和 replay 输入，不作为 live 定价输入；`reward_strategy_actions` 同时是 Postgres-only durable executor 的执行队列。executor 随 rewards poll loop 启动，使用 account-scoped lease、owner fencing 和当前风险/venue 状态复核后执行或恢复受支持动作。
 - 数据库维护任务生产模板默认开启；它不删除 rewards fills、positions、account state 等核心账本表。
 
 ## 修改检查清单
 
-- [ ] 修改 schema 时优先更新 `init.sql` 和 `migrations/0001_initial_schema.sql` 的当前基线；生产部署前不新增增量迁移。
+- [ ] 禁止修改已发布 migration；schema 改动时新增前向 migration，并同步更新 `init.sql` 的最新完整 schema。
 - [ ] 新增表/列后同步更新 application store trait、infrastructure Postgres/in-memory 实现和前端 DTO（如对外暴露）。
 - [ ] 新增枚举后同步更新 `domain` crate 和前端枚举翻译。
 - [ ] 修改后运行 `cargo check --workspace --tests`；涉及查询行为时补充 `cargo test --workspace`。

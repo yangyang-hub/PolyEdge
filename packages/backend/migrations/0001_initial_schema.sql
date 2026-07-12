@@ -1533,9 +1533,6 @@ CREATE TABLE reward_fair_value_history (
 CREATE INDEX reward_fair_value_history_condition_observed_idx
     ON reward_fair_value_history (condition_id, observed_at DESC);
 
-CREATE UNIQUE INDEX reward_fair_value_history_identity_uidx
-    ON reward_fair_value_history (condition_id, source, observed_at);
-
 CREATE INDEX reward_fair_value_history_created_idx
     ON reward_fair_value_history (created_at DESC);
 

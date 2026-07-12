@@ -99,6 +99,8 @@ Auto 模式：
 4. API/orderbook/front 按变更独立重建和重启。
 5. 容器未运行但镜像 hash 未变化时只 `up -d` 启动已有镜像。
 
+API 和 orderbook 启动时都会运行 SQLx embedded migrations。已发布的 migration 必须保持字节不变，否则现有数据库会因 checksum 不匹配拒绝启动；后续 schema 变更只能新增前向 migration。
+
 Manual 模式：
 
 - `scripts/deploy.sh all`

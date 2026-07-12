@@ -13,6 +13,9 @@ pub mod settings;
 pub mod stores;
 pub mod telemetry;
 
+#[cfg(test)]
+mod migration_baseline_tests;
+
 pub use auth::{
     AuthContext, IdempotencyKey, InternalTokenVerifier, RequestKind, require_connector_write_auth,
     require_console_read_auth, require_console_write_auth, require_mode_write_auth,
