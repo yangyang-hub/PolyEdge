@@ -226,6 +226,13 @@ export function AiAdvisoryConfig({
         hint={h.aiAdvisoryTtlSec}
         onChange={(value) => updateNumber("ai_advisory_ttl_sec", value)}
       />
+      <NumberInput
+        label={dictionary.rewards.aiAdvisoryProviderPendingGraceSec}
+        value={draft.ai_advisory_provider_pending_grace_sec}
+        suffix="s"
+        hint={h.aiAdvisoryProviderPendingGraceSec}
+        onChange={(value) => updateNumber("ai_advisory_provider_pending_grace_sec", value)}
+      />
       <ToggleField
         label={dictionary.rewards.aiProviderConcurrencyEnabled}
         hint={h.aiProviderConcurrencyEnabled}
@@ -319,6 +326,13 @@ export function AiAdvisoryConfig({
         suffix="s"
         hint={h.infoRiskTtlSec}
         onChange={(value) => updateNumber("info_risk_ttl_sec", value)}
+      />
+      <NumberInput
+        label={dictionary.rewards.infoRiskProviderPendingGraceSec}
+        value={draft.info_risk_provider_pending_grace_sec}
+        suffix="s"
+        hint={h.infoRiskProviderPendingGraceSec}
+        onChange={(value) => updateNumber("info_risk_provider_pending_grace_sec", value)}
       />
       <ToggleField
         label={dictionary.rewards.requireInfoRiskBeforeFirstQuote}

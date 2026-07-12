@@ -165,20 +165,37 @@ impl RewardBotStore for PostgresRewardBotStore {
     async fn complete_control_command(
         &self,
         command_id: &str,
-        trace_id: &str,
+        lease_owner: &str,
+        lease_version: i64,
         now: OffsetDateTime,
     ) -> Result<()> {
-        postgres_complete_reward_control_command(&self.pool, command_id, trace_id, now).await
+        postgres_complete_reward_control_command(
+            &self.pool,
+            command_id,
+            lease_owner,
+            lease_version,
+            now,
+        )
+        .await
     }
 
     async fn fail_control_command(
         &self,
         command_id: &str,
-        trace_id: &str,
+        lease_owner: &str,
+        lease_version: i64,
         error: &str,
         now: OffsetDateTime,
     ) -> Result<()> {
-        postgres_fail_reward_control_command(&self.pool, command_id, trace_id, error, now).await
+        postgres_fail_reward_control_command(
+            &self.pool,
+            command_id,
+            lease_owner,
+            lease_version,
+            error,
+            now,
+        )
+        .await
     }
 
     async fn upsert_markets(&self, markets: &[RewardMarket]) -> Result<()> {
@@ -414,6 +431,13 @@ impl RewardBotStore for PostgresRewardBotStore {
         postgres_record_reward_market_candle_sample(&self.pool, sample).await
     }
 
+    async fn record_market_candle_samples(
+        &self,
+        samples: &[RewardMarketCandleSample],
+    ) -> Result<()> {
+        postgres_record_reward_market_candle_samples(&self.pool, samples).await
+    }
+
     async fn list_recent_market_candles(
         &self,
         condition_id: &str,
@@ -456,7 +480,7 @@ impl RewardBotStore for PostgresRewardBotStore {
               AND model = $4
               AND input_hash = $5
               AND expires_at > $6
-            ORDER BY expires_at DESC
+            ORDER BY created_at DESC, id DESC
             LIMIT 1
             "#,
         )
@@ -1096,7 +1120,7 @@ impl RewardBotStore for PostgresRewardBotStore {
             FROM reward_merge_intents
             WHERE account_id = $1
               AND condition_id = $2
-              AND status IN ('pending', 'unsupported', 'submitted', 'completed')
+              AND status IN ('pending', 'unsupported', 'broadcasting', 'submitted')
             "#,
         )
         .bind(account_id)
@@ -1275,7 +1299,7 @@ impl RewardBotStore for PostgresRewardBotStore {
         submitted_at: OffsetDateTime,
         reason: &str,
     ) -> Result<()> {
-        sqlx::query(
+        let result = sqlx::query(
             r#"
             UPDATE reward_merge_intents
             SET status = 'submitted',
@@ -1285,7 +1309,7 @@ impl RewardBotStore for PostgresRewardBotStore {
                 reason = $4,
                 updated_at = $3
             WHERE id = $1
-              AND status IN ('pending', 'unsupported')
+              AND status = 'broadcasting'
               AND tx_hash IS NULL
             "#,
         )
@@ -1301,6 +1325,50 @@ impl RewardBotStore for PostgresRewardBotStore {
                 format!("failed to mark reward merge intent submitted: {error}"),
             )
         })?;
+        if result.rows_affected() != 1 {
+            return Err(AppError::conflict(
+                "REWARD_MERGE_SUBMIT_FENCE_LOST",
+                "merge intent was not in the broadcasting state when submission completed",
+            ));
+        }
+        Ok(())
+    }
+
+    async fn mark_merge_intent_broadcasting(
+        &self,
+        intent_id: &str,
+        broadcasting_at: OffsetDateTime,
+        reason: &str,
+    ) -> Result<()> {
+        let result = sqlx::query(
+            r#"
+            UPDATE reward_merge_intents
+            SET status = 'broadcasting',
+                reason = $3,
+                failed_reason = NULL,
+                updated_at = $2
+            WHERE id = $1
+              AND status IN ('pending', 'unsupported')
+              AND tx_hash IS NULL
+            "#,
+        )
+        .bind(intent_id)
+        .bind(broadcasting_at)
+        .bind(reason)
+        .execute(&self.pool)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_UPDATE_FAILED",
+                format!("failed to fence reward merge intent before broadcast: {error}"),
+            )
+        })?;
+        if result.rows_affected() != 1 {
+            return Err(AppError::conflict(
+                "REWARD_MERGE_BROADCAST_FENCE_LOST",
+                "merge intent could not enter broadcasting because it was already claimed or resolved",
+            ));
+        }
         Ok(())
     }
 
@@ -1310,7 +1378,7 @@ impl RewardBotStore for PostgresRewardBotStore {
         failed_reason: &str,
         failed_at: OffsetDateTime,
     ) -> Result<()> {
-        sqlx::query(
+        let result = sqlx::query(
             r#"
             UPDATE reward_merge_intents
             SET status = 'failed',
@@ -1334,6 +1402,12 @@ impl RewardBotStore for PostgresRewardBotStore {
                 format!("failed to mark reward merge intent failed: {error}"),
             )
         })?;
+        if result.rows_affected() != 1 {
+            return Err(AppError::conflict(
+                "REWARD_MERGE_FAIL_FENCE_LOST",
+                "merge intent was not safely fail-able from its current state",
+            ));
+        }
         Ok(())
     }
 
@@ -1409,9 +1483,7 @@ impl RewardBotStore for PostgresRewardBotStore {
         for intent in &outcome.merge_intents {
             upsert_reward_merge_intent_tx(&mut transaction, intent).await?;
         }
-        for position in &outcome.positions {
-            upsert_reward_position_tx(&mut transaction, position).await?;
-        }
+        upsert_reward_positions_tx(&mut transaction, &outcome.positions).await?;
         upsert_reward_account_state_tx(&mut transaction, &outcome.account).await?;
         for event in &outcome.events {
             insert_reward_event_tx(&mut transaction, event).await?;
@@ -1461,6 +1533,33 @@ impl RewardBotStore for PostgresRewardBotStore {
             )
         })?;
 
+        let current_updated_at: Option<OffsetDateTime> = sqlx::query_scalar(
+            r#"
+            SELECT updated_at
+            FROM reward_account_state
+            WHERE account_id = $1
+            FOR UPDATE
+            "#,
+        )
+        .bind(&account.account_id)
+        .fetch_optional(&mut *transaction)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_QUERY_FAILED",
+                format!("failed to fence reward account sync version: {error}"),
+            )
+        })?;
+        if current_updated_at.is_some_and(|updated_at| updated_at > account.updated_at) {
+            transaction.commit().await.map_err(|error| {
+                db_error(
+                    "POSTGRES_TRANSACTION_COMMIT_FAILED",
+                    format!("failed to commit skipped stale reward account sync: {error}"),
+                )
+            })?;
+            return Ok(());
+        }
+
         upsert_reward_account_state_tx(&mut transaction, account).await?;
         if let Some(positions) = positions {
             sqlx::query("DELETE FROM reward_positions WHERE account_id = $1")
@@ -1473,9 +1572,7 @@ impl RewardBotStore for PostgresRewardBotStore {
                         format!("failed to replace externally synced reward positions: {error}"),
                     )
                 })?;
-            for position in positions {
-                upsert_reward_position_tx(&mut transaction, position).await?;
-            }
+            upsert_reward_positions_tx(&mut transaction, positions).await?;
         }
 
         transaction.commit().await.map_err(|error| {

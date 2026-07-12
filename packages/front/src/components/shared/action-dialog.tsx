@@ -13,7 +13,6 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import { OperationFeedbackBanner } from "@/components/shared/operation-feedback-banner";
 import { dictionary } from "@/lib/i18n/dictionaries";
 
@@ -76,14 +75,19 @@ export function ActionDialog({
             <label className="text-sm font-medium text-foreground" htmlFor="operation-note">
               {dictionary.actionDialog.operatorNote}
             </label>
-            <Textarea
+            <Input
               id="operation-note"
+              name="operator-note"
+              autoComplete="off"
+              maxLength={500}
               value={note}
               onChange={(event) => onNoteChange(event.target.value)}
-              className="min-h-28 rounded-sm border-white/10 bg-accent/45 text-foreground"
+              aria-invalid={Boolean(noteError)}
+              aria-describedby={noteError ? "operation-note-error" : undefined}
+              className="h-10 rounded-sm border-white/10 bg-accent/45 text-foreground"
               placeholder={dictionary.actionDialog.notePlaceholder}
             />
-            {noteError ? <p className="text-xs text-destructive">{noteError}</p> : null}
+            {noteError ? <p id="operation-note-error" className="text-xs text-destructive">{noteError}</p> : null}
           </div>
 
           {requiresStepUp ? (
@@ -93,12 +97,17 @@ export function ActionDialog({
               </label>
               <Input
                 id="step-up-code"
+                name="step-up-code"
+                autoComplete="one-time-code"
+                spellCheck={false}
                 value={stepUpCode}
                 onChange={(event) => onStepUpCodeChange(event.target.value)}
+                aria-invalid={Boolean(stepUpCodeError)}
+                aria-describedby={stepUpCodeError ? "step-up-code-error" : undefined}
                 className="h-10 rounded-sm border-white/10 bg-accent/45"
                 placeholder={dictionary.actionDialog.stepUpCodePlaceholder}
               />
-              {stepUpCodeError ? <p className="text-xs text-destructive">{stepUpCodeError}</p> : null}
+              {stepUpCodeError ? <p id="step-up-code-error" className="text-xs text-destructive">{stepUpCodeError}</p> : null}
             </div>
           ) : null}
         </div>

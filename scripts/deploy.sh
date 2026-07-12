@@ -200,16 +200,31 @@ validate_api_env_file() {
   local auth_disabled
   auth_disabled="$(env_value POLYEDGE_AUTH__DISABLED "${file}")"
   if ! env_truthy "${auth_disabled}"; then
-    local step_up_code
-    step_up_code="$(env_value POLYEDGE_AUTH__STEP_UP_CODE "${file}")"
-    if [[ -z "${step_up_code}" || "${step_up_code}" == "change-me" ]]; then
-      fail "POLYEDGE_AUTH__STEP_UP_CODE must be set to a non-placeholder value in ${file}, or set POLYEDGE_AUTH__DISABLED=true for an intranet-only deployment."
+    local auth_keys_json
+    auth_keys_json="$(env_value POLYEDGE_AUTH__KEYS_JSON "${file}")"
+    if [[ -z "${auth_keys_json}" || "${auth_keys_json}" == "[]" || "${auth_keys_json}" == *"<base64"* ]]; then
+      fail "POLYEDGE_AUTH__KEYS_JSON must contain at least one real Ed25519 public key in ${file} when POLYEDGE_AUTH__DISABLED=false. The current static frontend also requires an external short-lived JWT issuance/transport integration."
     fi
   fi
 
   local runtime_environment
   runtime_environment="$(env_value POLYEDGE_RUNTIME__ENVIRONMENT "${file}")"
   runtime_environment="${runtime_environment:-local}"
+  if [[ "${runtime_environment}" == "production" ]] && env_truthy "${auth_disabled}"; then
+    local insecure_private_deploy_ack
+    insecure_private_deploy_ack="$(env_value POLYEDGE_AUTH__ALLOW_INSECURE_PRIVATE_DEPLOY "${file}")"
+    if ! env_truthy "${insecure_private_deploy_ack}"; then
+      fail "POLYEDGE_AUTH__ALLOW_INSECURE_PRIVATE_DEPLOY=true is required in ${file} when production authentication is disabled; expose the API only behind a VPN, private ACL, or trusted access proxy."
+    fi
+  fi
+  local cors_allowed_origins
+  cors_allowed_origins="$(env_value POLYEDGE_CORS__ALLOWED_ORIGINS "${file}")"
+  if [[ "${runtime_environment}" == "production" && -z "${cors_allowed_origins}" ]]; then
+    fail "POLYEDGE_CORS__ALLOWED_ORIGINS must contain at least one exact frontend origin in production (${file})."
+  fi
+  if [[ "${cors_allowed_origins}" == *"*"* ]]; then
+    fail "POLYEDGE_CORS__ALLOWED_ORIGINS must not contain wildcard origins in ${file}."
+  fi
   local dev_bypass
   dev_bypass="$(env_value POLYEDGE_INTERNAL_AUTH_DEV_BYPASS "${file}")"
   dev_bypass="${dev_bypass:-0}"

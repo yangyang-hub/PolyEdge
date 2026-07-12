@@ -11,53 +11,36 @@ async fn register_orderbook_tokens(
     let mut exec_candidate_seen = HashSet::new();
     let mut exec_query_complete = true;
 
-    // Source 1: Active execution orders -> market YES/NO asset IDs.
-    for status in [
-        OrderStatus::Submitted,
-        OrderStatus::Open,
-        OrderStatus::PartiallyFilled,
-    ] {
-        // Cap at 200 to satisfy OrderListFilters validation (execution MAX_LIST_LIMIT).
-        let fetch_limit = max_tokens.saturating_mul(2).min(200) as u16;
-        let filters = match OrderListFilters::new(
-            None,
-            None,
-            Some(POLYMARKET_CONNECTOR_NAME.to_string()),
-            Some(status),
-            Some(fetch_limit),
-        ) {
-            Ok(f) => f,
-            Err(error) => {
-                warn!(error = %error, "failed to build order filters for token registration");
-                exec_query_complete = false;
-                continue;
-            }
-        };
-        let orders = match state.execution_service.list_orders(filters).await {
-            Ok(orders) => orders,
-            Err(error) => {
-                warn!(error = %error, "failed to list orders for token registration");
-                exec_query_complete = false;
-                continue;
-            }
-        };
-
-        for order in orders {
-            if exec_candidates.len() >= max_tokens {
-                break;
-            }
-            let market = match state.market_event_service.get_market(&order.market_id).await {
+    // Source 1: every distinct market with a potentially live execution order.
+    // This specialized query is not constrained by the 200-row console list
+    // limit, so older active orders cannot silently lose their subscriptions.
+    let active_market_ids = match state
+        .market_event_service
+        .list_active_order_market_ids(POLYMARKET_CONNECTOR_NAME, max_tokens.max(1))
+        .await
+    {
+        Ok(market_ids) => market_ids,
+        Err(error) => {
+            warn!(error = %error, "failed to list active order markets for token registration");
+            exec_query_complete = false;
+            Vec::new()
+        }
+    };
+    for market_id in active_market_ids {
+        if exec_candidates.len() >= max_tokens {
+            break;
+        }
+        let market = match state.market_event_service.get_market(&market_id).await {
                 Ok(m) => m,
                 Err(_) => continue,
             };
-            let refs = match polymarket_market_refs(&market) {
-                Ok(r) => r,
-                Err(_) => continue,
-            };
-            for token_id in [refs.yes_asset_id, refs.no_asset_id] {
-                if exec_candidate_seen.insert(token_id.clone()) {
-                    exec_candidates.push(token_id);
-                }
+        let refs = match polymarket_market_refs(&market) {
+            Ok(r) => r,
+            Err(_) => continue,
+        };
+        for token_id in [refs.yes_asset_id, refs.no_asset_id] {
+            if exec_candidate_seen.insert(token_id.clone()) {
+                exec_candidates.push(token_id);
             }
         }
     }

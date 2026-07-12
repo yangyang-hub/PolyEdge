@@ -149,6 +149,7 @@ fn opportunity_metrics_penalize_crowded_reward_markets() {
         &[],
         &opportunity_test_account(decimal("1000")),
         &config,
+        OffsetDateTime::now_utc(),
     );
 
     let metrics = plans[0]
@@ -188,6 +189,7 @@ fn opportunity_metrics_competition_hard_gate_blocks_overcrowded_market() {
         &[],
         &opportunity_test_account(decimal("1000")),
         &config,
+        OffsetDateTime::now_utc(),
     );
 
     let metrics = plans[0]
@@ -223,6 +225,7 @@ fn opportunity_metrics_competition_hard_gate_disabled_does_not_block() {
         &[],
         &opportunity_test_account(decimal("1000")),
         &config,
+        OffsetDateTime::now_utc(),
     );
 
     let metrics = plans[0]
@@ -263,6 +266,7 @@ fn opportunity_metrics_refresh_is_idempotent_and_does_not_promote_blocked_plan()
         &[],
         &opportunity_test_account(decimal("1000")),
         &config,
+        OffsetDateTime::now_utc(),
     );
 
     let first_score = plans[0].score;
@@ -284,6 +288,7 @@ fn opportunity_metrics_refresh_is_idempotent_and_does_not_promote_blocked_plan()
         &[],
         &opportunity_test_account(decimal("1000")),
         &config,
+        OffsetDateTime::now_utc(),
     );
 
     assert_eq!(plans[0].score, first_score);

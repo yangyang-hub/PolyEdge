@@ -35,7 +35,7 @@ export const shared = {
     reconnecting: "重连中",
     review: "检查",
     streamSynced: "流已同步",
-    submitting: "提交中...",
+    submitting: "提交中…",
     sync: "同步",
     unknown: "未知",
     yes: "是",
@@ -70,9 +70,9 @@ export const shared = {
   },
   actionDialog: {
     operatorNote: "操作备注",
-    notePlaceholder: "说明为什么要执行该操作、已经检查了哪些上下文，以及下一步应如何处理。",
+    notePlaceholder: "说明为什么要执行该操作、已经检查了哪些上下文，以及下一步应如何处理…",
     stepUpCode: "二次确认码",
-    stepUpCodePlaceholder: "输入二次确认码",
+    stepUpCodePlaceholder: "输入二次确认码…",
   },
   feedback: {
     operationQueued: "操作已入队",

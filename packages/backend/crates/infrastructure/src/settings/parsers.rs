@@ -8,6 +8,7 @@ fn environment_source() -> Environment {
         .try_parsing(true)
         .list_separator(",")
         .with_list_parse_key("auth.revoked_sessions")
+        .with_list_parse_key("cors.allowed_origins")
 }
 
 fn decimal(value: &str) -> rust_decimal::Decimal {

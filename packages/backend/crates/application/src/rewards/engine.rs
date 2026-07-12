@@ -38,6 +38,7 @@ impl RewardDecisionEngine {
             &cycle.open_orders,
             &cycle.account,
             &cycle.config,
+            now,
         );
         let fair_value_estimates = apply_reward_fair_values_to_quote_plans(
             &mut cycle.plans,
@@ -114,6 +115,7 @@ impl RewardDecisionEngine {
             &cycle.open_orders,
             &cycle.account,
             &cycle.config,
+            now,
         );
         let fair_value_estimates = apply_reward_fair_values_to_quote_plans(
             &mut cycle.plans,
@@ -199,7 +201,7 @@ pub fn apply_reward_live_funding_precheck(
             .config_for_strategy_bucket(plan.strategy_bucket)
             .config_for_strategy_profile(plan.strategy_profile);
         let Ok(materialized) =
-            materialize_reward_quote_plan_for_live_orderbook(plan, books, &plan_config)
+            materialize_reward_quote_plan_for_live_orderbook_at(plan, books, &plan_config, now)
         else {
             continue;
         };
@@ -268,7 +270,7 @@ pub fn refresh_reward_live_quote_plan_readiness(
         let plan_config = config
             .config_for_strategy_bucket(plan.strategy_bucket)
             .config_for_strategy_profile(plan.strategy_profile);
-        match materialize_reward_quote_plan_for_live_orderbook(plan, books, &plan_config) {
+        match materialize_reward_quote_plan_for_live_orderbook_at(plan, books, &plan_config, now) {
             Ok(materialized) => {
                 if apply_reward_live_quote_plan_materialization(plan, materialized, now) {
                     changed = true;

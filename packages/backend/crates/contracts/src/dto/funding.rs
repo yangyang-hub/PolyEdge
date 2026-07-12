@@ -29,6 +29,8 @@ pub struct FundingTransferRequest {
     pub token_id: String,
     pub amount: Decimal,
     pub confirmed: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub operator_note: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

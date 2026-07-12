@@ -1,6 +1,6 @@
 # Funding（Polymarket 入金）
 
-最后更新：2026-06-26
+最后更新：2026-07-12
 
 ## 概述
 
@@ -18,6 +18,7 @@
 | `src/features/funding/components/funding-review-card.tsx` | 发送前复核卡片：付款钱包、Polymarket 入账钱包、Bridge 地址、交易链接 |
 | `src/features/funding/components/funding-info-cards.tsx` | 安全边界和入金流程说明 |
 | `src/features/funding/lib/polygon-funding.ts` | 金额最小单位转换、Polygonscan 链接和 token 说明映射 |
+| `src/features/funding/lib/funding-intent.ts` | 会话级转账意图与幂等键恢复；同一资产/金额重试复用 key |
 | `src/features/funding/types.ts` | 后端转账提交状态类型 |
 | `src/lib/api/funding.ts` | Funding API client：读状态、提交转账 |
 | `src/lib/api/actions/funding.ts` | Funding 写操作校验与标准化结果 |
@@ -36,14 +37,15 @@
 
 - **加载状态**：页面进入时读取 `GET /api/v1/funding`，展示后端资金钱包、Polymarket 入账钱包、USDC/USDT 链上余额和配置是否完整。
 - **选择资产**：资产清单来自后端；当前入口为 Polygon USDC 与 USDT0 / USDT。
-- **提交转账**：当前内网免鉴权部署下，前端只提交 `token_id`、`amount` 和 `confirmed=true`；不提交充值地址或二次确认码。
+- **提交转账**：页面先按后端 token 最低金额、全局单笔上限和可用余额校验；危险操作对话框要求操作备注与 `funding_transfer` step-up，再提交 `token_id`、`amount`、`confirmed=true` 和 `operator_note`，不提交充值地址。
+- **幂等重试**：首次确认资产/金额时创建会话级 Funding intent。网络失败或未知结果保留并复用同一个 `Idempotency-Key`；只有用户修改资产或金额，或收到成功回执后，才结束旧 intent。页面刷新会从 `sessionStorage` 恢复未决 intent。
 - **后端执行**：`POST /api/v1/funding/transfer` 先用配置的 Polymarket 钱包调用 Bridge `/deposit` 获取 EVM 入金地址，再用配置私钥向该地址发送所选 ERC-20。
 - **复核与追踪**：提交前展示付款钱包和 Polymarket 入账钱包；广播后展示 Bridge EVM 地址和 Polygonscan 交易链接。
 
 ## API 依赖
 
 - `GET /api/v1/funding`：console_read，读取后端资金配置状态。
-- `POST /api/v1/funding/transfer`：当前内网免鉴权部署下前端只携带 `Idempotency-Key` 和请求体；后端仍保留真实链上转账校验和广播逻辑。
+- `POST /api/v1/funding/transfer`：携带稳定的 intent `Idempotency-Key`、`funding_transfer` step-up scope/code 和请求体；后端仍执行最终金额、资产、权限与链上广播校验。
 
 ## i18n
 
@@ -51,7 +53,7 @@
 
 ## 当前状态
 
-已实现 `/funding` 控制台页面和侧边导航入口，支持使用后端配置资金钱包将 Polygon USDC / USDT 入金到后端配置的 Polymarket 账户。页面会在资产卡片展示后端资金钱包的 USDC/USDT Polygon 链上余额；余额查询失败时展示“余额暂不可用”提示但不阻断配置状态展示。入账钱包固定由后端配置决定：优先 `POLYEDGE_POLYMARKET__FUNDER`，未配置时回退 `POLYEDGE_POLYMARKET__ACCOUNT_ID`。当前纯内网部署不再要求页面填写二次确认码，仍保留真实链上转账确认勾选。
+已实现 `/funding` 控制台页面和侧边导航入口，支持使用后端配置资金钱包将 Polygon USDC / USDT 入金到后端配置的 Polymarket 账户。资产选择使用原生 radio，可完整键盘操作；金额输入按后端最低/最高金额和已知链上余额即时验证，并通过关联错误说明与 live region 向辅助技术反馈。页面会在资产卡片展示后端资金钱包的 USDC/USDT Polygon 链上余额；余额查询失败时展示“余额暂不可用”提示但不阻断配置状态展示。入账钱包固定由后端配置决定：优先 `POLYEDGE_POLYMARKET__FUNDER`，未配置时回退 `POLYEDGE_POLYMARKET__ACCOUNT_ID`。真实转账必须经过风险摘要、操作备注和 `funding_transfer` step-up；同一用户意图的失败重试不会生成新的幂等键。
 
 已知限制：
 

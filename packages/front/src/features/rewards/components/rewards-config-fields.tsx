@@ -61,7 +61,17 @@ export function Hint({ content }: { content: string }) {
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <Info className="size-3 cursor-help text-muted-foreground/60" />
+        <button
+          type="button"
+          className="inline-flex size-6 shrink-0 items-center justify-center rounded-full text-muted-foreground/70 hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          aria-label={content}
+          onClick={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+          }}
+        >
+          <Info className="size-3.5" aria-hidden="true" />
+        </button>
       </TooltipTrigger>
       <TooltipContent side="top" className="max-w-xs text-wrap">
         {content}

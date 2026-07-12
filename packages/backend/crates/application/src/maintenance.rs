@@ -10,6 +10,7 @@ const REWARD_CANDLE_RETENTION_DAYS: i64 = 30;
 const REWARD_FAIR_VALUE_HISTORY_RETENTION_DAYS: i64 = 90;
 const REWARD_STRATEGY_RUN_RETENTION_DAYS: i64 = 90;
 const REWARD_ORDER_TRANSITION_RETENTION_DAYS: i64 = 180;
+const REWARD_RISK_EVENT_RETENTION_DAYS: i64 = 180;
 const CONTROL_COMMAND_COMPLETED_RETENTION_DAYS: i64 = 30;
 const CONTROL_COMMAND_FAILED_RETENTION_DAYS: i64 = 90;
 const OUTBOX_PUBLISHED_RETENTION_DAYS: i64 = 30;
@@ -29,6 +30,7 @@ pub struct DatabaseMaintenanceCutoffs {
     pub reward_fair_value_history_before: OffsetDateTime,
     pub reward_strategy_runs_before: OffsetDateTime,
     pub reward_order_transitions_before: OffsetDateTime,
+    pub reward_risk_events_before: OffsetDateTime,
     pub control_commands_completed_before: OffsetDateTime,
     pub control_commands_failed_before: OffsetDateTime,
     pub outbox_published_before: OffsetDateTime,
@@ -53,6 +55,7 @@ impl DatabaseMaintenanceCutoffs {
             reward_strategy_runs_before: now - Duration::days(REWARD_STRATEGY_RUN_RETENTION_DAYS),
             reward_order_transitions_before: now
                 - Duration::days(REWARD_ORDER_TRANSITION_RETENTION_DAYS),
+            reward_risk_events_before: now - Duration::days(REWARD_RISK_EVENT_RETENTION_DAYS),
             control_commands_completed_before: now
                 - Duration::days(CONTROL_COMMAND_COMPLETED_RETENTION_DAYS),
             control_commands_failed_before: now
@@ -82,6 +85,7 @@ pub struct DatabaseMaintenanceReport {
     pub reward_fair_value_history_deleted: u64,
     pub reward_strategy_runs_deleted: u64,
     pub reward_order_transitions_deleted: u64,
+    pub reward_risk_events_deleted: u64,
     pub reward_control_commands_deleted: u64,
     pub audit_logs_deleted: u64,
     pub mode_transitions_deleted: u64,
@@ -101,6 +105,7 @@ impl DatabaseMaintenanceReport {
             .saturating_add(self.reward_fair_value_history_deleted)
             .saturating_add(self.reward_strategy_runs_deleted)
             .saturating_add(self.reward_order_transitions_deleted)
+            .saturating_add(self.reward_risk_events_deleted)
             .saturating_add(self.reward_control_commands_deleted)
             .saturating_add(self.audit_logs_deleted)
             .saturating_add(self.mode_transitions_deleted)

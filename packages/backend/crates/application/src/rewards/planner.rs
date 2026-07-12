@@ -94,7 +94,7 @@ fn reward_market_prefilter_reason(
         config.min_market_liquidity_usd,
         config.min_market_volume_24h_usd,
     ) {
-        return Some("market liquidity and 24h volume are below thresholds");
+        return Some("market liquidity or 24h volume is below threshold");
     }
     if market.market_spread_cents > config.max_market_spread_cents {
         return Some("market top-of-book spread is too wide");
@@ -133,7 +133,9 @@ fn reward_market_activity_meets_thresholds(
         min_liquidity_usd > Decimal::ZERO,
         min_volume_24h_usd > Decimal::ZERO,
     ) {
-        (true, true) => liquidity_usd >= min_liquidity_usd || volume_24h_usd >= min_volume_24h_usd,
+        // Historical activity cannot substitute for executable current
+        // liquidity. When both safeguards are configured, both must pass.
+        (true, true) => liquidity_usd >= min_liquidity_usd && volume_24h_usd >= min_volume_24h_usd,
         (true, false) => liquidity_usd >= min_liquidity_usd,
         (false, true) => volume_24h_usd >= min_volume_24h_usd,
         (false, false) => true,

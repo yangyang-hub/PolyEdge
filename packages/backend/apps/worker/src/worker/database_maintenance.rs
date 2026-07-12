@@ -19,6 +19,7 @@ fn log_database_maintenance_report(report: DatabaseMaintenanceReport, message: &
         reward_fair_value_history_deleted = report.reward_fair_value_history_deleted,
         reward_strategy_runs_deleted = report.reward_strategy_runs_deleted,
         reward_order_transitions_deleted = report.reward_order_transitions_deleted,
+        reward_risk_events_deleted = report.reward_risk_events_deleted,
         reward_control_commands_deleted = report.reward_control_commands_deleted,
         audit_logs_deleted = report.audit_logs_deleted,
         mode_transitions_deleted = report.mode_transitions_deleted,

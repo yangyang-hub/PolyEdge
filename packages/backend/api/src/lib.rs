@@ -1,22 +1,22 @@
 use axum::{
     Router,
     extract::{Extension, Json, Path, Query, State},
-    http::{HeaderMap, StatusCode},
+    http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode, header},
     middleware,
     routing::get,
 };
 use polyedge_application::{
-    AuthenticatedActor, EventListFilters, EventView, EvidenceListFilters, EvidenceView,
-    ExecutionFillResult, ExecutionRequestListFilters, ExecutionRequestView, IdempotencyBegin,
-    IdempotencyRequest, MarketListFilters, MarketSortField, MarketView, ModeTransitionCommand,
-    NewsRawEventListFilters, NewsRawEventView, NewsSourceHealthListFilters, NewsSourceHealthView,
-    OrderDraftListFilters, OrderDraftView, OrderListFilters, OrderView, OrderbookCache, PageQuery,
-    Paginated, PositionListFilters, PositionView, ProbabilityEstimateListFilters,
-    ProbabilityEstimateView, ReconcileExternalTradeCommand, RewardBotConfigPatch,
-    RewardBotSnapshot, RewardControlAction, RewardOrderListQuery, RewardOrderTransitionListQuery,
-    RewardQuotePlanListQuery, RewardStrategyActionListQuery, RewardStrategyDecisionListQuery,
-    RewardStrategyRunListQuery, RewardTokenQuote, RiskPolicy, RiskStateView, SortOrder,
-    SyncExternalOrderStatusCommand, TradeListFilters, TradeView,
+    AuditLogEntry, AuthenticatedActor, EventListFilters, EventView, EvidenceListFilters,
+    EvidenceView, ExecutionFillResult, ExecutionRequestListFilters, ExecutionRequestView,
+    IdempotencyBegin, IdempotencyRequest, MarketListFilters, MarketSortField, MarketView,
+    ModeTransitionCommand, NewsRawEventListFilters, NewsRawEventView, NewsSourceHealthListFilters,
+    NewsSourceHealthView, OrderDraftListFilters, OrderDraftView, OrderListFilters, OrderView,
+    OrderbookCache, PageQuery, Paginated, PositionListFilters, PositionView,
+    ProbabilityEstimateListFilters, ProbabilityEstimateView, ReconcileExternalTradeCommand,
+    RewardBotConfigPatch, RewardBotSnapshot, RewardControlAction, RewardOrderListQuery,
+    RewardOrderTransitionListQuery, RewardQuotePlanListQuery, RewardStrategyActionListQuery,
+    RewardStrategyDecisionListQuery, RewardStrategyRunListQuery, RewardTokenQuote, RiskPolicy,
+    RiskStateView, SortOrder, SyncExternalOrderStatusCommand, TradeListFilters, TradeView,
 };
 use polyedge_connectors::{
     ConnectorOrderStatusUpdate, ConnectorTradeFillUpdate, PolymarketChainConnector,
@@ -33,12 +33,15 @@ use polyedge_contracts::{
     NewsSourceHealthListQuery, OrderData, OrderDraftData, OrderDraftListQuery, OrderListQuery,
     OrderbookData, OrderbookLevelData, PolymarketOrderStatusCallbackRequest,
     PolymarketTradeFillCallbackRequest, PositionData, ProbabilityEstimateData,
-    ProbabilityEstimateListQuery, ReadinessData, RewardBotSnapshotQuery,
+    ProbabilityEstimateListQuery, ReadinessData, RewardBotControlRequest, RewardBotSnapshotQuery,
     RewardOrderTransitionsQuery, RewardStrategyActionsQuery, RewardStrategyDecisionsQuery,
     RewardStrategyRunsQuery, RiskStateData, RuntimeConfigEntryData, SystemModeData, TradeData,
-    TradeListQuery, TransitionSystemModeRequest, UpdateRuntimeConfigRequest,
+    TradeListQuery, TransitionSystemModeRequest, UpdateRewardBotConfigRequest,
+    UpdateRuntimeConfigRequest,
 };
-use polyedge_domain::{AppError, OrderStatus, Probability, Quantity, StepUpScope, UsdAmount};
+use polyedge_domain::{
+    AppError, AuditResult, OrderStatus, Probability, Quantity, StepUpScope, UsdAmount,
+};
 use polyedge_infrastructure::stores::ExternalEventBegin;
 use polyedge_infrastructure::{
     AppState, AuthContext, HttpError, IdempotencyKey, hash_json, new_trace_id,
@@ -49,12 +52,16 @@ use rust_decimal::Decimal;
 use std::{collections::HashMap, str::FromStr};
 use tower::ServiceBuilder;
 use tower_http::{
-    cors::CorsLayer, limit::RequestBodyLimitLayer, timeout::TimeoutLayer, trace::TraceLayer,
+    cors::{AllowOrigin, CorsLayer},
+    limit::RequestBodyLimitLayer,
+    timeout::TimeoutLayer,
+    trace::TraceLayer,
 };
 
 const CONNECTOR_ORDER_STATUS_SOURCE: &str = "connector.orders.status";
 const CONNECTOR_TRADE_FILL_SOURCE: &str = "connector.trades.fill";
 pub fn build_app(state: AppState) -> Router {
+    let cors = configured_cors_layer(&state);
     let system_routes = Router::new()
         .route(
             "/mode",
@@ -295,7 +302,40 @@ pub fn build_app(state: AppState) -> Router {
                     std::time::Duration::from_secs(30),
                 )),
         )
-        .layer(CorsLayer::permissive())
+        .layer(cors)
+}
+
+fn configured_cors_layer(state: &AppState) -> CorsLayer {
+    let allowed_origins = state
+        .settings
+        .cors
+        .allowed_origins
+        .iter()
+        .filter_map(|origin| match HeaderValue::from_str(origin) {
+            Ok(origin) => Some(origin),
+            Err(error) => {
+                tracing::error!(%error, %origin, "ignoring invalid configured CORS origin");
+                None
+            }
+        })
+        .collect::<Vec<_>>();
+
+    CorsLayer::new()
+        .allow_origin(AllowOrigin::list(allowed_origins))
+        .allow_methods([Method::GET, Method::POST, Method::PATCH, Method::OPTIONS])
+        .allow_headers([
+            header::ACCEPT,
+            header::AUTHORIZATION,
+            header::CONTENT_TYPE,
+            HeaderName::from_static("idempotency-key"),
+            HeaderName::from_static("x-request-id"),
+            HeaderName::from_static("x-polyedge-dev-auth"),
+            HeaderName::from_static("x-polyedge-console-role"),
+            HeaderName::from_static("x-polyedge-console-user"),
+            HeaderName::from_static("x-polyedge-step-up-code"),
+            HeaderName::from_static("x-polyedge-step-up-scopes"),
+        ])
+        .max_age(std::time::Duration::from_secs(600))
 }
 
 include!("handlers/health.rs");

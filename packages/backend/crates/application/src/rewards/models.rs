@@ -175,6 +175,7 @@ impl FromStr for RewardStrategyProfile {
 pub enum RewardMergeIntentStatus {
     Pending,
     Unsupported,
+    Broadcasting,
     Submitted,
     Completed,
     Failed,
@@ -186,6 +187,7 @@ impl RewardMergeIntentStatus {
         match self {
             Self::Pending => "pending",
             Self::Unsupported => "unsupported",
+            Self::Broadcasting => "broadcasting",
             Self::Submitted => "submitted",
             Self::Completed => "completed",
             Self::Failed => "failed",
@@ -196,7 +198,7 @@ impl RewardMergeIntentStatus {
     pub const fn counts_as_active_pair(self) -> bool {
         matches!(
             self,
-            Self::Pending | Self::Unsupported | Self::Submitted | Self::Completed
+            Self::Pending | Self::Unsupported | Self::Broadcasting | Self::Submitted
         )
     }
 }
@@ -208,6 +210,7 @@ impl FromStr for RewardMergeIntentStatus {
         match value {
             "pending" => Ok(Self::Pending),
             "unsupported" => Ok(Self::Unsupported),
+            "broadcasting" => Ok(Self::Broadcasting),
             "submitted" => Ok(Self::Submitted),
             "completed" => Ok(Self::Completed),
             "failed" => Ok(Self::Failed),

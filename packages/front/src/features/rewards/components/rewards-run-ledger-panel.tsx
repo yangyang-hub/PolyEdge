@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { RefreshCcw } from "lucide-react";
 
 import { PaginationBar } from "@/components/pagination-bar";
@@ -44,21 +44,6 @@ function statusTone(status: string): StatusTone {
   if (status === "failed") return "danger";
   if (status === "running" || status === "executing") return "warning";
   return "neutral";
-}
-
-function runPagination(page: RewardListPageDto, onPageChange: (page: number) => void): PaginationState {
-  return {
-    page: page.page,
-    totalPages: page.total_pages,
-    start: 0,
-    end: 0,
-    setPage: onPageChange,
-    goPrevious: () => onPageChange(Math.max(1, page.page - 1)),
-    goNext: () => onPageChange(Math.min(page.total_pages, page.page + 1)),
-    reset: () => onPageChange(1),
-    hasPrevious: page.page > 1,
-    hasNext: page.page < page.total_pages,
-  };
 }
 
 function formatTime(value?: string | null) {
@@ -123,11 +108,16 @@ export function RewardsRunLedgerPanel() {
   const [runs, setRuns] = useState<RewardStrategyRunDto[]>([]);
   const [runsPage, setRunsPage] = useState<RewardListPageDto | null>(null);
   const [runPage, setRunPage] = useState(1);
+  const [requestedRunPage, setRequestedRunPage] = useState(1);
   const [selectedRunId, setSelectedRunId] = useState<number | null>(null);
   const [decisions, setDecisions] = useState<RewardStrategyDecisionDto[]>([]);
   const [actions, setActions] = useState<RewardStrategyActionDto[]>([]);
   const [loading, setLoading] = useState(false);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailReloadToken, setDetailReloadToken] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const runsRequestSequence = useRef(0);
+  const detailRequestSequence = useRef(0);
 
   const selectedRun = useMemo(
     () => runs.find((run) => run.run_id === selectedRunId) ?? null,
@@ -183,64 +173,90 @@ export function RewardsRunLedgerPanel() {
   }, []);
 
   const loadRuns = useCallback(async (page: number) => {
+    const requestSequence = ++runsRequestSequence.current;
     setLoading(true);
     setError(null);
     try {
       const response = await listRewardStrategyRuns({ page, page_size: RUNS_PAGE_SIZE });
+      if (requestSequence !== runsRequestSequence.current) return;
       setRuns(response.data.items);
       setRunsPage(response.data.page);
       setRunPage(response.data.page.page);
+      setDecisions([]);
+      setActions([]);
       if (response.data.items.length === 0) {
+        detailRequestSequence.current += 1;
         setSelectedRunId(null);
-        setDecisions([]);
-        setActions([]);
+        setDetailLoading(false);
       } else {
+        setDetailLoading(true);
         setSelectedRunId((current) =>
           response.data.items.some((run) => run.run_id === current)
             ? current
             : response.data.items[0]?.run_id ?? null,
         );
+        setDetailReloadToken((current) => current + 1);
       }
     } catch (err) {
+      if (requestSequence !== runsRequestSequence.current) return;
       setError(err instanceof Error ? err.message : dictionary.rewards.runLedgerLoadFailed);
     } finally {
-      setLoading(false);
+      if (requestSequence === runsRequestSequence.current) setLoading(false);
     }
   }, []);
 
+  const handleRunPageChange = useCallback((page: number) => {
+    setRequestedRunPage(page);
+  }, []);
+  const runsPagination: PaginationState | null = runsPage
+    ? {
+        page: runsPage.page,
+        totalPages: runsPage.total_pages,
+        start: 0,
+        end: 0,
+        setPage: handleRunPageChange,
+        goPrevious: () => handleRunPageChange(Math.max(1, runsPage.page - 1)),
+        goNext: () => handleRunPageChange(Math.min(runsPage.total_pages, runsPage.page + 1)),
+        reset: () => handleRunPageChange(1),
+        hasPrevious: runsPage.page > 1,
+        hasNext: runsPage.page < runsPage.total_pages,
+      }
+    : null;
+
   useEffect(() => {
     const timeout = window.setTimeout(() => {
-      void loadRuns(1);
+      void loadRuns(requestedRunPage);
     }, 0);
     return () => window.clearTimeout(timeout);
-  }, [loadRuns]);
+  }, [loadRuns, requestedRunPage]);
 
   useEffect(() => {
     if (selectedRunId == null) {
+      detailRequestSequence.current += 1;
       return;
     }
-    let active = true;
+    const requestSequence = ++detailRequestSequence.current;
     void Promise.all([
       listAllRewardStrategyDecisions(selectedRunId),
       listAllRewardStrategyActions(selectedRunId),
     ])
       .then(([decisionItems, actionItems]) => {
-        if (!active) return;
+        if (requestSequence !== detailRequestSequence.current) return;
         setError(null);
         setDecisions(decisionItems);
         setActions(actionItems);
       })
       .catch((err) => {
-        if (!active) return;
+        if (requestSequence !== detailRequestSequence.current) return;
         setError(err instanceof Error ? err.message : dictionary.rewards.runLedgerLoadFailed);
+      })
+      .finally(() => {
+        if (requestSequence === detailRequestSequence.current) setDetailLoading(false);
       });
-    return () => {
-      active = false;
-    };
-  }, [selectedRunId]);
+  }, [detailReloadToken, selectedRunId]);
 
   return (
-    <div className="grid gap-4 xl:grid-cols-[360px_minmax(0,1fr)]">
+    <div className="grid gap-4 xl:grid-cols-[360px_minmax(0,1fr)]" aria-busy={loading || detailLoading}>
       <Card>
         <CardHeader className="flex flex-row items-center justify-between border-b border-border/70">
           <CardTitle>{dictionary.rewards.strategyRuns}</CardTitle>
@@ -252,7 +268,7 @@ export function RewardsRunLedgerPanel() {
             onClick={() => void loadRuns(runPage)}
             disabled={loading}
           >
-            <RefreshCcw className="size-4" />
+            <RefreshCcw className="size-4" aria-hidden="true" />
           </Button>
         </CardHeader>
         <CardContent className="space-y-3">
@@ -265,7 +281,14 @@ export function RewardsRunLedgerPanel() {
                 <button
                   key={run.run_id}
                   type="button"
-                  onClick={() => setSelectedRunId(run.run_id)}
+                  onClick={() => {
+                    if (run.run_id === selectedRunId) return;
+                    detailRequestSequence.current += 1;
+                    setDecisions([]);
+                    setActions([]);
+                    setDetailLoading(true);
+                    setSelectedRunId(run.run_id);
+                  }}
                   className="flex w-full flex-col gap-2 rounded-md border border-border/70 px-3 py-2 text-left transition-colors hover:bg-muted/60 data-[active=true]:border-primary data-[active=true]:bg-muted"
                   data-active={run.run_id === selectedRunId}
                 >
@@ -281,9 +304,9 @@ export function RewardsRunLedgerPanel() {
               ))
             )}
           </div>
-          {runsPage ? (
+          {runsPage && runsPagination ? (
             <PaginationBar
-              pagination={runPagination(runsPage, (page) => void loadRuns(page))}
+              pagination={runsPagination}
               totalItems={runsPage.total_items}
             />
           ) : null}

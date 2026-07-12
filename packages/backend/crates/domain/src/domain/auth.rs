@@ -19,6 +19,10 @@ pub enum StepUpScope {
     SystemKillSwitchRelease,
     RiskThresholdUpdate,
     FundingTransfer,
+    RewardsRunOnce,
+    RewardsLiveTradingEnable,
+    RewardsMergeAutoExecute,
+    RewardsStateReset,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

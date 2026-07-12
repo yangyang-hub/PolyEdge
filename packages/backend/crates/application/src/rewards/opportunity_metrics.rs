@@ -5,6 +5,7 @@ pub fn apply_reward_opportunity_metrics_to_quote_plans(
     open_orders: &[ManagedRewardOrder],
     account: &RewardAccountState,
     config: &RewardBotConfig,
+    now: OffsetDateTime,
 ) {
     apply_reward_opportunity_metrics_to_quote_plans_inner(
         plans,
@@ -13,6 +14,7 @@ pub fn apply_reward_opportunity_metrics_to_quote_plans(
         open_orders,
         account,
         config,
+        now,
         true,
     );
 }
@@ -24,6 +26,7 @@ pub fn refresh_reward_opportunity_metrics_for_quote_plans(
     open_orders: &[ManagedRewardOrder],
     account: &RewardAccountState,
     config: &RewardBotConfig,
+    now: OffsetDateTime,
 ) {
     apply_reward_opportunity_metrics_to_quote_plans_inner(
         plans,
@@ -32,6 +35,7 @@ pub fn refresh_reward_opportunity_metrics_for_quote_plans(
         open_orders,
         account,
         config,
+        now,
         false,
     );
 }
@@ -43,9 +47,9 @@ fn apply_reward_opportunity_metrics_to_quote_plans_inner(
     open_orders: &[ManagedRewardOrder],
     account: &RewardAccountState,
     config: &RewardBotConfig,
+    now: OffsetDateTime,
     allow_score_promotion: bool,
 ) {
-    let now = OffsetDateTime::now_utc();
     for plan in plans {
         let plan_config = config
             .config_for_strategy_bucket(plan.strategy_bucket)
@@ -79,7 +83,8 @@ fn apply_reward_opportunity_metrics_to_plan(
     allow_score_promotion: bool,
 ) {
     let base_score = reward_opportunity_base_score(plan);
-    let materialized = materialize_reward_quote_plan_for_live_orderbook(plan, books, config);
+    let materialized =
+        materialize_reward_quote_plan_for_live_orderbook_at(plan, books, config, now);
     let metrics = match materialized {
         Ok(materialized) => {
             let midpoint = materialized.midpoint;

@@ -1,6 +1,6 @@
 # API App（HTTP API 服务）
 
-最后更新：2026-07-08
+最后更新：2026-07-12
 
 ## 概述
 
@@ -55,10 +55,12 @@
 - `RequestBodyLimitLayer`：1MB 请求体限制。
 - `TraceLayer`：HTTP 请求追踪。
 - `TimeoutLayer`：30 秒超时。
-- `CorsLayer::permissive()`：支持前端和 API 分别部署在内网不同主机/端口。
+- 配置化 `CorsLayer`：只回显 `POLYEDGE_CORS__ALLOWED_ORIGINS` 中的精确 origin；production 空 allowlist 会在 API bind 前失败，同源请求不依赖 CORS。
 - 认证中间件：按路由组使用 `console_read`、`console_write`、`connector_write` 或 `mode_write`；`POLYEDGE_AUTH__DISABLED=true` 时直接注入内部 admin `AuthContext`。
 
 ## 关键行为
+
+Rewards Bot 的 config、`run`、`cancel-all` 和 `reset` 写端点都要求 `Idempotency-Key`，按端点 scope + payload hash 写入统一 idempotency store；完成后保存首次完整 `ApiResponse`，相同键/相同 payload 重放该响应，不重复更新配置或入队命令。控制请求体为 `{ operator_note?: string }`，config 保持配置 patch 字段平铺并额外接受 `operator_note`；note 经单行/500 字符校验后进入 command reason 和 `audit_logs`。`run`、`reset` 分别要求 `rewards_run_once` / `rewards_state_reset` step-up；config payload 只要包含 `enabled=true` 或 `balanced_merge_auto_execute_enabled=true`，就分别要求 `rewards_live_trading_enable` / `rewards_merge_auto_execute`，确保幂等重放也不能因当前状态已改变而绕过提权。`cancel-all` 是保护性动作，只要求 console write 权限。
 
 Rewards Bot 的 `run`、`cancel-all` 和 `reset` handler 不直接执行策略、不读取外部盘口、不修改 live 订单。handler 委托 `RewardBotService` 写入 `reward_control_commands`，同账户同动作 pending/running 命令会合并；成功入队后通过 service revision 唤醒同进程 rewards loop。
 
@@ -66,7 +68,7 @@ Rewards snapshot 只读取 `RewardBotService` / store。配置、账户、positi
 
 Rewards strategy run ledger 端点只读数据库/内存 store，不请求外部 API。`runs` 支持 account/status 分页；run detail、decisions、actions 和 order transitions 直接返回 application 层 ledger 模型。
 
-Funding 状态接口只返回派生付款地址、Polymarket 入账钱包、支持资产、单笔上限和 USDC/USDT 链上余额，不返回私钥。转账接口是真实链上操作：验证幂等键和确认字段后，委托 `PolymarketChainConnector` 调用 Bridge 生成入金地址并广播 Polygon ERC-20 转账。
+Funding 状态接口只返回派生付款地址、Polymarket 入账钱包、支持资产、单笔上限和 USDC/USDT 链上余额，不返回私钥。转账接口是真实链上操作：验证稳定 Funding intent 的幂等键、`funding_transfer` step-up、确认字段和单行操作备注后，委托 `PolymarketChainConnector` 调用 Bridge 生成入金地址并广播 Polygon ERC-20 转账；成功及幂等重放写入 `audit_logs`。
 
 Connector callback 路由用于订单状态和成交回填。回调通过 external-event/idempotency 存储防重，并委托 execution service 做状态更新和审计。
 
@@ -86,11 +88,12 @@ HTTP Request
 - 当前 REST 端点覆盖市场、事件/证据、新闻、订单/成交、执行请求、pricing、rewards snapshot/control、rewards strategy run ledger、funding、runtime config、system mode、connector callback 和单 token orderbook 代理。
 - SSE 流式端点已移除；前端通过 REST API 加载数据。
 - API 进程内嵌 worker runtime；`polyedge-worker` 只作为 CLI/运维兼容入口保留。
-- 当前内网部署常用 `POLYEDGE_AUTH__DISABLED=true`；关闭该开关后，写路径仍使用 console/mode 权限和 Funding step-up scope。
-- CORS 当前为 permissive，适配内网前后端分开部署。
+- 当前静态前端没有登录/session/JWT 获取链路，部署模板保持 `POLYEDGE_AUTH__DISABLED=true` 才能直接使用；production 必须同时设置 `POLYEDGE_AUTH__ALLOW_INSECURE_PRIVATE_DEPLOY=true`，否则 API 拒绝启动。该模式必须由 VPN、私网 ACL 或可信反向代理形成访问边界。接入真实身份签发网关后可关闭免鉴权，写路径再使用 console/mode 权限以及 Funding/Rewards 危险动作 step-up scope。
+- CORS 已改为 exact-origin allowlist；不再允许任意网站跨域调用 API。
 
 ## 已知缺口
 
+- 前端 `/login` 目前只重定向回目标页面，API client 不发送 Bearer token；仓库尚无生产身份签发、session 或短时 request-bound JWT 传输链路。
 - Rewards 外部 balance、positions 和 earnings 新鲜度取决于 rewards poll 周期和外部 API 成功率。
 - `orders` / `orders_page` 只覆盖本系统 managed orders，尚未提供账户范围全部外部开放订单视图。
 

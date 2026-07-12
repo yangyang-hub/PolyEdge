@@ -566,6 +566,35 @@ impl PostgresMarketEventStore {
         rows.iter().map(parse_order_row).collect()
     }
 
+    async fn market_event_list_active_order_market_ids(
+        &self,
+        connector_name: &str,
+        limit: usize,
+    ) -> Result<Vec<String>> {
+        let rows = sqlx::query_scalar::<_, String>(
+            r#"
+            SELECT market_id
+            FROM orders
+            WHERE connector_name = $1
+              AND status IN ('submitted', 'open', 'partially_filled')
+            GROUP BY market_id
+            ORDER BY MAX(updated_at) DESC, market_id ASC
+            LIMIT $2
+            "#,
+        )
+        .bind(connector_name)
+        .bind(i64::try_from(limit).unwrap_or(i64::MAX))
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_QUERY_FAILED",
+                format!("failed to list active order market ids: {error}"),
+            )
+        })?;
+        Ok(rows)
+    }
+
     async fn market_event_list_trades(&self, filters: &TradeListFilters) -> Result<Vec<TradeView>> {
         let rows = sqlx::query(
             r#"

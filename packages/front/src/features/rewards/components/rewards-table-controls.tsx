@@ -14,9 +14,9 @@ export function SortIndicator({
 }) {
   if (!active) return null;
   return order === "asc" ? (
-    <ArrowUp className="ml-1 inline size-3" />
+    <ArrowUp className="ml-1 inline size-3" aria-hidden="true" />
   ) : (
-    <ArrowDown className="ml-1 inline size-3" />
+    <ArrowDown className="ml-1 inline size-3" aria-hidden="true" />
   );
 }
 
@@ -40,8 +40,15 @@ function FilterBar({
   return (
     <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
       <div className="relative w-full sm:max-w-xs">
-        <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+        <Search
+          className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground"
+          aria-hidden="true"
+        />
         <Input
+          name="rewards-table-search"
+          type="search"
+          autoComplete="off"
+          aria-label={placeholder}
           className="h-8 pl-8 text-sm"
           placeholder={placeholder}
           value={search}
@@ -64,6 +71,7 @@ function FilterBar({
                 : "bg-muted text-muted-foreground hover:bg-muted/80")
             }
             onClick={() => onTabChange(tab.key)}
+            aria-pressed={activeTab === tab.key}
           >
             {tab.label}
             {typeof tab.count === "number" ? (
@@ -92,6 +100,8 @@ export function DebouncedFilterBar({
   onTabChange: (key: string) => void;
 }) {
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const onSearchChangeRef = useRef(onSearchChange);
+  const lastCommittedRef = useRef(initialSearch);
   const [search, setSearch] = useState(initialSearch);
   const [lastInitialSearch, setLastInitialSearch] = useState(initialSearch);
 
@@ -101,20 +111,34 @@ export function DebouncedFilterBar({
     setSearch(initialSearch);
   }
 
+  useEffect(() => {
+    lastCommittedRef.current = initialSearch;
+  }, [initialSearch]);
+
+  useEffect(() => {
+    onSearchChangeRef.current = onSearchChange;
+  }, [onSearchChange]);
+
   useEffect(() => () => clearTimeout(debounceRef.current), []);
+
+  const commitSearch = useCallback((value: string) => {
+    if (value === lastCommittedRef.current) return;
+    lastCommittedRef.current = value;
+    onSearchChangeRef.current(value);
+  }, []);
 
   const handleSearchChange = useCallback(
     (value: string) => {
       setSearch(value);
       clearTimeout(debounceRef.current);
-      debounceRef.current = setTimeout(() => onSearchChange(value), 300);
+      debounceRef.current = setTimeout(() => commitSearch(value), 400);
     },
-    [onSearchChange],
+    [commitSearch],
   );
   const handleSearchCommit = useCallback(() => {
     clearTimeout(debounceRef.current);
-    onSearchChange(search);
-  }, [onSearchChange, search]);
+    commitSearch(search);
+  }, [commitSearch, search]);
 
   return (
     <FilterBar

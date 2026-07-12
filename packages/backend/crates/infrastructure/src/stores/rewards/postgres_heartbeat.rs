@@ -9,6 +9,7 @@ async fn postgres_record_reward_worker_heartbeat(
         VALUES ($1, $2)
         ON CONFLICT (account_id) DO UPDATE
         SET observed_at = EXCLUDED.observed_at
+        WHERE EXCLUDED.observed_at >= reward_worker_heartbeats.observed_at
         "#,
     )
     .bind(account_id)

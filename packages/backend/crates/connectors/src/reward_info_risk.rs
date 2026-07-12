@@ -276,6 +276,9 @@ pub(crate) fn parse_info_risk_sources(value: Option<&Value>) -> Vec<RewardInfoRi
                             .and_then(Value::as_str)
                             .unwrap_or("")
                             .to_string(),
+                        // A model cannot attest its own evidence. A separate
+                        // trusted fetch/verification stage may promote it later.
+                        evidence_verified: false,
                         published_at: parse_optional_rfc3339(item.get("published_at")),
                         snippet: item
                             .get("snippet")

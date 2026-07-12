@@ -467,6 +467,7 @@ fn evidence_backed_directional_info_action_cancels_only_matching_outcome() {
         sources: vec![polyedge_application::RewardInfoRiskSource {
             url: "https://example.com/result".to_string(),
             title: "Official result".to_string(),
+            evidence_verified: true,
             published_at: Some(now),
             snippet: Some("YES BUY is exposed to adverse selection".to_string()),
         }],
@@ -529,6 +530,7 @@ fn directional_info_cancel_keeps_complementary_placement_budget() {
         sources: vec![polyedge_application::RewardInfoRiskSource {
             url: "https://example.com/result".to_string(),
             title: "Official result".to_string(),
+            evidence_verified: true,
             published_at: Some(now),
             snippet: Some("YES BUY is exposed to adverse selection".to_string()),
         }],
@@ -603,10 +605,11 @@ fn live_cancel_in_flight_guard_dedupes_concurrent_cancel_requests() {
 }
 
 #[test]
-fn event_cancel_fast_path_filters_to_updated_token_and_hard_risk() {
+fn event_cancel_fast_path_checks_all_orders_in_updated_condition() {
     let config = RewardBotConfig {
         account_id: "reward_live".to_string(),
         min_depth_usd: reward_decimal("100"),
+        fair_value_enabled: false,
         ..RewardBotConfig::default()
     };
     let now = OffsetDateTime::now_utc();
@@ -634,9 +637,13 @@ fn event_cancel_fast_path_filters_to_updated_token_and_hard_risk() {
         false,
     );
 
-    assert_eq!(candidates.len(), 1);
-    assert_eq!(candidates[0].0, yes_order.id);
-    assert!(candidates[0].1.contains("external bid depth"));
+    assert_eq!(candidates.len(), 2);
+    assert!(
+        candidates
+            .iter()
+            .any(|(order_id, reason)| order_id == &yes_order.id
+                && reason.contains("external bid depth"))
+    );
 }
 
 #[test]
@@ -644,6 +651,7 @@ fn event_cancel_fast_path_cancels_buy_that_would_touch_best_ask() {
     let config = RewardBotConfig {
         account_id: "reward_live".to_string(),
         stale_book_ms: 45_000,
+        fair_value_enabled: false,
         ..RewardBotConfig::default()
     };
     let now = OffsetDateTime::now_utc();
@@ -680,6 +688,7 @@ fn event_cancel_fast_path_cancels_buy_when_live_token_spread_is_wide() {
         account_id: "reward_live".to_string(),
         stale_book_ms: 45_000,
         max_market_spread_cents: reward_decimal("10"),
+        fair_value_enabled: false,
         ..RewardBotConfig::default()
     };
     let now = OffsetDateTime::now_utc();
@@ -706,23 +715,65 @@ fn event_cancel_fast_path_cancels_buy_when_live_token_spread_is_wide() {
 }
 
 #[test]
-fn event_cancel_active_tokens_only_include_updated_order_token() {
+fn event_cancel_active_tokens_include_both_sides_of_updated_condition() {
     let now = OffsetDateTime::now_utc();
     let plan = live_test_plan(now);
     let yes_order = live_test_open_order("yes_live");
-    let unrelated_updated_tokens = HashSet::from(["no_live".to_string()]);
-    let matching_updated_tokens = HashSet::from(["yes_live".to_string()]);
+    let unrelated_updated_tokens = HashSet::from(["other".to_string()]);
+    let complementary_updated_tokens = HashSet::from(["no_live".to_string()]);
 
     let unrelated = reward_event_cancel_active_order_tokens(
         &[plan.clone()],
         &[yes_order.clone()],
         &unrelated_updated_tokens,
     );
-    let matching =
-        reward_event_cancel_active_order_tokens(&[plan], &[yes_order], &matching_updated_tokens);
+    let matching = reward_event_cancel_active_order_tokens(
+        &[plan],
+        &[yes_order],
+        &complementary_updated_tokens,
+    );
 
     assert!(unrelated.is_empty());
-    assert_eq!(matching, vec!["yes_live".to_string()]);
+    assert_eq!(
+        matching.into_iter().collect::<HashSet<_>>(),
+        HashSet::from(["yes_live".to_string(), "no_live".to_string()])
+    );
+}
+
+#[test]
+fn event_cancel_complementary_book_update_recomputes_fair_value_for_resting_buy() {
+    let config = RewardBotConfig {
+        account_id: "reward_live".to_string(),
+        min_depth_usd: Decimal::ZERO,
+        fair_value_min_history_samples: 0,
+        fair_value_min_confidence: Decimal::ZERO,
+        ..RewardBotConfig::default()
+    };
+    let now = OffsetDateTime::now_utc();
+    let plan = live_test_plan(now);
+    let yes_order = live_test_open_order("yes_live");
+    let yes_book = live_test_book("yes_live", now);
+    let mut no_book = live_test_book("no_live", now);
+    no_book.bids[0].price = reward_decimal("0.78");
+    no_book.asks[0].price = reward_decimal("0.82");
+    let books = HashMap::from([
+        ("yes_live".to_string(), yes_book),
+        ("no_live".to_string(), no_book),
+    ]);
+
+    let candidates = live_event_hard_cancel_candidates(
+        &config,
+        &[plan],
+        &[yes_order.clone()],
+        &books,
+        &HashMap::new(),
+        &HashSet::from(["no_live".to_string()]),
+        false,
+    );
+
+    assert_eq!(candidates.len(), 1);
+    assert_eq!(candidates[0].0, yes_order.id);
+    assert!(candidates[0].1.contains("fair-value estimate unsafe"));
 }
 
 #[test]
@@ -730,6 +781,7 @@ fn event_cancel_fast_path_uses_normal_depth_rule_for_all_buy_orders() {
     let config = RewardBotConfig {
         account_id: "reward_live".to_string(),
         min_depth_usd: reward_decimal("100"),
+        fair_value_enabled: false,
         ..RewardBotConfig::default()
     };
     let now = OffsetDateTime::now_utc();
@@ -765,6 +817,7 @@ fn event_cancel_fast_path_ignores_requote_only_reasons() {
         requote_drift_cooldown_sec: 0,
         requote_drift_max_cancels_per_cycle: 1,
         requote_interval_sec: 1,
+        fair_value_enabled: false,
         ..RewardBotConfig::default()
     };
     let now = OffsetDateTime::now_utc();

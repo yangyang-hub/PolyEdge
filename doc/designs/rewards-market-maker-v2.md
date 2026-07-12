@@ -1,6 +1,6 @@
 # Rewards Market Maker V2 设计
 
-最后更新：2026-07-11
+最后更新：2026-07-12
 
 状态：已按本方案实现，最终验证命令见本文末尾；仓库实时状态仍以 `AGENTS.md` 和模块文档为准。
 
@@ -46,6 +46,7 @@ market/catalog hard filters
 - `expected_reward_rebate_cents` 继续估计 LP 次级收益。
 - `reward_adjusted_edge_cents = effective_edge + expected_reward_rebate` 只用于展示与审计，不进入交易 edge gate 或 edge 排序分。
 - 基础市场质量中 LP 相关分数合计最多 10%；最终 `selection_score` 的独立 reward-density 权重为 10%，其余主要权重给 effective edge、退出能力、稳定性和风险。
+- Market-implied fair value 使用 midpoint parity、top-of-book microprice imbalance 与短窗历史；最终 edge 扣除动态 uncertainty 和 provider buffer，并在失败时继续搜索更深 rank。Selection 的正向权重固定为 base 15% / reward 10% / fair-value edge 20% / exit 30% / stability 25%，edge 4c 才满分。
 - 准入只检查 raw/effective trading edge，奖励不能把失败的交易 edge 变成通过。
 
 ## Provider 合约
@@ -97,6 +98,9 @@ AI 不输出价格、bid rank、单双边方向或绝对资金上限。输出：
 - info-risk 表持久化 `action`。
 - quote plan / strategy decision 完整 JSON 保留 provider 动作和 reward-adjusted edge；摘要列使用 `ai_action` / `info_risk_action`，blocker 独立标记 provider size、maker budget 与 inventory headroom。
 - 配置仍使用 `reward_bot_config` key-value；新增 V2 配置不增加配置表列。
+- Durable BUY 在真实提交前重新读取当前 kill switch，读取失败也禁止下单。控制命令、外部事件和幂等请求均使用短租约与 owner/version fencing；过期执行者不能提交 terminal 状态。
+- 任一 outcome 的 orderbook 更新会以 condition 为单位刷新 YES/NO 双边盘口、重算 fair value，并检查该 condition 全部 resting BUY。
+- BalancedMerge 在广播前原子进入 `broadcasting` 状态；缺少已持久化 tx hash 的 broadcasting intent 只能人工/链上对账，禁止自动重播。`completed` intent 不再永久抵扣未来配对库存。
 
 ## 交付验收
 

@@ -1,6 +1,6 @@
 # 数据库（Migrations + Schema）
 
-最后更新：2026-07-11
+最后更新：2026-07-12
 
 ## 概述
 
@@ -25,7 +25,8 @@
 ### 审计/幂等/LLM
 
 - `audit_logs`：actor、action、resource、result、IP、user agent、payload JSON、version snapshot。
-- `idempotency_keys`：scope + key + request_hash，跟踪 started/completed/failed 状态和 TTL。
+- `idempotency_keys`：scope + key + request_hash，跟踪 started/completed/failed、`error_code`、5 分钟执行租约、terminal 时间和 24 小时结果 TTL；request id 充当 lease owner，旧执行者不能在租约被接管后写 terminal 状态。
+- `external_event_dedup`：connector callback payload hash、处理结果、trace owner 与 5 分钟租约；未完成事件可在崩溃后重领，完成/abandon 均 owner-fenced。
 - `llm_calls`：外部 provider 调用审计/统计，记录 task_type、provider/model、input_hash、raw/parsed output、validation_result、fallback_used、latency、cost_estimate、trace_id 和 created_at。Rewards combined provider 调用复用该表，snapshot 按 UTC 日聚合。
 
 ### 市场/事件/新闻
@@ -52,6 +53,7 @@
 - `reward_markets`：condition、question、market_slug、rewards_max_spread/min_size、total_daily_rate、tokens JSON。
 - `reward_quote_plans`：当前 quote plan snapshot，主键为 `(condition_id, strategy_profile)`，包含基础/selection score、readiness/mode/reason/blocker、fair-value、`ai_action`、`info_risk_action`/level 摘要和完整 JSON。预算、provider size 与库存 headroom blocker 有独立 reason code。
 - `reward_strategy_runs`：每轮 full tick 的 run header，记录 account、trace、trigger、status、config hash/json、输入摘要、指标、开始/完成时间和错误。
+- `reward_strategy_runs_started_idx` 支撑不带 account/status 过滤的全局最近运行列表；AI advisory/info-risk 另有 `expires_at` 单列索引支撑全局过期清理。
 - `reward_strategy_decisions`：每个 run 下按 condition + strategy profile 记录 quote plan 决策快照、排序、readiness、reason/blocker、planned notional、fair-value/opportunity/event、`ai_action`、`info_risk_action`/level 和 decision JSON。
 - `reward_strategy_actions`：从 tick outcome 派生的动作账本，记录 place/cancel/exit/fill/merge/skip 等动作、状态、幂等键、请求/结果 JSON 和关联订单。
 - `reward_strategy_actions` 还保存 `lease_owner`、`lease_expires_at` 和 `execution_attempts`，支持多实例 executor 原子 claim/续租和超时恢复；partial index 加速 planned/expired-executing 领取。
@@ -60,16 +62,18 @@
 - `reward_managed_orders`：托管订单，包含 account/condition/token、side、price、size、status、strategy bucket/profile、exit strategy source/selected/floor/reselect state、filled_size、reward_earned、external id 和对账锁等字段。外部库存补 SELL intent 可来自当前 rewards catalog 外的 condition；adaptive 本地 pending SELL 用这些字段在 worker 重启后继续持仓期重评。
 - `reward_fills`：托管订单成交，保存 account/condition/token/outcome/side、price、size、notional、role、realized PnL。
 - `reward_positions`：按 account + token 保存外部完整持仓，可包含当前 rewards catalog 外的市场。
+- 外部持仓替换使用单条 typed `UNNEST`/批量 upsert，而不是事务内逐仓位往返；position、managed fill、merge retry/avg price 和 fair-value/confidence/JSON 均有数据库 CHECK 防线。
 - `reward_account_state`：capital、available、reserved 兼容字段、realized PnL、reward earned、fees、tick index、funding address、外部 BUY notional。
-- `reward_control_commands`：run_once/cancel_all/reset 命令队列，支持 pending/running/completed/failed 和 running lease。
+- `reward_control_commands`：run_once/cancel_all/reset 命令队列，支持 pending/running/completed/failed；running claim 写入 `lease_owner`、单调 `lease_version` 和 `lease_expires_at`，terminal update 必须匹配 owner/version。
 - `reward_worker_heartbeats`：worker running 状态来源。
-- `reward_market_advisories`：AI advisory V2 缓存，按 condition/provider/request_format/model/input_hash 存储 `action=allow|reduce|stop_new`、size multiplier、edge buffer、confidence、reasons/metrics JSON 和 expires_at；旧 suitability/quote mode/exit policy 列已删除。
-- `reward_market_info_risks`：信息风险 V2 缓存，存储 evidence action（含定向 cancel）、risk level/type/direction、resolution_imminent、expected_event_at、confidence、summary、sources/metrics JSON 和 expires_at。
-- `reward_market_candles`：orderbook 服务从 CLOB `/prices-history` 低频写入的 rewards token 5m source candles。provider price 同时写入 close、best bid close 和 best ask close，`spread_cents_close=0`，`sample_count` 表示同 bucket 内 provider history 点数量。
+- `reward_market_advisories`：AI advisory V2 缓存，按 condition/provider/request_format/model/input_hash 存储 `action=allow|reduce|stop_new`、size multiplier、edge buffer、confidence、reasons/metrics JSON 和 expires_at；有效记录固定按 `created_at DESC, id DESC` 取最新，不能按较长 TTL 覆盖新评估；旧 suitability/quote mode/exit policy 列已删除。
+- `reward_market_info_risks`：信息风险 V2 缓存，存储 evidence action（含定向 cancel）、risk level/type/direction、resolution_imminent、expected_event_at、confidence、summary、sources/metrics JSON 和 expires_at；单条与 condition 批量读取均按 `created_at DESC, id DESC` 选择最新有效评估。
+- `reward_market_candles`：orderbook 服务从 CLOB `/prices-history` 低频写入的 rewards token 5m source candles。provider price 同时写入 close、best bid close 和 best ask close，`spread_cents_close=0`，`sample_count` 表示同 bucket 内新持久化点数量；batch upsert 会排除不晚于现有 close 的重叠点，避免增量回看重复计数。
 - `reward_fair_values`：每个 condition 最新 fair-value 估计，保存 fair_yes/fair_no、market midpoint、confidence、uncertainty、YES/NO 偏离、组件 JSON、拒绝原因和有效期。
 - `reward_fair_value_history`：fair-value 历史追加表，用于审计和回测；数据库维护默认按 `created_at` 保留 90 天。
 - `reward_market_event_windows`：按 condition/source 保存事件时间候选；effective 查询按 active、confidence、source 优先级和更新时间选一条。
-- `reward_merge_intents`：BalancedMerge 配对库存合并意图，包含 YES/NO token、merge size、两侧库存均价、source fill、status、tx hash、submitted/confirmed/failed 时间、失败原因和 retry count；链上 receipt 解析以 intent id + tx hash 双重 fencing 更新 completed/failed。
+- `reward_merge_intents`：BalancedMerge 配对库存合并意图，包含 YES/NO token、merge size、两侧库存均价、source fill、status、tx hash、submitted/confirmed/failed 时间、失败原因和 retry count；广播前原子进入不可自动重领的 `broadcasting`，只有该状态能写 `submitted + tx_hash`，链上 receipt 解析再以 intent id + tx hash 双重 fencing 更新 completed/failed。Active paired size 只计算 pending/unsupported/broadcasting/submitted，completed 不抵扣未来新库存。
+- 高频 mutable snapshot 使用版本 fencing：managed order、position、account state、heartbeat、event-window、fair-value 和 strategy ledger 不接受较旧时间版本；账户全量持仓替换会先锁定 account state 版本，避免乱序同步先删除新仓位再写回旧仓位。
 
 ## 数据保留与自动清理
 
@@ -81,6 +85,7 @@
 - `reward_fair_value_history`：90 天。
 - `reward_strategy_runs`：90 天，删除 completed/failed/cancelled run 时级联删除对应 decisions/actions。
 - `reward_order_transitions`：180 天。
+- `reward_risk_events`：180 天。
 - completed control commands：30 天；failed control commands：90 天。
 - outbox/external dedup：30-90 天窗口。
 - `llm_calls`：180 天。

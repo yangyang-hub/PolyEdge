@@ -672,7 +672,9 @@ fn reward_strategy_action_from_merge_intent(
 ) -> RewardStrategyAction {
     let action_type = if matches!(
         intent.status,
-        RewardMergeIntentStatus::Submitted | RewardMergeIntentStatus::Completed
+        RewardMergeIntentStatus::Broadcasting
+            | RewardMergeIntentStatus::Submitted
+            | RewardMergeIntentStatus::Completed
     ) {
         RewardStrategyActionType::ExecuteMerge
     } else {
@@ -680,6 +682,7 @@ fn reward_strategy_action_from_merge_intent(
     };
     let status = match intent.status {
         RewardMergeIntentStatus::Failed => RewardStrategyActionStatus::Failed,
+        RewardMergeIntentStatus::Broadcasting => RewardStrategyActionStatus::Unknown,
         RewardMergeIntentStatus::Submitted | RewardMergeIntentStatus::Completed => {
             RewardStrategyActionStatus::Succeeded
         }

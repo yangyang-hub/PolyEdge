@@ -25,6 +25,7 @@ export type FundingTransferRequestDto = {
   token_id: string;
   amount: DecimalValue;
   confirmed: boolean;
+  operator_note?: string;
 };
 
 export type FundingTransferDto = {

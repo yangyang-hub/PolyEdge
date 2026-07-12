@@ -12,7 +12,8 @@ use std::str::FromStr;
 use std::time::{Duration, Instant};
 use tokio::net::TcpStream;
 use tokio_tungstenite::{
-    MaybeTlsStream, WebSocketStream, connect_async, tungstenite::protocol::Message,
+    MaybeTlsStream, WebSocketStream, connect_async,
+    tungstenite::{client::IntoClientRequest, protocol::Message},
 };
 
 const ORDERBOOK_STREAM_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
@@ -27,6 +28,7 @@ pub struct OrderbookHttpClient {
 
 pub struct OrderbookStreamClient {
     stream_url: String,
+    write_token: Option<String>,
 }
 
 pub struct OrderbookStreamConnection {
@@ -82,14 +84,20 @@ impl OrderbookHttpClient {
 
 impl OrderbookStreamClient {
     pub fn new(base_url: &str) -> Self {
+        Self::new_authenticated(base_url, None)
+    }
+
+    pub fn new_authenticated(base_url: &str, write_token: Option<&str>) -> Self {
         Self {
             stream_url: orderbook_stream_url(base_url),
+            write_token: normalized_write_token(write_token),
         }
     }
 
     pub fn new_for_source(base_url: &str, source: &str) -> Self {
         Self {
             stream_url: orderbook_stream_url_for_source(base_url, source),
+            write_token: None,
         }
     }
 
@@ -98,20 +106,39 @@ impl OrderbookStreamClient {
     }
 
     pub async fn connect(&self) -> Result<OrderbookStreamConnection> {
-        let connect = tokio::time::timeout(
-            ORDERBOOK_STREAM_CONNECT_TIMEOUT,
-            connect_async(self.stream_url.as_str()),
-        )
-        .await
-        .map_err(|_| {
-            AppError::dependency_unavailable(
-                "ORDERBOOK_STREAM_CONNECT_TIMEOUT",
-                format!(
-                    "timed out connecting to orderbook stream after {:?}",
-                    ORDERBOOK_STREAM_CONNECT_TIMEOUT
-                ),
-            )
-        })?;
+        let mut request = self
+            .stream_url
+            .as_str()
+            .into_client_request()
+            .map_err(|error| {
+                AppError::invalid_input(
+                    "ORDERBOOK_STREAM_URL_INVALID",
+                    format!("invalid orderbook stream URL: {error}"),
+                )
+            })?;
+        if let Some(token) = self.write_token.as_deref() {
+            let header = token.parse().map_err(|error| {
+                AppError::invalid_input(
+                    "ORDERBOOK_STREAM_TOKEN_INVALID",
+                    format!("invalid orderbook stream token header: {error}"),
+                )
+            })?;
+            request
+                .headers_mut()
+                .insert("x-polyedge-orderbook-token", header);
+        }
+        let connect =
+            tokio::time::timeout(ORDERBOOK_STREAM_CONNECT_TIMEOUT, connect_async(request))
+                .await
+                .map_err(|_| {
+                    AppError::dependency_unavailable(
+                        "ORDERBOOK_STREAM_CONNECT_TIMEOUT",
+                        format!(
+                            "timed out connecting to orderbook stream after {:?}",
+                            ORDERBOOK_STREAM_CONNECT_TIMEOUT
+                        ),
+                    )
+                })?;
         let (stream, _) = connect.map_err(|error| {
             AppError::dependency_unavailable(
                 "ORDERBOOK_STREAM_CONNECT_FAILED",
@@ -120,6 +147,13 @@ impl OrderbookStreamClient {
         })?;
         Ok(OrderbookStreamConnection { stream })
     }
+}
+
+fn normalized_write_token(write_token: Option<&str>) -> Option<String> {
+    write_token
+        .map(str::trim)
+        .filter(|token| !token.is_empty())
+        .map(ToString::to_string)
 }
 
 impl OrderbookStreamConnection {
@@ -226,8 +260,6 @@ struct IngestBook {
     bids: Vec<IngestLevel>,
     asks: Vec<IngestLevel>,
     observed_at: i64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    confirmed_at: Option<i64>,
     source: String,
 }
 
@@ -339,7 +371,6 @@ impl OrderbookCache for OrderbookHttpClient {
                     })
                     .collect(),
                 observed_at: book.observed_at,
-                confirmed_at: Some(book.confirmation_time_ms()),
                 source: book.source.to_string(),
             }],
         };
@@ -395,7 +426,6 @@ impl OrderbookCache for OrderbookHttpClient {
                         })
                         .collect(),
                     observed_at: book.observed_at,
-                    confirmed_at: Some(book.confirmation_time_ms()),
                     source: book.source.to_string(),
                 })
                 .collect(),
@@ -447,8 +477,7 @@ impl OrderbookHttpClient {
 
         let url = format!("{}/orderbook/batch", self.base_url);
         let resp = self
-            .client
-            .post(&url)
+            .authorize_write(self.client.post(&url))
             .json(&BatchRequest {
                 token_ids: token_ids.to_vec(),
                 refresh_if_stale_ms,

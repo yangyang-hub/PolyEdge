@@ -2586,6 +2586,7 @@ fn adaptive_post_fill_keeps_complementary_inventory_for_directional_info_cancel(
         sources: vec![polyedge_application::RewardInfoRiskSource {
             url: "https://example.com/result".to_string(),
             title: "Official result".to_string(),
+            evidence_verified: true,
             published_at: Some(now),
             snippet: Some("YES BUY is exposed to adverse selection".to_string()),
         }],

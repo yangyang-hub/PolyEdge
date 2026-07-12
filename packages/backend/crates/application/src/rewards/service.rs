@@ -114,6 +114,9 @@ impl RewardBotService {
             started_at: None,
             completed_at: None,
             trace_id: Some(trace_id.to_string()),
+            lease_owner: None,
+            lease_version: 0,
+            lease_expires_at: None,
             error: None,
         };
 
@@ -181,8 +184,19 @@ impl RewardBotService {
         command: &RewardControlCommand,
         trace_id: &str,
     ) -> Result<()> {
+        let lease_owner = command.lease_owner.as_deref().ok_or_else(|| {
+            AppError::conflict(
+                "REWARD_CONTROL_LEASE_MISSING",
+                "claimed rewards control command is missing its lease owner",
+            )
+        })?;
         self.store
-            .complete_control_command(&command.id, trace_id, OffsetDateTime::now_utc())
+            .complete_control_command(
+                &command.id,
+                lease_owner,
+                command.lease_version,
+                OffsetDateTime::now_utc(),
+            )
             .await?;
         self.log_event_to_store_and_memory(new_risk_event(
                 command.account_id.clone(),
@@ -207,10 +221,17 @@ impl RewardBotService {
         error: &AppError,
     ) -> Result<()> {
         let error_message = error.to_string();
+        let lease_owner = command.lease_owner.as_deref().ok_or_else(|| {
+            AppError::conflict(
+                "REWARD_CONTROL_LEASE_MISSING",
+                "claimed rewards control command is missing its lease owner",
+            )
+        })?;
         self.store
             .fail_control_command(
                 &command.id,
-                trace_id,
+                lease_owner,
+                command.lease_version,
                 &error_message,
                 OffsetDateTime::now_utc(),
             )
@@ -507,6 +528,13 @@ impl RewardBotService {
         sample: &RewardMarketCandleSample,
     ) -> Result<()> {
         self.store.record_market_candle_sample(sample).await
+    }
+
+    pub async fn record_market_candle_samples(
+        &self,
+        samples: &[RewardMarketCandleSample],
+    ) -> Result<()> {
+        self.store.record_market_candle_samples(samples).await
     }
 
     pub async fn list_recent_market_candles(
@@ -990,6 +1018,17 @@ impl RewardBotService {
     ) -> Result<()> {
         self.store
             .mark_merge_intent_submitted(intent_id, tx_hash, submitted_at, reason)
+            .await
+    }
+
+    pub async fn mark_reward_merge_intent_broadcasting(
+        &self,
+        intent_id: &str,
+        broadcasting_at: OffsetDateTime,
+        reason: &str,
+    ) -> Result<()> {
+        self.store
+            .mark_merge_intent_broadcasting(intent_id, broadcasting_at, reason)
             .await
     }
 

@@ -233,15 +233,16 @@ async fn latest_market_info_risk_for_endpoints(
     Ok(freshest_reward_cache_row(primary, fallback_cached))
 }
 
-/// Pick the cache row with the greater `expires_at` (None < Some). Both
-/// advisory and info-risk rows expose `expires_at: OffsetDateTime`.
+/// Pick the most recently evaluated cache row. Expiry is only a validity
+/// boundary; endpoint-specific TTL or jitter must not let an older decision
+/// override a newer one.
 fn freshest_reward_cache_row<T>(primary: Option<T>, fallback: Option<T>) -> Option<T>
 where
-    T: CacheExpiresAt,
+    T: CacheCreatedAt,
 {
     match (primary, fallback) {
         (Some(a), Some(b)) => {
-            if a.expires_at() >= b.expires_at() {
+            if a.created_at() >= b.created_at() {
                 Some(a)
             } else {
                 Some(b)
@@ -253,19 +254,19 @@ where
     }
 }
 
-trait CacheExpiresAt {
-    fn expires_at(&self) -> OffsetDateTime;
+trait CacheCreatedAt {
+    fn created_at(&self) -> OffsetDateTime;
 }
 
-impl CacheExpiresAt for RewardMarketAdvisory {
-    fn expires_at(&self) -> OffsetDateTime {
-        self.expires_at
+impl CacheCreatedAt for RewardMarketAdvisory {
+    fn created_at(&self) -> OffsetDateTime {
+        self.created_at
     }
 }
 
-impl CacheExpiresAt for RewardMarketInfoRisk {
-    fn expires_at(&self) -> OffsetDateTime {
-        self.expires_at
+impl CacheCreatedAt for RewardMarketInfoRisk {
+    fn created_at(&self) -> OffsetDateTime {
+        self.created_at
     }
 }
 
@@ -536,6 +537,36 @@ mod reward_provider_fallback_tests {
                 Some("advisory_hash"),
                 Some("risk_hash"),
             ))
+        );
+    }
+
+    #[test]
+    fn freshest_cache_prefers_latest_evaluation_not_longest_ttl() {
+        #[derive(Debug, PartialEq)]
+        struct CacheRow {
+            label: &'static str,
+            created_at: OffsetDateTime,
+        }
+
+        impl CacheCreatedAt for CacheRow {
+            fn created_at(&self) -> OffsetDateTime {
+                self.created_at
+            }
+        }
+
+        let old_long_ttl = CacheRow {
+            label: "old",
+            created_at: OffsetDateTime::UNIX_EPOCH,
+        };
+        let new_short_ttl = CacheRow {
+            label: "new",
+            created_at: OffsetDateTime::UNIX_EPOCH + TimeDuration::seconds(1),
+        };
+
+        assert_eq!(
+            freshest_reward_cache_row(Some(old_long_ttl), Some(new_short_ttl))
+                .map(|row| row.label),
+            Some("new")
         );
     }
 

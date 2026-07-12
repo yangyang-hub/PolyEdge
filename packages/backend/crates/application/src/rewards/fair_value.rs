@@ -29,6 +29,17 @@ pub fn apply_reward_fair_value_to_quote_plan(
 
     let estimate = estimate_reward_fair_value(plan, books, book_history, config, now)
         .unwrap_or_else(|reason| empty_reward_fair_value_estimate(plan, reason, config, now));
+    if estimate.do_not_quote_reason.is_none()
+        && let Ok(materialized) = materialize_reward_quote_plan_for_live_orderbook_with_fair_value_at(
+            plan, books, config, now, &estimate,
+        )
+    {
+        plan.quote_mode = materialized.quote_mode;
+        plan.recommended_quote_mode = materialized.recommended_quote_mode;
+        plan.book_metrics = materialized.book_metrics;
+        plan.midpoint = Some(materialized.midpoint);
+        plan.legs = materialized.legs;
+    }
     let decision = build_reward_fair_value_decision(plan, estimate.clone(), config);
     if !decision.passed
         && plan.quote_mode != RewardPlanQuoteMode::None
@@ -59,18 +70,38 @@ fn estimate_reward_fair_value(
         components.push(RewardFairValueComponent {
             source: "current_yes_midpoint".to_string(),
             value: state.midpoint,
+            weight: decimal("0.5"),
+            confidence: decimal("0.8"),
+            reason: "fresh YES midpoint".to_string(),
+        });
+        components.push(RewardFairValueComponent {
+            source: "current_yes_microprice".to_string(),
+            value: state.microprice,
             weight: Decimal::ONE,
             confidence: decimal("0.9"),
-            reason: "fresh YES midpoint".to_string(),
+            reason: format!(
+                "YES top-of-book microprice from {:.4} bid imbalance",
+                state.bid_imbalance
+            ),
         });
     }
     if let Some(state) = no {
         components.push(RewardFairValueComponent {
             source: "current_no_inverse_midpoint".to_string(),
             value: Decimal::ONE - state.midpoint,
+            weight: decimal("0.5"),
+            confidence: decimal("0.8"),
+            reason: "fresh inverse NO midpoint".to_string(),
+        });
+        components.push(RewardFairValueComponent {
+            source: "current_no_inverse_microprice".to_string(),
+            value: Decimal::ONE - state.microprice,
             weight: Decimal::ONE,
             confidence: decimal("0.9"),
-            reason: "fresh inverse NO midpoint".to_string(),
+            reason: format!(
+                "inverse NO top-of-book microprice from {:.4} bid imbalance",
+                state.bid_imbalance
+            ),
         });
     }
 
@@ -90,6 +121,14 @@ fn estimate_reward_fair_value(
         Decimal::max(yes.map_or(Decimal::ZERO, |state| state.spread_cents), no.map_or(Decimal::ZERO, |state| state.spread_cents));
 
     let deviation_component = midpoint_deviation_cents.unwrap_or(Decimal::ZERO);
+    let microprice_dislocation_cents = Decimal::max(
+        yes.map_or(Decimal::ZERO, |state| {
+            (state.microprice - state.midpoint).abs() * decimal("100")
+        }),
+        no.map_or(Decimal::ZERO, |state| {
+            (state.microprice - state.midpoint).abs() * decimal("100")
+        }),
+    );
     let history_component = history_range_cents.unwrap_or_else(|| {
         if config.fair_value_min_history_samples > 0 {
             config.fair_value_uncertainty_buffer_cents
@@ -99,7 +138,11 @@ fn estimate_reward_fair_value(
     });
     let uncertainty_cents = Decimal::max(
         config.fair_value_uncertainty_buffer_cents,
-        (max_current_spread_cents / decimal("2") + deviation_component + history_component / decimal("2")).round_dp(4),
+        (max_current_spread_cents / decimal("2")
+            + deviation_component
+            + history_component / decimal("2")
+            + microprice_dislocation_cents / decimal("2"))
+            .round_dp(4),
     );
     let mut confidence = (Decimal::ONE - uncertainty_cents / decimal("20"))
         .max(decimal("0.05"))
@@ -135,6 +178,12 @@ fn build_reward_fair_value_decision(
     config: &RewardBotConfig,
 ) -> RewardFairValueDecision {
     let rebate_cents = reward_fair_value_rebate_cents(plan, config);
+    let provider_edge_buffer_cents = plan
+        .ai_advisory
+        .as_ref()
+        .map_or(Decimal::ZERO, |advisory| {
+            reward_ai_edge_buffer_cents(advisory, config)
+        });
     let mut edges = Vec::new();
     for leg in &plan.legs {
         let fair_price = if leg.outcome.trim().eq_ignore_ascii_case("no") {
@@ -150,8 +199,9 @@ fn build_reward_fair_value_decision(
         // Market Maker V2: LP rewards are secondary income. They are reported
         // below but never subsidize quote admission. A quote must preserve its
         // trading edge after uncertainty on its own.
-        let effective_edge_cents =
-            (raw_edge_cents - estimate.uncertainty_cents).round_dp(4);
+        let total_uncertainty_cents =
+            (estimate.uncertainty_cents + provider_edge_buffer_cents).round_dp(4);
+        let effective_edge_cents = (raw_edge_cents - total_uncertainty_cents).round_dp(4);
         let reward_adjusted_edge_cents = (effective_edge_cents + rebate_cents).round_dp(4);
         let mut reason = "fair-value edge accepted".to_string();
         let mut passed = true;
@@ -164,7 +214,7 @@ fn build_reward_fair_value_decision(
         } else if effective_edge_cents < config.fair_value_min_effective_edge_cents {
             passed = false;
             reason = format!(
-                "effective trading edge {effective_edge_cents}c below {}c after uncertainty",
+                "effective trading edge {effective_edge_cents}c below {}c after market/provider uncertainty",
                 config.fair_value_min_effective_edge_cents
             );
         }
@@ -176,7 +226,7 @@ fn build_reward_fair_value_decision(
             fair_price,
             raw_edge_cents,
             expected_reward_rebate_cents: rebate_cents,
-            uncertainty_cents: estimate.uncertainty_cents,
+            uncertainty_cents: total_uncertainty_cents,
             effective_edge_cents,
             reward_adjusted_edge_cents,
             min_raw_edge_cents: config.fair_value_min_raw_edge_cents,
@@ -210,6 +260,8 @@ fn build_reward_fair_value_decision(
 #[derive(Debug, Clone, Copy)]
 struct RewardFairValueTokenState {
     midpoint: Decimal,
+    microprice: Decimal,
+    bid_imbalance: Decimal,
     spread_cents: Decimal,
 }
 
@@ -235,11 +287,25 @@ fn reward_fair_value_state_from_levels(
 ) -> Option<RewardFairValueTokenState> {
     let best_bid = bids.first()?.price;
     let best_ask = asks.first()?.price;
+    let best_bid_size = bids.first()?.size.max(Decimal::ZERO);
+    let best_ask_size = asks.first()?.size.max(Decimal::ZERO);
     if best_bid <= Decimal::ZERO || best_ask <= best_bid || best_ask >= Decimal::ONE {
         return None;
     }
+    let midpoint = ((best_bid + best_ask) / decimal("2")).round_dp(6);
+    let top_size = best_bid_size + best_ask_size;
+    let (microprice, bid_imbalance) = if top_size > Decimal::ZERO {
+        (
+            ((best_ask * best_bid_size + best_bid * best_ask_size) / top_size).round_dp(6),
+            (best_bid_size / top_size).round_dp(6),
+        )
+    } else {
+        (midpoint, decimal("0.5"))
+    };
     Some(RewardFairValueTokenState {
-        midpoint: ((best_bid + best_ask) / decimal("2")).round_dp(6),
+        midpoint,
+        microprice,
+        bid_imbalance,
         spread_cents: ((best_ask - best_bid) * decimal("100")).round_dp(4),
     })
 }

@@ -204,6 +204,7 @@ async fn postgres_record_reward_strategy_decisions_tx(
                 info_risk_level = EXCLUDED.info_risk_level,
                 decision_json = EXCLUDED.decision_json,
                 created_at = EXCLUDED.created_at
+            WHERE EXCLUDED.created_at >= reward_strategy_decisions.created_at
             "#,
         );
         builder
@@ -315,6 +316,11 @@ async fn postgres_record_reward_strategy_actions_tx(
                     EXCLUDED.execution_attempts
                 ),
                 updated_at = EXCLUDED.updated_at
+            WHERE EXCLUDED.updated_at >= reward_strategy_actions.updated_at
+              AND (
+                  reward_strategy_actions.status NOT IN ('succeeded', 'failed', 'skipped', 'unknown')
+                  OR EXCLUDED.status = reward_strategy_actions.status
+              )
             "#,
         );
         builder

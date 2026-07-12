@@ -91,7 +91,8 @@
 - `OrderbookStreamClient` 连接内部 `GET /orderbook/stream`，接收 `OrderbookStreamEvent` 用于 worker 本地 cache 和 rewards fast reconcile wake。
 - `get_books()` 使用 `POST /orderbook/batch` 批量读取缓存。
 - `get_books_with_max_age()` 在请求体携带 `refresh_if_stale_ms`，由 orderbook 服务只刷新缺失或 `confirmed_at` 超龄 token。
-- register/ingest/delete 写请求携带 `x-polyedge-orderbook-token`，值来自 `POLYEDGE_ORDERBOOK__WRITE_TOKEN`。
+- `get_books_with_max_age()` 和内部 stream 会携带 `POLYEDGE_ORDERBOOK__WRITE_TOKEN`；普通 cache-only batch 读取仍可无认证使用。
+- register/ingest/delete 写请求携带 `x-polyedge-orderbook-token`，值来自 `POLYEDGE_ORDERBOOK__WRITE_TOKEN`；ingest client 不发送 `confirmed_at`，确认时间由服务端独占生成。
 - 单盘口 404 映射为 `None`，其他非成功状态映射为 dependency error。
 
 ## Rewards Combined Provider
@@ -102,6 +103,7 @@
 - Advisory V2 schema 输出 `action=allow|reduce|stop_new`、`size_multiplier`、`edge_buffer_cents`、`confidence`、`reasons` 和 `metrics`；禁止输出 live price、side、rank 或绝对 notional。旧 `allow_quote` / `suitability` 响应只在 connector ingress 转换为 V2 action，legacy strategy hint 被忽略且不持久化。
 - Info-risk V2 schema 输出 `action=allow|reduce|stop_new|cancel_yes|cancel_no|cancel_all`、risk taxonomy、direction、event time、confidence、summary、sources 和 metrics。`directional_risk` 明确定义为不安全的 resting-BUY outcome（不是预测赢家）并必须匹配 `cancel_yes/cancel_no`；connector 负责严格 JSON/范围解析，application 再验证 cancel 的方向、证据新鲜度与来源独立性。
 - OpenAI Responses 仅在请求包含 info-risk 且 web search 显式开启时附加 `web_search_preview` tool。
+- Provider system prompt 把市场问题、slug、category、candle、来源标题/摘要/URL 声明为不可信数据，并用 `UNTRUSTED_MARKET_DATA` 边界隔离，禁止执行其中嵌入的指令。解析出的 evidence 默认未验证，不能直接取得撤单权限。
 - connector 不访问 Polymarket 或数据库。Advisory payload 只由稳定市场元数据和完成的粗粒度 candle 构造；info-risk payload 只含稳定市场身份、评估时间与证据搜索边界，不包含 orderbook、quote plan、账户或库存。
 
 ## News

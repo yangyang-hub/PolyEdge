@@ -33,6 +33,7 @@ pub struct AppState {
     pub runtime_config_store: Arc<dyn RuntimeConfigStore>,
     pub auth_verifier: Arc<InternalTokenVerifier>,
     pub idempotency_store: Arc<dyn IdempotencyStore>,
+    pub audit_log_sink: Arc<dyn AuditLogSink>,
     pub external_event_store: Arc<dyn ExternalEventStore>,
     pub system_mode_service: Arc<SystemModeService>,
     pub market_event_service: Arc<MarketEventService>,
@@ -274,7 +275,7 @@ impl Runtime {
             risk_state_store,
             market_event_service.clone(),
             system_mode_service.clone(),
-            audit_log_sink,
+            audit_log_sink.clone(),
         ));
         let execution_service = Arc::new(ExecutionService::new(
             market_event_service.clone(),
@@ -301,6 +302,7 @@ impl Runtime {
                 runtime_config_store,
                 auth_verifier,
                 idempotency_store,
+                audit_log_sink: audit_log_sink.clone(),
                 external_event_store,
                 system_mode_service,
                 market_event_service,
@@ -357,7 +359,7 @@ impl Runtime {
             risk_state_store,
             market_event_service.clone(),
             system_mode_service.clone(),
-            audit_log_sink,
+            audit_log_sink.clone(),
         ));
         let execution_service = Arc::new(ExecutionService::new(
             market_event_service.clone(),
@@ -386,6 +388,7 @@ impl Runtime {
             runtime_config_store,
             auth_verifier,
             idempotency_store,
+            audit_log_sink: audit_log_sink.clone(),
             external_event_store,
             system_mode_service,
             market_event_service,

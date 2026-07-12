@@ -9,6 +9,14 @@ impl Default for ServerSettings {
     }
 }
 
+impl Default for CorsSettings {
+    fn default() -> Self {
+        Self {
+            allowed_origins: Vec::new(),
+        }
+    }
+}
+
 impl Default for DatabaseSettings {
     fn default() -> Self {
         Self {
@@ -249,6 +257,7 @@ impl Default for AuthSettings {
     fn default() -> Self {
         Self {
             disabled: false,
+            allow_insecure_private_deploy: false,
             issuer: "polyedge-nextjs".to_string(),
             audience: "polyedge-rust-api".to_string(),
             clock_skew_secs: 30,

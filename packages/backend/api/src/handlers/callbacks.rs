@@ -205,7 +205,7 @@ async fn process_connector_order_status_callback<T: serde::Serialize>(
         Err(error) => {
             state
                 .external_event_store
-                .abandon(&source_system, &callback.event_id)
+                .abandon(&source_system, &callback.event_id, trace_id)
                 .await
                 .map_err(|abandon_error| {
                     HttpError::with_meta(
@@ -291,7 +291,7 @@ async fn process_connector_trade_fill_callback<T: serde::Serialize>(
         Err(error) => {
             state
                 .external_event_store
-                .abandon(&source_system, &callback.event_id)
+                .abandon(&source_system, &callback.event_id, trace_id)
                 .await
                 .map_err(|abandon_error| {
                     HttpError::with_meta(

@@ -22,13 +22,15 @@ pub trait RewardBotStore: Send + Sync {
     async fn complete_control_command(
         &self,
         command_id: &str,
-        trace_id: &str,
+        lease_owner: &str,
+        lease_version: i64,
         now: OffsetDateTime,
     ) -> Result<()>;
     async fn fail_control_command(
         &self,
         command_id: &str,
-        trace_id: &str,
+        lease_owner: &str,
+        lease_version: i64,
         error: &str,
         now: OffsetDateTime,
     ) -> Result<()>;
@@ -125,6 +127,12 @@ pub trait RewardBotStore: Send + Sync {
         estimates: &[RewardFairValueEstimate],
     ) -> Result<()>;
     async fn record_market_candle_sample(&self, sample: &RewardMarketCandleSample) -> Result<()>;
+    async fn record_market_candle_samples(&self, samples: &[RewardMarketCandleSample]) -> Result<()> {
+        for sample in samples {
+            self.record_market_candle_sample(sample).await?;
+        }
+        Ok(())
+    }
     async fn list_recent_market_candles(
         &self,
         condition_id: &str,
@@ -223,6 +231,15 @@ pub trait RewardBotStore: Send + Sync {
         account_id: &str,
         limit: u16,
     ) -> Result<Vec<RewardMergeIntent>>;
+    /// Atomically fence a merge intent before any chain broadcast is attempted.
+    /// A broadcasting intent without a transaction hash is deliberately not
+    /// executable again and requires operator/on-chain reconciliation.
+    async fn mark_merge_intent_broadcasting(
+        &self,
+        intent_id: &str,
+        broadcasting_at: OffsetDateTime,
+        reason: &str,
+    ) -> Result<()>;
     async fn mark_merge_intent_submitted(
         &self,
         intent_id: &str,

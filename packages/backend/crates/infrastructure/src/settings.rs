@@ -20,6 +20,7 @@ pub use runtime_config::{RuntimeConfigEntry, RuntimeConfigValueType};
 #[serde(default)]
 pub struct Settings {
     pub server: ServerSettings,
+    pub cors: CorsSettings,
     pub postgres: DatabaseSettings,
     pub redis: RedisSettings,
     pub runtime: RuntimeSettings,
@@ -38,6 +39,14 @@ pub struct Settings {
 pub struct ServerSettings {
     pub host: String,
     pub port: u16,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct CorsSettings {
+    /// Exact browser origins allowed to call the API cross-origin. An empty
+    /// list disables cross-origin access while preserving same-origin calls.
+    pub allowed_origins: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -230,6 +239,9 @@ pub struct OrderbookServiceSettings {
 #[serde(default)]
 pub struct AuthSettings {
     pub disabled: bool,
+    /// Explicit production acknowledgement for private-network deployments
+    /// that temporarily run without application authentication.
+    pub allow_insecure_private_deploy: bool,
     pub issuer: String,
     pub audience: String,
     pub clock_skew_secs: i64,
@@ -321,6 +333,33 @@ impl Settings {
         Ok(settings)
     }
 
+    pub fn validate_deployment_security(&self) -> polyedge_domain::Result<()> {
+        let production = self.runtime.environment.eq_ignore_ascii_case("production");
+        if production && self.cors.allowed_origins.is_empty() {
+            return Err(AppError::internal(
+                "CONFIG_CORS_ALLOWED_ORIGINS_REQUIRED",
+                "production requires at least one exact CORS allowed origin",
+            ));
+        }
+        if production && !self.auth.disabled && self.auth.keys.is_empty() {
+            return Err(AppError::internal(
+                "CONFIG_AUTH_KEYS_REQUIRED",
+                "production authentication requires at least one Ed25519 JWT verification key",
+            ));
+        }
+        if production && self.auth.disabled && !self.auth.allow_insecure_private_deploy {
+            return Err(AppError::internal(
+                "CONFIG_INSECURE_PRIVATE_DEPLOY_ACK_REQUIRED",
+                "production with authentication disabled requires POLYEDGE_AUTH__ALLOW_INSECURE_PRIVATE_DEPLOY=true and a private network or trusted access proxy",
+            ));
+        }
+
+        for origin in &self.cors.allowed_origins {
+            validate_cors_origin(origin)?;
+        }
+        Ok(())
+    }
+
     fn from_config(config: Config) -> polyedge_domain::Result<Self> {
         config.try_deserialize().map_err(|error| {
             AppError::internal(
@@ -329,6 +368,35 @@ impl Settings {
             )
         })
     }
+}
+
+fn validate_cors_origin(origin: &str) -> polyedge_domain::Result<()> {
+    let origin = origin.trim();
+    if origin.is_empty() || origin == "*" {
+        return Err(AppError::internal(
+            "CONFIG_CORS_ALLOWED_ORIGIN_INVALID",
+            "CORS allowed origins must be exact non-wildcard http(s) origins",
+        ));
+    }
+
+    let uri = origin.parse::<axum::http::Uri>().map_err(|error| {
+        AppError::internal(
+            "CONFIG_CORS_ALLOWED_ORIGIN_INVALID",
+            format!("invalid CORS allowed origin {origin:?}: {error}"),
+        )
+    })?;
+    if !matches!(uri.scheme_str(), Some("http" | "https"))
+        || uri.authority().is_none()
+        || uri.query().is_some()
+        || !matches!(uri.path(), "" | "/")
+    {
+        return Err(AppError::internal(
+            "CONFIG_CORS_ALLOWED_ORIGIN_INVALID",
+            format!("CORS allowed origin must contain only scheme and authority: {origin:?}"),
+        ));
+    }
+
+    Ok(())
 }
 
 include!("settings/defaults.rs");

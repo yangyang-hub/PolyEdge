@@ -71,6 +71,15 @@ pub trait MarketEventStore: Send + Sync {
 
     async fn list_orders(&self, filters: &OrderListFilters) -> Result<Vec<OrderView>>;
 
+    /// Distinct markets with potentially live connector orders. This query is
+    /// intentionally independent of the console list limit so orderbook
+    /// subscriptions cannot silently omit older active orders.
+    async fn list_active_order_market_ids(
+        &self,
+        connector_name: &str,
+        limit: usize,
+    ) -> Result<Vec<String>>;
+
     async fn list_trades(&self, filters: &TradeListFilters) -> Result<Vec<TradeView>>;
 
     async fn list_positions(&self, filters: &PositionListFilters) -> Result<Vec<PositionView>>;
@@ -442,6 +451,16 @@ impl MarketEventService {
 
     pub async fn list_orders(&self, filters: OrderListFilters) -> Result<Vec<OrderView>> {
         self.store.list_orders(&filters).await
+    }
+
+    pub async fn list_active_order_market_ids(
+        &self,
+        connector_name: &str,
+        limit: usize,
+    ) -> Result<Vec<String>> {
+        self.store
+            .list_active_order_market_ids(connector_name, limit.clamp(1, 10_000))
+            .await
     }
 
     pub async fn list_trades(&self, filters: TradeListFilters) -> Result<Vec<TradeView>> {

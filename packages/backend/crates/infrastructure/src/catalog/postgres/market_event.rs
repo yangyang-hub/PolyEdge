@@ -103,6 +103,15 @@ impl MarketEventStore for PostgresMarketEventStore {
         self.market_event_list_orders(filters).await
     }
 
+    async fn list_active_order_market_ids(
+        &self,
+        connector_name: &str,
+        limit: usize,
+    ) -> Result<Vec<String>> {
+        self.market_event_list_active_order_market_ids(connector_name, limit)
+            .await
+    }
+
     async fn list_trades(&self, filters: &TradeListFilters) -> Result<Vec<TradeView>> {
         self.market_event_list_trades(filters).await
     }

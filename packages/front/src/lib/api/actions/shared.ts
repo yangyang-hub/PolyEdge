@@ -21,6 +21,7 @@ export type OperationActionResult = {
       | "tokenId"
       | "amount"
       | "confirmed"
+      | "idempotencyKey"
       | "source"
       | "status"
       | "reason",

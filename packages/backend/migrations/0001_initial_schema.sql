@@ -1,5 +1,5 @@
 -- PolyEdge complete PostgreSQL initialization script
--- Baseline schema for initializing an empty database on 2026-07-11.
+-- Baseline schema for initializing an empty database on 2026-07-12.
 -- Single clean-deploy baseline shared by init.sql and migrations/0001_initial_schema.sql.
 
 
@@ -40,14 +40,21 @@ CREATE TABLE IF NOT EXISTS idempotency_keys (
   resource_type TEXT,
   resource_id TEXT,
   response_json JSONB,
+  error_code TEXT,
   first_seen_at TIMESTAMPTZ NOT NULL,
   last_seen_at TIMESTAMPTZ NOT NULL,
+  lease_expires_at TIMESTAMPTZ,
+  completed_at TIMESTAMPTZ,
   expires_at TIMESTAMPTZ NOT NULL,
+  CHECK (lease_expires_at IS NULL OR lease_expires_at <= expires_at),
   PRIMARY KEY (scope, idempotency_key)
 );
 
 CREATE INDEX IF NOT EXISTS idempotency_keys_expires_at_idx ON idempotency_keys (expires_at);
 CREATE INDEX IF NOT EXISTS idempotency_keys_request_id_idx ON idempotency_keys (request_id);
+CREATE INDEX IF NOT EXISTS idempotency_keys_started_lease_idx
+  ON idempotency_keys (lease_expires_at)
+  WHERE status = 'started';
 
 CREATE TABLE IF NOT EXISTS outbox_events (
   id TEXT PRIMARY KEY,
@@ -74,11 +81,15 @@ CREATE TABLE IF NOT EXISTS external_event_dedup (
   payload_hash TEXT NOT NULL,
   first_seen_at TIMESTAMPTZ NOT NULL,
   processed_at TIMESTAMPTZ,
+  lease_expires_at TIMESTAMPTZ NOT NULL,
   trace_id TEXT NOT NULL,
   PRIMARY KEY (source_system, external_event_id)
 );
 
 CREATE INDEX IF NOT EXISTS external_event_dedup_processed_idx ON external_event_dedup (processed_at);
+CREATE INDEX IF NOT EXISTS external_event_dedup_lease_idx
+  ON external_event_dedup (lease_expires_at)
+  WHERE processed_at IS NULL;
 
 CREATE TABLE IF NOT EXISTS llm_calls (
   id TEXT PRIMARY KEY,
@@ -820,8 +831,8 @@ CREATE TABLE reward_positions (
     condition_id TEXT NOT NULL REFERENCES reward_markets(condition_id) ON DELETE CASCADE,
     token_id TEXT NOT NULL,
     outcome TEXT NOT NULL,
-    size NUMERIC(24, 8) NOT NULL DEFAULT 0,
-    avg_price NUMERIC(12, 6) NOT NULL DEFAULT 0,
+    size NUMERIC(24, 8) NOT NULL DEFAULT 0 CHECK (size >= 0),
+    avg_price NUMERIC(12, 6) NOT NULL DEFAULT 0 CHECK (avg_price >= 0 AND avg_price < 1),
     realized_pnl NUMERIC(14, 4) NOT NULL DEFAULT 0,
     updated_at TIMESTAMPTZ NOT NULL,
     PRIMARY KEY (account_id, token_id)
@@ -886,7 +897,8 @@ INSERT INTO market_categories (id, label, sort_order) VALUES
 -- Stateful rewards market-making simulation: order fills, fund-pool ledger.
 
 ALTER TABLE reward_managed_orders
-    ADD COLUMN filled_size NUMERIC(24, 8) NOT NULL DEFAULT 0 CHECK (filled_size >= 0),
+    ADD COLUMN filled_size NUMERIC(24, 8) NOT NULL DEFAULT 0
+        CHECK (filled_size >= 0 AND filled_size <= size),
     ADD COLUMN reward_earned NUMERIC(14, 4) NOT NULL DEFAULT 0,
     ADD COLUMN last_scored_at TIMESTAMPTZ;
 
@@ -937,12 +949,19 @@ CREATE TABLE reward_control_commands (
     started_at TIMESTAMPTZ,
     completed_at TIMESTAMPTZ,
     trace_id TEXT,
-    error TEXT
+    error TEXT,
+    lease_owner TEXT,
+    lease_version BIGINT NOT NULL DEFAULT 0 CHECK (lease_version >= 0),
+    lease_expires_at TIMESTAMPTZ
 );
 
 CREATE INDEX reward_control_commands_pending_idx
     ON reward_control_commands (status, requested_at)
     WHERE status = 'pending';
+
+CREATE UNIQUE INDEX reward_control_commands_active_unique_idx
+    ON reward_control_commands (action, COALESCE(account_id, ''))
+    WHERE status IN ('pending', 'running');
 
 CREATE INDEX reward_control_commands_recent_idx
     ON reward_control_commands (requested_at DESC);
@@ -961,7 +980,7 @@ CREATE INDEX IF NOT EXISTS idx_markets_open_tradable_volume
 
 
 CREATE INDEX IF NOT EXISTS idx_reward_control_commands_running_started_at
-ON reward_control_commands (started_at, requested_at)
+ON reward_control_commands (lease_expires_at, requested_at)
 WHERE status = 'running';
 
 
@@ -1203,6 +1222,12 @@ CREATE TABLE reward_market_advisories (
 CREATE INDEX idx_reward_market_advisories_condition_expires
     ON reward_market_advisories (condition_id, expires_at DESC);
 
+CREATE INDEX idx_reward_market_advisories_condition_created
+    ON reward_market_advisories (condition_id, created_at DESC, id DESC);
+
+CREATE INDEX idx_reward_market_advisories_expires
+    ON reward_market_advisories (expires_at);
+
 CREATE INDEX idx_reward_market_advisories_provider_input
     ON reward_market_advisories (provider, request_format, model, input_hash);
 
@@ -1249,8 +1274,14 @@ CREATE TABLE reward_market_info_risks (
 CREATE INDEX idx_reward_market_info_risks_condition_expires
   ON reward_market_info_risks (condition_id, expires_at DESC);
 
+CREATE INDEX idx_reward_market_info_risks_condition_created
+  ON reward_market_info_risks (condition_id, created_at DESC, id DESC);
+
 CREATE INDEX idx_reward_market_info_risks_level_expires
   ON reward_market_info_risks (risk_level, expires_at DESC);
+
+CREATE INDEX idx_reward_market_info_risks_expires
+  ON reward_market_info_risks (expires_at);
 
 CREATE INDEX idx_reward_market_info_risks_request_cache
   ON reward_market_info_risks (
@@ -1427,10 +1458,10 @@ CREATE TABLE reward_merge_intents (
     merge_size NUMERIC(24, 8) NOT NULL CHECK (merge_size > 0),
     yes_position_size NUMERIC(24, 8) NOT NULL CHECK (yes_position_size >= 0),
     no_position_size NUMERIC(24, 8) NOT NULL CHECK (no_position_size >= 0),
-    yes_avg_price NUMERIC(12, 6) NOT NULL DEFAULT 0,
-    no_avg_price NUMERIC(12, 6) NOT NULL DEFAULT 0,
+    yes_avg_price NUMERIC(12, 6) NOT NULL DEFAULT 0 CHECK (yes_avg_price >= 0 AND yes_avg_price < 1),
+    no_avg_price NUMERIC(12, 6) NOT NULL DEFAULT 0 CHECK (no_avg_price >= 0 AND no_avg_price < 1),
     status TEXT NOT NULL CHECK (
-        status IN ('pending', 'unsupported', 'submitted', 'completed', 'failed')
+        status IN ('pending', 'unsupported', 'broadcasting', 'submitted', 'completed', 'failed')
     ),
     reason TEXT NOT NULL,
     source_fill_id TEXT NOT NULL,
@@ -1457,7 +1488,7 @@ ALTER TABLE reward_merge_intents
     ADD COLUMN submitted_at TIMESTAMPTZ,
     ADD COLUMN confirmed_at TIMESTAMPTZ,
     ADD COLUMN failed_reason TEXT,
-    ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0;
+    ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0 CHECK (retry_count >= 0);
 
 CREATE INDEX reward_merge_intents_executable_idx
     ON reward_merge_intents (account_id, status, updated_at ASC)
@@ -1467,14 +1498,14 @@ CREATE INDEX reward_merge_intents_executable_idx
 CREATE TABLE reward_fair_values (
     condition_id TEXT PRIMARY KEY,
     source TEXT NOT NULL,
-    fair_yes NUMERIC NOT NULL,
-    fair_no NUMERIC NOT NULL,
-    market_midpoint_yes NUMERIC,
-    confidence NUMERIC NOT NULL,
-    uncertainty_cents NUMERIC NOT NULL,
-    midpoint_deviation_cents NUMERIC,
-    sample_count BIGINT NOT NULL DEFAULT 0,
-    components_json JSONB NOT NULL DEFAULT '[]'::jsonb,
+    fair_yes NUMERIC NOT NULL CHECK (fair_yes >= 0 AND fair_yes <= 1),
+    fair_no NUMERIC NOT NULL CHECK (fair_no >= 0 AND fair_no <= 1),
+    market_midpoint_yes NUMERIC CHECK (market_midpoint_yes IS NULL OR (market_midpoint_yes >= 0 AND market_midpoint_yes <= 1)),
+    confidence NUMERIC NOT NULL CHECK (confidence >= 0 AND confidence <= 1),
+    uncertainty_cents NUMERIC NOT NULL CHECK (uncertainty_cents >= 0),
+    midpoint_deviation_cents NUMERIC CHECK (midpoint_deviation_cents IS NULL OR midpoint_deviation_cents >= 0),
+    sample_count BIGINT NOT NULL DEFAULT 0 CHECK (sample_count >= 0),
+    components_json JSONB NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof(components_json) = 'array'),
     do_not_quote_reason TEXT,
     observed_at TIMESTAMPTZ NOT NULL,
     expires_at TIMESTAMPTZ NOT NULL,
@@ -1485,14 +1516,14 @@ CREATE TABLE reward_fair_value_history (
     id UUID PRIMARY KEY,
     condition_id TEXT NOT NULL,
     source TEXT NOT NULL,
-    fair_yes NUMERIC NOT NULL,
-    fair_no NUMERIC NOT NULL,
-    market_midpoint_yes NUMERIC,
-    confidence NUMERIC NOT NULL,
-    uncertainty_cents NUMERIC NOT NULL,
-    midpoint_deviation_cents NUMERIC,
-    sample_count BIGINT NOT NULL DEFAULT 0,
-    components_json JSONB NOT NULL DEFAULT '[]'::jsonb,
+    fair_yes NUMERIC NOT NULL CHECK (fair_yes >= 0 AND fair_yes <= 1),
+    fair_no NUMERIC NOT NULL CHECK (fair_no >= 0 AND fair_no <= 1),
+    market_midpoint_yes NUMERIC CHECK (market_midpoint_yes IS NULL OR (market_midpoint_yes >= 0 AND market_midpoint_yes <= 1)),
+    confidence NUMERIC NOT NULL CHECK (confidence >= 0 AND confidence <= 1),
+    uncertainty_cents NUMERIC NOT NULL CHECK (uncertainty_cents >= 0),
+    midpoint_deviation_cents NUMERIC CHECK (midpoint_deviation_cents IS NULL OR midpoint_deviation_cents >= 0),
+    sample_count BIGINT NOT NULL DEFAULT 0 CHECK (sample_count >= 0),
+    components_json JSONB NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof(components_json) = 'array'),
     do_not_quote_reason TEXT,
     observed_at TIMESTAMPTZ NOT NULL,
     expires_at TIMESTAMPTZ NOT NULL,
@@ -1554,6 +1585,9 @@ CREATE TABLE reward_strategy_runs (
 
 CREATE INDEX reward_strategy_runs_account_started_idx
     ON reward_strategy_runs (account_id, started_at DESC, run_id DESC);
+
+CREATE INDEX reward_strategy_runs_started_idx
+    ON reward_strategy_runs (started_at DESC, run_id DESC);
 
 CREATE INDEX reward_strategy_runs_trace_idx
     ON reward_strategy_runs (trace_id, started_at DESC, run_id DESC);

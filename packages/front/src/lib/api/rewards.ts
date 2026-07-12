@@ -10,7 +10,19 @@ import type {
   RewardStrategyRunDto,
   RewardStrategyRunPageDto,
 } from "@/lib/contracts/dto";
-import { buildQueryString, fetchContract, fetchWriteContract, randomUUID } from "@/lib/api/base";
+import {
+  buildQueryString,
+  fetchContract,
+  fetchWriteContract,
+  randomUUID,
+  type InternalApiStepUpScope,
+} from "@/lib/api/base";
+
+export interface RewardWriteOptions {
+  operatorNote?: string;
+  stepUpCode?: string;
+  stepUpScopes?: InternalApiStepUpScope[];
+}
 
 export interface RewardBotSnapshotQuery {
   plans_search?: string;
@@ -63,35 +75,51 @@ export async function readRewardBotSnapshot(
 
 export async function updateRewardBotConfig(
   patch: RewardBotConfigPatchDto,
+  options: RewardWriteOptions = {},
 ): Promise<ApiResponse<RewardBotSnapshotDto>> {
   return fetchWriteContract<ApiResponse<RewardBotSnapshotDto>>("/api/v1/rewards-bot/config", {
     method: "POST",
     idempotencyKey: `reward-config-${randomUUID()}`,
-    body: patch as Record<string, unknown>,
+    body: {
+      ...(patch as Record<string, unknown>),
+      ...(options.operatorNote ? { operator_note: options.operatorNote } : {}),
+    },
+    stepUpCode: options.stepUpCode,
+    stepUpScopes: options.stepUpScopes,
   });
 }
 
-export async function runRewardBotOnce(): Promise<ApiResponse<RewardBotSnapshotDto>> {
+export async function runRewardBotOnce(
+  options: RewardWriteOptions = {},
+): Promise<ApiResponse<RewardBotSnapshotDto>> {
   return fetchWriteContract<ApiResponse<RewardBotSnapshotDto>>("/api/v1/rewards-bot/run", {
     method: "POST",
     idempotencyKey: `reward-run-${randomUUID()}`,
-    body: {},
+    body: options.operatorNote ? { operator_note: options.operatorNote } : {},
+    stepUpCode: options.stepUpCode,
+    stepUpScopes: ["rewards_run_once"],
   });
 }
 
-export async function cancelRewardBotOrders(): Promise<ApiResponse<RewardBotSnapshotDto>> {
+export async function cancelRewardBotOrders(
+  options: RewardWriteOptions = {},
+): Promise<ApiResponse<RewardBotSnapshotDto>> {
   return fetchWriteContract<ApiResponse<RewardBotSnapshotDto>>("/api/v1/rewards-bot/cancel-all", {
     method: "POST",
     idempotencyKey: `reward-cancel-${randomUUID()}`,
-    body: {},
+    body: options.operatorNote ? { operator_note: options.operatorNote } : {},
   });
 }
 
-export async function resetRewardBot(): Promise<ApiResponse<RewardBotSnapshotDto>> {
+export async function resetRewardBot(
+  options: RewardWriteOptions = {},
+): Promise<ApiResponse<RewardBotSnapshotDto>> {
   return fetchWriteContract<ApiResponse<RewardBotSnapshotDto>>("/api/v1/rewards-bot/reset", {
     method: "POST",
     idempotencyKey: `reward-reset-${randomUUID()}`,
-    body: {},
+    body: options.operatorNote ? { operator_note: options.operatorNote } : {},
+    stepUpCode: options.stepUpCode,
+    stepUpScopes: ["rewards_state_reset"],
   });
 }
 
@@ -128,6 +156,33 @@ export async function listRewardStrategyActions(
 }
 
 const STRATEGY_LEDGER_ANALYTICS_PAGE_SIZE = 500;
+const STRATEGY_LEDGER_PAGE_CONCURRENCY = 2;
+
+async function mapPagesWithConcurrency<T>(
+  pages: number[],
+  loadPage: (page: number) => Promise<T>,
+): Promise<T[]> {
+  if (pages.length === 0) return [];
+  const results = new Array<T>(pages.length);
+  let nextIndex = 0;
+
+  async function worker() {
+    while (nextIndex < pages.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      const page = pages[index];
+      if (page !== undefined) results[index] = await loadPage(page);
+    }
+  }
+
+  await Promise.all(
+    Array.from(
+      { length: Math.min(STRATEGY_LEDGER_PAGE_CONCURRENCY, pages.length) },
+      () => worker(),
+    ),
+  );
+  return results;
+}
 
 export async function listAllRewardStrategyDecisions(
   runId: number,
@@ -140,13 +195,11 @@ export async function listAllRewardStrategyDecisions(
     { length: Math.max(0, first.data.page.total_pages - 1) },
     (_, index) => index + 2,
   );
-  const remaining = await Promise.all(
-    remainingPages.map((page) =>
-      listRewardStrategyDecisions(runId, {
+  const remaining = await mapPagesWithConcurrency(remainingPages, (page) =>
+    listRewardStrategyDecisions(runId, {
         page,
         page_size: STRATEGY_LEDGER_ANALYTICS_PAGE_SIZE,
       }),
-    ),
   );
   return [first, ...remaining].flatMap((response) => response.data.items);
 }
@@ -162,13 +215,11 @@ export async function listAllRewardStrategyActions(
     { length: Math.max(0, first.data.page.total_pages - 1) },
     (_, index) => index + 2,
   );
-  const remaining = await Promise.all(
-    remainingPages.map((page) =>
-      listRewardStrategyActions(runId, {
+  const remaining = await mapPagesWithConcurrency(remainingPages, (page) =>
+    listRewardStrategyActions(runId, {
         page,
         page_size: STRATEGY_LEDGER_ANALYTICS_PAGE_SIZE,
       }),
-    ),
   );
   return [first, ...remaining].flatMap((response) => response.data.items);
 }

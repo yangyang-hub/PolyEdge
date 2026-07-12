@@ -30,7 +30,7 @@ async fn postgres_latest_market_info_risk(
           AND model = $4
           AND input_hash = $5
           AND expires_at > $6
-        ORDER BY expires_at DESC, created_at DESC
+        ORDER BY created_at DESC, id DESC
         LIMIT 1
         "#,
     )
@@ -84,7 +84,7 @@ async fn postgres_latest_market_info_risks(
         FROM reward_market_info_risks
         WHERE condition_id = ANY($1)
           AND expires_at > $2
-        ORDER BY condition_id, expires_at DESC, created_at DESC
+        ORDER BY condition_id, created_at DESC, id DESC
         "#,
     )
     .bind(condition_ids)

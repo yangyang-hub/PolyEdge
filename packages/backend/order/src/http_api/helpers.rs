@@ -91,25 +91,41 @@ fn parse_levels(
     max_levels: usize,
     descending: bool,
 ) -> Result<Vec<CachedBookLevel>, ApiError> {
-    let mut parsed = levels
-        .into_iter()
-        .map(|level| {
-            Ok(CachedBookLevel {
-                price: Decimal::from_str(&level.price).map_err(|error| {
-                    error_response(
-                        StatusCode::BAD_REQUEST,
-                        format!("invalid orderbook level price '{}': {error}", level.price),
-                    )
-                })?,
-                size: Decimal::from_str(&level.size).map_err(|error| {
-                    error_response(
-                        StatusCode::BAD_REQUEST,
-                        format!("invalid orderbook level size '{}': {error}", level.size),
-                    )
-                })?,
-            })
-        })
-        .collect::<Result<Vec<_>, _>>()?;
+    let mut seen_prices = HashSet::new();
+    let mut parsed = Vec::with_capacity(levels.len());
+    for level in levels {
+        let price = Decimal::from_str(&level.price).map_err(|error| {
+            error_response(
+                StatusCode::BAD_REQUEST,
+                format!("invalid orderbook level price '{}': {error}", level.price),
+            )
+        })?;
+        let size = Decimal::from_str(&level.size).map_err(|error| {
+            error_response(
+                StatusCode::BAD_REQUEST,
+                format!("invalid orderbook level size '{}': {error}", level.size),
+            )
+        })?;
+        if price <= Decimal::ZERO || price >= Decimal::ONE {
+            return Err(error_response(
+                StatusCode::BAD_REQUEST,
+                format!("orderbook price must be strictly between 0 and 1, got {price}"),
+            ));
+        }
+        if size <= Decimal::ZERO {
+            return Err(error_response(
+                StatusCode::BAD_REQUEST,
+                format!("orderbook size must be positive, got {size}"),
+            ));
+        }
+        if !seen_prices.insert(price) {
+            return Err(error_response(
+                StatusCode::BAD_REQUEST,
+                format!("duplicate orderbook price level {price}"),
+            ));
+        }
+        parsed.push(CachedBookLevel { price, size });
+    }
     // Keep the BEST levels (bids descending, asks ascending) before trimming, so
     // an unsorted ingest payload never drops top-of-book.
     if descending {
@@ -119,6 +135,19 @@ fn parse_levels(
     }
     parsed.truncate(max_levels.max(1));
     Ok(parsed)
+}
+
+fn validate_ingest_observed_at(observed_at: i64, now: i64) -> Result<(), ApiError> {
+    if observed_at <= 0
+        || observed_at > now.saturating_add(MAX_INGEST_CLOCK_SKEW_MS)
+        || observed_at < now.saturating_sub(MAX_INGEST_OBSERVED_AGE_MS)
+    {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            "orderbook observed_at is outside the accepted service time window",
+        ));
+    }
+    Ok(())
 }
 
 fn message_response(message: impl Into<String>) -> Json<MessageResponse> {

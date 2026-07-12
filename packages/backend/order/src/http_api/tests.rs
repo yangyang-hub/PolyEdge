@@ -43,4 +43,51 @@ mod tests {
 
         assert!(super::authorize_write(&state, &headers).is_ok());
     }
+
+    #[test]
+    fn ingest_levels_reject_invalid_values_duplicates_and_crossing() {
+        let invalid_price = super::parse_levels(
+            vec![super::LevelResponse {
+                price: "1".to_string(),
+                size: "2".to_string(),
+            }],
+            10,
+            true,
+        );
+        assert!(invalid_price.is_err());
+
+        let invalid_size = super::parse_levels(
+            vec![super::LevelResponse {
+                price: "0.5".to_string(),
+                size: "0".to_string(),
+            }],
+            10,
+            true,
+        );
+        assert!(invalid_size.is_err());
+
+        let duplicate = super::parse_levels(
+            vec![
+                super::LevelResponse {
+                    price: "0.5".to_string(),
+                    size: "1".to_string(),
+                },
+                super::LevelResponse {
+                    price: "0.5".to_string(),
+                    size: "2".to_string(),
+                },
+            ],
+            10,
+            true,
+        );
+        assert!(duplicate.is_err());
+    }
+
+    #[test]
+    fn ingest_timestamp_requires_recent_service_time() {
+        let now = 1_800_000_000_000_i64;
+        assert!(super::validate_ingest_observed_at(now, now).is_ok());
+        assert!(super::validate_ingest_observed_at(now + 30_001, now).is_err());
+        assert!(super::validate_ingest_observed_at(now - 86_400_001, now).is_err());
+    }
 }

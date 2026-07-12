@@ -1,4 +1,4 @@
-use crate::updates::OrderbookUpdateBroadcaster;
+use crate::{metrics::OrderbookRuntimeMetrics, updates::OrderbookUpdateBroadcaster};
 use futures::StreamExt;
 use polyedge_application::{
     BookSource, CachedBookLevel, CachedOrderBook, OrderbookCache, OrderbookStreamReason,
@@ -9,13 +9,14 @@ use polyedge_infrastructure::AppState;
 use polymarket_client_sdk::clob::ws::Client as ClobWsClient;
 use polymarket_client_sdk::clob::{
     types::Side,
-    ws::{BookUpdate, PriceChange},
+    ws::{BookUpdate, PriceChange, PriceChangeBatchEntry},
 };
 use polymarket_client_sdk::types::U256;
 use polymarket_client_sdk::ws::config::Config as WsConfig;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
 use std::sync::Arc;
+use std::sync::Mutex as StdMutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 use time::OffsetDateTime;
@@ -32,7 +33,11 @@ const ORDERBOOK_WS_SDK_RECONNECT_INITIAL_SECS: u64 = 30;
 const ORDERBOOK_WS_SDK_RECONNECT_MAX_SECS: u64 = 120;
 const ORDERBOOK_WS_STARTUP_BACKOFF_BASE_MS: u64 = 2_000;
 const ORDERBOOK_WS_STARTUP_BACKOFF_MAX_MS: u64 = 60_000;
+const ORDERBOOK_WS_EVENT_QUEUE_CAPACITY: usize = 2_048;
+const ORDERBOOK_WS_COALESCED_LEVELS_PER_TOKEN: usize = 128;
+const ORDERBOOK_POLL_SAFE_CONFIRMATION_LAG_MS: i64 = 2_000;
 pub(crate) const ORDERBOOK_UPSTREAM_BATCH_DELAY_MS: u64 = 100;
+pub(crate) const ORDERBOOK_UPSTREAM_BATCH_TIMEOUT_SECS: u64 = 20;
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct OrderbookStreamReport {
@@ -50,6 +55,7 @@ pub async fn run_orderbook_stream(
     state: &AppState,
     broadcaster: &OrderbookUpdateBroadcaster,
     upstream_request_gate: Arc<Mutex<()>>,
+    runtime_metrics: Arc<OrderbookRuntimeMetrics>,
 ) -> Result<OrderbookStreamReport> {
     let settings = &state.settings.orderbook_stream;
     let cache = state.orderbook_cache.clone();
@@ -117,6 +123,7 @@ pub async fn run_orderbook_stream(
     let poll_failures = Arc::new(AtomicUsize::new(0));
     let poll_rec_clone = poll_reconciliations.clone();
     let poll_fail_clone = poll_failures.clone();
+    let poll_runtime_metrics = Arc::clone(&runtime_metrics);
 
     let poll_handle = tokio::spawn(async move {
         let connector = match PolymarketRewardsConnector::new(&clob_host) {
@@ -160,21 +167,35 @@ pub async fn run_orderbook_stream(
                 }
                 let fetch_result = {
                     let _request_guard = upstream_request_gate.lock().await;
-                    connector.fetch_order_books(chunk).await
+                    tokio::time::timeout(
+                        Duration::from_secs(ORDERBOOK_UPSTREAM_BATCH_TIMEOUT_SECS),
+                        connector.fetch_order_books(chunk),
+                    )
+                    .await
+                    .unwrap_or_else(|_| {
+                        Err(AppError::dependency_unavailable(
+                            "ORDERBOOK_POLL_BATCH_TIMEOUT",
+                            format!(
+                                "orderbook poll batch exceeded {} seconds",
+                                ORDERBOOK_UPSTREAM_BATCH_TIMEOUT_SECS
+                            ),
+                        ))
+                    })
                 };
                 match fetch_result {
                     Ok(books) => {
                         let poll_confirmed_at = current_unix_millis();
+                        poll_runtime_metrics.observe_poll_success(poll_confirmed_at);
                         for book in books {
                             let cached = normalized_cached_book(
                                 reward_book_to_cached(&book, poll_confirmed_at),
                                 poll_max_levels,
                             );
-                            if let Err(error) = set_book_and_publish_if_current(
+                            if let Err(error) = reconcile_poll_book(
                                 &poll_cache,
                                 &poll_broadcaster,
-                                OrderbookStreamReason::PollReconcile,
                                 &cached,
+                                &poll_runtime_metrics,
                             )
                             .await
                             {
@@ -222,6 +243,7 @@ pub async fn run_orderbook_stream(
             max_levels_per_side,
             snapshots_received: ws_snapshots_received.clone(),
             price_changes_received: ws_price_changes_received.clone(),
+            runtime_metrics: Arc::clone(&runtime_metrics),
         };
         let mut session_tasks: JoinSet<ChunkExit> = JoinSet::new();
         let mut session_cmds: Vec<mpsc::Sender<ChunkCommand>> = Vec::new();
@@ -462,6 +484,7 @@ pub async fn run_orderbook_stream(
                 max_levels_per_side,
                 snapshots_received: ws_snapshots_received.clone(),
                 price_changes_received: ws_price_changes_received.clone(),
+                runtime_metrics: Arc::clone(&runtime_metrics),
             };
             ws_tasks.spawn(async move {
                 if !startup_delay.is_zero() {
@@ -620,11 +643,139 @@ struct OrderbookWsChunkContext {
     max_levels_per_side: usize,
     snapshots_received: Arc<AtomicUsize>,
     price_changes_received: Arc<AtomicUsize>,
+    runtime_metrics: Arc<OrderbookRuntimeMetrics>,
 }
 
 enum OrderbookWsEvent {
     Book(BookUpdate),
-    PriceChange(PriceChange),
+    PriceChange {
+        timestamp: i64,
+        change: PriceChangeBatchEntry,
+    },
+}
+
+impl OrderbookWsEvent {
+    fn token_id(&self) -> String {
+        match self {
+            Self::Book(book) => book.asset_id.to_string(),
+            Self::PriceChange { change, .. } => change.asset_id.to_string(),
+        }
+    }
+}
+
+#[derive(Default)]
+struct PendingTokenEvents {
+    snapshot: Option<BookUpdate>,
+    deltas: HashMap<(String, String), (i64, PriceChangeBatchEntry)>,
+}
+
+#[derive(Clone)]
+struct OrderbookWsEventSender {
+    tx: mpsc::Sender<OrderbookWsEvent>,
+    pending: Arc<StdMutex<HashMap<String, PendingTokenEvents>>>,
+    metrics: Arc<OrderbookRuntimeMetrics>,
+}
+
+impl OrderbookWsEventSender {
+    fn new(metrics: Arc<OrderbookRuntimeMetrics>) -> (Self, mpsc::Receiver<OrderbookWsEvent>) {
+        let (tx, rx) = mpsc::channel(ORDERBOOK_WS_EVENT_QUEUE_CAPACITY);
+        (
+            Self {
+                tx,
+                pending: Arc::new(StdMutex::new(HashMap::new())),
+                metrics,
+            },
+            rx,
+        )
+    }
+
+    fn send(&self, event: OrderbookWsEvent) -> bool {
+        match self.tx.try_send(event) {
+            Ok(()) => {
+                self.metrics
+                    .set_ws_queue_depth(ORDERBOOK_WS_EVENT_QUEUE_CAPACITY - self.tx.capacity());
+                true
+            }
+            Err(mpsc::error::TrySendError::Full(event)) => {
+                let token_id = event.token_id();
+                let mut pending = match self.pending.lock() {
+                    Ok(pending) => pending,
+                    Err(_) => {
+                        self.metrics.increment_dropped();
+                        return true;
+                    }
+                };
+                let token = pending.entry(token_id).or_default();
+                match event {
+                    OrderbookWsEvent::Book(book) => {
+                        if token
+                            .snapshot
+                            .as_ref()
+                            .is_none_or(|current| current.timestamp <= book.timestamp)
+                        {
+                            token.snapshot = Some(book);
+                            token.deltas.clear();
+                        }
+                    }
+                    OrderbookWsEvent::PriceChange { timestamp, change } => {
+                        if token
+                            .snapshot
+                            .as_ref()
+                            .is_some_and(|snapshot| snapshot.timestamp > timestamp)
+                        {
+                            self.metrics.increment_coalesced();
+                            return true;
+                        }
+                        let key = (format!("{:?}", change.side), change.price.to_string());
+                        token.deltas.insert(key, (timestamp, change));
+                        if token.deltas.len() > ORDERBOOK_WS_COALESCED_LEVELS_PER_TOKEN {
+                            if let Some(oldest_key) = token
+                                .deltas
+                                .iter()
+                                .min_by_key(|(_, (timestamp, _))| *timestamp)
+                                .map(|(key, _)| key.clone())
+                            {
+                                token.deltas.remove(&oldest_key);
+                                self.metrics.increment_dropped();
+                            }
+                        }
+                    }
+                }
+                self.metrics.increment_coalesced();
+                true
+            }
+            Err(mpsc::error::TrySendError::Closed(_)) => false,
+        }
+    }
+
+    fn drain_pending(&self) -> Vec<OrderbookWsEvent> {
+        let mut pending = match self.pending.lock() {
+            Ok(pending) => pending,
+            Err(_) => {
+                self.metrics.increment_dropped();
+                return Vec::new();
+            }
+        };
+        let drained = std::mem::take(&mut *pending);
+        drop(pending);
+        let mut events = Vec::new();
+        for (_, token) in drained {
+            if let Some(snapshot) = token.snapshot {
+                events.push(OrderbookWsEvent::Book(snapshot));
+            }
+            events.extend(
+                token
+                    .deltas
+                    .into_values()
+                    .map(|(timestamp, change)| OrderbookWsEvent::PriceChange { timestamp, change }),
+            );
+        }
+        events.sort_by_key(|event| match event {
+            OrderbookWsEvent::Book(book) => (book.timestamp, 0_u8),
+            OrderbookWsEvent::PriceChange { timestamp, .. } => (*timestamp, 1_u8),
+        });
+        events
+    }
 }
 
 async fn run_orderbook_ws_chunk(
@@ -653,7 +804,8 @@ async fn run_orderbook_ws_chunk(
             )
         })?;
     subscription_guard.mark_subscribed();
-    let (event_tx, mut event_rx) = mpsc::unbounded_channel();
+    let (event_tx, mut event_rx) =
+        OrderbookWsEventSender::new(Arc::clone(&context.runtime_metrics));
     let mut reader_tasks = JoinSet::new();
 
     {
@@ -663,7 +815,7 @@ async fn run_orderbook_ws_chunk(
             while let Some(message) = book_stream.next().await {
                 match message {
                     Ok(book_update) => {
-                        if event_tx.send(OrderbookWsEvent::Book(book_update)).is_err() {
+                        if !event_tx.send(OrderbookWsEvent::Book(book_update)) {
                             break;
                         }
                     }
@@ -687,11 +839,13 @@ async fn run_orderbook_ws_chunk(
             while let Some(message) = price_stream.next().await {
                 match message {
                     Ok(price_change) => {
-                        if event_tx
-                            .send(OrderbookWsEvent::PriceChange(price_change))
-                            .is_err()
-                        {
-                            break;
+                        for change in price_change.price_changes {
+                            if !event_tx.send(OrderbookWsEvent::PriceChange {
+                                timestamp: price_change.timestamp,
+                                change,
+                            }) {
+                                return Ok::<(), AppError>(());
+                            }
                         }
                     }
                     Err(error) => {
@@ -706,8 +860,6 @@ async fn run_orderbook_ws_chunk(
             Ok::<(), AppError>(())
         });
     }
-    drop(event_tx);
-
     info!(
         ws_chunk = chunk_index,
         subscribed_tokens = token_ids.len(),
@@ -717,52 +869,13 @@ async fn run_orderbook_ws_chunk(
     loop {
         tokio::select! {
             Some(event) = event_rx.recv() => {
-                match event {
-                    OrderbookWsEvent::Book(book_update) => {
-                        let cached = normalized_cached_book(
-                            book_update_to_cached(&book_update),
-                            context.max_levels_per_side,
-                        );
-                        if let Err(error) = set_book_and_publish_if_current(
-                            &context.cache,
-                            &context.broadcaster,
-                            OrderbookStreamReason::Book,
-                            &cached,
-                        )
-                        .await
-                        {
-                            warn!(
-                                ws_chunk = chunk_index,
-                                token_id = %cached.token_id,
-                                error = %error,
-                                "failed to write orderbook snapshot to cache"
-                            );
-                        }
-                        let received = context.snapshots_received.fetch_add(1, Ordering::Relaxed) + 1;
-
-                        if received.is_multiple_of(100) {
-                            debug!(
-                                ws_chunk = chunk_index,
-                                received,
-                                "orderbook stream processing snapshots"
-                            );
-                        }
-                    }
-                    OrderbookWsEvent::PriceChange(price_change) => {
-                        if let Err(error) = apply_price_change_to_cache(
-                            &context.cache,
-                            &context.broadcaster,
-                            &price_change,
-                        )
-                        .await
-                        {
-                            warn!(
-                                ws_chunk = chunk_index,
-                                error = %error,
-                                "failed to apply orderbook price change"
-                            );
-                        }
-                        context.price_changes_received.fetch_add(1, Ordering::Relaxed);
+                context.runtime_metrics.set_ws_queue_depth(
+                    ORDERBOOK_WS_EVENT_QUEUE_CAPACITY - event_tx.tx.capacity()
+                );
+                handle_orderbook_ws_event(event, &context, chunk_index).await;
+                if event_tx.tx.capacity() == ORDERBOOK_WS_EVENT_QUEUE_CAPACITY {
+                    for pending in event_tx.drain_pending() {
+                        handle_orderbook_ws_event(pending, &context, chunk_index).await;
                     }
                 }
             }
@@ -831,6 +944,9 @@ async fn handle_orderbook_ws_event(
     context: &OrderbookWsChunkContext,
     chunk_index: usize,
 ) {
+    context
+        .runtime_metrics
+        .observe_ws_event(current_unix_millis());
     match event {
         OrderbookWsEvent::Book(book_update) => {
             let cached = normalized_cached_book(
@@ -860,10 +976,14 @@ async fn handle_orderbook_ws_event(
                 );
             }
         }
-        OrderbookWsEvent::PriceChange(price_change) => {
-            if let Err(error) =
-                apply_price_change_to_cache(&context.cache, &context.broadcaster, &price_change)
-                    .await
+        OrderbookWsEvent::PriceChange { timestamp, change } => {
+            if let Err(error) = apply_single_price_change_to_cache(
+                &context.cache,
+                &context.broadcaster,
+                timestamp,
+                &change,
+            )
+            .await
             {
                 warn!(
                     ws_chunk = chunk_index,
@@ -920,8 +1040,8 @@ fn u256_to_token_strings(tokens: &[U256]) -> Vec<String> {
 async fn subscribe_orderbook_token_set(
     client: &ClobWsClient,
     tokens: &[U256],
-    event_tx: mpsc::UnboundedSender<OrderbookWsEvent>,
-    reader_died_tx: mpsc::UnboundedSender<()>,
+    event_tx: OrderbookWsEventSender,
+    reader_died_tx: mpsc::Sender<()>,
     chunk_index: usize,
 ) -> Result<(OrderbookWsSubscriptionGuard, JoinSet<()>)> {
     let mut guard = OrderbookWsSubscriptionGuard::new(client.clone(), tokens.to_vec());
@@ -954,7 +1074,7 @@ async fn subscribe_orderbook_token_set(
             while let Some(message) = book_stream.next().await {
                 match message {
                     Ok(book_update) => {
-                        if event_tx.send(OrderbookWsEvent::Book(book_update)).is_err() {
+                        if !event_tx.send(OrderbookWsEvent::Book(book_update)) {
                             break;
                         }
                     }
@@ -967,7 +1087,7 @@ async fn subscribe_orderbook_token_set(
                     }
                 }
             }
-            let _ = reader_died_tx.send(());
+            let _ = reader_died_tx.try_send(());
         });
     }
     {
@@ -978,11 +1098,14 @@ async fn subscribe_orderbook_token_set(
             while let Some(message) = price_stream.next().await {
                 match message {
                     Ok(price_change) => {
-                        if event_tx
-                            .send(OrderbookWsEvent::PriceChange(price_change))
-                            .is_err()
-                        {
-                            break;
+                        for change in price_change.price_changes {
+                            if !event_tx.send(OrderbookWsEvent::PriceChange {
+                                timestamp: price_change.timestamp,
+                                change,
+                            }) {
+                                let _ = reader_died_tx.try_send(());
+                                return;
+                            }
                         }
                     }
                     Err(error) => {
@@ -994,7 +1117,7 @@ async fn subscribe_orderbook_token_set(
                     }
                 }
             }
-            let _ = reader_died_tx.send(());
+            let _ = reader_died_tx.try_send(());
         });
     }
     Ok((guard, readers))
@@ -1127,8 +1250,9 @@ async fn run_orderbook_chunk_session(
         }
     };
 
-    let (event_tx, mut event_rx) = mpsc::unbounded_channel::<OrderbookWsEvent>();
-    let (reader_died_tx, mut reader_died_rx) = mpsc::unbounded_channel::<()>();
+    let (event_tx, mut event_rx) =
+        OrderbookWsEventSender::new(Arc::clone(&context.runtime_metrics));
+    let (reader_died_tx, mut reader_died_rx) = mpsc::channel::<()>(2);
 
     let mut current_tokens = initial_tokens.clone();
     let (mut current_guard, mut readers) = match subscribe_orderbook_token_set(
@@ -1164,7 +1288,15 @@ async fn run_orderbook_chunk_session(
     loop {
         tokio::select! {
             Some(event) = event_rx.recv() => {
+                context.runtime_metrics.set_ws_queue_depth(
+                    ORDERBOOK_WS_EVENT_QUEUE_CAPACITY - event_tx.tx.capacity()
+                );
                 handle_orderbook_ws_event(event, &context, chunk_index).await;
+                if event_tx.tx.capacity() == ORDERBOOK_WS_EVENT_QUEUE_CAPACITY {
+                    for pending in event_tx.drain_pending() {
+                        handle_orderbook_ws_event(pending, &context, chunk_index).await;
+                    }
+                }
             }
             command = command_rx.recv() => match command {
                 Some(ChunkCommand::Reconcile(new_tokens)) => {
@@ -1406,6 +1538,69 @@ pub(crate) async fn set_book_and_publish_if_current(
     publish_if_current(cache, broadcaster, reason, book).await
 }
 
+pub(crate) async fn reconcile_poll_book(
+    cache: &Arc<dyn OrderbookCache>,
+    broadcaster: &OrderbookUpdateBroadcaster,
+    candidate: &CachedOrderBook,
+    metrics: &OrderbookRuntimeMetrics,
+) -> Result<()> {
+    let Some(current) = cache.get_book(&candidate.token_id).await? else {
+        return set_book_and_publish_if_current(
+            cache,
+            broadcaster,
+            OrderbookStreamReason::PollReconcile,
+            candidate,
+        )
+        .await;
+    };
+    if candidate.observed_at > current.observed_at
+        || (candidate.observed_at == current.observed_at
+            && !(current.source == BookSource::Ws && candidate.source == BookSource::Poll))
+    {
+        return set_book_and_publish_if_current(
+            cache,
+            broadcaster,
+            OrderbookStreamReason::PollReconcile,
+            candidate,
+        )
+        .await;
+    }
+
+    let lag_ms = current.observed_at.saturating_sub(candidate.observed_at);
+    let content_matches = book_levels_equal(&current, candidate);
+    if !content_matches {
+        metrics.increment_poll_divergence();
+    }
+    if content_matches || lag_ms <= ORDERBOOK_POLL_SAFE_CONFIRMATION_LAG_MS {
+        if cache
+            .confirm_book_version(
+                &candidate.token_id,
+                current.observed_at,
+                candidate.confirmation_time_ms(),
+            )
+            .await?
+        {
+            if let Some(confirmed) = cache.get_book(&candidate.token_id).await? {
+                broadcaster.publish(OrderbookStreamReason::PollReconcile, confirmed);
+            }
+        }
+    } else {
+        metrics.increment_poll_confirmation_rejected();
+        warn!(
+            token_id = %candidate.token_id,
+            current_observed_at = current.observed_at,
+            poll_observed_at = candidate.observed_at,
+            lag_ms,
+            "rejected stale divergent poll confirmation"
+        );
+    }
+    Ok(())
+}
+
+fn book_levels_equal(left: &CachedOrderBook, right: &CachedOrderBook) -> bool {
+    left.bids == right.bids && left.asks == right.asks
+}
+
 async fn publish_if_current(
     cache: &Arc<dyn OrderbookCache>,
     broadcaster: &OrderbookUpdateBroadcaster,
@@ -1429,42 +1624,52 @@ async fn apply_price_change_to_cache(
     update: &PriceChange,
 ) -> Result<()> {
     for change in &update.price_changes {
-        let token_id = change.asset_id.to_string();
-        let Some(mut book) = cache.get_book(&token_id).await? else {
-            debug!(token_id, "price change skipped: book not in cache");
-            continue;
-        };
-        if update.timestamp < book.observed_at {
-            continue;
-        }
+        apply_single_price_change_to_cache(cache, broadcaster, update.timestamp, change).await?;
+    }
+    Ok(())
+}
 
-        let levels = match change.side {
-            Side::Buy => &mut book.bids,
-            Side::Sell => &mut book.asks,
-            _ => continue,
-        };
-        let Some(size) = change.size else {
-            continue;
-        };
-        if size <= rust_decimal::Decimal::ZERO {
-            levels.retain(|level| level.price != change.price);
-        } else if let Some(level) = levels.iter_mut().find(|level| level.price == change.price) {
-            level.size = size;
-        } else {
-            levels.push(CachedBookLevel {
-                price: change.price,
-                size,
-            });
-        }
-        book.observed_at = update.timestamp;
-        book.confirmed_at = current_unix_millis();
-        book.source = BookSource::Ws;
-        // Use replace_book which checks freshness atomically under the lock,
-        // preventing the race where a poll reconciler writes a newer snapshot
-        // between our get_book and set_book.
-        if cache.replace_book(&book).await? {
-            broadcaster.publish(OrderbookStreamReason::PriceChange, book);
-        }
+async fn apply_single_price_change_to_cache(
+    cache: &Arc<dyn OrderbookCache>,
+    broadcaster: &OrderbookUpdateBroadcaster,
+    timestamp: i64,
+    change: &PriceChangeBatchEntry,
+) -> Result<()> {
+    let token_id = change.asset_id.to_string();
+    let Some(mut book) = cache.get_book(&token_id).await? else {
+        debug!(token_id, "price change skipped: book not in cache");
+        return Ok(());
+    };
+    if timestamp < book.observed_at {
+        return Ok(());
+    }
+
+    let levels = match change.side {
+        Side::Buy => &mut book.bids,
+        Side::Sell => &mut book.asks,
+        _ => return Ok(()),
+    };
+    let Some(size) = change.size else {
+        return Ok(());
+    };
+    if size <= rust_decimal::Decimal::ZERO {
+        levels.retain(|level| level.price != change.price);
+    } else if let Some(level) = levels.iter_mut().find(|level| level.price == change.price) {
+        level.size = size;
+    } else {
+        levels.push(CachedBookLevel {
+            price: change.price,
+            size,
+        });
+    }
+    book.observed_at = timestamp;
+    book.confirmed_at = current_unix_millis();
+    book.source = BookSource::Ws;
+    // Use replace_book which checks freshness atomically under the lock,
+    // preventing the race where a poll reconciler writes a newer snapshot
+    // between our get_book and set_book.
+    if cache.replace_book(&book).await? {
+        broadcaster.publish(OrderbookStreamReason::PriceChange, book);
     }
     Ok(())
 }
@@ -1585,6 +1790,59 @@ mod tests {
         assert_eq!(book.bids.len(), 1);
         assert_eq!(book.bids[0].price, Decimal::new(50, 2));
         assert_eq!(book.bids[0].size, Decimal::from(7_u64));
+    }
+
+    #[tokio::test]
+    async fn stale_divergent_poll_is_observable_and_cannot_confirm() {
+        let cache: Arc<dyn OrderbookCache> = Arc::new(InMemoryOrderbookCache::new(60_000, 10));
+        cache
+            .set_book(&CachedOrderBook {
+                token_id: "123".to_string(),
+                bids: vec![CachedBookLevel {
+                    price: Decimal::new(49, 2),
+                    size: Decimal::ONE,
+                }],
+                asks: vec![CachedBookLevel {
+                    price: Decimal::new(51, 2),
+                    size: Decimal::ONE,
+                }],
+                observed_at: 10_000,
+                confirmed_at: 10_000,
+                source: BookSource::Ws,
+            })
+            .await
+            .unwrap();
+        let poll = CachedOrderBook {
+            token_id: "123".to_string(),
+            bids: vec![CachedBookLevel {
+                price: Decimal::new(40, 2),
+                size: Decimal::ONE,
+            }],
+            asks: vec![CachedBookLevel {
+                price: Decimal::new(60, 2),
+                size: Decimal::ONE,
+            }],
+            observed_at: 1_000,
+            confirmed_at: 20_000,
+            source: BookSource::Poll,
+        };
+        let metrics = OrderbookRuntimeMetrics::default();
+        reconcile_poll_book(
+            &cache,
+            &OrderbookUpdateBroadcaster::new(16),
+            &poll,
+            &metrics,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            cache.get_book("123").await.unwrap().unwrap().confirmed_at,
+            10_000
+        );
+        let snapshot = metrics.snapshot();
+        assert_eq!(snapshot.poll_divergences, 1);
+        assert_eq!(snapshot.poll_confirmations_rejected, 1);
     }
 
     #[test]

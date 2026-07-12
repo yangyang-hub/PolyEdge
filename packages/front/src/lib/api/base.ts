@@ -16,7 +16,11 @@ export type InternalApiStepUpScope =
   | "system_kill_switch_trigger"
   | "system_kill_switch_release"
   | "risk_threshold_update"
-  | "funding_transfer";
+  | "funding_transfer"
+  | "rewards_run_once"
+  | "rewards_live_trading_enable"
+  | "rewards_merge_auto_execute"
+  | "rewards_state_reset";
 
 export class PolyEdgeApiError extends Error {
   code?: string;

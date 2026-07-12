@@ -3,7 +3,50 @@ pub fn materialize_reward_quote_plan_for_live_orderbook(
     books: &HashMap<String, RewardOrderBook>,
     config: &RewardBotConfig,
 ) -> std::result::Result<RewardLiveQuoteMaterialization, String> {
-    let now = OffsetDateTime::now_utc();
+    materialize_reward_quote_plan_for_live_orderbook_at(
+        plan,
+        books,
+        config,
+        OffsetDateTime::now_utc(),
+    )
+}
+
+pub fn materialize_reward_quote_plan_for_live_orderbook_at(
+    plan: &RewardQuotePlan,
+    books: &HashMap<String, RewardOrderBook>,
+    config: &RewardBotConfig,
+    now: OffsetDateTime,
+) -> std::result::Result<RewardLiveQuoteMaterialization, String> {
+    materialize_reward_quote_plan_for_live_orderbook_inner(plan, books, config, now, None)
+}
+
+pub fn materialize_reward_quote_plan_for_live_orderbook_with_fair_value_at(
+    plan: &RewardQuotePlan,
+    books: &HashMap<String, RewardOrderBook>,
+    config: &RewardBotConfig,
+    now: OffsetDateTime,
+    estimate: &RewardFairValueEstimate,
+) -> std::result::Result<RewardLiveQuoteMaterialization, String> {
+    materialize_reward_quote_plan_for_live_orderbook_inner(
+        plan,
+        books,
+        config,
+        now,
+        Some(LiveFairValueEdgeContext {
+            fair_yes: estimate.fair_yes,
+            fair_no: estimate.fair_no,
+            uncertainty_cents: estimate.uncertainty_cents,
+        }),
+    )
+}
+
+fn materialize_reward_quote_plan_for_live_orderbook_inner(
+    plan: &RewardQuotePlan,
+    books: &HashMap<String, RewardOrderBook>,
+    config: &RewardBotConfig,
+    now: OffsetDateTime,
+    fair_value: Option<LiveFairValueEdgeContext>,
+) -> std::result::Result<RewardLiveQuoteMaterialization, String> {
     let (yes_token, no_token) = reward_quote_plan_tokens(plan)?;
     let yes_state = get_token_book_state(&yes_token, books, config, now);
     let no_state = get_token_book_state(&no_token, books, config, now);
@@ -57,6 +100,7 @@ pub fn materialize_reward_quote_plan_for_live_orderbook(
         yes_quote_midpoint,
         max_spread,
         provider_edge_buffer_cents,
+        fair_value.map(|context| (context.fair_yes, context.uncertainty_cents)),
         config,
     )?;
     let no_bid = select_live_quote_bid(
@@ -65,6 +109,7 @@ pub fn materialize_reward_quote_plan_for_live_orderbook(
         no_quote_midpoint,
         max_spread,
         provider_edge_buffer_cents,
+        fair_value.map(|context| (context.fair_no, context.uncertainty_cents)),
         config,
     )?;
 
@@ -134,12 +179,20 @@ struct LiveBidSelection {
     rank: u16,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct LiveFairValueEdgeContext {
+    fair_yes: Decimal,
+    fair_no: Decimal,
+    uncertainty_cents: Decimal,
+}
+
 fn select_live_quote_bid(
     label: &str,
     state: &Option<TokenBookState>,
     midpoint: Decimal,
     max_spread: Decimal,
     provider_edge_buffer_cents: Decimal,
+    fair_value: Option<(Decimal, Decimal)>,
     config: &RewardBotConfig,
 ) -> std::result::Result<Option<LiveBidSelection>, String> {
     // Preserve hard book-risk reasons instead of collapsing them into a
@@ -172,6 +225,7 @@ fn select_live_quote_bid(
             price,
             midpoint,
             provider_edge_buffer_cents,
+            fair_value,
             config,
         ) {
             continue;
@@ -185,14 +239,17 @@ fn live_quote_preserves_trading_edge(
     price: Decimal,
     midpoint: Decimal,
     provider_edge_buffer_cents: Decimal,
+    fair_value: Option<(Decimal, Decimal)>,
     config: &RewardBotConfig,
 ) -> bool {
     if !config.fair_value_enabled {
         return true;
     }
-    let raw_edge_cents = ((midpoint - price) * decimal("100")).round_dp(4);
+    let (fair_price, market_uncertainty_cents) = fair_value
+        .unwrap_or((midpoint, config.fair_value_uncertainty_buffer_cents));
+    let raw_edge_cents = ((fair_price - price) * decimal("100")).round_dp(4);
     let effective_edge_cents = (raw_edge_cents
-        - config.fair_value_uncertainty_buffer_cents
+        - market_uncertainty_cents
         - provider_edge_buffer_cents)
         .round_dp(4);
     raw_edge_cents >= config.fair_value_min_raw_edge_cents
@@ -396,20 +453,44 @@ fn reward_quote_plan_tokens(
         .legs
         .iter()
         .find(|leg| leg.outcome.trim().eq_ignore_ascii_case("yes"))
-        .ok_or_else(|| "quote plan missing YES token for live validation".to_string())?;
+        .map(|leg| leg.token_id.clone());
     let no = plan
         .legs
         .iter()
         .find(|leg| leg.outcome.trim().eq_ignore_ascii_case("no"))
-        .ok_or_else(|| "quote plan missing NO token for live validation".to_string())?;
+        .map(|leg| leg.token_id.clone());
+    let (yes, no) = match (yes, no) {
+        (Some(yes), Some(no)) => (yes, no),
+        (Some(yes), None) => {
+            let no = plan
+                .orderbook_token_ids
+                .iter()
+                .find(|token_id| token_id.as_str() != yes.as_str())
+                .cloned()
+                .ok_or_else(|| "quote plan missing NO token for live validation".to_string())?;
+            (yes, no)
+        }
+        (None, Some(no)) => {
+            let yes = plan
+                .orderbook_token_ids
+                .iter()
+                .find(|token_id| token_id.as_str() != no.as_str())
+                .cloned()
+                .ok_or_else(|| "quote plan missing YES token for live validation".to_string())?;
+            (yes, no)
+        }
+        (None, None) => {
+            return Err("quote plan has no token legs for live validation".to_string());
+        }
+    };
     Ok((
         RewardToken {
-            token_id: yes.token_id.clone(),
+            token_id: yes,
             outcome: "Yes".to_string(),
             price: None,
         },
         RewardToken {
-            token_id: no.token_id.clone(),
+            token_id: no,
             outcome: "No".to_string(),
             price: None,
         },

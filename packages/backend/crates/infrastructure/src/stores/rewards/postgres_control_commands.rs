@@ -14,9 +14,12 @@ async fn postgres_enqueue_reward_control_command(
           started_at,
           completed_at,
           trace_id,
+          lease_owner,
+          lease_version,
+          lease_expires_at,
           error
         )
-        SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
+        SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13
         WHERE NOT EXISTS (
           SELECT 1
           FROM reward_control_commands
@@ -36,6 +39,9 @@ async fn postgres_enqueue_reward_control_command(
     .bind(command.started_at)
     .bind(command.completed_at)
     .bind(&command.trace_id)
+    .bind(&command.lease_owner)
+    .bind(command.lease_version)
+    .bind(command.lease_expires_at)
     .bind(&command.error)
     .execute(pool)
     .await
@@ -53,35 +59,48 @@ async fn postgres_claim_next_reward_control_command(
     trace_id: &str,
     now: OffsetDateTime,
 ) -> Result<Option<RewardControlCommand>> {
-    let mut transaction = pool.begin().await.map_err(|error| {
-        db_error(
-            "POSTGRES_TRANSACTION_BEGIN_FAILED",
-            format!("failed to begin reward control command transaction: {error}"),
-        )
-    })?;
-
     let row = sqlx::query(
         r#"
-        SELECT id,
-               action,
-               account_id,
-               reason,
-               status,
-               requested_at,
-               started_at,
-               completed_at,
-               trace_id,
-               error
-        FROM reward_control_commands
-        WHERE status = 'pending'
-           OR (status = 'running' AND started_at <= $1)
-        ORDER BY requested_at ASC
-        LIMIT 1
-        FOR UPDATE SKIP LOCKED
+        UPDATE reward_control_commands
+        SET status = 'running',
+            started_at = $1,
+            completed_at = NULL,
+            trace_id = $2,
+            lease_owner = $2,
+            lease_version = lease_version + 1,
+            lease_expires_at = $3,
+            error = NULL
+        WHERE id = (
+            SELECT id
+            FROM reward_control_commands
+            WHERE status = 'pending'
+               OR (
+                   status = 'running'
+                   AND (lease_expires_at IS NULL OR lease_expires_at <= $1)
+               )
+            ORDER BY requested_at ASC
+            LIMIT 1
+            FOR UPDATE SKIP LOCKED
+        )
+        RETURNING id,
+                  action,
+                  account_id,
+                  reason,
+                  status,
+                  requested_at,
+                  started_at,
+                  completed_at,
+                  trace_id,
+                  lease_owner,
+                  lease_version,
+                  lease_expires_at,
+                  error
         "#,
     )
-    .bind(now - REWARD_CONTROL_COMMAND_LEASE)
-    .fetch_optional(&mut *transaction)
+    .bind(now)
+    .bind(trace_id)
+    .bind(now + REWARD_CONTROL_COMMAND_LEASE)
+    .fetch_optional(pool)
     .await
     .map_err(|error| {
         db_error(
@@ -91,74 +110,35 @@ async fn postgres_claim_next_reward_control_command(
     })?;
 
     let Some(row) = row else {
-        transaction.commit().await.map_err(|error| {
-            db_error(
-                "POSTGRES_TRANSACTION_COMMIT_FAILED",
-                format!("failed to commit reward control command transaction: {error}"),
-            )
-        })?;
         return Ok(None);
     };
-    let command = reward_control_command_from_row(&row)?;
-
-    sqlx::query(
-        r#"
-        UPDATE reward_control_commands
-        SET status = 'running',
-            started_at = $2,
-            trace_id = $3,
-            error = NULL,
-            completed_at = NULL
-        WHERE id = $1
-        "#,
-    )
-    .bind(&command.id)
-    .bind(now)
-    .bind(trace_id)
-    .execute(&mut *transaction)
-    .await
-    .map_err(|error| {
-        db_error(
-            "POSTGRES_UPDATE_FAILED",
-            format!("failed to claim reward control command: {error}"),
-        )
-    })?;
-
-    transaction.commit().await.map_err(|error| {
-        db_error(
-            "POSTGRES_TRANSACTION_COMMIT_FAILED",
-            format!("failed to commit reward control command transaction: {error}"),
-        )
-    })?;
-
-    Ok(Some(RewardControlCommand {
-        status: RewardControlCommandStatus::Running,
-        started_at: Some(now),
-        trace_id: Some(trace_id.to_string()),
-        error: None,
-        ..command
-    }))
+    Ok(Some(reward_control_command_from_row(&row)?))
 }
 
 async fn postgres_complete_reward_control_command(
     pool: &PgPool,
     command_id: &str,
-    trace_id: &str,
+    lease_owner: &str,
+    lease_version: i64,
     now: OffsetDateTime,
 ) -> Result<()> {
-    sqlx::query(
+    let result = sqlx::query(
         r#"
         UPDATE reward_control_commands
         SET status = 'completed',
             completed_at = $2,
-            trace_id = $3,
+            lease_expires_at = NULL,
             error = NULL
-        WHERE id = $1 AND status = 'running'
+        WHERE id = $1
+          AND status = 'running'
+          AND lease_owner = $3
+          AND lease_version = $4
         "#,
     )
     .bind(command_id)
     .bind(now)
-    .bind(trace_id)
+    .bind(lease_owner)
+    .bind(lease_version)
     .execute(pool)
     .await
     .map_err(|error| {
@@ -167,29 +147,40 @@ async fn postgres_complete_reward_control_command(
             format!("failed to complete reward control command: {error}"),
         )
     })?;
+    if result.rows_affected() != 1 {
+        return Err(AppError::conflict(
+            "REWARD_CONTROL_LEASE_LOST",
+            "reward control command completion was rejected because its lease was lost",
+        ));
+    }
     Ok(())
 }
 
 async fn postgres_fail_reward_control_command(
     pool: &PgPool,
     command_id: &str,
-    trace_id: &str,
+    lease_owner: &str,
+    lease_version: i64,
     error: &str,
     now: OffsetDateTime,
 ) -> Result<()> {
-    sqlx::query(
+    let result = sqlx::query(
         r#"
         UPDATE reward_control_commands
         SET status = 'failed',
             completed_at = $2,
-            trace_id = $3,
-            error = $4
-        WHERE id = $1 AND status = 'running'
+            lease_expires_at = NULL,
+            error = $5
+        WHERE id = $1
+          AND status = 'running'
+          AND lease_owner = $3
+          AND lease_version = $4
         "#,
     )
     .bind(command_id)
     .bind(now)
-    .bind(trace_id)
+    .bind(lease_owner)
+    .bind(lease_version)
     .bind(error)
     .execute(pool)
     .await
@@ -199,5 +190,11 @@ async fn postgres_fail_reward_control_command(
             format!("failed to fail reward control command: {error}"),
         )
     })?;
+    if result.rows_affected() != 1 {
+        return Err(AppError::conflict(
+            "REWARD_CONTROL_LEASE_LOST",
+            "reward control command failure was rejected because its lease was lost",
+        ));
+    }
     Ok(())
 }

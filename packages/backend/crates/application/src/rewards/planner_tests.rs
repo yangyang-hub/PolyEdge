@@ -146,6 +146,33 @@ fn quote_materialization_ignores_config_market_and_leg_budgets() {
 }
 
 #[test]
+fn live_materialization_at_uses_injected_time_for_replay() {
+    let config = RewardBotConfig {
+        stale_book_ms: 1_000,
+        fair_value_enabled: false,
+        ..RewardBotConfig::default()
+    };
+    let initial_books = test_books();
+    let plan = build_reward_quote_plan(&test_market(decimal("5")), &initial_books, &config);
+    let fixed_now = OffsetDateTime::from_unix_timestamp(1_700_000_000).expect("fixed timestamp");
+    let mut replay_books = initial_books;
+    for book in replay_books.values_mut() {
+        book.observed_at = fixed_now;
+        book.confirmed_at = fixed_now;
+    }
+
+    assert!(
+        materialize_reward_quote_plan_for_live_orderbook_at(
+            &plan,
+            &replay_books,
+            &config,
+            fixed_now,
+        )
+        .is_ok()
+    );
+}
+
+#[test]
 fn planner_freshness_uses_orderbook_confirmation_time() {
     let config = RewardBotConfig {
         min_market_score: Decimal::ZERO,
@@ -539,6 +566,7 @@ fn info_risk_directional_cancel_keeps_only_the_complementary_quote() {
     risk.sources = vec![RewardInfoRiskSource {
         url: "https://example.com/official-result".to_string(),
         title: "Official result".to_string(),
+        evidence_verified: true,
         published_at: Some(risk.created_at),
         snippet: Some("Result announced".to_string()),
     }];
@@ -566,7 +594,30 @@ fn stale_info_risk_evidence_can_stop_new_but_cannot_cancel() {
     risk.sources = vec![RewardInfoRiskSource {
         url: "https://example.com/old-result".to_string(),
         title: "Old result".to_string(),
+        evidence_verified: true,
         published_at: Some(risk.created_at - TimeDuration::hours(25)),
+        snippet: None,
+    }];
+
+    assert_eq!(
+        reward_info_risk_effective_action(&risk, RewardInfoRiskLevel::High, decimal("0.70")),
+        RewardProviderAction::StopNew
+    );
+}
+
+#[test]
+fn provider_reported_but_unverified_evidence_cannot_cancel() {
+    let mut risk = test_info_risk(
+        RewardInfoRiskLevel::Critical,
+        RewardInfoRiskType::OfficialResult,
+        true,
+    );
+    risk.action = RewardProviderAction::CancelAll;
+    risk.sources = vec![RewardInfoRiskSource {
+        url: "https://official.example/result".to_string(),
+        title: "Provider-reported result".to_string(),
+        evidence_verified: false,
+        published_at: Some(risk.created_at),
         snippet: None,
     }];
 
@@ -588,6 +639,7 @@ fn breaking_news_cancel_requires_two_independent_fresh_sources() {
     risk.sources = vec![RewardInfoRiskSource {
         url: "https://wire.example/story".to_string(),
         title: "Breaking".to_string(),
+        evidence_verified: true,
         published_at: Some(risk.created_at),
         snippet: None,
     }];
@@ -599,6 +651,7 @@ fn breaking_news_cancel_requires_two_independent_fresh_sources() {
     risk.sources.push(RewardInfoRiskSource {
         url: "https://official.example/update".to_string(),
         title: "Official update".to_string(),
+        evidence_verified: true,
         published_at: Some(risk.created_at),
         snippet: None,
     });
@@ -620,6 +673,7 @@ fn directional_cancel_mismatch_downgrades_to_stop_new() {
     risk.sources = vec![RewardInfoRiskSource {
         url: "https://official.example/result".to_string(),
         title: "Official result".to_string(),
+        evidence_verified: true,
         published_at: Some(risk.created_at),
         snippet: None,
     }];
@@ -1457,6 +1511,7 @@ fn candidate_prefilter_rejects_low_quality_or_near_expiry_markets() {
     assert!(select_reward_quote_candidate_markets(&[market.clone()], &config).is_empty());
 
     market.liquidity_usd = config.min_market_liquidity_usd;
+    market.volume_24h_usd = config.min_market_volume_24h_usd;
     assert_eq!(
         select_reward_quote_candidate_markets(&[market.clone()], &config).len(),
         1
@@ -1464,10 +1519,13 @@ fn candidate_prefilter_rejects_low_quality_or_near_expiry_markets() {
 
     market.liquidity_usd = config.min_market_liquidity_usd - Decimal::ONE;
     market.volume_24h_usd = config.min_market_volume_24h_usd;
-    assert_eq!(
-        select_reward_quote_candidate_markets(&[market.clone()], &config).len(),
-        1
-    );
+    assert!(select_reward_quote_candidate_markets(&[market.clone()], &config).is_empty());
+
+    market.liquidity_usd = config.min_market_liquidity_usd;
+    market.volume_24h_usd = config.min_market_volume_24h_usd - Decimal::ONE;
+    assert!(select_reward_quote_candidate_markets(&[market.clone()], &config).is_empty());
+
+    market.volume_24h_usd = config.min_market_volume_24h_usd;
 
     market.end_at = Some(
         OffsetDateTime::now_utc()

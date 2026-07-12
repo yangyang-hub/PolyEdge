@@ -75,6 +75,9 @@ impl InMemoryOrderbookCache {
         replacement: &CachedOrderBook,
         expires_at_ms: i64,
     ) -> bool {
+        if entry.book.bids != replacement.bids || entry.book.asks != replacement.asks {
+            return false;
+        }
         let replacement_confirmed_at = replacement.confirmation_time_ms();
         if replacement_confirmed_at > entry.book.confirmation_time_ms() {
             entry.book.confirmed_at = replacement_confirmed_at;
@@ -200,6 +203,28 @@ impl OrderbookCache for InMemoryOrderbookCache {
         let books = self.books.read().await;
         Ok(books.len())
     }
+
+    async fn confirm_book_version(
+        &self,
+        token_id: &str,
+        expected_observed_at: i64,
+        confirmed_at: i64,
+    ) -> Result<bool> {
+        let mut books = self.books.write().await;
+        let now = now_millis();
+        let Some(entry) = books.get_mut(token_id) else {
+            return Ok(false);
+        };
+        if entry.expires_at_ms <= now || entry.book.observed_at != expected_observed_at {
+            return Ok(false);
+        }
+        if confirmed_at > entry.book.confirmation_time_ms() {
+            entry.book.confirmed_at = confirmed_at;
+            entry.expires_at_ms = now + self.ttl_ms;
+            return Ok(true);
+        }
+        Ok(false)
+    }
 }
 
 fn now_millis() -> i64 {
@@ -207,4 +232,48 @@ fn now_millis() -> i64 {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as i64
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use polyedge_application::{BookSource, CachedBookLevel};
+    use rust_decimal::Decimal;
+
+    fn level(price: i64, size: i64) -> CachedBookLevel {
+        CachedBookLevel {
+            price: Decimal::new(price, 2),
+            size: Decimal::new(size, 0),
+        }
+    }
+
+    fn book(observed_at: i64, confirmed_at: i64, source: BookSource, bid_size: i64) -> CachedOrderBook {
+        CachedOrderBook {
+            token_id: "1".to_string(),
+            bids: vec![level(40, bid_size)],
+            asks: vec![level(60, 1)],
+            observed_at,
+            confirmed_at,
+            source,
+        }
+    }
+
+    #[tokio::test]
+    async fn stale_divergent_poll_does_not_advance_confirmation() {
+        let cache = InMemoryOrderbookCache::new(60_000, 10);
+        cache.set_book(&book(200, 300, BookSource::Ws, 1)).await.unwrap();
+        cache.set_book(&book(100, 400, BookSource::Poll, 2)).await.unwrap();
+        let current = cache.get_book("1").await.unwrap().unwrap();
+        assert_eq!(current.confirmed_at, 300);
+        assert_eq!(current.bids[0].size, Decimal::ONE);
+    }
+
+    #[tokio::test]
+    async fn explicit_confirmation_is_version_fenced() {
+        let cache = InMemoryOrderbookCache::new(60_000, 10);
+        cache.set_book(&book(200, 300, BookSource::Ws, 1)).await.unwrap();
+        assert!(!cache.confirm_book_version("1", 199, 400).await.unwrap());
+        assert!(cache.confirm_book_version("1", 200, 400).await.unwrap());
+        assert_eq!(cache.get_book("1").await.unwrap().unwrap().confirmed_at, 400);
+    }
 }

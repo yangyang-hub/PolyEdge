@@ -11,6 +11,7 @@ import type {
   RewardBotConfigPatchDto,
   RewardBotSnapshotDto,
 } from "@/lib/contracts/dto";
+import type { InternalApiStepUpScope } from "@/lib/api/base";
 
 import {
   actionOperationId,
@@ -25,6 +26,47 @@ export type RewardBotActionResult = OperationActionResult & {
   snapshot?: RewardBotSnapshotDto;
 };
 
+export type RewardOperationActionInput = {
+  operatorNote?: string;
+  stepUpCode?: string;
+};
+
+export type RewardConfigActionOptions = RewardOperationActionInput & {
+  stepUpScopes?: Extract<
+    InternalApiStepUpScope,
+    "rewards_live_trading_enable" | "rewards_merge_auto_execute"
+  >[];
+};
+
+const operatorNoteSchema = z
+  .string()
+  .trim()
+  .max(500)
+  .refine((value) => !/[\u0000-\u001F\u007F]/u.test(value));
+const stepUpCodeSchema = z.string().trim().min(1);
+
+function parseOperationInput(
+  input: RewardOperationActionInput,
+  requiresStepUp: boolean,
+): { operatorNote?: string; stepUpCode?: string } | RewardBotActionResult {
+  const note = operatorNoteSchema.safeParse(input.operatorNote ?? "");
+  if (!note.success) {
+    return createActionFailureResult("Operator note must be one printable line of 500 characters or fewer.", {
+      fieldErrors: { note: "Use one printable line of 500 characters or fewer." },
+    });
+  }
+  const stepUpCode = stepUpCodeSchema.safeParse(input.stepUpCode ?? "");
+  if (requiresStepUp && !stepUpCode.success) {
+    return createActionFailureResult("Step-up confirmation is required.", {
+      fieldErrors: { stepUpCode: "Enter a valid step-up confirmation code." },
+    });
+  }
+  return {
+    ...(note.data ? { operatorNote: note.data } : {}),
+    ...(stepUpCode.success ? { stepUpCode: stepUpCode.data } : {}),
+  };
+}
+
 function normalizeRewardConfigPatchForSubmit(
   config: z.infer<typeof rewardConfigSchema>,
 ): RewardBotConfigPatchDto {
@@ -37,7 +79,7 @@ const rewardConfigSchema = z.object({
   max_markets: z.coerce.number().int().min(0).max(65_535),
   max_open_orders: z.coerce.number().int().min(0).max(65_535),
   maker_market_budget_usd: decimalNumber.min(0).max(1_000_000),
-  min_daily_reward: decimalNumber.min(0),
+  min_daily_reward: decimalNumber.min(0).max(100_000),
   min_market_liquidity_usd: decimalNumber.min(0).max(1_000_000_000),
   min_market_volume_24h_usd: decimalNumber.min(0).max(1_000_000_000),
   min_hours_to_end: z.coerce.number().int().min(0).max(87_600),
@@ -56,12 +98,14 @@ const rewardConfigSchema = z.object({
   max_top1_depth_share: decimalNumber.min(0).max(1),
   max_top3_depth_share: decimalNumber.min(0).max(1),
   max_book_hhi: decimalNumber.min(0).max(1),
-  preferred_categories: z.array(z.string().trim().min(1)).max(32),
+  preferred_categories: z.array(z.string().trim().min(1)),
   preferred_category_score_bonus: decimalNumber.min(0).max(20),
   opportunity_metrics_enabled: z.boolean(),
   opportunity_probe_notional_usd: decimalNumber.min(0).max(1_000_000),
   opportunity_min_reward_per_100_usd_day: decimalNumber.min(0).max(100_000),
   opportunity_max_competition_multiple: decimalNumber.min(0).max(1_000_000),
+  opportunity_competition_hard_gate_enabled: z.boolean(),
+  opportunity_competition_hard_gate_multiple: decimalNumber.min(0).max(1_000_000),
   opportunity_max_account_allocation_bps: z.coerce.number().int().min(0).max(10_000),
   opportunity_max_market_allocation_bps: z.coerce.number().int().min(0).max(10_000),
   opportunity_min_exit_depth_usd: decimalNumber.min(0).max(1_000_000),
@@ -72,10 +116,21 @@ const rewardConfigSchema = z.object({
   opportunity_min_book_samples: z.coerce.number().int().min(1).max(10_000),
   opportunity_max_midpoint_range_cents: decimalNumber.min(0).max(100),
   opportunity_max_top_of_book_flip_count: z.coerce.number().int().min(0).max(10_000),
-  opportunity_reward_weight: decimalNumber.min(0).max(100),
-  opportunity_competition_weight: decimalNumber.min(0).max(100),
-  opportunity_exit_weight: decimalNumber.min(0).max(100),
-  opportunity_stability_weight: decimalNumber.min(0).max(100),
+  opportunity_reward_weight: decimalNumber.min(0).max(1_000),
+  opportunity_competition_weight: decimalNumber.min(0).max(1_000),
+  opportunity_exit_weight: decimalNumber.min(0).max(1_000),
+  opportunity_stability_weight: decimalNumber.min(0).max(1_000),
+  fair_value_enabled: z.boolean(),
+  fair_value_record_history_enabled: z.boolean(),
+  fair_value_min_confidence: decimalNumber.min(0).max(1),
+  fair_value_min_raw_edge_cents: decimalNumber.min(0).max(50),
+  fair_value_min_effective_edge_cents: decimalNumber.min(0).max(50),
+  fair_value_uncertainty_buffer_cents: decimalNumber.min(0).max(50),
+  fair_value_rebate_haircut: decimalNumber.min(0).max(1),
+  fair_value_max_reward_rebate_cents: decimalNumber.min(0).max(50),
+  fair_value_max_midpoint_deviation_cents: decimalNumber.min(0).max(50),
+  fair_value_history_window_sec: z.coerce.number().int().min(0).max(86_400),
+  fair_value_min_history_samples: z.coerce.number().int().min(0).max(10_000),
   ai_advisory_enabled: z.boolean(),
   ai_provider: z.enum(["openai", "anthropic"]),
   ai_request_format: z.enum([
@@ -94,6 +149,8 @@ const rewardConfigSchema = z.object({
   info_risk_avoid_level: z.enum(["low", "medium", "high", "critical", "unknown"]),
   info_risk_min_confidence: decimalNumber.min(0).max(1),
   info_risk_ttl_sec: z.coerce.number().int().min(60).max(86_400),
+  ai_advisory_provider_pending_grace_sec: z.coerce.number().int().min(0).max(86_400),
+  info_risk_provider_pending_grace_sec: z.coerce.number().int().min(0).max(86_400),
   event_window_enabled: z.boolean(),
   event_window_min_confidence: z.enum(["low", "medium", "high"]),
   event_window_stop_new_quote_before_start_sec: z.coerce
@@ -121,16 +178,16 @@ const rewardConfigSchema = z.object({
   first_quote_quarantine_sec: z.coerce.number().int().min(0).max(86_400),
   safety_margin_cents: decimalNumber.min(0).max(20),
   min_midpoint: decimalNumber.min(0).max(0.49),
-  max_midpoint: decimalNumber.min(0.51).max(0.99),
-  stale_book_ms: z.coerce.number().int().min(0).max(120_000),
-  min_scoring_check_sec: z.coerce.number().int().min(0).max(600),
-  max_position_usd: decimalNumber.min(0),
-  max_global_position_usd: decimalNumber.min(0),
+  max_midpoint: decimalNumber.min(0.51).max(1),
+  stale_book_ms: z.coerce.number().int().min(5_000).max(120_000),
+  min_scoring_check_sec: z.coerce.number().int().min(15).max(600),
+  max_position_usd: decimalNumber.min(0).max(1_000_000),
+  max_global_position_usd: decimalNumber.min(0).max(10_000_000),
   inventory_skew_enabled: z.boolean(),
   inventory_skew_strength: decimalNumber.min(0).max(1),
   exit_markup_cents: decimalNumber.min(0).max(50),
   maker_max_exit_loss_cents: decimalNumber.min(0).max(50),
-  account_capital_usd: decimalNumber.min(1),
+  account_capital_usd: decimalNumber.min(1).max(100_000_000),
   requote_drift_cents: decimalNumber.min(0).max(99),
   requote_drift_confirm_sec: z.coerce.number().int().min(0).max(3600),
   requote_drift_cooldown_sec: z.coerce.number().int().min(0).max(86_400),
@@ -184,6 +241,7 @@ const rewardConfigSchema = z.object({
   requote_jitter_sec: z.coerce.number().int().min(0).max(600),
   reconcile_interval_sec: z.coerce.number().int().min(1).max(60),
 })
+  .strict()
   .refine((value) => value.max_midpoint > value.min_midpoint, {
     message: "Max midpoint must be greater than min midpoint.",
     path: ["max_midpoint"],
@@ -241,6 +299,7 @@ const rewardConfigSchema = z.object({
 
 export async function updateRewardBotConfigAction(
   input: RewardBotConfigDto,
+  options: RewardConfigActionOptions = {},
 ): Promise<RewardBotActionResult> {
   try {
     const parsed = rewardConfigSchema.safeParse(input);
@@ -252,9 +311,13 @@ export async function updateRewardBotConfigAction(
       return createActionFailureResult(`Reward bot config is invalid: ${issues}`);
     }
 
-    const response = await updateRewardBotConfig(
-      normalizeRewardConfigPatchForSubmit(parsed.data),
-    );
+    const operation = parseOperationInput(options, Boolean(options.stepUpScopes?.length));
+    if ("ok" in operation) return operation;
+
+    const response = await updateRewardBotConfig(normalizeRewardConfigPatchForSubmit(parsed.data), {
+      ...operation,
+      stepUpScopes: options.stepUpScopes,
+    });
 
     return {
       ...createActionSuccessResult("Reward bot configuration saved.", {
@@ -270,9 +333,13 @@ export async function updateRewardBotConfigAction(
   }
 }
 
-export async function runRewardBotOnceAction(): Promise<RewardBotActionResult> {
+export async function runRewardBotOnceAction(
+  input: RewardOperationActionInput = {},
+): Promise<RewardBotActionResult> {
   try {
-    const response = await runRewardBotOnce();
+    const operation = parseOperationInput(input, true);
+    if ("ok" in operation) return operation;
+    const response = await runRewardBotOnce(operation);
 
     return {
       ...createActionSuccessResult("Reward strategy run queued for worker execution.", {
@@ -288,9 +355,13 @@ export async function runRewardBotOnceAction(): Promise<RewardBotActionResult> {
   }
 }
 
-export async function cancelRewardBotOrdersAction(): Promise<RewardBotActionResult> {
+export async function cancelRewardBotOrdersAction(
+  input: RewardOperationActionInput = {},
+): Promise<RewardBotActionResult> {
   try {
-    const response = await cancelRewardBotOrders();
+    const operation = parseOperationInput(input, false);
+    if ("ok" in operation) return operation;
+    const response = await cancelRewardBotOrders(operation);
 
     return {
       ...createActionSuccessResult("Reward order cancellation queued for worker execution.", {
@@ -306,9 +377,13 @@ export async function cancelRewardBotOrdersAction(): Promise<RewardBotActionResu
   }
 }
 
-export async function resetRewardBotAction(): Promise<RewardBotActionResult> {
+export async function resetRewardBotAction(
+  input: RewardOperationActionInput = {},
+): Promise<RewardBotActionResult> {
   try {
-    const response = await resetRewardBot();
+    const operation = parseOperationInput(input, true);
+    if ("ok" in operation) return operation;
+    const response = await resetRewardBot(operation);
 
     return {
       ...createActionSuccessResult("Rewards reset command queued for worker execution.", {

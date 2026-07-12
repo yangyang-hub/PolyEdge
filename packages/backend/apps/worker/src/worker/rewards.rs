@@ -236,6 +236,16 @@ async fn execute_pending_balanced_merge_intents(
             .await?;
         }
 
+        let broadcasting_at = OffsetDateTime::now_utc();
+        state
+            .reward_bot_service
+            .mark_reward_merge_intent_broadcasting(
+                &intent.id,
+                broadcasting_at,
+                "chain broadcast fenced before submission; missing tx hash requires reconciliation",
+            )
+            .await?;
+
         match chain
             .submit_merge_positions(
                 &private_key,
@@ -317,11 +327,9 @@ async fn execute_pending_balanced_merge_intents(
             }
             Err(error) => {
                 let now = OffsetDateTime::now_utc();
-                let reason = format!("balanced merge transaction failed before broadcast: {error}");
-                state
-                    .reward_bot_service
-                    .mark_reward_merge_intent_failed(&intent.id, &reason, now)
-                    .await?;
+                let reason = format!(
+                    "balanced merge broadcast outcome is unknown and automatic replay is forbidden: {error}"
+                );
                 if let Some(run_id) = run_id {
                     let action_context = RewardActionPlannerContext {
                         run_id,
@@ -334,7 +342,7 @@ async fn execute_pending_balanced_merge_intents(
                             RewardActionPlanner::merge_execution_result_action(
                                 action_context,
                                 &intent,
-                                RewardStrategyActionStatus::Failed,
+                                RewardStrategyActionStatus::Unknown,
                                 &reason,
                                 json!({
                                     "error": error.to_string(),
@@ -354,7 +362,7 @@ async fn execute_pending_balanced_merge_intents(
                         Some(intent.account_id.clone()),
                         Some(intent.condition_id.clone()),
                         None,
-                        "reward_live_balanced_merge_failed",
+                        "reward_live_balanced_merge_broadcast_unknown",
                         RewardRiskSeverity::Critical,
                         reason,
                         json!({

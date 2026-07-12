@@ -21,7 +21,7 @@ import {
   formatUsdFixed,
   toFiniteNumber,
 } from "@/lib/formatters";
-import { dictionary } from "@/lib/i18n/dictionaries";
+import { dictionary, formatMessage } from "@/lib/i18n/dictionaries";
 
 import { eventCategory } from "../lib/rewards-helpers";
 import type { EventCategory } from "../types";
@@ -38,8 +38,8 @@ export function ModeStatusPanel({
   snapshot: RewardBotSnapshotDto;
   eventCounts: RewardEventCounts;
 }) {
-  const readyQuoteMarkets = readyQuoteMarketCount(snapshot);
-  const readyQuoteRatio = ratio(readyQuoteMarkets, snapshot.status.plans_total);
+  const readyQuotePlans = readyQuotePlanCount(snapshot);
+  const readyQuoteRatio = ratio(readyQuotePlans, snapshot.status.plans_total);
   const availableRatio = ratio(
     snapshot.account.available_usd,
     snapshot.config.account_capital_usd,
@@ -144,24 +144,24 @@ export function CommandPanel({
       <CardContent className="flex flex-1 flex-col gap-4">
         <div className="grid gap-2 sm:grid-cols-2">
           <Button type="button" size="lg" disabled={pending} aria-busy={pending} onClick={onRun}>
-            {pending ? <Loader2 className="size-4 animate-spin" /> : <Play className="size-4" />}
+            {pending ? <Loader2 className="size-4 animate-spin" aria-hidden="true" /> : <Play className="size-4" aria-hidden="true" />}
             {dictionary.rewards.run}
           </Button>
           <Button type="button" size="lg" variant="outline" disabled={!isDirty || pending} aria-busy={pending} onClick={onSave}>
-            {pending ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
+            {pending ? <Loader2 className="size-4 animate-spin" aria-hidden="true" /> : <Save className="size-4" aria-hidden="true" />}
             {dictionary.rewards.save}
           </Button>
           <Button type="button" size="lg" variant="destructive" disabled={pending} aria-busy={pending} onClick={onCancel}>
-            {pending ? <Loader2 className="size-4 animate-spin" /> : <Ban className="size-4" />}
+            {pending ? <Loader2 className="size-4 animate-spin" aria-hidden="true" /> : <Ban className="size-4" aria-hidden="true" />}
             {dictionary.rewards.cancelAll}
           </Button>
           <Button type="button" size="lg" variant="outline" disabled={pending} aria-busy={pending} onClick={onReset}>
-            {pending ? <Loader2 className="size-4 animate-spin" /> : <RotateCcw className="size-4" />}
+            {pending ? <Loader2 className="size-4 animate-spin" aria-hidden="true" /> : <RotateCcw className="size-4" aria-hidden="true" />}
             {dictionary.rewards.reset}
           </Button>
         </div>
         <div className="mt-auto flex items-start gap-2 rounded-lg border border-border/70 bg-muted/20 p-3 text-xs leading-5 text-muted-foreground">
-          <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-secondary" />
+          <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-secondary" aria-hidden="true" />
           <span>{dictionary.rewards.commandCenterHint}</span>
         </div>
       </CardContent>
@@ -176,10 +176,12 @@ export function SummaryStrip({
   snapshot: RewardBotSnapshotDto;
   eventCounts: RewardEventCounts;
 }) {
-  const eligibleMarkets = eligibleMarketCount(snapshot);
-  const readyQuoteMarkets = readyQuoteMarketCount(snapshot);
+  const eligiblePlans = eligiblePlanCount(snapshot);
+  const readyQuotePlans = readyQuotePlanCount(snapshot);
   const waitingOrderbookMarkets = snapshot.status.waiting_orderbook_markets ?? 0;
   const providerPendingMarkets = snapshot.status.provider_pending_markets ?? 0;
+  const aiPendingMarkets = snapshot.status.blocker_counts?.ai_pending ?? 0;
+  const infoRiskPendingMarkets = snapshot.status.blocker_counts?.info_risk_pending ?? 0;
   const blockedPlans = blockedPlanCount(snapshot);
   const fundingBlocked = capitalRiskBlockerCount(snapshot);
   const liveValidationBlocked = blockerCount(snapshot, "live_validation");
@@ -189,13 +191,13 @@ export function SummaryStrip({
     <Card size="sm">
       <CardContent className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 2xl:grid-cols-10">
         <SummaryMetric
-          label={dictionary.rewards.liveReadyMarkets}
-          value={String(readyQuoteMarkets)}
-          hint={`${eligibleMarkets} ${dictionary.rewards.finalEligibleMarkets} / ${snapshot.status.plans_total} ${dictionary.rewards.candidatePlans}`}
+          label={dictionary.rewards.liveReadyPlans}
+          value={String(readyQuotePlans)}
+          hint={`${eligiblePlans} ${dictionary.rewards.finalEligiblePlans} / ${snapshot.status.plans_total} ${dictionary.rewards.candidatePlans}`}
         />
         <SummaryMetric
-          label={dictionary.rewards.finalEligibleMarkets}
-          value={String(eligibleMarkets)}
+          label={dictionary.rewards.finalEligiblePlans}
+          value={String(eligiblePlans)}
           hint={`${waitingOrderbookMarkets} ${dictionary.rewards.waitingOrderbook} / ${providerPendingMarkets} ${dictionary.rewards.providerPending}`}
         />
         <SummaryMetric
@@ -216,7 +218,12 @@ export function SummaryStrip({
         <SummaryMetric
           label={dictionary.rewards.providerRiskBlocked}
           value={String(providerBlocked)}
-          hint={dictionary.rewards.providerRiskBlockerHint}
+          hint={formatMessage(dictionary.rewards.providerPendingGraceHint, {
+            aiPending: aiPendingMarkets,
+            infoPending: infoRiskPendingMarkets,
+            aiGrace: snapshot.config.ai_advisory_provider_pending_grace_sec,
+            infoGrace: snapshot.config.info_risk_provider_pending_grace_sec,
+          })}
         />
         <SummaryMetric
           label={dictionary.rewards.openOrders}
@@ -370,16 +377,16 @@ function ratio(numerator: number | string, denominator: number | string) {
   return toFiniteNumber(numerator) / nextDenominator;
 }
 
-function readyQuoteMarketCount(snapshot: RewardBotSnapshotDto) {
+function readyQuotePlanCount(snapshot: RewardBotSnapshotDto) {
   return snapshot.status.ready_quote_markets ?? snapshot.status.eligible_markets;
 }
 
-function eligibleMarketCount(snapshot: RewardBotSnapshotDto) {
+function eligiblePlanCount(snapshot: RewardBotSnapshotDto) {
   return snapshot.status.eligible_markets;
 }
 
 function blockedPlanCount(snapshot: RewardBotSnapshotDto) {
-  return Math.max(0, snapshot.status.plans_total - eligibleMarketCount(snapshot));
+  return Math.max(0, snapshot.status.plans_total - eligiblePlanCount(snapshot));
 }
 
 function blockerCount(

@@ -51,6 +51,8 @@ export type NumberConfigKey =
   | "ai_action_min_confidence"
   | "info_risk_min_confidence"
   | "info_risk_ttl_sec"
+  | "ai_advisory_provider_pending_grace_sec"
+  | "info_risk_provider_pending_grace_sec"
   | "event_window_stop_new_quote_before_start_sec"
   | "event_window_cancel_open_buy_before_start_sec"
   | "event_window_resume_after_event_end_sec"

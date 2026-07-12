@@ -165,6 +165,27 @@ async fn dispatch_reward_place_buy(
         }
     }
 
+    // Venue matching above is read-only and remains available while risk state
+    // is unavailable so an already-submitted order can still be adopted. A
+    // confirmed venue miss, however, can lead to a new external BUY and must
+    // therefore use the latest durable risk state rather than the stale
+    // strategy-cycle snapshot.
+    let latest_kill_switch = match state.risk_service.read_state().await {
+        Ok(risk) => Some(risk.kill_switch),
+        Err(error) => {
+            warn!(
+                error = %error,
+                order_id = %order.id,
+                "reward action executor could not read current risk state; BUY is blocked"
+            );
+            None
+        }
+    };
+    let kill_switch = match authorize_executor_buy_risk(latest_kill_switch) {
+        Ok(kill_switch) => kill_switch,
+        Err(blocked) => return Ok(blocked),
+    };
+
     let plan_index = reward_live_plan_index(&cycle.plans);
     let token_ids = live_buy_submission_last_look_token_ids(
         &order,
@@ -181,7 +202,7 @@ async fn dispatch_reward_place_buy(
         open_orders: &cycle.open_orders,
         positions: &cycle.positions,
         account: &risk_account,
-        kill_switch: false,
+        kill_switch,
     };
     submit_pending_live_reward_orders(
         connector,
@@ -218,6 +239,36 @@ async fn dispatch_reward_place_buy(
             reason: "fresh last-look or risk validation did not permit BUY submission",
             result_json: json!({"status": "skipped", "submitted": false, "managed_order_status": updated.status.as_str(), "reason": updated.reason}),
         })
+    }
+}
+
+fn authorize_executor_buy_risk(
+    latest_kill_switch: Option<bool>,
+) -> std::result::Result<bool, RewardCancelDispatchResult> {
+    match latest_kill_switch {
+        Some(false) => Ok(false),
+        Some(true) => Err(RewardCancelDispatchResult {
+            status: RewardStrategyActionStatus::Skipped,
+            reason_code: "executor_buy_kill_switch_active",
+            reason: "current global kill switch blocks durable BUY submission",
+            result_json: json!({
+                "status": "skipped",
+                "submitted": false,
+                "external_side_effect_executed": false,
+                "kill_switch": true,
+            }),
+        }),
+        None => Err(RewardCancelDispatchResult {
+            status: RewardStrategyActionStatus::Skipped,
+            reason_code: "executor_buy_risk_state_unavailable",
+            reason: "current risk state is unavailable; durable BUY submission failed closed",
+            result_json: json!({
+                "status": "skipped",
+                "submitted": false,
+                "external_side_effect_executed": false,
+                "risk_state_available": false,
+            }),
+        }),
     }
 }
 
@@ -1234,6 +1285,27 @@ mod reward_action_executor_tests {
             classify_reward_durable_action(&action).disposition,
             RewardDurableDispatch::PlaceBuy(_)
         ));
+    }
+
+    #[test]
+    fn durable_buy_execution_uses_fail_closed_current_risk_gate() {
+        assert!(matches!(authorize_executor_buy_risk(Some(false)), Ok(false)));
+
+        let kill_switch = authorize_executor_buy_risk(Some(true))
+            .expect_err("active kill switch must block BUY");
+        assert_eq!(
+            kill_switch.reason_code,
+            "executor_buy_kill_switch_active"
+        );
+        assert_eq!(kill_switch.result_json["submitted"], false);
+
+        let unavailable = authorize_executor_buy_risk(None)
+            .expect_err("unavailable risk state must fail closed");
+        assert_eq!(
+            unavailable.reason_code,
+            "executor_buy_risk_state_unavailable"
+        );
+        assert_eq!(unavailable.result_json["external_side_effect_executed"], false);
     }
 
     #[test]

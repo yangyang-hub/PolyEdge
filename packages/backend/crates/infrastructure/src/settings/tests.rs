@@ -171,6 +171,10 @@ mod tests {
         let source = environment_source().source(Some(HashMap::from([
             ("POLYEDGE_SERVER__PORT".to_string(), "9090".to_string()),
             (
+                "POLYEDGE_CORS__ALLOWED_ORIGINS".to_string(),
+                "https://console-a.example,https://console-b.example:8443".to_string(),
+            ),
+            (
                 "POLYEDGE_POSTGRES__URL".to_string(),
                 "postgres://postgres:postgres@localhost:5432/polyedge".to_string(),
             ),
@@ -356,6 +360,13 @@ mod tests {
 
         assert_eq!(settings.server.port, 9090);
         assert_eq!(
+            settings.cors.allowed_origins,
+            vec![
+                "https://console-a.example".to_string(),
+                "https://console-b.example:8443".to_string(),
+            ]
+        );
+        assert_eq!(
             settings.postgres.url.as_deref(),
             Some("postgres://postgres:postgres@localhost:5432/polyedge"),
         );
@@ -501,5 +512,71 @@ mod tests {
         let error = Settings::validate_runtime_config_keys(&values).expect_err("unknown key");
 
         assert_eq!(error.code(), "CONFIG_RUNTIME_KEY_UNSUPPORTED");
+    }
+
+    #[test]
+    fn production_requires_explicit_cors_allowed_origins() {
+        let mut settings = Settings::default();
+        settings.runtime.environment = "production".to_string();
+
+        let error = settings
+            .validate_deployment_security()
+            .expect_err("production without CORS allowlist must fail");
+
+        assert_eq!(error.code(), "CONFIG_CORS_ALLOWED_ORIGINS_REQUIRED");
+    }
+
+    #[test]
+    fn cors_allowed_origins_must_be_exact_http_origins() {
+        let mut settings = Settings::default();
+        settings.cors.allowed_origins = vec!["*".to_string()];
+        let wildcard = settings
+            .validate_deployment_security()
+            .expect_err("wildcard CORS origin must fail");
+        assert_eq!(wildcard.code(), "CONFIG_CORS_ALLOWED_ORIGIN_INVALID");
+
+        settings.cors.allowed_origins = vec!["https://console.example/rewards".to_string()];
+        let path = settings
+            .validate_deployment_security()
+            .expect_err("origin with path must fail");
+        assert_eq!(path.code(), "CONFIG_CORS_ALLOWED_ORIGIN_INVALID");
+
+        settings.cors.allowed_origins = vec!["https://console.example:443".to_string()];
+        settings
+            .validate_deployment_security()
+            .expect("exact HTTPS origin must be accepted");
+    }
+
+    #[test]
+    fn production_authentication_requires_jwt_verification_keys() {
+        let mut settings = Settings::default();
+        settings.runtime.environment = "production".to_string();
+        settings.cors.allowed_origins = vec!["https://console.example".to_string()];
+        settings.auth.disabled = false;
+        settings.auth.keys.clear();
+
+        let error = settings
+            .validate_deployment_security()
+            .expect_err("production auth without verification keys must fail");
+
+        assert_eq!(error.code(), "CONFIG_AUTH_KEYS_REQUIRED");
+    }
+
+    #[test]
+    fn production_auth_disabled_requires_explicit_private_deploy_acknowledgement() {
+        let mut settings = Settings::default();
+        settings.runtime.environment = "production".to_string();
+        settings.cors.allowed_origins = vec!["https://console.example".to_string()];
+        settings.auth.disabled = true;
+
+        let error = settings
+            .validate_deployment_security()
+            .expect_err("production auth bypass must require an explicit acknowledgement");
+        assert_eq!(error.code(), "CONFIG_INSECURE_PRIVATE_DEPLOY_ACK_REQUIRED");
+
+        settings.auth.allow_insecure_private_deploy = true;
+        settings
+            .validate_deployment_security()
+            .expect("explicitly acknowledged private deployment must be accepted");
     }
 }

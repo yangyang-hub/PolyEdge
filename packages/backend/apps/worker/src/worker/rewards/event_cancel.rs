@@ -83,7 +83,7 @@ fn drain_reward_orderbook_cancel_tokens(
     }
 }
 
-fn remember_reward_event_cancel_plan_token(
+fn remember_reward_event_cancel_token(
     token_id: &str,
     seen: &mut HashSet<String>,
     active_order_tokens: &mut Vec<String>,
@@ -96,18 +96,37 @@ fn remember_reward_event_cancel_plan_token(
 }
 
 fn reward_event_cancel_active_order_tokens(
-    _plans: &[RewardQuotePlan],
+    plans: &[RewardQuotePlan],
     open_orders: &[ManagedRewardOrder],
     token_ids: &HashSet<String>,
 ) -> Vec<String> {
+    let affected_conditions =
+        reward_event_cancel_affected_conditions(plans, open_orders, token_ids);
     let mut active_order_tokens = Vec::new();
     let mut seen = HashSet::new();
 
+    // Fair value is condition-scoped: a NO update can invalidate a resting YES
+    // BUY (and vice versa). Fetch every plan token for the affected condition,
+    // not just the token that emitted the stream event.
+    for plan in plans
+        .iter()
+        .filter(|plan| affected_conditions.contains(&plan.condition_id))
+    {
+        for token_id in plan.orderbook_token_ids.iter().chain(
+            plan.legs.iter().map(|leg| &leg.token_id),
+        ) {
+            remember_reward_event_cancel_token(
+                token_id,
+                &mut seen,
+                &mut active_order_tokens,
+            );
+        }
+    }
+
     for order in open_orders.iter().filter(|order| {
-        order.status.is_open_like()
-            && live_event_cancel_order_matches_updated_tokens(order, token_ids)
+        order.status.is_open_like() && affected_conditions.contains(&order.condition_id)
     }) {
-        remember_reward_event_cancel_plan_token(
+        remember_reward_event_cancel_token(
             &order.token_id,
             &mut seen,
             &mut active_order_tokens,
@@ -115,6 +134,30 @@ fn reward_event_cancel_active_order_tokens(
     }
 
     active_order_tokens
+}
+
+fn reward_event_cancel_affected_conditions(
+    plans: &[RewardQuotePlan],
+    open_orders: &[ManagedRewardOrder],
+    token_ids: &HashSet<String>,
+) -> HashSet<String> {
+    let mut affected = HashSet::new();
+    for plan in plans {
+        if plan
+            .orderbook_token_ids
+            .iter()
+            .chain(plan.legs.iter().map(|leg| &leg.token_id))
+            .any(|token_id| token_ids.contains(token_id))
+        {
+            affected.insert(plan.condition_id.clone());
+        }
+    }
+    for order in open_orders {
+        if token_ids.contains(&order.token_id) {
+            affected.insert(order.condition_id.clone());
+        }
+    }
+    affected
 }
 
 async fn run_reward_orderbook_event_cancel_fast_path(
@@ -299,13 +342,33 @@ fn live_event_hard_cancel_candidates_with_account(
     token_ids: &HashSet<String>,
     kill_switch: bool,
 ) -> Vec<(String, String)> {
-    let plan_index = reward_live_plan_index(plans);
     let now = OffsetDateTime::now_utc();
+    let affected_conditions =
+        reward_event_cancel_affected_conditions(plans, open_orders, token_ids);
+    if affected_conditions.is_empty() {
+        return Vec::new();
+    }
+    let mut evaluated_plans = plans.to_vec();
+    for plan in evaluated_plans
+        .iter_mut()
+        .filter(|plan| affected_conditions.contains(&plan.condition_id))
+    {
+        let plan_config = config
+            .config_for_strategy_bucket(plan.strategy_bucket)
+            .config_for_strategy_profile(plan.strategy_profile);
+        apply_reward_fair_value_to_quote_plan(
+            plan,
+            books,
+            book_history,
+            &plan_config,
+            now,
+        );
+    }
+    let plan_index = reward_live_plan_index(&evaluated_plans);
     open_orders
         .iter()
         .filter(|order| {
-            order.status.is_open_like()
-                && live_event_cancel_order_matches_updated_tokens(order, token_ids)
+            order.status.is_open_like() && affected_conditions.contains(&order.condition_id)
         })
         .filter_map(|order| {
             let order_config = reward_live_plan_for_order(&plan_index, order)
@@ -327,13 +390,6 @@ fn live_event_hard_cancel_candidates_with_account(
             .map(|reason| (order.id.clone(), reason))
         })
         .collect()
-}
-
-fn live_event_cancel_order_matches_updated_tokens(
-    order: &ManagedRewardOrder,
-    token_ids: &HashSet<String>,
-) -> bool {
-    token_ids.contains(&order.token_id)
 }
 
 fn live_event_hard_cancel_reason(

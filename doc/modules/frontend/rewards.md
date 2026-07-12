@@ -1,6 +1,6 @@
 # Rewards Market Maker
 
-最后更新：2026-07-11
+最后更新：2026-07-12
 
 ## 概述
 
@@ -22,6 +22,7 @@
 | `rewards-advanced-config.tsx` | 盘口选择、AI advisory、信息风险和事件窗口配置 |
 | `rewards-risk-config.tsx` | 库存、撤单、深度、velocity、requote 和 reconcile 配置 |
 | `rewards-config-fields.tsx` | 配置面板共享字段组件 |
+| `rewards-operation-risk-summary.tsx` | Run、危险配置保存、Cancel、Reset 的实盘风险摘要与 step-up 规则 |
 | `rewards-tables.tsx` | 报价计划和托管订单表格入口，重导出成交/持仓/事件表 |
 | `rewards-fills-table.tsx` | 成交记录表格 |
 | `rewards-positions-table.tsx` | 持仓表格和 PnL 展示 |
@@ -52,9 +53,12 @@
 ## 关键交互
 
 - Run：`runRewardBotOnce()` 写入 `run_once` 控制命令，worker 领取后执行一轮 live 策略。
-- Runs tab：读取只读 strategy ledger，全量分页聚合选中 run 的 eligible、平均 selection score、fair-value 通过率、action 成功率，以及 blocker、AI/info-risk action、action type/status 分布；明细表限制显示前 20 条。该视图不提交交易命令。
-- Cancel open orders：`cancelRewardBotOrders()` 写入 `cancel_all` 控制命令，worker 撤销本系统托管 live 订单。
-- Reset：`resetRewardBot()` 写入 `reset` 控制命令，worker 按 cancel-all 处理并重置本地策略状态。
+- Run / Cancel / Reset 返回的 snapshot 只更新实时视图，不覆盖尚未保存的配置 draft；只有 Save 成功后才用后端规范化 config 同步 draft。
+- 未保存配置会注册 `beforeunload` 离页保护。Run 始终显示已保存配置的资金/订单/自动 merge 风险摘要并要求 `rewards_run_once` step-up；若有草稿，摘要明确本轮不会使用草稿。
+- 保存的 payload 只要保持启用实盘交易或自动 merge，Save 就显示风险摘要、要求操作备注，并分别发送 `rewards_live_trading_enable` / `rewards_merge_auto_execute` step-up scope；两项均关闭时的普通配置保存不增加确认摩擦。这保证幂等重放不会因数据库状态已经变更而绕过 step-up。
+- Runs tab：读取只读 strategy ledger，全量分页聚合选中 run 的 eligible、平均 selection score、fair-value 通过率、action 成功率，以及 blocker、AI/info-risk action、action type/status 分布；明细表限制显示前 20 条。全量分页每类最多 2 个并发请求，避免大 run 触发请求风暴。runs 列表和选中 run 明细各自使用单调请求序号，切换 run 时立即清空旧 decisions/actions，迟到响应不能覆盖新选择。该视图不提交交易命令。
+- Cancel open orders：`cancelRewardBotOrders()` 写入 `cancel_all` 控制命令，worker 撤销本系统托管 live 订单；操作备注进入命令审计，但保护性撤单不要求额外 step-up。
+- Reset：`resetRewardBot()` 写入 `reset` 控制命令，worker 按 cancel-all 处理并重置本地策略状态；前端要求操作备注与 `rewards_state_reset` step-up。
 - Config：`updateRewardBotConfig(patch)` 保存配置并返回最新 snapshot。
 - 挂单档位：`quote_bid_rank` 是首选（默认买一），`quote_max_bid_rank` 是最深搜索档位；后端逐档寻找首个满足 post-only、reward spread 和 trading edge 的价位，不保证始终停在买一。
 - 漂移换价：安全目标价下调使用独立 `adverse_requote_*` 短确认且不受普通撤单限速；竞争性上调才使用 `requote_drift_*` 确认、冷却和单轮上限。
@@ -67,7 +71,7 @@
 - 市场选择：quote plan 默认按 `selection_score` 排序；页面“选择分”显示 maker 资金优先级，行内小字保留基础 `score`。`selection_score` 以 effective fair-value edge、退出能力和稳定性为主，reward density 仅占独立 10% 次级权重，再扣竞争/资金占用和风险 penalty。
 - Fair-value：`fair_value_*` 配置控制估值、最低 confidence、raw/effective trading edge、不确定性缓冲、LP rebate 展示折扣、YES/NO 中点偏离和历史窗口；工作台并列展示 effective 与 reward-adjusted edge，明确后者不参与 gate。
 - 资金与库存：`maker_market_budget_usd` 是 condition 全部托管 BUY 的硬上限；库存偏斜缩小已持有 outcome、增加互补侧预算。钱包不足、reward minimum 超预算、单侧 headroom 和包含 resting BUY 的全局潜在暴露都会阻止新增。
-- 表格刷新：页面每 10 秒静默刷新当前 snapshot；手动搜索/分页/操作使用单调请求序号，只接收最新响应。
+- 表格刷新：页面每 10 秒静默刷新当前 snapshot；搜索使用 400ms debounce，手动搜索/分页/操作使用单调请求序号，只接收最新响应。
 
 ## 数据流
 
@@ -88,11 +92,12 @@ User mutation
 
 ## 当前状态
 
-- 顶部概览展示 live 启停/运行状态、实时可报价、最终可挂、候选计划、已拦截、等待 provider、资金/风险预算、live 盘口验证、AI/info-risk 拦截、钱包余额和每日 LLM 统计。
+- 顶部概览展示 live 启停/运行状态、实时可报价计划、最终可挂计划、候选计划、已拦截计划、等待 provider、资金/风险预算、live 盘口验证、AI/info-risk 拦截、钱包余额和每日 LLM 统计；`eligible_markets` / `ready_quote_markets` 当前后端语义实际为 quote-plan count，前端不再误称为 condition 市场数。
 - 操作中心集中 Run / Save / Cancel / Reset，并明确这些命令可能提交或取消 Polymarket live 订单。
 - 配置面板只暴露当前仍生效的参数；旧 `per_market_usd`、`quote_size_usd`、AI strategy hint 和成交后整组撤单开关不再出现，统一为单市场挂买预算、Provider 风险动作和持续库存管理。
 - 空库 Postgres 返回保守 live-drill profile：默认不启用交易，限制 2 个市场、6 个开放订单、单市场 `$10` 和全局 `$25`，BalancedMerge/自动 merge/adaptive exit cancel-replace 关闭。前端只展示和保存后端配置，不维护另一份硬编码默认值。
 - 主策略页 header 提供 Fair value 入口；fair-value 页单独显示 tracked/pass/blocked/avg confidence 指标和 quote plan 估值审计表。
+- Fair-value 页刷新失败会保留旧数据并显示可操作错误；统计明确标记为当前已加载页，不再把最多 100 条分页结果误称为全局统计。
 - 主策略页 Runs tab 展示 strategy run ledger 与 Decision Analytics；它用于审计、参数校准和演练排障，不参与 live 下单决策。
 - 市场筛选面板公开最低流动性、24h 成交量、剩余结算时间、Gamma spread 和目录同步年龄门槛。
 - 竞争度只作为统一机会评分的一部分展示；fair-value 作为独立做市定价 gate 展示，不再作为旧 EV strategy mode。
@@ -101,6 +106,7 @@ User mutation
 - 持仓和订单表格展示 API snapshot 注入的 `token_quotes`（best bid/ask/mark price）；缺盘口时显示 `—`，不阻断页面。
 - 当日已赚奖励展示 worker 同步的 UTC 当日 maker rewards，worker 优先读取 CLOB 聚合端点，失败时回退明细端点。
 - 页面不直接访问 Polymarket 私有账户；账户余额、positions 和本系统托管订单都从数据库读取。
+- Provider pending grace 在配置面板可编辑，概览同时展示 AI/info-risk pending 数量及各自宽限秒数。
 
 ## i18n
 

@@ -1,6 +1,6 @@
 # 数据层（API Client + Actions + Contracts）
 
-最后更新：2026-07-11
+最后更新：2026-07-12
 
 ## 概述
 
@@ -40,9 +40,9 @@
 - `fetchListContract<TLive, TFront>()`：GET 列表，兼容后端分页信封并支持 item map。
 - `fetchWriteContract<TLive, TFront>()`：POST/PATCH 写操作，自动带 Idempotency-Key 和 step-up header。
 - `buildQueryString()`：构建 query string。
-- `InternalApiStepUpScope`：包含 Funding 转账等敏感操作 scope。
+- `InternalApiStepUpScope`：包含 Funding 转账及 Rewards run、启用实盘、自动 merge、状态 reset 等敏感操作 scope。
 
-基础 URL 来自 `NEXT_PUBLIC_POLYEDGE_API_BASE_URL`。设置该变量时请求使用 `credentials: "omit"`；未设置时才走同源。当前内网部署通常由 API 侧 `POLYEDGE_AUTH__DISABLED=true` 关闭权限校验，前端默认不发送 dev-auth header。
+基础 URL 来自 `NEXT_PUBLIC_POLYEDGE_API_BASE_URL`。设置该变量时请求使用 `credentials: "omit"`；未设置时才走同源。当前 API client 没有 Bearer token/session 来源，也不能安全地在静态 public env 中保存长期 JWT；因此默认部署由 API 侧 `POLYEDGE_AUTH__DISABLED=true` 关闭权限校验，并依赖 VPN/私网 ACL/可信反向代理边界。前端默认不发送 dev-auth header。
 
 ## 领域 API 模块
 
@@ -66,6 +66,12 @@
 | `actions/settings.ts` | Runtime config 更新 action |
 
 Server Actions 只用于写操作。读数据由 Server Component/loader 或 client boundary 调用领域 API 模块。
+
+Rewards config action 的 Zod schema 与完整 DTO 字段集一致并启用 strict mode；competition hard gate、fair-value 与 provider pending grace 字段可完整 round-trip，未知/遗漏字段不会再被静默剥离。数值边界与 `RewardBotConfig::normalized()` 保持一致，包括 `max_midpoint=1.0`、5 秒盘口 freshness 下限、15 秒评分检查下限，以及日奖、仓位、全局仓位和账户资本上限，避免保存后被后端静默 clamp。
+
+Rewards 控制请求支持可选、trim 后最多 500 字的 `operator_note`。Run 固定发送 `rewards_run_once` scope，Reset 固定发送 `rewards_state_reset` scope；配置 payload 中实盘或自动 merge 为 `true` 时始终发送对应 scope，避免幂等重放绕过 step-up。Strategy ledger 的全量 decisions/actions 分页按每类 2 并发读取，而不是对全部页面执行无上限 `Promise.all`。
+
+Funding action 接收客户端创建的稳定 intent idempotency key，并发送 `funding_transfer` step-up scope/code 与单行操作备注；同一资产/金额的失败重试复用原 key，避免响应丢失后重复广播。
 
 ## 数据流
 
@@ -96,9 +102,10 @@ Client interaction
 
 ## 当前状态
 
+- `/login` 仅清理并重定向 `next` 路径，不执行身份认证；启用后端 JWT 前必须先接入真实身份签发与短时 token 传输，不能让浏览器持有签名私钥或 public bundle 中的长期 token。
 - 6 个领域 API 模块覆盖当前前端页面和 Rust API 端点。
 - `fetchListContract()` 兼容 events/evidences/news 等分页信封，调用方读取统一 `ApiListResponse<T>`。
-- Funding DTO/API/action 已接入 `/api/v1/funding` 与 `/api/v1/funding/transfer`；前端只提交 token、amount、confirmed，不提交充值地址或私钥。
+- Funding DTO/API/action 已接入 `/api/v1/funding` 与 `/api/v1/funding/transfer`；前端提交 token、amount、confirmed、operator note 和稳定 intent idempotency key，并发送 `funding_transfer` step-up，不提交充值地址或私钥。
 - Rewards strategy ledger DTO/API 已接入 `/api/v1/rewards-bot/runs*` 和 `/api/v1/rewards-bot/orders/{managed_order_id}/transitions`，仅用于只读审计视图。
 - `MarketDto` 镜像后端 `MarketData` 中的 `liquidity_usd` 与 `end_at`。
 - 静态部署通过 `NEXT_PUBLIC_POLYEDGE_API_BASE_URL` 直连 Rust API，不依赖前端 Nginx 反代 `/api/v1`。

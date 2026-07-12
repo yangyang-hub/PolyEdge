@@ -139,6 +139,10 @@ impl FromStr for RewardInfoDirectionalRisk {
 pub struct RewardInfoRiskSource {
     pub url: String,
     pub title: String,
+    /// True only after a code-owned evidence pipeline fetched and verified the
+    /// source. Provider/LLM output is always ingested as unverified.
+    #[serde(default)]
+    pub evidence_verified: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[serde(with = "time::serde::rfc3339::option")]
     pub published_at: Option<OffsetDateTime>,
@@ -523,6 +527,9 @@ fn reward_info_risk_has_fresh_cancel_evidence(risk: &RewardMarketInfoRisk) -> bo
     let newest = risk.created_at + TimeDuration::minutes(5);
     let mut authorities = Vec::new();
     for source in &risk.sources {
+        if !source.evidence_verified {
+            continue;
+        }
         let url = source.url.trim();
         let Some(authority) = reward_info_risk_source_authority(url) else {
             continue;

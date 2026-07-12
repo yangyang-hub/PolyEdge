@@ -21,6 +21,9 @@ mod rewards_tests {
             started_at: Some(started_at),
             completed_at: None,
             trace_id: Some("trc_old".to_string()),
+            lease_owner: Some("trc_old".to_string()),
+            lease_version: 1,
+            lease_expires_at: Some(started_at + REWARD_CONTROL_COMMAND_LEASE),
             error: None,
         }
     }
@@ -64,6 +67,33 @@ mod rewards_tests {
             avg_price: Decimal::new(49, 2),
             realized_pnl: Decimal::ZERO,
             updated_at: OffsetDateTime::now_utc(),
+        }
+    }
+
+    fn merge_intent(id: &str, status: RewardMergeIntentStatus) -> RewardMergeIntent {
+        let now = OffsetDateTime::now_utc();
+        RewardMergeIntent {
+            id: id.to_string(),
+            account_id: "reward_live".to_string(),
+            condition_id: "cond_merge".to_string(),
+            yes_token_id: "yes_merge".to_string(),
+            no_token_id: "no_merge".to_string(),
+            merge_size: Decimal::from(5),
+            yes_position_size: Decimal::from(5),
+            no_position_size: Decimal::from(5),
+            yes_avg_price: Decimal::new(45, 2),
+            no_avg_price: Decimal::new(45, 2),
+            status,
+            reason: "merge test".to_string(),
+            source_fill_id: format!("fill_{id}"),
+            tx_hash: None,
+            submitted_at: None,
+            confirmed_at: None,
+            failed_reason: None,
+            retry_count: 0,
+            trace_id: "trace_merge".to_string(),
+            created_at: now,
+            updated_at: now,
         }
     }
 
@@ -310,6 +340,22 @@ mod rewards_tests {
         assert_eq!(claimed.status, RewardControlCommandStatus::Running);
         assert_eq!(claimed.started_at, Some(now));
         assert_eq!(claimed.trace_id.as_deref(), Some("trc_new"));
+        assert_eq!(claimed.lease_owner.as_deref(), Some("trc_new"));
+        assert_eq!(claimed.lease_version, 2);
+        assert_eq!(
+            claimed.lease_expires_at,
+            Some(now + REWARD_CONTROL_COMMAND_LEASE)
+        );
+
+        let stale_finalize = store
+            .complete_control_command("rewcmd_lease", "trc_old", 1, now)
+            .await;
+        assert!(stale_finalize.is_err());
+
+        store
+            .complete_control_command("rewcmd_lease", "trc_new", 2, now)
+            .await
+            .expect("current lease owner completes command");
     }
 
     #[tokio::test]
@@ -328,6 +374,59 @@ mod rewards_tests {
                 .expect("claim command")
                 .is_none()
         );
+    }
+
+    #[tokio::test]
+    async fn completed_merge_intent_does_not_reserve_future_inventory() {
+        let store = InMemoryRewardBotStore::new();
+        store
+            .create_merge_intent_if_absent(&merge_intent(
+                "merge_completed",
+                RewardMergeIntentStatus::Completed,
+            ))
+            .await
+            .expect("insert completed merge intent");
+
+        assert_eq!(
+            store
+                .active_merge_intent_size("reward_live", "cond_merge")
+                .await
+                .expect("active merge size"),
+            Decimal::ZERO
+        );
+    }
+
+    #[tokio::test]
+    async fn merge_broadcast_fence_is_one_way_and_not_executable() {
+        let store = InMemoryRewardBotStore::new();
+        let intent = merge_intent("merge_broadcast", RewardMergeIntentStatus::Pending);
+        store
+            .create_merge_intent_if_absent(&intent)
+            .await
+            .expect("insert merge intent");
+        let now = OffsetDateTime::now_utc();
+        store
+            .mark_merge_intent_broadcasting(&intent.id, now, "broadcast fenced")
+            .await
+            .expect("fence broadcast");
+
+        assert!(
+            store
+                .list_executable_merge_intents("reward_live", 10)
+                .await
+                .expect("list executable intents")
+                .is_empty()
+        );
+        assert!(
+            store
+                .mark_merge_intent_broadcasting(&intent.id, now, "duplicate")
+                .await
+                .is_err()
+        );
+        store
+            .mark_merge_intent_submitted(&intent.id, "0xtx", now, "submitted")
+            .await
+            .expect("broadcasting intent becomes submitted");
     }
 
     #[tokio::test]

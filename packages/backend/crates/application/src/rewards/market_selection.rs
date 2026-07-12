@@ -61,9 +61,9 @@ fn build_reward_market_selection_metrics(
     // here because it already contains reward and would double-count it.
     let positive = base_quality_score * decimal("0.15")
         + reward_density_score * decimal("0.10")
-        + fair_value_edge_score * decimal("0.30")
-        + exit_score * decimal("0.25")
-        + stability_score * decimal("0.20");
+        + fair_value_edge_score * decimal("0.20")
+        + exit_score * decimal("0.30")
+        + stability_score * decimal("0.25");
     let penalty = competition_penalty * decimal("0.18")
         + allocation_penalty * decimal("0.10")
         + risk_penalty * decimal("0.45");
@@ -103,7 +103,10 @@ fn reward_selection_fair_value_edge_score(plan: &RewardQuotePlan) -> Decimal {
         sum + edge.effective_edge_cents.max(Decimal::ZERO)
     });
     let average_edge = total_edge / Decimal::from(passed_edges.len() as u64);
-    ratio_selection_score(average_edge, decimal("2"))
+    // Market-implied fair value is a microstructure estimate rather than an
+    // independent alpha model. Require 4c effective edge for a full score so a
+    // small midpoint dislocation cannot dominate exit quality and stability.
+    ratio_selection_score(average_edge, decimal("4"))
 }
 
 fn reward_selection_competition_penalty(plan: &RewardQuotePlan) -> Decimal {

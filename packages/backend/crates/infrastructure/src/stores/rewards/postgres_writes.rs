@@ -55,7 +55,8 @@ async fn upsert_reward_markets_tx(
                 tokens_json = EXCLUDED.tokens_json,
                 active = EXCLUDED.active,
                 updated_at = EXCLUDED.updated_at
-            WHERE reward_markets.question IS DISTINCT FROM EXCLUDED.question
+            WHERE EXCLUDED.updated_at >= reward_markets.updated_at
+              AND (reward_markets.question IS DISTINCT FROM EXCLUDED.question
                OR reward_markets.market_slug IS DISTINCT FROM EXCLUDED.market_slug
                OR reward_markets.event_slug IS DISTINCT FROM EXCLUDED.event_slug
                OR reward_markets.image IS DISTINCT FROM EXCLUDED.image
@@ -64,7 +65,7 @@ async fn upsert_reward_markets_tx(
                OR reward_markets.total_daily_rate IS DISTINCT FROM EXCLUDED.total_daily_rate
                OR reward_markets.tokens_json IS DISTINCT FROM EXCLUDED.tokens_json
                OR reward_markets.active IS DISTINCT FROM EXCLUDED.active
-               OR reward_markets.updated_at < now() - (${}::BIGINT * interval '1 second')"#,
+               OR reward_markets.updated_at < now() - (${}::BIGINT * interval '1 second'))"#,
             chunk.len() * cols + 1,
         );
 
@@ -327,6 +328,7 @@ async fn postgres_record_reward_fair_value_estimates(
                 observed_at = EXCLUDED.observed_at,
                 expires_at = EXCLUDED.expires_at,
                 updated_at = now()
+            WHERE EXCLUDED.observed_at >= reward_fair_values.observed_at
             "#
         );
 

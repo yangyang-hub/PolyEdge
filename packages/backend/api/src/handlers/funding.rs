@@ -83,6 +83,19 @@ async fn submit_funding_transfer(
                 })?;
             replayed.replayed = true;
 
+            append_funding_audit(
+                &state,
+                &auth,
+                &trace_id,
+                &replayed.tx_hash,
+                payload.operator_note.as_deref().unwrap_or("idempotent funding replay"),
+                AuditResult::Succeeded,
+            )
+            .await
+            .map_err(|error| {
+                HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone())
+            })?;
+
             return Ok(Json(ApiResponse::new(replayed, auth.request_id, trace_id)));
         }
         IdempotencyBegin::Started => {}
@@ -171,6 +184,17 @@ async fn submit_funding_transfer(
         .await
         .map_err(|error| HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone()))?;
 
+    append_funding_audit(
+        &state,
+        &auth,
+        &trace_id,
+        &response_data.tx_hash,
+        payload.operator_note.as_deref().unwrap_or("funding transfer"),
+        AuditResult::Succeeded,
+    )
+    .await
+    .map_err(|error| HttpError::with_meta(error, auth.request_id.clone(), trace_id.clone()))?;
+
     Ok(Json(ApiResponse::new(
         response_data,
         auth.request_id,
@@ -180,6 +204,38 @@ async fn submit_funding_transfer(
 
 fn funding_max_transfer_amount() -> Decimal {
     Decimal::from(FUNDING_MAX_TRANSFER_AMOUNT_UNITS)
+}
+
+async fn append_funding_audit(
+    state: &AppState,
+    auth: &AuthContext,
+    trace_id: &str,
+    tx_hash: &str,
+    reason: &str,
+    result: AuditResult,
+) -> polyedge_domain::Result<()> {
+    state
+        .audit_log_sink
+        .append(AuditLogEntry {
+            occurred_at: time::OffsetDateTime::now_utc(),
+            request_id: auth.request_id.clone(),
+            trace_id: trace_id.to_string(),
+            actor: AuthenticatedActor {
+                user_id: auth.user_id.clone(),
+                session_id: auth.session_id.clone(),
+                roles: auth.roles.clone(),
+                request_id: auth.request_id.clone(),
+                ip: auth.ip.clone(),
+                user_agent: auth.user_agent.clone(),
+            },
+            action: "funding_transfer".to_string(),
+            resource_type: "polygon_transaction".to_string(),
+            resource_id: tx_hash.to_string(),
+            reason: reason.to_string(),
+            result,
+            error_code: None,
+        })
+        .await
 }
 
 async fn funding_tokens_to_contract(
@@ -250,6 +306,15 @@ fn funding_transfer_to_contract(
 }
 
 fn validate_funding_transfer_request(payload: &FundingTransferRequest) -> polyedge_domain::Result<()> {
+    if let Some(note) = payload.operator_note.as_deref() {
+        let note = note.trim();
+        if note.len() > 500 || note.contains('\r') || note.contains('\n') {
+            return Err(AppError::invalid_input(
+                "FUNDING_OPERATOR_NOTE_INVALID",
+                "funding operator_note must be a single line of at most 500 bytes",
+            ));
+        }
+    }
     if !payload.confirmed {
         return Err(AppError::invalid_input(
             "FUNDING_TRANSFER_CONFIRMATION_REQUIRED",

@@ -1,10 +1,10 @@
 # 部署（Docker + Nginx + Scripts）
 
-最后更新：2026-07-11
+最后更新：2026-07-12
 
 ## 概述
 
-部署体系基于 Docker Compose，包含 3 个服务：`polyedge-api`（API + 内嵌 worker runtime）、`polyedge-orderbook`、`polyedge-front`。前端是静态站点，浏览器通过 `NEXT_PUBLIC_POLYEDGE_API_BASE_URL` 直连 Rust API；API 使用 permissive CORS，支持 front/API 分别部署在不同内网服务器。
+部署体系基于 Docker Compose，包含 3 个服务：`polyedge-api`（API + 内嵌 worker runtime）、`polyedge-orderbook`、`polyedge-front`。前端是静态站点，浏览器通过 `NEXT_PUBLIC_POLYEDGE_API_BASE_URL` 直连 Rust API；API 使用 exact-origin CORS allowlist，支持 front/API 分别部署在不同主机，同时拒绝未授权网站跨域调用。
 
 当前部署只保留市场数据、新闻/事件、LP rewards、Funding、settings 和执行/对账相关服务配置。旧钱包类与独立研究 worker/env 已从模板中删除。
 
@@ -49,6 +49,7 @@ polyedge-front (nginx static)
 - 端口：`0.0.0.0:38001 -> container:38001`。
 - 健康检查：`GET /healthz`。
 - 环境变量：`.env.api`。
+- `POLYEDGE_CORS__ALLOWED_ORIGINS` 必须列出浏览器实际 frontend origin；production 为空、包含 `*` 或带路径时 API 拒绝启动。
 - 通过 `POLYEDGE_ORDERBOOK__SERVICE_URL` 访问 orderbook 服务。
 - `POLYEDGE_ORDERBOOK__WRITE_TOKEN` 必须与 `.env.orderbook` 一致，用于 worker 注册 token。
 - 启动时内嵌 `WorkerRuntime`，后台任务由 `POLYEDGE_WORKER__*` 和业务 settings 控制。
@@ -63,7 +64,7 @@ polyedge-front (nginx static)
 - 环境变量：`.env.orderbook`。
 - 职责：Gamma market sync、CLOB rewards catalog sync、price-history candle sync、CLOB WS + `/books` poll cache、HTTP 盘口 API、内部 `/orderbook/stream`、token registry。
 - 启动时先 bind HTTP 暴露健康检查，再后台执行初始同步，避免外部 API 慢响应阻塞容器健康。
-- register/ingest/delete 写接口要求 `POLYEDGE_ORDERBOOK__WRITE_TOKEN`；读盘口、batch、stats、stream 和 health 不鉴权，需依赖内网边界。
+- register/ingest/delete、内部 stream，以及带 `refresh_if_stale_ms` 的 batch 请求要求 `POLYEDGE_ORDERBOOK__WRITE_TOKEN`；cache-only 盘口/batch、stats 和 health 不鉴权，仍需依赖内网边界。
 - Polymarket market-channel 默认目标 chunk 为 500 token、最多 8 条连接；有效 chunk 会自动放大以满足连接预算，连接按 500ms 错峰启动，SDK 以 30-120 秒退避重连，降低同一出口 IP 触发 Cloudflare 429/1015 的风险。
 
 ## polyedge-front
@@ -83,7 +84,7 @@ polyedge-front (nginx static)
 | `/_next/static/` | 静态资源，`Cache-Control: no-cache, must-revalidate` |
 | `/` | 静态文件服务，fallback 到 `$uri.html` 和 `/404.html` |
 
-API 请求不经过前端 nginx 反代；跨域由 Rust API 的 CORS 处理。
+API 请求不经过前端 nginx 反代；跨域由 Rust API 的精确 allowlist 处理。同源部署可保持空列表，但 production 模板要求显式配置，以避免前端/API 拆分后静默不可用。
 
 ## deploy.sh
 
@@ -106,8 +107,10 @@ Manual 模式：
 环境变量验证：
 
 - `POLYEDGE_POSTGRES__URL` 不能包含 `change-me`。
+- production 的 `POLYEDGE_CORS__ALLOWED_ORIGINS` 不能为空且不能包含通配符。
 - API 与 orderbook 的 `POLYEDGE_ORDERBOOK__WRITE_TOKEN` 必须存在且一致。
-- `POLYEDGE_AUTH__DISABLED=false` 时，`POLYEDGE_AUTH__STEP_UP_CODE` 不能为空或 `change-me`。
+- `POLYEDGE_AUTH__DISABLED=false` 时，`POLYEDGE_AUTH__KEYS_JSON` 必须包含至少一个真实 Ed25519 公钥；仅配置 step-up code 无效，因为 production JWT 路径不读取它。
+- production 使用 `POLYEDGE_AUTH__DISABLED=true` 时必须显式设置 `POLYEDGE_AUTH__ALLOW_INSECURE_PRIVATE_DEPLOY=true`；API 和部署脚本都会拒绝缺少该确认的配置。该确认不提供安全能力，仍必须使用 VPN、私网 ACL 或可信访问代理隔离 API。
 - 未关闭鉴权时，dev bypass 仅允许 local environment。
 
 ## 必需环境变量
@@ -124,7 +127,8 @@ Manual 模式：
 | 变量/前缀 | 位置 | 说明 |
 |---|---|---|
 | `POLYEDGE_RUNTIME__ENVIRONMENT` | `.env.api` / `.env.orderbook` | 部署模板为 `production` |
-| `POLYEDGE_AUTH__DISABLED` / `POLYEDGE_AUTH__STEP_UP_CODE` / `POLYEDGE_AUTH__KEYS_JSON` | `.env.api` | 鉴权配置 |
+| `POLYEDGE_CORS__ALLOWED_ORIGINS` | `.env.api` | 逗号分隔的 frontend exact-origin allowlist |
+| `POLYEDGE_AUTH__DISABLED` / `POLYEDGE_AUTH__ALLOW_INSECURE_PRIVATE_DEPLOY` / `POLYEDGE_AUTH__STEP_UP_CODE` / `POLYEDGE_AUTH__KEYS_JSON` | `.env.api` | 鉴权配置；关闭 production 鉴权需显式私网风险确认，step-up code 仅 local dev，production 使用 JWT claims |
 | `POLYEDGE_API_BIND` / `POLYEDGE_API_PORT` | `.env.api` | API 宿主机暴露地址和端口 |
 | `POLYEDGE_FRONT_BIND` / `POLYEDGE_FRONT_PORT` | `.env.front` | 前端宿主机端口 |
 | `POLYEDGE_ORDERBOOK_STREAM__MAX_TOKENS` / `WS_CHUNK_SIZE` / `WS_MAX_CONNECTIONS` / `MAX_LEVELS_PER_SIDE` / `STALE_THRESHOLD_MS` | `.env.orderbook` | orderbook token 容量、WS 连接预算、盘口深度和 stale reconcile 调参 |
@@ -159,14 +163,14 @@ POLYEDGE_BACKEND_BINARY=polyedge-orderbook ./scripts/build-backend-bin.sh
 
 ## 当前状态
 
-- 部署模板适合原型/内网共享环境。
+- 当前静态前端没有登录/session/Bearer token 获取链路，模板默认保持免鉴权以保证部署可用，同时要求 exact-origin CORS；production API 会记录安全告警，部署必须依赖 VPN、私网 ACL 或可信反向代理限制 API 访问。CORS 本身不是鉴权。
 - 默认生产排查入口为 Frontend Rewards `http://192.168.31.5:33002/rewards`、API `http://100.87.45.72:38001`、Orderbook `http://100.87.45.72:38002`。
 - Orderbook 部署默认使用 `WS_CHUNK_SIZE=500`、`WS_MAX_CONNECTIONS=8`；即使 runtime config 残留旧的 100-token chunk，有效 chunk 仍会按连接预算自动收敛。
 - Compose 使用窄构建上下文：后端只上传 `bin/`，前端只上传 `packages/front/`。
 - `polyedge-front` 可独立运行，浏览器按 build-time API URL 访问后端。
 - 前端生产构建不依赖 Google Fonts 或其他远程字体下载。
 - `deploy/.env.api.example` 默认启用 database maintenance，清理 raw events、AI/info-risk cache、reward candles、控制命令、outbox/dedup、LLM/audit 等可增长表。
-- 生产前需要关闭免鉴权、接入真实会话体系、签名 JWT 和 key rotation。
+- 若关闭免鉴权，必须先接入真实身份签发网关、前端短时 request-bound JWT 传输和 key rotation；不能把私钥或长期 JWT 放入静态前端 bundle。production step-up 由 JWT claims 表达。
 
 ## 修改检查清单
 

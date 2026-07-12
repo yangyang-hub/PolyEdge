@@ -208,7 +208,7 @@ mod orderbook_cache_tests {
     }
 
     #[tokio::test]
-    async fn older_poll_confirmation_refreshes_without_overwriting_ws_content() {
+    async fn older_divergent_poll_does_not_refresh_or_overwrite_ws_content() {
         let cache = InMemoryOrderbookCache::new(60_000, 10);
         let ws = polyedge_application::CachedOrderBook {
             token_id: "tok1".to_string(),
@@ -236,7 +236,7 @@ mod orderbook_cache_tests {
             .expect("get book")
             .expect("book present");
         assert_eq!(got.observed_at, 200);
-        assert_eq!(got.confirmation_time_ms(), 1_000);
+        assert_eq!(got.confirmation_time_ms(), 200);
         assert_eq!(got.source, polyedge_application::BookSource::Ws);
         assert_eq!(got.bids[0].price, rust_decimal::Decimal::new(60, 2));
     }

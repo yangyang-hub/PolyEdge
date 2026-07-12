@@ -66,18 +66,19 @@ pub async fn run_reward_candle_history_sync_loop(state: AppState) {
             return;
         }
     };
-    let mut first_cycle = true;
+    let mut backfilled_tokens = HashSet::new();
 
     loop {
         let cycle_started = Instant::now();
-        let lookback_secs = reward_candle_history_lookback_secs(&state, first_cycle);
-        match sync_reward_candle_history_once(&state, &connector, lookback_secs, request_delay)
-            .await
+        match sync_reward_candle_history_once(
+            &state,
+            &connector,
+            &mut backfilled_tokens,
+            request_delay,
+        )
+        .await
         {
             Ok(report) => {
-                if first_cycle && report.tokens_selected > 0 {
-                    first_cycle = false;
-                }
                 info!(
                     tokens_selected = report.tokens_selected,
                     tokens_requested = report.tokens_requested,
@@ -85,14 +86,13 @@ pub async fn run_reward_candle_history_sync_loop(state: AppState) {
                     samples_saved = report.samples_saved,
                     failures = report.failures,
                     stopped_early = report.stopped_early,
-                    lookback_secs,
+                    backfilled_tokens = backfilled_tokens.len(),
                     request_delay_ms = request_delay.as_millis(),
                     "synced reward candle history",
                 );
             }
             Err(error) => warn!(
                 error = %error,
-                lookback_secs,
                 "reward candle history sync failed",
             ),
         }
@@ -107,7 +107,7 @@ pub async fn run_reward_candle_history_sync_loop(state: AppState) {
 async fn sync_reward_candle_history_once(
     state: &AppState,
     connector: &PolymarketRewardsConnector,
-    lookback_secs: u64,
+    backfilled_tokens: &mut HashSet<String>,
     request_delay: Duration,
 ) -> Result<RewardCandleHistorySyncReport> {
     let tokens = reward_candle_history_token_ids(state).await?;
@@ -120,7 +120,6 @@ async fn sync_reward_candle_history_once(
     }
 
     let end = OffsetDateTime::now_utc();
-    let start = end - time::Duration::seconds(lookback_secs as i64);
     let fidelity_minutes = (REWARD_PRICE_HISTORY_CANDLE_INTERVAL_SEC / 60).max(1) as u16;
 
     for (index, token_id) in tokens.iter().enumerate() {
@@ -128,6 +127,9 @@ async fn sync_reward_candle_history_once(
             tokio::time::sleep(request_delay).await;
         }
         report.tokens_requested += 1;
+        let needs_backfill = !backfilled_tokens.contains(token_id);
+        let lookback_secs = reward_candle_history_lookback_secs(state, needs_backfill);
+        let start = end - time::Duration::seconds(lookback_secs as i64);
         match connector
             .fetch_price_history(token_id, start, end, fidelity_minutes)
             .await
@@ -142,6 +144,7 @@ async fn sync_reward_candle_history_once(
                     end,
                 )
                 .await?;
+                backfilled_tokens.insert(token_id.clone());
             }
             Err(error) => {
                 report.failures += 1;
@@ -168,16 +171,16 @@ async fn record_price_history_points(
     start: OffsetDateTime,
     end: OffsetDateTime,
 ) -> Result<usize> {
-    let mut saved = 0usize;
+    let mut samples = Vec::with_capacity(points.len());
     for point in points {
         if point.observed_at < start || point.observed_at > end {
             continue;
         }
         let sample = reward_candle_sample_from_price_history(token_id, point)?;
-        service.record_market_candle_sample(&sample).await?;
-        saved += 1;
+        samples.push(sample);
     }
-    Ok(saved)
+    service.record_market_candle_samples(&samples).await?;
+    Ok(samples.len())
 }
 
 fn reward_candle_sample_from_price_history(

@@ -49,6 +49,7 @@ async fn postgres_upsert_reward_market_event_windows(
                 reviewed_by = EXCLUDED.reviewed_by,
                 reviewed_at = EXCLUDED.reviewed_at,
                 updated_at = EXCLUDED.updated_at
+            WHERE EXCLUDED.updated_at >= reward_market_event_windows.updated_at
             "#,
         )
         .bind(&window.condition_id)

@@ -27,3 +27,4 @@ include!("dto/callback.rs");
 include!("dto/query.rs");
 include!("dto/orderbook.rs");
 include!("dto/funding.rs");
+include!("dto/rewards.rs");

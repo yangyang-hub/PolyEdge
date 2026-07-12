@@ -27,6 +27,10 @@ fn parse_dev_step_up_scopes(value: &str) -> Result<Vec<StepUpScope>> {
             "system_kill_switch_release" => Ok(StepUpScope::SystemKillSwitchRelease),
             "risk_threshold_update" => Ok(StepUpScope::RiskThresholdUpdate),
             "funding_transfer" => Ok(StepUpScope::FundingTransfer),
+            "rewards_run_once" => Ok(StepUpScope::RewardsRunOnce),
+            "rewards_live_trading_enable" => Ok(StepUpScope::RewardsLiveTradingEnable),
+            "rewards_merge_auto_execute" => Ok(StepUpScope::RewardsMergeAutoExecute),
+            "rewards_state_reset" => Ok(StepUpScope::RewardsStateReset),
             other => Err(AppError::unauthorized(
                 "AUTH_DEV_STEP_UP_SCOPE_INVALID",
                 format!("invalid local dev step-up scope: {other}"),

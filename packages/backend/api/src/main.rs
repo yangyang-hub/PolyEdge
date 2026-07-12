@@ -2,7 +2,7 @@ use polyedge_api::build_app;
 use polyedge_common::{bind_service_listener, service_socket_addr, shutdown_signal_then};
 use polyedge_infrastructure::{AppState, Runtime, telemetry::init_tracing};
 use polyedge_worker::WorkerRuntime;
-use tracing::info;
+use tracing::{info, warn};
 
 #[tokio::main]
 async fn main() -> polyedge_domain::Result<()> {
@@ -10,6 +10,18 @@ async fn main() -> polyedge_domain::Result<()> {
     let runtime = Runtime::load().await?;
     let state = {
         let base = runtime.app_state();
+        base.settings.validate_deployment_security()?;
+        if base
+            .settings
+            .runtime
+            .environment
+            .eq_ignore_ascii_case("production")
+            && base.settings.auth.disabled
+        {
+            warn!(
+                "API authentication is disabled in production; restrict API access with VPN/private-network ACLs or a trusted reverse proxy"
+            );
+        }
         let url = &base.settings.orderbook.service_url;
         let client = std::sync::Arc::new(polyedge_connectors::OrderbookHttpClient::new(
             url,

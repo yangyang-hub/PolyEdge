@@ -32,6 +32,13 @@ import {
   countRewardEvents,
 } from "./rewards-overview-cards";
 import { RiskControlConfig } from "./rewards-risk-config";
+import {
+  OperationRiskSummary,
+  operationRequiresNote,
+  operationRequiresStepUp,
+  type RewardRiskySaveScope,
+  type RewardsConfirmKind,
+} from "./rewards-operation-risk-summary";
 import { OrdersTable, PositionsTable, QuotePlansTable } from "./rewards-tables";
 
 const REWARD_ORDERS_PAGE_SIZE = 15;
@@ -41,7 +48,12 @@ const REWARD_SNAPSHOT_REFRESH_MS = 10_000;
 type OrderStatusFilter = "all" | "open" | "filled" | "cancelled" | "exit_pending";
 type PlansEligibilityFilter = "all" | "eligible" | "ineligible";
 type SortOrder = "asc" | "desc";
-type ConfirmKind = "cancel" | "reset";
+type ConfirmState = {
+  kind: RewardsConfirmKind;
+  note: string;
+  stepUpCode: string;
+  attempted: boolean;
+};
 
 export function RewardsWorkbench({ initialSnapshot }: { initialSnapshot: RewardBotSnapshotDto }) {
   const [snapshot, setSnapshot] = useState(initialSnapshot);
@@ -50,7 +62,7 @@ export function RewardsWorkbench({ initialSnapshot }: { initialSnapshot: RewardB
   const [pending, setPending] = useState(false);
   const [filtering, setFiltering] = useState(false);
   const refetchSequence = useRef(0);
-  const [confirm, setConfirm] = useState<{ kind: ConfirmKind; note: string } | null>(null);
+  const [confirm, setConfirm] = useState<ConfirmState | null>(null);
 
   const [plansSearch, setPlansSearch] = useState("");
   const [plansEligible, setPlansEligible] = useState<PlansEligibilityFilter>("eligible");
@@ -67,6 +79,24 @@ export function RewardsWorkbench({ initialSnapshot }: { initialSnapshot: RewardB
   const eventCounts = useMemo(() => countRewardEvents(snapshot), [snapshot]);
 
   const isDirty = JSON.stringify(draft) !== JSON.stringify(snapshot.config);
+  const riskySaveScopes = useMemo(() => {
+    const scopes: RewardRiskySaveScope[] = [];
+    if (draft.enabled) scopes.push("rewards_live_trading_enable");
+    if (draft.balanced_merge_auto_execute_enabled) {
+      scopes.push("rewards_merge_auto_execute");
+    }
+    return scopes;
+  }, [draft.balanced_merge_auto_execute_enabled, draft.enabled]);
+
+  useEffect(() => {
+    if (!isDirty) return;
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [isDirty]);
 
   const buildQuery = useCallback(
     (
@@ -173,7 +203,7 @@ export function RewardsWorkbench({ initialSnapshot }: { initialSnapshot: RewardB
     };
   }, [refetchWithFilters]);
 
-  function applyResult(result: RewardBotActionResult) {
+  function applyResult(result: RewardBotActionResult, syncDraft: boolean) {
     setFeedback(result);
     if (result.ok) {
       toast.success(result.message);
@@ -182,16 +212,16 @@ export function RewardsWorkbench({ initialSnapshot }: { initialSnapshot: RewardB
     }
     if (result.snapshot) {
       setSnapshot(result.snapshot);
-      setDraft(result.snapshot.config);
+      if (syncDraft) setDraft(result.snapshot.config);
       refetchWithFilters();
     }
   }
 
-  function runAction(action: () => Promise<RewardBotActionResult>) {
+  function runAction(action: () => Promise<RewardBotActionResult>, syncDraft = false) {
     setPending(true);
     startTransition(() => {
       void action()
-        .then(applyResult)
+        .then((result) => applyResult(result, syncDraft))
         .finally(() => setPending(false));
     });
   }
@@ -213,7 +243,7 @@ export function RewardsWorkbench({ initialSnapshot }: { initialSnapshot: RewardB
         actions={
           <Button asChild variant="outline" size="sm">
             <a href="/rewards/fair-value">
-              <LineChart className="size-4" />
+              <LineChart className="size-4" aria-hidden="true" />
               {dictionary.rewards.fairValueWorkbench}
             </a>
           </Button>
@@ -227,10 +257,16 @@ export function RewardsWorkbench({ initialSnapshot }: { initialSnapshot: RewardB
         <CommandPanel
           pending={pending}
           isDirty={isDirty}
-          onRun={() => runAction(runRewardBotOnceAction)}
-          onCancel={() => setConfirm({ kind: "cancel", note: "" })}
-          onReset={() => setConfirm({ kind: "reset", note: "" })}
-          onSave={() => runAction(() => updateRewardBotConfigAction(draft))}
+          onRun={() => setConfirm(newConfirmState("run"))}
+          onCancel={() => setConfirm(newConfirmState("cancel"))}
+          onReset={() => setConfirm(newConfirmState("reset"))}
+          onSave={() => {
+            if (riskySaveScopes.length > 0) {
+              setConfirm(newConfirmState("save"));
+            } else {
+              runAction(() => updateRewardBotConfigAction(draft), true);
+            }
+          }}
         />
       </section>
 
@@ -239,19 +275,19 @@ export function RewardsWorkbench({ initialSnapshot }: { initialSnapshot: RewardB
       <Tabs defaultValue="activity" className="gap-4">
         <TabsList className="h-auto w-full flex-wrap justify-start">
           <TabsTrigger value="activity">
-            <Activity className="size-4" />
+            <Activity className="size-4" aria-hidden="true" />
             {dictionary.rewards.activityTab}
           </TabsTrigger>
           <TabsTrigger value="config">
-            <CircleDollarSign className="size-4" />
+            <CircleDollarSign className="size-4" aria-hidden="true" />
             {dictionary.rewards.strategyTab}
           </TabsTrigger>
           <TabsTrigger value="risk">
-            <ShieldCheck className="size-4" />
+            <ShieldCheck className="size-4" aria-hidden="true" />
             {dictionary.rewards.riskTab}
           </TabsTrigger>
           <TabsTrigger value="runs">
-            <ListChecks className="size-4" />
+            <ListChecks className="size-4" aria-hidden="true" />
             {dictionary.rewards.runsTab}
           </TabsTrigger>
         </TabsList>
@@ -378,37 +414,103 @@ export function RewardsWorkbench({ initialSnapshot }: { initialSnapshot: RewardB
             if (!open) setConfirm(null);
           }}
           title={
-            confirm.kind === "cancel"
-              ? dictionary.rewards.cancelConfirmTitle
-              : dictionary.rewards.resetConfirmTitle
+            confirm.kind === "run"
+              ? dictionary.rewards.runConfirmTitle
+              : confirm.kind === "save"
+                ? dictionary.rewards.riskySaveConfirmTitle
+                : confirm.kind === "cancel"
+                  ? dictionary.rewards.cancelConfirmTitle
+                  : dictionary.rewards.resetConfirmTitle
           }
           description={
-            confirm.kind === "cancel"
-              ? dictionary.rewards.cancelConfirmDescription
-              : dictionary.rewards.resetConfirmDescription
+            confirm.kind === "run"
+              ? dictionary.rewards.runConfirmDescription
+              : confirm.kind === "save"
+                ? dictionary.rewards.riskySaveConfirmDescription
+                : confirm.kind === "cancel"
+                  ? dictionary.rewards.cancelConfirmDescription
+                  : dictionary.rewards.resetConfirmDescription
           }
           confirmLabel={dictionary.rewards.confirmAction}
-          confirmVariant={confirm.kind === "cancel" ? "destructive" : "default"}
+          confirmVariant={confirm.kind === "cancel" || confirm.kind === "reset" ? "destructive" : "default"}
           isPending={pending}
           note={confirm.note}
           onNoteChange={(value) =>
             setConfirm((current) => (current ? { ...current, note: value } : current))
           }
-          requiresStepUp={false}
-          stepUpCode=""
-          onStepUpCodeChange={() => {}}
+          noteError={
+            confirm.attempted && operationRequiresNote(confirm.kind) && !confirm.note.trim()
+              ? dictionary.rewards.operatorNoteRequired
+              : confirm.note.length > 500
+                ? dictionary.rewards.operatorNoteTooLong
+                : undefined
+          }
+          requiresStepUp={operationRequiresStepUp(confirm.kind)}
+          stepUpCode={confirm.stepUpCode}
+          onStepUpCodeChange={(value) =>
+            setConfirm((current) => (current ? { ...current, stepUpCode: value } : current))
+          }
+          stepUpCodeError={
+            confirm.attempted && operationRequiresStepUp(confirm.kind) && !confirm.stepUpCode.trim()
+              ? dictionary.rewards.stepUpRequired
+              : undefined
+          }
           feedback={null}
+          context={
+            <OperationRiskSummary
+              kind={confirm.kind}
+              snapshot={snapshot}
+              draft={draft}
+              isDirty={isDirty}
+              riskySaveScopes={riskySaveScopes}
+            />
+          }
           onSubmit={() => {
-            const kind = confirm.kind;
+            const next = { ...confirm, attempted: true };
+            setConfirm(next);
+            if (next.note.length > 500 || (operationRequiresNote(next.kind) && !next.note.trim())) {
+              window.requestAnimationFrame(() => document.getElementById("operation-note")?.focus());
+              return;
+            }
+            if (operationRequiresStepUp(next.kind) && !next.stepUpCode.trim()) {
+              window.requestAnimationFrame(() => document.getElementById("step-up-code")?.focus());
+              return;
+            }
             setConfirm(null);
-            if (kind === "cancel") {
-              runAction(cancelRewardBotOrdersAction);
+            if (next.kind === "run") {
+              runAction(() =>
+                runRewardBotOnceAction({
+                  operatorNote: next.note,
+                  stepUpCode: next.stepUpCode,
+                }),
+              );
+            } else if (next.kind === "save") {
+              runAction(
+                () =>
+                  updateRewardBotConfigAction(draft, {
+                    operatorNote: next.note,
+                    stepUpCode: next.stepUpCode,
+                    stepUpScopes: riskySaveScopes,
+                  }),
+                true,
+              );
+            } else if (next.kind === "cancel") {
+              runAction(() => cancelRewardBotOrdersAction({ operatorNote: next.note }));
             } else {
-              runAction(resetRewardBotAction);
+              runAction(() =>
+                resetRewardBotAction({
+                  operatorNote: next.note,
+                  stepUpCode: next.stepUpCode,
+                }),
+              );
             }
           }}
         />
       ) : null}
     </div>
   );
+}
+
+function newConfirmState(kind: RewardsConfirmKind): ConfirmState {
+  return { kind, note: "", stepUpCode: "", attempted: false };
 }

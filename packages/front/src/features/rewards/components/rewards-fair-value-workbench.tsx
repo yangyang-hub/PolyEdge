@@ -19,6 +19,7 @@ import {
 import type { RewardBotSnapshotDto, RewardQuotePlanDto } from "@/lib/contracts/dto";
 import { readRewardBotSnapshot } from "@/lib/api/rewards";
 import { formatFixed, formatInteger, toFiniteNumber } from "@/lib/formatters";
+import { dictionary, formatMessage, translateEnum } from "@/lib/i18n/dictionaries";
 
 type FairValueStats = {
   total: number;
@@ -34,11 +35,13 @@ export function RewardsFairValueWorkbench({
 }) {
   const [snapshot, setSnapshot] = useState(initialSnapshot);
   const [refreshing, setRefreshing] = useState(false);
+  const [refreshError, setRefreshError] = useState<string | null>(null);
   const plans = useMemo(() => snapshot.quote_plans ?? [], [snapshot.quote_plans]);
   const stats = useMemo(() => fairValueStats(plans), [plans]);
 
   async function refresh() {
     setRefreshing(true);
+    setRefreshError(null);
     try {
       const response = await readRewardBotSnapshot({
         plans_page: 1,
@@ -49,6 +52,10 @@ export function RewardsFairValueWorkbench({
         orders_page_size: 5,
       });
       setSnapshot(response.data);
+    } catch (error) {
+      setRefreshError(
+        error instanceof Error ? error.message : dictionary.rewards.fairValueRefreshFailed,
+      );
     } finally {
       setRefreshing(false);
     }
@@ -57,22 +64,36 @@ export function RewardsFairValueWorkbench({
   return (
     <div className="space-y-5">
       <PageHeader
-        eyebrow="Market maker"
-        title="Fair value"
-        description="实时做市估值、edge 与 rewards rebate 约束。"
+        eyebrow={dictionary.rewards.eyebrow}
+        title={dictionary.rewards.fairValuePageTitle}
+        description={dictionary.rewards.fairValuePageDescription}
         actions={
-          <Button type="button" variant="outline" size="sm" onClick={refresh} disabled={refreshing}>
-            <RefreshCw className="size-4" />
-            Refresh
+          <Button type="button" variant="outline" size="sm" onClick={refresh} disabled={refreshing} aria-busy={refreshing}>
+            <RefreshCw className={refreshing ? "size-4 animate-spin" : "size-4"} aria-hidden="true" />
+            {refreshing ? dictionary.rewards.refreshing : dictionary.rewards.refresh}
           </Button>
         }
       />
 
+      {refreshError ? (
+        <div role="alert" className="rounded-lg border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive">
+          <p className="font-medium">{dictionary.rewards.fairValueRefreshFailed}</p>
+          <p className="mt-1 break-words text-xs">{refreshError}</p>
+        </div>
+      ) : null}
+
+      <p className="text-sm text-muted-foreground">
+        {formatMessage(dictionary.rewards.fairValueCurrentPageNotice, {
+          loaded: plans.length,
+          total: snapshot.plans_page?.total_items ?? snapshot.status.plans_total,
+        })}
+      </p>
+
       <section className="grid gap-3 md:grid-cols-4">
-        <FairValueStat title="Tracked" value={formatInteger(stats.total)} />
-        <FairValueStat title="Passed" value={formatInteger(stats.passed)} tone="success" />
-        <FairValueStat title="Blocked" value={formatInteger(stats.blocked)} tone="danger" />
-        <FairValueStat title="Avg confidence" value={`${stats.avgConfidence.toFixed(0)}%`} />
+        <FairValueStat title={dictionary.rewards.fairValueAssessedCurrentPage} value={formatInteger(stats.total)} />
+        <FairValueStat title={dictionary.rewards.fairValuePassedCurrentPage} value={formatInteger(stats.passed)} tone="success" />
+        <FairValueStat title={dictionary.rewards.fairValueBlockedCurrentPage} value={formatInteger(stats.blocked)} tone="danger" />
+        <FairValueStat title={dictionary.rewards.fairValueAverageConfidenceCurrentPage} value={`${formatFixed(stats.avgConfidence, 0)}%`} />
       </section>
 
       <FairValueTable plans={plans} />
@@ -103,24 +124,24 @@ function FairValueStat({
 
 function FairValueTable({ plans }: { plans: RewardQuotePlanDto[] }) {
   return (
-    <div className="overflow-x-auto rounded-lg border border-border/70">
+    <div className="overflow-x-auto rounded-lg border border-border/70 [content-visibility:auto]">
       <Table className="min-w-[1280px] table-fixed">
         <TableHeader>
           <TableRow>
-            <TableHead className="w-[30%]">Market</TableHead>
-            <TableHead>Fair YES</TableHead>
-            <TableHead>Market mid</TableHead>
-            <TableHead>Confidence</TableHead>
-            <TableHead>Uncertainty</TableHead>
-            <TableHead className="w-[25%]">Edges</TableHead>
-            <TableHead className="w-[18%]">Decision</TableHead>
+            <TableHead className="w-[30%]">{dictionary.rewards.market}</TableHead>
+            <TableHead>{dictionary.rewards.fairValueYes}</TableHead>
+            <TableHead>{dictionary.rewards.fairValueMarketMidpoint}</TableHead>
+            <TableHead>{dictionary.rewards.fairValueConfidence}</TableHead>
+            <TableHead>{dictionary.rewards.fairValueUncertainty}</TableHead>
+            <TableHead className="w-[25%]">{dictionary.rewards.fairValueEdges}</TableHead>
+            <TableHead className="w-[18%]">{dictionary.rewards.fairValueDecision}</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
           {plans.length === 0 ? (
             <TableRow>
               <TableCell colSpan={7} className="py-8 text-center text-sm text-muted-foreground">
-                No quote plans.
+                {dictionary.rewards.fairValueNoPlans}
               </TableCell>
             </TableRow>
           ) : (
@@ -133,27 +154,27 @@ function FairValueTable({ plans }: { plans: RewardQuotePlanDto[] }) {
                       <TruncateText text={plan.question} lines={2} className="font-medium" />
                       <div className="flex gap-2">
                         <StatusPill tone={plan.eligible ? "success" : "neutral"}>
-                          {plan.eligible ? "eligible" : "blocked"}
+                          {plan.eligible ? dictionary.rewards.eligible : dictionary.rewards.blocked}
                         </StatusPill>
                         <StatusPill tone="neutral">{plan.strategy_profile ?? "standard"}</StatusPill>
                       </div>
                     </div>
                   </TableCell>
                   <TableCell className="align-top font-mono">
-                    {fair ? formatFixed(fair.estimate.fair_yes, 4) : "n/a"}
+                    {fair ? formatFixed(fair.estimate.fair_yes, 4) : dictionary.rewards.notAvailable}
                   </TableCell>
                   <TableCell className="align-top font-mono">
                     {fair?.estimate.market_midpoint_yes == null
-                      ? "n/a"
+                      ? dictionary.rewards.notAvailable
                       : formatFixed(fair.estimate.market_midpoint_yes, 4)}
                   </TableCell>
                   <TableCell className="align-top">
                     <StatusPill tone={fair?.passed ? "success" : "warning"}>
-                      {fair ? `${(toFiniteNumber(fair.estimate.confidence) * 100).toFixed(0)}%` : "n/a"}
+                      {fair ? `${(toFiniteNumber(fair.estimate.confidence) * 100).toFixed(0)}%` : dictionary.rewards.notAvailable}
                     </StatusPill>
                   </TableCell>
                   <TableCell className="align-top font-mono">
-                    {fair ? `${formatFixed(fair.estimate.uncertainty_cents, 2)}c` : "n/a"}
+                    {fair ? `${formatFixed(fair.estimate.uncertainty_cents, 2)}c` : dictionary.rewards.notAvailable}
                   </TableCell>
                   <TableCell className="align-top">
                     <div className="space-y-1 font-mono text-xs">
@@ -161,7 +182,7 @@ function FairValueTable({ plans }: { plans: RewardQuotePlanDto[] }) {
                         ? fair.edges.map((edge) => (
                             <div key={`${edge.token_id}:${edge.outcome}`} className="flex gap-2">
                               <StatusPill tone={edge.passed ? "success" : "danger"}>
-                                {edge.outcome}
+                                {translateEnum(edge.outcome)}
                               </StatusPill>
                               <span>
                                 raw {formatFixed(edge.raw_edge_cents, 2)}c / eff{" "}
@@ -170,13 +191,13 @@ function FairValueTable({ plans }: { plans: RewardQuotePlanDto[] }) {
                               </span>
                             </div>
                           ))
-                        : "n/a"}
+                        : dictionary.rewards.notAvailable}
                     </div>
                   </TableCell>
                   <TableCell className="align-top">
                     <div className="space-y-1">
                       <StatusPill tone={fair?.passed ? "success" : "danger"}>
-                        {fair?.passed ? "pass" : "blocked"}
+                        {fair?.passed ? dictionary.rewards.fairValuePass : dictionary.rewards.blocked}
                       </StatusPill>
                       <TruncateText
                         text={fair?.reason ?? plan.reason}

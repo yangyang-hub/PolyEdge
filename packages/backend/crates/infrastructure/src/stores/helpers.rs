@@ -230,6 +230,7 @@ async fn insert_reward_order(
             last_scored_at = EXCLUDED.last_scored_at,
             updated_at = EXCLUDED.updated_at,
             trace_id = EXCLUDED.trace_id
+        WHERE EXCLUDED.updated_at >= reward_managed_orders.updated_at
         "#,
     )
     .bind(&order.id)
@@ -353,6 +354,11 @@ async fn upsert_reward_merge_intent_tx(
             retry_count = EXCLUDED.retry_count,
             trace_id = EXCLUDED.trace_id,
             updated_at = EXCLUDED.updated_at
+        WHERE EXCLUDED.updated_at >= reward_merge_intents.updated_at
+          AND (
+              reward_merge_intents.status IN ('pending', 'unsupported')
+              OR EXCLUDED.status = reward_merge_intents.status
+          )
         "#,
     )
     .bind(&intent.id)
@@ -575,6 +581,7 @@ const REWARD_ACCOUNT_STATE_UPSERT: &str = r#"
         fees_paid = EXCLUDED.fees_paid,
         tick_index = EXCLUDED.tick_index,
         updated_at = EXCLUDED.updated_at
+    WHERE EXCLUDED.updated_at >= reward_account_state.updated_at
 "#;
 
 fn bind_reward_account_state<'q>(
@@ -625,41 +632,39 @@ async fn upsert_reward_account_state_tx(
     Ok(())
 }
 
-async fn upsert_reward_position_tx(
+async fn upsert_reward_positions_tx(
     transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    position: &RewardPosition,
+    positions: &[RewardPosition],
 ) -> Result<()> {
-    sqlx::query(
-        r#"
-        INSERT INTO reward_positions (
-          account_id, condition_id, token_id, outcome, size, avg_price, realized_pnl, updated_at
-        )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-        ON CONFLICT (account_id, token_id) DO UPDATE
-        SET condition_id = EXCLUDED.condition_id,
-            outcome = EXCLUDED.outcome,
-            size = EXCLUDED.size,
-            avg_price = EXCLUDED.avg_price,
-            realized_pnl = EXCLUDED.realized_pnl,
-            updated_at = EXCLUDED.updated_at
-        "#,
-    )
-    .bind(&position.account_id)
-    .bind(&position.condition_id)
-    .bind(&position.token_id)
-    .bind(&position.outcome)
-    .bind(position.size)
-    .bind(position.avg_price)
-    .bind(position.realized_pnl)
-    .bind(position.updated_at)
-    .execute(&mut **transaction)
-    .await
-    .map_err(|error| {
-        db_error(
-            "POSTGRES_UPSERT_FAILED",
-            format!("failed to upsert reward position: {error}"),
-        )
-    })?;
+    if positions.is_empty() {
+        return Ok(());
+    }
+    let mut query = QueryBuilder::<Postgres>::new(
+        "INSERT INTO reward_positions (account_id, condition_id, token_id, outcome, size, avg_price, realized_pnl, updated_at) ",
+    );
+    query.push_values(positions, |mut row, position| {
+        row.push_bind(&position.account_id)
+            .push_bind(&position.condition_id)
+            .push_bind(&position.token_id)
+            .push_bind(&position.outcome)
+            .push_bind(position.size)
+            .push_bind(position.avg_price)
+            .push_bind(position.realized_pnl)
+            .push_bind(position.updated_at);
+    });
+    query.push(
+        " ON CONFLICT (account_id, token_id) DO UPDATE SET condition_id = EXCLUDED.condition_id, outcome = EXCLUDED.outcome, size = EXCLUDED.size, avg_price = EXCLUDED.avg_price, realized_pnl = EXCLUDED.realized_pnl, updated_at = EXCLUDED.updated_at WHERE EXCLUDED.updated_at >= reward_positions.updated_at",
+    );
+    query
+        .build()
+        .execute(&mut **transaction)
+        .await
+        .map_err(|error| {
+            db_error(
+                "POSTGRES_UPSERT_FAILED",
+                format!("failed to batch upsert reward positions: {error}"),
+            )
+        })?;
     Ok(())
 }
 
@@ -745,6 +750,11 @@ fn reward_control_command_from_row(
         started_at: row.try_get("started_at").map_err(postgres_decode_error)?,
         completed_at: row.try_get("completed_at").map_err(postgres_decode_error)?,
         trace_id: row.try_get("trace_id").map_err(postgres_decode_error)?,
+        lease_owner: row.try_get("lease_owner").map_err(postgres_decode_error)?,
+        lease_version: row.try_get("lease_version").map_err(postgres_decode_error)?,
+        lease_expires_at: row
+            .try_get("lease_expires_at")
+            .map_err(postgres_decode_error)?,
         error: row.try_get("error").map_err(postgres_decode_error)?,
     })
 }

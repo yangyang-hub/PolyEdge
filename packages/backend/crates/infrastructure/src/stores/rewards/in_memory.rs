@@ -179,8 +179,8 @@ impl RewardBotStore for InMemoryRewardBotStore {
                 command.status == RewardControlCommandStatus::Pending
                     || (command.status == RewardControlCommandStatus::Running
                         && command
-                            .started_at
-                            .is_some_and(|started_at| started_at <= now - REWARD_CONTROL_COMMAND_LEASE))
+                            .lease_expires_at
+                            .is_none_or(|lease_expires_at| lease_expires_at <= now))
             })
         else {
             return Ok(None);
@@ -189,6 +189,9 @@ impl RewardBotStore for InMemoryRewardBotStore {
         command.started_at = Some(now);
         command.completed_at = None;
         command.trace_id = Some(trace_id.to_string());
+        command.lease_owner = Some(trace_id.to_string());
+        command.lease_version += 1;
+        command.lease_expires_at = Some(now + REWARD_CONTROL_COMMAND_LEASE);
         command.error = None;
         Ok(Some(command.clone()))
     }
@@ -196,36 +199,52 @@ impl RewardBotStore for InMemoryRewardBotStore {
     async fn complete_control_command(
         &self,
         command_id: &str,
-        trace_id: &str,
+        lease_owner: &str,
+        lease_version: i64,
         now: OffsetDateTime,
     ) -> Result<()> {
         let mut commands = self.control_commands.write().await;
-        if let Some(command) = commands.iter_mut().find(|command| {
-            command.id == command_id && command.status == RewardControlCommandStatus::Running
-        }) {
-            command.status = RewardControlCommandStatus::Completed;
-            command.completed_at = Some(now);
-            command.trace_id = Some(trace_id.to_string());
-        }
+        let Some(command) = commands.iter_mut().find(|command| {
+            command.id == command_id
+                && command.status == RewardControlCommandStatus::Running
+                && command.lease_owner.as_deref() == Some(lease_owner)
+                && command.lease_version == lease_version
+        }) else {
+            return Err(AppError::conflict(
+                "REWARD_CONTROL_LEASE_LOST",
+                "reward control command completion was rejected because its lease was lost",
+            ));
+        };
+        command.status = RewardControlCommandStatus::Completed;
+        command.completed_at = Some(now);
+        command.lease_expires_at = None;
         Ok(())
     }
 
     async fn fail_control_command(
         &self,
         command_id: &str,
-        trace_id: &str,
+        lease_owner: &str,
+        lease_version: i64,
         error: &str,
         now: OffsetDateTime,
     ) -> Result<()> {
         let mut commands = self.control_commands.write().await;
-        if let Some(command) = commands.iter_mut().find(|command| {
-            command.id == command_id && command.status == RewardControlCommandStatus::Running
-        }) {
-            command.status = RewardControlCommandStatus::Failed;
-            command.completed_at = Some(now);
-            command.trace_id = Some(trace_id.to_string());
-            command.error = Some(error.to_string());
-        }
+        let Some(command) = commands.iter_mut().find(|command| {
+            command.id == command_id
+                && command.status == RewardControlCommandStatus::Running
+                && command.lease_owner.as_deref() == Some(lease_owner)
+                && command.lease_version == lease_version
+        }) else {
+            return Err(AppError::conflict(
+                "REWARD_CONTROL_LEASE_LOST",
+                "reward control command failure was rejected because its lease was lost",
+            ));
+        };
+        command.status = RewardControlCommandStatus::Failed;
+        command.completed_at = Some(now);
+        command.lease_expires_at = None;
+        command.error = Some(error.to_string());
         Ok(())
     }
 
@@ -1458,27 +1477,53 @@ impl RewardBotStore for InMemoryRewardBotStore {
         submitted_at: OffsetDateTime,
         reason: &str,
     ) -> Result<()> {
-        if let Some(intent) = self
-            .merge_intents
-            .write()
-            .await
+        let mut intents = self.merge_intents.write().await;
+        let Some(intent) = intents
             .iter_mut()
             .find(|intent| {
                 intent.id == intent_id
-                    && matches!(
-                        intent.status,
-                        RewardMergeIntentStatus::Pending | RewardMergeIntentStatus::Unsupported
-                    )
+                    && intent.status == RewardMergeIntentStatus::Broadcasting
                     && intent.tx_hash.is_none()
             })
-        {
-            intent.status = RewardMergeIntentStatus::Submitted;
-            intent.tx_hash = Some(tx_hash.to_string());
-            intent.submitted_at = Some(submitted_at);
-            intent.failed_reason = None;
-            intent.reason = reason.to_string();
-            intent.updated_at = submitted_at;
-        }
+        else {
+            return Err(AppError::conflict(
+                "REWARD_MERGE_SUBMIT_FENCE_LOST",
+                "merge intent was not in the broadcasting state when submission completed",
+            ));
+        };
+        intent.status = RewardMergeIntentStatus::Submitted;
+        intent.tx_hash = Some(tx_hash.to_string());
+        intent.submitted_at = Some(submitted_at);
+        intent.failed_reason = None;
+        intent.reason = reason.to_string();
+        intent.updated_at = submitted_at;
+        Ok(())
+    }
+
+    async fn mark_merge_intent_broadcasting(
+        &self,
+        intent_id: &str,
+        broadcasting_at: OffsetDateTime,
+        reason: &str,
+    ) -> Result<()> {
+        let mut intents = self.merge_intents.write().await;
+        let Some(intent) = intents.iter_mut().find(|intent| {
+            intent.id == intent_id
+                && matches!(
+                    intent.status,
+                    RewardMergeIntentStatus::Pending | RewardMergeIntentStatus::Unsupported
+                )
+                && intent.tx_hash.is_none()
+        }) else {
+            return Err(AppError::conflict(
+                "REWARD_MERGE_BROADCAST_FENCE_LOST",
+                "merge intent could not enter broadcasting because it was already claimed or resolved",
+            ));
+        };
+        intent.status = RewardMergeIntentStatus::Broadcasting;
+        intent.reason = reason.to_string();
+        intent.failed_reason = None;
+        intent.updated_at = broadcasting_at;
         Ok(())
     }
 
@@ -1488,10 +1533,8 @@ impl RewardBotStore for InMemoryRewardBotStore {
         failed_reason: &str,
         failed_at: OffsetDateTime,
     ) -> Result<()> {
-        if let Some(intent) = self
-            .merge_intents
-            .write()
-            .await
+        let mut intents = self.merge_intents.write().await;
+        let Some(intent) = intents
             .iter_mut()
             .find(|intent| {
                 intent.id == intent_id
@@ -1501,13 +1544,17 @@ impl RewardBotStore for InMemoryRewardBotStore {
                     )
                     && intent.tx_hash.is_none()
             })
-        {
-            intent.status = RewardMergeIntentStatus::Failed;
-            intent.failed_reason = Some(failed_reason.to_string());
-            intent.retry_count += 1;
-            intent.reason = failed_reason.to_string();
-            intent.updated_at = failed_at;
-        }
+        else {
+            return Err(AppError::conflict(
+                "REWARD_MERGE_FAIL_FENCE_LOST",
+                "merge intent was not safely fail-able from its current state",
+            ));
+        };
+        intent.status = RewardMergeIntentStatus::Failed;
+        intent.failed_reason = Some(failed_reason.to_string());
+        intent.retry_count += 1;
+        intent.reason = failed_reason.to_string();
+        intent.updated_at = failed_at;
         Ok(())
     }
 
@@ -1575,7 +1622,9 @@ impl RewardBotStore for InMemoryRewardBotStore {
             let mut orders = self.orders.write().await;
             for order in &outcome.orders {
                 if let Some(existing) = orders.iter_mut().find(|stored| stored.id == order.id) {
-                    *existing = order.clone();
+                    if order.updated_at >= existing.updated_at {
+                        *existing = order.clone();
+                    }
                 } else {
                     orders.push(order.clone());
                 }
@@ -1585,10 +1634,13 @@ impl RewardBotStore for InMemoryRewardBotStore {
         {
             let mut positions = self.positions.write().await;
             for position in &outcome.positions {
-                positions.insert(
-                    (position.account_id.clone(), position.token_id.clone()),
-                    position.clone(),
-                );
+                let key = (position.account_id.clone(), position.token_id.clone());
+                if positions
+                    .get(&key)
+                    .is_none_or(|existing| position.updated_at >= existing.updated_at)
+                {
+                    positions.insert(key, position.clone());
+                }
             }
         }
         {
@@ -1604,7 +1656,15 @@ impl RewardBotStore for InMemoryRewardBotStore {
                     .iter_mut()
                     .find(|stored| stored.id == intent.id)
                 {
-                    *existing = intent.clone();
+                    if intent.updated_at >= existing.updated_at
+                        && (matches!(
+                            existing.status,
+                            RewardMergeIntentStatus::Pending
+                                | RewardMergeIntentStatus::Unsupported
+                        ) || intent.status == existing.status)
+                    {
+                        *existing = intent.clone();
+                    }
                 } else {
                     merge_intents.push(intent.clone());
                 }
@@ -1612,7 +1672,13 @@ impl RewardBotStore for InMemoryRewardBotStore {
             merge_intents.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
         }
         {
-            *self.account_state.write().await = Some(outcome.account.clone());
+            let mut state = self.account_state.write().await;
+            if state
+                .as_ref()
+                .is_none_or(|existing| outcome.account.updated_at >= existing.updated_at)
+            {
+                *state = Some(outcome.account.clone());
+            }
         }
         {
             let mut events = self.events.write().await;
@@ -1651,7 +1717,15 @@ impl RewardBotStore for InMemoryRewardBotStore {
         positions: Option<&[RewardPosition]>,
         _trace_id: &str,
     ) -> Result<()> {
-        *self.account_state.write().await = Some(account.clone());
+        let mut account_state = self.account_state.write().await;
+        if account_state
+            .as_ref()
+            .is_some_and(|existing| existing.updated_at > account.updated_at)
+        {
+            return Ok(());
+        }
+        *account_state = Some(account.clone());
+        drop(account_state);
         if let Some(positions) = positions {
             let mut stored = self.positions.write().await;
             stored.retain(|(account_id, _), _| account_id != &account.account_id);

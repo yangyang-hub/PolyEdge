@@ -177,7 +177,10 @@ async fn consume_reward_orderbook_stream(
     state: AppState,
     cache: Arc<RewardOrderbookLocalCache>,
 ) {
-    let client = OrderbookStreamClient::new(&state.settings.orderbook.service_url);
+    let client = OrderbookStreamClient::new_authenticated(
+        &state.settings.orderbook.service_url,
+        state.settings.orderbook.write_token.as_deref(),
+    );
     let mut active_tokens = HashSet::new();
     let mut last_active_refresh = Instant::now() - REWARD_ORDERBOOK_ACTIVE_TOKEN_REFRESH;
     let reconnect_delay =

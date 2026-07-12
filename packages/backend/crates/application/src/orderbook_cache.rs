@@ -18,7 +18,7 @@ impl std::fmt::Display for BookSource {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CachedBookLevel {
     pub price: Decimal,
     pub size: Decimal,
@@ -84,6 +84,17 @@ pub trait OrderbookCache: Send + Sync {
     async fn set_books(&self, books: &[CachedOrderBook]) -> Result<()>;
     async fn get_stale_tokens(&self, token_ids: &[String], max_age_ms: i64) -> Result<Vec<String>>;
     async fn entry_count(&self) -> Result<usize>;
+    /// Advance confirmation for the exact cached content version. This is used
+    /// by poll reconciliation after it has independently checked compatibility;
+    /// it never replaces levels or confirms a version that changed concurrently.
+    async fn confirm_book_version(
+        &self,
+        _token_id: &str,
+        _expected_observed_at: i64,
+        _confirmed_at: i64,
+    ) -> Result<bool> {
+        Ok(false)
+    }
 
     /// Replace a cached book only if it exists and the new content is not older
     /// than the current cached value. Implementations may merge a newer

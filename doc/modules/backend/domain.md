@@ -1,6 +1,6 @@
 # domain（领域层）
 
-最后更新：2026-06-26
+最后更新：2026-07-11
 
 ## 概述
 
@@ -69,7 +69,7 @@
 | `MarketSortField` | 2 | 排序字段 |
 | `SortOrder` | 2 | 排序方向 |
 | `UserRole` | — | 用户角色 |
-| `StepUpScope` | 9 | 提权范围，含信号执行、订单取消、系统模式/熔断、风险阈值和 funding 转账 |
+| `StepUpScope` | 13 | 提权范围，含信号执行、订单取消、系统模式/熔断、风险阈值、funding 转账，以及 Rewards run/live enable/merge auto execute/reset |
 
 所有枚举使用 `#[serde(rename_all = "snake_case")]`，大多数实现 `as_str()` 和 `FromStr`。
 
@@ -82,7 +82,7 @@
 
 - 完全实现，作为系统通用语言的基础
 - 所有类型在全部上层 crate 中广泛使用
-- `StepUpScope` 已包含 `FundingTransfer`，wire value 为 `funding_transfer`，供后端资金钱包 Polymarket 入金转账使用
+- `StepUpScope` 对 Rewards 危险操作使用四个最小权限 wire value：`rewards_run_once`、`rewards_live_trading_enable`、`rewards_merge_auto_execute`、`rewards_state_reset`；保护性 cancel-all 不要求额外 scope
 
 ## 修改检查清单
 

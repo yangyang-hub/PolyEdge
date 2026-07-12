@@ -153,11 +153,14 @@ impl RewardBotConfig {
     #[must_use]
     pub fn production_live_drill_defaults() -> Self {
         let mut config = Self::default();
-        config.max_markets = 2;
-        config.max_open_orders = 6;
-        config.maker_market_budget_usd = decimal("10");
-        config.min_market_liquidity_usd = decimal("5000");
-        config.min_market_volume_24h_usd = decimal("2500");
+        // With no account-specific calibration data, concentrate the live drill
+        // in one condition and reserve enough notional for common two-sided
+        // rewards minimum sizes instead of spreading an unusable $10 budget.
+        config.max_markets = 1;
+        config.max_open_orders = 4;
+        config.maker_market_budget_usd = decimal("20");
+        config.min_market_liquidity_usd = decimal("10000");
+        config.min_market_volume_24h_usd = decimal("5000");
         config.min_hours_to_end = 72;
         config.max_market_spread_cents = decimal("6");
         config.max_market_data_age_minutes = 5;
@@ -165,10 +168,11 @@ impl RewardBotConfig {
         config.max_spread_cents = decimal("5");
         config.quote_max_bid_rank = 2;
         config.opportunity_competition_hard_gate_multiple = decimal("8");
-        config.opportunity_max_account_allocation_bps = 1_000;
-        config.opportunity_min_exit_depth_usd = decimal("100");
-        config.opportunity_min_exit_depth_multiple = decimal("3");
-        config.opportunity_max_entry_exit_slippage_cents = decimal("1.5");
+        config.opportunity_max_account_allocation_bps = 2_500;
+        config.opportunity_max_market_allocation_bps = 2_500;
+        config.opportunity_min_exit_depth_usd = decimal("150");
+        config.opportunity_min_exit_depth_multiple = decimal("4");
+        config.opportunity_max_entry_exit_slippage_cents = decimal("1");
         config.opportunity_max_bad_fill_recovery_days = decimal("2");
         config.opportunity_max_midpoint_range_cents = decimal("2");
         config.opportunity_max_top_of_book_flip_count = 6;
@@ -176,15 +180,19 @@ impl RewardBotConfig {
         config.fair_value_min_raw_edge_cents = decimal("0.5");
         config.fair_value_min_effective_edge_cents = Decimal::ONE;
         config.fair_value_max_midpoint_deviation_cents = decimal("2");
+        // Gamma reviewed dates are deliberately classified as medium. The
+        // production profile must therefore accept medium confidence or its
+        // configured event-window protection would never engage for them.
+        config.event_window_min_confidence = RewardEventTimeConfidence::Medium;
         config.event_window_stop_new_quote_before_start_sec = 21_600;
         config.event_window_cancel_open_buy_before_start_sec = 7_200;
         config.first_quote_quarantine_sec = 900;
         config.safety_margin_cents = decimal("1.5");
         config.min_midpoint = decimal("0.15");
         config.max_midpoint = decimal("0.85");
-        config.stale_book_ms = 30_000;
-        config.max_position_usd = decimal("10");
-        config.max_global_position_usd = decimal("25");
+        config.stale_book_ms = 5_000;
+        config.max_position_usd = decimal("12");
+        config.max_global_position_usd = decimal("20");
         config.inventory_skew_strength = Decimal::ONE;
         config.maker_max_exit_loss_cents = decimal("1.5");
         config.account_capital_usd = decimal("100");
@@ -193,7 +201,7 @@ impl RewardBotConfig {
         config.requote_drift_cooldown_sec = 180;
         config.requote_drift_max_cancels_per_cycle = 1;
         config.adverse_requote_confirm_sec = 2;
-        config.min_depth_usd = decimal("25");
+        config.min_depth_usd = decimal("50");
         config.depth_drop_pct = decimal("50");
         config.fill_velocity_usd = decimal("15");
         config.mass_cancel_pct = decimal("50");
@@ -1249,16 +1257,21 @@ mod reward_config_tests {
         let config = RewardBotConfig::production_live_drill_defaults();
 
         assert!(!config.enabled);
-        assert_eq!(config.max_markets, 2);
-        assert_eq!(config.max_open_orders, 6);
-        assert_eq!(config.maker_market_budget_usd, decimal("10"));
-        assert_eq!(config.max_position_usd, decimal("10"));
-        assert_eq!(config.max_global_position_usd, decimal("25"));
+        assert_eq!(config.max_markets, 1);
+        assert_eq!(config.max_open_orders, 4);
+        assert_eq!(config.maker_market_budget_usd, decimal("20"));
+        assert_eq!(config.max_position_usd, decimal("12"));
+        assert_eq!(config.max_global_position_usd, decimal("20"));
         assert_eq!(config.account_capital_usd, decimal("100"));
         assert_eq!(config.fair_value_min_effective_edge_cents, Decimal::ONE);
+        assert_eq!(
+            config.event_window_min_confidence,
+            RewardEventTimeConfidence::Medium
+        );
+        assert_eq!(config.stale_book_ms, 5_000);
         assert_eq!(config.opportunity_competition_hard_gate_multiple, decimal("8"));
         assert_eq!(config.requote_drift_max_cancels_per_cycle, 1);
-        assert_eq!(config.min_depth_usd, decimal("25"));
+        assert_eq!(config.min_depth_usd, decimal("50"));
         assert_eq!(config.depth_drop_pct, decimal("50"));
         assert_eq!(config.fill_velocity_usd, decimal("15"));
         assert_eq!(config.mass_cancel_pct, decimal("50"));

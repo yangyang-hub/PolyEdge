@@ -89,6 +89,7 @@ shadcn 生成的 Radix UI 基础组件（style: radix-nova）：
 - 顶栏不再显示横向导航快捷入口，也不再读取旧风控状态或展示 kill-switch 控制；移动端顶栏显示菜单按钮并从左侧打开导航抽屉
 - 暗色主题（`globals.css` 中仅定义暗色变量）
 - `src/app/layout.tsx` 与 `globals.css` 使用系统字体栈，不在 `next build` 时访问 Google Fonts，保证离线/内网部署可复现构建
+- `ActionDialog` 的操作备注与 step-up 输入具备显式 label、字段错误关联、500 字限制和一次性验证码 autocomplete；Rewards 风险操作复用该组件并在校验失败时聚焦首个错误字段。
 
 ## 修改检查清单
 

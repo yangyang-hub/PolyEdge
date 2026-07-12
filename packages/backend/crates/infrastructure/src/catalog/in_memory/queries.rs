@@ -343,6 +343,35 @@ async fn market_event_list_orders(&self, filters: &OrderListFilters) -> Result<V
         Ok(items)
     }
 
+async fn market_event_list_active_order_market_ids(
+    &self,
+    connector_name: &str,
+    limit: usize,
+) -> Result<Vec<String>> {
+    let orders = self.orders.read().await;
+    let mut latest_by_market = HashMap::new();
+    for order in orders.values().filter(|order| {
+        order.connector_name == connector_name
+            && matches!(
+                order.status,
+                OrderStatus::Submitted | OrderStatus::Open | OrderStatus::PartiallyFilled
+            )
+    }) {
+        latest_by_market
+            .entry(order.market_id.clone())
+            .and_modify(|updated_at: &mut OffsetDateTime| {
+                *updated_at = (*updated_at).max(order.updated_at);
+            })
+            .or_insert(order.updated_at);
+    }
+    let mut markets = latest_by_market.into_iter().collect::<Vec<_>>();
+    markets.sort_by(|(left_id, left_at), (right_id, right_at)| {
+        right_at.cmp(left_at).then_with(|| left_id.cmp(right_id))
+    });
+    markets.truncate(limit);
+    Ok(markets.into_iter().map(|(market_id, _)| market_id).collect())
+}
+
 async fn market_event_list_trades(&self, filters: &TradeListFilters) -> Result<Vec<TradeView>> {
         let trades = self.trades.read().await;
         let mut items: Vec<_> = trades

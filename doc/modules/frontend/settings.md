@@ -21,7 +21,7 @@
 
 ## 权限
 
-`/settings` 路由仍声明 `admin` 角色；当前内网部署由 API 侧 `POLYEDGE_AUTH__DISABLED=true` 关闭后端权限校验，前端 auth mode 仍为 `off`。
+`/settings` 路由仍声明 `admin` 角色；当前前端 auth mode 为 `off`，没有 session/JWT 获取链路。默认部署由 API 侧 `POLYEDGE_AUTH__DISABLED=true` 关闭后端权限校验，并必须置于 VPN、私网 ACL 或可信反向代理边界内。
 
 ## i18n
 

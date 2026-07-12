@@ -21,6 +21,9 @@ use candle_history::run_reward_candle_history_sync_loop;
 mod stream;
 use stream::run_orderbook_stream;
 
+mod metrics;
+use metrics::OrderbookRuntimeMetrics;
+
 mod updates;
 use updates::OrderbookUpdateBroadcaster;
 
@@ -73,6 +76,7 @@ async fn main() -> polyedge_domain::Result<()> {
     info!(port, "starting polyedge-orderbook service");
 
     let broadcaster = OrderbookUpdateBroadcaster::new(16_384);
+    let runtime_metrics = Arc::new(OrderbookRuntimeMetrics::default());
     // Serialize CLOB REST orderbook batches across the background reconciler
     // and HTTP on-demand refresh path. Without a shared gate, rewards full
     // ticks and the 10s poll can duplicate thousands of token refreshes.
@@ -98,6 +102,7 @@ async fn main() -> polyedge_domain::Result<()> {
             state.clone(),
             broadcaster.clone(),
             Arc::clone(&upstream_request_gate),
+            Arc::clone(&runtime_metrics),
         ));
 
     let listener = bind_service_listener(addr, "orderbook HTTP", "ORDERBOOK_BIND_FAILED").await?;
@@ -132,6 +137,7 @@ async fn main() -> polyedge_domain::Result<()> {
     let stream_state = state.clone();
     let stream_broadcaster = broadcaster.clone();
     let stream_upstream_request_gate = Arc::clone(&upstream_request_gate);
+    let stream_runtime_metrics = Arc::clone(&runtime_metrics);
     let stream_handle = tokio::spawn(async move {
         let restart_interval = Duration::from_secs(
             stream_state
@@ -157,6 +163,7 @@ async fn main() -> polyedge_domain::Result<()> {
                 &stream_state,
                 &stream_broadcaster,
                 Arc::clone(&stream_upstream_request_gate),
+                Arc::clone(&stream_runtime_metrics),
             )
             .await
             {

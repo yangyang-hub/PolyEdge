@@ -121,11 +121,17 @@ fn fair_value_gate_blocks_quote_above_fair_value() {
     let books = fair_value_test_books(now);
     let mut plan = fair_value_test_plan(decimal("0.565"), now);
 
+    let config = RewardBotConfig {
+        quote_bid_rank: 1,
+        quote_max_bid_rank: 1,
+        fair_value_min_effective_edge_cents: decimal("2"),
+        ..fair_value_test_config()
+    };
     apply_reward_fair_value_to_quote_plan(
         &mut plan,
         &books,
         &HashMap::new(),
-        &fair_value_test_config(),
+        &config,
         now,
     )
     .expect("fair value estimate");
@@ -136,6 +142,30 @@ fn fair_value_gate_blocks_quote_above_fair_value() {
     assert!(!plan.pre_ai_eligible);
     assert!(plan.reason.contains("fair value gate"));
     assert!(decision.edges[0].raw_edge_cents < Decimal::ZERO);
+}
+
+#[test]
+fn fair_value_uses_top_of_book_microprice_imbalance() {
+    let now = OffsetDateTime::now_utc();
+    let mut books = fair_value_test_books(now);
+    books.get_mut("yes_fair").expect("YES book").bids[0].size = decimal("900");
+    books.get_mut("yes_fair").expect("YES book").asks[0].size = decimal("100");
+    let mut plan = fair_value_test_plan(decimal("0.53"), now);
+
+    let estimate = apply_reward_fair_value_to_quote_plan(
+        &mut plan,
+        &books,
+        &HashMap::new(),
+        &fair_value_test_config(),
+        now,
+    )
+    .expect("fair value estimate");
+
+    assert!(estimate.fair_yes > decimal("0.55"));
+    assert!(estimate.components.iter().any(|component| {
+        component.source == "current_yes_microprice" && component.value > decimal("0.55")
+    }));
+    assert!(estimate.uncertainty_cents > Decimal::ZERO);
 }
 
 #[test]
@@ -174,6 +204,8 @@ fn lp_reward_cannot_rescue_a_quote_that_fails_trading_edge() {
     let config = RewardBotConfig {
         fair_value_rebate_haircut: Decimal::ONE,
         fair_value_max_reward_rebate_cents: decimal("10"),
+        quote_bid_rank: 1,
+        quote_max_bid_rank: 1,
         ..fair_value_test_config()
     };
 
@@ -191,4 +223,74 @@ fn lp_reward_cannot_rescue_a_quote_that_fails_trading_edge() {
     assert!(edge.reward_adjusted_edge_cents > config.fair_value_min_effective_edge_cents);
     assert!(!edge.passed);
     assert!(!plan.eligible);
+}
+
+#[test]
+fn provider_edge_buffer_is_included_in_final_edge_gate() {
+    let now = OffsetDateTime::now_utc();
+    let books = fair_value_test_books(now);
+    let mut plan = fair_value_test_plan(decimal("0.53"), now);
+    plan.ai_advisory = Some(RewardMarketAdvisory {
+        condition_id: plan.condition_id.clone(),
+        provider: RewardAiProvider::OpenAi,
+        request_format: RewardAiRequestFormat::OpenAiResponses,
+        model: "test-model".to_string(),
+        input_hash: "test-hash".to_string(),
+        action: RewardProviderAction::Reduce,
+        size_multiplier: Decimal::ONE,
+        edge_buffer_cents: decimal("2"),
+        confidence: Decimal::ONE,
+        reasons: vec!["structural uncertainty".to_string()],
+        metrics: json!({}),
+        created_at: now,
+        expires_at: now + TimeDuration::hours(1),
+    });
+    let config = RewardBotConfig {
+        ai_advisory_enabled: true,
+        ai_risk_adjustment_enabled: true,
+        ai_action_min_confidence: decimal("0.5"),
+        ..fair_value_test_config()
+    };
+
+    apply_reward_fair_value_to_quote_plan(&mut plan, &books, &HashMap::new(), &config, now)
+        .expect("fair value estimate");
+
+    let edge = &plan.fair_value.as_ref().expect("decision").edges[0];
+    assert_eq!(edge.uncertainty_cents, decimal("3"));
+    assert!(!edge.passed);
+    assert!(!plan.eligible);
+}
+
+#[test]
+fn final_fair_value_gate_searches_deeper_rank_with_dynamic_uncertainty() {
+    let now = OffsetDateTime::now_utc();
+    let mut books = fair_value_test_books(now);
+    books.get_mut("yes_fair").expect("YES book").bids = vec![
+        RewardBookLevel {
+            price: decimal("0.54"),
+            size: decimal("100"),
+        },
+        RewardBookLevel {
+            price: decimal("0.53"),
+            size: decimal("100"),
+        },
+        RewardBookLevel {
+            price: decimal("0.52"),
+            size: decimal("100"),
+        },
+    ];
+    let mut plan = fair_value_test_plan(decimal("0.54"), now);
+    let config = RewardBotConfig {
+        quote_bid_rank: 1,
+        quote_max_bid_rank: 3,
+        fair_value_min_raw_edge_cents: decimal("0.5"),
+        fair_value_min_effective_edge_cents: decimal("1"),
+        ..fair_value_test_config()
+    };
+
+    apply_reward_fair_value_to_quote_plan(&mut plan, &books, &HashMap::new(), &config, now)
+        .expect("fair value estimate");
+
+    assert_eq!(plan.legs[0].price, decimal("0.53"));
+    assert!(plan.fair_value.as_ref().expect("decision").passed);
 }
