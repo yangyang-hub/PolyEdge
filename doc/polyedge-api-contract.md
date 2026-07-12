@@ -1,6 +1,6 @@
 # PolyEdge API 契约文档
 
-> **状态（2026-07-07）**：本文是历史 API 契约草案，实时流设计已经过时。当前 API 状态以 [../AGENTS.md](../AGENTS.md)、[../README.md](../README.md)、[modules/backend/api-app.md](modules/backend/api-app.md) 和代码为准。
+> **状态（2026-07-12）**：本文是历史 API 契约草案，实时流、approvals 和旧控制台资源设计已经过时。当前 API 已聚焦 markets/events/news/evidences、orders/trades/pricing、rewards（含 run ledger reads）、Funding、runtime/system 和 orderbook reads；精确路由与写入保护以 [../AGENTS.md](../AGENTS.md)、[modules/backend/api-app.md](modules/backend/api-app.md) 和代码为准。
 
 ## 1. 文档目标
 
@@ -46,15 +46,16 @@
 10. `/api/v1/execution/requests`
 11. `/api/v1/pricing/estimates`
 12. `/api/v1/rewards-bot`
-13. `/api/v1/funding`
-14. `/api/v1/funding/transfer`
-15. `/api/v1/runtime-config`
-16. `/api/v1/system/mode`
-17. `/api/v1/orderbook/{token_id}`
-18. `/api/v1/connectors/callbacks/orders/status`
-19. `/api/v1/connectors/callbacks/trades/fill`
-20. `/api/v1/connectors/polymarket/callbacks/orders/status`
-21. `/api/v1/connectors/polymarket/callbacks/trades/fill`
+13. `/api/v1/rewards-bot/runs` 及其 run decisions/actions、order transitions 子资源
+14. `/api/v1/funding`
+15. `/api/v1/funding/transfer`
+16. `/api/v1/runtime-config`
+17. `/api/v1/system/mode`
+18. `/api/v1/orderbook/{token_id}`
+19. `/api/v1/connectors/callbacks/orders/status`
+20. `/api/v1/connectors/callbacks/trades/fill`
+21. `/api/v1/connectors/polymarket/callbacks/orders/status`
+22. `/api/v1/connectors/polymarket/callbacks/trades/fill`
 
 历史草案里的 approvals、SSE 实时流和已删除控制台模块路由当前不是 API 能力；前端通过 REST 加载数据。
 

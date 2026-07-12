@@ -1,6 +1,6 @@
 # PolyEdge 前端 UI 框架与依赖建议
 
-> **状态（2026-06-14）**：本文是前端 UI 栈建议和原型背景，其中部分页面名称来自早期原型。当前前端页面和模块以 [../AGENTS.md](../AGENTS.md)、[../README.md](../README.md) 和 [modules/frontend/](modules/frontend/) 为准。
+> **状态（2026-07-12）**：本文是前端 UI 栈建议和原型背景，其中 signals/approvals/risk 等页面名称来自早期原型。当前实现使用 Next.js 16.2、React 19.2、Tailwind CSS 4、shadcn/Radix，并以系统字体静态导出；实际依赖和页面以 `packages/front/package.json`、[../AGENTS.md](../AGENTS.md) 和 [modules/frontend/](modules/frontend/) 为准。
 
 ## 1. 文档目标
 

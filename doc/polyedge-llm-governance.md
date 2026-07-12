@@ -1,6 +1,6 @@
 # PolyEdge LLM 调用治理文档
 
-> **状态（2026-06-14）**：本文是 LLM 治理设计背景。当前已落地的 LLM 路径主要是 rewards AI advisory 和 rewards 信息风险，实际实现以 [../AGENTS.md](../AGENTS.md)、[modules/backend/application.md](modules/backend/application.md) 和 [modules/backend/connectors.md](modules/backend/connectors.md) 为准。
+> **状态（2026-07-12）**：本文是 LLM 治理设计背景。当前已落地的外部 LLM 路径是 rewards combined provider 的 AI advisory 与 info-risk：provider 不接收实时盘口/账户上下文，输出只作为受限风险动作，返回证据默认不可信且不能仅凭 LLM URL/时间戳撤单；调用审计写入 `llm_calls(task_type=reward_provider)`。实际实现以 [../AGENTS.md](../AGENTS.md)、[modules/backend/application.md](modules/backend/application.md) 和 [modules/backend/connectors.md](modules/backend/connectors.md) 为准。
 
 ## 1. 文档目标
 

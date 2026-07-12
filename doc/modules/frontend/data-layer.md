@@ -6,7 +6,7 @@
 
 前端数据层是 Next.js 控制台与 Rust API 通信的唯一通道，包含三层：`contracts/dto` TypeScript DTO 镜像、`api/*.ts` 读写客户端、`api/actions.ts` + `api/actions/` Server Actions。页面和组件不直接 `fetch` 后端。
 
-当前数据层只覆盖控制台仍存在的页面：Dashboard、Markets、Events、Rewards、Funding、Settings。
+当前数据层只覆盖控制台仍存在的页面：Dashboard、Markets、Events、Rewards、Funding、Settings。各 console route 通过 `ClientDataBoundary` 在客户端执行 feature loader；loader 仍是数据装配边界，不在页面组件中直接 `fetch`。
 
 ## 设计目标
 
@@ -104,6 +104,7 @@ Client interaction
 
 - `/login` 仅清理并重定向 `next` 路径，不执行身份认证；启用后端 JWT 前必须先接入真实身份签发与短时 token 传输，不能让浏览器持有签名私钥或 public bundle 中的长期 token。
 - 6 个领域 API 模块覆盖当前前端页面和 Rust API 端点。
+- Dashboard/Events/Settings loader 读取全量或小限额数据后做前端装配；Markets 首屏缓存 events，后续筛选/排序/翻页只重读 markets；Rewards 的计划和订单使用后端分页 query。
 - `fetchListContract()` 兼容 events/evidences/news 等分页信封，调用方读取统一 `ApiListResponse<T>`。
 - Funding DTO/API/action 已接入 `/api/v1/funding` 与 `/api/v1/funding/transfer`；前端提交 token、amount、confirmed、operator note 和稳定 intent idempotency key，并发送 `funding_transfer` step-up，不提交充值地址或私钥。
 - Rewards strategy ledger DTO/API 已接入 `/api/v1/rewards-bot/runs*` 和 `/api/v1/rewards-bot/orders/{managed_order_id}/transitions`，仅用于只读审计视图。

@@ -1,6 +1,6 @@
 # PolyEdge 鉴权与会话设计文档
 
-> **状态（2026-06-14）**：本文是鉴权设计背景，不代表当前生产级会话已完成。当前仓库只保留前端 `off` 会话模式；仓库状态以 [../AGENTS.md](../AGENTS.md)、[../README.md](../README.md) 和 [modules/](modules/README.md) 为准。
+> **状态（2026-07-12）**：本文是鉴权设计背景，不代表当前生产级会话已完成。Rust API 已具备 Ed25519 JWT、scope/step-up、CORS 和审计边界，但静态前端只保留 `off` 模式，没有登录/session/Bearer token 获取链路；内网部署因此默认关闭应用鉴权并依赖 VPN/ACL/可信代理。当前状态以 [../AGENTS.md](../AGENTS.md) 和 [modules/backend/api-app.md](modules/backend/api-app.md) 为准。
 
 ## 1. 文档目标
 

@@ -1,6 +1,6 @@
 # PolyEdge 存储 Schema 补充规范
 
-> **状态（2026-06-14）**：本文是早期 schema 补充规范，部分表名和 outbox/SSE 规划已不代表当前迁移。当前数据库状态以 [modules/infra/database.md](modules/infra/database.md) 和 [../packages/backend/migrations/](../packages/backend/migrations/) 为准。
+> **状态（2026-07-12）**：本文是早期 schema 补充规范，正文只作为审计/幂等/outbox 设计背景，部分表名、列和 SSE 投递规划不代表当前迁移。当前数据库使用 `0001_initial_schema.sql` 单 baseline，包含 rewards run/replay/action ledger、fair value、candles、event windows 和 BalancedMerge；准确状态以 [modules/infra/database.md](modules/infra/database.md) 和 [../packages/backend/migrations/](../packages/backend/migrations/) 为准。
 
 ## 1. 文档目标
 

@@ -72,6 +72,7 @@ polyedge-front (nginx static)
 - 端口：`0.0.0.0:33002 -> container:80`。
 - 本机先 `yarn build` 生成 `out/`，镜像只复制静态文件到 nginx。
 - `NEXT_PUBLIC_POLYEDGE_API_BASE_URL` 在 build time 写入静态 JS bundle；修改 API 地址后必须重建前端。
+- `NEXT_PUBLIC_POLYEDGE_CONSOLE_AUTH` 当前唯一支持值为 `off`；静态前端尚无登录/session/Bearer token 获取链路。
 - 字体使用本机/容器系统字体栈，`next build` 不访问 Google Fonts，内网构建不需要公共字体网络。
 - 当前内网免鉴权模式不需要设置 dev-auth header。
 - `scripts/deploy.sh` build 前会清理 `.next/` 和 `out/`，并给 HTML 中的 static 资源引用追加 front hash query，避免浏览器复用旧 bundle。
@@ -110,6 +111,7 @@ Manual 模式：
 - production 的 `POLYEDGE_CORS__ALLOWED_ORIGINS` 不能为空且不能包含通配符。
 - API 与 orderbook 的 `POLYEDGE_ORDERBOOK__WRITE_TOKEN` 必须存在且一致。
 - `POLYEDGE_AUTH__DISABLED=false` 时，`POLYEDGE_AUTH__KEYS_JSON` 必须包含至少一个真实 Ed25519 公钥；仅配置 step-up code 无效，因为 production JWT 路径不读取它。
+- `.env.front` 的 `NEXT_PUBLIC_POLYEDGE_CONSOLE_AUTH` 应保持 `off`；前端类型和运行时会把该设置收敛为 `off`，不能据此认为已接入会话体系。
 - production 使用 `POLYEDGE_AUTH__DISABLED=true` 时必须显式设置 `POLYEDGE_AUTH__ALLOW_INSECURE_PRIVATE_DEPLOY=true`；API 和部署脚本都会拒绝缺少该确认的配置。该确认不提供安全能力，仍必须使用 VPN、私网 ACL 或可信访问代理隔离 API。
 - 未关闭鉴权时，dev bypass 仅允许 local environment。
 
@@ -121,6 +123,7 @@ Manual 模式：
 | `POLYEDGE_ORDERBOOK__WRITE_TOKEN` | `.env.api` / `.env.orderbook` | orderbook 写接口共享密钥 |
 | `POLYEDGE_ORDERBOOK__SERVICE_URL` | `.env.api` | API/worker 访问 orderbook 的 HTTP 地址 |
 | `NEXT_PUBLIC_POLYEDGE_API_BASE_URL` | `.env.front` | 前端 build-time API 地址 |
+| `NEXT_PUBLIC_POLYEDGE_CONSOLE_AUTH` | `.env.front` | 当前固定为 `off`；真实会话模式尚未接入 |
 
 ## 常用可选环境变量
 
@@ -170,6 +173,7 @@ POLYEDGE_BACKEND_BINARY=polyedge-orderbook ./scripts/build-backend-bin.sh
 - `polyedge-front` 可独立运行，浏览器按 build-time API URL 访问后端。
 - 前端生产构建不依赖 Google Fonts 或其他远程字体下载。
 - `deploy/.env.api.example` 默认启用 database maintenance，清理 raw events、AI/info-risk cache、reward candles、控制命令、outbox/dedup、LLM/audit 等可增长表。
+- Rewards poll loop 启动时会同时启动 Postgres-only durable action executor；无需也没有单独的 Compose worker/executor 服务开关。CLI 的 `poll-reward-action-executor` 主要用于独立排障。
 - 若关闭免鉴权，必须先接入真实身份签发网关、前端短时 request-bound JWT 传输和 key rotation；不能把私钥或长期 JWT 放入静态前端 bundle。production step-up 由 JWT claims 表达。
 
 ## 修改检查清单

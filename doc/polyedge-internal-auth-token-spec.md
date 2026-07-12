@@ -1,6 +1,6 @@
 # PolyEdge 内部鉴权 Token 协议
 
-> **状态（2026-06-14）**：本文是内部鉴权 token 协议草案。当前前端 `off` 会话不会签发可信令牌，生产级会话体系仍是缺口；当前状态以 [../AGENTS.md](../AGENTS.md) 和 [modules/backend/api-app.md](modules/backend/api-app.md) 为准。
+> **状态（2026-07-12）**：本文是内部鉴权 token 协议背景。Rust API 已实现 Ed25519 JWT 校验、issuer/audience/TTL、request binding、session revocation 和 step-up claims，但当前静态前端 `off` 模式不会签发可信令牌，身份网关与真实 session UX 仍是缺口；当前状态以 [../AGENTS.md](../AGENTS.md) 和 [modules/backend/api-app.md](modules/backend/api-app.md) 为准。
 
 ## 1. 文档目标
 

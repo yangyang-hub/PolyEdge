@@ -1,6 +1,6 @@
 # 共享组件（Shared Components + UI Primitives）
 
-最后更新：2026-07-11
+最后更新：2026-07-12
 
 ## 概述
 
@@ -90,6 +90,8 @@ shadcn 生成的 Radix UI 基础组件（style: radix-nova）：
 - 暗色主题（`globals.css` 中仅定义暗色变量）
 - `src/app/layout.tsx` 与 `globals.css` 使用系统字体栈，不在 `next build` 时访问 Google Fonts，保证离线/内网部署可复现构建
 - `ActionDialog` 的操作备注与 step-up 输入具备显式 label、字段错误关联、500 字限制和一次性验证码 autocomplete；Rewards 风险操作复用该组件并在校验失败时聚焦首个错误字段。
+- `ClientDataBoundary` 是当前所有 console route 的统一数据入口，在客户端执行 feature loader，并统一显示 loading skeleton 或错误状态；当前错误态不提供内联重试按钮。
+- `WorkBenchSegmentedControl` 使用原生 button 实现可键盘操作的分段选择；`PaginationBar` 与 `usePagination` 用于 Dashboard/Events 的本地分页，Markets/Rewards 的服务端分页使用各自 feature 状态。
 
 ## 修改检查清单
 

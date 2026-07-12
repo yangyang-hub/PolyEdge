@@ -1,50 +1,85 @@
 # PolyEdge
 
-PolyEdge 是面向 Polymarket 的事件、市场数据、市场策略研究和 LP rewards 自动化控制台。当前仓库已经包含前端、Rust 后端、数据库迁移、orderbook 服务和 Docker 部署入口。
+最后更新：2026-07-12
 
-如果要判断“代码现在真实实现到哪里”，优先看 [AGENTS.md](./AGENTS.md) 和 [doc/modules/](./doc/modules/README.md)。`doc/polyedge-*.md` 中的设计/计划文档保留为历史背景，不作为当前能力清单。
+PolyEdge 是面向 Polymarket rewards market maker 的实盘策略与运维控制台。当前核心路径是 live 双边报价、market-implied fair value、资金与库存风控、成交后 maker/flatten 退出，以及 BalancedMerge 配对合并；市场、事件/新闻和 Funding 作为做市策略的支撑能力保留。
+
+判断仓库当前真实状态时，优先阅读 [AGENTS.md](./AGENTS.md) 和 [模块文档索引](./doc/modules/README.md)。`doc/polyedge-*.md` 中的早期设计与计划仅作历史背景，不是当前能力清单。
 
 ## 当前状态
 
-- 前端控制台页面：`dashboard / markets / events / rewards / rewards/fair-value / funding / settings`。未落地的 approvals 页面和 `/replay` 不再作为前端入口暴露。
-- 前端只走真实 Rust API，不再提供 mock 数据模式；所有文案走 `@/lib/i18n/dictionaries` 中文字典。
-- 后端 Rust workspace 根为 `packages/backend/Cargo.toml`：服务 crate、worker/replay 兼容 app、共享 crates、迁移和初始化 SQL 均位于 `packages/backend/`，其中 API 在 `packages/backend/api`，orderbook 服务在 `packages/backend/order`。
-- 数据库当前只保留空库部署基线；`packages/backend/init.sql` 和 `packages/backend/migrations/0001_initial_schema.sql` 表达同一份当前 schema，运行时通过该 baseline 做 `sqlx` 初始化/校验。
-- 市场同步、rewards catalog 同步和 orderbook WS/poll 缓存由独立 `polyedge-orderbook` 服务负责。
-- API 只读数据库或 orderbook 服务，不在 handler 中直接请求 Polymarket。Rewards 控制操作通过数据库命令队列交给 worker/runtime 执行。
-- Rewards bot 仅支持 live 实盘路径：确定性动态档位、交易 edge gate、库存偏斜、post-only BUY、风险分类撤单、confirmed fill 对账、成本目标/受控损失 floor 的退出 SELL、BalancedMerge、账户同步和异步 AI/info-risk 风险缓存。LP rewards 只作为通过交易 edge 后的次级排序收益。
-- 历史钱包类和独立研究模块已从前后端、worker、数据库和模块文档中移除；项目当前聚焦 Polymarket 做市商策略，LP rewards 仅作为次级收益信号。
-- 当前控制台会话只保留 `off`，默认内网部署不是生产级真实会话/权限体系。
+- 控制台主路由为 `dashboard / markets / events / rewards / rewards/fair-value / funding / settings`；另有 `/login`、`/unauthorized` 支撑路由，但仓库尚未提供生产级身份签发和 session 获取链路。
+- 前端使用 Next.js 16、React 19、Tailwind CSS v4 和系统字体，只访问真实 Rust API，不含 mock-data 模式。
+- Rust workspace 位于 `packages/backend/`，包含 `polyedge-api`、`polyedge-orderbook`、`polyedge-worker`、`polyedge-replay` 和共享 crates。
+- 数据库采用单一干净部署基线：`packages/backend/migrations/0001_initial_schema.sql` 与 `packages/backend/init.sql` 表达当前 schema；旧部署不做历史表兼容迁移。
+- `polyedge-orderbook` 独立负责 Gamma market、rewards catalog、reward candles、CLOB WS/poll 盘口缓存与 token registry。
+- API handler 和策略代码只读 Postgres 或 orderbook service，不在请求路径直接调用 Polymarket 外部 API。
+- Rewards bot 仅支持 live 路径；默认生产 drill 配置保持交易关闭，并以 1 个市场、最多 4 个开放订单和严格资金上限开始校准。
+- 历史钱包、Copy-Trading 和独立研究模块已从路由、API、worker、服务、store、DTO、schema 和模块文档中移除。
 
 ## 仓库结构
 
 ```text
 PolyEdge/
-├── AGENTS.md                  # 当前仓库状态快照和维护规则
+├── AGENTS.md                  # 当前仓库状态快照与维护规则
 ├── README.md                  # 项目入口说明
 ├── doc/
-│   ├── modules/               # 当前模块文档，开发时优先查阅
-│   └── polyedge-*.md          # 历史设计、契约、计划和背景文档
-├── deploy/                    # Docker Compose、Dockerfile 和 env 模板
-├── scripts/                   # 构建、部署、冒烟脚本
-├── bin/                       # 部署镜像复制的预构建后端二进制
+│   ├── modules/               # 当前模块文档，开发与排障优先阅读
+│   ├── designs/               # 当前 Rewards 设计基线
+│   └── polyedge-*.md          # 历史设计、契约和实施计划
+├── deploy/                    # Compose、Dockerfile 与 env 模板
+├── scripts/                   # 构建、部署和冒烟脚本
+├── bin/                       # 部署镜像使用的预构建后端二进制
 └── packages/
-    ├── backend/               # Rust 后端：api、order、worker/replay、共享 crates、迁移和 init.sql
-    │   ├── Cargo.toml         # Rust workspace 根
-    │   ├── Cargo.lock         # Rust workspace lockfile
-    │   ├── rust-toolchain.toml
-    │   ├── api/               # polyedge-api 服务 crate
-    │   └── order/             # polyedge-orderbook 服务 crate
-    └── front/                 # Next.js 16 + React 19 控制台
+    ├── backend/               # Rust workspace、迁移与 init.sql
+    └── front/                 # Next.js 控制台
 ```
 
-代码规范：
+代码与文档规范：
 
-- 前端见 [packages/front/AGENTS.md](./packages/front/AGENTS.md)
-- 后端见 [packages/backend/AGENTS.md](./packages/backend/AGENTS.md)
-- 模块文档索引见 [doc/modules/README.md](./doc/modules/README.md)
+- [后端规范](./packages/backend/AGENTS.md)
+- [前端规范](./packages/front/AGENTS.md)
+- [模块文档索引](./doc/modules/README.md)
 
 ## 本地运行
+
+后端：
+
+```bash
+cd packages/backend
+cargo fmt --all
+cargo check --workspace --tests
+cargo test --workspace
+cargo run -p polyedge-api
+cargo run -p polyedge-orderbook
+cargo run -p polyedge-worker
+```
+
+常用 worker 命令：
+
+```bash
+cargo run -p polyedge-worker -- ingest-news-once
+cargo run -p polyedge-worker -- poll-news
+cargo run -p polyedge-worker -- promote-news-events
+cargo run -p polyedge-worker -- run-database-maintenance-once
+cargo run -p polyedge-worker -- scan-rewards-once
+cargo run -p polyedge-worker -- poll-reward-bot
+cargo run -p polyedge-worker -- poll-reward-action-executor
+cargo run -p polyedge-worker -- scan-reward-info-risks-once
+cargo run -p polyedge-worker -- poll-reward-info-risks
+cargo run -p polyedge-worker -- drain-execution-queue
+cargo run -p polyedge-worker -- poll-polymarket-order-statuses
+cargo run -p polyedge-worker -- reconcile-polymarket-fills
+cargo run -p polyedge-worker -- consume-polymarket-user-events
+```
+
+Rewards 审计与确定性回放：
+
+```bash
+cargo run -p polyedge-replay -- --run-id <RUN_ID>
+cargo run -p polyedge-replay -- --fixture <FIXTURE.json>
+cargo run -p polyedge-replay -- --stored-run-id <RUN_ID>
+```
 
 前端：
 
@@ -56,34 +91,7 @@ yarn lint
 yarn build
 ```
 
-`NEXT_PUBLIC_POLYEDGE_API_BASE_URL` 必须指向 Rust API，例如 `http://127.0.0.1:38001`。静态部署时该值在 build 阶段写入前端 bundle。
-
-后端：
-
-```bash
-cd packages/backend
-cargo check --workspace
-cargo test --workspace
-cargo run -p polyedge-api
-cargo run -p polyedge-orderbook
-cargo run -p polyedge-worker
-```
-
-常用 worker 维护/调试子命令：
-
-```bash
-cargo run -p polyedge-worker -- ingest-news-once
-cargo run -p polyedge-worker -- poll-news
-cargo run -p polyedge-worker -- promote-news-events
-cargo run -p polyedge-worker -- scan-rewards-once
-cargo run -p polyedge-worker -- poll-reward-bot
-cargo run -p polyedge-worker -- scan-reward-info-risks-once
-cargo run -p polyedge-worker -- poll-reward-info-risks
-cargo run -p polyedge-worker -- drain-execution-queue
-cargo run -p polyedge-worker -- poll-polymarket-order-statuses
-cargo run -p polyedge-worker -- reconcile-polymarket-fills
-cargo run -p polyedge-worker -- consume-polymarket-user-events
-```
+`NEXT_PUBLIC_POLYEDGE_API_BASE_URL` 必须指向 Rust API；静态部署时该值在构建阶段写入前端 bundle。
 
 默认端口：
 
@@ -91,34 +99,39 @@ cargo run -p polyedge-worker -- consume-polymarket-user-events
 - Orderbook：`0.0.0.0:38002`
 - Front Docker runtime：宿主机默认 `33002 -> container:80`
 
-默认生产排查环境：
+默认生产排查地址：
 
-- Frontend Rewards 工作台：`http://192.168.31.5:33002/rewards`
-- API 服务：`http://100.87.45.72:38001`
-- Orderbook 服务：`http://100.87.45.72:38002`
-
-除非另行说明，线上问题排查默认使用这组地址；前端静态构建的 `NEXT_PUBLIC_POLYEDGE_API_BASE_URL` 应指向 `http://100.87.45.72:38001`。
+- Frontend Rewards：`http://192.168.31.5:33002/rewards`
+- API：`http://100.87.45.72:38001`
+- Orderbook：`http://100.87.45.72:38002`
 
 ## 数据获取架构
 
-外部市场数据必须由后台 producer 获取并写入数据库或缓存，策略、页面和 API handler 只读这些存储。
+所有外部 API 数据必须由后台 producer 获取并写入 Postgres 或进程内缓存。策略、页面和 API handler 只能读取这些 store。
 
 | 数据 | Producer | Source | Store |
 |---|---|---|---|
-| 通用市场 | `polyedge-orderbook` Gamma full/priority sync | Gamma `/markets` + `/markets?condition_ids=...` | Postgres `markets` |
-| Rewards markets | `polyedge-orderbook` rewards catalog sync | CLOB `/rewards/markets/current` | Postgres `reward_markets` |
-| Order books | `polyedge-orderbook` WS + poll | CLOB WS + `/books` batch，回退 `/book` | orderbook 服务进程内 `InMemoryOrderbookCache` |
-| Rewards 账户状态 | worker rewards loop | 认证 CLOB / Data API / Polygon RPC | Postgres rewards tables |
+| 通用市场 | `polyedge-orderbook` Gamma full/priority sync | Gamma `/markets` | `markets` |
+| Rewards 市场 | `polyedge-orderbook` catalog sync | CLOB `/rewards/markets/current` | `reward_markets` |
+| Order books | `polyedge-orderbook` WS + reconcile poll | CLOB WS、`/books`，回退 `/book` | `InMemoryOrderbookCache` |
+| Rewards candles | `polyedge-orderbook` history sync | CLOB `/prices-history` | `reward_market_candles` |
+| 账户、订单、成交、持仓 | `polyedge-worker` rewards loop | 认证 CLOB、Data API fallback、Polygon RPC | Rewards Postgres tables |
+| Fair value | `polyedge-worker` rewards tick | orderbook service + 本地历史 | `reward_fair_values` / history |
 
-关键约束：
-
-- API handler、前端 loader 和策略代码不得直接调用 Polymarket Gamma/CLOB/Data API。
-- Orderbook 写接口使用 `POLYEDGE_ORDERBOOK__WRITE_TOKEN`，读盘口接口应放在可信内网。
-- Rewards worker 通过 orderbook HTTP batch 和内部 `/orderbook/stream` 读取盘口，本地 cache 缺失时才 bootstrap。
+Orderbook subscription 由 registry 聚合 `rewards_active`、`exec_orders`、`rewards_eligible`、`rewards_candidates`，并受 token 与 WS connection 上限约束。`observed_at` 表示盘口内容版本，`confirmed_at` 表示服务最近通过 WS/poll/ingest 确认过该盘口；Rewards 新挂单和撤单的 freshness 判断使用 `confirmed_at`。
 
 ## Rewards Bot
 
-Rewards bot 只从 `reward_markets` 和 `markets` 读取候选，硬过滤非 open/tradable、高歧义、低流动性、低 24h 成交量、临近结算、Gamma spread 过宽、数据过期/异常超前、非唯一 YES/NO token 的市场。通过门槛后先按交易 edge、退出能力、盘口稳定性、竞争和风险形成 maker 资金优先级；LP 奖励只保留受限的 reward-density 次级权重。
+Rewards 计划先经过市场可交易性、catalog 流动性/成交量、事件窗口、盘口 freshness/结构、fair-value edge、退出深度、稳定性和资金风险门槛，再按 `selection_score` 分配资本。LP rewards 只以受限的 reward-density 次级权重参与排序，不能覆盖交易 edge 或风险门槛。
+
+关键行为：
+
+- Standard maker 从配置的 bid rank 开始，向更深档位搜索第一个满足 post-only 和 robust edge 的报价。
+- Fair value 结合 YES/NO midpoint parity、microprice imbalance、历史、动态不确定性和可选 AI edge buffer。
+- 下单 sizing 同时受 `maker_market_budget_usd`、钱包可用余额、per-outcome inventory、全局潜在敞口和 provider multiplier 约束；resting BUY 计入并发成交风险。
+- AI advisory 只做慢速结构性风险审阅；info-risk 的取消动作必须满足可信来源、时间归因和置信度规则，provider 自报证据默认不可信。
+- 成交后 standard profile 以成本/markup 目标退出，必要时受 `maker_max_exit_loss_cents` 控制 flatten floor；BalancedMerge 是独立 profile，链上广播使用 fail-closed fence。
+- Full tick 记录 run/decision/action/order-transition ledger，并保存有大小与敏感字段保护的 replay fixture；Postgres durable action executor 对计划动作使用 lease、owner fence 和 venue-first reconciliation。
 
 启用 live worker 至少需要：
 
@@ -126,50 +139,29 @@ Rewards bot 只从 `reward_markets` 和 `markets` 读取候选，硬过滤非 op
 POLYEDGE_REWARDS__ENABLED=true
 POLYEDGE_WORKER__POLL_REWARD_BOT=true
 POLYEDGE_ORDERBOOK__SERVICE_URL=http://127.0.0.1:38002
+POLYEDGE_ORDERBOOK__WRITE_TOKEN=<shared-token>
 ```
 
-要真实下单，还需要配置 Polymarket 凭证、签名类型、资金钱包和正在运行的 `polyedge-orderbook`。信息风险异步扫描另外需要：
+真实下单还需要完整 Polymarket 凭证、资金钱包、Postgres 和正在运行的 orderbook service。独立异步 info-risk 扫描仅在未由 AI advisory 驱动 combined provider refresh 时需要 `POLYEDGE_WORKER__POLL_REWARD_INFO_RISKS=true`。
 
-```bash
-POLYEDGE_WORKER__POLL_REWARD_INFO_RISKS=true
-```
+## API 安全边界
 
-资金模型：本系统未成交 maker 买单不按全局资金硬锁，不同 condition 可复用资金；同一 condition 的已有 managed BUY 剩余 notional 与待补腿必须 fit 当前可用资金。账户级外部 BUY notional 中无法归属到本系统 managed order 的部分会被保守扣除。
-
-主要缺口仍是账户范围外开放订单明细同步和奖励结算对账。
-
-## Copy-Trading
-
-Copy-trading 当前是只读跟踪和分析子系统：
-
-- 管理多个 Polymarket 钱包地址
-- 通过 Data API 扫描源钱包成交
-- 记录 source trades 和事件日志
-- 统计钱包胜率、ROI、成交量等分析指标
-- 前端只保留启停跟踪、钱包管理和 Analyze
-
-启用持续扫描：
-
-```bash
-POLYEDGE_COPYTRADE__ENABLED=true
-POLYEDGE_WORKER__POLL_COPYTRADE=true
-```
-
-旧 Run / Cancel / Reset 模拟交易语义已移除；兼容命令在 worker 中是 no-op 或仅用于历史控制队列兼容。
+- 浏览器 CORS 使用 `POLYEDGE_CORS__ALLOWED_ORIGINS` 精确 origin；production 禁止通配符、带 path/query 的 origin 和空 allowlist。
+- 当前静态前端没有生产级登录/session/Bearer token 获取链路。部署模板因此使用 `POLYEDGE_AUTH__DISABLED=true`，并要求 VPN、私网 ACL 或可信反向代理边界；production 还必须显式设置 `POLYEDGE_AUTH__ALLOW_INSECURE_PRIVATE_DEPLOY=true`。
+- 开启鉴权时，production 需要非空 Ed25519 `POLYEDGE_AUTH__KEYS_JSON`；危险 Rewards 操作使用独立 step-up scopes。签名密钥和长期 JWT 不得进入前端 public env 或 bundle。
 
 ## Docker 部署
 
-部署镜像从 `bin/` 复制预构建后端二进制，服务器部署不编译 Rust。构建机/CI 先执行：
+部署镜像从 `bin/` 复制预构建的 `polyedge-api` 和 `polyedge-orderbook`，服务器部署不编译 Rust。构建机或 CI 先运行：
 
 ```bash
 ./scripts/build-backend-bin.sh
-git add bin/polyedge-api bin/polyedge-orderbook
 ```
 
-Compose 当前编排三个服务：
+Compose 编排三个服务：
 
-- `polyedge-orderbook`：独立市场同步、盘口 WS/poll、HTTP API
-- `polyedge-api`：HTTP API，并在同一进程中内嵌 worker runtime；加载 `.env.api`
+- `polyedge-orderbook`：市场同步、candles、盘口 WS/poll、registry 与 HTTP API
+- `polyedge-api`：HTTP API，并在同一进程内嵌 worker runtime
 - `polyedge-front`：Nginx 静态站点
 
 部署入口：
@@ -178,29 +170,28 @@ Compose 当前编排三个服务：
 cp deploy/.env.api.example deploy/.env.api
 cp deploy/.env.orderbook.example deploy/.env.orderbook
 cp deploy/.env.front.example deploy/.env.front
-# 在 .env.api 和 .env.orderbook 填入 PostgreSQL URL，并设置相同的 POLYEDGE_ORDERBOOK__WRITE_TOKEN
-# 在 .env.api 设置 POLYEDGE_ORDERBOOK__SERVICE_URL，在 .env.front 设置 NEXT_PUBLIC_POLYEDGE_API_BASE_URL
+# 填写 Postgres、同一 POLYEDGE_ORDERBOOK__WRITE_TOKEN、service URL、前端 API URL 和凭证
 ./scripts/deploy.sh all
 ```
 
-部署侧只有三个服务级 env：`deploy/.env.api`、`deploy/.env.orderbook`、`deploy/.env.front`。同一 Compose 项目中 `POLYEDGE_ORDERBOOK__SERVICE_URL` 通常是 `http://polyedge-orderbook:38002`；跨服务器部署时使用 orderbook 服务器实际地址，当前默认生产排查地址是 `http://100.87.45.72:38002`。`deploy/.env.front` 的 `NEXT_PUBLIC_POLYEDGE_API_BASE_URL` 当前默认生产值是 `http://100.87.45.72:38001`。`deploy/.env.api.example` 会显式关闭各 worker 后台任务，需要运行时再改为 `true`。
+同一 Compose 项目内 `POLYEDGE_ORDERBOOK__SERVICE_URL` 通常使用 `http://polyedge-orderbook:38002`。`deploy/.env.api.example` 默认关闭 rewards 和大多数会产生外部副作用的 worker 任务，启用前必须完成凭证、资金、风险配置和小额 drill。
 
-## 主要缺口
+## 已知缺口
 
-- 生产级真实会话体系未完成；当前前端只保留 `off`。
-- 内部 JWT 签名 helper 已有代码路径，但当前不会从 `off` 签发可信令牌。
-- 前端已移除 SSE 实时流，页面通过 REST API 初始加载。
-- 新闻源可以抓取、去重、提升为 events/evidences，但尚未自动生成 signals。
-- Rewards 仍缺账户范围外开放订单明细同步和奖励结算对账。
-- Deposit Wallet 生命周期管理未实现，包括 relayer 建钱包、pUSD 入金/approval 批处理。
+- 生产级真实 session/auth UX 尚未完成；内部部署通常在受控网络边界内关闭 API 鉴权。
+- Polymarket 私有任务需要真实凭证、已注资账户、小额实盘演练和正式运维 runbook 后才能投入生产。
+- 控制台订单视图聚焦 PolyEdge managed orders，尚未完整展示账户范围内由其他客户端创建的开放订单。
+- Rewards replay 已支持确定性决策重跑和 expected-plan 对比，但尚未模拟 fill risk、exit cost 和 cancel churn。
+- 旧 arbitrage 表/迁移仍保留在当前 baseline 的必要部分，但旧 radar/signals/risk 控制台流程已不再暴露。
+- Deposit Wallet 的 relayer 建钱包、pUSD 包装/入金和 approval 批处理仍需外部运维流程。
+- 部分后端 Rewards/Orderbook 文件和前端 Rewards 配置面板仍超过仓库文件长度硬上限，存量清单见 package 级 `AGENTS.md`。
 
 ## 推荐阅读顺序
 
 1. [AGENTS.md](./AGENTS.md)
 2. [doc/modules/README.md](./doc/modules/README.md)
-3. [doc/modules/backend/worker-app.md](./doc/modules/backend/worker-app.md)
-4. [doc/modules/backend/orderbook-app.md](./doc/modules/backend/orderbook-app.md)
-5. [doc/modules/frontend/data-layer.md](./doc/modules/frontend/data-layer.md)
-6. [doc/modules/infra/deployment.md](./doc/modules/infra/deployment.md)
-
-`README.md` 是入口说明，`AGENTS.md` 是当前状态快照。如果两者冲突，以 `AGENTS.md` 为准并修正 README。
+3. [Rewards Market Maker V2](./doc/designs/rewards-market-maker-v2.md)
+4. [后端 worker 模块](./doc/modules/backend/worker-app.md)
+5. [Orderbook 模块](./doc/modules/backend/orderbook-app.md)
+6. [Rewards 前端模块](./doc/modules/frontend/rewards.md)
+7. [部署模块](./doc/modules/infra/deployment.md)

@@ -95,7 +95,7 @@ User mutation
 - 顶部概览展示 live 启停/运行状态、实时可报价计划、最终可挂计划、候选计划、已拦截计划、等待 provider、资金/风险预算、live 盘口验证、AI/info-risk 拦截、钱包余额和每日 LLM 统计；`eligible_markets` / `ready_quote_markets` 当前后端语义实际为 quote-plan count，前端不再误称为 condition 市场数。
 - 操作中心集中 Run / Save / Cancel / Reset，并明确这些命令可能提交或取消 Polymarket live 订单。
 - 配置面板只暴露当前仍生效的参数；旧 `per_market_usd`、`quote_size_usd`、AI strategy hint 和成交后整组撤单开关不再出现，统一为单市场挂买预算、Provider 风险动作和持续库存管理。
-- 空库 Postgres 返回保守 live-drill profile：默认不启用交易，限制 2 个市场、6 个开放订单、单市场 `$10` 和全局 `$25`，BalancedMerge/自动 merge/adaptive exit cancel-replace 关闭。前端只展示和保存后端配置，不维护另一份硬编码默认值。
+- 空库 Postgres 返回保守 production live-drill profile：默认不启用交易，集中在 1 个市场 / 4 个开放订单，单市场预算 `$20`、单 outcome `$12`、全局潜在暴露 `$20`，要求 5 秒内盘口、`$10k` 流动性、`$5k` 24h 成交量、`$150` 机会退出深度、`$50` live 最低深度和 1 美分 effective edge。前端只展示和保存后端配置，不维护另一份硬编码默认值。
 - 主策略页 header 提供 Fair value 入口；fair-value 页单独显示 tracked/pass/blocked/avg confidence 指标和 quote plan 估值审计表。
 - Fair-value 页刷新失败会保留旧数据并显示可操作错误；统计明确标记为当前已加载页，不再把最多 100 条分页结果误称为全局统计。
 - 主策略页 Runs tab 展示 strategy run ledger 与 Decision Analytics；它用于审计、参数校准和演练排障，不参与 live 下单决策。

@@ -69,7 +69,7 @@ AI 不输出价格、bid rank、单双边方向或绝对资金上限。输出：
 - `action`: `allow | reduce | stop_new | cancel_yes | cancel_no | cancel_all`
 - 既有 risk level/type/directional risk、event time、confidence、summary 和 sources
 
-只有置信度达标且具备 24 小时内可归因来源的 cancel 动作才能撤已有订单；breaking-news cancel 需要两个独立来源。普通预测不确定性、无来源猜测和 provider 故障只允许 `reduce` / `stop_new`。
+只有置信度达标、具备 24 小时内可归因来源，且来源已经过代码拥有的 evidence verification/promotion pipeline 验证的 cancel 动作才能撤已有订单；breaking-news cancel 需要两个独立来源。LLM 自报 URL/时间戳默认不可信，未获验证的 cancel 会降级为 stop-new。普通预测不确定性、无来源猜测和 provider 故障只允许 `reduce` / `stop_new`。
 `cancel_yes` / `cancel_no` 只删除并撤销命中的 outcome，互补侧保留完整做市预算；只有 `stop_new` / `cancel_all` 把 condition 新单预算归零。
 `directional_risk` 定义为“哪个 outcome 的 resting BUY 会遭受逆向选择”，必须与定向 cancel 一致，不表示预测赢家：证据提高 YES 概率时通常是 NO BUY 不安全，应为 `cancel_no`；反之为 `cancel_yes`。
 
@@ -99,6 +99,7 @@ AI 不输出价格、bid rank、单双边方向或绝对资金上限。输出：
 - quote plan / strategy decision 完整 JSON 保留 provider 动作和 reward-adjusted edge；摘要列使用 `ai_action` / `info_risk_action`，blocker 独立标记 provider size、maker budget 与 inventory headroom。
 - 配置仍使用 `reward_bot_config` key-value；新增 V2 配置不增加配置表列。
 - Durable BUY 在真实提交前重新读取当前 kill switch，读取失败也禁止下单。控制命令、外部事件和幂等请求均使用短租约与 owner/version fencing；过期执行者不能提交 terminal 状态。
+- Postgres-only durable action executor 随 rewards poll loop 启动，和 live tick 共享 account advisory lock；它负责受支持的 merge-intent create、cancel/cancel-replace、首次 PlaceBuy、match-first exit SELL，以及仅对已有 tx hash 的 ExecuteMerge 做 receipt 对账。首次链上 merge 广播仍只在 fresh synchronous tick 中执行。
 - 任一 outcome 的 orderbook 更新会以 condition 为单位刷新 YES/NO 双边盘口、重算 fair value，并检查该 condition 全部 resting BUY。
 - BalancedMerge 在广播前原子进入 `broadcasting` 状态；缺少已持久化 tx hash 的 broadcasting intent 只能人工/链上对账，禁止自动重播。`completed` intent 不再永久抵扣未来配对库存。
 

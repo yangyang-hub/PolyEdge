@@ -1,6 +1,6 @@
 # PolyEdge Polymarket 连接器设计
 
-> **状态（2026-06-14）**：本文是 Polymarket 连接器设计背景。当前连接器实现、orderbook 服务职责和 live CLOB 状态以 [../AGENTS.md](../AGENTS.md)、[modules/backend/connectors.md](modules/backend/connectors.md) 和 [modules/backend/orderbook-app.md](modules/backend/orderbook-app.md) 为准。
+> **状态（2026-07-12）**：本文是 Polymarket 连接器设计背景。当前 Gamma/rewards catalog/orderbook/price-history 外部读取由独立 orderbook producer 负责；worker 的 authenticated CLOB、Data API fallback 和 Polygon RPC 仅服务 rewards account/order reconciliation、Funding 与 BalancedMerge。策略/API 不在请求路径直连外部市场数据；实现以 [../AGENTS.md](../AGENTS.md)、[modules/backend/connectors.md](modules/backend/connectors.md) 和 [modules/backend/orderbook-app.md](modules/backend/orderbook-app.md) 为准。
 
 ## 1. 文档目标
 

@@ -1,6 +1,6 @@
 # domain（领域层）
 
-最后更新：2026-07-11
+最后更新：2026-07-12
 
 ## 概述
 
@@ -20,8 +20,8 @@
 | `packages/backend/crates/domain/src/lib.rs` | 模块入口，通过 `include!()` 内联所有子文件 |
 | `domain/error.rs` | `AppError`、`ErrorKind`、`Result<T>` 类型别名、辅助函数 |
 | `domain/numeric.rs` | 数值 newtype：`Probability`、`Edge`、`ExposureRatio`、`Quantity`、`UsdAmount`、`SignedUsdAmount` |
-| `domain/market_enums.rs` | 18 个业务枚举（市场状态、订单状态、信号生命周期等） |
-| `domain/auth.rs` | 认证原语类型 |
+| `domain/market_enums.rs` | 16 个市场、事件、信号、执行和排序枚举 |
+| `domain/auth.rs` | `UserRole`、`StepUpScope`、`AuditResult`、`IdempotencyStatus` |
 | `domain/tests.rs` | 单元测试 |
 
 所有子文件通过 `include!()` 内联到 crate 根命名空间，外部直接使用 `polyedge_domain::Xxx`。
@@ -48,11 +48,11 @@
 
 共同模式：`new()` 带范围校验、`value()` 返回内部 `Decimal`、`api_string()` 返回格式化字符串、手动 `Serialize`/`Deserialize`/`Display` 实现。
 
-### 业务枚举（market_enums.rs，~605 行）
+### 业务枚举（market_enums.rs）
 
 | 枚举 | 变体数 | 用途 |
 |---|---|---|
-| `SystemMode` | 5 | 系统运行模式（Research/PaperTrade/ManualConfirm/LiveAuto/KillSwitchLocked） |
+| `SystemMode` | 2 | 当前运行模式（LiveAuto/KillSwitchLocked）；旧 `research`/`paper_trade`/`manual_confirm` 输入仅作为 `live_auto` 兼容别名解析 |
 | `MarketStatus` | 3 | 市场状态（Open/Closed/Resolved） |
 | `OrderStatus` | 8 | 订单生命周期（New→Submitted→Open→PartiallyFilled→Filled/Canceled/Expired/Rejected） |
 | `SignalLifecycleState` | 7 | 信号生命周期（New/Active/Weakened/Executed/Invalidated/Reversed/Expired） |
@@ -68,8 +68,10 @@
 | `TimeHorizon` | 3 | 时间范围 |
 | `MarketSortField` | 2 | 排序字段 |
 | `SortOrder` | 2 | 排序方向 |
-| `UserRole` | — | 用户角色 |
-| `StepUpScope` | 13 | 提权范围，含信号执行、订单取消、系统模式/熔断、风险阈值、funding 转账，以及 Rewards run/live enable/merge auto execute/reset |
+| `UserRole` | 4 | Viewer/Operator/RiskAdmin/Admin |
+| `StepUpScope` | 13 | 提权范围，含信号执行、订单取消、系统模式/熔断、风险阈值、Funding 转账，以及 Rewards run/live enable/merge auto execute/reset |
+| `AuditResult` | 4 | accepted/succeeded/rejected/failed 审计结果 |
+| `IdempotencyStatus` | 3 | started/completed/failed 幂等请求状态 |
 
 所有枚举使用 `#[serde(rename_all = "snake_case")]`，大多数实现 `as_str()` 和 `FromStr`。
 
@@ -80,7 +82,8 @@
 
 ## 当前状态
 
-- 完全实现，作为系统通用语言的基础
+- 当前活动运行模式已收敛为 `live_auto` 与 `kill_switch_locked`；历史模式字符串只用于兼容读取，不代表仍有 paper/research runtime
+- 作为系统通用语言的基础，数值 newtype、执行/市场枚举和认证原语均由上层 crate 直接复用
 - 所有类型在全部上层 crate 中广泛使用
 - `StepUpScope` 对 Rewards 危险操作使用四个最小权限 wire value：`rewards_run_once`、`rewards_live_trading_enable`、`rewards_merge_auto_execute`、`rewards_state_reset`；保护性 cancel-all 不要求额外 scope
 

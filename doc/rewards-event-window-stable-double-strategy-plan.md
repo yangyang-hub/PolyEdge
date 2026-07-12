@@ -1,10 +1,19 @@
 # Rewards 事件窗口与稳定双边策略设计方案
 
-最后更新：2026-07-11
+最后更新：2026-07-12
 
 > 历史设计记录：事件窗口和 BalancedMerge 已继续演进；AI 盘口 payload、成交后 sibling cancel 等旧描述已被 [Rewards Market Maker V2](designs/rewards-market-maker-v2.md) 取代，不代表当前行为。
 
 历史状态快照：本文撰写阶段已完成核心事件窗口，但当时尚未完成互补持仓合并执行链路。该描述不再代表仓库当前能力；BalancedMerge 与当前缺口请以 `AGENTS.md` 和 V2 设计为准。
+
+## 2026-07-12 落地结果
+
+- 事件窗口 gate 已进入 planner、live placement 和 condition-scoped orderbook event cancel；reviewed Gamma 日期可从 Medium confidence 参与判断。
+- “stable double” 没有按本文的独立 mode 落地，后续收敛为标准 market maker 的稳定性/退出评分，以及独立固定档位的 `BalancedMerge` strategy profile。
+- 成交后 sibling blanket cancel 已移除；互补 BUY 按自身 edge、库存和显式风险动作独立管理。
+- BalancedMerge merge intent、`broadcasting` fence、tx-hash fencing 和 receipt reconciliation 已落地；缺少已持久化 tx hash 的 broadcasting intent 禁止自动重播。
+
+以下阶段、默认值和“当前”措辞均是历史快照，不能用作现行配置或能力清单。
 
 ## 背景
 
@@ -419,11 +428,11 @@ stable_double_metrics
 - 表格能解释每个市场为何通过/不通过稳定双边。
 - observe 不改变当前订单提交数量和方向。
 
-### Phase 5：稳定双边 Enforce
+### Phase 5：稳定双边 Enforce（历史计划，已由 V2 路径取代）
 
 - 已部分完成：统一 `opportunity_metrics` 已参与 score/eligibility，事件窗口已作为新增 BUY/撤 BUY 前置硬 gate，默认买一和安全边际沿用现有 live materializer。
 - 未完成：独立 stable-double enforce mode；当前仍通过 `quote_mode=double|auto`、`selection_mode`、机会评分和 live materializer 组合实现，不提供单独稳定双边策略 profile。
-- 当前 BUY 成交后仍沿用 sibling cancel + SELL exit。
+- 当时 BUY 成交后仍沿用 sibling cancel + SELL exit；该语义现已移除。
 
 验收：
 
@@ -431,7 +440,7 @@ stable_double_metrics
 - 任一稳定性、事件窗口、退出深度或 provider gate 失败都会 fail closed。
 - 小额实盘 smoke 后再提高额度。
 
-### Phase 6：互补持仓合并 / Redeem
+### Phase 6：互补持仓合并 / Redeem（后续以 BalancedMerge 形态落地）
 
 - 设计并实现 CTF merge/redeem connector。
 - 增加 merge intent、状态机、幂等、对账和 UI。
@@ -442,6 +451,8 @@ stable_double_metrics
 - 能在测试账户小额完成合并并对账。
 - 失败不会重复提交或破坏 positions/account state。
 - merge/redeem 关闭前不得在 UI 中描述为已实现。
+
+后续结果：BalancedMerge 已实现 guarded merge intent、广播 fencing 和 receipt 对账，但仍需真实凭证、资金、gas/approval 准备和小额 live drill；这不表示任意市场或任意互补持仓都会自动合并。
 
 ## 测试计划
 
@@ -461,8 +472,8 @@ stable_double_metrics
 | 外部赛程源延迟或错误 | 保留 source/confidence、人工 override、stale 检查 |
 | 事件延期导致过早停挂或误恢复 | Producer 支持更新；post-event cooldown；info-risk 辅助提示 |
 | 稳定双边被低样本盘口误判 | 样本不足 fail closed；要求 top-of-book flip 和 midpoint range 同时达标 |
-| 双边成交后无合并能力 | Phase 1-5 沿用 sibling cancel + SELL exit，不承诺合并 |
-| 合并链路链上失败 | Phase 6 增加 intent 状态机、幂等和对账后再 live |
+| 双边成交后无合并能力 | 历史风险；当前由独立 BalancedMerge profile 和 merge intent 处理，不恢复 blanket sibling cancel |
+| 合并链路链上失败 | 已增加 broadcasting/tx-hash fence 和 receipt 对账；无 hash 的未知广播状态 fail closed |
 
 ## 推荐优先级
 
@@ -470,4 +481,4 @@ stable_double_metrics
 
 第二优先级是 Phase 4-5，将现有机会评分和盘口历史收敛成可解释的稳定双边 gate。
 
-Phase 6 应最后做，并且必须通过小额真实账户验证后再开启。
+历史推荐是最后实施 Phase 6；当前代码能力已落地，但小额真实账户验证和 ops runbook 仍是上线前要求。

@@ -1,6 +1,6 @@
 # PolyEdge 前端原型设计文档
 
-> **状态（2026-06-14）**：本文是前端原型设计背景，包含已移除或未落地的 approvals、research/replay 和早期页面规划。当前控制台页面以 [../AGENTS.md](../AGENTS.md)、[../README.md](../README.md) 和 [modules/frontend/](modules/frontend/) 为准。
+> **状态（2026-07-12）**：本文是前端原型设计背景，包含已移除或未落地的 signals/approvals/risk、独立 research/replay 和早期页面规划。当前控制台已收敛为 dashboard/markets/events/rewards/rewards-fair-value/funding/settings；页面与交互状态以 [../AGENTS.md](../AGENTS.md) 和 [modules/frontend/](modules/frontend/) 为准。
 
 ## 1. 文档目标
 

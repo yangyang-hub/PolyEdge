@@ -1,6 +1,6 @@
 # PolyEdge 后端实现计划
 
-> **状态（2026-06-14）**：本文是早期实施计划，开头所述“仓库基本还是设计文档阶段”等内容已经过时。当前实现以 [../AGENTS.md](../AGENTS.md)、[../README.md](../README.md) 和 [modules/backend/](modules/backend/) 为准。
+> **状态（2026-07-12）**：本文是从零搭建 Rust 后端的历史实施计划，正文中的空仓库、research-first、SSE 和待建 workspace 描述仅代表当时起点。当前 API、worker、orderbook、replay、单 baseline schema 和 rewards live 闭环均已存在；实时实现以 [../AGENTS.md](../AGENTS.md) 和 [modules/backend/](modules/backend/) 为准。
 
 ## 1. 当前起点
 

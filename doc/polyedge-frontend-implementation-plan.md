@@ -1,6 +1,6 @@
 # PolyEdge 前端实现计划
 
-> **状态（2026-06-14）**：本文是早期实施计划，其中 mock/live adapter、approvals、replay 和 SSE 相关内容均为历史规划。当前前端所有页面通过 REST API 初始加载，不再使用 `EventSource`、`use-sse-stream.ts`、`console-realtime-provider.tsx` 或 `use-live-status.ts`。当前状态以 [../AGENTS.md](../AGENTS.md)、[../README.md](../README.md) 和 [modules/frontend/](modules/frontend/) 为准。
+> **状态（2026-07-12）**：本文是早期实施计划，其中 mock/live adapter、approvals、独立 replay 页面和 SSE 相关内容均为历史规划。当前数据层位于 `src/lib/api/*`，页面装配位于 `features/*/loaders/*`，所有页面读取真实 Rust REST API；`src/lib/server/*` 等正文路径已不存在。当前状态以 [../AGENTS.md](../AGENTS.md) 和 [modules/frontend/](modules/frontend/) 为准。
 
 ## 1. 当前起点
 

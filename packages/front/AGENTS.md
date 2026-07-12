@@ -78,3 +78,12 @@ yarn build              # 生产构建（含完整类型检查）
 ```
 
 前端无端到端运行时测试，重构交互组件后**必须人工 smoke** 对应页面（实时更新、过滤、对话框、表格渲染等）。
+
+## 现有文件长度债务（2026-07-12 快照）
+
+- `src/features/rewards/components/rewards-config-panel.tsx`（~718）已超过 600 行硬上限，后续修改应优先拆分配置分区与交互状态。
+- `src/lib/contracts/dto/rewards.ts`（~650）属于纯类型定义例外，但新增 DTO 时仍应评估继续按领域子文件拆分。
+- `src/lib/i18n/dictionaries/rewards.ts`（~569）属于已按命名空间拆分后的字典例外。
+- `src/features/rewards/components/rewards-workbench.tsx`（~516）处于软上限区间，应避免继续膨胀。
+
+行数以当前物理文件 `wc -l` 为准；完成拆分后同步刷新本节。

@@ -1,6 +1,6 @@
 # PolyEdge 设计文档
 
-> **状态（2026-06-14）**：本文是系统总体早期设计，包含目标能力和分阶段规划，不等同于当前已实现能力。当前状态以 [../AGENTS.md](../AGENTS.md)、[../README.md](../README.md) 和 [modules/](modules/README.md) 为准。
+> **状态（2026-07-12）**：本文是系统总体早期设计，事件驱动 research/signals/approval 等目标不等同于当前能力。当前产品焦点已收敛到 Polymarket rewards market maker；市场、事件/新闻与 Funding 作为支撑，旧钱包类和独立研究模块已移除。当前状态以 [../AGENTS.md](../AGENTS.md) 和 [modules/](modules/README.md) 为准。
 
 ## 1. 文档目标
 

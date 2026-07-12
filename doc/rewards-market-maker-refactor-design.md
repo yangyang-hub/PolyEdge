@@ -1,20 +1,29 @@
 # Rewards 做市商生产前重构设计
 
-最后更新：2026-07-11
+最后更新：2026-07-12
 
 > 历史阶段文档：其中旧 provider 字段和策略默认值已被 [Rewards Market Maker V2](designs/rewards-market-maker-v2.md) 取代，不代表当前实现。当前状态以 `AGENTS.md` 与模块文档为准。
 
 历史状态快照：本文记录阶段 1 至阶段 3 第一层的交付边界；其中“已实现/未实现”均指当时状态。此后 provider、做市决策、BalancedMerge 和 replay 基础继续演进，当前能力与缺口只以 `AGENTS.md`、V2 设计和 `doc/modules/*` 为准。
 
+## 2026-07-12 落地结果
+
+- `RewardStrategyInput`、`RewardDecisionEngine`、自动 replay fixture 和 `polyedge-replay --run-id/--fixture/--stored-run-id` 已落地。
+- `RewardActionPlanner` 与 Postgres-only durable executor 已落地；full tick 和有外部动作的 fast path 使用 action ledger，executor 以 account lease/owner fencing 执行受支持动作。
+- BUY/SELL 执行会先查 venue；BUY 无匹配时必须通过 fresh full last-look 与当前 kill-switch 读取，SELL 会复核库存、notional 与 maker/flatten book 语义。读取失败、歧义和未知提交均 fail closed。
+- ExecuteMerge executor 只对已有持久化 tx hash 做 receipt reconciliation；首次链上广播仍在 fresh synchronous tick 中，且必须先进入 `broadcasting` fence。
+
+因此下文“仍需 durable executor/回放工具”等表述仅是历史阶段记录。
+
 ## 背景
 
-当前 Rewards market maker 已经具备完整 live 闭环：市场数据由 `polyedge-orderbook` 同步，策略只读 Postgres 和 orderbook cache，worker 执行 fair-value gate、opportunity scoring、AI/info-risk、事件窗口、下单前 last-look、成交后退出和 BalancedMerge，并把 full tick 的 run、decision、action 和订单状态变迁写入 shadow ledger。
+本文阶段的 Rewards market maker 已经具备完整 live 闭环：市场数据由 `polyedge-orderbook` 同步，策略只读 Postgres 和 orderbook cache，worker 执行 fair-value gate、opportunity scoring、AI/info-risk、事件窗口、下单前 last-look、成交后退出和 BalancedMerge，并把 full tick 的 run、decision、action 和订单状态变迁写入当时的 shadow ledger。
 
 问题不在于缺少单个风控条件，而在于生产前还需要持续建设三类能力：
 
-- 决策可追责：阶段 1 已把 run、decision、action 和订单状态变迁串起来；阶段 3 第一层已在执行前写 planned action proposal。后续还需要把 worker side effect 执行完全改为 durable action executor 控制，而不是主要依赖现有 tick 流程。
-- 回放可校准：selection score、fair-value 和 opportunity 权重是合理启发式；阶段 1 记录了 run 版本和决策快照，阶段 2 已集中主要计划变换入口，后续还需要稳定的 replay 输入模型与回放工具。
-- 结构可维护：live tick 同时承担 snapshot 构建、外部同步、撤单、pending 提交、新挂单和持久化，安全但调试成本高；阶段 2 已把确定性 plan transform 收敛到 application `RewardDecisionEngine`，后续还需要副作用执行层。
+- 决策可追责：历史阶段已串联 run、decision、action 和订单状态变迁；后续已补上常驻 durable executor，但链上首次 merge 广播仍有意保留在 fresh synchronous tick。
+- 回放可校准：后续已落地稳定 `RewardStrategyInput`、自动 fixture 和 replay CLI；盘口/退出成本的更完整历史回放仍可继续扩展。
+- 结构可维护：确定性 plan transform 已收敛到 application `RewardDecisionEngine`，受支持副作用由 durable action executor 承担，worker 仍负责外部输入装配和同步广播 fence。
 
 ## 目标
 
@@ -377,7 +386,7 @@ RewardLiveExecutor
   behavior: submit/cancel/merge with idempotency and unknown-result protection
 ```
 
-当前已新增 application `RewardActionPlanner`，并在 full tick 的 merge create/execute、cancel/cancel-replace、pending submit 和 placement submit 前使用同一 idempotency key 写入 `planned -> executing`；executing 持久化失败时不会执行对应 live side effect，后续 outcome/对账更新 terminal 状态。fast reconcile 没有 strategy run 上下文，仍保持原路径。完整的可 claim/恢复 durable executor 尚未抽离，live connector 调用仍在 worker 原流程中执行。
+历史阶段状态：当时已新增 application `RewardActionPlanner`，并在 full tick 的 merge create/execute、cancel/cancel-replace、pending submit 和 placement submit 前使用同一 idempotency key 写入 `planned -> executing`；executing 持久化失败时不会执行对应 live side effect，后续 outcome/对账更新 terminal 状态。当时 fast reconcile 没有 strategy run 上下文，完整的可 claim/恢复 durable executor 尚未抽离。该缺口已由本文顶部的 2026-07-12 落地结果更新。
 
 需要保留现有保护：
 
@@ -436,8 +445,8 @@ RewardLiveExecutor
 3. 已完成：在现有 live tick 中接入影子 run ledger，保持交易行为不变。
 4. 已完成：前端增加 Runs tab，只读展示 run timeline、summary、decisions 和 actions。
 5. 已完成：抽出 `RewardDecisionEngine`（pre/post-provider/snapshot 纯决策变换）与可序列化 `RewardStrategyInput` tick 输入快照，新增独立 input builder（`RewardBotService::build_strategy_input`，单一读路径 + 单一注入 `now`）和 `RewardLiveCycle::from_strategy_input` 桥接，engine 行为不变；新增 application engine tests 与 strategy_input tests。注：builder 注入单一 `now` 替代原先 `prepare_live_cycle` 内多次 `now_utc()`，带来 plan `updated_at` 亚毫秒级差异；provider cache 未纳入快照（Phase 4 v2）。
-6. 进行中：`RewardActionPlanner` 已在 full tick 与有动作的 fast reconcile/orderbook-event 路径副作用前写 `planned -> executing`；store 支持 account-scoped claim、owner/expiry fencing、renew/finalize/release。常驻 executor 已迁移 merge-intent create、cancel/cancel-replace、首次 PlaceBuy 和 match-first exit SELL；BUY/SELL 在 venue 查询不唯一或失败时 fail closed，BUY 仅首次 claim 且通过 fresh last-look 才提交，SELL 在恢复后仍会重查持仓和盘口。ExecuteMerge 已支持按 intent id 读取持久化 tx hash，并只读查询 receipt、以 `(intent_id, tx_hash)` fencing 完成/回滚状态；无 tx hash 时 executor 不广播。链上首次广播仍保留在 fresh synchronous tick。
-7. 已完成第一版 replay CLI 与 full tick 自动 fixture 持久化：`--run-id` 做 ledger 审计，`--fixture` 重跑全部纯 engine 阶段并比较 expected plans；fixture 有 8 MiB/敏感字段/integrity 保护。后续为盘口/退出成本回放。
+6. 已完成当前边界：`RewardActionPlanner` 在 full tick 与有动作的 fast reconcile/orderbook-event 路径副作用前写 action；store 支持 account-scoped claim、owner/expiry fencing、renew/finalize/release。常驻 executor 已迁移 merge-intent create、cancel/cancel-replace、首次 PlaceBuy 和 match-first exit SELL；BUY/SELL 在 venue 查询不唯一或失败时 fail closed，BUY 仅首次 claim 且通过 fresh last-look/kill-switch read 才提交，SELL 在恢复后仍会重查持仓和盘口。ExecuteMerge 只读查询已持久化 tx hash 的 receipt；无 tx hash 时不广播。链上首次广播仍保留在 fresh synchronous tick。
+7. 已完成第一版 replay CLI 与 full tick 自动 fixture 持久化：`--run-id` 做 ledger 审计，`--fixture` 重跑纯 engine 阶段并比较 expected plans，`--stored-run-id` 读取数据库 fixture；fixture 有 8 MiB/敏感字段/integrity 保护。后续可扩展盘口/退出成本回放。
 8. 小额 live drill：单账户、低额度、只开 standard profile，记录 run/action/order transition 指标。
 
 ## 测试要求

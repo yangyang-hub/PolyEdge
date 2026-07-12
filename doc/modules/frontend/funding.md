@@ -55,6 +55,8 @@
 
 已实现 `/funding` 控制台页面和侧边导航入口，支持使用后端配置资金钱包将 Polygon USDC / USDT 入金到后端配置的 Polymarket 账户。资产选择使用原生 radio，可完整键盘操作；金额输入按后端最低/最高金额和已知链上余额即时验证，并通过关联错误说明与 live region 向辅助技术反馈。页面会在资产卡片展示后端资金钱包的 USDC/USDT Polygon 链上余额；余额查询失败时展示“余额暂不可用”提示但不阻断配置状态展示。入账钱包固定由后端配置决定：优先 `POLYEDGE_POLYMARKET__FUNDER`，未配置时回退 `POLYEDGE_POLYMARKET__ACCOUNT_ID`。真实转账必须经过风险摘要、操作备注和 `funding_transfer` step-up；同一用户意图的失败重试不会生成新的幂等键。
 
+前端只保存会话级未决 intent 和后端返回的交易回执，不持久化私钥、Bridge 地址或自行推导的 calldata。
+
 已知限制：
 
 - 不查询后端资金钱包 allowance、POL gas 余额或链上确认数。

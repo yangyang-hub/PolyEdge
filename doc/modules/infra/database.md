@@ -4,7 +4,7 @@
 
 ## 概述
 
-数据库使用 PostgreSQL。当前项目尚未生产部署，数据库基线已压缩为单个初始化迁移 `0001_initial_schema.sql`，不保留历史增量迁移链。schema 覆盖审计、幂等、LLM 调用、市场数据、事件/证据、执行历史、内部风险状态、新闻、LP rewards market maker、strategy run ledger、fair-value estimates、adaptive exit reselection、Funding/Polymarket 账户配套、orderbook price-history candles、runtime config 和 BalancedMerge。
+数据库使用 PostgreSQL。当前项目按尚未生产迁移、可从空库重新初始化的前提维护；数据库基线已压缩为单个初始化迁移 `0001_initial_schema.sql`，不保留历史增量迁移链。schema 覆盖审计、幂等、LLM 调用、市场数据、事件/证据、执行历史、内部风险状态、新闻、LP rewards market maker、strategy run ledger/replay fixtures、durable action executor、fair-value estimates、adaptive exit reselection、Funding/Polymarket 账户配套、orderbook price-history candles、runtime config 和 BalancedMerge。
 
 本项目现在面向空库重新部署：`packages/backend/init.sql` 与 `packages/backend/migrations/0001_initial_schema.sql` 表达同一份当前 schema，不兼容已删除历史模块的旧表。运行时仍通过 `sqlx::migrate!` 使用单个 baseline 迁移做初始化/校验。
 
@@ -39,12 +39,12 @@
 - `evidences`：market/event 关联证据、方向、strength、source reliability、novelty、resolution relevance、status、expiry。
 - `probability_estimates`：prior/posterior/fair/market price、edge、confidence、model_version、reason_codes。
 
-### Legacy 执行链路表
+### Legacy / 通用执行链路表
 
-- `signals`、`signal_transitions`：随历史迁移保留的内部表，当前公开页面/API 不再使用。
+- `signals`、`signal_evidence_links`、`signal_transitions`：baseline 仍保留的内部表，当前公开页面/API/worker 不再提供历史 signal 控制台流程。
 - `risk_state`：kill switch、PnL、gross/net exposure、open alerts 等执行链路状态。
 - `order_drafts`、`execution_requests`、`orders`、`trades`、`positions`：执行链路和 connector callback 使用的订单/成交/持仓历史。
-- `arbitrage_*` 表：历史 schema 保留，当前不再有 active app/worker/API 写入新 scan/opportunity 数据。
+- `arbitrage_*` 与 `market_book_snapshots`：历史 schema 保留，当前不再有 active app/worker/API 写入新 scan/opportunity 数据。
 
 ### LP rewards
 
@@ -97,10 +97,10 @@
 
 - 当前迁移目录只保留单个 baseline：`0001_initial_schema.sql`。
 - `packages/backend/init.sql` 与 runtime baseline 表达同一当前 schema。
-- 已删除历史模块的迁移、表、store、handler 和前端 DTO 不在当前基线中。
+- 已移除的钱包类和独立研究模块不再有前端路由、API、worker、application store、DTO 或专属 schema；baseline 仍明确保留上述 legacy signal/arbitrage 通用表，不能据此推断旧控制台流程仍可用。
 - Rewards 竞争度相关数据只存在于 quote plan 的统一 opportunity metrics 中，不再有独立 observation 表或模块；最终市场选择优先级存于 quote plan 的 `selection_score` / `selection_metrics`。
 - Rewards 事件窗口、strategy run ledger、fair-value estimates、AI advisory、信息风险、price-history candles、worker heartbeat、控制命令去重和 BalancedMerge merge intent 已落地。
-- Strategy run ledger 当前是 shadow 审计层，支持生产前演练追踪 run、decision、action 和 order transition，不作为 live 交易决策输入。
+- Strategy run/decision ledger 是审计和 replay 输入，不作为 live 定价输入；`reward_strategy_actions` 同时是 Postgres-only durable executor 的执行队列。executor 随 rewards poll loop 启动，使用 account-scoped lease、owner fencing 和当前风险/venue 状态复核后执行或恢复受支持动作。
 - 数据库维护任务生产模板默认开启；它不删除 rewards fills、positions、account state 等核心账本表。
 
 ## 修改检查清单

@@ -73,11 +73,30 @@ cargo fmt --all                   # 统一格式（拆分/搬移后必跑）
 cargo clippy --workspace --tests  # lint
 ```
 
-## 待跟进（软 500–硬 800 之间，非强制）
+## 现有文件长度债务（2026-07-12 快照）
 
-下列文件超过软上限但未达硬上限，建议后续按本文件的 `include!` 模式继续拆分；新增改动不应让它们继续膨胀：
+以下生产代码物理文件已超过 800 行硬上限，属于存量拆分债务；后续触碰这些文件时应优先按职责拆分，不能继续扩大：
 
-- `catalog/postgres/market_event/queries.rs`（~782；市场查询已拆到 `market_queries.rs`）
-- `stores/rewards/postgres.rs`（~701，受单 trait impl 约束，优先级低）
-- `catalog/postgres/market_event/execution_updates/fills.rs`（~688）
-- `application/risk.rs`（~687）
+- `order/src/stream.rs`（~1965）
+- `crates/infrastructure/src/stores/rewards/in_memory.rs`（~1837）
+- `apps/worker/src/worker/rewards.rs`（~1745）
+- `apps/worker/src/worker/rewards/live_orders.rs`（~1647）
+- `crates/infrastructure/src/stores/rewards/postgres.rs`（~1629；单个 `impl RewardBotStore` 受语言限制，方法体应委托到 inherent helper）
+- `apps/worker/src/worker/reward_action_executor.rs`（~1529）
+- `crates/application/src/rewards/config_impl.rs`（~1352）
+- `crates/infrastructure/src/stores/rewards/postgres_run_ledger.rs`（~1293）
+- `crates/application/src/rewards/service.rs`（~1210）
+- `crates/connectors/src/polymarket/chain.rs`（~1168）
+- `apps/worker/src/worker/rewards/account_sync.rs`（~1121）
+- `crates/application/src/rewards/planner.rs`（~1049）
+- `apps/worker/src/worker/rewards/live_pending.rs`（~967）
+- `crates/application/src/rewards/models.rs`（~905；纯数据定义可按例外评估）
+- `crates/application/src/rewards/run_ledger_models.rs`（~903；纯数据定义可按例外评估）
+- `crates/application/src/rewards/runtime_models.rs`（~892；纯数据定义可按例外评估）
+- `apps/worker/src/worker/rewards/live_sync.rs`（~874）
+- `crates/application/src/rewards/opportunity_metrics.rs`（~825）
+- `crates/infrastructure/src/stores/helpers/reward_config.rs`（~820）
+- `apps/worker/src/worker/rewards/info_risk.rs`（~820）
+- `crates/infrastructure/src/catalog/postgres/market_event/queries.rs`（~811）
+
+此外仍有多份测试文件超过硬上限，`catalog/postgres/market_event/execution_updates/fills.rs`（~688）和 `application/risk.rs`（~684）等生产文件处于软上限区间。行数以当前物理文件 `wc -l` 为准；重构后应同步刷新本节。

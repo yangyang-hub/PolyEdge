@@ -1,6 +1,6 @@
 # PolyEdge 文档索引
 
-最后更新：2026-07-08
+最后更新：2026-07-12
 
 ## 当前事实来源
 
@@ -14,7 +14,7 @@
 
 ## 历史设计文档
 
-`polyedge-*.md` 文件保留为早期产品、架构、契约和实施计划背景。它们可能包含已经移除或尚未落地的内容，例如 approvals 页面、前端 SSE 实时流、旧运行模式和 replay 页面。
+`polyedge-*.md` 文件保留为早期产品、架构、契约和实施计划背景。它们可能包含已经移除或尚未落地的内容，例如 approvals 页面、前端 SSE 实时流、旧运行模式和独立 research/replay 页面。当前实际 replay 能力是后端 `polyedge-replay` CLI 和 rewards 自动保存的 replay fixture，不是旧前端页面方案。
 
 阅读这些文档时按以下规则处理：
 
@@ -41,9 +41,10 @@
 | [polyedge-llm-governance.md](polyedge-llm-governance.md) | LLM 治理设计背景 |
 | [polyedge-polymarket-connector-design.md](polyedge-polymarket-connector-design.md) | Polymarket 连接器设计背景 |
 
-## 活跃方案文档
+## Rewards 策略文档
 
 | 文档 | 状态 |
 |---|---|
-| [rewards-event-window-stable-double-strategy-plan.md](rewards-event-window-stable-double-strategy-plan.md) | Rewards 事件窗口硬风控核心实现状态、稳定双边挂单和后续互补持仓合并策略方案 |
-| [rewards-market-maker-refactor-design.md](rewards-market-maker-refactor-design.md) | Rewards 做市商生产前数据库、策略引擎、worker 执行流和运维前端重构设计方案 |
+| [designs/rewards-market-maker-v2.md](designs/rewards-market-maker-v2.md) | 当前 Rewards 做市策略设计基线；已实现，实时状态仍以 `AGENTS.md` 和模块文档为准 |
+| [rewards-event-window-stable-double-strategy-plan.md](rewards-event-window-stable-double-strategy-plan.md) | 历史阶段方案；事件窗口与 BalancedMerge 后续实现已演进，旧 sibling-cancel/AI 盘口描述不代表当前行为 |
+| [rewards-market-maker-refactor-design.md](rewards-market-maker-refactor-design.md) | 历史阶段重构记录；当前 durable executor、replay fixture/CLI 和 provider 语义以 V2/模块文档为准 |

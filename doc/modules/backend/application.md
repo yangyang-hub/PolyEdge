@@ -11,6 +11,11 @@
 | 文件 | 作用 |
 |---|---|
 | `src/lib.rs` | application crate 对外 re-export |
+| `src/market_event.rs` + `src/market_event/*` | 市场、事件、证据、信号和 probability estimate 查询/重算 service 与 store port |
+| `src/news_ingestion.rs` | 新闻采集写入模型、source health 和 ingestion store port |
+| `src/execution.rs` + `src/execution/*` | execution request、order draft/order/trade/position 用例、命令和 store port |
+| `src/system_mode.rs` | 系统模式、认证 actor、审计和通用幂等 port |
+| `src/risk.rs` | legacy execution 链路的 risk state、kill switch 和 signal approval 用例 |
 | `src/rewards.rs` + `src/rewards/*` | Rewards market maker：配置、规划、机会评分、fair-value、事件窗口、AI advisory、info-risk、live 订单模型和 snapshot |
 | `src/rewards/service.rs` + `src/rewards/service/*` | `RewardBotService` 与 `RewardBotStore` trait，控制命令、snapshot、分页、缓存读取 |
 | `src/rewards/config_impl.rs` | `RewardBotConfig` 默认值、归一化和 patch 应用 |
@@ -36,8 +41,7 @@
 | `src/maintenance.rs` | 数据库 retention cutoffs、report 和 store port |
 | `src/orderbook_cache.rs` | cached orderbook 与内部 stream event 模型 |
 | `src/orderbook_registry.rs` | 多来源 orderbook token registry trait |
-| `src/funding.rs` | Funding service models/ports |
-| `src/auth.rs` / `src/mode_state.rs` / `src/risk.rs` | 鉴权、模式状态、风险状态应用模型 |
+| `src/list_filters.rs` / `src/pagination.rs` | 共享列表过滤、分页模型和边界校验 |
 
 ## 核心数据结构
 
@@ -62,7 +66,7 @@
 - Rewards market maker 是当前核心策略模块，运行路径为 live-only；成交后退出支持固定策略和 `adaptive` 策略选择配置，adaptive 退出会在本地 `ExitPending` SELL 提交前按重查周期、冷却和单单重选上限持续重评并持久化当前具体策略；`adaptive_exit_cancel_replace_enabled` 默认关闭，开启后已提交的 adaptive 退出 SELL 在策略切换或价格漂移超阈值时会先撤单，替换退出单必须等待对账确认剩余持仓后恢复，撤单结果未知时绝不补单，与本地重选共享同一套节流预算（`exit_reselect_count` / 冷却 / 单单上限）和每 tick 撤换上限。
 - BalancedMerge candidate profile 与 standard profile 可在同一 condition 下并存，quote plan 按 `(condition_id, strategy_profile)` 持久化，避免低成交量配对合并计划被 standard 计划覆盖。
 - Quote planning 只依赖数据库中的 reward markets、Gamma markets、orderbook 服务缓存、price-history candles、AI/info-risk cache 和本地配置。Full tick 的 pre-provider gates、post-provider first-quote gate 和最终 snapshot refresh 已通过 `RewardDecisionEngine` 集中为纯决策变换；provider cache 读取、外部账户同步和 live 下单/撤单仍留在 worker。Full tick 输入由 `RewardBotService::build_strategy_input` 作为单一读路径装配成可序列化 `RewardStrategyInput` 快照（注入单一 `now`），再经 `RewardLiveCycle::from_strategy_input` 派生 engine 可变 cycle，engine 行为不变；`prepare_live_cycle` 退化为该路径的薄委托。
-- Rewards 目录准入把当前 liquidity 与 24h volume 分成独立门槛：两项都配置为正数时必须同时通过，历史成交量不能替代当前可执行流动性。空库 production live-drill profile 使用 10 秒盘口 freshness，并接受 `gamma_reviewed` 的 medium confidence 事件时间进入 hard event-window gate。
+- Rewards 目录准入把当前 liquidity 与 24h volume 分成独立门槛：两项都配置为正数时必须同时通过，历史成交量不能替代当前可执行流动性。空库 production live-drill profile 使用 5 秒盘口 freshness，并接受 `gamma_reviewed` 的 medium confidence 事件时间进入 hard event-window gate。
 - Opportunity metrics 与 fair-value/event-window 共用该注入时间，不再读取系统时钟，保证同 tick 边界一致和 replay 确定性。
 - Unified opportunity metrics 是 LP rewards 的统一评分层；竞争度、奖励密度、退出能力和盘口稳定性均作为做市策略内部指标处理，不再拆出独立观察模块。
 - Market selection 以 `selection_score` 作为最终排序和资金优先级。该分数在 opportunity metrics 与 fair-value 之后计算，以 effective fair-value edge、退出能力和盘口稳定性为主，奖励密度只占独立 10% 次级权重，并惩罚拥挤、资金占用和事件/AI/info-risk/fair-value/readiness 风险；`score` 不再作为 live 市场选择的主排序。基础 `score` 中 LP 奖励与 rewards spread 合计也封顶 10%。
@@ -76,7 +80,7 @@
 - `eligible` 现在只表示能否新增报价；已有订单的 cancel 动作独立评估。Stop-new 不会因为计划不可挂而自动撤销安全订单。
 - Live orderbook validation skip 只保留 60 秒用于 fast-path 抑制和审计；每个 full tick 都基于最新 candidate/books/config 重新构建计划，不继承上一轮 skip。standard 与 BalancedMerge 即使共享 condition，也不会再因只按 condition 继承旧 skip 而互相污染。
 - AI advisory 和 info-risk 只通过 provider cache 影响 live tick；外部 provider refresh 由 worker 后台任务写缓存，不阻塞 API handler。
-- Funding、orderbook cache/registry、maintenance、auth/mode/risk 仍作为 application-level ports/models 保留。
+- 市场/事件、新闻、执行、orderbook cache/registry、maintenance、system mode/idempotency/audit 和 risk 仍作为 application-level ports/models 保留。Funding 当前由 API 薄层使用共享幂等/审计 port 并委托 chain connector，不存在独立 `application/src/funding.rs`。
 
 ## 已移除
 

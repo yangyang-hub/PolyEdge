@@ -1,6 +1,6 @@
 # PolyEdge 后端设计文档
 
-> **状态（2026-06-14）**：本文是后端早期设计文档，包含部分历史规划。当前后端实现和缺口以 [../AGENTS.md](../AGENTS.md)、[../README.md](../README.md) 和 [modules/backend/](modules/backend/) 为准。
+> **状态（2026-07-12）**：本文是后端早期设计文档，research/signals/approval/SSE 等章节不代表当前产品路径。当前后端由 Rust API（内嵌 worker runtime）、独立 orderbook 服务和 replay CLI 构成，核心聚焦 rewards live 做市、fair value、风控、退出和 BalancedMerge；实现和缺口以 [../AGENTS.md](../AGENTS.md) 和 [modules/backend/](modules/backend/) 为准。
 
 ## 1. 文档目标
 

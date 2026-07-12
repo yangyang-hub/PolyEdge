@@ -1,6 +1,6 @@
 # PolyEdge 枚举与定点数规范
 
-> **状态（2026-06-14）**：本文是枚举和定点数设计背景。当前实际枚举、DTO 和数据库约束以代码、迁移和 [modules/infra/database.md](modules/infra/database.md) 为准。
+> **状态（2026-07-12）**：本文是枚举和定点数设计背景，其中 signal/outbox 等枚举包含 legacy/目标语境。当前实际值域、DTO、金额字符串化和数据库 CHECK 约束以代码、单 baseline 迁移和 [modules/infra/database.md](modules/infra/database.md) 为准。
 
 ## 1. 文档目标
 

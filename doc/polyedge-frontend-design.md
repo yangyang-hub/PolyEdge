@@ -1,6 +1,6 @@
 # PolyEdge 前端设计文档
 
-> **状态（2026-06-14）**：本文是前端早期设计，包含已移除的 approvals、replay 和 SSE 规划。当前前端状态以 [../AGENTS.md](../AGENTS.md)、[../README.md](../README.md) 和 [modules/frontend/](modules/frontend/) 为准。
+> **状态（2026-07-12）**：本文是前端早期设计，包含已移除的 approvals、独立 research/replay 页面和 SSE 规划。当前前端是 Next.js 16 静态导出，路由为 dashboard/markets/events/rewards/rewards-fair-value/funding/settings，浏览器直连真实 Rust REST API；当前状态以 [../AGENTS.md](../AGENTS.md) 和 [modules/frontend/](modules/frontend/) 为准。
 
 ## 1. 文档目标
 

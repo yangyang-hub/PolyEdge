@@ -164,9 +164,9 @@ Common worker commands:
 cargo run -p polyedge-worker -- ingest-news-once
 cargo run -p polyedge-worker -- poll-news
 cargo run -p polyedge-worker -- promote-news-events
+cargo run -p polyedge-worker -- run-database-maintenance-once
 cargo run -p polyedge-worker -- scan-rewards-once
 cargo run -p polyedge-worker -- poll-reward-bot
-cargo run -p polyedge-worker -- poll-reward-action-executor
 cargo run -p polyedge-worker -- poll-reward-action-executor
 cargo run -p polyedge-worker -- scan-reward-info-risks-once
 cargo run -p polyedge-worker -- poll-reward-info-risks
@@ -210,4 +210,8 @@ yarn build
 
 - Production-grade real session/auth UX is not complete; local/internal deployments commonly run with auth disabled.
 - External Polymarket private tasks require real credentials, a funded account, small-size drills and an ops runbook before production use.
+- Console order views cover PolyEdge-managed orders; account-wide visibility for unrelated external open orders is not complete.
+- Deterministic Rewards replay covers stored decision inputs and expected-plan comparison, but does not yet simulate fill risk, exit cost or cancellation churn.
+- Deposit Wallet lifecycle automation is incomplete: relayer wallet creation, pUSD wrapping/funding and approval batching remain external operational steps.
 - Old arbitrage tables/migrations remain where still part of current baseline, but the active app no longer exposes old radar/signals/risk console flows.
+- Several backend rewards/orderbook files and the frontend rewards config panel exceed the repository's documented physical-file hard limits; the current debt inventory is tracked in the package-level `AGENTS.md` files.
