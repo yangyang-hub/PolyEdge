@@ -100,11 +100,11 @@ Rewards provider 密钥只从 `RewardsSettings` 读取，不进入 `RewardBotCon
 - `reward_quote_plans` 额外持久化 `latest_run_id`、`quote_readiness`、`quote_mode`、`reason_code`、`blocker_codes` 和 provider/fair-value/event 摘要列，JSON 仍保存完整计划快照。
 - `RewardBotStore` 维护 `reward_strategy_runs`、`reward_strategy_decisions`、`reward_strategy_actions` 和 `reward_order_transitions`。Postgres 与 in-memory 实现都支持创建/完成/失败 run、批量 upsert 决策和动作、记录订单状态变迁，以及按 run/order 分页查询。
 - Strategy action 支持 account-scoped 原子 claim、owner-only lease renew 和 owner-fenced terminal finalize；Postgres 使用 `FOR UPDATE SKIP LOCKED`，仅恢复 planned 或租约明确过期的 executing。`unknown` 与没有租约的历史 executing 不参与自动领取，失去 lease 的 executor 不能覆盖 terminal 结果。
-- `reward_strategy_replay_fixtures` 按 run 一对一保存受 8 MiB 上限和敏感字段检查保护的完整 replay fixture，记录 schema version、SHA-256、JSON 字节数和 captured time；run 删除时级联清理。
+- `reward_strategy_replay_fixtures` 按 run 一对一保存受 8 MiB 上限和敏感字段检查保护的 replay fixture，记录 schema version、SHA-256、JSON 字节数和 captured time。默认写入 schema V2 紧凑 payload，读取保留 V1/缺省 schema 兼容；run 删除时级联清理。
 - Merge intent store 支持 `create_merge_intent_if_absent` 和按 id 读取；Postgres 使用 `ON CONFLICT (id) DO NOTHING`，允许 executor 在 lease 恢复后安全重试 create 动作。链上调用前必须原子执行 `pending|unsupported -> broadcasting`，只有 `broadcasting -> submitted` 可写 tx hash；`broadcasting` 不再进入 executable 列表，未知广播结果不会自动重放。已提交链上 merge 只能用匹配的 `(intent_id, tx_hash)` receipt 更新为 completed/failed，防止陈旧 receipt 串写其他交易；`completed` 不再永久占用后续可配对库存。
 - Provider cache 的 `expires_at` 只表示有效期边界，最新 advisory/info-risk 固定按 `created_at DESC, id DESC` 选择，避免旧长 TTL 结果覆盖新风险评估。
 - 高频 rewards order、position、account、heartbeat、event-window、fair-value、strategy decision/action 和 merge-intent upsert 使用 `updated_at` / `observed_at` fencing；外部账户全量持仓替换先锁定账户版本，旧 snapshot 不会删除或覆盖新状态。Terminal strategy action 与 merge broadcast/receipt 状态也禁止被迟到的普通 upsert 回退。
-- `reward_fair_values` 保存每个 condition 最新 fair-value 估计；`reward_fair_value_history` 追加保存历史估计用于审计/回测，数据库维护默认保留 90 天。
+- `reward_fair_values` 保存每个 condition 最新 fair-value 估计。Postgres 与 in-memory store 在写入前都按 condition 选择最新 latest，并按 `(condition_id, source, observed_at)` 对 history 幂等去重；同一 identity 却 payload 不同时拒绝整批写入。历史默认保留 90 天。
 - `reward_positions` 可保存当前 rewards catalog 外的外部库存；外部账户持仓同步成功时会原子替换目标账户全部持仓，失败时保留上一版。
 - `reward_merge_intents` 支持 BalancedMerge 配对库存合并、提交 tx hash、失败原因和 retry count。
 - `InMemoryOrderbookCache` 写入时排序 bids/asks、裁剪深度、拒绝旧 `observed_at` 覆盖未过期条目；旧写入只有盘口内容完全一致时才可隐式合并 `confirmed_at`。poll reconcile 可在兼容性检查后用版本 fenced 的 `confirm_book_version` 只推进指定当前版本。

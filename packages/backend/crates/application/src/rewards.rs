@@ -55,6 +55,7 @@ include!("rewards/provider_prefilter.rs");
 include!("rewards/engine.rs");
 include!("rewards/helpers.rs");
 include!("rewards/strategy_input.rs");
+include!("rewards/replay_v2.rs");
 include!("rewards/replay.rs");
 
 #[cfg(test)]

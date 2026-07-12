@@ -810,7 +810,6 @@ async fn save_reward_quote_plans_for_run(
 
 #[allow(clippy::too_many_arguments)]
 async fn persist_reward_replay_fixture(
-    state: &AppState,
     run_id: i64,
     input: RewardStrategyInput,
     cycle: &RewardLiveCycle,
@@ -818,70 +817,14 @@ async fn persist_reward_replay_fixture(
     book_history: &HashMap<String, VecDeque<BookSnapshot>>,
     trace_id: &str,
 ) {
-    let providers = RewardReplayProviderSnapshot {
-        advisories: cycle
-            .plans
-            .iter()
-            .filter_map(|plan| {
-                plan.ai_advisory
-                    .clone()
-                    .map(|advisory| (plan.condition_id.clone(), advisory))
-            })
-            .collect(),
-        info_risks: cycle
-            .plans
-            .iter()
-            .filter_map(|plan| {
-                plan.info_risk
-                    .clone()
-                    .map(|risk| (plan.condition_id.clone(), risk))
-            })
-            .collect(),
-    };
-    let final_state = RewardReplayFinalState {
-        account: Some(cycle.account.clone()),
-        open_orders: Some(cycle.open_orders.clone()),
-        positions: Some(cycle.positions.clone()),
-        books: Some(books.clone()),
-        book_history: Some(
-            book_history
-                .iter()
-                .map(|(token_id, snapshots)| {
-                    (token_id.clone(), snapshots.iter().cloned().collect())
-                })
-                .collect(),
-        ),
-    };
-    let fixture = RewardDecisionReplayFixture {
-        schema_version: REWARD_DECISION_REPLAY_SCHEMA_VERSION,
+    enqueue_reward_replay_fixture(
+        run_id,
         input,
-        providers,
-        final_state: Some(final_state),
-        expected_plans: Some(cycle.plans.clone()),
-    };
-    let captured_at = OffsetDateTime::now_utc();
-    match RewardStrategyReplayFixture::capture(run_id, fixture, captured_at) {
-        Ok(record) => {
-            if let Err(error) = state
-                .reward_bot_service
-                .save_strategy_replay_fixture(&record)
-                .await
-            {
-                warn!(
-                    trace_id = %trace_id,
-                    run_id,
-                    error = %error,
-                    "failed to persist rewards replay fixture"
-                );
-            }
-        }
-        Err(error) => warn!(
-            trace_id = %trace_id,
-            run_id,
-            error = %error,
-            "skipped unsafe or oversized rewards replay fixture"
-        ),
-    }
+        cycle,
+        books,
+        book_history,
+        trace_id,
+    );
 }
 
 async fn record_planned_reward_actions(
@@ -1286,7 +1229,6 @@ async fn run_reward_bot_live_tick_prepared(
     .await;
     save_reward_quote_plans_for_run(state, run_id, &mut cycle.plans).await?;
     persist_reward_replay_fixture(
-        state,
         run_id,
         replay_input,
         &cycle,
@@ -1726,6 +1668,7 @@ async fn cancel_live_reward_orders(
 }
 
 include!("rewards/account_sync.rs");
+include!("rewards/replay_capture.rs");
 include!("rewards/live_sync.rs");
 include!("rewards/live_orders.rs");
 include!("rewards/live_submission.rs");

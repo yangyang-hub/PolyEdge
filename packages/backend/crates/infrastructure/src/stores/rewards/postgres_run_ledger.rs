@@ -804,7 +804,6 @@ async fn postgres_save_reward_strategy_replay_fixture(
     pool: &PgPool,
     fixture: &RewardStrategyReplayFixture,
 ) -> Result<()> {
-    fixture.validate_integrity()?;
     let json_bytes = i32::try_from(fixture.json_bytes).map_err(|_| {
         AppError::invalid_input(
             "REWARD_REPLAY_FIXTURE_TOO_LARGE",

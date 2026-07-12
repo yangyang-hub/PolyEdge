@@ -77,15 +77,15 @@ cargo clippy --workspace --tests  # lint
 
 以下生产代码物理文件已超过 800 行硬上限，属于存量拆分债务；后续触碰这些文件时应优先按职责拆分，不能继续扩大：
 
-- `order/src/stream.rs`（~1965）
+- `order/src/stream.rs`（~1969；CLOB refresh 调度已拆到 `order/src/refresh_scheduler.rs`）
 - `crates/infrastructure/src/stores/rewards/in_memory.rs`（~1837）
-- `apps/worker/src/worker/rewards.rs`（~1745）
+- `apps/worker/src/worker/rewards.rs`（~1688；replay capture 已拆到 `worker/rewards/replay_capture.rs`）
 - `apps/worker/src/worker/rewards/live_orders.rs`（~1647）
 - `crates/infrastructure/src/stores/rewards/postgres.rs`（~1629；单个 `impl RewardBotStore` 受语言限制，方法体应委托到 inherent helper）
 - `apps/worker/src/worker/reward_action_executor.rs`（~1529）
 - `crates/application/src/rewards/config_impl.rs`（~1352）
 - `crates/infrastructure/src/stores/rewards/postgres_run_ledger.rs`（~1293）
-- `crates/application/src/rewards/service.rs`（~1210）
+- `crates/application/src/rewards/service.rs`（~1238）
 - `crates/connectors/src/polymarket/chain.rs`（~1168）
 - `apps/worker/src/worker/rewards/account_sync.rs`（~1121）
 - `crates/application/src/rewards/planner.rs`（~1049）

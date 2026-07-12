@@ -52,6 +52,7 @@ polyedge-front (nginx static)
 - `POLYEDGE_CORS__ALLOWED_ORIGINS` 必须列出浏览器实际 frontend origin；production 为空、包含 `*` 或带路径时 API 拒绝启动。
 - 通过 `POLYEDGE_ORDERBOOK__SERVICE_URL` 访问 orderbook 服务。
 - `POLYEDGE_ORDERBOOK__WRITE_TOKEN` 必须与 `.env.orderbook` 一致，用于 worker 注册 token。
+- 生产 API 模板显式设置 `POLYEDGE_ORDERBOOK_STREAM__REWARD_CANDIDATE_TOKEN_CAP=50`，避免候选预热因 runtime override 缺失而关闭；设为 0 仍可人工关闭，但 worker 会记录 WARN。
 - 启动时内嵌 `WorkerRuntime`，后台任务由 `POLYEDGE_WORKER__*` 和业务 settings 控制。
 - 模板默认开启新闻采集和数据库维护，rewards live、info-risk、execution drain、paper/live 对账和 Polymarket 用户事件等任务默认关闭，需要真实凭证和运营准备后再开启。
 - Polymarket live、Deposit Wallet、Funding API 和 AI provider 相关密钥只放 `.env.api`，不得放入 front/orderbook。
@@ -65,6 +66,7 @@ polyedge-front (nginx static)
 - 职责：Gamma market sync、CLOB rewards catalog sync、price-history candle sync、CLOB WS + `/books` poll cache、HTTP 盘口 API、内部 `/orderbook/stream`、token registry。
 - 启动时先 bind HTTP 暴露健康检查，再后台执行初始同步，避免外部 API 慢响应阻塞容器健康。
 - register/ingest/delete、内部 stream，以及带 `refresh_if_stale_ms` 的 batch 请求要求 `POLYEDGE_ORDERBOOK__WRITE_TOKEN`；cache-only 盘口/batch、stats 和 health 不鉴权，仍需依赖内网边界。
+- 正数 stale refresh 每个 HTTP 请求最多 100 token，由 P0-P3 有界调度器串行调用 CLOB；deferred/失败仍返回现有缓存。Cache-only batch 不受 100-token refresh 上限影响。
 - Polymarket market-channel 默认目标 chunk 为 500 token、最多 8 条连接；有效 chunk 会自动放大以满足连接预算，连接按 500ms 错峰启动，SDK 以 30-120 秒退避重连，降低同一出口 IP 触发 Cloudflare 429/1015 的风险。
 
 ## polyedge-front
@@ -134,6 +136,7 @@ Manual 模式：
 | `POLYEDGE_AUTH__DISABLED` / `POLYEDGE_AUTH__ALLOW_INSECURE_PRIVATE_DEPLOY` / `POLYEDGE_AUTH__STEP_UP_CODE` / `POLYEDGE_AUTH__KEYS_JSON` | `.env.api` | 鉴权配置；关闭 production 鉴权需显式私网风险确认，step-up code 仅 local dev，production 使用 JWT claims |
 | `POLYEDGE_API_BIND` / `POLYEDGE_API_PORT` | `.env.api` | API 宿主机暴露地址和端口 |
 | `POLYEDGE_FRONT_BIND` / `POLYEDGE_FRONT_PORT` | `.env.front` | 前端宿主机端口 |
+| `POLYEDGE_ORDERBOOK_STREAM__MAX_TOKENS` / `REWARD_CANDIDATE_TOKEN_CAP` | `.env.api` | worker token 注册总额度与 rewards candidate prewarm 上限；模板显式使用 50 |
 | `POLYEDGE_ORDERBOOK_STREAM__MAX_TOKENS` / `WS_CHUNK_SIZE` / `WS_MAX_CONNECTIONS` / `MAX_LEVELS_PER_SIDE` / `STALE_THRESHOLD_MS` | `.env.orderbook` | orderbook token 容量、WS 连接预算、盘口深度和 stale reconcile 调参 |
 | `POLYEDGE_NEWS__ENABLED` / `POLYEDGE_NEWS__SOURCES_JSON` | `.env.api` | 新闻采集开关和 source 列表 |
 | `POLYEDGE_WORKER__POLL_NEWS` / `PROMOTE_NEWS_EVENTS` / `DATABASE_MAINTENANCE` / `POLL_REWARD_BOT` / `POLL_REWARD_INFO_RISKS` | `.env.api` | API 内嵌 worker 循环开关 |

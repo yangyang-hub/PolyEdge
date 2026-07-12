@@ -57,7 +57,7 @@
 - `reward_strategy_decisions`：每个 run 下按 condition + strategy profile 记录 quote plan 决策快照、排序、readiness、reason/blocker、planned notional、fair-value/opportunity/event、`ai_action`、`info_risk_action`/level 和 decision JSON。
 - `reward_strategy_actions`：从 tick outcome 派生的动作账本，记录 place/cancel/exit/fill/merge/skip 等动作、状态、幂等键、请求/结果 JSON 和关联订单。
 - `reward_strategy_actions` 还保存 `lease_owner`、`lease_expires_at` 和 `execution_attempts`，支持多实例 executor 原子 claim/续租和超时恢复；partial index 加速 planned/expired-executing 领取。
-- `reward_strategy_replay_fixtures`：与 strategy run 一对一的完整确定性回放 fixture，保存 schema version、SHA-256、JSON 字节数、JSONB payload 和 captured time，随 run 级联删除。
+- `reward_strategy_replay_fixtures`：与 strategy run 一对一的确定性回放 fixture，保存 schema version、SHA-256、JSON 字节数、JSONB payload 和 captured time，随 run 级联删除。当前默认写 schema V2 紧凑 payload，同表保留 V1/缺省 schema 读取兼容。
 - `reward_order_transitions`：托管订单状态追加式时间线，记录 managed/external order、from/to status、reason、metadata，并可关联 run/action。
 - `reward_managed_orders`：托管订单，包含 account/condition/token、side、price、size、status、strategy bucket/profile、exit strategy source/selected/floor/reselect state、filled_size、reward_earned、external id 和对账锁等字段。外部库存补 SELL intent 可来自当前 rewards catalog 外的 condition；adaptive 本地 pending SELL 用这些字段在 worker 重启后继续持仓期重评。
 - `reward_fills`：托管订单成交，保存 account/condition/token/outcome/side、price、size、notional、role、realized PnL。
@@ -70,7 +70,7 @@
 - `reward_market_info_risks`：信息风险 V2 缓存，存储 evidence action（含定向 cancel）、risk level/type/direction、resolution_imminent、expected_event_at、confidence、summary、sources/metrics JSON 和 expires_at；单条与 condition 批量读取均按 `created_at DESC, id DESC` 选择最新有效评估。
 - `reward_market_candles`：orderbook 服务从 CLOB `/prices-history` 低频写入的 rewards token 5m source candles。provider price 同时写入 close、best bid close 和 best ask close，`spread_cents_close=0`，`sample_count` 表示同 bucket 内新持久化点数量；batch upsert 会排除不晚于现有 close 的重叠点，避免增量回看重复计数。
 - `reward_fair_values`：每个 condition 最新 fair-value 估计，保存 fair_yes/fair_no、market midpoint、confidence、uncertainty、YES/NO 偏离、组件 JSON、拒绝原因和有效期。
-- `reward_fair_value_history`：fair-value 历史追加表，用于审计和回测；数据库维护默认按 `created_at` 保留 90 天。
+- `reward_fair_value_history`：fair-value 历史追加表，用于审计和回测；`(condition_id, source, observed_at)` 唯一索引使同一估计重试幂等，数据库维护默认按 `created_at` 保留 90 天。
 - `reward_market_event_windows`：按 condition/source 保存事件时间候选；effective 查询按 active、confidence、source 优先级和更新时间选一条。
 - `reward_merge_intents`：BalancedMerge 配对库存合并意图，包含 YES/NO token、merge size、两侧库存均价、source fill、status、tx hash、submitted/confirmed/failed 时间、失败原因和 retry count；广播前原子进入不可自动重领的 `broadcasting`，只有该状态能写 `submitted + tx_hash`，链上 receipt 解析再以 intent id + tx hash 双重 fencing 更新 completed/failed。Active paired size 只计算 pending/unsupported/broadcasting/submitted，completed 不抵扣未来新库存。
 - 高频 mutable snapshot 使用版本 fencing：managed order、position、account state、heartbeat、event-window、fair-value 和 strategy ledger 不接受较旧时间版本；账户全量持仓替换会先锁定 account state 版本，避免乱序同步先删除新仓位再写回旧仓位。
@@ -99,7 +99,8 @@
 - `packages/backend/init.sql` 与 runtime baseline 表达同一当前 schema。
 - 已移除的钱包类和独立研究模块不再有前端路由、API、worker、application store、DTO 或专属 schema；baseline 仍明确保留上述 legacy signal/arbitrage 通用表，不能据此推断旧控制台流程仍可用。
 - Rewards 竞争度相关数据只存在于 quote plan 的统一 opportunity metrics 中，不再有独立 observation 表或模块；最终市场选择优先级存于 quote plan 的 `selection_score` / `selection_metrics`。
-- Rewards 事件窗口、strategy run ledger、fair-value estimates、AI advisory、信息风险、price-history candles、worker heartbeat、控制命令去重和 BalancedMerge merge intent 已落地。
+- Rewards 事件窗口、strategy run ledger、Replay V2 fixture、condition 级 fair-value estimates/幂等 history、AI advisory、信息风险、price-history candles、worker heartbeat、控制命令去重和 BalancedMerge merge intent 已落地。
+- 新建数据库直接包含 `reward_fair_value_history_identity_uidx`。保留数据的现场实例在部署新二进制时应先去重同 `(condition_id, source, observed_at)` 历史行，再以独立运维 DDL 创建唯一索引。二进制使用无目标 `ON CONFLICT DO NOTHING`，因此索引未建立时不会中断 live tick，但重试幂等只在索引存在后完整生效。
 - Strategy run/decision ledger 是审计和 replay 输入，不作为 live 定价输入；`reward_strategy_actions` 同时是 Postgres-only durable executor 的执行队列。executor 随 rewards poll loop 启动，使用 account-scoped lease、owner fencing 和当前风险/venue 状态复核后执行或恢复受支持动作。
 - 数据库维护任务生产模板默认开启；它不删除 rewards fills、positions、account state 等核心账本表。
 

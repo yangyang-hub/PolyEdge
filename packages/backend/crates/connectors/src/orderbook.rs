@@ -17,6 +17,9 @@ use tokio_tungstenite::{
 };
 
 const ORDERBOOK_STREAM_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+const ORDERBOOK_CACHE_ONLY_TIMEOUT: Duration = Duration::from_secs(5);
+const ORDERBOOK_REFRESH_TIMEOUT: Duration = Duration::from_secs(15);
+const ORDERBOOK_REFRESH_BATCH_TOKEN_CAP: usize = 100;
 
 /// HTTP client that implements `OrderbookCache` by calling the standalone
 /// orderbook service. Used by API and Worker processes to read orderbook data.
@@ -227,6 +230,17 @@ struct OrderbookResponse {
 #[derive(Deserialize)]
 struct OrderbookBatchResponse {
     books: Vec<OrderbookResponse>,
+    #[serde(default)]
+    refresh: Option<OrderbookRefreshSummary>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OrderbookRefreshSummary {
+    requested: usize,
+    stale: usize,
+    refreshed: usize,
+    deferred: usize,
+    failed: usize,
 }
 
 #[derive(Serialize)]
@@ -475,15 +489,52 @@ impl OrderbookHttpClient {
             return Ok(Vec::new());
         }
 
+        // A refresh can trigger external CLOB work, so keep each request within
+        // the orderbook service's single-upstream-batch budget. Cache-only reads
+        // remain large batches because they never leave the service process.
+        if refresh_if_stale_ms.is_some() && token_ids.len() > ORDERBOOK_REFRESH_BATCH_TOKEN_CAP {
+            let mut books = Vec::new();
+            for chunk in token_ids.chunks(ORDERBOOK_REFRESH_BATCH_TOKEN_CAP) {
+                books.extend(
+                    self.get_books_request_inner(chunk, refresh_if_stale_ms)
+                        .await?,
+                );
+            }
+            return Ok(books);
+        }
+
+        self.get_books_request_inner(token_ids, refresh_if_stale_ms)
+            .await
+    }
+
+    async fn get_books_request_inner(
+        &self,
+        token_ids: &[String],
+        refresh_if_stale_ms: Option<i64>,
+    ) -> Result<Vec<CachedOrderBook>> {
         let url = format!("{}/orderbook/batch", self.base_url);
-        let resp = self
+        let request = self
             .authorize_write(self.client.post(&url))
             .json(&BatchRequest {
                 token_ids: token_ids.to_vec(),
                 refresh_if_stale_ms,
-            })
-            .send()
+            });
+        let request_timeout = if refresh_if_stale_ms.is_some() {
+            ORDERBOOK_REFRESH_TIMEOUT
+        } else {
+            ORDERBOOK_CACHE_ONLY_TIMEOUT
+        };
+        let resp = tokio::time::timeout(request_timeout, request.send())
             .await
+            .map_err(|_| {
+                AppError::dependency_unavailable(
+                    "ORDERBOOK_HTTP_BATCH_TIMEOUT",
+                    format!(
+                        "orderbook batch request exceeded {} seconds",
+                        request_timeout.as_secs()
+                    ),
+                )
+            })?
             .map_err(|error| {
                 AppError::dependency_unavailable(
                     "ORDERBOOK_HTTP_BATCH_ERROR",
@@ -504,6 +555,18 @@ impl OrderbookHttpClient {
                 format!("failed to decode orderbook batch response: {error}"),
             )
         })?;
+        if let Some(refresh) = &response.refresh
+            && (refresh.deferred > 0 || refresh.failed > 0)
+        {
+            tracing::warn!(
+                requested = refresh.requested,
+                stale = refresh.stale,
+                refreshed = refresh.refreshed,
+                deferred = refresh.deferred,
+                failed = refresh.failed,
+                "orderbook service returned cached books after a partial refresh"
+            );
+        }
         Ok(response.books.into_iter().map(to_cached).collect())
     }
 }
@@ -622,5 +685,24 @@ impl OrderbookSubscriptionRegistry for OrderbookHttpClient {
         // Return false (conservative) — the orderbook stream uses direct token
         // set comparison instead of this method.
         false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn batch_response_remains_compatible_without_refresh_summary() {
+        let response: OrderbookBatchResponse = serde_json::from_value(serde_json::json!({
+            "books": []
+        }))
+        .expect("legacy batch response");
+        assert!(response.refresh.is_none());
+    }
+
+    #[test]
+    fn refresh_batch_cap_matches_one_clob_batch() {
+        assert_eq!(ORDERBOOK_REFRESH_BATCH_TOKEN_CAP, 100);
     }
 }

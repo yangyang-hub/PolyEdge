@@ -23,7 +23,7 @@
 | `src/rewards/strategy_input.rs` | `RewardStrategyInput` 可序列化 tick 输入快照与 `RewardLiveCycle::from_strategy_input` 桥接（engine 借用入参为 `RewardLiveEngineInput`） |
 | `src/rewards/action_planner.rs` | `RewardActionPlanner`：把 worker 已确定的订单/merge intent 副作用候选转换为执行前 planned action ledger row |
 | `src/rewards/action_request.rs` | v1 durable action envelope、强类型 order/merge payload、身份/数值/敏感字段校验与恢复分类 |
-| `src/rewards/replay.rs` | `RewardDecisionReplayFixture` 与纯 engine replay runner：使用注入时间重跑 pre-provider/provider/post-provider/final snapshot，并比较 expected plans |
+| `src/rewards/replay.rs` + `src/rewards/replay_v2.rs` | V1/V2 `RewardDecisionReplayFixture` 与纯 engine replay runner：紧凑历史、final delta、expected plan hash 及双版本确定性比较 |
 | `src/rewards/planner.rs` | deterministic quote plan 构建 |
 | `src/rewards/planner_selection.rs` | auto/dominant 单边选择和盘口集中度指标 |
 | `src/rewards/planner_live.rs` | live orderbook materialization 与下单前盘口校验 |
@@ -47,7 +47,7 @@
 
 - `RewardBotConfig`：做市策略配置。V2 关键字段包括首选/最深报价档位、`maker_market_budget_usd`、库存偏斜、AI/info-risk 动作阈值、非对称 requote 和独立的最大退出损失 floor；旧 `per_market_usd`、`quote_size_usd`、`cancel_on_fill` 与环境变量置信度阈值已移除。
 - `RewardBotConfig::production_live_drill_defaults()`：空库 Postgres 部署使用的保守生产演练 profile。保持 `enabled=false`，集中在 1 个市场、4 个开放订单，单市场/单 outcome/全局潜在暴露为 `$20/$12/$20`，以覆盖常见双边 rewards minimum size；盘口 freshness 为 5 秒，并提高 catalog/activity、退出深度与 live depth 门槛。通用 `Default` 继续作为纯计算和 in-memory 测试基线。
-- `RewardFairValueEstimate` / `RewardFairValueDecision` / `RewardQuoteEdge`：fair-value 估计与每条 leg 的 raw/effective trading edge。`effective_edge_cents` 只扣不确定性并用于 gate/edge priority，`reward_adjusted_edge_cents` 再加入预期 LP rebate 但只供展示/审计；LP rebate 永远不能补贴失败的交易 edge。
+- `RewardFairValueEstimate` / `RewardFairValueDecision` / `RewardQuoteEdge`：fair-value estimate 是 condition 级事实，同 condition 的 Standard/BalancedMerge 共享一次估计；decision/edge 仍按 strategy profile 的 legs、价格和 provider buffer 分别计算。跨 profile YES/NO token 映射不一致时整个 condition fail closed。`effective_edge_cents` 只扣不确定性并用于 gate/edge priority，`reward_adjusted_edge_cents` 再加入预期 LP rebate 但只供展示/审计。
 - Fair-value 当前组件包含 YES midpoint、反向 NO midpoint、两侧 top-of-book microprice/imbalance 和短窗历史 median；最终 edge 同时扣除动态市场不确定性与 provider edge buffer。首选 rank 失败时会在 `quote_max_bid_rank` 内继续搜索更保守价位。
 - `RewardProviderAction` / `RewardMarketAdvisory` / `RewardMarketInfoRisk`：统一 provider 动作。AI 仅使用 `allow/reduce/stop_new` 和有界 size/edge modifier；info-risk 还可产生 `cancel_yes/cancel_no/cancel_all`。旧 suitability、AI quote mode 和 exit policy 不再属于核心模型。
 - `RewardInfoRiskSource.evidence_verified`：代码侧证据验证标记，provider ingress 永远写入 `false`；撤单证据计数只接受已验证来源，未验证的 LLM URL/发布时间最多触发 stop-new。
@@ -56,7 +56,7 @@
 - `RewardStrategyInput` / `RewardLiveCycle::from_strategy_input` / `RewardDecisionEngine` / `RewardDecisionSet`：`RewardStrategyInput` 是一次 tick 的 owned、可序列化只读输入快照（config、candidate markets、pre-application plans、books、book history、account、open orders、positions、event windows、now、force_orders），由 `RewardBotService::build_strategy_input` 作为单一读路径装配，供回放与审计；`RewardLiveCycle::from_strategy_input` 把快照桥接成 engine 可变 working cycle（markets 从 candidates 投影、should_execute 从 `config.enabled || force_orders` 派生，其余字段拷贝）。engine 借用入参为 `RewardLiveEngineInput<'a>`（cycle + books + book history + now），返回更新后的 cycle、fair-value estimates、资金预检/first-quote/readiness 变更统计，不访问 DB、HTTP 或 connector。Provider cache 在 engine 阶段之间由 worker 应用，未纳入快照（Phase 4 v2）。
 - `RewardStrategyRun` / `RewardStrategyDecision` / `RewardStrategyAction` / `RewardOrderTransition`：做市策略运行审计与执行 ledger。Action 包含 lease owner、expiry 和 execution attempts；claim 只领取 planned 或带明确过期租约的 executing，unknown 和无租约 executing 不会自动重放。Service/store 另提供 owner-fenced terminal finalize，防止已失去 lease 的 worker 覆盖新 owner 结果。
 - `RewardActionPlanner` / `RewardDurableActionEnvelope`：执行前 proposal、v1 typed request 和状态转换层。它校验账户/condition/token/order identity、side/status/price/size、merge 字段及敏感键；legacy/无效 payload fail-closed。`create_reward_merge_intent_if_absent` 提供按 intent id 的幂等 executor 写入入口。
-- `RewardDecisionReplayFixture` / `RewardReplayProviderSnapshot` / `replay_reward_decision_engine`：离线确定性回放模型，携带完整 `RewardStrategyInput`、已解析 provider cache、可选 final state 和 expected plans；回放不访问数据库、外部 provider 或 live connector。
+- `RewardDecisionReplayFixture` / `RewardReplayProviderSnapshot` / `RewardReplayFinalDelta` / `RewardReplayExpectedPlanHash`：V1 保留完整 final state/expected plans 双读兼容；V2 把历史收敛为实际 fair-value/opportunity 时间窗口内的 top-of-book，final state 仅保存 upsert/removal delta，expected plans 保存规范化 SHA-256 + reason code。回放不访问数据库、外部 provider 或 live connector。
 - `RewardBotStore`：application 层持久化 port。覆盖 config、markets、quote plans、orders、fills、positions、events、account state、merge intents、fair-value estimates、candles、AI/info-risk cache、LLM calls、heartbeat、control commands 和历史清理。Merge intent 支持按 id 读取及以 `(intent_id, tx_hash)` fencing 解析 confirmed/reverted receipt。
 - `RewardMarketCandle`：orderbook 服务写入的 5m price-history source candle；`RewardBotStore`/service 提供单点和批量 sample 写入，AI payload 在 application 层聚合成最多 24 根 1h candle。
 - `DatabaseMaintenanceCutoffs` / `DatabaseMaintenanceReport`：统一 retention 配置和清理统计，覆盖 strategy run ledger、order transitions、fair-value history、candles、缓存和审计/幂等表。
@@ -72,10 +72,10 @@
 - Market selection 以 `selection_score` 作为最终排序和资金优先级。该分数在 opportunity metrics 与 fair-value 之后计算，以 effective fair-value edge、退出能力和盘口稳定性为主，奖励密度只占独立 10% 次级权重，并惩罚拥挤、资金占用和事件/AI/info-risk/fair-value/readiness 风险；`score` 不再作为 live 市场选择的主排序。基础 `score` 中 LP 奖励与 rewards spread 合计也封顶 10%。
 - 当前正向选择权重为基础质量 15%、reward density 10%、fair-value edge 20%、退出质量 30%、稳定性 25%；market-implied edge 达到 4 cents 才记满分，避免自引用盘口微差压过退出与稳定性。
 - Strategy run ledger 已落地为审计与执行状态层：它不改变 live 下单/撤单决策。Full tick 的 merge create/execute、cancel/cancel-replace、pending submit 和 placement submit 会在副作用前以相同 idempotency key 依次写入 `planned → executing`；若 executing 持久化失败则不执行交易副作用，既有 outcome/对账路径继续写 terminal 状态。
-- Application 已提供 fixture 驱动的真实 engine replay，按 pre-provider、provider、post-provider、final snapshot 全阶段重算，并可与 expected plans 做一致性比较。`RewardStrategyReplayFixture` 提供 8 MiB 上限、SHA-256/size/schema 元数据和递归敏感键拒绝，供 full tick 自动持久化。
+- Application 已提供 fixture 驱动的真实 engine replay，按 pre-provider、provider、post-provider、final snapshot 全阶段重算。默认写 V2 紧凑 fixture，同时读取 V1/缺省 schema 旧 fixture；8 MiB 硬上限、SHA-256/size/schema 元数据和递归敏感键拒绝仍保留。
 - Database maintenance cutoffs 已覆盖 strategy run ledger：completed/failed/cancelled runs 默认保留 90 天并级联 decisions/actions，order transitions 默认保留 180 天。
 - Standard live materializer 从 `quote_bid_rank` 到 `quote_max_bid_rank` 逐档搜索第一个满足 post-only、reward spread 和 trading-edge 约束的价格；rank 表示相对 best bid 的 1 cent 竞争带，即使稀疏盘口没有精确对应深度也可构造有效 maker 价。BalancedMerge 继续使用独立固定 rank。
-- Fair-value gate 默认启用：worker 用当前 YES 中点、反向 NO 中点和短窗口历史 median 估计 fair value，要求 BUY 报价保留 raw edge 和扣除不确定性后的 effective trading edge；LP rebate 只进入 reward-adjusted edge。历史估计写入 latest/history 表用于审计和回测。
+- Fair-value gate 默认启用：worker 用当前 YES 中点、反向 NO 中点和短窗口历史 median 估计 fair value，要求 BUY 报价保留 raw/effective trading edge。估计按 condition 计算/持久化一次，各 profile 只分岔 decision/edge；基础设施写入前再做 condition 归一化和同时间冲突校验。
 - Provider payload 与 cache key 排除 live orderbook、quote price/side/rank、账户余额和库存；AI 只接收稳定市场身份与完成的粗粒度 candle，info-risk 只接收市场身份、评估时间和搜索边界。LP rewards/rebate 被显式声明为与 provider 风险判断无关，不能成为放行、减小 edge buffer 或保留不安全订单的理由。低置信度 AI 非 allow 动作确定性降级为 0.5 倍 `reduce`；info-risk cancel 还必须满足新鲜、可归因和独立来源规则，独立来源按发布组织或一手权威主体计算，转载、镜像和同一原始声明的多个 URL 只算一个来源。
 - `eligible` 现在只表示能否新增报价；已有订单的 cancel 动作独立评估。Stop-new 不会因为计划不可挂而自动撤销安全订单。
 - Live orderbook validation skip 只保留 60 秒用于 fast-path 抑制和审计；每个 full tick 都基于最新 candidate/books/config 重新构建计划，不继承上一轮 skip。standard 与 BalancedMerge 即使共享 condition，也不会再因只按 condition 继承旧 skip 而互相污染。

@@ -467,8 +467,36 @@ impl RewardBotService {
         &self,
         fixture: &RewardStrategyReplayFixture,
     ) -> Result<()> {
-        fixture.validate_integrity()?;
+        let fixture_to_validate = fixture.clone();
+        tokio::task::spawn_blocking(move || fixture_to_validate.validate_integrity())
+            .await
+            .map_err(|error| {
+                AppError::internal(
+                    "REWARD_REPLAY_VALIDATION_TASK_FAILED",
+                    format!("rewards replay validation task failed: {error}"),
+                )
+            })??;
         self.store.save_strategy_replay_fixture(fixture).await
+    }
+
+    pub async fn capture_and_save_strategy_replay_fixture(
+        &self,
+        run_id: i64,
+        fixture: RewardDecisionReplayFixture,
+        captured_at: OffsetDateTime,
+    ) -> Result<RewardStrategyReplayFixture> {
+        let record = tokio::task::spawn_blocking(move || {
+            RewardStrategyReplayFixture::capture(run_id, fixture, captured_at)
+        })
+        .await
+        .map_err(|error| {
+            AppError::internal(
+                "REWARD_REPLAY_CAPTURE_TASK_FAILED",
+                format!("rewards replay capture task failed: {error}"),
+            )
+        })??;
+        self.store.save_strategy_replay_fixture(&record).await?;
+        Ok(record)
     }
 
     pub async fn get_strategy_replay_fixture(

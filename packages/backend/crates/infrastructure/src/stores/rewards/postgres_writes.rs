@@ -275,6 +275,7 @@ async fn postgres_record_reward_fair_value_estimates(
     if estimates.is_empty() {
         return Ok(());
     }
+    let normalized = normalize_reward_fair_value_estimates(estimates)?;
 
     let mut transaction = pool.begin().await.map_err(|error| {
         db_error(
@@ -283,7 +284,7 @@ async fn postgres_record_reward_fair_value_estimates(
         )
     })?;
 
-    for chunk in estimates.chunks(REWARD_UPSERT_BATCH_SIZE) {
+    for chunk in normalized.latest.chunks(REWARD_UPSERT_BATCH_SIZE) {
         let cols = 13usize;
         let placeholders: String = chunk
             .iter()
@@ -349,7 +350,10 @@ async fn postgres_record_reward_fair_value_estimates(
                 )
             })?;
 
-        let history_cols = cols + 1;
+    }
+
+    for chunk in normalized.history.chunks(REWARD_UPSERT_BATCH_SIZE) {
+        let history_cols = 14usize;
         let history_placeholders: String = chunk
             .iter()
             .enumerate()
@@ -380,6 +384,7 @@ async fn postgres_record_reward_fair_value_estimates(
               expires_at
             )
             VALUES {history_placeholders}
+            ON CONFLICT DO NOTHING
             "#
         );
         let mut history_query = sqlx::query(&history_sql);

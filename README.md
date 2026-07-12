@@ -131,7 +131,7 @@ Rewards 计划先经过市场可交易性、catalog 流动性/成交量、事件
 - 下单 sizing 同时受 `maker_market_budget_usd`、钱包可用余额、per-outcome inventory、全局潜在敞口和 provider multiplier 约束；resting BUY 计入并发成交风险。
 - AI advisory 只做慢速结构性风险审阅；info-risk 的取消动作必须满足可信来源、时间归因和置信度规则，provider 自报证据默认不可信。
 - 成交后 standard profile 以成本/markup 目标退出，必要时受 `maker_max_exit_loss_cents` 控制 flatten floor；BalancedMerge 是独立 profile，链上广播使用 fail-closed fence。
-- Full tick 记录 run/decision/action/order-transition ledger，并保存有大小与敏感字段保护的 replay fixture；Postgres durable action executor 对计划动作使用 lease、owner fence 和 venue-first reconciliation。
+- Full tick 记录 run/decision/action/order-transition ledger，并通过有界异步 writer 保存紧凑 Replay V2 fixture（V1 仍可读）；Postgres durable action executor 对计划动作使用 lease、owner fence 和 venue-first reconciliation。
 
 启用 live worker 至少需要：
 

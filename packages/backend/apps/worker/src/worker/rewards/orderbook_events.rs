@@ -378,10 +378,9 @@ async fn fetch_remote_cached_orderbooks(
     Ok(books)
 }
 
-// Keep each worker -> orderbook HTTP refresh comfortably below the client's
-// 30s timeout. The orderbook service further splits this into 100-token CLOB
-// batches and paces them behind a shared upstream request gate.
-const REWARD_ORDERBOOK_HTTP_BATCH_TOKEN_CAP: usize = 500;
+// A positive refresh can reach CLOB, so keep each worker request aligned with
+// one upstream /books batch. Cache-only reads remain independently large.
+const REWARD_ORDERBOOK_HTTP_BATCH_TOKEN_CAP: usize = 100;
 
 fn reward_orderbook_http_batch_size(max_tokens: usize) -> usize {
     max_tokens.clamp(1, REWARD_ORDERBOOK_HTTP_BATCH_TOKEN_CAP)
@@ -418,7 +417,7 @@ mod reward_orderbook_local_cache_tests {
     fn remote_http_batch_size_is_bounded() {
         assert_eq!(reward_orderbook_http_batch_size(1), 1);
         assert_eq!(reward_orderbook_http_batch_size(100), 100);
-        assert_eq!(reward_orderbook_http_batch_size(3_000), 500);
+        assert_eq!(reward_orderbook_http_batch_size(3_000), 100);
         assert_eq!(reward_orderbook_http_batch_size(0), 1);
     }
 

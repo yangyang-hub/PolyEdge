@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 
-pub const REWARD_DECISION_REPLAY_SCHEMA_VERSION: u16 = 1;
+pub const REWARD_DECISION_REPLAY_SCHEMA_VERSION: u16 = 2;
+const REWARD_DECISION_REPLAY_V1_SCHEMA_VERSION: u16 = 1;
 /// Hard ceiling for the canonical JSON representation persisted for one tick.
 ///
 /// The database applies an additional defensive bound. Keeping this limit in
@@ -45,12 +46,19 @@ pub struct RewardDecisionReplayFixture {
     pub input: RewardStrategyInput,
     #[serde(default)]
     pub providers: RewardReplayProviderSnapshot,
+    /// V2 stores only the top bid/ask used by historical decision metrics.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub compact_book_history: HashMap<String, Vec<RewardReplayTopOfBookPoint>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub final_state: Option<RewardReplayFinalState>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub final_delta: Option<RewardReplayFinalDelta>,
     /// Expected final plans captured from the original run. Omit this field to
     /// use the fixture only for counterfactual output generation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expected_plans: Option<Vec<RewardQuotePlan>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_plan_hashes: Option<Vec<RewardReplayExpectedPlanHash>>,
 }
 
 /// Integrity metadata and typed payload for one persisted full-tick fixture.
@@ -137,7 +145,7 @@ impl RewardStrategyReplayFixture {
 }
 
 const fn default_reward_decision_replay_schema_version() -> u16 {
-    REWARD_DECISION_REPLAY_SCHEMA_VERSION
+    REWARD_DECISION_REPLAY_V1_SCHEMA_VERSION
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -200,7 +208,11 @@ pub fn replay_reward_decision_engine(
 
     let now = fixture.input.now;
     let mut books = fixture.input.books.clone();
-    let mut book_history = replay_book_history(&fixture.input.book_history);
+    let mut book_history = if fixture.compact_book_history.is_empty() {
+        replay_book_history(&fixture.input.book_history)
+    } else {
+        replay_compact_book_history(&fixture.compact_book_history)
+    };
     let pre_provider = RewardDecisionEngine::evaluate_pre_provider(RewardLiveEngineInput {
         cycle: RewardLiveCycle::from_strategy_input(&fixture.input),
         books: &books,
@@ -246,6 +258,14 @@ pub fn replay_reward_decision_engine(
             book_history = replay_book_history(final_book_history);
         }
     }
+    if let Some(final_delta) = &fixture.final_delta {
+        apply_reward_replay_final_delta(
+            final_delta,
+            &mut cycle,
+            &mut books,
+            &mut book_history,
+        );
+    }
 
     let final_decisions = RewardDecisionEngine::refresh_snapshot(RewardLiveEngineInput {
         cycle,
@@ -257,10 +277,14 @@ pub fn replay_reward_decision_engine(
     let readiness_changed = final_decisions.readiness_changed;
     let plans = final_decisions.cycle.plans;
     let summary = reward_replay_summary(&plans);
-    let comparison = fixture
-        .expected_plans
-        .as_deref()
-        .map(|expected| compare_reward_replay_plans(expected, &plans));
+    let comparison = match (
+        fixture.expected_plan_hashes.as_deref(),
+        fixture.expected_plans.as_deref(),
+    ) {
+        (Some(expected), _) => Some(compare_reward_replay_plan_hashes(expected, &plans)?),
+        (None, Some(expected)) => Some(compare_reward_replay_plans(expected, &plans)),
+        (None, None) => None,
+    };
 
     Ok(RewardDecisionReplayResult {
         schema_version: fixture.schema_version,
@@ -275,12 +299,17 @@ pub fn replay_reward_decision_engine(
 }
 
 fn validate_reward_replay_fixture(fixture: &RewardDecisionReplayFixture) -> Result<()> {
-    if fixture.schema_version != REWARD_DECISION_REPLAY_SCHEMA_VERSION {
+    if !matches!(
+        fixture.schema_version,
+        REWARD_DECISION_REPLAY_V1_SCHEMA_VERSION | REWARD_DECISION_REPLAY_SCHEMA_VERSION
+    ) {
         return Err(AppError::invalid_input(
             "REWARD_REPLAY_SCHEMA_VERSION_UNSUPPORTED",
             format!(
-                "unsupported rewards replay schema version {}; expected {}",
-                fixture.schema_version, REWARD_DECISION_REPLAY_SCHEMA_VERSION
+                "unsupported rewards replay schema version {}; supported versions are {} and {}",
+                fixture.schema_version,
+                REWARD_DECISION_REPLAY_V1_SCHEMA_VERSION,
+                REWARD_DECISION_REPLAY_SCHEMA_VERSION
             ),
         ));
     }

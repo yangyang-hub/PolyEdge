@@ -90,4 +90,12 @@ mod tests {
         assert!(super::validate_ingest_observed_at(now + 30_001, now).is_err());
         assert!(super::validate_ingest_observed_at(now - 86_400_001, now).is_err());
     }
+
+    #[test]
+    fn refresh_requests_are_limited_to_one_upstream_batch() {
+        assert!(super::validate_refresh_batch_size(100).is_ok());
+        let error = super::validate_refresh_batch_size(101)
+            .expect_err("refresh request above one upstream batch must fail");
+        assert_eq!(error.0, axum::http::StatusCode::BAD_REQUEST);
+    }
 }

@@ -1,9 +1,12 @@
-use crate::{metrics::OrderbookRuntimeMetrics, updates::OrderbookUpdateBroadcaster};
+use crate::{
+    metrics::OrderbookRuntimeMetrics,
+    refresh_scheduler::{OrderbookRefreshScheduler, RefreshBatchOutcome, RefreshPriority},
+    updates::OrderbookUpdateBroadcaster,
+};
 use futures::StreamExt;
 use polyedge_application::{
     BookSource, CachedBookLevel, CachedOrderBook, OrderbookCache, OrderbookStreamReason,
 };
-use polyedge_connectors::PolymarketRewardsConnector;
 use polyedge_domain::{AppError, Result};
 use polyedge_infrastructure::AppState;
 use polymarket_client_sdk::clob::ws::Client as ClobWsClient;
@@ -20,7 +23,7 @@ use std::sync::Mutex as StdMutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 use time::OffsetDateTime;
-use tokio::sync::{Mutex, RwLock, mpsc};
+use tokio::sync::{RwLock, mpsc};
 use tokio::task::JoinSet;
 use tracing::{debug, info, warn};
 
@@ -37,7 +40,6 @@ const ORDERBOOK_WS_EVENT_QUEUE_CAPACITY: usize = 2_048;
 const ORDERBOOK_WS_COALESCED_LEVELS_PER_TOKEN: usize = 128;
 const ORDERBOOK_POLL_SAFE_CONFIRMATION_LAG_MS: i64 = 2_000;
 pub(crate) const ORDERBOOK_UPSTREAM_BATCH_DELAY_MS: u64 = 100;
-pub(crate) const ORDERBOOK_UPSTREAM_BATCH_TIMEOUT_SECS: u64 = 20;
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct OrderbookStreamReport {
@@ -54,7 +56,7 @@ pub struct OrderbookStreamReport {
 pub async fn run_orderbook_stream(
     state: &AppState,
     broadcaster: &OrderbookUpdateBroadcaster,
-    upstream_request_gate: Arc<Mutex<()>>,
+    refresh_scheduler: OrderbookRefreshScheduler,
     runtime_metrics: Arc<OrderbookRuntimeMetrics>,
 ) -> Result<OrderbookStreamReport> {
     let settings = &state.settings.orderbook_stream;
@@ -116,7 +118,7 @@ pub async fn run_orderbook_stream(
     let poll_tokens_ref = shared_tokens.clone();
     let poll_interval = settings.poll_reconcile_interval_secs;
     let stale_threshold_ms = settings.stale_threshold_ms as i64;
-    let clob_host = state.settings.polymarket.clob_host.clone();
+    let poll_registry = state.orderbook_registry.clone();
     let poll_max_tokens = settings.max_tokens;
     let poll_max_levels = max_levels_per_side;
     let poll_reconciliations = Arc::new(AtomicUsize::new(0));
@@ -126,14 +128,6 @@ pub async fn run_orderbook_stream(
     let poll_runtime_metrics = Arc::clone(&runtime_metrics);
 
     let poll_handle = tokio::spawn(async move {
-        let connector = match PolymarketRewardsConnector::new(&clob_host) {
-            Ok(c) => c,
-            Err(error) => {
-                warn!(error = %error, "orderbook poll reconciler failed to create connector");
-                return;
-            }
-        };
-
         loop {
             tokio::time::sleep(Duration::from_secs(poll_interval.max(1))).await;
 
@@ -149,6 +143,15 @@ pub async fn run_orderbook_stream(
                 }
             };
             let targets = poll_reconcile_targets(&current_tokens, &stale, poll_max_tokens);
+            let candidate_tokens = poll_registry
+                .list_source_tokens("rewards_candidates")
+                .await
+                .into_iter()
+                .collect::<HashSet<_>>();
+            let mut priority_tokens = HashSet::new();
+            for source in ["rewards_active", "exec_orders", "rewards_eligible"] {
+                priority_tokens.extend(poll_registry.list_source_tokens(source).await);
+            }
 
             if targets.is_empty() {
                 continue;
@@ -165,25 +168,19 @@ pub async fn run_orderbook_stream(
                     tokio::time::sleep(Duration::from_millis(ORDERBOOK_UPSTREAM_BATCH_DELAY_MS))
                         .await;
                 }
-                let fetch_result = {
-                    let _request_guard = upstream_request_gate.lock().await;
-                    tokio::time::timeout(
-                        Duration::from_secs(ORDERBOOK_UPSTREAM_BATCH_TIMEOUT_SECS),
-                        connector.fetch_order_books(chunk),
-                    )
-                    .await
-                    .unwrap_or_else(|_| {
-                        Err(AppError::dependency_unavailable(
-                            "ORDERBOOK_POLL_BATCH_TIMEOUT",
-                            format!(
-                                "orderbook poll batch exceeded {} seconds",
-                                ORDERBOOK_UPSTREAM_BATCH_TIMEOUT_SECS
-                            ),
-                        ))
-                    })
+                let priority = if chunk
+                    .iter()
+                    .all(|token_id| candidate_tokens.contains(token_id))
+                    && chunk
+                        .iter()
+                        .all(|token_id| !priority_tokens.contains(token_id))
+                {
+                    RefreshPriority::CandidatePrewarm
+                } else {
+                    RefreshPriority::BackgroundActive
                 };
-                match fetch_result {
-                    Ok(books) => {
+                match refresh_scheduler.refresh(priority, chunk).await {
+                    RefreshBatchOutcome::Completed(books) => {
                         let poll_confirmed_at = current_unix_millis();
                         poll_runtime_metrics.observe_poll_success(poll_confirmed_at);
                         for book in books {
@@ -208,7 +205,14 @@ pub async fn run_orderbook_stream(
                         }
                         poll_rec_clone.fetch_add(1, Ordering::Relaxed);
                     }
-                    Err(error) => {
+                    RefreshBatchOutcome::Deferred => {
+                        debug!(
+                            requested = chunk.len(),
+                            ?priority,
+                            "poll reconciler refresh was deferred by scheduler"
+                        );
+                    }
+                    RefreshBatchOutcome::Failed(error) => {
                         poll_fail_clone.fetch_add(1, Ordering::Relaxed);
                         warn!(error = %error, "poll reconciler failed to fetch books");
                     }

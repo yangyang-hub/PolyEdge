@@ -1,12 +1,14 @@
 pub struct WorkerRuntime {
     shutdown_tx: watch::Sender<bool>,
     handles: Vec<JoinHandle<()>>,
+    replay_capture: RewardReplayCaptureRuntime,
 }
 
 impl WorkerRuntime {
     #[must_use]
     pub fn start(state: &AppState) -> Self {
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
+        let replay_capture = RewardReplayCaptureRuntime::start(state);
         let handles = spawn_worker_tasks(state, shutdown_rx);
 
         if handles.is_empty() {
@@ -18,6 +20,7 @@ impl WorkerRuntime {
         Self {
             shutdown_tx,
             handles,
+            replay_capture,
         }
     }
 
@@ -28,6 +31,7 @@ impl WorkerRuntime {
                 warn!(error = %error, "worker task failed to join");
             }
         }
+        self.replay_capture.shutdown().await;
         info!("embedded worker runtime stopped");
     }
 }

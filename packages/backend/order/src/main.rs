@@ -3,7 +3,6 @@ use polyedge_application::MarketUpsertOptions;
 use polyedge_common::{bind_service_listener, service_socket_addr};
 use polyedge_infrastructure::{AppState, Runtime};
 use std::{sync::Arc, time::Duration};
-use tokio::sync::Mutex;
 use tower_http::limit::RequestBodyLimitLayer;
 use tower_http::trace::TraceLayer;
 use tracing::info;
@@ -23,6 +22,9 @@ use stream::run_orderbook_stream;
 
 mod metrics;
 use metrics::OrderbookRuntimeMetrics;
+
+mod refresh_scheduler;
+use refresh_scheduler::OrderbookRefreshScheduler;
 
 mod updates;
 use updates::OrderbookUpdateBroadcaster;
@@ -77,10 +79,10 @@ async fn main() -> polyedge_domain::Result<()> {
 
     let broadcaster = OrderbookUpdateBroadcaster::new(16_384);
     let runtime_metrics = Arc::new(OrderbookRuntimeMetrics::default());
-    // Serialize CLOB REST orderbook batches across the background reconciler
-    // and HTTP on-demand refresh path. Without a shared gate, rewards full
-    // ticks and the 10s poll can duplicate thousands of token refreshes.
-    let upstream_request_gate = Arc::new(Mutex::new(()));
+    let refresh_connector =
+        polyedge_connectors::PolymarketRewardsConnector::new(&state.settings.polymarket.clob_host)?;
+    let refresh_scheduler =
+        OrderbookRefreshScheduler::spawn(refresh_connector, Arc::clone(&runtime_metrics));
 
     // Build and bind HTTP API before any external market sync. Health checks
     // should reflect process readiness, not Polymarket API latency.
@@ -101,7 +103,7 @@ async fn main() -> polyedge_domain::Result<()> {
         .with_state(OrderbookApiState::new(
             state.clone(),
             broadcaster.clone(),
-            Arc::clone(&upstream_request_gate),
+            refresh_scheduler.clone(),
             Arc::clone(&runtime_metrics),
         ));
 
@@ -136,7 +138,7 @@ async fn main() -> polyedge_domain::Result<()> {
     // It subscribes to tokens registered via the HTTP API by other services.
     let stream_state = state.clone();
     let stream_broadcaster = broadcaster.clone();
-    let stream_upstream_request_gate = Arc::clone(&upstream_request_gate);
+    let stream_refresh_scheduler = refresh_scheduler.clone();
     let stream_runtime_metrics = Arc::clone(&runtime_metrics);
     let stream_handle = tokio::spawn(async move {
         let restart_interval = Duration::from_secs(
@@ -162,7 +164,7 @@ async fn main() -> polyedge_domain::Result<()> {
             match run_orderbook_stream(
                 &stream_state,
                 &stream_broadcaster,
-                Arc::clone(&stream_upstream_request_gate),
+                stream_refresh_scheduler.clone(),
                 Arc::clone(&stream_runtime_metrics),
             )
             .await

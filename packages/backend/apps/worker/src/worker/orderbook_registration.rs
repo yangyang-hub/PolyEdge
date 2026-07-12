@@ -7,6 +7,12 @@ async fn register_orderbook_tokens(
 ) {
     let max_tokens = state.settings.orderbook_stream.max_tokens;
     let reward_candidate_token_cap = state.settings.orderbook_stream.reward_candidate_token_cap;
+    if reward_candidate_token_cap == 0 && !registration_state.candidate_cap_zero_warned {
+        warn!(
+            "reward candidate orderbook prewarm is disabled because reward_candidate_token_cap is zero"
+        );
+        registration_state.candidate_cap_zero_warned = true;
+    }
     let mut exec_candidates = Vec::new();
     let mut exec_candidate_seen = HashSet::new();
     let mut exec_query_complete = true;
@@ -76,6 +82,10 @@ async fn register_orderbook_tokens(
         }
     };
 
+    let reward_active_raw_tokens = active_tokens.len();
+    let reward_eligible_raw_tokens = eligible_tokens.len();
+    let reward_candidate_raw_tokens = candidate_tokens.len();
+    let exec_raw_tokens = exec_candidates.len();
     let buckets = allocate_registration_buckets(
         active_tokens,
         exec_candidates,
@@ -132,9 +142,13 @@ async fn register_orderbook_tokens(
 
     info!(
         reward_active_tokens = buckets.active.len(),
+        reward_active_raw_tokens,
         exec_tokens = buckets.exec.len(),
+        exec_raw_tokens,
         reward_eligible_tokens = buckets.eligible.len(),
+        reward_eligible_raw_tokens,
         reward_candidate_tokens = buckets.candidate.len(),
+        reward_candidate_raw_tokens,
         reward_candidate_token_cap,
         max_tokens,
         "registered orderbook tokens with orderbook service"
@@ -147,6 +161,7 @@ struct OrderbookRegistrationState {
     exec_orders_empty_streak: usize,
     rewards_eligible_empty_streak: usize,
     rewards_candidates_empty_streak: usize,
+    candidate_cap_zero_warned: bool,
 }
 
 const REWARDS_ACTIVE_EMPTY_CLEAR_AFTER: usize = 2;
@@ -261,12 +276,24 @@ async fn register_reward_eligible_orderbook_tokens_from_plans(
     trace_id: &str,
 ) {
     let max_tokens = state.settings.orderbook_stream.max_tokens;
-    let source_tokens = reward_eligible_orderbook_tokens_from_plans(plans, max_tokens);
+    let (source_tokens, diagnostics) =
+        reward_eligible_orderbook_tokens_with_diagnostics(plans, max_tokens);
     if source_tokens.is_empty() {
-        debug!(
-            trace_id = %trace_id,
-            "immediate eligible rewards orderbook registration returned empty; preserving previous source"
-        );
+        if diagnostics.eligible_plans > 0 {
+            warn!(
+                trace_id = %trace_id,
+                eligible_plans = diagnostics.eligible_plans,
+                plans_missing_orderbook_tokens = diagnostics.plans_missing_orderbook_tokens,
+                plans_using_leg_fallback = diagnostics.plans_using_leg_fallback,
+                max_tokens,
+                "eligible reward plans produced no orderbook registration tokens; preserving previous source"
+            );
+        } else {
+            debug!(
+                trace_id = %trace_id,
+                "immediate eligible rewards orderbook registration returned empty; preserving previous source"
+            );
+        }
         return;
     }
 
@@ -286,32 +313,58 @@ async fn register_reward_eligible_orderbook_tokens_from_plans(
     debug!(
         trace_id = %trace_id,
         reward_eligible_tokens = source_tokens.len(),
+        eligible_plans = diagnostics.eligible_plans,
+        plans_missing_orderbook_tokens = diagnostics.plans_missing_orderbook_tokens,
+        plans_using_leg_fallback = diagnostics.plans_using_leg_fallback,
+        raw_tokens = diagnostics.raw_tokens,
+        duplicate_or_empty_tokens = diagnostics.raw_tokens.saturating_sub(source_tokens.len()),
+        truncated = diagnostics.truncated,
         max_tokens,
         "immediately registered eligible rewards orderbook tokens"
     );
 }
 
-fn reward_eligible_orderbook_tokens_from_plans(
+#[derive(Debug, Default, PartialEq, Eq)]
+struct EligibleRegistrationDiagnostics {
+    eligible_plans: usize,
+    plans_missing_orderbook_tokens: usize,
+    plans_using_leg_fallback: usize,
+    raw_tokens: usize,
+    truncated: bool,
+}
+
+fn reward_eligible_orderbook_tokens_with_diagnostics(
     plans: &[RewardQuotePlan],
     max_tokens: usize,
-) -> Vec<String> {
+) -> (Vec<String>, EligibleRegistrationDiagnostics) {
     let mut source_tokens = Vec::new();
     let mut seen = HashSet::new();
+    let mut diagnostics = EligibleRegistrationDiagnostics::default();
     for plan in plans.iter().filter(|plan| plan.eligible) {
+        diagnostics.eligible_plans += 1;
         if source_tokens.len() >= max_tokens {
+            diagnostics.truncated = true;
             break;
         }
         if plan.orderbook_token_ids.is_empty() {
+            diagnostics.plans_using_leg_fallback += 1;
+            if plan.legs.is_empty() {
+                diagnostics.plans_missing_orderbook_tokens += 1;
+            }
+            diagnostics.raw_tokens += plan.legs.len();
             for leg in &plan.legs {
                 push_unique_token(&mut source_tokens, &mut seen, &leg.token_id, max_tokens);
             }
         } else {
+            diagnostics.raw_tokens += plan.orderbook_token_ids.len();
             for token_id in &plan.orderbook_token_ids {
                 push_unique_token(&mut source_tokens, &mut seen, token_id, max_tokens);
             }
         }
     }
-    source_tokens
+    diagnostics.truncated |= source_tokens.len() >= max_tokens
+        && diagnostics.raw_tokens > source_tokens.len();
+    (source_tokens, diagnostics)
 }
 
 fn push_unique_token(
@@ -523,9 +576,11 @@ mod orderbook_registration_tests {
             },
         ];
 
-        assert_eq!(
-            reward_eligible_orderbook_tokens_from_plans(&plans, 10),
-            vec!["yes_a".to_string(), "no_a".to_string()]
-        );
+        let (tokens, diagnostics) =
+            reward_eligible_orderbook_tokens_with_diagnostics(&plans, 10);
+        assert_eq!(tokens, vec!["yes_a".to_string(), "no_a".to_string()]);
+        assert_eq!(diagnostics.eligible_plans, 1);
+        assert_eq!(diagnostics.raw_tokens, 2);
+        assert_eq!(diagnostics.plans_missing_orderbook_tokens, 0);
     }
 }

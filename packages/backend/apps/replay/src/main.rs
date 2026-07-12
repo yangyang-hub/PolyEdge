@@ -66,6 +66,7 @@ async fn replay_stored_fixture(run_id: i64) -> Result<()> {
     );
     info!(
         run_id,
+        schema_version = stored.schema_version,
         sha256 = %stored.sha256,
         fixture_bytes = stored.json_bytes,
         matches_expected = result.comparison.as_ref().map(|value| value.matches),
@@ -102,6 +103,7 @@ fn replay_fixture(path: &PathBuf) -> Result<()> {
     );
     info!(
         fixture = %path.display(),
+        schema_version = fixture.schema_version,
         plans = result.summary.plan_count,
         eligible = result.summary.eligible_count,
         matches_expected = result.comparison.as_ref().map(|value| value.matches),

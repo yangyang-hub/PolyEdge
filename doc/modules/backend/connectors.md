@@ -89,11 +89,11 @@
 
 - `OrderbookHttpClient` 供 API/worker 读取独立 orderbook 服务缓存，并由 worker 注册 token source。
 - `OrderbookStreamClient` 连接内部 `GET /orderbook/stream`，接收 `OrderbookStreamEvent` 用于 worker 本地 cache 和 rewards fast reconcile wake。
-- `get_books()` 使用 `POST /orderbook/batch` 批量读取缓存。
-- `get_books_with_max_age()` 在请求体携带 `refresh_if_stale_ms`，由 orderbook 服务只刷新缺失或 `confirmed_at` 超龄 token。
+- `get_books()` 使用 `POST /orderbook/batch` 批量读取缓存，使用 5 秒 cache-only timeout 且不主动拆分大批。
+- `get_books_with_max_age()` 在请求体携带 `refresh_if_stale_ms`，使用 15 秒 timeout，并自动把超过 100 token 的输入拆成多个 refresh 请求。响应可带 `requested/stale/refreshed/deferred/failed` summary；部分 refresh 失败仍返回可用缓存。
 - `get_books_with_max_age()` 和内部 stream 会携带 `POLYEDGE_ORDERBOOK__WRITE_TOKEN`；普通 cache-only batch 读取仍可无认证使用。
 - register/ingest/delete 写请求携带 `x-polyedge-orderbook-token`，值来自 `POLYEDGE_ORDERBOOK__WRITE_TOKEN`；ingest client 不发送 `confirmed_at`，确认时间由服务端独占生成。
-- 单盘口 404 映射为 `None`，其他非成功状态映射为 dependency error。
+- 单盘口 404 映射为 `None`，其他非成功状态映射为 dependency error。Refresh summary 中出现 deferred/failed 时记录 warn，但返回的 books 仍交给调用方按 `confirmed_at` 判定。
 
 ## Rewards Combined Provider
 

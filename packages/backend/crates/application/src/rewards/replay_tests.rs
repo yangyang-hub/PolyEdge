@@ -5,8 +5,11 @@ fn replay_test_fixture(now: OffsetDateTime) -> RewardDecisionReplayFixture {
         schema_version: REWARD_DECISION_REPLAY_SCHEMA_VERSION,
         input: super::strategy_input_tests::strategy_test_snapshot(now, false),
         providers: RewardReplayProviderSnapshot::default(),
+        compact_book_history: HashMap::new(),
         final_state: None,
+        final_delta: None,
         expected_plans: None,
+        expected_plan_hashes: None,
     }
 }
 
@@ -155,4 +158,135 @@ fn persisted_replay_fixture_enforces_json_size_limit() {
     let error = RewardStrategyReplayFixture::capture(42, fixture, now)
         .expect_err("oversized fixture must be rejected");
     assert_eq!(error.code(), "REWARD_REPLAY_FIXTURE_TOO_LARGE");
+}
+
+#[test]
+fn reward_decision_replay_reads_v1_without_v2_fields() {
+    let now = OffsetDateTime::from_unix_timestamp(1_750_000_000).expect("fixed timestamp");
+    let mut value = serde_json::to_value(replay_test_fixture(now)).expect("serialize fixture");
+    let object = value.as_object_mut().expect("fixture object");
+    object.insert("schema_version".to_string(), json!(1));
+    object.remove("compact_book_history");
+    object.remove("final_delta");
+    object.remove("expected_plan_hashes");
+
+    let fixture: RewardDecisionReplayFixture =
+        serde_json::from_value(value).expect("decode v1 fixture");
+    assert_eq!(fixture.schema_version, 1);
+    replay_reward_decision_engine(&fixture).expect("replay v1 fixture");
+}
+
+#[test]
+fn reward_decision_replay_treats_missing_schema_version_as_v1() {
+    let now = OffsetDateTime::from_unix_timestamp(1_750_000_000).expect("fixed timestamp");
+    let mut value = serde_json::to_value(replay_test_fixture(now)).expect("serialize fixture");
+    value
+        .as_object_mut()
+        .expect("fixture object")
+        .remove("schema_version");
+    let fixture: RewardDecisionReplayFixture =
+        serde_json::from_value(value).expect("decode legacy fixture");
+    assert_eq!(fixture.schema_version, 1);
+}
+
+#[test]
+fn reward_decision_replay_v2_compacts_history_and_plan_expectations() {
+    let now = OffsetDateTime::from_unix_timestamp(1_750_000_000).expect("fixed timestamp");
+    let mut input = super::strategy_input_tests::strategy_test_snapshot(now, false);
+    let deep_levels = (1..=100)
+        .map(|index| RewardBookLevel {
+            price: decimal("0.50"),
+            size: Decimal::from(index),
+        })
+        .collect::<Vec<_>>();
+    for history in input.book_history.values_mut() {
+        *history = (0..120)
+            .map(|index| BookSnapshot {
+                bids: deep_levels.clone(),
+                asks: deep_levels.clone(),
+                observed_at: if index < 100 {
+                    now - TimeDuration::hours(2) + TimeDuration::seconds(index)
+                } else {
+                    now - TimeDuration::seconds(120 - index)
+                },
+            })
+            .collect();
+    }
+    let final_history = input
+        .book_history
+        .iter()
+        .map(|(token_id, history)| (token_id.clone(), history.iter().cloned().collect()))
+        .collect::<HashMap<String, VecDeque<BookSnapshot>>>();
+    let expected = replay_reward_decision_engine(&RewardDecisionReplayFixture {
+        schema_version: 1,
+        input: input.clone(),
+        providers: RewardReplayProviderSnapshot::default(),
+        compact_book_history: HashMap::new(),
+        final_state: None,
+        final_delta: None,
+        expected_plans: None,
+        expected_plan_hashes: None,
+    })
+    .expect("baseline replay");
+    let final_account = input.account.clone();
+    let final_open_orders = input.open_orders.clone();
+    let final_positions = input.positions.clone();
+    let final_books = input.books.clone();
+    let legacy_input = input.clone();
+    let fixture = build_reward_decision_replay_fixture_v2(
+        input,
+        RewardReplayProviderSnapshot::default(),
+        &final_account,
+        &final_open_orders,
+        &final_positions,
+        &final_books,
+        &final_history,
+        &expected.plans,
+    );
+    let fixture = fixture.expect("build v2 fixture");
+    assert!(fixture.input.book_history.is_empty());
+    assert!(fixture.expected_plans.is_none());
+    assert!(fixture.expected_plan_hashes.is_some());
+    for history in fixture.compact_book_history.values() {
+        assert_eq!(history.len(), 20);
+        assert!(history.iter().all(|point| point.observed_at >= now - TimeDuration::minutes(30)));
+        assert!(history.iter().all(|point| point.best_bid.is_some()));
+    }
+    let replayed = replay_reward_decision_engine(&fixture).expect("replay v2 fixture");
+    assert_eq!(
+        replayed.comparison.as_ref().map(|comparison| comparison.matches),
+        Some(true)
+    );
+    let json = serde_json::to_vec(&fixture).expect("serialize v2 fixture");
+    let legacy_json = serde_json::to_vec(&RewardDecisionReplayFixture {
+        schema_version: 1,
+        input: legacy_input,
+        providers: RewardReplayProviderSnapshot::default(),
+        compact_book_history: HashMap::new(),
+        final_state: Some(RewardReplayFinalState {
+            account: Some(final_account),
+            open_orders: Some(final_open_orders),
+            positions: Some(final_positions),
+            books: Some(final_books),
+            book_history: Some(
+                final_history
+                    .iter()
+                    .map(|(token_id, history)| {
+                        (token_id.clone(), history.iter().cloned().collect())
+                    })
+                    .collect(),
+            ),
+        }),
+        final_delta: None,
+        expected_plans: Some(expected.plans),
+        expected_plan_hashes: None,
+    })
+    .expect("serialize v1 fixture");
+    assert!(json.len() < 500_000, "compact fixture was {} bytes", json.len());
+    assert!(
+        json.len() * 10 < legacy_json.len(),
+        "v2={} bytes v1={} bytes",
+        json.len(),
+        legacy_json.len()
+    );
 }

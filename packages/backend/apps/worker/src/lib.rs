@@ -13,29 +13,29 @@ use polyedge_application::{
     ReconcileExternalTradeCommand, RewardAccountState, RewardActionPlanner,
     RewardActionPlannerContext, RewardAiAdvisoryRequest, RewardBookLevel, RewardBotConfig,
     RewardBotRunReport, RewardCandidateMarket, RewardControlAction, RewardControlCommand,
-    RewardDecisionEngine, RewardDecisionReplayFixture, RewardDurableActionRecovery,
-    RewardDurableActionRequest, RewardEventWindowStatus, RewardExitStrategySource,
-    RewardFairValueEstimate, RewardFill, RewardFillRole, RewardInfoRiskAssessmentRequest,
-    RewardLiveCycle, RewardLiveEngineInput, RewardLiveQuoteMaterialization, RewardLlmCallRecord,
-    RewardMarket, RewardMarketAdvisory, RewardMarketInfoRisk, RewardMergeActionProposal,
-    RewardMergeIntent, RewardMergeIntentStatus, RewardOrderActionIntent, RewardOrderActionProposal,
-    RewardOrderBook, RewardOrderSide, RewardPlanQuoteMode, RewardPosition,
-    RewardProviderPreLlmCandidateKind, RewardQuoteLeg, RewardQuotePlan, RewardQuoteReadiness,
-    RewardReplayFinalState, RewardReplayProviderSnapshot, RewardRiskEvent, RewardRiskSeverity,
-    RewardStrategyAction, RewardStrategyActionStatus, RewardStrategyActionType,
-    RewardStrategyBucket, RewardStrategyInput, RewardStrategyProfile, RewardStrategyReplayFixture,
-    RewardStrategyRunStart, RewardStrategyRunTrigger, RewardTickOutcome, RewardToken,
-    SyncExternalOrderStatusCommand, apply_reward_ai_advisories,
-    apply_reward_fair_value_to_quote_plan, apply_reward_info_risks,
-    build_reward_ai_advisory_request, build_reward_info_risk_assessment_request,
-    materialize_reward_quote_plan_for_live_orderbook, new_risk_event, reward_ai_edge_buffer_cents,
-    reward_ai_effective_action, reward_ai_size_multiplier, reward_condition_has_active_exposure,
-    reward_config_hash, reward_info_risk_effective_action, reward_info_risk_size_multiplier,
+    RewardDecisionEngine, RewardDurableActionRecovery, RewardDurableActionRequest,
+    RewardEventWindowStatus, RewardExitStrategySource, RewardFairValueEstimate, RewardFill,
+    RewardFillRole, RewardInfoRiskAssessmentRequest, RewardLiveCycle, RewardLiveEngineInput,
+    RewardLiveQuoteMaterialization, RewardLlmCallRecord, RewardMarket, RewardMarketAdvisory,
+    RewardMarketInfoRisk, RewardMergeActionProposal, RewardMergeIntent, RewardMergeIntentStatus,
+    RewardOrderActionIntent, RewardOrderActionProposal, RewardOrderBook, RewardOrderSide,
+    RewardPlanQuoteMode, RewardPosition, RewardProviderPreLlmCandidateKind, RewardQuoteLeg,
+    RewardQuotePlan, RewardQuoteReadiness, RewardReplayProviderSnapshot, RewardRiskEvent,
+    RewardRiskSeverity, RewardStrategyAction, RewardStrategyActionStatus, RewardStrategyActionType,
+    RewardStrategyBucket, RewardStrategyInput, RewardStrategyProfile, RewardStrategyRunStart,
+    RewardStrategyRunTrigger, RewardTickOutcome, RewardToken, SyncExternalOrderStatusCommand,
+    apply_reward_ai_advisories, apply_reward_fair_value_to_quote_plan, apply_reward_info_risks,
+    build_reward_ai_advisory_request, build_reward_decision_replay_fixture_v2_pending_expectations,
+    build_reward_info_risk_assessment_request, materialize_reward_quote_plan_for_live_orderbook,
+    new_risk_event, reward_ai_edge_buffer_cents, reward_ai_effective_action,
+    reward_ai_size_multiplier, reward_condition_has_active_exposure, reward_config_hash,
+    reward_info_risk_effective_action, reward_info_risk_size_multiplier,
     reward_order_counts_as_external_open, reward_provider_cache_refresh_due,
     reward_provider_plan_passes_pre_llm_gate, reward_provider_pre_llm_candidate_kind,
     reward_quote_plan_event_window_blocks_new_buy, reward_quote_plan_event_window_cancels_open_buy,
     reward_strategy_decisions_from_plans, scale_double_legs_for_weighted_budget,
     scale_single_leg_for_budget, select_reward_book_token_ids,
+    set_reward_replay_expected_plan_hashes,
 };
 use polyedge_connectors::{
     ConnectorNewsItem, ConnectorOrderStatusUpdate, ConnectorTradeFillUpdate,
@@ -266,7 +266,10 @@ pub async fn run_cli() -> Result<()> {
         }
         Some("scan-rewards-once") => {
             let trace_id = new_trace_id();
-            let report = run_reward_bot_once(&state, &trace_id).await?;
+            let replay_capture = RewardReplayCaptureRuntime::start(&state);
+            let result = run_reward_bot_once(&state, &trace_id).await;
+            replay_capture.shutdown().await;
+            let report = result?;
             info!(
                 trace_id = %trace_id,
                 markets_scanned = report.markets_scanned,
@@ -281,7 +284,10 @@ pub async fn run_cli() -> Result<()> {
         }
         Some("poll-reward-bot") => {
             let max_cycles = parse_limit_arg(args.next())?.map(usize::from);
-            let report = poll_reward_bot(&state, max_cycles).await?;
+            let replay_capture = RewardReplayCaptureRuntime::start(&state);
+            let result = poll_reward_bot(&state, max_cycles).await;
+            replay_capture.shutdown().await;
+            let report = result?;
             info!(
                 markets_scanned = report.markets_scanned,
                 books_fetched = report.books_fetched,

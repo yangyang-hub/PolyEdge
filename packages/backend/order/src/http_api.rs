@@ -1,7 +1,7 @@
 use crate::{
     metrics::OrderbookRuntimeMetrics,
+    refresh_scheduler::{OrderbookRefreshScheduler, RefreshBatchOutcome, RefreshPriority},
     stream::{
-        ORDERBOOK_UPSTREAM_BATCH_DELAY_MS, ORDERBOOK_UPSTREAM_BATCH_TIMEOUT_SECS,
         current_unix_millis, effective_orderbook_ws_chunk_size, normalized_cached_book,
         reconcile_poll_book, reward_book_to_cached,
     },
@@ -17,13 +17,12 @@ use axum::{
     response::IntoResponse,
 };
 use polyedge_application::{BookSource, CachedBookLevel, CachedOrderBook, OrderbookStreamReason};
-use polyedge_connectors::PolymarketRewardsConnector;
 use polyedge_infrastructure::AppState;
 use polymarket_client_sdk::types::U256;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashSet, str::FromStr, sync::Arc, time::Duration};
-use tokio::sync::{Mutex, Semaphore, broadcast};
+use tokio::sync::{Semaphore, broadcast};
 use tracing::{debug, warn};
 
 const MAX_REGISTRY_SOURCES: usize = 32;
@@ -32,6 +31,8 @@ const MAX_INTERNAL_STREAM_CONNECTIONS: usize = 64;
 const INTERNAL_STREAM_SEND_TIMEOUT: Duration = Duration::from_secs(5);
 const MAX_INGEST_CLOCK_SKEW_MS: i64 = 30_000;
 const MAX_INGEST_OBSERVED_AGE_MS: i64 = 24 * 60 * 60 * 1_000;
+const MAX_REFRESH_TOKENS_PER_REQUEST: usize = 100;
+const LIVE_ACTION_REFRESH_MAX_AGE_MS: i64 = 1_000;
 
 type ApiError = (StatusCode, Json<MessageResponse>);
 type ApiResult<T> = Result<Json<T>, ApiError>;
@@ -40,7 +41,7 @@ type ApiResult<T> = Result<Json<T>, ApiError>;
 pub struct OrderbookApiState {
     pub app: AppState,
     pub broadcaster: OrderbookUpdateBroadcaster,
-    upstream_request_gate: Arc<Mutex<()>>,
+    refresh_scheduler: OrderbookRefreshScheduler,
     stream_connections: Arc<Semaphore>,
     runtime_metrics: Arc<OrderbookRuntimeMetrics>,
 }
@@ -49,13 +50,13 @@ impl OrderbookApiState {
     pub fn new(
         app: AppState,
         broadcaster: OrderbookUpdateBroadcaster,
-        upstream_request_gate: Arc<Mutex<()>>,
+        refresh_scheduler: OrderbookRefreshScheduler,
         runtime_metrics: Arc<OrderbookRuntimeMetrics>,
     ) -> Self {
         Self {
             app,
             broadcaster,
-            upstream_request_gate,
+            refresh_scheduler,
             stream_connections: Arc::new(Semaphore::new(MAX_INTERNAL_STREAM_CONNECTIONS)),
             runtime_metrics,
         }
@@ -83,6 +84,17 @@ pub struct LevelResponse {
 #[derive(Serialize)]
 pub struct OrderbookBatchResponse {
     pub books: Vec<OrderbookResponse>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub refresh: Option<OrderbookRefreshSummary>,
+}
+
+#[derive(Debug, Default, Serialize)]
+pub struct OrderbookRefreshSummary {
+    pub requested: usize,
+    pub stale: usize,
+    pub refreshed: usize,
+    pub deferred: usize,
+    pub failed: usize,
 }
 
 #[derive(Serialize)]
@@ -157,17 +169,31 @@ pub async fn get_orderbook_batch(
 ) -> ApiResult<OrderbookBatchResponse> {
     let max_tokens = state.app.settings.orderbook_stream.max_tokens;
     let token_ids = validate_token_ids(req.token_ids, max_tokens)?;
-    if let Some(max_age_ms) = req.refresh_if_stale_ms.filter(|max_age_ms| *max_age_ms > 0) {
-        authorize_write(&state.app, &headers)?;
-        if let Err(error) = refresh_stale_orderbook_batch(&state, &token_ids, max_age_ms).await {
-            warn!(
-                error = %error,
-                requested = token_ids.len(),
-                max_age_ms,
-                "failed to refresh stale orderbook batch before cache read"
-            );
-        }
-    }
+    let refresh =
+        if let Some(max_age_ms) = req.refresh_if_stale_ms.filter(|max_age_ms| *max_age_ms > 0) {
+            authorize_write(&state.app, &headers)?;
+            validate_refresh_batch_size(token_ids.len())?;
+            Some(
+                match refresh_stale_orderbook_batch(&state, &token_ids, max_age_ms).await {
+                    Ok(summary) => summary,
+                    Err(error) => {
+                        warn!(
+                            error = %error,
+                            requested = token_ids.len(),
+                            max_age_ms,
+                            "failed to refresh stale orderbook batch before cache read"
+                        );
+                        OrderbookRefreshSummary {
+                            requested: token_ids.len(),
+                            failed: token_ids.len(),
+                            ..OrderbookRefreshSummary::default()
+                        }
+                    }
+                },
+            )
+        } else {
+            None
+        };
     let books = state
         .app
         .orderbook_cache
@@ -182,91 +208,94 @@ pub async fn get_orderbook_batch(
         .into_iter()
         .map(to_response)
         .collect();
-    Ok(Json(OrderbookBatchResponse { books }))
+    Ok(Json(OrderbookBatchResponse { books, refresh }))
+}
+
+fn validate_refresh_batch_size(token_count: usize) -> Result<(), ApiError> {
+    if token_count > MAX_REFRESH_TOKENS_PER_REQUEST {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            format!("refresh batch exceeds maximum of {MAX_REFRESH_TOKENS_PER_REQUEST} token IDs"),
+        ));
+    }
+    Ok(())
 }
 
 async fn refresh_stale_orderbook_batch(
     state: &OrderbookApiState,
     token_ids: &[String],
     max_age_ms: i64,
-) -> polyedge_domain::Result<usize> {
+) -> polyedge_domain::Result<OrderbookRefreshSummary> {
     let initially_stale = state
         .app
         .orderbook_cache
         .get_stale_tokens(token_ids, max_age_ms)
         .await?;
     if initially_stale.is_empty() {
-        return Ok(0);
+        return Ok(OrderbookRefreshSummary {
+            requested: token_ids.len(),
+            ..OrderbookRefreshSummary::default()
+        });
     }
 
-    let connector = PolymarketRewardsConnector::new(&state.app.settings.polymarket.clob_host)?;
     let max_levels = state.app.settings.orderbook_stream.max_levels_per_side;
-    let mut refreshed = 0usize;
-    for (chunk_index, chunk) in initially_stale.chunks(100).enumerate() {
-        if chunk_index > 0 {
-            tokio::time::sleep(Duration::from_millis(ORDERBOOK_UPSTREAM_BATCH_DELAY_MS)).await;
+    let mut summary = OrderbookRefreshSummary {
+        requested: token_ids.len(),
+        stale: initially_stale.len(),
+        ..OrderbookRefreshSummary::default()
+    };
+    let priority = if max_age_ms <= LIVE_ACTION_REFRESH_MAX_AGE_MS {
+        RefreshPriority::LiveAction
+    } else {
+        RefreshPriority::HttpRefresh
+    };
+    let books = match state
+        .refresh_scheduler
+        .refresh(priority, &initially_stale)
+        .await
+    {
+        RefreshBatchOutcome::Completed(books) => books,
+        RefreshBatchOutcome::Deferred => {
+            summary.deferred = initially_stale.len();
+            return Ok(summary);
         }
-        let books = {
-            let _request_guard = state.upstream_request_gate.lock().await;
-            // A background poll or an earlier caller may have refreshed this
-            // chunk while it waited for the shared upstream gate. Recheck
-            // under the gate to avoid sending duplicate CLOB requests.
-            let stale = state
-                .app
-                .orderbook_cache
-                .get_stale_tokens(chunk, max_age_ms)
-                .await?;
-            if stale.is_empty() {
-                continue;
-            }
-            tokio::time::timeout(
-                Duration::from_secs(ORDERBOOK_UPSTREAM_BATCH_TIMEOUT_SECS),
-                connector.fetch_order_books(&stale),
-            )
-            .await
-            .map_err(|_| {
-                polyedge_domain::AppError::dependency_unavailable(
-                    "ORDERBOOK_ON_DEMAND_BATCH_TIMEOUT",
-                    format!(
-                        "orderbook on-demand batch exceeded {} seconds",
-                        ORDERBOOK_UPSTREAM_BATCH_TIMEOUT_SECS
-                    ),
-                )
-            })??
-        };
-        let poll_confirmed_at = current_unix_millis();
-        state
-            .runtime_metrics
-            .observe_poll_success(poll_confirmed_at);
-        for book in books {
-            let cached =
-                normalized_cached_book(reward_book_to_cached(&book, poll_confirmed_at), max_levels);
-            reconcile_poll_book(
-                &state.app.orderbook_cache,
-                &state.broadcaster,
-                &cached,
-                &state.runtime_metrics,
-            )
-            .await?;
-            if state
-                .app
-                .orderbook_cache
-                .get_book(&cached.token_id)
-                .await?
-                .is_some_and(|current| current.confirmation_time_ms() >= poll_confirmed_at)
-            {
-                refreshed += 1;
-            }
+        RefreshBatchOutcome::Failed(error) => {
+            warn!(error = %error, stale = initially_stale.len(), "orderbook on-demand refresh failed");
+            summary.failed = initially_stale.len();
+            return Ok(summary);
         }
+    };
+    let poll_confirmed_at = current_unix_millis();
+    state
+        .runtime_metrics
+        .observe_poll_success(poll_confirmed_at);
+    for book in books {
+        let cached =
+            normalized_cached_book(reward_book_to_cached(&book, poll_confirmed_at), max_levels);
+        reconcile_poll_book(
+            &state.app.orderbook_cache,
+            &state.broadcaster,
+            &cached,
+            &state.runtime_metrics,
+        )
+        .await?;
     }
+    let remaining_stale = state
+        .app
+        .orderbook_cache
+        .get_stale_tokens(&initially_stale, max_age_ms)
+        .await?
+        .len();
+    summary.refreshed = initially_stale.len().saturating_sub(remaining_stale);
+    summary.failed = remaining_stale;
     debug!(
         requested = token_ids.len(),
         stale = initially_stale.len(),
-        refreshed,
+        refreshed = summary.refreshed,
         max_age_ms,
         "refreshed stale orderbook batch on demand"
     );
-    Ok(refreshed)
+    Ok(summary)
 }
 
 pub async fn get_orderbook_stats(

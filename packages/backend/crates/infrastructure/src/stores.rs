@@ -79,3 +79,4 @@ include!("stores/orderbook_registry_tests.rs");
 include!("stores/orderbook_cache_tests.rs");
 include!("stores/consistency_tests.rs");
 include!("stores/rewards_tests.rs");
+include!("stores/rewards_fair_value_tests.rs");

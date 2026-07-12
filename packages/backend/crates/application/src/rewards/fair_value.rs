@@ -7,12 +7,59 @@ pub fn apply_reward_fair_values_to_quote_plans(
     config: &RewardBotConfig,
     now: OffsetDateTime,
 ) -> Vec<RewardFairValueEstimate> {
-    plans
-        .iter_mut()
-        .filter_map(|plan| {
-            apply_reward_fair_value_to_quote_plan(plan, books, book_history, config, now)
-        })
-        .collect()
+    if !config.fair_value_enabled {
+        for plan in plans {
+            plan.fair_value = None;
+        }
+        return Vec::new();
+    }
+
+    let mut condition_order = Vec::new();
+    let mut plan_indexes_by_condition: HashMap<String, Vec<usize>> = HashMap::new();
+    for (index, plan) in plans.iter().enumerate() {
+        if !plan_indexes_by_condition.contains_key(&plan.condition_id) {
+            condition_order.push(plan.condition_id.clone());
+        }
+        plan_indexes_by_condition
+            .entry(plan.condition_id.clone())
+            .or_default()
+            .push(index);
+    }
+
+    let mut estimates = Vec::with_capacity(condition_order.len());
+    for condition_id in condition_order {
+        let indexes = &plan_indexes_by_condition[&condition_id];
+        let token_ids = consistent_reward_fair_value_token_ids(plans, indexes);
+        let estimate = match token_ids {
+            Ok((yes_token_id, no_token_id)) => estimate_reward_fair_value_for_tokens(
+                &condition_id,
+                &yes_token_id,
+                &no_token_id,
+                books,
+                book_history,
+                config,
+                now,
+            )
+            .unwrap_or_else(|reason| {
+                empty_reward_fair_value_estimate(&condition_id, reason, config, now)
+            }),
+            Err(reason) => {
+                empty_reward_fair_value_estimate(&condition_id, reason, config, now)
+            }
+        };
+
+        for index in indexes {
+            apply_reward_fair_value_estimate_to_quote_plan(
+                &mut plans[*index],
+                books,
+                config,
+                now,
+                estimate.clone(),
+            );
+        }
+        estimates.push(estimate);
+    }
+    estimates
 }
 
 pub fn apply_reward_fair_value_to_quote_plan(
@@ -28,7 +75,20 @@ pub fn apply_reward_fair_value_to_quote_plan(
     }
 
     let estimate = estimate_reward_fair_value(plan, books, book_history, config, now)
-        .unwrap_or_else(|reason| empty_reward_fair_value_estimate(plan, reason, config, now));
+        .unwrap_or_else(|reason| {
+            empty_reward_fair_value_estimate(&plan.condition_id, reason, config, now)
+        });
+    apply_reward_fair_value_estimate_to_quote_plan(plan, books, config, now, estimate.clone());
+    Some(estimate)
+}
+
+fn apply_reward_fair_value_estimate_to_quote_plan(
+    plan: &mut RewardQuotePlan,
+    books: &HashMap<String, RewardOrderBook>,
+    config: &RewardBotConfig,
+    now: OffsetDateTime,
+    estimate: RewardFairValueEstimate,
+) {
     if estimate.do_not_quote_reason.is_none()
         && let Ok(materialized) = materialize_reward_quote_plan_for_live_orderbook_with_fair_value_at(
             plan, books, config, now, &estimate,
@@ -51,7 +111,6 @@ pub fn apply_reward_fair_value_to_quote_plan(
     }
     plan.fair_value = Some(decision);
     plan.updated_at = now;
-    Some(estimate)
 }
 
 fn estimate_reward_fair_value(
@@ -62,8 +121,28 @@ fn estimate_reward_fair_value(
     now: OffsetDateTime,
 ) -> std::result::Result<RewardFairValueEstimate, String> {
     let (yes_token_id, no_token_id) = reward_fair_value_token_ids(plan)?;
-    let yes = reward_fair_value_current_token_state(&yes_token_id, books, config, now);
-    let no = reward_fair_value_current_token_state(&no_token_id, books, config, now);
+    estimate_reward_fair_value_for_tokens(
+        &plan.condition_id,
+        &yes_token_id,
+        &no_token_id,
+        books,
+        book_history,
+        config,
+        now,
+    )
+}
+
+fn estimate_reward_fair_value_for_tokens(
+    condition_id: &str,
+    yes_token_id: &str,
+    no_token_id: &str,
+    books: &HashMap<String, RewardOrderBook>,
+    book_history: &HashMap<String, VecDeque<BookSnapshot>>,
+    config: &RewardBotConfig,
+    now: OffsetDateTime,
+) -> std::result::Result<RewardFairValueEstimate, String> {
+    let yes = reward_fair_value_current_token_state(yes_token_id, books, config, now);
+    let no = reward_fair_value_current_token_state(no_token_id, books, config, now);
 
     let mut components = Vec::new();
     if let Some(state) = yes {
@@ -106,7 +185,7 @@ fn estimate_reward_fair_value(
     }
 
     let (history_components, history_sample_count, history_range_cents) =
-        reward_fair_value_history_components(&yes_token_id, &no_token_id, book_history, config, now);
+        reward_fair_value_history_components(yes_token_id, no_token_id, book_history, config, now);
     components.extend(history_components);
 
     if components.is_empty() {
@@ -129,7 +208,7 @@ fn estimate_reward_fair_value(
             (state.microprice - state.midpoint).abs() * decimal("100")
         }),
     );
-    let history_component = history_range_cents.unwrap_or_else(|| {
+    let history_component = history_range_cents.unwrap_or({
         if config.fair_value_min_history_samples > 0 {
             config.fair_value_uncertainty_buffer_cents
         } else {
@@ -156,7 +235,7 @@ fn estimate_reward_fair_value(
         reward_fair_value_rejection_reason(config, confidence, midpoint_deviation_cents);
 
     Ok(RewardFairValueEstimate {
-        condition_id: plan.condition_id.clone(),
+        condition_id: condition_id.to_string(),
         source: REWARD_FAIR_VALUE_SOURCE_MARKET_IMPLIED.to_string(),
         fair_yes: fair_yes.round_dp(6),
         fair_no: fair_no.round_dp(6),
@@ -415,6 +494,28 @@ fn reward_fair_value_token_ids(
     }
 }
 
+fn consistent_reward_fair_value_token_ids(
+    plans: &[RewardQuotePlan],
+    indexes: &[usize],
+) -> std::result::Result<(String, String), String> {
+    let Some(first_index) = indexes.first() else {
+        return Err("condition has no quote plans for fair-value estimation".to_string());
+    };
+    let expected = reward_fair_value_token_ids(&plans[*first_index])?;
+    for index in indexes.iter().skip(1) {
+        let actual = reward_fair_value_token_ids(&plans[*index]).map_err(|reason| {
+            format!("inconsistent outcome token mapping across strategy profiles: {reason}")
+        })?;
+        if actual != expected {
+            return Err(format!(
+                "inconsistent outcome token mapping across strategy profiles: expected YES={} NO={}, found YES={} NO={}",
+                expected.0, expected.1, actual.0, actual.1
+            ));
+        }
+    }
+    Ok(expected)
+}
+
 fn weighted_reward_fair_value(components: &[RewardFairValueComponent]) -> std::result::Result<Decimal, String> {
     let total_weight: Decimal = components.iter().map(|component| component.weight).sum();
     if total_weight <= Decimal::ZERO {
@@ -491,13 +592,13 @@ fn reward_fair_value_rebate_cents(plan: &RewardQuotePlan, config: &RewardBotConf
 }
 
 fn empty_reward_fair_value_estimate(
-    plan: &RewardQuotePlan,
+    condition_id: &str,
     reason: String,
     config: &RewardBotConfig,
     now: OffsetDateTime,
 ) -> RewardFairValueEstimate {
     RewardFairValueEstimate {
-        condition_id: plan.condition_id.clone(),
+        condition_id: condition_id.to_string(),
         source: REWARD_FAIR_VALUE_SOURCE_MARKET_IMPLIED.to_string(),
         fair_yes: Decimal::ZERO,
         fair_no: Decimal::ZERO,
@@ -520,7 +621,7 @@ fn median_decimal(values: &[Decimal]) -> Option<Decimal> {
     let mut values = values.to_vec();
     values.sort();
     let mid = values.len() / 2;
-    if values.len() % 2 == 0 {
+    if values.len().is_multiple_of(2) {
         Some(((values[mid - 1] + values[mid]) / decimal("2")).round_dp(6))
     } else {
         Some(values[mid].round_dp(6))

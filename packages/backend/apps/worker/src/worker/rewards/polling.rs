@@ -593,16 +593,32 @@ async fn fetch_cached_reward_books(
         let remote_refresh_tokens =
             reward_orderbook_remote_refresh_tokens(state, token_ids, &cached_books).await?;
         if !remote_refresh_tokens.is_empty() {
-            let remote_books = fetch_remote_cached_orderbooks(state, &remote_refresh_tokens).await?;
-            let remote_token_ids = remote_books
-                .iter()
-                .map(|book| book.token_id.as_str())
-                .collect::<HashSet<_>>();
-            cached_books.retain(|book| !remote_token_ids.contains(book.token_id.as_str()));
-            for book in &remote_books {
-                cached_books.push(book.clone());
+            match fetch_remote_cached_orderbooks(state, &remote_refresh_tokens).await {
+                Ok(remote_books) => {
+                    let remote_token_ids = remote_books
+                        .iter()
+                        .map(|book| book.token_id.as_str())
+                        .collect::<HashSet<_>>();
+                    cached_books
+                        .retain(|book| !remote_token_ids.contains(book.token_id.as_str()));
+                    for book in &remote_books {
+                        cached_books.push(book.clone());
+                    }
+                    orderbook_cache.apply_books(remote_books).await;
+                }
+                Err(error) => {
+                    // Preserve the long-running rewards loop after a transient
+                    // service/network failure. Live action paths continue to
+                    // validate confirmed_at and therefore fail closed if these
+                    // retained local books are too old.
+                    warn!(
+                        error = %error,
+                        requested = remote_refresh_tokens.len(),
+                        cached = cached_books.len(),
+                        "orderbook refresh failed; continuing with worker-local cache"
+                    );
+                }
             }
-            orderbook_cache.apply_books(remote_books).await;
         }
         cached_books
     } else {

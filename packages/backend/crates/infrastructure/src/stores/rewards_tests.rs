@@ -146,14 +146,17 @@ mod rewards_tests {
                 event_windows: Vec::new(),
             },
             providers: polyedge_application::RewardReplayProviderSnapshot::default(),
+            compact_book_history: HashMap::new(),
             final_state: None,
+            final_delta: None,
             expected_plans: Some(Vec::new()),
+            expected_plan_hashes: None,
         }
     }
 
     #[tokio::test]
     async fn in_memory_strategy_replay_fixture_round_trip_requires_existing_run() {
-        let store = InMemoryRewardBotStore::new();
+        let store = Arc::new(InMemoryRewardBotStore::new());
         let now = OffsetDateTime::from_unix_timestamp(1_750_000_000).expect("fixed timestamp");
         let missing = RewardStrategyReplayFixture::capture(1, replay_fixture(now), now)
             .expect("capture missing fixture");
@@ -175,12 +178,11 @@ mod rewards_tests {
             })
             .await
             .expect("start run");
-        let fixture = RewardStrategyReplayFixture::capture(run_id, replay_fixture(now), now)
-            .expect("capture fixture");
-        store
-            .save_strategy_replay_fixture(&fixture)
+        let service = polyedge_application::RewardBotService::new(store.clone());
+        let fixture = service
+            .capture_and_save_strategy_replay_fixture(run_id, replay_fixture(now), now)
             .await
-            .expect("save fixture");
+            .expect("capture and save fixture");
 
         let stored = store
             .get_strategy_replay_fixture(run_id)

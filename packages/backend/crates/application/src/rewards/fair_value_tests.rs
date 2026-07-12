@@ -294,3 +294,97 @@ fn final_fair_value_gate_searches_deeper_rank_with_dynamic_uncertainty() {
     assert_eq!(plan.legs[0].price, decimal("0.53"));
     assert!(plan.fair_value.as_ref().expect("decision").passed);
 }
+
+#[test]
+fn fair_value_estimate_is_reused_across_strategy_profiles() {
+    let now = OffsetDateTime::now_utc();
+    let books = fair_value_test_books(now);
+    let standard = fair_value_test_plan(decimal("0.53"), now);
+    let mut balanced_merge = fair_value_test_plan(decimal("0.52"), now);
+    balanced_merge.strategy_bucket = RewardStrategyBucket::Standard;
+    balanced_merge.strategy_profile = RewardStrategyProfile::BalancedMerge;
+    balanced_merge.ai_advisory = Some(RewardMarketAdvisory {
+        condition_id: balanced_merge.condition_id.clone(),
+        provider: RewardAiProvider::OpenAi,
+        request_format: RewardAiRequestFormat::OpenAiResponses,
+        model: "test-model".to_string(),
+        input_hash: "balanced-hash".to_string(),
+        action: RewardProviderAction::Reduce,
+        size_multiplier: Decimal::ONE,
+        edge_buffer_cents: decimal("0.5"),
+        confidence: Decimal::ONE,
+        reasons: vec!["profile-specific adjustment".to_string()],
+        metrics: json!({}),
+        created_at: now,
+        expires_at: now + TimeDuration::hours(1),
+    });
+    let mut plans = vec![standard, balanced_merge];
+    let config = RewardBotConfig {
+        ai_advisory_enabled: true,
+        ai_risk_adjustment_enabled: true,
+        ai_action_min_confidence: decimal("0.5"),
+        ..fair_value_test_config()
+    };
+
+    let estimates = apply_reward_fair_values_to_quote_plans(
+        &mut plans,
+        &books,
+        &HashMap::new(),
+        &config,
+        now,
+    );
+
+    assert_eq!(estimates.len(), 1);
+    assert_eq!(estimates[0].condition_id, "cond_fair");
+    assert_eq!(
+        plans[0].fair_value.as_ref().expect("standard decision").estimate,
+        plans[1]
+            .fair_value
+            .as_ref()
+            .expect("balanced decision")
+            .estimate
+    );
+    assert_ne!(
+        plans[0].fair_value.as_ref().expect("standard decision").edges,
+        plans[1]
+            .fair_value
+            .as_ref()
+            .expect("balanced decision")
+            .edges
+    );
+}
+
+#[test]
+fn inconsistent_profile_token_mapping_fails_closed_for_the_condition() {
+    let now = OffsetDateTime::now_utc();
+    let books = fair_value_test_books(now);
+    let standard = fair_value_test_plan(decimal("0.53"), now);
+    let mut balanced_merge = fair_value_test_plan(decimal("0.52"), now);
+    balanced_merge.strategy_bucket = RewardStrategyBucket::Standard;
+    balanced_merge.strategy_profile = RewardStrategyProfile::BalancedMerge;
+    balanced_merge.orderbook_token_ids = vec!["other_yes".to_string(), "other_no".to_string()];
+    balanced_merge.legs[0].token_id = "other_yes".to_string();
+    let mut plans = vec![standard, balanced_merge];
+
+    let estimates = apply_reward_fair_values_to_quote_plans(
+        &mut plans,
+        &books,
+        &HashMap::new(),
+        &fair_value_test_config(),
+        now,
+    );
+
+    assert_eq!(estimates.len(), 1);
+    let reason = estimates[0]
+        .do_not_quote_reason
+        .as_deref()
+        .expect("fail-closed reason");
+    assert!(reason.contains("inconsistent outcome token mapping across strategy profiles"));
+    for plan in plans {
+        assert!(!plan.eligible);
+        assert!(!plan.pre_ai_eligible);
+        let decision = plan.fair_value.expect("fair-value decision");
+        assert!(!decision.passed);
+        assert_eq!(decision.estimate.do_not_quote_reason.as_deref(), Some(reason));
+    }
+}

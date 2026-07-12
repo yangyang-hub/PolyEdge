@@ -654,7 +654,6 @@ impl RewardBotStore for InMemoryRewardBotStore {
         &self,
         fixture: &RewardStrategyReplayFixture,
     ) -> Result<()> {
-        fixture.validate_integrity()?;
         if !self
             .strategy_runs
             .read()
@@ -795,7 +794,11 @@ impl RewardBotStore for InMemoryRewardBotStore {
         if estimates.is_empty() {
             return Ok(());
         }
-        self.fair_values.write().await.extend_from_slice(estimates);
+        let normalized = normalize_reward_fair_value_estimates(estimates)?;
+        self.fair_values
+            .write()
+            .await
+            .extend(normalized.history);
         Ok(())
     }
 
