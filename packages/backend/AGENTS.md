@@ -1,5 +1,7 @@
 # packages/backend/AGENTS.md
 
+最后更新：2026-07-13
+
 后端（Rust workspace）代码规范。Rust workspace 根为 [packages/backend/Cargo.toml](Cargo.toml)。仓库级状态快照见根 [AGENTS.md](../../AGENTS.md)；前端规范见 [packages/front/AGENTS.md](../front/AGENTS.md)。本文件的规则在写或改 `packages/backend/api/`、`packages/backend/order/`、`packages/backend/` 下任何 Rust 代码时必须遵守，违背即应拆分/重构而非沿用。
 
 ## 适用范围
@@ -24,6 +26,13 @@ crate 依赖**单向**，不可逆向：
 - `domain` 不得 `use` 任何上层；领域逻辑不下沉到 `infrastructure`。
 - HTTP DTO 只放 `contracts`，不在 handler 内联定义请求/响应结构。
 - 跨外部系统的交互走 `connectors`，不在 `application` 里直接发 HTTP/SQL。
+
+## Event-window 数据合同
+
+- Gamma `startDate` / `startDateIso` 只是 market lifecycle start，`endDate` / `endDateIso` 只是 market end/resolution deadline；无论 `hasReviewedDates` 值如何，都不得作为 rewards 事件 hard gate。只有 `gameStartTime` 和 `events[].startTime` 可以生成显式 scheduled-event candidate。
+- 同一 condition 必须支持多 `event_key`；不得把多事件压成一条 `(condition_id, source)` 行，也不得用会随重排/改期变化的 ordinal 或 timestamp 作 key。Application 按 event key 选最高优先级 source，`manual` 可以覆盖或撤回 Gamma，然后在多 key 中聚合最严格风险动作。
+- Producer 必须使用 source snapshot replace，在 `coverage[]` 中逐 condition 声明 `condition_id + source_updated_at`。Store 按 source 获取 Postgres transaction advisory lock，以每 condition `(producer_version, source_updated_at, observed_at)` 和 snapshot hash 作 high-water，并将快照中缺失的 event key tombstone；禁止回退成逐行 upsert。
+- Legacy 行缺少 time role/precision/start provenance 时必须 fail closed，不得仅依靠 source 名称或旧 confidence 推断 hard-gate eligibility。`0003_reward_event_window_semantics.sql` 与旧 producer 不滚动兼容；部署时必须协调停止旧 producer，迁移后再启动新 runtime。
 
 ## 模块化设计
 
@@ -73,26 +82,26 @@ cargo fmt --all                   # 统一格式（拆分/搬移后必跑）
 cargo clippy --workspace --tests  # lint
 ```
 
-## 现有文件长度债务（2026-07-12 快照）
+## 现有文件长度债务（2026-07-13 快照）
 
 以下生产代码物理文件已超过 800 行硬上限，属于存量拆分债务；后续触碰这些文件时应优先按职责拆分，不能继续扩大：
 
 - `order/src/stream.rs`（~1969；CLOB refresh 调度已拆到 `order/src/refresh_scheduler.rs`）
-- `crates/infrastructure/src/stores/rewards/in_memory.rs`（~1837）
+- `crates/infrastructure/src/stores/rewards/in_memory.rs`（~1807）
 - `apps/worker/src/worker/rewards.rs`（~1688；replay capture 已拆到 `worker/rewards/replay_capture.rs`）
 - `apps/worker/src/worker/rewards/live_orders.rs`（~1647）
-- `crates/infrastructure/src/stores/rewards/postgres.rs`（~1629；单个 `impl RewardBotStore` 受语言限制，方法体应委托到 inherent helper）
+- `crates/infrastructure/src/stores/rewards/postgres.rs`（~1630；单个 `impl RewardBotStore` 受语言限制，方法体应委托到 inherent helper）
 - `apps/worker/src/worker/reward_action_executor.rs`（~1529）
-- `crates/application/src/rewards/config_impl.rs`（~1352）
-- `crates/infrastructure/src/stores/rewards/postgres_run_ledger.rs`（~1293）
-- `crates/application/src/rewards/service.rs`（~1238）
+- `crates/application/src/rewards/config_impl.rs`（~1353）
+- `crates/infrastructure/src/stores/rewards/postgres_run_ledger.rs`（~1292）
+- `crates/application/src/rewards/service.rs`（~1240）
 - `crates/connectors/src/polymarket/chain.rs`（~1168）
 - `apps/worker/src/worker/rewards/account_sync.rs`（~1121）
 - `crates/application/src/rewards/planner.rs`（~1049）
 - `apps/worker/src/worker/rewards/live_pending.rs`（~967）
 - `crates/application/src/rewards/models.rs`（~905；纯数据定义可按例外评估）
-- `crates/application/src/rewards/run_ledger_models.rs`（~903；纯数据定义可按例外评估）
-- `crates/application/src/rewards/runtime_models.rs`（~892；纯数据定义可按例外评估）
+- `crates/application/src/rewards/run_ledger_models.rs`（~911；纯数据定义可按例外评估）
+- `crates/application/src/rewards/runtime_models.rs`（~968；纯数据定义可按例外评估）
 - `apps/worker/src/worker/rewards/live_sync.rs`（~874）
 - `crates/application/src/rewards/opportunity_metrics.rs`（~825）
 - `crates/infrastructure/src/stores/helpers/reward_config.rs`（~820）

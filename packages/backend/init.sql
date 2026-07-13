@@ -1407,7 +1407,28 @@ ALTER TABLE reward_account_state
 CREATE TABLE IF NOT EXISTS reward_market_event_windows (
     condition_id TEXT NOT NULL REFERENCES reward_markets(condition_id) ON DELETE CASCADE,
     source TEXT NOT NULL,
+    event_key TEXT NOT NULL CHECK (event_key = btrim(event_key) AND event_key <> ''),
     event_type TEXT NOT NULL DEFAULT 'other',
+    event_time_role TEXT NOT NULL DEFAULT 'unknown'
+        CHECK (event_time_role IN (
+            'event_occurrence',
+            'market_lifecycle',
+            'resolution_deadline',
+            'unknown'
+        )),
+    schedule_status TEXT NOT NULL DEFAULT 'unknown'
+        CHECK (schedule_status IN (
+            'scheduled',
+            'conflicting',
+            'finished',
+            'withdrawn',
+            'unknown'
+        )),
+    time_precision TEXT NOT NULL DEFAULT 'unknown'
+        CHECK (time_precision IN ('exact', 'date_only', 'inferred', 'unknown')),
+    start_source_field TEXT,
+    end_policy TEXT NOT NULL DEFAULT 'unknown'
+        CHECK (end_policy IN ('explicit', 'point', 'until_market_closed', 'unknown')),
     event_start_at TIMESTAMPTZ,
     event_end_at TIMESTAMPTZ,
     confidence TEXT NOT NULL CHECK (confidence IN ('low', 'medium', 'high')),
@@ -1415,19 +1436,80 @@ CREATE TABLE IF NOT EXISTS reward_market_event_windows (
     source_payload JSONB NOT NULL DEFAULT '{}'::jsonb,
     notes TEXT NOT NULL DEFAULT '',
     active BOOLEAN NOT NULL DEFAULT TRUE,
+    hard_gate_eligible BOOLEAN NOT NULL DEFAULT FALSE,
+    producer_version BIGINT NOT NULL DEFAULT 1
+        CHECK (producer_version > 0 AND producer_version <= 4294967295),
+    source_updated_at TIMESTAMPTZ,
+    observed_at TIMESTAMPTZ,
+    expires_at TIMESTAMPTZ,
     reviewed_by TEXT,
     reviewed_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    PRIMARY KEY (condition_id, source)
+    PRIMARY KEY (condition_id, source, event_key),
+    CHECK (
+        NOT hard_gate_eligible
+        OR (
+            active
+            AND event_time_role = 'event_occurrence'
+            AND schedule_status = 'scheduled'
+            AND time_precision = 'exact'
+            AND start_source_field IS NOT NULL
+            AND btrim(start_source_field) <> ''
+            AND event_start_at IS NOT NULL
+            AND end_policy <> 'unknown'
+            AND (
+                end_policy IN ('point', 'until_market_closed')
+                OR event_end_at IS NOT NULL
+            )
+            AND (event_end_at IS NULL OR event_end_at >= event_start_at)
+        )
+    ),
+    CHECK (
+        expires_at IS NULL
+        OR observed_at IS NULL
+        OR expires_at >= observed_at
+    )
 );
 
 CREATE INDEX IF NOT EXISTS reward_market_event_windows_active_idx
     ON reward_market_event_windows (
         condition_id,
-        active,
-        confidence,
-        updated_at DESC
+        expires_at,
+        updated_at DESC,
+        source,
+        event_key
+    )
+    WHERE active;
+
+CREATE INDEX IF NOT EXISTS reward_market_event_windows_source_active_idx
+    ON reward_market_event_windows (
+        source,
+        condition_id,
+        observed_at DESC,
+        event_key
+    )
+    WHERE active;
+
+CREATE TABLE IF NOT EXISTS reward_event_window_source_versions (
+    source TEXT NOT NULL CHECK (source = btrim(source) AND source <> ''),
+    condition_id TEXT NOT NULL REFERENCES reward_markets(condition_id) ON DELETE CASCADE,
+    producer_version BIGINT NOT NULL
+        CHECK (producer_version > 0 AND producer_version <= 4294967295),
+    source_updated_at TIMESTAMPTZ,
+    observed_at TIMESTAMPTZ NOT NULL,
+    snapshot_hash TEXT NOT NULL
+        CHECK (snapshot_hash ~ '^[0-9a-f]{64}$'),
+    updated_at TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (source, condition_id)
+);
+
+CREATE INDEX IF NOT EXISTS reward_event_window_source_versions_observed_idx
+    ON reward_event_window_source_versions (
+        source,
+        source_updated_at DESC,
+        observed_at DESC,
+        condition_id
     );
 
 CREATE INDEX IF NOT EXISTS reward_market_event_windows_start_idx

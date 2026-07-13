@@ -250,6 +250,39 @@ impl FromStr for RewardEventWindowStatus {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RewardFairValueAssessmentStatus {
+    #[default]
+    Evaluated,
+    NotEvaluated,
+}
+
+impl RewardFairValueAssessmentStatus {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Evaluated => "evaluated",
+            Self::NotEvaluated => "not_evaluated",
+        }
+    }
+}
+
+impl FromStr for RewardFairValueAssessmentStatus {
+    type Err = AppError;
+
+    fn from_str(value: &str) -> Result<Self> {
+        match value {
+            "evaluated" => Ok(Self::Evaluated),
+            "not_evaluated" => Ok(Self::NotEvaluated),
+            other => Err(AppError::invalid_input(
+                "REWARD_FAIR_VALUE_ASSESSMENT_STATUS_INVALID",
+                format!("unknown reward fair-value assessment status: {other}"),
+            )),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RewardPlanQuoteMode {

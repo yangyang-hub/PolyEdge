@@ -10,6 +10,7 @@ const GAMMA_RATE_LIMIT_MAX_RETRIES: u32 = 5;
 const GAMMA_RATE_LIMIT_BASE_DELAY: Duration = Duration::from_secs(2);
 const GAMMA_CONDITION_BATCH_SIZE: usize = 50;
 const RESPONSE_PREVIEW_BYTES: usize = 300;
+const GAMMA_EVENT_START_AGREEMENT_TOLERANCE_SECS: i64 = 60;
 
 #[derive(Debug, Clone)]
 pub struct PolymarketGammaMarket {
@@ -23,10 +24,16 @@ pub struct PolymarketGammaMarket {
     pub mid_price: Probability,
     pub volume_24h: UsdAmount,
     pub liquidity_usd: UsdAmount,
-    pub start_at: Option<OffsetDateTime>,
-    pub end_at: Option<OffsetDateTime>,
-    pub event_start_at: Option<OffsetDateTime>,
-    pub event_end_at: Option<OffsetDateTime>,
+    /// Gamma market lifecycle timestamp. This is not a scheduled event time and
+    /// must never be used to construct a rewards event-window hard gate.
+    pub lifecycle_started_at: Option<OffsetDateTime>,
+    /// Gamma market end/resolution deadline. This remains market metadata and
+    /// must not be treated as the end of a discrete scheduled event.
+    pub resolution_deadline_at: Option<OffsetDateTime>,
+    /// Explicit scheduled occurrences parsed from `gameStartTime` or
+    /// `events[].startTime`. Lifecycle `startDate`/`endDate` fields never enter
+    /// this collection.
+    pub scheduled_events: Vec<PolymarketGammaScheduledEvent>,
     pub has_reviewed_dates: bool,
     pub ambiguity_level: AmbiguityLevel,
     pub tradability_status: TradabilityStatus,
@@ -40,6 +47,43 @@ pub struct PolymarketGammaMarket {
     pub outcome_prices: Vec<Decimal>,
     pub updated_at: OffsetDateTime,
     pub version: i64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GammaScheduledEventKind {
+    Sports,
+    OtherStructured,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GammaEventStartSource {
+    GameStartTime,
+    EventStartTime,
+    Corroborated,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GammaScheduleStatus {
+    Scheduled,
+    Conflicting,
+    Finished,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PolymarketGammaScheduledEvent {
+    /// Stable within one Gamma source and condition. Scheduled timestamps are
+    /// deliberately excluded so a reschedule updates the existing candidate.
+    pub event_key: String,
+    pub gamma_event_id: Option<String>,
+    pub title: Option<String>,
+    pub kind: GammaScheduledEventKind,
+    pub status: GammaScheduleStatus,
+    pub start_at: Option<OffsetDateTime>,
+    pub start_source: Option<GammaEventStartSource>,
+    pub finished_at: Option<OffsetDateTime>,
+    pub sports_market_type: Option<String>,
+    pub game_id: Option<i64>,
+    pub series_slug: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -104,17 +148,27 @@ struct RawGammaMarket {
     end_date_iso: Option<String>,
     #[serde(rename = "hasReviewedDates", default)]
     has_reviewed_dates: bool,
+    #[serde(rename = "gameStartTime")]
+    game_start_time: Option<String>,
+    #[serde(rename = "sportsMarketType")]
+    sports_market_type: Option<String>,
     #[serde(default)]
     events: Vec<RawGammaEvent>,
 }
 
 #[derive(Debug, Deserialize)]
 struct RawGammaEvent {
+    #[serde(default)]
+    id: Option<JsonValue>,
     title: Option<String>,
-    #[serde(rename = "startDate")]
-    start_date: Option<String>,
-    #[serde(rename = "endDate")]
-    end_date: Option<String>,
+    #[serde(rename = "startTime")]
+    start_time: Option<String>,
+    #[serde(rename = "finishedTimestamp")]
+    finished_timestamp: Option<String>,
+    #[serde(rename = "gameId")]
+    game_id: Option<i64>,
+    #[serde(rename = "seriesSlug")]
+    series_slug: Option<String>,
     #[serde(rename = "resolutionSource")]
     resolution_source: Option<String>,
 }
@@ -513,22 +567,11 @@ fn map_gamma_market(raw: RawGammaMarket) -> Result<Option<PolymarketGammaMarket>
             .unwrap_or(Decimal::ZERO)
             .max(Decimal::ZERO),
     )?;
-    let start_at = parse_rfc3339(raw.start_date_iso.as_deref())
+    let lifecycle_started_at = parse_rfc3339(raw.start_date_iso.as_deref())
         .or_else(|| parse_rfc3339(raw.start_date.as_deref()));
-    let end_at = parse_rfc3339(raw.end_date_iso.as_deref())
+    let resolution_deadline_at = parse_rfc3339(raw.end_date_iso.as_deref())
         .or_else(|| parse_rfc3339(raw.end_date.as_deref()));
-    let event_start_at = raw
-        .events
-        .iter()
-        .filter_map(|event| parse_rfc3339(event.start_date.as_deref()))
-        .min()
-        .or(start_at);
-    let event_end_at = raw
-        .events
-        .iter()
-        .filter_map(|event| parse_rfc3339(event.end_date.as_deref()))
-        .max()
-        .or(end_at);
+    let scheduled_events = gamma_scheduled_events(&raw);
     let updated_at =
         parse_rfc3339(raw.updated_at.as_deref()).unwrap_or_else(OffsetDateTime::now_utc);
     let status = if raw.closed {
@@ -564,10 +607,9 @@ fn map_gamma_market(raw: RawGammaMarket) -> Result<Option<PolymarketGammaMarket>
         mid_price,
         volume_24h,
         liquidity_usd,
-        start_at,
-        end_at,
-        event_start_at,
-        event_end_at,
+        lifecycle_started_at,
+        resolution_deadline_at,
+        scheduled_events,
         has_reviewed_dates: raw.has_reviewed_dates,
         ambiguity_level,
         tradability_status,
@@ -642,6 +684,8 @@ fn parse_decimal_value(value: Option<JsonValue>) -> Option<Decimal> {
 fn parse_rfc3339(value: Option<&str>) -> Option<OffsetDateTime> {
     OffsetDateTime::parse(value?.trim(), &Rfc3339).ok()
 }
+
+include!("gamma/scheduled_events.rs");
 
 fn normalize_optional_text(value: Option<String>) -> Option<String> {
     let normalized = value?.trim().to_string();

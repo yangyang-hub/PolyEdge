@@ -215,18 +215,19 @@ impl RewardBotStore for PostgresRewardBotStore {
         Ok(())
     }
 
-    async fn upsert_market_event_windows(
+    async fn replace_market_event_windows(
         &self,
-        windows: &[RewardMarketEventWindow],
-    ) -> Result<()> {
-        postgres_upsert_reward_market_event_windows(&self.pool, windows).await
+        snapshot: &RewardEventWindowSourceSnapshot,
+    ) -> Result<RewardEventWindowReplaceReport> {
+        postgres_replace_reward_market_event_windows(&self.pool, snapshot).await
     }
 
-    async fn list_effective_market_event_windows(
+    async fn list_market_event_windows(
         &self,
         condition_ids: &[String],
+        as_of: OffsetDateTime,
     ) -> Result<Vec<RewardMarketEventWindow>> {
-        postgres_list_effective_reward_market_event_windows(&self.pool, condition_ids).await
+        postgres_list_reward_market_event_windows(&self.pool, condition_ids, as_of).await
     }
 
     async fn start_strategy_run(&self, run: &RewardStrategyRunStart) -> Result<i64> {

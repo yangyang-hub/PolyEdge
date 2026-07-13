@@ -1,6 +1,6 @@
 # Worker App（后台任务服务）
 
-最后更新：2026-07-12
+最后更新：2026-07-13
 
 ## 概述
 
@@ -43,7 +43,7 @@
 | `worker/rewards/live_cancel.rs` | 撤单候选和撤单原因分流 |
 | `worker/rewards/live_risk.rs` | 下单前/撤单风控 helper |
 | `worker/rewards/orderbook_events.rs` | 内部 orderbook WS 消费、本地盘口 cache 和活跃 token wake |
-| `worker/rewards/replay_capture.rs` | Replay V2 紧凑 fixture 构建、容量 2 的有界单消费者队列、`spawn_blocking` capture 与 shutdown drain |
+| `worker/rewards/replay_capture.rs` | Replay V3 fixture 构建、容量 2 的有界单消费者队列、`spawn_blocking` capture 与 shutdown drain |
 | `worker/rewards/event_cancel.rs` | 盘口事件驱动的 hard-risk cancel-only 快路径 |
 | `worker/rewards/polling.rs` | rewards 常驻 poll loop、fast reconcile、外部同步节流和本地盘口预热 |
 | `worker/rewards/provider_advisory.rs` | AI advisory 缓存 gate、pre-provider 硬过滤和 LLM 调用记录 |
@@ -127,12 +127,14 @@ poll_reward_bot_until_shutdown()
 
 Rewards market maker 只做 live 路径，LP 奖励是次级收益信号。新增 BUY 必须经过最终 quote plan、maker selection priority、fair-value raw/effective trading edge、当前盘口、`maker_market_budget_usd`、钱包余额、provider modifier、单侧库存、全局潜在成交暴露、事件窗口、盘口新鲜度、深度/rank/history/requote 和 kill switch 检查。全局库存上限同时预留托管及账户快照中的非托管 resting BUY，防止多个订单在下次 reconcile 前并发成交。Rewards minimum 不能覆盖这些风险预算。
 
+Event-window 输入可在同一 condition 下包含多个 `event_key`。Application 先按 event key 选择 source 优先级最高的候选（`manual` 可覆盖或撤回 Gamma），再聚合最严格的 stop-new/cancel 状态。Worker 只消费 store 中已规范化的显式事件候选；Gamma `startDate` / `endDate` 市场 lifecycle 元数据永不进入这条 hard-gate 路径。
+
 Full tick 会通过 application 层 `RewardDecisionEngine` 在 pre-provider、post-provider 和最终 snapshot 三个阶段重算 opportunity/fair-value/readiness/selection 并重排 plans。Worker 仍负责读取 provider cache、触发 provider refresh、外部订单/账户同步和 live 下单/撤单。live placement 依顺序扫描 plans，因此 `max_markets` 和资金占用优先给 effective trading edge、退出能力和稳定性更好的市场；reward density 只是独立 10% 次级信号。
 
 Live orderbook validation 失败只在当前计划上记录 60 秒 skip，下一次 full tick 会用最新盘口重新验证，不继承旧计划的安全边际、HHI、深度集中度或 spread 失败。worker 读取大量候选盘口时先保留 active order/position token、再补候选并受 `MAX_TOKENS` 总量限制；cache-only HTTP batch 仍可大批读取，但可触发 CLOB 的正数 stale refresh 自动拆成最多 100-token 请求。
 
 Full tick 现在会创建 strategy run ledger：run 保存 account、trace、trigger、配置 hash、配置 JSON 和输入摘要；每次保存 quote plans 会写入同一 run 的 decision 快照，并把 `RewardQuotePlan.latest_run_id` 指向该 run。执行 merge create/execute、cancel/cancel-replace、pending submit 和 placement submit 前，worker 通过 application `RewardActionPlanner` 以同一 idempotency key 写入 `planned → executing`；executing 写入失败时停止该副作用。live tick outcome/对账继续更新 terminal 状态并追加 order transitions，不改变既有报价、撤单、成交、退出或 BalancedMerge 决策。
-- Full tick 保存最终计划后会把 Replay V2 capture job 非阻塞投递到容量 2 的单消费者队列。V2 只保存决策窗口内 top-of-book 历史、final delta 和 expected-plan hash；规范化、敏感键扫描、JSON/SHA 与数据库写入不占用 live tick async executor。队列满、fixture 超过 8 MiB 或保存失败时记录结构化 status 并丢弃当次 fixture，不阻断交易。Worker/CLI shutdown 最多等待 5 秒 drain。
+- Full tick 保存最终计划后会把 Replay V3 capture job 非阻塞投递到容量 2 的单消费者队列。V3 沿用 V2 的决策窗口 top-of-book 历史、final delta 和 expected-plan hash，并固化扩展后的 event/fair-value 模型；规范化、敏感键扫描、JSON/SHA 与数据库写入不占用 live tick async executor。队列满、fixture 超过 8 MiB 或保存失败时记录结构化 status 并丢弃当次 fixture，不阻断交易。Worker/CLI shutdown 最多等待 5 秒 drain。
 - Fast reconcile 仅在确有 merge、risk cancel 或 pending SELL submit 时懒创建 action-only run；orderbook event cancel 使用 `orderbook_event` run。盘口事件按 condition 聚合：YES/NO 任一侧更新都会抓取双边盘口、重算该 condition 各 profile 的 fair value，并检查同 condition 下全部 resting order。无动作的高频 reconcile 不写 run，相关副作用同样先写 `planned → executing`。
 - `poll_reward_bot` 启用时会同时启动 durable action executor。两者复用同一个 Postgres advisory lock。Typed dispatcher 已接管 `create_merge_intent` 的按 id 幂等写入、带有效 external order id 的 cancel/cancel-replace，以及 PlaceBuy/SubmitExitSell。BUY dispatch 先用 token/side/price/adjusted-size 严格查询 venue 开放单：唯一匹配会幂等绑定，多个匹配或查询错误进入 unknown；仅确认无匹配且本地 payload 未漂移时，才复用现有 fresh orderbook last-look、资金/库存/全局暴露和 kill-switch gate 提交。恢复后的 BUY execution 不自动重放。Exit SELL 在首次执行和租约恢复后都先做相同的严格 venue matching；确认无匹配后才复用 pending submission 路径重新读取当前持仓、裁剪 size、检查最低 notional，并按 post-only maker 或受控 flatten 盘口语义提交。cancel-replace 永不补 replacement。ExecuteMerge 会按 durable intent id 读取当前 merge intent：已有 tx hash 时只查询 Polygon receipt，并以 `(intent_id, tx_hash)` fencing 更新 completed/reverted；receipt pending、RPC 错误或哈希不一致均进入 unknown。无 tx hash 的首次 claim 退回 fresh-tick replan，恢复 claim 进入 unknown，executor 永不广播或重发链上 merge。
 
@@ -166,7 +168,7 @@ settings.news.sources
 - `WorkerSettings` 控制常驻任务开关与轮询间隔。
 - `RewardsSettings` 控制 rewards live worker 的进程级启用、poll 间隔和 provider 环境密钥。
 - `RewardBotConfig` 存在 `reward_bot_config` 表，控制 `maker_market_budget_usd`、动态 rank、交易 edge、机会评分、adaptive 退出、provider 动作阈值、事件窗口、库存偏斜、非对称 requote 和 BalancedMerge。旧 `per_market_usd` / `quote_size_usd` / `cancel_on_fill` 已删除。
-- 空库 Postgres 的默认 live-drill profile 保持交易关闭，并使用：1 market、4 open orders、`$20` market budget、`$12` per-outcome cap、`$20` global potential-exposure cap、1 cent effective edge、5 秒 stale book、medium event confidence（使 reviewed Gamma 日期进入 hard gate）、最多 1 次 competitive cancel/tick、`$50` live minimum depth、`$150` opportunity exit depth、50% depth/mass-cancel shock 和 `$15` fill-velocity guard。BalancedMerge、自动 merge execution 和 adaptive exit cancel-replace 默认关闭。
+- 空库 Postgres 的默认 live-drill profile 保持交易关闭，并使用：1 market、4 open orders、`$20` market budget、`$12` per-outcome cap、`$20` global potential-exposure cap、1 cent effective edge、5 秒 stale book、medium event confidence（可接受 reviewed 的 Gamma 显式 schedule，但不接受 lifecycle start/end）、最多 1 次 competitive cancel/tick、`$50` live minimum depth、`$150` opportunity exit depth、50% depth/mass-cancel shock 和 `$15` fill-velocity guard。BalancedMerge、自动 merge execution 和 adaptive exit cancel-replace 默认关闭。
 - Durable BUY executor 在 venue 确认无匹配订单后、提交新单前重新读取当前 `RiskService` kill switch；kill switch 开启或风险状态读取失败都 fail closed，不产生外部 BUY 副作用。只读 venue matching 和已有订单本地绑定仍可用于安全对账。
 - `POLYEDGE_ORDERBOOK__SERVICE_URL` 指向 orderbook 服务；`POLYEDGE_ORDERBOOK__WRITE_TOKEN` 用于 token 注册。
 - Primary/fallback provider cache 按 `created_at` 选择最新评估，`expires_at` 只作为有效期边界。Provider 自报 evidence 默认未验证，在可信验证 pipeline 落地前 cancel fail closed 为 stop-new。

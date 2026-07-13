@@ -1,6 +1,6 @@
 # connectors（外部连接器层）
 
-最后更新：2026-07-12
+最后更新：2026-07-13
 
 ## 概述
 
@@ -20,7 +20,8 @@
 | 文件/目录 | 职责 |
 |---|---|
 | `lib.rs` | 模块入口和 Paper Trading 执行器 |
-| `polymarket/gamma.rs` | Gamma `/markets` 全量/condition 定向查询 |
+| `polymarket/gamma.rs` | Gamma `/markets` 全量/condition 定向查询，并明确区分市场 lifecycle/deadline 与显式 scheduled events |
+| `polymarket/gamma/scheduled_events.rs` | 解析 `gameStartTime` / `events[].startTime`，生成稳定 `event_key`、冲突/完成状态和 start provenance |
 | `polymarket/book.rs` | CLOB public orderbook connector |
 | `polymarket/data_api.rs` | Data API 钱包活动/持仓/交易读取；当前只作为 rewards 对账 fallback |
 | `polymarket/live.rs` | 认证 CLOB connector：下单、撤单、余额、开放订单、订单状态、成交同步、用户 WS |
@@ -42,7 +43,9 @@
 - `PolymarketGammaConnector` 读取 Gamma public market data。
 - `fetch_markets()` 使用 offset 分页，按 active/open/non-archived 和 24h volume 拉取，遇到 422 offset 边界、空页或短页停止，并按 market id 去重。
 - `fetch_markets_by_condition_ids()` 使用重复 `condition_ids` query 参数做小批量定向刷新，每批最多 50 个 condition。
-- `PolymarketGammaMarket` 保存 id、slug、question、category、status、best bid/ask/mid、`liquidity_usd`、`volume_24h`、start/end time、event date candidates、`has_reviewed_dates`、ambiguity/tradability、condition id、YES/NO asset id 和原始 token 信息。
+- `PolymarketGammaMarket` 保存 id、slug、question、category、status、best bid/ask/mid、`liquidity_usd`、`volume_24h`、lifecycle start、resolution deadline、显式 scheduled events、`has_reviewed_dates`、ambiguity/tradability、condition id、YES/NO asset id 和原始 token 信息。`startDateIso` / `startDate` 仅是 lifecycle start，`endDateIso` / `endDate` 仅是 market end/resolution deadline；两者都不进入 scheduled-event 集合，永不可直接构造 rewards hard gate。
+- 显式 schedule 只从 `gameStartTime` 或 `events[].startTime` 解析。多 event market 使用 Gamma event id 构造稳定 `event_key`；没有稳定 id 的多 event 候选不用 ordinal/时间戳凑 key，以免重排或改期后错配。单 event 可用 market 级稳定 fallback key，独立 `gameStartTime` 可用 market game key。
+- Sports event 同时提供 `gameStartTime` 与 `events[].startTime` 时，60 秒内一致才视为 corroborated，否则标记 conflicting；`finishedTimestamp` 标记 finished。仅有结构化 sports 类型的 scheduled occurrence 才可在下游成为 Gamma hard-gate candidate，其他显式 schedule 只保留审计/观察语义。`hasReviewedDates` 只调整这些显式 schedule 的置信度，不会把 lifecycle 日期升格为事件。
 - 用途：`polyedge-orderbook` 的 full/priority market sync；worker 中的 market sync 仅是 CLI 兼容入口。
 
 ## Polymarket Data API

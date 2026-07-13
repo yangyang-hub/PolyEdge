@@ -25,7 +25,7 @@ use polyedge_application::{
     RewardStrategyBucket, RewardStrategyInput, RewardStrategyProfile, RewardStrategyRunStart,
     RewardStrategyRunTrigger, RewardTickOutcome, RewardToken, SyncExternalOrderStatusCommand,
     apply_reward_ai_advisories, apply_reward_fair_value_to_quote_plan, apply_reward_info_risks,
-    build_reward_ai_advisory_request, build_reward_decision_replay_fixture_v2_pending_expectations,
+    build_reward_ai_advisory_request, build_reward_decision_replay_fixture_v3_pending_expectations,
     build_reward_info_risk_assessment_request, materialize_reward_quote_plan_for_live_orderbook,
     new_risk_event, reward_ai_edge_buffer_cents, reward_ai_effective_action,
     reward_ai_size_multiplier, reward_condition_has_active_exposure, reward_config_hash,

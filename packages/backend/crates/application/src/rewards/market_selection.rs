@@ -142,7 +142,10 @@ fn reward_selection_risk_penalty(plan: &RewardQuotePlan, config: &RewardBotConfi
     if plan
         .fair_value
         .as_ref()
-        .is_some_and(|decision| !decision.passed)
+        .is_some_and(|decision| {
+            decision.assessment_status == RewardFairValueAssessmentStatus::Evaluated
+                && !decision.passed
+        })
     {
         penalty += decimal("60");
     }

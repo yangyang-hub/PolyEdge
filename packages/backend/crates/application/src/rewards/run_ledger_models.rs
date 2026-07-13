@@ -513,7 +513,10 @@ pub fn reward_strategy_decision_from_plan(
         reason: plan.reason.clone(),
         blocker_codes,
         planned_buy_notional_usd,
-        fair_value_passed: plan.fair_value.as_ref().map(|decision| decision.passed),
+        fair_value_passed: plan.fair_value.as_ref().and_then(|decision| {
+            (decision.assessment_status == RewardFairValueAssessmentStatus::Evaluated)
+                .then_some(decision.passed)
+        }),
         fair_value_effective_edge_cents,
         opportunity_score: plan
             .opportunity_metrics
@@ -826,6 +829,8 @@ pub fn reward_quote_plan_reason_code(plan: &RewardQuotePlan) -> String {
         "event_window".to_string()
     } else if reason.starts_with("fair value gate:") {
         "fair_value".to_string()
+    } else if reason.starts_with("competition multiple ") {
+        "competition".to_string()
     } else if reason.starts_with("live funding below rewards minimum:") {
         "funding".to_string()
     } else if reason.starts_with("maker market budget below required rewards quote:") {
@@ -859,7 +864,10 @@ pub fn reward_quote_plan_blocker_codes(
     if plan
         .fair_value
         .as_ref()
-        .is_some_and(|decision| !decision.passed)
+        .is_some_and(|decision| {
+            decision.assessment_status == RewardFairValueAssessmentStatus::Evaluated
+                && !decision.passed
+        })
     {
         push_unique_code(&mut codes, "fair_value");
     }

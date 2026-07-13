@@ -229,6 +229,7 @@ fn selection_test_fair_value(
             reason: "test".to_string(),
         }],
         expected_reward_rebate_cents: Decimal::ZERO,
+        assessment_status: RewardFairValueAssessmentStatus::Evaluated,
         passed,
         reason: "test".to_string(),
     }

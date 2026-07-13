@@ -6,7 +6,9 @@ use polyedge_application::{
     ModeTransitionCommand, PostFillStrategy, RewardAccountState, RewardAiAdvisoryRequest,
     RewardAiProvider, RewardAiRequestFormat, RewardBotConfig, RewardBotStore,
     RewardCandidateFilter, RewardControlAction, RewardControlCommand, RewardControlCommandStatus,
-    RewardDecisionReplayFixture, RewardEventTimeConfidence, RewardExitStrategySource,
+    RewardDecisionReplayFixture, RewardEventEndPolicy, RewardEventScheduleStatus,
+    RewardEventTimeConfidence, RewardEventTimePrecision, RewardEventTimeRole,
+    RewardEventWindowReplaceReport, RewardEventWindowSourceSnapshot, RewardExitStrategySource,
     RewardFairValueEstimate, RewardFill, RewardFillRole, RewardGammaEventDateMode,
     RewardHistoryPruneReport, RewardInfoDirectionalRisk, RewardInfoRiskAssessmentRequest,
     RewardInfoRiskLevel, RewardInfoRiskSource, RewardInfoRiskType, RewardLlmCallDailyStats,
@@ -34,6 +36,7 @@ use polyedge_domain::{
 };
 use rust_decimal::Decimal;
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use sqlx::{PgPool, Postgres, QueryBuilder, Row, types::Json};
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
@@ -43,6 +46,9 @@ use std::{
 use time::{Duration, OffsetDateTime};
 use tokio::sync::{Mutex, RwLock};
 use uuid::Uuid;
+
+#[cfg(test)]
+use polyedge_application::RewardEventWindowSourceCoverage;
 
 const SYSTEM_RUNTIME_STATE_ID: &str = "global";
 const RISK_STATE_ID: &str = "global";
@@ -80,3 +86,4 @@ include!("stores/orderbook_cache_tests.rs");
 include!("stores/consistency_tests.rs");
 include!("stores/rewards_tests.rs");
 include!("stores/rewards_fair_value_tests.rs");
+include!("stores/rewards_event_window_tests.rs");

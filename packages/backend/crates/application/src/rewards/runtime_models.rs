@@ -100,7 +100,19 @@ pub struct RewardMarketCandleSample {
 pub struct RewardMarketEventWindow {
     pub condition_id: String,
     pub source: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub event_key: String,
     pub event_type: String,
+    #[serde(default)]
+    pub event_time_role: RewardEventTimeRole,
+    #[serde(default)]
+    pub schedule_status: RewardEventScheduleStatus,
+    #[serde(default)]
+    pub time_precision: RewardEventTimePrecision,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_source_field: Option<String>,
+    #[serde(default)]
+    pub end_policy: RewardEventEndPolicy,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[serde(with = "time::serde::rfc3339::option")]
     pub event_start_at: Option<OffsetDateTime>,
@@ -116,6 +128,22 @@ pub struct RewardMarketEventWindow {
     pub notes: String,
     #[serde(default = "default_true")]
     pub active: bool,
+    #[serde(default, skip_serializing_if = "reward_event_bool_is_false")]
+    pub hard_gate_eligible: bool,
+    #[serde(
+        default = "default_reward_event_producer_version",
+        skip_serializing_if = "reward_event_producer_version_is_one"
+    )]
+    pub producer_version: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(with = "time::serde::rfc3339::option")]
+    pub source_updated_at: Option<OffsetDateTime>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(with = "time::serde::rfc3339::option")]
+    pub observed_at: Option<OffsetDateTime>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(with = "time::serde::rfc3339::option")]
+    pub expires_at: Option<OffsetDateTime>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reviewed_by: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -129,6 +157,31 @@ pub struct RewardMarketEventWindow {
 pub struct RewardEventWindowAssessment {
     pub status: RewardEventWindowStatus,
     pub reason: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub event_key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub event_time_role: Option<RewardEventTimeRole>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub schedule_status: Option<RewardEventScheduleStatus>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub time_precision: Option<RewardEventTimePrecision>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_source_field: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub end_policy: Option<RewardEventEndPolicy>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hard_gate_eligible: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub producer_version: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(with = "time::serde::rfc3339::option")]
+    pub source_updated_at: Option<OffsetDateTime>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(with = "time::serde::rfc3339::option")]
+    pub observed_at: Option<OffsetDateTime>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(with = "time::serde::rfc3339::option")]
+    pub expires_at: Option<OffsetDateTime>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[serde(with = "time::serde::rfc3339::option")]
     pub event_start_at: Option<OffsetDateTime>,
@@ -287,8 +340,19 @@ pub struct RewardFairValueDecision {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub edges: Vec<RewardQuoteEdge>,
     pub expected_reward_rebate_cents: Decimal,
+    #[serde(
+        default,
+        skip_serializing_if = "reward_fair_value_assessment_was_evaluated"
+    )]
+    pub assessment_status: RewardFairValueAssessmentStatus,
     pub passed: bool,
     pub reason: String,
+}
+
+fn reward_fair_value_assessment_was_evaluated(
+    status: &RewardFairValueAssessmentStatus,
+) -> bool {
+    *status == RewardFairValueAssessmentStatus::Evaluated
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -677,6 +741,12 @@ pub struct RewardQuotePlanBlockerCounts {
     pub ai_stop_new: usize,
     pub provider_size: usize,
     pub info_risk: usize,
+    #[serde(default)]
+    pub event_window: usize,
+    #[serde(default)]
+    pub fair_value: usize,
+    #[serde(default)]
+    pub competition: usize,
     pub funding: usize,
     pub maker_budget: usize,
     pub inventory_headroom: usize,
@@ -738,6 +808,12 @@ impl RewardQuotePlanBlockerCounts {
             self.provider_size += 1;
         } else if reason.starts_with("info risk ") {
             self.info_risk += 1;
+        } else if reason.starts_with("event window") {
+            self.event_window += 1;
+        } else if reason.starts_with("fair value gate:") {
+            self.fair_value += 1;
+        } else if reason.starts_with("competition multiple ") {
+            self.competition += 1;
         } else if reason.starts_with("live funding below rewards minimum:") {
             self.funding += 1;
         } else if reason.starts_with("maker market budget below required rewards quote:") {

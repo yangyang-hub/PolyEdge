@@ -1,7 +1,8 @@
 use std::collections::BTreeMap;
 
-pub const REWARD_DECISION_REPLAY_SCHEMA_VERSION: u16 = 2;
+pub const REWARD_DECISION_REPLAY_SCHEMA_VERSION: u16 = 3;
 const REWARD_DECISION_REPLAY_V1_SCHEMA_VERSION: u16 = 1;
+const REWARD_DECISION_REPLAY_V2_SCHEMA_VERSION: u16 = 2;
 /// Hard ceiling for the canonical JSON representation persisted for one tick.
 ///
 /// The database applies an additional defensive bound. Keeping this limit in
@@ -301,14 +302,17 @@ pub fn replay_reward_decision_engine(
 fn validate_reward_replay_fixture(fixture: &RewardDecisionReplayFixture) -> Result<()> {
     if !matches!(
         fixture.schema_version,
-        REWARD_DECISION_REPLAY_V1_SCHEMA_VERSION | REWARD_DECISION_REPLAY_SCHEMA_VERSION
+        REWARD_DECISION_REPLAY_V1_SCHEMA_VERSION
+            | REWARD_DECISION_REPLAY_V2_SCHEMA_VERSION
+            | REWARD_DECISION_REPLAY_SCHEMA_VERSION
     ) {
         return Err(AppError::invalid_input(
             "REWARD_REPLAY_SCHEMA_VERSION_UNSUPPORTED",
             format!(
-                "unsupported rewards replay schema version {}; supported versions are {} and {}",
+                "unsupported rewards replay schema version {}; supported versions are {}, {} and {}",
                 fixture.schema_version,
                 REWARD_DECISION_REPLAY_V1_SCHEMA_VERSION,
+                REWARD_DECISION_REPLAY_V2_SCHEMA_VERSION,
                 REWARD_DECISION_REPLAY_SCHEMA_VERSION
             ),
         ));

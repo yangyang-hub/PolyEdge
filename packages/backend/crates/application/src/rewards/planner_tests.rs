@@ -737,6 +737,25 @@ fn quote_plan_counts_classify_provider_and_blocker_reasons() {
     info_risk.legs.clear();
     info_risk.reason = "info risk critical: imminent official result".to_string();
 
+    let mut event_window = base.clone();
+    event_window.eligible = false;
+    event_window.quote_mode = RewardPlanQuoteMode::None;
+    event_window.legs.clear();
+    event_window.reason =
+        "event window blocked: event is in progress; blocking BUY quotes".to_string();
+
+    let mut fair_value = base.clone();
+    fair_value.eligible = false;
+    fair_value.quote_mode = RewardPlanQuoteMode::None;
+    fair_value.legs.clear();
+    fair_value.reason = "fair value gate: effective edge is below minimum".to_string();
+
+    let mut competition = base.clone();
+    competition.eligible = false;
+    competition.quote_mode = RewardPlanQuoteMode::None;
+    competition.legs.clear();
+    competition.reason = "competition multiple 9 exceeds hard gate 8".to_string();
+
     let mut funding = base.clone();
     funding.eligible = false;
     funding.quote_mode = RewardPlanQuoteMode::None;
@@ -756,20 +775,27 @@ fn quote_plan_counts_classify_provider_and_blocker_reasons() {
         &ai_stop_new,
         &provider_size,
         &info_risk,
+        &event_window,
+        &fair_value,
+        &competition,
         &funding,
         &live_validation,
     ]);
 
-    assert_eq!(counts.total, 7);
+    assert_eq!(counts.total, 10);
     assert_eq!(counts.eligible, 1);
     assert_eq!(counts.provider_pending, 1);
     assert_eq!(counts.blockers.ai_pending, 1);
     assert_eq!(counts.blockers.ai_stop_new, 1);
     assert_eq!(counts.blockers.provider_size, 1);
     assert_eq!(counts.blockers.info_risk, 1);
+    assert_eq!(counts.blockers.event_window, 1);
+    assert_eq!(counts.blockers.fair_value, 1);
+    assert_eq!(counts.blockers.competition, 1);
     assert_eq!(counts.blockers.funding, 1);
     assert_eq!(counts.blockers.live_validation, 1);
     assert_eq!(counts.blockers.other, 0);
+    assert_eq!(reward_quote_plan_reason_code(&competition), "competition");
 }
 
 #[test]

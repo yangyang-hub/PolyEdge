@@ -4,9 +4,14 @@ import type {
   PostFillStrategy,
   RewardAiProvider,
   RewardAiRequestFormat,
+  RewardEventEndPolicy,
+  RewardEventScheduleStatus,
   RewardEventTimeConfidence,
+  RewardEventTimePrecision,
+  RewardEventTimeRole,
   RewardEventWindowStatus,
   RewardExitStrategySource,
+  RewardFairValueAssessmentStatus,
   RewardFillRole,
   RewardGammaEventDateMode,
   RewardInfoDirectionalRisk,
@@ -293,6 +298,7 @@ export type RewardQuoteEdgeDto = {
 };
 
 export type RewardFairValueDecisionDto = {
+  assessment_status?: RewardFairValueAssessmentStatus;
   estimate: RewardFairValueEstimateDto;
   edges: RewardQuoteEdgeDto[];
   expected_reward_rebate_cents: DecimalValue;
@@ -361,6 +367,17 @@ export type RewardMarketInfoRiskDto = {
 export type RewardEventWindowAssessmentDto = {
   status: RewardEventWindowStatus;
   reason: string;
+  event_key?: string | null;
+  event_time_role?: RewardEventTimeRole | null;
+  schedule_status?: RewardEventScheduleStatus | null;
+  time_precision?: RewardEventTimePrecision | null;
+  start_source_field?: string | null;
+  end_policy?: RewardEventEndPolicy | null;
+  hard_gate_eligible?: boolean | null;
+  producer_version?: number | null;
+  source_updated_at?: string | null;
+  observed_at?: string | null;
+  expires_at?: string | null;
   event_start_at?: string | null;
   event_end_at?: string | null;
   source?: string | null;
@@ -499,6 +516,9 @@ export type RewardQuotePlanBlockerCountsDto = {
   ai_stop_new?: number;
   provider_size?: number;
   info_risk?: number;
+  event_window?: number;
+  fair_value?: number;
+  competition?: number;
   funding?: number;
   maker_budget?: number;
   inventory_headroom?: number;

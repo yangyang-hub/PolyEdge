@@ -244,6 +244,7 @@ fn reward_decision_replay_v2_compacts_history_and_plan_expectations() {
         &expected.plans,
     );
     let fixture = fixture.expect("build v2 fixture");
+    assert_eq!(fixture.schema_version, REWARD_DECISION_REPLAY_V2_SCHEMA_VERSION);
     assert!(fixture.input.book_history.is_empty());
     assert!(fixture.expected_plans.is_none());
     assert!(fixture.expected_plan_hashes.is_some());
@@ -288,5 +289,45 @@ fn reward_decision_replay_v2_compacts_history_and_plan_expectations() {
         "v2={} bytes v1={} bytes",
         json.len(),
         legacy_json.len()
+    );
+}
+
+#[test]
+fn reward_decision_replay_v3_is_the_current_capture_schema() {
+    let now = OffsetDateTime::from_unix_timestamp(1_750_000_000).expect("fixed timestamp");
+    let input = super::strategy_input_tests::strategy_test_snapshot(now, false);
+    let final_history = input
+        .book_history
+        .iter()
+        .map(|(token_id, history)| (token_id.clone(), history.iter().cloned().collect()))
+        .collect::<HashMap<String, VecDeque<BookSnapshot>>>();
+    let expected = replay_reward_decision_engine(&RewardDecisionReplayFixture {
+        schema_version: REWARD_DECISION_REPLAY_V2_SCHEMA_VERSION,
+        input: input.clone(),
+        providers: RewardReplayProviderSnapshot::default(),
+        compact_book_history: HashMap::new(),
+        final_state: None,
+        final_delta: None,
+        expected_plans: None,
+        expected_plan_hashes: None,
+    })
+    .expect("baseline replay");
+    let fixture = build_reward_decision_replay_fixture_v3(
+        input.clone(),
+        RewardReplayProviderSnapshot::default(),
+        &input.account,
+        &input.open_orders,
+        &input.positions,
+        &input.books,
+        &final_history,
+        &expected.plans,
+    )
+    .expect("build v3 fixture");
+
+    assert_eq!(fixture.schema_version, REWARD_DECISION_REPLAY_SCHEMA_VERSION);
+    let replayed = replay_reward_decision_engine(&fixture).expect("replay v3 fixture");
+    assert_eq!(
+        replayed.comparison.as_ref().map(|comparison| comparison.matches),
+        Some(true)
     );
 }

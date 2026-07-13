@@ -31,6 +31,7 @@ pub const REWARD_LIVE_ORDERBOOK_VALIDATION_SKIP_TTL: TimeDuration = TimeDuration
 
 include!("rewards/models.rs");
 include!("rewards/quote_selection_models.rs");
+include!("rewards/event_window_source_models.rs");
 include!("rewards/ai_advisory_models.rs");
 include!("rewards/ai_advisory_payload.rs");
 include!("rewards/info_risk_models.rs");

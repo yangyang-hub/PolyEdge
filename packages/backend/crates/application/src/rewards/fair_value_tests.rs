@@ -145,6 +145,62 @@ fn fair_value_gate_blocks_quote_above_fair_value() {
 }
 
 #[test]
+fn upstream_event_block_marks_fair_value_not_evaluated_instead_of_failed() {
+    let now = OffsetDateTime::now_utc();
+    let books = fair_value_test_books(now);
+    let mut plan = fair_value_test_plan(decimal("0.53"), now);
+    plan.eligible = false;
+    plan.pre_ai_eligible = false;
+    plan.quote_mode = RewardPlanQuoteMode::None;
+    plan.legs.clear();
+    plan.reason = "event window blocked: event starts soon".to_string();
+    plan.event_window = Some(RewardEventWindowAssessment {
+        status: RewardEventWindowStatus::StopNewQuotes,
+        reason: "event starts soon".to_string(),
+        event_key: Some("event:test".to_string()),
+        event_time_role: Some(RewardEventTimeRole::EventOccurrence),
+        schedule_status: Some(RewardEventScheduleStatus::Scheduled),
+        time_precision: Some(RewardEventTimePrecision::Exact),
+        start_source_field: Some("manual.event_start_at".to_string()),
+        end_policy: Some(RewardEventEndPolicy::Point),
+        hard_gate_eligible: Some(true),
+        producer_version: Some(1),
+        source_updated_at: Some(now),
+        observed_at: Some(now),
+        expires_at: None,
+        event_start_at: Some(now + TimeDuration::minutes(30)),
+        event_end_at: None,
+        source: Some("manual".to_string()),
+        confidence: Some(RewardEventTimeConfidence::High),
+        event_type: Some("sports".to_string()),
+    });
+
+    apply_reward_fair_value_to_quote_plan(
+        &mut plan,
+        &books,
+        &HashMap::new(),
+        &fair_value_test_config(),
+        now,
+    )
+    .expect("fair value estimate");
+
+    let decision = plan.fair_value.as_ref().expect("fair value decision");
+    assert_eq!(
+        decision.assessment_status,
+        RewardFairValueAssessmentStatus::NotEvaluated
+    );
+    assert!(!decision.passed);
+    assert!(decision.edges.is_empty());
+    assert!(!reward_quote_plan_blocker_codes(&plan, "event_window")
+        .iter()
+        .any(|code| code == "fair_value"));
+    assert_eq!(
+        reward_strategy_decision_from_plan(1, 0, &plan, now).fair_value_passed,
+        None
+    );
+}
+
+#[test]
 fn fair_value_uses_top_of_book_microprice_imbalance() {
     let now = OffsetDateTime::now_utc();
     let mut books = fair_value_test_books(now);

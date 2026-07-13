@@ -1,6 +1,6 @@
 # 数据库（Migrations + Schema）
 
-最后更新：2026-07-12
+最后更新：2026-07-13
 
 ## 概述
 
@@ -13,7 +13,8 @@
 - `packages/backend/init.sql`：空库初始化脚本，直接表示当前完整 schema。
 - `packages/backend/migrations/0001_initial_schema.sql`：已冻结的 Rust runtime 初始基线；发布后禁止修改 checksum。
 - `packages/backend/migrations/0002_reward_fair_value_history_identity.sql`：对旧 fair-value history identity 去重并创建唯一索引，支持现有部署原地升级。
-- 当前不维护增量迁移链；已有数据库如需保留历史 `_sqlx_migrations`，需要单独规划迁移，不属于当前重新部署目标。
+- `packages/backend/migrations/0003_reward_event_window_semantics.sql`：区分显式事件时间与市场 lifecycle/deadline，加入 multi-event identity、source snapshot 版本表和 hard-gate shape 约束。
+- `0003` 不是滚动兼容迁移：旧 producer 仍按旧 `(condition_id, source)` 单行合同写入，不理解 `event_key`/source snapshot/high-water 语义。升级时必须先停止旧 orderbook/worker producer，执行迁移并部署新 runtime 后再恢复生产。
 
 ## 迁移文件列表
 
@@ -21,6 +22,7 @@
 |---|---|---|
 | `0001_initial_schema.sql` | 当前完整 schema baseline | 全量创建当前所需表、约束和索引，包括 rewards market maker、strategy run ledger、fair-value、selection score、BalancedMerge、Funding、orderbook candles、worker/runtime 支撑表 |
 | `0002_reward_fair_value_history_identity.sql` | Fair-value history 升级 | 去重 `(condition_id, source, observed_at)` 并创建唯一索引，使历史写入重试幂等 |
+| `0003_reward_event_window_semantics.sql` | Event-window 语义升级 | 新增 `event_key`、time role/precision/provenance/end policy、`hard_gate_eligible`、`producer_version`、source/observed/expiry 时间字段，主键改为 `(condition_id, source, event_key)`；新建带 `source_updated_at` 的 `reward_event_window_source_versions` |
 
 ## Schema 领域分组
 
@@ -59,7 +61,7 @@
 - `reward_strategy_decisions`：每个 run 下按 condition + strategy profile 记录 quote plan 决策快照、排序、readiness、reason/blocker、planned notional、fair-value/opportunity/event、`ai_action`、`info_risk_action`/level 和 decision JSON。
 - `reward_strategy_actions`：从 tick outcome 派生的动作账本，记录 place/cancel/exit/fill/merge/skip 等动作、状态、幂等键、请求/结果 JSON 和关联订单。
 - `reward_strategy_actions` 还保存 `lease_owner`、`lease_expires_at` 和 `execution_attempts`，支持多实例 executor 原子 claim/续租和超时恢复；partial index 加速 planned/expired-executing 领取。
-- `reward_strategy_replay_fixtures`：与 strategy run 一对一的确定性回放 fixture，保存 schema version、SHA-256、JSON 字节数、JSONB payload 和 captured time，随 run 级联删除。当前默认写 schema V2 紧凑 payload，同表保留 V1/缺省 schema 读取兼容。
+- `reward_strategy_replay_fixtures`：与 strategy run 一对一的确定性回放 fixture，保存 schema version、SHA-256、JSON 字节数、JSONB payload 和 captured time，随 run 级联删除。当前默认写 schema V3；V3 沿用 V2 紧凑 payload，同表保留 V1、V2 与缺省版本按 V1 的读取兼容。
 - `reward_order_transitions`：托管订单状态追加式时间线，记录 managed/external order、from/to status、reason、metadata，并可关联 run/action。
 - `reward_managed_orders`：托管订单，包含 account/condition/token、side、price、size、status、strategy bucket/profile、exit strategy source/selected/floor/reselect state、filled_size、reward_earned、external id 和对账锁等字段。外部库存补 SELL intent 可来自当前 rewards catalog 外的 condition；adaptive 本地 pending SELL 用这些字段在 worker 重启后继续持仓期重评。
 - `reward_fills`：托管订单成交，保存 account/condition/token/outcome/side、price、size、notional、role、realized PnL。
@@ -73,9 +75,10 @@
 - `reward_market_candles`：orderbook 服务从 CLOB `/prices-history` 低频写入的 rewards token 5m source candles。provider price 同时写入 close、best bid close 和 best ask close，`spread_cents_close=0`，`sample_count` 表示同 bucket 内新持久化点数量；batch upsert 会排除不晚于现有 close 的重叠点，避免增量回看重复计数。
 - `reward_fair_values`：每个 condition 最新 fair-value 估计，保存 fair_yes/fair_no、market midpoint、confidence、uncertainty、YES/NO 偏离、组件 JSON、拒绝原因和有效期。
 - `reward_fair_value_history`：fair-value 历史追加表，用于审计和回测；`(condition_id, source, observed_at)` 唯一索引使同一估计重试幂等，数据库维护默认按 `created_at` 保留 90 天。
-- `reward_market_event_windows`：按 condition/source 保存事件时间候选；effective 查询按 active、confidence、source 优先级和更新时间选一条。
+- `reward_market_event_windows`：按 `(condition_id, source, event_key)` 保存同一市场的多事件候选。字段明确记录 `event_time_role`、`schedule_status`、`time_precision`、`start_source_field`、`end_policy`、`hard_gate_eligible`、`producer_version`、`source_updated_at`、`observed_at` 和 `expires_at`；数据库 CHECK 确保 hard gate 只能由 active + scheduled + exact + `event_occurrence` + 明确 start provenance 的形状构成。Gamma lifecycle `startDate`/`endDate` 不满足该形状，永不作为硬 gate。
+- `reward_event_window_source_versions`：按 `(source, condition_id)` 保存 source snapshot 的 `producer_version`、`source_updated_at`、`observed_at` 和每 condition `snapshot_hash`。Producer 在 `coverage[]` 中逐 condition 传递 upstream `source_updated_at`，写路径按 source 获取 Postgres transaction advisory lock，以 `(producer_version, source_updated_at, observed_at)` 字典序作高水位，幂等接受完全相同的同高水位快照，并拒绝同高水位但哈希不同的冲突 payload。每次 source snapshot 替换会把 coverage condition 中缺失的 event key tombstone 为 withdrawn。
 - `reward_merge_intents`：BalancedMerge 配对库存合并意图，包含 YES/NO token、merge size、两侧库存均价、source fill、status、tx hash、submitted/confirmed/failed 时间、失败原因和 retry count；广播前原子进入不可自动重领的 `broadcasting`，只有该状态能写 `submitted + tx_hash`，链上 receipt 解析再以 intent id + tx hash 双重 fencing 更新 completed/failed。Active paired size 只计算 pending/unsupported/broadcasting/submitted，completed 不抵扣未来新库存。
-- 高频 mutable snapshot 使用版本 fencing：managed order、position、account state、heartbeat、event-window、fair-value 和 strategy ledger 不接受较旧时间版本；账户全量持仓替换会先锁定 account state 版本，避免乱序同步先删除新仓位再写回旧仓位。
+- 高频 mutable snapshot 使用版本 fencing：managed order、position、account state、heartbeat、fair-value 和 strategy ledger 不接受较旧时间版本；event-window 额外使用 producer version + per-condition source-updated/observed high-water/hash。账户全量持仓替换会先锁定 account state 版本，避免乱序同步先删除新仓位再写回旧仓位。
 
 ## 数据保留与自动清理
 
@@ -97,12 +100,14 @@
 
 ## 当前状态
 
-- 当前迁移目录包含不可变基线 `0001_initial_schema.sql` 和前向修复 `0002_reward_fair_value_history_identity.sql`。
+- 当前迁移目录包含不可变基线 `0001_initial_schema.sql`、fair-value 前向修复 `0002_reward_fair_value_history_identity.sql` 和 event-window 语义升级 `0003_reward_event_window_semantics.sql`。
 - `packages/backend/init.sql` 表达执行全部迁移后的最新 schema，不再要求与冻结 `0001` 字节相同。
 - 已移除的钱包类和独立研究模块不再有前端路由、API、worker、application store、DTO 或专属 schema；baseline 仍明确保留上述 legacy signal/arbitrage 通用表，不能据此推断旧控制台流程仍可用。
 - Rewards 竞争度相关数据只存在于 quote plan 的统一 opportunity metrics 中，不再有独立 observation 表或模块；最终市场选择优先级存于 quote plan 的 `selection_score` / `selection_metrics`。
-- Rewards 事件窗口、strategy run ledger、Replay V2 fixture、condition 级 fair-value estimates/幂等 history、AI advisory、信息风险、price-history candles、worker heartbeat、控制命令去重和 BalancedMerge merge intent 已落地。
+- Rewards 事件窗口已升级为 multi-event/source-snapshot 模型；Gamma lifecycle 旧行在 `0003` 中被标记 inactive/withdrawn、清除 hard-gate eligibility 并写入 quarantine 审计原因。其他 legacy 行因无 time role/precision/provenance 也统一 fail closed，必须由新 producer 按新合同重发才能恢复可用性。
+- Strategy run ledger、Replay V3 fixture（兼容读取 V1/V2）、condition 级 fair-value estimates/幂等 history、AI advisory、信息风险、price-history candles、worker heartbeat、控制命令去重和 BalancedMerge merge intent 已落地。
 - 新建数据库和现有部署都通过 `0002` 获得 `reward_fair_value_history_identity_uidx`；迁移会先按 `(condition_id, source, observed_at)` 去重，再创建唯一索引。写路径使用无目标 `ON CONFLICT DO NOTHING`，与冻结 `0001` 兼容。
+- 现有部署通过 `0003` 获得 event-window 新主键、shape checks 和 source version 表；该过程必须协调停止旧 producer，不支持新旧 runtime 同时滚动写入。
 - Strategy run/decision ledger 是审计和 replay 输入，不作为 live 定价输入；`reward_strategy_actions` 同时是 Postgres-only durable executor 的执行队列。executor 随 rewards poll loop 启动，使用 account-scoped lease、owner fencing 和当前风险/venue 状态复核后执行或恢复受支持动作。
 - 数据库维护任务生产模板默认开启；它不删除 rewards fills、positions、account state 等核心账本表。
 

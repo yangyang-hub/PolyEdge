@@ -1,5 +1,6 @@
-/// Compact historical snapshot used by replay schema V2. Decision history
-/// consumers read only the first valid bid/ask, so deeper levels are omitted.
+/// Compact historical snapshot introduced by replay schema V2 and retained by
+/// V3. Decision history consumers read only the first valid bid/ask, so deeper
+/// levels are omitted.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RewardReplayTopOfBookPoint {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -50,7 +51,32 @@ pub fn build_reward_decision_replay_fixture_v2(
     final_book_history: &HashMap<String, VecDeque<BookSnapshot>>,
     expected_plans: &[RewardQuotePlan],
 ) -> Result<RewardDecisionReplayFixture> {
-    let mut fixture = build_reward_decision_replay_fixture_v2_pending_expectations(
+    let mut fixture = build_reward_decision_replay_fixture_pending_expectations(
+        REWARD_DECISION_REPLAY_V2_SCHEMA_VERSION,
+        input,
+        providers,
+        final_account,
+        final_open_orders,
+        final_positions,
+        final_books,
+        final_book_history,
+    );
+    set_reward_replay_expected_plan_hashes(&mut fixture, expected_plans)?;
+    Ok(fixture)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn build_reward_decision_replay_fixture_v3(
+    input: RewardStrategyInput,
+    providers: RewardReplayProviderSnapshot,
+    final_account: &RewardAccountState,
+    final_open_orders: &[ManagedRewardOrder],
+    final_positions: &[RewardPosition],
+    final_books: &HashMap<String, RewardOrderBook>,
+    final_book_history: &HashMap<String, VecDeque<BookSnapshot>>,
+    expected_plans: &[RewardQuotePlan],
+) -> Result<RewardDecisionReplayFixture> {
+    let mut fixture = build_reward_decision_replay_fixture_v3_pending_expectations(
         input,
         providers,
         final_account,
@@ -65,6 +91,51 @@ pub fn build_reward_decision_replay_fixture_v2(
 
 #[allow(clippy::too_many_arguments)]
 pub fn build_reward_decision_replay_fixture_v2_pending_expectations(
+    input: RewardStrategyInput,
+    providers: RewardReplayProviderSnapshot,
+    final_account: &RewardAccountState,
+    final_open_orders: &[ManagedRewardOrder],
+    final_positions: &[RewardPosition],
+    final_books: &HashMap<String, RewardOrderBook>,
+    final_book_history: &HashMap<String, VecDeque<BookSnapshot>>,
+) -> RewardDecisionReplayFixture {
+    build_reward_decision_replay_fixture_pending_expectations(
+        REWARD_DECISION_REPLAY_V2_SCHEMA_VERSION,
+        input,
+        providers,
+        final_account,
+        final_open_orders,
+        final_positions,
+        final_books,
+        final_book_history,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn build_reward_decision_replay_fixture_v3_pending_expectations(
+    input: RewardStrategyInput,
+    providers: RewardReplayProviderSnapshot,
+    final_account: &RewardAccountState,
+    final_open_orders: &[ManagedRewardOrder],
+    final_positions: &[RewardPosition],
+    final_books: &HashMap<String, RewardOrderBook>,
+    final_book_history: &HashMap<String, VecDeque<BookSnapshot>>,
+) -> RewardDecisionReplayFixture {
+    build_reward_decision_replay_fixture_pending_expectations(
+        REWARD_DECISION_REPLAY_SCHEMA_VERSION,
+        input,
+        providers,
+        final_account,
+        final_open_orders,
+        final_positions,
+        final_books,
+        final_book_history,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_reward_decision_replay_fixture_pending_expectations(
+    schema_version: u16,
     mut input: RewardStrategyInput,
     providers: RewardReplayProviderSnapshot,
     final_account: &RewardAccountState,
@@ -120,7 +191,7 @@ pub fn build_reward_decision_replay_fixture_v2_pending_expectations(
     };
 
     RewardDecisionReplayFixture {
-        schema_version: REWARD_DECISION_REPLAY_SCHEMA_VERSION,
+        schema_version,
         input,
         providers,
         compact_book_history,

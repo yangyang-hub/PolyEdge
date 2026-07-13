@@ -1,9 +1,12 @@
 use polyedge_application::{
-    MarketUpsertOptions, MarketView, RewardEventTimeConfidence, RewardGammaEventDateMode,
-    RewardMarket, RewardMarketEventWindow, RewardToken,
+    MarketUpsertOptions, MarketView, RewardEventEndPolicy, RewardEventScheduleStatus,
+    RewardEventTimeConfidence, RewardEventTimePrecision, RewardEventTimeRole,
+    RewardEventWindowSourceCoverage, RewardEventWindowSourceSnapshot, RewardMarket,
+    RewardMarketEventWindow, RewardToken,
 };
 use polyedge_connectors::{
-    PolymarketGammaConnector, PolymarketGammaMarket, PolymarketRewardMarket,
+    GammaEventStartSource, GammaScheduleStatus, GammaScheduledEventKind, PolymarketGammaConnector,
+    PolymarketGammaMarket, PolymarketGammaScheduledEvent, PolymarketRewardMarket,
     PolymarketRewardsConnector,
 };
 use polyedge_domain::{AppError, Result};
@@ -21,26 +24,20 @@ pub struct PriorityMarketSyncReport {
 
 static MARKET_UPSERT_GATE: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 const GENERAL_MARKET_SYNC_PAGE_SIZE: u16 = 100;
+const GAMMA_EVENT_WINDOW_SOURCE: &str = "gamma";
+const GAMMA_EVENT_WINDOW_PRODUCER_VERSION: u32 = 2;
 
 pub async fn sync_general_markets_once(
     state: &AppState,
     trace_id: &str,
     upsert_options: MarketUpsertOptions,
 ) -> Result<usize> {
+    let observed_at = OffsetDateTime::now_utc();
     let connector = PolymarketGammaConnector::new(&state.settings.polymarket.gamma_host)?;
     let gamma_markets = connector
         .fetch_markets(GENERAL_MARKET_SYNC_PAGE_SIZE)
         .await?;
-    let reward_config = state.reward_bot_service.read_config().await?;
-    let event_windows = gamma_markets
-        .iter()
-        .filter_map(|market| {
-            gamma_market_to_event_window(
-                market,
-                reward_config.event_window_gamma_unreviewed_dates_mode,
-            )
-        })
-        .collect::<Vec<_>>();
+    let event_window_snapshot = gamma_event_window_snapshot(&gamma_markets, observed_at);
     let views: Vec<MarketView> = gamma_markets
         .iter()
         .cloned()
@@ -53,10 +50,10 @@ pub async fn sync_general_markets_once(
         .await?;
     if let Err(error) = state
         .reward_bot_service
-        .upsert_market_event_windows(&event_windows)
+        .replace_market_event_windows(&event_window_snapshot)
         .await
     {
-        tracing::warn!(error = %error, "failed to upsert Gamma reward event-window candidates");
+        tracing::warn!(error = %error, "failed to replace Gamma reward event-window candidates");
     }
     Ok(upserted)
 }
@@ -99,21 +96,13 @@ pub async fn sync_priority_markets_once(
         });
     }
 
+    let observed_at = OffsetDateTime::now_utc();
     let connector = PolymarketGammaConnector::new(&state.settings.polymarket.gamma_host)?;
     let gamma_markets = connector
         .fetch_markets_by_condition_ids(&condition_ids)
         .await?;
-    let reward_config = state.reward_bot_service.read_config().await?;
     let fetched = gamma_markets.len();
-    let event_windows = gamma_markets
-        .iter()
-        .filter_map(|market| {
-            gamma_market_to_event_window(
-                market,
-                reward_config.event_window_gamma_unreviewed_dates_mode,
-            )
-        })
-        .collect::<Vec<_>>();
+    let event_window_snapshot = gamma_event_window_snapshot(&gamma_markets, observed_at);
     let views: Vec<MarketView> = gamma_markets
         .iter()
         .cloned()
@@ -126,10 +115,10 @@ pub async fn sync_priority_markets_once(
         .await?;
     if let Err(error) = state
         .reward_bot_service
-        .upsert_market_event_windows(&event_windows)
+        .replace_market_event_windows(&event_window_snapshot)
         .await
     {
-        tracing::warn!(error = %error, "failed to upsert priority Gamma reward event-window candidates");
+        tracing::warn!(error = %error, "failed to replace priority Gamma reward event-window candidates");
     }
 
     Ok(PriorityMarketSyncReport {
@@ -353,7 +342,7 @@ fn gamma_market_to_view(market: PolymarketGammaMarket) -> MarketView {
         mid_price: market.mid_price,
         volume_24h: market.volume_24h,
         liquidity_usd: market.liquidity_usd,
-        end_at: market.end_at,
+        end_at: market.resolution_deadline_at,
         ambiguity_level: market.ambiguity_level,
         tradability_status: market.tradability_status,
         resolution_source: market.resolution_source,
@@ -366,32 +355,100 @@ fn gamma_market_to_view(market: PolymarketGammaMarket) -> MarketView {
     }
 }
 
-fn gamma_market_to_event_window(
+fn gamma_event_window_snapshot(
+    markets: &[PolymarketGammaMarket],
+    observed_at: OffsetDateTime,
+) -> RewardEventWindowSourceSnapshot {
+    RewardEventWindowSourceSnapshot {
+        source: GAMMA_EVENT_WINDOW_SOURCE.to_string(),
+        producer_version: GAMMA_EVENT_WINDOW_PRODUCER_VERSION,
+        observed_at,
+        coverage: markets
+            .iter()
+            .map(|market| RewardEventWindowSourceCoverage {
+                condition_id: market.condition_id.clone(),
+                source_updated_at: Some(market.updated_at),
+            })
+            .collect(),
+        windows: markets
+            .iter()
+            .flat_map(|market| gamma_market_to_event_windows(market, observed_at))
+            .collect(),
+    }
+}
+
+fn gamma_market_to_event_windows(
     market: &PolymarketGammaMarket,
-    gamma_unreviewed_dates_mode: RewardGammaEventDateMode,
-) -> Option<RewardMarketEventWindow> {
-    let event_start_at = market.event_start_at.or(market.start_at)?;
-    let source = if market.has_reviewed_dates {
-        "gamma_reviewed"
-    } else {
-        "gamma"
-    };
+    observed_at: OffsetDateTime,
+) -> Vec<RewardMarketEventWindow> {
+    market
+        .scheduled_events
+        .iter()
+        .map(|event| gamma_scheduled_event_to_window(market, event, observed_at))
+        .collect()
+}
+
+fn gamma_scheduled_event_to_window(
+    market: &PolymarketGammaMarket,
+    event: &PolymarketGammaScheduledEvent,
+    observed_at: OffsetDateTime,
+) -> RewardMarketEventWindow {
     let confidence = if market.has_reviewed_dates {
         RewardEventTimeConfidence::Medium
     } else {
-        match gamma_unreviewed_dates_mode {
-            RewardGammaEventDateMode::Ignore => return None,
-            RewardGammaEventDateMode::Observe => RewardEventTimeConfidence::Low,
-            RewardGammaEventDateMode::MediumConfidence => RewardEventTimeConfidence::Medium,
+        RewardEventTimeConfidence::Low
+    };
+    let schedule_status = match event.status {
+        GammaScheduleStatus::Scheduled => RewardEventScheduleStatus::Scheduled,
+        GammaScheduleStatus::Conflicting => RewardEventScheduleStatus::Conflicting,
+        GammaScheduleStatus::Finished => RewardEventScheduleStatus::Finished,
+    };
+    let is_scheduled_sports = event.kind == GammaScheduledEventKind::Sports
+        && event.status == GammaScheduleStatus::Scheduled;
+    let event_end_at = match event.status {
+        GammaScheduleStatus::Finished => event.finished_at,
+        GammaScheduleStatus::Scheduled if event.kind == GammaScheduledEventKind::Sports => {
+            market.resolution_deadline_at
         }
+        GammaScheduleStatus::Scheduled | GammaScheduleStatus::Conflicting => None,
+    };
+    let end_policy = match event.status {
+        GammaScheduleStatus::Finished => RewardEventEndPolicy::Explicit,
+        GammaScheduleStatus::Scheduled if event.kind == GammaScheduledEventKind::Sports => {
+            RewardEventEndPolicy::UntilMarketClosed
+        }
+        GammaScheduleStatus::Scheduled => RewardEventEndPolicy::Point,
+        GammaScheduleStatus::Conflicting => RewardEventEndPolicy::Unknown,
+    };
+    let hard_gate_eligible = is_scheduled_sports && event.start_at.is_some();
+    let start_source_field = event.start_source.map(|source| match source {
+        GammaEventStartSource::GameStartTime => "gameStartTime".to_string(),
+        GammaEventStartSource::EventStartTime => "events[].startTime".to_string(),
+        GammaEventStartSource::Corroborated => "gameStartTime+events[].startTime".to_string(),
+    });
+    let event_type = match event.kind {
+        GammaScheduledEventKind::Sports => "sports",
+        GammaScheduledEventKind::OtherStructured => "other_structured",
     };
 
-    Some(RewardMarketEventWindow {
+    RewardMarketEventWindow {
         condition_id: market.condition_id.clone(),
-        source: source.to_string(),
-        event_type: "gamma_date".to_string(),
-        event_start_at: Some(event_start_at),
-        event_end_at: market.event_end_at.or(market.end_at),
+        source: GAMMA_EVENT_WINDOW_SOURCE.to_string(),
+        event_key: event.event_key.clone(),
+        event_type: event_type.to_string(),
+        event_time_role: RewardEventTimeRole::EventOccurrence,
+        schedule_status,
+        time_precision: if event.status == GammaScheduleStatus::Conflicting
+            || event.start_at.is_none()
+        {
+            RewardEventTimePrecision::Unknown
+        } else {
+            RewardEventTimePrecision::Exact
+        },
+        start_source_field,
+        end_policy,
+        event_start_at: event.start_at,
+        event_end_at,
         confidence,
         source_url: market
             .slug
@@ -400,17 +457,46 @@ fn gamma_market_to_event_window(
         source_payload: json!({
             "market_id": market.id,
             "slug": market.slug,
-            "start_at": market.start_at,
-            "end_at": market.end_at,
-            "event_start_at": market.event_start_at,
-            "event_end_at": market.event_end_at,
+            "gamma_event_id": event.gamma_event_id,
+            "title": event.title,
+            "event_key": event.event_key,
+            "event_kind": event_type,
+            "schedule_status": gamma_schedule_status_name(event.status),
+            "start_source": gamma_event_start_source_name(event.start_source),
+            "sports_market_type": event.sports_market_type,
+            "game_id": event.game_id,
+            "series_slug": event.series_slug,
+            "lifecycle_started_at": market.lifecycle_started_at,
+            "resolution_deadline_at": market.resolution_deadline_at,
             "has_reviewed_dates": market.has_reviewed_dates,
         }),
-        notes: "Polymarket Gamma date candidate; verify semantics before using as a high-confidence event time.".to_string(),
+        notes: "Polymarket Gamma explicit scheduled-event candidate; lifecycle dates are excluded."
+            .to_string(),
         active: true,
+        hard_gate_eligible,
+        producer_version: GAMMA_EVENT_WINDOW_PRODUCER_VERSION,
+        source_updated_at: Some(market.updated_at),
+        observed_at: Some(observed_at),
+        expires_at: None,
         reviewed_by: None,
         reviewed_at: None,
-        updated_at: OffsetDateTime::now_utc(),
+        updated_at: observed_at,
+    }
+}
+
+fn gamma_schedule_status_name(status: GammaScheduleStatus) -> &'static str {
+    match status {
+        GammaScheduleStatus::Scheduled => "scheduled",
+        GammaScheduleStatus::Conflicting => "conflicting",
+        GammaScheduleStatus::Finished => "finished",
+    }
+}
+
+fn gamma_event_start_source_name(source: Option<GammaEventStartSource>) -> Option<&'static str> {
+    source.map(|source| match source {
+        GammaEventStartSource::GameStartTime => "gameStartTime",
+        GammaEventStartSource::EventStartTime => "events[].startTime",
+        GammaEventStartSource::Corroborated => "gameStartTime+events[].startTime",
     })
 }
 
@@ -442,5 +528,193 @@ fn reward_market_from_connector(market: PolymarketRewardMarket) -> RewardMarket 
             .collect(),
         active: market.active,
         updated_at: market.updated_at,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use polyedge_domain::{
+        AmbiguityLevel, MarketStatus, Probability, TradabilityStatus, UsdAmount,
+    };
+    use time::Duration as TimeDuration;
+
+    fn test_gamma_market(
+        now: OffsetDateTime,
+        reviewed_dates: bool,
+        scheduled_events: Vec<PolymarketGammaScheduledEvent>,
+    ) -> PolymarketGammaMarket {
+        let midpoint = Decimal::from_str_exact("0.50").expect("midpoint");
+        PolymarketGammaMarket {
+            id: "gamma-market-1".to_string(),
+            slug: Some("fixture-market".to_string()),
+            question: "Fixture market?".to_string(),
+            category: "Sports".to_string(),
+            status: MarketStatus::Open,
+            best_bid: Probability::new(midpoint).expect("best bid"),
+            best_ask: Probability::new(midpoint).expect("best ask"),
+            mid_price: Probability::new(midpoint).expect("mid price"),
+            volume_24h: UsdAmount::new(Decimal::from(1_000_u64)).expect("volume"),
+            liquidity_usd: UsdAmount::new(Decimal::from(1_000_u64)).expect("liquidity"),
+            lifecycle_started_at: Some(now - TimeDuration::days(30)),
+            resolution_deadline_at: Some(now + TimeDuration::days(7)),
+            scheduled_events,
+            has_reviewed_dates: reviewed_dates,
+            ambiguity_level: AmbiguityLevel::Low,
+            tradability_status: TradabilityStatus::Tradable,
+            resolution_source: "fixture".to_string(),
+            edge_case_notes: Vec::new(),
+            condition_id: "condition-1".to_string(),
+            yes_asset_id: "yes-token".to_string(),
+            no_asset_id: "no-token".to_string(),
+            outcome_token_ids: vec!["yes-token".to_string(), "no-token".to_string()],
+            outcomes: vec!["Yes".to_string(), "No".to_string()],
+            outcome_prices: vec![midpoint, midpoint],
+            updated_at: now,
+            version: now.unix_timestamp(),
+        }
+    }
+
+    fn scheduled_event(
+        now: OffsetDateTime,
+        event_key: &str,
+        kind: GammaScheduledEventKind,
+        status: GammaScheduleStatus,
+    ) -> PolymarketGammaScheduledEvent {
+        PolymarketGammaScheduledEvent {
+            event_key: event_key.to_string(),
+            gamma_event_id: Some(event_key.to_string()),
+            title: Some("Fixture event".to_string()),
+            kind,
+            status,
+            start_at: (status != GammaScheduleStatus::Conflicting)
+                .then_some(now + TimeDuration::hours(6)),
+            start_source: (status != GammaScheduleStatus::Conflicting)
+                .then_some(GammaEventStartSource::EventStartTime),
+            finished_at: (status == GammaScheduleStatus::Finished).then_some(now),
+            sports_market_type: (kind == GammaScheduledEventKind::Sports)
+                .then(|| "moneyline".to_string()),
+            game_id: (kind == GammaScheduledEventKind::Sports).then_some(42),
+            series_slug: (kind == GammaScheduledEventKind::Sports)
+                .then(|| "fixture-series".to_string()),
+        }
+    }
+
+    #[test]
+    fn gamma_snapshot_covers_markets_without_discrete_events_for_tombstones() {
+        let now = OffsetDateTime::from_unix_timestamp(1_784_000_000).expect("fixed time");
+        let market = test_gamma_market(now, true, Vec::new());
+
+        let snapshot = gamma_event_window_snapshot(&[market], now);
+
+        assert_eq!(snapshot.source, "gamma");
+        assert_eq!(snapshot.coverage[0].condition_id, "condition-1");
+        assert!(snapshot.windows.is_empty());
+    }
+
+    #[test]
+    fn gamma_scheduled_sports_event_is_the_only_hard_gate_shape() {
+        let now = OffsetDateTime::from_unix_timestamp(1_784_000_000).expect("fixed time");
+        let market = test_gamma_market(
+            now,
+            true,
+            vec![scheduled_event(
+                now,
+                "event:sports-1",
+                GammaScheduledEventKind::Sports,
+                GammaScheduleStatus::Scheduled,
+            )],
+        );
+
+        let window = gamma_event_window_snapshot(&[market], now)
+            .windows
+            .into_iter()
+            .next()
+            .expect("sports window");
+
+        assert_eq!(window.source, "gamma");
+        assert_eq!(window.event_key, "event:sports-1");
+        assert_eq!(window.event_time_role, RewardEventTimeRole::EventOccurrence);
+        assert_eq!(window.schedule_status, RewardEventScheduleStatus::Scheduled);
+        assert_eq!(window.time_precision, RewardEventTimePrecision::Exact);
+        assert_eq!(window.end_policy, RewardEventEndPolicy::UntilMarketClosed);
+        assert_eq!(window.confidence, RewardEventTimeConfidence::Medium);
+        assert!(window.hard_gate_eligible);
+        assert_eq!(window.producer_version, 2);
+    }
+
+    #[test]
+    fn gamma_other_and_conflicting_events_are_audited_but_not_hard_gated() {
+        let now = OffsetDateTime::from_unix_timestamp(1_784_000_000).expect("fixed time");
+        let market = test_gamma_market(
+            now,
+            false,
+            vec![
+                scheduled_event(
+                    now,
+                    "event:other-1",
+                    GammaScheduledEventKind::OtherStructured,
+                    GammaScheduleStatus::Scheduled,
+                ),
+                scheduled_event(
+                    now,
+                    "event:conflict-1",
+                    GammaScheduledEventKind::Sports,
+                    GammaScheduleStatus::Conflicting,
+                ),
+            ],
+        );
+
+        let snapshot = gamma_event_window_snapshot(&[market], now);
+
+        assert_eq!(snapshot.windows.len(), 2);
+        assert!(
+            snapshot
+                .windows
+                .iter()
+                .all(|window| !window.hard_gate_eligible)
+        );
+        assert_eq!(snapshot.windows[0].end_policy, RewardEventEndPolicy::Point);
+        assert_eq!(
+            snapshot.windows[1].schedule_status,
+            RewardEventScheduleStatus::Conflicting
+        );
+        assert_eq!(
+            snapshot.windows[1].time_precision,
+            RewardEventTimePrecision::Unknown
+        );
+        assert_eq!(
+            snapshot.windows[0].confidence,
+            RewardEventTimeConfidence::Low
+        );
+    }
+
+    #[test]
+    fn gamma_snapshot_keeps_multiple_events_separate() {
+        let now = OffsetDateTime::from_unix_timestamp(1_784_000_000).expect("fixed time");
+        let market = test_gamma_market(
+            now,
+            true,
+            vec![
+                scheduled_event(
+                    now,
+                    "event:sports-1",
+                    GammaScheduledEventKind::Sports,
+                    GammaScheduleStatus::Scheduled,
+                ),
+                scheduled_event(
+                    now,
+                    "event:sports-2",
+                    GammaScheduledEventKind::Sports,
+                    GammaScheduleStatus::Scheduled,
+                ),
+            ],
+        );
+
+        let snapshot = gamma_event_window_snapshot(&[market], now);
+
+        assert_eq!(snapshot.windows.len(), 2);
+        assert_eq!(snapshot.windows[0].event_key, "event:sports-1");
+        assert_eq!(snapshot.windows[1].event_key, "event:sports-2");
     }
 }

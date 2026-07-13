@@ -256,6 +256,10 @@ fn build_reward_fair_value_decision(
     estimate: RewardFairValueEstimate,
     config: &RewardBotConfig,
 ) -> RewardFairValueDecision {
+    let upstream_event_block = plan
+        .event_window
+        .as_ref()
+        .is_some_and(|assessment| assessment.status.blocks_new_buy());
     let rebate_cents = reward_fair_value_rebate_cents(plan, config);
     let provider_edge_buffer_cents = plan
         .ai_advisory
@@ -315,11 +319,23 @@ fn build_reward_fair_value_decision(
         });
     }
 
-    let mut passed = estimate.do_not_quote_reason.is_none() && !edges.is_empty();
-    let mut reason = estimate
-        .do_not_quote_reason
-        .clone()
-        .unwrap_or_else(|| "fair-value gate accepted".to_string());
+    let assessment_status = if upstream_event_block && edges.is_empty() {
+        RewardFairValueAssessmentStatus::NotEvaluated
+    } else {
+        RewardFairValueAssessmentStatus::Evaluated
+    };
+    let mut passed = assessment_status == RewardFairValueAssessmentStatus::Evaluated
+        && estimate.do_not_quote_reason.is_none()
+        && !edges.is_empty();
+    let mut reason = if assessment_status == RewardFairValueAssessmentStatus::NotEvaluated {
+        "fair-value not evaluated because an upstream event window blocked the quote plan"
+            .to_string()
+    } else {
+        estimate
+            .do_not_quote_reason
+            .clone()
+            .unwrap_or_else(|| "fair-value gate accepted".to_string())
+    };
     if passed
         && let Some(edge) = edges.iter().find(|edge| !edge.passed)
     {
@@ -331,6 +347,7 @@ fn build_reward_fair_value_decision(
         estimate,
         edges,
         expected_reward_rebate_cents: rebate_cents,
+        assessment_status,
         passed,
         reason,
     }

@@ -19,6 +19,12 @@ async fn postgres_count_quote_plans(pool: &PgPool) -> Result<RewardQuotePlanCoun
                COUNT(*) FILTER (WHERE NOT eligible
                                 AND reason_code = 'info_risk') AS blocker_info_risk,
                COUNT(*) FILTER (WHERE NOT eligible
+                                AND reason_code = 'event_window') AS blocker_event_window,
+               COUNT(*) FILTER (WHERE NOT eligible
+                                AND reason_code = 'fair_value') AS blocker_fair_value,
+               COUNT(*) FILTER (WHERE NOT eligible
+                                AND reason_code = 'competition') AS blocker_competition,
+               COUNT(*) FILTER (WHERE NOT eligible
                                 AND reason_code = 'funding') AS blocker_funding,
                COUNT(*) FILTER (WHERE NOT eligible
                                 AND reason_code = 'maker_budget') AS blocker_maker_budget,
@@ -33,6 +39,9 @@ async fn postgres_count_quote_plans(pool: &PgPool) -> Result<RewardQuotePlanCoun
                                     'ai_stop_new',
                                     'provider_size',
                                     'info_risk',
+                                    'event_window',
+                                    'fair_value',
+                                    'competition',
                                     'funding',
                                     'maker_budget',
                                     'inventory_headroom',
@@ -63,6 +72,9 @@ async fn postgres_count_quote_plans(pool: &PgPool) -> Result<RewardQuotePlanCoun
             ai_stop_new: postgres_count_to_usize(&row, "blocker_ai_stop_new")?,
             provider_size: postgres_count_to_usize(&row, "blocker_provider_size")?,
             info_risk: postgres_count_to_usize(&row, "blocker_info_risk")?,
+            event_window: postgres_count_to_usize(&row, "blocker_event_window")?,
+            fair_value: postgres_count_to_usize(&row, "blocker_fair_value")?,
+            competition: postgres_count_to_usize(&row, "blocker_competition")?,
             funding: postgres_count_to_usize(&row, "blocker_funding")?,
             maker_budget: postgres_count_to_usize(&row, "blocker_maker_budget")?,
             inventory_headroom: postgres_count_to_usize(&row, "blocker_inventory_headroom")?,

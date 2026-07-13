@@ -25,6 +25,7 @@ type FairValueStats = {
   total: number;
   passed: number;
   blocked: number;
+  notEvaluated: number;
   avgConfidence: number;
 };
 
@@ -89,10 +90,11 @@ export function RewardsFairValueWorkbench({
         })}
       </p>
 
-      <section className="grid gap-3 md:grid-cols-4">
+      <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
         <FairValueStat title={dictionary.rewards.fairValueAssessedCurrentPage} value={formatInteger(stats.total)} />
         <FairValueStat title={dictionary.rewards.fairValuePassedCurrentPage} value={formatInteger(stats.passed)} tone="success" />
         <FairValueStat title={dictionary.rewards.fairValueBlockedCurrentPage} value={formatInteger(stats.blocked)} tone="danger" />
+        <FairValueStat title={dictionary.rewards.fairValueNotEvaluated} value={formatInteger(stats.notEvaluated)} />
         <FairValueStat title={dictionary.rewards.fairValueAverageConfidenceCurrentPage} value={`${formatFixed(stats.avgConfidence, 0)}%`} />
       </section>
 
@@ -147,6 +149,7 @@ function FairValueTable({ plans }: { plans: RewardQuotePlanDto[] }) {
           ) : (
             plans.map((plan) => {
               const fair = plan.fair_value;
+              const evaluated = fair?.assessment_status !== "not_evaluated";
               return (
                 <TableRow key={`${plan.condition_id}:${plan.strategy_profile ?? "standard"}`}>
                   <TableCell className="align-top">
@@ -169,7 +172,7 @@ function FairValueTable({ plans }: { plans: RewardQuotePlanDto[] }) {
                       : formatFixed(fair.estimate.market_midpoint_yes, 4)}
                   </TableCell>
                   <TableCell className="align-top">
-                    <StatusPill tone={fair?.passed ? "success" : "warning"}>
+                    <StatusPill tone={fair?.passed ? "success" : evaluated ? "warning" : "neutral"}>
                       {fair ? `${(toFiniteNumber(fair.estimate.confidence) * 100).toFixed(0)}%` : dictionary.rewards.notAvailable}
                     </StatusPill>
                   </TableCell>
@@ -196,8 +199,12 @@ function FairValueTable({ plans }: { plans: RewardQuotePlanDto[] }) {
                   </TableCell>
                   <TableCell className="align-top">
                     <div className="space-y-1">
-                      <StatusPill tone={fair?.passed ? "success" : "danger"}>
-                        {fair?.passed ? dictionary.rewards.fairValuePass : dictionary.rewards.blocked}
+                      <StatusPill tone={fair?.passed ? "success" : evaluated ? "danger" : "warning"}>
+                        {fair?.passed
+                          ? dictionary.rewards.fairValuePass
+                          : evaluated
+                            ? dictionary.rewards.blocked
+                            : dictionary.rewards.fairValueNotEvaluated}
                       </StatusPill>
                       <TruncateText
                         text={fair?.reason ?? plan.reason}
@@ -217,16 +224,26 @@ function FairValueTable({ plans }: { plans: RewardQuotePlanDto[] }) {
 }
 
 function fairValueStats(plans: RewardQuotePlanDto[]): FairValueStats {
-  const fairPlans = plans.filter((plan) => plan.fair_value);
-  const passed = fairPlans.filter((plan) => plan.fair_value?.passed).length;
-  const confidenceSum = fairPlans.reduce(
-    (sum, plan) => sum + toFiniteNumber(plan.fair_value?.estimate.confidence),
-    0,
-  );
+  let total = 0;
+  let passed = 0;
+  let notEvaluated = 0;
+  let confidenceSum = 0;
+  for (const plan of plans) {
+    const fair = plan.fair_value;
+    if (!fair) continue;
+    if (fair.assessment_status === "not_evaluated") {
+      notEvaluated += 1;
+      continue;
+    }
+    total += 1;
+    if (fair.passed) passed += 1;
+    confidenceSum += toFiniteNumber(fair.estimate.confidence);
+  }
   return {
-    total: fairPlans.length,
+    total,
     passed,
-    blocked: fairPlans.length - passed,
-    avgConfidence: fairPlans.length === 0 ? 0 : (confidenceSum / fairPlans.length) * 100,
+    blocked: total - passed,
+    notEvaluated,
+    avgConfidence: total === 0 ? 0 : (confidenceSum / total) * 100,
   };
 }

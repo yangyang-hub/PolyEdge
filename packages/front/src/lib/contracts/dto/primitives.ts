@@ -38,6 +38,19 @@ export type RewardSelectionMode = "observe" | "enforce";
 export type RewardEventTimeConfidence = "low" | "medium" | "high";
 export type RewardUnknownEventTimeMode = "allow" | "observe" | "block";
 export type RewardGammaEventDateMode = "ignore" | "observe" | "medium_confidence";
+export type RewardEventTimeRole =
+  | "event_occurrence"
+  | "market_lifecycle"
+  | "resolution_deadline"
+  | "unknown";
+export type RewardEventScheduleStatus =
+  | "scheduled"
+  | "conflicting"
+  | "finished"
+  | "withdrawn"
+  | "unknown";
+export type RewardEventTimePrecision = "exact" | "date_only" | "inferred" | "unknown";
+export type RewardEventEndPolicy = "explicit" | "point" | "until_market_closed" | "unknown";
 export type RewardEventWindowStatus =
   | "no_event_window"
   | "safe_before_window"
@@ -47,6 +60,7 @@ export type RewardEventWindowStatus =
   | "post_event_cooldown"
   | "expired_or_resolved"
   | "untrusted_event_time";
+export type RewardFairValueAssessmentStatus = "evaluated" | "not_evaluated";
 export type RewardPlanQuoteMode = "double" | "single_yes" | "single_no" | "none";
 export type RewardQuoteReadiness =
   | "ready_to_quote"

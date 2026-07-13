@@ -3,6 +3,229 @@ mod tests {
     use super::*;
     use rust_decimal::Decimal;
 
+    fn gamma_market_fixture(overrides: serde_json::Value) -> PolymarketGammaMarket {
+        let mut fixture = serde_json::json!({
+            "id": "gamma-market-1",
+            "question": "Fixture market?",
+            "conditionId": "condition-1",
+            "clobTokenIds": ["yes-token", "no-token"],
+            "outcomes": ["Yes", "No"],
+            "outcomePrices": ["0.50", "0.50"],
+            "active": true,
+            "enableOrderBook": true,
+            "acceptingOrders": true,
+            "updatedAt": "2026-07-13T00:00:00Z"
+        });
+        let fixture_object = fixture.as_object_mut().expect("fixture object");
+        for (key, value) in overrides.as_object().expect("override object") {
+            fixture_object.insert(key.clone(), value.clone());
+        }
+        let raw: RawGammaMarket = serde_json::from_value(fixture).expect("Gamma fixture");
+        map_gamma_market(raw)
+            .expect("Gamma market mapping")
+            .expect("quoteable Gamma market")
+    }
+
+    #[test]
+    fn gamma_lifecycle_dates_never_create_scheduled_events() {
+        let market = gamma_market_fixture(serde_json::json!({
+            "startDate": "2026-03-01T00:16:42.70388Z",
+            "startDateIso": "2026-03-01",
+            "endDate": "2026-12-31T00:00:00Z",
+            "endDateIso": "2026-12-31",
+            "hasReviewedDates": true,
+            "events": [{
+                "id": "237598",
+                "title": "Iran leader end of 2026?",
+                "startDate": "2026-03-01T00:15:11.057586Z",
+                "endDate": "2026-12-31T00:00:00Z"
+            }]
+        }));
+
+        assert_eq!(
+            market.lifecycle_started_at,
+            parse_rfc3339(Some("2026-03-01T00:16:42.70388Z"))
+        );
+        assert_eq!(
+            market.resolution_deadline_at,
+            parse_rfc3339(Some("2026-12-31T00:00:00Z"))
+        );
+        assert!(market.scheduled_events.is_empty());
+    }
+
+    #[test]
+    fn gamma_sports_event_uses_corroborated_explicit_start_fields() {
+        let market = gamma_market_fixture(serde_json::json!({
+            "gameStartTime": "2026-07-14 19:00:00+00",
+            "sportsMarketType": "moneyline",
+            "hasReviewedDates": true,
+            "events": [{
+                "id": "691040",
+                "title": "France vs. Spain",
+                "startTime": "2026-07-14T19:00:00Z",
+                "startDate": "2026-07-11T10:03:23.216548Z",
+                "endDate": "2026-07-14T19:00:00Z",
+                "gameId": 982432,
+                "seriesSlug": "soccer-fifwc"
+            }]
+        }));
+
+        assert_eq!(market.scheduled_events.len(), 1);
+        let event = &market.scheduled_events[0];
+        assert_eq!(event.event_key, "event:691040");
+        assert_eq!(event.kind, GammaScheduledEventKind::Sports);
+        assert_eq!(event.status, GammaScheduleStatus::Scheduled);
+        assert_eq!(event.start_source, Some(GammaEventStartSource::Corroborated));
+        assert_eq!(
+            event.start_at,
+            parse_rfc3339(Some("2026-07-14T19:00:00Z"))
+        );
+    }
+
+    #[test]
+    fn gamma_conflicting_explicit_sports_times_fail_closed() {
+        let market = gamma_market_fixture(serde_json::json!({
+            "gameStartTime": "2026-07-14 19:00:00+00",
+            "sportsMarketType": "moneyline",
+            "events": [{
+                "id": "691040",
+                "startTime": "2026-07-14T19:02:00Z",
+                "gameId": 982432
+            }]
+        }));
+
+        let event = &market.scheduled_events[0];
+        assert_eq!(event.status, GammaScheduleStatus::Conflicting);
+        assert!(event.start_at.is_none());
+        assert!(event.start_source.is_none());
+    }
+
+    #[test]
+    fn gamma_non_sports_start_time_stays_other_structured() {
+        let market = gamma_market_fixture(serde_json::json!({
+            "events": [{
+                "id": "election-2028",
+                "title": "Presidential Election Winner 2028",
+                "startTime": "2028-11-07T12:00:00Z"
+            }]
+        }));
+
+        let event = &market.scheduled_events[0];
+        assert_eq!(event.kind, GammaScheduledEventKind::OtherStructured);
+        assert_eq!(event.start_source, Some(GammaEventStartSource::EventStartTime));
+    }
+
+    #[test]
+    fn gamma_game_start_time_alone_does_not_classify_a_market_as_sports() {
+        let market = gamma_market_fixture(serde_json::json!({
+            "gameStartTime": "2026-07-14 19:00:00+00",
+            "events": [{
+                "id": "tweet-count",
+                "title": "Tweet count market"
+            }]
+        }));
+
+        assert_eq!(market.scheduled_events.len(), 1);
+        let event = &market.scheduled_events[0];
+        assert_eq!(event.event_key, "market:gamma-market-1:game");
+        assert_eq!(event.kind, GammaScheduledEventKind::OtherStructured);
+        assert_eq!(event.start_source, Some(GammaEventStartSource::GameStartTime));
+    }
+
+    #[test]
+    fn gamma_numeric_event_id_is_normalized_without_rejecting_the_market() {
+        let market = gamma_market_fixture(serde_json::json!({
+            "sportsMarketType": "moneyline",
+            "events": [{
+                "id": 691040,
+                "startTime": "2026-07-14T19:00:00Z",
+                "gameId": 982432
+            }]
+        }));
+
+        assert_eq!(market.scheduled_events[0].event_key, "event:691040");
+        assert_eq!(
+            market.scheduled_events[0].gamma_event_id.as_deref(),
+            Some("691040")
+        );
+    }
+
+    #[test]
+    fn gamma_multiple_events_remain_independent_and_never_form_an_envelope() {
+        let market = gamma_market_fixture(serde_json::json!({
+            "sportsMarketType": "moneyline",
+            "events": [
+                {
+                    "id": "game-1",
+                    "startTime": "2026-07-14T19:00:00Z",
+                    "gameId": 1
+                },
+                {
+                    "id": "game-2",
+                    "startTime": "2026-07-21T19:00:00Z",
+                    "gameId": 2
+                }
+            ]
+        }));
+
+        assert_eq!(market.scheduled_events.len(), 2);
+        assert_eq!(market.scheduled_events[0].event_key, "event:game-1");
+        assert_eq!(market.scheduled_events[1].event_key, "event:game-2");
+        assert_ne!(
+            market.scheduled_events[0].start_at,
+            market.scheduled_events[1].start_at
+        );
+    }
+
+    #[test]
+    fn gamma_reschedule_preserves_event_key() {
+        let original = gamma_market_fixture(serde_json::json!({
+            "sportsMarketType": "moneyline",
+            "events": [{
+                "id": "game-1",
+                "startTime": "2026-07-14T19:00:00Z",
+                "gameId": 1
+            }]
+        }));
+        let rescheduled = gamma_market_fixture(serde_json::json!({
+            "sportsMarketType": "moneyline",
+            "events": [{
+                "id": "game-1",
+                "startTime": "2026-07-15T19:00:00Z",
+                "gameId": 1
+            }]
+        }));
+
+        assert_eq!(
+            original.scheduled_events[0].event_key,
+            rescheduled.scheduled_events[0].event_key
+        );
+        assert_ne!(
+            original.scheduled_events[0].start_at,
+            rescheduled.scheduled_events[0].start_at
+        );
+    }
+
+    #[test]
+    fn gamma_finished_timestamp_marks_the_schedule_finished() {
+        let market = gamma_market_fixture(serde_json::json!({
+            "sportsMarketType": "moneyline",
+            "events": [{
+                "id": "game-1",
+                "startTime": "2026-07-14T19:00:00Z",
+                "finishedTimestamp": "2026-07-14T21:15:00Z",
+                "gameId": 1
+            }]
+        }));
+
+        let event = &market.scheduled_events[0];
+        assert_eq!(event.status, GammaScheduleStatus::Finished);
+        assert_eq!(
+            event.finished_at,
+            parse_rfc3339(Some("2026-07-14T21:15:00Z"))
+        );
+    }
+
     #[test]
     fn poly1271_signature_scheme_maps_to_sdk_signature_type() {
         let signature_type: SignatureType = PolymarketSignatureScheme::Poly1271.into();

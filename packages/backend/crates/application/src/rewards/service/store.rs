@@ -35,11 +35,14 @@ pub trait RewardBotStore: Send + Sync {
         now: OffsetDateTime,
     ) -> Result<()>;
     async fn upsert_markets(&self, markets: &[RewardMarket]) -> Result<()>;
-    async fn upsert_market_event_windows(&self, windows: &[RewardMarketEventWindow])
-    -> Result<()>;
-    async fn list_effective_market_event_windows(
+    async fn replace_market_event_windows(
+        &self,
+        snapshot: &RewardEventWindowSourceSnapshot,
+    ) -> Result<RewardEventWindowReplaceReport>;
+    async fn list_market_event_windows(
         &self,
         condition_ids: &[String],
+        as_of: OffsetDateTime,
     ) -> Result<Vec<RewardMarketEventWindow>>;
     async fn start_strategy_run(&self, run: &RewardStrategyRunStart) -> Result<i64>;
     async fn complete_strategy_run(

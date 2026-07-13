@@ -438,12 +438,30 @@ async fn run_priority_market_sync(
 async fn run_reward_market_sync(state: &AppState, phase: &'static str, timeout: Duration) {
     let started = std::time::Instant::now();
     match tokio::time::timeout(timeout, sync_reward_markets_once(state)).await {
-        Ok(Ok(reward)) => info!(
-            phase,
-            reward,
-            elapsed_ms = started.elapsed().as_millis() as u64,
-            "orderbook reward market sync complete"
-        ),
+        Ok(Ok(reward)) => {
+            info!(
+                phase,
+                reward,
+                elapsed_ms = started.elapsed().as_millis() as u64,
+                "orderbook reward market sync complete"
+            );
+
+            // A first Gamma sync can precede the rewards catalog, in which case
+            // event-window rows are skipped by their reward-market foreign key.
+            // Reconcile priority conditions immediately after a successful
+            // catalog replacement instead of waiting for the independent loop.
+            let full_interval =
+                Duration::from_secs(state.settings.worker.market_sync_interval_secs.max(60));
+            let (priority_interval, freshness_minutes) =
+                priority_market_sync_interval(state, full_interval).await;
+            run_priority_market_sync(
+                state,
+                "reward_catalog_reconcile",
+                priority_market_sync_timeout(priority_interval),
+                freshness_minutes,
+            )
+            .await;
+        }
         Ok(Err(error)) => tracing::warn!(
             phase,
             error = %error,

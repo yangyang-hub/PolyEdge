@@ -20,7 +20,8 @@ use time::OffsetDateTime;
 pub use news::{ConnectorNewsItem, NewsSource, RssNewsConnector, RssNewsSourceConfig};
 pub use orderbook::{OrderbookHttpClient, OrderbookStreamClient, OrderbookStreamConnection};
 pub use polymarket::{
-    ConnectorOrderStatusUpdate, ConnectorTradeFillUpdate, LivePolymarketCancelAcceptance,
+    ConnectorOrderStatusUpdate, ConnectorTradeFillUpdate, GammaEventStartSource,
+    GammaScheduleStatus, GammaScheduledEventKind, LivePolymarketCancelAcceptance,
     LivePolymarketCancelOrderRequest, LivePolymarketCancelOutcome, LivePolymarketConfig,
     LivePolymarketConnector, LivePolymarketExecutionOutcome, LivePolymarketOrderAcceptance,
     LivePolymarketOrderRequest, LivePolymarketOrderStatusRequest, LivePolymarketTokenOrderRequest,
@@ -29,12 +30,12 @@ pub use polymarket::{
     PolymarketBookLevel, PolymarketChainConnector, PolymarketClosedPosition,
     PolymarketDataApiConnector, PolymarketFundingToken, PolymarketFundingTransferReceipt,
     PolymarketFundingTransferRequest, PolymarketGammaConnector, PolymarketGammaMarket,
-    PolymarketLeaderboardEntry, PolymarketMarketRefs, PolymarketMatchedOrderHint,
-    PolymarketMergePositionsReceipt, PolymarketMergePositionsRequest, PolymarketOpenOrder,
-    PolymarketOrderRejection, PolymarketPublicProfile, PolymarketSignatureScheme,
-    PolymarketSingleTokenBook, PolymarketTokenOrderSide, PolymarketTrade,
-    PolymarketTransactionReceipt, PolymarketTransactionReceiptStatus, PolymarketWalletActivity,
-    PolymarketWalletPosition, normalize_polymarket_order_status_update,
+    PolymarketGammaScheduledEvent, PolymarketLeaderboardEntry, PolymarketMarketRefs,
+    PolymarketMatchedOrderHint, PolymarketMergePositionsReceipt, PolymarketMergePositionsRequest,
+    PolymarketOpenOrder, PolymarketOrderRejection, PolymarketPublicProfile,
+    PolymarketSignatureScheme, PolymarketSingleTokenBook, PolymarketTokenOrderSide,
+    PolymarketTrade, PolymarketTransactionReceipt, PolymarketTransactionReceiptStatus,
+    PolymarketWalletActivity, PolymarketWalletPosition, normalize_polymarket_order_status_update,
     normalize_polymarket_trade_fill_update, normalize_polymarket_ws_order_message,
     normalize_polymarket_ws_trade_message,
 };

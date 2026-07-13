@@ -23,7 +23,7 @@ import type {
 } from "@/lib/contracts/dto";
 import { formatFixed, formatUsdFixed } from "@/lib/formatters";
 import type { PaginationState } from "@/hooks/use-pagination";
-import { dictionary } from "@/lib/i18n/dictionaries";
+import { dictionary, formatMessage, translateEnum } from "@/lib/i18n/dictionaries";
 
 import {
   quoteReadinessLabel,
@@ -222,6 +222,20 @@ export function QuotePlansTable({
                   <StatusPill tone={quoteReadinessTone(plan)}>
                     {quoteReadinessLabel(plan)}
                   </StatusPill>
+                  {plan.event_window ? (
+                    <div className="mt-1 space-y-0.5 text-[11px] leading-4 text-muted-foreground">
+                      <div>{translateEnum(plan.event_window.status)}</div>
+                      <div>
+                        {formatMessage(dictionary.rewards.eventWindowAuditSummary, {
+                          source: plan.event_window.source ?? dictionary.rewards.notAvailable,
+                          role: translateEnum(plan.event_window.event_time_role ?? "unknown"),
+                          startField:
+                            plan.event_window.start_source_field ?? dictionary.rewards.notAvailable,
+                          endPolicy: translateEnum(plan.event_window.end_policy ?? "unknown"),
+                        })}
+                      </div>
+                    </div>
+                  ) : null}
                   <OpportunitySummary plan={plan} />
                 </TableCell>
                 <TableCell className="align-top">

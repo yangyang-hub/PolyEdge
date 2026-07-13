@@ -138,7 +138,7 @@ fn enqueue_reward_replay_fixture(
             .collect(),
     };
     let started = Instant::now();
-    let fixture = build_reward_decision_replay_fixture_v2_pending_expectations(
+    let fixture = build_reward_decision_replay_fixture_v3_pending_expectations(
         input,
         providers,
         &cycle.account,

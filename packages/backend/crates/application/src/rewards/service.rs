@@ -267,19 +267,20 @@ impl RewardBotService {
         self.store.upsert_markets(markets).await
     }
 
-    pub async fn upsert_market_event_windows(
+    pub async fn replace_market_event_windows(
         &self,
-        windows: &[RewardMarketEventWindow],
-    ) -> Result<()> {
-        self.store.upsert_market_event_windows(windows).await
+        snapshot: &RewardEventWindowSourceSnapshot,
+    ) -> Result<RewardEventWindowReplaceReport> {
+        self.store.replace_market_event_windows(snapshot).await
     }
 
-    pub async fn list_effective_market_event_windows(
+    pub async fn list_market_event_windows(
         &self,
         condition_ids: &[String],
+        as_of: OffsetDateTime,
     ) -> Result<Vec<RewardMarketEventWindow>> {
         self.store
-            .list_effective_market_event_windows(condition_ids)
+            .list_market_event_windows(condition_ids, as_of)
             .await
     }
 
@@ -894,7 +895,7 @@ impl RewardBotService {
             .collect::<Vec<_>>();
         let event_windows = self
             .store
-            .list_effective_market_event_windows(&condition_ids)
+            .list_market_event_windows(&condition_ids, now)
             .await?;
         apply_reward_event_windows_to_quote_plans(&mut plans, &event_windows, &config, now);
         let pre_ai_eligible_condition_ids = plans
@@ -946,6 +947,7 @@ impl RewardBotService {
     /// the full reward market catalog. Full ticks pass candidate markets through
     /// `prepare_live_cycle`.
     pub async fn current_live_cycle_state(&self) -> Result<RewardLiveCycle> {
+        let now = OffsetDateTime::now_utc();
         let config = self.read_config().await?;
         let account = self.load_account_state_cached(&config).await?;
         let open_orders = self.store.list_open_orders(&account.account_id).await?;
@@ -957,13 +959,13 @@ impl RewardBotService {
             .collect::<Vec<_>>();
         let event_windows = self
             .store
-            .list_effective_market_event_windows(&condition_ids)
+            .list_market_event_windows(&condition_ids, now)
             .await?;
         apply_reward_event_windows_to_quote_plans(
             &mut plans,
             &event_windows,
             &config,
-            OffsetDateTime::now_utc(),
+            now,
         );
         let pre_ai_eligible_condition_ids = plans
             .iter()

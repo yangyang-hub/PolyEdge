@@ -1,27 +1,30 @@
 # Rewards 事件窗口与稳定双边策略设计方案
 
-最后更新：2026-07-12
+最后更新：2026-07-13
 
 > 历史设计记录：事件窗口和 BalancedMerge 已继续演进；AI 盘口 payload、成交后 sibling cancel 等旧描述已被 [Rewards Market Maker V2](designs/rewards-market-maker-v2.md) 取代，不代表当前行为。
 
 历史状态快照：本文撰写阶段已完成核心事件窗口，但当时尚未完成互补持仓合并执行链路。该描述不再代表仓库当前能力；BalancedMerge 与当前缺口请以 `AGENTS.md` 和 V2 设计为准。
 
-## 2026-07-12 落地结果
+## 2026-07-13 落地结果
 
-- 事件窗口 gate 已进入 planner、live placement 和 condition-scoped orderbook event cancel；reviewed Gamma 日期可从 Medium confidence 参与判断。
-- “stable double” 没有按本文的独立 mode 落地，后续收敛为标准 market maker 的稳定性/退出评分，以及独立固定档位的 `BalancedMerge` strategy profile。
+- 事件窗口 gate 已进入 planner、live placement 和 condition-scoped orderbook event cancel。Gamma producer 仅从 `gameStartTime` / `events[].startTime` 构造显式 scheduled-event 候选，`startDate` / `endDate` 只保留为市场生命周期/解析截止元数据，不能进入 hard gate。
+- 事件候选现在保留 `source`、`event_time_role`、`start_source_field`、`end_policy` 等 provenance；quote-plan 表格直接展示 source / role / start field / end policy，避免将市场开放时间误认为离散事件起点。
+- 上游事件窗口已阻断且没有可评估 edge 时，fair-value 标记为 `not_evaluated`；它不计作 fair-value 失败，不进入 pass/blocked 统计，也不触发 fair-value selection risk penalty。
+- Rewards Replay 当前 capture schema 已升为 V3，继续使用 V2 引入的紧凑 top-of-book history、final delta 和 normalized expected-plan hash；读取/回放仍兼容 V1 和 V2，缺失 `schema_version` 的 fixture 仍按 V1 解析。
+- “stable double” 独立 mode 仍未按本文落地，已被 Rewards Market Maker V2 的 `quote_mode=double|auto`、统一机会/稳定性/退出评分、fair-value gate 与 live materializer 路径取代；`BalancedMerge` 是独立固定档位 profile，不等于本文原设计的 stable-double mode。
 - 成交后 sibling blanket cancel 已移除；互补 BUY 按自身 edge、库存和显式风险动作独立管理。
 - BalancedMerge merge intent、`broadcasting` fence、tx-hash fencing 和 receipt reconciliation 已落地；缺少已持久化 tx hash 的 broadcasting intent 禁止自动重播。
 
-以下阶段、默认值和“当前”措辞均是历史快照，不能用作现行配置或能力清单。
+本文保留原始方案作为历史记录；实施阶段中的“已完成/未完成”状态已按 2026-07-13 实现更新，标记为“历史建议/原验收”的默认值和 mode 不能用作现行配置或能力清单。
 
-## 背景
+## 原始背景（历史）
 
 Rewards 做市策略在安静市场上可以依靠买一/买二挂单获取 maker rewards，但部分市场在真实事件临近时会从低波动状态切换到高波动状态。例如体育比赛开赛、财报发布、经济数据公布、投票截止、官方结果发布或 token unlock。开赛前几天盘口可能稳定，开赛前数小时信息和交易强度会快速变化，此时继续被动挂买单容易遭遇逆向选择。
 
-另一个相关机会是低波动二元市场中同时在 YES 和 NO 买一挂单。如果两边成交价之和小于 1 且留有安全边际，理论上可以通过持有互补 outcome 或合并/redeem 降低方向风险。但当前系统成交后主要走 sibling cancel 和 SELL 退出，不支持自动合并互补持仓。
+另一个相关机会是低波动二元市场中同时在 YES 和 NO 买一挂单。如果两边成交价之和小于 1 且留有安全边际，理论上可以通过持有互补 outcome 或合并/redeem 降低方向风险。本文原始撰写时，系统成交后主要走 sibling cancel 和 SELL 退出，尚不支持自动合并互补持仓。
 
-## 目标
+## 原始目标（历史）
 
 - 建立结构化事件时间数据层，支持按市场关联的真实事件时间做硬风控。
 - 在 planner、live placement 和 live cancel 三个阶段执行事件窗口 gate，避免只依赖 AI 判断。
@@ -29,7 +32,7 @@ Rewards 做市策略在安静市场上可以依靠买一/买二挂单获取 make
 - 把 AI advisory 和 info-risk 用作辅助解释、候选时间提取和不确定性提示，而不是最终下单权限来源。
 - 为后续互补 YES/NO 持仓合并或 redeem 设计清晰执行边界。
 
-## 非目标
+## 原始非目标（历史）
 
 - 不让 API handler、前端或策略代码直接抓取外部赛程、Gamma、CLOB 或新闻数据。
 - 不把 Polymarket Gamma `startDate` 直接当作比赛开始时间硬执行。
@@ -37,7 +40,7 @@ Rewards 做市策略在安静市场上可以依靠买一/买二挂单获取 make
 - 第一阶段不实现自动 merge/redeem，不改变当前 BUY fill 后 sibling cancel + SELL 退出语义。
 - 不放宽现有 rewards 市场质量、盘口、资金、库存、kill switch 和 provider fail-closed 风控。
 
-## 当前基础
+## 历史撰写时基础
 
 已可复用能力：
 
@@ -47,12 +50,12 @@ Rewards 做市策略在安静市场上可以依靠买一/买二挂单获取 make
 - `opportunity_metrics` 已计算竞争倍数、奖励密度、退出深度、入场/退出滑点、坏成交恢复天数、盘口样本数、midpoint range 和 top-of-book flip count。
 - AI advisory payload 已包含当前盘口、pricing context、最近 1h candles 和 cache TTL horizon，可输出 `allow_quote` 与 `strategy_hint`。
 - info-risk 已支持 `allow_quote`、`resolution_imminent`、官方结果和近期信息风险 fail-closed。
-- BUY 成交后当前会按配置撤 sibling BUY，并生成 SELL 退出 intent。
+- BUY 成交后当时会按配置撤 sibling BUY，并生成 SELL 退出 intent。
 
-主要缺口：
+当时主要缺口（不代表 2026-07-13 仓库现状）：
 
 - `RewardMarket` 仅持有 `end_at`，没有 `event_start_at` / `event_end_at` / `event_time_source` / `event_time_confidence`。
-- Gamma connector 当前只解析 `endDate`，未解析 `startDate`、`startDateIso`、`events[].startDate/endDate` 或 event metadata。
+- Gamma connector 当时只解析 `endDate`，未区分 market lifecycle、resolution deadline 与显式 scheduled event metadata。
 - Gamma `startDate` 往往表示市场开放或事件页开始，不一定是比赛开赛或数据发布时间。
 - 没有外部结构化赛程/日历 producer。
 - 没有互补 YES/NO 持仓合并、split、redeem 或链上 CTF 操作对账。
@@ -67,8 +70,8 @@ Rewards 做市策略在安静市场上可以依靠买一/买二挂单获取 make
 |---|---|---|---|
 | Manual override | 硬 gate | high | 人工确认，优先级最高 |
 | 官方/结构化日历 | 硬 gate | high | 体育联盟赛程、交易所公告、经济日历、财报日历、官方投票截止 |
-| Polymarket Gamma reviewed dates | 候选或硬 gate | medium/high | 仅在 `hasReviewedDates=true` 且字段语义匹配时提升 |
-| Polymarket Gamma raw dates | 候选 | low/medium | `startDate` 可能是市场开放时间，需要校验 |
+| Polymarket Gamma reviewed scheduled events | 候选或硬 gate | medium | 只接受显式 `gameStartTime` / `events[].startTime`，且必须满足 hard-gate shape |
+| Polymarket Gamma raw scheduled events | 候选 | low | 未审核候选按配置 observe/ignore/medium-confidence；`startDate` 不是候选起点 |
 | News/RSS/Data API | 候选/补充 | medium | 适合发现变更或延期 |
 | AI extracted | 候选/解释 | low | 需要人工或结构化源确认后才能硬 gate |
 
@@ -86,13 +89,19 @@ Rewards 做市策略在安静市场上可以依靠买一/买二挂单获取 make
 
 ## 数据模型
 
-已实现表：
+当前核心字段（完整约束见 `0003_reward_event_window_semantics.sql` 和 `init.sql`）：
 
 ```sql
 CREATE TABLE reward_market_event_windows (
     condition_id TEXT NOT NULL REFERENCES reward_markets(condition_id) ON DELETE CASCADE,
     source TEXT NOT NULL,
+    event_key TEXT NOT NULL,
     event_type TEXT NOT NULL,
+    event_time_role TEXT NOT NULL,      -- event_occurrence | market_lifecycle | resolution_deadline | unknown
+    schedule_status TEXT NOT NULL,      -- scheduled | conflicting | finished | withdrawn | unknown
+    time_precision TEXT NOT NULL,       -- exact | date_only | inferred | unknown
+    start_source_field TEXT,
+    end_policy TEXT NOT NULL,           -- explicit | point | until_market_closed | unknown
     event_start_at TIMESTAMPTZ,
     event_end_at TIMESTAMPTZ,
     confidence TEXT NOT NULL,
@@ -100,61 +109,82 @@ CREATE TABLE reward_market_event_windows (
     source_payload JSONB NOT NULL DEFAULT '{}'::JSONB,
     notes TEXT NOT NULL DEFAULT '',
     active BOOLEAN NOT NULL DEFAULT TRUE,
+    hard_gate_eligible BOOLEAN NOT NULL DEFAULT FALSE,
+    producer_version BIGINT NOT NULL DEFAULT 1,
+    source_updated_at TIMESTAMPTZ,
+    observed_at TIMESTAMPTZ,
+    expires_at TIMESTAMPTZ,
     reviewed_by TEXT,
     reviewed_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    PRIMARY KEY (condition_id, source)
+    PRIMARY KEY (condition_id, source, event_key)
+);
+
+CREATE TABLE reward_event_window_source_versions (
+    source TEXT NOT NULL,
+    condition_id TEXT NOT NULL REFERENCES reward_markets(condition_id) ON DELETE CASCADE,
+    producer_version BIGINT NOT NULL,
+    source_updated_at TIMESTAMPTZ,
+    observed_at TIMESTAMPTZ NOT NULL,
+    snapshot_hash TEXT NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (source, condition_id)
 );
 ```
 
-可选派生快照（当前未建 DB view，effective selection 由 application/store 查询实现）：
+当前不建只能返回单条 condition 记录的 DB view。Store 会返回 condition 下的全部有效候选；application 先按 `event_key` 在 source priority、hard-gate shape、schedule status、confidence 和新鲜度上选出该事件的最佳候选，再在多个独立事件中选择动作最严格的 assessment。这样 manual withdrawal 可覆盖同 `event_key` 的 Gamma 候选，但 condition 下不同事件不会相互覆盖。
 
-```sql
-CREATE VIEW reward_market_effective_event_windows AS
-SELECT DISTINCT ON (condition_id)
-  condition_id,
-  event_type,
-  event_start_at,
-  event_end_at,
-  confidence,
-  source,
-  source_url,
-  updated_at
-FROM reward_market_event_windows
-WHERE active
-ORDER BY
-  condition_id,
-  CASE confidence
-    WHEN 'high' THEN 3
-    WHEN 'medium' THEN 2
-    ELSE 1
-  END DESC,
-  CASE source
-    WHEN 'manual' THEN 5
-    WHEN 'official' THEN 4
-    WHEN 'sports_api' THEN 4
-    WHEN 'economic_calendar' THEN 4
-    WHEN 'gamma_reviewed' THEN 3
-    WHEN 'gamma' THEN 2
-    ELSE 1
-  END DESC,
-  updated_at DESC;
-```
-
-Application 层模型建议：
+Application 层已实现模型：
 
 ```text
 RewardMarketEventWindow {
   condition_id,
+  source,
+  event_key,
   event_type,
+  event_time_role,
+  schedule_status,
+  time_precision,
+  start_source_field,
+  end_policy,
   event_start_at,
   event_end_at,
   confidence,
-  source,
   source_url,
+  source_payload,
   notes,
+  active,
+  hard_gate_eligible,
+  producer_version,
+  source_updated_at,
+  observed_at,
+  expires_at,
   updated_at
+}
+
+RewardEventWindowAssessment {
+  status,
+  reason,
+  event_key,
+  event_time_role,
+  schedule_status,
+  time_precision,
+  start_source_field,
+  end_policy,
+  event_start_at,
+  event_end_at,
+  source,
+  confidence,
+  producer/audit timestamps
+}
+
+RewardEventWindowSourceSnapshot {
+  source,
+  producer_version,
+  observed_at,
+  coverage[{ condition_id, source_updated_at }],
+  windows
 }
 
 RewardEventWindowConfig {
@@ -188,7 +218,14 @@ UntrustedEventTime
 基础规则：
 
 ```text
-if no trusted event_start_at:
+if condition 没有任何离散事件候选:
+  NoEventWindow；即使 unknown_event_time_mode=block 也不阻断
+
+if event_time_role != event_occurrence:
+  只作生命周期/解析元数据审计，不进入 hard gate
+
+if 已有预期事件候选，但不满足 active + scheduled + exact +
+   hard_gate_eligible + start_source_field + event_start_at + valid end_policy:
   unknown_event_time_mode 决定 allow/observe/block
 
 if now >= event_start_at - cancel_open_buy_before_start_sec:
@@ -197,11 +234,17 @@ if now >= event_start_at - cancel_open_buy_before_start_sec:
 else if now >= event_start_at - stop_new_quote_before_start_sec:
   禁止新 BUY，不强制撤已有 BUY
 
-if event_start_at <= now <= event_end_at + resume_after_event_end_sec:
-  禁止新 BUY；已有 BUY 按配置撤或保持已撤状态
+end_policy=explicit:
+  以 event_end_at 为结束，再加 resume_after_event_end_sec
+
+end_policy=point:
+  以 event_start_at 作为点事件结束，再加 resume_after_event_end_sec
+
+end_policy=until_market_closed:
+  事件开始后持续阻断/撤 BUY，直到候选失效、撤回或市场关闭，不伪造 event_end_at
 ```
 
-默认建议：
+历史通用默认建议；当前空库 production live-drill profile 实际使用 Medium confidence、6 小时 stop-new、2 小时 cancel-open，其余以后端 config 为准：
 
 | 配置 | 默认值 |
 |---|---:|
@@ -229,11 +272,19 @@ if event_start_at <= now <= event_end_at + resume_after_event_end_sec:
 - Pending/unknown/cancel reconciliation：不重复提交，不破坏现有对账锁；只记录 gate reason。
 - 已有持仓：不自动亏损平仓，除非后续新增独立 flatten policy。
 
+### Fair-value 交互语义
+
+- 事件窗口在 fair-value edge 生成前已阻断新 BUY，且没有 edge 可评估时，decision 写入 `assessment_status=not_evaluated`。
+- `not_evaluated` 不是 `passed=false` 的 gate 失败；fair-value 页将其单独统计，Runs ledger 的 `fair_value_passed` 保持空值，blocker codes 也不添加 `fair_value`。
+- 市场选择只对 `assessment_status=evaluated && passed=false` 加 fair-value selection risk penalty；`not_evaluated` 的阻断责任归于上游 event-window gate，不重复惩罚。
+
 ## 稳定双边策略
+
+> 以下为历史独立 mode 提案，当前没有 `stable_double` / `RewardStableDoubleMode` 可配置实现。现行路径由 Rewards Market Maker V2 的 `quote_mode=double|auto`、统一 opportunity/stability/exit scoring、fair-value gate 和 live materializer 承担；`BalancedMerge` 不是该 mode 的更名。
 
 ### 策略模式
 
-建议新增：
+历史建议（未实现）：
 
 ```text
 RewardQuoteMode:
@@ -247,7 +298,7 @@ RewardStableDoubleMode:
   enforce
 ```
 
-`stable_double` 不是替代现有 `double`，而是加严后的专用模式。也可以先作为 `opportunity_metrics` 下的 enforce gate 落地，暂不新增 quote mode。
+`stable_double` 原定义是加严后的专用模式，但该 API/配置未落地；不应从当前已有的双边报价或 BalancedMerge profile 推断它已完成。
 
 ### 准入条件
 
@@ -269,7 +320,7 @@ qualified competition / reward density 达标
 AI/info-risk 若开启必须允许，缺缓存按现有配置 fail closed
 ```
 
-默认建议：
+历史默认建议（当前无对应配置键）：
 
 | 配置 | 默认值 |
 |---|---:|
@@ -345,51 +396,60 @@ event_time_sources
 
 ## API 与前端展示
 
-Quote plan 建议新增展示字段：
+Quote plan 已有 `event_window` assessment，其中可审计字段包括：
 
 ```text
-event_window_status
-event_window_reason
+status
+reason
+event_key
+event_time_role
+schedule_status
+time_precision
+start_source_field
+end_policy
 event_start_at
 event_end_at
-event_time_source
-event_time_confidence
-stable_double_metrics
+source
+confidence
+hard_gate_eligible
+producer_version
+source_updated_at / observed_at / expires_at
 ```
 
 控制台展示：
 
-- 状态列显示“事件窗口停挂 / 即将撤单 / 稳定双边通过 / 稳定双边样本不足”。
-- 配置面板展示事件窗口阈值、未知时间处理、稳定双边 observe/enforce。
-- 风险摘要显示事件时间来源和置信度，避免误把 Gamma 市场开放时间当开赛时间。
+- Quote plans 的 readiness 单元格显示事件窗口状态，并显式列出 `source / role / start source field / end policy` provenance。
+- Fair-value 工作台单独显示 `not_evaluated`，不将上游事件阻断误报为 fair-value 失败。
+- 配置面板已展示事件窗口阈值和未知时间处理；未实现独立 stable-double observe/enforce 配置或 `stable_double_metrics`。
 
 ## 实施计划
 
 ### Phase 0：调研与样本验证
 
-- 抽样 Gamma 原始字段：`startDate`、`startDateIso`、`endDate`、`events[].startDate/endDate`、`hasReviewedDates`、event metadata。
-- 按 sports / macro / earnings / crypto / politics 分类验证字段语义。
-- 形成 source confidence 规则。
-- 输出一组人工标注样本用于回归测试。
+- 已完成代码语义分离：`startDate` / `startDateIso` 只是 market lifecycle，`endDate` / `endDateIso` 只是 resolution deadline；只有 `gameStartTime` / `events[].startTime` 能生成 scheduled-event 候选。
+- 已完成 Gamma fixture 覆盖：字段一致、时间冲突、sports/非 sports、finished 事件和多事件分离。
+- 未完成：按 sports / macro / earnings / crypto / politics 做足量真实市场字段语义验证。
+- 部分完成：代码内已形成 Gamma source confidence/hard-gate shape 规则，外部类别规则仍待 producer 落地。
+- 未完成：输出足量人工标注样本用于回归测试。
 
-验收：
+剩余验收：
 
 - 至少 50 个市场样本，标注 Gamma 日期是否等于真实事件时间。
-- 明确哪些类别允许 Gamma reviewed date 升级为 hard gate。
+- 明确哪些类别允许 Gamma reviewed explicit schedule 升级为 hard gate。
 
 ### Phase 1：事件窗口数据层
 
-- 已完成：新增 `0054_reward_market_event_windows.sql`。
-- 已完成：Application 增加模型、Store trait 方法和 effective window 查询。
-- 已完成：Infrastructure 增加 Postgres/in-memory 实现。
-- 已完成：Orderbook/Gamma sync 解析 Gamma 日期作为低/中置信候选；默认 `gamma_unreviewed_dates_mode=ignore`，不直接硬 gate。
-- 增加 worker CLI 或 admin path 支持 manual override 导入。
+- 已完成：冻结 baseline 上由 `0003_reward_event_window_semantics.sql` 增加 provenance、multi-event identity、hard-gate shape constraint 和 source-version fence，`init.sql` 同步最新结构。
+- 已完成：Application 增加模型、source snapshot replace contract、Store trait 方法和多候选 assessment。
+- 已完成：Infrastructure 的 Postgres/in-memory 实现按 `(condition_id, source, event_key)` 保存候选，支持 covered-condition tombstone、幂等重放、stale snapshot fence 和过期过滤。
+- 已完成：Orderbook/Gamma sync 只解析显式 scheduled-event 字段；Gamma sports scheduled event 使用 `event_occurrence + exact + start_source_field + until_market_closed`，lifecycle/deadline 日期不能 hard gate。
+- 未完成：增加 worker CLI 或 admin path 支持 manual override 导入。
 
 验收：
 
-- 可按 condition 查询 effective event window。
+- 可按 condition 查询全部有效 event candidates，同一 `event_key` 可由高优先级 source 覆盖，不同事件保持独立。
 - 无 event window 时保持当前行为。
-- Gamma 候选不会默认触发硬拦截。
+- Gamma lifecycle/deadline 不会触发硬拦截；只有满足 hard-gate shape 且达到配置置信度的 scheduled event 才能参与。
 
 ### Phase 2：事件窗口硬 Gate
 
@@ -398,6 +458,8 @@ stable_double_metrics
 - 已完成：Live placement 和 BUY 提交前 last-look 会阻断进入事件窗口的新 BUY intent；已有 live BUY 只在撤单窗口撤。
 - 已完成：Fast reconcile / event cancel 共用 `live_cancel_reason`，事件窗口撤 BUY 会产生专用 reason；SELL exit 不因事件窗口阻断。
 - 已完成：Provider refresh prefilter 跳过被事件窗口阻断新增的无敞口计划；已有订单/持仓仍优先保留用于风险解释。
+- 已完成：Quote-plan API/DTO 保留 event provenance，前端展示 source / role / start field / end policy。
+- 已完成：事件窗口先阻断且无 edge 时，fair-value 使用 `not_evaluated`，不计失败、blocker 或 selection risk penalty。
 
 验收：
 
@@ -405,12 +467,17 @@ stable_double_metrics
 - 已有 SELL exit 不被事件窗口阻断。
 - 事件窗口跨越时已有 BUY 会被撤，新 BUY 不会提交。
 
+### Replay schema（跨阶段已完成）
+
+- 当前新 capture 写入 schema V3，保留 V2 的 decision-window top-of-book 历史压缩、final delta 和 normalized expected-plan hash 比较。
+- Replay validator/执行器同时接受 V1、V2、V3；V1 仍可使用完整 final state / expected plans，V2 仍可使用紧凑字段，缺少 `schema_version` 按 V1 兼容。
+- V3 的目的是固化当前嵌套决策模型语义，不是删除 V1/V2 读取路径。
+
 ### Phase 3：结构化外部日历 Producer
 
-- 先选一个高价值类别接入，例如体育赛程或经济数据日历。
-- Producer 写入 `reward_market_event_windows`，只由 worker/orderbook 服务运行。
-- 增加 source payload、source URL 和 stale 处理。
-- 对延期/取消事件更新 event window。
+- 未完成：先选一个高价值类别接入，例如体育赛程或经济数据日历。
+- 未完成：Producer 通过 source snapshot contract 写入 `reward_market_event_windows`，只由 worker/orderbook 服务运行。
+- 未完成：接入 source payload、source URL、stale/expiry 和延期/取消更新。
 
 验收：
 
@@ -419,22 +486,21 @@ stable_double_metrics
 
 ### Phase 4：稳定双边 Observe
 
-- 已部分完成：当前统一 `opportunity_metrics` 已复用 book history 计算 midpoint range、top-of-book flip、退出深度、坏成交恢复天数、竞争倍数和 100U 日奖，并在 quote plan/front 表格展示。
-- 未完成：独立 `stable_double_metrics` 命名结构和专用“稳定双边通过/样本不足”状态列。
-- 增加配置和前端展示。
+- V2 替代路径已完成相关共享能力：统一 `opportunity_metrics` 复用 book history 计算 midpoint range、top-of-book flip、退出深度、坏成交恢复天数、竞争倍数和 100U 日奖，并在 quote plan/front 表格展示。
+- 未完成且已被 V2 路径取代：独立 `stable_double_metrics`、observe mode 配置和专用“稳定双边通过/样本不足”状态列。
 
-验收：
+原 observe 验收（历史记录，不宣称独立 mode 已通过）：
 
 - 表格能解释每个市场为何通过/不通过稳定双边。
 - observe 不改变当前订单提交数量和方向。
 
 ### Phase 5：稳定双边 Enforce（历史计划，已由 V2 路径取代）
 
-- 已部分完成：统一 `opportunity_metrics` 已参与 score/eligibility，事件窗口已作为新增 BUY/撤 BUY 前置硬 gate，默认买一和安全边际沿用现有 live materializer。
-- 未完成：独立 stable-double enforce mode；当前仍通过 `quote_mode=double|auto`、`selection_mode`、机会评分和 live materializer 组合实现，不提供单独稳定双边策略 profile。
+- V2 替代路径已落地：统一 `opportunity_metrics` 参与 score/eligibility，事件窗口是新增 BUY/撤 BUY 前置硬 gate，档位与安全边际由现有 live materializer 校验。
+- 独立 stable-double enforce mode 没有完成，也不是待补同名 profile；当前通过 `quote_mode=double|auto`、`selection_mode`、机会/稳定性/退出评分、fair-value gate 和 live materializer 组合实现 V2 做市路径。
 - 当时 BUY 成交后仍沿用 sibling cancel + SELL exit；该语义现已移除。
 
-验收：
+原 enforce 验收（历史记录，不宣称独立 mode 已通过）：
 
 - 只在全部稳定条件满足时双边挂单。
 - 任一稳定性、事件窗口、退出深度或 provider gate 失败都会 fail closed。
@@ -442,11 +508,13 @@ stable_double_metrics
 
 ### Phase 6：互补持仓合并 / Redeem（后续以 BalancedMerge 形态落地）
 
+原计划：
+
 - 设计并实现 CTF merge/redeem connector。
 - 增加 merge intent、状态机、幂等、对账和 UI。
 - 先 observe 识别可合并持仓，再 paper，再 guarded live。
 
-验收：
+原验收：
 
 - 能在测试账户小额完成合并并对账。
 - 失败不会重复提交或破坏 positions/account state。
@@ -456,29 +524,27 @@ stable_double_metrics
 
 ## 测试计划
 
-- 已完成：Application unit tests 覆盖事件窗口 stop-new、cancel-open、in-event、cooldown、unknown policy 和 confidence gate。
-- 已完成：Backend compile check 覆盖 Postgres/in-memory store wiring、Gamma parser/orderbook producer、worker live cancel/placement wiring。
-- 待补：Store integration tests 覆盖 Postgres upsert/effective query/manual override 优先级。
+- 已完成：Application unit tests 覆盖 stop-new、cancel-open、in-event、cooldown、无事件不误 block、conflicting expected event、lifecycle 非 hard gate、`until_market_closed`、multi-event 最严格聚合和 manual withdrawal 覆盖 Gamma。
+- 已完成：In-memory/Postgres store tests 覆盖 source snapshot replacement、missing-key tombstone、stale fence、过期过滤、非法 hard-gate shape 拒绝，以及前向迁移隔离 legacy Gamma rows。Postgres 用例需要 `POLYEDGE_TEST_DATABASE_URL` 才执行。
+- 已完成：Gamma connector/orderbook producer fixtures 覆盖显式 start provenance、冲突时间、sports hard-gate shape、非 sports observe-only、finished 和 multi-event。
+- 已完成：Replay tests 覆盖当前 V3 capture，以及 V1、缺失版本按 V1、V2 紧凑 fixture 的反序列化/回放兼容。
 - 待补：Worker integration tests 覆盖 live placement 事件窗口 last-look、event cancel BUY 撤单、SELL exit 不阻断。
-- 待补：Connector fixture tests 覆盖 Gamma 日期解析不误升 high confidence。
-- 待补：独立 stable-double observe/enforce 测试；当前稳定性逻辑由统一 `opportunity_metrics` 覆盖，没有独立 stable-double profile。
+- 不适用：独立 stable-double observe/enforce 测试，因为该 mode 已被 V2 路径取代；现行稳定性逻辑应由统一 `opportunity_metrics`、fair-value、event-window 和 live-materializer 测试覆盖。
 - Integration/smoke：本地 Postgres + orderbook cache + worker run-once，验证 quote plan reason 和撤单事件。
 
 ## 风险与缓解
 
 | 风险 | 缓解 |
 |---|---|
-| Gamma `startDate` 语义不稳定 | 默认只作为候选；需要 reviewed/official/manual 才 hard gate |
+| Gamma lifecycle 日期被误当事件时间 | `startDate` / `endDate` 只写入 lifecycle/deadline 元数据；hard gate 要求 `event_occurrence + exact + start_source_field + valid end_policy` |
 | 外部赛程源延迟或错误 | 保留 source/confidence、人工 override、stale 检查 |
 | 事件延期导致过早停挂或误恢复 | Producer 支持更新；post-event cooldown；info-risk 辅助提示 |
 | 稳定双边被低样本盘口误判 | 样本不足 fail closed；要求 top-of-book flip 和 midpoint range 同时达标 |
 | 双边成交后无合并能力 | 历史风险；当前由独立 BalancedMerge profile 和 merge intent 处理，不恢复 blanket sibling cancel |
 | 合并链路链上失败 | 已增加 broadcasting/tx-hash fence 和 receipt 对账；无 hash 的未知广播状态 fail closed |
 
-## 推荐优先级
+## 当前后续优先级
 
-优先做 Phase 1-2。它们能直接降低“事件临近还在挂买单”的主要实盘风险，且不依赖复杂 merge/redeem。
-
-第二优先级是 Phase 4-5，将现有机会评分和盘口历史收敛成可解释的稳定双边 gate。
-
-历史推荐是最后实施 Phase 6；当前代码能力已落地，但小额真实账户验证和 ops runbook 仍是上线前要求。
+- 事件窗口主路径已落地；后续优先补高价值结构化外部日历 producer、manual override 操作路径、真实市场人工标注样本和 worker live integration/smoke。
+- 不再建议新建独立 stable-double mode；应继续在 Rewards Market Maker V2 的统一评分、fair-value、事件窗口和 live materializer 内做可解释性与校准。
+- BalancedMerge 代码链路已落地，但小额真实账户验证、gas/approval 准备和 ops runbook 仍是上线前要求。
