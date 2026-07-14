@@ -227,6 +227,19 @@ export function AiAdvisoryConfig({
         onChange={(value) => updateNumber("ai_advisory_ttl_sec", value)}
       />
       <NumberInput
+        label={dictionary.rewards.aiProviderMaxMarkets}
+        value={draft.ai_provider_max_markets}
+        hint={h.aiProviderMaxMarkets}
+        onChange={(value) => updateNumber("ai_provider_max_markets", value)}
+      />
+      <NumberInput
+        label={dictionary.rewards.aiProviderFailureCooldownSec}
+        value={draft.ai_provider_failure_cooldown_sec}
+        suffix="s"
+        hint={h.aiProviderFailureCooldownSec}
+        onChange={(value) => updateNumber("ai_provider_failure_cooldown_sec", value)}
+      />
+      <NumberInput
         label={dictionary.rewards.aiAdvisoryProviderPendingGraceSec}
         value={draft.ai_advisory_provider_pending_grace_sec}
         suffix="s"

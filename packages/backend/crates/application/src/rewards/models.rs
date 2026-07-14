@@ -458,6 +458,12 @@ pub struct RewardBotConfig {
     pub ai_provider: RewardAiProvider,
     pub ai_request_format: RewardAiRequestFormat,
     pub ai_advisory_ttl_sec: u64,
+    /// Maximum unique conditions ranked into provider refresh per cycle after
+    /// active-exposure priority. Caps the AI/info-risk call pool size.
+    pub ai_provider_max_markets: u16,
+    /// Seconds to skip re-requesting a condition after a non-content-filter
+    /// provider failure. `0` disables failure cooldown.
+    pub ai_provider_failure_cooldown_sec: u64,
     /// Allow the background rewards provider refresh to issue multiple
     /// condition-level LLM requests concurrently. Disabled keeps legacy serial
     /// behavior even when the max values are greater than one.
@@ -749,6 +755,10 @@ pub struct RewardBotConfigPatch {
     pub ai_request_format: Option<RewardAiRequestFormat>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ai_advisory_ttl_sec: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ai_provider_max_markets: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ai_provider_failure_cooldown_sec: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ai_provider_concurrency_enabled: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

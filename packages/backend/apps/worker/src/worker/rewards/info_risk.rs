@@ -130,7 +130,7 @@ async fn scan_reward_info_risks_unlocked(
         OffsetDateTime::now_utc(),
     );
     report.candidates = ordered_conditions.len();
-    let max_conditions = reward_provider_max_conditions_per_cycle(state);
+    let max_conditions = reward_provider_max_conditions_per_cycle(state, &config);
     if ordered_conditions.len() > max_conditions {
         ordered_conditions.truncate(max_conditions);
     }
@@ -236,6 +236,15 @@ async fn scan_reward_info_risk_condition(
         .plans
         .iter()
         .find(|plan| plan.condition_id == condition_id);
+    let now = OffsetDateTime::now_utc();
+    if reward_provider_failure_cooldown_active(&condition_id, now) {
+        debug!(
+            trace_id = %trace_id,
+            condition_id = %condition_id,
+            "skipping reward info risk request because failure cooldown is active",
+        );
+        return Ok(outcome);
+    }
     let request = build_reward_info_risk_assessment_request(
         market,
         plan,
@@ -255,7 +264,7 @@ async fn scan_reward_info_risk_condition(
         if !reward_provider_cache_refresh_due(
             cached.expires_at,
             config.info_risk_ttl_sec,
-            OffsetDateTime::now_utc(),
+            now,
         ) {
             return Ok(outcome);
         }
@@ -329,6 +338,7 @@ async fn scan_reward_info_risk_condition(
                 OffsetDateTime::now_utc(),
             );
             state.reward_bot_service.save_market_info_risk(&risk).await?;
+            clear_reward_provider_failure_cooldown(&condition_id);
             outcome.report.saved += 1;
             info!(
                 trace_id = %trace_id,
@@ -367,9 +377,15 @@ async fn scan_reward_info_risk_condition(
             .await?
             .is_some()
             {
+                clear_reward_provider_failure_cooldown(&condition_id);
                 outcome.report.saved += 1;
                 return Ok(outcome);
             }
+            mark_reward_provider_failure_cooldown(
+                &condition_id,
+                config.ai_provider_failure_cooldown_sec,
+                OffsetDateTime::now_utc(),
+            );
             if reward_combined_provider_overloaded(&primary_error, fallback_error.as_ref()) {
                 outcome.stop_refresh = true;
                 warn!(

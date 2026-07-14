@@ -1,6 +1,6 @@
 # infrastructure（基础设施层）
 
-最后更新：2026-07-13
+最后更新：2026-07-14
 
 ## 概述
 
@@ -91,7 +91,7 @@ Rewards provider 密钥只从 `RewardsSettings` 读取，不进入 `RewardBotCon
 - 幂等请求把 24 小时结果保留窗口与 5 分钟执行租约分离：`started` 租约过期可由同 payload 新 request owner 原子接管，`complete` / `fail` 同时按 request hash、request id 和 active 状态 fencing；失败错误码持久化在 `error_code`，不会再因 schema 缺列掩盖原始业务失败。
 - 外部 callback dedup 使用 5 分钟 `lease_expires_at` 和 trace owner。进程崩溃后未完成事件可重领；旧 owner 不能完成或 abandon 已由新请求接管的事件。
 - Postgres maintenance 使用 `WITH doomed AS (SELECT ctid ... LIMIT $n) DELETE ... USING doomed` 分批删除，避免超大事务；strategy run ledger 按 run/transition 分开保留，删除旧 completed/failed/cancelled run 时由 FK 级联清理 decisions/actions。
-- Rewards 配置以 key-value 保存，覆盖 `maker_market_budget_usd`、市场质量、动态 quote rank、机会评分、fair-value、adaptive 退出、AI/info-risk 动作阈值、事件窗口、库存偏斜、非对称 requote 和 BalancedMerge。旧 `per_market_usd`、`quote_size_usd`、`cancel_on_fill` key 不再解析或写入。
+- Rewards 配置以 key-value 保存，覆盖 `maker_market_budget_usd`、市场质量、动态 quote rank、机会评分、fair-value、adaptive 退出、AI/info-risk 动作阈值、`ai_provider_max_markets`、`ai_provider_failure_cooldown_sec`、事件窗口、库存偏斜、非对称 requote 和 BalancedMerge。默认 AI/info-risk TTL 为 7200。旧 `per_market_usd`、`quote_size_usd`、`cancel_on_fill` key 不再解析或写入。
 - Postgres `reward_bot_config` 为空时从 `production_live_drill_defaults()` 装配缺省值；已有 key 逐项覆盖该 profile。首次通过 API 保存配置后仍写入完整 key-value snapshot。In-memory store 保留通用 `Default`，用于测试和无数据库开发。
 - `RewardBotStore` 维护 `reward_control_commands`，API 入队 pending 命令，worker 使用 claim/complete/fail 处理；claim 原子写入 5 分钟 `lease_owner` / `lease_version` / `lease_expires_at`，running 租约过期可重领，旧 owner/version 不能覆盖新 worker 的 terminal 结果。
 - `RewardBotStore` 维护 `reward_worker_heartbeats`，API snapshot 只在配置启用且最近 2 分钟有 heartbeat 时标记 worker running。

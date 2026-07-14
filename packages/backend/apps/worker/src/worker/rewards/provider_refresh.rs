@@ -76,6 +76,7 @@ struct RewardProviderRefreshReport {
     requested: usize,
     saved: usize,
     failures: usize,
+    cooldown_skips: usize,
     skipped_missing_market: usize,
     advisory_saved: usize,
     info_risk_saved: usize,
@@ -97,6 +98,7 @@ impl RewardProviderRefreshReport {
         self.requested += outcome.report.requested;
         self.saved += outcome.report.saved;
         self.failures += outcome.report.failures;
+        self.cooldown_skips += outcome.report.cooldown_skips;
         self.skipped_missing_market += outcome.report.skipped_missing_market;
         self.advisory_saved += outcome.report.advisory_saved;
         self.info_risk_saved += outcome.report.info_risk_saved;
@@ -242,7 +244,7 @@ async fn refresh_reward_provider_cache(
         &cycle.config,
     );
     let original_ordered_conditions = ordered.len();
-    let max_conditions = reward_provider_max_conditions_per_cycle(state);
+    let max_conditions = reward_provider_max_conditions_per_cycle(state, &cycle.config);
     let request_budget = Arc::new(AtomicUsize::new(max_conditions));
 
     info!(
@@ -251,6 +253,7 @@ async fn refresh_reward_provider_cache(
         request_format = request_format.as_str(),
         ordered_conditions = original_ordered_conditions,
         max_provider_requests = max_conditions,
+        ai_provider_max_markets = cycle.config.ai_provider_max_markets,
         primary_concurrency = provider_concurrency.primary_limit,
         fallback_concurrency = provider_concurrency.fallback_limit,
         condition_parallelism,
@@ -350,6 +353,7 @@ async fn refresh_reward_provider_cache(
         provider_request_cap_exhausted = report.request_cap_exhausted,
         provider_saved = report.saved,
         provider_failures = report.failures,
+        provider_cooldown_skips = report.cooldown_skips,
         provider_skipped_missing_market = report.skipped_missing_market,
         advisory_saved = report.advisory_saved,
         info_risk_saved = report.info_risk_saved,
@@ -386,6 +390,15 @@ async fn refresh_reward_provider_for_condition(
     let plan = cycle.plans.iter().find(|p| p.condition_id == condition_id);
     let request_format = reward_ai_effective_request_format_for_model(&cycle.config, model);
     let now = OffsetDateTime::now_utc();
+    if reward_provider_failure_cooldown_active(condition_id, now) {
+        outcome.report.cooldown_skips += 1;
+        debug!(
+            trace_id = %trace_id,
+            condition_id = %condition_id,
+            "skipping reward provider request because failure cooldown is active",
+        );
+        return Ok(outcome);
+    }
     let fallback = resolve_reward_ai_fallback(&state.settings.rewards);
 
     // Build the advisory sub-request only when AI advisory is enabled AND a plan
@@ -532,6 +545,7 @@ async fn refresh_reward_provider_for_condition(
             endpoint,
             request: winning,
         } => {
+            clear_reward_provider_failure_cooldown(condition_id);
             if let Some(advisory_decision) = decision.advisory {
                 if let Some(request) = &winning.advisory {
                     let advisory = advisory_decision.into_advisory(
@@ -644,8 +658,15 @@ async fn refresh_reward_provider_for_condition(
                 }
             }
             if handled {
+                clear_reward_provider_failure_cooldown(condition_id);
                 return Ok(outcome);
             }
+
+            mark_reward_provider_failure_cooldown(
+                condition_id,
+                cycle.config.ai_provider_failure_cooldown_sec,
+                OffsetDateTime::now_utc(),
+            );
 
             if reward_combined_provider_overloaded(&primary_error, fallback_error.as_ref()) {
                 warn!(

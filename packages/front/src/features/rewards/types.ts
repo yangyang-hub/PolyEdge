@@ -46,6 +46,8 @@ export type NumberConfigKey =
   | "fair_value_history_window_sec"
   | "fair_value_min_history_samples"
   | "ai_advisory_ttl_sec"
+  | "ai_provider_max_markets"
+  | "ai_provider_failure_cooldown_sec"
   | "ai_provider_primary_max_concurrency"
   | "ai_provider_fallback_max_concurrency"
   | "ai_action_min_confidence"

@@ -65,7 +65,9 @@ impl Default for RewardBotConfig {
             ai_advisory_enabled: false,
             ai_provider: RewardAiProvider::OpenAi,
             ai_request_format: RewardAiRequestFormat::OpenAiResponses,
-            ai_advisory_ttl_sec: 3600,
+            ai_advisory_ttl_sec: 7200,
+            ai_provider_max_markets: 50,
+            ai_provider_failure_cooldown_sec: 600,
             ai_provider_concurrency_enabled: false,
             ai_provider_primary_max_concurrency: 1,
             ai_provider_fallback_max_concurrency: 1,
@@ -75,7 +77,7 @@ impl Default for RewardBotConfig {
             info_risk_mode: RewardSelectionMode::Observe,
             info_risk_avoid_level: RewardInfoRiskLevel::High,
             info_risk_min_confidence: decimal("0.70"),
-            info_risk_ttl_sec: 3600,
+            info_risk_ttl_sec: 7200,
             ai_advisory_provider_pending_grace_sec: 120,
             info_risk_provider_pending_grace_sec: 120,
             event_window_enabled: true,
@@ -376,6 +378,9 @@ impl RewardBotConfig {
         self.fair_value_history_window_sec = self.fair_value_history_window_sec.clamp(0, 86_400);
         self.fair_value_min_history_samples = self.fair_value_min_history_samples.clamp(0, 10_000);
         self.ai_advisory_ttl_sec = self.ai_advisory_ttl_sec.clamp(60, 86_400);
+        self.ai_provider_max_markets = clamp_u16(self.ai_provider_max_markets, 0, u16::MAX);
+        self.ai_provider_failure_cooldown_sec =
+            self.ai_provider_failure_cooldown_sec.clamp(0, 86_400);
         self.ai_provider_primary_max_concurrency =
             self.ai_provider_primary_max_concurrency.clamp(1, 10);
         self.ai_provider_fallback_max_concurrency =
@@ -816,6 +821,12 @@ impl RewardBotConfig {
         if let Some(value) = patch.ai_advisory_ttl_sec {
             next.ai_advisory_ttl_sec = value;
         }
+        if let Some(value) = patch.ai_provider_max_markets {
+            next.ai_provider_max_markets = value;
+        }
+        if let Some(value) = patch.ai_provider_failure_cooldown_sec {
+            next.ai_provider_failure_cooldown_sec = value;
+        }
         if let Some(value) = patch.ai_provider_concurrency_enabled {
             next.ai_provider_concurrency_enabled = value;
         }
@@ -1250,6 +1261,10 @@ mod reward_config_tests {
         assert_eq!(config.opportunity_reward_weight, decimal("10"));
         assert!(config.opportunity_exit_weight > config.opportunity_reward_weight);
         assert!(config.opportunity_stability_weight > config.opportunity_reward_weight);
+        assert_eq!(config.ai_advisory_ttl_sec, 7200);
+        assert_eq!(config.info_risk_ttl_sec, 7200);
+        assert_eq!(config.ai_provider_max_markets, 50);
+        assert_eq!(config.ai_provider_failure_cooldown_sec, 600);
     }
 
     #[test]

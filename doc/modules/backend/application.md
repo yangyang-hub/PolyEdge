@@ -1,6 +1,6 @@
 # Backend Application Crate
 
-最后更新：2026-07-13
+最后更新：2026-07-14
 
 ## 模块边界
 
@@ -83,6 +83,7 @@
 - `eligible` 现在只表示能否新增报价；已有订单的 cancel 动作独立评估。Stop-new 不会因为计划不可挂而自动撤销安全订单。
 - Live orderbook validation skip 只保留 60 秒用于 fast-path 抑制和审计；每个 full tick 都基于最新 candidate/books/config 重新构建计划，不继承上一轮 skip。standard 与 BalancedMerge 即使共享 condition，也不会再因只按 condition 继承旧 skip 而互相污染。
 - AI advisory 和 info-risk 只通过 provider cache 影响 live tick；外部 provider refresh 由 worker 后台任务写缓存，不阻塞 API handler。
+- `RewardBotConfig` 默认 `ai_advisory_ttl_sec` / `info_risk_ttl_sec` 为 7200；新增 `ai_provider_max_markets`（默认 50）限制进入 provider 排序的唯一 condition 数，以及 `ai_provider_failure_cooldown_sec`（默认 600）供 worker 在失败后跳过同 condition 重试。
 - 市场/事件、新闻、执行、orderbook cache/registry、maintenance、system mode/idempotency/audit 和 risk 仍作为 application-level ports/models 保留。Funding 当前由 API 薄层使用共享幂等/审计 port 并委托 chain connector，不存在独立 `application/src/funding.rs`。
 
 ## 已移除

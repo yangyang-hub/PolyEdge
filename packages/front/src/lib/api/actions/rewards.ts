@@ -139,6 +139,8 @@ const rewardConfigSchema = z.object({
     "anthropic_messages",
   ]),
   ai_advisory_ttl_sec: z.coerce.number().int().min(60).max(86_400),
+  ai_provider_max_markets: z.coerce.number().int().min(0).max(65_535),
+  ai_provider_failure_cooldown_sec: z.coerce.number().int().min(0).max(86_400),
   ai_provider_concurrency_enabled: z.boolean(),
   ai_provider_primary_max_concurrency: z.coerce.number().int().min(1).max(10),
   ai_provider_fallback_max_concurrency: z.coerce.number().int().min(1).max(10),

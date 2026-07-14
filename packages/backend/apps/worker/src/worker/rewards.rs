@@ -1683,6 +1683,7 @@ include!("rewards/polling.rs");
 include!("rewards/provider_advisory.rs");
 include!("rewards/provider_fallback.rs");
 include!("rewards/provider_content_filter.rs");
+include!("rewards/provider_failure_cooldown.rs");
 include!("rewards/provider_refresh.rs");
 include!("rewards/provider_refresh_candidates.rs");
 include!("rewards/info_risk.rs");

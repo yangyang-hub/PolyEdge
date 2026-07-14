@@ -153,6 +153,12 @@ fn apply_reward_config_value(config: &mut RewardBotConfig, key: &str, value: &st
             config.ai_request_format = RewardAiRequestFormat::from_str(value)?;
         }
         "ai_advisory_ttl_sec" => config.ai_advisory_ttl_sec = parse_u64_config(key, value)?,
+        "ai_provider_max_markets" => {
+            config.ai_provider_max_markets = parse_u16_config(key, value)?;
+        }
+        "ai_provider_failure_cooldown_sec" => {
+            config.ai_provider_failure_cooldown_sec = parse_u64_config(key, value)?;
+        }
         "ai_provider_concurrency_enabled" => {
             config.ai_provider_concurrency_enabled = parse_bool_config(key, value)?;
         }
@@ -552,6 +558,14 @@ fn reward_config_entries(config: &RewardBotConfig) -> Vec<(&'static str, String)
         (
             "ai_advisory_ttl_sec",
             config.ai_advisory_ttl_sec.to_string(),
+        ),
+        (
+            "ai_provider_max_markets",
+            config.ai_provider_max_markets.to_string(),
+        ),
+        (
+            "ai_provider_failure_cooldown_sec",
+            config.ai_provider_failure_cooldown_sec.to_string(),
         ),
         (
             "ai_provider_concurrency_enabled",

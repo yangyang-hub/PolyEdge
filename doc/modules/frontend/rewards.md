@@ -1,6 +1,6 @@
 # Rewards Market Maker
 
-最后更新：2026-07-13
+最后更新：2026-07-14
 
 ## 概述
 
@@ -39,7 +39,7 @@
 
 ## 核心类型
 
-- `NumberConfigKey` 覆盖当前可编辑数值配置：市场上限、开放订单上限、最低日奖、市场质量门槛、机会评分 `opportunity_*`、fair-value `fair_value_*`、dominant 单边阈值、盘口集中度阈值、AI advisory TTL、provider 并发、信息风险 TTL、事件窗口秒数、首单观察窗口、报价构造、adaptive post-fill、pending-exit 重评、已提交退出撤换、库存、requote、BalancedMerge、深度/velocity/reconcile 等字段。
+- `NumberConfigKey` 覆盖当前可编辑数值配置：市场上限、开放订单上限、最低日奖、市场质量门槛、机会评分 `opportunity_*`、fair-value `fair_value_*`、dominant 单边阈值、盘口集中度阈值、AI advisory TTL、`ai_provider_max_markets`、`ai_provider_failure_cooldown_sec`、provider 并发、信息风险 TTL、事件窗口秒数、首单观察窗口、报价构造、adaptive post-fill、pending-exit 重评、已提交退出撤换、库存、requote、BalancedMerge、深度/velocity/reconcile 等字段。
 - `RewardFairValueEstimateDto` / `RewardFairValueDecisionDto` / `RewardQuoteEdgeDto` 映射后端 fair-value、raw/effective trading edge 与 `reward_adjusted_edge_cents`；LP rebate 只影响 reward-adjusted 展示/审计，不参与 pass gate 或 edge priority。`RewardFairValueDecisionDto.assessment_status` 区分 evaluated 和 `not_evaluated`；字段缺省或值为 `evaluated` 均按已评估兼容，上游事件窗口已阻断且没有生成 edge 时显式使用 `not_evaluated`。后者不计作 fair-value 失败，也不触发 fair-value selection risk penalty。
 - `RewardEventWindowAssessmentDto` 在状态/原因/时间/置信度外保留事件时间 provenance，包括 `source`、`event_time_role`、`start_source_field`、`end_policy`，以及 `event_key`、schedule/precision 和 producer 审计字段。
 - `RewardMarketAdvisoryDto` 只包含 V2 action、size multiplier、edge buffer、confidence 与审计信息；旧 suitability、AI quote mode/exit policy 已从公开 DTO 删除。
@@ -67,7 +67,7 @@
 - 漂移换价：安全目标价下调使用独立 `adverse_requote_*` 短确认且不受普通撤单限速；竞争性上调才使用 `requote_drift_*` 确认、冷却和单轮上限。
 - 盘口选择：`quote_mode=double|auto` 与 `selection_mode=observe|enforce` 控制双边/单边候选；live placement 阶段用当前 orderbook 验证退出深度、集中度、档位和安全边际。
 - 成交后合并：`balanced_merge_enabled` 默认关闭；开启后后端追加 `balanced_merge` profile 候选，同一 condition 可同时显示 standard 与 balanced_merge 两条 quote plan。该 profile 固定 YES/NO 双边 BUY，一侧成交后不生成 SELL、不撤对侧 BUY，full tick/fast reconcile 会发现可配对库存并写入 merge intent。`balanced_merge_auto_execute_enabled` 默认关闭，开启后 worker 通过 Safe proxy wallet 提交 CTF merge。
-- AI/信息风险：页面保存 provider 类型、request format、TTL、并发上限、统一 AI 动作置信度、信息风险动作阈值/模式和首单 gate。AI 只能 allow/reduce/stop-new 并附加 size/edge 风险修正；info-risk 才能在满足证据规则时定向 cancel。`cancel_yes/cancel_no` 表示要撤的、不安全 resting-BUY outcome，不是预测赢家。API key、base URL、模型名、超时和 web search 开关仍只来自 worker 环境变量。
+- AI/信息风险：页面保存 provider 类型、request format、TTL（默认 2h）、`ai_provider_max_markets`、失败冷却、并发上限、统一 AI 动作置信度、信息风险动作阈值/模式和首单 gate。AI 只能 allow/reduce/stop-new 并附加 size/edge 风险修正；info-risk 才能在满足证据规则时定向 cancel。`cancel_yes/cancel_no` 表示要撤的、不安全 resting-BUY outcome，不是预测赢家。API key、base URL、模型名、超时和 web search 开关仍只来自 worker 环境变量。
 - 事件窗口：页面配置启用开关、最低置信度、赛前停止新增、赛前撤 BUY、赛后恢复冷却、未知事件时间处理和 Gamma 未审核日期处理。Quote plans 的 readiness 单元格同时展示窗口状态和 `source / event_time_role / start_source_field / end_policy` provenance，让操作者能区分真实事件起点、市场生命周期字段和结束策略。
 - 成交后退出：正常 maker SELL 以库存成本/加价为目标，`maker_max_exit_loss_cents` 只定义紧急 flatten 的受控损失 floor。成交后不会 blanket 撤互补 BUY；对侧继续由自身 edge、库存与显式风险动作管理。Adaptive pending/cancel-replace 仍保留冷却、次数和对账确认保护。
 - 机会评分：统一 `opportunity_*` 配置把竞争倍数、100U 日奖、账户/单市场资金占比、退出深度、入场退出滑点、坏成交恢复天数、盘口样本、中点波动、top-of-book 跳变和权重转为综合分。
