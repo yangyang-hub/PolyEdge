@@ -458,8 +458,9 @@ pub struct RewardBotConfig {
     pub ai_provider: RewardAiProvider,
     pub ai_request_format: RewardAiRequestFormat,
     pub ai_advisory_ttl_sec: u64,
-    /// Maximum unique conditions ranked into provider refresh per cycle after
-    /// active-exposure priority. Caps the AI/info-risk call pool size.
+    /// Maximum real provider HTTP requests per refresh cycle (shared with
+    /// `info_risk_max_markets_per_cycle`). Does not truncate the priority queue;
+    /// cache-fresh conditions are skipped without consuming this budget.
     pub ai_provider_max_markets: u16,
     /// Seconds to skip re-requesting a condition after a non-content-filter
     /// provider failure. `0` disables failure cooldown.

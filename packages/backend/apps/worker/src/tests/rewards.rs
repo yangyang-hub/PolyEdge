@@ -515,8 +515,8 @@ fn reward_provider_refresh_candidates_prioritize_active_exposure_and_dedupe() {
         vec![
             "cond_open",
             "cond_position",
-            "cond_eligible",
             "cond_candidate",
+            "cond_eligible",
         ],
     );
 }
@@ -572,16 +572,16 @@ fn reward_provider_refresh_candidates_keep_legacy_bucket_in_unified_order() {
         vec![
             "cond_open",
             "cond_position",
-            "cond_standard",
+            "cond_ai_only_legacy",
             "cond_candidate",
             "cond_legacy",
-            "cond_ai_only_legacy",
+            "cond_standard",
         ],
     );
 }
 
 #[test]
-fn reward_provider_refresh_candidates_keep_input_order_after_active_exposure() {
+fn reward_provider_refresh_candidates_sort_by_score_then_condition_id() {
     let now = OffsetDateTime::now_utc();
     let mut standard_a = live_test_plan(now);
     standard_a.condition_id = "cond_standard_a".to_string();
@@ -618,16 +618,18 @@ fn reward_provider_refresh_candidates_keep_input_order_after_active_exposure() {
         &RewardBotConfig::default(),
     );
 
+    // Equal missing-info / selection_score ties break on condition_id. The
+    // ordered queue is no longer truncated by ai_provider_max_markets.
     assert_eq!(
         ordered,
         vec![
-            "cond_standard_a",
             "cond_legacy_a",
-            "cond_standard_b",
             "cond_legacy_b",
+            "cond_legacy_c",
+            "cond_standard_a",
+            "cond_standard_b",
             "cond_standard_c",
             "cond_standard_d",
-            "cond_legacy_c",
         ],
     );
 }

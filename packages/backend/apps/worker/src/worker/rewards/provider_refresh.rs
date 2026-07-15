@@ -258,6 +258,8 @@ async fn refresh_reward_provider_cache(
         fallback_concurrency = provider_concurrency.fallback_limit,
         condition_parallelism,
         provider_candidates = report.candidates,
+        // ordered_conditions is the full priority queue; max_provider_requests
+        // alone caps real HTTP calls so cache-fresh heads cannot starve misses.
         "starting reward provider refresh",
     );
 

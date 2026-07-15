@@ -5,6 +5,9 @@ fn reward_provider_refresh_candidate_condition_ids(
     positions: &[RewardPosition],
     config: &RewardBotConfig,
 ) -> Vec<String> {
+    // Return the full priority queue. `ai_provider_max_markets` /
+    // `info_risk_max_markets_per_cycle` only cap real HTTP requests later;
+    // truncating here starves lower-score markets when the head is cache-fresh.
     let available_conditions = condition_ids
         .iter()
         .filter_map(|condition_id| reward_provider_normalized_condition_id(condition_id))
@@ -30,7 +33,6 @@ fn reward_provider_refresh_candidate_condition_ids(
         );
     }
 
-    let exposure_count = ordered.len();
     let mut standard_candidates = Vec::new();
     for condition_id in condition_ids {
         let Some(condition_id) = reward_provider_normalized_condition_id(condition_id) else {
@@ -55,17 +57,25 @@ fn reward_provider_refresh_candidate_condition_ids(
             .map(|plan| plan.selection_score)
             .max()
             .unwrap_or(Decimal::ZERO);
-        standard_candidates.push((condition_id, selection_score));
+        let missing_info_risk = condition_plans
+            .iter()
+            .any(|plan| plan.info_risk.is_none());
+        standard_candidates.push((condition_id, missing_info_risk, selection_score));
     }
-    standard_candidates.sort_by(|(left_id, left_score), (right_id, right_score)| {
-        right_score
-            .cmp(left_score)
-            .then_with(|| left_id.cmp(right_id))
-    });
+    // Prefer markets still missing info-risk (first-quote gate), then higher
+    // selection_score. Cache-fresh heads are skipped without consuming the
+    // request budget, so lower-priority misses still get reached.
+    standard_candidates.sort_by(
+        |(left_id, left_missing_info, left_score),
+         (right_id, right_missing_info, right_score)| {
+            right_missing_info
+                .cmp(left_missing_info)
+                .then_with(|| right_score.cmp(left_score))
+                .then_with(|| left_id.cmp(right_id))
+        },
+    );
 
-    let max_markets = usize::from(config.ai_provider_max_markets);
-    let standard_budget = max_markets.saturating_sub(exposure_count);
-    for (condition_id, _) in standard_candidates.into_iter().take(standard_budget) {
+    for (condition_id, _, _) in standard_candidates {
         if seen.insert(condition_id.clone()) {
             ordered.push(condition_id);
         }
@@ -151,8 +161,10 @@ mod reward_provider_refresh_candidate_tests {
     }
 
     #[test]
-    fn refresh_candidates_cap_standard_pool_and_keep_exposure_first() {
+    fn refresh_candidates_keep_full_priority_queue_and_exposure_first() {
         let mut config = RewardBotConfig::default();
+        // Request budget stays 3, but the ordered queue must still include every
+        // standard candidate so cache-fresh heads cannot starve lower scores.
         config.ai_provider_max_markets = 3;
         let plans = vec![
             candidate_plan("cond_low", d("1")),
@@ -204,6 +216,54 @@ mod reward_provider_refresh_candidate_tests {
                 "cond_exposure".to_string(),
                 "cond_high".to_string(),
                 "cond_mid".to_string(),
+                "cond_low".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn refresh_candidates_prefer_missing_info_risk_before_score() {
+        let config = RewardBotConfig::default();
+        let now = OffsetDateTime::now_utc();
+        let mut with_info = candidate_plan("cond_cached", d("90"));
+        with_info.info_risk = Some(RewardMarketInfoRisk {
+            condition_id: "cond_cached".to_string(),
+            provider: config.ai_provider,
+            request_format: config.ai_request_format,
+            model: "model".to_string(),
+            query_hash: "query-hash".to_string(),
+            input_hash: "input-hash".to_string(),
+            action: polyedge_application::RewardProviderAction::Allow,
+            risk_level: polyedge_application::RewardInfoRiskLevel::Low,
+            risk_type: polyedge_application::RewardInfoRiskType::None,
+            directional_risk: polyedge_application::RewardInfoDirectionalRisk::Unclear,
+            resolution_imminent: false,
+            expected_event_at: None,
+            confidence: Decimal::ONE,
+            summary: "ok".to_string(),
+            sources: Vec::new(),
+            metrics: json!({}),
+            created_at: now,
+            expires_at: now + time::Duration::hours(1),
+        });
+        let missing = candidate_plan("cond_missing", d("1"));
+        let plans = vec![with_info, missing];
+        let union = plans
+            .iter()
+            .map(|plan| plan.condition_id.clone())
+            .collect::<Vec<_>>();
+        let ordered = reward_provider_refresh_candidate_condition_ids(
+            &union,
+            &plans,
+            &[],
+            &[],
+            &config,
+        );
+        assert_eq!(
+            ordered,
+            vec![
+                "cond_missing".to_string(),
+                "cond_cached".to_string(),
             ]
         );
     }

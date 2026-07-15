@@ -1,6 +1,6 @@
 # Agent Guidelines
 
-最后更新：2026-07-14
+最后更新：2026-07-15
 
 ## 维护规则
 
@@ -149,7 +149,7 @@ Polymarket market-channel WS uses a target chunk size plus a hard connection bud
 - Rewards worker prioritizes active order/position tokens, caps each full-tick book fetch at `MAX_TOKENS`, and limits each positive orderbook HTTP refresh request to 100 tokens while leaving cache-only reads large. Remote refresh failure preserves worker-local cache and does not restart the rewards poll runtime; all live actions still fail closed on `confirmed_at`. The orderbook service schedules P0 live action, P1 HTTP, P2 active poll and P3 candidate prewarm through one bounded weighted queue, with identical token sets coalesced across queued/in-flight requests. Registration logs raw/dedup/truncated coverage and warns when eligible plans yield no tokens or candidate prewarm is disabled.
 - Execution-order registration uses a dedicated distinct-active-market query instead of the 200-row console order limit, so older submitted/open/partially-filled orders retain orderbook coverage.
 - Reward price-history sync keeps first-backfill completion per token and batch-upserts each response, so an early failed cycle does not permanently leave later tokens with only the incremental window and large histories do not issue one SQL statement per point.
-- LLM calls for rewards combined provider are recorded in `llm_calls(task_type=reward_provider)`. Provider cache hits do not count as external calls. Provider refresh ranks active-exposure conditions first, then `selection_score`, and caps unique conditions with `ai_provider_max_markets` (default 50) against `info_risk_max_markets_per_cycle`. Default AI/info-risk TTL is 7200s. Non-content-filter failures arm a process-local `ai_provider_failure_cooldown_sec` (default 600s) so the next full ticks skip that condition instead of retrying every minute.
+- LLM calls for rewards combined provider are recorded in `llm_calls(task_type=reward_provider)`. Provider cache hits do not count as external calls. Provider refresh keeps a full priority queue (active exposure first, then missing info-risk before `selection_score`) and only caps real HTTP requests with `ai_provider_max_markets` (default 50) against `info_risk_max_markets_per_cycle`; cache-fresh heads are skipped without consuming that budget so lower-score misses are not starved. Default AI/info-risk TTL is 7200s. Non-content-filter failures arm a process-local `ai_provider_failure_cooldown_sec` (default 600s) so the next full ticks skip that condition instead of retrying every minute.
 
 - Database maintenance prunes raw events, expired AI/info-risk caches, reward candles, fair-value history, strategy run ledger, order transitions, completed/failed control commands, outbox/external dedup, LLM calls, audit logs and mode transitions. It preserves current rewards orders, fills, positions and account state.
 

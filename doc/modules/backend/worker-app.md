@@ -1,6 +1,6 @@
 # Worker App（后台任务服务）
 
-最后更新：2026-07-14
+最后更新：2026-07-15
 
 ## 概述
 
@@ -141,7 +141,7 @@ Full tick 现在会创建 strategy run ledger：run 保存 account、trace、tri
 
 Standard quote materializer 默认从买一开始，最多搜索到 `quote_max_bid_rank`，选择首个同时满足 post-only、reward spread 和 `raw - uncertainty - provider edge buffer` 的价格；不会为了 LP reward 接受负交易 edge。Fair-value latest/history 继续用于审计，maker selection 的 edge 分只使用 `effective_edge_cents`，`reward_adjusted_edge_cents` 只展示。BUY submission last-look 使用相同 edge、单市场预算和全局潜在暴露口径。
 
-provider refresh 是后台补缓存任务：同一 condition 的 AI advisory 与信息风险可由一次 combined provider 请求返回；实际外部请求写入 `llm_calls(task_type=reward_provider)`。候选按已有敞口优先、其余按 `selection_score` 排序，并用 `ai_provider_max_markets`（默认 50）与进程级 `info_risk_max_markets_per_cycle` 的较小值截断请求预算。非 content-filter 失败会写入进程内 `ai_provider_failure_cooldown_sec`（默认 600s）冷却，避免下一 full tick 立刻重试；成功或 content-filter fail-closed 缓存会清除冷却。默认 AI/info-risk TTL 为 7200s。AI payload 只含结构市场事实和完成的粗粒度 candles，输出 `allow/reduce/stop_new`、size multiplier 与 edge buffer；info-risk payload 只含稳定市场身份和证据搜索边界，可输出定向 cancel。Provider 不读盘口/账户/库存、不选择价格/方向/rank，且只写缓存；LP rewards/rebate 是做市副收益，不参与 provider 风险放行或撤单判断。Info cancel 必须由代码验证置信度、24 小时内来源和可归因事件；breaking news 需要两个独立发布组织或一手权威主体，转载和镜像不构成独立来源。
+provider refresh 是后台补缓存任务：同一 condition 的 AI advisory 与信息风险可由一次 combined provider 请求返回；实际外部请求写入 `llm_calls(task_type=reward_provider)`。候选保留完整优先级队列（已有敞口优先，其次缺 info-risk，再按 `selection_score`）；`ai_provider_max_markets`（默认 50）与进程级 `info_risk_max_markets_per_cycle` 的较小值只截断真实 HTTP 请求次数，cache-fresh 的队头不占用该预算，避免低分缺缓存市场被饿死。非 content-filter 失败会写入进程内 `ai_provider_failure_cooldown_sec`（默认 600s）冷却，避免下一 full tick 立刻重试；成功或 content-filter fail-closed 缓存会清除冷却。默认 AI/info-risk TTL 为 7200s。AI payload 只含结构市场事实和完成的粗粒度 candles，输出 `allow/reduce/stop_new`、size multiplier 与 edge buffer；info-risk payload 只含稳定市场身份和证据搜索边界，可输出定向 cancel。Provider 不读盘口/账户/库存、不选择价格/方向/rank，且只写缓存；LP rewards/rebate 是做市副收益，不参与 provider 风险放行或撤单判断。Info cancel 必须由代码验证置信度、24 小时内来源和可归因事件；breaking news 需要两个独立发布组织或一手权威主体，转载和镜像不构成独立来源。
 
 成交后不再执行 sibling blanket cancel；互补 BUY 继续由自身 edge、库存和显式风险动作管理。正常 `ExitAtMarkup` / `HoldAndRequote` maker SELL 以库存成本或加价为目标，`maker_max_exit_loss_cents` 只定义紧急 flatten 的独立风险 floor。`Adaptive` 根据 quote plan、event/provider/fair-value/live 硬风险和 floor 上方深度选择 maker hold/markup 或受控损失 flatten；定向 info cancel 只把命中的 outcome 视为 hard risk，互补库存保持 maker exit。原有 pending 重评、cancel-replace 冷却/次数/对账确认保障继续保留。BalancedMerge 继续发现配对库存并创建 merge intent。
 
