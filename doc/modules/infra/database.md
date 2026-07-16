@@ -1,120 +1,94 @@
-# 数据库（Migrations + Schema）
+# 数据库（V3 Clean Deploy Schema）
 
-最后更新：2026-07-13
+最后更新：2026-07-15
 
 ## 概述
 
-数据库使用 PostgreSQL。已发布的 `0001_initial_schema.sql` 现在视为不可变基线，避免 SQLx migration checksum 拒绝现有部署；后续 schema 修正使用新的前向迁移。`init.sql` 仍表达最新完整 schema，供空库直接初始化和审计。
+V3 schema 服务于人工市场策略、稳定 quote slots 和多钱包批量执行。项目明确不兼容旧数据：不迁移旧 markets/events/news/evidences/rewards catalog/candles/fair-value/AI/provider/replay 表，部署时必须创建空数据库。
 
-运行时通过 `sqlx::migrate!` 依次校验/执行冻结基线和前向迁移。不兼容已删除历史模块的旧表，但必须支持从当前生产 schema 原地升级到新版本。
+核心原则：
+
+- 主键使用 `BIGINT GENERATED ALWAYS AS IDENTITY`；
+- 价格、数量、余额和名义金额使用 `NUMERIC`，时间使用 `TIMESTAMPTZ`；
+- FK 访问路径显式建索引；
+- 关系数据保持 3NF，JSONB 只承载 durable action request/result 和审计扩展；
+- credential 表只保存 provider + locator，不保存明文 secret；
+- clean deploy 默认全局交易关闭且 kill switch 锁定。
 
 ## 初始化入口
 
-- `packages/backend/init.sql`：空库初始化脚本，直接表示当前完整 schema。
-- `packages/backend/migrations/0001_initial_schema.sql`：已冻结的 Rust runtime 初始基线；发布后禁止修改 checksum。
-- `packages/backend/migrations/0002_reward_fair_value_history_identity.sql`：对旧 fair-value history identity 去重并创建唯一索引，支持现有部署原地升级。
-- `packages/backend/migrations/0003_reward_event_window_semantics.sql`：区分显式事件时间与市场 lifecycle/deadline，加入 multi-event identity、source snapshot 版本表和 hard-gate shape 约束。
-- `0003` 不是滚动兼容迁移：旧 producer 仍按旧 `(condition_id, source)` 单行合同写入，不理解 `event_key`/source snapshot/high-water 语义。升级时必须先停止旧 orderbook/worker producer，执行迁移并部署新 runtime 后再恢复生产。
+| 文件 | 职责 |
+|---|---|
+| `packages/backend/migrations_v2/0001_manual_trading_schema.sql` | V3 唯一 migration baseline |
+| `packages/backend/init.sql` | 与 baseline 字节一致的空库初始化快照 |
+| `packages/backend/server/src/state.rs` | server 启动时连接 Postgres 并执行 V3 migration |
 
-## 迁移文件列表
+旧 `packages/backend/migrations/` 属于前一 schema epoch，不得与 `migrations_v2` 混用。V3 结构变化直接修改 clean baseline 与 `init.sql`；不编写旧数据升级脚本。
 
-| 迁移 | 主题 | 核心表/改动 |
-|---|---|---|
-| `0001_initial_schema.sql` | 当前完整 schema baseline | 全量创建当前所需表、约束和索引，包括 rewards market maker、strategy run ledger、fair-value、selection score、BalancedMerge、Funding、orderbook candles、worker/runtime 支撑表 |
-| `0002_reward_fair_value_history_identity.sql` | Fair-value history 升级 | 去重 `(condition_id, source, observed_at)` 并创建唯一索引，使历史写入重试幂等 |
-| `0003_reward_event_window_semantics.sql` | Event-window 语义升级 | 新增 `event_key`、time role/precision/provenance/end policy、`hard_gate_eligible`、`producer_version`、source/observed/expiry 时间字段，主键改为 `(condition_id, source, event_key)`；新建带 `source_updated_at` 的 `reward_event_window_source_versions` |
+## Schema 分组
 
-## Schema 领域分组
+### 钱包与风险
 
-### 审计/幂等/LLM
+- `wallet_credential_refs`：`environment|vault|kms` locator 与可选 key version。
+- `wallet_accounts`：显示名、signer/funder、signature type、状态和钱包交易开关。
+- `wallet_risk_policies`：开放订单、开放 BUY、总仓位、单市场和单订单名义金额上限。
+- `wallet_account_state`：余额、reserved、open BUY 与总持仓 snapshot，使用 monotonic version。
 
-- `audit_logs`：actor、action、resource、result、IP、user agent、payload JSON、version snapshot。
-- `idempotency_keys`：scope + key + request_hash，跟踪 started/completed/failed、`error_code`、5 分钟执行租约、terminal 时间和 24 小时结果 TTL；request id 充当 lease owner，旧执行者不能在租约被接管后写 terminal 状态。
-- `external_event_dedup`：connector callback payload hash、处理结果、trace owner 与 5 分钟租约；未完成事件可在崩溃后重领，完成/abandon 均 owner-fenced。
-- `llm_calls`：外部 provider 调用审计/统计，记录 task_type、provider/model、input_hash、raw/parsed output、validation_result、fallback_used、latency、cost_estimate、trace_id 和 created_at。Rewards combined provider 调用复用该表，snapshot 按 UTC 日聚合。
+钱包状态非 `active` 时数据库约束禁止 `trading_enabled=true`。真实私钥与 CLOB secret 只存在于外部 secret provider。
 
-### 市场/事件/新闻
+### 人工市场与策略
 
-- `markets`：question、category、status、best_bid/ask/mid_price、`liquidity_usd`、volume_24h、`end_at`、`synced_at`、ambiguity_level、tradability_status、slug、Polymarket condition/YES/NO asset id 等。
-- `market_resolution_rules`：resolution source 和 edge-case notes。
-- `market_categories`：控制台市场分类。
-- `raw_events`：source、hash、source_type、external_id、title、url、author、published_at、event_time、payload JSON。
-- `news_source_health`：enabled、reliability、last_success/error、consecutive_failures、circuit breaker。
-- `evidences`：market/event 关联证据、方向、strength、source reliability、novelty、resolution relevance、status、expiry。
-- `probability_estimates`：prior/posterior/fair/market price、edge、confidence、model_version、reason_codes。
+- `managed_markets`：operator 录入 condition、slug、question、URL 与状态；不存在全市场目录表。
+- `managed_market_outcomes`：每个市场恰当映射 YES/NO token，token 全局唯一。
+- `market_reward_terms`：人工录入 minimum size、maximum spread 与可选 daily rate。
+- `market_strategies`：市场级统一策略资源。
+- `strategy_versions`：不可变版本；每个策略最多一个 `published` 版本。
+- `strategy_quote_slots`：每行是一张持续维护的目标订单，固化 outcome、quantity、fixed/book-rank、offset、价格边界、post-only 和 enabled。
+- `strategy_wallet_targets`：把一个统一策略分配到多个钱包，不复制策略参数。
 
-### Legacy / 通用执行链路表
+quote slot 约束 fixed price 与 positive book rank 二选一，价格严格位于 `(0,1)`，数量必须为正。
 
-- `signals`、`signal_evidence_links`、`signal_transitions`：baseline 仍保留的内部表，当前公开页面/API/worker 不再提供历史 signal 控制台流程。
-- `risk_state`：kill switch、PnL、gross/net exposure、open alerts 等执行链路状态。
-- `order_drafts`、`execution_requests`、`orders`、`trades`、`positions`：执行链路和 connector callback 使用的订单/成交/持仓历史。
-- `arbitrage_*` 与 `market_book_snapshots`：历史 schema 保留，当前不再有 active app/worker/API 写入新 scan/opportunity 数据。
+### 批次与 durable execution
 
-### LP rewards
+- `execution_batches`：固化 strategy version、请求人、操作备注和批次状态。
+- `wallet_execution_jobs`：`batch + wallet` 唯一；支持 owner/epoch/expiry lease fencing。
+- `execution_actions`：place/cancel/replace/reconcile action、全局 idempotency key、request/result JSON 与 action lease。
 
-- `reward_bot_config`：key-value 配置，覆盖 `maker_market_budget_usd`、动态 rank、交易 edge、机会评分、adaptive 退出、AI/info-risk 动作阈值、事件窗口、库存偏斜、非对称 requote 和 BalancedMerge；不再保存旧双预算或成交后整组撤单 key。
-- 空表读取使用 application `production_live_drill_defaults()`；无需在 baseline SQL 中硬编码配置行。用户首次保存后会写入完整当前 snapshot，因此重新部署空库会获得最新保守 profile。
-- `reward_markets`：condition、question、market_slug、rewards_max_spread/min_size、total_daily_rate、tokens JSON。
-- `reward_quote_plans`：当前 quote plan snapshot，主键为 `(condition_id, strategy_profile)`，包含基础/selection score、readiness/mode/reason/blocker、fair-value、`ai_action`、`info_risk_action`/level 摘要和完整 JSON。预算、provider size 与库存 headroom blocker 有独立 reason code。
-- `reward_strategy_runs`：每轮 full tick 的 run header，记录 account、trace、trigger、status、config hash/json、输入摘要、指标、开始/完成时间和错误。
-- `reward_strategy_runs_started_idx` 支撑不带 account/status 过滤的全局最近运行列表；AI advisory/info-risk 另有 `expires_at` 单列索引支撑全局过期清理。
-- `reward_strategy_decisions`：每个 run 下按 condition + strategy profile 记录 quote plan 决策快照、排序、readiness、reason/blocker、planned notional、fair-value/opportunity/event、`ai_action`、`info_risk_action`/level 和 decision JSON。
-- `reward_strategy_actions`：从 tick outcome 派生的动作账本，记录 place/cancel/exit/fill/merge/skip 等动作、状态、幂等键、请求/结果 JSON 和关联订单。
-- `reward_strategy_actions` 还保存 `lease_owner`、`lease_expires_at` 和 `execution_attempts`，支持多实例 executor 原子 claim/续租和超时恢复；partial index 加速 planned/expired-executing 领取。
-- `reward_strategy_replay_fixtures`：与 strategy run 一对一的确定性回放 fixture，保存 schema version、SHA-256、JSON 字节数、JSONB payload 和 captured time，随 run 级联删除。当前默认写 schema V3；V3 沿用 V2 紧凑 payload，同表保留 V1、V2 与缺省版本按 V1 的读取兼容。
-- `reward_order_transitions`：托管订单状态追加式时间线，记录 managed/external order、from/to status、reason、metadata，并可关联 run/action。
-- `reward_managed_orders`：托管订单，包含 account/condition/token、side、price、size、status、strategy bucket/profile、exit strategy source/selected/floor/reselect state、filled_size、reward_earned、external id 和对账锁等字段。外部库存补 SELL intent 可来自当前 rewards catalog 外的 condition；adaptive 本地 pending SELL 用这些字段在 worker 重启后继续持仓期重评。
-- `reward_fills`：托管订单成交，保存 account/condition/token/outcome/side、price、size、notional、role、realized PnL。
-- `reward_positions`：按 account + token 保存外部完整持仓，可包含当前 rewards catalog 外的市场。
-- 外部持仓替换使用单条 typed `UNNEST`/批量 upsert，而不是事务内逐仓位往返；position、managed fill、merge retry/avg price 和 fair-value/confidence/JSON 均有数据库 CHECK 防线。
-- `reward_account_state`：capital、available、reserved 兼容字段、realized PnL、reward earned、fees、tick index、funding address、外部 BUY notional。
-- `reward_control_commands`：run_once/cancel_all/reset 命令队列，支持 pending/running/completed/failed；running claim 写入 `lease_owner`、单调 `lease_version` 和 `lease_expires_at`，terminal update 必须匹配 owner/version。
-- `reward_worker_heartbeats`：worker running 状态来源。
-- `reward_market_advisories`：AI advisory V2 缓存，按 condition/provider/request_format/model/input_hash 存储 `action=allow|reduce|stop_new`、size multiplier、edge buffer、confidence、reasons/metrics JSON 和 expires_at；有效记录固定按 `created_at DESC, id DESC` 取最新，不能按较长 TTL 覆盖新评估；旧 suitability/quote mode/exit policy 列已删除。
-- `reward_market_info_risks`：信息风险 V2 缓存，存储 evidence action（含定向 cancel）、risk level/type/direction、resolution_imminent、expected_event_at、confidence、summary、sources/metrics JSON 和 expires_at；单条与 condition 批量读取均按 `created_at DESC, id DESC` 选择最新有效评估。
-- `reward_market_candles`：orderbook 服务从 CLOB `/prices-history` 低频写入的 rewards token 5m source candles。provider price 同时写入 close、best bid close 和 best ask close，`spread_cents_close=0`，`sample_count` 表示同 bucket 内新持久化点数量；batch upsert 会排除不晚于现有 close 的重叠点，避免增量回看重复计数。
-- `reward_fair_values`：每个 condition 最新 fair-value 估计，保存 fair_yes/fair_no、market midpoint、confidence、uncertainty、YES/NO 偏离、组件 JSON、拒绝原因和有效期。
-- `reward_fair_value_history`：fair-value 历史追加表，用于审计和回测；`(condition_id, source, observed_at)` 唯一索引使同一估计重试幂等，数据库维护默认按 `created_at` 保留 90 天。
-- `reward_market_event_windows`：按 `(condition_id, source, event_key)` 保存同一市场的多事件候选。字段明确记录 `event_time_role`、`schedule_status`、`time_precision`、`start_source_field`、`end_policy`、`hard_gate_eligible`、`producer_version`、`source_updated_at`、`observed_at` 和 `expires_at`；数据库 CHECK 确保 hard gate 只能由 active + scheduled + exact + `event_occurrence` + 明确 start provenance 的形状构成。Gamma lifecycle `startDate`/`endDate` 不满足该形状，永不作为硬 gate。
-- `reward_event_window_source_versions`：按 `(source, condition_id)` 保存 source snapshot 的 `producer_version`、`source_updated_at`、`observed_at` 和每 condition `snapshot_hash`。Producer 在 `coverage[]` 中逐 condition 传递 upstream `source_updated_at`，写路径按 source 获取 Postgres transaction advisory lock，以 `(producer_version, source_updated_at, observed_at)` 字典序作高水位，幂等接受完全相同的同高水位快照，并拒绝同高水位但哈希不同的冲突 payload。每次 source snapshot 替换会把 coverage condition 中缺失的 event key tombstone 为 withdrawn。
-- `reward_merge_intents`：BalancedMerge 配对库存合并意图，包含 YES/NO token、merge size、两侧库存均价、source fill、status、tx hash、submitted/confirmed/failed 时间、失败原因和 retry count；广播前原子进入不可自动重领的 `broadcasting`，只有该状态能写 `submitted + tx_hash`，链上 receipt 解析再以 intent id + tx hash 双重 fencing 更新 completed/failed。Active paired size 只计算 pending/unsupported/broadcasting/submitted，completed 不抵扣未来新库存。
-- 高频 mutable snapshot 使用版本 fencing：managed order、position、account state、heartbeat、fair-value 和 strategy ledger 不接受较旧时间版本；event-window 额外使用 producer version + per-condition source-updated/observed high-water/hash。账户全量持仓替换会先锁定 account state 版本，避免乱序同步先删除新仓位再写回旧仓位。
+claim 索引只覆盖可执行 job/action，供 `FOR UPDATE SKIP LOCKED` 使用。running/executing 行必须同时具备 owner、positive epoch 和 expiry；terminal write 必须按 owner + epoch 条件更新。
 
-## 数据保留与自动清理
+### 订单与持仓
 
-内嵌 worker runtime 的 `database-maintenance` 任务调用 `DatabaseMaintenanceService`，Postgres 实现按表分批删除历史/缓存/队列数据。默认窗口：
+- `managed_orders`：钱包、市场、版本、quote slot、token、价格、数量、venue id、generation 和状态。
+- `managed_orders_open_slot_uidx`：一个钱包同一 quote slot 最多一张 open-like 订单；`unknown` 也占用 slot。
+- `order_transitions`：追加式订单状态时间线。
+- `positions`：按 `(wallet_id, token_id)` 保存最新持仓，使用 version/observed time fencing。
 
-- raw events：未关联 30 天，已关联 90 天。
-- 过期 AI advisory / info-risk cache：额外保留 7 天。
-- `reward_market_candles`：30 天。
-- `reward_fair_value_history`：90 天。
-- `reward_strategy_runs`：90 天，删除 completed/failed/cancelled run 时级联删除对应 decisions/actions。
-- `reward_order_transitions`：180 天。
-- `reward_risk_events`：180 天。
-- completed control commands：30 天；failed control commands：90 天。
-- outbox/external dedup：30-90 天窗口。
-- `llm_calls`：180 天。
-- `audit_logs` / `mode_transitions`：365 天。
+### 平台表
 
-每个表每轮最多 20 批、每批 10,000 行，避免单次大事务。删除后物理文件不会立即缩小，需要依赖 autovacuum；如需归还磁盘空间，需规划 `VACUUM FULL` / `pg_repack` 等维护窗口。
+- `idempotency_keys`：API request hash、owner lease、完整结果与 TTL。
+- `audit_logs`：actor/action/resource/result/operator note 追加日志。
+- `system_runtime_state`：单行全局 trading/kill switch 状态。
+
+## 数据一致性
+
+- published strategy version 唯一，execution batch 固化 version，不受后续策略更新影响。
+- open-like slot partial unique index 与 venue-first match 共同防止重复下单。
+- submission/cancel 结果不明时使用 `unknown`，保留 slot ownership 并阻止自动重放。
+- API 幂等以 `scope + idempotency_key` 唯一，并校验 request hash；相同 payload 重放首次完整响应，不同 payload 冲突。
+- clean deploy 插入 `system_runtime_state(kill_switch_locked=true, trading_enabled=false)`，首次实盘必须显式提权解锁。
 
 ## 当前状态
 
-- 当前迁移目录包含不可变基线 `0001_initial_schema.sql`、fair-value 前向修复 `0002_reward_fair_value_history_identity.sql` 和 event-window 语义升级 `0003_reward_event_window_semantics.sql`。
-- `packages/backend/init.sql` 表达执行全部迁移后的最新 schema，不再要求与冻结 `0001` 字节相同。
-- 已移除的钱包类和独立研究模块不再有前端路由、API、worker、application store、DTO 或专属 schema；baseline 仍明确保留上述 legacy signal/arbitrage 通用表，不能据此推断旧控制台流程仍可用。
-- Rewards 竞争度相关数据只存在于 quote plan 的统一 opportunity metrics 中，不再有独立 observation 表或模块；最终市场选择优先级存于 quote plan 的 `selection_score` / `selection_metrics`。
-- Rewards 事件窗口已升级为 multi-event/source-snapshot 模型；Gamma lifecycle 旧行在 `0003` 中被标记 inactive/withdrawn、清除 hard-gate eligibility 并写入 quarantine 审计原因。其他 legacy 行因无 time role/precision/provenance 也统一 fail closed，必须由新 producer 按新合同重发才能恢复可用性。
-- Strategy run ledger、Replay V3 fixture（兼容读取 V1/V2）、condition 级 fair-value estimates/幂等 history、AI advisory、信息风险、price-history candles、worker heartbeat、控制命令去重和 BalancedMerge merge intent 已落地。
-- 新建数据库和现有部署都通过 `0002` 获得 `reward_fair_value_history_identity_uidx`；迁移会先按 `(condition_id, source, observed_at)` 去重，再创建唯一索引。写路径使用无目标 `ON CONFLICT DO NOTHING`，与冻结 `0001` 兼容。
-- 现有部署通过 `0003` 获得 event-window 新主键、shape checks 和 source version 表；该过程必须协调停止旧 producer，不支持新旧 runtime 同时滚动写入。
-- Strategy run/decision ledger 是审计和 replay 输入，不作为 live 定价输入；`reward_strategy_actions` 同时是 Postgres-only durable executor 的执行队列。executor 随 rewards poll loop 启动，使用 account-scoped lease、owner fencing 和当前风险/venue 状态复核后执行或恢复受支持动作。
-- 数据库维护任务生产模板默认开启；它不删除 rewards fills、positions、account state 等核心账本表。
+- V3 baseline 与 `init.sql` 已建立并保持字节一致。
+- schema 已在 PostgreSQL 16 空库执行验证。
+- `polyedge-server` 启动时使用 V3 migration，并已接入钱包、策略、批次、撤单、账本、runtime state、幂等、审计与 execution lease SQL。
+- schema 不包含 events/news/evidences、Gamma/rewards catalog、candles、fair value、AI/info-risk、LLM calls 或 replay 表。
+- Data API positions 全量替换已接入钱包 execution job。独立 fills、SELL exit、merge 与 Funding 表和运行能力均不属于 V3 schema。
 
 ## 修改检查清单
 
-- [ ] 禁止修改已发布 migration；schema 改动时新增前向 migration，并同步更新 `init.sql` 的最新完整 schema。
-- [ ] 新增表/列后同步更新 application store trait、infrastructure Postgres/in-memory 实现和前端 DTO（如对外暴露）。
-- [ ] 新增枚举后同步更新 `domain` crate 和前端枚举翻译。
-- [ ] 修改后运行 `cargo check --workspace --tests`；涉及查询行为时补充 `cargo test --workspace`。
-- [ ] 更新本文档的迁移列表和 schema 说明。
+- [ ] 直接同步修改 V3 baseline 与 `init.sql`，不增加旧 schema 兼容迁移。
+- [ ] 两份 SQL 保持字节一致并在空 PostgreSQL 16 上执行。
+- [ ] 新 FK 增加访问索引；不得弱化 open-slot、幂等和 lease fencing。
+- [ ] 新公开字段同步 domain、contracts、server store/API 与前端 DTO。
+- [ ] 运行 workspace 测试与相关数据库 smoke。

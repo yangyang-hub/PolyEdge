@@ -1,7 +1,7 @@
 export const shared = {
   meta: {
     title: "PolyEdge 控制台",
-    description: "面向 Polymarket 研究与执行的事件驱动交易控制台。",
+    description: "面向 Polymarket 人工做市策略与多钱包执行的控制台。",
   },
   common: {
     active: "活跃",
@@ -50,23 +50,15 @@ export const shared = {
   },
   nav: {
     dashboard: "仪表盘",
-    markets: "市场",
-    events: "事件",
-    rewards: "做市",
-    funding: "Polymarket 入金",
     settings: "设置",
+    strategies: "市场策略",
+    wallets: "钱包账户",
+    operations: "执行运营",
   },
   topbar: {
     title: "PolyEdge 控制台",
     openNavigation: "打开导航菜单",
     streamSync: "API 状态同步中",
-  },
-  statusRail: {
-    apiStreamDegraded: "API 数据降级",
-    apiStreamSyncing: "API 数据同步中",
-    apiStreamHealthy: "API 数据健康",
-    marketStream: "市场数据",
-    eventStream: "事件数据",
   },
   actionDialog: {
     operatorNote: "操作备注",
@@ -78,6 +70,23 @@ export const shared = {
     operationQueued: "操作已入队",
     operationFailed: "操作失败",
   },
+  roles: {
+    viewer: "观察员",
+    operator: "操作员",
+    risk_admin: "风控管理员",
+    admin: "管理员",
+  },
+  auth: {
+    requestedRoute: "请求路由",
+    accessBoundary: "访问边界",
+    unauthorizedTitle: "当前会话不满足路由策略",
+    unauthorizedDescription: "当前角色低于目标路由要求。",
+    requiredRole: "需要角色",
+    currentRole: "当前角色",
+    noSession: "无会话",
+    switchRole: "切换角色",
+    goToDashboard: "前往仪表盘",
+  },
   routeStates: {
     notFoundEyebrow: "404",
     notFoundTitle: "该路由未映射",
@@ -88,8 +97,8 @@ export const shared = {
     consoleNotFoundEyebrow: "控制台未找到",
     consoleNotFoundTitle: "请求的控制台资源不存在",
     consoleNotFoundDescription: "当前路由已解析，但具体资源或子段不存在。",
-    consoleNotFoundDetails: "可以返回仪表盘，或直接进入市场工作台。",
-    openMarkets: "打开市场",
+    consoleNotFoundDetails: "可以返回仪表盘，或直接进入市场策略工作台。",
+    openStrategies: "打开市场策略",
     consoleErrorEyebrow: "控制台错误",
     consoleErrorTitle: "控制台片段渲染失败",
     consoleErrorDescription: "运行时错误中断了当前路由。可以重试片段渲染，或返回仪表盘外壳。",
@@ -97,7 +106,5 @@ export const shared = {
     digest: "摘要",
     retrySegment: "重试片段",
     returnDashboard: "返回仪表盘",
-    eventsDataRequired: "事件页面至少需要一条 API 结果。",
-    marketsDataRequired: "市场页面至少需要一条 API 结果。",
   },
 } as const;

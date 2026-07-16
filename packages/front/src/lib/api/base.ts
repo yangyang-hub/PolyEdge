@@ -8,19 +8,11 @@ import type {
 
 export type BackendMode = "live";
 export type InternalApiStepUpScope =
-  | "signal_approve"
-  | "signal_reject"
+  | "wallet_trading_enable"
   | "execution_submit"
   | "order_cancel_force"
-  | "system_mode_switch"
   | "system_kill_switch_trigger"
-  | "system_kill_switch_release"
-  | "risk_threshold_update"
-  | "funding_transfer"
-  | "rewards_run_once"
-  | "rewards_live_trading_enable"
-  | "rewards_merge_auto_execute"
-  | "rewards_state_reset";
+  | "system_kill_switch_release";
 
 export class PolyEdgeApiError extends Error {
   code?: string;
@@ -195,12 +187,6 @@ async function fetchJson<T>(
   const requestId = createRequestId();
 
   headers.set("X-Request-Id", requestId);
-
-  if (process.env.NEXT_PUBLIC_POLYEDGE_INTERNAL_AUTH_DEV_BYPASS === "1") {
-    headers.set("X-PolyEdge-Dev-Auth", "local");
-    headers.set("X-PolyEdge-Console-Role", "admin");
-    headers.set("X-PolyEdge-Console-User", encodeURIComponent("Static Console"));
-  }
 
   if (auth.stepUpCode?.trim()) {
     headers.set("X-PolyEdge-Step-Up-Code", auth.stepUpCode.trim());

@@ -18,7 +18,7 @@ This version has breaking changes — APIs, conventions, and file structure may 
 |---|---|
 | `src/app/*` | App Router 路由、`page` / `layout` / route handler |
 | `src/features/<name>/` | 按页面/领域组织的功能模块，内部分 `components` / `loaders` / `lib` / `types.ts`（见下） |
-| `src/lib/api/*` | **统一数据层**：读取按领域拆文件（`markets.ts` / `rewards.ts` / `funding.ts`…，基于 `base.ts`），写操作（server actions）通过 `actions.ts` barrel 暴露，具体实现按领域放在 `actions/` |
+| `src/lib/api/*` | **统一数据层**：读取按领域拆文件（`wallets.ts` / `strategies.ts` / `operations.ts` / `settings.ts`，基于 `base.ts`），写操作通过 `actions.ts` barrel 暴露，具体实现按领域放在 `actions/` |
 | `src/lib/{contracts,i18n,…}` | 跨 feature 共享库：`contracts/dto` 是后端 DTO 的类型镜像，`i18n` 是中文字典 |
 | `src/components/ui/*` | shadcn 生成的基础组件，不手改风格 |
 | `src/components/shared/*` | 跨页面复用的业务组件 |
@@ -30,14 +30,14 @@ This version has breaking changes — APIs, conventions, and file structure may 
 - `lib/`：纯函数——流式 patch、状态推导、格式化、比较器；可带 `*.test.ts`。
 - `types.ts`：本 feature 的类型定义。
 
-范例形态见 `src/features/rewards/`：`components/`、`loaders/`、`lib/` 和紧邻领域类型/格式化 helper 分层。新建/重构 feature 复刻这种页面/领域内聚结构。
+复杂 feature 使用 `components/`、`loaders/`、`lib/` 和紧邻领域类型/格式化 helper 分层；简单 V3 工作台可只保留单一交互组件，增长到软上限前再机械拆分。
 
 **注意：`src/server/` 当前是空目录（历史遗留），新代码不要往里放；数据层一律用 `src/lib/api/*`。**
 
 ## 数据与装配约定
 
 - server component 经 `features/*/loaders/*` 调用 `src/lib/api/*` 取数，不在组件里直接 fetch。
-- mutation 用 `src/lib/api/actions.ts` 暴露的 server action；新增 action 按领域放进 `src/lib/api/actions/`，保持外部 import 路径不变。
+- mutation 用 `src/lib/api/actions.ts` 暴露的 action；静态导出不支持 Next Server Actions，因此 action 是复用 `base.ts` 的客户端 mutation 函数。新增 action 按领域放进 `src/lib/api/actions/`，保持外部 import 路径不变。
 - DTO 类型从 `@/lib/contracts/dto` 引用，**不在组件内重新定义后端结构**。
 - 文案一律走 i18n 字典（`dictionary`），从 `@/lib/i18n/dictionaries` 直接 import；不硬编码中文。字典按命名空间拆分（`src/lib/i18n/dictionaries/`）。
 
@@ -79,11 +79,8 @@ yarn build              # 生产构建（含完整类型检查）
 
 前端无端到端运行时测试，重构交互组件后**必须人工 smoke** 对应页面（实时更新、过滤、对话框、表格渲染等）。
 
-## 现有文件长度债务（2026-07-12 快照）
+## 现有文件长度债务（2026-07-15 快照）
 
-- `src/features/rewards/components/rewards-config-panel.tsx`（~718）已超过 600 行硬上限，后续修改应优先拆分配置分区与交互状态。
-- `src/lib/contracts/dto/rewards.ts`（~650）属于纯类型定义例外，但新增 DTO 时仍应评估继续按领域子文件拆分。
-- `src/lib/i18n/dictionaries/rewards.ts`（~569）属于已按命名空间拆分后的字典例外。
-- `src/features/rewards/components/rewards-workbench.tsx`（~516）处于软上限区间，应避免继续膨胀。
+V3 删除旧 Rewards 大型组件与 DTO 后，当前业务文件均未超过 400 行软上限。
 
 行数以当前物理文件 `wc -l` 为准；完成拆分后同步刷新本节。

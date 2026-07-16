@@ -1,31 +1,18 @@
-# Prebuilt Backend Binaries
+# Prebuilt Backend Binary
 
-Last updated: 2026-07-12
+Last updated: 2026-07-15
 
-The deployment images copy prebuilt binaries from `bin/` directly into runtime
-containers. Build them on a Linux environment compatible with the server
-runtime, then commit the required binaries to the repository:
+V3 deployment uses one Rust artifact only:
+
+- `bin/polyedge-server`
+
+Build it on a Linux environment compatible with the target server:
 
 ```bash
 ./scripts/build-backend-bin.sh
-git add bin/polyedge-api bin/polyedge-orderbook
+git add bin/polyedge-server
 ```
 
-Current Compose deployment uses:
+The script runs `cargo build --release -p polyedge-server`, copies the result to this directory, makes it executable, and prints its SHA-256.
 
-- `bin/polyedge-api` for the API process with embedded worker runtime
-- `bin/polyedge-orderbook` for the standalone orderbook service
-
-`polyedge-worker` remains useful as a CLI/maintenance binary, but Docker Compose
-does not run it as a separate long-lived service.
-
-To build only one deployable binary:
-
-```bash
-POLYEDGE_BACKEND_BINARY=polyedge-orderbook ./scripts/build-backend-bin.sh
-```
-
-The binaries are platform artifacts, not portable Rust releases. Build them for
-the target server architecture/libc and verify the printed SHA-256 before
-deployment. The repository currently tracks only the API and orderbook binaries
-required by Compose.
+Legacy `polyedge-api`, `polyedge-orderbook`, `polyedge-worker`, and `polyedge-replay` binaries are not V3 deployment artifacts and must not be referenced by Docker Compose or deployment scripts.

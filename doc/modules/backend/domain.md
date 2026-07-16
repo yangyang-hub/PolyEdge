@@ -1,98 +1,52 @@
-# domain（领域层）
+# domain（V3 领域层）
 
-最后更新：2026-07-12
+最后更新：2026-07-15
 
 ## 概述
 
-`polyedge_domain` crate 是系统的最底层基础，定义了所有业务领域的值对象、枚举、错误类型和认证原语。零外部业务依赖，不依赖任何上层 crate。
+`polyedge_domain` 是活动后端的最底层 crate，定义统一错误、精确数值和值对象，以及人工市场、多钱包、策略版本、quote slot、执行批次和交易账本状态。它不依赖 SQL、HTTP、connector 或 server。
 
-## 设计目标
-
-- 提供整个系统共享的**通用语言**（Ubiquitous Language）类型
-- 保证类型安全：用 newtype 包装 `Decimal` 防止原始值混用
-- 统一错误模型：所有 crate 使用同一个 `AppError`
-- 枚举序列化与反序列化一致（`snake_case`）
-
-## 架构与关键文件
+## 关键文件
 
 | 文件 | 职责 |
 |---|---|
-| `packages/backend/crates/domain/src/lib.rs` | 模块入口，通过 `include!()` 内联所有子文件 |
-| `domain/error.rs` | `AppError`、`ErrorKind`、`Result<T>` 类型别名、辅助函数 |
-| `domain/numeric.rs` | 数值 newtype：`Probability`、`Edge`、`ExposureRatio`、`Quantity`、`UsdAmount`、`SignedUsdAmount` |
-| `domain/market_enums.rs` | 16 个市场、事件、信号、执行和排序枚举 |
-| `domain/auth.rs` | `UserRole`、`StepUpScope`、`AuditResult`、`IdempotencyStatus` |
-| `domain/tests.rs` | 单元测试 |
+| `src/lib.rs` | 活动领域模块入口与 re-export |
+| `src/manual_trading.rs` | V3 钱包、市场、策略、执行和账本模型 |
+| `src/domain/error.rs` | `AppError`、`ErrorKind`、`Result<T>` |
+| `src/domain/numeric.rs` | `Probability`、`Quantity`、`UsdAmount` 等精确数值类型 |
 
-所有子文件通过 `include!()` 内联到 crate 根命名空间，外部直接使用 `polyedge_domain::Xxx`。
+V3 活动领域不包含 events/news/evidences、signals、AI/info-risk、fair-value、Gamma/rewards catalog、Replay 或旧系统模式。
 
-## 核心数据结构
+## 核心类型
 
-### 错误模型（error.rs）
+- 钱包：`WalletCredentialRef`、`WalletAccount`、`WalletRiskPolicy`、`WalletAccountState`。
+- 人工市场：`ManagedMarket`、`ManagedMarketOutcome`、`MarketRewardTerms`。
+- 策略：`MarketStrategy`、`StrategyVersion`、`StrategyQuoteSlot`、`StrategyWalletTarget`。
+- 执行：`ExecutionBatch`、`WalletExecutionJob`、`ExecutionAction`。
+- 账本：`ManagedOrder`、`ManagedPosition`。独立 fill 模型不属于 V3。
 
-- **`ErrorKind`**（7 个变体）：`InvalidInput`、`Unauthorized`、`Forbidden`、`NotFound`、`Conflict`、`DependencyUnavailable`、`Internal`
-- **`AppError`**：`kind` + `code`（静态错误码）+ `message`（可读描述）+ `retryable`
-- 7 个构造函数：`invalid_input`、`unauthorized`、`forbidden`、`not_found`、`conflict`、`dependency_unavailable`（默认 retryable）、`internal`（默认 retryable）
-- 辅助函数：`round_decimal`、`format_decimal`、`deserialize_decimal_str`
+状态枚举统一以 snake_case 序列化，覆盖 wallet/market/strategy/version、outcome、pricing mode、batch/job/action/order 和 maker/taker role。
 
-### 数值类型（numeric.rs，~306 行）
+## 领域约束
 
-| 类型 | 有效范围 | 精度（SCALE） | 用途 |
-|---|---|---|---|
-| `Probability` | [0, 1] | 6 | 市场概率 |
-| `Edge` | [-1, 1] | 6 | 交易边际 |
-| `ExposureRatio` | [0, 10] | 6 | 组合敞口比 |
-| `Quantity` | ≥ 0 | 8 | 订单数量 |
-| `UsdAmount` | ≥ 0 | 2 | 非负美元金额 |
-| `SignedUsdAmount` | 无限制 | 2 | 可负美元金额（如 PnL） |
-
-共同模式：`new()` 带范围校验、`value()` 返回内部 `Decimal`、`api_string()` 返回格式化字符串、手动 `Serialize`/`Deserialize`/`Display` 实现。
-
-### 业务枚举（market_enums.rs）
-
-| 枚举 | 变体数 | 用途 |
-|---|---|---|
-| `SystemMode` | 2 | 当前运行模式（LiveAuto/KillSwitchLocked）；旧 `research`/`paper_trade`/`manual_confirm` 输入仅作为 `live_auto` 兼容别名解析 |
-| `MarketStatus` | 3 | 市场状态（Open/Closed/Resolved） |
-| `OrderStatus` | 8 | 订单生命周期（New→Submitted→Open→PartiallyFilled→Filled/Canceled/Expired/Rejected） |
-| `SignalLifecycleState` | 7 | 信号生命周期（New/Active/Weakened/Executed/Invalidated/Reversed/Expired） |
-| `SignalAction` | 2 | 买入/卖出 |
-| `SignalSide` | 2 | Yes/No |
-| `ExecutionRequestStatus` | 4 | 执行请求状态 |
-| `OrderDraftStatus` | 4 | 草稿订单状态 |
-| `EventStatus` | 4 | 事件状态 |
-| `EvidenceStatus` | 3 | 证据状态 |
-| `EvidenceDirection` | 3 | 证据方向 |
-| `AmbiguityLevel` | 3 | 模糊度 |
-| `TradabilityStatus` | 4 | 可交易性 |
-| `TimeHorizon` | 3 | 时间范围 |
-| `MarketSortField` | 2 | 排序字段 |
-| `SortOrder` | 2 | 排序方向 |
-| `UserRole` | 4 | Viewer/Operator/RiskAdmin/Admin |
-| `StepUpScope` | 13 | 提权范围，含信号执行、订单取消、系统模式/熔断、风险阈值、Funding 转账，以及 Rewards run/live enable/merge auto execute/reset |
-| `AuditResult` | 4 | accepted/succeeded/rejected/failed 审计结果 |
-| `IdempotencyStatus` | 3 | started/completed/failed 幂等请求状态 |
-
-所有枚举使用 `#[serde(rename_all = "snake_case")]`，大多数实现 `as_str()` 和 `FromStr`。
+- quote slot 明确 outcome、quantity、fixed/book-rank、offset、价格边界和 post-only。
+- quantity/价格/名义金额使用 `Decimal` 或相应 newtype，不使用浮点数。
+- credential ref 只表达 provider/locator/key version，不持有 secret。
+- `unknown` managed-order 状态属于 open-like 状态，表示必须 fail closed 并阻止重复下单。
+- 执行批次固化 strategy version；钱包目标与策略参数分离。
 
 ## 依赖关系
 
-- **上游**：无（纯基础层）
-- **下游被依赖**：`application`、`connectors`、`infrastructure`、`contracts`、`common`、`packages/backend/api`、`packages/backend/order`、`packages/backend/apps/worker` — 所有上层 crate 都依赖 `domain`
+- 上游：无。
+- 下游：`contracts`、`connectors`、`server`。
 
 ## 当前状态
 
-- 当前活动运行模式已收敛为 `live_auto` 与 `kill_switch_locked`；历史模式字符串只用于兼容读取，不代表仍有 paper/research runtime
-- 作为系统通用语言的基础，数值 newtype、执行/市场枚举和认证原语均由上层 crate 直接复用
-- 所有类型在全部上层 crate 中广泛使用
-- `StepUpScope` 对 Rewards 危险操作使用四个最小权限 wire value：`rewards_run_once`、`rewards_live_trading_enable`、`rewards_merge_auto_execute`、`rewards_state_reset`；保护性 cancel-all 不要求额外 scope
+V3 manual-trading 类型已覆盖当前 schema 与 server execution runtime。删除或更改公开枚举/字段时必须同步 contracts、SQL row mapping、API、前端 DTO 和文档。
 
 ## 修改检查清单
 
-- [ ] 新增/修改枚举时，确保 `serde(rename_all = "snake_case")` 和 `FromStr` 实现一致
-- [ ] 新增数值 newtype 时，遵循现有模式（`new()` 范围校验、`SCALE` 常量、序列化实现）
-- [ ] 修改 `AppError` 时检查所有上层 crate 的错误处理路径
-- [ ] 修改后运行 `cargo check --workspace --tests`
-- [ ] 同步更新 `contracts` crate 中对应的 DTO 枚举（如果新增枚举）
-- [ ] 同步更新前端 `src/lib/contracts/dto/` 中对应的 TypeScript 类型
-- [ ] 同步更新 `src/lib/i18n/dictionaries/enums.ts` 中的枚举翻译
+- [ ] 枚举保持 snake_case serde 与 `FromStr`/`as_str` 一致。
+- [ ] 数值保持精确范围校验，不引入 `f32/f64` 交易字段。
+- [ ] domain 不依赖 server/SQL/HTTP/connector。
+- [ ] 修改后运行 workspace tests 并同步 contracts/frontend。

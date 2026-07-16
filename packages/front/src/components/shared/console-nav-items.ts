@@ -1,9 +1,8 @@
 import type { LucideIcon } from "lucide-react";
 import {
-  CircleDollarSign,
-  HandCoins,
   LayoutDashboard,
-  Newspaper,
+  WalletCards,
+  PlaySquare,
   Settings,
   SquareChartGantt,
 } from "lucide-react";
@@ -18,10 +17,9 @@ export type ConsoleNavItem = {
 
 export const consoleNavItems: ConsoleNavItem[] = [
   { href: "/dashboard", labelKey: "dashboard", icon: LayoutDashboard },
-  { href: "/markets", labelKey: "markets", icon: SquareChartGantt },
-  { href: "/events", labelKey: "events", icon: Newspaper },
-  { href: "/rewards", labelKey: "rewards", icon: HandCoins },
-  { href: "/funding", labelKey: "funding", icon: CircleDollarSign },
+  { href: "/strategies", labelKey: "strategies", icon: SquareChartGantt },
+  { href: "/wallets", labelKey: "wallets", icon: WalletCards },
+  { href: "/operations", labelKey: "operations", icon: PlaySquare },
   { href: "/settings", labelKey: "settings", icon: Settings },
 ];
 

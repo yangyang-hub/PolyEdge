@@ -1,211 +1,144 @@
-import { MeterBar } from "@/components/shared/meter-bar";
+"use client";
+
+import { useCallback, useEffect, useState, useTransition } from "react";
+
+import { ActionDialog } from "@/components/shared/action-dialog";
+import { OperationFeedbackBanner } from "@/components/shared/operation-feedback-banner";
 import { PageHeader } from "@/components/shared/page-header";
 import { StatusPill } from "@/components/shared/status-pill";
-import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { RuntimeConfigPanel } from "@/features/settings/components/runtime-config-panel";
-import type { getSettingsPageData } from "@/features/settings/loaders/settings-page-data";
-import { dictionary, formatMessage } from "@/lib/i18n/dictionaries";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { updateSystemRuntimeState, type OperationActionResult } from "@/lib/api/actions";
+import { readSystemRuntimeState } from "@/lib/api/settings";
+import type { SystemRuntimeStateData } from "@/lib/contracts/dto";
+import { dictionary } from "@/lib/i18n/dictionaries";
 
-type SettingsPageData = Awaited<ReturnType<typeof getSettingsPageData>>;
+type RuntimeAction = "lock" | "release" | null;
 
-type SettingsWorkbenchProps = {
-  data: SettingsPageData;
-  format?: (template: string, values?: Record<string, string | number>) => string;
-};
+export function SettingsWorkbench() {
+  const d = dictionary.settingsV3;
+  const [state, setState] = useState<SystemRuntimeStateData | null>(null);
+  const [action, setAction] = useState<RuntimeAction>(null);
+  const [enableTrading, setEnableTrading] = useState(false);
+  const [reason, setReason] = useState("");
+  const [note, setNote] = useState("");
+  const [stepUpCode, setStepUpCode] = useState("");
+  const [loadError, setLoadError] = useState("");
+  const [feedback, setFeedback] = useState<OperationActionResult | null>(null);
+  const [isPending, startTransition] = useTransition();
 
-export function SettingsWorkbench({ data }: SettingsWorkbenchProps) {
-  const format = formatMessage;
-  const docs = [
-    { title: dictionary.docs.systemDesign, path: "doc/polyedge-design.md" },
-    { title: dictionary.docs.frontendDesign, path: "doc/polyedge-frontend-design.md" },
-    { title: dictionary.docs.uiStack, path: "doc/polyedge-frontend-ui-stack.md" },
-  ];
+  const reload = useCallback(() => {
+    void readSystemRuntimeState()
+      .then((response) => {
+        setState(response.data);
+        setEnableTrading(response.data.trading_enabled);
+        setLoadError("");
+      })
+      .catch(() => setLoadError(d.loadFailed));
+  }, [d.loadFailed]);
+
+  useEffect(reload, [reload]);
+
+  const openAction = (nextAction: Exclude<RuntimeAction, null>) => {
+    setAction(nextAction);
+    setReason("");
+    setNote("");
+    setStepUpCode("");
+    setFeedback(null);
+  };
+
+  const submit = () => {
+    if (!action) return;
+    startTransition(async () => {
+      const result = await updateSystemRuntimeState({
+        request: {
+          kill_switch_locked: action === "lock",
+          trading_enabled: action === "release" && enableTrading,
+          reason: reason.trim() || undefined,
+          operator_note: note.trim() || undefined,
+        },
+        stepUpCode,
+      });
+      setFeedback(result);
+      if (result.ok) {
+        setAction(null);
+        reload();
+      }
+    });
+  };
 
   return (
-    <div className="space-y-6">
-      <PageHeader
-        eyebrow={dictionary.settings.eyebrow}
-        title={dictionary.settings.title}
-        description={dictionary.settings.description}
-        actions={
-          <StatusPill tone={data.backendMode === "live" ? "success" : "warning"}>
-            {data.backendMode}
-          </StatusPill>
-        }
-      />
+    <div className="space-y-8">
+      <PageHeader eyebrow={d.eyebrow} title={d.title} description={d.description} />
+      {feedback ? <OperationFeedbackBanner feedback={feedback} /> : null}
+      {loadError ? <p className="text-sm text-destructive">{loadError}</p> : null}
 
-      <section className="grid gap-4 md:grid-cols-2">
-        <RuntimeConfigPanel entries={data.runtimeConfig} />
+      <Card>
+        <CardHeader>
+          <CardTitle>{d.runtimeState}</CardTitle>
+        </CardHeader>
+        <CardContent className="grid gap-4 md:grid-cols-3">
+          <StateValue label={d.killSwitch} value={state?.kill_switch_locked ? d.locked : d.released} tone={state?.kill_switch_locked ? "danger" : "success"} />
+          <StateValue label={d.trading} value={state?.trading_enabled ? d.enabled : d.disabled} tone={state?.trading_enabled ? "success" : "neutral"} />
+          <StateValue label={d.version} value={state ? String(state.version) : dictionary.common.loading} />
+          <div className="md:col-span-3 grid gap-2 text-sm text-muted-foreground sm:grid-cols-3">
+            <p>{d.reason}: {state?.reason ?? d.none}</p>
+            <p>{d.updatedBy}: {state?.updated_by ?? d.none}</p>
+            <p>{d.updatedAt}: {state?.updated_at ?? d.none}</p>
+          </div>
+          <div className="flex flex-wrap gap-2 md:col-span-3">
+            <Button variant="destructive" disabled={state?.kill_switch_locked === true} onClick={() => openAction("lock")}>{d.trigger}</Button>
+            <Button disabled={!state} onClick={() => openAction("release")}>{d.release}</Button>
+            <Button variant="outline" onClick={reload}>{d.refresh}</Button>
+          </div>
+        </CardContent>
+      </Card>
 
-        <Card className="md:col-span-2">
-          <CardHeader>
-            <CardTitle>{dictionary.settings.dataSourceHealth}</CardTitle>
-            <CardDescription>{dictionary.settings.sourceHealthDescription}</CardDescription>
-            <CardAction>
-              <StatusPill tone={data.sourceHealthSummary.tone}>{data.sourceHealthSummary.label}</StatusPill>
-            </CardAction>
-          </CardHeader>
-          <CardContent>
-            {data.sourceHealth.length > 0 ? (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>{dictionary.settings.source}</TableHead>
-                    <TableHead>{dictionary.settings.type}</TableHead>
-                    <TableHead className="min-w-36">{dictionary.settings.health}</TableHead>
-                    <TableHead>{dictionary.settings.fetched}</TableHead>
-                    <TableHead>{dictionary.settings.inserted}</TableHead>
-                    <TableHead>{dictionary.settings.deduped}</TableHead>
-                    <TableHead>{dictionary.settings.failures}</TableHead>
-                    <TableHead>{dictionary.settings.updated}</TableHead>
-                    <TableHead>{dictionary.settings.error}</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {data.sourceHealth.map((source) => (
-                    <TableRow key={source.source}>
-                      <TableCell>
-                        <div className="space-y-1">
-                          <p className="font-mono text-xs text-foreground">{source.source}</p>
-                          <p className="text-xs text-muted-foreground">{source.enabledLabel}</p>
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <StatusPill tone="neutral">{source.typeLabel}</StatusPill>
-                      </TableCell>
-                      <TableCell>
-                        <div className="space-y-2">
-                          <div className="flex items-center justify-between gap-3">
-                            <StatusPill tone={source.tone}>{source.healthScoreLabel}</StatusPill>
-                            <span className="text-xs text-muted-foreground">
-                              {source.reliabilityLabel} {dictionary.settings.rel}
-                            </span>
-                          </div>
-                          <MeterBar value={source.healthScoreWidth} tone={source.tone} />
-                        </div>
-                      </TableCell>
-                      <TableCell>{source.fetchedLabel}</TableCell>
-                      <TableCell>{source.insertedLabel}</TableCell>
-                      <TableCell>{source.dedupedLabel}</TableCell>
-                      <TableCell>{source.consecutiveFailures}</TableCell>
-                      <TableCell>
-                        <div className="space-y-1 text-xs">
-                          <p className="text-foreground">{source.updatedAtLabel}</p>
-                          <p className="text-muted-foreground">
-                            {dictionary.settings.ok} {source.lastSuccessLabel}
-                          </p>
-                        </div>
-                      </TableCell>
-                      <TableCell className="max-w-56 whitespace-normal text-xs text-muted-foreground">
-                        {source.lastError ? `${source.lastErrorLabel} - ${source.lastError}` : dictionary.common.none}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            ) : (
-              <p className="text-sm text-muted-foreground">{dictionary.settings.noSourceHealth}</p>
-            )}
-          </CardContent>
-        </Card>
+      <Card>
+        <CardHeader><CardTitle>{d.boundaries}</CardTitle></CardHeader>
+        <CardContent className="grid gap-4 text-sm md:grid-cols-3">
+          <Boundary title={d.backendMode} detail={d.backendModeDetail} />
+          <Boundary title={d.dataSource} detail={d.dataSourceDetail} />
+          <Boundary title={d.removedCapabilities} detail={d.removedCapabilitiesDetail} />
+        </CardContent>
+      </Card>
 
-        <Card className="md:col-span-2">
-          <CardHeader>
-            <CardTitle>{dictionary.settings.recentRawNews}</CardTitle>
-            <CardDescription>{dictionary.settings.rawNewsDescription}</CardDescription>
-          </CardHeader>
-          <CardContent>
-            {data.rawNews.length > 0 ? (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>{dictionary.settings.source}</TableHead>
-                    <TableHead>{dictionary.settings.titleColumn}</TableHead>
-                    <TableHead>{dictionary.settings.eventTime}</TableHead>
-                    <TableHead>{dictionary.settings.ingested}</TableHead>
-                    <TableHead>{dictionary.settings.trace}</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {data.rawNews.map((event) => (
-                    <TableRow key={event.id}>
-                      <TableCell>
-                        <div className="space-y-1">
-                          <p className="font-mono text-xs text-foreground">{event.source}</p>
-                          <StatusPill tone="neutral">{event.typeLabel}</StatusPill>
-                        </div>
-                      </TableCell>
-                      <TableCell className="max-w-xl whitespace-normal">
-                        <div className="space-y-1">
-                          {event.url ? (
-                            <a
-                              href={event.url}
-                              className="text-sm font-medium text-foreground underline-offset-4 hover:underline"
-                              target="_blank"
-                              rel="noreferrer"
-                            >
-                              {event.title}
-                            </a>
-                          ) : (
-                            <p className="text-sm font-medium text-foreground">{event.title}</p>
-                          )}
-                          <p className="text-xs text-muted-foreground">
-                            {event.externalId ?? event.author ?? event.id}
-                          </p>
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <div className="space-y-1 text-xs">
-                          <p className="text-foreground">{event.eventTimeLabel}</p>
-                          <p className="text-muted-foreground">
-                            {dictionary.common.published} {event.publishedAtLabel}
-                          </p>
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-xs text-muted-foreground">{event.ingestedAtLabel}</TableCell>
-                      <TableCell className="font-mono text-xs text-muted-foreground">{event.traceId}</TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            ) : (
-              <p className="text-sm text-muted-foreground">{dictionary.settings.noRawNews}</p>
-            )}
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle className="font-heading text-base">{dictionary.settings.documentationLinks}</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {docs.map((doc) => (
-              <div key={doc.title} className="rounded-sm border border-border/70 bg-card p-3">
-                <p className="text-sm font-medium text-foreground">{doc.title}</p>
-                <p className="mt-1 font-mono text-xs text-muted-foreground">{doc.path}</p>
-              </div>
-            ))}
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle className="font-heading text-base">{dictionary.settings.buildTargets}</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-2 text-sm text-muted-foreground">
-            <p>
-              1. {format(dictionary.settings.buildTargetApi, {
-                state: data.apiBaseUrl ? `-> ${data.apiBaseUrl}` : dictionary.settings.buildTargetApiUnset,
-              })}
-            </p>
-            <p>2. {format(dictionary.settings.buildTargetBackendMode, { mode: data.backendMode })}</p>
-            <p>3. {format(dictionary.settings.buildTargetAuthMode, { mode: data.consoleAuthMode })}</p>
-            <p>4. {dictionary.settings.buildTargetLiveMode}</p>
-            <p>5. {dictionary.settings.buildTargetStepUp}</p>
-          </CardContent>
-        </Card>
-      </section>
+      <ActionDialog
+        open={action !== null}
+        onOpenChange={(open) => { if (!open) setAction(null); }}
+        title={action === "lock" ? d.lockDialogTitle : d.releaseDialogTitle}
+        description={action === "lock" ? d.lockDialogDescription : d.releaseDialogDescription}
+        confirmLabel={action === "lock" ? d.lockConfirm : d.releaseConfirm}
+        confirmVariant={action === "lock" ? "destructive" : "default"}
+        isPending={isPending}
+        note={note}
+        onNoteChange={setNote}
+        stepUpCode={stepUpCode}
+        onStepUpCodeChange={setStepUpCode}
+        requiresStepUp
+        onSubmit={submit}
+        confirmDisabled={!stepUpCode.trim()}
+      >
+        <label className="space-y-2 text-sm">
+          <span>{d.reason}</span>
+          <Input value={reason} onChange={(event) => setReason(event.target.value)} />
+        </label>
+        {action === "release" ? (
+          <label className="flex items-center gap-3 rounded-md border p-3 text-sm">
+            <input type="checkbox" checked={enableTrading} onChange={(event) => setEnableTrading(event.target.checked)} />
+            <span>{d.enableTradingOnRelease}</span>
+          </label>
+        ) : null}
+      </ActionDialog>
     </div>
   );
+}
+
+function StateValue({ label, value, tone = "neutral" }: { label: string; value: string; tone?: "neutral" | "success" | "danger" }) {
+  return <div className="rounded-lg border p-4"><p className="text-xs text-muted-foreground">{label}</p><StatusPill className="mt-2" tone={tone}>{value}</StatusPill></div>;
+}
+
+function Boundary({ title, detail }: { title: string; detail: string }) {
+  return <div className="rounded-lg border p-4"><p className="font-medium">{title}</p><p className="mt-2 text-muted-foreground">{detail}</p></div>;
 }

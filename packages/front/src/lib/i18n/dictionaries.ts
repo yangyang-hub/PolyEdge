@@ -1,19 +1,11 @@
 import { shared } from "./dictionaries/shared";
 import { enums } from "./dictionaries/enums";
-import { dashboard } from "./dictionaries/dashboard";
-import { markets } from "./dictionaries/markets";
-import { rewards } from "./dictionaries/rewards";
-import { ops } from "./dictionaries/ops";
-import { funding } from "./dictionaries/funding";
+import { v3 } from "./dictionaries/v3";
 
 const _dictionary = {
   ...shared,
   ...enums,
-  ...dashboard,
-  ...markets,
-  ...rewards,
-  ...ops,
-  ...funding,
+  ...v3,
 } as const;
 
 type DeepStringRecord<T> = {

@@ -5,13 +5,11 @@ impl LivePolymarketConnector {
             &config.private_key,
             "POLYMARKET_PRIVATE_KEY_REQUIRED",
         )?;
-        let account_id = normalize_required(
+        let _account_id = normalize_required(
             "account_id",
             &config.account_id,
             "POLYMARKET_ACCOUNT_ID_REQUIRED",
         )?;
-        let ws_host =
-            normalize_required("ws_host", &config.ws_host, "POLYMARKET_WS_HOST_REQUIRED")?;
         let signer = LocalSigner::from_str(&private_key)
             .map_err(|error| {
                 AppError::invalid_input(
@@ -57,75 +55,8 @@ impl LivePolymarketConnector {
             client,
             private_key,
             chain_id: config.chain_id,
-            account_id,
-            ws_host,
             signature_type: config.signature_type,
         })
-    }
-
-    #[must_use]
-    pub fn account_id(&self) -> &str {
-        &self.account_id
-    }
-
-    /// Send one CLOB heartbeat and return the id required by the next call.
-    pub async fn post_heartbeat(&self, heartbeat_id: Option<&str>) -> Result<String> {
-        let parsed_heartbeat_id = heartbeat_id
-            .map(Uuid::from_str)
-            .transpose()
-            .map_err(|error| {
-                AppError::invalid_input(
-                    "POLYMARKET_HEARTBEAT_ID_INVALID",
-                    format!("invalid Polymarket heartbeat id: {error}"),
-                )
-            })?;
-        match self
-            .client
-            .post_heartbeat(parsed_heartbeat_id)
-            .await
-            .map(|response| response.heartbeat_id.to_string())
-        {
-            Ok(next_heartbeat_id) => Ok(next_heartbeat_id),
-            Err(error) => {
-                let same_chain_error = if heartbeat_id.is_some() {
-                    match self.raw_post_heartbeat(heartbeat_id).await {
-                        Ok(next_heartbeat_id) => return Ok(next_heartbeat_id),
-                        Err(error) => Some(error),
-                    }
-                } else {
-                    None
-                };
-                self.raw_post_heartbeat(None).await.map_err(|restart_error| {
-                    let same_chain_detail = same_chain_error
-                        .map(|error| error.to_string())
-                        .unwrap_or_else(|| "not attempted".to_string());
-                    AppError::dependency_unavailable(
-                        "POLYMARKET_HEARTBEAT_FAILED",
-                        format!(
-                            "failed to post Polymarket heartbeat: {error}; raw same-chain fallback failed: {same_chain_detail}; raw restart failed: {restart_error}"
-                        ),
-                    )
-                })
-            }
-        }
-    }
-
-    pub fn connect_user_ws(&self) -> Result<ClobWsClient<Authenticated<Normal>>> {
-        let client = ClobWsClient::new(&self.ws_host, WsConfig::default()).map_err(|error| {
-            AppError::internal(
-                "POLYMARKET_WS_CLIENT_INIT_FAILED",
-                format!("failed to initialize Polymarket user websocket client: {error}"),
-            )
-        })?;
-
-        client
-            .authenticate(self.client.credentials().clone(), self.client.address())
-            .map_err(|error| {
-                AppError::internal(
-                    "POLYMARKET_WS_AUTHENTICATION_FAILED",
-                    format!("failed to authenticate Polymarket user websocket client: {error}"),
-                )
-            })
     }
 
     /// Query the authenticated account's USDC balance from Polymarket.
@@ -156,161 +87,6 @@ impl LivePolymarketConnector {
         self.balance().await
     }
 
-    /// Check the current rewards-scoring status for a batch of managed orders.
-    pub async fn orders_scoring(
-        &self,
-        order_ids: &[String],
-    ) -> Result<std::collections::HashMap<String, bool>> {
-        if order_ids.is_empty() {
-            return Ok(std::collections::HashMap::new());
-        }
-        let order_ids = order_ids.iter().map(String::as_str).collect::<Vec<_>>();
-        self.client
-            .are_orders_scoring(&order_ids)
-            .await
-            .map_err(|error| {
-                AppError::dependency_unavailable(
-                    "POLYMARKET_ORDER_SCORING_QUERY_FAILED",
-                    format!("failed to query Polymarket order scoring: {error}"),
-                )
-            })
-    }
-
-    /// Return today's maker rewards converted to USD using each reward asset's
-    /// exchange rate from the CLOB response.
-    pub async fn reward_earnings_today_usd(&self) -> Result<Decimal> {
-        let date = chrono::Utc::now().date_naive();
-        let total_result = self.reward_total_earnings_for_day_usd(date).await;
-
-        match total_result {
-            Ok(total) if total > Decimal::ZERO => Ok(total),
-            Ok(total) => match self.reward_detailed_earnings_for_day_usd(date).await {
-                Ok(detailed) => Ok(detailed),
-                Err(error) => {
-                    warn!(
-                        error = %error,
-                        "failed to query detailed Polymarket reward earnings fallback"
-                    );
-                    Ok(total)
-                }
-            },
-            Err(total_error) => match self.reward_detailed_earnings_for_day_usd(date).await {
-                Ok(detailed) => Ok(detailed),
-                Err(detail_error) => Err(AppError::dependency_unavailable(
-                    "POLYMARKET_REWARD_EARNINGS_QUERY_FAILED",
-                    format!(
-                        "failed to query Polymarket reward earnings for {date}: total endpoint failed: {total_error}; detail endpoint failed: {detail_error}"
-                    ),
-                )),
-            },
-        }
-    }
-
-    async fn reward_total_earnings_for_day_usd(&self, date: chrono::NaiveDate) -> Result<Decimal> {
-        // Polymarket's rewards page usually uses the aggregated daily endpoint
-        // for its "Daily Rewards" total. The SDK endpoint wrapper does not
-        // expose `sponsored=true`, so use the raw authenticated path first.
-        match self
-            .raw_reward_total_earnings_for_day_usd(date, true)
-            .await
-        {
-            Ok(total) => return Ok(total),
-            Err(error) => {
-                warn!(
-                    error = %error,
-                    "failed to query sponsored Polymarket reward earnings total; falling back to SDK total"
-                );
-            }
-        }
-
-        match self
-            .client
-            .total_earnings_for_user_for_day(date)
-            .await
-        {
-            Ok(earnings) => Ok(sum_reward_earning_amounts_usd(
-                earnings
-                    .into_iter()
-                    .map(|earning| (earning.earnings, earning.asset_rate)),
-            )),
-            Err(error) => self
-                .raw_reward_total_earnings_for_day_usd(date, false)
-                .await
-                .map_err(|fallback_error| {
-                    AppError::dependency_unavailable(
-                        "POLYMARKET_REWARD_EARNINGS_QUERY_FAILED",
-                        format!(
-                            "failed to query Polymarket reward earnings for {date}: {error}; raw fallback failed: {fallback_error}"
-                        ),
-                    )
-                }),
-        }
-    }
-
-    async fn reward_detailed_earnings_for_day_usd(
-        &self,
-        date: chrono::NaiveDate,
-    ) -> Result<Decimal> {
-        // Some account/signature combinations can return an empty aggregate
-        // response while the detailed per-market endpoint carries the same
-        // reward totals.
-        let mut next_cursor: Option<String> = None;
-        let mut amounts = Vec::new();
-
-        for _ in 0..CLOB_MAX_PAGES {
-            let page = match self
-                .client
-                .earnings_for_user_for_day(date, next_cursor.clone())
-                .await
-            {
-                Ok(page) => page,
-                Err(error) => {
-                    let native = self
-                        .raw_reward_detailed_earnings_for_day_usd(date, false)
-                        .await
-                        .map_err(|fallback_error| {
-                            AppError::dependency_unavailable(
-                                "POLYMARKET_REWARD_EARNINGS_QUERY_FAILED",
-                                format!(
-                                    "failed to query detailed Polymarket reward earnings for {date}: {error}; raw fallback failed: {fallback_error}"
-                                ),
-                            )
-                        })?;
-                    return Ok((native + self.sponsored_detailed_earnings_for_day_usd(date).await)
-                        .round_dp(4));
-                }
-            };
-
-            amounts.extend(
-                page.data
-                    .into_iter()
-                    .map(|earning| (earning.earnings, earning.asset_rate)),
-            );
-
-            if clob_page_is_terminal(&page.next_cursor, page.count, next_cursor.as_deref()) {
-                break;
-            }
-            next_cursor = Some(page.next_cursor);
-        }
-
-        Ok((sum_reward_earning_amounts_usd(amounts)
-            + self.sponsored_detailed_earnings_for_day_usd(date).await)
-        .round_dp(4))
-    }
-
-    async fn sponsored_detailed_earnings_for_day_usd(&self, date: chrono::NaiveDate) -> Decimal {
-        match self.raw_reward_detailed_earnings_for_day_usd(date, true).await {
-            Ok(total) => total,
-            Err(error) => {
-                warn!(
-                    error = %error,
-                    "failed to query sponsored Polymarket reward earnings detail fallback"
-                );
-                Decimal::ZERO
-            }
-        }
-    }
-
     /// List all open orders for the authenticated account, paginating
     /// through all available pages.
     pub async fn list_open_orders(&self) -> Result<Vec<PolymarketOpenOrder>> {
@@ -332,9 +108,10 @@ impl LivePolymarketConnector {
                         "POLYMARKET_ORDERS_QUERY_FAILED",
                         format!("failed to query Polymarket orders: {error}"),
                     )
-                })?;
+            })?;
 
             for o in page.data {
+                let lifecycle_status = order_lifecycle_status(&o, OffsetDateTime::now_utc());
                 all_orders.push(PolymarketOpenOrder {
                     id: o.id,
                     market: format!("0x{:064x}", o.market),
@@ -348,7 +125,7 @@ impl LivePolymarketConnector {
                     size_matched: o.size_matched,
                     price: o.price,
                     outcome: o.outcome,
-                    status: format!("{:?}", o.status),
+                    lifecycle_status,
                     created_at: OffsetDateTime::from_unix_timestamp(o.created_at.timestamp())
                         .unwrap_or_else(|_| OffsetDateTime::now_utc()),
                 });
@@ -361,6 +138,28 @@ impl LivePolymarketConnector {
         }
 
         Ok(all_orders)
+    }
+
+    /// Fetch one explicitly managed order by its venue id. This endpoint is
+    /// used only when that id disappears from the account open-order set; it
+    /// never enumerates historical orders or markets.
+    pub async fn order_snapshot(&self, external_order_id: &str) -> Result<PolymarketOrderSnapshot> {
+        let external_order_id = normalize_required(
+            "external_order_id",
+            external_order_id,
+            "POLYMARKET_ORDER_ID_REQUIRED",
+        )?;
+        let order = self.client.order(&external_order_id).await.map_err(|error| {
+            AppError::dependency_unavailable(
+                "POLYMARKET_ORDER_QUERY_FAILED",
+                format!("failed to query managed Polymarket order {external_order_id}: {error}"),
+            )
+        })?;
+        Ok(PolymarketOrderSnapshot {
+            external_order_id: order.id.clone(),
+            status: order_lifecycle_status(&order, OffsetDateTime::now_utc()),
+            filled_quantity: order.size_matched.max(Decimal::ZERO),
+        })
     }
 
     /// Recover a previously-submitted token order after the caller lost the
@@ -400,117 +199,6 @@ impl LivePolymarketConnector {
             submitted_quantity: adjusted_quantity,
             accepted_at: OffsetDateTime::now_utc(),
         }))
-    }
-
-    pub async fn submit(
-        &self,
-        request: &LivePolymarketOrderRequest,
-    ) -> Result<LivePolymarketExecutionOutcome> {
-        validate_live_order_request(request)?;
-        let _ = request.market_refs.condition_id()?;
-        let asset_id = request.market_refs.asset_id_for_side(request.side)?;
-        let adjusted_quantity = adjusted_order_quantity(request.limit_price, request.quantity)?;
-        // Snap to a 0.01-tick-safe price (<= 2 dp); see submit_token_order.
-        let tick_price = request.limit_price.value().round_dp(2);
-        let adjusted_notional = tick_price * adjusted_quantity.value();
-        let signer = LocalSigner::from_str(&self.private_key)
-            .map_err(|error| {
-                AppError::invalid_input(
-                    "POLYMARKET_PRIVATE_KEY_INVALID",
-                    format!("invalid polymarket private_key: {error}"),
-                )
-            })?
-            .with_chain_id(Some(self.chain_id));
-
-        if adjusted_notional < POLYMARKET_MIN_NOTIONAL_USD {
-            return Ok(LivePolymarketExecutionOutcome::Rejected(
-                PolymarketOrderRejection {
-                    code: "POLYMARKET_MIN_NOTIONAL_NOT_MET".to_string(),
-                    message: format!(
-                        "polymarket live connector requires adjusted notional >= 1.00 USD, got {}",
-                        adjusted_notional
-                    ),
-                },
-            ));
-        }
-
-        self.update_deposit_wallet_balance_allowance_if_needed(Side::Buy, Some(asset_id))
-            .await?;
-
-        let signable = self
-            .client
-            .limit_order()
-            .token_id(asset_id)
-            .side(Side::Buy)
-            .price(tick_price)
-            .size(adjusted_quantity.value())
-            .order_type(OrderType::GTC)
-            .build()
-            .await
-            .map_err(|error| {
-                AppError::internal(
-                    "POLYMARKET_ORDER_BUILD_FAILED",
-                    format!(
-                        "failed to build live polymarket order for execution_request_id={}: {error}",
-                        request.execution_request_id
-                    ),
-                )
-            })?;
-
-        let signed = self.client.sign(&signer, signable).await.map_err(|error| {
-            AppError::internal(
-                "POLYMARKET_ORDER_SIGN_FAILED",
-                format!(
-                    "failed to sign live polymarket order for execution_request_id={}: {error}",
-                    request.execution_request_id
-                ),
-            )
-        })?;
-
-        let response = match self.client.post_order(signed).await {
-            Ok(response) => response,
-            Err(error) => {
-                if let Some(rejection) = explicit_order_post_rejection(&error) {
-                    return Ok(LivePolymarketExecutionOutcome::Rejected(rejection));
-                }
-                return Err(AppError::internal(
-                    "POLYMARKET_ORDER_POST_FAILED",
-                    format!(
-                        "failed to submit live polymarket order for execution_request_id={}: {error}",
-                        request.execution_request_id
-                    ),
-                ));
-            }
-        };
-
-        if !response.success && response.order_id.trim().is_empty() {
-            return Ok(LivePolymarketExecutionOutcome::Rejected(
-                PolymarketOrderRejection {
-                    code: "POLYMARKET_ORDER_REJECTED".to_string(),
-                    message: response
-                        .error_msg
-                        .unwrap_or_else(|| "Polymarket order was rejected".to_string()),
-                },
-            ));
-        }
-        if response.order_id.trim().is_empty() {
-            return Err(AppError::internal(
-                "POLYMARKET_ORDER_POST_FAILED",
-                format!(
-                    "Polymarket accepted live order without order_id for execution_request_id={}",
-                    request.execution_request_id
-                ),
-            ));
-        }
-
-        Ok(LivePolymarketExecutionOutcome::Accepted(
-            LivePolymarketOrderAcceptance {
-                order_id: response.order_id,
-                status: accepted_order_status(&response.status),
-                submitted_quantity: adjusted_quantity,
-                accepted_at: OffsetDateTime::now_utc(),
-            },
-        ))
     }
 
     pub async fn submit_token_order(
@@ -730,43 +418,7 @@ impl LivePolymarketConnector {
         ))
     }
 
-    pub async fn poll_order_status(
-        &self,
-        request: &LivePolymarketOrderStatusRequest,
-    ) -> Result<Option<ConnectorOrderStatusUpdate>> {
-        validate_live_order_status_request(request)?;
-        let order = self.fetch_order(&request.external_order_id).await?;
-
-        match order.status {
-            SdkOrderStatusType::Live | SdkOrderStatusType::Unmatched
-                if !matches!(order.order_type, OrderType::FAK | OrderType::FOK) =>
-            {
-                Ok(Some(ConnectorOrderStatusUpdate {
-                    event_id: format!("evt_pm_order_poll:{}:live", order.id),
-                    connector_name: POLYMARKET_CONNECTOR_NAME.to_string(),
-                    external_order_id: order.id,
-                    status: OrderStatus::Open,
-                }))
-            }
-            SdkOrderStatusType::Canceled => Ok(Some(ConnectorOrderStatusUpdate {
-                event_id: format!("evt_pm_order_poll:{}:canceled", order.id),
-                connector_name: POLYMARKET_CONNECTOR_NAME.to_string(),
-                external_order_id: order.id,
-                status: OrderStatus::Canceled,
-            })),
-            SdkOrderStatusType::Matched
-            | SdkOrderStatusType::Delayed
-            | SdkOrderStatusType::Unmatched
-            | SdkOrderStatusType::Unknown(_)
-            | _ => Ok(None),
-        }
-    }
-
 }
-
-include!("live/raw.rs");
-include!("live/trade_reconciliation.rs");
-include!("live/trade_sync.rs");
 
 fn token_order_side(side: PolymarketTokenOrderSide) -> Side {
     match side {

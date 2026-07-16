@@ -1,111 +1,78 @@
 # packages/backend/AGENTS.md
 
-最后更新：2026-07-13
+最后更新：2026-07-15
 
-后端（Rust workspace）代码规范。Rust workspace 根为 [packages/backend/Cargo.toml](Cargo.toml)。仓库级状态快照见根 [AGENTS.md](../../AGENTS.md)；前端规范见 [packages/front/AGENTS.md](../front/AGENTS.md)。本文件的规则在写或改 `packages/backend/api/`、`packages/backend/order/`、`packages/backend/` 下任何 Rust 代码时必须遵守，违背即应拆分/重构而非沿用。
+后端 Rust workspace 根为 [Cargo.toml](Cargo.toml)，仓库状态快照见根 [AGENTS.md](../../AGENTS.md)。本文件适用于 `packages/backend/server` 与活动共享 crates。
 
-## 适用范围
+## 活动 workspace 边界
 
-`packages/backend` Rust workspace 下所有后端 crate 与 app：服务 crate `packages/backend/api`、`packages/backend/order`，以及 worker/replay app 和共享 crates。任何改变模块结构、分层依赖、公共抽象位置的改动，都要确认仍符合本文件，必要时同步更新本文件。
-
-## 分层架构
-
-crate 依赖**单向**，不可逆向：
-
-| crate | 职责 | 依赖 |
+| crate/app | 职责 | 依赖方向 |
 |---|---|---|
-| `domain` | 领域模型、错误（`AppError`）、数值 newtype（`Probability`/`Edge`/`UsdAmount`…） | 无（不依赖任何上层） |
-| `application` | 用例服务 + port traits（`*Store`/`*Sink` 抽象）、领域编排 | `domain` |
-| `connectors` | 外部数据源适配（Polymarket / news） | `domain` `application` |
-| `infrastructure` | port 的具体实现：`catalog`(postgres/in-memory)、`stores`、`settings`、`auth`、`http`、`runtime` | `domain` `application` |
-| `contracts` | HTTP API DTO（纯数据结构 + serde） | `domain` |
-| `common` | 跨二进制复用的进程外壳 helper（监听地址、signal shutdown 等），不放业务逻辑 | `domain` |
-| `packages/backend/api` / `packages/backend/order` / `packages/backend/apps/{worker,replay}` | 可执行入口，组装上述 crate | 全部 |
+| `crates/domain` | 领域模型、状态枚举、数值和 `AppError` | 不依赖上层 |
+| `crates/contracts` | HTTP 请求/响应 DTO | `domain` |
+| `crates/connectors` | Polymarket CLOB/Data API 协议适配 | `domain` |
+| `server` | Axum API、Postgres store、targeted orderbook、secret resolver、多钱包执行 runtime | 上述 crates |
 
-**红线：**
-- `domain` 不得 `use` 任何上层；领域逻辑不下沉到 `infrastructure`。
-- HTTP DTO 只放 `contracts`，不在 handler 内联定义请求/响应结构。
-- 跨外部系统的交互走 `connectors`，不在 `application` 里直接发 HTTP/SQL。
+V3 不再设置独立 `application`、`infrastructure`、`common`、API app、worker app、orderbook app 或 replay app。后端可部署产物只有 `polyedge-server`；不要重新引入进程间 orderbook/provider HTTP client、Gamma/news producer 或旧 Rewards service。
 
-## Event-window 数据合同
+## 分层红线
 
-- Gamma `startDate` / `startDateIso` 只是 market lifecycle start，`endDate` / `endDateIso` 只是 market end/resolution deadline；无论 `hasReviewedDates` 值如何，都不得作为 rewards 事件 hard gate。只有 `gameStartTime` 和 `events[].startTime` 可以生成显式 scheduled-event candidate。
-- 同一 condition 必须支持多 `event_key`；不得把多事件压成一条 `(condition_id, source)` 行，也不得用会随重排/改期变化的 ordinal 或 timestamp 作 key。Application 按 event key 选最高优先级 source，`manual` 可以覆盖或撤回 Gamma，然后在多 key 中聚合最严格风险动作。
-- Producer 必须使用 source snapshot replace，在 `coverage[]` 中逐 condition 声明 `condition_id + source_updated_at`。Store 按 source 获取 Postgres transaction advisory lock，以每 condition `(producer_version, source_updated_at, observed_at)` 和 snapshot hash 作 high-water，并将快照中缺失的 event key tombstone；禁止回退成逐行 upsert。
-- Legacy 行缺少 time role/precision/start provenance 时必须 fail closed，不得仅依靠 source 名称或旧 confidence 推断 hard-gate eligibility。`0003_reward_event_window_semantics.sql` 与旧 producer 不滚动兼容；部署时必须协调停止旧 producer，迁移后再启动新 runtime。
+- `domain` 不得依赖 HTTP、SQL、connector 或 server。
+- 对外 HTTP DTO 放在 `contracts`；handler 不内联公开请求/响应类型。
+- 外部 Polymarket 协议调用集中在 `connectors`；API handler 和策略纯函数不得直接发外部请求。
+- SQL、迁移、幂等、审计和执行 lease 位于 `server/store` 与 `migrations_v2`。
+- `server/orderbook` 只处理数据库已知的人工目标 token、open-like managed orders 和非零 positions，不发现市场、不全量扫描。
+- 钱包 credential 表只保存 provider/locator；真实 secret 由 `server/secrets.rs` 运行时解析，禁止进入 DTO、日志和数据库。
 
-## 模块化设计
+## V3 执行约束
 
-1. **crate 根 `lib.rs` / 目录 `mod.rs`**：只做 `mod` 声明 + `pub use` 收敛对外 API（范例：`packages/backend/crates/application/src/lib.rs`）。不要在根文件堆实现。
+- quote slot 是 desired-order 稳定身份；一个钱包/slot 最多一张 open-like 订单。
+- 钱包间并行、单钱包串行；数据库 job/action terminal write 必须携带 lease owner + epoch fencing。
+- `unknown` submission/cancel 结果必须占用 slot 并 fail closed，不能自动补挂。
+- place/replace 前重新检查 kill switch、钱包开关、余额、风险上限、盘口 freshness、post-only 和价格边界。
+- fixed price 与 positive book rank 二选一；数量、方向、单边/双边均来自人工策略版本。
+- 下调/上调重挂分别遵守确认时间，竞争性上调还受 cooldown 与 `max_replaces_per_cycle` 限制。
+- clean deploy 默认 kill switch 锁定且全局交易关闭。
 
-2. **`include!` 拆分模式（项目核心惯例，全仓 100+ 处）**：当单个逻辑模块超过行数阈值，建一个「模块根文件」放共享 `use`/`const`/核心类型，按职责把实现拆到子目录文件，用 `include!("子目录/文件.rs")` 内联：
-   - 被 `include!` 的子文件**不写自己的 `use`**，共享根文件作用域的导入；
-   - 同一个 `impl T` 可拆成多个 `impl T { … }` 块分布在不同子文件；
-   - 路径相对**根文件物理目录**解析，可多层嵌套（范例：`catalog/postgres/market_event/execution_updates/`）；
-   - 子文件按**职责**命名（`fills.rs`/`quoting.rs`/`verifier.rs`/`parsers.rs`），不要按类型机械堆叠。
+## 代码组织
 
-   范例：`rewards.rs`（根：共享导入 + `include!` 聚合）→ `rewards/{models,service,planner,helpers}.rs`。
+- crate 根 `lib.rs` 只做模块声明与 re-export。
+- 同一逻辑单元超过阈值时优先拆成真实 `mod`；仅在现有 include 组织下延续职责清晰的 `include!`，不要为了规避边界把无关逻辑塞进同一作用域。
+- 重复 SQL/row mapping 放到 `store/helpers.rs` 或职责明确的 store 子模块。
+- API、store、orderbook、execution、secrets 和 config 保持独立职责；不要在 handler 内实现策略或数据库事务。
 
-3. **`mod` vs `include!`**：要对外暴露子命名空间（独立可见性边界）用真正的 `mod`（如 `settings::runtime_config`、`infrastructure` 的 `pub mod`）；同一逻辑单元的纯物理拆分用 `include!`。
+## 文件行数
 
-## 文件行数规范
+- 软上限 500 行，超过时评估拆分。
+- 硬上限 800 行，必须拆分；纯 DTO/生成代码/长 SQL 可按例外审查。
+- 函数建议不超过 80 行。
+- 当前没有活动生产文件超过 800 行硬上限。`server/src/store/execution.rs` 已接近硬上限；`server/src/api/mod.rs`、`execution.rs`、`store/strategies.rs` 已超过 500 行软上限。后续触碰应按 API 资源、runtime/venue action 和 store query/write 职责拆分。
 
-- **软上限 500 行**：超过应评估是否按职责拆分。
-- **硬上限 800 行**：必须拆分。
-- 函数体建议 ≤ 80 行；过长的 `impl` 拆成多个 `impl T { … }` 分文件。
-- **例外（允许略超）：**
-  - 单个 `impl Trait for Type` 块语言上不可跨文件拆（范例：`stores/rewards/postgres.rs` 的 `impl RewardBotStore`）。确需缩小时，把方法体委托给可拆分的 inherent helper。
-  - 纯数据定义集合（DTO）、生成代码、长 SQL 字面量。
-- **拆分纪律**：纯文本搬移、零逻辑改动；每拆一个文件立即 `cargo check`，编译器兜底正确性，不向后累积错误。
+## 测试与验证
 
-## 公共代码提取
-
-- 重复逻辑提到 `helpers.rs`（范例：`rewards/helpers.rs`、`stores/helpers.rs`）。
-- DB 行 ↔ 领域对象映射放 `*_rows.rs`（范例：`catalog/helpers/*_rows.rs`）。
-- HTTP DTO ↔ 领域对象转换放 `mappers.rs`（范例：`packages/backend/api/src/handlers/mappers.rs`）。
-- 仅本模块用的私有 helper 就近放模块内；跨 crate 业务复用下沉到 `domain` 或 `application`，跨二进制进程外壳复用放 `common`，不要在 app 之间复制。
-- 禁止复制粘贴成片逻辑：同一段逻辑第二次出现即提取为共享函数。
-
-## 测试组织
-
-- 库 crate：模块内 `#[cfg(test)] mod tests { use super::*; … }`，可作为 `tests.rs` 被 `include!`（范例：`auth/tests.rs`、`settings/tests.rs`）。
-- 二进制 crate：`src/tests/` 目录 + `src/tests.rs` 聚合（范例：`packages/backend/api/src/tests/`）。
-- 测试与被测代码同 crate，通过 `super::` 访问私有项。
-
-## 验证命令
+- 纯决策逻辑使用模块内单元测试覆盖 fixed/book-rank、freshness、post-only、risk、keep/cancel/replace 与 unknown fencing。
+- Store 变更应使用 PostgreSQL 集成测试或最小 clean-schema smoke，特别验证 `SKIP LOCKED`、lease fencing、partial unique open-slot 约束和幂等重放。
+- 禁止使用真实私钥、真实资金或真实下单作为默认测试前置。
 
 ```bash
 cd packages/backend
-cargo check --workspace --tests   # 编译（含测试目标），跨 crate 改动后必跑
-cargo test --workspace            # 运行测试
-cargo fmt --all                   # 统一格式（拆分/搬移后必跑）
-cargo clippy --workspace --tests  # lint
+cargo fmt --all
+cargo check --workspace --tests
+cargo test --workspace
+cargo clippy --workspace --tests
+cargo run -p polyedge-server
 ```
 
-## 现有文件长度债务（2026-07-13 快照）
+数据库变更还必须保持以下文件字节一致，并在空 PostgreSQL 上执行：
 
-以下生产代码物理文件已超过 800 行硬上限，属于存量拆分债务；后续触碰这些文件时应优先按职责拆分，不能继续扩大：
+```bash
+cmp packages/backend/migrations_v2/0001_manual_trading_schema.sql packages/backend/init.sql
+```
 
-- `order/src/stream.rs`（~1969；CLOB refresh 调度已拆到 `order/src/refresh_scheduler.rs`）
-- `crates/infrastructure/src/stores/rewards/in_memory.rs`（~1807）
-- `apps/worker/src/worker/rewards.rs`（~1688；replay capture 已拆到 `worker/rewards/replay_capture.rs`）
-- `apps/worker/src/worker/rewards/live_orders.rs`（~1647）
-- `crates/infrastructure/src/stores/rewards/postgres.rs`（~1630；单个 `impl RewardBotStore` 受语言限制，方法体应委托到 inherent helper）
-- `apps/worker/src/worker/reward_action_executor.rs`（~1529）
-- `crates/application/src/rewards/config_impl.rs`（~1353）
-- `crates/infrastructure/src/stores/rewards/postgres_run_ledger.rs`（~1292）
-- `crates/application/src/rewards/service.rs`（~1240）
-- `crates/connectors/src/polymarket/chain.rs`（~1168）
-- `apps/worker/src/worker/rewards/account_sync.rs`（~1121）
-- `crates/application/src/rewards/planner.rs`（~1049）
-- `apps/worker/src/worker/rewards/live_pending.rs`（~967）
-- `crates/application/src/rewards/models.rs`（~905；纯数据定义可按例外评估）
-- `crates/application/src/rewards/run_ledger_models.rs`（~911；纯数据定义可按例外评估）
-- `crates/application/src/rewards/runtime_models.rs`（~968；纯数据定义可按例外评估）
-- `apps/worker/src/worker/rewards/live_sync.rs`（~874）
-- `crates/application/src/rewards/opportunity_metrics.rs`（~825）
-- `crates/infrastructure/src/stores/helpers/reward_config.rs`（~820）
-- `apps/worker/src/worker/rewards/info_risk.rs`（~820）
-- `crates/infrastructure/src/catalog/postgres/market_event/queries.rs`（~811）
+## 文档同步
 
-此外仍有多份测试文件超过硬上限，`catalog/postgres/market_event/execution_updates/fills.rs`（~688）和 `application/risk.rs`（~684）等生产文件处于软上限区间。行数以当前物理文件 `wc -l` 为准；重构后应同步刷新本节。
+- 修改 `server`：更新 `doc/modules/backend/server-app.md`。
+- 修改 connector：更新 `doc/modules/backend/connectors.md`。
+- 修改 domain/contracts：更新对应模块文档和前端 DTO。
+- 修改 schema：更新 `doc/modules/infra/database.md`。
+- 修改 env、端口、镜像或运行命令：更新根 `AGENTS.md`、README 和部署文档。

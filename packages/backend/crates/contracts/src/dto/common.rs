@@ -72,5 +72,5 @@ pub struct DependencyStatus {
 pub struct ReadinessData {
     pub status: String,
     pub postgres: DependencyStatus,
-    pub redis: DependencyStatus,
+    pub orderbook: DependencyStatus,
 }

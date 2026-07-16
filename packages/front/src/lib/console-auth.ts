@@ -19,10 +19,9 @@ const CONSOLE_ROLE_RANK: Record<ConsoleRole, number> = {
 
 const CONSOLE_ROUTE_REQUIREMENTS: Array<{ prefix: string; minRole: ConsoleRole }> = [
   { prefix: "/dashboard", minRole: "viewer" },
-  { prefix: "/markets", minRole: "viewer" },
-  { prefix: "/events", minRole: "viewer" },
-  { prefix: "/rewards", minRole: "operator" },
-  { prefix: "/funding", minRole: "operator" },
+  { prefix: "/strategies", minRole: "operator" },
+  { prefix: "/wallets", minRole: "operator" },
+  { prefix: "/operations", minRole: "operator" },
   { prefix: "/settings", minRole: "admin" },
 ];
 

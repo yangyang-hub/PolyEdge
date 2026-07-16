@@ -1,62 +1,54 @@
-# contracts（HTTP API DTO 层）
+# contracts（V3 HTTP DTO）
 
-最后更新：2026-07-12
+最后更新：2026-07-15
 
 ## 概述
 
-`polyedge_contracts` crate 定义后端 HTTP API 的请求/响应 DTO。API handler 和前端 TypeScript DTO 镜像都以这里的结构为契约来源，避免路由响应和客户端类型漂移。
+`polyedge_contracts` 定义 `polyedge-server` 的公开 HTTP 请求/响应。Handler 与前端 TypeScript DTO 必须以这里为唯一字段契约，不在路由文件中内联公开 payload。
 
-## 设计目标
+V3 契约只覆盖健康/就绪、钱包、人工策略、执行批次、批量撤单、managed orders/positions 和 system runtime state；不再公开 fills、markets/events/news/rewards/fair-value/funding/provider/orderbook-service 旧 DTO。
 
-- API handler 不内联定义公开请求/响应结构。
-- DTO 按领域拆分到 `dto/` 子文件，并通过 `include!()` 暴露在 crate 根命名空间。
-- 复用 `domain` crate 的核心枚举和数值类型，保持跨层一致。
-
-## 架构与关键文件
+## 关键文件
 
 | 文件 | 职责 |
 |---|---|
-| `lib.rs` | DTO crate 入口，内联当前 12 个 DTO 文件 |
-| `dto/common.rs` | `ApiMeta`、`ApiResponse<T>`、`ApiListResponse<T>` 等共享信封 |
-| `dto/system.rs` | 健康、就绪、系统模式和 runtime config |
-| `dto/market.rs` | 市场列表、详情、分类和 bucket 状态 |
-| `dto/news.rs` | 新闻源健康和 raw news event 查询 |
-| `dto/risk.rs` | connector callback 兼容的 `RiskStateData` |
-| `dto/execution.rs` | 执行请求、订单、草稿、持仓、成交和回调相关 DTO |
-| `dto/pricing.rs` | 概率估计查询和响应 |
-| `dto/callback.rs` | Connector callback 请求/响应 |
-| `dto/query.rs` | 分页、排序等共享查询参数 |
-| `dto/orderbook.rs` | Orderbook HTTP 代理 DTO |
-| `dto/funding.rs` | Funding 状态、资产余额、转账请求和回执 |
-| `dto/rewards.rs` | Rewards config/control 写请求，包含平铺 patch 和可选 operator note |
+| `src/lib.rs` | 当前 DTO re-export |
+| `src/dto/common.rs` | `ApiMeta`、`ApiResponse<T>`、结构化错误、health/readiness |
+| `src/manual_trading.rs` | V3 request/data/query DTO |
 
-## 核心设计模式
+## 核心请求
 
-- DTO 默认 derive `Debug, Clone, Serialize, Deserialize`。
-- 查询类型使用 `#[serde(skip_serializing_if = "Option::is_none")]`。
-- 列表查询支持分页参数。
-- 响应使用 `ApiResponse<T>` 或 `ApiListResponse<T>` 信封。
-- `RewardBotSnapshotQuery` 支持计划/订单分页、搜索、状态过滤和排序参数。
-- `UpdateRewardBotConfigRequest` 保持现有 config patch 的平铺 JSON 兼容性，并把 `operator_note` 从策略配置字段中隔离；`RewardBotControlRequest` 是 run/cancel/reset 的严格请求体。
-- `RewardStrategyRunsQuery`、`RewardStrategyDecisionsQuery`、`RewardStrategyActionsQuery`、`RewardOrderTransitionsQuery` 支持 rewards strategy ledger 查询分页和过滤。
-- `MarketData` 包含 Gamma 同步的 `liquidity_usd` 与 `end_at`。
+- `CreateWalletAccountRequest` / `UpdateWalletAccountRequest`：钱包身份、credential locator、交易开关与风险 policy；不接受私钥。
+- `CreateMarketStrategyRequest`：一次提交人工 market、rewards terms、version、quote slots 和 `wallet_ids`。
+- `UpdateMarketStrategyRequest`：更新 market/status 或创建后续不可变版本。
+- `CreateExecutionBatchRequest`：一个 `strategy_id` + 多个 `wallet_ids` + 可选 operator note。
+- `CancelExecutionBatchRequest` / `CreateCancellationBatchRequest`：批次级或钱包/策略范围的保护性撤单。
+- `UpdateSystemRuntimeStateRequest`：全局 trading/kill-switch 状态与 operator note。
 
-## 依赖关系
+## 核心响应
 
-- 上游：`domain`（枚举和值对象）。
-- 下游：`packages/backend/api` handler、前端 `src/lib/contracts/dto/` TypeScript 镜像。
+- `WalletAccountData`：account + credential ref + risk + state，不含 secret。
+- `MarketStrategyData`：strategy + managed market/outcomes/reward terms + published version/slots/targets。
+- `ExecutionBatchData` / `WalletExecutionJobData`：批次和逐钱包结果。
+- `WriteOperationData`：accepted、operation id、resource id、completed/queued 状态。
+- `ManagedOrderData`、`ManagedPositionData`：复用 domain 账本类型。
+- `SystemRuntimeStateData`：全局交易与 kill switch 状态。
+
+## 契约规则
+
+- 所有响应使用 `ApiResponse<T>`，携带 request/trace meta。
+- Decimal 字段按 Rust serde 契约传输；前端不得擅自改成不兼容数字结构。
+- operator note 单行且最多 500 字符。
+- 业务写请求由 server 强制 `Idempotency-Key`；危险操作另要求 step-up scope。
+- 前端 execution batch 必须发送单一 `strategy_id`，不能发送旧 `strategy_version_ids[]`。
 
 ## 当前状态
 
-- 当前 DTO 覆盖 markets、events/evidences、news、orders、trades、pricing、rewards snapshot/control 查询参数与写请求、rewards strategy ledger 查询参数、runtime config、system mode、connector callback、orderbook 和 funding。
-- 已删除旧钱包类与独立研究 DTO；`lib.rs` 不再 include 对应文件。
-- `RiskStateData` 和 execution `PositionData` 仅保留给 connector callback 与内部执行链路兼容，不代表旧控制台风控页面仍存在。
-- Funding DTO 覆盖后端资金钱包状态、USDC/USDT 链上余额和转账回执；请求只包含 `token_id`、`amount`、`confirmed`，不包含充值地址或私钥字段。
-- Rewards snapshot/config/order/plan 响应体主要直接使用 application 层模型序列化；当前公开配置使用单一 `maker_market_budget_usd`，advisory 使用 V2 action/size/edge 字段，blocker counts 区分 provider、maker budget 与 inventory headroom。前端 DTO 必须同步镜像。
+V3 manual-trading DTO 已被 server API 使用。前端 `src/lib/contracts/dto/` 与表单必须逐字段镜像；任何嵌套/字段名变化都要同时验证 Rust serde 与 TypeScript 类型检查。
 
 ## 修改检查清单
 
-- [ ] 新增/修改 API 端点时，先在此 crate 定义或更新 DTO。
-- [ ] 新增 DTO 文件后在 `lib.rs` 中添加 `include!()`。
-- [ ] 修改 DTO 后同步更新前端 TypeScript DTO 镜像。
-- [ ] 运行 `cargo check --workspace --tests`。
+- [ ] 先改 contract，再改 handler/store 和前端镜像。
+- [ ] secret 永不进入 request echo/response/debug DTO。
+- [ ] 删除字段时不保留旧数据兼容分支。
+- [ ] 运行 backend check/tests 与 frontend typecheck/build。

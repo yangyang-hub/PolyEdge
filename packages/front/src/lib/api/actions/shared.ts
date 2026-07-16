@@ -8,26 +8,8 @@ export type OperationActionResult = {
   requestId?: string;
   traceId?: string;
   operationId?: string;
-  status?: "queued" | "completed" | "rejected";
-  fieldErrors?: Partial<
-    Record<
-      | "note"
-      | "stepUpCode"
-      | "targetMode"
-      | "limitPrice"
-      | "quantity"
-      | "connectorName"
-      | "address"
-      | "tokenId"
-      | "amount"
-      | "confirmed"
-      | "idempotencyKey"
-      | "source"
-      | "status"
-      | "reason",
-      string
-    >
-  >;
+  status?: string;
+  fieldErrors?: Record<string, string | undefined>;
 };
 
 export function createActionSuccessResult(
@@ -36,7 +18,7 @@ export function createActionSuccessResult(
     requestId: string;
     traceId: string;
     operationId: string;
-    status: "queued" | "completed" | "rejected";
+    status: string;
   },
 ): OperationActionResult {
   return {

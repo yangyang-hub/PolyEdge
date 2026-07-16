@@ -17,7 +17,7 @@ export default function NotFound() {
             <Link href="/dashboard">{dictionary.common.backToDashboard}</Link>
           </Button>
           <Button asChild variant="outline" className="rounded-sm border-white/10 bg-accent/45 hover:bg-accent">
-            <Link href="/markets">{dictionary.routeStates.openMarkets}</Link>
+            <Link href="/strategies">{dictionary.routeStates.openStrategies}</Link>
           </Button>
         </>
       }

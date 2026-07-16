@@ -1,53 +1,47 @@
 # 模块文档索引
 
-最后更新：2026-07-12
+最后更新：2026-07-15
 
-本目录记录项目每个模块的设计与实现细节。**修改任何模块前必须先查阅对应文档；修改后必须同步更新文档。**
+本目录记录当前活动模块的设计与实现细节。修改模块前先阅读对应文档，修改后同步更新日期、关键文件、数据结构、当前状态和缺口。
 
-当前 Rewards 策略设计基线见 [Rewards Market Maker V2](../designs/rewards-market-maker-v2.md)；历史计划文档不作为实现状态来源。
+V3 总体设计基线见 [人工市场多钱包做市 V3](../designs/manual-market-maker-v3.md)。旧 Rewards V2、事件窗口、AI/provider、fair-value、独立 worker/orderbook/replay 文档均为历史材料，不是当前能力来源。
 
 ## 后端（Rust workspace）
 
 | 文档 | 模块 | 职责 |
 |---|---|---|
-| [domain.md](backend/domain.md) | `packages/backend/crates/domain` | 领域层：值对象、枚举、错误类型 |
-| [application.md](backend/application.md) | `packages/backend/crates/application` | 应用层：业务服务、Store trait、命令类型 |
-| [connectors.md](backend/connectors.md) | `packages/backend/crates/connectors` | 连接器层：Polymarket CLOB/Gamma/DataAPI、RSS、Paper Trading |
-| [infrastructure.md](backend/infrastructure.md) | `packages/backend/crates/infrastructure` | 基础设施层：持久化、认证、配置、运行时 |
-| [contracts.md](backend/contracts.md) | `packages/backend/crates/contracts` | HTTP API DTO 定义 |
-| [common.md](backend/common.md) | `packages/backend/crates/common` | 后端二进制共享进程外壳 helper |
-| [api-app.md](backend/api-app.md) | `packages/backend/api` | Axum HTTP API 服务 |
-| [worker-app.md](backend/worker-app.md) | `packages/backend/apps/worker` | Tokio 后台任务服务 |
-| [orderbook-app.md](backend/orderbook-app.md) | `packages/backend/order` | 独立市场同步、盘口流和盘口 HTTP 服务 |
-| [replay-app.md](backend/replay-app.md) | `packages/backend/apps/replay` | 历史回放工具 |
+| [server-app.md](backend/server-app.md) | `packages/backend/server` | 单后端进程：API、Postgres store、targeted orderbook、多钱包执行 |
+| [domain.md](backend/domain.md) | `packages/backend/crates/domain` | V3 领域类型、状态枚举和值对象 |
+| [contracts.md](backend/contracts.md) | `packages/backend/crates/contracts` | V3 HTTP API DTO |
+| [connectors.md](backend/connectors.md) | `packages/backend/crates/connectors` | Polymarket CLOB live、targeted books 与 Data API 适配 |
+
+旧 `api-app.md`、`application.md`、`common.md`、`infrastructure.md`、`orderbook-app.md`、`worker-app.md`、`replay-app.md` 已删除，因为对应活动模块和独立进程在 V3 中不存在。
 
 ## 前端（Next.js + React）
 
 | 文档 | 模块 | 职责 |
 |---|---|---|
-| [data-layer.md](frontend/data-layer.md) | `src/lib/api/*` + `contracts/*` | 数据层：API Client、Server Actions、DTO 类型镜像 |
-| [i18n.md](frontend/i18n.md) | `src/lib/i18n/*` | 国际化：字典、运行时、Provider |
-| [shared-components.md](frontend/shared-components.md) | `src/components/*` + `src/hooks/*` | 共享组件和自定义 Hooks |
-| [dashboard.md](frontend/dashboard.md) | `features/dashboard` | 仪表盘 |
-| [markets.md](frontend/markets.md) | `features/markets` | 市场列表 |
-| [events.md](frontend/events.md) | `features/events` | 事件/证据 |
-| [rewards.md](frontend/rewards.md) | `features/rewards` | 奖励机器人 |
-| [funding.md](frontend/funding.md) | `features/funding` | Polymarket 入金 |
-| [settings.md](frontend/settings.md) | `features/settings` | 设置 |
+| [data-layer.md](frontend/data-layer.md) | `src/lib/api/*` + `contracts/*` | API client、mutation actions、TypeScript DTO |
+| [i18n.md](frontend/i18n.md) | `src/lib/i18n/*` | 中文字典与运行时 |
+| [shared-components.md](frontend/shared-components.md) | `src/components/*` + `src/hooks/*` | 共享组件和 hooks |
+| [dashboard.md](frontend/dashboard.md) | `features/dashboard` | V3 概览入口 |
+| [strategies.md](frontend/strategies.md) | `features/strategies` | 人工市场、quote slots 与目标钱包 |
+| [wallets.md](frontend/wallets.md) | `features/wallets` | 多钱包、credential locator 和风险限制 |
+| [operations.md](frontend/operations.md) | `features/operations` | 执行批次、撤单、订单与持仓账本 |
+| [settings.md](frontend/settings.md) | `features/settings` | 单后端运行边界说明 |
+
+SELL exit、merge、Funding 与独立 fills 账本已从 V3 schema、后端、前端和文档模块索引删除，不属于当前范围。
 
 ## 基础设施
 
 | 文档 | 模块 | 职责 |
 |---|---|---|
-| [deployment.md](infra/deployment.md) | `deploy/` + `scripts/` | Docker Compose 部署、Nginx、构建脚本 |
-| [database.md](infra/database.md) | `packages/backend/migrations/` | 数据库迁移和 Schema |
+| [database.md](infra/database.md) | `migrations_v2/` + `init.sql` | V3 clean-deploy schema |
+| [deployment.md](infra/deployment.md) | `deploy/` + `scripts/` | `polyedge-server` + `polyedge-front` 部署 |
 
 ## 维护规则
 
-1. **查阅优先**：修改任何模块前，先阅读对应的模块文档了解设计约束和依赖关系。
-2. **同步更新**：每次修改模块后，更新对应文档的以下内容：
-   - 顶部的「最后更新」日期
-   - 架构/关键文件表（如有新增/删除文件）
-   - 核心数据结构（如有新增/修改类型）
-   - 当前状态和已知缺口
-3. **新增模块**：新增功能模块时，创建对应的文档文件并添加到本索引。
+1. 修改前阅读对应文档。
+2. 修改后更新日期、关键文件、公开结构、状态与缺口。
+3. 新模块必须同时增加文档与索引；删除模块必须删除或明确归档对应文档。
+4. 历史设计不得覆盖根 `AGENTS.md` 与本目录的当前状态。

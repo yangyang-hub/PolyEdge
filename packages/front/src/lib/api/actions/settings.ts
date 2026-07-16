@@ -1,46 +1,38 @@
-import { z } from "zod";
-
-import { updateRuntimeConfig } from "@/lib/api/settings";
-import type { RuntimeConfigEntryDto, RuntimeConfigUpdateDto } from "@/lib/contracts/dto";
+import { fetchWriteContract } from "@/lib/api/base";
+import type { WriteResponse } from "@/lib/contracts/api";
+import type { UpdateSystemRuntimeStateRequest } from "@/lib/contracts/dto";
+import { dictionary } from "@/lib/i18n/dictionaries";
 
 import {
   actionOperationId,
   apiActionFailure,
-  createActionFailureResult,
   createActionSuccessResult,
   type OperationActionResult,
 } from "./shared";
 
-export type RuntimeConfigActionResult = OperationActionResult & {
-  entries?: RuntimeConfigEntryDto[];
-};
-
-const runtimeConfigSchema = z.object({
-  values: z.record(z.string().min(1), z.string().max(20_000)),
-});
-
-export async function updateRuntimeConfigAction(
-  input: RuntimeConfigUpdateDto,
-): Promise<RuntimeConfigActionResult> {
+export async function updateSystemRuntimeState(input: {
+  request: UpdateSystemRuntimeStateRequest;
+  stepUpCode: string;
+}): Promise<OperationActionResult> {
   try {
-    const parsed = runtimeConfigSchema.safeParse(input);
-
-    if (!parsed.success) {
-      return createActionFailureResult("Runtime configuration is invalid.");
-    }
-
-    const response = await updateRuntimeConfig(parsed.data);
-
-    return {
-      ...createActionSuccessResult("Runtime configuration saved. Restart backend processes to apply runtime consumers.", {
-        requestId: response.meta.request_id,
-        traceId: response.meta.trace_id,
-        operationId: actionOperationId("runtime_config"),
-        status: "completed",
-      }),
-      entries: response.data,
-    };
+    const result = await fetchWriteContract<WriteResponse>("/api/v1/system/runtime-state", {
+      method: "PATCH",
+      body: input.request as unknown as Record<string, unknown>,
+      idempotencyKey: actionOperationId("runtime-state"),
+      stepUpCode: input.stepUpCode,
+      stepUpScopes: [
+        input.request.kill_switch_locked
+          ? "system_kill_switch_trigger"
+          : "system_kill_switch_release",
+      ],
+    });
+    return createActionSuccessResult(dictionary.actionMessages.runtimeUpdated, {
+      requestId: result.meta.request_id,
+      traceId: result.meta.trace_id,
+      operationId: result.data.operation_id,
+      status: result.data.status,
+    });
   } catch (error) {
-    return apiActionFailure(error, "Runtime configuration update failed.");
+    return apiActionFailure(error, dictionary.actionMessages.runtimeUpdateFailed);
   }
 }

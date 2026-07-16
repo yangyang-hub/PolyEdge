@@ -1,18 +1,15 @@
-import type { RuntimeConfigValueType } from "./primitives";
-
-export type RuntimeConfigEntryDto = {
-  key: string;
-  section: string;
-  field: string;
-  label: string;
-  env_name: string;
-  value: string;
-  default_value: string;
-  value_type: RuntimeConfigValueType;
-  options: string[];
-  restart_required: boolean;
+export type SystemRuntimeStateData = {
+  kill_switch_locked: boolean;
+  trading_enabled: boolean;
+  reason: string | null;
+  version: number;
+  updated_by: string;
+  updated_at: string;
 };
 
-export type RuntimeConfigUpdateDto = {
-  values: Record<string, string>;
+export type UpdateSystemRuntimeStateRequest = {
+  kill_switch_locked: boolean;
+  trading_enabled: boolean;
+  reason?: string;
+  operator_note?: string;
 };
