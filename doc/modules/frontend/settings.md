@@ -8,4 +8,4 @@
 
 旧 runtime-config、Funding、新闻源健康和研究配置已删除。
 
-当前页面仍要求输入旧 step-up code，后端实际以 admin role + recent-auth session 保护全局状态写入。后续可清理无效输入；最终授权始终由后端执行。
+当前页面不再要求无效的 step-up code，后端以 admin role + recent-auth session 保护全局状态写入。后续可增加 recent-auth 过期时的 `/auth/reauth` 交互；最终授权始终由后端执行。

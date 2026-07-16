@@ -25,11 +25,14 @@ import type {
   WalletAccountData,
 } from "@/lib/contracts/dto";
 import { dictionary, translateEnum } from "@/lib/i18n/dictionaries";
+import { canWriteMarkets, useAuth } from "@/components/shared/auth-provider";
 
 type DialogMode = "execute" | "cancel" | null;
 
 export function OperationsWorkbench() {
   const d = dictionary.operations;
+  const { user } = useAuth();
+  const writable = canWriteMarkets(user?.role);
   const [strategies, setStrategies] = useState<MarketStrategyData[]>([]);
   const [wallets, setWallets] = useState<WalletAccountData[]>([]);
   const [batches, setBatches] = useState<ExecutionBatchData[]>([]);
@@ -40,7 +43,6 @@ export function OperationsWorkbench() {
   const [conditionIds, setConditionIds] = useState("");
   const [dialogMode, setDialogMode] = useState<DialogMode>(null);
   const [note, setNote] = useState("");
-  const [stepUpCode, setStepUpCode] = useState("");
   const [feedback, setFeedback] = useState<OperationActionResult | null>(null);
   const [loadError, setLoadError] = useState("");
   const [isPending, startTransition] = useTransition();
@@ -80,7 +82,6 @@ export function OperationsWorkbench() {
               wallet_ids: selectedWalletIds,
               operator_note: note.trim() || undefined,
             },
-            stepUpCode,
           })
         : await cancelOrders({
             request: {
@@ -88,13 +89,11 @@ export function OperationsWorkbench() {
               condition_ids: selectedConditionIds,
               operator_note: note.trim() || undefined,
             },
-            stepUpCode,
           });
       setFeedback(result);
       if (result.ok) {
         setDialogMode(null);
         setNote("");
-        setStepUpCode("");
         reload();
       }
     });
@@ -141,10 +140,10 @@ export function OperationsWorkbench() {
             <Input value={conditionIds} onChange={(event) => setConditionIds(event.target.value)} placeholder={d.conditionIdsPlaceholder} />
           </label>
           <div className="flex flex-wrap gap-2 md:col-span-3">
-            <Button disabled={!Number.isSafeInteger(selectedStrategyId) || selectedStrategyId <= 0 || selectedWalletIds.length === 0} onClick={() => openDialog("execute")}>
+            <Button disabled={!writable || !Number.isSafeInteger(selectedStrategyId) || selectedStrategyId <= 0 || selectedWalletIds.length === 0} onClick={() => openDialog("execute")}>
               {d.execute}
             </Button>
-            <Button variant="destructive" disabled={selectedWalletIds.length === 0 && selectedConditionIds.length === 0} onClick={() => openDialog("cancel")}>
+            <Button variant="destructive" disabled={!writable || (selectedWalletIds.length === 0 && selectedConditionIds.length === 0)} onClick={() => openDialog("cancel")}>
               {d.cancel}
             </Button>
             <Button variant="outline" onClick={reload}>{d.refresh}</Button>
@@ -198,11 +197,7 @@ export function OperationsWorkbench() {
         isPending={isPending}
         note={note}
         onNoteChange={setNote}
-        stepUpCode={stepUpCode}
-        onStepUpCodeChange={setStepUpCode}
-        requiresStepUp
         onSubmit={submitDialog}
-        confirmDisabled={!stepUpCode.trim()}
         context={
           <p>
             {dialogMode === "cancel"

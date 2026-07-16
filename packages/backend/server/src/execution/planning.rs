@@ -114,11 +114,6 @@ pub fn compare_target(
     }
 }
 
-pub fn ensure_risk_budget(context: &ExecutionContext, target: &TargetOrder) -> Result<()> {
-    let snapshot = risk_snapshot(context);
-    ensure_risk_budget_snapshot(&context.risk_policy, &snapshot, target)
-}
-
 fn risk_snapshot(context: &ExecutionContext) -> RiskSnapshot {
     RiskSnapshot {
         open_orders: context

@@ -1,5 +1,3 @@
-import { z } from "zod";
-
 import { PolyEdgeApiError, randomUUID } from "@/lib/api/base";
 
 export type OperationActionResult = {
@@ -62,17 +60,3 @@ export function apiActionFailure(error: unknown, fallback: string): OperationAct
 export function actionOperationId(prefix: string): string {
   return `${prefix}_${randomUUID().slice(0, 8)}`;
 }
-
-export const decimalNumber = z.coerce.number().finite();
-
-const DECIMAL_STRING_PATTERN = /^(?:\d+|\d+\.\d+|\.\d+)$/;
-
-export const decimalString = (label: string) =>
-  z
-    .string()
-    .trim()
-    .min(1, `${label} is required.`)
-    .refine(
-      (value) => DECIMAL_STRING_PATTERN.test(value) && Number.isFinite(Number(value)),
-      `${label} must be numeric.`,
-    );

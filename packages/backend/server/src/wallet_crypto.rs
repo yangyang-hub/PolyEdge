@@ -529,6 +529,18 @@ pub fn wallet_import_aad(context_id: Uuid, binding: &[u8]) -> Vec<u8> {
     )
 }
 
+/// Canonical database-envelope binding for a wallet secret.
+#[must_use]
+pub(crate) fn wallet_storage_aad(
+    wallet_id: i64,
+    owner_user_id: i64,
+    signer: &str,
+    version: i64,
+) -> Vec<u8> {
+    format!("wallet={wallet_id};owner={owner_user_id};signer={signer};version={version}")
+        .into_bytes()
+}
+
 fn storage_payload_aad(version: i16, key_id: &str, aad: &[u8]) -> Vec<u8> {
     storage_aad(STORAGE_PAYLOAD_AAD_DOMAIN, version, key_id, aad)
 }

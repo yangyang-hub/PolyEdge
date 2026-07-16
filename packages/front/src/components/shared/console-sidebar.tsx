@@ -1,6 +1,7 @@
 "use client";
 
 import { usePathname } from "next/navigation";
+import Link from "next/link";
 
 import { consoleNavItems, isConsoleNavItemActive } from "@/components/shared/console-nav-items";
 import { dictionary } from "@/lib/i18n/dictionaries";
@@ -28,7 +29,7 @@ export function ConsoleSidebar() {
           const label = dictionary.nav[labelKey];
 
           return (
-            <a
+            <Link
               key={href}
               href={href}
               className={cn(
@@ -42,7 +43,7 @@ export function ConsoleSidebar() {
               <span className="min-w-max opacity-0 transition-opacity duration-200 group-hover:opacity-100">
                 {label}
               </span>
-            </a>
+            </Link>
           );
         })}
       </nav>

@@ -1,5 +1,7 @@
 use super::*;
-use crate::wallet_crypto::{WalletCryptoService, WalletImportCiphertext, WalletSecretEnvelope};
+use crate::wallet_crypto::{
+    WalletCryptoService, WalletImportCiphertext, WalletSecretEnvelope, wallet_storage_aad,
+};
 use k256::elliptic_curve::sec1::ToEncodedPoint;
 use polyedge_domain::{ActorScope, UserRole, WalletSecretMetadata};
 use secrecy::ExposeSecret;
@@ -17,7 +19,6 @@ impl PostgresStore {
         expires_at: OffsetDateTime,
         max_active_contexts: usize,
     ) -> Result<()> {
-        let digest = sha2::Sha256::digest(context_id.as_bytes());
         let mut tx = self.pool.begin().await?;
         sqlx::query("SELECT pg_advisory_xact_lock(731947211)")
             .execute(&mut *tx)
@@ -44,13 +45,12 @@ impl PostgresStore {
         }
         sqlx::query(
             r#"INSERT INTO wallet_import_contexts (
-                 import_context_id,owner_user_id,transport_key_id,context_token_hash,expires_at
-               ) VALUES ($1,$2,$3,$4,$5)"#,
+                 import_context_id,owner_user_id,transport_key_id,expires_at
+               ) VALUES ($1,$2,$3,$4)"#,
         )
         .bind(context_id)
         .bind(owner_user_id)
         .bind(key_id)
-        .bind(digest.as_slice())
         .bind(expires_at)
         .execute(&mut *tx)
         .await?;
@@ -448,11 +448,6 @@ fn normalize_address(value: &str) -> Result<String> {
         ));
     }
     Ok(value)
-}
-
-fn wallet_storage_aad(wallet_id: i64, owner_user_id: i64, signer: &str, version: i64) -> Vec<u8> {
-    format!("wallet={wallet_id};owner={owner_user_id};signer={signer};version={version}")
-        .into_bytes()
 }
 
 async fn insert_secret_envelope(

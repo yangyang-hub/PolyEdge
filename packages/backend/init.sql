@@ -4,7 +4,7 @@
 
 CREATE TABLE users (
     user_id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    username TEXT NOT NULL UNIQUE CHECK (length(btrim(username)) BETWEEN 3 AND 64),
+    username TEXT NOT NULL CHECK (length(btrim(username)) BETWEEN 3 AND 64),
     display_name TEXT NOT NULL CHECK (length(btrim(display_name)) BETWEEN 1 AND 120),
     role TEXT NOT NULL CHECK (role IN ('admin', 'market_editor', 'read_only')),
     status TEXT NOT NULL DEFAULT 'pending'
@@ -143,7 +143,6 @@ CREATE TABLE wallet_import_contexts (
     import_context_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     owner_user_id BIGINT NOT NULL REFERENCES users (user_id) ON DELETE CASCADE,
     transport_key_id TEXT NOT NULL CHECK (length(btrim(transport_key_id)) > 0),
-    context_token_hash BYTEA NOT NULL UNIQUE CHECK (octet_length(context_token_hash) >= 32),
     expires_at TIMESTAMPTZ NOT NULL,
     consumed_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -207,9 +206,6 @@ CREATE TABLE managed_market_outcomes (
     token_id TEXT NOT NULL UNIQUE CHECK (length(btrim(token_id)) > 0),
     UNIQUE (market_id, outcome)
 );
-
-CREATE INDEX managed_market_outcomes_market_idx
-    ON managed_market_outcomes (market_id, outcome);
 
 CREATE TABLE market_strategies (
     strategy_id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -511,6 +507,9 @@ CREATE INDEX managed_orders_subscription_idx
     ON managed_orders (subscription_id, status, updated_at DESC);
 CREATE INDEX managed_orders_quote_slot_idx
     ON managed_orders (quote_slot_id, created_at DESC) WHERE quote_slot_id IS NOT NULL;
+CREATE INDEX managed_orders_targeted_token_idx
+    ON managed_orders (token_id)
+    WHERE status IN ('planned', 'submitting', 'open', 'partially_filled', 'cancel_pending', 'unknown');
 
 CREATE TABLE execution_actions (
     action_id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -595,6 +594,8 @@ CREATE INDEX positions_user_idx ON positions (owner_user_id, updated_at DESC);
 CREATE INDEX positions_market_idx ON positions (market_id, wallet_id);
 CREATE INDEX positions_wallet_nonzero_idx
     ON positions (wallet_id, updated_at DESC) WHERE quantity > 0;
+CREATE INDEX positions_targeted_token_idx
+    ON positions (token_id) WHERE quantity > 0;
 
 CREATE TABLE venue_fills (
     fill_id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -650,33 +651,6 @@ CREATE INDEX external_cash_flows_wallet_time_idx
 CREATE INDEX external_cash_flows_recorder_idx
     ON external_cash_flows (recorded_by_user_id, created_at DESC)
     WHERE recorded_by_user_id IS NOT NULL;
-
-CREATE TABLE position_valuation_snapshots (
-    valuation_snapshot_id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    owner_user_id BIGINT NOT NULL,
-    wallet_id BIGINT NOT NULL,
-    position_id BIGINT NOT NULL,
-    quantity NUMERIC(24, 8) NOT NULL CHECK (quantity >= 0),
-    mark_price NUMERIC(12, 10) CHECK (mark_price IS NULL OR (mark_price >= 0 AND mark_price < 1)),
-    market_value NUMERIC(24, 8),
-    unrealized_pnl NUMERIC(24, 8),
-    valuation_status TEXT NOT NULL CHECK (valuation_status IN ('complete', 'stale', 'unavailable')),
-    observed_at TIMESTAMPTZ,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    FOREIGN KEY (owner_user_id, wallet_id)
-        REFERENCES wallet_accounts (owner_user_id, wallet_id) ON DELETE CASCADE,
-    FOREIGN KEY (owner_user_id, position_id)
-        REFERENCES positions (owner_user_id, position_id) ON DELETE CASCADE,
-    CHECK (
-        (valuation_status = 'complete' AND mark_price IS NOT NULL AND market_value IS NOT NULL AND unrealized_pnl IS NOT NULL AND observed_at IS NOT NULL)
-        OR valuation_status <> 'complete'
-    )
-);
-
-CREATE INDEX position_valuation_snapshots_position_idx
-    ON position_valuation_snapshots (position_id, created_at DESC);
-CREATE INDEX position_valuation_snapshots_user_idx
-    ON position_valuation_snapshots (owner_user_id, created_at DESC);
 
 CREATE TABLE wallet_equity_snapshots (
     equity_snapshot_id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,

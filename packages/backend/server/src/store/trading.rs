@@ -75,35 +75,6 @@ impl PostgresStore {
             .collect()
     }
 
-    pub async fn active_token_ids(&self) -> Result<Vec<String>> {
-        Ok(sqlx::query_scalar::<_, String>(
-            r#"
-            SELECT DISTINCT token_id
-            FROM (
-              SELECT o.token_id
-              FROM managed_market_outcomes o
-              JOIN market_strategies s ON s.market_id = o.market_id
-              JOIN strategy_versions v ON v.strategy_id = s.strategy_id
-              JOIN strategy_subscriptions sub ON sub.source_strategy_id = s.strategy_id
-              JOIN strategy_subscription_wallets t ON t.subscription_id = sub.subscription_id
-              JOIN wallet_accounts w ON w.wallet_id = t.wallet_id
-              WHERE s.status = 'active' AND v.status = 'published'
-                AND now() >= s.active_from AND now() < s.active_until
-                AND sub.status = 'active' AND (sub.active_until IS NULL OR now() < sub.active_until)
-                AND t.enabled AND w.status = 'active' AND w.trading_enabled
-              UNION
-              SELECT token_id FROM managed_orders
-              WHERE status IN ('planned', 'submitting', 'open', 'partially_filled', 'cancel_pending', 'unknown')
-              UNION
-              SELECT token_id FROM positions WHERE quantity > 0
-            ) active_tokens
-            ORDER BY token_id
-            "#,
-        )
-        .fetch_all(&self.pool)
-        .await?)
-    }
-
     pub async fn kill_switch_locked(&self) -> Result<bool> {
         Ok(sqlx::query_scalar::<_, bool>(
             "SELECT kill_switch_locked FROM system_runtime_state WHERE singleton = TRUE",

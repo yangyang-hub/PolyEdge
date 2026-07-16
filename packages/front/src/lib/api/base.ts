@@ -7,13 +7,6 @@ import type {
 } from "@/lib/contracts/api";
 
 export type BackendMode = "live";
-export type InternalApiStepUpScope =
-  | "wallet_trading_enable"
-  | "execution_submit"
-  | "order_cancel_force"
-  | "system_kill_switch_trigger"
-  | "system_kill_switch_release";
-
 export class PolyEdgeApiError extends Error {
   code?: string;
   requestId?: string;
@@ -177,10 +170,6 @@ export function createWriteResponse(
 async function fetchJson<T>(
   path: string,
   init: RequestInit,
-  auth: {
-    stepUpCode?: string;
-    stepUpScopes?: InternalApiStepUpScope[];
-  },
 ): Promise<T> {
   const apiBaseUrl = getApiBaseUrl();
   const headers = new Headers(init.headers);
@@ -191,14 +180,6 @@ async function fetchJson<T>(
   if (init.method && init.method !== "GET" && init.method !== "HEAD") {
     const csrfToken = readCookie("polyedge_csrf");
     if (csrfToken) headers.set("X-PolyEdge-CSRF-Token", csrfToken);
-  }
-
-  if (auth.stepUpCode?.trim()) {
-    headers.set("X-PolyEdge-Step-Up-Code", auth.stepUpCode.trim());
-  }
-
-  if (auth.stepUpScopes?.length) {
-    headers.set("X-PolyEdge-Step-Up-Scopes", auth.stepUpScopes.join(","));
   }
 
   const response = await fetch(`${apiBaseUrl}${path}`, {
@@ -243,8 +224,6 @@ export async function fetchContract<T>(path: string): Promise<T> {
         Accept: "application/json",
       },
     },
-    {
-    },
   );
 }
 
@@ -260,8 +239,6 @@ export async function fetchListContract<TLive, TFront = TLive>(
       headers: {
         Accept: "application/json",
       },
-    },
-    {
     },
   );
   const listPayload = payload.data;
@@ -297,8 +274,6 @@ export async function fetchWriteContract<TLive, TFront = TLive>(
     method?: "POST" | "PATCH" | "DELETE";
     body: Record<string, unknown>;
     idempotencyKey: string;
-    stepUpCode?: string;
-    stepUpScopes?: InternalApiStepUpScope[];
   },
   options?: {
     mapLiveResponse?: (payload: TLive) => TFront;
@@ -314,10 +289,6 @@ export async function fetchWriteContract<TLive, TFront = TLive>(
         "Idempotency-Key": init.idempotencyKey,
       },
       body: JSON.stringify(init.body),
-    },
-    {
-      stepUpCode: init.stepUpCode,
-      stepUpScopes: init.stepUpScopes,
     },
   );
 

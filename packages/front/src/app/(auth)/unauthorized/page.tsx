@@ -3,20 +3,21 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
-import {
-  normalizeConsoleRole,
-  sanitizeNextPath,
-  type ConsoleRole,
-} from "@/lib/console-auth";
+import { sanitizeNextPath } from "@/lib/console-auth";
+import type { UserRole } from "@/lib/contracts/dto";
 import { Button } from "@/components/ui/button";
 import { RouteStateCard } from "@/components/shared/route-state-card";
 import { dictionary } from "@/lib/i18n/dictionaries";
 
 type UnauthorizedState = {
   nextPath: string;
-  requiredRole: ConsoleRole | null;
-  currentRole: ConsoleRole | null;
+  requiredRole: UserRole | null;
+  currentRole: UserRole | null;
 };
+
+const USER_ROLES: UserRole[] = ["admin", "market_editor", "read_only"];
+const parseRole = (value: string | null): UserRole | null =>
+  USER_ROLES.find((role) => role === value) ?? null;
 
 export default function UnauthorizedPage() {
   const [state, setState] = useState<UnauthorizedState>({
@@ -31,8 +32,8 @@ export default function UnauthorizedPage() {
 
       setState({
         nextPath: sanitizeNextPath(searchParams.get("next")),
-        requiredRole: normalizeConsoleRole(searchParams.get("required")),
-        currentRole: normalizeConsoleRole(searchParams.get("current")),
+        requiredRole: parseRole(searchParams.get("required")),
+        currentRole: parseRole(searchParams.get("current")),
       });
     }, 0);
 

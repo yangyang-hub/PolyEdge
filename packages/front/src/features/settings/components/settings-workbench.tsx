@@ -23,7 +23,6 @@ export function SettingsWorkbench() {
   const [enableTrading, setEnableTrading] = useState(false);
   const [reason, setReason] = useState("");
   const [note, setNote] = useState("");
-  const [stepUpCode, setStepUpCode] = useState("");
   const [loadError, setLoadError] = useState("");
   const [feedback, setFeedback] = useState<OperationActionResult | null>(null);
   const [isPending, startTransition] = useTransition();
@@ -44,7 +43,6 @@ export function SettingsWorkbench() {
     setAction(nextAction);
     setReason("");
     setNote("");
-    setStepUpCode("");
     setFeedback(null);
   };
 
@@ -58,7 +56,6 @@ export function SettingsWorkbench() {
           reason: reason.trim() || undefined,
           operator_note: note.trim() || undefined,
         },
-        stepUpCode,
       });
       setFeedback(result);
       if (result.ok) {
@@ -114,11 +111,7 @@ export function SettingsWorkbench() {
         isPending={isPending}
         note={note}
         onNoteChange={setNote}
-        stepUpCode={stepUpCode}
-        onStepUpCodeChange={setStepUpCode}
-        requiresStepUp
         onSubmit={submit}
-        confirmDisabled={!stepUpCode.trim()}
       >
         <label className="space-y-2 text-sm">
           <span>{d.reason}</span>

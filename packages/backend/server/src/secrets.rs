@@ -1,6 +1,9 @@
 //! Runtime wallet credential decryption from PostgreSQL envelope storage.
 
-use crate::{store::PostgresStore, wallet_crypto::WalletCryptoService};
+use crate::{
+    store::PostgresStore,
+    wallet_crypto::{WalletCryptoService, wallet_storage_aad},
+};
 use polyedge_connectors::{LivePolymarketConfig, PolymarketSignatureScheme};
 use polyedge_domain::{AppError, Result, WalletAccount};
 use secrecy::ExposeSecret;
@@ -108,11 +111,6 @@ struct WalletSecret {
     api_secret: Option<Zeroizing<String>>,
     #[serde(default)]
     api_passphrase: Option<Zeroizing<String>>,
-}
-
-fn wallet_storage_aad(wallet_id: i64, owner_user_id: i64, signer: &str, version: i64) -> Vec<u8> {
-    format!("wallet={wallet_id};owner={owner_user_id};signer={signer};version={version}")
-        .into_bytes()
 }
 
 fn non_empty(field: &str, value: String) -> Result<String> {

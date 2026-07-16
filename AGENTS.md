@@ -45,7 +45,7 @@ browser
 - targeted token 集来自有效 subscription 钱包对应的 slots、open-like managed orders 和非零 positions；超过 `POLYEDGE_TARGETED_ORDERBOOK__MAX_TOKENS` 时整轮失败，不静默截断。
 - opaque session token、CSRF token 和 activation token 在数据库只保存 SHA-256 hash；密码保存 Argon2 PHC hash。生产 session cookie 使用 `Secure`、`HttpOnly`、`SameSite=Strict`。
 - 浏览器用一次性进程内 RSA-OAEP-256 + AES-256-GCM context 上传钱包 secret；后端验证私钥推导地址后，用独立 AES-256-GCM storage KEK 和每钱包随机 DEK 写入 `wallet_secret_envelopes`。数据库、DTO、日志和管理员接口均不返回明文 secret。
-- storage KEK 当前由环境变量直接注入，不是外部 KMS；导入 context 当前只保存在 server 内存，schema 中的 `wallet_import_contexts` 尚未接入 runtime。
+- storage KEK 当前由环境变量直接注入，不是外部 KMS；导入 context 已按 owner 持久化到 `wallet_import_contexts` 并原子消费，server 内存不保存可重放明文 token。
 - 管理员可以跨用户查看业务、余额和现有财务 snapshot 汇总，但不能查看或导出私钥。
 
 ## 策略、跟随与执行语义
@@ -150,6 +150,7 @@ git diff --check
 - cash-flow 由管理员人工录入并校验钱包创建时间及未来时间上限；managed 累计成交差额和 position 同步仅生成操作性 fill/partial equity 数据，尚无权威 venue fill ingestion 与完整 mark-to-market，不能宣称完整盈利核算。
 - 前端管理员用户页支持创建、列表、角色/状态修改和 pending local 用户重新签发激活 token；环境管理员不可被降权或禁用。
 - `/following` 已能按源策略 ID 创建和列出订阅，但尚未把 discover API 做成可浏览选择器，也没有完整暂停/停止编辑 UI。
-- 前端仍保留旧 step-up code 输入组件；后端实际只认 recent-auth session，尚未把危险操作失败自动衔接到 `/auth/reauth` 交互。
+- 前端危险操作已移除无效 step-up code 输入和兼容 header；后端仍只认 recent-auth session，尚未把 recent-auth 过期自动衔接到 `/auth/reauth` 交互。
+- 前端已移除未使用的 toast/decimal 校验运行时依赖及历史占位组件；新增依赖需先确认被活动路由或数据层实际引用。
 - `PATCH /system/runtime-state` 与 cash-flow 写入均显式要求 admin role + recent-auth。
 - 真实实盘仍需要 funded/approved 账户、小额演练、storage key/RSA key 轮换方案和运维 runbook。

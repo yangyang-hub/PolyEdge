@@ -15,7 +15,6 @@ import {
 
 type ProtectedMutation<T> = {
   request: T;
-  stepUpCode: string;
 };
 
 export async function executeBatch(
@@ -25,8 +24,6 @@ export async function executeBatch(
     const result = await fetchWriteContract<WriteResponse>("/api/v1/execution-batches", {
       body: input.request as unknown as Record<string, unknown>,
       idempotencyKey: actionOperationId("batch"),
-      stepUpCode: input.stepUpCode,
-      stepUpScopes: ["execution_submit"],
     });
     return createActionSuccessResult(dictionary.actionMessages.executionSubmitted, {
       requestId: result.meta.request_id,
@@ -46,8 +43,6 @@ export async function cancelOrders(
     const result = await fetchWriteContract<WriteResponse>("/api/v1/cancellation-batches", {
       body: input.request as unknown as Record<string, unknown>,
       idempotencyKey: actionOperationId("cancel"),
-      stepUpCode: input.stepUpCode,
-      stepUpScopes: ["order_cancel_force"],
     });
     return createActionSuccessResult(dictionary.actionMessages.cancellationSubmitted, {
       requestId: result.meta.request_id,

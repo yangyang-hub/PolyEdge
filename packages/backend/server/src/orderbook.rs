@@ -41,11 +41,6 @@ pub struct CachedOrderBook {
 
 impl CachedOrderBook {
     #[must_use]
-    pub fn best_bid(&self) -> Option<Decimal> {
-        self.bids.first().map(|level| level.price)
-    }
-
-    #[must_use]
     pub fn best_ask(&self) -> Option<Decimal> {
         self.asks.first().map(|level| level.price)
     }
@@ -105,11 +100,6 @@ impl OrderbookSupervisor {
             cache: Arc::new(RwLock::new(HashMap::new())),
             config,
         })
-    }
-
-    #[must_use]
-    pub fn cache_handle(&self) -> Arc<RwLock<HashMap<String, CachedOrderBook>>> {
-        Arc::clone(&self.cache)
     }
 
     pub async fn get(&self, token_id: &str) -> Option<CachedOrderBook> {

@@ -66,18 +66,15 @@ export const shared = {
   actionDialog: {
     operatorNote: "操作备注",
     notePlaceholder: "说明为什么要执行该操作、已经检查了哪些上下文，以及下一步应如何处理…",
-    stepUpCode: "二次确认码",
-    stepUpCodePlaceholder: "输入二次确认码…",
   },
   feedback: {
     operationQueued: "操作已入队",
     operationFailed: "操作失败",
   },
   roles: {
-    viewer: "观察员",
-    operator: "操作员",
-    risk_admin: "风控管理员",
     admin: "管理员",
+    market_editor: "市场编辑员",
+    read_only: "只读用户",
   },
   auth: {
     requestedRoute: "请求路由",

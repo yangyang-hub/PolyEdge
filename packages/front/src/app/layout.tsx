@@ -2,7 +2,6 @@ import type { Metadata } from "next";
 
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { dictionary } from "@/lib/i18n/dictionaries";
-import { Toaster } from "sonner";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -20,7 +19,6 @@ export default function RootLayout({
       <body className="min-h-full bg-background text-foreground">
         <TooltipProvider delayDuration={150}>
           {children}
-          <Toaster richColors position="top-right" theme="dark" />
         </TooltipProvider>
       </body>
     </html>

@@ -3,6 +3,7 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { usePathname } from "next/navigation";
 
+import { ConsoleLoadingSkeleton } from "@/components/shared/console-loading-skeleton";
 import { getCurrentUser, logout } from "@/lib/api/auth";
 import type { CurrentUserDto, UserRole } from "@/lib/contracts/dto";
 
@@ -20,12 +21,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (!active) return;
       const current = response.data.user;
       setUser(current);
-      if ((pathname.startsWith("/admin/") || pathname === "/settings") && current.role !== "admin") window.location.replace("/unauthorized");
     }).catch(() => {
-      if (active) window.location.replace(`/login?next=${encodeURIComponent(pathname)}`);
+      if (active) window.location.replace(`/login?next=${encodeURIComponent(window.location.pathname)}`);
     }).finally(() => active && setLoading(false));
     return () => { active = false; };
-  }, [pathname]);
+  }, []);
+
+  const requiresAdmin = pathname.startsWith("/admin/") || pathname === "/settings";
+  const authorized = !requiresAdmin || user?.role === "admin";
+
+  useEffect(() => {
+    if (loading || !user || authorized) return;
+    const query = new URLSearchParams({
+      next: pathname,
+      required: "admin",
+      current: user.role,
+    });
+    window.location.replace(`/unauthorized?${query.toString()}`);
+  }, [authorized, loading, pathname, user]);
 
   const value = useMemo<AuthState>(() => ({
     user,
@@ -33,9 +46,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     signOut: async () => { await logout(); window.location.replace("/login"); },
   }), [loading, user]);
 
-  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+  return (
+    <AuthContext.Provider value={value}>
+      {loading || !user || !authorized ? <ConsoleLoadingSkeleton /> : children}
+    </AuthContext.Provider>
+  );
 }
 
 export function useAuth() { return useContext(AuthContext); }
 export function canWriteMarkets(role: UserRole | undefined) { return role === "admin" || role === "market_editor"; }
-export function isAdmin(role: UserRole | undefined) { return role === "admin"; }

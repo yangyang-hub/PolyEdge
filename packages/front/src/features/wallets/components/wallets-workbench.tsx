@@ -43,7 +43,6 @@ export function WalletsWorkbench() {
   const [wallets, setWallets] = useState<WalletAccountData[]>([]);
   const [loadError, setLoadError] = useState("");
   const [feedback, setFeedback] = useState<OperationActionResult | null>(null);
-  const [stepUpCode, setStepUpCode] = useState("");
   const [isPending, startTransition] = useTransition();
 
   const reload = () => {
@@ -86,13 +85,11 @@ export function WalletsWorkbench() {
           encrypted_secret: encryptedSecret,
           operator_note: form.operator_note?.trim() || undefined,
         },
-        stepUpCode,
       });
       setFeedback(result);
       if (result.ok) {
         setForm(INITIAL_FORM);
         setPrivateKey("");
-        setStepUpCode("");
         reload();
       }
     });
@@ -146,14 +143,6 @@ export function WalletsWorkbench() {
               />
               <span>{d.trading}</span>
             </label>
-            {form.trading_enabled ? (
-              <Field
-                label={dictionary.actionDialog.stepUpCode}
-                type="password"
-                value={stepUpCode}
-                onChange={setStepUpCode}
-              />
-            ) : null}
             <div className="grid gap-3 md:col-span-2 md:grid-cols-5">
               <Field label={d.maxOpenOrders} type="number" value={String(form.risk_policy.max_open_orders)} onChange={(value) => setRisk("max_open_orders", value)} />
               <Field label={d.maxOpenBuy} value={form.risk_policy.max_open_buy_notional} onChange={(value) => setRisk("max_open_buy_notional", value)} />
@@ -169,7 +158,7 @@ export function WalletsWorkbench() {
             />
             <Button
               className="md:col-span-2"
-              disabled={isPending || !privateKey.trim() || (form.trading_enabled && !stepUpCode.trim())}
+              disabled={isPending || !privateKey.trim()}
               onClick={submit}
             >
               {isPending ? dictionary.common.submitting : d.save}

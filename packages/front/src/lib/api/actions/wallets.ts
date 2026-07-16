@@ -12,14 +12,11 @@ import {
 
 export async function saveWallet(input: {
   request: CreateWalletAccountRequest;
-  stepUpCode?: string;
 }): Promise<OperationActionResult> {
   try {
     const result = await fetchWriteContract<WriteResponse>("/api/v1/wallets", {
       body: input.request as unknown as Record<string, unknown>,
       idempotencyKey: actionOperationId("wallet"),
-      stepUpCode: input.request.trading_enabled ? input.stepUpCode : undefined,
-      stepUpScopes: input.request.trading_enabled ? ["wallet_trading_enable"] : undefined,
     });
     return createActionSuccessResult(dictionary.actionMessages.walletSaved, {
       requestId: result.meta.request_id,

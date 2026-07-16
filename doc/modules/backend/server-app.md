@@ -28,7 +28,7 @@
 | `src/store/order_reconciliation.rs` | managed order 缺失时的 venue 终态精确对账与 slot 释放 |
 | `src/orderbook.rs` | 目标 token 集查询、CLOB REST poll、内存盘口 cache |
 | `src/secrets.rs` | 从数据库 envelope 解密每钱包 CLOB secret 的运行时解析 |
-| `src/wallet_crypto.rs` | 浏览器 RSA-OAEP-256 + AES-256-GCM 一次性钱包导入上下文、数据库 AES-GCM envelope、密钥配置校验与脱敏 |
+| `src/wallet_crypto.rs` | 浏览器 RSA-OAEP-256 + AES-256-GCM 一次性钱包导入上下文、数据库 AES-GCM envelope、wallet storage AAD 构造、密钥配置校验与脱敏 |
 | `src/execution.rs` | 钱包 job claim、desired target 计算、风险校验、keep/place/cancel/replace |
 | `src/execution/planning.rs` | fixed/book-rank target、重挂确认与钱包风险纯计算 |
 | `src/execution/reconciliation.rs` | open-set 缺失订单的 external order id 查询、状态映射与 fail-closed 处理 |

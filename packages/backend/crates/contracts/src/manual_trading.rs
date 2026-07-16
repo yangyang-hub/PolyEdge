@@ -252,12 +252,6 @@ pub struct ExecutionBatchData {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WalletExecutionJobData {
-    pub job: polyedge_domain::WalletExecutionJob,
-    pub actions: Vec<polyedge_domain::ExecutionAction>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WriteOperationData {
     pub accepted: bool,
     pub operation_id: String,
@@ -298,9 +292,6 @@ pub struct UpdateSystemRuntimeStateRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub operator_note: Option<String>,
 }
-
-pub type ManagedOrderData = polyedge_domain::ManagedOrder;
-pub type ManagedPositionData = polyedge_domain::ManagedPosition;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

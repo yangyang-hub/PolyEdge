@@ -27,10 +27,6 @@ type ActionDialogProps = {
   note: string;
   onNoteChange: (value: string) => void;
   noteError?: string;
-  stepUpCode: string;
-  onStepUpCodeChange: (value: string) => void;
-  stepUpCodeError?: string;
-  requiresStepUp: boolean;
   onSubmit: () => void;
   confirmDisabled?: boolean;
   feedback?: OperationActionResult | null;
@@ -49,10 +45,6 @@ export function ActionDialog({
   note,
   onNoteChange,
   noteError,
-  stepUpCode,
-  onStepUpCodeChange,
-  stepUpCodeError,
-  requiresStepUp,
   onSubmit,
   confirmDisabled = false,
   feedback,
@@ -90,26 +82,6 @@ export function ActionDialog({
             {noteError ? <p id="operation-note-error" className="text-xs text-destructive">{noteError}</p> : null}
           </div>
 
-          {requiresStepUp ? (
-            <div className="space-y-2">
-              <label className="text-sm font-medium text-foreground" htmlFor="step-up-code">
-                {dictionary.actionDialog.stepUpCode}
-              </label>
-              <Input
-                id="step-up-code"
-                name="step-up-code"
-                autoComplete="one-time-code"
-                spellCheck={false}
-                value={stepUpCode}
-                onChange={(event) => onStepUpCodeChange(event.target.value)}
-                aria-invalid={Boolean(stepUpCodeError)}
-                aria-describedby={stepUpCodeError ? "step-up-code-error" : undefined}
-                className="h-10 rounded-sm border-white/10 bg-accent/45"
-                placeholder={dictionary.actionDialog.stepUpCodePlaceholder}
-              />
-              {stepUpCodeError ? <p id="step-up-code-error" className="text-xs text-destructive">{stepUpCodeError}</p> : null}
-            </div>
-          ) : null}
         </div>
 
         <DialogFooter className="border-white/8 bg-card/90">
