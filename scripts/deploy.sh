@@ -120,22 +120,6 @@ env_value() {
   printf '%s' "${value}"
 }
 
-resolve_deploy_path() {
-  local value="$1"
-  if [[ "${value}" == /* ]]; then
-    printf '%s' "${value}"
-  else
-    printf '%s/%s' "${deploy_path}" "${value#./}"
-  fi
-}
-
-validate_secret_permissions() {
-  local file="$1"
-  local mode
-  mode="$(stat -c '%a' "${file}" 2>/dev/null)" || fail "cannot read Unix permissions for secret file: ${file}"
-  (( (8#${mode} & 8#077) == 0 )) || fail "secret file must not be group/world accessible (chmod 600): ${file}"
-}
-
 ensure_env_file() {
   local file="$1"
   local example="$2"
@@ -157,8 +141,8 @@ validate_server_env_file() {
 
   local postgres_url runtime_environment public_origin cors_allowed_origins origin
   local server_host server_port
-  local admin_username admin_password_hash transport_key_file storage_key_file storage_key_bytes
-  local wallet_transport_mount wallet_storage_mount
+  local admin_username admin_password_hash
+  local transport_private_key_pem storage_key storage_key_bytes normalized_pem
   local -a origins
   postgres_url="$(env_value POLYEDGE_POSTGRES__URL "${file}")"
   [[ -n "${postgres_url}" ]] || fail "POLYEDGE_POSTGRES__URL is required in ${file}."
@@ -204,24 +188,30 @@ validate_server_env_file() {
     done
   fi
 
-  transport_key_file="$(env_value POLYEDGE_WALLET_CRYPTO__TRANSPORT_PRIVATE_KEY_PEM_FILE "${file}")"
-  [[ -n "${transport_key_file}" ]] || fail "POLYEDGE_WALLET_CRYPTO__TRANSPORT_PRIVATE_KEY_PEM_FILE is required in ${file}."
-  [[ "${transport_key_file}" == "/run/secrets/polyedge-wallet-import-private.pem" ]] \
-    || fail "wallet transport key container path must be /run/secrets/polyedge-wallet-import-private.pem (${file})."
-  wallet_transport_mount="$(env_value POLYEDGE_WALLET_IMPORT_PRIVATE_KEY_FILE "${file}")"
-  wallet_transport_mount="$(resolve_deploy_path "${wallet_transport_mount:-./secrets/polyedge-wallet-import-private.pem}")"
-  [[ -f "${wallet_transport_mount}" ]] || fail "wallet import RSA private key file not found: ${wallet_transport_mount}"
-  validate_secret_permissions "${wallet_transport_mount}"
-  storage_key_file="$(env_value POLYEDGE_WALLET_CRYPTO__STORAGE_KEY_FILE "${file}")"
-  [[ -n "${storage_key_file}" ]] || fail "POLYEDGE_WALLET_CRYPTO__STORAGE_KEY_FILE is required in ${file}."
-  [[ "${storage_key_file}" == "/run/secrets/polyedge-wallet-storage-key" ]] \
-    || fail "wallet storage key container path must be /run/secrets/polyedge-wallet-storage-key (${file})."
-  wallet_storage_mount="$(env_value POLYEDGE_WALLET_STORAGE_KEY_FILE "${file}")"
-  wallet_storage_mount="$(resolve_deploy_path "${wallet_storage_mount:-./secrets/polyedge-wallet-storage-key}")"
-  [[ -f "${wallet_storage_mount}" ]] || fail "wallet storage key file not found: ${wallet_storage_mount}"
-  validate_secret_permissions "${wallet_storage_mount}"
-  storage_key_bytes="$(base64 --decode < "${wallet_storage_mount}" 2>/dev/null | wc -c | tr -d '[:space:]')"
-  [[ "${storage_key_bytes}" == "32" ]] || fail "wallet storage key file must contain exactly one standard-base64 encoded 32-byte key (${wallet_storage_mount})."
+  if [[ -n "$(env_value POLYEDGE_WALLET_CRYPTO__TRANSPORT_PRIVATE_KEY_PEM_FILE "${file}")" \
+     || -n "$(env_value POLYEDGE_WALLET_IMPORT_PRIVATE_KEY_FILE "${file}")" ]]; then
+    fail "file-based wallet transport key vars are removed; set POLYEDGE_WALLET_CRYPTO__TRANSPORT_PRIVATE_KEY_PEM in ${file}."
+  fi
+  if [[ -n "$(env_value POLYEDGE_WALLET_CRYPTO__STORAGE_KEY_FILE "${file}")" \
+     || -n "$(env_value POLYEDGE_WALLET_STORAGE_KEY_FILE "${file}")" ]]; then
+    fail "file-based wallet storage key vars are removed; set POLYEDGE_WALLET_CRYPTO__STORAGE_KEY in ${file}."
+  fi
+
+  transport_private_key_pem="$(env_value POLYEDGE_WALLET_CRYPTO__TRANSPORT_PRIVATE_KEY_PEM "${file}")"
+  [[ -n "${transport_private_key_pem}" ]] || fail "POLYEDGE_WALLET_CRYPTO__TRANSPORT_PRIVATE_KEY_PEM is required in ${file}."
+  [[ "${transport_private_key_pem}" != *"replace-with"* ]] \
+    || fail "POLYEDGE_WALLET_CRYPTO__TRANSPORT_PRIVATE_KEY_PEM still contains a placeholder in ${file}."
+  normalized_pem="${transport_private_key_pem//\\n/$'\n'}"
+  [[ "${normalized_pem}" == *"BEGIN"* && "${normalized_pem}" == *"PRIVATE KEY"* && "${normalized_pem}" == *"END"* ]] \
+    || fail "POLYEDGE_WALLET_CRYPTO__TRANSPORT_PRIVATE_KEY_PEM must look like a PKCS#8/PKCS#1 RSA PEM in ${file}."
+
+  storage_key="$(env_value POLYEDGE_WALLET_CRYPTO__STORAGE_KEY "${file}")"
+  [[ -n "${storage_key}" ]] || fail "POLYEDGE_WALLET_CRYPTO__STORAGE_KEY is required in ${file}."
+  [[ "${storage_key}" != *"replace-with"* ]] \
+    || fail "POLYEDGE_WALLET_CRYPTO__STORAGE_KEY still contains a placeholder in ${file}."
+  storage_key_bytes="$(printf '%s' "${storage_key}" | base64 --decode 2>/dev/null | wc -c | tr -d '[:space:]')"
+  [[ "${storage_key_bytes}" == "32" ]] \
+    || fail "POLYEDGE_WALLET_CRYPTO__STORAGE_KEY must be standard-base64 for exactly 32 bytes (${file})."
 }
 
 validate_front_env_file() {
@@ -245,8 +235,6 @@ load_compose_environment() {
   if [[ -f "${server_env_file}" ]]; then
     export POLYEDGE_SERVER_ENV_FILE="${server_env_file}"
     export_env_if_set "${server_env_file}" POLYEDGE_SERVER_IMAGE
-    export_env_if_set "${server_env_file}" POLYEDGE_WALLET_IMPORT_PRIVATE_KEY_FILE
-    export_env_if_set "${server_env_file}" POLYEDGE_WALLET_STORAGE_KEY_FILE
   else
     export POLYEDGE_SERVER_ENV_FILE="${deploy_path}/.env.server.example"
   fi
@@ -457,9 +445,7 @@ export COMPOSE_PARALLEL_LIMIT="${COMPOSE_PARALLEL_LIMIT:-1}"
 load_compose_environment
 
 if [[ "${mode}" == "auto" ]]; then
-  wallet_transport_mount="$(resolve_deploy_path "${POLYEDGE_WALLET_IMPORT_PRIVATE_KEY_FILE:-./secrets/polyedge-wallet-import-private.pem}")"
-  wallet_storage_mount="$(resolve_deploy_path "${POLYEDGE_WALLET_STORAGE_KEY_FILE:-./secrets/polyedge-wallet-storage-key}")"
-  current_server_hash="$(combined_file_hash bin/polyedge-server deploy/server.Dockerfile deploy/docker-compose.yml "${server_env_file}" "${wallet_transport_mount}" "${wallet_storage_mount}")"
+  current_server_hash="$(combined_file_hash bin/polyedge-server deploy/server.Dockerfile deploy/docker-compose.yml "${server_env_file}")"
   current_front_hash="$(frontend_build_hash packages/front "${front_env_file}")"
   state_file="${deploy_dir}/.deploy-state"
   saved_server_hash=""

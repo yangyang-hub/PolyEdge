@@ -97,12 +97,14 @@
 
 ## Secret 边界
 
-数据库只保存加密 envelope（version、key id、nonce、wrapped DEK 和 ciphertext）及 ownership metadata；不得保存明文 private key、API secret 或 passphrase。浏览器钱包导入使用短期有界的一次性 RSA-OAEP-256 + AES-256-GCM context，签发容量、过期清理与原子消费统一由数据库管理，拒绝非当前 transport key id；`WalletCryptoService` 不再保留进程内 context store 或兼容消费路径。钱包密文 JSON 只允许 `private_key` 与可选 CLOB `api_key/api_secret/api_passphrase`；account id、funder 和 chain id 始终取服务端钱包记录与配置，不接受密文中的隐藏覆盖。数据库 envelope 使用独立的 32 字节 AES storage KEK 包裹每个 payload 的随机 DEK，并以 AES-256-GCM 认证 payload 和 metadata。RSA 私钥与 base64 storage KEK 分别从 `TRANSPORT_PRIVATE_KEY_PEM_FILE`、`STORAGE_KEY_FILE` 的只读 secret 文件读取；Unix 下拒绝 group/world 可访问权限。密钥和解密结果使用 `secrecy`/`zeroize`。
+数据库只保存加密 envelope（version、key id、nonce、wrapped DEK 和 ciphertext）及 ownership metadata；不得保存明文 private key、API secret 或 passphrase。浏览器钱包导入使用短期有界的一次性 RSA-OAEP-256 + AES-256-GCM context，签发容量、过期清理与原子消费统一由数据库管理，拒绝非当前 transport key id；`WalletCryptoService` 不再保留进程内 context store 或兼容消费路径。钱包密文 JSON 只允许 `private_key` 与可选 CLOB `api_key/api_secret/api_passphrase`；account id、funder 和 chain id 始终取服务端钱包记录与配置，不接受密文中的隐藏覆盖。数据库 envelope 使用独立的 32 字节 AES storage KEK 包裹每个 payload 的随机 DEK，并以 AES-256-GCM 认证 payload 和 metadata。RSA 私钥与 base64 storage KEK 分别从环境变量 `TRANSPORT_PRIVATE_KEY_PEM`、`STORAGE_KEY` 读取；`.env` 中 PEM 推荐单行并用 `\n` 表示换行。旧 `*_FILE` 路径配置已移除。密钥和解密结果使用 `secrecy`/`zeroize`。
 
-storage KEK 由 secret manager/受控宿主文件挂载，不是 KMS/HSM；当前只支持单活动 key id，没有在线旧 keyring 轮换流程。
+storage KEK 由 server `.env` 注入，不是 KMS/HSM；当前只支持单活动 key id，没有在线旧 keyring 轮换流程。
 
-新增配置：
+配置：
 
+- `POLYEDGE_WALLET_CRYPTO__TRANSPORT_PRIVATE_KEY_PEM`（必需，PKCS#8/PKCS#1 RSA PEM）；
+- `POLYEDGE_WALLET_CRYPTO__STORAGE_KEY`（必需，标准 base64，解码后 32 bytes）；
 - `POLYEDGE_WALLET_CRYPTO__TRANSPORT_KEY_ID`（可选，默认 `wallet-import-rsa-v1`）；
 - `POLYEDGE_WALLET_CRYPTO__STORAGE_KEY_ID`（可选，默认 `wallet-storage-aes-v1`）；
 - `POLYEDGE_WALLET_CRYPTO__IMPORT_CONTEXT_TTL_SECONDS`（可选，默认 300，最大 3600）；

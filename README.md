@@ -84,7 +84,7 @@ cp deploy/.env.front.example deploy/.env.front
 ./scripts/deploy.sh all
 ```
 
-部署前必须配置真实 Argon2id 管理员 hash、RSA 导入私钥文件和 32-byte base64 storage key。Compose 只运行 `polyedge-server` 和 `polyedge-front`。
+部署前必须在 `deploy/.env.server` 配置真实 Argon2id 管理员 hash、RSA 导入私钥 PEM 和 32-byte base64 storage key。Compose 只运行 `polyedge-server` 和 `polyedge-front`。
 
 ## 当前缺口
 

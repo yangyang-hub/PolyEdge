@@ -2,10 +2,10 @@
 //!
 //! Transport encryption and storage encryption intentionally use different keys:
 //!
-//! - browser imports use a mounted RSA private key with RSA-OAEP-SHA256 to unwrap an
+//! - browser imports use an RSA private key (from env PEM) with RSA-OAEP-SHA256 to unwrap an
 //!   ephemeral AES-256-GCM key;
-//! - database envelopes use a 32-byte AES-256-GCM storage KEK to wrap a fresh DEK for
-//!   every credential payload.
+//! - database envelopes use a 32-byte AES-256-GCM storage KEK (from env base64) to wrap a
+//!   fresh DEK for every credential payload.
 //!
 //! Secret key material and decrypted payloads are held in `secrecy`/`zeroize` containers.
 //! Errors and `Debug` implementations never include PEM, symmetric keys, ciphertext, or
@@ -25,12 +25,7 @@ use rsa::{
 use secrecy::{ExposeSecret, ExposeSecretMut, SecretBox, SecretSlice};
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
-use std::{
-    env, fmt, fs,
-    path::{Path, PathBuf},
-    sync::Arc,
-    time::Duration,
-};
+use std::{env, fmt, sync::Arc, time::Duration};
 use time::OffsetDateTime;
 use uuid::Uuid;
 use zeroize::Zeroizing;
@@ -39,8 +34,8 @@ const AES_KEY_BYTES: usize = 32;
 const AES_NONCE_BYTES: usize = 12;
 const AES_TAG_BYTES: usize = 16;
 const MIN_RSA_BITS: usize = 2_048;
-const MAX_PEM_BYTES: u64 = 64 * 1_024;
-const MAX_STORAGE_KEY_FILE_BYTES: u64 = 4 * 1_024;
+const MAX_PEM_CHARS: usize = 64 * 1_024;
+const MAX_STORAGE_KEY_CHARS: usize = 4 * 1_024;
 const MAX_IMPORT_CIPHERTEXT_BYTES: usize = 64 * 1_024;
 const STORAGE_ENVELOPE_VERSION: i16 = 1;
 const IMPORT_AAD_VERSION: &str = "polyedge-wallet-import-v1";
@@ -56,7 +51,6 @@ pub struct WalletCryptoConfig {
     pub max_import_contexts: usize,
     transport_private_key: Arc<RsaPrivateKey>,
     storage_key: Arc<SecretBox<[u8; AES_KEY_BYTES]>>,
-    transport_private_key_pem_file: PathBuf,
 }
 
 impl fmt::Debug for WalletCryptoConfig {
@@ -67,10 +61,6 @@ impl fmt::Debug for WalletCryptoConfig {
             .field("storage_key_id", &self.storage_key_id)
             .field("import_context_ttl", &self.import_context_ttl)
             .field("max_import_contexts", &self.max_import_contexts)
-            .field(
-                "transport_private_key_pem_file",
-                &self.transport_private_key_pem_file,
-            )
             .field("transport_private_key", &"[REDACTED]")
             .field("storage_key", &"[REDACTED]")
             .finish()
@@ -79,9 +69,23 @@ impl fmt::Debug for WalletCryptoConfig {
 
 impl WalletCryptoConfig {
     pub(crate) fn from_env() -> Result<Self> {
-        let transport_private_key_pem_file = PathBuf::from(required_env(
+        reject_removed_file_env(
             "POLYEDGE_WALLET_CRYPTO__TRANSPORT_PRIVATE_KEY_PEM_FILE",
-        )?);
+            "POLYEDGE_WALLET_CRYPTO__TRANSPORT_PRIVATE_KEY_PEM",
+        )?;
+        reject_removed_file_env(
+            "POLYEDGE_WALLET_CRYPTO__STORAGE_KEY_FILE",
+            "POLYEDGE_WALLET_CRYPTO__STORAGE_KEY",
+        )?;
+        reject_removed_file_env(
+            "POLYEDGE_WALLET_IMPORT_PRIVATE_KEY_FILE",
+            "POLYEDGE_WALLET_CRYPTO__TRANSPORT_PRIVATE_KEY_PEM",
+        )?;
+        reject_removed_file_env(
+            "POLYEDGE_WALLET_STORAGE_KEY_FILE",
+            "POLYEDGE_WALLET_CRYPTO__STORAGE_KEY",
+        )?;
+
         let transport_key_id = parse_key_id(
             "POLYEDGE_WALLET_CRYPTO__TRANSPORT_KEY_ID",
             optional_env("POLYEDGE_WALLET_CRYPTO__TRANSPORT_KEY_ID")
@@ -109,23 +113,12 @@ impl WalletCryptoConfig {
                 "POLYEDGE_WALLET_CRYPTO__MAX_IMPORT_CONTEXTS may not exceed 100000".to_string(),
             ));
         }
-        let storage_key_file =
-            PathBuf::from(required_env("POLYEDGE_WALLET_CRYPTO__STORAGE_KEY_FILE")?);
-        validate_secret_file(
-            &storage_key_file,
-            MAX_STORAGE_KEY_FILE_BYTES,
-            "wallet storage key",
-        )?;
-        let storage_key_base64 = fs::read_to_string(&storage_key_file)
-            .map(Zeroizing::new)
-            .map_err(|_| {
-                ServerError::Configuration(
-                    "wallet storage key file must contain UTF-8 base64".to_string(),
-                )
-            })?;
-        let storage_key = Arc::new(parse_storage_key(storage_key_base64)?);
+        let transport_pem = required_secret_env("POLYEDGE_WALLET_CRYPTO__TRANSPORT_PRIVATE_KEY_PEM")?;
         let transport_private_key =
-            Arc::new(load_transport_private_key(&transport_private_key_pem_file)?);
+            Arc::new(parse_transport_private_key(&normalize_pem_env(&transport_pem))?);
+        let storage_key = Arc::new(parse_storage_key(required_secret_env(
+            "POLYEDGE_WALLET_CRYPTO__STORAGE_KEY",
+        )?)?);
 
         Ok(Self {
             transport_key_id,
@@ -134,7 +127,6 @@ impl WalletCryptoConfig {
             max_import_contexts,
             transport_private_key,
             storage_key,
-            transport_private_key_pem_file,
         })
     }
 
@@ -147,7 +139,6 @@ impl WalletCryptoConfig {
             max_import_contexts: 8,
             transport_private_key: Arc::new(transport_private_key),
             storage_key: Arc::new(SecretBox::new(Box::new(storage_key))),
-            transport_private_key_pem_file: PathBuf::from("[test-key]"),
         }
     }
 }
@@ -494,62 +485,27 @@ fn public_jwk(key_id: &str, public_key: &RsaPublicKey) -> WalletImportPublicJwk 
     }
 }
 
-fn load_transport_private_key(path: &Path) -> Result<RsaPrivateKey> {
-    let metadata = fs::metadata(path).map_err(|_| {
-        ServerError::Configuration(format!(
-            "wallet transport private key file {} is not readable",
-            path.display()
-        ))
-    })?;
-    if !metadata.is_file() || metadata.len() == 0 || metadata.len() > MAX_PEM_BYTES {
-        return Err(ServerError::Configuration(format!(
-            "wallet transport private key file {} must be a non-empty PEM file no larger than {MAX_PEM_BYTES} bytes",
-            path.display()
-        )));
+fn normalize_pem_env(pem: &str) -> Zeroizing<String> {
+    let trimmed = pem.trim();
+    if trimmed.contains('\n') {
+        Zeroizing::new(trimmed.to_string())
+    } else {
+        Zeroizing::new(trimmed.replace("\\n", "\n"))
     }
-    validate_secret_permissions(path, &metadata)?;
-    let pem = fs::read_to_string(path).map(Zeroizing::new).map_err(|_| {
-        ServerError::Configuration(format!(
-            "wallet transport private key file {} is not valid UTF-8 PEM",
-            path.display()
-        ))
-    })?;
-    parse_transport_private_key(&pem)
-}
-
-fn validate_secret_file(path: &Path, max_bytes: u64, label: &str) -> Result<()> {
-    let metadata = fs::metadata(path).map_err(|_| {
-        ServerError::Configuration(format!("{label} file {} is not readable", path.display()))
-    })?;
-    if !metadata.is_file() || metadata.len() == 0 || metadata.len() > max_bytes {
-        return Err(ServerError::Configuration(format!(
-            "{label} file {} must be non-empty and no larger than {max_bytes} bytes",
-            path.display()
-        )));
-    }
-    validate_secret_permissions(path, &metadata)
-}
-
-fn validate_secret_permissions(path: &Path, metadata: &fs::Metadata) -> Result<()> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        if metadata.permissions().mode() & 0o077 != 0 {
-            return Err(ServerError::Configuration(format!(
-                "secret file {} must not be group/world accessible (chmod 600)",
-                path.display()
-            )));
-        }
-    }
-    Ok(())
 }
 
 fn parse_transport_private_key(pem: &str) -> Result<RsaPrivateKey> {
+    if pem.is_empty() || pem.len() > MAX_PEM_CHARS {
+        return Err(ServerError::Configuration(format!(
+            "POLYEDGE_WALLET_CRYPTO__TRANSPORT_PRIVATE_KEY_PEM must be a non-empty PEM no larger than {MAX_PEM_CHARS} characters"
+        )));
+    }
     let private_key = RsaPrivateKey::from_pkcs8_pem(pem)
         .or_else(|_| RsaPrivateKey::from_pkcs1_pem(pem))
         .map_err(|_| {
             ServerError::Configuration(
-                "wallet transport private key must be PKCS#8 or PKCS#1 RSA PEM".to_string(),
+                "POLYEDGE_WALLET_CRYPTO__TRANSPORT_PRIVATE_KEY_PEM must be PKCS#8 or PKCS#1 RSA PEM"
+                    .to_string(),
             )
         })?;
     if private_key.n().bits() < MIN_RSA_BITS {
@@ -564,22 +520,41 @@ fn parse_transport_private_key(pem: &str) -> Result<RsaPrivateKey> {
 }
 
 fn parse_storage_key(encoded: Zeroizing<String>) -> Result<SecretBox<[u8; AES_KEY_BYTES]>> {
+    let trimmed = encoded.trim();
+    if trimmed.is_empty() || trimmed.len() > MAX_STORAGE_KEY_CHARS {
+        return Err(ServerError::Configuration(format!(
+            "POLYEDGE_WALLET_CRYPTO__STORAGE_KEY must be non-empty standard Base64 no larger than {MAX_STORAGE_KEY_CHARS} characters"
+        )));
+    }
     let decoded = general_purpose::STANDARD
-        .decode(encoded.trim())
+        .decode(trimmed)
         .map(Zeroizing::new)
         .map_err(|_| {
             ServerError::Configuration(
-                "wallet storage key file must contain valid Base64".to_string(),
+                "POLYEDGE_WALLET_CRYPTO__STORAGE_KEY must be valid standard Base64".to_string(),
             )
         })?;
     if decoded.len() != AES_KEY_BYTES {
         return Err(ServerError::Configuration(format!(
-            "wallet storage key must decode to exactly {AES_KEY_BYTES} bytes"
+            "POLYEDGE_WALLET_CRYPTO__STORAGE_KEY must decode to exactly {AES_KEY_BYTES} bytes"
         )));
     }
     let mut key = SecretBox::new(Box::new([0_u8; AES_KEY_BYTES]));
     key.expose_secret_mut().copy_from_slice(decoded.as_slice());
     Ok(key)
+}
+
+fn reject_removed_file_env(removed: &str, replacement: &str) -> Result<()> {
+    if optional_env(removed).is_some() {
+        return Err(ServerError::Configuration(format!(
+            "{removed} is no longer supported; set {replacement} instead"
+        )));
+    }
+    Ok(())
+}
+
+fn required_secret_env(name: &str) -> Result<Zeroizing<String>> {
+    required_env(name).map(Zeroizing::new)
 }
 
 fn decode_base64url_field(field: &str, encoded: &str) -> Result<Vec<u8>> {
@@ -738,27 +713,17 @@ mod tests {
         assert!(parse_storage_key(Zeroizing::new(short)).is_err());
     }
 
-    #[cfg(unix)]
     #[test]
-    fn secret_files_reject_group_or_world_permissions() -> Result<()> {
-        use std::os::unix::fs::PermissionsExt;
-
-        let path = std::env::temp_dir().join(format!(
-            "polyedge-wallet-secret-permissions-{}",
-            Uuid::now_v7()
-        ));
-        fs::write(&path, b"secret")
-            .map_err(|error| ServerError::Internal(format!("test file write failed: {error}")))?;
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o644))
-            .map_err(|error| ServerError::Internal(format!("test chmod failed: {error}")))?;
-        let rejected = validate_secret_file(&path, 32, "test secret").is_err();
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o600))
-            .map_err(|error| ServerError::Internal(format!("test chmod failed: {error}")))?;
-        let accepted = validate_secret_file(&path, 32, "test secret").is_ok();
-        let _ = fs::remove_file(&path);
-        assert!(rejected);
-        assert!(accepted);
-        Ok(())
+    fn pem_env_expands_escaped_newlines() {
+        let escaped = "-----BEGIN PRIVATE KEY-----\\nMIIE\\n-----END PRIVATE KEY-----";
+        let normalized = normalize_pem_env(escaped);
+        assert!(normalized.contains('\n'));
+        assert!(!normalized.contains("\\n"));
+        let already_multiline = "-----BEGIN PRIVATE KEY-----\nMIIE\n-----END PRIVATE KEY-----";
+        assert_eq!(
+            normalize_pem_env(already_multiline).as_str(),
+            already_multiline
+        );
     }
 
     #[test]

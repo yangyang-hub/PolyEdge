@@ -45,7 +45,7 @@ browser
 - targeted token 集来自有效 subscription 钱包对应的 slots、open-like managed orders 和非零 positions；超过 `POLYEDGE_TARGETED_ORDERBOOK__MAX_TOKENS` 时整轮失败，不静默截断。
 - opaque session token、CSRF token 和 activation token 在数据库只保存 SHA-256 hash；密码保存 Argon2 PHC hash。生产 session cookie 使用 `Secure`、`HttpOnly`、`SameSite=Strict`。
 - 浏览器用一次性 RSA-OAEP-256 + AES-256-GCM import context 上传钱包 secret；后端验证私钥推导地址后，用独立 AES-256-GCM storage KEK 和每钱包随机 DEK 写入 `wallet_secret_envelopes`。数据库、DTO、日志和管理员接口均不返回明文 secret。
-- storage KEK 当前由受控宿主 secret 文件只读挂载，文件路径通过环境变量配置，不是外部 KMS；导入 context 已按 owner 持久化到 `wallet_import_contexts` 并原子消费，server 内存不保存可重放明文 token。
+- storage KEK 与 transport RSA 私钥当前通过 server `.env` 直接注入（`POLYEDGE_WALLET_CRYPTO__STORAGE_KEY` / `TRANSPORT_PRIVATE_KEY_PEM`），不是外部 KMS；导入 context 已按 owner 持久化到 `wallet_import_contexts` 并原子消费，server 内存不保存可重放明文 token。
 - 管理员可以跨用户查看业务、余额和现有财务 snapshot 汇总，但不能查看或导出私钥。
 
 ## 策略、跟随与执行语义
@@ -138,7 +138,7 @@ git diff --check
 - runtime：`POLYEDGE_RUNTIME__ENVIRONMENT` 只接受 `local|production`；production 强制 HTTPS public origin、非空 exact CORS 和 Secure Cookie。
 - 身份：`POLYEDGE_PUBLIC_ORIGIN`、`POLYEDGE_BOOTSTRAP_ADMIN__USERNAME|DISPLAY_NAME|PASSWORD_HASH|CREDENTIAL_VERSION`、`POLYEDGE_AUTH__SESSION_IDLE_SECONDS|SESSION_ABSOLUTE_SECONDS|ACTIVATION_TTL_SECONDS|RECENT_AUTH_TTL_SECONDS`。
 - CORS：`POLYEDGE_CORS__ALLOWED_ORIGINS` 只接受 exact origin；production 非空。即使同源 Nginx 是主路径，server 仍执行写请求 Origin 检查。
-- 钱包加密：`POLYEDGE_WALLET_CRYPTO__TRANSPORT_PRIVATE_KEY_PEM_FILE|TRANSPORT_KEY_ID|STORAGE_KEY_ID|STORAGE_KEY_FILE|IMPORT_CONTEXT_TTL_SECONDS|MAX_IMPORT_CONTEXTS`。Compose 通过 `POLYEDGE_WALLET_IMPORT_PRIVATE_KEY_FILE` 与 `POLYEDGE_WALLET_STORAGE_KEY_FILE` 指定权限为 `0600` 的宿主 secret 文件挂载源，容器内路径固定在 `/run/secrets/`。
+- 钱包加密：`POLYEDGE_WALLET_CRYPTO__TRANSPORT_PRIVATE_KEY_PEM|TRANSPORT_KEY_ID|STORAGE_KEY_ID|STORAGE_KEY|IMPORT_CONTEXT_TTL_SECONDS|MAX_IMPORT_CONTEXTS`。RSA PEM 与 32-byte base64 storage key 直接写在 server `.env`；PEM 推荐单行并用 `\n` 表示换行。旧 `*_FILE` / Compose secret mount 变量已移除。
 - targeted orderbook：`POLYEDGE_TARGETED_ORDERBOOK__MAX_TOKENS|POLL_INTERVAL_MS`；freshness 只由策略版本 `book_freshness_ms` 决定。
 - 执行：`POLYEDGE_EXECUTION__WALLET_CONCURRENCY|RECONCILE_INTERVAL_MS`。
 - Polymarket：`POLYEDGE_POLYMARKET__CLOB_HOST|DATA_API_HOST|CHAIN_ID`。

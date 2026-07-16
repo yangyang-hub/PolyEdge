@@ -12,9 +12,6 @@ services:
         max-file: "3"
     env_file:
       - ${POLYEDGE_SERVER_ENV_FILE:-.env.server}
-    volumes:
-      - ${POLYEDGE_WALLET_IMPORT_PRIVATE_KEY_FILE:-./secrets/polyedge-wallet-import-private.pem}:/run/secrets/polyedge-wallet-import-private.pem:ro
-      - ${POLYEDGE_WALLET_STORAGE_KEY_FILE:-./secrets/polyedge-wallet-storage-key}:/run/secrets/polyedge-wallet-storage-key:ro
     expose:
       - "38001"
     command: ["polyedge-server"]
