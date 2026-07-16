@@ -7,7 +7,7 @@
 
 use crate::store::PostgresStore;
 use polyedge_connectors::{
-    PolymarketRewardBookLevel, PolymarketRewardOrderBook, PolymarketRewardsConnector,
+    PolymarketOrderBook, PolymarketOrderBookConnector, PolymarketOrderBookLevel,
 };
 use polyedge_domain::{AppError, Result};
 use rust_decimal::Decimal;
@@ -74,7 +74,7 @@ impl Default for OrderbookRuntimeConfig {
 #[derive(Clone)]
 pub struct OrderbookSupervisor {
     store: PostgresStore,
-    connector: PolymarketRewardsConnector,
+    connector: PolymarketOrderBookConnector,
     cache: Arc<RwLock<HashMap<String, CachedOrderBook>>>,
     config: OrderbookRuntimeConfig,
 }
@@ -93,7 +93,7 @@ impl OrderbookSupervisor {
                 "orderbook poll interval must be greater than zero",
             ));
         }
-        let connector = PolymarketRewardsConnector::new(&config.clob_host)?;
+        let connector = PolymarketOrderBookConnector::new(&config.clob_host)?;
         Ok(Self {
             store,
             connector,
@@ -279,10 +279,7 @@ pub async fn load_required_tokens(store: &PostgresStore, max_tokens: usize) -> R
     Ok(tokens)
 }
 
-fn normalize_book(
-    book: PolymarketRewardOrderBook,
-    confirmed_at: OffsetDateTime,
-) -> CachedOrderBook {
+fn normalize_book(book: PolymarketOrderBook, confirmed_at: OffsetDateTime) -> CachedOrderBook {
     let mut bids = normalize_levels(book.bids);
     bids.sort_by(|left, right| right.price.cmp(&left.price));
     let mut asks = normalize_levels(book.asks);
@@ -296,7 +293,7 @@ fn normalize_book(
     }
 }
 
-fn normalize_levels(levels: Vec<PolymarketRewardBookLevel>) -> Vec<BookLevel> {
+fn normalize_levels(levels: Vec<PolymarketOrderBookLevel>) -> Vec<BookLevel> {
     levels
         .into_iter()
         .filter(|level| {

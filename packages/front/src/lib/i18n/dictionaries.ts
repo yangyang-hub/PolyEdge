@@ -1,11 +1,11 @@
 import { shared } from "./dictionaries/shared";
 import { enums } from "./dictionaries/enums";
-import { v3 } from "./dictionaries/v3";
+import { consoleDictionary } from "./dictionaries/console";
 
 const _dictionary = {
   ...shared,
   ...enums,
-  ...v3,
+  ...consoleDictionary,
 } as const;
 
 type DeepStringRecord<T> = {

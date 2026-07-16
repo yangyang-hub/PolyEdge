@@ -1,7 +1,7 @@
 #![allow(clippy::missing_const_for_fn)]
 
 mod polymarket;
-mod rewards;
+mod targeted_orderbook;
 
 pub use polymarket::{
     LivePolymarketCancelAcceptance, LivePolymarketCancelOrderRequest, LivePolymarketCancelOutcome,
@@ -11,6 +11,6 @@ pub use polymarket::{
     PolymarketOrderLifecycleStatus, PolymarketOrderRejection, PolymarketOrderSnapshot,
     PolymarketSignatureScheme, PolymarketTokenOrderSide, PolymarketWalletPosition,
 };
-pub use rewards::{
-    PolymarketRewardBookLevel, PolymarketRewardOrderBook, PolymarketRewardsConnector,
+pub use targeted_orderbook::{
+    PolymarketOrderBook, PolymarketOrderBookConnector, PolymarketOrderBookLevel,
 };

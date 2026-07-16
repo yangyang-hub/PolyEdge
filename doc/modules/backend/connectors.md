@@ -18,7 +18,7 @@ V4 活动路径不包含 Gamma、RSS/Atom、AI/provider、info-risk、Polygon ch
 | `src/polymarket/order_reconciliation.rs` | 将 CLOB 单订单状态映射为 open/partial/terminal/unknown 生命周期 |
 | `src/polymarket/data_api.rs` | 指定钱包完整 positions 的只读分页接口 |
 | `src/polymarket/models.rs`、`helpers.rs` | 共享 wire model、认证签名和校验 helper |
-| `src/rewards.rs` + `src/rewards/orderbooks.rs` | 指定 token 集的 CLOB `/books` 批量读取，供 targeted supervisor 使用 |
+| `src/targeted_orderbook.rs` + `src/targeted_orderbook/requests.rs` | 指定 token 集的 CLOB `/books` 批量读取，供 targeted supervisor 使用 |
 
 ## Targeted book
 

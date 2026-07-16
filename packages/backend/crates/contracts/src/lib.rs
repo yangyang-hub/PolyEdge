@@ -1,6 +1,6 @@
 //! HTTP API contract DTOs for PolyEdge.
 //!
-//! Only the V3 manual-market, multi-wallet HTTP surface is public.
+//! Only the V4 multi-user manual-market HTTP surface is public.
 
 use polyedge_domain::MarketStatus;
 use rust_decimal::Decimal;

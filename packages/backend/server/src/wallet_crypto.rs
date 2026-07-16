@@ -26,11 +26,10 @@ use secrecy::{ExposeSecret, ExposeSecretMut, SecretBox, SecretSlice};
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use std::{
-    collections::HashMap,
     env, fmt, fs,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
-    time::{Duration, Instant},
+    sync::Arc,
+    time::Duration,
 };
 use time::OffsetDateTime;
 use uuid::Uuid;
@@ -220,7 +219,7 @@ impl fmt::Debug for WalletSecretEnvelope {
     }
 }
 
-/// Process-local wallet cryptography service.
+/// Wallet cryptography service. Import-context lifecycle is persisted in PostgreSQL.
 pub struct WalletCryptoService {
     transport_key_id: String,
     storage_key_id: String,
@@ -229,7 +228,6 @@ pub struct WalletCryptoService {
     public_key: WalletImportPublicJwk,
     import_context_ttl: Duration,
     max_import_contexts: usize,
-    contexts: ImportContextStore,
 }
 
 impl fmt::Debug for WalletCryptoService {
@@ -259,24 +257,7 @@ impl WalletCryptoService {
             public_key,
             import_context_ttl: config.import_context_ttl,
             max_import_contexts: config.max_import_contexts,
-            contexts: ImportContextStore::new(
-                config.import_context_ttl,
-                config.max_import_contexts,
-            ),
         }
-    }
-
-    /// Issue a bounded, short-lived, one-time import context.
-    pub fn create_import_context(&self) -> Result<WalletImportContext> {
-        let issued = self.contexts.issue()?;
-        Ok(WalletImportContext {
-            context_id: issued.context_id,
-            key_id: self.transport_key_id.clone(),
-            algorithm: "RSA-OAEP-256+A256GCM",
-            aad_version: IMPORT_AAD_VERSION,
-            public_key: self.public_key.clone(),
-            expires_at: issued.expires_at,
-        })
     }
 
     /// Issue a context whose lifecycle and capacity are managed by PostgreSQL.
@@ -305,20 +286,6 @@ impl WalletCryptoService {
     #[must_use]
     pub(crate) fn transport_key_id(&self) -> &str {
         &self.transport_key_id
-    }
-
-    /// Decrypt a browser payload after consuming its context.
-    ///
-    /// `binding` must be stable server-controlled data such as the authenticated user id and
-    /// wallet id. The browser constructs the same AAD with [`wallet_import_aad`].
-    pub fn decrypt_import(
-        &self,
-        context_id: Uuid,
-        encrypted: &WalletImportCiphertext,
-        binding: &[u8],
-    ) -> Result<SecretSlice<u8>> {
-        self.contexts.consume(context_id)?;
-        self.decrypt_import_validated(context_id, encrypted, binding)
     }
 
     /// Decrypt after a durable external context store has atomically validated and consumed
@@ -451,71 +418,6 @@ impl WalletCryptoService {
             )
             .map_err(|_| invalid_storage_envelope())?;
         Ok(plaintext.into())
-    }
-}
-
-struct IssuedContext {
-    context_id: Uuid,
-    expires_at: OffsetDateTime,
-}
-
-struct ImportContextStore {
-    ttl: Duration,
-    max_entries: usize,
-    entries: Mutex<HashMap<Uuid, Instant>>,
-}
-
-impl ImportContextStore {
-    fn new(ttl: Duration, max_entries: usize) -> Self {
-        Self {
-            ttl,
-            max_entries,
-            entries: Mutex::new(HashMap::new()),
-        }
-    }
-
-    fn issue(&self) -> Result<IssuedContext> {
-        let now = Instant::now();
-        let mut entries = self.lock_entries()?;
-        entries.retain(|_, expires_at| *expires_at > now);
-        if entries.len() >= self.max_entries {
-            return Err(ServerError::Dependency(
-                "wallet import context capacity is temporarily exhausted".to_string(),
-            ));
-        }
-        let context_id = Uuid::new_v4();
-        entries.insert(context_id, now + self.ttl);
-        let expires_at = OffsetDateTime::now_utc()
-            + time::Duration::try_from(self.ttl).map_err(|_| {
-                ServerError::Configuration(
-                    "wallet import context TTL exceeds supported duration".to_string(),
-                )
-            })?;
-        Ok(IssuedContext {
-            context_id,
-            expires_at,
-        })
-    }
-
-    fn consume(&self, context_id: Uuid) -> Result<()> {
-        let now = Instant::now();
-        let mut entries = self.lock_entries()?;
-        let valid = entries
-            .remove(&context_id)
-            .map(|expires_at| expires_at > now)
-            .unwrap_or(false);
-        if !valid {
-            return Err(ServerError::InvalidInput(
-                "wallet import context is invalid, expired, or already consumed".to_string(),
-            ));
-        }
-        Ok(())
-    }
-
-    fn lock_entries(&self) -> Result<std::sync::MutexGuard<'_, HashMap<Uuid, Instant>>> {
-        self.entries.lock().map_err(|_| {
-            ServerError::Internal("wallet import context store is unavailable".to_string())
-        })
     }
 }
 
@@ -789,9 +691,9 @@ mod tests {
     }
 
     #[test]
-    fn browser_import_decrypts_once_and_consumes_context() -> Result<()> {
+    fn browser_import_ciphertext_round_trips_with_durable_context() -> Result<()> {
         let (service, public_key) = test_service()?;
-        let context = service.create_import_context()?;
+        let context = service.create_durable_import_context()?;
         let dek = [11_u8; AES_KEY_BYTES];
         let nonce = [13_u8; AES_NONCE_BYTES];
         let aad = wallet_import_aad(context.context_id, b"user-1/new-wallet");
@@ -814,27 +716,17 @@ mod tests {
             ciphertext: general_purpose::URL_SAFE_NO_PAD.encode(ciphertext),
         };
 
-        let decrypted =
-            service.decrypt_import(context.context_id, &encrypted, b"user-1/new-wallet")?;
+        let decrypted = service.decrypt_import_validated(
+            context.context_id,
+            &encrypted,
+            b"user-1/new-wallet",
+        )?;
         assert_eq!(decrypted.expose_secret(), b"browser wallet secret");
         assert!(
             service
-                .decrypt_import(context.context_id, &encrypted, b"user-1/new-wallet")
+                .decrypt_import_validated(context.context_id, &encrypted, b"user-2/new-wallet")
                 .is_err()
         );
-        Ok(())
-    }
-
-    #[test]
-    fn context_store_is_bounded_and_expired_contexts_are_invalid() -> Result<()> {
-        let store = ImportContextStore::new(Duration::from_millis(1), 1);
-        let first = store.issue()?;
-        assert!(store.issue().is_err());
-        std::thread::sleep(Duration::from_millis(3));
-        let second = store.issue()?;
-        assert!(store.consume(first.context_id).is_err());
-        store.consume(second.context_id)?;
-        assert!(store.consume(second.context_id).is_err());
         Ok(())
     }
 

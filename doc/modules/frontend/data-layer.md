@@ -2,7 +2,7 @@
 
 最后更新：2026-07-16
 
-前端通信统一使用 cookie session、`credentials: include` 和写请求 `X-PolyEdge-CSRF-Token`。新增 `auth.ts`、`admin.ts`、`subscriptions.ts` 与 `wallet-security.ts`，覆盖认证、管理员视图、策略跟随和 WebCrypto hybrid envelope。静态导出不使用 Next Server Actions。
+前端通信统一使用 cookie session、`credentials: include` 和写请求 `X-PolyEdge-CSRF-Token`；后端不再接受旧 CSRF header 别名或 Authorization/Bearer 兼容。`auth.ts`、`admin.ts`、`subscriptions.ts` 与 `wallet-security.ts` 覆盖认证、管理员视图、策略跟随和 WebCrypto hybrid envelope。静态导出不使用 Next Server Actions。
 
 DTO 直接镜像 `packages/backend/crates/contracts/src/identity.rs`、`manual_trading.rs` 与对应 domain 类型：
 

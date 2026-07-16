@@ -1,4 +1,4 @@
-// Polymarket public Data API connector. V3 uses only wallet-scoped current
+// Polymarket public Data API connector. V4 uses only wallet-scoped current
 // positions for risk reconciliation; this module must not expose discovery,
 // leaderboard, profile, activity, trade-history, or closed-position APIs.
 

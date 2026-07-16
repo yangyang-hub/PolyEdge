@@ -39,8 +39,9 @@ impl ServerConfig {
         let bind_addr = SocketAddr::from_str(&format!("{host}:{port}")).map_err(|error| {
             ServerError::Configuration(format!("invalid server bind address: {error}"))
         })?;
-        let environment =
-            env_value("POLYEDGE_RUNTIME__ENVIRONMENT").unwrap_or_else(|| "local".to_string());
+        let environment = parse_environment(
+            env_value("POLYEDGE_RUNTIME__ENVIRONMENT").unwrap_or_else(|| "local".to_string()),
+        )?;
         let public_origin = env_value("POLYEDGE_PUBLIC_ORIGIN")
             .unwrap_or_else(|| "http://localhost:33002".to_string());
         validate_exact_origin(
@@ -162,6 +163,17 @@ fn parse_cors_origins(raw: String) -> Result<Vec<String>> {
         .collect()
 }
 
+fn parse_environment(raw: String) -> Result<String> {
+    let environment = raw.to_ascii_lowercase();
+    if matches!(environment.as_str(), "local" | "production") {
+        Ok(environment)
+    } else {
+        Err(ServerError::Configuration(
+            "POLYEDGE_RUNTIME__ENVIRONMENT must be local or production".to_string(),
+        ))
+    }
+}
+
 fn validate_exact_origin(name: &str, origin: &str, require_https: bool) -> Result<()> {
     let (scheme, authority) = origin.split_once("://").ok_or_else(|| {
         ServerError::Configuration(format!("{name} must be an exact HTTP(S) origin"))
@@ -194,5 +206,15 @@ mod tests {
         assert!(validate_exact_origin("origin", "https://polyedge.example/", false).is_err());
         assert!(validate_exact_origin("origin", "javascript://polyedge", false).is_err());
         assert!(validate_exact_origin("origin", "http://localhost", true).is_err());
+    }
+
+    #[test]
+    fn runtime_environment_rejects_unknown_values() {
+        assert_eq!(
+            parse_environment("Production".to_string()).unwrap(),
+            "production"
+        );
+        assert!(parse_environment("prodution".to_string()).is_err());
+        assert!(parse_environment("staging".to_string()).is_err());
     }
 }

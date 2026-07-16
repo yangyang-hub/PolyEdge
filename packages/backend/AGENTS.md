@@ -22,7 +22,7 @@ V4 不再设置独立 `application`、`infrastructure`、`common`、API app、wo
 - 外部 Polymarket 协议调用集中在 `connectors`；API handler 和策略纯函数不得直接发外部请求。
 - SQL、迁移、幂等、审计和执行 lease 位于 `server/store` 与 `migrations_v2`。
 - `server/orderbook` 只处理数据库已知的人工目标 token、open-like managed orders 和非零 positions，不发现市场、不全量扫描。
-- 用户身份来自 opaque Cookie session，不接受共享 Bearer token或客户端伪造 actor；写请求校验 CSRF 与 exact Origin，危险操作校验 recent authentication。
+- 用户身份来自 opaque Cookie session，不接受共享 Bearer token或客户端伪造 actor；写请求只接受 `X-PolyEdge-CSRF-Token` 并校验 exact Origin，危险操作校验 recent authentication。
 - 钱包 secret 只以 envelope ciphertext 存入数据库；`server/secrets.rs` 执行时解密，禁止明文进入 DTO、日志或管理员接口。浏览器 transport key 与数据库 storage key 必须分离。
 
 ## V4 执行约束

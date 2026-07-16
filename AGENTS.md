@@ -36,7 +36,7 @@ browser
   -> PostgreSQL / Polymarket CLOB / Data API
 ```
 
-后端只有一个活动可部署进程 `polyedge-server`。API、数据访问、目标盘口监督和执行 runtime 位于同一进程，不通过内部 HTTP 相互调用。生产浏览器流量应通过前端 Nginx 的同源 `/api` 代理；server 的 38001 宿主映射主要用于运维和调试。
+后端只有一个活动可部署进程 `polyedge-server`。API、数据访问、目标盘口监督和执行 runtime 位于同一进程，不通过内部 HTTP 相互调用。生产浏览器流量通过前端 Nginx 的同源 `/api` 代理；Compose 只在内部网络 `expose` server 的 38001，不映射宿主端口。
 
 ## 数据与安全边界
 
@@ -44,8 +44,8 @@ browser
 - 实时盘口只存在于 server 进程内 targeted cache；API handler 不在请求时调用 Polymarket。
 - targeted token 集来自有效 subscription 钱包对应的 slots、open-like managed orders 和非零 positions；超过 `POLYEDGE_TARGETED_ORDERBOOK__MAX_TOKENS` 时整轮失败，不静默截断。
 - opaque session token、CSRF token 和 activation token 在数据库只保存 SHA-256 hash；密码保存 Argon2 PHC hash。生产 session cookie 使用 `Secure`、`HttpOnly`、`SameSite=Strict`。
-- 浏览器用一次性进程内 RSA-OAEP-256 + AES-256-GCM context 上传钱包 secret；后端验证私钥推导地址后，用独立 AES-256-GCM storage KEK 和每钱包随机 DEK 写入 `wallet_secret_envelopes`。数据库、DTO、日志和管理员接口均不返回明文 secret。
-- storage KEK 当前由环境变量直接注入，不是外部 KMS；导入 context 已按 owner 持久化到 `wallet_import_contexts` 并原子消费，server 内存不保存可重放明文 token。
+- 浏览器用一次性 RSA-OAEP-256 + AES-256-GCM import context 上传钱包 secret；后端验证私钥推导地址后，用独立 AES-256-GCM storage KEK 和每钱包随机 DEK 写入 `wallet_secret_envelopes`。数据库、DTO、日志和管理员接口均不返回明文 secret。
+- storage KEK 当前由受控宿主 secret 文件只读挂载，文件路径通过环境变量配置，不是外部 KMS；导入 context 已按 owner 持久化到 `wallet_import_contexts` 并原子消费，server 内存不保存可重放明文 token。
 - 管理员可以跨用户查看业务、余额和现有财务 snapshot 汇总，但不能查看或导出私钥。
 
 ## 策略、跟随与执行语义
@@ -75,7 +75,7 @@ browser
 - 账本与系统：`GET /orders`、`GET /positions`、`GET /cash-flows`、管理员 `POST /cash-flows`、`GET/PATCH /system/runtime-state`
 - 健康：`GET /healthz`、`GET /readyz`
 
-业务写接口使用 `Idempotency-Key` 和 CSRF/Origin 校验；登录、激活、登出和重新认证不进入业务幂等层。管理员创建用户与重签激活令牌的明文 token 永不写入幂等响应，重放返回冲突。危险钱包启用、执行、强制撤单、用户管理、cash-flow 和 kill-switch 变更要求 recent authentication。
+业务写接口使用 `Idempotency-Key`、`X-PolyEdge-CSRF-Token` 和 Origin 校验；不接受 Bearer 身份或旧 CSRF header 别名。登录、激活、登出和重新认证不进入业务幂等层。管理员创建用户与重签激活令牌的明文 token 永不写入幂等响应，重放返回冲突。危险钱包启用/secret rotation、执行、强制撤单、用户管理、cash-flow 和 kill-switch 变更要求 recent authentication。
 
 ## 关键文件
 
@@ -126,7 +126,7 @@ yarn build
 ```bash
 ./scripts/build-backend-bin.sh
 bash -n scripts/deploy.sh scripts/build-backend-bin.sh
-POLYEDGE_SERVER_ENV_FILE=.env.server.example POLYEDGE_FRONT_ENV_FILE=.env.front.example \
+POLYEDGE_SERVER_ENV_FILE=.env.server.example \
   docker compose -f deploy/docker-compose.yml config
 cmp packages/backend/migrations_v2/0001_manual_trading_schema.sql packages/backend/init.sql
 git diff --check
@@ -135,13 +135,14 @@ git diff --check
 ## 配置说明
 
 - Postgres：`POLYEDGE_POSTGRES__URL`；不读取旧 `DATABASE_URL`。
+- runtime：`POLYEDGE_RUNTIME__ENVIRONMENT` 只接受 `local|production`；production 强制 HTTPS public origin、非空 exact CORS 和 Secure Cookie。
 - 身份：`POLYEDGE_PUBLIC_ORIGIN`、`POLYEDGE_BOOTSTRAP_ADMIN__USERNAME|DISPLAY_NAME|PASSWORD_HASH|CREDENTIAL_VERSION`、`POLYEDGE_AUTH__SESSION_IDLE_SECONDS|SESSION_ABSOLUTE_SECONDS|ACTIVATION_TTL_SECONDS|RECENT_AUTH_TTL_SECONDS`。
 - CORS：`POLYEDGE_CORS__ALLOWED_ORIGINS` 只接受 exact origin；production 非空。即使同源 Nginx 是主路径，server 仍执行写请求 Origin 检查。
-- 钱包加密：`POLYEDGE_WALLET_CRYPTO__TRANSPORT_PRIVATE_KEY_PEM_FILE|TRANSPORT_KEY_ID|STORAGE_KEY_ID|STORAGE_KEY_FILE|IMPORT_CONTEXT_TTL_SECONDS|MAX_IMPORT_CONTEXTS`。Compose 通过 `POLYEDGE_WALLET_IMPORT_PRIVATE_KEY_FILE` 与 `POLYEDGE_WALLET_STORAGE_KEY_FILE` 指定宿主 secret 文件挂载源。
+- 钱包加密：`POLYEDGE_WALLET_CRYPTO__TRANSPORT_PRIVATE_KEY_PEM_FILE|TRANSPORT_KEY_ID|STORAGE_KEY_ID|STORAGE_KEY_FILE|IMPORT_CONTEXT_TTL_SECONDS|MAX_IMPORT_CONTEXTS`。Compose 通过 `POLYEDGE_WALLET_IMPORT_PRIVATE_KEY_FILE` 与 `POLYEDGE_WALLET_STORAGE_KEY_FILE` 指定权限为 `0600` 的宿主 secret 文件挂载源，容器内路径固定在 `/run/secrets/`。
 - targeted orderbook：`POLYEDGE_TARGETED_ORDERBOOK__MAX_TOKENS|POLL_INTERVAL_MS`；freshness 只由策略版本 `book_freshness_ms` 决定。
 - 执行：`POLYEDGE_EXECUTION__WALLET_CONCURRENCY|RECONCILE_INTERVAL_MS`。
 - Polymarket：`POLYEDGE_POLYMARKET__CLOB_HOST|DATA_API_HOST|CHAIN_ID`。
-- 前端生产默认 `NEXT_PUBLIC_POLYEDGE_API_BASE_URL=`，使用 Nginx 同源 `/api` 代理。
+- 前端生产必须保持 `NEXT_PUBLIC_POLYEDGE_API_BASE_URL=`，使用 Nginx 同源 `/api` 代理；非空值只用于 `packages/front` 本地开发。
 
 ## 当前缺口
 

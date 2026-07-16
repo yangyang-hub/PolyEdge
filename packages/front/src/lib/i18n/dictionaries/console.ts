@@ -1,4 +1,4 @@
-export const v3 = {
+export const consoleDictionary = {
   actionMessages: {
     walletSaved: "钱包已保存。",
     walletSaveFailed: "保存钱包失败。",
@@ -31,7 +31,6 @@ export const v3 = {
     rewardMaximumSpread: "奖励最大价差",
     rewardDailyRate: "奖励日费率（可选）",
     operatorNote: "操作备注（可选）",
-    slotsLabel: "报价槽位",
     slotKey: "槽位 Key",
     outcome: "方向",
     quantity: "数量（份）",
@@ -60,17 +59,13 @@ export const v3 = {
   wallets: {
     eyebrow: "账户隔离",
     title: "钱包账户",
-    description: "数据库仅保存凭证定位符；执行时按钱包串行、跨钱包有界并行。",
+    description: "钱包私钥在浏览器内加密上传，并以数据库 envelope 密文保存；执行时按钱包串行、跨钱包有界并行。",
     add: "添加钱包",
     name: "显示名称",
     signerAddress: "Signer 地址",
     funder: "Funder 地址",
     signatureType: "签名类型",
-    credentialProvider: "凭证 Provider",
-    credentialLocator: "凭证定位符",
-    credentialVersion: "凭证版本（可选）",
-    credentialPlaceholder: "例如 maker-primary",
-    credential: "凭证",
+    credential: "存储密钥",
     trading: "创建后允许交易",
     operatorNote: "操作备注（可选）",
     maxOpenOrders: "最大开放订单",
@@ -120,7 +115,7 @@ export const v3 = {
     walletTargets: "个钱包目标",
     marketTargets: "个市场过滤条件",
   },
-  settingsV3: {
+  settings: {
     eyebrow: "系统保护",
     title: "设置",
     description: "查看单后端运行边界，并通过受保护操作控制全局交易开关。",
@@ -155,7 +150,7 @@ export const v3 = {
     releaseConfirm: "确认释放",
     enableTradingOnRelease: "释放时同时启用全局交易",
   },
-  dashboardV3: {
+  dashboard: {
     eyebrow: "运行概览",
     title: "做市控制台",
     description: "人工策略、多钱包执行和受管订单状态的单一视图。",
@@ -163,10 +158,10 @@ export const v3 = {
     wallets: "启用钱包",
     openOrders: "开放订单",
     pendingBatches: "待处理批次",
-    liveHint: "来自 V3 API 的当前数据",
+    liveHint: "来自当前 API 的最新快照",
     quickStart: "从这里开始",
     strategyHint: "录入市场和稳定报价槽位",
-    walletHint: "配置凭证引用与钱包风控",
+    walletHint: "加密导入钱包并配置风控",
     operationHint: "选择策略并批量投射到钱包",
     openWorkbench: "打开工作台 →",
   },

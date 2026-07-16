@@ -5,11 +5,12 @@ Next.js 16.2 + React 19.2 static console for session login/activation, dashboard
 ## Local development
 
 ```bash
+cp .env.example .env
 yarn install
 yarn dev
 ```
 
-Leave `NEXT_PUBLIC_POLYEDGE_API_BASE_URL` empty for the production same-origin Nginx proxy. A separate backend origin is supported only for local development with matching CORS/Origin configuration. Wallet plaintext exists only briefly in the browser before WebCrypto envelope upload and is never persisted by the frontend.
+The local example points to `http://localhost:38001`; configure the backend public origin and CORS allowlist for `http://localhost:33002`. Production uses `deploy/.env.front` and must leave `NEXT_PUBLIC_POLYEDGE_API_BASE_URL` empty for the same-origin Nginx proxy. Wallet plaintext exists only briefly in the browser before WebCrypto envelope upload and is never persisted by the frontend.
 
 ## Validation
 

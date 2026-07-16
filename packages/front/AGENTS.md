@@ -32,8 +32,6 @@ This version has breaking changes — APIs, conventions, and file structure may 
 
 复杂 feature 使用 `components/`、`loaders/`、`lib/` 和紧邻领域类型/格式化 helper 分层；简单工作台可只保留单一交互组件，增长到软上限前再机械拆分。
 
-**注意：`src/server/` 当前是空目录（历史遗留），新代码不要往里放；数据层一律用 `src/lib/api/*`。**
-
 ## 数据与装配约定
 
 - server component 经 `features/*/loaders/*` 调用 `src/lib/api/*` 取数，不在组件里直接 fetch。当前 session 依赖浏览器 Cookie 的工作台可在 client component 中通过统一 API 模块加载。

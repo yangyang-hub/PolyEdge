@@ -18,7 +18,7 @@ type Metrics = {
 };
 
 export function DashboardOverview() {
-  const d = dictionary.dashboardV3;
+  const d = dictionary.dashboard;
   const [metrics, setMetrics] = useState<Metrics | null>(null);
 
   useEffect(() => {

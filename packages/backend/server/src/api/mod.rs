@@ -760,11 +760,9 @@ fn cors_layer(state: &AppState) -> CorsLayer {
         .allow_credentials(true)
         .allow_headers([
             header::ACCEPT,
-            header::AUTHORIZATION,
             header::CONTENT_TYPE,
             header::HeaderName::from_static("x-request-id"),
             header::HeaderName::from_static("idempotency-key"),
             header::HeaderName::from_static("x-polyedge-csrf-token"),
-            header::HeaderName::from_static("x-csrf-token"),
         ])
 }

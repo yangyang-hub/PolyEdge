@@ -1,7 +1,7 @@
 fn spawn_next_orderbook_fetch<'a>(
-    tasks: &mut JoinSet<Result<Option<PolymarketRewardOrderBook>>>,
+    tasks: &mut JoinSet<Result<Option<PolymarketOrderBook>>>,
     pending: &mut std::slice::Iter<'a, String>,
-    connector: &PolymarketRewardsConnector,
+    connector: &PolymarketOrderBookConnector,
 ) {
     if let Some(token_id) = pending.next() {
         let connector = connector.clone();
@@ -10,11 +10,11 @@ fn spawn_next_orderbook_fetch<'a>(
     }
 }
 
-impl PolymarketRewardsConnector {
+impl PolymarketOrderBookConnector {
     pub async fn fetch_order_books(
         &self,
         token_ids: &[String],
-    ) -> Result<Vec<PolymarketRewardOrderBook>> {
+    ) -> Result<Vec<PolymarketOrderBook>> {
         if token_ids.is_empty() {
             return Ok(Vec::new());
         }
@@ -65,7 +65,7 @@ impl PolymarketRewardsConnector {
     async fn fetch_order_book_batch(
         &self,
         token_ids: &[String],
-    ) -> Result<Vec<PolymarketRewardOrderBook>> {
+    ) -> Result<Vec<PolymarketOrderBook>> {
         let requests = token_ids
             .iter()
             .map(|token_id| serde_json::json!({ "token_id": token_id }))
@@ -100,7 +100,7 @@ impl PolymarketRewardsConnector {
             "POLYMARKET_BOOK_BATCH_DECODE_FAILED",
             "Polymarket order book batch",
         )?;
-        let books = map_requested_reward_order_books(raws, token_ids);
+        let books = map_requested_order_books(raws, token_ids);
         if books.len() < token_ids.len() {
             tracing::warn!(
                 requested = token_ids.len(),
@@ -115,7 +115,7 @@ impl PolymarketRewardsConnector {
     async fn fetch_order_books_individually(
         &self,
         token_ids: &[String],
-    ) -> Result<Vec<PolymarketRewardOrderBook>> {
+    ) -> Result<Vec<PolymarketOrderBook>> {
         let mut pending = token_ids.iter();
         let mut tasks = JoinSet::new();
         let mut books = Vec::new();
@@ -147,7 +147,7 @@ impl PolymarketRewardsConnector {
         Ok(books)
     }
 
-    async fn fetch_order_book(&self, token_id: &str) -> Result<Option<PolymarketRewardOrderBook>> {
+    async fn fetch_order_book(&self, token_id: &str) -> Result<Option<PolymarketOrderBook>> {
         let mut url =
             reqwest::Url::parse(&format!("{}/book", self.clob_host)).map_err(|error| {
                 AppError::invalid_input(
@@ -183,17 +183,17 @@ impl PolymarketRewardsConnector {
             "POLYMARKET_BOOK_DECODE_FAILED",
             &format!("Polymarket order book for token_id={token_id}"),
         )
-        .map(|raw| map_reward_order_book_with_fallback(raw, token_id))
+        .map(|raw| map_order_book_with_fallback(raw, token_id))
     }
 }
 
-fn map_reward_order_book(raw: RawOrderBook) -> Option<PolymarketRewardOrderBook> {
+fn map_order_book(raw: RawOrderBook) -> Option<PolymarketOrderBook> {
     let token_id = raw.asset_id?.trim().to_string();
     if token_id.is_empty() {
         return None;
     }
     let observed_at = parse_order_book_timestamp(raw.timestamp.as_deref())?;
-    Some(PolymarketRewardOrderBook {
+    Some(PolymarketOrderBook {
         token_id,
         bids: parse_levels(raw.bids, SortDirection::Descending),
         asks: parse_levels(raw.asks, SortDirection::Ascending),
@@ -201,27 +201,27 @@ fn map_reward_order_book(raw: RawOrderBook) -> Option<PolymarketRewardOrderBook>
     })
 }
 
-fn map_reward_order_book_with_fallback(
+fn map_order_book_with_fallback(
     mut raw: RawOrderBook,
     fallback_token_id: &str,
-) -> Option<PolymarketRewardOrderBook> {
+) -> Option<PolymarketOrderBook> {
     if raw.asset_id.as_deref().is_none_or(str::is_empty) {
         raw.asset_id = Some(fallback_token_id.to_string());
     }
-    map_reward_order_book(raw)
+    map_order_book(raw)
 }
 
-fn map_requested_reward_order_books(
+fn map_requested_order_books(
     raws: Vec<RawOrderBook>,
     token_ids: &[String],
-) -> Vec<PolymarketRewardOrderBook> {
+) -> Vec<PolymarketOrderBook> {
     let requested = token_ids
         .iter()
         .map(String::as_str)
         .collect::<HashSet<_>>();
     let mut seen = HashSet::new();
     raws.into_iter()
-        .filter_map(map_reward_order_book)
+        .filter_map(map_order_book)
         .filter(|book| {
             requested.contains(book.token_id.as_str()) && seen.insert(book.token_id.clone())
         })
@@ -237,7 +237,7 @@ enum SortDirection {
 fn parse_levels(
     levels: Option<Vec<RawBookLevel>>,
     direction: SortDirection,
-) -> Vec<PolymarketRewardBookLevel> {
+) -> Vec<PolymarketOrderBookLevel> {
     let mut parsed = levels
         .unwrap_or_default()
         .into_iter()
@@ -247,7 +247,7 @@ fn parse_levels(
             if size <= Decimal::ZERO {
                 return None;
             }
-            Some(PolymarketRewardBookLevel { price, size })
+            Some(PolymarketOrderBookLevel { price, size })
         })
         .collect::<Vec<_>>();
 
@@ -277,7 +277,7 @@ mod orderbook_tests {
 
     #[test]
     fn batch_order_book_mapping_keeps_best_level_order() {
-        let book = map_reward_order_book(RawOrderBook {
+        let book = map_order_book(RawOrderBook {
             asset_id: Some("123".to_string()),
             timestamp: Some("1717171717000".to_string()),
             bids: Some(vec![
@@ -316,7 +316,7 @@ mod orderbook_tests {
             bids: None,
             asks: None,
         };
-        let books = map_requested_reward_order_books(
+        let books = map_requested_order_books(
             vec![raw("requested"), raw("requested"), raw("unexpected")],
             &["requested".to_string()],
         );
@@ -328,7 +328,7 @@ mod orderbook_tests {
     #[test]
     fn order_book_without_exchange_timestamp_is_rejected() {
         assert!(
-            map_reward_order_book(RawOrderBook {
+            map_order_book(RawOrderBook {
                 asset_id: Some("123".to_string()),
                 timestamp: None,
                 bids: None,

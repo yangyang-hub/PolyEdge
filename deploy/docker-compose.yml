@@ -37,8 +37,6 @@ services:
     image: ${POLYEDGE_FRONT_IMAGE:-polyedge-front:local}
     restart: unless-stopped
     logging: *default-logging
-    env_file:
-      - ${POLYEDGE_FRONT_ENV_FILE:-.env.front}
     ports:
       - "${POLYEDGE_FRONT_BIND:-0.0.0.0}:${POLYEDGE_FRONT_PORT:-33002}:80"
     healthcheck:

@@ -16,21 +16,21 @@ const ENRICH_CONCURRENCY: usize = 3;
 const RESPONSE_PREVIEW_BYTES: usize = 300;
 
 #[derive(Debug, Clone)]
-pub struct PolymarketRewardBookLevel {
+pub struct PolymarketOrderBookLevel {
     pub price: Decimal,
     pub size: Decimal,
 }
 
 #[derive(Debug, Clone)]
-pub struct PolymarketRewardOrderBook {
+pub struct PolymarketOrderBook {
     pub token_id: String,
-    pub bids: Vec<PolymarketRewardBookLevel>,
-    pub asks: Vec<PolymarketRewardBookLevel>,
+    pub bids: Vec<PolymarketOrderBookLevel>,
+    pub asks: Vec<PolymarketOrderBookLevel>,
     pub observed_at: OffsetDateTime,
 }
 
 #[derive(Debug, Clone)]
-pub struct PolymarketRewardsConnector {
+pub struct PolymarketOrderBookConnector {
     clob_host: String,
     client: reqwest::Client,
 }
@@ -49,7 +49,7 @@ struct RawOrderBook {
     asks: Option<Vec<RawBookLevel>>,
 }
 
-impl PolymarketRewardsConnector {
+impl PolymarketOrderBookConnector {
     pub fn new(clob_host: &str) -> Result<Self> {
         let clob_host = clob_host.trim().trim_end_matches('/').to_string();
         if clob_host.is_empty() {
@@ -96,4 +96,4 @@ fn response_body_preview(body: &[u8]) -> String {
     preview
 }
 
-include!("rewards/orderbooks.rs");
+include!("targeted_orderbook/requests.rs");

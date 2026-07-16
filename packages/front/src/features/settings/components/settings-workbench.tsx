@@ -17,7 +17,7 @@ import { dictionary } from "@/lib/i18n/dictionaries";
 type RuntimeAction = "lock" | "release" | null;
 
 export function SettingsWorkbench() {
-  const d = dictionary.settingsV3;
+  const d = dictionary.settings;
   const [state, setState] = useState<SystemRuntimeStateData | null>(null);
   const [action, setAction] = useState<RuntimeAction>(null);
   const [enableTrading, setEnableTrading] = useState(false);

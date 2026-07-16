@@ -236,8 +236,8 @@ fn session_cookie(headers: &HeaderMap) -> Option<&str> {
 }
 
 fn csrf_header(headers: &HeaderMap) -> Option<&str> {
-    headers.get("x-csrf-token")
-        .or_else(|| headers.get("x-polyedge-csrf-token"))
+    headers
+        .get("x-polyedge-csrf-token")
         .and_then(|value| value.to_str().ok())
 }
 
