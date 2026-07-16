@@ -17,7 +17,9 @@ pub(super) async fn replace_wallet_positions(
 ) -> Result<WalletPositionRiskTotals> {
     validate_snapshot(&snapshot)?;
     let mut tx = store.pool.begin().await?;
-    sqlx::query("SELECT wallet_id FROM wallet_account_state WHERE wallet_id = $1 FOR UPDATE")
+    let owner_user_id: i64 = sqlx::query_scalar(
+        "SELECT w.owner_user_id FROM wallet_account_state a JOIN wallet_accounts w ON w.wallet_id = a.wallet_id WHERE a.wallet_id = $1 FOR UPDATE OF a",
+    )
         .bind(wallet_id)
         .fetch_optional(&mut *tx)
         .await?
@@ -41,6 +43,19 @@ pub(super) async fn replace_wallet_positions(
         })
     })
     .collect::<Result<Vec<_>>>()?;
+    let existing_realized =
+        sqlx::query("SELECT token_id,realized_pnl FROM positions WHERE wallet_id=$1")
+            .bind(wallet_id)
+            .fetch_all(&mut *tx)
+            .await?
+            .into_iter()
+            .map(|row| {
+                Ok((
+                    row.try_get::<String, _>("token_id")?,
+                    row.try_get::<Decimal, _>("realized_pnl")?,
+                ))
+            })
+            .collect::<Result<HashMap<_, _>>>()?;
 
     let incoming = snapshot
         .positions
@@ -55,26 +70,35 @@ pub(super) async fn replace_wallet_positions(
     let mut realized_pnls = Vec::with_capacity(known.len());
     for outcome in known {
         let position = incoming.get(&outcome.token_id);
+        let realized_pnl = position.map_or_else(
+            || {
+                existing_realized
+                    .get(&outcome.token_id)
+                    .copied()
+                    .unwrap_or(Decimal::ZERO)
+            },
+            |value| value.realized_pnl,
+        );
         market_ids.push(outcome.market_id);
         outcomes.push(outcome.outcome);
         token_ids.push(outcome.token_id);
         quantities.push(position.map_or(Decimal::ZERO, |value| value.quantity));
         average_prices.push(position.map_or(Decimal::ZERO, |value| value.average_price));
-        realized_pnls.push(position.map_or(Decimal::ZERO, |value| value.realized_pnl));
+        realized_pnls.push(realized_pnl);
     }
 
     sqlx::query(
         r#"
         INSERT INTO positions (
-          wallet_id, market_id, token_id, outcome, quantity, average_price,
+          owner_user_id, wallet_id, market_id, token_id, outcome, quantity, average_price,
           realized_pnl, version, observed_at
         )
-        SELECT $1, snapshot.market_id, snapshot.token_id, snapshot.outcome,
+        SELECT $1, $2, snapshot.market_id, snapshot.token_id, snapshot.outcome,
                snapshot.quantity, snapshot.average_price, snapshot.realized_pnl,
-               1, $8
+               1, $9
         FROM UNNEST(
-          $2::BIGINT[], $3::TEXT[], $4::TEXT[], $5::NUMERIC[],
-          $6::NUMERIC[], $7::NUMERIC[]
+          $3::BIGINT[], $4::TEXT[], $5::TEXT[], $6::NUMERIC[],
+          $7::NUMERIC[], $8::NUMERIC[]
         ) AS snapshot(
           market_id, outcome, token_id, quantity, average_price, realized_pnl
         )
@@ -90,6 +114,7 @@ pub(super) async fn replace_wallet_positions(
         WHERE positions.observed_at <= EXCLUDED.observed_at
         "#,
     )
+    .bind(owner_user_id)
     .bind(wallet_id)
     .bind(&market_ids)
     .bind(&outcomes)
@@ -136,6 +161,35 @@ pub(super) async fn replace_wallet_positions(
             "wallet account state changed during position reconciliation".to_string(),
         ));
     }
+    let equity = sqlx::query(
+        r#"SELECT s.available_collateral, s.reserved_collateral,
+                  COALESCE(SUM(p.realized_pnl),0) AS realized_pnl
+           FROM wallet_account_state s
+           LEFT JOIN positions p ON p.wallet_id=s.wallet_id
+           WHERE s.wallet_id=$1
+           GROUP BY s.available_collateral,s.reserved_collateral"#,
+    )
+    .bind(wallet_id)
+    .fetch_one(&mut *tx)
+    .await?;
+    let available: Decimal = equity.try_get("available_collateral")?;
+    let reserved: Decimal = equity.try_get("reserved_collateral")?;
+    let realized_pnl: Decimal = equity.try_get("realized_pnl")?;
+    sqlx::query(
+        r#"INSERT INTO wallet_equity_snapshots (
+             owner_user_id,wallet_id,collateral_balance,position_market_value,
+             realized_pnl,unrealized_pnl,total_equity,valuation_status,observed_at
+           ) VALUES ($1,$2,$3,$4,$5,0,$6,'partial',$7)"#,
+    )
+    .bind(owner_user_id)
+    .bind(wallet_id)
+    .bind(available + reserved)
+    .bind(total_position_notional)
+    .bind(realized_pnl)
+    .bind(available + reserved + total_position_notional)
+    .bind(snapshot.observed_at)
+    .execute(&mut *tx)
+    .await?;
     tx.commit().await?;
     Ok(WalletPositionRiskTotals {
         total_position_notional,

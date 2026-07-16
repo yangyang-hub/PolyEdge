@@ -6,9 +6,9 @@ use polyedge_contracts::{
 };
 use polyedge_domain::{
     ExecutionBatch, ManagedMarket, ManagedMarketOutcome, ManagedOrder, ManagedPosition,
-    MarketRewardTerms, MarketStrategy, QuoteOutcome, QuotePricingMode, StrategyQuoteSlot,
-    StrategyVersion, StrategyWalletTarget, WalletAccount, WalletAccountState, WalletAccountStatus,
-    WalletCredentialRef, WalletExecutionJob, WalletRiskPolicy,
+    MarketStrategy, QuoteOutcome, QuotePricingMode, StrategyQuoteSlot, StrategyRewardTerms,
+    StrategyStatus, StrategyVersion, WalletAccount, WalletAccountState, WalletAccountStatus,
+    WalletExecutionJob, WalletRiskPolicy,
 };
 use rust_decimal::Decimal;
 use sqlx::{PgPool, Postgres, Row, Transaction, postgres::PgPoolOptions};
@@ -22,10 +22,14 @@ pub enum IdempotencyBegin {
 
 mod batches;
 mod execution;
+mod execution_enqueue;
+mod finance;
 mod helpers;
+mod identity;
 mod order_reconciliation;
 mod positions;
 mod strategies;
+mod subscriptions;
 mod trading;
 mod wallets;
 

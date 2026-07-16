@@ -9,4 +9,5 @@ use std::collections::BTreeMap;
 use time::OffsetDateTime;
 
 include!("dto/common.rs");
+include!("identity.rs");
 include!("manual_trading.rs");

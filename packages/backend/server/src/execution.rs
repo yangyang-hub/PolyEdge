@@ -16,8 +16,9 @@ use polyedge_connectors::{
     PolymarketOpenOrder, PolymarketTokenOrderSide,
 };
 use polyedge_domain::{
-    AppError, ManagedOrder, ManagedOrderStatus, QuoteOutcome, QuotePricingMode, Result,
-    StrategyQuoteSlot, StrategyVersion, WalletAccount, WalletAccountState, WalletCredentialRef,
+    AppError, ManagedOrder, ManagedOrderStatus, MarketStatus, QuoteOutcome, QuotePricingMode,
+    Result, StrategyQuoteSlot, StrategyStatus, StrategySubscriptionStatus, StrategyVersion,
+    StrategyVersionStatus, WalletAccount, WalletAccountState, WalletAccountStatus,
     WalletExecutionJob, WalletRiskPolicy,
 };
 use rust_decimal::Decimal;
@@ -51,7 +52,13 @@ impl Default for ExecutionRuntimeConfig {
 pub struct ExecutionContext {
     pub job: WalletExecutionJob,
     pub wallet: WalletAccount,
-    pub credential: WalletCredentialRef,
+    pub subscription_id: i64,
+    pub subscription_status: StrategySubscriptionStatus,
+    pub subscription_wallet_enabled: bool,
+    pub strategy_status: StrategyStatus,
+    pub strategy_active_from: OffsetDateTime,
+    pub effective_active_until: OffsetDateTime,
+    pub market_status: MarketStatus,
     pub strategy_version: StrategyVersion,
     pub market_id: i64,
     pub slots: Vec<StrategyQuoteSlot>,
@@ -63,6 +70,22 @@ pub struct ExecutionContext {
     pub trading_enabled: bool,
     pub kill_switch_locked: bool,
     pub force_cancel_all: bool,
+}
+
+#[must_use]
+pub fn desired_state_active_at(context: &ExecutionContext, now: OffsetDateTime) -> bool {
+    context.trading_enabled
+        && !context.kill_switch_locked
+        && !context.force_cancel_all
+        && context.wallet.status == WalletAccountStatus::Active
+        && context.wallet.trading_enabled
+        && context.subscription_wallet_enabled
+        && context.subscription_status == StrategySubscriptionStatus::Active
+        && context.strategy_status == StrategyStatus::Active
+        && context.market_status == MarketStatus::Open
+        && context.strategy_version.status == StrategyVersionStatus::Published
+        && now >= context.strategy_active_from
+        && now < context.effective_active_until
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -154,6 +177,11 @@ pub struct WalletPositionRiskTotals {
 
 #[async_trait]
 pub trait ExecutionStore: Send + Sync {
+    /// Persistently expire due source strategies before desired-state jobs are
+    /// generated. Implementations must also expire their subscriptions and
+    /// emit the durable expire command in the same transaction.
+    async fn expire_due_strategies(&self, limit: i64) -> Result<u64>;
+
     /// Create one pending job per enabled wallet target for the currently
     /// published version. Implementations must be idempotent for a cycle.
     async fn enqueue_active_wallet_reconciles(&self) -> Result<usize>;
@@ -300,6 +328,7 @@ impl RuntimeSupervisor {
     }
 
     pub async fn run_cycle(&self) -> Result<usize> {
+        let _ = self.store.expire_due_strategies(500).await?;
         let _ = self.store.enqueue_active_wallet_reconciles().await?;
         let semaphore = Arc::new(Semaphore::new(self.config.max_wallet_concurrency));
         let mut tasks = JoinSet::new();
@@ -369,13 +398,9 @@ impl RuntimeSupervisor {
             self.store
                 .renew_job_lease(&job, &self.owner, self.config.lease_duration)
                 .await?;
-            let config = self.secrets.resolve(&context.wallet, &context.credential)?;
+            let config = self.secrets.resolve(&context.wallet).await?;
             let connector = LivePolymarketConnector::connect(&config).await?;
-            if context.force_cancel_all
-                || context.kill_switch_locked
-                || !context.trading_enabled
-                || !context.wallet.trading_enabled
-            {
+            if !desired_state_active_at(&context, OffsetDateTime::now_utc()) {
                 return self.reconcile_wallet(&connector, &context).await;
             }
             let balance = connector.refresh_balance().await?;
@@ -450,10 +475,7 @@ impl RuntimeSupervisor {
         let mut replacements = 0i64;
         let mut risk = risk_snapshot(context);
         risk.open_orders = risk.open_orders.max(venue_orders.len() as i64);
-        let trading_allowed = context.trading_enabled
-            && !context.kill_switch_locked
-            && context.wallet.trading_enabled
-            && !context.force_cancel_all;
+        let trading_allowed = desired_state_active_at(context, now);
         for slot in context.slots.iter().filter(|slot| slot.enabled) {
             self.store
                 .renew_job_lease(&context.job, &self.owner, self.config.lease_duration)

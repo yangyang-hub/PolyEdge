@@ -54,6 +54,9 @@ export const shared = {
     strategies: "市场策略",
     wallets: "钱包账户",
     operations: "执行运营",
+    following: "策略跟随",
+    users: "用户权限",
+    finance: "资金收益",
   },
   topbar: {
     title: "PolyEdge 控制台",

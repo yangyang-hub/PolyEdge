@@ -25,7 +25,8 @@ async fn main() -> Result<()> {
     let resolver = WalletSecretResolver::new(
         config.chain_id,
         config.clob_host.clone(),
-        config.wallet_secret_env_prefix.clone(),
+        state.store.clone(),
+        Arc::clone(&state.wallet_crypto),
     )?;
     let data_api = PolymarketDataApiConnector::new(&config.data_api_host)?;
     let execution = Arc::new(RuntimeSupervisor::new(

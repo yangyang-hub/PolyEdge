@@ -1,7 +1,7 @@
 //! Targeted orderbook polling for manually managed markets.
 //!
 //! This runtime never discovers markets. Its token universe is rebuilt from
-//! active strategy targets, open managed orders, and non-zero positions in
+//! active subscription wallets, open managed orders, and non-zero positions in
 //! Postgres. Exceeding the configured token ceiling is an error: silently
 //! truncating would remove risk coverage for an account.
 
@@ -214,11 +214,17 @@ pub async fn load_required_tokens(store: &PostgresStore, max_tokens: usize) -> R
         SELECT token_id
         FROM (
             SELECT outcome.token_id
-            FROM strategy_wallet_targets target
+            FROM strategy_subscriptions subscription
+            JOIN strategy_subscription_wallets target
+              ON target.subscription_id = subscription.subscription_id
+             AND target.follower_user_id = subscription.follower_user_id
             JOIN wallet_accounts wallet
               ON wallet.wallet_id = target.wallet_id
+             AND wallet.owner_user_id = subscription.follower_user_id
+            JOIN users follower_user ON follower_user.user_id = subscription.follower_user_id
             JOIN market_strategies strategy
-              ON strategy.strategy_id = target.strategy_id
+              ON strategy.strategy_id = subscription.source_strategy_id
+            JOIN users source_user ON source_user.user_id = strategy.owner_user_id
             JOIN strategy_versions version
               ON version.strategy_id = strategy.strategy_id
              AND version.status = 'published'
@@ -233,7 +239,13 @@ pub async fn load_required_tokens(store: &PostgresStore, max_tokens: usize) -> R
             WHERE target.enabled = TRUE
               AND wallet.status = 'active'
               AND wallet.trading_enabled = TRUE
+              AND follower_user.status = 'active'
+              AND source_user.status = 'active'
               AND strategy.status = 'active'
+              AND strategy.active_from <= now()
+              AND strategy.active_until > now()
+              AND subscription.status = 'active'
+              AND (subscription.active_until IS NULL OR subscription.active_until > now())
               AND market.status = 'open'
 
             UNION

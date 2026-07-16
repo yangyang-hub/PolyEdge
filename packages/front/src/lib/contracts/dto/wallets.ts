@@ -1,24 +1,22 @@
 import type { DecimalValue } from "./primitives";
 
 export type WalletAccountStatus = "active" | "paused" | "disabled" | "error";
-export type CredentialProvider = "environment" | "vault" | "kms";
+export type EncryptedWalletSecretInput = { context_id: string; key_id: string; algorithm: "RSA-OAEP-256+A256GCM"; wrapped_key: string; nonce: string; ciphertext: string };
 
-export type WalletCredentialRefDto = {
-  id: number;
-  provider: CredentialProvider;
-  locator: string;
-  key_version: string | null;
-  created_at: string;
+export type WalletSecretMetadataDto = {
+  wallet_id: number;
+  key_id: string;
+  secret_version: number;
   updated_at: string;
 };
 
 export type WalletAccountDto = {
   id: number;
+  owner_user_id: number;
   name: string;
   signer_address: string;
   funder_address: string;
   signature_type: number;
-  credential_ref_id: number;
   status: WalletAccountStatus;
   trading_enabled: boolean;
   created_at: string;
@@ -49,7 +47,7 @@ export type WalletAccountStateDto = {
 
 export type WalletAccountData = {
   account: WalletAccountDto;
-  credential: WalletCredentialRefDto;
+  secret: WalletSecretMetadataDto;
   risk_policy: WalletRiskPolicyDto;
   state: WalletAccountStateDto;
 };
@@ -67,9 +65,7 @@ export type CreateWalletAccountRequest = {
   signer_address: string;
   funder_address: string;
   signature_type: number;
-  credential_provider: CredentialProvider;
-  credential_locator: string;
-  credential_key_version?: string;
+  encrypted_secret: EncryptedWalletSecretInput;
   trading_enabled?: boolean;
   risk_policy: WalletRiskPolicyInput;
   operator_note?: string;
@@ -77,9 +73,7 @@ export type CreateWalletAccountRequest = {
 
 export type UpdateWalletAccountRequest = {
   name?: string;
-  credential_provider?: CredentialProvider;
-  credential_locator?: string;
-  credential_key_version?: string;
+  encrypted_secret?: EncryptedWalletSecretInput;
   status?: WalletAccountStatus;
   trading_enabled?: boolean;
   risk_policy?: WalletRiskPolicyInput;

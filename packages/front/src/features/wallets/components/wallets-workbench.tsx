@@ -10,20 +10,20 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { saveWallet, type OperationActionResult } from "@/lib/api/actions";
 import { listWallets } from "@/lib/api/wallets";
+import { encryptWalletSecret } from "@/lib/api/wallet-security";
 import type {
   CreateWalletAccountRequest,
-  CredentialProvider,
   WalletAccountData,
 } from "@/lib/contracts/dto";
 import { dictionary, translateEnum } from "@/lib/i18n/dictionaries";
+import { canWriteMarkets, useAuth } from "@/components/shared/auth-provider";
 
-const INITIAL_FORM: CreateWalletAccountRequest = {
+type WalletForm = Omit<CreateWalletAccountRequest, "encrypted_secret">;
+const INITIAL_FORM: WalletForm = {
   name: "",
   signer_address: "",
   funder_address: "",
   signature_type: 0,
-  credential_provider: "environment",
-  credential_locator: "",
   trading_enabled: false,
   risk_policy: {
     max_open_orders: 10,
@@ -36,7 +36,10 @@ const INITIAL_FORM: CreateWalletAccountRequest = {
 
 export function WalletsWorkbench() {
   const d = dictionary.wallets;
-  const [form, setForm] = useState<CreateWalletAccountRequest>(INITIAL_FORM);
+  const { user } = useAuth();
+  const writable = canWriteMarkets(user?.role);
+  const [form, setForm] = useState<WalletForm>(INITIAL_FORM);
+  const [privateKey, setPrivateKey] = useState("");
   const [wallets, setWallets] = useState<WalletAccountData[]>([]);
   const [loadError, setLoadError] = useState("");
   const [feedback, setFeedback] = useState<OperationActionResult | null>(null);
@@ -54,12 +57,12 @@ export function WalletsWorkbench() {
 
   useEffect(reload, [d.loadFailed]);
 
-  const setField = <K extends keyof CreateWalletAccountRequest>(
+  const setField = <K extends keyof WalletForm>(
     key: K,
     value: CreateWalletAccountRequest[K],
   ) => setForm((current) => ({ ...current, [key]: value }));
 
-  const setRisk = (key: keyof CreateWalletAccountRequest["risk_policy"], value: string) => {
+  const setRisk = (key: keyof WalletForm["risk_policy"], value: string) => {
     setForm((current) => ({
       ...current,
       risk_policy: {
@@ -71,10 +74,16 @@ export function WalletsWorkbench() {
 
   const submit = () => {
     startTransition(async () => {
+      let encryptedSecret;
+      try {
+        if (!user) throw new Error("当前用户会话不可用");
+        encryptedSecret = await encryptWalletSecret(user.id, { private_key: privateKey });
+      }
+      catch (error) { setFeedback({ ok: false, message: error instanceof Error ? error.message : "加密钱包私钥失败" }); return; }
       const result = await saveWallet({
         request: {
           ...form,
-          credential_key_version: form.credential_key_version?.trim() || undefined,
+          encrypted_secret: encryptedSecret,
           operator_note: form.operator_note?.trim() || undefined,
         },
         stepUpCode,
@@ -82,6 +91,7 @@ export function WalletsWorkbench() {
       setFeedback(result);
       if (result.ok) {
         setForm(INITIAL_FORM);
+        setPrivateKey("");
         setStepUpCode("");
         reload();
       }
@@ -93,7 +103,7 @@ export function WalletsWorkbench() {
       <PageHeader eyebrow={d.eyebrow} title={d.title} description={d.description} />
       {feedback ? <OperationFeedbackBanner feedback={feedback} /> : null}
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">
-        <Card>
+        {writable ? <Card>
           <CardHeader>
             <CardTitle>{d.add}</CardTitle>
           </CardHeader>
@@ -121,30 +131,12 @@ export function WalletsWorkbench() {
                 <option value={2}>2</option>
               </select>
             </label>
-            <label className="space-y-2 text-sm">
-              <span>{d.credentialProvider}</span>
-              <select
-                className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
-                value={form.credential_provider}
-                onChange={(event) =>
-                  setField("credential_provider", event.target.value as CredentialProvider)
-                }
-              >
-                <option value="environment">environment</option>
-                <option value="vault">vault</option>
-                <option value="kms">kms</option>
-              </select>
-            </label>
             <Field
-              label={d.credentialLocator}
-              value={form.credential_locator}
-              onChange={(value) => setField("credential_locator", value)}
-              placeholder={d.credentialPlaceholder}
-            />
-            <Field
-              label={d.credentialVersion}
-              value={form.credential_key_version ?? ""}
-              onChange={(value) => setField("credential_key_version", value)}
+              label="钱包私钥"
+              type="password"
+              value={privateKey}
+              onChange={setPrivateKey}
+              placeholder="仅在浏览器内加密后上传"
             />
             <label className="flex items-center gap-3 self-end rounded-md border p-3 text-sm">
               <input
@@ -177,13 +169,13 @@ export function WalletsWorkbench() {
             />
             <Button
               className="md:col-span-2"
-              disabled={isPending || (form.trading_enabled && !stepUpCode.trim())}
+              disabled={isPending || !privateKey.trim() || (form.trading_enabled && !stepUpCode.trim())}
               onClick={submit}
             >
               {isPending ? dictionary.common.submitting : d.save}
             </Button>
           </CardContent>
-        </Card>
+        </Card> : null}
 
         <Card>
           <CardHeader>
@@ -196,7 +188,7 @@ export function WalletsWorkbench() {
                 {d.empty}
               </div>
             ) : null}
-            {wallets.map(({ account, credential, risk_policy, state }) => (
+            {wallets.map(({ account, secret, risk_policy, state }) => (
               <div key={account.id} className="space-y-3 rounded-lg border p-4">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
@@ -212,7 +204,7 @@ export function WalletsWorkbench() {
                 </div>
                 <div className="grid gap-2 text-xs text-muted-foreground sm:grid-cols-2">
                   <p>{d.walletId}: {account.id}</p>
-                  <p>{d.credential}: {credential.provider}:{credential.locator}</p>
+                  <p>{d.credential}: {secret.key_id} · v{secret.secret_version}</p>
                   <p>{d.availableCollateral}: {state.available_collateral}</p>
                   <p>{d.openBuyNotional}: {state.open_buy_notional}</p>
                   <p>{d.maxOpenOrders}: {risk_policy.max_open_orders}</p>

@@ -48,6 +48,7 @@ pub(super) fn validate_price(value: Decimal, field: &'static str) -> Result<()> 
 impl PostgresStore {
     pub async fn begin_idempotency(
         &self,
+        actor_user_id: i64,
         scope: &str,
         key: &str,
         request_hash: &str,
@@ -59,26 +60,24 @@ impl PostgresStore {
         sqlx::query(
             r#"
             INSERT INTO idempotency_keys (
-              scope, idempotency_key, request_hash, owner_token, status,
+              actor_type, actor_user_id, scope, idempotency_key, request_hash, owner_token, status,
               lease_expires_at, expires_at
-            ) VALUES ($1, $2, $3, $4, 'started', now() + interval '30 seconds', now() + interval '24 hours')
-            ON CONFLICT (scope, idempotency_key) DO NOTHING
+            ) VALUES ('user', $1, $2, $3, $4, $5, 'started', now() + interval '30 seconds', now() + interval '24 hours')
+            ON CONFLICT (actor_type, actor_user_id, scope, idempotency_key) DO NOTHING
             "#,
         )
-        .bind(&scope)
-        .bind(&key)
-        .bind(request_hash)
-        .bind(&owner_token)
+        .bind(actor_user_id).bind(&scope).bind(&key).bind(request_hash).bind(&owner_token)
         .execute(&mut *tx)
         .await?;
         let row = sqlx::query(
             r#"
             SELECT request_hash, owner_token, status, response_json, lease_expires_at
             FROM idempotency_keys
-            WHERE scope = $1 AND idempotency_key = $2
+            WHERE actor_type='user' AND actor_user_id=$1 AND scope = $2 AND idempotency_key = $3
             FOR UPDATE
             "#,
         )
+        .bind(actor_user_id)
         .bind(&scope)
         .bind(&key)
         .fetch_one(&mut *tx)
@@ -110,12 +109,13 @@ impl PostgresStore {
             sqlx::query(
                 r#"
                 UPDATE idempotency_keys
-                SET owner_token = $3, status = 'started', response_json = NULL,
+                SET owner_token = $4, status = 'started', response_json = NULL,
                     error_code = NULL, lease_epoch = lease_epoch + 1,
                     lease_expires_at = now() + interval '30 seconds', updated_at = now()
-                WHERE scope = $1 AND idempotency_key = $2
+                WHERE actor_type='user' AND actor_user_id=$1 AND scope = $2 AND idempotency_key = $3
                 "#,
             )
+            .bind(actor_user_id)
             .bind(&scope)
             .bind(&key)
             .bind(&owner_token)
@@ -128,6 +128,7 @@ impl PostgresStore {
 
     pub async fn complete_idempotency(
         &self,
+        actor_user_id: i64,
         scope: &str,
         key: &str,
         owner_token: &str,
@@ -136,11 +137,13 @@ impl PostgresStore {
         let result = sqlx::query(
             r#"
             UPDATE idempotency_keys
-            SET status = 'completed', response_json = $4, completed_at = now(),
+            SET status = 'completed', response_json = $5, completed_at = now(),
                 updated_at = now(), lease_expires_at = NULL
-            WHERE scope = $1 AND idempotency_key = $2 AND owner_token = $3 AND status = 'started'
+            WHERE actor_type='user' AND actor_user_id=$1 AND scope = $2
+              AND idempotency_key = $3 AND owner_token = $4 AND status = 'started'
             "#,
         )
+        .bind(actor_user_id)
         .bind(scope)
         .bind(key)
         .bind(owner_token)

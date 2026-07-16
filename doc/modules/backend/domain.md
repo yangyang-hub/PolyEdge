@@ -1,29 +1,32 @@
-# domain（V3 领域层）
+# domain（V4 领域层）
 
-最后更新：2026-07-15
+最后更新：2026-07-16
 
 ## 概述
 
-`polyedge_domain` 是活动后端的最底层 crate，定义统一错误、精确数值和值对象，以及人工市场、多钱包、策略版本、quote slot、执行批次和交易账本状态。它不依赖 SQL、HTTP、connector 或 server。
+`polyedge_domain` 是活动后端的最底层 crate，定义统一错误、身份权限、精确数值和值对象，以及多用户人工市场、有效期策略、跨用户跟随、quote slot、执行批次和交易账本状态。它不依赖 SQL、HTTP、connector 或 server。
 
 ## 关键文件
 
 | 文件 | 职责 |
 |---|---|
 | `src/lib.rs` | 活动领域模块入口与 re-export |
-| `src/manual_trading.rs` | V3 钱包、市场、策略、执行和账本模型 |
+| `src/identity.rs` | `UserAccount`、role/status/auth source 与 `ActorScope` |
+| `src/manual_trading.rs` | V4 钱包、市场、有效期策略、跟随、执行和账本模型 |
 | `src/domain/error.rs` | `AppError`、`ErrorKind`、`Result<T>` |
 | `src/domain/numeric.rs` | `Probability`、`Quantity`、`UsdAmount` 等精确数值类型 |
 
-V3 活动领域不包含 events/news/evidences、signals、AI/info-risk、fair-value、Gamma/rewards catalog、Replay 或旧系统模式。
+V4 活动领域不包含 events/news/evidences、signals、AI/info-risk、fair-value、Gamma/rewards catalog、Replay 或旧系统模式。
 
 ## 核心类型
 
-- 钱包：`WalletCredentialRef`、`WalletAccount`、`WalletRiskPolicy`、`WalletAccountState`。
-- 人工市场：`ManagedMarket`、`ManagedMarketOutcome`、`MarketRewardTerms`。
-- 策略：`MarketStrategy`、`StrategyVersion`、`StrategyQuoteSlot`、`StrategyWalletTarget`。
+- 身份：`UserAccount`、`UserRole(admin|market_editor|read_only)`、`UserStatus`、`UserAuthSource`、`ActorScope`。
+- 钱包：`WalletAccount`、`WalletSecretMetadata`、`WalletRiskPolicy`、`WalletAccountState`。
+- 人工市场：`ManagedMarket`、`ManagedMarketOutcome`。
+- 策略：`MarketStrategy`（owner、visibility、`[active_from, active_until)`）、`StrategyVersion`、`StrategyRewardTerms`、`StrategyQuoteSlot`。
+- 跟随：`StrategySubscription`、`StrategySubscriptionWallet`、`StrategyCommand` 及其状态枚举。
 - 执行：`ExecutionBatch`、`WalletExecutionJob`、`ExecutionAction`。
-- 账本：`ManagedOrder`、`ManagedPosition`。独立 fill 模型不属于 V3。
+- 账本：`ManagedOrder`、`ManagedPosition`。schema 虽预留 fill/equity 表，domain 尚无对应活动模型或采集状态机。
 
 状态枚举统一以 snake_case 序列化，覆盖 wallet/market/strategy/version、outcome、pricing mode、batch/job/action/order 和 maker/taker role。
 
@@ -31,9 +34,11 @@ V3 活动领域不包含 events/news/evidences、signals、AI/info-risk、fair-v
 
 - quote slot 明确 outcome、quantity、fixed/book-rank、offset、价格边界和 post-only。
 - quantity/价格/名义金额使用 `Decimal` 或相应 newtype，不使用浮点数。
-- credential ref 只表达 provider/locator/key version，不持有 secret。
+- `WalletSecretMetadata` 只表达 storage key id、secret version 和更新时间，不持有 ciphertext 或 secret。
 - `unknown` managed-order 状态属于 open-like 状态，表示必须 fail closed 并阻止重复下单。
 - 执行批次固化 strategy version；钱包目标与策略参数分离。
+- reward 条款是 strategy version 的不可变快照，不再属于全局 market。
+- follower subscription 引用源策略并只绑定 follower 自己的钱包；有效停止时间是源策略与 subscription 截止时间的较早值。
 
 ## 依赖关系
 
@@ -42,7 +47,7 @@ V3 活动领域不包含 events/news/evidences、signals、AI/info-risk、fair-v
 
 ## 当前状态
 
-V3 manual-trading 类型已覆盖当前 schema 与 server execution runtime。删除或更改公开枚举/字段时必须同步 contracts、SQL row mapping、API、前端 DTO 和文档。
+V4 identity/manual-trading 类型已覆盖用户权限、钱包 owner/secret metadata、策略有效期、版本 reward snapshot、跨用户 subscription/command 和 owner-aware 执行账本。execution 与 orderbook 已切换到 subscription desired state；fills/equity 尚未形成 domain/runtime 闭环。
 
 ## 修改检查清单
 

@@ -4,8 +4,9 @@ import type {
   QuoteOutcome,
   QuotePricingMode,
 } from "./primitives";
+import type { StrategySubscriptionData } from "./subscriptions";
 
-export type StrategyStatus = "draft" | "active" | "paused" | "archived";
+export type StrategyStatus = "draft" | "active" | "paused" | "expired" | "archived";
 export type StrategyVersionStatus = "draft" | "published" | "retired";
 
 export type ManagedMarketDto = {
@@ -26,18 +27,22 @@ export type ManagedMarketOutcomeDto = {
   token_id: string;
 };
 
-export type MarketRewardTermsDto = {
-  market_id: number;
+export type StrategyRewardTermsDto = {
+  strategy_version_id: number;
   minimum_size: DecimalValue;
   maximum_spread: DecimalValue;
   daily_rate: DecimalValue | null;
-  updated_at: string;
 };
 
 export type MarketStrategyDto = {
   id: number;
   market_id: number;
   name: string;
+  owner_user_id: number;
+  owner_display_name: string;
+  visibility: "private" | "followable";
+  active_from: string;
+  active_until: string;
   status: StrategyStatus;
   created_at: string;
   updated_at: string;
@@ -73,21 +78,14 @@ export type StrategyQuoteSlotDto = {
   enabled: boolean;
 };
 
-export type StrategyWalletTargetDto = {
-  strategy_id: number;
-  wallet_id: number;
-  enabled: boolean;
-  created_at: string;
-};
-
 export type MarketStrategyData = {
   market: ManagedMarketDto;
   outcomes: ManagedMarketOutcomeDto[];
-  reward_terms: MarketRewardTermsDto;
+  reward_terms: StrategyRewardTermsDto;
   strategy: MarketStrategyDto;
   version: StrategyVersionDto;
   quote_slots: StrategyQuoteSlotDto[];
-  wallet_targets: StrategyWalletTargetDto[];
+  current_user_subscription?: StrategySubscriptionData | null;
 };
 
 export type ManagedMarketInput = {
@@ -97,9 +95,6 @@ export type ManagedMarketInput = {
   polymarket_url?: string;
   yes_token_id: string;
   no_token_id: string;
-  reward_minimum_size: DecimalValue;
-  reward_maximum_spread: DecimalValue;
-  reward_daily_rate?: DecimalValue;
 };
 
 export type QuoteSlotInput = {
@@ -117,18 +112,24 @@ export type QuoteSlotInput = {
 };
 
 export type StrategyVersionInput = {
+  reward_minimum_size: DecimalValue;
+  reward_maximum_spread: DecimalValue;
+  reward_daily_rate?: DecimalValue;
   book_freshness_ms: number;
   downward_reprice_confirm_ms: number;
   upward_reprice_confirm_ms: number;
   reprice_cooldown_ms: number;
   max_replaces_per_cycle: number;
   quote_slots: QuoteSlotInput[];
-  wallet_ids: number[];
 };
 
 export type CreateMarketStrategyRequest = {
   name: string;
+  visibility: "private" | "followable";
+  active_from: string;
+  active_until: string;
   market: ManagedMarketInput;
   version: StrategyVersionInput;
+  wallet_ids: number[];
   operator_note?: string;
 };

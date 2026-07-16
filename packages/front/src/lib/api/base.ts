@@ -188,6 +188,11 @@ async function fetchJson<T>(
 
   headers.set("X-Request-Id", requestId);
 
+  if (init.method && init.method !== "GET" && init.method !== "HEAD") {
+    const csrfToken = readCookie("polyedge_csrf");
+    if (csrfToken) headers.set("X-PolyEdge-CSRF-Token", csrfToken);
+  }
+
   if (auth.stepUpCode?.trim()) {
     headers.set("X-PolyEdge-Step-Up-Code", auth.stepUpCode.trim());
   }
@@ -200,7 +205,7 @@ async function fetchJson<T>(
     ...init,
     headers,
     cache: "no-store",
-    credentials: apiBaseUrl ? "omit" : "same-origin",
+    credentials: "include",
   });
 
   if (!response.ok) {
@@ -221,6 +226,13 @@ async function fetchJson<T>(
   }
 
   return (await response.json()) as T;
+}
+
+function readCookie(name: string): string | null {
+  if (typeof document === "undefined") return null;
+  const prefix = `${encodeURIComponent(name)}=`;
+  const entry = document.cookie.split("; ").find((item) => item.startsWith(prefix));
+  return entry ? decodeURIComponent(entry.slice(prefix.length)) : null;
 }
 
 export async function fetchContract<T>(path: string): Promise<T> {
@@ -282,7 +294,7 @@ export async function fetchListContract<TLive, TFront = TLive>(
 export async function fetchWriteContract<TLive, TFront = TLive>(
   path: string,
   init: {
-    method?: "POST" | "PATCH";
+    method?: "POST" | "PATCH" | "DELETE";
     body: Record<string, unknown>;
     idempotencyKey: string;
     stepUpCode?: string;

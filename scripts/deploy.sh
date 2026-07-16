@@ -145,8 +145,9 @@ validate_server_env_file() {
   }
   [[ -f "${file}" ]] || fail "server env file not found: ${file}"
 
-  local postgres_url runtime_environment auth_disabled auth_api_token
-  local insecure_ack cors_allowed_origins step_up_code secret_prefix origin
+  local postgres_url runtime_environment public_origin cors_allowed_origins origin
+  local admin_username admin_password_hash transport_key_file storage_key_file storage_key_bytes
+  local wallet_storage_mount
   local -a origins
   postgres_url="$(env_value POLYEDGE_POSTGRES__URL "${file}")"
   [[ -n "${postgres_url}" ]] || fail "POLYEDGE_POSTGRES__URL is required in ${file}."
@@ -154,22 +155,19 @@ validate_server_env_file() {
 
   runtime_environment="$(env_value POLYEDGE_RUNTIME__ENVIRONMENT "${file}")"
   runtime_environment="${runtime_environment:-local}"
-  auth_disabled="$(env_value POLYEDGE_AUTH__DISABLED "${file}")"
-  if ! env_truthy "${auth_disabled}"; then
-    auth_api_token="$(env_value POLYEDGE_AUTH__API_TOKEN "${file}")"
-    if [[ -z "${auth_api_token}" || "${auth_api_token}" == *"replace-with"* || ${#auth_api_token} -lt 32 ]]; then
-      fail "POLYEDGE_AUTH__API_TOKEN must contain a real token of at least 32 characters when authentication is enabled (${file})."
-    fi
+
+  public_origin="$(env_value POLYEDGE_PUBLIC_ORIGIN "${file}")"
+  [[ -n "${public_origin}" ]] || fail "POLYEDGE_PUBLIC_ORIGIN is required in ${file}."
+  [[ "${public_origin}" =~ ^https?://[^/?#]+$ ]] || fail "POLYEDGE_PUBLIC_ORIGIN must be an exact origin in ${file}."
+  if [[ "${runtime_environment}" == "production" && ! "${public_origin}" =~ ^https:// ]]; then
+    fail "production POLYEDGE_PUBLIC_ORIGIN must use https (${file})."
   fi
-  if [[ "${runtime_environment}" == "production" ]] && env_truthy "${auth_disabled}"; then
-    insecure_ack="$(env_value POLYEDGE_AUTH__ALLOW_INSECURE_PRIVATE_DEPLOY "${file}")"
-    env_truthy "${insecure_ack}" || fail "POLYEDGE_AUTH__ALLOW_INSECURE_PRIVATE_DEPLOY=true is required when production authentication is disabled (${file})."
-  fi
-  step_up_code="$(env_value POLYEDGE_AUTH__STEP_UP_CODE "${file}")"
-  if [[ "${runtime_environment}" == "production" ]]; then
-    if [[ -z "${step_up_code}" || "${step_up_code}" == *"replace-with"* || ${#step_up_code} -lt 16 ]]; then
-      fail "POLYEDGE_AUTH__STEP_UP_CODE must contain a real value of at least 16 characters in production (${file})."
-    fi
+
+  admin_username="$(env_value POLYEDGE_BOOTSTRAP_ADMIN__USERNAME "${file}")"
+  [[ -n "${admin_username}" ]] || fail "POLYEDGE_BOOTSTRAP_ADMIN__USERNAME is required in ${file}."
+  admin_password_hash="$(env_value POLYEDGE_BOOTSTRAP_ADMIN__PASSWORD_HASH "${file}")"
+  if [[ -z "${admin_password_hash}" || "${admin_password_hash}" == *"replace-with"* || "${admin_password_hash}" != \$argon2* ]]; then
+    fail "POLYEDGE_BOOTSTRAP_ADMIN__PASSWORD_HASH must contain a real Argon2 PHC hash (${file})."
   fi
 
   cors_allowed_origins="$(env_value POLYEDGE_CORS__ALLOWED_ORIGINS "${file}")"
@@ -185,19 +183,29 @@ validate_server_env_file() {
     done
   fi
 
-  secret_prefix="$(env_value POLYEDGE_WALLET_SECRETS__ENV_PREFIX "${file}")"
-  [[ -n "${secret_prefix}" ]] || fail "POLYEDGE_WALLET_SECRETS__ENV_PREFIX must be set in ${file}."
+  transport_key_file="$(env_value POLYEDGE_WALLET_CRYPTO__TRANSPORT_PRIVATE_KEY_PEM_FILE "${file}")"
+  [[ -n "${transport_key_file}" ]] || fail "POLYEDGE_WALLET_CRYPTO__TRANSPORT_PRIVATE_KEY_PEM_FILE is required in ${file}."
+  storage_key_file="$(env_value POLYEDGE_WALLET_CRYPTO__STORAGE_KEY_FILE "${file}")"
+  [[ -n "${storage_key_file}" ]] || fail "POLYEDGE_WALLET_CRYPTO__STORAGE_KEY_FILE is required in ${file}."
+  wallet_storage_mount="$(env_value POLYEDGE_WALLET_STORAGE_KEY_FILE "${file}")"
+  wallet_storage_mount="${wallet_storage_mount:-${deploy_path}/secrets/polyedge-wallet-storage-key}"
+  if [[ "${wallet_storage_mount}" != /* ]]; then
+    wallet_storage_mount="${deploy_path}/${wallet_storage_mount#./}"
+  fi
+  [[ -f "${wallet_storage_mount}" ]] || fail "wallet storage key file not found: ${wallet_storage_mount}"
+  storage_key_bytes="$(base64 --decode < "${wallet_storage_mount}" 2>/dev/null | wc -c | tr -d '[:space:]')"
+  [[ "${storage_key_bytes}" == "32" ]] || fail "wallet storage key file must contain exactly one standard-base64 encoded 32-byte key (${wallet_storage_mount})."
 }
 
 validate_front_env_file() {
   local file="$1"
   [[ "${POLYEDGE_SKIP_ENV_VALIDATION:-0}" != "1" ]] || return 0
   [[ -f "${file}" ]] || fail "frontend env file not found: ${file}"
-  local api_base_url console_auth
+  local api_base_url
   api_base_url="$(env_value NEXT_PUBLIC_POLYEDGE_API_BASE_URL "${file}")"
-  [[ -n "${api_base_url}" ]] || fail "NEXT_PUBLIC_POLYEDGE_API_BASE_URL must be set in ${file}."
-  console_auth="$(env_value NEXT_PUBLIC_POLYEDGE_CONSOLE_AUTH "${file}")"
-  [[ -z "${console_auth}" || "${console_auth}" == "off" ]] || fail "NEXT_PUBLIC_POLYEDGE_CONSOLE_AUTH currently supports only off (${file})."
+  if [[ -n "${api_base_url}" ]]; then
+    [[ "${api_base_url}" =~ ^https?://[^/?#]+$ ]] || fail "NEXT_PUBLIC_POLYEDGE_API_BASE_URL must be empty for same-origin or an exact origin (${file})."
+  fi
 }
 
 export_env_if_set() {
@@ -214,6 +222,8 @@ load_compose_environment() {
     export_env_if_set "${server_env_file}" POLYEDGE_SERVER_IMAGE
     export_env_if_set "${server_env_file}" POLYEDGE_SERVER_BIND
     export_env_if_set "${server_env_file}" POLYEDGE_SERVER_PORT
+    export_env_if_set "${server_env_file}" POLYEDGE_WALLET_IMPORT_PRIVATE_KEY_FILE
+    export_env_if_set "${server_env_file}" POLYEDGE_WALLET_STORAGE_KEY_FILE
   else
     export POLYEDGE_SERVER_ENV_FILE="${deploy_path}/.env.server.example"
   fi
@@ -261,11 +271,6 @@ frontend_build_hash() {
 load_frontend_build_env() {
   validate_front_env_file "$1"
   export NEXT_PUBLIC_POLYEDGE_API_BASE_URL="$(env_value NEXT_PUBLIC_POLYEDGE_API_BASE_URL "$1")"
-  local value
-  value="$(env_value NEXT_PUBLIC_POLYEDGE_INTERNAL_AUTH_DEV_BYPASS "$1")"
-  [[ -z "${value}" ]] || export NEXT_PUBLIC_POLYEDGE_INTERNAL_AUTH_DEV_BYPASS="${value}"
-  value="$(env_value NEXT_PUBLIC_POLYEDGE_CONSOLE_AUTH "$1")"
-  [[ -z "${value}" ]] || export NEXT_PUBLIC_POLYEDGE_CONSOLE_AUTH="${value}"
   log "frontend build env loaded from $1: NEXT_PUBLIC_POLYEDGE_API_BASE_URL=${NEXT_PUBLIC_POLYEDGE_API_BASE_URL}"
 }
 

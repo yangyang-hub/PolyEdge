@@ -15,10 +15,12 @@ import {
 import { consoleNavItems, isConsoleNavItemActive } from "@/components/shared/console-nav-items";
 import { dictionary } from "@/lib/i18n/dictionaries";
 import { cn } from "@/lib/utils";
+import { useAuth } from "@/components/shared/auth-provider";
 
 export function ConsoleTopbar() {
   const pathname = usePathname();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const { user, signOut } = useAuth();
 
   return (
     <header className="fixed inset-x-0 top-0 z-30 bg-background/95 backdrop-blur md:left-16">
@@ -45,7 +47,7 @@ export function ConsoleTopbar() {
                 </SheetTitle>
               </SheetHeader>
               <nav className="flex flex-col gap-1 px-2 py-3">
-                {consoleNavItems.map(({ href, labelKey, icon: Icon }) => {
+                {consoleNavItems.filter((item) => !item.roles || (user && item.roles.includes(user.role))).map(({ href, labelKey, icon: Icon }) => {
                   const active = isConsoleNavItemActive(pathname, href);
                   const label = dictionary.nav[labelKey];
 
@@ -73,6 +75,7 @@ export function ConsoleTopbar() {
             {dictionary.topbar.title}
           </p>
         </div>
+        <div className="flex items-center gap-3 text-sm"><span className="hidden text-muted-foreground sm:inline">{user?.display_name}</span><Button size="sm" variant="ghost" onClick={() => void signOut()}>退出</Button></div>
       </div>
     </header>
   );

@@ -17,6 +17,8 @@ pub enum ServerError {
     Unauthorized,
     #[error("forbidden")]
     Forbidden,
+    #[error("too many authentication attempts")]
+    RateLimited,
     #[error("not found: {0}")]
     NotFound(String),
     #[error("conflict: {0}")]
@@ -36,6 +38,7 @@ impl ServerError {
             Self::InvalidInput(_) => StatusCode::BAD_REQUEST,
             Self::Unauthorized => StatusCode::UNAUTHORIZED,
             Self::Forbidden => StatusCode::FORBIDDEN,
+            Self::RateLimited => StatusCode::TOO_MANY_REQUESTS,
             Self::NotFound(_) => StatusCode::NOT_FOUND,
             Self::Conflict(_) => StatusCode::CONFLICT,
             Self::Dependency(_) => StatusCode::SERVICE_UNAVAILABLE,
@@ -52,6 +55,7 @@ impl ServerError {
             Self::InvalidInput(_) => "REQUEST_INVALID",
             Self::Unauthorized => "AUTH_UNAUTHORIZED",
             Self::Forbidden => "AUTH_FORBIDDEN",
+            Self::RateLimited => "AUTH_RATE_LIMITED",
             Self::NotFound(_) => "RESOURCE_NOT_FOUND",
             Self::Conflict(_) => "RESOURCE_CONFLICT",
             Self::Database(_) => "DATABASE_OPERATION_FAILED",
@@ -94,7 +98,10 @@ impl IntoResponse for ServerError {
                 code: self.code().to_string(),
                 message,
                 details: None,
-                retryable: matches!(status, StatusCode::SERVICE_UNAVAILABLE),
+                retryable: matches!(
+                    status,
+                    StatusCode::SERVICE_UNAVAILABLE | StatusCode::TOO_MANY_REQUESTS
+                ),
             },
             meta: ApiErrorMeta {
                 request_id,

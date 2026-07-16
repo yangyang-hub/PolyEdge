@@ -5,9 +5,11 @@ import { usePathname } from "next/navigation";
 import { consoleNavItems, isConsoleNavItemActive } from "@/components/shared/console-nav-items";
 import { dictionary } from "@/lib/i18n/dictionaries";
 import { cn } from "@/lib/utils";
+import { useAuth } from "@/components/shared/auth-provider";
 
 export function ConsoleSidebar() {
   const pathname = usePathname();
+  const { user } = useAuth();
 
   return (
     <aside className="group fixed inset-y-0 left-0 z-40 hidden w-16 overflow-hidden bg-sidebar transition-all duration-300 hover:w-48 md:flex md:flex-col">
@@ -21,7 +23,7 @@ export function ConsoleSidebar() {
       </div>
 
       <nav className="flex-1 space-y-1 px-2 pt-4">
-        {consoleNavItems.map(({ href, labelKey, icon: Icon }) => {
+        {consoleNavItems.filter((item) => !item.roles || (user && item.roles.includes(user.role))).map(({ href, labelKey, icon: Icon }) => {
           const active = isConsoleNavItemActive(pathname, href);
           const label = dictionary.nav[labelKey];
 

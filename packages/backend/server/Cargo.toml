@@ -5,16 +5,25 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+aes-gcm.workspace = true
 async-trait.workspace = true
+argon2.workspace = true
+hex.workspace = true
+k256.workspace = true
 axum.workspace = true
+base64.workspace = true
 dotenvy.workspace = true
 polyedge-connectors = { path = "../crates/connectors" }
 polyedge-contracts = { path = "../crates/contracts" }
 polyedge-domain = { path = "../crates/domain" }
+rand = "0.8.5"
+rsa.workspace = true
 rust_decimal.workspace = true
+secrecy.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
+sha3.workspace = true
 sqlx.workspace = true
 subtle = "2.6.1"
 thiserror.workspace = true
@@ -25,3 +34,4 @@ tower-http.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 uuid.workspace = true
+zeroize.workspace = true

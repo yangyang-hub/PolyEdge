@@ -15,9 +15,9 @@ use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive;
 use serde::Deserialize;
 use serde_json::Value as JsonValue;
-use std::str::FromStr;
-use std::time::Duration;
+use std::{fmt, str::FromStr, time::Duration};
 use time::OffsetDateTime;
+use zeroize::Zeroize;
 
 pub const POLYMARKET_CONNECTOR_NAME: &str = "polymarket";
 const POLYMARKET_MIN_NOTIONAL_USD: Decimal = Decimal::ONE;

@@ -51,7 +51,12 @@ manual_trading_enum!(StrategyStatus {
     Draft => "draft",
     Active => "active",
     Paused => "paused",
+    Expired => "expired",
     Archived => "archived",
+});
+manual_trading_enum!(StrategyVisibility {
+    Private => "private",
+    Followable => "followable",
 });
 manual_trading_enum!(StrategyVersionStatus {
     Draft => "draft",
@@ -66,6 +71,31 @@ manual_trading_enum!(QuotePricingMode {
     Fixed => "fixed",
     BookRank => "book_rank",
 });
+manual_trading_enum!(StrategySubscriptionKind {
+    Owner => "owner",
+    Follower => "follower",
+});
+manual_trading_enum!(StrategySubscriptionStatus {
+    Active => "active",
+    Paused => "paused",
+    Stopped => "stopped",
+    Expired => "expired",
+});
+manual_trading_enum!(StrategyCommandType {
+    Publish => "publish",
+    Activate => "activate",
+    Pause => "pause",
+    Resume => "resume",
+    Expire => "expire",
+    Archive => "archive",
+    ForceCancel => "force_cancel",
+});
+manual_trading_enum!(StrategyCommandStatus {
+    Pending => "pending",
+    Running => "running",
+    Completed => "completed",
+    Failed => "failed",
+});
 manual_trading_enum!(TradingOrderSide {
     Buy => "buy",
     Sell => "sell",
@@ -77,6 +107,16 @@ manual_trading_enum!(ExecutionBatchStatus {
     Succeeded => "succeeded",
     Failed => "failed",
     Cancelled => "cancelled",
+});
+manual_trading_enum!(ExecutionBatchType {
+    Execute => "execute",
+    Cancel => "cancel",
+});
+manual_trading_enum!(ExecutionRequestSource {
+    Operator => "operator",
+    Runtime => "runtime",
+    StrategyCommand => "strategy_command",
+    ExpirySupervisor => "expiry_supervisor",
 });
 manual_trading_enum!(WalletExecutionJobStatus {
     Pending => "pending",
@@ -113,11 +153,15 @@ manual_trading_enum!(ManagedOrderStatus {
 });
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct WalletCredentialRef {
+pub struct WalletAccount {
     pub id: i64,
-    pub provider: CredentialProvider,
-    pub locator: String,
-    pub key_version: Option<String>,
+    pub owner_user_id: i64,
+    pub name: String,
+    pub signer_address: String,
+    pub funder_address: String,
+    pub signature_type: i32,
+    pub status: WalletAccountStatus,
+    pub trading_enabled: bool,
     #[serde(with = "time::serde::rfc3339")]
     pub created_at: OffsetDateTime,
     #[serde(with = "time::serde::rfc3339")]
@@ -125,17 +169,10 @@ pub struct WalletCredentialRef {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct WalletAccount {
-    pub id: i64,
-    pub name: String,
-    pub signer_address: String,
-    pub funder_address: String,
-    pub signature_type: i32,
-    pub credential_ref_id: i64,
-    pub status: WalletAccountStatus,
-    pub trading_enabled: bool,
-    #[serde(with = "time::serde::rfc3339")]
-    pub created_at: OffsetDateTime,
+pub struct WalletSecretMetadata {
+    pub wallet_id: i64,
+    pub key_id: String,
+    pub secret_version: i64,
     #[serde(with = "time::serde::rfc3339")]
     pub updated_at: OffsetDateTime,
 }
@@ -170,6 +207,7 @@ pub struct WalletAccountState {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ManagedMarket {
     pub id: i64,
+    pub created_by_user_id: i64,
     pub condition_id: String,
     pub slug: String,
     pub question: String,
@@ -190,25 +228,32 @@ pub struct ManagedMarketOutcome {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct MarketRewardTerms {
+pub struct MarketStrategy {
+    pub id: i64,
+    pub owner_user_id: i64,
+    pub owner_display_name: String,
     pub market_id: i64,
-    pub minimum_size: Decimal,
-    pub maximum_spread: Decimal,
-    pub daily_rate: Option<Decimal>,
+    pub name: String,
+    pub status: StrategyStatus,
+    pub visibility: StrategyVisibility,
+    #[serde(with = "time::serde::rfc3339")]
+    pub active_from: OffsetDateTime,
+    #[serde(with = "time::serde::rfc3339")]
+    pub active_until: OffsetDateTime,
+    #[serde(with = "time::serde::rfc3339::option")]
+    pub expired_at: Option<OffsetDateTime>,
+    #[serde(with = "time::serde::rfc3339")]
+    pub created_at: OffsetDateTime,
     #[serde(with = "time::serde::rfc3339")]
     pub updated_at: OffsetDateTime,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct MarketStrategy {
-    pub id: i64,
-    pub market_id: i64,
-    pub name: String,
-    pub status: StrategyStatus,
-    #[serde(with = "time::serde::rfc3339")]
-    pub created_at: OffsetDateTime,
-    #[serde(with = "time::serde::rfc3339")]
-    pub updated_at: OffsetDateTime,
+pub struct StrategyRewardTerms {
+    pub strategy_version_id: i64,
+    pub minimum_size: Decimal,
+    pub maximum_spread: Decimal,
+    pub daily_rate: Option<Decimal>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -246,8 +291,31 @@ pub struct StrategyQuoteSlot {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct StrategyWalletTarget {
-    pub strategy_id: i64,
+pub struct StrategySubscription {
+    pub id: i64,
+    pub follower_user_id: i64,
+    pub source_strategy_id: i64,
+    pub source_strategy_name: String,
+    pub source_user_id: i64,
+    pub source_display_name: String,
+    pub kind: StrategySubscriptionKind,
+    pub status: StrategySubscriptionStatus,
+    #[serde(with = "time::serde::rfc3339::option")]
+    pub active_until: Option<OffsetDateTime>,
+    #[serde(with = "time::serde::rfc3339")]
+    pub effective_active_until: OffsetDateTime,
+    #[serde(with = "time::serde::rfc3339::option")]
+    pub stopped_at: Option<OffsetDateTime>,
+    #[serde(with = "time::serde::rfc3339")]
+    pub created_at: OffsetDateTime,
+    #[serde(with = "time::serde::rfc3339")]
+    pub updated_at: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct StrategySubscriptionWallet {
+    pub subscription_id: i64,
+    pub follower_user_id: i64,
     pub wallet_id: i64,
     pub enabled: bool,
     #[serde(with = "time::serde::rfc3339")]
@@ -255,11 +323,39 @@ pub struct StrategyWalletTarget {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct StrategyCommand {
+    pub id: i64,
+    pub source_strategy_id: i64,
+    pub source_user_id: i64,
+    pub strategy_version_id: Option<i64>,
+    pub sequence: i64,
+    pub command_type: StrategyCommandType,
+    pub status: StrategyCommandStatus,
+    pub lease_owner: Option<String>,
+    pub lease_epoch: i64,
+    #[serde(with = "time::serde::rfc3339::option")]
+    pub lease_expires_at: Option<OffsetDateTime>,
+    pub last_error: Option<String>,
+    #[serde(with = "time::serde::rfc3339")]
+    pub created_at: OffsetDateTime,
+    #[serde(with = "time::serde::rfc3339")]
+    pub updated_at: OffsetDateTime,
+    #[serde(with = "time::serde::rfc3339::option")]
+    pub completed_at: Option<OffsetDateTime>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ExecutionBatch {
     pub id: i64,
+    pub subscriber_user_id: i64,
+    pub subscription_id: i64,
+    pub source_strategy_id: i64,
     pub strategy_version_id: i64,
+    pub strategy_command_id: Option<i64>,
+    pub batch_type: ExecutionBatchType,
     pub status: ExecutionBatchStatus,
-    pub requested_by: String,
+    pub requested_by_user_id: Option<i64>,
+    pub request_source: ExecutionRequestSource,
     pub operator_note: Option<String>,
     #[serde(with = "time::serde::rfc3339")]
     pub created_at: OffsetDateTime,
@@ -273,6 +369,7 @@ pub struct ExecutionBatch {
 pub struct WalletExecutionJob {
     pub id: i64,
     pub batch_id: i64,
+    pub owner_user_id: i64,
     pub wallet_id: i64,
     pub status: WalletExecutionJobStatus,
     pub attempt_count: i64,
@@ -312,7 +409,9 @@ pub struct ExecutionAction {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ManagedOrder {
     pub id: i64,
+    pub owner_user_id: i64,
     pub wallet_id: i64,
+    pub subscription_id: i64,
     pub market_id: i64,
     pub strategy_version_id: i64,
     pub quote_slot_id: Option<i64>,
@@ -334,6 +433,7 @@ pub struct ManagedOrder {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ManagedPosition {
     pub id: i64,
+    pub owner_user_id: i64,
     pub wallet_id: i64,
     pub market_id: i64,
     pub token_id: String,

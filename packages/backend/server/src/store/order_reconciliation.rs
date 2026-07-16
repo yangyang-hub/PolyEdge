@@ -15,8 +15,11 @@ pub(super) async fn mark_order_unknown(
         UPDATE managed_orders o
         SET status = 'unknown', updated_at = now()
         FROM wallet_execution_jobs j
+        JOIN execution_batches b ON b.batch_id = j.batch_id
         WHERE o.managed_order_id = $1
           AND j.job_id = $2 AND j.wallet_id = o.wallet_id
+          AND j.owner_user_id = o.owner_user_id
+          AND b.subscription_id = o.subscription_id
           AND j.status = 'running' AND j.lease_owner = $3
           AND j.lease_epoch = $4 AND j.lease_expires_at > now()
           AND o.status IN ('planned', 'submitting', 'open', 'partially_filled', 'cancel_pending', 'unknown')
@@ -65,6 +68,9 @@ pub(super) async fn reconcile_managed_order(
         FROM managed_orders o
         JOIN wallet_execution_jobs j
           ON j.job_id = $2 AND j.wallet_id = o.wallet_id
+         AND j.owner_user_id = o.owner_user_id
+        JOIN execution_batches b
+          ON b.batch_id = j.batch_id AND b.subscription_id = o.subscription_id
         WHERE o.managed_order_id = $1
           AND j.status = 'running'
           AND j.lease_owner = $3
@@ -128,6 +134,32 @@ pub(super) async fn reconcile_managed_order(
             "previous_filled_quantity": current_filled.to_string(),
             "filled_quantity": filled_quantity.to_string(),
         }))
+        .execute(&mut *tx)
+        .await?;
+    }
+    if filled_quantity > current_filled {
+        let fill_delta = filled_quantity - current_filled;
+        let external_fill_id = format!(
+            "managed:{}:cumulative:{}",
+            order.id,
+            filled_quantity.normalize()
+        );
+        sqlx::query(
+            r#"INSERT INTO venue_fills (
+                 owner_user_id,wallet_id,managed_order_id,market_id,token_id,
+                 external_fill_id,side,price,quantity,fee_amount,occurred_at
+               ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,0,now())
+               ON CONFLICT (wallet_id,external_fill_id) DO NOTHING"#,
+        )
+        .bind(order.owner_user_id)
+        .bind(order.wallet_id)
+        .bind(order.id)
+        .bind(order.market_id)
+        .bind(&order.token_id)
+        .bind(external_fill_id)
+        .bind(order.side.as_str())
+        .bind(order.price)
+        .bind(fill_delta)
         .execute(&mut *tx)
         .await?;
     }

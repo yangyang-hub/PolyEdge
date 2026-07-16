@@ -17,6 +17,7 @@ import type {
   QuoteSlotInput,
 } from "@/lib/contracts/dto";
 import { dictionary, translateEnum } from "@/lib/i18n/dictionaries";
+import { canWriteMarkets, useAuth } from "@/components/shared/auth-provider";
 
 type StrategyForm = CreateMarketStrategyRequest;
 
@@ -37,28 +38,33 @@ function blankSlot(index: number): QuoteSlotInput {
 
 const INITIAL_FORM: StrategyForm = {
   name: "",
+  visibility: "private",
+  active_from: new Date().toISOString(),
+  active_until: new Date(Date.now() + 5 * 60 * 60 * 1000).toISOString(),
   market: {
     condition_id: "",
     slug: "",
     question: "",
     yes_token_id: "",
     no_token_id: "",
-    reward_minimum_size: "5",
-    reward_maximum_spread: "0.03",
   },
   version: {
+    reward_minimum_size: "5",
+    reward_maximum_spread: "0.03",
     book_freshness_ms: 5_000,
     downward_reprice_confirm_ms: 1_000,
     upward_reprice_confirm_ms: 3_000,
     reprice_cooldown_ms: 10_000,
     max_replaces_per_cycle: 2,
     quote_slots: [blankSlot(1)],
-    wallet_ids: [],
   },
+  wallet_ids: [],
 };
 
 export function StrategiesWorkbench() {
   const d = dictionary.strategies;
+  const { user } = useAuth();
+  const writable = canWriteMarkets(user?.role);
   const [form, setForm] = useState<StrategyForm>(INITIAL_FORM);
   const [walletIds, setWalletIds] = useState("");
   const [strategies, setStrategies] = useState<MarketStrategyData[]>([]);
@@ -114,12 +120,12 @@ export function StrategiesWorkbench() {
         market: {
           ...form.market,
           polymarket_url: form.market.polymarket_url?.trim() || undefined,
-          reward_daily_rate: form.market.reward_daily_rate?.trim() || undefined,
         },
         version: {
           ...form.version,
-          wallet_ids: parseIds(walletIds),
+          reward_daily_rate: form.version.reward_daily_rate?.trim() || undefined,
         },
+        wallet_ids: parseIds(walletIds),
         operator_note: form.operator_note?.trim() || undefined,
       });
       setFeedback(result);
@@ -132,26 +138,29 @@ export function StrategiesWorkbench() {
       <PageHeader eyebrow={d.eyebrow} title={d.title} description={d.description} />
       {feedback ? <OperationFeedbackBanner feedback={feedback} /> : null}
 
-      <Card>
+      {writable ? <Card>
         <CardHeader>
           <CardTitle>{d.identity}</CardTitle>
         </CardHeader>
         <CardContent className="grid gap-4 md:grid-cols-2">
           <Field label={d.strategyName} value={form.name} onChange={(value) => setForm((current) => ({ ...current, name: value }))} />
+          <SelectField label="可见性" value={form.visibility} onChange={(value) => setForm((current) => ({ ...current, visibility: value as "private" | "followable" }))} options={["private", "followable"]} />
+          <Field label="开始生效" type="datetime-local" value={toLocalInput(form.active_from)} onChange={(value) => setForm((current) => ({ ...current, active_from: new Date(value).toISOString() }))} />
+          <Field label="停止做市" type="datetime-local" value={toLocalInput(form.active_until)} onChange={(value) => setForm((current) => ({ ...current, active_until: new Date(value).toISOString() }))} />
           <Field label={d.slug} value={form.market.slug} onChange={(value) => setMarket("slug", value)} />
           <Field label={d.conditionId} value={form.market.condition_id} onChange={(value) => setMarket("condition_id", value)} />
           <Field label={d.polymarketUrl} value={form.market.polymarket_url ?? ""} onChange={(value) => setMarket("polymarket_url", value)} />
           <Field className="md:col-span-2" label={d.marketQuestion} value={form.market.question} onChange={(value) => setMarket("question", value)} />
           <Field label={d.yesToken} value={form.market.yes_token_id} onChange={(value) => setMarket("yes_token_id", value)} />
           <Field label={d.noToken} value={form.market.no_token_id} onChange={(value) => setMarket("no_token_id", value)} />
-          <Field label={d.rewardMinimumSize} value={form.market.reward_minimum_size} onChange={(value) => setMarket("reward_minimum_size", value)} />
-          <Field label={d.rewardMaximumSpread} value={form.market.reward_maximum_spread} onChange={(value) => setMarket("reward_maximum_spread", value)} />
-          <Field label={d.rewardDailyRate} value={form.market.reward_daily_rate ?? ""} onChange={(value) => setMarket("reward_daily_rate", value)} />
+          <Field label={d.rewardMinimumSize} value={form.version.reward_minimum_size} onChange={(value) => setVersion("reward_minimum_size", value)} />
+          <Field label={d.rewardMaximumSpread} value={form.version.reward_maximum_spread} onChange={(value) => setVersion("reward_maximum_spread", value)} />
+          <Field label={d.rewardDailyRate} value={form.version.reward_daily_rate ?? ""} onChange={(value) => setVersion("reward_daily_rate", value)} />
           <Field label={d.operatorNote} value={form.operator_note ?? ""} onChange={(value) => setForm((current) => ({ ...current, operator_note: value }))} />
         </CardContent>
-      </Card>
+      </Card> : null}
 
-      <Card>
+      {writable ? <Card>
         <CardHeader className="flex-row items-center justify-between">
           <CardTitle>{d.slots}</CardTitle>
           <Button
@@ -198,9 +207,9 @@ export function StrategiesWorkbench() {
             </div>
           ))}
         </CardContent>
-      </Card>
+      </Card> : null}
 
-      <Card>
+      {writable ? <Card>
         <CardHeader>
           <CardTitle>{d.execution}</CardTitle>
         </CardHeader>
@@ -215,7 +224,7 @@ export function StrategiesWorkbench() {
             {isPending ? dictionary.common.submitting : d.save}
           </Button>
         </CardContent>
-      </Card>
+      </Card> : null}
 
       <Card>
         <CardHeader>
@@ -229,12 +238,13 @@ export function StrategiesWorkbench() {
               <div>
                 <p className="font-medium">{item.strategy.name}</p>
                 <p className="text-xs text-muted-foreground">#{item.strategy.id} · {item.market.question}</p>
+                <p className="text-xs text-muted-foreground">{item.strategy.owner_display_name} · {item.strategy.visibility} · 至 {new Date(item.strategy.active_until).toLocaleString()}</p>
               </div>
               <div className="flex flex-wrap gap-2">
                 <StatusPill>{translateEnum(item.strategy.status)}</StatusPill>
                 <StatusPill tone="primary">v{item.version.version_number}</StatusPill>
                 <StatusPill>{item.quote_slots.length} {d.slotCount}</StatusPill>
-                <StatusPill>{item.wallet_targets.length} {d.walletCount}</StatusPill>
+                <StatusPill>{item.current_user_subscription?.wallets.length ?? 0} {d.walletCount}</StatusPill>
               </div>
             </div>
           ))}
@@ -247,6 +257,7 @@ export function StrategiesWorkbench() {
 function parseIds(value: string): number[] {
   return [...new Set(value.split(",").map((item) => Number(item.trim())).filter((id) => Number.isSafeInteger(id) && id > 0))];
 }
+function toLocalInput(value: string): string { const date = new Date(value); return new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16); }
 
 function Field({ label, value, onChange, type = "text", placeholder, className }: { label: string; value: string; onChange: (value: string) => void; type?: string; placeholder?: string; className?: string }) {
   return <label className={`space-y-2 text-sm ${className ?? ""}`}><span>{label}</span><Input type={type} value={value} placeholder={placeholder} onChange={(event) => onChange(event.target.value)} /></label>;

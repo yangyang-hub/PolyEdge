@@ -12,8 +12,11 @@ services:
         max-file: "3"
     env_file:
       - ${POLYEDGE_SERVER_ENV_FILE:-.env.server}
-    ports:
-      - "${POLYEDGE_SERVER_BIND:-0.0.0.0}:${POLYEDGE_SERVER_PORT:-38001}:38001"
+    volumes:
+      - ${POLYEDGE_WALLET_IMPORT_PRIVATE_KEY_FILE:-./secrets/polyedge-wallet-import-private.pem}:/run/secrets/polyedge-wallet-import-private.pem:ro
+      - ${POLYEDGE_WALLET_STORAGE_KEY_FILE:-./secrets/polyedge-wallet-storage-key}:/run/secrets/polyedge-wallet-storage-key:ro
+    expose:
+      - "38001"
     command: ["polyedge-server"]
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -25,6 +28,9 @@ services:
       start_period: 20s
 
   polyedge-front:
+    depends_on:
+      polyedge-server:
+        condition: service_healthy
     build:
       context: ../packages/front
       dockerfile: Dockerfile

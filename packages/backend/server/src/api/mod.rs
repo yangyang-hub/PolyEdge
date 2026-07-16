@@ -10,15 +10,17 @@ use axum::{
     routing::{get, post},
 };
 use polyedge_contracts::{
-    ApiResponse, CancelExecutionBatchRequest, CreateCancellationBatchRequest,
-    CreateExecutionBatchRequest, CreateMarketStrategyRequest, CreateWalletAccountRequest,
-    DependencyStatus, HealthData, ManualTradingListQuery, ReadinessData,
-    UpdateMarketStrategyRequest, UpdateSystemRuntimeStateRequest, UpdateWalletAccountRequest,
+    ActivateUserRequest, ApiResponse, CancelExecutionBatchRequest, CreateCancellationBatchRequest,
+    CreateExecutionBatchRequest, CreateMarketStrategyRequest, CreateStrategySubscriptionRequest,
+    CreateUserRequest, CreateWalletAccountRequest, DependencyStatus, HealthData, LoginRequest,
+    ManualTradingListQuery, ReadinessData, ReauthenticateRequest, ReissueActivationTokenRequest,
+    UpdateMarketStrategyRequest, UpdateStrategySubscriptionRequest,
+    UpdateSystemRuntimeStateRequest, UpdateUserRequest, UpdateWalletAccountRequest,
     WriteOperationData,
 };
 use serde::Serialize;
 use sha2::{Digest, Sha256};
-use subtle::ConstantTimeEq;
+use time::OffsetDateTime;
 use tower::ServiceBuilder;
 use tower_http::{
     cors::{AllowOrigin, CorsLayer},
@@ -31,6 +33,8 @@ use uuid::Uuid;
 const EXECUTION_SCOPE: &str = "execution_submit";
 const CANCEL_SCOPE: &str = "order_cancel_force";
 const WALLET_TRADING_ENABLE_SCOPE: &str = "wallet_trading_enable";
+const WALLET_SECRET_ROTATE_SCOPE: &str = "wallet_secret_rotate";
+const CASH_FLOW_RECORD_SCOPE: &str = "cash_flow_record";
 const KILL_SWITCH_TRIGGER_SCOPE: &str = "system_kill_switch_trigger";
 const KILL_SWITCH_RELEASE_SCOPE: &str = "system_kill_switch_release";
 
@@ -38,7 +42,8 @@ const KILL_SWITCH_RELEASE_SCOPE: &str = "system_kill_switch_release";
 struct RequestContext {
     request_id: String,
     trace_id: String,
-    actor_id: String,
+    actor: polyedge_domain::ActorScope,
+    session_id: Uuid,
 }
 
 enum WriteLease {
@@ -48,15 +53,40 @@ enum WriteLease {
 
 pub fn router(state: AppState) -> Router {
     let api = Router::new()
+        .route("/auth/login", post(login))
+        .route("/auth/logout", post(logout))
+        .route("/auth/activate", post(activate_user))
+        .route("/auth/reauth", post(reauthenticate))
+        .route("/auth/me", get(current_user))
+        .route("/admin/users", get(list_users).post(create_user))
+        .route("/admin/users/{id}", axum::routing::patch(update_user))
+        .route(
+            "/admin/users/{id}/activation-token",
+            post(reissue_activation_token),
+        )
+        .route("/admin/finance", get(admin_finance))
+        .route(
+            "/security/wallet-import-contexts",
+            post(create_wallet_import_context),
+        )
         .route("/wallets", get(list_wallets).post(create_wallet))
         .route("/wallets/{id}", get(get_wallet).patch(update_wallet))
         .route(
             "/market-strategies",
             get(list_strategies).post(create_strategy),
         )
+        .route("/market-strategies/discover", get(discover_strategies))
         .route(
             "/market-strategies/{id}",
             get(get_strategy).patch(update_strategy),
+        )
+        .route(
+            "/strategy-subscriptions",
+            get(list_strategy_subscriptions).post(create_strategy_subscription),
+        )
+        .route(
+            "/strategy-subscriptions/{id}",
+            axum::routing::patch(update_strategy_subscription),
         )
         .route(
             "/execution-batches",
@@ -70,6 +100,7 @@ pub fn router(state: AppState) -> Router {
         .route("/cancellation-batches", post(create_cancellation_batch))
         .route("/orders", get(list_orders))
         .route("/positions", get(list_positions))
+        .route("/cash-flows", get(list_cash_flows).post(record_cash_flow))
         .route(
             "/system/runtime-state",
             get(get_runtime_state).patch(update_runtime_state),
@@ -91,6 +122,11 @@ pub fn router(state: AppState) -> Router {
                 .layer(cors),
         )
 }
+
+include!("identity.rs");
+include!("finance.rs");
+include!("subscriptions.rs");
+include!("wallet_security.rs");
 
 async fn healthz(headers: HeaderMap) -> Json<ApiResponse<HealthData>> {
     let context = request_context(&headers);
@@ -136,8 +172,11 @@ async fn list_wallets(
     headers: HeaderMap,
     Query(query): Query<ManualTradingListQuery>,
 ) -> Result<Json<ApiResponse<Vec<polyedge_contracts::WalletAccountData>>>> {
-    let context = authorize(&state, &headers, None)?;
-    Ok(response(state.store.list_wallets(&query).await?, &context))
+    let context = authorize(&state, &headers, None).await?;
+    Ok(response(
+        state.store.list_wallets(context.actor, &query).await?,
+        &context,
+    ))
 }
 
 async fn get_wallet(
@@ -145,8 +184,11 @@ async fn get_wallet(
     headers: HeaderMap,
     Path(wallet_id): Path<i64>,
 ) -> Result<Json<ApiResponse<polyedge_contracts::WalletAccountData>>> {
-    let context = authorize(&state, &headers, None)?;
-    Ok(response(state.store.get_wallet(wallet_id).await?, &context))
+    let context = authorize(&state, &headers, None).await?;
+    Ok(response(
+        state.store.get_wallet(context.actor, wallet_id).await?,
+        &context,
+    ))
 }
 
 async fn create_wallet(
@@ -160,14 +202,20 @@ async fn create_wallet(
         request
             .trading_enabled
             .then_some(WALLET_TRADING_ENABLE_SCOPE),
-    )?;
+    )
+    .await?;
     let lease = begin_write(&state, &headers, "wallet.create", &request).await?;
     if let WriteLease::Replay(replay) = lease {
         return Ok(Json(replay));
     }
     let wallet = state
         .store
-        .create_wallet(&request, &context.actor_id, &context.request_id)
+        .create_wallet(
+            context.actor,
+            &request,
+            &state.wallet_crypto,
+            &context.request_id,
+        )
         .await?;
     finish_write(
         &state,
@@ -188,8 +236,13 @@ async fn update_wallet(
     let context = authorize(
         &state,
         &headers,
-        (request.trading_enabled == Some(true)).then_some(WALLET_TRADING_ENABLE_SCOPE),
-    )?;
+        if request.encrypted_secret.is_some() {
+            Some(WALLET_SECRET_ROTATE_SCOPE)
+        } else {
+            (request.trading_enabled == Some(true)).then_some(WALLET_TRADING_ENABLE_SCOPE)
+        },
+    )
+    .await?;
     let scope = format!("wallet.update:{wallet_id}");
     let lease = begin_write(&state, &headers, &scope, &request).await?;
     if let WriteLease::Replay(replay) = lease {
@@ -197,7 +250,13 @@ async fn update_wallet(
     }
     state
         .store
-        .update_wallet(wallet_id, &request, &context.actor_id, &context.request_id)
+        .update_wallet(
+            context.actor,
+            wallet_id,
+            &request,
+            &state.wallet_crypto,
+            &context.request_id,
+        )
         .await?;
     finish_write(
         &state,
@@ -214,9 +273,24 @@ async fn list_strategies(
     headers: HeaderMap,
     Query(query): Query<ManualTradingListQuery>,
 ) -> Result<Json<ApiResponse<Vec<polyedge_contracts::MarketStrategyData>>>> {
-    let context = authorize(&state, &headers, None)?;
+    let context = authorize(&state, &headers, None).await?;
     Ok(response(
-        state.store.list_strategies(&query).await?,
+        state.store.list_strategies(&query, context.actor).await?,
+        &context,
+    ))
+}
+
+async fn discover_strategies(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<ManualTradingListQuery>,
+) -> Result<Json<ApiResponse<Vec<polyedge_contracts::MarketStrategyData>>>> {
+    let context = authorize(&state, &headers, None).await?;
+    Ok(response(
+        state
+            .store
+            .discover_strategies(&query, context.actor)
+            .await?,
         &context,
     ))
 }
@@ -226,9 +300,9 @@ async fn get_strategy(
     headers: HeaderMap,
     Path(strategy_id): Path<i64>,
 ) -> Result<Json<ApiResponse<polyedge_contracts::MarketStrategyData>>> {
-    let context = authorize(&state, &headers, None)?;
+    let context = authorize(&state, &headers, None).await?;
     Ok(response(
-        state.store.get_strategy(strategy_id).await?,
+        state.store.get_strategy(strategy_id, context.actor).await?,
         &context,
     ))
 }
@@ -238,14 +312,14 @@ async fn create_strategy(
     headers: HeaderMap,
     Json(request): Json<CreateMarketStrategyRequest>,
 ) -> Result<Json<ApiResponse<WriteOperationData>>> {
-    let context = authorize(&state, &headers, None)?;
+    let context = authorize(&state, &headers, None).await?;
     let lease = begin_write(&state, &headers, "strategy.create", &request).await?;
     if let WriteLease::Replay(replay) = lease {
         return Ok(Json(replay));
     }
     let strategy = state
         .store
-        .create_strategy(&request, &context.actor_id, &context.request_id)
+        .create_strategy(&request, context.actor, &context.request_id)
         .await?;
     finish_write(
         &state,
@@ -263,7 +337,7 @@ async fn update_strategy(
     Path(strategy_id): Path<i64>,
     Json(request): Json<UpdateMarketStrategyRequest>,
 ) -> Result<Json<ApiResponse<WriteOperationData>>> {
-    let context = authorize(&state, &headers, None)?;
+    let context = authorize(&state, &headers, None).await?;
     let scope = format!("strategy.update:{strategy_id}");
     let lease = begin_write(&state, &headers, &scope, &request).await?;
     if let WriteLease::Replay(replay) = lease {
@@ -271,12 +345,7 @@ async fn update_strategy(
     }
     state
         .store
-        .update_strategy(
-            strategy_id,
-            &request,
-            &context.actor_id,
-            &context.request_id,
-        )
+        .update_strategy(strategy_id, &request, context.actor, &context.request_id)
         .await?;
     finish_write(
         &state,
@@ -293,9 +362,12 @@ async fn list_execution_batches(
     headers: HeaderMap,
     Query(query): Query<ManualTradingListQuery>,
 ) -> Result<Json<ApiResponse<Vec<polyedge_contracts::ExecutionBatchData>>>> {
-    let context = authorize(&state, &headers, None)?;
+    let context = authorize(&state, &headers, None).await?;
     Ok(response(
-        state.store.list_execution_batches(&query).await?,
+        state
+            .store
+            .list_execution_batches(&query, context.actor)
+            .await?,
         &context,
     ))
 }
@@ -305,9 +377,12 @@ async fn get_execution_batch(
     headers: HeaderMap,
     Path(batch_id): Path<i64>,
 ) -> Result<Json<ApiResponse<polyedge_contracts::ExecutionBatchData>>> {
-    let context = authorize(&state, &headers, None)?;
+    let context = authorize(&state, &headers, None).await?;
     Ok(response(
-        state.store.get_execution_batch(batch_id).await?,
+        state
+            .store
+            .get_execution_batch(batch_id, context.actor)
+            .await?,
         &context,
     ))
 }
@@ -317,14 +392,14 @@ async fn create_execution_batch(
     headers: HeaderMap,
     Json(request): Json<CreateExecutionBatchRequest>,
 ) -> Result<Json<ApiResponse<WriteOperationData>>> {
-    let context = authorize(&state, &headers, Some(EXECUTION_SCOPE))?;
+    let context = authorize(&state, &headers, Some(EXECUTION_SCOPE)).await?;
     let lease = begin_write(&state, &headers, "execution_batch.create", &request).await?;
     if let WriteLease::Replay(replay) = lease {
         return Ok(Json(replay));
     }
     let batch = state
         .store
-        .create_execution_batch(&request, &context.actor_id, &context.request_id)
+        .create_execution_batch(&request, context.actor, &context.request_id)
         .await?;
     finish_write(
         &state,
@@ -342,7 +417,7 @@ async fn cancel_execution_batch(
     Path(batch_id): Path<i64>,
     Json(request): Json<CancelExecutionBatchRequest>,
 ) -> Result<Json<ApiResponse<WriteOperationData>>> {
-    let context = authorize(&state, &headers, Some(CANCEL_SCOPE))?;
+    let context = authorize(&state, &headers, Some(CANCEL_SCOPE)).await?;
     let scope = format!("execution_batch.cancel:{batch_id}");
     let lease = begin_write(&state, &headers, &scope, &request).await?;
     if let WriteLease::Replay(replay) = lease {
@@ -353,7 +428,7 @@ async fn cancel_execution_batch(
         .cancel_execution_batch(
             batch_id,
             request.operator_note.as_deref(),
-            &context.actor_id,
+            context.actor,
             &context.request_id,
         )
         .await?;
@@ -372,14 +447,14 @@ async fn create_cancellation_batch(
     headers: HeaderMap,
     Json(request): Json<CreateCancellationBatchRequest>,
 ) -> Result<Json<ApiResponse<WriteOperationData>>> {
-    let context = authorize(&state, &headers, Some(CANCEL_SCOPE))?;
+    let context = authorize(&state, &headers, Some(CANCEL_SCOPE)).await?;
     let lease = begin_write(&state, &headers, "cancellation_batch.create", &request).await?;
     if let WriteLease::Replay(replay) = lease {
         return Ok(Json(replay));
     }
     let batch_ids = state
         .store
-        .create_cancellation_batches(&request, &context.actor_id, &context.request_id)
+        .create_cancellation_batches(&request, context.actor, &context.request_id)
         .await?;
     let resource_id = if batch_ids.is_empty() {
         "none".to_string()
@@ -410,8 +485,11 @@ async fn list_orders(
     headers: HeaderMap,
     Query(query): Query<ManualTradingListQuery>,
 ) -> Result<Json<ApiResponse<Vec<polyedge_domain::ManagedOrder>>>> {
-    let context = authorize(&state, &headers, None)?;
-    Ok(response(state.store.list_orders(&query).await?, &context))
+    let context = authorize(&state, &headers, None).await?;
+    Ok(response(
+        state.store.list_orders(&query, context.actor).await?,
+        &context,
+    ))
 }
 
 async fn list_positions(
@@ -419,9 +497,9 @@ async fn list_positions(
     headers: HeaderMap,
     Query(query): Query<ManualTradingListQuery>,
 ) -> Result<Json<ApiResponse<Vec<polyedge_domain::ManagedPosition>>>> {
-    let context = authorize(&state, &headers, None)?;
+    let context = authorize(&state, &headers, None).await?;
     Ok(response(
-        state.store.list_positions(&query).await?,
+        state.store.list_positions(&query, context.actor).await?,
         &context,
     ))
 }
@@ -430,7 +508,7 @@ async fn get_runtime_state(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<ApiResponse<polyedge_contracts::SystemRuntimeStateData>>> {
-    let context = authorize(&state, &headers, None)?;
+    let context = authorize(&state, &headers, None).await?;
     Ok(response(
         state.store.system_runtime_state().await?,
         &context,
@@ -447,14 +525,17 @@ async fn update_runtime_state(
     } else {
         KILL_SWITCH_RELEASE_SCOPE
     };
-    let context = authorize(&state, &headers, Some(required_scope))?;
+    let context = authorize(&state, &headers, Some(required_scope)).await?;
+    if !context.actor.is_admin() {
+        return Err(ServerError::Forbidden);
+    }
     let lease = begin_write(&state, &headers, "system.runtime_state.update", &request).await?;
     if let WriteLease::Replay(replay) = lease {
         return Ok(Json(replay));
     }
     state
         .store
-        .update_system_runtime_state(&request, &context.actor_id, &context.request_id)
+        .update_system_runtime_state(&request, context.actor, &context.request_id)
         .await?;
     finish_write(
         &state,
@@ -467,70 +548,105 @@ async fn update_runtime_state(
 }
 
 fn request_context(headers: &HeaderMap) -> RequestContext {
-    let request_id = headers
+    RequestContext {
+        request_id: request_id(headers),
+        trace_id: trace_id(headers),
+        actor: polyedge_domain::ActorScope {
+            user_id: 0,
+            role: polyedge_domain::UserRole::ReadOnly,
+        },
+        session_id: Uuid::nil(),
+    }
+}
+
+fn request_id(headers: &HeaderMap) -> String {
+    headers
         .get("x-request-id")
         .and_then(|value| value.to_str().ok())
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)
-        .unwrap_or_else(|| format!("req_{}", Uuid::now_v7()));
-    let actor_id = headers
-        .get("x-polyedge-console-user")
+        .unwrap_or_else(|| format!("req_{}", Uuid::now_v7()))
+}
+
+fn trace_id(headers: &HeaderMap) -> String {
+    headers
+        .get("x-trace-id")
         .and_then(|value| value.to_str().ok())
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .unwrap_or("console")
-        .chars()
-        .take(120)
-        .collect();
-    RequestContext {
-        request_id,
-        trace_id: format!("trc_{}", Uuid::now_v7()),
-        actor_id,
-    }
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| format!("trc_{}", Uuid::now_v7()))
 }
 
-fn authorize(
+async fn authorize(
     state: &AppState,
     headers: &HeaderMap,
     required_scope: Option<&str>,
 ) -> Result<RequestContext> {
-    let context = request_context(headers);
-    if !state.config.auth_disabled {
-        let actual = headers
-            .get(header::AUTHORIZATION)
+    let write_request = headers.contains_key("idempotency-key") || required_scope.is_some();
+    authorize_request(state, headers, required_scope, write_request, write_request).await
+}
+
+async fn authorize_mutation(
+    state: &AppState,
+    headers: &HeaderMap,
+    required_scope: Option<&str>,
+) -> Result<RequestContext> {
+    authorize_request(state, headers, required_scope, true, true).await
+}
+
+async fn authorize_account_mutation(
+    state: &AppState,
+    headers: &HeaderMap,
+) -> Result<RequestContext> {
+    authorize_request(state, headers, None, true, false).await
+}
+
+async fn authorize_request(
+    state: &AppState,
+    headers: &HeaderMap,
+    required_scope: Option<&str>,
+    write_request: bool,
+    enforce_writer_role: bool,
+) -> Result<RequestContext> {
+    let token = session_cookie(headers).ok_or(ServerError::Unauthorized)?;
+    if write_request {
+        let origin = headers
+            .get(header::ORIGIN)
             .and_then(|value| value.to_str().ok())
-            .and_then(|value| value.strip_prefix("Bearer "))
-            .unwrap_or_default();
-        let expected = state.config.api_token.as_deref().unwrap_or_default();
-        if !constant_time_equal(actual, expected) {
-            return Err(ServerError::Unauthorized);
-        }
-    }
-    if let Some(required_scope) = required_scope {
-        let scopes = headers
-            .get("x-polyedge-step-up-scopes")
-            .or_else(|| headers.get("x-step-up-scope"))
-            .and_then(|value| value.to_str().ok())
-            .unwrap_or_default();
-        if !scopes
-            .split(',')
-            .map(str::trim)
-            .any(|scope| scope == required_scope)
-        {
+            .ok_or(ServerError::Forbidden)?;
+        if origin != state.config.public_origin {
             return Err(ServerError::Forbidden);
         }
-        if let Some(expected_code) = state.config.step_up_code.as_deref() {
-            let actual_code = headers
-                .get("x-polyedge-step-up-code")
-                .and_then(|value| value.to_str().ok())
-                .unwrap_or_default();
-            if !constant_time_equal(actual_code, expected_code) {
-                return Err(ServerError::Forbidden);
-            }
+    }
+    let session = state
+        .store
+        .authenticate_session(
+            token,
+            csrf_header(headers),
+            write_request,
+            time::Duration::try_from(state.config.session_idle_ttl)
+                .map_err(|_| ServerError::Configuration("session idle ttl is invalid".into()))?,
+        )
+        .await?;
+    if enforce_writer_role && session.user.role == polyedge_domain::UserRole::ReadOnly {
+        return Err(ServerError::Forbidden);
+    }
+    if required_scope.is_some() {
+        let recent = session.recent_auth_at.ok_or(ServerError::Forbidden)?;
+        let recent_ttl = time::Duration::try_from(state.config.recent_auth_ttl)
+            .map_err(|_| ServerError::Configuration("recent auth ttl is invalid".into()))?;
+        if OffsetDateTime::now_utc() - recent > recent_ttl {
+            return Err(ServerError::Forbidden);
         }
     }
-    Ok(context)
+    Ok(RequestContext {
+        request_id: request_id(headers),
+        trace_id: trace_id(headers),
+        actor: session.actor(),
+        session_id: session.session_id,
+    })
 }
 
 async fn begin_write<T: Serialize>(
@@ -552,9 +668,19 @@ async fn begin_write<T: Serialize>(
         ));
     }
     let request_hash = hash_json(request)?;
+    let authenticated = state
+        .store
+        .authenticate_session(
+            session_cookie(headers).ok_or(ServerError::Unauthorized)?,
+            csrf_header(headers),
+            true,
+            time::Duration::try_from(state.config.session_idle_ttl)
+                .map_err(|_| ServerError::Configuration("session idle ttl is invalid".into()))?,
+        )
+        .await?;
     match state
         .store
-        .begin_idempotency(scope, &key, &request_hash)
+        .begin_idempotency(authenticated.user.id, scope, &key, &request_hash)
         .await?
     {
         IdempotencyBegin::Replay(value) => {
@@ -581,7 +707,7 @@ async fn finish_write(
         })?;
         state
             .store
-            .complete_idempotency(scope, &key, &owner_token, &value)
+            .complete_idempotency(context.actor.user_id, scope, &key, &owner_token, &value)
             .await?;
     }
     Ok(Json(response))
@@ -621,12 +747,6 @@ fn hash_json<T: Serialize>(value: &T) -> Result<String> {
     Ok(digest.iter().map(|byte| format!("{byte:02x}")).collect())
 }
 
-fn constant_time_equal(actual: &str, expected: &str) -> bool {
-    let actual = Sha256::digest(actual.as_bytes());
-    let expected = Sha256::digest(expected.as_bytes());
-    bool::from(actual.as_slice().ct_eq(expected.as_slice()))
-}
-
 fn cors_layer(state: &AppState) -> CorsLayer {
     let origins = state
         .config
@@ -637,14 +757,14 @@ fn cors_layer(state: &AppState) -> CorsLayer {
     CorsLayer::new()
         .allow_origin(AllowOrigin::list(origins))
         .allow_methods([Method::GET, Method::POST, Method::PATCH])
+        .allow_credentials(true)
         .allow_headers([
             header::ACCEPT,
             header::AUTHORIZATION,
             header::CONTENT_TYPE,
             header::HeaderName::from_static("x-request-id"),
             header::HeaderName::from_static("idempotency-key"),
-            header::HeaderName::from_static("x-polyedge-step-up-code"),
-            header::HeaderName::from_static("x-polyedge-step-up-scopes"),
-            header::HeaderName::from_static("x-polyedge-console-user"),
+            header::HeaderName::from_static("x-polyedge-csrf-token"),
+            header::HeaderName::from_static("x-csrf-token"),
         ])
 }

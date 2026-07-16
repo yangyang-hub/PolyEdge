@@ -1,3 +1,4 @@
+use super::execution_enqueue::enqueue_active_wallet_reconciles;
 use super::*;
 use crate::execution::{
     ActionHandle, ActionProposal, ExecutionContext, ExecutionStore, TargetOrder,
@@ -9,6 +10,11 @@ use std::time::Duration;
 
 #[async_trait]
 impl ExecutionStore for PostgresStore {
+    async fn expire_due_strategies(&self, limit: i64) -> polyedge_domain::Result<u64> {
+        PostgresStore::expire_due_strategies(self, limit)
+            .await
+            .map_err(server_to_domain_error)
+    }
     async fn enqueue_active_wallet_reconciles(&self) -> polyedge_domain::Result<usize> {
         enqueue_active_wallet_reconciles(self)
             .await
@@ -180,73 +186,6 @@ impl ExecutionStore for PostgresStore {
     }
 }
 
-async fn enqueue_active_wallet_reconciles(store: &PostgresStore) -> Result<usize> {
-    let rows = sqlx::query(
-        r#"
-        SELECT v.strategy_version_id, t.wallet_id
-        FROM strategy_versions v
-        JOIN market_strategies s ON s.strategy_id = v.strategy_id
-        JOIN managed_markets m ON m.market_id = s.market_id
-        JOIN strategy_wallet_targets t ON t.strategy_id = s.strategy_id
-        JOIN wallet_accounts w ON w.wallet_id = t.wallet_id
-        WHERE v.status = 'published' AND s.status = 'active' AND m.status = 'open'
-          AND t.enabled AND w.status = 'active' AND w.trading_enabled
-        ORDER BY v.strategy_version_id, t.wallet_id
-        "#,
-    )
-    .fetch_all(&store.pool)
-    .await?;
-    let mut grouped: HashMap<i64, Vec<i64>> = HashMap::new();
-    for row in rows {
-        grouped
-            .entry(row.try_get("strategy_version_id")?)
-            .or_default()
-            .push(row.try_get("wallet_id")?);
-    }
-    let mut created = 0usize;
-    for (version_id, wallet_ids) in grouped {
-        let mut tx = store.pool.begin().await?;
-        let existing: bool = sqlx::query_scalar(
-            r#"
-            SELECT EXISTS (
-              SELECT 1 FROM execution_batches
-              WHERE strategy_version_id = $1
-                AND requested_by = 'runtime'
-                AND (
-                  status IN ('pending', 'running')
-                  OR created_at > now() - interval '5 seconds'
-                )
-            )
-            "#,
-        )
-        .bind(version_id)
-        .fetch_one(&mut *tx)
-        .await?;
-        if existing {
-            tx.rollback().await?;
-            continue;
-        }
-        let batch_id: i64 = sqlx::query_scalar(
-            "INSERT INTO execution_batches (strategy_version_id, status, requested_by) VALUES ($1, 'pending', 'runtime') RETURNING batch_id",
-        )
-        .bind(version_id)
-        .fetch_one(&mut *tx)
-        .await?;
-        for wallet_id in wallet_ids {
-            sqlx::query(
-                "INSERT INTO wallet_execution_jobs (batch_id, wallet_id, status) VALUES ($1, $2, 'pending')",
-            )
-            .bind(batch_id)
-            .bind(wallet_id)
-            .execute(&mut *tx)
-            .await?;
-            created += 1;
-        }
-        tx.commit().await?;
-    }
-    Ok(created)
-}
-
 async fn claim_next_job(
     store: &PostgresStore,
     owner: &str,
@@ -277,7 +216,7 @@ async fn claim_next_job(
             started_at = COALESCE(j.started_at, now()), updated_at = now()
         FROM candidate
         WHERE j.job_id = candidate.job_id
-        RETURNING j.job_id, j.batch_id, j.wallet_id, j.status, j.attempt_count,
+        RETURNING j.job_id, j.batch_id, j.owner_user_id, j.wallet_id, j.status, j.attempt_count,
                   j.error_code, j.error_message, j.lease_epoch, j.lease_owner,
                   j.lease_expires_at, j.created_at, j.updated_at
         "#,
@@ -338,12 +277,10 @@ async fn load_execution_context(
     let row = sqlx::query(
         r#"
         SELECT
-          w.wallet_id, w.name, w.signer_address, w.funder_address,
-          w.signature_type, w.credential_ref_id, w.status AS wallet_status,
+          w.wallet_id, w.owner_user_id, w.name, w.signer_address, w.funder_address,
+          w.signature_type, w.status AS wallet_status,
           w.trading_enabled AS wallet_trading_enabled,
           w.created_at AS wallet_created_at, w.updated_at AS wallet_updated_at,
-          c.provider, c.locator, c.key_version,
-          c.created_at AS credential_created_at, c.updated_at AS credential_updated_at,
           r.max_open_orders, r.max_open_buy_notional,
           r.max_total_position_notional, r.max_market_position_notional,
           r.max_order_notional, r.updated_at AS risk_updated_at,
@@ -352,27 +289,35 @@ async fn load_execution_context(
           a.version AS state_version, a.updated_at AS state_updated_at,
           v.strategy_version_id, v.strategy_id, v.version_number,
           v.status AS version_status, v.book_freshness_ms,
+          v.reward_minimum_size, v.reward_maximum_spread, v.reward_daily_rate,
           v.downward_reprice_confirm_ms, v.upward_reprice_confirm_ms,
           v.reprice_cooldown_ms, v.max_replaces_per_cycle, v.published_at,
           v.created_at AS version_created_at,
-          s.market_id, sys.trading_enabled AS system_trading_enabled,
+          s.market_id, b.subscription_id, sub.status AS subscription_status,
+          COALESCE(sw.enabled, FALSE)
+            AND source_user.status='active' AND follower_user.status='active'
+            AS subscription_wallet_enabled,
+          s.status AS strategy_status, s.active_from AS strategy_active_from,
+          LEAST(s.active_until, COALESCE(sub.active_until, s.active_until)) AS effective_active_until,
+          m.status AS market_status, sys.trading_enabled AS system_trading_enabled,
           sys.kill_switch_locked,
           COALESCE((
             SELECT SUM(p.quantity * p.average_price)
             FROM positions p
             WHERE p.wallet_id = j.wallet_id AND p.market_id = s.market_id
           ), 0) AS market_position_notional,
-          EXISTS (
-            SELECT 1 FROM execution_actions ea
-            WHERE ea.job_id = j.job_id AND ea.action_type = 'cancel_order'
-              AND ea.reason_code = 'operator_cancel_batch'
-          ) AS force_cancel_all
+          (b.batch_type = 'cancel') AS force_cancel_all
         FROM wallet_execution_jobs j
         JOIN execution_batches b ON b.batch_id = j.batch_id
         JOIN strategy_versions v ON v.strategy_version_id = b.strategy_version_id
         JOIN market_strategies s ON s.strategy_id = v.strategy_id
+        JOIN users source_user ON source_user.user_id = s.owner_user_id
+        JOIN managed_markets m ON m.market_id = s.market_id
+        JOIN strategy_subscriptions sub ON sub.subscription_id = b.subscription_id
+        JOIN users follower_user ON follower_user.user_id = sub.follower_user_id
+        LEFT JOIN strategy_subscription_wallets sw
+          ON sw.subscription_id = sub.subscription_id AND sw.wallet_id = j.wallet_id
         JOIN wallet_accounts w ON w.wallet_id = j.wallet_id
-        JOIN wallet_credential_refs c ON c.credential_ref_id = w.credential_ref_id
         JOIN wallet_risk_policies r ON r.wallet_id = w.wallet_id
         JOIN wallet_account_state a ON a.wallet_id = w.wallet_id
         JOIN system_runtime_state sys ON sys.singleton = TRUE
@@ -418,18 +363,28 @@ async fn load_execution_context(
     }
     let managed_orders = sqlx::query(
         r#"
-        SELECT managed_order_id, wallet_id, market_id, strategy_version_id,
+        SELECT managed_order_id, owner_user_id, wallet_id, subscription_id, market_id, strategy_version_id,
                quote_slot_id, token_id, outcome, side, price, quantity,
                filled_quantity, status, external_order_id, generation,
                created_at, updated_at
         FROM managed_orders
-        WHERE wallet_id = $1 AND strategy_version_id = $2
+        WHERE wallet_id = $1 AND subscription_id = $2
           AND status IN ('planned', 'submitting', 'open', 'partially_filled', 'cancel_pending', 'unknown')
+          AND (
+            $3::boolean = FALSE
+            OR EXISTS (
+              SELECT 1 FROM execution_actions ea
+              WHERE ea.job_id = $4 AND ea.managed_order_id = managed_orders.managed_order_id
+                AND ea.action_type = 'cancel_order' AND ea.status = 'planned'
+            )
+          )
         ORDER BY managed_order_id
         "#,
     )
     .bind(job.wallet_id)
-    .bind(version_id)
+    .bind(row.try_get::<i64, _>("subscription_id")?)
+    .bind(row.try_get::<bool, _>("force_cancel_all")?)
+    .bind(job.id)
     .fetch_all(&store.pool)
     .await?
     .into_iter()
@@ -439,24 +394,26 @@ async fn load_execution_context(
         job: job.clone(),
         wallet: WalletAccount {
             id: row.try_get("wallet_id")?,
+            owner_user_id: row.try_get("owner_user_id")?,
             name: row.try_get("name")?,
             signer_address: row.try_get("signer_address")?,
             funder_address: row.try_get("funder_address")?,
             signature_type: row.try_get("signature_type")?,
-            credential_ref_id: row.try_get("credential_ref_id")?,
             status: enum_value(row.try_get("wallet_status")?, "wallet status")?,
             trading_enabled: row.try_get("wallet_trading_enabled")?,
             created_at: row.try_get("wallet_created_at")?,
             updated_at: row.try_get("wallet_updated_at")?,
         },
-        credential: WalletCredentialRef {
-            id: row.try_get("credential_ref_id")?,
-            provider: enum_value(row.try_get("provider")?, "credential provider")?,
-            locator: row.try_get("locator")?,
-            key_version: row.try_get("key_version")?,
-            created_at: row.try_get("credential_created_at")?,
-            updated_at: row.try_get("credential_updated_at")?,
-        },
+        subscription_id: row.try_get("subscription_id")?,
+        subscription_status: enum_value(
+            row.try_get("subscription_status")?,
+            "subscription status",
+        )?,
+        subscription_wallet_enabled: row.try_get("subscription_wallet_enabled")?,
+        strategy_status: enum_value(row.try_get("strategy_status")?, "strategy status")?,
+        strategy_active_from: row.try_get("strategy_active_from")?,
+        effective_active_until: row.try_get("effective_active_until")?,
+        market_status: enum_value(row.try_get("market_status")?, "market status")?,
         strategy_version: StrategyVersion {
             id: version_id,
             strategy_id: row.try_get("strategy_id")?,
@@ -595,14 +552,16 @@ async fn record_order_submitted(
     let managed_order_id: i64 = sqlx::query_scalar(
         r#"
         INSERT INTO managed_orders (
-          wallet_id, market_id, strategy_version_id, quote_slot_id,
+          owner_user_id, wallet_id, subscription_id, market_id, strategy_version_id, quote_slot_id,
           token_id, outcome, side, price, quantity, status,
           external_order_id, client_order_key, generation, last_venue_sync_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, 'buy', $7, $8, 'open', $9, $10, $11, now())
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'buy', $9, $10, 'open', $11, $12, $13, now())
         RETURNING managed_order_id
         "#,
     )
+    .bind(context.wallet.owner_user_id)
     .bind(context.wallet.id)
+    .bind(context.subscription_id)
     .bind(context.market_id)
     .bind(context.strategy_version.id)
     .bind(target.slot.id)
@@ -678,7 +637,7 @@ async fn finish_job(
             SET status = 'succeeded', result_json = '{"marker":true}'::jsonb,
                 completed_at = now(), updated_at = now()
             WHERE job_id = $1 AND status = 'planned'
-              AND reason_code = 'operator_cancel_batch'
+              AND action_type = 'cancel_order'
             "#,
         )
         .bind(job.id)
@@ -735,6 +694,7 @@ async fn finish_job(
 }
 
 fn server_to_domain_error(error: ServerError) -> polyedge_domain::AppError {
+    tracing::error!(error = ?error, "execution store operation failed");
     match error {
         ServerError::InvalidInput(message) => {
             polyedge_domain::AppError::invalid_input("EXECUTION_STORE_INVALID", message)

@@ -1,29 +1,35 @@
 use crate::error::{Result, ServerError};
+use crate::wallet_crypto::WalletCryptoConfig;
 use std::{env, net::SocketAddr, str::FromStr, time::Duration};
 
 const DEFAULT_CLOB_HOST: &str = "https://clob.polymarket.com";
 const DEFAULT_DATA_API_HOST: &str = "https://data-api.polymarket.com";
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct ServerConfig {
     pub bind_addr: SocketAddr,
     pub database_url: String,
     pub postgres_max_connections: u32,
     pub environment: String,
-    pub auth_disabled: bool,
-    pub allow_insecure_private_deploy: bool,
-    pub api_token: Option<String>,
-    pub step_up_code: Option<String>,
+    pub public_origin: String,
+    pub bootstrap_admin_username: String,
+    pub bootstrap_admin_display_name: String,
+    pub bootstrap_admin_password_hash: String,
+    pub bootstrap_admin_credential_version: i64,
+    pub session_idle_ttl: Duration,
+    pub session_absolute_ttl: Duration,
+    pub activation_ttl: Duration,
+    pub recent_auth_ttl: Duration,
     pub max_body_bytes: usize,
     pub cors_origins: Vec<String>,
     pub clob_host: String,
     pub data_api_host: String,
     pub chain_id: u64,
-    pub wallet_secret_env_prefix: String,
     pub orderbook_max_tokens: usize,
     pub orderbook_poll_interval: Duration,
     pub wallet_concurrency: usize,
     pub reconcile_interval: Duration,
+    pub wallet_crypto: WalletCryptoConfig,
 }
 
 impl ServerConfig {
@@ -35,45 +41,24 @@ impl ServerConfig {
         })?;
         let environment =
             env_value("POLYEDGE_RUNTIME__ENVIRONMENT").unwrap_or_else(|| "local".to_string());
-        let auth_disabled = parse_bool_env("POLYEDGE_AUTH__DISABLED", true)?;
-        let allow_insecure_private_deploy =
-            parse_bool_env("POLYEDGE_AUTH__ALLOW_INSECURE_PRIVATE_DEPLOY", false)?;
-
-        if environment.eq_ignore_ascii_case("production")
-            && auth_disabled
-            && !allow_insecure_private_deploy
-        {
+        let public_origin = env_value("POLYEDGE_PUBLIC_ORIGIN")
+            .unwrap_or_else(|| "http://localhost:33002".to_string());
+        validate_exact_origin(
+            "POLYEDGE_PUBLIC_ORIGIN",
+            &public_origin,
+            environment.eq_ignore_ascii_case("production"),
+        )?;
+        let bootstrap_admin_username = required_env("POLYEDGE_BOOTSTRAP_ADMIN__USERNAME")?;
+        let bootstrap_admin_display_name = env_value("POLYEDGE_BOOTSTRAP_ADMIN__DISPLAY_NAME")
+            .unwrap_or_else(|| "PolyEdge Administrator".to_string());
+        let bootstrap_admin_password_hash =
+            required_env("POLYEDGE_BOOTSTRAP_ADMIN__PASSWORD_HASH")?;
+        let bootstrap_admin_credential_version =
+            parse_env("POLYEDGE_BOOTSTRAP_ADMIN__CREDENTIAL_VERSION", 1_i64)?;
+        if bootstrap_admin_credential_version <= 0 {
             return Err(ServerError::Configuration(
-                "production auth disablement requires POLYEDGE_AUTH__ALLOW_INSECURE_PRIVATE_DEPLOY=true"
-                    .to_string(),
+                "bootstrap admin credential version must be positive".to_string(),
             ));
-        }
-
-        let api_token = env_value("POLYEDGE_AUTH__API_TOKEN");
-        if !auth_disabled {
-            let valid = api_token
-                .as_deref()
-                .map(|token| token.chars().count() >= 32)
-                .unwrap_or(false);
-            if !valid {
-                return Err(ServerError::Configuration(
-                    "POLYEDGE_AUTH__API_TOKEN must contain at least 32 characters when authentication is enabled"
-                        .to_string(),
-                ));
-            }
-        }
-        let step_up_code = env_value("POLYEDGE_AUTH__STEP_UP_CODE");
-        if environment.eq_ignore_ascii_case("production") {
-            let valid = step_up_code
-                .as_deref()
-                .map(|code| code.chars().count() >= 16)
-                .unwrap_or(false);
-            if !valid {
-                return Err(ServerError::Configuration(
-                    "production requires POLYEDGE_AUTH__STEP_UP_CODE with at least 16 characters"
-                        .to_string(),
-                ));
-            }
         }
 
         let cors_origins =
@@ -87,16 +72,36 @@ impl ServerConfig {
         let database_url = env_value("POLYEDGE_POSTGRES__URL").ok_or_else(|| {
             ServerError::Configuration("POLYEDGE_POSTGRES__URL is required".to_string())
         })?;
+        let session_idle_seconds = parse_env("POLYEDGE_AUTH__SESSION_IDLE_SECONDS", 1_800_u64)?;
+        let session_absolute_seconds =
+            parse_env("POLYEDGE_AUTH__SESSION_ABSOLUTE_SECONDS", 28_800_u64)?;
+        let activation_seconds = parse_env("POLYEDGE_AUTH__ACTIVATION_TTL_SECONDS", 86_400_u64)?;
+        let recent_auth_seconds = parse_env("POLYEDGE_AUTH__RECENT_AUTH_TTL_SECONDS", 300_u64)?;
+        if session_idle_seconds == 0
+            || session_absolute_seconds < session_idle_seconds
+            || activation_seconds == 0
+            || recent_auth_seconds == 0
+        {
+            return Err(ServerError::Configuration(
+                "authentication TTLs must be positive and absolute session TTL must be >= idle TTL"
+                    .into(),
+            ));
+        }
 
         Ok(Self {
             bind_addr,
             database_url,
             postgres_max_connections: parse_env("POLYEDGE_POSTGRES__MAX_CONNECTIONS", 20_u32)?,
             environment,
-            auth_disabled,
-            allow_insecure_private_deploy,
-            api_token,
-            step_up_code,
+            public_origin,
+            bootstrap_admin_username,
+            bootstrap_admin_display_name,
+            bootstrap_admin_password_hash,
+            bootstrap_admin_credential_version,
+            session_idle_ttl: Duration::from_secs(session_idle_seconds),
+            session_absolute_ttl: Duration::from_secs(session_absolute_seconds),
+            activation_ttl: Duration::from_secs(activation_seconds),
+            recent_auth_ttl: Duration::from_secs(recent_auth_seconds),
             max_body_bytes: parse_env("POLYEDGE_SERVER__MAX_BODY_BYTES", 1_048_576_usize)?,
             cors_origins,
             clob_host: env_value("POLYEDGE_POLYMARKET__CLOB_HOST")
@@ -104,8 +109,6 @@ impl ServerConfig {
             data_api_host: env_value("POLYEDGE_POLYMARKET__DATA_API_HOST")
                 .unwrap_or_else(|| DEFAULT_DATA_API_HOST.to_string()),
             chain_id: parse_env("POLYEDGE_POLYMARKET__CHAIN_ID", 137_u64)?,
-            wallet_secret_env_prefix: env_value("POLYEDGE_WALLET_SECRETS__ENV_PREFIX")
-                .unwrap_or_else(|| "POLYEDGE_WALLET_SECRET__".to_string()),
             orderbook_max_tokens: parse_env(
                 "POLYEDGE_TARGETED_ORDERBOOK__MAX_TOKENS",
                 1_000_usize,
@@ -119,8 +122,13 @@ impl ServerConfig {
                 "POLYEDGE_EXECUTION__RECONCILE_INTERVAL_MS",
                 2_000_u64,
             )?),
+            wallet_crypto: WalletCryptoConfig::from_env()?,
         })
     }
+}
+
+fn required_env(name: &str) -> Result<String> {
+    env_value(name).ok_or_else(|| ServerError::Configuration(format!("{name} is required")))
 }
 
 fn env_value(name: &str) -> Option<String> {
@@ -128,19 +136,6 @@ fn env_value(name: &str) -> Option<String> {
         .ok()
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
-}
-
-fn parse_bool_env(name: &str, default: bool) -> Result<bool> {
-    let Some(value) = env_value(name) else {
-        return Ok(default);
-    };
-    match value.to_ascii_lowercase().as_str() {
-        "1" | "true" | "yes" | "on" => Ok(true),
-        "0" | "false" | "no" | "off" => Ok(false),
-        _ => Err(ServerError::Configuration(format!(
-            "{name} must be a boolean"
-        ))),
-    }
 }
 
 fn parse_env<T>(name: &str, default: T) -> Result<T>
@@ -161,21 +156,43 @@ fn parse_cors_origins(raw: String) -> Result<Vec<String>> {
         .map(str::trim)
         .filter(|origin| !origin.is_empty())
         .map(|origin| {
-            if origin == "*" || origin.contains('?') || origin.contains('#') {
-                return Err(ServerError::Configuration(
-                    "CORS origins must be exact and may not contain wildcard/query/fragment"
-                        .to_string(),
-                ));
-            }
-            let scheme_end = origin.find("://").ok_or_else(|| {
-                ServerError::Configuration(format!("invalid CORS origin: {origin}"))
-            })?;
-            if origin[(scheme_end + 3)..].contains('/') {
-                return Err(ServerError::Configuration(format!(
-                    "CORS origin may not contain a path: {origin}"
-                )));
-            }
+            validate_exact_origin("CORS origin", origin, false)?;
             Ok(origin.to_string())
         })
         .collect()
+}
+
+fn validate_exact_origin(name: &str, origin: &str, require_https: bool) -> Result<()> {
+    let (scheme, authority) = origin.split_once("://").ok_or_else(|| {
+        ServerError::Configuration(format!("{name} must be an exact HTTP(S) origin"))
+    })?;
+    if !matches!(scheme, "http" | "https")
+        || authority.is_empty()
+        || authority.contains(['/', '?', '#'])
+        || origin == "*"
+    {
+        return Err(ServerError::Configuration(format!(
+            "{name} must be an exact HTTP(S) origin without path, query, fragment, or wildcard"
+        )));
+    }
+    if require_https && scheme != "https" {
+        return Err(ServerError::Configuration(format!(
+            "production {name} must use https"
+        )));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn exact_origin_validation_rejects_paths_and_non_http_schemes() {
+        assert!(validate_exact_origin("origin", "https://polyedge.example", true).is_ok());
+        assert!(validate_exact_origin("origin", "http://localhost:33002", false).is_ok());
+        assert!(validate_exact_origin("origin", "https://polyedge.example/", false).is_err());
+        assert!(validate_exact_origin("origin", "javascript://polyedge", false).is_err());
+        assert!(validate_exact_origin("origin", "http://localhost", true).is_err());
+    }
 }

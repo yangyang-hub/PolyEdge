@@ -5,4 +5,5 @@ use time::OffsetDateTime;
 
 include!("domain/error.rs");
 include!("domain/numeric.rs");
+include!("identity.rs");
 include!("manual_trading.rs");

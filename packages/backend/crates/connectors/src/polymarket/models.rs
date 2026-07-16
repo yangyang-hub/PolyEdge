@@ -17,7 +17,7 @@ impl From<PolymarketSignatureScheme> for SignatureType {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct LivePolymarketConfig {
     pub account_id: String,
     pub clob_host: String,
@@ -28,6 +28,38 @@ pub struct LivePolymarketConfig {
     pub api_key: Option<String>,
     pub api_secret: Option<String>,
     pub api_passphrase: Option<String>,
+}
+
+impl fmt::Debug for LivePolymarketConfig {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("LivePolymarketConfig")
+            .field("account_id", &self.account_id)
+            .field("clob_host", &self.clob_host)
+            .field("chain_id", &self.chain_id)
+            .field("signature_type", &self.signature_type)
+            .field("funder", &self.funder)
+            .field("private_key", &"[REDACTED]")
+            .field("api_key", &self.api_key.as_ref().map(|_| "[REDACTED]"))
+            .field("api_secret", &self.api_secret.as_ref().map(|_| "[REDACTED]"))
+            .field("api_passphrase", &self.api_passphrase.as_ref().map(|_| "[REDACTED]"))
+            .finish()
+    }
+}
+
+impl Drop for LivePolymarketConfig {
+    fn drop(&mut self) {
+        self.private_key.zeroize();
+        if let Some(value) = self.api_key.as_mut() {
+            value.zeroize();
+        }
+        if let Some(value) = self.api_secret.as_mut() {
+            value.zeroize();
+        }
+        if let Some(value) = self.api_passphrase.as_mut() {
+            value.zeroize();
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -151,10 +183,53 @@ pub struct PolymarketOrderRejection {
     pub message: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct LivePolymarketConnector {
     client: ClobClient<Authenticated<Normal>>,
     private_key: String,
     chain_id: u64,
     signature_type: PolymarketSignatureScheme,
+}
+
+impl fmt::Debug for LivePolymarketConnector {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("LivePolymarketConnector")
+            .field("client", &"[AUTHENTICATED CLIENT REDACTED]")
+            .field("private_key", &"[REDACTED]")
+            .field("chain_id", &self.chain_id)
+            .field("signature_type", &self.signature_type)
+            .finish()
+    }
+}
+
+impl Drop for LivePolymarketConnector {
+    fn drop(&mut self) {
+        self.private_key.zeroize();
+    }
+}
+
+#[cfg(test)]
+mod secret_debug_tests {
+    use super::*;
+
+    #[test]
+    fn live_config_debug_redacts_credentials() {
+        let config = LivePolymarketConfig {
+            account_id: "account".to_string(),
+            clob_host: "https://clob.example".to_string(),
+            chain_id: 137,
+            signature_type: PolymarketSignatureScheme::Eoa,
+            funder: None,
+            private_key: "private-key-material".to_string(),
+            api_key: Some("api-key-material".to_string()),
+            api_secret: Some("api-secret-material".to_string()),
+            api_passphrase: Some("api-passphrase-material".to_string()),
+        };
+        let debug = format!("{config:?}");
+        assert!(debug.contains("[REDACTED]"));
+        assert!(!debug.contains("private-key-material"));
+        assert!(!debug.contains("api-secret-material"));
+        assert!(!debug.contains("api-passphrase-material"));
+    }
 }

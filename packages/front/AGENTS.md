@@ -18,7 +18,7 @@ This version has breaking changes — APIs, conventions, and file structure may 
 |---|---|
 | `src/app/*` | App Router 路由、`page` / `layout` / route handler |
 | `src/features/<name>/` | 按页面/领域组织的功能模块，内部分 `components` / `loaders` / `lib` / `types.ts`（见下） |
-| `src/lib/api/*` | **统一数据层**：读取按领域拆文件（`wallets.ts` / `strategies.ts` / `operations.ts` / `settings.ts`，基于 `base.ts`），写操作通过 `actions.ts` barrel 暴露，具体实现按领域放在 `actions/` |
+| `src/lib/api/*` | **统一数据层**：认证、管理员、钱包加密、钱包、策略、跟随、执行与设置 API，统一基于 `base.ts` 的 Cookie/CSRF client；既有业务写操作通过 `actions.ts` barrel 暴露 |
 | `src/lib/{contracts,i18n,…}` | 跨 feature 共享库：`contracts/dto` 是后端 DTO 的类型镜像，`i18n` 是中文字典 |
 | `src/components/ui/*` | shadcn 生成的基础组件，不手改风格 |
 | `src/components/shared/*` | 跨页面复用的业务组件 |
@@ -30,13 +30,13 @@ This version has breaking changes — APIs, conventions, and file structure may 
 - `lib/`：纯函数——流式 patch、状态推导、格式化、比较器；可带 `*.test.ts`。
 - `types.ts`：本 feature 的类型定义。
 
-复杂 feature 使用 `components/`、`loaders/`、`lib/` 和紧邻领域类型/格式化 helper 分层；简单 V3 工作台可只保留单一交互组件，增长到软上限前再机械拆分。
+复杂 feature 使用 `components/`、`loaders/`、`lib/` 和紧邻领域类型/格式化 helper 分层；简单工作台可只保留单一交互组件，增长到软上限前再机械拆分。
 
 **注意：`src/server/` 当前是空目录（历史遗留），新代码不要往里放；数据层一律用 `src/lib/api/*`。**
 
 ## 数据与装配约定
 
-- server component 经 `features/*/loaders/*` 调用 `src/lib/api/*` 取数，不在组件里直接 fetch。
+- server component 经 `features/*/loaders/*` 调用 `src/lib/api/*` 取数，不在组件里直接 fetch。当前 session 依赖浏览器 Cookie 的工作台可在 client component 中通过统一 API 模块加载。
 - mutation 用 `src/lib/api/actions.ts` 暴露的 action；静态导出不支持 Next Server Actions，因此 action 是复用 `base.ts` 的客户端 mutation 函数。新增 action 按领域放进 `src/lib/api/actions/`，保持外部 import 路径不变。
 - DTO 类型从 `@/lib/contracts/dto` 引用，**不在组件内重新定义后端结构**。
 - 文案一律走 i18n 字典（`dictionary`），从 `@/lib/i18n/dictionaries` 直接 import；不硬编码中文。字典按命名空间拆分（`src/lib/i18n/dictionaries/`）。
@@ -79,8 +79,8 @@ yarn build              # 生产构建（含完整类型检查）
 
 前端无端到端运行时测试，重构交互组件后**必须人工 smoke** 对应页面（实时更新、过滤、对话框、表格渲染等）。
 
-## 现有文件长度债务（2026-07-15 快照）
+## 现有文件长度债务（2026-07-16 快照）
 
-V3 删除旧 Rewards 大型组件与 DTO 后，当前业务文件均未超过 400 行软上限。
+删除旧 Rewards 大型组件并加入 V4 多用户页面后，当前业务文件仍均未超过 400 行软上限。
 
 行数以当前物理文件 `wc -l` 为准；完成拆分后同步刷新本节。

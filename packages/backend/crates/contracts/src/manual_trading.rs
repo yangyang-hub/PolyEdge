@@ -8,17 +8,14 @@ pub struct WalletRiskPolicyInput {
     pub max_order_notional: Decimal,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CreateWalletAccountRequest {
     pub name: String,
     pub signer_address: String,
     pub funder_address: String,
     pub signature_type: i32,
-    pub credential_provider: polyedge_domain::CredentialProvider,
-    pub credential_locator: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub credential_key_version: Option<String>,
+    pub encrypted_secret: EncryptedWalletSecretInput,
     #[serde(default)]
     pub trading_enabled: bool,
     pub risk_policy: WalletRiskPolicyInput,
@@ -26,17 +23,13 @@ pub struct CreateWalletAccountRequest {
     pub operator_note: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Clone, Serialize, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 pub struct UpdateWalletAccountRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub credential_provider: Option<polyedge_domain::CredentialProvider>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub credential_locator: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub credential_key_version: Option<String>,
+    pub encrypted_secret: Option<EncryptedWalletSecretInput>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status: Option<polyedge_domain::WalletAccountStatus>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -50,9 +43,42 @@ pub struct UpdateWalletAccountRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WalletAccountData {
     pub account: polyedge_domain::WalletAccount,
-    pub credential: polyedge_domain::WalletCredentialRef,
+    pub secret: polyedge_domain::WalletSecretMetadata,
     pub risk_policy: polyedge_domain::WalletRiskPolicy,
     pub state: polyedge_domain::WalletAccountState,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EncryptedWalletSecretInput {
+    pub context_id: String,
+    pub key_id: String,
+    pub algorithm: String,
+    pub wrapped_key: String,
+    pub nonce: String,
+    pub ciphertext: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WalletImportPublicJwkData {
+    pub kty: String,
+    #[serde(rename = "use")]
+    pub use_: String,
+    pub alg: String,
+    pub kid: String,
+    pub n: String,
+    pub e: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WalletImportContextData {
+    pub context_id: String,
+    pub key_id: String,
+    pub algorithm: String,
+    pub aad_version: String,
+    pub public_key: WalletImportPublicJwkData,
+    #[serde(with = "time::serde::rfc3339")]
+    pub expires_at: OffsetDateTime,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -65,10 +91,6 @@ pub struct ManagedMarketInput {
     pub polymarket_url: Option<String>,
     pub yes_token_id: String,
     pub no_token_id: String,
-    pub reward_minimum_size: Decimal,
-    pub reward_maximum_spread: Decimal,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reward_daily_rate: Option<Decimal>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -99,21 +121,31 @@ fn default_true() -> bool {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct StrategyVersionInput {
+    pub reward_minimum_size: Decimal,
+    pub reward_maximum_spread: Decimal,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reward_daily_rate: Option<Decimal>,
     pub book_freshness_ms: i64,
     pub downward_reprice_confirm_ms: i64,
     pub upward_reprice_confirm_ms: i64,
     pub reprice_cooldown_ms: i64,
     pub max_replaces_per_cycle: i64,
     pub quote_slots: Vec<QuoteSlotInput>,
-    pub wallet_ids: Vec<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CreateMarketStrategyRequest {
     pub name: String,
+    pub visibility: polyedge_domain::StrategyVisibility,
+    #[serde(with = "time::serde::rfc3339")]
+    pub active_from: OffsetDateTime,
+    #[serde(with = "time::serde::rfc3339")]
+    pub active_until: OffsetDateTime,
     pub market: ManagedMarketInput,
     pub version: StrategyVersionInput,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub wallet_ids: Vec<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub operator_note: Option<String>,
 }
@@ -129,12 +161,6 @@ pub struct UpdateManagedMarketRequest {
     pub polymarket_url: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status: Option<MarketStatus>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reward_minimum_size: Option<Decimal>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reward_maximum_spread: Option<Decimal>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reward_daily_rate: Option<Decimal>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -145,9 +171,17 @@ pub struct UpdateMarketStrategyRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status: Option<polyedge_domain::StrategyStatus>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub visibility: Option<polyedge_domain::StrategyVisibility>,
+    #[serde(default, with = "time::serde::rfc3339::option", skip_serializing_if = "Option::is_none")]
+    pub active_from: Option<OffsetDateTime>,
+    #[serde(default, with = "time::serde::rfc3339::option", skip_serializing_if = "Option::is_none")]
+    pub active_until: Option<OffsetDateTime>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub market: Option<UpdateManagedMarketRequest>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub version: Option<StrategyVersionInput>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wallet_ids: Option<Vec<i64>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub operator_note: Option<String>,
 }
@@ -156,11 +190,42 @@ pub struct UpdateMarketStrategyRequest {
 pub struct MarketStrategyData {
     pub market: polyedge_domain::ManagedMarket,
     pub outcomes: Vec<polyedge_domain::ManagedMarketOutcome>,
-    pub reward_terms: polyedge_domain::MarketRewardTerms,
     pub strategy: polyedge_domain::MarketStrategy,
     pub version: polyedge_domain::StrategyVersion,
+    pub reward_terms: polyedge_domain::StrategyRewardTerms,
     pub quote_slots: Vec<polyedge_domain::StrategyQuoteSlot>,
-    pub wallet_targets: Vec<polyedge_domain::StrategyWalletTarget>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_user_subscription: Option<StrategySubscriptionData>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StrategySubscriptionData {
+    pub subscription: polyedge_domain::StrategySubscription,
+    pub wallets: Vec<polyedge_domain::StrategySubscriptionWallet>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CreateStrategySubscriptionRequest {
+    pub source_strategy_id: i64,
+    pub wallet_ids: Vec<i64>,
+    #[serde(default, with = "time::serde::rfc3339::option", skip_serializing_if = "Option::is_none")]
+    pub active_until: Option<OffsetDateTime>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub operator_note: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct UpdateStrategySubscriptionRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<polyedge_domain::StrategySubscriptionStatus>,
+    #[serde(default, with = "time::serde::rfc3339::option", skip_serializing_if = "Option::is_none")]
+    pub active_until: Option<OffsetDateTime>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wallet_ids: Option<Vec<i64>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub operator_note: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -236,6 +301,36 @@ pub struct UpdateSystemRuntimeStateRequest {
 
 pub type ManagedOrderData = polyedge_domain::ManagedOrder;
 pub type ManagedPositionData = polyedge_domain::ManagedPosition;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RecordCashFlowRequest {
+    pub wallet_id: i64,
+    pub flow_type: String,
+    pub amount: Decimal,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub external_reference: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+    #[serde(with = "time::serde::rfc3339")]
+    pub occurred_at: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CashFlowData {
+    pub id: i64,
+    pub owner_user_id: i64,
+    pub wallet_id: i64,
+    pub flow_type: String,
+    pub amount: Decimal,
+    pub external_reference: Option<String>,
+    pub note: Option<String>,
+    #[serde(with = "time::serde::rfc3339")]
+    pub occurred_at: OffsetDateTime,
+    pub recorded_by_user_id: Option<i64>,
+    #[serde(with = "time::serde::rfc3339")]
+    pub created_at: OffsetDateTime,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ManualTradingListQuery {
