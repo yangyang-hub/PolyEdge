@@ -22,20 +22,20 @@ export function RouteStateCard({
   return (
     <section
       className={cn(
-        "relative overflow-hidden rounded-2xl border border-border/70 bg-card/95 p-6 shadow-[0_24px_80px_rgba(0,0,0,0.28)]",
+        "relative overflow-hidden rounded-xl border border-border bg-card p-6 shadow-sm",
         className,
       )}
     >
-      <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-primary/50 to-transparent" />
+      <div className="absolute inset-x-0 top-0 h-0.5 bg-primary" />
       <div className="space-y-4">
         <div className="space-y-2">
-          <p className="font-mono text-[10px] font-bold uppercase tracking-[0.24em] text-muted-foreground">
+          <p className="text-xs font-medium uppercase tracking-[0.08em] text-muted-foreground">
             {eyebrow}
           </p>
-          <h1 className="font-heading text-2xl font-black tracking-tight text-foreground">{title}</h1>
+          <h1 className="font-heading text-2xl font-semibold tracking-tight text-foreground">{title}</h1>
           <p className="max-w-2xl text-sm leading-6 text-muted-foreground">{description}</p>
         </div>
-        {details ? <div className="rounded-xl bg-accent/45 p-4 text-sm text-muted-foreground">{details}</div> : null}
+        {details ? <div className="rounded-lg bg-muted p-4 text-sm text-muted-foreground">{details}</div> : null}
         {actions ? <div className="flex flex-wrap gap-3">{actions}</div> : null}
       </div>
     </section>

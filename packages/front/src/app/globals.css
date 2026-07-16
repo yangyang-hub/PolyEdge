@@ -7,9 +7,9 @@
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  --font-mono: "Roboto Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-  --font-heading: Manrope, Inter, ui-sans-serif, system-ui, sans-serif;
+  --font-sans: var(--font-inter), Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  --font-heading: var(--font-inter), Inter, ui-sans-serif, system-ui, sans-serif;
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -50,75 +50,80 @@
   --radius-4xl: calc(var(--radius) * 2.6);
 }
 
+/*
+  Polymarket-inspired console tokens.
+  Brand: Poly Blue #2E5CFF, Inter, black/white neutrals.
+  Surface language: light news-terminal chrome (white cards, hairline borders).
+*/
 :root {
-  --background: #0b1326;
-  --foreground: #dae2fd;
-  --card: #131b2e;
-  --card-foreground: #dae2fd;
-  --popover: #171f33;
-  --popover-foreground: #dae2fd;
-  --primary: #b3c5ff;
-  --primary-foreground: #002b75;
-  --secondary: #4edea3;
-  --secondary-foreground: #003824;
-  --muted: #171f33;
-  --muted-foreground: #8c90a1;
-  --accent: #222a3d;
-  --accent-foreground: #dae2fd;
-  --destructive: #ffb4ab;
-  --destructive-foreground: #690005;
-  --border: rgb(140 144 161 / 0.18);
-  --input: rgb(140 144 161 / 0.25);
-  --ring: rgb(179 197 255 / 0.45);
-  --chart-1: #4edea3;
-  --chart-2: #b3c5ff;
-  --chart-3: #d0bcff;
-  --chart-4: #ffb4ab;
-  --chart-5: #8c90a1;
+  --background: #f7f8fa;
+  --foreground: #15191d;
+  --card: #ffffff;
+  --card-foreground: #15191d;
+  --popover: #ffffff;
+  --popover-foreground: #15191d;
+  --primary: #2e5cff;
+  --primary-foreground: #ffffff;
+  --secondary: #27ae60;
+  --secondary-foreground: #ffffff;
+  --muted: #eef0f3;
+  --muted-foreground: #6b7280;
+  --accent: #eef2ff;
+  --accent-foreground: #15191d;
+  --destructive: #e64840;
+  --destructive-foreground: #ffffff;
+  --border: #e5e7eb;
+  --input: #dfe3e8;
+  --ring: rgb(46 92 255 / 0.35);
+  --chart-1: #27ae60;
+  --chart-2: #2e5cff;
+  --chart-3: #808eef;
+  --chart-4: #e64840;
+  --chart-5: #6b7280;
   --radius: 0.5rem;
-  --sidebar: #060e20;
-  --sidebar-foreground: #dae2fd;
-  --sidebar-primary: #0066ff;
-  --sidebar-primary-foreground: #f8f7ff;
-  --sidebar-accent: #131b2e;
-  --sidebar-accent-foreground: #b3c5ff;
-  --sidebar-border: rgb(140 144 161 / 0.14);
-  --sidebar-ring: rgb(179 197 255 / 0.45);
+  --sidebar: #ffffff;
+  --sidebar-foreground: #15191d;
+  --sidebar-primary: #2e5cff;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #eef2ff;
+  --sidebar-accent-foreground: #2e5cff;
+  --sidebar-border: #e5e7eb;
+  --sidebar-ring: rgb(46 92 255 / 0.35);
 }
 
 .dark {
-  --background: #0b1326;
-  --foreground: #dae2fd;
-  --card: #131b2e;
-  --card-foreground: #dae2fd;
-  --popover: #171f33;
-  --popover-foreground: #dae2fd;
-  --primary: #b3c5ff;
-  --primary-foreground: #002b75;
-  --secondary: #4edea3;
-  --secondary-foreground: #003824;
-  --muted: #171f33;
-  --muted-foreground: #8c90a1;
-  --accent: #222a3d;
-  --accent-foreground: #dae2fd;
-  --destructive: #ffb4ab;
-  --destructive-foreground: #690005;
-  --border: rgb(140 144 161 / 0.18);
-  --input: rgb(140 144 161 / 0.25);
-  --ring: rgb(179 197 255 / 0.45);
-  --chart-1: #4edea3;
-  --chart-2: #b3c5ff;
-  --chart-3: #d0bcff;
-  --chart-4: #ffb4ab;
-  --chart-5: #8c90a1;
-  --sidebar: #060e20;
-  --sidebar-foreground: #dae2fd;
-  --sidebar-primary: #0066ff;
-  --sidebar-primary-foreground: #f8f7ff;
-  --sidebar-accent: #131b2e;
-  --sidebar-accent-foreground: #b3c5ff;
-  --sidebar-border: rgb(140 144 161 / 0.14);
-  --sidebar-ring: rgb(179 197 255 / 0.45);
+  --background: #0f1215;
+  --foreground: #f3f4f6;
+  --card: #15191d;
+  --card-foreground: #f3f4f6;
+  --popover: #1a1f24;
+  --popover-foreground: #f3f4f6;
+  --primary: #2e5cff;
+  --primary-foreground: #ffffff;
+  --secondary: #27ae60;
+  --secondary-foreground: #ffffff;
+  --muted: #1f262d;
+  --muted-foreground: #9ca3af;
+  --accent: #1a2448;
+  --accent-foreground: #e8ecff;
+  --destructive: #ff6b63;
+  --destructive-foreground: #1a0a0a;
+  --border: rgb(255 255 255 / 0.1);
+  --input: rgb(255 255 255 / 0.14);
+  --ring: rgb(46 92 255 / 0.45);
+  --chart-1: #27ae60;
+  --chart-2: #2e5cff;
+  --chart-3: #808eef;
+  --chart-4: #ff6b63;
+  --chart-5: #9ca3af;
+  --sidebar: #15191d;
+  --sidebar-foreground: #f3f4f6;
+  --sidebar-primary: #2e5cff;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #1a2448;
+  --sidebar-accent-foreground: #a8bcff;
+  --sidebar-border: rgb(255 255 255 / 0.1);
+  --sidebar-ring: rgb(46 92 255 / 0.45);
 }
 
 @layer base {
@@ -126,8 +131,11 @@
     @apply border-border outline-ring/50;
   }
   html {
-    color-scheme: dark;
+    color-scheme: light;
     @apply font-sans;
+  }
+  html.dark {
+    color-scheme: dark;
   }
   body {
     @apply bg-background text-foreground antialiased;
@@ -139,7 +147,7 @@ body {
 }
 
 ::selection {
-  background: rgb(179 197 255 / 0.2);
+  background: rgb(46 92 255 / 0.18);
   color: var(--foreground);
 }
 
@@ -149,16 +157,24 @@ body {
 }
 
 ::-webkit-scrollbar-track {
-  background: #060e20;
+  background: transparent;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #2d3449;
+  background: #c9ced9;
   border-radius: 999px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #424656;
+  background: #aeb4bb;
+}
+
+.dark ::-webkit-scrollbar-thumb {
+  background: #3a424c;
+}
+
+.dark ::-webkit-scrollbar-thumb:hover {
+  background: #525b66;
 }
 
 @media (prefers-reduced-motion: reduce) {

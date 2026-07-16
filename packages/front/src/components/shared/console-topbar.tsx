@@ -24,9 +24,9 @@ export function ConsoleTopbar() {
   const { user, signOut } = useAuth();
 
   return (
-    <header className="fixed inset-x-0 top-0 z-30 bg-background/95 backdrop-blur md:left-16">
-      <div className="flex h-14 items-center justify-between gap-6 px-4 md:px-6">
-        <div className="flex min-w-0 flex-1 items-center gap-6">
+    <header className="fixed inset-x-0 top-0 z-30 border-b border-border bg-card/90 backdrop-blur-md md:left-16">
+      <div className="mx-auto flex h-14 w-full max-w-[1400px] items-center justify-between gap-6 px-4 md:px-6">
+        <div className="flex min-w-0 flex-1 items-center gap-4">
           <Sheet open={mobileMenuOpen} onOpenChange={setMobileMenuOpen}>
             <SheetTrigger asChild>
               <Button
@@ -39,15 +39,15 @@ export function ConsoleTopbar() {
               </Button>
             </SheetTrigger>
             <SheetContent className="w-[18rem] max-w-[calc(100vw-2rem)] gap-0 p-0" side="left">
-              <SheetHeader className="border-b border-border/70 px-4 py-4">
+              <SheetHeader className="border-b border-border px-4 py-4">
                 <SheetTitle className="flex items-center gap-3">
-                  <span className="flex size-7 shrink-0 items-center justify-center rounded-sm bg-primary/15 font-heading text-sm font-black text-primary">
+                  <span className="flex size-7 shrink-0 items-center justify-center rounded-md bg-primary text-xs font-bold text-primary-foreground">
                     P
                   </span>
-                  <span className="font-heading text-lg font-extrabold text-primary">PolyEdge</span>
+                  <span className="font-heading text-lg font-semibold text-foreground">PolyEdge</span>
                 </SheetTitle>
               </SheetHeader>
-              <nav className="flex flex-col gap-1 px-2 py-3">
+              <nav className="flex flex-col gap-0.5 px-2 py-3">
                 {consoleNavItems.filter((item) => !item.roles || (user && item.roles.includes(user.role))).map(({ href, labelKey, icon: Icon }) => {
                   const active = isConsoleNavItemActive(pathname, href);
                   const label = dictionary.nav[labelKey];
@@ -58,10 +58,10 @@ export function ConsoleTopbar() {
                       href={href}
                       onClick={() => setMobileMenuOpen(false)}
                       className={cn(
-                        "flex h-11 items-center gap-3 rounded-sm border-l-2 px-3 text-sm font-medium transition-colors",
+                        "flex h-10 items-center gap-3 rounded-md px-3 text-sm font-medium transition-colors",
                         active
-                          ? "border-sidebar-primary bg-sidebar-accent text-sidebar-accent-foreground"
-                          : "border-transparent text-muted-foreground hover:bg-accent hover:text-foreground",
+                          ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                          : "text-muted-foreground hover:bg-muted hover:text-foreground",
                       )}
                     >
                       <Icon className="size-4 shrink-0" />
@@ -72,11 +72,18 @@ export function ConsoleTopbar() {
               </nav>
             </SheetContent>
           </Sheet>
-          <p className="hidden font-heading text-lg font-black tracking-tight text-primary md:block">
+          <p className="truncate text-sm font-semibold tracking-tight text-foreground md:text-base">
             {dictionary.topbar.title}
           </p>
         </div>
-        <div className="flex items-center gap-3 text-sm"><span className="hidden text-muted-foreground sm:inline">{user?.display_name}</span><Button size="sm" variant="ghost" onClick={() => void signOut()}>退出</Button></div>
+        <div className="flex items-center gap-2 text-sm">
+          <span className="hidden rounded-md bg-muted px-2.5 py-1 text-xs font-medium text-muted-foreground sm:inline">
+            {user?.display_name}
+          </span>
+          <Button size="sm" variant="outline" onClick={() => void signOut()}>
+            退出
+          </Button>
+        </div>
       </div>
     </header>
   );

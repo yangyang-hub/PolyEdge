@@ -11,7 +11,9 @@ export function ConsoleShell({ children }: { children: ReactNode }) {
       <ConsoleSidebar />
       <div className="md:pl-16">
         <ConsoleTopbar />
-        <main className="px-4 pb-12 pt-[4.5rem] md:px-6">{children}</main>
+        <main className="mx-auto w-full max-w-[1400px] px-4 pb-12 pt-[4.5rem] md:px-6">
+          {children}
+        </main>
       </div>
     </div>
   );

@@ -56,8 +56,8 @@ export function DashboardOverview() {
         <CardHeader><CardTitle>{d.quickStart}</CardTitle></CardHeader>
         <CardContent className="grid gap-3 md:grid-cols-3">
           {[["/strategies", d.strategyHint], ["/wallets", d.walletHint], ["/operations", d.operationHint]].map(([href, label]) => (
-            <Link key={href} href={href} className="rounded-lg border border-border/70 p-4 text-sm transition hover:border-primary">
-              <span className="font-medium">{label}</span>
+            <Link key={href} href={href} className="rounded-lg border border-border bg-background p-4 text-sm transition hover:border-primary hover:bg-accent">
+              <span className="font-medium text-foreground">{label}</span>
               <span className="mt-2 block text-xs text-muted-foreground">{d.openWorkbench}</span>
             </Link>
           ))}

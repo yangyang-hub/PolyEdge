@@ -4,4 +4,6 @@
 
 控制台复用现有组件。`AuthProvider` 读取 `/auth/me`、处理登录跳转、登出和管理员路由保护；导航新增 `/following`、`/admin/users` 与 `/admin/finance`，管理员项按角色过滤。策略/钱包写表单按 `admin|market_editor` 隐藏，只读用户仍可浏览。
 
+视觉体系对齐 Polymarket 官网品牌与信息流风格：默认浅色表面（`#F7F8FA` / 白卡片）、Poly Blue `#2E5CFF` 主色、Yes/成功绿与 No/危险红、Inter 字体（`next/font` → `--font-inter`）。token 定义在 `src/app/globals.css`；壳层（`ConsoleShell` / `ConsoleSidebar` / `ConsoleTopbar` / `PageHeader` / `StatusPill` / `RouteStateCard`）与 auth 布局已切换到该语言。保留 `.dark` token 备选，但根布局默认为 light。
+
 页面保持静态导出兼容。`ActionDialog` 只收集操作备注和上下文，不再展示无效的 step-up code；危险操作的 recent-auth 由后端统一校验。operations/following 的写入口按 `admin|market_editor` 门控，settings 与 `/admin/*` 仅允许 admin，后端 RBAC 仍是最终写入边界。桌面和移动导航使用 Next `Link` 保持客户端路由。旧分页、占位展示组件和未使用 UI primitives 已删除。已删除的 Funding、Markets、Events、Rewards 路由不会出现在桌面或移动导航。
