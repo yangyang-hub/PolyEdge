@@ -64,11 +64,6 @@ impl ServerConfig {
 
         let cors_origins =
             parse_cors_origins(env_value("POLYEDGE_CORS__ALLOWED_ORIGINS").unwrap_or_default())?;
-        if environment.eq_ignore_ascii_case("production") && cors_origins.is_empty() {
-            return Err(ServerError::Configuration(
-                "production requires a non-empty exact CORS allowlist".to_string(),
-            ));
-        }
 
         let database_url = env_value("POLYEDGE_POSTGRES__URL").ok_or_else(|| {
             ServerError::Configuration("POLYEDGE_POSTGRES__URL is required".to_string())
@@ -216,5 +211,11 @@ mod tests {
         );
         assert!(parse_environment("prodution".to_string()).is_err());
         assert!(parse_environment("staging".to_string()).is_err());
+    }
+
+    #[test]
+    fn cors_allowlist_may_be_empty_but_rejects_wildcards() {
+        assert!(parse_cors_origins(String::new()).unwrap().is_empty());
+        assert!(parse_cors_origins("*".to_string()).is_err());
     }
 }

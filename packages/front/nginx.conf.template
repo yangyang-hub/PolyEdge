@@ -23,7 +23,7 @@ server {
   }
 
   location /api/ {
-    proxy_pass http://polyedge-server:38001;
+    proxy_pass ${POLYEDGE_FRONT_API_UPSTREAM};
     proxy_http_version 1.1;
     proxy_set_header Host $host;
     proxy_set_header X-Forwarded-Host $host;

@@ -1,6 +1,6 @@
 # polyedge-server（单后端应用）
 
-最后更新：2026-07-16
+最后更新：2026-07-21
 
 ## 概述
 
@@ -69,7 +69,7 @@
 - `system_kill_switch_trigger`
 - `system_kill_switch_release`
 
-身份使用数据库 opaque session。token/CSRF 只存 hash；用户名规范化为 3-64 位 ASCII 字母、数字、点、下划线或连字符，显示名拒绝控制字符。登录/reauth 失败计数持久化，所有 Argon2 hash/verify 还经过进程级有界并发，避免未认证请求耗尽 blocking pool。`POLYEDGE_RUNTIME__ENVIRONMENT` 只接受 `local|production`，未知值启动失败；production session cookie 为 `__Host-polyedge_session`，带 `Secure`、`HttpOnly`、`SameSite=Strict`，CSRF cookie 可由浏览器读取并通过 canonical header 回传。登录即记录 recent authentication；危险操作要求其未超过 `POLYEDGE_AUTH__RECENT_AUTH_TTL_SECONDS`，也可调用 `/auth/reauth` 刷新并轮换 session。环境管理员启动时在 advisory lock 事务中幂等创建/升级，不能经 API 禁用或降权。
+身份使用数据库 opaque session。token/CSRF 只存 hash；用户名规范化为 3-64 位 ASCII 字母、数字、点、下划线或连字符，显示名拒绝控制字符。登录/reauth 失败计数持久化，所有 Argon2 hash/verify 还经过进程级有界并发，避免未认证请求耗尽 blocking pool。`POLYEDGE_RUNTIME__ENVIRONMENT` 只接受 `local|production`，未知值启动失败；production session cookie 为 `__Host-polyedge_session`，带 `Secure`、`HttpOnly`、`SameSite=Strict`，CSRF cookie 可由浏览器读取并通过 canonical header 回传。CORS allowlist 可为空（不开放跨源），非空时只接受 exact origin 并拒绝 wildcard；业务写请求仍独立校验 `Origin == POLYEDGE_PUBLIC_ORIGIN`。登录即记录 recent authentication；危险操作要求其未超过 `POLYEDGE_AUTH__RECENT_AUTH_TTL_SECONDS`，也可调用 `/auth/reauth` 刷新并轮换 session。环境管理员启动时在 advisory lock 事务中幂等创建/升级，不能经 API 禁用或降权。
 
 ## Targeted orderbook
 
@@ -121,7 +121,7 @@ storage KEK 由 server `.env` 注入，不是 KMS/HSM；当前只支持单活动
 - 精确 token universe、targeted REST orderbook cache；
 - 多钱包 job claim、钱包串行、place/cancel/replace、unknown fencing；
 - CLOB 余额/开放订单读取、Data API positions 全量替换与持仓风险合计；
-- exact-origin CORS、`local|production` 环境枚举、canonical CSRF header、无 Bearer/旧 header 兼容面的 Cookie-only 请求边界，以及危险操作 recent-auth；
+- 可为空且拒绝 wildcard 的 exact-origin CORS、`local|production` 环境枚举、canonical CSRF header、无 Bearer/旧 header 兼容面的 Cookie-only 请求边界，以及危险操作 recent-auth；
 - 外部 cash-flow 管理员录入、钱包归属审计，以及不早于钱包创建且不超过当前时间五分钟的时间边界校验；
 - actor-scoped 策略读取与写入：管理员可全局查看，普通用户只能读取自有或 followable 策略，策略写入要求管理员或市场录入权限且只能修改自有资源（管理员除外）；
 - `[active_from, active_until)` 策略窗口、不可恢复的 expired 状态、owner subscription 自动创建、follower subscription CRUD、钱包 owner 校验和 strategy commands 持久化。

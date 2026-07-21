@@ -120,6 +120,23 @@ env_value() {
   printf '%s' "${value}"
 }
 
+is_ipv4_address() {
+  local address="$1"
+  local octet
+  local -a octets
+  [[ "${address}" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] || return 1
+  IFS='.' read -r -a octets <<< "${address}"
+  for octet in "${octets[@]}"; do
+    ((10#${octet} <= 255)) || return 1
+  done
+}
+
+is_valid_port() {
+  local value="$1"
+  [[ "${value}" =~ ^[0-9]{1,5}$ ]] || return 1
+  ((10#${value} >= 1 && 10#${value} <= 65535))
+}
+
 ensure_env_file() {
   local file="$1"
   local example="$2"
@@ -140,7 +157,7 @@ validate_server_env_file() {
   [[ -f "${file}" ]] || fail "server env file not found: ${file}"
 
   local postgres_url runtime_environment public_origin cors_allowed_origins origin
-  local server_host server_port
+  local server_host server_port server_publish_bind server_publish_port
   local admin_username admin_password_hash
   local transport_private_key_pem storage_key storage_key_bytes normalized_pem
   local -a origins
@@ -161,6 +178,15 @@ validate_server_env_file() {
   [[ "${server_host}" == "0.0.0.0" && "${server_port}" == "38001" ]] \
     || fail "Compose requires POLYEDGE_SERVER__HOST=0.0.0.0 and POLYEDGE_SERVER__PORT=38001 (${file})."
 
+  server_publish_bind="$(env_value POLYEDGE_SERVER_PUBLISH_BIND "${file}")"
+  server_publish_bind="${server_publish_bind:-127.0.0.1}"
+  is_ipv4_address "${server_publish_bind}" \
+    || fail "POLYEDGE_SERVER_PUBLISH_BIND must be an IPv4 address (${file})."
+  server_publish_port="$(env_value POLYEDGE_SERVER_PUBLISH_PORT "${file}")"
+  server_publish_port="${server_publish_port:-38001}"
+  is_valid_port "${server_publish_port}" \
+    || fail "POLYEDGE_SERVER_PUBLISH_PORT must be between 1 and 65535 (${file})."
+
   public_origin="$(env_value POLYEDGE_PUBLIC_ORIGIN "${file}")"
   [[ -n "${public_origin}" ]] || fail "POLYEDGE_PUBLIC_ORIGIN is required in ${file}."
   [[ "${public_origin}" =~ ^https?://[^/?#]+$ ]] || fail "POLYEDGE_PUBLIC_ORIGIN must be an exact origin in ${file}."
@@ -176,9 +202,6 @@ validate_server_env_file() {
   fi
 
   cors_allowed_origins="$(env_value POLYEDGE_CORS__ALLOWED_ORIGINS "${file}")"
-  if [[ "${runtime_environment}" == "production" && -z "${cors_allowed_origins}" ]]; then
-    fail "POLYEDGE_CORS__ALLOWED_ORIGINS must contain at least one exact frontend origin in production (${file})."
-  fi
   [[ "${cors_allowed_origins}" != *"*"* ]] || fail "POLYEDGE_CORS__ALLOWED_ORIGINS must not contain wildcard origins in ${file}."
   if [[ -n "${cors_allowed_origins}" ]]; then
     IFS=',' read -r -a origins <<< "${cors_allowed_origins}"
@@ -218,9 +241,17 @@ validate_front_env_file() {
   local file="$1"
   [[ "${POLYEDGE_SKIP_ENV_VALIDATION:-0}" != "1" ]] || return 0
   [[ -f "${file}" ]] || fail "frontend env file not found: ${file}"
-  local api_base_url
+  local api_base_url api_upstream upstream_port
   api_base_url="$(env_value NEXT_PUBLIC_POLYEDGE_API_BASE_URL "${file}")"
   [[ -z "${api_base_url}" ]] || fail "NEXT_PUBLIC_POLYEDGE_API_BASE_URL must be empty for the production Nginx same-origin proxy (${file})."
+  api_upstream="$(env_value POLYEDGE_FRONT_API_UPSTREAM "${file}")"
+  api_upstream="${api_upstream:-http://polyedge-server:38001}"
+  [[ "${api_upstream}" =~ ^https?://[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?:[0-9]{1,5}$ \
+     && "${api_upstream}" != *".."* ]] \
+    || fail "POLYEDGE_FRONT_API_UPSTREAM must be an exact HTTP(S) origin with host and port, without path/query/fragment (${file})."
+  upstream_port="${api_upstream##*:}"
+  is_valid_port "${upstream_port}" \
+    || fail "POLYEDGE_FRONT_API_UPSTREAM port must be between 1 and 65535 (${file})."
 }
 
 export_env_if_set() {
@@ -235,6 +266,8 @@ load_compose_environment() {
   if [[ -f "${server_env_file}" ]]; then
     export POLYEDGE_SERVER_ENV_FILE="${server_env_file}"
     export_env_if_set "${server_env_file}" POLYEDGE_SERVER_IMAGE
+    export_env_if_set "${server_env_file}" POLYEDGE_SERVER_PUBLISH_BIND
+    export_env_if_set "${server_env_file}" POLYEDGE_SERVER_PUBLISH_PORT
   else
     export POLYEDGE_SERVER_ENV_FILE="${deploy_path}/.env.server.example"
   fi
@@ -242,7 +275,20 @@ load_compose_environment() {
     export_env_if_set "${front_env_file}" POLYEDGE_FRONT_IMAGE
     export_env_if_set "${front_env_file}" POLYEDGE_FRONT_BIND
     export_env_if_set "${front_env_file}" POLYEDGE_FRONT_PORT
+    export_env_if_set "${front_env_file}" POLYEDGE_FRONT_API_UPSTREAM
   fi
+}
+
+compose_up_services() {
+  local service
+  local includes_server=0
+  local -a services=("$@")
+  local -a args=(up -d --remove-orphans)
+  for service in "${services[@]}"; do
+    [[ "${service}" != "polyedge-server" ]] || includes_server=1
+  done
+  [[ "${includes_server}" == "1" ]] || args+=(--no-deps)
+  "${compose_cmd[@]}" -f "${compose_file}" "${args[@]}" "${services[@]}"
 }
 
 file_hash() {
@@ -429,7 +475,7 @@ else
   [[ "${target_front}" != "1" ]] || ensure_env_file "${front_env_file}" "${deploy_path}/.env.front.example" front created_env_files
 fi
 if [[ ${#created_env_files[@]} -gt 0 ]]; then
-  fail "created env file(s): ${created_env_files[*]}. Configure PostgreSQL, CORS/auth, wallet secret resolver, and frontend API URL, then rerun."
+  fail "created env file(s): ${created_env_files[*]}. Configure PostgreSQL, runtime/origin/auth, wallet crypto, and frontend API upstream, then rerun."
 fi
 
 if [[ "${mode}" == "auto" ]]; then
@@ -461,7 +507,7 @@ if [[ "${mode}" == "auto" ]]; then
   [[ "${current_front_hash}" == "${saved_front_hash}" ]] || front_changed=1
   if [[ "${new_code}" == "1" && -n "${pre_merge_head}" ]]; then
     git diff --name-only "${pre_merge_head}" HEAD -- deploy/docker-compose.yml deploy/server.Dockerfile scripts/deploy.sh | grep -q . && server_changed=1
-    git diff --name-only "${pre_merge_head}" HEAD -- packages/front/ deploy/.env.front.example | grep -q . && front_changed=1
+    git diff --name-only "${pre_merge_head}" HEAD -- packages/front/ deploy/docker-compose.yml deploy/.env.front.example scripts/deploy.sh | grep -q . && front_changed=1
   fi
 
   server_running=1
@@ -492,7 +538,7 @@ if [[ "${mode}" == "auto" ]]; then
     "${compose_cmd[@]}" -f "${compose_file}" build --pull "${build_images[@]}"
   fi
   if [[ ${#restart_services[@]} -gt 0 ]]; then
-    "${compose_cmd[@]}" -f "${compose_file}" up -d --remove-orphans "${restart_services[@]}"
+    compose_up_services "${restart_services[@]}"
   fi
   save_deploy_state "${state_file}"
 else
@@ -509,7 +555,7 @@ else
     build_frontend
   fi
   [[ ${#build_images[@]} -eq 0 ]] || "${compose_cmd[@]}" -f "${compose_file}" build --pull "${build_images[@]}"
-  [[ ${#runtime_services[@]} -eq 0 ]] || "${compose_cmd[@]}" -f "${compose_file}" up -d --remove-orphans "${runtime_services[@]}"
+  [[ ${#runtime_services[@]} -eq 0 ]] || compose_up_services "${runtime_services[@]}"
 fi
 
 "${compose_cmd[@]}" -f "${compose_file}" ps

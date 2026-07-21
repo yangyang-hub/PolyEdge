@@ -14,6 +14,8 @@ services:
       - ${POLYEDGE_SERVER_ENV_FILE:-.env.server}
     expose:
       - "38001"
+    ports:
+      - "${POLYEDGE_SERVER_PUBLISH_BIND:-127.0.0.1}:${POLYEDGE_SERVER_PUBLISH_PORT:-38001}:38001"
     command: ["polyedge-server"]
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -33,6 +35,9 @@ services:
       dockerfile: Dockerfile
     image: ${POLYEDGE_FRONT_IMAGE:-polyedge-front:local}
     restart: unless-stopped
+    environment:
+      POLYEDGE_FRONT_API_UPSTREAM: ${POLYEDGE_FRONT_API_UPSTREAM:-http://polyedge-server:38001}
+      NGINX_ENVSUBST_FILTER: ^POLYEDGE_FRONT_API_UPSTREAM$
     logging: *default-logging
     ports:
       - "${POLYEDGE_FRONT_BIND:-0.0.0.0}:${POLYEDGE_FRONT_PORT:-33002}:80"
