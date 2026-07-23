@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect } from "react";
-import Link from "next/link";
 
 import { Button } from "@/components/ui/button";
 import { RouteStateCard } from "@/components/shared/route-state-card";
@@ -38,7 +37,7 @@ export default function Error({
             {dictionary.routeStates.retrySegment}
           </Button>
           <Button asChild variant="outline" className="rounded-sm border-white/10 bg-accent/45 hover:bg-accent">
-            <Link href="/dashboard">{dictionary.routeStates.returnDashboard}</Link>
+            <a href="/dashboard">{dictionary.routeStates.returnDashboard}</a>
           </Button>
         </>
       }

@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import { sanitizeNextPath } from "@/lib/console-auth";
@@ -55,10 +54,10 @@ export default function UnauthorizedPage() {
       actions={
         <>
           <Button asChild className="rounded-sm bg-primary text-primary-foreground hover:bg-primary/90">
-            <Link href={`/login?next=${encodeURIComponent(state.nextPath)}`}>{dictionary.auth.switchRole}</Link>
+            <a href={`/login?next=${encodeURIComponent(state.nextPath)}`}>{dictionary.auth.switchRole}</a>
           </Button>
           <Button asChild variant="outline" className="rounded-sm border-white/10 bg-accent/45 hover:bg-accent">
-            <Link href="/dashboard">{dictionary.auth.goToDashboard}</Link>
+            <a href="/dashboard">{dictionary.auth.goToDashboard}</a>
           </Button>
         </>
       }

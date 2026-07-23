@@ -1,5 +1,3 @@
-import Link from "next/link";
-
 import { Button } from "@/components/ui/button";
 import { RouteStateCard } from "@/components/shared/route-state-card";
 import { dictionary } from "@/lib/i18n/dictionaries";
@@ -14,10 +12,10 @@ export default function NotFound() {
       actions={
         <>
           <Button asChild className="rounded-sm bg-primary text-primary-foreground hover:bg-primary/90">
-            <Link href="/dashboard">{dictionary.common.backToDashboard}</Link>
+            <a href="/dashboard">{dictionary.common.backToDashboard}</a>
           </Button>
           <Button asChild variant="outline" className="rounded-sm border-white/10 bg-accent/45 hover:bg-accent">
-            <Link href="/strategies">{dictionary.routeStates.openStrategies}</Link>
+            <a href="/strategies">{dictionary.routeStates.openStrategies}</a>
           </Button>
         </>
       }

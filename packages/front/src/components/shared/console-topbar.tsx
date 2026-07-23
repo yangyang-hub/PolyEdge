@@ -1,7 +1,6 @@
 "use client";
 
 import { usePathname } from "next/navigation";
-import Link from "next/link";
 import { Menu } from "lucide-react";
 import { useState } from "react";
 
@@ -53,7 +52,7 @@ export function ConsoleTopbar() {
                   const label = dictionary.nav[labelKey];
 
                   return (
-                    <Link
+                    <a
                       key={href}
                       href={href}
                       onClick={() => setMobileMenuOpen(false)}
@@ -66,7 +65,7 @@ export function ConsoleTopbar() {
                     >
                       <Icon className="size-4 shrink-0" />
                       <span>{label}</span>
-                    </Link>
+                    </a>
                   );
                 })}
               </nav>
